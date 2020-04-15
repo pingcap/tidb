@@ -18,11 +18,11 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/aggregation"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/v4/expression"
+	"github.com/pingcap/tidb/v4/expression/aggregation"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/util/chunk"
+	"github.com/pingcap/tidb/v4/util/codec"
 )
 
 type aggCtxsMapper map[string][]*aggregation.AggEvaluateContext

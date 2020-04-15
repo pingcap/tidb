@@ -15,7 +15,7 @@ package executor_test
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/v4/util/testkit"
 )
 
 func (s *testSuite1) TestTraceExec(c *C) {

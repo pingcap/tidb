@@ -17,11 +17,11 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/v4/ddl"
+	"github.com/pingcap/tidb/v4/expression"
+	"github.com/pingcap/tidb/v4/sessionctx"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/util/mock"
 )
 
 var _ = Suite(&testPartitionPruningSuite{})
@@ -79,7 +79,7 @@ func (s *testPartitionPruningSuite) TestCanBePrune(c *C) {
 
 	queryExpr = tc.expr("report_updated > unix_timestamp('2008-05-01 00:00:00')")
 	partitionRangeForCNFExpr(tc.sctx, queryExpr, prunner, fullRange(len(lessThan.data)))
-	// TODO: Uncomment the check after fixing issue https://github.com/pingcap/tidb/issues/12028
+	// TODO: Uncomment the check after fixing issue https://github.com/pingcap/tidb/v4/issues/12028
 	// c.Assert(equalPartitionRangeOR(result, partitionRangeOR{{2, 4}}), IsTrue)
 	// report_updated > unix_timestamp('2008-05-01 00:00:00') is converted to gt(t.t.report_updated, <nil>)
 	// Because unix_timestamp('2008-05-01 00:00:00') is fold to constant int 1564761600, and compare it with timestamp (report_updated)

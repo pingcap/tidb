@@ -20,9 +20,9 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/planner/util"
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/v4/expression"
+	"github.com/pingcap/tidb/v4/planner/util"
+	"github.com/pingcap/tidb/v4/types"
 )
 
 func (s *testUnitTestSuit) rewriteSimpleExpr(str string, schema *expression.Schema, names types.NameSlice) ([]expression.Expression, error) {

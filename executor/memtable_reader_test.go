@@ -32,11 +32,11 @@ import (
 	"github.com/pingcap/fn"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"github.com/pingcap/sysutil"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/util/pdapi"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/v4/domain"
+	"github.com/pingcap/tidb/v4/kv"
+	"github.com/pingcap/tidb/v4/session"
+	"github.com/pingcap/tidb/v4/util/pdapi"
+	"github.com/pingcap/tidb/v4/util/testkit"
 	pmodel "github.com/prometheus/common/model"
 	"google.golang.org/grpc"
 )
@@ -61,7 +61,7 @@ func (s *testClusterTableBase) TearDownSuite(c *C) {
 }
 
 func (s *testMemTableReaderSuite) TestMetricTableData(c *C) {
-	fpName := "github.com/pingcap/tidb/executor/mockMetricsPromData"
+	fpName := "github.com/pingcap/tidb/v4/executor/mockMetricsPromData"
 	c.Assert(failpoint.Enable(fpName, "return"), IsNil)
 	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
 
@@ -170,7 +170,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 		}
 	}
 
-	fpName := "github.com/pingcap/tidb/executor/mockClusterConfigServerInfo"
+	fpName := "github.com/pingcap/tidb/v4/executor/mockClusterConfigServerInfo"
 	fpExpr := strings.Join(servers, ";")
 	c.Assert(failpoint.Enable(fpName, fmt.Sprintf(`return("%s")`, fpExpr)), IsNil)
 	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
@@ -840,7 +840,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
 	for _, s := range testServers {
 		servers = append(servers, strings.Join([]string{s.typ, s.address, s.address}, ","))
 	}
-	fpName := "github.com/pingcap/tidb/executor/mockClusterLogServerInfo"
+	fpName := "github.com/pingcap/tidb/v4/executor/mockClusterLogServerInfo"
 	fpExpr := strings.Join(servers, ";")
 	c.Assert(failpoint.Enable(fpName, fmt.Sprintf(`return("%s")`, fpExpr)), IsNil)
 	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
@@ -871,7 +871,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
 
 func (s *testMemTableReaderSuite) TestTiDBClusterLogError(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	fpName := "github.com/pingcap/tidb/executor/mockClusterLogServerInfo"
+	fpName := "github.com/pingcap/tidb/v4/executor/mockClusterLogServerInfo"
 	c.Assert(failpoint.Enable(fpName, `return("")`), IsNil)
 	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
 

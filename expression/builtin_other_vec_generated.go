@@ -17,10 +17,10 @@ package expression
 
 import (
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/types/json"
+	"github.com/pingcap/tidb/v4/util/chunk"
+	"github.com/pingcap/tidb/v4/util/collate"
 )
 
 func (b *builtinInIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {

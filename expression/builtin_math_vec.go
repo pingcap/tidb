@@ -21,8 +21,8 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/util/chunk"
 )
 
 func (b *builtinLog1ArgSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {

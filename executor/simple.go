@@ -27,21 +27,21 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/plugin"
-	"github.com/pingcap/tidb/privilege"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/v4/config"
+	"github.com/pingcap/tidb/v4/domain"
+	"github.com/pingcap/tidb/v4/infoschema"
+	"github.com/pingcap/tidb/v4/kv"
+	"github.com/pingcap/tidb/v4/metrics"
+	"github.com/pingcap/tidb/v4/planner/core"
+	"github.com/pingcap/tidb/v4/plugin"
+	"github.com/pingcap/tidb/v4/privilege"
+	"github.com/pingcap/tidb/v4/sessionctx"
+	"github.com/pingcap/tidb/v4/sessionctx/variable"
+	"github.com/pingcap/tidb/v4/util"
+	"github.com/pingcap/tidb/v4/util/chunk"
+	"github.com/pingcap/tidb/v4/util/hack"
+	"github.com/pingcap/tidb/v4/util/logutil"
+	"github.com/pingcap/tidb/v4/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -1157,7 +1157,7 @@ func (e *SimpleExec) executeShutdown(s *ast.ShutdownStmt) error {
 	return nil
 }
 
-// #14239 - https://github.com/pingcap/tidb/issues/14239
+// #14239 - https://github.com/pingcap/tidb/v4/issues/14239
 // Need repair 'shutdown' command behavior.
 // Response of TiDB is different to MySQL.
 // This function need to run with async model, otherwise it will block main coroutine

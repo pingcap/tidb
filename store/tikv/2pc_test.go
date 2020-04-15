@@ -28,10 +28,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/v4/kv"
+	"github.com/pingcap/tidb/v4/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/v4/store/tikv/oracle"
+	"github.com/pingcap/tidb/v4/store/tikv/tikvrpc"
 )
 
 type testCommitterSuite struct {
@@ -788,10 +788,10 @@ func (s *testCommitterSuite) TestPkNotFound(c *C) {
 	txn3 := s.begin(c)
 	txn3.SetOption(kv.Pessimistic, true)
 	lockCtx = &kv.LockCtx{ForUpdateTS: txn1.startTS - 1, WaitStartTime: time.Now(), LockWaitTime: kv.LockNoWait}
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/txnNotFoundRetTTL", "return"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/store/tikv/txnNotFoundRetTTL", "return"), IsNil)
 	err = txn3.LockKeys(context.Background(), lockCtx, k3)
 	c.Assert(err.Error(), Equals, ErrLockAcquireFailAndNoWaitSet.Error())
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/txnNotFoundRetTTL"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/store/tikv/txnNotFoundRetTTL"), IsNil)
 }
 
 func (s *testCommitterSuite) TestPessimisticLockPrimary(c *C) {
@@ -823,9 +823,9 @@ func (s *testCommitterSuite) TestPessimisticLockPrimary(c *C) {
 	txn3 := s.begin(c)
 	txn3.SetOption(kv.Pessimistic, true)
 	lockCtx3 := &kv.LockCtx{ForUpdateTS: txn3.startTS, WaitStartTime: time.Now(), LockWaitTime: kv.LockNoWait}
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/txnNotFoundRetTTL", "return"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/store/tikv/txnNotFoundRetTTL", "return"), IsNil)
 	err = txn3.LockKeys(context.Background(), lockCtx3, k2)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/txnNotFoundRetTTL"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/store/tikv/txnNotFoundRetTTL"), IsNil)
 	c.Assert(err, IsNil)
 	waitErr := <-doneCh
 	c.Assert(ErrLockWaitTimeout.Equal(waitErr), IsTrue)

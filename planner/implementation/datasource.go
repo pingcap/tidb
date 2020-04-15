@@ -16,11 +16,11 @@ package implementation
 import (
 	"math"
 
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/kv"
-	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/planner/memo"
-	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/v4/expression"
+	"github.com/pingcap/tidb/v4/kv"
+	plannercore "github.com/pingcap/tidb/v4/planner/core"
+	"github.com/pingcap/tidb/v4/planner/memo"
+	"github.com/pingcap/tidb/v4/statistics"
 )
 
 // TableDualImpl implementation of PhysicalTableDual.

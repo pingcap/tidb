@@ -16,10 +16,10 @@ package ranger
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/v4/expression"
+	"github.com/pingcap/tidb/v4/sessionctx"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/util/collate"
 )
 
 // detachColumnCNFConditions detaches the condition for calculating range from the other conditions.

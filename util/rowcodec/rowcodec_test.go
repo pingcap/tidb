@@ -21,14 +21,14 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/rowcodec"
+	"github.com/pingcap/tidb/v4/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/v4/tablecodec"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/types/json"
+	"github.com/pingcap/tidb/v4/util/chunk"
+	"github.com/pingcap/tidb/v4/util/codec"
+	"github.com/pingcap/tidb/v4/util/collate"
+	"github.com/pingcap/tidb/v4/util/rowcodec"
 )
 
 func TestT(t *testing.T) {

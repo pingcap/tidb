@@ -22,7 +22,7 @@ import (
 	"github.com/google/btree"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/v4/util/codec"
 )
 
 type mvccValueType int

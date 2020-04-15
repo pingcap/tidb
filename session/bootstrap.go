@@ -30,15 +30,15 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/pingcap/tidb/v4/config"
+	"github.com/pingcap/tidb/v4/ddl"
+	"github.com/pingcap/tidb/v4/domain"
+	"github.com/pingcap/tidb/v4/infoschema"
+	"github.com/pingcap/tidb/v4/planner/core"
+	"github.com/pingcap/tidb/v4/sessionctx/variable"
+	"github.com/pingcap/tidb/v4/util/chunk"
+	"github.com/pingcap/tidb/v4/util/logutil"
+	"github.com/pingcap/tidb/v4/util/timeutil"
 	"go.uber.org/zap"
 )
 
@@ -370,7 +370,7 @@ const (
 	version38 = 38
 	version39 = 39
 	// version40 is the version that introduce new collation in TiDB,
-	// see https://github.com/pingcap/tidb/pull/14574 for more details.
+	// see https://github.com/pingcap/tidb/v4/pull/14574 for more details.
 	version40 = 40
 	version41 = 41
 )

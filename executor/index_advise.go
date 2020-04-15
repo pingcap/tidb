@@ -20,9 +20,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/v4/sessionctx"
+	"github.com/pingcap/tidb/v4/util"
+	"github.com/pingcap/tidb/v4/util/chunk"
 )
 
 // IndexAdviseExec represents a index advise executor.

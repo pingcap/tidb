@@ -29,22 +29,22 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/kv"
-	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/kvcache"
-	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tidb/v4/domain"
+	"github.com/pingcap/tidb/v4/expression"
+	"github.com/pingcap/tidb/v4/kv"
+	plannercore "github.com/pingcap/tidb/v4/planner/core"
+	"github.com/pingcap/tidb/v4/session"
+	"github.com/pingcap/tidb/v4/sessionctx"
+	"github.com/pingcap/tidb/v4/sessionctx/variable"
+	"github.com/pingcap/tidb/v4/store/mockstore"
+	"github.com/pingcap/tidb/v4/table"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/util/collate"
+	"github.com/pingcap/tidb/v4/util/kvcache"
+	"github.com/pingcap/tidb/v4/util/mock"
+	"github.com/pingcap/tidb/v4/util/sqlexec"
+	"github.com/pingcap/tidb/v4/util/testkit"
+	"github.com/pingcap/tidb/v4/util/testutil"
 )
 
 var _ = Suite(&testIntegrationSuite{})
@@ -2779,7 +2779,7 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("2442"))
 
 	// for regexp, rlike
-	// https://github.com/pingcap/tidb/issues/4080
+	// https://github.com/pingcap/tidb/v4/issues/4080
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t (a char(10), b varchar(10), c binary(10), d varbinary(10));`)
 	tk.MustExec(`insert into t values ('text','text','text','text');`)
@@ -5196,7 +5196,7 @@ func (s *testIntegrationSuite) TestIssue11309And11319(c *C) {
 	tk.MustQuery(`SELECT DATE_ADD('2003-11-18 07:25:13',INTERVAL c MINUTE_SECOND) FROM t`).Check(testkit.Rows(`2003-11-18 09:29:13`, `2003-11-18 05:21:13`))
 	tk.MustExec(`drop table if exists t;`)
 
-	// for https://github.com/pingcap/tidb/issues/11319
+	// for https://github.com/pingcap/tidb/v4/issues/11319
 	tk.MustQuery(`SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 MINUTE_MICROSECOND)`).Check(testkit.Rows("2007-03-28 22:08:25.800000"))
 	tk.MustQuery(`SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 SECOND_MICROSECOND)`).Check(testkit.Rows("2007-03-28 22:08:25.800000"))
 	tk.MustQuery(`SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 HOUR_MICROSECOND)`).Check(testkit.Rows("2007-03-28 22:08:25.800000"))

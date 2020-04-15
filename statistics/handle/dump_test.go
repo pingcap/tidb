@@ -19,9 +19,9 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/statistics/handle"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/v4/statistics"
+	"github.com/pingcap/tidb/v4/statistics/handle"
+	"github.com/pingcap/tidb/v4/util/testkit"
 )
 
 func (s *testStatsSuite) TestConversion(c *C) {

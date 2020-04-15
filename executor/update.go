@@ -19,13 +19,13 @@ import (
 
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/kv"
-	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/v4/expression"
+	"github.com/pingcap/tidb/v4/kv"
+	plannercore "github.com/pingcap/tidb/v4/planner/core"
+	"github.com/pingcap/tidb/v4/table"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/util/chunk"
+	"github.com/pingcap/tidb/v4/util/memory"
 )
 
 // UpdateExec represents a new update executor.
@@ -113,7 +113,7 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 // outer join: the outer row can not match any inner rows, and in this scenario
 // the inner handle field is filled with a NULL value.
 //
-// This fixes: https://github.com/pingcap/tidb/issues/7176.
+// This fixes: https://github.com/pingcap/tidb/v4/issues/7176.
 func (e *UpdateExec) canNotUpdate(handle types.Datum) bool {
 	return handle.IsNull()
 }

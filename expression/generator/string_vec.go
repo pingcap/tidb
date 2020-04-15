@@ -24,7 +24,7 @@ import (
 	"path/filepath"
 	"text/template"
 
-	. "github.com/pingcap/tidb/expression/generator/helper"
+	. "github.com/pingcap/tidb/v4/expression/generator/helper"
 )
 
 const header = `// Copyright 2019 PingCAP, Inc.
@@ -48,8 +48,8 @@ package expression
 const newLine = "\n"
 
 const builtinStringImports = `import (
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/util/chunk"
 )
 `
 
@@ -113,7 +113,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/v4/types"
 )
 
 var vecGeneratedBuiltinStringCases = map[string][]vecExprBenchCase{

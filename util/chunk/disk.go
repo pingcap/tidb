@@ -23,10 +23,10 @@ import (
 	"sync"
 
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/disk"
-	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/v4/config"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/util/disk"
+	"github.com/pingcap/tidb/v4/util/stringutil"
 )
 
 const (

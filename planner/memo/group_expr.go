@@ -17,8 +17,8 @@ import (
 	"encoding/binary"
 	"reflect"
 
-	"github.com/pingcap/tidb/expression"
-	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/v4/expression"
+	plannercore "github.com/pingcap/tidb/v4/planner/core"
 )
 
 // GroupExpr is used to store all the logically equivalent expressions which

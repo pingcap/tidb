@@ -14,8 +14,8 @@
 package implementation
 
 import (
-	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/planner/memo"
+	plannercore "github.com/pingcap/tidb/v4/planner/core"
+	"github.com/pingcap/tidb/v4/planner/memo"
 )
 
 // HashJoinImpl is the implementation for PhysicalHashJoin.

@@ -18,8 +18,8 @@ import (
 	"sync"
 
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/v4/errno"
+	"github.com/pingcap/tidb/v4/util/logutil"
 	"go.uber.org/zap"
 )
 

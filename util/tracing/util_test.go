@@ -20,7 +20,7 @@ import (
 	basictracer "github.com/opentracing/basictracer-go"
 	"github.com/opentracing/opentracing-go"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/util/tracing"
+	"github.com/pingcap/tidb/v4/util/tracing"
 )
 
 var _ = Suite(&testTraceSuite{})

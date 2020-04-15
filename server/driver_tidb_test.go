@@ -19,7 +19,7 @@ import (
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/v4/types"
 )
 
 type tidbResultSetTestSuite struct{}
@@ -43,7 +43,7 @@ func createColumnByTypeAndLen(tp byte, len uint32) *ColumnInfo {
 	}
 }
 func (ts tidbResultSetTestSuite) TestConvertColumnInfo(c *C) {
-	// Test "mysql.TypeBit", for: https://github.com/pingcap/tidb/issues/5405.
+	// Test "mysql.TypeBit", for: https://github.com/pingcap/tidb/v4/issues/5405.
 	resultField := ast.ResultField{
 		Column: &model.ColumnInfo{
 			Name:   model.NewCIStr("a"),
@@ -66,7 +66,7 @@ func (ts tidbResultSetTestSuite) TestConvertColumnInfo(c *C) {
 	colInfo := convertColumnInfo(&resultField)
 	c.Assert(colInfo, DeepEquals, createColumnByTypeAndLen(mysql.TypeBit, 1))
 
-	// Test "mysql.TypeTiny", for: https://github.com/pingcap/tidb/issues/5405.
+	// Test "mysql.TypeTiny", for: https://github.com/pingcap/tidb/v4/issues/5405.
 	resultField = ast.ResultField{
 		Column: &model.ColumnInfo{
 			Name:   model.NewCIStr("a"),

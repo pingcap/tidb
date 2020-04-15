@@ -21,7 +21,7 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/kv/memdb"
+	"github.com/pingcap/tidb/v4/kv/memdb"
 )
 
 // memDbBuffer implements the MemBuffer interface.

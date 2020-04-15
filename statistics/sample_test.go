@@ -18,10 +18,10 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/v4/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/util/mock"
+	"github.com/pingcap/tidb/v4/util/sqlexec"
 )
 
 var _ = Suite(&testSampleSuite{})

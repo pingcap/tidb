@@ -38,24 +38,24 @@ import (
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/binloginfo"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/helper"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/printer"
-	"github.com/pingcap/tidb/util/rowcodec"
+	"github.com/pingcap/tidb/v4/config"
+	"github.com/pingcap/tidb/v4/domain"
+	"github.com/pingcap/tidb/v4/kv"
+	"github.com/pingcap/tidb/v4/meta"
+	"github.com/pingcap/tidb/v4/session"
+	"github.com/pingcap/tidb/v4/sessionctx"
+	"github.com/pingcap/tidb/v4/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/v4/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/v4/sessionctx/variable"
+	"github.com/pingcap/tidb/v4/store/helper"
+	"github.com/pingcap/tidb/v4/store/mockstore"
+	"github.com/pingcap/tidb/v4/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/v4/store/tikv"
+	"github.com/pingcap/tidb/v4/tablecodec"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/util/codec"
+	"github.com/pingcap/tidb/v4/util/printer"
+	"github.com/pingcap/tidb/v4/util/rowcodec"
 	log "github.com/sirupsen/logrus"
 	"go.uber.org/zap"
 )
@@ -331,11 +331,11 @@ func (ts *HTTPHandlerTestSuite) TestRegionsFromMeta(c *C) {
 	}
 
 	// test no panic
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/server/errGetRegionByIDEmpty", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/server/errGetRegionByIDEmpty", `return(true)`), IsNil)
 	resp1, err := ts.fetchStatus("/regions/meta")
 	c.Assert(err, IsNil)
 	defer resp1.Body.Close()
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/server/errGetRegionByIDEmpty"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/server/errGetRegionByIDEmpty"), IsNil)
 }
 
 func (ts *HTTPHandlerTestSuite) startServer(c *C) {
@@ -1140,13 +1140,13 @@ func (ts *HTTPHandlerTestSuite) TestFailpointHandler(c *C) {
 	ts.stopServer(c)
 
 	// enable failpoint integration and start server
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/server/integrateFailpoint", "return"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/server/integrateFailpoint", "return"), IsNil)
 	ts.startServer(c)
 	resp, err = ts.fetchStatus("/fail/")
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	b, err := ioutil.ReadAll(resp.Body)
 	c.Assert(err, IsNil)
-	c.Assert(strings.Contains(string(b), "github.com/pingcap/tidb/server/integrateFailpoint=return"), IsTrue)
+	c.Assert(strings.Contains(string(b), "github.com/pingcap/tidb/v4/server/integrateFailpoint=return"), IsTrue)
 	c.Assert(resp.Body.Close(), IsNil)
 }

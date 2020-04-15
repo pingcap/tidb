@@ -15,9 +15,9 @@ package statistics
 
 import (
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/v4/sessionctx"
+	"github.com/pingcap/tidb/v4/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/v4/types"
 )
 
 // SortedBuilder is used to build histograms for PK and index.

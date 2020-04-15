@@ -20,12 +20,12 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/store/mockstore"
-	. "github.com/pingcap/tidb/util/admin"
-	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/v4/kv"
+	"github.com/pingcap/tidb/v4/meta"
+	"github.com/pingcap/tidb/v4/store/mockstore"
+	. "github.com/pingcap/tidb/v4/util/admin"
+	"github.com/pingcap/tidb/v4/util/mock"
+	"github.com/pingcap/tidb/v4/util/testleak"
 )
 
 func TestT(t *testing.T) {

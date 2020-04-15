@@ -27,11 +27,11 @@ import (
 	"github.com/pingcap/goleveldb/leveldb/util"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/deadlock"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/v4/kv"
+	"github.com/pingcap/tidb/v4/store/tikv/oracle"
+	"github.com/pingcap/tidb/v4/util/codec"
+	"github.com/pingcap/tidb/v4/util/deadlock"
+	"github.com/pingcap/tidb/v4/util/logutil"
 	"go.uber.org/zap"
 )
 

@@ -17,10 +17,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/v4/metrics"
+	"github.com/pingcap/tidb/v4/sessionctx/variable"
+	"github.com/pingcap/tidb/v4/store/tikv/oracle"
+	"github.com/pingcap/tidb/v4/util/logutil"
 	"go.uber.org/zap"
 )
 

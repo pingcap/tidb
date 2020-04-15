@@ -22,17 +22,17 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/hint"
-	"github.com/pingcap/tidb/util/kvcache"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/v4/executor"
+	"github.com/pingcap/tidb/v4/infoschema"
+	"github.com/pingcap/tidb/v4/kv"
+	"github.com/pingcap/tidb/v4/metrics"
+	"github.com/pingcap/tidb/v4/planner/core"
+	"github.com/pingcap/tidb/v4/session"
+	"github.com/pingcap/tidb/v4/sessionctx/variable"
+	"github.com/pingcap/tidb/v4/util/hint"
+	"github.com/pingcap/tidb/v4/util/kvcache"
+	"github.com/pingcap/tidb/v4/util/testkit"
+	"github.com/pingcap/tidb/v4/util/testleak"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 )
@@ -291,7 +291,7 @@ func (s *testPrepareSuite) TestPrepareOverMaxPreparedStmtCount(c *C) {
 	}
 }
 
-// unit test for issue https://github.com/pingcap/tidb/issues/8518
+// unit test for issue https://github.com/pingcap/tidb/v4/issues/8518
 func (s *testPrepareSerialSuite) TestPrepareTableAsNameOnGroupByWithCache(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
@@ -341,7 +341,7 @@ func readGaugeInt(g prometheus.Gauge) int {
 	return int(mm.GetGauge().GetValue())
 }
 
-// unit test for issue https://github.com/pingcap/tidb/issues/9478
+// unit test for issue https://github.com/pingcap/tidb/v4/issues/9478
 func (s *testPrepareSuite) TestPrepareWithWindowFunction(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()

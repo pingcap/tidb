@@ -21,9 +21,9 @@ import (
 	_ "unsafe"  // required by go:linkname
 
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/util/israce"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/v4/config"
+	"github.com/pingcap/tidb/v4/util/israce"
+	"github.com/pingcap/tidb/v4/util/logutil"
 	"go.uber.org/zap"
 )
 

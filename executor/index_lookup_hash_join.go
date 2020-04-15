@@ -20,14 +20,14 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/expression"
-	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/v4/expression"
+	plannercore "github.com/pingcap/tidb/v4/planner/core"
+	"github.com/pingcap/tidb/v4/util"
+	"github.com/pingcap/tidb/v4/util/chunk"
+	"github.com/pingcap/tidb/v4/util/codec"
+	"github.com/pingcap/tidb/v4/util/logutil"
+	"github.com/pingcap/tidb/v4/util/memory"
+	"github.com/pingcap/tidb/v4/util/ranger"
 	"go.uber.org/zap"
 )
 

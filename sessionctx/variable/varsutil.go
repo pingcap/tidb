@@ -26,11 +26,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/pingcap/tidb/v4/config"
+	"github.com/pingcap/tidb/v4/kv"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/util/collate"
+	"github.com/pingcap/tidb/v4/util/timeutil"
 )
 
 // secondsPerYear represents seconds in a normal year. Leap year is not considered here.

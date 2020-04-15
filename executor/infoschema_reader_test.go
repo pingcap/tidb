@@ -30,24 +30,24 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/domain/infosync"
-	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/server"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/statistics/handle"
-	"github.com/pingcap/tidb/store/helper"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/pdapi"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tidb/v4/config"
+	"github.com/pingcap/tidb/v4/domain"
+	"github.com/pingcap/tidb/v4/domain/infosync"
+	"github.com/pingcap/tidb/v4/executor"
+	"github.com/pingcap/tidb/v4/kv"
+	"github.com/pingcap/tidb/v4/server"
+	"github.com/pingcap/tidb/v4/session"
+	"github.com/pingcap/tidb/v4/sessionctx/variable"
+	"github.com/pingcap/tidb/v4/statistics"
+	"github.com/pingcap/tidb/v4/statistics/handle"
+	"github.com/pingcap/tidb/v4/store/helper"
+	"github.com/pingcap/tidb/v4/store/mockstore"
+	"github.com/pingcap/tidb/v4/store/tikv"
+	"github.com/pingcap/tidb/v4/util"
+	"github.com/pingcap/tidb/v4/util/pdapi"
+	"github.com/pingcap/tidb/v4/util/testkit"
+	"github.com/pingcap/tidb/v4/util/testleak"
+	"github.com/pingcap/tidb/v4/util/testutil"
 	"google.golang.org/grpc"
 )
 
@@ -117,7 +117,7 @@ func (s *inspectionSuite) TestInspectionTables(c *C) {
 		"tidb,127.0.0.1:11080,127.0.0.1:10080,mock-version,mock-githash",
 		"tikv,127.0.0.1:11080,127.0.0.1:10080,mock-version,mock-githash",
 	}
-	fpName := "github.com/pingcap/tidb/infoschema/mockClusterInfo"
+	fpName := "github.com/pingcap/tidb/v4/infoschema/mockClusterInfo"
 	fpExpr := `return("` + strings.Join(instances, ";") + `")`
 	c.Assert(failpoint.Enable(fpName, fpExpr), IsNil)
 	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
@@ -717,8 +717,8 @@ func (s *testInfoschemaClusterTableSuite) TestTiDBClusterInfo(c *C) {
 		"tikv,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash",
 	}
 	fpExpr := `return("` + strings.Join(instances, ";") + `")`
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockClusterInfo", fpExpr), IsNil)
-	defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/infoschema/mockClusterInfo"), IsNil) }()
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/infoschema/mockClusterInfo", fpExpr), IsNil)
+	defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/infoschema/mockClusterInfo"), IsNil) }()
 	tk.MustQuery("select * from information_schema.cluster_config").Check(testkit.Rows(
 		"pd 127.0.0.1:11080 key1 value1",
 		"pd 127.0.0.1:11080 key2.nest1 n-value1",

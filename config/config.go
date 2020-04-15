@@ -31,7 +31,7 @@ import (
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/v4/util/logutil"
 	tracing "github.com/uber/jaeger-client-go/config"
 	"go.uber.org/zap"
 )
@@ -126,7 +126,7 @@ type Config struct {
 	// Experimental contains parameters for experimental features.
 	Experimental Experimental `toml:"experimental" json:"experimental"`
 	// EnableDynamicConfig enables the TiDB to fetch configs from PD and update itself during runtime.
-	// see https://github.com/pingcap/tidb/pull/13660 for more details.
+	// see https://github.com/pingcap/tidb/v4/pull/13660 for more details.
 	EnableDynamicConfig bool `toml:"enable-dynamic-config" json:"enable-dynamic-config"`
 }
 

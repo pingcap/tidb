@@ -18,7 +18,7 @@ import (
 	"encoding/binary"
 	"sort"
 
-	"github.com/pingcap/tidb/util/plancodec"
+	"github.com/pingcap/tidb/v4/util/plancodec"
 )
 
 func encodeIntAsUint32(result []byte, value int) []byte {

@@ -23,9 +23,9 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/v4/executor"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/util/testkit"
 )
 
 func cmpAndRm(expected, outfile string, c *C) {

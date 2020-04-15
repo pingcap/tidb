@@ -19,8 +19,8 @@ import (
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	ast "github.com/pingcap/parser/types"
-	"github.com/pingcap/tidb/types/json"
-	utilMath "github.com/pingcap/tidb/util/math"
+	"github.com/pingcap/tidb/v4/types/json"
+	utilMath "github.com/pingcap/tidb/v4/util/math"
 )
 
 // UnspecifiedLength is unspecified length.

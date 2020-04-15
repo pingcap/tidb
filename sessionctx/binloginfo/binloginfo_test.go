@@ -29,20 +29,20 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/binloginfo"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/v4/ddl"
+	"github.com/pingcap/tidb/v4/domain"
+	"github.com/pingcap/tidb/v4/kv"
+	"github.com/pingcap/tidb/v4/session"
+	"github.com/pingcap/tidb/v4/sessionctx"
+	"github.com/pingcap/tidb/v4/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/v4/store/mockstore"
+	"github.com/pingcap/tidb/v4/table"
+	"github.com/pingcap/tidb/v4/table/tables"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/util/codec"
+	"github.com/pingcap/tidb/v4/util/collate"
+	"github.com/pingcap/tidb/v4/util/logutil"
+	"github.com/pingcap/tidb/v4/util/testkit"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	"google.golang.org/grpc"
 )
@@ -379,9 +379,9 @@ func mutationRowsToRows(c *C, mutationRows [][]byte, columnValueOffsets ...int) 
 }
 
 func (s *testBinlogSuite) TestBinlogForSequence(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockSyncBinlogCommit", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/store/tikv/mockSyncBinlogCommit", `return(true)`), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/mockSyncBinlogCommit"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/store/tikv/mockSyncBinlogCommit"), IsNil)
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

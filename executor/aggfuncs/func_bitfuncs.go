@@ -16,8 +16,8 @@ package aggfuncs
 import (
 	"math"
 
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/v4/sessionctx"
+	"github.com/pingcap/tidb/v4/util/chunk"
 )
 
 type baseBitAggFunc struct {

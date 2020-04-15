@@ -18,8 +18,8 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/plugin"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/v4/plugin"
+	"github.com/pingcap/tidb/v4/sessionctx/variable"
 )
 
 func LoadRunShutdownPluginExample() {
@@ -27,7 +27,7 @@ func LoadRunShutdownPluginExample() {
 	var pluginVarNames []string
 	cfg := plugin.Config{
 		Plugins:        []string{"conn_ip_example-1"},
-		PluginDir:      "/home/robi/Code/go/src/github.com/pingcap/tidb/plugin/conn_ip_example",
+		PluginDir:      "/home/robi/Code/go/src/github.com/pingcap/tidb/v4/plugin/conn_ip_example",
 		GlobalSysVar:   &variable.SysVars,
 		PluginVarNames: &pluginVarNames,
 	}

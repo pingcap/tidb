@@ -15,8 +15,8 @@ package memo
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/expression"
-	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/v4/expression"
+	plannercore "github.com/pingcap/tidb/v4/planner/core"
 )
 
 func (s *testMemoSuite) TestNewExprIterFromGroupElem(c *C) {

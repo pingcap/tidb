@@ -20,10 +20,10 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/types/json"
+	"github.com/pingcap/tidb/v4/util/chunk"
+	"github.com/pingcap/tidb/v4/util/mock"
 )
 
 func (s *pkgTestSuite) TestRowHashMap(c *C) {

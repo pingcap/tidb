@@ -25,8 +25,8 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/v4/kv"
+	"github.com/pingcap/tidb/v4/store/mockstore/mocktikv"
 )
 
 type testRegionCacheSuite struct {

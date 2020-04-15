@@ -24,15 +24,15 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/v4/domain"
+	"github.com/pingcap/tidb/v4/kv"
+	"github.com/pingcap/tidb/v4/planner/core"
+	"github.com/pingcap/tidb/v4/store/mockstore"
+	"github.com/pingcap/tidb/v4/tablecodec"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/util/logutil"
+	"github.com/pingcap/tidb/v4/util/sqlexec"
+	"github.com/pingcap/tidb/v4/util/testleak"
 )
 
 func TestT(t *testing.T) {

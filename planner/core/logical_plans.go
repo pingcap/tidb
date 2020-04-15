@@ -20,15 +20,15 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/aggregation"
-	"github.com/pingcap/tidb/planner/property"
-	"github.com/pingcap/tidb/planner/util"
-	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/v4/expression"
+	"github.com/pingcap/tidb/v4/expression/aggregation"
+	"github.com/pingcap/tidb/v4/planner/property"
+	"github.com/pingcap/tidb/v4/planner/util"
+	"github.com/pingcap/tidb/v4/statistics"
+	"github.com/pingcap/tidb/v4/table"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/util/logutil"
+	"github.com/pingcap/tidb/v4/util/ranger"
 	"go.uber.org/zap"
 )
 
@@ -275,7 +275,7 @@ type LogicalProjection struct {
 	// building columnEvaluator for the expressions of Projection which is
 	// built by buildProjection4Union.
 	// This can be removed after column pool being supported.
-	// Related issue: TiDB#8141(https://github.com/pingcap/tidb/issues/8141)
+	// Related issue: TiDB#8141(https://github.com/pingcap/tidb/v4/issues/8141)
 	AvoidColumnEvaluator bool
 }
 

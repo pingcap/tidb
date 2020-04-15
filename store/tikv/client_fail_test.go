@@ -21,8 +21,8 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/v4/config"
+	"github.com/pingcap/tidb/v4/store/tikv/tikvrpc"
 )
 
 type testClientFailSuite struct {
@@ -45,8 +45,8 @@ func setGrpcConnectionCount(count uint) {
 }
 
 func (s *testClientFailSuite) TestPanicInRecvLoop(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/panicInFailPendingRequests", `panic`), IsNil)
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/gotErrorInRecvLoop", `return("0")`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/store/tikv/panicInFailPendingRequests", `panic`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/store/tikv/gotErrorInRecvLoop", `return("0")`), IsNil)
 
 	server, port := startMockTikvService()
 	c.Assert(port > 0, IsTrue)
@@ -61,8 +61,8 @@ func (s *testClientFailSuite) TestPanicInRecvLoop(c *C) {
 	c.Assert(err, IsNil)
 
 	time.Sleep(time.Second)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/gotErrorInRecvLoop"), IsNil)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/panicInFailPendingRequests"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/store/tikv/gotErrorInRecvLoop"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/store/tikv/panicInFailPendingRequests"), IsNil)
 	time.Sleep(time.Second)
 
 	req := tikvrpc.NewRequest(tikvrpc.CmdEmpty, &tikvpb.BatchCommandsEmptyRequest{})

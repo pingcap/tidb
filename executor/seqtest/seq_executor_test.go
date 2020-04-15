@@ -39,29 +39,29 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl"
-	ddltestutil "github.com/pingcap/tidb/ddl/testutil"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta/autoid"
-	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/statistics/handle"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/gcutil"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tidb/v4/config"
+	"github.com/pingcap/tidb/v4/ddl"
+	ddltestutil "github.com/pingcap/tidb/v4/ddl/testutil"
+	"github.com/pingcap/tidb/v4/domain"
+	"github.com/pingcap/tidb/v4/errno"
+	"github.com/pingcap/tidb/v4/executor"
+	"github.com/pingcap/tidb/v4/kv"
+	"github.com/pingcap/tidb/v4/meta/autoid"
+	plannercore "github.com/pingcap/tidb/v4/planner/core"
+	"github.com/pingcap/tidb/v4/session"
+	"github.com/pingcap/tidb/v4/sessionctx/variable"
+	"github.com/pingcap/tidb/v4/statistics/handle"
+	"github.com/pingcap/tidb/v4/store/mockstore"
+	"github.com/pingcap/tidb/v4/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/v4/store/tikv"
+	"github.com/pingcap/tidb/v4/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/v4/util/collate"
+	"github.com/pingcap/tidb/v4/util/gcutil"
+	"github.com/pingcap/tidb/v4/util/logutil"
+	"github.com/pingcap/tidb/v4/util/mock"
+	"github.com/pingcap/tidb/v4/util/testkit"
+	"github.com/pingcap/tidb/v4/util/testleak"
+	"github.com/pingcap/tidb/v4/util/testutil"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -151,9 +151,9 @@ func (s *seqTestSuite) TestEarlyClose(c *C) {
 	}
 
 	// Goroutine should not leak when error happen.
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/handleTaskOnceError", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/store/tikv/handleTaskOnceError", `return(true)`), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/handleTaskOnceError"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/store/tikv/handleTaskOnceError"), IsNil)
 	}()
 	rss, err := tk.Se.Execute(ctx, "select * from earlyclose")
 	c.Assert(err, IsNil)
@@ -197,14 +197,14 @@ func (s *seqTestSuite) TestShow(c *C) {
 	result = tk.MustQuery(testSQL)
 	c.Check(result.Rows(), HasLen, 1)
 	row := result.Rows()[0]
-	// For issue https://github.com/pingcap/tidb/issues/1061
+	// For issue https://github.com/pingcap/tidb/v4/issues/1061
 	expectedRow := []interface{}{
 		"SHOW_test", "CREATE TABLE `SHOW_test` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n  `c1` int(11) DEFAULT NULL COMMENT 'c1_comment',\n  `c2` int(11) DEFAULT NULL,\n  `c3` int(11) DEFAULT '1',\n  `c4` text DEFAULT NULL,\n  `c5` tinyint(1) DEFAULT NULL,\n  PRIMARY KEY (`id`),\n  KEY `idx_wide_c4` (`c3`,`c4`(10))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=28934 COMMENT='table_comment'"}
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
 	}
 
-	// For issue https://github.com/pingcap/tidb/issues/1918
+	// For issue https://github.com/pingcap/tidb/v4/issues/1918
 	testSQL = `create table ptest(
 		a int primary key,
 		b double NOT NULL DEFAULT 2.0,
@@ -386,7 +386,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 	c.Check(result.Rows(), HasLen, 1)
 
 	// Test show full columns
-	// for issue https://github.com/pingcap/tidb/issues/4224
+	// for issue https://github.com/pingcap/tidb/v4/issues/4224
 	tk.MustExec(`drop table if exists show_test_comment`)
 	tk.MustExec(`create table show_test_comment (id int not null default 0 comment "show_test_comment_id")`)
 	tk.MustQuery(`show full columns from show_test_comment`).Check(testutil.RowsWithSep("|",
@@ -394,7 +394,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 	))
 
 	// Test show create table with AUTO_INCREMENT option
-	// for issue https://github.com/pingcap/tidb/issues/3747
+	// for issue https://github.com/pingcap/tidb/v4/issues/3747
 	tk.MustExec(`drop table if exists show_auto_increment`)
 	tk.MustExec(`create table show_auto_increment (id int key auto_increment) auto_increment=4`)
 	tk.MustQuery(`show create table show_auto_increment`).Check(testutil.RowsWithSep("|",
@@ -404,7 +404,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 			"  PRIMARY KEY (`id`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=4",
 	))
-	// for issue https://github.com/pingcap/tidb/issues/4678
+	// for issue https://github.com/pingcap/tidb/v4/issues/4678
 	autoIDStep := autoid.GetStep()
 	tk.MustExec("insert into show_auto_increment values(20)")
 	autoID := autoIDStep + 21
@@ -435,7 +435,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 	))
 
 	// Test show table with column's comment contain escape character
-	// for issue https://github.com/pingcap/tidb/issues/4411
+	// for issue https://github.com/pingcap/tidb/v4/issues/4411
 	tk.MustExec(`drop table if exists show_escape_character`)
 	tk.MustExec(`create table show_escape_character(id int comment 'a\rb\nc\td\0ef')`)
 	tk.MustQuery(`show create table show_escape_character`).Check(testutil.RowsWithSep("|",
@@ -445,7 +445,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 
-	// for issue https://github.com/pingcap/tidb/issues/4424
+	// for issue https://github.com/pingcap/tidb/v4/issues/4424
 	tk.MustExec("drop table if exists show_test")
 	testSQL = `create table show_test(
 		a varchar(10) COMMENT 'a\nb\rc\td\0e'
@@ -461,7 +461,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 		c.Check(r, Equals, expectedRow[i])
 	}
 
-	// for issue https://github.com/pingcap/tidb/issues/4425
+	// for issue https://github.com/pingcap/tidb/v4/issues/4425
 	tk.MustExec("drop table if exists show_test")
 	testSQL = `create table show_test(
 		a varchar(10) DEFAULT 'a\nb\rc\td\0e'
@@ -477,7 +477,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 		c.Check(r, Equals, expectedRow[i])
 	}
 
-	// for issue https://github.com/pingcap/tidb/issues/4426
+	// for issue https://github.com/pingcap/tidb/v4/issues/4426
 	tk.MustExec("drop table if exists show_test")
 	testSQL = `create table show_test(
 		a bit(1),
@@ -718,9 +718,9 @@ func (s *seqTestSuite) TestIndexMergeReaderClose(c *C) {
 	tk.MustExec("create table t (a int, b int)")
 	tk.MustExec("create index idx1 on t(a)")
 	tk.MustExec("create index idx2 on t(b)")
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/startPartialIndexWorkerErr", "return"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/executor/startPartialIndexWorkerErr", "return"), IsNil)
 	err := tk.QueryToErr("select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * from t where a > 10 or b < 100")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/startPartialIndexWorkerErr"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/executor/startPartialIndexWorkerErr"), IsNil)
 	c.Assert(err, NotNil)
 	c.Check(checkGoroutineExists("fetchLoop"), IsFalse)
 	c.Check(checkGoroutineExists("fetchHandles"), IsFalse)
@@ -740,9 +740,9 @@ func (s *seqTestSuite) TestParallelHashAggClose(c *C) {
 	//     └─TableFullScan_10   | 3.00  | cop[tikv]  | table:t, keep order:fa$se, stats:pseudo |
 
 	// Goroutine should not leak when error happen.
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/parallelHashAggError", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/executor/parallelHashAggError", `return(true)`), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/parallelHashAggError"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/executor/parallelHashAggError"), IsNil)
 	}()
 	ctx := context.Background()
 	rss, err := tk.Se.Execute(ctx, "select sum(a) from (select cast(t.a as signed) as a, b from t) t group by b;")
@@ -761,9 +761,9 @@ func (s *seqTestSuite) TestUnparallelHashAggClose(c *C) {
 	tk.MustExec("insert into t values(1,1),(2,2)")
 
 	// Goroutine should not leak when error happen.
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/unparallelHashAggError", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/executor/unparallelHashAggError", `return(true)`), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/unparallelHashAggError"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/executor/unparallelHashAggError"), IsNil)
 	}()
 	ctx := context.Background()
 	rss, err := tk.Se.Execute(ctx, "select sum(distinct a) from (select cast(t.a as signed) as a, b from t) t group by b;")
@@ -788,9 +788,9 @@ func (s *seqTestSuite) TestAdminShowNextID(c *C) {
 }
 
 func HelperTestAdminShowNextID(c *C, s *seqTestSuite, str string) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/meta/autoid/mockAutoIDChange"), IsNil)
 	}()
 	step := int64(10)
 	autoIDStep := autoid.GetStep()
@@ -853,10 +853,10 @@ func (s *seqTestSuite) TestNoHistoryWhenDisableRetry(c *C) {
 	tk.MustExec("set @@autocommit = 1")
 	tk.MustExec("set @@tidb_retry_limit = 10")
 	tk.MustExec("set @@tidb_disable_txn_auto_retry = 1")
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/keepHistory", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/session/keepHistory", `return(true)`), IsNil)
 	tk.MustExec("insert history values (1)")
 	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 1)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/keepHistory"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/session/keepHistory"), IsNil)
 	tk.MustExec("begin")
 	tk.MustExec("insert history values (1)")
 	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 0)
@@ -864,9 +864,9 @@ func (s *seqTestSuite) TestNoHistoryWhenDisableRetry(c *C) {
 
 	// Enable auto_retry will add history for both.
 	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/keepHistory", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/session/keepHistory", `return(true)`), IsNil)
 	tk.MustExec("insert history values (1)")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/keepHistory"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/session/keepHistory"), IsNil)
 	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 1)
 	tk.MustExec("begin")
 	tk.MustExec("insert history values (1)")
@@ -1244,9 +1244,9 @@ func (s *seqTestSuite) TestAutoIncIDInRetry(c *C) {
 	tk.MustExec("insert into t values (),()")
 	tk.MustExec("insert into t values ()")
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockCommitRetryForAutoIncID", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/session/mockCommitRetryForAutoIncID", `return(true)`), IsNil)
 	tk.MustExec("commit")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockCommitRetryForAutoIncID"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/session/mockCommitRetryForAutoIncID"), IsNil)
 
 	tk.MustExec("insert into t values ()")
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("1", "2", "3", "4", "5"))
@@ -1276,7 +1276,7 @@ func (s *seqTestSuite) TestAutoRandIDRetry(c *C) {
 	tk.MustExec("insert into t values ()")
 
 	session.ResetMockAutoRandIDRetryCount(5)
-	fpName := "github.com/pingcap/tidb/session/mockCommitRetryForAutoRandID"
+	fpName := "github.com/pingcap/tidb/v4/session/mockCommitRetryForAutoRandID"
 	c.Assert(failpoint.Enable(fpName, `return(true)`), IsNil)
 	tk.MustExec("commit")
 	c.Assert(failpoint.Disable(fpName), IsNil)
@@ -1326,9 +1326,9 @@ func (s *seqTestSuite) TestAutoRandRecoverTable(c *C) {
 	err := gcutil.EnableGC(tk.Se)
 	c.Assert(err, IsNil)
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/meta/autoid/mockAutoIDChange"), IsNil)
 	}()
 	const autoRandIDStep = 5000
 	stp := autoid.GetStep()
@@ -1377,7 +1377,7 @@ func (s *seqTestSuite) TestMaxDeltaSchemaCount(c *C) {
 }
 
 func (s *seqTestSuite) TestOOMPanicInHashJoinWhenFetchBuildRows(c *C) {
-	fpName := "github.com/pingcap/tidb/executor/errorFetchBuildSideRowsMockOOMPanic"
+	fpName := "github.com/pingcap/tidb/v4/executor/errorFetchBuildSideRowsMockOOMPanic"
 	c.Assert(failpoint.Enable(fpName, `panic("ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")`), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable(fpName), IsNil)

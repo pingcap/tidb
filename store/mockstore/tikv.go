@@ -19,10 +19,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/pd/v4/client"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/v4/config"
+	"github.com/pingcap/tidb/v4/kv"
+	"github.com/pingcap/tidb/v4/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/v4/store/tikv"
 )
 
 // MockDriver is in memory mock TiKV driver.

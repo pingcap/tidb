@@ -18,8 +18,8 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/v4/statistics"
+	"github.com/pingcap/tidb/v4/util/testkit"
 )
 
 type testShowStatsSuite struct {

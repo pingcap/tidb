@@ -17,13 +17,13 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/disk"
-	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/v4/config"
+	"github.com/pingcap/tidb/v4/expression"
+	"github.com/pingcap/tidb/v4/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/v4/util/chunk"
+	"github.com/pingcap/tidb/v4/util/disk"
+	"github.com/pingcap/tidb/v4/util/memory"
+	"github.com/pingcap/tidb/v4/util/stringutil"
 )
 
 // MergeJoinExec implements the merge join algorithm.

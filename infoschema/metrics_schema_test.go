@@ -17,8 +17,8 @@ import (
 	"strings"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/v4/infoschema"
+	"github.com/pingcap/tidb/v4/util/set"
 )
 
 type metricSchemaSuite struct{}

@@ -16,14 +16,14 @@ package executor_test
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/v4/sessionctx/variable"
 	"math/rand"
 	"strings"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/v4/config"
+	"github.com/pingcap/tidb/v4/util"
+	"github.com/pingcap/tidb/v4/util/testkit"
 )
 
 const plan1 = `[[TableScan_12 {
@@ -399,7 +399,7 @@ func (s *testSuite2) TestMergeJoin(c *C) {
 		"0",
 	))
 
-	// Test TIDB_SMJ for join with order by desc, see https://github.com/pingcap/tidb/issues/14483
+	// Test TIDB_SMJ for join with order by desc, see https://github.com/pingcap/tidb/v4/issues/14483
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t (a int, key(a))")

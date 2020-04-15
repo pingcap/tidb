@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/v4/kv"
+	"github.com/pingcap/tidb/v4/store/tikv/tikvrpc"
 )
 
 type testLockSuite struct {
@@ -497,9 +497,9 @@ func (s *testLockSuite) TestZeroMinCommitTS(c *C) {
 	bo := NewBackoffer(context.Background(), PrewriteMaxBackoff)
 
 	mockValue := fmt.Sprintf(`return(%d)`, txn.StartTS())
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockZeroCommitTS", mockValue), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/store/tikv/mockZeroCommitTS", mockValue), IsNil)
 	s.prewriteTxnWithTTL(c, txn.(*tikvTxn), 1000)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/mockZeroCommitTS"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/store/tikv/mockZeroCommitTS"), IsNil)
 
 	lock := s.mustGetLock(c, []byte("key"))
 	expire, pushed, err := newLockResolver(s.store).ResolveLocks(bo, 0, []*Lock{lock})

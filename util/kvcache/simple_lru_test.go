@@ -17,7 +17,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/v4/util/memory"
 )
 
 func TestT(t *testing.T) {

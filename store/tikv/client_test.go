@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/v4/config"
+	"github.com/pingcap/tidb/v4/store/tikv/tikvrpc"
 )
 
 func TestT(t *testing.T) {
@@ -140,10 +140,10 @@ func (s *testClientSuite) TestIdleHeartbeat(c *C) {
 	conn, err := rpcClient.getConnArray(addr, true)
 	c.Assert(err, IsNil)
 
-	sendIdleReq := "github.com/pingcap/tidb/store/tikv/sendIdleHeartbeatReq"
-	noStripResp := "github.com/pingcap/tidb/store/tikv/forceReturnIdleHeartbeatResp"
-	noAvConn := "github.com/pingcap/tidb/store/tikv/noAvConn"
-	failBeforeSend := "github.com/pingcap/tidb/store/tikv/failBeforeSend"
+	sendIdleReq := "github.com/pingcap/tidb/v4/store/tikv/sendIdleHeartbeatReq"
+	noStripResp := "github.com/pingcap/tidb/v4/store/tikv/forceReturnIdleHeartbeatResp"
+	noAvConn := "github.com/pingcap/tidb/v4/store/tikv/noAvConn"
+	failBeforeSend := "github.com/pingcap/tidb/v4/store/tikv/failBeforeSend"
 
 	c.Assert(failpoint.Enable(sendIdleReq, `return()`), IsNil)
 	c.Assert(failpoint.Enable(noStripResp, `return()`), IsNil)

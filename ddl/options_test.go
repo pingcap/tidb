@@ -18,9 +18,9 @@ import (
 
 	"github.com/ngaut/pools"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/v4/ddl"
+	"github.com/pingcap/tidb/v4/infoschema"
+	"github.com/pingcap/tidb/v4/util/mock"
 	"go.etcd.io/etcd/clientv3"
 )
 

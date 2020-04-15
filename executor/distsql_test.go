@@ -22,14 +22,14 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/v4/domain"
+	"github.com/pingcap/tidb/v4/executor"
+	"github.com/pingcap/tidb/v4/store/tikv"
+	"github.com/pingcap/tidb/v4/table/tables"
+	"github.com/pingcap/tidb/v4/tablecodec"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/util/mock"
+	"github.com/pingcap/tidb/v4/util/testkit"
 )
 
 func checkGoroutineExists(keyword string) bool {
@@ -176,7 +176,7 @@ func (s *testSuiteP1) TestUniqueKeyNullValueSelect(c *C) {
 	res.Check(testkit.Rows("<nil> a", "<nil> b", "<nil> c"))
 }
 
-// TestIssue10178 contains tests for https://github.com/pingcap/tidb/issues/10178 .
+// TestIssue10178 contains tests for https://github.com/pingcap/tidb/v4/issues/10178 .
 func (s *testSuite3) TestIssue10178(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

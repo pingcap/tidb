@@ -15,7 +15,7 @@ package stmtsummary
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/v4/config"
 )
 
 var _ = Suite(&testVariablesSuite{})

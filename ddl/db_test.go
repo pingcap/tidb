@@ -30,29 +30,29 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl"
-	testddlutil "github.com/pingcap/tidb/ddl/testutil"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/admin"
-	"github.com/pingcap/tidb/util/domainutil"
-	"github.com/pingcap/tidb/util/israce"
-	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tidb/v4/config"
+	"github.com/pingcap/tidb/v4/ddl"
+	testddlutil "github.com/pingcap/tidb/v4/ddl/testutil"
+	"github.com/pingcap/tidb/v4/domain"
+	"github.com/pingcap/tidb/v4/errno"
+	"github.com/pingcap/tidb/v4/infoschema"
+	"github.com/pingcap/tidb/v4/kv"
+	"github.com/pingcap/tidb/v4/meta"
+	"github.com/pingcap/tidb/v4/meta/autoid"
+	"github.com/pingcap/tidb/v4/session"
+	"github.com/pingcap/tidb/v4/sessionctx"
+	"github.com/pingcap/tidb/v4/store/mockstore"
+	"github.com/pingcap/tidb/v4/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/v4/table"
+	"github.com/pingcap/tidb/v4/table/tables"
+	"github.com/pingcap/tidb/v4/tablecodec"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/util/admin"
+	"github.com/pingcap/tidb/v4/util/domainutil"
+	"github.com/pingcap/tidb/v4/util/israce"
+	"github.com/pingcap/tidb/v4/util/mock"
+	"github.com/pingcap/tidb/v4/util/testkit"
+	"github.com/pingcap/tidb/v4/util/testutil"
 )
 
 const (
@@ -2128,9 +2128,9 @@ func (s *testDBSuite1) TestCreateTable(c *C) {
 }
 
 func (s *testDBSuite5) TestRepairTable(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/repairFetchCreateTable", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/infoschema/repairFetchCreateTable", `return(true)`), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/infoschema/repairFetchCreateTable"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/infoschema/repairFetchCreateTable"), IsNil)
 	}()
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
@@ -2280,9 +2280,9 @@ func turnRepairModeAndInit(on bool) {
 }
 
 func (s *testDBSuite5) TestRepairTableWithPartition(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/repairFetchCreateTable", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/infoschema/repairFetchCreateTable", `return(true)`), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/infoschema/repairFetchCreateTable"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/infoschema/repairFetchCreateTable"), IsNil)
 	}()
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
@@ -2940,9 +2940,9 @@ func (s *testDBSuite4) TestComment(c *C) {
 }
 
 func (s *testSerialDBSuite) TestRebaseAutoID(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/meta/autoid/mockAutoIDChange"), IsNil)
 	}()
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
@@ -3578,7 +3578,7 @@ func (s *testDBSuite5) TestAddIndexForGeneratedColumn(c *C) {
 		c.Assert(strings.EqualFold(idx.Meta().Name.L, "idx_c2"), IsFalse)
 	}
 	// NOTE: this test case contains a bug, it should be uncommented after the bug is fixed.
-	// TODO: Fix bug https://github.com/pingcap/tidb/issues/12181
+	// TODO: Fix bug https://github.com/pingcap/tidb/v4/issues/12181
 	//s.mustExec(c, "delete from t where y = 2155")
 	//s.mustExec(c, "alter table t add index idx_y(y1)")
 	//s.mustExec(c, "alter table t drop index idx_y")
@@ -3873,9 +3873,9 @@ func (s *testDBSuite1) TestSetTableFlashReplica(c *C) {
 }
 
 func (s *testSerialDBSuite) TestAlterShardRowIDBits(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/meta/autoid/mockAutoIDChange"), IsNil)
 	}()
 
 	s.tk = testkit.NewTestKit(c, s.store)
@@ -4516,9 +4516,9 @@ func (s *testSerialDBSuite) TestDDLJobErrorCount(c *C) {
 		Args:       []interface{}{schema.ID, newTableName},
 	}
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockErrEntrySizeTooLarge", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/ddl/mockErrEntrySizeTooLarge", `return(true)`), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockErrEntrySizeTooLarge"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/ddl/mockErrEntrySizeTooLarge"), IsNil)
 	}()
 
 	txn, err := s.store.Begin()

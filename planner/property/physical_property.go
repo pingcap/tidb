@@ -16,8 +16,8 @@ package property
 import (
 	"fmt"
 
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/v4/expression"
+	"github.com/pingcap/tidb/v4/util/codec"
 )
 
 // Item wraps the column and its order.

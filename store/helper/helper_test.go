@@ -25,11 +25,11 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/store/helper"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/util/pdapi"
+	"github.com/pingcap/tidb/v4/store/helper"
+	"github.com/pingcap/tidb/v4/store/mockstore"
+	"github.com/pingcap/tidb/v4/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/v4/store/tikv"
+	"github.com/pingcap/tidb/v4/util/pdapi"
 	"go.uber.org/zap"
 )
 

@@ -17,9 +17,9 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/util/memory"
+	"github.com/pingcap/tidb/v4/util/stringutil"
 )
 
 // List holds a slice of chunks, use to append rows with max chunk size properly handled.

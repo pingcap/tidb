@@ -22,9 +22,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
-	stats "github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/statistics/handle"
-	"github.com/pingcap/tidb/types"
+	stats "github.com/pingcap/tidb/v4/statistics"
+	"github.com/pingcap/tidb/v4/statistics/handle"
+	"github.com/pingcap/tidb/v4/types"
 	"go.uber.org/zap"
 )
 

@@ -16,12 +16,12 @@ package util
 import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/v4/expression"
+	"github.com/pingcap/tidb/v4/kv"
+	"github.com/pingcap/tidb/v4/sessionctx"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/util/collate"
+	"github.com/pingcap/tidb/v4/util/ranger"
 )
 
 // AccessPath indicates the way we access a table: by using single index, or by using multiple indexes,

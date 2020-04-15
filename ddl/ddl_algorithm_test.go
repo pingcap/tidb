@@ -16,7 +16,7 @@ package ddl_test
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/v4/ddl"
 )
 
 var _ = Suite(&testDDLAlgorithmSuite{})

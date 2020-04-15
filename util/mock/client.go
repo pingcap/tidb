@@ -16,7 +16,7 @@ package mock
 import (
 	"context"
 
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/v4/kv"
 )
 
 // Client implement kv.Client interface, mocked from "CopClient" defined in

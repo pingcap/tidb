@@ -16,7 +16,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/util/sys/linux"
+	"github.com/pingcap/tidb/v4/util/sys/linux"
 )
 
 func TestT(t *testing.T) {

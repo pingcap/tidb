@@ -29,26 +29,26 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/planner"
-	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/plugin"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/plancodec"
-	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/stmtsummary"
-	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/v4/config"
+	"github.com/pingcap/tidb/v4/domain"
+	"github.com/pingcap/tidb/v4/expression"
+	"github.com/pingcap/tidb/v4/infoschema"
+	"github.com/pingcap/tidb/v4/kv"
+	"github.com/pingcap/tidb/v4/metrics"
+	"github.com/pingcap/tidb/v4/planner"
+	plannercore "github.com/pingcap/tidb/v4/planner/core"
+	"github.com/pingcap/tidb/v4/plugin"
+	"github.com/pingcap/tidb/v4/sessionctx"
+	"github.com/pingcap/tidb/v4/sessionctx/variable"
+	"github.com/pingcap/tidb/v4/store/tikv"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/util/chunk"
+	"github.com/pingcap/tidb/v4/util/logutil"
+	"github.com/pingcap/tidb/v4/util/memory"
+	"github.com/pingcap/tidb/v4/util/plancodec"
+	"github.com/pingcap/tidb/v4/util/sqlexec"
+	"github.com/pingcap/tidb/v4/util/stmtsummary"
+	"github.com/pingcap/tidb/v4/util/stringutil"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -94,7 +94,7 @@ func colNames2ResultFields(schema *expression.Schema, names []*types.FieldName, 
 			DBName:       dbName,
 		}
 		// This is for compatibility.
-		// See issue https://github.com/pingcap/tidb/issues/10513 .
+		// See issue https://github.com/pingcap/tidb/v4/issues/10513 .
 		if len(rf.ColumnAsName.O) > mysql.MaxAliasIdentifierLen {
 			rf.ColumnAsName.O = rf.ColumnAsName.O[:mysql.MaxAliasIdentifierLen]
 		}

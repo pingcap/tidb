@@ -17,9 +17,9 @@ import (
 	"fmt"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/v4/config"
+	"github.com/pingcap/tidb/v4/util"
+	"github.com/pingcap/tidb/v4/util/testkit"
 )
 
 func (s *testSuite) TestSortInDisk(c *C) {

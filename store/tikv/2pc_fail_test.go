@@ -20,15 +20,15 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/v4/kv"
 )
 
 // TestFailCommitPrimaryRpcErrors tests rpc errors are handled properly when
 // committing primary region task.
 func (s *testCommitterSuite) TestFailCommitPrimaryRpcErrors(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcCommitResult", `return("timeout")`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/store/mockstore/mocktikv/rpcCommitResult", `return("timeout")`), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcCommitResult"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/store/mockstore/mocktikv/rpcCommitResult"), IsNil)
 	}()
 	// The rpc error will be wrapped to ErrResultUndetermined.
 	t1 := s.begin(c)
@@ -46,9 +46,9 @@ func (s *testCommitterSuite) TestFailCommitPrimaryRpcErrors(c *C) {
 // TestFailCommitPrimaryRegionError tests RegionError is handled properly when
 // committing primary region task.
 func (s *testCommitterSuite) TestFailCommitPrimaryRegionError(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcCommitResult", `return("notLeader")`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/store/mockstore/mocktikv/rpcCommitResult", `return("notLeader")`), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcCommitResult"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/store/mockstore/mocktikv/rpcCommitResult"), IsNil)
 	}()
 	// Ensure it returns the original error without wrapped to ErrResultUndetermined
 	// if it exceeds max retry timeout on RegionError.
@@ -63,9 +63,9 @@ func (s *testCommitterSuite) TestFailCommitPrimaryRegionError(c *C) {
 // TestFailCommitPrimaryRPCErrorThenRegionError tests the case when commit first
 // receive a rpc timeout, then region errors afterwrards.
 func (s *testCommitterSuite) TestFailCommitPrimaryRPCErrorThenRegionError(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcCommitResult", `1*return("timeout")->return("notLeader")`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/store/mockstore/mocktikv/rpcCommitResult", `1*return("timeout")->return("notLeader")`), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcCommitResult"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/store/mockstore/mocktikv/rpcCommitResult"), IsNil)
 	}()
 	// The region error will be wrapped to ErrResultUndetermined.
 	t1 := s.begin(c)
@@ -79,9 +79,9 @@ func (s *testCommitterSuite) TestFailCommitPrimaryRPCErrorThenRegionError(c *C) 
 // TestFailCommitPrimaryKeyError tests KeyError is handled properly when
 // committing primary region task.
 func (s *testCommitterSuite) TestFailCommitPrimaryKeyError(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcCommitResult", `return("keyError")`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/store/mockstore/mocktikv/rpcCommitResult", `return("keyError")`), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcCommitResult"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/store/mockstore/mocktikv/rpcCommitResult"), IsNil)
 	}()
 	// Ensure it returns the original error without wrapped to ErrResultUndetermined
 	// if it meets KeyError.
@@ -94,9 +94,9 @@ func (s *testCommitterSuite) TestFailCommitPrimaryKeyError(c *C) {
 }
 
 func (s *testCommitterSuite) TestFailCommitTimeout(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcCommitTimeout", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/store/mockstore/mocktikv/rpcCommitTimeout", `return(true)`), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcCommitTimeout"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/store/mockstore/mocktikv/rpcCommitTimeout"), IsNil)
 	}()
 	txn := s.begin(c)
 	err := txn.Set([]byte("a"), []byte("a1"))
@@ -119,9 +119,9 @@ func (s *testCommitterSuite) TestFailCommitTimeout(c *C) {
 
 // TestFailPrewriteRegionError tests data race does not happen on retries
 func (s *testCommitterSuite) TestFailPrewriteRegionError(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcPrewriteResult", `return("notLeader")`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/store/mockstore/mocktikv/rpcPrewriteResult", `return("notLeader")`), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcPrewriteResult"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/store/mockstore/mocktikv/rpcPrewriteResult"), IsNil)
 	}()
 
 	txn := s.begin(c)

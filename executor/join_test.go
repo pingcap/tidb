@@ -21,11 +21,11 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/config"
-	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/v4/config"
+	plannercore "github.com/pingcap/tidb/v4/planner/core"
+	"github.com/pingcap/tidb/v4/session"
+	"github.com/pingcap/tidb/v4/util"
+	"github.com/pingcap/tidb/v4/util/testkit"
 )
 
 type testSuiteJoin1 struct {
@@ -403,7 +403,7 @@ func (s *testSuiteJoin2) TestJoinCast(c *C) {
 	result = tk.MustQuery("select * from t a , t1 b where (a.c1, a.c2) = (b.c1, b.c2);")
 	result.Check(testkit.Rows("1 2 1 2"))
 
-	/* Enable & fix this test after https://github.com/pingcap/tidb/issues/11895 is fixed.
+	/* Enable & fix this test after https://github.com/pingcap/tidb/v4/issues/11895 is fixed.
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t(c1 bigint unsigned);")
@@ -414,7 +414,7 @@ func (s *testSuiteJoin2) TestJoinCast(c *C) {
 	c.Check(len(result.Rows()), Equals, 1)
 	*/
 
-	/* https://github.com/pingcap/tidb/issues/11896
+	/* https://github.com/pingcap/tidb/v4/issues/11896
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t(c1 bigint);")
@@ -1249,7 +1249,7 @@ func (s *testSuiteJoinSerial) TestIndexNestedLoopHashJoin(c *C) {
 	}
 
 	// index hash join with semi join
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/planner/core/MockOnlyEnableIndexHashJoin", "return(true)"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/planner/core/MockOnlyEnableIndexHashJoin", "return(true)"), IsNil)
 	tk.MustExec("drop table t")
 	tk.MustExec("CREATE TABLE `t` (	`l_orderkey` int(11) NOT NULL,`l_linenumber` int(11) NOT NULL,`l_partkey` int(11) DEFAULT NULL,`l_suppkey` int(11) DEFAULT NULL,PRIMARY KEY (`l_orderkey`,`l_linenumber`))")
 	tk.MustExec(`insert into t values(0,0,0,0);`)
@@ -1290,7 +1290,7 @@ func (s *testSuiteJoinSerial) TestIndexNestedLoopHashJoin(c *C) {
 		"    └─Selection_26(Probe) 3.00 cop[tikv]  not(isnull(test.t.l_suppkey))",
 		"      └─TableRowIDScan_25 3.00 cop[tikv] table:l2 keep order:false"))
 	tk.MustQuery("select count(*) from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey );").Check(testkit.Rows("9"))
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/planner/core/MockOnlyEnableIndexHashJoin"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/planner/core/MockOnlyEnableIndexHashJoin"), IsNil)
 	tk.MustExec("DROP TABLE IF EXISTS t, s")
 }
 

@@ -17,8 +17,8 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/v4/expression"
+	"github.com/pingcap/tidb/v4/types/parser_driver"
 )
 
 var _ = Suite(&testCacheableSuite{})

@@ -23,8 +23,8 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/v4/util/hack"
+	"github.com/pingcap/tidb/v4/util/stringutil"
 )
 
 // Type returns type of BinaryJSON as string.

@@ -19,14 +19,14 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/expression"
-	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/disk"
-	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/v4/config"
+	"github.com/pingcap/tidb/v4/expression"
+	plannercore "github.com/pingcap/tidb/v4/planner/core"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/util/chunk"
+	"github.com/pingcap/tidb/v4/util/disk"
+	"github.com/pingcap/tidb/v4/util/memory"
+	"github.com/pingcap/tidb/v4/util/stringutil"
 )
 
 var rowChunksLabel fmt.Stringer = stringutil.StringerStr("rowChunks")

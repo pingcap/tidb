@@ -17,7 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/pd/v4/client"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/v4/kv"
 )
 
 // NewTestTiKVStore creates a test store with Option

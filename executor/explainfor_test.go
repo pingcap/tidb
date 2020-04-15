@@ -20,11 +20,11 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/kvcache"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/v4/planner/core"
+	"github.com/pingcap/tidb/v4/session"
+	"github.com/pingcap/tidb/v4/util"
+	"github.com/pingcap/tidb/v4/util/kvcache"
+	"github.com/pingcap/tidb/v4/util/testkit"
 )
 
 // mockSessionManager is a mocked session manager which is used for test.

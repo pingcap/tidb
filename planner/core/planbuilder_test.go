@@ -20,10 +20,10 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/planner/util"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/hint"
+	"github.com/pingcap/tidb/v4/expression"
+	"github.com/pingcap/tidb/v4/planner/util"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/util/hint"
 )
 
 var _ = Suite(&testPlanBuilderSuite{})

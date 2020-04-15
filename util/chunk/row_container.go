@@ -18,11 +18,11 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/disk"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/util/disk"
+	"github.com/pingcap/tidb/v4/util/logutil"
+	"github.com/pingcap/tidb/v4/util/memory"
+	"github.com/pingcap/tidb/v4/util/stringutil"
 	"go.uber.org/zap"
 )
 

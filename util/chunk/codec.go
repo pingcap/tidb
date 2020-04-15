@@ -20,7 +20,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/v4/types"
 )
 
 // Codec is used to:

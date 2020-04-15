@@ -21,7 +21,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/util/plancodec"
+	"github.com/pingcap/tidb/v4/util/plancodec"
 )
 
 var encoderPool = sync.Pool{

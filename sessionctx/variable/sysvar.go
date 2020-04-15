@@ -19,9 +19,9 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/v4/config"
+	"github.com/pingcap/tidb/v4/kv"
+	"github.com/pingcap/tidb/v4/util/logutil"
 )
 
 // ScopeFlag is for system variable whether can be changed in global/session dynamically or not.
@@ -491,7 +491,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "sql_log_off", "0"},
 	// In MySQL, the default value of `explicit_defaults_for_timestamp` is `0`.
 	// But In TiDB, it's set to `1` to be consistent with TiDB timestamp behavior.
-	// See: https://github.com/pingcap/tidb/pull/6068 for details
+	// See: https://github.com/pingcap/tidb/v4/pull/6068 for details
 	{ScopeNone, "explicit_defaults_for_timestamp", "1"},
 	{ScopeNone, "performance_schema_events_waits_history_size", "10"},
 	{ScopeGlobal, "log_syslog_tag", ""},

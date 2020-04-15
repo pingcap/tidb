@@ -30,26 +30,26 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta/autoid"
-	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/privilege/privileges"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/binloginfo"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tidb/v4/config"
+	"github.com/pingcap/tidb/v4/domain"
+	"github.com/pingcap/tidb/v4/executor"
+	"github.com/pingcap/tidb/v4/kv"
+	"github.com/pingcap/tidb/v4/meta/autoid"
+	plannercore "github.com/pingcap/tidb/v4/planner/core"
+	"github.com/pingcap/tidb/v4/privilege/privileges"
+	"github.com/pingcap/tidb/v4/session"
+	"github.com/pingcap/tidb/v4/sessionctx"
+	"github.com/pingcap/tidb/v4/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/v4/sessionctx/variable"
+	"github.com/pingcap/tidb/v4/store/mockstore"
+	"github.com/pingcap/tidb/v4/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/v4/store/tikv"
+	"github.com/pingcap/tidb/v4/table/tables"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/util/sqlexec"
+	"github.com/pingcap/tidb/v4/util/testkit"
+	"github.com/pingcap/tidb/v4/util/testleak"
+	"github.com/pingcap/tidb/v4/util/testutil"
 	"github.com/pingcap/tipb/go-binlog"
 	"go.etcd.io/etcd/clientv3"
 	"google.golang.org/grpc"
@@ -1114,7 +1114,7 @@ func (s *testSessionSuite) TestAutoIncrementID(c *C) {
 }
 
 func (s *testSessionSuite) TestAutoIncrementWithRetry(c *C) {
-	// test for https://github.com/pingcap/tidb/issues/827
+	// test for https://github.com/pingcap/tidb/v4/issues/827
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
@@ -1384,7 +1384,7 @@ func (s *testSessionSuite) TestResultField(c *C) {
 }
 
 func (s *testSessionSuite) TestResultType(c *C) {
-	// Testcase for https://github.com/pingcap/tidb/issues/325
+	// Testcase for https://github.com/pingcap/tidb/v4/issues/325
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	rs, err := tk.Exec(`select cast(null as char(30))`)
 	c.Assert(err, IsNil)
@@ -1545,7 +1545,7 @@ func (s *testSessionSuite3) TestISColumns(c *C) {
 }
 
 func (s *testSessionSuite2) TestRetry(c *C) {
-	// For https://github.com/pingcap/tidb/issues/571
+	// For https://github.com/pingcap/tidb/v4/issues/571
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec("begin")
@@ -1618,7 +1618,7 @@ func (s *testSessionSuite3) TestDecimal(c *C) {
 func (s *testSessionSuite2) TestParser(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
-	// test for https://github.com/pingcap/tidb/pull/177
+	// test for https://github.com/pingcap/tidb/v4/pull/177
 	tk.MustExec("CREATE TABLE `t1` ( `a` char(3) NOT NULL default '', `b` char(3) NOT NULL default '', `c` char(3) NOT NULL default '', PRIMARY KEY  (`a`,`b`,`c`)) ENGINE=InnoDB;")
 	tk.MustExec("CREATE TABLE `t2` ( `a` char(3) NOT NULL default '', `b` char(3) NOT NULL default '', `c` char(3) NOT NULL default '', PRIMARY KEY  (`a`,`b`,`c`)) ENGINE=InnoDB;")
 	tk.MustExec(`INSERT INTO t1 VALUES (1,1,1);`)
@@ -1633,7 +1633,7 @@ func (s *testSessionSuite2) TestParser(c *C) {
 func (s *testSessionSuite3) TestOnDuplicate(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
-	// test for https://github.com/pingcap/tidb/pull/454
+	// test for https://github.com/pingcap/tidb/v4/pull/454
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (c1 int, c2 int, c3 int);")
@@ -1646,7 +1646,7 @@ func (s *testSessionSuite3) TestOnDuplicate(c *C) {
 func (s *testSessionSuite2) TestReplace(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
-	// test for https://github.com/pingcap/tidb/pull/456
+	// test for https://github.com/pingcap/tidb/v4/pull/456
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (c1 int, c2 int, c3 int);")
@@ -1657,7 +1657,7 @@ func (s *testSessionSuite2) TestReplace(c *C) {
 }
 
 func (s *testSessionSuite3) TestDelete(c *C) {
-	// test for https://github.com/pingcap/tidb/pull/1135
+	// test for https://github.com/pingcap/tidb/v4/pull/1135
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk1 := testkit.NewTestKit(c, s.store)
@@ -1728,7 +1728,7 @@ func (s *testSessionSuite2) TestResetCtx(c *C) {
 }
 
 func (s *testSessionSuite3) TestUnique(c *C) {
-	// test for https://github.com/pingcap/tidb/pull/461
+	// test for https://github.com/pingcap/tidb/v4/pull/461
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
@@ -1755,7 +1755,7 @@ func (s *testSessionSuite3) TestUnique(c *C) {
 	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue, Commentf("err %v", err))
 	c.Assert(err.Error(), Equals, "previous statement: insert into test(id, val) values(2, 2);: [kv:1062]Duplicate entry '2' for key 'val'")
 
-	// Test for https://github.com/pingcap/tidb/issues/463
+	// Test for https://github.com/pingcap/tidb/v4/issues/463
 	tk.MustExec("drop table test;")
 	tk.MustExec(`CREATE TABLE test (
 			id int(11) UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -1796,7 +1796,7 @@ func (s *testSessionSuite3) TestUnique(c *C) {
 }
 
 func (s *testSessionSuite2) TestSet(c *C) {
-	// Test for https://github.com/pingcap/tidb/issues/1114
+	// Test for https://github.com/pingcap/tidb/v4/issues/1114
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("set @tmp = 0")
@@ -1980,7 +1980,7 @@ func (s *testSchemaSerialSuite) TestLoadSchemaFailed(c *C) {
 	tk2.MustExec("begin")
 
 	// Make sure loading information schema is failed and server is invalid.
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/domain/ErrorMockReloadFailed", `return(true)`), IsNil)
 	err := domain.GetDomain(tk.Se).Reload()
 	c.Assert(err, NotNil)
 
@@ -2001,7 +2001,7 @@ func (s *testSchemaSerialSuite) TestLoadSchemaFailed(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(ver, NotNil)
 
-	failpoint.Disable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed")
+	failpoint.Disable("github.com/pingcap/tidb/v4/domain/ErrorMockReloadFailed")
 	time.Sleep(lease * 2)
 
 	tk.MustExec("drop table if exists t;")
@@ -2135,12 +2135,12 @@ func (s *testSchemaSuite) TestRetrySchemaChange(c *C) {
 	}
 
 	// In order to cover a bug that statement history is not updated during retry.
-	// See https://github.com/pingcap/tidb/pull/5202
+	// See https://github.com/pingcap/tidb/v4/pull/5202
 	// Step1: when tk1 commit, it find schema changed and retry().
 	// Step2: during retry, hook() is called, tk update primary key.
 	// Step3: tk1 continue commit in retry() meet a retryable error(write conflict), retry again.
 	// Step4: tk1 retry() success, if it use the stale statement, data and index will inconsistent.
-	fpName := "github.com/pingcap/tidb/session/preCommitHook"
+	fpName := "github.com/pingcap/tidb/v4/session/preCommitHook"
 	c.Assert(failpoint.Enable(fpName, "return"), IsNil)
 	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
 
@@ -2637,7 +2637,7 @@ func (s *testSessionSerialSuite) TestKVVars(c *C) {
 		wg.Done()
 	}()
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockSleepBetween2PC", "return"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/store/tikv/mockSleepBetween2PC", "return"), IsNil)
 	go func() {
 		for {
 			tk.MustExec("update kvvars set b = b + 1 where a = 1")
@@ -2648,7 +2648,7 @@ func (s *testSessionSerialSuite) TestKVVars(c *C) {
 		wg.Done()
 	}()
 	wg.Wait()
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/mockSleepBetween2PC"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/store/tikv/mockSleepBetween2PC"), IsNil)
 
 	for {
 		tk2.MustQuery("select * from kvvars")
@@ -2703,9 +2703,9 @@ func (s *testSessionSerialSuite) TestTxnRetryErrMsg(c *C) {
 	tk1.MustExec("begin")
 	tk2.MustExec("update no_retry set id = id + 1")
 	tk1.MustExec("update no_retry set id = id + 1")
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/ErrMockRetryableOnly", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/store/tikv/ErrMockRetryableOnly", `return(true)`), IsNil)
 	_, err := tk1.Se.Execute(context.Background(), "commit")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/ErrMockRetryableOnly"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/store/tikv/ErrMockRetryableOnly"), IsNil)
 	c.Assert(err, NotNil)
 	c.Assert(kv.ErrTxnRetryable.Equal(err), IsTrue, Commentf("error: %s", err))
 	c.Assert(strings.Contains(err.Error(), "mock retryable error"), IsTrue, Commentf("error: %s", err))

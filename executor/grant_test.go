@@ -20,9 +20,9 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/v4/executor"
+	"github.com/pingcap/tidb/v4/infoschema"
+	"github.com/pingcap/tidb/v4/util/testkit"
 )
 
 func (s *testSuiteP1) TestGrantGlobal(c *C) {

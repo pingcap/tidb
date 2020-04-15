@@ -29,13 +29,13 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/infoschema/perfschema"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/v4/domain"
+	"github.com/pingcap/tidb/v4/infoschema/perfschema"
+	"github.com/pingcap/tidb/v4/kv"
+	"github.com/pingcap/tidb/v4/session"
+	"github.com/pingcap/tidb/v4/store/mockstore"
+	"github.com/pingcap/tidb/v4/util/testkit"
+	"github.com/pingcap/tidb/v4/util/testleak"
 )
 
 func TestT(t *testing.T) {
@@ -150,7 +150,7 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	).Check(testkit.Rows("<nil>"))
 
 	// Test SELECT.
-	const failpointName = "github.com/pingcap/tidb/planner/core/mockPlanRowCount"
+	const failpointName = "github.com/pingcap/tidb/v4/planner/core/mockPlanRowCount"
 	c.Assert(failpoint.Enable(failpointName, "return(100)"), IsNil)
 	defer func() { c.Assert(failpoint.Disable(failpointName), IsNil) }()
 	tk.MustQuery("select * from t where a=2")
@@ -446,7 +446,7 @@ func (s *testTableSuite) TestTiKVProfileCPU(c *C) {
 		strings.Join([]string{"pd", mockAddr, mockAddr}, ","),
 	}
 	fpExpr := strings.Join(servers, ";")
-	fpName := "github.com/pingcap/tidb/infoschema/perfschema/mockRemoteNodeStatusAddress"
+	fpName := "github.com/pingcap/tidb/v4/infoschema/perfschema/mockRemoteNodeStatusAddress"
 	c.Assert(failpoint.Enable(fpName, fmt.Sprintf(`return("%s")`, fpExpr)), IsNil)
 	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
 

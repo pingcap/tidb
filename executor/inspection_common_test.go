@@ -17,9 +17,9 @@ import (
 	"context"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/v4/executor"
+	"github.com/pingcap/tidb/v4/session"
+	"github.com/pingcap/tidb/v4/util/testkit"
 )
 
 func (s *inspectionSummarySuite) TestInspectionRules(c *C) {

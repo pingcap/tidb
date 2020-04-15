@@ -21,11 +21,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/expression"
-	planutil "github.com/pingcap/tidb/planner/util"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/v4/expression"
+	planutil "github.com/pingcap/tidb/v4/planner/util"
+	"github.com/pingcap/tidb/v4/sessionctx"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/util/ranger"
 )
 
 // If one condition can't be calculated, we will assume that the selectivity of this condition is 0.8.

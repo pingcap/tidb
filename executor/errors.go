@@ -15,7 +15,7 @@ package executor
 
 import (
 	"github.com/pingcap/parser/terror"
-	mysql "github.com/pingcap/tidb/errno"
+	mysql "github.com/pingcap/tidb/v4/errno"
 )
 
 // Error instances.

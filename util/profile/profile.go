@@ -24,8 +24,8 @@ import (
 
 	"github.com/google/pprof/profile"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/texttree"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/util/texttree"
 )
 
 // CPUProfileInterval represents the duration of sampling CPU

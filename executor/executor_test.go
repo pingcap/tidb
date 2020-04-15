@@ -36,44 +36,44 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/domain/infosync"
-	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/planner"
-	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/server"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/admin"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/gcutil"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/rowcodec"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/testutil"
-	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/pingcap/tidb/v4/config"
+	"github.com/pingcap/tidb/v4/ddl"
+	"github.com/pingcap/tidb/v4/domain"
+	"github.com/pingcap/tidb/v4/domain/infosync"
+	"github.com/pingcap/tidb/v4/executor"
+	"github.com/pingcap/tidb/v4/expression"
+	"github.com/pingcap/tidb/v4/infoschema"
+	"github.com/pingcap/tidb/v4/kv"
+	"github.com/pingcap/tidb/v4/meta"
+	"github.com/pingcap/tidb/v4/meta/autoid"
+	"github.com/pingcap/tidb/v4/planner"
+	plannercore "github.com/pingcap/tidb/v4/planner/core"
+	"github.com/pingcap/tidb/v4/server"
+	"github.com/pingcap/tidb/v4/session"
+	"github.com/pingcap/tidb/v4/sessionctx"
+	"github.com/pingcap/tidb/v4/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/v4/sessionctx/variable"
+	"github.com/pingcap/tidb/v4/statistics"
+	"github.com/pingcap/tidb/v4/store/mockstore"
+	"github.com/pingcap/tidb/v4/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/v4/store/tikv"
+	"github.com/pingcap/tidb/v4/store/tikv/oracle"
+	"github.com/pingcap/tidb/v4/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/v4/table"
+	"github.com/pingcap/tidb/v4/table/tables"
+	"github.com/pingcap/tidb/v4/tablecodec"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/util"
+	"github.com/pingcap/tidb/v4/util/admin"
+	"github.com/pingcap/tidb/v4/util/codec"
+	"github.com/pingcap/tidb/v4/util/gcutil"
+	"github.com/pingcap/tidb/v4/util/logutil"
+	"github.com/pingcap/tidb/v4/util/mock"
+	"github.com/pingcap/tidb/v4/util/rowcodec"
+	"github.com/pingcap/tidb/v4/util/testkit"
+	"github.com/pingcap/tidb/v4/util/testleak"
+	"github.com/pingcap/tidb/v4/util/testutil"
+	"github.com/pingcap/tidb/v4/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"google.golang.org/grpc"
 )
@@ -993,7 +993,7 @@ func (s *testSuiteP1) TestOrderBy(c *C) {
 	tk.MustExec("create table t (c1 int, c2 int, c3 varchar(20))")
 	tk.MustExec("insert into t values (1, 2, 'abc'), (2, 1, 'bcd')")
 
-	// Fix issue https://github.com/pingcap/tidb/issues/337
+	// Fix issue https://github.com/pingcap/tidb/v4/issues/337
 	tk.MustQuery("select c1 as a, c1 as b from t order by c1").Check(testkit.Rows("1 1", "2 2"))
 
 	tk.MustQuery("select c1 as a, t.c1 as a from t order by a desc").Check(testkit.Rows("2 2", "1 1"))
@@ -1039,7 +1039,7 @@ func (s *testSuiteP1) TestSelectErrorRow(c *C) {
 	c.Assert(err, NotNil)
 }
 
-// TestIssue2612 is related with https://github.com/pingcap/tidb/issues/2612
+// TestIssue2612 is related with https://github.com/pingcap/tidb/v4/issues/2612
 func (s *testSuiteP1) TestIssue2612(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1057,7 +1057,7 @@ func (s *testSuiteP1) TestIssue2612(c *C) {
 	rs.Close()
 }
 
-// TestIssue345 is related with https://github.com/pingcap/tidb/issues/345
+// TestIssue345 is related with https://github.com/pingcap/tidb/v4/issues/345
 func (s *testSuiteP1) TestIssue345(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1653,7 +1653,7 @@ func (s *testSuiteP1) TestJSON(c *C) {
 
 	// Check cast json to decimal.
 	// NOTE: this test case contains a bug, it should be uncommented after the bug is fixed.
-	// TODO: Fix bug https://github.com/pingcap/tidb/issues/12178
+	// TODO: Fix bug https://github.com/pingcap/tidb/v4/issues/12178
 	//tk.MustExec("drop table if exists test_json")
 	//tk.MustExec("create table test_json ( a decimal(60,2) as (JSON_EXTRACT(b,'$.c')), b json );")
 	//tk.MustExec(`insert into test_json (b) values
@@ -2163,8 +2163,8 @@ func (s *testSuiteP2) TestPointGetRepeatableRead(c *C) {
 	tk2.MustExec("use test")
 
 	var (
-		step1 = "github.com/pingcap/tidb/executor/pointGetRepeatableReadTest-step1"
-		step2 = "github.com/pingcap/tidb/executor/pointGetRepeatableReadTest-step2"
+		step1 = "github.com/pingcap/tidb/v4/executor/pointGetRepeatableReadTest-step1"
+		step2 = "github.com/pingcap/tidb/v4/executor/pointGetRepeatableReadTest-step2"
 	)
 
 	c.Assert(failpoint.Enable(step1, "return"), IsNil)
@@ -2197,8 +2197,8 @@ func (s *testSuiteP2) TestBatchPointGetRepeatableRead(c *C) {
 	tk2.MustExec("use test")
 
 	var (
-		step1 = "github.com/pingcap/tidb/executor/batchPointGetRepeatableReadTest-step1"
-		step2 = "github.com/pingcap/tidb/executor/batchPointGetRepeatableReadTest-step2"
+		step1 = "github.com/pingcap/tidb/v4/executor/batchPointGetRepeatableReadTest-step1"
+		step2 = "github.com/pingcap/tidb/v4/executor/batchPointGetRepeatableReadTest-step2"
 	)
 
 	c.Assert(failpoint.Enable(step1, "return"), IsNil)
@@ -2223,7 +2223,7 @@ func (s *testSuiteP2) TestBatchPointGetRepeatableRead(c *C) {
 }
 
 func (s *testSuite7) TestSplitRegionTimeout(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/MockSplitRegionTimeout", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/store/tikv/MockSplitRegionTimeout", `return(true)`), IsNil)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -2232,12 +2232,12 @@ func (s *testSuite7) TestSplitRegionTimeout(c *C) {
 	tk.MustExec(`set @@tidb_wait_split_region_timeout=1`)
 	// result 0 0 means split 0 region and 0 region finish scatter regions before timeout.
 	tk.MustQuery(`split table t between (0) and (10000) regions 10`).Check(testkit.Rows("0 0"))
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/MockSplitRegionTimeout"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/store/tikv/MockSplitRegionTimeout"), IsNil)
 
 	// Test scatter regions timeout.
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/MockScatterRegionTimeout", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/store/tikv/MockScatterRegionTimeout", `return(true)`), IsNil)
 	tk.MustQuery(`split table t between (0) and (10000) regions 10`).Check(testkit.Rows("10 1"))
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/MockScatterRegionTimeout"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/store/tikv/MockScatterRegionTimeout"), IsNil)
 }
 
 func (s *testSuiteP2) TestRow(c *C) {
@@ -2356,7 +2356,7 @@ func (s *testSuiteP2) TestColumnName(c *C) {
 	}
 	rs.Close()
 
-	// Test issue https://github.com/pingcap/tidb/issues/9639 .
+	// Test issue https://github.com/pingcap/tidb/v4/issues/9639 .
 	// Both window function and expression appear in final result field.
 	tk.MustExec("set @@tidb_enable_window_function = 1")
 	rs, err = tk.Exec("select 1+1, row_number() over() num from t")
@@ -2547,7 +2547,7 @@ func (s *testSuite) TestTimestampTimeZone(c *C) {
 		tk.MustQuery("select * from t").Check(testkit.Rows(tt.expect))
 	}
 
-	// For issue https://github.com/pingcap/tidb/issues/3467
+	// For issue https://github.com/pingcap/tidb/v4/issues/3467
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec(`CREATE TABLE t1 (
  	      id bigint(20) NOT NULL AUTO_INCREMENT,
@@ -2566,7 +2566,7 @@ func (s *testSuite) TestTimestampTimeZone(c *C) {
 	r = tk.MustQuery("select * from t1 where datetime='2014-03-31 08:57:10';")
 	r.Check(testkit.Rows("123381351 1734 2014-03-31 08:57:10 127.0.0.1")) // Cover IndexLookupExec
 
-	// For issue https://github.com/pingcap/tidb/issues/3485
+	// For issue https://github.com/pingcap/tidb/v4/issues/3485
 	tk.MustExec("set time_zone = 'Asia/Shanghai'")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec(`CREATE TABLE t1 (
@@ -2784,7 +2784,7 @@ func (s *testSuite) TestEmptyEnum(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("", "", "<nil>"))
 }
 
-// TestIssue4024 This tests https://github.com/pingcap/tidb/issues/4024
+// TestIssue4024 This tests https://github.com/pingcap/tidb/v4/issues/4024
 func (s *testSuite) TestIssue4024(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database test2")
@@ -3824,13 +3824,13 @@ func (s *testSuite3) TestTSOFail(c *C) {
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t(a int)`)
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockGetTSFail", "return"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/session/mockGetTSFail", "return"), IsNil)
 	ctx := failpoint.WithHook(context.Background(), func(ctx context.Context, fpname string) bool {
-		return fpname == "github.com/pingcap/tidb/session/mockGetTSFail"
+		return fpname == "github.com/pingcap/tidb/v4/session/mockGetTSFail"
 	})
 	_, err := tk.Se.Execute(ctx, `select * from t`)
 	c.Assert(err, NotNil)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockGetTSFail"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/session/mockGetTSFail"), IsNil)
 }
 
 func (s *testSuite3) TestSelectHashPartitionTable(c *C) {
@@ -4596,9 +4596,9 @@ func (s *testRecoverTable) TearDownSuite(c *C) {
 }
 
 func (s *testRecoverTable) TestRecoverTable(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
 	defer func() {
-		failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange")
+		failpoint.Disable("github.com/pingcap/tidb/v4/meta/autoid/mockAutoIDChange")
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists test_recover")
@@ -4708,9 +4708,9 @@ func (s *testRecoverTable) TestRecoverTable(c *C) {
 }
 
 func (s *testRecoverTable) TestFlashbackTable(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/meta/autoid/mockAutoIDChange"), IsNil)
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists test_flashback")

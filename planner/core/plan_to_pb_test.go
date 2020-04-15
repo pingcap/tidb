@@ -17,10 +17,10 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/util"
+	"github.com/pingcap/tidb/v4/util/collate"
+	"github.com/pingcap/tidb/v4/util/testleak"
 	"github.com/pingcap/tipb/go-tipb"
 )
 

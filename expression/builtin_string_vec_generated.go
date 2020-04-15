@@ -16,8 +16,8 @@
 package expression
 
 import (
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/util/chunk"
 )
 
 // vecEvalInt evals FIELD(str,str1,str2,str3,...).

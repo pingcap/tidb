@@ -17,7 +17,7 @@ import (
 	"context"
 
 	"github.com/cznic/mathutil"
-	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/v4/expression"
 )
 
 // pushDownTopNOptimizer pushes down the topN or limit. In the future we will remove the limit from `requiredProperty` in CBO phase.

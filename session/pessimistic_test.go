@@ -25,13 +25,13 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/v4/kv"
+	"github.com/pingcap/tidb/v4/session"
+	"github.com/pingcap/tidb/v4/sessionctx/variable"
+	"github.com/pingcap/tidb/v4/store/tikv"
+	"github.com/pingcap/tidb/v4/tablecodec"
+	"github.com/pingcap/tidb/v4/util/codec"
+	"github.com/pingcap/tidb/v4/util/testkit"
 )
 
 var _ = SerialSuites(&testPessimisticSuite{})
@@ -205,7 +205,7 @@ func (s *testPessimisticSuite) TestSingleStatementRollback(c *C) {
 	region2ID := region2.Id
 
 	syncCh := make(chan bool)
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/SingleStmtDeadLockRetrySleep", "return"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/store/tikv/SingleStmtDeadLockRetrySleep", "return"), IsNil)
 	go func() {
 		tk2.MustExec("begin pessimistic")
 		<-syncCh
@@ -221,7 +221,7 @@ func (s *testPessimisticSuite) TestSingleStatementRollback(c *C) {
 	s.cluster.ScheduleDelay(tk.Se.GetSessionVars().TxnCtx.StartTS, region1ID, time.Millisecond*10)
 	tk.MustExec("update single_statement set v = v + 1")
 	tk.MustExec("commit")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/SingleStmtDeadLockRetrySleep"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/store/tikv/SingleStmtDeadLockRetrySleep"), IsNil)
 	syncCh <- true
 }
 
@@ -521,8 +521,8 @@ func (s *testPessimisticSuite) TestAsyncRollBackNoWait(c *C) {
 	// test get ts failed for handlePessimisticLockError when using nowait
 	// even though async rollback for pessimistic lock may rollback later locked key if get ts failed from pd
 	// the txn correctness should be ensured
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/ExecStmtGetTsError", "return"), IsNil)
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/AsyncRollBackSleep", "return"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/executor/ExecStmtGetTsError", "return"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/store/tikv/AsyncRollBackSleep", "return"), IsNil)
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("select * from tk where c1 > 0 for update nowait")
 	tk2.MustExec("begin pessimistic")
@@ -549,8 +549,8 @@ func (s *testPessimisticSuite) TestAsyncRollBackNoWait(c *C) {
 	tk3.MustQuery("select * from tk where c1 = 4 for update nowait").Check(testkit.Rows("4 4"))
 	tk3.MustQuery("select * from tk where c1 = 3 for update nowait").Check(testkit.Rows("3 3"))
 	tk3.MustExec("commit")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/ExecStmtGetTsError"), IsNil)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/AsyncRollBackSleep"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/executor/ExecStmtGetTsError"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/store/tikv/AsyncRollBackSleep"), IsNil)
 }
 
 func (s *testPessimisticSuite) TestWaitLockKill(c *C) {
@@ -780,7 +780,7 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeoutWaitStart(c *C) {
 
 	tk2.MustExec("begin pessimistic")
 	done := make(chan error)
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/PessimisticLockErrWriteConflict", "return"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/store/tikv/PessimisticLockErrWriteConflict", "return"), IsNil)
 	var duration time.Duration
 	go func() {
 		var err error
@@ -792,7 +792,7 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeoutWaitStart(c *C) {
 		_, err = tk2.Exec("select * from tk where c1 = 1 for update")
 	}()
 	time.Sleep(time.Millisecond * 100)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/PessimisticLockErrWriteConflict"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/store/tikv/PessimisticLockErrWriteConflict"), IsNil)
 	waitErr := <-done
 	c.Assert(waitErr, NotNil)
 	c.Check(waitErr.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
@@ -998,7 +998,7 @@ func (s *testPessimisticSuite) TestPessimisticCommitReadLock(c *C) {
 			done <- err
 		}()
 		// let txn not found could be checked by lock wait timeout utility
-		err = failpoint.Enable("github.com/pingcap/tidb/store/tikv/txnNotFoundRetTTL", "return")
+		err = failpoint.Enable("github.com/pingcap/tidb/v4/store/tikv/txnNotFoundRetTTL", "return")
 		if err != nil {
 			return
 		}
@@ -1006,7 +1006,7 @@ func (s *testPessimisticSuite) TestPessimisticCommitReadLock(c *C) {
 		if err != nil {
 			return
 		}
-		err = failpoint.Disable("github.com/pingcap/tidb/store/tikv/txnNotFoundRetTTL")
+		err = failpoint.Disable("github.com/pingcap/tidb/v4/store/tikv/txnNotFoundRetTTL")
 		if err != nil {
 			return
 		}
@@ -1145,8 +1145,8 @@ func (s *testPessimisticSuite) TestRollbackWakeupBlockedTxn(c *C) {
 	tk.MustExec("insert into t1 values (5, 5, 5)")
 	tk.MustExec("insert into t1 values (10, 10, 10)")
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/txnExpireRetTTL", "return"), IsNil)
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/getTxnStatusDelay", "return"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/store/tikv/txnExpireRetTTL", "return"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/store/tikv/getTxnStatusDelay", "return"), IsNil)
 	tk.MustExec("begin pessimistic")
 	tk2.MustExec("set innodb_lock_wait_timeout = 1")
 	tk2.MustExec("begin pessimistic")
@@ -1167,8 +1167,8 @@ func (s *testPessimisticSuite) TestRollbackWakeupBlockedTxn(c *C) {
 	err := <-errCh
 	c.Assert(err, IsNil)
 	tk2.MustExec("rollback")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/txnExpireRetTTL"), IsNil)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/getTxnStatusDelay"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/store/tikv/txnExpireRetTTL"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/store/tikv/getTxnStatusDelay"), IsNil)
 }
 
 func (s *testPessimisticSuite) TestRCSubQuery(c *C) {

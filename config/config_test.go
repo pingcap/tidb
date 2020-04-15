@@ -24,7 +24,7 @@ import (
 	. "github.com/pingcap/check"
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/v4/util/logutil"
 	tracing "github.com/uber/jaeger-client-go/config"
 )
 

@@ -18,10 +18,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/v4/config"
+	"github.com/pingcap/tidb/v4/store/tikv/oracle"
+	"github.com/pingcap/tidb/v4/util/execdetails"
+	"github.com/pingcap/tidb/v4/util/memory"
 )
 
 // Transaction options

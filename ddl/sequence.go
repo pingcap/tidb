@@ -20,10 +20,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/ddl/util"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/meta"
-	math2 "github.com/pingcap/tidb/util/math"
+	"github.com/pingcap/tidb/v4/ddl/util"
+	"github.com/pingcap/tidb/v4/infoschema"
+	"github.com/pingcap/tidb/v4/meta"
+	math2 "github.com/pingcap/tidb/v4/util/math"
 )
 
 func onCreateSequence(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {

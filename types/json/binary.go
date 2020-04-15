@@ -27,7 +27,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/v4/util/hack"
 )
 
 /*

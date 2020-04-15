@@ -23,7 +23,7 @@ import (
 	"path/filepath"
 	"text/template"
 
-	. "github.com/pingcap/tidb/expression/generator/helper"
+	. "github.com/pingcap/tidb/v4/expression/generator/helper"
 )
 
 var addOrSubTime = template.Must(template.New("").Parse(`
@@ -48,8 +48,8 @@ package expression
 import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/util/chunk"
 )
 {{ end }}
 {{ define "SetNull" }}{{if .Output.Fixed}}result.SetNull(i, true){{else}}result.AppendNull(){{end}} // fixed: {{.Output.Fixed }}{{ end }}
@@ -648,7 +648,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/v4/types"
 )
 
 type gener struct {

@@ -19,8 +19,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/util/chunk"
 )
 
 // ExplainInfo implements the Expression interface.

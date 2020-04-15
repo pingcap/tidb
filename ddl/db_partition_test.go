@@ -28,20 +28,20 @@ import (
 	"github.com/pingcap/parser/model"
 	tmysql "github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/ddl/testutil"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/admin"
-	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/v4/ddl"
+	"github.com/pingcap/tidb/v4/ddl/testutil"
+	"github.com/pingcap/tidb/v4/domain"
+	"github.com/pingcap/tidb/v4/kv"
+	"github.com/pingcap/tidb/v4/meta"
+	"github.com/pingcap/tidb/v4/session"
+	"github.com/pingcap/tidb/v4/sessionctx"
+	"github.com/pingcap/tidb/v4/table"
+	"github.com/pingcap/tidb/v4/table/tables"
+	"github.com/pingcap/tidb/v4/tablecodec"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/util/admin"
+	"github.com/pingcap/tidb/v4/util/mock"
+	"github.com/pingcap/tidb/v4/util/testkit"
 )
 
 func (s *testIntegrationSuite3) TestCreateTableWithPartition(c *C) {
@@ -261,7 +261,7 @@ func (s *testIntegrationSuite3) TestCreateTableWithPartition(c *C) {
 		PARTITION p3 VALUES LESS THAN (2005)
 	);`, tmysql.ErrBadField)
 
-	// Fix a timezone dependent check bug introduced in https://github.com/pingcap/tidb/pull/10655
+	// Fix a timezone dependent check bug introduced in https://github.com/pingcap/tidb/v4/pull/10655
 	tk.MustExec(`create table t34 (dt timestamp(3)) partition by range (floor(unix_timestamp(dt))) (
 		partition p0 values less than (unix_timestamp('2020-04-04 00:00:00')),
 		partition p1 values less than (unix_timestamp('2020-04-05 00:00:00')));`)

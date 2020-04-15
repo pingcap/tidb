@@ -24,8 +24,8 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/v4/kv"
+	"github.com/pingcap/tidb/v4/tablecodec"
 	"go.uber.org/atomic"
 )
 

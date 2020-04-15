@@ -24,8 +24,8 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/ddl/util"
-	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/v4/ddl/util"
+	"github.com/pingcap/tidb/v4/owner"
 	"go.etcd.io/etcd/integration"
 )
 
@@ -81,8 +81,8 @@ func TestTopology(t *testing.T) {
 
 	cli := clus.RandClient()
 
-	failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockServerInfo", "return(true)")
-	defer failpoint.Disable("github.com/pingcap/tidb/domain/infosync/mockServerInfo")
+	failpoint.Enable("github.com/pingcap/tidb/v4/domain/infosync/mockServerInfo", "return(true)")
+	defer failpoint.Disable("github.com/pingcap/tidb/v4/domain/infosync/mockServerInfo")
 
 	info, err := GlobalInfoSyncerInit(ctx, currentID, cli)
 	if err != nil {

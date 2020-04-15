@@ -14,7 +14,7 @@
 package kv
 
 import (
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/v4/util/logutil"
 	"go.uber.org/zap"
 )
 

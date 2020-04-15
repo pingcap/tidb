@@ -44,10 +44,10 @@ import (
 	"time"
 
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/v4/config"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/util/chunk"
+	"github.com/pingcap/tidb/v4/util/hack"
 )
 
 func parseNullTermString(b []byte) (str []byte, remain []byte) {

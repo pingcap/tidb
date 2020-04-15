@@ -32,24 +32,24 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/aggregation"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/planner/property"
-	"github.com/pingcap/tidb/privilege"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/types"
-	driver "github.com/pingcap/tidb/types/parser_driver"
-	util2 "github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/chunk"
-	utilhint "github.com/pingcap/tidb/util/hint"
-	"github.com/pingcap/tidb/util/plancodec"
+	"github.com/pingcap/tidb/v4/domain"
+	"github.com/pingcap/tidb/v4/expression"
+	"github.com/pingcap/tidb/v4/expression/aggregation"
+	"github.com/pingcap/tidb/v4/infoschema"
+	"github.com/pingcap/tidb/v4/kv"
+	"github.com/pingcap/tidb/v4/metrics"
+	"github.com/pingcap/tidb/v4/planner/property"
+	"github.com/pingcap/tidb/v4/privilege"
+	"github.com/pingcap/tidb/v4/sessionctx"
+	"github.com/pingcap/tidb/v4/statistics"
+	"github.com/pingcap/tidb/v4/table"
+	"github.com/pingcap/tidb/v4/table/tables"
+	"github.com/pingcap/tidb/v4/types"
+	driver "github.com/pingcap/tidb/v4/types/parser_driver"
+	util2 "github.com/pingcap/tidb/v4/util"
+	"github.com/pingcap/tidb/v4/util/chunk"
+	utilhint "github.com/pingcap/tidb/v4/util/hint"
+	"github.com/pingcap/tidb/v4/util/plancodec"
 )
 
 const (
@@ -1107,7 +1107,7 @@ func (b *PlanBuilder) buildUnion(ctx context.Context, union *ast.UnionStmt) (Log
 		}
 	}
 
-	// Fix issue #8189 (https://github.com/pingcap/tidb/issues/8189).
+	// Fix issue #8189 (https://github.com/pingcap/tidb/v4/issues/8189).
 	// If there are extra expressions generated from `ORDER BY` clause, generate a `Projection` to remove them.
 	if oldLen != unionPlan.Schema().Len() {
 		proj := LogicalProjection{Exprs: expression.Column2Exprs(unionPlan.Schema().Columns[:oldLen])}.Init(b.ctx, b.getSelectOffset())

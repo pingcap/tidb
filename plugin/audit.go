@@ -16,7 +16,7 @@ package plugin
 import (
 	"context"
 
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/v4/sessionctx/variable"
 )
 
 // GeneralEvent presents TiDB generate event.

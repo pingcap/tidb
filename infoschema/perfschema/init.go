@@ -21,11 +21,11 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/v4/ddl"
+	"github.com/pingcap/tidb/v4/expression"
+	"github.com/pingcap/tidb/v4/infoschema"
+	"github.com/pingcap/tidb/v4/meta/autoid"
+	"github.com/pingcap/tidb/v4/util"
 )
 
 var once sync.Once
@@ -33,7 +33,7 @@ var once sync.Once
 // Init register the PERFORMANCE_SCHEMA virtual tables.
 // It should be init(), and the ideal usage should be:
 //
-// import _ "github.com/pingcap/tidb/perfschema"
+// import _ "github.com/pingcap/tidb/v4/perfschema"
 //
 // This function depends on plan/core.init(), which initialize the expression.EvalAstExpr function.
 // The initialize order is a problem if init() is used as the function name.

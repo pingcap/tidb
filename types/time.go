@@ -26,10 +26,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/util/logutil"
-	tidbMath "github.com/pingcap/tidb/util/math"
-	"github.com/pingcap/tidb/util/parser"
+	"github.com/pingcap/tidb/v4/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/v4/util/logutil"
+	tidbMath "github.com/pingcap/tidb/v4/util/math"
+	"github.com/pingcap/tidb/v4/util/parser"
 )
 
 // Time format without fractional seconds precision.

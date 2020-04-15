@@ -17,7 +17,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/v4/util/collate"
 )
 
 // CompareInt64 returns an integer comparing the int64 x to y.

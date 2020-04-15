@@ -20,7 +20,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/check"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/v4/sessionctx/variable"
 )
 
 func TestT(t *testing.T) {

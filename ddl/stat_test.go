@@ -19,7 +19,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/v4/util/mock"
 )
 
 var _ = Suite(&testStatSuite{})

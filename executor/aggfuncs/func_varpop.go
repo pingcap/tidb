@@ -15,9 +15,9 @@ package aggfuncs
 
 import (
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/v4/sessionctx"
+	"github.com/pingcap/tidb/v4/util/chunk"
+	"github.com/pingcap/tidb/v4/util/set"
 )
 
 type baseVarPopAggFunc struct {

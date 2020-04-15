@@ -17,7 +17,7 @@ import (
 	"math/bits"
 
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/v4/expression"
 )
 
 type joinReorderDPSolver struct {

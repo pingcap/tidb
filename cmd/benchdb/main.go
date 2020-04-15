@@ -24,10 +24,10 @@ import (
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/store"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/v4/session"
+	"github.com/pingcap/tidb/v4/store"
+	"github.com/pingcap/tidb/v4/store/tikv"
+	"github.com/pingcap/tidb/v4/util/logutil"
 	"go.uber.org/zap"
 )
 

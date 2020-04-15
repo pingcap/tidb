@@ -19,7 +19,7 @@ import (
 	"fmt"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/v4/store/mockstore/mocktikv"
 )
 
 type testRawKVSuite struct {

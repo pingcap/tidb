@@ -14,12 +14,12 @@
 package executor
 
 import (
-	"github.com/pingcap/tidb/expression"
-	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/v4/expression"
+	plannercore "github.com/pingcap/tidb/v4/planner/core"
+	"github.com/pingcap/tidb/v4/sessionctx"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/util/chunk"
+	"github.com/pingcap/tidb/v4/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -231,7 +231,7 @@ func (j *baseJoiner) initDefaultInner(innerTypes []*types.FieldType, defaultInne
 
 func (j *baseJoiner) makeJoinRowToChunk(chk *chunk.Chunk, lhs, rhs chunk.Row, lUsed, rUsed []int) {
 	// Call AppendRow() first to increment the virtual rows.
-	// Fix: https://github.com/pingcap/tidb/issues/5771
+	// Fix: https://github.com/pingcap/tidb/v4/issues/5771
 	lWide := chk.AppendRowByColIdxs(lhs, lUsed)
 	chk.AppendPartialRowByColIdxs(lWide, rhs, rUsed)
 }

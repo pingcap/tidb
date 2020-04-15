@@ -16,7 +16,7 @@ package executor_test
 import (
 	"fmt"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/v4/util/testkit"
 )
 
 func (s *testSuite7) TestWindowFunctions(c *C) {
@@ -198,7 +198,7 @@ func doTestWindowFunctions(tk *testkit.TestKit) {
 }
 
 func (s *testSuite7) TestWindowFunctionsDataReference(c *C) {
-	// see https://github.com/pingcap/tidb/issues/11614
+	// see https://github.com/pingcap/tidb/v4/issues/11614
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -213,7 +213,7 @@ func (s *testSuite7) TestWindowFunctionsDataReference(c *C) {
 	result = tk.MustQuery("select a, b, CUME_DIST() over (partition by a order by b) from t")
 	result.Check(testkit.Rows("2 1 0.3333333333333333", "2 2 0.6666666666666666", "2 3 1"))
 
-	// see https://github.com/pingcap/tidb/issues/12415
+	// see https://github.com/pingcap/tidb/v4/issues/12415
 	result = tk.MustQuery("select b, first_value(b) over (order by b RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) from t")
 	result.Check(testkit.Rows("1 1", "2 1", "3 1"))
 	result = tk.MustQuery("select b, first_value(b) over (order by b ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) from t")

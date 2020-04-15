@@ -22,7 +22,7 @@ import (
 
 	"github.com/golang/snappy"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/util/texttree"
+	"github.com/pingcap/tidb/v4/util/texttree"
 )
 
 const (

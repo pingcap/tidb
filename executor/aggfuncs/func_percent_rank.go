@@ -14,8 +14,8 @@
 package aggfuncs
 
 import (
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/v4/sessionctx"
+	"github.com/pingcap/tidb/v4/util/chunk"
 )
 
 // percentRank calculates the percentage of partition values less than the value in the current row, excluding the highest value.

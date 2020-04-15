@@ -20,7 +20,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/v4/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 

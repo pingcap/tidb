@@ -17,11 +17,11 @@ import (
 	"container/list"
 	"math"
 
-	"github.com/pingcap/tidb/expression"
-	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/planner/memo"
-	"github.com/pingcap/tidb/planner/property"
-	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/v4/expression"
+	plannercore "github.com/pingcap/tidb/v4/planner/core"
+	"github.com/pingcap/tidb/v4/planner/memo"
+	"github.com/pingcap/tidb/v4/planner/property"
+	"github.com/pingcap/tidb/v4/sessionctx"
 )
 
 // DefaultOptimizer is the optimizer which contains all of the default

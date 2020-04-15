@@ -18,13 +18,13 @@ import (
 	"math"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/metrics"
-	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/kvcache"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/v4/executor"
+	"github.com/pingcap/tidb/v4/metrics"
+	plannercore "github.com/pingcap/tidb/v4/planner/core"
+	"github.com/pingcap/tidb/v4/session"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/util/kvcache"
+	"github.com/pingcap/tidb/v4/util/testkit"
 	dto "github.com/prometheus/client_model/go"
 )
 

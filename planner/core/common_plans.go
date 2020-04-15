@@ -24,22 +24,22 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/privilege"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/types"
-	driver "github.com/pingcap/tidb/types/parser_driver"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/hint"
-	"github.com/pingcap/tidb/util/kvcache"
-	"github.com/pingcap/tidb/util/math"
-	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pingcap/tidb/util/texttree"
+	"github.com/pingcap/tidb/v4/expression"
+	"github.com/pingcap/tidb/v4/infoschema"
+	"github.com/pingcap/tidb/v4/kv"
+	"github.com/pingcap/tidb/v4/metrics"
+	"github.com/pingcap/tidb/v4/privilege"
+	"github.com/pingcap/tidb/v4/sessionctx"
+	"github.com/pingcap/tidb/v4/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/v4/table"
+	"github.com/pingcap/tidb/v4/types"
+	driver "github.com/pingcap/tidb/v4/types/parser_driver"
+	"github.com/pingcap/tidb/v4/util/chunk"
+	"github.com/pingcap/tidb/v4/util/hint"
+	"github.com/pingcap/tidb/v4/util/kvcache"
+	"github.com/pingcap/tidb/v4/util/math"
+	"github.com/pingcap/tidb/v4/util/ranger"
+	"github.com/pingcap/tidb/v4/util/texttree"
 )
 
 var planCacheCounter = metrics.PlanCacheCounter.WithLabelValues("prepare")
@@ -845,7 +845,7 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 
 	if physPlan, ok := p.(PhysicalPlan); ok {
 		// indicate driven side and driving side of 'join' and 'apply'
-		// See issue https://github.com/pingcap/tidb/issues/14602.
+		// See issue https://github.com/pingcap/tidb/v4/issues/14602.
 		driverSideInfo := make([]string, len(physPlan.Children()))
 		buildSide := -1
 

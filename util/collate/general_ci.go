@@ -16,7 +16,7 @@ package collate
 import (
 	"unicode/utf8"
 
-	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/v4/util/stringutil"
 )
 
 type generalCICollator struct {

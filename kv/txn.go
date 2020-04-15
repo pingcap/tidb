@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/v4/util/logutil"
 	"go.uber.org/zap"
 )
 

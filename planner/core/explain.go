@@ -20,10 +20,10 @@ import (
 	"strings"
 
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/aggregation"
-	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/v4/expression"
+	"github.com/pingcap/tidb/v4/expression/aggregation"
+	"github.com/pingcap/tidb/v4/statistics"
+	"github.com/pingcap/tidb/v4/util/stringutil"
 )
 
 // A plan is dataAccesser means it can access underlying data.

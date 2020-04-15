@@ -18,12 +18,12 @@ import (
 	"fmt"
 
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/owner"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/kvcache"
-	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/v4/kv"
+	"github.com/pingcap/tidb/v4/owner"
+	"github.com/pingcap/tidb/v4/sessionctx/variable"
+	"github.com/pingcap/tidb/v4/util"
+	"github.com/pingcap/tidb/v4/util/kvcache"
+	"github.com/pingcap/tidb/v4/util/memory"
 	"github.com/pingcap/tipb/go-binlog"
 )
 

@@ -17,8 +17,8 @@ import (
 	"time"
 
 	"github.com/ngaut/pools"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/v4/infoschema"
+	"github.com/pingcap/tidb/v4/kv"
 	"go.etcd.io/etcd/clientv3"
 )
 

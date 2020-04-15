@@ -21,11 +21,11 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/v4/infoschema"
+	"github.com/pingcap/tidb/v4/session"
+	"github.com/pingcap/tidb/v4/sessionctx/variable"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/util/testkit"
 )
 
 var _ = SerialSuites(&inspectionResultSuite{&testClusterTableBase{}})
@@ -109,7 +109,7 @@ func (s *inspectionResultSuite) TestInspectionResult(c *C) {
 	}
 
 	ctx := context.WithValue(context.Background(), "__mockInspectionTables", mockData)
-	fpName := "github.com/pingcap/tidb/executor/mockMergeMockInspectionTables"
+	fpName := "github.com/pingcap/tidb/v4/executor/mockMergeMockInspectionTables"
 	ctx = failpoint.WithHook(ctx, func(_ context.Context, fpname string) bool {
 		return fpname == fpName
 	})
@@ -187,10 +187,10 @@ func (s *inspectionResultSuite) parseTime(c *C, se session.Session, str string) 
 }
 
 func (s *inspectionResultSuite) tearDownForThresholdCheck(c *C) {
-	fpName := "github.com/pingcap/tidb/executor/mockMergeMockInspectionTables"
+	fpName := "github.com/pingcap/tidb/v4/executor/mockMergeMockInspectionTables"
 	c.Assert(failpoint.Disable(fpName), IsNil)
 
-	fpName2 := "github.com/pingcap/tidb/executor/mockMetricsTableData"
+	fpName2 := "github.com/pingcap/tidb/v4/executor/mockMetricsTableData"
 	c.Assert(failpoint.Disable(fpName2), IsNil)
 }
 
@@ -219,11 +219,11 @@ func (s *inspectionResultSuite) setupForThresholdCheck(c *C, mockData map[string
 			types.MakeDatums("tikv", "tikv-1", "tikv-1", "4.0", "a234c", "", ""),
 		},
 	}
-	fpName := "github.com/pingcap/tidb/executor/mockMergeMockInspectionTables"
+	fpName := "github.com/pingcap/tidb/v4/executor/mockMergeMockInspectionTables"
 	c.Assert(failpoint.Enable(fpName, "return"), IsNil)
 
 	// Mock for metric table data.
-	fpName2 := "github.com/pingcap/tidb/executor/mockMetricsTableData"
+	fpName2 := "github.com/pingcap/tidb/v4/executor/mockMetricsTableData"
 	c.Assert(failpoint.Enable(fpName2, "return"), IsNil)
 
 	ctx := context.WithValue(context.Background(), "__mockInspectionTables", configurations)
@@ -472,12 +472,12 @@ func (s *inspectionResultSuite) TestCriticalErrorInspection(c *C) {
 	for _, s := range testServers {
 		servers = append(servers, strings.Join([]string{s.typ, s.address, s.address}, ","))
 	}
-	fpName2 := "github.com/pingcap/tidb/executor/mockClusterLogServerInfo"
+	fpName2 := "github.com/pingcap/tidb/v4/executor/mockClusterLogServerInfo"
 	fpExpr := strings.Join(servers, ";")
 	c.Assert(failpoint.Enable(fpName2, fmt.Sprintf(`return("%s")`, fpExpr)), IsNil)
 	defer func() { c.Assert(failpoint.Disable(fpName2), IsNil) }()
 
-	fpName := "github.com/pingcap/tidb/executor/mockMetricsTableData"
+	fpName := "github.com/pingcap/tidb/v4/executor/mockMetricsTableData"
 	c.Assert(failpoint.Enable(fpName, "return"), IsNil)
 	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
 

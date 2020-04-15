@@ -25,8 +25,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/v4/config"
+	"github.com/pingcap/tidb/v4/store/tikv"
 	"go.uber.org/zap"
 )
 

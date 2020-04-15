@@ -23,7 +23,7 @@ import (
 	"path/filepath"
 	"text/template"
 
-	. "github.com/pingcap/tidb/expression/generator/helper"
+	. "github.com/pingcap/tidb/v4/expression/generator/helper"
 )
 
 const header = `// Copyright 2019 PingCAP, Inc.
@@ -46,8 +46,8 @@ package expression
 import (
 	"time"
 
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/util/chunk"
 )
 `
 
@@ -333,7 +333,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/v4/types"
 )
 
 var defaultControlIntGener = &controlIntGener{zeroRation: 0.3, defaultGener: *newDefaultGener(0.3, types.ETInt)}
@@ -398,17 +398,17 @@ func BenchmarkVectorizedBuiltin{{.Category}}FuncGenerated(b *testing.B) {
 `))
 
 type typeContext struct {
-	// Describe the name of "github.com/pingcap/tidb/types".ET{{ .ETName }}
+	// Describe the name of "github.com/pingcap/tidb/v4/types".ET{{ .ETName }}
 	ETName string
-	// Describe the name of "github.com/pingcap/tidb/expression".VecExpr.VecEval{{ .TypeName }}
+	// Describe the name of "github.com/pingcap/tidb/v4/expression".VecExpr.VecEval{{ .TypeName }}
 	// If undefined, it's same as ETName.
 	TypeName string
-	// Describe the name of "github.com/pingcap/tidb/util/chunk".*Column.Append{{ .TypeNameInColumn }},
+	// Describe the name of "github.com/pingcap/tidb/v4/util/chunk".*Column.Append{{ .TypeNameInColumn }},
 	// Resize{{ .TypeNameInColumn }}, Reserve{{ .TypeNameInColumn }}, Get{{ .TypeNameInColumn }} and
 	// {{ .TypeNameInColumn }}s.
 	// If undefined, it's same as TypeName.
 	TypeNameInColumn string
-	// Same as "github.com/pingcap/tidb/util/chunk".getFixedLen()
+	// Same as "github.com/pingcap/tidb/v4/util/chunk".getFixedLen()
 	Fixed bool
 }
 

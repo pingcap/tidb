@@ -14,7 +14,7 @@
 package disk
 
 import (
-	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/v4/util/memory"
 )
 
 // Tracker is used to track the disk usage during query execution.

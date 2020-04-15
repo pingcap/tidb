@@ -20,9 +20,9 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/util/chunk"
+	"github.com/pingcap/tidb/v4/util/mock"
 )
 
 type periodGener struct {
@@ -186,7 +186,7 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.SecToTime: {
 		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETReal}},
 	},
-	// This test case may fail due to the issue: https://github.com/pingcap/tidb/issues/13638.
+	// This test case may fail due to the issue: https://github.com/pingcap/tidb/v4/issues/13638.
 	// We remove this case to stabilize CI, and will reopen this when we fix the issue above.
 	//ast.TimestampAdd: {
 	//	{

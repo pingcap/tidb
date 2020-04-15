@@ -17,7 +17,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/util/texttree"
+	"github.com/pingcap/tidb/v4/util/texttree"
 )
 
 type texttreeSuite struct{}

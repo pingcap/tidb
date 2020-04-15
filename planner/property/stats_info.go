@@ -16,7 +16,7 @@ package property
 import (
 	"fmt"
 
-	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/v4/statistics"
 )
 
 // StatsInfo stores the basic information of statistics for the plan's output. It is used for cost estimation.

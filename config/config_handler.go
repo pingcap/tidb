@@ -26,12 +26,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/configpb"
 	"github.com/pingcap/pd/v4/client"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/v4/util/logutil"
 	"go.uber.org/zap"
 )
 
 // ConfHandler is used to load and update config online.
-// See https://github.com/pingcap/tidb/pull/13660 for more details.
+// See https://github.com/pingcap/tidb/v4/pull/13660 for more details.
 type ConfHandler interface {
 	Start()
 	Close()
@@ -156,7 +156,7 @@ func (ch *pdConfHandler) SetConfig(conf *Config) error {
 
 func (ch *pdConfHandler) register() {
 	// register to PD and get the new default config.
-	// see https://github.com/pingcap/tidb/pull/13660 for more details.
+	// see https://github.com/pingcap/tidb/v4/pull/13660 for more details.
 	// suppose port and security config items cannot be change online.
 	confContent, err := encodeConfig(ch.curConf.Load().(*Config))
 	if err != nil {

@@ -15,8 +15,8 @@ package chunk
 
 import (
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/types/json"
 )
 
 // Row represents a row of data, can be used to access values.

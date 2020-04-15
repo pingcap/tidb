@@ -19,12 +19,12 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/planner/util"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/hint"
-	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tidb/v4/infoschema"
+	"github.com/pingcap/tidb/v4/planner/util"
+	"github.com/pingcap/tidb/v4/sessionctx"
+	"github.com/pingcap/tidb/v4/util/hint"
+	"github.com/pingcap/tidb/v4/util/testleak"
+	"github.com/pingcap/tidb/v4/util/testutil"
 )
 
 var _ = Suite(&testIndexMergeSuite{})

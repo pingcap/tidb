@@ -20,8 +20,8 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/v4/infoschema"
+	"github.com/pingcap/tidb/v4/util/sqlexec"
 )
 
 // GCStats will garbage collect the useless stats info. For dropped tables, we will first update their version so that

@@ -18,7 +18,7 @@ import (
 	"math"
 	"unsafe"
 
-	"github.com/pingcap/tidb/util/fastrand"
+	"github.com/pingcap/tidb/v4/util/fastrand"
 )
 
 const (

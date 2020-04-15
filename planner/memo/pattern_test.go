@@ -15,7 +15,7 @@ package memo
 
 import (
 	. "github.com/pingcap/check"
-	plannercore "github.com/pingcap/tidb/planner/core"
+	plannercore "github.com/pingcap/tidb/v4/planner/core"
 )
 
 func (s *testMemoSuite) TestGetOperand(c *C) {

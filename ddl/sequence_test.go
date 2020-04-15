@@ -20,11 +20,11 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/ddl"
-	mysql "github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/v4/ddl"
+	mysql "github.com/pingcap/tidb/v4/errno"
+	"github.com/pingcap/tidb/v4/session"
+	"github.com/pingcap/tidb/v4/table/tables"
+	"github.com/pingcap/tidb/v4/util/testkit"
 )
 
 var _ = Suite(&testSequenceSuite{&testDBSuite{}})

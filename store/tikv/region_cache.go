@@ -28,9 +28,9 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	pd "github.com/pingcap/pd/v4/client"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/v4/kv"
+	"github.com/pingcap/tidb/v4/metrics"
+	"github.com/pingcap/tidb/v4/util/logutil"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -351,7 +351,7 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 	if err != nil {
 		return nil, err
 	}
-	// enable by `curl -XPUT -d '1*return("[some-addr]")->return("")' http://host:port/github.com/pingcap/tidb/store/tikv/injectWrongStoreAddr`
+	// enable by `curl -XPUT -d '1*return("[some-addr]")->return("")' http://host:port/github.com/pingcap/tidb/v4/store/tikv/injectWrongStoreAddr`
 	failpoint.Inject("injectWrongStoreAddr", func(val failpoint.Value) {
 		if a, ok := val.(string); ok && len(a) > 0 {
 			addr = a

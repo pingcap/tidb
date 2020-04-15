@@ -24,11 +24,11 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/session"
-	. "github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/v4/domain"
+	"github.com/pingcap/tidb/v4/session"
+	. "github.com/pingcap/tidb/v4/store/tikv"
+	"github.com/pingcap/tidb/v4/util/mock"
+	"github.com/pingcap/tidb/v4/util/testkit"
 )
 
 var _ = Suite(&testSQLSuite{})
@@ -74,11 +74,11 @@ func (s *testSQLSerialSuite) TestFailBusyServerCop(c *C) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcServerBusy", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/store/mockstore/mocktikv/rpcServerBusy", `return(true)`), IsNil)
 	go func() {
 		defer wg.Done()
 		time.Sleep(time.Millisecond * 100)
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcServerBusy"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/store/mockstore/mocktikv/rpcServerBusy"), IsNil)
 	}()
 
 	go func() {

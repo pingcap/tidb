@@ -19,13 +19,13 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/set"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/v4/domain"
+	"github.com/pingcap/tidb/v4/executor"
+	"github.com/pingcap/tidb/v4/infoschema"
+	"github.com/pingcap/tidb/v4/kv"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/util/set"
+	"github.com/pingcap/tidb/v4/util/testkit"
 )
 
 var _ = SerialSuites(&inspectionSummarySuite{})
@@ -63,7 +63,7 @@ func (s *inspectionSummarySuite) TestValidInspectionSummaryRules(c *C) {
 func (s *inspectionSummarySuite) TestInspectionSummary(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
-	fpName := "github.com/pingcap/tidb/executor/mockMetricsTableData"
+	fpName := "github.com/pingcap/tidb/v4/executor/mockMetricsTableData"
 	c.Assert(failpoint.Enable(fpName, "return"), IsNil)
 	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
 

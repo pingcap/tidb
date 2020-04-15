@@ -36,10 +36,10 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	tmysql "github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/printer"
+	"github.com/pingcap/tidb/v4/errno"
+	"github.com/pingcap/tidb/v4/kv"
+	"github.com/pingcap/tidb/v4/util/logutil"
+	"github.com/pingcap/tidb/v4/util/printer"
 	"go.uber.org/zap"
 )
 
@@ -829,12 +829,12 @@ func (cli *testServerClient) runTestLoadData(c *C, server *Server) {
 		dbt.Check(rows.Next(), IsFalse, Commentf("unexpected data"))
 
 		// fail error processing test
-		dbt.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/commitOneTaskErr", "return"), IsNil)
+		dbt.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/executor/commitOneTaskErr", "return"), IsNil)
 		_, err1 = dbt.db.Exec(`load data local infile '/tmp/load_data_test.csv' into table pn FIELDS TERMINATED BY ','`)
 		mysqlErr, ok := err1.(*mysql.MySQLError)
 		dbt.Assert(ok, IsTrue)
 		dbt.Assert(mysqlErr.Message, Equals, "mock commit one task error")
-		dbt.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/commitOneTaskErr"), IsNil)
+		dbt.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/executor/commitOneTaskErr"), IsNil)
 
 		dbt.mustExec("drop table if exists pn")
 	})

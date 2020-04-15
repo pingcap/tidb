@@ -18,7 +18,7 @@ import (
 	"crypto/tls"
 	"sync"
 
-	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/v4/util"
 )
 
 var statisticsList []Statistics

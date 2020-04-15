@@ -31,21 +31,21 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/server"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/store/helper"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/pdapi"
-	"github.com/pingcap/tidb/util/set"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tidb/v4/config"
+	"github.com/pingcap/tidb/v4/domain"
+	"github.com/pingcap/tidb/v4/infoschema"
+	"github.com/pingcap/tidb/v4/kv"
+	"github.com/pingcap/tidb/v4/meta/autoid"
+	"github.com/pingcap/tidb/v4/server"
+	"github.com/pingcap/tidb/v4/session"
+	"github.com/pingcap/tidb/v4/store/helper"
+	"github.com/pingcap/tidb/v4/store/mockstore"
+	"github.com/pingcap/tidb/v4/util"
+	"github.com/pingcap/tidb/v4/util/pdapi"
+	"github.com/pingcap/tidb/v4/util/set"
+	"github.com/pingcap/tidb/v4/util/testkit"
+	"github.com/pingcap/tidb/v4/util/testleak"
+	"github.com/pingcap/tidb/v4/util/testutil"
 	"google.golang.org/grpc"
 )
 
@@ -655,7 +655,7 @@ func (s *testClusterTableSuite) TestForClusterServerInfo(c *C) {
 	}
 
 	fpExpr := `return("` + strings.Join(instances, ";") + `")`
-	fpName := "github.com/pingcap/tidb/infoschema/mockClusterInfo"
+	fpName := "github.com/pingcap/tidb/v4/infoschema/mockClusterInfo"
 	c.Assert(failpoint.Enable(fpName, fpExpr), IsNil)
 	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
 

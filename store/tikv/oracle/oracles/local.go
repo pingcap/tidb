@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/v4/store/tikv/oracle"
 )
 
 var _ oracle.Oracle = &localOracle{}

@@ -18,9 +18,9 @@ import (
 	"strings"
 
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/domain/infosync"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/v4/domain/infosync"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/util"
 )
 
 // Cluster table list, attention:

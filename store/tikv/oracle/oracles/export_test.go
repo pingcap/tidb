@@ -16,7 +16,7 @@ package oracles
 import (
 	"time"
 
-	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/v4/store/tikv/oracle"
 )
 
 // SetOracleHookCurrentTime exports localOracle's time hook to test.

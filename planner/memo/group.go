@@ -17,9 +17,9 @@ import (
 	"container/list"
 	"fmt"
 
-	"github.com/pingcap/tidb/expression"
-	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/v4/expression"
+	plannercore "github.com/pingcap/tidb/v4/planner/core"
+	"github.com/pingcap/tidb/v4/planner/property"
 )
 
 // EngineType is determined by whether it's above or below `Gather`s.

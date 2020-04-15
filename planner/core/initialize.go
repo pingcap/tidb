@@ -14,11 +14,11 @@
 package core
 
 import (
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/planner/property"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/plancodec"
+	"github.com/pingcap/tidb/v4/expression"
+	"github.com/pingcap/tidb/v4/planner/property"
+	"github.com/pingcap/tidb/v4/sessionctx"
+	"github.com/pingcap/tidb/v4/types"
+	"github.com/pingcap/tidb/v4/util/plancodec"
 )
 
 // Init initializes LogicalAggregation.
