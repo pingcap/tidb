@@ -86,10 +86,19 @@ func (s *testTableSuite) TestPerfSchemaTables(c *C) {
 func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
+	tk.MustQuery("select column_comment from information_schema.columns " +
+		"where table_name='events_statements_summary_by_digest' and column_name='STMT_TYPE'",
+	).Check(testkit.Rows("Statement type"))
+
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b varchar(10), key k(a))")
 
+	// Clear all statements.
+	tk.MustExec("set session tidb_enable_stmt_summary = 0")
+	tk.MustExec("set session tidb_enable_stmt_summary = ''")
+
 	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+	defer tk.MustExec("set global tidb_enable_stmt_summary = ''")
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
 
 	// Invalidate the cache manually so that tidb_enable_stmt_summary works immediately.
@@ -177,8 +186,8 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	// Disable it again.
 	tk.MustExec("set global tidb_enable_stmt_summary = false")
 	tk.MustExec("set session tidb_enable_stmt_summary = false")
-	defer tk.MustExec("set global tidb_enable_stmt_summary = 1")
-	defer tk.MustExec("set session tidb_enable_stmt_summary = 1")
+	defer tk.MustExec("set global tidb_enable_stmt_summary = ''")
+	defer tk.MustExec("set session tidb_enable_stmt_summary = ''")
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("0"))
 
 	// Create a new session to test
@@ -327,7 +336,7 @@ func (s *testTableSuite) TestStmtSummaryHistoryTable(c *C) {
 
 	tk.MustExec("set global tidb_enable_stmt_summary = 1")
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
-	defer tk.MustExec("set global tidb_enable_stmt_summary = false")
+	defer tk.MustExec("set global tidb_enable_stmt_summary = ''")
 
 	// Invalidate the cache manually so that tidb_enable_stmt_summary works immediately.
 	s.dom.GetGlobalVarsCache().Disable()

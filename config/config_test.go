@@ -148,7 +148,7 @@ disable-error-stack = false
 
 func (s *testConfigSuite) TestConfig(c *C) {
 	conf := new(Config)
-	conf.TempStoragePath = filepath.Join(os.TempDir(), "tidb", "tmp-storage")
+	conf.TempStoragePath = tempStorageDirName
 	conf.Binlog.Enable = true
 	conf.Binlog.IgnoreError = true
 	conf.Binlog.Strategy = "hash"
@@ -171,6 +171,7 @@ unrecognized-option-test = true
 	c.Assert(f.Sync(), IsNil)
 
 	c.Assert(conf.Load(configFile), ErrorMatches, "(?:.|\n)*unknown configuration option(?:.|\n)*")
+	c.Assert(conf.MaxServerConnections, Equals, uint32(0))
 
 	f.Truncate(0)
 	f.Seek(0, 0)
