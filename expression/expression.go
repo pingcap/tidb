@@ -1013,6 +1013,7 @@ func storeTypeMask(storeType kv.StoreType) uint32 {
 	return 1 << storeType
 }
 
+// IsPushDownEnabled returns true if the input expr is not in the expr_pushdown_blacklist
 func IsPushDownEnabled(name string, storeType kv.StoreType) bool {
 	value, exists := DefaultExprPushDownBlacklist.Load().(map[string]uint32)[name]
 	if exists {
