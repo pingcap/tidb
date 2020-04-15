@@ -121,16 +121,11 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForServersInfo()
 		case infoschema.TableTiFlashReplica:
 			e.dataForTableTiFlashReplica(sctx, dbs)
-<<<<<<< HEAD
-=======
-		case infoschema.TableTiKVStoreStatus:
-			err = e.dataForTiKVStoreStatus(sctx)
 		case infoschema.TableStatementsSummary,
 			infoschema.TableStatementsSummaryHistory,
 			infoschema.ClusterTableStatementsSummary,
 			infoschema.ClusterTableStatementsSummaryHistory:
 			err = e.setDataForStatementsSummary(sctx, e.table.Name.O)
->>>>>>> b1d11a7... *: rename statement summary tables (#16188)
 		}
 		if err != nil {
 			return nil, err

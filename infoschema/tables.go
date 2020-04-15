@@ -1025,7 +1025,6 @@ var tableSequencesCols = []columnInfo{
 	{name: "COMMENT", tp: mysql.TypeVarchar, size: 64},
 }
 
-<<<<<<< HEAD
 func dataForTiKVRegionStatus(ctx sessionctx.Context) (records [][]types.Datum, err error) {
 	tikvStore, ok := ctx.GetStore().(tikv.Storage)
 	if !ok {
@@ -1127,7 +1126,8 @@ func dataForTiKVStoreStatus(ctx sessionctx.Context) (records [][]types.Datum, er
 		records = append(records, row)
 	}
 	return records, nil
-=======
+}
+
 var tableStatementsSummaryCols = []columnInfo{
 	{name: "SUMMARY_BEGIN_TIME", tp: mysql.TypeTimestamp, size: 26, flag: mysql.NotNullFlag, comment: "Begin time of this summary"},
 	{name: "SUMMARY_END_TIME", tp: mysql.TypeTimestamp, size: 26, flag: mysql.NotNullFlag, comment: "End time of this summary"},
@@ -1195,7 +1195,6 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: "PREV_SAMPLE_TEXT", tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "The previous statement before commit"},
 	{name: "PLAN_DIGEST", tp: mysql.TypeVarchar, size: 64, comment: "Digest of its execution plan"},
 	{name: "PLAN", tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "Sampled execution plan"},
->>>>>>> b1d11a7... *: rename statement summary tables (#16188)
 }
 
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
