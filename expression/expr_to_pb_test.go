@@ -482,7 +482,9 @@ func (s *testEvaluatorSerialSuites) TestPushDownSwitcher(c *C) {
 	}
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/expression/PushDownTestSwitcher", `return("all")`), IsNil)
-	defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/expression/PushDownTestSwitcher"), IsNil) }()
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/expression/PushDownTestSwitcher"), IsNil)
+	}()
 
 	pbExprs := ExpressionsToPBList(sc, funcs, client)
 	c.Assert(len(pbExprs), Equals, len(cases))
@@ -683,7 +685,9 @@ func (s *testEvaluatorSerialSuites) TestMetadata(c *C) {
 	dg := new(dataGen4Expr2PbTest)
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/v4/expression/PushDownTestSwitcher", `return("all")`), IsNil)
-	defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/expression/PushDownTestSwitcher"), IsNil) }()
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/v4/expression/PushDownTestSwitcher"), IsNil)
+	}()
 
 	pc := PbConverter{client: client, sc: sc}
 
