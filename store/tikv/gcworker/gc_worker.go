@@ -890,7 +890,6 @@ func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64, concurren
 
 	// First try resolve locks with physical scan
 	err := w.resolveLocksPhysical(ctx, safePoint)
-
 	if err == nil {
 		return nil
 	}
@@ -1036,27 +1035,35 @@ func (w *GCWorker) resolveLocksPhysical(ctx context.Context, safePoint uint64) e
 		zap.Uint64("safePoint", safePoint))
 	startTime := time.Now()
 
-	stores, err := w.getUpStoresMapForGC(ctx)
+	dirtyStores, err := w.getUpStoresMapForGC(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-
 	defer func() {
+		stores, err := w.getUpStoresMapForGC(ctx)
+		if err != nil {
+			logutil.Logger(ctx).Error("[gc worker] failed to remove lock observers",
+				zap.String("uuid", w.uuid),
+				zap.Uint64("safePoint", safePoint),
+				zap.NamedError("getUpStoresMapForGCErr", err),
+			)
+			return
+		}
 		w.removeLockObservers(ctx, safePoint, stores)
 	}()
 
-	err = w.registerLockObservers(ctx, safePoint, stores)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	for retry := 0; retry < 3; retry++ {
-		resolvedStores, err := w.physicalScanAndResolveLocks(ctx, safePoint, stores)
+		err = w.registerLockObservers(ctx, safePoint, dirtyStores)
 		if err != nil {
 			return errors.Trace(err)
 		}
 
-		stores, err = w.getUpStoresMapForGC(ctx)
+		resolvedStores, err := w.physicalScanAndResolveLocks(ctx, safePoint, dirtyStores)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		stores, err := w.getUpStoresMapForGC(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1066,20 +1073,31 @@ func (w *GCWorker) resolveLocksPhysical(ctx context.Context, safePoint uint64) e
 			return errors.Trace(err)
 		}
 
-		// Remove clean stores from the set
-		for resolvedStore := range resolvedStores {
-			// Only stores that are both resolved and checked is clean.
-			// For each clean store, remove it from the stores set.
-			if _, ok := checkedStores[resolvedStore]; ok {
-				delete(stores, resolvedStore)
+		for store := range stores {
+			if _, ok := checkedStores[store]; ok {
+				// The store is resolved and checked.
+				if _, ok := resolvedStores[store]; ok {
+					delete(stores, store)
+				}
+				// The store is checked and has been resolved before.
+				if _, ok := dirtyStores[store]; !ok {
+					delete(stores, store)
+				}
 			}
 		}
+		dirtyStores = stores
 
 		// If there are still dirty stores, continue the loop to clean them again.
 		// Only dirty stores will be scanned in the next loop.
-		if len(stores) == 0 {
+		if len(dirtyStores) == 0 {
 			break
 		}
+		// Clear all collected locks of dirty stores to prevent it from being dirty again.
+		w.removeLockObservers(ctx, safePoint, dirtyStores)
+	}
+
+	if len(dirtyStores) != 0 {
+		return errors.Errorf("still has %d dirty stores after physical resolve locks", len(dirtyStores))
 	}
 
 	logutil.Logger(ctx).Info("[gc worker] finish resolve locks with physical scan locks",
