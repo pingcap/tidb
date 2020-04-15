@@ -1193,3 +1193,8 @@ func (ctx *ctxForPartitionExpr) StmtAddDirtyTableOP(op int, tid int64, handle in
 func (ctx *ctxForPartitionExpr) DDLOwnerChecker() owner.DDLOwnerChecker {
 	panic("not support")
 }
+
+// PrepareTxnFuture uses to prepare txn by future.
+func (ctx *ctxForPartitionExpr) PrepareTxnFuture(context.Context) {
+	panic("not support")
+}
