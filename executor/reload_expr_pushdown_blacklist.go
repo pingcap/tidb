@@ -55,11 +55,11 @@ func LoadExprPushdownBlacklist(ctx sessionctx.Context) (err error) {
 		}
 		storeTypes := strings.Split(storeTypeString, ",")
 		for _, typeString := range storeTypes {
-			if typeString == "tidb" {
+			if typeString == kv.TiDB.Name() {
 				value |= 1 << kv.TiDB
-			} else if typeString == "tiflash" {
+			} else if typeString == kv.TiFlash.Name() {
 				value |= 1 << kv.TiFlash
-			} else if typeString == "tikv" {
+			} else if typeString == kv.TiKV.Name() {
 				value |= 1 << kv.TiKV
 			}
 		}
