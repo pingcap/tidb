@@ -148,7 +148,21 @@ func (a *recordSet) NewChunk() *chunk.Chunk {
 
 func (a *recordSet) Close() error {
 	err := a.executor.Close()
+<<<<<<< HEAD
 	a.stmt.CloseRecordSet(a.txnStartTS, a.lastErr)
+=======
+	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
+	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil, false)
+	a.stmt.SummaryStmt()
+	sessVars := a.stmt.Ctx.GetSessionVars()
+	pps := types.CloneRow(sessVars.PreparedParams)
+	sessVars.PrevStmt = FormatSQL(a.stmt.OriginText(), pps)
+	a.stmt.logAudit()
+	// Detach the disk tracker from GlobalDiskUsageTracker after every execution
+	if stmtCtx := a.stmt.Ctx.GetSessionVars().StmtCtx; stmtCtx != nil && stmtCtx.DiskTracker != nil {
+		stmtCtx.DiskTracker.DetachFromGlobalTracker()
+	}
+>>>>>>> 3edfffa... Util: Fix global tracker mutex contention (#16298)
 	return err
 }
 
