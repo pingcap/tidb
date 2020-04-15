@@ -407,7 +407,7 @@ func (s *testConfigSuite) TestAllowAutoRandomValid(c *C) {
 func (s *testConfigSuite) TestPreparePlanCacheValid(c *C) {
 	conf := NewConfig()
 	tests := map[PreparedPlanCache]bool {
-		{Enabled: true, Capacity: 1}: false,
+		{Enabled: true, Capacity: 0}: false,
 		{Enabled: true, Capacity: 2}: true,
 		{Enabled: true, MemoryGuardRatio: -0.1}: false,
 		{Enabled: true, MemoryGuardRatio: 2.2}: false,
@@ -415,7 +415,7 @@ func (s *testConfigSuite) TestPreparePlanCacheValid(c *C) {
 	}
 	for testCase, res := range tests {
 		conf.PreparedPlanCache = testCase
-		c.Assert(conf.Valid(), Equals, res)
+		c.Assert(conf.Valid() == nil, Equals, res)
 	}
 }
 

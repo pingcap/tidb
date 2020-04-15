@@ -249,7 +249,7 @@ header-timeout = 5
 [prepared-plan-cache]
 enabled = false
 capacity = 100
-memory-guard-ratio = 1.0
+memory-guard-ratio = 0.1
 
 [opentracing]
 # Enable opentracing.
