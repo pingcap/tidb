@@ -171,6 +171,11 @@ type stmtSummaryByDigestElement struct {
 	firstSeen time.Time
 	// The last time this type of SQL executes.
 	lastSeen time.Time
+	// plan cache
+	planInCache     bool
+	planCacheHits   int64
+	planCacheMisses int64
+	planLastUpdate  time.Time
 }
 
 // StmtExecInfo records execution information of each statement.
@@ -815,6 +820,10 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		avgFloat(int64(ssElement.sumAffectedRows), ssElement.execCount),
 		types.NewTime(types.FromGoTime(ssElement.firstSeen), mysql.TypeTimestamp, 0),
 		types.NewTime(types.FromGoTime(ssElement.lastSeen), mysql.TypeTimestamp, 0),
+		bool(ssElement.planInCache),
+		int64(ssElement.planCacheHits),
+		int64(ssElement.planCacheMisses),
+		types.NewTime(types.FromGoTime(ssElement.planLastUpdate), mysql.TypeTimestamp, 0),
 		ssElement.sampleSQL,
 		ssElement.prevSQL,
 		ssbd.planDigest,
