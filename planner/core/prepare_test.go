@@ -699,12 +699,13 @@ func (s *testPlanSerialSuite) TestPlanCacheHitInfo(c *C) {
 	tk.MustExec("create table t(id int)")
 	tk.MustExec("insert into t values (1),(2),(3),(4)")
 	tk.MustExec("prepare stmt from 'select * from t where id=?'")
+	tk.MustExec("prepare stmt2 from 'select /*+ ignore_plan_cache() */ * from t where id=?'")
 	tk.MustExec("set @doma = 1")
 	tk.MustQuery(`select @@last_statement_found_in_plan_cache`).Check(testkit.Rows("0"))
 	tk.MustQuery("execute stmt using @doma").Check(testkit.Rows("1"))
-	tk.MustQuery(`show session variables like "last_statement_found_in_plan_cache"`).Check(testkit.Rows(
-		"last_statement_found_in_plan_cache 1",
-	))
+	tk.MustQuery(`select @@last_statement_found_in_plan_cache`).Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt2 using @doma").Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@last_statement_found_in_plan_cache`).Check(testkit.Rows("0"))
 }
 
 func (s *testPrepareSuite) TestPrepareForGroupByMultiItems(c *C) {
