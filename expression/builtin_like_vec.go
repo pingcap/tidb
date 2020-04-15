@@ -95,7 +95,7 @@ func (b *builtinRegexpSharedSig) initMemoizedRegexp(patterns *chunk.Column, n in
 		b.memorizedErr = err
 		break
 	}
-	if !b.isMemorizedRegexpInitialized() {
+	if !b.isMemorizedRegexpInitialized() && n > 0 {
 		b.memorizedErr = errors.New("No valid regexp pattern found")
 	}
 	if b.memorizedErr != nil {
