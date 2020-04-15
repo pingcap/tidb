@@ -649,13 +649,14 @@ func (s *testInfoschemaClusterTableSuite) setUpMockPDHTTPServer() (*httptest.Ser
 	// TiDB/TiKV config
 	router.Handle("/config", fn.Wrap(mockConfig))
 	// pd region
-	router.Handle("/pd/api/v1/stats/region", fn.Wrap(func() (*executor.PdRegionStats, error) {
-		return &executor.PdRegionStats{
-			Count:          1,
-			EmptyCount:     1,
-			StorageSize:    1,
-			StorageKeys:    1,
-			StorePeerCount: map[uint64]int{1: 1},
+	router.Handle("/pd/api/v1/stats/region", fn.Wrap(func() (*helper.PdRegionStats, error) {
+		return &helper.PdRegionStats{
+			Count:            1,
+			EmptyCount:       1,
+			StorageSize:      1,
+			StorageKeys:      1,
+			StoreLeaderCount: map[uint64]int{1: 1},
+			StorePeerCount:   map[uint64]int{1: 1},
 		}, nil
 	}))
 	return server, mockAddr

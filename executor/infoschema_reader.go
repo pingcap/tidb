@@ -1556,10 +1556,10 @@ func (e *tableStorageStatsRetriever) setDataForTableStorageStats(ctx sessionctx.
 			break
 		}
 		record := types.MakeDatums(
-			table.db,          // TABLE_SCHEMA
-			table.tb.Name.O,   // TABLE_NAME
-			tableID,           // TABLE_ID
-			peerCount,         // TABLE_PEER_COUNT
+			table.db,            // TABLE_SCHEMA
+			table.tb.Name.O,     // TABLE_NAME
+			tableID,             // TABLE_ID
+			peerCount,           // TABLE_PEER_COUNT
 			e.stats.Count,       // TABLE_REGION_COUNT
 			e.stats.EmptyCount,  // TABLE_EMPTY_REGION_COUNT
 			e.stats.StorageSize, // TABLE_SIZE
