@@ -62,7 +62,7 @@ func (e *bitOrUint64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 
 func (*bitOrUint64) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error {
 	p1, p2 := (*partialResult4BitFunc)(src), (*partialResult4BitFunc)(dst)
-	*p2 |= uint64(*p1)
+	*p2 |= *p1
 	return nil
 }
 
@@ -112,7 +112,7 @@ func (e *bitXorUint64) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStar
 
 func (*bitXorUint64) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error {
 	p1, p2 := (*partialResult4BitFunc)(src), (*partialResult4BitFunc)(dst)
-	*p2 ^= uint64(*p1)
+	*p2 ^= *p1
 	return nil
 }
 
@@ -148,6 +148,6 @@ func (e *bitAndUint64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup 
 
 func (*bitAndUint64) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error {
 	p1, p2 := (*partialResult4BitFunc)(src), (*partialResult4BitFunc)(dst)
-	*p2 &= uint64(*p1)
+	*p2 &= *p1
 	return nil
 }
