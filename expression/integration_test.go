@@ -6033,6 +6033,8 @@ func (s *testIntegrationSuite) TestIssue15992(c *C) {
 func (s *testIntegrationSuite) TestIssue16419(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("drop table if exists t1")
 	tk.MustExec("CREATE TABLE t0(c0 INT);")
 	tk.MustExec("CREATE TABLE t1(c0 INT);")
 	tk.MustQuery("SELECT * FROM t1 NATURAL LEFT JOIN t0 WHERE NOT t1.c0;").Check(testkit.Rows())
