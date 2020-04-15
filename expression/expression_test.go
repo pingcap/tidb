@@ -22,6 +22,8 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mock"
 )
 
 func (s *testEvaluatorSuite) TestNewValuesFunc(c *C) {
@@ -91,6 +93,51 @@ func (s *testEvaluatorSuite) TestConstItem(c *C) {
 	c.Assert(sf.ConstItem(s.ctx.GetSessionVars().StmtCtx), Equals, true)
 }
 
+func (s *testEvaluatorSuite) TestVectorizable(c *C) {
+	exprs := make([]Expression, 0, 4)
+	sf := newFunction(ast.Rand)
+	column := &Column{
+		UniqueID: 0,
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	}
+	exprs = append(exprs, sf)
+	exprs = append(exprs, One)
+	exprs = append(exprs, Null)
+	exprs = append(exprs, column)
+	c.Assert(Vectorizable(exprs), Equals, true)
+
+	column0 := &Column{
+		UniqueID: 1,
+		RetType:  types.NewFieldType(mysql.TypeString),
+	}
+	column1 := &Column{
+		UniqueID: 2,
+		RetType:  types.NewFieldType(mysql.TypeString),
+	}
+	column2 := &Column{
+		UniqueID: 3,
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	}
+	exprs = exprs[:0]
+	sf = newFunction(ast.SetVar, column0, column1)
+	exprs = append(exprs, sf)
+	c.Assert(Vectorizable(exprs), Equals, false)
+
+	exprs = exprs[:0]
+	sf = newFunction(ast.GetVar, column0)
+	exprs = append(exprs, sf)
+	c.Assert(Vectorizable(exprs), Equals, false)
+
+	exprs = exprs[:0]
+	sf = newFunction(ast.NextVal, column0)
+	exprs = append(exprs, sf)
+	sf = newFunction(ast.LastVal, column0)
+	exprs = append(exprs, sf)
+	sf = newFunction(ast.SetVal, column1, column2)
+	exprs = append(exprs, sf)
+	c.Assert(Vectorizable(exprs), Equals, false)
+}
+
 type testTableBuilder struct {
 	tableName   string
 	columnNames []string
@@ -140,4 +187,39 @@ func tableInfoToSchemaForTest(tableInfo *model.TableInfo) *Schema {
 		})
 	}
 	return schema
+}
+
+func (s *testEvaluatorSuite) TestEvalExpr(c *C) {
+	ctx := mock.NewContext()
+	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
+	tNames := []string{"int", "real", "decimal", "string", "timestamp", "datetime", "duration"}
+	for i := 0; i < len(tNames); i++ {
+		ft := eType2FieldType(eTypes[i])
+		colExpr := &Column{Index: 0, RetType: ft}
+		input := chunk.New([]*types.FieldType{ft}, 1024, 1024)
+		fillColumnWithGener(eTypes[i], input, 0, nil)
+		colBuf := chunk.NewColumn(ft, 1024)
+		colBuf2 := chunk.NewColumn(ft, 1024)
+		var err error
+		c.Assert(colExpr.Vectorized(), IsTrue)
+		ctx.GetSessionVars().EnableVectorizedExpression = false
+		err = EvalExpr(ctx, colExpr, input, colBuf)
+		if err != nil {
+			c.Fatal(err)
+		}
+		ctx.GetSessionVars().EnableVectorizedExpression = true
+		err = EvalExpr(ctx, colExpr, input, colBuf2)
+		if err != nil {
+			c.Fatal(err)
+		}
+		for j := 0; j < 1024; j++ {
+			isNull := colBuf.IsNull(j)
+			isNull2 := colBuf2.IsNull(j)
+			c.Assert(isNull, Equals, isNull2)
+			if isNull {
+				continue
+			}
+			c.Assert(string(colBuf.GetRaw(j)), Equals, string(colBuf2.GetRaw(j)))
+		}
+	}
 }

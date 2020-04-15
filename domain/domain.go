@@ -552,8 +552,8 @@ func (do *Domain) mustRestartSyncer() error {
 		if do.isClose() {
 			return err
 		}
-		time.Sleep(time.Second)
 		logutil.BgLogger().Error("restart the schema syncer failed", zap.Error(err))
+		time.Sleep(time.Second)
 	}
 }
 
@@ -922,7 +922,7 @@ func (do *Domain) handleEvolvePlanTasksLoop(ctx sessionctx.Context) {
 			case <-time.After(bindinfo.Lease):
 			}
 			if owner.IsOwner() {
-				err := do.bindHandle.HandleEvolvePlanTask(ctx)
+				err := do.bindHandle.HandleEvolvePlanTask(ctx, false)
 				if err != nil {
 					logutil.BgLogger().Info("evolve plan failed", zap.Error(err))
 				}

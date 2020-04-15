@@ -164,7 +164,7 @@ Projection_10	0.00	root		test.dt.id, test.dt.aid, test.dt.pt, test.dt.dic, test.
 explain select pc,cr,count(DISTINCT uid) as pay_users,count(oid) as pay_times,sum(am) as am from pp where ps=2  and ppt>=1478188800 and ppt<1478275200  and pi in ('510017','520017') and uid in ('18089709','18090780') group by pc,cr;
 id	estRows	task	access object	operator info
 Projection_5	1.00	root		test.pp.pc, test.pp.cr, Column#22, Column#23, Column#24
-└─HashAgg_7	1.00	root		group by:test.pp.cr, test.pp.pc, funcs:count(distinct test.pp.uid)->Column#22, funcs:count(test.pp.oid)->Column#23, funcs:sum(test.pp.am)->Column#24, funcs:firstrow(test.pp.pc)->test.pp.pc, funcs:firstrow(test.pp.cr)->test.pp.cr
+└─HashAgg_6	1.00	root		group by:test.pp.cr, test.pp.pc, funcs:count(distinct test.pp.uid)->Column#22, funcs:count(test.pp.oid)->Column#23, funcs:sum(test.pp.am)->Column#24, funcs:firstrow(test.pp.pc)->test.pp.pc, funcs:firstrow(test.pp.cr)->test.pp.cr
   └─IndexLookUp_21	0.00	root		
     ├─IndexRangeScan_18(Build)	0.00	cop[tikv]	table:pp, index:sp(uid, pi)	range:[18089709 510017,18089709 510017], [18089709 520017,18089709 520017], [18090780 510017,18090780 510017], [18090780 520017,18090780 520017], keep order:false, stats:pseudo
     └─Selection_20(Probe)	0.00	cop[tikv]		eq(test.pp.ps, 2), ge(test.pp.ppt, 1478188800), lt(test.pp.ppt, 1478275200)

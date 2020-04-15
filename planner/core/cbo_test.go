@@ -132,7 +132,7 @@ func (s *testAnalyzeSuite) TestCBOWithoutAnalyze(c *C) {
 		"    └─TableFullScan_10 6.00 cop[tikv] table:t1 keep order:false",
 	))
 	testKit.MustQuery("explain format = 'hint' select * from t1, t2 where t1.a = t2.a").Check(testkit.Rows(
-		"USE_INDEX(@`sel_1` `test`.`t1` ), USE_INDEX(@`sel_1` `test`.`t2` ), HASH_JOIN(@`sel_1` `test`.`t1`)"))
+		"use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` ), hash_join(@`sel_1` `test`.`t1`)"))
 }
 
 func (s *testAnalyzeSuite) TestStraightJoin(c *C) {
