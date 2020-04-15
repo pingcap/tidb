@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/stringutil"
 )
 
 // Type returns type of BinaryJSON as string.
@@ -778,7 +779,7 @@ func PeekBytesAsJSON(b []byte) (n int, err error) {
 		err = errors.New("Cant peek from empty bytes")
 		return
 	}
-	switch c := TypeCode(b[0]); c {
+	switch c := b[0]; c {
 	case TypeCodeObject, TypeCodeArray:
 		if len(b) >= valTypeSize+headerSize {
 			size := endian.Uint32(b[valTypeSize+dataSizeOff:])
@@ -878,6 +879,47 @@ func (bj BinaryJSON) GetElemDepth() int {
 	default:
 		return 1
 	}
+}
+
+// Search for JSON_Search
+// rules referenced by MySQL JSON_SEARCH function
+// [https://dev.mysql.com/doc/refman/5.7/en/json-search-functions.html#function_json-search]
+func (bj BinaryJSON) Search(containType string, search string, escape byte, pathExpres []PathExpression) (res BinaryJSON, isNull bool, err error) {
+	if containType != ContainsPathOne && containType != ContainsPathAll {
+		return res, true, ErrInvalidJSONPath
+	}
+	patChars, patTypes := stringutil.CompilePattern(search, escape)
+
+	result := make([]interface{}, 0)
+	walkFn := func(fullpath PathExpression, bj BinaryJSON) (stop bool, err error) {
+		if bj.TypeCode == TypeCodeString && stringutil.DoMatch(string(bj.GetString()), patChars, patTypes) {
+			result = append(result, fullpath.String())
+			if containType == ContainsPathOne {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+	if len(pathExpres) != 0 {
+		err := bj.Walk(walkFn, pathExpres...)
+		if err != nil {
+			return res, true, err
+		}
+	} else {
+		err := bj.Walk(walkFn)
+		if err != nil {
+			return res, true, err
+		}
+	}
+	switch len(result) {
+	case 0:
+		return res, true, nil
+	case 1:
+		return CreateBinary(result[0]), false, nil
+	default:
+		return CreateBinary(result), false, nil
+	}
+
 }
 
 // extractCallbackFn: the type of CALLBACK function for extractToCallback

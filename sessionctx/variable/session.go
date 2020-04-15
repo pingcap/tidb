@@ -1041,7 +1041,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.MaxExecutionTime = uint64(timeoutMS)
 	case InnodbLockWaitTimeout:
 		lockWaitSec := tidbOptInt64(val, DefInnodbLockWaitTimeout)
-		s.LockWaitTimeout = int64(lockWaitSec * 1000)
+		s.LockWaitTimeout = lockWaitSec * 1000
 	case WindowingUseHighPrecision:
 		s.WindowingUseHighPrecision = TiDBOptOn(val)
 	case TiDBSkipUTF8Check:
@@ -1271,6 +1271,13 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 			config.GetGlobalConfig().CheckMb4ValueInUTF8 = TiDBOptOn(val)
 		} else {
 			s.StmtCtx.AppendWarning(errors.Errorf("cannot update %s when enabling dynamic configs", TiDBCheckMb4ValueInUTF8))
+		}
+	case TiDBEnableCollectExecutionInfo:
+		conf := config.GetGlobalConfig()
+		if !conf.EnableDynamicConfig {
+			config.GetGlobalConfig().EnableCollectExecutionInfo = TiDBOptOn(val)
+		} else {
+			s.StmtCtx.AppendWarning(errors.Errorf("cannot update %s when enabling dynamic configs", TiDBEnableCollectExecutionInfo))
 		}
 	}
 	s.systems[name] = val
