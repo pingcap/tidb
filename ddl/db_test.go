@@ -456,9 +456,7 @@ LOOP:
 	}
 
 	idx := tables.NewIndex(t.Meta().ID, t.Meta(), c3IdxInfo)
-	checkDelRangeDongo backgroundExec(s.store, "alter table t1 change c2 c2 bigint not null;", done)
-3295
-e(c, ctx, idx)
+	checkDelRangeDone(c, ctx, idx)
 	d.(ddl.DDLForTest).SetHook(originalHook)
 }
 
