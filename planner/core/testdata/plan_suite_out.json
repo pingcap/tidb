@@ -748,11 +748,7 @@
       },
       {
         "SQL": "select a from t where not a",
-<<<<<<< HEAD
-        "Best": "IndexReader(Index(t.f)[[NULL,+inf]]->Sel([not(test.t.a)]))"
-=======
         "Best": "TableReader(Table(t))"
->>>>>>> 90c3759... expression: fix double negation error when PushDownNot (#16094)
       },
       {
         "SQL": "select a from t where c in (1)",

@@ -474,13 +474,10 @@ func (c *ifFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	}
 	retTp := InferType4ControlFuncs(args[1].GetType(), args[2].GetType())
 	evalTps := retTp.EvalType()
-<<<<<<< HEAD
-=======
 	args[0], err = wrapWithIsTrue(ctx, true, args[0], false)
 	if err != nil {
 		return nil, err
 	}
->>>>>>> 90c3759... expression: fix double negation error when PushDownNot (#16094)
 	bf := newBaseBuiltinFuncWithTp(ctx, args, evalTps, types.ETInt, evalTps, evalTps)
 	retTp.Flag |= bf.tp.Flag
 	bf.tp = retTp
