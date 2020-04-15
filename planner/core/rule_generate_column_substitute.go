@@ -45,33 +45,13 @@ func (gc *gcSubstituter) optimize(ctx context.Context, lp LogicalPlan) (LogicalP
 	return gc.substitute(ctx, lp, exprToColumn), nil
 }
 
-// Classification rules should be the same as server.dumpTextRow.
-func getStoreType(colType *types.FieldType) byte {
+// Only integers can be substituted between different types now.
+func getSubstitutableType(colType *types.FieldType) int {
 	switch colType.Tp {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
-		return 1
-	case mysql.TypeFloat:
-		return 2
-	case mysql.TypeDouble:
-		return 3
-	case mysql.TypeNewDecimal:
-		return 4
-	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-		return 5
-	case mysql.TypeDuration:
-		return 6
-	case mysql.TypeEnum:
-		return 7
-	case mysql.TypeSet:
-		return 8
-	case mysql.TypeJSON:
-		return 9
-	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBit,
-		mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
-		return 10
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		return -1
 	}
-	// TODO: add error handle.
-	return 0
+	return int(colType.Tp)
 }
 
 // collectGenerateColumn collect the generate column and save them to a map from their expressions to themselves.
@@ -92,7 +72,7 @@ func collectGenerateColumn(lp LogicalPlan, exprToColumn ExprColumnMap) {
 			if colInfo.IsGenerated() && !colInfo.GeneratedStored {
 				s := ds.schema.Columns
 				col := expression.ColInfo2Col(s, colInfo)
-				if col != nil && getStoreType(col.GetType()) == getStoreType(col.VirtualExpr.GetType()) {
+				if col != nil && getSubstitutableType(col.GetType()) == getSubstitutableType(col.VirtualExpr.GetType()) {
 					exprToColumn[col.VirtualExpr] = col
 				}
 			}

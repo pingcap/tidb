@@ -175,3 +175,27 @@ create table t(c0 float, c1 float as (c0+1) unique);
 insert into t(c0) values (1.1),(2.2);
 explain select c0+1 from t;
 select c0+1 from t;
+
+drop table if exists t;
+create table t(c0 int, c1 tinyint as (c0) unique);
+insert into t(c0) values (1),(127);
+desc select * from t;
+select * from t;
+
+drop table if exists t;
+create table t(c0 int, c1 year as (c0) unique);
+insert into t(c0) values (48);
+desc select * from t;
+select * from t;
+
+drop table t;
+create table t(c0 varchar(10), c1 char(10) as (c0) unique);
+insert into t(c0) values ("a         ");
+desc select * from t;
+select * from t;
+
+drop table if exists t;
+create table t(c0 timestamp, c1 date as (c0) unique);
+insert into t(c0) values('2038-01-19 03:14:07.999999');
+desc select * from t;
+select * from t;
