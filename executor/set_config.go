@@ -84,7 +84,6 @@ var TestSetConfigServerInfoKey stringutil.StringerStr = "TestSetConfigServerInfo
 // TestSetConfigHTTPHandlerKey is used as the key to store 'TestSetConfigDoRequestFunc' in the context.
 var TestSetConfigHTTPHandlerKey stringutil.StringerStr = "TestSetConfigHTTPHandlerKey"
 
-
 // Next implements the Executor Next interface.
 func (s *SetConfigExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
