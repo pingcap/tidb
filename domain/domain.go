@@ -409,10 +409,10 @@ func (do *Domain) ShowSlowQuery(showSlow *ast.ShowSlow) []*SlowQueryInfo {
 func (do *Domain) topNSlowQueryLoop() {
 	ticker := time.NewTicker(time.Minute * 10)
 	defer func() {
-		recoverInDomain("topNSlowQueryLoop", false)
 		ticker.Stop()
 		do.wg.Done()
 		logutil.BgLogger().Info("topNSlowQueryLoop exited.")
+		recoverInDomain("topNSlowQueryLoop", false)
 	}()
 	for {
 		select {
@@ -440,9 +440,9 @@ func (do *Domain) topNSlowQueryLoop() {
 
 func (do *Domain) infoSyncerKeeper() {
 	defer func() {
-		recoverInDomain("infoSyncerKeeper", false)
 		do.wg.Done()
 		logutil.BgLogger().Info("infoSyncerKeeper exited.")
+		recoverInDomain("infoSyncerKeeper", false)
 	}()
 	ticker := time.NewTicker(infosync.ReportInterval)
 	defer ticker.Stop()
@@ -465,10 +465,10 @@ func (do *Domain) infoSyncerKeeper() {
 func (do *Domain) topologySyncerKeeper() {
 	ticker := time.NewTicker(infosync.TopologyTimeToRefresh)
 	defer func() {
-		recoverInDomain("topologySyncerKeeper", false)
 		ticker.Stop()
 		do.wg.Done()
 		logutil.BgLogger().Info("topologySyncerKeeper exited.")
+		recoverInDomain("topologySyncerKeeper", false)
 	}()
 
 	for {
@@ -495,10 +495,11 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 	// Use lease/2 here as recommend by paper.
 	ticker := time.NewTicker(lease / 2)
 	defer func() {
-		recoverInDomain("loadSchemaInLoop", true)
 		ticker.Stop()
 		do.wg.Done()
 		logutil.BgLogger().Info("loadSchemaInLoop exited.")
+		recoverInDomain("loadSchemaInLoop", true)
+
 	}()
 	syncer := do.ddl.SchemaSyncer()
 
@@ -837,9 +838,9 @@ func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 	do.wg.Add(1)
 	go func() {
 		defer func() {
-			recoverInDomain("loadPrivilegeInLoop", false)
 			do.wg.Done()
 			logutil.BgLogger().Info("loadPrivilegeInLoop exited.")
+			recoverInDomain("loadPrivilegeInLoop", false)
 		}()
 		var count int
 		for {
@@ -901,9 +902,9 @@ func (do *Domain) globalBindHandleWorkerLoop() {
 	do.wg.Add(1)
 	go func() {
 		defer func() {
-			recoverInDomain("globalBindHandleWorkerLoop", false)
 			do.wg.Done()
 			logutil.BgLogger().Info("globalBindHandleWorkerLoop exited.")
+			recoverInDomain("globalBindHandleWorkerLoop", false)
 		}()
 		bindWorkerTicker := time.NewTicker(bindinfo.Lease)
 		defer bindWorkerTicker.Stop()
@@ -930,9 +931,9 @@ func (do *Domain) handleEvolvePlanTasksLoop(ctx sessionctx.Context) {
 	do.wg.Add(1)
 	go func() {
 		defer func() {
-			recoverInDomain("handleEvolvePlanTasksLoop", false)
 			do.wg.Done()
 			logutil.BgLogger().Info("handleEvolvePlanTasksLoop exited.")
+			recoverInDomain("handleEvolvePlanTasksLoop", false)
 		}()
 		owner := do.newOwnerManager(bindinfo.Prompt, bindinfo.OwnerKey)
 		for {
@@ -1030,10 +1031,10 @@ func (do *Domain) loadStatsWorker() {
 	}
 	loadTicker := time.NewTicker(lease)
 	defer func() {
-		recoverInDomain("loadStatsWorker", false)
 		loadTicker.Stop()
 		do.wg.Done()
 		logutil.BgLogger().Info("loadStatsWorker exited.")
+		recoverInDomain("loadStatsWorker", false)
 	}()
 	statsHandle := do.StatsHandle()
 	t := time.Now()
@@ -1068,7 +1069,6 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	loadFeedbackTicker := time.NewTicker(5 * lease)
 	statsHandle := do.StatsHandle()
 	defer func() {
-		recoverInDomain("updateStatsWorker", false)
 		loadFeedbackTicker.Stop()
 		dumpFeedbackTicker.Stop()
 		gcStatsTicker.Stop()
@@ -1076,6 +1076,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 		do.SetStatsUpdating(false)
 		do.wg.Done()
 		logutil.BgLogger().Info("updateStatsWorker exited.")
+		recoverInDomain("updateStatsWorker", false)
 	}()
 	for {
 		select {
@@ -1122,13 +1123,13 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 }
 
 func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
-	defer recoverInDomain("autoAnalyzeWorker", false)
 	statsHandle := do.StatsHandle()
 	analyzeTicker := time.NewTicker(do.statsLease)
 	defer func() {
 		analyzeTicker.Stop()
 		do.wg.Done()
 		logutil.BgLogger().Info("autoAnalyzeWorker exited.")
+		defer recoverInDomain("autoAnalyzeWorker", false)
 	}()
 	for {
 		select {
