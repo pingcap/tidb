@@ -107,7 +107,7 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 				// final round of fetch
 				// TODO: Add a label to distinguish between success or failure.
 				// https://github.com/pingcap/tidb/issues/11397
-				metrics.DistSQLQueryHistgram.WithLabelValues(r.label, r.sqlType).Observe(r.fetchDuration.Seconds())
+				metrics.DistSQLQueryHistogram.WithLabelValues(r.label, r.sqlType).Observe(r.fetchDuration.Seconds())
 				r.durationReported = true
 			}
 			return nil
