@@ -139,11 +139,12 @@ type twoPhaseCommitter struct {
 	commitTS         uint64
 	priority         pb.CommandPri
 	connID           uint64 // connID is used for log.
+	ttlMngLifetime   uint64
+	concurrency      int
 	cleanWg          sync.WaitGroup
 	detail           unsafe.Pointer
 	txnSize          int
 	noNeedCommitKeys map[string]struct{}
-	concurrency      int
 
 	primaryKey  []byte
 	forUpdateTS uint64
@@ -218,8 +219,9 @@ type batchExecutor struct {
 // newTwoPhaseCommitter creates a twoPhaseCommitter.
 func newTwoPhaseCommitter(ctx context.Context, txn *tikvTxn) (*twoPhaseCommitter, error) {
 	var (
-		connID      uint64
-		concurrency = variable.DefTwoPhaseCommitterConcurrency
+		connID         uint64
+		concurrency    = variable.DefTwoPhaseCommitterConcurrency
+		ttlMngLifetime = variable.DefTTLMngLifetime
 	)
 	val := ctx.Value(sessionctx.ConnID)
 	if val != nil {
@@ -229,13 +231,18 @@ func newTwoPhaseCommitter(ctx context.Context, txn *tikvTxn) (*twoPhaseCommitter
 	if val != nil {
 		concurrency = val.(int)
 	}
+	val = ctx.Value(sessionctx.TTLMngLifetime)
+	if val != nil {
+		ttlMngLifetime = val.(uint64)
+	}
 	return &twoPhaseCommitter{
-		store:         txn.store,
-		txn:           txn,
-		startTS:       txn.StartTS(),
-		connID:        connID,
-		concurrency:   concurrency,
-		regionTxnSize: map[uint64]int{},
+		store:          txn.store,
+		txn:            txn,
+		startTS:        txn.StartTS(),
+		connID:         connID,
+		concurrency:    concurrency,
+		ttlMngLifetime: ttlMngLifetime,
+		regionTxnSize:  map[uint64]int{},
 		ttlManager: ttlManager{
 			ch: make(chan struct{}),
 		},
@@ -745,9 +752,8 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 			}
 
 			uptime := uint64(oracle.ExtractPhysical(now) - oracle.ExtractPhysical(c.startTS))
-			const c10min = 10 * 60 * 1000
-			if uptime > c10min {
-				// Set a 10min maximum lifetime for the ttlManager, so when something goes wrong
+			if uptime > c.ttlMngLifetime {
+				// Checks lifetime for the ttlManager, so when something goes wrong
 				// the key will not be locked forever.
 				logutil.Logger(bo.ctx).Info("ttlManager live up to its lifetime",
 					zap.Uint64("txnStartTS", c.startTS))

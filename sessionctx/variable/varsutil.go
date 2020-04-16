@@ -463,7 +463,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			}
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-	case MaxExecutionTime:
+	case MaxExecutionTime, TiDBTTLManagerLifetime:
 		return checkUInt64SystemVar(name, value, 0, math.MaxUint64, vars)
 	case ThreadPoolSize:
 		return checkUInt64SystemVar(name, value, 1, 64, vars)
