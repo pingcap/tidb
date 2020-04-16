@@ -231,6 +231,24 @@ func initializeTempDir() {
 	}
 }
 
+<<<<<<< HEAD
+=======
+func checkTempStorageQuota() {
+	// check capacity and the quota when OOMUseTmpStorage is enabled
+	c := config.GetGlobalConfig()
+	if c.TempStorageQuota < 0 {
+		// means unlimited, do nothing
+	} else {
+		capacityByte, err := storageSys.GetTargetDirectoryCapacity(c.TempStoragePath)
+		if err != nil {
+			log.Fatal(err.Error())
+		} else if capacityByte < uint64(c.TempStorageQuota) {
+			log.Fatal(fmt.Sprintf("value of [tmp-storage-quota](%d byte) exceeds the capacity(%d byte) of the [%s] directory", c.TempStorageQuota, capacityByte, c.TempStoragePath))
+		}
+	}
+}
+
+>>>>>>> b2f5921... config: Unify the style for storage quota config name (#16431)
 func setCPUAffinity() {
 	if affinityCPU == nil || len(*affinityCPU) == 0 {
 		return
