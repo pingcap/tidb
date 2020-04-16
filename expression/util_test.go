@@ -145,7 +145,7 @@ func (s *testUtilSuite) TestPushDownNot(c *check.C) {
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
-	c.Assert(ret.Equal(ctx, newFunction(ast.UnaryNot, col)), check.IsFalse)
+	c.Assert(ret.Equal(ctx, newFunction(ast.UnaryNot, col)), check.IsTrue)
 
 	// (not not not not a) should be optimized to (not not a)
 	notFunc = newFunction(ast.UnaryNot, col)
@@ -153,7 +153,7 @@ func (s *testUtilSuite) TestPushDownNot(c *check.C) {
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
-	c.Assert(ret.Equal(ctx, newFunction(ast.UnaryNot, newFunction(ast.UnaryNot, col))), check.IsFalse)
+	c.Assert(ret.Equal(ctx, newFunction(ast.UnaryNot, newFunction(ast.UnaryNot, col))), check.IsTrue)
 }
 
 func (s *testUtilSuite) TestFilter(c *check.C) {
