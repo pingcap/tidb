@@ -46,6 +46,8 @@ func (gc *gcSubstituter) optimize(ctx context.Context, lp LogicalPlan) (LogicalP
 }
 
 // Only integers can be substituted between different types now.
+// Because they are all stored as 64-bit integers in chunks.
+// And the inserted value will meet the requirements of virtual column type and virtual column expression type.
 func getSubstitutableType(colType *types.FieldType) int {
 	switch colType.Tp {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
@@ -54,6 +56,9 @@ func getSubstitutableType(colType *types.FieldType) int {
 	return int(colType.Tp)
 }
 
+// We do not check whether flen is the same.
+// Because different flen will not cause data truncation.
+// See https://github.com/pingcap/tidb/pull/16316.
 func checkSubstitutability(c1, c2 *types.FieldType) bool {
 	partialEqual := c1.Decimal == c2.Decimal &&
 		c1.Charset == c2.Charset &&
