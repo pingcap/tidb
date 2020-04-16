@@ -55,9 +55,20 @@ func getSubstitutableType(colType *types.FieldType) int {
 }
 
 func checkSubstitutability(c1, c2 *types.FieldType) bool {
-	return getSubstitutableType(c1) == getSubstitutableType(c2) &&
-		c1.Decimal == c2.Decimal &&
-		c1.Collate == c2.Collate
+	partialEqual := c1.Decimal == c2.Decimal &&
+		c1.Charset == c2.Charset &&
+		c1.Collate == c2.Collate &&
+		getSubstitutableType(c1) == getSubstitutableType(c2) &&
+		mysql.HasUnsignedFlag(c1.Flag) == mysql.HasUnsignedFlag(c2.Flag)
+	if !partialEqual || len(c1.Elems) != len(c2.Elems) {
+		return false
+	}
+	for i := range c1.Elems {
+		if c1.Elems[i] != c2.Elems[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // collectGenerateColumn collect the generate column and save them to a map from their expressions to themselves.
