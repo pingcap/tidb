@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/v4/sessionctx"
 	"github.com/pingcap/tidb/v4/types"
-	driver "github.com/pingcap/tidb/v4/types/parser_driver"
+	"github.com/pingcap/tidb/v4/types/parser_driver"
 	"github.com/pingcap/tidb/v4/util/chunk"
 	"github.com/pingcap/tidb/v4/util/logutil"
 	"go.uber.org/zap"
@@ -336,6 +336,24 @@ func timeZone2Duration(tz string) time.Duration {
 	return time.Duration(sign) * (time.Duration(h)*time.Hour + time.Duration(m)*time.Minute)
 }
 
+var logicalOps = map[string]struct{}{
+	ast.LT:        {},
+	ast.GE:        {},
+	ast.GT:        {},
+	ast.LE:        {},
+	ast.EQ:        {},
+	ast.NE:        {},
+	ast.UnaryNot:  {},
+	ast.LogicAnd:  {},
+	ast.LogicOr:   {},
+	ast.LogicXor:  {},
+	ast.In:        {},
+	ast.IsNull:    {},
+	ast.IsTruth:   {},
+	ast.IsFalsity: {},
+	ast.Like:      {},
+}
+
 var oppositeOp = map[string]string{
 	ast.LT:       ast.GE,
 	ast.GE:       ast.LT,
@@ -369,12 +387,24 @@ func pushNotAcrossArgs(ctx sessionctx.Context, exprs []Expression, not bool) ([]
 	return newExprs, flag
 }
 
-// pushNotAcrossExpr try to eliminate the NOT expr in expression tree. It will records whether there's already NOT pushed.
-func pushNotAcrossExpr(ctx sessionctx.Context, expr Expression, not bool) (Expression, bool) {
+// pushNotAcrossExpr try to eliminate the NOT expr in expression tree.
+// Input `not` indicates whether there's a `NOT` be pushed down.
+// Output `changed` indicates whether the output expression differs from the
+// input `expr` because of the pushed-down-not.
+func pushNotAcrossExpr(ctx sessionctx.Context, expr Expression, not bool) (_ Expression, changed bool) {
 	if f, ok := expr.(*ScalarFunction); ok {
 		switch f.FuncName.L {
 		case ast.UnaryNot:
-			return pushNotAcrossExpr(f.GetCtx(), f.GetArgs()[0], !not)
+			child, err := wrapWithIsTrue(ctx, true, f.GetArgs()[0], true)
+			if err != nil {
+				return expr, false
+			}
+			var childExpr Expression
+			childExpr, changed = pushNotAcrossExpr(f.GetCtx(), child, !not)
+			if !changed && !not {
+				return expr, false
+			}
+			return childExpr, true
 		case ast.LT, ast.GE, ast.GT, ast.LE, ast.EQ, ast.NE:
 			if not {
 				return NewFunctionInternal(f.GetCtx(), oppositeOp[f.FuncName.L], f.GetType(), f.GetArgs()...), true
