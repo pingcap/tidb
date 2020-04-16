@@ -1201,3 +1201,28 @@ func (s *testTableSuite) TestStmtSummaryInternalQuery(c *C) {
 		"1 select original_sql , bind_sql , default_db , status , create_time , update_time , charset , collation from mysql . bind_info" +
 			" where update_time > ? order by update_time"))
 }
+
+// Test error count and warning count.
+func (s *testTableSuite) TestStmtSummaryErrorCount(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	// clear summaries
+	tk.MustExec("set global tidb_enable_stmt_summary = 0")
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+	defer tk.MustExec("set global tidb_enable_stmt_summary = ''")
+
+	tk.MustExec("drop table if exists stmt_summary_test")
+	tk.MustExec("create table stmt_summary_test(id int primary key)")
+	tk.MustExec("insert into stmt_summary_test values(1)")
+	_, err := tk.Exec("insert into stmt_summary_test values(1)")
+	c.Assert(err, NotNil)
+
+	tk.MustQuery(`select exec_count, sum_errors, sum_warnings
+		from information_schema.statements_summary
+		where digest_text like "insert into stmt_summary_test%"`).Check(testkit.Rows("2 1 0"))
+
+	tk.MustExec("insert ignore into stmt_summary_test values(1)")
+	tk.MustQuery(`select exec_count, sum_errors, sum_warnings
+		from information_schema.statements_summary
+		where digest_text like "insert ignore into stmt_summary_test%"`).Check(testkit.Rows("1 0 1"))
+}
