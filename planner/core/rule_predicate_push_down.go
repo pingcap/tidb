@@ -321,7 +321,7 @@ func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
 // If it is a conjunction containing a null-rejected condition as a conjunct.
 // If it is a disjunction of null-rejected conditions.
 func isNullRejected(ctx sessionctx.Context, schema *expression.Schema, expr expression.Expression) bool {
-	expr = expression.PushDownNot(nil, expr, false)
+	expr = expression.PushDownNot(ctx, expr)
 	sc := ctx.GetSessionVars().StmtCtx
 	sc.InNullRejectCheck = true
 	result := expression.EvaluateExprWithNull(ctx, schema, expr)
