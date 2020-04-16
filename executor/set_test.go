@@ -15,6 +15,9 @@ package executor_test
 
 import (
 	"context"
+	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/infoschema"
+	"net/http"
 	"strconv"
 
 	. "github.com/pingcap/check"
@@ -928,4 +931,20 @@ func (s *testSuite5) TestEnableNoopFunctionsVar(c *C) {
 }
 
 func (s *testSuite5) TestSetClusterConfig(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	serversInfo := []infoschema.ServerInfo{
+		{ServerType: "tidb", Address: "127.0.0.1:1111", StatusAddr: "127.0.0.1:1111"}, {},
+	}
+	var serverInfoErr error
+	serverInfoFunc := func(sessionctx.Context) ([]infoschema.ServerInfo, error) {
+		return serversInfo, serverInfoErr
+	}
+	tk.Se.SetValue(executor.TestSetConfigServerInfoKey, serverInfoFunc)
+
+	httpHandler := func(r *http.Request) (*http.Response, error) {
+		return nil, nil
+	}
+	tk.Se.SetValue(executor.TestSetConfigHTTPHandlerKey, httpHandler)
 }

@@ -17,6 +17,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/stringutil"
 	"io/ioutil"
 	"net"
 	"net/http"
@@ -74,9 +76,20 @@ func (s *SetConfigExec) Open(ctx context.Context) error {
 	return nil
 }
 
+// TestSetConfigServerInfoKey is used as the key to store 'TestSetConfigServerInfoFunc' in the context.
+var TestSetConfigServerInfoKey stringutil.StringerStr = "TestSetConfigServerInfoKey"
+
+// TestSetConfigHTTPHandlerKey is used as the key to store 'TestSetConfigDoRequestFunc' in the context.
+var TestSetConfigHTTPHandlerKey stringutil.StringerStr = "TestSetConfigHTTPHandlerKey"
+
 func (s *SetConfigExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
-	serversInfo, err := infoschema.GetClusterServerInfo(s.ctx)
+	getServerFunc := infoschema.GetClusterServerInfo
+	if v := s.ctx.Value(TestSetConfigServerInfoKey); v != nil {
+		getServerFunc = v.(func(sessionctx.Context) ([]infoschema.ServerInfo, error))
+	}
+
+	serversInfo, err := getServerFunc(s.ctx)
 	if err != nil {
 		return err
 	}
@@ -113,7 +126,13 @@ func (s *SetConfigExec) doRequest(url string) error {
 	if err != nil {
 		return err
 	}
-	resp, err := util.InternalHTTPClient().Do(req)
+	var httpHandler func(req *http.Request) (*http.Response, error)
+	if v := s.ctx.Value(TestSetConfigHTTPHandlerKey); v != nil {
+		httpHandler = v.(func(*http.Request) (*http.Response, error))
+	} else {
+		httpHandler = util.InternalHTTPClient().Do
+	}
+	resp, err := httpHandler(req)
 	if err != nil {
 		return err
 	}
