@@ -40,7 +40,9 @@ import (
 type Tracker struct {
 	mu struct {
 		sync.Mutex
-		children []*Tracker // The children memory trackers
+		// The children memory trackers. If the Tracker is the Global Tracker, like executor.GlobalDiskUsageTracker,
+		// we wouldn't maintain its children in order to avoiding mutex contention.
+		children []*Tracker
 	}
 	actionMu struct {
 		sync.Mutex
@@ -52,17 +54,31 @@ type Tracker struct {
 	bytesLimit    int64        // bytesLimit <= 0 means no limit.
 	maxConsumed   int64        // max number of bytes consumed during execution.
 	parent        *Tracker     // The parent memory tracker.
+	isGlobal      bool         // isGlobal indicates whether this tracker is global tracker
 }
 
 // NewTracker creates a memory tracker.
 //	1. "label" is the label used in the usage string.
 //	2. "bytesLimit <= 0" means no limit.
+// For the common tracker, isGlobal is default as false
 func NewTracker(label fmt.Stringer, bytesLimit int64) *Tracker {
 	t := &Tracker{
 		label:      label,
 		bytesLimit: bytesLimit,
 	}
 	t.actionMu.actionOnExceed = &LogOnExceed{}
+	t.isGlobal = false
+	return t
+}
+
+// NewGlobalTracker creates a global tracker, its isGlobal is default as true
+func NewGlobalTracker(label fmt.Stringer, bytesLimit int64) *Tracker {
+	t := &Tracker{
+		label:      label,
+		bytesLimit: bytesLimit,
+	}
+	t.actionMu.actionOnExceed = &LogOnExceed{}
+	t.isGlobal = true
 	return t
 }
 
@@ -274,4 +290,39 @@ func (t *Tracker) BytesToString(numBytes int64) string {
 	}
 
 	return fmt.Sprintf("%v Bytes", numBytes)
+}
+
+// AttachToGlobalTracker attach the tracker to the global tracker
+// AttachToGlobalTracker should be called at the initialization for the session executor's tracker
+func (t *Tracker) AttachToGlobalTracker(globalTracker *Tracker) {
+	if globalTracker == nil {
+		return
+	}
+	if !globalTracker.isGlobal {
+		panic("Attach to a non-GlobalTracker")
+	}
+	if t.parent != nil {
+		if t.parent.isGlobal {
+			t.parent.Consume(-t.BytesConsumed())
+		} else {
+			t.parent.remove(t)
+		}
+	}
+	t.parent = globalTracker
+	t.parent.Consume(t.BytesConsumed())
+}
+
+// DetachFromGlobalTracker detach itself from its parent
+// Note that only the parent of this tracker is Global Tracker could call this function
+// Otherwise it should use Detach
+func (t *Tracker) DetachFromGlobalTracker() {
+	if t.parent == nil {
+		return
+	}
+	if !t.parent.isGlobal {
+		panic("Detach from a non-GlobalTracker")
+	}
+	parent := t.parent
+	parent.Consume(-t.BytesConsumed())
+	t.parent = nil
 }

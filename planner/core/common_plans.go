@@ -908,16 +908,10 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 		err = e.explainPlanInRowFormat(x.indexPlan, "cop[tikv]", "(Build)", childIndent, false)
 		err = e.explainPlanInRowFormat(x.tablePlan, "cop[tikv]", "(Probe)", childIndent, true)
 	case *PhysicalIndexMergeReader:
-		for i, pchild := range x.partialPlans {
-			if x.tablePlan != nil || i < len(x.partialPlans)-1 {
-				err = e.explainPlanInRowFormat(pchild, "cop[tikv]", "(Build)", childIndent, false)
-			} else {
-				err = e.explainPlanInRowFormat(pchild, "cop[tikv]", "(Probe)", childIndent, true)
-			}
+		for _, pchild := range x.partialPlans {
+			err = e.explainPlanInRowFormat(pchild, "cop[tikv]", "(Build)", childIndent, false)
 		}
-		if x.tablePlan != nil {
-			err = e.explainPlanInRowFormat(x.tablePlan, "cop[tikv]", "(Probe)", childIndent, true)
-		}
+		err = e.explainPlanInRowFormat(x.tablePlan, "cop[tikv]", "(Probe)", childIndent, true)
 	case *Insert:
 		if x.SelectPlan != nil {
 			err = e.explainPlanInRowFormat(x.SelectPlan, "root", "", childIndent, true)
