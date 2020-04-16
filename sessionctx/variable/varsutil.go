@@ -490,6 +490,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		TiDBHashAggFinalConcurrency,
 		TiDBWindowConcurrency,
 		TiDBDistSQLScanConcurrency,
+		TiDBTwoPhaseCommitterConcurrency,
 		TiDBIndexSerialScanConcurrency, TiDBDDLReorgWorkerCount,
 		TiDBBackoffLockFast, TiDBBackOffWeight,
 		TiDBDMLBatchSize, TiDBOptimizerSelectivityLevel:

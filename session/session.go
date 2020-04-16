@@ -2039,6 +2039,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBOptDiskFactor,
 	variable.TiDBOptConcurrencyFactor,
 	variable.TiDBDistSQLScanConcurrency,
+	variable.TiDBTwoPhaseCommitterConcurrency,
 	variable.TiDBInitChunkSize,
 	variable.TiDBMaxChunkSize,
 	variable.TiDBEnableCascadesPlanner,

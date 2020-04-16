@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"math"
 	"math/rand"
 	"strings"
@@ -337,10 +338,12 @@ func errMsgMustContain(c *C, err error, msg string) {
 }
 
 func newTwoPhaseCommitterWithInit(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, error) {
-	c, err := newTwoPhaseCommitter(txn, connID)
+	c, err := newTwoPhaseCommitter(context.Background(), txn)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	c.connID = connID
+	c.concurrency = variable.DefTwoPhaseCommitterConcurrency
 	if err = c.initKeysAndMutations(); err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -230,18 +229,11 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	start := time.Now()
 	defer func() { tikvTxnCmdHistogramWithCommit.Observe(time.Since(start).Seconds()) }()
 
-	// connID is used for log.
-	var connID uint64
-	val := ctx.Value(sessionctx.ConnID)
-	if val != nil {
-		connID = val.(uint64)
-	}
-
 	var err error
 	// If the txn use pessimistic lock, committer is initialized.
 	committer := txn.committer
 	if committer == nil {
-		committer, err = newTwoPhaseCommitter(txn, connID)
+		committer, err = newTwoPhaseCommitter(ctx, txn)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -360,13 +352,8 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 	if txn.IsPessimistic() && lockCtx.ForUpdateTS > 0 {
 		if txn.committer == nil {
 			// connID is used for log.
-			var connID uint64
 			var err error
-			val := ctx.Value(sessionctx.ConnID)
-			if val != nil {
-				connID = val.(uint64)
-			}
-			txn.committer, err = newTwoPhaseCommitter(txn, connID)
+			txn.committer, err = newTwoPhaseCommitter(ctx, txn)
 			if err != nil {
 				return err
 			}

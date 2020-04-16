@@ -129,12 +129,21 @@ const (
 	LastExecuteDDL basicCtxType = 3
 )
 
-type connIDCtxKeyType struct{}
+type (
+	connIDCtxKeyType      struct{}
+	commitConcurrencyType struct{}
+)
 
-// ConnID is the key in context.
-var ConnID = connIDCtxKeyType{}
+var (
+	// ConnID is the key in context for connection id.
+	ConnID = connIDCtxKeyType{}
+	// CommitConcurrencyType is the key in context for commit concurrency.
+	CommitConcurrency = commitConcurrencyType{}
+)
 
 // SetCommitCtx sets connection id into context
 func SetCommitCtx(ctx context.Context, sessCtx Context) context.Context {
-	return context.WithValue(ctx, ConnID, sessCtx.GetSessionVars().ConnectionID)
+	ctx = context.WithValue(ctx, ConnID, sessCtx.GetSessionVars().ConnectionID)
+	ctx = context.WithValue(ctx, CommitConcurrency, sessCtx.GetSessionVars().TwoPhaseCommitterConcurrency)
+	return ctx
 }
