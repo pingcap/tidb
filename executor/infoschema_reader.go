@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/stmtsummary"
 )
 
 type memtableRetriever struct {
@@ -120,6 +121,11 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForServersInfo()
 		case infoschema.TableTiFlashReplica:
 			e.dataForTableTiFlashReplica(sctx, dbs)
+		case infoschema.TableStatementsSummary,
+			infoschema.TableStatementsSummaryHistory,
+			infoschema.ClusterTableStatementsSummary,
+			infoschema.ClusterTableStatementsSummaryHistory:
+			err = e.setDataForStatementsSummary(sctx, e.table.Name.O)
 		}
 		if err != nil {
 			return nil, err
@@ -960,15 +966,21 @@ func (e *memtableRetriever) dataForTiDBClusterInfo(ctx sessionctx.Context) error
 	}
 	rows := make([][]types.Datum, 0, len(servers))
 	for _, server := range servers {
-		startTime := time.Unix(server.StartTimestamp, 0)
+		startTimeStr := ""
+		upTimeStr := ""
+		if server.StartTimestamp > 0 {
+			startTime := time.Unix(server.StartTimestamp, 0)
+			startTimeStr = startTime.Format(time.RFC3339)
+			upTimeStr = time.Since(startTime).String()
+		}
 		row := types.MakeDatums(
 			server.ServerType,
 			server.Address,
 			server.StatusAddr,
 			server.Version,
 			server.GitHash,
-			startTime.Format(time.RFC3339),
-			time.Since(startTime).String(),
+			startTimeStr,
+			upTimeStr,
 		)
 		rows = append(rows, row)
 	}
@@ -1426,7 +1438,6 @@ func (e *memtableRetriever) setDataFromSequences(ctx sessionctx.Context, schemas
 				table.Sequence.Increment,  // INCREMENT
 				table.Sequence.MaxValue,   // MAXVALUE
 				table.Sequence.MinValue,   // MINVALUE
-				table.Sequence.Order,      // ORDER
 				table.Sequence.Start,      // START
 				table.Sequence.Comment,    // COMMENT
 			)
@@ -1478,4 +1489,30 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, s
 	}
 	e.rows = rows
 	return
+}
+
+func (e *memtableRetriever) setDataForStatementsSummary(ctx sessionctx.Context, tableName string) error {
+	user := ctx.GetSessionVars().User
+	isSuper := false
+	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
+		isSuper = pm.RequestVerificationWithUser("", "", "", mysql.SuperPriv, user)
+	}
+	switch tableName {
+	case infoschema.TableStatementsSummary,
+		infoschema.ClusterTableStatementsSummary:
+		e.rows = stmtsummary.StmtSummaryByDigestMap.ToCurrentDatum(user, isSuper)
+	case infoschema.TableStatementsSummaryHistory,
+		infoschema.ClusterTableStatementsSummaryHistory:
+		e.rows = stmtsummary.StmtSummaryByDigestMap.ToHistoryDatum(user, isSuper)
+	}
+	switch tableName {
+	case infoschema.ClusterTableStatementsSummary,
+		infoschema.ClusterTableStatementsSummaryHistory:
+		rows, err := infoschema.AppendHostInfoToRows(e.rows)
+		if err != nil {
+			return err
+		}
+		e.rows = rows
+	}
+	return nil
 }

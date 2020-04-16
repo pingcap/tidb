@@ -68,6 +68,7 @@ const (
 
 	CmdCop CmdType = 512 + iota
 	CmdCopStream
+	CmdBatchCop
 
 	CmdMvccGetByKey CmdType = 1024 + iota
 	CmdMvccGetByStartTs
@@ -136,6 +137,8 @@ func (t CmdType) String() string {
 		return "Cop"
 	case CmdCopStream:
 		return "CopStream"
+	case CmdBatchCop:
+		return "BatchCop"
 	case CmdMvccGetByKey:
 		return "MvccGetByKey"
 	case CmdMvccGetByStartTs:
@@ -307,6 +310,11 @@ func (req *Request) PhysicalScanLock() *kvrpcpb.PhysicalScanLockRequest {
 // Cop returns coprocessor request in request.
 func (req *Request) Cop() *coprocessor.Request {
 	return req.req.(*coprocessor.Request)
+}
+
+// BatchCop returns coprocessor request in request.
+func (req *Request) BatchCop() *coprocessor.BatchRequest {
+	return req.req.(*coprocessor.BatchRequest)
 }
 
 // MvccGetByKey returns MvccGetByKeyRequest in request.
@@ -495,6 +503,14 @@ type CopStreamResponse struct {
 	Lease                 // Shared by this object and a background goroutine.
 }
 
+// BatchCopStreamResponse comprises the BatchCoprocessorClient , the first result and timeout detector.
+type BatchCopStreamResponse struct {
+	tikvpb.Tikv_BatchCoprocessorClient
+	*coprocessor.BatchResponse
+	Timeout time.Duration
+	Lease   // Shared by this object and a background goroutine.
+}
+
 // SetContext set the Context field for the given req to the specified ctx.
 func SetContext(req *Request, region *metapb.Region, peer *metapb.Peer) error {
 	ctx := &req.Context
@@ -561,6 +577,8 @@ func SetContext(req *Request, region *metapb.Region, peer *metapb.Peer) error {
 		req.Cop().Context = ctx
 	case CmdCopStream:
 		req.Cop().Context = ctx
+	case CmdBatchCop:
+		req.BatchCop().Context = ctx
 	case CmdMvccGetByKey:
 		req.MvccGetByKey().Context = ctx
 	case CmdMvccGetByStartTs:
@@ -797,6 +815,12 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 		resp.Resp = &CopStreamResponse{
 			Tikv_CoprocessorStreamClient: streamClient,
 		}
+	case CmdBatchCop:
+		var streamClient tikvpb.Tikv_BatchCoprocessorClient
+		streamClient, err = client.BatchCoprocessor(ctx, req.BatchCop())
+		resp.Resp = &BatchCopStreamResponse{
+			Tikv_BatchCoprocessorClient: streamClient,
+		}
 	case CmdMvccGetByKey:
 		resp.Resp, err = client.MvccGetByKey(ctx, req.MvccGetByKey())
 	case CmdMvccGetByStartTs:
@@ -850,6 +874,27 @@ func (resp *CopStreamResponse) Recv() (*coprocessor.Response, error) {
 
 // Close closes the CopStreamResponse object.
 func (resp *CopStreamResponse) Close() {
+	atomic.StoreInt64(&resp.Lease.deadline, 1)
+	// We also call cancel here because CheckStreamTimeoutLoop
+	// is not guaranteed to cancel all items when it exits.
+	if resp.Lease.Cancel != nil {
+		resp.Lease.Cancel()
+	}
+}
+
+// Recv overrides the stream client Recv() function.
+func (resp *BatchCopStreamResponse) Recv() (*coprocessor.BatchResponse, error) {
+	deadline := time.Now().Add(resp.Timeout).UnixNano()
+	atomic.StoreInt64(&resp.Lease.deadline, deadline)
+
+	ret, err := resp.Tikv_BatchCoprocessorClient.Recv()
+
+	atomic.StoreInt64(&resp.Lease.deadline, 0) // Stop the lease check.
+	return ret, errors.Trace(err)
+}
+
+// Close closes the CopStreamResponse object.
+func (resp *BatchCopStreamResponse) Close() {
 	atomic.StoreInt64(&resp.Lease.deadline, 1)
 	// We also call cancel here because CheckStreamTimeoutLoop
 	// is not guaranteed to cancel all items when it exits.

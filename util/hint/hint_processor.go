@@ -95,7 +95,7 @@ func RestoreTableOptimizerHint(hint *ast.TableOptimizerHint) string {
 	if err != nil {
 		logutil.BgLogger().Debug("restore TableOptimizerHint failed", zap.Error(err))
 	}
-	return sb.String()
+	return strings.ToLower(sb.String())
 }
 
 // RestoreIndexHint returns string format of IndexHint.
@@ -107,7 +107,7 @@ func RestoreIndexHint(hint *ast.IndexHint) (string, error) {
 		logutil.BgLogger().Debug("restore IndexHint failed", zap.Error(err))
 		return "", err
 	}
-	return sb.String(), nil
+	return strings.ToLower(sb.String()), nil
 }
 
 // Restore returns the string format of HintsSet.
@@ -184,13 +184,55 @@ func BindHint(stmt ast.StmtNode, hintsSet *HintsSet) ast.StmtNode {
 	return stmt
 }
 
-// ParseHintsSet parses a SQL string and collect HintsSet.
-func ParseHintsSet(p *parser.Parser, sql, charset, collation string) (*HintsSet, error) {
-	stmtNode, err := p.ParseOneStmt(sql, charset, collation)
+// ParseHintsSet parses a SQL string, then collects and normalizes the HintsSet.
+func ParseHintsSet(p *parser.Parser, sql, charset, collation, db string) (*HintsSet, []error, error) {
+	stmtNodes, warns, err := p.Parse(sql, charset, collation)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return CollectHint(stmtNode), nil
+	if len(stmtNodes) != 1 {
+		return nil, nil, errors.New(fmt.Sprintf("bind_sql must be a single statement: %s", sql))
+	}
+	hs := CollectHint(stmtNodes[0])
+	processor := &BlockHintProcessor{}
+	stmtNodes[0].Accept(processor)
+	for i, tblHints := range hs.tableHints {
+		newHints := make([]*ast.TableOptimizerHint, 0, len(tblHints))
+		for _, tblHint := range tblHints {
+			if tblHint.HintName.L == hintQBName {
+				continue
+			}
+			offset := processor.GetHintOffset(tblHint.QBName, TypeSelect, i+1)
+			if offset < 0 || !processor.checkTableQBName(tblHint.Tables, TypeSelect) {
+				hintStr := RestoreTableOptimizerHint(tblHint)
+				return nil, nil, errors.New(fmt.Sprintf("Unknown query block name in hint %s", hintStr))
+			}
+			tblHint.QBName = GenerateQBName(TypeSelect, offset)
+			for i, tbl := range tblHint.Tables {
+				if tbl.DBName.String() == "" {
+					tblHint.Tables[i].DBName = model.NewCIStr(db)
+				}
+			}
+			newHints = append(newHints, tblHint)
+		}
+		hs.tableHints[i] = newHints
+	}
+	return hs, extractHintWarns(warns), nil
+}
+
+func extractHintWarns(warns []error) []error {
+	for _, w := range warns {
+		if parser.ErrWarnOptimizerHintUnsupportedHint.Equal(w) ||
+			parser.ErrWarnOptimizerHintInvalidToken.Equal(w) ||
+			parser.ErrWarnMemoryQuotaOverflow.Equal(w) ||
+			parser.ErrWarnOptimizerHintParseError.Equal(w) ||
+			parser.ErrWarnOptimizerHintInvalidInteger.Equal(w) {
+			// Just one warning is enough, however we use a slice here to stop golint complaining
+			// "error should be the last type when returning multiple items" for `ParseHintsSet`.
+			return []error{w}
+		}
+	}
+	return nil
 }
 
 // BlockHintProcessor processes hints at different level of sql statement.
