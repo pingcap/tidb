@@ -611,11 +611,11 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 
 	// refreshInterval may change anytime, update endTime ASAP.
 	ssElement.endTime = ssElement.beginTime + intervalSeconds
+	ssElement.execCount++
 	if !sei.Succeed {
 		ssElement.sumErrors += 1
 	}
 	ssElement.sumWarnings += int(sei.StmtCtx.WarningCount())
-	ssElement.execCount++
 
 	// latency
 	ssElement.sumLatency += sei.TotalLatency
@@ -766,9 +766,9 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		convertEmptyToNil(ssbd.tableNames),
 		convertEmptyToNil(strings.Join(ssElement.indexNames, ",")),
 		convertEmptyToNil(sampleUser),
+		ssElement.execCount,
 		ssElement.sumErrors,
 		ssElement.sumWarnings,
-		ssElement.execCount,
 		int64(ssElement.sumLatency),
 		int64(ssElement.maxLatency),
 		int64(ssElement.minLatency),
