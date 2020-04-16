@@ -12,6 +12,7 @@ type TableDataIR interface {
 	ChunkIndex() int
 	ColumnCount() uint
 	ColumnTypes() []string
+	ColumnNames() []string
 	SelectedField() string
 	EscapeBackSlash() bool
 
@@ -37,6 +38,7 @@ type RowReceiverStringer interface {
 
 type Stringer interface {
 	WriteToBuffer(*bytes.Buffer, bool)
+	WriteToBufferInCsv(*bytes.Buffer, bool)
 }
 
 type RowReceiver interface {

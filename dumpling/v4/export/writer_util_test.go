@@ -71,6 +71,26 @@ func (s *testUtilSuite) TestWriteInsert(c *C) {
 	c.Assert(bf.String(), Equals, expected)
 }
 
+func (s *testUtilSuite) TestWriteInsertInCsv(c *C) {
+	data := [][]driver.Value{
+		{"1", "male", "bob@mail.com", "020-1234", nil},
+		{"2", "female", "sarah@mail.com", "020-1253", "healthy"},
+		{"3", "male", "john@mail.com", "020-1256", "healthy"},
+		{"4", "female", "sarah@mail.com", "020-1235", "healthy"},
+	}
+	colTypes := []string{"INT", "SET", "VARCHAR", "VARCHAR", "TEXT"}
+	tableIR := newMockTableIR("test", "employee", data, nil, colTypes)
+	bf := &bytes.Buffer{}
+
+	err := WriteInsertInCsv(tableIR, bf, true)
+	c.Assert(err, IsNil)
+	expected := "1,\"male\",\"bob@mail.com\",\"020-1234\",\\N\n" +
+		"2,\"female\",\"sarah@mail.com\",\"020-1253\",\"healthy\"\n" +
+		"3,\"male\",\"john@mail.com\",\"020-1256\",\"healthy\"\n" +
+		"4,\"female\",\"sarah@mail.com\",\"020-1235\",\"healthy\"\n"
+	c.Assert(bf.String(), Equals, expected)
+}
+
 func (s *testUtilSuite) TestSQLDataTypes(c *C) {
 	data := [][]driver.Value{
 		{"CHAR", "char1", `'char1'`},

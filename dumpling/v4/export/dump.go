@@ -3,6 +3,7 @@ package export
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"time"
 
 	"github.com/pingcap/dumpling/v4/log"
@@ -76,7 +77,13 @@ func Dump(conf *Config) (err error) {
 		log.Info("get global metadata failed", zap.Error(err))
 	}
 
-	writer, err := NewSimpleWriter(conf)
+	var writer Writer
+	switch strings.ToLower(conf.FileType) {
+	case "sql":
+		writer, err = NewSimpleWriter(conf)
+	case "csv":
+		writer, err = NewCsvWriter(conf)
+	}
 	if err != nil {
 		return err
 	}

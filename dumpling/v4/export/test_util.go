@@ -82,6 +82,7 @@ type mockTableIR struct {
 	selectedField   string
 	specCmt         []string
 	colTypes        []string
+	colNames        []string
 	escapeBackSlash bool
 }
 
@@ -103,6 +104,10 @@ func (m *mockTableIR) ColumnCount() uint {
 
 func (m *mockTableIR) ColumnTypes() []string {
 	return m.colTypes
+}
+
+func (m *mockTableIR) ColumnNames() []string {
+	return m.colNames
 }
 
 func (m *mockTableIR) SelectedField() string {
