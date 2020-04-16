@@ -27,8 +27,9 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/tools/container/intsets"
@@ -215,6 +216,7 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 		if v.InOperand {
 			newExpr = setExprColumnInOperand(newExpr)
 		}
+		newExpr.SetCoercibility(v.Coercibility())
 		return true, newExpr
 	case *ScalarFunction:
 		if v.FuncName.L == ast.Cast {
@@ -226,8 +228,25 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 		// when expr in args is changed
 		refExprArr := cowExprRef{v.GetArgs(), nil}
 		substituted := false
+		_, coll, _ := DeriveCollationFromExprs(v.GetCtx(), v.GetArgs()...)
 		for idx, arg := range v.GetArgs() {
 			changed, newFuncExpr := ColumnSubstituteImpl(arg, schema, newExprs)
+			if collate.NewCollationEnabled() {
+				// Make sure the collation used by the ScalarFunction isn't changed and its result collation is not weaker than the collation used by the ScalarFunction.
+				if changed {
+					changed = false
+					tmpArgs := make([]Expression, 0, len(v.GetArgs()))
+					_ = append(append(append(tmpArgs, refExprArr.Result()[0:idx]...), refExprArr.Result()[idx+1:]...), newFuncExpr)
+					_, newColl, _ := DeriveCollationFromExprs(v.GetCtx(), append(v.GetArgs(), newFuncExpr)...)
+					if coll == newColl {
+						collStrictness, ok1 := CollationStrictness[coll]
+						newResStrictness, ok2 := CollationStrictness[newFuncExpr.GetType().Collate]
+						if ok1 && ok2 && newResStrictness >= collStrictness {
+							changed = true
+						}
+					}
+				}
+			}
 			refExprArr.Set(idx, changed, newFuncExpr)
 			if changed {
 				substituted = true
@@ -336,6 +355,24 @@ func timeZone2Duration(tz string) time.Duration {
 	return time.Duration(sign) * (time.Duration(h)*time.Hour + time.Duration(m)*time.Minute)
 }
 
+var logicalOps = map[string]struct{}{
+	ast.LT:        {},
+	ast.GE:        {},
+	ast.GT:        {},
+	ast.LE:        {},
+	ast.EQ:        {},
+	ast.NE:        {},
+	ast.UnaryNot:  {},
+	ast.LogicAnd:  {},
+	ast.LogicOr:   {},
+	ast.LogicXor:  {},
+	ast.In:        {},
+	ast.IsNull:    {},
+	ast.IsTruth:   {},
+	ast.IsFalsity: {},
+	ast.Like:      {},
+}
+
 var oppositeOp = map[string]string{
 	ast.LT:       ast.GE,
 	ast.GE:       ast.LT,
@@ -369,12 +406,24 @@ func pushNotAcrossArgs(ctx sessionctx.Context, exprs []Expression, not bool) ([]
 	return newExprs, flag
 }
 
-// pushNotAcrossExpr try to eliminate the NOT expr in expression tree. It will records whether there's already NOT pushed.
-func pushNotAcrossExpr(ctx sessionctx.Context, expr Expression, not bool) (Expression, bool) {
+// pushNotAcrossExpr try to eliminate the NOT expr in expression tree.
+// Input `not` indicates whether there's a `NOT` be pushed down.
+// Output `changed` indicates whether the output expression differs from the
+// input `expr` because of the pushed-down-not.
+func pushNotAcrossExpr(ctx sessionctx.Context, expr Expression, not bool) (_ Expression, changed bool) {
 	if f, ok := expr.(*ScalarFunction); ok {
 		switch f.FuncName.L {
 		case ast.UnaryNot:
-			return pushNotAcrossExpr(f.GetCtx(), f.GetArgs()[0], !not)
+			child, err := wrapWithIsTrue(ctx, true, f.GetArgs()[0], true)
+			if err != nil {
+				return expr, false
+			}
+			var childExpr Expression
+			childExpr, changed = pushNotAcrossExpr(f.GetCtx(), child, !not)
+			if !changed && !not {
+				return expr, false
+			}
+			return childExpr, true
 		case ast.LT, ast.GE, ast.GT, ast.LE, ast.EQ, ast.NE:
 			if not {
 				return NewFunctionInternal(f.GetCtx(), oppositeOp[f.FuncName.L], f.GetType(), f.GetArgs()...), true

@@ -244,7 +244,7 @@ func checkTempStorageQuota() {
 		if err != nil {
 			log.Fatal(err.Error())
 		} else if capacityByte < uint64(c.TempStorageQuota) {
-			log.Fatal(fmt.Sprintf("value of [temp-storage-quota](%d byte) exceeds the capacity(%d byte) of the [%s] directory", c.TempStorageQuota, capacityByte, c.TempStoragePath))
+			log.Fatal(fmt.Sprintf("value of [tmp-storage-quota](%d byte) exceeds the capacity(%d byte) of the [%s] directory", c.TempStorageQuota, capacityByte, c.TempStoragePath))
 		}
 	}
 }
