@@ -41,7 +41,7 @@ type testMainSuite struct{}
 
 func (t *testMainSuite) TestSetGlobalVars(c *C) {
 	c.Assert(variable.SysVars[variable.TiDBIsolationReadEngines], Equals, "tikv, tiflash, tidb")
-	c.Assert(variable.SysVars[variable.TIDBMemQuotaQuery], Equals, 1 << 30)
+	c.Assert(variable.SysVars[variable.TIDBMemQuotaQuery], Equals, 1<<30)
 
 	config.GetGlobalConfig().IsolationRead.Engines = []string{"tikv", "tidb"}
 	config.GetGlobalConfig().MemQuotaQuery = 9999999
