@@ -789,6 +789,14 @@ func GetUint64FromConstant(expr Expression) (uint64, bool, bool) {
 		return uint64(val), false, true
 	case types.KindUint64:
 		return dt.GetUint64(), false, true
+	case types.KindString:
+		valStr := dt.GetString()
+		val, err := strconv.ParseUint(valStr, 10, 64)
+		if err != nil {
+			logutil.BgLogger().Warn("parse uint failed", zap.Error(err))
+			return 0, false, false
+		}
+		return val, false, true
 	}
 	return 0, false, false
 }

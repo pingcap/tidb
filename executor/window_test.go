@@ -353,3 +353,19 @@ func baseTestSlidingWindowFunctions(tk *testkit.TestKit) {
 	result = tk.MustQuery("SELECT sex, BIT_XOR(id) OVER (ORDER BY id DESC RANGE BETWEEN 1 PRECEDING and 2 FOLLOWING) FROM t;")
 	result.Check(testkit.Rows("<nil> 1", "<nil> 1", "M 2", "F 0", "F 4", "F 0", "M 3"))
 }
+
+func (s *testSuite7) TestIssue16362(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values(1,2),(1,3),(2,3),(-1,1),(-1,-1)")
+	tk.MustExec(`prepare stmt from "select sum(b) over w, nth_value(b, ?) over w from t window w as (partition by a)"`)
+	tk.MustExec("set @a=1")
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows(
+		"3 3",
+		"0 1",
+		"0 1",
+		"5 2",
+		"5 2"))
+}
