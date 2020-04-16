@@ -143,7 +143,10 @@ func (e *clusterConfigRetriever) retrieve(_ context.Context, sctx sessionctx.Con
 		return nil, nil
 	}
 	e.retrieved = true
+	return fetchClusterConfig(sctx, e.extractor.NodeTypes, e.extractor.Instances)
+}
 
+func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.StringSet) ([][]types.Datum, error) {
 	type result struct {
 		idx  int
 		rows [][]types.Datum
@@ -159,7 +162,7 @@ func (e *clusterConfigRetriever) retrieve(_ context.Context, sctx sessionctx.Con
 	if err != nil {
 		return nil, err
 	}
-	serversInfo = filterClusterServerInfo(serversInfo, e.extractor.NodeTypes, e.extractor.Instances)
+	serversInfo = filterClusterServerInfo(serversInfo, nodeTypes, nodeAddrs)
 
 	var finalRows [][]types.Datum
 	wg := sync.WaitGroup{}
