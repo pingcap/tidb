@@ -425,6 +425,7 @@ func (helper extractHelper) extractTimeRange(
 					endTime = mathutil.MinInt64(endTime, timestamp)
 				}
 			case ast.GT:
+				// FixMe: add 1ms is not absolutely correct here, just because the log search precision is millisecond.
 				startTime = mathutil.MaxInt64(startTime, timestamp+int64(time.Millisecond))
 			case ast.GE:
 				startTime = mathutil.MaxInt64(startTime, timestamp)
