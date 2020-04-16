@@ -144,6 +144,9 @@ type StatementContext struct {
 	LockKeysDuration      time.Duration
 	LockKeysCount         int32
 	TblInfo2UnionScan     map[*model.TableInfo]bool
+	PlanCacheHit          bool
+	IsExecute             bool // If it is executing a prepared statement
+	CacheUpdatedTime      time.Time
 }
 
 // StmtHints are SessionVars related sql hints.

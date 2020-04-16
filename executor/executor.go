@@ -1691,6 +1691,9 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.PrevAffectedRows = -1
 	}
 	sc.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
+	sc.IsExecute = false
+	sc.CacheUpdatedTime = time.Time{}
+	sc.PlanCacheHit = false
 	errCount, warnCount := vars.StmtCtx.NumErrorWarnings()
 	vars.SysErrorCount = errCount
 	vars.SysWarningCount = warnCount

@@ -575,13 +575,16 @@ func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalS
 		// PrevSQL is already truncated to cfg.Log.QueryLogMaxLen.
 		prevSQL: sei.PrevSQL,
 		// samplePlan needs to be decoded so it can't be truncated.
-		samplePlan:   sei.PlanGenerator(),
-		indexNames:   sei.StmtCtx.IndexNames,
-		minLatency:   sei.TotalLatency,
-		firstSeen:    sei.StartTime,
-		lastSeen:     sei.StartTime,
-		backoffTypes: make(map[fmt.Stringer]int),
-		authUsers:    make(map[string]struct{}),
+		samplePlan:      sei.PlanGenerator(),
+		indexNames:      sei.StmtCtx.IndexNames,
+		minLatency:      sei.TotalLatency,
+		firstSeen:       sei.StartTime,
+		lastSeen:        sei.StartTime,
+		backoffTypes:    make(map[fmt.Stringer]int),
+		authUsers:       make(map[string]struct{}),
+		planInCache:     false,
+		planCacheMisses: 0,
+		planCacheHits:   0,
 	}
 	ssElement.add(sei, intervalSeconds)
 	return ssElement
@@ -724,6 +727,18 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 			ssElement.backoffTypes[backoffType] += 1
 		}
 		commitDetails.Mu.Unlock()
+	}
+
+	//plan cache
+	if sei.StmtCtx.IsExecute { //For the execution of prepared statements
+		if sei.StmtCtx.PlanCacheHit {
+			ssElement.planLastUpdate = sei.StmtCtx.CacheUpdatedTime
+			ssElement.planInCache = true
+			ssElement.planCacheHits += 1
+		} else {
+			ssElement.planCacheMisses += 1
+			ssElement.planInCache = false
+		}
 	}
 
 	// other
