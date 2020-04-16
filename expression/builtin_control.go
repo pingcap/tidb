@@ -174,7 +174,7 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 	argTps := make([]types.EvalType, 0, l)
 	for i := 0; i < l-1; i += 2 {
-		if args[i], err = wrapWithIsTrue(ctx, true, args[i], false); err != nil {
+		if args[i], err = wrapWithIsTrue(ctx, true, args[i]); err != nil {
 			return nil, err
 		}
 		argTps = append(argTps, types.ETInt, tp)
@@ -474,7 +474,7 @@ func (c *ifFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	}
 	retTp := InferType4ControlFuncs(args[1].GetType(), args[2].GetType())
 	evalTps := retTp.EvalType()
-	args[0], err = wrapWithIsTrue(ctx, true, args[0], false)
+	args[0], err = wrapWithIsTrue(ctx, true, args[0])
 	if err != nil {
 		return nil, err
 	}
