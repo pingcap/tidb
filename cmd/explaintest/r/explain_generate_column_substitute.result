@@ -474,3 +474,13 @@ id	estRows	task	access object	operator info
 Projection_4	10000.00	root		hex(test.t.c0)->Column#4
 └─TableReader_6	10000.00	root		data:TableFullScan_5
   └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop table t;
+create table t(a enum('1', '2', '3'), b enum('a', 'b', 'c') as (a) unique);
+insert into t(a) values ('1');
+desc select * from t;
+id	estRows	task	access object	operator info
+TableReader_5	10000.00	root		data:TableFullScan_4
+└─TableFullScan_4	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t;
+a	b
+1	a

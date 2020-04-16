@@ -216,3 +216,9 @@ select c0 from t use index();
 desc select c0 from t use index();
 select hex(c0) from (select c0 from t use index()) tt;
 desc select hex(c0) from (select c0 from t use index()) tt;
+
+drop table t;
+create table t(a enum('1', '2', '3'), b enum('a', 'b', 'c') as (a) unique);
+insert into t(a) values ('1');
+desc select * from t;
+select * from t;
