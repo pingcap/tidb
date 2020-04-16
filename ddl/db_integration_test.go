@@ -410,13 +410,13 @@ func (s *testIntegrationSuite1) TestIssue5092(c *C) {
 	tk.MustExec("alter table t_issue_5092 add column d int default 4 after c1, add column aa int default 0 first")
 	tk.MustQuery("select * from t_issue_5092").Check(testkit.Rows("0 1 2 22 3 33 4"))
 	tk.MustQuery("show create table t_issue_5092").Check(testkit.Rows("t_issue_5092 CREATE TABLE `t_issue_5092` (\n" +
-		"  `aa` int(11) DEFAULT '0',\n" +
-		"  `a` int(11) DEFAULT '1',\n" +
-		"  `b` int(11) DEFAULT '2',\n" +
-		"  `b1` int(11) DEFAULT '22',\n" +
-		"  `c` int(11) DEFAULT '3',\n" +
-		"  `c1` int(11) DEFAULT '33',\n" +
-		"  `d` int(11) DEFAULT '4'\n" +
+		"  `aa` int(11) DEFAULT 0,\n" +
+		"  `a` int(11) DEFAULT 1,\n" +
+		"  `b` int(11) DEFAULT 2,\n" +
+		"  `b1` int(11) DEFAULT 22,\n" +
+		"  `c` int(11) DEFAULT 3,\n" +
+		"  `c1` int(11) DEFAULT 33,\n" +
+		"  `d` int(11) DEFAULT 4\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("drop table t_issue_5092")
 
