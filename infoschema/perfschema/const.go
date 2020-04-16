@@ -32,9 +32,6 @@ var perfSchemaTables = []string{
 	tableStagesHistory,
 	tableStagesHistoryLong,
 	tableEventsStatementsSummaryByDigest,
-	tableEventsStatementsSummaryByDigestHistory,
-	tableClusterEventsStatementsSummaryByDigest,
-	tableClusterEventsStatementsSummaryByDigestHistory,
 	tableTiDBProfileCPU,
 	tableTiDBProfileMemory,
 	tableTiDBProfileMutex,
@@ -457,23 +454,43 @@ const fieldsInEventsStatementsSummary = "SUMMARY_BEGIN_TIME TIMESTAMP(6) NOT NUL
 
 // tableEventsStatementsSummaryByDigest contains the column name definitions for table
 // events_statements_summary_by_digest, same as MySQL.
-const tableEventsStatementsSummaryByDigest = "CREATE TABLE if not exists " + tableNameEventsStatementsSummaryByDigest +
-	"(" + fieldsInEventsStatementsSummary
-
-// tableEventsStatementsSummaryByDigestHistory contains the column name definitions for table
-// events_statements_summary_by_digest_history.
-const tableEventsStatementsSummaryByDigestHistory = "CREATE TABLE if not exists " + tableNameEventsStatementsSummaryByDigestHistory +
-	"(" + fieldsInEventsStatementsSummary
-
-// tableClusterEventsStatementsSummaryByDigest contains the column name definitions for table
-// cluster_events_statements_summary_by_digest, same as MySQL.
-const tableClusterEventsStatementsSummaryByDigest = "CREATE TABLE if not exists " + tableNameClusterEventsStatementsSummaryByDigest +
-	"(ADDRESS VARCHAR(64) DEFAULT NULL COMMENT 'Address of TiDB server'," + fieldsInEventsStatementsSummary
-
-// tableClusterEventsStatementsSummaryByDigestHistory contains the column name definitions for table
-// cluster_events_statements_summary_by_digest_history.
-const tableClusterEventsStatementsSummaryByDigestHistory = "CREATE TABLE if not exists " + tableNameClusterEventsStatementsSummaryByDigestHistory +
-	"(ADDRESS VARCHAR(64) DEFAULT NULL COMMENT 'Address of TiDB server'," + fieldsInEventsStatementsSummary
+const tableEventsStatementsSummaryByDigest = "CREATE TABLE if not exists performance_schema." + tableNameEventsStatementsSummaryByDigest + " (" +
+	"SCHEMA_NAME varchar(64) DEFAULT NULL," +
+	"DIGEST varchar(64) DEFAULT NULL," +
+	"DIGEST_TEXT longtext," +
+	"COUNT_STAR bigint unsigned NOT NULL," +
+	"SUM_TIMER_WAIT bigint unsigned NOT NULL," +
+	"MIN_TIMER_WAIT bigint unsigned NOT NULL," +
+	"AVG_TIMER_WAIT bigint unsigned NOT NULL," +
+	"MAX_TIMER_WAIT bigint unsigned NOT NULL," +
+	"SUM_LOCK_TIME bigint unsigned NOT NULL," +
+	"SUM_ERRORS bigint unsigned NOT NULL," +
+	"SUM_WARNINGS bigint unsigned NOT NULL," +
+	"SUM_ROWS_AFFECTED bigint unsigned NOT NULL," +
+	"SUM_ROWS_SENT bigint unsigned NOT NULL," +
+	"SUM_ROWS_EXAMINED bigint unsigned NOT NULL," +
+	"SUM_CREATED_TMP_DISK_TABLES bigint unsigned NOT NULL," +
+	"SUM_CREATED_TMP_TABLES bigint unsigned NOT NULL," +
+	"SUM_SELECT_FULL_JOIN bigint unsigned NOT NULL," +
+	"SUM_SELECT_FULL_RANGE_JOIN bigint unsigned NOT NULL," +
+	"SUM_SELECT_RANGE bigint unsigned NOT NULL," +
+	"SUM_SELECT_RANGE_CHECK bigint unsigned NOT NULL," +
+	"SUM_SELECT_SCAN bigint unsigned NOT NULL," +
+	"SUM_SORT_MERGE_PASSES bigint unsigned NOT NULL," +
+	"SUM_SORT_RANGE bigint unsigned NOT NULL," +
+	"SUM_SORT_ROWS bigint unsigned NOT NULL," +
+	"SUM_SORT_SCAN bigint unsigned NOT NULL," +
+	"SUM_NO_INDEX_USED bigint unsigned NOT NULL," +
+	"SUM_NO_GOOD_INDEX_USED bigint unsigned NOT NULL," +
+	"FIRST_SEEN timestamp(6) NOT NULL DEFAULT '0000-00-00 00:00:00.000000'," +
+	"LAST_SEEN timestamp(6) NOT NULL DEFAULT '0000-00-00 00:00:00.000000'," +
+	"QUANTILE_95 bigint unsigned NOT NULL," +
+	"QUANTILE_99 bigint unsigned NOT NULL," +
+	"QUANTILE_999 bigint unsigned NOT NULL," +
+	"QUERY_SAMPLE_TEXT longtext," +
+	"QUERY_SAMPLE_SEEN timestamp(6) NOT NULL DEFAULT '0000-00-00 00:00:00.000000'," +
+	"QUERY_SAMPLE_TIMER_WAIT bigint unsigned NOT NULL," +
+	"UNIQUE KEY `SCHEMA_NAME` (`SCHEMA_NAME`,`DIGEST`));"
 
 // tableTiDBProfileCPU contains the columns name definitions for table tidb_profile_cpu
 const tableTiDBProfileCPU = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfileCPU + " (" +

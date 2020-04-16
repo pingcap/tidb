@@ -35,9 +35,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// There're many types of statement summary tables in MySQL, but we have
-// only implemented events_statements_summary_by_digest for now.
-
 // stmtSummaryByDigestKey defines key for stmtSummaryByDigestMap.summaryMap.
 type stmtSummaryByDigestKey struct {
 	// Same statements may appear in different schema, but they refer to different tables.
