@@ -3423,8 +3423,8 @@ func (s *testDBSuite2) TestTransactionOnAddDropColumn(c *C) {
 		// do transaction.
 		for _, transaction := range transactions {
 			for _, sql := range transaction {
-				_, checkErr = s.tk.Exec(sql)
-				if checkErr != nil {
+				if _, checkErr = s.tk.Exec(sql); checkErr != nil {
+					checkErr = errors.Errorf("err: %s, sql: %s, job schema state: %s", checkErr.Error(), sql, job.SchemaState)
 					return
 				}
 			}
@@ -3479,8 +3479,8 @@ func (s *testDBSuite3) TestTransactionWithWriteOnlyColumn(c *C) {
 		// do transaction.
 		for _, transaction := range transactions {
 			for _, sql := range transaction {
-				_, checkErr = s.tk.Exec(sql)
-				if checkErr != nil {
+				if _, checkErr = s.tk.Exec(sql); checkErr != nil {
+					checkErr = errors.Errorf("err: %s, sql: %s, job schema state: %s", checkErr.Error(), sql, job.SchemaState)
 					return
 				}
 			}
