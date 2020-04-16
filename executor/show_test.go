@@ -16,6 +16,7 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/types"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -790,4 +791,38 @@ func (s *testSuite5) TestShowBuiltin(c *C) {
 	c.Assert(268, Equals, len(rows))
 	c.Assert("abs", Equals, rows[0][0].(string))
 	c.Assert("yearweek", Equals, rows[267][0].(string))
+}
+
+func (s *testSuite5) TestShowClusterConfig(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	var confItems [][]types.Datum
+	var confErr error
+	var confFunc executor.TestShowClusterConfigFunc = func() ([][]types.Datum, error) {
+		return confItems, confErr
+	}
+	tk.Se.SetValue(executor.TestShowClusterConfigKey, confFunc)
+	strs2Items := func(strs ...string) []types.Datum {
+		items := make([]types.Datum, 0, len(strs))
+		for _, s := range strs {
+			items = append(items, types.NewStringDatum(s))
+		}
+		return items
+	}
+	confItems = append(confItems, strs2Items("tidb", "127.0.0.1:1111", "log.level", "info"))
+	confItems = append(confItems, strs2Items("pd", "127.0.0.1:2222", "log.level", "info"))
+	confItems = append(confItems, strs2Items("tikv", "127.0.0.1:3333", "log.level", "info"))
+	tk.MustQuery("show config").Check(testkit.Rows(
+		"tidb 127.0.0.1:1111 log.level info",
+		"pd 127.0.0.1:2222 log.level info",
+		"tikv 127.0.0.1:3333 log.level info"))
+	tk.MustQuery("show config where type='tidb'").Check(testkit.Rows(
+		"tidb 127.0.0.1:1111 log.level info"))
+	tk.MustQuery("show config where type like '%ti%'").Check(testkit.Rows(
+		"tidb 127.0.0.1:1111 log.level info",
+		"tikv 127.0.0.1:3333 log.level info"))
+
+	confErr = fmt.Errorf("something unknown error")
+	c.Assert(tk.QueryToErr("show config"), ErrorMatches, confErr.Error())
 }

@@ -966,9 +966,21 @@ func (e *ShowExec) fetchShowCreateSequence() error {
 	return nil
 }
 
+// TestShowClusterConfigKey is the key used to store TestShowClusterConfigFunc.
+var TestShowClusterConfigKey stringutil.StringerStr = "TestShowClusterConfigKey"
+
+// TestShowClusterConfigFunc is used to test 'show config ...'.
+type TestShowClusterConfigFunc func() ([][]types.Datum, error)
+
 func (e *ShowExec) fetchShowClusterConfigs(ctx context.Context) error {
 	emptySet := set.NewStringSet()
-	confItems, err := fetchClusterConfig(e.ctx, emptySet, emptySet)
+	var confItems [][]types.Datum
+	var err error
+	if f := e.ctx.Value(TestShowClusterConfigKey); f != nil {
+		confItems, err = f.(TestShowClusterConfigFunc)()
+	} else {
+		confItems, err = fetchClusterConfig(e.ctx, emptySet, emptySet)
+	}
 	if err != nil {
 		return err
 	}
