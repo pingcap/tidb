@@ -978,7 +978,7 @@ func (b *builtinWeekWithModeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 			continue
 		}
 		mode := int(ms[i])
-		week := date.Week(int(mode))
+		week := date.Week(mode)
 		i64s[i] = int64(week)
 	}
 	return nil
@@ -2519,11 +2519,50 @@ func (b *builtinUTCTimestampWithoutArgSig) vecEvalTime(input *chunk.Chunk, resul
 }
 
 func (b *builtinConvertTzSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinConvertTzSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	if err := b.args[0].VecEvalTime(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	fromTzBuf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(fromTzBuf)
+	if err := b.args[1].VecEvalString(b.ctx, input, fromTzBuf); err != nil {
+		return err
+	}
+
+	toTzBuf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(toTzBuf)
+	if err := b.args[2].VecEvalString(b.ctx, input, toTzBuf); err != nil {
+		return err
+	}
+
+	result.MergeNulls(fromTzBuf, toTzBuf)
+	ts := result.Times()
+	var isNull bool
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+
+		ts[i], isNull, err = b.convertTz(ts[i], fromTzBuf.GetString(i), toTzBuf.GetString(i))
+		if err != nil {
+			return err
+		}
+		if isNull {
+			result.SetNull(i, true)
+		}
+	}
+	return nil
 }
 
 func (b *builtinTimestamp1ArgSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
