@@ -48,12 +48,10 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.CreateTableStmt) (*m
 
 	var enable bool
 	switch ctx.GetSessionVars().EnableTablePartition {
-	case "on":
-		enable = true
 	case "off":
 		enable = false
 	default:
-		// When tidb_enable_table_partition = 'auto',
+		// When tidb_enable_table_partition is 'on' or 'auto'.
 		if s.Partition.Tp == model.PartitionTypeRange {
 			// Partition by range expression is enabled by default.
 			if s.Partition.ColumnNames == nil {
