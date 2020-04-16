@@ -52,7 +52,7 @@ func (s *testIndexChangeSuite) TearDownSuite(c *C) {
 }
 
 func (s *testIndexChangeSuite) TestIndexChange(c *C) {
-	d := newDDL(
+	d := testNewDDLAndStart(c,
 		context.Background(),
 		WithStore(s.store),
 		WithLease(testLease),

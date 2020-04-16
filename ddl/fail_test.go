@@ -24,7 +24,7 @@ import (
 )
 
 func (s *testColumnChangeSuite) TestFailBeforeDecodeArgs(c *C) {
-	d := newDDL(
+	d := testNewDDLAndStart(c,
 		context.Background(),
 		WithStore(s.store),
 		WithLease(testLease),

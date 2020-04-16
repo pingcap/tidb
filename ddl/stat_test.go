@@ -44,7 +44,7 @@ func (s *testStatSuite) TestStat(c *C) {
 	store := testCreateStore(c, "test_stat")
 	defer store.Close()
 
-	d := newDDL(
+	d := testNewDDLAndStart(c,
 		context.Background(),
 		WithStore(store),
 		WithLease(testLease),

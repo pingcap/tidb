@@ -56,7 +56,7 @@ func (s *testDDLSuite) TestCheckOwner(c *C) {
 	store := testCreateStore(c, "test_owner")
 	defer store.Close()
 
-	d1 := newDDL(
+	d1 := testNewDDLAndStart(c,
 		context.Background(),
 		WithStore(store),
 		WithLease(testLease),
@@ -74,7 +74,7 @@ func (s *testDDLSerialSuite) testRunWorker(c *C) {
 	defer store.Close()
 
 	RunWorker = false
-	d := newDDL(
+	d := testNewDDLAndStart(c,
 		context.Background(),
 		WithStore(store),
 		WithLease(testLease),
@@ -87,7 +87,7 @@ func (s *testDDLSerialSuite) testRunWorker(c *C) {
 	c.Assert(worker, IsNil)
 	// Make sure the DDL job can be done and exit that goroutine.
 	RunWorker = true
-	d1 := newDDL(
+	d1 := testNewDDLAndStart(c,
 		context.Background(),
 		WithStore(store),
 		WithLease(testLease),
@@ -102,7 +102,7 @@ func (s *testDDLSuite) TestSchemaError(c *C) {
 	store := testCreateStore(c, "test_schema_error")
 	defer store.Close()
 
-	d := newDDL(
+	d := testNewDDLAndStart(c,
 		context.Background(),
 		WithStore(store),
 		WithLease(testLease),
@@ -117,7 +117,7 @@ func (s *testDDLSuite) TestTableError(c *C) {
 	store := testCreateStore(c, "test_table_error")
 	defer store.Close()
 
-	d := newDDL(
+	d := testNewDDLAndStart(c,
 		context.Background(),
 		WithStore(store),
 		WithLease(testLease),
@@ -162,7 +162,7 @@ func (s *testDDLSuite) TestViewError(c *C) {
 	store := testCreateStore(c, "test_view_error")
 	defer store.Close()
 
-	d := newDDL(
+	d := testNewDDLAndStart(c,
 		context.Background(),
 		WithStore(store),
 		WithLease(testLease),
@@ -189,7 +189,7 @@ func (s *testDDLSuite) TestViewError(c *C) {
 func (s *testDDLSuite) TestInvalidDDLJob(c *C) {
 	store := testCreateStore(c, "test_invalid_ddl_job_type_error")
 	defer store.Close()
-	d := newDDL(
+	d := testNewDDLAndStart(c,
 		context.Background(),
 		WithStore(store),
 		WithLease(testLease),
@@ -212,7 +212,7 @@ func (s *testDDLSuite) TestForeignKeyError(c *C) {
 	store := testCreateStore(c, "test_foreign_key_error")
 	defer store.Close()
 
-	d := newDDL(
+	d := testNewDDLAndStart(c,
 		context.Background(),
 		WithStore(store),
 		WithLease(testLease),
@@ -234,7 +234,7 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 	store := testCreateStore(c, "test_index_error")
 	defer store.Close()
 
-	d := newDDL(
+	d := testNewDDLAndStart(c,
 		context.Background(),
 		WithStore(store),
 		WithLease(testLease),
@@ -273,7 +273,7 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 func (s *testDDLSuite) TestColumnError(c *C) {
 	store := testCreateStore(c, "test_column_error")
 	defer store.Close()
-	d := newDDL(
+	d := testNewDDLAndStart(c,
 		context.Background(),
 		WithStore(store),
 		WithLease(testLease),
@@ -526,7 +526,7 @@ func checkColumnsNotFound(t table.Table, colNames []string) bool {
 func (s *testDDLSuite) TestCancelJob(c *C) {
 	store := testCreateStore(c, "test_cancel_job")
 	defer store.Close()
-	d := newDDL(
+	d := testNewDDLAndStart(c,
 		context.Background(),
 		WithStore(store),
 		WithLease(testLease),
@@ -1048,7 +1048,7 @@ func addDDLJob(c *C, d *ddl, job *model.Job) {
 func (s *testDDLSuite) TestParallelDDL(c *C) {
 	store := testCreateStore(c, "test_parallel_ddl")
 	defer store.Close()
-	d := newDDL(
+	d := testNewDDLAndStart(c,
 		context.Background(),
 		WithStore(store),
 		WithLease(testLease),
@@ -1242,7 +1242,7 @@ func (s *testDDLSuite) TestDDLPackageExecuteSQL(c *C) {
 	store := testCreateStore(c, "test_run_sql")
 	defer store.Close()
 
-	d := newDDL(
+	d := testNewDDLAndStart(c,
 		context.Background(),
 		WithStore(store),
 		WithLease(testLease),

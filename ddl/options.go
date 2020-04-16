@@ -16,7 +16,6 @@ package ddl
 import (
 	"time"
 
-	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"go.etcd.io/etcd/clientv3"
@@ -32,7 +31,6 @@ type Options struct {
 	InfoHandle   *infoschema.Handle
 	Hook         Callback
 	Lease        time.Duration
-	ResourcePool *pools.ResourcePool
 }
 
 // WithEtcdClient specifies the `clientv3.Client` of DDL used to request the etcd service
@@ -70,9 +68,3 @@ func WithLease(lease time.Duration) Option {
 	}
 }
 
-// WithResourcePool specifies the `pools.ResourcePool` of DDL used
-func WithResourcePool(pools *pools.ResourcePool) Option {
-	return func(options *Options) {
-		options.ResourcePool = pools
-	}
-}

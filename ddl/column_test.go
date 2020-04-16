@@ -43,7 +43,7 @@ type testColumnSuite struct {
 
 func (s *testColumnSuite) SetUpSuite(c *C) {
 	s.store = testCreateStore(c, "test_column")
-	d := newDDL(
+	d := testNewDDLAndStart(c,
 		context.Background(),
 		WithStore(s.store),
 		WithLease(testLease),
@@ -180,7 +180,7 @@ func testDropColumns(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo,
 }
 
 func (s *testColumnSuite) TestColumn(c *C) {
-	d := newDDL(
+	d := testNewDDLAndStart(c,
 		context.Background(),
 		WithStore(s.store),
 		WithLease(testLease),
@@ -826,7 +826,7 @@ func (s *testColumnSuite) testGetColumn(t table.Table, name string, isExist bool
 }
 
 func (s *testColumnSuite) TestAddColumn(c *C) {
-	d := newDDL(
+	d := testNewDDLAndStart(c,
 		context.Background(),
 		WithStore(s.store),
 		WithLease(testLease),
@@ -912,7 +912,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 }
 
 func (s *testColumnSuite) TestAddColumns(c *C) {
-	d := newDDL(
+	d := testNewDDLAndStart(c,
 		context.Background(),
 		WithStore(s.store),
 		WithLease(testLease),
@@ -995,7 +995,7 @@ func (s *testColumnSuite) TestAddColumns(c *C) {
 }
 
 func (s *testColumnSuite) TestDropColumn(c *C) {
-	d := newDDL(
+	d := testNewDDLAndStart(c,
 		context.Background(),
 		WithStore(s.store),
 		WithLease(testLease),
@@ -1069,7 +1069,7 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 }
 
 func (s *testColumnSuite) TestDropColumns(c *C) {
-	d := newDDL(
+	d := testNewDDLAndStart(c,
 		context.Background(),
 		WithStore(s.store),
 		WithLease(testLease),
@@ -1136,7 +1136,7 @@ func (s *testColumnSuite) TestDropColumns(c *C) {
 }
 
 func (s *testColumnSuite) TestModifyColumn(c *C) {
-	d := newDDL(
+	d := testNewDDLAndStart(c,
 		context.Background(),
 		WithStore(s.store),
 		WithLease(testLease),
