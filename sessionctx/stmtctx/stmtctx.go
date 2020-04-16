@@ -168,6 +168,10 @@ type StmtHints struct {
 	HasEnableCascadesPlannerHint   bool
 }
 
+func (sc *StatementContext) AddPlanCacheHitInfo(IsHit bool) {
+	sc.PlanCacheHit = IsHit
+}
+
 // GetNowTsCached getter for nowTs, if not set get now time and cache it
 func (sc *StatementContext) GetNowTsCached() time.Time {
 	if !sc.stmtTimeCached {

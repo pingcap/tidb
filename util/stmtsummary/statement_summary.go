@@ -175,7 +175,6 @@ type stmtSummaryByDigestElement struct {
 	planInCache     bool
 	planCacheHits   int64
 	planCacheMisses int64
-	planLastUpdate  time.Time
 }
 
 // StmtExecInfo records execution information of each statement.
@@ -732,7 +731,6 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	//plan cache
 	if sei.StmtCtx.IsExecute { //For the execution of prepared statements
 		if sei.StmtCtx.PlanCacheHit {
-			ssElement.planLastUpdate = sei.StmtCtx.CacheUpdatedTime
 			ssElement.planInCache = true
 			ssElement.planCacheHits += 1
 		} else {
@@ -838,7 +836,6 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		ssElement.planInCache,
 		ssElement.planCacheHits,
 		ssElement.planCacheMisses,
-		types.NewTime(types.FromGoTime(ssElement.planLastUpdate), mysql.TypeTimestamp, 0),
 		ssElement.sampleSQL,
 		ssElement.prevSQL,
 		ssbd.planDigest,

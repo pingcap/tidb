@@ -265,6 +265,7 @@ func (e *Execute) checkPreparedPriv(ctx context.Context, sctx sessionctx.Context
 
 func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt) error {
 	stmtCtx := sctx.GetSessionVars().StmtCtx
+	stmtCtx.IsExecute = true
 	prepared := preparedStmt.PreparedAst
 	if prepared.CachedPlan != nil {
 		// Rewriting the expression in the select.where condition  will convert its
@@ -282,6 +283,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		} else {
 			planCacheCounter.Inc()
 		}
+		stmtCtx.AddPlanCacheHitInfo(true)
 		e.names = names
 		e.Plan = plan
 		stmtCtx.PointExec = true
@@ -307,6 +309,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 				}
 			}
 			if planValid {
+				stmtCtx.AddPlanCacheHitInfo(true)
 				if metrics.ResettablePlanCacheCounterFortTest {
 					metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
 				} else {
