@@ -2228,7 +2228,7 @@ type InjectProjectionBelowAgg struct {
 
 // NewRuleInjectProjectionBelowAgg creates a new Transformation NewRuleInjectProjectionBelowAgg.
 // It will extract the ScalarFunctions of `AggFuncDesc` and `GroupByItems` into a Projection and injects it below Agg.
-// The reason why we need this rule is that, TopNExecutor in TiDB does not support ScalarFunction
+// The reason why we need this rule is that, AggExecutor in TiDB does not support ScalarFunction
 // as `AggFuncDesc.Arg` and `GroupByItem`. So we have to use a Projection to calculate the ScalarFunctions in advance.
 // The pattern of this rule is: a single Aggregation.
 func NewRuleInjectProjectionBelowAgg() Transformation {
@@ -2247,24 +2247,23 @@ func (r *InjectProjectionBelowAgg) Match(expr *memo.ExprIter) bool {
 }
 
 // OnTransform implements Transformation interface.
-// It will convert `Agg -> X` to `Agg -> Projection -> X`.
+// It will convert `Agg -> X` to `Agg -> Proj -> X`.
 func (r *InjectProjectionBelowAgg) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
 
+	hasScalarFunc := false
 	copyFuncs := make([]*aggregation.AggFuncDesc, 0, len(agg.AggFuncs))
 	for _, aggFunc := range agg.AggFuncs {
 		copyFunc := aggFunc.Clone()
+		//WrapCastForAggArgs will modify AggFunc, so we should clone AggFunc.
 		copyFunc.WrapCastForAggArgs(agg.SCtx())
 		copyFuncs = append(copyFuncs, copyFunc)
-	}
-
-	hasScalarFunc := false
-	for i := 0; !hasScalarFunc && i < len(copyFuncs); i++ {
-		for _, arg := range copyFuncs[i].Args {
+		for _, arg := range copyFunc.Args {
 			_, isScalarFunc := arg.(*expression.ScalarFunction)
 			hasScalarFunc = hasScalarFunc || isScalarFunc
 		}
 	}
+
 	for i := 0; !hasScalarFunc && i < len(agg.GroupByItems); i++ {
 		_, isScalarFunc := agg.GroupByItems[i].(*expression.ScalarFunction)
 		hasScalarFunc = hasScalarFunc || isScalarFunc
@@ -2284,7 +2283,6 @@ func (r *InjectProjectionBelowAgg) OnTransform(old *memo.ExprIter) (newExprs []*
 			case *expression.Column:
 				projExprs = append(projExprs, expr)
 				projSchemaCols = append(projSchemaCols, expr)
-				f.Args[i] = expr
 			default:
 				projExprs = append(projExprs, expr)
 				newArg := &expression.Column{
@@ -2334,8 +2332,6 @@ func (r *InjectProjectionBelowAgg) OnTransform(old *memo.ExprIter) (newExprs []*
 	newAgg.CopyAggHints(agg)
 	newAggExpr := memo.NewGroupExpr(newAgg)
 	newAggExpr.SetChildren(projGroup)
-	println("==================")
-	println(len(newGroupByItems))
 
 	return []*memo.GroupExpr{newAggExpr}, true, false, nil
 }
@@ -2503,19 +2499,17 @@ func (r *aggPushDownHelper) allocColumn(sctx sessionctx.Context, retType *types.
 
 // it is not an actual aggFunc.
 // it used to generate div(sum(sum_a), sum(count_a)) for avg(a).
-const aggFuncAggDecomposeFlag = "$_avg_decompose_flag"
+const aggFuncAvgDecomposeFlag = "$_avg_decompose_flag"
 
 // decomposeProjExpr will transform `Agg` to `Proj->Agg`.
 // such as it will `Agg($_avg_decompose_flag(sum_a, count_a))` to `Proj(sum_sum_a / sum_count_a) -> Agg(sum(sum_a), sum(count_a))`.
 func (r *aggPushDownHelper) decomposeProjExpr(aggSchema *expression.Schema, aggExpr *memo.GroupExpr) *memo.GroupExpr {
 	agg := aggExpr.ExprNode.(*plannercore.LogicalAggregation)
-	println("-----------------")
-	println(len(agg.GroupByItems))
 	decompose := false
 	realAggFuncNum := 0
 	for _, aggFunc := range agg.AggFuncs {
 		switch aggFunc.Name {
-		case aggFuncAggDecomposeFlag:
+		case aggFuncAvgDecomposeFlag:
 			decompose = true
 			realAggFuncNum += 2
 		default:
@@ -2531,7 +2525,7 @@ func (r *aggPushDownHelper) decomposeProjExpr(aggSchema *expression.Schema, aggE
 	realAggSchema := expression.NewSchema(make([]*expression.Column, 0, realAggFuncNum)...)
 	for i, aggFunc := range agg.AggFuncs {
 		switch aggFunc.Name {
-		case aggFuncAggDecomposeFlag:
+		case aggFuncAvgDecomposeFlag:
 			partialSumSum := aggFunc.Clone()
 			partialSumSum.Name = ast.AggFuncSum
 			partialSumSum.Args = []expression.Expression{aggFunc.Args[0]}
@@ -2616,7 +2610,7 @@ func (r *aggPushDownHelper) decomposeAggFunc(
 		finalAggFunc := aggFunc.Clone()
 		// aggFuncAggDecomposeFlag is not an actual aggFunc.
 		// it used to generate div(sum(sum_a), sum(count_a))) in `decomposeProjExpr`.
-		finalAggFunc.Name = aggFuncAggDecomposeFlag
+		finalAggFunc.Name = aggFuncAvgDecomposeFlag
 		finalAggFunc.Args = expression.Column2Exprs(partialFuncOutputs)
 		finalFuncs = []*aggregation.AggFuncDesc{finalAggFunc}
 	default:
@@ -2631,7 +2625,7 @@ func (r *aggPushDownHelper) decomposeAggFunc(
 // It's easy to see that max, min, first row is decomposable, no matter whether it's distinct, but sum(distinct) and
 // count(distinct) is not.
 // avg can decomposed to sum and count.
-// Currently we don't support concat.
+// Currently we don't support group_concat.
 func (*aggPushDownHelper) isDecomposable(fun *aggregation.AggFuncDesc) bool {
 	switch fun.Name {
 	// ToDo support ast.AggFuncGroupConcat
@@ -2697,10 +2691,9 @@ func (r *PushAggDownJoin) Match(expr *memo.ExprIter) bool {
 }
 
 // OnTransform implements Transformation interface.
-// It will transform `Agg->Join` to `Agg -> Join -> Agg`.
 // It will transform `Agg->Join` to:
 //   `Agg -> Join -> Agg` or
-//   `Proj->Agg -> Join -> Agg`
+//   `Proj -> Agg -> Join -> Agg`
 func (r *PushAggDownJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
 	join := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalJoin)
@@ -2752,7 +2745,7 @@ func (r *PushAggDownJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.Grou
 // doPushAggDownJoin will transform `Agg->Join` to
 // `finalAgg -> Join -> leftAgg, rightAgg` or
 // `finalAgg -> Join -> leftJoinChild, rightAgg` or
-// `finalAgg -> Join -> leftAgg, rightJoinChild` or
+// `finalAgg -> Join -> leftAgg, rightJoinChild`.
 func (r *PushAggDownJoin) doPushAggDownJoin(
 	leftOk, rightOk bool,
 	leftFinalAggFuncs, leftPartialAggFuncs []*aggregation.AggFuncDesc,
