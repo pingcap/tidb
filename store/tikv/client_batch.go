@@ -657,7 +657,7 @@ func (c *rpcClient) recycleDieConnArray() {
 	var addrs []string
 	c.RLock()
 	for _, conn := range c.conns {
-		if conn.isDie() {
+		if conn.batchConn != nil && conn.isDie() {
 			addrs = append(addrs, conn.target)
 		}
 	}
