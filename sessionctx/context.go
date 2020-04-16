@@ -132,18 +132,22 @@ const (
 type (
 	connIDCtxKeyType      struct{}
 	commitConcurrencyType struct{}
+	ttlMngLifetimeType    struct{}
 )
 
 var (
 	// ConnID is the key in context for connection id.
 	ConnID = connIDCtxKeyType{}
-	// CommitConcurrencyType is the key in context for commit concurrency.
+	// CommitConcurrency is the key in context for commit concurrency.
 	CommitConcurrency = commitConcurrencyType{}
+	// TTLMngLifetime is the key in context for ttl manager lifetime.
+	TTLMngLifetime = ttlMngLifetimeType{}
 )
 
 // SetCommitCtx sets the variables for context before commit a transaction.
 func SetCommitCtx(ctx context.Context, sessCtx Context) context.Context {
 	ctx = context.WithValue(ctx, ConnID, sessCtx.GetSessionVars().ConnectionID)
 	ctx = context.WithValue(ctx, CommitConcurrency, sessCtx.GetSessionVars().TwoPhaseCommitterConcurrency)
+	ctx = context.WithValue(ctx, TTLMngLifetime, sessCtx.GetSessionVars().TTLMngLifetime)
 	return ctx
 }

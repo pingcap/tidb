@@ -1932,6 +1932,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBOptConcurrencyFactor,
 	variable.TiDBDistSQLScanConcurrency,
 	variable.TiDBTwoPhaseCommitterConcurrency,
+	variable.TiDBTTLManagerLifetime,
 	variable.TiDBInitChunkSize,
 	variable.TiDBMaxChunkSize,
 	variable.TiDBEnableCascadesPlanner,

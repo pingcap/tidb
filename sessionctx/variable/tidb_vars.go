@@ -183,8 +183,11 @@ const (
 	// If the query has a LIMIT clause, high concurrency makes the system do much more work than needed.
 	TiDBDistSQLScanConcurrency = "tidb_distsql_scan_concurrency"
 
-	// TiDBTwoPhaseCommitterConcurrency  is used to set the concurrency of for phase committer.
+	// TiDBTwoPhaseCommitterConcurrency is used to set the concurrency of for phase committer.
 	TiDBTwoPhaseCommitterConcurrency = "tidb_two_phase_committer_concurrency"
+
+	// TiDBTTLManagerLifetime is used to control max lifetime of txn ttl manager.
+	TiDBTTLManagerLifetime = "tidb_ttl_manager_lifetime"
 
 	// tidb_opt_insubquery_to_join_and_agg is used to enable/disable the optimizer rule of rewriting IN subquery.
 	TiDBOptInSubqToJoinAndAgg = "tidb_opt_insubq_to_join_and_agg"
@@ -479,6 +482,7 @@ const (
 	DefTiDBStoreLimit                  = 0
 	DefTiDBMetricSchemaStep            = 60 // 60s
 	DefTiDBMetricSchemaRangeDuration   = 60 // 60s
+	DefTTLMngLifetime                  = uint64(10 * 60 * 1000)
 )
 
 // Process global variables.

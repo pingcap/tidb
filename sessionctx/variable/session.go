@@ -297,6 +297,7 @@ type SessionVars struct {
 	Concurrency
 	MemQuota
 	BatchSize
+	TTLMngLifetime      uint64
 	RetryLimit          int64
 	DisableTxnAutoRetry bool
 	// UsersLock is a lock for user defined variables.
@@ -679,6 +680,7 @@ func NewSessionVars() *SessionVars {
 		MetricSchemaRangeDuration:   DefTiDBMetricSchemaRangeDuration,
 		SequenceState:               NewSequenceState(),
 		WindowingUseHighPrecision:   true,
+		TTLMngLifetime:              DefTTLMngLifetime,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1079,6 +1081,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.IndexLookupConcurrency = tidbOptPositiveInt32(val, DefIndexLookupConcurrency)
 	case TiDBTwoPhaseCommitterConcurrency:
 		s.TwoPhaseCommitterConcurrency = tidbOptPositiveInt32(val, DefTwoPhaseCommitterConcurrency)
+	case TiDBTTLManagerLifetime:
+		s.TTLMngLifetime = uint64(tidbOptInt64(val, int64(DefTTLMngLifetime)))
 	case TiDBIndexLookupJoinConcurrency:
 		s.IndexLookupJoinConcurrency = tidbOptPositiveInt32(val, DefIndexLookupJoinConcurrency)
 	case TiDBIndexJoinBatchSize:
