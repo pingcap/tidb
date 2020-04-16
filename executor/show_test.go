@@ -16,7 +16,6 @@ package executor_test
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/types"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -28,6 +27,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
