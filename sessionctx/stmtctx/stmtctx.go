@@ -168,6 +168,7 @@ type StmtHints struct {
 	HasEnableCascadesPlannerHint   bool
 }
 
+// Handle a plan cache hit/miss, maintain plan cache statistics information
 func (sc *StatementContext) AddPlanCacheHitInfo(IsHit bool) {
 	sc.PlanCacheHit = IsHit
 }
