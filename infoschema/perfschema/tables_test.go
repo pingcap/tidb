@@ -113,7 +113,7 @@ func (s *testTableSuite) TestTiKVProfileCPU(c *C) {
 		strings.Join([]string{"pd", mockAddr, mockAddr}, ","),
 	}
 	fpExpr := strings.Join(servers, ";")
-	fpName := "github.com/pingcap/tidb/infoschema/perfschema/mockRemoteNodeStatusAddress"
+	fpName := "github.com/pingcap/tidb/v4/infoschema/perfschema/mockRemoteNodeStatusAddress"
 	c.Assert(failpoint.Enable(fpName, fmt.Sprintf(`return("%s")`, fpExpr)), IsNil)
 	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
 

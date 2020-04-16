@@ -920,7 +920,7 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	).Check(testkit.Rows("<nil>"))
 
 	// Test SELECT.
-	const failpointName = "github.com/pingcap/tidb/planner/core/mockPlanRowCount"
+	const failpointName = "github.com/pingcap/tidb/v4/planner/core/mockPlanRowCount"
 	c.Assert(failpoint.Enable(failpointName, "return(100)"), IsNil)
 	defer func() { c.Assert(failpoint.Disable(failpointName), IsNil) }()
 	tk.MustQuery("select * from t where a=2")
