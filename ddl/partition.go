@@ -330,7 +330,7 @@ func checkPartitionFuncType(ctx sessionctx.Context, s *ast.CreateTableStmt, cols
 // Side effect: it may simplify the partition range definition from a constant expression to an integer.
 func checkCreatePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo, pi *model.PartitionInfo, cols []*table.Column) error {
 	defs := pi.Definitions
-	if len(defs) <= 1 {
+	if len(defs) == 0 {
 		return nil
 	}
 
