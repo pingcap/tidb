@@ -19,7 +19,6 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/goleveldb/leveldb/comparer"
 	"github.com/pingcap/goleveldb/leveldb/memdb"
 )
 
@@ -314,86 +313,6 @@ func (s testMemDBSuite) TestEmptyDB(c *C) {
 	c.Check(it.Valid(), IsFalse)
 	it.Seek([]byte{0xff})
 	c.Check(it.Valid(), IsFalse)
-}
-
-func (s testMemDBSuite) TestRandom(c *C) {
-	const cnt = 500000
-	keys := make([][]byte, cnt)
-	for i := range keys {
-		keys[i] = make([]byte, rand.Intn(19)+1)
-		rand.Read(keys[i])
-	}
-
-	p1 := NewSandbox()
-	p2 := memdb.New(comparer.DefaultComparer, 4*1024)
-	for _, k := range keys {
-		p1.Put(k, k)
-		_ = p2.Put(k, k)
-	}
-
-	c.Check(p1.Len(), Equals, p2.Len())
-	c.Check(p1.Size(), Equals, p2.Size())
-
-	rand.Shuffle(cnt, func(i, j int) { keys[i], keys[j] = keys[j], keys[i] })
-
-	for _, k := range keys {
-		newValue := make([]byte, rand.Intn(19)+1)
-		rand.Read(newValue)
-		p1.Put(k, newValue)
-		_ = p2.Put(k, newValue)
-	}
-	s.checkConsist(c, p1, p2)
-}
-
-func (s testMemDBSuite) TestRandomDerive(c *C) {
-	s.testRandomDeriveRecur(c, NewSandbox(), memdb.New(comparer.DefaultComparer, 4*1024), 0)
-}
-
-func (s testMemDBSuite) testRandomDeriveRecur(c *C, sb *Sandbox, db *memdb.DB, depth int) {
-	var keys [][]byte
-	if rand.Float64() < 0.5 {
-		start, end := rand.Intn(512), rand.Intn(512)+512
-		cnt := end - start
-		keys = make([][]byte, cnt)
-		for i := range keys {
-			keys[i] = make([]byte, 8)
-			binary.BigEndian.PutUint64(keys[i], uint64(start+i))
-		}
-	} else {
-		keys = make([][]byte, rand.Intn(512)+512)
-		for i := range keys {
-			keys[i] = make([]byte, rand.Intn(19)+1)
-			rand.Read(keys[i])
-		}
-	}
-
-	vals := make([][]byte, len(keys))
-	for i := range vals {
-		vals[i] = make([]byte, rand.Intn(255)+1)
-		rand.Read(vals[i])
-	}
-
-	sbBuf := sb.Derive()
-	dbBuf := memdb.New(comparer.DefaultComparer, 4*1024)
-	for i := range keys {
-		sbBuf.Put(keys[i], vals[i])
-		_ = dbBuf.Put(keys[i], vals[i])
-	}
-
-	if depth < 1000 {
-		s.testRandomDeriveRecur(c, sbBuf, dbBuf, depth+1)
-	}
-
-	if rand.Float64() < 0.3 && depth > 0 {
-		sbBuf.Discard()
-	} else {
-		sbBuf.Flush()
-		it := dbBuf.NewIterator(nil)
-		for it.First(); it.Valid(); it.Next() {
-			_ = db.Put(it.Key(), it.Value())
-		}
-	}
-	s.checkConsist(c, sb, db)
 }
 
 func (s testMemDBSuite) checkConsist(c *C, p1 *Sandbox, p2 *memdb.DB) {
