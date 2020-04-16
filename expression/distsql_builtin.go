@@ -50,6 +50,19 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	base.tp = fieldTp
 	var message proto.Message
 	if len(metadata) != 0 {
+		switch sigCode {
+		case tipb.ScalarFuncSig_CastIntAsInt, tipb.ScalarFuncSig_CastIntAsReal, tipb.ScalarFuncSig_CastIntAsDecimal,
+			tipb.ScalarFuncSig_CastRealAsInt, tipb.ScalarFuncSig_CastRealAsReal, tipb.ScalarFuncSig_CastRealAsDecimal,
+			tipb.ScalarFuncSig_CastDecimalAsInt, tipb.ScalarFuncSig_CastDecimalAsReal, tipb.ScalarFuncSig_CastDecimalAsDecimal,
+			tipb.ScalarFuncSig_CastStringAsInt, tipb.ScalarFuncSig_CastStringAsReal, tipb.ScalarFuncSig_CastStringAsDecimal,
+			tipb.ScalarFuncSig_CastTimeAsInt, tipb.ScalarFuncSig_CastTimeAsReal, tipb.ScalarFuncSig_CastTimeAsDecimal,
+			tipb.ScalarFuncSig_CastDurationAsInt, tipb.ScalarFuncSig_CastDurationAsReal, tipb.ScalarFuncSig_CastDurationAsDecimal,
+			tipb.ScalarFuncSig_CastJsonAsInt, tipb.ScalarFuncSig_CastJsonAsReal, tipb.ScalarFuncSig_CastJsonAsDecimal:
+			message = new(tipb.InUnionMetadata)
+		case tipb.ScalarFuncSig_IntIsTrue, tipb.ScalarFuncSig_RealIsTrue, tipb.ScalarFuncSig_DecimalIsTrue,
+			tipb.ScalarFuncSig_IntIsFalse, tipb.ScalarFuncSig_RealIsFalse, tipb.ScalarFuncSig_DecimalIsFalse:
+			message = new(tipb.IsTrueOrFalseMetadata)
+		}
 		err := proto.Unmarshal(metadata, message)
 		if err != nil {
 			logutil.BgLogger().Error("decode metadata", zap.Any("metadata", metadata), zap.Error(err))
