@@ -13,7 +13,17 @@
 
 package main
 
+<<<<<<< HEAD
 import "testing"
+=======
+import (
+	"testing"
+
+	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/sessionctx/variable"
+)
+>>>>>>> 39cc893... session: fix unseccessfully isolation read engines init session (#16465)
 
 var isCoverageServer = "0"
 
@@ -24,3 +34,26 @@ func TestRunMain(t *testing.T) {
 		main()
 	}
 }
+<<<<<<< HEAD
+=======
+
+func TestT(t *testing.T) {
+	TestingT(t)
+}
+
+var _ = Suite(&testMainSuite{})
+
+type testMainSuite struct{}
+
+func (t *testMainSuite) TestSetGlobalVars(c *C) {
+	c.Assert(variable.SysVars[variable.TiDBIsolationReadEngines].Value, Equals, "tikv, tiflash, tidb")
+	c.Assert(variable.SysVars[variable.TIDBMemQuotaQuery].Value, Equals, "1073741824")
+
+	config.GetGlobalConfig().IsolationRead.Engines = []string{"tikv", "tidb"}
+	config.GetGlobalConfig().MemQuotaQuery = 9999999
+	setGlobalVars()
+
+	c.Assert(variable.SysVars[variable.TiDBIsolationReadEngines].Value, Equals, "tikv, tidb")
+	c.Assert(variable.SysVars[variable.TIDBMemQuotaQuery].Value, Equals, "9999999")
+}
+>>>>>>> 39cc893... session: fix unseccessfully isolation read engines init session (#16465)
