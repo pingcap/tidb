@@ -363,9 +363,9 @@ func (s *testSuite7) TestIssue16362(c *C) {
 	tk.MustExec(`prepare stmt from "select sum(b) over w, nth_value(b, ?) over w from t window w as (partition by a)"`)
 	tk.MustExec("set @a=1")
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows(
-		"3 3",
 		"0 1",
 		"0 1",
 		"5 2",
-		"5 2"))
+		"5 2",
+		"3 3"))
 }
