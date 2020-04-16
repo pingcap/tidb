@@ -998,6 +998,8 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 			ret = scalarExprSupportedByFlash(sf)
 		case kv.TiKV:
 			ret = scalarExprSupportedByTiKV(sf)
+		case kv.TiDB:
+			ret = scalarExprSupportedByTiDB(sf)
 		}
 	}
 	if ret {
@@ -1098,6 +1100,16 @@ func CanExprsPushDown(sc *stmtctx.StatementContext, exprs []Expression, client k
 }
 
 func scalarExprSupportedByTiKV(function *ScalarFunction) bool {
+	switch function.FuncName.L {
+	case ast.Substr, ast.Substring, ast.DateAdd, ast.TimestampDiff,
+		ast.FromUnixTime:
+		return false
+	default:
+		return true
+	}
+}
+
+func scalarExprSupportedByTiDB(function *ScalarFunction) bool {
 	switch function.FuncName.L {
 	case ast.Substr, ast.Substring, ast.DateAdd, ast.TimestampDiff,
 		ast.FromUnixTime:
