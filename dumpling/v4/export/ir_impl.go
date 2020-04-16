@@ -154,6 +154,14 @@ func (td *tableData) ColumnTypes() []string {
 	return colTypes
 }
 
+func (td *tableData) ColumnNames() []string {
+	colNames := make([]string, len(td.colTypes))
+	for i, ct := range td.colTypes {
+		colNames[i] = ct.Name()
+	}
+	return colNames
+}
+
 func (td *tableData) DatabaseName() string {
 	return td.database
 }

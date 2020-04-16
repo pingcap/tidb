@@ -41,6 +41,8 @@ var (
 	statusAddr    string
 	rows          uint64
 	where         string
+	fileType      string
+	noHeader      bool
 
 	escapeBackslash bool
 
@@ -78,6 +80,8 @@ func init() {
 	rootCmd.PersistentFlags().Uint64VarP(&rows, "rows", "r", export.UnspecifiedSize, "Split table into chunks of this many rows, default unlimited")
 	rootCmd.PersistentFlags().StringVar(&where, "where", "", "Dump only selected records")
 	rootCmd.PersistentFlags().BoolVar(&escapeBackslash, "escape-backslash", true, "use backslash to escape quotation marks")
+	rootCmd.PersistentFlags().StringVar(&fileType, "filetype", "sql", "The type of export file (sql/csv)")
+	rootCmd.PersistentFlags().BoolVar(&noHeader, "no-header", false, "whether not to dump CSV table header")
 }
 
 func run() {
@@ -100,6 +104,8 @@ func run() {
 	conf.Where = where
 	conf.EscapeBackslash = escapeBackslash
 	conf.LogLevel = logLevel
+	conf.FileType = fileType
+	conf.NoHeader = noHeader
 
 	err := export.Dump(conf)
 	if err != nil {

@@ -90,3 +90,56 @@ func writeMetaToFile(target, metaSQL, path string) error {
 		metaSQL: metaSQL,
 	}, fileWriter)
 }
+
+type CsvWriter struct {
+	cfg *Config
+}
+
+func NewCsvWriter(config *Config) (Writer, error) {
+	sw := &CsvWriter{cfg: config}
+	return sw, os.MkdirAll(config.OutputDirPath, 0755)
+}
+
+func (f *CsvWriter) WriteDatabaseMeta(ctx context.Context, db, createSQL string) error {
+	fileName := fmt.Sprintf("%s-schema-create.sql", db)
+	filePath := path.Join(f.cfg.OutputDirPath, fileName)
+	return writeMetaToFile(db, createSQL, filePath)
+}
+
+func (f *CsvWriter) WriteTableMeta(ctx context.Context, db, table, createSQL string) error {
+	fileName := fmt.Sprintf("%s.%s-schema.sql", db, table)
+	filePath := path.Join(f.cfg.OutputDirPath, fileName)
+	return writeMetaToFile(db, createSQL, filePath)
+}
+
+func (f *CsvWriter) WriteTableData(ctx context.Context, ir TableDataIR) error {
+	log.Debug("start dumping table in csv format...", zap.String("table", ir.TableName()))
+
+	chunkIndex := ir.ChunkIndex()
+	fileName := fmt.Sprintf("%s.%s.%d.csv", ir.DatabaseName(), ir.TableName(), ir.ChunkIndex())
+	chunksIter := buildChunksIter(ir, f.cfg.FileSize, f.cfg.StatementSize)
+	defer chunksIter.Rows().Close()
+
+	for {
+		filePath := path.Join(f.cfg.OutputDirPath, fileName)
+		fileWriter, tearDown := buildInterceptFileWriter(filePath)
+		err := WriteInsertInCsv(chunksIter, fileWriter, f.cfg.NoHeader)
+		tearDown()
+		if err != nil {
+			return err
+		}
+
+		if w, ok := fileWriter.(*InterceptFileWriter); ok && !w.SomethingIsWritten {
+			break
+		}
+
+		if f.cfg.FileSize == UnspecifiedSize {
+			break
+		}
+		chunkIndex += 1
+		fileName = fmt.Sprintf("%s.%s.%d.csv", ir.DatabaseName(), ir.TableName(), chunkIndex)
+	}
+	log.Debug("dumping table in csv format successfully",
+		zap.String("table", ir.TableName()))
+	return nil
+}

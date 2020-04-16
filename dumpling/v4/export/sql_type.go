@@ -9,7 +9,9 @@ import (
 var colTypeRowReceiverMap = map[string]func() RowReceiverStringer{}
 
 var nullValue = "NULL"
+var csvNullValue = "\\N"
 var quotationMark byte = '\''
+var doubleQuotationMark byte = '"'
 var quotationMarkNotQuote = []byte{quotationMark}
 var quotationMarkQuote = []byte{quotationMark, quotationMark}
 
@@ -146,6 +148,15 @@ func (r RowReceiverArr) WriteToBuffer(bf *bytes.Buffer, escapeBackslash bool) {
 	bf.WriteByte(')')
 }
 
+func (r RowReceiverArr) WriteToBufferInCsv(bf *bytes.Buffer, escapeBackslash bool) {
+	for i, receiver := range r {
+		receiver.WriteToBufferInCsv(bf, escapeBackslash)
+		if i != len(r)-1 {
+			bf.WriteByte(',')
+		}
+	}
+}
+
 type SQLTypeNumber struct {
 	SQLTypeString
 }
@@ -155,6 +166,14 @@ func (s SQLTypeNumber) WriteToBuffer(bf *bytes.Buffer, _ bool) {
 		bf.Write(s.RawBytes)
 	} else {
 		bf.WriteString(nullValue)
+	}
+}
+
+func (s SQLTypeNumber) WriteToBufferInCsv(bf *bytes.Buffer, _ bool) {
+	if s.RawBytes != nil {
+		bf.Write(s.RawBytes)
+	} else {
+		bf.WriteString(csvNullValue)
 	}
 }
 
@@ -182,6 +201,16 @@ func (s *SQLTypeString) WriteToBuffer(bf *bytes.Buffer, escapeBackslash bool) {
 	}
 }
 
+func (s *SQLTypeString) WriteToBufferInCsv(bf *bytes.Buffer, escapeBackslash bool) {
+	if s.RawBytes != nil {
+		bf.WriteByte(doubleQuotationMark)
+		escape(s.RawBytes, bf, escapeBackslash)
+		bf.WriteByte(doubleQuotationMark)
+	} else {
+		bf.WriteString(csvNullValue)
+	}
+}
+
 type SQLTypeBytes struct {
 	sql.RawBytes
 }
@@ -195,4 +224,14 @@ func (s *SQLTypeBytes) ReportSize() uint64 {
 
 func (s *SQLTypeBytes) WriteToBuffer(bf *bytes.Buffer, _ bool) {
 	fmt.Fprintf(bf, "x'%x'", s.RawBytes)
+}
+
+func (s *SQLTypeBytes) WriteToBufferInCsv(bf *bytes.Buffer, _ bool) {
+	if s.RawBytes != nil {
+		bf.WriteByte(doubleQuotationMark)
+		bf.Write(s.RawBytes)
+		bf.WriteByte(doubleQuotationMark)
+	} else {
+		bf.WriteString(csvNullValue)
+	}
 }
