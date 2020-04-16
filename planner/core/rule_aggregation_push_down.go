@@ -237,7 +237,7 @@ func GetDefaultValues(aggFuncs []*aggregation.AggFuncDesc, sctx sessionctx.Conte
 }
 
 // CheckAnyCountAndSum check if there exist count or sum functions.
-func CheckAnyCountAndSum(aggFuncs []*aggregation.AggFuncDesc) bool {
+func (a *aggregationPushDownSolver) checkAnyCountAndSum(aggFuncs []*aggregation.AggFuncDesc) bool {
 	for _, fun := range aggFuncs {
 		if fun.Name == ast.AggFuncSum || fun.Name == ast.AggFuncCount {
 			return true
@@ -338,8 +338,8 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan) (_ LogicalPlan, e
 					var lChild, rChild LogicalPlan
 					// If there exist count or sum functions in left join path, we can't push any
 					// aggregate function into right join path.
-					rightInvalid := CheckAnyCountAndSum(leftAggFuncs)
-					leftInvalid := CheckAnyCountAndSum(rightAggFuncs)
+					rightInvalid := a.checkAnyCountAndSum(leftAggFuncs)
+					leftInvalid := a.checkAnyCountAndSum(rightAggFuncs)
 					if rightInvalid {
 						rChild = join.children[1]
 					} else {
