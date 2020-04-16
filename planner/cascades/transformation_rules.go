@@ -2638,16 +2638,6 @@ func (*aggPushDownHelper) isDecomposable(fun *aggregation.AggFuncDesc) bool {
 	}
 }
 
-// checkAnyCountAndSumWithoutDistinct check if there exist count or sum functions whose HasDistinct = false.
-func (*aggPushDownHelper) checkAnyCountAndSumWithoutDistinct(aggFuncs []*aggregation.AggFuncDesc) bool {
-	for _, fun := range aggFuncs {
-		if (fun.Name == ast.AggFuncSum || fun.Name == ast.AggFuncCount) && !fun.HasDistinct {
-			return true
-		}
-	}
-	return false
-}
-
 // PushAggDownJoin splits Aggregation to two Agg: finalAgg and partialAgg(modes are all CompleteMode),
 // and pushed the partialAgg down to the child of join.
 type PushAggDownJoin struct {
@@ -2957,9 +2947,9 @@ func (r *PushAggDownJoin) tryToDecomposeAggFuncs(
 		}
 	}
 
-	// if otherAggFuncs contains count or sum function whose HasDistinct = false, we can't push aggFuncs down join,
+	// if otherAggFuncs contains count or sum function, we can't push aggFuncs down join,
 	// because partial agg will affect the row of join, and then affect the result of count or sum.
-	if r.checkAnyCountAndSumWithoutDistinct(otherAggFuncs) {
+	if plannercore.CheckAnyCountAndSum(otherAggFuncs) {
 		return false, nil, join, nil, nil, nil
 	}
 
