@@ -16,7 +16,6 @@ package mocktikv
 import (
 	"bytes"
 	"context"
-	"github.com/pingcap/tidb/util/bloom"
 	hash2 "hash"
 	"hash/fnv"
 	"sort"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/bloom"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/rowcodec"
@@ -534,24 +534,6 @@ func evalBoolForBloom(ctx *stmtctx.StatementContext, bloom *bloom.Filter, joinKe
 	return false
 }
 
-//for _, expr := range exprs {
-//data, err := expr.Eval(chunk.MutRowFromDatums(row).ToRow())
-//if err != nil {
-//return false, errors.Trace(err)
-//}
-//if data.IsNull() {
-//return false, nil
-//}
-//
-//isBool, err := data.ToBool(ctx)
-//isBool, err = expression.HandleOverflowOnSelection(ctx, isBool, err)
-//if err != nil {
-//return false, errors.Trace(err)
-//}
-//if isBool == 0 {
-//return false, nil
-//}
-//}
 type topNExec struct {
 	heap              *topNHeap
 	evalCtx           *evalContext

@@ -370,12 +370,6 @@ github.com/urfave/cli v1.20.0/go.mod h1:70zkFmudgCuE/ngEzBv17Jvp/497gISqfk5gWijb
 github.com/urfave/cli v1.22.2/go.mod h1:Gos4lmkARVdJ6EkW0WaNv/tZAAMe9V7XWyB60NtXRu0=
 github.com/urfave/negroni v0.3.0 h1:PaXOb61mWeZJxc1Ji2xJjpVg9QfPo0rrB+lHyBxGNSU=
 github.com/urfave/negroni v0.3.0/go.mod h1:Meg73S6kFm/4PpbYdq35yYWoCZ9mS/YSx+lKnmiohz4=
-github.com/wshwsh12/tipb v0.0.0-20200226065640-6fa320720e3a h1:2UY1HimxwVTNacVG3TUdYlA3rrfjUwhOjSIvgyQiwZI=
-github.com/wshwsh12/tipb v0.0.0-20200226065640-6fa320720e3a/go.mod h1:UFKGXY+Ij4rifkYSXsZOrEQcV70dCog1faHm7QKJiWs=
-github.com/wshwsh12/tipb v0.0.0-20200226140455-5ce1bd8df8c2 h1:ehOqPgM4He75bDt91kiVwp66CTlDV8Kr2z1dNtto+K4=
-github.com/wshwsh12/tipb v0.0.0-20200226140455-5ce1bd8df8c2/go.mod h1:UFKGXY+Ij4rifkYSXsZOrEQcV70dCog1faHm7QKJiWs=
-github.com/wshwsh12/tipb v0.0.0-20200227022041-d89cbe431d94 h1:2XatErr6ff8HE6lcgmy77HUcTjacFrrV8zIvQVWMOAk=
-github.com/wshwsh12/tipb v0.0.0-20200227022041-d89cbe431d94/go.mod h1:UFKGXY+Ij4rifkYSXsZOrEQcV70dCog1faHm7QKJiWs=
 github.com/wshwsh12/tipb v0.0.0-20200401074107-b98a3ab068d2 h1:Gn4h4ARZZTseNp197A2w0EcF6+xvX+NxSm/0xyaqhK8=
 github.com/wshwsh12/tipb v0.0.0-20200401074107-b98a3ab068d2/go.mod h1:UFKGXY+Ij4rifkYSXsZOrEQcV70dCog1faHm7QKJiWs=
 github.com/xiang90/probing v0.0.0-20190116061207-43a291ad63a2 h1:eY9dn8+vbi4tKz5Qo6v2eYzo7kUS51QINcR5jNpbZS8=

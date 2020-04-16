@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util/bloom"
 	"math"
 	"sort"
 	"strings"
@@ -48,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/bloom"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
@@ -1135,19 +1135,11 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	}
 	if e.joinType == plannercore.InnerJoin {
 		if probeExec, ok := e.probeSideExec.(*TableReaderExecutor); ok {
-			bl, _ := bloom.NewFilter(10)
-			e.bloomFilter = bl
-			e.bloomFilters = make([]*bloom.Filter, 0, 100)
-			e.joinKeysForMulti = make([][]int64, 0, 100)
-			probeExec.bloomFilters = e.bloomFilters
-			probeExec.joinKeyIdx = e.joinKeysForMulti
-
-			e.bloomFilters = append(e.bloomFilters, bl)
-			joinKeyIdx := make([]int64, len(e.probeKeys))
-			for i := range e.probeKeys {
-				joinKeyIdx[i] = int64(e.probeKeys[i].Index)
-			}
-			e.joinKeysForMulti = append(e.joinKeysForMulti, joinKeyIdx)
+			// Init bloom filter for Table Reader.
+			probeExec.bloomFilters = make([]*bloom.Filter, 0, 10)
+			probeExec.joinKeyIdx = make([][]int64, 0, 10)
+			e.bloomFilters = &probeExec.bloomFilters
+			e.joinKeysForMulti = &probeExec.joinKeyIdx
 
 			e.indexChange = make([]int64, e.Schema().Len())
 			for i := 0; i < len(e.indexChange); i++ {
@@ -1161,28 +1153,19 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 					}
 				}
 			}
-		}
-		if probeExec, ok := e.probeSideExec.(*HashJoinExec); ok {
-			var canPushBfInThisJoin = true
-
-			e.bloomFilters = probeExec.bloomFilters
-			e.joinKeysForMulti = probeExec.joinKeysForMulti
-
+			// Init bloom filter for Hash join.
+			bl := bloom.NewFilterWithoutLength()
+			e.bloomFilter = bl
+			*e.bloomFilters = append(*e.bloomFilters, bl)
 			joinKeyIdx := make([]int64, len(e.probeKeys))
 			for i := range e.probeKeys {
-				if probeExec.indexChange[e.probeKeys[i].Index] == -1 {
-					canPushBfInThisJoin = false
-					break
-				}
-				joinKeyIdx[i] = probeExec.indexChange[e.probeKeys[i].Index]
+				joinKeyIdx[i] = int64(e.probeKeys[i].Index)
 			}
-
-			if canPushBfInThisJoin {
-				bl, _ := bloom.NewFilter(10)
-				e.bloomFilter = bl
-				e.bloomFilters = append(e.bloomFilters, bl)
-				e.joinKeysForMulti = append(e.joinKeysForMulti, joinKeyIdx)
-			}
+			*e.joinKeysForMulti = append(*e.joinKeysForMulti, joinKeyIdx)
+		}
+		if probeExec, ok := e.probeSideExec.(*HashJoinExec); ok {
+			e.bloomFilters = probeExec.bloomFilters
+			e.joinKeysForMulti = probeExec.joinKeysForMulti
 
 			e.indexChange = make([]int64, e.Schema().Len())
 			for i := 0; i < len(e.indexChange); i++ {
@@ -1195,6 +1178,23 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 						e.indexChange[j] = probeExec.indexChange[i]
 					}
 				}
+			}
+
+			var canPushBfInThisJoin = true
+			joinKeyIdx := make([]int64, len(e.probeKeys))
+			for i := range e.probeKeys {
+				if probeExec.indexChange[e.probeKeys[i].Index] == -1 {
+					canPushBfInThisJoin = false
+					break
+				}
+				joinKeyIdx[i] = probeExec.indexChange[e.probeKeys[i].Index]
+			}
+
+			if canPushBfInThisJoin {
+				bl := bloom.NewFilterWithoutLength()
+				e.bloomFilter = bl
+				*e.bloomFilters = append(*e.bloomFilters, bl)
+				*e.joinKeysForMulti = append(*e.joinKeysForMulti, joinKeyIdx)
 			}
 		}
 	}

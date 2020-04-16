@@ -16,7 +16,6 @@ package executor
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util/bloom"
 	"sort"
 
 	"github.com/opentracing/opentracing-go"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/bloom"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -117,8 +117,6 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	if e.bloomFilters != nil {
 		exec := e.dagPB.Executors[len(e.dagPB.Executors)-1]
 		if exec.Selection != nil {
-			e.bloomFilters = e.bloomFilters[0:100]
-			e.joinKeyIdx = e.joinKeyIdx[0:100]
 			for i := range e.bloomFilters {
 				if e.bloomFilters[i] == nil {
 					break
@@ -128,8 +126,6 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		} else {
 			selExec := &tipb.Selection{}
 			exec := &tipb.Executor{Tp: tipb.ExecType_TypeSelection, Selection: selExec}
-			e.bloomFilters = e.bloomFilters[0:100]
-			e.joinKeyIdx = e.joinKeyIdx[0:100]
 			for i := range e.bloomFilters {
 				if e.bloomFilters[i] == nil {
 					break

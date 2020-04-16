@@ -16,7 +16,6 @@ package executor
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util/bloom"
 	"sync"
 	"sync/atomic"
 
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/bitmap"
+	"github.com/pingcap/tidb/util/bloom"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/disk"
@@ -87,8 +87,8 @@ type HashJoinExec struct {
 	finished            atomic.Value
 
 	bloomFilter      *bloom.Filter
-	bloomFilters     []*bloom.Filter
-	joinKeysForMulti [][]int64
+	bloomFilters     *[]*bloom.Filter
+	joinKeysForMulti *[][]int64
 	indexChange      []int64
 }
 
