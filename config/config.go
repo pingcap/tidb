@@ -624,7 +624,7 @@ var defaultConf = Config{
 		MaxBatchWaitTime:  0,
 		BatchWaitSize:     8,
 
-		EnableChunkRPC: true,
+		EnableChunkRPC: false,
 
 		RegionCacheTTL: 600,
 		StoreLimit:     0,
