@@ -16,6 +16,7 @@ package expression
 import (
 	"time"
 
+	"github.com/gogo/protobuf/proto"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
@@ -240,42 +241,42 @@ func (s *testEvalSuite) TestEval(c *C) {
 			newJSONDatum(c, `"$[1][0].k"`),
 		},
 		{
-			scalarFunctionExpr(tipb.ScalarFuncSig_CastIntAsInt,
+			scalarFunctionExprWithMetaData(tipb.ScalarFuncSig_CastIntAsInt, &tipb.InUnionMetadata{InUnion: false},
 				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewIntDatum(2333))),
 			types.NewIntDatum(2333),
 		},
 		{
-			scalarFunctionExpr(tipb.ScalarFuncSig_CastRealAsInt,
+			scalarFunctionExprWithMetaData(tipb.ScalarFuncSig_CastRealAsInt, &tipb.InUnionMetadata{InUnion: false},
 				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewFloat64Datum(2333))),
 			types.NewIntDatum(2333),
 		},
 		{
-			scalarFunctionExpr(tipb.ScalarFuncSig_CastStringAsInt,
+			scalarFunctionExprWithMetaData(tipb.ScalarFuncSig_CastStringAsInt, &tipb.InUnionMetadata{InUnion: false},
 				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewStringDatum("2333"))),
 			types.NewIntDatum(2333),
 		},
 		{
-			scalarFunctionExpr(tipb.ScalarFuncSig_CastDecimalAsInt,
+			scalarFunctionExprWithMetaData(tipb.ScalarFuncSig_CastDecimalAsInt, &tipb.InUnionMetadata{InUnion: false},
 				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewDecimalDatum(newMyDecimal(c, "2333")))),
 			types.NewIntDatum(2333),
 		},
 		{
-			scalarFunctionExpr(tipb.ScalarFuncSig_CastIntAsReal,
+			scalarFunctionExprWithMetaData(tipb.ScalarFuncSig_CastIntAsReal, &tipb.InUnionMetadata{InUnion: false},
 				toPBFieldType(newRealFieldType()), datumExpr(c, types.NewIntDatum(2333))),
 			types.NewFloat64Datum(2333),
 		},
 		{
-			scalarFunctionExpr(tipb.ScalarFuncSig_CastRealAsReal,
+			scalarFunctionExprWithMetaData(tipb.ScalarFuncSig_CastRealAsReal, &tipb.InUnionMetadata{InUnion: false},
 				toPBFieldType(newRealFieldType()), datumExpr(c, types.NewFloat64Datum(2333))),
 			types.NewFloat64Datum(2333),
 		},
 		{
-			scalarFunctionExpr(tipb.ScalarFuncSig_CastStringAsReal,
+			scalarFunctionExprWithMetaData(tipb.ScalarFuncSig_CastStringAsReal, &tipb.InUnionMetadata{InUnion: false},
 				toPBFieldType(newRealFieldType()), datumExpr(c, types.NewStringDatum("2333"))),
 			types.NewFloat64Datum(2333),
 		},
 		{
-			scalarFunctionExpr(tipb.ScalarFuncSig_CastDecimalAsReal,
+			scalarFunctionExprWithMetaData(tipb.ScalarFuncSig_CastDecimalAsReal, &tipb.InUnionMetadata{InUnion: false},
 				toPBFieldType(newRealFieldType()), datumExpr(c, types.NewDecimalDatum(newMyDecimal(c, "2333")))),
 			types.NewFloat64Datum(2333),
 		},
@@ -300,22 +301,22 @@ func (s *testEvalSuite) TestEval(c *C) {
 			types.NewStringDatum("2333"),
 		},
 		{
-			scalarFunctionExpr(tipb.ScalarFuncSig_CastDecimalAsDecimal,
+			scalarFunctionExprWithMetaData(tipb.ScalarFuncSig_CastDecimalAsDecimal, &tipb.InUnionMetadata{InUnion: false},
 				toPBFieldType(newDecimalFieldType()), datumExpr(c, types.NewDecimalDatum(newMyDecimal(c, "2333")))),
 			types.NewDecimalDatum(newMyDecimal(c, "2333")),
 		},
 		{
-			scalarFunctionExpr(tipb.ScalarFuncSig_CastIntAsDecimal,
+			scalarFunctionExprWithMetaData(tipb.ScalarFuncSig_CastIntAsDecimal, &tipb.InUnionMetadata{InUnion: false},
 				toPBFieldType(newDecimalFieldType()), datumExpr(c, types.NewIntDatum(2333))),
 			types.NewDecimalDatum(newMyDecimal(c, "2333")),
 		},
 		{
-			scalarFunctionExpr(tipb.ScalarFuncSig_CastRealAsDecimal,
+			scalarFunctionExprWithMetaData(tipb.ScalarFuncSig_CastRealAsDecimal, &tipb.InUnionMetadata{InUnion: false},
 				toPBFieldType(newDecimalFieldType()), datumExpr(c, types.NewFloat64Datum(2333))),
 			types.NewDecimalDatum(newMyDecimal(c, "2333")),
 		},
 		{
-			scalarFunctionExpr(tipb.ScalarFuncSig_CastStringAsDecimal,
+			scalarFunctionExprWithMetaData(tipb.ScalarFuncSig_CastStringAsDecimal, &tipb.InUnionMetadata{InUnion: false},
 				toPBFieldType(newDecimalFieldType()), datumExpr(c, types.NewStringDatum("2333"))),
 			types.NewDecimalDatum(newMyDecimal(c, "2333")),
 		},
@@ -831,22 +832,22 @@ func (s *testEvalSuite) TestEval(c *C) {
 			types.NewDatum(nil),
 		},
 		{
-			scalarFunctionExpr(tipb.ScalarFuncSig_RealIsFalse,
+			scalarFunctionExprWithMetaData(tipb.ScalarFuncSig_RealIsFalse, &tipb.IsTrueOrFalseMetadata{KeepNull: false},
 				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewFloat64Datum(1))),
 			types.NewIntDatum(0),
 		},
 		{
-			scalarFunctionExpr(tipb.ScalarFuncSig_DecimalIsFalse,
+			scalarFunctionExprWithMetaData(tipb.ScalarFuncSig_DecimalIsFalse, &tipb.IsTrueOrFalseMetadata{KeepNull: false},
 				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewDecimalDatum(newMyDecimal(c, "1")))),
 			types.NewIntDatum(0),
 		},
 		{
-			scalarFunctionExpr(tipb.ScalarFuncSig_RealIsTrue,
+			scalarFunctionExprWithMetaData(tipb.ScalarFuncSig_RealIsTrue, &tipb.IsTrueOrFalseMetadata{KeepNull: false},
 				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewFloat64Datum(1))),
 			types.NewIntDatum(1),
 		},
 		{
-			scalarFunctionExpr(tipb.ScalarFuncSig_DecimalIsTrue,
+			scalarFunctionExprWithMetaData(tipb.ScalarFuncSig_DecimalIsTrue, &tipb.IsTrueOrFalseMetadata{KeepNull: false},
 				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewDecimalDatum(newMyDecimal(c, "1")))),
 			types.NewIntDatum(1),
 		},
@@ -1057,6 +1058,17 @@ func newEnumFieldType() *types.FieldType {
 func scalarFunctionExpr(sigCode tipb.ScalarFuncSig, retType *tipb.FieldType, args ...*tipb.Expr) *tipb.Expr {
 	return &tipb.Expr{
 		Tp:        tipb.ExprType_ScalarFunc,
+		Sig:       sigCode,
+		Children:  args,
+		FieldType: retType,
+	}
+}
+
+func scalarFunctionExprWithMetaData(sigCode tipb.ScalarFuncSig, metadata proto.Message, retType *tipb.FieldType, args ...*tipb.Expr) *tipb.Expr {
+	val, _ := proto.Marshal(metadata)
+	return &tipb.Expr{
+		Tp:        tipb.ExprType_ScalarFunc,
+		Val:       val,
 		Sig:       sigCode,
 		Children:  args,
 		FieldType: retType,
