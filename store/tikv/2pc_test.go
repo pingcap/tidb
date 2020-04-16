@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -336,10 +337,12 @@ func errMsgMustContain(c *C, err error, msg string) {
 }
 
 func newTwoPhaseCommitterWithInit(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, error) {
-	c, err := newTwoPhaseCommitter(txn, connID)
+	c, err := newTwoPhaseCommitter(context.Background(), txn)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	c.connID = connID
+	c.concurrency = variable.DefTwoPhaseCommitterConcurrency
 	if err = c.initKeysAndMutations(); err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -17,6 +17,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"math"
 	"sort"
 	"sync"
@@ -141,6 +143,7 @@ type twoPhaseCommitter struct {
 	detail           unsafe.Pointer
 	txnSize          int
 	noNeedCommitKeys map[string]struct{}
+	concurrency      int
 
 	primaryKey  []byte
 	forUpdateTS uint64
@@ -213,12 +216,25 @@ type batchExecutor struct {
 }
 
 // newTwoPhaseCommitter creates a twoPhaseCommitter.
-func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, error) {
+func newTwoPhaseCommitter(ctx context.Context, txn *tikvTxn) (*twoPhaseCommitter, error) {
+	var (
+		connID      uint64
+		concurrency = variable.DefTwoPhaseCommitterConcurrency
+	)
+	val := ctx.Value(sessionctx.ConnID)
+	if val != nil {
+		connID = val.(uint64)
+	}
+	val = ctx.Value(sessionctx.CommitConcurrency)
+	if val != nil {
+		concurrency = val.(int)
+	}
 	return &twoPhaseCommitter{
 		store:         txn.store,
 		txn:           txn,
 		startTS:       txn.StartTS(),
 		connID:        connID,
+		concurrency:   concurrency,
 		regionTxnSize: map[uint64]int{},
 		ttlManager: ttlManager{
 			ch: make(chan struct{}),

@@ -682,15 +682,16 @@ func NewSessionVars() *SessionVars {
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
-		IndexLookupConcurrency:     DefIndexLookupConcurrency,
-		IndexSerialScanConcurrency: DefIndexSerialScanConcurrency,
-		IndexLookupJoinConcurrency: DefIndexLookupJoinConcurrency,
-		HashJoinConcurrency:        DefTiDBHashJoinConcurrency,
-		ProjectionConcurrency:      DefTiDBProjectionConcurrency,
-		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
-		HashAggPartialConcurrency:  DefTiDBHashAggPartialConcurrency,
-		HashAggFinalConcurrency:    DefTiDBHashAggFinalConcurrency,
-		WindowConcurrency:          DefTiDBWindowConcurrency,
+		IndexLookupConcurrency:       DefIndexLookupConcurrency,
+		IndexSerialScanConcurrency:   DefIndexSerialScanConcurrency,
+		IndexLookupJoinConcurrency:   DefIndexLookupJoinConcurrency,
+		HashJoinConcurrency:          DefTiDBHashJoinConcurrency,
+		ProjectionConcurrency:        DefTiDBProjectionConcurrency,
+		DistSQLScanConcurrency:       DefDistSQLScanConcurrency,
+		HashAggPartialConcurrency:    DefTiDBHashAggPartialConcurrency,
+		HashAggFinalConcurrency:      DefTiDBHashAggFinalConcurrency,
+		WindowConcurrency:            DefTiDBWindowConcurrency,
+		TwoPhaseCommitterConcurrency: DefTwoPhaseCommitterConcurrency,
 	}
 	vars.MemQuota = MemQuota{
 		MemQuotaQuery: config.GetGlobalConfig().MemQuotaQuery,
@@ -1076,6 +1077,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.ConcurrencyFactor = tidbOptFloat64(val, DefOptConcurrencyFactor)
 	case TiDBIndexLookupConcurrency:
 		s.IndexLookupConcurrency = tidbOptPositiveInt32(val, DefIndexLookupConcurrency)
+	case TiDBTwoPhaseCommitterConcurrency:
+		s.TwoPhaseCommitterConcurrency = tidbOptPositiveInt32(val, DefTwoPhaseCommitterConcurrency)
 	case TiDBIndexLookupJoinConcurrency:
 		s.IndexLookupJoinConcurrency = tidbOptPositiveInt32(val, DefIndexLookupJoinConcurrency)
 	case TiDBIndexJoinBatchSize:
@@ -1384,6 +1387,9 @@ type Concurrency struct {
 
 	// IndexSerialScanConcurrency is the number of concurrent index serial scan worker.
 	IndexSerialScanConcurrency int
+
+	// TwoPhaseCommitterConcurrency it the max number of concurrent inflight 2pc requests in one commit stmt.
+	TwoPhaseCommitterConcurrency int
 }
 
 // MemQuota defines memory quota values.

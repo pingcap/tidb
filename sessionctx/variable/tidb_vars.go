@@ -183,6 +183,9 @@ const (
 	// If the query has a LIMIT clause, high concurrency makes the system do much more work than needed.
 	TiDBDistSQLScanConcurrency = "tidb_distsql_scan_concurrency"
 
+	// TiDBTwoPhaseCommitterConcurrency  is used to set the concurrency of for phase committer.
+	TiDBTwoPhaseCommitterConcurrency = "tidb_two_phase_committer_concurrency"
+
 	// tidb_opt_insubquery_to_join_and_agg is used to enable/disable the optimizer rule of rewriting IN subquery.
 	TiDBOptInSubqToJoinAndAgg = "tidb_opt_insubq_to_join_and_agg"
 
@@ -389,6 +392,7 @@ const (
 const (
 	DefHostname                        = "localhost"
 	DefIndexLookupConcurrency          = 4
+	DefTwoPhaseCommitterConcurrency    = 16
 	DefIndexLookupJoinConcurrency      = 4
 	DefIndexSerialScanConcurrency      = 1
 	DefIndexJoinBatchSize              = 25000
