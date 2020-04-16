@@ -704,12 +704,14 @@ func (s *testPlanSerialSuite) TestPlanCacheHitInfo(c *C) {
 	// Test if last_stmt_found_in_plan_cache is appropriately initialized.
 	tk.MustQuery(`select @@last_stmt_found_in_plan_cache`).Check(testkit.Rows("0"))
 	tk.MustQuery("execute stmt using @doma").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @doma").Check(testkit.Rows("1"))
 	// Test if last_stmt_found_in_plan_cache is updated after a plan cache hit.
 	tk.MustQuery(`select @@last_stmt_found_in_plan_cache`).Check(testkit.Rows("1"))
 	tk.MustQuery("execute stmt2 using @doma").Check(testkit.Rows("1"))
 	// Test if last_stmt_found_in_plan_cache is updated after a plan cache miss caused by a prepared statement.
 	tk.MustQuery(`select @@last_stmt_found_in_plan_cache`).Check(testkit.Rows("0"))
 	// Test if last_stmt_found_in_plan_cache is updated after a plan cache miss caused by a usual statement.
+	tk.MustQuery("execute stmt using @doma").Check(testkit.Rows("1"))
 	tk.MustQuery("execute stmt using @doma").Check(testkit.Rows("1"))
 	tk.MustQuery(`select @@last_stmt_found_in_plan_cache`).Check(testkit.Rows("1"))
 	tk.MustQuery("select * from t where id=1").Check(testkit.Rows("1"))
