@@ -148,9 +148,12 @@ func (gvcSuite *testGVCSuite) TestConcurrentOneFlight(c *C) {
 
 	// Let cache become invalid, and try concurrent load
 	counter := int32(0)
+	waitRet := new(sync.WaitGroup)
+	waitRet.Add(1)
 	gvc.lastModify = time.Now().Add(time.Duration(-10) * time.Second)
 	loadFunc := func() ([]chunk.Row, []*ast.ResultField, error) {
 		atomic.AddInt32(&counter, 1)
+		waitRet.Wait()
 		return []chunk.Row{ckLow.GetRow(0)}, []*ast.ResultField{rf, rf1}, nil
 	}
 	wg := new(sync.WaitGroup)
@@ -165,6 +168,7 @@ func (gvcSuite *testGVCSuite) TestConcurrentOneFlight(c *C) {
 			resArray[idx].fields = resField
 		}(i)
 	}
+	waitRet.Done()
 	wg.Wait()
 	succ, rows, fields = gvc.Get()
 	c.Assert(counter, Equals, int32(1))
