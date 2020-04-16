@@ -1206,11 +1206,12 @@ func (s *testTableSuite) TestStmtSummaryInternalQuery(c *C) {
 func (s *testTableSuite) TestStmtSummaryErrorCount(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
-	// clear summaries
+	// Clear summaries.
 	tk.MustExec("set global tidb_enable_stmt_summary = 0")
 	tk.MustExec("set global tidb_enable_stmt_summary = 1")
 	defer tk.MustExec("set global tidb_enable_stmt_summary = ''")
 
+	tk.MustExec("use test")
 	tk.MustExec("drop table if exists stmt_summary_test")
 	tk.MustExec("create table stmt_summary_test(id int primary key)")
 	tk.MustExec("insert into stmt_summary_test values(1)")
