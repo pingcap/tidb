@@ -550,6 +550,7 @@ func setGlobalVars() {
 	variable.SysVars[variable.Socket].Value = cfg.Socket
 	variable.SysVars[variable.DataDir].Value = cfg.Path
 	variable.SysVars[variable.TiDBSlowQueryFile].Value = cfg.Log.SlowQueryFile
+	variable.SysVars[variable.TiDBIsolationReadEngines].Value = strings.Join(cfg.IsolationRead.Engines, ", ")
 
 	// For CI environment we default enable prepare-plan-cache.
 	plannercore.SetPreparedPlanCache(config.CheckTableBeforeDrop || cfg.PreparedPlanCache.Enabled)
