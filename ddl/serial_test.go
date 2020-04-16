@@ -152,6 +152,14 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when alter-primary-key is false")
 }
 
+func (s *testSerialSuite) TestDropAutoIncrementIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int(11) not null auto_increment key, b int(11), c bigint, unique key (a, b, c))")
+	tk.MustExec("alter table t1 drop index a")
+}
+
 func (s *testSerialSuite) TestMultiRegionGetTableEndHandle(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("drop database if exists test_get_endhandle")
