@@ -892,12 +892,12 @@
       {
         "SQL": "select t1.a, t1.b from t1, t2 where t1.a = t2.a and t1.a > 2",
         "Plan": [
-          "Projection_16 2.00 root  test.t1.a, test.t1.b",
-          "└─MergeJoin_19 2.00 root  inner join, left key:test.t1.a, right key:test.t2.a",
-          "  ├─TableReader_35(Build) 2.00 root  data:TableRangeScan_36",
-          "  │ └─TableRangeScan_36 2.00 cop[tikv] table:t2 pk col:test.t2.a, range:(2,+inf], keep order:true",
-          "  └─TableReader_32(Probe) 2.00 root  data:TableRangeScan_33",
-          "    └─TableRangeScan_33 2.00 cop[tikv] table:t1 pk col:test.t1.a, range:(2,+inf], keep order:true"
+          "Projection_18 2.00 root  test.t1.a, test.t1.b",
+          "└─MergeJoin_21 2.00 root  inner join, left key:test.t1.a, right key:test.t2.a",
+          "  ├─TableReader_37(Build) 2.00 root  data:TableRangeScan_38",
+          "  │ └─TableRangeScan_38 2.00 cop[tikv] table:t2 pk col:test.t2.a, range:(2,+inf], keep order:true",
+          "  └─TableReader_34(Probe) 2.00 root  data:TableRangeScan_35",
+          "    └─TableRangeScan_35 2.00 cop[tikv] table:t1 pk col:test.t1.a, range:(2,+inf], keep order:true"
         ],
         "Result": [
           "3 33"
@@ -906,13 +906,13 @@
       {
         "SQL": "select t1.a, t1.b from t1, t2 where t1.a > t2.a and t2.b > 200",
         "Plan": [
-          "Projection_13 5.33 root  test.t1.a, test.t1.b",
-          "└─HashJoin_15 5.33 root  CARTESIAN inner join, other cond:gt(test.t1.a, test.t2.a)",
-          "  ├─TableReader_18(Build) 1.33 root  data:Selection_20",
-          "  │ └─Selection_20 1.33 cop[tikv]  gt(test.t2.b, 200)",
-          "  │   └─TableFullScan_19 4.00 cop[tikv] table:t2 pk col:test.t2.a, keep order:false",
-          "  └─TableReader_16(Probe) 4.00 root  data:TableFullScan_17",
-          "    └─TableFullScan_17 4.00 cop[tikv] table:t1 pk col:test.t1.a, keep order:false"
+          "Projection_15 5.33 root  test.t1.a, test.t1.b",
+          "└─HashJoin_17 5.33 root  CARTESIAN inner join, other cond:gt(test.t1.a, test.t2.a)",
+          "  ├─TableReader_20(Build) 1.33 root  data:Selection_22",
+          "  │ └─Selection_22 1.33 cop[tikv]  gt(test.t2.b, 200)",
+          "  │   └─TableFullScan_21 4.00 cop[tikv] table:t2 pk col:test.t2.a, keep order:false",
+          "  └─TableReader_18(Probe) 4.00 root  data:TableFullScan_19",
+          "    └─TableFullScan_19 4.00 cop[tikv] table:t1 pk col:test.t1.a, keep order:false"
         ],
         "Result": [
           "3 33",
@@ -954,12 +954,12 @@
       {
         "SQL": "select t1.a, t1.b from t1, t2 where t1.a = t2.a order by t1.a",
         "Plan": [
-          "Projection_12 4.00 root  test.t1.a, test.t1.b",
-          "└─MergeJoin_13 4.00 root  inner join, left key:test.t1.a, right key:test.t2.a",
-          "  ├─TableReader_22(Build) 4.00 root  data:TableFullScan_23",
-          "  │ └─TableFullScan_23 4.00 cop[tikv] table:t2 pk col:test.t2.a, keep order:true",
-          "  └─TableReader_17(Probe) 4.00 root  data:TableFullScan_18",
-          "    └─TableFullScan_18 4.00 cop[tikv] table:t1 pk col:test.t1.a, keep order:true"
+          "Projection_14 4.00 root  test.t1.a, test.t1.b",
+          "└─MergeJoin_15 4.00 root  inner join, left key:test.t1.a, right key:test.t2.a",
+          "  ├─TableReader_24(Build) 4.00 root  data:TableFullScan_25",
+          "  │ └─TableFullScan_25 4.00 cop[tikv] table:t2 pk col:test.t2.a, keep order:true",
+          "  └─TableReader_19(Probe) 4.00 root  data:TableFullScan_20",
+          "    └─TableFullScan_20 4.00 cop[tikv] table:t1 pk col:test.t1.a, keep order:true"
         ],
         "Result": [
           "1 11",
@@ -970,11 +970,11 @@
       {
         "SQL": "select * from t1 join t2 on t1.a = t2.a",
         "Plan": [
-          "MergeJoin_11 4.00 root  inner join, left key:test.t1.a, right key:test.t2.a",
-          "├─TableReader_25(Build) 4.00 root  data:TableFullScan_26",
-          "│ └─TableFullScan_26 4.00 cop[tikv] table:t2 pk col:test.t2.a, keep order:true",
-          "└─TableReader_22(Probe) 4.00 root  data:TableFullScan_23",
-          "  └─TableFullScan_23 4.00 cop[tikv] table:t1 pk col:test.t1.a, keep order:true"
+          "MergeJoin_13 4.00 root  inner join, left key:test.t1.a, right key:test.t2.a",
+          "├─TableReader_27(Build) 4.00 root  data:TableFullScan_28",
+          "│ └─TableFullScan_28 4.00 cop[tikv] table:t2 pk col:test.t2.a, keep order:true",
+          "└─TableReader_24(Probe) 4.00 root  data:TableFullScan_25",
+          "  └─TableFullScan_25 4.00 cop[tikv] table:t1 pk col:test.t1.a, keep order:true"
         ],
         "Result": [
           "1 11 1 111",
@@ -1240,14 +1240,14 @@
       {
         "SQL": "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1, t2 where t1.a = t2.a;",
         "Plan": [
-          "Projection_40 12487.50 root  test.t1.b, test.t2.b",
-          "└─HashJoin_41 12487.50 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
-          "  ├─TableReader_43(Build) 9990.00 root  data:Selection_45",
-          "  │ └─Selection_45 9990.00 cop[tikv]  not(isnull(test.t1.a))",
-          "  │   └─TableFullScan_44 10000.00 cop[tikv] table:t1 pk col:test.t1._tidb_rowid, keep order:false, stats:pseudo",
-          "  └─TableReader_50(Probe) 9990.00 root  data:Selection_52",
-          "    └─Selection_52 9990.00 cop[tikv]  not(isnull(test.t2.a))",
-          "      └─TableFullScan_51 10000.00 cop[tikv] table:t2 pk col:test.t2._tidb_rowid, keep order:false, stats:pseudo"
+          "Projection_42 12487.50 root  test.t1.b, test.t2.b",
+          "└─HashJoin_43 12487.50 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader_45(Build) 9990.00 root  data:Selection_47",
+          "  │ └─Selection_47 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "  │   └─TableFullScan_46 10000.00 cop[tikv] table:t1 pk col:test.t1._tidb_rowid, keep order:false, stats:pseudo",
+          "  └─TableReader_52(Probe) 9990.00 root  data:Selection_54",
+          "    └─Selection_54 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "      └─TableFullScan_53 10000.00 cop[tikv] table:t2 pk col:test.t2._tidb_rowid, keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 1"
@@ -1256,11 +1256,11 @@
       {
         "SQL": "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
         "Plan": [
-          "HashJoin_21 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
-          "├─TableReader_23(Build) 10000.00 root  data:TableFullScan_24",
-          "│ └─TableFullScan_24 10000.00 cop[tikv] table:t1 pk col:test.t1._tidb_rowid, keep order:false, stats:pseudo",
-          "└─TableReader_29(Probe) 10000.00 root  data:TableFullScan_30",
-          "  └─TableFullScan_30 10000.00 cop[tikv] table:t2 pk col:test.t2._tidb_rowid, keep order:false, stats:pseudo"
+          "HashJoin_23 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─TableReader_25(Build) 10000.00 root  data:TableFullScan_26",
+          "│ └─TableFullScan_26 10000.00 cop[tikv] table:t1 pk col:test.t1._tidb_rowid, keep order:false, stats:pseudo",
+          "└─TableReader_31(Probe) 10000.00 root  data:TableFullScan_32",
+          "  └─TableFullScan_32 10000.00 cop[tikv] table:t2 pk col:test.t2._tidb_rowid, keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 1"
@@ -1327,11 +1327,11 @@
       {
         "SQL": "select /*+ INL_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
         "Plan": [
-          "HashJoin_21 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
-          "├─TableReader_23(Build) 10000.00 root  data:TableFullScan_24",
-          "│ └─TableFullScan_24 10000.00 cop[tikv] table:t1 pk col:test.t1._tidb_rowid, keep order:false, stats:pseudo",
-          "└─TableReader_29(Probe) 10000.00 root  data:TableFullScan_30",
-          "  └─TableFullScan_30 10000.00 cop[tikv] table:t2 pk col:test.t2._tidb_rowid, keep order:false, stats:pseudo"
+          "HashJoin_23 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─TableReader_25(Build) 10000.00 root  data:TableFullScan_26",
+          "│ └─TableFullScan_26 10000.00 cop[tikv] table:t1 pk col:test.t1._tidb_rowid, keep order:false, stats:pseudo",
+          "└─TableReader_31(Probe) 10000.00 root  data:TableFullScan_32",
+          "  └─TableFullScan_32 10000.00 cop[tikv] table:t2 pk col:test.t2._tidb_rowid, keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 1"
@@ -1340,11 +1340,11 @@
       {
         "SQL": "select /*+ INL_HASH_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
         "Plan": [
-          "HashJoin_21 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
-          "├─TableReader_23(Build) 10000.00 root  data:TableFullScan_24",
-          "│ └─TableFullScan_24 10000.00 cop[tikv] table:t1 pk col:test.t1._tidb_rowid, keep order:false, stats:pseudo",
-          "└─TableReader_29(Probe) 10000.00 root  data:TableFullScan_30",
-          "  └─TableFullScan_30 10000.00 cop[tikv] table:t2 pk col:test.t2._tidb_rowid, keep order:false, stats:pseudo"
+          "HashJoin_23 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─TableReader_25(Build) 10000.00 root  data:TableFullScan_26",
+          "│ └─TableFullScan_26 10000.00 cop[tikv] table:t1 pk col:test.t1._tidb_rowid, keep order:false, stats:pseudo",
+          "└─TableReader_31(Probe) 10000.00 root  data:TableFullScan_32",
+          "  └─TableFullScan_32 10000.00 cop[tikv] table:t2 pk col:test.t2._tidb_rowid, keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 1"
@@ -1353,11 +1353,11 @@
       {
         "SQL": "select /*+ INL_MERGE_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
         "Plan": [
-          "HashJoin_21 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
-          "├─TableReader_23(Build) 10000.00 root  data:TableFullScan_24",
-          "│ └─TableFullScan_24 10000.00 cop[tikv] table:t1 pk col:test.t1._tidb_rowid, keep order:false, stats:pseudo",
-          "└─TableReader_29(Probe) 10000.00 root  data:TableFullScan_30",
-          "  └─TableFullScan_30 10000.00 cop[tikv] table:t2 pk col:test.t2._tidb_rowid, keep order:false, stats:pseudo"
+          "HashJoin_23 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─TableReader_25(Build) 10000.00 root  data:TableFullScan_26",
+          "│ └─TableFullScan_26 10000.00 cop[tikv] table:t1 pk col:test.t1._tidb_rowid, keep order:false, stats:pseudo",
+          "└─TableReader_31(Probe) 10000.00 root  data:TableFullScan_32",
+          "  └─TableFullScan_32 10000.00 cop[tikv] table:t2 pk col:test.t2._tidb_rowid, keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 1"

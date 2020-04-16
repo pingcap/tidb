@@ -58,6 +58,8 @@ type TransformationRuleBatch map[memo.Operand][]Transformation
 var DefaultRuleBatches = []TransformationRuleBatch{
 	TiDBLayerOptimizationBatch,
 	TiKVLayerOptimizationBatch,
+	PrepareJoinReorderBatch,
+	JoinReorderBatch,
 	PostTransformationBatch,
 }
 
@@ -148,6 +150,12 @@ var PrepareJoinReorderBatch = TransformationRuleBatch{
 		NewRuleMergeJoinOneSideMultiJoin(true),
 		NewRuleMergeJoinOneSideMultiJoin(false),
 		NewRuleMergeJoinTwoSidesMultiJoin(),
+	},
+}
+
+var JoinReorderBatch = TransformationRuleBatch{
+	memo.OperandMultiJoin: {
+		NewRuleEnumerateJoinOrders(),
 	},
 }
 
@@ -3599,4 +3607,145 @@ func (r *MergeJoinTwoSidesMultiJoin) OnTransform(old *memo.ExprIter) (newExprs [
 	newChildren = append(newChildren, old.Children[1].GetExpr().Children...)
 	newMultiJoinExpr.SetChildren(newChildren...)
 	return []*memo.GroupExpr{newMultiJoinExpr}, true, false, nil
+}
+
+type EnumerateJoinOrders struct {
+	baseRule
+}
+
+func NewRuleEnumerateJoinOrders() Transformation {
+	rule := &EnumerateJoinOrders{}
+	rule.pattern = memo.NewPattern(memo.OperandMultiJoin, memo.EngineTiDBOnly)
+	return rule
+}
+
+func (r *EnumerateJoinOrders) Match(expr *memo.ExprIter) bool {
+    return len(expr.GetExpr().Children) <= 8
+}
+
+func (r *EnumerateJoinOrders) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	conditions := old.GetExpr().ExprNode.(*plannercore.LogicalMultiJoin).Conditions
+	children := old.GetExpr().Children
+	neededChildrenIdx := make([]int, len(children))
+	for i := range neededChildrenIdx {
+		neededChildrenIdx[i] = i
+	}
+	topJoinGroup := r.enumerateJoinTree(old.GetExpr().ExprNode.SCtx(), children, neededChildrenIdx, conditions, make(map[int]*memo.Group))
+	joinExprs := make([]*memo.GroupExpr, 0, topJoinGroup.Equivalents.Len())
+	for iter := topJoinGroup.Equivalents.Front(); iter != nil; iter = iter.Next() {
+		expr := iter.Value.(*memo.GroupExpr)
+		newExpr := memo.NewGroupExpr(expr.ExprNode)
+		newExpr.SetChildren(expr.Children...)
+		joinExprs = append(joinExprs, newExpr)
+	}
+
+	return joinExprs, true, false, nil
+}
+
+func (r *EnumerateJoinOrders) getKeyOfChildrenIdx(childIdx []int) int {
+	key := 0
+	for _, idx := range childIdx {
+		key |= 1 << idx
+	}
+	return key
+}
+
+func (r *EnumerateJoinOrders) decodeKeyToChildrenIdx(key int, maxLen int) []int {
+	childIdx := make([]int, 0, maxLen)
+	for i := 0; i <= maxLen; i++ {
+		if key & (1 << i) != 0 {
+			childIdx = append(childIdx, i)
+		}
+	}
+	return childIdx
+}
+
+func (r *EnumerateJoinOrders) enumerateCombination(remained[]int, m int, tempResult int) []int {
+	if len(remained) < m {
+		return nil
+	}
+	if m == 0 {
+		return []int{tempResult}
+	}
+	result := make([]int, 0, len(remained)) // should use C(n, m)
+	for i := range remained {
+		result = append(result, r.enumerateCombination(remained[i:], m-1, tempResult | (1 << remained[i]))...)
+	}
+	return result
+}
+
+func (r *EnumerateJoinOrders) constructSchema(allChildren []*memo.Group, childrenIdx []int) *expression.Schema {
+	schema := expression.NewSchema()
+	for _, idx := range childrenIdx {
+		schema.Append(allChildren[idx].Prop.Schema.Columns...)
+	}
+	return schema
+}
+
+func (r *EnumerateJoinOrders) constructLogicalJoin(sctx sessionctx.Context, conditions []expression.Expression, leftSchema *expression.Schema, rightSchema *expression.Schema) (join *plannercore.LogicalJoin, leftConditions, rightConditions []expression.Expression) {
+	join = plannercore.LogicalJoin{JoinType:plannercore.InnerJoin}.Init(sctx, 0)
+	eqCond, leftCond, rightCond, otherCond := join.ExtractOnCondition(conditions, leftSchema, rightSchema, false, false)
+	join.EqualConditions = eqCond
+	join.OtherConditions = otherCond
+	return join, leftCond, rightCond
+}
+
+func (r *EnumerateJoinOrders) enumerateJoinTree(
+	sctx sessionctx.Context,
+	allChildren []*memo.Group,
+	neededChildrenIdx []int,
+	conditions []expression.Expression,
+	cache map[int]*memo.Group) (result *memo.Group) {
+	selfKey := r.getKeyOfChildrenIdx(neededChildrenIdx)
+	if group, ok := cache[selfKey]; ok {
+		return group
+	}
+	defer func(){cache[selfKey] = result}()
+	if len(neededChildrenIdx) == 1 {
+		return allChildren[neededChildrenIdx[0]]
+	}
+	joinExprs := make([]*memo.GroupExpr, 0)
+	for i := 1; i <= len(neededChildrenIdx)/2; i++ {
+		leftGroupKeys := r.enumerateCombination(neededChildrenIdx, i, 0)
+		if len(neededChildrenIdx) % 2 == 0 && i == len(neededChildrenIdx) / 2 {
+			// need to deduplicate
+			newLeftGroupKeys := make([]int, 0, len(leftGroupKeys)/ 2)
+			dedupMap := make(map[int]struct{}, len(leftGroupKeys)/ 2)
+			for _, leftKey := range leftGroupKeys {
+				rightKey := selfKey ^ leftKey
+				if _, ok := dedupMap[leftKey]; ok {
+					continue
+				}
+				if _, ok := dedupMap[rightKey]; ok {
+					continue
+				}
+				newLeftGroupKeys = append(newLeftGroupKeys, leftKey)
+				dedupMap[leftKey] = struct{}{}
+			}
+			leftGroupKeys = newLeftGroupKeys
+		}
+		for _, leftKey := range leftGroupKeys {
+			rightKey := selfKey ^ leftKey
+			leftSlice := r.decodeKeyToChildrenIdx(leftKey, len(allChildren))
+			rightSlice := r.decodeKeyToChildrenIdx(rightKey, len(allChildren))
+			leftSchema := r.constructSchema(allChildren, leftSlice)
+			rightSchema := r.constructSchema(allChildren, rightSlice)
+			newJoin, leftConditions, rightConditions := r.constructLogicalJoin(sctx, conditions, leftSchema, rightSchema)
+			newJoinExpr := memo.NewGroupExpr(newJoin)
+			leftGroup := r.enumerateJoinTree(sctx, allChildren, leftSlice, leftConditions, cache)
+			rightGroup := r.enumerateJoinTree(sctx, allChildren, rightSlice, rightConditions, cache)
+			newJoinExpr.SetChildren(leftGroup, rightGroup)
+			joinExprs = append(joinExprs, newJoinExpr)
+		}
+	}
+	selfSchema := r.constructSchema(allChildren, neededChildrenIdx)
+	newGroup := memo.NewGroupWithSchema(joinExprs[0], selfSchema)
+	for i, joinExpr := range joinExprs {
+		if i == 0 {
+			continue
+		}
+		newGroup.Insert(joinExpr)
+	}
+	result = newGroup
+	return
 }

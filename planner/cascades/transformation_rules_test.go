@@ -564,3 +564,34 @@ func (s *testTransformationRuleSuite) TestJoin2MultiJoin(c *C) {
 	s.testData.GetTestCases(c, &input, &output)
 	testGroupToString(input, output, s, c)
 }
+func (s *testTransformationRuleSuite) TestEnumerateJoinOrders(c *C) {
+	s.optimizer.ResetTransformationRules(TransformationRuleBatch{
+		memo.OperandProjection: {
+			NewRuleEliminateProjection(),
+		},
+		memo.OperandSelection: {
+			NewRulePushSelDownSort(),
+			NewRulePushSelDownProjection(),
+			NewRulePushSelDownAggregation(),
+			NewRulePushSelDownJoin(),
+			NewRulePushSelDownUnionAll(),
+			NewRulePushSelDownWindow(),
+			NewRuleMergeAdjacentSelection(),
+			NewRulePushSelDownApply(),
+		},
+	},
+	PrepareJoinReorderBatch,
+	TransformationRuleBatch{
+		memo.OperandMultiJoin: {
+			NewRuleEnumerateJoinOrders(),
+		},
+	})
+	defer s.optimizer.ResetTransformationRules(DefaultRuleBatches...)
+	var input []string
+	var output []struct {
+		SQL    string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	testGroupToString(input, output, s, c)
+}
