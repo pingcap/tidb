@@ -17,8 +17,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/stringutil"
 	"io/ioutil"
 	"net"
 	"net/http"
@@ -29,10 +27,12 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/util/stringutil"
 )
 
 type SetConfigExec struct {
