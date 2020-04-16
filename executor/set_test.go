@@ -926,3 +926,6 @@ func (s *testSuite5) TestEnableNoopFunctionsVar(c *C) {
 	tk.MustExec(`set tidb_enable_noop_functions=0;`)
 	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("0"))
 }
+
+func (s *testSuite5) TestSetClusterConfig(c *C) {
+}
