@@ -14,9 +14,12 @@
 package executor_test
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
+	"io/ioutil"
 	"net/http"
 	"strconv"
 
@@ -935,7 +938,12 @@ func (s *testSuite5) TestSetClusterConfig(c *C) {
 	tk.MustExec("use test")
 
 	serversInfo := []infoschema.ServerInfo{
-		{ServerType: "tidb", Address: "127.0.0.1:1111", StatusAddr: "127.0.0.1:1111"}, {},
+		{ServerType: "tidb", Address: "127.0.0.1:1111", StatusAddr: "127.0.0.1:1111"},
+		{ServerType: "tidb", Address: "127.0.0.1:2222", StatusAddr: "127.0.0.1:2222"},
+		{ServerType: "pd", Address: "127.0.0.1:3333", StatusAddr: "127.0.0.1:3333"},
+		{ServerType: "pd", Address: "127.0.0.1:4444", StatusAddr: "127.0.0.1:4444"},
+		{ServerType: "tikv", Address: "127.0.0.1:5555", StatusAddr: "127.0.0.1:5555"},
+		{ServerType: "tikv", Address: "127.0.0.1:6666", StatusAddr: "127.0.0.1:6666"},
 	}
 	var serverInfoErr error
 	serverInfoFunc := func(sessionctx.Context) ([]infoschema.ServerInfo, error) {
@@ -943,8 +951,35 @@ func (s *testSuite5) TestSetClusterConfig(c *C) {
 	}
 	tk.Se.SetValue(executor.TestSetConfigServerInfoKey, serverInfoFunc)
 
-	httpHandler := func(r *http.Request) (*http.Response, error) {
-		return nil, nil
-	}
-	tk.Se.SetValue(executor.TestSetConfigHTTPHandlerKey, httpHandler)
+	c.Assert(tk.ExecToErr("set config xxx log.level='info'"), ErrorMatches, "unknown type xxx")
+	c.Assert(tk.ExecToErr("set config tidb log.level='info'"), ErrorMatches, "TiDB doesn't support to change configs online, please use SQL variables")
+	c.Assert(tk.ExecToErr("set config '127.a.b.c:1234' log.level='info'"), ErrorMatches, "invalid instance 127.a.b.c:1234")
+	c.Assert(tk.ExecToErr("set config tikv log.level=null"), ErrorMatches, "can't set config to null")
+
+	httpCnt := 0
+	tk.Se.SetValue(executor.TestSetConfigHTTPHandlerKey, func(*http.Request) (*http.Response, error) {
+		httpCnt++
+		return &http.Response{StatusCode: http.StatusOK}, nil
+	})
+	tk.MustExec("set config tikv log.level='info'")
+	c.Assert(httpCnt, Equals, 2)
+
+	httpCnt = 0
+	tk.MustExec("set config '127.0.0.1:5555' log.level='info'")
+	c.Assert(httpCnt, Equals, 1)
+
+	httpCnt = 0
+	tk.Se.SetValue(executor.TestSetConfigHTTPHandlerKey, func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("something wrong")
+	})
+	tk.MustExec("set config tikv log.level='info'")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 something wrong", "Warning 1105 something wrong"))
+
+	tk.Se.SetValue(executor.TestSetConfigHTTPHandlerKey, func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusBadRequest, Body: ioutil.NopCloser(bytes.NewBufferString("WRONG"))}, nil
+	})
+	tk.MustExec("set config tikv log.level='info'")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 bad request to http://127.0.0.1:5555/config: WRONG", "Warning 1105 bad request to http://127.0.0.1:6666/config: WRONG"))
 }

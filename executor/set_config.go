@@ -51,7 +51,7 @@ func (s *SetConfigExec) Open(ctx context.Context) error {
 	if s.p.Type != "" {
 		s.p.Type = strings.ToLower(s.p.Type)
 		if s.p.Type != "tikv" && s.p.Type != "tidb" && s.p.Type != "pd" {
-			return errors.Errorf("unknown config type %v", s.p.Type)
+			return errors.Errorf("unknown type %v", s.p.Type)
 		}
 		if s.p.Type == "tidb" {
 			return errors.Errorf("TiDB doesn't support to change configs online, please use SQL variables")
