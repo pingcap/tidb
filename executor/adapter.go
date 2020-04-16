@@ -773,9 +773,10 @@ var (
 )
 
 // FinishExecuteStmt is used to record some information after `ExecStmt` execution finished:
-// 1. slow log.
-// 2. execute duration metric.
-// 3.
+// 1. record slow log if needed.
+// 2. record summary statement.
+// 3. record execute duration metric.
+// 4. update the `PrevStmt` in session variable.
 func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, succ bool, hasMoreResults bool) {
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
