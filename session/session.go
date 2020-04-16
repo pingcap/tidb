@@ -83,9 +83,6 @@ var (
 	transactionDurationGeneralCommit     = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, metrics.LblCommit)
 	transactionDurationGeneralAbort      = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, metrics.LblAbort)
 
-	sessionExecuteRunDurationInternal = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblInternal)
-	sessionExecuteRunDurationGeneral  = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblGeneral)
-
 	sessionExecuteCompileDurationInternal = metrics.SessionExecuteCompileDuration.WithLabelValues(metrics.LblInternal)
 	sessionExecuteCompileDurationGeneral  = metrics.SessionExecuteCompileDuration.WithLabelValues(metrics.LblGeneral)
 	sessionExecuteParseDurationInternal   = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblInternal)
@@ -1036,7 +1033,6 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 
 func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode ast.StmtNode, stmt sqlexec.Statement, recordSets []sqlexec.RecordSet, inMulitQuery bool) ([]sqlexec.RecordSet, error) {
 	logStmt(stmtNode, s.sessionVars)
-	startTime := time.Now()
 	recordSet, err := runStmt(ctx, s, stmt)
 	if err != nil {
 		if !kv.ErrKeyExists.Equal(err) {
@@ -1046,11 +1042,6 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 				zap.String("session", s.String()))
 		}
 		return nil, err
-	}
-	if s.isInternal() {
-		sessionExecuteRunDurationInternal.Observe(time.Since(startTime).Seconds())
-	} else {
-		sessionExecuteRunDurationGeneral.Observe(time.Since(startTime).Seconds())
 	}
 
 	if inMulitQuery && recordSet == nil {
@@ -1165,7 +1156,6 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 
 	// Execute the physical plan.
 	logStmt(stmtNode, s.sessionVars)
-	startTime := time.Now()
 	recordSet, err := runStmt(ctx, s, stmt)
 	if err != nil {
 		if !kv.ErrKeyExists.Equal(err) {
@@ -1175,11 +1165,6 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 				zap.String("session", s.String()))
 		}
 		return nil, err
-	}
-	if s.isInternal() {
-		sessionExecuteRunDurationInternal.Observe(time.Since(startTime).Seconds())
-	} else {
-		sessionExecuteRunDurationGeneral.Observe(time.Since(startTime).Seconds())
 	}
 	return recordSet, nil
 }
@@ -1307,11 +1292,8 @@ func (s *session) CommonExec(ctx context.Context,
 		return nil, err
 	}
 	sessionExecuteCompileDurationGeneral.Observe(time.Since(s.sessionVars.StartTime).Seconds())
-	startTime := time.Now()
 	logQuery(st.OriginText(), s.sessionVars)
-	recordSet, err := runStmt(ctx, s, st)
-	sessionExecuteRunDurationGeneral.Observe(time.Since(startTime).Seconds())
-	return recordSet, err
+	return runStmt(ctx, s, st)
 }
 
 // CachedPlanExec short path currently ONLY for cached "point select plan" execution
@@ -1343,7 +1325,6 @@ func (s *session) CachedPlanExec(ctx context.Context,
 	sessionExecuteCompileDurationGeneral.Observe(compileDuration.Seconds())
 	s.GetSessionVars().DurationCompile = compileDuration
 
-	startTime := time.Now()
 	stmt.Text = prepared.Stmt.Text()
 	stmtCtx.OriginalSQL = stmt.Text
 	stmtCtx.InitSQLDigest(prepareStmt.NormalizedSQL, prepareStmt.SQLDigest)
@@ -1364,7 +1345,6 @@ func (s *session) CachedPlanExec(ctx context.Context,
 		prepared.CachedPlan = nil
 		return nil, errors.Errorf("invalid cached plan type")
 	}
-	sessionExecuteRunDurationGeneral.Observe(time.Since(startTime).Seconds())
 	return resultSet, err
 }
 
