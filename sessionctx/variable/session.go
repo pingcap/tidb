@@ -597,7 +597,7 @@ type SessionVars struct {
 
 	// FoundInPlanCache indicates whether this statement was found in plan cache.
 	FoundInPlanCache bool
-	// PrevFoundInPlanCache indicates whether the last statement was found in plan cache
+	// PrevFoundInPlanCache indicates whether the last statement was found in plan cache.
 	PrevFoundInPlanCache bool
 }
 
