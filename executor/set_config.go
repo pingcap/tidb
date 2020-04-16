@@ -35,12 +35,14 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
+// SetConfigExec executes 'SET CONFIG' statement.
 type SetConfigExec struct {
 	baseExecutor
 	p *core.SetConfig
 	v string
 }
 
+// Open implements the Executor Open interface.
 func (s *SetConfigExec) Open(ctx context.Context) error {
 	// TODO: create a new privilege for this operation instead of using the SuperPriv
 	checker := privilege.GetPrivilegeManager(s.ctx)
@@ -82,6 +84,8 @@ var TestSetConfigServerInfoKey stringutil.StringerStr = "TestSetConfigServerInfo
 // TestSetConfigHTTPHandlerKey is used as the key to store 'TestSetConfigDoRequestFunc' in the context.
 var TestSetConfigHTTPHandlerKey stringutil.StringerStr = "TestSetConfigHTTPHandlerKey"
 
+
+// Next implements the Executor Next interface.
 func (s *SetConfigExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	getServerFunc := infoschema.GetClusterServerInfo
