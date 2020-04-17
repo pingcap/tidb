@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
@@ -542,8 +543,8 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 	// If the rate limit is too high, tikv will report service is busy.
 	// If the rate limit is too low, we can't full utilize the tikv's throughput.
 	// TODO: Find a self-adaptive way to control the rate limit here.
-	if rateLim > 16 {
-		rateLim = 16
+	if rateLim > config.GetGlobalConfig().Performance.CommitterConcurrency {
+		rateLim = config.GetGlobalConfig().Performance.CommitterConcurrency
 	}
 	batchExecutor := newBatchExecutor(rateLim, c, action, bo)
 	err := batchExecutor.process(batches)
@@ -729,12 +730,13 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 			}
 
 			uptime := uint64(oracle.ExtractPhysical(now) - oracle.ExtractPhysical(c.startTS))
-			const c10min = 10 * 60 * 1000
-			if uptime > c10min {
-				// Set a 10min maximum lifetime for the ttlManager, so when something goes wrong
+			if uptime > config.GetGlobalConfig().Performance.TLLMngLifetime {
+				// Checks maximum lifetime for the ttlManager, so when something goes wrong
 				// the key will not be locked forever.
 				logutil.Logger(bo.ctx).Info("ttlManager live up to its lifetime",
-					zap.Uint64("txnStartTS", c.startTS))
+					zap.Uint64("txnStartTS", c.startTS),
+					zap.Uint64("uptime", uptime),
+					zap.Uint64("maxLifetime", config.GetGlobalConfig().Performance.TLLMngLifetime))
 				metrics.TiKVTTLLifeTimeReachCounter.Inc()
 				// the pessimistic locks may expire if the ttl manager has timed out, set `LockExpired` flag
 				// so that this transaction could only commit or rollback with no more statement executions
