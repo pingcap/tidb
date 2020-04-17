@@ -109,7 +109,7 @@ func rewriteCount(ctx sessionctx.Context, exprs []expression.Expression, targetT
 	isNullExprs := make([]expression.Expression, 0, len(exprs))
 	for _, expr := range exprs {
 		if mysql.HasNotNullFlag(expr.GetType().Flag) {
-			isNullExprs = append(isNullExprs, expression.Zero)
+			isNullExprs = append(isNullExprs, expression.NewZero())
 		} else {
 			isNullExpr := expression.NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr)
 			isNullExprs = append(isNullExprs, isNullExpr)
@@ -117,7 +117,7 @@ func rewriteCount(ctx sessionctx.Context, exprs []expression.Expression, targetT
 	}
 
 	innerExpr := expression.ComposeDNFCondition(ctx, isNullExprs...)
-	newExpr := expression.NewFunctionInternal(ctx, ast.If, targetTp, innerExpr, expression.Zero, expression.One)
+	newExpr := expression.NewFunctionInternal(ctx, ast.If, targetTp, innerExpr, expression.NewZero(), expression.NewOne())
 	return newExpr
 }
 
@@ -127,7 +127,7 @@ func rewriteBitFunc(ctx sessionctx.Context, funcType string, arg expression.Expr
 	outerCast := wrapCastFunction(ctx, innerCast, targetTp)
 	var finalExpr expression.Expression
 	if funcType != ast.AggFuncBitAnd {
-		finalExpr = expression.NewFunctionInternal(ctx, ast.Ifnull, targetTp, outerCast, expression.Zero.Clone())
+		finalExpr = expression.NewFunctionInternal(ctx, ast.Ifnull, targetTp, outerCast, expression.NewZero())
 	} else {
 		finalExpr = expression.NewFunctionInternal(ctx, ast.Ifnull, outerCast.GetType(), outerCast, &expression.Constant{Value: types.NewUintDatum(math.MaxUint64), RetType: targetTp})
 	}
