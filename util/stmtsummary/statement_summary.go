@@ -103,11 +103,13 @@ type stmtSummaryByDigestElement struct {
 	beginTime int64
 	endTime   int64
 	// basic
-	sampleSQL  string
-	prevSQL    string
-	samplePlan string
-	indexNames []string
-	execCount  int64
+	sampleSQL   string
+	prevSQL     string
+	samplePlan  string
+	indexNames  []string
+	execCount   int64
+	sumErrors   int
+	sumWarnings int
 	// latency
 	sumLatency        time.Duration
 	maxLatency        time.Duration
@@ -191,6 +193,7 @@ type StmtExecInfo struct {
 	MemMax         int64
 	StartTime      time.Time
 	IsInternal     bool
+	Succeed        bool
 }
 
 // newStmtSummaryByDigestMap creates an empty stmtSummaryByDigestMap.
@@ -609,6 +612,10 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	// refreshInterval may change anytime, update endTime ASAP.
 	ssElement.endTime = ssElement.beginTime + intervalSeconds
 	ssElement.execCount++
+	if !sei.Succeed {
+		ssElement.sumErrors += 1
+	}
+	ssElement.sumWarnings += int(sei.StmtCtx.WarningCount())
 
 	// latency
 	ssElement.sumLatency += sei.TotalLatency
@@ -760,6 +767,8 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		convertEmptyToNil(strings.Join(ssElement.indexNames, ",")),
 		convertEmptyToNil(sampleUser),
 		ssElement.execCount,
+		ssElement.sumErrors,
+		ssElement.sumWarnings,
 		int64(ssElement.sumLatency),
 		int64(ssElement.maxLatency),
 		int64(ssElement.minLatency),
