@@ -445,17 +445,29 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_BitNegSig:
 		f = &builtinBitNegSig{base}
 	case tipb.ScalarFuncSig_IntIsTrue:
-		f = &builtinIntIsTrueSig{base, false}
+		f = &builtinIntIsTrueSig{base}
 	case tipb.ScalarFuncSig_RealIsTrue:
-		f = &builtinRealIsTrueSig{base, false}
+		f = &builtinRealIsTrueSig{base}
 	case tipb.ScalarFuncSig_DecimalIsTrue:
-		f = &builtinDecimalIsTrueSig{base, false}
+		f = &builtinDecimalIsTrueSig{base}
 	case tipb.ScalarFuncSig_IntIsFalse:
-		f = &builtinIntIsFalseSig{base, false}
+		f = &builtinIntIsFalseSig{base}
 	case tipb.ScalarFuncSig_RealIsFalse:
-		f = &builtinRealIsFalseSig{base, false}
+		f = &builtinRealIsFalseSig{base}
 	case tipb.ScalarFuncSig_DecimalIsFalse:
-		f = &builtinDecimalIsFalseSig{base, false}
+		f = &builtinDecimalIsFalseSig{base}
+	case tipb.ScalarFuncSig_IntIsTrueWithNull:
+		f = &builtinIntIsTrueWithNullSig{base}
+	case tipb.ScalarFuncSig_RealIsTrueWithNull:
+		f = &builtinRealIsTrueWithNullSig{base}
+	case tipb.ScalarFuncSig_DecimalIsTrueWithNull:
+		f = &builtinDecimalIsTrueWithNullSig{base}
+	case tipb.ScalarFuncSig_IntIsFalseWithNull:
+		f = &builtinIntIsFalseWithNullSig{base}
+	case tipb.ScalarFuncSig_RealIsFalseWithNull:
+		f = &builtinRealIsFalseWithNullSig{base}
+	case tipb.ScalarFuncSig_DecimalIsFalseWithNull:
+		f = &builtinDecimalIsFalseWithNullSig{base}
 	case tipb.ScalarFuncSig_LeftShift:
 		f = &builtinLeftShiftSig{base}
 	case tipb.ScalarFuncSig_RightShift:
