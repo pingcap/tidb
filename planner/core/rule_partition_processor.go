@@ -517,6 +517,19 @@ func makePartitionByFnCol(ds *DataSource, partitionExpr string) (*expression.Col
 	var fn *expression.ScalarFunction
 	switch raw := partExpr.(type) {
 	case *expression.ScalarFunction:
+		// Special handle for floor(unix_timestamp(ts)) as partition expression.
+		// This pattern is so common for timestamp(3) column as partition expression that it deserve an optimization.
+		if raw.FuncName.L == ast.Floor {
+			if ut, ok := raw.GetArgs()[0].(*expression.ScalarFunction); ok && ut.FuncName.L == ast.UnixTimestamp {
+				args := ut.GetArgs()
+				if len(args) == 1 {
+					if c, ok1 := args[0].(*expression.Column); ok1 {
+						return c, raw, nil
+					}
+				}
+			}
+		}
+
 		if _, ok := monotoneIncFuncs[raw.FuncName.L]; ok {
 			fn = raw
 			col = fn.GetArgs()[0].(*expression.Column)
@@ -622,10 +635,15 @@ func extractDataForPrune(sctx sessionctx.Context, expr expression.Expression, pa
 	var constExpr expression.Expression
 	if partFn != nil {
 		// If the partition expression is fn(col), change constExpr to fn(constExpr).
+<<<<<<< HEAD
 		// No 'copy on write' for the expression here, this is a dangerous operation.
 		args := partFn.GetArgs()
 		args[0] = con
 		constExpr = partFn
+=======
+		constExpr = replaceColumnWithConst(p.partFn, con)
+
+>>>>>>> d8e6cf8... planner/core: support partition pruning for partition expression floor(unix_timestamp()) (#16402)
 		// Sometimes we need to relax the condition, < to <=, > to >=.
 		// For example, the following case doesn't hold:
 		// col < '2020-02-11 17:34:11' => to_days(col) < to_days(2020-02-11 17:34:11)
@@ -642,6 +660,25 @@ func extractDataForPrune(sctx sessionctx.Context, expr expression.Expression, pa
 		return ret, true
 	}
 	return ret, false
+}
+
+// replaceColumnWithConst change fn(col) to fn(const)
+func replaceColumnWithConst(partFn *expression.ScalarFunction, con *expression.Constant) *expression.ScalarFunction {
+	args := partFn.GetArgs()
+	// The partition function may be floor(unix_timestamp(ts)) instead of a simple fn(col).
+	if partFn.FuncName.L == ast.Floor {
+		ut := args[0].(*expression.ScalarFunction)
+		if ut.FuncName.L == ast.UnixTimestamp {
+			args = ut.GetArgs()
+			args[0] = con
+			return partFn
+		}
+	}
+
+	// No 'copy on write' for the expression here, this is a dangerous operation.
+	args[0] = con
+	return partFn
+
 }
 
 // opposite turns > to <, >= to <= and so on.
