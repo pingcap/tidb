@@ -559,7 +559,6 @@ func (b *builtinRealIsFalseWithNullSig) vecEvalInt(input *chunk.Chunk, result *c
 	for i := 0; i < numRows; i++ {
 		isNull := buf.IsNull(i)
 		if isNull {
-			result.SetNull(i, true)
 			continue
 		}
 		if bufI64s[i] != 0 {
@@ -854,7 +853,11 @@ func (b *builtinDecimalIsTrueWithNullSig) vecEvalInt(input *chunk.Chunk, result 
 
 	for i := 0; i < numRows; i++ {
 		isNull := buf.IsNull(i)
-		if isNull || decs[i].IsZero() {
+		if isNull {
+			result.SetNull(i, true)
+			continue
+		}
+		if decs[i].IsZero() {
 			i64s[i] = 0
 		} else {
 			i64s[i] = 1
