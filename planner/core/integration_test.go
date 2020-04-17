@@ -320,3 +320,14 @@ func (s *testIntegrationSuite) TestIssue15813(c *C) {
 	tk.MustExec("CREATE INDEX i0 ON t1(c0)")
 	tk.MustQuery("select /*+ MERGE_JOIN(t0, t1) */ * from t0, t1 where t0.c0 = t1.c0").Check(testkit.Rows())
 }
+
+func (s *testIntegrationSuite) TestIssue16440(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(c0 int)")
+	tk.MustExec("INSERT INTO t1(c0) VALUES (NULL);")
+	tk.MustQuery("SELECT t1.c0 FROM t1 WHERE NOT t1.c0;").Check(testkit.Rows())
+	tk.MustExec("drop table t1")
+}
