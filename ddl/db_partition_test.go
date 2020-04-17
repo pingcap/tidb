@@ -267,11 +267,11 @@ func (s *testIntegrationSuite9) TestCreateTableWithPartition(c *C) {
 		partition p0 values less than (unix_timestamp('2020-04-04 00:00:00')),
 		partition p1 values less than (unix_timestamp('2020-04-05 00:00:00')));`)
 
-	tk.MustGetErrCode(`create table t34 (dt timestamp(3)) partition by range (unix_timestamp(date(dt))) (
+	tk.MustGetErrCode(`create table t35 (dt timestamp(3)) partition by range (unix_timestamp(date(dt))) (
 		partition p0 values less than (unix_timestamp('2020-04-04 00:00:00')),
 		partition p1 values less than (unix_timestamp('2020-04-05 00:00:00')));`, tmysql.ErrWrongExprInPartitionFunc)
 
-	tk.MustGetErrCode(`create table t34 (dt datetime) partition by range (unix_timestamp(dt)) (
+	tk.MustGetErrCode(`create table t35 (dt datetime) partition by range (unix_timestamp(dt)) (
 		partition p0 values less than (unix_timestamp('2020-04-04 00:00:00')),
 		partition p1 values less than (unix_timestamp('2020-04-05 00:00:00')));`, tmysql.ErrWrongExprInPartitionFunc)
 
