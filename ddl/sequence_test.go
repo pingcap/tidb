@@ -255,6 +255,11 @@ func (s *testSequenceSuite) TestSequenceAsDefaultValue(c *C) {
 	s.tk.MustExec("create sequence seq")
 
 	// test the use sequence's nextval as default.
+	s.tk.MustExec("drop table if exists t")
+	s.tk.MustExec("create table t(a int not null default next value for seq key)")
+	s.tk.MustExec("drop table if exists t")
+	s.tk.MustExec("create table t(a int not null default nextval(seq), b int, primary key(a))")
+
 	s.tk.MustExec("create table t1 (a int default next value for seq)")
 	s.tk.MustGetErrMsg("create table t2 (a char(1) default next value for seq)", "[ddl:8228]Unsupported sequence default value for column type 'a'")
 
