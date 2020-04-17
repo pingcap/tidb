@@ -253,7 +253,7 @@ func TestEtcd(t *testing.T) {
 
 	wg := sync.WaitGroup{}
 
-	for j := 0; j < 500; j++ {
+	for j := 0; j < 1000; j++ {
 		wg.Add(50)
 		for n := 0; n < 10; n++ {
 			for i := 0; i < 5; i++ {
@@ -299,7 +299,7 @@ func TestEtcd2(t *testing.T) {
 
 	wg := sync.WaitGroup{}
 
-	for j := 0; j < 500; j++ {
+	for j := 0; j < 1000; j++ {
 		wg.Add(50)
 		for n := 0; n < 10; n++ {
 			for i := 0; i < 5; i++ {
@@ -345,7 +345,7 @@ func TestEtcd3(t *testing.T) {
 
 	wg := sync.WaitGroup{}
 
-	for j := 0; j < 500; j++ {
+	for j := 0; j < 1000; j++ {
 		wg.Add(50)
 		for n := 0; n < 10; n++ {
 			for i := 0; i < 5; i++ {
@@ -391,7 +391,7 @@ func TestEtcd4(t *testing.T) {
 
 	wg := sync.WaitGroup{}
 
-	for j := 0; j < 500; j++ {
+	for j := 0; j < 1000; j++ {
 		wg.Add(50)
 		for n := 0; n < 10; n++ {
 			for i := 0; i < 5; i++ {
