@@ -17,6 +17,9 @@ package util_test
 import (
 	"context"
 	"fmt"
+	"github.com/google/uuid"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"sync"
 	"testing"
 	"time"
@@ -227,6 +230,119 @@ func TestSyncerSimple(t *testing.T) {
 	}
 	if len(resp.Kvs) != 0 {
 		t.Fatalf("remove key %s failed %v", key, err)
+	}
+}
+
+func TestEtcd(t *testing.T) {
+	clus := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer clus.Terminate(t)
+	cli := clus.RandClient()
+	ctx := goctx.Background()
+
+	logPrefix := fmt.Sprintf("[%s] %s", "ddl-syncer", fmt.Sprintf("%s/%s", DDLAllSchemaVersions, uuid.New()))
+	session, err := owner.NewSession(ctx, logPrefix, cli, owner.NewSessionDefaultRetryCnt, SyncerSessionTTL)
+	if err != nil {
+		t.Fatal("start new session failed")
+	}
+
+	k := []string{"/tidb/ddl/all_schema_versions/50dae239-007f-4789-ae87-304bb2d8a368",
+		"/tidb/ddl/all_schema_versions/9a240ac4-e031-45a6-93a3-b3f117d1dd08",
+		"/tidb/ddl/all_schema_versions/50dae239-007f-4789-ae87-b3f117d1dd08,",
+		"/tidb/ddl/all_schema_versions/50dae239e031-4789-ae87-304bb2d8a368",
+		"/tidb/ddl/all_schema_versions/9a240ac4-007f-4789-ae87-304bb2d8a368"}
+
+	wg := sync.WaitGroup{}
+
+	for j := 0; j < 50; j++ {
+		wg.Add(5)
+		for i := 0; i < 5; i++ {
+			ii := i
+			go func() {
+				err := PutKVToEtcd(ctx, cli, 1, k[ii], string(ii+1),
+					clientv3.WithLease(session.Lease()))
+				if err != nil {
+					t.Fatal("Put fail")
+				}
+
+				childCtx, _ := goctx.WithTimeout(ctx, 2*time.Second)
+				_, err = cli.Get(childCtx, k[ii])
+				if err != nil {
+					t.Fatal("Get fail")
+				}
+				wg.Done()
+			}()
+		}
+		wg.Wait()
+		logutil.BgLogger().Info("loop0 finish", zap.Int("count", j))
+	}
+
+	for j := 0; j < 100; j++ {
+		wg.Add(5)
+		for i := 0; i < 5; i++ {
+			ii := i
+			go func() {
+				err := PutKVToEtcd(ctx, cli, 1, k[ii], string(ii+1),
+					clientv3.WithLease(session.Lease()))
+				if err != nil {
+					t.Fatal("Put fail")
+				}
+
+				childCtx, _ := goctx.WithTimeout(ctx, time.Second)
+				_, err = cli.Get(childCtx, k[ii])
+				if err != nil {
+					t.Fatal("Get fail")
+				}
+				wg.Done()
+			}()
+		}
+		wg.Wait()
+		logutil.BgLogger().Info("loop1 finish", zap.Int("count", j))
+	}
+
+	for j := 0; j < 200; j++ {
+		wg.Add(5)
+		for i := 0; i < 5; i++ {
+			ii := i
+			go func() {
+				err := PutKVToEtcd(ctx, cli, 1, k[ii], string(ii+1),
+					clientv3.WithLease(session.Lease()))
+				if err != nil {
+					t.Fatal("Put fail")
+				}
+
+				childCtx, _ := goctx.WithTimeout(ctx, 500*time.Millisecond)
+				_, err = cli.Get(childCtx, k[ii])
+				if err != nil {
+					t.Fatal("Get fail")
+				}
+				wg.Done()
+			}()
+		}
+		wg.Wait()
+		logutil.BgLogger().Info("loop2 finish", zap.Int("count", j))
+	}
+
+	for j := 0; j < 500; j++ {
+		wg.Add(5)
+		for i := 0; i < 5; i++ {
+			ii := i
+			go func() {
+				err := PutKVToEtcd(ctx, cli, 1, k[ii], string(ii+1),
+					clientv3.WithLease(session.Lease()))
+				if err != nil {
+					t.Fatal("Put fail")
+				}
+
+				childCtx, _ := goctx.WithTimeout(ctx, 100*time.Millisecond)
+				_, err = cli.Get(childCtx, k[ii])
+				if err != nil {
+					t.Fatal("Get fail")
+				}
+				wg.Done()
+			}()
+		}
+		wg.Wait()
+		logutil.BgLogger().Info("loop3 finish", zap.Int("count", j))
 	}
 }
 
