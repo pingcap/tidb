@@ -28,7 +28,7 @@ import (
 	"go.uber.org/zap"
 )
 
-//  NewOne stands for a number 1.
+// NewOne stands for a number 1.
 func NewOne() *Constant {
 	return &Constant{
 		Value:   types.NewDatum(1),
