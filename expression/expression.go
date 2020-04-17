@@ -1102,7 +1102,7 @@ func CanExprsPushDown(sc *stmtctx.StatementContext, exprs []Expression, client k
 func scalarExprSupportedByTiKV(function *ScalarFunction) bool {
 	switch function.FuncName.L {
 	case ast.Substr, ast.Substring, ast.DateAdd, ast.TimestampDiff,
-		ast.FromUnixTime, ast.Plus:
+		ast.FromUnixTime:
 		return false
 	default:
 		return true
