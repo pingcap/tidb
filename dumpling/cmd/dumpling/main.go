@@ -43,6 +43,8 @@ var (
 	where         string
 	fileType      string
 	noHeader      bool
+	noSchemas     bool
+	noData        bool
 
 	escapeBackslash bool
 
@@ -82,6 +84,8 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&escapeBackslash, "escape-backslash", true, "use backslash to escape quotation marks")
 	rootCmd.PersistentFlags().StringVar(&fileType, "filetype", "sql", "The type of export file (sql/csv)")
 	rootCmd.PersistentFlags().BoolVar(&noHeader, "no-header", false, "whether not to dump CSV table header")
+	rootCmd.PersistentFlags().BoolVarP(&noSchemas, "no-schemas", "m", false, "Do not dump table schemas with the data")
+	rootCmd.PersistentFlags().BoolVarP(&noData, "no-data", "d", false, "Do not dump table data")
 }
 
 func run() {
@@ -106,6 +110,8 @@ func run() {
 	conf.LogLevel = logLevel
 	conf.FileType = fileType
 	conf.NoHeader = noHeader
+	conf.NoSchemas = noSchemas
+	conf.NoData = noData
 
 	err := export.Dump(conf)
 	if err != nil {
