@@ -31,6 +31,7 @@ GOBUILDCOVERAGE := GOPATH=$(GOPATH) cd tidb-server; $(GO) test -coverpkg="../...
 GOTEST          := $(GO) test -p $(P)
 OVERALLS        := GO111MODULE=on overalls
 STATICCHECK     := GO111MODULE=on staticcheck
+UNCONVERT       := GO111MODULE=on unconvert
 
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
@@ -82,7 +83,7 @@ build:
 # Install the check tools.
 check-setup:tools/bin/revive tools/bin/goword tools/bin/gometalinter tools/bin/gosec
 
-check: fmt errcheck lint tidy testSuite check-static vet staticcheck
+check: fmt errcheck lint tidy testSuite check-static vet staticcheck unconvert
 
 # These need to be fixed before they can be ran regularly
 check-fail: goword check-slow
@@ -127,6 +128,11 @@ vet:
 staticcheck:
 	$(GO) get honnef.co/go/tools/cmd/staticcheck
 	$(STATICCHECK) ./...
+
+
+unconvert:
+	$(GO) get github.com/mdempsky/unconvert
+	$(UNCONVERT) ./...
 
 tidy:
 	@echo "go mod tidy"
