@@ -273,12 +273,12 @@ func (s *testTableSuite) TestInfoschemaFieldValue(c *C) {
 	tk.MustQuery("show create table information_schema.PROCESSLIST").Check(
 		testkit.Rows("" +
 			"PROCESSLIST CREATE TABLE `PROCESSLIST` (\n" +
-			"  `ID` bigint(21) unsigned NOT NULL DEFAULT '0',\n" +
+			"  `ID` bigint(21) unsigned NOT NULL DEFAULT 0,\n" +
 			"  `USER` varchar(16) NOT NULL DEFAULT '',\n" +
 			"  `HOST` varchar(64) NOT NULL DEFAULT '',\n" +
 			"  `DB` varchar(64) DEFAULT NULL,\n" +
 			"  `COMMAND` varchar(16) NOT NULL DEFAULT '',\n" +
-			"  `TIME` int(7) NOT NULL DEFAULT '0',\n" +
+			"  `TIME` int(7) NOT NULL DEFAULT 0,\n" +
 			"  `STATE` varchar(7) DEFAULT NULL,\n" +
 			"  `INFO` binary(512) DEFAULT NULL,\n" +
 			"  `MEM` bigint(21) unsigned DEFAULT NULL,\n" +
@@ -1200,4 +1200,30 @@ func (s *testTableSuite) TestStmtSummaryInternalQuery(c *C) {
 		where digest_text like "select original_sql , bind_sql , default_db , status%"`).Check(testkit.Rows(
 		"1 select original_sql , bind_sql , default_db , status , create_time , update_time , charset , collation from mysql . bind_info" +
 			" where update_time > ? order by update_time"))
+}
+
+// Test error count and warning count.
+func (s *testTableSuite) TestStmtSummaryErrorCount(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	// Clear summaries.
+	tk.MustExec("set global tidb_enable_stmt_summary = 0")
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+	defer tk.MustExec("set global tidb_enable_stmt_summary = ''")
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists stmt_summary_test")
+	tk.MustExec("create table stmt_summary_test(id int primary key)")
+	tk.MustExec("insert into stmt_summary_test values(1)")
+	_, err := tk.Exec("insert into stmt_summary_test values(1)")
+	c.Assert(err, NotNil)
+
+	tk.MustQuery(`select exec_count, sum_errors, sum_warnings
+		from information_schema.statements_summary
+		where digest_text like "insert into stmt_summary_test%"`).Check(testkit.Rows("2 1 0"))
+
+	tk.MustExec("insert ignore into stmt_summary_test values(1)")
+	tk.MustQuery(`select exec_count, sum_errors, sum_warnings
+		from information_schema.statements_summary
+		where digest_text like "insert ignore into stmt_summary_test%"`).Check(testkit.Rows("1 0 1"))
 }
