@@ -21,6 +21,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -628,7 +629,8 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 		Tp:      &types.FieldType{Tp: mysql.TypeLonglong},
 		Options: []*ast.ColumnOption{},
 	}
-	col, _, err := buildColumnAndConstraint(ctx, 2, newColumnDef, nil, mysql.DefaultCharset, "", mysql.DefaultCharset, "")
+	chs, coll := charset.GetDefaultCharsetAndCollate()
+	col, _, err := buildColumnAndConstraint(ctx, 2, newColumnDef, nil, chs, coll)
 	c.Assert(err, IsNil)
 
 	addColumnArgs := []interface{}{col, &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, 0}
@@ -849,6 +851,72 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	testDropIndex(c, ctx, d, dbInfo, tblInfo, idxOrigName)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	s.checkDropIdx(c, d, dbInfo.ID, tblInfo.ID, idxOrigName, true)
+<<<<<<< HEAD
+=======
+
+	// for add columns
+	updateTest(&tests[34])
+	addingColNames := []string{"colA", "colB", "colC", "colD", "colE", "colF"}
+	cols := make([]*table.Column, len(addingColNames))
+	for i, addingColName := range addingColNames {
+		newColumnDef := &ast.ColumnDef{
+			Name:    &ast.ColumnName{Name: model.NewCIStr(addingColName)},
+			Tp:      &types.FieldType{Tp: mysql.TypeLonglong},
+			Options: []*ast.ColumnOption{},
+		}
+		col, _, err := buildColumnAndConstraint(ctx, 0, newColumnDef, nil, mysql.DefaultCharset, "")
+		c.Assert(err, IsNil)
+		cols[i] = col
+	}
+	offsets := make([]int, len(cols))
+	positions := make([]*ast.ColumnPosition, len(cols))
+	for i := range positions {
+		positions[i] = &ast.ColumnPosition{Tp: ast.ColumnPositionNone}
+	}
+	ifNotExists := make([]bool, len(cols))
+
+	addColumnArgs = []interface{}{cols, positions, offsets, ifNotExists}
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddColumns, addColumnArgs, &cancelState)
+	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	s.checkAddColumns(c, d, dbInfo.ID, tblInfo.ID, addingColNames, false)
+
+	updateTest(&tests[35])
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddColumns, addColumnArgs, &cancelState)
+	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	s.checkAddColumns(c, d, dbInfo.ID, tblInfo.ID, addingColNames, false)
+
+	updateTest(&tests[36])
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddColumns, addColumnArgs, &cancelState)
+	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	s.checkAddColumns(c, d, dbInfo.ID, tblInfo.ID, addingColNames, false)
+
+	updateTest(&tests[37])
+	testAddColumns(c, ctx, d, dbInfo, tblInfo, addColumnArgs)
+	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	s.checkAddColumns(c, d, dbInfo.ID, tblInfo.ID, addingColNames, true)
+
+	// for drop columns
+	updateTest(&tests[38])
+	dropColNames := []string{"colA", "colB"}
+	s.checkCancelDropColumns(c, d, dbInfo.ID, tblInfo.ID, dropColNames, false)
+	testDropColumns(c, ctx, d, dbInfo, tblInfo, dropColNames, false)
+	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	s.checkCancelDropColumns(c, d, dbInfo.ID, tblInfo.ID, dropColNames, true)
+
+	updateTest(&tests[39])
+	dropColNames = []string{"colC", "colD"}
+	s.checkCancelDropColumns(c, d, dbInfo.ID, tblInfo.ID, dropColNames, false)
+	testDropColumns(c, ctx, d, dbInfo, tblInfo, dropColNames, false)
+	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	s.checkCancelDropColumns(c, d, dbInfo.ID, tblInfo.ID, dropColNames, true)
+
+	updateTest(&tests[40])
+	dropColNames = []string{"colE", "colF"}
+	s.checkCancelDropColumns(c, d, dbInfo.ID, tblInfo.ID, dropColNames, false)
+	testDropColumns(c, ctx, d, dbInfo, tblInfo, dropColNames, false)
+	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	s.checkCancelDropColumns(c, d, dbInfo.ID, tblInfo.ID, dropColNames, true)
+>>>>>>> 6b034d4... *: fix unexpected error when setting collate for database (#16283)
 }
 
 func (s *testDDLSuite) TestIgnorableSpec(c *C) {

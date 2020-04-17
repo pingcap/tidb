@@ -342,6 +342,27 @@ func (s *testSuite6) TestCreateDropDatabase(c *C) {
 
 	_, err = tk.Exec("drop database mysql")
 	c.Assert(err, NotNil)
+
+	tk.MustExec("create database charset_test charset ascii;")
+	tk.MustQuery("show create database charset_test;").Check(testutil.RowsWithSep("|",
+		"charset_test|CREATE DATABASE `charset_test` /*!40100 DEFAULT CHARACTER SET ascii */",
+	))
+	tk.MustExec("drop database charset_test;")
+	tk.MustExec("create database charset_test charset binary;")
+	tk.MustQuery("show create database charset_test;").Check(testutil.RowsWithSep("|",
+		"charset_test|CREATE DATABASE `charset_test` /*!40100 DEFAULT CHARACTER SET binary */",
+	))
+	tk.MustExec("drop database charset_test;")
+	tk.MustExec("create database charset_test collate utf8_general_ci;")
+	tk.MustQuery("show create database charset_test;").Check(testutil.RowsWithSep("|",
+		"charset_test|CREATE DATABASE `charset_test` /*!40100 DEFAULT CHARACTER SET utf8 COLLATE utf8_general_ci */",
+	))
+	tk.MustExec("drop database charset_test;")
+	tk.MustExec("create database charset_test charset utf8 collate utf8_general_ci;")
+	tk.MustQuery("show create database charset_test;").Check(testutil.RowsWithSep("|",
+		"charset_test|CREATE DATABASE `charset_test` /*!40100 DEFAULT CHARACTER SET utf8 COLLATE utf8_general_ci */",
+	))
+	tk.MustGetErrMsg("create database charset_test charset utf8 collate utf8mb4_unicode_ci;", "[ddl:1253]COLLATION 'utf8mb4_unicode_ci' is not valid for CHARACTER SET 'utf8'")
 }
 
 func (s *testSuite6) TestCreateDropTable(c *C) {
