@@ -83,9 +83,6 @@ var (
 	transactionDurationGeneralCommit     = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, metrics.LblCommit)
 	transactionDurationGeneralAbort      = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, metrics.LblAbort)
 
-	sessionExecuteRunDurationInternal = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblInternal)
-	sessionExecuteRunDurationGeneral  = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblGeneral)
-
 	sessionExecuteCompileDurationInternal = metrics.SessionExecuteCompileDuration.WithLabelValues(metrics.LblInternal)
 	sessionExecuteCompileDurationGeneral  = metrics.SessionExecuteCompileDuration.WithLabelValues(metrics.LblGeneral)
 	sessionExecuteParseDurationInternal   = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblInternal)
@@ -1033,7 +1030,6 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 
 func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode ast.StmtNode, stmt sqlexec.Statement, recordSets []sqlexec.RecordSet, inMulitQuery bool) ([]sqlexec.RecordSet, error) {
 	logStmt(stmtNode, s.sessionVars)
-	startTime := time.Now()
 	recordSet, err := runStmt(ctx, s, stmt)
 	if err != nil {
 		if !kv.ErrKeyExists.Equal(err) {
@@ -1043,11 +1039,6 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 				zap.String("session", s.String()))
 		}
 		return nil, err
-	}
-	if s.isInternal() {
-		sessionExecuteRunDurationInternal.Observe(time.Since(startTime).Seconds())
-	} else {
-		sessionExecuteRunDurationGeneral.Observe(time.Since(startTime).Seconds())
 	}
 
 	if inMulitQuery && recordSet == nil {
@@ -1088,6 +1079,96 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 	return
 }
 
+<<<<<<< HEAD
+=======
+// Parse parses a query string to raw ast.StmtNode.
+func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error) {
+	charsetInfo, collation := s.sessionVars.GetCharsetInfo()
+	parseStartTime := time.Now()
+	stmts, warns, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
+	if err != nil {
+		s.rollbackOnError(ctx)
+
+		// Only print log message when this SQL is from the user.
+		// Mute the warning for internal SQLs.
+		if !s.sessionVars.InRestrictedSQL {
+			logutil.Logger(ctx).Warn("parse SQL failed", zap.Error(err), zap.String("SQL", sql))
+		}
+		return nil, util.SyntaxError(err)
+	}
+
+	durParse := time.Since(parseStartTime)
+	s.GetSessionVars().DurationParse = durParse
+	isInternal := s.isInternal()
+	if isInternal {
+		sessionExecuteParseDurationInternal.Observe(durParse.Seconds())
+	} else {
+		sessionExecuteParseDurationGeneral.Observe(durParse.Seconds())
+	}
+	for _, warn := range warns {
+		s.sessionVars.StmtCtx.AppendWarning(util.SyntaxWarn(warn))
+	}
+	return stmts, nil
+}
+
+func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("session.ExecuteStmt", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+
+	s.PrepareTxnCtx(ctx)
+	err := s.loadCommonGlobalVariablesIfNeeded()
+	if err != nil {
+		return nil, err
+	}
+
+	s.sessionVars.StartTime = time.Now()
+
+	// Some executions are done in compile stage, so we reset them before compile.
+	if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
+		return nil, err
+	}
+
+	// Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
+	compiler := executor.Compiler{Ctx: s}
+	stmt, err := compiler.Compile(ctx, stmtNode)
+	if err != nil {
+		s.rollbackOnError(ctx)
+
+		// Only print log message when this SQL is from the user.
+		// Mute the warning for internal SQLs.
+		if !s.sessionVars.InRestrictedSQL {
+			logutil.Logger(ctx).Warn("compile SQL failed", zap.Error(err), zap.String("SQL", stmtNode.Text()))
+		}
+		return nil, err
+	}
+	durCompile := time.Since(s.sessionVars.StartTime)
+	s.GetSessionVars().DurationCompile = durCompile
+	if s.isInternal() {
+		sessionExecuteCompileDurationInternal.Observe(durCompile.Seconds())
+	} else {
+		sessionExecuteCompileDurationGeneral.Observe(durCompile.Seconds())
+	}
+	s.currentPlan = stmt.Plan
+
+	// Execute the physical plan.
+	logStmt(stmtNode, s.sessionVars)
+	recordSet, err := runStmt(ctx, s, stmt)
+	if err != nil {
+		if !kv.ErrKeyExists.Equal(err) {
+			logutil.Logger(ctx).Warn("run statement failed",
+				zap.Int64("schemaVersion", s.sessionVars.TxnCtx.SchemaVersion),
+				zap.Error(err),
+				zap.String("session", s.String()))
+		}
+		return nil, err
+	}
+	return recordSet, nil
+}
+
+>>>>>>> 7106b18... session: refine record execution duration metric (#16453)
 func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec.RecordSet, err error) {
 	s.PrepareTxnCtx(ctx)
 	connID := s.sessionVars.ConnectionID
@@ -1210,6 +1291,10 @@ func (s *session) CommonExec(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
+<<<<<<< HEAD
+=======
+	sessionExecuteCompileDurationGeneral.Observe(time.Since(s.sessionVars.StartTime).Seconds())
+>>>>>>> 7106b18... session: refine record execution duration metric (#16453)
 	logQuery(st.OriginText(), s.sessionVars)
 	return runStmt(ctx, s, st)
 }
@@ -1239,7 +1324,14 @@ func (s *session) CachedPlanExec(ctx context.Context,
 		OutputNames: execPlan.OutputNames(),
 		PsStmt:      prepareStmt,
 	}
+<<<<<<< HEAD
 	s.GetSessionVars().DurationCompile = time.Since(s.sessionVars.StartTime)
+=======
+	compileDuration := time.Since(s.sessionVars.StartTime)
+	sessionExecuteCompileDurationGeneral.Observe(compileDuration.Seconds())
+	s.GetSessionVars().DurationCompile = compileDuration
+
+>>>>>>> 7106b18... session: refine record execution duration metric (#16453)
 	stmt.Text = prepared.Stmt.Text()
 	stmtCtx.OriginalSQL = stmt.Text
 	stmtCtx.InitSQLDigest(prepareStmt.NormalizedSQL, prepareStmt.SQLDigest)
