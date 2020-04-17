@@ -4626,6 +4626,48 @@ func (s *testIntegrationSuite) TestMySQLExtAssignment(c *C) {
 	tk.MustExec("set @count := @count + 5;")
 }
 
+func (s *testIntegrationSuite) TestExprPushdown(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int, col1 varchar(10), col2 varchar(10), col3 int, col4 int, col5 int, index key1" +
+		" (col1, col2, col3, col4), index key2 (col4, col3, col2, col1))")
+	tk.MustExec("insert into t values(1,'211111','311',4,5,6),(2,'311111','411',5,6,7),(3,'411111','511',6,7,8)," +
+		"(4,'511111','611',7,8,9),(5,'611111','711',8,9,10)")
+
+	// case 1, index scan without double read, some filters can not be pushed to cop task
+	rows := tk.MustQuery("explain select col2, col1 from t use index(key1) where col2 like '5%' and substr(col1, 1, 1) = '4'").Rows()
+	c.Assert(fmt.Sprintf("%v", rows[1][2]), Equals, "root")
+	c.Assert(fmt.Sprintf("%v", rows[1][3]), Equals, "eq(substr(test.t.col1, 1, 1), \"4\")")
+	c.Assert(fmt.Sprintf("%v", rows[3][2]), Equals, "cop[tikv]")
+	c.Assert(fmt.Sprintf("%v", rows[3][3]), Equals, "like(test.t.col2, \"5%\", 92)")
+	tk.MustQuery("select col2, col1 from t use index(key1) where col2 like '5%' and substr(col1, 1, 1) = '4'").Check(testkit.Rows("511 411111"))
+	tk.MustQuery("select count(col2) from t use index(key1) where col2 like '5%' and substr(col1, 1, 1) = '4'").Check(testkit.Rows("1"))
+
+	// case 2, index scan without double read, none of the filters can be pushed to cop task
+	rows = tk.MustQuery("explain select col1, col2 from t use index(key2) where substr(col2, 1, 1) = '5' and substr(col1, 1, 1) = '4'").Rows()
+	c.Assert(fmt.Sprintf("%v", rows[0][2]), Equals, "root")
+	c.Assert(fmt.Sprintf("%v", rows[0][3]), Equals, "eq(substr(test.t.col1, 1, 1), \"4\"), eq(substr(test.t.col2, 1, 1), \"5\")")
+	tk.MustQuery("select col1, col2 from t use index(key2) where substr(col2, 1, 1) = '5' and substr(col1, 1, 1) = '4'").Check(testkit.Rows("411111 511"))
+	tk.MustQuery("select count(col1) from t use index(key2) where substr(col2, 1, 1) = '5' and substr(col1, 1, 1) = '4'").Check(testkit.Rows("1"))
+
+	// case 3, index scan with double read, some filters can not be pushed to cop task
+	rows = tk.MustQuery("explain select id from t use index(key1) where col2 like '5%' and substr(col1, 1, 1) = '4'").Rows()
+	c.Assert(fmt.Sprintf("%v", rows[1][2]), Equals, "root")
+	c.Assert(fmt.Sprintf("%v", rows[1][3]), Equals, "eq(substr(test.t.col1, 1, 1), \"4\")")
+	c.Assert(fmt.Sprintf("%v", rows[3][2]), Equals, "cop[tikv]")
+	c.Assert(fmt.Sprintf("%v", rows[3][3]), Equals, "like(test.t.col2, \"5%\", 92)")
+	tk.MustQuery("select id from t use index(key1) where col2 like '5%' and substr(col1, 1, 1) = '4'").Check(testkit.Rows("3"))
+	tk.MustQuery("select count(id) from t use index(key1) where col2 like '5%' and substr(col1, 1, 1) = '4'").Check(testkit.Rows("1"))
+
+	// case 4, index scan with double read, none of the filters can be pushed to cop task
+	rows = tk.MustQuery("explain select id from t use index(key2) where substr(col2, 1, 1) = '5' and substr(col1, 1, 1) = '4'").Rows()
+	c.Assert(fmt.Sprintf("%v", rows[1][2]), Equals, "root")
+	c.Assert(fmt.Sprintf("%v", rows[1][3]), Equals, "eq(substr(test.t.col1, 1, 1), \"4\"), eq(substr(test.t.col2, 1, 1), \"5\")")
+	tk.MustQuery("select id from t use index(key2) where substr(col2, 1, 1) = '5' and substr(col1, 1, 1) = '4'").Check(testkit.Rows("3"))
+	tk.MustQuery("select count(id) from t use index(key2) where substr(col2, 1, 1) = '5' and substr(col1, 1, 1) = '4'").Check(testkit.Rows("1"))
+}
+
 func (s *testIntegrationSuite) TestExprPushdownBlacklist(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery(`select * from mysql.expr_pushdown_blacklist`).Check(testkit.Rows())
