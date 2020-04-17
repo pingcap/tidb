@@ -4928,6 +4928,55 @@ func (s *testIntegrationSuite) TestIssue10181(c *C) {
 	tk.MustQuery(`select * from t where a > 9223372036854775807-0.5 order by a`).Check(testkit.Rows(`9223372036854775807`, `18446744073709551615`))
 }
 
+func (s *testIntegrationSuite) TestExprPushdown(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int, col1 int, col2 int, col3 int, col4 int, col5 int, index key1" +
+		" (col1, col2, col3, col4), index key2 (col4, col3, col2, col1))")
+	tk.MustExec("insert into t values(1,2,3,4,5,6),(2,3,4,5,6,7),(3,4,5,6,7,8),(4,5,6,7,8,9),(5,6,7,8,9,10)")
+
+	// disable plus pushdown to tikv
+	tk.MustExec("insert into mysql.expr_pushdown_blacklist " +
+		"values('plus', 'tikv', 'for test')")
+	tk.MustExec("admin reload expr_pushdown_blacklist")
+
+	// case 1, index scan without double read, some filters can not be pushed to cop task
+	rows := tk.MustQuery("explain select col2, col1 from t use index(key1) where col2 - 1 >= 4 and col1 + 1 <= 5").Rows()
+	c.Assert(fmt.Sprintf("%v", rows[1][2]), Equals, "root")
+	c.Assert(fmt.Sprintf("%v", rows[1][4]), Equals, "le(plus(test.t.col1, 1), 5)")
+	c.Assert(fmt.Sprintf("%v", rows[3][2]), Equals, "cop[tikv]")
+	c.Assert(fmt.Sprintf("%v", rows[3][4]), Equals, "ge(minus(test.t.col2, 1), 4)")
+	tk.MustQuery("select col2, col1 from t use index(key1) where col2 - 1 >= 4 and col1 + 1 <= 5").Check(testkit.Rows("5 4"))
+	tk.MustQuery("select count(col2) from t use index(key1) where col2 - 1 >= 4 and col1 + 1 <= 5").Check(testkit.Rows("1"))
+
+	// case 2, index scan without double read, none of the filters can be pushed to cop task
+	rows = tk.MustQuery("explain select col1, col2 from t use index(key2) where col2 + 1 >= 6 and col1 + 1 <= 5").Rows()
+	c.Assert(fmt.Sprintf("%v", rows[0][2]), Equals, "root")
+	c.Assert(fmt.Sprintf("%v", rows[0][4]), Equals, "ge(plus(test.t.col2, 1), 6), le(plus(test.t.col1, 1), 5)")
+	tk.MustQuery("select col1, col2 from t use index(key2) where col2 + 1 >= 6 and col1 + 1 <= 5").Check(testkit.Rows("4 5"))
+	tk.MustQuery("select count(col1) from t use index(key2) where col2 + 1 >= 6 and col1 + 1 <= 5").Check(testkit.Rows("1"))
+
+	// case 3, index scan with double read, some filters can not be pushed to cop task
+	rows = tk.MustQuery("explain select id from t use index(key1) where col2 - 1 >= 4 and col1 + 1 <= 5;").Rows()
+	c.Assert(fmt.Sprintf("%v", rows[1][2]), Equals, "root")
+	c.Assert(fmt.Sprintf("%v", rows[1][4]), Equals, "le(plus(test.t.col1, 1), 5)")
+	c.Assert(fmt.Sprintf("%v", rows[3][2]), Equals, "cop[tikv]")
+	c.Assert(fmt.Sprintf("%v", rows[3][4]), Equals, "ge(minus(test.t.col2, 1), 4)")
+	tk.MustQuery("select id from t use index(key1) where col2 - 1 >= 4 and col1 + 1 <= 5").Check(testkit.Rows("3"))
+	tk.MustQuery("select count(id) from t use index(key1) where col2 - 1 >= 4 and col1 + 1 <= 5").Check(testkit.Rows("1"))
+
+	// case 4, index scan with double read, none of the filters can be pushed to cop task
+	rows = tk.MustQuery("explain select id from t use index(key2) where col2 + 1 >= 6 and col1 + 1 <= 5").Rows()
+	c.Assert(fmt.Sprintf("%v", rows[1][2]), Equals, "root")
+	c.Assert(fmt.Sprintf("%v", rows[1][4]), Equals, "ge(plus(test.t.col2, 1), 6), le(plus(test.t.col1, 1), 5)")
+	tk.MustQuery("select id from t use index(key2) where col2 + 1 >= 6 and col1 + 1 <= 5").Check(testkit.Rows("3"))
+	tk.MustQuery("select count(id) from t use index(key2) where col2 + 1 >= 6 and col1 + 1 <= 5").Check(testkit.Rows("1"))
+
+	tk.MustExec("delete from mysql.expr_pushdown_blacklist " +
+		"where name = 'plus' and store_type = 'tikv' and reason = 'for test'")
+	tk.MustExec("admin reload expr_pushdown_blacklist")
+}
 func (s *testIntegrationSuite) TestExprPushdownBlacklist(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery(`select * from mysql.expr_pushdown_blacklist`).Check(testkit.Rows(
