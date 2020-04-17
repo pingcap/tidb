@@ -337,7 +337,15 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 		return true, nil
 	}
 	if regionErr.GetStaleCommand() != nil {
+<<<<<<< HEAD
 		logutil.Logger(context.Background()).Debug("tikv reports `StaleCommand`", zap.Stringer("ctx", ctx))
+=======
+		logutil.BgLogger().Debug("tikv reports `StaleCommand`", zap.Stringer("ctx", ctx))
+		err = bo.Backoff(boStaleCmd, errors.Errorf("stale command, ctx: %v", ctx))
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+>>>>>>> 14a4a4e... tikv: fix infinite retry when kv continuing to return staleCommand error (#16481)
 		return true, nil
 	}
 	if regionErr.GetRaftEntryTooLarge() != nil {
