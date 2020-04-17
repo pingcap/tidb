@@ -471,31 +471,103 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 		ast.DateFormat,
 		ast.Month,
 		ast.TimestampDiff,
+		ast.DateAdd,
+		ast.FromUnixTime,
 
+<<<<<<< HEAD
 		// string functions
 		ast.Substring,
 		ast.Substr:
 		_, disallowPushDown := DefaultExprPushDownBlacklist.Load().(map[string]struct{})[sf.FuncName.L]
 		ret = !disallowPushDown
+=======
+		// encryption functions.
+		ast.MD5,
+		ast.SHA1,
+		ast.UncompressedLength,
+
+		ast.Cast,
+
+		// misc functions.
+		ast.InetNtoa,
+		ast.InetAton,
+		ast.Inet6Ntoa,
+		ast.Inet6Aton,
+		ast.IsIPv4,
+		ast.IsIPv4Compat,
+		ast.IsIPv4Mapped,
+		ast.IsIPv6:
+		ret = true
+
+	// A special case: Only push down Round by signature
+	case ast.Round:
+		switch sf.Function.PbCode() {
+		case
+			tipb.ScalarFuncSig_RoundReal,
+			tipb.ScalarFuncSig_RoundInt,
+			tipb.ScalarFuncSig_RoundDec:
+			ret = true
+		}
+	case
+		ast.Substring,
+		ast.Substr:
+		switch sf.Function.PbCode() {
+		case
+			tipb.ScalarFuncSig_Substring2ArgsUTF8,
+			tipb.ScalarFuncSig_Substring3ArgsUTF8:
+			ret = true
+		}
+	case ast.Rand:
+		switch sf.Function.PbCode() {
+		case
+			tipb.ScalarFuncSig_RandWithSeedFirstGen:
+			ret = true
+		}
+>>>>>>> b8494e7... expression: support disable expression pushdown based on store… (#16389)
 	}
 
 	if ret {
 		switch storeType {
 		case kv.TiFlash:
-			return scalarExprSupportedByFlash(sf)
+			ret = scalarExprSupportedByFlash(sf)
 		case kv.TiKV:
-			return scalarExprSupportedByTiKV(sf)
+			ret = scalarExprSupportedByTiKV(sf)
+		case kv.TiDB:
+			ret = scalarExprSupportedByTiDB(sf)
 		}
+	}
+	if ret {
+		ret = IsPushDownEnabled(sf.FuncName.L, storeType)
 	}
 	return ret
 }
 
+<<<<<<< HEAD
+=======
+func storeTypeMask(storeType kv.StoreType) uint32 {
+	if storeType == kv.UnSpecified {
+		return 1<<kv.TiKV | 1<<kv.TiFlash | 1<<kv.TiDB
+	}
+	return 1 << storeType
+}
+
+// IsPushDownEnabled returns true if the input expr is not in the expr_pushdown_blacklist
+func IsPushDownEnabled(name string, storeType kv.StoreType) bool {
+	value, exists := DefaultExprPushDownBlacklist.Load().(map[string]uint32)[name]
+	if exists {
+		mask := storeTypeMask(storeType)
+		return !(value&mask == mask)
+	}
+	return true
+}
+
+>>>>>>> b8494e7... expression: support disable expression pushdown based on store… (#16389)
 // DefaultExprPushDownBlacklist indicates the expressions which can not be pushed down to TiKV.
 var DefaultExprPushDownBlacklist *atomic.Value
 
 func init() {
 	DefaultExprPushDownBlacklist = new(atomic.Value)
-	DefaultExprPushDownBlacklist.Store(make(map[string]struct{}))
+	DefaultExprPushDownBlacklist.Store(make(map[string]uint32))
 }
 
 func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType kv.StoreType) bool {
@@ -555,8 +627,23 @@ func CanExprsPushDown(sc *stmtctx.StatementContext, exprs []Expression, client k
 
 func scalarExprSupportedByTiKV(function *ScalarFunction) bool {
 	switch function.FuncName.L {
+<<<<<<< HEAD
 	case ast.Substr, ast.Substring, ast.DateAdd,
 		ast.TimestampDiff, ast.Month:
+=======
+	case ast.Substr, ast.Substring, ast.DateAdd, ast.TimestampDiff,
+		ast.FromUnixTime:
+		return false
+	default:
+		return true
+	}
+}
+
+func scalarExprSupportedByTiDB(function *ScalarFunction) bool {
+	switch function.FuncName.L {
+	case ast.Substr, ast.Substring, ast.DateAdd, ast.TimestampDiff,
+		ast.FromUnixTime:
+>>>>>>> b8494e7... expression: support disable expression pushdown based on store… (#16389)
 		return false
 	default:
 		return true
@@ -569,11 +656,27 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		ast.NullEQ, ast.GE, ast.LE, ast.EQ, ast.NE,
 		ast.LT, ast.GT, ast.Ifnull, ast.IsNull, ast.Or,
 		ast.In, ast.Mod, ast.And, ast.LogicOr, ast.LogicAnd,
+<<<<<<< HEAD
 		ast.Like, ast.UnaryNot, ast.Case, ast.Month, ast.TimestampDiff:
 		return true
 	case ast.Substr, ast.Substring:
 		switch function.Function.PbCode() {
 		case tipb.ScalarFuncSig_Substring2Args, tipb.ScalarFuncSig_Substring3Args:
+=======
+		ast.Like, ast.UnaryNot, ast.Case, ast.Month, ast.Substr,
+		ast.Substring, ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime:
+		return true
+	case ast.Cast:
+		switch function.Function.PbCode() {
+		case tipb.ScalarFuncSig_CastIntAsDecimal:
+			return true
+		default:
+			return false
+		}
+	case ast.DateAdd:
+		switch function.Function.PbCode() {
+		case tipb.ScalarFuncSig_AddDateDatetimeInt, tipb.ScalarFuncSig_AddDateStringInt:
+>>>>>>> b8494e7... expression: support disable expression pushdown based on store… (#16389)
 			return true
 		default:
 			return false

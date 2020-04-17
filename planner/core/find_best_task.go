@@ -628,7 +628,21 @@ func (is *PhysicalIndexScan) initSchema(idx *model.IndexInfo, isDoubleRead bool)
 
 func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSource, path *accessPath, finalStats *property.StatsInfo) {
 	// Add filter condition to table plan now.
+<<<<<<< HEAD
 	indexConds, tableConds := path.indexFilters, path.tableFilters
+=======
+	indexConds, tableConds := path.IndexFilters, path.TableFilters
+
+	tableConds, copTask.rootTaskConds = SplitSelCondsWithVirtualColumn(tableConds)
+
+	var newRootConds []expression.Expression
+	indexConds, newRootConds = expression.PushDownExprs(is.ctx.GetSessionVars().StmtCtx, indexConds, is.ctx.GetClient(), kv.TiKV)
+	copTask.rootTaskConds = append(copTask.rootTaskConds, newRootConds...)
+
+	tableConds, newRootConds = expression.PushDownExprs(is.ctx.GetSessionVars().StmtCtx, tableConds, is.ctx.GetClient(), kv.TiKV)
+	copTask.rootTaskConds = append(copTask.rootTaskConds, newRootConds...)
+
+>>>>>>> b8494e7... expression: support disable expression pushdown based on store… (#16389)
 	sessVars := is.ctx.GetSessionVars()
 	if indexConds != nil {
 		copTask.cst += copTask.count() * sessVars.CopCPUFactor

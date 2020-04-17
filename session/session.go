@@ -1708,7 +1708,11 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
+<<<<<<< HEAD
 	currentBootstrapVersion = version38
+=======
+	currentBootstrapVersion = version42
+>>>>>>> b8494e7... expression: support disable expression pushdown based on store… (#16389)
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {

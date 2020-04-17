@@ -271,7 +271,9 @@ const (
 
 	// CreateExprPushdownBlacklist stores the expressions which are not allowed to be pushed down.
 	CreateExprPushdownBlacklist = `CREATE TABLE IF NOT EXISTS mysql.expr_pushdown_blacklist (
-		name char(100) NOT NULL
+		name char(100) NOT NULL,
+		store_type char(100) NOT NULL DEFAULT 'tikv,tiflash,tidb',
+		reason varchar(200)
 	);`
 
 	// CreateOptRuleBlacklist stores the list of disabled optimizing operations.
@@ -361,6 +363,16 @@ const (
 	version36 = 36
 	version37 = 37
 	version38 = 38
+<<<<<<< HEAD
+=======
+	version39 = 39
+	// version40 is the version that introduce new collation in TiDB,
+	// see https://github.com/pingcap/tidb/pull/14574 for more details.
+	version40 = 40
+	version41 = 41
+	// version42 add storeType and reason column in expr_pushdown_blacklist
+	version42 = 42
+>>>>>>> b8494e7... expression: support disable expression pushdown based on store… (#16389)
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -573,6 +585,25 @@ func upgrade(s Session) {
 		upgradeToVer38(s)
 	}
 
+<<<<<<< HEAD
+=======
+	if ver < version39 {
+		upgradeToVer39(s)
+	}
+
+	if ver < version40 {
+		upgradeToVer40(s)
+	}
+
+	if ver < version41 {
+		upgradeToVer41(s)
+	}
+
+	if ver < version42 {
+		upgradeToVer42(s)
+	}
+
+>>>>>>> b8494e7... expression: support disable expression pushdown based on store… (#16389)
 	updateBootstrapVer(s)
 	_, err = s.Execute(context.Background(), "COMMIT")
 
@@ -914,6 +945,19 @@ func upgradeToVer38(s Session) {
 	}
 }
 
+// writeDefaultExprPushDownBlacklist writes default expr pushdown blacklist into mysql.expr_pushdown_blacklist
+func writeDefaultExprPushDownBlacklist(s Session) {
+	mustExecute(s, "INSERT HIGH_PRIORITY INTO mysql.expr_pushdown_blacklist VALUES"+
+		"('date_add','tiflash', 'DST(daylight saving time) does not take effect in TiFlash date_add'),"+
+		"('cast','tiflash', 'Behavior of some corner cases(overflow, truncate etc) is different in TiFlash and TiDB')")
+}
+
+func upgradeToVer42(s Session) {
+	doReentrantDDL(s, "ALTER TABLE mysql.expr_pushdown_blacklist ADD COLUMN `store_type` char(100) NOT NULL DEFAULT 'tikv,tiflash,tidb'", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.expr_pushdown_blacklist ADD COLUMN `reason` varchar(200)", infoschema.ErrColumnExists)
+	writeDefaultExprPushDownBlacklist(s)
+}
+
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
@@ -1015,6 +1059,14 @@ func doDMLWorks(s Session) {
 	mustExecute(s, sql)
 
 	writeSystemTZ(s)
+<<<<<<< HEAD
+=======
+
+	writeNewCollationParameter(s, config.GetGlobalConfig().NewCollationsEnabledOnFirstBootstrap)
+
+	writeDefaultExprPushDownBlacklist(s)
+
+>>>>>>> b8494e7... expression: support disable expression pushdown based on store… (#16389)
 	_, err := s.Execute(context.Background(), "COMMIT")
 	if err != nil {
 		sleepTime := 1 * time.Second
