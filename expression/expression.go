@@ -427,12 +427,9 @@ func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Colum
 			if buf.IsNull(i) {
 				isZero[i] = -1
 			} else {
-				iVal, err := types.StrToInt(sc, buf.GetString(i))
+				iVal, err := types.StrToFloat(sc, buf.GetString(i))
 				if err != nil {
-					iVal, err = HandleOverflowOnSelection(sc, iVal, err)
-					if err != nil {
-						return err
-					}
+					return err
 				}
 				if iVal == 0 {
 					isZero[i] = 0
@@ -946,6 +943,8 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 		ast.PeriodAdd,
 		ast.PeriodDiff,
 		ast.TimestampDiff,
+		ast.DateAdd,
+		ast.FromUnixTime,
 
 		// encryption functions.
 		ast.MD5,
@@ -963,7 +962,7 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 		ast.IsIPv4Compat,
 		ast.IsIPv4Mapped,
 		ast.IsIPv6:
-		ret = isPushDownEnabled(sf.FuncName.L)
+		ret = true
 
 	// A special case: Only push down Round by signature
 	case ast.Round:
@@ -972,7 +971,7 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 			tipb.ScalarFuncSig_RoundReal,
 			tipb.ScalarFuncSig_RoundInt,
 			tipb.ScalarFuncSig_RoundDec:
-			ret = isPushDownEnabled(sf.FuncName.L)
+			ret = true
 		}
 	case
 		ast.Substring,
@@ -981,29 +980,46 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 		case
 			tipb.ScalarFuncSig_Substring2ArgsUTF8,
 			tipb.ScalarFuncSig_Substring3ArgsUTF8:
-			ret = isPushDownEnabled(sf.FuncName.L)
+			ret = true
 		}
 	case ast.Rand:
 		switch sf.Function.PbCode() {
 		case
 			tipb.ScalarFuncSig_RandWithSeedFirstGen:
-			ret = isPushDownEnabled(sf.FuncName.L)
+			ret = true
 		}
 	}
 	if ret {
 		switch storeType {
 		case kv.TiFlash:
-			return scalarExprSupportedByFlash(sf)
+			ret = scalarExprSupportedByFlash(sf)
 		case kv.TiKV:
-			return scalarExprSupportedByTiKV(sf)
+			ret = scalarExprSupportedByTiKV(sf)
+		case kv.TiDB:
+			ret = scalarExprSupportedByTiDB(sf)
 		}
+	}
+	if ret {
+		ret = IsPushDownEnabled(sf.FuncName.L, storeType)
 	}
 	return ret
 }
 
-func isPushDownEnabled(name string) bool {
-	_, disallowPushDown := DefaultExprPushDownBlacklist.Load().(map[string]struct{})[name]
-	return !disallowPushDown
+func storeTypeMask(storeType kv.StoreType) uint32 {
+	if storeType == kv.UnSpecified {
+		return 1<<kv.TiKV | 1<<kv.TiFlash | 1<<kv.TiDB
+	}
+	return 1 << storeType
+}
+
+// IsPushDownEnabled returns true if the input expr is not in the expr_pushdown_blacklist
+func IsPushDownEnabled(name string, storeType kv.StoreType) bool {
+	value, exists := DefaultExprPushDownBlacklist.Load().(map[string]uint32)[name]
+	if exists {
+		mask := storeTypeMask(storeType)
+		return !(value&mask == mask)
+	}
+	return true
 }
 
 // DefaultExprPushDownBlacklist indicates the expressions which can not be pushed down to TiKV.
@@ -1011,7 +1027,7 @@ var DefaultExprPushDownBlacklist *atomic.Value
 
 func init() {
 	DefaultExprPushDownBlacklist = new(atomic.Value)
-	DefaultExprPushDownBlacklist.Store(make(map[string]struct{}))
+	DefaultExprPushDownBlacklist.Store(make(map[string]uint32))
 }
 
 func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType kv.StoreType) bool {
@@ -1082,7 +1098,18 @@ func CanExprsPushDown(sc *stmtctx.StatementContext, exprs []Expression, client k
 
 func scalarExprSupportedByTiKV(function *ScalarFunction) bool {
 	switch function.FuncName.L {
-	case ast.Substr, ast.Substring, ast.DateAdd, ast.TimestampDiff:
+	case ast.Substr, ast.Substring, ast.DateAdd, ast.TimestampDiff,
+		ast.FromUnixTime:
+		return false
+	default:
+		return true
+	}
+}
+
+func scalarExprSupportedByTiDB(function *ScalarFunction) bool {
+	switch function.FuncName.L {
+	case ast.Substr, ast.Substring, ast.DateAdd, ast.TimestampDiff,
+		ast.FromUnixTime:
 		return false
 	default:
 		return true
@@ -1096,8 +1123,22 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		ast.LT, ast.GT, ast.Ifnull, ast.IsNull, ast.Or,
 		ast.In, ast.Mod, ast.And, ast.LogicOr, ast.LogicAnd,
 		ast.Like, ast.UnaryNot, ast.Case, ast.Month, ast.Substr,
-		ast.Substring, ast.TimestampDiff:
+		ast.Substring, ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime:
 		return true
+	case ast.Cast:
+		switch function.Function.PbCode() {
+		case tipb.ScalarFuncSig_CastIntAsDecimal:
+			return true
+		default:
+			return false
+		}
+	case ast.DateAdd:
+		switch function.Function.PbCode() {
+		case tipb.ScalarFuncSig_AddDateDatetimeInt, tipb.ScalarFuncSig_AddDateStringInt:
+			return true
+		default:
+			return false
+		}
 	default:
 		return false
 	}
