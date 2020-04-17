@@ -152,6 +152,8 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return BoolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUTF8), true, nil
 	case TiDBCapturePlanBaseline:
 		return CapturePlanBaseline.GetVal(), true, nil
+	case TiDBFoundInPlanCache:
+		return BoolToIntStr(s.PrevFoundInPlanCache), true, nil
 	case TiDBEnableCollectExecutionInfo:
 		return BoolToIntStr(config.GetGlobalConfig().EnableCollectExecutionInfo), true, nil
 	}
@@ -419,8 +421,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		TiDBBatchDelete, TiDBBatchCommit, TiDBEnableCascadesPlanner, TiDBEnableWindowFunction, TiDBPProfSQLCPU,
 		TiDBLowResolutionTSO, TiDBEnableIndexMerge, TiDBEnableNoopFuncs,
 		TiDBCheckMb4ValueInUTF8, TiDBEnableSlowLog, TiDBRecordPlanInSlowLog,
-		TiDBScatterRegion, TiDBGeneralLog, TiDBConstraintCheckInPlace, TiDBEnableVectorizedExpression,
-		TiDBEnableCollectExecutionInfo:
+		TiDBScatterRegion, TiDBGeneralLog, TiDBConstraintCheckInPlace,
+		TiDBEnableVectorizedExpression, TiDBFoundInPlanCache, TiDBEnableCollectExecutionInfo:
 		fallthrough
 	case GeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, LogBin,
 		CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode, PseudoSlaveMode, LowPriorityUpdates,
