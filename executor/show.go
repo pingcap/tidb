@@ -994,10 +994,39 @@ func ConstructResultOfShowCreateDatabase(ctx sessionctx.Context, dbInfo *model.D
 	if ifNotExists {
 		ifNotExistsStr = "/*!32312 IF NOT EXISTS*/ "
 	}
+<<<<<<< HEAD
 	fmt.Fprintf(buf, "CREATE DATABASE %s%s", ifNotExistsStr, escape(dbInfo.Name, sqlMode))
 	if s := dbInfo.Charset; len(s) > 0 {
 		fmt.Fprintf(buf, " /*!40100 DEFAULT CHARACTER SET %s */", s)
+=======
+	fmt.Fprintf(buf, "CREATE DATABASE %s%s", ifNotExistsStr, stringutil.Escape(dbInfo.Name.O, sqlMode))
+	if dbInfo.Charset != "" {
+		fmt.Fprintf(buf, " /*!40100 DEFAULT CHARACTER SET %s ", dbInfo.Charset)
+		defaultCollate, err := charset.GetDefaultCollation(dbInfo.Charset)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if dbInfo.Collate != "" && dbInfo.Collate != defaultCollate {
+			fmt.Fprintf(buf, "COLLATE %s ", dbInfo.Collate)
+		}
+		fmt.Fprint(buf, "*/")
+		return nil
 	}
+	if dbInfo.Collate != "" {
+		collInfo, err := collate.GetCollationByName(dbInfo.Collate)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		fmt.Fprintf(buf, " /*!40100 DEFAULT CHARACTER SET %s ", collInfo.CharsetName)
+		if !collInfo.IsDefault {
+			fmt.Fprintf(buf, "COLLATE %s ", dbInfo.Collate)
+		}
+		fmt.Fprint(buf, "*/")
+		return nil
+>>>>>>> 6b034d4... *: fix unexpected error when setting collate for database (#16283)
+	}
+	// MySQL 5.7 always show the charset info but TiDB may ignore it, which makes a slight difference. We keep this
+	// behavior unchanged because it is trivial enough.
 	return nil
 }
 

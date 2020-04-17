@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stmtsummary"
@@ -212,8 +213,17 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 func (e *SetExecutor) setCharset(cs, co string) error {
 	var err error
 	if len(co) == 0 {
+<<<<<<< HEAD
 		co, err = charset.GetDefaultCollation(cs)
 		if err != nil {
+=======
+		if co, err = charset.GetDefaultCollation(cs); err != nil {
+			return err
+		}
+	} else {
+		var coll *charset.Collation
+		if coll, err = collate.GetCollationByName(co); err != nil {
+>>>>>>> 6b034d4... *: fix unexpected error when setting collate for database (#16283)
 			return err
 		}
 	}
