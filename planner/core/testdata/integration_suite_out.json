@@ -5,7 +5,6 @@
       {
         "SQL": "explain select * from t t1 left join t t2 on t1.a=t2.a where from_unixtime(t2.b);",
         "Plan": [
-<<<<<<< HEAD
           "HashLeftJoin_8 9990.00 root inner join, inner:Selection_13, equal:[eq(test.t1.a, test.t2.a)]",
           "├─TableReader_12 9990.00 root data:Selection_11",
           "│ └─Selection_11 9990.00 cop[tikv] not(isnull(test.t1.a))",
@@ -14,16 +13,6 @@
           "  └─TableReader_16 9990.00 root data:Selection_15",
           "    └─Selection_15 9990.00 cop[tikv] not(isnull(test.t2.a))",
           "      └─TableScan_14 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
-=======
-          "HashJoin_7 9990.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
-          "├─Selection_15(Build) 7992.00 root  from_unixtime(cast(test.t.b))",
-          "│ └─TableReader_14 7992.00 root  data:Selection_13",
-          "│   └─Selection_13 7992.00 cop[tikv]  not(isnull(test.t.a))",
-          "│     └─TableFullScan_12 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "└─TableReader_11(Probe) 9990.00 root  data:Selection_10",
-          "  └─Selection_10 9990.00 cop[tikv]  not(isnull(test.t.a))",
-          "    └─TableFullScan_9 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
->>>>>>> b8494e7... expression: support disable expression pushdown based on store… (#16389)
         ]
       }
     ]

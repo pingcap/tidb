@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -37,42 +36,18 @@ func (e *ReloadExprPushdownBlacklistExec) Next(ctx context.Context, _ *chunk.Chu
 
 // LoadExprPushdownBlacklist loads the latest data from table mysql.expr_pushdown_blacklist.
 func LoadExprPushdownBlacklist(ctx sessionctx.Context) (err error) {
-<<<<<<< HEAD
 	sql := "select HIGH_PRIORITY name from mysql.expr_pushdown_blacklist"
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return err
 	}
 	newBlacklist := make(map[string]struct{})
-=======
-	sql := "select HIGH_PRIORITY name, store_type from mysql.expr_pushdown_blacklist"
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
-	if err != nil {
-		return err
-	}
-	newBlacklist := make(map[string]uint32, len(rows))
->>>>>>> b8494e7... expression: support disable expression pushdown based on store… (#16389)
 	for _, row := range rows {
 		name := strings.ToLower(row.GetString(0))
-		storeTypeString := strings.ToLower(row.GetString(1))
 		if alias, ok := funcName2Alias[name]; ok {
 			name = alias
 		}
-		var value uint32 = 0
-		if val, ok := newBlacklist[name]; ok {
-			value = val
-		}
-		storeTypes := strings.Split(storeTypeString, ",")
-		for _, typeString := range storeTypes {
-			if typeString == kv.TiDB.Name() {
-				value |= 1 << kv.TiDB
-			} else if typeString == kv.TiFlash.Name() {
-				value |= 1 << kv.TiFlash
-			} else if typeString == kv.TiKV.Name() {
-				value |= 1 << kv.TiKV
-			}
-		}
-		newBlacklist[name] = value
+		newBlacklist[name] = struct{}{}
 	}
 	expression.DefaultExprPushDownBlacklist.Store(newBlacklist)
 	return nil

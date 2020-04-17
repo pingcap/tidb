@@ -18,7 +18,6 @@ delete from mysql.opt_rule_blacklist where name='predicate_push_down';
 admin reload opt_rule_blacklist;
 
 explain select * from t where a < 1;
-<<<<<<< HEAD
 id	count	task	operator info
 TableReader_7	3323.33	root	data:Selection_6
 └─Selection_6	3323.33	cop[tikv]	lt(test.t.a, 1)
@@ -48,37 +47,6 @@ Selection_5	8000.00	root	lt(test.t.a, 1)
 └─TableReader_7	10000.00	root	data:TableScan_6
   └─TableScan_6	10000.00	cop[tikv]	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
 delete from mysql.expr_pushdown_blacklist where name='lt';
-=======
-id	estRows	task	access object	operator info
-TableReader_7	3323.33	root		data:Selection_6
-└─Selection_6	3323.33	cop[tikv]		lt(test.t.a, 1)
-  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-insert into mysql.expr_pushdown_blacklist values('<', 'tikv,tiflash,tidb', 'for test');
-admin reload expr_pushdown_blacklist;
-
-explain select * from t where a < 1;
-id	estRows	task	access object	operator info
-Selection_5	8000.00	root		lt(test.t.a, 1)
-└─TableReader_7	10000.00	root		data:TableFullScan_6
-  └─TableFullScan_6	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-delete from mysql.expr_pushdown_blacklist where name='<' and store_type = 'tikv,tiflash,tidb' and reason = 'for test';
-admin reload expr_pushdown_blacklist;
-
-explain select * from t where a < 1;
-id	estRows	task	access object	operator info
-TableReader_7	3323.33	root		data:Selection_6
-└─Selection_6	3323.33	cop[tikv]		lt(test.t.a, 1)
-  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-insert into mysql.expr_pushdown_blacklist values('lt', 'tikv,tiflash,tidb', 'for test');
-admin reload expr_pushdown_blacklist;
-
-explain select * from t where a < 1;
-id	estRows	task	access object	operator info
-Selection_5	8000.00	root		lt(test.t.a, 1)
-└─TableReader_7	10000.00	root		data:TableFullScan_6
-  └─TableFullScan_6	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-delete from mysql.expr_pushdown_blacklist where name='lt' and store_type = 'tikv,tiflash,tidb' and reason = 'for test';
->>>>>>> b8494e7... expression: support disable expression pushdown based on store… (#16389)
 admin reload expr_pushdown_blacklist;
 
 explain select * from t where a < 1;
