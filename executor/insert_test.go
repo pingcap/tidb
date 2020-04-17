@@ -861,3 +861,190 @@ func (s *testSuite3) TestAutoIDIncrementAndOffset(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[autoid:8060]Invalid auto_increment settings: auto_increment_increment: 65536, auto_increment_offset: 65536, both of them must be in range [1..65535]")
 }
+<<<<<<< HEAD
+=======
+
+var _ = SerialSuites(&testSuite9{&baseTestSuite{}})
+
+type testSuite9 struct {
+	*baseTestSuite
+}
+
+func (s *testSuite9) TestAutoRandomID(c *C) {
+	allowAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
+	if !allowAutoRandom {
+		config.GetGlobalConfig().Experimental.AllowAutoRandom = true
+		defer func() {
+			config.GetGlobalConfig().Experimental.AllowAutoRandom = false
+		}()
+	}
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists ar`)
+	tk.MustExec(`create table ar (id int key auto_random, name char(10))`)
+
+	tk.MustExec(`insert into ar(id) values (null)`)
+	rs := tk.MustQuery(`select id from ar`)
+	c.Assert(len(rs.Rows()), Equals, 1)
+	firstValue, err := strconv.Atoi(rs.Rows()[0][0].(string))
+	c.Assert(err, IsNil)
+	c.Assert(firstValue, Greater, 0)
+	tk.MustQuery(`select last_insert_id()`).Check(testkit.Rows(fmt.Sprintf("%d", firstValue)))
+	tk.MustExec(`delete from ar`)
+
+	tk.MustExec(`insert into ar(id) values (0)`)
+	rs = tk.MustQuery(`select id from ar`)
+	c.Assert(len(rs.Rows()), Equals, 1)
+	firstValue, err = strconv.Atoi(rs.Rows()[0][0].(string))
+	c.Assert(err, IsNil)
+	c.Assert(firstValue, Greater, 0)
+	tk.MustQuery(`select last_insert_id()`).Check(testkit.Rows(fmt.Sprintf("%d", firstValue)))
+	tk.MustExec(`delete from ar`)
+
+	tk.MustExec(`insert into ar(name) values ('a')`)
+	rs = tk.MustQuery(`select id from ar`)
+	c.Assert(len(rs.Rows()), Equals, 1)
+	firstValue, err = strconv.Atoi(rs.Rows()[0][0].(string))
+	c.Assert(err, IsNil)
+	c.Assert(firstValue, Greater, 0)
+	tk.MustQuery(`select last_insert_id()`).Check(testkit.Rows(fmt.Sprintf("%d", firstValue)))
+
+	tk.MustExec(`drop table ar`)
+}
+
+func (s *testSuite9) TestMultiAutoRandomID(c *C) {
+	allowAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
+	if !allowAutoRandom {
+		config.GetGlobalConfig().Experimental.AllowAutoRandom = true
+		defer func() {
+			config.GetGlobalConfig().Experimental.AllowAutoRandom = false
+		}()
+	}
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists ar`)
+	tk.MustExec(`create table ar (id int key auto_random, name char(10))`)
+
+	tk.MustExec(`insert into ar(id) values (null),(null),(null)`)
+	rs := tk.MustQuery(`select id from ar order by id`)
+	c.Assert(len(rs.Rows()), Equals, 3)
+	firstValue, err := strconv.Atoi(rs.Rows()[0][0].(string))
+	c.Assert(err, IsNil)
+	c.Assert(firstValue, Greater, 0)
+	c.Assert(rs.Rows()[1][0].(string), Equals, fmt.Sprintf("%d", firstValue+1))
+	c.Assert(rs.Rows()[2][0].(string), Equals, fmt.Sprintf("%d", firstValue+2))
+	tk.MustQuery(`select last_insert_id()`).Check(testkit.Rows(fmt.Sprintf("%d", firstValue)))
+	tk.MustExec(`delete from ar`)
+
+	tk.MustExec(`insert into ar(id) values (0),(0),(0)`)
+	rs = tk.MustQuery(`select id from ar order by id`)
+	c.Assert(len(rs.Rows()), Equals, 3)
+	firstValue, err = strconv.Atoi(rs.Rows()[0][0].(string))
+	c.Assert(err, IsNil)
+	c.Assert(firstValue, Greater, 0)
+	c.Assert(rs.Rows()[1][0].(string), Equals, fmt.Sprintf("%d", firstValue+1))
+	c.Assert(rs.Rows()[2][0].(string), Equals, fmt.Sprintf("%d", firstValue+2))
+	tk.MustQuery(`select last_insert_id()`).Check(testkit.Rows(fmt.Sprintf("%d", firstValue)))
+	tk.MustExec(`delete from ar`)
+
+	tk.MustExec(`insert into ar(name) values ('a'),('a'),('a')`)
+	rs = tk.MustQuery(`select id from ar order by id`)
+	c.Assert(len(rs.Rows()), Equals, 3)
+	firstValue, err = strconv.Atoi(rs.Rows()[0][0].(string))
+	c.Assert(err, IsNil)
+	c.Assert(firstValue, Greater, 0)
+	c.Assert(rs.Rows()[1][0].(string), Equals, fmt.Sprintf("%d", firstValue+1))
+	c.Assert(rs.Rows()[2][0].(string), Equals, fmt.Sprintf("%d", firstValue+2))
+	tk.MustQuery(`select last_insert_id()`).Check(testkit.Rows(fmt.Sprintf("%d", firstValue)))
+
+	tk.MustExec(`drop table ar`)
+}
+
+func (s *testSuite9) TestAutoRandomIDAllowZero(c *C) {
+	allowAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
+	if !allowAutoRandom {
+		config.GetGlobalConfig().Experimental.AllowAutoRandom = true
+		defer func() {
+			config.GetGlobalConfig().Experimental.AllowAutoRandom = false
+		}()
+	}
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists ar`)
+	tk.MustExec(`create table ar (id int key auto_random, name char(10))`)
+
+	rs := tk.MustQuery(`select @@session.sql_mode`)
+	sqlMode := rs.Rows()[0][0].(string)
+	tk.MustExec(fmt.Sprintf(`set session sql_mode="%s,%s"`, sqlMode, "NO_AUTO_VALUE_ON_ZERO"))
+
+	tk.MustExec(`insert into ar(id) values (0)`)
+	rs = tk.MustQuery(`select id from ar`)
+	c.Assert(len(rs.Rows()), Equals, 1)
+	firstValue, err := strconv.Atoi(rs.Rows()[0][0].(string))
+	c.Assert(err, IsNil)
+	c.Assert(firstValue, Equals, 0)
+	tk.MustQuery(`select last_insert_id()`).Check(testkit.Rows(fmt.Sprintf("%d", firstValue)))
+	tk.MustExec(`delete from ar`)
+
+	tk.MustExec(`insert into ar(id) values (null)`)
+	rs = tk.MustQuery(`select id from ar`)
+	c.Assert(len(rs.Rows()), Equals, 1)
+	firstValue, err = strconv.Atoi(rs.Rows()[0][0].(string))
+	c.Assert(err, IsNil)
+	c.Assert(firstValue, Greater, 0)
+	tk.MustQuery(`select last_insert_id()`).Check(testkit.Rows(fmt.Sprintf("%d", firstValue)))
+
+	tk.MustExec(`drop table ar`)
+}
+
+func (s *testSuite9) TestAutoRandomIDExplicit(c *C) {
+	allowAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
+	if !allowAutoRandom {
+		config.GetGlobalConfig().Experimental.AllowAutoRandom = true
+		defer func() {
+			config.GetGlobalConfig().Experimental.AllowAutoRandom = false
+		}()
+	}
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists ar`)
+	tk.MustExec(`create table ar (id int key auto_random, name char(10))`)
+
+	tk.MustExec(`insert into ar(id) values (1)`)
+	tk.MustQuery(`select id from ar`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select last_insert_id()`).Check(testkit.Rows("0"))
+	tk.MustExec(`delete from ar`)
+
+	tk.MustExec(`insert into ar(id) values (1), (2)`)
+	tk.MustQuery(`select id from ar`).Check(testkit.Rows("1", "2"))
+	tk.MustQuery(`select last_insert_id()`).Check(testkit.Rows("0"))
+	tk.MustExec(`delete from ar`)
+
+	tk.MustExec(`drop table ar`)
+}
+
+func (s *testSuite9) TestInsertErrorMsg(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t (a int primary key, b datetime, d date)`)
+	_, err := tk.Exec(`insert into t values (1, '2019-02-11 30:00:00', '2019-01-31')`)
+	c.Assert(err, NotNil)
+	c.Assert(strings.Contains(err.Error(), "Incorrect datetime value: '2019-02-11 30:00:00' for column 'b' at row 1"), IsTrue, Commentf("%v", err))
+}
+
+func (s *testSuite9) TestIssue16366(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(c numeric primary key);`)
+	tk.MustExec("insert ignore into t values(null);")
+	_, err := tk.Exec(`insert into t values(0);`)
+	c.Assert(err, NotNil)
+	c.Assert(strings.Contains(err.Error(), "Duplicate entry '0' for key 'PRIMARY'"), IsTrue, Commentf("%v", err))
+}
+>>>>>>> a0c7407... executor: set length and frac when we change zero to decimal t… (#16518)
