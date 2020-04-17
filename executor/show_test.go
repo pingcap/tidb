@@ -649,6 +649,60 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 	tk.MustExec("drop sequence if exists seq")
 	tk.MustExec("create sequence seq")
 	tk.MustQuery("show create table seq;").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB"))
+<<<<<<< HEAD
+=======
+
+	// Test for issue #15633, 'binary' collation should be ignored in the result of 'show create table'.
+	tk.MustExec(`drop table if exists binary_collate`)
+	tk.MustExec(`create table binary_collate(a varchar(10)) default collate=binary;`)
+	tk.MustQuery(`show create table binary_collate`).Check(testutil.RowsWithSep("|",
+		""+
+			"binary_collate CREATE TABLE `binary_collate` (\n"+
+			"  `a` varbinary(10) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=binary", // binary collate is ignored
+	))
+	tk.MustExec(`drop table if exists binary_collate`)
+	tk.MustExec(`create table binary_collate(a varchar(10)) default charset=binary collate=binary;`)
+	tk.MustQuery(`show create table binary_collate`).Check(testutil.RowsWithSep("|",
+		""+
+			"binary_collate CREATE TABLE `binary_collate` (\n"+
+			"  `a` varbinary(10) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=binary", // binary collate is ignored
+	))
+	tk.MustExec(`drop table if exists binary_collate`)
+	tk.MustExec(`create table binary_collate(a varchar(10)) default charset=utf8mb4 collate=utf8mb4_bin;`)
+	tk.MustQuery(`show create table binary_collate`).Check(testutil.RowsWithSep("|",
+		""+
+			"binary_collate CREATE TABLE `binary_collate` (\n"+
+			"  `a` varchar(10) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin", // non-binary collate is kept.
+	))
+	// Test for issue #17 in bug competition, default num and sequence should be shown without quote.
+	tk.MustExec(`drop table if exists default_num`)
+	tk.MustExec("create table default_num(a int default 11)")
+	tk.MustQuery("show create table default_num").Check(testutil.RowsWithSep("|",
+		""+
+			"default_num CREATE TABLE `default_num` (\n"+
+			"  `a` int(11) DEFAULT 11\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+	tk.MustExec(`drop table if exists default_varchar`)
+	tk.MustExec("create table default_varchar(a varchar(10) default \"haha\")")
+	tk.MustQuery("show create table default_varchar").Check(testutil.RowsWithSep("|",
+		""+
+			"default_varchar CREATE TABLE `default_varchar` (\n"+
+			"  `a` varchar(10) DEFAULT 'haha'\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+	tk.MustExec(`drop table if exists default_sequence`)
+	tk.MustExec("create table default_sequence(a int default nextval(seq))")
+	tk.MustQuery("show create table default_sequence").Check(testutil.RowsWithSep("|",
+		""+
+			"default_sequence CREATE TABLE `default_sequence` (\n"+
+			"  `a` int(11) DEFAULT nextval(`test`.`seq`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+>>>>>>> 4e44a74... executor: fix show default num and sequence (#16450)
 }
 
 func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
