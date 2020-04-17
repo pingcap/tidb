@@ -244,6 +244,9 @@ func (a *aggregationPushDownSolver) checkAnyCountAndSum(aggFuncs []*aggregation.
 	return false
 }
 
+// TODO:
+//   1. https://github.com/pingcap/tidb/issues/16355, push avg & distinct functions across join
+//   2. remove this method and use splitPartialAgg instead for clean code.
 func (a *aggregationPushDownSolver) makeNewAgg(ctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc, gbyCols []*expression.Column, aggHints aggHintInfo, blockOffset int) (*LogicalAggregation, error) {
 	agg := LogicalAggregation{
 		GroupByItems: expression.Column2Exprs(gbyCols),
@@ -273,6 +276,27 @@ func (a *aggregationPushDownSolver) makeNewAgg(ctx sessionctx.Context, aggFuncs 
 	// TODO: Add a Projection if any argument of aggregate funcs or group by items are scalar functions.
 	// agg.buildProjectionIfNecessary()
 	return agg, nil
+}
+
+func (a *aggregationPushDownSolver) splitPartialAgg(agg *LogicalAggregation) (pushedAgg *LogicalAggregation) {
+	partial, final, _ := BuildFinalModeAggregation(agg.ctx, &AggInfo{
+		AggFuncs:     agg.AggFuncs,
+		GroupByItems: agg.GroupByItems,
+		Schema:       agg.schema,
+	}, false)
+	agg.SetSchema(final.Schema)
+	agg.AggFuncs = final.AggFuncs
+	agg.GroupByItems = final.GroupByItems
+	agg.collectGroupByColumns()
+
+	pushedAgg = LogicalAggregation{
+		AggFuncs:     partial.AggFuncs,
+		GroupByItems: partial.GroupByItems,
+		aggHints:     agg.aggHints,
+	}.Init(agg.ctx, agg.blockOffset)
+	pushedAgg.SetSchema(partial.Schema)
+	pushedAgg.collectGroupByColumns()
+	return
 }
 
 // pushAggCrossUnion will try to push the agg down to the union. If the new aggregation's group-by columns doesn't contain unique key.
@@ -379,12 +403,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan) (_ LogicalPlan, e
 				projChild := proj.children[0]
 				agg.SetChildren(projChild)
 			} else if union, ok1 := child.(*LogicalUnionAll); ok1 {
-				var gbyCols []*expression.Column
-				gbyCols = expression.ExtractColumnsFromExpressions(gbyCols, agg.GroupByItems, nil)
-				pushedAgg, err := a.makeNewAgg(agg.ctx, agg.AggFuncs, gbyCols, agg.aggHints, agg.blockOffset)
-				if err != nil {
-					return nil, err
-				}
+				pushedAgg := a.splitPartialAgg(agg)
 				newChildren := make([]LogicalPlan, 0, len(union.children))
 				for _, child := range union.children {
 					newChild := a.pushAggCrossUnion(pushedAgg, union.Schema(), child)
