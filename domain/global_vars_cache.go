@@ -15,7 +15,6 @@ package domain
 
 import (
 	"fmt"
-	"golang.org/x/sync/singleflight"
 	"sync"
 	"time"
 
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"go.uber.org/zap"
+	"golang.org/x/sync/singleflight"
 )
 
 // GlobalVariableCache caches global variables.
