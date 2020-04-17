@@ -112,6 +112,13 @@ func (c *ConsistencySnapshot) Setup() error {
 		}
 		c.snapshot = str[snapshotFieldIndex]
 	}
+	hasTiKV, err := CheckTiDBWithTiKV(c.db)
+	if err != nil {
+		return err
+	}
+	if !hasTiKV {
+		return nil
+	}
 	return SetTiDBSnapshot(c.db, c.snapshot)
 }
 
