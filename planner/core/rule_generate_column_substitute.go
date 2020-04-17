@@ -17,6 +17,7 @@ import (
 	"context"
 
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -44,6 +45,37 @@ func (gc *gcSubstituter) optimize(ctx context.Context, lp LogicalPlan) (LogicalP
 	return gc.substitute(ctx, lp, exprToColumn), nil
 }
 
+// Only integers can be substituted between different types now.
+// Because they are all stored as 64-bit integers in chunks.
+// And the inserted value will meet the requirements of virtual column type and virtual column expression type.
+func getSubstitutableType(colType *types.FieldType) int {
+	switch colType.Tp {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		return -1
+	}
+	return int(colType.Tp)
+}
+
+// We do not check whether flen is the same.
+// Because different flen will not cause data truncation.
+// See https://github.com/pingcap/tidb/pull/16316.
+func checkSubstitutability(c1, c2 *types.FieldType) bool {
+	partialEqual := c1.Decimal == c2.Decimal &&
+		c1.Charset == c2.Charset &&
+		c1.Collate == c2.Collate &&
+		getSubstitutableType(c1) == getSubstitutableType(c2) &&
+		mysql.HasUnsignedFlag(c1.Flag) == mysql.HasUnsignedFlag(c2.Flag)
+	if !partialEqual || len(c1.Elems) != len(c2.Elems) {
+		return false
+	}
+	for i := range c1.Elems {
+		if c1.Elems[i] != c2.Elems[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // collectGenerateColumn collect the generate column and save them to a map from their expressions to themselves.
 // For the sake of simplicity, we don't collect the stored generate column because we can't get their expressions directly.
 // TODO: support stored generate column.
@@ -62,7 +94,7 @@ func collectGenerateColumn(lp LogicalPlan, exprToColumn ExprColumnMap) {
 			if colInfo.IsGenerated() && !colInfo.GeneratedStored {
 				s := ds.schema.Columns
 				col := expression.ColInfo2Col(s, colInfo)
-				if col != nil {
+				if col != nil && checkSubstitutability(col.GetType(), col.VirtualExpr.GetType()) {
 					exprToColumn[col.VirtualExpr] = col
 				}
 			}
