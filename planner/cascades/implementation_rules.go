@@ -685,7 +685,7 @@ func (r *ImplApply) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty)
 // OnImplement implements ImplementationRule OnImplement interface
 func (r *ImplApply) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	la := expr.ExprNode.(*plannercore.LogicalApply)
-	join := la.GetHashJoin(reqProp)
+	join := la.GetHashJoin(reqProp, expr.Group.Prop.Stats)
 	physicalApply := plannercore.PhysicalApply{
 		PhysicalHashJoin: *join,
 		OuterSchema:      la.CorCols,

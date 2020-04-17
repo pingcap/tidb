@@ -307,41 +307,41 @@ func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) []PhysicalPl
 	joins := make([]PhysicalPlan, 0, 2)
 	switch p.JoinType {
 	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
-		joins = append(joins, p.getHashJoin(prop, 1, false))
+		joins = append(joins, p.getHashJoin(prop, 1, false, p.stats))
 	case LeftOuterJoin:
 		if ForceUseOuterBuild4Test {
-			joins = append(joins, p.getHashJoin(prop, 1, true))
+			joins = append(joins, p.getHashJoin(prop, 1, true, p.stats))
 		} else {
-			joins = append(joins, p.getHashJoin(prop, 1, false))
-			joins = append(joins, p.getHashJoin(prop, 1, true))
+			joins = append(joins, p.getHashJoin(prop, 1, false, p.stats))
+			joins = append(joins, p.getHashJoin(prop, 1, true, p.stats))
 		}
 	case RightOuterJoin:
 		if ForceUseOuterBuild4Test {
-			joins = append(joins, p.getHashJoin(prop, 0, true))
+			joins = append(joins, p.getHashJoin(prop, 0, true, p.stats))
 		} else {
-			joins = append(joins, p.getHashJoin(prop, 0, false))
-			joins = append(joins, p.getHashJoin(prop, 0, true))
+			joins = append(joins, p.getHashJoin(prop, 0, false, p.stats))
+			joins = append(joins, p.getHashJoin(prop, 0, true, p.stats))
 		}
 	case InnerJoin:
 		if ForcedHashLeftJoin4Test {
-			joins = append(joins, p.getHashJoin(prop, 1, false))
+			joins = append(joins, p.getHashJoin(prop, 1, false, p.stats))
 		} else {
-			joins = append(joins, p.getHashJoin(prop, 1, false))
-			joins = append(joins, p.getHashJoin(prop, 0, false))
+			joins = append(joins, p.getHashJoin(prop, 1, false, p.stats))
+			joins = append(joins, p.getHashJoin(prop, 0, false, p.stats))
 		}
 	}
 	return joins
 }
 
-func (p *LogicalJoin) getHashJoin(prop *property.PhysicalProperty, innerIdx int, useOuterToBuild bool) *PhysicalHashJoin {
+func (p *LogicalJoin) getHashJoin(prop *property.PhysicalProperty, innerIdx int, useOuterToBuild bool, stats *property.StatsInfo) *PhysicalHashJoin {
 	chReqProps := make([]*property.PhysicalProperty, 2)
 	chReqProps[innerIdx] = &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	chReqProps[1-innerIdx] = &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
-	if prop.ExpectedCnt < p.stats.RowCount {
-		expCntScale := prop.ExpectedCnt / p.stats.RowCount
+	if prop.ExpectedCnt < stats.RowCount {
+		expCntScale := prop.ExpectedCnt / stats.RowCount
 		chReqProps[1-innerIdx].ExpectedCnt = p.children[1-innerIdx].statsInfo().RowCount * expCntScale
 	}
-	hashJoin := NewPhysicalHashJoin(p, innerIdx, useOuterToBuild, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), chReqProps...)
+	hashJoin := NewPhysicalHashJoin(p, innerIdx, useOuterToBuild, stats.ScaleByExpectCnt(prop.ExpectedCnt), chReqProps...)
 	hashJoin.SetSchema(p.schema)
 	return hashJoin
 }
@@ -1546,15 +1546,15 @@ func (lt *LogicalTopN) exhaustPhysicalPlans(prop *property.PhysicalProperty) []P
 }
 
 // GetHashJoin is public for cascades planner.
-func (la *LogicalApply) GetHashJoin(prop *property.PhysicalProperty) *PhysicalHashJoin {
-	return la.LogicalJoin.getHashJoin(prop, 1, false)
+func (la *LogicalApply) GetHashJoin(prop *property.PhysicalProperty, stats *property.StatsInfo) *PhysicalHashJoin {
+	return la.LogicalJoin.getHashJoin(prop, 1, false, stats)
 }
 
 func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
 	if !prop.AllColsFromSchema(la.children[0].Schema()) { // for convenient, we don't pass through any prop
 		return nil
 	}
-	join := la.GetHashJoin(prop)
+	join := la.GetHashJoin(prop, la.stats)
 	apply := PhysicalApply{
 		PhysicalHashJoin: *join,
 		OuterSchema:      la.CorCols,

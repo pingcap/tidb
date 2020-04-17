@@ -8,6 +8,7 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/cascades"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/memo"
@@ -26,6 +27,7 @@ type testTPCHTransformationSuite struct {
 	is infoschema.InfoSchema
 	optimizer *cascades.Optimizer
 	sctx sessionctx.Context
+	store kv.Storage
 }
 
 func (s *testTPCHTransformationSuite) prepareInfoSchema(c *C) {
@@ -120,6 +122,7 @@ func (s *testTPCHTransformationSuite) prepareInfoSchema(c *C) {
 	domain.BindDomain(ctx, dom)
 	s.sctx = ctx
 	s.is = schema
+	s.store = store
 }
 
 func (s *testTPCHTransformationSuite) SetUpSuite(c *C) {
@@ -148,8 +151,12 @@ func (s *testTPCHTransformationSuite) TestTPCHQueries(c *C) {
 		SQL string
 		InitMemo []string
 		Result []string
+		Plan   []string
 	}
 	s.testData.GetTestCases(c, &input, &output)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use tpch")
+	tk.MustExec("set tidb_enable_cascades_planner = 1")
 	for i, sql := range input {
 		if queryNumber > 0 && queryNumber != i+1 {
 			continue
@@ -169,7 +176,9 @@ func (s *testTPCHTransformationSuite) TestTPCHQueries(c *C) {
 			output[i].SQL = sql
 			output[i].InitMemo = initMemo
 			output[i].Result = cascades.ToString(group)
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + sql).Rows())
 		})
 		c.Assert(cascades.ToString(group), DeepEquals, output[i].Result)
+		tk.MustExec(sql)
 	}
 }
