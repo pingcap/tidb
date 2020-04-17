@@ -174,6 +174,356 @@ func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, b
 	return true, false, nil
 }
 
+<<<<<<< HEAD
+=======
+var (
+	defaultChunkSize = 1024
+	selPool          = sync.Pool{
+		New: func() interface{} {
+			return make([]int, defaultChunkSize)
+		},
+	}
+	zeroPool = sync.Pool{
+		New: func() interface{} {
+			return make([]int8, defaultChunkSize)
+		},
+	}
+)
+
+func allocSelSlice(n int) []int {
+	if n > defaultChunkSize {
+		return make([]int, n)
+	}
+	return selPool.Get().([]int)
+}
+
+func deallocateSelSlice(sel []int) {
+	if cap(sel) <= defaultChunkSize {
+		selPool.Put(sel)
+	}
+}
+
+func allocZeroSlice(n int) []int8 {
+	if n > defaultChunkSize {
+		return make([]int8, n)
+	}
+	return zeroPool.Get().([]int8)
+}
+
+func deallocateZeroSlice(isZero []int8) {
+	if cap(isZero) <= defaultChunkSize {
+		zeroPool.Put(isZero)
+	}
+}
+
+// VecEvalBool does the same thing as EvalBool but it works in a vectorized manner.
+func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, selected, nulls []bool) ([]bool, []bool, error) {
+	// If input.Sel() != nil, we will call input.SetSel(nil) to clear the sel slice in input chunk.
+	// After the function finished, then we reset the input.Sel().
+	// The caller will handle the input.Sel() and selected slices.
+	defer input.SetSel(input.Sel())
+	input.SetSel(nil)
+
+	n := input.NumRows()
+	selected = selected[:0]
+	nulls = nulls[:0]
+	for i := 0; i < n; i++ {
+		selected = append(selected, false)
+		nulls = append(nulls, false)
+	}
+
+	sel := allocSelSlice(n)
+	defer deallocateSelSlice(sel)
+	sel = sel[:0]
+	for i := 0; i < n; i++ {
+		sel = append(sel, i)
+	}
+	input.SetSel(sel)
+
+	// In isZero slice, -1 means Null, 0 means zero, 1 means not zero
+	isZero := allocZeroSlice(n)
+	defer deallocateZeroSlice(isZero)
+	for _, expr := range exprList {
+		eType := expr.GetType().EvalType()
+		buf, err := globalColumnAllocator.get(eType, n)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		if err := EvalExpr(ctx, expr, input, buf); err != nil {
+			return nil, nil, err
+		}
+
+		err = toBool(ctx.GetSessionVars().StmtCtx, eType, buf, sel, isZero)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		j := 0
+		isEQCondFromIn := IsEQCondFromIn(expr)
+		for i := range sel {
+			if isZero[i] == -1 {
+				if eType != types.ETInt && !isEQCondFromIn {
+					continue
+				}
+				// In this case, we set this row to null and let it pass this filter.
+				// The null flag may be set to false later by other expressions in some cases.
+				nulls[sel[i]] = true
+				sel[j] = sel[i]
+				j++
+				continue
+			}
+
+			if isZero[i] == 0 {
+				continue
+			}
+			sel[j] = sel[i] // this row passes this filter
+			j++
+		}
+		sel = sel[:j]
+		input.SetSel(sel)
+		globalColumnAllocator.put(buf)
+	}
+
+	for _, i := range sel {
+		if !nulls[i] {
+			selected[i] = true
+		}
+	}
+
+	return selected, nulls, nil
+}
+
+func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Column, sel []int, isZero []int8) error {
+	switch eType {
+	case types.ETInt:
+		i64s := buf.Int64s()
+		for i := range sel {
+			if buf.IsNull(i) {
+				isZero[i] = -1
+			} else {
+				if i64s[i] == 0 {
+					isZero[i] = 0
+				} else {
+					isZero[i] = 1
+				}
+			}
+		}
+	case types.ETReal:
+		f64s := buf.Float64s()
+		for i := range sel {
+			if buf.IsNull(i) {
+				isZero[i] = -1
+			} else {
+				if types.RoundFloat(f64s[i]) == 0 {
+					isZero[i] = 0
+				} else {
+					isZero[i] = 1
+				}
+			}
+		}
+	case types.ETDuration:
+		d64s := buf.GoDurations()
+		for i := range sel {
+			if buf.IsNull(i) {
+				isZero[i] = -1
+			} else {
+				if d64s[i] == 0 {
+					isZero[i] = 0
+				} else {
+					isZero[i] = 1
+				}
+			}
+		}
+	case types.ETDatetime, types.ETTimestamp:
+		t64s := buf.Times()
+		for i := range sel {
+			if buf.IsNull(i) {
+				isZero[i] = -1
+			} else {
+				if t64s[i].IsZero() {
+					isZero[i] = 0
+				} else {
+					isZero[i] = 1
+				}
+			}
+		}
+	case types.ETString:
+		for i := range sel {
+			if buf.IsNull(i) {
+				isZero[i] = -1
+			} else {
+				iVal, err := types.StrToFloat(sc, buf.GetString(i))
+				if err != nil {
+					return err
+				}
+				if iVal == 0 {
+					isZero[i] = 0
+				} else {
+					isZero[i] = 1
+				}
+			}
+		}
+	case types.ETDecimal:
+		d64s := buf.Decimals()
+		for i := range sel {
+			if buf.IsNull(i) {
+				isZero[i] = -1
+			} else {
+				v, err := d64s[i].ToFloat64()
+				if err != nil {
+					return err
+				}
+				if types.RoundFloat(v) == 0 {
+					isZero[i] = 0
+				} else {
+					isZero[i] = 1
+				}
+			}
+		}
+	case types.ETJson:
+		return errors.Errorf("cannot convert type json.BinaryJSON to bool")
+	}
+	return nil
+}
+
+// EvalExpr evaluates this expr according to its type.
+// And it selects the method for evaluating expression based on
+// the environment variables and whether the expression can be vectorized.
+func EvalExpr(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, result *chunk.Column) (err error) {
+	evalType := expr.GetType().EvalType()
+	if expr.Vectorized() && ctx.GetSessionVars().EnableVectorizedExpression {
+		switch evalType {
+		case types.ETInt:
+			err = expr.VecEvalInt(ctx, input, result)
+		case types.ETReal:
+			err = expr.VecEvalReal(ctx, input, result)
+		case types.ETDuration:
+			err = expr.VecEvalDuration(ctx, input, result)
+		case types.ETDatetime, types.ETTimestamp:
+			err = expr.VecEvalTime(ctx, input, result)
+		case types.ETString:
+			err = expr.VecEvalString(ctx, input, result)
+		case types.ETJson:
+			err = expr.VecEvalJSON(ctx, input, result)
+		case types.ETDecimal:
+			err = expr.VecEvalDecimal(ctx, input, result)
+		default:
+			err = errors.New(fmt.Sprintf("invalid eval type %v", expr.GetType().EvalType()))
+		}
+	} else {
+		ind, n := 0, input.NumRows()
+		iter := chunk.NewIterator4Chunk(input)
+		switch evalType {
+		case types.ETInt:
+			result.ResizeInt64(n, false)
+			i64s := result.Int64s()
+			for it := iter.Begin(); it != iter.End(); it = iter.Next() {
+				value, isNull, err := expr.EvalInt(ctx, it)
+				if err != nil {
+					return err
+				}
+				if isNull {
+					result.SetNull(ind, isNull)
+				} else {
+					i64s[ind] = value
+				}
+				ind++
+			}
+		case types.ETReal:
+			result.ResizeFloat64(n, false)
+			f64s := result.Float64s()
+			for it := iter.Begin(); it != iter.End(); it = iter.Next() {
+				value, isNull, err := expr.EvalReal(ctx, it)
+				if err != nil {
+					return err
+				}
+				if isNull {
+					result.SetNull(ind, isNull)
+				} else {
+					f64s[ind] = value
+				}
+				ind++
+			}
+		case types.ETDuration:
+			result.ResizeGoDuration(n, false)
+			d64s := result.GoDurations()
+			for it := iter.Begin(); it != iter.End(); it = iter.Next() {
+				value, isNull, err := expr.EvalDuration(ctx, it)
+				if err != nil {
+					return err
+				}
+				if isNull {
+					result.SetNull(ind, isNull)
+				} else {
+					d64s[ind] = value.Duration
+				}
+				ind++
+			}
+		case types.ETDatetime, types.ETTimestamp:
+			result.ResizeTime(n, false)
+			t64s := result.Times()
+			for it := iter.Begin(); it != iter.End(); it = iter.Next() {
+				value, isNull, err := expr.EvalTime(ctx, it)
+				if err != nil {
+					return err
+				}
+				if isNull {
+					result.SetNull(ind, isNull)
+				} else {
+					t64s[ind] = value
+				}
+				ind++
+			}
+		case types.ETString:
+			result.ReserveString(n)
+			for it := iter.Begin(); it != iter.End(); it = iter.Next() {
+				value, isNull, err := expr.EvalString(ctx, it)
+				if err != nil {
+					return err
+				}
+				if isNull {
+					result.AppendNull()
+				} else {
+					result.AppendString(value)
+				}
+			}
+		case types.ETJson:
+			result.ReserveJSON(n)
+			for it := iter.Begin(); it != iter.End(); it = iter.Next() {
+				value, isNull, err := expr.EvalJSON(ctx, it)
+				if err != nil {
+					return err
+				}
+				if isNull {
+					result.AppendNull()
+				} else {
+					result.AppendJSON(value)
+				}
+			}
+		case types.ETDecimal:
+			result.ResizeDecimal(n, false)
+			d64s := result.Decimals()
+			for it := iter.Begin(); it != iter.End(); it = iter.Next() {
+				value, isNull, err := expr.EvalDecimal(ctx, it)
+				if err != nil {
+					return err
+				}
+				if isNull {
+					result.SetNull(ind, isNull)
+				} else {
+					d64s[ind] = *value
+				}
+				ind++
+			}
+		default:
+			err = errors.New(fmt.Sprintf("invalid eval type %v", expr.GetType().EvalType()))
+		}
+	}
+	return
+}
+
+>>>>>>> bdbdbae... expression: fix the issue that incorrect result for a predicat… (#16014)
 // composeConditionWithBinaryOp composes condition with binary operator into a balance deep tree, which benefits a lot for pb decoder/encoder.
 func composeConditionWithBinaryOp(ctx sessionctx.Context, conditions []Expression, funcName string) Expression {
 	length := len(conditions)
