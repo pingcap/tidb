@@ -237,7 +237,7 @@ txn-total-size-limit = 104857600
 committer-concurrency = 16
 
 # max lifetime of transaction ttl manager.
-ttl-mng-lifetime = 6000000
+ttl-mng-lifetime = 600000
 
 [proxy-protocol]
 # PROXY protocol acceptable client networks.
