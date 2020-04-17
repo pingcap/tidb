@@ -28,25 +28,29 @@ import (
 	"go.uber.org/zap"
 )
 
-var (
-	// One stands for a number 1.
-	One = &Constant{
+// NewOne stands for a number 1.
+func NewOne() *Constant {
+	return &Constant{
 		Value:   types.NewDatum(1),
 		RetType: types.NewFieldType(mysql.TypeTiny),
 	}
+}
 
-	// Zero stands for a number 0.
-	Zero = &Constant{
+// NewZero stands for a number 0.
+func NewZero() *Constant {
+	return &Constant{
 		Value:   types.NewDatum(0),
 		RetType: types.NewFieldType(mysql.TypeTiny),
 	}
+}
 
-	// Null stands for null constant.
-	Null = &Constant{
+// NewNull stands for null constant.
+func NewNull() *Constant {
+	return &Constant{
 		Value:   types.NewDatum(nil),
 		RetType: types.NewFieldType(mysql.TypeTiny),
 	}
-)
+}
 
 // Constant stands for a constant value.
 type Constant struct {
@@ -99,11 +103,8 @@ func (c *Constant) MarshalJSON() ([]byte, error) {
 
 // Clone implements Expression interface.
 func (c *Constant) Clone() Expression {
-	if c.DeferredExpr != nil || c.ParamMarker != nil {
-		con := *c
-		return &con
-	}
-	return c
+	con := *c
+	return &con
 }
 
 // GetType implements Expression interface.
