@@ -15,10 +15,10 @@ package domain
 
 import (
 	"fmt"
+	"golang.org/x/sync/singleflight"
 	"sync"
 	"time"
 
-	"github.com/golang/groupcache/singleflight"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
@@ -83,7 +83,7 @@ func (gvc *GlobalVariableCache) LoadGlobalVariables(loadFn func() ([]chunk.Row, 
 		gvc.Update(resRows, resFields)
 		return &loadResult{resRows, resFields}, nil
 	}
-	res, err := gvc.SingleFight.Do("loadGlobalVariable", fn)
+	res, err, _ := gvc.SingleFight.Do("loadGlobalVariable", fn)
 	if err != nil {
 		return nil, nil, err
 	}
