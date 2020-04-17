@@ -54,6 +54,8 @@ const (
 	SnapshotTS
 	// Set replica read
 	ReplicaRead
+	// Set task ID
+	TaskID
 )
 
 // Priority value for transaction priority.
