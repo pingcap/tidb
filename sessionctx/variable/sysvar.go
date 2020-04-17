@@ -718,6 +718,11 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBEnableSlowLog, BoolToIntStr(logutil.DefaultTiDBEnableSlowLog)},
 	{ScopeSession, TiDBQueryLogMaxLen, strconv.Itoa(logutil.DefaultQueryLogMaxLen)},
 	{ScopeSession, TiDBCheckMb4ValueInUTF8, BoolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUTF8)},
+<<<<<<< HEAD
+=======
+	{ScopeSession, TiDBFoundInPlanCache, BoolToIntStr(DefTiDBFoundInPlanCache)},
+	{ScopeSession, TiDBEnableCollectExecutionInfo, BoolToIntStr(logutil.DefaultTiDBEnableSlowLog)},
+>>>>>>> ff7413f... planner, sessionctx : Add 'last_plan_from_cache' to help know whether sql's plan is from plan cache (#16321)
 }
 
 // SynonymsSysVariables is synonyms of system variables.

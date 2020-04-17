@@ -168,6 +168,9 @@ const (
 
 	// TiDBCheckMb4ValueInUTF8 is used to control whether to enable the check wrong utf8 value.
 	TiDBCheckMb4ValueInUTF8 = "tidb_check_mb4_value_in_utf8"
+
+	// TiDBFoundInPlanCache indicates whether the last statement was found in plan cache
+	TiDBFoundInPlanCache = "last_plan_from_cache"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -479,6 +482,11 @@ const (
 	DefTiDBStoreLimit                  = 0
 	DefTiDBMetricSchemaStep            = 60 // 60s
 	DefTiDBMetricSchemaRangeDuration   = 60 // 60s
+<<<<<<< HEAD
+=======
+	DefTiDBFoundInPlanCache            = false
+	DefTidbEnableCollectExecutionInfo  = false
+>>>>>>> ff7413f... planner, sessionctx : Add 'last_plan_from_cache' to help know whether sql's plan is from plan cache (#16321)
 )
 
 // Process global variables.
