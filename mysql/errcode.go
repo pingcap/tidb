@@ -899,6 +899,7 @@ const (
 	ErrAdminCheckTable    = 8003
 
 	// TiKV/PD errors.
+<<<<<<< HEAD:mysql/errcode.go
 	ErrPDServerTimeout    = 9001
 	ErrTiKVServerTimeout  = 9002
 	ErrTiKVServerBusy     = 9003
@@ -907,4 +908,16 @@ const (
 	ErrGCTooEarly         = 9006
 
 	ErrTxnTooLarge = 9500
+=======
+	ErrPDServerTimeout        = 9001
+	ErrTiKVServerTimeout      = 9002
+	ErrTiKVServerBusy         = 9003
+	ErrResolveLockTimeout     = 9004
+	ErrRegionUnavailable      = 9005
+	ErrGCTooEarly             = 9006
+	ErrWriteConflict          = 9007
+	ErrTiKVStoreLimit         = 9008
+	ErrPrometheusAddrIsNotSet = 9009
+	ErrTiKVStaleCommand       = 9010
+>>>>>>> 14a4a4e... tikv: fix infinite retry when kv continuing to return staleCommand error (#16481):errno/errcode.go
 )

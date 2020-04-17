@@ -22,6 +22,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/config"
@@ -55,6 +56,85 @@ func (s *testRegionRequestSuite) SetUpTest(c *C) {
 	s.regionRequestSender = NewRegionRequestSender(s.cache, client)
 }
 
+<<<<<<< HEAD
+=======
+func (s *testStoreLimitSuite) SetUpTest(c *C) {
+	s.cluster = mocktikv.NewCluster()
+	s.storeIDs, s.peerIDs, s.regionID, s.leaderPeer = mocktikv.BootstrapWithMultiStores(s.cluster, 3)
+	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
+	s.cache = NewRegionCache(pdCli)
+	s.bo = NewNoopBackoff(context.Background())
+	s.mvccStore = mocktikv.MustNewMVCCStore()
+	client := mocktikv.NewRPCClient(s.cluster, s.mvccStore)
+	s.regionRequestSender = NewRegionRequestSender(s.cache, client)
+}
+
+func (s *testRegionRequestSuite) TearDownTest(c *C) {
+	s.cache.Close()
+}
+
+func (s *testStoreLimitSuite) TearDownTest(c *C) {
+	s.cache.Close()
+}
+
+type fnClient struct {
+	fn func(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error)
+}
+
+func (f *fnClient) Close() error {
+	return nil
+}
+
+func (f *fnClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	return f.fn(ctx, addr, req, timeout)
+}
+
+func (s *testRegionRequestSuite) TestOnRegionError(c *C) {
+	req := tikvrpc.NewRequest(tikvrpc.CmdRawPut, &kvrpcpb.RawPutRequest{
+		Key:   []byte("key"),
+		Value: []byte("value"),
+	})
+	region, err := s.cache.LocateRegionByID(s.bo, s.region)
+	c.Assert(err, IsNil)
+	c.Assert(region, NotNil)
+
+	// test stale command retry.
+	func() {
+		oc := s.regionRequestSender.client
+		defer func() {
+			s.regionRequestSender.client = oc
+		}()
+		s.regionRequestSender.client = &fnClient{func(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (response *tikvrpc.Response, err error) {
+			staleResp := &tikvrpc.Response{Resp: &kvrpcpb.GetResponse{
+				RegionError: &errorpb.Error{StaleCommand: &errorpb.StaleCommand{}},
+			}}
+			return staleResp, nil
+		}}
+		bo := NewBackoffer(context.Background(), 5)
+		resp, err := s.regionRequestSender.SendReq(bo, req, region.Region, time.Second)
+		c.Assert(err, NotNil)
+		c.Assert(resp, IsNil)
+	}()
+
+}
+
+func (s *testStoreLimitSuite) TestStoreTokenLimit(c *C) {
+	req := tikvrpc.NewRequest(tikvrpc.CmdPrewrite, &kvrpcpb.PrewriteRequest{}, kvrpcpb.Context{})
+	region, err := s.cache.LocateRegionByID(s.bo, s.regionID)
+	c.Assert(err, IsNil)
+	c.Assert(region, NotNil)
+	oldStoreLimit := storeutil.StoreLimit.Load()
+	storeutil.StoreLimit.Store(500)
+	s.cache.getStoreByStoreID(s.storeIDs[0]).tokenCount.Store(500)
+	// cause there is only one region in this cluster, regionID maps this leader.
+	resp, err := s.regionRequestSender.SendReq(s.bo, req, region.Region, time.Second)
+	c.Assert(err, NotNil)
+	c.Assert(resp, IsNil)
+	c.Assert(err.Error(), Equals, "[tikv:9008]Store token is up to the limit, store id = 1")
+	storeutil.StoreLimit.Store(oldStoreLimit)
+}
+
+>>>>>>> 14a4a4e... tikv: fix infinite retry when kv continuing to return staleCommand error (#16481)
 func (s *testRegionRequestSuite) TestOnSendFailedWithStoreRestart(c *C) {
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdRawPut,
