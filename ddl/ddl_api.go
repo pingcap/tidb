@@ -52,7 +52,33 @@ import (
 	"go.uber.org/zap"
 )
 
+<<<<<<< HEAD
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) (err error) {
+=======
+const expressionIndexPrefix = "_V$"
+
+func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) error {
+	dbInfo := &model.DBInfo{Name: schema}
+	if charsetInfo != nil {
+		chs, coll, err := ResolveCharsetCollation(ast.CharsetOpt{Chs: charsetInfo.Chs, Col: charsetInfo.Col})
+		if err != nil {
+			return errors.Trace(err)
+		}
+		dbInfo.Charset = chs
+		dbInfo.Collate = coll
+	} else {
+		dbInfo.Charset, dbInfo.Collate = charset.GetDefaultCharsetAndCollate()
+	}
+	return d.CreateSchemaWithInfo(ctx, dbInfo, OnExistError, false /*tryRetainID*/)
+}
+
+func (d *ddl) CreateSchemaWithInfo(
+	ctx sessionctx.Context,
+	dbInfo *model.DBInfo,
+	onExist OnExist,
+	tryRetainID bool,
+) error {
+>>>>>>> 6b034d4... *: fix unexpected error when setting collate for database (#16283)
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	_, ok := is.SchemaByName(schema)
 	if ok {
@@ -136,11 +162,14 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 		return nil
 	}
 
+<<<<<<< HEAD
 	// Check the current TiDB limitations.
 	if err = modifiableCharsetAndCollation(toCharset, toCollate, dbInfo.Charset, dbInfo.Collate); err != nil {
 		return errors.Trace(err)
 	}
 
+=======
+>>>>>>> 6b034d4... *: fix unexpected error when setting collate for database (#16283)
 	// Do the DDL job.
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
@@ -237,8 +266,13 @@ func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constra
 	}
 }
 
-func buildColumnsAndConstraints(ctx sessionctx.Context, colDefs []*ast.ColumnDef,
-	constraints []*ast.Constraint, tblCharset, tblCollate, dbCharset, dbCollate string) ([]*table.Column, []*ast.Constraint, error) {
+func buildColumnsAndConstraints(
+	ctx sessionctx.Context,
+	colDefs []*ast.ColumnDef,
+	constraints []*ast.Constraint,
+	tblCharset string,
+	tblCollate string,
+) ([]*table.Column, []*ast.Constraint, error) {
 	colMap := map[string]*table.Column{}
 	// outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
 	var outPriKeyConstraint *ast.Constraint
@@ -250,7 +284,7 @@ func buildColumnsAndConstraints(ctx sessionctx.Context, colDefs []*ast.ColumnDef
 	}
 	cols := make([]*table.Column, 0, len(colDefs))
 	for i, colDef := range colDefs {
-		col, cts, err := buildColumnAndConstraint(ctx, i, colDef, outPriKeyConstraint, tblCharset, tblCollate, dbCharset, dbCollate)
+		col, cts, err := buildColumnAndConstraint(ctx, i, colDef, outPriKeyConstraint, tblCharset, tblCollate)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -266,36 +300,31 @@ func buildColumnsAndConstraints(ctx sessionctx.Context, colDefs []*ast.ColumnDef
 	return cols, constraints, nil
 }
 
-// ResolveCharsetCollation will resolve the charset by the order: table charset > database charset > server default charset,
-// and it will also resolve the collate by the order: table collate > database collate > server default collate.
-func ResolveCharsetCollation(tblCharset, tblCollate, dbCharset, dbCollate string) (string, string, error) {
-	if len(tblCharset) != 0 {
-		// tblCollate is not specified by user.
-		if len(tblCollate) == 0 {
-			defCollate, err := charset.GetDefaultCollation(tblCharset)
+// ResolveCharsetCollation will resolve the charset and collate by the order of parameters:
+// * If any given ast.CharsetOpt is not empty, the resolved charset and collate will be returned.
+// * If all ast.CharsetOpts are empty, the default charset and collate will be returned.
+func ResolveCharsetCollation(charsetOpts ...ast.CharsetOpt) (string, string, error) {
+	for _, v := range charsetOpts {
+		if v.Col != "" {
+			collation, err := collate.GetCollationByName(v.Col)
 			if err != nil {
-				// return terror is better.
-				return "", "", ErrUnknownCharacterSet.GenWithStackByArgs(tblCharset)
+				return "", "", errors.Trace(err)
 			}
-			return tblCharset, defCollate, nil
+			if v.Chs != "" && collation.CharsetName != v.Chs {
+				return "", "", charset.ErrCollationCharsetMismatch.GenWithStackByArgs(v.Col, v.Chs)
+			}
+			return collation.CharsetName, v.Col, nil
 		}
-		return tblCharset, tblCollate, nil
-	}
-
-	if len(dbCharset) != 0 {
-		// dbCollate is not specified by user.
-		if len(dbCollate) == 0 {
-			defCollate, err := charset.GetDefaultCollation(dbCharset)
+		if v.Chs != "" {
+			coll, err := charset.GetDefaultCollation(v.Chs)
 			if err != nil {
-				return "", "", ErrUnknownCharacterSet.GenWithStackByArgs(dbCharset)
+				return "", "", errors.Trace(err)
 			}
-			return dbCharset, defCollate, nil
+			return v.Chs, coll, err
 		}
-		return dbCharset, dbCollate, nil
 	}
-
-	charset, collate := charset.GetDefaultCharsetAndCollate()
-	return charset, collate, nil
+	chs, coll := charset.GetDefaultCharsetAndCollate()
+	return chs, coll, nil
 }
 
 func typesNeedCharset(tp byte) bool {
@@ -308,6 +337,7 @@ func typesNeedCharset(tp byte) bool {
 	return false
 }
 
+<<<<<<< HEAD
 func setCharsetCollationFlenDecimal(tp *types.FieldType, specifiedCollates []string, tblCharset, tblCollate, dbCharset, dbCollate string) error {
 	tp.Charset = strings.ToLower(tp.Charset)
 	tp.Collate = strings.ToLower(tp.Collate)
@@ -367,6 +397,15 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, specifiedCollates []str
 				}
 			}
 		}
+=======
+func setCharsetCollationFlenDecimal(tp *types.FieldType, colCharset, colCollate string) error {
+	if typesNeedCharset(tp.Tp) {
+		tp.Charset = colCharset
+		tp.Collate = colCollate
+	} else {
+		tp.Charset = charset.CharsetBin
+		tp.Collate = charset.CharsetBin
+>>>>>>> 6b034d4... *: fix unexpected error when setting collate for database (#16283)
 	}
 
 	// Use default value for flen or decimal when they are unspecified.
@@ -385,13 +424,31 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, specifiedCollates []str
 	return nil
 }
 
-// outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
-func buildColumnAndConstraint(ctx sessionctx.Context, offset int,
-	colDef *ast.ColumnDef, outPriKeyConstraint *ast.Constraint, tblCharset, tblCollate, dbCharset, dbCollate string) (*table.Column, []*ast.Constraint, error) {
-	// specifiedCollates refers to collates in colDef.Options, should handle them together.
-	specifiedCollates := extractCollateFromOption(colDef)
+// buildColumnAndConstraint builds table.Column and ast.Constraint from the parameters.
+// outPriKeyConstraint is the primary key constraint out of column definition. For example:
+// `create table t1 (id int , age int, primary key(id));`
+func buildColumnAndConstraint(
+	ctx sessionctx.Context,
+	offset int,
+	colDef *ast.ColumnDef,
+	outPriKeyConstraint *ast.Constraint,
+	tblCharset string,
+	tblCollate string,
+) (*table.Column, []*ast.Constraint, error) {
+	// specifiedCollate refers to the last collate specified in colDef.Options.
+	chs, coll, err := getCharsetAndCollateInColumnDef(colDef)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	chs, coll, err = ResolveCharsetCollation(
+		ast.CharsetOpt{Chs: chs, Col: coll},
+		ast.CharsetOpt{Chs: tblCharset, Col: tblCollate},
+	)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
 
-	if err := setCharsetCollationFlenDecimal(colDef.Tp, specifiedCollates, tblCharset, tblCollate, dbCharset, dbCollate); err != nil {
+	if err := setCharsetCollationFlenDecimal(colDef.Tp, chs, coll); err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 	col, cts, err := columnDefToCol(ctx, offset, colDef, outPriKeyConstraint)
@@ -1079,10 +1136,78 @@ func checkConstraintNames(constraints []*ast.Constraint) error {
 	return nil
 }
 
+<<<<<<< HEAD
 func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols []*table.Column, constraints []*ast.Constraint) (tbInfo *model.TableInfo, err error) {
+=======
+func setTableAutoRandomBits(ctx sessionctx.Context, tbInfo *model.TableInfo, colDefs []*ast.ColumnDef) error {
+	allowAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
+	pkColName := tbInfo.GetPkName()
+	for _, col := range colDefs {
+		if containsColumnOption(col, ast.ColumnOptionAutoRandom) {
+			if !allowAutoRandom {
+				return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomExperimentalDisabledErrMsg)
+			}
+			if !tbInfo.PKIsHandle || col.Name.Name.L != pkColName.L {
+				return ErrInvalidAutoRandom.GenWithStackByArgs(fmt.Sprintf(autoid.AutoRandomPKisNotHandleErrMsg, col.Name.Name.O))
+			}
+			if containsColumnOption(col, ast.ColumnOptionAutoIncrement) {
+				return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomIncompatibleWithAutoIncErrMsg)
+			}
+			if containsColumnOption(col, ast.ColumnOptionDefaultValue) {
+				return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomIncompatibleWithDefaultValueErrMsg)
+			}
+
+			autoRandBits, err := extractAutoRandomBitsFromColDef(col)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			maxFieldTypeBitsLength := uint64(mysql.DefaultLengthOfMysqlTypes[col.Tp.Tp] * 8)
+			if autoRandBits == 0 {
+				return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomNonPositive)
+			} else if autoRandBits >= maxFieldTypeBitsLength {
+				return ErrInvalidAutoRandom.GenWithStackByArgs(fmt.Sprintf(autoid.AutoRandomOverflowErrMsg, col.Name.Name.L, maxFieldTypeBitsLength, autoRandBits, col.Name.Name.L, maxFieldTypeBitsLength-1))
+			}
+			tbInfo.AutoRandomBits = autoRandBits
+
+			availableBits := maxFieldTypeBitsLength - 1 - autoRandBits
+			msg := fmt.Sprintf(autoid.AutoRandomAvailableAllocTimesNote, uint64(math.Pow(2, float64(availableBits)))-1)
+			ctx.GetSessionVars().StmtCtx.AppendNote(errors.Errorf(msg))
+		}
+	}
+	return nil
+}
+
+func extractAutoRandomBitsFromColDef(colDef *ast.ColumnDef) (uint64, error) {
+	for _, op := range colDef.Options {
+		if op.Tp == ast.ColumnOptionAutoRandom {
+			return convertAutoRandomBitsToUnsigned(op.AutoRandomBitLength)
+		}
+	}
+	return 0, nil
+}
+
+func convertAutoRandomBitsToUnsigned(autoRandomBits int) (uint64, error) {
+	if autoRandomBits == types.UnspecifiedLength {
+		return autoid.DefaultAutoRandomBits, nil
+	} else if autoRandomBits < 0 {
+		return 0, ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomNonPositive)
+	}
+	return uint64(autoRandomBits), nil
+}
+
+func buildTableInfo(
+	ctx sessionctx.Context,
+	tableName model.CIStr,
+	cols []*table.Column,
+	constraints []*ast.Constraint,
+	charset string,
+	collate string) (tbInfo *model.TableInfo, err error) {
+>>>>>>> 6b034d4... *: fix unexpected error when setting collate for database (#16283)
 	tbInfo = &model.TableInfo{
 		Name:    tableName,
 		Version: model.CurrLatestTableInfoVersion,
+		Charset: charset,
+		Collate: collate,
 	}
 	// When this function is called by MockTableInfo, we should set a particular table id.
 	// So the `ddl` structure may be nil.
@@ -1305,11 +1430,18 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 
 	tableCharset, tableCollate, err := getCharsetAndCollateInTableOption(0, s.Options)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
+	}
+	tableCharset, tableCollate, err = ResolveCharsetCollation(
+		ast.CharsetOpt{Chs: tableCharset, Col: tableCollate},
+		ast.CharsetOpt{Chs: dbCharset, Col: dbCollate},
+	)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	// The column charset haven't been resolved here.
-	cols, newConstraints, err := buildColumnsAndConstraints(ctx, colDefs, s.Constraints, tableCharset, tableCollate, dbCharset, dbCollate)
+	cols, newConstraints, err := buildColumnsAndConstraints(ctx, colDefs, s.Constraints, tableCharset, tableCollate)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1320,12 +1452,14 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 	}
 
 	var tbInfo *model.TableInfo
+<<<<<<< HEAD
 	tbInfo, err = buildTableInfo(ctx, d, ident.Name, cols, newConstraints)
+=======
+	tbInfo, err = buildTableInfo(ctx, s.Table.Name, cols, newConstraints, tableCharset, tableCollate)
+>>>>>>> 6b034d4... *: fix unexpected error when setting collate for database (#16283)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	tbInfo.Collate = tableCollate
-	tbInfo.Charset = tableCharset
 
 	if s.Partition != nil {
 		err := checkPartitionExprValid(ctx, tbInfo, s.Partition.Expr)
@@ -1357,12 +1491,22 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 		return nil, errors.Trace(err)
 	}
 
+<<<<<<< HEAD
 	if err = resolveDefaultTableCharsetAndCollation(tbInfo, dbCharset, dbCollate); err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	if err = checkCharsetAndCollation(tbInfo.Charset, tbInfo.Collate); err != nil {
 		return nil, errors.Trace(err)
+=======
+	return tbInfo, nil
+}
+
+func (d *ddl) assignTableID(tbInfo *model.TableInfo) error {
+	genIDs, err := d.genGlobalIDs(1)
+	if err != nil {
+		return errors.Trace(err)
+>>>>>>> 6b034d4... *: fix unexpected error when setting collate for database (#16283)
 	}
 
 	return tbInfo, nil
@@ -1526,6 +1670,7 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 		return err
 	}
 
+<<<<<<< HEAD
 	tbInfo, err := buildTableInfo(ctx, d, ident.Name, cols, nil)
 	if err != nil {
 		return err
@@ -1540,15 +1685,32 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{tbInfo, s.OrReplace, oldViewTblID},
 	}
+=======
+	tblCharset := ""
+	tblCollate := ""
+>>>>>>> 6b034d4... *: fix unexpected error when setting collate for database (#16283)
 	if v, ok := ctx.GetSessionVars().GetSystemVar("character_set_client"); ok {
-		tbInfo.Charset = v
+		tblCharset = v
 	}
 	if v, ok := ctx.GetSessionVars().GetSystemVar("collation_connection"); ok {
-		tbInfo.Collate = v
+		tblCollate = v
 	}
+<<<<<<< HEAD
 	err = checkCharsetAndCollation(tbInfo.Charset, tbInfo.Collate)
 	if err != nil {
 		return errors.Trace(err)
+=======
+
+	tbInfo, err := buildTableInfo(ctx, s.ViewName.Name, cols, nil, tblCharset, tblCollate)
+	if err != nil {
+		return err
+	}
+	tbInfo.View = viewInfo
+
+	onExist := OnExistError
+	if s.OrReplace {
+		onExist = OnExistReplace
+>>>>>>> 6b034d4... *: fix unexpected error when setting collate for database (#16283)
 	}
 	err = d.doDDLJob(ctx, job)
 
@@ -1746,21 +1908,6 @@ func (d *ddl) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64) error {
 	return nil
 }
 
-func resolveDefaultTableCharsetAndCollation(tbInfo *model.TableInfo, dbCharset, dbCollate string) (err error) {
-	chr, collate, err := ResolveCharsetCollation(tbInfo.Charset, tbInfo.Collate, dbCharset, dbCollate)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if len(tbInfo.Charset) == 0 {
-		tbInfo.Charset = chr
-	}
-
-	if len(tbInfo.Collate) == 0 {
-		tbInfo.Collate = collate
-	}
-	return
-}
-
 // handleTableOptions updates tableInfo according to table options.
 func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) error {
 	for _, op := range options {
@@ -1782,6 +1929,8 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			tbInfo.MaxShardRowIDBits = tbInfo.ShardRowIDBits
 		case ast.TableOptionPreSplitRegion:
 			tbInfo.PreSplitRegions = op.UintValue
+		case ast.TableOptionCharset, ast.TableOptionCollate:
+			// We don't handle charset and collate here since they're handled in `getCharsetAndCollateInTableOption`.
 		}
 	}
 	if tbInfo.PreSplitRegions > tbInfo.ShardRowIDBits {
@@ -1795,6 +1944,33 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 func isIgnorableSpec(tp ast.AlterTableType) bool {
 	// AlterTableLock/AlterTableAlgorithm are ignored.
 	return tp == ast.AlterTableLock || tp == ast.AlterTableAlgorithm
+}
+
+// getCharsetAndCollateInColumnDef will iterate collate in the options, validate it by checking the charset
+// of column definition. If there's no collate in the option, the default collate of column's charset will be used.
+func getCharsetAndCollateInColumnDef(def *ast.ColumnDef) (chs, coll string, err error) {
+	chs = def.Tp.Charset
+	coll = def.Tp.Collate
+	if chs != "" && coll == "" {
+		if coll, err = charset.GetDefaultCollation(chs); err != nil {
+			return "", "", errors.Trace(err)
+		}
+	}
+	for _, opt := range def.Options {
+		if opt.Tp == ast.ColumnOptionCollate {
+			info, err := collate.GetCollationByName(opt.StrValue)
+			if err != nil {
+				return "", "", errors.Trace(err)
+			}
+			if chs == "" {
+				chs = info.CharsetName
+			} else if chs != info.CharsetName {
+				return "", "", ErrCollationCharsetMismatch.GenWithStackByArgs(info.Name, chs)
+			}
+			coll = info.Name
+		}
+	}
+	return
 }
 
 // getCharsetAndCollateInTableOption will iterate the charset and collate in the options,
@@ -2131,6 +2307,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 		}
 	}
 
+<<<<<<< HEAD
 	if len(colName) > mysql.MaxColumnNameLength {
 		return ErrTooLongIdent.GenWithStackByArgs(colName)
 	}
@@ -2139,6 +2316,25 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	// We use length(t.Cols()) as the default offset firstly, we will change the
 	// column's offset later.
 	col, _, err = buildColumnAndConstraint(ctx, len(t.Cols()), specNewColumn, nil, t.Meta().Charset, t.Meta().Collate, schema.Charset, schema.Collate)
+=======
+	tableCharset, tableCollate, err := ResolveCharsetCollation(
+		ast.CharsetOpt{Chs: t.Meta().Charset, Col: t.Meta().Collate},
+		ast.CharsetOpt{Chs: schema.Charset, Col: schema.Collate},
+	)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	// Ignore table constraints now, they will be checked later.
+	// We use length(t.Cols()) as the default offset firstly, we will change the column's offset later.
+	col, _, err = buildColumnAndConstraint(
+		ctx,
+		len(t.Cols()),
+		specNewColumn,
+		nil,
+		tableCharset,
+		tableCollate,
+	)
+>>>>>>> 6b034d4... *: fix unexpected error when setting collate for database (#16283)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2623,19 +2819,26 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		Version:            col.Version,
 	})
 
+	var chs, coll string
 	// TODO: Remove it when all table versions are greater than or equal to TableInfoVersion1.
 	// If newCol's charset is empty and the table's version less than TableInfoVersion1,
 	// we will not modify the charset of the column. This behavior is not compatible with MySQL.
 	if len(newCol.FieldType.Charset) == 0 && t.Meta().Version < model.TableInfoVersion1 {
-		newCol.FieldType.Charset = col.FieldType.Charset
-		newCol.FieldType.Collate = col.FieldType.Collate
+		chs = col.FieldType.Charset
+		coll = col.FieldType.Collate
+	} else {
+		chs, coll, err = getCharsetAndCollateInColumnDef(specNewColumn)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		chs, coll, err = ResolveCharsetCollation(
+			ast.CharsetOpt{Chs: chs, Col: coll},
+			ast.CharsetOpt{Chs: t.Meta().Charset, Col: t.Meta().Collate},
+			ast.CharsetOpt{Chs: schema.Charset, Col: schema.Collate},
+		)
 	}
-	// specifiedCollates refers to collates in colDef.Option. When setting charset and collate here we
-	// should take the collate in colDef.Option into consideration rather than handling it separately
-	specifiedCollates := extractCollateFromOption(specNewColumn)
 
-	err = setCharsetCollationFlenDecimal(&newCol.FieldType, specifiedCollates, t.Meta().Charset, t.Meta().Collate, schema.Charset, schema.Collate)
-	if err != nil {
+	if err = setCharsetCollationFlenDecimal(&newCol.FieldType, chs, coll); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -2940,14 +3143,12 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, dbInfo *model.DBInfo, toCh
 		}
 	}
 
-	if len(origCharset) == 0 {
-		// The table charset may be "", if the table is create in old TiDB version, such as v2.0.8.
-		// This DDL will update the table charset to default charset.
-		origCharset, origCollate, err = ResolveCharsetCollation("", "", dbInfo.Charset, dbInfo.Collate)
-		if err != nil {
-			return doNothing, err
-		}
-	}
+	// The table charset may be "", if the table is create in old TiDB version, such as v2.0.8.
+	// This DDL will update the table charset to default charset.
+	origCharset, origCollate, err = ResolveCharsetCollation(
+		ast.CharsetOpt{Chs: origCharset, Col: origCollate},
+		ast.CharsetOpt{Chs: dbInfo.Charset, Col: dbInfo.Collate},
+	)
 
 	if err = modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollate); err != nil {
 		return doNothing, err
@@ -3538,6 +3739,7 @@ func checkRangeColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.Tab
 	return nil
 }
 
+<<<<<<< HEAD
 // extractCollateFromOption take collates(may multiple) in option into consideration
 // when handle charset and collate of a column, rather than handling it separately.
 func extractCollateFromOption(def *ast.ColumnDef) []string {
@@ -3552,4 +3754,299 @@ func extractCollateFromOption(def *ast.ColumnDef) []string {
 		}
 	}
 	return specifiedCollates
+=======
+// LockTables uses to execute lock tables statement.
+func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error {
+	lockTables := make([]model.TableLockTpInfo, 0, len(stmt.TableLocks))
+	sessionInfo := model.SessionInfo{
+		ServerID:  d.GetID(),
+		SessionID: ctx.GetSessionVars().ConnectionID,
+	}
+	uniqueTableID := make(map[int64]struct{})
+	// Check whether the table was already locked by another.
+	for _, tl := range stmt.TableLocks {
+		tb := tl.Table
+		err := throwErrIfInMemOrSysDB(ctx, tb.Schema.L)
+		if err != nil {
+			return err
+		}
+		schema, t, err := d.getSchemaAndTableByIdent(ctx, ast.Ident{Schema: tb.Schema, Name: tb.Name})
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if t.Meta().IsView() {
+			return table.ErrUnsupportedOp.GenWithStackByArgs()
+		}
+		err = checkTableLocked(t.Meta(), tl.Type, sessionInfo)
+		if err != nil {
+			return err
+		}
+		if _, ok := uniqueTableID[t.Meta().ID]; ok {
+			return infoschema.ErrNonuniqTable.GenWithStackByArgs(t.Meta().Name)
+		}
+		uniqueTableID[t.Meta().ID] = struct{}{}
+		lockTables = append(lockTables, model.TableLockTpInfo{SchemaID: schema.ID, TableID: t.Meta().ID, Tp: tl.Type})
+	}
+
+	unlockTables := ctx.GetAllTableLocks()
+	arg := &lockTablesArg{
+		LockTables:   lockTables,
+		UnlockTables: unlockTables,
+		SessionInfo:  sessionInfo,
+	}
+	job := &model.Job{
+		SchemaID:   lockTables[0].SchemaID,
+		TableID:    lockTables[0].TableID,
+		Type:       model.ActionLockTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{arg},
+	}
+	// AddTableLock here is avoiding this job was executed successfully but the session was killed before return.
+	ctx.AddTableLock(lockTables)
+	err := d.doDDLJob(ctx, job)
+	if err == nil {
+		ctx.ReleaseTableLocks(unlockTables)
+		ctx.AddTableLock(lockTables)
+	}
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+// UnlockTables uses to execute unlock tables statement.
+func (d *ddl) UnlockTables(ctx sessionctx.Context, unlockTables []model.TableLockTpInfo) error {
+	if len(unlockTables) == 0 {
+		return nil
+	}
+	arg := &lockTablesArg{
+		UnlockTables: unlockTables,
+		SessionInfo: model.SessionInfo{
+			ServerID:  d.GetID(),
+			SessionID: ctx.GetSessionVars().ConnectionID,
+		},
+	}
+	job := &model.Job{
+		SchemaID:   unlockTables[0].SchemaID,
+		TableID:    unlockTables[0].TableID,
+		Type:       model.ActionUnlockTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{arg},
+	}
+
+	err := d.doDDLJob(ctx, job)
+	if err == nil {
+		ctx.ReleaseAllTableLocks()
+	}
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func throwErrIfInMemOrSysDB(ctx sessionctx.Context, dbLowerName string) error {
+	if util.IsMemOrSysDB(dbLowerName) {
+		if ctx.GetSessionVars().User != nil {
+			return infoschema.ErrAccessDenied.GenWithStackByArgs(ctx.GetSessionVars().User.Username, ctx.GetSessionVars().User.Hostname)
+		}
+		return infoschema.ErrAccessDenied.GenWithStackByArgs("", "")
+	}
+	return nil
+}
+
+func (d *ddl) CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) error {
+	uniqueTableID := make(map[int64]struct{})
+	cleanupTables := make([]model.TableLockTpInfo, 0, len(tables))
+	unlockedTablesNum := 0
+	// Check whether the table was already locked by another.
+	for _, tb := range tables {
+		err := throwErrIfInMemOrSysDB(ctx, tb.Schema.L)
+		if err != nil {
+			return err
+		}
+		schema, t, err := d.getSchemaAndTableByIdent(ctx, ast.Ident{Schema: tb.Schema, Name: tb.Name})
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if t.Meta().IsView() {
+			return table.ErrUnsupportedOp
+		}
+		// Maybe the table t was not locked, but still try to unlock this table.
+		// If we skip unlock the table here, the job maybe not consistent with the job.Query.
+		// eg: unlock tables t1,t2;  If t2 is not locked and skip here, then the job will only unlock table t1,
+		// and this behaviour is not consistent with the sql query.
+		if !t.Meta().IsLocked() {
+			unlockedTablesNum++
+		}
+		if _, ok := uniqueTableID[t.Meta().ID]; ok {
+			return infoschema.ErrNonuniqTable.GenWithStackByArgs(t.Meta().Name)
+		}
+		uniqueTableID[t.Meta().ID] = struct{}{}
+		cleanupTables = append(cleanupTables, model.TableLockTpInfo{SchemaID: schema.ID, TableID: t.Meta().ID})
+	}
+	// If the num of cleanupTables is 0, or all cleanupTables is unlocked, just return here.
+	if len(cleanupTables) == 0 || len(cleanupTables) == unlockedTablesNum {
+		return nil
+	}
+
+	arg := &lockTablesArg{
+		UnlockTables: cleanupTables,
+		IsCleanup:    true,
+	}
+	job := &model.Job{
+		SchemaID:   cleanupTables[0].SchemaID,
+		TableID:    cleanupTables[0].TableID,
+		Type:       model.ActionUnlockTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{arg},
+	}
+	err := d.doDDLJob(ctx, job)
+	if err == nil {
+		ctx.ReleaseTableLocks(cleanupTables)
+	}
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+type lockTablesArg struct {
+	LockTables    []model.TableLockTpInfo
+	IndexOfLock   int
+	UnlockTables  []model.TableLockTpInfo
+	IndexOfUnlock int
+	SessionInfo   model.SessionInfo
+	IsCleanup     bool
+}
+
+func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createStmt *ast.CreateTableStmt) error {
+	// Existence of DB and table has been checked in the preprocessor.
+	oldTableInfo, ok := (ctx.Value(domainutil.RepairedTable)).(*model.TableInfo)
+	if !ok || oldTableInfo == nil {
+		return ErrRepairTableFail.GenWithStack("Failed to get the repaired table")
+	}
+	oldDBInfo, ok := (ctx.Value(domainutil.RepairedDatabase)).(*model.DBInfo)
+	if !ok || oldDBInfo == nil {
+		return ErrRepairTableFail.GenWithStack("Failed to get the repaired database")
+	}
+	// By now only support same DB repair.
+	if createStmt.Table.Schema.L != oldDBInfo.Name.L {
+		return ErrRepairTableFail.GenWithStack("Repaired table should in same database with the old one")
+	}
+
+	// It is necessary to specify the table.ID and partition.ID manually.
+	newTableInfo, err := buildTableInfoWithCheck(ctx, createStmt, oldTableInfo.Charset, oldTableInfo.Collate)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// Override newTableInfo with oldTableInfo's element necessary.
+	// TODO: There may be more element assignments here, and the new TableInfo should be verified with the actual data.
+	newTableInfo.ID = oldTableInfo.ID
+	if err = checkAndOverridePartitionID(newTableInfo, oldTableInfo); err != nil {
+		return err
+	}
+	newTableInfo.AutoIncID = oldTableInfo.AutoIncID
+	// If any old columnInfo has lost, that means the old column ID lost too, repair failed.
+	for i, newOne := range newTableInfo.Columns {
+		old := getColumnInfoByName(oldTableInfo, newOne.Name.L)
+		if old == nil {
+			return ErrRepairTableFail.GenWithStackByArgs("Column " + newOne.Name.L + " has lost")
+		}
+		if newOne.Tp != old.Tp {
+			return ErrRepairTableFail.GenWithStackByArgs("Column " + newOne.Name.L + " type should be the same")
+		}
+		if newOne.Flen != old.Flen {
+			logutil.BgLogger().Warn("[ddl] admin repair table : Column " + newOne.Name.L + " flen is not equal to the old one")
+		}
+		newTableInfo.Columns[i].ID = old.ID
+	}
+	// If any old indexInfo has lost, that means the index ID lost too, so did the data, repair failed.
+	for i, newOne := range newTableInfo.Indices {
+		old := getIndexInfoByNameAndColumn(oldTableInfo, newOne)
+		if old == nil {
+			return ErrRepairTableFail.GenWithStackByArgs("Index " + newOne.Name.L + " has lost")
+		}
+		if newOne.Tp != old.Tp {
+			return ErrRepairTableFail.GenWithStackByArgs("Index " + newOne.Name.L + " type should be the same")
+		}
+		newTableInfo.Indices[i].ID = old.ID
+	}
+
+	newTableInfo.State = model.StatePublic
+	err = checkTableInfoValid(newTableInfo)
+	if err != nil {
+		return err
+	}
+	newTableInfo.State = model.StateNone
+
+	job := &model.Job{
+		SchemaID:   oldDBInfo.ID,
+		TableID:    newTableInfo.ID,
+		SchemaName: oldDBInfo.Name.L,
+		Type:       model.ActionRepairTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{newTableInfo},
+	}
+	err = d.doDDLJob(ctx, job)
+	if err == nil {
+		// Remove the old TableInfo from repairInfo before domain reload.
+		domainutil.RepairInfo.RemoveFromRepairInfo(oldDBInfo.Name.L, oldTableInfo.Name.L)
+	}
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func (d *ddl) OrderByColumns(ctx sessionctx.Context, ident ast.Ident) error {
+	_, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if tb.Meta().GetPkColInfo() != nil {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("ORDER BY ignored as there is a user-defined clustered index in the table '%s'", ident.Name))
+	}
+	return nil
+}
+
+func (d *ddl) CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStmt) error {
+	ident := ast.Ident{Name: stmt.Name.Name, Schema: stmt.Name.Schema}
+	sequenceInfo, err := buildSequenceInfo(stmt, ident)
+	if err != nil {
+		return err
+	}
+	// TiDB describe the sequence within a tableInfo, as a same-level object of a table and view.
+	tbInfo, err := buildTableInfo(ctx, ident.Name, nil, nil, "", "")
+	if err != nil {
+		return err
+	}
+	tbInfo.Sequence = sequenceInfo
+
+	onExist := OnExistError
+	if stmt.IfNotExists {
+		onExist = OnExistIgnore
+	}
+
+	return d.CreateTableWithInfo(ctx, ident.Schema, tbInfo, onExist, false /*tryRetainID*/)
+}
+
+func (d *ddl) DropSequence(ctx sessionctx.Context, ti ast.Ident, ifExists bool) (err error) {
+	schema, tbl, err := d.getSchemaAndTableByIdent(ctx, ti)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if !tbl.Meta().IsSequence() {
+		err = ErrWrongObject.GenWithStackByArgs(ti.Schema, ti.Name, "SEQUENCE")
+		if ifExists {
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			return nil
+		}
+		return err
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tbl.Meta().ID,
+		SchemaName: schema.Name.L,
+		Type:       model.ActionDropSequence,
+		BinlogInfo: &model.HistoryInfo{},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+>>>>>>> 6b034d4... *: fix unexpected error when setting collate for database (#16283)
 }

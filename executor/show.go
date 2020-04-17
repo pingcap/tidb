@@ -972,6 +972,46 @@ func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer) 
 	buf.WriteString(")")
 }
 
+<<<<<<< HEAD
+=======
+// ConstructResultOfShowCreateDatabase constructs the result for show create database.
+func ConstructResultOfShowCreateDatabase(ctx sessionctx.Context, dbInfo *model.DBInfo, ifNotExists bool, buf *bytes.Buffer) (err error) {
+	sqlMode := ctx.GetSessionVars().SQLMode
+	var ifNotExistsStr string
+	if ifNotExists {
+		ifNotExistsStr = "/*!32312 IF NOT EXISTS*/ "
+	}
+	fmt.Fprintf(buf, "CREATE DATABASE %s%s", ifNotExistsStr, stringutil.Escape(dbInfo.Name.O, sqlMode))
+	if dbInfo.Charset != "" {
+		fmt.Fprintf(buf, " /*!40100 DEFAULT CHARACTER SET %s ", dbInfo.Charset)
+		defaultCollate, err := charset.GetDefaultCollation(dbInfo.Charset)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if dbInfo.Collate != "" && dbInfo.Collate != defaultCollate {
+			fmt.Fprintf(buf, "COLLATE %s ", dbInfo.Collate)
+		}
+		fmt.Fprint(buf, "*/")
+		return nil
+	}
+	if dbInfo.Collate != "" {
+		collInfo, err := collate.GetCollationByName(dbInfo.Collate)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		fmt.Fprintf(buf, " /*!40100 DEFAULT CHARACTER SET %s ", collInfo.CharsetName)
+		if !collInfo.IsDefault {
+			fmt.Fprintf(buf, "COLLATE %s ", dbInfo.Collate)
+		}
+		fmt.Fprint(buf, "*/")
+		return nil
+	}
+	// MySQL 5.7 always show the charset info but TiDB may ignore it, which makes a slight difference. We keep this
+	// behavior unchanged because it is trivial enough.
+	return nil
+}
+
+>>>>>>> 6b034d4... *: fix unexpected error when setting collate for database (#16283)
 // fetchShowCreateDatabase composes show create database result.
 func (e *ShowExec) fetchShowCreateDatabase() error {
 	checker := privilege.GetPrivilegeManager(e.ctx)

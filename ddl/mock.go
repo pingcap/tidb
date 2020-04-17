@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/sessionctx"
@@ -149,11 +150,16 @@ func (dr *mockDelRange) clear() {}
 
 // MockTableInfo mocks a table info by create table stmt ast and a specified table id.
 func MockTableInfo(ctx sessionctx.Context, stmt *ast.CreateTableStmt, tableID int64) (*model.TableInfo, error) {
-	cols, newConstraints, err := buildColumnsAndConstraints(ctx, stmt.Cols, stmt.Constraints, "", "", "", "")
+	chs, coll := charset.GetDefaultCharsetAndCollate()
+	cols, newConstraints, err := buildColumnsAndConstraints(ctx, stmt.Cols, stmt.Constraints, chs, coll)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+<<<<<<< HEAD
 	tbl, err := buildTableInfo(ctx, nil, stmt.Table.Name, cols, newConstraints)
+=======
+	tbl, err := buildTableInfo(ctx, stmt.Table.Name, cols, newConstraints, "", "")
+>>>>>>> 6b034d4... *: fix unexpected error when setting collate for database (#16283)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -161,10 +167,6 @@ func MockTableInfo(ctx sessionctx.Context, stmt *ast.CreateTableStmt, tableID in
 
 	// The specified charset will be handled in handleTableOptions
 	if err = handleTableOptions(stmt.Options, tbl); err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	if err = resolveDefaultTableCharsetAndCollation(tbl, "", ""); err != nil {
 		return nil, errors.Trace(err)
 	}
 

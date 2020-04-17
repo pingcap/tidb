@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -940,7 +941,8 @@ func (s *testColumnSuite) colDefStrToFieldType(c *C, str string) *types.FieldTyp
 	stmt, err := parser.New().ParseOneStmt(sqlA, "", "")
 	c.Assert(err, IsNil)
 	colDef := stmt.(*ast.AlterTableStmt).Specs[0].NewColumns[0]
-	col, _, err := buildColumnAndConstraint(nil, 0, colDef, nil, mysql.DefaultCharset, "", mysql.DefaultCharset, "")
+	chs, coll := charset.GetDefaultCharsetAndCollate()
+	col, _, err := buildColumnAndConstraint(nil, 0, colDef, nil, chs, coll)
 	c.Assert(err, IsNil)
 	return &col.FieldType
 }
