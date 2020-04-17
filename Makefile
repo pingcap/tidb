@@ -129,7 +129,6 @@ staticcheck:
 	$(GO) get honnef.co/go/tools/cmd/staticcheck
 	$(STATICCHECK) ./...
 
-
 unconvert:
 	$(GO) get github.com/mdempsky/unconvert
 	$(UNCONVERT) ./...

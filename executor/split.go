@@ -534,7 +534,7 @@ func (e *SplitTableRegionExec) calculateBoundValue() (lowerValue int64, step int
 		if upperRecordID <= lowerRecordID {
 			return 0, 0, errors.Errorf("Split table `%s` region lower value %v should less than the upper value %v", e.tableInfo.Name, lowerRecordID, upperRecordID)
 		}
-		step = int64(upperRecordID - lowerRecordID/uint64(e.num))
+		step = int64((upperRecordID - lowerRecordID) / uint64(e.num))
 		lowerValue = int64(lowerRecordID)
 	} else {
 		lowerRecordID := e.lower.GetInt64()
