@@ -319,6 +319,8 @@ type Request struct {
 	SchemaVar int64
 	// BatchCop indicates whether send batch coprocessor request to tiflash.
 	BatchCop bool
+	// TaskID is an unique ID for an execution of a statement
+	TaskID uint64
 }
 
 // ResultSubset represents a result subset from a single storage unit.
