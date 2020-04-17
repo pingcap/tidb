@@ -13,9 +13,6 @@
 
 package main
 
-<<<<<<< HEAD
-import "testing"
-=======
 import (
 	"testing"
 
@@ -23,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/variable"
 )
->>>>>>> 39cc893... session: fix unseccessfully isolation read engines init session (#16465)
 
 var isCoverageServer = "0"
 
@@ -34,8 +30,6 @@ func TestRunMain(t *testing.T) {
 		main()
 	}
 }
-<<<<<<< HEAD
-=======
 
 func TestT(t *testing.T) {
 	TestingT(t)
@@ -56,4 +50,3 @@ func (t *testMainSuite) TestSetGlobalVars(c *C) {
 	c.Assert(variable.SysVars[variable.TiDBIsolationReadEngines].Value, Equals, "tikv, tidb")
 	c.Assert(variable.SysVars[variable.TIDBMemQuotaQuery].Value, Equals, "9999999")
 }
->>>>>>> 39cc893... session: fix unseccessfully isolation read engines init session (#16465)
