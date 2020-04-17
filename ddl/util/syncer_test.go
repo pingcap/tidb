@@ -254,23 +254,25 @@ func TestEtcd(t *testing.T) {
 	wg := sync.WaitGroup{}
 
 	for j := 0; j < 200; j++ {
-		wg.Add(5)
-		for i := 0; i < 5; i++ {
-			ii := i
-			go func() {
-				err := PutKVToEtcd(ctx, cli, 1, k[ii], string(ii+1),
-					clientv3.WithLease(session.Lease()))
-				if err != nil {
-					t.Fatal("Put fail")
-				}
+		wg.Add(50)
+		for n := 0; n < 10; n++ {
+			for i := 0; i < 5; i++ {
+				ii := i
+				go func() {
+					err := PutKVToEtcd(ctx, cli, 1, k[ii], string(ii+1),
+						clientv3.WithLease(session.Lease()))
+					if err != nil {
+						t.Fatal("Put fail")
+					}
 
-				childCtx, _ := goctx.WithTimeout(ctx, 2*time.Second)
-				_, err = cli.Get(childCtx, k[ii])
-				if err != nil {
-					t.Fatal("Get fail")
-				}
-				wg.Done()
-			}()
+					childCtx, _ := goctx.WithTimeout(ctx, 2*time.Second)
+					_, err = cli.Get(childCtx, k[ii])
+					if err != nil {
+						t.Fatal("Get fail")
+					}
+					wg.Done()
+				}()
+			}
 		}
 		wg.Wait()
 		logutil.BgLogger().Info("loop0 finish", zap.Int("count", j))
@@ -297,24 +299,26 @@ func TestEtcd2(t *testing.T) {
 
 	wg := sync.WaitGroup{}
 
-	for j := 0; j < 300; j++ {
-		wg.Add(5)
-		for i := 0; i < 5; i++ {
-			ii := i
-			go func() {
-				err := PutKVToEtcd(ctx, cli, 1, k[ii], string(ii+1),
-					clientv3.WithLease(session.Lease()))
-				if err != nil {
-					t.Fatal("Put fail")
-				}
+	for j := 0; j < 200; j++ {
+		wg.Add(50)
+		for n := 0; n < 10; n++ {
+			for i := 0; i < 5; i++ {
+				ii := i
+				go func() {
+					err := PutKVToEtcd(ctx, cli, 1, k[ii], string(ii+1),
+						clientv3.WithLease(session.Lease()))
+					if err != nil {
+						t.Fatal("Put fail")
+					}
 
-				childCtx, _ := goctx.WithTimeout(ctx, time.Second)
-				_, err = cli.Get(childCtx, k[ii])
-				if err != nil {
-					t.Fatal("Get fail")
-				}
-				wg.Done()
-			}()
+					childCtx, _ := goctx.WithTimeout(ctx, time.Second)
+					_, err = cli.Get(childCtx, k[ii])
+					if err != nil {
+						t.Fatal("Get fail")
+					}
+					wg.Done()
+				}()
+			}
 		}
 		wg.Wait()
 		logutil.BgLogger().Info("loop1 finish", zap.Int("count", j))
@@ -341,24 +345,26 @@ func TestEtcd3(t *testing.T) {
 
 	wg := sync.WaitGroup{}
 
-	for j := 0; j < 500; j++ {
-		wg.Add(5)
-		for i := 0; i < 5; i++ {
-			ii := i
-			go func() {
-				err := PutKVToEtcd(ctx, cli, 1, k[ii], string(ii+1),
-					clientv3.WithLease(session.Lease()))
-				if err != nil {
-					t.Fatal("Put fail")
-				}
+	for j := 0; j < 300; j++ {
+		wg.Add(50)
+		for n := 0; n < 10; n++ {
+			for i := 0; i < 5; i++ {
+				ii := i
+				go func() {
+					err := PutKVToEtcd(ctx, cli, 1, k[ii], string(ii+1),
+						clientv3.WithLease(session.Lease()))
+					if err != nil {
+						t.Fatal("Put fail")
+					}
 
-				childCtx, _ := goctx.WithTimeout(ctx, 500*time.Millisecond)
-				_, err = cli.Get(childCtx, k[ii])
-				if err != nil {
-					t.Fatal("Get fail")
-				}
-				wg.Done()
-			}()
+					childCtx, _ := goctx.WithTimeout(ctx, 500*time.Millisecond)
+					_, err = cli.Get(childCtx, k[ii])
+					if err != nil {
+						t.Fatal("Get fail")
+					}
+					wg.Done()
+				}()
+			}
 		}
 		wg.Wait()
 		logutil.BgLogger().Info("loop2 finish", zap.Int("count", j))
@@ -385,24 +391,26 @@ func TestEtcd4(t *testing.T) {
 
 	wg := sync.WaitGroup{}
 
-	for j := 0; j < 1000; j++ {
-		wg.Add(5)
-		for i := 0; i < 5; i++ {
-			ii := i
-			go func() {
-				err := PutKVToEtcd(ctx, cli, 1, k[ii], string(ii+1),
-					clientv3.WithLease(session.Lease()))
-				if err != nil {
-					t.Fatal("Put fail")
-				}
+	for j := 0; j < 500; j++ {
+		wg.Add(50)
+		for n := 0; n < 10; n++ {
+			for i := 0; i < 5; i++ {
+				ii := i
+				go func() {
+					err := PutKVToEtcd(ctx, cli, 1, k[ii], string(ii+1),
+						clientv3.WithLease(session.Lease()))
+					if err != nil {
+						t.Fatal("Put fail")
+					}
 
-				childCtx, _ := goctx.WithTimeout(ctx, 200*time.Millisecond)
-				_, err = cli.Get(childCtx, k[ii])
-				if err != nil {
-					t.Fatal("Get fail")
-				}
-				wg.Done()
-			}()
+					childCtx, _ := goctx.WithTimeout(ctx, 200*time.Millisecond)
+					_, err = cli.Get(childCtx, k[ii])
+					if err != nil {
+						t.Fatal("Get fail")
+					}
+					wg.Done()
+				}()
+			}
 		}
 		wg.Wait()
 		logutil.BgLogger().Info("loop3 finish", zap.Int("count", j))
