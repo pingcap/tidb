@@ -1124,3 +1124,26 @@ func (s *testRangerSuite) TestCompIndexInExprCorrCol(c *C) {
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
 	}
 }
+
+func (s *testRangerSuite) TestIndexStringIsTrueRange(c *C) {
+	// #15990
+	defer testleak.AfterTest(c)()
+	dom, store, err := newDomainStoreWithBootstrap(c)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t0")
+	testKit.MustExec("CREATE TABLE t0(c0 TEXT(10));")
+	testKit.MustExec("INSERT INTO t0(c0) VALUES (1);")
+	testKit.MustExec("CREATE INDEX i0 ON t0(c0(10));")
+	testKit.MustExec("analyze table t0;")
+	testKit.MustQuery("desc SELECT * FROM t0 WHERE ('a' != t0.c0) AND t0.c0;").Check(testkit.Rows(
+		"IndexReader_6 1.00 root  index:IndexRangeScan_5",
+		"└─IndexRangeScan_5 1.00 cop[tikv] table:t0, index:i0(c0) range:[-inf,\"\"), (\"\",\"a\"), (\"a\",+inf], keep order:false",
+	))
+	testKit.MustExec("drop table t0;")
+}
