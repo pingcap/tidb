@@ -490,14 +490,6 @@ func (s *testEvaluatorSerialSuites) TestPushDownSwitcher(c *C) {
 		c.Assert(pbExpr.Sig, Equals, cases[i].sig, Commentf("function: %s, sig: %v", cases[i].name, cases[i].sig))
 	}
 
-	// All disabled
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/PushDownTestSwitcher", `return("")`), IsNil)
-	pbExprs = ExpressionsToPBList(sc, funcs, client)
-	c.Assert(len(pbExprs), Equals, len(cases))
-	for i, pbExpr := range pbExprs {
-		c.Assert(pbExpr, IsNil, Commentf("function: %s, sig: %v", cases[i].name, cases[i].sig))
-	}
-
 	// Partial enabled
 	fpexpr := fmt.Sprintf(`return("%s")`, strings.Join(enabled, ","))
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/PushDownTestSwitcher", fpexpr), IsNil)
@@ -505,7 +497,6 @@ func (s *testEvaluatorSerialSuites) TestPushDownSwitcher(c *C) {
 	c.Assert(len(pbExprs), Equals, len(cases))
 	for i, pbExpr := range pbExprs {
 		if !cases[i].enable {
-			c.Assert(pbExpr, IsNil, Commentf("function: %s, sig: %v", cases[i].name, cases[i].sig))
 			continue
 		}
 		c.Assert(pbExpr.Sig, Equals, cases[i].sig, Commentf("function: %s, sig: %v", cases[i].name, cases[i].sig))

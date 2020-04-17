@@ -810,18 +810,18 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 	// Use the failpoint to control whether to push down an expression in the integration test.
 	// Push down all expression if the `failpoint expression` is `all`, otherwise, check
 	// whether scalar function's name is contained in the enabled expression list (e.g.`ne,eq,lt`).
-	failpoint.Inject("PushDownTestSwitcher", func(val failpoint.Value) bool {
+	// If neither of the above is true, turn to original logic.
+	failpoint.Inject("PushDownTestSwitcher", func(val failpoint.Value) {
 		enabled := val.(string)
 		if enabled == "all" {
-			return true
+			failpoint.Return(true)
 		}
 		exprs := strings.Split(enabled, ",")
 		for _, expr := range exprs {
 			if strings.ToLower(strings.TrimSpace(expr)) == sf.FuncName.L {
-				return true
+				failpoint.Return(true)
 			}
 		}
-		return false
 	})
 
 	ret := false
