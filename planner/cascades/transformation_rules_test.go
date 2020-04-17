@@ -564,6 +564,7 @@ func (s *testTransformationRuleSuite) TestJoin2MultiJoin(c *C) {
 	s.testData.GetTestCases(c, &input, &output)
 	testGroupToString(input, output, s, c)
 }
+
 func (s *testTransformationRuleSuite) TestEnumerateJoinOrders(c *C) {
 	s.optimizer.ResetTransformationRules(TransformationRuleBatch{
 		memo.OperandProjection: {
@@ -584,6 +585,22 @@ func (s *testTransformationRuleSuite) TestEnumerateJoinOrders(c *C) {
 	TransformationRuleBatch{
 		memo.OperandMultiJoin: {
 			NewRuleEnumerateJoinOrders(),
+		},
+	})
+	defer s.optimizer.ResetTransformationRules(DefaultRuleBatches...)
+	var input []string
+	var output []struct {
+		SQL    string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	testGroupToString(input, output, s, c)
+}
+
+func (s *testTransformationRuleSuite) TestReduceGroupByItems(c *C) {
+	s.optimizer.ResetTransformationRules(TransformationRuleBatch{
+		memo.OperandAggregation: {
+			NewRuleReduceGroupByItems(),
 		},
 	})
 	defer s.optimizer.ResetTransformationRules(DefaultRuleBatches...)

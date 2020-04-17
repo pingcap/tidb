@@ -256,5 +256,12 @@
       "select t1.a, t2.b, t3.c, t4.d from t t1, t t2, t t3, t t4 where t1.a = t2.b and t2.b = t3.c and t3.c = t4.d",
       "select t1.a, t2.b, t3.c, t4.d, t5.e from t t1, t t2, t t3, t t4, t t5 where t1.a = t2.b and t3.c = t4.d and t1.a > t3.c and t2.b = t5.e"
     ]
+  },
+  {
+    "name": "TestReduceGroupByItems",
+    "cases": [
+      "select t1.a, t1.b, t1.c, t1.d, sum(t2.c) from t t1, t t2 where t1.b = t2.b group by t1.a, t1.b, t1.c, t1.d",
+      "select t1.a, t1.b, t1.c, t1.d, t2.b, sum(t2.c) from t t1, t t2 where t1.b = t2.b group by t1.a, t1.b, t1.c, t1.d, t2.b"
+    ]
   }
 ]

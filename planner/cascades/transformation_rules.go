@@ -81,6 +81,7 @@ var TiDBLayerOptimizationBatch = TransformationRuleBatch{
 		NewRuleEliminateOuterJoinBelowAggregation(),
 		NewRuleTransformAggregateCaseToSelection(),
 		NewRuleTransformAggToProj(),
+		NewRuleReduceGroupByItems(),
 	},
 	memo.OperandLimit: {
 		NewRuleTransformLimitToTopN(),
@@ -3748,4 +3749,86 @@ func (r *EnumerateJoinOrders) enumerateJoinTree(
 	}
 	result = newGroup
 	return
+}
+
+type ReduceGroupByItems struct {
+	baseRule
+}
+
+func NewRuleReduceGroupByItems() Transformation {
+	rule := &ReduceGroupByItems{}
+	rule.pattern = memo.NewPattern(memo.OperandAggregation, memo.EngineTiDBOnly)
+	return rule
+}
+
+func (r *ReduceGroupByItems) Match(expr *memo.ExprIter) bool {
+	agg := expr.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	return len(agg.GroupByItems) > 1
+}
+
+func (r *ReduceGroupByItems) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	groupByItems := agg.GroupByItems
+	old.GetExpr().Group.BuildKeyInfo()
+	dependencyMap := make(map[int64]*expression.Schema)
+	r.collectFunctionalDependency(old.GetExpr().Children[0], dependencyMap)
+	oldGroupByItems := groupByItems
+	newGroupByItems := groupByItems
+
+	for {
+		changed := false
+		for _, item := range oldGroupByItems {
+			if key, ok := item.(*expression.Column); ok {
+				if schema, ok := dependencyMap[key.UniqueID]; ok {
+					newGroupByItems = make([]expression.Expression, 0, len(groupByItems))
+					newGroupByItems = append(newGroupByItems, key)
+					for _, item := range oldGroupByItems {
+						if col, ok := item.(*expression.Column); ok {
+							if col == key {
+								continue
+							}
+							if schema.Contains(col) {
+								changed = true
+								continue
+							}
+						}
+						newGroupByItems = append(newGroupByItems, item)
+					}
+					break
+				}
+			}
+		}
+		if changed {
+			oldGroupByItems = newGroupByItems
+		} else {
+			break
+		}
+	}
+
+	if len(newGroupByItems) >= len(groupByItems) {
+		return nil, false, false, nil
+	}
+
+	newAgg := plannercore.LogicalAggregation{
+		AggFuncs:     agg.AggFuncs,
+		GroupByItems: newGroupByItems,
+	}.Init(agg.SCtx(), agg.SelectBlockOffset())
+	newAggExpr := memo.NewGroupExpr(newAgg)
+	newAggExpr.SetChildren(old.GetExpr().Children...)
+	return []*memo.GroupExpr{newAggExpr}, true, false, nil
+}
+
+func (r *ReduceGroupByItems) collectFunctionalDependency(group *memo.Group, dependency map[int64]*expression.Schema) {
+	firstGroupExpr := group.GetFirstGroupExpr()
+	for _, childGroup := range firstGroupExpr.Children {
+		r.collectFunctionalDependency(childGroup, dependency)
+	}
+	for _, key := range group.Prop.Schema.Keys {
+		// Only handle one column unique key.
+		if len(key) != 1 {
+			continue
+		}
+		uniqueCol := key[0]
+		dependency[uniqueCol.UniqueID] = group.Prop.Schema
+	}
 }
