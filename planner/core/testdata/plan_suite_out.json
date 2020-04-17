@@ -229,6 +229,18 @@
         "Best": "IndexMergeReader(PartialPlans->[Index(t.c_d_e)[[-inf,1)], Index(t.f_g)[(2,+inf]]], TablePlan->Table(t))",
         "HasWarn": false,
         "Hints": "use_index_merge(@`sel_1` `t` `c_d_e`, `f_g`)"
+      },
+      {
+        "SQL": "select /*+ USE_INDEX_MERGE(db2.t) */ * from t where c < 1 or f > 2",
+        "Best": "TableReader(Table(t)->Sel([or(lt(test.t.c, 1), gt(test.t.f, 2))]))",
+        "HasWarn": true,
+        "Hints": "use_index(@`sel_1` `test`.`t` )"
+      },
+      {
+        "SQL": "select /*+ USE_INDEX_MERGE(db2.t, c_d_e, f_g) */ * from t where c < 1 or f > 2",
+        "Best": "TableReader(Table(t)->Sel([or(lt(test.t.c, 1), gt(test.t.f, 2))]))",
+        "HasWarn": true,
+        "Hints": "use_index(@`sel_1` `test`.`t` )"
       }
     ]
   },
