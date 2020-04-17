@@ -802,6 +802,8 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 					if col.Tp == mysql.TypeBit {
 						defaultValBinaryLiteral := types.BinaryLiteral(defaultValStr)
 						fmt.Fprintf(buf, " DEFAULT %s", defaultValBinaryLiteral.ToBitLiteralString(true))
+					} else if types.IsTypeNumeric(col.Tp) || col.DefaultIsExpr {
+						fmt.Fprintf(buf, " DEFAULT %s", format.OutputFormat(defaultValStr))
 					} else {
 						fmt.Fprintf(buf, " DEFAULT '%s'", format.OutputFormat(defaultValStr))
 					}
@@ -900,6 +902,10 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		if autoIncID > 1 {
 			fmt.Fprintf(buf, " AUTO_INCREMENT=%d", autoIncID)
 		}
+	}
+
+	if tableInfo.AutoIdCache != 0 {
+		fmt.Fprintf(buf, " /*T![auto_id_cache] AUTO_ID_CACHE=%d */", tableInfo.AutoIdCache)
 	}
 
 	if tableInfo.ShardRowIDBits > 0 {
