@@ -164,10 +164,10 @@ id	estRows	task	access object	operator info
 Union_17	26000.00	root		
 ├─HashAgg_21	16000.00	root		group by:Column#10, funcs:firstrow(Column#12)->Column#10
 │ └─Union_22	16000.00	root		
-│   ├─StreamAgg_27	8000.00	root		group by:test.t2.c1, funcs:firstrow(test.t2.c1)->Column#12, funcs:firstrow(test.t2.c1)->Column#10
+│   ├─StreamAgg_27	8000.00	root		group by:test.t2.c1, funcs:firstrow(test.t2.c1)->Column#12
 │   │ └─IndexReader_40	10000.00	root		index:IndexFullScan_39
 │   │   └─IndexFullScan_39	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:true, stats:pseudo
-│   └─StreamAgg_45	8000.00	root		group by:test.t2.c1, funcs:firstrow(test.t2.c1)->Column#12, funcs:firstrow(test.t2.c1)->Column#10
+│   └─StreamAgg_45	8000.00	root		group by:test.t2.c1, funcs:firstrow(test.t2.c1)->Column#12
 │     └─IndexReader_58	10000.00	root		index:IndexFullScan_57
 │       └─IndexFullScan_57	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:true, stats:pseudo
 └─IndexReader_63	10000.00	root		index:IndexFullScan_62
@@ -176,13 +176,13 @@ explain select c1 from t2 union all select c1 from t2 union select c1 from t2;
 id	estRows	task	access object	operator info
 HashAgg_18	24000.00	root		group by:Column#10, funcs:firstrow(Column#11)->Column#10
 └─Union_19	24000.00	root		
-  ├─StreamAgg_24	8000.00	root		group by:test.t2.c1, funcs:firstrow(test.t2.c1)->Column#11, funcs:firstrow(test.t2.c1)->Column#10
+  ├─StreamAgg_24	8000.00	root		group by:test.t2.c1, funcs:firstrow(test.t2.c1)->Column#11
   │ └─IndexReader_37	10000.00	root		index:IndexFullScan_36
   │   └─IndexFullScan_36	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:true, stats:pseudo
-  ├─StreamAgg_42	8000.00	root		group by:test.t2.c1, funcs:firstrow(test.t2.c1)->Column#11, funcs:firstrow(test.t2.c1)->Column#10
+  ├─StreamAgg_42	8000.00	root		group by:test.t2.c1, funcs:firstrow(test.t2.c1)->Column#11
   │ └─IndexReader_55	10000.00	root		index:IndexFullScan_54
   │   └─IndexFullScan_54	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:true, stats:pseudo
-  └─StreamAgg_60	8000.00	root		group by:test.t2.c1, funcs:firstrow(test.t2.c1)->Column#11, funcs:firstrow(test.t2.c1)->Column#10
+  └─StreamAgg_60	8000.00	root		group by:test.t2.c1, funcs:firstrow(test.t2.c1)->Column#11
     └─IndexReader_73	10000.00	root		index:IndexFullScan_72
       └─IndexFullScan_72	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:true, stats:pseudo
 select * from information_schema.tidb_indexes where table_name='t4';
@@ -669,17 +669,17 @@ id	estRows	task	access object	operator info
 Sort_13	2.00	root		Column#3:asc
 └─HashAgg_17	2.00	root		group by:Column#3, funcs:firstrow(Column#6)->Column#3
   └─Union_18	2.00	root		
-    ├─HashAgg_19	1.00	root		group by:1, funcs:firstrow(0)->Column#6, funcs:firstrow(0)->Column#3
+    ├─HashAgg_19	1.00	root		group by:1, funcs:firstrow(0)->Column#6
     │ └─TableDual_22	1.00	root		rows:1
-    └─HashAgg_25	1.00	root		group by:1, funcs:firstrow(1)->Column#6, funcs:firstrow(1)->Column#3
+    └─HashAgg_25	1.00	root		group by:1, funcs:firstrow(1)->Column#6
       └─TableDual_28	1.00	root		rows:1
 explain SELECT 0 AS a FROM dual UNION (SELECT 1 AS a FROM dual ORDER BY a);
 id	estRows	task	access object	operator info
 HashAgg_15	2.00	root		group by:Column#3, funcs:firstrow(Column#6)->Column#3
 └─Union_16	2.00	root		
-  ├─HashAgg_17	1.00	root		group by:1, funcs:firstrow(0)->Column#6, funcs:firstrow(0)->Column#3
+  ├─HashAgg_17	1.00	root		group by:1, funcs:firstrow(0)->Column#6
   │ └─TableDual_20	1.00	root		rows:1
-  └─StreamAgg_27	1.00	root		group by:Column#1, funcs:firstrow(Column#1)->Column#6, funcs:firstrow(Column#1)->Column#3
+  └─StreamAgg_27	1.00	root		group by:Column#1, funcs:firstrow(Column#1)->Column#6
     └─Projection_32	1.00	root		1->Column#1
       └─TableDual_33	1.00	root		rows:1
 create table t (i int key, j int, unique key (i, j));
