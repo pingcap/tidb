@@ -870,7 +870,10 @@ func checkDefaultValue(ctx sessionctx.Context, c *table.Column, hasDefaultValue 
 		return nil
 	}
 
-	if c.GetDefaultValue() != nil && !c.DefaultIsExpr {
+	if c.GetDefaultValue() != nil {
+		if c.DefaultIsExpr {
+			return nil
+		}
 		if _, err := table.GetColDefaultValue(ctx, c.ToInfo()); err != nil {
 			return types.ErrInvalidDefault.GenWithStackByArgs(c.Name)
 		}
