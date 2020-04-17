@@ -32,6 +32,8 @@ type Config struct {
 	Consistency   string
 	NoViews       bool
 	NoHeader      bool
+	NoSchemas     bool
+	NoData        bool
 
 	BlackWhiteList  BWListConf
 	Rows            uint64
@@ -63,6 +65,8 @@ func DefaultConfig() *Config {
 		Where:         "",
 		FileType:      "SQL",
 		NoHeader:      false,
+		NoSchemas:     false,
+		NoData:        false,
 	}
 }
 
