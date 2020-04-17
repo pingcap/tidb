@@ -812,6 +812,13 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 
 	tableConds, copTask.rootTaskConds = SplitSelCondsWithVirtualColumn(tableConds)
 
+	var newRootConds []expression.Expression
+	indexConds, newRootConds = expression.PushDownExprs(is.ctx.GetSessionVars().StmtCtx, indexConds, is.ctx.GetClient(), kv.TiKV)
+	copTask.rootTaskConds = append(copTask.rootTaskConds, newRootConds...)
+
+	tableConds, newRootConds = expression.PushDownExprs(is.ctx.GetSessionVars().StmtCtx, tableConds, is.ctx.GetClient(), kv.TiKV)
+	copTask.rootTaskConds = append(copTask.rootTaskConds, newRootConds...)
+
 	sessVars := is.ctx.GetSessionVars()
 	if indexConds != nil {
 		copTask.cst += copTask.count() * sessVars.CopCPUFactor
