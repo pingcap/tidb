@@ -284,6 +284,18 @@ func SetTiDBSnapshot(db *sql.DB, snapshot string) error {
 	return withStack(err)
 }
 
+func CheckTiDBWithTiKV(db *sql.DB) (bool, error) {
+	var count int
+	handleOneRow := func(rows *sql.Rows) error {
+		return rows.Scan(&count)
+	}
+	err := simpleQuery(db, "SELECT COUNT(1) as c FROM MYSQL.TiDB WHERE VARIABLE_NAME='tikv_gc_safe_point'", handleOneRow)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 func buildSelectField(db *sql.DB, dbName, tableName string) (string, error) {
 	query := `SELECT COLUMN_NAME,EXTRA FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=?;`
 	rows, err := db.Query(query, dbName, tableName)
