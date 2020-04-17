@@ -427,12 +427,9 @@ func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Colum
 			if buf.IsNull(i) {
 				isZero[i] = -1
 			} else {
-				iVal, err := types.StrToInt(sc, buf.GetString(i))
+				iVal, err := types.StrToFloat(sc, buf.GetString(i))
 				if err != nil {
-					iVal, err = HandleOverflowOnSelection(sc, iVal, err)
-					if err != nil {
-						return err
-					}
+					return err
 				}
 				if iVal == 0 {
 					isZero[i] = 0
