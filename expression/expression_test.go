@@ -40,7 +40,7 @@ func (s *testEvaluatorSuite) TestEvaluateExprWithNull(c *C) {
 	col0 := schema.Columns[0]
 	col1 := schema.Columns[1]
 	schema.Columns = schema.Columns[:1]
-	innerIfNull, err := newFunctionForTest(s.ctx, ast.Ifnull, col1, One.Clone())
+	innerIfNull, err := newFunctionForTest(s.ctx, ast.Ifnull, col1, NewOne())
 	c.Assert(err, IsNil)
 	outerIfNull, err := newFunctionForTest(s.ctx, ast.Ifnull, col0, innerIfNull)
 	c.Assert(err, IsNil)
@@ -51,17 +51,17 @@ func (s *testEvaluatorSuite) TestEvaluateExprWithNull(c *C) {
 	schema.Columns = append(schema.Columns, col1)
 	// ifnull(null, ifnull(null, 1))
 	res = EvaluateExprWithNull(s.ctx, schema, outerIfNull)
-	c.Assert(res.Equal(s.ctx, One), IsTrue)
+	c.Assert(res.Equal(s.ctx, NewOne()), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestConstant(c *C) {
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	c.Assert(Zero.IsCorrelated(), IsFalse)
-	c.Assert(Zero.ConstItem(sc), IsTrue)
-	c.Assert(Zero.Decorrelate(nil).Equal(s.ctx, Zero), IsTrue)
-	c.Assert(Zero.HashCode(sc), DeepEquals, []byte{0x0, 0x8, 0x0})
-	c.Assert(Zero.Equal(s.ctx, One), IsFalse)
-	res, err := Zero.MarshalJSON()
+	c.Assert(NewZero().IsCorrelated(), IsFalse)
+	c.Assert(NewZero().ConstItem(sc), IsTrue)
+	c.Assert(NewZero().Decorrelate(nil).Equal(s.ctx, NewZero()), IsTrue)
+	c.Assert(NewZero().HashCode(sc), DeepEquals, []byte{0x0, 0x8, 0x0})
+	c.Assert(NewZero().Equal(s.ctx, NewOne()), IsFalse)
+	res, err := NewZero().MarshalJSON()
 	c.Assert(err, IsNil)
 	c.Assert(res, DeepEquals, []byte{0x22, 0x30, 0x22})
 }
@@ -87,9 +87,9 @@ func (s *testEvaluatorSuite) TestConstItem(c *C) {
 	c.Assert(sf.ConstItem(s.ctx.GetSessionVars().StmtCtx), Equals, false)
 	sf = newFunction(ast.UUID)
 	c.Assert(sf.ConstItem(s.ctx.GetSessionVars().StmtCtx), Equals, false)
-	sf = newFunction(ast.GetParam, One)
+	sf = newFunction(ast.GetParam, NewOne())
 	c.Assert(sf.ConstItem(s.ctx.GetSessionVars().StmtCtx), Equals, false)
-	sf = newFunction(ast.Abs, One)
+	sf = newFunction(ast.Abs, NewOne())
 	c.Assert(sf.ConstItem(s.ctx.GetSessionVars().StmtCtx), Equals, true)
 }
 
@@ -101,8 +101,8 @@ func (s *testEvaluatorSuite) TestVectorizable(c *C) {
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	}
 	exprs = append(exprs, sf)
-	exprs = append(exprs, One)
-	exprs = append(exprs, Null)
+	exprs = append(exprs, NewOne())
+	exprs = append(exprs, NewNull())
 	exprs = append(exprs, column)
 	c.Assert(Vectorizable(exprs), Equals, true)
 

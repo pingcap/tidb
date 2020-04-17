@@ -201,7 +201,7 @@ func (s *testEvaluatorSuite) TestCoalesce(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.Length].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.Length].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -331,8 +331,8 @@ func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
 			}
 		}
 	}
-	_, err := funcs[ast.Greatest].getFunction(s.ctx, []Expression{Zero, One})
+	_, err := funcs[ast.Greatest].getFunction(s.ctx, []Expression{NewZero(), NewOne()})
 	c.Assert(err, IsNil)
-	_, err = funcs[ast.Least].getFunction(s.ctx, []Expression{Zero, One})
+	_, err = funcs[ast.Least].getFunction(s.ctx, []Expression{NewZero(), NewOne()})
 	c.Assert(err, IsNil)
 }
