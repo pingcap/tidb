@@ -16,12 +16,15 @@
       "Join{DataScan(a)->Aggr(sum(test.t.a),firstrow(test.t.c))->DataScan(b)}(test.t.c,test.t.c)->Aggr(sum(Column#26))->Projection",
       "Join{DataScan(a)->Aggr(sum(test.t.a),firstrow(test.t.c))->DataScan(b)}(test.t.c,test.t.c)->Aggr(sum(Column#26))->Projection",
       "DataScan(t)->Aggr(sum(test.t.a))->Projection",
-      "UnionAll{DataScan(a)->Projection->Aggr(sum(test.t.c),firstrow(test.t.d))->DataScan(b)->Projection->Aggr(sum(test.t.a),firstrow(test.t.b))->DataScan(c)->Projection->Aggr(sum(test.t.b),firstrow(test.t.e))}->Aggr(sum(Column#40))->Projection",
+      "UnionAll{DataScan(a)->Projection->Aggr(sum(test.t.c))->DataScan(b)->Projection->Aggr(sum(test.t.a))->DataScan(c)->Projection->Aggr(sum(test.t.b))}->Aggr(sum(Column#40))->Projection",
       "Join{DataScan(a)->DataScan(b)->Aggr(max(test.t.b),firstrow(test.t.c))}(test.t.c,test.t.c)->Projection->Projection",
       "Join{DataScan(a)->DataScan(b)}(test.t.a,test.t.a)->Aggr(max(test.t.b),max(test.t.b))->Projection",
       "UnionAll{DataScan(a)->Projection->Projection->Projection->DataScan(b)->Projection->Projection->Projection}->Aggr(max(Column#38))->Projection",
       "Join{DataScan(a)->DataScan(b)}(test.t.a,test.t.a)(test.t.b,test.t.b)->Aggr(max(test.t.c))->Projection",
-      "Join{DataScan(t1)->DataScan(t2)}(test.t.a,test.t.a)->Projection->Projection"
+      "Join{DataScan(t1)->DataScan(t2)}(test.t.a,test.t.a)->Projection->Projection",
+      "UnionAll{DataScan(t1)->Projection->Aggr(count(test.t.a),sum(test.t.a))->DataScan(t2)->Projection->Aggr(count(test.t.a),sum(test.t.a))}->Aggr(avg(Column#38, Column#39))->Projection",
+      "UnionAll{DataScan(t1)->Projection->Projection->Projection->DataScan(t2)->Projection->Projection->Projection}->Aggr(count(distinct Column#25))->Projection",
+      "UnionAll{DataScan(t1)->Projection->Aggr(firstrow(test.t.b))->DataScan(t2)->Projection->Aggr(firstrow(test.t.b))}->Aggr(count(distinct Column#26))->Projection"
     ]
   },
   {
@@ -897,8 +900,8 @@
       "DataScan(t1)->Aggr(firstrow(test.t.a),firstrow(test.t.b))",
       "DataScan(t2)->Aggr(firstrow(test.t.a),firstrow(test.t.b))",
       "DataScan(t1)->Aggr(max(test.t.a),min(test.t.b))->Projection",
-      "DataScan(t1)->Aggr(sum(test.t.a))->Projection",
-      "DataScan(t1)->Aggr(count(test.t.a, test.t.b))->Projection",
+      "DataScan(t1)->Aggr(sum(distinct test.t.a))->Projection",
+      "DataScan(t1)->Aggr(count(distinct test.t.a, test.t.b))->Projection",
       "DataScan(t1)->Projection",
       "DataScan(t2)->Projection",
       "Join{Join{DataScan(t1)->DataScan(t2)}(test.t.a,test.t.a)->DataScan(t3)->TopN([test.t.b true],0,1)}(test.t.b,test.t.b)->TopN([test.t.b true],0,1)->Aggr(max(test.t.b))->Projection",
