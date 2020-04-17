@@ -811,9 +811,6 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 	indexConds, tableConds := path.IndexFilters, path.TableFilters
 
 	tableConds, copTask.rootTaskConds = SplitSelCondsWithVirtualColumn(tableConds)
-	var newRootConds []expression.Expression
-	tableConds, newRootConds = expression.PushDownExprs(is.ctx.GetSessionVars().StmtCtx, tableConds, is.ctx.GetClient(), kv.TiKV)
-	copTask.rootTaskConds = append(copTask.rootTaskConds, newRootConds...)
 
 	sessVars := is.ctx.GetSessionVars()
 	if indexConds != nil {
@@ -862,10 +859,10 @@ func matchIndicesProp(idxCols []*expression.Column, colLens []int, propItems []p
 }
 
 func splitIndexFilterConditions(conditions []expression.Expression, indexColumns []*expression.Column, idxColLens []int,
-	table *model.TableInfo, sc *stmtctx.StatementContext, client kv.Client) (indexConds, tableConds []expression.Expression) {
+	table *model.TableInfo) (indexConds, tableConds []expression.Expression) {
 	var indexConditions, tableConditions []expression.Expression
 	for _, cond := range conditions {
-		if isCoveringIndex(expression.ExtractColumns(cond), indexColumns, idxColLens, table.PKIsHandle) && expression.CanExprsPushDown(sc, []expression.Expression{cond}, client, kv.TiKV) {
+		if isCoveringIndex(expression.ExtractColumns(cond), indexColumns, idxColLens, table.PKIsHandle) {
 			indexConditions = append(indexConditions, cond)
 		} else {
 			tableConditions = append(tableConditions, cond)
