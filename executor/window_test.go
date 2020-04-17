@@ -362,10 +362,10 @@ func (s *testSuite7) TestIssue16362(c *C) {
 	tk.MustExec("insert into t values(1,2),(1,3),(2,3),(-1,1),(-1,-1)")
 	tk.MustExec(`prepare stmt from "select sum(b) over w, nth_value(b, ?) over w from t window w as (partition by a)"`)
 	tk.MustExec("set @a=1")
-	tk.MustQuery("execute stmt using @a").Check(testkit.Rows(
+	tk.MustQuery("execute stmt using @a").Sort().Check(testkit.Rows(
 		"0 1",
 		"0 1",
+		"3 3",
 		"5 2",
-		"5 2",
-		"3 3"))
+		"5 2"))
 }
