@@ -489,6 +489,32 @@ func (w *GCWorker) calculateNewSafePoint(now time.Time) (*time.Time, error) {
 	return &safePoint, nil
 }
 
+// setServiceSafePoint sets the given safePoint as TiDB's service safePoint to PD, and returns the current minimal
+// service safePoint among all services.
+func (w *GCWorker) setServiceSafePoint(ctx context.Context, safePoint uint64) (uint64, error) {
+	// Sets TTL to 0 to make it permanently valid. TiDB uses empty serviceID.
+	// TODO: Should we use something like "gc_worker" ad the service name here which represents anything that is
+	// managing GC?
+	minSafePoint, err := w.pdClient.UpdateServiceGCSafePoint(ctx, "", 0, safePoint)
+	if err != nil {
+		logutil.Logger(ctx).Error("[gc worker] failed to update service safe point",
+			zap.String("uuid", w.uuid),
+			zap.Error(err))
+		metrics.GCJobFailureCounter.WithLabelValues("update_service_safe_point").Inc()
+		return 0, errors.Trace(err)
+	}
+	if minSafePoint < safePoint {
+		logutil.Logger(ctx).Info("[gc worker] there's another service in the cluster requires an earlier safe point. "+
+			"gc will continue with the earlier one",
+			zap.String("uuid", w.uuid),
+			zap.Uint64("ourSafePoint", safePoint),
+			zap.Uint64("minSafePoint", minSafePoint),
+		)
+		safePoint = minSafePoint
+	}
+	return safePoint, nil
+}
+
 func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency int) error {
 	metrics.GCWorkerCounter.WithLabelValues("run_job").Inc()
 	usePhysical, err := w.checkUsePhysicalScanLock()
@@ -515,6 +541,13 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency i
 	}
 	// Sleep to wait for all other tidb instances update their safepoint cache.
 	time.Sleep(gcSafePointCacheInterval)
+
+	// Update service GC safe point to PD and get the min safe point among TiDB and all other services. In case there
+	// are other services needs data before TiDB's safe point, those data should be kept.
+	safePoint, err = w.setServiceSafePoint(ctx, safePoint)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	err = w.deleteRanges(ctx, safePoint, concurrency)
 	if err != nil {
@@ -1659,19 +1692,20 @@ func (w *GCWorker) saveValueToSysTable(key, value string) error {
 }
 
 // RunGCJob sends GC command to KV. It is exported for kv api, do not use it with GCWorker at the same time.
-func RunGCJob(ctx context.Context, s tikv.Storage, safePoint uint64, identifier string, concurrency int) error {
+func RunGCJob(ctx context.Context, s tikv.Storage, pd pd.Client, safePoint uint64, identifier string, concurrency int) error {
 	gcWorker := &GCWorker{
-		store: s,
-		uuid:  identifier,
+		store:    s,
+		uuid:     identifier,
+		pdClient: pd,
+	}
+
+	if concurrency <= 0 {
+		return errors.Errorf("[gc worker] gc concurrency should greater than 0, current concurrency: %v", concurrency)
 	}
 
 	err := gcWorker.resolveLocks(ctx, safePoint, concurrency, false)
 	if err != nil {
 		return errors.Trace(err)
-	}
-
-	if concurrency <= 0 {
-		return errors.Errorf("[gc worker] gc concurrency should greater than 0, current concurrency: %v", concurrency)
 	}
 
 	err = gcWorker.saveSafePoint(gcWorker.store.GetSafePointKV(), safePoint)
@@ -1680,6 +1714,11 @@ func RunGCJob(ctx context.Context, s tikv.Storage, safePoint uint64, identifier 
 	}
 	// Sleep to wait for all other tidb instances update their safepoint cache.
 	time.Sleep(gcSafePointCacheInterval)
+
+	safePoint, err = gcWorker.setServiceSafePoint(ctx, safePoint)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	err = gcWorker.doGC(ctx, safePoint, concurrency)
 	if err != nil {
@@ -1710,6 +1749,11 @@ func RunDistributedGCJob(ctx context.Context, s tikv.Storage, pd pd.Client, safe
 	}
 	// Sleep to wait for all other tidb instances update their safepoint cache.
 	time.Sleep(gcSafePointCacheInterval)
+
+	safePoint, err = gcWorker.setServiceSafePoint(ctx, safePoint)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	err = gcWorker.uploadSafePointToPD(ctx, safePoint)
 	if err != nil {

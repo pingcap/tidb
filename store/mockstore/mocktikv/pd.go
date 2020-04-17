@@ -15,6 +15,7 @@ package mocktikv
 
 import (
 	"context"
+	"math"
 	"sync"
 	"time"
 
@@ -34,15 +35,19 @@ var tsMu = struct {
 type pdClient struct {
 	cluster *Cluster
 	// SafePoint set by `UpdateGCSafePoint`. Not to be confused with SafePointKV.
-	gcSafePoint   uint64
-	gcSafePointMu sync.Mutex
+	gcSafePoint uint64
+	// Represents the current safePoint of all services including TiDB, representing how much data they want to retain
+	// in GC.
+	serviceSafePoints map[string]uint64
+	gcSafePointMu     sync.Mutex
 }
 
 // NewPDClient creates a mock pd.Client that uses local timestamp and meta data
 // from a Cluster.
 func NewPDClient(cluster *Cluster) pd.Client {
 	return &pdClient{
-		cluster: cluster,
+		cluster:           cluster,
+		serviceSafePoints: make(map[string]uint64),
 	}
 }
 
@@ -128,6 +133,31 @@ func (c *pdClient) UpdateGCSafePoint(ctx context.Context, safePoint uint64) (uin
 		c.gcSafePoint = safePoint
 	}
 	return c.gcSafePoint, nil
+}
+
+func (c *pdClient) UpdateServiceGCSafePoint(ctx context.Context, serviceID string, _ttl int64, safePoint uint64) (uint64, error) {
+	c.gcSafePointMu.Lock()
+	defer c.gcSafePointMu.Unlock()
+
+	var minSafePoint uint64 = math.MaxUint64
+	for _, ssp := range c.serviceSafePoints {
+		if ssp < minSafePoint {
+			minSafePoint = ssp
+		}
+	}
+
+	if len(c.serviceSafePoints) == 0 || minSafePoint <= safePoint {
+		c.serviceSafePoints[serviceID] = safePoint
+	}
+
+	// The minSafePoint may have changed. Reload it.
+	minSafePoint = math.MaxUint64
+	for _, ssp := range c.serviceSafePoints {
+		if ssp < minSafePoint {
+			minSafePoint = ssp
+		}
+	}
+	return minSafePoint, nil
 }
 
 func (c *pdClient) Close() {

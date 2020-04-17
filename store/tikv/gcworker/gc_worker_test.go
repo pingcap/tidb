@@ -140,6 +140,16 @@ func (s *testGCWorkerSuite) mustGetSafePointFromPd(c *C) uint64 {
 	return safePoint
 }
 
+func (s *testGCWorkerSuite) mustGetMinServiceSafePointFromPd(c *C) uint64 {
+	// UpdateServiceGCSafePoint returns the minimal service safePoint. If trying to update it with a value less than the
+	// current minimal safePoint, nothing will be updated and the current minimal one will be returned. So we can use
+	// this API to check the current safePoint.
+	// This function shouldn't be invoked when there's no service safePoint set.
+	minSafePoint, err := s.pdClient.UpdateServiceGCSafePoint(context.Background(), "test", 1, 0)
+	c.Assert(err, IsNil)
+	return minSafePoint
+}
+
 // gcProbe represents a key that contains multiple versions, one of which should be collected. Execution of GC with
 // greater ts will be detected, but it may not work properly if there are newer versions of the key.
 // This is not used to check the correctness of GC algorithm, but only for checking whether GC has been executed on the
@@ -821,12 +831,65 @@ func (s *testGCWorkerSuite) TestRunGCJob(c *C) {
 	c.Assert(etcdSafePoint, Equals, safePoint)
 }
 
+func (s *testGCWorkerSuite) TestRunGCJobWithMinServiceSafePoint(c *C) {
+	gcSafePointCacheInterval = 0
+
+	// Ensure distributed mode is set.
+	useDistributedGC, err := s.gcWorker.checkUseDistributedGC()
+	c.Assert(err, IsNil)
+	c.Assert(useDistributedGC, IsTrue)
+
+	// GC without safePoint from other services.
+	safePoint := s.mustAllocTs(c)
+	err = s.gcWorker.runGCJob(context.Background(), safePoint, 1)
+	c.Assert(err, IsNil)
+	c.Assert(s.mustGetSafePointFromPd(c), Equals, safePoint)
+	c.Assert(s.mustGetMinServiceSafePointFromPd(c), Equals, safePoint)
+
+	// GC when there is a greater safePoint from other services.
+	oldSafePoint := safePoint
+	safePoint += 100
+	otherSafePoint := oldSafePoint + 110
+	minSafePoint, err := s.pdClient.UpdateServiceGCSafePoint(context.Background(), "svc1", 0, otherSafePoint)
+	c.Assert(err, IsNil)
+	c.Assert(minSafePoint, Equals, oldSafePoint)
+	err = s.gcWorker.runGCJob(context.Background(), safePoint, 1)
+	c.Assert(err, IsNil)
+	c.Assert(s.mustGetSafePointFromPd(c), Equals, safePoint)
+	c.Assert(s.mustGetMinServiceSafePointFromPd(c), Equals, safePoint)
+
+	// GC when there is a less safePoint from other services.
+	oldSafePoint = safePoint
+	safePoint += 100
+	otherSafePoint = oldSafePoint + 90
+	minSafePoint, err = s.pdClient.UpdateServiceGCSafePoint(context.Background(), "svc1", 0, otherSafePoint)
+	c.Assert(err, IsNil)
+	c.Assert(minSafePoint, Equals, oldSafePoint)
+	err = s.gcWorker.runGCJob(context.Background(), safePoint, 1)
+	c.Assert(err, IsNil)
+	c.Assert(s.mustGetSafePointFromPd(c), Equals, otherSafePoint)
+	c.Assert(s.mustGetMinServiceSafePointFromPd(c), Equals, otherSafePoint)
+
+	// GC with many safePoints from other services
+	safePoint += 100
+	for i := 0; i < 10; i++ {
+		// "svc1" used in former tests is included and will be replaced with new value here.
+		svcName := fmt.Sprintf("svc%d", i)
+		_, err = s.pdClient.UpdateServiceGCSafePoint(context.Background(), svcName, 0, safePoint+uint64(i)*10)
+		c.Assert(err, IsNil)
+	}
+	err = s.gcWorker.runGCJob(context.Background(), safePoint+50, 1)
+	c.Assert(err, IsNil)
+	c.Assert(s.mustGetSafePointFromPd(c), Equals, safePoint)
+	c.Assert(s.mustGetMinServiceSafePointFromPd(c), Equals, safePoint)
+}
+
 func (s *testGCWorkerSuite) TestRunGCJobAPI(c *C) {
 	gcSafePointCacheInterval = 0
 
 	p := s.createGCProbe(c, "k1")
 	safePoint := s.mustAllocTs(c)
-	err := RunGCJob(context.Background(), s.store, safePoint, "mock", 1)
+	err := RunGCJob(context.Background(), s.store, s.pdClient, safePoint, "mock", 1)
 	c.Assert(err, IsNil)
 	s.checkCollected(c, p)
 	etcdSafePoint := s.loadEtcdSafePoint(c)
