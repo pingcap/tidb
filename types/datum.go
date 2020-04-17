@@ -1444,8 +1444,7 @@ func (d *Datum) ToBool(sc *stmtctx.StatementContext) (int64, error) {
 	case KindMysqlDuration:
 		isZero = d.GetMysqlDuration().Duration == 0
 	case KindMysqlDecimal:
-		v, err1 := d.GetMysqlDecimal().ToFloat64()
-		isZero, err = v == 0, err1
+		isZero = d.GetMysqlDecimal().IsZero()
 	case KindMysqlEnum:
 		isZero = d.GetMysqlEnum().ToNumber() == 0
 	case KindMysqlSet:

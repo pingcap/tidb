@@ -6090,3 +6090,15 @@ func (s *testIntegrationSuite) TestIssue16029(c *C) {
 	tk.MustExec("drop table t0;")
 	tk.MustExec("drop table t1;")
 }
+
+func (s *testIntegrationSuite) TestIssue16426(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert into t values (42)")
+	tk.MustQuery("select a from t where a/10000").Check(testkit.Rows("42"))
+	tk.MustQuery("select a from t where a/100000").Check(testkit.Rows("42"))
+	tk.MustQuery("select a from t where a/1000000").Check(testkit.Rows("42"))
+	tk.MustQuery("select a from t where a/10000000").Check(testkit.Rows("42"))
+}
