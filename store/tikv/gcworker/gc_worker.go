@@ -1755,12 +1755,12 @@ const scanLockResultBufferSize = 128
 // mergeLockScanner is used to scan specified stores by using PhysicalScanLock. For multiple stores, the scanner will
 // merge the scan results of each store, and remove the duplicating items from different stores.
 type mergeLockScanner struct {
-	safePoint      uint64
-	client         tikv.Client
-	stores         map[uint64]*metapb.Store
-	receivers      mergeReceiver
-	currentLockKey []byte
-	scanLockLimit  uint32
+	safePoint     uint64
+	client        tikv.Client
+	stores        map[uint64]*metapb.Store
+	receivers     mergeReceiver
+	currentLock   *tikv.Lock
+	scanLockLimit uint32
 }
 
 type receiver struct {
@@ -1808,8 +1808,7 @@ func (r mergeReceiver) Less(i, j int) bool {
 		// lhs != nil, so lhs < rhs
 		return true
 	}
-
-	return bytes.Compare(lhs.Key, rhs.Key) < 0
+	return bytes.Compare(lhs.Key, rhs.Key) < 0 || (bytes.Equal(lhs.Key, rhs.Key) && lhs.TxnID < rhs.TxnID)
 }
 
 func (r mergeReceiver) Swap(i, j int) {
@@ -1875,15 +1874,15 @@ func (s *mergeLockScanner) startWithReceivers(receivers []*receiver) {
 
 func (s *mergeLockScanner) Next() *tikv.Lock {
 	for {
-		nextReceiver := heap.Pop(&s.receivers).(*receiver)
+		nextReceiver := s.receivers[0]
 		nextLock := nextReceiver.TakeNextLock()
-		heap.Push(&s.receivers, nextReceiver)
+		heap.Fix(&s.receivers, 0)
 
 		if nextLock == nil {
 			return nil
 		}
-		if s.currentLockKey == nil || !bytes.Equal(s.currentLockKey, nextLock.Key) {
-			s.currentLockKey = nextLock.Key
+		if s.currentLock == nil || !bytes.Equal(s.currentLock.Key, nextLock.Key) || s.currentLock.TxnID != nextLock.TxnID {
+			s.currentLock = nextLock
 			return nextLock
 		}
 	}
