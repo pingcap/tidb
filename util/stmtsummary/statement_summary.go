@@ -117,11 +117,9 @@ type stmtSummaryByDigestElement struct {
 	sumCompileLatency time.Duration
 	maxCompileLatency time.Duration
 	// coprocessor
-	numCopTasks          int64
-	sumCopProcessTime    int64
+	sumNumCopTasks       int64
 	maxCopProcessTime    time.Duration
 	maxCopProcessAddress string
-	sumCopWaitTime       int64
 	maxCopWaitTime       time.Duration
 	maxCopWaitAddress    string
 	// TiKV
@@ -629,13 +627,11 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 
 	// coprocessor
 	numCopTasks := int64(sei.CopTasks.NumCopTasks)
-	ssElement.numCopTasks += numCopTasks
-	ssElement.sumCopProcessTime += sei.CopTasks.AvgProcessTime.Nanoseconds() * numCopTasks
+	ssElement.sumNumCopTasks += numCopTasks
 	if sei.CopTasks.MaxProcessTime > ssElement.maxCopProcessTime {
 		ssElement.maxCopProcessTime = sei.CopTasks.MaxProcessTime
 		ssElement.maxCopProcessAddress = sei.CopTasks.MaxProcessAddress
 	}
-	ssElement.sumCopWaitTime += sei.CopTasks.AvgWaitTime.Nanoseconds() * numCopTasks
 	if sei.CopTasks.MaxWaitTime > ssElement.maxCopWaitTime {
 		ssElement.maxCopWaitTime = sei.CopTasks.MaxWaitTime
 		ssElement.maxCopWaitAddress = sei.CopTasks.MaxWaitAddress
@@ -768,11 +764,9 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		int64(ssElement.maxParseLatency),
 		avgInt(int64(ssElement.sumCompileLatency), ssElement.execCount),
 		int64(ssElement.maxCompileLatency),
-		ssElement.numCopTasks,
-		avgInt(ssElement.sumCopProcessTime, ssElement.numCopTasks),
+		ssElement.sumNumCopTasks,
 		int64(ssElement.maxCopProcessTime),
 		convertEmptyToNil(ssElement.maxCopProcessAddress),
-		avgInt(ssElement.sumCopWaitTime, ssElement.numCopTasks),
 		int64(ssElement.maxCopWaitTime),
 		convertEmptyToNil(ssElement.maxCopWaitAddress),
 		avgInt(int64(ssElement.sumProcessTime), ssElement.execCount),
