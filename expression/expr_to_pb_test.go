@@ -466,11 +466,8 @@ func (s *testEvaluatorSerialSuites) TestPushDownSwitcher(c *C) {
 		{ast.Tan, tipb.ScalarFuncSig_Tan, true},
 	}
 	var enabled []string
-	for i, funcName := range cases {
+	for _, funcName := range cases {
 		args := []Expression{dg.genColumn(mysql.TypeLong, 1)}
-		if i+1 < len(cases) {
-			args = append(args, dg.genColumn(mysql.TypeLong, 2))
-		}
 		fc, err := NewFunction(
 			mock.NewContext(),
 			funcName.name,
