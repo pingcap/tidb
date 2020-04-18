@@ -113,6 +113,7 @@ var TiDBLayerOptimizationBatch = TransformationRuleBatch{
 		NewRuleEliminateMaxOneRow(),
 	},
 	memo.OperandJoin: {
+		NewRuleTransformJoinCondToSelection(),
 		NewRulePullWindowUpJoin(true),
 		NewRulePullWindowUpJoin(false),
 	},
@@ -3831,4 +3832,29 @@ func (r *ReduceGroupByItems) collectFunctionalDependency(group *memo.Group, depe
 		uniqueCol := key[0]
 		dependency[uniqueCol.UniqueID] = group.Prop.Schema
 	}
+}
+
+type TransformJoinCondToSelection struct {
+	baseRule
+	PushSelDownJoinHelper
+}
+
+func NewRuleTransformJoinCondToSelection() Transformation {
+	rule := &TransformJoinCondToSelection{}
+	rule.pattern = memo.NewPattern(memo.OperandJoin, memo.EngineTiDBOnly)
+	return rule
+}
+
+func (r *TransformJoinCondToSelection) Match(expr *memo.ExprIter) bool {
+	join := expr.GetExpr().ExprNode.(*plannercore.LogicalJoin)
+	return len(join.LeftConditions) > 0 || len(join.RightConditions) > 0
+}
+
+func (r *TransformJoinCondToSelection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	joinExpr := old.GetExpr()
+	join := joinExpr.ExprNode.(*plannercore.LogicalJoin)
+	mockSel := plannercore.LogicalSelection{
+		Conditions: make([]expression.Expression, 0),
+	}.Init(join.SCtx(), join.SelectBlockOffset())
+	return r.onTransform(r, mockSel, join, joinExpr)
 }
