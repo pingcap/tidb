@@ -95,6 +95,7 @@ var TiDBLayerOptimizationBatch = TransformationRuleBatch{
 		NewRuleEliminateProjection(),
 		NewRuleMergeAdjacentProjection(),
 		NewRuleEliminateOuterJoinBelowProjection(),
+		NewRuleMergeProjectionAggregation(),
 	},
 	memo.OperandTopN: {
 		NewRulePushTopNDownProjection(),
@@ -1060,7 +1061,7 @@ func (h *PushSelDownJoinHelper) onTransform(
 		newJoinExpr = memo.NewGroupExpr(join)
 	}
 	newJoinExpr.SetChildren(leftGroup, rightGroup)
-
+	newJoinExpr.AddAppliedRule(rule)
 	if len(remainCond) > 0 {
 		newSel := plannercore.LogicalSelection{Conditions: remainCond}.Init(sctx, sel.SelectBlockOffset())
 		newSel.Conditions = remainCond
@@ -3847,7 +3848,7 @@ func NewRuleTransformJoinCondToSelection() Transformation {
 
 func (r *TransformJoinCondToSelection) Match(expr *memo.ExprIter) bool {
 	join := expr.GetExpr().ExprNode.(*plannercore.LogicalJoin)
-	return len(join.LeftConditions) > 0 || len(join.RightConditions) > 0
+	return !expr.GetExpr().HasAppliedRule(r) && (len(join.LeftConditions) > 0 || len(join.RightConditions) > 0)
 }
 
 func (r *TransformJoinCondToSelection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
@@ -3857,4 +3858,53 @@ func (r *TransformJoinCondToSelection) OnTransform(old *memo.ExprIter) (newExprs
 		Conditions: make([]expression.Expression, 0),
 	}.Init(join.SCtx(), join.SelectBlockOffset())
 	return r.onTransform(r, mockSel, join, joinExpr)
+}
+
+type MergeProjectionAggregation struct {
+	baseRule
+}
+
+func NewRuleMergeProjectionAggregation() Transformation {
+	rule := &MergeProjectionAggregation{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandProjection, memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandAggregation, memo.EngineTiDBOnly))
+	return rule
+}
+
+func (r *MergeProjectionAggregation) Match(expr *memo.ExprIter) bool {
+	proj := expr.GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	if expr.GetExpr().Children[0].Prop.Schema.Len() != len(proj.Exprs) {
+		return false
+	}
+	for _, expr := range proj.Exprs {
+		if _, ok := expr.(*expression.Column); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func (r *MergeProjectionAggregation) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	proj := old.GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	aggSchema := old.Children[0].GetExpr().Schema()
+	agg := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+
+	newAgg := plannercore.LogicalAggregation{
+		AggFuncs:     make([]*aggregation.AggFuncDesc, len(agg.AggFuncs)),
+		GroupByItems: agg.GroupByItems,
+	}.Init(agg.SCtx(), agg.SelectBlockOffset())
+
+	for i, expr := range proj.Exprs {
+		for j, col := range aggSchema.Columns {
+			if expr.Equal(agg.SCtx(), col) {
+				newAgg.AggFuncs[i] = agg.AggFuncs[j]
+				break
+			}
+		}
+	}
+
+	newAggExpr := memo.NewGroupExpr(newAgg)
+	newAggExpr.SetChildren(old.Children[0].GetExpr().Children...)
+	return []*memo.GroupExpr{newAggExpr}, true, false, nil
 }

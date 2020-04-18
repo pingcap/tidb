@@ -134,10 +134,10 @@
       {
         "SQL": "select sum(a) from t",
         "Plan": [
-          "StreamAgg_19 1.00 root  funcs:sum(Column#4)->Column#3",
-          "└─TableReader_20 1.00 root  data:StreamAgg_22",
-          "  └─StreamAgg_22 1.00 cop[tikv]  funcs:sum(test.t.a)->Column#4",
-          "    └─TableFullScan_17 4.00 cop[tikv] table:t pk col:test.t.a, keep order:false"
+          "StreamAgg_20 1.00 root  funcs:sum(Column#4)->Column#3",
+          "└─TableReader_21 1.00 root  data:StreamAgg_23",
+          "  └─StreamAgg_23 1.00 cop[tikv]  funcs:sum(test.t.a)->Column#4",
+          "    └─TableFullScan_18 4.00 cop[tikv] table:t pk col:test.t.a, keep order:false"
         ],
         "Result": [
           "10"
@@ -146,10 +146,10 @@
       {
         "SQL": "select max(a), min(b) from t",
         "Plan": [
-          "StreamAgg_15 1.00 root  funcs:max(Column#5)->Column#3, funcs:min(Column#6)->Column#4",
-          "└─TableReader_16 1.00 root  data:StreamAgg_18",
-          "  └─StreamAgg_18 1.00 cop[tikv]  funcs:max(test.t.a)->Column#5, funcs:min(test.t.b)->Column#6",
-          "    └─TableFullScan_13 4.00 cop[tikv] table:t pk col:test.t.a, keep order:false"
+          "StreamAgg_16 1.00 root  funcs:max(Column#5)->Column#3, funcs:min(Column#6)->Column#4",
+          "└─TableReader_17 1.00 root  data:StreamAgg_19",
+          "  └─StreamAgg_19 1.00 cop[tikv]  funcs:max(test.t.a)->Column#5, funcs:min(test.t.b)->Column#6",
+          "    └─TableFullScan_14 4.00 cop[tikv] table:t pk col:test.t.a, keep order:false"
         ],
         "Result": [
           "4 11"
@@ -158,12 +158,11 @@
       {
         "SQL": "select b, avg(a) from t group by b order by b",
         "Plan": [
-          "Projection_12 4.00 root  test.t.b, Column#3",
-          "└─Sort_21 4.00 root  test.t.b:asc",
-          "  └─HashAgg_14 4.00 root  group by:test.t.b, funcs:avg(Column#7)->Column#3, funcs:firstrow(test.t.b)->test.t.b",
-          "    └─Projection_15 4.00 root  cast(test.t.a, decimal(65,4) BINARY)->Column#7, test.t.b, test.t.b",
-          "      └─TableReader_16 4.00 root  data:TableFullScan_17",
-          "        └─TableFullScan_17 4.00 cop[tikv] table:t pk col:test.t.a, keep order:false"
+          "Sort_21 4.00 root  test.t.b:asc",
+          "└─HashAgg_14 4.00 root  group by:test.t.b, funcs:firstrow(test.t.b)->test.t.b, funcs:avg(Column#7)->Column#3",
+          "  └─Projection_15 4.00 root  test.t.b, cast(test.t.a, decimal(65,4) BINARY)->Column#7, test.t.b",
+          "    └─TableReader_16 4.00 root  data:TableFullScan_17",
+          "      └─TableFullScan_17 4.00 cop[tikv] table:t pk col:test.t.a, keep order:false"
         ],
         "Result": [
           "11 1.0000",
@@ -175,12 +174,11 @@
       {
         "SQL": "select b, sum(a) from t group by b order by b",
         "Plan": [
-          "Projection_12 4.00 root  test.t.b, Column#3",
-          "└─Sort_21 4.00 root  test.t.b:asc",
-          "  └─HashAgg_14 4.00 root  group by:test.t.b, funcs:sum(Column#6)->Column#3, funcs:firstrow(test.t.b)->test.t.b",
-          "    └─Projection_15 4.00 root  cast(test.t.a, decimal(65,0) BINARY)->Column#6, test.t.b, test.t.b",
-          "      └─TableReader_16 4.00 root  data:TableFullScan_17",
-          "        └─TableFullScan_17 4.00 cop[tikv] table:t pk col:test.t.a, keep order:false"
+          "Sort_21 4.00 root  test.t.b:asc",
+          "└─HashAgg_14 4.00 root  group by:test.t.b, funcs:firstrow(test.t.b)->test.t.b, funcs:sum(Column#6)->Column#3",
+          "  └─Projection_15 4.00 root  test.t.b, cast(test.t.a, decimal(65,0) BINARY)->Column#6, test.t.b",
+          "    └─TableReader_16 4.00 root  data:TableFullScan_17",
+          "      └─TableFullScan_17 4.00 cop[tikv] table:t pk col:test.t.a, keep order:false"
         ],
         "Result": [
           "11 1",
@@ -193,13 +191,12 @@
         "SQL": "select b, avg(a) from t group by b having sum(a) > 1 order by b",
         "Plan": [
           "Projection_14 3.20 root  test.t.b, Column#3",
-          "└─Projection_16 3.20 root  test.t.b, Column#3, Column#4",
-          "  └─Sort_29 3.20 root  test.t.b:asc",
-          "    └─Selection_28 3.20 root  gt(Column#4, 1)",
-          "      └─HashAgg_19 4.00 root  group by:test.t.b, funcs:avg(Column#11)->Column#3, funcs:sum(Column#12)->Column#4, funcs:firstrow(test.t.b)->test.t.b",
-          "        └─Projection_20 4.00 root  cast(test.t.a, decimal(65,4) BINARY)->Column#11, cast(test.t.a, decimal(65,0) BINARY)->Column#12, test.t.b, test.t.b",
-          "          └─TableReader_21 4.00 root  data:TableFullScan_22",
-          "            └─TableFullScan_22 4.00 cop[tikv] table:t pk col:test.t.a, keep order:false"
+          "└─Sort_28 3.20 root  test.t.b:asc",
+          "  └─Selection_27 3.20 root  gt(Column#4, 1)",
+          "    └─HashAgg_18 4.00 root  group by:test.t.b, funcs:firstrow(test.t.b)->test.t.b, funcs:avg(Column#11)->Column#3, funcs:sum(Column#12)->Column#4",
+          "      └─Projection_19 4.00 root  test.t.b, cast(test.t.a, decimal(65,4) BINARY)->Column#11, cast(test.t.a, decimal(65,0) BINARY)->Column#12, test.t.b",
+          "        └─TableReader_20 4.00 root  data:TableFullScan_21",
+          "          └─TableFullScan_21 4.00 cop[tikv] table:t pk col:test.t.a, keep order:false"
         ],
         "Result": [
           "22 2.0000",
@@ -210,10 +207,10 @@
       {
         "SQL": "select max(a+b) from t",
         "Plan": [
-          "StreamAgg_43 1.00 root  funcs:max(Column#4)->Column#3",
-          "└─TableReader_44 1.00 root  data:StreamAgg_46",
-          "  └─StreamAgg_46 1.00 cop[tikv]  funcs:max(plus(test.t.a, test.t.b))->Column#4",
-          "    └─TableFullScan_30 4.00 cop[tikv] table:t pk col:test.t.a, keep order:false"
+          "StreamAgg_45 1.00 root  funcs:max(Column#4)->Column#3",
+          "└─TableReader_46 1.00 root  data:StreamAgg_48",
+          "  └─StreamAgg_48 1.00 cop[tikv]  funcs:max(plus(test.t.a, test.t.b))->Column#4",
+          "    └─TableFullScan_32 4.00 cop[tikv] table:t pk col:test.t.a, keep order:false"
         ],
         "Result": [
           "48"
@@ -237,13 +234,12 @@
       {
         "SQL": "select b, sum(a) from t group by b having b > 1 order by b",
         "Plan": [
-          "Projection_17 1.33 root  test.t.b, Column#3",
-          "└─Sort_27 1.33 root  test.t.b:asc",
-          "  └─HashAgg_19 1.33 root  group by:test.t.b, funcs:sum(Column#6)->Column#3, funcs:firstrow(test.t.b)->test.t.b",
-          "    └─Projection_20 1.33 root  cast(test.t.a, decimal(65,0) BINARY)->Column#6, test.t.b, test.t.b",
-          "      └─TableReader_21 1.33 root  data:Selection_23",
-          "        └─Selection_23 1.33 cop[tikv]  gt(test.t.b, 1)",
-          "          └─TableFullScan_22 4.00 cop[tikv] table:t pk col:test.t.a, keep order:false"
+          "Sort_26 1.33 root  test.t.b:asc",
+          "└─HashAgg_18 1.33 root  group by:test.t.b, funcs:firstrow(test.t.b)->test.t.b, funcs:sum(Column#6)->Column#3",
+          "  └─Projection_19 1.33 root  test.t.b, cast(test.t.a, decimal(65,0) BINARY)->Column#6, test.t.b",
+          "    └─TableReader_20 1.33 root  data:Selection_22",
+          "      └─Selection_22 1.33 cop[tikv]  gt(test.t.b, 1)",
+          "        └─TableFullScan_21 4.00 cop[tikv] table:t pk col:test.t.a, keep order:false"
         ],
         "Result": [
           "11 1",
@@ -255,13 +251,12 @@
       {
         "SQL": "select c, sum(a) from (select a+b as c, a from t) t1 group by c having c > 1 order by c",
         "Plan": [
-          "Projection_24 3.20 root  Column#3, Column#4",
-          "└─Sort_36 3.20 root  Column#3:asc",
-          "  └─HashAgg_26 3.20 root  group by:Column#3, funcs:sum(Column#10)->Column#4, funcs:firstrow(Column#3)->Column#3",
-          "    └─Projection_27 3.20 root  cast(test.t.a, decimal(65,0) BINARY)->Column#10, plus(test.t.a, test.t.b)->Column#3, plus(test.t.a, test.t.b)->Column#3",
-          "      └─TableReader_28 3.20 root  data:Selection_30",
-          "        └─Selection_30 3.20 cop[tikv]  gt(plus(test.t.a, test.t.b), 1)",
-          "          └─TableFullScan_29 4.00 cop[tikv] table:t pk col:test.t.a, keep order:false"
+          "Sort_37 3.20 root  Column#3:asc",
+          "└─HashAgg_27 3.20 root  group by:Column#3, funcs:firstrow(Column#3)->Column#3, funcs:sum(Column#10)->Column#4",
+          "  └─Projection_28 3.20 root  plus(test.t.a, test.t.b)->Column#3, cast(test.t.a, decimal(65,0) BINARY)->Column#10, plus(test.t.a, test.t.b)->Column#3",
+          "    └─TableReader_29 3.20 root  data:Selection_31",
+          "      └─Selection_31 3.20 cop[tikv]  gt(plus(test.t.a, test.t.b), 1)",
+          "        └─TableFullScan_30 4.00 cop[tikv] table:t pk col:test.t.a, keep order:false"
         ],
         "Result": [
           "12 1",
@@ -273,11 +268,11 @@
       {
         "SQL": "select max(a.a) from t a left join t b on a.a = b.a",
         "Plan": [
-          "StreamAgg_120 1.00 root  funcs:max(test.t.a)->Column#5",
-          "└─Limit_122 1.00 root  offset:0, count:1",
-          "  └─TableReader_126 1.00 root  data:Limit_127",
-          "    └─Limit_127 1.00 cop[tikv]  offset:0, count:1",
-          "      └─TableFullScan_44 1.00 cop[tikv] table:a pk col:test.t.a, keep order:true, desc"
+          "StreamAgg_123 1.00 root  funcs:max(test.t.a)->Column#5",
+          "└─Limit_125 1.00 root  offset:0, count:1",
+          "  └─TableReader_129 1.00 root  data:Limit_130",
+          "    └─Limit_130 1.00 cop[tikv]  offset:0, count:1",
+          "      └─TableFullScan_47 1.00 cop[tikv] table:a pk col:test.t.a, keep order:true, desc"
         ],
         "Result": [
           "4"
@@ -286,10 +281,10 @@
       {
         "SQL": "select avg(a.b) from t a left join t b on a.a = b.a",
         "Plan": [
-          "StreamAgg_21 1.00 root  funcs:avg(Column#6, Column#7)->Column#5",
-          "└─TableReader_22 1.00 root  data:StreamAgg_24",
-          "  └─StreamAgg_24 1.00 cop[tikv]  funcs:avg(test.t.b)->Column#6",
-          "    └─TableFullScan_19 4.00 cop[tikv] table:a pk col:test.t.a, keep order:false"
+          "StreamAgg_22 1.00 root  funcs:avg(Column#6, Column#7)->Column#5",
+          "└─TableReader_23 1.00 root  data:StreamAgg_25",
+          "  └─StreamAgg_25 1.00 cop[tikv]  funcs:avg(test.t.b)->Column#6",
+          "    └─TableFullScan_20 4.00 cop[tikv] table:a pk col:test.t.a, keep order:false"
         ],
         "Result": [
           "27.5000"
@@ -298,9 +293,9 @@
       {
         "SQL": "select t1.a, max(t1.b) from t as t1 left join (select * from t) as t2 on t1.a = t2.a and t1.b = 3 group by t1.a order by a",
         "Plan": [
-          "Projection_14 4.00 root  test.t.a, cast(test.t.b, int(11))->Column#5",
-          "└─TableReader_15 4.00 root  data:TableFullScan_16",
-          "  └─TableFullScan_16 4.00 cop[tikv] table:t1 pk col:test.t.a, keep order:true"
+          "Projection_15 4.00 root  test.t.a, cast(test.t.b, int(11))->Column#5",
+          "└─TableReader_16 4.00 root  data:TableFullScan_17",
+          "  └─TableFullScan_17 4.00 cop[tikv] table:t1 pk col:test.t.a, keep order:true"
         ],
         "Result": [
           "1 11",
@@ -354,11 +349,11 @@
       {
         "SQL": "select max(a) from t",
         "Plan": [
-          "StreamAgg_23 1.00 root  funcs:max(test.t.a)->Column#3",
-          "└─Limit_25 1.00 root  offset:0, count:1",
-          "  └─TableReader_30 1.00 root  data:Limit_31",
-          "    └─Limit_31 1.00 cop[tikv]  offset:0, count:1",
-          "      └─TableFullScan_29 1.00 cop[tikv] table:t pk col:test.t.a, keep order:true, desc"
+          "StreamAgg_25 1.00 root  funcs:max(test.t.a)->Column#3",
+          "└─Limit_27 1.00 root  offset:0, count:1",
+          "  └─TableReader_32 1.00 root  data:Limit_33",
+          "    └─Limit_33 1.00 cop[tikv]  offset:0, count:1",
+          "      └─TableFullScan_31 1.00 cop[tikv] table:t pk col:test.t.a, keep order:true, desc"
         ],
         "Result": [
           "4"
@@ -367,10 +362,10 @@
       {
         "SQL": "select sum(case when a > 0 and a <= 1000 then b else 0 end) from t",
         "Plan": [
-          "StreamAgg_23 1.00 root  funcs:sum(Column#4)->Column#3",
-          "└─TableReader_24 1.00 root  data:StreamAgg_26",
-          "  └─StreamAgg_26 1.00 cop[tikv]  funcs:sum(test.t.b)->Column#4",
-          "    └─TableRangeScan_21 4.00 cop[tikv] table:t pk col:test.t.a, range:(0,1000], keep order:false"
+          "StreamAgg_24 1.00 root  funcs:sum(Column#4)->Column#3",
+          "└─TableReader_25 1.00 root  data:StreamAgg_27",
+          "  └─StreamAgg_27 1.00 cop[tikv]  funcs:sum(test.t.b)->Column#4",
+          "    └─TableRangeScan_22 4.00 cop[tikv] table:t pk col:test.t.a, range:(0,1000], keep order:false"
         ],
         "Result": [
           "110"
@@ -379,10 +374,10 @@
       {
         "SQL": "select sum(case when a > 0 then (case when a <= 1000 then b end) else 0 end) from t",
         "Plan": [
-          "StreamAgg_26 1.00 root  funcs:sum(Column#4)->Column#3",
-          "└─TableReader_27 1.00 root  data:StreamAgg_29",
-          "  └─StreamAgg_29 1.00 cop[tikv]  funcs:sum(test.t.b)->Column#4",
-          "    └─TableRangeScan_24 4.00 cop[tikv] table:t pk col:test.t.a, range:(0,1000], keep order:false"
+          "StreamAgg_27 1.00 root  funcs:sum(Column#4)->Column#3",
+          "└─TableReader_28 1.00 root  data:StreamAgg_30",
+          "  └─StreamAgg_30 1.00 cop[tikv]  funcs:sum(test.t.b)->Column#4",
+          "    └─TableRangeScan_25 4.00 cop[tikv] table:t pk col:test.t.a, range:(0,1000], keep order:false"
         ],
         "Result": [
           "110"
@@ -391,10 +386,10 @@
       {
         "SQL": "select sum(case when a <= 0 or a > 1000 then 0.0 else b end) from t",
         "Plan": [
-          "StreamAgg_23 1.00 root  funcs:sum(Column#4)->Column#3",
-          "└─TableReader_24 1.00 root  data:StreamAgg_26",
-          "  └─StreamAgg_26 1.00 cop[tikv]  funcs:sum(cast(test.t.b))->Column#4",
-          "    └─TableRangeScan_21 4.00 cop[tikv] table:t pk col:test.t.a, range:(0,1000], keep order:false"
+          "StreamAgg_24 1.00 root  funcs:sum(Column#4)->Column#3",
+          "└─TableReader_25 1.00 root  data:StreamAgg_27",
+          "  └─StreamAgg_27 1.00 cop[tikv]  funcs:sum(cast(test.t.b))->Column#4",
+          "    └─TableRangeScan_22 4.00 cop[tikv] table:t pk col:test.t.a, range:(0,1000], keep order:false"
         ],
         "Result": [
           "110.0"
@@ -403,10 +398,10 @@
       {
         "SQL": "select count(case when a > 0 and a <= 1000 then b end) from t",
         "Plan": [
-          "StreamAgg_19 1.00 root  funcs:count(Column#4)->Column#3",
-          "└─TableReader_20 1.00 root  data:StreamAgg_22",
-          "  └─StreamAgg_22 1.00 cop[tikv]  funcs:count(test.t.b)->Column#4",
-          "    └─TableRangeScan_17 4.00 cop[tikv] table:t pk col:test.t.a, range:(0,1000], keep order:false"
+          "StreamAgg_20 1.00 root  funcs:count(Column#4)->Column#3",
+          "└─TableReader_21 1.00 root  data:StreamAgg_23",
+          "  └─StreamAgg_23 1.00 cop[tikv]  funcs:count(test.t.b)->Column#4",
+          "    └─TableRangeScan_18 4.00 cop[tikv] table:t pk col:test.t.a, range:(0,1000], keep order:false"
         ],
         "Result": [
           "4"
@@ -415,10 +410,10 @@
       {
         "SQL": "select count(case when a <= 0 or a > 1000 then null else b end) from t",
         "Plan": [
-          "StreamAgg_19 1.00 root  funcs:count(Column#4)->Column#3",
-          "└─TableReader_20 1.00 root  data:StreamAgg_22",
-          "  └─StreamAgg_22 1.00 cop[tikv]  funcs:count(test.t.b)->Column#4",
-          "    └─TableRangeScan_17 4.00 cop[tikv] table:t pk col:test.t.a, range:(0,1000], keep order:false"
+          "StreamAgg_20 1.00 root  funcs:count(Column#4)->Column#3",
+          "└─TableReader_21 1.00 root  data:StreamAgg_23",
+          "  └─StreamAgg_23 1.00 cop[tikv]  funcs:count(test.t.b)->Column#4",
+          "    └─TableRangeScan_18 4.00 cop[tikv] table:t pk col:test.t.a, range:(0,1000], keep order:false"
         ],
         "Result": [
           "4"
@@ -427,9 +422,9 @@
       {
         "SQL": "select count(distinct case when a > 0 and a <= 1000 then b end) from t",
         "Plan": [
-          "StreamAgg_11 1.00 root  funcs:count(distinct test.t.b)->Column#3",
-          "└─TableReader_14 4.00 root  data:TableRangeScan_15",
-          "  └─TableRangeScan_15 4.00 cop[tikv] table:t pk col:test.t.a, range:(0,1000], keep order:false"
+          "StreamAgg_12 1.00 root  funcs:count(distinct test.t.b)->Column#3",
+          "└─TableReader_15 4.00 root  data:TableRangeScan_16",
+          "  └─TableRangeScan_16 4.00 cop[tikv] table:t pk col:test.t.a, range:(0,1000], keep order:false"
         ],
         "Result": [
           "4"
@@ -455,11 +450,11 @@
       {
         "SQL": "select group_concat(a, b), min(b), avg(a / b), a from t group by (a+b), a order by a",
         "Plan": [
-          "Sort_15 4.00 root  test.t.a:asc",
-          "└─HashAgg_11 4.00 root  group by:Column#9, test.t.a, funcs:group_concat(Column#6, Column#7, \",\")->Column#3, funcs:min(test.t.b)->Column#4, funcs:avg(Column#8)->Column#5, funcs:firstrow(test.t.a)->test.t.a",
-          "  └─Projection_12 4.00 root  cast(test.t.a, var_string(20))->Column#6, cast(test.t.b, var_string(20))->Column#7, test.t.b, div(cast(test.t.a, decimal(20,0) BINARY), cast(test.t.b, decimal(20,0) BINARY))->Column#8, test.t.a, plus(test.t.a, test.t.b)->Column#9, test.t.a",
-          "    └─TableReader_13 4.00 root  data:TableFullScan_14",
-          "      └─TableFullScan_14 4.00 cop[tikv] table:t pk col:test.t.a, keep order:false"
+          "Sort_16 4.00 root  test.t.a:asc",
+          "└─HashAgg_12 4.00 root  group by:Column#9, test.t.a, funcs:group_concat(Column#6, Column#7, \",\")->Column#3, funcs:min(test.t.b)->Column#4, funcs:avg(Column#8)->Column#5, funcs:firstrow(test.t.a)->test.t.a",
+          "  └─Projection_13 4.00 root  cast(test.t.a, var_string(20))->Column#6, cast(test.t.b, var_string(20))->Column#7, test.t.b, div(cast(test.t.a, decimal(20,0) BINARY), cast(test.t.b, decimal(20,0) BINARY))->Column#8, test.t.a, plus(test.t.a, test.t.b)->Column#9, test.t.a",
+          "    └─TableReader_14 4.00 root  data:TableFullScan_15",
+          "      └─TableFullScan_15 4.00 cop[tikv] table:t pk col:test.t.a, keep order:false"
         ],
         "Result": [
           "111 11 0.09090909 1",
@@ -476,11 +471,11 @@
       {
         "SQL": "select /*+ HASH_AGG() */ avg(distinct a) from t;",
         "Plan": [
-          "StreamAgg_23 1.00 root  funcs:avg(distinct Column#8)->Column#5",
-          "└─Projection_29 8000.00 root  cast(test.t.a, decimal(65,4) BINARY)->Column#8",
-          "  └─TableReader_30 8000.00 root  data:HashAgg_31",
-          "    └─HashAgg_31 8000.00 cop[tikv]  group by:test.t.a, ",
-          "      └─TableFullScan_17 10000.00 cop[tikv] table:t pk col:test.t._tidb_rowid, keep order:false, stats:pseudo"
+          "StreamAgg_24 1.00 root  funcs:avg(distinct Column#8)->Column#5",
+          "└─Projection_30 8000.00 root  cast(test.t.a, decimal(65,4) BINARY)->Column#8",
+          "  └─TableReader_31 8000.00 root  data:HashAgg_32",
+          "    └─HashAgg_32 8000.00 cop[tikv]  group by:test.t.a, ",
+          "      └─TableFullScan_18 10000.00 cop[tikv] table:t pk col:test.t._tidb_rowid, keep order:false, stats:pseudo"
         ],
         "Result": [
           "1.5000"
@@ -489,11 +484,10 @@
       {
         "SQL": "select /*+ HASH_AGG() */ a, count(distinct a) from t;",
         "Plan": [
-          "Projection_8 1.00 root  test.t.a, Column#5",
-          "└─StreamAgg_19 1.00 root  funcs:count(distinct test.t.a)->Column#5, funcs:firstrow(Column#7)->test.t.a",
-          "  └─TableReader_24 8000.00 root  data:HashAgg_25",
-          "    └─HashAgg_25 8000.00 cop[tikv]  group by:test.t.a, funcs:firstrow(test.t.a)->Column#7",
-          "      └─TableFullScan_13 10000.00 cop[tikv] table:t pk col:test.t._tidb_rowid, keep order:false, stats:pseudo"
+          "StreamAgg_16 1.00 root  funcs:firstrow(Column#7)->test.t.a, funcs:count(distinct test.t.a)->Column#5",
+          "└─TableReader_19 8000.00 root  data:HashAgg_20",
+          "  └─HashAgg_20 8000.00 cop[tikv]  group by:test.t.a, funcs:firstrow(test.t.a)->Column#7",
+          "    └─TableFullScan_12 10000.00 cop[tikv] table:t pk col:test.t._tidb_rowid, keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 2"
@@ -517,10 +511,10 @@
       {
         "SQL": "select /*+ STREAM_AGG() */ count(distinct c) from t group by c;",
         "Plan": [
-          "StreamAgg_21 8000.00 root  group by:test.t.c, funcs:count(distinct test.t.c)->Column#5",
-          "└─IndexReader_22 8000.00 root  index:StreamAgg_23",
-          "  └─StreamAgg_23 8000.00 cop[tikv]  group by:test.t.c, ",
-          "    └─IndexFullScan_15 10000.00 cop[tikv] table:t, index:c(c) keep order:true, stats:pseudo"
+          "StreamAgg_22 8000.00 root  group by:test.t.c, funcs:count(distinct test.t.c)->Column#5",
+          "└─IndexReader_23 8000.00 root  index:StreamAgg_24",
+          "  └─StreamAgg_24 8000.00 cop[tikv]  group by:test.t.c, ",
+          "    └─IndexFullScan_16 10000.00 cop[tikv] table:t, index:c(c) keep order:true, stats:pseudo"
         ],
         "Result": [
           "0",
@@ -531,10 +525,10 @@
       {
         "SQL": "select /*+ STREAM_AGG() */ count(distinct c) from t;",
         "Plan": [
-          "StreamAgg_17 1.00 root  funcs:count(distinct test.t.c)->Column#5",
-          "└─IndexReader_18 8000.00 root  index:StreamAgg_19",
-          "  └─StreamAgg_19 8000.00 cop[tikv]  group by:test.t.c, ",
-          "    └─IndexFullScan_20 10000.00 cop[tikv] table:t, index:c(c) keep order:true, stats:pseudo"
+          "StreamAgg_18 1.00 root  funcs:count(distinct test.t.c)->Column#5",
+          "└─IndexReader_19 8000.00 root  index:StreamAgg_20",
+          "  └─StreamAgg_20 8000.00 cop[tikv]  group by:test.t.c, ",
+          "    └─IndexFullScan_21 10000.00 cop[tikv] table:t, index:c(c) keep order:true, stats:pseudo"
         ],
         "Result": [
           "2"
@@ -543,10 +537,10 @@
       {
         "SQL": "select /*+ HASH_AGG() */ count(distinct c) from t;",
         "Plan": [
-          "StreamAgg_28 1.00 root  funcs:count(distinct test.t.c)->Column#5",
-          "└─IndexReader_36 8000.00 root  index:HashAgg_37",
-          "  └─HashAgg_37 8000.00 cop[tikv]  group by:test.t.c, ",
-          "    └─IndexFullScan_18 10000.00 cop[tikv] table:t, index:c(c) keep order:false, stats:pseudo"
+          "StreamAgg_29 1.00 root  funcs:count(distinct test.t.c)->Column#5",
+          "└─IndexReader_37 8000.00 root  index:HashAgg_38",
+          "  └─HashAgg_38 8000.00 cop[tikv]  group by:test.t.c, ",
+          "    └─IndexFullScan_19 10000.00 cop[tikv] table:t, index:c(c) keep order:false, stats:pseudo"
         ],
         "Result": [
           "2"
@@ -555,10 +549,10 @@
       {
         "SQL": "select count(distinct c) from t group by c;",
         "Plan": [
-          "StreamAgg_23 8000.00 root  group by:test.t.c, funcs:count(distinct test.t.c)->Column#5",
-          "└─IndexReader_27 8000.00 root  index:StreamAgg_28",
-          "  └─StreamAgg_28 8000.00 cop[tikv]  group by:test.t.c, ",
-          "    └─IndexFullScan_20 10000.00 cop[tikv] table:t, index:c(c) keep order:true, stats:pseudo"
+          "StreamAgg_24 8000.00 root  group by:test.t.c, funcs:count(distinct test.t.c)->Column#5",
+          "└─IndexReader_28 8000.00 root  index:StreamAgg_29",
+          "  └─StreamAgg_29 8000.00 cop[tikv]  group by:test.t.c, ",
+          "    └─IndexFullScan_21 10000.00 cop[tikv] table:t, index:c(c) keep order:true, stats:pseudo"
         ],
         "Result": [
           "0",
@@ -569,10 +563,10 @@
       {
         "SQL": "select count(distinct c) from t;",
         "Plan": [
-          "StreamAgg_23 1.00 root  funcs:count(distinct test.t.c)->Column#5",
-          "└─IndexReader_28 8000.00 root  index:HashAgg_29",
-          "  └─HashAgg_29 8000.00 cop[tikv]  group by:test.t.c, ",
-          "    └─IndexFullScan_17 10000.00 cop[tikv] table:t, index:c(c) keep order:false, stats:pseudo"
+          "StreamAgg_24 1.00 root  funcs:count(distinct test.t.c)->Column#5",
+          "└─IndexReader_29 8000.00 root  index:HashAgg_30",
+          "  └─HashAgg_30 8000.00 cop[tikv]  group by:test.t.c, ",
+          "    └─IndexFullScan_18 10000.00 cop[tikv] table:t, index:c(c) keep order:false, stats:pseudo"
         ],
         "Result": [
           "2"
@@ -586,10 +580,10 @@
       {
         "SQL": "select /*+ HASH_AGG(), AGG_TO_COP() */ avg(distinct a) from t;",
         "Plan": [
-          "StreamAgg_9 1.00 root  funcs:avg(distinct Column#7)->Column#5",
-          "└─Projection_14 10000.00 root  cast(test.t.a, decimal(65,4) BINARY)->Column#7",
-          "  └─TableReader_15 10000.00 root  data:TableFullScan_16",
-          "    └─TableFullScan_16 10000.00 cop[tikv] table:t pk col:test.t._tidb_rowid, keep order:false, stats:pseudo"
+          "StreamAgg_10 1.00 root  funcs:avg(distinct Column#7)->Column#5",
+          "└─Projection_15 10000.00 root  cast(test.t.a, decimal(65,4) BINARY)->Column#7",
+          "  └─TableReader_16 10000.00 root  data:TableFullScan_17",
+          "    └─TableFullScan_17 10000.00 cop[tikv] table:t pk col:test.t._tidb_rowid, keep order:false, stats:pseudo"
         ],
         "Result": [
           "1.5000"
@@ -598,10 +592,9 @@
       {
         "SQL": "select /*+ HASH_AGG(), AGG_TO_COP() */ a, count(distinct a) from t;",
         "Plan": [
-          "Projection_6 1.00 root  test.t.a, Column#5",
-          "└─StreamAgg_8 1.00 root  funcs:count(distinct test.t.a)->Column#5, funcs:firstrow(test.t.a)->test.t.a",
-          "  └─TableReader_12 10000.00 root  data:TableFullScan_13",
-          "    └─TableFullScan_13 10000.00 cop[tikv] table:t pk col:test.t._tidb_rowid, keep order:false, stats:pseudo"
+          "StreamAgg_8 1.00 root  funcs:firstrow(test.t.a)->test.t.a, funcs:count(distinct test.t.a)->Column#5",
+          "└─TableReader_11 10000.00 root  data:TableFullScan_12",
+          "  └─TableFullScan_12 10000.00 cop[tikv] table:t pk col:test.t._tidb_rowid, keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 2"
@@ -625,9 +618,9 @@
       {
         "SQL": "select /*+ STREAM_AGG(), AGG_TO_COP() */ count(distinct c) from t group by c;",
         "Plan": [
-          "StreamAgg_8 8000.00 root  group by:test.t.c, funcs:count(distinct test.t.c)->Column#5",
-          "└─IndexReader_10 10000.00 root  index:IndexFullScan_11",
-          "  └─IndexFullScan_11 10000.00 cop[tikv] table:t, index:c(c) keep order:true, stats:pseudo"
+          "StreamAgg_9 8000.00 root  group by:test.t.c, funcs:count(distinct test.t.c)->Column#5",
+          "└─IndexReader_11 10000.00 root  index:IndexFullScan_12",
+          "  └─IndexFullScan_12 10000.00 cop[tikv] table:t, index:c(c) keep order:true, stats:pseudo"
         ],
         "Result": [
           "0",
@@ -638,9 +631,9 @@
       {
         "SQL": "select /*+ STREAM_AGG(), AGG_TO_COP() */ count(distinct c) from t;",
         "Plan": [
-          "StreamAgg_8 1.00 root  funcs:count(distinct test.t.c)->Column#5",
-          "└─IndexReader_11 10000.00 root  index:IndexFullScan_12",
-          "  └─IndexFullScan_12 10000.00 cop[tikv] table:t, index:c(c) keep order:false, stats:pseudo"
+          "StreamAgg_9 1.00 root  funcs:count(distinct test.t.c)->Column#5",
+          "└─IndexReader_12 10000.00 root  index:IndexFullScan_13",
+          "  └─IndexFullScan_13 10000.00 cop[tikv] table:t, index:c(c) keep order:false, stats:pseudo"
         ],
         "Result": [
           "2"
@@ -649,9 +642,9 @@
       {
         "SQL": "select /*+ HASH_AGG(), AGG_TO_COP() */ count(distinct c) from t;",
         "Plan": [
-          "StreamAgg_9 1.00 root  funcs:count(distinct test.t.c)->Column#5",
-          "└─IndexReader_17 10000.00 root  index:IndexFullScan_18",
-          "  └─IndexFullScan_18 10000.00 cop[tikv] table:t, index:c(c) keep order:false, stats:pseudo"
+          "StreamAgg_10 1.00 root  funcs:count(distinct test.t.c)->Column#5",
+          "└─IndexReader_18 10000.00 root  index:IndexFullScan_19",
+          "  └─IndexFullScan_19 10000.00 cop[tikv] table:t, index:c(c) keep order:false, stats:pseudo"
         ],
         "Result": [
           "2"
@@ -660,9 +653,9 @@
       {
         "SQL": "select /*+ AGG_TO_COP() */ count(distinct c) from t group by c;",
         "Plan": [
-          "StreamAgg_9 8000.00 root  group by:test.t.c, funcs:count(distinct test.t.c)->Column#5",
-          "└─IndexReader_15 10000.00 root  index:IndexFullScan_16",
-          "  └─IndexFullScan_16 10000.00 cop[tikv] table:t, index:c(c) keep order:true, stats:pseudo"
+          "StreamAgg_10 8000.00 root  group by:test.t.c, funcs:count(distinct test.t.c)->Column#5",
+          "└─IndexReader_16 10000.00 root  index:IndexFullScan_17",
+          "  └─IndexFullScan_17 10000.00 cop[tikv] table:t, index:c(c) keep order:true, stats:pseudo"
         ],
         "Result": [
           "0",
@@ -785,8 +778,8 @@
       {
         "SQL": "select t1.a, t1.b from t as t1 left join t as t2 on t1.a = t2.a and t1.b = 3 order by a",
         "Plan": [
-          "TableReader_27 4.00 root  data:TableFullScan_28",
-          "└─TableFullScan_28 4.00 cop[tikv] table:t1 pk col:test.t.a, keep order:true"
+          "TableReader_11 4.00 root  data:TableFullScan_12",
+          "└─TableFullScan_12 4.00 cop[tikv] table:t1 pk col:test.t.a, keep order:true"
         ],
         "Result": [
           "1 11",
@@ -1453,11 +1446,12 @@
       {
         "SQL": "select * from t1 left join t2 on t1.b = t2.a and t1.b = t2.b and t1.a > 10 order by t1.a",
         "Plan": [
-          "IndexJoin_13 12500.00 root  left outer join, inner:TableReader_12, outer key:test.t1.b, inner key:test.t2.a, left cond:gt(test.t1.a, 10), other cond:eq(test.t1.b, test.t2.b)",
-          "├─TableReader_14(Build) 10000.00 root  data:TableFullScan_15",
-          "│ └─TableFullScan_15 10000.00 cop[tikv] table:t1 pk col:test.t1.a, keep order:true, stats:pseudo",
-          "└─TableReader_12(Probe) 1.00 root  data:TableRangeScan_11",
-          "  └─TableRangeScan_11 1.00 cop[tikv] table:t2 , range: decided by [test.t1.b test.t1.b]keep order:false, stats:pseudo"
+          "IndexJoin_18 12487.50 root  left outer join, inner:TableReader_17, outer key:test.t1.b, inner key:test.t2.a, left cond:gt(test.t1.a, 10), other cond:eq(test.t1.b, test.t2.b)",
+          "├─TableReader_19(Build) 10000.00 root  data:TableFullScan_20",
+          "│ └─TableFullScan_20 10000.00 cop[tikv] table:t1 pk col:test.t1.a, keep order:true, stats:pseudo",
+          "└─TableReader_17(Probe) 1.00 root  data:Selection_16",
+          "  └─Selection_16 1.00 cop[tikv]  not(isnull(test.t2.b))",
+          "    └─TableRangeScan_15 1.00 cop[tikv] table:t2 , range: decided by [test.t1.b test.t1.b]keep order:false, stats:pseudo"
         ],
         "Result": [
           "0 0 <nil> <nil>",
@@ -1491,13 +1485,13 @@
       {
         "SQL": "select t1.a, (select sum(t2.b) from t2 where t1.a = t2.a) from t1 order by t1.a",
         "Plan": [
-          "StreamAgg_25 8000.00 root  group by:test.t1.a, funcs:firstrow(test.t1.a)->test.t1.a, funcs:sum(Column#6)->Column#5",
-          "└─Projection_26 10000.00 root  test.t1.a, cast(test.t2.b, decimal(65,0) BINARY)->Column#6, test.t1.a",
-          "  └─MergeJoin_37 10000.00 root  left outer join, left key:test.t1.a, right key:test.t2.a",
-          "    ├─TableReader_41(Build) 10000.00 root  data:TableFullScan_42",
-          "    │ └─TableFullScan_42 10000.00 cop[tikv] table:t2 pk col:test.t2.a, keep order:true, stats:pseudo",
-          "    └─TableReader_29(Probe) 10000.00 root  data:TableFullScan_30",
-          "      └─TableFullScan_30 10000.00 cop[tikv] table:t1 pk col:test.t1.a, keep order:true, stats:pseudo"
+          "StreamAgg_27 8000.00 root  group by:test.t1.a, funcs:firstrow(test.t1.a)->test.t1.a, funcs:sum(Column#6)->Column#5",
+          "└─Projection_28 10000.00 root  test.t1.a, cast(test.t2.b, decimal(65,0) BINARY)->Column#6, test.t1.a",
+          "  └─MergeJoin_39 10000.00 root  left outer join, left key:test.t1.a, right key:test.t2.a",
+          "    ├─TableReader_43(Build) 10000.00 root  data:TableFullScan_44",
+          "    │ └─TableFullScan_44 10000.00 cop[tikv] table:t2 pk col:test.t2.a, keep order:true, stats:pseudo",
+          "    └─TableReader_31(Probe) 10000.00 root  data:TableFullScan_32",
+          "      └─TableFullScan_32 10000.00 cop[tikv] table:t1 pk col:test.t1.a, keep order:true, stats:pseudo"
         ],
         "Result": [
           "1 11",
@@ -1509,14 +1503,14 @@
       {
         "SQL": "select t1.a, (select count(1) from t2 where t1.a = t2.a) from t1 order by t1.a",
         "Plan": [
-          "Apply_20 10000.00 root  CARTESIAN left outer join",
-          "├─TableReader_21(Build) 10000.00 root  data:TableFullScan_22",
-          "│ └─TableFullScan_22 10000.00 cop[tikv] table:t1 pk col:test.t1.a, keep order:true, stats:pseudo",
-          "└─StreamAgg_35(Probe) 1.00 root  funcs:count(Column#6)->Column#5",
-          "  └─TableReader_36 1.00 root  data:StreamAgg_38",
-          "    └─StreamAgg_38 1.00 cop[tikv]  funcs:count(1)->Column#6",
-          "      └─Selection_33 10.00 cop[tikv]  eq(test.t1.a, test.t2.a)",
-          "        └─TableFullScan_32 10000.00 cop[tikv] table:t2 pk col:test.t2.a, keep order:false, stats:pseudo"
+          "Apply_21 10000.00 root  CARTESIAN left outer join",
+          "├─TableReader_22(Build) 10000.00 root  data:TableFullScan_23",
+          "│ └─TableFullScan_23 10000.00 cop[tikv] table:t1 pk col:test.t1.a, keep order:true, stats:pseudo",
+          "└─StreamAgg_36(Probe) 1.00 root  funcs:count(Column#6)->Column#5",
+          "  └─TableReader_37 1.00 root  data:StreamAgg_39",
+          "    └─StreamAgg_39 1.00 cop[tikv]  funcs:count(1)->Column#6",
+          "      └─Selection_34 10.00 cop[tikv]  eq(test.t1.a, test.t2.a)",
+          "        └─TableFullScan_33 10000.00 cop[tikv] table:t2 pk col:test.t2.a, keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 1",
