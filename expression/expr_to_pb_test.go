@@ -458,9 +458,12 @@ func (s *testEvaluatorSerialSuites) TestPushDownSwitcher(c *C) {
 		sig    tipb.ScalarFuncSig
 		enable bool
 	}{
-		{ast.And, tipb.ScalarFuncSig_BitAndSig, true},
-		{ast.Or, tipb.ScalarFuncSig_BitOrSig, false},
-		{ast.UnaryNot, tipb.ScalarFuncSig_UnaryNotInt, true},
+		// Note that so far ScalarFuncSigs here are not be pushed down when the failpoint PushDownTestSwitcher
+		// is disable, which is the prerequisite to pass this test.
+		// Need to be replaced with other non pushed down ScalarFuncSigs if they are pushed down one day.
+		{ast.Sin, tipb.ScalarFuncSig_Sin, true},
+		{ast.Cos, tipb.ScalarFuncSig_Cos, false},
+		{ast.Tan, tipb.ScalarFuncSig_Tan, true},
 	}
 	var enabled []string
 	for i, funcName := range cases {
@@ -490,6 +493,14 @@ func (s *testEvaluatorSerialSuites) TestPushDownSwitcher(c *C) {
 		c.Assert(pbExpr.Sig, Equals, cases[i].sig, Commentf("function: %s, sig: %v", cases[i].name, cases[i].sig))
 	}
 
+	// All disabled
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/PushDownTestSwitcher", `return("")`), IsNil)
+	pbExprs = ExpressionsToPBList(sc, funcs, client)
+	c.Assert(len(pbExprs), Equals, len(cases))
+	for i, pbExpr := range pbExprs {
+		c.Assert(pbExpr, IsNil, Commentf("function: %s, sig: %v", cases[i].name, cases[i].sig))
+	}
+
 	// Partial enabled
 	fpexpr := fmt.Sprintf(`return("%s")`, strings.Join(enabled, ","))
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/PushDownTestSwitcher", fpexpr), IsNil)
@@ -497,6 +508,7 @@ func (s *testEvaluatorSerialSuites) TestPushDownSwitcher(c *C) {
 	c.Assert(len(pbExprs), Equals, len(cases))
 	for i, pbExpr := range pbExprs {
 		if !cases[i].enable {
+			c.Assert(pbExpr, IsNil, Commentf("function: %s, sig: %v", cases[i].name, cases[i].sig))
 			continue
 		}
 		c.Assert(pbExpr.Sig, Equals, cases[i].sig, Commentf("function: %s, sig: %v", cases[i].name, cases[i].sig))
