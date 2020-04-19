@@ -205,5 +205,12 @@
     "cases": [
       "select a from t t1 where exists (select 1 from t t2 where t1.a = t2.b)"
     ]
+  },
+  {
+    "name": "TestPushProjDownUnionAll",
+    "cases": [
+      "select a+b+c+d, a / c from (select * from t union all select * from t union all select * from t) k",
+      "select a, b, 'fd', c from (select * from t union all select * from t union all select * from t) k"
+    ]
   }
 ]

@@ -425,3 +425,22 @@ func (s *testTransformationRuleSuite) TestDecorrelate(c *C) {
 	s.testData.GetTestCases(c, &input, &output)
 	testGroupToString(input, output, s, c)
 }
+
+func (s *testTransformationRuleSuite) TestPushProjDownUnionAll(c *C) {
+	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
+		memo.OperandProjection: {
+			NewRulePushProjDownUnionAll(),
+			NewRuleMergeAdjacentProjection(),
+		},
+	})
+	defer func() {
+		s.optimizer.ResetTransformationRules(DefaultRuleBatches...)
+	}()
+	var input []string
+	var output []struct {
+		SQL    string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	testGroupToString(input, output, s, c)
+}

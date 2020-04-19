@@ -777,6 +777,35 @@
           "3 33",
           "4 44"
         ]
+      },
+      {
+        "SQL": "select a+b*a*b, a / b from (select * from t union all select * from t union all select * from t) k",
+        "Plan": [
+          "Union_23 30000.00 root  ",
+          "├─Projection_24 10000.00 root  plus(test.t.a, mul(mul(test.t.b, test.t.a), test.t.b))->Column#9, div(cast(test.t.a, decimal(20,0) BINARY), cast(test.t.b, decimal(20,0) BINARY))->Column#10",
+          "│ └─TableReader_25 10000.00 root  data:TableFullScan_26",
+          "│   └─TableFullScan_26 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "├─Projection_27 10000.00 root  plus(test.t.a, mul(mul(test.t.b, test.t.a), test.t.b))->Column#9, div(cast(test.t.a, decimal(20,0) BINARY), cast(test.t.b, decimal(20,0) BINARY))->Column#10",
+          "│ └─TableReader_28 10000.00 root  data:TableFullScan_29",
+          "│   └─TableFullScan_29 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "└─Projection_30 10000.00 root  plus(test.t.a, mul(mul(test.t.b, test.t.a), test.t.b))->Column#9, div(cast(test.t.a, decimal(20,0) BINARY), cast(test.t.b, decimal(20,0) BINARY))->Column#10",
+          "  └─TableReader_31 10000.00 root  data:TableFullScan_32",
+          "    └─TableFullScan_32 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "122 0.0909",
+          "970 0.0909",
+          "3270 0.0909",
+          "7748 0.0909",
+          "122 0.0909",
+          "970 0.0909",
+          "3270 0.0909",
+          "7748 0.0909",
+          "122 0.0909",
+          "970 0.0909",
+          "3270 0.0909",
+          "7748 0.0909"
+        ]
       }
     ]
   },
