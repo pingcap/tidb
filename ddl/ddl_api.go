@@ -1478,6 +1478,37 @@ func (d *ddl) RecoverTable(ctx sessionctx.Context, tbInfo *model.TableInfo, sche
 	return errors.Trace(err)
 }
 
+// preSplitAndScatter performs pre-split and scatter of the table's regions.
+func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *model.PartitionInfo) {
+	sp, ok := d.store.(kv.SplitableStore)
+	if !ok || atomic.LoadUint32(&EnableSplitTableRegion) == 0 {
+		return
+	}
+	var (
+		preSplit      func()
+		scatterRegion bool
+	)
+	val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBScatterRegion)
+	if err != nil {
+		logutil.Logger(context.Background()).Warn("[ddl] won't scatter region", zap.Error(err))
+	} else {
+		scatterRegion = variable.TiDBOptOn(val)
+	}
+	if pi == nil {
+		pi = tbInfo.GetPartitionInfo()
+	}
+	if pi != nil {
+		preSplit = func() { splitPartitionTableRegion(sp, pi, scatterRegion) }
+	} else {
+		preSplit = func() { splitTableRegion(sp, tbInfo, scatterRegion) }
+	}
+	if scatterRegion {
+		preSplit()
+	} else {
+		go preSplit()
+	}
+}
+
 func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err error) {
 	ident := ast.Ident{Name: s.ViewName.Name, Schema: s.ViewName.Schema}
 	is := d.GetInfoSchemaWithInterceptor(ctx)
@@ -2204,6 +2235,9 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	}
 
 	err = d.doDDLJob(ctx, job)
+	if err == nil {
+		d.preSplitAndScatter(ctx, meta, partInfo)
+	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
