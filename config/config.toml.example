@@ -38,9 +38,14 @@ mem-quota-query = 1073741824
 oom-use-tmp-storage = true
 
 # Specifies the temporary storage path for some operators when a single SQL statement exceeds the memory quota specified by mem-quota-query.
-# It defaults to `<TMPDIR>/tidb/tmp-storage` if it is unset.
+# It defaults to a generated directory in `<TMPDIR>/tidb/` if it is unset.
 # It only takes effect when `oom-use-tmp-storage` is `true`.
-# tmp-storage-path = "/tmp/tidb/tmp-storage"
+# tmp-storage-path = "/tmp/tidb/NDAwMC8xMDA4MA==/tmp-storage"
+
+# Specifies the maximum use of temporary storage (bytes) for all active queries when `oom-use-tmp-storage` is enabled.
+# If the `tmp-storage-quota` exceeds the capacity of the temporary storage directory, tidb-server would return an error and exit.
+# The default value of tmp-storage-quota is under 0 which means tidb-server wouldn't check the capacity.
+tmp-storage-quota = -1
 
 # Specifies what operation TiDB performs when a single SQL statement exceeds the memory quota specified by mem-quota-query and cannot be spilled over to disk.
 # Valid options: ["log", "cancel"]
@@ -76,10 +81,6 @@ delay-clean-table-lock = 0
 
 # Maximum number of the splitting region, which is used by the split region statement.
 split-region-max-num = 1000
-
-# enable the TiDB to fetch configs from PD and update itself during runtime.
-# see https://github.com/pingcap/tidb/pull/13660 for more details.
-enable-dynamic-config = true
 
 # alter-primary-key is used to control alter primary key feature. Default is false, indicate the alter primary key feature is disabled.
 # If it is true, we can add the primary key by "alter table". However, if a table already exists before the switch is turned true and the data type of its primary key column is an integer,

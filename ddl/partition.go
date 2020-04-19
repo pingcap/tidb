@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
@@ -42,16 +43,6 @@ const (
 // buildTablePartitionInfo builds partition info and checks for some errors.
 func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.CreateTableStmt) (*model.PartitionInfo, error) {
 	if s.Partition == nil {
-		return nil, nil
-	}
-
-	// force-discard the unsupported types, even when @@tidb_enable_table_partition = 'on'
-	switch s.Partition.Tp {
-	case model.PartitionTypeKey:
-		// can't create a warning for KEY partition, it will fail an integration test :/
-		return nil, nil
-	case model.PartitionTypeList, model.PartitionTypeSystemTime:
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errUnsupportedCreatePartition)
 		return nil, nil
 	}
 
@@ -81,6 +72,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.CreateTableStmt) (*m
 	}
 	if !enable {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(errTablePartitionDisabled)
+		return nil, nil
 	}
 
 	pi := &model.PartitionInfo{
@@ -90,7 +82,10 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.CreateTableStmt) (*m
 	}
 	if s.Partition.Expr != nil {
 		buf := new(bytes.Buffer)
-		s.Partition.Expr.Format(buf)
+		restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, buf)
+		if err := s.Partition.Expr.Restore(restoreCtx); err != nil {
+			return nil, err
+		}
 		pi.Expr = buf.String()
 	} else if s.Partition.ColumnNames != nil {
 		// TODO: Support multiple columns for 'PARTITION BY RANGE COLUMNS'.
@@ -117,6 +112,10 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.CreateTableStmt) (*m
 }
 
 func buildHashPartitionDefinitions(ctx sessionctx.Context, s *ast.CreateTableStmt, pi *model.PartitionInfo) error {
+	if err := checkAddPartitionTooManyPartitions(pi.Num); err != nil {
+		return err
+	}
+
 	defs := make([]model.PartitionDefinition, pi.Num)
 	for i := 0; i < len(defs); i++ {
 		if len(s.Partition.Definitions) == 0 {
@@ -295,32 +294,72 @@ func defaultTimezoneDependent(ctx sessionctx.Context, tblInfo *model.TableInfo, 
 	return !v, nil
 }
 
+func checkPartitionFuncCallValid(ctx sessionctx.Context, tblInfo *model.TableInfo, expr *ast.FuncCallExpr) error {
+	// We assume the result of any function that has a TIMESTAMP argument to be
+	// timezone-dependent, since a TIMESTAMP value in both numeric and string
+	// contexts is interpreted according to the current timezone.
+	// The only exception is UNIX_TIMESTAMP() which returns the internal
+	// representation of a TIMESTAMP argument verbatim, and thus does not depend on
+	// the timezone.
+	// See https://github.com/mysql/mysql-server/blob/5.7/sql/item_func.h#L445
+	if expr.FnName.L != ast.UnixTimestamp {
+		for _, arg := range expr.Args {
+			if colName, ok := arg.(*ast.ColumnNameExpr); ok {
+				col := findColumnByName(colName.Name.Name.L, tblInfo)
+				if col == nil {
+					return ErrBadField.GenWithStackByArgs(colName.Name.Name.O, "expression")
+				}
+
+				if ok && col.FieldType.Tp == mysql.TypeTimestamp {
+					return errors.Trace(errWrongExprInPartitionFunc)
+				}
+			}
+		}
+	}
+
+	// check function which allowed in partitioning expressions
+	// see https://dev.mysql.com/doc/mysql-partitioning-excerpt/5.7/en/partitioning-limitations-functions.html
+	switch expr.FnName.L {
+	// Mysql don't allow creating partitions with expressions with non matching
+	// arguments as a (sub)partitioning function,
+	// but we want to allow such expressions when opening existing tables for
+	// easier maintenance. This exception should be deprecated at some point in future so that we always throw an error.
+	// See https://github.com/mysql/mysql-server/blob/5.7/sql/sql_partition.cc#L1072
+	case ast.Day, ast.DayOfMonth, ast.DayOfWeek, ast.DayOfYear, ast.Month, ast.Quarter, ast.ToDays, ast.ToSeconds,
+		ast.Weekday, ast.Year, ast.YearWeek:
+		return checkResultOK(hasDateField(ctx, tblInfo, expr))
+	case ast.Hour, ast.MicroSecond, ast.Minute, ast.Second, ast.TimeToSec:
+		return checkResultOK(hasTimeField(ctx, tblInfo, expr))
+	case ast.UnixTimestamp:
+		if len(expr.Args) != 1 {
+			return errors.Trace(errWrongExprInPartitionFunc)
+		}
+		col, err := expression.RewriteSimpleExprWithTableInfo(ctx, tblInfo, expr.Args[0])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if col.GetType().Tp != mysql.TypeTimestamp {
+			return errors.Trace(errWrongExprInPartitionFunc)
+		}
+		return nil
+	case ast.Abs, ast.Ceiling, ast.DateDiff, ast.Extract, ast.Floor, ast.Mod:
+		for _, arg := range expr.Args {
+			if err := checkPartitionExprValid(ctx, tblInfo, arg); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return errors.Trace(ErrPartitionFunctionIsNotAllowed)
+}
+
 // checkPartitionExprValid checks partition expression validly.
 func checkPartitionExprValid(ctx sessionctx.Context, tblInfo *model.TableInfo, expr ast.ExprNode) error {
 	switch v := expr.(type) {
 	case *ast.FuncCastExpr, *ast.CaseExpr, *ast.SubqueryExpr, *ast.WindowFuncExpr, *ast.RowExpr, *ast.DefaultExpr, *ast.ValuesExpr:
 		return errors.Trace(ErrPartitionFunctionIsNotAllowed)
 	case *ast.FuncCallExpr:
-		// check function which allowed in partitioning expressions
-		// see https://dev.mysql.com/doc/mysql-partitioning-excerpt/5.7/en/partitioning-limitations-functions.html
-		switch v.FnName.L {
-		// Mysql don't allow creating partitions with expressions with non matching
-		// arguments as a (sub)partitioning function,
-		// but we want to allow such expressions when opening existing tables for
-		// easier maintenance. This exception should be deprecated at some point in future so that we always throw an error.
-		// See https://github.com/mysql/mysql-server/blob/5.7/sql/sql_partition.cc#L1072
-		case ast.Day, ast.DayOfMonth, ast.DayOfWeek, ast.DayOfYear, ast.Month, ast.Quarter, ast.ToDays, ast.ToSeconds,
-			ast.Weekday, ast.Year, ast.YearWeek:
-			return checkPartitionFunc(hasDateField(ctx, tblInfo, expr))
-		case ast.Hour, ast.MicroSecond, ast.Minute, ast.Second, ast.TimeToSec:
-			return checkPartitionFunc(hasTimeField(ctx, tblInfo, expr))
-		case ast.UnixTimestamp:
-			return checkPartitionFunc(hasTimestampField(ctx, tblInfo, expr))
-		case ast.Abs, ast.Ceiling, ast.DateDiff, ast.Extract, ast.Floor, ast.Mod:
-			return checkPartitionFunc(defaultTimezoneDependent(ctx, tblInfo, expr))
-		default:
-			return errors.Trace(ErrPartitionFunctionIsNotAllowed)
-		}
+		return checkPartitionFuncCallValid(ctx, tblInfo, v)
 	case *ast.BinaryOperationExpr:
 		// The DIV operator (opcode.IntDiv) is also supported; the / operator ( opcode.Div ) is not permitted.
 		// see https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations.html
@@ -362,12 +401,12 @@ func checkPartitionFuncValid(ctx sessionctx.Context, tblInfo *model.TableInfo, e
 // For partition tables, mysql do not support Constant, random or timezone-dependent expressions
 // Based on mysql code to check whether field is valid, every time related type has check_valid_arguments_processor function.
 // See https://github.com/mysql/mysql-server/blob/5.7/sql/item_timefunc.
-func checkPartitionFunc(isTimezoneDependent bool, err error) error {
+func checkResultOK(ok bool, err error) error {
 	if err != nil {
 		return err
 	}
 
-	if !isTimezoneDependent {
+	if !ok {
 		return errors.Trace(errWrongExprInPartitionFunc)
 	}
 
@@ -390,7 +429,7 @@ func checkPartitionColumns(tblInfo *model.TableInfo, expr ast.ExprNode) ([]*mode
 }
 
 // checkPartitionFuncType checks partition function return type.
-func checkPartitionFuncType(ctx sessionctx.Context, s *ast.CreateTableStmt, cols []*table.Column, tblInfo *model.TableInfo) error {
+func checkPartitionFuncType(ctx sessionctx.Context, s *ast.CreateTableStmt, tblInfo *model.TableInfo) error {
 	if s.Partition.Expr == nil {
 		return nil
 	}
@@ -400,7 +439,7 @@ func checkPartitionFuncType(ctx sessionctx.Context, s *ast.CreateTableStmt, cols
 	if s.Partition.Tp == model.PartitionTypeRange || s.Partition.Tp == model.PartitionTypeHash {
 		// if partition by columnExpr, check the column type
 		if _, ok := s.Partition.Expr.(*ast.ColumnNameExpr); ok {
-			for _, col := range cols {
+			for _, col := range tblInfo.Columns {
 				name := strings.Replace(col.Name.String(), ".", "`.`", -1)
 				// Range partitioning key supported types: tinyint, smallint, mediumint, int and bigint.
 				if !validRangePartitionType(col) && fmt.Sprintf("`%s`", name) == exprStr {
@@ -428,12 +467,14 @@ func checkPartitionFuncType(ctx sessionctx.Context, s *ast.CreateTableStmt, cols
 
 // checkCreatePartitionValue checks whether `less than value` is strictly increasing for each partition.
 // Side effect: it may simplify the partition range definition from a constant expression to an integer.
-func checkCreatePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo, pi *model.PartitionInfo, cols []*table.Column) error {
+func checkCreatePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) error {
+	pi := tblInfo.Partition
 	defs := pi.Definitions
-	if len(defs) <= 1 {
+	if len(defs) == 0 {
 		return nil
 	}
 
+	cols := tblInfo.Columns
 	if strings.EqualFold(defs[len(defs)-1].LessThan[0], partitionMaxValue) {
 		defs = defs[:len(defs)-1]
 	}
@@ -506,7 +547,7 @@ func getRangeValue(ctx sessionctx.Context, tblInfo *model.TableInfo, str string,
 }
 
 // validRangePartitionType checks the type supported by the range partitioning key.
-func validRangePartitionType(col *table.Column) bool {
+func validRangePartitionType(col *model.ColumnInfo) bool {
 	switch col.FieldType.EvalType() {
 	case types.ETInt:
 		return true
@@ -673,10 +714,10 @@ func getPartitionIDs(table *model.TableInfo) []int64 {
 	return physicalTableIDs
 }
 
-// checkRangePartitioningKeysConstraints checks that the range partitioning key is included in the table constraint.
-func checkRangePartitioningKeysConstraints(sctx sessionctx.Context, s *ast.CreateTableStmt, tblInfo *model.TableInfo, constraints []*ast.Constraint) error {
-	// Returns directly if there is no constraint in the partition table.
-	if len(constraints) == 0 {
+// checkPartitioningKeysConstraints checks that the range partitioning key is included in the table constraint.
+func checkPartitioningKeysConstraints(sctx sessionctx.Context, s *ast.CreateTableStmt, tblInfo *model.TableInfo) error {
+	// Returns directly if there are no unique keys in the table.
+	if len(tblInfo.Indices) == 0 && !tblInfo.PKIsHandle {
 		return nil
 	}
 
@@ -692,26 +733,36 @@ func checkRangePartitioningKeysConstraints(sctx sessionctx.Context, s *ast.Creat
 		partCols = columnInfoSlice(partColumns)
 	} else if len(s.Partition.ColumnNames) > 0 {
 		partCols = columnNameSlice(s.Partition.ColumnNames)
+	} else {
+		// TODO: Check keys constraints for list, key partition type and so on.
+		return nil
 	}
 
 	// Checks that the partitioning key is included in the constraint.
 	// Every unique key on the table must use every column in the table's partitioning expression.
 	// See https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations-partitioning-keys-unique-keys.html
-	for _, constraint := range constraints {
-		switch constraint.Tp {
-		case ast.ConstraintPrimaryKey, ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
-			if !checkUniqueKeyIncludePartKey(partCols, constraint.Keys) {
-				if constraint.Tp == ast.ConstraintPrimaryKey {
-					return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY KEY")
-				}
-				return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
+	for _, index := range tblInfo.Indices {
+		if index.Unique && !checkUniqueKeyIncludePartKey(partCols, index.Columns) {
+			if index.Primary {
+				return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY KEY")
 			}
+			return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
+		}
+	}
+	// when PKIsHandle, tblInfo.Indices will not contain the primary key.
+	if tblInfo.PKIsHandle {
+		indexCols := []*model.IndexColumn{{
+			Name:   tblInfo.GetPkName(),
+			Length: types.UnspecifiedLength,
+		}}
+		if !checkUniqueKeyIncludePartKey(partCols, indexCols) {
+			return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY KEY")
 		}
 	}
 	return nil
 }
 
-func checkPartitionKeysConstraint(pi *model.PartitionInfo, indexPartSpecifications []*ast.IndexPartSpecification, tblInfo *model.TableInfo, isPK bool) error {
+func checkPartitionKeysConstraint(pi *model.PartitionInfo, indexColumns []*model.IndexColumn, tblInfo *model.TableInfo, isPK bool) error {
 	var (
 		partCols []*model.ColumnInfo
 		err      error
@@ -738,7 +789,7 @@ func checkPartitionKeysConstraint(pi *model.PartitionInfo, indexPartSpecificatio
 	// Every unique key on the table must use every column in the table's partitioning expression.(This
 	// also includes the table's primary key.)
 	// See https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations-partitioning-keys-unique-keys.html
-	if !checkUniqueKeyIncludePartKey(columnInfoSlice(partCols), indexPartSpecifications) {
+	if !checkUniqueKeyIncludePartKey(columnInfoSlice(partCols), indexColumns) {
 		if isPK {
 			return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY")
 		}
@@ -759,16 +810,24 @@ func (cne *columnNameExtractor) Enter(node ast.Node) (ast.Node, bool) {
 
 func (cne *columnNameExtractor) Leave(node ast.Node) (ast.Node, bool) {
 	if c, ok := node.(*ast.ColumnNameExpr); ok {
-		for _, info := range cne.tblInfo.Columns {
-			if info.Name.L == c.Name.Name.L {
-				cne.extractedColumns = append(cne.extractedColumns, info)
-				return node, true
-			}
+		info := findColumnByName(c.Name.Name.L, cne.tblInfo)
+		if info != nil {
+			cne.extractedColumns = append(cne.extractedColumns, info)
+			return node, true
 		}
 		cne.err = ErrBadField.GenWithStackByArgs(c.Name.Name.O, "expression")
 		return nil, false
 	}
 	return node, true
+}
+
+func findColumnByName(colName string, tblInfo *model.TableInfo) *model.ColumnInfo {
+	for _, info := range tblInfo.Columns {
+		if info.Name.L == colName {
+			return info
+		}
+	}
+	return nil
 }
 
 func extractPartitionColumns(partExpr string, tblInfo *model.TableInfo) ([]*model.ColumnInfo, error) {
@@ -796,7 +855,7 @@ type stringSlice interface {
 }
 
 // checkUniqueKeyIncludePartKey checks that the partitioning key is included in the constraint.
-func checkUniqueKeyIncludePartKey(partCols stringSlice, idxCols []*ast.IndexPartSpecification) bool {
+func checkUniqueKeyIncludePartKey(partCols stringSlice, idxCols []*model.IndexColumn) bool {
 	for i := 0; i < partCols.Len(); i++ {
 		partCol := partCols.At(i)
 		if !findColumnInIndexCols(partCol, idxCols) {
@@ -829,7 +888,7 @@ func (cns columnNameSlice) At(i int) string {
 }
 
 // isRangePartitionColUnsignedBigint returns true if the partitioning key column type is unsigned bigint type.
-func isRangePartitionColUnsignedBigint(cols []*table.Column, pi *model.PartitionInfo) bool {
+func isRangePartitionColUnsignedBigint(cols []*model.ColumnInfo, pi *model.PartitionInfo) bool {
 	for _, col := range cols {
 		isUnsigned := col.Tp == mysql.TypeLonglong && mysql.HasUnsignedFlag(col.Flag)
 		if isUnsigned && strings.Contains(strings.ToLower(pi.Expr), col.Name.L) {

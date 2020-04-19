@@ -107,6 +107,26 @@ type joiner interface {
 	Clone() joiner
 }
 
+// JoinerType returns the join type of a Joiner.
+func JoinerType(j joiner) plannercore.JoinType {
+	switch j.(type) {
+	case *semiJoiner:
+		return plannercore.SemiJoin
+	case *antiSemiJoiner:
+		return plannercore.AntiSemiJoin
+	case *leftOuterSemiJoiner:
+		return plannercore.LeftOuterSemiJoin
+	case *antiLeftOuterSemiJoiner:
+		return plannercore.AntiLeftOuterSemiJoin
+	case *leftOuterJoiner:
+		return plannercore.LeftOuterJoin
+	case *rightOuterJoiner:
+		return plannercore.RightOuterJoin
+	default:
+		return plannercore.InnerJoin
+	}
+}
+
 func newJoiner(ctx sessionctx.Context, joinType plannercore.JoinType,
 	outerIsRight bool, defaultInner []types.Datum, filter []expression.Expression,
 	lhsColTypes, rhsColTypes []*types.FieldType, childrenUsed [][]bool) joiner {
@@ -389,9 +409,11 @@ func (j *semiJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.Row, ch
 		if err != nil {
 			return outerRowStatus, err
 		}
-		outerRowStatus = append(outerRowStatus, outerRowMatched)
 		if matched {
+			outerRowStatus = append(outerRowStatus, outerRowMatched)
 			chk.AppendRowByColIdxs(outer, j.lUsed)
+		} else {
+			outerRowStatus = append(outerRowStatus, outerRowUnmatched)
 		}
 	}
 	err = outers.Error()

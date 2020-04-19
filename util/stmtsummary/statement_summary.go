@@ -35,9 +35,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// There're many types of statement summary tables in MySQL, but we have
-// only implemented events_statements_summary_by_digest for now.
-
 // stmtSummaryByDigestKey defines key for stmtSummaryByDigestMap.summaryMap.
 type stmtSummaryByDigestKey struct {
 	// Same statements may appear in different schema, but they refer to different tables.
@@ -106,11 +103,13 @@ type stmtSummaryByDigestElement struct {
 	beginTime int64
 	endTime   int64
 	// basic
-	sampleSQL  string
-	prevSQL    string
-	samplePlan string
-	indexNames []string
-	execCount  int64
+	sampleSQL   string
+	prevSQL     string
+	samplePlan  string
+	indexNames  []string
+	execCount   int64
+	sumErrors   int
+	sumWarnings int
 	// latency
 	sumLatency        time.Duration
 	maxLatency        time.Duration
@@ -120,11 +119,9 @@ type stmtSummaryByDigestElement struct {
 	sumCompileLatency time.Duration
 	maxCompileLatency time.Duration
 	// coprocessor
-	numCopTasks          int64
-	sumCopProcessTime    int64
+	sumNumCopTasks       int64
 	maxCopProcessTime    time.Duration
 	maxCopProcessAddress string
-	sumCopWaitTime       int64
 	maxCopWaitTime       time.Duration
 	maxCopWaitAddress    string
 	// TiKV
@@ -194,6 +191,7 @@ type StmtExecInfo struct {
 	MemMax         int64
 	StartTime      time.Time
 	IsInternal     bool
+	Succeed        bool
 }
 
 // newStmtSummaryByDigestMap creates an empty stmtSummaryByDigestMap.
@@ -612,6 +610,10 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	// refreshInterval may change anytime, update endTime ASAP.
 	ssElement.endTime = ssElement.beginTime + intervalSeconds
 	ssElement.execCount++
+	if !sei.Succeed {
+		ssElement.sumErrors += 1
+	}
+	ssElement.sumWarnings += int(sei.StmtCtx.WarningCount())
 
 	// latency
 	ssElement.sumLatency += sei.TotalLatency
@@ -632,13 +634,11 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 
 	// coprocessor
 	numCopTasks := int64(sei.CopTasks.NumCopTasks)
-	ssElement.numCopTasks += numCopTasks
-	ssElement.sumCopProcessTime += sei.CopTasks.AvgProcessTime.Nanoseconds() * numCopTasks
+	ssElement.sumNumCopTasks += numCopTasks
 	if sei.CopTasks.MaxProcessTime > ssElement.maxCopProcessTime {
 		ssElement.maxCopProcessTime = sei.CopTasks.MaxProcessTime
 		ssElement.maxCopProcessAddress = sei.CopTasks.MaxProcessAddress
 	}
-	ssElement.sumCopWaitTime += sei.CopTasks.AvgWaitTime.Nanoseconds() * numCopTasks
 	if sei.CopTasks.MaxWaitTime > ssElement.maxCopWaitTime {
 		ssElement.maxCopWaitTime = sei.CopTasks.MaxWaitTime
 		ssElement.maxCopWaitAddress = sei.CopTasks.MaxWaitAddress
@@ -763,6 +763,8 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		convertEmptyToNil(strings.Join(ssElement.indexNames, ",")),
 		convertEmptyToNil(sampleUser),
 		ssElement.execCount,
+		ssElement.sumErrors,
+		ssElement.sumWarnings,
 		int64(ssElement.sumLatency),
 		int64(ssElement.maxLatency),
 		int64(ssElement.minLatency),
@@ -771,11 +773,9 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		int64(ssElement.maxParseLatency),
 		avgInt(int64(ssElement.sumCompileLatency), ssElement.execCount),
 		int64(ssElement.maxCompileLatency),
-		ssElement.numCopTasks,
-		avgInt(ssElement.sumCopProcessTime, ssElement.numCopTasks),
+		ssElement.sumNumCopTasks,
 		int64(ssElement.maxCopProcessTime),
 		convertEmptyToNil(ssElement.maxCopProcessAddress),
-		avgInt(ssElement.sumCopWaitTime, ssElement.numCopTasks),
 		int64(ssElement.maxCopWaitTime),
 		convertEmptyToNil(ssElement.maxCopWaitAddress),
 		avgInt(int64(ssElement.sumProcessTime), ssElement.execCount),

@@ -13,7 +13,9 @@
 
 package kv
 
-import "context"
+import (
+	"context"
+)
 
 // UnionStore is a store that wraps a snapshot for read and a BufferStore for buffered write.
 // Also, it provides some transaction related utilities.
@@ -91,100 +93,10 @@ type unionStore struct {
 // NewUnionStore builds a new UnionStore.
 func NewUnionStore(snapshot Snapshot) UnionStore {
 	return &unionStore{
-		BufferStore:  NewBufferStore(snapshot, DefaultTxnMembufCap),
+		BufferStore:  NewBufferStore(snapshot),
 		keyExistErrs: make(map[string]*existErrInfo),
 		opts:         make(map[Option]interface{}),
 	}
-}
-
-// invalidIterator implements Iterator interface.
-// It is used for read-only transaction which has no data written, the iterator is always invalid.
-type invalidIterator struct{}
-
-func (it invalidIterator) Valid() bool {
-	return false
-}
-
-func (it invalidIterator) Next() error {
-	return nil
-}
-
-func (it invalidIterator) Key() Key {
-	return nil
-}
-
-func (it invalidIterator) Value() []byte {
-	return nil
-}
-
-func (it invalidIterator) Close() {}
-
-// lazyMemBuffer wraps a MemBuffer which is to be initialized when it is modified.
-type lazyMemBuffer struct {
-	mb  MemBuffer
-	cap int
-}
-
-func (lmb *lazyMemBuffer) Get(ctx context.Context, k Key) ([]byte, error) {
-	if lmb.mb == nil {
-		return nil, ErrNotExist
-	}
-
-	return lmb.mb.Get(ctx, k)
-}
-
-func (lmb *lazyMemBuffer) Set(key Key, value []byte) error {
-	if lmb.mb == nil {
-		lmb.mb = NewMemDbBuffer(lmb.cap)
-	}
-
-	return lmb.mb.Set(key, value)
-}
-
-func (lmb *lazyMemBuffer) Delete(k Key) error {
-	if lmb.mb == nil {
-		lmb.mb = NewMemDbBuffer(lmb.cap)
-	}
-
-	return lmb.mb.Delete(k)
-}
-
-func (lmb *lazyMemBuffer) Iter(k Key, upperBound Key) (Iterator, error) {
-	if lmb.mb == nil {
-		return invalidIterator{}, nil
-	}
-	return lmb.mb.Iter(k, upperBound)
-}
-
-func (lmb *lazyMemBuffer) IterReverse(k Key) (Iterator, error) {
-	if lmb.mb == nil {
-		return invalidIterator{}, nil
-	}
-	return lmb.mb.IterReverse(k)
-}
-
-func (lmb *lazyMemBuffer) Size() int {
-	if lmb.mb == nil {
-		return 0
-	}
-	return lmb.mb.Size()
-}
-
-func (lmb *lazyMemBuffer) Len() int {
-	if lmb.mb == nil {
-		return 0
-	}
-	return lmb.mb.Len()
-}
-
-func (lmb *lazyMemBuffer) Reset() {
-	if lmb.mb != nil {
-		lmb.mb.Reset()
-	}
-}
-
-func (lmb *lazyMemBuffer) SetCap(cap int) {
-	lmb.cap = cap
 }
 
 // Get implements the Retriever interface.
@@ -240,13 +152,16 @@ func (us *unionStore) GetMemBuffer() MemBuffer {
 	return us.BufferStore.MemBuffer
 }
 
-// SetCap sets membuffer capability.
-func (us *unionStore) SetCap(cap int) {
-	us.BufferStore.SetCap(cap)
+func (us *unionStore) NewStagingBuffer() MemBuffer {
+	return us.BufferStore.NewStagingBuffer()
 }
 
-func (us *unionStore) Reset() {
-	us.BufferStore.Reset()
+func (us *unionStore) Flush() (int, error) {
+	return us.BufferStore.Flush()
+}
+
+func (us *unionStore) Discard() {
+	us.BufferStore.Discard()
 }
 
 type options map[Option]interface{}
