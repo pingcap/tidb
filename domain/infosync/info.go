@@ -301,7 +301,7 @@ func (is *InfoSyncer) RemoveServerInfo() {
 type topologyInfo struct {
 	ServerVersionInfo
 	StatusPort     uint   `json:"status_port"`
-	BinaryPath     string `json:"binary_path"`
+	DeployPath     string `json:"deploy_path"`
 	StartTimestamp int64  `json:"start_timestamp"`
 }
 
@@ -316,7 +316,7 @@ func (is *InfoSyncer) getTopologyInfo() topologyInfo {
 			GitHash: is.info.ServerVersionInfo.GitHash,
 		},
 		StatusPort:     is.info.StatusPort,
-		BinaryPath:     s,
+		DeployPath:     s,
 		StartTimestamp: is.info.StartTimestamp,
 	}
 }
