@@ -119,7 +119,9 @@ type AggFunc interface {
 	// the partial result and then iterates on the input rows and update that
 	// partial result according to the functionality and the state of the
 	// aggregate function.
-	UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error
+	// The first return value is the `accquiredRows` of AggFunc, means the number of rows has been scaned.
+	// Now it's only meaningful for DISTINCT, to fix: https://github.com/pingcap/tidb/issues/15284
+	UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int, error)
 
 	// MergePartialResult will be called in the final phase when parallelly
 	// executing. It converts the PartialResult `src`, `dst` to the same specific

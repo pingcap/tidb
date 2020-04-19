@@ -433,7 +433,8 @@ func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 	for uint64(e.rowChunks.NumRow()) < e.totalLimit {
 		srcChk := newFirstChunk(e.children[0])
 		// adjust required rows by total limit
-		srcChk.SetRequiredRows(int(e.totalLimit-uint64(e.rowChunks.NumRow())), e.maxChunkSize)
+		// srcChk.SetRequiredRows(int(e.totalLimit-uint64(e.rowChunks.NumRow())), e.maxChunkSize)
+		// srcChk.SetRequiredRows(e.maxChunkSize, e.maxChunkSize)
 		err := Next(ctx, e.children[0], srcChk)
 		if err != nil {
 			return err

@@ -35,8 +35,8 @@ func (rn *rowNumber) ResetPartialResult(pr PartialResult) {
 	p.curIdx = 0
 }
 
-func (rn *rowNumber) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
-	return nil
+func (rn *rowNumber) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int, error) {
+	return 0, nil
 }
 
 func (rn *rowNumber) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {

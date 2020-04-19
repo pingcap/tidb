@@ -228,11 +228,13 @@ func buildAvg(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordi
 
 // buildFirstRow builds the AggFunc implementation for function "FIRST_ROW".
 func buildFirstRow(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
-	base := baseAggFunc{
-		args:    aggFuncDesc.Args,
-		ordinal: ordinal,
+	base := baseFirstRowAggFunc{
+		baseAggFunc: baseAggFunc{
+			args:    aggFuncDesc.Args,
+			ordinal: ordinal,
+		},
+		accquiredRows: 0,
 	}
-
 	evalType, fieldType := aggFuncDesc.RetTp.EvalType(), aggFuncDesc.RetTp
 	if fieldType.Tp == mysql.TypeBit {
 		evalType = types.ETString

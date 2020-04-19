@@ -45,19 +45,19 @@ type bitOrUint64 struct {
 	baseBitAggFunc
 }
 
-func (e *bitOrUint64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+func (e *bitOrUint64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int, error) {
 	p := (*partialResult4BitFunc)(pr)
 	for _, row := range rowsInGroup {
 		inputValue, isNull, err := e.args[0].EvalInt(sctx, row)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if isNull {
 			continue
 		}
 		*p |= uint64(inputValue)
 	}
-	return nil
+	return 0, nil
 }
 
 func (*bitOrUint64) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error {
@@ -70,19 +70,19 @@ type bitXorUint64 struct {
 	baseBitAggFunc
 }
 
-func (e *bitXorUint64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+func (e *bitXorUint64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int, error) {
 	p := (*partialResult4BitFunc)(pr)
 	for _, row := range rowsInGroup {
 		inputValue, isNull, err := e.args[0].EvalInt(sctx, row)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if isNull {
 			continue
 		}
 		*p ^= uint64(inputValue)
 	}
-	return nil
+	return 0, nil
 }
 
 func (e *bitXorUint64) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
@@ -131,19 +131,19 @@ func (e *bitAndUint64) ResetPartialResult(pr PartialResult) {
 	*p = math.MaxUint64
 }
 
-func (e *bitAndUint64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+func (e *bitAndUint64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int, error) {
 	p := (*partialResult4BitFunc)(pr)
 	for _, row := range rowsInGroup {
 		inputValue, isNull, err := e.args[0].EvalInt(sctx, row)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if isNull {
 			continue
 		}
 		*p &= uint64(inputValue)
 	}
-	return nil
+	return 0, nil
 }
 
 func (*bitAndUint64) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error {

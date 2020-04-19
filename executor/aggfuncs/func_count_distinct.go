@@ -53,13 +53,13 @@ func (e *countOriginalWithDistinct4Int) AppendFinalResult2Chunk(sctx sessionctx.
 	return nil
 }
 
-func (e *countOriginalWithDistinct4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+func (e *countOriginalWithDistinct4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int, error) {
 	p := (*partialResult4CountDistinctInt)(pr)
 
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalInt(sctx, row)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if isNull {
 			continue
@@ -70,7 +70,7 @@ func (e *countOriginalWithDistinct4Int) UpdatePartialResult(sctx sessionctx.Cont
 		p.valSet.Insert(input)
 	}
 
-	return nil
+	return 0, nil
 }
 
 type partialResult4CountDistinctReal struct {
@@ -98,13 +98,13 @@ func (e *countOriginalWithDistinct4Real) AppendFinalResult2Chunk(sctx sessionctx
 	return nil
 }
 
-func (e *countOriginalWithDistinct4Real) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+func (e *countOriginalWithDistinct4Real) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int, error) {
 	p := (*partialResult4CountDistinctReal)(pr)
 
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalReal(sctx, row)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if isNull {
 			continue
@@ -115,7 +115,7 @@ func (e *countOriginalWithDistinct4Real) UpdatePartialResult(sctx sessionctx.Con
 		p.valSet.Insert(input)
 	}
 
-	return nil
+	return 0, nil
 }
 
 type partialResult4CountDistinctDecimal struct {
@@ -143,20 +143,20 @@ func (e *countOriginalWithDistinct4Decimal) AppendFinalResult2Chunk(sctx session
 	return nil
 }
 
-func (e *countOriginalWithDistinct4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+func (e *countOriginalWithDistinct4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int, error) {
 	p := (*partialResult4CountDistinctDecimal)(pr)
 
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if isNull {
 			continue
 		}
 		hash, err := input.ToHashKey()
 		if err != nil {
-			return err
+			return 0, err
 		}
 		decStr := string(hack.String(hash))
 		if p.valSet.Exist(decStr) {
@@ -165,7 +165,7 @@ func (e *countOriginalWithDistinct4Decimal) UpdatePartialResult(sctx sessionctx.
 		p.valSet.Insert(decStr)
 	}
 
-	return nil
+	return 0, nil
 }
 
 type partialResult4CountDistinctDuration struct {
@@ -193,13 +193,13 @@ func (e *countOriginalWithDistinct4Duration) AppendFinalResult2Chunk(sctx sessio
 	return nil
 }
 
-func (e *countOriginalWithDistinct4Duration) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+func (e *countOriginalWithDistinct4Duration) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int, error) {
 	p := (*partialResult4CountDistinctDuration)(pr)
 
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalDuration(sctx, row)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if isNull {
 			continue
@@ -211,7 +211,7 @@ func (e *countOriginalWithDistinct4Duration) UpdatePartialResult(sctx sessionctx
 		p.valSet.Insert(int64(input.Duration))
 	}
 
-	return nil
+	return 0, nil
 }
 
 type partialResult4CountDistinctString struct {
@@ -239,13 +239,13 @@ func (e *countOriginalWithDistinct4String) AppendFinalResult2Chunk(sctx sessionc
 	return nil
 }
 
-func (e *countOriginalWithDistinct4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+func (e *countOriginalWithDistinct4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int, error) {
 	p := (*partialResult4CountDistinctString)(pr)
 
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalString(sctx, row)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if isNull {
 			continue
@@ -257,7 +257,7 @@ func (e *countOriginalWithDistinct4String) UpdatePartialResult(sctx sessionctx.C
 		p.valSet.Insert(input)
 	}
 
-	return nil
+	return 0, nil
 }
 
 type countOriginalWithDistinct struct {
@@ -285,8 +285,9 @@ func (e *countOriginalWithDistinct) AppendFinalResult2Chunk(sctx sessionctx.Cont
 	return nil
 }
 
-func (e *countOriginalWithDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (err error) {
+func (e *countOriginalWithDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (accquiredRows int, err error) {
 	p := (*partialResult4CountWithDistinct)(pr)
+	accquiredRows = 0
 
 	encodedBytes := make([]byte, 0)
 	// Decimal struct is the biggest type we will use.
@@ -313,7 +314,7 @@ func (e *countOriginalWithDistinct) UpdatePartialResult(sctx sessionctx.Context,
 		p.valSet.Insert(encodedString)
 	}
 
-	return nil
+	return accquiredRows, nil
 }
 
 // evalAndEncode eval one row with an expression and encode value to bytes.

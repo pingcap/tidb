@@ -45,7 +45,7 @@ func (n *ntile) ResetPartialResult(pr PartialResult) {
 	p.numRows = 0
 }
 
-func (n *ntile) UpdatePartialResult(_ sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+func (n *ntile) UpdatePartialResult(_ sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int, error) {
 	p := (*partialResult4Ntile)(pr)
 	p.numRows += uint64(len(rowsInGroup))
 	// Update the quotient and remainder.
@@ -53,7 +53,7 @@ func (n *ntile) UpdatePartialResult(_ sessionctx.Context, rowsInGroup []chunk.Ro
 		p.quotient = p.numRows / n.n
 		p.remainder = p.numRows % n.n
 	}
-	return nil
+	return 0, nil
 }
 
 func (n *ntile) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {

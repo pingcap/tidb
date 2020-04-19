@@ -88,7 +88,7 @@ func (e *groupConcat) ResetPartialResult(pr PartialResult) {
 	p.buffer = nil
 }
 
-func (e *groupConcat) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (err error) {
+func (e *groupConcat) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (accquiredRows int, err error) {
 	p := (*partialResult4GroupConcat)(pr)
 	v, isNull := "", false
 	for _, row := range rowsInGroup {
@@ -96,7 +96,7 @@ func (e *groupConcat) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 		for _, arg := range e.args {
 			v, isNull, err = arg.EvalString(sctx, row)
 			if err != nil {
-				return err
+				return 0, err
 			}
 			if isNull {
 				break
@@ -114,9 +114,9 @@ func (e *groupConcat) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 		p.buffer.WriteString(p.valsBuf.String())
 	}
 	if p.buffer != nil {
-		return e.truncatePartialResultIfNeed(sctx, p.buffer)
+		return 0, e.truncatePartialResultIfNeed(sctx, p.buffer)
 	}
-	return nil
+	return 0, nil
 }
 
 func (e *groupConcat) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error {
@@ -165,7 +165,7 @@ func (e *groupConcatDistinct) ResetPartialResult(pr PartialResult) {
 	p.buffer, p.valSet = nil, set.NewStringSet()
 }
 
-func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (err error) {
+func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (accquiredRows int, err error) {
 	p := (*partialResult4GroupConcatDistinct)(pr)
 	v, isNull := "", false
 	for _, row := range rowsInGroup {
@@ -174,7 +174,7 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		for _, arg := range e.args {
 			v, isNull, err = arg.EvalString(sctx, row)
 			if err != nil {
-				return err
+				return 0, err
 			}
 			if isNull {
 				break
@@ -200,9 +200,9 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		p.buffer.WriteString(p.valsBuf.String())
 	}
 	if p.buffer != nil {
-		return e.truncatePartialResultIfNeed(sctx, p.buffer)
+		return 0, e.truncatePartialResultIfNeed(sctx, p.buffer)
 	}
-	return nil
+	return 0, nil
 }
 
 // SetTruncated will be called in `executorBuilder#buildHashAgg` with duck-type.

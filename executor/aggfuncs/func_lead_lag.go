@@ -42,10 +42,10 @@ func (v *baseLeadLag) ResetPartialResult(pr PartialResult) {
 	p.curIdx = 0
 }
 
-func (v *baseLeadLag) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+func (v *baseLeadLag) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int, error) {
 	p := (*partialResult4LeadLag)(pr)
 	p.rows = append(p.rows, rowsInGroup...)
-	return nil
+	return 0, nil
 }
 
 type lead struct {

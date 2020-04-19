@@ -69,27 +69,27 @@ func (e *jsonObjectAgg) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Part
 	return nil
 }
 
-func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int, error) {
 	p := (*partialResult4JsonObjectAgg)(pr)
 	for _, row := range rowsInGroup {
 		key, err := e.args[0].Eval(row)
 		if err != nil {
-			return errors.Trace(err)
+			return 0, errors.Trace(err)
 		}
 
 		value, err := e.args[1].Eval(row)
 		if err != nil {
-			return errors.Trace(err)
+			return 0, errors.Trace(err)
 		}
 
 		if key.IsNull() {
-			return json.ErrJSONDocumentNULLKey
+			return 0, json.ErrJSONDocumentNULLKey
 		}
 
 		// the result json's key is string, so it needs to convert the first arg to string
 		keyString, err := key.ToString()
 		if err != nil {
-			return errors.Trace(err)
+			return 0, errors.Trace(err)
 		}
 
 		realVal := value.GetValue()
@@ -97,10 +97,10 @@ func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 		case nil, bool, int64, uint64, float64, string, json.BinaryJSON, *types.MyDecimal, []uint8, types.Time, types.Duration:
 			p.entries[keyString] = realVal
 		default:
-			return json.ErrUnsupportedSecondArgumentType.GenWithStackByArgs(x)
+			return 0, json.ErrUnsupportedSecondArgumentType.GenWithStackByArgs(x)
 		}
 	}
-	return nil
+	return 0, nil
 }
 
 func (e *jsonObjectAgg) MergePartialResult(sctx sessionctx.Context, src PartialResult, dst PartialResult) error {

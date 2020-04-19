@@ -62,12 +62,12 @@ func calculateIntermediate(count int64, sum float64, input float64, variance flo
 	return variance
 }
 
-func (e *varPop4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+func (e *varPop4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int, error) {
 	p := (*partialResult4VarPopFloat64)(pr)
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalReal(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return 0, errors.Trace(err)
 		}
 		if isNull {
 			continue
@@ -78,7 +78,7 @@ func (e *varPop4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGrou
 			p.variance = calculateIntermediate(p.count, p.sum, input, p.variance)
 		}
 	}
-	return nil
+	return 0, nil
 }
 
 func calculateMerge(srcCount, dstCount int64, srcSum, dstSum, srcVariance, dstVariance float64) float64 {
@@ -148,12 +148,12 @@ func (e *varPop4DistinctFloat64) AppendFinalResult2Chunk(sctx sessionctx.Context
 	return nil
 }
 
-func (e *varPop4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+func (e *varPop4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int, error) {
 	p := (*partialResult4VarPopDistinctFloat64)(pr)
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalReal(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return 0, errors.Trace(err)
 		}
 		if isNull || p.valSet.Exist(input) {
 			continue
@@ -165,5 +165,5 @@ func (e *varPop4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, ro
 			p.variance = calculateIntermediate(p.count, p.sum, input, p.variance)
 		}
 	}
-	return nil
+	return 0, nil
 }
