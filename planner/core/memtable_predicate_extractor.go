@@ -533,7 +533,22 @@ func (e *ClusterTableExtractor) Extract(_ sessionctx.Context,
 }
 
 func (e *ClusterTableExtractor) explainInfo(p *PhysicalMemTable) string {
-	return ""
+	if e.SkipRequest {
+		return "skip_request: true"
+	}
+	r := new(bytes.Buffer)
+	if len(e.NodeTypes) > 0 {
+		r.WriteString(fmt.Sprintf("node_types:[%s], ", extractStringFromStringSet(e.NodeTypes)))
+	}
+	if len(e.Instances) > 0 {
+		r.WriteString(fmt.Sprintf("instances:[%s], ", extractStringFromStringSet(e.Instances)))
+	}
+	// remove the last ", " in the message info
+	s := r.String()
+	if len(s) > 2 {
+		return s[:len(s)-2]
+	}
+	return s
 }
 
 // ClusterLogTableExtractor is used to extract some predicates of `cluster_config`
