@@ -91,6 +91,7 @@ var TiDBLayerOptimizationBatch = TransformationRuleBatch{
 		NewRuleEliminateProjection(),
 		NewRuleMergeAdjacentProjection(),
 		NewRuleEliminateOuterJoinBelowProjection(),
+		NewRulePushProjDownUnionAll(),
 	},
 	memo.OperandTopN: {
 		NewRulePushTopNDownProjection(),
@@ -2307,4 +2308,67 @@ func (r *PullSelectionUpApply) OnTransform(old *memo.ExprIter) (newExprs []*memo
 	newApplyGroupExpr := memo.NewGroupExpr(newApply)
 	newApplyGroupExpr.SetChildren(outerChildGroup, old.Children[1].GetExpr().Children[0])
 	return []*memo.GroupExpr{newApplyGroupExpr}, false, false, nil
+}
+
+// PushProjDownUnionAll pushes the Projection down to the child of UnionAll.
+type PushProjDownUnionAll struct {
+	baseRule
+}
+
+// NewRulePushProjDownUnionAll creates a new Transformation PushProjDownUnionAll.
+// The pattern of this rule is: `Proj -> UnionAll)`.
+func NewRulePushProjDownUnionAll() Transformation {
+	rule := &PushProjDownUnionAll{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandProjection,
+		memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandUnionAll, memo.EngineTiDBOnly),
+	)
+	return rule
+}
+
+// Match implements Transformation interface.
+func (r *PushProjDownUnionAll) Match(expr *memo.ExprIter) bool {
+	if len(expr.Children[0].GetExpr().Children) <= 1 {
+		return false
+	}
+
+	proj := expr.GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	for _, expr := range proj.Exprs {
+		_, ok := expr.(*expression.ScalarFunction)
+		if ok {
+			return true
+		}
+	}
+	return false
+}
+
+// OnTransform implements Transformation interface.
+// It will transform `Projection->UnionAll->x` to `top Projection->UnionAll->bottom Projection->x`.
+func (r *PushProjDownUnionAll) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	proj := old.GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	unionAll := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalUnionAll)
+
+	// Construct GroupExpr, Group (TopProj -> UnionAll -> BottomProj -> Child)
+	bottomProj := plannercore.LogicalProjection{Exprs: proj.Exprs}.Init(proj.SCtx(), proj.SelectBlockOffset())
+	bottomProj.SetSchema(old.GetExpr().Group.Prop.Schema)
+
+	newUnionAllExpr := memo.NewGroupExpr(unionAll)
+	for _, child := range old.Children[0].GetExpr().Children {
+		bottomProjExpr := memo.NewGroupExpr(bottomProj)
+		bottomProjExpr.SetChildren(child)
+		bottomProjGroup := memo.NewGroupWithSchema(bottomProjExpr, bottomProj.Schema())
+		newUnionAllExpr.Children = append(newUnionAllExpr.Children, bottomProjGroup)
+	}
+	newUnionAllGroup := memo.NewGroupWithSchema(newUnionAllExpr, old.GetExpr().Group.Prop.Schema)
+
+	topProj := plannercore.LogicalProjection{Exprs: make([]expression.Expression, len(proj.Exprs))}.Init(proj.SCtx(), proj.SelectBlockOffset())
+	topProj.SetSchema(old.GetExpr().Group.Prop.Schema)
+	for index := range proj.Exprs {
+		topProj.Exprs[index] = topProj.Schema().Columns[index]
+	}
+	topProjExpr := memo.NewGroupExpr(topProj)
+	topProjExpr.SetChildren(newUnionAllGroup)
+
+	return []*memo.GroupExpr{topProjExpr}, true, false, nil
 }

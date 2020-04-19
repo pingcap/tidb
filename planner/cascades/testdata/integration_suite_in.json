@@ -57,7 +57,8 @@
       "select * from ((select a as aa from t t1) union all (select b as aa from t t2)) as t3 order by aa",
       "select a, b, lag(a,1) over (order by b) from t order by b",
       "select * from (select a+1 as c, a+b as d from t) as t1 order by c+d limit 10",
-      "select t1.a, t1.b from t as t1 left join t as t2 on t1.a = t2.a and t1.b = 3 order by a"
+      "select t1.a, t1.b from t as t1 left join t as t2 on t1.a = t2.a and t1.b = 3 order by a",
+      "select a+b*a*b, a / b from (select * from t union all select * from t union all select * from t) k"
     ]
   },
   {
