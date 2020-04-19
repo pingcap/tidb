@@ -182,7 +182,7 @@ func WriteInsert(tblIR TableDataIR, w io.Writer) error {
 	return wp.Error()
 }
 
-func WriteInsertInCsv(tblIR TableDataIR, w io.Writer, noHeader bool) error {
+func WriteInsertInCsv(tblIR TableDataIR, w io.Writer, noHeader bool, csvNullValue string) error {
 	fileRowIter := tblIR.Rows()
 	if !fileRowIter.HasNext() {
 		return nil
@@ -234,7 +234,7 @@ func WriteInsertInCsv(tblIR TableDataIR, w io.Writer, noHeader bool) error {
 				return err
 			}
 
-			row.WriteToBufferInCsv(bf, escapeBackSlash)
+			row.WriteToBufferInCsv(bf, escapeBackSlash, csvNullValue)
 			counter += 1
 
 			if bf.Len() >= lengthLimit {

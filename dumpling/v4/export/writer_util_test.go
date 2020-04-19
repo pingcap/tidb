@@ -82,7 +82,7 @@ func (s *testUtilSuite) TestWriteInsertInCsv(c *C) {
 	tableIR := newMockTableIR("test", "employee", data, nil, colTypes)
 	bf := &bytes.Buffer{}
 
-	err := WriteInsertInCsv(tableIR, bf, true)
+	err := WriteInsertInCsv(tableIR, bf, true, "\\N")
 	c.Assert(err, IsNil)
 	expected := "1,\"male\",\"bob@mail.com\",\"020-1234\",\\N\n" +
 		"2,\"female\",\"sarah@mail.com\",\"020-1253\",\"healthy\"\n" +

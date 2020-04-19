@@ -34,6 +34,7 @@ type Config struct {
 	NoHeader      bool
 	NoSchemas     bool
 	NoData        bool
+	CsvNullValue  string
 
 	BlackWhiteList  BWListConf
 	Rows            uint64
@@ -67,6 +68,7 @@ func DefaultConfig() *Config {
 		NoHeader:      false,
 		NoSchemas:     false,
 		NoData:        false,
+		CsvNullValue:  "\\N",
 	}
 }
 

@@ -123,7 +123,7 @@ func (f *CsvWriter) WriteTableData(ctx context.Context, ir TableDataIR) error {
 	for {
 		filePath := path.Join(f.cfg.OutputDirPath, fileName)
 		fileWriter, tearDown := buildInterceptFileWriter(filePath)
-		err := WriteInsertInCsv(chunksIter, fileWriter, f.cfg.NoHeader)
+		err := WriteInsertInCsv(chunksIter, fileWriter, f.cfg.NoHeader, f.cfg.CsvNullValue)
 		tearDown()
 		if err != nil {
 			return err
