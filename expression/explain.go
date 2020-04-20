@@ -91,11 +91,7 @@ func ExplainExpressionList(exprs []Expression, schema *Schema) string {
 	for i, expr := range exprs {
 		switch expr.(type) {
 		case *Column, *CorrelatedColumn:
-			if schema.Columns[i].Equal(nil, expr) {
-				builder.WriteString(expr.String())
-			} else {
-				fmt.Fprintf(builder, "%v->%v", expr.String(), schema.Columns[i])
-			}
+			builder.WriteString(expr.String())
 		default:
 			fmt.Fprintf(builder, "%v->%v", expr.String(), schema.Columns[i])
 		}
