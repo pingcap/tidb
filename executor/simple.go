@@ -537,7 +537,7 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 		// Since we have checked the charset, the dbCollate here shouldn't be "".
 		dbCollate = getDefaultCollate(dbinfo.Charset)
 	}
-	return sessionVars.SetSystemVar(variable.CollationDatabase, dbinfo.Collate)
+	return sessionVars.SetSystemVar(variable.CollationDatabase, dbCollate)
 }
 
 func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
