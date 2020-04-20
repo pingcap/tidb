@@ -140,6 +140,10 @@ func (ts *testFunctionsSuite) TestAggregateFuncExprRestore(c *C) {
 		{"VAR_SAMP(test_score)", "VAR_SAMP(`test_score`)"},
 		{"VARIANCE(test_score)", "VAR_POP(`test_score`)"},
 		{"JSON_OBJECTAGG(test_score, results)", "JSON_OBJECTAGG(`test_score`, `results`)"},
+		{"GROUP_CONCAT(a)", "GROUP_CONCAT(`a` SEPARATOR ',')"},
+		{"GROUP_CONCAT(a separator '--')", "GROUP_CONCAT(`a` SEPARATOR '--')"},
+		{"GROUP_CONCAT(a order by b desc, c)", "GROUP_CONCAT(`a` ORDER BY `b` DESC,`c` SEPARATOR ',')"},
+		{"GROUP_CONCAT(a order by b desc, c separator '--')", "GROUP_CONCAT(`a` ORDER BY `b` DESC,`c` SEPARATOR '--')"},
 	}
 	extractNodeFunc := func(node Node) Node {
 		return node.(*SelectStmt).Fields.Fields[0].Expr

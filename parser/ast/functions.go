@@ -700,6 +700,8 @@ type AggregateFuncExpr struct {
 	// For example, column c1 values are "1", "2", "2",  "sum(c1)" is "5",
 	// but "sum(distinct c1)" is "3".
 	Distinct bool
+	// Order is only used in GROUP_CONCAT
+	Order *OrderByClause
 }
 
 // Restore implements Node interface.
@@ -717,6 +719,12 @@ func (n *AggregateFuncExpr) Restore(ctx *format.RestoreCtx) error {
 			}
 			if err := n.Args[i].Restore(ctx); err != nil {
 				return errors.Annotatef(err, "An error occurred while restore AggregateFuncExpr.Args[%d]", i)
+			}
+		}
+		if n.Order != nil {
+			ctx.WritePlain(" ")
+			if err := n.Order.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occur while restore AggregateFuncExpr.Args Order")
 			}
 		}
 		ctx.WriteKeyWord(" SEPARATOR ")
@@ -755,6 +763,13 @@ func (n *AggregateFuncExpr) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.Args[i] = node.(ExprNode)
+	}
+	if n.Order != nil {
+		node, ok := n.Order.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Order = node.(*OrderByClause)
 	}
 	return v.Leave(n)
 }
