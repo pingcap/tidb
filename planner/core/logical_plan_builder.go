@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
@@ -143,6 +144,16 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 		newFunc, err := aggregation.NewAggFuncDesc(b.ctx, aggFunc.F, newArgList, aggFunc.Distinct)
 		if err != nil {
 			return nil, nil, err
+		}
+		if aggFunc.Order != nil {
+			for _, byItem := range aggFunc.Order.Items {
+				newByItem, np, err := b.rewrite(ctx, byItem.Expr, p, nil, true)
+				if err != nil {
+					return nil, nil, err
+				}
+				p = np
+				newFunc.ByItems = append(newFunc.ByItems, &util.ByItems{Expr: newByItem, Desc: byItem.Desc})
+			}
 		}
 		combined := false
 		for j, oldFunc := range plan4Agg.AggFuncs {
@@ -1164,30 +1175,6 @@ func (b *PlanBuilder) buildUnionAll(ctx context.Context, subPlan []LogicalPlan) 
 	return u
 }
 
-// ByItems wraps a "by" item.
-type ByItems struct {
-	Expr expression.Expression
-	Desc bool
-}
-
-// String implements fmt.Stringer interface.
-func (by *ByItems) String() string {
-	if by.Desc {
-		return fmt.Sprintf("%s true", by.Expr)
-	}
-	return by.Expr.String()
-}
-
-// Clone makes a copy of ByItems.
-func (by *ByItems) Clone() *ByItems {
-	return &ByItems{Expr: by.Expr.Clone(), Desc: by.Desc}
-}
-
-// Equal checks whether two ByItems are equal.
-func (by *ByItems) Equal(ctx sessionctx.Context, other *ByItems) bool {
-	return by.Expr.Equal(ctx, other.Expr) && by.Desc == other.Desc
-}
-
 // itemTransformer transforms ParamMarkerExpr to PositionExpr in the context of ByItem
 type itemTransformer struct {
 }
@@ -1212,7 +1199,7 @@ func (b *PlanBuilder) buildSort(ctx context.Context, p LogicalPlan, byItems []*a
 		b.curClause = orderByClause
 	}
 	sort := LogicalSort{}.Init(b.ctx, b.getSelectOffset())
-	exprs := make([]*ByItems, 0, len(byItems))
+	exprs := make([]*util.ByItems, 0, len(byItems))
 	transformer := &itemTransformer{}
 	for _, item := range byItems {
 		newExpr, _ := item.Expr.Accept(transformer)
@@ -1223,7 +1210,7 @@ func (b *PlanBuilder) buildSort(ctx context.Context, p LogicalPlan, byItems []*a
 		}
 
 		p = np
-		exprs = append(exprs, &ByItems{Expr: it, Desc: item.Desc})
+		exprs = append(exprs, &util.ByItems{Expr: it, Desc: item.Desc})
 	}
 	sort.ByItems = exprs
 	sort.SetChildren(p)

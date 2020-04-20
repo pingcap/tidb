@@ -97,6 +97,9 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 	var selfUsedCols []*expression.Column
 	for _, aggrFunc := range la.AggFuncs {
 		selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, aggrFunc.Args, nil)
+		for _, byItem := range aggrFunc.ByItems {
+			selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, []expression.Expression{byItem.Expr}, nil)
+		}
 	}
 	if len(la.AggFuncs) == 0 {
 		// If all the aggregate functions are pruned, we should add an aggregate function to keep the correctness.

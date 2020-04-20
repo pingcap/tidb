@@ -175,7 +175,7 @@ func (a *maxMinEliminator) eliminateSingleMaxMin(agg *LogicalAggregation) *Logic
 		desc := f.Name == ast.AggFuncMax
 		// Compose Sort operator.
 		sort := LogicalSort{}.Init(ctx, agg.blockOffset)
-		sort.ByItems = append(sort.ByItems, &ByItems{f.Args[0], desc})
+		sort.ByItems = append(sort.ByItems, &util.ByItems{f.Args[0], desc})
 		sort.SetChildren(child)
 		child = sort
 	}
