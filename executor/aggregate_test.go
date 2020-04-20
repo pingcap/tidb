@@ -503,6 +503,7 @@ func (s *testSuiteAgg) TestGroupConcatAggr(c *C) {
 
 	tk.MustExec(fmt.Sprintf("set session group_concat_max_len=%v", math.MaxUint32))
 
+	// test varchar table
 	tk.MustExec("drop table if exists test2;")
 	tk.MustExec("create table test2(id varchar(20), name varchar(20));")
 	tk.MustExec("insert into test2 select * from test;")
@@ -514,6 +515,25 @@ func (s *testSuiteAgg) TestGroupConcatAggr(c *C) {
 
 	result = tk.MustQuery("select group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test2;")
 	result.Check(testkit.Rows("500++30++200++20++20++10 3--1--3--1--2--1"))
+
+	// test partition table
+	tk.MustExec("drop table if exists ptest;")
+	tk.MustExec("CREATE TABLE ptest (id int,name int) PARTITION BY RANGE ( id ) " +
+		"(PARTITION `p0` VALUES LESS THAN (2), PARTITION `p1` VALUES LESS THAN (11))")
+	tk.MustExec("insert into ptest select * from test;")
+
+	for i := 0; i <= 1; i++ {
+		for j := 0; j <= 1; j++ {
+			tk.MustExec(fmt.Sprintf("set session tidb_opt_distinct_agg_push_down = %v", i))
+			tk.MustExec(fmt.Sprintf("set session tidb_opt_agg_push_down = %v", j))
+
+			result = tk.MustQuery("select /*+ agg_to_cop */ group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from ptest;")
+			result.Check(testkit.Rows("500++200++30++20++20++10 3--3--1--1--2--1"))
+
+			result = tk.MustQuery("select /*+ agg_to_cop */ group_concat(distinct name order by id desc, name asc) from ptest;")
+			result.Check(testkit.Rows("200,500,10,20,30"))
+		}
+	}
 
 	// issue #9920
 	tk.MustQuery("select group_concat(123, null)").Check(testkit.Rows("<nil>"))
