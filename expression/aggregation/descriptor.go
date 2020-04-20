@@ -85,6 +85,7 @@ func (a *AggFuncDesc) Equal(ctx sessionctx.Context, other *AggFuncDesc) bool {
 func (a *AggFuncDesc) Clone() *AggFuncDesc {
 	clone := *a
 	clone.baseFuncDesc = *a.baseFuncDesc.clone()
+	clone.ByItems = make([]*util.ByItems, len(a.ByItems))
 	for i, byItem := range a.ByItems {
 		clone.ByItems[i] = byItem.Clone()
 	}
