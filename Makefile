@@ -31,7 +31,6 @@ GOBUILDCOVERAGE := GOPATH=$(GOPATH) cd tidb-server; $(GO) test -coverpkg="../...
 GOTEST          := $(GO) test -p $(P)
 OVERALLS        := GO111MODULE=on overalls
 STATICCHECK     := GO111MODULE=on staticcheck
-UNCONVERT       := GO111MODULE=on unconvert
 
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
@@ -113,6 +112,10 @@ errcheck:tools/bin/errcheck
 	@echo "errcheck"
 	@GO111MODULE=on tools/bin/errcheck -exclude ./tools/check/errcheck_excludes.txt -ignoretests -blank $(PACKAGES)
 
+unconvert:tools/bin/unconvert
+	@echo "unconvert check"
+	@GO111MODULE=on tools/bin/unconvert ./...
+
 gogenerate:
 	@echo "go generate ./..."
 	./tools/check/check-gogenerate.sh
@@ -128,10 +131,6 @@ vet:
 staticcheck:
 	$(GO) get honnef.co/go/tools/cmd/staticcheck
 	$(STATICCHECK) ./...
-
-unconvert:
-	$(GO) get github.com/mdempsky/unconvert
-	$(UNCONVERT) ./...
 
 tidy:
 	@echo "go mod tidy"
@@ -287,6 +286,10 @@ tools/bin/gosec: tools/check/go.mod
 tools/bin/errcheck: tools/check/go.mod
 	cd tools/check; \
 	$(GO) build -o ../bin/errcheck github.com/kisielk/errcheck
+
+tools/bin/unconvert: tools/check/go.mod
+	cd tools/check; \
+	$(GO) build -o ../bin/unconvert github.com/mdempsky/unconvert
 
 tools/bin/failpoint-ctl: go.mod
 	$(GO) build -o $@ github.com/pingcap/failpoint/failpoint-ctl
