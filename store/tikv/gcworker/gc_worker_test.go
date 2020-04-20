@@ -150,6 +150,18 @@ func (s *testGCWorkerSuite) mustGetMinServiceSafePointFromPd(c *C) uint64 {
 	return minSafePoint
 }
 
+func (s *testGCWorkerSuite) mustUpdateServiceGCSafePoint(c *C, serviceID string, safePoint, expectedMinSafePoint uint64) {
+	minSafePoint, err := s.pdClient.UpdateServiceGCSafePoint(context.Background(), serviceID, 0, safePoint)
+	c.Assert(err, IsNil)
+	c.Assert(minSafePoint, Equals, expectedMinSafePoint)
+}
+
+func (s *testGCWorkerSuite) mustSetTiDBServiceSafePoint(c *C, safePoint, expectedMinSafePoint uint64) {
+	minSafePoint, err := s.gcWorker.setTiDBServiceSafePoint(context.Background(), safePoint)
+	c.Assert(err, IsNil)
+	c.Assert(minSafePoint, Equals, expectedMinSafePoint)
+}
+
 // gcProbe represents a key that contains multiple versions, one of which should be collected. Execution of GC with
 // greater ts will be detected, but it may not work properly if there are newer versions of the key.
 // This is not used to check the correctness of GC algorithm, but only for checking whether GC has been executed on the
@@ -831,18 +843,6 @@ func (s *testGCWorkerSuite) TestRunGCJob(c *C) {
 	c.Assert(etcdSafePoint, Equals, safePoint)
 }
 
-func (s *testGCWorkerSuite) mustSetTiDBServiceSafePoint(c *C, safePoint, expectedMinSafePoint uint64) {
-	minSafePoint, err := s.gcWorker.setTiDBServiceSafePoint(context.Background(), safePoint)
-	c.Assert(err, IsNil)
-	c.Assert(minSafePoint, Equals, expectedMinSafePoint)
-}
-
-func (s *testGCWorkerSuite) mustUpdateServiceGCSafePoint(c *C, serviceID string, safePoint, expectedMinSafePoint uint64) {
-	minSafePoint, err := s.pdClient.UpdateServiceGCSafePoint(context.Background(), serviceID, 0, safePoint)
-	c.Assert(err, IsNil)
-	c.Assert(minSafePoint, Equals, expectedMinSafePoint)
-}
-
 func (s *testGCWorkerSuite) TestSetServiceSafePoint(c *C) {
 	// SafePoint calculations are based on time rather than ts value.
 	safePoint := s.mustAllocTs(c)
@@ -866,12 +866,14 @@ func (s *testGCWorkerSuite) TestSetServiceSafePoint(c *C) {
 	// Returns the last service safePoint that were uploaded.
 	s.mustUpdateServiceGCSafePoint(c, "svc1", safePoint-10, safePoint-100)
 	s.mustSetTiDBServiceSafePoint(c, safePoint, safePoint-10)
-	c.Assert(s.mustGetMinServiceSafePointFromPd(c), Equals, safePoint)
+	c.Assert(s.mustGetMinServiceSafePointFromPd(c), Equals, safePoint-10)
 
 	// TODO: Test removing a safePoint.
 
 	// Test the case when there are many safePoints.
 	safePoint += 100
+	// Currently it doesn't support removing.
+	s.mustUpdateServiceGCSafePoint(c, "svc1", safePoint+10, safePoint-100)
 	for i := 0; i < 10; i++ {
 		svcName := fmt.Sprintf("svc%d", i)
 		s.mustUpdateServiceGCSafePoint(c, svcName, safePoint+uint64(i)*10, safePoint-100)
