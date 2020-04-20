@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -310,13 +311,14 @@ func (is *InfoSyncer) getTopologyInfo() topologyInfo {
 	if err != nil {
 		s = ""
 	}
+	dir := path.Dir(s)
 	return topologyInfo{
 		ServerVersionInfo: ServerVersionInfo{
 			Version: mysql.TiDBReleaseVersion,
 			GitHash: is.info.ServerVersionInfo.GitHash,
 		},
 		StatusPort:     is.info.StatusPort,
-		DeployPath:     s,
+		DeployPath:     dir,
 		StartTimestamp: is.info.StartTimestamp,
 	}
 }
