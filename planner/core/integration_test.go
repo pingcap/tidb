@@ -814,8 +814,6 @@ func (s *testIntegrationSuite) TestIssue15846(c *C) {
 	tk.MustExec("INSERT INTO t0(t0) VALUES (NULL), (NULL);")
 	tk.MustQuery("SELECT t1.c0 FROM t1 LEFT JOIN t0 ON 1;").Check(testkit.Rows("0", "0"))
 }
-<<<<<<< HEAD
-=======
 
 func (s *testIntegrationSuite) TestFloorUnixTimestampPruning(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -854,4 +852,3 @@ func (s *testIntegrationSuite) TestIssue16290And16292(c *C) {
 		tk.MustQuery("select count(distinct b) from (select * from t ta union all select * from t tb) t;").Check(testkit.Rows("1"))
 	}
 }
->>>>>>> d8e6cf8... planner/core: support partition pruning for partition expression floor(unix_timestamp()) (#16402)
