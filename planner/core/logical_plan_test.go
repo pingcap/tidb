@@ -2744,9 +2744,10 @@ func (s *testPlanSuite) TestSimplyOuterJoinWithOnlyOuterExpr(c *C) {
 	c.Assert(err, IsNil)
 	Preprocess(s.ctx, stmt, s.is)
 	builder := &PlanBuilder{
-		ctx:       MockContext(),
-		is:        s.is,
-		colMapper: make(map[*ast.ColumnNameExpr]int),
+		ctx:           MockContext(),
+		is:            s.is,
+		colMapper:     make(map[*ast.ColumnNameExpr]int),
+		hintProcessor: &BlockHintProcessor{},
 	}
 	p, err := builder.Build(ctx, stmt)
 	c.Assert(err, IsNil)
