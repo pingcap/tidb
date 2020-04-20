@@ -483,6 +483,9 @@ func (s *testSuiteAgg) TestGroupConcatAggr(c *C) {
 	result = tk.MustQuery("select group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;")
 	result.Check(testkit.Rows("500++200++30++20++20++10 3--3--1--1--2--1"))
 
+	result = tk.MustQuery("select group_concat(distinct name order by id desc, name asc) from test;")
+	result.Check(testkit.Rows("200,500,10,20,30"))
+
 	expected := "3--3--1--1--2--1"
 	for maxLen := 4; maxLen < len(expected); maxLen++ {
 		tk.MustExec(fmt.Sprintf("set session group_concat_max_len=%v", maxLen))
