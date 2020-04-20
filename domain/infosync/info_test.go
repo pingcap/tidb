@@ -129,6 +129,17 @@ func TestTopology(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	s, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir := path.Dir(s)
+
+	if topo.DeployPath != dir {
+		t.Fatal("DeployPath not match expected path")
+	}
+
 	if topo.StartTimestamp != 1282967700000 {
 		t.Fatal("start_timestamp of topology info does not match")
 	}
@@ -161,16 +172,5 @@ func TestTopology(t *testing.T) {
 	}
 	if !ttlExists {
 		t.Fatal("ttl non-exists")
-	}
-
-	s, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	dir := path.Dir(s)
-
-	if info.getTopologyInfo().DeployPath != dir {
-		t.Fatal("DeployPath not match expected path")
 	}
 }
