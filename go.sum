@@ -248,8 +248,8 @@ github.com/pingcap/log v0.0.0-20191012051959-b742a5d432e9 h1:AJD9pZYm72vMgPcQDww
 github.com/pingcap/log v0.0.0-20191012051959-b742a5d432e9/go.mod h1:4rbK1p9ILyIfb6hU7OG2CiWSqMXnp3JMbiaVJ6mvoY8=
 github.com/pingcap/log v0.0.0-20200117041106-d28c14d3b1cd h1:CV3VsP3Z02MVtdpTMfEgRJ4T9NGgGTxdHpJerent7rM=
 github.com/pingcap/log v0.0.0-20200117041106-d28c14d3b1cd/go.mod h1:4rbK1p9ILyIfb6hU7OG2CiWSqMXnp3JMbiaVJ6mvoY8=
-github.com/pingcap/parser v3.1.0-beta.1.0.20200318061433-f0b8f6cdca0d+incompatible h1:+Jibmc9uklKz9/prpBggFyjZpqRM8phc1AOOJGxkP48=
-github.com/pingcap/parser v3.1.0-beta.1.0.20200318061433-f0b8f6cdca0d+incompatible/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
+github.com/pingcap/parser v3.1.0-beta.2.0.20200420103716-1679ace3c5e4+incompatible h1:5QPhy9X4nEVdcua5g8gqC6ub7gLVDq34veqOergOwpA=
+github.com/pingcap/parser v3.1.0-beta.2.0.20200420103716-1679ace3c5e4+incompatible/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
 github.com/pingcap/pd/v3 v3.1.0-beta.2.0.20200312100832-1206736bd050 h1:mxPdR0pxnUcRfRGX2JnaLyAd9SZWeR42SzvMp4Zv3YI=
 github.com/pingcap/pd/v3 v3.1.0-beta.2.0.20200312100832-1206736bd050/go.mod h1:0HfF1LfWLMuGpui0PKhGvkXxfjv1JslMRY6B+cae3dg=
 github.com/pingcap/tidb-tools v4.0.0-beta.1.0.20200317092225-ed6b2a87af54+incompatible h1:tYADqdmWwgDOwf/qEN0trJAy6H3c3Tt/QZx1z4qVrRQ=
@@ -324,8 +324,6 @@ github.com/swaggo/swag v1.6.3/go.mod h1:wcc83tB4Mb2aNiL/HP4MFeQdpHUrca+Rp/DRNgWA
 github.com/swaggo/swag v1.6.5/go.mod h1:Y7ZLSS0d0DdxhWGVhQdu+Bu1QhaF5k0RD7FKdiAykeY=
 github.com/syndtr/goleveldb v0.0.0-20180815032940-ae2bd5eed72d h1:4J9HCZVpvDmj2tiKGSTUnb3Ok/9CEQb9oqu9LHKQQpc=
 github.com/syndtr/goleveldb v0.0.0-20180815032940-ae2bd5eed72d/go.mod h1:Z4AUp2Km+PwemOoO/VB5AOx9XSsIItzFjoJlOSiYmn0=
-github.com/tangenta/parser v0.0.0-20200414071829-2eb65d9409e5 h1:/ovS0UNx7JPqJNmH/1OyNjrCxsLjW2/oahV4tSU0+Jo=
-github.com/tangenta/parser v0.0.0-20200414071829-2eb65d9409e5/go.mod h1:oSfJIZa9GejzkSyzPXTNY6GyTKbkaTPNzjN36yDKmak=
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJfDRtkanvQPiooDH8HvJ2FBh+iKT/OmiQQ=
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
 github.com/tmc/grpc-websocket-proxy v0.0.0-20170815181823-89b8d40f7ca8/go.mod h1:ncp9v5uamzpCO7NfCPTXjqaC+bZgJeR0sMTm6dMHP7U=
