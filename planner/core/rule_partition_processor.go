@@ -635,15 +635,8 @@ func extractDataForPrune(sctx sessionctx.Context, expr expression.Expression, pa
 	var constExpr expression.Expression
 	if partFn != nil {
 		// If the partition expression is fn(col), change constExpr to fn(constExpr).
-<<<<<<< HEAD
-		// No 'copy on write' for the expression here, this is a dangerous operation.
-		args := partFn.GetArgs()
-		args[0] = con
-		constExpr = partFn
-=======
-		constExpr = replaceColumnWithConst(p.partFn, con)
+		constExpr = replaceColumnWithConst(partFn, con)
 
->>>>>>> d8e6cf8... planner/core: support partition pruning for partition expression floor(unix_timestamp()) (#16402)
 		// Sometimes we need to relax the condition, < to <=, > to >=.
 		// For example, the following case doesn't hold:
 		// col < '2020-02-11 17:34:11' => to_days(col) < to_days(2020-02-11 17:34:11)
