@@ -511,6 +511,8 @@ func GetZeroValue(col *model.ColumnInfo) types.Datum {
 	case mysql.TypeDouble:
 		d.SetFloat64(0)
 	case mysql.TypeNewDecimal:
+		d.SetLength(col.Flen)
+		d.SetFrac(col.Decimal)
 		d.SetMysqlDecimal(new(types.MyDecimal))
 	case mysql.TypeString:
 		if col.Flen > 0 && col.Charset == charset.CharsetBin {
