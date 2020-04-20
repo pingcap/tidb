@@ -687,7 +687,7 @@
       },
       {
         "SQL": "select a from t where not a",
-        "Best": "TableReader(Table(t))"
+        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]]->Sel([not(test.t.a)]))"
       },
       {
         "SQL": "select a from t where c in (1)",
