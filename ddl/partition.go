@@ -46,18 +46,8 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.CreateTableStmt) (*m
 		return nil, nil
 	}
 
-<<<<<<< HEAD
-	// force-discard the unsupported types, even when @@tidb_enable_table_partition = 'on'
-	switch s.Partition.Tp {
-	case model.PartitionTypeKey:
-		// can't create a warning for KEY partition, it will fail an integration test :/
-		return nil, nil
-	case model.PartitionTypeList, model.PartitionTypeSystemTime:
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errUnsupportedCreatePartition)
-=======
 	if ctx.GetSessionVars().EnableTablePartition == "off" {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(errTablePartitionDisabled)
->>>>>>> f033927... sessionctx/variable,ddl: change @@tidb_enable_table_partition default value and update the semantic (#16497)
 		return nil, nil
 	}
 
@@ -80,12 +70,8 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.CreateTableStmt) (*m
 	}
 
 	if !enable {
-<<<<<<< HEAD
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errTablePartitionDisabled)
-=======
 		ctx.GetSessionVars().StmtCtx.AppendWarning(errUnsupportedCreatePartition)
 		return nil, nil
->>>>>>> f033927... sessionctx/variable,ddl: change @@tidb_enable_table_partition default value and update the semantic (#16497)
 	}
 
 	pi := &model.PartitionInfo{
