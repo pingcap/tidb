@@ -23,6 +23,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1317,7 +1318,7 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 					types.NewMysqlEnumDatum(types.Enum{Name: "n", Value: 2}),
 				}
 			}
-			baseFunc, fts, input, output := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
+			baseFunc, fts, input, _ := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
 			baseFuncName := fmt.Sprintf("%v", reflect.TypeOf(baseFunc))
 			tmp := strings.Split(baseFuncName, ".")
 			baseFuncName = tmp[len(tmp)-1]
@@ -1330,132 +1331,146 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 			commentf := func(row int) CommentInterface {
 				return Commentf("func: %v, case %+v, row: %v, rowData: %v", baseFuncName, testCase, row, input.GetRow(row).GetDatumRow(fts))
 			}
-			it := chunk.NewIterator4Chunk(input)
-			i := 0
-			var vecWarnCnt uint16
-			switch testCase.retEvalType {
-			case types.ETInt:
-				err := baseFunc.vecEvalInt(input, output)
-				c.Assert(err, IsNil, Commentf("func: %v, case: %+v", baseFuncName, testCase))
-				// do not forget to call ResizeXXX/ReserveXXX
-				c.Assert(getColumnLen(output, testCase.retEvalType), Equals, input.NumRows())
-				vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
-				i64s := output.Int64s()
-				for row := it.Begin(); row != it.End(); row = it.Next() {
-					val, isNull, err := baseFunc.evalInt(row)
-					c.Assert(err, IsNil, commentf(i))
-					c.Assert(isNull, Equals, output.IsNull(i), commentf(i))
-					if !isNull {
-						c.Assert(val, Equals, i64s[i], commentf(i))
+			// to guarantee thread-safe
+			buildinFun := func() {
+				it := chunk.NewIterator4Chunk(input)
+				i := 0
+				output := chunk.NewColumn(eType2FieldType(testCase.retEvalType), testCase.chunkSize)
+				// Mess up the output to make sure vecEvalXXX to call ResizeXXX/ReserveXXX itself.
+				output.AppendNull()
+				var vecWarnCnt uint16
+				switch testCase.retEvalType {
+				case types.ETInt:
+					err := baseFunc.vecEvalInt(input, output)
+					c.Assert(err, IsNil, Commentf("func: %v, case: %+v", baseFuncName, testCase))
+					// do not forget to call ResizeXXX/ReserveXXX
+					c.Assert(getColumnLen(output, testCase.retEvalType), Equals, input.NumRows())
+					vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
+					i64s := output.Int64s()
+					for row := it.Begin(); row != it.End(); row = it.Next() {
+						val, isNull, err := baseFunc.evalInt(row)
+						c.Assert(err, IsNil, commentf(i))
+						c.Assert(isNull, Equals, output.IsNull(i), commentf(i))
+						if !isNull {
+							c.Assert(val, Equals, i64s[i], commentf(i))
+						}
+						i++
 					}
-					i++
-				}
-			case types.ETReal:
-				err := baseFunc.vecEvalReal(input, output)
-				c.Assert(err, IsNil, Commentf("func: %v, case: %+v", baseFuncName, testCase))
-				// do not forget to call ResizeXXX/ReserveXXX
-				c.Assert(getColumnLen(output, testCase.retEvalType), Equals, input.NumRows())
-				vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
-				f64s := output.Float64s()
-				for row := it.Begin(); row != it.End(); row = it.Next() {
-					val, isNull, err := baseFunc.evalReal(row)
-					c.Assert(err, IsNil, commentf(i))
-					c.Assert(isNull, Equals, output.IsNull(i), commentf(i))
-					if !isNull {
-						c.Assert(val, Equals, f64s[i], commentf(i))
+				case types.ETReal:
+					err := baseFunc.vecEvalReal(input, output)
+					c.Assert(err, IsNil, Commentf("func: %v, case: %+v", baseFuncName, testCase))
+					// do not forget to call ResizeXXX/ReserveXXX
+					c.Assert(getColumnLen(output, testCase.retEvalType), Equals, input.NumRows())
+					vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
+					f64s := output.Float64s()
+					for row := it.Begin(); row != it.End(); row = it.Next() {
+						val, isNull, err := baseFunc.evalReal(row)
+						c.Assert(err, IsNil, commentf(i))
+						c.Assert(isNull, Equals, output.IsNull(i), commentf(i))
+						if !isNull {
+							c.Assert(val, Equals, f64s[i], commentf(i))
+						}
+						i++
 					}
-					i++
-				}
-			case types.ETDecimal:
-				err := baseFunc.vecEvalDecimal(input, output)
-				c.Assert(err, IsNil, Commentf("func: %v, case: %+v", baseFuncName, testCase))
-				// do not forget to call ResizeXXX/ReserveXXX
-				c.Assert(getColumnLen(output, testCase.retEvalType), Equals, input.NumRows())
-				vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
-				d64s := output.Decimals()
-				for row := it.Begin(); row != it.End(); row = it.Next() {
-					val, isNull, err := baseFunc.evalDecimal(row)
-					c.Assert(err, IsNil, commentf(i))
-					c.Assert(isNull, Equals, output.IsNull(i), commentf(i))
-					if !isNull {
-						c.Assert(*val, Equals, d64s[i], commentf(i))
+				case types.ETDecimal:
+					err := baseFunc.vecEvalDecimal(input, output)
+					c.Assert(err, IsNil, Commentf("func: %v, case: %+v", baseFuncName, testCase))
+					// do not forget to call ResizeXXX/ReserveXXX
+					c.Assert(getColumnLen(output, testCase.retEvalType), Equals, input.NumRows())
+					vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
+					d64s := output.Decimals()
+					for row := it.Begin(); row != it.End(); row = it.Next() {
+						val, isNull, err := baseFunc.evalDecimal(row)
+						c.Assert(err, IsNil, commentf(i))
+						c.Assert(isNull, Equals, output.IsNull(i), commentf(i))
+						if !isNull {
+							c.Assert(*val, Equals, d64s[i], commentf(i))
+						}
+						i++
 					}
-					i++
-				}
-			case types.ETDatetime, types.ETTimestamp:
-				err := baseFunc.vecEvalTime(input, output)
-				c.Assert(err, IsNil, Commentf("func: %v, case: %+v", baseFuncName, testCase))
-				// do not forget to call ResizeXXX/ReserveXXX
-				c.Assert(getColumnLen(output, testCase.retEvalType), Equals, input.NumRows())
-				vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
-				t64s := output.Times()
-				for row := it.Begin(); row != it.End(); row = it.Next() {
-					val, isNull, err := baseFunc.evalTime(row)
-					c.Assert(err, IsNil, commentf(i))
-					c.Assert(isNull, Equals, output.IsNull(i), commentf(i))
-					if !isNull {
-						c.Assert(val, Equals, t64s[i], commentf(i))
+				case types.ETDatetime, types.ETTimestamp:
+					err := baseFunc.vecEvalTime(input, output)
+					c.Assert(err, IsNil, Commentf("func: %v, case: %+v", baseFuncName, testCase))
+					// do not forget to call ResizeXXX/ReserveXXX
+					c.Assert(getColumnLen(output, testCase.retEvalType), Equals, input.NumRows())
+					vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
+					t64s := output.Times()
+					for row := it.Begin(); row != it.End(); row = it.Next() {
+						val, isNull, err := baseFunc.evalTime(row)
+						c.Assert(err, IsNil, commentf(i))
+						c.Assert(isNull, Equals, output.IsNull(i), commentf(i))
+						if !isNull {
+							c.Assert(val, Equals, t64s[i], commentf(i))
+						}
+						i++
 					}
-					i++
-				}
-			case types.ETDuration:
-				err := baseFunc.vecEvalDuration(input, output)
-				c.Assert(err, IsNil, Commentf("func: %v, case: %+v", baseFuncName, testCase))
-				// do not forget to call ResizeXXX/ReserveXXX
-				c.Assert(getColumnLen(output, testCase.retEvalType), Equals, input.NumRows())
-				vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
-				d64s := output.GoDurations()
-				for row := it.Begin(); row != it.End(); row = it.Next() {
-					val, isNull, err := baseFunc.evalDuration(row)
-					c.Assert(err, IsNil, commentf(i))
-					c.Assert(isNull, Equals, output.IsNull(i), commentf(i))
-					if !isNull {
-						c.Assert(val.Duration, Equals, d64s[i], commentf(i))
+				case types.ETDuration:
+					err := baseFunc.vecEvalDuration(input, output)
+					c.Assert(err, IsNil, Commentf("func: %v, case: %+v", baseFuncName, testCase))
+					// do not forget to call ResizeXXX/ReserveXXX
+					c.Assert(getColumnLen(output, testCase.retEvalType), Equals, input.NumRows())
+					vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
+					d64s := output.GoDurations()
+					for row := it.Begin(); row != it.End(); row = it.Next() {
+						val, isNull, err := baseFunc.evalDuration(row)
+						c.Assert(err, IsNil, commentf(i))
+						c.Assert(isNull, Equals, output.IsNull(i), commentf(i))
+						if !isNull {
+							c.Assert(val.Duration, Equals, d64s[i], commentf(i))
+						}
+						i++
 					}
-					i++
-				}
-			case types.ETJson:
-				err := baseFunc.vecEvalJSON(input, output)
-				c.Assert(err, IsNil, Commentf("func: %v, case: %+v", baseFuncName, testCase))
-				// do not forget to call ResizeXXX/ReserveXXX
-				c.Assert(getColumnLen(output, testCase.retEvalType), Equals, input.NumRows())
-				vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
-				for row := it.Begin(); row != it.End(); row = it.Next() {
-					val, isNull, err := baseFunc.evalJSON(row)
-					c.Assert(err, IsNil, commentf(i))
-					c.Assert(isNull, Equals, output.IsNull(i), commentf(i))
-					if !isNull {
-						cmp := json.CompareBinary(val, output.GetJSON(i))
-						c.Assert(cmp, Equals, 0, commentf(i))
+				case types.ETJson:
+					err := baseFunc.vecEvalJSON(input, output)
+					c.Assert(err, IsNil, Commentf("func: %v, case: %+v", baseFuncName, testCase))
+					// do not forget to call ResizeXXX/ReserveXXX
+					c.Assert(getColumnLen(output, testCase.retEvalType), Equals, input.NumRows())
+					vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
+					for row := it.Begin(); row != it.End(); row = it.Next() {
+						val, isNull, err := baseFunc.evalJSON(row)
+						c.Assert(err, IsNil, commentf(i))
+						c.Assert(isNull, Equals, output.IsNull(i), commentf(i))
+						if !isNull {
+							cmp := json.CompareBinary(val, output.GetJSON(i))
+							c.Assert(cmp, Equals, 0, commentf(i))
+						}
+						i++
 					}
-					i++
-				}
-			case types.ETString:
-				err := baseFunc.vecEvalString(input, output)
-				c.Assert(err, IsNil, Commentf("func: %v, case: %+v", baseFuncName, testCase))
-				// do not forget to call ResizeXXX/ReserveXXX
-				c.Assert(getColumnLen(output, testCase.retEvalType), Equals, input.NumRows())
-				vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
-				for row := it.Begin(); row != it.End(); row = it.Next() {
-					val, isNull, err := baseFunc.evalString(row)
-					c.Assert(err, IsNil, commentf(i))
-					c.Assert(isNull, Equals, output.IsNull(i), commentf(i))
-					if !isNull {
-						c.Assert(val, Equals, output.GetString(i), commentf(i))
+				case types.ETString:
+					err := baseFunc.vecEvalString(input, output)
+					c.Assert(err, IsNil, Commentf("func: %v, case: %+v", baseFuncName, testCase))
+					// do not forget to call ResizeXXX/ReserveXXX
+					c.Assert(getColumnLen(output, testCase.retEvalType), Equals, input.NumRows())
+					vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
+					for row := it.Begin(); row != it.End(); row = it.Next() {
+						val, isNull, err := baseFunc.evalString(row)
+						c.Assert(err, IsNil, commentf(i))
+						c.Assert(isNull, Equals, output.IsNull(i), commentf(i))
+						if !isNull {
+							c.Assert(val, Equals, output.GetString(i), commentf(i))
+						}
+						i++
 					}
-					i++
+				default:
+					c.Fatal(fmt.Sprintf("evalType=%v is not supported", testCase.retEvalType))
 				}
-			default:
-				c.Fatal(fmt.Sprintf("evalType=%v is not supported", testCase.retEvalType))
+				totalWarns := ctx.GetSessionVars().StmtCtx.WarningCount()
+				c.Assert(2*vecWarnCnt, Equals, totalWarns)
+				warns := ctx.GetSessionVars().StmtCtx.GetWarnings()
+				for i := 0; i < int(vecWarnCnt); i++ {
+					c.Assert(terror.ErrorEqual(warns[i].Err, warns[i+int(vecWarnCnt)].Err), IsTrue)
+				}
 			}
-
-			// check warnings
-			totalWarns := ctx.GetSessionVars().StmtCtx.WarningCount()
-			c.Assert(2*vecWarnCnt, Equals, totalWarns)
-			warns := ctx.GetSessionVars().StmtCtx.GetWarnings()
-			for i := 0; i < int(vecWarnCnt); i++ {
-				c.Assert(terror.ErrorEqual(warns[i].Err, warns[i+int(vecWarnCnt)].Err), IsTrue)
+			wg := sync.WaitGroup{}
+			concurrency := 10
+			wg.Add(concurrency)
+			for i := 0; i < concurrency; i++ {
+				go func() {
+					defer wg.Done()
+					buildinFun()
+				}()
 			}
+			wg.Wait()
 		}
 	}
 }

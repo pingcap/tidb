@@ -14,6 +14,8 @@
 package expression
 
 import (
+	"sync"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/terror"
@@ -21,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/testutil"
-	"sync"
 )
 
 func (s *testEvaluatorSuite) TestLike(c *C) {
@@ -42,6 +43,7 @@ func (s *testEvaluatorSuite) TestLike(c *C) {
 	wg.Add(concurrency)
 	for i := 0; i < concurrency; i++ {
 		go func() {
+			defer wg.Done()
 			for _, tt := range tests {
 				fc := funcs[ast.Like]
 				f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tt.input, tt.pattern, 0)))
@@ -50,7 +52,6 @@ func (s *testEvaluatorSuite) TestLike(c *C) {
 				c.Assert(err, IsNil)
 				c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.match))
 			}
-			defer wg.Done()
 		}()
 	}
 	wg.Wait()
