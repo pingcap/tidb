@@ -377,6 +377,8 @@ const (
 	version41 = 41
 	// version42 add storeType and reason column in expr_pushdown_blacklist
 	version42 = 42
+	// version43 delete tidb_isolation_read_engines from mysql.global_variables to avoid unexpected behavior after upgrade.
+	version43 = 43
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -603,6 +605,10 @@ func upgrade(s Session) {
 
 	if ver < version42 {
 		upgradeToVer42(s)
+	}
+
+	if ver < version43 {
+		upgradeToVer43(s)
 	}
 
 	updateBootstrapVer(s)
@@ -989,6 +995,10 @@ func upgradeToVer42(s Session) {
 	doReentrantDDL(s, "ALTER TABLE mysql.expr_pushdown_blacklist ADD COLUMN `store_type` char(100) NOT NULL DEFAULT 'tikv,tiflash,tidb'", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.expr_pushdown_blacklist ADD COLUMN `reason` varchar(200)", infoschema.ErrColumnExists)
 	writeDefaultExprPushDownBlacklist(s)
+}
+
+func upgradeToVer43(s Session) {
+	mustExecute(s, "DELETE FROM mysql.global_variables where variable_name = \"tidb_isolation_read_engines\"")
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
