@@ -2285,6 +2285,10 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 		return err
 	}
 
+	if len(colName) > mysql.MaxColumnNameLength {
+		return ErrTooLongIdent.GenWithStackByArgs(colName)
+	}
+
 	// If new column is a generated column, do validation.
 	// NOTE: we do check whether the column refers other generated
 	// columns occurring later in a table, but we don't handle the col offset.
@@ -2318,22 +2322,12 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 		}
 	}
 
-<<<<<<< HEAD
-	if len(colName) > mysql.MaxColumnNameLength {
-		return ErrTooLongIdent.GenWithStackByArgs(colName)
-	}
-
-	// Ignore table constraints now, maybe return error later.
-	// We use length(t.Cols()) as the default offset firstly, we will change the
-	// column's offset later.
-	col, _, err = buildColumnAndConstraint(ctx, len(t.Cols()), specNewColumn, nil, t.Meta().Charset, t.Meta().Collate, schema.Charset, schema.Collate)
-=======
 	tableCharset, tableCollate, err := ResolveCharsetCollation(
 		ast.CharsetOpt{Chs: t.Meta().Charset, Col: t.Meta().Collate},
 		ast.CharsetOpt{Chs: schema.Charset, Col: schema.Collate},
 	)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	// Ignore table constraints now, they will be checked later.
 	// We use length(t.Cols()) as the default offset firstly, we will change the column's offset later.
@@ -2345,7 +2339,6 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 		tableCharset,
 		tableCollate,
 	)
->>>>>>> 6b034d4... *: fix unexpected error when setting collate for database (#16283)
 	if err != nil {
 		return errors.Trace(err)
 	}
