@@ -123,7 +123,25 @@ func (s *testSuite) TestExplainMetricTable(c *C) {
 		`MemTableScan_5 10000.00 root table:CLUSTER_LOG start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, node_types:["high_cpu_1","high_memory_1"]`))
 }
 
+<<<<<<< HEAD
 func (s *testSuite) TestExplainForConnPlanCache(c *C) {
+=======
+func (s *testSuite) TestInspectionRuleTable(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.inspection_rules where type='inspection'")).Check(testkit.Rows(
+		`MemTableScan_5 10000.00 root table:INSPECTION_RULES node_types:["inspection"]`))
+	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.inspection_rules where type='inspection' or type='summary'")).Check(testkit.Rows(
+		`MemTableScan_5 10000.00 root table:INSPECTION_RULES node_types:["inspection","summary"]`))
+	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.inspection_rules where type='inspection' and type='summary'")).Check(testkit.Rows(
+		`MemTableScan_5 10000.00 root table:INSPECTION_RULES skip_request: true`))
+}
+
+type testPrepareSerialSuite struct {
+	*baseTestSuite
+}
+
+func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
+>>>>>>> 2a69052... test: fix unit test and make test running serially. (#16525)
 	tk := testkit.NewTestKit(c, s.store)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer func() {

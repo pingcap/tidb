@@ -124,7 +124,11 @@ var _ = Suite(&testMemTableReaderSuite{&testClusterTableBase{}})
 var _ = SerialSuites(&testFlushSuite{})
 var _ = SerialSuites(&testAutoRandomSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testClusterTableSuite{})
+<<<<<<< HEAD
 var _ = SerialSuites(&testSuite10{&baseTestSuite{}})
+=======
+var _ = SerialSuites(&testPrepareSerialSuite{&baseTestSuite{}})
+>>>>>>> 2a69052... test: fix unit test and make test running serially. (#16525)
 
 type testSuite struct{ *baseTestSuite }
 type testSuiteP1 struct{ *baseTestSuite }
