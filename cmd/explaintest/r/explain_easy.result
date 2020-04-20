@@ -751,3 +751,13 @@ label = "cop"
 }
 
 drop table if exists t;
+create table t(a int, b int, index idx_ab(a, b));
+explain select a, b from t where a in (1) order by b;
+id	count	task	operator info
+IndexReader_12	10.00	root	index:IndexScan_11
+└─IndexScan_11	10.00	cop	table:t, index:a, b, range:[1,1], keep order:true, stats:pseudo
+explain select a, b from t where a = 1 order by b;
+id	count	task	operator info
+IndexReader_12	10.00	root	index:IndexScan_11
+└─IndexScan_11	10.00	cop	table:t, index:a, b, range:[1,1], keep order:true, stats:pseudo
+drop table if exists t;
