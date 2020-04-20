@@ -125,7 +125,7 @@ const (
 )
 
 func init() {
-	GlobalDiskUsageTracker = disk.NewTracker(stringutil.StringerStr("GlobalStorageLabel"), -1)
+	GlobalDiskUsageTracker = disk.NewGlobalTrcaker(stringutil.StringerStr("GlobalStorageLabel"), -1)
 	action := &globalPanicOnExceed{}
 	GlobalDiskUsageTracker.SetActionOnExceed(action)
 }
@@ -1552,7 +1552,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars := ctx.GetSessionVars()
 	// Detach the disk tracker for the previous stmtctx from GlobalDiskUsageTracker
 	if vars.StmtCtx != nil && vars.StmtCtx.DiskTracker != nil {
-		vars.StmtCtx.DiskTracker.Detach()
+		vars.StmtCtx.DiskTracker.DetachFromGlobalTracker()
 	}
 	sc := &stmtctx.StatementContext{
 		TimeZone:    vars.Location(),
@@ -1560,7 +1560,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		DiskTracker: disk.NewTracker(stringutil.MemoizeStr(s.Text), -1),
 	}
 	if config.GetGlobalConfig().OOMUseTmpStorage && GlobalDiskUsageTracker != nil {
-		sc.DiskTracker.AttachTo(GlobalDiskUsageTracker)
+		sc.DiskTracker.AttachToGlobalTracker(GlobalDiskUsageTracker)
 	}
 	switch config.GetGlobalConfig().OOMAction {
 	case config.OOMActionCancel:
@@ -1691,6 +1691,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.SysErrorCount = errCount
 	vars.SysWarningCount = warnCount
 	vars.StmtCtx = sc
+	vars.PrevFoundInPlanCache = vars.FoundInPlanCache
+	vars.FoundInPlanCache = false
 	return
 }
 

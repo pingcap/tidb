@@ -114,6 +114,36 @@ func (s *testKeySuite) TestBasicFunc(c *C) {
 	c.Assert(IsTxnRetryableError(errors.New("test")), IsFalse)
 }
 
+func (s *testKeySuite) TestHandle(c *C) {
+	ih := IntHandle(100)
+	c.Assert(ih.IsInt(), IsTrue)
+	_, iv, _ := codec.DecodeInt(ih.Encoded())
+	c.Assert(iv, Equals, ih.IntValue())
+	ih2 := ih.Next()
+	c.Assert(ih2.IntValue(), Equals, int64(101))
+	c.Assert(ih.Equal(ih2), IsFalse)
+	c.Assert(ih.Compare(ih2), Equals, -1)
+	c.Assert(ih.String(), Equals, "100")
+
+	encoded, err := codec.EncodeKey(new(stmtctx.StatementContext), nil, types.NewIntDatum(100), types.NewStringDatum("abc"))
+	c.Assert(err, IsNil)
+	ch, err := NewCommonHandle(encoded)
+	c.Assert(err, IsNil)
+	c.Assert(ch.IsInt(), IsFalse)
+	ch2 := ch.Next()
+	c.Assert(ch.Equal(ch2), IsFalse)
+	c.Assert(ch.Compare(ch2), Equals, -1)
+	c.Assert(ch2.Encoded(), HasLen, len(ch.Encoded()))
+	c.Assert(ch.NumCols(), Equals, 2)
+	_, d, err := codec.DecodeOne(ch.EncodedCol(0))
+	c.Assert(err, IsNil)
+	c.Assert(d.GetInt64(), Equals, int64(100))
+	_, d, err = codec.DecodeOne(ch.EncodedCol(1))
+	c.Assert(err, IsNil)
+	c.Assert(d.GetString(), Equals, "abc")
+	c.Assert(ch.String(), Equals, "{100, abc}")
+}
+
 func BenchmarkIsPoint(b *testing.B) {
 	b.ReportAllocs()
 	kr := KeyRange{
