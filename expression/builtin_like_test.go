@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/testutil"
+	"sync"
 )
 
 func (s *testEvaluatorSuite) TestLike(c *C) {
@@ -36,7 +37,10 @@ func (s *testEvaluatorSuite) TestLike(c *C) {
 		{"aAb", `Aa%`, 0},
 		{"aAb", "aA_", 1},
 	}
-	for i := 0; i < 10; i++ {
+	wg := sync.WaitGroup{}
+	concurrency := 10
+	wg.Add(concurrency)
+	for i := 0; i < concurrency; i++ {
 		go func() {
 			for _, tt := range tests {
 				fc := funcs[ast.Like]
@@ -46,8 +50,10 @@ func (s *testEvaluatorSuite) TestLike(c *C) {
 				c.Assert(err, IsNil)
 				c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.match))
 			}
+			defer wg.Done()
 		}()
 	}
+	wg.Wait()
 }
 
 func (s *testEvaluatorSerialSuites) TestCILike(c *C) {

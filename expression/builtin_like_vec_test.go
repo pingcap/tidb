@@ -33,11 +33,7 @@ var vecBuiltinLikeCases = map[string][]vecExprBenchCase{
 }
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinLikeFunc(c *C) {
-	for i := 0; i < 10; i++ {
-		go func() {
-			testVectorizedBuiltinFunc(c, vecBuiltinLikeCases)
-		}()
-	}
+	testVectorizedBuiltinFunc(c, vecBuiltinLikeCases)
 }
 
 func BenchmarkVectorizedBuiltinLikeFunc(b *testing.B) {
