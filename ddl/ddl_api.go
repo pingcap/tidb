@@ -3758,7 +3758,6 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		if _, tb, err := d.getSchemaAndTableByIdent(ctx, ti); err == nil {
 			d.preSplitAndScatter(ctx, tb.Meta())
 		}
-
 	}
 
 	if !config.TableLockEnabled() {
