@@ -1332,7 +1332,7 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 				return Commentf("func: %v, case %+v, row: %v, rowData: %v", baseFuncName, testCase, row, input.GetRow(row).GetDatumRow(fts))
 			}
 			// to guarantee thread-safe
-			buildinFun := func() {
+			buildinFun := func(checkWarn bool) {
 				it := chunk.NewIterator4Chunk(input)
 				i := 0
 				output := chunk.NewColumn(eType2FieldType(testCase.retEvalType), testCase.chunkSize)
@@ -1454,20 +1454,25 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 				default:
 					c.Fatal(fmt.Sprintf("evalType=%v is not supported", testCase.retEvalType))
 				}
-				totalWarns := ctx.GetSessionVars().StmtCtx.WarningCount()
-				c.Assert(2*vecWarnCnt, Equals, totalWarns)
-				warns := ctx.GetSessionVars().StmtCtx.GetWarnings()
-				for i := 0; i < int(vecWarnCnt); i++ {
-					c.Assert(terror.ErrorEqual(warns[i].Err, warns[i+int(vecWarnCnt)].Err), IsTrue)
+				if checkWarn {
+					totalWarns := ctx.GetSessionVars().StmtCtx.WarningCount()
+					c.Assert(2*vecWarnCnt, Equals, totalWarns)
+					warns := ctx.GetSessionVars().StmtCtx.GetWarnings()
+					for i := 0; i < int(vecWarnCnt); i++ {
+						c.Assert(terror.ErrorEqual(warns[i].Err, warns[i+int(vecWarnCnt)].Err), IsTrue)
+					}
 				}
 			}
+			// single thread running to check warnings
+			buildinFun(true)
+			// concurrent running focuses on correction
 			wg := sync.WaitGroup{}
 			concurrency := 10
 			wg.Add(concurrency)
 			for i := 0; i < concurrency; i++ {
 				go func() {
 					defer wg.Done()
-					buildinFun()
+					buildinFun(false)
 				}()
 			}
 			wg.Wait()
