@@ -15,7 +15,6 @@ package statistics
 
 import (
 	"context"
-	"github.com/pingcap/tidb/tablecodec"
 	"sort"
 	"time"
 
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/fastrand"
