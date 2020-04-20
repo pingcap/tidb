@@ -181,3 +181,9 @@ drop table t;
 create table t(a int, b int);
 explain format="dot" select * from t where a < 2;
 drop table if exists t;
+
+# https://github.com/pingcap/tidb/issues/10626
+create table t(a int, b int, index idx_ab(a, b));
+explain select a, b from t where a in (1) order by b;
+explain select a, b from t where a = 1 order by b;
+drop table if exists t;
