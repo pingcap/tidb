@@ -145,12 +145,18 @@ func (s *testGCWorkerSuite) mustGetMinServiceSafePointFromPd(c *C) uint64 {
 	// current minimal safePoint, nothing will be updated and the current minimal one will be returned. So we can use
 	// this API to check the current safePoint.
 	// This function shouldn't be invoked when there's no service safePoint set.
-	minSafePoint, err := s.pdClient.UpdateServiceGCSafePoint(context.Background(), "test", 1, 0)
+	minSafePoint, err := s.pdClient.UpdateServiceGCSafePoint(context.Background(), "test", 0, 0)
 	c.Assert(err, IsNil)
 	return minSafePoint
 }
 
 func (s *testGCWorkerSuite) mustUpdateServiceGCSafePoint(c *C, serviceID string, safePoint, expectedMinSafePoint uint64) {
+	minSafePoint, err := s.pdClient.UpdateServiceGCSafePoint(context.Background(), serviceID, math.MaxInt64, safePoint)
+	c.Assert(err, IsNil)
+	c.Assert(minSafePoint, Equals, expectedMinSafePoint)
+}
+
+func (s *testGCWorkerSuite) mustRemoveServiceGCSafePoint(c *C, serviceID string, safePoint, expectedMinSafePoint uint64) {
 	minSafePoint, err := s.pdClient.UpdateServiceGCSafePoint(context.Background(), serviceID, 0, safePoint)
 	c.Assert(err, IsNil)
 	c.Assert(minSafePoint, Equals, expectedMinSafePoint)
@@ -868,12 +874,12 @@ func (s *testGCWorkerSuite) TestSetServiceSafePoint(c *C) {
 	s.mustSetTiDBServiceSafePoint(c, safePoint, safePoint-10)
 	c.Assert(s.mustGetMinServiceSafePointFromPd(c), Equals, safePoint-10)
 
-	// TODO: Test removing a safePoint.
+	// Test removing the minimum service safe point.
+	s.mustRemoveServiceGCSafePoint(c, "svc1", safePoint-10, safePoint)
+	c.Assert(s.mustGetMinServiceSafePointFromPd(c), Equals, safePoint)
 
 	// Test the case when there are many safePoints.
 	safePoint += 100
-	// Currently it doesn't support removing.
-	s.mustUpdateServiceGCSafePoint(c, "svc1", safePoint+10, safePoint-100)
 	for i := 0; i < 10; i++ {
 		svcName := fmt.Sprintf("svc%d", i)
 		s.mustUpdateServiceGCSafePoint(c, svcName, safePoint+uint64(i)*10, safePoint-100)

@@ -135,23 +135,27 @@ func (c *pdClient) UpdateGCSafePoint(ctx context.Context, safePoint uint64) (uin
 	return c.gcSafePoint, nil
 }
 
-func (c *pdClient) UpdateServiceGCSafePoint(ctx context.Context, serviceID string, _ttl int64, safePoint uint64) (uint64, error) {
+func (c *pdClient) UpdateServiceGCSafePoint(ctx context.Context, serviceID string, ttl int64, safePoint uint64) (uint64, error) {
 	c.gcSafePointMu.Lock()
 	defer c.gcSafePointMu.Unlock()
 
-	var minSafePoint uint64 = math.MaxUint64
-	for _, ssp := range c.serviceSafePoints {
-		if ssp < minSafePoint {
-			minSafePoint = ssp
+	if ttl == 0 {
+		delete(c.serviceSafePoints, serviceID)
+	} else {
+		var minSafePoint uint64 = math.MaxUint64
+		for _, ssp := range c.serviceSafePoints {
+			if ssp < minSafePoint {
+				minSafePoint = ssp
+			}
+		}
+
+		if len(c.serviceSafePoints) == 0 || minSafePoint <= safePoint {
+			c.serviceSafePoints[serviceID] = safePoint
 		}
 	}
 
-	if len(c.serviceSafePoints) == 0 || minSafePoint <= safePoint {
-		c.serviceSafePoints[serviceID] = safePoint
-	}
-
 	// The minSafePoint may have changed. Reload it.
-	minSafePoint = math.MaxUint64
+	var minSafePoint uint64 = math.MaxUint64
 	for _, ssp := range c.serviceSafePoints {
 		if ssp < minSafePoint {
 			minSafePoint = ssp

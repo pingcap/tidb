@@ -323,8 +323,8 @@ github.com/russross/blackfriday/v2 v2.0.1/go.mod h1:+Rmxgy9KzJVeS9/2gXHxylqXiyQD
 github.com/satori/go.uuid v1.2.0/go.mod h1:dA0hQrYB0VpLJoorglMZABFdXlWrHn1NEOzdhQKdks0=
 github.com/sergi/go-diff v1.0.1-0.20180205163309-da645544ed44 h1:tB9NOR21++IjLyVx3/PCPhWMwqGNCMQEH96A6dMZ/gc=
 github.com/sergi/go-diff v1.0.1-0.20180205163309-da645544ed44/go.mod h1:0CfEIISq7TuYL3j771MWULgwwjU+GofnZX9QAmXWZgo=
-github.com/shafreeck/pd/v4 v4.0.0-beta.0.20200417104248-a5a9e9733299 h1:skSqQo/j3IXzbr2wXNoF/ereiAfsvfBFkMiPEtqu1BA=
-github.com/shafreeck/pd/v4 v4.0.0-beta.0.20200417104248-a5a9e9733299/go.mod h1:GJcnaYZp2RGU4xvo3/2L1HlnaW5ffHxnpcy68PsX4sI=
+github.com/shafreeck/pd/v4 v4.0.0-beta.0.20200420105955-16d58d301e0c h1:DiGSTAD5CRE5mRBdiu2cdpophj+HXGZSYE1hMF/XF2w=
+github.com/shafreeck/pd/v4 v4.0.0-beta.0.20200420105955-16d58d301e0c/go.mod h1:GJcnaYZp2RGU4xvo3/2L1HlnaW5ffHxnpcy68PsX4sI=
 github.com/shirou/gopsutil v2.19.10+incompatible h1:lA4Pi29JEVIQIgATSeftHSY0rMGI9CLrl2ZvDLiahto=
 github.com/shirou/gopsutil v2.19.10+incompatible/go.mod h1:5b4v6he4MtMOwMlS0TUMTu2PcXUg8+E1lC7eC3UO/RA=
 github.com/shirou/w32 v0.0.0-20160930032740-bb4de0191aa4 h1:udFKJ0aHUL60LboW/A+DfgoHVedieIzIXE8uylPue0U=

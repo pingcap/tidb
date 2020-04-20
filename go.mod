@@ -76,4 +76,4 @@ require (
 
 go 1.13
 
-replace github.com/pingcap/pd/v4 => github.com/shafreeck/pd/v4 v4.0.0-beta.0.20200417104248-a5a9e9733299
+replace github.com/pingcap/pd/v4 => github.com/shafreeck/pd/v4 v4.0.0-beta.0.20200420105955-16d58d301e0c

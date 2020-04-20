@@ -18,6 +18,7 @@ import (
 	"container/heap"
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"sort"
 	"strconv"
@@ -503,7 +504,7 @@ func (w *GCWorker) setTiDBServiceSafePoint(ctx context.Context, safePoint uint64
 	// Sets TTL to 0 to make it permanently valid. TiDB uses empty serviceID.
 	// TODO: Should we use something like "gc_worker" ad the service name here which represents anything that is
 	// managing GC?
-	minSafePoint, err := w.pdClient.UpdateServiceGCSafePoint(ctx, "", 0, safePoint)
+	minSafePoint, err := w.pdClient.UpdateServiceGCSafePoint(ctx, "", math.MaxInt64, safePoint)
 	if err != nil {
 		logutil.Logger(ctx).Error("[gc worker] failed to update service safe point",
 			zap.String("uuid", w.uuid),
