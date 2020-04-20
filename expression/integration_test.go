@@ -47,11 +47,20 @@ import (
 )
 
 var _ = Suite(&testIntegrationSuite{})
+var _ = SerialSuites(&testIntegrationSerialSuite{})
 
-type testIntegrationSuite struct {
+type testIntegrationSuiteBase struct {
 	store kv.Storage
 	dom   *domain.Domain
 	ctx   sessionctx.Context
+}
+
+type testIntegrationSuite struct {
+	testIntegrationSuiteBase
+}
+
+type testIntegrationSerialSuite struct {
+	testIntegrationSuiteBase
 }
 
 func (s *testIntegrationSuite) cleanEnv(c *C) {
@@ -4980,7 +4989,7 @@ func (s *testIntegrationSuite) TestIssue15790(c *C) {
 	tk.MustExec("drop table t0;")
 }
 
-func (s *testIntegrationSuite) TestCacheRefineArgs(c *C) {
+func (s *testIntegrationSerialSuite) TestCacheRefineArgs(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	orgCapacity := plannercore.PreparedPlanCacheCapacity

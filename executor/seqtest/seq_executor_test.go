@@ -63,7 +63,7 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-var _ = Suite(&seqTestSuite{})
+var _ = SerialSuites(&seqTestSuite{})
 var _ = Suite(&seqTestSuite1{})
 
 type seqTestSuite struct {
