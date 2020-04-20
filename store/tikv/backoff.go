@@ -53,6 +53,7 @@ var (
 	tikvBackoffCounterRegionMiss     = metrics.TiKVBackoffCounter.WithLabelValues("regionMiss")
 	tikvBackoffCounterUpdateLeader   = metrics.TiKVBackoffCounter.WithLabelValues("updateLeader")
 	tikvBackoffCounterServerBusy     = metrics.TiKVBackoffCounter.WithLabelValues("serverBusy")
+	tikvBackoffCounterStaleCmd       = metrics.TiKVBackoffCounter.WithLabelValues("staleCommand")
 	tikvBackoffCounterEmpty          = metrics.TiKVBackoffCounter.WithLabelValues("")
 	tikvBackoffHistogramRPC          = metrics.TiKVBackoffHistogram.WithLabelValues("tikvRPC")
 	tikvBackoffHistogramLock         = metrics.TiKVBackoffHistogram.WithLabelValues("txnLock")
@@ -80,13 +81,9 @@ func (t backoffType) metric() (prometheus.Counter, prometheus.Observer) {
 	case BoUpdateLeader:
 		return tikvBackoffCounterUpdateLeader, tikvBackoffHistogramUpdateLeader
 	case boServerBusy:
-<<<<<<< HEAD
 		return tikvBackoffCounterServerBusy, tikvBackoffHistogramServerBusy
-=======
-		return tikvBackoffHistogramServerBusy
 	case boStaleCmd:
-		return tikvBackoffHistogramStaleCmd
->>>>>>> 14a4a4e... tikv: fix infinite retry when kv continuing to return staleCommand error (#16481)
+		return tikvBackoffCounterStaleCmd, tikvBackoffHistogramStaleCmd
 	}
 	return tikvBackoffCounterEmpty, tikvBackoffHistogramEmpty
 }
@@ -150,11 +147,7 @@ const (
 	BoRegionMiss
 	BoUpdateLeader
 	boServerBusy
-<<<<<<< HEAD
-=======
-	boTxnNotFound
 	boStaleCmd
->>>>>>> 14a4a4e... tikv: fix infinite retry when kv continuing to return staleCommand error (#16481)
 )
 
 func (t backoffType) createFn(vars *kv.Variables) func(context.Context, int) int {
@@ -199,13 +192,8 @@ func (t backoffType) String() string {
 		return "updateLeader"
 	case boServerBusy:
 		return "serverBusy"
-<<<<<<< HEAD
-=======
 	case boStaleCmd:
 		return "staleCommand"
-	case boTxnNotFound:
-		return "txnNotFound"
->>>>>>> 14a4a4e... tikv: fix infinite retry when kv continuing to return staleCommand error (#16481)
 	}
 	return ""
 }
