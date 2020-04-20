@@ -831,57 +831,52 @@ func (s *testGCWorkerSuite) TestRunGCJob(c *C) {
 	c.Assert(etcdSafePoint, Equals, safePoint)
 }
 
-func (s *testGCWorkerSuite) TestRunGCJobWithMinServiceSafePoint(c *C) {
-	gcSafePointCacheInterval = 0
-
-	// Ensure distributed mode is set.
-	useDistributedGC, err := s.gcWorker.checkUseDistributedGC()
+func (s *testGCWorkerSuite) mustSetTiDBServiceSafePoint(c *C, safePoint, expectedMinSafePoint uint64) {
+	minSafePoint, err := s.gcWorker.setTiDBServiceSafePoint(context.Background(), safePoint)
 	c.Assert(err, IsNil)
-	c.Assert(useDistributedGC, IsTrue)
+	c.Assert(minSafePoint, Equals, expectedMinSafePoint)
+}
 
-	// GC without safePoint from other services.
+func (s *testGCWorkerSuite) mustUpdateServiceGCSafePoint(c *C, serviceID string, safePoint, expectedMinSafePoint uint64) {
+	minSafePoint, err := s.pdClient.UpdateServiceGCSafePoint(context.Background(), serviceID, 0, safePoint)
+	c.Assert(err, IsNil)
+	c.Assert(minSafePoint, Equals, expectedMinSafePoint)
+}
+
+func (s *testGCWorkerSuite) TestSetServiceSafePoint(c *C) {
+	// SafePoint calculations are based on time rather than ts value.
 	safePoint := s.mustAllocTs(c)
-	err = s.gcWorker.runGCJob(context.Background(), safePoint, 1)
-	c.Assert(err, IsNil)
-	c.Assert(s.mustGetSafePointFromPd(c), Equals, safePoint)
+	s.mustSetTiDBServiceSafePoint(c, safePoint, safePoint)
 	c.Assert(s.mustGetMinServiceSafePointFromPd(c), Equals, safePoint)
 
-	// GC when there is a greater safePoint from other services.
-	oldSafePoint := safePoint
+	// Advance the service safe point
 	safePoint += 100
-	otherSafePoint := oldSafePoint + 110
-	minSafePoint, err := s.pdClient.UpdateServiceGCSafePoint(context.Background(), "svc1", 0, otherSafePoint)
-	c.Assert(err, IsNil)
-	c.Assert(minSafePoint, Equals, oldSafePoint)
-	err = s.gcWorker.runGCJob(context.Background(), safePoint, 1)
-	c.Assert(err, IsNil)
-	c.Assert(s.mustGetSafePointFromPd(c), Equals, safePoint)
+	s.mustSetTiDBServiceSafePoint(c, safePoint, safePoint)
 	c.Assert(s.mustGetMinServiceSafePointFromPd(c), Equals, safePoint)
 
-	// GC when there is a less safePoint from other services.
-	oldSafePoint = safePoint
+	// It doesn't matter if there is a greater safePoint from other services.
 	safePoint += 100
-	otherSafePoint = oldSafePoint + 90
-	minSafePoint, err = s.pdClient.UpdateServiceGCSafePoint(context.Background(), "svc1", 0, otherSafePoint)
-	c.Assert(err, IsNil)
-	c.Assert(minSafePoint, Equals, oldSafePoint)
-	err = s.gcWorker.runGCJob(context.Background(), safePoint, 1)
-	c.Assert(err, IsNil)
-	c.Assert(s.mustGetSafePointFromPd(c), Equals, otherSafePoint)
-	c.Assert(s.mustGetMinServiceSafePointFromPd(c), Equals, otherSafePoint)
+	// Returns the last service safePoint that were uploaded.
+	s.mustUpdateServiceGCSafePoint(c, "svc1", safePoint+10, safePoint-100)
+	s.mustSetTiDBServiceSafePoint(c, safePoint, safePoint)
+	c.Assert(s.mustGetMinServiceSafePointFromPd(c), Equals, safePoint)
 
-	// GC with many safePoints from other services
+	// Test the case when there is a smaller safePoint from other services.
+	safePoint += 100
+	// Returns the last service safePoint that were uploaded.
+	s.mustUpdateServiceGCSafePoint(c, "svc1", safePoint-10, safePoint-100)
+	s.mustSetTiDBServiceSafePoint(c, safePoint, safePoint-10)
+	c.Assert(s.mustGetMinServiceSafePointFromPd(c), Equals, safePoint)
+
+	// TODO: Test removing a safePoint.
+
+	// Test the case when there are many safePoints.
 	safePoint += 100
 	for i := 0; i < 10; i++ {
-		// "svc1" used in former tests is included and will be replaced with new value here.
 		svcName := fmt.Sprintf("svc%d", i)
-		_, err = s.pdClient.UpdateServiceGCSafePoint(context.Background(), svcName, 0, safePoint+uint64(i)*10)
-		c.Assert(err, IsNil)
+		s.mustUpdateServiceGCSafePoint(c, svcName, safePoint+uint64(i)*10, safePoint-100)
 	}
-	err = s.gcWorker.runGCJob(context.Background(), safePoint+50, 1)
-	c.Assert(err, IsNil)
-	c.Assert(s.mustGetSafePointFromPd(c), Equals, safePoint)
-	c.Assert(s.mustGetMinServiceSafePointFromPd(c), Equals, safePoint)
+	s.mustSetTiDBServiceSafePoint(c, safePoint+50, safePoint)
 }
 
 func (s *testGCWorkerSuite) TestRunGCJobAPI(c *C) {

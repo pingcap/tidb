@@ -311,7 +311,7 @@ func (w *GCWorker) checkPrepare(ctx context.Context) (bool, uint64, error) {
 	if err != nil || !ok {
 		return false, 0, errors.Trace(err)
 	}
-	newSafePoint, err := w.calculateNewSafePoint(now)
+	newSafePoint, newSafePointValue, err := w.calculateNewSafePoint(ctx, now)
 	if err != nil || newSafePoint == nil {
 		return false, 0, errors.Trace(err)
 	}
@@ -323,7 +323,7 @@ func (w *GCWorker) checkPrepare(ctx context.Context) (bool, uint64, error) {
 	if err != nil {
 		return false, 0, errors.Trace(err)
 	}
-	return true, oracle.ComposeTS(oracle.GetPhysical(*newSafePoint), 0), nil
+	return true, newSafePointValue, nil
 }
 
 // calculateNewSafePoint uses the current global transaction min start timestamp to calculate the new safe point.
@@ -461,21 +461,29 @@ func (w *GCWorker) validateGCLiftTime(lifeTime time.Duration) (time.Duration, er
 	return gcMinLifeTime, err
 }
 
-func (w *GCWorker) calculateNewSafePoint(now time.Time) (*time.Time, error) {
+func (w *GCWorker) calculateNewSafePoint(ctx context.Context, now time.Time) (*time.Time, uint64, error) {
 	lifeTime, err := w.loadDurationWithDefault(gcLifeTimeKey, gcDefaultLifeTime)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, 0, errors.Trace(err)
 	}
 	*lifeTime, err = w.validateGCLiftTime(*lifeTime)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	metrics.GCConfigGauge.WithLabelValues(gcLifeTimeKey).Set(lifeTime.Seconds())
 	lastSafePoint, err := w.loadTime(gcSafePointKey)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, 0, errors.Trace(err)
 	}
 	safePoint := w.calSafePointByMinStartTS(now.Add(-*lifeTime))
+
+	safePointValue := oracle.ComposeTS(oracle.GetPhysical(safePoint), 0)
+	safePointValue, err = w.setTiDBServiceSafePoint(ctx, safePointValue)
+	safePoint = oracle.GetTimeFromTS(safePointValue)
+
+	if err != nil {
+		return nil, 0, errors.Trace(err)
+	}
 	// We should never decrease safePoint.
 	if lastSafePoint != nil && safePoint.Before(*lastSafePoint) {
 		logutil.BgLogger().Info("[gc worker] last safe point is later than current one."+
@@ -484,14 +492,14 @@ func (w *GCWorker) calculateNewSafePoint(now time.Time) (*time.Time, error) {
 			zap.String("leaderTick on", w.uuid),
 			zap.Time("last safe point", *lastSafePoint),
 			zap.Time("current safe point", safePoint))
-		return nil, nil
+		return nil, 0, nil
 	}
-	return &safePoint, nil
+	return &safePoint, safePointValue, nil
 }
 
-// setServiceSafePoint sets the given safePoint as TiDB's service safePoint to PD, and returns the current minimal
+// setTiDBServiceSafePoint sets the given safePoint as TiDB's service safePoint to PD, and returns the current minimal
 // service safePoint among all services.
-func (w *GCWorker) setServiceSafePoint(ctx context.Context, safePoint uint64) (uint64, error) {
+func (w *GCWorker) setTiDBServiceSafePoint(ctx context.Context, safePoint uint64) (uint64, error) {
 	// Sets TTL to 0 to make it permanently valid. TiDB uses empty serviceID.
 	// TODO: Should we use something like "gc_worker" ad the service name here which represents anything that is
 	// managing GC?
@@ -541,13 +549,6 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency i
 	}
 	// Sleep to wait for all other tidb instances update their safepoint cache.
 	time.Sleep(gcSafePointCacheInterval)
-
-	// Update service GC safe point to PD and get the min safe point among TiDB and all other services. In case there
-	// are other services needs data before TiDB's safe point, those data should be kept.
-	safePoint, err = w.setServiceSafePoint(ctx, safePoint)
-	if err != nil {
-		return errors.Trace(err)
-	}
 
 	err = w.deleteRanges(ctx, safePoint, concurrency)
 	if err != nil {
@@ -1715,7 +1716,7 @@ func RunGCJob(ctx context.Context, s tikv.Storage, pd pd.Client, safePoint uint6
 	// Sleep to wait for all other tidb instances update their safepoint cache.
 	time.Sleep(gcSafePointCacheInterval)
 
-	safePoint, err = gcWorker.setServiceSafePoint(ctx, safePoint)
+	safePoint, err = gcWorker.setTiDBServiceSafePoint(ctx, safePoint)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1750,7 +1751,7 @@ func RunDistributedGCJob(ctx context.Context, s tikv.Storage, pd pd.Client, safe
 	// Sleep to wait for all other tidb instances update their safepoint cache.
 	time.Sleep(gcSafePointCacheInterval)
 
-	safePoint, err = gcWorker.setServiceSafePoint(ctx, safePoint)
+	safePoint, err = gcWorker.setTiDBServiceSafePoint(ctx, safePoint)
 	if err != nil {
 		return errors.Trace(err)
 	}
