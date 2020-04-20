@@ -15,7 +15,9 @@ package statistics
 
 import (
 	"context"
+	"github.com/pingcap/tidb/tablecodec"
 	"sort"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -262,9 +264,9 @@ func RowToDatums(row chunk.Row, fields []*ast.ResultField) []types.Datum {
 }
 
 // ExtractTopN extracts the topn from the CM Sketch.
-func (c *SampleCollector) ExtractTopN(numTop uint32) {
+func (c *SampleCollector) ExtractTopN(numTop uint32, sc *stmtctx.StatementContext, tp *types.FieldType, timeZone *time.Location) error {
 	if numTop == 0 {
-		return
+		return nil
 	}
 	values := make([][]byte, 0, len(c.Samples))
 	for _, sample := range c.Samples {
@@ -276,10 +278,20 @@ func (c *SampleCollector) ExtractTopN(numTop uint32) {
 	// Process them decreasingly so we can handle most frequent values first and reduce the probability of hash collision
 	// by small values.
 	for i := uint32(0); i < helper.actualNumTop; i++ {
-		data := helper.sorted[i].data
-		h1, h2 := murmur3.Sum128(data)
+		h1, h2 := murmur3.Sum128(helper.sorted[i].data)
 		realCnt := cms.queryHashValue(h1, h2)
+		// Because the encode of topn is the new encode type. But analyze proto returns the old encode type for a sample datum,
+		// we should decode it and re-encode it to get the correct bytes.
+		d, err := tablecodec.DecodeColumnValue(helper.sorted[i].data, tp, timeZone)
+		if err != nil {
+			return err
+		}
+		data, err := tablecodec.EncodeValue(sc, nil, d)
+		if err != nil {
+			return err
+		}
 		cms.subValue(h1, h2, realCnt)
 		cms.topN[h1] = append(cms.topN[h1], &TopNMeta{h2, data, realCnt})
 	}
+	return nil
 }
