@@ -2743,7 +2743,11 @@ func (s *testPlanSuite) TestSimplyOuterJoinWithOnlyOuterExpr(c *C) {
 	stmt, err := s.ParseOneStmt(sql, "", "")
 	c.Assert(err, IsNil)
 	Preprocess(s.ctx, stmt, s.is)
-	builder := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
+	builder := &PlanBuilder{
+		ctx:       MockContext(),
+		is:        s.is,
+		colMapper: make(map[*ast.ColumnNameExpr]int),
+	}
 	p, err := builder.Build(ctx, stmt)
 	c.Assert(err, IsNil)
 	p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
