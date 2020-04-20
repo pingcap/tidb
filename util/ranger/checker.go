@@ -147,5 +147,8 @@ func (c *conditionChecker) checkColumn(expr expression.Expression) bool {
 	if !ok {
 		return false
 	}
+	if col.RetType.EvalType() == types.ETString {
+		return false
+	}
 	return c.colUniqueID == col.UniqueID
 }
