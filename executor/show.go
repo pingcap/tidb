@@ -58,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/hint"
+	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
 )
@@ -127,6 +128,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowCollation()
 	case ast.ShowColumns:
 		return e.fetchShowColumns(ctx)
+	case ast.ShowConfig:
+		return e.fetchShowClusterConfigs(ctx)
 	case ast.ShowCreateTable:
 		return e.fetchShowCreateTable()
 	case ast.ShowCreateSequence:
@@ -802,6 +805,8 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 					if col.Tp == mysql.TypeBit {
 						defaultValBinaryLiteral := types.BinaryLiteral(defaultValStr)
 						fmt.Fprintf(buf, " DEFAULT %s", defaultValBinaryLiteral.ToBitLiteralString(true))
+					} else if types.IsTypeNumeric(col.Tp) || col.DefaultIsExpr {
+						fmt.Fprintf(buf, " DEFAULT %s", format.OutputFormat(defaultValStr))
 					} else {
 						fmt.Fprintf(buf, " DEFAULT '%s'", format.OutputFormat(defaultValStr))
 					}
@@ -963,6 +968,34 @@ func (e *ShowExec) fetchShowCreateSequence() error {
 	return nil
 }
 
+// TestShowClusterConfigKey is the key used to store TestShowClusterConfigFunc.
+var TestShowClusterConfigKey stringutil.StringerStr = "TestShowClusterConfigKey"
+
+// TestShowClusterConfigFunc is used to test 'show config ...'.
+type TestShowClusterConfigFunc func() ([][]types.Datum, error)
+
+func (e *ShowExec) fetchShowClusterConfigs(ctx context.Context) error {
+	emptySet := set.NewStringSet()
+	var confItems [][]types.Datum
+	var err error
+	if f := e.ctx.Value(TestShowClusterConfigKey); f != nil {
+		confItems, err = f.(TestShowClusterConfigFunc)()
+	} else {
+		confItems, err = fetchClusterConfig(e.ctx, emptySet, emptySet)
+	}
+	if err != nil {
+		return err
+	}
+	for _, items := range confItems {
+		row := make([]interface{}, 0, 4)
+		for _, item := range items {
+			row = append(row, item.GetString())
+		}
+		e.appendRow(row)
+	}
+	return nil
+}
+
 func (e *ShowExec) fetchShowCreateTable() error {
 	tb, err := e.getTable()
 	if err != nil {
@@ -1064,9 +1097,32 @@ func ConstructResultOfShowCreateDatabase(ctx sessionctx.Context, dbInfo *model.D
 		ifNotExistsStr = "/*!32312 IF NOT EXISTS*/ "
 	}
 	fmt.Fprintf(buf, "CREATE DATABASE %s%s", ifNotExistsStr, stringutil.Escape(dbInfo.Name.O, sqlMode))
-	if s := dbInfo.Charset; len(s) > 0 {
-		fmt.Fprintf(buf, " /*!40100 DEFAULT CHARACTER SET %s */", s)
+	if dbInfo.Charset != "" {
+		fmt.Fprintf(buf, " /*!40100 DEFAULT CHARACTER SET %s ", dbInfo.Charset)
+		defaultCollate, err := charset.GetDefaultCollation(dbInfo.Charset)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if dbInfo.Collate != "" && dbInfo.Collate != defaultCollate {
+			fmt.Fprintf(buf, "COLLATE %s ", dbInfo.Collate)
+		}
+		fmt.Fprint(buf, "*/")
+		return nil
 	}
+	if dbInfo.Collate != "" {
+		collInfo, err := collate.GetCollationByName(dbInfo.Collate)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		fmt.Fprintf(buf, " /*!40100 DEFAULT CHARACTER SET %s ", collInfo.CharsetName)
+		if !collInfo.IsDefault {
+			fmt.Fprintf(buf, "COLLATE %s ", dbInfo.Collate)
+		}
+		fmt.Fprint(buf, "*/")
+		return nil
+	}
+	// MySQL 5.7 always show the charset info but TiDB may ignore it, which makes a slight difference. We keep this
+	// behavior unchanged because it is trivial enough.
 	return nil
 }
 
