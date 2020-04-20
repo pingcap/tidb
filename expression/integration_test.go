@@ -5443,7 +5443,7 @@ func (s *testIntegrationSuite) TestCastStrToInt(c *C) {
 	}
 }
 
-func (s *testIntegrationSuite) TestIssue16205(c *C) {
+func (s *testIntegrationSerialSuite) TestIssue16205(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
@@ -5497,7 +5497,7 @@ func (s *testIntegrationSuite) TestIssue14146(c *C) {
 	tk.MustQuery("select * from tt").Check(testkit.Rows("<nil>"))
 }
 
-func (s *testIntegrationSuite) TestCacheRegexpr(c *C) {
+func (s *testIntegrationSerialSuite) TestCacheRegexpr(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
@@ -5521,7 +5521,7 @@ func (s *testIntegrationSuite) TestCacheRegexpr(c *C) {
 	tk.MustQuery("execute stmt1 using @a").Check(testkit.Rows("R1"))
 }
 
-func (s *testIntegrationSuite) TestCacheRefineArgs(c *C) {
+func (s *testIntegrationSerialSuite) TestCacheRefineArgs(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
@@ -5644,7 +5644,7 @@ func (s *testIntegrationSuite) TestCoercibility(c *C) {
 	}, "from t")
 }
 
-func (s *testIntegrationSuite) TestCacheConstEval(c *C) {
+func (s *testIntegrationSerialSuite) TestCacheConstEval(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
