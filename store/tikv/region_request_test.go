@@ -23,6 +23,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/config"
@@ -87,6 +88,47 @@ func (s *testRegionRequestSuite) TearDownTest(c *C) {
 
 func (s *testStoreLimitSuite) TearDownTest(c *C) {
 	s.cache.Close()
+}
+
+type fnClient struct {
+	fn func(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error)
+}
+
+func (f *fnClient) Close() error {
+	return nil
+}
+
+func (f *fnClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	return f.fn(ctx, addr, req, timeout)
+}
+
+func (s *testRegionRequestSuite) TestOnRegionError(c *C) {
+	req := tikvrpc.NewRequest(tikvrpc.CmdRawPut, &kvrpcpb.RawPutRequest{
+		Key:   []byte("key"),
+		Value: []byte("value"),
+	})
+	region, err := s.cache.LocateRegionByID(s.bo, s.region)
+	c.Assert(err, IsNil)
+	c.Assert(region, NotNil)
+
+	// test stale command retry.
+	func() {
+		oc := s.regionRequestSender.client
+		defer func() {
+			s.regionRequestSender.client = oc
+		}()
+		s.regionRequestSender.client = &fnClient{func(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (response *tikvrpc.Response, err error) {
+			staleResp := &tikvrpc.Response{Resp: &kvrpcpb.GetResponse{
+				RegionError: &errorpb.Error{StaleCommand: &errorpb.StaleCommand{}},
+			}}
+			return staleResp, nil
+		}}
+		bo := NewBackoffer(context.Background(), 5)
+		resp, err := s.regionRequestSender.SendReq(bo, req, region.Region, time.Second)
+		c.Assert(err, NotNil)
+		c.Assert(resp, IsNil)
+	}()
+
 }
 
 func (s *testStoreLimitSuite) TestStoreTokenLimit(c *C) {

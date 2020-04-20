@@ -244,7 +244,9 @@ select 4;`
 # Time: 2020-02-16T19:00:00.000000+08:00
 select 5;
 # Time: 2020-02-17T18:00:05.000000+08:00
-select 6;`
+select 6;
+# Time: 2020-04-15T18:00:05.200716+08:00
+select 7;`
 
 	fileName0 := "tidb-slow-2020-02-14T19-04-05.01.log"
 	fileName1 := "tidb-slow-2020-02-15T19-04-05.01.log"
@@ -333,6 +335,15 @@ select 6;`
 			querys: []string{
 				"select 5;",
 				"select 6;",
+				"select 7;",
+			},
+		},
+		{
+			startTime: "2020-04-15T18:00:05.200716+08:00",
+			endTime:   "2020-04-15T18:00:05.200716+08:00",
+			files:     []string{fileName3},
+			querys: []string{
+				"select 7;",
 			},
 		},
 	}
