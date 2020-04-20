@@ -5405,5 +5405,4 @@ func (s *testSuite1) TestIssue16025(c *C) {
 	tk.MustExec("CREATE TABLE t0(c0 NUMERIC PRIMARY KEY);")
 	tk.MustExec("INSERT IGNORE INTO t0(c0) VALUES (NULL);")
 	tk.MustQuery("SELECT * FROM t0 WHERE c0;").Check(testkit.Rows())
-
 }
