@@ -231,6 +231,14 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		return ver, errors.Trace(err)
 	}
 
+	err = checkTableIDNotExists(t, schemaID, tblInfo.ID)
+	if err != nil {
+		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableExists.Equal(err) {
+			job.State = model.JobStateCancelled
+		}
+		return ver, errors.Trace(err)
+	}
+
 	// Recover table divide into 2 steps:
 	// 1. Check GC enable status, to decided whether enable GC after recover table.
 	//     a. Why not disable GC before put the job to DDL job queue?
@@ -831,6 +839,20 @@ func checkTableNotExists(d *ddlCtx, t *meta.Meta, schemaID int64, tableName stri
 	}
 
 	return checkTableNotExistsFromStore(t, schemaID, tableName)
+}
+
+func checkTableIDNotExists(t *meta.Meta, schemaID, tableID int64) error {
+	tbl, err := t.GetTable(schemaID, tableID)
+	if err != nil {
+		if meta.ErrDBNotExists.Equal(err) {
+			return infoschema.ErrDatabaseNotExists.GenWithStackByArgs("")
+		}
+		return errors.Trace(err)
+	}
+	if tbl != nil {
+		return infoschema.ErrTableExists.GenWithStackByArgs(tbl.Name)
+	}
+	return nil
 }
 
 func checkTableNotExistsFromInfoSchema(is infoschema.InfoSchema, schemaID int64, tableName string) error {

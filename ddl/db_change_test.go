@@ -1360,7 +1360,12 @@ func (s *serialTestStateChangeSuite) TestParallelFlashbackTable(c *C) {
 		c.Assert(err1, IsNil)
 		c.Assert(err2, NotNil)
 		c.Assert(err2.Error(), Equals, "[schema:1050]Table 't_flashback' already exists")
-
 	}
 	s.testControlParallelExecSQL(c, sql1, sql1, f)
+
+	// Test parallel flashback table with different name
+	tk.MustExec("drop table t_flashback")
+	sql1 = "flashback table t_flashback"
+	sql2 := "flashback table t_flashback to t_flashback2"
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
