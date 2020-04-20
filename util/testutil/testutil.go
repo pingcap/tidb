@@ -334,6 +334,14 @@ func (a *autoRandom) SetupAutoRandomTestConfig() {
 	globalCfg.Experimental.AllowAutoRandom = true
 }
 
+func (a *autoRandom) EnableAlterPrimaryKeyConfig() {
+	config.GetGlobalConfig().AlterPrimaryKey = true
+}
+
+func (a *autoRandom) DisableAlterPrimaryKeyConfig() {
+	config.GetGlobalConfig().AlterPrimaryKey = false
+}
+
 // RestoreAutoRandomTestConfig restore the values had been saved in SetupTestConfig.
 // This method should only be used for the tests in SerialSuite.
 func (a *autoRandom) RestoreAutoRandomTestConfig() {

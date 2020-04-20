@@ -838,6 +838,12 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	assertPKIsNotHandle("create table t (a bigint auto_random(3), b int, primary key (a, b))", "a")
 	assertPKIsNotHandle("create table t (a int auto_random(3), b int, c char, primary key (a, c))", "a")
 
+	testutil.ConfigTestUtils.EnableAlterPrimaryKeyConfig()
+	assertPKIsNotHandle("create table t (a bigint auto_random(3) primary key, b int)", "a")
+	assertPKIsNotHandle("create table t (a int auto_random(3) primary key, b int)", "a")
+	assertPKIsNotHandle("create table t (a int, b int auto_random(3) primary key)", "b")
+	testutil.ConfigTestUtils.DisableAlterPrimaryKeyConfig()
+
 	// Can not set auto_random along with auto_increment.
 	assertWithAutoInc("create table t (a bigint auto_random(3) primary key auto_increment)")
 	assertWithAutoInc("create table t (a bigint primary key auto_increment auto_random(3))")

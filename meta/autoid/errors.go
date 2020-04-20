@@ -30,7 +30,7 @@ var (
 
 const (
 	// AutoRandomPKisNotHandleErrMsg indicates the auto_random column attribute is defined on a non-primary key column, or the table's primary key is not a single integer column.
-	AutoRandomPKisNotHandleErrMsg = "column %s is not the single integer primary key, or alter-primary-key is enabled"
+	AutoRandomPKisNotHandleErrMsg = "column %s is not the integer primary key"
 	// AutoRandomExperimentalDisabledErrMsg is reported when the experimental option allow-auto-random is not enabled.
 	AutoRandomExperimentalDisabledErrMsg = "auto_random is an experimental feature, which can only be used when allow-auto-random is enabled. This can be changed in the configuration."
 	// AutoRandomIncompatibleWithAutoIncErrMsg is reported when auto_random and auto_increment are specified on the same column.

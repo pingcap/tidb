@@ -391,19 +391,6 @@ func (s *testConfigSuite) TestTxnTotalSizeLimitValid(c *C) {
 	c.Assert(conf.Valid(), NotNil)
 }
 
-func (s *testConfigSuite) TestAllowAutoRandomValid(c *C) {
-	conf := NewConfig()
-	checkValid := func(allowAlterPK, allowAutoRand, shouldBeValid bool) {
-		conf.AlterPrimaryKey = allowAlterPK
-		conf.Experimental.AllowAutoRandom = allowAutoRand
-		c.Assert(conf.Valid() == nil, Equals, shouldBeValid)
-	}
-	checkValid(true, true, false)
-	checkValid(true, false, true)
-	checkValid(false, true, true)
-	checkValid(false, false, true)
-}
-
 func (s *testConfigSuite) TestMaxIndexLength(c *C) {
 	conf := NewConfig()
 	checkValid := func(indexLen int, shouldBeValid bool) {

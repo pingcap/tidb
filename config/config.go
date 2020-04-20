@@ -847,9 +847,6 @@ func (c *Config) Valid() error {
 		return fmt.Errorf("refresh-interval in [stmt-summary] should be greater than 0")
 	}
 
-	if c.AlterPrimaryKey && c.Experimental.AllowAutoRandom {
-		return fmt.Errorf("allow-auto-random is unavailable when alter-primary-key is enabled")
-	}
 	if c.PreparedPlanCache.Capacity < 1 {
 		return fmt.Errorf("capacity in [prepared-plan-cache] should be at least 1")
 	}
