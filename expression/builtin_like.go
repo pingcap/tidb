@@ -92,8 +92,11 @@ func (b *builtinLikeSig) evalInt(row chunk.Row) (int64, bool, error) {
 			b.isMemorizedPattern = true
 		}
 	}
+	// should be thread-safe
 	if !b.isMemorizedPattern {
-		b.pattern.Compile(patternStr, byte(escape))
+		pattern := b.collator().Pattern()
+		pattern.Compile(patternStr, byte(escape))
+		return boolToInt64(pattern.DoMatch(valStr)), false, nil
 	}
 	return boolToInt64(b.pattern.DoMatch(valStr)), false, nil
 }
