@@ -1332,7 +1332,7 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 				return Commentf("func: %v, case %+v, row: %v, rowData: %v", baseFuncName, testCase, row, input.GetRow(row).GetDatumRow(fts))
 			}
 			// to guarantee thread-safe
-			buildinFun := func(checkWarn bool) {
+			buildinFunc := func(checkWarn bool) {
 				it := chunk.NewIterator4Chunk(input)
 				i := 0
 				output := chunk.NewColumn(eType2FieldType(testCase.retEvalType), testCase.chunkSize)
@@ -1464,7 +1464,7 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 				}
 			}
 			// single thread running to check warnings
-			buildinFun(true)
+			buildinFunc(true)
 			// concurrent running focuses on correction
 			wg := sync.WaitGroup{}
 			concurrency := 10
@@ -1472,7 +1472,7 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 			for i := 0; i < concurrency; i++ {
 				go func() {
 					defer wg.Done()
-					buildinFun(false)
+					buildinFunc(false)
 				}()
 			}
 			wg.Wait()
