@@ -163,6 +163,10 @@ github.com/grpc-ecosystem/grpc-gateway v1.12.1/go.mod h1:8XEsbTttt/W+VvjtQhLACqC
 github.com/gtank/cryptopasta v0.0.0-20170601214702-1f550f6f2f69/go.mod h1:YLEMZOtU+AZ7dhN9T/IpGhXVGly2bvkJQ+zxj3WeVQo=
 github.com/hanfei1991/parser v0.0.0-20200307135251-fda93fd3e461 h1:0PegpI/0sFxkvKSRj8MT6NG4DpqoT7oVWMnO9hyBd9U=
 github.com/hanfei1991/parser v0.0.0-20200307135251-fda93fd3e461/go.mod h1:9v0Edh8IbgjGYW2ArJr19E+bvL8zKahsFp+ixWeId+4=
+github.com/hanfei1991/parser v0.0.0-20200420095648-f4bcaaa96aa8 h1:JwAXZcOCNZ1Jb9qzDZu19N/sUdg6aTq6mZrNZDbu6V0=
+github.com/hanfei1991/parser v0.0.0-20200420095648-f4bcaaa96aa8/go.mod h1:9v0Edh8IbgjGYW2ArJr19E+bvL8zKahsFp+ixWeId+4=
+github.com/hanfei1991/parser v0.0.0-20200420101937-63e37f36ae0c h1:akJYnz7Fe6AXtCTcZai3gf+HrZxuoVbnaGXxEmtxvpo=
+github.com/hanfei1991/parser v0.0.0-20200420101937-63e37f36ae0c/go.mod h1:9v0Edh8IbgjGYW2ArJr19E+bvL8zKahsFp+ixWeId+4=
 github.com/hanfei1991/tipb v0.0.0-20200308103915-5f3b53798f00 h1:wRO6S3mWrAcoS78mGn1hvjPQjqTgA+MBzbq5NkKRQRM=
 github.com/hanfei1991/tipb v0.0.0-20200308103915-5f3b53798f00/go.mod h1:nPMpOLbGpW71jAalpqgYYjMAZfCGk+DdSPhoIVVizkU=
 github.com/hpcloud/tail v1.0.0 h1:nfCOvKYfkgYP8hkirhJocXT2+zOD8yUNjXaWfTlyFKI=

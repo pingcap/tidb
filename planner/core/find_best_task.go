@@ -1112,12 +1112,6 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		tblColHists:       ds.TblColHists,
 		cst:               cost,
 	}
-	if ts.StoreType == kv.TiFlash {
-		if prop.TaskTp != property.CopTiFlashLocalReadTaskType && prop.TaskTp != property.RootTaskType && prop.TaskTp != property.CopTiFlashGlobalReadTaskType {
-			logutil.BgLogger().Error("invalid task:", zap.String("type", prop.TaskTp.String()))
-			return invalidTask, nil
-		}
-	}
 	task = copTask
 	if candidate.isMatchProp {
 		copTask.keepOrder = true

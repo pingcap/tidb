@@ -2314,7 +2314,6 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) *
 	}
 
 	ts := v.GetTableScan()
-	logutil.BgLogger().Info("build table reader", zap.Int64("my table id", ts.Table.ID), zap.String("table name", ts.Table.Name.L), zap.String("range str", ts.Ranges[0].String()))
 	ret.ranges = ts.Ranges
 	sctx := b.ctx.GetSessionVars().StmtCtx
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)

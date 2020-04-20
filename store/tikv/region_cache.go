@@ -216,7 +216,7 @@ type RegionCache struct {
 	}
 	storeMu struct {
 		sync.RWMutex
-		stores map[uint64]*Store
+		stores           map[uint64]*Store
 		flashStoreNumber int32
 	}
 	notifyDieCh   chan []string
@@ -955,7 +955,7 @@ func (c *RegionCache) getStoreAddr(bo *Backoffer, region *Region, store *Store, 
 		addr, err = store.initResolve(bo, c)
 		if store.storeType == kv.TiFlash {
 			c.storeMu.Lock()
-			if _,exists := c.storeMu.stores[store.storeID]; exists {
+			if _, exists := c.storeMu.stores[store.storeID]; exists {
 				c.storeMu.flashStoreNumber++
 			}
 			c.storeMu.Unlock()
@@ -1380,7 +1380,7 @@ func (s *Store) reResolve(c *RegionCache) {
 		newStore := &Store{storeID: s.storeID, addr: addr, storeType: storeType}
 		newStore.state = *(*uint64)(unsafe.Pointer(&state))
 		c.storeMu.Lock()
-		orgStore,exists := c.storeMu.stores[newStore.storeID]
+		orgStore, exists := c.storeMu.stores[newStore.storeID]
 		if exists && orgStore.storeType == kv.TiFlash {
 			c.storeMu.flashStoreNumber--
 		}
