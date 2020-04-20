@@ -221,12 +221,12 @@ func (s *testInfoschemaTableSuite) TestCharacterSetCollations(c *C) {
 
 	// The description column is not important
 	tk.MustQuery("SELECT default_collate_name, maxlen FROM information_schema.character_sets ORDER BY character_set_name").Check(
-		testkit.Rows("ascii_bin 1", "binary 1", "latin1_bin 1", "utf8_bin 3", "utf8mb4_bin 4"))
+		testkit.Rows("ascii_bin 1", "binary 1", "gbk_chinese_ci 1", "latin1_bin 1", "utf8_bin 3", "utf8mb4_bin 4"))
 
 	// The is_default column is not important
 	// but the id's are used by client libraries and must be stable
 	tk.MustQuery("SELECT character_set_name, id, sortlen FROM information_schema.collations ORDER BY collation_name").Check(
-		testkit.Rows("ascii 65 1", "binary 63 1", "latin1 47 1", "utf8 83 1", "utf8mb4 46 1"))
+		testkit.Rows("ascii 65 1", "binary 63 1", "gbk 28 1", "latin1 47 1", "utf8 83 1", "utf8mb4 46 1"))
 
 	tk.MustQuery("select * from information_schema.COLLATION_CHARACTER_SET_APPLICABILITY where COLLATION_NAME='utf8mb4_bin';").Check(
 		testkit.Rows("utf8mb4_bin utf8mb4"))

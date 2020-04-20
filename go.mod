@@ -77,3 +77,5 @@ require (
 )
 
 go 1.13
+
+replace github.com/pingcap/parser => github.com/spongedu/parser v0.0.0-20200413061525-2b6c2eb15c23
