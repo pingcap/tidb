@@ -530,13 +530,14 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 	sessionVars := e.ctx.GetSessionVars()
 	err := sessionVars.SetSystemVar(variable.CharsetDatabase, dbinfo.Charset)
 	if err != nil {
-		logutil.BgLogger().Warn(err.Error())
+		return err
 	}
-	err = sessionVars.SetSystemVar(variable.CollationDatabase, dbinfo.Collate)
-	if err != nil {
-		logutil.BgLogger().Warn(err.Error())
+	dbCollate := dbinfo.Collate
+	if dbCollate == "" {
+		// Since we have checked the charset, the dbCollate here shouldn't be "".
+		dbCollate = getDefaultCollate(dbinfo.Charset)
 	}
-	return nil
+	return sessionVars.SetSystemVar(variable.CollationDatabase, dbinfo.Collate)
 }
 
 func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {

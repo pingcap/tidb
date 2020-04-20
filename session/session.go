@@ -323,6 +323,7 @@ func (s *session) SetCollation(coID int) error {
 	}
 	err = s.sessionVars.SetSystemVar(variable.CollationConnection, co)
 	if err != nil {
+		// Some clients may use the unsupported collations, such as utf8mb4_0900_ai_ci, We shouldn't return error or use the ERROR level log.
 		logutil.BgLogger().Warn(err.Error())
 	}
 	return nil
