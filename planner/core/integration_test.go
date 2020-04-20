@@ -15,8 +15,10 @@ package core_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -251,4 +253,15 @@ func (s *testIntegrationSuite) TestIssue15813(c *C) {
 	tk.MustExec("CREATE INDEX i0 ON t0(c0)")
 	tk.MustExec("CREATE INDEX i0 ON t1(c0)")
 	tk.MustQuery("select /*+ MERGE_JOIN(t0, t1) */ * from t0, t1 where t0.c0 = t1.c0").Check(testkit.Rows())
+}
+
+func (s *testIntegrationSuite) TestFullGroupByOrderBy(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustQuery("select count(a) as b from t group by a order by b").Check(testkit.Rows())
+	err := tk.ExecToErr("select count(a) as cnt from t group by a order by b")
+	c.Assert(terror.ErrorEqual(err, core.ErrFieldNotInGroupBy), IsTrue)
 }
