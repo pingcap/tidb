@@ -90,8 +90,8 @@ type hashRowContainer struct {
 	hCtx *hashContext
 	stat hashStatistic
 
-	// hashTable stores the map of hashKey and RowPtr
-	hashTable *rowHashMap
+	// hashMap stores the map of hashKey and RowPtr
+	hashTable *unsafeHashTable
 
 	rowContainer *chunk.RowContainer
 }
@@ -113,7 +113,7 @@ func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContex
 	c := &hashRowContainer{
 		sc:           sCtx.GetSessionVars().StmtCtx,
 		hCtx:         hCtx,
-		hashTable:    newRowHashMap(estCount),
+		hashTable:    newUnsafeHashTable(estCount),
 		rowContainer: rc,
 	}
 
@@ -307,52 +307,47 @@ type entryAddr struct {
 
 var nullEntryAddr = entryAddr{}
 
-// rowHashMap stores multiple rowPtr of rows for a given key with minimum GC overhead.
+// unsafeHashTable stores multiple rowPtr of rows for a given key with minimum GC overhead.
 // A given key can store multiple values.
 // It is not thread-safe, should only be used in one goroutine.
-type rowHashMap struct {
+type unsafeHashTable struct {
 	entryStore entryStore
-	hashTable  map[uint64]entryAddr
+	hashMap    map[uint64]entryAddr
 	length     int
 }
 
-// newRowHashMap creates a new rowHashMap. estCount means the estimated size of the hashMap.
+// newUnsafeHashTable creates a new unsafeHashTable. estCount means the estimated size of the hashMap.
 // If unknown, set it to 0.
-func newRowHashMap(estCount int) *rowHashMap {
-	m := new(rowHashMap)
-	m.hashTable = make(map[uint64]entryAddr, estCount)
+func newUnsafeHashTable(estCount int) *unsafeHashTable {
+	m := new(unsafeHashTable)
+	m.hashMap = make(map[uint64]entryAddr, estCount)
 	m.entryStore.init()
 	return m
 }
 
-// Put puts the key/rowPtr pairs to the rowHashMap, multiple rowPtrs are stored in a list.
-func (m *rowHashMap) Put(hashKey uint64, rowPtr chunk.RowPtr) {
-	oldEntryAddr := m.hashTable[hashKey]
+// Put puts the key/rowPtr pairs to the unsafeHashTable, multiple rowPtrs are stored in a list.
+func (m *unsafeHashTable) Put(hashKey uint64, rowPtr chunk.RowPtr) {
+	oldEntryAddr := m.hashMap[hashKey]
 	e := entry{
 		ptr:  rowPtr,
 		next: oldEntryAddr,
 	}
 	newEntryAddr := m.entryStore.put(e)
-	m.hashTable[hashKey] = newEntryAddr
+	m.hashMap[hashKey] = newEntryAddr
 	m.length++
 }
 
 // Get gets the values of the "key" and appends them to "values".
-func (m *rowHashMap) Get(hashKey uint64) (rowPtrs []chunk.RowPtr) {
-	entryAddr := m.hashTable[hashKey]
+func (m *unsafeHashTable) Get(hashKey uint64) (rowPtrs []chunk.RowPtr) {
+	entryAddr := m.hashMap[hashKey]
 	for entryAddr != nullEntryAddr {
 		e := m.entryStore.get(entryAddr)
 		entryAddr = e.next
 		rowPtrs = append(rowPtrs, e.ptr)
 	}
-	// Keep the order of input.
-	for i := 0; i < len(rowPtrs)/2; i++ {
-		j := len(rowPtrs) - 1 - i
-		rowPtrs[i], rowPtrs[j] = rowPtrs[j], rowPtrs[i]
-	}
 	return
 }
 
-// Len returns the number of rowPtrs in the rowHashMap, the number of keys may be less than Len
+// Len returns the number of rowPtrs in the unsafeHashTable, the number of keys may be less than Len
 // if the same key is put more than once.
-func (m *rowHashMap) Len() int { return m.length }
+func (m *unsafeHashTable) Len() int { return m.length }
