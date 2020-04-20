@@ -847,6 +847,19 @@ func (s *testGCWorkerSuite) TestRunDistGCJobAPI(c *C) {
 	c.Assert(etcdSafePoint, Equals, safePoint)
 }
 
+func (s *testGCWorkerSuite) TestStartWithRunGCJobFailures(c *C) {
+	s.gcWorker.Start()
+	defer s.gcWorker.Close()
+
+	for i := 0; i < 3; i++ {
+		select {
+		case <-time.After(100 * time.Millisecond):
+			c.Fatal("gc worker failed to handle errors")
+		case s.gcWorker.done <- errors.New("mock error"):
+		}
+	}
+}
+
 func (s *testGCWorkerSuite) loadEtcdSafePoint(c *C) uint64 {
 	val, err := s.gcWorker.store.GetSafePointKV().Get(tikv.GcSavedSafePoint)
 	c.Assert(err, IsNil)

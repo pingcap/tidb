@@ -490,6 +490,9 @@ func (w *GCWorker) calculateNewSafePoint(now time.Time) (*time.Time, error) {
 }
 
 func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency int) error {
+	failpoint.Inject("mockRunGCJobFail", func() {
+		failpoint.Return(errors.New("mock failure of runGCJoB"))
+	})
 	metrics.GCWorkerCounter.WithLabelValues("run_job").Inc()
 	usePhysical, err := w.checkUsePhysicalScanLock()
 	if err != nil {
