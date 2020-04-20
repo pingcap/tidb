@@ -15,7 +15,6 @@ package executor_test
 
 import (
 	"fmt"
-	"math"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -500,8 +499,15 @@ func (s *testSuiteAgg) TestGroupConcatAggr(c *C) {
 		result.Check(testkit.Rows(expected[:maxLen]))
 		c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
 	}
+	expected = "200,500,10,20,30"
+	for maxLen := 4; maxLen < len(expected); maxLen++ {
+		tk.MustExec(fmt.Sprintf("set session group_concat_max_len=%v", maxLen))
+		result = tk.MustQuery("select group_concat(distinct name order by id desc, name asc) from test;")
+		result.Check(testkit.Rows(expected[:maxLen]))
+		c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
+	}
 
-	tk.MustExec(fmt.Sprintf("set session group_concat_max_len=%v", math.MaxUint32))
+	tk.MustExec(fmt.Sprintf("set session group_concat_max_len=%v", 1024))
 
 	// test varchar table
 	tk.MustExec("drop table if exists test2;")
