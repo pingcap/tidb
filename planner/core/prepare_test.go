@@ -392,7 +392,7 @@ func (s *testPrepareSuite) TestPrepareForGroupByItems(c *C) {
 	tk.MustQuery("execute s1 using @a;").Check(testkit.Rows("3"))
 }
 
-func (s *testPrepareSuite) TestPrepareCacheForPartition(c *C) {
+func (s *testPrepareSerialSuite) TestPrepareCacheForPartition(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)

@@ -133,7 +133,11 @@ func (s *testSuite) TestInspectionRuleTable(c *C) {
 		`MemTableScan_5 10000.00 root table:INSPECTION_RULES skip_request: true`))
 }
 
-func (s *testSuite) TestExplainForConnPlanCache(c *C) {
+type testPreparePlanCacheSuite struct {
+	*baseTestSuite
+}
+
+func (s *testPreparePlanCacheSuite) TestExplainForConnPlanCache(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer func() {
