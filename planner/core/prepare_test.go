@@ -705,6 +705,8 @@ func (s *testPlanSerialSuite) TestPlanCacheHitInfo(c *C) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 	tk.MustQuery("execute stmt using @doma").Check(testkit.Rows("1"))
 	// Test if last_plan_from_cache is updated after a plan cache hit.
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @doma").Check(testkit.Rows("1"))
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 	tk.MustQuery("execute stmt2 using @doma").Check(testkit.Rows("1"))
 	// Test if last_plan_from_cache is updated after a plan cache miss caused by a prepared statement.
