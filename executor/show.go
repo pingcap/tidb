@@ -239,7 +239,7 @@ func (v *visibleChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
 func (e *ShowExec) fetchShowBind() error {
 	var bindRecords []*bindinfo.BindRecord
 	if !e.ctx.GetSessionVars().UsePlanBaselines {
-		e.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("system variable tidb_use_plan_baselines is disabled, although some statuses of bindings are `using`, but it doesn't affect query plans."))
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("system variable tidb_use_plan_baselines is disabled, although some statuses of bindings are `using`, it doesn't affect query plans."))
 	}
 	if !e.GlobalScope {
 		handle := e.ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
