@@ -6330,7 +6330,11 @@ SumExpr:
 		if $8 != nil {
 			$$ = &ast.WindowFuncExpr{F: $1, Args: args, Distinct: $3.(bool), Spec: *($8.(*ast.WindowSpec))}
 		} else {
-			$$ = &ast.AggregateFuncExpr{F: $1, Args: args, Distinct: $3.(bool)}
+			agg := &ast.AggregateFuncExpr{F: $1, Args: args, Distinct: $3.(bool)}
+			if $5 != nil {
+				agg.Order = $5.(*ast.OrderByClause)
+			}
+			$$ = agg
 		}
 	}
 |	builtinMax '(' BuggyDefaultFalseDistinctOpt Expression ')' OptWindowingClause
