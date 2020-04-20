@@ -660,6 +660,17 @@ func (e *slowQueryRetriever) getFileEndTime(file *os.File) (time.Time, error) {
 	cursor := int64(0)
 	line := make([]byte, 0, 64)
 	maxLineNum := 128
+	tryGetTime := func(line []byte) string {
+		for i, j := 0, len(line)-1; i < j; i, j = i+1, j-1 {
+			line[i], line[j] = line[j], line[i]
+		}
+		lineStr := string(line)
+		lineStr = strings.TrimSpace(lineStr)
+		if strings.HasPrefix(lineStr, variable.SlowLogStartPrefixStr) {
+			return lineStr[len(variable.SlowLogStartPrefixStr):]
+		}
+		return ""
+	}
 	for {
 		cursor -= 1
 		_, err := file.Seek(cursor, io.SeekEnd)
@@ -674,19 +685,17 @@ func (e *slowQueryRetriever) getFileEndTime(file *os.File) (time.Time, error) {
 		}
 		// If find a line.
 		if cursor != -1 && (char[0] == '\n' || char[0] == '\r') {
-			for i, j := 0, len(line)-1; i < j; i, j = i+1, j-1 {
-				line[i], line[j] = line[j], line[i]
-			}
-			lineStr := string(line)
-			lineStr = strings.TrimSpace(lineStr)
-			if strings.HasPrefix(lineStr, variable.SlowLogStartPrefixStr) {
-				return ParseTime(lineStr[len(variable.SlowLogStartPrefixStr):])
+			if timeStr := tryGetTime(line); len(timeStr) > 0 {
+				return ParseTime(timeStr)
 			}
 			line = line[:0]
 			maxLineNum -= 1
 		}
 		line = append(line, char[0])
 		if cursor == -fileSize || maxLineNum <= 0 {
+			if timeStr := tryGetTime(line); len(timeStr) > 0 {
+				return ParseTime(timeStr)
+			}
 			return t, errors.Errorf("malform slow query file %v", file.Name())
 		}
 	}
