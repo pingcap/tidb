@@ -219,6 +219,88 @@ func (s *testSuite) TestDecodeRowWithHandle(c *C) {
 	encodeAndDecodeHandle(c, testDataUnsigned)
 }
 
+func (s *testSuite) TestEncodeKindNullDatum(c *C) {
+	var encoder rowcodec.Encoder
+	sc := new(stmtctx.StatementContext)
+	sc.TimeZone = time.UTC
+	colIDs := []int64{
+		1,
+		2,
+	}
+	var nilDt types.Datum
+	nilDt.SetNull()
+	dts := []types.Datum{nilDt, types.NewIntDatum(2)}
+	ft := types.NewFieldType(mysql.TypeLonglong)
+	fts := []*types.FieldType{ft, ft}
+	newRow, err := encoder.Encode(sc, colIDs, dts, nil)
+	c.Assert(err, IsNil)
+
+	cols := []rowcodec.ColInfo{{
+		ID:      1,
+		Tp:      int32(ft.Tp),
+		Flag:    int32(ft.Flag),
+		Flen:    ft.Flen,
+		Decimal: ft.Decimal,
+		Elems:   ft.Elems,
+		Collate: ft.Collate,
+	},
+		{
+			ID:      2,
+			Tp:      int32(ft.Tp),
+			Flag:    int32(ft.Flag),
+			Flen:    ft.Flen,
+			Decimal: ft.Decimal,
+			Elems:   ft.Elems,
+			Collate: ft.Collate,
+		}}
+	cDecoder := rowcodec.NewChunkDecoder(cols, -1, nil, sc.TimeZone)
+	chk := chunk.New(fts, 1, 1)
+	err = cDecoder.DecodeToChunk(newRow, -1, chk)
+	c.Assert(err, IsNil)
+	chkRow := chk.GetRow(0)
+	cdt := chkRow.GetDatumRow(fts)
+	c.Assert(cdt[0].IsNull(), Equals, true)
+	c.Assert(cdt[1].GetInt64(), Equals, int64(2))
+}
+
+func (s *testSuite) TestDecodeDecimalFspNotMatch(c *C) {
+	var encoder rowcodec.Encoder
+	sc := new(stmtctx.StatementContext)
+	sc.TimeZone = time.UTC
+	colIDs := []int64{
+		1,
+	}
+	dec := withFrac(4)(withLen(6)(types.NewDecimalDatum(types.NewDecFromStringForTest("11.9900"))))
+	dts := []types.Datum{dec}
+	ft := types.NewFieldType(mysql.TypeNewDecimal)
+	ft.Decimal = 4
+	fts := []*types.FieldType{ft}
+	newRow, err := encoder.Encode(sc, colIDs, dts, nil)
+	c.Assert(err, IsNil)
+
+	// decode to chunk.
+	ft = types.NewFieldType(mysql.TypeNewDecimal)
+	ft.Decimal = 3
+	cols := make([]rowcodec.ColInfo, 0)
+	cols = append(cols, rowcodec.ColInfo{
+		ID:      1,
+		Tp:      int32(ft.Tp),
+		Flag:    int32(ft.Flag),
+		Flen:    ft.Flen,
+		Decimal: ft.Decimal,
+		Elems:   ft.Elems,
+		Collate: ft.Collate,
+	})
+	cDecoder := rowcodec.NewChunkDecoder(cols, -1, nil, sc.TimeZone)
+	chk := chunk.New(fts, 1, 1)
+	err = cDecoder.DecodeToChunk(newRow, -1, chk)
+	c.Assert(err, IsNil)
+	chkRow := chk.GetRow(0)
+	cdt := chkRow.GetDatumRow(fts)
+	dec = withFrac(3)(withLen(6)(types.NewDecimalDatum(types.NewDecFromStringForTest("11.990"))))
+	c.Assert(cdt[0].GetMysqlDecimal().String(), DeepEquals, dec.GetMysqlDecimal().String())
+}
+
 func (s *testSuite) TestTypesNewRowCodec(c *C) {
 	getJSONDatum := func(value string) types.Datum {
 		j, err := json.ParseBinaryFromString(value)
@@ -238,6 +320,7 @@ func (s *testSuite) TestTypesNewRowCodec(c *C) {
 		return t
 	}
 
+	var encoder rowcodec.Encoder
 	encodeAndDecode := func(c *C, testData []testData) {
 		// transform test data into input.
 		colIDs := make([]int64, 0, len(testData))
@@ -262,7 +345,6 @@ func (s *testSuite) TestTypesNewRowCodec(c *C) {
 		}
 
 		// test encode input.
-		var encoder rowcodec.Encoder
 		sc := new(stmtctx.StatementContext)
 		sc.TimeZone = time.UTC
 		newRow, err := encoder.Encode(sc, colIDs, dts, nil)
@@ -552,6 +634,20 @@ func (s *testSuite) TestNilAndDefault(c *C) {
 			} else {
 				c.Assert(d, DeepEquals, t.bt)
 			}
+		}
+
+		chk = chunk.New(fts, 1, 1)
+		cDecoder = rowcodec.NewChunkDecoder(cols, -1, nil, sc.TimeZone)
+		err = cDecoder.DecodeToChunk(newRow, -1, chk)
+		c.Assert(err, IsNil)
+		chkRow = chk.GetRow(0)
+		cdt = chkRow.GetDatumRow(fts)
+		for i := range testData {
+			if i == 0 {
+				continue
+			}
+			d := cdt[i]
+			c.Assert(d.IsNull(), Equals, true)
 		}
 
 		// decode to old row bytes.

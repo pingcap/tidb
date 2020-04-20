@@ -1440,7 +1440,7 @@ func (c *twoPhaseCommitter) appendBatchMutationsBySize(b []batchMutations, regio
 func newBatchExecutor(rateLimit int, committer *twoPhaseCommitter,
 	action twoPhaseCommitAction, backoffer *Backoffer) *batchExecutor {
 	return &batchExecutor{rateLimit, nil, committer,
-		action, backoffer, time.Duration(1 * time.Millisecond)}
+		action, backoffer, 1 * time.Millisecond}
 }
 
 // initUtils do initialize batchExecutor related policies like rateLimit util
