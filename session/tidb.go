@@ -268,7 +268,7 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 		if rs == nil {
 			// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 			s.(*executor.ExecStmt).LogSlowQuery(origTxnCtx.StartTS, err == nil, false)
-			s.(*executor.ExecStmt).SummaryStmt()
+			s.(*executor.ExecStmt).SummaryStmt(err == nil)
 			pps := types.CloneRow(sessVars.PreparedParams)
 			sessVars.PrevStmt = executor.FormatSQL(s.OriginText(), pps)
 		}
