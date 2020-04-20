@@ -334,12 +334,17 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	e.names = names
 	e.Plan = p
 	_, isTableDual := p.(*PhysicalTableDual)
+<<<<<<< HEAD
 	if !isTableDual && prepared.UseCache {
+=======
+	if !isTableDual && prepared.UseCache && !isRange {
+>>>>>>> 4ded1e2... planner : change the define of 'last_plan_from_cache' (#16594)
 		cached := NewPSTMTPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan)
 		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
 		sctx.PreparedPlanCache().Put(cacheKey, cached)
 	}
+	err = e.setFoundInPlanCache(sctx, false)
 	return err
 }
 
