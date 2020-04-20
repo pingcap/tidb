@@ -1052,10 +1052,14 @@ func (w *GCWorker) resolveLocksPhysical(ctx context.Context, safePoint uint64) e
 		w.removeLockObservers(ctx, safePoint, stores)
 	}()
 
+	registeredStores := make(map[uint64]interface{})
 	for retry := 0; retry < 3; retry++ {
 		err = w.registerLockObservers(ctx, safePoint, dirtyStores)
 		if err != nil {
 			return errors.Trace(err)
+		}
+		for id := range dirtyStores {
+			registeredStores[id] = nil
 		}
 
 		resolvedStores, err := w.physicalScanAndResolveLocks(ctx, safePoint, dirtyStores)
@@ -1083,6 +1087,13 @@ func (w *GCWorker) resolveLocksPhysical(ctx context.Context, safePoint uint64) e
 				if _, ok := dirtyStores[store]; !ok {
 					delete(stores, store)
 				}
+				// If the store is checked and not resolved, we can retry to resolve it again, so leave it in dirtyStores.
+			} else if _, ok := registeredStores[store]; ok {
+				// The store has been registered and it's dirty due to too many collected locks. Fall back to legacy mode.
+				// We can't remove the lock observer from the store and retry the whole procedure because if the store
+				// receives duplicated remove and register requests during resolving locks, the store will be cleaned
+				// when checking but the lock observer drops some locks. It may results in missing locks.
+				return errors.Errorf("store %v is dirty", store)
 			}
 		}
 		dirtyStores = stores
@@ -1092,8 +1103,6 @@ func (w *GCWorker) resolveLocksPhysical(ctx context.Context, safePoint uint64) e
 		if len(dirtyStores) == 0 {
 			break
 		}
-		// Clear all collected locks of dirty stores to prevent it from being dirty again.
-		w.removeLockObservers(ctx, safePoint, dirtyStores)
 	}
 
 	if len(dirtyStores) != 0 {
