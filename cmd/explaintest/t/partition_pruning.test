@@ -977,11 +977,11 @@ PARTITION BY RANGE COLUMNS(a) (
 
 desc select * from t where a = 11 and b = 1 or a = 12 and b = 1;
 
-<<<<<<< HEAD
+
 drop table if exists t;
 create table t (id int, name varchar(20)) partition by hash(id) partitions 128;
 explain SELECT * FROM t partition (p1) where name = '1';
-=======
+
 #
 # MySQL doesn't support partition pruning for 'floor(unix_timestamp(ts))' but it works on TiDB
 # https://github.com/pingcap/tidb/issues/16354
@@ -1016,4 +1016,3 @@ explain select * from t where ts <= '2020-04-25 00:00:00' -- p0,p1,p2;
 explain select * from t where ts > '2020-04-25 00:00:00' or ts < '2020-01-02 00:00:00' -- p0;
 explain select * from t where ts > '2020-04-02 00:00:00' and ts < '2020-04-07 00:00:00' -- p0,p1;
 
->>>>>>> d8e6cf8... planner/core: support partition pruning for partition expression floor(unix_timestamp()) (#16402)
