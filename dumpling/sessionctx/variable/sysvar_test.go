@@ -51,6 +51,9 @@ func (*testSysVarSuite) TestSysVar(c *C) {
 
 	f = GetSysVar("tidb_replica_read")
 	c.Assert(f.Value, Equals, "leader")
+
+	f = GetSysVar("tidb_enable_table_partition")
+	c.Assert(f.Value, Equals, "on")
 }
 
 func (*testSysVarSuite) TestTxnMode(c *C) {
