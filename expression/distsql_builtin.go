@@ -382,6 +382,7 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinRealIsFalseSig{base, false}
 	case tipb.ScalarFuncSig_DecimalIsFalse:
 		f = &builtinDecimalIsFalseSig{base, false}
+<<<<<<< HEAD
 	case tipb.ScalarFuncSig_IntIsTrue:
 		f = &builtinIntIsTrueSig{base, false}
 	case tipb.ScalarFuncSig_RealIsTrue:
@@ -395,6 +396,63 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_ModDecimal:
 		f = &builtinArithmeticModDecimalSig{base}
 
+=======
+	case tipb.ScalarFuncSig_IntIsTrueWithNull:
+		f = &builtinIntIsTrueSig{base, true}
+	case tipb.ScalarFuncSig_RealIsTrueWithNull:
+		f = &builtinRealIsTrueSig{base, true}
+	case tipb.ScalarFuncSig_DecimalIsTrueWithNull:
+		f = &builtinDecimalIsTrueSig{base, true}
+	case tipb.ScalarFuncSig_IntIsFalseWithNull:
+		f = &builtinIntIsFalseSig{base, true}
+	case tipb.ScalarFuncSig_RealIsFalseWithNull:
+		f = &builtinRealIsFalseSig{base, true}
+	case tipb.ScalarFuncSig_DecimalIsFalseWithNull:
+		f = &builtinDecimalIsFalseSig{base, true}
+	case tipb.ScalarFuncSig_LeftShift:
+		f = &builtinLeftShiftSig{base}
+	case tipb.ScalarFuncSig_RightShift:
+		f = &builtinRightShiftSig{base}
+	case tipb.ScalarFuncSig_BitCount:
+		f = &builtinBitCountSig{base}
+	case tipb.ScalarFuncSig_GetParamString:
+		f = &builtinGetParamStringSig{base}
+	case tipb.ScalarFuncSig_GetVar:
+		f = &builtinGetVarSig{base}
+	//case tipb.ScalarFuncSig_RowSig:
+	case tipb.ScalarFuncSig_SetVar:
+		f = &builtinSetVarSig{base}
+	//case tipb.ScalarFuncSig_ValuesDecimal:
+	//	f = &builtinValuesDecimalSig{base}
+	//case tipb.ScalarFuncSig_ValuesDuration:
+	//	f = &builtinValuesDurationSig{base}
+	//case tipb.ScalarFuncSig_ValuesInt:
+	//	f = &builtinValuesIntSig{base}
+	//case tipb.ScalarFuncSig_ValuesJSON:
+	//	f = &builtinValuesJSONSig{base}
+	//case tipb.ScalarFuncSig_ValuesReal:
+	//	f = &builtinValuesRealSig{base}
+	//case tipb.ScalarFuncSig_ValuesString:
+	//	f = &builtinValuesStringSig{base}
+	//case tipb.ScalarFuncSig_ValuesTime:
+	//	f = &builtinValuesTimeSig{base}
+	case tipb.ScalarFuncSig_InInt:
+		f = &builtinInIntSig{baseInSig: baseInSig{baseBuiltinFunc: base}}
+	case tipb.ScalarFuncSig_InReal:
+		f = &builtinInRealSig{baseInSig: baseInSig{baseBuiltinFunc: base}}
+	case tipb.ScalarFuncSig_InDecimal:
+		f = &builtinInDecimalSig{baseInSig: baseInSig{baseBuiltinFunc: base}}
+	case tipb.ScalarFuncSig_InString:
+		f = &builtinInStringSig{baseInSig: baseInSig{baseBuiltinFunc: base}}
+	case tipb.ScalarFuncSig_InTime:
+		f = &builtinInTimeSig{baseInSig: baseInSig{baseBuiltinFunc: base}}
+	case tipb.ScalarFuncSig_InDuration:
+		f = &builtinInDurationSig{baseInSig: baseInSig{baseBuiltinFunc: base}}
+	case tipb.ScalarFuncSig_InJson:
+		f = &builtinInJSONSig{baseBuiltinFunc: base}
+	case tipb.ScalarFuncSig_IfNullInt:
+		f = &builtinIfNullIntSig{base}
+>>>>>>> 8b6d53a... expression: split isTrue and isFalse expression sig (#16542)
 	case tipb.ScalarFuncSig_IfNullReal:
 		f = &builtinIfNullRealSig{base}
 	case tipb.ScalarFuncSig_IfNullInt:
