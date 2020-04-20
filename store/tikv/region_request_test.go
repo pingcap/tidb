@@ -87,7 +87,7 @@ func (s *testRegionRequestSuite) TestOnRegionError(c *C) {
 			s.regionRequestSender.client = oc
 		}()
 		s.regionRequestSender.client = &fnClient{func(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (response *tikvrpc.Response, err error) {
-			staleResp := &tikvrpc.Response{Resp: &kvrpcpb.GetResponse{
+			staleResp := &tikvrpc.Response{Type: tikvrpc.CmdGet, Get: &kvrpcpb.GetResponse{
 				RegionError: &errorpb.Error{StaleCommand: &errorpb.StaleCommand{}},
 			}}
 			return staleResp, nil
