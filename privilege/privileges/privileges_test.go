@@ -942,7 +942,7 @@ func (s *testPrivilegeSuite) TestLoadDataPrivilege(c *C) {
 		err = os.Remove(path)
 		c.Assert(err, IsNil)
 	}()
-	fp.WriteString("1\n");
+	fp.WriteString("1\n")
 
 	se := newSession(c, s.store, s.dbName)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil), IsTrue)
