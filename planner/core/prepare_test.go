@@ -20,12 +20,16 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 )
 
-var _ = SerialSuites(&testPrepareSuite{})
+var _ = Suite(&testPrepareSuite{})
+var _ = SerialSuites(&testPrepareSerialSuite{})
 
 type testPrepareSuite struct {
 }
 
-func (s *testPrepareSuite) TestPrepareCache(c *C) {
+type testPrepareSerialSuite struct {
+}
+
+func (s *testPrepareSerialSuite) TestPrepareCache(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
@@ -67,7 +71,7 @@ func (s *testPrepareSuite) TestPrepareCache(c *C) {
 	tk.MustQuery("execute stmt6").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
 }
 
-func (s *testPrepareSuite) TestPrepareCacheIndexScan(c *C) {
+func (s *testPrepareSerialSuite) TestPrepareCacheIndexScan(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
@@ -94,7 +98,7 @@ func (s *testPrepareSuite) TestPrepareCacheIndexScan(c *C) {
 }
 
 // unit test for issue https://github.com/pingcap/tidb/issues/8518
-func (s *testPrepareSuite) TestPrepareTableAsNameOnGroupByWithCache(c *C) {
+func (s *testPrepareSerialSuite) TestPrepareTableAsNameOnGroupByWithCache(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
