@@ -18,6 +18,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path"
 	"reflect"
 	"testing"
 	"time"
@@ -159,5 +161,16 @@ func TestTopology(t *testing.T) {
 	}
 	if !ttlExists {
 		t.Fatal("ttl non-exists")
+	}
+
+	s, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir := path.Dir(s)
+
+	if info.getTopologyInfo().DeployPath != dir {
+		t.Fatal("DeployPath not match expected path")
 	}
 }
