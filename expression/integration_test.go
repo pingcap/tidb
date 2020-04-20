@@ -46,11 +46,20 @@ import (
 )
 
 var _ = Suite(&testIntegrationSuite{})
+var _ = SerialSuites(&testIntegrationSerialSuite{})
 
-type testIntegrationSuite struct {
+type testIntegrationSuiteBase struct {
 	store kv.Storage
 	dom   *domain.Domain
 	ctx   sessionctx.Context
+}
+
+type testIntegrationSuite struct {
+	testIntegrationSuiteBase
+}
+
+type testIntegrationSerialSuite struct {
+	testIntegrationSuiteBase
 }
 
 func (s *testIntegrationSuite) cleanEnv(c *C) {
