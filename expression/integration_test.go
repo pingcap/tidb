@@ -45,11 +45,16 @@ import (
 )
 
 var _ = Suite(&testIntegrationSuite{})
+var _ = SerialSuites(&testIntegrationSerialSuite{&testIntegrationSuite{}})
 
 type testIntegrationSuite struct {
 	store kv.Storage
 	dom   *domain.Domain
 	ctx   sessionctx.Context
+}
+
+type testIntegrationSerialSuite struct {
+	*testIntegrationSuite
 }
 
 func (s *testIntegrationSuite) cleanEnv(c *C) {
@@ -4582,7 +4587,7 @@ func (s *testIntegrationSuite) TestValuesForBinaryLiteral(c *C) {
 	tk.MustExec("drop table testValuesBinary;")
 }
 
-func (s *testIntegrationSuite) TestCacheRefineArgs(c *C) {
+func (s *testIntegrationSerialSuite) TestCacheRefineArgs(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	orgCapacity := plannercore.PreparedPlanCacheCapacity

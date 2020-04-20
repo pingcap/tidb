@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 )
 
-var _ = Suite(&testPrepareSuite{})
+var _ = SerialSuites(&testPrepareSuite{})
 
 type testPrepareSuite struct {
 }
