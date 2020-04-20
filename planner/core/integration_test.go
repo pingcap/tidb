@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -583,6 +584,38 @@ func (s *testIntegrationSuite) TestTopNByConstFunc(c *C) {
 	))
 }
 
+func (s *testIntegrationSuite) TestIndexHintWarning(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int, c int, key a(a))")
+	tk.MustExec("create table t2(a int, b int, c int, key a(a))")
+	var input []string
+	var output []struct {
+		SQL      string
+		Warnings []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			tk.MustQuery(tt)
+			warns := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+			output[i].Warnings = make([]string, len(warns))
+			for j := range warns {
+				output[i].Warnings[j] = warns[j].Err.Error()
+			}
+		})
+		tk.MustQuery(tt)
+		warns := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+		c.Assert(len(warns), Equals, len(output[i].Warnings))
+		for j := range warns {
+			c.Assert(warns[j].Level, Equals, stmtctx.WarnLevelWarning)
+			c.Assert(warns[j].Err.Error(), Equals, output[i].Warnings[j])
+		}
+	}
+}
+
 func (s *testIntegrationSuite) TestIssue15546(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -607,4 +640,51 @@ func (s *testIntegrationSuite) TestIssue15813(c *C) {
 	tk.MustExec("CREATE INDEX i0 ON t0(c0)")
 	tk.MustExec("CREATE INDEX i0 ON t1(c0)")
 	tk.MustQuery("select /*+ MERGE_JOIN(t0, t1) */ * from t0, t1 where t0.c0 = t1.c0").Check(testkit.Rows())
+}
+
+func (s *testIntegrationSuite) TestIssue15846(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0, t1")
+	tk.MustExec("CREATE TABLE t0(t0 INT UNIQUE);")
+	tk.MustExec("CREATE TABLE t1(c0 FLOAT);")
+	tk.MustExec("INSERT INTO t1(c0) VALUES (0);")
+	tk.MustExec("INSERT INTO t0(t0) VALUES (NULL), (NULL);")
+	tk.MustQuery("SELECT t1.c0 FROM t1 LEFT JOIN t0 ON 1;").Check(testkit.Rows("0", "0"))
+
+	tk.MustExec("drop table if exists t0, t1")
+	tk.MustExec("CREATE TABLE t0(t0 INT);")
+	tk.MustExec("CREATE TABLE t1(c0 FLOAT);")
+	tk.MustExec("INSERT INTO t1(c0) VALUES (0);")
+	tk.MustExec("INSERT INTO t0(t0) VALUES (NULL), (NULL);")
+	tk.MustQuery("SELECT t1.c0 FROM t1 LEFT JOIN t0 ON 1;").Check(testkit.Rows("0", "0"))
+
+	tk.MustExec("drop table if exists t0, t1")
+	tk.MustExec("CREATE TABLE t0(t0 INT);")
+	tk.MustExec("CREATE TABLE t1(c0 FLOAT);")
+	tk.MustExec("create unique index idx on t0(t0);")
+	tk.MustExec("INSERT INTO t1(c0) VALUES (0);")
+	tk.MustExec("INSERT INTO t0(t0) VALUES (NULL), (NULL);")
+	tk.MustQuery("SELECT t1.c0 FROM t1 LEFT JOIN t0 ON 1;").Check(testkit.Rows("0", "0"))
+}
+
+func (s *testIntegrationSuite) TestFloorUnixTimestampPruning(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists floor_unix_timestamp")
+	tk.MustExec(`create table floor_unix_timestamp (ts timestamp(3))
+partition by range (floor(unix_timestamp(ts))) (
+partition p0 values less than (unix_timestamp('2020-04-05 00:00:00')),
+partition p1 values less than (unix_timestamp('2020-04-12 00:00:00')),
+partition p2 values less than (unix_timestamp('2020-04-15 00:00:00')))`)
+	tk.MustExec("insert into floor_unix_timestamp values ('2020-04-04 00:00:00')")
+	tk.MustExec("insert into floor_unix_timestamp values ('2020-04-04 23:59:59.999')")
+	tk.MustExec("insert into floor_unix_timestamp values ('2020-04-05 00:00:00')")
+	tk.MustExec("insert into floor_unix_timestamp values ('2020-04-05 00:00:00.001')")
+	tk.MustExec("insert into floor_unix_timestamp values ('2020-04-12 01:02:03.456')")
+	tk.MustExec("insert into floor_unix_timestamp values ('2020-04-14 00:00:42')")
+	tk.MustQuery("select count(*) from floor_unix_timestamp where '2020-04-05 00:00:00.001' = ts").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from floor_unix_timestamp where ts > '2020-04-05 00:00:00' order by ts").Check(testkit.Rows("2020-04-05 00:00:00.001", "2020-04-12 01:02:03.456", "2020-04-14 00:00:42.000"))
+	tk.MustQuery("select count(*) from floor_unix_timestamp where ts <= '2020-04-05 23:00:00'").Check(testkit.Rows("4"))
+	tk.MustQuery("select * from floor_unix_timestamp partition(p1, p2) where ts > '2020-04-14 00:00:00'").Check(testkit.Rows("2020-04-14 00:00:42.000"))
 }

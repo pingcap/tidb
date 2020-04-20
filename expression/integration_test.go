@@ -4055,7 +4055,7 @@ func (s *testIntegrationSuite) TestFilterExtractFromDNF(c *C) {
 		selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
 		conds := make([]expression.Expression, 0, len(selection.Conditions))
 		for _, cond := range selection.Conditions {
-			conds = append(conds, expression.PushDownNot(sctx, cond, false))
+			conds = append(conds, expression.PushDownNot(sctx, cond))
 		}
 		afterFunc := expression.ExtractFiltersFromDNFs(sctx, conds)
 		sort.Slice(afterFunc, func(i, j int) bool {
@@ -4917,6 +4917,16 @@ func (s *testIntegrationSuite) TestValuesForBinaryLiteral(c *C) {
 	c.Assert(err, IsNil)
 	tk.MustQuery("select a=0 from testValuesBinary;").Check(testkit.Rows("1"))
 	tk.MustExec("drop table testValuesBinary;")
+}
+
+func (s *testIntegrationSuite) TestIssue15725(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(2)")
+	tk.MustQuery("select * from t where (not not a) = a").Check(testkit.Rows())
+	tk.MustQuery("select * from t where (not not not not a) = a").Check(testkit.Rows())
 }
 
 func (s *testIntegrationSuite) TestIssue15790(c *C) {
