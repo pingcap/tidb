@@ -124,7 +124,7 @@ var _ = Suite(&testMemTableReaderSuite{&testClusterTableBase{}})
 var _ = SerialSuites(&testFlushSuite{})
 var _ = SerialSuites(&testAutoRandomSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testClusterTableSuite{})
-var _ = SerialSuites(&testSuite10{&baseTestSuite{}})
+var _ = SerialSuites(&testPrepareSerialSuite{&baseTestSuite{}})
 
 type testSuite struct{ *baseTestSuite }
 type testSuiteP1 struct{ *baseTestSuite }
@@ -4831,8 +4831,10 @@ func (s *testSuiteP2) TestPointGetPreparedPlan(c *C) {
 
 	pspk1Id, _, _, err := tk1.Se.PrepareStmt("select * from t where a = ?")
 	c.Assert(err, IsNil)
+	tk1.Se.GetSessionVars().PreparedStmts[pspk1Id].(*plannercore.CachedPrepareStmt).PreparedAst.UseCache = false
 	pspk2Id, _, _, err := tk1.Se.PrepareStmt("select * from t where ? = a ")
 	c.Assert(err, IsNil)
+	tk1.Se.GetSessionVars().PreparedStmts[pspk2Id].(*plannercore.CachedPrepareStmt).PreparedAst.UseCache = false
 
 	ctx := context.Background()
 	// first time plan generated
@@ -4872,6 +4874,7 @@ func (s *testSuiteP2) TestPointGetPreparedPlan(c *C) {
 	// unique index
 	psuk1Id, _, _, err := tk1.Se.PrepareStmt("select * from t where b = ? ")
 	c.Assert(err, IsNil)
+	tk1.Se.GetSessionVars().PreparedStmts[psuk1Id].(*plannercore.CachedPrepareStmt).PreparedAst.UseCache = false
 
 	rs, err = tk1.Se.ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(1)})
 	c.Assert(err, IsNil)
@@ -4985,6 +4988,7 @@ func (s *testSuiteP2) TestPointGetPreparedPlanWithCommitMode(c *C) {
 
 	pspk1Id, _, _, err := tk1.Se.PrepareStmt("select * from t where a = ?")
 	c.Assert(err, IsNil)
+	tk1.Se.GetSessionVars().PreparedStmts[pspk1Id].(*plannercore.CachedPrepareStmt).PreparedAst.UseCache = false
 
 	ctx := context.Background()
 	// first time plan generated
@@ -5048,9 +5052,11 @@ func (s *testSuiteP2) TestPointUpdatePreparedPlan(c *C) {
 
 	updateID1, pc, _, err := tk1.Se.PrepareStmt(`update t set c = c + 1 where a = ?`)
 	c.Assert(err, IsNil)
+	tk1.Se.GetSessionVars().PreparedStmts[updateID1].(*plannercore.CachedPrepareStmt).PreparedAst.UseCache = false
 	c.Assert(pc, Equals, 1)
 	updateID2, pc, _, err := tk1.Se.PrepareStmt(`update t set c = c + 2 where ? = a`)
 	c.Assert(err, IsNil)
+	tk1.Se.GetSessionVars().PreparedStmts[updateID2].(*plannercore.CachedPrepareStmt).PreparedAst.UseCache = false
 	c.Assert(pc, Equals, 1)
 
 	ctx := context.Background()
@@ -5085,6 +5091,7 @@ func (s *testSuiteP2) TestPointUpdatePreparedPlan(c *C) {
 	// unique index
 	updUkID1, _, _, err := tk1.Se.PrepareStmt(`update t set c = c + 10 where b = ?`)
 	c.Assert(err, IsNil)
+	tk1.Se.GetSessionVars().PreparedStmts[updUkID1].(*plannercore.CachedPrepareStmt).PreparedAst.UseCache = false
 	rs, err = tk1.Se.ExecutePreparedStmt(ctx, updUkID1, []types.Datum{types.NewDatum(3)})
 	c.Assert(rs, IsNil)
 	c.Assert(err, IsNil)
@@ -5149,6 +5156,7 @@ func (s *testSuiteP2) TestPointUpdatePreparedPlanWithCommitMode(c *C) {
 
 	ctx := context.Background()
 	updateID1, _, _, err := tk1.Se.PrepareStmt(`update t set c = c + 1 where a = ?`)
+	tk1.Se.GetSessionVars().PreparedStmts[updateID1].(*plannercore.CachedPrepareStmt).PreparedAst.UseCache = false
 	c.Assert(err, IsNil)
 
 	// first time plan generated
@@ -5389,4 +5397,14 @@ func (s *testSuite1) TestIssue15767(c *C) {
 	tk.MustExec("insert into t select * from t;")
 	tk.MustExec("insert into t select * from t;")
 	tk.MustQuery("select b, count(*) from ( select b from t order by a limit 20 offset 2) as s group by b order by b;").Check(testkit.Rows("a 6", "c 7", "s 7"))
+}
+
+func (s *testSuite1) TestIssue16025(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t0;")
+	tk.MustExec("CREATE TABLE t0(c0 NUMERIC PRIMARY KEY);")
+	tk.MustExec("INSERT IGNORE INTO t0(c0) VALUES (NULL);")
+	tk.MustQuery("SELECT * FROM t0 WHERE c0;").Check(testkit.Rows())
+
 }

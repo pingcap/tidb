@@ -50,14 +50,14 @@
       {
         "SQL": "explain select * from t t1 left join t t2 on t1.a=t2.a where from_unixtime(t2.b);",
         "Plan": [
-          "HashJoin_8 9990.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
-          "├─Selection_13(Build) 7992.00 root  from_unixtime(cast(test.t.b))",
-          "│ └─TableReader_16 9990.00 root  data:Selection_15",
-          "│   └─Selection_15 9990.00 cop[tikv]  not(isnull(test.t.a))",
-          "│     └─TableFullScan_14 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "└─TableReader_12(Probe) 9990.00 root  data:Selection_11",
-          "  └─Selection_11 9990.00 cop[tikv]  not(isnull(test.t.a))",
-          "    └─TableFullScan_10 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "HashJoin_7 9990.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "├─Selection_15(Build) 7992.00 root  from_unixtime(cast(test.t.b))",
+          "│ └─TableReader_14 7992.00 root  data:Selection_13",
+          "│   └─Selection_13 7992.00 cop[tikv]  not(isnull(test.t.a))",
+          "│     └─TableFullScan_12 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader_11(Probe) 9990.00 root  data:Selection_10",
+          "  └─Selection_10 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "    └─TableFullScan_9 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
       }
     ]
@@ -202,6 +202,23 @@
           "├─IndexRangeScan_5(Build) 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false, stats:pseudo",
           "├─IndexRangeScan_6(Build) 1.00 cop[tikv] table:t, index:b(b) range:[2,2], keep order:false, stats:pseudo",
           "└─TableRowIDScan_7(Probe) 2.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select /*+ USE_INDEX_MERGE(t, primary) */ * from t where 1 or t.c",
+        "Plan": [
+          "IndexMerge_8 10000.00 root  ",
+          "├─TableFullScan_5(Build) 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "├─TableRangeScan_6(Build) 6666.67 cop[tikv] table:t range:[-inf,0), (0,+inf], keep order:false, stats:pseudo",
+          "└─TableRowIDScan_7(Probe) 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select /*+ USE_INDEX_MERGE(t, a, b, c) */ * from t where 1 or t.a = 1 or t.b = 2",
+        "Plan": [
+          "TableReader_7 8000.00 root  data:Selection_6",
+          "└─Selection_6 8000.00 cop[tikv]  or(or(1, eq(test.t.a, 1)), eq(test.t.b, 2))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       }
     ]
