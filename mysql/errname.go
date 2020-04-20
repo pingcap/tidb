@@ -896,7 +896,6 @@ var MySQLErrName = map[uint16]string{
 	ErrAdminCheckTable:    "TiDB admin check table failed.",
 
 	// TiKV/PD errors.
-<<<<<<< HEAD:mysql/errname.go
 	ErrPDServerTimeout:    "PD server timeout",
 	ErrTiKVServerTimeout:  "TiKV server timeout",
 	ErrTiKVServerBusy:     "TiKV server is busy",
@@ -904,17 +903,6 @@ var MySQLErrName = map[uint16]string{
 	ErrRegionUnavailable:  "Region is unavailable",
 	ErrGCTooEarly:         "GC life time is shorter than transaction duration, transaction starts at %v, GC safe point is %v",
 
-	ErrTxnTooLarge: "Transaction is too large",
-=======
-	ErrPDServerTimeout:        "PD server timeout",
-	ErrTiKVServerTimeout:      "TiKV server timeout",
-	ErrTiKVServerBusy:         "TiKV server is busy",
-	ErrResolveLockTimeout:     "Resolve lock timeout",
-	ErrRegionUnavailable:      "Region is unavailable",
-	ErrGCTooEarly:             "GC life time is shorter than transaction duration, transaction starts at %v, GC safe point is %v",
-	ErrWriteConflict:          "Write conflict, txnStartTS=%d, conflictStartTS=%d, conflictCommitTS=%d, key=%s",
-	ErrTiKVStoreLimit:         "Store token is up to the limit, store id = %d",
-	ErrPrometheusAddrIsNotSet: "Prometheus address is not set in PD and etcd",
-	ErrTiKVStaleCommand:       "TiKV server reports stale command",
->>>>>>> 14a4a4e... tikv: fix infinite retry when kv continuing to return staleCommand error (#16481):errno/errname.go
+	ErrTiKVStaleCommand: "TiKV server reports stale command",
+	ErrTxnTooLarge:      "Transaction is too large",
 }

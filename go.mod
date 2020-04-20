@@ -86,3 +86,5 @@ require (
 )
 
 go 1.13
+
+replace github.com/pingcap/parser => github.com/lysu/parser v0.0.0-20200420033737-82a7da4a26b5
