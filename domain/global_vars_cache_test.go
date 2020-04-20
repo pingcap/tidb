@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 )
 
-var _ = Suite(&testGVCSuite{})
+var _ = SerialSuites(&testGVCSuite{})
 
 type testGVCSuite struct{}
 
