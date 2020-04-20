@@ -469,7 +469,7 @@ func checkPartitionFuncType(ctx sessionctx.Context, s *ast.CreateTableStmt, tblI
 func checkCreatePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) error {
 	pi := tblInfo.Partition
 	defs := pi.Definitions
-	if len(defs) <= 1 {
+	if len(defs) == 0 {
 		return nil
 	}
 

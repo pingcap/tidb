@@ -274,6 +274,10 @@ func (s *testIntegrationSuite3) TestCreateTableWithPartition(c *C) {
 	tk.MustGetErrCode(`create table t34 (dt datetime) partition by range (unix_timestamp(dt)) (
 		partition p0 values less than (unix_timestamp('2020-04-04 00:00:00')),
 		partition p1 values less than (unix_timestamp('2020-04-05 00:00:00')));`, tmysql.ErrWrongExprInPartitionFunc)
+
+	// Fix https://github.com/pingcap/tidb/issues/16333
+	tk.MustExec(`create table t35 (dt timestamp) partition by range (unix_timestamp(dt))
+(partition p0 values less than (unix_timestamp('2020-04-15 00:00:00')));`)
 }
 
 func (s *testIntegrationSuite2) TestCreateTableWithHashPartition(c *C) {

@@ -85,20 +85,20 @@ type connArray struct {
 	done chan struct{}
 }
 
-func newConnArray(maxSize uint, addr string, security config.Security, dieNotify *uint32, enableBatch bool) (*connArray, error) {
+func newConnArray(maxSize uint, addr string, security config.Security, idleNotify *uint32, enableBatch bool) (*connArray, error) {
 	a := &connArray{
 		index:         0,
 		v:             make([]*grpc.ClientConn, maxSize),
 		streamTimeout: make(chan *tikvrpc.Lease, 1024),
 		done:          make(chan struct{}),
 	}
-	if err := a.Init(addr, security, dieNotify, enableBatch); err != nil {
+	if err := a.Init(addr, security, idleNotify, enableBatch); err != nil {
 		return nil, err
 	}
 	return a, nil
 }
 
-func (a *connArray) Init(addr string, security config.Security, dieNotify *uint32, enableBatch bool) error {
+func (a *connArray) Init(addr string, security config.Security, idleNotify *uint32, enableBatch bool) error {
 	a.target = addr
 
 	opt := grpc.WithInsecure()
@@ -122,7 +122,7 @@ func (a *connArray) Init(addr string, security config.Security, dieNotify *uint3
 
 	allowBatch := (cfg.TiKVClient.MaxBatchSize > 0) && enableBatch
 	if allowBatch {
-		a.batchConn = newBatchConn(uint(len(a.v)), cfg.TiKVClient.MaxBatchSize, dieNotify)
+		a.batchConn = newBatchConn(uint(len(a.v)), cfg.TiKVClient.MaxBatchSize, idleNotify)
 		a.pendingRequests = metrics.TiKVPendingBatchRequests.WithLabelValues(a.target)
 	}
 	keepAlive := cfg.TiKVClient.GrpcKeepAliveTime
@@ -170,8 +170,6 @@ func (a *connArray) Init(addr string, security config.Security, dieNotify *uint3
 				closed:        0,
 				tikvClientCfg: cfg.TiKVClient,
 				tikvLoad:      &a.tikvTransportLayerLoad,
-				dieNotify:     a.dieNotify,
-				dieFlag:       &a.die,
 			}
 			a.batchCommandsClients = append(a.batchCommandsClients, batchClient)
 		}
@@ -215,11 +213,10 @@ type rpcClient struct {
 	conns    map[string]*connArray
 	security config.Security
 
-	dieNotify uint32
-	// Periodically check whether there is any connection that was die and then close and remove these connections.
+	idleNotify uint32
+	// Periodically check whether there is any connection that is idle and then close and remove these connections.
 	// Implement background cleanup.
-	isClosed         bool
-	dieEventListener func(addr []string)
+	isClosed bool
 }
 
 func newRPCClient(security config.Security) *rpcClient {
@@ -259,7 +256,7 @@ func (c *rpcClient) createConnArray(addr string, enableBatch bool) (*connArray, 
 	if !ok {
 		var err error
 		connCount := config.GetGlobalConfig().TiKVClient.GrpcConnectionCount
-		array, err = newConnArray(connCount, addr, c.security, &c.dieNotify, enableBatch)
+		array, err = newConnArray(connCount, addr, c.security, &c.idleNotify, enableBatch)
 		if err != nil {
 			return nil, err
 		}
@@ -315,8 +312,8 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	start := time.Now()
 	defer c.updateTiKVSendReqHistogram(req, start)
 
-	if atomic.CompareAndSwapUint32(&c.dieNotify, 1, 0) {
-		c.recycleDieConnArray()
+	if atomic.CompareAndSwapUint32(&c.idleNotify, 1, 0) {
+		c.recycleIdleConnArray()
 	}
 
 	enableBatch := req.StoreTp != kv.TiDB
