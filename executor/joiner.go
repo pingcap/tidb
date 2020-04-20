@@ -341,7 +341,7 @@ func (j *baseJoiner) Clone() baseJoiner {
 	if j.chk != nil {
 		base.chk = j.chk.CopyConstruct()
 	} else {
-		base.shallowRow = chunk.MutRow(j.shallowRow.ToRow())
+		base.shallowRow = j.shallowRow.Clone()
 	}
 	if !j.defaultInner.IsEmpty() {
 		base.defaultInner = j.defaultInner.CopyConstruct()
