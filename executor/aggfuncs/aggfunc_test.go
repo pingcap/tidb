@@ -120,7 +120,7 @@ func (s *testSuite) testMergePartialResult(c *C, p aggTest) {
 	dt := resultChk.GetRow(0).GetDatum(0, p.dataType)
 	result, err := dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[0])
 	c.Assert(err, IsNil)
-	c.Assert(result, Equals, 0)
+	c.Assert(result, Equals, 0, Commentf("%v != %v", dt.String(), p.results[0]))
 
 	err = finalFunc.MergePartialResult(s.ctx, partialResult, finalPr)
 	c.Assert(err, IsNil)
@@ -136,7 +136,7 @@ func (s *testSuite) testMergePartialResult(c *C, p aggTest) {
 	dt = resultChk.GetRow(0).GetDatum(0, p.dataType)
 	result, err = dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[1])
 	c.Assert(err, IsNil)
-	c.Assert(result, Equals, 0)
+	c.Assert(result, Equals, 0, Commentf("%v != %v", dt.String(), p.results[1]))
 	err = finalFunc.MergePartialResult(s.ctx, partialResult, finalPr)
 	c.Assert(err, IsNil)
 
@@ -147,7 +147,7 @@ func (s *testSuite) testMergePartialResult(c *C, p aggTest) {
 	dt = resultChk.GetRow(0).GetDatum(0, p.dataType)
 	result, err = dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[2])
 	c.Assert(err, IsNil)
-	c.Assert(result, Equals, 0)
+	c.Assert(result, Equals, 0, Commentf("%v != %v", dt.String(), p.results[2]))
 }
 
 func buildAggTester(funcName string, tp byte, numRows int, results ...interface{}) aggTest {
@@ -330,7 +330,7 @@ func (s *testSuite) testAggFunc(c *C, p aggTest) {
 	dt := resultChk.GetRow(0).GetDatum(0, desc.RetTp)
 	result, err := dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[1])
 	c.Assert(err, IsNil)
-	c.Assert(result, Equals, 0)
+	c.Assert(result, Equals, 0, Commentf("%v != %v", dt.String(), p.results[1]))
 
 	// test the empty input
 	resultChk.Reset()
@@ -339,7 +339,7 @@ func (s *testSuite) testAggFunc(c *C, p aggTest) {
 	dt = resultChk.GetRow(0).GetDatum(0, desc.RetTp)
 	result, err = dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[0])
 	c.Assert(err, IsNil)
-	c.Assert(result, Equals, 0)
+	c.Assert(result, Equals, 0, Commentf("%v != %v", dt.String(), p.results[0]))
 
 	// test the agg func with distinct
 	desc, err = aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, true)
@@ -364,7 +364,7 @@ func (s *testSuite) testAggFunc(c *C, p aggTest) {
 	dt = resultChk.GetRow(0).GetDatum(0, desc.RetTp)
 	result, err = dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[1])
 	c.Assert(err, IsNil)
-	c.Assert(result, Equals, 0)
+	c.Assert(result, Equals, 0, Commentf("%v != %v", dt.String(), p.results[1]))
 
 	// test the empty input
 	resultChk.Reset()
@@ -373,7 +373,7 @@ func (s *testSuite) testAggFunc(c *C, p aggTest) {
 	dt = resultChk.GetRow(0).GetDatum(0, desc.RetTp)
 	result, err = dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[0])
 	c.Assert(err, IsNil)
-	c.Assert(result, Equals, 0)
+	c.Assert(result, Equals, 0, Commentf("%v != %v", dt.String(), p.results[0]))
 }
 
 func (s *testSuite) testMultiArgsAggFunc(c *C, p multiArgsAggTest) {

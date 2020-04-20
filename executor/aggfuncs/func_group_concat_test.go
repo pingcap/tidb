@@ -36,6 +36,7 @@ func (s *testSuite) TestGroupConcat(c *C) {
 	test2.orderBy = true
 	s.testMultiArgsAggFunc(c, test2)
 
+	defer variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.GroupConcatMaxLen, types.NewStringDatum("1024"))
 	// minimum GroupConcatMaxLen is 4
 	for i := 4; i <= 7; i++ {
 		variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.GroupConcatMaxLen, types.NewStringDatum(fmt.Sprint(i)))
