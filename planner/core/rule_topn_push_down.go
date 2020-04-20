@@ -96,7 +96,7 @@ func (p *LogicalUnionAll) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 		if topN != nil {
 			newTopN = LogicalTopN{Count: topN.Count + topN.Offset}.Init(p.ctx, topN.blockOffset)
 			for _, by := range topN.ByItems {
-				newTopN.ByItems = append(newTopN.ByItems, &util.ByItems{by.Expr, by.Desc})
+				newTopN.ByItems = append(newTopN.ByItems, &util.ByItems{Expr: by.Expr, Desc: by.Desc})
 			}
 		}
 		p.children[i] = child.pushDownTopN(newTopN)
