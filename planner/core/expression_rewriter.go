@@ -38,8 +38,8 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
-// EvalSubquery evaluates incorrelated subqueries once.
-var EvalSubquery func(ctx context.Context, p PhysicalPlan, is infoschema.InfoSchema, sctx sessionctx.Context) ([][]types.Datum, error)
+// EvalSubqueryFirstRow evaluates incorrelated subqueries once, and get first row.
+var EvalSubqueryFirstRow func(ctx context.Context, p PhysicalPlan, is infoschema.InfoSchema, sctx sessionctx.Context) (row []types.Datum, err error)
 
 // evalAstExpr evaluates ast expression directly.
 func evalAstExpr(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error) {
@@ -707,13 +707,18 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 			er.err = err
 			return v, true
 		}
-		rows, err := EvalSubquery(ctx, physicalPlan, er.b.is, er.b.ctx)
+		row, err := EvalSubqueryFirstRow(ctx, physicalPlan, er.b.is, er.b.ctx)
 		if err != nil {
 			er.err = err
 			return v, true
 		}
+<<<<<<< HEAD
 		if (len(rows) > 0 && !v.Not) || (len(rows) == 0 && v.Not) {
 			er.ctxStackAppend(expression.One.Clone(), types.EmptyName)
+=======
+		if (row != nil && !v.Not) || (row == nil && v.Not) {
+			er.ctxStackAppend(expression.NewOne(), types.EmptyName)
+>>>>>>> 138f225... executor: only return the first row of a subquery (#16399)
 		} else {
 			er.ctxStackAppend(expression.Zero.Clone(), types.EmptyName)
 		}
@@ -877,14 +882,14 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 		er.err = err
 		return v, true
 	}
-	rows, err := EvalSubquery(ctx, physicalPlan, er.b.is, er.b.ctx)
+	row, err := EvalSubqueryFirstRow(ctx, physicalPlan, er.b.is, er.b.ctx)
 	if err != nil {
 		er.err = err
 		return v, true
 	}
 	if np.Schema().Len() > 1 {
 		newCols := make([]expression.Expression, 0, np.Schema().Len())
-		for i, data := range rows[0] {
+		for i, data := range row {
 			newCols = append(newCols, &expression.Constant{
 				Value:   data,
 				RetType: np.Schema().Columns[i].GetType()})
@@ -897,7 +902,7 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 		er.ctxStackAppend(expr, types.EmptyName)
 	} else {
 		er.ctxStackAppend(&expression.Constant{
-			Value:   rows[0][0],
+			Value:   row[0],
 			RetType: np.Schema().Columns[0].GetType(),
 		}, types.EmptyName)
 	}
