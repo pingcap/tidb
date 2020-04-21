@@ -108,5 +108,48 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestIndexHintWarning",
+    "Cases": [
+      {
+        "SQL": "select /*+ USE_INDEX(t1, j) */ * from t1",
+        "Warnings": [
+          "[planner:1176]Key 'j' doesn't exist in table 't1'"
+        ]
+      },
+      {
+        "SQL": "select /*+ IGNORE_INDEX(t1, j) */ * from t1",
+        "Warnings": [
+          "[planner:1176]Key 'j' doesn't exist in table 't1'"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t2, a, b, c) */ * from t1",
+        "Warnings": [
+          "[planner:1815]use_index(t2, a, b, c) is inapplicable, check whether the table(t2) exists"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t2) */ * from t1",
+        "Warnings": [
+          "[planner:1815]use_index(t2) is inapplicable, check whether the table(t2) exists"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t1, a), USE_INDEX(t2, a), USE_INDEX(t3, a) */ * from t1, t2 where t1.a=t2.a",
+        "Warnings": [
+          "[planner:1815]use_index(t3, a) is inapplicable, check whether the table(t3) exists"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t3, a), USE_INDEX(t4, b), IGNORE_INDEX(t3, a) */ * from t1, t2 where t1.a=t2.a",
+        "Warnings": [
+          "[planner:1815]use_index(t3, a) is inapplicable, check whether the table(t3) exists",
+          "[planner:1815]use_index(t4, b) is inapplicable, check whether the table(t4) exists",
+          "[planner:1815]ignore_index(t3, a) is inapplicable, check whether the table(t3) exists"
+        ]
+      }
+    ]
   }
 ]
