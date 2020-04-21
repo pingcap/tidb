@@ -417,8 +417,41 @@ func (s *testSuite6) TestAlterTableAddColumn(c *C) {
 	_, err = tk.Exec("alter table alter_view add column c4 varchar(50)")
 	c.Assert(err.Error(), Equals, ddl.ErrWrongObject.GenWithStackByArgs("test", "alter_view", "BASE TABLE").Error())
 	tk.MustExec("drop view alter_view")
+	tk.MustExec("create sequence alter_seq")
+	_, err = tk.Exec("alter table alter_seq add column c int")
+	c.Assert(err.Error(), Equals, ddl.ErrWrongObject.GenWithStackByArgs("test", "alter_seq", "BASE TABLE").Error())
+	tk.MustExec("drop sequence alter_seq")
 }
 
+<<<<<<< HEAD
+=======
+func (s *testSuite6) TestAlterTableAddColumns(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table if not exists alter_test (c1 int)")
+	tk.MustExec("insert into alter_test values(1)")
+	tk.MustExec("alter table alter_test add column c2 timestamp default current_timestamp, add column c8 varchar(50) default 'CURRENT_TIMESTAMP'")
+	tk.MustExec("alter table alter_test add column (c7 timestamp default current_timestamp, c3 varchar(50) default 'CURRENT_TIMESTAMP')")
+	r, err := tk.Exec("select c2 from alter_test")
+	c.Assert(err, IsNil)
+	req := r.NewChunk()
+	err = r.Next(context.Background(), req)
+	c.Assert(err, IsNil)
+	row := req.GetRow(0)
+	c.Assert(row.Len(), Equals, 1)
+	r.Close()
+	tk.MustQuery("select c3 from alter_test").Check(testkit.Rows("CURRENT_TIMESTAMP"))
+	tk.MustExec("create or replace view alter_view as select c1,c2 from alter_test")
+	_, err = tk.Exec("alter table alter_view add column (c4 varchar(50), c5 varchar(50))")
+	c.Assert(err.Error(), Equals, ddl.ErrWrongObject.GenWithStackByArgs("test", "alter_view", "BASE TABLE").Error())
+	tk.MustExec("drop view alter_view")
+	tk.MustExec("create sequence alter_seq")
+	_, err = tk.Exec("alter table alter_seq add column (c1 int, c2 varchar(10))")
+	c.Assert(err.Error(), Equals, ddl.ErrWrongObject.GenWithStackByArgs("test", "alter_seq", "BASE TABLE").Error())
+	tk.MustExec("drop sequence alter_seq")
+}
+
+>>>>>>> 8c455e8... ddl: fix sequence object check error when alter table (#16625)
 func (s *testSuite6) TestAddNotNullColumnNoDefault(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -466,6 +499,10 @@ func (s *testSuite6) TestAlterTableModifyColumn(c *C) {
 	_, err = tk.Exec("alter table alter_view modify column c2 text")
 	c.Assert(err.Error(), Equals, ddl.ErrWrongObject.GenWithStackByArgs("test", "alter_view", "BASE TABLE").Error())
 	tk.MustExec("drop view alter_view")
+	tk.MustExec("create sequence alter_seq")
+	_, err = tk.Exec("alter table alter_seq modify column c int")
+	c.Assert(err.Error(), Equals, ddl.ErrWrongObject.GenWithStackByArgs("test", "alter_seq", "BASE TABLE").Error())
+	tk.MustExec("drop sequence alter_seq")
 
 	// test multiple collate modification in column.
 	tk.MustExec("drop table if exists modify_column_multiple_collate")
