@@ -867,7 +867,6 @@ func (c *Config) Valid() error {
 		}
 	}
 
-
 	// test log level
 	l := zap.NewAtomicLevel()
 	return l.UnmarshalText([]byte(c.Log.Level))
