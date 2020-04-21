@@ -993,15 +993,15 @@ func oldPasswordUpgrade(pass string) (string, error) {
 }
 
 func init() {
-	bootstrapVersion = map[int64]func(Session) {
-		version2: upgradeToVer2,
-		version3: upgradeToVer3,
-		version4: upgradeToVer4,
-		version5: upgradeToVer5,
-		version6: upgradeToVer6,
-		version7: upgradeToVer7,
-		version8: upgradeToVer8,
-		version9: upgradeToVer9,
+	bootstrapVersion = map[int64]func(Session){
+		version2:  upgradeToVer2,
+		version3:  upgradeToVer3,
+		version4:  upgradeToVer4,
+		version5:  upgradeToVer5,
+		version6:  upgradeToVer6,
+		version7:  upgradeToVer7,
+		version8:  upgradeToVer8,
+		version9:  upgradeToVer9,
 		version10: upgradeToVer10,
 		version11: upgradeToVer11,
 		version12: upgradeToVer12,
