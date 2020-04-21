@@ -84,6 +84,7 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.AllowWriteRowID, Equals, DefOptWriteRowID)
 	c.Assert(vars.TiDBOptJoinReorderThreshold, Equals, DefTiDBOptJoinReorderThreshold)
 	c.Assert(vars.EnableFastAnalyze, Equals, DefTiDBUseFastAnalyze)
+	c.Assert(vars.FoundInPlanCache, Equals, DefTiDBFoundInPlanCache)
 
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.Concurrency))
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.MemQuota))
@@ -434,6 +435,13 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(val, Equals, "0")
 	err = SetSessionSystemVar(v, TiDBStmtSummaryMaxSQLLength, types.NewStringDatum("a"))
 	c.Assert(err, ErrorMatches, ".*Incorrect argument type to variable 'tidb_stmt_summary_max_sql_length'")
+
+	err = SetSessionSystemVar(v, TiDBFoundInPlanCache, types.NewStringDatum("1"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBFoundInPlanCache)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "0")
+	c.Assert(v.systems[TiDBFoundInPlanCache], Equals, "1")
 }
 
 func (s *testVarsutilSuite) TestSetOverflowBehave(c *C) {
