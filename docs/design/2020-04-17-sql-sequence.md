@@ -7,13 +7,13 @@
 
 ## Summary
 
-“Sequence Generator” (hereinafter referred to as “Sequence”) is a database feature introduced in SQL 2003 Standard. It is defined as “a mechanism for generating continuous numerical values, which can be either internal or external objects”.
+"Sequence Generator" (hereinafter referred to as "Sequence") is a database feature introduced in SQL 2003 Standard. It is defined as "a mechanism for generating continuous numerical values, which can be either internal or external objects".
 
-Based on the definition above, the conventional auto-increment columns of MySQL/TiDB can be considered as an internal implementation of Sequence Generator. This RFC describes the design of external Sequence Generator. Unless otherwise noted, the “Sequence” described below refers to external Sequence Generator.
+Based on the definition above, the conventional auto-increment columns of MySQL/TiDB can be considered as an internal implementation of Sequence Generator. This RFC describes the design of external Sequence Generator. Unless otherwise noted, the "Sequence" described below refers to external Sequence Generator.
 
 ## Motivation
 
-- Standardization: Admittedly sequence is a well-defined syntax standard in SQL 2003. Although auto-increment can be regarded as a internal sequence implementation, it hasn't supported all the external features (such as CYCLE).
+- Standardization: Admittedly sequence is a well-defined syntax standard in SQL 2003. Although auto-increment can be regarded as an internal sequence implementation, it hasn't supported all the external features (such as CYCLE).
 
 - Usability: A sequence can be independent of tables, shared by multiple tables and be specified with CACHE details (either specify the number of CACHE or disable CACHE), which improves usability of the product.
 
@@ -21,13 +21,13 @@ Based on the definition above, the conventional auto-increment columns of MySQL/
 
 ## Background
 
-TiDB auto-increment will cache a batch values by default in each instance to ensure better performance, which means auto-increment only guarantee the uniqueness under a multi-tidb-node cluster. This kind of cache mode is uncontrollable and implicit in auto-increment.
+TiDB auto-increment will cache a batch values by default in each instance to ensure better performance, which means auto-increment only guarantees the uniqueness under a multi-tidb-node cluster. This kind of cache mode is uncontrollable and implicit in auto-increment.
 
 But in sequence, we take it open. Users can specify whether to use cache mode or not, what the cache size should be, what's the min and max of the range like and so on. This factors make sequence more flexible, controllable and easy to use.
 
 ## Syntax and Semantics
 
-TiDB sequence is borrowed from MariaDB, which is also close to DB2 because DB2 is similar to MariaDB regarding the Sequence syntax.
+TiDB sequence is borrowed from MariaDB, which is also close to DB2 because DB2 is similar to MariaDB regarding to the Sequence syntax.
 
 create sequence statement:
 
@@ -47,7 +47,7 @@ show create sequence statement:
 SHOW CREATE SEQUENCE sequence_name
 ```
 
-drop sequence sequence statement:
+drop sequence statement:
 
 ```
 DROP SEQUENCE sequence_name_list
@@ -85,11 +85,11 @@ Each sequence value will be stored in its own range, with the key format below:
 DB:<dbID> SID:<sequenceID> ——> int64 
 ```
 
-Reads and writes to the sequence value (via the functions `nextval`, `setval`), will be implemented by direct calls to the `KV` layer's `Get`, `Inc`, and `Set` functions. Since sequence object store the value at the range of its own, it will cause hotpoint at sequence meta under insertion intensive cases.
+Reads and writes to the sequence value (via the functions `nextval`, `setval`), will be implemented by direct calls to the `KV` layer's `Get`, `Inc`, and `Set` functions. Since sequence objects store the value at the range of its own, it will cause hotspot at sequence meta under insertion intensive cases.
 
 - Sequence Transaction
 
-Storing sequence values in their own ranges means that inserts to tables which use sequences will always touch two ranges. However, since the sequence update takes place outside of the SQL transaction, this should not trigger the `2PC` commit protocol. 
+Storing sequence values in their own ranges means that insertions to tables which use sequences will always touch two ranges. However, since the sequence update takes place outside of the SQL transaction, this should not trigger the `2PC` commit protocol. 
 
 Sequence computation is under the expression framework, evaluating one value at a time. The values fetched by these functions won't be rolled back when the outer SQL transaction is aborted.
 
