@@ -658,13 +658,8 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 			er.err = err
 			return v, true
 		}
-<<<<<<< HEAD
-		if (len(rows) > 0 && !v.Not) || (len(rows) == 0 && v.Not) {
-			er.ctxStack = append(er.ctxStack, expression.One.Clone())
-=======
 		if (row != nil && !v.Not) || (row == nil && v.Not) {
-			er.ctxStackAppend(expression.NewOne(), types.EmptyName)
->>>>>>> 138f225... executor: only return the first row of a subquery (#16399)
+			er.ctxStack = append(er.ctxStack, expression.One.Clone())
 		} else {
 			er.ctxStack = append(er.ctxStack, expression.Zero.Clone())
 		}
@@ -841,13 +836,8 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 		}
 		er.ctxStack = append(er.ctxStack, expr)
 	} else {
-<<<<<<< HEAD
 		er.ctxStack = append(er.ctxStack, &expression.Constant{
-			Value:   rows[0][0],
-=======
-		er.ctxStackAppend(&expression.Constant{
 			Value:   row[0],
->>>>>>> 138f225... executor: only return the first row of a subquery (#16399)
 			RetType: np.Schema().Columns[0].GetType(),
 		})
 	}
