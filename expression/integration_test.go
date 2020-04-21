@@ -5544,6 +5544,28 @@ func (s *testIntegrationSuite) TestCacheRefineArgs(c *C) {
 	tk.MustQuery("execute stmt using @p0").Check(testkit.Rows("0"))
 }
 
+func (s *testIntegrationSuite) TestOrderByFuncPlanCache(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	var err error
+	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("prepare stmt from 'SELECT * FROM t order by rand()'")
+	tk.MustQuery("execute stmt").Check(testkit.Rows())
+	tk.MustExec("prepare stmt from 'SELECT * FROM t order by now()'")
+	tk.MustQuery("execute stmt").Check(testkit.Rows())
+}
+
 func (s *testIntegrationSuite) TestCollation(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
