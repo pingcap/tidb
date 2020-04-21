@@ -377,6 +377,7 @@ const (
 	version41 = 41
 	// version42 add storeType and reason column in expr_pushdown_blacklist
 	version42 = 42
+	// version43 updates global variables related to statement summary.
 	version43 = 43
 )
 
