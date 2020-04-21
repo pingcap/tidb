@@ -140,11 +140,9 @@ func (s *SetConfigExec) doRequest(url string) (retErr error) {
 		return err
 	}
 	defer func() {
-		if resp.Body != nil {
-			if err := resp.Body.Close(); err != nil {
-				if retErr == nil {
-					retErr = err
-				}
+		if err := resp.Body.Close(); err != nil {
+			if retErr == nil {
+				retErr = err
 			}
 		}
 	}()

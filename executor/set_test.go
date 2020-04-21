@@ -959,7 +959,7 @@ func (s *testSuite5) TestSetClusterConfig(c *C) {
 	httpCnt := 0
 	tk.Se.SetValue(executor.TestSetConfigHTTPHandlerKey, func(*http.Request) (*http.Response, error) {
 		httpCnt++
-		return &http.Response{StatusCode: http.StatusOK}, nil
+		return &http.Response{StatusCode: http.StatusOK, Body: ioutil.NopCloser(nil)}, nil
 	})
 	tk.MustExec("set config tikv log.level='info'")
 	c.Assert(httpCnt, Equals, 2)
