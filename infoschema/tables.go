@@ -1107,10 +1107,10 @@ var tableStorageStatsCols = []columnInfo{
 	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "PEER_COUNT", tp: mysql.TypeLonglong, size: 21},
-	{name: "REGION_COUNT", tp: mysql.TypeLonglong, size: 21},
-	{name: "EMPTY_REGION_COUNT", tp: mysql.TypeLonglong, size: 21},
-	{name: "TABLE_SIZE", tp: mysql.TypeLonglong, size: 64, comment: "The disk usage(MB) of the table"},
-	{name: "TABLE_KEYS", tp: mysql.TypeLonglong, size: 64, comment: "The count of keys of the table"},
+	{name: "REGION_COUNT", tp: mysql.TypeLonglong, size: 21, comment: "The region count of single replica of the table"},
+	{name: "EMPTY_REGION_COUNT", tp: mysql.TypeLonglong, size: 21, comment: "The region count of single replica of the table"},
+	{name: "TABLE_SIZE", tp: mysql.TypeLonglong, size: 64, comment: "The disk usage(MB) of single replica of the table, if the table size is less than 1MB, it would show 1MB "},
+	{name: "TABLE_KEYS", tp: mysql.TypeLonglong, size: 64, comment: "The count of keys of single replica of the table"},
 }
 
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
