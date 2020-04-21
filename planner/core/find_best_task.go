@@ -190,7 +190,7 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 		// combine best child tasks with parent physical plan.
 		curTask := pp.attach2Task(childTasks...)
 
-		if prop.TaskTp == property.CopTiFlashLocalReadTaskType || prop.TaskTp == property.CopTiFlashGlobalReadTaskType {
+		if prop.IsFlashOnlyProp() {
 			if _, ok := curTask.(*copTask); !ok {
 				continue
 			}
@@ -377,7 +377,7 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 					currentCandidate = ds.getTableCandidate(path, prop)
 				}
 			} else {
-				if !path.IsGlobalRead {
+				if !path.IsGlobalRead && !prop.IsFlashOnlyProp() {
 					currentCandidate = ds.getTableCandidate(path, prop)
 				}
 			}
@@ -1112,18 +1112,12 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		tblColHists:       ds.TblColHists,
 		cst:               cost,
 	}
-	if ts.StoreType == kv.TiFlash {
-		if prop.TaskTp != property.CopTiFlashLocalReadTaskType && prop.TaskTp != property.RootTaskType && prop.TaskTp != property.CopTiFlashGlobalReadTaskType {
-			logutil.BgLogger().Error("invalid task:", zap.String("type", prop.TaskTp.String()))
-			return invalidTask, nil
-		}
-	}
 	task = copTask
 	if candidate.isMatchProp {
 		copTask.keepOrder = true
 	}
 	ts.addPushedDownSelection(copTask, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt))
-	if (prop.TaskTp == property.CopTiFlashGlobalReadTaskType || prop.TaskTp == property.CopTiFlashLocalReadTaskType) && len(copTask.rootTaskConds) != 0 {
+	if prop.IsFlashOnlyProp() && len(copTask.rootTaskConds) != 0 {
 		return invalidTask, nil
 	}
 	if prop.TaskTp == property.RootTaskType {
