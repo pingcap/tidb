@@ -578,27 +578,22 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 		indexPlanFinished: true,
 		tblColHists:       ds.TblColHists,
 	}
-	allCovered := true
 	for _, partPath := range path.PartialIndexPaths {
 		var scan PhysicalPlan
 		var partialCost, rowCount float64
-		var tempCovered bool
 		if partPath.IsTablePath {
-			scan, partialCost, rowCount, tempCovered = ds.convertToPartialTableScan(prop, partPath)
+			scan, partialCost, rowCount = ds.convertToPartialTableScan(prop, partPath)
 		} else {
-			scan, partialCost, rowCount, tempCovered = ds.convertToPartialIndexScan(prop, partPath)
+			scan, partialCost, rowCount = ds.convertToPartialIndexScan(prop, partPath)
 		}
 		scans = append(scans, scan)
 		totalCost += partialCost
 		totalRowCount += rowCount
-		allCovered = allCovered && tempCovered
 	}
 
-	if !allCovered || len(path.TableFilters) > 0 {
-		ts, partialCost := ds.buildIndexMergeTableScan(prop, path.TableFilters, totalRowCount)
-		totalCost += partialCost
-		cop.tablePlan = ts
-	}
+	ts, partialCost := ds.buildIndexMergeTableScan(prop, path.TableFilters, totalRowCount)
+	totalCost += partialCost
+	cop.tablePlan = ts
 	cop.idxMergePartPlans = scans
 	cop.cst = totalCost
 	task = finishCopTask(ds.ctx, cop)
@@ -608,8 +603,7 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty, path *util.AccessPath) (
 	indexPlan PhysicalPlan,
 	partialCost float64,
-	rowCount float64,
-	isCovered bool) {
+	rowCount float64) {
 	idx := path.Index
 	is, partialCost, rowCount := ds.getOriginalPhysicalIndexScan(prop, path, false, false)
 	rowSize := is.indexScanRowSize(idx, ds, false)
@@ -631,18 +625,17 @@ func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty,
 		indexPlan := PhysicalSelection{Conditions: indexConds}.Init(is.ctx, stats, ds.blockOffset)
 		indexPlan.SetChildren(is)
 		partialCost += rowCount * rowSize * sessVars.NetworkFactor
-		return indexPlan, partialCost, rowCount, false
+		return indexPlan, partialCost, rowCount
 	}
 	partialCost += rowCount * rowSize * sessVars.NetworkFactor
 	indexPlan = is
-	return indexPlan, partialCost, rowCount, false
+	return indexPlan, partialCost, rowCount
 }
 
 func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty, path *util.AccessPath) (
 	tablePlan PhysicalPlan,
 	partialCost float64,
-	rowCount float64,
-	isCovered bool) {
+	rowCount float64) {
 	ts, partialCost, rowCount := ds.getOriginalPhysicalTableScan(prop, path, false)
 	rowSize := ds.TblColHists.GetAvgRowSize(ds.ctx, ds.TblCols, false, false)
 	sessVars := ds.ctx.GetSessionVars()
@@ -656,11 +649,11 @@ func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty,
 		tablePlan.SetChildren(ts)
 		partialCost += rowCount * sessVars.CopCPUFactor
 		partialCost += selectivity * rowCount * rowSize * sessVars.NetworkFactor
-		return tablePlan, partialCost, rowCount, true
+		return tablePlan, partialCost, rowCount
 	}
 	partialCost += rowCount * rowSize * sessVars.NetworkFactor
 	tablePlan = ts
-	return tablePlan, partialCost, rowCount, true
+	return tablePlan, partialCost, rowCount
 }
 
 func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, tableFilters []expression.Expression, totalRowCount float64) (PhysicalPlan, float64) {
@@ -855,6 +848,13 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 	indexConds, tableConds := path.IndexFilters, path.TableFilters
 
 	tableConds, copTask.rootTaskConds = SplitSelCondsWithVirtualColumn(tableConds)
+
+	var newRootConds []expression.Expression
+	indexConds, newRootConds = expression.PushDownExprs(is.ctx.GetSessionVars().StmtCtx, indexConds, is.ctx.GetClient(), kv.TiKV)
+	copTask.rootTaskConds = append(copTask.rootTaskConds, newRootConds...)
+
+	tableConds, newRootConds = expression.PushDownExprs(is.ctx.GetSessionVars().StmtCtx, tableConds, is.ctx.GetClient(), kv.TiKV)
+	copTask.rootTaskConds = append(copTask.rootTaskConds, newRootConds...)
 
 	sessVars := is.ctx.GetSessionVars()
 	if indexConds != nil {

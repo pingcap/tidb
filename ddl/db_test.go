@@ -88,7 +88,7 @@ type testDBSuite struct {
 func setUpSuite(s *testDBSuite, c *C) {
 	var err error
 
-	s.lease = 100 * time.Millisecond
+	s.lease = 600 * time.Millisecond
 	session.SetSchemaLease(s.lease)
 	session.DisableStats4Test()
 	s.schemaName = "test_db"
@@ -233,7 +233,7 @@ func (s *testDBSuite5) TestAddPrimaryKeyRollback1(c *C) {
 	hasNullValsInKey := false
 	idxName := "PRIMARY"
 	addIdxSQL := "alter table t1 add primary key c3_index (c3);"
-	errMsg := "[kv:1062]current error msg: Cancelled DDL job, original error msg: Duplicate entry '' for key 'PRIMARY'"
+	errMsg := "[kv:1062]Duplicate entry '' for key 'PRIMARY'"
 	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey)
 }
 
@@ -242,7 +242,7 @@ func (s *testDBSuite1) TestAddPrimaryKeyRollback2(c *C) {
 	hasNullValsInKey := true
 	idxName := "PRIMARY"
 	addIdxSQL := "alter table t1 add primary key c3_index (c3);"
-	errMsg := "[ddl:1138]current error msg: Cancelled DDL job, original error msg: Invalid use of NULL value"
+	errMsg := "[ddl:1138]Invalid use of NULL value"
 	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey)
 }
 
@@ -250,7 +250,7 @@ func (s *testDBSuite2) TestAddUniqueIndexRollback(c *C) {
 	hasNullValsInKey := false
 	idxName := "c3_index"
 	addIdxSQL := "create unique index c3_index on t1 (c3)"
-	errMsg := "[kv:1062]current error msg: Cancelled DDL job, original error msg: Duplicate entry '' for key 'c3_index'"
+	errMsg := "[kv:1062]Duplicate entry '' for key 'c3_index'"
 	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey)
 }
 
@@ -278,7 +278,7 @@ func (s *testSerialDBSuite) TestAddExpressionIndexRollback(c *C) {
 	}
 	d.(ddl.DDLForTest).SetHook(hook)
 
-	tk.MustGetErrMsg("alter table t1 add index expr_idx ((pow(c1, c2)));", "[ddl:8202]current error msg: Cancelled DDL job, original error msg: Cannot decode index value, because [types:1690]DOUBLE value is out of range in 'pow(160, 160)'")
+	tk.MustGetErrMsg("alter table t1 add index expr_idx ((pow(c1, c2)));", "[ddl:8202]Cannot decode index value, because [types:1690]DOUBLE value is out of range in 'pow(160, 160)'")
 	c.Assert(checkErr, IsNil)
 	tk.MustQuery("select * from t1;").Check(testkit.Rows("20 20 20", "80 80 80", "160 160 160"))
 }
@@ -1385,6 +1385,89 @@ func (s *testDBSuite3) TestCancelDropColumn(c *C) {
 	s.mustExec(c, "alter table test_drop_column drop column c3")
 }
 
+// TestCancelDropColumns tests cancel ddl job which type is drop multi-columns.
+func (s *testDBSuite3) TestCancelDropColumns(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+	s.mustExec(c, "drop table if exists test_drop_column")
+	s.mustExec(c, "create table test_drop_column(c1 int, c2 int)")
+	defer s.mustExec(c, "drop table test_drop_column;")
+	testCases := []struct {
+		needAddColumn  bool
+		jobState       model.JobState
+		JobSchemaState model.SchemaState
+		cancelSucc     bool
+	}{
+		{true, model.JobStateNone, model.StateNone, true},
+		{false, model.JobStateRunning, model.StateWriteOnly, false},
+		{true, model.JobStateRunning, model.StateDeleteOnly, false},
+		{true, model.JobStateRunning, model.StateDeleteReorganization, false},
+	}
+	var checkErr error
+	hook := &ddl.TestDDLCallback{}
+	var jobID int64
+	testCase := &testCases[0]
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionDropColumns && job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState {
+			jobIDs := []int64{job.ID}
+			jobID = job.ID
+			hookCtx := mock.NewContext()
+			hookCtx.Store = s.store
+			err := hookCtx.NewTxn(context.TODO())
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			txn, err := hookCtx.Txn(true)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			errs, err := admin.CancelJobs(txn, jobIDs)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			if errs[0] != nil {
+				checkErr = errors.Trace(errs[0])
+				return
+			}
+			checkErr = txn.Commit(context.Background())
+		}
+	}
+
+	originalHook := s.dom.DDL().GetHook()
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	var err1 error
+	for i := range testCases {
+		testCase = &testCases[i]
+		if testCase.needAddColumn {
+			s.mustExec(c, "alter table test_drop_column add column c3 int, add column c4 int")
+		}
+		_, err1 = s.tk.Exec("alter table test_drop_column drop column c3, drop column c4")
+		t := s.testGetTable(c, "test_drop_column")
+		col3 := table.FindCol(t.Cols(), "c3")
+		col4 := table.FindCol(t.Cols(), "c4")
+		if testCase.cancelSucc {
+			c.Assert(checkErr, IsNil)
+			c.Assert(col3, NotNil)
+			c.Assert(col4, NotNil)
+			c.Assert(col3.Name.L, Equals, "c3")
+			c.Assert(col4.Name.L, Equals, "c4")
+			c.Assert(err1.Error(), Equals, "[ddl:8214]Cancelled DDL job")
+		} else {
+			c.Assert(col3, IsNil)
+			c.Assert(col4, IsNil)
+			c.Assert(err1, IsNil)
+			c.Assert(checkErr, NotNil)
+			c.Assert(checkErr.Error(), Equals, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
+		}
+	}
+	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	s.mustExec(c, "alter table test_drop_column add column c3 int, add column c4 int")
+	s.mustExec(c, "alter table test_drop_column drop column c3, drop column c4")
+}
+
 func checkDelRangeDone(c *C, ctx sessionctx.Context, idx table.Index) {
 	startTime := time.Now()
 	f := func() map[int64]struct{} {
@@ -1804,7 +1887,7 @@ func (s *testDBSuite6) TestDropColumn(c *C) {
 	s.tk.MustExec("create table t1 (a int,b int) partition by hash(a) partitions 4;")
 	_, err := s.tk.Exec("alter table t1 drop column a")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[expression:1054]current error msg: Cancelled DDL job, original error msg: Unknown column 'a' in 'expression'")
+	c.Assert(err.Error(), Equals, "[expression:1054]Unknown column 'a' in 'expression'")
 
 	s.tk.MustExec("drop database drop_col_db")
 }
@@ -1982,7 +2065,9 @@ func (s *testDBSuite4) TestCreateTableWithLike2(c *C) {
 	hook := &ddl.TestDDLCallback{}
 	var onceChecker sync.Map
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if job.Type != model.ActionAddColumn && job.Type != model.ActionDropColumn && job.Type != model.ActionAddIndex && job.Type != model.ActionDropIndex {
+		if job.Type != model.ActionAddColumn && job.Type != model.ActionDropColumn &&
+			job.Type != model.ActionAddColumns && job.Type != model.ActionDropColumns &&
+			job.Type != model.ActionAddIndex && job.Type != model.ActionDropIndex {
 			return
 		}
 		if job.TableID != tbl1.Meta().ID {
@@ -3207,19 +3292,11 @@ func (s *testDBSuite5) TestModifyColumnRollBack(c *C) {
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	done := make(chan error, 1)
 	go backgroundExec(s.store, "alter table t1 change c2 c2 bigint not null;", done)
-	ticker := time.NewTicker(s.lease / 2)
-	defer ticker.Stop()
-LOOP:
-	for {
-		select {
-		case err := <-done:
-			c.Assert(err, NotNil)
-			c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
-			break LOOP
-		case <-ticker.C:
-			s.mustExec(c, "insert into t1(c2) values (null);")
-		}
-	}
+
+	err := <-done
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
+	s.mustExec(c, "insert into t1(c2) values (null);")
 
 	t := s.testGetTable(c, "t1")
 	for _, col := range t.Cols() {
@@ -3272,7 +3349,7 @@ func (s *testDBSuite1) TestModifyColumnNullToNotNull(c *C) {
 	_, err := s.tk.Exec("alter table t1 change c2 c2 int not null;")
 	c.Assert(checkErr, IsNil)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:1138]current error msg: Cancelled DDL job, original error msg: Invalid use of NULL value")
+	c.Assert(err.Error(), Equals, "[ddl:1138]Invalid use of NULL value")
 	s.tk.MustQuery("select * from t1").Check(testkit.Rows("<nil> <nil>"))
 
 	// Check insert error when column has PreventNullInsertFlag.
@@ -3325,7 +3402,11 @@ func (s *testDBSuite2) TestTransactionOnAddDropColumn(c *C) {
 	originHook := s.dom.DDL().GetHook()
 	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
 	hook := &ddl.TestDDLCallback{}
+	var checkErr error
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if checkErr != nil {
+			return
+		}
 		switch job.SchemaState {
 		case model.StateWriteOnly, model.StateWriteReorganization, model.StateDeleteOnly, model.StateDeleteReorganization:
 		default:
@@ -3334,7 +3415,10 @@ func (s *testDBSuite2) TestTransactionOnAddDropColumn(c *C) {
 		// do transaction.
 		for _, transaction := range transactions {
 			for _, sql := range transaction {
-				s.mustExec(c, sql)
+				if _, checkErr = s.tk.Exec(sql); checkErr != nil {
+					checkErr = errors.Errorf("err: %s, sql: %s, job schema state: %s", checkErr.Error(), sql, job.SchemaState)
+					return
+				}
 			}
 		}
 	}
@@ -3344,6 +3428,7 @@ func (s *testDBSuite2) TestTransactionOnAddDropColumn(c *C) {
 	go backgroundExec(s.store, "alter table t1 add column c int not null after a", done)
 	err := <-done
 	c.Assert(err, IsNil)
+	c.Assert(checkErr, IsNil)
 	s.tk.MustQuery("select a,b from t1 order by a").Check(testkit.Rows("1 1", "1 1", "1 1", "2 2", "2 2", "2 2"))
 	s.mustExec(c, "delete from t1")
 
@@ -3351,6 +3436,7 @@ func (s *testDBSuite2) TestTransactionOnAddDropColumn(c *C) {
 	go backgroundExec(s.store, "alter table t1 drop column c", done)
 	err = <-done
 	c.Assert(err, IsNil)
+	c.Assert(checkErr, IsNil)
 	s.tk.MustQuery("select a,b from t1 order by a").Check(testkit.Rows("1 1", "1 1", "1 1", "2 2", "2 2", "2 2"))
 }
 
@@ -3372,7 +3458,11 @@ func (s *testDBSuite3) TestTransactionWithWriteOnlyColumn(c *C) {
 	originHook := s.dom.DDL().GetHook()
 	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
 	hook := &ddl.TestDDLCallback{}
+	var checkErr error
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if checkErr != nil {
+			return
+		}
 		switch job.SchemaState {
 		case model.StateWriteOnly:
 		default:
@@ -3381,7 +3471,10 @@ func (s *testDBSuite3) TestTransactionWithWriteOnlyColumn(c *C) {
 		// do transaction.
 		for _, transaction := range transactions {
 			for _, sql := range transaction {
-				s.mustExec(c, sql)
+				if _, checkErr = s.tk.Exec(sql); checkErr != nil {
+					checkErr = errors.Errorf("err: %s, sql: %s, job schema state: %s", checkErr.Error(), sql, job.SchemaState)
+					return
+				}
 			}
 		}
 	}
@@ -3391,6 +3484,7 @@ func (s *testDBSuite3) TestTransactionWithWriteOnlyColumn(c *C) {
 	go backgroundExec(s.store, "alter table t1 add column c int not null", done)
 	err := <-done
 	c.Assert(err, IsNil)
+	c.Assert(checkErr, IsNil)
 	s.tk.MustQuery("select a from t1").Check(testkit.Rows("2"))
 	s.mustExec(c, "delete from t1")
 
@@ -3398,6 +3492,7 @@ func (s *testDBSuite3) TestTransactionWithWriteOnlyColumn(c *C) {
 	go backgroundExec(s.store, "alter table t1 drop column c", done)
 	err = <-done
 	c.Assert(err, IsNil)
+	c.Assert(checkErr, IsNil)
 	s.tk.MustQuery("select a from t1").Check(testkit.Rows("2"))
 }
 
@@ -3571,7 +3666,7 @@ func (s *testDBSuite5) TestAddIndexForGeneratedColumn(c *C) {
 	s.tk.MustExec("insert into t values()")
 	s.tk.MustExec("ALTER TABLE t ADD COLUMN y1 year as (y + 2)")
 	_, err := s.tk.Exec("ALTER TABLE t ADD INDEX idx_y(y1)")
-	c.Assert(err.Error(), Equals, "[ddl:8202]current error msg: Cancelled DDL job, original error msg: Cannot decode index value, because cannot convert datum from unsigned bigint to type year.")
+	c.Assert(err.Error(), Equals, "[ddl:8202]Cannot decode index value, because cannot convert datum from unsigned bigint to type year.")
 
 	t := s.testGetTable(c, "t")
 	for _, idx := range t.Indices() {
@@ -4464,7 +4559,7 @@ func (s *testDBSuite2) TestDDLWithInvalidTableInfo(c *C) {
 	// Test drop partition column.
 	_, err = tk.Exec("alter table t drop column a;")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[expression:1054]current error msg: Cancelled DDL job, original error msg: Unknown column 'a' in 'expression'")
+	c.Assert(err.Error(), Equals, "[expression:1054]Unknown column 'a' in 'expression'")
 	// Test modify column with invalid expression.
 	_, err = tk.Exec("alter table t modify column c int GENERATED ALWAYS AS ((case when (a = 0) then 0when (a > 0) then (b / a) end));")
 	c.Assert(err, NotNil)

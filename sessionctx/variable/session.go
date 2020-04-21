@@ -255,9 +255,6 @@ func (tc *TransactionContext) GetStmtFutureForRC() oracle.Future {
 type WriteStmtBufs struct {
 	// RowValBuf is used by tablecodec.EncodeRow, to reduce runtime.growslice.
 	RowValBuf []byte
-	// BufStore stores temp KVs for a row when executing insert statement.
-	// We could reuse a BufStore for multiple rows of a session to reduce memory allocations.
-	BufStore *kv.BufferStore
 	// AddRowValues use to store temp insert rows value, to reduce memory allocations when importing data.
 	AddRowValues []types.Datum
 
@@ -268,7 +265,6 @@ type WriteStmtBufs struct {
 }
 
 func (ib *WriteStmtBufs) clean() {
-	ib.BufStore = nil
 	ib.RowValBuf = nil
 	ib.AddRowValues = nil
 	ib.IndexValsBuf = nil
@@ -394,6 +390,10 @@ type SessionVars struct {
 	// AllowWriteRowID can be set to false to forbid write data to _tidb_rowid.
 	// This variable is currently not recommended to be turned on.
 	AllowWriteRowID bool
+
+	// AllowBatchCop means if we should send batch coprocessor to TiFlash. Default value is 1, means to use batch cop in case of aggregation and join.
+	// If value is set to 2 , which means to force to send batch cop for any query. Value is set to 0 means never use batch cop.
+	AllowBatchCop int
 
 	// CorrelationThreshold is the guard to enable row count estimation using column order correlation.
 	CorrelationThreshold float64
@@ -594,6 +594,11 @@ type SessionVars struct {
 	// WindowingUseHighPrecision determines whether to compute window operations without loss of precision.
 	// see https://dev.mysql.com/doc/refman/8.0/en/window-function-optimization.html for more details.
 	WindowingUseHighPrecision bool
+
+	// FoundInPlanCache indicates whether this statement was found in plan cache.
+	FoundInPlanCache bool
+	// PrevFoundInPlanCache indicates whether the last statement was found in plan cache.
+	PrevFoundInPlanCache bool
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -679,6 +684,8 @@ func NewSessionVars() *SessionVars {
 		MetricSchemaRangeDuration:   DefTiDBMetricSchemaRangeDuration,
 		SequenceState:               NewSequenceState(),
 		WindowingUseHighPrecision:   true,
+		PrevFoundInPlanCache:        DefTiDBFoundInPlanCache,
+		FoundInPlanCache:            DefTiDBFoundInPlanCache,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -720,6 +727,8 @@ func NewSessionVars() *SessionVars {
 		enableStreaming = "0"
 	}
 	terror.Log(vars.SetSystemVar(TiDBEnableStreaming, enableStreaming))
+
+	vars.AllowBatchCop = DefTiDBAllowBatchCop
 
 	var enableChunkRPC string
 	if config.GetGlobalConfig().TiKVClient.EnableChunkRPC {
@@ -1039,7 +1048,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.MaxExecutionTime = uint64(timeoutMS)
 	case InnodbLockWaitTimeout:
 		lockWaitSec := tidbOptInt64(val, DefInnodbLockWaitTimeout)
-		s.LockWaitTimeout = int64(lockWaitSec * 1000)
+		s.LockWaitTimeout = lockWaitSec * 1000
 	case WindowingUseHighPrecision:
 		s.WindowingUseHighPrecision = TiDBOptOn(val)
 	case TiDBSkipUTF8Check:
@@ -1080,6 +1089,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.IndexLookupJoinConcurrency = tidbOptPositiveInt32(val, DefIndexLookupJoinConcurrency)
 	case TiDBIndexJoinBatchSize:
 		s.IndexJoinBatchSize = tidbOptPositiveInt32(val, DefIndexJoinBatchSize)
+	case TiDBAllowBatchCop:
+		s.AllowBatchCop = int(tidbOptInt64(val, DefTiDBAllowBatchCop))
 	case TiDBIndexLookupSize:
 		s.IndexLookupSize = tidbOptPositiveInt32(val, DefIndexLookupSize)
 	case TiDBHashJoinConcurrency:
@@ -1234,40 +1245,19 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 			return errors.Trace(err)
 		}
 	case TiDBSlowLogThreshold:
-		conf := config.GetGlobalConfig()
-		if !conf.EnableDynamicConfig {
-			atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
-		} else {
-			s.StmtCtx.AppendWarning(errors.Errorf("cannot update %s when enabling dynamic configs", TiDBSlowLogThreshold))
-		}
+		atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
 	case TiDBRecordPlanInSlowLog:
-		conf := config.GetGlobalConfig()
-		if !conf.EnableDynamicConfig {
-			atomic.StoreUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog, uint32(tidbOptInt64(val, logutil.DefaultRecordPlanInSlowLog)))
-		} else {
-			s.StmtCtx.AppendWarning(errors.Errorf("cannot update %s when enabling dynamic configs", TiDBRecordPlanInSlowLog))
-		}
+		atomic.StoreUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog, uint32(tidbOptInt64(val, logutil.DefaultRecordPlanInSlowLog)))
 	case TiDBEnableSlowLog:
-		conf := config.GetGlobalConfig()
-		if !conf.EnableDynamicConfig {
-			config.GetGlobalConfig().Log.EnableSlowLog = TiDBOptOn(val)
-		} else {
-			s.StmtCtx.AppendWarning(errors.Errorf("cannot update %s when enabling dynamic configs", TiDBEnableSlowLog))
-		}
+		config.GetGlobalConfig().Log.EnableSlowLog = TiDBOptOn(val)
 	case TiDBQueryLogMaxLen:
-		conf := config.GetGlobalConfig()
-		if !conf.EnableDynamicConfig {
-			atomic.StoreUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen, uint64(tidbOptInt64(val, logutil.DefaultQueryLogMaxLen)))
-		} else {
-			s.StmtCtx.AppendWarning(errors.Errorf("cannot update %s when enabling dynamic configs", TiDBQueryLogMaxLen))
-		}
+		atomic.StoreUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen, uint64(tidbOptInt64(val, logutil.DefaultQueryLogMaxLen)))
 	case TiDBCheckMb4ValueInUTF8:
-		conf := config.GetGlobalConfig()
-		if !conf.EnableDynamicConfig {
-			config.GetGlobalConfig().CheckMb4ValueInUTF8 = TiDBOptOn(val)
-		} else {
-			s.StmtCtx.AppendWarning(errors.Errorf("cannot update %s when enabling dynamic configs", TiDBCheckMb4ValueInUTF8))
-		}
+		config.GetGlobalConfig().CheckMb4ValueInUTF8 = TiDBOptOn(val)
+	case TiDBFoundInPlanCache:
+		s.FoundInPlanCache = TiDBOptOn(val)
+	case TiDBEnableCollectExecutionInfo:
+		config.GetGlobalConfig().EnableCollectExecutionInfo = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil

@@ -19,7 +19,6 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/goleveldb/leveldb/comparer"
 	"github.com/pingcap/goleveldb/leveldb/memdb"
 )
 
@@ -74,36 +73,9 @@ func (s testMemDBSuite) TestIterator(c *C) {
 	c.Check(i, Equals, -1)
 }
 
-func (s testMemDBSuite) TestReset(c *C) {
-	p := New(4 * 1024)
-	p.Reset()
-	s.deriveAndFill(0, 10000, 0, &p.root).Flush()
-	p.Reset()
-	c.Check(p.Get([]byte{0}), IsNil)
-	c.Check(p.Size(), Equals, 0)
-	c.Check(p.Len(), Equals, 0)
-
-	key := []byte{0}
-	p.Put(key, key)
-	c.Check(p.Get(key), BytesEquals, key)
-
-	it := p.NewIterator()
-	it.SeekToFirst()
-	c.Check(it.Key(), BytesEquals, key)
-	c.Check(it.Value(), BytesEquals, key)
-	it.Next()
-	c.Check(it.Valid(), IsFalse)
-
-	it.SeekToLast()
-	c.Check(it.Key(), BytesEquals, key)
-	c.Check(it.Value(), BytesEquals, key)
-	it.Prev()
-	c.Check(it.Valid(), IsFalse)
-}
-
 func (s testMemDBSuite) TestDiscard(c *C) {
 	const cnt = 10000
-	p := NewSandbox(4 * 1024)
+	p := NewSandbox()
 	s.deriveAndFill(0, cnt, 0, p).Flush()
 	sz := p.Size()
 
@@ -141,7 +113,7 @@ func (s testMemDBSuite) TestDiscard(c *C) {
 
 func (s testMemDBSuite) TestFlushOverwrite(c *C) {
 	const cnt = 10000
-	p := NewSandbox(4 * 1024)
+	p := NewSandbox()
 	s.deriveAndFill(0, cnt, 0, p).Flush()
 	sz := p.Size()
 
@@ -188,7 +160,7 @@ func (s testMemDBSuite) TestComplexUpdate(c *C) {
 		insert    = 9000
 	)
 
-	p := NewSandbox(4 * 1024)
+	p := NewSandbox()
 	s.deriveAndFill(0, overwrite, 0, p).Flush()
 	c.Check(p.Len(), Equals, overwrite)
 	s.deriveAndFill(keep, insert, 1, p).Flush()
@@ -208,7 +180,7 @@ func (s testMemDBSuite) TestComplexUpdate(c *C) {
 }
 
 func (s testMemDBSuite) TestNestedSandbox(c *C) {
-	p := NewSandbox(4 * 1024)
+	p := NewSandbox()
 	sb0 := s.deriveAndFill(0, 200, 0, p)
 	sb1 := s.deriveAndFill(0, 100, 1, sb0)
 	sb2 := s.deriveAndFill(50, 150, 2, sb1)
@@ -318,7 +290,7 @@ func (s testMemDBSuite) TestOverwrite(c *C) {
 }
 
 func (s testMemDBSuite) TestKVLargeThanBlock(c *C) {
-	p := NewSandbox(4 * 1024)
+	p := NewSandbox()
 	p.Put([]byte{1}, make([]byte, 1))
 	p.Put([]byte{2}, make([]byte, 4096))
 	c.Check(len(p.arena.blocks), Equals, 2)
@@ -328,7 +300,7 @@ func (s testMemDBSuite) TestKVLargeThanBlock(c *C) {
 }
 
 func (s testMemDBSuite) TestEmptyDB(c *C) {
-	p := NewSandbox(4 * 1024)
+	p := NewSandbox()
 	c.Check(p.Get([]byte{0}), IsNil)
 	it := p.NewIterator()
 	it.SeekToFirst()
@@ -341,86 +313,6 @@ func (s testMemDBSuite) TestEmptyDB(c *C) {
 	c.Check(it.Valid(), IsFalse)
 	it.Seek([]byte{0xff})
 	c.Check(it.Valid(), IsFalse)
-}
-
-func (s testMemDBSuite) TestRandom(c *C) {
-	const cnt = 500000
-	keys := make([][]byte, cnt)
-	for i := range keys {
-		keys[i] = make([]byte, rand.Intn(19)+1)
-		rand.Read(keys[i])
-	}
-
-	p1 := NewSandbox(4 * 1024)
-	p2 := memdb.New(comparer.DefaultComparer, 4*1024)
-	for _, k := range keys {
-		p1.Put(k, k)
-		_ = p2.Put(k, k)
-	}
-
-	c.Check(p1.Len(), Equals, p2.Len())
-	c.Check(p1.Size(), Equals, p2.Size())
-
-	rand.Shuffle(cnt, func(i, j int) { keys[i], keys[j] = keys[j], keys[i] })
-
-	for _, k := range keys {
-		newValue := make([]byte, rand.Intn(19)+1)
-		rand.Read(newValue)
-		p1.Put(k, newValue)
-		_ = p2.Put(k, newValue)
-	}
-	s.checkConsist(c, p1, p2)
-}
-
-func (s testMemDBSuite) TestRandomDerive(c *C) {
-	s.testRandomDeriveRecur(c, NewSandbox(4*1024), memdb.New(comparer.DefaultComparer, 4*1024), 0)
-}
-
-func (s testMemDBSuite) testRandomDeriveRecur(c *C, sb *Sandbox, db *memdb.DB, depth int) {
-	var keys [][]byte
-	if rand.Float64() < 0.5 {
-		start, end := rand.Intn(512), rand.Intn(512)+512
-		cnt := end - start
-		keys = make([][]byte, cnt)
-		for i := range keys {
-			keys[i] = make([]byte, 8)
-			binary.BigEndian.PutUint64(keys[i], uint64(start+i))
-		}
-	} else {
-		keys = make([][]byte, rand.Intn(512)+512)
-		for i := range keys {
-			keys[i] = make([]byte, rand.Intn(19)+1)
-			rand.Read(keys[i])
-		}
-	}
-
-	vals := make([][]byte, len(keys))
-	for i := range vals {
-		vals[i] = make([]byte, rand.Intn(255)+1)
-		rand.Read(vals[i])
-	}
-
-	sbBuf := sb.Derive()
-	dbBuf := memdb.New(comparer.DefaultComparer, 4*1024)
-	for i := range keys {
-		sbBuf.Put(keys[i], vals[i])
-		_ = dbBuf.Put(keys[i], vals[i])
-	}
-
-	if depth < 1000 {
-		s.testRandomDeriveRecur(c, sbBuf, dbBuf, depth+1)
-	}
-
-	if rand.Float64() < 0.3 && depth > 0 {
-		sbBuf.Discard()
-	} else {
-		sbBuf.Flush()
-		it := dbBuf.NewIterator(nil)
-		for it.First(); it.Valid(); it.Next() {
-			_ = db.Put(it.Key(), it.Value())
-		}
-	}
-	s.checkConsist(c, sb, db)
 }
 
 func (s testMemDBSuite) checkConsist(c *C, p1 *Sandbox, p2 *memdb.DB) {
@@ -466,7 +358,7 @@ func (s testMemDBSuite) checkConsist(c *C, p1 *Sandbox, p2 *memdb.DB) {
 }
 
 func (s testMemDBSuite) fillDB(cnt int) *Sandbox {
-	p := NewSandbox(4 * 1024)
+	p := NewSandbox()
 	s.deriveAndFill(0, cnt, 0, p).Flush()
 	return p
 }
@@ -487,7 +379,7 @@ func BenchmarkLargeIndex(b *testing.B) {
 	for i := range buf {
 		binary.LittleEndian.PutUint32(buf[i][:], uint32(i))
 	}
-	p := NewSandbox(4 * 1024 * 1024)
+	p := NewSandbox()
 	b.ResetTimer()
 
 	for i := range buf {
@@ -505,8 +397,8 @@ func BenchmarkFlush(b *testing.B) {
 	b.Run("naive-insert", func(b *testing.B) {
 		for n := 0; n < b.N; n++ {
 			b.StopTimer()
-			p1 := NewSandbox(4 * 1024)
-			p2 := NewSandbox(4 * 1024)
+			p1 := NewSandbox()
+			p2 := NewSandbox()
 			for i := range buf[:len(buf)/2] {
 				p1.Put(buf[i][:keySize], buf[i][:])
 			}
@@ -524,7 +416,7 @@ func BenchmarkFlush(b *testing.B) {
 	b.Run("sandbox-flush", func(b *testing.B) {
 		for n := 0; n < b.N; n++ {
 			b.StopTimer()
-			p1 := NewSandbox(4 * 1024)
+			p1 := NewSandbox()
 			for i := range buf[:len(buf)/2] {
 				p1.Put(buf[i][:keySize], buf[i][:])
 			}
@@ -545,7 +437,7 @@ func BenchmarkPut(b *testing.B) {
 		binary.BigEndian.PutUint32(buf[i][:], uint32(i))
 	}
 
-	p := NewSandbox(4 * 1024 * 1024)
+	p := NewSandbox()
 	b.ResetTimer()
 
 	for i := range buf {
@@ -559,7 +451,7 @@ func BenchmarkPutRandom(b *testing.B) {
 		binary.LittleEndian.PutUint32(buf[i][:], uint32(rand.Int()))
 	}
 
-	p := NewSandbox(4 * 1024 * 1024)
+	p := NewSandbox()
 	b.ResetTimer()
 
 	for i := range buf {
@@ -573,7 +465,7 @@ func BenchmarkGet(b *testing.B) {
 		binary.BigEndian.PutUint32(buf[i][:], uint32(i))
 	}
 
-	p := NewSandbox(4 * 1024 * 1024)
+	p := NewSandbox()
 	for i := range buf {
 		p.Put(buf[i][:keySize], buf[i][:])
 	}
@@ -590,7 +482,7 @@ func BenchmarkGetRandom(b *testing.B) {
 		binary.LittleEndian.PutUint32(buf[i][:], uint32(rand.Int()))
 	}
 
-	p := NewSandbox(4 * 1024 * 1024)
+	p := NewSandbox()
 	for i := range buf {
 		p.Put(buf[i][:keySize], buf[i][:])
 	}

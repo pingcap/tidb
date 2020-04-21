@@ -912,7 +912,7 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 			newNames = append(newNames, p.OutputNames()[i])
 			continue
 		} else if !considerWindow && isWindowFuncField {
-			expr := expression.Zero
+			expr := expression.NewZero()
 			proj.Exprs = append(proj.Exprs, expr)
 			col, name, err := b.buildProjectionField(ctx, p, field, expr)
 			if err != nil {
@@ -1733,6 +1733,10 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 			g.err = ErrWrongGroupField.GenWithStackByArgs(g.fields[pos-1].Text())
 			return inNode, false
 		}
+		if _, ok := ret.(*ast.WindowFuncExpr); ok {
+			g.err = ErrWrongGroupField.GenWithStackByArgs(g.fields[pos-1].Text())
+			return inNode, false
+		}
 		return ret, true
 	case *ast.ValuesExpr:
 		if v.Column == nil {
@@ -1995,6 +1999,16 @@ func (b *PlanBuilder) checkOnlyFullGroupByWithGroupClause(p LogicalPlan, sel *as
 
 	if sel.OrderBy != nil {
 		for offset, item := range sel.OrderBy.Items {
+			if colName, ok := item.Expr.(*ast.ColumnNameExpr); ok {
+				index, err := resolveFromSelectFields(colName, sel.Fields.Fields, false)
+				if err != nil {
+					return err
+				}
+				// If the ByItem is in fields list, it has been checked already in above.
+				if index >= 0 {
+					continue
+				}
+			}
 			checkExprInGroupBy(p, item.Expr, offset, ErrExprInOrderBy, gbyColNames, gbyExprs, notInGbyColNames)
 		}
 	}
@@ -2126,6 +2140,8 @@ func (b *PlanBuilder) resolveGbyExprs(ctx context.Context, p LogicalPlan, gby *a
 	}
 	for _, item := range gby.Items {
 		resolver.inExpr = false
+		resolver.exprDepth = 0
+		resolver.isParam = false
 		retExpr, _ := item.Expr.Accept(resolver)
 		if resolver.err != nil {
 			return nil, nil, errors.Trace(resolver.err)
@@ -2689,8 +2705,37 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if hints := b.TableHints(); hints != nil {
 		for i, hint := range hints.indexMergeHintList {
 			if hint.tblName.L == tblName.L {
-				indexMergeHints = append(indexMergeHints, hint.indexHint)
 				hints.indexMergeHintList[i].matched = true
+				// check whether the index names in IndexMergeHint are valid.
+				invalidIdxNames := make([]string, 0, len(hint.indexHint.IndexNames))
+				for _, idxName := range hint.indexHint.IndexNames {
+					hasIdxName := false
+					for _, path := range possiblePaths {
+						if path.IsTablePath {
+							if idxName.L == "primary" {
+								hasIdxName = true
+								break
+							}
+							continue
+						}
+						if idxName.L == path.Index.Name.L {
+							hasIdxName = true
+							break
+						}
+					}
+					if !hasIdxName {
+						invalidIdxNames = append(invalidIdxNames, idxName.String())
+					}
+				}
+				if len(invalidIdxNames) == 0 {
+					indexMergeHints = append(indexMergeHints, hint.indexHint)
+				} else {
+					// Append warning if there are invalid index names.
+					errMsg := fmt.Sprintf("use_index_merge(%s) is inapplicable, check whether the indexes (%s) "+
+						"exist, or the indexes are conflicted with use_index/ignore_index hints.",
+						hint.indexString(), strings.Join(invalidIdxNames, ", "))
+					b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(errMsg))
+				}
 			}
 		}
 	}
@@ -2789,7 +2834,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				if err != nil {
 					return nil, err
 				}
-				colExpr.VirtualExpr = expr
+				colExpr.VirtualExpr = expr.Clone()
 			}
 		}
 	}
