@@ -27,7 +27,7 @@ import (
 )
 
 func (s *pkgTestSuite) TestRowHashMap(c *C) {
-	m := newUnsafeHashTable(0)
+	m := newUnsafeHashTable(0, true)
 	m.Put(1, chunk.RowPtr{ChkIdx: 1, RowIdx: 1})
 	c.Check(m.Get(1), DeepEquals, []chunk.RowPtr{{ChkIdx: 1, RowIdx: 1}})
 
@@ -37,7 +37,7 @@ func (s *pkgTestSuite) TestRowHashMap(c *C) {
 			rawData[i] = append(rawData[i], chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(j)})
 		}
 	}
-	m = newUnsafeHashTable(0)
+	m = newUnsafeHashTable(0, true)
 	// put all rawData into m vertically
 	for j := uint64(0); j < initialEntrySliceLen*9; j++ {
 		for i := 9; i >= 0; i-- {
@@ -54,7 +54,7 @@ func (s *pkgTestSuite) TestRowHashMap(c *C) {
 		totalCount += len(rawData[i])
 		c.Check(m.Get(i), DeepEquals, rawData[i])
 	}
-	c.Check(m.Len(), Equals, totalCount)
+	c.Check(m.Len(), Equals, uint64(totalCount))
 }
 
 func initBuildChunk(numRows int) (*chunk.Chunk, []*types.FieldType) {
