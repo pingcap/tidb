@@ -123,7 +123,7 @@ func (s *SetConfigExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func (s *SetConfigExec) doRequest(url string) error {
+func (s *SetConfigExec) doRequest(url string) (retErr error) {
 	body := bytes.NewBufferString(fmt.Sprintf("{'%s':'%s'}", s.p.Name, s.v))
 	req, err := http.NewRequest(http.MethodPost, url, body)
 	if err != nil {
@@ -141,7 +141,11 @@ func (s *SetConfigExec) doRequest(url string) error {
 	}
 	defer func() {
 		if resp.Body != nil {
-			resp.Body.Close()
+			if err := resp.Body.Close(); err != nil {
+				if retErr == nil {
+					retErr = err
+				}
+			}
 		}
 	}()
 	if resp.StatusCode == http.StatusOK {
