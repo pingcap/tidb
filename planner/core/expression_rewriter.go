@@ -712,13 +712,8 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 			er.err = err
 			return v, true
 		}
-<<<<<<< HEAD
-		if (len(rows) > 0 && !v.Not) || (len(rows) == 0 && v.Not) {
-			er.ctxStackAppend(expression.One.Clone(), types.EmptyName)
-=======
 		if (row != nil && !v.Not) || (row == nil && v.Not) {
-			er.ctxStackAppend(expression.NewOne(), types.EmptyName)
->>>>>>> 138f225... executor: only return the first row of a subquery (#16399)
+			er.ctxStackAppend(expression.One.Clone(), types.EmptyName)
 		} else {
 			er.ctxStackAppend(expression.Zero.Clone(), types.EmptyName)
 		}
