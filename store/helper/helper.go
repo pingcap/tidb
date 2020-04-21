@@ -775,9 +775,6 @@ func (h *Helper) GetPdRegionStats(tableID int64, stats *PdRegionStats) error {
 	}()
 
 	dec := json.NewDecoder(resp.Body)
-	if err = dec.Decode(stats); err != nil {
-		return err
-	}
 
-	return nil
+	return dec.Decode(stats)
 }
