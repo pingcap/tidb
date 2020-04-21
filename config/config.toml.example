@@ -389,6 +389,8 @@ history-size = 24
 allow-auto-random = false
 # enable creating expression index.
 allow-expression-index = false
+# enable bloomfilter in hash join when access path is TiFlash.
+allow-bloom-filter = false
 
 # server level isolation read by engines and labels
 [isolation-read]

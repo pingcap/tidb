@@ -521,6 +521,8 @@ type Experimental struct {
 	AllowAutoRandom bool `toml:"allow-auto-random" json:"allow-auto-random"`
 	// Whether enable creating expression index.
 	AllowsExpressionIndex bool `toml:"allow-expression-index" json:"allow-expression-index"`
+	// Whether enable bloomfilter in hash join when access path is TiFlash.
+	AllowsBloomFilter bool `toml:"allow-bloom-filter" json:"allow-bloom-filter"`
 }
 
 var defaultConf = Config{
@@ -663,6 +665,7 @@ var defaultConf = Config{
 	Experimental: Experimental{
 		AllowAutoRandom:       false,
 		AllowsExpressionIndex: false,
+		AllowsBloomFilter:     false,
 	},
 	EnableCollectExecutionInfo: false,
 }
