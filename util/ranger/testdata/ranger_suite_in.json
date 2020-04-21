@@ -5,5 +5,17 @@
       "explain select t.e in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c in (1, 2) and s.d = t.a and s.a = t1.a) from t",
       "select t.e in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c in (1, 2) and s.d = t.a and s.a = t1.a) from t"
     ]
+  },
+  {
+    "name": "TestIndexStringIsTrueRange",
+    "cases": [
+      "explain select * from t0 where c0",
+      "explain select * from t0 where c0 and c0 > '123'",
+      "explain select * from t0 where c0 and c0 <> '123'",
+      "explain select * from t0 where c0 is true",
+      "explain select * from t0 where c0 is false",
+      "explain select * from t0 where c0 and c0 in ('123','456','789')",
+      "explain SELECT * FROM t0 WHERE ('a' != t0.c0) AND t0.c0;"
+    ]
   }
 ]
