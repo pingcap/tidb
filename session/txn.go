@@ -307,6 +307,7 @@ func (st *TxnState) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 	return val, nil
 }
 
+// GetFromMemBuffer implements the MemBufferRetriever interface.
 func (st *TxnState) GetFromMemBuffer(ctx context.Context, k kv.Key) ([]byte, error) {
 	val, err := st.stmtBufGet(ctx, k)
 	if kv.IsErrNotFound(err) {
