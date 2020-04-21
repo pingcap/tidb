@@ -234,7 +234,6 @@ func initializeTempDir() {
 	}
 }
 
-
 func checkTempStorageQuota() {
 	// check capacity and the quota when OOMUseTmpStorage is enabled
 	c := config.GetGlobalConfig()
