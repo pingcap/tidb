@@ -106,6 +106,7 @@ var IllegalFunctions4GeneratedColumns = map[string]struct{}{
 // Note that, these functions must be foldable at first place, i.e, they are not in `unFoldableFunctions`.
 var DeferredFunctions = map[string]struct{}{
 	ast.Now:              {},
+	ast.RandomBytes:      {},
 	ast.CurrentTimestamp: {},
 	ast.UTCTime:          {},
 	ast.Curtime:          {},
