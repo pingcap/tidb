@@ -36,10 +36,10 @@ require (
 	github.com/pingcap/failpoint v0.0.0-20200210140405-f8f9fb234798
 	github.com/pingcap/fn v0.0.0-20191016082858-07623b84a47d
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
-	github.com/pingcap/kvproto v0.0.0-20200420075417-e0c6e8842f22
+	github.com/pingcap/kvproto v0.0.0-20200417092353-efbe03bcffbd
 	github.com/pingcap/log v0.0.0-20200117041106-d28c14d3b1cd
 	github.com/pingcap/parser v0.0.0-20200413043052-ef80f4de418c
-	github.com/pingcap/pd/v4 v4.0.0-beta.1.0.20200305072537-61d9f9cc35d3
+	github.com/pingcap/pd/v4 v4.0.0-rc.1.0.20200421125058-dbd0c7bff2bf
 	github.com/pingcap/sysutil v0.0.0-20200408114249-ed3bd6f7fdb1
 	github.com/pingcap/tidb-tools v4.0.0-beta.1.0.20200306084441-875bd09aa3d5+incompatible
 	github.com/pingcap/tipb v0.0.0-20200417094153-7316d94df1ee
@@ -75,5 +75,3 @@ require (
 )
 
 go 1.13
-
-replace github.com/pingcap/pd/v4 => github.com/shafreeck/pd/v4 v4.0.0-beta.0.20200420105955-16d58d301e0c
