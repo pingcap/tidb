@@ -99,7 +99,7 @@ func (s *decorrelateSolver) aggDefaultValueMap(agg *LogicalAggregation) map[int]
 	for i, f := range agg.AggFuncs {
 		switch f.Name {
 		case ast.AggFuncBitOr, ast.AggFuncBitXor, ast.AggFuncCount:
-			defaultValueMap[i] = expression.Zero.Clone().(*expression.Constant)
+			defaultValueMap[i] = expression.NewZero()
 		case ast.AggFuncBitAnd:
 			defaultValueMap[i] = &expression.Constant{Value: types.NewUintDatum(math.MaxUint64), RetType: types.NewFieldType(mysql.TypeLonglong)}
 		}
