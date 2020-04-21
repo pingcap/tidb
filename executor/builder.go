@@ -1133,8 +1133,9 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 			defaultValues = make([]types.Datum, e.buildSideExec.Schema().Len())
 		}
 	}
+	// For bloom filter
 	if e.joinType == plannercore.InnerJoin {
-		if probeExec, ok := e.probeSideExec.(*TableReaderExecutor); ok {
+		if probeExec, ok := e.probeSideExec.(*TableReaderExecutor); ok && probeExec.storeType == kv.TiFlash {
 			// Init bloom filter for Table Reader.
 			probeExec.bloomFilters = make([]*bloom.Filter, 0, 10)
 			probeExec.joinKeyIdx = make([][]int64, 0, 10)
@@ -1163,7 +1164,7 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 			}
 			*e.joinKeysForMulti = append(*e.joinKeysForMulti, joinKeyIdx)
 		}
-		if probeExec, ok := e.probeSideExec.(*HashJoinExec); ok {
+		if probeExec, ok := e.probeSideExec.(*HashJoinExec); ok && probeExec.bloomFilters != nil {
 			e.bloomFilters = probeExec.bloomFilters
 			e.joinKeysForMulti = probeExec.joinKeysForMulti
 
