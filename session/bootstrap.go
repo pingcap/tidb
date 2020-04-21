@@ -381,7 +381,51 @@ const (
 	version43 = 43
 )
 
-var bootstrapVersion map[int64]func(Session)
+var (
+	bootstrapVersion = map[int64]func(Session){
+		version2:  upgradeToVer2,
+		version3:  upgradeToVer3,
+		version4:  upgradeToVer4,
+		version5:  upgradeToVer5,
+		version6:  upgradeToVer6,
+		version7:  upgradeToVer7,
+		version8:  upgradeToVer8,
+		version9:  upgradeToVer9,
+		version10: upgradeToVer10,
+		version11: upgradeToVer11,
+		version12: upgradeToVer12,
+		version13: upgradeToVer13,
+		version14: upgradeToVer14,
+		version15: upgradeToVer15,
+		version16: upgradeToVer16,
+		version17: upgradeToVer17,
+		version18: upgradeToVer18,
+		version19: upgradeToVer19,
+		version20: upgradeToVer20,
+		version21: upgradeToVer21,
+		version22: upgradeToVer22,
+		version23: upgradeToVer23,
+		version24: upgradeToVer24,
+		version25: upgradeToVer25,
+		version26: upgradeToVer26,
+		version27: upgradeToVer27,
+		version28: upgradeToVer28,
+		version30: upgradeToVer30,
+		version31: upgradeToVer31,
+		version32: upgradeToVer32,
+		version33: upgradeToVer33,
+		version34: upgradeToVer34,
+		version35: upgradeToVer35,
+		version36: upgradeToVer36,
+		version37: upgradeToVer37,
+		version38: upgradeToVer38,
+		version39: upgradeToVer39,
+		version40: upgradeToVer40,
+		version41: upgradeToVer41,
+		version42: upgradeToVer42,
+		version43: upgradeToVer43,
+	}
+)
 
 func checkBootstrapped(s Session) (bool, error) {
 	//  Check if system db exists.
@@ -990,50 +1034,4 @@ func oldPasswordUpgrade(pass string) (string, error) {
 	hash2 := auth.Sha1Hash(hash1)
 	newpass := fmt.Sprintf("*%X", hash2)
 	return newpass, nil
-}
-
-func init() {
-	bootstrapVersion = map[int64]func(Session){
-		version2:  upgradeToVer2,
-		version3:  upgradeToVer3,
-		version4:  upgradeToVer4,
-		version5:  upgradeToVer5,
-		version6:  upgradeToVer6,
-		version7:  upgradeToVer7,
-		version8:  upgradeToVer8,
-		version9:  upgradeToVer9,
-		version10: upgradeToVer10,
-		version11: upgradeToVer11,
-		version12: upgradeToVer12,
-		version13: upgradeToVer13,
-		version14: upgradeToVer14,
-		version15: upgradeToVer15,
-		version16: upgradeToVer16,
-		version17: upgradeToVer17,
-		version18: upgradeToVer18,
-		version19: upgradeToVer19,
-		version20: upgradeToVer20,
-		version21: upgradeToVer21,
-		version22: upgradeToVer22,
-		version23: upgradeToVer23,
-		version24: upgradeToVer24,
-		version25: upgradeToVer25,
-		version26: upgradeToVer26,
-		version27: upgradeToVer27,
-		version28: upgradeToVer28,
-		version30: upgradeToVer30,
-		version31: upgradeToVer31,
-		version32: upgradeToVer32,
-		version33: upgradeToVer33,
-		version34: upgradeToVer34,
-		version35: upgradeToVer35,
-		version36: upgradeToVer36,
-		version37: upgradeToVer37,
-		version38: upgradeToVer38,
-		version39: upgradeToVer39,
-		version40: upgradeToVer40,
-		version41: upgradeToVer41,
-		version42: upgradeToVer42,
-		version43: upgradeToVer43,
-	}
 }
