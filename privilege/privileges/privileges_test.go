@@ -898,7 +898,7 @@ func (s *testPrivilegeSuite) TestSystemSchema(c *C) {
 	mustExec(c, se, `select * from performance_schema.events_statements_summary_by_digest`)
 	_, err = se.Execute(context.Background(), "drop table performance_schema.events_statements_summary_by_digest")
 	c.Assert(strings.Contains(err.Error(), "denied to user"), IsTrue)
-	_, err = se.Execute(context.Background(), "update performance_schema.events_statements_summary_by_digest set table_names = 'tst'")
+	_, err = se.Execute(context.Background(), "update performance_schema.events_statements_summary_by_digest set schema_name = 'tst'")
 	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
 	_, err = se.Execute(context.Background(), "delete from performance_schema.events_statements_summary_by_digest")
 	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
