@@ -1761,9 +1761,7 @@ func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProper
 		return streamAggs, true
 	}
 
-	aggs := make([]PhysicalPlan, 0, len(hashAggs)+len(streamAggs))
-	aggs = append(aggs, hashAggs...)
-	aggs = append(aggs, streamAggs...)
+	aggs := append(hashAggs, streamAggs...)
 
 	if streamAggs == nil && preferStream && !prop.IsEmpty() {
 		errMsg := "Optimizer Hint STREAM_AGG is inapplicable"
