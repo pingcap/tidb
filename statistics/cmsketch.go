@@ -511,6 +511,11 @@ func (c *CMSketch) TopN() []*TopNMeta {
 	return topN
 }
 
+// TopNMap gets the origin topN map.
+func (c *CMSketch) TopNMap() map[uint64][]*TopNMeta {
+	return c.topN
+}
+
 // AppendTopN appends a topn into the cm sketch.
 func (c *CMSketch) AppendTopN(data []byte, count uint64) {
 	if c.topN == nil {
