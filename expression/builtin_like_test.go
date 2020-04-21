@@ -14,8 +14,6 @@
 package expression
 
 import (
-	"sync"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/terror"
@@ -38,23 +36,15 @@ func (s *testEvaluatorSuite) TestLike(c *C) {
 		{"aAb", `Aa%`, 0},
 		{"aAb", "aA_", 1},
 	}
-	wg := sync.WaitGroup{}
-	concurrency := 10
-	wg.Add(concurrency)
-	for i := 0; i < concurrency; i++ {
-		go func() {
-			defer wg.Done()
-			for _, tt := range tests {
-				fc := funcs[ast.Like]
-				f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tt.input, tt.pattern, 0)))
-				c.Assert(err, IsNil)
-				r, err := evalBuiltinFunc(f, chunk.Row{})
-				c.Assert(err, IsNil)
-				c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.match))
-			}
-		}()
+
+	for _, tt := range tests {
+		fc := funcs[ast.Like]
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tt.input, tt.pattern, 0)))
+		c.Assert(err, IsNil)
+		r, err := evalBuiltinFuncConcurrent(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.match))
 	}
-	wg.Wait()
 }
 
 func (s *testEvaluatorSerialSuites) TestCILike(c *C) {

@@ -15,6 +15,7 @@ package expression
 
 import (
 	"reflect"
+	"sync"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
@@ -25,6 +26,20 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
+
+func evalBuiltinFuncConcurrent(f builtinFunc, row chunk.Row) (d types.Datum, err error) {
+	wg := sync.WaitGroup{}
+	concurrency := 10
+	wg.Add(concurrency)
+	for i := 0; i < concurrency; i++ {
+		go func() {
+			defer wg.Done()
+			d, err = evalBuiltinFunc(f, chunk.Row{})
+		}()
+	}
+	wg.Wait()
+	return
+}
 
 func evalBuiltinFunc(f builtinFunc, row chunk.Row) (d types.Datum, err error) {
 	var (
