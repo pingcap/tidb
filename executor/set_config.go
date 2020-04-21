@@ -139,6 +139,11 @@ func (s *SetConfigExec) doRequest(url string) error {
 	if err != nil {
 		return err
 	}
+	defer func() {
+		if resp.Body != nil {
+			resp.Body.Close()
+		}
+	}()
 	if resp.StatusCode == http.StatusOK {
 		return nil
 	} else if resp.StatusCode >= 400 && resp.StatusCode < 600 {
@@ -152,12 +157,9 @@ func (s *SetConfigExec) doRequest(url string) error {
 }
 
 func isValidInstance(instance string) bool {
-	var ip, port string
-	for i := len(instance) - 1; i >= 0; i-- {
-		if instance[i] == ':' {
-			ip = instance[:i]
-			port = instance[i+1:]
-		}
+	ip, port, err := net.SplitHostPort(instance)
+	if err != nil {
+		return false
 	}
 	if port == "" {
 		return false
