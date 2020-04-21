@@ -33,12 +33,17 @@ import (
 )
 
 var _ = Suite(&testPlanSuite{})
+var _ = SerialSuites(&testPlanSerialSuite{&testPlanSuite{}})
 
 type testPlanSuite struct {
 	*parser.Parser
 	is infoschema.InfoSchema
 
 	testData testutil.TestData
+}
+
+type testPlanSerialSuite struct {
+	*testPlanSuite
 }
 
 func (s *testPlanSuite) SetUpSuite(c *C) {

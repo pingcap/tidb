@@ -125,7 +125,7 @@ func (s *testPrepareSerialSuite) TestPrepareCacheIndexScan(c *C) {
 	tk.MustQuery("execute stmt1 using @a, @b").Check(testkit.Rows("1 3", "1 3"))
 }
 
-func (s *testPrepareSerialSuite) TestPrepareCacheDeferredFunction(c *C) {
+func (s *testPlanSerialSuite) TestPrepareCacheDeferredFunction(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
