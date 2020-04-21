@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2020 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,20 +11,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package metrics
+package storage_test
 
 import (
-	"github.com/prometheus/client_golang/prometheus"
+	"testing"
+
+	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/sys/storage"
 )
 
-// Metrics for the timestamp oracle.
-var (
-	TSFutureWaitDuration = prometheus.NewHistogram(
-		prometheus.HistogramOpts{
-			Namespace: "tidb",
-			Subsystem: "pdclient",
-			Name:      "ts_future_wait_seconds",
-			Help:      "Bucketed histogram of seconds cost for waiting timestamp future.",
-			Buckets:   prometheus.ExponentialBuckets(0.000005, 2, 24), // 5us ~ 40s
-		})
-)
+func TestT(t *testing.T) {
+	TestingT(t)
+}
+
+func TestGetTargetDirectoryCapacity(t *testing.T) {
+	r, err := storage.GetTargetDirectoryCapacity(".")
+	if err != nil {
+		t.Fatal(t)
+	}
+	if r < 1 {
+		t.Fatalf("couldn't get capacity")
+	}
+	//TODO: check the value of r with `df` in linux
+}

@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2020 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,20 +11,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package metrics
+// +build !linux,!windows,!darwin
 
-import (
-	"github.com/prometheus/client_golang/prometheus"
-)
+package storage
 
-// Metrics for the timestamp oracle.
-var (
-	TSFutureWaitDuration = prometheus.NewHistogram(
-		prometheus.HistogramOpts{
-			Namespace: "tidb",
-			Subsystem: "pdclient",
-			Name:      "ts_future_wait_seconds",
-			Help:      "Bucketed histogram of seconds cost for waiting timestamp future.",
-			Buckets:   prometheus.ExponentialBuckets(0.000005, 2, 24), // 5us ~ 40s
-		})
-)
+import "math"
+
+// GetTargetDirectoryCapacity get the capacity (bytes) of directory
+func GetTargetDirectoryCapacity(path string) (uint64, error) {
+	return math.MaxInt64, nil
+}
