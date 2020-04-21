@@ -407,6 +407,8 @@ func (e *groupConcatOrder) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 }
 
 func (e *groupConcatOrder) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error {
+	// If order by exists, the parallel hash aggregation is forbidden in executorBuilder.buildHashAgg.
+	// So MergePartialResult will not be called.
 	return terror.ClassOptimizer.New(mysql.ErrInternal, mysql.MySQLErrName[mysql.ErrInternal]).GenWithStack("groupConcatOrder.MergePartialResult should not be called")
 }
 
@@ -514,5 +516,7 @@ func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx sessionctx.Context, 
 }
 
 func (e *groupConcatDistinctOrder) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error {
+	// If order by exists, the parallel hash aggregation is forbidden in executorBuilder.buildHashAgg.
+	// So MergePartialResult will not be called.
 	return terror.ClassOptimizer.New(mysql.ErrInternal, mysql.MySQLErrName[mysql.ErrInternal]).GenWithStack("groupConcatDistinctOrder.MergePartialResult should not be called")
 }
