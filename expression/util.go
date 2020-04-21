@@ -866,7 +866,7 @@ func UnfoldVirtualColumn(expr Expression) Expression {
 	case *Column:
 		if v.VirtualExpr != nil {
 			return UnfoldVirtualColumn(v.VirtualExpr)
-		} 
+		}
 	case *ScalarFunction:
 		args := v.GetArgs()
 		for i := range args {
@@ -875,7 +875,6 @@ func UnfoldVirtualColumn(expr Expression) Expression {
 	}
 	return expr
 }
-
 
 // ContainMutableConst checks if the expressions contain a lazy constant.
 func ContainMutableConst(ctx sessionctx.Context, exprs []Expression) bool {
