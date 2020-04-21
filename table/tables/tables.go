@@ -299,7 +299,7 @@ func (t *TableCommon) IndexPrefix() kv.Key {
 
 // RecordKey implements table.Table interface.
 func (t *TableCommon) RecordKey(h int64) kv.Key {
-	return tablecodec.EncodeRecordKey(t.recordPrefix, h)
+	return tablecodec.EncodeRecordKey(t.recordPrefix, kv.IntHandle(h))
 }
 
 // FirstKey implements table.Table interface.
@@ -952,9 +952,9 @@ func (t *TableCommon) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols 
 		for _, col := range cols {
 			if col.IsPKHandleColumn(t.meta) {
 				if mysql.HasUnsignedFlag(col.Flag) {
-					data[col.Offset].SetUint64(uint64(handle))
+					data[col.Offset].SetUint64(uint64(handle.IntValue()))
 				} else {
-					data[col.Offset].SetInt64(handle)
+					data[col.Offset].SetInt64(handle.IntValue())
 				}
 				continue
 			}
@@ -967,12 +967,12 @@ func (t *TableCommon) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols 
 				return err
 			}
 		}
-		more, err := fn(handle, data, cols)
+		more, err := fn(handle.IntValue(), data, cols)
 		if !more || err != nil {
 			return err
 		}
 
-		rk := t.RecordKey(handle)
+		rk := t.RecordKey(handle.IntValue())
 		err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
 		if err != nil {
 			return err
@@ -1101,7 +1101,7 @@ func (t *TableCommon) Seek(ctx sessionctx.Context, h int64) (int64, bool, error)
 	if err != nil {
 		return 0, false, err
 	}
-	seekKey := tablecodec.EncodeRowKeyWithHandle(t.physicalTableID, h)
+	seekKey := tablecodec.EncodeRowKeyWithHandle(t.physicalTableID, kv.IntHandle(h))
 	iter, err := txn.Iter(seekKey, t.RecordPrefix().PrefixNext())
 	if err != nil {
 		return 0, false, err
@@ -1114,7 +1114,7 @@ func (t *TableCommon) Seek(ctx sessionctx.Context, h int64) (int64, bool, error)
 	if err != nil {
 		return 0, false, err
 	}
-	return handle, true, nil
+	return handle.IntValue(), true, nil
 }
 
 // Type implements table.Table Type interface.

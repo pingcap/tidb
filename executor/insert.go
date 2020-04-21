@@ -199,7 +199,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 				return err
 			}
 
-			err = e.updateDupRow(ctx, txn, r, handle, e.OnDuplicate)
+			err = e.updateDupRow(ctx, txn, r, handle.IntValue(), e.OnDuplicate)
 			if err == nil {
 				continue
 			}

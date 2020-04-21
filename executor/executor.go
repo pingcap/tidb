@@ -930,7 +930,7 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 				}
 
 				for _, col := range cols {
-					e.keys = append(e.keys, tablecodec.EncodeRowKeyWithHandle(physicalID, row.GetInt64(col.Index)))
+					e.keys = append(e.keys, tablecodec.EncodeRowKeyWithHandle(physicalID, kv.IntHandle(row.GetInt64(col.Index))))
 				}
 			}
 		}

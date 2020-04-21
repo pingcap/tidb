@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -77,7 +78,7 @@ func NewRowDecoder(tbl table.Table, decodeColMap map[int64]Column) *RowDecoder {
 }
 
 // DecodeAndEvalRowWithMap decodes a byte slice into datums and evaluates the generated column value.
-func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle int64, b []byte, decodeLoc, sysLoc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
+func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.Handle, b []byte, decodeLoc, sysLoc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
 	var err error
 	if rowcodec.IsNewFormat(b) {
 		row, err = tablecodec.DecodeRowWithMapNew(b, rd.colTypes, decodeLoc, row)
@@ -98,19 +99,13 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle int
 			rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
 			continue
 		}
-
+		if rd.tryDecodeFromHandle(dCol, handle) {
+			continue
+		}
 		// Get the default value of the column in the generated column expression.
-		if dCol.Col.IsPKHandleColumn(rd.tbl.Meta()) {
-			if mysql.HasUnsignedFlag(colInfo.Flag) {
-				val.SetUint64(uint64(handle))
-			} else {
-				val.SetInt64(handle)
-			}
-		} else {
-			val, err = tables.GetColDefaultValue(ctx, dCol.Col, rd.defaultVals)
-			if err != nil {
-				return nil, err
-			}
+		val, err = tables.GetColDefaultValue(ctx, dCol.Col, rd.defaultVals)
+		if err != nil {
+			return nil, err
 		}
 		rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
 	}
@@ -141,6 +136,22 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle int
 		row[id] = val
 	}
 	return row, nil
+}
+
+func (rd *RowDecoder) tryDecodeFromHandle(dCol Column, handle kv.Handle) bool {
+	if handle == nil {
+		return false
+	}
+	colInfo := dCol.Col.ColumnInfo
+	if dCol.Col.IsPKHandleColumn(rd.tbl.Meta()) {
+		if mysql.HasUnsignedFlag(colInfo.Flag) {
+			rd.mutRow.SetValue(colInfo.Offset, uint64(handle.IntValue()))
+		} else {
+			rd.mutRow.SetValue(colInfo.Offset, handle.IntValue())
+		}
+		return true
+	}
+	return false
 }
 
 // BuildFullDecodeColMap build a map that contains [columnID -> struct{*table.Column, expression.Expression}] from

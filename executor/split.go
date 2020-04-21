@@ -482,7 +482,7 @@ func (e *SplitTableRegionExec) getSplitTableKeysFromValueList() ([][]byte, error
 func (e *SplitTableRegionExec) getSplitTablePhysicalKeysFromValueList(physicalID int64, keys [][]byte) [][]byte {
 	recordPrefix := tablecodec.GenTableRecordPrefix(physicalID)
 	for _, v := range e.valueLists {
-		key := tablecodec.EncodeRecordKey(recordPrefix, v[0].GetInt64())
+		key := tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(v[0].GetInt64()))
 		keys = append(keys, key)
 	}
 	return keys
@@ -560,7 +560,7 @@ func (e *SplitTableRegionExec) getSplitTablePhysicalKeysFromBound(physicalID, lo
 	recordID := low
 	for i := 1; i < e.num; i++ {
 		recordID += step
-		key := tablecodec.EncodeRecordKey(recordPrefix, recordID)
+		key := tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(recordID))
 		keys = append(keys, key)
 	}
 	return keys

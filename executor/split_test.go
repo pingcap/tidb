@@ -22,6 +22,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -345,7 +346,7 @@ func (s *testSplitIndex) TestSplitTable(c *C) {
 	recordPrefix := tablecodec.GenTableRecordPrefix(e.tableInfo.ID)
 	for _, ca := range cases {
 		// test for minInt64 handle
-		key := tablecodec.EncodeRecordKey(recordPrefix, int64(ca.value))
+		key := tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(ca.value))
 		c.Assert(err, IsNil)
 		idx := searchLessEqualIdx(valueList, key)
 		c.Assert(idx, Equals, ca.lessEqualIdx, Commentf("%#v", ca))

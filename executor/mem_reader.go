@@ -178,7 +178,7 @@ func buildMemTableReader(us *UnionScanExec, tblReader *TableReaderExecutor) *mem
 		})
 	}
 
-	rd := rowcodec.NewByteDecoder(colInfo, -1, nil, nil)
+	rd := rowcodec.NewByteDecoder(colInfo, []int64{-1}, nil, nil)
 	return &memTableReader{
 		ctx:           us.ctx,
 		table:         us.table.Meta(),
@@ -229,7 +229,7 @@ func (m *memTableReader) decodeRecordKeyValue(key, value []byte) ([]types.Datum,
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return decodeRowData(m.ctx, m.table, m.columns, m.colIDs, handle, value, &m.buffer)
+	return decodeRowData(m.ctx, m.table, m.columns, m.colIDs, handle.IntValue(), value, &m.buffer)
 }
 
 // decodeRowData uses to decode row data value.
@@ -254,7 +254,7 @@ func decodeRowData(ctx sessionctx.Context, tb *model.TableInfo, columns []*model
 func getRowData(ctx *stmtctx.StatementContext, tb *model.TableInfo, columns []*model.ColumnInfo, colIDs map[int64]int, handle int64, value []byte, buffer *allocBuf) ([][]byte, error) {
 	pkIsHandle := tb.PKIsHandle
 	if rowcodec.IsNewFormat(value) {
-		return buffer.rd.DecodeToBytes(colIDs, handle, value, buffer.handleBytes)
+		return buffer.rd.DecodeToBytes(colIDs, kv.IntHandle(handle), value, buffer.handleBytes)
 	}
 	values, err := tablecodec.CutRowNew(value, colIDs)
 	if err != nil {
@@ -429,7 +429,7 @@ func (m *memIndexLookUpReader) getMemRows() ([][]types.Datum, error) {
 			Flen:       col.Flen,
 		})
 	}
-	rd := rowcodec.NewByteDecoder(colInfos, -1, nil, nil)
+	rd := rowcodec.NewByteDecoder(colInfos, []int64{-1}, nil, nil)
 	memTblReader := &memTableReader{
 		ctx:           m.ctx,
 		table:         m.table.Meta(),

@@ -139,6 +139,8 @@ type Handle interface {
 	Compare(h Handle) int
 	// Encoded returns the encoded bytes.
 	Encoded() []byte
+	// Len returns the length of the encoded bytes.
+	Len() int
 	// NumCols returns the number of columns of the handle,
 	NumCols() int
 	// EncodedCol returns the encoded column value at the given column index.
@@ -189,6 +191,11 @@ func (ih IntHandle) Compare(h Handle) int {
 // Encoded implements the Handle interface.
 func (ih IntHandle) Encoded() []byte {
 	return codec.EncodeInt(nil, int64(ih))
+}
+
+// Len implements the Handle interface.
+func (ih IntHandle) Len() int {
+	return 8
 }
 
 // NumCols implements the Handle interface, not supported for IntHandle type.
@@ -264,6 +271,11 @@ func (ch *CommonHandle) Compare(h Handle) int {
 // Encoded implements the Handle interface.
 func (ch *CommonHandle) Encoded() []byte {
 	return ch.encoded
+}
+
+// Len implements the Handle interface.
+func (ch *CommonHandle) Len() int {
+	return len(ch.encoded)
 }
 
 // NumCols implements the Handle interface.

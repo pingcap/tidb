@@ -502,7 +502,7 @@ func (s *testPointGetSuite) TestReturnValues(c *C) {
 	c.Assert(ok, IsTrue)
 	handle, err := tables.DecodeHandle(val)
 	c.Assert(err, IsNil)
-	rowKey := tablecodec.EncodeRowKeyWithHandle(tid, handle)
+	rowKey := tablecodec.EncodeRowKeyWithHandle(tid, kv.IntHandle(handle))
 	_, ok = txnCtx.GetKeyInPessimisticLockCache(rowKey)
 	c.Assert(ok, IsTrue)
 	tk.MustExec("rollback")

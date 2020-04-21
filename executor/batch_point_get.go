@@ -224,7 +224,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		} else {
 			tID = getPhysID(e.tblInfo, handle)
 		}
-		key := tablecodec.EncodeRowKeyWithHandle(tID, handle)
+		key := tablecodec.EncodeRowKeyWithHandle(tID, kv.IntHandle(handle))
 		keys[i] = key
 	}
 

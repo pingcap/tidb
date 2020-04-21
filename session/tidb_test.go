@@ -174,7 +174,7 @@ func match(c *C, row []types.Datum, expected ...interface{}) {
 }
 
 func (s *testMainSuite) TestKeysNeedLock(c *C) {
-	rowKey := tablecodec.EncodeRowKeyWithHandle(1, 1)
+	rowKey := tablecodec.EncodeRowKeyWithHandle(1, kv.IntHandle(1))
 	indexKey := tablecodec.EncodeIndexSeekKey(1, 1, []byte{1})
 	uniqueValue := make([]byte, 8)
 	uniqueUntouched := append(uniqueValue, '1')

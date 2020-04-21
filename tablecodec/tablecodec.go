@@ -66,18 +66,15 @@ func TablePrefix() []byte {
 
 // EncodeRowKey encodes the table id and record handle into a kv.Key
 func EncodeRowKey(tableID int64, encodedHandle []byte) kv.Key {
-	buf := make([]byte, 0, RecordRowKeyLen)
+	buf := make([]byte, 0, prefixLen+len(encodedHandle))
 	buf = appendTableRecordPrefix(buf, tableID)
 	buf = append(buf, encodedHandle...)
 	return buf
 }
 
 // EncodeRowKeyWithHandle encodes the table id, row handle into a kv.Key
-func EncodeRowKeyWithHandle(tableID int64, handle int64) kv.Key {
-	buf := make([]byte, 0, RecordRowKeyLen)
-	buf = appendTableRecordPrefix(buf, tableID)
-	buf = codec.EncodeInt(buf, handle)
-	return buf
+func EncodeRowKeyWithHandle(tableID int64, handle kv.Handle) kv.Key {
+	return EncodeRowKey(tableID, handle.Encoded())
 }
 
 // CutRowKeyPrefix cuts the row key prefix.
@@ -86,10 +83,10 @@ func CutRowKeyPrefix(key kv.Key) []byte {
 }
 
 // EncodeRecordKey encodes the recordPrefix, row handle into a kv.Key.
-func EncodeRecordKey(recordPrefix kv.Key, h int64) kv.Key {
-	buf := make([]byte, 0, len(recordPrefix)+idLen)
+func EncodeRecordKey(recordPrefix kv.Key, h kv.Handle) kv.Key {
+	buf := make([]byte, 0, len(recordPrefix)+h.Len())
 	buf = append(buf, recordPrefix...)
-	buf = codec.EncodeInt(buf, h)
+	buf = append(buf, h.Encoded()...)
 	return buf
 }
 
@@ -102,31 +99,33 @@ func hasRecordPrefixSep(key kv.Key) bool {
 }
 
 // DecodeRecordKey decodes the key and gets the tableID, handle.
-func DecodeRecordKey(key kv.Key) (tableID int64, handle int64, err error) {
+func DecodeRecordKey(key kv.Key) (tableID int64, handle kv.Handle, err error) {
 	if len(key) <= prefixLen {
-		return 0, 0, errInvalidRecordKey.GenWithStack("invalid record key - %q", key)
+		return 0, nil, errInvalidRecordKey.GenWithStack("invalid record key - %q", key)
 	}
 
 	k := key
 	if !hasTablePrefix(key) {
-		return 0, 0, errInvalidRecordKey.GenWithStack("invalid record key - %q", k)
+		return 0, nil, errInvalidRecordKey.GenWithStack("invalid record key - %q", k)
 	}
 
 	key = key[tablePrefixLength:]
 	key, tableID, err = codec.DecodeInt(key)
 	if err != nil {
-		return 0, 0, errors.Trace(err)
+		return 0, nil, errors.Trace(err)
 	}
 
 	if !hasRecordPrefixSep(key) {
-		return 0, 0, errInvalidRecordKey.GenWithStack("invalid record key - %q", k)
+		return 0, nil, errInvalidRecordKey.GenWithStack("invalid record key - %q", k)
 	}
 
 	key = key[recordPrefixSepLength:]
-	key, handle, err = codec.DecodeInt(key)
+	var intHandle int64
+	key, intHandle, err = codec.DecodeInt(key)
 	if err != nil {
-		return 0, 0, errors.Trace(err)
+		return 0, nil, errors.Trace(err)
 	}
+	handle = kv.IntHandle(intHandle)
 	return
 }
 
@@ -241,12 +240,12 @@ func DecodeTableID(key kv.Key) int64 {
 }
 
 // DecodeRowKey decodes the key and gets the handle.
-func DecodeRowKey(key kv.Key) (int64, error) {
+func DecodeRowKey(key kv.Key) (kv.Handle, error) {
 	if len(key) != RecordRowKeyLen || !hasTablePrefix(key) || !hasRecordPrefixSep(key[prefixLen-2:]) {
-		return 0, errInvalidKey.GenWithStack("invalid key - %q", key)
+		return kv.IntHandle(0), errInvalidKey.GenWithStack("invalid key - %q", key)
 	}
 	u := binary.BigEndian.Uint64(key[prefixLen:])
-	return codec.DecodeCmpUintToInt(u), nil
+	return kv.IntHandle(codec.DecodeCmpUintToInt(u)), nil
 }
 
 // EncodeValue encodes a go value to bytes.
@@ -379,8 +378,8 @@ func DecodeRowWithMapNew(b []byte, cols map[int64]*types.FieldType, loc *time.Lo
 	// for decodeToMap:
 	// - no need handle
 	// - no need get default value
-	rd := rowcodec.NewDatumMapDecoder(reqCols, -1, loc)
-	return rd.DecodeToDatumMap(b, -1, row)
+	rd := rowcodec.NewDatumMapDecoder(reqCols, nil, loc)
+	return rd.DecodeToDatumMap(b, nil, row)
 }
 
 // DecodeRowWithMap decodes a byte slice into datums with a existing row map.
@@ -648,7 +647,7 @@ func decodeIndexKvNewCollation(key, value []byte, colsLen int, hdStatus HandleSt
 		colIDs[col.ID] = i
 	}
 	// We don't need to decode handle here, and colIDs >= 0 always.
-	rd := rowcodec.NewByteDecoder(columns, -1, nil, nil)
+	rd := rowcodec.NewByteDecoder(columns, []int64{-1}, nil, nil)
 	vLen := len(value)
 	tailLen := int(value[0])
 	resultValues, err := rd.DecodeToBytesNoHandle(colIDs, value[1:vLen-tailLen])
@@ -829,8 +828,8 @@ func TruncateToRowKeyLen(key kv.Key) kv.Key {
 
 // GetTableHandleKeyRange returns table handle's key range with tableID.
 func GetTableHandleKeyRange(tableID int64) (startKey, endKey []byte) {
-	startKey = EncodeRowKeyWithHandle(tableID, math.MinInt64)
-	endKey = EncodeRowKeyWithHandle(tableID, math.MaxInt64)
+	startKey = EncodeRowKeyWithHandle(tableID, kv.IntHandle(math.MinInt64))
+	endKey = EncodeRowKeyWithHandle(tableID, kv.IntHandle(math.MaxInt64))
 	return
 }
 

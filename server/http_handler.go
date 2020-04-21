@@ -152,7 +152,7 @@ func (t *tikvHandlerTool) getRegionIDByKey(encodedKey []byte) (uint64, error) {
 }
 
 func (t *tikvHandlerTool) getMvccByHandle(tableID, handle int64) (*mvccKV, error) {
-	encodedKey := tablecodec.EncodeRowKeyWithHandle(tableID, handle)
+	encodedKey := tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(handle))
 	data, err := t.GetMvccByEncodedKey(encodedKey)
 	if err != nil {
 		return nil, err
@@ -1540,7 +1540,7 @@ func (h *mvccTxnHandler) handleMvccGetByTxn(params map[string]string) (interface
 		return nil, errors.Trace(err)
 	}
 	startKey := tablecodec.EncodeTablePrefix(tableID)
-	endKey := tablecodec.EncodeRowKeyWithHandle(tableID, math.MaxInt64)
+	endKey := tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(math.MaxInt64))
 	return h.getMvccByStartTs(uint64(startTS), startKey, endKey)
 }
 

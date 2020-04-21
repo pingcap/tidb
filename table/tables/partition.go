@@ -245,7 +245,7 @@ func (t *partitionedTable) PartitionExpr() (*PartitionExpr, error) {
 
 func partitionRecordKey(pid int64, handle int64) kv.Key {
 	recordPrefix := tablecodec.GenTableRecordPrefix(pid)
-	return tablecodec.EncodeRecordKey(recordPrefix, handle)
+	return tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(handle))
 }
 
 // locatePartition returns the partition ID of the input record.

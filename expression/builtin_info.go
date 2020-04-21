@@ -729,7 +729,7 @@ func decodeKey(ctx sessionctx.Context, s string) string {
 	// Try to decode it as a record key.
 	tableID, handle, err := tablecodec.DecodeRecordKey(key)
 	if err == nil {
-		return "tableID=" + strconv.FormatInt(tableID, 10) + ", _tidb_rowid=" + strconv.FormatInt(handle, 10)
+		return "tableID=" + strconv.FormatInt(tableID, 10) + ", _tidb_rowid=" + strconv.FormatInt(handle.IntValue(), 10)
 	}
 	// Try decode as table index key.
 	tableID, indexID, indexValues, err := tablecodec.DecodeIndexKeyPrefix(key)
