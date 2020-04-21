@@ -19,6 +19,7 @@ import (
 	"reflect"
 	"sort"
 
+	"github.com/cznic/mathutil"
 	"github.com/cznic/sortutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/spaolacci/murmur3"
 )
@@ -71,7 +71,7 @@ type topNHelper struct {
 }
 
 func newTopNHelper(sample [][]byte, numTop uint32) *topNHelper {
-	counter := make(map[hack.MutableString]uint64)
+	counter := make(map[hack.MutableString]uint64, len(sample))
 	for i := range sample {
 		counter[hack.String(sample[i])]++
 	}
@@ -126,7 +126,7 @@ func buildCMSWithTopN(helper *topNHelper, d, w int32, scaleRatio uint64, default
 	c = NewCMSketch(d, w)
 	enableTopN := helper.sampleSize/topNThreshold <= helper.sumTopN
 	if enableTopN {
-		c.topN = make(map[uint64][]*TopNMeta)
+		c.topN = make(map[uint64][]*TopNMeta, helper.actualNumTop)
 		for i := uint32(0); i < helper.actualNumTop; i++ {
 			data, cnt := helper.sorted[i].data, helper.sorted[i].cnt
 			h1, h2 := murmur3.Sum128(data)
@@ -150,11 +150,11 @@ func buildCMSWithTopN(helper *topNHelper, d, w int32, scaleRatio uint64, default
 
 func calculateDefaultVal(helper *topNHelper, estimateNDV, scaleRatio, rowCount uint64) uint64 {
 	sampleNDV := uint64(len(helper.sorted))
-	if rowCount <= (helper.sampleSize-uint64(helper.onlyOnceItems))*scaleRatio {
+	if rowCount <= (helper.sampleSize-helper.onlyOnceItems)*scaleRatio {
 		return 1
 	}
-	estimateRemainingCount := rowCount - (helper.sampleSize-uint64(helper.onlyOnceItems))*scaleRatio
-	return estimateRemainingCount / mathutil.MaxUint64(1, estimateNDV-uint64(sampleNDV)+helper.onlyOnceItems)
+	estimateRemainingCount := rowCount - (helper.sampleSize-helper.onlyOnceItems)*scaleRatio
+	return estimateRemainingCount / mathutil.MaxUint64(1, estimateNDV-sampleNDV+helper.onlyOnceItems)
 }
 
 func (c *CMSketch) findTopNMeta(h1, h2 uint64, d []byte) *TopNMeta {
@@ -341,7 +341,7 @@ func (c *CMSketch) MergeCMSketch(rc *CMSketch, numTopN uint32) error {
 	if c.depth != rc.depth || c.width != rc.width {
 		return errors.New("Dimensions of Count-Min Sketch should be the same")
 	}
-	if c.topN != nil || rc.topN != nil {
+	if len(c.topN) > 0 || len(rc.topN) > 0 {
 		c.mergeTopN(c.topN, rc.topN, numTopN, false)
 	}
 	c.count += rc.count
@@ -365,7 +365,7 @@ func (c *CMSketch) MergeCMSketch4IncrementalAnalyze(rc *CMSketch, numTopN uint32
 	if c.depth != rc.depth || c.width != rc.width {
 		return errors.New("Dimensions of Count-Min Sketch should be the same")
 	}
-	if c.topN != nil || rc.topN != nil {
+	if len(c.topN) > 0 || len(rc.topN) > 0 {
 		c.mergeTopN(c.topN, rc.topN, numTopN, true)
 	}
 	for i := range c.table {
@@ -413,7 +413,7 @@ func CMSketchFromProto(protoSketch *tipb.CMSketch) *CMSketch {
 	if len(protoSketch.TopN) == 0 {
 		return c
 	}
-	c.topN = make(map[uint64][]*TopNMeta)
+	c.topN = make(map[uint64][]*TopNMeta, len(protoSketch.TopN))
 	for _, e := range protoSketch.TopN {
 		h1, h2 := murmur3.Sum128(e.Data)
 		c.topN[h1] = append(c.topN[h1], &TopNMeta{h2, e.Data, e.Count})
@@ -479,7 +479,7 @@ func (c *CMSketch) Copy() *CMSketch {
 	}
 	var topN map[uint64][]*TopNMeta
 	if c.topN != nil {
-		topN = make(map[uint64][]*TopNMeta)
+		topN = make(map[uint64][]*TopNMeta, len(c.topN))
 		for h1, vals := range c.topN {
 			newVals := make([]*TopNMeta, 0, len(vals))
 			for _, val := range vals {

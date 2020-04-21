@@ -106,7 +106,7 @@ func (s *testCascadesSuite) TestPreparePossibleProperties(c *C) {
 		},
 	})
 	defer func() {
-		s.optimizer.ResetTransformationRules(defaultTransformationMap)
+		s.optimizer.ResetTransformationRules(DefaultRuleBatches...)
 	}()
 	stmt, err := s.ParseOneStmt("select f, sum(a) from t group by f", "", "")
 	c.Assert(err, IsNil)
@@ -187,7 +187,7 @@ func (s *testCascadesSuite) TestAppliedRuleSet(c *C) {
 		},
 	})
 	defer func() {
-		s.optimizer.ResetTransformationRules(defaultTransformationMap)
+		s.optimizer.ResetTransformationRules(DefaultRuleBatches...)
 	}()
 	stmt, err := s.ParseOneStmt("select 1", "", "")
 	c.Assert(err, IsNil)

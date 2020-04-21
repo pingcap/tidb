@@ -14,12 +14,12 @@
 package aggfuncs
 
 import (
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/set"
 )
 
@@ -98,6 +98,43 @@ func (e *avgOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		}
 		p.sum = *newSum
 		p.count++
+	}
+	return nil
+}
+
+func (e *avgOriginal4Decimal) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
+	p := (*partialResult4AvgDecimal)(pr)
+	for i := uint64(0); i < shiftEnd; i++ {
+		input, isNull, err := e.args[0].EvalDecimal(sctx, rows[lastEnd+i])
+		if err != nil {
+			return err
+		}
+		if isNull {
+			continue
+		}
+		newSum := new(types.MyDecimal)
+		err = types.DecimalAdd(&p.sum, input, newSum)
+		if err != nil {
+			return err
+		}
+		p.sum = *newSum
+		p.count++
+	}
+	for i := uint64(0); i < shiftStart; i++ {
+		input, isNull, err := e.args[0].EvalDecimal(sctx, rows[lastStart+i])
+		if err != nil {
+			return err
+		}
+		if isNull {
+			continue
+		}
+		newSum := new(types.MyDecimal)
+		err = types.DecimalSub(&p.sum, input, newSum)
+		if err != nil {
+			return err
+		}
+		p.sum = *newSum
+		p.count--
 	}
 	return nil
 }
@@ -264,11 +301,11 @@ func (e *baseAvgFloat64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Par
 	return nil
 }
 
-type avgOriginal4Float64 struct {
+type avgOriginal4Float64HighPrecision struct {
 	baseAvgFloat64
 }
 
-func (e *avgOriginal4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+func (e *avgOriginal4Float64HighPrecision) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4AvgFloat64)(pr)
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalReal(sctx, row)
@@ -281,6 +318,37 @@ func (e *avgOriginal4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsI
 
 		p.sum += input
 		p.count++
+	}
+	return nil
+}
+
+type avgOriginal4Float64 struct {
+	avgOriginal4Float64HighPrecision
+}
+
+func (e *avgOriginal4Float64) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
+	p := (*partialResult4AvgFloat64)(pr)
+	for i := uint64(0); i < shiftEnd; i++ {
+		input, isNull, err := e.args[0].EvalReal(sctx, rows[lastEnd+i])
+		if err != nil {
+			return err
+		}
+		if isNull {
+			continue
+		}
+		p.sum += input
+		p.count++
+	}
+	for i := uint64(0); i < shiftStart; i++ {
+		input, isNull, err := e.args[0].EvalReal(sctx, rows[lastStart+i])
+		if err != nil {
+			return err
+		}
+		if isNull {
+			continue
+		}
+		p.sum -= input
+		p.count--
 	}
 	return nil
 }

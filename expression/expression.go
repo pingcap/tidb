@@ -16,19 +16,28 @@ package expression
 import (
 	goJSON "encoding/json"
 	"fmt"
+	"strings"
 	"sync"
+	"sync/atomic"
 
+	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 // These are byte flags used for `HashCode()`.
@@ -83,6 +92,7 @@ type Expression interface {
 	goJSON.Marshaler
 	VecExpr
 	ReverseExpr
+	CollationInfo
 
 	// Eval evaluates an expression through a row.
 	Eval(row chunk.Row) (types.Datum, error)
@@ -314,7 +324,7 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 			return nil, nil, err
 		}
 
-		if err := VecEval(ctx, expr, input, buf); err != nil {
+		if err := EvalExpr(ctx, expr, input, buf); err != nil {
 			return nil, nil, err
 		}
 
@@ -417,12 +427,9 @@ func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Colum
 			if buf.IsNull(i) {
 				isZero[i] = -1
 			} else {
-				iVal, err := types.StrToInt(sc, buf.GetString(i))
+				iVal, err := types.StrToFloat(sc, buf.GetString(i))
 				if err != nil {
-					iVal, err = HandleOverflowOnSelection(sc, iVal, err)
-					if err != nil {
-						return err
-					}
+					return err
 				}
 				if iVal == 0 {
 					isZero[i] = 0
@@ -454,25 +461,138 @@ func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Colum
 	return nil
 }
 
-// VecEval evaluates this expr according to its type.
-func VecEval(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, result *chunk.Column) (err error) {
-	switch expr.GetType().EvalType() {
-	case types.ETInt:
-		err = expr.VecEvalInt(ctx, input, result)
-	case types.ETReal:
-		err = expr.VecEvalReal(ctx, input, result)
-	case types.ETDuration:
-		err = expr.VecEvalDuration(ctx, input, result)
-	case types.ETDatetime, types.ETTimestamp:
-		err = expr.VecEvalTime(ctx, input, result)
-	case types.ETString:
-		err = expr.VecEvalString(ctx, input, result)
-	case types.ETJson:
-		err = expr.VecEvalJSON(ctx, input, result)
-	case types.ETDecimal:
-		err = expr.VecEvalDecimal(ctx, input, result)
-	default:
-		err = errors.New(fmt.Sprintf("invalid eval type %v", expr.GetType().EvalType()))
+// EvalExpr evaluates this expr according to its type.
+// And it selects the method for evaluating expression based on
+// the environment variables and whether the expression can be vectorized.
+func EvalExpr(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, result *chunk.Column) (err error) {
+	evalType := expr.GetType().EvalType()
+	if expr.Vectorized() && ctx.GetSessionVars().EnableVectorizedExpression {
+		switch evalType {
+		case types.ETInt:
+			err = expr.VecEvalInt(ctx, input, result)
+		case types.ETReal:
+			err = expr.VecEvalReal(ctx, input, result)
+		case types.ETDuration:
+			err = expr.VecEvalDuration(ctx, input, result)
+		case types.ETDatetime, types.ETTimestamp:
+			err = expr.VecEvalTime(ctx, input, result)
+		case types.ETString:
+			err = expr.VecEvalString(ctx, input, result)
+		case types.ETJson:
+			err = expr.VecEvalJSON(ctx, input, result)
+		case types.ETDecimal:
+			err = expr.VecEvalDecimal(ctx, input, result)
+		default:
+			err = errors.New(fmt.Sprintf("invalid eval type %v", expr.GetType().EvalType()))
+		}
+	} else {
+		ind, n := 0, input.NumRows()
+		iter := chunk.NewIterator4Chunk(input)
+		switch evalType {
+		case types.ETInt:
+			result.ResizeInt64(n, false)
+			i64s := result.Int64s()
+			for it := iter.Begin(); it != iter.End(); it = iter.Next() {
+				value, isNull, err := expr.EvalInt(ctx, it)
+				if err != nil {
+					return err
+				}
+				if isNull {
+					result.SetNull(ind, isNull)
+				} else {
+					i64s[ind] = value
+				}
+				ind++
+			}
+		case types.ETReal:
+			result.ResizeFloat64(n, false)
+			f64s := result.Float64s()
+			for it := iter.Begin(); it != iter.End(); it = iter.Next() {
+				value, isNull, err := expr.EvalReal(ctx, it)
+				if err != nil {
+					return err
+				}
+				if isNull {
+					result.SetNull(ind, isNull)
+				} else {
+					f64s[ind] = value
+				}
+				ind++
+			}
+		case types.ETDuration:
+			result.ResizeGoDuration(n, false)
+			d64s := result.GoDurations()
+			for it := iter.Begin(); it != iter.End(); it = iter.Next() {
+				value, isNull, err := expr.EvalDuration(ctx, it)
+				if err != nil {
+					return err
+				}
+				if isNull {
+					result.SetNull(ind, isNull)
+				} else {
+					d64s[ind] = value.Duration
+				}
+				ind++
+			}
+		case types.ETDatetime, types.ETTimestamp:
+			result.ResizeTime(n, false)
+			t64s := result.Times()
+			for it := iter.Begin(); it != iter.End(); it = iter.Next() {
+				value, isNull, err := expr.EvalTime(ctx, it)
+				if err != nil {
+					return err
+				}
+				if isNull {
+					result.SetNull(ind, isNull)
+				} else {
+					t64s[ind] = value
+				}
+				ind++
+			}
+		case types.ETString:
+			result.ReserveString(n)
+			for it := iter.Begin(); it != iter.End(); it = iter.Next() {
+				value, isNull, err := expr.EvalString(ctx, it)
+				if err != nil {
+					return err
+				}
+				if isNull {
+					result.AppendNull()
+				} else {
+					result.AppendString(value)
+				}
+			}
+		case types.ETJson:
+			result.ReserveJSON(n)
+			for it := iter.Begin(); it != iter.End(); it = iter.Next() {
+				value, isNull, err := expr.EvalJSON(ctx, it)
+				if err != nil {
+					return err
+				}
+				if isNull {
+					result.AppendNull()
+				} else {
+					result.AppendJSON(value)
+				}
+			}
+		case types.ETDecimal:
+			result.ResizeDecimal(n, false)
+			d64s := result.Decimals()
+			for it := iter.Begin(); it != iter.End(); it = iter.Next() {
+				value, isNull, err := expr.EvalDecimal(ctx, it)
+				if err != nil {
+					return err
+				}
+				if isNull {
+					result.SetNull(ind, isNull)
+				} else {
+					d64s[ind] = *value
+				}
+				ind++
+			}
+		default:
+			err = errors.New(fmt.Sprintf("invalid eval type %v", expr.GetType().EvalType()))
+		}
 	}
 	return
 }
@@ -686,30 +806,342 @@ func IsBinaryLiteral(expr Expression) bool {
 	return ok && con.Value.Kind() == types.KindBinaryLiteral
 }
 
-// CheckExprPushFlash checks a expr list whether each expr can be pushed to flash storage.
-func CheckExprPushFlash(exprs []Expression) (exprPush, remain []Expression) {
-	for _, expr := range exprs {
-		switch x := expr.(type) {
-		case *Constant, *CorrelatedColumn, *Column:
-			exprPush = append(exprPush, expr)
-		case *ScalarFunction:
-			switch x.FuncName.L {
-			case ast.Plus, ast.Minus, ast.Div, ast.Mul,
-				ast.NullEQ, ast.GE, ast.LE, ast.EQ, ast.NE,
-				ast.LT, ast.GT, ast.Ifnull, ast.IsNull, ast.Or,
-				ast.In, ast.Mod, ast.And, ast.LogicOr, ast.LogicAnd,
-				ast.Like, ast.UnaryNot:
-				if _, r := CheckExprPushFlash(x.GetArgs()); len(r) > 0 {
-					remain = append(remain, expr)
-				} else {
-					exprPush = append(exprPush, expr)
-				}
-			default:
-				remain = append(remain, expr)
+func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
+	// Use the failpoint to control whether to push down an expression in the integration test.
+	// Push down all expression if the `failpoint expression` is `all`, otherwise, check
+	// whether scalar function's name is contained in the enabled expression list (e.g.`ne,eq,lt`).
+	failpoint.Inject("PushDownTestSwitcher", func(val failpoint.Value) bool {
+		enabled := val.(string)
+		if enabled == "all" {
+			return true
+		}
+		exprs := strings.Split(enabled, ",")
+		for _, expr := range exprs {
+			if strings.ToLower(strings.TrimSpace(expr)) == sf.FuncName.L {
+				return true
 			}
+		}
+		return false
+	})
+
+	ret := false
+	switch sf.FuncName.L {
+	case
+		// op functions.
+		ast.LogicAnd,
+		ast.LogicOr,
+		ast.LogicXor,
+		ast.UnaryNot,
+		ast.And,
+		ast.Or,
+		ast.Xor,
+		ast.BitNeg,
+		ast.LeftShift,
+		ast.RightShift,
+		ast.UnaryMinus,
+
+		// compare functions.
+		ast.LT,
+		ast.LE,
+		ast.EQ,
+		ast.NE,
+		ast.GE,
+		ast.GT,
+		ast.NullEQ,
+		ast.In,
+		ast.IsNull,
+		ast.Like,
+		ast.IsTruth,
+		ast.IsFalsity,
+
+		// arithmetical functions.
+		ast.Plus,
+		ast.Minus,
+		ast.Mul,
+		ast.Div,
+		ast.Abs,
+
+		// math functions.
+		ast.Ceil,
+		ast.Ceiling,
+		ast.Floor,
+		ast.Sqrt,
+		ast.Sign,
+		ast.Ln,
+		ast.Log,
+		ast.Log2,
+		ast.Log10,
+		ast.Exp,
+		ast.Pow,
+		// Rust use the llvm math functions, which have different precision with Golang/MySQL(cmath)
+		// open the following switchers if we implement them in coprocessor via `cmath`
+		// ast.Sin,
+		// ast.Asin,
+		// ast.Cos,
+		// ast.Acos,
+		// ast.Tan,
+		// ast.Atan,
+		// ast.Atan2,
+		// ast.Cot,
+		ast.Radians,
+		ast.Degrees,
+		ast.Conv,
+		ast.CRC32,
+
+		// control flow functions.
+		ast.Case,
+		ast.If,
+		ast.Ifnull,
+		ast.Coalesce,
+
+		// string functions.
+		ast.Length,
+		ast.BitLength,
+		ast.Concat,
+		ast.ConcatWS,
+		// ast.Locate,
+		ast.Replace,
+		ast.ASCII,
+		ast.Hex,
+		ast.Reverse,
+		ast.LTrim,
+		ast.RTrim,
+		// ast.Left,
+		ast.Strcmp,
+		ast.Space,
+		ast.Elt,
+		ast.Field,
+
+		// json functions.
+		ast.JSONType,
+		ast.JSONExtract,
+		// FIXME: JSONUnquote is incompatible with Coprocessor
+		// ast.JSONUnquote,
+		ast.JSONObject,
+		ast.JSONArray,
+		ast.JSONMerge,
+		ast.JSONSet,
+		ast.JSONInsert,
+		// ast.JSONReplace,
+		ast.JSONRemove,
+		ast.JSONLength,
+
+		// date functions.
+		ast.DateFormat,
+		ast.FromDays,
+		// ast.ToDays,
+		ast.DayOfYear,
+		ast.DayOfMonth,
+		ast.Year,
+		ast.Month,
+		// FIXME: the coprocessor cannot keep the same behavior with TiDB in current compute framework
+		// ast.Hour,
+		// ast.Minute,
+		// ast.Second,
+		// ast.MicroSecond,
+		// ast.DayName,
+		ast.PeriodAdd,
+		ast.PeriodDiff,
+		ast.TimestampDiff,
+		ast.DateAdd,
+		ast.FromUnixTime,
+
+		// encryption functions.
+		ast.MD5,
+		ast.SHA1,
+		ast.UncompressedLength,
+
+		ast.Cast,
+
+		// misc functions.
+		ast.InetNtoa,
+		ast.InetAton,
+		ast.Inet6Ntoa,
+		ast.Inet6Aton,
+		ast.IsIPv4,
+		ast.IsIPv4Compat,
+		ast.IsIPv4Mapped,
+		ast.IsIPv6:
+		ret = true
+
+	// A special case: Only push down Round by signature
+	case ast.Round:
+		switch sf.Function.PbCode() {
+		case
+			tipb.ScalarFuncSig_RoundReal,
+			tipb.ScalarFuncSig_RoundInt,
+			tipb.ScalarFuncSig_RoundDec:
+			ret = true
+		}
+	case
+		ast.Substring,
+		ast.Substr:
+		switch sf.Function.PbCode() {
+		case
+			tipb.ScalarFuncSig_Substring2ArgsUTF8,
+			tipb.ScalarFuncSig_Substring3ArgsUTF8:
+			ret = true
+		}
+	case ast.Rand:
+		switch sf.Function.PbCode() {
+		case
+			tipb.ScalarFuncSig_RandWithSeedFirstGen:
+			ret = true
+		}
+	}
+	if ret {
+		switch storeType {
+		case kv.TiFlash:
+			ret = scalarExprSupportedByFlash(sf)
+		case kv.TiKV:
+			ret = scalarExprSupportedByTiKV(sf)
+		case kv.TiDB:
+			ret = scalarExprSupportedByTiDB(sf)
+		}
+	}
+	if ret {
+		ret = IsPushDownEnabled(sf.FuncName.L, storeType)
+	}
+	return ret
+}
+
+func storeTypeMask(storeType kv.StoreType) uint32 {
+	if storeType == kv.UnSpecified {
+		return 1<<kv.TiKV | 1<<kv.TiFlash | 1<<kv.TiDB
+	}
+	return 1 << storeType
+}
+
+// IsPushDownEnabled returns true if the input expr is not in the expr_pushdown_blacklist
+func IsPushDownEnabled(name string, storeType kv.StoreType) bool {
+	value, exists := DefaultExprPushDownBlacklist.Load().(map[string]uint32)[name]
+	if exists {
+		mask := storeTypeMask(storeType)
+		return !(value&mask == mask)
+	}
+	return true
+}
+
+// DefaultExprPushDownBlacklist indicates the expressions which can not be pushed down to TiKV.
+var DefaultExprPushDownBlacklist *atomic.Value
+
+func init() {
+	DefaultExprPushDownBlacklist = new(atomic.Value)
+	DefaultExprPushDownBlacklist.Store(make(map[string]uint32))
+}
+
+func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType kv.StoreType) bool {
+	pbCode := scalarFunc.Function.PbCode()
+	if pbCode <= tipb.ScalarFuncSig_Unspecified {
+		failpoint.Inject("PanicIfPbCodeUnspecified", func() {
+			panic(errors.Errorf("unspecified PbCode: %T", scalarFunc.Function))
+		})
+		return false
+	}
+
+	// Check whether this function can be pushed.
+	if !canFuncBePushed(scalarFunc, storeType) {
+		return false
+	}
+
+	// Check whether all of its parameters can be pushed.
+	for _, arg := range scalarFunc.GetArgs() {
+		if !canExprPushDown(arg, pc, storeType) {
+			return false
+		}
+	}
+
+	if metadata := scalarFunc.Function.metadata(); metadata != nil {
+		var err error
+		_, err = proto.Marshal(metadata)
+		if err != nil {
+			logutil.BgLogger().Error("encode metadata", zap.Any("metadata", metadata), zap.Error(err))
+			return false
+		}
+	}
+	return true
+}
+
+func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType) bool {
+	if storeType == kv.TiFlash && (expr.GetType().Tp == mysql.TypeDuration || expr.GetType().Tp == mysql.TypeJSON || collate.NewCollationEnabled()) {
+		return false
+	}
+	switch x := expr.(type) {
+	case *Constant, *CorrelatedColumn:
+		return pc.conOrCorColToPBExpr(expr) != nil
+	case *Column:
+		return pc.columnToPBExpr(x) != nil
+	case *ScalarFunction:
+		return canScalarFuncPushDown(x, pc, storeType)
+	}
+	return false
+}
+
+// PushDownExprs split the input exprs into pushed and remained, pushed include all the exprs that can be pushed down
+func PushDownExprs(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client, storeType kv.StoreType) (pushed []Expression, remained []Expression) {
+	pc := PbConverter{sc: sc, client: client}
+	for _, expr := range exprs {
+		if canExprPushDown(expr, pc, storeType) {
+			pushed = append(pushed, expr)
+		} else {
+			remained = append(remained, expr)
 		}
 	}
 	return
+}
+
+// CanExprsPushDown return true if all the expr in exprs can be pushed down
+func CanExprsPushDown(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client, storeType kv.StoreType) bool {
+	_, remained := PushDownExprs(sc, exprs, client, storeType)
+	return len(remained) == 0
+}
+
+func scalarExprSupportedByTiKV(function *ScalarFunction) bool {
+	switch function.FuncName.L {
+	case ast.Substr, ast.Substring, ast.DateAdd, ast.TimestampDiff,
+		ast.FromUnixTime:
+		return false
+	default:
+		return true
+	}
+}
+
+func scalarExprSupportedByTiDB(function *ScalarFunction) bool {
+	switch function.FuncName.L {
+	case ast.Substr, ast.Substring, ast.DateAdd, ast.TimestampDiff,
+		ast.FromUnixTime:
+		return false
+	default:
+		return true
+	}
+}
+
+func scalarExprSupportedByFlash(function *ScalarFunction) bool {
+	switch function.FuncName.L {
+	case ast.Plus, ast.Minus, ast.Div, ast.Mul,
+		ast.NullEQ, ast.GE, ast.LE, ast.EQ, ast.NE,
+		ast.LT, ast.GT, ast.Ifnull, ast.IsNull, ast.Or,
+		ast.In, ast.Mod, ast.And, ast.LogicOr, ast.LogicAnd,
+		ast.Like, ast.UnaryNot, ast.Case, ast.Month, ast.Substr,
+		ast.Substring, ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime:
+		return true
+	case ast.Cast:
+		switch function.Function.PbCode() {
+		case tipb.ScalarFuncSig_CastIntAsDecimal:
+			return true
+		default:
+			return false
+		}
+	case ast.DateAdd:
+		switch function.Function.PbCode() {
+		case tipb.ScalarFuncSig_AddDateDatetimeInt, tipb.ScalarFuncSig_AddDateStringInt:
+			return true
+		default:
+			return false
+		}
+	default:
+		return false
+	}
 }
 
 // wrapWithIsTrue wraps `arg` with istrue function if the return type of expr is not
@@ -717,10 +1149,18 @@ func CheckExprPushFlash(exprs []Expression) (exprPush, remain []Expression) {
 // The `keepNull` controls what the istrue function will return when `arg` is null:
 // 1. keepNull is true and arg is null, the istrue function returns null.
 // 2. keepNull is false and arg is null, the istrue function returns 0.
+// The `wrapForInt` indicates whether we need to wrapIsTrue for non-logical Expression with int type.
 // TODO: remove this function. ScalarFunction should be newed in one place.
-func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression) (Expression, error) {
+func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression, wrapForInt bool) (Expression, error) {
 	if arg.GetType().EvalType() == types.ETInt {
-		return arg, nil
+		if !wrapForInt {
+			return arg, nil
+		}
+		if child, ok := arg.(*ScalarFunction); ok {
+			if _, isLogicalOp := logicalOps[child.FuncName.L]; isLogicalOp {
+				return arg, nil
+			}
+		}
 	}
 	fc := &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruth, 1, 1}, opcode.IsTruth, keepNull}
 	f, err := fc.getFunction(ctx, []Expression{arg})

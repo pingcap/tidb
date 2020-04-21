@@ -190,8 +190,8 @@ func BenchmarkVectorizedExecute(b *testing.B) {
 
 func BenchmarkScalarFunctionClone(b *testing.B) {
 	col := &Column{RetType: types.NewFieldType(mysql.TypeLonglong)}
-	con1 := One.Clone()
-	con2 := Zero.Clone()
+	con1 := NewOne()
+	con2 := NewZero()
 	add := NewFunctionInternal(mock.NewContext(), ast.Plus, types.NewFieldType(mysql.TypeLonglong), col, con1)
 	sub := NewFunctionInternal(mock.NewContext(), ast.Plus, types.NewFieldType(mysql.TypeLonglong), add, con2)
 	b.ResetTimer()
@@ -317,6 +317,23 @@ func newSelectStringGener(candidates []string) *selectStringGener {
 }
 
 func (g *selectStringGener) gen() interface{} {
+	if len(g.candidates) == 0 {
+		return nil
+	}
+	return g.candidates[g.randGen.Intn(len(g.candidates))]
+}
+
+// selectRealGener select one real number randomly from the candidates array
+type selectRealGener struct {
+	candidates []float64
+	randGen    *defaultRandGen
+}
+
+func newSelectRealGener(candidates []float64) *selectRealGener {
+	return &selectRealGener{candidates, newDefaultRandGen()}
+}
+
+func (g *selectRealGener) gen() interface{} {
 	if len(g.candidates) == 0 {
 		return nil
 	}
@@ -915,6 +932,23 @@ func (g *formatGener) gen() interface{} {
 	default:
 		return nil
 	}
+}
+
+type nullWrappedGener struct {
+	nullRation float64
+	inner      dataGenerator
+	randGen    *defaultRandGen
+}
+
+func newNullWrappedGener(nullRation float64, inner dataGenerator) *nullWrappedGener {
+	return &nullWrappedGener{nullRation, inner, newDefaultRandGen()}
+}
+
+func (g *nullWrappedGener) gen() interface{} {
+	if g.randGen.Float64() < g.nullRation {
+		return nil
+	}
+	return g.inner.gen()
 }
 
 type vecExprBenchCase struct {
@@ -1717,7 +1751,7 @@ func genVecEvalBool(numCols int, colTypes, eTypes []types.EvalType) (CNFExprs, *
 
 func generateRandomSel() []int {
 	randGen := newDefaultRandGen()
-	randGen.Seed(int64(time.Now().UnixNano()))
+	randGen.Seed(time.Now().UnixNano())
 	var sel []int
 	count := 0
 	// Use constant 256 to make it faster to generate randomly arranged sel slices
@@ -1760,21 +1794,6 @@ func (s *testVectorizeSuite2) TestVecEvalBool(c *C) {
 			}
 		}
 	}
-}
-
-func (s *testVectorizeSuite2) TestVecToBool(c *C) {
-	ctx := mock.NewContext()
-	buf := chunk.NewColumn(eType2FieldType(types.ETString), 2)
-	buf.ReserveString(1)
-	buf.AppendString("999999999999999999923")
-	c.Assert(toBool(ctx.GetSessionVars().StmtCtx, types.ETString, buf, []int{0, 1}, []int8{0, 0}), NotNil)
-	buf.ReserveString(1)
-	buf.AppendString("23")
-	c.Assert(toBool(ctx.GetSessionVars().StmtCtx, types.ETString, buf, []int{0, 1}, []int8{0, 0}), IsNil)
-	buf.ReserveString(2)
-	buf.AppendString("999999999999999999923")
-	buf.AppendString("23")
-	c.Assert(toBool(ctx.GetSessionVars().StmtCtx, types.ETString, buf, []int{0, 1}, []int8{0, 0}), NotNil)
 }
 
 func BenchmarkVecEvalBool(b *testing.B) {

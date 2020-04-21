@@ -17,13 +17,14 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"strings"
 	"testing"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
-	"github.com/pingcap/tidb/util/mathutil"
 )
 
 func initChunks(numChk, numRow int) ([]*Chunk, []*types.FieldType) {
@@ -56,6 +57,7 @@ func initChunks(numChk, numRow int) ([]*Chunk, []*types.FieldType) {
 }
 
 func (s *testChunkSuite) TestListInDisk(c *check.C) {
+
 	numChk, numRow := 2, 2
 	chks, fields := initChunks(numChk, numRow)
 	l := NewListInDisk(fields)
@@ -70,7 +72,7 @@ func (s *testChunkSuite) TestListInDisk(c *check.C) {
 		err := l.Add(chk)
 		c.Check(err, check.IsNil)
 	}
-
+	c.Assert(strings.HasPrefix(l.disk.Name(), "/tmp/tidb/test-temp-storage"), check.Equals, true)
 	c.Check(l.NumChunks(), check.Equals, numChk)
 	c.Check(l.GetDiskTracker().BytesConsumed() > 0, check.IsTrue)
 

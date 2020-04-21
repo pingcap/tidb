@@ -43,6 +43,9 @@ var unFoldableFunctions = map[string]struct{}{
 	ast.GetParam:  {},
 	ast.Benchmark: {},
 	ast.DayName:   {},
+	ast.NextVal:   {},
+	ast.LastVal:   {},
+	ast.SetVal:    {},
 }
 
 // DisableFoldFunctions stores functions which prevent child scope functions from being constant folded.
@@ -102,6 +105,7 @@ var IllegalFunctions4GeneratedColumns = map[string]struct{}{
 // DeferredFunctions stores non-deterministic functions, which can be deferred only when the plan cache is enabled.
 var DeferredFunctions = map[string]struct{}{
 	ast.Now:              {},
+	ast.RandomBytes:      {},
 	ast.CurrentTimestamp: {},
 	ast.UTCTime:          {},
 	ast.Curtime:          {},

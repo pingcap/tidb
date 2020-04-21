@@ -17,10 +17,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain/infosync"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 )
@@ -29,18 +27,25 @@ import (
 // 1. the table name should be upper case.
 // 2. clusterTableName should equal to "CLUSTER_" + memTableTableName.
 const (
-	clusterTableSlowLog     = "CLUSTER_SLOW_QUERY"
-	clusterTableProcesslist = "CLUSTER_PROCESSLIST"
+	// ClusterTableSlowLog is the string constant of cluster slow query memory table.
+	ClusterTableSlowLog     = "CLUSTER_SLOW_QUERY"
+	ClusterTableProcesslist = "CLUSTER_PROCESSLIST"
+	// ClusterTableStatementsSummary is the string constant of cluster statement summary table.
+	ClusterTableStatementsSummary = "CLUSTER_STATEMENTS_SUMMARY"
+	// ClusterTableStatementsSummaryHistory is the string constant of cluster statement summary history table.
+	ClusterTableStatementsSummaryHistory = "CLUSTER_STATEMENTS_SUMMARY_HISTORY"
 )
 
 // memTableToClusterTables means add memory table to cluster table.
 var memTableToClusterTables = map[string]string{
-	tableSlowLog:     clusterTableSlowLog,
-	tableProcesslist: clusterTableProcesslist,
+	TableSlowQuery:                ClusterTableSlowLog,
+	TableProcesslist:              ClusterTableProcesslist,
+	TableStatementsSummary:        ClusterTableStatementsSummary,
+	TableStatementsSummaryHistory: ClusterTableStatementsSummaryHistory,
 }
 
 func init() {
-	var addrCol = columnInfo{"INSTANCE", mysql.TypeVarchar, 64, 0, nil, nil}
+	var addrCol = columnInfo{name: "INSTANCE", tp: mysql.TypeVarchar, size: 64}
 	for memTableName, clusterMemTableName := range memTableToClusterTables {
 		memTableCols := tableNameToColumns[memTableName]
 		if len(memTableCols) == 0 {
@@ -70,22 +75,6 @@ func isClusterTableByName(dbName, tableName string) bool {
 		}
 	}
 	return false
-}
-
-func getClusterMemTableRows(ctx sessionctx.Context, tableName string) (rows [][]types.Datum, err error) {
-	tableName = strings.ToUpper(tableName)
-	switch tableName {
-	case clusterTableSlowLog:
-		rows, err = dataForSlowLog(ctx)
-	case clusterTableProcesslist:
-		rows = dataForProcesslist(ctx)
-	default:
-		err = errors.Errorf("unknown cluster table: %v", tableName)
-	}
-	if err != nil {
-		return nil, err
-	}
-	return AppendHostInfoToRows(rows)
 }
 
 // AppendHostInfoToRows appends host info to the rows.

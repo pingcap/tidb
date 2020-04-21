@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
@@ -53,10 +54,13 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/util/hint"
+	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/stringutil"
 )
 
 var etcdDialTimeout = 5 * time.Second
@@ -124,6 +128,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowCollation()
 	case ast.ShowColumns:
 		return e.fetchShowColumns(ctx)
+	case ast.ShowConfig:
+		return e.fetchShowClusterConfigs(ctx)
 	case ast.ShowCreateTable:
 		return e.fetchShowCreateTable()
 	case ast.ShowCreateSequence:
@@ -370,6 +376,8 @@ func (e *ShowExec) fetchShowTables() error {
 		tableNames = append(tableNames, v.Meta().Name.O)
 		if v.Meta().IsView() {
 			tableTypes[v.Meta().Name.O] = "VIEW"
+		} else if v.Meta().IsSequence() {
+			tableTypes[v.Meta().Name.O] = "SEQUENCE"
 		} else {
 			tableTypes[v.Meta().Name.O] = "BASE TABLE"
 		}
@@ -444,7 +452,7 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 	if tb.Meta().IsView() {
 		// Because view's undertable's column could change or recreate, so view's column type may change overtime.
 		// To avoid this situation we need to generate a logical plan and extract current column types from Schema.
-		planBuilder := plannercore.NewPlanBuilder(e.ctx, e.is, &plannercore.BlockHintProcessor{})
+		planBuilder := plannercore.NewPlanBuilder(e.ctx, e.is, &hint.BlockHintProcessor{})
 		viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(ctx, e.DBName, tb.Meta())
 		if err != nil {
 			return err
@@ -546,6 +554,8 @@ func (e *ShowExec) fetchShowIndex() error {
 			"BTREE",          // Index_type
 			"",               // Comment
 			"",               // Index_comment
+			"YES",            // Index_visible
+			"NULL",           // Expression
 		})
 	}
 	for _, idx := range tb.Indices() {
@@ -558,20 +568,36 @@ func (e *ShowExec) fetchShowIndex() error {
 			if idx.Meta().Unique {
 				nonUniq = 0
 			}
+
 			var subPart interface{}
 			if col.Length != types.UnspecifiedLength {
 				subPart = col.Length
 			}
+
 			nullVal := "YES"
 			if idx.Meta().Name.O == mysql.PrimaryKeyName {
 				nullVal = ""
 			}
+
+			visible := "YES"
+			if idx.Meta().Invisible {
+				visible = "NO"
+			}
+
+			colName := col.Name.O
+			expression := "NULL"
+			tblCol := tb.Meta().Columns[col.Offset]
+			if tblCol.Hidden {
+				colName = "NULL"
+				expression = fmt.Sprintf("(%s)", tblCol.GeneratedExprString)
+			}
+
 			e.appendRow([]interface{}{
 				tb.Meta().Name.O,       // Table
 				nonUniq,                // Non_unique
 				idx.Meta().Name.O,      // Key_name
 				i + 1,                  // Seq_in_index
-				col.Name.O,             // Column_name
+				colName,                // Column_name
 				"A",                    // Collation
 				0,                      // Cardinality
 				subPart,                // Sub_part
@@ -580,6 +606,8 @@ func (e *ShowExec) fetchShowIndex() error {
 				idx.Meta().Tp.String(), // Index_type
 				"",                     // Comment
 				idx.Meta().Comment,     // Index_comment
+				visible,                // Index_visible
+				expression,             // Expression
 			})
 		}
 	}
@@ -684,24 +712,14 @@ func getDefaultCollate(charsetName string) string {
 	return ""
 }
 
-// escape the identifier for pretty-printing.
-// For instance, the identifier "foo `bar`" will become "`foo ``bar```".
-// The sqlMode controls whether to escape with backquotes (`) or double quotes
-// (`"`) depending on whether mysql.ModeANSIQuotes is enabled.
-func escape(cis model.CIStr, sqlMode mysql.SQLMode) string {
-	var quote string
-	if sqlMode&mysql.ModeANSIQuotes != 0 {
-		quote = `"`
-	} else {
-		quote = "`"
-	}
-	return quote + strings.Replace(cis.O, quote, quote+quote, -1) + quote
-}
-
 // ConstructResultOfShowCreateTable constructs the result for show create table.
 func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.TableInfo, allocator autoid.Allocator, buf *bytes.Buffer) (err error) {
 	if tableInfo.IsView() {
 		fetchShowCreateTable4View(ctx, tableInfo, buf)
+		return nil
+	}
+	if tableInfo.IsSequence() {
+		ConstructResultOfShowCreateSequence(ctx, tableInfo, buf)
 		return nil
 	}
 
@@ -716,7 +734,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	}
 
 	sqlMode := ctx.GetSessionVars().SQLMode
-	fmt.Fprintf(buf, "CREATE TABLE %s (\n", escape(tableInfo.Name, sqlMode))
+	fmt.Fprintf(buf, "CREATE TABLE %s (\n", stringutil.Escape(tableInfo.Name.O, sqlMode))
 	var pkCol *model.ColumnInfo
 	var hasAutoIncID bool
 	needAddComma := false
@@ -727,7 +745,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		if needAddComma {
 			buf.WriteString(",\n")
 		}
-		fmt.Fprintf(buf, "  %s %s", escape(col.Name, sqlMode), col.GetTypeDesc())
+		fmt.Fprintf(buf, "  %s %s", stringutil.Escape(col.Name.O, sqlMode), col.GetTypeDesc())
 		if col.Charset != "binary" {
 			if col.Charset != tblCharset {
 				fmt.Fprintf(buf, " CHARACTER SET %s", col.Charset)
@@ -787,6 +805,8 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 					if col.Tp == mysql.TypeBit {
 						defaultValBinaryLiteral := types.BinaryLiteral(defaultValStr)
 						fmt.Fprintf(buf, " DEFAULT %s", defaultValBinaryLiteral.ToBitLiteralString(true))
+					} else if types.IsTypeNumeric(col.Tp) || col.DefaultIsExpr {
+						fmt.Fprintf(buf, " DEFAULT %s", format.OutputFormat(defaultValStr))
 					} else {
 						fmt.Fprintf(buf, " DEFAULT '%s'", format.OutputFormat(defaultValStr))
 					}
@@ -798,7 +818,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 			}
 		}
 		if tableInfo.PKIsHandle && tableInfo.ContainsAutoRandomBits() && tableInfo.GetPkName().L == col.Name.L {
-			buf.WriteString(fmt.Sprintf(" /*T!%s AUTO_RANDOM(%d) */", parser.CommentCodeAutoRandom, tableInfo.AutoRandomBits))
+			buf.WriteString(fmt.Sprintf(" /*T![auto_rand] AUTO_RANDOM(%d) */", tableInfo.AutoRandomBits))
 		}
 		if len(col.Comment) > 0 {
 			buf.WriteString(fmt.Sprintf(" COMMENT '%s'", format.OutputFormat(col.Comment)))
@@ -814,7 +834,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	if pkCol != nil {
 		// If PKIsHanle, pk info is not in tb.Indices(). We should handle it here.
 		buf.WriteString(",\n")
-		fmt.Fprintf(buf, "  PRIMARY KEY (%s)", escape(pkCol.Name, sqlMode))
+		fmt.Fprintf(buf, "  PRIMARY KEY (%s)", stringutil.Escape(pkCol.Name.O, sqlMode))
 	}
 
 	publicIndices := make([]*model.IndexInfo, 0, len(tableInfo.Indices))
@@ -831,9 +851,9 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		if idxInfo.Primary {
 			buf.WriteString("  PRIMARY KEY ")
 		} else if idxInfo.Unique {
-			fmt.Fprintf(buf, "  UNIQUE KEY %s ", escape(idxInfo.Name, sqlMode))
+			fmt.Fprintf(buf, "  UNIQUE KEY %s ", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		} else {
-			fmt.Fprintf(buf, "  KEY %s ", escape(idxInfo.Name, sqlMode))
+			fmt.Fprintf(buf, "  KEY %s ", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		}
 
 		cols := make([]string, 0, len(idxInfo.Columns))
@@ -842,7 +862,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 			if tableInfo.Columns[c.Offset].Hidden {
 				colInfo = fmt.Sprintf("(%s)", tableInfo.Columns[c.Offset].GeneratedExprString)
 			} else {
-				colInfo = escape(c.Name, sqlMode)
+				colInfo = stringutil.Escape(c.Name.O, sqlMode)
 				if c.Length != types.UnspecifiedLength {
 					colInfo = fmt.Sprintf("%s(%s)", colInfo, strconv.Itoa(c.Length))
 				}
@@ -850,6 +870,9 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 			cols = append(cols, colInfo)
 		}
 		fmt.Fprintf(buf, "(%s)", strings.Join(cols, ","))
+		if idxInfo.Invisible {
+			fmt.Fprintf(buf, ` /*!80000 INVISIBLE */`)
+		}
 		if i != len(publicIndices)-1 {
 			buf.WriteString(",\n")
 		}
@@ -858,10 +881,11 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	buf.WriteString("\n")
 
 	buf.WriteString(") ENGINE=InnoDB")
-	// Because we only support case sensitive utf8_bin collate, we need to explicitly set the default charset and collation
+	// We need to explicitly set the default charset and collation
 	// to make it work on MySQL server which has default collate utf8_general_ci.
-	if len(tblCollate) == 0 {
+	if len(tblCollate) == 0 || tblCollate == "binary" {
 		// If we can not find default collate for the given charset,
+		// or the collate is 'binary'(MySQL-5.7 compatibility, see #15633 for details),
 		// do not show the collate part.
 		fmt.Fprintf(buf, " DEFAULT CHARSET=%s", tblCharset)
 	} else {
@@ -884,6 +908,10 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		}
 	}
 
+	if tableInfo.AutoIdCache != 0 {
+		fmt.Fprintf(buf, " /*T![auto_id_cache] AUTO_ID_CACHE=%d */", tableInfo.AutoIdCache)
+	}
+
 	if tableInfo.ShardRowIDBits > 0 {
 		fmt.Fprintf(buf, "/*!90000 SHARD_ROW_ID_BITS=%d ", tableInfo.ShardRowIDBits)
 		if tableInfo.PreSplitRegions > 0 {
@@ -903,7 +931,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 // ConstructResultOfShowCreateSequence constructs the result for show create sequence.
 func ConstructResultOfShowCreateSequence(ctx sessionctx.Context, tableInfo *model.TableInfo, buf *bytes.Buffer) {
 	sqlMode := ctx.GetSessionVars().SQLMode
-	fmt.Fprintf(buf, "CREATE SEQUENCE %s ", escape(tableInfo.Name, sqlMode))
+	fmt.Fprintf(buf, "CREATE SEQUENCE %s ", stringutil.Escape(tableInfo.Name.O, sqlMode))
 	sequenceInfo := tableInfo.Sequence
 	fmt.Fprintf(buf, "start with %d ", sequenceInfo.Start)
 	fmt.Fprintf(buf, "minvalue %d ", sequenceInfo.MinValue)
@@ -940,6 +968,34 @@ func (e *ShowExec) fetchShowCreateSequence() error {
 	return nil
 }
 
+// TestShowClusterConfigKey is the key used to store TestShowClusterConfigFunc.
+var TestShowClusterConfigKey stringutil.StringerStr = "TestShowClusterConfigKey"
+
+// TestShowClusterConfigFunc is used to test 'show config ...'.
+type TestShowClusterConfigFunc func() ([][]types.Datum, error)
+
+func (e *ShowExec) fetchShowClusterConfigs(ctx context.Context) error {
+	emptySet := set.NewStringSet()
+	var confItems [][]types.Datum
+	var err error
+	if f := e.ctx.Value(TestShowClusterConfigKey); f != nil {
+		confItems, err = f.(TestShowClusterConfigFunc)()
+	} else {
+		confItems, err = fetchClusterConfig(e.ctx, emptySet, emptySet)
+	}
+	if err != nil {
+		return err
+	}
+	for _, items := range confItems {
+		row := make([]interface{}, 0, 4)
+		for _, item := range items {
+			row = append(row, item.GetString())
+		}
+		e.appendRow(row)
+	}
+	return nil
+}
+
 func (e *ShowExec) fetchShowCreateTable() error {
 	tb, err := e.getTable()
 	if err != nil {
@@ -947,10 +1003,10 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	}
 
 	tableInfo := tb.Meta()
-	allocator := tb.Allocator(e.ctx, autoid.RowIDAllocType)
+	allocator := tb.Allocators(e.ctx).Get(autoid.RowIDAllocType)
 	var buf bytes.Buffer
 	// TODO: let the result more like MySQL.
-	if err = ConstructResultOfShowCreateTable(e.ctx, tb.Meta(), allocator, &buf); err != nil {
+	if err = ConstructResultOfShowCreateTable(e.ctx, tableInfo, allocator, &buf); err != nil {
 		return err
 	}
 	if tableInfo.IsView() {
@@ -958,7 +1014,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		return nil
 	}
 
-	e.appendRow([]interface{}{tb.Meta().Name.O, buf.String()})
+	e.appendRow([]interface{}{tableInfo.Name.O, buf.String()})
 	return nil
 }
 
@@ -987,11 +1043,11 @@ func fetchShowCreateTable4View(ctx sessionctx.Context, tb *model.TableInfo, buf 
 	sqlMode := ctx.GetSessionVars().SQLMode
 
 	fmt.Fprintf(buf, "CREATE ALGORITHM=%s ", tb.View.Algorithm.String())
-	fmt.Fprintf(buf, "DEFINER=%s@%s ", escape(model.NewCIStr(tb.View.Definer.Username), sqlMode), escape(model.NewCIStr(tb.View.Definer.Hostname), sqlMode))
+	fmt.Fprintf(buf, "DEFINER=%s@%s ", stringutil.Escape(tb.View.Definer.Username, sqlMode), stringutil.Escape(tb.View.Definer.Hostname, sqlMode))
 	fmt.Fprintf(buf, "SQL SECURITY %s ", tb.View.Security.String())
-	fmt.Fprintf(buf, "VIEW %s (", escape(tb.Name, sqlMode))
+	fmt.Fprintf(buf, "VIEW %s (", stringutil.Escape(tb.Name.O, sqlMode))
 	for i, col := range tb.Columns {
-		fmt.Fprintf(buf, "%s", escape(col.Name, sqlMode))
+		fmt.Fprintf(buf, "%s", stringutil.Escape(col.Name.O, sqlMode))
 		if i < len(tb.Columns)-1 {
 			fmt.Fprintf(buf, ", ")
 		}
@@ -1023,7 +1079,7 @@ func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer) 
 	}
 	for i, def := range partitionInfo.Definitions {
 		lessThans := strings.Join(def.LessThan, ",")
-		fmt.Fprintf(buf, "  PARTITION %s VALUES LESS THAN (%s)", def.Name, lessThans)
+		fmt.Fprintf(buf, "  PARTITION `%s` VALUES LESS THAN (%s)", def.Name, lessThans)
 		if i < len(partitionInfo.Definitions)-1 {
 			buf.WriteString(",\n")
 		} else {
@@ -1040,10 +1096,33 @@ func ConstructResultOfShowCreateDatabase(ctx sessionctx.Context, dbInfo *model.D
 	if ifNotExists {
 		ifNotExistsStr = "/*!32312 IF NOT EXISTS*/ "
 	}
-	fmt.Fprintf(buf, "CREATE DATABASE %s%s", ifNotExistsStr, escape(dbInfo.Name, sqlMode))
-	if s := dbInfo.Charset; len(s) > 0 {
-		fmt.Fprintf(buf, " /*!40100 DEFAULT CHARACTER SET %s */", s)
+	fmt.Fprintf(buf, "CREATE DATABASE %s%s", ifNotExistsStr, stringutil.Escape(dbInfo.Name.O, sqlMode))
+	if dbInfo.Charset != "" {
+		fmt.Fprintf(buf, " /*!40100 DEFAULT CHARACTER SET %s ", dbInfo.Charset)
+		defaultCollate, err := charset.GetDefaultCollation(dbInfo.Charset)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if dbInfo.Collate != "" && dbInfo.Collate != defaultCollate {
+			fmt.Fprintf(buf, "COLLATE %s ", dbInfo.Collate)
+		}
+		fmt.Fprint(buf, "*/")
+		return nil
 	}
+	if dbInfo.Collate != "" {
+		collInfo, err := collate.GetCollationByName(dbInfo.Collate)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		fmt.Fprintf(buf, " /*!40100 DEFAULT CHARACTER SET %s ", collInfo.CharsetName)
+		if !collInfo.IsDefault {
+			fmt.Fprintf(buf, "COLLATE %s ", dbInfo.Collate)
+		}
+		fmt.Fprint(buf, "*/")
+		return nil
+	}
+	// MySQL 5.7 always show the charset info but TiDB may ignore it, which makes a slight difference. We keep this
+	// behavior unchanged because it is trivial enough.
 	return nil
 }
 
@@ -1070,7 +1149,7 @@ func (e *ShowExec) fetchShowCreateDatabase() error {
 }
 
 func (e *ShowExec) fetchShowCollation() error {
-	collations := charset.GetSupportedCollations()
+	collations := collate.GetSupportedCollations()
 	for _, v := range collations {
 		isDefault := ""
 		if v.IsDefault {
@@ -1146,6 +1225,19 @@ func (e *ShowExec) fetchShowGrants() error {
 	checker := privilege.GetPrivilegeManager(e.ctx)
 	if checker == nil {
 		return errors.New("miss privilege checker")
+	}
+	sessVars := e.ctx.GetSessionVars()
+	if !e.User.CurrentUser {
+		userName := sessVars.User.AuthUsername
+		hostName := sessVars.User.AuthHostname
+		// Show grant user requires the SELECT privilege on mysql schema.
+		// Ref https://dev.mysql.com/doc/refman/8.0/en/show-grants.html
+		if userName != e.User.Username || hostName != e.User.Hostname {
+			activeRoles := sessVars.ActiveRoles
+			if !checker.RequestVerification(activeRoles, mysql.SystemDB, "", "", mysql.SelectPriv) {
+				return ErrDBaccessDenied.GenWithStackByArgs(userName, hostName, mysql.SystemDB)
+			}
+		}
 	}
 	for _, r := range e.Roles {
 		if r.Hostname == "" {

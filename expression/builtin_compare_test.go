@@ -45,7 +45,7 @@ func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
 		{"a >= '1.1'", "ge(a, 2)"},
 		{"a = '1.1'", "0"},
 		{"a <=> '1.1'", "0"},
-		{"a != '1.1'", "ne(cast(a), 1.1)"},
+		{"a != '1.1'", "ne(cast(a, double BINARY), 1.1)"},
 		{"'1' < a", "lt(1, a)"},
 		{"'1' <= a", "le(1, a)"},
 		{"'1' > a", "gt(1, a)"},
@@ -59,7 +59,7 @@ func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
 		{"'1.1' >= a", "ge(1, a)"},
 		{"'1.1' = a", "0"},
 		{"'1.1' <=> a", "0"},
-		{"'1.1' != a", "ne(1.1, cast(a))"},
+		{"'1.1' != a", "ne(1.1, cast(a, double BINARY))"},
 		{"'123456789123456711111189' = a", "0"},
 		{"123456789123456789.12345 = a", "0"},
 		{"123456789123456789123456789.12345 > a", "1"},
@@ -68,7 +68,7 @@ func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
 		{"-123456789123456789123456789.12345 < a", "1"},
 		// This cast can not be eliminated,
 		// since converting "aaaa" to an int will cause DataTruncate error.
-		{"'aaaa'=a", "eq(cast(aaaa), cast(a))"},
+		{"'aaaa'=a", "eq(cast(aaaa, double BINARY), cast(a, double BINARY))"},
 	}
 	cols, names := ColumnInfos2ColumnsAndNames(s.ctx, model.NewCIStr(""), tblInfo.Name, tblInfo.Columns)
 	schema := NewSchema(cols...)
@@ -82,7 +82,7 @@ func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
 func (s *testEvaluatorSuite) TestCompare(c *C) {
 	intVal, uintVal, realVal, stringVal, decimalVal := 1, uint64(1), 1.1, "123", types.NewDecFromFloatForTest(123.123)
 	timeVal := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 6)
-	durationVal := types.Duration{Duration: time.Duration(12*time.Hour + 1*time.Minute + 1*time.Second)}
+	durationVal := types.Duration{Duration: 12*time.Hour + 1*time.Minute + 1*time.Second}
 	jsonVal := json.CreateBinary("123")
 	// test cases for generating function signatures.
 	tests := []struct {
@@ -201,7 +201,7 @@ func (s *testEvaluatorSuite) TestCoalesce(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.Length].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.Length].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -331,8 +331,8 @@ func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
 			}
 		}
 	}
-	_, err := funcs[ast.Greatest].getFunction(s.ctx, []Expression{Zero, One})
+	_, err := funcs[ast.Greatest].getFunction(s.ctx, []Expression{NewZero(), NewOne()})
 	c.Assert(err, IsNil)
-	_, err = funcs[ast.Least].getFunction(s.ctx, []Expression{Zero, One})
+	_, err = funcs[ast.Least].getFunction(s.ctx, []Expression{NewZero(), NewOne()})
 	c.Assert(err, IsNil)
 }

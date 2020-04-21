@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
@@ -154,7 +155,7 @@ func (e *CheckIndexRangeExec) constructIndexScanPB() *tipb.Executor {
 	idxExec := &tipb.IndexScan{
 		TableId: e.table.ID,
 		IndexId: e.index.ID,
-		Columns: model.ColumnsToProto(e.cols, e.table.PKIsHandle),
+		Columns: util.ColumnsToProto(e.cols, e.table.PKIsHandle),
 	}
 	return &tipb.Executor{Tp: tipb.ExecType_TypeIndexScan, IdxScan: idxExec}
 }
@@ -239,7 +240,7 @@ func (e *RecoverIndexExec) buildDAGPB(txn kv.Transaction, limitCnt uint64) (*tip
 	}
 
 	tblInfo := e.table.Meta()
-	pbColumnInfos := model.ColumnsToProto(e.columns, tblInfo.PKIsHandle)
+	pbColumnInfos := util.ColumnsToProto(e.columns, tblInfo.PKIsHandle)
 	err := plannercore.SetPBColumnsDefaultValue(e.ctx, pbColumnInfos, e.columns)
 	if err != nil {
 		return nil, err
@@ -534,15 +535,15 @@ func (e *CleanupIndexExec) deleteDanglingIdx(txn kv.Transaction, values map[stri
 
 func extractIdxVals(row chunk.Row, idxVals []types.Datum,
 	fieldTypes []*types.FieldType) []types.Datum {
-	if idxVals == nil {
-		idxVals = make([]types.Datum, 0, row.Len()-1)
+	if cap(idxVals) < row.Len()-1 {
+		idxVals = make([]types.Datum, row.Len()-1)
 	} else {
-		idxVals = idxVals[:0]
+		idxVals = idxVals[:row.Len()-1]
 	}
 
 	for i := 0; i < row.Len()-1; i++ {
 		colVal := row.GetDatum(i, fieldTypes[i])
-		idxVals = append(idxVals, *colVal.Copy())
+		colVal.Copy(&idxVals[i])
 	}
 	return idxVals
 }
@@ -693,7 +694,7 @@ func (e *CleanupIndexExec) constructIndexScanPB() *tipb.Executor {
 	idxExec := &tipb.IndexScan{
 		TableId: e.table.Meta().ID,
 		IndexId: e.index.Meta().ID,
-		Columns: model.ColumnsToProto(e.idxCols, e.table.Meta().PKIsHandle),
+		Columns: util.ColumnsToProto(e.idxCols, e.table.Meta().PKIsHandle),
 	}
 	return &tipb.Executor{Tp: tipb.ExecType_TypeIndexScan, IdxScan: idxExec}
 }

@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
@@ -102,7 +103,6 @@ func writeData(w http.ResponseWriter, data interface{}) {
 		writeError(w, err)
 		return
 	}
-	logutil.BgLogger().Info(string(js))
 	// write response
 	w.Header().Set(headerContentType, contentTypeJSON)
 	w.WriteHeader(http.StatusOK)
@@ -482,7 +482,7 @@ func (vh valueHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	// Decode a column.
 	m := make(map[int64]*types.FieldType, 1)
-	m[int64(colID)] = ft
+	m[colID] = ft
 	loc := time.UTC
 	vals, err := tablecodec.DecodeRow(valData, m, loc)
 	if err != nil {
@@ -490,7 +490,7 @@ func (vh valueHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	v := vals[int64(colID)]
+	v := vals[colID]
 	val, err := v.ToString()
 	if err != nil {
 		writeError(w, err)
@@ -674,19 +674,6 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
-// configReloadHandler is the handler for reloading config online.
-type configReloadHandler struct {
-}
-
-// ServeHTTP handles request of reloading config for this server.
-func (h configReloadHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	if err := config.ReloadGlobalConfig(); err != nil {
-		writeError(w, err)
-	} else {
-		writeData(w, "success!")
-	}
-}
-
 // ServeHTTP recovers binlog service.
 func (h binlogRecover) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	op := req.FormValue(qOperation)
@@ -739,6 +726,17 @@ func (h flashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 			if tblInfo.TiFlashReplica == nil {
 				continue
 			}
+			if pi := tblInfo.GetPartitionInfo(); pi != nil {
+				for _, p := range pi.Definitions {
+					replicaInfos = append(replicaInfos, &tableFlashReplicaInfo{
+						ID:             p.ID,
+						ReplicaCount:   tblInfo.TiFlashReplica.Count,
+						LocationLabels: tblInfo.TiFlashReplica.LocationLabels,
+						Available:      tblInfo.TiFlashReplica.IsPartitionAvailable(p.ID),
+					})
+				}
+				continue
+			}
 			replicaInfos = append(replicaInfos, &tableFlashReplicaInfo{
 				ID:             tblInfo.ID,
 				ReplicaCount:   tblInfo.TiFlashReplica.Count,
@@ -752,8 +750,10 @@ func (h flashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 
 type tableFlashReplicaStatus struct {
 	// Modifying the field name needs to negotiate with TiFlash colleague.
-	ID               int64  `json:"id"`
-	RegionCount      uint64 `json:"region_count"`
+	ID int64 `json:"id"`
+	// RegionCount is the number of regions that need sync.
+	RegionCount uint64 `json:"region_count"`
+	// FlashRegionCount is the number of regions that already sync completed.
 	FlashRegionCount uint64 `json:"flash_region_count"`
 }
 
@@ -779,10 +779,20 @@ func (h flashReplicaHandler) handleStatusReport(w http.ResponseWriter, req *http
 		writeError(w, err)
 		return
 	}
-	err = do.DDL().UpdateTableReplicaInfo(s, status.ID, status.checkTableFlashReplicaAvailable())
+	available := status.checkTableFlashReplicaAvailable()
+	err = do.DDL().UpdateTableReplicaInfo(s, status.ID, available)
 	if err != nil {
 		writeError(w, err)
 	}
+	if available {
+		err = infosync.DeleteTiFlashTableSyncProgress(status.ID)
+	} else {
+		err = infosync.UpdateTiFlashTableSyncProgress(context.Background(), status.ID, float64(status.FlashRegionCount)/float64(status.RegionCount))
+	}
+	if err != nil {
+		writeError(w, err)
+	}
+
 	logutil.BgLogger().Info("handle flash replica report", zap.Int64("table ID", status.ID), zap.Uint64("region count",
 		status.RegionCount),
 		zap.Uint64("flash region count", status.FlashRegionCount),
@@ -1004,8 +1014,8 @@ func (h tableHandler) addScatterSchedule(startKey, endKey []byte, name string) e
 	if err != nil {
 		return err
 	}
-	scheduleURL := fmt.Sprintf("http://%s/pd/api/v1/schedulers", pdAddrs[0])
-	resp, err := http.Post(scheduleURL, "application/json", bytes.NewBuffer(v))
+	scheduleURL := fmt.Sprintf("%s://%s/pd/api/v1/schedulers", util.InternalHTTPSchema(), pdAddrs[0])
+	resp, err := util.InternalHTTPClient().Post(scheduleURL, "application/json", bytes.NewBuffer(v))
 	if err != nil {
 		return err
 	}
@@ -1020,12 +1030,12 @@ func (h tableHandler) deleteScatterSchedule(name string) error {
 	if err != nil {
 		return err
 	}
-	scheduleURL := fmt.Sprintf("http://%s/pd/api/v1/schedulers/scatter-range-%s", pdAddrs[0], name)
+	scheduleURL := fmt.Sprintf("%s://%s/pd/api/v1/schedulers/scatter-range-%s", util.InternalHTTPSchema(), pdAddrs[0], name)
 	req, err := http.NewRequest(http.MethodDelete, scheduleURL, nil)
 	if err != nil {
 		return err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := util.InternalHTTPClient().Do(req)
 	if err != nil {
 		return err
 	}
@@ -1193,12 +1203,13 @@ func (h tableHandler) handleDiskUsageRequest(schema infoschema.InfoSchema, tbl t
 	startKey = codec.EncodeBytes([]byte{}, startKey)
 	endKey = codec.EncodeBytes([]byte{}, endKey)
 
-	statURL := fmt.Sprintf("http://%s/pd/api/v1/stats/region?start_key=%s&end_key=%s",
+	statURL := fmt.Sprintf("%s://%s/pd/api/v1/stats/region?start_key=%s&end_key=%s",
+		util.InternalHTTPSchema(),
 		pdAddrs[0],
 		url.QueryEscape(string(startKey)),
 		url.QueryEscape(string(endKey)))
 
-	resp, err := http.Get(statURL)
+	resp, err := util.InternalHTTPClient().Get(statURL)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -1653,34 +1664,12 @@ func (h dbTableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	// The physicalID maybe a partition ID of the partition-table.
-	dbTblInfo.TableInfo, dbTblInfo.DBInfo = findTableByPartitionID(schema, int64(physicalID))
-	if dbTblInfo.TableInfo == nil {
+	tbl, dbInfo := schema.FindTableByPartitionID(int64(physicalID))
+	if tbl == nil {
 		writeError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
 		return
 	}
+	dbTblInfo.TableInfo = tbl.Meta()
+	dbTblInfo.DBInfo = dbInfo
 	writeData(w, dbTblInfo)
-}
-
-// findTableByPartitionID finds the partition-table info by the partitionID.
-// This function will traverse all the tables to find the partitionID partition in which partition-table.
-func findTableByPartitionID(schema infoschema.InfoSchema, partitionID int64) (*model.TableInfo, *model.DBInfo) {
-	allDBs := schema.AllSchemas()
-	for _, db := range allDBs {
-		allTables := schema.SchemaTables(db.Name)
-		for _, tbl := range allTables {
-			if tbl.Meta().ID > partitionID || tbl.Meta().GetPartitionInfo() == nil {
-				continue
-			}
-			info := tbl.Meta().GetPartitionInfo()
-			tb := tbl.(table.PartitionedTable)
-			for _, def := range info.Definitions {
-				pid := def.ID
-				partition := tb.GetPartition(pid)
-				if partition.GetPhysicalID() == partitionID {
-					return tbl.Meta(), db
-				}
-			}
-		}
-	}
-	return nil, nil
 }

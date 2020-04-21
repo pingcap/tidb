@@ -14,11 +14,17 @@
 package expression
 
 import (
+	"time"
+
 	"github.com/pingcap/check"
 )
 
 func (s *testExpressionSuite) TestRandWithTime(c *check.C) {
 	rng1 := NewWithTime()
+	// NOTE: On windows platform, this Sleep is necessary. Because time.Now() is
+	// imprecise, calling UnixNano() twice returns the same value. We have to make
+	// sure the elapsed time is longer than 1ms to get different values.
+	time.Sleep(time.Millisecond)
 	rng2 := NewWithTime()
 	got1 := rng1.Gen()
 	got2 := rng2.Gen()

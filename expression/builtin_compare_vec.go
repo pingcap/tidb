@@ -265,7 +265,7 @@ func (b *builtinLeastStringSig) vecEvalString(input *chunk.Chunk, result *chunk.
 			}
 			srcStr := src.GetString(i)
 			argStr := arg.GetString(i)
-			if types.CompareString(srcStr, argStr) < 0 {
+			if types.CompareString(srcStr, argStr, b.collation) < 0 {
 				dst.AppendString(srcStr)
 			} else {
 				dst.AppendString(argStr)
@@ -725,8 +725,8 @@ func (b *builtinLeastTimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 	}
 	var argTime types.Time
 
-	var findInvalidTime []bool = make([]bool, n)
-	var invalidValue []string = make([]string, n)
+	findInvalidTime := make([]bool, n)
+	invalidValue := make([]string, n)
 
 	for j := 0; j < len(b.args); j++ {
 		if err := b.args[j].VecEvalString(b.ctx, input, result); err != nil {
@@ -802,7 +802,7 @@ func (b *builtinGreatestStringSig) vecEvalString(input *chunk.Chunk, result *chu
 			}
 			srcStr := src.GetString(i)
 			argStr := arg.GetString(i)
-			if types.CompareString(srcStr, argStr) > 0 {
+			if types.CompareString(srcStr, argStr, b.collation) > 0 {
 				dst.AppendString(srcStr)
 			} else {
 				dst.AppendString(argStr)

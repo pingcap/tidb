@@ -14,6 +14,8 @@
 package ranger_test
 
 import (
+	"math"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -127,5 +129,60 @@ func (s *testRangeSuite) TestRange(c *C) {
 	sc := new(stmtctx.StatementContext)
 	for _, t := range isPointTests {
 		c.Assert(t.ran.IsPoint(sc), Equals, t.isPoint)
+	}
+}
+
+func (s *testRangeSuite) TestIsFullRange(c *C) {
+	nullDatum := types.MinNotNullDatum()
+	nullDatum.SetNull()
+	isFullRangeTests := []struct {
+		ran         ranger.Range
+		isFullRange bool
+	}{
+		{
+			ran: ranger.Range{
+				LowVal:  []types.Datum{types.NewIntDatum(math.MinInt64)},
+				HighVal: []types.Datum{types.NewIntDatum(math.MaxInt64)},
+			},
+			isFullRange: true,
+		},
+		{
+			ran: ranger.Range{
+				LowVal:  []types.Datum{types.NewIntDatum(math.MaxInt64)},
+				HighVal: []types.Datum{types.NewIntDatum(math.MinInt64)},
+			},
+			isFullRange: false,
+		},
+		{
+			ran: ranger.Range{
+				LowVal:  []types.Datum{types.NewIntDatum(1)},
+				HighVal: []types.Datum{types.NewUintDatum(math.MaxUint64)},
+			},
+			isFullRange: false,
+		},
+		{
+			ran: ranger.Range{
+				LowVal:  []types.Datum{*nullDatum.Clone()},
+				HighVal: []types.Datum{types.NewUintDatum(math.MaxUint64)},
+			},
+			isFullRange: true,
+		},
+		{
+			ran: ranger.Range{
+				LowVal:  []types.Datum{*nullDatum.Clone()},
+				HighVal: []types.Datum{*nullDatum.Clone()},
+			},
+			isFullRange: true,
+		},
+		{
+			ran: ranger.Range{
+				LowVal:  []types.Datum{types.MinNotNullDatum()},
+				HighVal: []types.Datum{types.MaxValueDatum()},
+			},
+			isFullRange: true,
+		},
+	}
+	for _, t := range isFullRangeTests {
+		c.Assert(t.ran.IsFullRange(), Equals, t.isFullRange)
 	}
 }

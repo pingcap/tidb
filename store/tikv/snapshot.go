@@ -151,6 +151,28 @@ func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string]
 	return m, nil
 }
 
+type batchKeys struct {
+	region RegionVerID
+	keys   [][]byte
+}
+
+// appendBatchKeysBySize appends keys to b. It may split the keys to make
+// sure each batch's size does not exceed the limit.
+func appendBatchKeysBySize(b []batchKeys, region RegionVerID, keys [][]byte, sizeFn func([]byte) int, limit int) []batchKeys {
+	var start, end int
+	for start = 0; start < len(keys); start = end {
+		var size int
+		for end = start; end < len(keys) && size < limit; end++ {
+			size += sizeFn(keys[end])
+		}
+		b = append(b, batchKeys{
+			region: region,
+			keys:   keys[start:end],
+		})
+	}
+	return b
+}
+
 func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, collectF func(k, v []byte)) error {
 	groups, _, err := s.store.regionCache.GroupKeysByRegion(bo, keys, nil)
 	if err != nil {
@@ -161,7 +183,7 @@ func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, colle
 
 	var batches []batchKeys
 	for id, g := range groups {
-		batches = appendBatchBySize(batches, id, g, func([]byte) int { return 1 }, batchGetSize)
+		batches = appendBatchKeysBySize(batches, id, g, func([]byte) int { return 1 }, batchGetSize)
 	}
 
 	if len(batches) == 0 {

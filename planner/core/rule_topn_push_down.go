@@ -16,8 +16,8 @@ package core
 import (
 	"context"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/util/mathutil"
 )
 
 // pushDownTopNOptimizer pushes down the topN or limit. In the future we will remove the limit from `requiredProperty` in CBO phase.
@@ -114,7 +114,7 @@ func (p *LogicalProjection) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 	}
 	if topN != nil {
 		for _, by := range topN.ByItems {
-			by.Expr = expression.ColumnSubstitute(by.Expr, p.schema, p.Exprs)
+			by.Expr = expression.FoldConstant(expression.ColumnSubstitute(by.Expr, p.schema, p.Exprs))
 		}
 
 		// remove meaningless constant sort items.
@@ -127,6 +127,13 @@ func (p *LogicalProjection) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 	}
 	p.children[0] = p.children[0].pushDownTopN(topN)
 	return p
+}
+
+func (p *LogicalLock) pushDownTopN(topN *LogicalTopN) LogicalPlan {
+	if topN != nil {
+		p.children[0] = p.children[0].pushDownTopN(topN)
+	}
+	return p.self
 }
 
 // pushDownTopNToChild will push a topN to one child of join. The idx stands for join child index. 0 is for left child.

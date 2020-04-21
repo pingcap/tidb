@@ -34,6 +34,8 @@ func init() {
 // FoldConstant does constant folding optimization on an expression excluding deferred ones.
 func FoldConstant(expr Expression) Expression {
 	e, _ := foldConstant(expr)
+	// keep the original coercibility values after folding
+	e.SetCoercibility(expr.Coercibility())
 	return e
 }
 
@@ -167,7 +169,7 @@ func foldConstant(expr Expression) (Expression, bool) {
 				if argIsConst[i] {
 					constArgs[i] = arg
 				} else {
-					constArgs[i] = One
+					constArgs[i] = NewOne()
 				}
 			}
 			dummyScalarFunc, err := NewFunctionBase(x.GetCtx(), x.FuncName.L, x.GetType(), constArgs...)

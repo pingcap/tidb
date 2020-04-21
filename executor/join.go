@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/bitmap"
 	"github.com/pingcap/tidb/util/chunk"
@@ -49,6 +50,8 @@ type HashJoinExec struct {
 	outerFilter       expression.CNFExprs
 	probeKeys         []*expression.Column
 	buildKeys         []*expression.Column
+	probeTypes        []*types.FieldType
+	buildTypes        []*types.FieldType
 
 	// concurrency is the number of partition, build and join workers.
 	concurrency   uint
@@ -136,7 +139,9 @@ func (e *HashJoinExec) Close() error {
 	if e.runtimeStats != nil {
 		concurrency := cap(e.joiners)
 		e.runtimeStats.SetConcurrencyInfo("Concurrency", concurrency)
-		e.runtimeStats.SetAdditionalInfo(e.rowContainer.stat.String())
+		if e.rowContainer != nil {
+			e.runtimeStats.SetAdditionalInfo(e.rowContainer.stat.String())
+		}
 	}
 	err := e.baseExecutor.Close()
 	return err
@@ -158,6 +163,13 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 	e.closeCh = make(chan struct{})
 	e.finished.Store(false)
 	e.joinWorkerWaitGroup = sync.WaitGroup{}
+
+	if e.probeTypes == nil {
+		e.probeTypes = retTypes(e.probeSideExec)
+	}
+	if e.buildTypes == nil {
+		e.buildTypes = retTypes(e.buildSideExec)
+	}
 	return nil
 }
 
@@ -197,13 +209,13 @@ func (e *HashJoinExec) fetchProbeSideChunks(ctx context.Context) {
 				e.finished.Store(true)
 				return
 			}
-			jobFinished, buildErr := e.wait4BuildSide()
+			emptyBuild, buildErr := e.wait4BuildSide()
 			if buildErr != nil {
 				e.joinResultCh <- &hashjoinWorkerResult{
 					err: buildErr,
 				}
 				return
-			} else if jobFinished {
+			} else if emptyBuild {
 				return
 			}
 			hasWaitedForBuild = true
@@ -217,7 +229,7 @@ func (e *HashJoinExec) fetchProbeSideChunks(ctx context.Context) {
 	}
 }
 
-func (e *HashJoinExec) wait4BuildSide() (finished bool, err error) {
+func (e *HashJoinExec) wait4BuildSide() (emptyBuild bool, err error) {
 	select {
 	case <-e.closeCh:
 		return true, nil
@@ -432,7 +444,7 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, probeKeyColIdx []int) {
 		dest: e.probeResultChs[workerID],
 	}
 	hCtx := &hashContext{
-		allTypes:  retTypes(e.probeSideExec),
+		allTypes:  e.probeTypes,
 		keyColIdx: probeKeyColIdx,
 	}
 	for ok := true; ok; {
@@ -482,6 +494,7 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID ui
 
 	iter := chunk.NewIterator4Slice(buildSideRows)
 	var outerMatchStatus []outerRowStatusFlag
+	rowIdx := 0
 	for iter.Begin(); iter.Current() != iter.End(); {
 		outerMatchStatus, err = e.joiners[workerID].tryToMatchOuters(iter, probeSideRow, joinResult.chk, outerMatchStatus)
 		if err != nil {
@@ -490,9 +503,10 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID ui
 		}
 		for i := range outerMatchStatus {
 			if outerMatchStatus[i] == outerRowMatched {
-				e.outerMatchedStatus[rowsPtrs[i].ChkIdx].Set(int(rowsPtrs[i].RowIdx))
+				e.outerMatchedStatus[rowsPtrs[rowIdx+i].ChkIdx].Set(int(rowsPtrs[rowIdx+i].RowIdx))
 			}
 		}
+		rowIdx += len(outerMatchStatus)
 		if joinResult.chk.IsFull() {
 			e.joinResultCh <- joinResult
 			ok, joinResult := e.getNewJoinResult(workerID)
@@ -694,9 +708,8 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 	for i := range e.buildKeys {
 		buildKeyColIdx[i] = e.buildKeys[i].Index
 	}
-	allTypes := e.buildSideExec.base().retFieldTypes
 	hCtx := &hashContext{
-		allTypes:  allTypes,
+		allTypes:  e.buildTypes,
 		keyColIdx: buildKeyColIdx,
 	}
 	var err error
@@ -790,7 +803,7 @@ func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 	e.innerChunk = newFirstChunk(e.innerExec)
 	e.innerList = chunk.NewList(retTypes(e.innerExec), e.initCap, e.maxChunkSize)
 
-	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaNestedLoopApply)
+	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
 	e.innerList.GetMemTracker().SetLabel(innerListLabel)

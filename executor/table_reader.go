@@ -21,6 +21,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
@@ -87,6 +88,8 @@ type TableReaderExecutor struct {
 	virtualColumnIndex []int
 	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
 	virtualColumnRetFieldTypes []*types.FieldType
+	// batchCop indicates whether use super batch coprocessor request, only works for TiFlash engine.
+	batchCop bool
 }
 
 // Open initialzes necessary variables for using this executor.
@@ -97,7 +100,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaDistSQL)
+	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
 	var err error
@@ -165,24 +168,9 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 		return err
 	}
 
-	virCols := chunk.NewChunkWithCapacity(e.virtualColumnRetFieldTypes, req.Capacity())
-	iter := chunk.NewIterator4Chunk(req)
-
-	for i, idx := range e.virtualColumnIndex {
-		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			datum, err := e.schema.Columns[idx].EvalVirtualColumn(row)
-			if err != nil {
-				return err
-			}
-			// Because the expression might return different type from
-			// the generated column, we should wrap a CAST on the result.
-			castDatum, err := table.CastValue(e.ctx, datum, e.columns[idx])
-			if err != nil {
-				return err
-			}
-			virCols.AppendDatum(i, &castDatum)
-		}
-		req.SetCol(idx, virCols.Column(i))
+	err := FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.schema, e.columns, e.ctx, req)
+	if err != nil {
+		return nil
 	}
 
 	return nil
@@ -215,6 +203,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetMemTracker(e.memTracker).
 		SetStoreType(e.storeType).
+		SetAllowBatchCop(e.batchCop).
 		Build()
 	if err != nil {
 		return nil, err
@@ -228,18 +217,23 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 	return result, nil
 }
 
-// buildVirtualColumnInfo saves virtual column indices and sort them in definition order
-func (e *TableReaderExecutor) buildVirtualColumnInfo() {
-	e.virtualColumnIndex = make([]int, 0)
-	for i, col := range e.schema.Columns {
+func buildVirtualColumnIndex(schema *expression.Schema, columns []*model.ColumnInfo) []int {
+	virtualColumnIndex := make([]int, 0, len(columns))
+	for i, col := range schema.Columns {
 		if col.VirtualExpr != nil {
-			e.virtualColumnIndex = append(e.virtualColumnIndex, i)
+			virtualColumnIndex = append(virtualColumnIndex, i)
 		}
 	}
-	sort.Slice(e.virtualColumnIndex, func(i, j int) bool {
-		return plannercore.FindColumnInfoByID(e.columns, e.schema.Columns[e.virtualColumnIndex[i]].ID).Offset <
-			plannercore.FindColumnInfoByID(e.columns, e.schema.Columns[e.virtualColumnIndex[j]].ID).Offset
+	sort.Slice(virtualColumnIndex, func(i, j int) bool {
+		return plannercore.FindColumnInfoByID(columns, schema.Columns[virtualColumnIndex[i]].ID).Offset <
+			plannercore.FindColumnInfoByID(columns, schema.Columns[virtualColumnIndex[j]].ID).Offset
 	})
+	return virtualColumnIndex
+}
+
+// buildVirtualColumnInfo saves virtual column indices and sort them in definition order
+func (e *TableReaderExecutor) buildVirtualColumnInfo() {
+	e.virtualColumnIndex = buildVirtualColumnIndex(e.Schema(), e.columns)
 	if len(e.virtualColumnIndex) > 0 {
 		e.virtualColumnRetFieldTypes = make([]*types.FieldType, len(e.virtualColumnIndex))
 		for i, idx := range e.virtualColumnIndex {

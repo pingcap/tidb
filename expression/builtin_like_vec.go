@@ -19,7 +19,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/stringutil"
 )
 
 func (b *builtinLikeSig) vectorized() bool {
@@ -36,7 +35,6 @@ func (b *builtinLikeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 	if err = b.args[0].VecEvalString(b.ctx, input, bufVal); err != nil {
 		return err
 	}
-
 	bufPattern, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
@@ -56,6 +54,9 @@ func (b *builtinLikeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 	}
 	escapes := bufEscape.Int64s()
 
+	if b.pattern == nil {
+		b.pattern = b.collator().Pattern()
+	}
 	result.ResizeInt64(n, false)
 	result.MergeNulls(bufVal, bufPattern, bufEscape)
 	i64s := result.Int64s()
@@ -63,10 +64,8 @@ func (b *builtinLikeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 		if result.IsNull(i) {
 			continue
 		}
-
-		escape := byte(escapes[i])
-		patChars, patTypes := stringutil.CompilePattern(bufPattern.GetString(i), escape)
-		match := stringutil.DoMatch(bufVal.GetString(i), patChars, patTypes)
+		b.pattern.Compile(bufPattern.GetString(i), byte(escapes[i]))
+		match := b.pattern.DoMatch(bufVal.GetString(i))
 		i64s[i] = boolToInt64(match)
 	}
 
@@ -87,6 +86,10 @@ func (b *builtinRegexpSharedSig) isMemorizedRegexpInitialized() bool {
 
 func (b *builtinRegexpSharedSig) initMemoizedRegexp(patterns *chunk.Column, n int) {
 	// Precondition: patterns is generated from a constant expression
+	if n == 0 {
+		// If the input rownum is zero, the Regexp error shouldn't be generated.
+		return
+	}
 	for i := 0; i < n; i++ {
 		if patterns.IsNull(i) {
 			continue

@@ -10,6 +10,7 @@
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
+// +build !windows
 
 package util_test
 
@@ -115,7 +116,7 @@ func TestSyncerSimple(t *testing.T) {
 				t.Fatalf("get chan events count less than 1")
 			}
 			checkRespKV(t, 1, DDLGlobalSchemaVersion, fmt.Sprintf("%v", currentVer), resp.Events[0].Kv)
-		case <-time.After(100 * time.Millisecond):
+		case <-time.After(3 * time.Second):
 			t.Fatalf("get udpate version failed")
 		}
 	}()

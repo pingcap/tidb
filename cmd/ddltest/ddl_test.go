@@ -35,6 +35,7 @@ import (
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
@@ -103,9 +104,8 @@ func (s *TestDDLSuite) SetUpSuite(c *C) {
 	// Make sure the schema lease of this session is equal to other TiDB servers'.
 	session.SetSchemaLease(time.Duration(*lease) * time.Second)
 
-	dom, err := session.BootstrapSession(s.store)
+	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
-	s.dom = dom
 
 	s.s, err = session.CreateSession(s.store)
 	c.Assert(err, IsNil)
@@ -115,13 +115,19 @@ func (s *TestDDLSuite) SetUpSuite(c *C) {
 	_, err = s.s.Execute(goCtx, "create database if not exists test_ddl")
 	c.Assert(err, IsNil)
 
-	_, err = s.s.Execute(goCtx, "use test_ddl")
-	c.Assert(err, IsNil)
-
 	s.Bootstrap(c)
 
 	// Stop current DDL worker, so that we can't be the owner now.
 	err = domain.GetDomain(s.ctx).DDL().Stop()
+	c.Assert(err, IsNil)
+	ddl.RunWorker = false
+	session.ResetStoreForWithTiKVTest(s.store)
+	s.s, err = session.CreateSession(s.store)
+	c.Assert(err, IsNil)
+	s.dom, err = session.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
+	s.ctx = s.s.(sessionctx.Context)
+	_, err = s.s.Execute(goCtx, "use test_ddl")
 	c.Assert(err, IsNil)
 
 	addEnvPath("..")
@@ -350,7 +356,8 @@ func isRetryError(err error) bool {
 		strings.Contains(err.Error(), "connection refused") ||
 		strings.Contains(err.Error(), "getsockopt: connection reset by peer") ||
 		strings.Contains(err.Error(), "KV error safe to retry") ||
-		strings.Contains(err.Error(), "try again later") {
+		strings.Contains(err.Error(), "try again later") ||
+		strings.Contains(err.Error(), "invalid connection") {
 		return true
 	}
 
@@ -738,7 +745,7 @@ func (s *TestDDLSuite) TestSimpleConflictUpdate(c *C) {
 				k := randomNum(rowCount)
 				s.mustExec(c, fmt.Sprintf("update test_conflict_update set c2 = %d where c1 = %d", defaultValue, k))
 				mu.Lock()
-				keysMap[int64(k)] = int64(defaultValue)
+				keysMap[int64(k)] = defaultValue
 				mu.Unlock()
 			}
 		}()

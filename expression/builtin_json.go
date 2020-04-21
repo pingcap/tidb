@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -71,6 +70,7 @@ var (
 	_ builtinFunc = &builtinJSONRemoveSig{}
 	_ builtinFunc = &builtinJSONMergeSig{}
 	_ builtinFunc = &builtinJSONContainsSig{}
+	_ builtinFunc = &builtinJSONStorageSizeSig{}
 	_ builtinFunc = &builtinJSONDepthSig{}
 	_ builtinFunc = &builtinJSONSearchSig{}
 	_ builtinFunc = &builtinJSONKeysSig{}
@@ -100,6 +100,7 @@ func (c *jsonTypeFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETJson)
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 51 // Flen of JSON_TYPE is length of UNSIGNED INTEGER.
 	sig := &builtinJSONTypeSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonTypeSig)
@@ -866,51 +867,51 @@ func (b *builtinJSONArrayAppendSig) evalJSON(row chunk.Row) (res json.BinaryJSON
 
 	for i := 1; i < len(b.args)-1; i += 2 {
 		// If JSON path is NULL, MySQL breaks and returns NULL.
-		s, isNull, err := b.args[i].EvalString(b.ctx, row)
-		if isNull || err != nil {
+		s, sNull, err := b.args[i].EvalString(b.ctx, row)
+		if sNull || err != nil {
 			return res, true, err
 		}
-
-		// We should do the following checks to get correct values in res.Extract
-		pathExpr, err := json.ParseJSONPathExpr(s)
-		if err != nil {
-			return res, true, json.ErrInvalidJSONPath.GenWithStackByArgs(s)
-		}
-		if pathExpr.ContainsAnyAsterisk() {
-			return res, true, json.ErrInvalidJSONPathWildcard.GenWithStackByArgs(s)
-		}
-
-		obj, exists := res.Extract([]json.PathExpression{pathExpr})
-		if !exists {
-			// If path not exists, just do nothing and no errors.
-			continue
-		}
-
-		if obj.TypeCode != json.TypeCodeArray {
-			// res.Extract will return a json object instead of an array if there is an object at path pathExpr.
-			// JSON_ARRAY_APPEND({"a": "b"}, "$", {"b": "c"}) => [{"a": "b"}, {"b", "c"}]
-			// We should wrap them to a single array first.
-			obj = json.CreateBinary([]interface{}{obj})
-		}
-
-		value, isnull, err := b.args[i+1].EvalJSON(b.ctx, row)
+		value, vNull, err := b.args[i+1].EvalJSON(b.ctx, row)
 		if err != nil {
 			return res, true, err
 		}
-
-		if isnull {
+		if vNull {
 			value = json.CreateBinary(nil)
 		}
-
-		obj = json.MergeBinary([]json.BinaryJSON{obj, value})
-		res, err = res.Modify([]json.PathExpression{pathExpr}, []json.BinaryJSON{obj}, json.ModifySet)
-		if err != nil {
-			// We checked pathExpr in the same way as res.Modify do.
-			// So err should always be nil, the function should never return here.
-			return res, true, err
+		res, isNull, err = b.appendJSONArray(res, s, value)
+		if isNull || err != nil {
+			return res, isNull, err
 		}
 	}
 	return res, false, nil
+}
+
+func (b *builtinJSONArrayAppendSig) appendJSONArray(res json.BinaryJSON, p string, v json.BinaryJSON) (json.BinaryJSON, bool, error) {
+	// We should do the following checks to get correct values in res.Extract
+	pathExpr, err := json.ParseJSONPathExpr(p)
+	if err != nil {
+		return res, true, json.ErrInvalidJSONPath.GenWithStackByArgs(p)
+	}
+	if pathExpr.ContainsAnyAsterisk() {
+		return res, true, json.ErrInvalidJSONPathWildcard.GenWithStackByArgs(p)
+	}
+
+	obj, exists := res.Extract([]json.PathExpression{pathExpr})
+	if !exists {
+		// If path not exists, just do nothing and no errors.
+		return res, false, nil
+	}
+
+	if obj.TypeCode != json.TypeCodeArray {
+		// res.Extract will return a json object instead of an array if there is an object at path pathExpr.
+		// JSON_ARRAY_APPEND({"a": "b"}, "$", {"b": "c"}) => [{"a": "b"}, {"b", "c"}]
+		// We should wrap them to a single array first.
+		obj = json.CreateBinary([]interface{}{obj})
+	}
+
+	obj = json.MergeBinary([]json.BinaryJSON{obj, v})
+	res, err = res.Modify([]json.PathExpression{pathExpr}, []json.BinaryJSON{obj}, json.ModifySet)
+	return res, false, err
 }
 
 type jsonArrayInsertFunctionClass struct {
@@ -1108,6 +1109,7 @@ func (b *builtinJSONSearchSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isN
 	if isNull || err != nil {
 		return res, isNull, err
 	}
+	containType = strings.ToLower(containType)
 	if containType != json.ContainsPathAll && containType != json.ContainsPathOne {
 		return res, true, errors.AddStack(json.ErrInvalidJSONContainsPathType)
 	}
@@ -1128,25 +1130,10 @@ func (b *builtinJSONSearchSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isN
 		if isNull || len(escapeStr) == 0 {
 			escape = byte('\\')
 		} else if len(escapeStr) == 1 {
-			escape = byte(escapeStr[0])
+			escape = escapeStr[0]
 		} else {
 			return res, true, errIncorrectArgs.GenWithStackByArgs("ESCAPE")
 		}
-	}
-	patChars, patTypes := stringutil.CompilePattern(searchStr, escape)
-
-	// result
-	result := make([]interface{}, 0)
-
-	// walk json_doc
-	walkFn := func(fullpath json.PathExpression, bj json.BinaryJSON) (stop bool, err error) {
-		if bj.TypeCode == json.TypeCodeString && stringutil.DoMatch(string(bj.GetString()), patChars, patTypes) {
-			result = append(result, fullpath.String())
-			if containType == json.ContainsPathOne {
-				return true, nil
-			}
-		}
-		return false, nil
 	}
 	if len(b.args) >= 5 { // path...
 		pathExprs := make([]json.PathExpression, 0, len(b.args)-4)
@@ -1163,34 +1150,48 @@ func (b *builtinJSONSearchSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isN
 			}
 			pathExprs = append(pathExprs, pathExpr)
 		}
-		err = obj.Walk(walkFn, pathExprs...)
-		if err != nil {
-			return res, true, err
-		}
-	} else {
-		err = obj.Walk(walkFn)
-		if err != nil {
-			return res, true, err
-		}
+		return obj.Search(containType, searchStr, escape, pathExprs)
 	}
-
-	// return
-	switch len(result) {
-	case 0:
-		return res, true, nil
-	case 1:
-		return json.CreateBinary(result[0]), false, nil
-	default:
-		return json.CreateBinary(result), false, nil
-	}
+	return obj.Search(containType, searchStr, escape, nil)
 }
 
 type jsonStorageSizeFunctionClass struct {
 	baseFunctionClass
 }
 
+type builtinJSONStorageSizeSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinJSONStorageSizeSig) Clone() builtinFunc {
+	newSig := &builtinJSONStorageSizeSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 func (c *jsonStorageSizeFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "JSON_STORAGE_SIZE")
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETJson)
+	sig := &builtinJSONStorageSizeSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_JsonStorageSizeSig)
+	return sig, nil
+}
+
+func (b *builtinJSONStorageSizeSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
+	obj, isNull, err := b.args[0].EvalJSON(b.ctx, row)
+	if isNull || err != nil {
+		return res, isNull, err
+	}
+
+	buf, err := obj.MarshalJSON()
+	if err != nil {
+		return res, isNull, err
+	}
+
+	return int64(len(buf)), false, nil
 }
 
 type jsonDepthFunctionClass struct {

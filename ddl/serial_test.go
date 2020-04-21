@@ -19,6 +19,7 @@ import (
 	"math"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -40,12 +41,14 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
 
+// Make it serial because config is modified in test cases.
 var _ = SerialSuites(&testSerialSuite{})
 
 type testSerialSuite struct {
@@ -63,7 +66,7 @@ func (s *testSerialSuite) SetUpSuite(c *C) {
 	newCfg.AlterPrimaryKey = false
 	config.StoreGlobalConfig(&newCfg)
 
-	ddl.WaitTimeWhenErrorOccured = 1 * time.Microsecond
+	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
 	var err error
 	s.store, err = mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
@@ -79,6 +82,25 @@ func (s *testSerialSuite) TearDownSuite(c *C) {
 	if s.store != nil {
 		s.store.Close()
 	}
+}
+
+func (s *testSerialSuite) TestChangeMaxIndexLength(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	cfg := config.GetGlobalConfig()
+	newCfg := *cfg
+	originalMaxIndexLen := cfg.MaxIndexLength
+	newCfg.MaxIndexLength = config.DefMaxOfMaxIndexLength
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		newCfg.MaxIndexLength = originalMaxIndexLen
+		config.StoreGlobalConfig(&newCfg)
+	}()
+
+	tk.MustExec("create table t (c1 varchar(3073), index(c1)) charset = ascii;")
+	tk.MustExec(fmt.Sprintf("create table t1 (c1 varchar(%d), index(c1)) charset = ascii;", config.DefMaxOfMaxIndexLength))
+	_, err := tk.Exec(fmt.Sprintf("create table t2 (c1 varchar(%d), index(c1)) charset = ascii;", config.DefMaxOfMaxIndexLength+1))
+	c.Assert(err.Error(), Equals, "[ddl:1071]Specified key was too long; max key length is 12288 bytes")
+	tk.MustExec("drop table t, t1")
 }
 
 func (s *testSerialSuite) TestPrimaryKey(c *C) {
@@ -130,6 +152,14 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when alter-primary-key is false")
 }
 
+func (s *testSerialSuite) TestDropAutoIncrementIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int(11) not null auto_increment key, b int(11), c bigint, unique key (a, b, c))")
+	tk.MustExec("alter table t1 drop index a")
+}
+
 func (s *testSerialSuite) TestMultiRegionGetTableEndHandle(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("drop database if exists test_get_endhandle")
@@ -137,9 +167,13 @@ func (s *testSerialSuite) TestMultiRegionGetTableEndHandle(c *C) {
 	tk.MustExec("use test_get_endhandle")
 
 	tk.MustExec("create table t(a bigint PRIMARY KEY, b int)")
+	var builder strings.Builder
+	fmt.Fprintf(&builder, "insert into t values ")
 	for i := 0; i < 1000; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values(%v, %v)", i, i))
+		fmt.Fprintf(&builder, "(%v, %v),", i, i)
 	}
+	sql := builder.String()
+	tk.MustExec(sql[:len(sql)-1])
 
 	// Get table ID for split.
 	dom := domain.GetDomain(tk.Se)
@@ -205,9 +239,14 @@ func (s *testSerialSuite) TestGetTableEndHandle(c *C) {
 
 	tk.MustExec("create table t1(a bigint PRIMARY KEY, b int)")
 
+	var builder strings.Builder
+	fmt.Fprintf(&builder, "insert into t1 values ")
 	for i := 0; i < 1000; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t1 values(%v, %v)", i, i))
+		fmt.Fprintf(&builder, "(%v, %v),", i, i)
 	}
+	sql := builder.String()
+	tk.MustExec(sql[:len(sql)-1])
+
 	is = s.dom.InfoSchema()
 	testCtx.tbl, err = is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
@@ -221,9 +260,13 @@ func (s *testSerialSuite) TestGetTableEndHandle(c *C) {
 	c.Assert(err, IsNil)
 	checkGetMaxTableRowID(testCtx, s.store, true, int64(math.MaxInt64))
 
+	builder.Reset()
+	fmt.Fprintf(&builder, "insert into t2 values ")
 	for i := 0; i < 1000; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t2 values(%v)", i))
+		fmt.Fprintf(&builder, "(%v),", i)
 	}
+	sql = builder.String()
+	tk.MustExec(sql[:len(sql)-1])
 
 	result := tk.MustQuery("select MAX(_tidb_rowid) from t2")
 	maxID, emptyTable := getMaxTableRowID(testCtx, s.store)
@@ -305,7 +348,40 @@ func (s *testSerialSuite) TestCreateTableWithLike(c *C) {
 	tk.MustExec("create table ctwl_db1.pt1 like ctwl_db.pt1;")
 	tk.MustQuery("select * from ctwl_db1.pt1").Check(testkit.Rows())
 
-	// for failure cases
+	// Test create table like for partition table.
+	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_scatter_region=1;")
+	tk.MustExec("drop table if exists partition_t;")
+	tk.MustExec("create table partition_t (a int, b int,index(a)) partition by hash (a) partitions 3")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 like partition_t")
+	re := tk.MustQuery("show table t1 regions")
+	rows := re.Rows()
+	c.Assert(len(rows), Equals, 3)
+	tbl := testGetTableByName(c, tk.Se, "test", "t1")
+	partitionDef := tbl.Meta().GetPartitionInfo().Definitions
+	c.Assert(rows[0][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[0].ID))
+	c.Assert(rows[1][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[1].ID))
+	c.Assert(rows[2][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[2].ID))
+
+	// Test pre-split table region when create table like.
+	tk.MustExec("drop table if exists t_pre")
+	tk.MustExec("create table t_pre (a int, b int) shard_row_id_bits = 2 pre_split_regions=2;")
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("create table t2 like t_pre")
+	re = tk.MustQuery("show table t2 regions")
+	rows = re.Rows()
+	// Table t2 which create like t_pre should have 4 regions now.
+	c.Assert(len(rows), Equals, 4)
+	tbl = testGetTableByName(c, tk.Se, "test", "t2")
+	c.Assert(rows[1][1], Equals, fmt.Sprintf("t_%d_r_2305843009213693952", tbl.Meta().ID))
+	c.Assert(rows[2][1], Equals, fmt.Sprintf("t_%d_r_4611686018427387904", tbl.Meta().ID))
+	c.Assert(rows[3][1], Equals, fmt.Sprintf("t_%d_r_6917529027641081856", tbl.Meta().ID))
+	defer atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
+
+	// for failure table cases
+	tk.MustExec("use ctwl_db")
 	failSQL := fmt.Sprintf("create table t1 like test_not_exist.t")
 	tk.MustGetErrCode(failSQL, mysql.ErrNoSuchTable)
 	failSQL = fmt.Sprintf("create table t1 like test.t_not_exist")
@@ -316,6 +392,14 @@ func (s *testSerialSuite) TestCreateTableWithLike(c *C) {
 	tk.MustGetErrCode(failSQL, mysql.ErrBadDB)
 	failSQL = fmt.Sprintf("create table t1 like ctwl_db.t")
 	tk.MustGetErrCode(failSQL, mysql.ErrTableExists)
+
+	// test failure for wrong object cases
+	tk.MustExec("drop view if exists v")
+	tk.MustExec("create view v as select 1 from dual")
+	tk.MustGetErrCode("create table viewTable like v", mysql.ErrWrongObject)
+	tk.MustExec("drop sequence if exists seq")
+	tk.MustExec("create sequence seq")
+	tk.MustGetErrCode("create table sequenceTable like seq", mysql.ErrWrongObject)
 
 	tk.MustExec("drop database ctwl_db")
 	tk.MustExec("drop database ctwl_db1")
@@ -402,8 +486,8 @@ func (s *testSerialSuite) TestRecoverTableByJobID(c *C) {
 	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
 	ddl.EmulatorGCDisable()
 	gcTimeFormat := "20060102-15:04:05 -0700 MST"
-	timeBeforeDrop := time.Now().Add(0 - time.Duration(48*60*60*time.Second)).Format(gcTimeFormat)
-	timeAfterDrop := time.Now().Add(time.Duration(48 * 60 * 60 * time.Second)).Format(gcTimeFormat)
+	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
+	timeAfterDrop := time.Now().Add(48 * 60 * 60 * time.Second).Format(gcTimeFormat)
 	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
 			       ON DUPLICATE KEY
 			       UPDATE variable_value = '%[1]s'`
@@ -413,17 +497,23 @@ func (s *testSerialSuite) TestRecoverTableByJobID(c *C) {
 	tk.MustExec("insert into t_recover values (1),(2),(3)")
 	tk.MustExec("drop table t_recover")
 
-	rs, err := tk.Exec("admin show ddl jobs")
-	c.Assert(err, IsNil)
-	rows, err := session.GetRows4Test(context.Background(), tk.Se, rs)
-	c.Assert(err, IsNil)
-	row := rows[0]
-	c.Assert(row.GetString(1), Equals, "test_recover")
-	c.Assert(row.GetString(3), Equals, "drop table")
-	jobID := row.GetInt64(0)
+	getDDLJobID := func(table, tp string) int64 {
+		rs, err := tk.Exec("admin show ddl jobs")
+		c.Assert(err, IsNil)
+		rows, err := session.GetRows4Test(context.Background(), tk.Se, rs)
+		c.Assert(err, IsNil)
+		for _, row := range rows {
+			if row.GetString(1) == table && row.GetString(3) == tp {
+				return row.GetInt64(0)
+			}
+		}
+		c.Errorf("can't find %s table of %s", tp, table)
+		return -1
+	}
+	jobID := getDDLJobID("test_recover", "drop table")
 
 	// if GC safe point is not exists in mysql.tidb
-	_, err = tk.Exec(fmt.Sprintf("recover table by job %d", jobID))
+	_, err := tk.Exec(fmt.Sprintf("recover table by job %d", jobID))
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "can not get 'tikv_gc_safe_point'")
 	// set GC safe point
@@ -472,14 +562,7 @@ func (s *testSerialSuite) TestRecoverTableByJobID(c *C) {
 
 	tk.MustExec("delete from t_recover where a > 1")
 	tk.MustExec("drop table t_recover")
-	rs, err = tk.Exec("admin show ddl jobs")
-	c.Assert(err, IsNil)
-	rows, err = session.GetRows4Test(context.Background(), tk.Se, rs)
-	c.Assert(err, IsNil)
-	row = rows[0]
-	c.Assert(row.GetString(1), Equals, "test_recover")
-	c.Assert(row.GetString(3), Equals, "drop table")
-	jobID = row.GetInt64(0)
+	jobID = getDDLJobID("test_recover", "drop table")
 
 	tk.MustExec(fmt.Sprintf("recover table by job %d", jobID))
 
@@ -488,6 +571,14 @@ func (s *testSerialSuite) TestRecoverTableByJobID(c *C) {
 	// check recover table autoID.
 	tk.MustExec("insert into t_recover values (7),(8),(9)")
 	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "7", "8", "9"))
+
+	// Test for recover truncate table.
+	tk.MustExec("truncate table t_recover")
+	tk.MustExec("rename table t_recover to t_recover_new")
+	jobID = getDDLJobID("test_recover", "truncate table")
+	tk.MustExec(fmt.Sprintf("recover table by job %d", jobID))
+	tk.MustExec("insert into t_recover values (10)")
+	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "7", "8", "9", "10"))
 
 	gcEnable, err := gcutil.CheckGCEnable(tk.Se)
 	c.Assert(err, IsNil)
@@ -512,7 +603,7 @@ func (s *testSerialSuite) TestRecoverTableByJobIDFail(c *C) {
 	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
 	ddl.EmulatorGCDisable()
 	gcTimeFormat := "20060102-15:04:05 -0700 MST"
-	timeBeforeDrop := time.Now().Add(0 - time.Duration(48*60*60*time.Second)).Format(gcTimeFormat)
+	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
 	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
 			       ON DUPLICATE KEY
 			       UPDATE variable_value = '%[1]s'`
@@ -581,7 +672,7 @@ func (s *testSerialSuite) TestRecoverTableByTableNameFail(c *C) {
 	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
 	ddl.EmulatorGCDisable()
 	gcTimeFormat := "20060102-15:04:05 -0700 MST"
-	timeBeforeDrop := time.Now().Add(0 - time.Duration(48*60*60*time.Second)).Format(gcTimeFormat)
+	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
 	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
 			       ON DUPLICATE KEY
 			       UPDATE variable_value = '%[1]s'`
@@ -640,7 +731,7 @@ func (s *testSerialSuite) TestCancelJobByErrorCountLimit(c *C) {
 
 	_, err = tk.Exec("create table t (a int)")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
+	c.Assert(err.Error(), Equals, "[ddl:-1]DDL job rollback, error msg: mock do job error")
 }
 
 func (s *testSerialSuite) TestCanceledJobTakeTime(c *C) {
@@ -663,13 +754,13 @@ func (s *testSerialSuite) TestCanceledJobTakeTime(c *C) {
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	defer s.dom.DDL().(ddl.DDLForTest).SetHook(origHook)
 
-	originalWT := ddl.WaitTimeWhenErrorOccured
-	ddl.WaitTimeWhenErrorOccured = 1 * time.Second
-	defer func() { ddl.WaitTimeWhenErrorOccured = originalWT }()
+	originalWT := ddl.GetWaitTimeWhenErrorOccurred()
+	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Second)
+	defer func() { ddl.SetWaitTimeWhenErrorOccurred(originalWT) }()
 	startTime := time.Now()
 	tk.MustGetErrCode("alter table t_cjtt add column b int", mysql.ErrNoSuchTable)
 	sub := time.Since(startTime)
-	c.Assert(sub, Less, ddl.WaitTimeWhenErrorOccured)
+	c.Assert(sub, Less, ddl.GetWaitTimeWhenErrorOccurred())
 }
 
 func (s *testSerialSuite) TestTableLocksEnable(c *C) {
@@ -717,8 +808,8 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	assertWithAutoInc := func(sql string) {
 		assertInvalidAutoRandomErr(sql, autoid.AutoRandomIncompatibleWithAutoIncErrMsg)
 	}
-	assertOverflow := func(sql string, autoRandBits, maxFieldLength uint64) {
-		assertInvalidAutoRandomErr(sql, autoid.AutoRandomOverflowErrMsg, autoRandBits, maxFieldLength)
+	assertOverflow := func(sql, colType string, autoRandBits, maxFieldLength uint64) {
+		assertInvalidAutoRandomErr(sql, autoid.AutoRandomOverflowErrMsg, colType, maxFieldLength, autoRandBits, colType, maxFieldLength-1)
 	}
 	assertModifyColType := func(sql string) {
 		assertInvalidAutoRandomErr(sql, autoid.AutoRandomModifyColTypeErrMsg)
@@ -762,11 +853,11 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	assertWithAutoInc("create table t (a bigint auto_random(3) auto_increment, primary key (a))")
 
 	// Overflow data type max length.
-	assertOverflow("create table t (a bigint auto_random(65) primary key)", 65, 64)
-	assertOverflow("create table t (a int auto_random(33) primary key)", 33, 32)
-	assertOverflow("create table t (a mediumint auto_random(25) primary key)", 25, 24)
-	assertOverflow("create table t (a smallint auto_random(17) primary key)", 17, 16)
-	assertOverflow("create table t (a tinyint auto_random(9) primary key)", 9, 8)
+	assertOverflow("create table t (a bigint auto_random(65) primary key)", "a", 65, 64)
+	assertOverflow("create table t (a int auto_random(33) primary key)", "a", 33, 32)
+	assertOverflow("create table t (a mediumint auto_random(25) primary key)", "a", 25, 24)
+	assertOverflow("create table t (a smallint auto_random(17) primary key)", "a", 17, 16)
+	assertOverflow("create table t (a tinyint auto_random(9) primary key)", "a", 9, 8)
 
 	assertNonPositive("create table t (a bigint auto_random(0) primary key)")
 
@@ -815,7 +906,90 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 		assertModifyColType("alter table t modify column a smallint auto_random(3)")
 	})
 
+	// Test show warnings when create auto_random table.
+	assertShowWarningCorrect := func(sql string, times int) {
+		mustExecAndDrop(sql, func() {
+			note := fmt.Sprintf(autoid.AutoRandomAvailableAllocTimesNote, times)
+			result := fmt.Sprintf("Note|1105|%s", note)
+			tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", result))
+			c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
+		})
+	}
+	assertShowWarningCorrect("create table t (a tinyint unsigned auto_random(6) primary key)", 1)
+	assertShowWarningCorrect("create table t (a tinyint unsigned auto_random(5) primary key)", 3)
+	assertShowWarningCorrect("create table t (a tinyint auto_random(4) primary key)", 7)
+	assertShowWarningCorrect("create table t (a bigint auto_random(62) primary key)", 1)
+	assertShowWarningCorrect("create table t (a bigint unsigned auto_random(61) primary key)", 3)
+	assertShowWarningCorrect("create table t (a int auto_random(30) primary key)", 1)
+	assertShowWarningCorrect("create table t (a int auto_random(29) primary key)", 3)
+
 	// Disallow using it when allow-auto-random is not enabled.
 	config.GetGlobalConfig().Experimental.AllowAutoRandom = false
 	assertExperimentDisabled("create table auto_random_table (a int primary key auto_random(3))")
+}
+
+func (s *testSerialSuite) TestModifyingColumn4NewCollations(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database dct")
+	tk.MustExec("use dct")
+	tk.MustExec("create table t(b varchar(10) collate utf8_bin, c varchar(10) collate utf8_general_ci) collate utf8_bin")
+	// Column collation can be changed as long as there is no index defined.
+	tk.MustExec("alter table t modify b varchar(10) collate utf8_general_ci")
+	tk.MustExec("alter table t modify c varchar(10) collate utf8_bin")
+	tk.MustExec("alter table t charset utf8 collate utf8_general_ci")
+	tk.MustExec("alter table t convert to charset utf8 collate utf8_bin")
+	tk.MustExec("alter table t convert to charset utf8 collate utf8_general_ci")
+	tk.MustExec("alter table t modify b varchar(10) collate utf8_bin")
+
+	tk.MustExec("alter table t add index b_idx(b)")
+	tk.MustExec("alter table t add index c_idx(c)")
+	tk.MustGetErrMsg("alter table t modify b varchar(10) collate utf8_general_ci", "[ddl:8200]Unsupported modifying collation of column 'b' from 'utf8_bin' to 'utf8_general_ci' when index is defined on it.")
+	tk.MustGetErrMsg("alter table t modify c varchar(10) collate utf8_bin", "[ddl:8200]Unsupported modifying collation of column 'c' from 'utf8_general_ci' to 'utf8_bin' when index is defined on it.")
+	tk.MustGetErrMsg("alter table t convert to charset utf8 collate utf8_general_ci", "[ddl:8200]Unsupported converting collation of column 'b' from 'utf8_bin' to 'utf8_general_ci' when index is defined on it.")
+	// Change to a compatible collation is allowed.
+	tk.MustExec("alter table t modify c varchar(10) collate utf8mb4_general_ci")
+	// Change the default collation of table is allowed.
+	tk.MustExec("alter table t collate utf8mb4_general_ci")
+	tk.MustExec("alter table t charset utf8mb4 collate utf8mb4_bin")
+	// Change the default collation of database is allowed.
+	tk.MustExec("alter database dct charset utf8mb4 collate utf8mb4_general_ci")
+}
+
+func (s *testSerialSuite) TestForbidUnsupportedCollations(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+
+	mustGetUnsupportedCollation := func(sql string, coll string) {
+		tk.MustGetErrMsg(sql, fmt.Sprintf("[ddl:1273]Unsupported collation when new collation is enabled: '%s'", coll))
+	}
+	// Test default collation of database.
+	mustGetUnsupportedCollation("create database ucd charset utf8mb4 collate utf8mb4_unicode_ci", "utf8mb4_unicode_ci")
+	mustGetUnsupportedCollation("create database ucd charset utf8 collate utf8_unicode_ci", "utf8_unicode_ci")
+	tk.MustExec("create database ucd")
+	mustGetUnsupportedCollation("alter database ucd charset utf8mb4 collate utf8mb4_unicode_ci", "utf8mb4_unicode_ci")
+	mustGetUnsupportedCollation("alter database ucd collate utf8mb4_unicode_ci", "utf8mb4_unicode_ci")
+
+	// Test default collation of table.
+	tk.MustExec("use ucd")
+	mustGetUnsupportedCollation("create table t(a varchar(20)) charset utf8mb4 collate utf8mb4_unicode_ci", "utf8mb4_unicode_ci")
+	mustGetUnsupportedCollation("create table t(a varchar(20)) collate utf8_unicode_ci", "utf8_unicode_ci")
+	tk.MustExec("create table t(a varchar(20)) collate utf8mb4_general_ci")
+	mustGetUnsupportedCollation("alter table t default collate utf8mb4_unicode_ci", "utf8mb4_unicode_ci")
+	mustGetUnsupportedCollation("alter table t convert to charset utf8mb4 collate utf8mb4_unicode_ci", "utf8mb4_unicode_ci")
+
+	// Test collation of columns.
+	mustGetUnsupportedCollation("create table t1(a varchar(20)) collate utf8mb4_unicode_ci", "utf8mb4_unicode_ci")
+	mustGetUnsupportedCollation("create table t1(a varchar(20)) charset utf8 collate utf8_unicode_ci", "utf8_unicode_ci")
+	tk.MustExec("create table t1(a varchar(20))")
+	mustGetUnsupportedCollation("alter table t1 modify a varchar(20) collate utf8mb4_unicode_ci", "utf8mb4_unicode_ci")
+	mustGetUnsupportedCollation("alter table t1 modify a varchar(20) charset utf8 collate utf8_unicode_ci", "utf8_unicode_ci")
+	mustGetUnsupportedCollation("alter table t1 modify a varchar(20) charset utf8 collate utf8_unicode_ci", "utf8_unicode_ci")
+
+	// TODO(bb7133): fix the following cases by setting charset from collate firstly.
+	// mustGetUnsupportedCollation("create database ucd collate utf8mb4_unicode_ci", errMsgUnsupportedUnicodeCI)
+	// mustGetUnsupportedCollation("alter table t convert to collate utf8mb4_unicode_ci", "utf8mb4_unicode_ci")
 }

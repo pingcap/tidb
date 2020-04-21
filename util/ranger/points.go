@@ -22,15 +22,18 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 )
 
 // Error instances.
 var (
-	ErrUnsupportedType = terror.ClassOptimizer.New(mysql.ErrUnsupportedType, mysql.MySQLErrName[mysql.ErrUnsupportedType])
+	ErrUnsupportedType = terror.ClassOptimizer.New(errno.ErrUnsupportedType, errno.MySQLErrName[errno.ErrUnsupportedType])
 )
 
 // RangeType is alias for int.
@@ -148,6 +151,7 @@ func NullRange() []*Range {
 type builder struct {
 	err error
 	sc  *stmtctx.StatementContext
+	ctx *sessionctx.Context
 }
 
 func (r *builder) build(expr expression.Expression) []point {
@@ -186,6 +190,15 @@ func (r *builder) buildFromConstant(expr *expression.Constant) []point {
 }
 
 func (r *builder) buildFromColumn(expr *expression.Column) []point {
+	if expr.GetType().EvalType() == types.ETString {
+		startPoint1 := point{value: types.MinNotNullDatum(), start: true}
+		endPoint1 := point{excl: true}
+		endPoint1.value.SetString("", mysql.DefaultCharset)
+		startPoint2 := point{excl: true, start: true}
+		startPoint2.value.SetString("", mysql.DefaultCharset)
+		endPoint2 := point{value: types.MaxValueDatum()}
+		return []point{startPoint1, endPoint1, startPoint2, endPoint2}
+	}
 	// column name expression is equivalent to column name is true.
 	startPoint1 := point{value: types.MinNotNullDatum(), start: true}
 	endPoint1 := point{excl: true}
@@ -205,18 +218,33 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 		err   error
 		ft    *types.FieldType
 	)
+
+	// refineValue refines the constant datum for string type since we may eval the constant to another collation instead of its own collation.
+	refineValue := func(col *expression.Column, value *types.Datum) {
+		if col.RetType.EvalType() == types.ETString && value.Kind() == types.KindString {
+			value.SetString(value.GetString(), col.RetType.Collate)
+		}
+	}
 	if col, ok := expr.GetArgs()[0].(*expression.Column); ok {
-		value, err = expr.GetArgs()[1].Eval(chunk.Row{})
-		op = expr.FuncName.L
 		ft = col.RetType
+		value, err = expr.GetArgs()[1].Eval(chunk.Row{})
+		if err != nil {
+			return nil
+		}
+		refineValue(col, &value)
+		op = expr.FuncName.L
 	} else {
 		col, ok := expr.GetArgs()[1].(*expression.Column)
 		if !ok {
 			return nil
 		}
 		ft = col.RetType
-
 		value, err = expr.GetArgs()[0].Eval(chunk.Row{})
+		if err != nil {
+			return nil
+		}
+		refineValue(col, &value)
+
 		switch expr.FuncName.L {
 		case ast.GE:
 			op = ast.LE
@@ -229,9 +257,6 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 		default:
 			op = expr.FuncName.L
 		}
-	}
-	if err != nil {
-		return nil
 	}
 	if value.IsNull() {
 		return nil
@@ -340,6 +365,7 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]point, bool) {
 	list := expr.GetArgs()[1:]
 	rangePoints := make([]point, 0, len(list)*2)
 	hasNull := false
+	colCollate := expr.GetArgs()[0].GetType().Collate
 	for _, e := range list {
 		v, ok := e.(*expression.Constant)
 		if !ok {
@@ -355,8 +381,14 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]point, bool) {
 			hasNull = true
 			continue
 		}
-		startPoint := point{value: types.NewDatum(dt.GetValue()), start: true}
-		endPoint := point{value: types.NewDatum(dt.GetValue())}
+		if dt.Kind() == types.KindString {
+			dt.SetString(dt.GetString(), colCollate)
+		}
+		var startValue, endValue types.Datum
+		dt.Copy(&startValue)
+		dt.Copy(&endValue)
+		startPoint := point{value: startValue, start: true}
+		endPoint := point{value: endValue}
 		rangePoints = append(rangePoints, startPoint, endPoint)
 	}
 	sorter := pointSorter{points: rangePoints, sc: r.sc}
@@ -382,7 +414,12 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]point, bool) {
 }
 
 func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []point {
+	_, collation, _ := expr.CharsetAndCollation(expr.GetCtx())
+	if !collate.CompatibleCollate(expr.GetArgs()[0].GetType().Collate, collation) {
+		return fullRange
+	}
 	pdt, err := expr.GetArgs()[1].(*expression.Constant).Eval(chunk.Row{})
+	tpOfPattern := expr.GetArgs()[0].GetType()
 	if err != nil {
 		r.err = errors.Trace(err)
 		return fullRange
@@ -434,11 +471,11 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []poi
 		return []point{{value: types.MinNotNullDatum(), start: true}, {value: types.MaxValueDatum()}}
 	}
 	if isExactMatch {
-		val := types.NewStringDatum(string(lowValue))
+		val := types.NewCollationStringDatum(string(lowValue), tpOfPattern.Collate, tpOfPattern.Flen)
 		return []point{{value: val, start: true}, {value: val}}
 	}
 	startPoint := point{start: true, excl: exclude}
-	startPoint.value.SetBytesAsString(lowValue)
+	startPoint.value.SetBytesAsString(lowValue, tpOfPattern.Collate, uint32(tpOfPattern.Flen))
 	highValue := make([]byte, len(lowValue))
 	copy(highValue, lowValue)
 	endPoint := point{excl: true}
@@ -448,7 +485,7 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []poi
 		// e.g., the start point value is "abc", so the end point value is "abd".
 		highValue[i]++
 		if highValue[i] != 0 {
-			endPoint.value.SetBytesAsString(highValue)
+			endPoint.value.SetBytesAsString(highValue, tpOfPattern.Collate, uint32(tpOfPattern.Flen))
 			break
 		}
 		// If highValue[i] is 255 and highValue[i]++ is 0, then the end point value is max value.

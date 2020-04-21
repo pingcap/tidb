@@ -228,7 +228,6 @@ func (c *batchCommandsClient) send(request *tikvpb.BatchCommandsRequest, entries
 		c.failPendingRequests(err)
 		return
 	}
-
 	if err := c.client.Send(request); err != nil {
 		logutil.BgLogger().Info(
 			"sending batch commands meets error",
@@ -261,6 +260,13 @@ func (c *batchCommandsClient) failPendingRequests(err error) {
 }
 
 func (c *batchCommandsClient) waitConnReady() (err error) {
+	if c.conn.GetState() == connectivity.Ready {
+		return
+	}
+	start := time.Now()
+	defer func() {
+		metrics.TiKVBatchClientWaitEstablish.Observe(time.Since(start).Seconds())
+	}()
 	dialCtx, cancel := context.WithTimeout(context.Background(), dialTimeout)
 	for {
 		s := c.conn.GetState()
@@ -491,6 +497,8 @@ func (a *batchConn) getClientAndSend(entries []*batchCommandsEntry, requests []*
 	}
 	if cli == nil {
 		logutil.BgLogger().Warn("no available connections", zap.String("target", target))
+		metrics.TiKVNoAvailableConnectionCounter.Inc()
+
 		for _, entry := range entries {
 			// Please ensure the error is handled in region cache correctly.
 			entry.err = errors.New("no available connections")
@@ -573,14 +581,17 @@ func sendBatchRequest(
 		canceled: 0,
 		err:      nil,
 	}
-	ctx1, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
 	select {
 	case batchConn.batchCommandsCh <- entry:
-	case <-ctx1.Done():
+	case <-ctx.Done():
 		logutil.BgLogger().Warn("send request is cancelled",
-			zap.String("to", addr), zap.String("cause", ctx1.Err().Error()))
-		return nil, errors.Trace(ctx1.Err())
+			zap.String("to", addr), zap.String("cause", ctx.Err().Error()))
+		return nil, errors.Trace(ctx.Err())
+	case <-timer.C:
+		return nil, context.DeadlineExceeded
 	}
 
 	select {
@@ -589,11 +600,13 @@ func sendBatchRequest(
 			return nil, errors.Trace(entry.err)
 		}
 		return tikvrpc.FromBatchCommandsResponse(res)
-	case <-ctx1.Done():
+	case <-ctx.Done():
 		atomic.StoreInt32(&entry.canceled, 1)
 		logutil.BgLogger().Warn("wait response is cancelled",
-			zap.String("to", addr), zap.String("cause", ctx1.Err().Error()))
-		return nil, errors.Trace(ctx1.Err())
+			zap.String("to", addr), zap.String("cause", ctx.Err().Error()))
+		return nil, errors.Trace(ctx.Err())
+	case <-timer.C:
+		return nil, context.DeadlineExceeded
 	}
 }
 
@@ -601,7 +614,7 @@ func (c *rpcClient) recycleIdleConnArray() {
 	var addrs []string
 	c.RLock()
 	for _, conn := range c.conns {
-		if conn.isIdle() {
+		if conn.batchConn != nil && conn.isIdle() {
 			addrs = append(addrs, conn.target)
 		}
 	}

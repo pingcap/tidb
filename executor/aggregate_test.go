@@ -346,6 +346,11 @@ func (s *testSuiteAgg) TestAggregation(c *C) {
 	tk.MustQuery("select group_concat(a), group_concat(distinct a) from t").Check(testkit.Rows("<nil> <nil>"))
 	tk.MustExec("insert into t value(1, null), (null, 1), (1, 2), (3, 4)")
 	tk.MustQuery("select group_concat(a, b), group_concat(distinct a,b) from t").Check(testkit.Rows("12,34 12,34"))
+	tk.MustExec("set @@session.tidb_opt_distinct_agg_push_down = 0")
+	tk.MustQuery("select count(distinct a) from t;").Check(testkit.Rows("2"))
+	tk.MustExec("set @@session.tidb_opt_distinct_agg_push_down = 1")
+	tk.MustQuery("select count(distinct a) from t;").Check(testkit.Rows("2"))
+	tk.MustExec("set @@session.tidb_opt_distinct_agg_push_down = 0")
 
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t(a decimal(10, 4))")
@@ -616,6 +621,17 @@ func (s *testSuiteAgg) TestOnlyFullGroupBy(c *C) {
 	c.Assert(terror.ErrorEqual(err, plannercore.ErrAmbiguous), IsTrue, Commentf("err %v", err))
 }
 
+func (s *testSuiteAgg) TestIssue16279(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set sql_mode = 'ONLY_FULL_GROUP_BY'")
+	tk.MustExec("drop table if exists s")
+	tk.MustExec("create table s(a int);")
+	tk.MustQuery("select count(a) , date_format(a, '%Y-%m-%d') from s group by date_format(a, '%Y-%m-%d');")
+	tk.MustQuery("select count(a) , date_format(a, '%Y-%m-%d') as xx from s group by date_format(a, '%Y-%m-%d');")
+	tk.MustQuery("select count(a) , date_format(a, '%Y-%m-%d') as xx from s group by xx")
+}
+
 func (s *testSuiteAgg) TestIssue13652(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -628,6 +644,15 @@ func (s *testSuiteAgg) TestIssue13652(c *C) {
 	tk.MustQuery("select a from t group by ((+a))")
 	_, err := tk.Exec("select a from t group by (-a)")
 	c.Assert(err.Error(), Equals, "[planner:1055]Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test.t.a' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")
+}
+
+func (s *testSuiteAgg) TestIssue14947(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set sql_mode = 'ONLY_FULL_GROUP_BY'")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustQuery("select ((+a+1)) as tmp from t group by tmp")
 }
 
 func (s *testSuiteAgg) TestHaving(c *C) {
@@ -820,4 +845,69 @@ func (s *testSuiteAgg) TestIssue12759HashAggCalledByApply(c *C) {
 		})
 		tk.MustQuery(tt).Check(testkit.Rows(output[i]...))
 	}
+}
+
+func (s *testSuiteAgg) TestPR15242ShallowCopy(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a json);`)
+	tk.MustExec(`insert into t values ('{"id": 1,"score":23}');`)
+	tk.MustExec(`insert into t values ('{"id": 2,"score":23}');`)
+	tk.MustExec(`insert into t values ('{"id": 1,"score":233}');`)
+	tk.MustExec(`insert into t values ('{"id": 2,"score":233}');`)
+	tk.MustExec(`insert into t values ('{"id": 3,"score":233}');`)
+	tk.Se.GetSessionVars().MaxChunkSize = 2
+	tk.MustQuery(`select max(JSON_EXTRACT(a, '$.score')) as max_score,JSON_EXTRACT(a,'$.id') as id from t group by id order by id;`).Check(testkit.Rows("233 1", "233 2", "233 3"))
+
+}
+
+func (s *testSuiteAgg) TestIssue15690(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.Se.GetSessionVars().MaxChunkSize = 2
+	// check for INT type
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a int);`)
+	tk.MustExec(`insert into t values(null),(null);`)
+	tk.MustExec(`insert into t values(0),(2),(2),(4),(8);`)
+	tk.MustQuery(`select /*+ stream_agg() */ distinct * from t;`).Check(testkit.Rows("<nil>", "0", "2", "4", "8"))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
+
+	// check for FLOAT type
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a float);`)
+	tk.MustExec(`insert into t values(null),(null),(null),(null);`)
+	tk.MustExec(`insert into t values(1.1),(1.1);`)
+	tk.MustQuery(`select /*+ stream_agg() */ distinct * from t;`).Check(testkit.Rows("<nil>", "1.1"))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
+
+	// check for DECIMAL type
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a decimal(5,1));`)
+	tk.MustExec(`insert into t values(null),(null),(null);`)
+	tk.MustExec(`insert into t values(1.1),(2.2),(2.2);`)
+	tk.MustQuery(`select /*+ stream_agg() */ distinct * from t;`).Check(testkit.Rows("<nil>", "1.1", "2.2"))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
+
+	// check for DATETIME type
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a datetime);`)
+	tk.MustExec(`insert into t values(null);`)
+	tk.MustExec(`insert into t values("2019-03-20 21:50:00"),("2019-03-20 21:50:01"), ("2019-03-20 21:50:00");`)
+	tk.MustQuery(`select /*+ stream_agg() */ distinct * from t;`).Check(testkit.Rows("<nil>", "2019-03-20 21:50:00", "2019-03-20 21:50:01"))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
+
+	// check for JSON type
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a json);`)
+	tk.MustExec(`insert into t values(null),(null),(null),(null);`)
+	tk.MustQuery(`select /*+ stream_agg() */ distinct * from t;`).Check(testkit.Rows("<nil>"))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
+
+	// check for char type
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a char);`)
+	tk.MustExec(`insert into t values(null),(null),(null),(null);`)
+	tk.MustExec(`insert into t values('a'),('b');`)
+	tk.MustQuery(`select /*+ stream_agg() */ distinct * from t;`).Check(testkit.Rows("<nil>", "a", "b"))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
 }

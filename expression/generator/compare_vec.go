@@ -90,7 +90,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(in
 {{- else if eq .type.ETName "Real" }}
 		val := types.CompareFloat64(arg0[i], arg1[i])
 {{- else if eq .type.ETName "String" }}
-		val := types.CompareString(buf0.GetString(i), buf1.GetString(i))
+		val := types.CompareString(buf0.GetString(i), buf1.GetString(i), b.collation)
 {{- else if eq .type.ETName "Duration" }}
 		val := types.CompareDuration(arg0[i], arg1[i])
 {{- else if eq .type.ETName "Datetime" }}
@@ -151,7 +151,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(in
 {{- else if eq .type.ETName "Real" }}
 		case types.CompareFloat64(arg0[i], arg1[i]) == 0:
 {{- else if eq .type.ETName "String" }}
-		case types.CompareString(buf0.GetString(i), buf1.GetString(i)) == 0:
+		case types.CompareString(buf0.GetString(i), buf1.GetString(i), b.collation) == 0:
 {{- else if eq .type.ETName "Duration" }}
 		case types.CompareDuration(arg0[i], arg1[i]) == 0:
 {{- else if eq .type.ETName "Datetime" }}

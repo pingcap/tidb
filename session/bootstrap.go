@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -46,7 +47,7 @@ const (
 	CreateUserTable = `CREATE TABLE if not exists mysql.user (
 		Host				CHAR(64),
 		User				CHAR(32),
-		Password			CHAR(41),
+		authentication_string	TEXT,
 		Select_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Insert_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Update_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
@@ -66,16 +67,16 @@ const (
 		Show_view_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_routine_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Alter_routine_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Index_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Index_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_user_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Event_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Event_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Trigger_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_role_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Drop_role_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Account_locked			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Shutdown_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Reload_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		FILE_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Reload_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
+		FILE_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		PRIMARY KEY (Host, User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
 	CreateGlobalPrivTable = "CREATE TABLE if not exists mysql.global_priv (" +
@@ -130,11 +131,11 @@ const (
 		Timestamp	Timestamp DEFAULT CURRENT_TIMESTAMP,
 		Column_priv	SET('Select','Insert','Update'),
 		PRIMARY KEY (Host, DB, User, Table_name, Column_name));`
-	// CreateGloablVariablesTable is the SQL statement creates global variable table in system db.
+	// CreateGlobalVariablesTable is the SQL statement creates global variable table in system db.
 	// TODO: MySQL puts GLOBAL_VARIABLES table in INFORMATION_SCHEMA db.
 	// INFORMATION_SCHEMA is a virtual db in TiDB. So we put this table in system db.
 	// Maybe we will put it back to INFORMATION_SCHEMA.
-	CreateGloablVariablesTable = `CREATE TABLE if not exists mysql.GLOBAL_VARIABLES(
+	CreateGlobalVariablesTable = `CREATE TABLE if not exists mysql.GLOBAL_VARIABLES(
 		VARIABLE_NAME  VARCHAR(64) Not Null PRIMARY KEY,
 		VARIABLE_VALUE VARCHAR(1024) DEFAULT Null);`
 	// CreateTiDBTable is the SQL statement creates a table in system db.
@@ -273,7 +274,9 @@ const (
 
 	// CreateExprPushdownBlacklist stores the expressions which are not allowed to be pushed down.
 	CreateExprPushdownBlacklist = `CREATE TABLE IF NOT EXISTS mysql.expr_pushdown_blacklist (
-		name char(100) NOT NULL
+		name char(100) NOT NULL,
+		store_type char(100) NOT NULL DEFAULT 'tikv,tiflash,tidb',
+		reason varchar(200)
 	);`
 
 	// CreateOptRuleBlacklist stores the list of disabled optimizing operations.
@@ -313,18 +316,22 @@ func bootstrap(s Session) {
 }
 
 const (
+	// varTrue is the true value in mysql.TiDB table for boolean columns.
+	varTrue = "True"
+	// varFalse is the false value in mysql.TiDB table for boolean columns.
+	varFalse = "False"
 	// The variable name in mysql.TiDB table.
 	// It is used for checking if the store is bootstrapped by any TiDB server.
+	// If the value is `True`, the store is already bootstrapped by a TiDB server.
 	bootstrappedVar = "bootstrapped"
-	// The variable value in mysql.TiDB table for bootstrappedVar.
-	// If the value true, the store is already bootstrapped by a TiDB server.
-	bootstrappedVarTrue = "True"
 	// The variable name in mysql.TiDB table.
 	// It is used for getting the version of the TiDB server which bootstrapped the store.
 	tidbServerVersionVar = "tidb_server_version"
 	// The variable name in mysql.tidb table and it will be used when we want to know
 	// system timezone.
 	tidbSystemTZ = "system_tz"
+	// The variable name in mysql.tidb table and it will indicate if the new collations are enabled in the TiDB cluster.
+	tidbNewCollationEnabled = "new_collation_enabled"
 	// Const for TiDB server version 2.
 	version2  = 2
 	version3  = 3
@@ -353,7 +360,7 @@ const (
 	version26 = 26
 	version27 = 27
 	version28 = 28
-	version29 = 29
+	// version29 is not needed.
 	version30 = 30
 	version31 = 31
 	version32 = 32
@@ -364,6 +371,12 @@ const (
 	version37 = 37
 	version38 = 38
 	version39 = 39
+	// version40 is the version that introduce new collation in TiDB,
+	// see https://github.com/pingcap/tidb/pull/14574 for more details.
+	version40 = 40
+	version41 = 41
+	// version42 add storeType and reason column in expr_pushdown_blacklist
+	version42 = 42
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -381,7 +394,7 @@ func checkBootstrapped(s Session) (bool, error) {
 		}
 		return false, errors.Trace(err)
 	}
-	isBootstrapped := sVal == bootstrappedVarTrue
+	isBootstrapped := sVal == varTrue
 	if isBootstrapped {
 		// Make sure that doesn't affect the following operations.
 		if err = s.CommitTxn(context.Background()); err != nil {
@@ -580,6 +593,18 @@ func upgrade(s Session) {
 		upgradeToVer39(s)
 	}
 
+	if ver < version40 {
+		upgradeToVer40(s)
+	}
+
+	if ver < version41 {
+		upgradeToVer41(s)
+	}
+
+	if ver < version42 {
+		upgradeToVer42(s)
+	}
+
 	updateBootstrapVer(s)
 	_, err = s.Execute(context.Background(), "COMMIT")
 
@@ -701,6 +726,10 @@ func upgradeToVer12(s Session) {
 	terror.MustNil(err)
 	sql := "SELECT HIGH_PRIORITY user, host, password FROM mysql.user WHERE password != ''"
 	rs, err := s.Execute(ctx, sql)
+	if terror.ErrorEqual(err, core.ErrUnknownColumn) {
+		sql := "SELECT HIGH_PRIORITY user, host, authentication_string FROM mysql.user WHERE authentication_string != ''"
+		rs, err = s.Execute(ctx, sql)
+	}
 	terror.MustNil(err)
 	r := rs[0]
 	sqls := make([]string, 0, 1)
@@ -928,6 +957,40 @@ func upgradeToVer39(s Session) {
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET File_priv='Y' where Super_priv='Y'")
 }
 
+func writeNewCollationParameter(s Session, flag bool) {
+	comment := "If the new collations are enabled. Do not edit it."
+	b := varFalse
+	if flag {
+		b = varTrue
+	}
+	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES ("%s", '%s', '%s') ON DUPLICATE KEY UPDATE VARIABLE_VALUE='%s'`,
+		mysql.SystemDB, mysql.TiDBTable, tidbNewCollationEnabled, b, comment, b)
+	mustExecute(s, sql)
+}
+
+func upgradeToVer40(s Session) {
+	// There is no way to enable new collation for an existing TiDB cluster.
+	writeNewCollationParameter(s, false)
+}
+
+func upgradeToVer41(s Session) {
+	doReentrantDDL(s, "ALTER TABLE mysql.user CHANGE `password` `authentication_string` TEXT", infoschema.ErrColumnExists, infoschema.ErrColumnNotExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `password` TEXT as (`authentication_string`)", infoschema.ErrColumnExists)
+}
+
+// writeDefaultExprPushDownBlacklist writes default expr pushdown blacklist into mysql.expr_pushdown_blacklist
+func writeDefaultExprPushDownBlacklist(s Session) {
+	mustExecute(s, "INSERT HIGH_PRIORITY INTO mysql.expr_pushdown_blacklist VALUES"+
+		"('date_add','tiflash', 'DST(daylight saving time) does not take effect in TiFlash date_add'),"+
+		"('cast','tiflash', 'Behavior of some corner cases(overflow, truncate etc) is different in TiFlash and TiDB')")
+}
+
+func upgradeToVer42(s Session) {
+	doReentrantDDL(s, "ALTER TABLE mysql.expr_pushdown_blacklist ADD COLUMN `store_type` char(100) NOT NULL DEFAULT 'tikv,tiflash,tidb'", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.expr_pushdown_blacklist ADD COLUMN `reason` varchar(200)", infoschema.ErrColumnExists)
+	writeDefaultExprPushDownBlacklist(s)
+}
+
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
@@ -962,7 +1025,7 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateTablePrivTable)
 	mustExecute(s, CreateColumnPrivTable)
 	// Create global system variable table.
-	mustExecute(s, CreateGloablVariablesTable)
+	mustExecute(s, CreateGlobalVariablesTable)
 	// Create TiDB table.
 	mustExecute(s, CreateTiDBTable)
 	// Create help table.
@@ -1024,7 +1087,7 @@ func doDMLWorks(s Session) {
 
 	sql = fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES("%s", "%s", "Bootstrap flag. Do not delete.")
 		ON DUPLICATE KEY UPDATE VARIABLE_VALUE="%s"`,
-		mysql.SystemDB, mysql.TiDBTable, bootstrappedVar, bootstrappedVarTrue, bootstrappedVarTrue)
+		mysql.SystemDB, mysql.TiDBTable, bootstrappedVar, varTrue, varTrue)
 	mustExecute(s, sql)
 
 	sql = fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES("%s", "%d", "Bootstrap version. Do not delete.")`,
@@ -1032,6 +1095,11 @@ func doDMLWorks(s Session) {
 	mustExecute(s, sql)
 
 	writeSystemTZ(s)
+
+	writeNewCollationParameter(s, config.GetGlobalConfig().NewCollationsEnabledOnFirstBootstrap)
+
+	writeDefaultExprPushDownBlacklist(s)
+
 	_, err := s.Execute(context.Background(), "COMMIT")
 	if err != nil {
 		sleepTime := 1 * time.Second

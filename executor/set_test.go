@@ -137,6 +137,15 @@ func (s *testSuite5) TestSetVar(c *C) {
 	c.Assert(charset, Equals, "utf8")
 	c.Assert(collation, Equals, "utf8_bin")
 
+	expectErrMsg := "[ddl:1273]Unknown collation: 'non_exist_collation'"
+	tk.MustGetErrMsg("set names utf8 collate non_exist_collation", expectErrMsg)
+	tk.MustGetErrMsg("set @@session.collation_server='non_exist_collation'", expectErrMsg)
+	tk.MustGetErrMsg("set @@session.collation_database='non_exist_collation'", expectErrMsg)
+	tk.MustGetErrMsg("set @@session.collation_connection='non_exist_collation'", expectErrMsg)
+	tk.MustGetErrMsg("set @@global.collation_server='non_exist_collation'", expectErrMsg)
+	tk.MustGetErrMsg("set @@global.collation_database='non_exist_collation'", expectErrMsg)
+	tk.MustGetErrMsg("set @@global.collation_connection='non_exist_collation'", expectErrMsg)
+
 	tk.MustExec("set character_set_results = NULL")
 	tk.MustQuery("select @@character_set_results").Check(testkit.Rows(""))
 
@@ -268,20 +277,6 @@ func (s *testSuite5) TestSetVar(c *C) {
 	tk.MustExec("set global tidb_constraint_check_in_place = 0")
 	tk.MustQuery(`select @@global.tidb_constraint_check_in_place;`).Check(testkit.Rows("0"))
 
-	tk.MustExec("set tidb_slow_log_threshold = 0")
-	tk.MustQuery("select @@session.tidb_slow_log_threshold;").Check(testkit.Rows("0"))
-	tk.MustExec("set tidb_slow_log_threshold = 30000")
-	tk.MustQuery("select @@session.tidb_slow_log_threshold;").Check(testkit.Rows("30000"))
-	_, err = tk.Exec("set global tidb_slow_log_threshold = 0")
-	c.Assert(err, NotNil)
-
-	tk.MustExec("set tidb_query_log_max_len = 0")
-	tk.MustQuery("select @@session.tidb_query_log_max_len;").Check(testkit.Rows("0"))
-	tk.MustExec("set tidb_query_log_max_len = 20")
-	tk.MustQuery("select @@session.tidb_query_log_max_len;").Check(testkit.Rows("20"))
-	_, err = tk.Exec("set global tidb_query_log_max_len = 20")
-	c.Assert(err, NotNil)
-
 	tk.MustExec("set tidb_batch_commit = 0")
 	tk.MustQuery("select @@session.tidb_batch_commit;").Check(testkit.Rows("0"))
 	tk.MustExec("set tidb_batch_commit = 1")
@@ -386,11 +381,6 @@ func (s *testSuite5) TestSetVar(c *C) {
 
 	tk.MustExec("set @@tidb_expensive_query_time_threshold=70")
 	tk.MustQuery("select @@tidb_expensive_query_time_threshold;").Check(testkit.Rows("70"))
-
-	tk.MustExec("set @@tidb_record_plan_in_slow_log = 1")
-	tk.MustQuery("select @@tidb_record_plan_in_slow_log;").Check(testkit.Rows("1"))
-	tk.MustExec("set @@tidb_record_plan_in_slow_log = 0")
-	tk.MustQuery("select @@tidb_record_plan_in_slow_log;").Check(testkit.Rows("0"))
 
 	tk.MustQuery("select @@tidb_store_limit;").Check(testkit.Rows("0"))
 	tk.MustExec("set @@tidb_store_limit = 100")
@@ -565,9 +555,6 @@ func (s *testSuite5) TestValidateSetVar(c *C) {
 	tk.MustQuery("select @@tidb_enable_streaming;").Check(testkit.Rows("1"))
 
 	_, err = tk.Exec("set @@tidb_batch_delete=3;")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
-
-	_, err = tk.Exec("set @@tidb_mem_quota_mergejoin='tidb';")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
 
 	tk.MustExec("set @@group_concat_max_len=1")

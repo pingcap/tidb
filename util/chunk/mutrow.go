@@ -149,12 +149,12 @@ func makeMutRowColumn(in interface{}) *Column {
 		return col
 	case types.Enum:
 		col := newMutRowVarLenColumn(len(x.Name) + 8)
-		*(*uint64)(unsafe.Pointer(&col.data[0])) = x.Value
+		copy(col.data, (*[8]byte)(unsafe.Pointer(&x.Value))[:])
 		copy(col.data[8:], x.Name)
 		return col
 	case types.Set:
 		col := newMutRowVarLenColumn(len(x.Name) + 8)
-		*(*uint64)(unsafe.Pointer(&col.data[0])) = x.Value
+		copy(col.data, (*[8]byte)(unsafe.Pointer(&x.Value))[:])
 		copy(col.data[8:], x.Name)
 		return col
 	default:
@@ -163,12 +163,12 @@ func makeMutRowColumn(in interface{}) *Column {
 }
 
 func newMutRowFixedLenColumn(elemSize int) *Column {
-	buf := make([]byte, elemSize+1)
+	buf := make([]byte, elemSize)
 	col := &Column{
 		length:     1,
-		elemBuf:    buf[:elemSize],
-		data:       buf[:elemSize],
-		nullBitmap: buf[elemSize:],
+		elemBuf:    buf,
+		data:       buf,
+		nullBitmap: make([]byte, 1),
 	}
 	col.nullBitmap[0] = 1
 	return col

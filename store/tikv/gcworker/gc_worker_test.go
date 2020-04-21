@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"math"
 	"sort"
 	"strconv"
@@ -30,7 +29,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	pd "github.com/pingcap/pd/client"
+	pd "github.com/pingcap/pd/v4/client"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -466,6 +465,36 @@ func (s *testGCWorkerSuite) TestCheckScanLockMode(c *C) {
 	c.Assert(usePhysical, Equals, false)
 }
 
+func (s *testGCWorkerSuite) TestNeedsGCOperationForStore(c *C) {
+	newStore := func(hasEngineLabel bool, engineLabel string) *metapb.Store {
+		store := &metapb.Store{}
+		if hasEngineLabel {
+			store.Labels = []*metapb.StoreLabel{{Key: engineLabelKey, Value: engineLabel}}
+		}
+		return store
+	}
+
+	// TiKV needs to do the store-level GC operations.
+	res, err := needsGCOperationForStore(newStore(false, ""))
+	c.Assert(err, IsNil)
+	c.Assert(res, IsTrue)
+	res, err = needsGCOperationForStore(newStore(true, ""))
+	c.Assert(err, IsNil)
+	c.Assert(res, IsTrue)
+	res, err = needsGCOperationForStore(newStore(true, engineLabelTiKV))
+	c.Assert(err, IsNil)
+	c.Assert(res, IsTrue)
+
+	// TiFlash does not need these operations.
+	res, err = needsGCOperationForStore(newStore(true, engineLabelTiFlash))
+	c.Assert(err, IsNil)
+	c.Assert(res, IsFalse)
+
+	// Throw an error for unknown store types.
+	_, err = needsGCOperationForStore(newStore(true, "invalid"))
+	c.Assert(err, NotNil)
+}
+
 const (
 	failRPCErr  = 0
 	failNilResp = 1
@@ -509,7 +538,7 @@ func (s *testGCWorkerSuite) testDeleteRangesFailureImpl(c *C, failType int) {
 	c.Assert(err, IsNil)
 	c.Assert(preparedRanges, DeepEquals, ranges)
 
-	stores, err := s.gcWorker.getUpStores(context.Background())
+	stores, err := s.gcWorker.getUpStoresForGC(context.Background())
 	c.Assert(err, IsNil)
 	c.Assert(len(stores), Equals, 3)
 
@@ -826,33 +855,6 @@ func (s *testGCWorkerSuite) loadEtcdSafePoint(c *C) uint64 {
 	return res
 }
 
-type mockPhysicalScanLockStream struct {
-	mocktikv.MockClientStream
-	Ch <-chan scanLockResult
-}
-
-func (s *mockPhysicalScanLockStream) Recv() (*kvrpcpb.PhysicalScanLockResponse, error) {
-	res, ok := <-s.Ch
-	if !ok {
-		return nil, io.EOF
-	}
-
-	errStr := ""
-	if res.Err != nil {
-		errStr = res.Err.Error()
-	}
-	lockKey := []byte(nil)
-	if res.Lock != nil {
-		lockKey = res.Lock.Key
-	}
-
-	return &kvrpcpb.PhysicalScanLockResponse{
-		Error: errStr,
-		// We only care about the key in the test.
-		Locks: []*kvrpcpb.LockInfo{{Key: lockKey}},
-	}, res.Err
-}
-
 func makeMergedChannel(c *C, count int) (*mergeLockScanner, []chan scanLockResult, []uint64, <-chan []*tikv.Lock) {
 	scanner := &mergeLockScanner{}
 	channels := make([]chan scanLockResult, 0, count)
@@ -895,9 +897,12 @@ func (s *testGCWorkerSuite) makeMergedMockClient(c *C, count int) (*mergeLockSca
 		storeIDs[i] = stores[i].Id
 	}
 
-	storesMap, err := s.gcWorker.getUpStoresMap(context.Background())
+	const scanLockLimit = 3
+
+	storesMap, err := s.gcWorker.getUpStoresMapForGC(context.Background())
 	c.Assert(err, IsNil)
 	scanner := newMergeLockScanner(100000, s.client, storesMap)
+	scanner.scanLockLimit = scanLockLimit
 	channels := make([]chan scanLockResult, 0, len(stores))
 
 	for range stores {
@@ -909,9 +914,26 @@ func (s *testGCWorkerSuite) makeMergedMockClient(c *C, count int) (*mergeLockSca
 	s.client.physicalScanLockHandler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 		for i, store := range stores {
 			if store.Address == addr {
+				locks := make([]*kvrpcpb.LockInfo, 0, 3)
+				errStr := ""
+				for j := 0; j < scanLockLimit; j++ {
+					res, ok := <-channels[i]
+					if !ok {
+						break
+					}
+					if res.Err != nil {
+						errStr = res.Err.Error()
+						locks = nil
+						break
+					}
+					lockInfo := &kvrpcpb.LockInfo{Key: res.Lock.Key}
+					locks = append(locks, lockInfo)
+				}
+
 				return &tikvrpc.Response{
-					Resp: &mockPhysicalScanLockStream{
-						Ch: channels[i],
+					Resp: &kvrpcpb.PhysicalScanLockResponse{
+						Locks: locks,
+						Error: errStr,
 					},
 				}, nil
 			}

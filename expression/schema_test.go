@@ -127,3 +127,15 @@ func (s *testEvalSuite) TestSchemaMergeSchema(c *C) {
 		c.Assert(schema.Columns[i+len(lSchema.Columns)].UniqueID, Equals, rSchema.Columns[i].UniqueID)
 	}
 }
+
+func (s *testEvalSuite) TestGetUsedList(c *C) {
+	schema := s.generateSchema(5)
+	var usedCols []*Column
+	usedCols = append(usedCols, schema.Columns[3])
+	usedCols = append(usedCols, s.generateSchema(2).Columns...)
+	usedCols = append(usedCols, schema.Columns[1])
+	usedCols = append(usedCols, schema.Columns[3])
+
+	used := GetUsedList(usedCols, schema)
+	c.Assert(used, DeepEquals, []bool{false, true, false, true, false})
+}

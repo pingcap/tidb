@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -47,7 +49,7 @@ func (s *testEvaluatorSuite) TestLengthAndOctetLength(c *C) {
 		{types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 6), 26, false, false},
 		{types.NewBinaryLiteralFromUint(0x01, -1), 1, false, false},
 		{types.Set{Value: 1, Name: "abc"}, 3, false, false},
-		{types.Duration{Duration: time.Duration(12*time.Hour + 1*time.Minute + 1*time.Second), Fsp: types.DefaultFsp}, 8, false, false},
+		{types.Duration{Duration: 12*time.Hour + 1*time.Minute + 1*time.Second, Fsp: types.DefaultFsp}, 8, false, false},
 		{nil, 0, true, false},
 		{errors.New("must error"), 0, false, true},
 	}
@@ -71,7 +73,7 @@ func (s *testEvaluatorSuite) TestLengthAndOctetLength(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.Length].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.Length].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -107,7 +109,7 @@ func (s *testEvaluatorSuite) TestASCII(c *C) {
 			}
 		}
 	}
-	_, err := funcs[ast.Length].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.Length].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -131,7 +133,7 @@ func (s *testEvaluatorSuite) TestConcat(c *C) {
 				types.NewDecFromFloatForTest(1.1),
 				types.NewTime(types.FromDate(2000, 1, 1, 12, 01, 01, 0), mysql.TypeDatetime, types.DefaultFsp),
 				types.Duration{
-					Duration: time.Duration(12*time.Hour + 1*time.Minute + 1*time.Second),
+					Duration: 12*time.Hour + 1*time.Minute + 1*time.Second,
 					Fsp:      types.DefaultFsp},
 			},
 			false, false, "ab121.11.21.12000-01-01 12:01:0112:01:01",
@@ -249,7 +251,7 @@ func (s *testEvaluatorSuite) TestConcatWS(c *C) {
 				types.NewDecFromFloatForTest(1.1),
 				types.NewTime(types.FromDate(2000, 1, 1, 12, 01, 01, 0), mysql.TypeDatetime, types.DefaultFsp),
 				types.Duration{
-					Duration: time.Duration(12*time.Hour + 1*time.Minute + 1*time.Second),
+					Duration: 12*time.Hour + 1*time.Minute + 1*time.Second,
 					Fsp:      types.DefaultFsp},
 			},
 			false, false, "a,b,1,2,1.1,0.11,1.1,2000-01-01 12:01:01,12:01:01",
@@ -701,7 +703,7 @@ func (s *testEvaluatorSuite) TestReplace(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.Replace].getFunction(s.ctx, []Expression{Zero, Zero, Zero})
+	_, err := funcs[ast.Replace].getFunction(s.ctx, []Expression{NewZero(), NewZero(), NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -745,10 +747,10 @@ func (s *testEvaluatorSuite) TestSubstring(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.Substring].getFunction(s.ctx, []Expression{Zero, Zero, Zero})
+	_, err := funcs[ast.Substring].getFunction(s.ctx, []Expression{NewZero(), NewZero(), NewZero()})
 	c.Assert(err, IsNil)
 
-	_, err = funcs[ast.Substring].getFunction(s.ctx, []Expression{Zero, Zero})
+	_, err = funcs[ast.Substring].getFunction(s.ctx, []Expression{NewZero(), NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -853,7 +855,7 @@ func (s *testEvaluatorSuite) TestSubstringIndex(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.SubstringIndex].getFunction(s.ctx, []Expression{Zero, Zero, Zero})
+	_, err := funcs[ast.SubstringIndex].getFunction(s.ctx, []Expression{NewZero(), NewZero(), NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -898,7 +900,7 @@ func (s *testEvaluatorSuite) TestSpace(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.Space].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.Space].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -1042,13 +1044,13 @@ func (s *testEvaluatorSuite) TestTrim(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.Trim].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.Trim].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
 
-	_, err = funcs[ast.Trim].getFunction(s.ctx, []Expression{Zero, Zero})
+	_, err = funcs[ast.Trim].getFunction(s.ctx, []Expression{NewZero(), NewZero()})
 	c.Assert(err, IsNil)
 
-	_, err = funcs[ast.Trim].getFunction(s.ctx, []Expression{Zero, Zero, Zero})
+	_, err = funcs[ast.Trim].getFunction(s.ctx, []Expression{NewZero(), NewZero(), NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -1089,7 +1091,7 @@ func (s *testEvaluatorSuite) TestLTrim(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.LTrim].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.LTrim].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -1128,7 +1130,7 @@ func (s *testEvaluatorSuite) TestRTrim(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.RTrim].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.RTrim].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -1210,7 +1212,7 @@ func (s *testEvaluatorSuite) TestUnhexFunc(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.Unhex].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.Unhex].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -1242,7 +1244,7 @@ func (s *testEvaluatorSuite) TestBitLength(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.BitLength].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.BitLength].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -1272,10 +1274,7 @@ func (s *testEvaluatorSuite) TestChar(c *C) {
 			c.Assert(err, IsNil)
 			c.Assert(f, NotNil)
 			r, err := evalBuiltinFunc(f, chunk.Row{})
-			if err != nil {
-				fmt.Printf("%s\n", err.Error())
-			}
-			c.Assert(err, IsNil)
+			c.Assert(err, IsNil, Commentf("err: %v", err))
 			c.Assert(r, testutil.DatumEquals, types.NewDatum(v.result))
 		}
 	}
@@ -1853,27 +1852,27 @@ func (s *testEvaluatorSuite) TestFromBase64(c *C) {
 		args   interface{}
 		expect interface{}
 	}{
-		{string(""), string("")},
-		{string("YWJj"), string("abc")},
-		{string("YWIgYw=="), string("ab c")},
-		{string("YWIKYw=="), string("ab\nc")},
-		{string("YWIJYw=="), string("ab\tc")},
-		{string("cXdlcnR5MTIzNDU2"), string("qwerty123456")},
+		{"", ""},
+		{"YWJj", "abc"},
+		{"YWIgYw==", "ab c"},
+		{"YWIKYw==", "ab\nc"},
+		{"YWIJYw==", "ab\tc"},
+		{"cXdlcnR5MTIzNDU2", "qwerty123456"},
 		{
-			string("QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0\nNTY3ODkrL0FCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4\neXowMTIzNDU2Nzg5Ky9BQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWmFiY2RlZmdoaWprbG1ub3Bx\ncnN0dXZ3eHl6MDEyMzQ1Njc4OSsv"),
-			string("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"),
+			"QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0\nNTY3ODkrL0FCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4\neXowMTIzNDU2Nzg5Ky9BQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWmFiY2RlZmdoaWprbG1ub3Bx\ncnN0dXZ3eHl6MDEyMzQ1Njc4OSsv",
+			"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
 		},
 		{
-			string("QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0NTY3ODkrLw=="),
-			string("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"),
+			"QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0NTY3ODkrLw==",
+			"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
 		},
 		{
-			string("QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0NTY3ODkrLw=="),
-			string("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"),
+			"QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0NTY3ODkrLw==",
+			"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
 		},
 		{
-			string("QUJDREVGR0hJSkt\tMTU5PUFFSU1RVVld\nYWVphYmNkZ\rWZnaGlqa2xt   bm9wcXJzdHV2d3h5ejAxMjM0NTY3ODkrLw=="),
-			string("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"),
+			"QUJDREVGR0hJSkt\tMTU5PUFFSU1RVVld\nYWVphYmNkZ\rWZnaGlqa2xt   bm9wcXJzdHV2d3h5ejAxMjM0NTY3ODkrLw==",
+			"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
 		},
 	}
 	fc := funcs[ast.FromBase64]
@@ -1903,16 +1902,16 @@ func (s *testEvaluatorSuite) TestFromBase64Sig(c *C) {
 		isNil          bool
 		maxAllowPacket uint64
 	}{
-		{string("YWJj"), string("abc"), false, 3},
-		{string("YWJj"), "", true, 2},
+		{"YWJj", "abc", false, 3},
+		{"YWJj", "", true, 2},
 		{
-			string("QUJDREVGR0hJSkt\tMTU5PUFFSU1RVVld\nYWVphYmNkZ\rWZnaGlqa2xt   bm9wcXJzdHV2d3h5ejAxMjM0NTY3ODkrLw=="),
-			string("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"),
+			"QUJDREVGR0hJSkt\tMTU5PUFFSU1RVVld\nYWVphYmNkZ\rWZnaGlqa2xt   bm9wcXJzdHV2d3h5ejAxMjM0NTY3ODkrLw==",
+			"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
 			false,
 			70,
 		},
 		{
-			string("QUJDREVGR0hJSkt\tMTU5PUFFSU1RVVld\nYWVphYmNkZ\rWZnaGlqa2xt   bm9wcXJzdHV2d3h5ejAxMjM0NTY3ODkrLw=="),
+			"QUJDREVGR0hJSkt\tMTU5PUFFSU1RVVld\nYWVphYmNkZ\rWZnaGlqa2xt   bm9wcXJzdHV2d3h5ejAxMjM0NTY3ODkrLw==",
 			"",
 			true,
 			69,
@@ -2025,7 +2024,7 @@ func (s *testEvaluatorSuite) TestOrd(c *C) {
 			}
 		}
 	}
-	_, err := funcs[ast.Ord].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.Ord].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -2204,7 +2203,7 @@ func (s *testEvaluatorSuite) TestToBase64(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.ToBase64].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.ToBase64].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -2295,6 +2294,129 @@ func (s *testEvaluatorSuite) TestStringRight(c *C) {
 		str := types.NewDatum(test.str)
 		length := types.NewDatum(test.length)
 		f, _ := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{str, length}))
+		result, err := evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		if result.IsNull() {
+			c.Assert(test.expect, IsNil)
+			continue
+		}
+		res, err := result.ToString()
+		c.Assert(err, IsNil)
+		c.Assert(res, Equals, test.expect)
+	}
+}
+
+func (s *testEvaluatorSuite) TestWeightString(c *C) {
+	fc := funcs[ast.WeightString]
+	tests := []struct {
+		expr    interface{}
+		padding string
+		length  int
+		expect  interface{}
+	}{
+		{nil, "NONE", 0, nil},
+		{7, "NONE", 0, nil},
+		{7.0, "NONE", 0, nil},
+		{"a", "NONE", 0, "a"},
+		{"a ", "NONE", 0, "a "},
+		{"中", "NONE", 0, "中"},
+		{"中 ", "NONE", 0, "中 "},
+		{nil, "CHAR", 5, nil},
+		{7, "CHAR", 5, nil},
+		{7.0, "NONE", 0, nil},
+		{"a", "CHAR", 5, "a    "},
+		{"a ", "CHAR", 5, "a    "},
+		{"中", "CHAR", 5, "中    "},
+		{"中 ", "CHAR", 5, "中    "},
+		{nil, "BINARY", 5, nil},
+		{7, "BINARY", 2, "7\x00"},
+		{7.0, "NONE", 0, nil},
+		{"a", "BINARY", 1, "a"},
+		{"ab", "BINARY", 1, "a"},
+		{"a", "BINARY", 5, "a\x00\x00\x00\x00"},
+		{"a ", "BINARY", 5, "a \x00\x00\x00"},
+		{"中", "BINARY", 1, "\xe4"},
+		{"中", "BINARY", 2, "\xe4\xb8"},
+		{"中", "BINARY", 3, "中"},
+		{"中", "BINARY", 5, "中\x00\x00"},
+	}
+
+	for _, test := range tests {
+		str := types.NewDatum(test.expr)
+		var f builtinFunc
+		var err error
+		if test.padding == "NONE" {
+			f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{str}))
+		} else {
+			padding := types.NewDatum(test.padding)
+			length := types.NewDatum(test.length)
+			f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{str, padding, length}))
+		}
+		c.Assert(err, IsNil)
+		// Reset warnings.
+		s.ctx.GetSessionVars().StmtCtx.ResetForRetry()
+		result, err := evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		if result.IsNull() {
+			c.Assert(test.expect, IsNil)
+			continue
+		}
+		res, err := result.ToString()
+		c.Assert(err, IsNil)
+		c.Assert(res, Equals, test.expect)
+		if test.expr == nil {
+			continue
+		}
+		strExpr := fmt.Sprintf("%v", test.expr)
+		if test.padding == "BINARY" && test.length < len(strExpr) {
+			expectWarn := fmt.Sprintf("[expression:1292]Truncated incorrect BINARY(%d) value: '%s'", test.length, strExpr)
+			obtainedWarns := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
+			c.Assert(len(obtainedWarns), Equals, 1)
+			c.Assert(obtainedWarns[0].Level, Equals, "Warning")
+			c.Assert(obtainedWarns[0].Err.Error(), Equals, expectWarn)
+		}
+	}
+}
+
+func (s *testEvaluatorSerialSuites) TestCIWeightString(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	fc := funcs[ast.WeightString]
+	tests := []struct {
+		str     string
+		padding string
+		length  int
+		expect  interface{}
+	}{
+		{"aAÁàãăâ", "NONE", 0, "\x00A\x00A\x00A\x00A\x00A\x00A\x00A"},
+		{"中", "NONE", 0, "\x4E\x2D"},
+		{"a", "CHAR", 5, "\x00A"},
+		{"a ", "CHAR", 5, "\x00A"},
+		{"中", "CHAR", 5, "\x4E\x2D"},
+		{"中 ", "CHAR", 5, "\x4E\x2D"},
+		{"a", "BINARY", 1, "a"},
+		{"ab", "BINARY", 1, "a"},
+		{"a", "BINARY", 5, "a\x00\x00\x00\x00"},
+		{"a ", "BINARY", 5, "a \x00\x00\x00"},
+		{"中", "BINARY", 1, "\xe4"},
+		{"中", "BINARY", 2, "\xe4\xb8"},
+		{"中", "BINARY", 3, "中"},
+		{"中", "BINARY", 5, "中\x00\x00"},
+	}
+
+	for _, test := range tests {
+		str := types.NewCollationStringDatum(test.str, "utf8mb4_general_ci", utf8.RuneCountInString(test.str))
+		var f builtinFunc
+		var err error
+		if test.padding == "NONE" {
+			f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{str}))
+		} else {
+			padding := types.NewDatum(test.padding)
+			length := types.NewDatum(test.length)
+			f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{str, padding, length}))
+		}
+		c.Assert(err, IsNil)
 		result, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		if result.IsNull() {

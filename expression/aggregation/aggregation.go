@@ -15,10 +15,12 @@ package aggregation
 
 import (
 	"bytes"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -185,6 +187,19 @@ func IsAllFirstRow(aggFuncs []*AggFuncDesc) bool {
 		}
 	}
 	return true
+}
+
+// CheckAggPushDown checks whether an agg function can be pushed to storage.
+func CheckAggPushDown(aggFunc *AggFuncDesc, storeType kv.StoreType) bool {
+	ret := true
+	switch storeType {
+	case kv.TiFlash:
+		ret = CheckAggPushFlash(aggFunc)
+	}
+	if ret {
+		ret = expression.IsPushDownEnabled(strings.ToLower(aggFunc.Name), storeType)
+	}
+	return ret
 }
 
 // CheckAggPushFlash checks whether an agg function can be pushed to flash storage.

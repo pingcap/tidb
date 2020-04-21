@@ -16,6 +16,8 @@ package types
 import (
 	"math/rand"
 	"testing"
+
+	"github.com/pingcap/parser/mysql"
 )
 
 func BenchmarkDefaultTypeForValue(b *testing.B) {
@@ -35,7 +37,7 @@ func BenchmarkDefaultTypeForValue(b *testing.B) {
 		b.StartTimer()
 		var ft FieldType
 		for i := 0; i < b.N; i++ {
-			DefaultTypeForValue(numsFull[int(i)%lenNums], &ft)
+			DefaultTypeForValue(numsFull[i%lenNums], &ft, mysql.DefaultCharset, mysql.DefaultCollationName)
 		}
 	})
 
@@ -43,7 +45,7 @@ func BenchmarkDefaultTypeForValue(b *testing.B) {
 		b.StartTimer()
 		var ft FieldType
 		for i := 0; i < b.N; i++ {
-			DefaultTypeForValue(nums64k[int(i)%lenNums], &ft)
+			DefaultTypeForValue(nums64k[i%lenNums], &ft, mysql.DefaultCharset, mysql.DefaultCollationName)
 		}
 	})
 
@@ -51,7 +53,7 @@ func BenchmarkDefaultTypeForValue(b *testing.B) {
 		b.StartTimer()
 		var ft FieldType
 		for i := 0; i < b.N; i++ {
-			DefaultTypeForValue(nums512[int(i)%lenNums], &ft)
+			DefaultTypeForValue(nums512[i%lenNums], &ft, mysql.DefaultCharset, mysql.DefaultCollationName)
 		}
 	})
 }

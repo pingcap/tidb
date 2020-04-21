@@ -15,6 +15,8 @@ package executor
 
 import (
 	"context"
+
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/executor/aggfuncs"
@@ -22,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/mathutil"
 )
 
 // WindowExec is the executor for window functions.
@@ -428,28 +429,59 @@ func (p *rangeFrameWindowProcessor) getEndOffset(ctx sessionctx.Context, rows []
 }
 
 func (p *rangeFrameWindowProcessor) appendResult2Chunk(ctx sessionctx.Context, rows []chunk.Row, chk *chunk.Chunk, remained int) ([]chunk.Row, error) {
-	for remained > 0 {
-		start, err := p.getStartOffset(ctx, rows)
+	var (
+		err                      error
+		initializedSlidingWindow bool
+		start                    uint64
+		end                      uint64
+		lastStart                uint64
+		lastEnd                  uint64
+		shiftStart               uint64
+		shiftEnd                 uint64
+	)
+	slidingWindowAggFuncs := make([]aggfuncs.SlidingWindowAggFunc, len(p.windowFuncs))
+	for i, windowFunc := range p.windowFuncs {
+		if slidingWindowAggFunc, ok := windowFunc.(aggfuncs.SlidingWindowAggFunc); ok {
+			slidingWindowAggFuncs[i] = slidingWindowAggFunc
+		}
+	}
+	for ; remained > 0; lastStart, lastEnd = start, end {
+		start, err = p.getStartOffset(ctx, rows)
 		if err != nil {
 			return nil, err
 		}
-		end, err := p.getEndOffset(ctx, rows)
+		end, err = p.getEndOffset(ctx, rows)
 		if err != nil {
 			return nil, err
 		}
 		p.curRowIdx++
 		remained--
+		shiftStart = start - lastStart
+		shiftEnd = end - lastEnd
 		if start >= end {
 			for i, windowFunc := range p.windowFuncs {
-				err := windowFunc.AppendFinalResult2Chunk(ctx, p.partialResults[i], chk)
+				slidingWindowAggFunc := slidingWindowAggFuncs[i]
+				if slidingWindowAggFunc != nil && initializedSlidingWindow {
+					err = slidingWindowAggFunc.Slide(ctx, rows, lastStart, lastEnd, shiftStart, shiftEnd, p.partialResults[i])
+					if err != nil {
+						return nil, err
+					}
+				}
+				err = windowFunc.AppendFinalResult2Chunk(ctx, p.partialResults[i], chk)
 				if err != nil {
 					return nil, err
 				}
 			}
 			continue
 		}
+
 		for i, windowFunc := range p.windowFuncs {
-			err := windowFunc.UpdatePartialResult(ctx, rows[start:end], p.partialResults[i])
+			slidingWindowAggFunc := slidingWindowAggFuncs[i]
+			if slidingWindowAggFunc != nil && initializedSlidingWindow {
+				err = slidingWindowAggFunc.Slide(ctx, rows, lastStart, lastEnd, shiftStart, shiftEnd, p.partialResults[i])
+			} else {
+				err = windowFunc.UpdatePartialResult(ctx, rows[start:end], p.partialResults[i])
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -457,8 +489,16 @@ func (p *rangeFrameWindowProcessor) appendResult2Chunk(ctx sessionctx.Context, r
 			if err != nil {
 				return nil, err
 			}
-			windowFunc.ResetPartialResult(p.partialResults[i])
+			if slidingWindowAggFunc == nil {
+				windowFunc.ResetPartialResult(p.partialResults[i])
+			}
 		}
+		if !initializedSlidingWindow {
+			initializedSlidingWindow = true
+		}
+	}
+	for i, windowFunc := range p.windowFuncs {
+		windowFunc.ResetPartialResult(p.partialResults[i])
 	}
 	return rows, nil
 }

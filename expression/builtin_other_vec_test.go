@@ -70,7 +70,7 @@ func (s *testEvaluatorSuite) TestInDecimal(c *C) {
 	for i := 0; i < 1024; i++ {
 		d0 := new(types.MyDecimal)
 		d1 := new(types.MyDecimal)
-		v := fmt.Sprintf("%v", float64(rand.Intn(1000))+rand.Float64())
+		v := fmt.Sprintf("%d.%d", rand.Intn(1000), rand.Int31())
 		c.Assert(d0.FromString([]byte(v)), IsNil)
 		v += "00"
 		c.Assert(d1.FromString([]byte(v)), IsNil)

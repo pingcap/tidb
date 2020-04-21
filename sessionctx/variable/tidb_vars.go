@@ -45,6 +45,9 @@ const (
 	// tidb_opt_agg_push_down is used to enable/disable the optimizer rule of aggregation push down.
 	TiDBOptAggPushDown = "tidb_opt_agg_push_down"
 
+	// tidb_opt_distinct_agg_push_down is used to decide whether agg with distinct should be pushed to tikv/tiflash.
+	TiDBOptDistinctAggPushDown = "tidb_opt_distinct_agg_push_down"
+
 	// tidb_opt_write_row_id is used to enable/disable the operations of insert、replace and update to _tidb_rowid.
 	TiDBOptWriteRowID = "tidb_opt_write_row_id"
 
@@ -87,13 +90,6 @@ const (
 
 	// The following session variables controls the memory quota during query execution.
 	// "tidb_mem_quota_query":				control the memory quota of a query.
-	// "tidb_mem_quota_hashjoin": 			control the memory quota of "HashJoinExec".
-	// "tidb_mem_quota_mergejoin": 			control the memory quota of "MergeJoinExec".
-	// "tidb_mem_quota_sort":     			control the memory quota of "SortExec".
-	// "tidb_mem_quota_topn":     			control the memory quota of "TopNExec".
-	// "tidb_mem_quota_indexlookupreader":	control the memory quota of "IndexLookUpExecutor".
-	// "tidb_mem_quota_indexlookupjoin":	control the memory quota of "IndexLookUpJoin".
-	// "tidb_mem_quota_nestedloopapply": 	control the memory quota of "NestedLoopApplyExec".
 	TIDBMemQuotaQuery = "tidb_mem_quota_query" // Bytes.
 	// TODO: remove them below sometime, it should have only one Quota(TIDBMemQuotaQuery).
 	TIDBMemQuotaHashJoin          = "tidb_mem_quota_hashjoin"          // Bytes.
@@ -109,18 +105,6 @@ const (
 
 	// tidb_pprof_sql_cpu is used to add label sql label to pprof result.
 	TiDBPProfSQLCPU = "tidb_pprof_sql_cpu"
-
-	// tidb_slow_log_threshold is used to set the slow log threshold in the server.
-	TiDBSlowLogThreshold = "tidb_slow_log_threshold"
-
-	// tidb_record_plan_in_slow_log is used to log the plan of the slow query.
-	TiDBRecordPlanInSlowLog = "tidb_record_plan_in_slow_log"
-
-	// tidb_enable_slow_log enables TiDB to log slow queries.
-	TiDBEnableSlowLog = "tidb_enable_slow_log"
-
-	// tidb_query_log_max_len is used to set the max length of the query in the log.
-	TiDBQueryLogMaxLen = "tidb_query_log_max_len"
 
 	// tidb_retry_limit is the maximum number of retries when committing a transaction.
 	TiDBRetryLimit = "tidb_retry_limit"
@@ -145,13 +129,9 @@ const (
 
 	// tidb_enable_table_partition is used to control table partition feature.
 	// The valid value include auto/on/off:
-	// auto: enable table partition when that feature is implemented.
-	// on: always enable table partition.
+	// on or auto: enable table partition if the partition type is implemented.
 	// off: always disable table partition.
 	TiDBEnableTablePartition = "tidb_enable_table_partition"
-
-	// TiDBCheckMb4ValueInUTF8 is used to control whether to enable the check wrong utf8 value.
-	TiDBCheckMb4ValueInUTF8 = "tidb_check_mb4_value_in_utf8"
 
 	// tidb_skip_isolation_level_check is used to control whether to return error when set unsupported transaction
 	// isolation level.
@@ -173,6 +153,24 @@ const (
 	TiDBEvolvePlanTaskStartTime = "tidb_evolve_plan_task_start_time"
 	// TiDBEvolvePlanTaskEndTime is the end time of evolution task.
 	TiDBEvolvePlanTaskEndTime = "tidb_evolve_plan_task_end_time"
+
+	// tidb_slow_log_threshold is used to set the slow log threshold in the server.
+	TiDBSlowLogThreshold = "tidb_slow_log_threshold"
+
+	// tidb_record_plan_in_slow_log is used to log the plan of the slow query.
+	TiDBRecordPlanInSlowLog = "tidb_record_plan_in_slow_log"
+
+	// tidb_enable_slow_log enables TiDB to log slow queries.
+	TiDBEnableSlowLog = "tidb_enable_slow_log"
+
+	// tidb_query_log_max_len is used to set the max length of the query in the log.
+	TiDBQueryLogMaxLen = "tidb_query_log_max_len"
+
+	// TiDBCheckMb4ValueInUTF8 is used to control whether to enable the check wrong utf8 value.
+	TiDBCheckMb4ValueInUTF8 = "tidb_check_mb4_value_in_utf8"
+
+	// TiDBFoundInPlanCache indicates whether the last statement was found in plan cache
+	TiDBFoundInPlanCache = "last_plan_from_cache"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -246,6 +244,11 @@ const (
 
 	// TiDBMaxChunkSize is used to control the max chunk size during query execution.
 	TiDBMaxChunkSize = "tidb_max_chunk_size"
+
+	// TiDBAllowBatchCop means if we should send batch coprocessor to TiFlash. It can be set to 0, 1 and 2.
+	// 0 means never use batch cop, 1 means use batch cop in case of aggregation and join, 2, means to force to send batch cop for any query.
+	// The default value is 0
+	TiDBAllowBatchCop = "tidb_allow_batch_cop"
 
 	// TiDBInitChunkSize is used to control the init chunk size during query execution.
 	TiDBInitChunkSize = "tidb_init_chunk_size"
@@ -351,11 +354,20 @@ const (
 	// TiDBEnableStmtSummary indicates whether the statement summary is enabled.
 	TiDBEnableStmtSummary = "tidb_enable_stmt_summary"
 
+	// TiDBStmtSummaryInternalQuery indicates whether the statement summary contain internal query.
+	TiDBStmtSummaryInternalQuery = "tidb_stmt_summary_internal_query"
+
 	// TiDBStmtSummaryRefreshInterval indicates the refresh interval in seconds for each statement summary.
 	TiDBStmtSummaryRefreshInterval = "tidb_stmt_summary_refresh_interval"
 
 	// TiDBStmtSummaryHistorySize indicates the history size of each statement summary.
 	TiDBStmtSummaryHistorySize = "tidb_stmt_summary_history_size"
+
+	// TiDBStmtSummaryMaxStmtCount indicates the max number of statements kept in memory.
+	TiDBStmtSummaryMaxStmtCount = "tidb_stmt_summary_max_stmt_count"
+
+	// TiDBStmtSummaryMaxSQLLength indicates the max length of displayed normalized sql and sample sql.
+	TiDBStmtSummaryMaxSQLLength = "tidb_stmt_summary_max_sql_length"
 
 	// TiDBCapturePlanBaseline indicates whether the capture of plan baselines is enabled.
 	TiDBCapturePlanBaseline = "tidb_capture_plan_baselines"
@@ -378,6 +390,9 @@ const (
 
 	// TiDBMetricSchemaRangeDuration indicates the range duration when query metric schema.
 	TiDBMetricSchemaRangeDuration = "tidb_metric_query_range_duration"
+
+	// TiDBEnableCollectExecutionInfo indicates that whether execution info is collected.
+	TiDBEnableCollectExecutionInfo = "tidb_enable_collect_execution_info"
 )
 
 // Default TiDB system variable values.
@@ -398,6 +413,7 @@ const (
 	DefChecksumTableConcurrency        = 4
 	DefSkipUTF8Check                   = false
 	DefOptAggPushDown                  = false
+	DefOptDistinctAggPushDown          = false
 	DefOptWriteRowID                   = false
 	DefOptCorrelationThreshold         = 0.9
 	DefOptCorrelationExpFactor         = 1
@@ -436,6 +452,7 @@ const (
 	DefTiDBHashJoinConcurrency         = 5
 	DefTiDBProjectionConcurrency       = 4
 	DefTiDBOptimizerSelectivityLevel   = 0
+	DefTiDBAllowBatchCop               = 0
 	DefTiDBTxnMode                     = ""
 	DefTiDBRowFormatV1                 = 1
 	DefTiDBRowFormatV2                 = 2
@@ -469,6 +486,8 @@ const (
 	DefTiDBStoreLimit                  = 0
 	DefTiDBMetricSchemaStep            = 60 // 60s
 	DefTiDBMetricSchemaRangeDuration   = 60 // 60s
+	DefTiDBFoundInPlanCache            = false
+	DefTidbEnableCollectExecutionInfo  = false
 )
 
 // Process global variables.

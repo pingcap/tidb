@@ -44,7 +44,7 @@ var (
 	tablePrivMask          = computePrivMask(mysql.AllTablePrivs)
 )
 
-const globalDBVisible = mysql.CreatePriv | mysql.SelectPriv | mysql.InsertPriv | mysql.UpdatePriv | mysql.DeletePriv | mysql.ShowDBPriv | mysql.DropPriv | mysql.AlterPriv | mysql.IndexPriv | mysql.CreateViewPriv | mysql.ShowViewPriv | mysql.GrantPriv
+const globalDBVisible = mysql.CreatePriv | mysql.SelectPriv | mysql.InsertPriv | mysql.UpdatePriv | mysql.DeletePriv | mysql.ShowDBPriv | mysql.DropPriv | mysql.AlterPriv | mysql.IndexPriv | mysql.CreateViewPriv | mysql.ShowViewPriv | mysql.GrantPriv | mysql.TriggerPriv | mysql.ReferencesPriv | mysql.ExecutePriv
 
 func computePrivMask(privs []mysql.PrivilegeType) mysql.PrivilegeType {
 	var mask mysql.PrivilegeType
@@ -72,9 +72,9 @@ type baseRecord struct {
 type UserRecord struct {
 	baseRecord
 
-	Password      string // max length 41
-	Privileges    mysql.PrivilegeType
-	AccountLocked bool // A role record when this field is true
+	AuthenticationString string
+	Privileges           mysql.PrivilegeType
+	AccountLocked        bool // A role record when this field is true
 }
 
 // NewUserRecord return a UserRecord, only use for unit test.
@@ -353,7 +353,7 @@ func (p *MySQLPrivilege) LoadUserTable(ctx sessionctx.Context) error {
 	for _, v := range mysql.Priv2UserCol {
 		userPrivCols = append(userPrivCols, v)
 	}
-	query := fmt.Sprintf("select HIGH_PRIORITY Host,User,Password,%s,account_locked from mysql.user;", strings.Join(userPrivCols, ", "))
+	query := fmt.Sprintf("select HIGH_PRIORITY Host,User,authentication_string,%s,account_locked from mysql.user;", strings.Join(userPrivCols, ", "))
 	err := p.loadTable(ctx, query, p.decodeUserTableRow)
 	if err != nil {
 		return errors.Trace(err)
@@ -588,8 +588,8 @@ func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*ast.ResultField
 	var value UserRecord
 	for i, f := range fs {
 		switch {
-		case f.ColumnAsName.L == "password":
-			value.Password = row.GetString(i)
+		case f.ColumnAsName.L == "authentication_string":
+			value.AuthenticationString = row.GetString(i)
 		case f.ColumnAsName.L == "account_locked":
 			if row.GetEnum(i).String() == "Y" {
 				value.AccountLocked = true
@@ -983,13 +983,13 @@ func (p *MySQLPrivilege) DBIsVisible(user, host, db string) bool {
 
 func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentity) []string {
 	var gs []string
-	var hasGlobalGrant bool = false
+	var hasGlobalGrant = false
 	// Some privileges may granted from role inheritance.
 	// We should find these inheritance relationship.
 	allRoles := p.FindAllRole(roles)
 	// Show global grants.
 	var currentPriv mysql.PrivilegeType
-	var hasGrantOptionPriv bool = false
+	var hasGrantOptionPriv = false
 	var g string
 	for _, record := range p.User {
 		if record.baseRecord.match(user, host) {
@@ -1253,11 +1253,10 @@ func (p *MySQLPrivilege) getAllRoles(user, host string) []*auth.RoleIdentity {
 	key := user + "@" + host
 	edgeTable, ok := p.RoleGraph[key]
 	ret := make([]*auth.RoleIdentity, 0, len(edgeTable.roleList))
-	if !ok {
-		return nil
-	}
-	for _, r := range edgeTable.roleList {
-		ret = append(ret, r)
+	if ok {
+		for _, r := range edgeTable.roleList {
+			ret = append(ret, r)
+		}
 	}
 	return ret
 }

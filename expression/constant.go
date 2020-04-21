@@ -28,25 +28,29 @@ import (
 	"go.uber.org/zap"
 )
 
-var (
-	// One stands for a number 1.
-	One = &Constant{
+// NewOne stands for a number 1.
+func NewOne() *Constant {
+	return &Constant{
 		Value:   types.NewDatum(1),
 		RetType: types.NewFieldType(mysql.TypeTiny),
 	}
+}
 
-	// Zero stands for a number 0.
-	Zero = &Constant{
+// NewZero stands for a number 0.
+func NewZero() *Constant {
+	return &Constant{
 		Value:   types.NewDatum(0),
 		RetType: types.NewFieldType(mysql.TypeTiny),
 	}
+}
 
-	// Null stands for null constant.
-	Null = &Constant{
+// NewNull stands for null constant.
+func NewNull() *Constant {
+	return &Constant{
 		Value:   types.NewDatum(nil),
 		RetType: types.NewFieldType(mysql.TypeTiny),
 	}
-)
+}
 
 // Constant stands for a constant value.
 type Constant struct {
@@ -60,13 +64,14 @@ type Constant struct {
 	// It's only used to reference a user variable provided in the `EXECUTE` statement or `COM_EXECUTE` binary protocol.
 	ParamMarker *ParamMarker
 	hashcode    []byte
+
+	collationInfo
 }
 
 // ParamMarker indicates param provided by COM_STMT_EXECUTE.
 type ParamMarker struct {
 	ctx   sessionctx.Context
 	order int
-	tp    types.FieldType
 }
 
 // GetUserVar returns the corresponding user variable presented in the `EXECUTE` statement or `COM_EXECUTE` command.
@@ -79,14 +84,14 @@ func (d *ParamMarker) GetUserVar() types.Datum {
 func (c *Constant) String() string {
 	if c.ParamMarker != nil {
 		dt := c.ParamMarker.GetUserVar()
-		c.Value.SetValue(dt.GetValue())
+		c.Value.SetValue(dt.GetValue(), c.RetType)
 	} else if c.DeferredExpr != nil {
 		dt, err := c.Eval(chunk.Row{})
 		if err != nil {
 			logutil.BgLogger().Error("eval constant failed", zap.Error(err))
 			return ""
 		}
-		c.Value.SetValue(dt.GetValue())
+		c.Value.SetValue(dt.GetValue(), c.RetType)
 	}
 	return fmt.Sprintf("%v", c.Value.GetValue())
 }
@@ -98,21 +103,17 @@ func (c *Constant) MarshalJSON() ([]byte, error) {
 
 // Clone implements Expression interface.
 func (c *Constant) Clone() Expression {
-	if c.DeferredExpr != nil || c.ParamMarker != nil {
-		con := *c
-		return &con
-	}
-	return c
+	con := *c
+	return &con
 }
-
-var unspecifiedTp = types.NewFieldType(mysql.TypeUnspecified)
 
 // GetType implements Expression interface.
 func (c *Constant) GetType() *types.FieldType {
-	if c.ParamMarker != nil {
-		tp := &c.ParamMarker.tp
-		*tp = *unspecifiedTp
-		dt := c.ParamMarker.GetUserVar()
+	if p := c.ParamMarker; p != nil && !p.ctx.GetSessionVars().StmtCtx.InExplainStmt {
+		// GetType() may be called in multi-threaded context, e.g, in building inner executors of IndexJoin,
+		// so it should avoid data race. We achieve this by returning different FieldType pointer for each call.
+		tp := types.NewFieldType(mysql.TypeUnspecified)
+		dt := p.GetUserVar()
 		types.DefaultParamTypeForValue(dt.GetValue(), tp)
 		return tp
 	}
@@ -176,8 +177,13 @@ func (c *Constant) VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, resul
 }
 
 func (c *Constant) getLazyDatum() (dt types.Datum, isLazy bool, err error) {
-	if c.ParamMarker != nil {
-		dt = c.ParamMarker.GetUserVar()
+	if p := c.ParamMarker; p != nil {
+		if p.ctx.GetSessionVars().StmtCtx.InExplainStmt {
+			// Since `ParamMarker` is not nil only in prepare/execute context, the query must be `explain for connection` when coming here.
+			// The PreparedParams may have been reset already, to avoid panic, we just use the pre-evaluated datum for this constant.
+			return dt, false, nil
+		}
+		dt = p.GetUserVar()
 		isLazy = true
 		return
 	} else if c.DeferredExpr != nil {
@@ -224,8 +230,10 @@ func (c *Constant) EvalInt(ctx sessionctx.Context, _ chunk.Row) (int64, bool, er
 	}
 	if c.GetType().Tp == mysql.TypeNull || dt.IsNull() {
 		return 0, true, nil
-	}
-	if c.GetType().Hybrid() || dt.Kind() == types.KindBinaryLiteral || dt.Kind() == types.KindString {
+	} else if dt.Kind() == types.KindBinaryLiteral {
+		val, err := dt.GetBinaryLiteral().ToInt(ctx.GetSessionVars().StmtCtx)
+		return int64(val), err != nil, err
+	} else if c.GetType().Hybrid() || dt.Kind() == types.KindString {
 		res, err := dt.ToInt64(ctx.GetSessionVars().StmtCtx)
 		return res, false, err
 	}
@@ -406,4 +414,14 @@ func (c *Constant) SupportReverseEval() bool {
 // ReverseEval evaluates the only one column value with given function result.
 func (c *Constant) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
 	return c.Value, nil
+}
+
+// Coercibility returns the coercibility value which is used to check collations.
+func (c *Constant) Coercibility() Coercibility {
+	if c.HasCoercibility() {
+		return c.collationInfo.Coercibility()
+	}
+
+	c.SetCoercibility(deriveCoercibilityForConstant(c))
+	return c.collationInfo.Coercibility()
 }

@@ -18,8 +18,6 @@ import (
 	"container/heap"
 	"context"
 	"fmt"
-	"io"
-	"math"
 	"os"
 	"sort"
 	"strconv"
@@ -32,9 +30,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/parser/terror"
-	pd "github.com/pingcap/pd/client"
+	pd "github.com/pingcap/pd/v4/client"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
@@ -186,7 +183,6 @@ func (w *GCWorker) start(ctx context.Context, wg *sync.WaitGroup) {
 			w.lastFinish = time.Now()
 			if err != nil {
 				logutil.Logger(ctx).Error("[gc worker] runGCJob", zap.Error(err))
-				return
 			}
 		case <-ctx.Done():
 			logutil.Logger(ctx).Info("[gc worker] quit", zap.String("uuid", w.uuid))
@@ -404,7 +400,7 @@ func (w *GCWorker) getGCConcurrency(ctx context.Context) (int, error) {
 		return w.loadGCConcurrencyWithDefault()
 	}
 
-	stores, err := w.getUpStores(ctx)
+	stores, err := w.getUpStoresForGC(ctx)
 	concurrency := len(stores)
 	if err != nil {
 		logutil.Logger(ctx).Error("[gc worker] failed to get up stores to calculate concurrency. use config.",
@@ -672,7 +668,7 @@ func (w *GCWorker) redoDeleteRanges(ctx context.Context, safePoint uint64, concu
 
 func (w *GCWorker) doUnsafeDestroyRangeRequest(ctx context.Context, startKey []byte, endKey []byte, concurrency int) error {
 	// Get all stores every time deleting a region. So the store list is less probably to be stale.
-	stores, err := w.getUpStores(ctx)
+	stores, err := w.getUpStoresForGC(ctx)
 	if err != nil {
 		logutil.Logger(ctx).Error("[gc worker] delete ranges: got an error while trying to get store list from PD",
 			zap.String("uuid", w.uuid),
@@ -739,7 +735,47 @@ func (w *GCWorker) doUnsafeDestroyRangeRequest(ctx context.Context, startKey []b
 	return nil
 }
 
-func (w *GCWorker) getUpStores(ctx context.Context) ([]*metapb.Store, error) {
+const (
+	engineLabelKey     = "engine"
+	engineLabelTiFlash = "tiflash"
+	engineLabelTiKV    = "tikv"
+)
+
+// needsGCOperationForStore checks if the store-level requests related to GC needs to be sent to the store. The store-level
+// requests includes UnsafeDestroyRange, PhysicalScanLock, etc.
+func needsGCOperationForStore(store *metapb.Store) (bool, error) {
+	engineLabel := ""
+
+	for _, label := range store.GetLabels() {
+		if label.GetKey() == engineLabelKey {
+			engineLabel = label.GetValue()
+			break
+		}
+	}
+
+	switch engineLabel {
+	case engineLabelTiFlash:
+		// For a TiFlash node, it uses other approach to delete dropped tables, so it's safe to skip sending
+		// UnsafeDestroyRange requests; it has only learner peers and their data must exist in TiKV, so it's safe to
+		// skip physical resolve locks for it.
+		return false, nil
+
+	case "":
+		// If no engine label is set, it should be a TiKV node.
+		fallthrough
+	case engineLabelTiKV:
+		return true, nil
+
+	default:
+		return true, errors.Errorf("unsupported store engine \"%v\" with storeID %v, addr %v",
+			engineLabel,
+			store.GetId(),
+			store.GetAddress())
+	}
+}
+
+// getUpStoresForGC gets the list of stores that needs to be processed during GC.
+func (w *GCWorker) getUpStoresForGC(ctx context.Context) ([]*metapb.Store, error) {
 	stores, err := w.pdClient.GetAllStores(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -747,15 +783,22 @@ func (w *GCWorker) getUpStores(ctx context.Context) ([]*metapb.Store, error) {
 
 	upStores := make([]*metapb.Store, 0, len(stores))
 	for _, store := range stores {
-		if store.State == metapb.StoreState_Up {
+		if store.State != metapb.StoreState_Up {
+			continue
+		}
+		needsGCOp, err := needsGCOperationForStore(store)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if needsGCOp {
 			upStores = append(upStores, store)
 		}
 	}
 	return upStores, nil
 }
 
-func (w *GCWorker) getUpStoresMap(ctx context.Context) (map[uint64]*metapb.Store, error) {
-	stores, err := w.getUpStores(ctx)
+func (w *GCWorker) getUpStoresMapForGC(ctx context.Context) (map[uint64]*metapb.Store, error) {
+	stores, err := w.getUpStoresForGC(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -993,12 +1036,14 @@ func (w *GCWorker) resolveLocksPhysical(ctx context.Context, safePoint uint64) e
 		zap.Uint64("safePoint", safePoint))
 	startTime := time.Now()
 
-	stores, err := w.getUpStoresMap(ctx)
+	stores, err := w.getUpStoresMapForGC(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	// TODO: If failed anywhere, should we try to cleanup the observers?
+	defer func() {
+		w.removeLockObservers(ctx, safePoint, stores)
+	}()
 
 	err = w.registerLockObservers(ctx, safePoint, stores)
 	if err != nil {
@@ -1011,7 +1056,7 @@ func (w *GCWorker) resolveLocksPhysical(ctx context.Context, safePoint uint64) e
 			return errors.Trace(err)
 		}
 
-		stores, err = w.getUpStoresMap(ctx)
+		stores, err = w.getUpStoresMapForGC(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1036,8 +1081,6 @@ func (w *GCWorker) resolveLocksPhysical(ctx context.Context, safePoint uint64) e
 			break
 		}
 	}
-
-	w.removeLockObservers(ctx, safePoint, stores)
 
 	logutil.Logger(ctx).Info("[gc worker] finish resolve locks with physical scan locks",
 		zap.String("uuid", w.uuid),
@@ -1717,6 +1760,7 @@ type mergeLockScanner struct {
 	stores         map[uint64]*metapb.Store
 	receivers      mergeReceiver
 	currentLockKey []byte
+	scanLockLimit  uint32
 }
 
 type receiver struct {
@@ -1790,9 +1834,10 @@ type scanLockResult struct {
 
 func newMergeLockScanner(safePoint uint64, client tikv.Client, stores map[uint64]*metapb.Store) *mergeLockScanner {
 	return &mergeLockScanner{
-		safePoint: safePoint,
-		client:    client,
-		stores:    stores,
+		safePoint:     safePoint,
+		client:        client,
+		stores:        stores,
+		scanLockLimit: gcScanLockLimit,
 	}
 }
 
@@ -1858,7 +1903,7 @@ func (s *mergeLockScanner) NextBatch(batchSize int) []*tikv.Lock {
 
 // GetSucceededStores gets a set of successfully scanned stores. Only call this after finishing scanning all locks.
 func (s *mergeLockScanner) GetSucceededStores() map[uint64]interface{} {
-	stores := make(map[uint64]interface{})
+	stores := make(map[uint64]interface{}, len(s.receivers))
 	for _, receiver := range s.receivers {
 		if receiver.Err == nil {
 			stores[receiver.StoreID] = nil
@@ -1871,38 +1916,41 @@ func (s *mergeLockScanner) physicalScanLocksForStore(ctx context.Context, safePo
 	address := store.Address
 	req := tikvrpc.NewRequest(tikvrpc.CmdPhysicalScanLock, &kvrpcpb.PhysicalScanLockRequest{
 		MaxTs: safePoint,
+		Limit: s.scanLockLimit,
 	})
 
-	const Unlimited = time.Duration(math.MaxInt64)
-
-	ctx1, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	response, err := s.client.SendRequest(ctx1, address, req, Unlimited)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	respStream := response.Resp.(tikvpb.Tikv_PhysicalScanLockClient)
-	if respStream == nil {
-		return errors.Errorf("cannot get stream from physical scan lock response")
-	}
+	nextKey := make([]byte, 0)
 
 	for {
-		resp, err := respStream.Recv()
-		if err == io.EOF {
-			break
-		}
+		req.PhysicalScanLock().StartKey = nextKey
+
+		response, err := s.client.SendRequest(ctx, address, req, tikv.ReadTimeoutMedium)
 		if err != nil {
 			return errors.Trace(err)
+		}
+
+		resp := response.Resp.(*kvrpcpb.PhysicalScanLockResponse)
+		if resp == nil {
+			return errors.Errorf("physical scan lock response is nil")
 		}
 
 		if len(resp.Error) > 0 {
 			return errors.Errorf("physical scan lock received error from store: %v", resp.Error)
 		}
 
+		if len(resp.Locks) == 0 {
+			break
+		}
+
+		nextKey = resp.Locks[len(resp.Locks)-1].Key
+		nextKey = append(nextKey, 0)
+
 		for _, lockInfo := range resp.Locks {
 			lockCh <- scanLockResult{Lock: tikv.NewLock(lockInfo)}
+		}
+
+		if len(resp.Locks) < int(s.scanLockLimit) {
+			break
 		}
 	}
 

@@ -45,11 +45,9 @@ func (ts *testDatumSuite) TestDatum(c *C) {
 	for _, val := range values {
 		var d Datum
 		d.SetMinNotNull()
-		d.SetValue(val)
+		d.SetValueWithDefaultCollation(val)
 		x := d.GetValue()
 		c.Assert(x, DeepEquals, val)
-		d.SetCollation(d.Collation())
-		c.Assert(d.Collation(), NotNil)
 		c.Assert(d.Length(), Equals, int(d.length))
 		c.Assert(fmt.Sprint(d), Equals, d.String())
 	}
@@ -66,7 +64,7 @@ func testDatumToBool(c *C, in interface{}, res int) {
 }
 
 func (ts *testDatumSuite) TestToBool(c *C) {
-	testDatumToBool(c, int(0), 0)
+	testDatumToBool(c, 0, 0)
 	testDatumToBool(c, int64(0), 0)
 	testDatumToBool(c, uint64(0), 0)
 	testDatumToBool(c, float32(0.1), 0)
@@ -74,9 +72,9 @@ func (ts *testDatumSuite) TestToBool(c *C) {
 	testDatumToBool(c, float64(0.5), 1)
 	testDatumToBool(c, float64(0.499), 0)
 	testDatumToBool(c, "", 0)
-	testDatumToBool(c, "0.1", 0)
+	testDatumToBool(c, "0.1", 1)
 	testDatumToBool(c, []byte{}, 0)
-	testDatumToBool(c, []byte("0.1"), 0)
+	testDatumToBool(c, []byte("0.1"), 1)
 	testDatumToBool(c, NewBinaryLiteralFromUint(0, -1), 0)
 	testDatumToBool(c, Enum{Name: "a", Value: 1}, 1)
 	testDatumToBool(c, Set{Name: "a", Value: 1}, 1)
@@ -148,7 +146,7 @@ func testDatumToInt64(c *C, val interface{}, expect int64) {
 
 func (ts *testTypeConvertSuite) TestToInt64(c *C) {
 	testDatumToInt64(c, "0", int64(0))
-	testDatumToInt64(c, int(0), int64(0))
+	testDatumToInt64(c, 0, int64(0))
 	testDatumToInt64(c, int64(0), int64(0))
 	testDatumToInt64(c, uint64(0), int64(0))
 	testDatumToInt64(c, float32(3.1), int64(3))
@@ -173,10 +171,6 @@ func (ts *testTypeConvertSuite) TestToInt64(c *C) {
 	v, err := Convert(3.1415926, ft)
 	c.Assert(err, IsNil)
 	testDatumToInt64(c, v, int64(3))
-
-	binLit, err := ParseHexStr("0x9999999999999999999999999999999999999999999")
-	c.Assert(err, IsNil)
-	testDatumToInt64(c, binLit, -1)
 }
 
 func (ts *testTypeConvertSuite) TestToFloat32(c *C) {
@@ -189,7 +183,7 @@ func (ts *testTypeConvertSuite) TestToFloat32(c *C) {
 	c.Assert(converted.Kind(), Equals, KindFloat32)
 	c.Assert(converted.GetFloat32(), Equals, float32(281.37))
 
-	datum.SetString("281.37")
+	datum.SetString("281.37", mysql.DefaultCollationName)
 	converted, err = datum.ConvertTo(sc, ft)
 	c.Assert(err, IsNil)
 	c.Assert(converted.Kind(), Equals, KindFloat32)
@@ -366,7 +360,7 @@ func (ts *testDatumSuite) TestCloneDatum(c *C) {
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
 	for _, tt := range tests {
-		tt1 := CloneDatum(tt)
+		tt1 := *tt.Clone()
 		res, err := tt.CompareDatum(sc, &tt1)
 		c.Assert(err, IsNil)
 		c.Assert(res, Equals, 0)

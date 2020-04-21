@@ -396,6 +396,7 @@ func (e *maxMin4Decimal) MergePartialResult(sctx sessionctx.Context, src, dst Pa
 
 type maxMin4String struct {
 	baseMaxMinAggFunc
+	retTp *types.FieldType
 }
 
 func (e *maxMin4String) AllocPartialResult() PartialResult {
@@ -421,6 +422,7 @@ func (e *maxMin4String) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Part
 
 func (e *maxMin4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4MaxMinString)(pr)
+	tp := e.args[0].GetType()
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalString(sctx, row)
 		if err != nil {
@@ -438,7 +440,7 @@ func (e *maxMin4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 			p.isNull = false
 			continue
 		}
-		cmp := types.CompareString(input, p.val)
+		cmp := types.CompareString(input, p.val, tp.Collate)
 		if e.isMax && cmp == 1 || !e.isMax && cmp == -1 {
 			p.val = stringutil.Copy(input)
 		}
@@ -455,7 +457,8 @@ func (e *maxMin4String) MergePartialResult(sctx sessionctx.Context, src, dst Par
 		*p2 = *p1
 		return nil
 	}
-	cmp := types.CompareString(p1.val, p2.val)
+	tp := e.args[0].GetType()
+	cmp := types.CompareString(p1.val, p2.val, tp.Collate)
 	if e.isMax && cmp > 0 || !e.isMax && cmp < 0 {
 		p2.val, p2.isNull = p1.val, false
 	}
@@ -632,7 +635,7 @@ func (e *maxMin4JSON) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 		}
 		cmp := json.CompareBinary(input, p.val)
 		if e.isMax && cmp > 0 || !e.isMax && cmp < 0 {
-			p.val = input
+			p.val = input.Copy()
 		}
 	}
 	return nil

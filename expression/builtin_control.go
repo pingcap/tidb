@@ -14,13 +14,13 @@
 package expression
 
 import (
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -143,14 +143,22 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	for i := 1; i < l; i += 2 {
 		fieldTps = append(fieldTps, args[i].GetType())
 		decimal = mathutil.Max(decimal, args[i].GetType().Decimal)
-		flen = mathutil.Max(flen, args[i].GetType().Flen)
+		if args[i].GetType().Flen == -1 {
+			flen = -1
+		} else if flen != -1 {
+			flen = mathutil.Max(flen, args[i].GetType().Flen)
+		}
 		isBinaryStr = isBinaryStr || types.IsBinaryStr(args[i].GetType())
 		isBinaryFlag = isBinaryFlag || !types.IsNonBinaryStr(args[i].GetType())
 	}
 	if l%2 == 1 {
 		fieldTps = append(fieldTps, args[l-1].GetType())
 		decimal = mathutil.Max(decimal, args[l-1].GetType().Decimal)
-		flen = mathutil.Max(flen, args[l-1].GetType().Flen)
+		if args[l-1].GetType().Flen == -1 {
+			flen = -1
+		} else if flen != -1 {
+			flen = mathutil.Max(flen, args[l-1].GetType().Flen)
+		}
 		isBinaryStr = isBinaryStr || types.IsBinaryStr(args[l-1].GetType())
 		isBinaryFlag = isBinaryFlag || !types.IsNonBinaryStr(args[l-1].GetType())
 	}
@@ -170,11 +178,14 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 	// Set retType to BINARY(0) if all arguments are of type NULL.
 	if fieldTp.Tp == mysql.TypeNull {
-		fieldTp.Flen, fieldTp.Decimal = 0, -1
+		fieldTp.Flen, fieldTp.Decimal = 0, types.UnspecifiedLength
 		types.SetBinChsClnFlag(fieldTp)
 	}
 	argTps := make([]types.EvalType, 0, l)
 	for i := 0; i < l-1; i += 2 {
+		if args[i], err = wrapWithIsTrue(ctx, true, args[i], false); err != nil {
+			return nil, err
+		}
 		argTps = append(argTps, types.ETInt, tp)
 	}
 	if l%2 == 1 {
@@ -222,7 +233,7 @@ func (b *builtinCaseWhenIntSig) Clone() builtinFunc {
 }
 
 // evalInt evals a builtinCaseWhenIntSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/case.html
+// See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#operator_case
 func (b *builtinCaseWhenIntSig) evalInt(row chunk.Row) (ret int64, isNull bool, err error) {
 	var condition int64
 	args, l := b.getArgs(), len(b.getArgs())
@@ -258,7 +269,7 @@ func (b *builtinCaseWhenRealSig) Clone() builtinFunc {
 }
 
 // evalReal evals a builtinCaseWhenRealSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/case.html
+// See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#operator_case
 func (b *builtinCaseWhenRealSig) evalReal(row chunk.Row) (ret float64, isNull bool, err error) {
 	var condition int64
 	args, l := b.getArgs(), len(b.getArgs())
@@ -294,7 +305,7 @@ func (b *builtinCaseWhenDecimalSig) Clone() builtinFunc {
 }
 
 // evalDecimal evals a builtinCaseWhenDecimalSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/case.html
+// See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#operator_case
 func (b *builtinCaseWhenDecimalSig) evalDecimal(row chunk.Row) (ret *types.MyDecimal, isNull bool, err error) {
 	var condition int64
 	args, l := b.getArgs(), len(b.getArgs())
@@ -330,7 +341,7 @@ func (b *builtinCaseWhenStringSig) Clone() builtinFunc {
 }
 
 // evalString evals a builtinCaseWhenStringSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/case.html
+// See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#operator_case
 func (b *builtinCaseWhenStringSig) evalString(row chunk.Row) (ret string, isNull bool, err error) {
 	var condition int64
 	args, l := b.getArgs(), len(b.getArgs())
@@ -366,7 +377,7 @@ func (b *builtinCaseWhenTimeSig) Clone() builtinFunc {
 }
 
 // evalTime evals a builtinCaseWhenTimeSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/case.html
+// See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#operator_case
 func (b *builtinCaseWhenTimeSig) evalTime(row chunk.Row) (ret types.Time, isNull bool, err error) {
 	var condition int64
 	args, l := b.getArgs(), len(b.getArgs())
@@ -402,7 +413,7 @@ func (b *builtinCaseWhenDurationSig) Clone() builtinFunc {
 }
 
 // evalDuration evals a builtinCaseWhenDurationSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/case.html
+// See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#operator_case
 func (b *builtinCaseWhenDurationSig) evalDuration(row chunk.Row) (ret types.Duration, isNull bool, err error) {
 	var condition int64
 	args, l := b.getArgs(), len(b.getArgs())
@@ -438,7 +449,7 @@ func (b *builtinCaseWhenJSONSig) Clone() builtinFunc {
 }
 
 // evalJSON evals a builtinCaseWhenJSONSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/case.html
+// See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#operator_case
 func (b *builtinCaseWhenJSONSig) evalJSON(row chunk.Row) (ret json.BinaryJSON, isNull bool, err error) {
 	var condition int64
 	args, l := b.getArgs(), len(b.getArgs())
@@ -472,6 +483,10 @@ func (c *ifFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	}
 	retTp := InferType4ControlFuncs(args[1].GetType(), args[2].GetType())
 	evalTps := retTp.EvalType()
+	args[0], err = wrapWithIsTrue(ctx, true, args[0], false)
+	if err != nil {
+		return nil, err
+	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, evalTps, types.ETInt, evalTps, evalTps)
 	retTp.Flag |= bf.tp.Flag
 	bf.tp = retTp

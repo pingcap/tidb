@@ -117,11 +117,12 @@ func (s *pkgTestSuite) TestHashRowContainer(c *C) {
 	}
 	rowContainer := s.testHashRowContainer(c, hashFunc, false)
 	c.Assert(rowContainer.stat.probeCollision, Equals, 0)
-	c.Assert(rowContainer.stat.buildTableElapse > 0, IsTrue)
+	// On windows time.Now() is imprecise, the elapse time may equal 0
+	c.Assert(rowContainer.stat.buildTableElapse >= 0, IsTrue)
 
 	rowContainer = s.testHashRowContainer(c, hashFunc, true)
 	c.Assert(rowContainer.stat.probeCollision, Equals, 0)
-	c.Assert(rowContainer.stat.buildTableElapse > 0, IsTrue)
+	c.Assert(rowContainer.stat.buildTableElapse >= 0, IsTrue)
 
 	h := &hashCollision{count: 0}
 	hashFuncCollision := func() hash.Hash64 {
@@ -130,7 +131,7 @@ func (s *pkgTestSuite) TestHashRowContainer(c *C) {
 	rowContainer = s.testHashRowContainer(c, hashFuncCollision, false)
 	c.Assert(h.count > 0, IsTrue)
 	c.Assert(rowContainer.stat.probeCollision > 0, IsTrue)
-	c.Assert(rowContainer.stat.buildTableElapse > 0, IsTrue)
+	c.Assert(rowContainer.stat.buildTableElapse >= 0, IsTrue)
 }
 
 func (s *pkgTestSuite) testHashRowContainer(c *C, hashFunc func() hash.Hash64, spill bool) *hashRowContainer {

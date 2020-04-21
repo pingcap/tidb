@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto/tls"
 	"math"
+	"net"
 	"testing"
 	"time"
 
@@ -26,9 +27,9 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
@@ -73,7 +74,22 @@ func (mebd *mockEtcdBackend) StartGCWorker() error {
 	panic("not implemented")
 }
 
+// ETCD use ip:port as unix socket address, however this address is invalid on windows.
+// We have to skip some of the test in such case.
+// https://github.com/etcd-io/etcd/blob/f0faa5501d936cd8c9f561bb9d1baca70eb67ab1/pkg/types/urls.go#L42
+func unixSocketAvailable() bool {
+	c, err := net.Listen("unix", "127.0.0.1:0")
+	if err == nil {
+		c.Close()
+		return true
+	}
+	return false
+}
+
 func TestInfo(t *testing.T) {
+	if !unixSocketAvailable() {
+		return
+	}
 	defer testleak.AfterTestT(t)()
 	ddlLease := 80 * time.Millisecond
 	s, err := mockstore.NewMockTikvStore()
@@ -148,9 +164,13 @@ func TestInfo(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-dom.ddl.SchemaSyncer().Done()
+	err = failpoint.Disable("github.com/pingcap/tidb/ddl/util/ErrorMockSessionDone")
+	if err != nil {
+		t.Fatal(err)
+	}
 	time.Sleep(15 * time.Millisecond)
 	syncerStarted := false
-	for i := 0; i < 200; i++ {
+	for i := 0; i < 1000; i++ {
 		if dom.SchemaValidator.IsStarted() {
 			syncerStarted = true
 			break
@@ -159,10 +179,6 @@ func TestInfo(t *testing.T) {
 	}
 	if !syncerStarted {
 		t.Fatal("start syncer failed")
-	}
-	err = failpoint.Disable("github.com/pingcap/tidb/ddl/util/ErrorMockSessionDone")
-	if err != nil {
-		t.Fatal(err)
 	}
 	// Make sure loading schema is normal.
 	cs := &ast.CharsetOpt{
@@ -212,6 +228,8 @@ func (msm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, boo
 }
 
 func (msm *mockSessionManager) Kill(cid uint64, query bool) {}
+
+func (msm *mockSessionManager) UpdateTLSConfig(cfg *tls.Config) {}
 
 func (*testSuite) TestT(c *C) {
 	defer testleak.AfterTest(c)()
@@ -435,6 +453,6 @@ func (*testSuite) TestSessionPool(c *C) {
 }
 
 func (*testSuite) TestErrorCode(c *C) {
-	c.Assert(int(ErrInfoSchemaExpired.ToSQLError().Code), Equals, mysql.ErrInfoSchemaExpired)
-	c.Assert(int(ErrInfoSchemaChanged.ToSQLError().Code), Equals, mysql.ErrInfoSchemaChanged)
+	c.Assert(int(ErrInfoSchemaExpired.ToSQLError().Code), Equals, errno.ErrInfoSchemaExpired)
+	c.Assert(int(ErrInfoSchemaChanged.ToSQLError().Code), Equals, errno.ErrInfoSchemaChanged)
 }
