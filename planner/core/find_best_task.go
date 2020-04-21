@@ -1244,10 +1244,12 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 }
 
 func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *property.StatsInfo) {
-	ts.filterCondition, copTask.rootTaskConds = SplitSelCondsWithVirtualColumn(ts.filterCondition)
-	var newRootConds []expression.Expression
-	ts.filterCondition, newRootConds = expression.PushDownExprs(ts.ctx.GetSessionVars().StmtCtx, ts.filterCondition, ts.ctx.GetClient(), ts.StoreType)
-	copTask.rootTaskConds = append(copTask.rootTaskConds, newRootConds...)
+	for i := range ts.filterCondition {
+		if expression.ContainVirtualColumn(ts.filterCondition[i : i+1]) {
+			ts.filterCondition[i] = expression.UnfoldVirtualColumn(ts.filterCondition[i].Clone())
+		}
+	}
+	ts.filterCondition, copTask.rootTaskConds = expression.PushDownExprs(ts.ctx.GetSessionVars().StmtCtx, ts.filterCondition, ts.ctx.GetClient(), ts.StoreType)
 
 	// Add filter condition to table plan now.
 	sessVars := ts.ctx.GetSessionVars()

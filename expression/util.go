@@ -842,7 +842,7 @@ func GetUint64FromConstant(expr Expression) (uint64, bool, bool) {
 	return 0, false, false
 }
 
-// ContainVirtualColumn checks if the expressions contain a virtual column
+// ContainVirtualColumn checks if the expressions contain a virtual column.
 func ContainVirtualColumn(exprs []Expression) bool {
 	for _, expr := range exprs {
 		switch v := expr.(type) {
@@ -858,6 +858,24 @@ func ContainVirtualColumn(exprs []Expression) bool {
 	}
 	return false
 }
+
+// UnfoldVirtualColumn expand all virtual columns to their expressions.
+// Pass cloned expression if you don't want to modify the original expressions.
+func UnfoldVirtualColumn(expr Expression) Expression {
+	switch v := expr.(type) {
+	case *Column:
+		if v.VirtualExpr != nil {
+			return UnfoldVirtualColumn(v.VirtualExpr)
+		} 
+	case *ScalarFunction:
+		args := v.GetArgs()
+		for i := range args {
+			args[i] = UnfoldVirtualColumn(args[i])
+		}
+	}
+	return expr
+}
+
 
 // ContainMutableConst checks if the expressions contain a lazy constant.
 func ContainMutableConst(ctx sessionctx.Context, exprs []Expression) bool {
