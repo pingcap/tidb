@@ -551,3 +551,39 @@ func (s *testSuite1) TestExtractTopN(c *C) {
 	item = idxStats.CMSketch.TopN()[0]
 	c.Assert(item.Count, Equals, uint64(11))
 }
+
+func (s *testSuite1) TestHashInTopN(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b float, c decimal(30, 10), d varchar(20))")
+	tk.MustExec(`insert into t values
+				(1, 1.1, 11.1, "0110"),
+				(2, 2.2, 22.2, "0110"),
+				(3, 3.3, 33.3, "0110"),
+				(4, 4.4, 44.4, "0440")`)
+	for i := 0; i < 5; i++ {
+		tk.MustExec("insert into t select * from t")
+	}
+	// get stats of normal analyze
+	tk.MustExec("analyze table t")
+	is := s.dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo := tbl.Meta()
+	tblStats1 := s.dom.StatsHandle().GetTableStats(tblInfo).Copy()
+	// get stats of fast analyze
+	tk.MustExec("set @@tidb_enable_fast_analyze = 1")
+	tk.MustExec("analyze table t")
+	tblStats2 := s.dom.StatsHandle().GetTableStats(tblInfo).Copy()
+	// check the hash for topn
+	for _, col := range tblInfo.Columns {
+		topn1 := tblStats1.Columns[col.ID].TopN()
+		cm2 := tblStats2.Columns[col.ID].CMSketch
+		for h1, topnMeta1 := range topn1 {
+			count2, exists := cm2.QueryTopN(uint64(h1), topnMeta1.GetH2(), topnMeta1.Data)
+			c.Assert(exists, Equals, true)
+			c.Assert(count2, Equals, topnMeta1.Count)
+		}
+	}
+}

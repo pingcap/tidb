@@ -52,6 +52,11 @@ type TopNMeta struct {
 	Count uint64
 }
 
+// GetH2 get the the second part of `murmur3.Sum128()`, just for test.
+func (t *TopNMeta) GetH2() uint64 {
+	return t.h2
+}
+
 // NewCMSketch returns a new CM sketch.
 func NewCMSketch(d, w int32) *CMSketch {
 	tbl := make([][]uint32, d)
@@ -180,7 +185,8 @@ func (c *CMSketch) updateTopNWithDelta(h1, h2 uint64, d []byte, delta uint64) bo
 	return false
 }
 
-func (c *CMSketch) queryTopN(h1, h2 uint64, d []byte) (uint64, bool) {
+// QueryTopN returns the results for (h1, h2) in murmur3.Sum128(), if not exists, return (0, false).
+func (c *CMSketch) QueryTopN(h1, h2 uint64, d []byte) (uint64, bool) {
 	if c.topN == nil {
 		return 0, false
 	}
@@ -216,7 +222,7 @@ func (c *CMSketch) considerDefVal(cnt uint64) bool {
 // updateValueBytes updates value of d to count.
 func (c *CMSketch) updateValueBytes(d []byte, count uint64) {
 	h1, h2 := murmur3.Sum128(d)
-	if oriCount, ok := c.queryTopN(h1, h2, d); ok {
+	if oriCount, ok := c.QueryTopN(h1, h2, d); ok {
 		deltaCount := count - oriCount
 		c.updateTopNWithDelta(h1, h2, d, deltaCount)
 	}
@@ -264,7 +270,7 @@ func (c *CMSketch) queryValue(sc *stmtctx.StatementContext, val types.Datum) (ui
 // QueryBytes is used to query the count of specified bytes.
 func (c *CMSketch) QueryBytes(d []byte) uint64 {
 	h1, h2 := murmur3.Sum128(d)
-	if count, ok := c.queryTopN(h1, h2, d); ok {
+	if count, ok := c.QueryTopN(h1, h2, d); ok {
 		return count
 	}
 	return c.queryHashValue(h1, h2)
