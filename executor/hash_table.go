@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"hash"
 	"hash/fnv"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -91,7 +92,7 @@ type hashRowContainer struct {
 	stat hashStatistic
 
 	// hashMap stores the map of hashKey and RowPtr
-	hashTable *unsafeHashTable
+	hashTable baseHashTable
 
 	rowContainer *chunk.RowContainer
 }
@@ -113,7 +114,7 @@ func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContex
 	c := &hashRowContainer{
 		sc:           sCtx.GetSessionVars().StmtCtx,
 		hCtx:         hCtx,
-		hashTable:    newUnsafeHashTable(estCount, false),
+		hashTable:    NewCMapHT(estCount),
 		rowContainer: rc,
 	}
 
@@ -306,8 +307,8 @@ type baseHashTable interface {
 // A given key can store multiple values.
 // It is not thread-safe, should only be used in one goroutine.
 type unsafeHashTable struct {
-	entryStore *entryStore
 	hashMap    map[uint64]*entry
+	entryStore *entryStore
 	length     uint64
 	keepOrder  bool
 }
@@ -315,32 +316,32 @@ type unsafeHashTable struct {
 // newUnsafeHashTable creates a new unsafeHashTable. estCount means the estimated size of the hashMap.
 // If unknown, set it to 0.
 func newUnsafeHashTable(estCount int, keepOrder bool) *unsafeHashTable {
-	m := new(unsafeHashTable)
-	m.hashMap = make(map[uint64]*entry, estCount)
-	m.entryStore = newEntryStore()
-	m.keepOrder = keepOrder
-	return m
+	ht := new(unsafeHashTable)
+	ht.hashMap = make(map[uint64]*entry, estCount)
+	ht.entryStore = newEntryStore()
+	ht.keepOrder = keepOrder
+	return ht
 }
 
 // Put puts the key/rowPtr pairs to the unsafeHashTable, multiple rowPtrs are stored in a list.
-func (m *unsafeHashTable) Put(hashKey uint64, rowPtr chunk.RowPtr) {
-	oldEntry := m.hashMap[hashKey]
-	newEntry := m.entryStore.GetStore()
+func (ht *unsafeHashTable) Put(hashKey uint64, rowPtr chunk.RowPtr) {
+	oldEntry := ht.hashMap[hashKey]
+	newEntry := ht.entryStore.GetStore()
 	newEntry.ptr = rowPtr
 	newEntry.next = oldEntry
-	m.hashMap[hashKey] = newEntry
-	m.length++
+	ht.hashMap[hashKey] = newEntry
+	ht.length++
 }
 
 // Get gets the values of the "key" and appends them to "values".
-func (m *unsafeHashTable) Get(hashKey uint64) (rowPtrs []chunk.RowPtr) {
-	entryAddr := m.hashMap[hashKey]
+func (ht *unsafeHashTable) Get(hashKey uint64) (rowPtrs []chunk.RowPtr) {
+	entryAddr := ht.hashMap[hashKey]
 	for entryAddr != nil {
 		rowPtrs = append(rowPtrs, entryAddr.ptr)
 		entryAddr = entryAddr.next
 	}
 	// Keep the order of input.
-	if m.keepOrder {
+	if ht.keepOrder {
 		for i := 0; i < len(rowPtrs)/2; i++ {
 			j := len(rowPtrs) - 1 - i
 			rowPtrs[i], rowPtrs[j] = rowPtrs[j], rowPtrs[i]
@@ -351,4 +352,47 @@ func (m *unsafeHashTable) Get(hashKey uint64) (rowPtrs []chunk.RowPtr) {
 
 // Len returns the number of rowPtrs in the unsafeHashTable, the number of keys may be less than Len
 // if the same key is put more than once.
-func (m *unsafeHashTable) Len() uint64 { return m.length }
+func (ht *unsafeHashTable) Len() uint64 { return ht.length }
+
+type ConcurrentMapHashTable struct {
+	hashMap    concurrentMap
+	entryStore *entryStore
+	length     uint64
+}
+
+func NewCMapHT(estCount int) *ConcurrentMapHashTable {
+	ht := new(ConcurrentMapHashTable)
+	ht.hashMap = NewConcMap()
+	ht.entryStore = newEntryStore()
+	ht.length = 0
+	return ht
+}
+
+func (ht *ConcurrentMapHashTable) Len() uint64 {
+	return ht.length
+}
+
+func (ht *ConcurrentMapHashTable) Put(hashKey uint64, rowPtr chunk.RowPtr) {
+	cb := func(exists bool, valueInMap, newValue *entry) *entry {
+		if !exists {
+			return newValue
+		}
+		nv := newValue
+		nv.next = valueInMap
+		return nv
+	}
+	newEntry := ht.entryStore.GetStore()
+	newEntry.ptr = rowPtr
+	newEntry.next = nil
+	ht.hashMap.Upsert(hashKey, newEntry, cb)
+	atomic.AddUint64(&ht.length, 1)
+}
+
+func (ht *ConcurrentMapHashTable) Get(hashKey uint64) (rowPtrs []chunk.RowPtr) {
+	entryAddr, _ := ht.hashMap.Get(hashKey)
+	for entryAddr != nil {
+		rowPtrs = append(rowPtrs, entryAddr.ptr)
+		entryAddr = entryAddr.next
+	}
+	return
+}
