@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -1166,7 +1167,7 @@ func GetClusterServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 
 	type retriever func(ctx sessionctx.Context) ([]ServerInfo, error)
 	var servers []ServerInfo
-	for _, r := range []retriever{GetTiDBServerInfo, GetPDServerInfo, GetTiKVServerInfo} {
+	for _, r := range []retriever{GetTiDBServerInfo, GetPDServerInfo, GetTiKVServerInfo, GetTiFlashServerInfo} {
 		nodes, err := r(ctx)
 		if err != nil {
 			return nil, err
@@ -1287,6 +1288,16 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	return servers, nil
 }
 
+func isTiFlashStore(store *metapb.Store) bool {
+	isTiFlash := false
+	for _, label := range store.Labels {
+		if label.GetKey() == "engine" && label.GetValue() == "tiflash" {
+			isTiFlash = true
+		}
+	}
+	return isTiFlash
+}
+
 // GetTiKVServerInfo returns all TiKV nodes information of cluster
 func GetTiKVServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	store := ctx.GetStore()
@@ -1305,15 +1316,48 @@ func GetTiKVServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	}
 	var servers []ServerInfo
 	for _, store := range stores {
-		tp := tikv.GetStoreTypeByMeta(store).Name()
-		servers = append(servers, ServerInfo{
-			ServerType:     tp,
-			Address:        store.Address,
-			StatusAddr:     store.StatusAddress,
-			Version:        store.Version,
-			GitHash:        store.GitHash,
-			StartTimestamp: store.StartTimestamp,
-		})
+		if !isTiFlashStore(store) {
+			tp := tikv.GetStoreTypeByMeta(store).Name()
+			servers = append(servers, ServerInfo{
+				ServerType:     tp,
+				Address:        store.Address,
+				StatusAddr:     store.StatusAddress,
+				Version:        store.Version,
+				GitHash:        store.GitHash,
+				StartTimestamp: store.StartTimestamp,
+			})
+		}
+	}
+	return servers, nil
+}
+
+func GetTiFlashServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
+	store := ctx.GetStore()
+	tikvStore, ok := store.(tikv.Storage)
+	if !ok {
+		return nil, errors.Errorf("%T is not an TiKV store instance", store)
+	}
+	pdClient := tikvStore.GetRegionCache().PDClient()
+	if pdClient == nil {
+		return nil, errors.New("pd unavailable")
+	}
+	stores, err := pdClient.GetAllStores(context.Background())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	var servers []ServerInfo
+	for _, store := range stores {
+		if isTiFlashStore(store) {
+			tp := "tiflash"
+			servers = append(servers, ServerInfo{
+				ServerType:     tp,
+				Address:        store.Address,
+				StatusAddr:     store.StatusAddress,
+				Version:        store.Version,
+				GitHash:        store.GitHash,
+				StartTimestamp: store.StartTimestamp,
+			})
+		}
 	}
 	return servers, nil
 }
