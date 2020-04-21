@@ -160,7 +160,7 @@ func (ls *LogicalSort) PruneColumns(parentUsedCols []*expression.Column) error {
 	for i := len(ls.ByItems) - 1; i >= 0; i-- {
 		cols := expression.ExtractColumns(ls.ByItems[i].Expr)
 		if len(cols) == 0 {
-			if !ls.ByItems[i].Expr.ConstItem() {
+			if !expression.IsRuntimeConstExpr(ls.ByItems[i].Expr) {
 				continue
 			}
 			ls.ByItems = append(ls.ByItems[:i], ls.ByItems[i+1:]...)
