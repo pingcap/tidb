@@ -192,6 +192,19 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 // and sends the chunks to multiple channels which will be read by multiple join workers.
 func (e *HashJoinExec) fetchProbeSideChunks(ctx context.Context) {
 	hasWaitedForBuild := false
+	if !e.probeIsOpen {
+		emptyBuild, buildErr := e.wait4BuildSide()
+		if buildErr != nil {
+			e.joinResultCh <- &hashjoinWorkerResult{
+				err: buildErr,
+			}
+			return
+		} else if emptyBuild {
+			return
+		}
+		hasWaitedForBuild = true
+	}
+
 	for {
 		if e.finished.Load().(bool) {
 			return
@@ -212,19 +225,15 @@ func (e *HashJoinExec) fetchProbeSideChunks(ctx context.Context) {
 			required := int(atomic.LoadInt64(&e.requiredRows))
 			probeSideResult.SetRequiredRows(required, e.maxChunkSize)
 		}
-
-		if e.probeIsOpen {
-			err := Next(ctx, e.probeSideExec, probeSideResult)
-			if err != nil {
-				e.joinResultCh <- &hashjoinWorkerResult{
-					err: err,
-				}
-				return
+		err := Next(ctx, e.probeSideExec, probeSideResult)
+		if err != nil {
+			e.joinResultCh <- &hashjoinWorkerResult{
+				err: err,
 			}
+			return
 		}
-
 		if !hasWaitedForBuild {
-			if e.probeIsOpen && probeSideResult.NumRows() == 0 && !e.useOuterToBuild {
+			if probeSideResult.NumRows() == 0 && !e.useOuterToBuild {
 				e.finished.Store(true)
 				return
 			}
@@ -238,16 +247,6 @@ func (e *HashJoinExec) fetchProbeSideChunks(ctx context.Context) {
 				return
 			}
 			hasWaitedForBuild = true
-		}
-
-		if !e.probeIsOpen {
-			err := Next(ctx, e.probeSideExec, probeSideResult)
-			if err != nil {
-				e.joinResultCh <- &hashjoinWorkerResult{
-					err: err,
-				}
-				return
-			}
 		}
 
 		if probeSideResult.NumRows() == 0 {
@@ -794,6 +793,7 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 	return nil
 }
 
+// PutChunkToBloom puts hash values in hctx to bloom filter.
 func (e *HashJoinExec) PutChunkToBloom(hctx *hashContext) {
 	for _, hash := range hctx.hashVals {
 		e.bloomFilter.LazyInsertU64(hash.Sum64())

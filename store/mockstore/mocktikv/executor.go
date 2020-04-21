@@ -500,7 +500,11 @@ func (e *selectionExec) Next(ctx context.Context) (value [][]byte, err error) {
 
 		if e.bloomFilter != nil {
 			for i := range e.bloomFilter {
-				match = match && evalBoolForBloom(e.evalCtx.sc, e.bloomFilter[i], e.joinKeyIdx[i], e.row)
+				ok, err := evalBoolForBloom(e.evalCtx.sc, e.bloomFilter[i], e.joinKeyIdx[i], e.row)
+				if err != nil {
+					return nil, err
+				}
+				match = match && ok
 			}
 		}
 		if err != nil {
@@ -512,7 +516,7 @@ func (e *selectionExec) Next(ctx context.Context) (value [][]byte, err error) {
 	}
 }
 
-func evalBoolForBloom(ctx *stmtctx.StatementContext, bloom *bloom.Filter, joinKeyIdx []int64, row []types.Datum) bool {
+func evalBoolForBloom(ctx *stmtctx.StatementContext, bloom *bloom.Filter, joinKeyIdx []int64, row []types.Datum) (bool, error) {
 	hash := make([]hash2.Hash64, 0, 1)
 	hash = append(hash, fnv.New64())
 	b := make([]byte, 1)
@@ -523,15 +527,18 @@ func evalBoolForBloom(ctx *stmtctx.StatementContext, bloom *bloom.Filter, joinKe
 		if row[idx].Kind() == types.KindInt64 {
 			tp = types.NewFieldType(mysql.TypeLonglong)
 		} else {
-			return true
+			return true, nil
 		}
-		_ = codec.HashChunkSelected(ctx, hash, r.Chunk(), tp, int(idx), b, isnull, nil)
+		err := codec.HashChunkSelected(ctx, hash, r.Chunk(), tp, int(idx), b, isnull, nil)
+		if err != nil {
+			return false, err
+		}
 	}
 
 	if bloom.ProbeU64(hash[0].Sum64()) {
-		return true
+		return true, nil
 	}
-	return false
+	return false, nil
 }
 
 type topNExec struct {

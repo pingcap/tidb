@@ -124,7 +124,10 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 				exec.Selection.Bloom = append(exec.Selection.Bloom, &tipb.BloomFilter{BitSet: e.bloomFilters[i].BitSet, ColIdx: e.joinKeyIdx[i]})
 			}
 		} else {
-			selExec := &tipb.Selection{}
+			condition := []expression.Expression{expression.NewOne()}
+			selExec := &tipb.Selection{
+				Conditions: expression.ExpressionsToPBList(e.ctx.GetSessionVars().StmtCtx, condition, e.ctx.GetClient()),
+			}
 			exec := &tipb.Executor{Tp: tipb.ExecType_TypeSelection, Selection: selExec}
 			for i := range e.bloomFilters {
 				if e.bloomFilters[i] == nil {
