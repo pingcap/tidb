@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -61,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/util/signal"
 	"github.com/pingcap/tidb/util/storeutil"
 	"github.com/pingcap/tidb/util/sys/linux"
+	storageSys "github.com/pingcap/tidb/util/sys/storage"
 	"github.com/pingcap/tidb/util/systimemon"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
@@ -167,6 +169,7 @@ func main() {
 	if config.GetGlobalConfig().OOMUseTmpStorage {
 		config.GetGlobalConfig().UpdateTempStoragePath()
 		initializeTempDir()
+		checkTempStorageQuota()
 	}
 	setGlobalVars()
 	setCPUAffinity()
@@ -231,8 +234,7 @@ func initializeTempDir() {
 	}
 }
 
-<<<<<<< HEAD
-=======
+
 func checkTempStorageQuota() {
 	// check capacity and the quota when OOMUseTmpStorage is enabled
 	c := config.GetGlobalConfig()
@@ -248,7 +250,6 @@ func checkTempStorageQuota() {
 	}
 }
 
->>>>>>> b2f5921... config: Unify the style for storage quota config name (#16431)
 func setCPUAffinity() {
 	if affinityCPU == nil || len(*affinityCPU) == 0 {
 		return
@@ -589,6 +590,7 @@ func setGlobalVars() {
 	tikv.RegionCacheTTLSec = int64(cfg.TiKVClient.RegionCacheTTL)
 	domainutil.RepairInfo.SetRepairMode(cfg.RepairMode)
 	domainutil.RepairInfo.SetRepairTableList(cfg.RepairTableList)
+	executor.GlobalDiskUsageTracker.SetBytesLimit(config.GetGlobalConfig().TempStorageQuota)
 }
 
 func setupLog() {
