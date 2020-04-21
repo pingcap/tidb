@@ -307,22 +307,11 @@ func (st *TxnState) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 	return val, nil
 }
 
-// GetFromMemBuffer implements the MemBufferRetriever interface.
-func (st *TxnState) GetFromMemBuffer(ctx context.Context, k kv.Key) ([]byte, error) {
-	val, err := st.stmtBufGet(ctx, k)
-	if kv.IsErrNotFound(err) {
-		_, err = st.Transaction.GetMemBuffer().Get(ctx, k)
-		if kv.IsErrNotFound(err) {
-			return nil, err
-		}
+func (st *TxnState) GetMemBuffer() kv.MemBuffer {
+	if st.stmtBuf == nil || st.stmtBuf.Size() == 0 {
+		return st.Transaction.GetMemBuffer()
 	}
-	if err != nil {
-		return nil, err
-	}
-	if len(val) == 0 {
-		return nil, kv.ErrNotExist
-	}
-	return val, nil
+	return kv.NewBufferStoreFrom(st.Transaction.GetMemBuffer(), st.stmtBuf)
 }
 
 // BatchGet overrides the Transaction interface.

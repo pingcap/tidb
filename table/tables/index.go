@@ -293,11 +293,7 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 		// If the index kv was untouched(unchanged), and the key/value already exists in mem-buffer,
 		// should not overwrite the key with un-commit flag.
 		// So if the key exists, just do nothing and return.
-		if memTxn, ok := txn.(kv.MemBufferRetriever); ok {
-			_, err = memTxn.GetFromMemBuffer(ctx, key)
-		} else {
-			_, err = txn.GetMemBuffer().Get(ctx, key)
-		}
+		_, err = txn.GetMemBuffer().Get(ctx, key)
 		if err == nil {
 			return 0, nil
 		}
