@@ -318,3 +318,9 @@ func (s *testBootstrapSuite) TestBootstrapInitExpensiveQueryHandle(c *C) {
 	dom.InitExpensiveQueryHandle()
 	c.Assert(dom.ExpensiveQueryHandle(), NotNil)
 }
+
+func (s *testBootstrapSuite) TestCurrentVerEqualUpgradeVer(c *C) {
+	for ver := range bootstrapVersion {
+		c.Assert(ver <= currentBootstrapVersion, Equals, true)
+	}
+}

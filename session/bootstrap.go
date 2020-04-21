@@ -381,6 +381,8 @@ const (
 	version43 = 43
 )
 
+var bootstrapVersion map[int64]func(Session)
+
 func checkBootstrapped(s Session) (bool, error) {
 	//  Check if system db exists.
 	_, err := s.Execute(context.Background(), fmt.Sprintf("USE %s;", mysql.SystemDB))
@@ -443,172 +445,15 @@ func upgrade(s Session) {
 		return
 	}
 	// Do upgrade works then update bootstrap version.
-	if ver < version2 {
-		upgradeToVer2(s)
-		ver = version2
-	}
-	if ver < version3 {
-		upgradeToVer3(s)
-	}
-	if ver < version4 {
-		upgradeToVer4(s)
-	}
-
-	if ver < version5 {
-		upgradeToVer5(s)
-	}
-
-	if ver < version6 {
-		upgradeToVer6(s)
-	}
-
-	if ver < version7 {
-		upgradeToVer7(s)
-	}
-
-	if ver < version8 {
-		upgradeToVer8(s)
-	}
-
-	if ver < version9 {
-		upgradeToVer9(s)
-	}
-
-	if ver < version10 {
-		upgradeToVer10(s)
-	}
-
-	if ver < version11 {
-		upgradeToVer11(s)
-	}
-
-	if ver < version12 {
-		upgradeToVer12(s)
-	}
-
-	if ver < version13 {
-		upgradeToVer13(s)
-	}
-
-	if ver < version14 {
-		upgradeToVer14(s)
-	}
-
-	if ver < version15 {
-		upgradeToVer15(s)
-	}
-
-	if ver < version16 {
-		upgradeToVer16(s)
-	}
-
-	if ver < version17 {
-		upgradeToVer17(s)
-	}
-
-	if ver < version18 {
-		upgradeToVer18(s)
-	}
-
-	if ver < version19 {
-		upgradeToVer19(s)
-	}
-
-	if ver < version20 {
-		upgradeToVer20(s)
-	}
-
-	if ver < version21 {
-		upgradeToVer21(s)
-	}
-
-	if ver < version22 {
-		upgradeToVer22(s)
-	}
-
-	if ver < version23 {
-		upgradeToVer23(s)
-	}
-
-	if ver < version24 {
-		upgradeToVer24(s)
-	}
-
-	if ver < version25 {
-		upgradeToVer25(s)
-	}
-
-	if ver < version26 {
-		upgradeToVer26(s)
-	}
-
-	if ver < version27 {
-		upgradeToVer27(s)
-	}
-
-	if ver < version28 {
-		upgradeToVer28(s)
+	for version, upgradeFunc := range bootstrapVersion {
+		if ver < version {
+			upgradeFunc(s)
+		}
 	}
 
 	// upgradeToVer29 only need to be run when the current version is 28.
 	if ver == version28 {
 		upgradeToVer29(s)
-	}
-
-	if ver < version30 {
-		upgradeToVer30(s)
-	}
-
-	if ver < version31 {
-		upgradeToVer31(s)
-	}
-
-	if ver < version32 {
-		upgradeToVer32(s)
-	}
-
-	if ver < version33 {
-		upgradeToVer33(s)
-	}
-
-	if ver < version34 {
-		upgradeToVer34(s)
-	}
-
-	if ver < version35 {
-		upgradeToVer35(s)
-	}
-
-	if ver < version36 {
-		upgradeToVer36(s)
-	}
-
-	if ver < version37 {
-		upgradeToVer37(s)
-	}
-
-	if ver < version38 {
-		upgradeToVer38(s)
-	}
-
-	if ver < version39 {
-		upgradeToVer39(s)
-	}
-
-	if ver < version40 {
-		upgradeToVer40(s)
-	}
-
-	if ver < version41 {
-		upgradeToVer41(s)
-	}
-
-	if ver < version42 {
-		upgradeToVer42(s)
-	}
-
-	if ver < version43 {
-		upgradeToVer43(s)
 	}
 
 	updateBootstrapVer(s)
@@ -1145,4 +990,50 @@ func oldPasswordUpgrade(pass string) (string, error) {
 	hash2 := auth.Sha1Hash(hash1)
 	newpass := fmt.Sprintf("*%X", hash2)
 	return newpass, nil
+}
+
+func init() {
+	bootstrapVersion = map[int64]func(Session) {
+		version2: upgradeToVer2,
+		version3: upgradeToVer3,
+		version4: upgradeToVer4,
+		version5: upgradeToVer5,
+		version6: upgradeToVer6,
+		version7: upgradeToVer7,
+		version8: upgradeToVer8,
+		version9: upgradeToVer9,
+		version10: upgradeToVer10,
+		version11: upgradeToVer11,
+		version12: upgradeToVer12,
+		version13: upgradeToVer13,
+		version14: upgradeToVer14,
+		version15: upgradeToVer15,
+		version16: upgradeToVer16,
+		version17: upgradeToVer17,
+		version18: upgradeToVer18,
+		version19: upgradeToVer19,
+		version20: upgradeToVer20,
+		version21: upgradeToVer21,
+		version22: upgradeToVer22,
+		version23: upgradeToVer23,
+		version24: upgradeToVer24,
+		version25: upgradeToVer25,
+		version26: upgradeToVer26,
+		version27: upgradeToVer27,
+		version28: upgradeToVer28,
+		version30: upgradeToVer30,
+		version31: upgradeToVer31,
+		version32: upgradeToVer32,
+		version33: upgradeToVer33,
+		version34: upgradeToVer34,
+		version35: upgradeToVer35,
+		version36: upgradeToVer36,
+		version37: upgradeToVer37,
+		version38: upgradeToVer38,
+		version39: upgradeToVer39,
+		version40: upgradeToVer40,
+		version41: upgradeToVer41,
+		version42: upgradeToVer42,
+		version43: upgradeToVer43,
+	}
 }
