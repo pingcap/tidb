@@ -979,7 +979,7 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 	}
 	var sVal string
 	var err error
-	sVal, err = variable.ValidateSetSystemVar(s.sessionVars, name, value)
+	sVal, err = variable.ValidateSetSystemVar(s.sessionVars, name, value, variable.ScopeGlobal)
 	if err != nil {
 		return err
 	}
@@ -1913,7 +1913,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = version42
+	currentBootstrapVersion = version43
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
