@@ -22,6 +22,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"runtime/debug"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -489,10 +490,15 @@ func upgrade(s Session) {
 		return
 	}
 	// Do upgrade works then update bootstrap version.
-	for version, upgradeFunc := range bootstrapVersion {
+	versionsUpgrade := make([]int64, 0, len(bootstrapVersion))
+	for version := range bootstrapVersion {
 		if ver < version {
-			upgradeFunc(s)
+			versionsUpgrade = append(versionsUpgrade, version)
 		}
+	}
+	sort.Slice(versionsUpgrade, func(i, j int) bool { return versionsUpgrade[i] < versionsUpgrade[j] })
+	for _, verUpgrade := range versionsUpgrade {
+		bootstrapVersion[verUpgrade](s)
 	}
 
 	// upgradeToVer29 only need to be run when the current version is 28.
