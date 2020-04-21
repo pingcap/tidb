@@ -139,6 +139,8 @@ const (
 
 	gcAutoConcurrencyKey     = "tikv_gc_auto_concurrency"
 	gcDefaultAutoConcurrency = true
+
+	gcWorkerServiceSafePointID = "gc_worker"
 )
 
 var gcSafePointCacheInterval = tikv.GcSafePointCacheInterval
@@ -479,7 +481,7 @@ func (w *GCWorker) calculateNewSafePoint(ctx context.Context, now time.Time) (*t
 	safePoint := w.calSafePointByMinStartTS(now.Add(-*lifeTime))
 
 	safePointValue := oracle.ComposeTS(oracle.GetPhysical(safePoint), 0)
-	safePointValue, err = w.setTiDBServiceSafePoint(ctx, safePointValue)
+	safePointValue, err = w.setGCWorkerServiceSafePoint(ctx, safePointValue)
 	safePoint = oracle.GetTimeFromTS(safePointValue)
 
 	if err != nil {
@@ -498,13 +500,11 @@ func (w *GCWorker) calculateNewSafePoint(ctx context.Context, now time.Time) (*t
 	return &safePoint, safePointValue, nil
 }
 
-// setTiDBServiceSafePoint sets the given safePoint as TiDB's service safePoint to PD, and returns the current minimal
+// setGCWorkerServiceSafePoint sets the given safePoint as TiDB's service safePoint to PD, and returns the current minimal
 // service safePoint among all services.
-func (w *GCWorker) setTiDBServiceSafePoint(ctx context.Context, safePoint uint64) (uint64, error) {
+func (w *GCWorker) setGCWorkerServiceSafePoint(ctx context.Context, safePoint uint64) (uint64, error) {
 	// Sets TTL to 0 to make it permanently valid. TiDB uses empty serviceID.
-	// TODO: Should we use something like "gc_worker" ad the service name here which represents anything that is
-	// managing GC?
-	minSafePoint, err := w.pdClient.UpdateServiceGCSafePoint(ctx, "", math.MaxInt64, safePoint)
+	minSafePoint, err := w.pdClient.UpdateServiceGCSafePoint(ctx, gcWorkerServiceSafePointID, math.MaxInt64, safePoint)
 	if err != nil {
 		logutil.Logger(ctx).Error("[gc worker] failed to update service safe point",
 			zap.String("uuid", w.uuid),
@@ -1705,7 +1705,12 @@ func RunGCJob(ctx context.Context, s tikv.Storage, pd pd.Client, safePoint uint6
 		return errors.Errorf("[gc worker] gc concurrency should greater than 0, current concurrency: %v", concurrency)
 	}
 
-	err := gcWorker.resolveLocks(ctx, safePoint, concurrency, false)
+	safePoint, err := gcWorker.setGCWorkerServiceSafePoint(ctx, safePoint)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = gcWorker.resolveLocks(ctx, safePoint, concurrency, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1716,12 +1721,6 @@ func RunGCJob(ctx context.Context, s tikv.Storage, pd pd.Client, safePoint uint6
 	}
 	// Sleep to wait for all other tidb instances update their safepoint cache.
 	time.Sleep(gcSafePointCacheInterval)
-
-	safePoint, err = gcWorker.setTiDBServiceSafePoint(ctx, safePoint)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	err = gcWorker.doGC(ctx, safePoint, concurrency)
 	if err != nil {
 		return errors.Trace(err)
@@ -1739,7 +1738,12 @@ func RunDistributedGCJob(ctx context.Context, s tikv.Storage, pd pd.Client, safe
 		pdClient: pd,
 	}
 
-	err := gcWorker.resolveLocks(ctx, safePoint, concurrency, false)
+	safePoint, err := gcWorker.setGCWorkerServiceSafePoint(ctx, safePoint)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = gcWorker.resolveLocks(ctx, safePoint, concurrency, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1751,11 +1755,6 @@ func RunDistributedGCJob(ctx context.Context, s tikv.Storage, pd pd.Client, safe
 	}
 	// Sleep to wait for all other tidb instances update their safepoint cache.
 	time.Sleep(gcSafePointCacheInterval)
-
-	safePoint, err = gcWorker.setTiDBServiceSafePoint(ctx, safePoint)
-	if err != nil {
-		return errors.Trace(err)
-	}
 
 	err = gcWorker.uploadSafePointToPD(ctx, safePoint)
 	if err != nil {

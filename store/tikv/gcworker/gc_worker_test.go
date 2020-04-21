@@ -163,7 +163,7 @@ func (s *testGCWorkerSuite) mustRemoveServiceGCSafePoint(c *C, serviceID string,
 }
 
 func (s *testGCWorkerSuite) mustSetTiDBServiceSafePoint(c *C, safePoint, expectedMinSafePoint uint64) {
-	minSafePoint, err := s.gcWorker.setTiDBServiceSafePoint(context.Background(), safePoint)
+	minSafePoint, err := s.gcWorker.setGCWorkerServiceSafePoint(context.Background(), safePoint)
 	c.Assert(err, IsNil)
 	c.Assert(minSafePoint, Equals, expectedMinSafePoint)
 }
