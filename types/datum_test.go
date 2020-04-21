@@ -64,8 +64,15 @@ func (ts *testDatumSuite) TestToBool(c *C) {
 	testDatumToBool(c, int(0), 0)
 	testDatumToBool(c, int64(0), 0)
 	testDatumToBool(c, uint64(0), 0)
+<<<<<<< HEAD
 	testDatumToBool(c, float32(0.1), 0)
 	testDatumToBool(c, float64(0.1), 0)
+=======
+	testDatumToBool(c, float32(0.1), 1)
+	testDatumToBool(c, float64(0.1), 1)
+	testDatumToBool(c, float64(0.5), 1)
+	testDatumToBool(c, float64(0.499), 1)
+>>>>>>> 94011e6... expression: fix the issue that incorrect result for query that uses an AND operator on floats (#15927)
 	testDatumToBool(c, "", 0)
 	testDatumToBool(c, "0.1", 0)
 	testDatumToBool(c, []byte{}, 0)
@@ -86,7 +93,7 @@ func (ts *testDatumSuite) TestToBool(c *C) {
 	ft.Decimal = 5
 	v, err := Convert(0.1415926, ft)
 	c.Assert(err, IsNil)
-	testDatumToBool(c, v, 0)
+	testDatumToBool(c, v, 1)
 	d := NewDatum(&invalidMockType{})
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
