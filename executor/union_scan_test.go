@@ -317,4 +317,14 @@ func (s *testSuite7) TestForUpdateUntouchedIndex(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a varchar(10),b int, unique index(a))")
 	checkFunc()
+
+	// Test for on duplicate update also conflict too.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int,b int, unique index(a))")
+	tk.MustExec("begin")
+	_, err := tk.Exec("insert into t values (1, 1), (2, 2), (1, 3) on duplicate key update a = a + 1;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '2' for key 'a'")
+	tk.MustExec("commit")
+	tk.MustExec("admin check table t")
 }
