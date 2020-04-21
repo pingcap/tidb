@@ -86,10 +86,12 @@ type HashJoinExec struct {
 	joinWorkerWaitGroup sync.WaitGroup
 	finished            atomic.Value
 
+	// bloomFilter
 	bloomFilter      *bloom.Filter
 	bloomFilters     *[]*bloom.Filter
 	joinKeysForMulti *[][]int64
 	indexChange      []int64
+	probeIsOpen      bool
 }
 
 // probeChkResource stores the result of the join probe side fetch worker,
@@ -155,8 +157,15 @@ func (e *HashJoinExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *HashJoinExec) Open(ctx context.Context) error {
-	if err := e.buildSideExec.Open(ctx); err != nil {
-		return err
+	if e.bloomFilter != nil {
+		if err := e.buildSideExec.Open(ctx); err != nil {
+			return err
+		}
+	} else {
+		if err := e.baseExecutor.Open(ctx); err != nil {
+			return err
+		}
+		e.probeIsOpen = true
 	}
 
 	e.prepared = false
@@ -204,11 +213,21 @@ func (e *HashJoinExec) fetchProbeSideChunks(ctx context.Context) {
 			probeSideResult.SetRequiredRows(required, e.maxChunkSize)
 		}
 
+		if e.probeIsOpen {
+			err := Next(ctx, e.probeSideExec, probeSideResult)
+			if err != nil {
+				e.joinResultCh <- &hashjoinWorkerResult{
+					err: err,
+				}
+				return
+			}
+		}
+
 		if !hasWaitedForBuild {
-			//if probeSideResult.NumRows() == 0 && !e.useOuterToBuild {
-			//	e.finished.Store(true)
-			//	return
-			//}
+			if e.probeIsOpen && probeSideResult.NumRows() == 0 && !e.useOuterToBuild {
+				e.finished.Store(true)
+				return
+			}
 			emptyBuild, buildErr := e.wait4BuildSide()
 			if buildErr != nil {
 				e.joinResultCh <- &hashjoinWorkerResult{
@@ -221,12 +240,14 @@ func (e *HashJoinExec) fetchProbeSideChunks(ctx context.Context) {
 			hasWaitedForBuild = true
 		}
 
-		err := Next(ctx, e.probeSideExec, probeSideResult)
-		if err != nil {
-			e.joinResultCh <- &hashjoinWorkerResult{
-				err: err,
+		if !e.probeIsOpen {
+			err := Next(ctx, e.probeSideExec, probeSideResult)
+			if err != nil {
+				e.joinResultCh <- &hashjoinWorkerResult{
+					err: err,
+				}
+				return
 			}
-			return
 		}
 
 		if probeSideResult.NumRows() == 0 {
@@ -709,9 +730,11 @@ func (e *HashJoinExec) fetchAndBuildHashTable(ctx context.Context) {
 		}
 	}
 
-	if err := e.probeSideExec.Open(ctx); err != nil {
-		e.buildFinished <- errors.Trace(err)
-		close(doneCh)
+	if !e.probeIsOpen {
+		if err := e.probeSideExec.Open(ctx); err != nil {
+			e.buildFinished <- errors.Trace(err)
+			close(doneCh)
+		}
 	}
 }
 
