@@ -290,3 +290,31 @@ func (s *testSuite7) TestUnionScanForMemBufferReader(c *C) {
 	tk.MustQuery("select * from t1 use index(idx2);").Check(testkit.Rows("1 2 1"))
 	tk.MustExec("admin check table t1;")
 }
+
+func (s *testSuite7) TestForUpdateUntouchedIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+
+	checkFunc := func() {
+		tk.MustExec("begin")
+		tk.MustExec("insert into t values ('a', 1), ('b', 3), ('a', 2) on duplicate key update b = b + 1;")
+		tk.MustExec("commit")
+		tk.MustExec("admin check table t")
+
+		// Test for autocommit
+		tk.MustExec("set autocommit=0")
+		tk.MustExec("insert into t values ('a', 1), ('b', 3), ('a', 2) on duplicate key update b = b + 1;")
+		tk.MustExec("set autocommit=1")
+		tk.MustExec("admin check table t")
+	}
+
+	// Test for primary key.
+	tk.MustExec("create table t (a varchar(10) primary key,b int)")
+	checkFunc()
+
+	// Test for unique key.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a varchar(10),b int, unique index(a))")
+	checkFunc()
+}

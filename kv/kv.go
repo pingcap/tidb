@@ -207,6 +207,10 @@ type Transaction interface {
 	IsPessimistic() bool
 }
 
+type MemBufferRetriever interface {
+	GetFromMemBuffer(ctx context.Context, k Key) ([]byte, error)
+}
+
 // LockCtx contains information for LockKeys method.
 type LockCtx struct {
 	Killed                *uint32
