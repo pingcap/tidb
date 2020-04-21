@@ -4618,3 +4618,64 @@ func (s *testIntegrationSuite) TestIssue15790(c *C) {
 	tk.MustQuery("SELECT * FROM t0 WHERE -10000000000000000000 | t0.c0 UNION all SELECT * FROM t0;").Check(testkit.Rows("0", "0"))
 	tk.MustExec("drop table t0;")
 }
+<<<<<<< HEAD
+=======
+
+func (s *testIntegrationSuite) TestIssue15990(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t0;")
+	tk.MustExec("CREATE TABLE t0(c0 TEXT(10));")
+	tk.MustExec("INSERT INTO t0(c0) VALUES (1);")
+	tk.MustQuery("SELECT * FROM t0 WHERE ('a' != t0.c0) AND t0.c0;").Check(testkit.Rows("1"))
+	tk.MustExec("CREATE INDEX i0 ON t0(c0(10));")
+	tk.MustQuery("SELECT * FROM t0 WHERE ('a' != t0.c0) AND t0.c0;").Check(testkit.Rows("1"))
+	tk.MustExec("drop table t0;")
+}
+
+func (s *testIntegrationSuite) TestIssue15992(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("CREATE TABLE t0(c0 INT, c1 INT AS (c0));")
+	tk.MustExec("CREATE INDEX i0 ON t0(c1);")
+	tk.MustQuery("SELECT t0.c0 FROM t0 UNION ALL SELECT 0 FROM t0;").Check(testkit.Rows())
+	tk.MustExec("drop table t0;")
+}
+
+func (s *testIntegrationSuite) TestIssue16419(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("CREATE TABLE t0(c0 INT);")
+	tk.MustExec("CREATE TABLE t1(c0 INT);")
+	tk.MustQuery("SELECT * FROM t1 NATURAL LEFT JOIN t0 WHERE NOT t1.c0;").Check(testkit.Rows())
+	tk.MustExec("drop table t0, t1;")
+}
+
+func (s *testIntegrationSuite) TestIssue16029(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t0,t1;")
+	tk.MustExec("CREATE TABLE t0(c0 INT);")
+	tk.MustExec("CREATE TABLE t1(c0 INT);")
+	tk.MustExec("INSERT INTO t0 VALUES (NULL), (1);")
+	tk.MustExec("INSERT INTO t1 VALUES (0);")
+	tk.MustQuery("SELECT t0.c0 FROM t0 JOIN t1 ON (t0.c0 REGEXP 1) | t1.c0  WHERE BINARY STRCMP(t1.c0, t0.c0);").Check(testkit.Rows("1"))
+	tk.MustExec("drop table t0;")
+	tk.MustExec("drop table t1;")
+}
+
+func (s *testIntegrationSuite) TestIssue16505(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t(c varchar(100), index idx(c(100)));")
+	tk.MustExec("INSERT INTO t VALUES (NULL),('1'),('0'),(''),('aaabbb'),('0abc'),('123e456'),('0.0001deadsfeww');")
+	tk.MustQuery("select * from t where c;").Sort().Check(testkit.Rows("0.0001deadsfeww", "1", "123e456"))
+	tk.MustQuery("select /*+ USE_INDEX(t, idx) */ * from t where c;").Sort().Check(testkit.Rows("0.0001deadsfeww", "1", "123e456"))
+	tk.MustQuery("select /*+ IGNORE_INDEX(t, idx) */* from t where c;").Sort().Check(testkit.Rows("0.0001deadsfeww", "1", "123e456"))
+	tk.MustExec("drop table t;")
+}
+>>>>>>> 0d5a831... util: build right range when where stmt only have string column. (#16645)
