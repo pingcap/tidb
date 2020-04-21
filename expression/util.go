@@ -689,6 +689,27 @@ func BuildNotNullExpr(ctx sessionctx.Context, expr Expression) Expression {
 	return notNull
 }
 
+// IsRuntimeConstExpr checks if a expr can be treated as a constant in **executor**.
+func IsRuntimeConstExpr(expr Expression) bool {
+	switch x := expr.(type) {
+	case *ScalarFunction:
+		if _, ok := unFoldableFunctions[x.FuncName.L]; ok {
+			return false
+		}
+		for _, arg := range x.GetArgs() {
+			if !IsRuntimeConstExpr(arg) {
+				return false
+			}
+		}
+		return true
+	case *Column:
+		return false
+	case *Constant, *CorrelatedColumn:
+		return true
+	}
+	return false
+}
+
 // isMutableEffectsExpr checks if expr contains function which is mutable or has side effects.
 func isMutableEffectsExpr(expr Expression) bool {
 	switch x := expr.(type) {
