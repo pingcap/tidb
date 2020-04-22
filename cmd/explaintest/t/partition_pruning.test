@@ -977,6 +977,42 @@ PARTITION BY RANGE COLUMNS(a) (
 
 desc select * from t where a = 11 and b = 1 or a = 12 and b = 1;
 
+
 drop table if exists t;
 create table t (id int, name varchar(20)) partition by hash(id) partitions 128;
 explain SELECT * FROM t partition (p1) where name = '1';
+
+#
+# MySQL doesn't support partition pruning for 'floor(unix_timestamp(ts))' but it works on TiDB
+# https://github.com/pingcap/tidb/issues/16354
+#
+drop table if exists t;
+create table t (ts timestamp(3) not null default current_timestamp(3))
+partition by range (floor(unix_timestamp(ts))) (
+  partition p0 values less than (unix_timestamp('2020-04-05 00:00:00')),
+  partition p1 values less than (unix_timestamp('2020-04-15 00:00:00')),
+  partition p2 values less than (unix_timestamp('2020-04-25 00:00:00'))
+);
+
+explain select * from t where ts = '2020-04-06 00:00:00' -- p1;
+explain select * from t where ts = '2020-04-05 00:00:00.001' -- p1;
+explain select * from t where ts > '2020-04-15 00:00:00' -- p2;
+explain select * from t where ts > '2020-04-14 23:59:59.999' -- p1,p2;
+explain select * from t where ts > '2020-04-15 00:00:00.001' -- p2;
+explain select * from t where ts > '2020-04-26 00:00:00.001' -- dual;
+explain select * from t where ts >= '2020-04-04 12:22:32' --  p0,p1,p2;
+explain select * from t where ts >= '2020-04-05 00:00:00' -- p1,p2;
+explain select * from t where ts >= '2020-04-25 00:00:00' -- dual;
+explain select * from t where ts < '2020-04-25 00:00:00' -- p0,p1,p2;
+explain select * from t where ts < '2020-04-15 00:00:00.001' -- p0,p1,p2;
+explain select * from t where ts < '2020-04-15 00:00:00' -- expect perfect : p0,p1,  obtain: p0,p1,p2;
+explain select * from t where ts < '2020-04-14 23:59:59.999' -- p0,p1;
+explain select * from t where ts < '2020-04-03 00:00:00' -- p0;
+explain select * from t where ts < '2021-05-03 00:00:00' -- p0,p1,p2;
+explain select * from t where ts <= '2020-04-05 00:00:00' -- p0,p1;
+explain select * from t where ts <= '2020-04-03 00:00:00' -- p0;
+explain select * from t where ts <= '2020-04-14 23:59:59.123' -- p0,p1;
+explain select * from t where ts <= '2020-04-25 00:00:00' -- p0,p1,p2;
+explain select * from t where ts > '2020-04-25 00:00:00' or ts < '2020-01-02 00:00:00' -- p0;
+explain select * from t where ts > '2020-04-02 00:00:00' and ts < '2020-04-07 00:00:00' -- p0,p1;
+
