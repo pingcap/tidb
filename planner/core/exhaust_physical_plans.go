@@ -1531,16 +1531,21 @@ func (p *LogicalJoin) tryToGetBroadCastJoin(prop *property.PhysicalProperty) []P
 	//  is not equal to preferred global index
 	baseJoin.InnerChildIdx = preferredBuildIndex
 	childrenReqProps := make([]*property.PhysicalProperty, 2)
-	childrenReqProps[preferredGlobalIndex] = &property.PhysicalProperty{TaskTp: property.CopTiFlashGlobalReadTaskType}
+	childrenReqProps[preferredGlobalIndex] = &property.PhysicalProperty{TaskTp: property.CopTiFlashGlobalReadTaskType, ExpectedCnt: math.MaxFloat64}
 	if prop.TaskTp == property.CopTiFlashGlobalReadTaskType {
-		childrenReqProps[1-preferredGlobalIndex] = &property.PhysicalProperty{TaskTp: property.CopTiFlashGlobalReadTaskType}
+		childrenReqProps[1-preferredGlobalIndex] = &property.PhysicalProperty{TaskTp: property.CopTiFlashGlobalReadTaskType, ExpectedCnt: math.MaxFloat64}
 	} else {
-		childrenReqProps[1-preferredGlobalIndex] = &property.PhysicalProperty{TaskTp: property.CopTiFlashLocalReadTaskType}
+		childrenReqProps[1-preferredGlobalIndex] = &property.PhysicalProperty{TaskTp: property.CopTiFlashLocalReadTaskType, ExpectedCnt: math.MaxFloat64}
 	}
+	if prop.ExpectedCnt < p.stats.RowCount {
+		expCntScale := prop.ExpectedCnt / p.stats.RowCount
+		childrenReqProps[1-baseJoin.InnerChildIdx].ExpectedCnt = p.children[1-baseJoin.InnerChildIdx].statsInfo().RowCount * expCntScale
+	}
+
 	join := PhysicalBroadCastJoin{
 		basePhysicalJoin: baseJoin,
 		globalChildIndex: preferredGlobalIndex,
-	}.Init(p.ctx, p.stats, p.blockOffset, childrenReqProps...)
+	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, childrenReqProps...)
 	results := make([]PhysicalPlan, 0, 1)
 	results = append(results, join)
 	return results
