@@ -45,7 +45,6 @@ func NewBufferStore(r Retriever, cap int) *BufferStore {
 	}
 }
 
-<<<<<<< HEAD
 // Reset resets s.MemBuffer.
 func (s *BufferStore) Reset() {
 	s.MemBuffer.Reset()
@@ -54,22 +53,14 @@ func (s *BufferStore) Reset() {
 // SetCap sets the MemBuffer capability.
 func (s *BufferStore) SetCap(cap int) {
 	s.MemBuffer.SetCap(cap)
-=======
+}
+
 // NewBufferStoreFrom creates a BufferStore from retriever and mem-buffer.
 func NewBufferStoreFrom(r Retriever, buf MemBuffer) *BufferStore {
 	return &BufferStore{
 		r:         r,
 		MemBuffer: buf,
 	}
-}
-
-// NewStagingBufferStore returns a BufferStore with buffer derived from the buffer.
-func NewStagingBufferStore(buf MemBuffer) *BufferStore {
-	return &BufferStore{
-		r:         buf,
-		MemBuffer: buf.NewStagingBuffer(),
-	}
->>>>>>> a909102... *: fix lost index bug of insert on duplicate key update (#16672)
 }
 
 // Get implements the Retriever interface.
