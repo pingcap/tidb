@@ -14,12 +14,12 @@
 package aggfuncs
 
 import (
+	"fmt"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/stringutil"
-	"reflect"
 	"sort"
 )
 
@@ -27,43 +27,41 @@ type maxMinQueue struct {
 	queue   []interface{}
 	counter map[interface{}]int64
 	isMax   bool
+	cmpFunc func(i, j interface{}) int
 }
 
-func newMaxMinQueue(isMax bool) maxMinQueue {
-	return maxMinQueue{
+func newMaxMinQueue(isMax bool) *maxMinQueue {
+	return &maxMinQueue{
 		queue:   make([]interface{}, 0),
 		counter: make(map[interface{}]int64),
 		isMax:   isMax,
 	}
 }
 
-func (m maxMinQueue) Resort() {
+func (m *maxMinQueue) Resort() {
 	if len(m.queue) == 0 {
 		return
 	}
-	var lessFunc func(i, j int) bool
-	switch m.queue[0].(type) {
-	case int64:
-		lessFunc = func(i, j int) bool {
-			if m.isMax {
-				return m.queue[i].(int64) > m.queue[j].(int64)
-			}
-			return m.queue[i].(int64) < m.queue[j].(int64)
+	sort.Slice(m.queue, func(i, j int) bool {
+		if m.isMax {
+			return m.cmpFunc(m.queue[i], m.queue[j]) < 0
 		}
-	}
-	sort.Slice(m.queue, lessFunc)
+		return m.cmpFunc(m.queue[i], m.queue[j]) > 0
+	})
 }
 
-func (m maxMinQueue) Top() (val interface{}, isEmpty bool) {
+func (m *maxMinQueue) Top() (val interface{}, isEmpty bool) {
 	if len(m.queue) == 0 {
 		return nil, true
 	}
+	fmt.Println("top", m.queue[0])
 	return m.queue[0], false
 }
 
-func (m maxMinQueue) Del(val interface{}) {
+func (m *maxMinQueue) Del(val interface{}) {
+	fmt.Println("Del", val)
 	for i, qVal := range m.queue {
-		if reflect.DeepEqual(qVal, val) {
+		if m.cmpFunc(qVal, val) == 0 {
 			if i < len(m.queue) {
 				m.queue = append(m.queue[:i], m.queue[i+1:]...)
 			} else {
@@ -71,9 +69,11 @@ func (m maxMinQueue) Del(val interface{}) {
 			}
 		}
 	}
+	fmt.Println("Del", m.queue)
 }
 
-func (m maxMinQueue) Push(val interface{}) {
+func (m *maxMinQueue) Push(val interface{}) {
+	fmt.Println("Push", val)
 	if v, ok := m.counter[val]; ok {
 		m.counter[val] = v + 1
 	} else {
@@ -81,19 +81,25 @@ func (m maxMinQueue) Push(val interface{}) {
 		m.queue = append(m.queue, val)
 		m.Resort()
 	}
+	fmt.Println("Push", m.queue, m.counter)
 }
 
-func (m maxMinQueue) Pop(val interface{}) {
-	if v, ok := m.counter[val]; ok {
+func (m *maxMinQueue) Pop(val interface{}) {
+	fmt.Println("Pop", val)
+	v, ok := m.counter[val]
+	fmt.Println("m.counter[val]", v, ok, val)
+	if ok {
 		m.counter[val] = v - 1
-		if v-1 == 0 {
+		if v == 1 {
+			fmt.Println("m.Del(val)", m.queue, m.counter)
 			m.Del(val)
 			m.Resort()
 		}
 	}
+	fmt.Println("Pop", m.queue, m.counter)
 }
 
-func (m maxMinQueue) Reset() {
+func (m *maxMinQueue) Reset() {
 	m.queue = m.queue[:0]
 	m.counter = make(map[interface{}]int64)
 }
@@ -104,7 +110,7 @@ type partialResult4MaxMinInt struct {
 	// 1. whether the partial result is the initialization value which should not be compared during evaluation;
 	// 2. whether all the values of arg are all null, if so, we should return null as the default value for MAX/MIN.
 	isNull bool
-	queue  maxMinQueue
+	queue  *maxMinQueue
 }
 
 type partialResult4MaxMinUint struct {
@@ -161,6 +167,9 @@ func (e *maxMin4Int) AllocPartialResult() PartialResult {
 	p := new(partialResult4MaxMinInt)
 	p.isNull = true
 	p.queue = newMaxMinQueue(e.isMax)
+	p.queue.cmpFunc = func(i, j interface{}) int {
+		return types.CompareInt64(i.(int64), j.(int64))
+	}
 	return PartialResult(p)
 }
 
@@ -191,14 +200,12 @@ func (e *maxMin4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []
 		if isNull {
 			continue
 		}
-		if p.isNull {
-			p.val = input
+		p.queue.Push(input)
+		if val, isEmpty := p.queue.Top(); !isEmpty {
+			p.val = val.(int64)
 			p.isNull = false
-			continue
-		}
-		if e.isMax && input > p.val || !e.isMax && input < p.val {
-			p.queue.Push(input)
-			p.val = input
+		}else {
+			p.isNull = true
 		}
 	}
 	return nil
@@ -228,6 +235,9 @@ func (e *maxMin4Int) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart,
 	}
 	if val, isEmpty := p.queue.Top(); !isEmpty {
 		p.val = val.(int64)
+		p.isNull = false
+	} else {
+		p.isNull = true
 	}
 	return nil
 }
