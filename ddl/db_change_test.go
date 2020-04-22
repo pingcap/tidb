@@ -841,7 +841,7 @@ func (s *testStateChangeSuite) TestParallelChangeColumnName(c *C) {
 				oneErr = err2
 			}
 		}
-		c.Assert(oneErr.Error(), Equals, "[schema:1060]current error msg: Cancelled DDL job, original error msg: Duplicate column name 'aa'")
+		c.Assert(oneErr.Error(), Equals, "[schema:1060]Duplicate column name 'aa'")
 	}
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
@@ -851,7 +851,7 @@ func (s *testStateChangeSuite) TestParallelAlterAddIndex(c *C) {
 	sql2 := "CREATE INDEX index_b ON t (c);"
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
-		c.Assert(err2.Error(), Equals, "[ddl:1061]current error msg: Cancelled DDL job, original error msg: index already exist index_b")
+		c.Assert(err2.Error(), Equals, "[ddl:1061]index already exist index_b")
 	}
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
@@ -862,7 +862,7 @@ func (s *serialTestStateChangeSuite) TestParallelAlterAddExpressionIndex(c *C) {
 	sql2 := "CREATE INDEX expr_index_b ON t ((c+1));"
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
-		c.Assert(err2.Error(), Equals, "[ddl:1061]current error msg: Cancelled DDL job, original error msg: index already exist expr_index_b")
+		c.Assert(err2.Error(), Equals, "[ddl:1061]index already exist expr_index_b")
 	}
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
@@ -872,7 +872,7 @@ func (s *testStateChangeSuite) TestParallelAddPrimaryKey(c *C) {
 	sql2 := "ALTER TABLE t add primary key index_b(c);"
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
-		c.Assert(err2.Error(), Equals, "[schema:1068]current error msg: Cancelled DDL job, original error msg: Multiple primary key defined")
+		c.Assert(err2.Error(), Equals, "[schema:1068]Multiple primary key defined")
 	}
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
@@ -883,7 +883,7 @@ func (s *testStateChangeSuite) TestParallelAlterAddPartition(c *C) {
    );`
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
-		c.Assert(err2.Error(), Equals, "[ddl:1493]current error msg: Cancelled DDL job, original error msg: VALUES LESS THAN value must be strictly increasing for each partition")
+		c.Assert(err2.Error(), Equals, "[ddl:1493]VALUES LESS THAN value must be strictly increasing for each partition")
 	}
 	s.testControlParallelExecSQL(c, sql1, sql1, f)
 }
@@ -892,7 +892,7 @@ func (s *testStateChangeSuite) TestParallelDropColumn(c *C) {
 	sql := "ALTER TABLE t drop COLUMN c ;"
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
-		c.Assert(err2.Error(), Equals, "[ddl:1091]current error msg: Cancelled DDL job, original error msg: column c doesn't exist")
+		c.Assert(err2.Error(), Equals, "[ddl:1091]column c doesn't exist")
 	}
 	s.testControlParallelExecSQL(c, sql, sql, f)
 }
@@ -901,7 +901,7 @@ func (s *testStateChangeSuite) TestParallelDropColumns(c *C) {
 	sql := "ALTER TABLE t drop COLUMN b, drop COLUMN c;"
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
-		c.Assert(err2.Error(), Equals, "[ddl:1091]current error msg: Cancelled DDL job, original error msg: column b doesn't exist")
+		c.Assert(err2.Error(), Equals, "[ddl:1091]column b doesn't exist")
 	}
 	s.testControlParallelExecSQL(c, sql, sql, f)
 }
@@ -920,7 +920,7 @@ func (s *testStateChangeSuite) TestParallelDropIndex(c *C) {
 	sql2 := "alter table t drop index idx2 ;"
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
-		c.Assert(err2.Error(), Equals, "[autoid:1075]current error msg: Cancelled DDL job, original error msg: Incorrect table definition; there can be only one auto column and it must be defined as a key")
+		c.Assert(err2.Error(), Equals, "[autoid:1075]Incorrect table definition; there can be only one auto column and it must be defined as a key")
 	}
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
@@ -934,7 +934,7 @@ func (s *testStateChangeSuite) TestParallelDropPrimaryKey(c *C) {
 	sql2 := "alter table t drop primary key;"
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
-		c.Assert(err2.Error(), Equals, "[ddl:1091]current error msg: Cancelled DDL job, original error msg: index PRIMARY doesn't exist")
+		c.Assert(err2.Error(), Equals, "[ddl:1091]index PRIMARY doesn't exist")
 	}
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
@@ -945,7 +945,7 @@ func (s *testStateChangeSuite) TestParallelCreateAndRename(c *C) {
 	defer s.se.Execute(context.Background(), "drop table t_exists")
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
-		c.Assert(err2.Error(), Equals, "[schema:1050]current error msg: Cancelled DDL job, original error msg: Table 't_exists' already exists")
+		c.Assert(err2.Error(), Equals, "[schema:1050]Table 't_exists' already exists")
 	}
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
@@ -1085,7 +1085,7 @@ func (s *testStateChangeSuite) TestParallelUpdateTableReplica(c *C) {
 	}()
 	wg.Wait()
 	c.Assert(err1, IsNil)
-	c.Assert(err2.Error(), Equals, "[ddl:-1]current error msg: Cancelled DDL job, original error msg: the replica available status of table t1 is already updated")
+	c.Assert(err2.Error(), Equals, "[ddl:-1]the replica available status of table t1 is already updated")
 }
 
 func (s *testStateChangeSuite) testParallelExecSQL(c *C, sql string) {
@@ -1336,7 +1336,7 @@ func (s *serialTestStateChangeSuite) TestParallelFlashbackTable(c *C) {
 	// Disable emulator GC, otherwise, emulator GC will delete table record as soon as possible after executing drop table DDL.
 	ddl.EmulatorGCDisable()
 	gcTimeFormat := "20060102-15:04:05 -0700 MST"
-	timeBeforeDrop := time.Now().Add(0 - time.Duration(48*60*60*time.Second)).Format(gcTimeFormat)
+	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
 	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
 			       ON DUPLICATE KEY
 			       UPDATE variable_value = '%[1]s'`
@@ -1359,7 +1359,7 @@ func (s *serialTestStateChangeSuite) TestParallelFlashbackTable(c *C) {
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
 		c.Assert(err2, NotNil)
-		c.Assert(err2.Error(), Equals, "[schema:1050]current error msg: Cancelled DDL job, original error msg: Table 't_flashback' already exists")
+		c.Assert(err2.Error(), Equals, "[schema:1050]Table 't_flashback' already exists")
 
 	}
 	s.testControlParallelExecSQL(c, sql1, sql1, f)

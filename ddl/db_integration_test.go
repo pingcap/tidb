@@ -16,6 +16,7 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -409,13 +410,13 @@ func (s *testIntegrationSuite1) TestIssue5092(c *C) {
 	tk.MustExec("alter table t_issue_5092 add column d int default 4 after c1, add column aa int default 0 first")
 	tk.MustQuery("select * from t_issue_5092").Check(testkit.Rows("0 1 2 22 3 33 4"))
 	tk.MustQuery("show create table t_issue_5092").Check(testkit.Rows("t_issue_5092 CREATE TABLE `t_issue_5092` (\n" +
-		"  `aa` int(11) DEFAULT '0',\n" +
-		"  `a` int(11) DEFAULT '1',\n" +
-		"  `b` int(11) DEFAULT '2',\n" +
-		"  `b1` int(11) DEFAULT '22',\n" +
-		"  `c` int(11) DEFAULT '3',\n" +
-		"  `c1` int(11) DEFAULT '33',\n" +
-		"  `d` int(11) DEFAULT '4'\n" +
+		"  `aa` int(11) DEFAULT 0,\n" +
+		"  `a` int(11) DEFAULT 1,\n" +
+		"  `b` int(11) DEFAULT 2,\n" +
+		"  `b1` int(11) DEFAULT 22,\n" +
+		"  `c` int(11) DEFAULT 3,\n" +
+		"  `c1` int(11) DEFAULT 33,\n" +
+		"  `d` int(11) DEFAULT 4\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("drop table t_issue_5092")
 
@@ -2151,4 +2152,108 @@ func (s *testIntegrationSuite7) TestAddExpressionIndexOnPartition(c *C) {
 	c.Assert(columns[3].Hidden, IsTrue)
 
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 'test' 2", "12 'test' 3", "15 'test' 10", "20 'test' 20"))
+}
+
+// TestCreateTableWithAutoIdCache test the auto_id_cache table option.
+// `auto_id_cache` take effects on handle too when `PKIshandle` is false,
+// or even there is no auto_increment column at all.
+func (s *testIntegrationSuite3) TestCreateTableWithAutoIdCache(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("USE test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("drop table if exists t1;")
+
+	// Test primary key is handle.
+	tk.MustExec("create table t(a int auto_increment key) auto_id_cache 100")
+	tblInfo, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	c.Assert(tblInfo.Meta().AutoIdCache, Equals, int64(100))
+	tk.MustExec("insert into t values()")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
+	tk.MustExec("delete from t")
+
+	// Invalid the allocator cache, insert will trigger a new cache
+	tk.MustExec("rename table t to t1;")
+	tk.MustExec("insert into t1 values()")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("101"))
+
+	// Test primary key is not handle.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t(a int) auto_id_cache 100")
+	tblInfo, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+
+	tk.MustExec("insert into t values()")
+	tk.MustQuery("select _tidb_rowid from t").Check(testkit.Rows("1"))
+	tk.MustExec("delete from t")
+
+	// Invalid the allocator cache, insert will trigger a new cache
+	tk.MustExec("rename table t to t1;")
+	tk.MustExec("insert into t1 values()")
+	tk.MustQuery("select _tidb_rowid from t1").Check(testkit.Rows("101"))
+
+	// Test both auto_increment and rowid exist.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t(a int null, b int auto_increment unique) auto_id_cache 100")
+	tblInfo, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+
+	tk.MustExec("insert into t(b) values(NULL)")
+	tk.MustQuery("select b, _tidb_rowid from t").Check(testkit.Rows("1 2"))
+	tk.MustExec("delete from t")
+
+	// Invalid the allocator cache, insert will trigger a new cache.
+	tk.MustExec("rename table t to t1;")
+	tk.MustExec("insert into t1(b) values(NULL)")
+	tk.MustQuery("select b, _tidb_rowid from t1").Check(testkit.Rows("101 102"))
+	tk.MustExec("delete from t1")
+
+	// Test alter auto_id_cache.
+	tk.MustExec("alter table t1 auto_id_cache 200")
+	tblInfo, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	c.Assert(tblInfo.Meta().AutoIdCache, Equals, int64(200))
+
+	tk.MustExec("insert into t1(b) values(NULL)")
+	tk.MustQuery("select b, _tidb_rowid from t1").Check(testkit.Rows("201 202"))
+	tk.MustExec("delete from t1")
+
+	// Invalid the allocator cache, insert will trigger a new cache.
+	tk.MustExec("rename table t1 to t;")
+	tk.MustExec("insert into t(b) values(NULL)")
+	tk.MustQuery("select b, _tidb_rowid from t").Check(testkit.Rows("401 402"))
+	tk.MustExec("delete from t")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t(a int auto_increment key) auto_id_cache 3")
+	tblInfo, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	c.Assert(tblInfo.Meta().AutoIdCache, Equals, int64(3))
+
+	// Test insert batch size(4 here) greater than the customized autoid step(3 here).
+	tk.MustExec("insert into t(a) values(NULL),(NULL),(NULL),(NULL)")
+	tk.MustQuery("select a from t").Check(testkit.Rows("1", "2", "3", "4"))
+	tk.MustExec("delete from t")
+
+	// Invalid the allocator cache, insert will trigger a new cache.
+	tk.MustExec("rename table t to t1;")
+	tk.MustExec("insert into t1(a) values(NULL)")
+	next := tk.MustQuery("select a from t1").Rows()[0][0].(string)
+	nextInt, err := strconv.Atoi(next)
+	c.Assert(err, IsNil)
+	c.Assert(nextInt, Greater, 5)
+
+	// Test auto_id_cache overflows int64.
+	tk.MustExec("drop table if exists t;")
+	_, err = tk.Exec("create table t(a int) auto_id_cache = 9223372036854775808")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "table option auto_id_cache overflows int64")
+
+	tk.MustExec("create table t(a int) auto_id_cache = 9223372036854775807")
+	_, err = tk.Exec("alter table t auto_id_cache = 9223372036854775808")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "table option auto_id_cache overflows int64")
 }
