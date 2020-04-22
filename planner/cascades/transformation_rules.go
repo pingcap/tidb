@@ -159,6 +159,7 @@ var PrepareJoinReorderBatch = TransformationRuleBatch{
 var JoinReorderBatch = TransformationRuleBatch{
 	memo.OperandMultiJoin: {
 		NewRuleEnumerateJoinOrders(),
+		NewRuleDPJoinReorder(),
 	},
 }
 
@@ -3612,8 +3613,12 @@ func (r *MergeJoinTwoSidesMultiJoin) OnTransform(old *memo.ExprIter) (newExprs [
 	return []*memo.GroupExpr{newMultiJoinExpr}, true, false, nil
 }
 
+type joinReorderHelper struct {
+}
+
 type EnumerateJoinOrders struct {
 	baseRule
+	joinReorderHelper
 }
 
 func NewRuleEnumerateJoinOrders() Transformation {
@@ -3623,7 +3628,7 @@ func NewRuleEnumerateJoinOrders() Transformation {
 }
 
 func (r *EnumerateJoinOrders) Match(expr *memo.ExprIter) bool {
-    return len(expr.GetExpr().Children) <= 8
+    return len(expr.GetExpr().Children) <= 5
 }
 
 func (r *EnumerateJoinOrders) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
@@ -3645,7 +3650,7 @@ func (r *EnumerateJoinOrders) OnTransform(old *memo.ExprIter) (newExprs []*memo.
 	return joinExprs, true, false, nil
 }
 
-func (r *EnumerateJoinOrders) getKeyOfChildrenIdx(childIdx []int) int {
+func (h *joinReorderHelper) getKeyOfChildrenIdx(childIdx []int) int {
 	key := 0
 	for _, idx := range childIdx {
 		key |= 1 << idx
@@ -3653,7 +3658,7 @@ func (r *EnumerateJoinOrders) getKeyOfChildrenIdx(childIdx []int) int {
 	return key
 }
 
-func (r *EnumerateJoinOrders) decodeKeyToChildrenIdx(key int, maxLen int) []int {
+func (h *joinReorderHelper) decodeKeyToChildrenIdx(key int, maxLen int) []int {
 	childIdx := make([]int, 0, maxLen)
 	for i := 0; i <= maxLen; i++ {
 		if key & (1 << i) != 0 {
@@ -3663,7 +3668,7 @@ func (r *EnumerateJoinOrders) decodeKeyToChildrenIdx(key int, maxLen int) []int 
 	return childIdx
 }
 
-func (r *EnumerateJoinOrders) enumerateCombination(remained[]int, m int, tempResult int) []int {
+func (h *joinReorderHelper) enumerateCombination(remained[]int, m int, tempResult int) []int {
 	if len(remained) < m {
 		return nil
 	}
@@ -3672,12 +3677,12 @@ func (r *EnumerateJoinOrders) enumerateCombination(remained[]int, m int, tempRes
 	}
 	result := make([]int, 0, len(remained)) // should use C(n, m)
 	for i := range remained {
-		result = append(result, r.enumerateCombination(remained[i:], m-1, tempResult | (1 << remained[i]))...)
+		result = append(result, h.enumerateCombination(remained[i:], m-1, tempResult | (1 << remained[i]))...)
 	}
 	return result
 }
 
-func (r *EnumerateJoinOrders) constructSchema(allChildren []*memo.Group, childrenIdx []int) *expression.Schema {
+func (h *joinReorderHelper) constructSchema(allChildren []*memo.Group, childrenIdx []int) *expression.Schema {
 	schema := expression.NewSchema()
 	for _, idx := range childrenIdx {
 		schema.Append(allChildren[idx].Prop.Schema.Columns...)
@@ -3685,7 +3690,7 @@ func (r *EnumerateJoinOrders) constructSchema(allChildren []*memo.Group, childre
 	return schema
 }
 
-func (r *EnumerateJoinOrders) constructLogicalJoin(sctx sessionctx.Context, conditions []expression.Expression, leftSchema *expression.Schema, rightSchema *expression.Schema) (join *plannercore.LogicalJoin, leftConditions, rightConditions []expression.Expression) {
+func (h *joinReorderHelper) constructLogicalJoin(sctx sessionctx.Context, conditions []expression.Expression, leftSchema *expression.Schema, rightSchema *expression.Schema) (join *plannercore.LogicalJoin, leftConditions, rightConditions []expression.Expression) {
 	join = plannercore.LogicalJoin{JoinType:plannercore.InnerJoin}.Init(sctx, 0)
 	eqCond, leftCond, rightCond, otherCond := join.ExtractOnCondition(conditions, leftSchema, rightSchema, false, false)
 	join.EqualConditions = eqCond
@@ -3907,4 +3912,100 @@ func (r *MergeProjectionAggregation) OnTransform(old *memo.ExprIter) (newExprs [
 	newAggExpr := memo.NewGroupExpr(newAgg)
 	newAggExpr.SetChildren(old.Children[0].GetExpr().Children...)
 	return []*memo.GroupExpr{newAggExpr}, true, false, nil
+}
+
+type DPJoinReorder struct {
+	baseRule
+	joinReorderHelper
+}
+
+func NewRuleDPJoinReorder() Transformation {
+	rule := &DPJoinReorder{}
+	rule.pattern = memo.NewPattern(memo.OperandMultiJoin, memo.EngineTiDBOnly)
+	return rule
+}
+
+func (r *DPJoinReorder) Match(expr *memo.ExprIter) bool {
+	return len(expr.GetExpr().Children) <= 8 && len(expr.GetExpr().Children) > 5
+}
+
+func (r *DPJoinReorder) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	conditions := old.GetExpr().ExprNode.(*plannercore.LogicalMultiJoin).Conditions
+	children := old.GetExpr().Children
+	neededChildrenIdx := make([]int, len(children))
+	for i := range neededChildrenIdx {
+		neededChildrenIdx[i] = i
+	}
+	topJoinGroup, err := r.getBestJoinGroup(old.GetExpr().ExprNode.SCtx(), children, neededChildrenIdx, conditions, make(map[int]*memo.Group))
+	if err != nil {
+		return nil, false, false, nil
+	}
+	newJoinGroupExpr := memo.NewGroupExpr(topJoinGroup.GetFirstGroupExpr().ExprNode)
+	newJoinGroupExpr.SetChildren(topJoinGroup.GetFirstGroupExpr().Children...)
+	return []*memo.GroupExpr{newJoinGroupExpr}, true, false, nil
+}
+
+func (r *DPJoinReorder) getBestJoinGroup(
+	sctx sessionctx.Context,
+	allChildren []*memo.Group,
+	neededChildrenIdx []int,
+	conditions []expression.Expression,
+	cache map[int]*memo.Group) (result *memo.Group, err error) {
+	selfKey := 	r.getKeyOfChildrenIdx(neededChildrenIdx)
+	if group, ok := cache[selfKey]; ok {
+		return group, nil
+	}
+	if len(neededChildrenIdx) == 1 {
+		cache[selfKey] = allChildren[neededChildrenIdx[0]]
+		return allChildren[neededChildrenIdx[0]], nil
+	}
+	var bestJoinGroup *memo.Group
+	selfSchema := r.constructSchema(allChildren, neededChildrenIdx)
+	for i := 1; i <= len(neededChildrenIdx)/2; i++ {
+		leftGroupKeys := r.enumerateCombination(neededChildrenIdx, i, 0)
+		if len(neededChildrenIdx)%2 == 0 && i == len(neededChildrenIdx)/2 {
+			// need to deduplicate
+			newLeftGroupKeys := make([]int, 0, len(leftGroupKeys)/2)
+			dedupMap := make(map[int]struct{}, len(leftGroupKeys)/2)
+			for _, leftKey := range leftGroupKeys {
+				rightKey := selfKey ^ leftKey
+				if _, ok := dedupMap[leftKey]; ok {
+					continue
+				}
+				if _, ok := dedupMap[rightKey]; ok {
+					continue
+				}
+				newLeftGroupKeys = append(newLeftGroupKeys, leftKey)
+				dedupMap[leftKey] = struct{}{}
+			}
+			leftGroupKeys = newLeftGroupKeys
+		}
+		for _, leftKey := range leftGroupKeys {
+			rightKey := selfKey ^ leftKey
+			leftSlice := r.decodeKeyToChildrenIdx(leftKey, len(allChildren))
+			rightSlice := r.decodeKeyToChildrenIdx(rightKey, len(allChildren))
+			leftSchema := r.constructSchema(allChildren, leftSlice)
+			rightSchema := r.constructSchema(allChildren, rightSlice)
+			newJoin, leftConditions, rightConditions := r.constructLogicalJoin(sctx, conditions, leftSchema, rightSchema)
+			newJoinExpr := memo.NewGroupExpr(newJoin)
+			leftGroup, err := r.getBestJoinGroup(sctx, allChildren, leftSlice, leftConditions, cache)
+			if err != nil {
+				return nil, err
+			}
+			rightGroup, err := r.getBestJoinGroup(sctx, allChildren, rightSlice, rightConditions, cache)
+			if err != nil {
+				return nil, err
+			}
+			newJoinExpr.SetChildren(leftGroup, rightGroup)
+			newJoinGroup := memo.NewGroupWithSchema(newJoinExpr, selfSchema)
+			if err := fillGroupStats(newJoinGroup); err != nil {
+				return nil, err
+			}
+			if bestJoinGroup == nil || newJoinGroup.Prop.Stats.RowCount < bestJoinGroup.Prop.Stats.RowCount {
+				bestJoinGroup = newJoinGroup
+			}
+		}
+	}
+	cache[selfKey] = bestJoinGroup
+	return bestJoinGroup, nil
 }

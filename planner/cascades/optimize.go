@@ -228,7 +228,7 @@ func (opt *Optimizer) findMoreEquiv(g *memo.Group, elem *list.Element, round int
 }
 
 // fillGroupStats computes Stats property for each Group recursively.
-func (opt *Optimizer) fillGroupStats(g *memo.Group) (err error) {
+func fillGroupStats(g *memo.Group) (err error) {
 	if g.Prop.Stats != nil {
 		return nil
 	}
@@ -236,7 +236,7 @@ func (opt *Optimizer) fillGroupStats(g *memo.Group) (err error) {
 	for iter := g.Equivalents.Front(); iter != nil; iter = iter.Next() {
 		expr := iter.Value.(*memo.GroupExpr)
 		for _, childGroup := range expr.Children {
-			err = opt.fillGroupStats(childGroup)
+			err = fillGroupStats(childGroup)
 			if err != nil {
 				return err
 			}
@@ -263,7 +263,7 @@ func (opt *Optimizer) onPhaseImplementation(sctx sessionctx.Context, g *memo.Gro
 	prop := &property.PhysicalProperty{
 		ExpectedCnt: math.MaxFloat64,
 	}
-	err := opt.fillGroupStats(g)
+	err := fillGroupStats(g)
 	if err != nil {
 		return nil, 0, err
 	}
