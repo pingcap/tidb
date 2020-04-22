@@ -3783,6 +3783,9 @@ DeleteFromStmt:
 			Quick:     $4.(bool),
 			IgnoreErr: $5.(bool),
 		}
+		if $2 != nil {
+			x.TableHints = $2.([]*ast.TableOptimizerHint)
+		}
 		if $10 != nil {
 			x.Where = $10.(ast.ExprNode)
 		}
