@@ -281,7 +281,7 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 	}
 
 	if ctx.Meta != nil {
-		s.regionCache.OnSendFail(bo, ctx, s.needReloadRegion(ctx), err)
+		s.regionCache.OnStoreDown(bo, ctx, s.needReloadRegion(ctx), err)
 	}
 
 	// Retry on send request failure when it's not canceled.
@@ -352,7 +352,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 		logutil.BgLogger().Warn("tikv reports `StoreNotMatch` retry later",
 			zap.Stringer("storeNotMatch", storeNotMatch),
 			zap.Stringer("ctx", ctx))
-		ctx.Store.markNeedCheck(s.regionCache.notifyCheckCh)
+		ctx.Store.scheduleResolve()
 		return true, nil
 	}
 

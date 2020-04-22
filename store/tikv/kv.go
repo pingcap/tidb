@@ -115,8 +115,8 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 		return nil, errors.Trace(err)
 	}
 
-	coprCacheConfig := &config.GetGlobalConfig().TiKVClient.CoprCache
-	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, spkv, newRPCClient(security), !disableGC, coprCacheConfig)
+	tikvCliConfig := &config.GetGlobalConfig().TiKVClient
+	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, spkv, newRPCClient(security), !disableGC, tikvCliConfig)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -192,10 +192,16 @@ func (s *tikvStore) CheckVisibility(startTime uint64) error {
 	return nil
 }
 
-func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client, enableGC bool, coprCacheConfig *config.CoprocessorCache) (*tikvStore, error) {
+func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client, enableGC bool, tikvClientCfg *config.TiKVClient) (*tikvStore, error) {
 	o, err := oracles.NewPdOracle(pdClient, time.Duration(oracleUpdateInterval)*time.Millisecond)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	var (
+		coprCacheConfig *config.CoprocessorCache
+	)
+	if tikvClientCfg != nil {
+		coprCacheConfig = &tikvClientCfg.CoprCache
 	}
 	store := &tikvStore{
 		clusterID:       pdClient.GetClusterID(context.TODO()),

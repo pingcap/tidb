@@ -17,6 +17,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net/http"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -28,11 +30,14 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	pd "github.com/pingcap/pd/v4/client"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
+	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -77,18 +82,18 @@ type RegionStore struct {
 	workTiKVIdx    int32    // point to current work peer in meta.Peers and work store in stores(same idx) for tikv peer
 	workTiFlashIdx int32    // point to current work peer in meta.Peers and work store in stores(same idx) for tiflash peer
 	stores         []*Store // stores in this region
-	storeFails     []uint32 // snapshots of store's fail, need reload when `storeFails[curr] != stores[cur].fail`
+	storeEpochs    []uint32 // snapshots of store's fail, need reload when `storeEpochs[curr] != stores[cur].fail`
 }
 
 // clone clones region store struct.
 func (r *RegionStore) clone() *RegionStore {
 	storeFails := make([]uint32, len(r.stores))
-	copy(storeFails, r.storeFails)
+	copy(storeFails, r.storeEpochs)
 	return &RegionStore{
 		workTiFlashIdx: r.workTiFlashIdx,
 		workTiKVIdx:    r.workTiKVIdx,
 		stores:         r.stores,
-		storeFails:     storeFails,
+		storeEpochs:    storeFails,
 	}
 }
 
@@ -107,7 +112,7 @@ func (r *RegionStore) follower(seed uint32) int32 {
 		if r.stores[followerIdx].storeType != kv.TiKV {
 			continue
 		}
-		if r.storeFails[followerIdx] == atomic.LoadUint32(&r.stores[followerIdx].fail) {
+		if r.storeEpochs[followerIdx] == r.stores[followerIdx].currentEpoch() {
 			return followerIdx
 		}
 		seed++
@@ -122,7 +127,7 @@ func (r *RegionStore) peer(seed uint32) int32 {
 		if r.stores[i].storeType != kv.TiKV {
 			continue
 		}
-		if r.storeFails[i] != atomic.LoadUint32(&r.stores[i].fail) {
+		if r.storeEpochs[i] != r.stores[i].currentEpoch() {
 			continue
 		}
 		candidates = append(candidates, int32(i))
@@ -142,7 +147,7 @@ func (r *Region) init(c *RegionCache) {
 		workTiKVIdx:    0,
 		workTiFlashIdx: 0,
 		stores:         make([]*Store, 0, len(r.meta.Peers)),
-		storeFails:     make([]uint32, 0, len(r.meta.Peers)),
+		storeEpochs:    make([]uint32, 0, len(r.meta.Peers)),
 	}
 	for _, p := range r.meta.Peers {
 		c.storeMu.RLock()
@@ -152,7 +157,7 @@ func (r *Region) init(c *RegionCache) {
 			store = c.getStoreByStoreID(p.StoreId)
 		}
 		rs.stores = append(rs.stores, store)
-		rs.storeFails = append(rs.storeFails, atomic.LoadUint32(&store.fail))
+		rs.storeEpochs = append(rs.storeEpochs, store.currentEpoch())
 	}
 	atomic.StorePointer(&r.store, unsafe.Pointer(rs))
 
@@ -218,8 +223,7 @@ type RegionCache struct {
 		sync.RWMutex
 		stores map[uint64]*Store
 	}
-	notifyCheckCh chan struct{}
-	closeCh       chan struct{}
+	closeCh chan struct{}
 }
 
 // NewRegionCache creates a RegionCache.
@@ -230,55 +234,13 @@ func NewRegionCache(pdClient pd.Client) *RegionCache {
 	c.mu.regions = make(map[RegionVerID]*Region)
 	c.mu.sorted = btree.New(btreeDegree)
 	c.storeMu.stores = make(map[uint64]*Store)
-	c.notifyCheckCh = make(chan struct{}, 1)
 	c.closeCh = make(chan struct{})
-	go c.asyncCheckAndResolveLoop()
 	return c
 }
 
 // Close releases region cache's resource.
 func (c *RegionCache) Close() {
 	close(c.closeCh)
-}
-
-// asyncCheckAndResolveLoop with
-func (c *RegionCache) asyncCheckAndResolveLoop() {
-	var needCheckStores []*Store
-	for {
-		select {
-		case <-c.closeCh:
-			return
-		case <-c.notifyCheckCh:
-			needCheckStores = needCheckStores[:0]
-			c.checkAndResolve(needCheckStores)
-		}
-	}
-}
-
-// checkAndResolve checks and resolve addr of failed stores.
-// this method isn't thread-safe and only be used by one goroutine.
-func (c *RegionCache) checkAndResolve(needCheckStores []*Store) {
-	defer func() {
-		r := recover()
-		if r != nil {
-			logutil.BgLogger().Error("panic in the checkAndResolve goroutine",
-				zap.Reflect("r", r),
-				zap.Stack("stack trace"))
-		}
-	}()
-
-	c.storeMu.RLock()
-	for _, store := range c.storeMu.stores {
-		state := store.getResolveState()
-		if state == needCheck {
-			needCheckStores = append(needCheckStores, store)
-		}
-	}
-	c.storeMu.RUnlock()
-
-	for _, store := range needCheckStores {
-		store.reResolve(c)
-	}
 }
 
 // RPCContext contains data that is needed to send RPC to a region.
@@ -322,7 +284,7 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 	default:
 		store, peer, storeIdx = cachedRegion.WorkStorePeer(regionStore)
 	}
-	addr, err := c.getStoreAddr(bo, cachedRegion, store, storeIdx)
+	addr, _, err := store.getAddr(bo, cachedRegion, storeIdx)
 	if err != nil {
 		return nil, err
 	}
@@ -338,15 +300,13 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 		return nil, nil
 	}
 
-	storeFailEpoch := atomic.LoadUint32(&store.fail)
-	if storeFailEpoch != regionStore.storeFails[storeIdx] {
+	if store.currentEpoch() != regionStore.storeEpochs[storeIdx] {
 		cachedRegion.invalidate()
-		logutil.BgLogger().Info("invalidate current region, because others failed on same store",
+		logutil.BgLogger().Info("invalidate current region, because others request detect store was down",
 			zap.Uint64("region", id.GetID()),
 			zap.String("store", store.addr))
 		return nil, nil
 	}
-
 	return &RPCContext{
 		Region:  id,
 		Meta:    cachedRegion.meta,
@@ -377,7 +337,7 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID) (*RPCC
 	for i := range regionStore.stores {
 		storeIdx := (sIdx + i) % len(regionStore.stores)
 		store := regionStore.stores[storeIdx]
-		addr, err := c.getStoreAddr(bo, cachedRegion, store, storeIdx)
+		addr, _, err := store.getAddr(bo, cachedRegion, storeIdx)
 		if err != nil {
 			return nil, err
 		}
@@ -385,18 +345,14 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID) (*RPCC
 			cachedRegion.invalidate()
 			return nil, nil
 		}
-		if store.getResolveState() == needCheck {
-			store.reResolve(c)
-		}
 		if store.storeType != kv.TiFlash {
 			continue
 		}
 		atomic.StoreInt32(&regionStore.workTiFlashIdx, int32(storeIdx))
 		peer := cachedRegion.meta.Peers[storeIdx]
-		storeFailEpoch := atomic.LoadUint32(&store.fail)
-		if storeFailEpoch != regionStore.storeFails[storeIdx] {
+		if store.currentEpoch() != regionStore.storeEpochs[storeIdx] {
 			cachedRegion.invalidate()
-			logutil.BgLogger().Info("invalidate current region, because others failed on same store",
+			logutil.BgLogger().Info("invalidate current region, because others request detect store was down",
 				zap.Uint64("region", id.GetID()),
 				zap.String("store", store.addr))
 			return nil, nil
@@ -487,11 +443,15 @@ func (c *RegionCache) findRegionByKey(bo *Backoffer, key []byte, isEndKey bool) 
 	return r, nil
 }
 
-// OnSendFail handles send request fail logic.
-func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload bool, err error) {
+// OnStoreDown handles send request fail and store down logic.
+func (c *RegionCache) OnStoreDown(bo *Backoffer, ctx *RPCContext, scheduleReload bool, err error) {
 	tikvRegionCacheCounterWithSendFail.Inc()
 	r := c.getCachedRegionWithRLock(ctx.Region)
 	if r != nil {
+		livenessState := r.getStore().stores[ctx.PeerIdx].requestLiveness()
+		if livenessState == alive {
+			return
+		}
 		if ctx.Store.storeType == kv.TiKV {
 			c.switchNextPeer(r, ctx.PeerIdx, err)
 		} else {
@@ -500,7 +460,7 @@ func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload 
 		if scheduleReload {
 			r.scheduleReload()
 		}
-		logutil.Logger(bo.ctx).Info("switch region peer to next due to send request fail",
+		logutil.Logger(bo.ctx).Info("switch region peer to next due to send request fail and store liveness is down",
 			zap.Stringer("current", ctx),
 			zap.Bool("needReload", scheduleReload),
 			zap.Error(err))
@@ -926,26 +886,64 @@ func (c *RegionCache) getCachedRegionWithRLock(regionID RegionVerID) (r *Region)
 	return
 }
 
-func (c *RegionCache) getStoreAddr(bo *Backoffer, region *Region, store *Store, storeIdx int) (addr string, err error) {
-	state := store.getResolveState()
+// getAddr takes the store's addr.
+// it will init resolve / re-resolve addr / revise store referenced by region base on resolve state machine.
+//
+//              +-----------+
+//              | unresolve |
+//              +---+-------+
+//                  |
+//                  |initResolve()
+//                  |
+//                  |
+//              +---v-------+
+//              | resolved  |
+//              +---+---^---+
+//                  |   |                     +--------+
+// markNeedResolve()|   |  doResolve()+------>+obsolete|
+//                  |   |                     +--------+
+//              +---v---+---+
+//              | needCheck |
+//              +-----------+
+//
+// - new store found by region view will be init as `unresolved`
+// - first access request wil trigger `unresolved` store to resolve address and change to `resolved`
+// - when store down or storeNotMatch will change `resolved` store as `needCheck`
+// - first request access `needCheck` store will resolve addr again, then:
+//    - invalidate region when re-resolve can not found that storeID in PD
+//    - address changed will copy-on-write insert a new `resolved` region in store cache and mark old store as `obsolete`(region will refer old store at this time)
+//    - address not change try to change status to `resolved` status if it's  in `needResolve`
+// - first request access `obsolete` store will cas change current region's reference store to new `resolved` store from store cache
+//
+func (s *Store) getAddr(bo *Backoffer, region *Region, storeIdx int) (addr, saddr string, err error) {
+	state := s.currentResolveState()
 	switch state {
-	case resolved, needCheck:
-		addr = store.addr
-		return
+	case resolved:
+		addr, saddr = s.addr, s.saddr
+	case needCheck:
+		err = s.doResolve(bo)
+		addr, saddr = s.addr, s.saddr
 	case unresolved:
-		addr, err = store.initResolve(bo, c)
-		return
-	case deleted:
-		addr = c.changeToActiveStore(region, store, storeIdx)
-		return
+		addr, saddr, err = s.initResolve(bo)
+	case obsolete:
+		if region != nil {
+			addr, saddr = s.rc.changeToActiveStore(region, s, storeIdx)
+		} else {
+			s.rc.storeMu.RLock()
+			ns := s.rc.storeMu.stores[s.storeID]
+			s.rc.storeMu.RUnlock()
+			addr, saddr = ns.addr, ns.saddr
+		}
 	default:
 		panic("unsupported resolve state")
 	}
+	return
 }
 
-func (c *RegionCache) changeToActiveStore(region *Region, store *Store, storeIdx int) (addr string) {
+// changeToActiveStore replace region's referenced but obsolete store with new one.
+func (c *RegionCache) changeToActiveStore(region *Region, store *Store, storeIdx int) (addr, saddr string) {
 	c.storeMu.RLock()
-	store = c.storeMu.stores[store.storeID]
+	nstore := c.storeMu.stores[store.storeID]
 	c.storeMu.RUnlock()
 	for {
 		oldRegionStore := region.getStore()
@@ -953,7 +951,7 @@ func (c *RegionCache) changeToActiveStore(region *Region, store *Store, storeIdx
 		newRegionStore.stores = make([]*Store, 0, len(oldRegionStore.stores))
 		for i, s := range oldRegionStore.stores {
 			if i == storeIdx {
-				newRegionStore.stores = append(newRegionStore.stores, store)
+				newRegionStore.stores = append(newRegionStore.stores, nstore)
 			} else {
 				newRegionStore.stores = append(newRegionStore.stores, s)
 			}
@@ -962,7 +960,7 @@ func (c *RegionCache) changeToActiveStore(region *Region, store *Store, storeIdx
 			break
 		}
 	}
-	addr = store.addr
+	addr, saddr = nstore.addr, nstore.saddr
 	return
 }
 
@@ -974,7 +972,7 @@ func (c *RegionCache) getStoreByStoreID(storeID uint64) (store *Store) {
 		c.storeMu.Unlock()
 		return
 	}
-	store = &Store{storeID: storeID}
+	store = &Store{storeID: storeID, rc: c}
 	c.storeMu.stores[storeID] = store
 	c.storeMu.Unlock()
 	return
@@ -1152,12 +1150,12 @@ func (c *RegionCache) switchNextFlashPeer(r *Region, currentPeerIdx int, err err
 
 	if err != nil { // TODO: refine err, only do this for some errors.
 		s := rs.stores[currentPeerIdx]
-		epoch := rs.storeFails[currentPeerIdx]
-		if atomic.CompareAndSwapUint32(&s.fail, epoch, epoch+1) {
+		epoch := rs.storeEpochs[currentPeerIdx]
+		if atomic.CompareAndSwapUint32(&s.epoch, epoch, epoch+1) {
 			logutil.BgLogger().Info("mark store's regions need be refill", zap.String("store", s.addr))
 			tikvRegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
 		}
-		s.markNeedCheck(c.notifyCheckCh)
+		s.scheduleResolve()
 	}
 
 	nextIdx := (currentPeerIdx + 1) % len(rs.stores)
@@ -1171,12 +1169,12 @@ func (c *RegionCache) switchNextPeer(r *Region, currentPeerIdx int, err error) {
 
 	if err != nil { // TODO: refine err, only do this for some errors.
 		s := rs.stores[currentPeerIdx]
-		epoch := rs.storeFails[currentPeerIdx]
-		if atomic.CompareAndSwapUint32(&s.fail, epoch, epoch+1) {
+		epoch := rs.storeEpochs[currentPeerIdx]
+		if atomic.CompareAndSwapUint32(&s.epoch, epoch, epoch+1) {
 			logutil.BgLogger().Info("mark store's regions need be refill", zap.String("store", s.addr))
 			tikvRegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
 		}
-		s.markNeedCheck(c.notifyCheckCh)
+		s.scheduleResolve()
 	}
 
 	if int(rs.workTiKVIdx) != currentPeerIdx {
@@ -1235,71 +1233,61 @@ func (r *Region) ContainsByEnd(key []byte) bool {
 		(bytes.Compare(key, r.meta.GetEndKey()) <= 0 || len(r.meta.GetEndKey()) == 0)
 }
 
-// Store contains a kv process's address.
+var (
+	resolveSf, livenessSf singleflight.Group
+)
+
+// Store contains a kv process's type and addresses.
 type Store struct {
-	addr         string        // loaded store address
-	storeID      uint64        // store's id
-	state        uint64        // unsafe store storeState
-	resolveMutex sync.Mutex    // protect pd from concurrent init requests
-	fail         uint32        // store fail count, see RegionStore.storeFails
-	storeType    kv.StoreType  // type of the store
-	tokenCount   atomic2.Int64 // used store token count
+	addr      string       // loaded store address
+	saddr     string       // loaded store status address
+	storeType kv.StoreType // type of the store
+	storeID   uint64       // store's id
+	rc        *RegionCache
+
+	tokenCount atomic2.Int64 // used store token coun
+	closed     chan struct{}
+
+	resolveState uint64 // unsafe store storeState
+
+	epoch         uint32 // store fail epoch, see RegionStore.storeEpochs
+	livenessState uint32 // store liveness status
+	liveness      struct {
+		runNow        chan struct{}
+		checkInterval uint64
+	}
 }
 
+// resolveState indicates store's resolve state in resolve state machine.
+// see more detail in Store#getAddr's comments.
 type resolveState uint64
 
 const (
 	unresolved resolveState = iota
 	resolved
 	needCheck
-	deleted
+	obsolete
 )
 
-// initResolve resolves addr for store that never resolved.
-func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err error) {
-	s.resolveMutex.Lock()
-	state := s.getResolveState()
-	defer s.resolveMutex.Unlock()
+// initResolve init store's addr and change resolve status from unresolve to resolved.
+func (s *Store) initResolve(bo *Backoffer) (addr, saddr string, err error) {
+	state := s.currentResolveState()
 	if state != unresolved {
-		addr = s.addr
+		addr, saddr = s.addr, s.saddr
 		return
 	}
-	var store *metapb.Store
-	for {
-		store, err = c.pdClient.GetStore(bo.ctx, s.storeID)
-		if err != nil {
-			tikvRegionCacheCounterWithGetStoreError.Inc()
-		} else {
-			tikvRegionCacheCounterWithGetStoreOK.Inc()
+	err = s.requestResolveAddr(bo, func(store *metapb.Store) {
+		if s.casResolveState(state, resolved) {
+			s.addr = store.Address
+			s.saddr = store.StatusAddress
+			s.storeType = GetStoreTypeByMeta(store)
 		}
-		if err != nil {
-			// TODO: more refine PD error status handle.
-			if errors.Cause(err) == context.Canceled {
-				return
-			}
-			err = errors.Errorf("loadStore from PD failed, id: %d, err: %v", s.storeID, err)
-			if err = bo.Backoff(BoPDRPC, err); err != nil {
-				return
-			}
-			continue
-		}
-		if store == nil {
-			return
-		}
-		addr = store.GetAddress()
-		s.addr = addr
-		s.storeType = GetStoreTypeByMeta(store)
-	retry:
-		state = s.getResolveState()
-		if state != unresolved {
-			addr = s.addr
-			return
-		}
-		if !s.compareAndSwapState(state, resolved) {
-			goto retry
-		}
+	})
+	if err != nil {
 		return
 	}
+	addr, saddr = s.addr, s.saddr
+	return
 }
 
 // GetStoreTypeByMeta gets store type by store meta pb.
@@ -1316,86 +1304,223 @@ func GetStoreTypeByMeta(store *metapb.Store) kv.StoreType {
 	return tp
 }
 
-// reResolve try to resolve addr for store that need check.
-func (s *Store) reResolve(c *RegionCache) {
-	var addr string
-	store, err := c.pdClient.GetStore(context.Background(), s.storeID)
-	if err != nil {
-		tikvRegionCacheCounterWithGetStoreError.Inc()
-	} else {
-		tikvRegionCacheCounterWithGetStoreOK.Inc()
-	}
-	if err != nil {
-		logutil.BgLogger().Error("loadStore from PD failed", zap.Uint64("id", s.storeID), zap.Error(err))
-		// we cannot do backoff in reResolve loop but try check other store and wait tick.
-		return
-	}
-	if store == nil {
-		// store has be removed in PD, we should invalidate all regions using those store.
-		logutil.BgLogger().Info("invalidate regions in removed store",
-			zap.Uint64("store", s.storeID), zap.String("add", s.addr))
-		atomic.AddUint32(&s.fail, 1)
-		tikvRegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
-		return
-	}
-
-	storeType := GetStoreTypeByMeta(store)
-	addr = store.GetAddress()
-	if s.addr != addr {
-		state := resolved
-		newStore := &Store{storeID: s.storeID, addr: addr, storeType: storeType}
-		newStore.state = *(*uint64)(&state)
-		c.storeMu.Lock()
-		c.storeMu.stores[newStore.storeID] = newStore
-		c.storeMu.Unlock()
-	retryMarkDel:
-		// all region used those
-		oldState := s.getResolveState()
-		if oldState == deleted {
+// doResolve resolves store's addr.
+// it will COW change store's addr and mark old store as delete to notify regions reference old store to switch to new one.
+func (s *Store) doResolve(bo *Backoffer) (err error) {
+	err = s.requestResolveAddr(bo, func(store *metapb.Store) {
+		if store == nil {
+			// store has be removed in PD, we should invalidate all regions using those store.
+			s.updateLivenessState(atomic.LoadUint32(&s.livenessState), uint32(die), "resolve loop found store has be removed")
 			return
 		}
-		newState := deleted
-		if !s.compareAndSwapState(oldState, newState) {
-			goto retryMarkDel
+		storeType := GetStoreTypeByMeta(store)
+		addr, saddr := store.GetAddress(), store.GetStatusAddress()
+		s.storeType = GetStoreTypeByMeta(store)
+		if s.addr != addr || s.saddr != saddr {
+			// store addr has be changed.
+			// copy-on-write a new resolved store and insert store cache.
+			newStore := &Store{storeID: s.storeID, addr: addr, saddr: saddr, storeType: storeType, livenessState: uint32(alive), rc: s.rc}
+			state := resolved
+			newStore.resolveState = *(*uint64)(unsafe.Pointer(&state))
+			newStore.initLiveness(time.Duration(atomic.LoadUint64(&s.liveness.checkInterval)))
+			s.rc.storeMu.Lock()
+			s.rc.storeMu.stores[newStore.storeID] = newStore
+			s.rc.storeMu.Unlock()
+		retryMarkDel:
+			// mark old store as obsolete to notify region ref old store switch to new one, see RegionCache#changeToActiveStore
+			oldState := s.currentResolveState()
+			if oldState == obsolete {
+				return
+			}
+			newState := obsolete
+			if !s.casResolveState(oldState, newState) {
+				goto retryMarkDel
+			}
+			close(s.closed)
+			return
 		}
+		// store add hasn't changed.
+		// mark store back to resolved state directly.
+	retryMarkResolved:
+		oldState := s.currentResolveState()
+		if oldState != needCheck {
+			return
+		}
+		newState := resolved
+		if !s.casResolveState(oldState, newState) {
+			goto retryMarkResolved
+		}
+	})
+	if err != nil {
+		logutil.BgLogger().Error("loadStore from PD failed and use old addr", zap.Uint64("id", s.storeID), zap.Error(err))
 		return
 	}
-retryMarkResolved:
-	oldState := s.getResolveState()
-	if oldState != needCheck {
-		return
+	return
+}
+
+func (s *Store) requestResolveAddr(retryBo *Backoffer, f func(store *metapb.Store)) (err error) {
+	rsCh := resolveSf.DoChan(strconv.FormatUint(s.storeID, 10), func() (interface{}, error) {
+		var st *metapb.Store
+		st, err = s.rc.pdClient.GetStore(context.Background(), s.storeID) // TODO: how long we should set timeout?
+		if err != nil {
+			tikvRegionCacheCounterWithGetStoreError.Inc()
+		} else {
+			tikvRegionCacheCounterWithGetStoreOK.Inc()
+		}
+		if err != nil {
+			return nil, err
+		}
+		f(st)
+		return nil, nil
+	})
+	var doneCh <-chan struct{}
+	if retryBo != nil {
+		doneCh = retryBo.ctx.Done()
 	}
-	newState := resolved
-	if !s.compareAndSwapState(oldState, newState) {
-		goto retryMarkResolved
+	for {
+		select {
+		case <-doneCh:
+			return errors.Trace(retryBo.ctx.Err()) // never reach here when doneCh is nil
+		case rs := <-rsCh:
+			if rs.Err != nil {
+				// TODO: more refine PD error status handle.
+				if errors.Cause(rs.Err) == context.Canceled {
+					return errors.Trace(rs.Err)
+				}
+				err = errors.Errorf("loadStore from PD failed, id: %d, err: %v", s.storeID, rs.Err)
+				if retryBo == nil {
+					// no need retry when retryBo is nil
+					return err
+				}
+				if err = retryBo.Backoff(BoPDRPC, err); err != nil {
+					return err
+				}
+				continue
+			}
+			return nil
+		}
 	}
 }
 
-func (s *Store) getResolveState() resolveState {
+func (s *Store) currentResolveState() resolveState {
 	var state resolveState
 	if s == nil {
 		return state
 	}
-	return resolveState(atomic.LoadUint64(&s.state))
+	return resolveState(atomic.LoadUint64(&s.resolveState))
 }
 
-func (s *Store) compareAndSwapState(oldState, newState resolveState) bool {
-	return atomic.CompareAndSwapUint64(&s.state, uint64(oldState), uint64(newState))
+func (s *Store) casResolveState(oldState, newState resolveState) bool {
+	return atomic.CompareAndSwapUint64(&s.resolveState, uint64(oldState), uint64(newState))
 }
 
-// markNeedCheck marks resolved store to be async resolve to check store addr change.
-func (s *Store) markNeedCheck(notifyCheckCh chan struct{}) {
-retry:
-	oldState := s.getResolveState()
-	if oldState != resolved {
+// scheduleResolve schedules a addr resolve when next getAddr called.
+func (s *Store) scheduleResolve() {
+	s.casResolveState(resolved, needCheck)
+}
+
+type livenessState uint32
+
+const (
+	unknown livenessState = 1 + iota
+	alive
+	die
+)
+
+func (s *Store) initLiveness(livenessCheckInterval time.Duration) {
+	s.liveness.runNow = make(chan struct{})
+	s.liveness.checkInterval = uint64(livenessCheckInterval)
+	go s.livenessLoop()
+}
+
+func (s *Store) livenessLoop() {
+	t := time.NewTimer(time.Duration(atomic.LoadUint64(&s.liveness.checkInterval)))
+	for {
+		select {
+		case <-s.closed:
+			t.Stop()
+			return
+		case <-t.C:
+			s.checkLiveness()
+			t.Reset(time.Duration(atomic.LoadUint64(&s.liveness.checkInterval)))
+		case <-s.liveness.runNow:
+			s.checkLiveness()
+			t.Reset(time.Duration(atomic.LoadUint64(&s.liveness.checkInterval)))
+		}
+	}
+}
+
+func (s *Store) checkLiveness() {
+	ns := s.requestLiveness()
+	os := atomic.LoadUint32(&s.livenessState)
+	if uint32(ns) == os {
 		return
 	}
-	if !s.compareAndSwapState(oldState, needCheck) {
-		goto retry
+	if ns == die {
+		s.scheduleResolve()
 	}
-	select {
-	case notifyCheckCh <- struct{}{}:
-	default:
-	}
+	s.updateLivenessState(os, uint32(ns), "liveness check loop found die")
+}
 
+func (s *Store) updateLivenessState(os, ns uint32, reason string) {
+	changed := atomic.CompareAndSwapUint32(&s.livenessState, os, ns)
+	if changed && (os == uint32(alive) && ns == uint32(die)) {
+		logutil.BgLogger().Info("invalidate regions in die store",
+			zap.Uint64("store", s.storeID), zap.String("add", s.saddr),
+			zap.String("reason", reason))
+		atomic.AddUint32(&s.epoch, 1)
+		tikvRegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
+	}
+}
+
+func (s *Store) currentEpoch() uint32 {
+	return atomic.LoadUint32(&s.epoch)
+}
+
+func (s *Store) currentLivenessState() livenessState {
+	return livenessState(atomic.LoadUint32(&s.livenessState))
+}
+
+// IsAlive checks whether store process still alive.
+func (s *Store) requestLiveness() (l livenessState) {
+	_, saddr, err := s.getAddr(NewNoopBackoff(context.Background()), nil, 0)
+	if err != nil || len(saddr) == 0 {
+		l = unknown
+		return
+	}
+	_, err, _ = livenessSf.Do(saddr, func() (interface{}, error) {
+		l = invokeKVStatusAPI(saddr, time.Duration(config.GetGlobalConfig().TiKVClient.StoreLivenessTimeout)*time.Second)
+		return nil, nil
+	})
+	if err != nil {
+		l = unknown
+	}
+	return
+}
+
+func invokeKVStatusAPI(saddr string, timeout time.Duration) livenessState {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	url := fmt.Sprintf("%s://%s/status", util.InternalHTTPSchema(), saddr)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		logutil.BgLogger().Info("[liveness] build kv status request fail", zap.String("store", saddr), zap.Error(err))
+		return die
+	}
+	resp, err := util.InternalHTTPClient().Do(req)
+	if err != nil {
+		logutil.BgLogger().Info("[liveness] request kv status fail", zap.String("store", saddr), zap.Error(err))
+		return die
+	}
+	defer func() {
+		err1 := resp.Body.Close()
+		if err1 != nil {
+			logutil.BgLogger().Debug("[liveness] close kv status api body failed", zap.String("store", saddr), zap.Error(err))
+		}
+	}()
+	if resp.StatusCode != http.StatusOK {
+		logutil.BgLogger().Info("[liveness] request kv status fail", zap.String("store", saddr), zap.String("status", resp.Status))
+		return die
+	}
+	return alive
 }
