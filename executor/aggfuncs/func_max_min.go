@@ -19,7 +19,84 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/stringutil"
+	"reflect"
+	"sort"
 )
+
+type maxMinQueue struct {
+	queue   []interface{}
+	counter map[interface{}]int64
+	isMax   bool
+}
+
+func newMaxMinQueue(isMax bool) maxMinQueue {
+	return maxMinQueue{
+		queue:   make([]interface{}, 0),
+		counter: make(map[interface{}]int64),
+		isMax:   isMax,
+	}
+}
+
+func (m maxMinQueue) Resort() {
+	if len(m.queue) == 0 {
+		return
+	}
+	var lessFunc func(i, j int) bool
+	switch m.queue[0].(type) {
+	case int64:
+		lessFunc = func(i, j int) bool {
+			if m.isMax {
+				return m.queue[i].(int64) > m.queue[j].(int64)
+			}
+			return m.queue[i].(int64) < m.queue[j].(int64)
+		}
+	}
+	sort.Slice(m.queue, lessFunc)
+}
+
+func (m maxMinQueue) Top() (val interface{}, isEmpty bool) {
+	if len(m.queue) == 0 {
+		return nil, true
+	}
+	return m.queue[0], false
+}
+
+func (m maxMinQueue) Del(val interface{}) {
+	for i, qVal := range m.queue {
+		if reflect.DeepEqual(qVal, val) {
+			if i < len(m.queue) {
+				m.queue = append(m.queue[:i], m.queue[i+1:]...)
+			} else {
+				m.queue = m.queue[:i]
+			}
+		}
+	}
+}
+
+func (m maxMinQueue) Push(val interface{}) {
+	if v, ok := m.counter[val]; ok {
+		m.counter[val] = v + 1
+	} else {
+		m.counter[val] = 1
+		m.queue = append(m.queue, val)
+		m.Resort()
+	}
+}
+
+func (m maxMinQueue) Pop(val interface{}) {
+	if v, ok := m.counter[val]; ok {
+		m.counter[val] = v - 1
+		if v-1 == 0 {
+			m.Del(val)
+			m.Resort()
+		}
+	}
+}
+
+func (m maxMinQueue) Reset() {
+	m.queue = m.queue[:0]
+	m.counter = make(map[interface{}]int64)
+}
 
 type partialResult4MaxMinInt struct {
 	val int64
@@ -27,6 +104,7 @@ type partialResult4MaxMinInt struct {
 	// 1. whether the partial result is the initialization value which should not be compared during evaluation;
 	// 2. whether all the values of arg are all null, if so, we should return null as the default value for MAX/MIN.
 	isNull bool
+	queue  maxMinQueue
 }
 
 type partialResult4MaxMinUint struct {
@@ -82,6 +160,7 @@ type maxMin4Int struct {
 func (e *maxMin4Int) AllocPartialResult() PartialResult {
 	p := new(partialResult4MaxMinInt)
 	p.isNull = true
+	p.queue = newMaxMinQueue(e.isMax)
 	return PartialResult(p)
 }
 
@@ -89,6 +168,7 @@ func (e *maxMin4Int) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinInt)(pr)
 	p.val = 0
 	p.isNull = true
+	p.queue.Reset()
 }
 
 func (e *maxMin4Int) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -117,8 +197,37 @@ func (e *maxMin4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []
 			continue
 		}
 		if e.isMax && input > p.val || !e.isMax && input < p.val {
+			p.queue.Push(input)
 			p.val = input
 		}
+	}
+	return nil
+}
+
+func (e *maxMin4Int) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
+	p := (*partialResult4MaxMinInt)(pr)
+	for i := uint64(0); i < shiftEnd; i++ {
+		input, isNull, err := e.args[0].EvalInt(sctx, rows[lastEnd+i])
+		if err != nil {
+			return err
+		}
+		if isNull {
+			continue
+		}
+		p.queue.Pop(input)
+	}
+	for i := uint64(0); i < shiftStart; i++ {
+		input, isNull, err := e.args[0].EvalInt(sctx, rows[lastStart+i])
+		if err != nil {
+			return err
+		}
+		if isNull {
+			continue
+		}
+		p.queue.Push(input)
+	}
+	if val, isEmpty := p.queue.Top(); !isEmpty {
+		p.val = val.(int64)
 	}
 	return nil
 }
