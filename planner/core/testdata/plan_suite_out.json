@@ -984,9 +984,115 @@
         "Warning": "[planner:1815]Optimizer Hint /*+ INL_JOIN(t1) */ or /*+ TIDB_INLJ(t1) */ is inapplicable"
       },
       {
+<<<<<<< HEAD
         "SQL": "select /*+ TIDB_INLJ(t2) */ t1.b, t2.a from t2 t1, t2 t2 where t1.b=t2.b and t2.c=-1;",
         "Best": "IndexJoin{IndexReader(Index(t2.b)[[NULL,+inf]])->IndexReader(Index(t2.b_c)[[NULL,+inf]]->Sel([eq(test.t2.c, -1)]))}(test.t2.b,test.t1.b)->Projection",
         "Warning": "[planner:1815]Optimizer Hint /*+ INL_JOIN(t2) */ or /*+ TIDB_INLJ(t2) */ is inapplicable"
+=======
+        "SQL": "select /*+ HASH_AGG() */ count(*) from t t1, t t2 where t1.a = t2.b",
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t))}(test.t.a,test.t.b)->HashAgg",
+        "Warning": ""
+      },
+      {
+        "SQL": "select /*+ STREAM_AGG() */ count(t1.a) from t t1, t t2 where t1.a = t2.a*2 group by t1.a",
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]])->Projection}(test.t.a,Column#26)->Sort->StreamAgg",
+        "Warning": ""
+      },
+      {
+        "SQL": "select /*+ HASH_AGG() STREAM_AGG() */ count(*) from t t1, t t2 where t1.a = t2.b",
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t))}(test.t.a,test.t.b)->StreamAgg",
+        "Warning": "[planner:1815]Optimizer aggregation hints are conflicted"
+      },
+      {
+        "SQL": "select /*+ STREAM_AGG() */ distinct a from t",
+        "Best": "TableReader(Table(t))->StreamAgg",
+        "Warning": ""
+      },
+      {
+        "SQL": "select /*+ HASH_AGG() */ t1.a from t t1 where t1.a < any(select t2.b from t t2)",
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]]->Sel([if(isnull(test.t.a), <nil>, 1)]))->TableReader(Table(t)->HashAgg)->HashAgg->Sel([ne(Column#27, 0)])}",
+        "Warning": ""
+      },
+      {
+        "SQL": "select /*+ hash_agg() */ t1.a from t t1 where t1.a != any(select t2.b from t t2)",
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]]->Sel([if(isnull(test.t.a), <nil>, 1)]))->TableReader(Table(t))->Projection->HashAgg->Sel([ne(Column#28, 0)])}",
+        "Warning": ""
+      },
+      {
+        "SQL": "select /*+ hash_agg() */ t1.a from t t1 where t1.a = all(select t2.b from t t2)",
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t))->Projection->HashAgg}",
+        "Warning": ""
+      },
+      {
+        "SQL": "select /*+ STREAM_AGG() */ sum(t1.a) from t t1 join t t2 on t1.b = t2.b group by t1.b",
+        "Best": "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))->Sort->Projection->StreamAgg}(test.t.b,test.t.b)->HashAgg",
+        "Warning": ""
+      },
+      {
+        "SQL": "select /*+ STREAM_AGG() */ e, sum(b) from t group by e",
+        "Best": "TableReader(Table(t))->Sort->Projection->StreamAgg->Projection",
+        "Warning": ""
+      }
+    ]
+  },
+  {
+    "Name": "TestQueryBlockHint",
+    "Cases": [
+      {
+        "SQL": "select /*+ MERGE_JOIN(@sel_1 t1), INL_JOIN(@sel_2 t3) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "Plan": "MergeInnerJoin{TableReader(Table(t))->IndexJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)",
+        "Hints": "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_2` `test`.`t2` ), use_index(@`sel_2` `test`.`t3` `c_d_e`), inl_join(@`sel_2` `test`.`t3`), merge_join(@`sel_1` `test`.`t1`)"
+      },
+      {
+        "SQL": "select /*+ MERGE_JOIN(@sel_1 t1), INL_JOIN(@qb t3) */ t1.a, t1.b from t t1, (select /*+ QB_NAME(qb) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "Plan": "MergeInnerJoin{TableReader(Table(t))->IndexJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)",
+        "Hints": "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_2` `test`.`t2` ), use_index(@`sel_2` `test`.`t3` `c_d_e`), inl_join(@`sel_2` `test`.`t3`), merge_join(@`sel_1` `test`.`t1`)"
+      },
+      {
+        "SQL": "select /*+ HASH_JOIN(@sel_1 t1), MERGE_JOIN(@sel_2 t2) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "Plan": "RightHashJoin{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)",
+        "Hints": "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_2` `test`.`t2` ), use_index(@`sel_2` `test`.`t3` `c_d_e`), merge_join(@`sel_2` `test`.`t2`), hash_join(@`sel_1` `test`.`t1`)"
+      },
+      {
+        "SQL": "select /*+ HASH_JOIN(@sel_1 t1), MERGE_JOIN(@qb t2) */ t1.a, t1.b from t t1, (select /*+ QB_NAME(qb) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "Plan": "RightHashJoin{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)",
+        "Hints": "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_2` `test`.`t2` ), use_index(@`sel_2` `test`.`t3` `c_d_e`), merge_join(@`sel_2` `test`.`t2`), hash_join(@`sel_1` `test`.`t1`)"
+      },
+      {
+        "SQL": "select /*+ INL_JOIN(@sel_1 t1), HASH_JOIN(@sel_2 t2) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "Plan": "IndexJoin{TableReader(Table(t))->LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)",
+        "Hints": "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_2` `test`.`t2` `f`), use_index(@`sel_2` `test`.`t3` `c_d_e`), hash_join(@`sel_2` `test`.`t2`), inl_join(@`sel_1` `test`.`t1`)"
+      },
+      {
+        "SQL": "select /*+ INL_JOIN(@sel_1 t1), HASH_JOIN(@qb t2) */ t1.a, t1.b from t t1, (select /*+ QB_NAME(qb) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "Plan": "IndexJoin{TableReader(Table(t))->LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)",
+        "Hints": "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_2` `test`.`t2` `f`), use_index(@`sel_2` `test`.`t3` `c_d_e`), hash_join(@`sel_2` `test`.`t2`), inl_join(@`sel_1` `test`.`t1`)"
+      },
+      {
+        "SQL": "select /*+ HASH_AGG(@sel_1), STREAM_AGG(@sel_2) */ count(*) from t t1 where t1.a < (select count(*) from t t2 where t1.a > t2.a)",
+        "Plan": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]]->Sel([gt(test.t.a, test.t.a)])->StreamAgg)->StreamAgg->Sel([not(isnull(Column#25))])}->HashAgg",
+        "Hints": "use_index(@`sel_1` `test`.`t1` `f`), use_index(@`sel_2` `test`.`t2` `f`), stream_agg(@`sel_2`), hash_agg(@`sel_1`)"
+      },
+      {
+        "SQL": "select /*+ STREAM_AGG(@sel_1), HASH_AGG(@qb) */ count(*) from t t1 where t1.a < (select /*+ QB_NAME(qb) */ count(*) from t t2 where t1.a > t2.a)",
+        "Plan": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]]->Sel([gt(test.t.a, test.t.a)])->HashAgg)->HashAgg->Sel([not(isnull(Column#25))])}->StreamAgg",
+        "Hints": "use_index(@`sel_1` `test`.`t1` `f`), use_index(@`sel_2` `test`.`t2` `f`), hash_agg(@`sel_2`), stream_agg(@`sel_1`)"
+      },
+      {
+        "SQL": "select /*+ HASH_AGG(@sel_2) */ a, (select count(*) from t t1 where t1.b > t.a) from t where b > (select b from t t2 where t2.b = t.a limit 1)",
+        "Plan": "Apply{Apply{TableReader(Table(t))->TableReader(Table(t)->Sel([eq(test.t.b, test.t.a)])->Limit)->Limit}->TableReader(Table(t)->Sel([gt(test.t.b, test.t.a)])->HashAgg)->HashAgg}->Projection",
+        "Hints": "use_index(@`sel_1` `test`.`t` ), use_index(@`sel_3` `test`.`t2` ), use_index(@`sel_2` `test`.`t1` ), hash_agg(@`sel_2`)"
+      },
+      {
+        "SQL": "select /*+ HASH_JOIN(@sel_1 t1), HASH_JOIN(@sel_2 t1) */ t1.b, t2.a, t2.aa from t t1, (select t1.a as a, t2.a as aa from t t1, t t2) t2 where t1.a = t2.aa;",
+        "Plan": "RightHashJoin{TableReader(Table(t))->LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]])}}(test.t.a,test.t.a)",
+        "Hints": "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_2` `test`.`t1` `f`), use_index(@`sel_2` `test`.`t2` `f`), hash_join(@`sel_2` `test`.`t1`), hash_join(@`sel_1` `test`.`t1`)"
+      },
+      {
+        "SQL": "select /*+ HASH_JOIN(@sel_2 t1@sel_2, t2@sel_2), MERGE_JOIN(@sel_1 t1@sel_1, t2@sel_1) */ * from (select t1.a, t1.b from t t1, t t2 where t1.a = t2.a) t1, t t2 where t1.b = t2.b",
+        "Plan": "MergeInnerJoin{LeftHashJoin{TableReader(Table(t))->IndexReader(Index(t.f)[[NULL,+inf]])}(test.t.a,test.t.a)->Sort->TableReader(Table(t))->Sort}(test.t.b,test.t.b)",
+        "Hints": "use_index(@`sel_2` `test`.`t1` ), use_index(@`sel_2` `test`.`t2` `f`), hash_join(@`sel_2` `test`.`t1`), use_index(@`sel_1` `test`.`t2` ), merge_join(@`sel_1` `test`.`t1`)"
+>>>>>>> b6fcc15... planner: enforce the required property when hint cannot satisf… (#15650)
       }
     ]
   },
