@@ -588,7 +588,7 @@ func (b *builtinInet6NtoaSig) evalString(row chunk.Row) (string, bool, error) {
 	if err != nil || isNull {
 		return "", true, err
 	}
-	ip := net.IP([]byte(val)).String()
+	ip := net.IP(val).String()
 	if len(val) == net.IPv6len && !strings.Contains(ip, ":") {
 		ip = fmt.Sprintf("::ffff:%s", ip)
 	}
