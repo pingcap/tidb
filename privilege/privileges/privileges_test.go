@@ -15,6 +15,7 @@ package privileges_test
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -336,6 +337,45 @@ func (s *testPrivilegeSuite) TestAdminCommand(c *C) {
 	c.Assert(err, IsNil)
 }
 
+<<<<<<< HEAD
+=======
+func (s *testPrivilegeSuite) TestLoadDataPrivilege(c *C) {
+	// Create file.
+	path := "/tmp/load_data_priv.csv"
+	fp, err := os.Create(path)
+	c.Assert(err, IsNil)
+	c.Assert(fp, NotNil)
+	defer func() {
+		err = fp.Close()
+		c.Assert(err, IsNil)
+		err = os.Remove(path)
+		c.Assert(err, IsNil)
+	}()
+	fp.WriteString("1\n")
+
+	se := newSession(c, s.store, s.dbName)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil), IsTrue)
+	mustExec(c, se, `CREATE USER 'test_load'@'localhost';`)
+	mustExec(c, se, `CREATE TABLE t_load(a int)`)
+	mustExec(c, se, `GRANT SELECT on *.* to 'test_load'@'localhost'`)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "test_load", Hostname: "localhost"}, nil, nil), IsTrue)
+	_, err = se.Execute(context.Background(), "LOAD DATA LOCAL INFILE '/tmp/load_data_priv.csv' INTO TABLE t_load")
+	c.Assert(strings.Contains(err.Error(), "INSERT command denied to user 'test_load'@'localhost' for table 't_load'"), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil), IsTrue)
+	mustExec(c, se, `GRANT INSERT on *.* to 'test_load'@'localhost'`)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "test_load", Hostname: "localhost"}, nil, nil), IsTrue)
+	_, err = se.Execute(context.Background(), "LOAD DATA LOCAL INFILE '/tmp/load_data_priv.csv' INTO TABLE t_load")
+	c.Assert(err, IsNil)
+}
+
+func (s *testPrivilegeSuite) TestGetEncodedPassword(c *C) {
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, se, `CREATE USER 'test_encode_u'@'localhost' identified by 'root';`)
+	pc := privilege.GetPrivilegeManager(se)
+	c.Assert(pc.GetEncodedPassword("test_encode_u", "localhost"), Equals, "*81F5E21E35407D884A6CD4A731AEBFB6AF209E1B")
+}
+
+>>>>>>> 26ba532... plan, privilege:fix load data privilege check (#16607)
 func (s *testPrivilegeSuite) TestAuthHost(c *C) {
 	rootSe := newSession(c, s.store, s.dbName)
 	se := newSession(c, s.store, s.dbName)

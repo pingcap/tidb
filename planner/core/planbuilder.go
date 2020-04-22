@@ -1595,6 +1595,12 @@ func (b *planBuilder) buildLoadData(ld *ast.LoadDataStmt) (Plan, error) {
 		LinesInfo:   ld.LinesInfo,
 		IgnoreLines: ld.IgnoreLines,
 	}
+	user := b.ctx.GetSessionVars().User
+	var insertErr error
+	if user != nil {
+		insertErr = ErrTableaccessDenied.GenWithStackByArgs("INSERT", user.AuthUsername, user.AuthHostname, p.Table.Name.O)
+	}
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, p.Table.Schema.O, p.Table.Name.O, "", insertErr)
 	tableInfo := p.Table.TableInfo
 	tableInPlan, ok := b.is.TableByID(tableInfo.ID)
 	if !ok {
