@@ -12,6 +12,7 @@
 // limitations under the License.
 
 // Note: All the tests in this file will be executed sequentially.
+// +build !race
 
 package executor_test
 
