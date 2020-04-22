@@ -58,6 +58,8 @@
       "select /*+ USE_INDEX_MERGE(t, primary, f_g) */ * from t where a < 1 or f > 2",
       "select /*+ USE_INDEX_MERGE(t, primary, f_g, c_d_e) */ * from t where a < 1 or f > 2",
       "select /*+ NO_INDEX_MERGE(), USE_INDEX_MERGE(t, primary, f_g, c_d_e) */ * from t where a < 1 or f > 2",
+      "select /*+ USE_INDEX_MERGE(t1, c_d_e, f_g) */ * from t where c < 1 or f > 2",
+      "select /*+ NO_INDEX_MERGE(), USE_INDEX_MERGE(t, primary, f_g, c_d_e) */ * from t where a < 1 or f > 2",
       "select /*+ USE_INDEX_MERGE(t) USE_INDEX_MERGE(t) */ * from t where c < 1 or f > 2"
     ]
   },
@@ -533,6 +535,45 @@
     ]
   },
   {
+    "name": "TestPushdownDistinctEnable",
+    "cases": [
+      "select /*+ HASH_AGG() */ avg(distinct a) from t;", // InjectProjBelowAgg
+      "select /*+ HASH_AGG() */ a, count(distinct a) from t;", // firstrow(a) cannot be removed.
+      "select /*+ HASH_AGG() */ avg(b), c, avg(b), count(distinct A, B),  count(distinct A), count(distinct c), sum(b) from t group by c;",
+      "select /*+ STREAM_AGG() */ count(distinct c) from t group by c;", // can push down
+      "select /*+ STREAM_AGG() */ count(distinct c) from t;", // can not push down because c is not in group by
+      "select /*+ HASH_AGG() */ count(distinct c) from t;", // can push down
+      "select count(distinct c) from t group by c;",
+      "select count(distinct c) from t;", // should not use streamAgg because c is not in group by
+
+      "select /*+ HASH_AGG(), AGG_TO_COP() */ sum(distinct b) from pt;",
+      "select /*+ HASH_AGG(), AGG_TO_COP() */ count(distinct a) from (select * from ta union all select * from tb) t;"
+    ]
+  },
+  {
+    "name": "TestPushdownDistinctDisable",
+    "cases": [
+      // do not pushdown even AGG_TO_COP is specified.
+      "select /*+ HASH_AGG(), AGG_TO_COP() */ avg(distinct a) from t;",
+      "select /*+ HASH_AGG(), AGG_TO_COP() */ a, count(distinct a) from t;",
+      "select /*+ HASH_AGG(), AGG_TO_COP() */ avg(b), c, avg(b), count(distinct A, B),  count(distinct A), count(distinct c), sum(b) from t group by c;",
+      "select /*+ STREAM_AGG(), AGG_TO_COP() */ count(distinct c) from t group by c;",
+      "select /*+ STREAM_AGG(), AGG_TO_COP() */ count(distinct c) from t;",
+      "select /*+ HASH_AGG(), AGG_TO_COP() */ count(distinct c) from t;",
+      "select /*+ AGG_TO_COP() */ count(distinct c) from t group by c;",
+
+      "select /*+ HASH_AGG(), AGG_TO_COP() */ sum(distinct b) from pt;",
+      "select /*+ HASH_AGG(), AGG_TO_COP() */ count(distinct a) from (select * from ta union all select * from tb) t;"
+    ]
+  },
+  {
+    "name": "TestPushdownDistinctEnableAggPushDownDisable",
+    "cases": [
+      "select /*+ HASH_AGG(), AGG_TO_COP() */ sum(distinct b) from pt;",
+      "select /*+ HASH_AGG(), AGG_TO_COP() */ count(distinct a) from (select * from ta union all select * from tb) t;"
+    ]
+  },
+  {
     "name": "TestDAGPlanBuilderWindow",
     "cases":[
       "select lead(a, 1) over (partition by null) as c from t"
@@ -571,7 +612,8 @@
       "select 1 from (select /*+ HASH_JOIN(t1) */ t1.a not in (select t2.a from t2) from t1) x;",
       "select /*+ INL_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
       "select /*+ INL_HASH_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
-      "select /*+ INL_MERGE_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;"
+      "select /*+ INL_MERGE_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
+      "select /*+ MERGE_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;"
     ]
   },
   {

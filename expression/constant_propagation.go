@@ -142,7 +142,7 @@ func tryToReplaceCond(ctx sessionctx.Context, src *Column, tgt *Column, cond Exp
 	for idx, expr := range sf.GetArgs() {
 		if src.Equal(nil, expr) {
 			_, coll, _ := cond.CharsetAndCollation(ctx)
-			if !collate.CompatibleCollate(tgt.GetType().Collate, coll) {
+			if tgt.GetType().Collate != coll {
 				continue
 			}
 			replaced = true
@@ -197,20 +197,6 @@ func (s *propConstSolver) propagateConstantEQ() {
 		}
 		for i, cond := range s.conditions {
 			if !visited[i] {
-				// Make sure the collations of the argument are equal.
-				if sf, ok := cond.(*ScalarFunction); ok && len(sf.GetArgs()) > 1 {
-					baseCollation := sf.GetArgs()[0].GetType().Collate
-					skip := false
-					for _, arg := range sf.GetArgs() {
-						if !collate.CompatibleCollate(arg.GetType().Collate, baseCollation) {
-							skip = true
-							break
-						}
-					}
-					if skip {
-						continue
-					}
-				}
 				s.conditions[i] = ColumnSubstitute(cond, NewSchema(cols...), cons)
 			}
 		}
@@ -242,7 +228,7 @@ func (s *propConstSolver) propagateColumnEQ() {
 		if fun, ok := s.conditions[i].(*ScalarFunction); ok && fun.FuncName.L == ast.EQ {
 			lCol, lOk := fun.GetArgs()[0].(*Column)
 			rCol, rOk := fun.GetArgs()[1].(*Column)
-			if lOk && rOk && collate.CompatibleCollate(lCol.GetType().Collate, rCol.GetType().Collate) {
+			if lOk && rOk && lCol.GetType().Collate == rCol.GetType().Collate {
 				lID := s.getColID(lCol)
 				rID := s.getColID(rCol)
 				s.unionSet.Union(lID, rID)
@@ -489,7 +475,7 @@ func (s *propOuterJoinConstSolver) validColEqualCond(cond Expression) (*Column, 
 	if fun, ok := cond.(*ScalarFunction); ok && fun.FuncName.L == ast.EQ {
 		lCol, lOk := fun.GetArgs()[0].(*Column)
 		rCol, rOk := fun.GetArgs()[1].(*Column)
-		if lOk && rOk && collate.CompatibleCollate(lCol.GetType().Collate, rCol.GetType().Collate) {
+		if lOk && rOk && lCol.GetType().Collate == rCol.GetType().Collate {
 			return s.colsFromOuterAndInner(lCol, rCol)
 		}
 	}

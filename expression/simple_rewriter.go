@@ -271,7 +271,7 @@ func (sr *simpleRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok boo
 			RetType: types.NewFieldType(mysql.TypeVarchar),
 		})
 	case *ast.SetCollationExpr:
-		arg := sr.pop()
+		arg := sr.stack[len(sr.stack)-1]
 		if collate.NewCollationEnabled() {
 			var collInfo *charset.Collation
 			// TODO(bb7133): use charset.ValidCharsetAndCollation when its bug is fixed.
@@ -420,8 +420,8 @@ func (sr *simpleRewriter) constructBinaryOpFunction(l Expression, r Expression, 
 		var expr1, expr2, expr3 Expression
 		if op == ast.LE || op == ast.GE {
 			expr1 = NewFunctionInternal(sr.ctx, op, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
-			expr1 = NewFunctionInternal(sr.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), expr1, Zero)
-			expr2 = Zero
+			expr1 = NewFunctionInternal(sr.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), expr1, NewZero())
+			expr2 = NewZero()
 		} else if op == ast.LT || op == ast.GT {
 			expr1 = NewFunctionInternal(sr.ctx, ast.NE, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
 			expr2 = NewFunctionInternal(sr.ctx, op, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
@@ -595,7 +595,7 @@ func (sr *simpleRewriter) inToExpression(lLen int, not bool, tp *types.FieldType
 	}
 	leftIsNull := leftFt.Tp == mysql.TypeNull
 	if leftIsNull {
-		sr.push(Null.Clone())
+		sr.push(NewNull())
 		return
 	}
 	leftEt := leftFt.EvalType()
