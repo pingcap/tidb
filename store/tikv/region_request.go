@@ -75,6 +75,12 @@ func NewRegionBatchRequestSender(cache *RegionCache, client Client) *RegionBatch
 func (ss *RegionBatchRequestSender) sendReqToAddr(bo *Backoffer, ctxs []copTaskAndRPCContext, req *tikvrpc.Request, timout time.Duration) (resp *tikvrpc.Response, retry bool, err error) {
 	// use the first ctx to send request, because every ctx has same address.
 	ctx := ctxs[0].ctx
+	if !ctx.Store.accessible() {
+		if e := ss.onSendFail(bo, ctx, storeUnreachableErr); e != nil {
+			return nil, false, errors.Trace(e)
+		}
+		return nil, true, nil
+	}
 	if e := tikvrpc.SetContext(req, ctx.Meta, ctx.Peer); e != nil {
 		return nil, false, errors.Trace(e)
 	}
@@ -216,7 +222,15 @@ func (s *RegionRequestSender) SendReqCtx(
 	}
 }
 
+var storeUnreachableErr = errors.SuspendStack(errors.New("store unreachable"))
+
 func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, req *tikvrpc.Request, timeout time.Duration) (resp *tikvrpc.Response, retry bool, err error) {
+	if !ctx.Store.accessible() {
+		if e := s.onSendFail(bo, ctx, storeUnreachableErr); e != nil {
+			return nil, false, errors.Trace(e)
+		}
+		return nil, true, nil
+	}
 	if e := tikvrpc.SetContext(req, ctx.Meta, ctx.Peer); e != nil {
 		return nil, false, errors.Trace(e)
 	}

@@ -86,55 +86,55 @@ type RegionStore struct {
 }
 
 // clone clones region store struct.
-func (r *RegionStore) clone() *RegionStore {
-	storeFails := make([]uint32, len(r.stores))
-	copy(storeFails, r.storeEpochs)
+func (rs *RegionStore) clone() *RegionStore {
+	storeFails := make([]uint32, len(rs.stores))
+	copy(storeFails, rs.storeEpochs)
 	return &RegionStore{
-		workTiFlashIdx: r.workTiFlashIdx,
-		workTiKVIdx:    r.workTiKVIdx,
-		stores:         r.stores,
+		workTiFlashIdx: rs.workTiFlashIdx,
+		workTiKVIdx:    rs.workTiKVIdx,
+		stores:         rs.stores,
 		storeEpochs:    storeFails,
 	}
 }
 
 // return next follower store's index
-func (r *RegionStore) follower(seed uint32) int32 {
-	l := uint32(len(r.stores))
+func (rs *RegionStore) follower(seed uint32) int32 {
+	l := uint32(len(rs.stores))
 	if l <= 1 {
-		return r.workTiKVIdx
+		return rs.workTiKVIdx
 	}
 
 	for retry := l - 1; retry > 0; retry-- {
 		followerIdx := int32(seed % (l - 1))
-		if followerIdx >= r.workTiKVIdx {
+		if followerIdx >= rs.workTiKVIdx {
 			followerIdx++
 		}
-		if r.stores[followerIdx].storeType != kv.TiKV {
+		if rs.stores[followerIdx].storeType != kv.TiKV {
 			continue
 		}
-		if r.storeEpochs[followerIdx] == r.stores[followerIdx].currentEpoch() {
+		if rs.storeEpochs[followerIdx] == rs.stores[followerIdx].currentEpoch() {
 			return followerIdx
 		}
 		seed++
 	}
-	return r.workTiKVIdx
+	return rs.workTiKVIdx
 }
 
 // return next leader or follower store's index
-func (r *RegionStore) peer(seed uint32) int32 {
-	candidates := make([]int32, 0, len(r.stores))
-	for i := 0; i < len(r.stores); i++ {
-		if r.stores[i].storeType != kv.TiKV {
+func (rs *RegionStore) peer(seed uint32) int32 {
+	candidates := make([]int32, 0, len(rs.stores))
+	for i := 0; i < len(rs.stores); i++ {
+		if rs.stores[i].storeType != kv.TiKV {
 			continue
 		}
-		if r.storeEpochs[i] != r.stores[i].currentEpoch() {
+		if rs.storeEpochs[i] != rs.stores[i].currentEpoch() {
 			continue
 		}
 		candidates = append(candidates, int32(i))
 	}
 
 	if len(candidates) == 0 {
-		return r.workTiKVIdx
+		return rs.workTiKVIdx
 	}
 	return candidates[int32(seed)%int32(len(candidates))]
 }
@@ -448,21 +448,25 @@ func (c *RegionCache) OnStoreDown(bo *Backoffer, ctx *RPCContext, scheduleReload
 	tikvRegionCacheCounterWithSendFail.Inc()
 	r := c.getCachedRegionWithRLock(ctx.Region)
 	if r != nil {
-		livenessState := r.getStore().stores[ctx.PeerIdx].requestLiveness()
-		if livenessState == alive {
-			return
+		rs := r.getStore()
+		s := rs.stores[ctx.PeerIdx]
+
+		if err != nil && s.accessible() {
+			if s.requestLiveness(bo) != reachable {
+				s.updateLivenessState(uint32(reachable), uint32(unreachable), "send fail and store unreachable", true)
+			}
 		}
+
 		if ctx.Store.storeType == kv.TiKV {
-			c.switchNextPeer(r, ctx.PeerIdx, err)
+			rs.switchNextPeer(r, ctx.PeerIdx)
 		} else {
-			c.switchNextFlashPeer(r, ctx.PeerIdx, err)
+			rs.switchNextFlashPeer(r, ctx.PeerIdx)
 		}
 		if scheduleReload {
 			r.scheduleReload()
 		}
 		logutil.Logger(bo.ctx).Info("switch region peer to next due to send request fail and store liveness is down",
 			zap.Stringer("current", ctx),
-			zap.Bool("needReload", scheduleReload),
 			zap.Error(err))
 	}
 }
@@ -665,7 +669,7 @@ func (c *RegionCache) UpdateLeader(regionID RegionVerID, leaderStoreID uint64, c
 	}
 
 	if leaderStoreID == 0 {
-		c.switchNextPeer(r, currentPeerIdx, nil)
+		r.getStore().switchNextPeer(r, currentPeerIdx)
 		logutil.BgLogger().Info("switch region peer to next due to NotLeader with NULL leader",
 			zap.Int("currIdx", currentPeerIdx),
 			zap.Uint64("regionID", regionID.GetID()))
@@ -1145,38 +1149,14 @@ func (c *RegionCache) switchToPeer(r *Region, targetStoreID uint64) (found bool)
 	return
 }
 
-func (c *RegionCache) switchNextFlashPeer(r *Region, currentPeerIdx int, err error) {
-	rs := r.getStore()
-
-	if err != nil { // TODO: refine err, only do this for some errors.
-		s := rs.stores[currentPeerIdx]
-		epoch := rs.storeEpochs[currentPeerIdx]
-		if atomic.CompareAndSwapUint32(&s.epoch, epoch, epoch+1) {
-			logutil.BgLogger().Info("mark store's regions need be refill", zap.String("store", s.addr))
-			tikvRegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
-		}
-		s.scheduleResolve()
-	}
-
+func (rs *RegionStore) switchNextFlashPeer(r *Region, currentPeerIdx int) {
 	nextIdx := (currentPeerIdx + 1) % len(rs.stores)
 	newRegionStore := rs.clone()
 	newRegionStore.workTiFlashIdx = int32(nextIdx)
 	r.compareAndSwapStore(rs, newRegionStore)
 }
 
-func (c *RegionCache) switchNextPeer(r *Region, currentPeerIdx int, err error) {
-	rs := r.getStore()
-
-	if err != nil { // TODO: refine err, only do this for some errors.
-		s := rs.stores[currentPeerIdx]
-		epoch := rs.storeEpochs[currentPeerIdx]
-		if atomic.CompareAndSwapUint32(&s.epoch, epoch, epoch+1) {
-			logutil.BgLogger().Info("mark store's regions need be refill", zap.String("store", s.addr))
-			tikvRegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
-		}
-		s.scheduleResolve()
-	}
-
+func (rs *RegionStore) switchNextPeer(r *Region, currentPeerIdx int) {
 	if int(rs.workTiKVIdx) != currentPeerIdx {
 		return
 	}
@@ -1253,7 +1233,7 @@ type Store struct {
 	epoch         uint32 // store fail epoch, see RegionStore.storeEpochs
 	livenessState uint32 // store liveness status
 	liveness      struct {
-		runNow        chan struct{}
+		resetCh       chan struct{}
 		checkInterval uint64
 	}
 }
@@ -1281,6 +1261,8 @@ func (s *Store) initResolve(bo *Backoffer) (addr, saddr string, err error) {
 			s.addr = store.Address
 			s.saddr = store.StatusAddress
 			s.storeType = GetStoreTypeByMeta(store)
+			s.initLiveness(normalLivenessCheckInterval)
+			s.updateLivenessState(0, uint32(s.requestLiveness(bo)), "init store fail", true)
 		}
 	})
 	if err != nil {
@@ -1310,7 +1292,7 @@ func (s *Store) doResolve(bo *Backoffer) (err error) {
 	err = s.requestResolveAddr(bo, func(store *metapb.Store) {
 		if store == nil {
 			// store has be removed in PD, we should invalidate all regions using those store.
-			s.updateLivenessState(atomic.LoadUint32(&s.livenessState), uint32(die), "resolve loop found store has be removed")
+			s.updateLivenessState(atomic.LoadUint32(&s.livenessState), uint32(offline), "resolve loop found store has be removed", true)
 			return
 		}
 		storeType := GetStoreTypeByMeta(store)
@@ -1319,10 +1301,11 @@ func (s *Store) doResolve(bo *Backoffer) (err error) {
 		if s.addr != addr || s.saddr != saddr {
 			// store addr has be changed.
 			// copy-on-write a new resolved store and insert store cache.
-			newStore := &Store{storeID: s.storeID, addr: addr, saddr: saddr, storeType: storeType, livenessState: uint32(alive), rc: s.rc}
+			newStore := &Store{storeID: s.storeID, addr: addr, saddr: saddr, storeType: storeType, livenessState: uint32(reachable), rc: s.rc}
 			state := resolved
 			newStore.resolveState = *(*uint64)(unsafe.Pointer(&state))
 			newStore.initLiveness(time.Duration(atomic.LoadUint64(&s.liveness.checkInterval)))
+			newStore.updateLivenessState(0, uint32(s.requestLiveness(bo)), "re-resolve init", true)
 			s.rc.storeMu.Lock()
 			s.rc.storeMu.stores[newStore.storeID] = newStore
 			s.rc.storeMu.Unlock()
@@ -1373,14 +1356,16 @@ func (s *Store) requestResolveAddr(retryBo *Backoffer, f func(store *metapb.Stor
 		f(st)
 		return nil, nil
 	})
-	var doneCh <-chan struct{}
+	var ctx context.Context
 	if retryBo != nil {
-		doneCh = retryBo.ctx.Done()
+		ctx = retryBo.ctx
+	} else {
+		ctx = context.Background()
 	}
 	for {
 		select {
-		case <-doneCh:
-			return errors.Trace(retryBo.ctx.Err()) // never reach here when doneCh is nil
+		case <-ctx.Done():
+			return errors.Trace(ctx.Err())
 		case rs := <-rsCh:
 			if rs.Err != nil {
 				// TODO: more refine PD error status handle.
@@ -1423,12 +1408,19 @@ type livenessState uint32
 
 const (
 	unknown livenessState = 1 + iota
-	alive
-	die
+	reachable
+	unreachable
+	offline
+)
+
+const (
+	normalLivenessCheckInterval    = 30 * time.Second
+	criticalLivenessCheckInterval  = 1 * time.Second
+	hibernateLivenessCheckInterval = 1 * time.Minute
 )
 
 func (s *Store) initLiveness(livenessCheckInterval time.Duration) {
-	s.liveness.runNow = make(chan struct{})
+	s.liveness.resetCh = make(chan struct{}, 1)
 	s.liveness.checkInterval = uint64(livenessCheckInterval)
 	go s.livenessLoop()
 }
@@ -1441,35 +1433,61 @@ func (s *Store) livenessLoop() {
 			t.Stop()
 			return
 		case <-t.C:
-			s.checkLiveness()
+			ns := s.requestLiveness(nil)
+			os := atomic.LoadUint32(&s.livenessState)
+			if livenessState(os) == unreachable && ns == unreachable {
+				s.scheduleResolve()
+			}
+			s.updateLivenessState(os, uint32(ns), "liveness check loop found unreachable", false)
 			t.Reset(time.Duration(atomic.LoadUint64(&s.liveness.checkInterval)))
-		case <-s.liveness.runNow:
-			s.checkLiveness()
+		case <-s.liveness.resetCh:
 			t.Reset(time.Duration(atomic.LoadUint64(&s.liveness.checkInterval)))
 		}
 	}
 }
 
-func (s *Store) checkLiveness() {
-	ns := s.requestLiveness()
-	os := atomic.LoadUint32(&s.livenessState)
-	if uint32(ns) == os {
-		return
+func (s *Store) resetLivenessInterval(i time.Duration, schedReset bool) {
+	atomic.StoreUint64(&s.liveness.checkInterval, uint64(i))
+	if schedReset {
+		select {
+		case s.liveness.resetCh <- struct{}{}:
+		default:
+		}
 	}
-	if ns == die {
-		s.scheduleResolve()
-	}
-	s.updateLivenessState(os, uint32(ns), "liveness check loop found die")
 }
 
-func (s *Store) updateLivenessState(os, ns uint32, reason string) {
+func (s *Store) updateLivenessState(os, ns uint32, reason string, schedReset bool) {
+	if ns == os {
+		return
+	}
+	if ns == uint32(unreachable) && os == uint32(offline) {
+		// keep hibernate interval, no need offline -> unreachable
+		return
+	}
 	changed := atomic.CompareAndSwapUint32(&s.livenessState, os, ns)
-	if changed && (os == uint32(alive) && ns == uint32(die)) {
-		logutil.BgLogger().Info("invalidate regions in die store",
-			zap.Uint64("store", s.storeID), zap.String("add", s.saddr),
-			zap.String("reason", reason))
-		atomic.AddUint32(&s.epoch, 1)
-		tikvRegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
+	if changed {
+		switch livenessState(ns) {
+		case reachable:
+			s.resetLivenessInterval(normalLivenessCheckInterval, schedReset)
+		case unreachable:
+			logutil.BgLogger().Info("invalidate regions using unreachable store",
+				zap.Uint64("store", s.storeID), zap.String("add", s.saddr),
+				zap.String("reason", reason))
+			atomic.AddUint32(&s.epoch, 1)
+			tikvRegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
+
+			s.scheduleResolve()
+
+			s.resetLivenessInterval(criticalLivenessCheckInterval, schedReset)
+		case offline:
+			logutil.BgLogger().Info("invalidate regions using offline store",
+				zap.Uint64("store", s.storeID), zap.String("add", s.saddr),
+				zap.String("reason", reason))
+			atomic.AddUint32(&s.epoch, 1)
+			tikvRegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
+
+			s.resetLivenessInterval(hibernateLivenessCheckInterval, schedReset)
+		}
 	}
 }
 
@@ -1481,19 +1499,36 @@ func (s *Store) currentLivenessState() livenessState {
 	return livenessState(atomic.LoadUint32(&s.livenessState))
 }
 
-// IsAlive checks whether store process still alive.
-func (s *Store) requestLiveness() (l livenessState) {
-	_, saddr, err := s.getAddr(NewNoopBackoff(context.Background()), nil, 0)
+func (s *Store) accessible() bool {
+	st := s.currentLivenessState()
+	return st == unknown || st == reachable
+}
+
+func (s *Store) requestLiveness(bo *Backoffer) (l livenessState) {
+	_, saddr, err := s.getAddr(bo, nil, 0)
 	if err != nil || len(saddr) == 0 {
 		l = unknown
 		return
 	}
-	_, err, _ = livenessSf.Do(saddr, func() (interface{}, error) {
-		l = invokeKVStatusAPI(saddr, time.Duration(config.GetGlobalConfig().TiKVClient.StoreLivenessTimeout)*time.Second)
-		return nil, nil
+	rsCh := livenessSf.DoChan(saddr, func() (interface{}, error) {
+		return invokeKVStatusAPI(saddr, time.Duration(config.GetGlobalConfig().TiKVClient.StoreLivenessTimeout)*time.Second), nil
 	})
-	if err != nil {
+	var ctx context.Context
+	if bo != nil {
+		ctx = bo.ctx
+	} else {
+		ctx = context.Background()
+	}
+	select {
+	case rs := <-rsCh:
+		if rs.Err != nil {
+			l = unknown
+			return
+		}
+		l = rs.Val.(livenessState)
+	case <-ctx.Done():
 		l = unknown
+		return
 	}
 	return
 }
@@ -1505,12 +1540,12 @@ func invokeKVStatusAPI(saddr string, timeout time.Duration) livenessState {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		logutil.BgLogger().Info("[liveness] build kv status request fail", zap.String("store", saddr), zap.Error(err))
-		return die
+		return unreachable
 	}
 	resp, err := util.InternalHTTPClient().Do(req)
 	if err != nil {
 		logutil.BgLogger().Info("[liveness] request kv status fail", zap.String("store", saddr), zap.Error(err))
-		return die
+		return unreachable
 	}
 	defer func() {
 		err1 := resp.Body.Close()
@@ -1520,7 +1555,7 @@ func invokeKVStatusAPI(saddr string, timeout time.Duration) livenessState {
 	}()
 	if resp.StatusCode != http.StatusOK {
 		logutil.BgLogger().Info("[liveness] request kv status fail", zap.String("store", saddr), zap.String("status", resp.Status))
-		return die
+		return unreachable
 	}
-	return alive
+	return reachable
 }
