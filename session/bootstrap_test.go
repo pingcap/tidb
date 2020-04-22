@@ -327,7 +327,7 @@ func (s *testBootstrapSuite) TestStmtSummary(c *C) {
 	defer dom.Close()
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, `update mysql.global_variables set variable_value='' where variable_name='tidb_enable_stmt_summary'`)
-	convertStmtSummaryVars(se)
+	writeStmtSummaryVars(se)
 
 	r := mustExecSQL(c, se, "select variable_value from mysql.global_variables where variable_name='tidb_enable_stmt_summary'")
 	req := r.NewChunk()

@@ -998,7 +998,7 @@ func upgradeToVer42(s Session) {
 }
 
 // Convert statement summary global variables to non-empty values.
-func convertStmtSummaryVars(s Session) {
+func writeStmtSummaryVars(s Session) {
 	sql := fmt.Sprintf("UPDATE %s.%s SET variable_value='%%s' WHERE variable_name='%%s' AND variable_value=''", mysql.SystemDB, mysql.GlobalVariablesTable)
 	stmtSummaryConfig := config.GetGlobalConfig().StmtSummary
 	mustExecute(s, fmt.Sprintf(sql, variable.BoolToIntStr(stmtSummaryConfig.Enable), variable.TiDBEnableStmtSummary))
@@ -1010,7 +1010,7 @@ func convertStmtSummaryVars(s Session) {
 }
 
 func upgradeToVer43(s Session) {
-	convertStmtSummaryVars(s)
+	writeStmtSummaryVars(s)
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
@@ -1122,7 +1122,7 @@ func doDMLWorks(s Session) {
 
 	writeDefaultExprPushDownBlacklist(s)
 
-	convertStmtSummaryVars(s)
+	writeStmtSummaryVars(s)
 
 	_, err := s.Execute(context.Background(), "COMMIT")
 	if err != nil {
