@@ -1326,7 +1326,11 @@ func checkTableInfoValid(tblInfo *model.TableInfo) error {
 	return err
 }
 
-func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo) *model.TableInfo {
+func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo) (*model.TableInfo, error) {
+	// Check the referred table is a real table object.
+	if referTblInfo.IsSequence() || referTblInfo.IsView() {
+		return nil, ErrWrongObject.GenWithStackByArgs(ident.Schema, referTblInfo.Name, "BASE TABLE")
+	}
 	tblInfo := *referTblInfo
 	// Check non-public column and adjust column offset.
 	newColumns := referTblInfo.Cols()
@@ -1354,7 +1358,7 @@ func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo) *mod
 		copy(pi.Definitions, referTblInfo.Partition.Definitions)
 		tblInfo.Partition = &pi
 	}
-	return &tblInfo
+	return &tblInfo, nil
 }
 
 // BuildTableInfoFromAST builds model.TableInfo from a SQL statement.
@@ -1474,7 +1478,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	// build tableInfo
 	var tbInfo *model.TableInfo
 	if s.ReferTable != nil {
-		tbInfo = buildTableInfoWithLike(ident, referTbl.Meta())
+		tbInfo, err = buildTableInfoWithLike(ident, referTbl.Meta())
 	} else {
 		tbInfo, err = buildTableInfoWithStmt(ctx, s, schema.Charset, schema.Collate)
 	}
@@ -2054,7 +2058,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 	}
 
 	is := d.infoHandle.Get()
-	if is.TableIsView(ident.Schema, ident.Name) {
+	if is.TableIsView(ident.Schema, ident.Name) || is.TableIsSequence(ident.Schema, ident.Name) {
 		return ErrWrongObject.GenWithStackByArgs(ident.Schema, ident.Name, "BASE TABLE")
 	}
 

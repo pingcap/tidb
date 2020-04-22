@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -748,6 +749,37 @@ func (s *testIntegrationSuite) TestIssue15546(c *C) {
 	tk.MustQuery("select * from pt, vt where pt.a = vt.a").Check(testkit.Rows("1 1 1 1"))
 }
 
+func (s *testIntegrationSuite) TestHintWithRequiredProperty(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b int, c int, key b(b))")
+	var input []string
+	var output []struct {
+		SQL      string
+		Plan     []string
+		Warnings []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+			output[i].Warnings = make([]string, len(warnings))
+			for j, warning := range warnings {
+				output[i].Warnings[j] = warning.Err.Error()
+			}
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+		warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+		c.Assert(len(warnings), Equals, len(output[i].Warnings))
+		for j, warning := range warnings {
+			c.Assert(output[i].Warnings[j], Equals, warning.Err.Error())
+		}
+	}
+}
+
 func (s *testIntegrationSuite) TestIssue15813(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -758,6 +790,17 @@ func (s *testIntegrationSuite) TestIssue15813(c *C) {
 	tk.MustExec("CREATE INDEX i0 ON t0(c0)")
 	tk.MustExec("CREATE INDEX i0 ON t1(c0)")
 	tk.MustQuery("select /*+ MERGE_JOIN(t0, t1) */ * from t0, t1 where t0.c0 = t1.c0").Check(testkit.Rows())
+}
+
+func (s *testIntegrationSuite) TestFullGroupByOrderBy(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustQuery("select count(a) as b from t group by a order by b").Check(testkit.Rows())
+	err := tk.ExecToErr("select count(a) as cnt from t group by a order by b")
+	c.Assert(terror.ErrorEqual(err, core.ErrFieldNotInGroupBy), IsTrue)
 }
 
 func (s *testIntegrationSuite) TestHintWithoutTableWarning(c *C) {
