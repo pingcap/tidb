@@ -252,10 +252,25 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	if err != nil {
 		return nil, err
 	}
+<<<<<<< HEAD
 	_, isTableDual := p.(*PhysicalTableDual)
 	isPartition := e.isPartition(p)
 	if !isTableDual && prepared.UseCache && !isPartition {
 		sctx.PreparedPlanCache().Put(cacheKey, NewPSTMTPlanCacheValue(p))
+=======
+	e.names = names
+	e.Plan = p
+	_, isTableDual := p.(*PhysicalTableDual)
+	if !isTableDual && prepared.UseCache {
+		err = e.setFoundInPlanCache(sctx, true)
+		if err != nil {
+			return err
+		}
+		cached := NewPSTMTPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan)
+		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
+		stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
+		sctx.PreparedPlanCache().Put(cacheKey, cached)
+>>>>>>> 79211fe... plan: make query on partition table not cacheable (#16375)
 	}
 	return p, err
 }
@@ -330,6 +345,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 	return nil
 }
 
+<<<<<<< HEAD
 func checkPartitionInfo(pi *model.PartitionInfo) bool {
 	if pi != nil {
 		return true
@@ -360,6 +376,8 @@ func (e *Execute) isPartition(p Plan) bool {
 	return isRange
 }
 
+=======
+>>>>>>> 79211fe... plan: make query on partition table not cacheable (#16375)
 func (e *Execute) buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) ([]*ranger.Range, error) {
 	idxCols, colLengths := expression.IndexInfo2Cols(is.schema.Columns, is.Index)
 	if len(idxCols) == 0 {

@@ -16,20 +16,51 @@ package core
 import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // Cacheable checks whether the input ast is cacheable.
+<<<<<<< HEAD
 func Cacheable(node ast.Node) bool {
 	_, isSelect := node.(*ast.SelectStmt)
 	_, isUpdate := node.(*ast.UpdateStmt)
 	_, isInsert := node.(*ast.InsertStmt)
 	_, isDelete := node.(*ast.DeleteStmt)
 	if !(isSelect || isUpdate || isInsert || isDelete) {
+=======
+// Handle "ignore_plan_cache()" hint
+// If there are multiple hints, only one will take effect
+func Cacheable(node ast.Node, is infoschema.InfoSchema) bool {
+	switch node.(type) {
+	case *ast.SelectStmt:
+		for _, hints := range (node.(*ast.SelectStmt)).TableHints {
+			if hints.HintName.L == HintIgnorePlanCache {
+				return false
+			}
+		}
+	case *ast.DeleteStmt:
+		for _, hints := range (node.(*ast.DeleteStmt)).TableHints {
+			if hints.HintName.L == HintIgnorePlanCache {
+				return false
+			}
+		}
+	case *ast.UpdateStmt:
+		for _, hints := range (node.(*ast.UpdateStmt)).TableHints {
+			if hints.HintName.L == HintIgnorePlanCache {
+				return false
+			}
+		}
+	case *ast.InsertStmt:
+	default:
+>>>>>>> 79211fe... plan: make query on partition table not cacheable (#16375)
 		return false
 	}
 	checker := cacheableChecker{
 		cacheable: true,
+		schema:    is,
 	}
 	node.Accept(&checker)
 	return checker.cacheable
@@ -42,6 +73,7 @@ func Cacheable(node ast.Node) bool {
 // NOTE: we can add more rules in the future.
 type cacheableChecker struct {
 	cacheable bool
+	schema    infoschema.InfoSchema
 }
 
 // Enter implements Visitor interface.
@@ -87,8 +119,25 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 			checker.cacheable = false
 			return in, true
 		}
+	case *ast.TableName:
+		if checker.isPartitionTable(node) {
+			checker.cacheable = false
+			return in, true
+		}
 	}
 	return in, false
+}
+
+func (checker *cacheableChecker) isPartitionTable(tn *ast.TableName) bool {
+	tb, err := checker.schema.TableByName(tn.Schema, tn.Name)
+	if err != nil {
+		logutil.BgLogger().Error("Error occur in checking cacheable", zap.Error(err))
+		return false
+	}
+	if tb.Meta().Partition != nil {
+		return true
+	}
+	return false
 }
 
 // Leave implements Visitor interface.
