@@ -86,55 +86,55 @@ type RegionStore struct {
 }
 
 // clone clones region store struct.
-func (rs *RegionStore) clone() *RegionStore {
-	storeFails := make([]uint32, len(rs.stores))
-	copy(storeFails, rs.storeEpochs)
+func (r *RegionStore) clone() *RegionStore {
+	storeFails := make([]uint32, len(r.stores))
+	copy(storeFails, r.storeEpochs)
 	return &RegionStore{
-		workTiFlashIdx: rs.workTiFlashIdx,
-		workTiKVIdx:    rs.workTiKVIdx,
-		stores:         rs.stores,
+		workTiFlashIdx: r.workTiFlashIdx,
+		workTiKVIdx:    r.workTiKVIdx,
+		stores:         r.stores,
 		storeEpochs:    storeFails,
 	}
 }
 
 // return next follower store's index
-func (rs *RegionStore) follower(seed uint32) int32 {
-	l := uint32(len(rs.stores))
+func (r *RegionStore) follower(seed uint32) int32 {
+	l := uint32(len(r.stores))
 	if l <= 1 {
-		return rs.workTiKVIdx
+		return r.workTiKVIdx
 	}
 
 	for retry := l - 1; retry > 0; retry-- {
 		followerIdx := int32(seed % (l - 1))
-		if followerIdx >= rs.workTiKVIdx {
+		if followerIdx >= r.workTiKVIdx {
 			followerIdx++
 		}
-		if rs.stores[followerIdx].storeType != kv.TiKV {
+		if r.stores[followerIdx].storeType != kv.TiKV {
 			continue
 		}
-		if rs.storeEpochs[followerIdx] == rs.stores[followerIdx].currentEpoch() {
+		if r.storeEpochs[followerIdx] == r.stores[followerIdx].currentEpoch() {
 			return followerIdx
 		}
 		seed++
 	}
-	return rs.workTiKVIdx
+	return r.workTiKVIdx
 }
 
 // return next leader or follower store's index
-func (rs *RegionStore) peer(seed uint32) int32 {
-	candidates := make([]int32, 0, len(rs.stores))
-	for i := 0; i < len(rs.stores); i++ {
-		if rs.stores[i].storeType != kv.TiKV {
+func (r *RegionStore) peer(seed uint32) int32 {
+	candidates := make([]int32, 0, len(r.stores))
+	for i := 0; i < len(r.stores); i++ {
+		if r.stores[i].storeType != kv.TiKV {
 			continue
 		}
-		if rs.storeEpochs[i] != rs.stores[i].currentEpoch() {
+		if r.storeEpochs[i] != r.stores[i].currentEpoch() {
 			continue
 		}
 		candidates = append(candidates, int32(i))
 	}
 
 	if len(candidates) == 0 {
-		return rs.workTiKVIdx
+		return r.workTiKVIdx
 	}
 	return candidates[int32(seed)%int32(len(candidates))]
 }
@@ -443,8 +443,8 @@ func (c *RegionCache) findRegionByKey(bo *Backoffer, key []byte, isEndKey bool) 
 	return r, nil
 }
 
-// OnStoreDown handles send request fail and store down logic.
-func (c *RegionCache) OnStoreDown(bo *Backoffer, ctx *RPCContext, scheduleReload bool, err error) {
+// OnSendFail handles send request fail and store down logic.
+func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload bool, err error) {
 	tikvRegionCacheCounterWithSendFail.Inc()
 	r := c.getCachedRegionWithRLock(ctx.Region)
 	if r != nil {
@@ -1149,25 +1149,25 @@ func (c *RegionCache) switchToPeer(r *Region, targetStoreID uint64) (found bool)
 	return
 }
 
-func (rs *RegionStore) switchNextFlashPeer(r *Region, currentPeerIdx int) {
-	nextIdx := (currentPeerIdx + 1) % len(rs.stores)
-	newRegionStore := rs.clone()
+func (r *RegionStore) switchNextFlashPeer(rr *Region, currentPeerIdx int) {
+	nextIdx := (currentPeerIdx + 1) % len(r.stores)
+	newRegionStore := r.clone()
 	newRegionStore.workTiFlashIdx = int32(nextIdx)
-	r.compareAndSwapStore(rs, newRegionStore)
+	rr.compareAndSwapStore(r, newRegionStore)
 }
 
-func (rs *RegionStore) switchNextPeer(r *Region, currentPeerIdx int) {
-	if int(rs.workTiKVIdx) != currentPeerIdx {
+func (r *RegionStore) switchNextPeer(rr *Region, currentPeerIdx int) {
+	if int(r.workTiKVIdx) != currentPeerIdx {
 		return
 	}
 
-	nextIdx := (currentPeerIdx + 1) % len(rs.stores)
-	for rs.stores[nextIdx].storeType == kv.TiFlash {
-		nextIdx = (nextIdx + 1) % len(rs.stores)
+	nextIdx := (currentPeerIdx + 1) % len(r.stores)
+	for r.stores[nextIdx].storeType == kv.TiFlash {
+		nextIdx = (nextIdx + 1) % len(r.stores)
 	}
-	newRegionStore := rs.clone()
+	newRegionStore := r.clone()
 	newRegionStore.workTiKVIdx = int32(nextIdx)
-	r.compareAndSwapStore(rs, newRegionStore)
+	rr.compareAndSwapStore(r, newRegionStore)
 }
 
 func (c *RegionCache) getPeerStoreIndex(r *Region, id uint64) (idx int, found bool) {
