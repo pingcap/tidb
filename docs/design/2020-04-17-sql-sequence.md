@@ -50,7 +50,7 @@ SHOW CREATE SEQUENCE sequence_name
 drop sequence statement:
 
 ```
-DROP SEQUENCE sequence_name_list
+DROP SEQUENCE [IF EXISTS] sequence_name_list
 ```
 
 get the next value of sequence:
@@ -73,11 +73,11 @@ SETVAL(sequence_name, num)
 
 ## Rationale
 
-- Sequence metadata
+### Sequence metadata
 
-Sequence is a table-level object, sharing the same namespace with the base table and view objects, whose meta are recorded in `ast.tableInfo`. But actually sequence definition do not have columns in it's meta, which means you can't operate the sequence value by `DML` interface. The only way you can do it is by `setval` function, after all, the sequence value is essentially a `KV` pair with some constraints.
+Sequence is a table-level object, sharing the same namespace with the base table and view objects, whose meta are recorded in `*model.tableInfo`. But actually sequence definition do not have columns in its meta, which means you can't operate the sequence value by `DML` interface. The only way you can do it is by `setval` function, after all, the sequence value is essentially a KV pair with some constraints.
 
-- Sequence values
+### Sequence values
 
 Each sequence value will be stored in its own range, with the key format below:
 
@@ -87,13 +87,13 @@ DB:<dbID> SID:<sequenceID> ——> int64
 
 Reads and writes to the sequence value (via the functions `nextval`, `setval`), will be implemented by direct calls to the `KV` layer's `Get`, `Inc`, and `Set` functions. Since sequence objects store the value at the range of its own, it will cause hotspot at sequence meta under insertion intensive cases.
 
-- Sequence Transaction
+### Sequence Transaction
 
 Storing sequence values in their own ranges means that insertions to tables which use sequences will always touch two ranges. However, since the sequence update takes place outside of the SQL transaction, this should not trigger the `2PC` commit protocol. 
 
 Sequence computation is under the expression framework, evaluating one value at a time. The values fetched by these functions won't be rolled back when the outer SQL transaction is aborted.
 
-- Sequence Binlog
+### Sequence Binlog
 
 Distinguished from auto-increment's rebase functionality, columns with sequence as default won't rebase it's value automatically when the inserted value was specified explicitly. Besides, sequence can also be used directly as the inserted expression value. Thus, it's necessary to sync the sequence value down to the upstream cluster.
 
@@ -101,7 +101,7 @@ Sequence binlog is triggered by both `nextval` and `setval` functions when the u
 
 Sequence binlog is not a sort of `DML` binlog, but mocked as a kind of `DDL` `job` by specifying the job id equal to -1 specially. Therefore, the drainer won't take it for granted that it's a real ddl job and it should be occurred in ddl history queue. 
 
-- Sequence Performance
+### Sequence Performance
 
 The insertion performance of sequences is comparable to the `auto-increment` of the same cache size (now can be specified with `auto_id_cache` table option) in our recent tests on IDC cluster. The default cache size of sequence is 1000, which could achieve approximately 3 thousands TPS with 64 threads under our own SysBench. 
 
@@ -115,4 +115,4 @@ The insertion performance of sequences is comparable to the `auto-increment` of 
 
 ## Compatibility
 
-About specific compatibility, you can view [MySQL’s compatibility](https://github.com/pingcap/docs/blob/master/sql/mysql-compatibility.md#ddl).
+About specific compatibility, you can view [MySQL’s compatibility](https://pingcap.com/docs-cn/stable/reference/mysql-compatibility/).
