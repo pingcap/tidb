@@ -45,6 +45,14 @@ func NewBufferStore(r Retriever, cap int) *BufferStore {
 	}
 }
 
+// NewBufferStoreFrom creates a BufferStore from retriever and mem-buffer.
+func NewBufferStoreFrom(r Retriever, buf MemBuffer) *BufferStore {
+	return &BufferStore{
+		r:         r,
+		MemBuffer: buf,
+	}
+}
+
 // Reset resets s.MemBuffer.
 func (s *BufferStore) Reset() {
 	s.MemBuffer.Reset()
