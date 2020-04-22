@@ -1825,7 +1825,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = version41
+	currentBootstrapVersion = version42
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -1991,18 +1991,16 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	// Use GlobalVariableCache if TiDB just loaded global variables within 2 second ago.
 	// When a lot of connections connect to TiDB simultaneously, it can protect TiKV meta region from overload.
 	gvc := domain.GetDomain(s).GetGlobalVarsCache()
-	succ, rows, fields := gvc.Get()
-	if !succ {
-		// Set the variable to true to prevent cyclic recursive call.
-		vars.CommonGlobalLoaded = true
-		rows, fields, err = s.ExecRestrictedSQL(loadCommonGlobalVarsSQL)
-		if err != nil {
-			vars.CommonGlobalLoaded = false
-			logutil.BgLogger().Error("failed to load common global variables.")
-			return err
-		}
-		gvc.Update(rows, fields)
+	loadFunc := func() ([]chunk.Row, []*ast.ResultField, error) {
+		return s.ExecRestrictedSQL(loadCommonGlobalVarsSQL)
 	}
+	rows, fields, err := gvc.LoadGlobalVariables(loadFunc)
+	if err != nil {
+		logutil.BgLogger().Warn("failed to load global variables",
+			zap.Uint64("conn", s.sessionVars.ConnectionID), zap.Error(err))
+		return err
+	}
+	vars.CommonGlobalLoaded = true
 
 	for _, row := range rows {
 		varName := row.GetString(0)
