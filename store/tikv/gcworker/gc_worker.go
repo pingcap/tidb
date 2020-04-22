@@ -503,7 +503,7 @@ func (w *GCWorker) calculateNewSafePoint(ctx context.Context, now time.Time) (*t
 // setGCWorkerServiceSafePoint sets the given safePoint as TiDB's service safePoint to PD, and returns the current minimal
 // service safePoint among all services.
 func (w *GCWorker) setGCWorkerServiceSafePoint(ctx context.Context, safePoint uint64) (uint64, error) {
-	// Sets TTL to 0 to make it permanently valid. TiDB uses empty serviceID.
+	// Sets TTL to MAX to make it permanently valid.
 	minSafePoint, err := w.pdClient.UpdateServiceGCSafePoint(ctx, gcWorkerServiceSafePointID, math.MaxInt64, safePoint)
 	if err != nil {
 		logutil.Logger(ctx).Error("[gc worker] failed to update service safe point",
