@@ -3628,7 +3628,7 @@ func NewRuleEnumerateJoinOrders() Transformation {
 }
 
 func (r *EnumerateJoinOrders) Match(expr *memo.ExprIter) bool {
-    return len(expr.GetExpr().Children) <= 5
+    return len(expr.GetExpr().Children) <= 3
 }
 
 func (r *EnumerateJoinOrders) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
@@ -3919,6 +3919,11 @@ type DPJoinReorder struct {
 	joinReorderHelper
 }
 
+type joinGroup struct {
+	group *memo.Group
+	cost float64
+}
+
 func NewRuleDPJoinReorder() Transformation {
 	rule := &DPJoinReorder{}
 	rule.pattern = memo.NewPattern(memo.OperandMultiJoin, memo.EngineTiDBOnly)
@@ -3926,7 +3931,7 @@ func NewRuleDPJoinReorder() Transformation {
 }
 
 func (r *DPJoinReorder) Match(expr *memo.ExprIter) bool {
-	return len(expr.GetExpr().Children) <= 8 && len(expr.GetExpr().Children) > 5
+	return len(expr.GetExpr().Children) > 3
 }
 
 func (r *DPJoinReorder) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
@@ -3936,12 +3941,12 @@ func (r *DPJoinReorder) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupE
 	for i := range neededChildrenIdx {
 		neededChildrenIdx[i] = i
 	}
-	topJoinGroup, err := r.getBestJoinGroup(old.GetExpr().ExprNode.SCtx(), children, neededChildrenIdx, conditions, make(map[int]*memo.Group))
+	topJoinGroup, err := r.getBestJoinGroup(old.GetExpr().ExprNode.SCtx(), children, neededChildrenIdx, conditions, make(map[int]*joinGroup))
 	if err != nil {
 		return nil, false, false, nil
 	}
-	newJoinGroupExpr := memo.NewGroupExpr(topJoinGroup.GetFirstGroupExpr().ExprNode)
-	newJoinGroupExpr.SetChildren(topJoinGroup.GetFirstGroupExpr().Children...)
+	newJoinGroupExpr := memo.NewGroupExpr(topJoinGroup.group.GetFirstGroupExpr().ExprNode)
+	newJoinGroupExpr.SetChildren(topJoinGroup.group.GetFirstGroupExpr().Children...)
 	return []*memo.GroupExpr{newJoinGroupExpr}, true, false, nil
 }
 
@@ -3950,16 +3955,17 @@ func (r *DPJoinReorder) getBestJoinGroup(
 	allChildren []*memo.Group,
 	neededChildrenIdx []int,
 	conditions []expression.Expression,
-	cache map[int]*memo.Group) (result *memo.Group, err error) {
+	cache map[int]*joinGroup) (result *joinGroup, err error) {
 	selfKey := 	r.getKeyOfChildrenIdx(neededChildrenIdx)
 	if group, ok := cache[selfKey]; ok {
 		return group, nil
 	}
 	if len(neededChildrenIdx) == 1 {
-		cache[selfKey] = allChildren[neededChildrenIdx[0]]
-		return allChildren[neededChildrenIdx[0]], nil
+		newGroup := &joinGroup{allChildren[neededChildrenIdx[0]], 0}
+		cache[selfKey] = newGroup
+		return newGroup,nil
 	}
-	var bestJoinGroup *memo.Group
+	var bestJoinGroup *joinGroup
 	selfSchema := r.constructSchema(allChildren, neededChildrenIdx)
 	for i := 1; i <= len(neededChildrenIdx)/2; i++ {
 		leftGroupKeys := r.enumerateCombination(neededChildrenIdx, i, 0)
@@ -3996,12 +4002,15 @@ func (r *DPJoinReorder) getBestJoinGroup(
 			if err != nil {
 				return nil, err
 			}
-			newJoinExpr.SetChildren(leftGroup, rightGroup)
-			newJoinGroup := memo.NewGroupWithSchema(newJoinExpr, selfSchema)
-			if err := fillGroupStats(newJoinGroup); err != nil {
+			newJoinExpr.SetChildren(leftGroup.group, rightGroup.group)
+			newGroup := memo.NewGroupWithSchema(newJoinExpr, selfSchema)
+			if err := fillGroupStats(newGroup); err != nil {
 				return nil, err
 			}
-			if bestJoinGroup == nil || newJoinGroup.Prop.Stats.RowCount < bestJoinGroup.Prop.Stats.RowCount {
+			newJoinGroup := &joinGroup{group:newGroup, cost:0}
+			newJoinGroup.cost = leftGroup.cost + rightGroup.cost + newGroup.Prop.Stats.RowCount
+
+			if bestJoinGroup == nil || newJoinGroup.cost < bestJoinGroup.cost {
 				bestJoinGroup = newJoinGroup
 			}
 		}
