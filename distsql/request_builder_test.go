@@ -102,7 +102,7 @@ func (s *testSuite) getExpectedRanges(tid int64, hrs []*handleRange) []kv.KeyRan
 	for _, hr := range hrs {
 		low := codec.EncodeInt(nil, hr.start)
 		high := codec.EncodeInt(nil, hr.end)
-		high = []byte(kv.Key(high).PrefixNext())
+		high = kv.Key(high).PrefixNext()
 		startKey := tablecodec.EncodeRowKey(tid, low)
 		endKey := tablecodec.EncodeRowKey(tid, high)
 		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
