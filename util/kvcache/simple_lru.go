@@ -19,7 +19,6 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stringutil"
-	"reflect"
 )
 
 // Key is the interface that every key in LRU Cache should implement.
@@ -29,6 +28,7 @@ type Key interface {
 
 // Value is the interface that every value in LRU Cache should implement.
 type Value interface {
+	memConsume() int64
 }
 
 // cacheEntry wraps Key and Value. It's the value of list.Element.
@@ -38,7 +38,7 @@ type cacheEntry struct {
 }
 
 func (c *cacheEntry) memConsume() int64 {
-	return int64(reflect.TypeOf(c).Size())
+	return int64(len(c.key.Hash())) + c.value.memConsume()
 }
 
 // SimpleLRUCache is a simple least recently used cache, not thread-safe, use it carefully.
@@ -66,7 +66,7 @@ func NewSimpleLRUCache(capacity uint, guard float64, quota uint64) *SimpleLRUCac
 		guard:      guard,
 		elements:   make(map[string]*list.Element),
 		cache:      list.New(),
-		memTracker: memory.NewTracker(stringutil.StringerStr("lru"), -1),
+		memTracker: memory.NewTracker(stringutil.StringerStr("SimpleLRUCache"), -1),
 	}
 	if executor.GlobalMemoryUsageTracker != nil {
 		sc.memTracker.AttachTo(executor.GlobalMemoryUsageTracker)
@@ -198,6 +198,7 @@ func (l *SimpleLRUCache) SetCapacity(capacity uint) error {
 		l.cache.Remove(lru)
 		delete(l.elements, string(lru.Value.(*cacheEntry).key.Hash()))
 		l.size--
+		l.memTracker.Consume(-lru.Value.(*cacheEntry).memConsume())
 	}
 	return nil
 }

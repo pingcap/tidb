@@ -572,7 +572,14 @@ func setGlobalVars() {
 	tikv.RegionCacheTTLSec = int64(cfg.TiKVClient.RegionCacheTTL)
 	domainutil.RepairInfo.SetRepairMode(cfg.RepairMode)
 	domainutil.RepairInfo.SetRepairTableList(cfg.RepairTableList)
-	executor.GlobalDiskUsageTracker.SetBytesLimit(config.GetGlobalConfig().TempStorageQuota)
+	c := config.GetGlobalConfig()
+	executor.GlobalDiskUsageTracker.SetBytesLimit(c.TempStorageQuota)
+	if c.Performance.MaxMemory < 1 {
+		// If MaxMemory equals 0, it means unlimited
+		executor.GlobalMemoryUsageTracker.SetBytesLimit(-1)
+	} else {
+		executor.GlobalMemoryUsageTracker.SetBytesLimit(int64(c.Performance.MaxMemory))
+	}
 }
 
 func setupLog() {
