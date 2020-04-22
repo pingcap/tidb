@@ -1035,6 +1035,8 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{"set config PD LOG.LEVEL='info'", true, "SET CONFIG PD LOG.LEVEL = 'info'"},
 		{"set config TIDB LOG.LEVEL='info'", true, "SET CONFIG TIDB LOG.LEVEL = 'info'"},
 		{"set config '127.0.0.1:3306' LOG.LEVEL='info'", true, "SET CONFIG '127.0.0.1:3306' LOG.LEVEL = 'info'"},
+		{"set config '127.0.0.1:3306' AUTO-COMPACTION-MODE=TRUE", true, "SET CONFIG '127.0.0.1:3306' AUTO-COMPACTION-MODE = TRUE"},
+		{"set config '127.0.0.1:3306' LABEL-PROPERTY.REJECT-LEADER.KEY='zone'", true, "SET CONFIG '127.0.0.1:3306' LABEL-PROPERTY.REJECT-LEADER.KEY = 'zone'"},
 		{"show config", true, "SHOW CONFIG"},
 		{"show config where type='tidb'", true, "SHOW CONFIG WHERE `type`='tidb'"},
 		{"show config where instance='127.0.0.1:3306'", true, "SHOW CONFIG WHERE `instance`='127.0.0.1:3306'"},
