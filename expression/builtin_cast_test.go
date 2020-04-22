@@ -167,7 +167,7 @@ func (s *testEvaluatorSuite) TestCastXXX(c *C) {
 
 	// cast('18446744073709551616' as signed);
 	mask := ^mysql.UnsignedFlag
-	tp1.Flag &= uint(mask)
+	tp1.Flag &= mask
 	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum("18446744073709551616"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)
 	res, err = f.Eval(chunk.Row{})
 	c.Assert(err, IsNil)
