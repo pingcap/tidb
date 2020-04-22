@@ -21,6 +21,7 @@ import (
 	"sort"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1134,10 +1135,9 @@ func (s *testGCWorkerSuite) TestResolveLocksPhysical(c *C) {
 
 	// Shouldn't return error when fails to scan locks.
 	reset()
-	returnError := true
+	var returnError uint32 = 1
 	s.client.physicalScanLockHandler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
-		if returnError {
-			returnError = false
+		if atomic.CompareAndSwapUint32(&returnError, 1, 0) {
 			return alwaysFailHandler(addr, req)
 		}
 		return alwaysSucceedHanlder(addr, req)
@@ -1218,22 +1218,20 @@ func (s *testGCWorkerSuite) TestResolveLocksPhysical(c *C) {
 	// Sleep to let the goroutine pause.
 	time.Sleep(500 * time.Millisecond)
 	store := s.cluster.GetAllStores()[0]
-	onceClean := true
+	var onceClean uint32 = 1
 	s.cluster.AddStore(100, "store100")
-	onceDirty := true
+	var onceDirty uint32 = 1
 	s.client.checkLockObserverHandler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 		switch addr {
 		case "store100":
 			// The newly added store returns IsClean=false for the first time.
-			if onceDirty {
-				onceDirty = false
+			if atomic.CompareAndSwapUint32(&onceDirty, 1, 0) {
 				return &tikvrpc.Response{Resp: &kvrpcpb.CheckLockObserverResponse{Error: "", IsClean: false, Locks: nil}}, nil
 			}
 			return alwaysSucceedHanlder(addr, req)
 		case store.Address:
 			// The store returns IsClean=true for the first time.
-			if onceClean {
-				onceClean = false
+			if atomic.CompareAndSwapUint32(&onceClean, 1, 0) {
 				return alwaysSucceedHanlder(addr, req)
 			}
 			return &tikvrpc.Response{Resp: &kvrpcpb.CheckLockObserverResponse{Error: "", IsClean: false, Locks: nil}}, nil
