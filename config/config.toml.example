@@ -338,6 +338,19 @@ region-cache-ttl = 600
 # default 0 means shutting off store limit.
 store-limit = 0
 
+[tikv-client.copr-cache]
+# Whether to enable the copr cache. The copr cache saves the result from TiKV Coprocessor in the memory and
+# reuses the result when corresponding data in TiKV is unchanged, on a region basis.
+enabled = true
+
+# The capacity in MB of the cache.
+capacity-mb = 1000.0
+
+# Only cache requests whose result set is small.
+admission-max-result-mb = 10.0
+# Only cache requests takes notable time to process.
+admission-min-process-ms = 5
+
 [binlog]
 # enable to write binlog.
 # NOTE: If binlog is enabled, txn-total-size-limit should be less than 104857600(10M).
