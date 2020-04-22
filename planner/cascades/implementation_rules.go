@@ -14,7 +14,9 @@
 package cascades
 
 import (
+	"github.com/pingcap/tidb/types"
 	"math"
+	"sort"
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -857,14 +859,27 @@ func (r *ImplIndexJoin) buildIndexJoinInner2TableScan(
 	// Step 3: Build InnerSide Implementation.
 	innerImpl := r.constructInnerTableScan(tableGatherExpr, tableScanExpr, outerJoinKeys, false, false, avgInnerRowCnt)
 
+	joins := make([]memo.Implementation, 0, 3)
 	// Step 4: Build IndexJoin Implementation.
 	indexJoinImpl := r.constructIndexJoin(
 		joinExpr, prop, outerIdx, innerImpl,
 		innerJoinKeys, outerJoinKeys, nil,
 		keyOff2IdxOff, nil, nil)
+	joins = append(joins, indexJoinImpl)
 	// TODO: Support IndexHashJoin & IndexMergeJoin.
-
-	return []memo.Implementation{indexJoinImpl}
+	innerImplForIMJ := r.constructInnerTableScan(tableGatherExpr, tableScanExpr, outerJoinKeys, true, !prop.IsEmpty()&&prop.Items[0].Desc, avgInnerRowCnt)
+	indexMergeJoinImpl := r.constructIndexMergeJoin(
+		joinExpr, prop, outerIdx, innerImplForIMJ,
+		innerJoinKeys, outerJoinKeys, nil,
+		keyOff2IdxOff, nil, nil)
+	if indexMergeJoinImpl != nil {
+		joins = append(joins, indexMergeJoinImpl)
+	}
+	joins = append(joins,
+		r.constructIndexHashJoin(joinExpr, prop, outerIdx, innerImpl,
+		innerJoinKeys, outerJoinKeys, nil,
+		keyOff2IdxOff, nil, nil))
+	return joins
 }
 
 func (r *ImplIndexJoin) findLeafGroupExpr(expr *memo.GroupExpr) *memo.GroupExpr {
@@ -907,6 +922,84 @@ func (r *ImplIndexJoin) constructIndexJoin(
 	indexJoin.IdxColLens = idxColLens
 	indexJoin.SetSchema(joinExpr.Schema())
 	return impl.NewIndexLookUpJoinImpl(indexJoin, innerImpl, outerIdx)
+}
+
+func (r *ImplIndexJoin) constructIndexMergeJoin(
+	joinExpr *memo.GroupExpr, prop *property.PhysicalProperty, outerIdx int, innerImpl memo.Implementation,
+	innerKeys []*expression.Column, outerKeys []*expression.Column, ranges []*ranger.Range,
+	keyOff2IdxOff []int, idxColLens []int, cmpFilter *plannercore.ColWithCmpFuncManager)  memo.Implementation {
+	indexJoinImpl := r.constructIndexJoin(joinExpr, prop, outerIdx, innerImpl, innerKeys, outerKeys, ranges, keyOff2IdxOff, idxColLens, cmpFilter)
+	join := indexJoinImpl.GetPlan().(*plannercore.PhysicalIndexJoin)
+	hasPrefixCol := false
+	for _, l := range join.IdxColLens {
+		if l != types.UnspecifiedLength {
+			hasPrefixCol = true
+			break
+		}
+	}
+	if hasPrefixCol {
+		return nil
+	}
+	keyOff2KeyOffOrderByIdx := make([]int, len(join.OuterJoinKeys))
+	keyOffMapList := make([]int, len(join.KeyOff2IdxOff))
+	copy(keyOffMapList, join.KeyOff2IdxOff)
+	keyOffMap := make(map[int]int, len(keyOffMapList))
+	for i, idxOff := range keyOffMapList {
+		keyOffMap[idxOff] = i
+	}
+	sort.Slice(keyOffMapList, func(i, j int) bool { return keyOffMapList[i] < keyOffMapList[j] })
+	for keyOff, idxOff := range keyOffMapList {
+		keyOff2KeyOffOrderByIdx[keyOffMap[idxOff]] = keyOff
+	}
+	// isOuterKeysPrefix means whether the outer join keys are the prefix of the prop items.
+	isOuterKeysPrefix := len(join.OuterJoinKeys) <= len(prop.Items)
+	compareFuncs := make([]expression.CompareFunc, 0, len(join.OuterJoinKeys))
+	outerCompareFuncs := make([]expression.CompareFunc, 0, len(join.OuterJoinKeys))
+
+	for i := range join.KeyOff2IdxOff {
+		if isOuterKeysPrefix && !prop.Items[i].Col.Equal(nil, join.OuterJoinKeys[keyOff2KeyOffOrderByIdx[i]]) {
+			isOuterKeysPrefix = false
+		}
+		compareFuncs = append(compareFuncs, expression.GetCmpFunction(join.SCtx(), join.OuterJoinKeys[i], join.InnerJoinKeys[i]))
+		outerCompareFuncs = append(outerCompareFuncs, expression.GetCmpFunction(join.SCtx(), join.OuterJoinKeys[i], join.OuterJoinKeys[i]))
+	}
+	// canKeepOuterOrder means whether the prop items are the prefix of the outer join keys.
+	canKeepOuterOrder := len(prop.Items) <= len(join.OuterJoinKeys)
+	for i := 0; canKeepOuterOrder && i < len(prop.Items); i++ {
+		if !prop.Items[i].Col.Equal(nil, join.OuterJoinKeys[keyOff2KeyOffOrderByIdx[i]]) {
+			canKeepOuterOrder = false
+		}
+	}
+	// Since index merge join requires prop items the prefix of outer join keys
+	// or outer join keys the prefix of the prop items. So we need `canKeepOuterOrder` or
+	// `isOuterKeysPrefix` to be true.
+	if canKeepOuterOrder || isOuterKeysPrefix {
+		indexMergeJoin := plannercore.PhysicalIndexMergeJoin{
+			PhysicalIndexJoin:       *join,
+			KeyOff2KeyOffOrderByIdx: keyOff2KeyOffOrderByIdx,
+			NeedOuterSort:           !isOuterKeysPrefix,
+			CompareFuncs:            compareFuncs,
+			OuterCompareFuncs:       outerCompareFuncs,
+			Desc:                    !prop.IsEmpty() && prop.Items[0].Desc,
+		}.Init(join.SCtx())
+		return impl.NewIndexMergeJoinImpl(indexMergeJoin, innerImpl, outerIdx)
+	}
+	return nil
+}
+
+func (r *ImplIndexJoin) constructIndexHashJoin(
+	joinExpr *memo.GroupExpr, prop *property.PhysicalProperty, outerIdx int, innerImpl memo.Implementation,
+	innerKeys []*expression.Column, outerKeys []*expression.Column, ranges []*ranger.Range,
+	keyOff2IdxOff []int, idxColLens []int, cmpFilter *plannercore.ColWithCmpFuncManager)  memo.Implementation {
+	indexJoinImpl := r.constructIndexJoin(joinExpr, prop, outerIdx, innerImpl, innerKeys, outerKeys, ranges, keyOff2IdxOff, idxColLens, cmpFilter)
+	join := indexJoinImpl.GetPlan().(*plannercore.PhysicalIndexJoin)
+	indexHashJoin := plannercore.PhysicalIndexHashJoin{
+		PhysicalIndexJoin: *join,
+		// Prop is empty means that the parent operator does not need the
+		// join operator to provide any promise of the output order.
+		KeepOuterOrder: !prop.IsEmpty(),
+	}.Init(join.SCtx())
+	return impl.NewIndexHashJoinImpl(indexHashJoin, innerImpl, outerIdx)
 }
 
 func (r *ImplIndexJoin) constructInnerTableScan(
