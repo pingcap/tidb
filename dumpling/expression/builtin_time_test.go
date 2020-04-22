@@ -738,7 +738,7 @@ func (s *testEvaluatorSuite) TestTime(c *C) {
 		c.Assert(tp.Tp, Equals, mysql.TypeDuration)
 		c.Assert(tp.Charset, Equals, charset.CharsetBin)
 		c.Assert(tp.Collate, Equals, charset.CollationBin)
-		c.Assert(tp.Flag&uint(mysql.BinaryFlag), Equals, uint(mysql.BinaryFlag))
+		c.Assert(tp.Flag&mysql.BinaryFlag, Equals, mysql.BinaryFlag)
 		c.Assert(tp.Flen, Equals, mysql.MaxDurationWidthWithFsp)
 		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
@@ -1508,7 +1508,7 @@ func (s *testEvaluatorSuite) TestTimeDiff(c *C) {
 		c.Assert(tp.Tp, Equals, mysql.TypeDuration)
 		c.Assert(tp.Charset, Equals, charset.CharsetBin)
 		c.Assert(tp.Collate, Equals, charset.CollationBin)
-		c.Assert(tp.Flag, Equals, uint(mysql.BinaryFlag))
+		c.Assert(tp.Flag, Equals, mysql.BinaryFlag)
 		c.Assert(tp.Flen, Equals, mysql.MaxDurationWidthWithFsp)
 		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
@@ -2062,7 +2062,7 @@ func (s *testEvaluatorSuite) TestMakeDate(c *C) {
 		c.Assert(tp.Tp, Equals, mysql.TypeDate)
 		c.Assert(tp.Charset, Equals, charset.CharsetBin)
 		c.Assert(tp.Collate, Equals, charset.CollationBin)
-		c.Assert(tp.Flag, Equals, uint(mysql.BinaryFlag))
+		c.Assert(tp.Flag, Equals, mysql.BinaryFlag)
 		c.Assert(tp.Flen, Equals, mysql.MaxDateWidth)
 		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
