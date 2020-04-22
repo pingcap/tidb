@@ -92,6 +92,7 @@ func (p *PhysicalProperty) IsFlashOnlyProp() bool {
 	return p.TaskTp == CopTiFlashLocalReadTaskType || p.TaskTp == CopTiFlashGlobalReadTaskType
 }
 
+// GetAllPossibleChildTaskTypes enumrates the possible types of tasks for children.
 func (p *PhysicalProperty) GetAllPossibleChildTaskTypes() []TaskType {
 	if p.TaskTp == RootTaskType {
 		return wholeTaskTypes

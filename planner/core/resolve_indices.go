@@ -113,6 +113,7 @@ func (p *PhysicalHashJoin) ResolveIndices() (err error) {
 	return
 }
 
+// ResolveIndices implements Plan interface.
 func (p *PhysicalBroadCastJoin) ResolveIndices() (err error) {
 	err = p.physicalSchemaProducer.ResolveIndices()
 	if err != nil {

@@ -73,10 +73,12 @@ type PhysicalTableReader struct {
 	StoreType kv.StoreType
 }
 
+// GetTablePlan exports the tablePlan.
 func (p *PhysicalTableReader) GetTablePlan() PhysicalPlan {
 	return p.tablePlan
 }
 
+// GetTableScan exports the tableScan that contained in tablePlan.
 func (p *PhysicalTableReader) GetTableScan() *PhysicalTableScan {
 	curPlan := p.tablePlan
 	for {
@@ -436,6 +438,7 @@ type PhysicalMergeJoin struct {
 	Desc bool
 }
 
+// PhysicalBroadCastJoin only works for TiFlash Engine, which broadcast the small table to every replica of probe side of tables.
 type PhysicalBroadCastJoin struct {
 	basePhysicalJoin
 	globalChildIndex int

@@ -312,6 +312,7 @@ func (p PhysicalHashJoin) Init(ctx sessionctx.Context, stats *property.StatsInfo
 	return &p
 }
 
+// Init initializes BatchPointGetPlan.
 func (p PhysicalBroadCastJoin) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalBroadCastJoin {
 	tp := plancodec.TypeBroadcastJoin
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, tp, &p, offset)

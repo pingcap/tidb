@@ -198,6 +198,7 @@ func (p *PhysicalIndexScan) ToPB(ctx sessionctx.Context, _ kv.StoreType) (*tipb.
 	return &tipb.Executor{Tp: tipb.ExecType_TypeIndexScan, IdxScan: idxExec}, nil
 }
 
+// ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalBroadCastJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	client := ctx.GetClient()

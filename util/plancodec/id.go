@@ -50,7 +50,7 @@ const (
 	TypeLimit = "Limit"
 	// TypeHashJoin is the type of hash join.
 	TypeHashJoin = "HashJoin"
-	// TypeHashRightJoin is the type of right hash join.
+	// TypeBroadcastJoin is the type of broad cast join.
 	TypeBroadcastJoin = "TypeBroadcastJoin"
 	// TypeMergeJoin is the type of merge join.
 	TypeMergeJoin = "MergeJoin"

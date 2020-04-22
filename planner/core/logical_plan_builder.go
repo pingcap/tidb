@@ -58,8 +58,12 @@ const (
 	// HintSMJ is hint enforce merge join.
 	HintSMJ = "merge_join"
 
+	// TiDBBroadCastJoin indicates applying broadcast join by force.
 	TiDBBroadCastJoin = "tidb_bcj"
-	HintBCJ           = "bc_join"
+
+	// HintBCJ indicates applying broadcast join by force.
+	HintBCJ = "bc_join"
+
 	// TiDBIndexNestedLoopJoin is hint enforce index nested loop join.
 	TiDBIndexNestedLoopJoin = "tidb_inlj"
 	// HintINLJ is hint enforce index nested loop join.

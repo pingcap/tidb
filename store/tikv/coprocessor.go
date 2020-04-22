@@ -55,6 +55,8 @@ type CopClient struct {
 	replicaReadSeed uint32
 }
 
+// GetBatchCopTaskNumber returns the number of stores that tiflash engines have.
+// This information is important for generating tiflash plan, for example, it can help calcuate the cost of broadcasting small table.
 func (c *CopClient) GetBatchCopTaskNumber() (ret int32) {
 	ret = c.store.regionCache.storeMu.flashStoreNumber
 	if ret <= 0 {
