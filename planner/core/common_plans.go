@@ -253,9 +253,56 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	if err != nil {
 		return nil, err
 	}
+<<<<<<< HEAD
 	_, isTableDual := p.(*PhysicalTableDual)
 	if !isTableDual && prepared.UseCache {
 		sctx.PreparedPlanCache().Put(cacheKey, NewPSTMTPlanCacheValue(p))
+=======
+	e.names = names
+	e.Plan = p
+	_, isTableDual := p.(*PhysicalTableDual)
+	if !isTableDual && prepared.UseCache {
+		err = e.setFoundInPlanCache(sctx, true)
+		if err != nil {
+			return err
+		}
+		cached := NewPSTMTPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan)
+		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
+		stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
+		sctx.PreparedPlanCache().Put(cacheKey, cached)
+	}
+	err = e.setFoundInPlanCache(sctx, false)
+	return err
+}
+
+// tryCachePointPlan will try to cache point execution plan, there may be some
+// short paths for these executions, currently "point select" and "point update"
+func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context,
+	preparedStmt *CachedPrepareStmt, is infoschema.InfoSchema, p Plan) error {
+	var (
+		prepared = preparedStmt.PreparedAst
+		ok       bool
+		err      error
+		names    types.NameSlice
+	)
+	switch p.(type) {
+	case *PointGetPlan:
+		ok, err = IsPointGetWithPKOrUniqueKeyByAutoCommit(sctx, p)
+		names = p.OutputNames()
+		if err != nil {
+			return err
+		}
+	case *Update:
+		ok, err = IsPointUpdateByAutoCommit(sctx, p)
+		if err != nil {
+			return err
+		}
+		if ok {
+			// make constant expression store paramMarker
+			sctx.GetSessionVars().StmtCtx.PointExec = true
+			p, names, err = OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
+		}
+>>>>>>> 79211fe... plan: make query on partition table not cacheable (#16375)
 	}
 	return p, err
 }
