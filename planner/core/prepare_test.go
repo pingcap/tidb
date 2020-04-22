@@ -392,7 +392,7 @@ func (s *testPrepareSuite) TestPrepareForGroupByItems(c *C) {
 	tk.MustQuery("execute s1 using @a;").Check(testkit.Rows("3"))
 }
 
-func (s *testPrepareSuite) TestPrepareCacheForPartition(c *C) {
+func (s *testPrepareSerialSuite) TestPrepareCacheForPartition(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
@@ -674,6 +674,48 @@ func (s *testPlanSerialSuite) TestPlanCacheUnionScan(c *C) {
 	counter.Write(pb)
 	cnt = pb.GetCounter().GetValue()
 	c.Check(cnt, Equals, float64(6))
+}
+
+func (s *testPlanSerialSuite) TestPlanCacheHitInfo(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		dom.Close()
+		store.Close()
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int)")
+	tk.MustExec("insert into t values (1),(2),(3),(4)")
+	tk.MustExec("prepare stmt from 'select * from t where id=?'")
+	tk.MustExec("prepare stmt2 from 'select /*+ ignore_plan_cache() */ * from t where id=?'")
+	tk.MustExec("set @doma = 1")
+	// Test if last_plan_from_cache is appropriately initialized.
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @doma").Check(testkit.Rows("1"))
+	// Test if last_plan_from_cache is updated after a plan cache hit.
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @doma").Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt2 using @doma").Check(testkit.Rows("1"))
+	// Test if last_plan_from_cache is updated after a plan cache miss caused by a prepared statement.
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	// Test if last_plan_from_cache is updated after a plan cache miss caused by a usual statement.
+	tk.MustQuery("execute stmt using @doma").Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t where id=1").Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 }
 
 func (s *testPrepareSuite) TestPrepareForGroupByMultiItems(c *C) {
