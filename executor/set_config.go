@@ -124,7 +124,7 @@ func (s *SetConfigExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func (s *SetConfigExec) doRequest(url string) (retErr error) {
-	body := bytes.NewBufferString(fmt.Sprintf("{'%s':'%s'}", s.p.Name, s.v))
+	body := bytes.NewBufferString(fmt.Sprintf(`{"%s":"%s"}`, s.p.Name, s.v))
 	req, err := http.NewRequest(http.MethodPost, url, body)
 	if err != nil {
 		return err
