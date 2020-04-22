@@ -42,6 +42,11 @@ oom-use-tmp-storage = true
 # It only takes effect when `oom-use-tmp-storage` is `true`.
 # tmp-storage-path = "/tmp/tidb/NDAwMC8xMDA4MA==/tmp-storage"
 
+# Specifies the maximum use of temporary storage (bytes) for all active queries when `oom-use-tmp-storage` is enabled.
+# If the `tmp-storage-quota` exceeds the capacity of the temporary storage directory, tidb-server would return an error and exit.
+# The default value of tmp-storage-quota is under 0 which means tidb-server wouldn't check the capacity.
+tmp-storage-quota = -1
+
 # Specifies what operation TiDB performs when a single SQL statement exceeds the memory quota specified by mem-quota-query and cannot be spilled over to disk.
 # Valid options: ["log", "cancel"]
 oom-action = "cancel"
@@ -332,6 +337,19 @@ region-cache-ttl = 600
 # If a store has been up to the limit, it will return error for the successive request in same store.
 # default 0 means shutting off store limit.
 store-limit = 0
+
+[tikv-client.copr-cache]
+# Whether to enable the copr cache. The copr cache saves the result from TiKV Coprocessor in the memory and
+# reuses the result when corresponding data in TiKV is unchanged, on a region basis.
+enabled = true
+
+# The capacity in MB of the cache.
+capacity-mb = 1000.0
+
+# Only cache requests whose result set is small.
+admission-max-result-mb = 10.0
+# Only cache requests takes notable time to process.
+admission-min-process-ms = 5
 
 [binlog]
 # enable to write binlog.
