@@ -16,12 +16,12 @@ package config
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/BurntSushi/toml"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 	"reflect"
 
+	"github.com/BurntSushi/toml"
 	. "github.com/pingcap/check"
 )
 
