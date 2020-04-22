@@ -19,7 +19,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -48,24 +47,18 @@ func (c *likeFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 		return nil, err
 	}
 	bf.tp.Flen = 1
-	sig := &builtinLikeSig{bf, nil, false}
+	sig := &builtinLikeSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_LikeSig)
 	return sig, nil
 }
 
 type builtinLikeSig struct {
 	baseBuiltinFunc
-	// pattern and isMemorizedPattern is not serialized with builtinLikeSig, treat them as a cache to accelerate
-	// the evaluation of builtinLikeSig.
-	pattern            collate.WildcardPattern
-	isMemorizedPattern bool
 }
 
 func (b *builtinLikeSig) Clone() builtinFunc {
 	newSig := &builtinLikeSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
-	newSig.pattern = b.pattern
-	newSig.isMemorizedPattern = b.isMemorizedPattern
 	return newSig
 }
 
@@ -85,20 +78,10 @@ func (b *builtinLikeSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	if b.pattern == nil {
-		b.pattern = b.collator().Pattern()
-		if b.args[1].ConstItem(b.ctx.GetSessionVars().StmtCtx) && b.args[2].ConstItem(b.ctx.GetSessionVars().StmtCtx) {
-			b.pattern.Compile(patternStr, byte(escape))
-			b.isMemorizedPattern = true
-		}
-	}
-	// should be thread-safe
-	if !b.isMemorizedPattern {
-		pattern := b.collator().Pattern()
-		pattern.Compile(patternStr, byte(escape))
-		return boolToInt64(pattern.DoMatch(valStr)), false, nil
-	}
-	return boolToInt64(b.pattern.DoMatch(valStr)), false, nil
+
+	pattern := b.collator().Pattern()
+	pattern.Compile(patternStr, byte(escape))
+	return boolToInt64(pattern.DoMatch(valStr)), false, nil
 }
 
 type regexpFunctionClass struct {
