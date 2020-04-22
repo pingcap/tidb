@@ -83,9 +83,6 @@ var (
 	transactionDurationGeneralCommit     = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, metrics.LblCommit)
 	transactionDurationGeneralAbort      = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, metrics.LblAbort)
 
-	sessionExecuteRunDurationInternal = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblInternal)
-	sessionExecuteRunDurationGeneral  = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblGeneral)
-
 	sessionExecuteCompileDurationInternal = metrics.SessionExecuteCompileDuration.WithLabelValues(metrics.LblInternal)
 	sessionExecuteCompileDurationGeneral  = metrics.SessionExecuteCompileDuration.WithLabelValues(metrics.LblGeneral)
 	sessionExecuteParseDurationInternal   = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblInternal)
@@ -324,7 +321,11 @@ func (s *session) SetCollation(coID int) error {
 	for _, v := range variable.SetNamesVariables {
 		terror.Log(s.sessionVars.SetSystemVar(v, cs))
 	}
-	terror.Log(s.sessionVars.SetSystemVar(variable.CollationConnection, co))
+	err = s.sessionVars.SetSystemVar(variable.CollationConnection, co)
+	if err != nil {
+		// Some clients may use the unsupported collations, such as utf8mb4_0900_ai_ci, We shouldn't return error or use the ERROR level log.
+		logutil.BgLogger().Warn(err.Error())
+	}
 	return nil
 }
 
@@ -1036,7 +1037,6 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 
 func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode ast.StmtNode, stmt sqlexec.Statement, recordSets []sqlexec.RecordSet, inMulitQuery bool) ([]sqlexec.RecordSet, error) {
 	logStmt(stmtNode, s.sessionVars)
-	startTime := time.Now()
 	recordSet, err := runStmt(ctx, s, stmt)
 	if err != nil {
 		if !kv.ErrKeyExists.Equal(err) {
@@ -1046,11 +1046,6 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 				zap.String("session", s.String()))
 		}
 		return nil, err
-	}
-	if s.isInternal() {
-		sessionExecuteRunDurationInternal.Observe(time.Since(startTime).Seconds())
-	} else {
-		sessionExecuteRunDurationGeneral.Observe(time.Since(startTime).Seconds())
 	}
 
 	if inMulitQuery && recordSet == nil {
@@ -1165,7 +1160,6 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 
 	// Execute the physical plan.
 	logStmt(stmtNode, s.sessionVars)
-	startTime := time.Now()
 	recordSet, err := runStmt(ctx, s, stmt)
 	if err != nil {
 		if !kv.ErrKeyExists.Equal(err) {
@@ -1175,11 +1169,6 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 				zap.String("session", s.String()))
 		}
 		return nil, err
-	}
-	if s.isInternal() {
-		sessionExecuteRunDurationInternal.Observe(time.Since(startTime).Seconds())
-	} else {
-		sessionExecuteRunDurationGeneral.Observe(time.Since(startTime).Seconds())
 	}
 	return recordSet, nil
 }
@@ -1307,11 +1296,8 @@ func (s *session) CommonExec(ctx context.Context,
 		return nil, err
 	}
 	sessionExecuteCompileDurationGeneral.Observe(time.Since(s.sessionVars.StartTime).Seconds())
-	startTime := time.Now()
 	logQuery(st.OriginText(), s.sessionVars)
-	recordSet, err := runStmt(ctx, s, st)
-	sessionExecuteRunDurationGeneral.Observe(time.Since(startTime).Seconds())
-	return recordSet, err
+	return runStmt(ctx, s, st)
 }
 
 // CachedPlanExec short path currently ONLY for cached "point select plan" execution
@@ -1343,7 +1329,6 @@ func (s *session) CachedPlanExec(ctx context.Context,
 	sessionExecuteCompileDurationGeneral.Observe(compileDuration.Seconds())
 	s.GetSessionVars().DurationCompile = compileDuration
 
-	startTime := time.Now()
 	stmt.Text = prepared.Stmt.Text()
 	stmtCtx.OriginalSQL = stmt.Text
 	stmtCtx.InitSQLDigest(prepareStmt.NormalizedSQL, prepareStmt.SQLDigest)
@@ -1364,7 +1349,6 @@ func (s *session) CachedPlanExec(ctx context.Context,
 		prepared.CachedPlan = nil
 		return nil, errors.Errorf("invalid cached plan type")
 	}
-	sessionExecuteRunDurationGeneral.Observe(time.Since(startTime).Seconds())
 	return resultSet, err
 }
 
@@ -1933,7 +1917,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = version41
+	currentBootstrapVersion = version42
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -2099,18 +2083,16 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	// Use GlobalVariableCache if TiDB just loaded global variables within 2 second ago.
 	// When a lot of connections connect to TiDB simultaneously, it can protect TiKV meta region from overload.
 	gvc := domain.GetDomain(s).GetGlobalVarsCache()
-	succ, rows, fields := gvc.Get()
-	if !succ {
-		// Set the variable to true to prevent cyclic recursive call.
-		vars.CommonGlobalLoaded = true
-		rows, fields, err = s.ExecRestrictedSQL(loadCommonGlobalVarsSQL)
-		if err != nil {
-			vars.CommonGlobalLoaded = false
-			logutil.BgLogger().Error("failed to load common global variables.")
-			return err
-		}
-		gvc.Update(rows, fields)
+	loadFunc := func() ([]chunk.Row, []*ast.ResultField, error) {
+		return s.ExecRestrictedSQL(loadCommonGlobalVarsSQL)
 	}
+	rows, fields, err := gvc.LoadGlobalVariables(loadFunc)
+	if err != nil {
+		logutil.BgLogger().Warn("failed to load global variables",
+			zap.Uint64("conn", s.sessionVars.ConnectionID), zap.Error(err))
+		return err
+	}
+	vars.CommonGlobalLoaded = true
 
 	for _, row := range rows {
 		varName := row.GetString(0)
