@@ -16,7 +16,6 @@ package kvcache
 import (
 	"container/list"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stringutil"
 )
@@ -28,7 +27,6 @@ type Key interface {
 
 // Value is the interface that every value in LRU Cache should implement.
 type Value interface {
-	memConsume() int64
 }
 
 // cacheEntry wraps Key and Value. It's the value of list.Element.
@@ -38,7 +36,7 @@ type cacheEntry struct {
 }
 
 func (c *cacheEntry) memConsume() int64 {
-	return int64(len(c.key.Hash())) + c.value.memConsume()
+	return int64(len(c.key.Hash()))
 }
 
 // SimpleLRUCache is a simple least recently used cache, not thread-safe, use it carefully.
@@ -68,9 +66,7 @@ func NewSimpleLRUCache(capacity uint, guard float64, quota uint64) *SimpleLRUCac
 		cache:      list.New(),
 		memTracker: memory.NewTracker(stringutil.StringerStr("SimpleLRUCache"), -1),
 	}
-	if executor.GlobalMemoryUsageTracker != nil {
-		sc.memTracker.AttachTo(executor.GlobalMemoryUsageTracker)
-	}
+	sc.memTracker.AttachToGlobalTracker(memory.GlobalMemoryUsageTracker)
 	return sc
 }
 

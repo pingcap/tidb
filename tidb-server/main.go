@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -55,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/gcworker"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -591,12 +591,12 @@ func setGlobalVars() {
 	domainutil.RepairInfo.SetRepairMode(cfg.RepairMode)
 	domainutil.RepairInfo.SetRepairTableList(cfg.RepairTableList)
 	c := config.GetGlobalConfig()
-	executor.GlobalDiskUsageTracker.SetBytesLimit(c.TempStorageQuota)
+	disk.GlobalDiskUsageTracker.SetBytesLimit(c.TempStorageQuota)
 	if c.Performance.MaxMemory < 1 {
 		// If MaxMemory equals 0, it means unlimited
-		executor.GlobalMemoryUsageTracker.SetBytesLimit(-1)
+		memory.GlobalMemoryUsageTracker.SetBytesLimit(-1)
 	} else {
-		executor.GlobalMemoryUsageTracker.SetBytesLimit(int64(c.Performance.MaxMemory))
+		memory.GlobalMemoryUsageTracker.SetBytesLimit(int64(c.Performance.MaxMemory))
 	}
 }
 

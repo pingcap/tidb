@@ -18,7 +18,59 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+
+	"github.com/pingcap/tidb/util/stringutil"
 )
+
+var (
+	// GlobalMemoryUsageTracker is the ancestor of all the Executors' memory tracker
+	GlobalMemoryUsageTracker *Tracker
+)
+
+const (
+	// globalStorageLabel represents the label of the GlobalDiskUsageTracker
+	globalStorageLabel string = "GlobalStorageLabel"
+	// globalMemoryLabel represents the label of the GlobalMemoryUsageTracker
+	globalMemoryLabel string = "GlobalMemoryLabel"
+	// globalPanicStorageExceed represents the panic message when out of storage quota.
+	globalPanicStorageExceed string = "Out Of Global Storage Quota!"
+	// globalPanicMemoryExceed represents the panic message when out of memory limit.
+	globalPanicMemoryExceed string = "Out Of Global Memory Limit!"
+)
+
+// globalPanicOnExceed panics when GlobalDisTracker storage usage exceeds storage quota.
+type GlobalPanicOnExceed struct {
+	mutex sync.Mutex // For synchronization.
+}
+
+func init() {
+	action := &GlobalPanicOnExceed{}
+	GlobalMemoryUsageTracker = NewGlobalTracker(stringutil.StringerStr(globalMemoryLabel), -1)
+	GlobalMemoryUsageTracker.SetActionOnExceed(action)
+}
+
+// SetLogHook sets a hook for PanicOnExceed.
+func (a *GlobalPanicOnExceed) SetLogHook(hook func(uint64)) {}
+
+// Action panics when storage usage exceeds storage quota.
+func (a *GlobalPanicOnExceed) Action(t *Tracker) {
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+	t.Label().String()
+	msg := ""
+	switch t.Label().String() {
+	case globalStorageLabel:
+		msg = globalPanicStorageExceed
+	case globalMemoryLabel:
+		msg = globalPanicMemoryExceed
+	default:
+		msg = "Out of Unknown Resource Quota!"
+	}
+	panic(msg)
+}
+
+// SetFallback sets a fallback action.
+func (a *GlobalPanicOnExceed) SetFallback(ActionOnExceed) {}
 
 // Tracker is used to track the memory usage during query execution.
 // It contains an optional limit and can be arranged into a tree structure
