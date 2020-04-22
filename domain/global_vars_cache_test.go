@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 )
 
-var _ = Suite(&testGVCSuite{})
+var _ = SerialSuites(&testGVCSuite{})
 
 type testGVCSuite struct{}
 
@@ -104,18 +104,7 @@ func getResultField(colName string, id, offset int) *ast.ResultField {
 func (gvcSuite *testGVCSuite) TestConcurrentOneFlight(c *C) {
 	defer testleak.AfterTest(c)()
 	testleak.BeforeTest()
-
-	store, err := mockstore.NewMockTikvStore()
-	c.Assert(err, IsNil)
-	defer store.Close()
-	ddlLease := 50 * time.Millisecond
-	dom := NewDomain(store, ddlLease, 0, mockFactory)
-	err = dom.Init(ddlLease, sysMockFactory)
-	c.Assert(err, IsNil)
-	defer dom.Close()
-
-	// Get empty global vars cache.
-	gvc := dom.GetGlobalVarsCache()
+	gvc := &GlobalVariableCache{}
 	succ, rows, fields := gvc.Get()
 	c.Assert(succ, IsFalse)
 	c.Assert(rows, IsNil)
@@ -134,12 +123,6 @@ func (gvcSuite *testGVCSuite) TestConcurrentOneFlight(c *C) {
 		Charset: charset.CharsetBin,
 		Collate: charset.CollationBin,
 	}
-	ck := chunk.NewChunkWithCapacity([]*types.FieldType{ft, ft1}, 1024)
-	ck.AppendString(0, "variable1")
-	ck.AppendString(1, "value1")
-	row := ck.GetRow(0)
-	gvc.Update([]chunk.Row{row}, []*ast.ResultField{rf, rf1})
-
 	ckLow := chunk.NewChunkWithCapacity([]*types.FieldType{ft, ft1}, 1024)
 	val := "fromStorage"
 	val1 := "fromStorage1"
@@ -148,12 +131,12 @@ func (gvcSuite *testGVCSuite) TestConcurrentOneFlight(c *C) {
 
 	// Let cache become invalid, and try concurrent load
 	counter := int32(0)
-	waitRet := new(sync.WaitGroup)
-	waitRet.Add(1)
+	waitToStart := new(sync.WaitGroup)
+	waitToStart.Add(1)
 	gvc.lastModify = time.Now().Add(time.Duration(-10) * time.Second)
 	loadFunc := func() ([]chunk.Row, []*ast.ResultField, error) {
+		time.Sleep(100 * time.Millisecond)
 		atomic.AddInt32(&counter, 1)
-		waitRet.Wait()
 		return []chunk.Row{ckLow.GetRow(0)}, []*ast.ResultField{rf, rf1}, nil
 	}
 	wg := new(sync.WaitGroup)
@@ -163,12 +146,13 @@ func (gvcSuite *testGVCSuite) TestConcurrentOneFlight(c *C) {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
+			waitToStart.Wait()
 			resRow, resField, _ := gvc.LoadGlobalVariables(loadFunc)
 			resArray[idx].rows = resRow
 			resArray[idx].fields = resField
 		}(i)
 	}
-	waitRet.Done()
+	waitToStart.Done()
 	wg.Wait()
 	succ, rows, fields = gvc.Get()
 	c.Assert(counter, Equals, int32(1))
