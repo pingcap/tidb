@@ -4928,9 +4928,96 @@ func (s *testIntegrationSuite) TestIssue10181(c *C) {
 	tk.MustQuery(`select * from t where a > 9223372036854775807-0.5 order by a`).Check(testkit.Rows(`9223372036854775807`, `18446744073709551615`))
 }
 
+func (s *testIntegrationSuite) TestExprPushdown(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int, col1 varchar(10), col2 varchar(10), col3 int, col4 int, col5 int, index key1" +
+		" (col1, col2, col3, col4), index key2 (col4, col3, col2, col1))")
+	tk.MustExec("insert into t values(1,'211111','311',4,5,6),(2,'311111','411',5,6,7),(3,'411111','511',6,7,8)," +
+		"(4,'511111','611',7,8,9),(5,'611111','711',8,9,10)")
+
+	// case 1, index scan without double read, some filters can not be pushed to cop task
+	rows := tk.MustQuery("explain select col2, col1 from t use index(key1) where col2 like '5%' and substr(col1, 1, 1) = '4'").Rows()
+	c.Assert(fmt.Sprintf("%v", rows[1][2]), Equals, "root")
+	c.Assert(fmt.Sprintf("%v", rows[1][4]), Equals, "eq(substr(test.t.col1, 1, 1), \"4\")")
+	c.Assert(fmt.Sprintf("%v", rows[3][2]), Equals, "cop[tikv]")
+	c.Assert(fmt.Sprintf("%v", rows[3][4]), Equals, "like(test.t.col2, \"5%\", 92)")
+	tk.MustQuery("select col2, col1 from t use index(key1) where col2 like '5%' and substr(col1, 1, 1) = '4'").Check(testkit.Rows("511 411111"))
+	tk.MustQuery("select count(col2) from t use index(key1) where col2 like '5%' and substr(col1, 1, 1) = '4'").Check(testkit.Rows("1"))
+
+	// case 2, index scan without double read, none of the filters can be pushed to cop task
+	rows = tk.MustQuery("explain select col1, col2 from t use index(key2) where substr(col2, 1, 1) = '5' and substr(col1, 1, 1) = '4'").Rows()
+	c.Assert(fmt.Sprintf("%v", rows[0][2]), Equals, "root")
+	c.Assert(fmt.Sprintf("%v", rows[0][4]), Equals, "eq(substr(test.t.col1, 1, 1), \"4\"), eq(substr(test.t.col2, 1, 1), \"5\")")
+	tk.MustQuery("select col1, col2 from t use index(key2) where substr(col2, 1, 1) = '5' and substr(col1, 1, 1) = '4'").Check(testkit.Rows("411111 511"))
+	tk.MustQuery("select count(col1) from t use index(key2) where substr(col2, 1, 1) = '5' and substr(col1, 1, 1) = '4'").Check(testkit.Rows("1"))
+
+	// case 3, index scan with double read, some filters can not be pushed to cop task
+	rows = tk.MustQuery("explain select id from t use index(key1) where col2 like '5%' and substr(col1, 1, 1) = '4'").Rows()
+	c.Assert(fmt.Sprintf("%v", rows[1][2]), Equals, "root")
+	c.Assert(fmt.Sprintf("%v", rows[1][4]), Equals, "eq(substr(test.t.col1, 1, 1), \"4\")")
+	c.Assert(fmt.Sprintf("%v", rows[3][2]), Equals, "cop[tikv]")
+	c.Assert(fmt.Sprintf("%v", rows[3][4]), Equals, "like(test.t.col2, \"5%\", 92)")
+	tk.MustQuery("select id from t use index(key1) where col2 like '5%' and substr(col1, 1, 1) = '4'").Check(testkit.Rows("3"))
+	tk.MustQuery("select count(id) from t use index(key1) where col2 like '5%' and substr(col1, 1, 1) = '4'").Check(testkit.Rows("1"))
+
+	// case 4, index scan with double read, none of the filters can be pushed to cop task
+	rows = tk.MustQuery("explain select id from t use index(key2) where substr(col2, 1, 1) = '5' and substr(col1, 1, 1) = '4'").Rows()
+	c.Assert(fmt.Sprintf("%v", rows[1][2]), Equals, "root")
+	c.Assert(fmt.Sprintf("%v", rows[1][4]), Equals, "eq(substr(test.t.col1, 1, 1), \"4\"), eq(substr(test.t.col2, 1, 1), \"5\")")
+	tk.MustQuery("select id from t use index(key2) where substr(col2, 1, 1) = '5' and substr(col1, 1, 1) = '4'").Check(testkit.Rows("3"))
+	tk.MustQuery("select count(id) from t use index(key2) where substr(col2, 1, 1) = '5' and substr(col1, 1, 1) = '4'").Check(testkit.Rows("1"))
+}
+
 func (s *testIntegrationSuite) TestExprPushdownBlacklist(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustQuery(`select * from mysql.expr_pushdown_blacklist`).Check(testkit.Rows())
+	tk.MustQuery(`select * from mysql.expr_pushdown_blacklist`).Check(testkit.Rows(
+		"date_add tiflash DST(daylight saving time) does not take effect in TiFlash date_add",
+		"cast tiflash Behavior of some corner cases(overflow, truncate etc) is different in TiFlash and TiDB"))
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int , b date)")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	tk.MustExec("insert into mysql.expr_pushdown_blacklist " +
+		"values('<', 'tikv,tiflash,tidb', 'for test'),('date_format', 'tikv', 'for test')")
+	tk.MustExec("admin reload expr_pushdown_blacklist")
+
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+
+	// < not pushed, cast only pushed to TiKV, date_format only pushed to TiFlash,
+	// > pushed to both TiKV and TiFlash
+	rows := tk.MustQuery("explain select * from test.t where b > date'1988-01-01' and b < date'1994-01-01' " +
+		"and cast(a as decimal(10,2)) > 10.10 and date_format(b,'%m') = '11'").Rows()
+	c.Assert(fmt.Sprintf("%v", rows[0][4]), Equals, "lt(test.t.b, 1994-01-01)")
+	c.Assert(fmt.Sprintf("%v", rows[1][4]), Equals, "gt(cast(test.t.a), 10.10)")
+	c.Assert(fmt.Sprintf("%v", rows[3][4]), Equals, "eq(date_format(test.t.b, \"%m\"), \"11\"), gt(test.t.b, 1988-01-01)")
+
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tikv'")
+	rows = tk.MustQuery("explain select * from test.t where b > date'1988-01-01' and b < date'1994-01-01' " +
+		"and cast(a as decimal(10,2)) > 10.10 and date_format(b,'%m') = '11'").Rows()
+	c.Assert(fmt.Sprintf("%v", rows[0][4]), Equals, "lt(test.t.b, 1994-01-01)")
+	c.Assert(fmt.Sprintf("%v", rows[1][4]), Equals, "eq(date_format(test.t.b, \"%m\"), \"11\")")
+	c.Assert(fmt.Sprintf("%v", rows[3][4]), Equals, "gt(cast(test.t.a), 10.10), gt(test.t.b, 1988-01-01)")
+
+	tk.MustExec("delete from mysql.expr_pushdown_blacklist where name = '<' and store_type = 'tikv,tiflash,tidb' and reason = 'for test'")
+	tk.MustExec("delete from mysql.expr_pushdown_blacklist where name = 'date_format' and store_type = 'tikv' and reason = 'for test'")
+	tk.MustExec("admin reload expr_pushdown_blacklist")
 }
 
 func (s *testIntegrationSuite) TestOptRuleBlacklist(c *C) {
@@ -5349,7 +5436,7 @@ func (s *testIntegrationSuite) TestCastStrToInt(c *C) {
 	}
 }
 
-func (s *testIntegrationSuite) TestIssue16205(c *C) {
+func (s *testIntegrationSerialSuite) TestIssue16205(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
@@ -5403,7 +5490,7 @@ func (s *testIntegrationSuite) TestIssue14146(c *C) {
 	tk.MustQuery("select * from tt").Check(testkit.Rows("<nil>"))
 }
 
-func (s *testIntegrationSuite) TestCacheRegexpr(c *C) {
+func (s *testIntegrationSerialSuite) TestCacheRegexpr(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
@@ -5427,7 +5514,7 @@ func (s *testIntegrationSuite) TestCacheRegexpr(c *C) {
 	tk.MustQuery("execute stmt1 using @a").Check(testkit.Rows("R1"))
 }
 
-func (s *testIntegrationSuite) TestCacheRefineArgs(c *C) {
+func (s *testIntegrationSerialSuite) TestCacheRefineArgs(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
@@ -5550,7 +5637,7 @@ func (s *testIntegrationSuite) TestCoercibility(c *C) {
 	}, "from t")
 }
 
-func (s *testIntegrationSuite) TestCacheConstEval(c *C) {
+func (s *testIntegrationSerialSuite) TestCacheConstEval(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
@@ -5568,7 +5655,7 @@ func (s *testIntegrationSuite) TestCacheConstEval(c *C) {
 	tk.MustExec("create table t(col_double double)")
 	tk.MustExec("insert into t values (1)")
 	tk.Se.GetSessionVars().EnableVectorizedExpression = false
-	tk.MustExec("insert into mysql.expr_pushdown_blacklist values('cast')")
+	tk.MustExec("insert into mysql.expr_pushdown_blacklist values('cast', 'tikv,tiflash,tidb', 'for test')")
 	tk.MustExec("admin reload expr_pushdown_blacklist")
 	tk.MustExec("prepare stmt from 'SELECT * FROM (SELECT col_double AS c0 FROM t) t WHERE (ABS((REPEAT(?, ?) OR 5617780767323292672)) < LN(EXP(c0)) + (? ^ ?))'")
 	tk.MustExec("set @a1 = 'JuvkBX7ykVux20zQlkwDK2DFelgn7'")
@@ -5579,7 +5666,7 @@ func (s *testIntegrationSuite) TestCacheConstEval(c *C) {
 	// incompatible with MySQL actually, update the result after fixing it.
 	tk.MustQuery("execute stmt using @a1, @a2, @a3, @a4").Check(testkit.Rows("1"))
 	tk.Se.GetSessionVars().EnableVectorizedExpression = true
-	tk.MustExec("delete from mysql.expr_pushdown_blacklist")
+	tk.MustExec("delete from mysql.expr_pushdown_blacklist where name = 'cast' and store_type = 'tikv,tiflash,tidb' and reason = 'for test'")
 	tk.MustExec("admin reload expr_pushdown_blacklist")
 }
 
@@ -6014,4 +6101,17 @@ func (s *testIntegrationSuite) TestIssue15992(c *C) {
 	tk.MustExec("CREATE INDEX i0 ON t0(c1);")
 	tk.MustQuery("SELECT t0.c0 FROM t0 UNION ALL SELECT 0 FROM t0;").Check(testkit.Rows())
 	tk.MustExec("drop table t0;")
+}
+
+func (s *testIntegrationSuite) TestIssue16029(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t0,t1;")
+	tk.MustExec("CREATE TABLE t0(c0 INT);")
+	tk.MustExec("CREATE TABLE t1(c0 INT);")
+	tk.MustExec("INSERT INTO t0 VALUES (NULL), (1);")
+	tk.MustExec("INSERT INTO t1 VALUES (0);")
+	tk.MustQuery("SELECT t0.c0 FROM t0 JOIN t1 ON (t0.c0 REGEXP 1) | t1.c0  WHERE BINARY STRCMP(t1.c0, t0.c0);").Check(testkit.Rows("1"))
+	tk.MustExec("drop table t0;")
+	tk.MustExec("drop table t1;")
 }
