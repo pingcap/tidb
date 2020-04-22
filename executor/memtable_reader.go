@@ -25,7 +25,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jeremywohl/flatten"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
@@ -213,19 +212,19 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 					ch <- result{err: errors.Trace(err)}
 					return
 				}
-				data, err := flatten.Flatten(nested, "", flatten.DotStyle)
-				if err != nil {
-					ch <- result{err: errors.Trace(err)}
-					return
-				}
-				// Sorts by keys and make the result stable
+				data := config.FlattenConfigItems(nested)
 				type item struct {
 					key string
 					val string
 				}
 				var items []item
 				for key, val := range data {
-					items = append(items, item{key: key, val: fmt.Sprintf("%v", val)})
+					jsonVal, err := json.Marshal(val)
+					if err != nil {
+						ch <- result{err: errors.Trace(err)}
+						return
+					}
+					items = append(items, item{key: key, val: string(jsonVal)})
 				}
 				sort.Slice(items, func(i, j int) bool { return items[i].key < items[j].key })
 				var rows [][]types.Datum
