@@ -265,7 +265,7 @@ func dataForRemoteProfile(ctx sessionctx.Context, nodeType, uri string, isGorout
 	)
 	switch nodeType {
 	case "tikv":
-		servers, err = infoschema.GetTiKVServerInfo(ctx)
+		servers, err = infoschema.GetStoreServerInfo(ctx)
 	case "pd":
 		servers, err = infoschema.GetPDServerInfo(ctx)
 	default:
