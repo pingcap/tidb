@@ -274,6 +274,18 @@
           "    └─TableReader_11(Probe) 10000.00 root  data:TableFullScan_10",
           "      └─TableFullScan_10 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
+      },
+      {
+        "SQL": "explain select * from t1 left join t2 on t1.a = t2.a where ifnull(t2.b, t1.a) = 1",
+        "Result": [
+          "Selection_7 9990.00 root  eq(ifnull(test.t2.b, test.t1.a), 1)",
+          "└─HashJoin_8 12487.50 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader_14(Build) 9990.00 root  data:Selection_13",
+          "  │ └─Selection_13 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan_12 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader_11(Probe) 10000.00 root  data:TableFullScan_10",
+          "    └─TableFullScan_10 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
       }
     ]
   }

@@ -4279,6 +4279,13 @@ func (s *testIntegrationSuite) TestIssues(c *C) {
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert t values (1)")
 	tk.MustQuery("select * from t where cast(a as binary)").Check(testkit.Rows("1"))
+
+	// for issue #16351
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2(a int, b varchar(20))")
+	tk.MustExec(`insert into t2 values(1,"1111"),(2,"2222"),(3,"3333"),(4,"4444"),(5,"5555"),(6,"6666"),(7,"7777"),(8,"8888"),(9,"9999"),(10,"0000")`)
+	tk.MustQuery(`select (@j := case when substr(t2.b,1,3)=@i then 1 else @j+1 end) from t2, (select @j := 0, @i := "0") tt limit 10`).Check(testkit.Rows(
+		"1", "2", "3", "4", "5", "6", "7", "8", "9", "10"))
 }
 
 func (s *testIntegrationSuite) TestInPredicate4UnsignedInt(c *C) {
@@ -5436,7 +5443,7 @@ func (s *testIntegrationSuite) TestCastStrToInt(c *C) {
 	}
 }
 
-func (s *testIntegrationSuite) TestIssue16205(c *C) {
+func (s *testIntegrationSerialSuite) TestIssue16205(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
@@ -5490,7 +5497,7 @@ func (s *testIntegrationSuite) TestIssue14146(c *C) {
 	tk.MustQuery("select * from tt").Check(testkit.Rows("<nil>"))
 }
 
-func (s *testIntegrationSuite) TestCacheRegexpr(c *C) {
+func (s *testIntegrationSerialSuite) TestCacheRegexpr(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
@@ -5514,7 +5521,7 @@ func (s *testIntegrationSuite) TestCacheRegexpr(c *C) {
 	tk.MustQuery("execute stmt1 using @a").Check(testkit.Rows("R1"))
 }
 
-func (s *testIntegrationSuite) TestCacheRefineArgs(c *C) {
+func (s *testIntegrationSerialSuite) TestCacheRefineArgs(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
@@ -5542,6 +5549,28 @@ func (s *testIntegrationSuite) TestCacheRefineArgs(c *C) {
 	tk.MustExec("prepare stmt from 'SELECT col_int < ? FROM t'")
 	tk.MustExec("set @p0='-184467440737095516167.1'")
 	tk.MustQuery("execute stmt using @p0").Check(testkit.Rows("0"))
+}
+
+func (s *testIntegrationSuite) TestOrderByFuncPlanCache(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	var err error
+	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("prepare stmt from 'SELECT * FROM t order by rand()'")
+	tk.MustQuery("execute stmt").Check(testkit.Rows())
+	tk.MustExec("prepare stmt from 'SELECT * FROM t order by now()'")
+	tk.MustQuery("execute stmt").Check(testkit.Rows())
 }
 
 func (s *testIntegrationSuite) TestCollation(c *C) {
@@ -5637,7 +5666,7 @@ func (s *testIntegrationSuite) TestCoercibility(c *C) {
 	}, "from t")
 }
 
-func (s *testIntegrationSuite) TestCacheConstEval(c *C) {
+func (s *testIntegrationSerialSuite) TestCacheConstEval(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
@@ -6101,6 +6130,37 @@ func (s *testIntegrationSerialSuite) TestCollateDDL(c *C) {
 	tk.MustExec("drop database t;")
 }
 
+func (s *testIntegrationSuite) TestIssue15986(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("CREATE TABLE t0(c0 int)")
+	tk.MustExec("INSERT INTO t0 VALUES (0)")
+	tk.MustQuery("SELECT t0.c0 FROM t0 WHERE CHAR(204355900);").Check(testkit.Rows("0"))
+	tk.MustQuery("SELECT t0.c0 FROM t0 WHERE not CHAR(204355900);").Check(testkit.Rows())
+	tk.MustQuery("SELECT t0.c0 FROM t0 WHERE '.0';").Check(testkit.Rows())
+	tk.MustQuery("SELECT t0.c0 FROM t0 WHERE not '.0';").Check(testkit.Rows("0"))
+	// If the number does not exceed the range of float64 and its value is not 0, it will be converted to true.
+	tk.MustQuery("select * from t0 where '.000000000000000000000000000000000000000000000000000000" +
+		"00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" +
+		"00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" +
+		"0000000000000000000000000000000000000000000000000000000000000000009';").Check(testkit.Rows("0"))
+	tk.MustQuery("select * from t0 where not '.000000000000000000000000000000000000000000000000000000" +
+		"00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" +
+		"00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" +
+		"0000000000000000000000000000000000000000000000000000000000000000009';").Check(testkit.Rows())
+
+	// If the number is truncated beyond the range of float64, it will be converted to true when the truncated result is 0.
+	tk.MustQuery("select * from t0 where '.0000000000000000000000000000000000000000000000000000000" +
+		"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" +
+		"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" +
+		"00000000000000000000000000000000000000000000000000000000000000000000000000000000000009';").Check(testkit.Rows())
+	tk.MustQuery("select * from t0 where not '.0000000000000000000000000000000000000000000000000000000" +
+		"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" +
+		"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" +
+		"00000000000000000000000000000000000000000000000000000000000000000000000000000000000009';").Check(testkit.Rows("0"))
+}
+
 func (s *testIntegrationSuite) TestNegativeZeroForHashJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
@@ -6112,6 +6172,15 @@ func (s *testIntegrationSuite) TestNegativeZeroForHashJoin(c *C) {
 	tk.MustQuery("SELECT t1.c0 FROM t1, t0 WHERE t0.c0=-t1.c0;").Check(testkit.Rows("0"))
 	tk.MustExec("drop TABLE t0;")
 	tk.MustExec("drop table t1;")
+}
+
+func (s *testIntegrationSuite) TestIssue15743(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("CREATE TABLE t0(c0 int)")
+	tk.MustExec("INSERT INTO t0 VALUES (1)")
+	tk.MustQuery("SELECT * FROM t0 WHERE 1 AND 0.4").Check(testkit.Rows("1"))
 }
 
 func (s *testIntegrationSuite) TestIssue15725(c *C) {
@@ -6132,6 +6201,18 @@ func (s *testIntegrationSuite) TestIssue15790(c *C) {
 	tk.MustExec("INSERT INTO t0(c0) VALUES (0);")
 	tk.MustQuery("SELECT * FROM t0 WHERE -10000000000000000000 | t0.c0 UNION SELECT * FROM t0;").Check(testkit.Rows("0"))
 	tk.MustQuery("SELECT * FROM t0 WHERE -10000000000000000000 | t0.c0 UNION all SELECT * FROM t0;").Check(testkit.Rows("0", "0"))
+	tk.MustExec("drop table t0;")
+}
+
+func (s *testIntegrationSuite) TestIssue15990(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t0;")
+	tk.MustExec("CREATE TABLE t0(c0 TEXT(10));")
+	tk.MustExec("INSERT INTO t0(c0) VALUES (1);")
+	tk.MustQuery("SELECT * FROM t0 WHERE ('a' != t0.c0) AND t0.c0;").Check(testkit.Rows("1"))
+	tk.MustExec("CREATE INDEX i0 ON t0(c0(10));")
+	tk.MustQuery("SELECT * FROM t0 WHERE ('a' != t0.c0) AND t0.c0;").Check(testkit.Rows("1"))
 	tk.MustExec("drop table t0;")
 }
 
@@ -6167,4 +6248,28 @@ func (s *testIntegrationSuite) TestIssue16029(c *C) {
 	tk.MustQuery("SELECT t0.c0 FROM t0 JOIN t1 ON (t0.c0 REGEXP 1) | t1.c0  WHERE BINARY STRCMP(t1.c0, t0.c0);").Check(testkit.Rows("1"))
 	tk.MustExec("drop table t0;")
 	tk.MustExec("drop table t1;")
+}
+
+func (s *testIntegrationSuite) TestIssue16426(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert into t values (42)")
+	tk.MustQuery("select a from t where a/10000").Check(testkit.Rows("42"))
+	tk.MustQuery("select a from t where a/100000").Check(testkit.Rows("42"))
+	tk.MustQuery("select a from t where a/1000000").Check(testkit.Rows("42"))
+	tk.MustQuery("select a from t where a/10000000").Check(testkit.Rows("42"))
+}
+
+func (s *testIntegrationSuite) TestIssue16505(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t(c varchar(100), index idx(c(100)));")
+	tk.MustExec("INSERT INTO t VALUES (NULL),('1'),('0'),(''),('aaabbb'),('0abc'),('123e456'),('0.0001deadsfeww');")
+	tk.MustQuery("select * from t where c;").Sort().Check(testkit.Rows("0.0001deadsfeww", "1", "123e456"))
+	tk.MustQuery("select /*+ USE_INDEX(t, idx) */ * from t where c;").Sort().Check(testkit.Rows("0.0001deadsfeww", "1", "123e456"))
+	tk.MustQuery("select /*+ IGNORE_INDEX(t, idx) */* from t where c;").Sort().Check(testkit.Rows("0.0001deadsfeww", "1", "123e456"))
+	tk.MustExec("drop table t;")
 }
