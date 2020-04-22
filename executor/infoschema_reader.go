@@ -1550,11 +1550,8 @@ func (e *tableStorageStatsRetriever) setDataForTableStorageStats(ctx sessionctx.
 		if err != nil {
 			return nil, err
 		}
-		peerCount := 0
-		for _, v := range e.stats.StorePeerCount {
-			peerCount = v
-			break
-		}
+		peerCount := len(e.stats.StorePeerCount)
+
 		record := types.MakeDatums(
 			table.db,            // TABLE_SCHEMA
 			table.tb.Name.O,     // TABLE_NAME
