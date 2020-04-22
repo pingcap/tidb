@@ -11804,6 +11804,9 @@ yynewstate:
 				Quick:     yyS[yypt-8].item.(bool),
 				IgnoreErr: yyS[yypt-7].item.(bool),
 			}
+			if yyS[yypt-10].item != nil {
+				x.TableHints = yyS[yypt-10].item.([]*ast.TableOptimizerHint)
+			}
 			if yyS[yypt-2].item != nil {
 				x.Where = yyS[yypt-2].item.(ast.ExprNode)
 			}
