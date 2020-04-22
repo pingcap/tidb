@@ -219,12 +219,19 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 				}
 				var items []item
 				for key, val := range data {
-					jsonVal, err := json.Marshal(val)
-					if err != nil {
-						ch <- result{err: errors.Trace(err)}
-						return
+					var str string
+					switch val.(type) {
+					case string: // remove quotes
+						str = val.(string)
+					default:
+						tmp, err := json.Marshal(val)
+						if err != nil {
+							ch <- result{err: errors.Trace(err)}
+							return
+						}
+						str = string(tmp)
 					}
-					items = append(items, item{key: key, val: string(jsonVal)})
+					items = append(items, item{key: key, val: str})
 				}
 				sort.Slice(items, func(i, j int) bool { return items[i].key < items[j].key })
 				var rows [][]types.Datum
