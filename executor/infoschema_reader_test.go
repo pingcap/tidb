@@ -644,13 +644,13 @@ func (s *testInfoschemaClusterTableSuite) setUpMockPDHTTPServer() (*httptest.Ser
 		}
 		return configuration, nil
 	}
-	// pd config
+	// PD config.
 	router.Handle(pdapi.Config, fn.Wrap(mockConfig))
-	// TiDB/TiKV config
+	// TiDB/TiKV config.
 	router.Handle("/config", fn.Wrap(mockConfig))
-	// pd region
-	router.Handle("/pd/api/v1/stats/region", fn.Wrap(func() (*helper.PdRegionStats, error) {
-		return &helper.PdRegionStats{
+	// PD region.
+	router.Handle("/pd/api/v1/stats/region", fn.Wrap(func() (*helper.PDRegionStats, error) {
+		return &helper.PDRegionStats{
 			Count:            1,
 			EmptyCount:       1,
 			StorageSize:      1,
@@ -770,7 +770,7 @@ func (s *testInfoschemaClusterTableSuite) TestTableStorageStats(c *C) {
 		mockAddr,
 	}
 
-	// information_schema.TABLE_STORAGE_STATS
+	// Test information_schema.TABLE_STORAGE_STATS.
 	tk = testkit.NewTestKit(c, store)
 	tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema' and TABLE_NAME='schemata';").Check(testkit.Rows("SCHEMATA"))
 	tk.MustExec("use test")
@@ -786,6 +786,13 @@ func (s *testInfoschemaClusterTableSuite) TestTableStorageStats(c *C) {
 	tk.MustQuery("select TABLE_SCHEMA, sum(TABLE_SIZE) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'test' group by TABLE_SCHEMA;").Check(testkit.Rows(
 		"test 2",
 	))
+
+	// Test information_schema.TABLE_STORAGE_STATS when the TABLE_SCHEMA or TABLE_NAME is not exist.
+	err = tk.QueryToErr("select * from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'db_not_exist';")
+	c.Assert(err.Error(), Equals, "schema or table not exist, please check the schema and table")
+	tk.MustExec("drop table if exists `tb_not_exist`")
+	err = tk.QueryToErr("select * from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'test' and TABLE_NAME = 'tb_not_exist';")
+	c.Assert(err.Error(), Equals, "schema or table not exist, please check the schema and table")
 }
 
 func (s *testInfoschemaTableSuite) TestSequences(c *C) {

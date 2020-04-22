@@ -956,30 +956,29 @@ func (e *SlowQueryExtractor) setTimeRange(start, end int64) {
 	e.Enable = true
 }
 
-// TableStorageStatsExtractor is used to extract some predicates of `disk_usage`
+// TableStorageStatsExtractor is used to extract some predicates of `disk_usage`.
 type TableStorageStatsExtractor struct {
 	extractHelper
-	// SkipRequest means the where clause always false, we don't need to request any component
+	// SkipRequest means the where clause always false, we don't need to request any component.
 	SkipRequest bool
-	//usage       set.StringSet
-	// TableSchema represents tableSchema applied to, and we should apply all table disk usage if there is no schema specified
-	// e.g: SELECT * FROM information_schema.disk_usage WHERE table_schema in ('test', 'information_schema')
+	// TableSchema represents tableSchema applied to, and we should apply all table disk usage if there is no schema specified.
+	// e.g: SELECT * FROM information_schema.disk_usage WHERE table_schema in ('test', 'information_schema').
 	TableSchema set.StringSet
-	// TableName represents tableName applied to, and we should apply all table disk usage if there is no table specified
-	// e.g: SELECT * FROM information_schema.disk_usage WHERE table in ('schemata', 'tables')
+	// TableName represents tableName applied to, and we should apply all table disk usage if there is no table specified.
+	// e.g: SELECT * FROM information_schema.disk_usage WHERE table in ('schemata', 'tables').
 	TableName set.StringSet
 }
 
-// Extract implements the MemTablePredicateExtractor Extract interface
+// Extract implements the MemTablePredicateExtractor Extract interface.
 func (e *TableStorageStatsExtractor) Extract(
 	_ sessionctx.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) []expression.Expression {
-	// Extract the `table_schema` columns
+	// Extract the `table_schema` columns.
 	remained, schemaSkip, tableSchema := e.extractCol(schema, names, predicates, "table_schema", true)
-	// Extract the `table_name` columns
+	// Extract the `table_name` columns.
 	remained, tableSkip, tableName := e.extractCol(schema, names, remained, "table_name", true)
 	e.SkipRequest = schemaSkip || tableSkip
 	if e.SkipRequest {

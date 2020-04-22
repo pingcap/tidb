@@ -1427,7 +1427,7 @@ func (e *memtableRetriever) setDataFromTableConstraints(ctx sessionctx.Context, 
 	e.rows = rows
 }
 
-//tableStorageStatsRetriever is used to read slow log data.
+// tableStorageStatsRetriever is used to read slow log data.
 type tableStorageStatsRetriever struct {
 	dummyCloser
 	table         *model.TableInfo
@@ -1439,7 +1439,7 @@ type tableStorageStatsRetriever struct {
 	curTable      int
 	pdAddress     string
 	helper        *helper.Helper
-	stats         helper.PdRegionStats
+	stats         helper.PDRegionStats
 }
 
 func (e *tableStorageStatsRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
@@ -1477,7 +1477,7 @@ func (e *tableStorageStatsRetriever) retrieve(ctx context.Context, sctx sessionc
 
 type initialTable struct {
 	db string
-	tb *model.TableInfo
+	*model.TableInfo
 }
 
 func (e *tableStorageStatsRetriever) initialize(sctx sessionctx.Context) error {
@@ -1486,42 +1486,19 @@ func (e *tableStorageStatsRetriever) initialize(sctx sessionctx.Context) error {
 	sort.Sort(infoschema.SchemasSorter(dbs))
 	schemas := e.extractor.TableSchema
 	tables := e.extractor.TableName
-	if len(schemas) != 0 {
-		for _, schema := range dbs {
-			if schemas.Exist(schema.Name.L) {
-				if len(tables) != 0 {
-					for _, table := range schema.Tables {
-						if tables.Exist(table.Name.L) {
-							e.initialTables = append(e.initialTables, &initialTable{db: schema.Name.L, tb: table})
-						}
-					}
-				} else {
-					for _, table := range schema.Tables {
-						e.initialTables = append(e.initialTables, &initialTable{db: schema.Name.L, tb: table})
-					}
-				}
-			}
 
-		}
-		if len(e.initialTables) == 0 && tables == nil {
-			return errors.Errorf("schema or table not exist, please check the schema and table")
-		}
-	} else {
-		if len(tables) != 0 {
-			for _, schema := range dbs {
-				for _, table := range schema.Tables {
-					if tables.Exist(table.Name.L) {
-						e.initialTables = append(e.initialTables, &initialTable{db: schema.Name.L, tb: table})
-					}
-				}
-			}
-		} else {
-			for _, schema := range dbs {
-				for _, table := range schema.Tables {
+	// Extract the tables to the initialTable.
+	for _, schema := range dbs {
+		if len(schemas) == 0 || schemas.Exist(schema.Name.L) {
+			for _, table := range schema.Tables {
+				if len(tables) == 0 || tables.Exist(table.Name.L) {
 					e.initialTables = append(e.initialTables, &initialTable{schema.Name.L, table})
 				}
 			}
 		}
+	}
+	if len(e.initialTables) == 0 {
+		return errors.Errorf("schema or table not exist, please check the schema and table")
 	}
 
 	// Cache the PD address.
@@ -1532,7 +1509,7 @@ func (e *tableStorageStatsRetriever) initialize(sctx sessionctx.Context) error {
 	e.helper = helper.NewHelper(tikvStore)
 	pdAddrs, err := e.helper.GetPDAddr()
 	if err != nil {
-		return errors.New("pd unavailable")
+		return err
 	}
 	e.pdAddress = pdAddrs[0]
 	e.initialized = true
@@ -1545,8 +1522,8 @@ func (e *tableStorageStatsRetriever) setDataForTableStorageStats(ctx sessionctx.
 	count := 0
 	for i := e.curTable; e.curTable < len(e.initialTables) && count < 1024; i++ {
 		table := (e.initialTables)[e.curTable]
-		tableID := table.tb.ID
-		err := e.helper.GetPdRegionStats(tableID, &e.stats)
+		tableID := table.ID
+		err := e.helper.GetPDRegionStats(tableID, &e.stats)
 		if err != nil {
 			return nil, err
 		}
@@ -1554,7 +1531,7 @@ func (e *tableStorageStatsRetriever) setDataForTableStorageStats(ctx sessionctx.
 
 		record := types.MakeDatums(
 			table.db,            // TABLE_SCHEMA
-			table.tb.Name.O,     // TABLE_NAME
+			table.Name.O,        // TABLE_NAME
 			tableID,             // TABLE_ID
 			peerCount,           // TABLE_PEER_COUNT
 			e.stats.Count,       // TABLE_REGION_COUNT

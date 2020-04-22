@@ -735,8 +735,8 @@ func (h *Helper) GetPDAddr() ([]string, error) {
 	return pdAddrs, nil
 }
 
-// PdRegionStats is the json response from PD.
-type PdRegionStats struct {
+// PDRegionStats is the json response from PD.
+type PDRegionStats struct {
 	Count            int            `json:"count"`
 	EmptyCount       int            `json:"empty_count"`
 	StorageSize      int64          `json:"storage_size"`
@@ -745,8 +745,8 @@ type PdRegionStats struct {
 	StorePeerCount   map[uint64]int `json:"store_peer_count"`
 }
 
-// GetPdRegionStats get the RegionStats by tableID.
-func (h *Helper) GetPdRegionStats(tableID int64, stats *PdRegionStats) error {
+// GetPDRegionStats get the RegionStats by tableID.
+func (h *Helper) GetPDRegionStats(tableID int64, stats *PDRegionStats) error {
 	pdAddrs, err := h.GetPDAddr()
 	if err != nil {
 		return err
