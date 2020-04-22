@@ -54,7 +54,7 @@ func (b *builtinLikeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 	}
 	escapes := bufEscape.Int64s()
 
-	// should be thread-safe
+	// Must not use b.pattern to avoid data race
 	pattern := b.collator().Pattern()
 
 	result.ResizeInt64(n, false)
