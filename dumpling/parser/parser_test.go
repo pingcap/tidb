@@ -3333,11 +3333,25 @@ func (s *testParserSuite) TestOptimizerHints(c *C) {
 	stmt, _, err = parser.Parse("select /*+ IGNORE_PLAN_CACHE(), ignore_plan_cache() */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
 	c.Assert(err, IsNil)
 	selectStmt = stmt[0].(*ast.SelectStmt)
-
 	hints = selectStmt.TableHints
 	c.Assert(hints, HasLen, 2)
 	c.Assert(hints[0].HintName.L, Equals, "ignore_plan_cache")
+	c.Assert(hints[1].HintName.L, Equals, "ignore_plan_cache")
 
+	stmt, _, err = parser.Parse("delete /*+ IGNORE_PLAN_CACHE(), ignore_plan_cache() */ from t where a = 1", "", "")
+	c.Assert(err, IsNil)
+	deleteStmt := stmt[0].(*ast.DeleteStmt)
+	hints = deleteStmt.TableHints
+	c.Assert(hints, HasLen, 2)
+	c.Assert(hints[0].HintName.L, Equals, "ignore_plan_cache")
+	c.Assert(hints[1].HintName.L, Equals, "ignore_plan_cache")
+
+	stmt, _, err = parser.Parse("update /*+  IGNORE_PLAN_CACHE(), ignore_plan_cache() */ t set a = 1 where a = 10", "", "")
+	c.Assert(err, IsNil)
+	updateStmt := stmt[0].(*ast.UpdateStmt)
+	hints = updateStmt.TableHints
+	c.Assert(hints, HasLen, 2)
+	c.Assert(hints[0].HintName.L, Equals, "ignore_plan_cache")
 	c.Assert(hints[1].HintName.L, Equals, "ignore_plan_cache")
 
 	// Test USE_CASCADES
