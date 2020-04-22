@@ -167,8 +167,12 @@ github.com/hanfei1991/parser v0.0.0-20200420095648-f4bcaaa96aa8 h1:JwAXZcOCNZ1Jb
 github.com/hanfei1991/parser v0.0.0-20200420095648-f4bcaaa96aa8/go.mod h1:9v0Edh8IbgjGYW2ArJr19E+bvL8zKahsFp+ixWeId+4=
 github.com/hanfei1991/parser v0.0.0-20200420101937-63e37f36ae0c h1:akJYnz7Fe6AXtCTcZai3gf+HrZxuoVbnaGXxEmtxvpo=
 github.com/hanfei1991/parser v0.0.0-20200420101937-63e37f36ae0c/go.mod h1:9v0Edh8IbgjGYW2ArJr19E+bvL8zKahsFp+ixWeId+4=
+github.com/hanfei1991/tipb v0.0.0-20200212061130-c4d518eb1d60 h1:i4siZGSlOhQSQYyDszniOVsGp8X72rAbl0FLZN9nxCI=
+github.com/hanfei1991/tipb v0.0.0-20200212061130-c4d518eb1d60/go.mod h1:nPMpOLbGpW71jAalpqgYYjMAZfCGk+DdSPhoIVVizkU=
 github.com/hanfei1991/tipb v0.0.0-20200308103915-5f3b53798f00 h1:wRO6S3mWrAcoS78mGn1hvjPQjqTgA+MBzbq5NkKRQRM=
 github.com/hanfei1991/tipb v0.0.0-20200308103915-5f3b53798f00/go.mod h1:nPMpOLbGpW71jAalpqgYYjMAZfCGk+DdSPhoIVVizkU=
+github.com/hanfei1991/tipb v0.0.0-20200421083959-59279b989667 h1:hrW/fUBSqAWYp0LFv5sct69QuvSjmYz89jjfWyZr7YM=
+github.com/hanfei1991/tipb v0.0.0-20200421083959-59279b989667/go.mod h1:nPMpOLbGpW71jAalpqgYYjMAZfCGk+DdSPhoIVVizkU=
 github.com/hpcloud/tail v1.0.0 h1:nfCOvKYfkgYP8hkirhJocXT2+zOD8yUNjXaWfTlyFKI=
 github.com/hpcloud/tail v1.0.0/go.mod h1:ab1qPbhIpdTxEkNHXyeSf5vhxWSCs/tWer42PpOxQnU=
 github.com/inconshreveable/mousetrap v1.0.0/go.mod h1:PxqpIevigyE2G7u3NXJIT2ANytuPF1OarO4DADm73n8=
