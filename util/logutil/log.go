@@ -235,9 +235,9 @@ func initFileLog(cfg *zaplog.FileLogConfig, logger *log.Logger) error {
 	// use lumberjack to logrotate
 	output := &lumberjack.Logger{
 		Filename:   cfg.Filename,
-		MaxSize:    int(cfg.MaxSize),
-		MaxBackups: int(cfg.MaxBackups),
-		MaxAge:     int(cfg.MaxDays),
+		MaxSize:    cfg.MaxSize,
+		MaxBackups: cfg.MaxBackups,
+		MaxAge:     cfg.MaxDays,
 		LocalTime:  true,
 	}
 

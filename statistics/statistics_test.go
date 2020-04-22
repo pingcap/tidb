@@ -287,7 +287,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	checkRepeats(c, col)
 	c.Assert(col.Len(), Equals, 250)
 
-	tblCount, col, _, err := buildIndex(ctx, bucketCount, 1, sqlexec.RecordSet(s.rc))
+	tblCount, col, _, err := buildIndex(ctx, bucketCount, 1, s.rc)
 	c.Check(err, IsNil)
 	checkRepeats(c, col)
 	col.PreCalculateScalar()
@@ -304,7 +304,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	c.Check(int(count), Equals, 0)
 
 	s.pk.(*recordSet).cursor = 0
-	tblCount, col, err = buildPK(ctx, bucketCount, 4, sqlexec.RecordSet(s.pk))
+	tblCount, col, err = buildPK(ctx, bucketCount, 4, s.pk)
 	c.Check(err, IsNil)
 	checkRepeats(c, col)
 	col.PreCalculateScalar()
@@ -338,7 +338,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 func (s *testStatisticsSuite) TestHistogramProtoConversion(c *C) {
 	ctx := mock.NewContext()
 	c.Assert(s.rc.Close(), IsNil)
-	tblCount, col, _, err := buildIndex(ctx, 256, 1, sqlexec.RecordSet(s.rc))
+	tblCount, col, _, err := buildIndex(ctx, 256, 1, s.rc)
 	c.Check(err, IsNil)
 	c.Check(int(tblCount), Equals, 100000)
 

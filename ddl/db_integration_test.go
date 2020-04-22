@@ -579,7 +579,7 @@ func (s *testIntegrationSuite5) TestErrnoErrorCode(c *C) {
 	sql = "alter table test_error_code_succ drop index idx_not_exist"
 	tk.MustGetErrCode(sql, errno.ErrCantDropFieldOrKey)
 	sql = "alter table test_error_code_succ drop column c3"
-	tk.MustGetErrCode(sql, int(errno.ErrUnsupportedDDLOperation))
+	tk.MustGetErrCode(sql, errno.ErrUnsupportedDDLOperation)
 	// modify column
 	sql = "alter table test_error_code_succ modify testx.test_error_code_succ.c1 bigint"
 	tk.MustGetErrCode(sql, errno.ErrWrongDBName)
