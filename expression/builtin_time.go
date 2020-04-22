@@ -293,11 +293,19 @@ func (b *builtinDateSig) Clone() builtinFunc {
 func (b *builtinDateSig) evalTime(row chunk.Row) (types.Time, bool, error) {
 	expr, isNull, err := b.args[0].EvalTime(b.ctx, row)
 	if isNull || err != nil {
+<<<<<<< HEAD
 		return types.Time{}, true, handleInvalidTimeError(b.ctx, err)
 	}
 
 	if expr.IsZero() {
 		return types.Time{}, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(expr.String()))
+=======
+		return types.ZeroTime, true, HandleInvalidTimeError(b.ctx, err)
+	}
+
+	if expr.IsZero() {
+		return types.ZeroTime, true, HandleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, expr.String()))
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 	}
 
 	expr.Time = types.FromDate(expr.Time.Year(), expr.Time.Month(), expr.Time.Day(), 0, 0, 0, 0)
@@ -387,18 +395,25 @@ func (b *builtinDateDiffSig) Clone() builtinFunc {
 func (b *builtinDateDiffSig) evalInt(row chunk.Row) (int64, bool, error) {
 	lhs, isNull, err := b.args[0].EvalTime(b.ctx, row)
 	if isNull || err != nil {
-		return 0, true, handleInvalidTimeError(b.ctx, err)
+		return 0, true, HandleInvalidTimeError(b.ctx, err)
 	}
 	rhs, isNull, err := b.args[1].EvalTime(b.ctx, row)
 	if isNull || err != nil {
-		return 0, true, handleInvalidTimeError(b.ctx, err)
+		return 0, true, HandleInvalidTimeError(b.ctx, err)
 	}
 	if invalidLHS, invalidRHS := lhs.InvalidZero(), rhs.InvalidZero(); invalidLHS || invalidRHS {
 		if invalidLHS {
+<<<<<<< HEAD
 			err = handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(lhs.String()))
 		}
 		if invalidRHS {
 			err = handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(rhs.String()))
+=======
+			err = HandleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, lhs.String()))
+		}
+		if invalidRHS {
+			err = HandleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, rhs.String()))
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 		}
 		return 0, true, err
 	}
@@ -794,7 +809,7 @@ func (b *builtinDateFormatSig) Clone() builtinFunc {
 func (b *builtinDateFormatSig) evalString(row chunk.Row) (string, bool, error) {
 	t, isNull, err := b.args[0].EvalTime(b.ctx, row)
 	if isNull || err != nil {
-		return "", isNull, handleInvalidTimeError(b.ctx, err)
+		return "", isNull, HandleInvalidTimeError(b.ctx, err)
 	}
 	if t.InvalidZero() {
 		return "", true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(t.String()))
@@ -803,6 +818,27 @@ func (b *builtinDateFormatSig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return "", isNull, err
 	}
+<<<<<<< HEAD
+=======
+	// MySQL compatibility, #11203
+	// If format mask is 0 then return 0 without warnings
+	if formatMask == "0" {
+		return "0", false, nil
+	}
+
+	if t.InvalidZero() {
+		// MySQL compatibility, #11203
+		// 0 | 0.0 should be converted to null without warnings
+		n, err := t.ToNumber().ToInt()
+		isOriginalIntOrDecimalZero := err == nil && n == 0
+		// Args like "0000-00-00", "0000-00-00 00:00:00" set Fsp to 6
+		isOriginalStringZero := t.Fsp() > 0
+		if isOriginalIntOrDecimalZero && !isOriginalStringZero {
+			return "", true, nil
+		}
+		return "", true, HandleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String()))
+	}
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 
 	res, err := t.DateFormat(formatMask)
 	return res, isNull, err
@@ -1013,12 +1049,16 @@ func (b *builtinMonthSig) evalInt(row chunk.Row) (int64, bool, error) {
 	date, isNull, err := b.args[0].EvalTime(b.ctx, row)
 
 	if isNull || err != nil {
-		return 0, true, handleInvalidTimeError(b.ctx, err)
+		return 0, true, HandleInvalidTimeError(b.ctx, err)
 	}
 
 	if date.IsZero() {
 		if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
+<<<<<<< HEAD
 			return 0, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(date.String()))
+=======
+			return 0, true, HandleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String()))
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 		}
 		return 0, false, nil
 	}
@@ -1054,11 +1094,15 @@ func (b *builtinMonthNameSig) Clone() builtinFunc {
 func (b *builtinMonthNameSig) evalString(row chunk.Row) (string, bool, error) {
 	arg, isNull, err := b.args[0].EvalTime(b.ctx, row)
 	if isNull || err != nil {
-		return "", true, handleInvalidTimeError(b.ctx, err)
+		return "", true, HandleInvalidTimeError(b.ctx, err)
 	}
 	mon := arg.Time.Month()
 	if (arg.IsZero() && b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode()) || mon < 0 || mon > len(types.MonthNames) {
+<<<<<<< HEAD
 		return "", true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(arg.String()))
+=======
+		return "", true, HandleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, arg.String()))
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 	} else if mon == 0 || arg.IsZero() {
 		return "", true, nil
 	}
@@ -1095,7 +1139,11 @@ func (b *builtinDayNameSig) evalIndex(row chunk.Row) (int64, bool, error) {
 		return 0, isNull, err
 	}
 	if arg.InvalidZero() {
+<<<<<<< HEAD
 		return 0, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(arg.String()))
+=======
+		return 0, true, HandleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, arg.String()))
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 	}
 	// Monday is 0, ... Sunday = 6 in MySQL
 	// but in go, Sunday is 0, ... Saturday is 6
@@ -1159,11 +1207,15 @@ func (b *builtinDayOfMonthSig) Clone() builtinFunc {
 func (b *builtinDayOfMonthSig) evalInt(row chunk.Row) (int64, bool, error) {
 	arg, isNull, err := b.args[0].EvalTime(b.ctx, row)
 	if isNull || err != nil {
-		return 0, true, handleInvalidTimeError(b.ctx, err)
+		return 0, true, HandleInvalidTimeError(b.ctx, err)
 	}
 	if arg.IsZero() {
 		if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
+<<<<<<< HEAD
 			return 0, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(arg.String()))
+=======
+			return 0, true, HandleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, arg.String()))
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 		}
 		return 0, false, nil
 	}
@@ -1199,10 +1251,14 @@ func (b *builtinDayOfWeekSig) Clone() builtinFunc {
 func (b *builtinDayOfWeekSig) evalInt(row chunk.Row) (int64, bool, error) {
 	arg, isNull, err := b.args[0].EvalTime(b.ctx, row)
 	if isNull || err != nil {
-		return 0, true, handleInvalidTimeError(b.ctx, err)
+		return 0, true, HandleInvalidTimeError(b.ctx, err)
 	}
 	if arg.InvalidZero() {
+<<<<<<< HEAD
 		return 0, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(arg.String()))
+=======
+		return 0, true, HandleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, arg.String()))
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 	}
 	// 1 is Sunday, 2 is Monday, .... 7 is Saturday
 	return int64(arg.Time.Weekday() + 1), false, nil
@@ -1237,10 +1293,14 @@ func (b *builtinDayOfYearSig) Clone() builtinFunc {
 func (b *builtinDayOfYearSig) evalInt(row chunk.Row) (int64, bool, error) {
 	arg, isNull, err := b.args[0].EvalTime(b.ctx, row)
 	if isNull || err != nil {
-		return 0, isNull, handleInvalidTimeError(b.ctx, err)
+		return 0, isNull, HandleInvalidTimeError(b.ctx, err)
 	}
 	if arg.InvalidZero() {
+<<<<<<< HEAD
 		return 0, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(arg.String()))
+=======
+		return 0, true, HandleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, arg.String()))
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 	}
 
 	return int64(arg.Time.YearDay()), false, nil
@@ -1289,11 +1349,15 @@ func (b *builtinWeekWithModeSig) evalInt(row chunk.Row) (int64, bool, error) {
 	date, isNull, err := b.args[0].EvalTime(b.ctx, row)
 
 	if isNull || err != nil {
-		return 0, true, handleInvalidTimeError(b.ctx, err)
+		return 0, true, HandleInvalidTimeError(b.ctx, err)
 	}
 
 	if date.IsZero() {
+<<<<<<< HEAD
 		return 0, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(date.String()))
+=======
+		return 0, true, HandleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String()))
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 	}
 
 	mode, isNull, err := b.args[1].EvalInt(b.ctx, row)
@@ -1321,11 +1385,15 @@ func (b *builtinWeekWithoutModeSig) evalInt(row chunk.Row) (int64, bool, error) 
 	date, isNull, err := b.args[0].EvalTime(b.ctx, row)
 
 	if isNull || err != nil {
-		return 0, true, handleInvalidTimeError(b.ctx, err)
+		return 0, true, HandleInvalidTimeError(b.ctx, err)
 	}
 
 	if date.IsZero() {
+<<<<<<< HEAD
 		return 0, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(date.String()))
+=======
+		return 0, true, HandleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String()))
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 	}
 
 	mode := 0
@@ -1333,7 +1401,7 @@ func (b *builtinWeekWithoutModeSig) evalInt(row chunk.Row) (int64, bool, error) 
 	if ok && modeStr != "" {
 		mode, err = strconv.Atoi(modeStr)
 		if err != nil {
-			return 0, true, handleInvalidTimeError(b.ctx, types.ErrInvalidWeekModeFormat.GenWithStackByArgs(modeStr))
+			return 0, true, HandleInvalidTimeError(b.ctx, types.ErrInvalidWeekModeFormat.GenWithStackByArgs(modeStr))
 		}
 	}
 
@@ -1371,11 +1439,15 @@ func (b *builtinWeekDaySig) Clone() builtinFunc {
 func (b *builtinWeekDaySig) evalInt(row chunk.Row) (int64, bool, error) {
 	date, isNull, err := b.args[0].EvalTime(b.ctx, row)
 	if isNull || err != nil {
-		return 0, true, handleInvalidTimeError(b.ctx, err)
+		return 0, true, HandleInvalidTimeError(b.ctx, err)
 	}
 
 	if date.IsZero() {
+<<<<<<< HEAD
 		return 0, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(date.String()))
+=======
+		return 0, true, HandleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String()))
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 	}
 
 	return int64(date.Time.Weekday()+6) % 7, false, nil
@@ -1411,11 +1483,15 @@ func (b *builtinWeekOfYearSig) evalInt(row chunk.Row) (int64, bool, error) {
 	date, isNull, err := b.args[0].EvalTime(b.ctx, row)
 
 	if isNull || err != nil {
-		return 0, true, handleInvalidTimeError(b.ctx, err)
+		return 0, true, HandleInvalidTimeError(b.ctx, err)
 	}
 
 	if date.IsZero() {
+<<<<<<< HEAD
 		return 0, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(date.String()))
+=======
+		return 0, true, HandleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String()))
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 	}
 
 	week := date.Time.Week(3)
@@ -1452,12 +1528,16 @@ func (b *builtinYearSig) evalInt(row chunk.Row) (int64, bool, error) {
 	date, isNull, err := b.args[0].EvalTime(b.ctx, row)
 
 	if isNull || err != nil {
-		return 0, true, handleInvalidTimeError(b.ctx, err)
+		return 0, true, HandleInvalidTimeError(b.ctx, err)
 	}
 
 	if date.IsZero() {
 		if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
+<<<<<<< HEAD
 			return 0, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(date.String()))
+=======
+			return 0, true, HandleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String()))
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 		}
 		return 0, false, nil
 	}
@@ -1505,10 +1585,14 @@ func (b *builtinYearWeekWithModeSig) Clone() builtinFunc {
 func (b *builtinYearWeekWithModeSig) evalInt(row chunk.Row) (int64, bool, error) {
 	date, isNull, err := b.args[0].EvalTime(b.ctx, row)
 	if isNull || err != nil {
-		return 0, isNull, handleInvalidTimeError(b.ctx, err)
+		return 0, isNull, HandleInvalidTimeError(b.ctx, err)
 	}
 	if date.IsZero() {
+<<<<<<< HEAD
 		return 0, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(date.String()))
+=======
+		return 0, true, HandleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String()))
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 	}
 
 	mode, isNull, err := b.args[1].EvalInt(b.ctx, row)
@@ -1542,11 +1626,15 @@ func (b *builtinYearWeekWithoutModeSig) Clone() builtinFunc {
 func (b *builtinYearWeekWithoutModeSig) evalInt(row chunk.Row) (int64, bool, error) {
 	date, isNull, err := b.args[0].EvalTime(b.ctx, row)
 	if isNull || err != nil {
-		return 0, true, handleInvalidTimeError(b.ctx, err)
+		return 0, true, HandleInvalidTimeError(b.ctx, err)
 	}
 
 	if date.InvalidZero() {
+<<<<<<< HEAD
 		return 0, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(date.String()))
+=======
+		return 0, true, HandleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String()))
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 	}
 
 	year, week := date.Time.YearWeek(0)
@@ -1845,10 +1933,17 @@ func (b *builtinStrToDateDateSig) evalTime(row chunk.Row) (types.Time, bool, err
 	sc := b.ctx.GetSessionVars().StmtCtx
 	succ := t.StrToDate(sc, date, format)
 	if !succ {
+<<<<<<< HEAD
 		return types.Time{}, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(t.String()))
 	}
 	if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() && (t.Time.Year() == 0 || t.Time.Month() == 0 || t.Time.Day() == 0) {
 		return types.Time{}, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(t.String()))
+=======
+		return types.ZeroTime, true, HandleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String()))
+	}
+	if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() && (t.Year() == 0 || t.Month() == 0 || t.Day() == 0) {
+		return types.ZeroTime, true, HandleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String()))
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 	}
 	t.Type, t.Fsp = mysql.TypeDate, types.MinFsp
 	return t, false, nil
@@ -1877,10 +1972,17 @@ func (b *builtinStrToDateDatetimeSig) evalTime(row chunk.Row) (types.Time, bool,
 	sc := b.ctx.GetSessionVars().StmtCtx
 	succ := t.StrToDate(sc, date, format)
 	if !succ {
+<<<<<<< HEAD
 		return types.Time{}, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(t.String()))
 	}
 	if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() && (t.Time.Year() == 0 || t.Time.Month() == 0 || t.Time.Day() == 0) {
 		return types.Time{}, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(t.String()))
+=======
+		return types.ZeroTime, true, HandleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String()))
+	}
+	if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() && (t.Year() == 0 || t.Month() == 0 || t.Day() == 0) {
+		return types.ZeroTime, true, HandleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String()))
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 	}
 	t.Type, t.Fsp = mysql.TypeDatetime, b.tp.Decimal
 	return t, false, nil
@@ -1897,8 +1999,6 @@ func (b *builtinStrToDateDurationSig) Clone() builtinFunc {
 }
 
 // evalDuration
-// TODO: If the NO_ZERO_DATE or NO_ZERO_IN_DATE SQL mode is enabled, zero dates or part of dates are disallowed.
-// In that case, STR_TO_DATE() returns NULL and generates a warning.
 func (b *builtinStrToDateDurationSig) evalDuration(row chunk.Row) (types.Duration, bool, error) {
 	date, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
@@ -1912,10 +2012,20 @@ func (b *builtinStrToDateDurationSig) evalDuration(row chunk.Row) (types.Duratio
 	sc := b.ctx.GetSessionVars().StmtCtx
 	succ := t.StrToDate(sc, date, format)
 	if !succ {
+<<<<<<< HEAD
 		return types.Duration{}, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(t.String()))
 	}
 	if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() && (t.Time.Year() == 0 || t.Time.Month() == 0 || t.Time.Day() == 0) {
 		return types.Duration{}, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(t.String()))
+=======
+		return types.Duration{}, true, HandleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String()))
+	}
+	if b.ctx.GetSessionVars().SQLMode.HasNoZeroInDateMode() && t.InvalidZero() && !t.IsZero() {
+		return types.Duration{}, true, HandleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String()))
+	}
+	if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() && t == types.ZeroDatetime {
+		return types.Duration{}, true, HandleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String()))
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 	}
 	t.Fsp = b.tp.Decimal
 	dur, err := t.ConvertToDuration()
@@ -2591,7 +2701,7 @@ func (du *baseDateArithmitical) getDateFromString(ctx sessionctx.Context, args [
 
 	sc := ctx.GetSessionVars().StmtCtx
 	date, err := types.ParseTime(sc, dateStr, dateTp, types.MaxFsp)
-	return date, err != nil, handleInvalidTimeError(ctx, err)
+	return date, err != nil, HandleInvalidTimeError(ctx, err)
 }
 
 func (du *baseDateArithmitical) getDateFromInt(ctx sessionctx.Context, args []Expression, row chunk.Row, unit string) (types.Time, bool, error) {
@@ -2603,7 +2713,11 @@ func (du *baseDateArithmitical) getDateFromInt(ctx sessionctx.Context, args []Ex
 	sc := ctx.GetSessionVars().StmtCtx
 	date, err := types.ParseTimeFromInt64(sc, dateInt)
 	if err != nil {
+<<<<<<< HEAD
 		return types.Time{}, true, handleInvalidTimeError(ctx, err)
+=======
+		return types.ZeroTime, true, HandleInvalidTimeError(ctx, err)
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 	}
 
 	dateTp := mysql.TypeDate
@@ -2722,6 +2836,7 @@ func (du *baseDateArithmitical) getIntervalFromReal(ctx sessionctx.Context, args
 
 func (du *baseDateArithmitical) add(ctx sessionctx.Context, date types.Time, interval string, unit string) (types.Time, bool, error) {
 	year, month, day, nano, err := types.ParseDurationValue(unit, interval)
+<<<<<<< HEAD
 	if err := handleInvalidTimeError(ctx, err); err != nil {
 		return types.Time{}, true, err
 	}
@@ -2729,6 +2844,15 @@ func (du *baseDateArithmitical) add(ctx sessionctx.Context, date types.Time, int
 	goTime, err := date.Time.GoTime(time.Local)
 	if err := handleInvalidTimeError(ctx, err); err != nil {
 		return types.Time{}, true, err
+=======
+	if err := HandleInvalidTimeError(ctx, err); err != nil {
+		return types.ZeroTime, true, err
+	}
+
+	goTime, err := date.GoTime(time.Local)
+	if err := HandleInvalidTimeError(ctx, err); err != nil {
+		return types.ZeroTime, true, err
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 	}
 
 	goTime = goTime.Add(time.Duration(nano))
@@ -2740,17 +2864,30 @@ func (du *baseDateArithmitical) add(ctx sessionctx.Context, date types.Time, int
 		date.Fsp = 6
 	}
 
+<<<<<<< HEAD
 	if goTime.Year() < 0 || goTime.Year() > (1<<16-1) {
 		return types.Time{}, true, handleInvalidTimeError(ctx, types.ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime"))
+=======
+	if goTime.Year() < 0 || goTime.Year() > 9999 {
+		return types.ZeroTime, true, HandleInvalidTimeError(ctx, types.ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime"))
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 	}
 
 	date.Time = types.FromGoTime(goTime)
 	overflow, err := types.DateTimeIsOverflow(ctx.GetSessionVars().StmtCtx, date)
+<<<<<<< HEAD
 	if err := handleInvalidTimeError(ctx, err); err != nil {
 		return types.Time{}, true, err
 	}
 	if overflow {
 		return types.Time{}, true, handleInvalidTimeError(ctx, types.ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime"))
+=======
+	if err := HandleInvalidTimeError(ctx, err); err != nil {
+		return types.ZeroTime, true, err
+	}
+	if overflow {
+		return types.ZeroTime, true, HandleInvalidTimeError(ctx, types.ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime"))
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 	}
 	return date, false, nil
 }
@@ -2758,7 +2895,7 @@ func (du *baseDateArithmitical) add(ctx sessionctx.Context, date types.Time, int
 func (du *baseDateArithmitical) addDuration(ctx sessionctx.Context, d types.Duration, interval string, unit string) (types.Duration, bool, error) {
 	dur, err := types.ExtractDurationValue(unit, interval)
 	if err != nil {
-		return types.ZeroDuration, true, handleInvalidTimeError(ctx, err)
+		return types.ZeroDuration, true, HandleInvalidTimeError(ctx, err)
 	}
 	retDur, err := d.Add(dur)
 	if err != nil {
@@ -2770,7 +2907,7 @@ func (du *baseDateArithmitical) addDuration(ctx sessionctx.Context, d types.Dura
 func (du *baseDateArithmitical) subDuration(ctx sessionctx.Context, d types.Duration, interval string, unit string) (types.Duration, bool, error) {
 	dur, err := types.ExtractDurationValue(unit, interval)
 	if err != nil {
-		return types.ZeroDuration, true, handleInvalidTimeError(ctx, err)
+		return types.ZeroDuration, true, HandleInvalidTimeError(ctx, err)
 	}
 	retDur, err := d.Sub(dur)
 	if err != nil {
@@ -2781,6 +2918,7 @@ func (du *baseDateArithmitical) subDuration(ctx sessionctx.Context, d types.Dura
 
 func (du *baseDateArithmitical) sub(ctx sessionctx.Context, date types.Time, interval string, unit string) (types.Time, bool, error) {
 	year, month, day, nano, err := types.ParseDurationValue(unit, interval)
+<<<<<<< HEAD
 	if err := handleInvalidTimeError(ctx, err); err != nil {
 		return types.Time{}, true, err
 	}
@@ -2789,6 +2927,16 @@ func (du *baseDateArithmitical) sub(ctx sessionctx.Context, date types.Time, int
 	goTime, err := date.Time.GoTime(time.Local)
 	if err := handleInvalidTimeError(ctx, err); err != nil {
 		return types.Time{}, true, err
+=======
+	if err := HandleInvalidTimeError(ctx, err); err != nil {
+		return types.ZeroTime, true, err
+	}
+	year, month, day, nano = -year, -month, -day, -nano
+
+	goTime, err := date.GoTime(time.Local)
+	if err := HandleInvalidTimeError(ctx, err); err != nil {
+		return types.ZeroTime, true, err
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 	}
 
 	duration := time.Duration(nano)
@@ -2801,21 +2949,329 @@ func (du *baseDateArithmitical) sub(ctx sessionctx.Context, date types.Time, int
 		date.Fsp = 6
 	}
 
+<<<<<<< HEAD
 	if goTime.Year() < 0 || goTime.Year() > (1<<16-1) {
 		return types.Time{}, true, handleInvalidTimeError(ctx, types.ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime"))
+=======
+	if goTime.Year() < 0 || goTime.Year() > 9999 {
+		return types.ZeroTime, true, HandleInvalidTimeError(ctx, types.ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime"))
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 	}
 
 	date.Time = types.FromGoTime(goTime)
 	overflow, err := types.DateTimeIsOverflow(ctx.GetSessionVars().StmtCtx, date)
+<<<<<<< HEAD
 	if err := handleInvalidTimeError(ctx, err); err != nil {
 		return types.Time{}, true, err
 	}
 	if overflow {
 		return types.Time{}, true, handleInvalidTimeError(ctx, types.ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime"))
+=======
+	if err := HandleInvalidTimeError(ctx, err); err != nil {
+		return types.ZeroTime, true, err
+	}
+	if overflow {
+		return types.ZeroTime, true, HandleInvalidTimeError(ctx, types.ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime"))
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 	}
 	return date, false, nil
 }
 
+<<<<<<< HEAD
+=======
+func (du *baseDateArithmitical) vecGetDateFromInt(b *baseBuiltinFunc, input *chunk.Chunk, unit string, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeTime(n, false)
+	result.MergeNulls(buf)
+	dates := result.Times()
+	i64s := buf.Int64s()
+	sc := b.ctx.GetSessionVars().StmtCtx
+	isClockUnit := types.IsClockUnit(unit)
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+
+		date, err := types.ParseTimeFromInt64(sc, i64s[i])
+		if err != nil {
+			err = HandleInvalidTimeError(b.ctx, err)
+			if err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
+		}
+
+		dateTp := mysql.TypeDate
+		if date.Type() == mysql.TypeDatetime || date.Type() == mysql.TypeTimestamp || isClockUnit {
+			dateTp = mysql.TypeDatetime
+		}
+		date.SetType(dateTp)
+		dates[i] = date
+	}
+	return nil
+}
+
+func (du *baseDateArithmitical) vecGetDateFromString(b *baseBuiltinFunc, input *chunk.Chunk, unit string, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeTime(n, false)
+	result.MergeNulls(buf)
+	dates := result.Times()
+	sc := b.ctx.GetSessionVars().StmtCtx
+	isClockUnit := types.IsClockUnit(unit)
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+
+		dateStr := buf.GetString(i)
+		dateTp := mysql.TypeDate
+		if !types.IsDateFormat(dateStr) || isClockUnit {
+			dateTp = mysql.TypeDatetime
+		}
+
+		date, err := types.ParseTime(sc, dateStr, dateTp, types.MaxFsp)
+		if err != nil {
+			err = HandleInvalidTimeError(b.ctx, err)
+			if err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+		} else {
+			dates[i] = date
+		}
+
+	}
+	return nil
+}
+
+func (du *baseDateArithmitical) vecGetDateFromDatetime(b *baseBuiltinFunc, input *chunk.Chunk, unit string, result *chunk.Column) error {
+	n := input.NumRows()
+	result.ResizeTime(n, false)
+	if err := b.args[0].VecEvalTime(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	dates := result.Times()
+	isClockUnit := types.IsClockUnit(unit)
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+
+		dateTp := mysql.TypeDate
+		if dates[i].Type() == mysql.TypeDatetime || dates[i].Type() == mysql.TypeTimestamp || isClockUnit {
+			dateTp = mysql.TypeDatetime
+		}
+		dates[i].SetType(dateTp)
+	}
+	return nil
+}
+
+func (du *baseDateArithmitical) vecGetIntervalFromString(b *baseBuiltinFunc, input *chunk.Chunk, unit string, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[1].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	amendInterval := func(val string) string {
+		return val
+	}
+	if unitLower := strings.ToLower(unit); unitLower == "day" || unitLower == "hour" {
+		amendInterval = func(val string) string {
+			if intervalLower := strings.ToLower(val); intervalLower == "true" {
+				return "1"
+			} else if intervalLower == "false" {
+				return "0"
+			}
+			return du.intervalRegexp.FindString(val)
+		}
+	}
+
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+
+		result.AppendString(amendInterval(buf.GetString(i)))
+	}
+	return nil
+}
+
+func (du *baseDateArithmitical) vecGetIntervalFromDecimal(b *baseBuiltinFunc, input *chunk.Chunk, unit string, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETDecimal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[1].VecEvalDecimal(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	isCompoundUnit := false
+	amendInterval := func(val string, row *chunk.Row) (string, bool, error) {
+		return val, false, nil
+	}
+	switch unitUpper := strings.ToUpper(unit); unitUpper {
+	case "HOUR_MINUTE", "MINUTE_SECOND", "YEAR_MONTH", "DAY_HOUR", "DAY_MINUTE",
+		"DAY_SECOND", "DAY_MICROSECOND", "HOUR_MICROSECOND", "HOUR_SECOND", "MINUTE_MICROSECOND", "SECOND_MICROSECOND":
+		isCompoundUnit = true
+		switch strings.ToUpper(unit) {
+		case "HOUR_MINUTE", "MINUTE_SECOND":
+			amendInterval = func(val string, _ *chunk.Row) (string, bool, error) {
+				return strings.Replace(val, ".", ":", -1), false, nil
+			}
+		case "YEAR_MONTH":
+			amendInterval = func(val string, _ *chunk.Row) (string, bool, error) {
+				return strings.Replace(val, ".", "-", -1), false, nil
+			}
+		case "DAY_HOUR":
+			amendInterval = func(val string, _ *chunk.Row) (string, bool, error) {
+				return strings.Replace(val, ".", " ", -1), false, nil
+			}
+		case "DAY_MINUTE":
+			amendInterval = func(val string, _ *chunk.Row) (string, bool, error) {
+				return "0 " + strings.Replace(val, ".", ":", -1), false, nil
+			}
+		case "DAY_SECOND":
+			amendInterval = func(val string, _ *chunk.Row) (string, bool, error) {
+				return "0 00:" + strings.Replace(val, ".", ":", -1), false, nil
+			}
+		case "DAY_MICROSECOND":
+			amendInterval = func(val string, _ *chunk.Row) (string, bool, error) {
+				return "0 00:00:" + val, false, nil
+			}
+		case "HOUR_MICROSECOND":
+			amendInterval = func(val string, _ *chunk.Row) (string, bool, error) {
+				return "00:00:" + val, false, nil
+			}
+		case "HOUR_SECOND":
+			amendInterval = func(val string, _ *chunk.Row) (string, bool, error) {
+				return "00:" + strings.Replace(val, ".", ":", -1), false, nil
+			}
+		case "MINUTE_MICROSECOND":
+			amendInterval = func(val string, _ *chunk.Row) (string, bool, error) {
+				return "00:" + val, false, nil
+			}
+		case "SECOND_MICROSECOND":
+			/* keep interval as original decimal */
+		}
+	case "SECOND":
+		/* keep interval as original decimal */
+	default:
+		// YEAR, QUARTER, MONTH, WEEK, DAY, HOUR, MINUTE, MICROSECOND
+		castExpr := WrapWithCastAsString(b.ctx, WrapWithCastAsInt(b.ctx, b.args[1]))
+		amendInterval = func(_ string, row *chunk.Row) (string, bool, error) {
+			interval, isNull, err := castExpr.EvalString(b.ctx, *row)
+			return interval, isNull || err != nil, err
+		}
+	}
+
+	result.ReserveString(n)
+	decs := buf.Decimals()
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+
+		interval := decs[i].String()
+		row := input.GetRow(i)
+		isNeg := false
+		if isCompoundUnit && interval != "" && interval[0] == '-' {
+			isNeg = true
+			interval = interval[1:]
+		}
+		interval, isNull, err := amendInterval(interval, &row)
+		if err != nil {
+			return err
+		}
+		if isNull {
+			result.AppendNull()
+			continue
+		}
+		if isCompoundUnit && isNeg {
+			interval = "-" + interval
+		}
+		result.AppendString(interval)
+	}
+	return nil
+}
+
+func (du *baseDateArithmitical) vecGetIntervalFromInt(b *baseBuiltinFunc, input *chunk.Chunk, unit string, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	i64s := buf.Int64s()
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+		} else {
+			result.AppendString(strconv.FormatInt(i64s[i], 10))
+		}
+	}
+	return nil
+}
+
+func (du *baseDateArithmitical) vecGetIntervalFromReal(b *baseBuiltinFunc, input *chunk.Chunk, unit string, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETReal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[1].VecEvalReal(b.ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	f64s := buf.Float64s()
+	prec := b.args[1].GetType().Decimal
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+		} else {
+			result.AppendString(strconv.FormatFloat(f64s[i], 'f', prec, 64))
+		}
+	}
+	return nil
+}
+
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 type addDateFunctionClass struct {
 	baseFunctionClass
 }
@@ -4152,18 +4608,25 @@ func (b *builtinTimestampDiffSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 	lhs, isNull, err := b.args[1].EvalTime(b.ctx, row)
 	if isNull || err != nil {
-		return 0, isNull, handleInvalidTimeError(b.ctx, err)
+		return 0, isNull, HandleInvalidTimeError(b.ctx, err)
 	}
 	rhs, isNull, err := b.args[2].EvalTime(b.ctx, row)
 	if isNull || err != nil {
-		return 0, isNull, handleInvalidTimeError(b.ctx, err)
+		return 0, isNull, HandleInvalidTimeError(b.ctx, err)
 	}
 	if invalidLHS, invalidRHS := lhs.InvalidZero(), rhs.InvalidZero(); invalidLHS || invalidRHS {
 		if invalidLHS {
+<<<<<<< HEAD
 			err = handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(lhs.String()))
 		}
 		if invalidRHS {
 			err = handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(rhs.String()))
+=======
+			err = HandleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, lhs.String()))
+		}
+		if invalidRHS {
+			err = HandleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, rhs.String()))
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 		}
 		return 0, true, err
 	}
@@ -4437,7 +4900,11 @@ func (b *builtinTimestamp1ArgSig) evalTime(row chunk.Row) (types.Time, bool, err
 		tm, err = types.ParseTime(sc, s, mysql.TypeDatetime, types.GetFsp(s))
 	}
 	if err != nil {
+<<<<<<< HEAD
 		return types.Time{}, true, handleInvalidTimeError(b.ctx, err)
+=======
+		return types.ZeroTime, true, HandleInvalidTimeError(b.ctx, err)
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 	}
 	return tm, false, nil
 }
@@ -4469,7 +4936,11 @@ func (b *builtinTimestamp2ArgsSig) evalTime(row chunk.Row) (types.Time, bool, er
 		tm, err = types.ParseTime(sc, arg0, mysql.TypeDatetime, types.GetFsp(arg0))
 	}
 	if err != nil {
+<<<<<<< HEAD
 		return types.Time{}, true, handleInvalidTimeError(b.ctx, err)
+=======
+		return types.ZeroTime, true, HandleInvalidTimeError(b.ctx, err)
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 	}
 	arg1, isNull, err := b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
@@ -4480,7 +4951,11 @@ func (b *builtinTimestamp2ArgsSig) evalTime(row chunk.Row) (types.Time, bool, er
 	}
 	duration, err := types.ParseDuration(sc, arg1, types.GetFsp(arg1))
 	if err != nil {
+<<<<<<< HEAD
 		return types.Time{}, true, handleInvalidTimeError(b.ctx, err)
+=======
+		return types.ZeroTime, true, HandleInvalidTimeError(b.ctx, err)
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 	}
 	tmp, err := tm.Add(sc, duration)
 	if err != nil {
@@ -5242,7 +5717,11 @@ func (b *builtinMakeDateSig) evalTime(row chunk.Row) (d types.Time, isNull bool,
 	}
 	retTimestamp := types.TimestampDiff("DAY", types.ZeroDate, startTime)
 	if retTimestamp == 0 {
+<<<<<<< HEAD
 		return d, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(startTime.String()))
+=======
+		return d, true, HandleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, startTime.String()))
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 	}
 	ret := types.TimeFromDays(retTimestamp + dayOfYear - 1)
 	if ret.IsZero() || ret.Time.Year() > 9999 {
@@ -5305,10 +5784,10 @@ func (b *builtinMakeTimeSig) Clone() builtinFunc {
 func (b *builtinMakeTimeSig) getIntParam(arg Expression, row chunk.Row) (int64, bool, error) {
 	if arg.GetType().EvalType() == types.ETReal {
 		fRes, isNull, err := arg.EvalReal(b.ctx, row)
-		return int64(fRes), isNull, handleInvalidTimeError(b.ctx, err)
+		return int64(fRes), isNull, HandleInvalidTimeError(b.ctx, err)
 	}
 	iRes, isNull, err := arg.EvalInt(b.ctx, row)
-	return iRes, isNull, handleInvalidTimeError(b.ctx, err)
+	return iRes, isNull, HandleInvalidTimeError(b.ctx, err)
 }
 
 // evalDuration evals a builtinMakeTimeIntSig.
@@ -5529,11 +6008,24 @@ func (b *builtinQuarterSig) Clone() builtinFunc {
 func (b *builtinQuarterSig) evalInt(row chunk.Row) (int64, bool, error) {
 	date, isNull, err := b.args[0].EvalTime(b.ctx, row)
 	if isNull || err != nil {
-		return 0, true, handleInvalidTimeError(b.ctx, err)
+		return 0, true, HandleInvalidTimeError(b.ctx, err)
 	}
 
 	if date.IsZero() {
+<<<<<<< HEAD
 		return 0, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(date.String()))
+=======
+		// MySQL compatibility, #11203
+		// 0 | 0.0 should be converted to 0 value (not null)
+		n, err := date.ToNumber().ToInt()
+		isOriginalIntOrDecimalZero := err == nil && n == 0
+		// Args like "0000-00-00", "0000-00-00 00:00:00" set Fsp to 6
+		isOriginalStringZero := date.Fsp() > 0
+		if isOriginalIntOrDecimalZero && !isOriginalStringZero {
+			return 0, false, nil
+		}
+		return 0, true, HandleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String()))
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 	}
 
 	return int64((date.Time.Month() + 2) / 3), false, nil
@@ -6188,7 +6680,7 @@ func (b *builtinTimestampAddSig) evalString(row chunk.Row) (string, bool, error)
 	}
 	r := types.Time{Time: types.FromGoTime(tb), Type: b.resolveType(arg.Type, unit), Fsp: fsp}
 	if err = r.Check(b.ctx.GetSessionVars().StmtCtx); err != nil {
-		return "", true, handleInvalidTimeError(b.ctx, err)
+		return "", true, HandleInvalidTimeError(b.ctx, err)
 	}
 	return r.String(), false, nil
 }
@@ -6239,11 +6731,15 @@ func (b *builtinToDaysSig) evalInt(row chunk.Row) (int64, bool, error) {
 	arg, isNull, err := b.args[0].EvalTime(b.ctx, row)
 
 	if isNull || err != nil {
-		return 0, true, handleInvalidTimeError(b.ctx, err)
+		return 0, true, HandleInvalidTimeError(b.ctx, err)
 	}
 	ret := types.TimestampDiff("DAY", types.ZeroDate, arg)
 	if ret == 0 {
+<<<<<<< HEAD
 		return 0, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(arg.String()))
+=======
+		return 0, true, HandleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, arg.String()))
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 	}
 	return ret, false, nil
 }
@@ -6276,11 +6772,15 @@ func (b *builtinToSecondsSig) Clone() builtinFunc {
 func (b *builtinToSecondsSig) evalInt(row chunk.Row) (int64, bool, error) {
 	arg, isNull, err := b.args[0].EvalTime(b.ctx, row)
 	if isNull || err != nil {
-		return 0, true, handleInvalidTimeError(b.ctx, err)
+		return 0, true, HandleInvalidTimeError(b.ctx, err)
 	}
 	ret := types.TimestampDiff("SECOND", types.ZeroDate, arg)
 	if ret == 0 {
+<<<<<<< HEAD
 		return 0, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(arg.String()))
+=======
+		return 0, true, HandleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, arg.String()))
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 	}
 	return ret, false, nil
 }
@@ -6413,11 +6913,16 @@ func (b *builtinLastDaySig) Clone() builtinFunc {
 func (b *builtinLastDaySig) evalTime(row chunk.Row) (types.Time, bool, error) {
 	arg, isNull, err := b.args[0].EvalTime(b.ctx, row)
 	if isNull || err != nil {
+<<<<<<< HEAD
 		return types.Time{}, true, handleInvalidTimeError(b.ctx, err)
+=======
+		return types.ZeroTime, true, HandleInvalidTimeError(b.ctx, err)
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 	}
 	tm := arg.Time
 	var day int
 	year, month := tm.Year(), tm.Month()
+<<<<<<< HEAD
 	if month == 0 {
 		return types.Time{}, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(arg.String()))
 	}
@@ -6426,6 +6931,10 @@ func (b *builtinLastDaySig) evalTime(row chunk.Row) (types.Time, bool, error) {
 		Time: types.FromDate(year, month, day, 0, 0, 0, 0),
 		Type: mysql.TypeDate,
 		Fsp:  types.DefaultFsp,
+=======
+	if arg.InvalidZero() {
+		return types.ZeroTime, true, HandleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, arg.String()))
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 	}
 	return ret, false, nil
 }
@@ -6474,7 +6983,11 @@ func (b *builtinTidbParseTsoSig) Clone() builtinFunc {
 func (b *builtinTidbParseTsoSig) evalTime(row chunk.Row) (types.Time, bool, error) {
 	arg, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil || arg <= 0 {
+<<<<<<< HEAD
 		return types.Time{}, true, handleInvalidTimeError(b.ctx, err)
+=======
+		return types.ZeroTime, true, HandleInvalidTimeError(b.ctx, err)
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 	}
 
 	t := oracle.GetTimeFromTS(uint64(arg))
