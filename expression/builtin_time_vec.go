@@ -1382,7 +1382,7 @@ func (b *builtinTimeToSecSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 			continue
 		}
 		var sign int
-		duration := buf.GetDuration(i, int(fsp))
+		duration := buf.GetDuration(i, fsp)
 		if duration.Duration >= 0 {
 			sign = 1
 		} else {

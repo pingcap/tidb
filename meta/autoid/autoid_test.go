@@ -86,7 +86,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, NotNil)
 	globalAutoID, err = alloc.NextGlobalAutoID(1)
 	c.Assert(err, IsNil)
-	c.Assert(globalAutoID, Equals, int64(autoid.GetStep()+1))
+	c.Assert(globalAutoID, Equals, autoid.GetStep()+1)
 
 	// rebase
 	err = alloc.Rebase(1, int64(1), true)
@@ -114,7 +114,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(alloc, NotNil)
 	_, id, err = alloc.Alloc(1, 1, 1, 1)
 	c.Assert(err, IsNil)
-	c.Assert(id, Equals, int64(autoid.GetStep()+1))
+	c.Assert(id, Equals, autoid.GetStep()+1)
 
 	alloc = autoid.NewAllocator(store, 1, false, autoid.RowIDAllocType)
 	c.Assert(alloc, NotNil)
@@ -288,7 +288,7 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 	c.Assert(err, NotNil)
 	globalAutoID, err = alloc.NextGlobalAutoID(1)
 	c.Assert(err, IsNil)
-	c.Assert(globalAutoID, Equals, int64(autoid.GetStep()+1))
+	c.Assert(globalAutoID, Equals, autoid.GetStep()+1)
 
 	// rebase
 	err = alloc.Rebase(1, int64(1), true)
@@ -316,7 +316,7 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 	c.Assert(alloc, NotNil)
 	_, id, err = alloc.Alloc(1, 1, 1, 1)
 	c.Assert(err, IsNil)
-	c.Assert(id, Equals, int64(autoid.GetStep()+1))
+	c.Assert(id, Equals, autoid.GetStep()+1)
 
 	alloc = autoid.NewAllocator(store, 1, true, autoid.RowIDAllocType)
 	c.Assert(alloc, NotNil)
@@ -400,7 +400,7 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 
 	c.Assert(max-min, Equals, autoid.CalcNeededBatchSize(int64(uint64(offset)-1), 2, increment, offset, true))
 	firstID := autoid.SeekToFirstAutoIDUnSigned(uint64(min), uint64(increment), uint64(offset))
-	c.Assert(uint64(firstID), Equals, uint64(math.MaxUint64-100))
+	c.Assert(firstID, Equals, uint64(math.MaxUint64-100))
 
 }
 
