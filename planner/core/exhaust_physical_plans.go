@@ -1452,9 +1452,6 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) []Ph
 			logutil.BgLogger().Info("prefer bc join", zap.Int("bc count", len(broadCastJoins)))
 			return broadCastJoins
 		}
-		if len(broadCastJoins) > 0 {
-			return broadCastJoins
-		}
 		joins = append(joins, broadCastJoins...)
 	}
 	if prop.IsFlashOnlyProp() {
