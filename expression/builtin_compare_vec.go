@@ -649,7 +649,7 @@ func (b *builtinGreatestTimeSig) vecEvalString(input *chunk.Chunk, result *chunk
 			}
 			argTime, err = types.ParseDatetime(sc, result.GetString(i))
 			if err != nil {
-				if err = handleInvalidTimeError(b.ctx, err); err != nil {
+				if err = HandleInvalidTimeError(b.ctx, err); err != nil {
 					return err
 				}
 				continue
@@ -739,7 +739,7 @@ func (b *builtinLeastTimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 			}
 			argTime, err = types.ParseDatetime(sc, result.GetString(i))
 			if err != nil {
-				if err = handleInvalidTimeError(b.ctx, err); err != nil {
+				if err = HandleInvalidTimeError(b.ctx, err); err != nil {
 					return err
 				} else if !findInvalidTime[i] {
 					invalidValue[i] = result.GetString(i)

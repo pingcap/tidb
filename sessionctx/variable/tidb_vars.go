@@ -129,8 +129,7 @@ const (
 
 	// tidb_enable_table_partition is used to control table partition feature.
 	// The valid value include auto/on/off:
-	// auto: enable table partition when that feature is implemented.
-	// on: always enable table partition.
+	// on or auto: enable table partition if the partition type is implemented.
 	// off: always disable table partition.
 	TiDBEnableTablePartition = "tidb_enable_table_partition"
 
@@ -169,6 +168,9 @@ const (
 
 	// TiDBCheckMb4ValueInUTF8 is used to control whether to enable the check wrong utf8 value.
 	TiDBCheckMb4ValueInUTF8 = "tidb_check_mb4_value_in_utf8"
+
+	// TiDBFoundInPlanCache indicates whether the last statement was found in plan cache
+	TiDBFoundInPlanCache = "last_plan_from_cache"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -411,7 +413,6 @@ const (
 	DefChecksumTableConcurrency        = 4
 	DefSkipUTF8Check                   = false
 	DefOptAggPushDown                  = false
-	DefOptDistinctAggPushDown          = false
 	DefOptWriteRowID                   = false
 	DefOptCorrelationThreshold         = 0.9
 	DefOptCorrelationExpFactor         = 1
@@ -484,6 +485,7 @@ const (
 	DefTiDBStoreLimit                  = 0
 	DefTiDBMetricSchemaStep            = 60 // 60s
 	DefTiDBMetricSchemaRangeDuration   = 60 // 60s
+	DefTiDBFoundInPlanCache            = false
 	DefTidbEnableCollectExecutionInfo  = false
 )
 

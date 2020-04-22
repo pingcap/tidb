@@ -600,7 +600,7 @@ func (b *builtinGreatestTimeSig) evalString(row chunk.Row) (_ string, isNull boo
 		}
 		t, err = types.ParseDatetime(sc, v)
 		if err != nil {
-			if err = handleInvalidTimeError(b.ctx, err); err != nil {
+			if err = HandleInvalidTimeError(b.ctx, err); err != nil {
 				return v, true, err
 			}
 			continue
@@ -800,7 +800,7 @@ func (b *builtinLeastTimeSig) evalString(row chunk.Row) (res string, isNull bool
 		}
 		t, err = types.ParseDatetime(sc, v)
 		if err != nil {
-			if err = handleInvalidTimeError(b.ctx, err); err != nil {
+			if err = HandleInvalidTimeError(b.ctx, err); err != nil {
 				return v, true, err
 			} else if !findInvalidTime {
 				res = v
@@ -1249,21 +1249,21 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	}
 	if isExceptional && (c.op == opcode.EQ || c.op == opcode.NullEQ) {
 		// This will always be false.
-		return []Expression{Zero, One}
+		return []Expression{NewZero(), NewOne()}
 	}
 	if isPositiveInfinite {
 		// If the op is opcode.LT, opcode.LE
 		// This will always be true.
 		// If the op is opcode.GT, opcode.GE
 		// This will always be false.
-		return []Expression{Zero, One}
+		return []Expression{NewZero(), NewOne()}
 	}
 	if isNegativeInfinite {
 		// If the op is opcode.GT, opcode.GE
 		// This will always be true.
 		// If the op is opcode.LT, opcode.LE
 		// This will always be false.
-		return []Expression{One, Zero}
+		return []Expression{NewOne(), NewZero()}
 	}
 
 	return []Expression{finalArg0, finalArg1}

@@ -408,7 +408,7 @@ func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) ([][]byte, error) {
 		if bytes.Compare(pair.Key, ran.EndKey) >= 0 {
 			return nil, nil
 		}
-		e.seekKey = []byte(kv.Key(pair.Key).PrefixNext())
+		e.seekKey = kv.Key(pair.Key).PrefixNext()
 	}
 	return tablecodec.DecodeIndexKV(pair.Key, pair.Value, e.colsLen, e.hdStatus, e.colInfos)
 }
