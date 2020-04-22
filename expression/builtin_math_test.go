@@ -159,7 +159,7 @@ func (s *testEvaluatorSuite) TestExp(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.Exp].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.Exp].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -268,7 +268,7 @@ func (s *testEvaluatorSuite) TestLog(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.Log].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.Log].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -304,7 +304,7 @@ func (s *testEvaluatorSuite) TestLog2(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.Log2].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.Log2].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -340,7 +340,7 @@ func (s *testEvaluatorSuite) TestLog10(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.Log10].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.Log10].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -583,7 +583,7 @@ func (s *testEvaluatorSuite) TestConv(c *C) {
 		c.Assert(r, Equals, t.ret)
 	}
 
-	_, err := funcs[ast.Conv].getFunction(s.ctx, []Expression{Zero, Zero, Zero})
+	_, err := funcs[ast.Conv].getFunction(s.ctx, []Expression{NewZero(), NewZero(), NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -657,7 +657,7 @@ func (s *testEvaluatorSuite) TestDegrees(c *C) {
 			}
 		}
 	}
-	_, err := funcs[ast.Degrees].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.Degrees].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -761,7 +761,7 @@ func (s *testEvaluatorSuite) TestSin(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.Sin].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.Sin].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -799,7 +799,7 @@ func (s *testEvaluatorSuite) TestCos(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.Cos].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.Cos].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -835,7 +835,7 @@ func (s *testEvaluatorSuite) TestAcos(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.Acos].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.Acos].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -871,7 +871,7 @@ func (s *testEvaluatorSuite) TestAsin(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.Asin].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.Asin].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -907,7 +907,7 @@ func (s *testEvaluatorSuite) TestAtan(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.Atan].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.Atan].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -944,7 +944,7 @@ func (s *testEvaluatorSuite) TestTan(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.Tan].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.Tan].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -986,6 +986,6 @@ func (s *testEvaluatorSuite) TestCot(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.Cot].getFunction(s.ctx, []Expression{One})
+	_, err := funcs[ast.Cot].getFunction(s.ctx, []Expression{NewOne()})
 	c.Assert(err, IsNil)
 }
