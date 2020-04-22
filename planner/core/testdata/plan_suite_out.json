@@ -1,7 +1,68 @@
 [
   {
     "Name": "TestIndexHint",
-    "Cases": null
+    "Cases": [
+      {
+        "SQL": "select /*+ USE_INDEX(t, c_d_e) */ * from t",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))",
+        "HasWarn": false
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t, c_d_e) */ * from t t1",
+        "Best": "TableReader(Table(t))",
+        "HasWarn": true
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t1, c_d_e) */ * from t t1",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))",
+        "HasWarn": false
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t1, c_d_e), USE_INDEX(t2, f) */ * from t t1, t t2 where t1.a = t2.b",
+        "Best": "LeftHashJoin{IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->IndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))}(test.t1.a,test.t2.b)",
+        "HasWarn": false
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t, c_d_e, f, g) */ * from t order by f",
+        "Best": "IndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))",
+        "HasWarn": false
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t) */ f from t where f > 10",
+        "Best": "TableReader(Table(t)->Sel([gt(test.t.f, 10)]))",
+        "HasWarn": false
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t, no_such_index) */ * from t",
+        "Best": "TableReader(Table(t))",
+        "HasWarn": true
+      },
+      {
+        "SQL": "select /*+ IGNORE_INDEX(t, no_such_index) */ * from t",
+        "Best": "TableReader(Table(t))",
+        "HasWarn": true
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t, c_d_e), IGNORE_INDEX(t, f) */ c from t order by c",
+        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]])",
+        "HasWarn": false
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t, f), IGNORE_INDEX(t, f) */ c from t order by c",
+        "Best": "TableReader(Table(t))->Sort",
+        "HasWarn": false
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t, c_d_e), IGNORE_INDEX(t, c_d_e) */ c from t order by c",
+        "Best": "TableReader(Table(t))->Sort",
+        "HasWarn": false
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t, c_d_e, f), IGNORE_INDEX(t, c_d_e) */ c from t order by c",
+        "Best": "IndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))->Sort",
+        "HasWarn": false
+      }
+    ]
   },
   {
     "Name": "TestDAGPlanBuilderSimpleCase",
@@ -687,7 +748,7 @@
       },
       {
         "SQL": "select a from t where not a",
-        "Best": "IndexReader(Index(t.f)[[NULL,+inf]]->Sel([not(test.t.a)]))"
+        "Best": "TableReader(Table(t))"
       },
       {
         "SQL": "select a from t where c in (1)",
