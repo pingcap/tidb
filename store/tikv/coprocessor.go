@@ -710,12 +710,14 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		if err == nil {
 			cacheKey = cKey
 			cValue := worker.store.coprCache.Get(cKey)
+			copReq.IsCacheEnabled = true
 			if cValue != nil && cValue.RegionID == task.region.id && cValue.TimeStamp <= worker.req.StartTs {
 				// Append cache version to the request to skip Coprocessor computation if possible
 				// when request result is cached
-				copReq.IsCacheEnabled = true
 				copReq.CacheIfMatchVersion = cValue.RegionDataVersion
 				cacheValue = cValue
+			} else {
+				copReq.CacheIfMatchVersion = 0
 			}
 		} else {
 			logutil.BgLogger().Warn("Failed to build copr cache key", zap.Error(err))
