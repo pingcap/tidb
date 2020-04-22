@@ -14,6 +14,8 @@
 package core_test
 
 import (
+	"fmt"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
@@ -745,6 +747,37 @@ func (s *testIntegrationSuite) TestIssue15546(c *C) {
 	tk.MustQuery("select * from pt, vt where pt.a = vt.a").Check(testkit.Rows("1 1 1 1"))
 }
 
+func (s *testIntegrationSuite) TestHintWithRequiredProperty(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b int, c int, key b(b))")
+	var input []string
+	var output []struct {
+		SQL      string
+		Plan     []string
+		Warnings []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+			output[i].Warnings = make([]string, len(warnings))
+			for j, warning := range warnings {
+				output[i].Warnings[j] = warning.Err.Error()
+			}
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+		warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+		c.Assert(len(warnings), Equals, len(output[i].Warnings))
+		for j, warning := range warnings {
+			c.Assert(output[i].Warnings[j], Equals, warning.Err.Error())
+		}
+	}
+}
+
 func (s *testIntegrationSuite) TestIssue15813(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -813,4 +846,21 @@ func (s *testIntegrationSuite) TestIssue15846(c *C) {
 	tk.MustExec("INSERT INTO t1(c0) VALUES (0);")
 	tk.MustExec("INSERT INTO t0(t0) VALUES (NULL), (NULL);")
 	tk.MustQuery("SELECT t1.c0 FROM t1 LEFT JOIN t0 ON 1;").Check(testkit.Rows("0", "0"))
+}
+
+func (s *testIntegrationSuite) TestIssue16290And16292(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b int, primary key(a));")
+	tk.MustExec("insert into t values(1, 1);")
+
+	for i := 0; i <= 1; i++ {
+		tk.MustExec(fmt.Sprintf("set session tidb_opt_agg_push_down = %v", i))
+
+		tk.MustQuery("select avg(a) from (select * from t ta union all select * from t tb) t;").Check(testkit.Rows("1.0000"))
+		tk.MustQuery("select avg(b) from (select * from t ta union all select * from t tb) t;").Check(testkit.Rows("1.0000"))
+		tk.MustQuery("select count(distinct a) from (select * from t ta union all select * from t tb) t;").Check(testkit.Rows("1"))
+		tk.MustQuery("select count(distinct b) from (select * from t ta union all select * from t tb) t;").Check(testkit.Rows("1"))
+	}
 }

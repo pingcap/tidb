@@ -650,6 +650,32 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 	tk.MustExec("drop sequence if exists seq")
 	tk.MustExec("create sequence seq")
 	tk.MustQuery("show create table seq;").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB"))
+
+	// Test for issue #17 in bug competition, default num and sequence should be shown without quote.
+	tk.MustExec(`drop table if exists default_num`)
+	tk.MustExec("create table default_num(a int default 11)")
+	tk.MustQuery("show create table default_num").Check(testutil.RowsWithSep("|",
+		""+
+			"default_num CREATE TABLE `default_num` (\n"+
+			"  `a` int(11) DEFAULT 11\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+	tk.MustExec(`drop table if exists default_varchar`)
+	tk.MustExec("create table default_varchar(a varchar(10) default \"haha\")")
+	tk.MustQuery("show create table default_varchar").Check(testutil.RowsWithSep("|",
+		""+
+			"default_varchar CREATE TABLE `default_varchar` (\n"+
+			"  `a` varchar(10) DEFAULT 'haha'\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+	tk.MustExec(`drop table if exists default_sequence`)
+	tk.MustExec("create table default_sequence(a int default nextval(seq))")
+	tk.MustQuery("show create table default_sequence").Check(testutil.RowsWithSep("|",
+		""+
+			"default_sequence CREATE TABLE `default_sequence` (\n"+
+			"  `a` int(11) DEFAULT nextval(`test`.`seq`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
 }
 
 func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {

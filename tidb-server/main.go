@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -61,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/util/signal"
 	"github.com/pingcap/tidb/util/storeutil"
 	"github.com/pingcap/tidb/util/sys/linux"
+	storageSys "github.com/pingcap/tidb/util/sys/storage"
 	"github.com/pingcap/tidb/util/systimemon"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
@@ -167,6 +169,7 @@ func main() {
 	if config.GetGlobalConfig().OOMUseTmpStorage {
 		config.GetGlobalConfig().UpdateTempStoragePath()
 		initializeTempDir()
+		checkTempStorageQuota()
 	}
 	setGlobalVars()
 	setCPUAffinity()
@@ -227,6 +230,21 @@ func initializeTempDir() {
 		if err != nil {
 			log.Warn("Remove temporary file error",
 				zap.String("tempStorageSubDir", filepath.Join(tempDir, subDir.Name())), zap.Error(err))
+		}
+	}
+}
+
+func checkTempStorageQuota() {
+	// check capacity and the quota when OOMUseTmpStorage is enabled
+	c := config.GetGlobalConfig()
+	if c.TempStorageQuota < 0 {
+		// means unlimited, do nothing
+	} else {
+		capacityByte, err := storageSys.GetTargetDirectoryCapacity(c.TempStoragePath)
+		if err != nil {
+			log.Fatal(err.Error())
+		} else if capacityByte < uint64(c.TempStorageQuota) {
+			log.Fatal(fmt.Sprintf("value of [tmp-storage-quota](%d byte) exceeds the capacity(%d byte) of the [%s] directory", c.TempStorageQuota, capacityByte, c.TempStoragePath))
 		}
 	}
 }
@@ -571,6 +589,7 @@ func setGlobalVars() {
 	tikv.RegionCacheTTLSec = int64(cfg.TiKVClient.RegionCacheTTL)
 	domainutil.RepairInfo.SetRepairMode(cfg.RepairMode)
 	domainutil.RepairInfo.SetRepairTableList(cfg.RepairTableList)
+	executor.GlobalDiskUsageTracker.SetBytesLimit(config.GetGlobalConfig().TempStorageQuota)
 }
 
 func setupLog() {
