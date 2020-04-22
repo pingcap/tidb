@@ -103,10 +103,10 @@ func (f *fnClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Re
 }
 
 func (s *testRegionRequestSuite) TestOnRegionError(c *C) {
-	req := tikvrpc.NewRequest(tikvrpc.CmdRawPut, &kvrpcpb.RawPutRequest{
+	req := &tikvrpc.Request{Type: tikvrpc.CmdRawPut, RawPut: &kvrpcpb.RawPutRequest{
 		Key:   []byte("key"),
 		Value: []byte("value"),
-	})
+	}}
 	region, err := s.cache.LocateRegionByID(s.bo, s.region)
 	c.Assert(err, IsNil)
 	c.Assert(region, NotNil)
@@ -118,7 +118,7 @@ func (s *testRegionRequestSuite) TestOnRegionError(c *C) {
 			s.regionRequestSender.client = oc
 		}()
 		s.regionRequestSender.client = &fnClient{func(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (response *tikvrpc.Response, err error) {
-			staleResp := &tikvrpc.Response{Resp: &kvrpcpb.GetResponse{
+			staleResp := &tikvrpc.Response{Get: &kvrpcpb.GetResponse{
 				RegionError: &errorpb.Error{StaleCommand: &errorpb.StaleCommand{}},
 			}}
 			return staleResp, nil
