@@ -1344,7 +1344,7 @@ func (s *Store) reResolve(c *RegionCache) {
 	if s.addr != addr {
 		state := resolved
 		newStore := &Store{storeID: s.storeID, addr: addr, storeType: storeType}
-		newStore.state = *(*uint64)(unsafe.Pointer(&state))
+		newStore.state = *(*uint64)(&state)
 		c.storeMu.Lock()
 		c.storeMu.stores[newStore.storeID] = newStore
 		c.storeMu.Unlock()

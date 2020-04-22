@@ -52,7 +52,7 @@ func (s *testMockTiKVSuite) SetUpTest(c *C) {
 }
 
 // PutMutations is exported for testing.
-var PutMutations func(kvpairs ...string) []*kvrpcpb.Mutation = putMutations
+var PutMutations = putMutations
 
 func putMutations(kvpairs ...string) []*kvrpcpb.Mutation {
 	var mutations []*kvrpcpb.Mutation
