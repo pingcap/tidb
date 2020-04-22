@@ -2433,7 +2433,7 @@ func (b *PlanBuilder) buildProjUponView(ctx context.Context, dbName model.CIStr,
 			OrigTblName: col.OrigTblName,
 			ColName:     columnInfo[i].Name,
 			OrigColName: origColName,
-			DBName:      col.DBName,
+			DBName:      dbName,
 			RetType:     col.GetType(),
 		})
 		projExprs = append(projExprs, col)
@@ -3241,6 +3241,9 @@ func (b *PlanBuilder) buildWindowFunctionFrame(ctx context.Context, spec *ast.Wi
 
 func (b *PlanBuilder) checkWindowFuncArgs(ctx context.Context, p LogicalPlan, windowFuncExprs []*ast.WindowFuncExpr, windowAggMap map[*ast.AggregateFuncExpr]int) error {
 	for _, windowFuncExpr := range windowFuncExprs {
+		if strings.ToLower(windowFuncExpr.F) == ast.AggFuncGroupConcat {
+			return ErrNotSupportedYet.GenWithStackByArgs("group_concat as window function")
+		}
 		args, err := b.buildArgs4WindowFunc(ctx, p, windowFuncExpr.Args, windowAggMap)
 		if err != nil {
 			return err

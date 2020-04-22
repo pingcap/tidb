@@ -317,7 +317,7 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 		selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
 		conds := make([]expression.Expression, 0, len(selection.Conditions))
 		for _, cond := range selection.Conditions {
-			conds = append(conds, expression.PushDownNot(sctx, cond, false))
+			conds = append(conds, expression.PushDownNot(sctx, cond))
 		}
 		tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
 		col := expression.ColInfo2Col(selection.Schema().Columns, tbl.Columns[0])
@@ -433,7 +433,7 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		{
 			indexPos:    0,
 			exprStr:     `a in ('a') and b in ('1', 2.0, NULL)`,
-			accessConds: "[in(test.t.a, a) in(test.t.b, 1, 2, <nil>)]",
+			accessConds: "[eq(test.t.a, a) in(test.t.b, 1, 2, <nil>)]",
 			filterConds: "[]",
 			resultStr:   `[["a" 1,"a" 1] ["a" 2,"a" 2]]`,
 		},
@@ -475,7 +475,7 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		{
 			indexPos:    0,
 			exprStr:     "a in (NULL)",
-			accessConds: "[in(test.t.a, <nil>)]",
+			accessConds: "[eq(test.t.a, <nil>)]",
 			filterConds: "[]",
 			resultStr:   "[]",
 		},
@@ -496,14 +496,14 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		{
 			indexPos:    0,
 			exprStr:     "not (a not in (NULL) and a > '2')",
-			accessConds: "[or(in(test.t.a, <nil>), le(test.t.a, 2))]",
+			accessConds: "[or(eq(test.t.a, <nil>), le(test.t.a, 2))]",
 			filterConds: "[]",
 			resultStr:   "[[-inf,\"2\"]]",
 		},
 		{
 			indexPos:    0,
 			exprStr:     "not (a not in (NULL) or a > '2')",
-			accessConds: "[and(in(test.t.a, <nil>), le(test.t.a, 2))]",
+			accessConds: "[and(eq(test.t.a, <nil>), le(test.t.a, 2))]",
 			filterConds: "[]",
 			resultStr:   "[]",
 		},
@@ -558,17 +558,17 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		},
 		{
 			indexPos:    2,
-			exprStr:     `d in ("你好啊")`,
-			accessConds: "[in(test.t.d, 你好啊)]",
-			filterConds: "[in(test.t.d, 你好啊)]",
-			resultStr:   "[[\"你好\",\"你好\"]]",
+			exprStr:     `d in ("你好啊", "再见")`,
+			accessConds: "[in(test.t.d, 你好啊, 再见)]",
+			filterConds: "[in(test.t.d, 你好啊, 再见)]",
+			resultStr:   "[[\"你好\",\"你好\"] [\"再见\",\"再见\"]]",
 		},
 		{
 			indexPos:    2,
 			exprStr:     `d not in ("你好啊")`,
-			accessConds: "[not(in(test.t.d, 你好啊))]",
-			filterConds: "[not(in(test.t.d, 你好啊))]",
-			resultStr:   "[(NULL,+inf]]",
+			accessConds: "[]",
+			filterConds: "[ne(test.t.d, 你好啊)]",
+			resultStr:   "[[NULL,+inf]]",
 		},
 		{
 			indexPos:    2,
@@ -603,7 +603,7 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		c.Assert(selection, NotNil, Commentf("expr:%v", tt.exprStr))
 		conds := make([]expression.Expression, 0, len(selection.Conditions))
 		for _, cond := range selection.Conditions {
-			conds = append(conds, expression.PushDownNot(sctx, cond, false))
+			conds = append(conds, expression.PushDownNot(sctx, cond))
 		}
 		cols, lengths := expression.IndexInfo2Cols(selection.Schema().Columns, tbl.Indices[tt.indexPos])
 		c.Assert(cols, NotNil)
@@ -661,9 +661,9 @@ func (s *testRangerSuite) TestIndexRangeForUnsignedInt(c *C) {
 		{
 			indexPos:    0,
 			exprStr:     `a not in (111)`,
-			accessConds: "[not(in(test.t.a, 111))]",
+			accessConds: "[ne(test.t.a, 111)]",
 			filterConds: "[]",
-			resultStr:   `[(NULL,111) (111,+inf]]`,
+			resultStr:   `[[-inf,111) (111,+inf]]`,
 		},
 		{
 			indexPos:    0,
@@ -724,7 +724,7 @@ func (s *testRangerSuite) TestIndexRangeForUnsignedInt(c *C) {
 		c.Assert(selection, NotNil, Commentf("expr:%v", tt.exprStr))
 		conds := make([]expression.Expression, 0, len(selection.Conditions))
 		for _, cond := range selection.Conditions {
-			conds = append(conds, expression.PushDownNot(sctx, cond, false))
+			conds = append(conds, expression.PushDownNot(sctx, cond))
 		}
 		cols, lengths := expression.IndexInfo2Cols(selection.Schema().Columns, tbl.Indices[tt.indexPos])
 		c.Assert(cols, NotNil)
@@ -1055,7 +1055,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 		c.Assert(ok, IsTrue, Commentf("expr:%v", tt.exprStr))
 		conds := make([]expression.Expression, 0, len(sel.Conditions))
 		for _, cond := range sel.Conditions {
-			conds = append(conds, expression.PushDownNot(sctx, cond, false))
+			conds = append(conds, expression.PushDownNot(sctx, cond))
 		}
 		col := expression.ColInfo2Col(sel.Schema().Columns, ds.TableInfo().Columns[tt.colPos])
 		c.Assert(col, NotNil)
