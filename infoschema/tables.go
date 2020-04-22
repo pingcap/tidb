@@ -1331,6 +1331,7 @@ func GetTiKVServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	return servers, nil
 }
 
+// GetTiFlashServerInfo returns all TiFlash nodes information of cluster
 func GetTiFlashServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	store := ctx.GetStore()
 	tikvStore, ok := store.(tikv.Storage)
