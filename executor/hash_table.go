@@ -114,7 +114,7 @@ func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContex
 	c := &hashRowContainer{
 		sc:           sCtx.GetSessionVars().StmtCtx,
 		hCtx:         hCtx,
-		hashTable:    NewCMapHT(estCount),
+		hashTable:    newConcurrentMapHashTable(estCount),
 		rowContainer: rc,
 	}
 
@@ -354,25 +354,29 @@ func (ht *unsafeHashTable) Get(hashKey uint64) (rowPtrs []chunk.RowPtr) {
 // if the same key is put more than once.
 func (ht *unsafeHashTable) Len() uint64 { return ht.length }
 
-type ConcurrentMapHashTable struct {
+// concurrentMapHashTable is a concurrent hash table built on concurrentMap
+type concurrentMapHashTable struct {
 	hashMap    concurrentMap
 	entryStore *entryStore
 	length     uint64
 }
 
-func NewCMapHT(estCount int) *ConcurrentMapHashTable {
-	ht := new(ConcurrentMapHashTable)
-	ht.hashMap = NewConcMap()
+// newConcurrentMapHashTable creates a concurrentMapHashTable
+func newConcurrentMapHashTable(estCount int) *concurrentMapHashTable {
+	ht := new(concurrentMapHashTable)
+	ht.hashMap = newConcurrentMap()
 	ht.entryStore = newEntryStore()
 	ht.length = 0
 	return ht
 }
 
-func (ht *ConcurrentMapHashTable) Len() uint64 {
+// Len return the number of rowPtrs in the concurrentMapHashTable
+func (ht *concurrentMapHashTable) Len() uint64 {
 	return ht.length
 }
 
-func (ht *ConcurrentMapHashTable) Put(hashKey uint64, rowPtr chunk.RowPtr) {
+// Put puts the key/rowPtr pairs to the concurrentMapHashTable, multiple rowPtrs are stored in a list.
+func (ht *concurrentMapHashTable) Put(hashKey uint64, rowPtr chunk.RowPtr) {
 	cb := func(exists bool, valueInMap, newValue *entry) *entry {
 		if !exists {
 			return newValue
@@ -388,7 +392,8 @@ func (ht *ConcurrentMapHashTable) Put(hashKey uint64, rowPtr chunk.RowPtr) {
 	atomic.AddUint64(&ht.length, 1)
 }
 
-func (ht *ConcurrentMapHashTable) Get(hashKey uint64) (rowPtrs []chunk.RowPtr) {
+// Get gets the values of the "key" and appends them to "values".
+func (ht *concurrentMapHashTable) Get(hashKey uint64) (rowPtrs []chunk.RowPtr) {
 	entryAddr, _ := ht.hashMap.Get(hashKey)
 	for entryAddr != nil {
 		rowPtrs = append(rowPtrs, entryAddr.ptr)

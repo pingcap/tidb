@@ -4,10 +4,10 @@ import (
 	"sync"
 )
 
-var SHARD_COUNT = 320
+var ShardCount = 320
 
 // A "thread" safe map of type string:Anything.
-// To avoid lock bottlenecks this map is dived to several (SHARD_COUNT) map shards.
+// To avoid lock bottlenecks this map is dived to several (ShardCount) map shards.
 type concurrentMap []*concurrentMapShared
 
 // A "thread" safe string to anything map.
@@ -16,10 +16,10 @@ type concurrentMapShared struct {
 	sync.RWMutex // Read Write mutex, guards access to internal map.
 }
 
-// Creates a new concurrent map.
-func NewConcMap() concurrentMap {
-	m := make(concurrentMap, SHARD_COUNT)
-	for i := 0; i < SHARD_COUNT; i++ {
+// newConcurrentMap creates a new concurrent map.
+func newConcurrentMap() concurrentMap {
+	m := make(concurrentMap, ShardCount)
+	for i := 0; i < ShardCount; i++ {
 		m[i] = &concurrentMapShared{items: make(map[uint64]*entry)}
 	}
 	return m
@@ -27,16 +27,16 @@ func NewConcMap() concurrentMap {
 
 // GetShard returns shard under given key
 func (m concurrentMap) GetShard(hashKey uint64) *concurrentMapShared {
-	return m[hashKey%uint64(SHARD_COUNT)]
+	return m[hashKey%uint64(ShardCount)]
 }
 
-// Callback to return new element to be inserted into the map
+// UpsertCb : Callback to return new element to be inserted into the map
 // It is called while lock is held, therefore it MUST NOT
 // try to access other keys in same map, as it can lead to deadlock since
 // Go sync.RWLock is not reentrant
 type UpsertCb func(exist bool, valueInMap, newValue *entry) *entry
 
-// Insert or Update - updates existing element or inserts a new one using UpsertCb
+// Upsert: Insert or Update - updates existing element or inserts a new one using UpsertCb
 func (m concurrentMap) Upsert(key uint64, value *entry, cb UpsertCb) (res *entry) {
 	shard := m.GetShard(key)
 	shard.Lock()
@@ -58,13 +58,13 @@ func (m concurrentMap) Get(key uint64) (*entry, bool) {
 	return val, ok
 }
 
-// Iterator callback,called for every key,value found in
+// IterCb :Iterator callback,called for every key,value found in
 // maps. RLock is held for all calls for a given shard
 // therefore callback sess consistent view of a shard,
 // but not across the shards
 type IterCb func(key uint64, e *entry)
 
-// Callback based iterator, cheapest way to read
+// IterCb iterates the map using a callback, cheapest way to read
 // all elements in a map.
 func (m concurrentMap) IterCb(fn IterCb) {
 	for idx := range m {
