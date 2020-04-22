@@ -127,9 +127,14 @@ func (b *builtinRegexpSharedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 		return err
 	}
 
-	if b.args[1].ConstItem(b.ctx.GetSessionVars().StmtCtx) && !b.isMemorizedRegexpInitialized() {
-		b.initMemoizedRegexp(bufPat, n)
+	memorization := func() {
+		if b.args[1].ConstItem(b.ctx.GetSessionVars().StmtCtx) && !b.isMemorizedRegexpInitialized() {
+			b.initMemoizedRegexp(bufPat, n)
+		}
 	}
+	// Only be executed once to achieve thread-safe
+	b.once.Do(memorization)
+
 	getRegexp := func(pat string) (*regexp.Regexp, error) {
 		if b.isMemorizedRegexpInitialized() {
 			return b.memorizedRegexp, b.memorizedErr

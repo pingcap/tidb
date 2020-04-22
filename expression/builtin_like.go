@@ -15,6 +15,7 @@ package expression
 
 import (
 	"regexp"
+	"sync"
 
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -121,6 +122,7 @@ type builtinRegexpSharedSig struct {
 	compile         func(string) (*regexp.Regexp, error)
 	memorizedRegexp *regexp.Regexp
 	memorizedErr    error
+	once            sync.Once
 }
 
 func (b *builtinRegexpSharedSig) clone(from *builtinRegexpSharedSig) {
