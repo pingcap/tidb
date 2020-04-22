@@ -552,7 +552,11 @@ func (b *builtinCastIntAsTimeSig) evalTime(row chunk.Row) (res types.Time, isNul
 	}
 	res, err = types.ParseTimeFromNum(b.ctx.GetSessionVars().StmtCtx, val, b.tp.Tp, b.tp.Decimal)
 	if err != nil {
+<<<<<<< HEAD
 		return types.Time{}, true, handleInvalidTimeError(b.ctx, err)
+=======
+		return types.ZeroTime, true, HandleInvalidTimeError(b.ctx, err)
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 	}
 	if b.tp.Tp == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
@@ -837,7 +841,11 @@ func (b *builtinCastRealAsTimeSig) evalTime(row chunk.Row) (types.Time, bool, er
 	sc := b.ctx.GetSessionVars().StmtCtx
 	res, err := types.ParseTime(sc, strconv.FormatFloat(val, 'f', -1, 64), b.tp.Tp, b.tp.Decimal)
 	if err != nil {
+<<<<<<< HEAD
 		return types.Time{}, true, handleInvalidTimeError(b.ctx, err)
+=======
+		return types.ZeroTime, true, HandleInvalidTimeError(b.ctx, err)
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 	}
 	if b.tp.Tp == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
@@ -994,7 +1002,11 @@ func (b *builtinCastDecimalAsTimeSig) evalTime(row chunk.Row) (res types.Time, i
 	sc := b.ctx.GetSessionVars().StmtCtx
 	res, err = types.ParseTimeFromFloatString(sc, string(val.ToString()), b.tp.Tp, b.tp.Decimal)
 	if err != nil {
+<<<<<<< HEAD
 		return types.Time{}, true, handleInvalidTimeError(b.ctx, err)
+=======
+		return types.ZeroTime, true, HandleInvalidTimeError(b.ctx, err)
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 	}
 	if b.tp.Tp == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
@@ -1210,7 +1222,11 @@ func (b *builtinCastStringAsTimeSig) evalTime(row chunk.Row) (res types.Time, is
 	sc := b.ctx.GetSessionVars().StmtCtx
 	res, err = types.ParseTime(sc, val, b.tp.Tp, b.tp.Decimal)
 	if err != nil {
+<<<<<<< HEAD
 		return types.Time{}, true, handleInvalidTimeError(b.ctx, err)
+=======
+		return types.ZeroTime, true, HandleInvalidTimeError(b.ctx, err)
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 	}
 	if b.tp.Tp == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
@@ -1264,7 +1280,11 @@ func (b *builtinCastTimeAsTimeSig) evalTime(row chunk.Row) (res types.Time, isNu
 
 	sc := b.ctx.GetSessionVars().StmtCtx
 	if res, err = res.Convert(sc, b.tp.Tp); err != nil {
+<<<<<<< HEAD
 		return types.Time{}, true, handleInvalidTimeError(b.ctx, err)
+=======
+		return types.ZeroTime, true, HandleInvalidTimeError(b.ctx, err)
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 	}
 	res, err = res.RoundFrac(sc, b.tp.Decimal)
 	if b.tp.Tp == mysql.TypeDate {
@@ -1525,7 +1545,11 @@ func (b *builtinCastDurationAsTimeSig) evalTime(row chunk.Row) (res types.Time, 
 	sc := b.ctx.GetSessionVars().StmtCtx
 	res, err = val.ConvertToTime(sc, b.tp.Tp)
 	if err != nil {
+<<<<<<< HEAD
 		return types.Time{}, true, handleInvalidTimeError(b.ctx, err)
+=======
+		return types.ZeroTime, true, HandleInvalidTimeError(b.ctx, err)
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 	}
 	res, err = res.RoundFrac(sc, b.tp.Decimal)
 	return res, false, errors.Trace(err)
@@ -1649,7 +1673,11 @@ func (b *builtinCastJSONAsTimeSig) evalTime(row chunk.Row) (res types.Time, isNu
 	sc := b.ctx.GetSessionVars().StmtCtx
 	res, err = types.ParseTime(sc, s, b.tp.Tp, b.tp.Decimal)
 	if err != nil {
+<<<<<<< HEAD
 		return types.Time{}, true, handleInvalidTimeError(b.ctx, err)
+=======
+		return types.ZeroTime, true, HandleInvalidTimeError(b.ctx, err)
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 	}
 	if b.tp.Tp == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.

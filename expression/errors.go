@@ -44,6 +44,7 @@ var (
 	errUnknownLocale                 = terror.ClassExpression.New(mysql.ErrUnknownLocale, mysql.MySQLErrName[mysql.ErrUnknownLocale])
 )
 
+<<<<<<< HEAD
 func init() {
 	expressionMySQLErrCodes := map[terror.ErrCode]uint16{
 		mysql.ErrWrongParamcountToNativeFct:        mysql.ErrWrongParamcountToNativeFct,
@@ -70,6 +71,12 @@ func init() {
 func handleInvalidTimeError(ctx sessionctx.Context, err error) error {
 	if err == nil || !(terror.ErrorEqual(err, types.ErrInvalidTimeFormat) || types.ErrIncorrectDatetimeValue.Equal(err) ||
 		types.ErrTruncatedWrongValue.Equal(err) || types.ErrInvalidWeekModeFormat.Equal(err) ||
+=======
+// HandleInvalidTimeError reports error or warning depend on the context.
+func HandleInvalidTimeError(ctx sessionctx.Context, err error) error {
+	if err == nil || !(types.ErrWrongValue.Equal(err) ||
+		types.ErrTruncatedWrongVal.Equal(err) || types.ErrInvalidWeekModeFormat.Equal(err) ||
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 		types.ErrDatetimeFunctionOverflow.Equal(err)) {
 		return err
 	}

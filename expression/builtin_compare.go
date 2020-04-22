@@ -596,8 +596,13 @@ func (b *builtinGreatestTimeSig) evalString(row chunk.Row) (_ string, isNull boo
 		}
 		t, err = types.ParseDatetime(sc, v)
 		if err != nil {
+<<<<<<< HEAD
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return v, true, errors.Trace(err)
+=======
+			if err = HandleInvalidTimeError(b.ctx, err); err != nil {
+				return v, true, err
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 			}
 			continue
 		}
@@ -795,8 +800,13 @@ func (b *builtinLeastTimeSig) evalString(row chunk.Row) (res string, isNull bool
 		}
 		t, err = types.ParseDatetime(sc, v)
 		if err != nil {
+<<<<<<< HEAD
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return v, true, errors.Trace(err)
+=======
+			if err = HandleInvalidTimeError(b.ctx, err); err != nil {
+				return v, true, err
+>>>>>>> db7c135... expression: support NO_ZERO_DATE sql_mode (#16053)
 			} else if !findInvalidTime {
 				res = v
 				findInvalidTime = true
