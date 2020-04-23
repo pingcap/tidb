@@ -318,3 +318,21 @@ func (s *testBootstrapSuite) TestBootstrapInitExpensiveQueryHandle(c *C) {
 	dom.InitExpensiveQueryHandle()
 	c.Assert(dom.ExpensiveQueryHandle(), NotNil)
 }
+
+func (s *testBootstrapSuite) TestStmtSummary(c *C) {
+	defer testleak.AfterTest(c)()
+	ctx := context.Background()
+	store, dom := newStoreWithBootstrap(c, s.dbName)
+	defer store.Close()
+	defer dom.Close()
+	se := newSession(c, store, s.dbName)
+	mustExecSQL(c, se, `update mysql.global_variables set variable_value='' where variable_name='tidb_enable_stmt_summary'`)
+	writeStmtSummaryVars(se)
+
+	r := mustExecSQL(c, se, "select variable_value from mysql.global_variables where variable_name='tidb_enable_stmt_summary'")
+	req := r.NewChunk()
+	c.Assert(r.Next(ctx, req), IsNil)
+	row := req.GetRow(0)
+	c.Assert(row.GetBytes(0), BytesEquals, []byte("1"))
+	c.Assert(r.Close(), IsNil)
+}
