@@ -2005,9 +2005,9 @@ func (r *TransformAggregateCaseToSelection) transform(agg *plannercore.LogicalAg
 	caseArgsNum := len(caseArgs)
 
 	// `case when a>0 then null else a end` should be converted to `case when !(a>0) then a else null end`.
-	var nullFlip = caseArgsNum == 3 && caseArgs[1].Equal(ctx, expression.Null) && !caseArgs[2].Equal(ctx, expression.Null)
+	var nullFlip = caseArgsNum == 3 && caseArgs[1].Equal(ctx, expression.NewNull()) && !caseArgs[2].Equal(ctx, expression.NewNull())
 	// `case when a>0 then 0 else a end` should be converted to `case when !(a>0) then a else 0 end`.
-	var zeroFlip = !nullFlip && caseArgsNum == 3 && caseArgs[1].Equal(ctx, expression.Zero)
+	var zeroFlip = !nullFlip && caseArgsNum == 3 && caseArgs[1].Equal(ctx, expression.NewZero())
 
 	var outputIdx int
 	if nullFlip || zeroFlip {
@@ -2040,8 +2040,8 @@ func (r *TransformAggregateCaseToSelection) transform(agg *plannercore.LogicalAg
 	//   => newAggFuncDesc: SUM(cnt), newCondition: x = 'foo'
 
 	switch {
-	case r.allowsSelection(aggFuncName) && (caseArgsNum == 2 || caseArgs[3-outputIdx].Equal(ctx, expression.Null)), // Case A1
-		aggFuncName == ast.AggFuncSum && caseArgsNum == 3 && caseArgs[3-outputIdx].Equal(ctx, expression.Zero): // Case A2
+	case r.allowsSelection(aggFuncName) && (caseArgsNum == 2 || caseArgs[3-outputIdx].Equal(ctx, expression.NewNull())), // Case A1
+		aggFuncName == ast.AggFuncSum && caseArgsNum == 3 && caseArgs[3-outputIdx].Equal(ctx, expression.NewZero()): // Case A2
 		newAggFuncDesc := aggFuncDesc.Clone()
 		newAggFuncDesc.Args = []expression.Expression{caseArgs[outputIdx]}
 		return true, newConditions, []*aggregation.AggFuncDesc{newAggFuncDesc}
@@ -2055,7 +2055,7 @@ func (r *TransformAggregateCaseToSelection) allowsSelection(aggFuncName string) 
 }
 
 func (r *TransformAggregateCaseToSelection) isOnlyOneNotNull(ctx sessionctx.Context, args []expression.Expression, argsNum int, outputIdx int) bool {
-	return !args[outputIdx].Equal(ctx, expression.Null) && (argsNum == 2 || args[3-outputIdx].Equal(ctx, expression.Null))
+	return !args[outputIdx].Equal(ctx, expression.NewNull()) && (argsNum == 2 || args[3-outputIdx].Equal(ctx, expression.NewNull()))
 }
 
 // TransformAggregateCaseToSelection only support `case when cond then var end` and `case when cond then var1 else var2 end`.
