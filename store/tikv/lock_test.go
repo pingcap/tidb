@@ -124,7 +124,7 @@ func (s *testLockSuite) TestScanLockResolveWithSeek(c *C) {
 	for ch := byte('a'); ch <= byte('z'); ch++ {
 		c.Assert(iter.Valid(), IsTrue)
 		c.Assert([]byte(iter.Key()), BytesEquals, []byte{ch})
-		c.Assert([]byte(iter.Value()), BytesEquals, []byte{ch})
+		c.Assert(iter.Value(), BytesEquals, []byte{ch})
 		c.Assert(iter.Next(), IsNil)
 	}
 }

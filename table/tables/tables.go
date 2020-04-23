@@ -851,7 +851,7 @@ func (t *TableCommon) removeRowData(ctx sessionctx.Context, h int64) error {
 	}
 
 	key := t.RecordKey(h)
-	err = txn.Delete([]byte(key))
+	err = txn.Delete(key)
 	if err != nil {
 		return err
 	}
