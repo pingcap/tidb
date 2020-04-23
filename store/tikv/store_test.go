@@ -203,6 +203,10 @@ func (c *mockPDClient) UpdateGCSafePoint(ctx context.Context, safePoint uint64) 
 	panic("unimplemented")
 }
 
+func (c *mockPDClient) UpdateServiceGCSafePoint(ctx context.Context, serviceID string, ttl int64, safePoint uint64) (uint64, error) {
+	panic("unimplemented")
+}
+
 func (c *mockPDClient) Close() {}
 
 func (c *mockPDClient) ScatterRegion(ctx context.Context, regionID uint64) error {
