@@ -3757,6 +3757,13 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		}
 		return errors.Trace(err)
 	}
+	oldTblInfo := tb.Meta()
+	if oldTblInfo.PreSplitRegions > 0 {
+		if _, tb, err := d.getSchemaAndTableByIdent(ctx, ti); err == nil {
+			d.preSplitAndScatter(ctx, tb.Meta())
+		}
+	}
+
 	if !config.TableLockEnabled() {
 		return nil
 	}
