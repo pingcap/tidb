@@ -2231,6 +2231,8 @@ func logQuery(query string, vars *variable.SessionVars) {
 			zap.Stringer("user", vars.User),
 			zap.Int64("schemaVersion", vars.TxnCtx.SchemaVersion),
 			zap.Uint64("txnStartTS", vars.TxnCtx.StartTS),
+			zap.Uint64("forUpdateTS", vars.TxnCtx.GetForUpdateTS()),
+			zap.Bool("isReadConsistency", vars.IsReadConsistencyTxn()),
 			zap.String("current_db", vars.CurrentDB),
 			zap.String("txn_mode", vars.GetReadableTxnMode()),
 			zap.String("sql", query+vars.PreparedParams.String()))
