@@ -452,8 +452,18 @@ func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload 
 		s := rs.stores[ctx.PeerIdx]
 
 		if err != nil && s.accessible() {
-			if s.requestLiveness(bo) != reachable {
-				s.updateLivenessState(uint32(reachable), uint32(unreachable), "send fail and store unreachable", true)
+			os := s.currentLivenessState()
+			ns := s.requestLiveness(bo)
+			if os == unknown && ns == unknown {
+				// unknown kv status, so run as old suboptimal way.
+				epoch := rs.storeEpochs[ctx.PeerIdx]
+				if atomic.CompareAndSwapUint32(&s.epoch, epoch, epoch+1) {
+					logutil.BgLogger().Info("mark store's regions need be refill", zap.String("store", s.addr))
+					tikvRegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
+				}
+				s.scheduleResolve()
+			} else if ns == unreachable {
+				s.updateLivenessState(uint32(os), uint32(ns), "send fail and store unreachable", true)
 			}
 		}
 
@@ -1262,8 +1272,8 @@ func (s *Store) initResolve(bo *Backoffer) (addr, saddr string, err error) {
 				s.addr = store.Address
 				s.saddr = store.StatusAddress
 				s.storeType = GetStoreTypeByMeta(store)
+				s.livenessState = uint32(unknown)
 				s.initLiveness(normalLivenessCheckInterval)
-				s.updateLivenessState(0, uint32(s.requestLiveness(bo)), "init store fail", true)
 			}
 		}
 	})
@@ -1294,7 +1304,7 @@ func (s *Store) doResolve(bo *Backoffer) (err error) {
 	err = s.requestResolveAddr(bo, func(store *metapb.Store) {
 		if store == nil {
 			// store has be removed in PD, we should invalidate all regions using those store.
-			s.updateLivenessState(atomic.LoadUint32(&s.livenessState), uint32(offline), "resolve loop found store has be removed", true)
+			s.updateLivenessState(uint32(s.currentLivenessState()), uint32(offline), "resolve loop found store has be removed", true)
 			return
 		}
 		storeType := GetStoreTypeByMeta(store)
@@ -1306,8 +1316,8 @@ func (s *Store) doResolve(bo *Backoffer) (err error) {
 			newStore := &Store{storeID: s.storeID, addr: addr, saddr: saddr, storeType: storeType, livenessState: uint32(reachable), rc: s.rc}
 			state := resolved
 			newStore.resolveState = *(*uint64)(unsafe.Pointer(&state))
+			newStore.livenessState = uint32(unknown)
 			newStore.initLiveness(time.Duration(atomic.LoadUint64(&s.liveness.checkInterval)))
-			newStore.updateLivenessState(0, uint32(s.requestLiveness(bo)), "re-resolve init", true)
 			s.rc.storeMu.Lock()
 			s.rc.storeMu.stores[newStore.storeID] = newStore
 			s.rc.storeMu.Unlock()
@@ -1411,7 +1421,7 @@ func (s *Store) scheduleResolve() {
 type livenessState uint32
 
 const (
-	unknown livenessState = 1 + iota
+	unknown livenessState = iota
 	reachable
 	unreachable
 	offline
@@ -1442,9 +1452,11 @@ func (s *Store) livenessLoop() {
 		case <-t.C:
 			ns := s.requestLiveness(nil)
 			os := atomic.LoadUint32(&s.livenessState)
-			if livenessState(os) == unreachable && ns == unreachable {
+			if (livenessState(os) == unreachable && ns == unreachable) || (livenessState(os) == unknown && ns == unknown) {
 				s.scheduleResolve()
 			}
+			logutil.BgLogger().Info("liveness change store status",
+				zap.Uint32("from", os), zap.Uint32("to", uint32(ns)), zap.Uint64("store", s.storeID))
 			s.updateLivenessState(os, uint32(ns), "liveness check loop found unreachable", false)
 			t.Reset(time.Duration(atomic.LoadUint64(&s.liveness.checkInterval)))
 		case <-s.liveness.resetCh:
@@ -1531,10 +1543,6 @@ func (s *Store) requestLiveness(bo *Backoffer) (l livenessState) {
 	}
 	select {
 	case rs := <-rsCh:
-		if rs.Err != nil {
-			l = unknown
-			return
-		}
 		l = rs.Val.(livenessState)
 	case <-ctx.Done():
 		l = unknown
