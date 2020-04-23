@@ -917,16 +917,15 @@ func BenchmarkHashJoinExec(b *testing.B) {
 
 	b.ReportAllocs()
 	cas := defaultHashJoinTestCase(cols, 0, false)
-	buildConcurrency := []int{1}
+	buildConcurrency := []int{1, 2, 4}
 	for _, con := range buildConcurrency {
 		cas.concurrency = con
 		cas.disk = false
+		cas.keyIdx = []int{0, 1}
 		b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 			benchmarkHashJoinExecWithCase(b, cas)
 		})
-	}
-	return
-	{
+
 		cas.keyIdx = []int{0}
 		b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 			benchmarkHashJoinExecWithCase(b, cas)
@@ -957,6 +956,7 @@ func BenchmarkHashJoinExec(b *testing.B) {
 	cas = defaultHashJoinTestCase(cols, 0, false)
 	for _, con := range buildConcurrency {
 		cas.concurrency = con
+		cas.keyIdx = []int{0, 1}
 		b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 			benchmarkHashJoinExecWithCase(b, cas)
 		})
