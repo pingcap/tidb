@@ -190,6 +190,8 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo) (
 		truncateTrailingSpaces(&casted)
 	}
 
+
+	logutil.BgLogger().Warn("111111111111111111111111111111       ", zap.Bool("zeroMode", ctx.GetSessionVars().SQLMode.HasNoZeroDateMode()))
 	if ((col.Tp == mysql.TypeDate && !casted.IsNull() && casted.GetMysqlTime() == types.ZeroDate) || (col.Tp == mysql.TypeDatetime && !casted.IsNull() && casted.GetMysqlTime() == types.ZeroDatetime)) && ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
 		if err := expression.HandleInvalidTimeError(ctx, types.ErrWrongValue); err != nil {
 			return casted, err
