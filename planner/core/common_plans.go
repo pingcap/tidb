@@ -554,6 +554,16 @@ type Set struct {
 	VarAssigns []*expression.VarAssignment
 }
 
+// SetConfig represents a plan for set config stmt.
+type SetConfig struct {
+	baseSchemaProducer
+
+	Type     string
+	Instance string
+	Name     string
+	Value    expression.Expression
+}
+
 // SQLBindOpType repreents the SQL bind type
 type SQLBindOpType int
 

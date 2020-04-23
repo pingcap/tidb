@@ -518,8 +518,8 @@ func (e *CleanupIndexExec) deleteDanglingIdx(txn kv.Transaction, values map[stri
 			if err != nil {
 				return err
 			}
-			for _, idxVals := range e.idxValues[handle] {
-				if err := e.index.Delete(e.ctx.GetSessionVars().StmtCtx, txn, idxVals, handle); err != nil {
+			for _, idxVals := range e.idxValues[handle.IntValue()] {
+				if err := e.index.Delete(e.ctx.GetSessionVars().StmtCtx, txn, idxVals, handle.IntValue()); err != nil {
 					return err
 				}
 				e.removeCnt++

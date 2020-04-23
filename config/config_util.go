@@ -132,3 +132,25 @@ func decodeConfig(content string) (*Config, error) {
 	_, err := toml.Decode(content, c)
 	return c, err
 }
+
+// FlattenConfigItems flatten this config, see more cases in the test.
+func FlattenConfigItems(nestedConfig map[string]interface{}) map[string]interface{} {
+	flatMap := make(map[string]interface{})
+	flatten(flatMap, nestedConfig, "")
+	return flatMap
+}
+
+func flatten(flatMap map[string]interface{}, nested interface{}, prefix string) {
+	switch nested.(type) {
+	case map[string]interface{}:
+		for k, v := range nested.(map[string]interface{}) {
+			path := k
+			if prefix != "" {
+				path = prefix + "." + k
+			}
+			flatten(flatMap, v, path)
+		}
+	default: // don't flatten arrays
+		flatMap[prefix] = nested
+	}
+}

@@ -95,7 +95,7 @@ func (ts *HTTPHandlerTestSuite) TestRegionIndexRange(c *C) {
 
 	startKey := tablecodec.EncodeIndexSeekKey(sTableID, sIndex, encodedValue)
 	recordPrefix := tablecodec.GenTableRecordPrefix(eTableID)
-	endKey := tablecodec.EncodeRecordKey(recordPrefix, recordID)
+	endKey := tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(recordID))
 
 	region := &tikv.KeyLocation{
 		Region:   tikv.RegionVerID{},
