@@ -35,10 +35,6 @@ type cacheEntry struct {
 	value Value
 }
 
-func (c *cacheEntry) memConsume() int64 {
-	return int64(len(c.key.Hash()))
-}
-
 var (
 	// GlobalLRUMemUsageTracker tracks all the memory usage of SimpleLRUCache
 	GlobalLRUMemUsageTracker *memory.Tracker
@@ -69,7 +65,7 @@ func NewSimpleLRUCache(capacity uint, guard float64, quota uint64) *SimpleLRUCac
 	if capacity < 1 {
 		panic("capacity of LRU Cache should be at least 1.")
 	}
-	sc := &SimpleLRUCache{
+	return &SimpleLRUCache{
 		capacity: capacity,
 		size:     0,
 		quota:    quota,
@@ -77,7 +73,6 @@ func NewSimpleLRUCache(capacity uint, guard float64, quota uint64) *SimpleLRUCac
 		elements: make(map[string]*list.Element),
 		cache:    list.New(),
 	}
-	return sc
 }
 
 // Get tries to find the corresponding value according to the given key.
@@ -107,10 +102,6 @@ func (l *SimpleLRUCache) Put(key Key, value Value) {
 	element = l.cache.PushFront(newCacheEntry)
 	l.elements[hash] = element
 	l.size++
-	if linshi == nil {
-		linshi = map[string]string{}
-	}
-
 	// Getting used memory is expensive and can be avoided by setting quota to 0.
 	if l.quota == 0 {
 		if l.size > l.capacity {
@@ -121,6 +112,7 @@ func (l *SimpleLRUCache) Put(key Key, value Value) {
 		}
 		return
 	}
+
 	memUsed, err := memory.MemUsed()
 	if err != nil {
 		l.DeleteAll()
