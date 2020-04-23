@@ -22,6 +22,6 @@ func recordMemTracker() error {
 	if err != nil {
 		return err
 	}
-	kvcache.GlobalLRUMemUsageTracker.Consume(bytes)
+	kvcache.GlobalLRUMemUsageTracker.ReplaceBytesUsed(bytes)
 	return nil
 }
