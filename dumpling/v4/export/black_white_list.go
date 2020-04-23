@@ -91,6 +91,11 @@ func filterTables(conf *Config) error {
 				ignoredDBTable.AppendTable(dbName, table)
 			}
 		}
+		// 1. this dbName doesn't match black white list, don't add
+		// 2. this dbName matches black white list, but there is no table in this database, add
+		if _, ok := dbTables[dbName]; !ok && bwList.Apply(dbName, "") {
+			dbTables[dbName] = make([]*TableInfo, 0)
+		}
 	}
 
 	if len(ignoredDBTable) > 0 {

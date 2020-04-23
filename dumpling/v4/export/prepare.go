@@ -50,6 +50,7 @@ func listAllTables(db *sql.DB, databaseNames []string) (DatabaseTables, error) {
 		if err != nil {
 			return nil, err
 		}
+		dbTables[dbName] = make([]*TableInfo, 0, len(tables))
 		dbTables = dbTables.AppendTables(dbName, tables...)
 	}
 	return dbTables, nil
