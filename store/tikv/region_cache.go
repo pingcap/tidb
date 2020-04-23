@@ -294,19 +294,18 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 	if err != nil {
 		return nil, err
 	}
-	addr := store.addr
 	// enable by `curl -XPUT -d '1*return("[some-addr]")->return("")' http://host:port/github.com/pingcap/tidb/store/tikv/injectWrongStoreAddr`
 	failpoint.Inject("injectWrongStoreAddr", func(val failpoint.Value) {
 		if a, ok := val.(string); ok && len(a) > 0 {
-			addr = a
+			store = nil
 		}
 	})
-	if store == nil || len(addr) == 0 {
+	if store == nil || len(store.addr) == 0 {
 		// Store not found, region must be out of date.
 		cachedRegion.invalidate()
 		return nil, nil
 	}
-
+	addr := store.addr
 	if store.currentEpoch() != regionStore.storeEpochs[storeIdx] {
 		cachedRegion.invalidate()
 		logutil.BgLogger().Info("invalidate current region, because others request detect store was down",
