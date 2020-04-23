@@ -79,3 +79,41 @@ func (s *testBWListSuite) TestFilterTables(c *C) {
 	c.Assert(conf.Tables, HasLen, 1)
 	c.Assert(conf.Tables, DeepEquals, expectedDBTables)
 }
+
+func (s *testBWListSuite) TestFilterDatabaseWithNoTable(c *C) {
+	dbTables := DatabaseTables{}
+	expectedDBTables := DatabaseTables{}
+
+	dbTables["xxx"] = []*TableInfo{}
+	conf := &Config{
+		ServerInfo: ServerInfo{
+			ServerType: ServerTypeTiDB,
+		},
+		Tables: dbTables,
+		BlackWhiteList: BWListConf{
+			Mode: MySQLReplicationMode,
+			Rules: &MySQLReplicationConf{
+				Rules: &filter.Rules{
+					DoDBs: []string{"yyy"},
+				},
+			},
+		},
+	}
+	c.Assert(filterTables(conf), IsNil)
+	c.Assert(conf.Tables, HasLen, 0)
+
+	dbTables["xxx"] = []*TableInfo{}
+	expectedDBTables["xxx"] = []*TableInfo{}
+	conf.Tables = dbTables
+	conf.BlackWhiteList = BWListConf{
+		Mode: MySQLReplicationMode,
+		Rules: &MySQLReplicationConf{
+			Rules: &filter.Rules{
+				DoDBs: []string{"xxx"},
+			},
+		},
+	}
+	c.Assert(filterTables(conf), IsNil)
+	c.Assert(conf.Tables, HasLen, 1)
+	c.Assert(conf.Tables, DeepEquals, expectedDBTables)
+}
