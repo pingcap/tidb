@@ -175,6 +175,9 @@ func (s *testSuite6) TestCreateTable(c *C) {
 	r.Check(testkit.Rows("1000 aa"))
 
 	// table option is auto-random
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+
 	tk.MustExec("drop table if exists auto_random_table_option")
 	tk.MustExec("create table auto_random_table_option (a bigint auto_random(5) key) auto_random = 1000")
 	t, err = domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("auto_random_table_option"))
@@ -941,6 +944,9 @@ func (s *testAutoRandomSuite) TestAlterTableAutoRandomTableOption(c *C) {
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists alter_table_auto_random_option")
+
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
 
 	tk.MustExec("create table alter_table_auto_random_option (a bigint primary key auto_random(4), b int)")
 	t, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("alter_table_auto_random_option"))
