@@ -57,7 +57,6 @@ type SimpleLRUCache struct {
 	guard      float64
 	elements   map[string]*list.Element
 	cache      *list.List
-	memTracker *memory.Tracker
 }
 
 // NewSimpleLRUCache creates a SimpleLRUCache object, whose capacity is "capacity".
@@ -73,9 +72,7 @@ func NewSimpleLRUCache(capacity uint, guard float64, quota uint64) *SimpleLRUCac
 		guard:      guard,
 		elements:   make(map[string]*list.Element),
 		cache:      list.New(),
-		memTracker: memory.NewTracker(stringutil.StringerStr("SimpleLRUCache"), -1),
 	}
-	sc.memTracker.AttachToGlobalTracker(memory.GlobalMemoryUsageTracker)
 	return sc
 }
 
@@ -106,7 +103,6 @@ func (l *SimpleLRUCache) Put(key Key, value Value) {
 	element = l.cache.PushFront(newCacheEntry)
 	l.elements[hash] = element
 	l.size++
-	l.memTracker.Consume(newCacheEntry.memConsume())
 
 	// Getting used memory is expensive and can be avoided by setting quota to 0.
 	if l.quota == 0 {
@@ -115,7 +111,6 @@ func (l *SimpleLRUCache) Put(key Key, value Value) {
 			l.cache.Remove(lru)
 			delete(l.elements, string(lru.Value.(*cacheEntry).key.Hash()))
 			l.size--
-			l.memTracker.Consume(-lru.Value.(*cacheEntry).memConsume())
 		}
 		return
 	}
@@ -133,7 +128,6 @@ func (l *SimpleLRUCache) Put(key Key, value Value) {
 		l.cache.Remove(lru)
 		delete(l.elements, string(lru.Value.(*cacheEntry).key.Hash()))
 		l.size--
-		l.memTracker.Consume(-lru.Value.(*cacheEntry).memConsume())
 		if memUsed > uint64(float64(l.quota)*(1.0-l.guard)) {
 			memUsed, err = memory.MemUsed()
 			if err != nil {
@@ -154,7 +148,6 @@ func (l *SimpleLRUCache) Delete(key Key) {
 	l.cache.Remove(element)
 	delete(l.elements, k)
 	l.size--
-	l.memTracker.Consume(-element.Value.(*cacheEntry).memConsume())
 }
 
 // DeleteAll deletes all elements from the LRU Cache.
@@ -163,7 +156,6 @@ func (l *SimpleLRUCache) DeleteAll() {
 		l.cache.Remove(lru)
 		delete(l.elements, string(lru.Value.(*cacheEntry).key.Hash()))
 		l.size--
-		l.memTracker.Consume(-lru.Value.(*cacheEntry).memConsume())
 	}
 }
 
@@ -203,7 +195,6 @@ func (l *SimpleLRUCache) SetCapacity(capacity uint) error {
 		l.cache.Remove(lru)
 		delete(l.elements, string(lru.Value.(*cacheEntry).key.Hash()))
 		l.size--
-		l.memTracker.Consume(-lru.Value.(*cacheEntry).memConsume())
 	}
 	return nil
 }
