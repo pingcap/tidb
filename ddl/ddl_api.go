@@ -3076,7 +3076,30 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	}
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
+<<<<<<< HEAD
 	return errors.Trace(err)
+=======
+	if err != nil {
+		if config.TableLockEnabled() {
+			ctx.ReleaseTableLockByTableIDs([]int64{newTableID})
+		}
+		return errors.Trace(err)
+	}
+	oldTblInfo := tb.Meta()
+	if oldTblInfo.PreSplitRegions > 0 {
+		if _, tb, err := d.getSchemaAndTableByIdent(ctx, ti); err == nil {
+			d.preSplitAndScatter(ctx, tb.Meta())
+		}
+	}
+
+	if !config.TableLockEnabled() {
+		return nil
+	}
+	if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok {
+		ctx.ReleaseTableLockByTableIDs([]int64{tb.Meta().ID})
+	}
+	return nil
+>>>>>>> c00384f... ddl: fix after truncate table 'pre-split-regions' does't work (#16578)
 }
 
 func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident, isAlterTable bool) error {
