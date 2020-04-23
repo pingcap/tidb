@@ -9418,6 +9418,10 @@ TableOption:
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionAutoIdCache, UintValue: $3.(uint64)}
 	}
+|	"AUTO_RANDOM" EqOpt LengthNum
+	{
+		$$ = &ast.TableOption{Tp: ast.TableOptionAutoRandom, UintValue: $3.(uint64)}
+	}
 |	"AVG_ROW_LENGTH" EqOpt LengthNum
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionAvgRowLength, UintValue: $3.(uint64)}
