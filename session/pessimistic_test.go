@@ -1255,3 +1255,14 @@ func (s *testPessimisticSuite) TestTxnWithExpiredPessimisticLocks(c *C) {
 	tk.MustExec("update t1 set c2 = c2 + 1")
 	tk.MustExec("rollback")
 }
+
+func (s *testPessimisticSuite) TestDupLockInconsistency(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, index b (b))")
+	tk.MustExec("insert t (a) values (1), (1)")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update t, (select a from t) s set t.b = s.a")
+	tk.MustExec("commit")
+	tk.MustExec("admin check table t")
+}
