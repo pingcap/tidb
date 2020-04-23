@@ -25,7 +25,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/pd/v4/client"
+	pd "github.com/pingcap/pd/v4/client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -213,9 +213,6 @@ func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Clie
 	}
 	store.lockResolver = newLockResolver(store)
 	store.enableGC = enableGC
-	if rpcClient, ok := store.client.(*rpcClient); ok {
-		rpcClient.dieEventListener = store.regionCache.NotifyNodeDie
-	}
 
 	coprCache, err := newCoprCache(coprCacheConfig)
 	if err != nil {
