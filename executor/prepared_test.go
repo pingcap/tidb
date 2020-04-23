@@ -14,7 +14,13 @@
 package executor_test
 
 import (
+	"fmt"
+
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -52,4 +58,42 @@ func (s *testSuite1) TestIgnorePlanCache(c *C) {
 	tk.MustExec("set @ignore_plan_doma = 1")
 	tk.MustExec("execute stmt using @ignore_plan_doma")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.UseCache, IsFalse)
+}
+
+func (s *testSuite1) TestPrepareStmtAfterIsolationReadChange(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	// create virtual tiflash replica.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	tk.MustExec("set @@session.tidb_isolation_read_engines='tikv'")
+	tk.MustExec("prepare stmt from \"select * from t\"")
+	tk.MustQuery("execute stmt")
+	tkProcess := tk.Se.ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
+	c.Assert(rows[len(rows)-1][2], Equals, "cop[tikv]")
+
+	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash'")
+	tk.MustExec("execute stmt")
+	tkProcess = tk.Se.ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
+	c.Assert(rows[len(rows)-1][2], Equals, "cop[tiflash]")
 }
