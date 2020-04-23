@@ -220,7 +220,7 @@ func (r *ImplTiKVDoubleReadGather) OnImplement(expr *memo.GroupExpr, reqProp *pr
 	if !reqProp.IsEmpty() && dg.HandleCol == nil {
 		return nil, nil
 	}
-	if reader.Schema().ColumnIndex(dg.HandleCol) == -1 && !reqProp.IsEmpty() {
+	if !reqProp.IsEmpty() && reader.Schema().ColumnIndex(dg.HandleCol) == -1 {
 		reader.Schema().Append(dg.HandleCol)
 		reader.(*plannercore.PhysicalIndexLookUpReader).ExtraHandleCol = dg.HandleCol
 		proj = plannercore.PhysicalProjection{Exprs: expression.Column2Exprs(logicProp.Schema.Columns)}.Init(dg.SCtx(), logicProp.Stats, dg.SelectBlockOffset())
