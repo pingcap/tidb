@@ -105,14 +105,6 @@ func (s *testCacheableSuite) TestCacheable(c *C) {
 	}
 	c.Assert(core.Cacheable(stmt, is), IsTrue)
 
-<<<<<<< HEAD
-=======
-	stmt.(*ast.DeleteStmt).TableHints = append(stmt.(*ast.DeleteStmt).TableHints, &ast.TableOptimizerHint{
-		HintName: model.NewCIStr(core.HintIgnorePlanCache),
-	})
-	c.Assert(core.Cacheable(stmt, is), IsFalse)
-
->>>>>>> 79211fe... plan: make query on partition table not cacheable (#16375)
 	// test UpdateStmt
 	whereExpr = &ast.FuncCallExpr{}
 	stmt = &ast.UpdateStmt{
@@ -160,14 +152,6 @@ func (s *testCacheableSuite) TestCacheable(c *C) {
 	}
 	c.Assert(core.Cacheable(stmt, is), IsTrue)
 
-<<<<<<< HEAD
-=======
-	stmt.(*ast.UpdateStmt).TableHints = append(stmt.(*ast.UpdateStmt).TableHints, &ast.TableOptimizerHint{
-		HintName: model.NewCIStr(core.HintIgnorePlanCache),
-	})
-	c.Assert(core.Cacheable(stmt, is), IsFalse)
-
->>>>>>> 79211fe... plan: make query on partition table not cacheable (#16375)
 	// test SelectStmt
 	whereExpr = &ast.FuncCallExpr{}
 	stmt = &ast.SelectStmt{
@@ -224,14 +208,6 @@ func (s *testCacheableSuite) TestCacheable(c *C) {
 	}
 	c.Assert(core.Cacheable(stmt, is), IsTrue)
 
-<<<<<<< HEAD
-=======
-	stmt.(*ast.SelectStmt).TableHints = append(stmt.(*ast.SelectStmt).TableHints, &ast.TableOptimizerHint{
-		HintName: model.NewCIStr(core.HintIgnorePlanCache),
-	})
-	c.Assert(core.Cacheable(stmt, is), IsFalse)
-
->>>>>>> 79211fe... plan: make query on partition table not cacheable (#16375)
 	boundExpr := &ast.FrameBound{Expr: &driver.ParamMarkerExpr{}}
 	c.Assert(core.Cacheable(boundExpr, is), IsFalse)
 

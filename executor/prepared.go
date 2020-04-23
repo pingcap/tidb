@@ -173,12 +173,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		Params:        sorter.markers,
 		SchemaVersion: e.is.SchemaMetaVersion(),
 	}
-<<<<<<< HEAD
-	prepared.UseCache = plannercore.PreparedPlanCacheEnabled() && (vars.LightningMode || plannercore.Cacheable(stmt))
-=======
-
-	prepared.UseCache = plannercore.PreparedPlanCacheEnabled() && plannercore.Cacheable(stmt, e.is)
->>>>>>> 79211fe... plan: make query on partition table not cacheable (#16375)
+	prepared.UseCache = plannercore.PreparedPlanCacheEnabled() && (vars.LightningMode || plannercore.Cacheable(stmt, e.is))
 
 	// We try to build the real statement of preparedStmt.
 	for i := range prepared.Params {
