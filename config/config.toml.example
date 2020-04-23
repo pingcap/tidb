@@ -232,6 +232,9 @@ force-priority = "NO_PRIORITY"
 # Bind info lease duration, which influences the duration of loading bind info and handling invalid bind.
 bind-info-lease = "3s"
 
+# Whether support pushing down aggregation with distinct to cop task
+distinct-agg-push-down = false
+
 # The limitation of the size in byte for the entries in one transaction.
 # If using TiKV as the storage, the entry represents a key/value pair.
 # NOTE: If binlog is enabled, this value should be less than 104857600(10M) because this is the maximum size that can be handled by Pumper.
