@@ -39,6 +39,8 @@ require (
 	github.com/pingcap/log v0.0.0-20200117041106-d28c14d3b1cd
 	github.com/pingcap/parser v0.0.0-20200422082501-7329d80eaf2c
 	github.com/pingcap/pd/v4 v4.0.0-rc.1.0.20200422143320-428acd53eba2
+	github.com/pingcap/parser v0.0.0-20200423064043-1ea364bf764d
+	github.com/pingcap/pd/v4 v4.0.0-beta.1.0.20200305072537-61d9f9cc35d3
 	github.com/pingcap/sysutil v0.0.0-20200408114249-ed3bd6f7fdb1
 	github.com/pingcap/tidb-tools v4.0.0-beta.1.0.20200306084441-875bd09aa3d5+incompatible
 	github.com/pingcap/tipb v0.0.0-20200417094153-7316d94df1ee
@@ -74,5 +76,3 @@ require (
 )
 
 go 1.13
-
-replace github.com/pingcap/parser => github.com/ailinkid/parser v0.0.0-20200422125639-bd5460ef5ec5
