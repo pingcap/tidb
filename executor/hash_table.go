@@ -15,8 +15,10 @@ package executor
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/util/bitmap"
 	"hash"
 	"hash/fnv"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -87,16 +89,18 @@ func (s *hashStatistic) String() string {
 // hashRowContainer handles the rows and the hash map of a table.
 type hashRowContainer struct {
 	sc   *stmtctx.StatementContext
-	hCtx *hashContext
+	hCtx []*hashContext
 	stat hashStatistic
 
 	// hashTable stores the map of hashKey and RowPtr
 	hashTable *rowHashMap
 
-	rowContainer *chunk.RowContainer
+	rowContainer       *chunk.RowContainer
+	outerMatchedStatus []*bitmap.ConcurrentBitmap
+	lock               sync.Mutex
 }
 
-func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContext) *hashRowContainer {
+func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx []*hashContext) *hashRowContainer {
 	maxChunkSize := sCtx.GetSessionVars().MaxChunkSize
 	// The estCount from cost model is not quite accurate and we need
 	// to avoid that it's too large to consume redundant memory.
@@ -109,7 +113,7 @@ func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContex
 	if estCount < maxChunkSize*estCountMinFactor {
 		estCount = 0
 	}
-	rc := chunk.NewRowContainer(hCtx.allTypes, maxChunkSize)
+	rc := chunk.NewRowContainer(hCtx[0].allTypes, maxChunkSize)
 	c := &hashRowContainer{
 		sc:           sCtx.GetSessionVars().StmtCtx,
 		hCtx:         hCtx,
@@ -154,7 +158,7 @@ func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk
 // matchJoinKey checks if join keys of buildRow and probeRow are logically equal.
 func (c *hashRowContainer) matchJoinKey(buildRow, probeRow chunk.Row, probeHCtx *hashContext) (ok bool, err error) {
 	return codec.EqualChunkRow(c.sc,
-		buildRow, c.hCtx.allTypes, c.hCtx.keyColIdx,
+		buildRow, c.hCtx[0].allTypes, c.hCtx[0].keyColIdx,
 		probeRow, probeHCtx.allTypes, probeHCtx.keyColIdx)
 }
 
@@ -167,39 +171,48 @@ func (c *hashRowContainer) alreadySpilledSafe() bool { return c.rowContainer.Alr
 // PutChunk puts a chunk into hashRowContainer and build hash map. It's not thread-safe.
 // key of hash table: hash value of key columns
 // value of hash table: RowPtr of the corresponded row
-func (c *hashRowContainer) PutChunk(chk *chunk.Chunk) error {
-	return c.PutChunkSelected(chk, nil)
+func (c *hashRowContainer) PutChunk(chk *chunk.Chunk, workID uint, useOuterToBuild bool) error {
+	return c.PutChunkSelected(chk, nil, workID, useOuterToBuild)
 }
 
 // PutChunkSelected selectively puts a chunk into hashRowContainer and build hash map. It's not thread-safe.
 // key of hash table: hash value of key columns
 // value of hash table: RowPtr of the corresponded row
-func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected []bool) error {
+func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected []bool, workID uint, useOuterToBuild bool) error {
 	start := time.Now()
 	defer func() { c.stat.buildTableElapse += time.Since(start) }()
-
+	// safely add chunks
+	c.lock.Lock()
 	chkIdx := uint32(c.rowContainer.NumChunks())
 	err := c.rowContainer.Add(chk)
+	if useOuterToBuild {
+		var bitMap = bitmap.NewConcurrentBitmap(chk.NumRows())
+		c.outerMatchedStatus = append(c.outerMatchedStatus, bitMap)
+		c.GetMemTracker().Consume(bitMap.BytesConsumed())
+	}
+	c.lock.Unlock()
 	if err != nil {
 		return err
 	}
 	numRows := chk.NumRows()
-	c.hCtx.initHash(numRows)
+	c.hCtx[workID].initHash(numRows)
 
-	hCtx := c.hCtx
-	for _, colIdx := range c.hCtx.keyColIdx {
+	hCtx := c.hCtx[workID]
+	for _, colIdx := range c.hCtx[workID].keyColIdx {
 		err := codec.HashChunkSelected(c.sc, hCtx.hashVals, chk, hCtx.allTypes[colIdx], colIdx, hCtx.buf, hCtx.hasNull, selected)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 	for i := 0; i < numRows; i++ {
-		if (selected != nil && !selected[i]) || c.hCtx.hasNull[i] {
+		if (selected != nil && !selected[i]) || c.hCtx[workID].hasNull[i] {
 			continue
 		}
-		key := c.hCtx.hashVals[i].Sum64()
+		key := c.hCtx[workID].hashVals[i].Sum64()
 		rowPtr := chunk.RowPtr{ChkIdx: chkIdx, RowIdx: uint32(i)}
+		c.lock.Lock()
 		c.hashTable.Put(key, rowPtr)
+		c.lock.Unlock()
 	}
 	return nil
 }

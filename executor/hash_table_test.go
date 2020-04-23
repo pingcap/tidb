@@ -150,16 +150,18 @@ func (s *pkgTestSuite) testHashRowContainer(c *C, hashFunc func() hash.Hash64, s
 	for i := 0; i < numRows; i++ {
 		hCtx.hashVals = append(hCtx.hashVals, hashFunc())
 	}
-	rowContainer := newHashRowContainer(sctx, 0, hCtx)
+	var hCtxArray []*hashContext
+	hCtxArray = append(hCtxArray, hCtx)
+	rowContainer := newHashRowContainer(sctx, 0, hCtxArray)
 	tracker := rowContainer.GetMemTracker()
 	tracker.SetLabel(buildSideResultLabel)
 	if spill {
 		rowContainer.ActionSpill().Action(tracker)
 		tracker.SetBytesLimit(1)
 	}
-	err = rowContainer.PutChunk(chk0)
+	err = rowContainer.PutChunk(chk0, 0, false)
 	c.Assert(err, IsNil)
-	err = rowContainer.PutChunk(chk1)
+	err = rowContainer.PutChunk(chk1, 0, false)
 	c.Assert(err, IsNil)
 
 	c.Assert(rowContainer.alreadySpilled(), Equals, spill)
