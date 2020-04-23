@@ -413,10 +413,11 @@ func getMaxExecutionTime(sctx sessionctx.Context) uint64 {
 }
 
 type chunkRowRecordSet struct {
-	rows   []chunk.Row
-	idx    int
-	fields []*ast.ResultField
-	e      Executor
+	rows     []chunk.Row
+	idx      int
+	fields   []*ast.ResultField
+	e        Executor
+	execStmt *ExecStmt
 }
 
 func (c *chunkRowRecordSet) Fields() []*ast.ResultField {
@@ -437,6 +438,12 @@ func (c *chunkRowRecordSet) NewChunk() *chunk.Chunk {
 }
 
 func (c *chunkRowRecordSet) Close() error {
+	c.execStmt.FinishExecuteStmt(c.execStmt.Ctx.GetSessionVars().TxnCtx.StartTS, true, false)
+	c.execStmt.logAudit()
+	// Detach the disk tracker from GlobalDiskUsageTracker after every execution
+	if stmtCtx := c.execStmt.Ctx.GetSessionVars().StmtCtx; stmtCtx != nil && stmtCtx.DiskTracker != nil {
+		stmtCtx.DiskTracker.DetachFromGlobalTracker()
+	}
 	return nil
 }
 
@@ -468,7 +475,7 @@ func (a *ExecStmt) runPessimisticSelectForUpdate(ctx context.Context, e Executor
 		}
 		if req.NumRows() == 0 {
 			fields := colNames2ResultFields(e.Schema(), a.OutputNames, a.Ctx.GetSessionVars().CurrentDB)
-			return &chunkRowRecordSet{rows: rows, fields: fields, e: e}, nil
+			return &chunkRowRecordSet{rows: rows, fields: fields, e: e, execStmt: a}, nil
 		}
 		iter := chunk.NewIterator4Chunk(req)
 		for r := iter.Begin(); r != iter.End(); r = iter.Next() {
