@@ -20,7 +20,6 @@ package tables
 import (
 	"context"
 	"encoding/binary"
-	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -1094,7 +1093,6 @@ func (t *TableCommon) Allocators(ctx sessionctx.Context) autoid.Allocators {
 // RebaseAutoID implements table.Table RebaseAutoID interface.
 // Both auto-increment and auto-random can use this function to do rebase on explicit newBase value (without shadow bits).
 func (t *TableCommon) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool, tp autoid.AllocatorType) error {
-	fmt.Println("tables 这里: tp", tp, ": base: ", newBase)
 	return t.Allocators(ctx).Get(tp).Rebase(t.tableID, newBase, isSetStep)
 }
 
