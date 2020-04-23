@@ -903,5 +903,6 @@ var MySQLErrName = map[uint16]string{
 	ErrRegionUnavailable:  "Region is unavailable",
 	ErrGCTooEarly:         "GC life time is shorter than transaction duration, transaction starts at %v, GC safe point is %v",
 
-	ErrTxnTooLarge: "Transaction is too large",
+	ErrTiKVStaleCommand: "TiKV server reports stale command",
+	ErrTxnTooLarge:      "Transaction is too large",
 }
