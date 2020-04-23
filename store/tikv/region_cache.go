@@ -1499,6 +1499,9 @@ func (s *Store) currentEpoch() uint32 {
 }
 
 func (s *Store) currentLivenessState() livenessState {
+	if s == nil {
+		return unknown
+	}
 	return livenessState(atomic.LoadUint32(&s.livenessState))
 }
 
