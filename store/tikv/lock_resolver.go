@@ -363,7 +363,8 @@ func (lr *LockResolver) resolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 		pushed = nil
 	}
 
-	if msBeforeTxnExpired.value() > 0 {
+	if msBeforeTxnExpired.value() > 0 && len(pushed) == 0 {
+		// If len(pushed) > 0, the caller will not block on the locks, it push the minCommitTS instead.
 		tikvLockResolverCountWithWaitExpired.Inc()
 	}
 	return msBeforeTxnExpired.value(), pushed, nil
