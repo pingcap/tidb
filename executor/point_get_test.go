@@ -141,10 +141,10 @@ func (s *testPointGetSuite) TestPointGetCharPK(c *C) {
 	tk.MustExec(`set @@sql_mode="";`)
 	tk.MustPointGet(`select * from t where a = "a";`).Check(testkit.Rows(`a b`))
 	tk.MustPointGet(`select * from t where a = "a ";`).Check(testkit.Rows())
-	tk.MustPointGet(`select * from t where a = "a  ";`).Check(testkit.Rows())
+	tk.MustTableDual(`select * from t where a = "a  ";`).Check(testkit.Rows())
 	tk.MustPointGet(`select * from t where a = "";`).Check(testkit.Rows(` `))
 	tk.MustPointGet(`select * from t where a = "  ";`).Check(testkit.Rows())
-	tk.MustPointGet(`select * from t where a = "   ";`).Check(testkit.Rows())
+	tk.MustTableDual(`select * from t where a = "   ";`).Check(testkit.Rows())
 
 }
 
@@ -157,7 +157,7 @@ func (s *testPointGetSuite) TestPointGetAliasTableCharPK(c *C) {
 
 	tk.MustExec(`set @@sql_mode="";`)
 	tk.MustPointGet(`select * from t tmp where a = "aa";`).Check(testkit.Rows(`aa bb`))
-	tk.MustPointGet(`select * from t tmp where a = "aab";`).Check(testkit.Rows())
+	tk.MustTableDual(`select * from t tmp where a = "aab";`).Check(testkit.Rows())
 
 	tk.MustExec(`truncate table t;`)
 	tk.MustExec(`insert into t values("a ", "b ");`)
@@ -165,7 +165,7 @@ func (s *testPointGetSuite) TestPointGetAliasTableCharPK(c *C) {
 	tk.MustExec(`set @@sql_mode="";`)
 	tk.MustPointGet(`select * from t tmp where a = "a";`).Check(testkit.Rows(`a b`))
 	tk.MustPointGet(`select * from t tmp where a = "a ";`).Check(testkit.Rows())
-	tk.MustPointGet(`select * from t tmp where a = "a  ";`).Check(testkit.Rows())
+	tk.MustTableDual(`select * from t tmp where a = "a  ";`).Check(testkit.Rows())
 
 	// Test CHAR BINARY.
 	tk.MustExec(`drop table if exists t;`)
@@ -176,10 +176,10 @@ func (s *testPointGetSuite) TestPointGetAliasTableCharPK(c *C) {
 	tk.MustExec(`set @@sql_mode="";`)
 	tk.MustPointGet(`select * from t tmp where a = "a";`).Check(testkit.Rows(`a b`))
 	tk.MustPointGet(`select * from t tmp where a = "a ";`).Check(testkit.Rows())
-	tk.MustPointGet(`select * from t tmp where a = "a  ";`).Check(testkit.Rows())
+	tk.MustTableDual(`select * from t tmp where a = "a  ";`).Check(testkit.Rows())
 	tk.MustPointGet(`select * from t tmp where a = "";`).Check(testkit.Rows(` `))
 	tk.MustPointGet(`select * from t tmp where a = "  ";`).Check(testkit.Rows())
-	tk.MustPointGet(`select * from t tmp where a = "   ";`).Check(testkit.Rows())
+	tk.MustTableDual(`select * from t tmp where a = "   ";`).Check(testkit.Rows())
 
 	// Test both wildcard and column name exist in select field list
 	tk.MustExec(`set @@sql_mode="";`)
@@ -192,9 +192,9 @@ func (s *testPointGetSuite) TestPointGetAliasTableCharPK(c *C) {
 	tk.MustPointGet(`select tmp.* from t tmp where a = "aa";`).Check(testkit.Rows(`aa bb`))
 	tk.MustPointGet(`select tmp.a, tmp.b from t tmp where a = "aa";`).Check(testkit.Rows(`aa bb`))
 	tk.MustPointGet(`select tmp.*, tmp.a, tmp.b from t tmp where a = "aa";`).Check(testkit.Rows(`aa bb aa bb`))
-	tk.MustPointGet(`select tmp.* from t tmp where a = "aab";`).Check(testkit.Rows())
-	tk.MustPointGet(`select tmp.a, tmp.b from t tmp where a = "aab";`).Check(testkit.Rows())
-	tk.MustPointGet(`select tmp.*, tmp.a, tmp.b from t tmp where a = "aab";`).Check(testkit.Rows())
+	tk.MustTableDual(`select tmp.* from t tmp where a = "aab";`).Check(testkit.Rows())
+	tk.MustTableDual(`select tmp.a, tmp.b from t tmp where a = "aab";`).Check(testkit.Rows())
+	tk.MustTableDual(`select tmp.*, tmp.a, tmp.b from t tmp where a = "aab";`).Check(testkit.Rows())
 
 	// Test using table alias in where clause
 	tk.MustPointGet(`select * from t tmp where tmp.a = "aa";`).Check(testkit.Rows(`aa bb`))
@@ -265,7 +265,7 @@ func (s *testPointGetSuite) TestPointGetVarcharPK(c *C) {
 
 	tk.MustExec(`set @@sql_mode="";`)
 	tk.MustPointGet(`select * from t where a = "aa";`).Check(testkit.Rows(`aa bb`))
-	tk.MustPointGet(`select * from t where a = "aab";`).Check(testkit.Rows())
+	tk.MustTableDual(`select * from t where a = "aab";`).Check(testkit.Rows())
 
 	tk.MustExec(`truncate table t;`)
 	tk.MustExec(`insert into t values("a ", "b ");`)
@@ -273,7 +273,7 @@ func (s *testPointGetSuite) TestPointGetVarcharPK(c *C) {
 	tk.MustExec(`set @@sql_mode="";`)
 	tk.MustPointGet(`select * from t where a = "a";`).Check(testkit.Rows())
 	tk.MustPointGet(`select * from t where a = "a ";`).Check(testkit.Rows(`a  b `))
-	tk.MustPointGet(`select * from t where a = "a  ";`).Check(testkit.Rows())
+	tk.MustTableDual(`select * from t where a = "a  ";`).Check(testkit.Rows())
 
 	// // Test VARCHAR BINARY.
 	tk.MustExec(`drop table if exists t;`)
@@ -284,10 +284,10 @@ func (s *testPointGetSuite) TestPointGetVarcharPK(c *C) {
 	tk.MustExec(`set @@sql_mode="";`)
 	tk.MustPointGet(`select * from t where a = "a";`).Check(testkit.Rows())
 	tk.MustPointGet(`select * from t where a = "a ";`).Check(testkit.Rows(`a  b `))
-	tk.MustPointGet(`select * from t where a = "a  ";`).Check(testkit.Rows())
+	tk.MustTableDual(`select * from t where a = "a  ";`).Check(testkit.Rows())
 	tk.MustPointGet(`select * from t where a = " ";`).Check(testkit.Rows())
 	tk.MustPointGet(`select * from t where a = "  ";`).Check(testkit.Rows(`     `))
-	tk.MustPointGet(`select * from t where a = "   ";`).Check(testkit.Rows())
+	tk.MustTableDual(`select * from t where a = "   ";`).Check(testkit.Rows())
 
 }
 
@@ -366,6 +366,20 @@ func (s *testPointGetSuite) TestIndexLookupBinary(c *C) {
 	tk.MustIndexLookup(`select * from t where a = "a ";`).Check(testkit.Rows(`a  b `))
 	tk.MustIndexLookup(`select * from t where a = "a  ";`).Check(testkit.Rows())
 
+}
+
+func (s *testPointGetSuite) TestOverflowOrTruncated(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t6 (id bigint, a bigint, primary key(id), unique key(a));")
+	tk.MustExec("insert into t6 values(9223372036854775807, 9223372036854775807);")
+	tk.MustExec("insert into t6 values(1, 1);")
+	var nilVal []string
+	// for unique key
+	tk.MustQuery("select * from t6 where a = 9223372036854775808").Check(testkit.Rows(nilVal...))
+	tk.MustQuery("select * from t6 where a = '1.123'").Check(testkit.Rows(nilVal...))
+	// for primary key
+	tk.MustQuery("select * from t6 where id = 9223372036854775808").Check(testkit.Rows(nilVal...))
+	tk.MustQuery("select * from t6 where id = '1.123'").Check(testkit.Rows(nilVal...))
 }
 
 func (s *testPointGetSuite) TestIssue10448(c *C) {
