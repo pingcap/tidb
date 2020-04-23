@@ -3260,6 +3260,9 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	}
 	if b.ctx.GetSessionVars().TxnCtx.IsPessimistic {
 		if update.TableRefs.TableRefs.Right == nil {
+			// buildSelectLock is an optimization that can reduce RPC call.
+			// We only need do this optimization for single table update which is the most common case.
+			// When TableRefs.Right is nil, it is single table update.
 			p = b.buildSelectLock(p, ast.SelectLockForUpdate)
 		}
 	}
