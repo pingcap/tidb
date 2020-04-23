@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -78,7 +79,7 @@ func (s *testSuite3) TestCopClientSend(c *C) {
 	rs.Close()
 
 	// Split one region.
-	key := tablecodec.EncodeRowKeyWithHandle(tblID, 500)
+	key := tablecodec.EncodeRowKeyWithHandle(tblID, kv.IntHandle(500))
 	region, _ := s.cluster.GetRegionByKey(key)
 	peerID := s.cluster.AllocID()
 	s.cluster.Split(region.GetId(), s.cluster.AllocID(), key, []uint64{peerID}, peerID)

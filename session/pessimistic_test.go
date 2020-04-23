@@ -197,10 +197,10 @@ func (s *testPessimisticSuite) TestSingleStatementRollback(c *C) {
 	tk.MustExec("insert into single_statement values (1, 1), (2, 1), (3, 1), (4, 1)")
 	tblID := tk.GetTableID("single_statement")
 	s.cluster.SplitTable(s.mvccStore, tblID, 2)
-	region1Key := codec.EncodeBytes(nil, tablecodec.EncodeRowKeyWithHandle(tblID, 1))
+	region1Key := codec.EncodeBytes(nil, tablecodec.EncodeRowKeyWithHandle(tblID, kv.IntHandle(1)))
 	region1, _ := s.cluster.GetRegionByKey(region1Key)
 	region1ID := region1.Id
-	region2Key := codec.EncodeBytes(nil, tablecodec.EncodeRowKeyWithHandle(tblID, 3))
+	region2Key := codec.EncodeBytes(nil, tablecodec.EncodeRowKeyWithHandle(tblID, kv.IntHandle(3)))
 	region2, _ := s.cluster.GetRegionByKey(region2Key)
 	region2ID := region2.Id
 
@@ -1290,4 +1290,15 @@ func (s *testPessimisticSuite) TestKillWaitLockTxn(c *C) {
 	tk.Exec("rollback")
 	tk.MustExec("rollback")
 	tk2.MustExec("rollback")
+}
+
+func (s *testPessimisticSuite) TestDupLockInconsistency(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, index b (b))")
+	tk.MustExec("insert t (a) values (1), (1)")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update t, (select a from t) s set t.b = s.a")
+	tk.MustExec("commit")
+	tk.MustExec("admin check table t")
 }
