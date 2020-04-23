@@ -69,6 +69,7 @@ const (
 	ActionAddColumns                    ActionType = 37
 	ActionDropColumns                   ActionType = 38
 	ActionModifyTableAutoIdCache        ActionType = 39
+	ActionRebaseAutoRandom              ActionType = 40
 )
 
 const (
@@ -117,6 +118,7 @@ var actionMap = map[ActionType]string{
 	ActionAddColumns:                    "add multi-columns",
 	ActionDropColumns:                   "drop multi-columns",
 	ActionModifyTableAutoIdCache:        "modify auto id cache",
+	ActionRebaseAutoRandom:              "rebase auto_random ID",
 }
 
 // String return current ddl action in string
