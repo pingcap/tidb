@@ -1429,6 +1429,9 @@ func (s *Store) livenessLoop() {
 	t := time.NewTimer(time.Duration(atomic.LoadUint64(&s.liveness.checkInterval)))
 	for {
 		select {
+		case <-s.rc.closeCh:
+			t.Stop()
+			return
 		case <-s.closed:
 			t.Stop()
 			return
