@@ -39,6 +39,15 @@ func (c *cacheEntry) memConsume() int64 {
 	return int64(len(c.key.Hash()))
 }
 
+var (
+	// GlobalLRUMemUsageTracker tracks all the memory usage of SimpleLRUCache
+	GlobalLRUMemUsageTracker *memory.Tracker
+)
+
+func init() {
+	GlobalLRUMemUsageTracker = memory.NewGlobalTracker(stringutil.StringerStr("GlobalSimpleLRUCache"), -1)
+}
+
 // SimpleLRUCache is a simple least recently used cache, not thread-safe, use it carefully.
 type SimpleLRUCache struct {
 	capacity uint

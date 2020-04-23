@@ -43,7 +43,7 @@ func (c *Collector) ProfileReaderToDatums(f io.Reader) ([][]types.Datum, error) 
 	return c.profileToDatums(p)
 }
 
-func (c *Collector) profileToDatums(p *profile.Profile) ([][]types.Datum, error) {
+func (c *Collector) profileToFlamegraphCollector(p *profile.Profile) (*flamegraphCollector, error) {
 	err := p.CheckValid()
 	if err != nil {
 		return nil, err
@@ -56,6 +56,14 @@ func (c *Collector) profileToDatums(p *profile.Profile) ([][]types.Datum, error)
 
 	col := newFlamegraphCollector(p)
 	col.collect(root)
+	return col, nil
+}
+
+func (c *Collector) profileToDatums(p *profile.Profile) ([][]types.Datum, error) {
+	col, err := c.profileToFlamegraphCollector(p)
+	if err != nil {
+		return nil, err
+	}
 	return col.rows, nil
 }
 

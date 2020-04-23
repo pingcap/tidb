@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/pd/v4/client"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
@@ -56,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/domainutil"
+	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/printer"
@@ -598,6 +598,7 @@ func setGlobalVars() {
 	} else {
 		memory.GlobalMemoryUsageTracker.SetBytesLimit(int64(c.Performance.MaxMemory))
 	}
+	kvcache.GlobalLRUMemUsageTracker.AttachToGlobalTracker(memory.GlobalMemoryUsageTracker)
 }
 
 func setupLog() {

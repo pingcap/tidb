@@ -23,7 +23,7 @@ import (
 )
 
 var (
-	// GlobalMemoryUsageTracker is the ancestor of all the Executors' memory tracker
+	// GlobalMemoryUsageTracker is the ancestor of all the Executors' memory tracker and GlobalMemory Tracker
 	GlobalMemoryUsageTracker *Tracker
 )
 
