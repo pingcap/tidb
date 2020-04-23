@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"math"
 	"net/http"
@@ -85,9 +86,9 @@ type HotRegionsStat struct {
 // RegionStat records each hot region's statistics
 // it's the response of PD.
 type RegionStat struct {
-	RegionID  uint64 `json:"region_id"`
-	FlowBytes uint64 `json:"flow_bytes"`
-	HotDegree int    `json:"hot_degree"`
+	RegionID  uint64  `json:"region_id"`
+	FlowBytes float64 `json:"flow_bytes"`
+	HotDegree int     `json:"hot_degree"`
 }
 
 // RegionMetric presents the final metric output entry.
@@ -138,7 +139,7 @@ func (h *Helper) FetchHotRegion(rw string) (map[uint64]RegionMetric, error) {
 	metric := make(map[uint64]RegionMetric)
 	for _, hotRegions := range regionResp.AsLeader {
 		for _, region := range hotRegions.RegionsStat {
-			metric[region.RegionID] = RegionMetric{FlowBytes: region.FlowBytes, MaxHotDegree: region.HotDegree}
+			metric[region.RegionID] = RegionMetric{FlowBytes: uint64(region.FlowBytes), MaxHotDegree: region.HotDegree}
 		}
 	}
 	return metric, nil
@@ -216,14 +217,36 @@ func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, allSchem
 func (h *Helper) FindTableIndexOfRegion(allSchemas []*model.DBInfo, hotRange *RegionFrameRange) *FrameItem {
 	for _, db := range allSchemas {
 		for _, tbl := range db.Tables {
-			if f := hotRange.GetRecordFrame(tbl.ID, db.Name.O, tbl.Name.O); f != nil {
+			if f := findRangeInTable(hotRange, db, tbl); f != nil {
 				return f
 			}
-			for _, idx := range tbl.Indices {
-				if f := hotRange.GetIndexFrame(tbl.ID, idx.ID, db.Name.O, tbl.Name.O, idx.Name.O); f != nil {
-					return f
-				}
-			}
+		}
+	}
+	return nil
+}
+
+func findRangeInTable(hotRange *RegionFrameRange, db *model.DBInfo, tbl *model.TableInfo) *FrameItem {
+	pi := tbl.GetPartitionInfo()
+	if pi == nil {
+		return findRangeInPhysicalTable(hotRange, tbl.ID, db.Name.O, tbl.Name.O, tbl.Indices)
+	}
+
+	for _, def := range pi.Definitions {
+		tablePartition := fmt.Sprintf("%s(%s)", tbl.Name.O, def.Name)
+		if f := findRangeInPhysicalTable(hotRange, def.ID, db.Name.O, tablePartition, tbl.Indices); f != nil {
+			return f
+		}
+	}
+	return nil
+}
+
+func findRangeInPhysicalTable(hotRange *RegionFrameRange, physicalID int64, dbName, tblName string, indices []*model.IndexInfo) *FrameItem {
+	if f := hotRange.GetRecordFrame(physicalID, dbName, tblName); f != nil {
+		return f
+	}
+	for _, idx := range indices {
+		if f := hotRange.GetIndexFrame(physicalID, idx.ID, dbName, tblName, idx.Name.O); f != nil {
+			return f
 		}
 	}
 	return nil
