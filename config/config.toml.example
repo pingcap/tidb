@@ -74,6 +74,9 @@ alter-primary-key = false
 # if server-version = "", the default value(original TiDB version string) is used.
 server-version = ""
 
+# enable-table-lock is used to control table lock feature. Default is false, indicate the table lock feature is disabled.
+enable-table-lock = false
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"
