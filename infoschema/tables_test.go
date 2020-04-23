@@ -887,7 +887,6 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	tk.MustExec("set session tidb_enable_stmt_summary = ''")
 
 	tk.MustExec("set global tidb_enable_stmt_summary = 1")
-	defer tk.MustExec("set global tidb_enable_stmt_summary = ''")
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
 
 	// Invalidate the cache manually so that tidb_enable_stmt_summary works immediately.
@@ -975,7 +974,7 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	// Disable it again.
 	tk.MustExec("set global tidb_enable_stmt_summary = false")
 	tk.MustExec("set session tidb_enable_stmt_summary = false")
-	defer tk.MustExec("set global tidb_enable_stmt_summary = ''")
+	defer tk.MustExec("set global tidb_enable_stmt_summary = 1")
 	defer tk.MustExec("set session tidb_enable_stmt_summary = ''")
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("0"))
 
@@ -1070,7 +1069,7 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		from information_schema.statements_summary
 		where digest_text like 'select * from t%'`,
 	)
-	// Super user can query all reocrds
+	// Super user can query all records.
 	c.Assert(len(result.Rows()), Equals, 1)
 	result = tk.MustQuery(`select *
 		from information_schema.statements_summary_history
@@ -1113,7 +1112,6 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		AuthUsername: "root",
 		AuthHostname: "%",
 	}, nil, nil)
-	tk.MustExec("set global tidb_enable_stmt_summary = off")
 }
 
 // Test statements_summary_history.
@@ -1125,7 +1123,6 @@ func (s *testTableSuite) TestStmtSummaryHistoryTable(c *C) {
 
 	tk.MustExec("set global tidb_enable_stmt_summary = 1")
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
-	defer tk.MustExec("set global tidb_enable_stmt_summary = ''")
 
 	// Invalidate the cache manually so that tidb_enable_stmt_summary works immediately.
 	s.dom.GetGlobalVarsCache().Disable()
@@ -1169,7 +1166,6 @@ func (s *testTableSuite) TestStmtSummaryInternalQuery(c *C) {
 	tk.MustExec("create global binding for select * from t where t.a = 1 using select * from t ignore index(k) where t.a = 1")
 	tk.MustExec("set global tidb_enable_stmt_summary = 1")
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
-	defer tk.MustExec("set global tidb_enable_stmt_summary = ''")
 	// Invalidate the cache manually so that tidb_enable_stmt_summary works immediately.
 	s.dom.GetGlobalVarsCache().Disable()
 	// Disable refreshing summary.
@@ -1210,7 +1206,6 @@ func (s *testTableSuite) TestStmtSummaryErrorCount(c *C) {
 	// Clear summaries.
 	tk.MustExec("set global tidb_enable_stmt_summary = 0")
 	tk.MustExec("set global tidb_enable_stmt_summary = 1")
-	defer tk.MustExec("set global tidb_enable_stmt_summary = ''")
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists stmt_summary_test")
