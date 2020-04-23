@@ -62,12 +62,15 @@ func (n *flamegraphNode) add(sample *profile.Sample) {
 
 		// The previous implementation in TiDB identify nodes using location ID,
 		// but `go tool pprof` identify nodes using function ID. Should we follow?
-		loc := locs[len(locs)-1].ID
-		child, ok := n.children[loc]
+		loc := locs[len(locs)-1]
+		locID := loc.ID
+		child, ok := n.children[locID]
 		if !ok {
 			child = newFlamegraphNode()
-			n.children[loc] = child
-			child.name = locs[len(locs)-1].Line[0].Function.Name
+			n.children[locID] = child
+			if len(loc.Line) > 0 && loc.Line[0].Function != nil {
+				child.name = locs[len(locs)-1].Line[0].Function.Name
+			}
 		}
 		locs = locs[:len(locs)-1]
 		n = child
