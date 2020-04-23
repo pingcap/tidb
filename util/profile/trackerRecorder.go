@@ -17,8 +17,8 @@ import "github.com/pingcap/tidb/util/kvcache"
 
 var col = &Collector{}
 
-func recordMemTracker() error {
-	bytes, err := col.memProfileIntoGlobalTracker(kvcache.ProfileName)
+func memProfileIntoGlobalTracker() error {
+	bytes, err := col.getFuncMemUsage(kvcache.ProfileName)
 	if err != nil {
 		return err
 	}

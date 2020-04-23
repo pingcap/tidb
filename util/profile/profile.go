@@ -147,7 +147,8 @@ func (c *Collector) ParseGoroutines(reader io.Reader) ([][]types.Datum, error) {
 	return rows, nil
 }
 
-func (c *Collector) memProfileIntoGlobalTracker(name string) (int64, error) {
+// getFuncMemUsage get function memory usage from heap profile
+func (c *Collector) getFuncMemUsage(name string) (int64, error) {
 	prof := pprof.Lookup("heap")
 	if prof == nil {
 		return 0, errors.Errorf("cannot retrieve %s profile", name)
@@ -165,5 +166,5 @@ func (c *Collector) memProfileIntoGlobalTracker(name string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	return root.searchFuncUsage(name), nil
+	return root.collectFuncUsage(name), nil
 }

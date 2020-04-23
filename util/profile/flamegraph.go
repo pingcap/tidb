@@ -74,7 +74,8 @@ func (n *flamegraphNode) add(sample *profile.Sample) {
 	}
 }
 
-func (n *flamegraphNode) searchFuncUsage(name string) int64 {
+// collectFuncUsage collect the value by given function name
+func (n *flamegraphNode) collectFuncUsage(name string) int64 {
 	if n.name == name {
 		return n.cumValue
 	}
@@ -83,7 +84,7 @@ func (n *flamegraphNode) searchFuncUsage(name string) int64 {
 	}
 	var usage int64 = 0
 	for _, child := range n.children {
-		usage = child.searchFuncUsage(name) + usage
+		usage = child.collectFuncUsage(name) + usage
 	}
 	return usage
 }
