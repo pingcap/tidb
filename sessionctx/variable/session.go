@@ -1246,18 +1246,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBQueryLogMaxLen:
 		atomic.StoreUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen, uint64(tidbOptInt64(val, logutil.DefaultQueryLogMaxLen)))
 	case TiDBCheckMb4ValueInUTF8:
-<<<<<<< HEAD
-		conf := config.GetGlobalConfig()
-		if !conf.EnableDynamicConfig {
-			config.GetGlobalConfig().CheckMb4ValueInUTF8 = TiDBOptOn(val)
-		} else {
-			s.StmtCtx.AppendWarning(errors.Errorf("cannot update %s when enabling dynamic configs", TiDBCheckMb4ValueInUTF8))
-		}
-=======
 		config.GetGlobalConfig().CheckMb4ValueInUTF8 = TiDBOptOn(val)
-	case TiDBEnableCollectExecutionInfo:
-		config.GetGlobalConfig().EnableCollectExecutionInfo = TiDBOptOn(val)
->>>>>>> 557d9d3... config: remove the config item 'enable-dynamic-config' (#16358)
 	}
 	s.systems[name] = val
 	return nil
