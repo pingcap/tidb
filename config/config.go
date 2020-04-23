@@ -85,7 +85,7 @@ type Config struct {
 	MemQuotaQuery    int64  `toml:"mem-quota-query" json:"mem-quota-query"`
 	// TempStorageQuota describe the temporary storage Quota during query exector when OOMUseTmpStorage is enabled
 	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error
-	TempStorageQuota int64           `toml:"temp-storage-quota" json:"temp-storage-quota"` // Bytes
+	TempStorageQuota int64           `toml:"tmp-storage-quota" json:"tmp-storage-quota"` // Bytes
 	EnableStreaming  bool            `toml:"enable-streaming" json:"enable-streaming"`
 	EnableBatchDML   bool            `toml:"enable-batch-dml" json:"enable-batch-dml"`
 	TxnLocalLatches  TxnLocalLatches `toml:"-" json:"-"`
@@ -129,9 +129,6 @@ type Config struct {
 	NewCollationsEnabledOnFirstBootstrap bool `toml:"new_collations_enabled_on_first_bootstrap" json:"new_collations_enabled_on_first_bootstrap"`
 	// Experimental contains parameters for experimental features.
 	Experimental Experimental `toml:"experimental" json:"experimental"`
-	// EnableDynamicConfig enables the TiDB to fetch configs from PD and update itself during runtime.
-	// see https://github.com/pingcap/tidb/pull/13660 for more details.
-	EnableDynamicConfig bool `toml:"enable-dynamic-config" json:"enable-dynamic-config"`
 	// EnableCollectExecutionInfo enables the TiDB to collect execution info.
 	EnableCollectExecutionInfo bool `toml:"enable-collect-execution-info" json:"enable-collect-execution-info"`
 }
@@ -362,6 +359,7 @@ type Performance struct {
 	TCPKeepAlive        bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
 	CrossJoin           bool    `toml:"cross-join" json:"cross-join"`
 	RunAutoAnalyze      bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
+	DistinctAggPushDown bool    `toml:"distinct-agg-push-down" json:"agg-push-down-join"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -595,6 +593,7 @@ var defaultConf = Config{
 		ForcePriority:       "NO_PRIORITY",
 		BindInfoLease:       "3s",
 		TxnTotalSizeLimit:   DefTxnTotalSizeLimit,
+		DistinctAggPushDown: false,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
@@ -630,18 +629,10 @@ var defaultConf = Config{
 		StoreLimit:     0,
 
 		CoprCache: CoprocessorCache{
-			// WARNING: Currently Coprocessor Cache may lead to inconsistent result. Do not open it.
-			// These config items are hidden from user, so that fill them with zero value instead of default value.
-			Enabled:               false,
-			CapacityMB:            0,
-			AdmissionMaxResultMB:  0,
-			AdmissionMinProcessMs: 0,
-
-			// If you still want to use Coprocessor Cache, here are some recommended configurations:
-			// Enabled:               true,
-			// CapacityMB:            1000,
-			// AdmissionMaxResultMB:  10,
-			// AdmissionMinProcessMs: 5,
+			Enabled:               true,
+			CapacityMB:            1000,
+			AdmissionMaxResultMB:  10,
+			AdmissionMinProcessMs: 5,
 		},
 	},
 	Binlog: Binlog{
@@ -667,7 +658,6 @@ var defaultConf = Config{
 		AllowAutoRandom:       false,
 		AllowsExpressionIndex: false,
 	},
-	EnableDynamicConfig:        false,
 	EnableCollectExecutionInfo: false,
 }
 
@@ -856,6 +846,9 @@ func (c *Config) Valid() error {
 	}
 	if c.PreparedPlanCache.Capacity < 1 {
 		return fmt.Errorf("capacity in [prepared-plan-cache] should be at least 1")
+	}
+	if c.PreparedPlanCache.MemoryGuardRatio < 0 || c.PreparedPlanCache.MemoryGuardRatio > 1 {
+		return fmt.Errorf("memory-guard-ratio in [prepared-plan-cache] must be NOT less than 0 and more than 1")
 	}
 	if len(c.IsolationRead.Engines) < 1 {
 		return fmt.Errorf("the number of [isolation-read]engines for isolation read should be at least 1")
