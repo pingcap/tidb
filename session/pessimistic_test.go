@@ -1302,3 +1302,70 @@ func (s *testPessimisticSuite) TestDupLockInconsistency(c *C) {
 	tk.MustExec("commit")
 	tk.MustExec("admin check table t")
 }
+
+func (s *testPessimisticSuite) TestUseLockCacheInRCMode(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk3 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists test_kill")
+	tk.MustExec("CREATE TABLE SEQUENCE_VALUE_ITEM(SEQ_NAME varchar(60) NOT NULL, SEQ_ID decimal(18,0) DEFAULT NULL, " +
+		"PRIMARY KEY (SEQ_NAME))")
+	tk.MustExec("create table t1(c1 int, c2 int, unique key(c1))")
+	tk.MustExec(`insert into sequence_value_item values("OSCurrentStep", 0)`)
+	tk.MustExec("insert into t1 values(1, 1)")
+	tk.MustExec("insert into t1 values(2, 2)")
+
+	// tk2 uses RC isolation level
+	tk2.MustExec("set @@tx_isolation='READ-COMMITTED'")
+	tk2.MustExec("set autocommit = 0")
+
+	// test point get
+	tk2.MustExec("SELECT SEQ_ID FROM SEQUENCE_VALUE_ITEM WHERE SEQ_NAME='OSCurrentStep' FOR UPDATE")
+	tk2.MustExec("UPDATE SEQUENCE_VALUE_ITEM SET SEQ_ID=SEQ_ID+100 WHERE SEQ_NAME='OSCurrentStep'")
+	tk2.MustExec("rollback")
+	tk2.MustQuery("select * from t1 where c1 = 1 for update").Check(testkit.Rows("1 1"))
+	tk2.MustExec("update t1 set c2 = c2 + 10 where c1 = 1")
+	tk2.MustQuery("select * from t1 where c1 in (1, 2) for update").Check(testkit.Rows("1 11", "2 2"))
+	tk2.MustExec("update t1 set c2 = c2 + 10 where c1 in (2)")
+	tk2.MustQuery("select * from t1 where c1 in (1, 2) for update").Check(testkit.Rows("1 11", "2 12"))
+	tk2.MustExec("commit")
+
+	// tk3 uses begin with RC isolation level
+	tk3.MustQuery("select * from SEQUENCE_VALUE_ITEM").Check(testkit.Rows("OSCurrentStep 0"))
+	tk3.MustExec("set @@tx_isolation='READ-COMMITTED'")
+	tk3.MustExec("begin")
+	tk3.MustExec("SELECT SEQ_ID FROM SEQUENCE_VALUE_ITEM WHERE SEQ_NAME='OSCurrentStep' FOR UPDATE")
+	tk3.MustExec("UPDATE SEQUENCE_VALUE_ITEM SET SEQ_ID=SEQ_ID+100 WHERE SEQ_NAME='OSCurrentStep'")
+	tk3.MustQuery("select * from t1 where c1 = 1 for update").Check(testkit.Rows("1 11"))
+	tk3.MustExec("update t1 set c2 = c2 + 10 where c1 = 1")
+	tk3.MustQuery("select * from t1 where c1 in (1, 2) for update").Check(testkit.Rows("1 21", "2 12"))
+	tk3.MustExec("update t1 set c2 = c2 + 10 where c1 in (2)")
+	tk3.MustQuery("select * from t1 where c1 in (1, 2) for update").Check(testkit.Rows("1 21", "2 22"))
+	tk3.MustExec("commit")
+
+	// verify
+	tk.MustQuery("select * from SEQUENCE_VALUE_ITEM").Check(testkit.Rows("OSCurrentStep 100"))
+	tk.MustQuery("select * from SEQUENCE_VALUE_ITEM where SEQ_ID = 100").Check(testkit.Rows("OSCurrentStep 100"))
+	tk.MustQuery("select * from t1 where c1 = 2").Check(testkit.Rows("2 22"))
+	tk.MustQuery("select * from t1 where c1 in (1, 2, 3)").Check(testkit.Rows("1 21", "2 22"))
+
+	// test batch point get
+	tk2.MustExec("set autocommit = 1")
+	tk2.MustExec("set autocommit = 0")
+	tk2.MustExec("SELECT SEQ_ID FROM SEQUENCE_VALUE_ITEM WHERE SEQ_NAME in ('OSCurrentStep') FOR UPDATE")
+	tk2.MustExec("UPDATE SEQUENCE_VALUE_ITEM SET SEQ_ID=SEQ_ID+100 WHERE SEQ_NAME in ('OSCurrentStep')")
+	tk2.MustQuery("select * from t1 where c1 in (1, 2, 3, 4, 5) for update").Check(testkit.Rows("1 21", "2 22"))
+	tk2.MustExec("update t1 set c2 = c2 + 10 where c1 in (1, 2, 3, 4, 5)")
+	tk2.MustQuery("select * from t1 where c1 in (1, 2, 3, 4, 5) for update").Check(testkit.Rows("1 31", "2 32"))
+	tk2.MustExec("commit")
+	tk2.MustExec("SELECT SEQ_ID FROM SEQUENCE_VALUE_ITEM WHERE SEQ_NAME in ('OSCurrentStep') FOR UPDATE")
+	tk2.MustExec("UPDATE SEQUENCE_VALUE_ITEM SET SEQ_ID=SEQ_ID+100 WHERE SEQ_NAME in ('OSCurrentStep')")
+	tk2.MustExec("rollback")
+
+	tk.MustQuery("select * from SEQUENCE_VALUE_ITEM").Check(testkit.Rows("OSCurrentStep 200"))
+	tk.MustQuery("select * from SEQUENCE_VALUE_ITEM where SEQ_NAME in ('OSCurrentStep')").Check(testkit.Rows("OSCurrentStep 200"))
+	tk.MustQuery("select * from t1 where c1 in (1, 2, 3)").Check(testkit.Rows("1 31", "2 32"))
+	tk.MustExec("rollback")
+	tk2.MustExec("rollback")
+	tk3.MustExec("rollback")
+}
