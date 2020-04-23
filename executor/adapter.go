@@ -148,12 +148,7 @@ func (a *recordSet) NewChunk() *chunk.Chunk {
 
 func (a *recordSet) Close() error {
 	err := a.executor.Close()
-	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
-	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil, false)
-	a.stmt.SummaryStmt(a.lastErr == nil)
-	sessVars := a.stmt.Ctx.GetSessionVars()
-	pps := types.CloneRow(sessVars.PreparedParams)
-	sessVars.PrevStmt = FormatSQL(a.stmt.OriginText(), pps)
+	a.stmt.FinishExecuteStmt(a.txnStartTS, a.lastErr == nil, false)
 	a.stmt.logAudit()
 	// Detach the disk tracker from GlobalDiskUsageTracker after every execution
 	if stmtCtx := a.stmt.Ctx.GetSessionVars().StmtCtx; stmtCtx != nil && stmtCtx.DiskTracker != nil {
@@ -769,6 +764,31 @@ func FormatSQL(sql string, pps variable.PreparedParams) stringutil.StringerFunc 
 			sql = fmt.Sprintf("%.*q(len:%d)", maxQueryLen, sql, length)
 		}
 		return QueryReplacer.Replace(sql) + pps.String()
+	}
+}
+
+var (
+	sessionExecuteRunDurationInternal = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblInternal)
+	sessionExecuteRunDurationGeneral  = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblGeneral)
+)
+
+// FinishExecuteStmt is used to record some information after `ExecStmt` execution finished:
+// 1. record slow log if needed.
+// 2. record summary statement.
+// 3. record execute duration metric.
+// 4. update the `PrevStmt` in session variable.
+func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, succ bool, hasMoreResults bool) {
+	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
+	a.LogSlowQuery(txnTS, succ, hasMoreResults)
+	a.SummaryStmt(succ)
+	sessVars := a.Ctx.GetSessionVars()
+	pps := types.CloneRow(sessVars.PreparedParams)
+	sessVars.PrevStmt = FormatSQL(a.OriginText(), pps)
+	executeDuration := time.Since(sessVars.StartTime) - sessVars.DurationCompile
+	if sessVars.InRestrictedSQL {
+		sessionExecuteRunDurationInternal.Observe(executeDuration.Seconds())
+	} else {
+		sessionExecuteRunDurationGeneral.Observe(executeDuration.Seconds())
 	}
 }
 
