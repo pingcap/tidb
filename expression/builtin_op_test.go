@@ -59,7 +59,7 @@ func (s *testEvaluatorSuite) TestUnary(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.UnaryMinus].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.UnaryMinus].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -118,10 +118,10 @@ func (s *testEvaluatorSuite) TestLogicAnd(c *C) {
 	}
 
 	// Test incorrect parameter count.
-	_, err := newFunctionForTest(s.ctx, ast.LogicAnd, Zero)
+	_, err := newFunctionForTest(s.ctx, ast.LogicAnd, NewZero())
 	c.Assert(err, NotNil)
 
-	_, err = funcs[ast.LogicAnd].getFunction(s.ctx, []Expression{Zero, Zero})
+	_, err = funcs[ast.LogicAnd].getFunction(s.ctx, []Expression{NewZero(), NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -187,10 +187,10 @@ func (s *testEvaluatorSuite) TestRightShift(c *C) {
 	}
 
 	// Test incorrect parameter count.
-	_, err := newFunctionForTest(s.ctx, ast.RightShift, Zero)
+	_, err := newFunctionForTest(s.ctx, ast.RightShift, NewZero())
 	c.Assert(err, NotNil)
 
-	_, err = funcs[ast.RightShift].getFunction(s.ctx, []Expression{Zero, Zero})
+	_, err = funcs[ast.RightShift].getFunction(s.ctx, []Expression{NewZero(), NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -225,10 +225,10 @@ func (s *testEvaluatorSuite) TestBitXor(c *C) {
 	}
 
 	// Test incorrect parameter count.
-	_, err := newFunctionForTest(s.ctx, ast.Xor, Zero)
+	_, err := newFunctionForTest(s.ctx, ast.Xor, NewZero())
 	c.Assert(err, NotNil)
 
-	_, err = funcs[ast.Xor].getFunction(s.ctx, []Expression{Zero, Zero})
+	_, err = funcs[ast.Xor].getFunction(s.ctx, []Expression{NewZero(), NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -270,10 +270,10 @@ func (s *testEvaluatorSuite) TestBitOr(c *C) {
 	}
 
 	// Test incorrect parameter count.
-	_, err := newFunctionForTest(s.ctx, ast.Or, Zero)
+	_, err := newFunctionForTest(s.ctx, ast.Or, NewZero())
 	c.Assert(err, NotNil)
 
-	_, err = funcs[ast.Or].getFunction(s.ctx, []Expression{Zero, Zero})
+	_, err = funcs[ast.Or].getFunction(s.ctx, []Expression{NewZero(), NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -336,10 +336,10 @@ func (s *testEvaluatorSuite) TestLogicOr(c *C) {
 	}
 
 	// Test incorrect parameter count.
-	_, err := newFunctionForTest(s.ctx, ast.LogicOr, Zero)
+	_, err := newFunctionForTest(s.ctx, ast.LogicOr, NewZero())
 	c.Assert(err, NotNil)
 
-	_, err = funcs[ast.LogicOr].getFunction(s.ctx, []Expression{Zero, Zero})
+	_, err = funcs[ast.LogicOr].getFunction(s.ctx, []Expression{NewZero(), NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -374,10 +374,10 @@ func (s *testEvaluatorSuite) TestBitAnd(c *C) {
 	}
 
 	// Test incorrect parameter count.
-	_, err := newFunctionForTest(s.ctx, ast.And, Zero)
+	_, err := newFunctionForTest(s.ctx, ast.And, NewZero())
 	c.Assert(err, NotNil)
 
-	_, err = funcs[ast.And].getFunction(s.ctx, []Expression{Zero, Zero})
+	_, err = funcs[ast.And].getFunction(s.ctx, []Expression{NewZero(), NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -419,10 +419,10 @@ func (s *testEvaluatorSuite) TestBitNeg(c *C) {
 	}
 
 	// Test incorrect parameter count.
-	_, err := newFunctionForTest(s.ctx, ast.BitNeg, Zero, Zero)
+	_, err := newFunctionForTest(s.ctx, ast.BitNeg, NewZero(), NewZero())
 	c.Assert(err, NotNil)
 
-	_, err = funcs[ast.BitNeg].getFunction(s.ctx, []Expression{Zero})
+	_, err = funcs[ast.BitNeg].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -470,10 +470,10 @@ func (s *testEvaluatorSuite) TestUnaryNot(c *C) {
 	}
 
 	// Test incorrect parameter count.
-	_, err := newFunctionForTest(s.ctx, ast.UnaryNot, Zero, Zero)
+	_, err := newFunctionForTest(s.ctx, ast.UnaryNot, NewZero(), NewZero())
 	c.Assert(err, NotNil)
 
-	_, err = funcs[ast.UnaryNot].getFunction(s.ctx, []Expression{Zero})
+	_, err = funcs[ast.UnaryNot].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -619,9 +619,9 @@ func (s *testEvaluatorSuite) TestLogicXor(c *C) {
 	}
 
 	// Test incorrect parameter count.
-	_, err := newFunctionForTest(s.ctx, ast.LogicXor, Zero)
+	_, err := newFunctionForTest(s.ctx, ast.LogicXor, NewZero())
 	c.Assert(err, NotNil)
 
-	_, err = funcs[ast.LogicXor].getFunction(s.ctx, []Expression{Zero, Zero})
+	_, err = funcs[ast.LogicXor].getFunction(s.ctx, []Expression{NewZero(), NewZero()})
 	c.Assert(err, IsNil)
 }
