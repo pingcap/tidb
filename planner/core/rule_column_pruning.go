@@ -100,7 +100,7 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 	}
 	if len(la.AggFuncs) == 0 {
 		// If all the aggregate functions are pruned, we should add an aggregate function to keep the correctness.
-		one, err := aggregation.NewAggFuncDesc(la.ctx, ast.AggFuncFirstRow, []expression.Expression{expression.One}, false)
+		one, err := aggregation.NewAggFuncDesc(la.ctx, ast.AggFuncFirstRow, []expression.Expression{expression.NewOne()}, false)
 		if err != nil {
 			return err
 		}
@@ -124,7 +124,7 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 		// If all the group by items are pruned, we should add a constant 1 to keep the correctness.
 		// Because `select count(*) from t` is different from `select count(*) from t group by 1`.
 		if len(la.GroupByItems) == 0 {
-			la.GroupByItems = []expression.Expression{expression.One}
+			la.GroupByItems = []expression.Expression{expression.NewOne()}
 		}
 	}
 	return child.PruneColumns(selfUsedCols)

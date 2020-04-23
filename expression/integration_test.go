@@ -5458,6 +5458,33 @@ func (s *testIntegrationSerialSuite) TestIssue16205(c *C) {
 	c.Assert(rows1[0][0].(string), Not(Equals), rows2[0][0].(string))
 }
 
+func (s *testIntegrationSerialSuite) TestRowCountPlanCache(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	var err error
+	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int auto_increment primary key)")
+	tk.MustExec("prepare stmt from 'select row_count()';")
+	tk.MustExec("insert into t values()")
+	res := tk.MustQuery("execute stmt").Rows()
+	c.Assert(len(res), Equals, 1)
+	c.Assert(res[0][0], Equals, "1")
+	tk.MustExec("insert into t values(),(),()")
+	res = tk.MustQuery("execute stmt").Rows()
+	c.Assert(len(res), Equals, 1)
+	c.Assert(res[0][0], Equals, "3")
+}
+
 func (s *testIntegrationSuite) TestValuesForBinaryLiteral(c *C) {
 	// See issue #15310
 	tk := testkit.NewTestKit(c, s.store)

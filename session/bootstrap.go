@@ -377,6 +377,8 @@ const (
 	version41 = 41
 	// version42 add storeType and reason column in expr_pushdown_blacklist
 	version42 = 42
+	// version43 updates global variables related to statement summary.
+	version43 = 43
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -603,6 +605,10 @@ func upgrade(s Session) {
 
 	if ver < version42 {
 		upgradeToVer42(s)
+	}
+
+	if ver < version43 {
+		upgradeToVer43(s)
 	}
 
 	updateBootstrapVer(s)
@@ -991,6 +997,22 @@ func upgradeToVer42(s Session) {
 	writeDefaultExprPushDownBlacklist(s)
 }
 
+// Convert statement summary global variables to non-empty values.
+func writeStmtSummaryVars(s Session) {
+	sql := fmt.Sprintf("UPDATE %s.%s SET variable_value='%%s' WHERE variable_name='%%s' AND variable_value=''", mysql.SystemDB, mysql.GlobalVariablesTable)
+	stmtSummaryConfig := config.GetGlobalConfig().StmtSummary
+	mustExecute(s, fmt.Sprintf(sql, variable.BoolToIntStr(stmtSummaryConfig.Enable), variable.TiDBEnableStmtSummary))
+	mustExecute(s, fmt.Sprintf(sql, variable.BoolToIntStr(stmtSummaryConfig.EnableInternalQuery), variable.TiDBStmtSummaryInternalQuery))
+	mustExecute(s, fmt.Sprintf(sql, strconv.Itoa(stmtSummaryConfig.RefreshInterval), variable.TiDBStmtSummaryRefreshInterval))
+	mustExecute(s, fmt.Sprintf(sql, strconv.Itoa(stmtSummaryConfig.HistorySize), variable.TiDBStmtSummaryHistorySize))
+	mustExecute(s, fmt.Sprintf(sql, strconv.FormatUint(uint64(stmtSummaryConfig.MaxStmtCount), 10), variable.TiDBStmtSummaryMaxStmtCount))
+	mustExecute(s, fmt.Sprintf(sql, strconv.FormatUint(uint64(stmtSummaryConfig.MaxSQLLength), 10), variable.TiDBStmtSummaryMaxSQLLength))
+}
+
+func upgradeToVer43(s Session) {
+	writeStmtSummaryVars(s)
+}
+
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
@@ -1099,6 +1121,8 @@ func doDMLWorks(s Session) {
 	writeNewCollationParameter(s, config.GetGlobalConfig().NewCollationsEnabledOnFirstBootstrap)
 
 	writeDefaultExprPushDownBlacklist(s)
+
+	writeStmtSummaryVars(s)
 
 	_, err := s.Execute(context.Background(), "COMMIT")
 	if err != nil {
