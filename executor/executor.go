@@ -114,13 +114,13 @@ const (
 	globalPanicMemoryExceed string = "Out Of Global Memory Limit!"
 )
 
-// GlobalPanicOnExceed panics when GlobalDisTracker storage usage exceeds storage quota.
-type GlobalPanicOnExceed struct {
+// globalPanicOnExceed panics when GlobalDisTracker storage usage exceeds storage quota.
+type globalPanicOnExceed struct {
 	mutex sync.Mutex // For synchronization.
 }
 
 func init() {
-	action := &GlobalPanicOnExceed{}
+	action := &globalPanicOnExceed{}
 	GlobalMemoryUsageTracker = memory.NewGlobalTracker(stringutil.StringerStr(globalMemoryLabel), -1)
 	GlobalMemoryUsageTracker.SetActionOnExceed(action)
 	GlobalDiskUsageTracker = disk.NewGlobalTrcaker(stringutil.StringerStr(globalStorageLabel), -1)
@@ -128,10 +128,10 @@ func init() {
 }
 
 // SetLogHook sets a hook for PanicOnExceed.
-func (a *GlobalPanicOnExceed) SetLogHook(hook func(uint64)) {}
+func (a *globalPanicOnExceed) SetLogHook(hook func(uint64)) {}
 
 // Action panics when storage usage exceeds storage quota.
-func (a *GlobalPanicOnExceed) Action(t *memory.Tracker) {
+func (a *globalPanicOnExceed) Action(t *memory.Tracker) {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
 	t.Label().String()
@@ -148,7 +148,7 @@ func (a *GlobalPanicOnExceed) Action(t *memory.Tracker) {
 }
 
 // SetFallback sets a fallback action.
-func (a *GlobalPanicOnExceed) SetFallback(memory.ActionOnExceed) {}
+func (a *globalPanicOnExceed) SetFallback(memory.ActionOnExceed) {}
 
 // base returns the baseExecutor of an executor, don't override this method!
 func (e *baseExecutor) base() *baseExecutor {
