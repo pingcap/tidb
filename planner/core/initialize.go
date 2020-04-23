@@ -462,22 +462,6 @@ func (p BatchPointGetPlan) Init(ctx sessionctx.Context, stats *property.StatsInf
 	return &p
 }
 
-// isTreePlan returns true if the plan is actually a tree
-func isTreePlan(plan PhysicalPlan) bool {
-	if len(plan.Children()) > 1 {
-		return true
-	}
-	if len(plan.Children()) == 0 {
-		return false
-	}
-	for _, child := range plan.Children() {
-		if isTreePlan(child) {
-			return true
-		}
-	}
-	return false
-}
-
 func flattenTreePlan(plan PhysicalPlan, plans []PhysicalPlan) []PhysicalPlan {
 	plans = append(plans, plan)
 	for _, child := range plan.Children() {
@@ -489,18 +473,7 @@ func flattenTreePlan(plan PhysicalPlan, plans []PhysicalPlan) []PhysicalPlan {
 // flattenPushDownPlan converts a plan tree to a list, whose head is the leaf node like table scan.
 func flattenPushDownPlan(p PhysicalPlan) []PhysicalPlan {
 	plans := make([]PhysicalPlan, 0, 5)
-	if isTreePlan(p) {
-		// tree plan is only used by TiFlash
-		plans = flattenTreePlan(p, plans)
-	} else {
-		for {
-			plans = append(plans, p)
-			if len(p.Children()) == 0 {
-				break
-			}
-			p = p.Children()[0]
-		}
-	}
+	plans = flattenTreePlan(p, plans)
 	for i := 0; i < len(plans)/2; i++ {
 		j := len(plans) - i - 1
 		plans[i], plans[j] = plans[j], plans[i]
