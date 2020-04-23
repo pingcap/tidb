@@ -1259,6 +1259,10 @@ func (e *memtableRetriever) setNewTiKVRegionStatusCol(region *helper.RegionInfo,
 	row[12].SetInt64(region.ReadBytes)
 	row[13].SetInt64(region.ApproximateSize)
 	row[14].SetInt64(region.ApproximateKeys)
+	if region.ReplicationStatus != nil {
+		row[15].SetString(region.ReplicationStatus.State, mysql.DefaultCollationName)
+		row[16].SetInt64(region.ReplicationStatus.StateID)
+	}
 	e.rows = append(e.rows, row)
 }
 
