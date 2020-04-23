@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stmtsummary"
@@ -220,7 +221,7 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 	case variable.TiDBStmtSummaryMaxSQLLength:
 		return stmtsummary.StmtSummaryByDigestMap.SetMaxSQLLength(valStr, !v.IsGlobal)
 	case variable.TiDBCapturePlanBaseline:
-		variable.CapturePlanBaseline.Set(valStr, !v.IsGlobal)
+		variable.CapturePlanBaseline.Set(strings.ToLower(valStr), !v.IsGlobal)
 	}
 
 	return nil
@@ -234,7 +235,7 @@ func (e *SetExecutor) setCharset(cs, co string) error {
 		}
 	} else {
 		var coll *charset.Collation
-		if coll, err = charset.GetCollationByName(co); err != nil {
+		if coll, err = collate.GetCollationByName(co); err != nil {
 			return err
 		}
 		if coll.CharsetName != cs {

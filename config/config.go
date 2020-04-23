@@ -16,6 +16,7 @@ package config
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -44,6 +45,10 @@ const (
 	DefMaxIndexLength = 3072
 	// DefMaxOfMaxIndexLength is the maximum index length(in bytes) for TiDB v3.0.7 and previous version.
 	DefMaxOfMaxIndexLength = 3072 * 4
+	// DefPort is the default port of TiDB
+	DefPort = 4000
+	// DefStatusPort is the default status port of TiBD
+	DefStatusPort = 10080
 )
 
 // Valid config maps
@@ -56,25 +61,30 @@ var (
 	CheckTableBeforeDrop = false
 	// checkBeforeDropLDFlag is a go build flag.
 	checkBeforeDropLDFlag = "None"
+	// tempStorageDirName is the default temporary storage dir name by base64 encoding a string `port/statusPort`
+	tempStorageDirName = encodeDefTempStorageDir(DefPort, DefStatusPort)
 )
 
 // Config contains configuration options.
 type Config struct {
-	Host             string          `toml:"host" json:"host"`
-	AdvertiseAddress string          `toml:"advertise-address" json:"advertise-address"`
-	Port             uint            `toml:"port" json:"port"`
-	Cors             string          `toml:"cors" json:"cors"`
-	Store            string          `toml:"store" json:"store"`
-	Path             string          `toml:"path" json:"path"`
-	Socket           string          `toml:"socket" json:"socket"`
-	Lease            string          `toml:"lease" json:"lease"`
-	RunDDL           bool            `toml:"run-ddl" json:"run-ddl"`
-	SplitTable       bool            `toml:"split-table" json:"split-table"`
-	TokenLimit       uint            `toml:"token-limit" json:"token-limit"`
-	OOMUseTmpStorage bool            `toml:"oom-use-tmp-storage" json:"oom-use-tmp-storage"`
-	TempStoragePath  string          `toml:"tmp-storage-path" json:"tmp-storage-path"`
-	OOMAction        string          `toml:"oom-action" json:"oom-action"`
-	MemQuotaQuery    int64           `toml:"mem-quota-query" json:"mem-quota-query"`
+	Host             string `toml:"host" json:"host"`
+	AdvertiseAddress string `toml:"advertise-address" json:"advertise-address"`
+	Port             uint   `toml:"port" json:"port"`
+	Cors             string `toml:"cors" json:"cors"`
+	Store            string `toml:"store" json:"store"`
+	Path             string `toml:"path" json:"path"`
+	Socket           string `toml:"socket" json:"socket"`
+	Lease            string `toml:"lease" json:"lease"`
+	RunDDL           bool   `toml:"run-ddl" json:"run-ddl"`
+	SplitTable       bool   `toml:"split-table" json:"split-table"`
+	TokenLimit       uint   `toml:"token-limit" json:"token-limit"`
+	OOMUseTmpStorage bool   `toml:"oom-use-tmp-storage" json:"oom-use-tmp-storage"`
+	TempStoragePath  string `toml:"tmp-storage-path" json:"tmp-storage-path"`
+	OOMAction        string `toml:"oom-action" json:"oom-action"`
+	MemQuotaQuery    int64  `toml:"mem-quota-query" json:"mem-quota-query"`
+	// TempStorageQuota describe the temporary storage Quota during query exector when OOMUseTmpStorage is enabled
+	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error
+	TempStorageQuota int64           `toml:"tmp-storage-quota" json:"tmp-storage-quota"` // Bytes
 	EnableStreaming  bool            `toml:"enable-streaming" json:"enable-streaming"`
 	EnableBatchDML   bool            `toml:"enable-batch-dml" json:"enable-batch-dml"`
 	TxnLocalLatches  TxnLocalLatches `toml:"-" json:"-"`
@@ -121,6 +131,19 @@ type Config struct {
 	// EnableDynamicConfig enables the TiDB to fetch configs from PD and update itself during runtime.
 	// see https://github.com/pingcap/tidb/pull/13660 for more details.
 	EnableDynamicConfig bool `toml:"enable-dynamic-config" json:"enable-dynamic-config"`
+}
+
+// UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
+// and the `tmp-storage-path` was not specified in the conf.toml or was specified the same as the default value.
+func (c *Config) UpdateTempStoragePath() {
+	if c.TempStoragePath == tempStorageDirName {
+		c.TempStoragePath = encodeDefTempStorageDir(c.Port, c.Status.StatusPort)
+	}
+}
+
+func encodeDefTempStorageDir(port, statusPort uint) string {
+	dirName := base64.URLEncoding.EncodeToString([]byte(fmt.Sprintf("%v/%v", port, statusPort)))
+	return filepath.Join(os.TempDir(), "tidb", dirName, "tmp-storage")
 }
 
 // nullableBool defaults unset bool options to unset instead of false, which enables us to know if the user has set 2
@@ -503,7 +526,7 @@ type Experimental struct {
 var defaultConf = Config{
 	Host:                         "0.0.0.0",
 	AdvertiseAddress:             "",
-	Port:                         4000,
+	Port:                         DefPort,
 	Cors:                         "",
 	Store:                        "mocktikv",
 	Path:                         "/tmp/tidb",
@@ -512,7 +535,8 @@ var defaultConf = Config{
 	Lease:                        "45s",
 	TokenLimit:                   1000,
 	OOMUseTmpStorage:             true,
-	TempStoragePath:              filepath.Join(os.TempDir(), "tidb", "tmp-storage"),
+	TempStorageQuota:             -1,
+	TempStoragePath:              tempStorageDirName,
 	OOMAction:                    OOMActionCancel,
 	MemQuotaQuery:                1 << 30,
 	EnableStreaming:              false,
@@ -551,7 +575,7 @@ var defaultConf = Config{
 	Status: Status{
 		ReportStatus:    true,
 		StatusHost:      "0.0.0.0",
-		StatusPort:      10080,
+		StatusPort:      DefStatusPort,
 		MetricsInterval: 15,
 		RecordQPSbyDB:   false,
 	},
@@ -603,18 +627,10 @@ var defaultConf = Config{
 		StoreLimit:     0,
 
 		CoprCache: CoprocessorCache{
-			// WARNING: Currently Coprocessor Cache may lead to inconsistent result. Do not open it.
-			// These config items are hidden from user, so that fill them with zero value instead of default value.
-			Enabled:               false,
-			CapacityMB:            0,
-			AdmissionMaxResultMB:  0,
-			AdmissionMinProcessMs: 0,
-
-			// If you still want to use Coprocessor Cache, here are some recommended configurations:
-			// Enabled:               true,
-			// CapacityMB:            1000,
-			// AdmissionMaxResultMB:  10,
-			// AdmissionMinProcessMs: 5,
+			Enabled:               true,
+			CapacityMB:            1000,
+			AdmissionMaxResultMB:  10,
+			AdmissionMinProcessMs: 5,
 		},
 	},
 	Binlog: Binlog{
@@ -833,6 +849,9 @@ func (c *Config) Valid() error {
 	}
 	if c.PreparedPlanCache.Capacity < 1 {
 		return fmt.Errorf("capacity in [prepared-plan-cache] should be at least 1")
+	}
+	if c.PreparedPlanCache.MemoryGuardRatio < 0 || c.PreparedPlanCache.MemoryGuardRatio > 1 {
+		return fmt.Errorf("memory-guard-ratio in [prepared-plan-cache] must be NOT less than 0 and more than 1")
 	}
 	if len(c.IsolationRead.Engines) < 1 {
 		return fmt.Errorf("the number of [isolation-read]engines for isolation read should be at least 1")

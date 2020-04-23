@@ -32,9 +32,6 @@ var perfSchemaTables = []string{
 	tableStagesHistory,
 	tableStagesHistoryLong,
 	tableEventsStatementsSummaryByDigest,
-	tableEventsStatementsSummaryByDigestHistory,
-	tableClusterEventsStatementsSummaryByDigest,
-	tableClusterEventsStatementsSummaryByDigestHistory,
 	tableTiDBProfileCPU,
 	tableTiDBProfileMemory,
 	tableTiDBProfileMutex,
@@ -384,93 +381,45 @@ const tableStagesHistoryLong = "CREATE TABLE if not exists performance_schema." 
 	"NESTING_EVENT_ID		BIGINT(20) UNSIGNED," +
 	"NESTING_EVENT_TYPE		ENUM('TRANSACTION','STATEMENT','STAGE'));"
 
-// Fields in `events_statements_summary_by_digest` and `events_statements_summary_by_digest_history` are the same.
-const fieldsInEventsStatementsSummary = "SUMMARY_BEGIN_TIME TIMESTAMP(6) NOT NULL," +
-	"SUMMARY_END_TIME TIMESTAMP(6) NOT NULL," +
-	"STMT_TYPE VARCHAR(64) NOT NULL," +
-	"SCHEMA_NAME VARCHAR(64) DEFAULT NULL," +
-	"DIGEST VARCHAR(64) NOT NULL," +
-	"DIGEST_TEXT LONGTEXT NOT NULL," +
-	"TABLE_NAMES TEXT DEFAULT NULL," +
-	"INDEX_NAMES TEXT DEFAULT NULL," +
-	"SAMPLE_USER VARCHAR(64) DEFAULT NULL," +
-	"EXEC_COUNT BIGINT(20) UNSIGNED NOT NULL," +
-	"SUM_LATENCY BIGINT(20) UNSIGNED NOT NULL," +
-	"MAX_LATENCY BIGINT(20) UNSIGNED NOT NULL," +
-	"MIN_LATENCY BIGINT(20) UNSIGNED NOT NULL," +
-	"AVG_LATENCY BIGINT(20) UNSIGNED NOT NULL," +
-	"AVG_PARSE_LATENCY BIGINT(20) UNSIGNED NOT NULL," +
-	"MAX_PARSE_LATENCY BIGINT(20) UNSIGNED NOT NULL," +
-	"AVG_COMPILE_LATENCY BIGINT(20) UNSIGNED NOT NULL," +
-	"MAX_COMPILE_LATENCY BIGINT(20) UNSIGNED NOT NULL," +
-	"COP_TASK_NUM BIGINT(20) UNSIGNED NOT NULL," +
-	"AVG_COP_PROCESS_TIME BIGINT(20) UNSIGNED NOT NULL," +
-	"MAX_COP_PROCESS_TIME BIGINT(20) UNSIGNED NOT NULL," +
-	"MAX_COP_PROCESS_ADDRESS VARCHAR(256) DEFAULT NULL," +
-	"AVG_COP_WAIT_TIME BIGINT(20) UNSIGNED NOT NULL," +
-	"MAX_COP_WAIT_TIME BIGINT(20) UNSIGNED NOT NULL," +
-	"MAX_COP_WAIT_ADDRESS VARCHAR(256) DEFAULT NULL," +
-	"AVG_PROCESS_TIME BIGINT(20) UNSIGNED NOT NULL," +
-	"MAX_PROCESS_TIME BIGINT(20) UNSIGNED NOT NULL," +
-	"AVG_WAIT_TIME BIGINT(20) UNSIGNED NOT NULL," +
-	"MAX_WAIT_TIME BIGINT(20) UNSIGNED NOT NULL," +
-	"AVG_BACKOFF_TIME BIGINT(20) UNSIGNED NOT NULL," +
-	"MAX_BACKOFF_TIME BIGINT(20) UNSIGNED NOT NULL," +
-	"AVG_TOTAL_KEYS BIGINT(20) UNSIGNED NOT NULL," +
-	"MAX_TOTAL_KEYS BIGINT(20) UNSIGNED NOT NULL," +
-	"AVG_PROCESSED_KEYS BIGINT(20) UNSIGNED NOT NULL," +
-	"MAX_PROCESSED_KEYS BIGINT(20) UNSIGNED NOT NULL," +
-	"AVG_PREWRITE_TIME BIGINT(20) UNSIGNED NOT NULL," +
-	"MAX_PREWRITE_TIME BIGINT(20) UNSIGNED NOT NULL," +
-	"AVG_COMMIT_TIME BIGINT(20) UNSIGNED NOT NULL," +
-	"MAX_COMMIT_TIME BIGINT(20) UNSIGNED NOT NULL," +
-	"AVG_GET_COMMIT_TS_TIME BIGINT(20) UNSIGNED NOT NULL," +
-	"MAX_GET_COMMIT_TS_TIME BIGINT(20) UNSIGNED NOT NULL," +
-	"AVG_COMMIT_BACKOFF_TIME BIGINT(20) UNSIGNED NOT NULL," +
-	"MAX_COMMIT_BACKOFF_TIME BIGINT(20) UNSIGNED NOT NULL," +
-	"AVG_RESOLVE_LOCK_TIME BIGINT(20) UNSIGNED NOT NULL," +
-	"MAX_RESOLVE_LOCK_TIME BIGINT(20) UNSIGNED NOT NULL," +
-	"AVG_LOCAL_LATCH_WAIT_TIME BIGINT(20) UNSIGNED NOT NULL," +
-	"MAX_LOCAL_LATCH_WAIT_TIME BIGINT(20) UNSIGNED NOT NULL," +
-	"AVG_WRITE_KEYS DOUBLE UNSIGNED NOT NULL," +
-	"MAX_WRITE_KEYS BIGINT(20) UNSIGNED NOT NULL," +
-	"AVG_WRITE_SIZE DOUBLE NOT NULL," +
-	"MAX_WRITE_SIZE BIGINT(20) UNSIGNED NOT NULL," +
-	"AVG_PREWRITE_REGIONS DOUBLE NOT NULL," +
-	"MAX_PREWRITE_REGIONS INT(11) UNSIGNED NOT NULL," +
-	"AVG_TXN_RETRY DOUBLE NOT NULL," +
-	"MAX_TXN_RETRY INT(11) UNSIGNED NOT NULL," +
-	"SUM_BACKOFF_TIMES BIGINT(20) UNSIGNED NOT NULL," +
-	"BACKOFF_TYPES VARCHAR(1024) DEFAULT NULL," +
-	"AVG_MEM BIGINT(20) UNSIGNED NOT NULL," +
-	"MAX_MEM BIGINT(20) UNSIGNED NOT NULL," +
-	"AVG_AFFECTED_ROWS DOUBLE UNSIGNED NOT NULL," +
-	"FIRST_SEEN TIMESTAMP(6) NOT NULL," +
-	"LAST_SEEN TIMESTAMP(6) NOT NULL," +
-	"QUERY_SAMPLE_TEXT LONGTEXT DEFAULT NULL," +
-	"PREV_SAMPLE_TEXT LONGTEXT DEFAULT NULL," +
-	"PLAN_DIGEST VARCHAR(64) DEFAULT NULL," +
-	"PLAN LONGTEXT DEFAULT NULL);"
-
 // tableEventsStatementsSummaryByDigest contains the column name definitions for table
 // events_statements_summary_by_digest, same as MySQL.
-const tableEventsStatementsSummaryByDigest = "CREATE TABLE if not exists " + tableNameEventsStatementsSummaryByDigest +
-	"(" + fieldsInEventsStatementsSummary
-
-// tableEventsStatementsSummaryByDigestHistory contains the column name definitions for table
-// events_statements_summary_by_digest_history.
-const tableEventsStatementsSummaryByDigestHistory = "CREATE TABLE if not exists " + tableNameEventsStatementsSummaryByDigestHistory +
-	"(" + fieldsInEventsStatementsSummary
-
-// tableClusterEventsStatementsSummaryByDigest contains the column name definitions for table
-// cluster_events_statements_summary_by_digest, same as MySQL.
-const tableClusterEventsStatementsSummaryByDigest = "CREATE TABLE if not exists " + tableNameClusterEventsStatementsSummaryByDigest +
-	"(ADDRESS VARCHAR(64) DEFAULT NULL," + fieldsInEventsStatementsSummary
-
-// tableClusterEventsStatementsSummaryByDigestHistory contains the column name definitions for table
-// cluster_events_statements_summary_by_digest_history.
-const tableClusterEventsStatementsSummaryByDigestHistory = "CREATE TABLE if not exists " + tableNameClusterEventsStatementsSummaryByDigestHistory +
-	"(ADDRESS VARCHAR(64) DEFAULT NULL," + fieldsInEventsStatementsSummary
+const tableEventsStatementsSummaryByDigest = "CREATE TABLE if not exists performance_schema." + tableNameEventsStatementsSummaryByDigest + " (" +
+	"SCHEMA_NAME varchar(64) DEFAULT NULL," +
+	"DIGEST varchar(64) DEFAULT NULL," +
+	"DIGEST_TEXT longtext," +
+	"COUNT_STAR bigint unsigned NOT NULL," +
+	"SUM_TIMER_WAIT bigint unsigned NOT NULL," +
+	"MIN_TIMER_WAIT bigint unsigned NOT NULL," +
+	"AVG_TIMER_WAIT bigint unsigned NOT NULL," +
+	"MAX_TIMER_WAIT bigint unsigned NOT NULL," +
+	"SUM_LOCK_TIME bigint unsigned NOT NULL," +
+	"SUM_ERRORS bigint unsigned NOT NULL," +
+	"SUM_WARNINGS bigint unsigned NOT NULL," +
+	"SUM_ROWS_AFFECTED bigint unsigned NOT NULL," +
+	"SUM_ROWS_SENT bigint unsigned NOT NULL," +
+	"SUM_ROWS_EXAMINED bigint unsigned NOT NULL," +
+	"SUM_CREATED_TMP_DISK_TABLES bigint unsigned NOT NULL," +
+	"SUM_CREATED_TMP_TABLES bigint unsigned NOT NULL," +
+	"SUM_SELECT_FULL_JOIN bigint unsigned NOT NULL," +
+	"SUM_SELECT_FULL_RANGE_JOIN bigint unsigned NOT NULL," +
+	"SUM_SELECT_RANGE bigint unsigned NOT NULL," +
+	"SUM_SELECT_RANGE_CHECK bigint unsigned NOT NULL," +
+	"SUM_SELECT_SCAN bigint unsigned NOT NULL," +
+	"SUM_SORT_MERGE_PASSES bigint unsigned NOT NULL," +
+	"SUM_SORT_RANGE bigint unsigned NOT NULL," +
+	"SUM_SORT_ROWS bigint unsigned NOT NULL," +
+	"SUM_SORT_SCAN bigint unsigned NOT NULL," +
+	"SUM_NO_INDEX_USED bigint unsigned NOT NULL," +
+	"SUM_NO_GOOD_INDEX_USED bigint unsigned NOT NULL," +
+	"FIRST_SEEN timestamp(6) NOT NULL DEFAULT '0000-00-00 00:00:00.000000'," +
+	"LAST_SEEN timestamp(6) NOT NULL DEFAULT '0000-00-00 00:00:00.000000'," +
+	"QUANTILE_95 bigint unsigned NOT NULL," +
+	"QUANTILE_99 bigint unsigned NOT NULL," +
+	"QUANTILE_999 bigint unsigned NOT NULL," +
+	"QUERY_SAMPLE_TEXT longtext," +
+	"QUERY_SAMPLE_SEEN timestamp(6) NOT NULL DEFAULT '0000-00-00 00:00:00.000000'," +
+	"QUERY_SAMPLE_TIMER_WAIT bigint unsigned NOT NULL," +
+	"UNIQUE KEY `SCHEMA_NAME` (`SCHEMA_NAME`,`DIGEST`));"
 
 // tableTiDBProfileCPU contains the columns name definitions for table tidb_profile_cpu
 const tableTiDBProfileCPU = "CREATE TABLE IF NOT EXISTS " + tableNameTiDBProfileCPU + " (" +

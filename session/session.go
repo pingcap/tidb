@@ -240,10 +240,6 @@ func (s *session) DDLOwnerChecker() owner.DDLOwnerChecker {
 	return s.ddlOwnerChecker
 }
 
-func (s *session) getMembufCap() int {
-	return kv.DefaultTxnMembufCap
-}
-
 func (s *session) cleanRetryInfo() {
 	if s.sessionVars.RetryInfo.Retrying {
 		return
@@ -325,7 +321,11 @@ func (s *session) SetCollation(coID int) error {
 	for _, v := range variable.SetNamesVariables {
 		terror.Log(s.sessionVars.SetSystemVar(v, cs))
 	}
-	terror.Log(s.sessionVars.SetSystemVar(variable.CollationConnection, co))
+	err = s.sessionVars.SetSystemVar(variable.CollationConnection, co)
+	if err != nil {
+		// Some clients may use the unsupported collations, such as utf8mb4_0900_ai_ci, We shouldn't return error or use the ERROR level log.
+		logutil.BgLogger().Warn(err.Error())
+	}
 	return nil
 }
 
@@ -1107,9 +1107,12 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	stmtNodes, warns, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
 	if err != nil {
 		s.rollbackOnError(ctx)
-		logutil.Logger(ctx).Warn("parse SQL failed",
-			zap.Error(err),
-			zap.String("SQL", sql))
+
+		// Only print log message when this SQL is from the user.
+		// Mute the warning for internal SQLs.
+		if !s.sessionVars.InRestrictedSQL {
+			logutil.Logger(ctx).Warn("parse SQL failed", zap.Error(err), zap.String("SQL", sql))
+		}
 		return nil, util.SyntaxError(err)
 	}
 	durParse := time.Since(parseStartTime)
@@ -1135,9 +1138,12 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		stmt, err := compiler.Compile(ctx, stmtNode)
 		if err != nil {
 			s.rollbackOnError(ctx)
-			logutil.Logger(ctx).Warn("compile SQL failed",
-				zap.Error(err),
-				zap.String("SQL", sql))
+
+			// Only print log message when this SQL is from the user.
+			// Mute the warning for internal SQLs.
+			if !s.sessionVars.InRestrictedSQL {
+				logutil.Logger(ctx).Warn("compile SQL failed", zap.Error(err), zap.String("SQL", sql))
+			}
 			return nil, err
 		}
 		durCompile := time.Since(s.sessionVars.StartTime)
@@ -1342,8 +1348,7 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		// Transaction is lazy initialized.
 		// PrepareTxnCtx is called to get a tso future, makes s.txn a pending txn,
 		// If Txn() is called later, wait for the future to get a valid txn.
-		txnCap := s.getMembufCap()
-		if err := s.txn.changePendingToValid(txnCap); err != nil {
+		if err := s.txn.changePendingToValid(); err != nil {
 			logutil.BgLogger().Error("active transaction fail",
 				zap.Error(err))
 			s.txn.cleanup()
@@ -1419,7 +1424,6 @@ func (s *session) NewTxn(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	txn.SetCap(s.getMembufCap())
 	txn.SetVars(s.sessionVars.KVVars)
 	if s.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 		txn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
@@ -1825,7 +1829,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = version41
+	currentBootstrapVersion = version42
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -1944,6 +1948,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableNoopFuncs,
 	variable.TiDBEnableIndexMerge,
 	variable.TiDBTxnMode,
+	variable.TiDBAllowBatchCop,
 	variable.TiDBRowFormatVersion,
 	variable.TiDBEnableStmtSummary,
 	variable.TiDBStmtSummaryInternalQuery,
@@ -1990,18 +1995,16 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	// Use GlobalVariableCache if TiDB just loaded global variables within 2 second ago.
 	// When a lot of connections connect to TiDB simultaneously, it can protect TiKV meta region from overload.
 	gvc := domain.GetDomain(s).GetGlobalVarsCache()
-	succ, rows, fields := gvc.Get()
-	if !succ {
-		// Set the variable to true to prevent cyclic recursive call.
-		vars.CommonGlobalLoaded = true
-		rows, fields, err = s.ExecRestrictedSQL(loadCommonGlobalVarsSQL)
-		if err != nil {
-			vars.CommonGlobalLoaded = false
-			logutil.BgLogger().Error("failed to load common global variables.")
-			return err
-		}
-		gvc.Update(rows, fields)
+	loadFunc := func() ([]chunk.Row, []*ast.ResultField, error) {
+		return s.ExecRestrictedSQL(loadCommonGlobalVarsSQL)
 	}
+	rows, fields, err := gvc.LoadGlobalVariables(loadFunc)
+	if err != nil {
+		logutil.BgLogger().Warn("failed to load global variables",
+			zap.Uint64("conn", s.sessionVars.ConnectionID), zap.Error(err))
+		return err
+	}
+	vars.CommonGlobalLoaded = true
 
 	for _, row := range rows {
 		varName := row.GetString(0)
@@ -2083,7 +2086,6 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 		return err
 	}
 	s.txn.changeInvalidToValid(txn)
-	s.txn.SetCap(s.getMembufCap())
 	err = s.loadCommonGlobalVariablesIfNeeded()
 	if err != nil {
 		return err

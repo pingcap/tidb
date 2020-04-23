@@ -218,7 +218,6 @@ type RegionCache struct {
 		sync.RWMutex
 		stores map[uint64]*Store
 	}
-	notifyDieCh   chan []string
 	notifyCheckCh chan struct{}
 	closeCh       chan struct{}
 }
@@ -232,7 +231,6 @@ func NewRegionCache(pdClient pd.Client) *RegionCache {
 	c.mu.sorted = btree.New(btreeDegree)
 	c.storeMu.stores = make(map[uint64]*Store)
 	c.notifyCheckCh = make(chan struct{}, 1)
-	c.notifyDieCh = make(chan []string, 1)
 	c.closeCh = make(chan struct{})
 	go c.asyncCheckAndResolveLoop()
 	return c
@@ -253,8 +251,6 @@ func (c *RegionCache) asyncCheckAndResolveLoop() {
 		case <-c.notifyCheckCh:
 			needCheckStores = needCheckStores[:0]
 			c.checkAndResolve(needCheckStores)
-		case addrs := <-c.notifyDieCh:
-			c.invalidStore(addrs)
 		}
 	}
 }
@@ -283,19 +279,6 @@ func (c *RegionCache) checkAndResolve(needCheckStores []*Store) {
 	for _, store := range needCheckStores {
 		store.reResolve(c)
 	}
-}
-
-func (c *RegionCache) invalidStore(sAddrs []string) {
-	c.storeMu.RLock()
-	for _, store := range c.storeMu.stores {
-		for _, sAddr := range sAddrs {
-			if store.addr == sAddr {
-				atomic.AddUint32(&store.fail, 1)
-			}
-		}
-
-	}
-	c.storeMu.RUnlock()
 }
 
 // RPCContext contains data that is needed to send RPC to a region.
@@ -1146,6 +1129,16 @@ func (r *RegionVerID) GetID() uint64 {
 	return r.id
 }
 
+// GetVer returns the version of the region's epoch
+func (r *RegionVerID) GetVer() uint64 {
+	return r.ver
+}
+
+// GetConfVer returns the conf ver of the region's epoch
+func (r *RegionVerID) GetConfVer() uint64 {
+	return r.confVer
+}
+
 // VerID returns the Region's RegionVerID.
 func (r *Region) VerID() RegionVerID {
 	return RegionVerID{
@@ -1190,14 +1183,6 @@ func (c *RegionCache) switchNextFlashPeer(r *Region, currentPeerIdx int, err err
 	newRegionStore := rs.clone()
 	newRegionStore.workTiFlashIdx = int32(nextIdx)
 	r.compareAndSwapStore(rs, newRegionStore)
-}
-
-// NotifyNodeDie is used for TiClient notify RegionCache a die node.
-func (c *RegionCache) NotifyNodeDie(addrs []string) {
-	select {
-	case c.notifyDieCh <- addrs:
-	default:
-	}
 }
 
 func (c *RegionCache) switchNextPeer(r *Region, currentPeerIdx int, err error) {
@@ -1322,15 +1307,7 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 		}
 		addr = store.GetAddress()
 		s.addr = addr
-		s.storeType = kv.TiKV
-		for _, label := range store.Labels {
-			if label.Key == "engine" {
-				if label.Value == kv.TiFlash.Name() {
-					s.storeType = kv.TiFlash
-				}
-				break
-			}
-		}
+		s.storeType = GetStoreTypeByMeta(store)
 	retry:
 		state = s.getResolveState()
 		if state != unresolved {
@@ -1342,6 +1319,20 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 		}
 		return
 	}
+}
+
+// GetStoreTypeByMeta gets store type by store meta pb.
+func GetStoreTypeByMeta(store *metapb.Store) kv.StoreType {
+	tp := kv.TiKV
+	for _, label := range store.Labels {
+		if label.Key == "engine" {
+			if label.Value == kv.TiFlash.Name() {
+				tp = kv.TiFlash
+			}
+			break
+		}
+	}
+	return tp
 }
 
 // reResolve try to resolve addr for store that need check.
@@ -1367,15 +1358,7 @@ func (s *Store) reResolve(c *RegionCache) {
 		return
 	}
 
-	storeType := kv.TiKV
-	for _, label := range store.Labels {
-		if label.Key == "engine" {
-			if label.Value == kv.TiFlash.Name() {
-				storeType = kv.TiFlash
-			}
-			break
-		}
-	}
+	storeType := GetStoreTypeByMeta(store)
 	addr = store.GetAddress()
 	if s.addr != addr {
 		state := resolved

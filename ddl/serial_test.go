@@ -152,6 +152,14 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when alter-primary-key is false")
 }
 
+func (s *testSerialSuite) TestDropAutoIncrementIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int(11) not null auto_increment key, b int(11), c bigint, unique key (a, b, c))")
+	tk.MustExec("alter table t1 drop index a")
+}
+
 func (s *testSerialSuite) TestMultiRegionGetTableEndHandle(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("drop database if exists test_get_endhandle")
@@ -372,7 +380,7 @@ func (s *testSerialSuite) TestCreateTableWithLike(c *C) {
 	c.Assert(rows[3][1], Equals, fmt.Sprintf("t_%d_r_6917529027641081856", tbl.Meta().ID))
 	defer atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
 
-	// for failure cases
+	// for failure table cases
 	tk.MustExec("use ctwl_db")
 	failSQL := fmt.Sprintf("create table t1 like test_not_exist.t")
 	tk.MustGetErrCode(failSQL, mysql.ErrNoSuchTable)
@@ -384,6 +392,14 @@ func (s *testSerialSuite) TestCreateTableWithLike(c *C) {
 	tk.MustGetErrCode(failSQL, mysql.ErrBadDB)
 	failSQL = fmt.Sprintf("create table t1 like ctwl_db.t")
 	tk.MustGetErrCode(failSQL, mysql.ErrTableExists)
+
+	// test failure for wrong object cases
+	tk.MustExec("drop view if exists v")
+	tk.MustExec("create view v as select 1 from dual")
+	tk.MustGetErrCode("create table viewTable like v", mysql.ErrWrongObject)
+	tk.MustExec("drop sequence if exists seq")
+	tk.MustExec("create sequence seq")
+	tk.MustGetErrCode("create table sequenceTable like seq", mysql.ErrWrongObject)
 
 	tk.MustExec("drop database ctwl_db")
 	tk.MustExec("drop database ctwl_db1")
