@@ -225,7 +225,7 @@ func (s *testSnapshotSuite) TestSkipLargeTxnLock(c *C) {
 
 	txn1 := s.beginTxn(c)
 	// txn1 is not blocked by txn in the large txn protocol.
-	_, err = txn1.Get(ctx, kv.Key(x))
+	_, err = txn1.Get(ctx, x)
 	c.Assert(kv.IsErrNotFound(errors.Trace(err)), IsTrue)
 
 	res, err := txn1.BatchGet(ctx, []kv.Key{x, y, kv.Key("z")})

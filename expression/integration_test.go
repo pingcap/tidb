@@ -5578,6 +5578,28 @@ func (s *testIntegrationSerialSuite) TestCacheRefineArgs(c *C) {
 	tk.MustQuery("execute stmt using @p0").Check(testkit.Rows("0"))
 }
 
+func (s *testIntegrationSuite) TestOrderByFuncPlanCache(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	var err error
+	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("prepare stmt from 'SELECT * FROM t order by rand()'")
+	tk.MustQuery("execute stmt").Check(testkit.Rows())
+	tk.MustExec("prepare stmt from 'SELECT * FROM t order by now()'")
+	tk.MustQuery("execute stmt").Check(testkit.Rows())
+}
+
 func (s *testIntegrationSuite) TestCollation(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -6179,6 +6201,15 @@ func (s *testIntegrationSuite) TestNegativeZeroForHashJoin(c *C) {
 	tk.MustExec("drop table t1;")
 }
 
+func (s *testIntegrationSuite) TestIssue15743(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("CREATE TABLE t0(c0 int)")
+	tk.MustExec("INSERT INTO t0 VALUES (1)")
+	tk.MustQuery("SELECT * FROM t0 WHERE 1 AND 0.4").Check(testkit.Rows("1"))
+}
+
 func (s *testIntegrationSuite) TestIssue15725(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
@@ -6244,6 +6275,18 @@ func (s *testIntegrationSuite) TestIssue16029(c *C) {
 	tk.MustQuery("SELECT t0.c0 FROM t0 JOIN t1 ON (t0.c0 REGEXP 1) | t1.c0  WHERE BINARY STRCMP(t1.c0, t0.c0);").Check(testkit.Rows("1"))
 	tk.MustExec("drop table t0;")
 	tk.MustExec("drop table t1;")
+}
+
+func (s *testIntegrationSuite) TestIssue16426(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert into t values (42)")
+	tk.MustQuery("select a from t where a/10000").Check(testkit.Rows("42"))
+	tk.MustQuery("select a from t where a/100000").Check(testkit.Rows("42"))
+	tk.MustQuery("select a from t where a/1000000").Check(testkit.Rows("42"))
+	tk.MustQuery("select a from t where a/10000000").Check(testkit.Rows("42"))
 }
 
 func (s *testIntegrationSuite) TestIssue16505(c *C) {

@@ -787,8 +787,8 @@ func (h *rpcHandler) extractKVRanges(keyRanges []*coprocessor.KeyRange, descScan
 			break
 		}
 		var kvr kv.KeyRange
-		kvr.StartKey = kv.Key(maxStartKey(lowerKey, h.rawStartKey))
-		kvr.EndKey = kv.Key(minEndKey(upperKey, h.rawEndKey))
+		kvr.StartKey = maxStartKey(lowerKey, h.rawStartKey)
+		kvr.EndKey = minEndKey(upperKey, h.rawEndKey)
 		kvRanges = append(kvRanges, kvr)
 	}
 	if descScan {
@@ -816,15 +816,15 @@ func appendRow(chunks []tipb.Chunk, data []byte, rowCnt int) []tipb.Chunk {
 }
 
 func maxStartKey(rangeStartKey kv.Key, regionStartKey []byte) []byte {
-	if bytes.Compare([]byte(rangeStartKey), regionStartKey) > 0 {
-		return []byte(rangeStartKey)
+	if bytes.Compare(rangeStartKey, regionStartKey) > 0 {
+		return rangeStartKey
 	}
 	return regionStartKey
 }
 
 func minEndKey(rangeEndKey kv.Key, regionEndKey []byte) []byte {
-	if len(regionEndKey) == 0 || bytes.Compare([]byte(rangeEndKey), regionEndKey) < 0 {
-		return []byte(rangeEndKey)
+	if len(regionEndKey) == 0 || bytes.Compare(rangeEndKey, regionEndKey) < 0 {
+		return rangeEndKey
 	}
 	return regionEndKey
 }
