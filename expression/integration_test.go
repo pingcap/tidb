@@ -4279,6 +4279,13 @@ func (s *testIntegrationSuite) TestIssues(c *C) {
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert t values (1)")
 	tk.MustQuery("select * from t where cast(a as binary)").Check(testkit.Rows("1"))
+
+	// for issue #16351
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2(a int, b varchar(20))")
+	tk.MustExec(`insert into t2 values(1,"1111"),(2,"2222"),(3,"3333"),(4,"4444"),(5,"5555"),(6,"6666"),(7,"7777"),(8,"8888"),(9,"9999"),(10,"0000")`)
+	tk.MustQuery(`select (@j := case when substr(t2.b,1,3)=@i then 1 else @j+1 end) from t2, (select @j := 0, @i := "0") tt limit 10`).Check(testkit.Rows(
+		"1", "2", "3", "4", "5", "6", "7", "8", "9", "10"))
 }
 
 func (s *testIntegrationSuite) TestInPredicate4UnsignedInt(c *C) {
@@ -5458,6 +5465,33 @@ func (s *testIntegrationSerialSuite) TestIssue16205(c *C) {
 	c.Assert(rows1[0][0].(string), Not(Equals), rows2[0][0].(string))
 }
 
+func (s *testIntegrationSerialSuite) TestRowCountPlanCache(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	var err error
+	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int auto_increment primary key)")
+	tk.MustExec("prepare stmt from 'select row_count()';")
+	tk.MustExec("insert into t values()")
+	res := tk.MustQuery("execute stmt").Rows()
+	c.Assert(len(res), Equals, 1)
+	c.Assert(res[0][0], Equals, "1")
+	tk.MustExec("insert into t values(),(),()")
+	res = tk.MustQuery("execute stmt").Rows()
+	c.Assert(len(res), Equals, 1)
+	c.Assert(res[0][0], Equals, "3")
+}
+
 func (s *testIntegrationSuite) TestValuesForBinaryLiteral(c *C) {
 	// See issue #15310
 	tk := testkit.NewTestKit(c, s.store)
@@ -5542,6 +5576,28 @@ func (s *testIntegrationSerialSuite) TestCacheRefineArgs(c *C) {
 	tk.MustExec("prepare stmt from 'SELECT col_int < ? FROM t'")
 	tk.MustExec("set @p0='-184467440737095516167.1'")
 	tk.MustQuery("execute stmt using @p0").Check(testkit.Rows("0"))
+}
+
+func (s *testIntegrationSuite) TestOrderByFuncPlanCache(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	var err error
+	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("prepare stmt from 'SELECT * FROM t order by rand()'")
+	tk.MustQuery("execute stmt").Check(testkit.Rows())
+	tk.MustExec("prepare stmt from 'SELECT * FROM t order by now()'")
+	tk.MustQuery("execute stmt").Check(testkit.Rows())
 }
 
 func (s *testIntegrationSuite) TestCollation(c *C) {
