@@ -190,7 +190,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		})
 	}
 
-	key := tablecodec.EncodeRowKeyWithHandle(tblID, e.handle)
+	key := tablecodec.EncodeRowKeyWithHandle(tblID, kv.IntHandle(e.handle))
 	val, err := e.getAndLock(ctx, key)
 	if err != nil {
 		return err
@@ -316,7 +316,7 @@ func encodeIndexKey(e *baseExecutor, tblInfo *model.TableInfo, idxInfo *model.In
 
 func decodeRowValToChunk(e *baseExecutor, tblInfo *model.TableInfo, handle int64, rowVal []byte, chk *chunk.Chunk, rd *rowcodec.ChunkDecoder) error {
 	if rowcodec.IsNewFormat(rowVal) {
-		return rd.DecodeToChunk(rowVal, handle, chk)
+		return rd.DecodeToChunk(rowVal, kv.IntHandle(handle), chk)
 	}
 	return decodeOldRowValToChunk(e, tblInfo, handle, rowVal, chk)
 }
