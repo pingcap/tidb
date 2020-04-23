@@ -174,6 +174,29 @@ func (s *testSuite6) TestCreateTable(c *C) {
 	r = tk.MustQuery("select * from create_auto_increment_test;")
 	r.Check(testkit.Rows("1000 aa"))
 
+	// table option is auto-random
+	tk.MustExec("drop table if exists auto_random_table_option")
+	tk.MustExec("create table auto_random_table_option (a bigint auto_random(5) key) auto_random = 1000")
+	t, err = domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("auto_random_table_option"))
+	c.Assert(err, IsNil)
+	c.Assert(t.Meta().AutoRandID, Equals, int64(1000))
+	tk.MustExec("insert into auto_random_table_option values (),(),(),(),()")
+	allHandles, err := ddltestutil.ExtractAllTableHandles(tk.Se, "test", "auto_random_table_option")
+	c.Assert(err, IsNil)
+	c.Assert(len(allHandles), Equals, 5)
+	// Test the high bits of handles are not all zero.
+	allZero := true
+	for _, h := range allHandles {
+		allZero = allZero && (h>>(64-6)) == 0
+	}
+	c.Assert(allZero, IsFalse)
+	// Test non-shard-bits part of auto random id is monotonic increasing and continuous.
+	orderedHandles := testutil.ConfigTestUtils.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
+	size := int64(len(allHandles))
+	for i := int64(0); i < size; i++ {
+		c.Assert(i+1000, Equals, orderedHandles[i])
+	}
+
 	// Test for `drop table if exists`.
 	tk.MustExec("drop table if exists t_if_exists;")
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Note 1051 Unknown table 'test.t_if_exists'"))
@@ -806,7 +829,7 @@ func (s *testSuite8) TestShardRowIDBits(c *C) {
 	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	maxID := 1<<(64-15-1) - 1
-	err = tbl.RebaseAutoID(tk.Se, int64(maxID)-1, false)
+	err = tbl.RebaseAutoID(tk.Se, int64(maxID)-1, false, autoid.RowIDAllocType)
 	c.Assert(err, IsNil)
 	tk.MustExec("insert into t1 values(1)")
 
@@ -911,6 +934,45 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 		c.Assert(orderedHandles[i], Equals, i-99)
 	}
 	tk.MustExec("drop table t")
+}
+
+func (s *testAutoRandomSuite) TestAlterTableAutoRandomTableOption(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists alter_table_auto_random_option")
+
+	tk.MustExec("create table alter_table_auto_random_option (a bigint primary key auto_random(4), b int)")
+	t, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("alter_table_auto_random_option"))
+	c.Assert(err, IsNil)
+	c.Assert(t.Meta().AutoRandID, Equals, int64(0))
+	tk.MustExec("insert into alter_table_auto_random_option values(),(),(),(),()")
+	allHandles, err := ddltestutil.ExtractAllTableHandles(tk.Se, "test", "alter_table_auto_random_option")
+	c.Assert(err, IsNil)
+	orderedHandles := testutil.ConfigTestUtils.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
+	size := int64(len(allHandles))
+	for i := int64(0); i < size; i++ {
+		c.Assert(orderedHandles[i], Equals, i+1)
+	}
+	tk.MustExec("delete from alter_table_auto_random_option")
+
+	// alter table to change the auto_random option (it will dismiss the local allocator cache)
+	// To avoid the new base is in the range of local cache, which will leading the next
+	// value is not what we rebased, because the local cache is dropped, here we choose
+	// a quite big value to do this.
+	tk.MustExec("alter table alter_table_auto_random_option auto_random = 3000000")
+	t, err = domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("alter_table_auto_random_option"))
+	c.Assert(err, IsNil)
+	c.Assert(t.Meta().AutoRandID, Equals, int64(3000000))
+	tk.MustExec("insert into alter_table_auto_random_option values(),(),(),(),()")
+	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Se, "test", "alter_table_auto_random_option")
+	c.Assert(err, IsNil)
+	orderedHandles = testutil.ConfigTestUtils.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
+	size = int64(len(allHandles))
+	for i := int64(0); i < size; i++ {
+		c.Assert(orderedHandles[i], Equals, i+3000000)
+	}
+	tk.MustExec("drop table alter_table_auto_random_option")
 }
 
 func (s *testSuite6) TestMaxHandleAddIndex(c *C) {

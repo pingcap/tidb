@@ -20,6 +20,7 @@ package tables
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -1091,8 +1092,23 @@ func (t *TableCommon) Allocators(ctx sessionctx.Context) autoid.Allocators {
 }
 
 // RebaseAutoID implements table.Table RebaseAutoID interface.
-func (t *TableCommon) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool) error {
-	return t.Allocators(ctx).Get(autoid.RowIDAllocType).Rebase(t.tableID, newBase, isSetStep)
+// Both auto-increment and auto-random can use this function to do rebase on explicit newBase value (without shadow bits).
+func (t *TableCommon) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool, tp autoid.AllocatorType) error {
+	fmt.Println("tables 这里: tp", tp, ": base: ", newBase)
+	return t.Allocators(ctx).Get(tp).Rebase(t.tableID, newBase, isSetStep)
+
+	// check whether the newBase of auto-random is overflows its type.
+	// 对于 rebase 而言，即使是 overflows 的值也是可以设置的
+	//if t.meta.PKIsHandle && t.meta.ContainsAutoRandomBits() {
+	//	for _, c := range t.Cols() {
+	//		if c.ID == t.meta.GetPkColInfo().ID {
+	//			typeBitsLength := uint64(mysql.DefaultLengthOfMysqlTypes[c.FieldType.Tp] * 8)
+	//			if OverflowShardBits(newBase, t.meta.AutoRandomBits, typeBitsLength) {
+	//				return autoid.ErrAutoRandReadFailed
+	//			}
+	//		}
+	//	}
+	//}
 }
 
 // Seek implements table.Table Seek interface.

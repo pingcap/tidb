@@ -655,7 +655,7 @@ var defaultConf = Config{
 		Engines: []string{"tikv", "tiflash", "tidb"},
 	},
 	Experimental: Experimental{
-		AllowAutoRandom:       false,
+		AllowAutoRandom:       true,
 		AllowsExpressionIndex: false,
 	},
 	EnableCollectExecutionInfo: false,
