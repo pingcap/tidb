@@ -125,24 +125,43 @@ func (s *partitionProcessor) pruneHashPartition(ds *DataSource, pi *model.Partit
 		return tableDual, nil
 	}
 	if ok {
-		idx := math.Abs(val) % int64(pi.Num)
-		if len(ds.partitionNames) > 0 && !s.findByName(ds.partitionNames, pi.Definitions[idx].Name.L) {
+		mp := make(map[int64]bool)
+		children := make([]LogicalPlan, 0, len(pi.Definitions))
+		for _, x := range val {
+			idx := math.Abs(x) % int64(pi.Num)
+			if len(ds.partitionNames) > 0 && !s.findByName(ds.partitionNames, pi.Definitions[idx].Name.L) {
+				continue
+			}
+			_, ok := mp[idx]
+			if ok {
+				continue
+			}
+			mp[idx] = true
+			newDataSource := *ds
+			newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.SCtx(), plancodec.TypeTableScan, &newDataSource, ds.blockOffset)
+			newDataSource.isPartition = true
+			newDataSource.physicalTableID = pi.Definitions[idx].ID
+			// There are many expression nodes in the plan tree use the original datasource
+			// id as FromID. So we set the id of the newDataSource with the original one to
+			// avoid traversing the whole plan tree to update the references.
+			newDataSource.id = ds.id
+			newDataSource.statisticTable = getStatsTable(ds.SCtx(), ds.table.Meta(), pi.Definitions[idx].ID)
+			children = append(children, &newDataSource)
+		}
+		if len(children) == 1 {
+			// No need for the union all.
+			return children[0], nil
+		}
+		if len(ds.partitionNames) > 0 && len(children) == 0 {
 			// For condition like `from t partition (p1) where a = 5`, but they are conflict, return TableDual directly.
 			tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.blockOffset)
 			tableDual.schema = ds.Schema()
 			return tableDual, nil
 		}
-		newDataSource := *ds
-		newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.SCtx(), plancodec.TypeTableScan, &newDataSource, ds.blockOffset)
-		newDataSource.isPartition = true
-		newDataSource.physicalTableID = pi.Definitions[idx].ID
-		// There are many expression nodes in the plan tree use the original datasource
-		// id as FromID. So we set the id of the newDataSource with the original one to
-		// avoid traversing the whole plan tree to update the references.
-		newDataSource.id = ds.id
-		newDataSource.statisticTable = getStatsTable(ds.SCtx(), ds.table.Meta(), pi.Definitions[idx].ID)
-		pl := &newDataSource
-		return pl, nil
+		unionAll := LogicalUnionAll{}.Init(ds.SCtx(), ds.blockOffset)
+		unionAll.SetChildren(children...)
+		unionAll.SetSchema(ds.schema.Clone())
+		return unionAll, nil
 	}
 
 	return s.makeUnionAllChildren(ds, pi, fullRange(len(pi.Definitions)))
