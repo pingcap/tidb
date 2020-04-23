@@ -44,11 +44,11 @@ type testKVSuite struct {
 
 func (s *testKVSuite) SetUpSuite(c *C) {
 	s.bs = make([]MemBuffer, 1)
-	s.bs[0] = NewMemDbBuffer(DefaultTxnMembufCap)
+	s.bs[0] = NewMemDbBuffer()
 }
 
 func (s *testKVSuite) ResetMembuffers() {
-	s.bs[0] = NewMemDbBuffer(DefaultTxnMembufCap)
+	s.bs[0] = NewMemDbBuffer()
 }
 
 func insertData(c *C, buffer MemBuffer) {
@@ -153,7 +153,7 @@ func (s *testKVSuite) TestNewIterator(c *C) {
 
 func (s *testKVSuite) TestIterNextUntil(c *C) {
 	defer testleak.AfterTest(c)()
-	buffer := NewMemDbBuffer(DefaultTxnMembufCap)
+	buffer := NewMemDbBuffer()
 	insertData(c, buffer)
 
 	iter, err := buffer.Iter(nil, nil)
@@ -212,7 +212,7 @@ func (s *testKVSuite) TestNewIteratorMin(c *C) {
 }
 
 func (s *testKVSuite) TestBufferLimit(c *C) {
-	buffer := NewMemDbBuffer(DefaultTxnMembufCap).(*memDbBuffer)
+	buffer := NewMemDbBuffer().(*memDbBuffer)
 	buffer.bufferSizeLimit = 1000
 	buffer.entrySizeLimit = 500
 
@@ -238,7 +238,7 @@ func BenchmarkMemDbBufferSequential(b *testing.B) {
 	for i := 0; i < opCnt; i++ {
 		data[i] = encodeInt(i)
 	}
-	buffer := NewMemDbBuffer(DefaultTxnMembufCap)
+	buffer := NewMemDbBuffer()
 	benchmarkSetGet(b, buffer, data)
 	b.ReportAllocs()
 }
@@ -249,20 +249,20 @@ func BenchmarkMemDbBufferRandom(b *testing.B) {
 		data[i] = encodeInt(i)
 	}
 	shuffle(data)
-	buffer := NewMemDbBuffer(DefaultTxnMembufCap)
+	buffer := NewMemDbBuffer()
 	benchmarkSetGet(b, buffer, data)
 	b.ReportAllocs()
 }
 
 func BenchmarkMemDbIter(b *testing.B) {
-	buffer := NewMemDbBuffer(DefaultTxnMembufCap)
+	buffer := NewMemDbBuffer()
 	benchIterator(b, buffer)
 	b.ReportAllocs()
 }
 
 func BenchmarkMemDbCreation(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		NewMemDbBuffer(DefaultTxnMembufCap)
+		NewMemDbBuffer()
 	}
 	b.ReportAllocs()
 }

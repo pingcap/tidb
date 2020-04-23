@@ -31,7 +31,7 @@ var (
 			Subsystem: "ddl",
 			Name:      "handle_job_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of handle jobs",
-			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 22), // 10ms ~ 12hours
+			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 22), // 10ms ~ 6hours
 		}, []string{LblType, LblResult})
 
 	BatchAddIdxHistogram = prometheus.NewHistogramVec(
@@ -40,7 +40,7 @@ var (
 			Subsystem: "ddl",
 			Name:      "batch_add_idx_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of batch handle data",
-			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 22), // 1ms ~ 1hours
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 22), // 1ms ~ 0.5hours
 		}, []string{LblType})
 
 	SyncerInit            = "init"
@@ -53,7 +53,7 @@ var (
 			Subsystem: "ddl",
 			Name:      "deploy_syncer_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of deploy syncer",
-			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 1024s
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
 		}, []string{LblType, LblResult})
 
 	UpdateSelfVersionHistogram = prometheus.NewHistogramVec(
@@ -62,7 +62,7 @@ var (
 			Subsystem: "ddl",
 			Name:      "update_self_ver_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of update self version",
-			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 1024s
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
 		}, []string{LblResult})
 
 	OwnerUpdateGlobalVersion    = "update_global_version"
@@ -77,7 +77,7 @@ var (
 			Subsystem: "ddl",
 			Name:      "owner_handle_syncer_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of handle syncer",
-			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 1024s
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
 		}, []string{LblType, LblResult})
 
 	// Metrics for ddl_worker.go.
@@ -91,7 +91,7 @@ var (
 			Subsystem: "ddl",
 			Name:      "worker_operation_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of ddl worker operations",
-			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 22), // 1ms ~ 4096s
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 22), // 1ms ~ 2048s
 		}, []string{LblType, LblAction, LblResult})
 
 	CreateDDLInstance = "create_ddl_instance"
