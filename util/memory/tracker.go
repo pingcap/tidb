@@ -38,7 +38,7 @@ const (
 	globalPanicMemoryExceed string = "Out Of Global Memory Limit!"
 )
 
-// globalPanicOnExceed panics when GlobalDisTracker storage usage exceeds storage quota.
+// GlobalPanicOnExceed panics when GlobalDisTracker storage usage exceeds storage quota.
 type GlobalPanicOnExceed struct {
 	mutex sync.Mutex // For synchronization.
 }
