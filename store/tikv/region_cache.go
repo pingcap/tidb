@@ -1258,11 +1258,13 @@ func (s *Store) initResolve(bo *Backoffer) (addr, saddr string, err error) {
 	}
 	err = s.requestResolveAddr(bo, func(store *metapb.Store) {
 		if s.casResolveState(state, resolved) {
-			s.addr = store.Address
-			s.saddr = store.StatusAddress
-			s.storeType = GetStoreTypeByMeta(store)
-			s.initLiveness(normalLivenessCheckInterval)
-			s.updateLivenessState(0, uint32(s.requestLiveness(bo)), "init store fail", true)
+			if store != nil {
+				s.addr = store.Address
+				s.saddr = store.StatusAddress
+				s.storeType = GetStoreTypeByMeta(store)
+				s.initLiveness(normalLivenessCheckInterval)
+				s.updateLivenessState(0, uint32(s.requestLiveness(bo)), "init store fail", true)
+			}
 		}
 	})
 	if err != nil {
@@ -1319,7 +1321,9 @@ func (s *Store) doResolve(bo *Backoffer) (err error) {
 			if !s.casResolveState(oldState, newState) {
 				goto retryMarkDel
 			}
-			close(s.closed)
+			if s.closed != nil {
+				close(s.closed)
+			}
 			return
 		}
 		// store add hasn't changed.
