@@ -14,7 +14,6 @@
 package core
 
 import (
-	"github.com/pingcap/tidb/kv"
 	"math"
 	"sync/atomic"
 	"time"
@@ -22,6 +21,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -129,13 +129,13 @@ func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, sch
 		_, timezoneOffset = time.Now().In(sessionVars.TimeZone).Zone()
 	}
 	key := &pstmtPlanCacheKey{
-		database:       sessionVars.CurrentDB,
-		connID:         sessionVars.ConnectionID,
-		pstmtID:        pstmtID,
-		snapshot:       sessionVars.SnapshotTS,
-		schemaVersion:  schemaVersion,
-		sqlMode:        sessionVars.SQLMode,
-		timezoneOffset: timezoneOffset,
+		database:             sessionVars.CurrentDB,
+		connID:               sessionVars.ConnectionID,
+		pstmtID:              pstmtID,
+		snapshot:             sessionVars.SnapshotTS,
+		schemaVersion:        schemaVersion,
+		sqlMode:              sessionVars.SQLMode,
+		timezoneOffset:       timezoneOffset,
 		isolationReadEngines: make(map[kv.StoreType]struct{}),
 	}
 	for k, v := range sessionVars.IsolationReadEngines {
