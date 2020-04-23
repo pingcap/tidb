@@ -498,6 +498,18 @@ func (b *baseFunctionClass) verifyArgs(args []Expression) error {
 	if l < b.minArgs || (b.maxArgs != -1 && l > b.maxArgs) {
 		return ErrIncorrectParameterCount.GenWithStackByArgs(b.funcName)
 	}
+	if l > 1 {
+		firstExplicitCollation := ""
+		for _, arg := range args {
+			if arg.Coercibility() == CoercibilityExplicit {
+				if firstExplicitCollation == "" {
+					firstExplicitCollation = arg.GetType().Collate
+				} else if firstExplicitCollation != arg.GetType().Collate {
+					return collate.ErrIllegalMixCollation.GenWithStackByArgs(firstExplicitCollation, "EXPLICIT", arg.GetType().Collate, "EXPLICIT", b.funcName)
+				}
+			}
+		}
+	}
 	return nil
 }
 

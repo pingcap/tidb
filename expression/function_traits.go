@@ -25,6 +25,7 @@ var UnCacheableFunctions = map[string]struct{}{
 	ast.User:         {},
 	ast.ConnectionID: {},
 	ast.LastInsertId: {},
+	ast.RowCount:     {},
 	ast.Version:      {},
 	ast.Like:         {},
 }
@@ -105,6 +106,7 @@ var IllegalFunctions4GeneratedColumns = map[string]struct{}{
 // DeferredFunctions stores non-deterministic functions, which can be deferred only when the plan cache is enabled.
 var DeferredFunctions = map[string]struct{}{
 	ast.Now:              {},
+	ast.RandomBytes:      {},
 	ast.CurrentTimestamp: {},
 	ast.UTCTime:          {},
 	ast.Curtime:          {},
