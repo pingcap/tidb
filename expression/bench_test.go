@@ -190,8 +190,8 @@ func BenchmarkVectorizedExecute(b *testing.B) {
 
 func BenchmarkScalarFunctionClone(b *testing.B) {
 	col := &Column{RetType: types.NewFieldType(mysql.TypeLonglong)}
-	con1 := One.Clone()
-	con2 := Zero.Clone()
+	con1 := NewOne()
+	con2 := NewZero()
 	add := NewFunctionInternal(mock.NewContext(), ast.Plus, types.NewFieldType(mysql.TypeLonglong), col, con1)
 	sub := NewFunctionInternal(mock.NewContext(), ast.Plus, types.NewFieldType(mysql.TypeLonglong), add, con2)
 	b.ResetTimer()
