@@ -150,6 +150,8 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen), 10), true, nil
 	case TiDBCheckMb4ValueInUTF8:
 		return BoolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUTF8), true, nil
+	case TiDBCapturePlanBaseline:
+		return CapturePlanBaseline.GetVal(), true, nil
 	}
 	sVal, ok := s.GetSystemVar(key)
 	if ok {
@@ -207,7 +209,7 @@ func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) erro
 	if err != nil {
 		return err
 	}
-	sVal, err = ValidateSetSystemVar(vars, name, sVal)
+	sVal, err = ValidateSetSystemVar(vars, name, sVal, ScopeSession)
 	if err != nil {
 		return err
 	}
@@ -284,7 +286,7 @@ const (
 )
 
 // ValidateSetSystemVar checks if system variable satisfies specific restriction.
-func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string, error) {
+func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope ScopeFlag) (string, error) {
 	if strings.EqualFold(value, "DEFAULT") {
 		if val := GetSysVar(name); val != nil {
 			return val.Value, nil
@@ -514,6 +516,15 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 		}
 		return value, nil
+	case TiDBAllowBatchCop:
+		v, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
+		}
+		if v < 0 || v > 2 {
+			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+		}
+		return value, nil
 	case TiDBOptCPUFactor,
 		TiDBOptCopCPUFactor,
 		TiDBOptNetworkFactor,
@@ -671,26 +682,28 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		case strings.EqualFold(value, "OFF") || value == "0":
 			return "0", nil
 		case value == "":
-			return "", nil
+			if scope == ScopeSession {
+				return "", nil
+			}
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case TiDBStmtSummaryRefreshInterval:
-		if value == "" {
+		if value == "" && scope == ScopeSession {
 			return "", nil
 		}
 		return checkUInt64SystemVar(name, value, 1, math.MaxInt32, vars)
 	case TiDBStmtSummaryHistorySize:
-		if value == "" {
+		if value == "" && scope == ScopeSession {
 			return "", nil
 		}
 		return checkUInt64SystemVar(name, value, 0, math.MaxUint8, vars)
 	case TiDBStmtSummaryMaxStmtCount:
-		if value == "" {
+		if value == "" && scope == ScopeSession {
 			return "", nil
 		}
 		return checkInt64SystemVar(name, value, 1, math.MaxInt16, vars)
 	case TiDBStmtSummaryMaxSQLLength:
-		if value == "" {
+		if value == "" && scope == ScopeSession {
 			return "", nil
 		}
 		return checkInt64SystemVar(name, value, 0, math.MaxInt32, vars)
