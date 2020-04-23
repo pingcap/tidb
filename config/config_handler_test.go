@@ -54,6 +54,10 @@ func (mc *mockPDConfigClient) Get(ctx context.Context, v *configpb.Version, comp
 	return mc.status, mc.version, mc.confContent.Load().(string), mc.err
 }
 
+func (mc *mockPDConfigClient) GetAll(ctx context.Context) (*configpb.Status, []*configpb.LocalConfig, error) {
+	panic("unimplemented")
+}
+
 func (mc *mockPDConfigClient) Update(ctx context.Context, v *configpb.Version, kind *configpb.ConfigKind, entries []*configpb.ConfigEntry) (*configpb.Status, *configpb.Version, error) {
 	return nil, nil, nil
 }
