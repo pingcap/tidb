@@ -361,7 +361,7 @@ type Performance struct {
 	RunAutoAnalyze       bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
 	DistinctAggPushDown  bool    `toml:"distinct-agg-push-down" json:"agg-push-down-join"`
 	CommitterConcurrency int     `toml:"committer-concurrency" json:"committer-concurrency"`
-	TLLMngLifetime       uint64  `toml:"ttl-mng-lifetime" json:"ttl-mng-lifetime"`
+	MaxTxnTTL            uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -597,7 +597,7 @@ var defaultConf = Config{
 		TxnTotalSizeLimit:    DefTxnTotalSizeLimit,
 		DistinctAggPushDown:  false,
 		CommitterConcurrency: 16,
-		TLLMngLifetime:       10 * 60 * 1000, // 10min
+		MaxTxnTTL:            10 * 60 * 1000, // 10min
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
