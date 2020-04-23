@@ -689,9 +689,6 @@ func (s *mockStore) TLSConfig() *tls.Config { panic("not implemented") }
 func (s *mockStore) StartGCWorker() error   { panic("not implemented") }
 
 func (s *testInfoschemaClusterTableSuite) TestTiDBClusterInfo(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	err := tk.QueryToErr("select * from information_schema.cluster_info")
-	c.Assert(err, NotNil)
 	mockAddr := s.mockAddr
 	store := &mockStore{
 		s.store.(tikv.Storage),
@@ -699,18 +696,18 @@ func (s *testInfoschemaClusterTableSuite) TestTiDBClusterInfo(c *C) {
 	}
 
 	// information_schema.cluster_info
-	tk = testkit.NewTestKit(c, store)
+	tk := testkit.NewTestKit(c, store)
 	tidbStatusAddr := fmt.Sprintf(":%d", config.GetGlobalConfig().Status.StatusPort)
 	row := func(cols ...string) string { return strings.Join(cols, " ") }
 	tk.MustQuery("select type, instance, status_address, version, git_hash from information_schema.cluster_info").Check(testkit.Rows(
 		row("tidb", ":4000", tidbStatusAddr, "5.7.25-TiDB-None", "None"),
 		row("pd", mockAddr, mockAddr, "4.0.0-alpha", "mock-pd-githash"),
-		row("tikv", "127.0.0.1:20160", mockAddr, "4.0.0-alpha", "mock-tikv-githash"),
+		row("tikv", "store1", "", "", ""),
 	))
 	startTime := s.startTime.Format(time.RFC3339)
 	tk.MustQuery("select type, instance, start_time from information_schema.cluster_info where type != 'tidb'").Check(testkit.Rows(
 		row("pd", mockAddr, startTime),
-		row("tikv", "127.0.0.1:20160", startTime),
+		row("tikv", "store1", ""),
 	))
 
 	// information_schema.cluster_config
