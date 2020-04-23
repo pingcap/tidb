@@ -321,7 +321,11 @@ func (s *session) SetCollation(coID int) error {
 	for _, v := range variable.SetNamesVariables {
 		terror.Log(s.sessionVars.SetSystemVar(v, cs))
 	}
-	terror.Log(s.sessionVars.SetSystemVar(variable.CollationConnection, co))
+	err = s.sessionVars.SetSystemVar(variable.CollationConnection, co)
+	if err != nil {
+		// Some clients may use the unsupported collations, such as utf8mb4_0900_ai_ci, We shouldn't return error or use the ERROR level log.
+		logutil.BgLogger().Warn(err.Error())
+	}
 	return nil
 }
 
@@ -979,7 +983,7 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 	}
 	var sVal string
 	var err error
-	sVal, err = variable.ValidateSetSystemVar(s.sessionVars, name, value)
+	sVal, err = variable.ValidateSetSystemVar(s.sessionVars, name, value, variable.ScopeGlobal)
 	if err != nil {
 		return err
 	}
@@ -1825,7 +1829,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = version41
+	currentBootstrapVersion = version43
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -1991,18 +1995,16 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	// Use GlobalVariableCache if TiDB just loaded global variables within 2 second ago.
 	// When a lot of connections connect to TiDB simultaneously, it can protect TiKV meta region from overload.
 	gvc := domain.GetDomain(s).GetGlobalVarsCache()
-	succ, rows, fields := gvc.Get()
-	if !succ {
-		// Set the variable to true to prevent cyclic recursive call.
-		vars.CommonGlobalLoaded = true
-		rows, fields, err = s.ExecRestrictedSQL(loadCommonGlobalVarsSQL)
-		if err != nil {
-			vars.CommonGlobalLoaded = false
-			logutil.BgLogger().Error("failed to load common global variables.")
-			return err
-		}
-		gvc.Update(rows, fields)
+	loadFunc := func() ([]chunk.Row, []*ast.ResultField, error) {
+		return s.ExecRestrictedSQL(loadCommonGlobalVarsSQL)
 	}
+	rows, fields, err := gvc.LoadGlobalVariables(loadFunc)
+	if err != nil {
+		logutil.BgLogger().Warn("failed to load global variables",
+			zap.Uint64("conn", s.sessionVars.ConnectionID), zap.Error(err))
+		return err
+	}
+	vars.CommonGlobalLoaded = true
 
 	for _, row := range rows {
 		varName := row.GetString(0)
