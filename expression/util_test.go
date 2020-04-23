@@ -256,13 +256,13 @@ func (s testUtilSuite) TestGetStrIntFromConstant(c *check.C) {
 
 func (s *testUtilSuite) TestSubstituteCorCol2Constant(c *check.C) {
 	ctx := mock.NewContext()
-	corCol1 := &CorrelatedColumn{Data: &One.Value}
+	corCol1 := &CorrelatedColumn{Data: &NewOne().Value}
 	corCol1.RetType = types.NewFieldType(mysql.TypeLonglong)
-	corCol2 := &CorrelatedColumn{Data: &One.Value}
+	corCol2 := &CorrelatedColumn{Data: &NewOne().Value}
 	corCol2.RetType = types.NewFieldType(mysql.TypeLonglong)
 	cast := BuildCastFunction(ctx, corCol1, types.NewFieldType(mysql.TypeLonglong))
 	plus := newFunction(ast.Plus, cast, corCol2)
-	plus2 := newFunction(ast.Plus, plus, One)
+	plus2 := newFunction(ast.Plus, plus, NewOne())
 	ans1 := &Constant{Value: types.NewIntDatum(3), RetType: types.NewFieldType(mysql.TypeLonglong)}
 	ret, err := SubstituteCorCol2Constant(plus2)
 	c.Assert(err, check.IsNil)
@@ -283,12 +283,12 @@ func (s *testUtilSuite) TestPushDownNot(c *check.C) {
 	ctx := mock.NewContext()
 	col := &Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
 	// !((a=1||a=1)&&a=1)
-	eqFunc := newFunction(ast.EQ, col, One)
+	eqFunc := newFunction(ast.EQ, col, NewOne())
 	orFunc := newFunction(ast.LogicOr, eqFunc, eqFunc)
 	andFunc := newFunction(ast.LogicAnd, orFunc, eqFunc)
 	notFunc := newFunction(ast.UnaryNot, andFunc)
 	// (a!=1&&a!=1)||a=1
-	neFunc := newFunction(ast.NE, col, One)
+	neFunc := newFunction(ast.NE, col, NewOne())
 	andFunc2 := newFunction(ast.LogicAnd, neFunc, neFunc)
 	orFunc2 := newFunction(ast.LogicOr, andFunc2, neFunc)
 	notFuncCopy := notFunc.Clone()
@@ -304,7 +304,7 @@ func (s *testUtilSuite) TestPushDownNot(c *check.C) {
 	c.Assert(ret.Equal(ctx, newFunction(ast.IsTruth, col)), check.IsTrue)
 
 	// (not not (a+1)) should be optimized to (a+1 is true)
-	plusFunc := newFunction(ast.Plus, col, One)
+	plusFunc := newFunction(ast.Plus, col, NewOne())
 	notFunc = newFunction(ast.UnaryNot, plusFunc)
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
