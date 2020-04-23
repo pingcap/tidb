@@ -114,11 +114,6 @@ func atomicWriteConfig(c *Config, confPath string) (err error) {
 	}
 	return errors.Trace(os.Rename(tmpConfPath, confPath))
 }
-<<<<<<< HEAD
-<<<<<<< HEAD
-====== =
-====== =
->>>>>>> upstream/release-4.0
 
 // ConfReloadFunc is used to reload the config to make it work.
 type ConfReloadFunc func(oldConf, newConf *Config)
