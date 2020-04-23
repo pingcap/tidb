@@ -1274,6 +1274,10 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		return err
 	}
 
+	if len(stmts) == 0 {
+		return cc.writeOK()
+	}
+
 	for i, stmt := range stmts {
 		if err = cc.handleStmt(ctx, stmt, i == len(stmts)-1); err != nil {
 			break
