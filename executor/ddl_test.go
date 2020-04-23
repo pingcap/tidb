@@ -278,6 +278,15 @@ func (s *testSuite6) TestCreateView(c *C) {
 	tk.MustExec("drop view v_nested, v_nested2")
 }
 
+func (s *testSuite6) TestIssue16250(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table if not exists t(a int)")
+	tk.MustExec("create view view_issue16250 as select * from t")
+	_, err := tk.Exec("truncate table view_issue16250")
+	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.view_issue16250' doesn't exist")
+}
+
 func (s *testSuite6) TestCreateViewWithOverlongColName(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -333,6 +342,27 @@ func (s *testSuite6) TestCreateDropDatabase(c *C) {
 
 	_, err = tk.Exec("drop database mysql")
 	c.Assert(err, NotNil)
+
+	tk.MustExec("create database charset_test charset ascii;")
+	tk.MustQuery("show create database charset_test;").Check(testutil.RowsWithSep("|",
+		"charset_test|CREATE DATABASE `charset_test` /*!40100 DEFAULT CHARACTER SET ascii */",
+	))
+	tk.MustExec("drop database charset_test;")
+	tk.MustExec("create database charset_test charset binary;")
+	tk.MustQuery("show create database charset_test;").Check(testutil.RowsWithSep("|",
+		"charset_test|CREATE DATABASE `charset_test` /*!40100 DEFAULT CHARACTER SET binary */",
+	))
+	tk.MustExec("drop database charset_test;")
+	tk.MustExec("create database charset_test collate utf8_general_ci;")
+	tk.MustQuery("show create database charset_test;").Check(testutil.RowsWithSep("|",
+		"charset_test|CREATE DATABASE `charset_test` /*!40100 DEFAULT CHARACTER SET utf8 COLLATE utf8_general_ci */",
+	))
+	tk.MustExec("drop database charset_test;")
+	tk.MustExec("create database charset_test charset utf8 collate utf8_general_ci;")
+	tk.MustQuery("show create database charset_test;").Check(testutil.RowsWithSep("|",
+		"charset_test|CREATE DATABASE `charset_test` /*!40100 DEFAULT CHARACTER SET utf8 COLLATE utf8_general_ci */",
+	))
+	tk.MustGetErrMsg("create database charset_test charset utf8 collate utf8mb4_unicode_ci;", "[ddl:1253]COLLATION 'utf8mb4_unicode_ci' is not valid for CHARACTER SET 'utf8'")
 }
 
 func (s *testSuite6) TestCreateDropTable(c *C) {
@@ -408,6 +438,10 @@ func (s *testSuite6) TestAlterTableAddColumn(c *C) {
 	_, err = tk.Exec("alter table alter_view add column c4 varchar(50)")
 	c.Assert(err.Error(), Equals, ddl.ErrWrongObject.GenWithStackByArgs("test", "alter_view", "BASE TABLE").Error())
 	tk.MustExec("drop view alter_view")
+	tk.MustExec("create sequence alter_seq")
+	_, err = tk.Exec("alter table alter_seq add column c int")
+	c.Assert(err.Error(), Equals, ddl.ErrWrongObject.GenWithStackByArgs("test", "alter_seq", "BASE TABLE").Error())
+	tk.MustExec("drop sequence alter_seq")
 }
 
 func (s *testSuite6) TestAddNotNullColumnNoDefault(c *C) {
@@ -457,6 +491,10 @@ func (s *testSuite6) TestAlterTableModifyColumn(c *C) {
 	_, err = tk.Exec("alter table alter_view modify column c2 text")
 	c.Assert(err.Error(), Equals, ddl.ErrWrongObject.GenWithStackByArgs("test", "alter_view", "BASE TABLE").Error())
 	tk.MustExec("drop view alter_view")
+	tk.MustExec("create sequence alter_seq")
+	_, err = tk.Exec("alter table alter_seq modify column c int")
+	c.Assert(err.Error(), Equals, ddl.ErrWrongObject.GenWithStackByArgs("test", "alter_seq", "BASE TABLE").Error())
+	tk.MustExec("drop sequence alter_seq")
 
 	// test multiple collate modification in column.
 	tk.MustExec("drop table if exists modify_column_multiple_collate")

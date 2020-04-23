@@ -88,7 +88,7 @@ type testDBSuite struct {
 func setUpSuite(s *testDBSuite, c *C) {
 	var err error
 
-	s.lease = 100 * time.Millisecond
+	s.lease = 600 * time.Millisecond
 	session.SetSchemaLease(s.lease)
 	session.DisableStats4Test()
 	s.schemaName = "test_db"
@@ -3317,7 +3317,11 @@ func (s *testDBSuite2) TestTransactionOnAddDropColumn(c *C) {
 	originHook := s.dom.DDL().GetHook()
 	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
 	hook := &ddl.TestDDLCallback{}
+	var checkErr error
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if checkErr != nil {
+			return
+		}
 		switch job.SchemaState {
 		case model.StateWriteOnly, model.StateWriteReorganization, model.StateDeleteOnly, model.StateDeleteReorganization:
 		default:
@@ -3326,7 +3330,10 @@ func (s *testDBSuite2) TestTransactionOnAddDropColumn(c *C) {
 		// do transaction.
 		for _, transaction := range transactions {
 			for _, sql := range transaction {
-				s.mustExec(c, sql)
+				if _, checkErr = s.tk.Exec(sql); checkErr != nil {
+					checkErr = errors.Errorf("err: %s, sql: %s, job schema state: %s", checkErr.Error(), sql, job.SchemaState)
+					return
+				}
 			}
 		}
 	}
@@ -3336,6 +3343,7 @@ func (s *testDBSuite2) TestTransactionOnAddDropColumn(c *C) {
 	go backgroundExec(s.store, "alter table t1 add column c int not null after a", done)
 	err := <-done
 	c.Assert(err, IsNil)
+	c.Assert(checkErr, IsNil)
 	s.tk.MustQuery("select a,b from t1 order by a").Check(testkit.Rows("1 1", "1 1", "1 1", "2 2", "2 2", "2 2"))
 	s.mustExec(c, "delete from t1")
 
@@ -3343,6 +3351,7 @@ func (s *testDBSuite2) TestTransactionOnAddDropColumn(c *C) {
 	go backgroundExec(s.store, "alter table t1 drop column c", done)
 	err = <-done
 	c.Assert(err, IsNil)
+	c.Assert(checkErr, IsNil)
 	s.tk.MustQuery("select a,b from t1 order by a").Check(testkit.Rows("1 1", "1 1", "1 1", "2 2", "2 2", "2 2"))
 }
 
@@ -3364,7 +3373,11 @@ func (s *testDBSuite3) TestTransactionWithWriteOnlyColumn(c *C) {
 	originHook := s.dom.DDL().GetHook()
 	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
 	hook := &ddl.TestDDLCallback{}
+	var checkErr error
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if checkErr != nil {
+			return
+		}
 		switch job.SchemaState {
 		case model.StateWriteOnly:
 		default:
@@ -3373,7 +3386,10 @@ func (s *testDBSuite3) TestTransactionWithWriteOnlyColumn(c *C) {
 		// do transaction.
 		for _, transaction := range transactions {
 			for _, sql := range transaction {
-				s.mustExec(c, sql)
+				if _, checkErr = s.tk.Exec(sql); checkErr != nil {
+					checkErr = errors.Errorf("err: %s, sql: %s, job schema state: %s", checkErr.Error(), sql, job.SchemaState)
+					return
+				}
 			}
 		}
 	}
@@ -3383,6 +3399,7 @@ func (s *testDBSuite3) TestTransactionWithWriteOnlyColumn(c *C) {
 	go backgroundExec(s.store, "alter table t1 add column c int not null", done)
 	err := <-done
 	c.Assert(err, IsNil)
+	c.Assert(checkErr, IsNil)
 	s.tk.MustQuery("select a from t1").Check(testkit.Rows("2"))
 	s.mustExec(c, "delete from t1")
 
@@ -3390,6 +3407,7 @@ func (s *testDBSuite3) TestTransactionWithWriteOnlyColumn(c *C) {
 	go backgroundExec(s.store, "alter table t1 drop column c", done)
 	err = <-done
 	c.Assert(err, IsNil)
+	c.Assert(checkErr, IsNil)
 	s.tk.MustQuery("select a from t1").Check(testkit.Rows("2"))
 }
 

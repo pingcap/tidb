@@ -123,7 +123,11 @@ func (s *testSuite) TestExplainMetricTable(c *C) {
 		`MemTableScan_5 10000.00 root table:CLUSTER_LOG start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, node_types:["high_cpu_1","high_memory_1"]`))
 }
 
-func (s *testSuite) TestExplainForConnPlanCache(c *C) {
+type testPrepareSerialSuite struct {
+	*baseTestSuite
+}
+
+func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer func() {
