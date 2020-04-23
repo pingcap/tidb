@@ -50,8 +50,8 @@ var (
 	errSequenceAccessDenied = terror.ClassExpression.New(mysql.ErrTableaccessDenied, mysql.MySQLErrName[mysql.ErrTableaccessDenied])
 )
 
-// handleInvalidTimeError reports error or warning depend on the context.
-func handleInvalidTimeError(ctx sessionctx.Context, err error) error {
+// HandleInvalidTimeError reports error or warning depend on the context.
+func HandleInvalidTimeError(ctx sessionctx.Context, err error) error {
 	if err == nil || !(types.ErrWrongValue.Equal(err) ||
 		types.ErrTruncatedWrongVal.Equal(err) || types.ErrInvalidWeekModeFormat.Equal(err) ||
 		types.ErrDatetimeFunctionOverflow.Equal(err)) {

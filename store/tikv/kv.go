@@ -213,9 +213,6 @@ func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Clie
 	}
 	store.lockResolver = newLockResolver(store)
 	store.enableGC = enableGC
-	if rpcClient, ok := store.client.(*rpcClient); ok {
-		rpcClient.dieEventListener = store.regionCache.NotifyNodeDie
-	}
 
 	coprCache, err := newCoprCache(coprCacheConfig)
 	if err != nil {

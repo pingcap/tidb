@@ -198,6 +198,7 @@ func (d *Datum) GetBytes() []byte {
 func (d *Datum) SetBytes(b []byte) {
 	d.k = KindBytes
 	d.b = b
+	d.collation = charset.CollationBin
 }
 
 // SetBytesAsString sets bytes value to datum as string type.
@@ -1433,19 +1434,18 @@ func (d *Datum) ToBool(sc *stmtctx.StatementContext) (int64, error) {
 	case KindUint64:
 		isZero = d.GetUint64() == 0
 	case KindFloat32:
-		isZero = RoundFloat(d.GetFloat64()) == 0
+		isZero = d.GetFloat64() == 0
 	case KindFloat64:
-		isZero = RoundFloat(d.GetFloat64()) == 0
+		isZero = d.GetFloat64() == 0
 	case KindString, KindBytes:
-		iVal, err1 := StrToInt(sc, d.GetString())
+		iVal, err1 := StrToFloat(sc, d.GetString())
 		isZero, err = iVal == 0, err1
 	case KindMysqlTime:
 		isZero = d.GetMysqlTime().IsZero()
 	case KindMysqlDuration:
 		isZero = d.GetMysqlDuration().Duration == 0
 	case KindMysqlDecimal:
-		v, err1 := d.GetMysqlDecimal().ToFloat64()
-		isZero, err = RoundFloat(v) == 0, err1
+		isZero = d.GetMysqlDecimal().IsZero()
 	case KindMysqlEnum:
 		isZero = d.GetMysqlEnum().ToNumber() == 0
 	case KindMysqlSet:

@@ -218,7 +218,6 @@ type RegionCache struct {
 		sync.RWMutex
 		stores map[uint64]*Store
 	}
-	notifyDieCh   chan []string
 	notifyCheckCh chan struct{}
 	closeCh       chan struct{}
 }
@@ -232,7 +231,6 @@ func NewRegionCache(pdClient pd.Client) *RegionCache {
 	c.mu.sorted = btree.New(btreeDegree)
 	c.storeMu.stores = make(map[uint64]*Store)
 	c.notifyCheckCh = make(chan struct{}, 1)
-	c.notifyDieCh = make(chan []string, 1)
 	c.closeCh = make(chan struct{})
 	go c.asyncCheckAndResolveLoop()
 	return c
@@ -253,8 +251,6 @@ func (c *RegionCache) asyncCheckAndResolveLoop() {
 		case <-c.notifyCheckCh:
 			needCheckStores = needCheckStores[:0]
 			c.checkAndResolve(needCheckStores)
-		case addrs := <-c.notifyDieCh:
-			c.invalidStore(addrs)
 		}
 	}
 }
@@ -285,19 +281,6 @@ func (c *RegionCache) checkAndResolve(needCheckStores []*Store) {
 	}
 }
 
-func (c *RegionCache) invalidStore(sAddrs []string) {
-	c.storeMu.RLock()
-	for _, store := range c.storeMu.stores {
-		for _, sAddr := range sAddrs {
-			if store.addr == sAddr {
-				atomic.AddUint32(&store.fail, 1)
-			}
-		}
-
-	}
-	c.storeMu.RUnlock()
-}
-
 // RPCContext contains data that is needed to send RPC to a region.
 type RPCContext struct {
 	Region  RegionVerID
@@ -306,14 +289,6 @@ type RPCContext struct {
 	PeerIdx int
 	Store   *Store
 	Addr    string
-}
-
-// GetStoreID returns StoreID.
-func (c *RPCContext) GetStoreID() uint64 {
-	if c.Store != nil {
-		return c.Store.storeID
-	}
-	return 0
 }
 
 func (c *RPCContext) String() string {
@@ -464,17 +439,6 @@ func (c *RegionCache) LocateKey(bo *Backoffer, key []byte) (*KeyLocation, error)
 		StartKey: r.StartKey(),
 		EndKey:   r.EndKey(),
 	}, nil
-}
-
-func (c *RegionCache) loadAndInsertRegion(bo *Backoffer, key []byte) (*Region, error) {
-	r, err := c.loadRegion(bo, key, false)
-	if err != nil {
-		return nil, err
-	}
-	c.mu.Lock()
-	c.insertRegionToCache(r)
-	c.mu.Unlock()
-	return r, nil
 }
 
 // LocateEndKey searches for the region and range that the key is located.
@@ -1202,14 +1166,6 @@ func (c *RegionCache) switchNextFlashPeer(r *Region, currentPeerIdx int, err err
 	r.compareAndSwapStore(rs, newRegionStore)
 }
 
-// NotifyNodeDie is used for TiClient notify RegionCache a die node.
-func (c *RegionCache) NotifyNodeDie(addrs []string) {
-	select {
-	case c.notifyDieCh <- addrs:
-	default:
-	}
-}
-
 func (c *RegionCache) switchNextPeer(r *Region, currentPeerIdx int, err error) {
 	rs := r.getStore()
 
@@ -1388,7 +1344,7 @@ func (s *Store) reResolve(c *RegionCache) {
 	if s.addr != addr {
 		state := resolved
 		newStore := &Store{storeID: s.storeID, addr: addr, storeType: storeType}
-		newStore.state = *(*uint64)(unsafe.Pointer(&state))
+		newStore.state = *(*uint64)(&state)
 		c.storeMu.Lock()
 		c.storeMu.stores[newStore.storeID] = newStore
 		c.storeMu.Unlock()

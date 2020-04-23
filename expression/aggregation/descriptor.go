@@ -14,6 +14,7 @@
 package aggregation
 
 import (
+	"bytes"
 	"fmt"
 	"math"
 	"strconv"
@@ -64,6 +65,23 @@ func (a *AggFuncDesc) HashCode(sc *stmtctx.StatementContext) []byte {
 	argHashCode := func(i int) []byte { return a.Args[i].HashCode(sc) }
 	hashcode = codec.Encode(hashcode, argHashCode, len(a.Args))
 	return hashcode
+}
+
+// String implements the fmt.Stringer interface.
+func (a *AggFuncDesc) String() string {
+	buffer := bytes.NewBufferString(a.Name)
+	buffer.WriteString("(")
+	if a.HasDistinct {
+		buffer.WriteString("distinct ")
+	}
+	for i, arg := range a.Args {
+		buffer.WriteString(arg.String())
+		if i+1 != len(a.Args) {
+			buffer.WriteString(", ")
+		}
+	}
+	buffer.WriteString(")")
+	return buffer.String()
 }
 
 // Equal checks whether two aggregation function signatures are equal.

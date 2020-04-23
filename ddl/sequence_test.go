@@ -72,7 +72,6 @@ func (s *testSequenceSuite) TestCreateSequence(c *C) {
 	c.Assert(sequenceTable.Meta().Sequence.Cache, Equals, true)
 	c.Assert(sequenceTable.Meta().Sequence.CacheValue, Equals, model.DefaultSequenceCacheValue)
 	c.Assert(sequenceTable.Meta().Sequence.Cycle, Equals, false)
-	c.Assert(sequenceTable.Meta().Sequence.Order, Equals, false)
 
 	// Test create privilege.
 	s.tk.MustExec("create user myuser@localhost")
@@ -256,6 +255,11 @@ func (s *testSequenceSuite) TestSequenceAsDefaultValue(c *C) {
 	s.tk.MustExec("create sequence seq")
 
 	// test the use sequence's nextval as default.
+	s.tk.MustExec("drop table if exists t")
+	s.tk.MustExec("create table t(a int not null default next value for seq key)")
+	s.tk.MustExec("drop table if exists t")
+	s.tk.MustExec("create table t(a int not null default nextval(seq), b int, primary key(a))")
+
 	s.tk.MustExec("create table t1 (a int default next value for seq)")
 	s.tk.MustGetErrMsg("create table t2 (a char(1) default next value for seq)", "[ddl:8228]Unsupported sequence default value for column type 'a'")
 
@@ -624,24 +628,24 @@ func (s *testSequenceSuite) TestSequenceFunction(c *C) {
 	s.tk.MustExec("drop table if exists seq1")
 	s.tk.MustExec("drop view if exists seq1")
 	s.tk.MustExec("create table seq(a int)")
-	err = s.tk.QueryToErr("select nextval(seq)")
+	_, err = s.tk.Exec("select nextval(seq)")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[schema:1347]'test.seq' is not SEQUENCE")
-	err = s.tk.QueryToErr("select lastval(seq)")
+	_, err = s.tk.Exec("select lastval(seq)")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[schema:1347]'test.seq' is not SEQUENCE")
-	err = s.tk.QueryToErr("select setval(seq, 10)")
+	_, err = s.tk.Exec("select setval(seq, 10)")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[schema:1347]'test.seq' is not SEQUENCE")
 
 	s.tk.MustExec("create view seq1 as select * from seq")
-	err = s.tk.QueryToErr("select nextval(seq1)")
+	_, err = s.tk.Exec("select nextval(seq1)")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[schema:1347]'test.seq1' is not SEQUENCE")
-	err = s.tk.QueryToErr("select lastval(seq1)")
+	_, err = s.tk.Exec("select lastval(seq1)")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[schema:1347]'test.seq1' is not SEQUENCE")
-	err = s.tk.QueryToErr("select setval(seq1, 10)")
+	_, err = s.tk.Exec("select setval(seq1, 10)")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[schema:1347]'test.seq1' is not SEQUENCE")
 	s.tk.MustExec("drop sequence if exists seq")
@@ -684,6 +688,22 @@ func (s *testSequenceSuite) TestSequenceFunction(c *C) {
 	tk1.MustQuery("select setval(seq, -101)").Check(testkit.Rows("<nil>"))
 	tk1.MustQuery("select setval(seq, -102)").Check(testkit.Rows("-102"))
 	s.tk.MustExec("drop sequence seq")
+
+	// test the sequence name preprocess.
+	s.tk.MustExec("drop table if exists t")
+	s.tk.MustExec("create sequence seq")
+	s.tk.MustExec("create table t(a int)")
+	s.tk.MustExec("insert into t values(1),(2)")
+	s.tk.MustQuery("select nextval(seq), t.a from t").Check(testkit.Rows("1 1", "2 2"))
+	_, err = s.tk.Exec("select nextval(t), t.a from t")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[schema:1347]'test.t' is not SEQUENCE")
+	_, err = s.tk.Exec("select nextval(seq), nextval(t), t.a from t")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[schema:1347]'test.t' is not SEQUENCE")
+	s.tk.MustQuery("select nextval(seq)").Check(testkit.Rows("3"))
+	s.tk.MustExec("drop sequence seq")
+	s.tk.MustExec("drop table t")
 }
 
 func (s *testSequenceSuite) TestInsertSequence(c *C) {
