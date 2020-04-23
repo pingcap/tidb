@@ -237,7 +237,7 @@ distinct-agg-push-down = false
 
 # The limitation of the size in byte for the entries in one transaction.
 # If using TiKV as the storage, the entry represents a key/value pair.
-# NOTE: If binlog is enabled, this value should be less than 104857600(10M) because this is the maximum size that can be handled by Pumper.
+# NOTE: If binlog is enabled, this value should be less than 104857600(100M) because this is the maximum size that can be handled by Pumper.
 # If binlog is not enabled, this value should be less than 10737418240(10G).
 txn-total-size-limit = 104857600
 
@@ -356,7 +356,7 @@ admission-min-process-ms = 5
 
 [binlog]
 # enable to write binlog.
-# NOTE: If binlog is enabled, txn-total-size-limit should be less than 104857600(10M).
+# NOTE: If binlog is enabled, txn-total-size-limit should be less than 104857600(100M).
 enable = false
 
 # WriteTimeout specifies how long it will wait for writing binlog to pump.
