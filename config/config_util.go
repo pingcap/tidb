@@ -14,6 +14,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -22,6 +23,7 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 )
 
@@ -113,7 +115,10 @@ func atomicWriteConfig(c *Config, confPath string) (err error) {
 	return errors.Trace(os.Rename(tmpConfPath, confPath))
 }
 <<<<<<< HEAD
-=======
+<<<<<<< HEAD
+====== =
+====== =
+>>>>>>> upstream/release-4.0
 
 // ConfReloadFunc is used to reload the config to make it work.
 type ConfReloadFunc func(oldConf, newConf *Config)
@@ -154,4 +159,3 @@ func flatten(flatMap map[string]interface{}, nested interface{}, prefix string) 
 		flatMap[prefix] = nested
 	}
 }
->>>>>>> d25d0a5... executor, config: update the way to show array config items when using `show config` (#16712)
