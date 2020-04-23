@@ -24,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -32,7 +33,6 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/sys/storage"
 	tracing "github.com/uber/jaeger-client-go/config"
 	"go.uber.org/zap"
 )
@@ -85,7 +85,7 @@ type Config struct {
 	MemQuotaQuery    int64  `toml:"mem-quota-query" json:"mem-quota-query"`
 	// TempStorageQuota describe the temporary storage Quota during query exector when OOMUseTmpStorage is enabled
 	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error
-	TempStorageQuota int64           `toml:"temp-storage-quota" json:"temp-storage-quota"` // Bytes
+	TempStorageQuota int64           `toml:"tmp-storage-quota" json:"tmp-storage-quota"` // Bytes
 	EnableStreaming  bool            `toml:"enable-streaming" json:"enable-streaming"`
 	EnableBatchDML   bool            `toml:"enable-batch-dml" json:"enable-batch-dml"`
 	TxnLocalLatches  TxnLocalLatches `toml:"-" json:"-"`
@@ -360,6 +360,7 @@ type Performance struct {
 	TCPKeepAlive        bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
 	CrossJoin           bool    `toml:"cross-join" json:"cross-join"`
 	RunAutoAnalyze      bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
+	DistinctAggPushDown bool    `toml:"distinct-agg-push-down" json:"agg-push-down-join"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -593,6 +594,7 @@ var defaultConf = Config{
 		ForcePriority:       "NO_PRIORITY",
 		BindInfoLease:       "3s",
 		TxnTotalSizeLimit:   DefTxnTotalSizeLimit,
+		DistinctAggPushDown: false,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
@@ -628,18 +630,10 @@ var defaultConf = Config{
 		StoreLimit:     0,
 
 		CoprCache: CoprocessorCache{
-			// WARNING: Currently Coprocessor Cache may lead to inconsistent result. Do not open it.
-			// These config items are hidden from user, so that fill them with zero value instead of default value.
-			Enabled:               false,
-			CapacityMB:            0,
-			AdmissionMaxResultMB:  0,
-			AdmissionMinProcessMs: 0,
-
-			// If you still want to use Coprocessor Cache, here are some recommended configurations:
-			// Enabled:               true,
-			// CapacityMB:            1000,
-			// AdmissionMaxResultMB:  10,
-			// AdmissionMinProcessMs: 5,
+			Enabled:               true,
+			CapacityMB:            1000,
+			AdmissionMaxResultMB:  10,
+			AdmissionMinProcessMs: 5,
 		},
 	},
 	Binlog: Binlog{
@@ -669,7 +663,7 @@ var defaultConf = Config{
 }
 
 var (
-	globalConfHandler ConfHandler
+	globalConf atomic.Value
 )
 
 // NewConfig creates a new config instance with default value.
@@ -682,14 +676,12 @@ func NewConfig() *Config {
 // It should store configuration from command line and configuration file.
 // Other parts of the system can read the global configuration use this function.
 func GetGlobalConfig() *Config {
-	return globalConfHandler.GetConfig()
+	return globalConf.Load().(*Config)
 }
 
 // StoreGlobalConfig stores a new config to the globalConf. It mostly uses in the test to avoid some data races.
 func StoreGlobalConfig(config *Config) {
-	if err := globalConfHandler.SetConfig(config); err != nil {
-		logutil.BgLogger().Error("update the global config error", zap.Error(err))
-	}
+	globalConf.Store(config)
 }
 
 var deprecatedConfig = map[string]struct{}{
@@ -755,10 +747,7 @@ func InitializeConfig(confPath string, configCheck, configStrict bool, reloadFun
 		fmt.Println("config check successful")
 		os.Exit(0)
 	}
-
-	globalConfHandler, err = NewConfHandler(confPath, cfg, reloadFunc, nil)
-	terror.MustNil(err)
-	globalConfHandler.Start()
+	StoreGlobalConfig(cfg)
 }
 
 // Load loads config options from a toml file.
@@ -859,26 +848,15 @@ func (c *Config) Valid() error {
 	if c.PreparedPlanCache.Capacity < 1 {
 		return fmt.Errorf("capacity in [prepared-plan-cache] should be at least 1")
 	}
+	if c.PreparedPlanCache.MemoryGuardRatio < 0 || c.PreparedPlanCache.MemoryGuardRatio > 1 {
+		return fmt.Errorf("memory-guard-ratio in [prepared-plan-cache] must be NOT less than 0 and more than 1")
+	}
 	if len(c.IsolationRead.Engines) < 1 {
 		return fmt.Errorf("the number of [isolation-read]engines for isolation read should be at least 1")
 	}
 	for _, engine := range c.IsolationRead.Engines {
 		if engine != "tidb" && engine != "tikv" && engine != "tiflash" {
 			return fmt.Errorf("type of [isolation-read]engines can't be %v should be one of tidb or tikv or tiflash", engine)
-		}
-	}
-
-	// check capacity and the quota when OOMUseTmpStorage is enabled
-	if c.OOMUseTmpStorage {
-		if c.TempStorageQuota < 0 {
-			// means unlimited, do nothing
-		} else {
-			capacityByte, err := storage.GetTargetDirectoryCapacity(c.TempStoragePath)
-			if err != nil {
-				return err
-			} else if capacityByte > uint64(c.TempStorageQuota) {
-				return fmt.Errorf("value of [temp-storage-quota](%d byte) exceeds the capacity(%d byte) of the [%s] directory", c.TempStorageQuota, capacityByte, c.TempStoragePath)
-			}
 		}
 	}
 
@@ -929,9 +907,7 @@ func (t *OpenTracing) ToTracingConfig() *tracing.Configuration {
 
 func init() {
 	conf := defaultConf
-	cch := new(constantConfHandler)
-	cch.curConf.Store(&conf)
-	globalConfHandler = cch
+	StoreGlobalConfig(&conf)
 	if checkBeforeDropLDFlag == "1" {
 		CheckTableBeforeDrop = true
 	}
