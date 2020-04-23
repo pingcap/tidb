@@ -569,7 +569,9 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	cc.attrs = resp.Attrs
 
 	err = cc.openSessionAndDoAuth(resp.Auth)
-	logutil.Logger(ctx).Warn("open new session failure", zap.Error(err))
+	if err != nil {
+		logutil.Logger(ctx).Warn("open new session failure", zap.Error(err))
+	}
 	return err
 }
 
