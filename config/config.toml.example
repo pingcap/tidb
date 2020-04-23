@@ -232,6 +232,9 @@ force-priority = "NO_PRIORITY"
 # Bind info lease duration, which influences the duration of loading bind info and handling invalid bind.
 bind-info-lease = "3s"
 
+# Whether support pushing down aggregation with distinct to cop task
+distinct-agg-push-down = false
+
 # The limitation of the size in byte for the entries in one transaction.
 # If using TiKV as the storage, the entry represents a key/value pair.
 # NOTE: If binlog is enabled, this value should be less than 104857600(10M) because this is the maximum size that can be handled by Pumper.
@@ -337,6 +340,19 @@ region-cache-ttl = 600
 # If a store has been up to the limit, it will return error for the successive request in same store.
 # default 0 means shutting off store limit.
 store-limit = 0
+
+[tikv-client.copr-cache]
+# Whether to enable the copr cache. The copr cache saves the result from TiKV Coprocessor in the memory and
+# reuses the result when corresponding data in TiKV is unchanged, on a region basis.
+enabled = true
+
+# The capacity in MB of the cache.
+capacity-mb = 1000.0
+
+# Only cache requests whose result set is small.
+admission-max-result-mb = 10.0
+# Only cache requests takes notable time to process.
+admission-min-process-ms = 5
 
 [binlog]
 # enable to write binlog.
