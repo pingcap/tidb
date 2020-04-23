@@ -85,6 +85,11 @@ var (
 	_ Executor = &TableScanExec{}
 	_ Executor = &TopNExec{}
 	_ Executor = &UnionExec{}
+
+	// GlobalMemoryUsageTracker is the ancestor of all the Executors' memory tracker and GlobalMemory Tracker
+	GlobalMemoryUsageTracker *memory.Tracker
+	// GlobalDiskUsageTracker is the ancestor of all the Executors' disk tracker
+	GlobalDiskUsageTracker *disk.Tracker
 )
 
 type baseExecutor struct {
@@ -97,6 +102,53 @@ type baseExecutor struct {
 	retFieldTypes []*types.FieldType
 	runtimeStats  *execdetails.RuntimeStats
 }
+
+const (
+	// globalStorageLabel represents the label of the GlobalDiskUsageTracker
+	globalStorageLabel string = "GlobalStorageLabel"
+	// globalMemoryLabel represents the label of the GlobalMemoryUsageTracker
+	globalMemoryLabel string = "GlobalMemoryLabel"
+	// globalPanicStorageExceed represents the panic message when out of storage quota.
+	globalPanicStorageExceed string = "Out Of Global Storage Quota!"
+	// globalPanicMemoryExceed represents the panic message when out of memory limit.
+	globalPanicMemoryExceed string = "Out Of Global Memory Limit!"
+)
+
+// GlobalPanicOnExceed panics when GlobalDisTracker storage usage exceeds storage quota.
+type GlobalPanicOnExceed struct {
+	mutex sync.Mutex // For synchronization.
+}
+
+func init() {
+	action := &GlobalPanicOnExceed{}
+	GlobalMemoryUsageTracker = memory.NewGlobalTracker(stringutil.StringerStr(globalMemoryLabel), -1)
+	GlobalMemoryUsageTracker.SetActionOnExceed(action)
+	GlobalDiskUsageTracker = disk.NewGlobalTrcaker(stringutil.StringerStr(globalStorageLabel), -1)
+	GlobalDiskUsageTracker.SetActionOnExceed(action)
+}
+
+// SetLogHook sets a hook for PanicOnExceed.
+func (a *GlobalPanicOnExceed) SetLogHook(hook func(uint64)) {}
+
+// Action panics when storage usage exceeds storage quota.
+func (a *GlobalPanicOnExceed) Action(t *memory.Tracker) {
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+	t.Label().String()
+	msg := ""
+	switch t.Label().String() {
+	case globalStorageLabel:
+		msg = globalPanicStorageExceed
+	case globalMemoryLabel:
+		msg = globalPanicMemoryExceed
+	default:
+		msg = "Out of Unknown Resource Quota!"
+	}
+	panic(msg)
+}
+
+// SetFallback sets a fallback action.
+func (a *GlobalPanicOnExceed) SetFallback(memory.ActionOnExceed) {}
 
 // base returns the baseExecutor of an executor, don't override this method!
 func (e *baseExecutor) base() *baseExecutor {
@@ -1532,9 +1584,9 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		MemTracker:  memory.NewTracker(stringutil.MemoizeStr(s.Text), vars.MemQuotaQuery),
 		DiskTracker: disk.NewTracker(stringutil.MemoizeStr(s.Text), -1),
 	}
-	sc.MemTracker.AttachTo(memory.GlobalMemoryUsageTracker)
-	if config.GetGlobalConfig().OOMUseTmpStorage && disk.GlobalDiskUsageTracker != nil {
-		sc.DiskTracker.AttachToGlobalTracker(disk.GlobalDiskUsageTracker)
+	sc.MemTracker.AttachTo(GlobalMemoryUsageTracker)
+	if config.GetGlobalConfig().OOMUseTmpStorage && GlobalDiskUsageTracker != nil {
+		sc.DiskTracker.AttachToGlobalTracker(GlobalDiskUsageTracker)
 	}
 	switch config.GetGlobalConfig().OOMAction {
 	case config.OOMActionCancel:

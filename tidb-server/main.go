@@ -17,6 +17,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/pingcap/tidb/executor"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -54,7 +55,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/gcworker"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
@@ -592,14 +592,14 @@ func setGlobalVars() {
 	domainutil.RepairInfo.SetRepairMode(cfg.RepairMode)
 	domainutil.RepairInfo.SetRepairTableList(cfg.RepairTableList)
 	c := config.GetGlobalConfig()
-	disk.GlobalDiskUsageTracker.SetBytesLimit(c.TempStorageQuota)
+	executor.GlobalDiskUsageTracker.SetBytesLimit(c.TempStorageQuota)
 	if c.Performance.MaxMemory < 1 {
 		// If MaxMemory equals 0, it means unlimited
-		memory.GlobalMemoryUsageTracker.SetBytesLimit(-1)
+		executor.GlobalMemoryUsageTracker.SetBytesLimit(-1)
 	} else {
-		memory.GlobalMemoryUsageTracker.SetBytesLimit(int64(c.Performance.MaxMemory))
+		executor.GlobalMemoryUsageTracker.SetBytesLimit(int64(c.Performance.MaxMemory))
 	}
-	kvcache.GlobalLRUMemUsageTracker.AttachToGlobalTracker(memory.GlobalMemoryUsageTracker)
+	kvcache.GlobalLRUMemUsageTracker.AttachToGlobalTracker(executor.GlobalMemoryUsageTracker)
 }
 
 func setupLog() {
