@@ -252,25 +252,9 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	if err != nil {
 		return nil, err
 	}
-<<<<<<< HEAD
-	_, isTableDual := p.(*PhysicalTableDual)
-	isPartition := e.isPartition(p)
-	if !isTableDual && prepared.UseCache && !isPartition {
-		sctx.PreparedPlanCache().Put(cacheKey, NewPSTMTPlanCacheValue(p))
-=======
-	e.names = names
-	e.Plan = p
 	_, isTableDual := p.(*PhysicalTableDual)
 	if !isTableDual && prepared.UseCache {
-		err = e.setFoundInPlanCache(sctx, true)
-		if err != nil {
-			return err
-		}
-		cached := NewPSTMTPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan)
-		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
-		stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
-		sctx.PreparedPlanCache().Put(cacheKey, cached)
->>>>>>> 79211fe... plan: make query on partition table not cacheable (#16375)
+		sctx.PreparedPlanCache().Put(cacheKey, NewPSTMTPlanCacheValue(p))
 	}
 	return p, err
 }
@@ -345,39 +329,6 @@ func (e *Execute) rebuildRange(p Plan) error {
 	return nil
 }
 
-<<<<<<< HEAD
-func checkPartitionInfo(pi *model.PartitionInfo) bool {
-	if pi != nil {
-		return true
-	}
-	return false
-}
-
-// Prepare plan cache is not support query plan on range partition table.
-func (e *Execute) isPartition(p Plan) bool {
-	isRange := false
-	switch x := p.(type) {
-	case *PhysicalTableReader:
-		ts := x.TablePlans[0].(*PhysicalTableScan)
-		return checkPartitionInfo(ts.Table.Partition)
-	case *PhysicalIndexLookUpReader:
-		is := x.IndexPlans[0].(*PhysicalIndexScan)
-		return checkPartitionInfo(is.Table.Partition)
-	case *PhysicalIndexReader:
-		is := x.IndexPlans[0].(*PhysicalIndexScan)
-		return checkPartitionInfo(is.Table.Partition)
-	case PhysicalPlan:
-		for _, child := range x.Children() {
-			if e.isPartition(child) {
-				isRange = true
-			}
-		}
-	}
-	return isRange
-}
-
-=======
->>>>>>> 79211fe... plan: make query on partition table not cacheable (#16375)
 func (e *Execute) buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) ([]*ranger.Range, error) {
 	idxCols, colLengths := expression.IndexInfo2Cols(is.schema.Columns, is.Index)
 	if len(idxCols) == 0 {
