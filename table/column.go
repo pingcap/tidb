@@ -183,6 +183,7 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo) (
 		err = sc.HandleTruncate(err)
 	}
 	if err != nil {
+		logutil.BgLogger().Warn("333333333333333333333333333     ", zap.String("errr", err.Error()))
 		return casted, err
 	}
 
