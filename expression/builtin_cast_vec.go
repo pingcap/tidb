@@ -379,7 +379,7 @@ func (b *builtinCastIntAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.
 		}
 		tm, err := types.ParseTimeFromNum(stmt, i64s[i], b.tp.Tp, fsp)
 		if err != nil {
-			if err = HandleInvalidTimeError(b.ctx, err); err != nil {
+			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return err
 			}
 			result.SetNull(i, true)
@@ -482,7 +482,7 @@ func (b *builtinCastJSONAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk
 		}
 		tm, err := types.ParseTime(stmtCtx, s, b.tp.Tp, fsp)
 		if err != nil {
-			if err = HandleInvalidTimeError(b.ctx, err); err != nil {
+			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return err
 			}
 			result.SetNull(i, true)
@@ -524,7 +524,7 @@ func (b *builtinCastRealAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk
 		}
 		tm, err := types.ParseTime(stmt, strconv.FormatFloat(f64s[i], 'f', -1, 64), b.tp.Tp, fsp)
 		if err != nil {
-			if err = HandleInvalidTimeError(b.ctx, err); err != nil {
+			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return err
 			}
 			result.SetNull(i, true)
@@ -601,7 +601,7 @@ func (b *builtinCastDurationAsTimeSig) vecEvalTime(input *chunk.Chunk, result *c
 		duration.Fsp = fsp
 		tm, err := duration.ConvertToTime(stmtCtx, b.tp.Tp)
 		if err != nil {
-			if err = HandleInvalidTimeError(b.ctx, err); err != nil {
+			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return err
 			}
 			result.SetNull(i, true)
@@ -1360,7 +1360,7 @@ func (b *builtinCastDecimalAsTimeSig) vecEvalTime(input *chunk.Chunk, result *ch
 		}
 		tm, err := types.ParseTimeFromFloatString(stmt, string(decimals[i].ToString()), b.tp.Tp, fsp)
 		if err != nil {
-			if err = HandleInvalidTimeError(b.ctx, err); err != nil {
+			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return err
 			}
 			result.SetNull(i, true)
@@ -1430,7 +1430,7 @@ func (b *builtinCastTimeAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk
 		}
 		res, err := times[i].Convert(stmt, b.tp.Tp)
 		if err != nil {
-			if err = HandleInvalidTimeError(b.ctx, err); err != nil {
+			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return err
 			}
 			result.SetNull(i, true)
@@ -1636,7 +1636,7 @@ func (b *builtinCastStringAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chu
 		}
 		tm, err := types.ParseTime(stmtCtx, buf.GetString(i), b.tp.Tp, fsp)
 		if err != nil {
-			if err = HandleInvalidTimeError(b.ctx, err); err != nil {
+			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return err
 			}
 			result.SetNull(i, true)
