@@ -1267,13 +1267,28 @@ func (s *Store) initResolve(bo *Backoffer) (addr, saddr string, err error) {
 		return
 	}
 	err = s.requestResolveAddr(bo, func(store *metapb.Store) {
-		if s.casResolveState(state, resolved) {
-			if store != nil {
-				s.addr = store.Address
-				s.saddr = store.StatusAddress
-				s.storeType = GetStoreTypeByMeta(store)
-				s.livenessState = uint32(unknown)
-				s.initLiveness(normalLivenessCheckInterval)
+		if store != nil {
+			storeType := GetStoreTypeByMeta(store)
+			addr, saddr := store.GetAddress(), store.GetStatusAddress()
+			newStore := &Store{storeID: s.storeID, addr: addr, saddr: saddr, storeType: storeType, livenessState: uint32(unknown), rc: s.rc}
+			state := resolved
+			newStore.resolveState = *(*uint64)(unsafe.Pointer(&state))
+			newStore.initLiveness(normalLivenessCheckInterval)
+			s.rc.storeMu.Lock()
+			s.rc.storeMu.stores[newStore.storeID] = newStore
+			s.rc.storeMu.Unlock()
+		retryMarkDel:
+			// mark old store as obsolete to notify region ref old store switch to new one, see RegionCache#changeToActiveStore
+			oldState := s.currentResolveState()
+			if oldState == obsolete {
+				return
+			}
+			newState := obsolete
+			if !s.casResolveState(oldState, newState) {
+				goto retryMarkDel
+			}
+			if s.closed != nil {
+				close(s.closed)
 			}
 		}
 	})
@@ -1309,14 +1324,12 @@ func (s *Store) doResolve(bo *Backoffer) (err error) {
 		}
 		storeType := GetStoreTypeByMeta(store)
 		addr, saddr := store.GetAddress(), store.GetStatusAddress()
-		s.storeType = GetStoreTypeByMeta(store)
 		if s.addr != addr || s.saddr != saddr {
 			// store addr has be changed.
 			// copy-on-write a new resolved store and insert store cache.
-			newStore := &Store{storeID: s.storeID, addr: addr, saddr: saddr, storeType: storeType, livenessState: uint32(reachable), rc: s.rc}
+			newStore := &Store{storeID: s.storeID, addr: addr, saddr: saddr, storeType: storeType, livenessState: uint32(unknown), rc: s.rc}
 			state := resolved
 			newStore.resolveState = *(*uint64)(unsafe.Pointer(&state))
-			newStore.livenessState = uint32(unknown)
 			newStore.initLiveness(time.Duration(atomic.LoadUint64(&s.liveness.checkInterval)))
 			s.rc.storeMu.Lock()
 			s.rc.storeMu.stores[newStore.storeID] = newStore
