@@ -3259,7 +3259,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		}
 	}
 	if b.ctx.GetSessionVars().TxnCtx.IsPessimistic {
-		if !update.MultipleTable {
+		if update.TableRefs.TableRefs.Right == nil {
 			p = b.buildSelectLock(p, ast.SelectLockForUpdate)
 		}
 	}
