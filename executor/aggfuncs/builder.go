@@ -485,7 +485,7 @@ func buildLeadLag(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) baseLeadLag
 		offset, _, _ = expression.GetUint64FromConstant(aggFuncDesc.Args[1])
 	}
 	var defaultExpr expression.Expression
-	defaultExpr = expression.Null
+	defaultExpr = expression.NewNull()
 	if len(aggFuncDesc.Args) == 3 {
 		defaultExpr = aggFuncDesc.Args[2]
 	}

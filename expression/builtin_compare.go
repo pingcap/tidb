@@ -1249,21 +1249,21 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	}
 	if isExceptional && (c.op == opcode.EQ || c.op == opcode.NullEQ) {
 		// This will always be false.
-		return []Expression{Zero, One}
+		return []Expression{NewZero(), NewOne()}
 	}
 	if isPositiveInfinite {
 		// If the op is opcode.LT, opcode.LE
 		// This will always be true.
 		// If the op is opcode.GT, opcode.GE
 		// This will always be false.
-		return []Expression{Zero, One}
+		return []Expression{NewZero(), NewOne()}
 	}
 	if isNegativeInfinite {
 		// If the op is opcode.GT, opcode.GE
 		// This will always be true.
 		// If the op is opcode.LT, opcode.LE
 		// This will always be false.
-		return []Expression{One, Zero}
+		return []Expression{NewOne(), NewZero()}
 	}
 
 	return []Expression{finalArg0, finalArg1}
