@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stmtsummary"
@@ -234,7 +235,7 @@ func (e *SetExecutor) setCharset(cs, co string) error {
 		}
 	} else {
 		var coll *charset.Collation
-		if coll, err = charset.GetCollationByName(co); err != nil {
+		if coll, err = collate.GetCollationByName(co); err != nil {
 			return err
 		}
 		if coll.CharsetName != cs {
