@@ -25,7 +25,6 @@ import (
 	"github.com/google/pprof/profile"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/texttree"
 )
 
@@ -54,7 +53,6 @@ func (c *Collector) profileToFlamegraphNode(p *profile.Profile) (*flamegraphNode
 	for _, sample := range p.Sample {
 		root.add(sample)
 	}
-	root.searchFuncUsage(kvcache.ProfileName)
 	return root, nil
 }
 
