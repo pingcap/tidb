@@ -17,7 +17,9 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"math/rand"
 	"runtime"
+	"strings"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -517,4 +519,29 @@ func (s *testLockSuite) TestZeroMinCommitTS(c *C) {
 	expire, _, err = newLockResolver(s.store).ResolveLocks(bo, 0, []*Lock{lock})
 	c.Assert(err, IsNil)
 	c.Assert(expire, Equals, int64(0))
+}
+
+func (s *testLockSuite) TestDeduplicateKeys(c *C) {
+	inputs := []string{
+		"a b c",
+		"a a b c",
+		"a a a b c",
+		"a a a b b b b c",
+		"a b b b b c c c",
+	}
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	for _, in := range inputs {
+		strs := strings.Split(in, " ")
+		keys := make([][]byte, len(strs))
+		for _, i := range r.Perm(len(strs)) {
+			keys[i] = []byte(strs[i])
+		}
+		keys = deduplicateKeys(keys)
+		strs = strs[:len(keys)]
+		for i := range keys {
+			strs[i] = string(keys[i])
+		}
+		out := strings.Join(strs, " ")
+		c.Assert(out, Equals, "a b c")
+	}
 }
