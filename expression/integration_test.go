@@ -5436,7 +5436,7 @@ func (s *testIntegrationSuite) TestCastStrToInt(c *C) {
 	}
 }
 
-func (s *testIntegrationSuite) TestIssue16205(c *C) {
+func (s *testIntegrationSerialSuite) TestIssue16205(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
@@ -5490,7 +5490,7 @@ func (s *testIntegrationSuite) TestIssue14146(c *C) {
 	tk.MustQuery("select * from tt").Check(testkit.Rows("<nil>"))
 }
 
-func (s *testIntegrationSuite) TestCacheRegexpr(c *C) {
+func (s *testIntegrationSerialSuite) TestCacheRegexpr(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
@@ -5514,7 +5514,7 @@ func (s *testIntegrationSuite) TestCacheRegexpr(c *C) {
 	tk.MustQuery("execute stmt1 using @a").Check(testkit.Rows("R1"))
 }
 
-func (s *testIntegrationSuite) TestCacheRefineArgs(c *C) {
+func (s *testIntegrationSerialSuite) TestCacheRefineArgs(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
@@ -5659,7 +5659,7 @@ func (s *testIntegrationSuite) TestCoercibility(c *C) {
 	}, "from t")
 }
 
-func (s *testIntegrationSuite) TestCacheConstEval(c *C) {
+func (s *testIntegrationSerialSuite) TestCacheConstEval(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
@@ -6123,4 +6123,17 @@ func (s *testIntegrationSuite) TestIssue15992(c *C) {
 	tk.MustExec("CREATE INDEX i0 ON t0(c1);")
 	tk.MustQuery("SELECT t0.c0 FROM t0 UNION ALL SELECT 0 FROM t0;").Check(testkit.Rows())
 	tk.MustExec("drop table t0;")
+}
+
+func (s *testIntegrationSuite) TestIssue16029(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t0,t1;")
+	tk.MustExec("CREATE TABLE t0(c0 INT);")
+	tk.MustExec("CREATE TABLE t1(c0 INT);")
+	tk.MustExec("INSERT INTO t0 VALUES (NULL), (1);")
+	tk.MustExec("INSERT INTO t1 VALUES (0);")
+	tk.MustQuery("SELECT t0.c0 FROM t0 JOIN t1 ON (t0.c0 REGEXP 1) | t1.c0  WHERE BINARY STRCMP(t1.c0, t0.c0);").Check(testkit.Rows("1"))
+	tk.MustExec("drop table t0;")
+	tk.MustExec("drop table t1;")
 }
