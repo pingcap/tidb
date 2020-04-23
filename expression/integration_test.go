@@ -2185,24 +2185,6 @@ func (s *testIntegrationSuite) TestDatetimeOverflow(c *C) {
 	tk.MustQuery(`select DATE_SUB('2008-11-23 22:47:31',INTERVAL -266076160 QUARTER);`).Check(testkit.Rows("<nil>"))
 }
 
-func (s *testIntegrationSuite) TestNoZeroDate(c *C) {
-	defer s.cleanEnv(c)
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-
-	tk.MustExec("create table t (a date, b datetime)")
-	tk.MustExec("set sql_mode=''")
-
-	tk.MustExec("insert into t values ('0000-00-00', '0000-00-00')")
-	tk.MustQuery("SELECT STR_TO_DATE('00/00/0000', '%m/%d/%Y');").Check(testkit.Rows("0000-00-00"))
-
-	tk.MustExec("set sql_mode='NO_ZERO_DATE,STRICT_TRANS_TABLES'")
-	tk.MustGetErrMsg("insert into t(a) values ('0000-00-00')", "[table:1366]Incorrect date value: '0000-00-00' for column 'a' at row 1")
-	tk.MustGetErrMsg("insert into t(b) values ('0000-00-00')", "[table:1366]Incorrect datetime value: '0000-00-00' for column 'b' at row 1")
-
-	tk.MustQuery("SELECT STR_TO_DATE('00/00/0000', '%m/%d/%Y');").Check(testkit.Rows("<nil>"))
-}
-
 func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
@@ -5481,6 +5463,33 @@ func (s *testIntegrationSerialSuite) TestIssue16205(c *C) {
 	rows2 := tk.MustQuery("execute stmt").Rows()
 	c.Assert(len(rows2), Equals, 1)
 	c.Assert(rows1[0][0].(string), Not(Equals), rows2[0][0].(string))
+}
+
+func (s *testIntegrationSerialSuite) TestRowCountPlanCache(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	var err error
+	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int auto_increment primary key)")
+	tk.MustExec("prepare stmt from 'select row_count()';")
+	tk.MustExec("insert into t values()")
+	res := tk.MustQuery("execute stmt").Rows()
+	c.Assert(len(res), Equals, 1)
+	c.Assert(res[0][0], Equals, "1")
+	tk.MustExec("insert into t values(),(),()")
+	res = tk.MustQuery("execute stmt").Rows()
+	c.Assert(len(res), Equals, 1)
+	c.Assert(res[0][0], Equals, "3")
 }
 
 func (s *testIntegrationSuite) TestValuesForBinaryLiteral(c *C) {
