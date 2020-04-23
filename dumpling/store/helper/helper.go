@@ -309,7 +309,11 @@ func NewFrameItemFromRegionKey(key []byte) (frame *FrameItem, err error) {
 	frame.TableID, frame.IndexID, frame.IsRecord, err = tablecodec.DecodeKeyHead(key)
 	if err == nil {
 		if frame.IsRecord {
-			_, frame.RecordID, err = tablecodec.DecodeRecordKey(key)
+			var handle kv.Handle
+			_, handle, err = tablecodec.DecodeRecordKey(key)
+			if err == nil {
+				frame.RecordID = handle.IntValue()
+			}
 		} else {
 			_, _, frame.IndexValues, err = tablecodec.DecodeIndexKey(key)
 		}
