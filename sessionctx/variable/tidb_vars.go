@@ -129,8 +129,7 @@ const (
 
 	// tidb_enable_table_partition is used to control table partition feature.
 	// The valid value include auto/on/off:
-	// auto: enable table partition when that feature is implemented.
-	// on: always enable table partition.
+	// on or auto: enable table partition if the partition type is implemented.
 	// off: always disable table partition.
 	TiDBEnableTablePartition = "tidb_enable_table_partition"
 
@@ -414,7 +413,6 @@ const (
 	DefChecksumTableConcurrency        = 4
 	DefSkipUTF8Check                   = false
 	DefOptAggPushDown                  = false
-	DefOptDistinctAggPushDown          = false
 	DefOptWriteRowID                   = false
 	DefOptCorrelationThreshold         = 0.9
 	DefOptCorrelationExpFactor         = 1

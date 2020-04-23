@@ -190,15 +190,6 @@ func (r *builder) buildFromConstant(expr *expression.Constant) []point {
 }
 
 func (r *builder) buildFromColumn(expr *expression.Column) []point {
-	if expr.GetType().EvalType() == types.ETString {
-		startPoint1 := point{value: types.MinNotNullDatum(), start: true}
-		endPoint1 := point{excl: true}
-		endPoint1.value.SetString("", mysql.DefaultCharset)
-		startPoint2 := point{excl: true, start: true}
-		startPoint2.value.SetString("", mysql.DefaultCharset)
-		endPoint2 := point{value: types.MaxValueDatum()}
-		return []point{startPoint1, endPoint1, startPoint2, endPoint2}
-	}
 	// column name expression is equivalent to column name is true.
 	startPoint1 := point{value: types.MinNotNullDatum(), start: true}
 	endPoint1 := point{excl: true}
