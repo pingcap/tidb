@@ -224,7 +224,7 @@ func (tk *TestKit) MustTableDual(sql string, args ...interface{}) *Result {
 func (tk *TestKit) MustPointGet(sql string, args ...interface{}) *Result {
 	rs := tk.MustQuery("explain "+sql, args...)
 	tk.c.Assert(len(rs.rows), check.Equals, 1)
-	tk.c.Assert(strings.Contains(rs.rows[0][0], "Point_Get"), check.IsTrue)
+	tk.c.Assert(strings.Contains(rs.rows[0][0], "Point_Get"), check.IsTrue, check.Commentf("plan %v", rs.rows[0][0]))
 	return tk.MustQuery(sql, args...)
 }
 
