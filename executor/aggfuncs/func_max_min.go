@@ -44,9 +44,9 @@ func (m *maxMinQueue) Resort() {
 	}
 	sort.Slice(m.queue, func(i, j int) bool {
 		if m.isMax {
-			return m.cmpFunc(m.queue[i], m.queue[j]) < 0
+			return m.cmpFunc(m.queue[i], m.queue[j]) > 0
 		}
-		return m.cmpFunc(m.queue[i], m.queue[j]) > 0
+		return m.cmpFunc(m.queue[i], m.queue[j]) < 0
 	})
 }
 
@@ -59,7 +59,6 @@ func (m *maxMinQueue) Top() (val interface{}, isEmpty bool) {
 }
 
 func (m *maxMinQueue) Del(val interface{}) {
-	fmt.Println("Del", val)
 	for i, qVal := range m.queue {
 		if m.cmpFunc(qVal, val) == 0 {
 			if i < len(m.queue) {
@@ -69,11 +68,10 @@ func (m *maxMinQueue) Del(val interface{}) {
 			}
 		}
 	}
-	fmt.Println("Del", m.queue)
+	fmt.Println("Del", val, m.queue, m.counter)
 }
 
 func (m *maxMinQueue) Push(val interface{}) {
-	fmt.Println("Push", val)
 	if v, ok := m.counter[val]; ok {
 		m.counter[val] = v + 1
 	} else {
@@ -81,22 +79,20 @@ func (m *maxMinQueue) Push(val interface{}) {
 		m.queue = append(m.queue, val)
 		m.Resort()
 	}
-	fmt.Println("Push", m.queue, m.counter)
+	fmt.Println("Push", val, m.queue, m.counter)
 }
 
 func (m *maxMinQueue) Pop(val interface{}) {
-	fmt.Println("Pop", val)
 	v, ok := m.counter[val]
-	fmt.Println("m.counter[val]", v, ok, val)
 	if ok {
 		m.counter[val] = v - 1
 		if v == 1 {
-			fmt.Println("m.Del(val)", m.queue, m.counter)
 			m.Del(val)
+			delete(m.counter, val)
 			m.Resort()
 		}
 	}
-	fmt.Println("Pop", m.queue, m.counter)
+	fmt.Println("Pop", val, m.queue, m.counter)
 }
 
 func (m *maxMinQueue) Reset() {
@@ -126,11 +122,13 @@ type partialResult4MaxMinDecimal struct {
 type partialResult4MaxMinFloat32 struct {
 	val    float32
 	isNull bool
+	queue  *maxMinQueue
 }
 
 type partialResult4MaxMinFloat64 struct {
 	val    float64
 	isNull bool
+	queue  *maxMinQueue
 }
 
 type partialResult4Time struct {
@@ -201,20 +199,20 @@ func (e *maxMin4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []
 			continue
 		}
 		p.queue.Push(input)
-		if val, isEmpty := p.queue.Top(); !isEmpty {
-			p.val = val.(int64)
-			p.isNull = false
-		}else {
-			p.isNull = true
-		}
+	}
+	if val, isEmpty := p.queue.Top(); !isEmpty {
+		p.val = val.(int64)
+		p.isNull = false
+	} else {
+		p.isNull = true
 	}
 	return nil
 }
 
 func (e *maxMin4Int) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
 	p := (*partialResult4MaxMinInt)(pr)
-	for i := uint64(0); i < shiftEnd; i++ {
-		input, isNull, err := e.args[0].EvalInt(sctx, rows[lastEnd+i])
+	for i := uint64(0); i < shiftStart; i++ {
+		input, isNull, err := e.args[0].EvalInt(sctx, rows[lastStart+i])
 		if err != nil {
 			return err
 		}
@@ -223,8 +221,8 @@ func (e *maxMin4Int) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart,
 		}
 		p.queue.Pop(input)
 	}
-	for i := uint64(0); i < shiftStart; i++ {
-		input, isNull, err := e.args[0].EvalInt(sctx, rows[lastStart+i])
+	for i := uint64(0); i < shiftEnd; i++ {
+		input, isNull, err := e.args[0].EvalInt(sctx, rows[lastEnd+i])
 		if err != nil {
 			return err
 		}
@@ -329,6 +327,10 @@ type maxMin4Float32 struct {
 func (e *maxMin4Float32) AllocPartialResult() PartialResult {
 	p := new(partialResult4MaxMinFloat32)
 	p.isNull = true
+	p.queue = newMaxMinQueue(e.isMax)
+	p.queue.cmpFunc = func(i, j interface{}) int {
+		return types.CompareFloat64(float64(i.(float32)), float64(j.(float32)))
+	}
 	return PartialResult(p)
 }
 
@@ -336,6 +338,7 @@ func (e *maxMin4Float32) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinFloat32)(pr)
 	p.val = 0
 	p.isNull = true
+	p.queue.Reset()
 }
 
 func (e *maxMin4Float32) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -358,15 +361,44 @@ func (e *maxMin4Float32) UpdatePartialResult(sctx sessionctx.Context, rowsInGrou
 		if isNull {
 			continue
 		}
-		f := float32(input)
-		if p.isNull {
-			p.val = f
-			p.isNull = false
+		p.queue.Push(float32(input))
+	}
+	if val, isEmpty := p.queue.Top(); !isEmpty {
+		p.val = val.(float32)
+		p.isNull = false
+	} else {
+		p.isNull = true
+	}
+	return nil
+}
+
+func (e *maxMin4Float32) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
+	p := (*partialResult4MaxMinFloat32)(pr)
+	for i := uint64(0); i < shiftStart; i++ {
+		input, isNull, err := e.args[0].EvalReal(sctx, rows[lastStart+i])
+		if err != nil {
+			return err
+		}
+		if isNull {
 			continue
 		}
-		if e.isMax && f > p.val || !e.isMax && f < p.val {
-			p.val = f
+		p.queue.Pop(float32(input))
+	}
+	for i := uint64(0); i < shiftEnd; i++ {
+		input, isNull, err := e.args[0].EvalReal(sctx, rows[lastEnd+i])
+		if err != nil {
+			return err
 		}
+		if isNull {
+			continue
+		}
+		p.queue.Push(float32(input))
+	}
+	if val, isEmpty := p.queue.Top(); !isEmpty {
+		p.val = val.(float32)
+		p.isNull = false
+	} else {
+		p.isNull = true
 	}
 	return nil
 }
@@ -393,6 +425,10 @@ type maxMin4Float64 struct {
 func (e *maxMin4Float64) AllocPartialResult() PartialResult {
 	p := new(partialResult4MaxMinFloat64)
 	p.isNull = true
+	p.queue = newMaxMinQueue(e.isMax)
+	p.queue.cmpFunc = func(i, j interface{}) int {
+		return types.CompareFloat64(i.(float64), j.(float64))
+	}
 	return PartialResult(p)
 }
 
@@ -400,6 +436,7 @@ func (e *maxMin4Float64) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinFloat64)(pr)
 	p.val = 0
 	p.isNull = true
+	p.queue.Reset()
 }
 
 func (e *maxMin4Float64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -422,14 +459,44 @@ func (e *maxMin4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGrou
 		if isNull {
 			continue
 		}
-		if p.isNull {
-			p.val = input
-			p.isNull = false
+		p.queue.Push(input)
+	}
+	if val, isEmpty := p.queue.Top(); !isEmpty {
+		p.val = val.(float64)
+		p.isNull = false
+	} else {
+		p.isNull = true
+	}
+	return nil
+}
+
+func (e *maxMin4Float64) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
+	p := (*partialResult4MaxMinFloat64)(pr)
+	for i := uint64(0); i < shiftStart; i++ {
+		input, isNull, err := e.args[0].EvalReal(sctx, rows[lastStart+i])
+		if err != nil {
+			return err
+		}
+		if isNull {
 			continue
 		}
-		if e.isMax && input > p.val || !e.isMax && input < p.val {
-			p.val = input
+		p.queue.Pop(input)
+	}
+	for i := uint64(0); i < shiftEnd; i++ {
+		input, isNull, err := e.args[0].EvalReal(sctx, rows[lastEnd+i])
+		if err != nil {
+			return err
 		}
+		if isNull {
+			continue
+		}
+		p.queue.Push(input)
+	}
+	if val, isEmpty := p.queue.Top(); !isEmpty {
+		p.val = val.(float64)
+		p.isNull = false
+	} else {
+		p.isNull = true
 	}
 	return nil
 }
