@@ -23,6 +23,7 @@ func memProfileForGlobalMemTracker() error {
 	if err != nil {
 		return err
 	}
+	// TODO: add recover for the panic in Consume
 	kvcache.GlobalLRUMemUsageTracker.ReplaceBytesUsed(bytes)
 	return nil
 }
