@@ -44,6 +44,10 @@ var (
 	GlobalLRUMemUsageTracker *memory.Tracker
 )
 
+const (
+	ProfileName = "github.com/pingcap/tidb/util/kvcache.(*SimpleLRUCache).Put"
+)
+
 func init() {
 	GlobalLRUMemUsageTracker = memory.NewGlobalTracker(stringutil.StringerStr("GlobalSimpleLRUCache"), -1)
 }
@@ -53,10 +57,10 @@ type SimpleLRUCache struct {
 	capacity uint
 	size     uint
 	// 0 indicates no quota
-	quota      uint64
-	guard      float64
-	elements   map[string]*list.Element
-	cache      *list.List
+	quota    uint64
+	guard    float64
+	elements map[string]*list.Element
+	cache    *list.List
 }
 
 // NewSimpleLRUCache creates a SimpleLRUCache object, whose capacity is "capacity".
@@ -66,12 +70,12 @@ func NewSimpleLRUCache(capacity uint, guard float64, quota uint64) *SimpleLRUCac
 		panic("capacity of LRU Cache should be at least 1.")
 	}
 	sc := &SimpleLRUCache{
-		capacity:   capacity,
-		size:       0,
-		quota:      quota,
-		guard:      guard,
-		elements:   make(map[string]*list.Element),
-		cache:      list.New(),
+		capacity: capacity,
+		size:     0,
+		quota:    quota,
+		guard:    guard,
+		elements: make(map[string]*list.Element),
+		cache:    list.New(),
 	}
 	return sc
 }
@@ -103,6 +107,9 @@ func (l *SimpleLRUCache) Put(key Key, value Value) {
 	element = l.cache.PushFront(newCacheEntry)
 	l.elements[hash] = element
 	l.size++
+	if linshi == nil {
+		linshi = map[string]string{}
+	}
 
 	// Getting used memory is expensive and can be avoided by setting quota to 0.
 	if l.quota == 0 {

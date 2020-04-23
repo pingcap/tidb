@@ -378,3 +378,9 @@ func (t *Tracker) DetachFromGlobalTracker() {
 	parent.Consume(-t.BytesConsumed())
 	t.parent = nil
 }
+
+// ReplaceBytesUsed replace bytesConsume
+func (t *Tracker) ReplaceBytesUsed(bytes int64) {
+	t.Consume(-t.BytesConsumed())
+	t.Consume(bytes)
+}

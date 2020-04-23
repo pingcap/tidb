@@ -26,12 +26,14 @@ import (
 type flamegraphNode struct {
 	cumValue int64
 	children map[uint64]*flamegraphNode
+	name     string
 }
 
 func newFlamegraphNode() *flamegraphNode {
 	return &flamegraphNode{
 		cumValue: 0,
 		children: make(map[uint64]*flamegraphNode),
+		name:     "",
 	}
 }
 
@@ -65,10 +67,25 @@ func (n *flamegraphNode) add(sample *profile.Sample) {
 		if !ok {
 			child = newFlamegraphNode()
 			n.children[loc] = child
+			child.name = locs[len(locs)-1].Line[0].Function.Name
 		}
 		locs = locs[:len(locs)-1]
 		n = child
 	}
+}
+
+func (n *flamegraphNode) searchFuncUsage(name string) int64 {
+	if n.name == name {
+		return n.cumValue
+	}
+	if len(n.children) == 0 {
+		return 0
+	}
+	var usage int64 = 0
+	for _, child := range n.children {
+		usage = child.searchFuncUsage(name) + usage
+	}
+	return usage
 }
 
 type flamegraphNodeWithLocation struct {
