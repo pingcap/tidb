@@ -134,7 +134,6 @@ func (a *globalPanicOnExceed) SetLogHook(hook func(uint64)) {}
 func (a *globalPanicOnExceed) Action(t *memory.Tracker) {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
-	t.Label().String()
 	msg := ""
 	switch t.Label().String() {
 	case globalStorageLabel:
