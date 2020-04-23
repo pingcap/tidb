@@ -107,6 +107,9 @@ func dumpDatabases(ctx context.Context, conf *Config, db *sql.DB, writer Writer)
 			return err
 		}
 
+		if len(tables) == 0 {
+			continue
+		}
 		rateLimit := newRateLimit(conf.Threads)
 		var g errgroup.Group
 		for _, table := range tables {
