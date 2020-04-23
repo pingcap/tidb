@@ -90,6 +90,7 @@ func TestInfo(t *testing.T) {
 	if !unixSocketAvailable() {
 		return
 	}
+	testleak.BeforeTest()
 	defer testleak.AfterTestT(t)()
 	ddlLease := 80 * time.Millisecond
 	s, err := mockstore.NewMockTikvStore()
