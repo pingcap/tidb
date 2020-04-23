@@ -349,7 +349,7 @@ func (e *InsertValues) fastEvalRow(ctx context.Context, list []expression.Expres
 		if err = e.handleErr(e.insertColumns[i], &val, rowIdx, err); err != nil {
 			return nil, err
 		}
-		logutil.BgLogger().Warn("2222222222222222222222222       ", zap.Bool("zeroMode", e.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode()))
+		logutil.BgLogger().Error("2222222222222222222222222       ", zap.Bool("zeroMode", e.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode()))
 		val1, err := table.CastValue(e.ctx, val, e.insertColumns[i].ToInfo())
 		if err = e.handleErr(e.insertColumns[i], &val, rowIdx, err); err != nil {
 			return nil, err

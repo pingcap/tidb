@@ -183,7 +183,7 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo) (
 		err = sc.HandleTruncate(err)
 	}
 	if err != nil {
-		logutil.BgLogger().Warn("333333333333333333333333333     ", zap.String("errr", err.Error()))
+		logutil.BgLogger().Error("333333333333333333333333333     ", zap.String("errr", err.Error()))
 		return casted, err
 	}
 
@@ -192,7 +192,7 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo) (
 	}
 
 
-	logutil.BgLogger().Warn("111111111111111111111111111111       ", zap.Bool("zeroMode", ctx.GetSessionVars().SQLMode.HasNoZeroDateMode()))
+	logutil.BgLogger().Error("111111111111111111111111111111       ", zap.Bool("zeroMode", ctx.GetSessionVars().SQLMode.HasNoZeroDateMode()))
 	if ((col.Tp == mysql.TypeDate && !casted.IsNull() && casted.GetMysqlTime() == types.ZeroDate) || (col.Tp == mysql.TypeDatetime && !casted.IsNull() && casted.GetMysqlTime() == types.ZeroDatetime)) && ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
 		if err := expression.HandleInvalidTimeError(ctx, types.ErrWrongValue); err != nil {
 			return casted, err
