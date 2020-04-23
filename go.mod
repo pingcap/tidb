@@ -1,6 +1,6 @@
 module github.com/pingcap/tidb
 
-replace github.com/pingcap/tipb v0.0.0-20200212061130-c4d518eb1d60 => github.com/hanfei1991/tipb v0.0.0-20200308103915-5f3b53798f00
+replace github.com/pingcap/tipb v0.0.0-20200212061130-c4d518eb1d60 => github.com/hanfei1991/tipb v0.0.0-20200421083959-59279b989667
 
 replace github.com/pingcap/parser v0.0.0-20200407074807-436f1c8c4cff => github.com/hanfei1991/parser v0.0.0-20200420101937-63e37f36ae0c
 

@@ -463,16 +463,18 @@ func (p BatchPointGetPlan) Init(ctx sessionctx.Context, stats *property.StatsInf
 	return &p
 }
 
+func flattenTreePlan(plan PhysicalPlan, plans []PhysicalPlan) []PhysicalPlan {
+	plans = append(plans, plan)
+	for _, child := range plan.Children() {
+		plans = flattenTreePlan(child, plans)
+	}
+	return plans
+}
+
 // flattenPushDownPlan converts a plan tree to a list, whose head is the leaf node like table scan.
 func flattenPushDownPlan(p PhysicalPlan) []PhysicalPlan {
 	plans := make([]PhysicalPlan, 0, 5)
-	for {
-		plans = append(plans, p)
-		if len(p.Children()) == 0 {
-			break
-		}
-		p = p.Children()[0]
-	}
+	plans = flattenTreePlan(p, plans)
 	for i := 0; i < len(plans)/2; i++ {
 		j := len(plans) - i - 1
 		plans[i], plans[j] = plans[j], plans[i]

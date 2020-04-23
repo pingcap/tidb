@@ -246,9 +246,14 @@ func (r *selectResult) updateCopRuntimeStats(detail *execdetails.ExecDetails, re
 	for i, detail := range r.selectResp.GetExecutionSummaries() {
 		if detail != nil && detail.TimeProcessedNs != nil &&
 			detail.NumProducedRows != nil && detail.NumIterations != nil {
-			planID := r.copPlanIDs[i]
+			planID := ""
+			if detail.GetExecutorId() != "" {
+				planID = detail.GetExecutorId()
+			} else {
+				planID = r.copPlanIDs[i].String()
+			}
 			r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.
-				RecordOneCopTask(planID.String(), callee, detail)
+				RecordOneCopTask(planID, callee, detail)
 		}
 	}
 }

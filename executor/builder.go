@@ -1994,7 +1994,9 @@ func (b *executorBuilder) constructDAGReq(plans []plannercore.PhysicalPlan, stor
 	sc := b.ctx.GetSessionVars().StmtCtx
 	dagReq.Flags = sc.PushDownFlags()
 	if storeType == kv.TiFlash {
-		dagReq.Executors, streaming, err = constructDistExecForTiFlash(b.ctx, plans[0])
+		var executors []*tipb.Executor
+		executors, streaming, err = constructDistExecForTiFlash(b.ctx, plans[0])
+		dagReq.RootExecutor = executors[0]
 	} else {
 		dagReq.Executors, streaming, err = constructDistExec(b.ctx, plans)
 	}
