@@ -216,7 +216,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	err = r.Next(ctx, req)
 	c.Assert(err, IsNil)
 	row = req.GetRow(0)
-	c.Assert(row.Len(), Equals, 10)
+	c.Assert(row.Len(), Equals, 11)
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
 	historyJobs, err := admin.GetHistoryDDLJobs(txn, admin.DefNumHistoryJobs)
@@ -232,7 +232,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	err = r.Next(ctx, req)
 	c.Assert(err, IsNil)
 	row = req.GetRow(0)
-	c.Assert(row.Len(), Equals, 10)
+	c.Assert(row.Len(), Equals, 11)
 	c.Assert(row.GetInt64(0), Equals, historyJobs[0].ID)
 	c.Assert(err, IsNil)
 
@@ -301,6 +301,13 @@ func (s *testSuite) TestAdmin(c *C) {
 	tk.MustExec("ALTER TABLE t1 ADD INDEX idx3 (c4);")
 	tk.MustExec("admin check table t1;")
 
+	// Test admin show ddl jobs table name after table has been droped.
+	tk.MustExec("drop table if exists t1;")
+	re := tk.MustQuery("admin show ddl jobs 1")
+	rows := re.Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][2], Equals, "t1")
+
 	// Test for reverse scan get history ddl jobs when ddl history jobs queue has multiple regions.
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
@@ -316,6 +323,39 @@ func (s *testSuite) TestAdmin(c *C) {
 	historyJobs2, err := admin.GetHistoryDDLJobs(txn, 20)
 	c.Assert(err, IsNil)
 	c.Assert(historyJobs, DeepEquals, historyJobs2)
+}
+
+func (s *testSuite) TestAdminShowDDLJobs(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test_admin_show_ddl_jobs")
+	tk.MustExec("use test_admin_show_ddl_jobs")
+	tk.MustExec("create table t (a int);")
+
+	re := tk.MustQuery("admin show ddl jobs 1")
+	row := re.Rows()[0]
+	c.Assert(row[1], Equals, "test_admin_show_ddl_jobs")
+	jobID, err := strconv.Atoi(row[0].(string))
+	c.Assert(err, IsNil)
+
+	c.Assert(tk.Se.NewTxn(context.Background()), IsNil)
+	txn, err := tk.Se.Txn(true)
+	c.Assert(err, IsNil)
+	t := meta.NewMeta(txn)
+	job, err := t.GetHistoryDDLJob(int64(jobID))
+	c.Assert(err, IsNil)
+	c.Assert(job, NotNil)
+	// Test for compatibility. Old TiDB version doesn't have SchemaName field, and the BinlogInfo maybe nil.
+	// See PR: 11561.
+	job.BinlogInfo = nil
+	job.SchemaName = ""
+	err = t.AddHistoryDDLJob(job, true)
+	c.Assert(err, IsNil)
+	err = tk.Se.CommitTxn(context.Background())
+	c.Assert(err, IsNil)
+
+	re = tk.MustQuery("admin show ddl jobs 1")
+	row = re.Rows()[0]
+	c.Assert(row[1], Equals, "test_admin_show_ddl_jobs")
 }
 
 func (s *testSuite) TestAdminChecksumOfPartitionedTable(c *C) {
@@ -3338,6 +3378,17 @@ func (s *testSuite3) TestIndexJoinTableDualPanic(c *C) {
 		Check(testkit.Rows("1 a"))
 }
 
+func (s *testSuite3) TestSortLeftJoinWithNullColumnInRightChildPanic(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("create table t2(a int)")
+	tk.MustExec("insert into t1(a) select 1;")
+	tk.MustQuery("select b.n from t1 left join (select a as a, null as n from t2) b on b.a = t1.a order by t1.a").
+		Check(testkit.Rows("<nil>"))
+}
+
 func (s *testSuite3) TestUnionAutoSignedCast(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -4387,4 +4438,14 @@ func (s *testSuite1) TestIssue15767(c *C) {
 	tk.MustExec("insert into t select * from t;")
 	tk.MustExec("insert into t select * from t;")
 	tk.MustQuery("select b, count(*) from ( select b from t order by a limit 20 offset 2) as s group by b order by b;").Check(testkit.Rows("a 6", "c 7", "s 7"))
+}
+
+func (s *testSuite1) TestIssue16025(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t0;")
+	tk.MustExec("CREATE TABLE t0(c0 NUMERIC PRIMARY KEY);")
+	tk.MustExec("INSERT IGNORE INTO t0(c0) VALUES (NULL);")
+	tk.MustQuery("SELECT * FROM t0 WHERE c0;").Check(testkit.Rows())
+
 }

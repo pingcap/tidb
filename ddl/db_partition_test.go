@@ -261,6 +261,23 @@ func (s *testIntegrationSuite9) TestCreateTableWithPartition(c *C) {
 		PARTITION p2 VALUES LESS THAN (2000),
 		PARTITION p3 VALUES LESS THAN (2005)
 	);`, tmysql.ErrBadField)
+
+	// Fix a timezone dependent check bug introduced in https://github.com/pingcap/tidb/pull/10655
+	tk.MustExec(`create table t34 (dt timestamp(3)) partition by range (floor(unix_timestamp(dt))) (
+		partition p0 values less than (unix_timestamp('2020-04-04 00:00:00')),
+		partition p1 values less than (unix_timestamp('2020-04-05 00:00:00')));`)
+
+	tk.MustGetErrCode(`create table t35 (dt timestamp(3)) partition by range (unix_timestamp(date(dt))) (
+		partition p0 values less than (unix_timestamp('2020-04-04 00:00:00')),
+		partition p1 values less than (unix_timestamp('2020-04-05 00:00:00')));`, tmysql.ErrWrongExprInPartitionFunc)
+
+	tk.MustGetErrCode(`create table t35 (dt datetime) partition by range (unix_timestamp(dt)) (
+		partition p0 values less than (unix_timestamp('2020-04-04 00:00:00')),
+		partition p1 values less than (unix_timestamp('2020-04-05 00:00:00')));`, tmysql.ErrWrongExprInPartitionFunc)
+
+	// Fix https://github.com/pingcap/tidb/issues/16333
+	tk.MustExec(`create table t35 (dt timestamp) partition by range (unix_timestamp(dt))
+(partition p0 values less than (unix_timestamp('2020-04-15 00:00:00')));`)
 }
 
 func (s *testIntegrationSuite7) TestCreateTableWithHashPartition(c *C) {
@@ -292,6 +309,17 @@ func (s *testIntegrationSuite7) TestCreateTableWithHashPartition(c *C) {
 		store_id int
 	)
 	partition by hash( year(hired) ) partitions 4;`)
+
+	// This query makes tidb OOM without partition count check.
+	tk.MustGetErrCode(`CREATE TABLE employees1 (
+    id INT NOT NULL,
+    fname VARCHAR(30),
+    lname VARCHAR(30),
+    hired DATE NOT NULL DEFAULT '1970-01-01',
+    separated DATE NOT NULL DEFAULT '9999-12-31',
+    job_code INT,
+    store_id INT
+) PARTITION BY HASH(store_id) PARTITIONS 102400000000;`, tmysql.ErrTooManyPartitions)
 }
 
 func (s *testIntegrationSuite10) TestCreateTableWithRangeColumnPartition(c *C) {

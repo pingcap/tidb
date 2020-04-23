@@ -118,10 +118,14 @@ func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 }
 
 func buildHashPartitionDefinitions(ctx sessionctx.Context, d *ddl, s *ast.CreateTableStmt, pi *model.PartitionInfo) error {
+	if err := checkAddPartitionTooManyPartitions(pi.Num); err != nil {
+		return err
+	}
 	genIDs, err := d.genGlobalIDs(int(pi.Num))
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	defs := make([]model.PartitionDefinition, pi.Num)
 	for i := 0; i < len(defs); i++ {
 		defs[i].ID = genIDs[i]
@@ -326,7 +330,7 @@ func checkPartitionFuncType(ctx sessionctx.Context, s *ast.CreateTableStmt, cols
 // Side effect: it may simplify the partition range definition from a constant expression to an integer.
 func checkCreatePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo, pi *model.PartitionInfo, cols []*table.Column) error {
 	defs := pi.Definitions
-	if len(defs) <= 1 {
+	if len(defs) == 0 {
 		return nil
 	}
 
