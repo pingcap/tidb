@@ -121,6 +121,10 @@ func CheckTableLock(ctx sessionctx.Context, is infoschema.InfoSchema, vs []visit
 
 // DoOptimize optimizes a logical plan to a physical plan.
 func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic LogicalPlan) (PhysicalPlan, float64, error) {
+	// if there is something after flagPrunColumns, do flagPrunColumnsAgain
+	if flag&flagPrunColumns > 0 && flag-flagPrunColumns > flagPrunColumns {
+		flag |= flagPrunColumnsAgain
+	}
 	logic, err := logicalOptimize(ctx, flag, logic)
 	if err != nil {
 		return nil, 0, err
@@ -144,16 +148,6 @@ func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
 }
 
 func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (LogicalPlan, error) {
-	// if there is something after flagPrunColumns, do flagPrunColumnsAgain
-	if flag&flagPrunColumns > 0 && flag-flagPrunColumns > flagPrunColumns {
-		flag |= flagPrunColumnsAgain
-	}
-	return logicalOptimize4Test(ctx, flag, logic)
-}
-
-// logicalOptimize4Test is separated for test because flagPrunColumnsAgain
-// in logicalOptimize may reset all keys in Schema.
-func logicalOptimize4Test(ctx context.Context, flag uint64, logic LogicalPlan) (LogicalPlan, error) {
 	var err error
 	for i, rule := range optRuleList {
 		// The order of flags is same as the order of optRule in the list.
