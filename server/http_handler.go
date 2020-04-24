@@ -802,7 +802,7 @@ func (h flashReplicaHandler) getDropOrTruncateTableTiflash(currentSchema infosch
 	err = admin.IterAllDDLJobs(txn, fn)
 	if err != nil {
 		if terror.ErrorEqual(variable.ErrSnapshotTooOld, err) {
-			// The err indicate that current ddl job and remain ddl jobs was been deleted by gc,
+			// The err indicate that current ddl job and remain DDL jobs was been deleted by GC,
 			// just ignore the error and return directly.
 			return replicaInfos, nil
 		}
