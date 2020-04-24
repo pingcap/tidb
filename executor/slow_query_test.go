@@ -244,13 +244,10 @@ select 4;`
 # Time: 2020-02-16T19:00:00.000000+08:00
 select 5;
 # Time: 2020-02-17T18:00:05.000000+08:00
-<<<<<<< HEAD
-select 6;`
-=======
+
 select 6;
 # Time: 2020-04-15T18:00:05.299063744+08:00
 select 7;`
->>>>>>> 5e4a694... executor: fix slow_query bug when query with time equal condit… (#16768)
 
 	fileName0 := "tidb-slow-2020-02-14T19-04-05.01.log"
 	fileName1 := "tidb-slow-2020-02-15T19-04-05.01.log"
@@ -339,8 +336,6 @@ select 7;`
 			querys: []string{
 				"select 5;",
 				"select 6;",
-<<<<<<< HEAD
-=======
 				"select 7;",
 			},
 		},
@@ -350,7 +345,6 @@ select 7;`
 			files:     []string{fileName3},
 			querys: []string{
 				"select 7;",
->>>>>>> 5e4a694... executor: fix slow_query bug when query with time equal condit… (#16768)
 			},
 		},
 	}
