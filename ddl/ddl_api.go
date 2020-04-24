@@ -1451,7 +1451,12 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 				go preSplit()
 			}
 		}
+<<<<<<< HEAD
 
+=======
+	} else if actionType == model.ActionCreateTable {
+		d.preSplitAndScatter(ctx, tbInfo, tbInfo.GetPartitionInfo())
+>>>>>>> aab9917... ddl: split partition region when add a new partition (#16537)
 		if tbInfo.AutoIncID > 1 {
 			// Default tableAutoIncID base is 0.
 			// If the first ID is expected to greater than 1, we need to do rebase.
@@ -1467,7 +1472,40 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	return errors.Trace(err)
 }
 
+<<<<<<< HEAD
 func (d *ddl) RecoverTable(ctx sessionctx.Context, tbInfo *model.TableInfo, schemaID, autoID, dropJobID int64, snapshotTS uint64) (err error) {
+=======
+// preSplitAndScatter performs pre-split and scatter of the table's regions.
+// If `pi` is not nil, will only split region for `pi`, this is used when add partition.
+func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *model.PartitionInfo) {
+	sp, ok := d.store.(kv.SplittableStore)
+	if !ok || atomic.LoadUint32(&EnableSplitTableRegion) == 0 {
+		return
+	}
+	var (
+		preSplit      func()
+		scatterRegion bool
+	)
+	val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBScatterRegion)
+	if err != nil {
+		logutil.BgLogger().Warn("[ddl] won't scatter region", zap.Error(err))
+	} else {
+		scatterRegion = variable.TiDBOptOn(val)
+	}
+	if pi != nil {
+		preSplit = func() { splitPartitionTableRegion(sp, pi, scatterRegion) }
+	} else {
+		preSplit = func() { splitTableRegion(sp, tbInfo, scatterRegion) }
+	}
+	if scatterRegion {
+		preSplit()
+	} else {
+		go preSplit()
+	}
+}
+
+func (d *ddl) RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo) (err error) {
+>>>>>>> aab9917... ddl: split partition region when add a new partition (#16537)
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	// Check schema exist.
 	schema, ok := is.SchemaByID(schemaID)
@@ -2238,6 +2276,16 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	}
 
 	err = d.doDDLJob(ctx, job)
+<<<<<<< HEAD
+=======
+	if ErrSameNamePartition.Equal(err) && spec.IfNotExists {
+		ctx.GetSessionVars().StmtCtx.AppendNote(err)
+		return nil
+	}
+	if err == nil {
+		d.preSplitAndScatter(ctx, meta, partInfo)
+	}
+>>>>>>> aab9917... ddl: split partition region when add a new partition (#16537)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
@@ -3153,6 +3201,16 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		}
 		return errors.Trace(err)
 	}
+<<<<<<< HEAD
+=======
+	oldTblInfo := tb.Meta()
+	if oldTblInfo.PreSplitRegions > 0 {
+		if _, tb, err := d.getSchemaAndTableByIdent(ctx, ti); err == nil {
+			d.preSplitAndScatter(ctx, tb.Meta(), tb.Meta().GetPartitionInfo())
+		}
+	}
+
+>>>>>>> aab9917... ddl: split partition region when add a new partition (#16537)
 	if !config.TableLockEnabled() {
 		return nil
 	}
