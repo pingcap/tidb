@@ -279,15 +279,15 @@ func (ts *testSuite) TestRowKeyCodec(c *C) {
 	}
 
 	for _, t := range tableVal {
-		b := tablecodec.EncodeRowKeyWithHandle(t.tableID, t.h)
+		b := tablecodec.EncodeRowKeyWithHandle(t.tableID, kv.IntHandle(t.h))
 		tableID, handle, err := tablecodec.DecodeRecordKey(b)
 		c.Assert(err, IsNil)
 		c.Assert(tableID, Equals, t.tableID)
-		c.Assert(handle, Equals, t.h)
+		c.Assert(handle.IntValue(), Equals, t.h)
 
 		handle, err = tablecodec.DecodeRowKey(b)
 		c.Assert(err, IsNil)
-		c.Assert(handle, Equals, t.h)
+		c.Assert(handle.IntValue(), Equals, t.h)
 	}
 
 	// test error
