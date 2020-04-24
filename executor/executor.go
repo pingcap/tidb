@@ -1461,19 +1461,66 @@ func (e *UnionExec) Open(ctx context.Context) error {
 	return nil
 }
 
+var sleepDur = []time.Duration{
+	time.Microsecond,
+	50 * time.Microsecond,
+	100 * time.Microsecond,
+	500 * time.Microsecond,
+	time.Millisecond,
+	2 * time.Millisecond,
+	3 * time.Millisecond,
+	4 * time.Millisecond,
+	5 * time.Millisecond,
+	6 * time.Millisecond,
+}
+
+// generateToken generates tokens to control:
+// 1. How many workers in total can be spawn.
+// 2. How long to wait before spawning a new worker.
+func generateToken(tokenCh chan<- struct{}, exitCh <-chan struct{}) {
+	t := time.NewTimer(sleepDur[0])
+	defer t.Stop()
+	// Generate 10 tokens at most, so the worker count is limited.
+	for _, duration := range sleepDur {
+		tokenCh <- struct{}{}
+		select {
+		case <-t.C:
+			t.Reset(duration)
+		case <-exitCh:
+			return
+		}
+	}
+}
+
 func (e *UnionExec) initialize(ctx context.Context) {
 	e.resultPool = make(chan *unionWorkerResult, len(e.children))
 	e.resourcePools = make([]chan *chunk.Chunk, len(e.children))
+
+	tokenCh := make(chan struct{}, len(sleepDur))
+	go generateToken(tokenCh, e.finished)
+
 	for i := range e.children {
 		e.resourcePools[i] = make(chan *chunk.Chunk, 1)
 		e.resourcePools[i] <- e.childrenResults[i]
-		e.wg.Add(1)
-		go e.resultPuller(ctx, i)
 	}
+	e.wg.Add(len(e.children))
+	go func() {
+		for i := range e.children {
+			select {
+			// If we do not limit the goroutine count here, 'select * from t limit 1000' on a
+			// very large partitioned table makes TiDB OOM. Because before the limit take
+			// effect, the background table reader has already fetch too much data.
+			case <-tokenCh:
+				go e.resultPuller(ctx, i, tokenCh)
+			case <-e.finished:
+				e.wg.Done()
+			}
+		}
+	}()
 	go e.waitAllFinished()
 }
 
-func (e *UnionExec) resultPuller(ctx context.Context, childID int) {
+func (e *UnionExec) resultPuller(ctx context.Context, childID int, tokenCh chan struct{}) {
 	result := &unionWorkerResult{
 		err: nil,
 		chk: nil,
@@ -1490,6 +1537,8 @@ func (e *UnionExec) resultPuller(ctx context.Context, childID int) {
 			e.stopFetchData.Store(true)
 		}
 		e.wg.Done()
+		// Release the token so we can spawn a new resultPuller.
+		tokenCh <- struct{}{}
 	}()
 	for {
 		if e.stopFetchData.Load().(bool) {
