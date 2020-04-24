@@ -1575,7 +1575,7 @@ func (d *ddl) CreateTableWithInfo(
 			err = nil
 		}
 	} else if actionType == model.ActionCreateTable {
-		d.preSplitAndScatter(ctx, tbInfo, nil)
+		d.preSplitAndScatter(ctx, tbInfo, tbInfo.GetPartitionInfo())
 		if tbInfo.AutoIncID > 1 {
 			// Default tableAutoIncID base is 0.
 			// If the first ID is expected to greater than 1, we need to do rebase.
@@ -1603,9 +1603,6 @@ func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo
 		logutil.BgLogger().Warn("[ddl] won't scatter region", zap.Error(err))
 	} else {
 		scatterRegion = variable.TiDBOptOn(val)
-	}
-	if pi == nil {
-		pi = tbInfo.GetPartitionInfo()
 	}
 	if pi != nil {
 		preSplit = func() { splitPartitionTableRegion(sp, pi, scatterRegion) }
