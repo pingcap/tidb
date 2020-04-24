@@ -1378,7 +1378,7 @@ func (b *builtinLocate2ArgsSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalInt evals LOCATE(substr,str).
+// evalInt evals LOCATE(substr,str), case-sensitive.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocate2ArgsSig) evalInt(row chunk.Row) (int64, bool, error) {
 	subStr, isNull, err := b.args[0].EvalString(b.ctx, row)
@@ -1410,7 +1410,7 @@ func (b *builtinLocate2ArgsUTF8Sig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalInt evals LOCATE(substr,str).
+// evalInt evals LOCATE(substr,str), non case-sensitive.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocate2ArgsUTF8Sig) evalInt(row chunk.Row) (int64, bool, error) {
 	subStr, isNull, err := b.args[0].EvalString(b.ctx, row)
@@ -1442,7 +1442,7 @@ func (b *builtinLocate3ArgsSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalInt evals LOCATE(substr,str,pos).
+// evalInt evals LOCATE(substr,str,pos), case-sensitive.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocate3ArgsSig) evalInt(row chunk.Row) (int64, bool, error) {
 	subStr, isNull, err := b.args[0].EvalString(b.ctx, row)
@@ -1483,7 +1483,7 @@ func (b *builtinLocate3ArgsUTF8Sig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalInt evals LOCATE(substr,str,pos).
+// evalInt evals LOCATE(substr,str,pos), non case-sensitive.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocate3ArgsUTF8Sig) evalInt(row chunk.Row) (int64, bool, error) {
 	subStr, isNull, err := b.args[0].EvalString(b.ctx, row)
@@ -3614,7 +3614,7 @@ func (b *builtinInstrSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalInt evals INSTR(str,substr).
+// evalInt evals INSTR(str,substr), case insensitive.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_instr
 func (b *builtinInstrUTF8Sig) evalInt(row chunk.Row) (int64, bool, error) {
 	str, IsNull, err := b.args[0].EvalString(b.ctx, row)
@@ -3636,7 +3636,7 @@ func (b *builtinInstrUTF8Sig) evalInt(row chunk.Row) (int64, bool, error) {
 	return int64(utf8.RuneCountInString(str[:idx]) + 1), false, nil
 }
 
-// evalInt evals INSTR(str,substr).
+// evalInt evals INSTR(str,substr), case sensitive.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_instr
 func (b *builtinInstrSig) evalInt(row chunk.Row) (int64, bool, error) {
 	str, IsNull, err := b.args[0].EvalString(b.ctx, row)
