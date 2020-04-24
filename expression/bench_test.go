@@ -1308,12 +1308,12 @@ func testVectorizedBuiltinFunc(c *C, vecExprCases vecExprBenchCases) {
 					types.NewTimeDatum(types.NewTime(types.FromGoTime(testTime), mysql.TypeTimestamp, 6)),
 					types.NewDurationDatum(types.ZeroDuration),
 					types.NewStringDatum("{}"),
-					types.NewBinaryLiteralDatum(types.BinaryLiteral([]byte{1})),
+					types.NewBinaryLiteralDatum([]byte{1}),
 					types.NewBytesDatum([]byte{'b'}),
 					types.NewFloat32Datum(1.1),
 					types.NewFloat64Datum(2.1),
 					types.NewUintDatum(100),
-					types.NewMysqlBitDatum(types.BinaryLiteral([]byte{1})),
+					types.NewMysqlBitDatum([]byte{1}),
 					types.NewMysqlEnumDatum(types.Enum{Name: "n", Value: 2}),
 				}
 			}
@@ -1527,12 +1527,12 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 					types.NewTimeDatum(types.NewTime(types.FromGoTime(testTime), mysql.TypeTimestamp, 6)),
 					types.NewDurationDatum(types.ZeroDuration),
 					types.NewStringDatum("{}"),
-					types.NewBinaryLiteralDatum(types.BinaryLiteral([]byte{1})),
+					types.NewBinaryLiteralDatum([]byte{1}),
 					types.NewBytesDatum([]byte{'b'}),
 					types.NewFloat32Datum(1.1),
 					types.NewFloat64Datum(2.1),
 					types.NewUintDatum(100),
-					types.NewMysqlBitDatum(types.BinaryLiteral([]byte{1})),
+					types.NewMysqlBitDatum([]byte{1}),
 					types.NewMysqlEnumDatum(types.Enum{Name: "n", Value: 2}),
 				}
 			}
