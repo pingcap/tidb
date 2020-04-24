@@ -966,7 +966,7 @@ func (s *testAutoRandomSuite) TestAlterTableAutoRandomTableOption(c *C) {
 	// To avoid the new base is in the range of local cache, which will leading the next
 	// value is not what we rebased, because the local cache is dropped, here we choose
 	// a quite big value to do this.
-	tk.MustExec("alter table alter_table_auto_random_option auto_random = 3000000")
+	tk.MustExec("alter table alter_table_auto_random_option auto_random_base = 3000000")
 	t, err = domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("alter_table_auto_random_option"))
 	c.Assert(err, IsNil)
 	c.Assert(t.Meta().AutoRandID, Equals, int64(3000000))
