@@ -3763,7 +3763,7 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	oldTblInfo := tb.Meta()
 	if oldTblInfo.PreSplitRegions > 0 {
 		if _, tb, err := d.getSchemaAndTableByIdent(ctx, ti); err == nil {
-			d.preSplitAndScatter(ctx, tb.Meta())
+			d.preSplitAndScatter(ctx, tb.Meta(), tb.Meta().GetPartitionInfo())
 		}
 	}
 
