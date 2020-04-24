@@ -990,7 +990,18 @@ func (e *TableStorageStatsExtractor) Extract(
 }
 
 func (e *TableStorageStatsExtractor) explainInfo(p *PhysicalMemTable) string {
-	return ""
+	if e.SkipRequest {
+		return "skip_request: true"
+	}
+
+	r := new(bytes.Buffer)
+	if len(e.TableSchema) > 0 {
+		r.WriteString(fmt.Sprintf("Schema:%s", extractStringFromStringSet(e.TableSchema)))
+	}
+	if len(e.TableName) > 0 {
+		r.WriteString(fmt.Sprintf(" table:%s", extractStringFromStringSet(e.TableName)))
+	}
+	return r.String()
 }
 
 func (e *SlowQueryExtractor) explainInfo(p *PhysicalMemTable) string {
