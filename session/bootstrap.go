@@ -377,8 +377,10 @@ const (
 	version41 = 41
 	// version42 add storeType and reason column in expr_pushdown_blacklist
 	version42 = 42
-	// version43 delete tidb_isolation_read_engines from mysql.global_variables to avoid unexpected behavior after upgrade.
+	// version43 updates global variables related to statement summary.
 	version43 = 43
+	// version44 delete tidb_isolation_read_engines from mysql.global_variables to avoid unexpected behavior after upgrade.
+	version44 = 44
 )
 
 var (
@@ -425,6 +427,7 @@ var (
 		upgradeToVer41,
 		upgradeToVer42,
 		upgradeToVer43,
+		upgradeToVer44,
 	}
 )
 
@@ -1004,8 +1007,27 @@ func upgradeToVer42(s Session, ver int64) {
 	writeDefaultExprPushDownBlacklist(s)
 }
 
+// Convert statement summary global variables to non-empty values.
+func writeStmtSummaryVars(s Session) {
+	sql := fmt.Sprintf("UPDATE %s.%s SET variable_value='%%s' WHERE variable_name='%%s' AND variable_value=''", mysql.SystemDB, mysql.GlobalVariablesTable)
+	stmtSummaryConfig := config.GetGlobalConfig().StmtSummary
+	mustExecute(s, fmt.Sprintf(sql, variable.BoolToIntStr(stmtSummaryConfig.Enable), variable.TiDBEnableStmtSummary))
+	mustExecute(s, fmt.Sprintf(sql, variable.BoolToIntStr(stmtSummaryConfig.EnableInternalQuery), variable.TiDBStmtSummaryInternalQuery))
+	mustExecute(s, fmt.Sprintf(sql, strconv.Itoa(stmtSummaryConfig.RefreshInterval), variable.TiDBStmtSummaryRefreshInterval))
+	mustExecute(s, fmt.Sprintf(sql, strconv.Itoa(stmtSummaryConfig.HistorySize), variable.TiDBStmtSummaryHistorySize))
+	mustExecute(s, fmt.Sprintf(sql, strconv.FormatUint(uint64(stmtSummaryConfig.MaxStmtCount), 10), variable.TiDBStmtSummaryMaxStmtCount))
+	mustExecute(s, fmt.Sprintf(sql, strconv.FormatUint(uint64(stmtSummaryConfig.MaxSQLLength), 10), variable.TiDBStmtSummaryMaxSQLLength))
+}
+
 func upgradeToVer43(s Session, ver int64) {
 	if ver >= version43 {
+		return
+	}
+	writeStmtSummaryVars(s)
+}
+
+func upgradeToVer44(s Session, ver int64) {
+	if ver >= version44 {
 		return
 	}
 	mustExecute(s, "DELETE FROM mysql.global_variables where variable_name = \"tidb_isolation_read_engines\"")
@@ -1119,6 +1141,8 @@ func doDMLWorks(s Session) {
 	writeNewCollationParameter(s, config.GetGlobalConfig().NewCollationsEnabledOnFirstBootstrap)
 
 	writeDefaultExprPushDownBlacklist(s)
+
+	writeStmtSummaryVars(s)
 
 	_, err := s.Execute(context.Background(), "COMMIT")
 	if err != nil {

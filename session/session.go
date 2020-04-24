@@ -321,7 +321,11 @@ func (s *session) SetCollation(coID int) error {
 	for _, v := range variable.SetNamesVariables {
 		terror.Log(s.sessionVars.SetSystemVar(v, cs))
 	}
-	terror.Log(s.sessionVars.SetSystemVar(variable.CollationConnection, co))
+	err = s.sessionVars.SetSystemVar(variable.CollationConnection, co)
+	if err != nil {
+		// Some clients may use the unsupported collations, such as utf8mb4_0900_ai_ci, We shouldn't return error or use the ERROR level log.
+		logutil.BgLogger().Warn(err.Error())
+	}
 	return nil
 }
 
@@ -979,7 +983,7 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 	}
 	var sVal string
 	var err error
-	sVal, err = variable.ValidateSetSystemVar(s.sessionVars, name, value)
+	sVal, err = variable.ValidateSetSystemVar(s.sessionVars, name, value, variable.ScopeGlobal)
 	if err != nil {
 		return err
 	}
