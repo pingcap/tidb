@@ -770,12 +770,34 @@ func (c *RegionCache) searchCachedRegion(key []byte, isEndKey bool) *Region {
 // `getCachedRegion`, it should be called with c.mu.RLock(), and the returned
 // Region should not be used after c.mu is RUnlock().
 func (c *RegionCache) getRegionByIDFromCache(regionID uint64) *Region {
+	var newestRegion *Region
+	ts := time.Now().Unix()
 	for v, r := range c.mu.regions {
 		if v.id == regionID {
-			return r
+			lastAccess := atomic.LoadInt64(&r.lastAccess)
+			if ts-lastAccess > RegionCacheTTLSec {
+				continue
+			}
+			if newestRegion == nil {
+				newestRegion = r
+				continue
+			}
+			nv := newestRegion.VerID()
+			cv := r.VerID()
+			if nv.GetConfVer() < cv.GetConfVer() {
+				newestRegion = r
+				continue
+			}
+			if nv.GetVer() < cv.GetVer() {
+				newestRegion = r
+				continue
+			}
 		}
 	}
-	return nil
+	if newestRegion != nil {
+		atomic.CompareAndSwapInt64(&newestRegion.lastAccess, atomic.LoadInt64(&newestRegion.lastAccess), ts)
+	}
+	return newestRegion
 }
 
 // loadRegion loads region from pd client, and picks the first peer as leader.
