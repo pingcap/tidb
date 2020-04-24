@@ -772,7 +772,18 @@ func (s *testInfoschemaClusterTableSuite) TestTableStorageStats(c *C) {
 
 	// Test information_schema.TABLE_STORAGE_STATS.
 	tk = testkit.NewTestKit(c, store)
-	tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema' and TABLE_NAME='schemata';").Check(testkit.Rows("SCHEMATA"))
+
+	// Test not set the schema.
+	err = tk.QueryToErr("select * from information_schema.TABLE_STORAGE_STATS")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Please specify the 'table_schema'")
+
+	// Test it would get null set when get the sys schema.
+	tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema';").Check([][]interface{}{})
+	tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql';").Check([][]interface{}{})
+	tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA in ('mysql', 'metrics_schema');").Check([][]interface{}{})
+	tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema' and TABLE_NAME='schemata';").Check([][]interface{}{})
+
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, index idx(a))")
@@ -786,13 +797,6 @@ func (s *testInfoschemaClusterTableSuite) TestTableStorageStats(c *C) {
 	tk.MustQuery("select TABLE_SCHEMA, sum(TABLE_SIZE) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'test' group by TABLE_SCHEMA;").Check(testkit.Rows(
 		"test 2",
 	))
-
-	// Test information_schema.TABLE_STORAGE_STATS when the TABLE_SCHEMA or TABLE_NAME is not exist.
-	err = tk.QueryToErr("select * from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'db_not_exist';")
-	c.Assert(err.Error(), Equals, "schema or table not exist, please check the schema and table")
-	tk.MustExec("drop table if exists `tb_not_exist`")
-	err = tk.QueryToErr("select * from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'test' and TABLE_NAME = 'tb_not_exist';")
-	c.Assert(err.Error(), Equals, "schema or table not exist, please check the schema and table")
 }
 
 func (s *testInfoschemaTableSuite) TestSequences(c *C) {

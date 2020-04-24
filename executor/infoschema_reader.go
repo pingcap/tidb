@@ -1482,23 +1482,36 @@ type initialTable struct {
 
 func (e *tableStorageStatsRetriever) initialize(sctx sessionctx.Context) error {
 	is := infoschema.GetInfoSchema(sctx)
-	dbs := is.AllSchemas()
-	sort.Sort(infoschema.SchemasSorter(dbs))
+	var databases []string
 	schemas := e.extractor.TableSchema
 	tables := e.extractor.TableName
 
+	// If not specify the table_schema, it would traverse all schemas and their tables.
+	if len(schemas) == 0 {
+		return errors.Errorf("Please specify the 'table_schema'")
+	}
+
+	// Filter the sys or memory schema.
+	for schema := range schemas {
+		if !util.IsMemOrSysDB(schema) {
+			databases = append(databases, schema)
+		}
+	}
+
 	// Extract the tables to the initialTable.
-	for _, schema := range dbs {
-		if len(schemas) == 0 || schemas.Exist(schema.Name.L) {
-			for _, table := range schema.Tables {
-				if len(tables) == 0 || tables.Exist(table.Name.L) {
-					e.initialTables = append(e.initialTables, &initialTable{schema.Name.L, table})
+	for _, db := range databases {
+		if len(tables) == 0 { // The user didn't specified the table, extract all tables of this db to initialTable.
+			tbs := is.SchemaTables(model.NewCIStr(db))
+			for _, tb := range tbs {
+				e.initialTables = append(e.initialTables, &initialTable{db, tb.Meta()})
+			}
+		} else { // The user specified the table, extract the specified tables of this db to initialTable.
+			for tb, _ := range tables {
+				if tb, ok := is.TableByName(model.NewCIStr(db), model.NewCIStr(tb)); ok == nil {
+					e.initialTables = append(e.initialTables, &initialTable{db, tb.Meta()})
 				}
 			}
 		}
-	}
-	if len(e.initialTables) == 0 {
-		return errors.Errorf("schema or table not exist, please check the schema and table")
 	}
 
 	// Cache the PD address.
@@ -1520,7 +1533,8 @@ func (e *tableStorageStatsRetriever) setDataForTableStorageStats(ctx sessionctx.
 	rows := make([][]types.Datum, 0, 1024)
 
 	count := 0
-	for i := e.curTable; e.curTable < len(e.initialTables) && count < 1024; i++ {
+	//for i := e.curTable; e.curTable < len(e.initialTables) && count < 1024; i++ {
+	for e.curTable < len(e.initialTables) && count < 1024 {
 		table := (e.initialTables)[e.curTable]
 		tableID := table.ID
 		err := e.helper.GetPDRegionStats(tableID, &e.stats)

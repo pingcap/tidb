@@ -729,7 +729,7 @@ func (h *Helper) GetPDAddr() ([]string, error) {
 		return nil, errors.New("not implemented")
 	}
 	pdAddrs = etcd.EtcdAddrs()
-	if len(pdAddrs) < 0 {
+	if len(pdAddrs) == 0 {
 		return nil, errors.New("pd unavailable")
 	}
 	return pdAddrs, nil
