@@ -559,6 +559,7 @@ func setGlobalVars() {
 	priority := mysql.Str2Priority(cfg.Performance.ForcePriority)
 	variable.ForcePriority = int32(priority)
 	variable.SysVars[variable.TiDBForcePriority].Value = mysql.Priority2Str[priority]
+	variable.SysVars[variable.TiDBOptDistinctAggPushDown].Value = variable.BoolToIntStr(cfg.Performance.DistinctAggPushDown)
 
 	variable.SysVars[variable.TIDBMemQuotaQuery].Value = strconv.FormatInt(cfg.MemQuotaQuery, 10)
 	variable.SysVars["lower_case_table_names"].Value = strconv.Itoa(cfg.LowerCaseTableNames)
