@@ -46,12 +46,12 @@ func (s *testTableCodecSuite) TestTableCodec(c *C) {
 	key := EncodeRowKey(1, codec.EncodeInt(nil, 2))
 	h, err := DecodeRowKey(key)
 	c.Assert(err, IsNil)
-	c.Assert(h, Equals, int64(2))
+	c.Assert(h.IntValue(), Equals, int64(2))
 
-	key = EncodeRowKeyWithHandle(1, 2)
+	key = EncodeRowKeyWithHandle(1, kv.IntHandle(2))
 	h, err = DecodeRowKey(key)
 	c.Assert(err, IsNil)
-	c.Assert(h, Equals, int64(2))
+	c.Assert(h.IntValue(), Equals, int64(2))
 }
 
 // column is a structure used for test
@@ -345,7 +345,7 @@ func (s *testTableCodecSuite) TestIndexKey(c *C) {
 
 func (s *testTableCodecSuite) TestRecordKey(c *C) {
 	tableID := int64(55)
-	tableKey := EncodeRowKeyWithHandle(tableID, math.MaxUint32)
+	tableKey := EncodeRowKeyWithHandle(tableID, kv.IntHandle(math.MaxUint32))
 	tTableID, _, isRecordKey, err := DecodeKeyHead(tableKey)
 	c.Assert(err, IsNil)
 	c.Assert(tTableID, Equals, tableID)
@@ -357,10 +357,10 @@ func (s *testTableCodecSuite) TestRecordKey(c *C) {
 	tTableID, handle, err := DecodeRecordKey(rowKey)
 	c.Assert(err, IsNil)
 	c.Assert(tTableID, Equals, tableID)
-	c.Assert(handle, Equals, int64(math.MaxUint32))
+	c.Assert(handle.IntValue(), Equals, int64(math.MaxUint32))
 
 	recordPrefix := GenTableRecordPrefix(tableID)
-	rowKey = EncodeRecordKey(recordPrefix, math.MaxUint32)
+	rowKey = EncodeRecordKey(recordPrefix, kv.IntHandle(math.MaxUint32))
 	c.Assert([]byte(tableKey), BytesEquals, []byte(rowKey))
 
 	_, _, err = DecodeRecordKey(nil)
@@ -397,7 +397,7 @@ func (s *testTableCodecSuite) TestPrefix(c *C) {
 
 func (s *testTableCodecSuite) TestReplaceRecordKeyTableID(c *C) {
 	tableID := int64(1)
-	tableKey := EncodeRowKeyWithHandle(tableID, 1)
+	tableKey := EncodeRowKeyWithHandle(tableID, kv.IntHandle(1))
 	tTableID, _, _, err := DecodeKeyHead(tableKey)
 	c.Assert(err, IsNil)
 	c.Assert(tTableID, Equals, tableID)
@@ -480,7 +480,7 @@ func (s *testTableCodecSuite) TestRange(c *C) {
 
 func (s *testTableCodecSuite) TestDecodeAutoIDMeta(c *C) {
 	keyBytes := []byte{0x6d, 0x44, 0x42, 0x3a, 0x35, 0x36, 0x0, 0x0, 0x0, 0xfc, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x68, 0x54, 0x49, 0x44, 0x3a, 0x31, 0x30, 0x38, 0x0, 0xfe}
-	key, field, err := DecodeMetaKey(kv.Key(keyBytes))
+	key, field, err := DecodeMetaKey(keyBytes)
 	c.Assert(err, IsNil)
 	c.Assert(string(key), Equals, "DB:56")
 	c.Assert(string(field), Equals, "TID:108")

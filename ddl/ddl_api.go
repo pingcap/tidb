@@ -1326,7 +1326,11 @@ func checkTableInfoValid(tblInfo *model.TableInfo) error {
 	return err
 }
 
-func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo) *model.TableInfo {
+func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo) (*model.TableInfo, error) {
+	// Check the referred table is a real table object.
+	if referTblInfo.IsSequence() || referTblInfo.IsView() {
+		return nil, ErrWrongObject.GenWithStackByArgs(ident.Schema, referTblInfo.Name, "BASE TABLE")
+	}
 	tblInfo := *referTblInfo
 	// Check non-public column and adjust column offset.
 	newColumns := referTblInfo.Cols()
@@ -1354,7 +1358,7 @@ func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo) *mod
 		copy(pi.Definitions, referTblInfo.Partition.Definitions)
 		tblInfo.Partition = &pi
 	}
-	return &tblInfo
+	return &tblInfo, nil
 }
 
 // BuildTableInfoFromAST builds model.TableInfo from a SQL statement.
@@ -1474,7 +1478,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	// build tableInfo
 	var tbInfo *model.TableInfo
 	if s.ReferTable != nil {
-		tbInfo = buildTableInfoWithLike(ident, referTbl.Meta())
+		tbInfo, err = buildTableInfoWithLike(ident, referTbl.Meta())
 	} else {
 		tbInfo, err = buildTableInfoWithStmt(ctx, s, schema.Charset, schema.Collate)
 	}
@@ -1571,7 +1575,7 @@ func (d *ddl) CreateTableWithInfo(
 			err = nil
 		}
 	} else if actionType == model.ActionCreateTable {
-		d.preSplitAndScatter(ctx, tbInfo)
+		d.preSplitAndScatter(ctx, tbInfo, tbInfo.GetPartitionInfo())
 		if tbInfo.AutoIncID > 1 {
 			// Default tableAutoIncID base is 0.
 			// If the first ID is expected to greater than 1, we need to do rebase.
@@ -1584,7 +1588,8 @@ func (d *ddl) CreateTableWithInfo(
 }
 
 // preSplitAndScatter performs pre-split and scatter of the table's regions.
-func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo) {
+// If `pi` is not nil, will only split region for `pi`, this is used when add partition.
+func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *model.PartitionInfo) {
 	sp, ok := d.store.(kv.SplittableStore)
 	if !ok || atomic.LoadUint32(&EnableSplitTableRegion) == 0 {
 		return
@@ -1599,7 +1604,6 @@ func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo
 	} else {
 		scatterRegion = variable.TiDBOptOn(val)
 	}
-	pi := tbInfo.GetPartitionInfo()
 	if pi != nil {
 		preSplit = func() { splitPartitionTableRegion(sp, pi, scatterRegion) }
 	} else {
@@ -2054,7 +2058,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 	}
 
 	is := d.infoHandle.Get()
-	if is.TableIsView(ident.Schema, ident.Name) {
+	if is.TableIsView(ident.Schema, ident.Name) || is.TableIsSequence(ident.Schema, ident.Name) {
 		return ErrWrongObject.GenWithStackByArgs(ident.Schema, ident.Name, "BASE TABLE")
 	}
 
@@ -2528,6 +2532,9 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	if ErrSameNamePartition.Equal(err) && spec.IfNotExists {
 		ctx.GetSessionVars().StmtCtx.AppendNote(err)
 		return nil
+	}
+	if err == nil {
+		d.preSplitAndScatter(ctx, meta, partInfo)
 	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
@@ -3753,6 +3760,13 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		}
 		return errors.Trace(err)
 	}
+	oldTblInfo := tb.Meta()
+	if oldTblInfo.PreSplitRegions > 0 {
+		if _, tb, err := d.getSchemaAndTableByIdent(ctx, ti); err == nil {
+			d.preSplitAndScatter(ctx, tb.Meta(), tb.Meta().GetPartitionInfo())
+		}
+	}
+
 	if !config.TableLockEnabled() {
 		return nil
 	}
