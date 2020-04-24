@@ -1250,6 +1250,9 @@ func (s *testSuiteJoinSerial) TestIndexNestedLoopHashJoin(c *C) {
 
 	// index hash join with semi join
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/planner/core/MockOnlyEnableIndexHashJoin", "return(true)"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/planner/core/MockOnlyEnableIndexHashJoin"), IsNil)
+	}()
 	tk.MustExec("drop table t")
 	tk.MustExec("CREATE TABLE `t` (	`l_orderkey` int(11) NOT NULL,`l_linenumber` int(11) NOT NULL,`l_partkey` int(11) DEFAULT NULL,`l_suppkey` int(11) DEFAULT NULL,PRIMARY KEY (`l_orderkey`,`l_linenumber`))")
 	tk.MustExec(`insert into t values(0,0,0,0);`)
@@ -1347,7 +1350,6 @@ func (s *testSuiteJoinSerial) TestIndexNestedLoopHashJoin(c *C) {
 	tk.MustExec("drop table nation")
 	tk.MustExec("drop table supplier")
 	tk.MustExec("drop table orders")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/planner/core/MockOnlyEnableIndexHashJoin"), IsNil)
 }
 
 func (s *testSuiteJoin3) TestIssue15686(c *C) {
