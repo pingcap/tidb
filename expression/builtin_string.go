@@ -1395,7 +1395,7 @@ func (b *builtinLocate2ArgsSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 	ret, idx := 0, strings.Index(str, subStr)
 	if idx != -1 {
-		ret = idx + 1
+		ret = utf8.RuneCountInString(str[:idx]) + 1
 	}
 	return int64(ret), false, nil
 }
@@ -1459,16 +1459,16 @@ func (b *builtinLocate3ArgsSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	subStrLen := len(subStr)
-	if pos < 0 || pos > int64(len(str)-subStrLen) {
+	subStrLen := len([]rune(subStr))
+	if pos < 0 || pos > int64(len([]rune(str))-subStrLen) {
 		return 0, false, nil
 	} else if subStrLen == 0 {
 		return pos + 1, false, nil
 	}
-	slice := str[pos:]
+	slice := string([]rune(str)[pos:])
 	idx := strings.Index(slice, subStr)
 	if idx != -1 {
-		return pos + int64(idx) + 1, false, nil
+		return pos + int64(utf8.RuneCountInString(slice[:idx])) + 1, false, nil
 	}
 	return 0, false, nil
 }
@@ -3653,7 +3653,7 @@ func (b *builtinInstrSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if idx == -1 {
 		return 0, false, nil
 	}
-	return int64(idx + 1), false, nil
+	return int64(utf8.RuneCountInString(str[:idx]) + 1), false, nil
 }
 
 type loadFileFunctionClass struct {
