@@ -679,7 +679,7 @@ func (b *builtinRowCountSig) Clone() builtinFunc {
 // evalInt evals ROW_COUNT().
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_row-count.
 func (b *builtinRowCountSig) evalInt(_ chunk.Row) (res int64, isNull bool, err error) {
-	res = int64(b.ctx.GetSessionVars().StmtCtx.PrevAffectedRows)
+	res = b.ctx.GetSessionVars().StmtCtx.PrevAffectedRows
 	return res, false, nil
 }
 
@@ -729,7 +729,7 @@ func decodeKey(ctx sessionctx.Context, s string) string {
 	// Try to decode it as a record key.
 	tableID, handle, err := tablecodec.DecodeRecordKey(key)
 	if err == nil {
-		return "tableID=" + strconv.FormatInt(tableID, 10) + ", _tidb_rowid=" + strconv.FormatInt(handle, 10)
+		return "tableID=" + strconv.FormatInt(tableID, 10) + ", _tidb_rowid=" + strconv.FormatInt(handle.IntValue(), 10)
 	}
 	// Try decode as table index key.
 	tableID, indexID, indexValues, err := tablecodec.DecodeIndexKeyPrefix(key)

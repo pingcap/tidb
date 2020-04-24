@@ -1424,7 +1424,7 @@ func (b *builtinLocate2ArgsUTF8Sig) evalInt(row chunk.Row) (int64, bool, error) 
 	if int64(len([]rune(subStr))) == 0 {
 		return 1, false, nil
 	}
-	slice := string([]rune(strings.ToLower(str)))
+	slice := strings.ToLower(str)
 	ret, idx := 0, strings.Index(slice, strings.ToLower(subStr))
 	if idx != -1 {
 		ret = utf8.RuneCountInString(slice[:idx]) + 1

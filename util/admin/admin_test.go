@@ -102,6 +102,7 @@ func (s *testSuite) TestGetDDLJobs(c *C) {
 	t := meta.NewMeta(txn)
 	cnt := 10
 	jobs := make([]*model.Job, cnt)
+	var currJobs2 []*model.Job
 	for i := 0; i < cnt; i++ {
 		jobs[i] = &model.Job{
 			ID:       int64(i),
@@ -113,6 +114,19 @@ func (s *testSuite) TestGetDDLJobs(c *C) {
 		currJobs, err1 := GetDDLJobs(txn)
 		c.Assert(err1, IsNil)
 		c.Assert(currJobs, HasLen, i+1)
+		currJobs2 = currJobs2[:0]
+		err = IterAllDDLJobs(txn, func(jobs []*model.Job) (b bool, e error) {
+			for _, job := range jobs {
+				if job.State == model.JobStateNone {
+					currJobs2 = append(currJobs2, job)
+				} else {
+					return true, nil
+				}
+			}
+			return false, nil
+		})
+		c.Assert(err, IsNil)
+		c.Assert(currJobs2, HasLen, i+1)
 	}
 
 	currJobs, err := GetDDLJobs(txn)
@@ -122,6 +136,7 @@ func (s *testSuite) TestGetDDLJobs(c *C) {
 		c.Assert(job.SchemaID, Equals, int64(1))
 		c.Assert(job.Type, Equals, model.ActionCreateTable)
 	}
+	c.Assert(currJobs, DeepEquals, currJobs2)
 
 	err = txn.Rollback()
 	c.Assert(err, IsNil)
@@ -321,6 +336,19 @@ func (s *testSuite) TestGetHistoryDDLJobs(c *C) {
 		c.Assert(job.SchemaID, Equals, int64(1))
 		c.Assert(job.Type, Equals, model.ActionCreateTable)
 	}
+
+	var historyJobs2 []*model.Job
+	err = IterHistoryDDLJobs(txn, func(jobs []*model.Job) (b bool, e error) {
+		for _, job := range jobs {
+			historyJobs2 = append(historyJobs2, job)
+			if len(historyJobs2) == DefNumHistoryJobs {
+				return true, nil
+			}
+		}
+		return false, nil
+	})
+	c.Assert(err, IsNil)
+	c.Assert(historyJobs2, DeepEquals, historyJobs)
 
 	err = txn.Rollback()
 	c.Assert(err, IsNil)
