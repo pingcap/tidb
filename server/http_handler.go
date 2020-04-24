@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -54,7 +55,9 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
 	log "github.com/sirupsen/logrus"
@@ -720,32 +723,92 @@ func (h flashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 	replicaInfos := make([]*tableFlashReplicaInfo, 0)
 	allDBs := schema.AllSchemas()
 	for _, db := range allDBs {
-		tables := schema.SchemaTables(db.Name)
-		for _, tbl := range tables {
-			tblInfo := tbl.Meta()
-			if tblInfo.TiFlashReplica == nil {
-				continue
-			}
-			if pi := tblInfo.GetPartitionInfo(); pi != nil {
-				for _, p := range pi.Definitions {
-					replicaInfos = append(replicaInfos, &tableFlashReplicaInfo{
-						ID:             p.ID,
-						ReplicaCount:   tblInfo.TiFlashReplica.Count,
-						LocationLabels: tblInfo.TiFlashReplica.LocationLabels,
-						Available:      tblInfo.TiFlashReplica.IsPartitionAvailable(p.ID),
-					})
-				}
-				continue
-			}
-			replicaInfos = append(replicaInfos, &tableFlashReplicaInfo{
-				ID:             tblInfo.ID,
-				ReplicaCount:   tblInfo.TiFlashReplica.Count,
-				LocationLabels: tblInfo.TiFlashReplica.LocationLabels,
-				Available:      tblInfo.TiFlashReplica.Available,
-			})
+		tbls := schema.SchemaTables(db.Name)
+		for _, tbl := range tbls {
+			replicaInfos = h.getTiFlashReplicaInfo(tbl.Meta(), replicaInfos)
 		}
 	}
+	dropedOrTruncateReplicaInfos, err := h.getDropOrTruncateTableTiflash(schema)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	replicaInfos = append(replicaInfos, dropedOrTruncateReplicaInfos...)
 	writeData(w, replicaInfos)
+}
+
+func (h flashReplicaHandler) getTiFlashReplicaInfo(tblInfo *model.TableInfo, replicaInfos []*tableFlashReplicaInfo) []*tableFlashReplicaInfo {
+	if tblInfo.TiFlashReplica == nil {
+		return replicaInfos
+	}
+	if pi := tblInfo.GetPartitionInfo(); pi != nil {
+		for _, p := range pi.Definitions {
+			replicaInfos = append(replicaInfos, &tableFlashReplicaInfo{
+				ID:             p.ID,
+				ReplicaCount:   tblInfo.TiFlashReplica.Count,
+				LocationLabels: tblInfo.TiFlashReplica.LocationLabels,
+				Available:      tblInfo.TiFlashReplica.IsPartitionAvailable(p.ID),
+			})
+		}
+		return replicaInfos
+	}
+	replicaInfos = append(replicaInfos, &tableFlashReplicaInfo{
+		ID:             tblInfo.ID,
+		ReplicaCount:   tblInfo.TiFlashReplica.Count,
+		LocationLabels: tblInfo.TiFlashReplica.LocationLabels,
+		Available:      tblInfo.TiFlashReplica.Available,
+	})
+	return replicaInfos
+}
+
+func (h flashReplicaHandler) getDropOrTruncateTableTiflash(currentSchema infoschema.InfoSchema) ([]*tableFlashReplicaInfo, error) {
+	s, err := session.CreateSession(h.Store.(kv.Storage))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if s != nil {
+		defer s.Close()
+	}
+
+	store := domain.GetDomain(s).Store()
+	txn, err := store.Begin()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	gcSafePoint, err := gcutil.GetGCSafePoint(s)
+	if err != nil {
+		return nil, err
+	}
+	replicaInfos := make([]*tableFlashReplicaInfo, 0)
+	uniqueIDMap := make(map[int64]struct{})
+	handleJobAndTableInfo := func(job *model.Job, tblInfo *model.TableInfo) (bool, error) {
+		// Avoid duplicate table ID info.
+		if _, ok := currentSchema.TableByID(tblInfo.ID); ok {
+			return false, nil
+		}
+		if _, ok := uniqueIDMap[tblInfo.ID]; ok {
+			return false, nil
+		}
+		uniqueIDMap[tblInfo.ID] = struct{}{}
+		replicaInfos = h.getTiFlashReplicaInfo(tblInfo, replicaInfos)
+		return false, nil
+	}
+	dom := domain.GetDomain(s)
+	fn := func(jobs []*model.Job) (bool, error) {
+		return executor.GetDropOrTruncateTableInfoFromJobs(jobs, gcSafePoint, dom, handleJobAndTableInfo)
+	}
+
+	err = admin.IterAllDDLJobs(txn, fn)
+	if err != nil {
+		if terror.ErrorEqual(variable.ErrSnapshotTooOld, err) {
+			// The err indicate that current ddl job and remain DDL jobs was been deleted by GC,
+			// just ignore the error and return directly.
+			return replicaInfos, nil
+		}
+		return nil, err
+	}
+	return replicaInfos, nil
 }
 
 type tableFlashReplicaStatus struct {
