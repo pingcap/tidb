@@ -1350,7 +1350,7 @@ func (c *locateFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, argTps...)
 	var sig builtinFunc
 	// Loacte is multibyte safe.
-	compareNoCI := !IsCICollation(bf.collation)
+	compareNoCI := !collate.IsCICollation(bf.collation)
 	switch {
 	case hasStartPos && compareNoCI:
 		sig = &builtinLocate3ArgsSig{bf}
@@ -3588,7 +3588,7 @@ func (c *instrFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString, types.ETString)
 	bf.tp.Flen = 11
-	if !IsCICollation(bf.collation) {
+	if !collate.IsCICollation(bf.collation) {
 		sig := &builtinInstrSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Instr)
 		return sig, nil
