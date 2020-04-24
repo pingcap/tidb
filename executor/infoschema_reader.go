@@ -1504,14 +1504,16 @@ func (e *tableStorageStatsRetriever) initialize(sctx sessionctx.Context) error {
 
 	// Extract the tables to the initialTable.
 	for _, db := range databases {
-		if len(tables) == 0 { // The user didn't specified the table, extract all tables of this db to initialTable.
+		// The user didn't specified the table, extract all tables of this db to initialTable.
+		if len(tables) == 0 {
 			tbs := is.SchemaTables(model.NewCIStr(db))
 			for _, tb := range tbs {
 				e.initialTables = append(e.initialTables, &initialTable{db, tb.Meta()})
 			}
-		} else { // The user specified the table, extract the specified tables of this db to initialTable.
-			for tb, _ := range tables {
-				if tb, ok := is.TableByName(model.NewCIStr(db), model.NewCIStr(tb)); ok == nil {
+		} else {
+			// The user specified the table, extract the specified tables of this db to initialTable.
+			for tb := range tables {
+				if tb, err := is.TableByName(model.NewCIStr(db), model.NewCIStr(tb)); err == nil {
 					e.initialTables = append(e.initialTables, &initialTable{db, tb.Meta()})
 				}
 			}
