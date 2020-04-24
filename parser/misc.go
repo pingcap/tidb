@@ -158,6 +158,7 @@ var tokenMap = map[string]int{
 	"AUTO_INCREMENT":             autoIncrement,
 	"AUTO_ID_CACHE":              autoIdCache,
 	"AUTO_RANDOM":                autoRandom,
+	"AUTO_RANDOM_BASE":           autoRandomBase,
 	"AVG_ROW_LENGTH":             avgRowLength,
 	"AVG":                        avg,
 	"BACKUP":                     backup,
