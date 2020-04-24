@@ -50,7 +50,12 @@ func (e *PartitionerExec) Open(ctx context.Context) error {
 
 // Close implements the Executor Close interface.
 func (e *PartitionerExec) Close() error {
-	err := e.baseExecutor.Close()
+	err := e.partitionInDisk.Close(e.partitionIdx)
+	if err != nil {
+		return err
+	}
+
+	err = e.baseExecutor.Close()
 	return errors.Trace(err)
 }
 

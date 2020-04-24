@@ -145,24 +145,10 @@ func (e *GraceHashJoinExec) Open(ctx context.Context) error {
 
 // Close implements the Executor Close interface.
 func (e *GraceHashJoinExec) Close() error {
-	err := e.buildPartitionerExec.partitionInDisk.Close()
-	if err != nil {
-		return err
-	}
-	err = e.probePartitionerExec.partitionInDisk.Close()
-	if err != nil {
-		return err
-	}
-
 	e.buildHashPartitioner = nil
 	e.probeHashPartitioner = nil
 
-	err = e.hashJoinExec.Close()
-	if err != nil {
-		return err
-	}
-
-	err = e.baseExecutor.Close()
+	err := e.baseExecutor.Close()
 	return err
 }
 
@@ -247,12 +233,19 @@ func (e *GraceHashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err err
 		if req.NumRows() > 0 {
 			break
 		}
+		e.buildPartitionerExec.partitionWaitGroup.Wait()
+		e.probePartitionerExec.partitionWaitGroup.Wait()
+
+		err = e.hashJoinExec.Close()
+		if err != nil {
+			return err
+		}
+
 		e.partitionIdx++
+		// all partitions have fininshed
 		if e.partitionIdx == e.partitionCnt {
 			break
 		}
-		e.buildPartitionerExec.partitionWaitGroup.Wait()
-		e.probePartitionerExec.partitionWaitGroup.Wait()
 
 		// this partition has fininshed
 		// reset partitionIdx and chkIdx to begin next partition
@@ -260,10 +253,6 @@ func (e *GraceHashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err err
 		e.buildPartitionerExec.chkIdx = 0
 		e.probePartitionerExec.partitionIdx = e.partitionIdx
 		e.probePartitionerExec.chkIdx = 0
-		err = e.hashJoinExec.Close()
-		if err != nil {
-			return err
-		}
 		err = e.hashJoinExec.Open(ctx)
 		if err != nil {
 			return err

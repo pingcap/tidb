@@ -449,12 +449,10 @@ func (p *PartitionInDisk) NumChunks(partitionIdx int) (num int, err error) {
 }
 
 // Close releases the disk resource.
-func (p *PartitionInDisk) Close() (err error) {
-	for _, idx := range p.partitionIdxToIndex {
-		err := p.disks[idx].Close()
-		if err != nil {
-			return err
-		}
+func (p *PartitionInDisk) Close(partitionIdx int) (err error) {
+	idx, ok := p.partitionIdxToIndex[partitionIdx]
+	if !ok {
+		return nil
 	}
-	return nil
+	return p.disks[idx].Close()
 }
