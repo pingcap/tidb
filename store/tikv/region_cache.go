@@ -1379,7 +1379,10 @@ func (s *Store) doResolve(bo *Backoffer) (ns *Store, err error) {
 
 func (s *Store) requestResolveAddr(retryBo *Backoffer, f func(store *metapb.Store)) (err error) {
 	rsCh := resolveSf.DoChan(strconv.FormatUint(s.storeID, 10), func() (interface{}, error) {
-		var st *metapb.Store
+		var (
+			st  *metapb.Store
+			err error
+		)
 		st, err = s.rc.pdClient.GetStore(context.Background(), s.storeID) // TODO: how long we should set timeout?
 		if err != nil {
 			tikvRegionCacheCounterWithGetStoreError.Inc()
