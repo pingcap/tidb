@@ -629,7 +629,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onTruncateTable(d, t, job)
 	case model.ActionRebaseAutoID:
 		ver, err = onRebaseRowIDType(d.store, t, job)
-	case model.ActionRebaseAutoRandom:
+	case model.ActionRebaseAutoRandomBase:
 		ver, err = onRebaseAutoRandomType(d.store, t, job)
 	case model.ActionRenameTable:
 		ver, err = onRenameTable(d, t, job)

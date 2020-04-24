@@ -179,7 +179,7 @@ func (s *testSuite6) TestCreateTable(c *C) {
 	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
 
 	tk.MustExec("drop table if exists auto_random_table_option")
-	tk.MustExec("create table auto_random_table_option (a bigint auto_random(5) key) auto_random = 1000")
+	tk.MustExec("create table auto_random_table_option (a bigint auto_random(5) key) auto_random_base = 1000")
 	t, err = domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("auto_random_table_option"))
 	c.Assert(err, IsNil)
 	c.Assert(t.Meta().AutoRandID, Equals, int64(1000))

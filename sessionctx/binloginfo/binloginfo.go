@@ -308,7 +308,7 @@ func AddSpecialComment(ddlQuery string) string {
 	}
 	ddlQuery = addSpecialCommentByRegexps(ddlQuery, specialPrefix, shardPat, preSplitPat)
 	for featureID, pattern := range driver.FeatureIDPatterns {
-		ddlQuery = addSpecialCommentInAllMatchForOneReg(ddlQuery, driver.BuildSpecialCommentPrefix(featureID), pattern)
+		ddlQuery = addSpecialCommentByRegexps(ddlQuery, driver.BuildSpecialCommentPrefix(featureID), pattern)
 	}
 	return ddlQuery
 }
@@ -351,47 +351,6 @@ func addSpecialCommentByRegexps(ddlQuery string, prefix string, regs ...*regexp.
 		return query
 	}
 	return ddlQuery
-}
-
-// addSpecialCommentInAllMatchForOneReg will add special comments for all the places that match the reg.
-func addSpecialCommentInAllMatchForOneReg(ddlQuery string, prefix string, reg *regexp.Regexp) string {
-	upperQuery := strings.ToUpper(ddlQuery)
-	resultQuery := ""
-	locs := reg.FindAllStringIndex(upperQuery, -1)
-	if len(locs) < 1 {
-		return ddlQuery
-	}
-	var lastPos int
-	for _, loc := range locs {
-		if len(loc) < 2 {
-			continue
-		}
-		matchString := ddlQuery[loc[0]:loc[1]]
-		if resultQuery == "" {
-			resultQuery += ddlQuery[:loc[0]]
-			lastPos = loc[1]
-		} else {
-			resultQuery += ddlQuery[lastPos:loc[0]]
-			lastPos = loc[1]
-		}
-		resultQuery += prefix
-		if resultQuery[len(resultQuery)-1] != ' ' {
-			resultQuery += " "
-		}
-		resultQuery += matchString
-		if resultQuery[len(resultQuery)-1] != ' ' {
-			resultQuery += " "
-		}
-		resultQuery += "*/"
-		if resultQuery[len(resultQuery)-1] != ' ' {
-			resultQuery += " "
-		}
-	}
-	if resultQuery[len(resultQuery)-1] != ' ' {
-		resultQuery += " "
-	}
-	resultQuery += ddlQuery[lastPos:]
-	return resultQuery
 }
 
 // MockPumpsClient creates a PumpsClient, used for test.

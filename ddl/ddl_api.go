@@ -1908,7 +1908,7 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 				return errors.New("table option auto_id_cache overflows int64")
 			}
 			tbInfo.AutoIdCache = int64(op.UintValue)
-		case ast.TableOptionAutoRandom:
+		case ast.TableOptionAutoRandomBase:
 			tbInfo.AutoRandID = int64(op.UintValue)
 		case ast.TableOptionComment:
 			tbInfo.Comment = op.StrValue
@@ -2172,7 +2172,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 						return errors.New("table option auto_id_cache overflows int64")
 					}
 					err = d.AlterTableAutoIDCache(ctx, ident, int64(opt.UintValue))
-				case ast.TableOptionAutoRandom:
+				case ast.TableOptionAutoRandomBase:
 					err = d.RebaseAutoID(ctx, ident, int64(opt.UintValue), autoid.AutoRandomType)
 				case ast.TableOptionComment:
 					spec.Comment = opt.StrValue
@@ -2230,7 +2230,7 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 	newBase = mathutil.MaxInt64(newBase, autoIncID)
 	actionType := model.ActionRebaseAutoID
 	if tp == autoid.AutoRandomType {
-		actionType = model.ActionRebaseAutoRandom
+		actionType = model.ActionRebaseAutoRandomBase
 	}
 	job := &model.Job{
 		SchemaID:   schema.ID,
