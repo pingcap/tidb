@@ -240,3 +240,37 @@ func (s *testSnapshotSuite) TestSkipLargeTxnLock(c *C) {
 	c.Assert(status.IsCommitted(), IsTrue)
 	c.Assert(status.CommitTS(), Greater, txn1.StartTS())
 }
+
+func (s *testSnapshotSuite) TestPointGetSkipTxnLock(c *C) {
+	x := kv.Key("x_key_TestPointGetSkipTxnLock")
+	y := kv.Key("y_key_TestPointGetSkipTxnLock")
+	txn := s.beginTxn(c)
+	c.Assert(txn.Set(x, []byte("x")), IsNil)
+	c.Assert(txn.Set(y, []byte("y")), IsNil)
+	ctx := context.Background()
+	bo := NewBackoffer(ctx, PrewriteMaxBackoff)
+	committer, err := newTwoPhaseCommitterWithInit(txn, 0)
+	c.Assert(err, IsNil)
+	committer.lockTTL = 3000
+	c.Assert(committer.prewriteMutations(bo, committer.mutations), IsNil)
+
+	snapshot := newTiKVSnapshot(s.store, kv.MaxVersion, 0)
+	start := time.Now()
+	c.Assert(committer.primary(), BytesEquals, []byte(x))
+	// Point get secondary key. Shouldn't be blocked by the lock and read old data.
+	_, err = snapshot.Get(ctx, y)
+	c.Assert(kv.IsErrNotFound(errors.Trace(err)), IsTrue)
+	c.Assert(time.Since(start), Less, 500*time.Millisecond)
+
+	// Commit the primary key
+	committer.commitTS = txn.StartTS() + 1
+	committer.commitMutations(bo, committer.mutationsOfKeys([][]byte{committer.primary()}))
+
+	snapshot = newTiKVSnapshot(s.store, kv.MaxVersion, 0)
+	start = time.Now()
+	// Point get secondary key. Should read committed data.
+	value, err := snapshot.Get(ctx, y)
+	c.Assert(err, IsNil)
+	c.Assert(value, BytesEquals, []byte("y"))
+	c.Assert(time.Since(start), Less, 500*time.Millisecond)
+}
