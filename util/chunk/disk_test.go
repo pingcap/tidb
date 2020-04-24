@@ -105,8 +105,10 @@ func (s *testChunkSuite) TestPartitionInDisk(c *check.C) {
 	partitions := initPartitions(numRow, partitionCnt)
 	p := NewPartitionInDisk(fields, numRow)
 	defer func() {
-		err := p.Close()
-		c.Check(err, check.IsNil)
+		for i := 0; i < partitionCnt; i++ {
+			err := p.Close(i)
+			c.Check(err, check.IsNil)
+		}
 	}()
 
 	for _, chk := range chks {
