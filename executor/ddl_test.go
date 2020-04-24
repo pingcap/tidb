@@ -977,6 +977,67 @@ func (s *testAutoRandomSuite) TestAutoRandomTableOption(c *C) {
 	tk.MustExec("drop table alter_table_auto_random_option")
 }
 
+// Test filter different kind of allocators.
+// In special ddl type, for example:
+// 1: ActionRenameTable             : it will abandon all the old allocators.
+// 2: ActionRebaseAutoID            : it will drop row-id-type allocator.
+// 3: ActionModifyTableAutoIdCache  : it will drop row-id-type allocator.
+// 3: ActionRebaseAutoRandomBase    : it will drop auto-rand-type allocator.
+func (s *testAutoRandomSuite) TestFilterDifferentAllocators(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+
+	tk.MustExec("create table t(a bigint auto_random(5) key, b int auto_increment unique)")
+	tk.MustExec("insert into t values()")
+	tk.MustQuery("select b from t").Check(testkit.Rows("1"))
+	allHandles, err := ddltestutil.ExtractAllTableHandles(tk.Se, "test", "t")
+	c.Assert(err, IsNil)
+	c.Assert(len(allHandles), Equals, 1)
+	orderedHandles := testutil.ConfigTestUtils.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
+	c.Assert(orderedHandles[0], Equals, int64(1))
+	tk.MustExec("delete from t")
+
+	// Test rebase auto_increment.
+	tk.MustExec("alter table t auto_increment 3000000")
+	tk.MustExec("insert into t values()")
+	tk.MustQuery("select b from t").Check(testkit.Rows("3000000"))
+	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Se, "test", "t")
+	c.Assert(err, IsNil)
+	c.Assert(len(allHandles), Equals, 1)
+	orderedHandles = testutil.ConfigTestUtils.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
+	c.Assert(orderedHandles[0], Equals, int64(2))
+	tk.MustExec("delete from t")
+
+	// Test rebase auto_random.
+	tk.MustExec("alter table t auto_random_base 3000000")
+	tk.MustExec("insert into t values()")
+	tk.MustQuery("select b from t").Check(testkit.Rows("3000001"))
+	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Se, "test", "t")
+	c.Assert(err, IsNil)
+	c.Assert(len(allHandles), Equals, 1)
+	orderedHandles = testutil.ConfigTestUtils.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
+	c.Assert(orderedHandles[0], Equals, int64(3000000))
+	tk.MustExec("delete from t")
+
+	// Test rename table.
+	tk.MustExec("rename table t to t1")
+	tk.MustExec("insert into t1 values()")
+	res := tk.MustQuery("select b from t1")
+	strInt64, err := strconv.ParseInt(res.Rows()[0][0].(string), 10, 64)
+	c.Assert(err, IsNil)
+	c.Assert(strInt64, Greater, int64(3000002))
+	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Se, "test", "t1")
+	c.Assert(err, IsNil)
+	c.Assert(len(allHandles), Equals, 1)
+	orderedHandles = testutil.ConfigTestUtils.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
+	c.Assert(orderedHandles[0], Greater, int64(3000001))
+}
+
 func (s *testSuite6) TestMaxHandleAddIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 

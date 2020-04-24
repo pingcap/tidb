@@ -34,7 +34,6 @@ func init() {
 	parser.SpecialCommentsController.Register(string(FeatureIDAutoRandom))
 	parser.SpecialCommentsController.Register(string(FeatureIDAutoIDCache))
 	parser.SpecialCommentsController.Register(string(FeatureIDAutoRandomBase))
-
 }
 
 // SpecialCommentVersionPrefix is the prefix of TiDB executable comments.
