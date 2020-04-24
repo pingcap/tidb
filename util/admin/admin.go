@@ -404,20 +404,20 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 		for _, col := range cols {
 			if col.IsPKHandleColumn(t.Meta()) {
 				if mysql.HasUnsignedFlag(col.Flag) {
-					data = append(data, types.NewUintDatum(uint64(handle)))
+					data = append(data, types.NewUintDatum(uint64(handle.IntValue())))
 				} else {
-					data = append(data, types.NewIntDatum(handle))
+					data = append(data, types.NewIntDatum(handle.IntValue()))
 				}
 			} else {
 				data = append(data, rowMap[col.ID])
 			}
 		}
-		more, err := fn(handle, data, cols)
+		more, err := fn(handle.IntValue(), data, cols)
 		if !more || err != nil {
 			return errors.Trace(err)
 		}
 
-		rk := t.RecordKey(handle)
+		rk := t.RecordKey(handle.IntValue())
 		err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
 		if err != nil {
 			return errors.Trace(err)
