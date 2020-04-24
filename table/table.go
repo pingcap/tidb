@@ -274,14 +274,3 @@ var TableFromMeta func(allocators autoid.Allocators, tblInfo *model.TableInfo) (
 
 // MockTableFromMeta only serves for test.
 var MockTableFromMeta func(tableInfo *model.TableInfo) Table
-
-// Slice is used for table sorting.
-type Slice []Table
-
-func (s Slice) Len() int { return len(s) }
-
-func (s Slice) Less(i, j int) bool {
-	return s[i].Meta().Name.O < s[j].Meta().Name.O
-}
-
-func (s Slice) Swap(i, j int) { s[i], s[j] = s[j], s[i] }

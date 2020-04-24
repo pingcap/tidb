@@ -549,15 +549,35 @@ func (s *testBinlogSuite) TestAddSpecialComment(c *C) {
 		},
 		{
 			"create table t1 (id int primary key auto_random(2));",
-			"create table t1 (id int primary key /*T!30100 auto_random(2) */ );",
+			"create table t1 (id int primary key /*T![auto_rand] auto_random(2) */ );",
 		},
 		{
 			"create table t1 (id int auto_random ( 4 ) primary key);",
-			"create table t1 (id int /*T!30100 auto_random ( 4 ) */ primary key);",
+			"create table t1 (id int /*T![auto_rand] auto_random ( 4 ) */ primary key);",
 		},
 		{
 			"create table t1 (id int  auto_random  (   4    ) primary key);",
-			"create table t1 (id int  /*T!30100 auto_random  (   4    ) */ primary key);",
+			"create table t1 (id int  /*T![auto_rand] auto_random  (   4    ) */ primary key);",
+		},
+		{
+			"create table t1 (id int auto_increment key) auto_id_cache 100;",
+			"create table t1 (id int auto_increment key) /*T![auto_id_cache] auto_id_cache 100 */ ;",
+		},
+		{
+			"create table t1 (id int auto_increment unique) auto_id_cache 10;",
+			"create table t1 (id int auto_increment unique) /*T![auto_id_cache] auto_id_cache 10 */ ;",
+		},
+		{
+			"create table t1 (id int) auto_id_cache = 5;",
+			"create table t1 (id int) /*T![auto_id_cache] auto_id_cache = 5 */ ;",
+		},
+		{
+			"create table t1 (id int) auto_id_cache=5;",
+			"create table t1 (id int) /*T![auto_id_cache] auto_id_cache=5 */ ;",
+		},
+		{
+			"create table t1 (id int) /*T![auto_id_cache] auto_id_cache=5 */ ;",
+			"create table t1 (id int) /*T![auto_id_cache] auto_id_cache=5 */ ;",
 		},
 	}
 	for _, ca := range testCase {

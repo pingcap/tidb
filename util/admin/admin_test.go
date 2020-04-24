@@ -336,6 +336,7 @@ func (s *testSuite) TestIsJobRollbackable(c *C) {
 		{model.ActionDropIndex, model.StateDeleteOnly, false},
 		{model.ActionDropSchema, model.StateDeleteOnly, false},
 		{model.ActionDropColumn, model.StateDeleteOnly, false},
+		{model.ActionDropColumns, model.StateDeleteOnly, false},
 	}
 	job := &model.Job{}
 	for _, ca := range cases {

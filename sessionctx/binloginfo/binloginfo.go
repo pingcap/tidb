@@ -14,7 +14,6 @@
 package binloginfo
 
 import (
-	"fmt"
 	"math"
 	"regexp"
 	"strings"
@@ -23,7 +22,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb-tools/tidb-binlog/node"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
@@ -31,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
@@ -300,16 +299,17 @@ func SetDDLBinlog(client *pumpcli.PumpsClient, txn kv.Transaction, jobID int64, 
 }
 
 const specialPrefix = `/*!90000 `
-const specialVersionPrefix = `/*T!%s `
 
 // AddSpecialComment uses to add comment for table option in DDL query.
 // Export for testing.
 func AddSpecialComment(ddlQuery string) string {
-	if strings.Contains(ddlQuery, specialPrefix) || parser.SpecVersionCodePattern.MatchString(ddlQuery) {
+	if strings.Contains(ddlQuery, specialPrefix) || strings.Contains(ddlQuery, driver.SpecialCommentVersionPrefix) {
 		return ddlQuery
 	}
 	ddlQuery = addSpecialCommentByRegexps(ddlQuery, specialPrefix, shardPat, preSplitPat)
-	ddlQuery = addSpecialCommentByRegexps(ddlQuery, fmt.Sprintf(specialVersionPrefix, parser.CommentCodeAutoRandom), autoRandomPat)
+	for featureID, pattern := range driver.FeatureIDPatterns {
+		ddlQuery = addSpecialCommentByRegexps(ddlQuery, driver.BuildSpecialCommentPrefix(featureID), pattern)
+	}
 	return ddlQuery
 }
 

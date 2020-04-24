@@ -107,6 +107,26 @@ type joiner interface {
 	Clone() joiner
 }
 
+// JoinerType returns the join type of a Joiner.
+func JoinerType(j joiner) plannercore.JoinType {
+	switch j.(type) {
+	case *semiJoiner:
+		return plannercore.SemiJoin
+	case *antiSemiJoiner:
+		return plannercore.AntiSemiJoin
+	case *leftOuterSemiJoiner:
+		return plannercore.LeftOuterSemiJoin
+	case *antiLeftOuterSemiJoiner:
+		return plannercore.AntiLeftOuterSemiJoin
+	case *leftOuterJoiner:
+		return plannercore.LeftOuterJoin
+	case *rightOuterJoiner:
+		return plannercore.RightOuterJoin
+	default:
+		return plannercore.InnerJoin
+	}
+}
+
 func newJoiner(ctx sessionctx.Context, joinType plannercore.JoinType,
 	outerIsRight bool, defaultInner []types.Datum, filter []expression.Expression,
 	lhsColTypes, rhsColTypes []*types.FieldType, childrenUsed [][]bool) joiner {
@@ -231,7 +251,7 @@ func (j *baseJoiner) makeShallowJoinRow(isRightJoin bool, inner, outer chunk.Row
 // built by one outer row and multiple inner rows. The returned bool value
 // indicates whether the outer row matches any inner rows.
 func (j *baseJoiner) filter(
-	input, output *chunk.Chunk, outerColsLen int,
+	input, output *chunk.Chunk, outerColLen int,
 	lUsed, rUsed []int) (bool, error) {
 
 	var err error
@@ -240,9 +260,10 @@ func (j *baseJoiner) filter(
 		return false, err
 	}
 	// Batch copies selected rows to output chunk.
-	innerColOffset, outerColOffset := 0, input.NumCols()-outerColsLen
+	innerColOffset, outerColOffset := 0, input.NumCols()-outerColLen
+	innerColLen := input.NumCols() - outerColLen
 	if !j.outerIsRight {
-		innerColOffset, outerColOffset = outerColsLen, 0
+		innerColOffset, outerColOffset = outerColLen, 0
 	}
 	if lUsed != nil || rUsed != nil {
 		lSize := outerColOffset
@@ -257,11 +278,14 @@ func (j *baseJoiner) filter(
 		input = input.Prune(used)
 
 		innerColOffset, outerColOffset = 0, len(lUsed)
+		innerColLen, outerColLen = len(lUsed), len(rUsed)
 		if !j.outerIsRight {
 			innerColOffset, outerColOffset = len(lUsed), 0
+			innerColLen, outerColLen = outerColLen, innerColLen
 		}
+
 	}
-	return chunk.CopySelectedJoinRowsWithSameOuterRows(input, innerColOffset, outerColOffset, j.selected, output)
+	return chunk.CopySelectedJoinRowsWithSameOuterRows(input, innerColOffset, innerColLen, outerColOffset, outerColLen, j.selected, output)
 }
 
 // filterAndCheckOuterRowStatus is used to filter the result constructed by
@@ -385,9 +409,11 @@ func (j *semiJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.Row, ch
 		if err != nil {
 			return outerRowStatus, err
 		}
-		outerRowStatus = append(outerRowStatus, outerRowMatched)
 		if matched {
+			outerRowStatus = append(outerRowStatus, outerRowMatched)
 			chk.AppendRowByColIdxs(outer, j.lUsed)
+		} else {
+			outerRowStatus = append(outerRowStatus, outerRowUnmatched)
 		}
 	}
 	err = outers.Error()

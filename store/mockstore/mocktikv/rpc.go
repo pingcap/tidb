@@ -252,7 +252,7 @@ func (h *rpcHandler) checkRequest(ctx *kvrpcpb.Context, size int) *errorpb.Error
 }
 
 func (h *rpcHandler) checkKeyInRegion(key []byte) bool {
-	return regionContains(h.startKey, h.endKey, []byte(NewMvccKey(key)))
+	return regionContains(h.startKey, h.endKey, NewMvccKey(key))
 }
 
 func (h *rpcHandler) handleKvGet(req *kvrpcpb.GetRequest) *kvrpcpb.GetResponse {
@@ -766,6 +766,10 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		}
 	})
 
+	// increase coverage for mock tikv
+	_ = req.Type.String()
+	_ = req.ToBatchCommandsRequest()
+
 	reqCtx := &req.Context
 	resp := &tikvrpc.Response{}
 	// When the store type is TiDB, the request should handle over to TiDB rpc server to handle.
@@ -971,13 +975,13 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	case tikvrpc.CmdUnsafeDestroyRange:
 		panic("unimplemented")
 	case tikvrpc.CmdRegisterLockObserver:
-		panic("unimplemented")
+		return nil, errors.New("unimplemented")
 	case tikvrpc.CmdCheckLockObserver:
-		panic("unimplemented")
+		return nil, errors.New("unimplemented")
 	case tikvrpc.CmdRemoveLockObserver:
-		panic("unimplemented")
+		return nil, errors.New("unimplemented")
 	case tikvrpc.CmdPhysicalScanLock:
-		panic("unimplemented")
+		return nil, errors.New("unimplemented")
 	case tikvrpc.CmdCop:
 		r := req.Cop()
 		if err := handler.checkRequestContext(reqCtx); err != nil {

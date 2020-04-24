@@ -14,6 +14,8 @@
 package aggfuncs_test
 
 import (
+	"testing"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
@@ -37,5 +39,52 @@ func (s *testSuite) TestCount(c *C) {
 	}
 	for _, test := range tests {
 		s.testAggFunc(c, test)
+	}
+	tests2 := []multiArgsAggTest{
+		buildMultiArgsAggTester(ast.AggFuncCount, []byte{mysql.TypeLonglong, mysql.TypeLonglong}, mysql.TypeLonglong, 5, 0, 5),
+		buildMultiArgsAggTester(ast.AggFuncCount, []byte{mysql.TypeFloat, mysql.TypeFloat}, mysql.TypeLonglong, 5, 0, 5),
+		buildMultiArgsAggTester(ast.AggFuncCount, []byte{mysql.TypeDouble, mysql.TypeDouble}, mysql.TypeLonglong, 5, 0, 5),
+		buildMultiArgsAggTester(ast.AggFuncCount, []byte{mysql.TypeNewDecimal, mysql.TypeNewDecimal}, mysql.TypeLonglong, 5, 0, 5),
+		buildMultiArgsAggTester(ast.AggFuncCount, []byte{mysql.TypeString, mysql.TypeString}, mysql.TypeLonglong, 5, 0, 5),
+		buildMultiArgsAggTester(ast.AggFuncCount, []byte{mysql.TypeDate, mysql.TypeDate}, mysql.TypeLonglong, 5, 0, 5),
+		buildMultiArgsAggTester(ast.AggFuncCount, []byte{mysql.TypeDuration, mysql.TypeDuration}, mysql.TypeLonglong, 5, 0, 5),
+		buildMultiArgsAggTester(ast.AggFuncCount, []byte{mysql.TypeJSON, mysql.TypeJSON}, mysql.TypeLonglong, 5, 0, 5),
+	}
+	for _, test := range tests2 {
+		s.testMultiArgsAggFunc(c, test)
+	}
+}
+
+func BenchmarkCount(b *testing.B) {
+	s := testSuite{}
+	s.SetUpSuite(nil)
+
+	rowNum := 50000
+	tests := []aggTest{
+		buildAggTester(ast.AggFuncCount, mysql.TypeLonglong, rowNum, 0, rowNum),
+		buildAggTester(ast.AggFuncCount, mysql.TypeFloat, rowNum, 0, rowNum),
+		buildAggTester(ast.AggFuncCount, mysql.TypeDouble, rowNum, 0, rowNum),
+		buildAggTester(ast.AggFuncCount, mysql.TypeNewDecimal, rowNum, 0, rowNum),
+		buildAggTester(ast.AggFuncCount, mysql.TypeString, rowNum, 0, rowNum),
+		buildAggTester(ast.AggFuncCount, mysql.TypeDate, rowNum, 0, rowNum),
+		buildAggTester(ast.AggFuncCount, mysql.TypeDuration, rowNum, 0, rowNum),
+		buildAggTester(ast.AggFuncCount, mysql.TypeJSON, rowNum, 0, rowNum),
+	}
+	for _, test := range tests {
+		s.benchmarkAggFunc(b, test)
+	}
+
+	tests2 := []multiArgsAggTest{
+		buildMultiArgsAggTester(ast.AggFuncCount, []byte{mysql.TypeLonglong, mysql.TypeLonglong}, mysql.TypeLonglong, rowNum, 0, rowNum),
+		buildMultiArgsAggTester(ast.AggFuncCount, []byte{mysql.TypeFloat, mysql.TypeFloat}, mysql.TypeLonglong, rowNum, 0, rowNum),
+		buildMultiArgsAggTester(ast.AggFuncCount, []byte{mysql.TypeDouble, mysql.TypeDouble}, mysql.TypeLonglong, rowNum, 0, rowNum),
+		buildMultiArgsAggTester(ast.AggFuncCount, []byte{mysql.TypeNewDecimal, mysql.TypeNewDecimal}, mysql.TypeLonglong, rowNum, 0, rowNum),
+		buildMultiArgsAggTester(ast.AggFuncCount, []byte{mysql.TypeString, mysql.TypeString}, mysql.TypeLonglong, rowNum, 0, rowNum),
+		buildMultiArgsAggTester(ast.AggFuncCount, []byte{mysql.TypeDate, mysql.TypeDate}, mysql.TypeLonglong, rowNum, 0, rowNum),
+		buildMultiArgsAggTester(ast.AggFuncCount, []byte{mysql.TypeDuration, mysql.TypeDuration}, mysql.TypeLonglong, rowNum, 0, rowNum),
+		buildMultiArgsAggTester(ast.AggFuncCount, []byte{mysql.TypeJSON, mysql.TypeJSON}, mysql.TypeLonglong, rowNum, 0, rowNum),
+	}
+	for _, test := range tests2 {
+		s.benchmarkMultiArgsAggFunc(b, test)
 	}
 }

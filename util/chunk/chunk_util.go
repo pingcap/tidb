@@ -75,7 +75,7 @@ func CopySelectedJoinRowsDirect(src *Chunk, selected []bool, dst *Chunk) (bool, 
 // Return true if at least one joined row was selected.
 //
 // NOTE: All the outer rows in the source Chunk should be the same.
-func CopySelectedJoinRowsWithSameOuterRows(src *Chunk, innerColOffset, outerColOffset int, selected []bool, dst *Chunk) (bool, error) {
+func CopySelectedJoinRowsWithSameOuterRows(src *Chunk, innerColOffset, innerColLen, outerColOffset, outerColLen int, selected []bool, dst *Chunk) (bool, error) {
 	if src.NumRows() == 0 {
 		return false, nil
 	}
@@ -83,8 +83,8 @@ func CopySelectedJoinRowsWithSameOuterRows(src *Chunk, innerColOffset, outerColO
 		return false, errors.New(msgErrSelNotNil)
 	}
 
-	numSelected := copySelectedInnerRows(innerColOffset, outerColOffset, src, selected, dst)
-	copyOuterRows(innerColOffset, outerColOffset, src, numSelected, dst)
+	numSelected := copySelectedInnerRows(innerColOffset, innerColLen, src, selected, dst)
+	copySameOuterRows(outerColOffset, outerColLen, src, numSelected, dst)
 	dst.numVirtualRows += numSelected
 	return numSelected > 0, nil
 }
@@ -92,13 +92,8 @@ func CopySelectedJoinRowsWithSameOuterRows(src *Chunk, innerColOffset, outerColO
 // copySelectedInnerRows copies the selected inner rows from the source Chunk
 // to the destination Chunk.
 // return the number of rows which is selected.
-func copySelectedInnerRows(innerColOffset, outerColOffset int, src *Chunk, selected []bool, dst *Chunk) int {
-	var srcCols []*Column
-	if innerColOffset == 0 {
-		srcCols = src.columns[:outerColOffset]
-	} else {
-		srcCols = src.columns[innerColOffset:]
-	}
+func copySelectedInnerRows(innerColOffset, innerColLen int, src *Chunk, selected []bool, dst *Chunk) int {
+	srcCols := src.columns[innerColOffset : innerColOffset+innerColLen]
 	if len(srcCols) == 0 {
 		numSelected := 0
 		for _, s := range selected {
@@ -140,19 +135,14 @@ func copySelectedInnerRows(innerColOffset, outerColOffset int, src *Chunk, selec
 	return dst.columns[innerColOffset].length - oldLen
 }
 
-// copyOuterRows copies the continuous 'numRows' outer rows in the source Chunk
+// copySameOuterRows copies the continuous 'numRows' outer rows in the source Chunk
 // to the destination Chunk.
-func copyOuterRows(innerColOffset, outerColOffset int, src *Chunk, numRows int, dst *Chunk) {
-	if numRows <= 0 {
+func copySameOuterRows(outerColOffset, outerColLen int, src *Chunk, numRows int, dst *Chunk) {
+	if numRows <= 0 || outerColLen <= 0 {
 		return
 	}
 	row := src.GetRow(0)
-	var srcCols []*Column
-	if innerColOffset == 0 {
-		srcCols = src.columns[outerColOffset:]
-	} else {
-		srcCols = src.columns[:innerColOffset]
-	}
+	srcCols := src.columns[outerColOffset : outerColOffset+outerColLen]
 	for i, srcCol := range srcCols {
 		dstCol := dst.columns[outerColOffset+i]
 		dstCol.appendMultiSameNullBitmap(!srcCol.IsNull(row.idx), numRows)
@@ -168,7 +158,7 @@ func copyOuterRows(innerColOffset, outerColOffset int, src *Chunk, numRows int, 
 			offsets := dstCol.offsets
 			elemLen := srcCol.offsets[row.idx+1] - srcCol.offsets[row.idx]
 			for j := 0; j < numRows; j++ {
-				offsets = append(offsets, int64(offsets[len(offsets)-1]+elemLen))
+				offsets = append(offsets, offsets[len(offsets)-1]+elemLen)
 			}
 			dstCol.offsets = offsets
 		}

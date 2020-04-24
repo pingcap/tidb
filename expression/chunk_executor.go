@@ -44,7 +44,7 @@ func checkSequenceFunction(exprs []Expression) bool {
 	for _, expr := range exprs {
 		scalaFunc, ok := expr.(*ScalarFunction)
 		if !ok {
-			return false
+			continue
 		}
 		switch scalaFunc.FuncName.L {
 		case ast.NextVal:

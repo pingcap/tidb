@@ -77,7 +77,7 @@ func (s *testExecutorSuite) TestResolvedLargeTxnLocks(c *C) {
 	tso, err := oracle.GetTimestamp(context.Background())
 	c.Assert(err, IsNil)
 
-	key := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, 1)
+	key := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, kv.IntHandle(1))
 	pairs := s.mvccStore.Scan(key, nil, 1, tso, kvrpcpb.IsolationLevel_SI, nil)
 	c.Assert(pairs, HasLen, 1)
 	c.Assert(pairs[0].Err, IsNil)

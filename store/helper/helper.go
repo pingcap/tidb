@@ -309,7 +309,11 @@ func NewFrameItemFromRegionKey(key []byte) (frame *FrameItem, err error) {
 	frame.TableID, frame.IndexID, frame.IsRecord, err = tablecodec.DecodeKeyHead(key)
 	if err == nil {
 		if frame.IsRecord {
-			_, frame.RecordID, err = tablecodec.DecodeRecordKey(key)
+			var handle kv.Handle
+			_, handle, err = tablecodec.DecodeRecordKey(key)
+			if err == nil {
+				frame.RecordID = handle.IntValue()
+			}
 		} else {
 			_, _, frame.IndexValues, err = tablecodec.DecodeIndexKey(key)
 		}
@@ -429,12 +433,20 @@ type RegionInfo struct {
 	ReadBytes       int64            `json:"read_bytes"`
 	ApproximateSize int64            `json:"approximate_size"`
 	ApproximateKeys int64            `json:"approximate_keys"`
+
+	ReplicationStatus *ReplicationStatus `json:"replication_status,omitempty"`
 }
 
 // RegionsInfo stores the information of regions.
 type RegionsInfo struct {
 	Count   int64        `json:"count"`
 	Regions []RegionInfo `json:"regions"`
+}
+
+// ReplicationStatus represents the replication mode status of the region.
+type ReplicationStatus struct {
+	State   string `json:"state"`
+	StateID int64  `json:"state_id"`
 }
 
 // TableInfo stores the information of a table or an index

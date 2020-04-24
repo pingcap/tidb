@@ -90,7 +90,7 @@ func VecCompareUI(x []uint64, y, res []int64) {
 func VecCompareIU(x []int64, y []uint64, res []int64) {
 	n := len(x)
 	for i := 0; i < n; i++ {
-		if x[i] < 0 || uint64(y[i]) > math.MaxInt64 {
+		if x[i] < 0 || y[i] > math.MaxInt64 {
 			res[i] = -1
 		} else if x[i] < int64(y[i]) {
 			res[i] = -1
@@ -115,7 +115,7 @@ func CompareFloat64(x, y float64) int {
 
 // CompareString returns an integer comparing the string x to y with the specified collation and length.
 func CompareString(x, y, collation string) int {
-	return collate.GetCollator(collation).Compare(x, y, collate.NewCollatorOption(0))
+	return collate.GetCollator(collation).Compare(x, y)
 }
 
 // CompareDuration returns an integer comparing the duration x to y.

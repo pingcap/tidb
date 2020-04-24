@@ -19,14 +19,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/jeremywohl/flatten"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
@@ -144,7 +142,10 @@ func (e *clusterConfigRetriever) retrieve(_ context.Context, sctx sessionctx.Con
 		return nil, nil
 	}
 	e.retrieved = true
+	return fetchClusterConfig(sctx, e.extractor.NodeTypes, e.extractor.Instances)
+}
 
+func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.StringSet) ([][]types.Datum, error) {
 	type result struct {
 		idx  int
 		rows [][]types.Datum
@@ -160,7 +161,7 @@ func (e *clusterConfigRetriever) retrieve(_ context.Context, sctx sessionctx.Con
 	if err != nil {
 		return nil, err
 	}
-	serversInfo = filterClusterServerInfo(serversInfo, e.extractor.NodeTypes, e.extractor.Instances)
+	serversInfo = filterClusterServerInfo(serversInfo, nodeTypes, nodeAddrs)
 
 	var finalRows [][]types.Datum
 	wg := sync.WaitGroup{}
@@ -211,19 +212,26 @@ func (e *clusterConfigRetriever) retrieve(_ context.Context, sctx sessionctx.Con
 					ch <- result{err: errors.Trace(err)}
 					return
 				}
-				data, err := flatten.Flatten(nested, "", flatten.DotStyle)
-				if err != nil {
-					ch <- result{err: errors.Trace(err)}
-					return
-				}
-				// Sorts by keys and make the result stable
+				data := config.FlattenConfigItems(nested)
 				type item struct {
 					key string
 					val string
 				}
 				var items []item
 				for key, val := range data {
-					items = append(items, item{key: key, val: fmt.Sprintf("%v", val)})
+					var str string
+					switch val.(type) {
+					case string: // remove quotes
+						str = val.(string)
+					default:
+						tmp, err := json.Marshal(val)
+						if err != nil {
+							ch <- result{err: errors.Trace(err)}
+							return
+						}
+						str = string(tmp)
+					}
+					items = append(items, item{key: key, val: str})
 				}
 				sort.Slice(items, func(i, j int) bool { return items[i].key < items[j].key })
 				var rows [][]types.Datum
@@ -290,14 +298,15 @@ func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionc
 	finalRows := make([][]types.Datum, 0, len(serversInfo)*10)
 	for i, srv := range serversInfo {
 		address := srv.Address
+		remote := address
 		if srv.ServerType == "tidb" {
-			address = srv.StatusAddr
+			remote = srv.StatusAddr
 		}
 		wg.Add(1)
-		go func(index int, address, serverTP string) {
+		go func(index int, remote, address, serverTP string) {
 			util.WithRecovery(func() {
 				defer wg.Done()
-				items, err := getServerInfoByGRPC(ctx, address, infoTp)
+				items, err := getServerInfoByGRPC(ctx, remote, infoTp)
 				if err != nil {
 					ch <- result{idx: index, err: err}
 					return
@@ -305,7 +314,7 @@ func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionc
 				partRows := serverInfoItemToRows(items, serverTP, address)
 				ch <- result{idx: index, rows: partRows}
 			}, nil)
-		}(i, address, srv.ServerType)
+		}(i, remote, address, srv.ServerType)
 	}
 	wg.Wait()
 	close(ch)
@@ -483,13 +492,8 @@ func (e *clusterLogRetriever) initialize(ctx context.Context, sctx sessionctx.Co
 		levels = append(levels, sysutil.ParseLogLevel(l))
 	}
 
-	startTime := e.extractor.StartTime
-	endTime := e.extractor.EndTime
+	startTime, endTime := e.extractor.GetTimeRange(isFailpointTestModeSkipCheck)
 	patterns := e.extractor.Patterns
-
-	if endTime == 0 {
-		endTime = math.MaxInt64
-	}
 
 	// There is no performance issue to check this variable because it will
 	// be eliminated in non-failpoint mode.
@@ -498,16 +502,6 @@ func (e *clusterLogRetriever) initialize(ctx context.Context, sctx sessionctx.Co
 		// in normally SQL. (But in test mode we should relax this limitation)
 		if len(patterns) == 0 && len(levels) == 0 && len(instances) == 0 && len(nodeTypes) == 0 {
 			return nil, errors.New("denied to scan full logs (use `SELECT * FROM cluster_log WHERE message LIKE '%'` explicitly if intentionally)")
-		}
-
-		// Just search the recent half an hour logs if the user doesn't specify the start time
-		const defaultSearchLogDuration = 30 * time.Minute / time.Millisecond
-		if startTime == 0 {
-			if endTime == math.MaxInt64 {
-				startTime = time.Now().UnixNano()/int64(time.Millisecond) - int64(defaultSearchLogDuration)
-			} else {
-				startTime = endTime - int64(defaultSearchLogDuration)
-			}
 		}
 	}
 

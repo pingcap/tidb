@@ -62,6 +62,37 @@ type RegionRequestSender struct {
 	failStoreIDs map[uint64]struct{}
 }
 
+// RegionBatchRequestSender sends BatchCop requests to TiFlash server by stream way.
+type RegionBatchRequestSender struct {
+	RegionRequestSender
+}
+
+// NewRegionBatchRequestSender creates a RegionBatchRequestSender object.
+func NewRegionBatchRequestSender(cache *RegionCache, client Client) *RegionBatchRequestSender {
+	return &RegionBatchRequestSender{RegionRequestSender: RegionRequestSender{regionCache: cache, client: client}}
+}
+
+func (ss *RegionBatchRequestSender) sendReqToAddr(bo *Backoffer, ctxs []copTaskAndRPCContext, req *tikvrpc.Request, timout time.Duration) (resp *tikvrpc.Response, retry bool, err error) {
+	// use the first ctx to send request, because every ctx has same address.
+	ctx := ctxs[0].ctx
+	if e := tikvrpc.SetContext(req, ctx.Meta, ctx.Peer); e != nil {
+		return nil, false, errors.Trace(e)
+	}
+	resp, err = ss.client.SendRequest(bo.ctx, ctx.Addr, req, timout)
+	if err != nil {
+		ss.rpcError = err
+		for _, failedCtx := range ctxs {
+			e := ss.onSendFail(bo, failedCtx.ctx, err)
+			if e != nil {
+				return nil, false, errors.Trace(e)
+			}
+		}
+		return nil, true, nil
+	}
+	// We don't need to process region error or lock error. Because TiFlash will retry by itself.
+	return
+}
+
 // NewRegionRequestSender creates a new sender.
 func NewRegionRequestSender(regionCache *RegionCache, client Client) *RegionRequestSender {
 	return &RegionRequestSender{
@@ -107,6 +138,10 @@ func (s *RegionRequestSender) SendReqCtx(
 		case "callBackofferHook":
 			if bo.vars != nil && bo.vars.Hook != nil {
 				bo.vars.Hook("callBackofferHook", bo.vars)
+			}
+		case "requestTiDBStoreError":
+			if sType == kv.TiDB {
+				failpoint.Return(nil, nil, ErrTiKVServerTimeout)
 			}
 		}
 	})
@@ -343,6 +378,10 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 	}
 	if regionErr.GetStaleCommand() != nil {
 		logutil.BgLogger().Debug("tikv reports `StaleCommand`", zap.Stringer("ctx", ctx))
+		err = bo.Backoff(boStaleCmd, errors.Errorf("stale command, ctx: %v", ctx))
+		if err != nil {
+			return false, errors.Trace(err)
+		}
 		return true, nil
 	}
 	if regionErr.GetRaftEntryTooLarge() != nil {

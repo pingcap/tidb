@@ -16,6 +16,7 @@ package kvcache
 import (
 	"container/list"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util/memory"
 )
 
@@ -158,4 +159,29 @@ func (l *SimpleLRUCache) Values() []Value {
 		values = append(values, value)
 	}
 	return values
+}
+
+// Keys return all keys in cache.
+func (l *SimpleLRUCache) Keys() []Key {
+	keys := make([]Key, 0, l.cache.Len())
+	for ele := l.cache.Front(); ele != nil; ele = ele.Next() {
+		key := ele.Value.(*cacheEntry).key
+		keys = append(keys, key)
+	}
+	return keys
+}
+
+// SetCapacity sets capacity of the cache.
+func (l *SimpleLRUCache) SetCapacity(capacity uint) error {
+	if capacity < 1 {
+		return errors.New("capacity of lru cache should be at least 1")
+	}
+	l.capacity = capacity
+	for l.size > l.capacity {
+		lru := l.cache.Back()
+		l.cache.Remove(lru)
+		delete(l.elements, string(lru.Value.(*cacheEntry).key.Hash()))
+		l.size--
+	}
+	return nil
 }

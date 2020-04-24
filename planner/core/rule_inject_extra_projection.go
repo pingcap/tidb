@@ -66,9 +66,10 @@ func wrapCastForAggFuncs(sctx sessionctx.Context, aggFuncs []*aggregation.AggFun
 	}
 }
 
-// InjectProjBelowAgg injects a ProjOperator below AggOperator. If all the args
-// of `aggFuncs`, and all the item of `groupByItems` are columns or constants,
-// we do not need to build the `proj`.
+// InjectProjBelowAgg injects a ProjOperator below AggOperator. So that All
+// scalar functions in aggregation may speed up by vectorized evaluation in
+// the `proj`. If all the args of `aggFuncs`, and all the item of `groupByItems`
+// are columns or constants, we do not need to build the `proj`.
 func InjectProjBelowAgg(aggPlan PhysicalPlan, aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression) PhysicalPlan {
 	hasScalarFunc := false
 

@@ -23,7 +23,37 @@ jobs:
       uses: srggrs/assign-one-project-github-action@1.2.0
       if: |
         contains(github.event.issue.labels.*.name, 'component/planner') ||
-        contains(github.event.issue.labels.*.name, 'component/statistics')
+        contains(github.event.issue.labels.*.name, 'component/statistics') ||
+        contains(github.event.issue.labels.*.name, 'component/bindinfo')
       with:
         project: 'https://github.com/pingcap/tidb/projects/39'
         column_name: 'Issue Backlog: Need Triage'
+    - name: Run issues assignment to Question and Bug Reports Kanban
+      uses: srggrs/assign-one-project-github-action@1.2.0
+      if: |
+        contains(github.event.issue.labels.*.name, 'type/question') ||
+        contains(github.event.issue.labels.*.name, 'type/bug')
+      with:
+        project: 'https://github.com/pingcap/tidb/projects/36'
+        column_name: 'Need Triage'
+    - name: Run issues assignment to Feature Request Kanban
+      uses: srggrs/assign-one-project-github-action@1.2.0
+      if: |
+        contains(github.event.issue.labels.*.name, 'type/feature-request')
+      with:
+        project: 'https://github.com/pingcap/tidb/projects/41'
+        column_name: 'Need Triage'
+    - name: Run issues assignment to Robust test
+      uses: srggrs/assign-one-project-github-action@1.2.0
+      if: |
+        contains(github.event.issue.labels.*.name, 'component/test')
+      with:
+        project: 'https://github.com/pingcap/tidb/projects/32'
+        column_name: 'TODO/Help Wanted'
+    - name: Run issues assignment to project UT Coverage
+      uses: srggrs/assign-one-project-github-action@1.2.0
+      if: |
+        contains(github.event.issue.labels.*.name, 'type/UT-coverage')
+      with:
+        project: 'https://github.com/pingcap/tidb/projects/44'
+        column_name: 'To do'

@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/rowDecoder"
+	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -104,13 +104,13 @@ func IsJobRollbackable(job *model.Job) bool {
 			job.SchemaState == model.StateDeleteOnly {
 			return false
 		}
-	case model.ActionDropColumn, model.ActionModifyColumn,
+	case model.ActionDropColumn, model.ActionDropColumns, model.ActionModifyColumn,
 		model.ActionDropTablePartition, model.ActionAddTablePartition,
 		model.ActionRebaseAutoID, model.ActionShardRowID,
 		model.ActionTruncateTable, model.ActionAddForeignKey,
 		model.ActionDropForeignKey, model.ActionRenameTable,
 		model.ActionModifyTableCharsetAndCollate, model.ActionTruncateTablePartition,
-		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable:
+		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable, model.ActionModifyTableAutoIdCache:
 		return job.SchemaState == model.StateNone
 	}
 	return true
@@ -404,20 +404,20 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 		for _, col := range cols {
 			if col.IsPKHandleColumn(t.Meta()) {
 				if mysql.HasUnsignedFlag(col.Flag) {
-					data = append(data, types.NewUintDatum(uint64(handle)))
+					data = append(data, types.NewUintDatum(uint64(handle.IntValue())))
 				} else {
-					data = append(data, types.NewIntDatum(handle))
+					data = append(data, types.NewIntDatum(handle.IntValue()))
 				}
 			} else {
 				data = append(data, rowMap[col.ID])
 			}
 		}
-		more, err := fn(handle, data, cols)
+		more, err := fn(handle.IntValue(), data, cols)
 		if !more || err != nil {
 			return errors.Trace(err)
 		}
 
-		rk := t.RecordKey(handle)
+		rk := t.RecordKey(handle.IntValue())
 		err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
 		if err != nil {
 			return errors.Trace(err)

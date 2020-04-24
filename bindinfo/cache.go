@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/hint"
 )
 
 const (
@@ -49,17 +50,16 @@ type Binding struct {
 	Charset    string
 	Collation  string
 	// Hint is the parsed hints, it is used to bind hints to stmt node.
-	Hint *HintsSet
-	// id is the string form of all hints. It is used to uniquely identify different hints.
-	// It would be non-empty only when the status is `Using` or `PendingVerify`.
-	id string
+	Hint *hint.HintsSet
+	// ID is the string form of Hint. It would be non-empty only when the status is `Using` or `PendingVerify`.
+	ID string
 }
 
 func (b *Binding) isSame(rb *Binding) bool {
-	if b.id != "" && rb.id != "" {
-		return b.id == rb.id
+	if b.ID != "" && rb.ID != "" {
+		return b.ID == rb.ID
 	}
-	// Sometimes we cannot construct `id` because of the changed schema, so we need to compare by bind sql.
+	// Sometimes we cannot construct `ID` because of the changed schema, so we need to compare by bind sql.
 	return b.BindSQL == rb.BindSQL
 }
 
@@ -96,29 +96,43 @@ func (br *BindRecord) HasUsingBinding() bool {
 // FindBinding find bindings in BindRecord.
 func (br *BindRecord) FindBinding(hint string) *Binding {
 	for _, binding := range br.Bindings {
-		if binding.id == hint {
+		if binding.ID == hint {
 			return &binding
 		}
 	}
 	return nil
 }
 
+// prepareHints builds ID and Hint for BindRecord. If sctx is not nil, we check if
+// the BindSQL is still valid.
 func (br *BindRecord) prepareHints(sctx sessionctx.Context) error {
 	p := parser.New()
 	for i, bind := range br.Bindings {
-		if bind.Hint != nil || bind.id != "" || bind.Status == deleted {
+		if (bind.Hint != nil && bind.ID != "") || bind.Status == deleted {
 			continue
 		}
-		stmtNode, err := p.ParseOneStmt(bind.BindSQL, bind.Charset, bind.Collation)
+		if sctx != nil {
+			_, err := getHintsForSQL(sctx, bind.BindSQL)
+			if err != nil {
+				return err
+			}
+		}
+		hintsSet, warns, err := hint.ParseHintsSet(p, bind.BindSQL, bind.Charset, bind.Collation, br.Db)
 		if err != nil {
 			return err
 		}
-		hints, err := getHintsForSQL(sctx, bind.BindSQL)
+		hintsStr, err := hintsSet.Restore()
 		if err != nil {
 			return err
 		}
-		br.Bindings[i].Hint = CollectHint(stmtNode)
-		br.Bindings[i].id = hints
+		// For `create global binding for select * from t using select * from t`, we allow it though hintsStr is empty.
+		// For `create global binding for select * from t using select /*+ non_exist_hint() */ * from t`,
+		// the hint is totally invaild, we escalate warning to error.
+		if hintsStr == "" && len(warns) > 0 {
+			return warns[0]
+		}
+		br.Bindings[i].Hint = hintsSet
+		br.Bindings[i].ID = hintsStr
 	}
 	return nil
 }

@@ -74,15 +74,6 @@ func (s *testEvaluatorSuite) TestAggFunc2Pb(c *C) {
 		types.NewFieldType(mysql.TypeDouble),
 		types.NewFieldType(mysql.TypeDouble),
 	}
-	for _, funcName := range funcNames {
-		args := []expression.Expression{dg.genColumn(mysql.TypeDouble, 1)}
-		aggFunc, err := NewAggFuncDesc(s.ctx, funcName, args, true)
-		c.Assert(err, IsNil)
-		pbExpr := AggFuncToPBExpr(sc, client, aggFunc)
-		js, err := json.Marshal(pbExpr)
-		c.Assert(err, IsNil)
-		c.Assert(string(js), Equals, "null")
-	}
 
 	jsons := []string{
 		`{"tp":3002,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":63,"charset":""}}],"sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":63,"charset":""}}`,
@@ -94,13 +85,15 @@ func (s *testEvaluatorSuite) TestAggFunc2Pb(c *C) {
 		`{"tp":3006,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":63,"charset":""}}],"sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":63,"charset":""}}`,
 	}
 	for i, funcName := range funcNames {
-		args := []expression.Expression{dg.genColumn(mysql.TypeDouble, 1)}
-		aggFunc, err := NewAggFuncDesc(s.ctx, funcName, args, false)
-		c.Assert(err, IsNil)
-		aggFunc.RetTp = funcTypes[i]
-		pbExpr := AggFuncToPBExpr(sc, client, aggFunc)
-		js, err := json.Marshal(pbExpr)
-		c.Assert(err, IsNil)
-		c.Assert(string(js), Equals, jsons[i])
+		for _, hasDistinct := range []bool{true, false} {
+			args := []expression.Expression{dg.genColumn(mysql.TypeDouble, 1)}
+			aggFunc, err := NewAggFuncDesc(s.ctx, funcName, args, hasDistinct)
+			c.Assert(err, IsNil)
+			aggFunc.RetTp = funcTypes[i]
+			pbExpr := AggFuncToPBExpr(sc, client, aggFunc)
+			js, err := json.Marshal(pbExpr)
+			c.Assert(err, IsNil)
+			c.Assert(string(js), Equals, jsons[i])
+		}
 	}
 }

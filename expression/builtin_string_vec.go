@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/text/transform"
@@ -1058,7 +1057,7 @@ func (b *builtinFindInSetSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 			continue
 		}
 		for j, strInSet := range strings.Split(strlistI, ",") {
-			if b.ctor.Compare(str.GetString(i), strInSet, collate.NewCollatorOption(0)) == 0 {
+			if b.ctor.Compare(str.GetString(i), strInSet) == 0 {
 				res[i] = int64(j + 1)
 			}
 		}
@@ -2162,7 +2161,7 @@ func (b *builtinLocate2ArgsUTF8Sig) vecEvalInt(input *chunk.Chunk, result *chunk
 			i64s[i] = 1
 			continue
 		}
-		slice := string([]rune(str))
+		slice := str
 		slice = strings.ToLower(slice)
 		subStr = strings.ToLower(subStr)
 		idx := strings.Index(slice, subStr)
