@@ -88,7 +88,7 @@ type testDBSuite struct {
 func setUpSuite(s *testDBSuite, c *C) {
 	var err error
 
-	s.lease = 100 * time.Millisecond
+	s.lease = 600 * time.Millisecond
 	session.SetSchemaLease(s.lease)
 	session.DisableStats4Test()
 	s.schemaName = "test_db"
@@ -3207,19 +3207,11 @@ func (s *testDBSuite5) TestModifyColumnRollBack(c *C) {
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	done := make(chan error, 1)
 	go backgroundExec(s.store, "alter table t1 change c2 c2 bigint not null;", done)
-	ticker := time.NewTicker(s.lease / 2)
-	defer ticker.Stop()
-LOOP:
-	for {
-		select {
-		case err := <-done:
-			c.Assert(err, NotNil)
-			c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
-			break LOOP
-		case <-ticker.C:
-			s.mustExec(c, "insert into t1(c2) values (null);")
-		}
-	}
+
+	err := <-done
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
+	s.mustExec(c, "insert into t1(c2) values (null);")
 
 	t := s.testGetTable(c, "t1")
 	for _, col := range t.Cols() {

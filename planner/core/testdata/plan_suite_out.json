@@ -1229,7 +1229,7 @@
       {
         "SQL": "select /*+ STREAM_AGG() */ sum(t1.a) from t t1 join t t2 on t1.b = t2.b group by t1.b",
         "Best": "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))->Sort->Projection->StreamAgg}(test.t.b,test.t.b)->HashAgg",
-        "Warning": "[planner:1815]Optimizer Hint STREAM_AGG is inapplicable"
+        "Warning": ""
       },
       {
         "SQL": "select /*+ STREAM_AGG() */ e, sum(b) from t group by e",

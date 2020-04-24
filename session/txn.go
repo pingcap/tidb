@@ -307,6 +307,14 @@ func (st *TxnState) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 	return val, nil
 }
 
+// GetMemBuffer overrides the Transaction interface.
+func (st *TxnState) GetMemBuffer() kv.MemBuffer {
+	if st.stmtBuf == nil || st.stmtBuf.Size() == 0 {
+		return st.Transaction.GetMemBuffer()
+	}
+	return kv.NewBufferStoreFrom(st.Transaction.GetMemBuffer(), st.stmtBuf)
+}
+
 // BatchGet overrides the Transaction interface.
 func (st *TxnState) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
 	bufferValues := make([][]byte, len(keys))

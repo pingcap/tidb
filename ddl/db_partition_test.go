@@ -233,13 +233,14 @@ func (s *testIntegrationSuite3) TestCreateTableWithPartition(c *C) {
 		);`)
 
 	tk.MustExec("set @@tidb_enable_table_partition = 1")
-	_, err = tk.Exec(`create table t30 (
+	tk.MustExec("set @@tidb_enable_table_partition = 1")
+	tk.MustExec(`create table t30 (
 		  a int,
 		  b float,
 		  c varchar(30))
 		  partition by range columns (a, b)
 		  (partition p0 values less than (10, 10.0))`)
-	c.Assert(ddl.ErrNotAllowedTypeInPartition.Equal(err), IsTrue)
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 8200 Unsupported partition type, treat as normal table"))
 
 	tk.MustGetErrCode(`create table t31 (a int not null) partition by range( a );`, tmysql.ErrPartitionsMustBeDefined)
 	tk.MustGetErrCode(`create table t32 (a int not null) partition by range columns( a );`, tmysql.ErrPartitionsMustBeDefined)
@@ -308,6 +309,17 @@ func (s *testIntegrationSuite2) TestCreateTableWithHashPartition(c *C) {
 		store_id int
 	)
 	partition by hash( year(hired) ) partitions 4;`)
+
+	// This query makes tidb OOM without partition count check.
+	tk.MustGetErrCode(`CREATE TABLE employees (
+    id INT NOT NULL,
+    fname VARCHAR(30),
+    lname VARCHAR(30),
+    hired DATE NOT NULL DEFAULT '1970-01-01',
+    separated DATE NOT NULL DEFAULT '9999-12-31',
+    job_code INT,
+    store_id INT
+) PARTITION BY HASH(store_id) PARTITIONS 102400000000;`, tmysql.ErrTooManyPartitions)
 }
 
 func (s *testIntegrationSuite1) TestCreateTableWithRangeColumnPartition(c *C) {
@@ -385,22 +397,43 @@ create table log_message_1 (
 			"create table t (id text) partition by range columns (id) (partition p0 values less than ('abc'));",
 			ddl.ErrNotAllowedTypeInPartition,
 		},
+		// create as normal table, warning.
+		//	{
+		//		"create table t (a int, b varchar(64)) partition by range columns (a, b) (" +
+		//			"partition p0 values less than (1, 'a')," +
+		//			"partition p1 values less than (1, 'a'))",
+		//		ddl.ErrRangeNotIncreasing,
+		//	},
 		{
-			"create table t (a int, b varchar(64)) partition by range columns (a, b) (" +
-				"partition p0 values less than (1, 'a')," +
-				"partition p1 values less than (1, 'a'))",
+			"create table t (a int, b varchar(64)) partition by range columns ( b) (" +
+				"partition p0 values less than ( 'a')," +
+				"partition p1 values less than ('a'))",
 			ddl.ErrRangeNotIncreasing,
 		},
+		// create as normal table, warning.
+		//	{
+		//		"create table t (a int, b varchar(64)) partition by range columns (a, b) (" +
+		//			"partition p0 values less than (1, 'b')," +
+		//			"partition p1 values less than (1, 'a'))",
+		//		ddl.ErrRangeNotIncreasing,
+		//	},
 		{
-			"create table t (a int, b varchar(64)) partition by range columns (a, b) (" +
-				"partition p0 values less than (1, 'b')," +
-				"partition p1 values less than (1, 'a'))",
+			"create table t (a int, b varchar(64)) partition by range columns (b) (" +
+				"partition p0 values less than ('b')," +
+				"partition p1 values less than ('a'))",
 			ddl.ErrRangeNotIncreasing,
 		},
+		// create as normal table, warning.
+		//		{
+		//			"create table t (a int, b varchar(64)) partition by range columns (a, b) (" +
+		//				"partition p0 values less than (1, maxvalue)," +
+		//				"partition p1 values less than (1, 'a'))",
+		//			ddl.ErrRangeNotIncreasing,
+		//		},
 		{
-			"create table t (a int, b varchar(64)) partition by range columns (a, b) (" +
-				"partition p0 values less than (1, maxvalue)," +
-				"partition p1 values less than (1, 'a'))",
+			"create table t (a int, b varchar(64)) partition by range columns ( b) (" +
+				"partition p0 values less than (  maxvalue)," +
+				"partition p1 values less than ('a'))",
 			ddl.ErrRangeNotIncreasing,
 		},
 		{
@@ -422,6 +455,10 @@ create table log_message_1 (
 	tk.MustExec("create table t1 (a int, b char(3)) partition by range columns (a, b) (" +
 		"partition p0 values less than (1, 'a')," +
 		"partition p1 values less than (2, maxvalue))")
+
+	tk.MustExec("create table t2 (a int, b char(3)) partition by range columns (b) (" +
+		"partition p0 values less than ( 'a')," +
+		"partition p1 values less than (maxvalue))")
 }
 
 func (s *testIntegrationSuite3) TestCreateTableWithKeyPartition(c *C) {
