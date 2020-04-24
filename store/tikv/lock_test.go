@@ -511,7 +511,7 @@ func (s *testLockSuite) TestZeroMinCommitTS(c *C) {
 
 	expire, pushed, err = newLockResolver(s.store).ResolveLocks(bo, math.MaxUint64, []*Lock{lock})
 	c.Assert(err, IsNil)
-	c.Assert(pushed, HasLen, 0)
+	c.Assert(pushed, HasLen, 1)
 	c.Assert(expire, Greater, int64(0))
 
 	// Clean up this test.
