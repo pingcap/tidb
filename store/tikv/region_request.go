@@ -309,6 +309,10 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, regi
 	}
 	if regionErr.GetStaleCommand() != nil {
 		logutil.Logger(context.Background()).Debug("tikv reports `StaleCommand`", zap.Stringer("ctx", ctx))
+		err = bo.Backoff(boStaleCmd, errors.Errorf("stale command, ctx: %v", ctx))
+		if err != nil {
+			return false, errors.Trace(err)
+		}
 		return true, nil
 	}
 	if regionErr.GetRaftEntryTooLarge() != nil {
