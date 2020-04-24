@@ -2433,7 +2433,7 @@ func (b *PlanBuilder) buildProjUponView(ctx context.Context, dbName model.CIStr,
 			OrigTblName: col.OrigTblName,
 			ColName:     columnInfo[i].Name,
 			OrigColName: origColName,
-			DBName:      col.DBName,
+			DBName:      dbName,
 			RetType:     col.GetType(),
 		})
 		projExprs = append(projExprs, col)
@@ -2631,9 +2631,6 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		if dbName == "" {
 			dbName = b.ctx.GetSessionVars().CurrentDB
 		}
-		if t.TableInfo.IsView() {
-			return nil, errors.Errorf("update view %s is not supported now.", t.Name.O)
-		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, t.Name.L, "", nil)
 	}
 
@@ -2828,8 +2825,12 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 	}
 
 	tblDbMap := make(map[string]string, len(tableList))
+	views := make(map[string]struct{}, len(tableList))
 	for _, tbl := range tableList {
 		tblDbMap[tbl.Name.L] = tbl.DBInfo.Name.L
+		if tbl.TableInfo.IsView() {
+			views[tbl.DBInfo.Name.L+"."+tbl.Name.L] = struct{}{}
+		}
 	}
 	for _, assign := range newList {
 		col := assign.Col
@@ -2838,6 +2839,9 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 		// To solve issue#10028, we need to get database name by the table alias name.
 		if dbNameTmp, ok := tblDbMap[col.TblName.L]; ok {
 			dbName = dbNameTmp
+		}
+		if _, ok := views[dbName+"."+col.TblName.L]; ok {
+			return nil, nil, errors.Errorf("update view %s is not supported now.", col.TblName.O)
 		}
 		if dbName == "" {
 			dbName = b.ctx.GetSessionVars().CurrentDB
@@ -3241,6 +3245,9 @@ func (b *PlanBuilder) buildWindowFunctionFrame(ctx context.Context, spec *ast.Wi
 
 func (b *PlanBuilder) checkWindowFuncArgs(ctx context.Context, p LogicalPlan, windowFuncExprs []*ast.WindowFuncExpr, windowAggMap map[*ast.AggregateFuncExpr]int) error {
 	for _, windowFuncExpr := range windowFuncExprs {
+		if strings.ToLower(windowFuncExpr.F) == ast.AggFuncGroupConcat {
+			return ErrNotSupportedYet.GenWithStackByArgs("group_concat as window function")
+		}
 		args, err := b.buildArgs4WindowFunc(ctx, p, windowFuncExpr.Args, windowAggMap)
 		if err != nil {
 			return err
@@ -3560,14 +3567,14 @@ func mergeWindowSpec(spec, ref *ast.WindowSpec) error {
 	if ref.Frame != nil {
 		return ErrWindowNoInherentFrame.GenWithStackByArgs(ref.Name.O)
 	}
+	if spec.PartitionBy != nil {
+		return errors.Trace(ErrWindowNoChildPartitioning)
+	}
 	if ref.OrderBy != nil {
 		if spec.OrderBy != nil {
 			return ErrWindowNoRedefineOrderBy.GenWithStackByArgs(getWindowName(spec.Name.O), ref.Name.O)
 		}
 		spec.OrderBy = ref.OrderBy
-	}
-	if spec.PartitionBy != nil {
-		return errors.Trace(ErrWindowNoChildPartitioning)
 	}
 	spec.PartitionBy = ref.PartitionBy
 	spec.Ref = model.NewCIStr("")
