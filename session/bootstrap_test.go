@@ -319,12 +319,6 @@ func (s *testBootstrapSuite) TestBootstrapInitExpensiveQueryHandle(c *C) {
 	c.Assert(dom.ExpensiveQueryHandle(), NotNil)
 }
 
-func (s *testBootstrapSuite) TestCurrentVerEqualUpgradeVer(c *C) {
-	for ver := range bootstrapVersion {
-		c.Assert(ver <= currentBootstrapVersion, Equals, true)
-	}
-}
-
 func (s *testBootstrapSuite) TestStmtSummary(c *C) {
 	defer testleak.AfterTest(c)()
 	ctx := context.Background()
