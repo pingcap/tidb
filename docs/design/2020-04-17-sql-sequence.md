@@ -26,7 +26,7 @@ But in sequence, we take it open. Users can specify whether to use cache mode or
 
 ## Syntax and Semantics
 
-create sequence statement:
+Create sequence statement:
 
 ```
 CREATE SEQUENCE [IF NOT EXISTS] sequence_name
@@ -38,31 +38,31 @@ CREATE SEQUENCE [IF NOT EXISTS] sequence_name
 [ CYCLE | NOCYCLE | NO CYCLE]
 ```
  
-show create sequence statement:
+Show create sequence statement:
 
 ```
 SHOW CREATE SEQUENCE sequence_name
 ```
 
-drop sequence statement:
+Drop sequence statement:
 
 ```
 DROP SEQUENCE [IF EXISTS] sequence_name_list
 ```
 
-get the next value of sequence:
+Get the next value of sequence:
 
 ```
 NEXT VALUE FOR sequence_name / NEXTVAL(sequence_name)
 ```
 
-get the previous value of sequence:
+Get the previous value of sequence:
 
 ```
 LASTVAL(sequence_name)
 ```
 
-move the current position in sequence number axis
+Move the current position in sequence number axis:
 
 ```
 SETVAL(sequence_name, num)
@@ -96,7 +96,7 @@ Distinguished from auto-increment's rebase functionality, columns with sequence 
 
 Sequence binlog is triggered by both `nextval` and `setval` functions when the update reaches the storage directly rather than in the cache.
 
-Sequence binlog is not a sort of `DML` binlog, but mocked as a kind of `DDL` `job` by specifying the job id equal to -1 specially. Therefore, the drainer won't take it for granted that it's a real ddl job and it should be occurred in ddl history queue. 
+Sequence binlog is not a sort of `DML` binlog, but mocked as a kind of `DDL` `job` by specifying the job id equal to -1 specially. Therefore, the drainer won't take it for granted that it's a real ddl job and appears in ddl history queue. 
 
 ### Sequence Performance
 
@@ -112,4 +112,4 @@ The insertion performance of sequences is comparable to the `auto-increment` of 
 
 ## Compatibility
 
-Specific compatibility can be referred by [MySQL’s compatibility](https://pingcap.com/docs-cn/stable/reference/mysql-compatibility/).
+Specific compatibility can be referred by [MySQL’s compatibility](https://pingcap.com/docs/stable/reference/mysql-compatibility/).
