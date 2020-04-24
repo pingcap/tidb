@@ -687,7 +687,7 @@ func (e *AnalyzeFastExec) getNextSampleKey(bo *tikv.Backoffer, startKey kv.Key) 
 		if err != nil {
 			return nil, err
 		}
-		if bytes.Compare(loc.StartKey, e.sampTasks[prefixLen].Location.EndKey) == 0 {
+		if bytes.Equal(loc.StartKey, e.sampTasks[prefixLen].Location.EndKey) {
 			startKey = loc.StartKey
 			break
 		}

@@ -2094,10 +2094,25 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 
 func (b *PlanBuilder) popTableHints() {
 	hintInfo := b.tableHintInfo[len(b.tableHintInfo)-1]
+	b.appendUnmatchedIndexHintWarning(hintInfo.indexHintList)
 	b.appendUnmatchedJoinHintWarning(HintINLJ, TiDBIndexNestedLoopJoin, hintInfo.indexNestedLoopJoinTables)
 	b.appendUnmatchedJoinHintWarning(HintSMJ, TiDBMergeJoin, hintInfo.sortMergeJoinTables)
 	b.appendUnmatchedJoinHintWarning(HintHJ, TiDBHashJoin, hintInfo.hashJoinTables)
 	b.tableHintInfo = b.tableHintInfo[:len(b.tableHintInfo)-1]
+}
+
+func (b *PlanBuilder) appendUnmatchedIndexHintWarning(indexHints []indexHintInfo) {
+	for _, hint := range indexHints {
+		if !hint.matched {
+			hintTypeString := hint.hintTypeString()
+			errMsg := fmt.Sprintf("%s(%s) is inapplicable, check whether the table(%s) exists",
+				hintTypeString,
+				hint.indexString(),
+				hint.tblName,
+			)
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(errMsg))
+		}
+	}
 }
 
 func (b *PlanBuilder) appendUnmatchedJoinHintWarning(joinType string, joinTypeAlias string, hintTables []hintTableInfo) {
@@ -2764,9 +2779,6 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		if dbName == "" {
 			dbName = b.ctx.GetSessionVars().CurrentDB
 		}
-		if t.TableInfo.IsView() {
-			return nil, errors.Errorf("update view %s is not supported now.", t.Name.O)
-		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, t.Name.L, "", nil)
 	}
 
@@ -2962,8 +2974,12 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 	}
 
 	tblDbMap := make(map[string]string, len(tableList))
+	views := make(map[string]struct{}, len(tableList))
 	for _, tbl := range tableList {
 		tblDbMap[tbl.Name.L] = tbl.DBInfo.Name.L
+		if tbl.TableInfo.IsView() {
+			views[tbl.DBInfo.Name.L+"."+tbl.Name.L] = struct{}{}
+		}
 	}
 	for _, assign := range newList {
 		col := assign.Col
@@ -2972,6 +2988,9 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 		// To solve issue#10028, we need to get database name by the table alias name.
 		if dbNameTmp, ok := tblDbMap[col.TblName.L]; ok {
 			dbName = dbNameTmp
+		}
+		if _, ok := views[dbName+"."+col.TblName.L]; ok {
+			return nil, nil, errors.Errorf("update view %s is not supported now.", col.TblName.O)
 		}
 		if dbName == "" {
 			dbName = b.ctx.GetSessionVars().CurrentDB

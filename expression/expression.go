@@ -391,9 +391,17 @@ func IsBinaryLiteral(expr Expression) bool {
 // The `keepNull` controls what the istrue function will return when `arg` is null:
 // 1. keepNull is true and arg is null, the istrue function returns null.
 // 2. keepNull is false and arg is null, the istrue function returns 0.
-func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression) (Expression, error) {
+// The `wrapForInt` indicates whether we need to wrapIsTrue for non-logical Expression with int type.
+func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression, wrapForInt bool) (Expression, error) {
 	if arg.GetType().EvalType() == types.ETInt {
-		return arg, nil
+		if !wrapForInt {
+			return arg, nil
+		}
+		if child, ok := arg.(*ScalarFunction); ok {
+			if _, isLogicalOp := logicalOps[child.FuncName.L]; isLogicalOp {
+				return arg, nil
+			}
+		}
 	}
 	fc := &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruth, 1, 1}, opcode.IsTruth, keepNull}
 	f, err := fc.getFunction(ctx, []Expression{arg})

@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strings"
@@ -28,6 +29,10 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
+)
+
+var (
+	null = []byte("NULL")
 )
 
 // LoadDataExec represents a load data executor.
@@ -486,7 +491,7 @@ func (e *LoadDataInfo) getFieldsFromLine(line []byte) ([]field, error) {
 	for {
 		eol, f := reader.GetField()
 		f = f.escape()
-		if string(f.str) == "NULL" && !f.enclosed {
+		if bytes.Equal(f.str, null) && !f.enclosed {
 			f.str = []byte{'N'}
 			f.maybeNull = true
 		}

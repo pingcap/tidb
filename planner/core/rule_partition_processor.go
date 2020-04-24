@@ -147,48 +147,8 @@ func (s *partitionProcessor) pruneHashPartition(ds *DataSource, pi *model.Partit
 		pl := &newDataSource
 		return pl, nil
 	}
-	// If can not hit partition by FastLocateHashPartition, try to prune all partition.
-	sctx := ds.context()
-	filterConds = expression.PropagateConstant(sctx, filterConds)
-	filterConds = solver.Solve(sctx, filterConds)
-	alwaysFalse := false
-	if len(filterConds) == 1 {
-		// Constant false.
-		if con, ok := filterConds[0].(*expression.Constant); ok && con.DeferredExpr == nil {
-			ret, _, err := expression.EvalBool(sctx, expression.CNFExprs{con}, chunk.Row{})
-			if err == nil && ret == false {
-				alwaysFalse = true
-			}
-		}
-	}
-	if alwaysFalse {
-		tableDual := LogicalTableDual{RowCount: 0}.Init(ds.context())
-		tableDual.schema = ds.Schema()
-		return tableDual, nil
-	}
-	children := make([]LogicalPlan, 0, len(pi.Definitions))
-	for i := 0; i < len(pi.Definitions); i++ {
-		// Not a deep copy.
-		newDataSource := *ds
-		newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.context(), plancodec.TypeTableScan, &newDataSource)
-		newDataSource.isPartition = true
-		newDataSource.physicalTableID = pi.Definitions[i].ID
-		newDataSource.possibleAccessPaths = make([]*accessPath, len(ds.possibleAccessPaths))
-		for i := range ds.possibleAccessPaths {
-			newPath := *ds.possibleAccessPaths[i]
-			newDataSource.possibleAccessPaths[i] = &newPath
-		}
-		// There are many expression nodes in the plan tree use the original datasource
-		// id as FromID. So we set the id of the newDataSource with the original one to
-		// avoid traversing the whole plan tree to update the references.
-		newDataSource.id = ds.id
-		newDataSource.statisticTable = getStatsTable(ds.context(), ds.table.Meta(), pi.Definitions[i].ID)
-		children = append(children, &newDataSource)
-	}
-	unionAll := LogicalUnionAll{}.Init(ds.context())
-	unionAll.SetChildren(children...)
-	unionAll.SetSchema(ds.schema)
-	return unionAll, nil
+
+	return s.makeUnionAllChildren(ds, pi, fullRange(len(pi.Definitions)))
 }
 
 func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
@@ -557,6 +517,19 @@ func makePartitionByFnCol(ds *DataSource, partitionExpr string) (*expression.Col
 	var fn *expression.ScalarFunction
 	switch raw := partExpr.(type) {
 	case *expression.ScalarFunction:
+		// Special handle for floor(unix_timestamp(ts)) as partition expression.
+		// This pattern is so common for timestamp(3) column as partition expression that it deserve an optimization.
+		if raw.FuncName.L == ast.Floor {
+			if ut, ok := raw.GetArgs()[0].(*expression.ScalarFunction); ok && ut.FuncName.L == ast.UnixTimestamp {
+				args := ut.GetArgs()
+				if len(args) == 1 {
+					if c, ok1 := args[0].(*expression.Column); ok1 {
+						return c, raw, nil
+					}
+				}
+			}
+		}
+
 		if _, ok := monotoneIncFuncs[raw.FuncName.L]; ok {
 			fn = raw
 			col = fn.GetArgs()[0].(*expression.Column)
@@ -662,10 +635,8 @@ func extractDataForPrune(sctx sessionctx.Context, expr expression.Expression, pa
 	var constExpr expression.Expression
 	if partFn != nil {
 		// If the partition expression is fn(col), change constExpr to fn(constExpr).
-		// No 'copy on write' for the expression here, this is a dangerous operation.
-		args := partFn.GetArgs()
-		args[0] = con
-		constExpr = partFn
+		constExpr = replaceColumnWithConst(partFn, con)
+
 		// Sometimes we need to relax the condition, < to <=, > to >=.
 		// For example, the following case doesn't hold:
 		// col < '2020-02-11 17:34:11' => to_days(col) < to_days(2020-02-11 17:34:11)
@@ -682,6 +653,25 @@ func extractDataForPrune(sctx sessionctx.Context, expr expression.Expression, pa
 		return ret, true
 	}
 	return ret, false
+}
+
+// replaceColumnWithConst change fn(col) to fn(const)
+func replaceColumnWithConst(partFn *expression.ScalarFunction, con *expression.Constant) *expression.ScalarFunction {
+	args := partFn.GetArgs()
+	// The partition function may be floor(unix_timestamp(ts)) instead of a simple fn(col).
+	if partFn.FuncName.L == ast.Floor {
+		ut := args[0].(*expression.ScalarFunction)
+		if ut.FuncName.L == ast.UnixTimestamp {
+			args = ut.GetArgs()
+			args[0] = con
+			return partFn
+		}
+	}
+
+	// No 'copy on write' for the expression here, this is a dangerous operation.
+	args[0] = con
+	return partFn
+
 }
 
 // opposite turns > to <, >= to <= and so on.
