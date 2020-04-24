@@ -198,6 +198,7 @@ func (d *Datum) GetBytes() []byte {
 func (d *Datum) SetBytes(b []byte) {
 	d.k = KindBytes
 	d.b = b
+	d.collation = charset.CollationBin
 }
 
 // SetBytesAsString sets bytes value to datum as string type.
