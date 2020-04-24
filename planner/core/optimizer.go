@@ -148,6 +148,12 @@ func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (Logic
 	if flag&flagPrunColumns > 0 && flag-flagPrunColumns > flagPrunColumns {
 		flag |= flagPrunColumnsAgain
 	}
+	return logicalOptimize4Test(ctx, flag, logic)
+}
+
+// logicalOptimize4Test is separated for test because flagPrunColumnsAgain
+// in logicalOptimize may reset all keys in Schema.
+func logicalOptimize4Test(ctx context.Context, flag uint64, logic LogicalPlan) (LogicalPlan, error) {
 	var err error
 	for i, rule := range optRuleList {
 		// The order of flags is same as the order of optRule in the list.
