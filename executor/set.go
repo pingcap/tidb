@@ -29,9 +29,11 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stmtsummary"
+	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
 
@@ -92,7 +94,8 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				if err1 != nil {
 					return err1
 				}
-				sessionVars.Users[name] = fmt.Sprintf("%v", svalue)
+
+				sessionVars.SetUserVar(name, stringutil.Copy(svalue), value.Collation())
 			}
 			continue
 		}
@@ -172,6 +175,10 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		if name == variable.TxnIsolationOneShot && sessionVars.InTxn() {
 			return errors.Trace(ErrCantChangeTxCharacteristics)
 		}
+		if name == variable.TiDBFoundInPlanCache {
+			sessionVars.StmtCtx.AppendWarning(fmt.Errorf("Set operation for '%s' will not take effect", variable.TiDBFoundInPlanCache))
+			return nil
+		}
 		err = variable.SetSessionSystemVar(sessionVars, name, value)
 		if err != nil {
 			return err
@@ -219,7 +226,7 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 	case variable.TiDBStmtSummaryMaxSQLLength:
 		return stmtsummary.StmtSummaryByDigestMap.SetMaxSQLLength(valStr, !v.IsGlobal)
 	case variable.TiDBCapturePlanBaseline:
-		variable.CapturePlanBaseline.Set(valStr, !v.IsGlobal)
+		variable.CapturePlanBaseline.Set(strings.ToLower(valStr), !v.IsGlobal)
 	}
 
 	return nil
@@ -233,7 +240,7 @@ func (e *SetExecutor) setCharset(cs, co string) error {
 		}
 	} else {
 		var coll *charset.Collation
-		if coll, err = charset.GetCollationByName(co); err != nil {
+		if coll, err = collate.GetCollationByName(co); err != nil {
 			return err
 		}
 		if coll.CharsetName != cs {

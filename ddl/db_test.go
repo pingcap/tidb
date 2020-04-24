@@ -68,6 +68,7 @@ var _ = Suite(&testDBSuite3{&testDBSuite{}})
 var _ = Suite(&testDBSuite4{&testDBSuite{}})
 var _ = Suite(&testDBSuite5{&testDBSuite{}})
 var _ = Suite(&testDBSuite6{&testDBSuite{}})
+var _ = Suite(&testDBSuite7{&testDBSuite{}})
 var _ = SerialSuites(&testSerialDBSuite{&testDBSuite{}})
 
 const defaultBatchSize = 1024
@@ -87,7 +88,7 @@ type testDBSuite struct {
 func setUpSuite(s *testDBSuite, c *C) {
 	var err error
 
-	s.lease = 100 * time.Millisecond
+	s.lease = 600 * time.Millisecond
 	session.SetSchemaLease(s.lease)
 	session.DisableStats4Test()
 	s.schemaName = "test_db"
@@ -136,6 +137,7 @@ type testDBSuite3 struct{ *testDBSuite }
 type testDBSuite4 struct{ *testDBSuite }
 type testDBSuite5 struct{ *testDBSuite }
 type testDBSuite6 struct{ *testDBSuite }
+type testDBSuite7 struct{ *testDBSuite }
 type testSerialDBSuite struct{ *testDBSuite }
 
 func (s *testDBSuite4) TestAddIndexWithPK(c *C) {
@@ -1383,6 +1385,89 @@ func (s *testDBSuite3) TestCancelDropColumn(c *C) {
 	s.mustExec(c, "alter table test_drop_column drop column c3")
 }
 
+// TestCancelDropColumns tests cancel ddl job which type is drop multi-columns.
+func (s *testDBSuite3) TestCancelDropColumns(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+	s.mustExec(c, "drop table if exists test_drop_column")
+	s.mustExec(c, "create table test_drop_column(c1 int, c2 int)")
+	defer s.mustExec(c, "drop table test_drop_column;")
+	testCases := []struct {
+		needAddColumn  bool
+		jobState       model.JobState
+		JobSchemaState model.SchemaState
+		cancelSucc     bool
+	}{
+		{true, model.JobStateNone, model.StateNone, true},
+		{false, model.JobStateRunning, model.StateWriteOnly, false},
+		{true, model.JobStateRunning, model.StateDeleteOnly, false},
+		{true, model.JobStateRunning, model.StateDeleteReorganization, false},
+	}
+	var checkErr error
+	hook := &ddl.TestDDLCallback{}
+	var jobID int64
+	testCase := &testCases[0]
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionDropColumns && job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState {
+			jobIDs := []int64{job.ID}
+			jobID = job.ID
+			hookCtx := mock.NewContext()
+			hookCtx.Store = s.store
+			err := hookCtx.NewTxn(context.TODO())
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			txn, err := hookCtx.Txn(true)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			errs, err := admin.CancelJobs(txn, jobIDs)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			if errs[0] != nil {
+				checkErr = errors.Trace(errs[0])
+				return
+			}
+			checkErr = txn.Commit(context.Background())
+		}
+	}
+
+	originalHook := s.dom.DDL().GetHook()
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	var err1 error
+	for i := range testCases {
+		testCase = &testCases[i]
+		if testCase.needAddColumn {
+			s.mustExec(c, "alter table test_drop_column add column c3 int, add column c4 int")
+		}
+		_, err1 = s.tk.Exec("alter table test_drop_column drop column c3, drop column c4")
+		t := s.testGetTable(c, "test_drop_column")
+		col3 := table.FindCol(t.Cols(), "c3")
+		col4 := table.FindCol(t.Cols(), "c4")
+		if testCase.cancelSucc {
+			c.Assert(checkErr, IsNil)
+			c.Assert(col3, NotNil)
+			c.Assert(col4, NotNil)
+			c.Assert(col3.Name.L, Equals, "c3")
+			c.Assert(col4.Name.L, Equals, "c4")
+			c.Assert(err1.Error(), Equals, "[ddl:8214]Cancelled DDL job")
+		} else {
+			c.Assert(col3, IsNil)
+			c.Assert(col4, IsNil)
+			c.Assert(err1, IsNil)
+			c.Assert(checkErr, NotNil)
+			c.Assert(checkErr.Error(), Equals, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
+		}
+	}
+	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	s.mustExec(c, "alter table test_drop_column add column c3 int, add column c4 int")
+	s.mustExec(c, "alter table test_drop_column drop column c3, drop column c4")
+}
+
 func checkDelRangeDone(c *C, ctx sessionctx.Context, idx table.Index) {
 	startTime := time.Now()
 	f := func() map[int64]struct{} {
@@ -1931,6 +2016,17 @@ func (s *testDBSuite5) TestRenameColumn(c *C) {
 	s.tk.MustExec("drop table test_rename_column")
 }
 
+func (s *testDBSuite7) TestSelectInViewFromAnotherDB(c *C) {
+	_, _ = s.s.Execute(context.Background(), "create database test_db2")
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+	s.tk.MustExec("create table t(a int)")
+	s.tk.MustExec("use test_db2")
+	s.tk.MustExec("create sql security invoker view v as select * from " + s.schemaName + ".t")
+	s.tk.MustExec("use " + s.schemaName)
+	s.tk.MustExec("select test_db2.v.a from test_db2.v")
+}
+
 func (s *testDBSuite) mustExec(c *C, query string, args ...interface{}) {
 	s.tk.MustExec(query, args...)
 }
@@ -1969,7 +2065,9 @@ func (s *testDBSuite4) TestCreateTableWithLike2(c *C) {
 	hook := &ddl.TestDDLCallback{}
 	var onceChecker sync.Map
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if job.Type != model.ActionAddColumn && job.Type != model.ActionDropColumn && job.Type != model.ActionAddIndex && job.Type != model.ActionDropIndex {
+		if job.Type != model.ActionAddColumn && job.Type != model.ActionDropColumn &&
+			job.Type != model.ActionAddColumns && job.Type != model.ActionDropColumns &&
+			job.Type != model.ActionAddIndex && job.Type != model.ActionDropIndex {
 			return
 		}
 		if job.TableID != tbl1.Meta().ID {
@@ -3194,19 +3292,11 @@ func (s *testDBSuite5) TestModifyColumnRollBack(c *C) {
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	done := make(chan error, 1)
 	go backgroundExec(s.store, "alter table t1 change c2 c2 bigint not null;", done)
-	ticker := time.NewTicker(s.lease / 2)
-	defer ticker.Stop()
-LOOP:
-	for {
-		select {
-		case err := <-done:
-			c.Assert(err, NotNil)
-			c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
-			break LOOP
-		case <-ticker.C:
-			s.mustExec(c, "insert into t1(c2) values (null);")
-		}
-	}
+
+	err := <-done
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
+	s.mustExec(c, "insert into t1(c2) values (null);")
 
 	t := s.testGetTable(c, "t1")
 	for _, col := range t.Cols() {
@@ -3312,7 +3402,11 @@ func (s *testDBSuite2) TestTransactionOnAddDropColumn(c *C) {
 	originHook := s.dom.DDL().GetHook()
 	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
 	hook := &ddl.TestDDLCallback{}
+	var checkErr error
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if checkErr != nil {
+			return
+		}
 		switch job.SchemaState {
 		case model.StateWriteOnly, model.StateWriteReorganization, model.StateDeleteOnly, model.StateDeleteReorganization:
 		default:
@@ -3321,7 +3415,10 @@ func (s *testDBSuite2) TestTransactionOnAddDropColumn(c *C) {
 		// do transaction.
 		for _, transaction := range transactions {
 			for _, sql := range transaction {
-				s.mustExec(c, sql)
+				if _, checkErr = s.tk.Exec(sql); checkErr != nil {
+					checkErr = errors.Errorf("err: %s, sql: %s, job schema state: %s", checkErr.Error(), sql, job.SchemaState)
+					return
+				}
 			}
 		}
 	}
@@ -3331,6 +3428,7 @@ func (s *testDBSuite2) TestTransactionOnAddDropColumn(c *C) {
 	go backgroundExec(s.store, "alter table t1 add column c int not null after a", done)
 	err := <-done
 	c.Assert(err, IsNil)
+	c.Assert(checkErr, IsNil)
 	s.tk.MustQuery("select a,b from t1 order by a").Check(testkit.Rows("1 1", "1 1", "1 1", "2 2", "2 2", "2 2"))
 	s.mustExec(c, "delete from t1")
 
@@ -3338,6 +3436,7 @@ func (s *testDBSuite2) TestTransactionOnAddDropColumn(c *C) {
 	go backgroundExec(s.store, "alter table t1 drop column c", done)
 	err = <-done
 	c.Assert(err, IsNil)
+	c.Assert(checkErr, IsNil)
 	s.tk.MustQuery("select a,b from t1 order by a").Check(testkit.Rows("1 1", "1 1", "1 1", "2 2", "2 2", "2 2"))
 }
 
@@ -3359,7 +3458,11 @@ func (s *testDBSuite3) TestTransactionWithWriteOnlyColumn(c *C) {
 	originHook := s.dom.DDL().GetHook()
 	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
 	hook := &ddl.TestDDLCallback{}
+	var checkErr error
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if checkErr != nil {
+			return
+		}
 		switch job.SchemaState {
 		case model.StateWriteOnly:
 		default:
@@ -3368,7 +3471,10 @@ func (s *testDBSuite3) TestTransactionWithWriteOnlyColumn(c *C) {
 		// do transaction.
 		for _, transaction := range transactions {
 			for _, sql := range transaction {
-				s.mustExec(c, sql)
+				if _, checkErr = s.tk.Exec(sql); checkErr != nil {
+					checkErr = errors.Errorf("err: %s, sql: %s, job schema state: %s", checkErr.Error(), sql, job.SchemaState)
+					return
+				}
 			}
 		}
 	}
@@ -3378,6 +3484,7 @@ func (s *testDBSuite3) TestTransactionWithWriteOnlyColumn(c *C) {
 	go backgroundExec(s.store, "alter table t1 add column c int not null", done)
 	err := <-done
 	c.Assert(err, IsNil)
+	c.Assert(checkErr, IsNil)
 	s.tk.MustQuery("select a from t1").Check(testkit.Rows("2"))
 	s.mustExec(c, "delete from t1")
 
@@ -3385,6 +3492,7 @@ func (s *testDBSuite3) TestTransactionWithWriteOnlyColumn(c *C) {
 	go backgroundExec(s.store, "alter table t1 drop column c", done)
 	err = <-done
 	c.Assert(err, IsNil)
+	c.Assert(checkErr, IsNil)
 	s.tk.MustQuery("select a from t1").Check(testkit.Rows("2"))
 }
 

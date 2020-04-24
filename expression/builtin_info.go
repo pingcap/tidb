@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -193,6 +194,7 @@ func (c *currentRoleFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 64
 	sig := &builtinCurrentRoleSig{bf}
 	return sig, nil
@@ -677,7 +679,7 @@ func (b *builtinRowCountSig) Clone() builtinFunc {
 // evalInt evals ROW_COUNT().
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_row-count.
 func (b *builtinRowCountSig) evalInt(_ chunk.Row) (res int64, isNull bool, err error) {
-	res = int64(b.ctx.GetSessionVars().StmtCtx.PrevAffectedRows)
+	res = b.ctx.GetSessionVars().StmtCtx.PrevAffectedRows
 	return res, false, nil
 }
 
@@ -720,14 +722,14 @@ func decodeKey(ctx sessionctx.Context, s string) string {
 		return s
 	}
 	// Auto decode byte if needed.
-	_, bs, err := codec.DecodeBytes([]byte(key), nil)
+	_, bs, err := codec.DecodeBytes(key, nil)
 	if err == nil {
 		key = bs
 	}
 	// Try to decode it as a record key.
 	tableID, handle, err := tablecodec.DecodeRecordKey(key)
 	if err == nil {
-		return "tableID=" + strconv.FormatInt(tableID, 10) + ", _tidb_rowid=" + strconv.FormatInt(handle, 10)
+		return "tableID=" + strconv.FormatInt(tableID, 10) + ", _tidb_rowid=" + strconv.FormatInt(handle.IntValue(), 10)
 	}
 	// Try decode as table index key.
 	tableID, indexID, indexValues, err := tablecodec.DecodeIndexKeyPrefix(key)
@@ -811,6 +813,12 @@ func (b *builtinNextValSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if err != nil {
 		return 0, false, err
 	}
+	// Do the privilege check.
+	checker := privilege.GetPrivilegeManager(b.ctx)
+	user := b.ctx.GetSessionVars().User
+	if checker != nil && !checker.RequestVerification(b.ctx.GetSessionVars().ActiveRoles, db, seq, "", mysql.InsertPriv) {
+		return 0, false, errSequenceAccessDenied.GenWithStackByArgs("INSERT", user.AuthUsername, user.AuthHostname, seq)
+	}
 	nextVal, err := sequence.GetSequenceNextVal(b.ctx, db, seq)
 	if err != nil {
 		return 0, false, err
@@ -858,6 +866,12 @@ func (b *builtinLastValSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if err != nil {
 		return 0, false, err
 	}
+	// Do the privilege check.
+	checker := privilege.GetPrivilegeManager(b.ctx)
+	user := b.ctx.GetSessionVars().User
+	if checker != nil && !checker.RequestVerification(b.ctx.GetSessionVars().ActiveRoles, db, seq, "", mysql.SelectPriv) {
+		return 0, false, errSequenceAccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, seq)
+	}
 	return b.ctx.GetSessionVars().SequenceState.GetLastValue(sequence.GetSequenceID())
 }
 
@@ -898,6 +912,12 @@ func (b *builtinSetValSig) evalInt(row chunk.Row) (int64, bool, error) {
 	sequence, err := b.ctx.GetSessionVars().TxnCtx.InfoSchema.(util.SequenceSchema).SequenceByName(model.NewCIStr(db), model.NewCIStr(seq))
 	if err != nil {
 		return 0, false, err
+	}
+	// Do the privilege check.
+	checker := privilege.GetPrivilegeManager(b.ctx)
+	user := b.ctx.GetSessionVars().User
+	if checker != nil && !checker.RequestVerification(b.ctx.GetSessionVars().ActiveRoles, db, seq, "", mysql.InsertPriv) {
+		return 0, false, errSequenceAccessDenied.GenWithStackByArgs("INSERT", user.AuthUsername, user.AuthHostname, seq)
 	}
 	setValue, isNull, err := b.args[1].EvalInt(b.ctx, row)
 	if isNull || err != nil {

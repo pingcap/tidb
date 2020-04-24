@@ -928,17 +928,17 @@ p_size;
 id	estRows	task	access object	operator info
 Sort_13	14.41	root		Column#23:desc, tpch.part.p_brand:asc, tpch.part.p_type:asc, tpch.part.p_size:asc
 └─Projection_15	14.41	root		tpch.part.p_brand, tpch.part.p_type, tpch.part.p_size, Column#23
-  └─HashAgg_18	14.41	root		group by:tpch.part.p_brand, tpch.part.p_size, tpch.part.p_type, funcs:count(distinct tpch.partsupp.ps_suppkey)->Column#23, funcs:firstrow(tpch.part.p_brand)->tpch.part.p_brand, funcs:firstrow(tpch.part.p_type)->tpch.part.p_type, funcs:firstrow(tpch.part.p_size)->tpch.part.p_size
-    └─HashJoin_30	3863988.24	root		anti semi join, equal:[eq(tpch.partsupp.ps_suppkey, tpch.supplier.s_suppkey)]
-      ├─TableReader_68(Build)	400000.00	root		data:Selection_67
-      │ └─Selection_67	400000.00	cop[tikv]		like(tpch.supplier.s_comment, "%Customer%Complaints%", 92)
-      │   └─TableFullScan_66	500000.00	cop[tikv]	table:supplier	keep order:false
-      └─IndexMergeJoin_38(Probe)	4829985.30	root		inner join, inner:IndexReader_36, outer key:tpch.part.p_partkey, inner key:tpch.partsupp.ps_partkey
-        ├─TableReader_61(Build)	1200618.43	root		data:Selection_60
-        │ └─Selection_60	1200618.43	cop[tikv]		in(tpch.part.p_size, 48, 19, 12, 4, 41, 7, 21, 39), ne(tpch.part.p_brand, "Brand#34"), not(like(tpch.part.p_type, "LARGE BRUSHED%", 92))
-        │   └─TableFullScan_59	10000000.00	cop[tikv]	table:part	keep order:false
-        └─IndexReader_36(Probe)	4.02	root		index:IndexRangeScan_35
-          └─IndexRangeScan_35	4.02	cop[tikv]	table:partsupp, index:PRIMARY(PS_PARTKEY, PS_SUPPKEY)	range: decided by [eq(tpch.partsupp.ps_partkey, tpch.part.p_partkey)], keep order:true
+  └─HashAgg_16	14.41	root		group by:tpch.part.p_brand, tpch.part.p_size, tpch.part.p_type, funcs:count(distinct tpch.partsupp.ps_suppkey)->Column#23, funcs:firstrow(tpch.part.p_brand)->tpch.part.p_brand, funcs:firstrow(tpch.part.p_type)->tpch.part.p_type, funcs:firstrow(tpch.part.p_size)->tpch.part.p_size
+    └─HashJoin_28	3863988.24	root		anti semi join, equal:[eq(tpch.partsupp.ps_suppkey, tpch.supplier.s_suppkey)]
+      ├─TableReader_66(Build)	400000.00	root		data:Selection_65
+      │ └─Selection_65	400000.00	cop[tikv]		like(tpch.supplier.s_comment, "%Customer%Complaints%", 92)
+      │   └─TableFullScan_64	500000.00	cop[tikv]	table:supplier	keep order:false
+      └─IndexMergeJoin_36(Probe)	4829985.30	root		inner join, inner:IndexReader_34, outer key:tpch.part.p_partkey, inner key:tpch.partsupp.ps_partkey
+        ├─TableReader_59(Build)	1200618.43	root		data:Selection_58
+        │ └─Selection_58	1200618.43	cop[tikv]		in(tpch.part.p_size, 48, 19, 12, 4, 41, 7, 21, 39), ne(tpch.part.p_brand, "Brand#34"), not(like(tpch.part.p_type, "LARGE BRUSHED%", 92))
+        │   └─TableFullScan_57	10000000.00	cop[tikv]	table:part	keep order:false
+        └─IndexReader_34(Probe)	4.02	root		index:IndexRangeScan_33
+          └─IndexRangeScan_33	4.02	cop[tikv]	table:partsupp, index:PRIMARY(PS_PARTKEY, PS_SUPPKEY)	range: decided by [eq(tpch.partsupp.ps_partkey, tpch.part.p_partkey)], keep order:true
 /*
 Q17 Small-Quantity-Order Revenue Query
 This query determines how much average yearly revenue would be lost if orders were no longer filled for small

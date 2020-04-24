@@ -55,7 +55,7 @@ func (s *testSuite) TearDownSuite(c *C) {
 var (
 	endpoints   = []string{"unix://new_session:12379"}
 	dialTimeout = 5 * time.Second
-	retryCnt    = int(math.MaxInt32)
+	retryCnt    = math.MaxInt32
 )
 
 func (s *testSuite) TestFailNewSession(c *C) {

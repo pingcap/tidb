@@ -90,6 +90,7 @@ func TestInfo(t *testing.T) {
 	if !unixSocketAvailable() {
 		return
 	}
+	testleak.BeforeTest()
 	defer testleak.AfterTestT(t)()
 	ddlLease := 80 * time.Millisecond
 	s, err := mockstore.NewMockTikvStore()
@@ -170,7 +171,7 @@ func TestInfo(t *testing.T) {
 	}
 	time.Sleep(15 * time.Millisecond)
 	syncerStarted := false
-	for i := 0; i < 200; i++ {
+	for i := 0; i < 1000; i++ {
 		if dom.SchemaValidator.IsStarted() {
 			syncerStarted = true
 			break

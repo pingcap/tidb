@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -111,8 +113,7 @@ func NewBindHandle(ctx sessionctx.Context) *BindHandle {
 	}
 	handle.pendingVerifyBindRecordMap.Value.Store(make(map[string]*bindRecordUpdate))
 	handle.pendingVerifyBindRecordMap.flushFunc = func(record *BindRecord) error {
-		// We do not need the first parameter because it is only use to generate hint,
-		// and we already have the hint.
+		// BindSQL has already been validated when coming here, so we use nil sctx parameter.
 		return handle.AddBindRecord(nil, record)
 	}
 	return handle
@@ -607,10 +608,14 @@ func (h *BindHandle) CaptureBaselines() {
 		}
 		h.sctx.Lock()
 		h.sctx.GetSessionVars().CurrentDB = schemas[i]
+		oriIsolationRead := h.sctx.GetSessionVars().IsolationReadEngines
+		// TODO: support all engines plan hint in capture baselines.
+		h.sctx.GetSessionVars().IsolationReadEngines = map[kv.StoreType]struct{}{kv.TiKV: {}}
 		hints, err := getHintsForSQL(h.sctx.Context, sqls[i])
+		h.sctx.GetSessionVars().IsolationReadEngines = oriIsolationRead
 		h.sctx.Unlock()
 		if err != nil {
-			logutil.BgLogger().Info("generate hints failed", zap.String("SQL", sqls[i]), zap.Error(err))
+			logutil.BgLogger().Debug("generate hints failed", zap.String("SQL", sqls[i]), zap.Error(err))
 			continue
 		}
 		bindSQL := GenerateBindSQL(context.TODO(), stmt, hints)
@@ -618,20 +623,13 @@ func (h *BindHandle) CaptureBaselines() {
 			continue
 		}
 		charset, collation := h.sctx.GetSessionVars().GetCharsetInfo()
-		hintsSet, err := ParseHintsSet(parser4Capture, bindSQL, charset, collation)
-		if err != nil {
-			logutil.BgLogger().Debug("parse BindSQL failed", zap.String("SQL", bindSQL), zap.Error(err))
-			continue
-		}
 		binding := Binding{
 			BindSQL:   bindSQL,
 			Status:    Using,
-			Hint:      hintsSet,
-			ID:        hints,
 			Charset:   charset,
 			Collation: collation,
 		}
-		// We don't need to pass the `sctx` because they are used to generate hints and we already filled hints in.
+		// We don't need to pass the `sctx` because the BindSQL has been validated already.
 		err = h.AddBindRecord(nil, &BindRecord{OriginalSQL: normalizedSQL, Db: dbName, Bindings: []Binding{binding}})
 		if err != nil {
 			logutil.BgLogger().Info("capture baseline failed", zap.String("SQL", sqls[i]), zap.Error(err))
@@ -673,7 +671,7 @@ func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string
 	}
 	// We need to evolve plan based on the current sql, not the original sql which may have different parameters.
 	// So here we would remove the hint and inject the current best plan hint.
-	BindHint(stmtNode, &HintsSet{})
+	hint.BindHint(stmtNode, &hint.HintsSet{})
 	var sb strings.Builder
 	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
 	err := stmtNode.Restore(restoreCtx)
@@ -843,7 +841,7 @@ func runSQL(ctx context.Context, sctx sessionctx.Context, sql string, resultChan
 
 // HandleEvolvePlanTask tries to evolve one plan task.
 // It only handle one tasks once because we want each task could use the latest parameters.
-func (h *BindHandle) HandleEvolvePlanTask(sctx sessionctx.Context) error {
+func (h *BindHandle) HandleEvolvePlanTask(sctx sessionctx.Context, adminEvolve bool) error {
 	originalSQL, db, binding := h.getOnePendingVerifyJob()
 	if originalSQL == "" {
 		return nil
@@ -852,7 +850,7 @@ func (h *BindHandle) HandleEvolvePlanTask(sctx sessionctx.Context) error {
 	if err != nil {
 		return err
 	}
-	if maxTime == 0 || !timeutil.WithinDayTimePeriod(startTime, endTime, time.Now()) {
+	if maxTime == 0 || (!timeutil.WithinDayTimePeriod(startTime, endTime, time.Now()) && !adminEvolve) {
 		return nil
 	}
 	sctx.GetSessionVars().UsePlanBaselines = true
@@ -878,7 +876,8 @@ func (h *BindHandle) HandleEvolvePlanTask(sctx sessionctx.Context) error {
 	} else {
 		binding.Status = Using
 	}
-	return h.AddBindRecord(sctx, &BindRecord{OriginalSQL: originalSQL, Db: db, Bindings: []Binding{binding}})
+	// We don't need to pass the `sctx` because the BindSQL has been validated already.
+	return h.AddBindRecord(nil, &BindRecord{OriginalSQL: originalSQL, Db: db, Bindings: []Binding{binding}})
 }
 
 // Clear resets the bind handle. It is only used for test.

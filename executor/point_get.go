@@ -165,6 +165,9 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			return err
 		}
 		if len(e.handleVal) == 0 {
+			if e.ctx.GetSessionVars().IsPessimisticReadConsistency() {
+				return nil
+			}
 			return e.lockKeyIfNeeded(ctx, e.idxKey)
 		}
 		e.handle, err = tables.DecodeHandle(e.handleVal)
@@ -187,14 +190,9 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		})
 	}
 
-	key := tablecodec.EncodeRowKeyWithHandle(tblID, e.handle)
-	// Lock the key before get, then get will get the value from the cache.
-	err = e.lockKeyIfNeeded(ctx, key)
+	key := tablecodec.EncodeRowKeyWithHandle(tblID, kv.IntHandle(e.handle))
+	val, err := e.getAndLock(ctx, key)
 	if err != nil {
-		return err
-	}
-	val, err := e.get(ctx, key)
-	if err != nil && !kv.ErrNotExist.Equal(err) {
 		return err
 	}
 	if len(val) == 0 {
@@ -215,6 +213,34 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 	return nil
+}
+
+func (e *PointGetExecutor) getAndLock(ctx context.Context, key kv.Key) (val []byte, err error) {
+	if e.ctx.GetSessionVars().IsPessimisticReadConsistency() {
+		// Lock the got keys in RC isolation.
+		val, err = e.get(ctx, key)
+		if kv.ErrNotExist.Equal(err) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		err = e.lockKeyIfNeeded(ctx, key)
+		if err != nil {
+			return nil, err
+		}
+		return val, nil
+	}
+	// Lock the key before get in RR isolation, then get will get the value from the cache.
+	err = e.lockKeyIfNeeded(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	val, err = e.get(ctx, key)
+	if err != nil && !kv.ErrNotExist.Equal(err) {
+		return nil, err
+	}
+	return val, nil
 }
 
 func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) error {
@@ -290,7 +316,7 @@ func encodeIndexKey(e *baseExecutor, tblInfo *model.TableInfo, idxInfo *model.In
 
 func decodeRowValToChunk(e *baseExecutor, tblInfo *model.TableInfo, handle int64, rowVal []byte, chk *chunk.Chunk, rd *rowcodec.ChunkDecoder) error {
 	if rowcodec.IsNewFormat(rowVal) {
-		return rd.DecodeToChunk(rowVal, handle, chk)
+		return rd.DecodeToChunk(rowVal, kv.IntHandle(handle), chk)
 	}
 	return decodeOldRowValToChunk(e, tblInfo, handle, rowVal, chk)
 }

@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -175,6 +176,11 @@ func (cc *clientConn) String() string {
 // After handshake, client can send sql query to server.
 func (cc *clientConn) handshake(ctx context.Context) error {
 	if err := cc.writeInitialHandshake(); err != nil {
+		if errors.Cause(err) == io.EOF {
+			logutil.Logger(ctx).Info("Could not send handshake due to connection has be closed by client-side")
+		} else {
+			terror.Log(err)
+		}
 		return err
 	}
 	if err := cc.readOptionalSSLRequestAndHandshakeResponse(ctx); err != nil {
@@ -195,10 +201,18 @@ func (cc *clientConn) handshake(ctx context.Context) error {
 	err := cc.writePacket(data)
 	cc.pkt.sequence = 0
 	if err != nil {
+		err = errors.SuspendStack(err)
+		logutil.Logger(ctx).Debug("write response to client failed", zap.Error(err))
 		return err
 	}
 
-	return cc.flush()
+	err = cc.flush()
+	if err != nil {
+		err = errors.SuspendStack(err)
+		logutil.Logger(ctx).Debug("flush response to client failed", zap.Error(err))
+		return err
+	}
+	return err
 }
 
 func (cc *clientConn) Close() error {
@@ -478,6 +492,12 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	// Read a packet. It may be a SSLRequest or HandshakeResponse.
 	data, err := cc.readPacket()
 	if err != nil {
+		err = errors.SuspendStack(err)
+		if errors.Cause(err) == io.EOF {
+			logutil.Logger(ctx).Info("wait handshake response fail due to connection has be closed by client-side")
+		} else {
+			logutil.Logger(ctx).Error("wait handshake response fail", zap.Error(err))
+		}
 		return err
 	}
 
@@ -500,6 +520,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	}
 
 	if err != nil {
+		terror.Log(err)
 		return err
 	}
 
@@ -513,6 +534,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 			// Read the following HandshakeResponse packet.
 			data, err = cc.readPacket()
 			if err != nil {
+				logutil.Logger(ctx).Warn("read handshake response failure after upgrade to TLS", zap.Error(err))
 				return err
 			}
 			if isOldVersion {
@@ -521,11 +543,14 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 				pos, err = parseHandshakeResponseHeader(ctx, &resp, data)
 			}
 			if err != nil {
+				terror.Log(err)
 				return err
 			}
 		}
 	} else if config.GetGlobalConfig().Security.RequireSecureTransport {
-		return errSecureTransportRequired.FastGenByArgs()
+		err := errSecureTransportRequired.FastGenByArgs()
+		terror.Log(err)
+		return err
 	}
 
 	// Read the remaining part of the packet.
@@ -535,6 +560,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 		err = parseHandshakeResponseBody(ctx, &resp, data, pos)
 	}
 	if err != nil {
+		terror.Log(err)
 		return err
 	}
 
@@ -545,6 +571,9 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	cc.attrs = resp.Attrs
 
 	err = cc.openSessionAndDoAuth(resp.Auth)
+	if err != nil {
+		logutil.Logger(ctx).Warn("open new session failure", zap.Error(err))
+	}
 	return err
 }
 
@@ -586,7 +615,7 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
 		return err
 	}
 	if !cc.ctx.Auth(&auth.UserIdentity{Username: cc.user, Hostname: host}, authData, cc.salt) {
-		return errAccessDenied.GenWithStackByArgs(cc.user, host, hasPassword)
+		return errAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
 	}
 	if cc.dbname != "" {
 		err = cc.useDB(context.Background(), cc.dbname)
@@ -698,7 +727,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 			if cc.ctx != nil {
 				txnMode = cc.ctx.GetSessionVars().GetReadableTxnMode()
 			}
-			logutil.Logger(ctx).Warn("command dispatched failed",
+			logutil.Logger(ctx).Error("command dispatched failed",
 				zap.String("connInfo", cc.String()),
 				zap.String("command", mysql.Command2Str[data[0]]),
 				zap.String("status", cc.SessionStatusToString()),
@@ -903,7 +932,11 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 func (cc *clientConn) useDB(ctx context.Context, db string) (err error) {
 	// if input is "use `SELECT`", mysql client just send "SELECT"
 	// so we add `` around db.
-	_, err = cc.ctx.Execute(ctx, "use `"+db+"`")
+	stmts, err := cc.ctx.Parse(ctx, "use `"+db+"`")
+	if err != nil {
+		return err
+	}
+	_, err = cc.ctx.ExecuteStmt(ctx, stmts[0])
 	if err != nil {
 		return err
 	}
@@ -1139,9 +1172,16 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 	err = loadDataInfo.CommitWork(ctx)
 	wg.Wait()
 	if err != nil {
+		if !loadDataInfo.Drained {
+			logutil.Logger(ctx).Info("not drained yet, try reading left data from client connection")
+		}
 		// drain the data from client conn util empty packet received, otherwise the connection will be reset
 		for !loadDataInfo.Drained {
-			logutil.Logger(ctx).Info("not drained yet, try reading left data from client connection")
+			// check kill flag again, let the draining loop could quit if empty packet could not be received
+			if atomic.CompareAndSwapUint32(&loadDataInfo.Ctx.GetSessionVars().Killed, 1, 0) {
+				logutil.Logger(ctx).Warn("receiving kill, stop draining data, connection may be reset")
+				return executor.ErrQueryInterrupted
+			}
 			curData, err1 := cc.readPacket()
 			if err1 != nil {
 				logutil.Logger(ctx).Error("drain reading left data encounter errors", zap.Error(err1))
@@ -1228,53 +1268,82 @@ func (cc *clientConn) handleIndexAdvise(ctx context.Context, indexAdviseInfo *ex
 // There is a special query `load data` that does not return result, which is handled differently.
 // Query `load stats` does not return result either.
 func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
-	rss, err := cc.ctx.Execute(ctx, sql)
+	stmts, err := cc.ctx.Parse(ctx, sql)
 	if err != nil {
 		metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
 		return err
 	}
-	status := atomic.LoadInt32(&cc.status)
-	if rss != nil && (status == connStatusShutdown || status == connStatusWaitShutdown) {
-		for _, rs := range rss {
-			terror.Call(rs.Close)
+
+	for i, stmt := range stmts {
+		if err = cc.handleStmt(ctx, stmt, i == len(stmts)-1); err != nil {
+			break
 		}
-		return executor.ErrQueryInterrupted
 	}
-	if rss != nil {
-		if len(rss) == 1 {
-			err = cc.writeResultset(ctx, rss[0], false, 0, 0)
-		} else {
-			err = cc.writeMultiResultset(ctx, rss, false)
-		}
-	} else {
-		loadDataInfo := cc.ctx.Value(executor.LoadDataVarKey)
-		if loadDataInfo != nil {
-			defer cc.ctx.SetValue(executor.LoadDataVarKey, nil)
-			if err = cc.handleLoadData(ctx, loadDataInfo.(*executor.LoadDataInfo)); err != nil {
-				return err
-			}
-		}
 
-		loadStats := cc.ctx.Value(executor.LoadStatsVarKey)
-		if loadStats != nil {
-			defer cc.ctx.SetValue(executor.LoadStatsVarKey, nil)
-			if err = cc.handleLoadStats(ctx, loadStats.(*executor.LoadStatsInfo)); err != nil {
-				return err
-			}
-		}
-
-		indexAdvise := cc.ctx.Value(executor.IndexAdviseVarKey)
-		if indexAdvise != nil {
-			defer cc.ctx.SetValue(executor.IndexAdviseVarKey, nil)
-			err = cc.handleIndexAdvise(ctx, indexAdvise.(*executor.IndexAdviseInfo))
-			if err != nil {
-				return err
-			}
-		}
-
-		err = cc.writeOK()
+	if err != nil {
+		metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
 	}
 	return err
+}
+
+func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, lastStmt bool) error {
+	rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
+	if rs != nil {
+		defer terror.Call(rs.Close)
+	}
+	if err != nil {
+		return err
+	}
+
+	status := cc.ctx.Status()
+	if !lastStmt {
+		status |= mysql.ServerMoreResultsExists
+	}
+
+	if rs != nil {
+		connStatus := atomic.LoadInt32(&cc.status)
+		if connStatus == connStatusShutdown || connStatus == connStatusWaitShutdown {
+			return executor.ErrQueryInterrupted
+		}
+
+		err = cc.writeResultset(ctx, rs, false, status, 0)
+		if err != nil {
+			return err
+		}
+	} else {
+		err = cc.handleQuerySpecial(ctx, status)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (cc *clientConn) handleQuerySpecial(ctx context.Context, status uint16) error {
+	loadDataInfo := cc.ctx.Value(executor.LoadDataVarKey)
+	if loadDataInfo != nil {
+		defer cc.ctx.SetValue(executor.LoadDataVarKey, nil)
+		if err := cc.handleLoadData(ctx, loadDataInfo.(*executor.LoadDataInfo)); err != nil {
+			return err
+		}
+	}
+
+	loadStats := cc.ctx.Value(executor.LoadStatsVarKey)
+	if loadStats != nil {
+		defer cc.ctx.SetValue(executor.LoadStatsVarKey, nil)
+		if err := cc.handleLoadStats(ctx, loadStats.(*executor.LoadStatsInfo)); err != nil {
+			return err
+		}
+	}
+
+	indexAdvise := cc.ctx.Value(executor.IndexAdviseVarKey)
+	if indexAdvise != nil {
+		defer cc.ctx.SetValue(executor.IndexAdviseVarKey, nil)
+		if err := cc.handleIndexAdvise(ctx, indexAdvise.(*executor.IndexAdviseInfo)); err != nil {
+			return err
+		}
+	}
+	return cc.writeOkWith(cc.ctx.LastMessage(), cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), status, cc.ctx.WarningCount())
 }
 
 // handleFieldList returns the field list for a table.
@@ -1309,13 +1378,9 @@ func (cc *clientConn) handleFieldList(sql string) (err error) {
 // If binary is true, the data would be encoded in BINARY format.
 // serverStatus, a flag bit represents server information.
 // fetchSize, the desired number of rows to be fetched each time when client uses cursor.
-// resultsets, it's used to support the MULTI_RESULTS capability in mysql protocol.
 func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary bool, serverStatus uint16, fetchSize int) (runErr error) {
 	defer func() {
 		// close ResultSet when cursor doesn't exist
-		if !mysql.HasCursorExistsFlag(serverStatus) {
-			terror.Call(rs.Close)
-		}
 		r := recover()
 		if r == nil {
 			return

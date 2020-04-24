@@ -44,7 +44,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/rowDecoder"
+	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/timeutil"
 	"go.uber.org/zap"
 )
@@ -417,7 +417,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		if len(hiddenCols) > 0 {
 			pos := &ast.ColumnPosition{Tp: ast.ColumnPositionNone}
 			for _, hiddenCol := range hiddenCols {
-				_, _, err = createColumnInfo(tblInfo, hiddenCol, pos)
+				_, _, _, err = createColumnInfo(tblInfo, hiddenCol, pos)
 				if err != nil {
 					job.State = model.JobStateCancelled
 					return ver, errors.Trace(err)
@@ -663,7 +663,8 @@ func checkDropIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.Inde
 func checkDropIndexOnAutoIncrementColumn(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) error {
 	cols := tblInfo.Columns
 	for _, idxCol := range indexInfo.Columns {
-		if !mysql.HasAutoIncrementFlag(cols[idxCol.Offset].Flag) {
+		flag := cols[idxCol.Offset].Flag
+		if !mysql.HasAutoIncrementFlag(flag) {
 			continue
 		}
 		// check the count of index on auto_increment column.
@@ -675,6 +676,9 @@ func checkDropIndexOnAutoIncrementColumn(tblInfo *model.TableInfo, indexInfo *mo
 					break
 				}
 			}
+		}
+		if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(flag) {
+			count++
 		}
 		if count < 2 {
 			return autoid.ErrWrongAutoKey
@@ -816,7 +820,7 @@ func (w *addIndexWorker) getIndexRecord(handle int64, recordKey []byte, rawRecor
 	cols := t.Cols()
 	idxInfo := w.index.Meta()
 	sysZone := timeutil.SystemLocation()
-	_, err := w.rowDecoder.DecodeAndEvalRowWithMap(w.sessCtx, handle, rawRecord, time.UTC, sysZone, w.rowMap)
+	_, err := w.rowDecoder.DecodeAndEvalRowWithMap(w.sessCtx, kv.IntHandle(handle), rawRecord, time.UTC, sysZone, w.rowMap)
 	if err != nil {
 		return nil, errors.Trace(errCantDecodeIndex.GenWithStackByArgs(err))
 	}
@@ -1219,7 +1223,7 @@ func decodeHandleRange(keyRange kv.KeyRange) (int64, int64, error) {
 		return 0, 0, errors.Trace(err)
 	}
 
-	return startHandle, endHandle, nil
+	return startHandle.IntValue(), endHandle.IntValue(), nil
 }
 
 func closeAddIndexWorkers(workers []*addIndexWorker) {
@@ -1580,14 +1584,14 @@ func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version 
 			break
 		}
 
-		var handle int64
+		var handle kv.Handle
 		handle, err = tablecodec.DecodeRowKey(it.Key())
 		if err != nil {
 			return errors.Trace(err)
 		}
-		rk := t.RecordKey(handle)
+		rk := t.RecordKey(handle.IntValue())
 
-		more, err := fn(handle, rk, it.Value())
+		more, err := fn(handle.IntValue(), rk, it.Value())
 		if !more || err != nil {
 			return errors.Trace(err)
 		}

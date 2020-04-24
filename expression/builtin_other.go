@@ -691,13 +691,21 @@ func (b *builtinSetVarSig) evalString(row chunk.Row) (res string, isNull bool, e
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	res, isNull, err = b.args[1].EvalString(b.ctx, row)
+
+	datum, err := b.args[1].Eval(row)
+	isNull = datum.IsNull()
 	if isNull || err != nil {
 		return "", isNull, err
 	}
+
+	res, err = datum.ToString()
+	if err != nil {
+		return "", isNull, err
+	}
+
 	varName = strings.ToLower(varName)
 	sessionVars.UsersLock.Lock()
-	sessionVars.Users[varName] = stringutil.Copy(res)
+	sessionVars.SetUserVar(varName, stringutil.Copy(res), datum.Collation())
 	sessionVars.UsersLock.Unlock()
 	return res, false, nil
 }
@@ -713,8 +721,33 @@ func (c *getVarFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	// TODO: we should consider the type of the argument, but not take it as string for all situations.
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
 	bf.tp.Flen = mysql.MaxFieldVarCharLength
+	if err := c.resolveCollation(ctx, args, &bf); err != nil {
+		return nil, err
+	}
 	sig = &builtinGetVarSig{bf}
 	return sig, nil
+}
+
+func (c *getVarFunctionClass) resolveCollation(ctx sessionctx.Context, args []Expression, bf *baseBuiltinFunc) (err error) {
+	if constant, ok := args[0].(*Constant); ok {
+		varName, err := constant.Value.ToString()
+		if err != nil {
+			return err
+		}
+		varName = strings.ToLower(varName)
+		ctx.GetSessionVars().UsersLock.RLock()
+		defer ctx.GetSessionVars().UsersLock.RUnlock()
+		if v, ok := ctx.GetSessionVars().Users[varName]; ok {
+			bf.tp.Collate = v.Collation()
+			if len(bf.tp.Charset) <= 0 {
+				charset, _ := ctx.GetSessionVars().GetCharsetInfo()
+				bf.tp.Charset = charset
+			}
+			return nil
+		}
+	}
+
+	return nil
 }
 
 type builtinGetVarSig struct {
@@ -737,7 +770,7 @@ func (b *builtinGetVarSig) evalString(row chunk.Row) (string, bool, error) {
 	sessionVars.UsersLock.RLock()
 	defer sessionVars.UsersLock.RUnlock()
 	if v, ok := sessionVars.Users[varName]; ok {
-		return v, false, nil
+		return v.GetString(), false, nil
 	}
 	return "", true, nil
 }

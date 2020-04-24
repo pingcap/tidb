@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
@@ -49,6 +50,8 @@ type InfoSchema interface {
 	SchemaMetaVersion() int64
 	// TableIsView indicates whether the schema.table is a view.
 	TableIsView(schema, table model.CIStr) bool
+	// TableIsSequence indicates whether the schema.table is a sequence.
+	TableIsSequence(schema, table model.CIStr) bool
 	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo)
 }
 
@@ -116,6 +119,30 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 	return result
 }
 
+// MockInfoSchemaWithSchemaVer only serves for test.
+func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) InfoSchema {
+	result := &infoSchema{}
+	result.schemaMap = make(map[string]*schemaTables)
+	result.sortedTablesBuckets = make([]sortedTables, bucketCount)
+	dbInfo := &model.DBInfo{ID: 0, Name: model.NewCIStr("test"), Tables: tbList}
+	tableNames := &schemaTables{
+		dbInfo: dbInfo,
+		tables: make(map[string]table.Table),
+	}
+	result.schemaMap["test"] = tableNames
+	for _, tb := range tbList {
+		tbl := table.MockTableFromMeta(tb)
+		tableNames.tables[tb.Name.L] = tbl
+		bucketIdx := tableBucketIdx(tb.ID)
+		result.sortedTablesBuckets[bucketIdx] = append(result.sortedTablesBuckets[bucketIdx], tbl)
+	}
+	for i := range result.sortedTablesBuckets {
+		sort.Sort(result.sortedTablesBuckets[i])
+	}
+	result.schemaMetaVersion = schemaVer
+	return result
+}
+
 var _ InfoSchema = (*infoSchema)(nil)
 
 func (is *infoSchema) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok bool) {
@@ -148,6 +175,15 @@ func (is *infoSchema) TableIsView(schema, table model.CIStr) bool {
 	if tbNames, ok := is.schemaMap[schema.L]; ok {
 		if t, ok := tbNames.tables[table.L]; ok {
 			return t.Meta().IsView()
+		}
+	}
+	return false
+}
+
+func (is *infoSchema) TableIsSequence(schema, table model.CIStr) bool {
+	if tbNames, ok := is.schemaMap[schema.L]; ok {
+		if t, ok := tbNames.tables[table.L]; ok {
+			return t.Meta().IsSequence()
 		}
 	}
 	return false
@@ -339,7 +375,12 @@ func HasAutoIncrementColumn(tbInfo *model.TableInfo) (bool, string) {
 // GetInfoSchema gets TxnCtx InfoSchema if snapshot schema is not set,
 // Otherwise, snapshot schema is returned.
 func GetInfoSchema(ctx sessionctx.Context) InfoSchema {
-	sessVar := ctx.GetSessionVars()
+	return GetInfoSchemaBySessionVars(ctx.GetSessionVars())
+}
+
+// GetInfoSchemaBySessionVars gets TxnCtx InfoSchema if snapshot schema is not set,
+// Otherwise, snapshot schema is returned.
+func GetInfoSchemaBySessionVars(sessVar *variable.SessionVars) InfoSchema {
 	var is InfoSchema
 	if snap := sessVar.SnapshotInfoschema; snap != nil {
 		is = snap.(InfoSchema)

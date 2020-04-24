@@ -118,7 +118,7 @@ func (s *testDeleteRangeSuite) TestDeleteRange(c *C) {
 	// Generate a sequence of keys and random values
 	for _, i := range []byte("abcd") {
 		for j := byte('0'); j <= byte('9'); j++ {
-			key := []byte{byte(i), byte(j)}
+			key := []byte{i, j}
 			value := []byte{byte(rand.Intn(256)), byte(rand.Intn(256))}
 			testData[string(key)] = string(value)
 			err := txn.Set(key, value)
