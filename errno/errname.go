@@ -1078,4 +1078,5 @@ var MySQLErrName = map[uint16]string{
 	ErrWriteConflict:          "Write conflict, txnStartTS=%d, conflictStartTS=%d, conflictCommitTS=%d, key=%s",
 	ErrTiKVStoreLimit:         "Store token is up to the limit, store id = %d",
 	ErrPrometheusAddrIsNotSet: "Prometheus address is not set in PD and etcd",
+	ErrTiKVStaleCommand:       "TiKV server reports stale command",
 }

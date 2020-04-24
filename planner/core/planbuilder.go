@@ -2305,6 +2305,12 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 		LinesInfo:   ld.LinesInfo,
 		IgnoreLines: ld.IgnoreLines,
 	}
+	user := b.ctx.GetSessionVars().User
+	var insertErr error
+	if user != nil {
+		insertErr = ErrTableaccessDenied.GenWithStackByArgs("INSERT", user.AuthUsername, user.AuthHostname, p.Table.Name.O)
+	}
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, p.Table.Schema.O, p.Table.Name.O, "", insertErr)
 	tableInfo := p.Table.TableInfo
 	tableInPlan, ok := b.is.TableByID(tableInfo.ID)
 	if !ok {
@@ -2920,6 +2926,8 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		return buildTableRegionsSchema()
 	case ast.ShowEngines:
 		names = []string{"Engine", "Support", "Comment", "Transactions", "XA", "Savepoints"}
+	case ast.ShowConfig:
+		names = []string{"Type", "Instance", "Name", "Value"}
 	case ast.ShowDatabases:
 		names = []string{"Database"}
 	case ast.ShowOpenTables:
