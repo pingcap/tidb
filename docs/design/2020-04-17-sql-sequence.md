@@ -1,13 +1,12 @@
-# TiDB SQL SEQUENCE
+# TiDB SEQUENCE GENERATOR
 
-- Feature Name: Sequences
 - Author(s):     [AilinKid](https://github.com/ailinkid) (Lingxiang Tai)
 - Last updated:  2020-04-17
 - Discussion at: https://tidbcommunity.slack.com/archives/CQNKBDVM0
 
 ## Summary
 
-"Sequence Generator" (hereinafter referred to as "Sequence") is a database feature introduced in SQL 2003 Standard. It is defined as "a mechanism for generating continuous numerical values, which can be either internal or external objects".
+"Sequence Generator" (hereinafter referred to as "Sequence") is a database feature introduced in SQL 2003 Standard. It is defined as "a mechanism for generating successive exact numeric values, one at a time, which can be either internal or external objects".
 
 Based on the definition above, the conventional auto-increment columns of MySQL/TiDB can be considered as an internal implementation of Sequence Generator. This RFC describes the design of external Sequence Generator. Unless otherwise noted, the "Sequence" described below refers to external Sequence Generator.
 
@@ -21,13 +20,11 @@ Based on the definition above, the conventional auto-increment columns of MySQL/
 
 ## Background
 
-TiDB auto-increment will cache a batch values by default in each instance to ensure better performance, which means auto-increment only guarantees the uniqueness under a multi-tidb-node cluster. This kind of cache mode is uncontrollable and implicit in auto-increment.
+The columns in TiDB with 'auto-increment' attribute will cache batch values by default in each instance to ensure better performance, which means auto-increment only guarantees the uniqueness under a multi-tidb-node cluster. This kind of cache mode is uncontrollable and implicit in auto-increment.
 
 But in sequence, we take it open. Users can specify whether to use cache mode or not, what the cache size should be, what's the min and max of the range like and so on. This factors make sequence more flexible, controllable and easy to use.
 
 ## Syntax and Semantics
-
-TiDB sequence is borrowed from MariaDB, which is also close to DB2 because DB2 is similar to MariaDB regarding to the Sequence syntax.
 
 create sequence statement:
 
@@ -75,7 +72,7 @@ SETVAL(sequence_name, num)
 
 ### Sequence metadata
 
-Sequence is a table-level object, sharing the same namespace with the base table and view objects, whose meta are recorded in `*model.tableInfo`. But actually sequence definition do not have columns in its meta, which means you can't operate the sequence value by `DML` interface. The only way you can do it is by `setval` function, after all, the sequence value is essentially a KV pair with some constraints.
+Sequence is a table-level object, sharing the same namespace with the base table and view objects, whose meta are recorded in `*model.tableInfo`. But actually sequence definition do not have columns in its meta, which means the sequence value cannot be operated by `DML` interface. The only way to do it is by `setval` function, after all, the sequence value is essentially a KV pair with some constraints.
 
 ### Sequence values
 
@@ -115,4 +112,4 @@ The insertion performance of sequences is comparable to the `auto-increment` of 
 
 ## Compatibility
 
-About specific compatibility, you can view [MySQL’s compatibility](https://pingcap.com/docs-cn/stable/reference/mysql-compatibility/).
+Specific compatibility can be referred by [MySQL’s compatibility](https://pingcap.com/docs-cn/stable/reference/mysql-compatibility/).
