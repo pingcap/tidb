@@ -582,7 +582,7 @@ func (s *testSuite1) TestHashInTopN(c *C) {
 		cm2 := tblStats2.Columns[col.ID].CMSketch
 		for h1, topnMetas := range topn1 {
 			for _, topnMeta1 := range topnMetas {
-				count2, exists := cm2.QueryTopN(uint64(h1), topnMeta1.GetH2(), topnMeta1.Data)
+				count2, exists := cm2.QueryTopN(h1, topnMeta1.GetH2(), topnMeta1.Data)
 				c.Assert(exists, Equals, true)
 				c.Assert(count2, Equals, topnMeta1.Count)
 			}
