@@ -45,25 +45,15 @@ func (gc *gcSubstituter) optimize(ctx context.Context, lp LogicalPlan) (LogicalP
 	return gc.substitute(ctx, lp, exprToColumn), nil
 }
 
-// Only integers can be substituted between different types now.
-// Because they are all stored as 64-bit integers in chunks.
-// And the inserted value will meet the requirements of virtual column type and virtual column expression type.
-func getSubstitutableType(colType *types.FieldType) int {
-	switch colType.Tp {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-		return -1
-	}
-	return int(colType.Tp)
-}
-
-// We do not check whether flen is the same.
-// Because different flen will not cause data truncation.
-// See https://github.com/pingcap/tidb/pull/16316.
+// When Tp is an integer or real type, we don't check whether Flen is equal.
+// Because their Flen is useless for them in TiDB now, and may be unequal for some reasons.
+// For example, Tp for default real is 22, and Tp for sum of real is -1.
 func checkSubstitutability(c1, c2 *types.FieldType) bool {
-	partialEqual := c1.Decimal == c2.Decimal &&
+	partialEqual := c1.Tp == c2.Tp &&
+		(mysql.IsIntegerType(c1.Tp) || c1.EvalType() == types.ETReal || c1.Flen == c2.Flen) &&
+		c1.Decimal == c2.Decimal &&
 		c1.Charset == c2.Charset &&
 		c1.Collate == c2.Collate &&
-		getSubstitutableType(c1) == getSubstitutableType(c2) &&
 		mysql.HasUnsignedFlag(c1.Flag) == mysql.HasUnsignedFlag(c2.Flag)
 	if !partialEqual || len(c1.Elems) != len(c2.Elems) {
 		return false
