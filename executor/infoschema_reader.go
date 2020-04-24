@@ -1537,7 +1537,6 @@ func (e *tableStorageStatsRetriever) setDataForTableStorageStats(ctx sessionctx.
 	rows := make([][]types.Datum, 0, 1024)
 
 	count := 0
-	//for i := e.curTable; e.curTable < len(e.initialTables) && count < 1024; i++ {
 	for e.curTable < len(e.initialTables) && count < 1024 {
 		table := (e.initialTables)[e.curTable]
 		tableID := table.ID
