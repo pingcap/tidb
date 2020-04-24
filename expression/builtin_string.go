@@ -1349,16 +1349,16 @@ func (c *locateFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, argTps...)
 	var sig builtinFunc
-	// Loacte is multibyte safe, and is case-sensitive only if at least one argument is a binary string.
-	hasBianryInput := types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[1].GetType())
+	// Loacte is multibyte safe.
+	compareNoCI := !IsCICollation(bf.collation)
 	switch {
-	case hasStartPos && hasBianryInput:
+	case hasStartPos && compareNoCI:
 		sig = &builtinLocate3ArgsSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Locate3Args)
 	case hasStartPos:
 		sig = &builtinLocate3ArgsUTF8Sig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Locate3ArgsUTF8)
-	case hasBianryInput:
+	case compareNoCI:
 		sig = &builtinLocate2ArgsSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Locate2Args)
 	default:
@@ -1378,7 +1378,7 @@ func (b *builtinLocate2ArgsSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalInt evals LOCATE(substr,str), case-sensitive.
+// evalInt evals LOCATE(substr,str).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocate2ArgsSig) evalInt(row chunk.Row) (int64, bool, error) {
 	subStr, isNull, err := b.args[0].EvalString(b.ctx, row)
@@ -1410,7 +1410,7 @@ func (b *builtinLocate2ArgsUTF8Sig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalInt evals LOCATE(substr,str), non case-sensitive.
+// evalInt evals LOCATE(substr,str).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocate2ArgsUTF8Sig) evalInt(row chunk.Row) (int64, bool, error) {
 	subStr, isNull, err := b.args[0].EvalString(b.ctx, row)
@@ -1442,7 +1442,7 @@ func (b *builtinLocate3ArgsSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalInt evals LOCATE(substr,str,pos), case-sensitive.
+// evalInt evals LOCATE(substr,str,pos).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocate3ArgsSig) evalInt(row chunk.Row) (int64, bool, error) {
 	subStr, isNull, err := b.args[0].EvalString(b.ctx, row)
@@ -1483,7 +1483,7 @@ func (b *builtinLocate3ArgsUTF8Sig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalInt evals LOCATE(substr,str,pos), non case-sensitive.
+// evalInt evals LOCATE(substr,str,pos).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocate3ArgsUTF8Sig) evalInt(row chunk.Row) (int64, bool, error) {
 	subStr, isNull, err := b.args[0].EvalString(b.ctx, row)
@@ -3588,7 +3588,7 @@ func (c *instrFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString, types.ETString)
 	bf.tp.Flen = 11
-	if types.IsBinaryStr(bf.args[0].GetType()) || types.IsBinaryStr(bf.args[1].GetType()) {
+	if !IsCICollation(bf.collation) {
 		sig := &builtinInstrSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Instr)
 		return sig, nil
@@ -3614,7 +3614,7 @@ func (b *builtinInstrSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalInt evals INSTR(str,substr), case insensitive
+// evalInt evals INSTR(str,substr).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_instr
 func (b *builtinInstrUTF8Sig) evalInt(row chunk.Row) (int64, bool, error) {
 	str, IsNull, err := b.args[0].EvalString(b.ctx, row)
@@ -3636,7 +3636,7 @@ func (b *builtinInstrUTF8Sig) evalInt(row chunk.Row) (int64, bool, error) {
 	return int64(utf8.RuneCountInString(str[:idx]) + 1), false, nil
 }
 
-// evalInt evals INSTR(str,substr), case sensitive
+// evalInt evals INSTR(str,substr).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_instr
 func (b *builtinInstrSig) evalInt(row chunk.Row) (int64, bool, error) {
 	str, IsNull, err := b.args[0].EvalString(b.ctx, row)

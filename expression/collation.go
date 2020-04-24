@@ -210,3 +210,8 @@ func DeriveCollationFromExprs(ctx sessionctx.Context, exprs ...Expression) (dstC
 	}
 	return
 }
+
+// IsCICollation returns if the collation is case-sensitive
+func IsCICollation(collate string) bool {
+	return collate == "utf8_general_ci" || collate == "utf8mb4_general_ci"
+}
