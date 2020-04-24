@@ -92,7 +92,6 @@ func NewListInDisk(fieldTypes []*types.FieldType) *ListInDisk {
 func (l *ListInDisk) initDiskFile() (err error) {
 	initializeTempDir()
 	l.disk, err = ioutil.TempFile(config.GetGlobalConfig().TempStoragePath, l.diskTracker.Label().String())
-
 	if err != nil {
 		return
 	}
@@ -379,7 +378,7 @@ func (format *diskFormatRow) toMutRow(fields []*types.FieldType) MutRow {
 }
 
 // PartitionInDisk save chunks in multiple ListInDisk.
-// the chunk is splitted by hash function into partitions
+// the chunk is split by hash function into partitions
 type PartitionInDisk struct {
 	fieldTypes          []*types.FieldType
 	chunkSize           int

@@ -189,7 +189,6 @@ func (e *GraceHashJoinExec) partition(chk *chunk.Chunk, hashPartitioner *hashPar
 }
 
 func (e *GraceHashJoinExec) buildPartitionInDisk(ctx context.Context) (err error) {
-
 	for {
 		chk := chunk.NewChunkWithCapacity(e.buildSideExec.base().retFieldTypes, e.ctx.GetSessionVars().MaxChunkSize)
 		err = Next(ctx, e.buildSideExec, chk)
@@ -225,7 +224,7 @@ func (e *GraceHashJoinExec) buildPartitionInDisk(ctx context.Context) (err error
 // Next implements the Executor Next interface.
 // grace hash join is executed in two phases:
 // phases 1 is partitioning. fetch data and partitioning them, then write to disk.
-// phases 2 is joining. fetch data from disk and execting join by partition order.
+// phases 2 is joining. fetch data from disk and executing join by partition order.
 func (e *GraceHashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	if !e.prepared {
 		err := e.buildPartitionInDisk(ctx)

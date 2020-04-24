@@ -14,11 +14,10 @@
 package executor
 
 import (
-	"sync"
-
 	"context"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util/chunk"
+	"sync"
 )
 
 var (
