@@ -73,14 +73,9 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	// We try to reuse the old allocator, so the cached auto ID can be reused.
 	var allocs autoid.Allocators
 	if tableIDIsValid(oldTableID) {
-<<<<<<< HEAD
-		if oldTableID == newTableID && diff.Type != model.ActionRenameTable && diff.Type != model.ActionRebaseAutoID {
-			allocs, _ = b.is.AllocByID(oldTableID)
-=======
 		if oldTableID == newTableID && diff.Type != model.ActionRenameTable {
 			oldAllocs, _ := b.is.AllocByID(oldTableID)
 			allocs = filterAllocators(diff, oldAllocs)
->>>>>>> 7b25ce0... *: support auto_random table option (#16750)
 		}
 
 		tmpIDs := tblIDs

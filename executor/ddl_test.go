@@ -909,9 +909,6 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 	tk.MustExec("drop table t")
 }
 
-<<<<<<< HEAD
-func (s *testSuite3) TestMaxHandleAddIndex(c *C) {
-=======
 func (s *testAutoRandomSuite) TestAutoRandomTableOption(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1037,8 +1034,7 @@ func (s *testAutoRandomSuite) TestFilterDifferentAllocators(c *C) {
 	c.Assert(orderedHandles[0], Greater, int64(3000001))
 }
 
-func (s *testSuite6) TestMaxHandleAddIndex(c *C) {
->>>>>>> 7b25ce0... *: support auto_random table option (#16750)
+func (s *testSuite3) TestMaxHandleAddIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")

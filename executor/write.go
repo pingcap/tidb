@@ -94,11 +94,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 				if err != nil {
 					return false, false, 0, err
 				}
-<<<<<<< HEAD
-				if err = t.RebaseAutoID(ctx, recordID, true); err != nil {
-=======
 				if err = t.RebaseAutoID(sctx, recordID, true, autoid.RowIDAllocType); err != nil {
->>>>>>> 7b25ce0... *: support auto_random table option (#16750)
 					return false, false, 0, err
 				}
 			}

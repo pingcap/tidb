@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -1897,17 +1898,8 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 		switch op.Tp {
 		case ast.TableOptionAutoIncrement:
 			tbInfo.AutoIncID = int64(op.UintValue)
-<<<<<<< HEAD
-=======
-		case ast.TableOptionAutoIdCache:
-			if op.UintValue > uint64(math.MaxInt64) {
-				// TODO: Refine this error.
-				return errors.New("table option auto_id_cache overflows int64")
-			}
-			tbInfo.AutoIdCache = int64(op.UintValue)
 		case ast.TableOptionAutoRandomBase:
 			tbInfo.AutoRandID = int64(op.UintValue)
->>>>>>> 7b25ce0... *: support auto_random table option (#16750)
 		case ast.TableOptionComment:
 			tbInfo.Comment = op.StrValue
 		case ast.TableOptionCompression:
@@ -2091,19 +2083,9 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 					}
 					err = d.ShardRowID(ctx, ident, opt.UintValue)
 				case ast.TableOptionAutoIncrement:
-<<<<<<< HEAD
-					err = d.RebaseAutoID(ctx, ident, int64(opt.UintValue))
-=======
 					err = d.RebaseAutoID(ctx, ident, int64(opt.UintValue), autoid.RowIDAllocType)
-				case ast.TableOptionAutoIdCache:
-					if opt.UintValue > uint64(math.MaxInt64) {
-						// TODO: Refine this error.
-						return errors.New("table option auto_id_cache overflows int64")
-					}
-					err = d.AlterTableAutoIDCache(ctx, ident, int64(opt.UintValue))
 				case ast.TableOptionAutoRandomBase:
 					err = d.RebaseAutoID(ctx, ident, int64(opt.UintValue), autoid.AutoRandomType)
->>>>>>> 7b25ce0... *: support auto_random table option (#16750)
 				case ast.TableOptionComment:
 					spec.Comment = opt.StrValue
 					err = d.AlterTableComment(ctx, ident, spec)
@@ -2145,11 +2127,7 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 	if err != nil {
 		return errors.Trace(err)
 	}
-<<<<<<< HEAD
-	autoIncID, err := t.Allocator(ctx, autoid.RowIDAllocType).NextGlobalAutoID(t.Meta().ID)
-=======
 	autoIncID, err := t.Allocators(ctx).Get(tp).NextGlobalAutoID(t.Meta().ID)
->>>>>>> 7b25ce0... *: support auto_random table option (#16750)
 	if err != nil {
 		return errors.Trace(err)
 	}
