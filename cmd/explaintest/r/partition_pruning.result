@@ -4218,3 +4218,177 @@ id	count	task	operator info
 TableReader_8	10.00	root	data:Selection_7
 └─Selection_7	10.00	cop[tikv]	eq(test.t.name, "1")
   └─TableScan_6	10000.00	cop[tikv]	table:t, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo
+drop table if exists t;
+create table t (ts timestamp(3) not null default current_timestamp(3))
+partition by range (floor(unix_timestamp(ts))) (
+partition p0 values less than (unix_timestamp('2020-04-05 00:00:00')),
+partition p1 values less than (unix_timestamp('2020-04-15 00:00:00')),
+partition p2 values less than (unix_timestamp('2020-04-25 00:00:00'))
+);
+explain select * from t where ts = '2020-04-06 00:00:00' -- p1;
+id	count	task	operator info
+TableReader_8	10.00	root	data:Selection_7
+└─Selection_7	10.00	cop[tikv]	eq(test.t.ts, 2020-04-06 00:00:00.000000)
+  └─TableScan_6	10000.00	cop[tikv]	table:t, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select * from t where ts = '2020-04-05 00:00:00.001' -- p1;
+id	count	task	operator info
+TableReader_8	10.00	root	data:Selection_7
+└─Selection_7	10.00	cop[tikv]	eq(test.t.ts, 2020-04-05 00:00:00.001000)
+  └─TableScan_6	10000.00	cop[tikv]	table:t, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select * from t where ts > '2020-04-15 00:00:00' -- p2;
+id	count	task	operator info
+TableReader_8	3333.33	root	data:Selection_7
+└─Selection_7	3333.33	cop[tikv]	gt(test.t.ts, 2020-04-15 00:00:00.000000)
+  └─TableScan_6	10000.00	cop[tikv]	table:t, partition:p2, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select * from t where ts > '2020-04-14 23:59:59.999' -- p1,p2;
+id	count	task	operator info
+Union_8	6666.67	root	
+├─TableReader_11	3333.33	root	data:Selection_10
+│ └─Selection_10	3333.33	cop[tikv]	gt(test.t.ts, 2020-04-14 23:59:59.999000)
+│   └─TableScan_9	10000.00	cop[tikv]	table:t, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_14	3333.33	root	data:Selection_13
+  └─Selection_13	3333.33	cop[tikv]	gt(test.t.ts, 2020-04-14 23:59:59.999000)
+    └─TableScan_12	10000.00	cop[tikv]	table:t, partition:p2, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select * from t where ts > '2020-04-15 00:00:00.001' -- p2;
+id	count	task	operator info
+TableReader_8	3333.33	root	data:Selection_7
+└─Selection_7	3333.33	cop[tikv]	gt(test.t.ts, 2020-04-15 00:00:00.001000)
+  └─TableScan_6	10000.00	cop[tikv]	table:t, partition:p2, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select * from t where ts > '2020-04-26 00:00:00.001' -- dual;
+id	count	task	operator info
+TableDual_6	0.00	root	rows:0
+explain select * from t where ts >= '2020-04-04 12:22:32' --  p0,p1,p2;
+id	count	task	operator info
+Union_9	10000.00	root	
+├─TableReader_12	3333.33	root	data:Selection_11
+│ └─Selection_11	3333.33	cop[tikv]	ge(test.t.ts, 2020-04-04 12:22:32.000000)
+│   └─TableScan_10	10000.00	cop[tikv]	table:t, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_15	3333.33	root	data:Selection_14
+│ └─Selection_14	3333.33	cop[tikv]	ge(test.t.ts, 2020-04-04 12:22:32.000000)
+│   └─TableScan_13	10000.00	cop[tikv]	table:t, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_18	3333.33	root	data:Selection_17
+  └─Selection_17	3333.33	cop[tikv]	ge(test.t.ts, 2020-04-04 12:22:32.000000)
+    └─TableScan_16	10000.00	cop[tikv]	table:t, partition:p2, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select * from t where ts >= '2020-04-05 00:00:00' -- p1,p2;
+id	count	task	operator info
+Union_8	6666.67	root	
+├─TableReader_11	3333.33	root	data:Selection_10
+│ └─Selection_10	3333.33	cop[tikv]	ge(test.t.ts, 2020-04-05 00:00:00.000000)
+│   └─TableScan_9	10000.00	cop[tikv]	table:t, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_14	3333.33	root	data:Selection_13
+  └─Selection_13	3333.33	cop[tikv]	ge(test.t.ts, 2020-04-05 00:00:00.000000)
+    └─TableScan_12	10000.00	cop[tikv]	table:t, partition:p2, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select * from t where ts >= '2020-04-25 00:00:00' -- dual;
+id	count	task	operator info
+TableDual_6	0.00	root	rows:0
+explain select * from t where ts < '2020-04-25 00:00:00' -- p0,p1,p2;
+id	count	task	operator info
+Union_9	9970.00	root	
+├─TableReader_12	3323.33	root	data:Selection_11
+│ └─Selection_11	3323.33	cop[tikv]	lt(test.t.ts, 2020-04-25 00:00:00.000000)
+│   └─TableScan_10	10000.00	cop[tikv]	table:t, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_15	3323.33	root	data:Selection_14
+│ └─Selection_14	3323.33	cop[tikv]	lt(test.t.ts, 2020-04-25 00:00:00.000000)
+│   └─TableScan_13	10000.00	cop[tikv]	table:t, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_18	3323.33	root	data:Selection_17
+  └─Selection_17	3323.33	cop[tikv]	lt(test.t.ts, 2020-04-25 00:00:00.000000)
+    └─TableScan_16	10000.00	cop[tikv]	table:t, partition:p2, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select * from t where ts < '2020-04-15 00:00:00.001' -- p0,p1,p2;
+id	count	task	operator info
+Union_9	9970.00	root	
+├─TableReader_12	3323.33	root	data:Selection_11
+│ └─Selection_11	3323.33	cop[tikv]	lt(test.t.ts, 2020-04-15 00:00:00.001000)
+│   └─TableScan_10	10000.00	cop[tikv]	table:t, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_15	3323.33	root	data:Selection_14
+│ └─Selection_14	3323.33	cop[tikv]	lt(test.t.ts, 2020-04-15 00:00:00.001000)
+│   └─TableScan_13	10000.00	cop[tikv]	table:t, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_18	3323.33	root	data:Selection_17
+  └─Selection_17	3323.33	cop[tikv]	lt(test.t.ts, 2020-04-15 00:00:00.001000)
+    └─TableScan_16	10000.00	cop[tikv]	table:t, partition:p2, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select * from t where ts < '2020-04-15 00:00:00' -- expect perfect : p0,p1,  obtain: p0,p1,p2;
+id	count	task	operator info
+Union_9	9970.00	root	
+├─TableReader_12	3323.33	root	data:Selection_11
+│ └─Selection_11	3323.33	cop[tikv]	lt(test.t.ts, 2020-04-15 00:00:00.000000)
+│   └─TableScan_10	10000.00	cop[tikv]	table:t, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_15	3323.33	root	data:Selection_14
+│ └─Selection_14	3323.33	cop[tikv]	lt(test.t.ts, 2020-04-15 00:00:00.000000)
+│   └─TableScan_13	10000.00	cop[tikv]	table:t, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_18	3323.33	root	data:Selection_17
+  └─Selection_17	3323.33	cop[tikv]	lt(test.t.ts, 2020-04-15 00:00:00.000000)
+    └─TableScan_16	10000.00	cop[tikv]	table:t, partition:p2, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select * from t where ts < '2020-04-14 23:59:59.999' -- p0,p1;
+id	count	task	operator info
+Union_8	6646.67	root	
+├─TableReader_11	3323.33	root	data:Selection_10
+│ └─Selection_10	3323.33	cop[tikv]	lt(test.t.ts, 2020-04-14 23:59:59.999000)
+│   └─TableScan_9	10000.00	cop[tikv]	table:t, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_14	3323.33	root	data:Selection_13
+  └─Selection_13	3323.33	cop[tikv]	lt(test.t.ts, 2020-04-14 23:59:59.999000)
+    └─TableScan_12	10000.00	cop[tikv]	table:t, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select * from t where ts < '2020-04-03 00:00:00' -- p0;
+id	count	task	operator info
+TableReader_8	3323.33	root	data:Selection_7
+└─Selection_7	3323.33	cop[tikv]	lt(test.t.ts, 2020-04-03 00:00:00.000000)
+  └─TableScan_6	10000.00	cop[tikv]	table:t, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select * from t where ts < '2021-05-03 00:00:00' -- p0,p1,p2;
+id	count	task	operator info
+Union_9	9970.00	root	
+├─TableReader_12	3323.33	root	data:Selection_11
+│ └─Selection_11	3323.33	cop[tikv]	lt(test.t.ts, 2021-05-03 00:00:00.000000)
+│   └─TableScan_10	10000.00	cop[tikv]	table:t, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_15	3323.33	root	data:Selection_14
+│ └─Selection_14	3323.33	cop[tikv]	lt(test.t.ts, 2021-05-03 00:00:00.000000)
+│   └─TableScan_13	10000.00	cop[tikv]	table:t, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_18	3323.33	root	data:Selection_17
+  └─Selection_17	3323.33	cop[tikv]	lt(test.t.ts, 2021-05-03 00:00:00.000000)
+    └─TableScan_16	10000.00	cop[tikv]	table:t, partition:p2, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select * from t where ts <= '2020-04-05 00:00:00' -- p0,p1;
+id	count	task	operator info
+Union_8	6646.67	root	
+├─TableReader_11	3323.33	root	data:Selection_10
+│ └─Selection_10	3323.33	cop[tikv]	le(test.t.ts, 2020-04-05 00:00:00.000000)
+│   └─TableScan_9	10000.00	cop[tikv]	table:t, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_14	3323.33	root	data:Selection_13
+  └─Selection_13	3323.33	cop[tikv]	le(test.t.ts, 2020-04-05 00:00:00.000000)
+    └─TableScan_12	10000.00	cop[tikv]	table:t, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select * from t where ts <= '2020-04-03 00:00:00' -- p0;
+id	count	task	operator info
+TableReader_8	3323.33	root	data:Selection_7
+└─Selection_7	3323.33	cop[tikv]	le(test.t.ts, 2020-04-03 00:00:00.000000)
+  └─TableScan_6	10000.00	cop[tikv]	table:t, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select * from t where ts <= '2020-04-14 23:59:59.123' -- p0,p1;
+id	count	task	operator info
+Union_8	6646.67	root	
+├─TableReader_11	3323.33	root	data:Selection_10
+│ └─Selection_10	3323.33	cop[tikv]	le(test.t.ts, 2020-04-14 23:59:59.123000)
+│   └─TableScan_9	10000.00	cop[tikv]	table:t, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_14	3323.33	root	data:Selection_13
+  └─Selection_13	3323.33	cop[tikv]	le(test.t.ts, 2020-04-14 23:59:59.123000)
+    └─TableScan_12	10000.00	cop[tikv]	table:t, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select * from t where ts <= '2020-04-25 00:00:00' -- p0,p1,p2;
+id	count	task	operator info
+Union_9	9970.00	root	
+├─TableReader_12	3323.33	root	data:Selection_11
+│ └─Selection_11	3323.33	cop[tikv]	le(test.t.ts, 2020-04-25 00:00:00.000000)
+│   └─TableScan_10	10000.00	cop[tikv]	table:t, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_15	3323.33	root	data:Selection_14
+│ └─Selection_14	3323.33	cop[tikv]	le(test.t.ts, 2020-04-25 00:00:00.000000)
+│   └─TableScan_13	10000.00	cop[tikv]	table:t, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_18	3323.33	root	data:Selection_17
+  └─Selection_17	3323.33	cop[tikv]	le(test.t.ts, 2020-04-25 00:00:00.000000)
+    └─TableScan_16	10000.00	cop[tikv]	table:t, partition:p2, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select * from t where ts > '2020-04-25 00:00:00' or ts < '2020-01-02 00:00:00' -- p0;
+id	count	task	operator info
+TableReader_8	6656.67	root	data:Selection_7
+└─Selection_7	6656.67	cop[tikv]	or(gt(test.t.ts, 2020-04-25 00:00:00.000000), lt(test.t.ts, 2020-01-02 00:00:00.000000))
+  └─TableScan_6	10000.00	cop[tikv]	table:t, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select * from t where ts > '2020-04-02 00:00:00' and ts < '2020-04-07 00:00:00' -- p0,p1;
+id	count	task	operator info
+Union_8	500.00	root	
+├─TableReader_11	250.00	root	data:Selection_10
+│ └─Selection_10	250.00	cop[tikv]	gt(test.t.ts, 2020-04-02 00:00:00.000000), lt(test.t.ts, 2020-04-07 00:00:00.000000)
+│   └─TableScan_9	10000.00	cop[tikv]	table:t, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_14	250.00	root	data:Selection_13
+  └─Selection_13	250.00	cop[tikv]	gt(test.t.ts, 2020-04-02 00:00:00.000000), lt(test.t.ts, 2020-04-07 00:00:00.000000)
+    └─TableScan_12	10000.00	cop[tikv]	table:t, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo
