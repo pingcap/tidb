@@ -33,6 +33,7 @@ import (
 func init() {
 	parser.SpecialCommentsController.Register(string(FeatureIDAutoRandom))
 	parser.SpecialCommentsController.Register(string(FeatureIDAutoIDCache))
+	parser.SpecialCommentsController.Register(string(FeatureIDAutoRandomBase))
 }
 
 // SpecialCommentVersionPrefix is the prefix of TiDB executable comments.
@@ -55,10 +56,13 @@ const (
 	FeatureIDAutoRandom featureID = "auto_rand"
 	// FeatureIDAutoIDCache is the `auto_id_cache` feature.
 	FeatureIDAutoIDCache featureID = "auto_id_cache"
+	// FeatureIDAutoRandomBase is the `auto_random_base` feature.
+	FeatureIDAutoRandomBase featureID = "auto_rand_base"
 )
 
 // FeatureIDPatterns is used to record special comments patterns.
 var FeatureIDPatterns = map[featureID]*regexp.Regexp{
-	FeatureIDAutoRandom:  regexp.MustCompile(`(?i)AUTO_RANDOM\s*(\(\s*\d+\s*\))?\s*`),
-	FeatureIDAutoIDCache: regexp.MustCompile(`(?i)AUTO_ID_CACHE\s*=?\s*\d+\s*`),
+	FeatureIDAutoRandom:     regexp.MustCompile(`(?i)AUTO_RANDOM\s*(\(\s*\d+\s*\)|\s+)\s*`),
+	FeatureIDAutoIDCache:    regexp.MustCompile(`(?i)AUTO_ID_CACHE\s*=?\s*\d+\s*`),
+	FeatureIDAutoRandomBase: regexp.MustCompile(`(?i)AUTO_RANDOM_BASE\s*=?\s*\d+\s*`),
 }
