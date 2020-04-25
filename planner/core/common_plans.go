@@ -425,7 +425,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 					return err
 				}
 				if pID != -1 {
-					ts.physicalTableID = pID
+					ts.PhysicalTableID = pID
 				}
 			}
 		} else {
@@ -443,7 +443,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 				return err
 			}
 			if pID != -1 {
-				is.physicalTableID = pID
+				is.PhysicalTableID = pID
 			}
 		}
 	case *PhysicalIndexLookUpReader:
@@ -458,9 +458,9 @@ func (e *Execute) rebuildRange(p Plan) error {
 				return err
 			}
 			if pID != -1 {
-				is.physicalTableID = pID
+				is.PhysicalTableID = pID
 				tblScan := x.TablePlans[0].(*PhysicalTableScan)
-				tblScan.physicalTableID = pID
+				tblScan.PhysicalTableID = pID
 			}
 		}
 	case *PointGetPlan:

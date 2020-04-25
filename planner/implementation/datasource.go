@@ -294,8 +294,9 @@ func (impl *IndexLookUpReaderImpl) ScaleCostLimit(costLimit float64) float64 {
 // AttachChildren implements Implementation AttachChildren interface.
 func (impl *IndexLookUpReaderImpl) AttachChildren(children ...memo.Implementation) memo.Implementation {
 	reader := impl.plan.(*plannercore.PhysicalIndexLookUpReader)
+	reader.IndexPlan, reader.TablePlan = children[0].GetPlan(), children[1].GetPlan()
 	reader.TablePlans = plannercore.FlattenPushDownPlan(reader.TablePlan)
-	tableScan := reader.TablePlans[len(reader.TablePlans)-1].(*plannercore.PhysicalTableScan)
+	tableScan := reader.TablePlans[0].(*plannercore.PhysicalTableScan)
 	if tableScan.Schema().ColumnIndex(tableScan.HandleCol) == -1 {
 		tableScan.Schema().Append(tableScan.HandleCol)
 		if tableScan.HandleCol.ID == model.ExtraHandleID {

@@ -82,7 +82,7 @@
           "Group#2 Schema:[test.t.b]",
           "    TiKVSingleGather_6 input:[Group#3], table:t",
           "Group#3 Schema:[test.t.b]",
-          "    TableScan_8 table:t, cond:[gt(test.t.b, 10)]"
+          "    TableScan_8 table:t, pk col:test.t._tidb_rowid, cond:[gt(test.t.b, 10)]"
         ]
       },
       {
@@ -170,7 +170,7 @@
           "Group#5 Schema:[test.t.b]",
           "    TiKVSingleGather_22 input:[Group#13], table:t2",
           "Group#13 Schema:[test.t.b]",
-          "    TableScan_21 table:t2"
+          "    TableScan_21 table:t2, pk col:test.t._tidb_rowid"
         ]
       },
       {
@@ -273,7 +273,7 @@
           "Group#15 Schema:[test.t.b]",
           "    TiKVSingleGather_25 input:[Group#16], table:t",
           "Group#16 Schema:[test.t.b]",
-          "    TableScan_24 table:t"
+          "    TableScan_24 table:t, pk col:test.t._tidb_rowid"
         ]
       },
       {
@@ -286,7 +286,7 @@
           "Group#2 Schema:[test.t.b,test.t.f,test.t.g], UniqueKey:[test.t.f,test.t.f,test.t.g]",
           "    TiKVSingleGather_6 input:[Group#3], table:t",
           "Group#3 Schema:[test.t.b,test.t.f,test.t.g], UniqueKey:[test.t.f,test.t.f,test.t.g]",
-          "    TableScan_17 table:t, cond:[eq(test.t.b, 2) eq(test.t.f, 1)]"
+          "    TableScan_17 table:t, pk col:test.t._tidb_rowid, cond:[eq(test.t.b, 2) eq(test.t.f, 1)]"
         ]
       },
       {

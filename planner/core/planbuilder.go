@@ -1131,7 +1131,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 		Index:            idx,
 		IdxCols:          idxCols,
 		IdxColLens:       idxColLens,
-		dataSourceSchema: schema,
+		DataSourceSchema: schema,
 		Ranges:           ranger.FullRange(),
 		GenExprs:         genExprsMap,
 	}.Init(b.ctx, b.getSelectOffset())
@@ -1142,9 +1142,9 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 	ts.SetSchema(tblSchema.Clone())
 	if tbl.Meta().GetPartitionInfo() != nil {
 		pid := tbl.(table.PhysicalTable).GetPhysicalID()
-		is.physicalTableID = pid
+		is.PhysicalTableID = pid
 		is.isPartition = true
-		ts.physicalTableID = pid
+		ts.PhysicalTableID = pid
 		ts.isPartition = true
 	}
 	cop := &copTask{
@@ -1153,7 +1153,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 		tblColHists: is.stats.HistColl,
 	}
 	ts.HandleIdx = pkOffset
-	is.initSchema(idx, fullIdxCols, true)
+	is.InitSchema(idx, fullIdxCols, true)
 	rootT := finishCopTask(b.ctx, cop).(*rootTask)
 	return rootT.p, nil
 }

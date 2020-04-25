@@ -616,7 +616,7 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 		newTask.cst += sortCPUCost
 	}
 	if t.doubleReadNeedProj {
-		schema := p.IndexPlans[0].(*PhysicalIndexScan).dataSourceSchema
+		schema := p.IndexPlans[0].(*PhysicalIndexScan).DataSourceSchema
 		proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.stats, t.tablePlan.SelectBlockOffset(), nil)
 		proj.SetSchema(schema)
 		proj.SetChildren(p)

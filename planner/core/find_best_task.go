@@ -403,7 +403,7 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 		if path.IsTablePath {
 			currentCandidate = ds.getTableCandidate(path, prop)
 		} else {
-			coveredByIdx := isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo.PKIsHandle)
+			coveredByIdx := IsCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo.PKIsHandle)
 			if len(path.AccessConds) > 0 || !prop.IsEmpty() || path.Forced || coveredByIdx {
 				// We will use index to generate physical plan if any of the following conditions is satisfied:
 				// 1. This path's access cond is not nil.
@@ -606,8 +606,8 @@ func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty,
 	rowCount float64) {
 	idx := path.Index
 	is, partialCost, rowCount := ds.getOriginalPhysicalIndexScan(prop, path, false, false)
-	rowSize := is.indexScanRowSize(idx, ds, false)
-	// TODO: Consider using isCoveringIndex() to avoid another TableRead
+	rowSize := is.IndexScanRowSize(idx, ds, false)
+	// TODO: Consider using IsCoveringIndex() to avoid another TableRead
 	indexConds := path.IndexFilters
 	sessVars := ds.ctx.GetSessionVars()
 	if indexConds != nil {
@@ -665,7 +665,7 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 		TableAsName:     ds.TableAsName,
 		DBName:          ds.DBName,
 		isPartition:     ds.isPartition,
-		physicalTableID: ds.physicalTableID,
+		PhysicalTableID: ds.physicalTableID,
 	}.Init(ds.ctx, ds.blockOffset)
 	ts.SetSchema(ds.schema.Clone())
 	if ts.Table.PKIsHandle {
@@ -695,7 +695,7 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 	return ts, partialCost
 }
 
-func isCoveringIndex(columns, indexColumns []*expression.Column, idxColLens []int, pkIsHandle bool) bool {
+func IsCoveringIndex(columns, indexColumns []*expression.Column, idxColLens []int, pkIsHandle bool) bool {
 	for _, col := range columns {
 		if pkIsHandle && mysql.HasPriKeyFlag(col.RetType.Flag) {
 			continue
@@ -761,7 +761,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 			Table:           is.Table,
 			TableAsName:     ds.TableAsName,
 			isPartition:     ds.isPartition,
-			physicalTableID: ds.physicalTableID,
+			PhysicalTableID: ds.physicalTableID,
 		}.Init(ds.ctx, is.blockOffset)
 		ts.SetSchema(ds.schema.Clone())
 		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
@@ -789,9 +789,9 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 	return task, nil
 }
 
-func (is *PhysicalIndexScan) indexScanRowSize(idx *model.IndexInfo, ds *DataSource, isForScan bool) float64 {
+func (is *PhysicalIndexScan) IndexScanRowSize(idx *model.IndexInfo, ds *DataSource, isForScan bool) float64 {
 	scanCols := make([]*expression.Column, 0, len(idx.Columns)+1)
-	// If `initSchema` has already appended the handle column in schema, just use schema columns, otherwise, add extra handle column.
+	// If `InitSchema` has already appended the handle column in schema, just use schema columns, otherwise, add extra handle column.
 	if len(idx.Columns) == len(is.schema.Columns) {
 		scanCols = append(scanCols, is.schema.Columns...)
 		handleCol := ds.getPKIsHandleCol()
@@ -807,7 +807,7 @@ func (is *PhysicalIndexScan) indexScanRowSize(idx *model.IndexInfo, ds *DataSour
 	return ds.TblColHists.GetAvgRowSize(is.ctx, scanCols, true, false)
 }
 
-func (is *PhysicalIndexScan) initSchema(idx *model.IndexInfo, idxExprCols []*expression.Column, isDoubleRead bool) {
+func (is *PhysicalIndexScan) InitSchema(idx *model.IndexInfo, idxExprCols []*expression.Column, isDoubleRead bool) {
 	indexCols := make([]*expression.Column, len(is.IdxCols), len(idx.Columns)+1)
 	copy(indexCols, is.IdxCols)
 	for i := len(is.IdxCols); i < len(idx.Columns); i++ {
@@ -826,7 +826,7 @@ func (is *PhysicalIndexScan) initSchema(idx *model.IndexInfo, idxExprCols []*exp
 	if !setHandle {
 		for i, col := range is.Columns {
 			if (mysql.HasPriKeyFlag(col.Flag) && is.Table.PKIsHandle) || col.ID == model.ExtraHandleID {
-				indexCols = append(indexCols, is.dataSourceSchema.Columns[i])
+				indexCols = append(indexCols, is.DataSourceSchema.Columns[i])
 				setHandle = true
 				break
 			}
@@ -904,11 +904,11 @@ func MatchIndicesProp(idxCols []*expression.Column, colLens []int, propItems []p
 	return true
 }
 
-func splitIndexFilterConditions(conditions []expression.Expression, indexColumns []*expression.Column, idxColLens []int,
+func SplitIndexFilterConditions(conditions []expression.Expression, indexColumns []*expression.Column, idxColLens []int,
 	table *model.TableInfo) (indexConds, tableConds []expression.Expression) {
 	var indexConditions, tableConditions []expression.Expression
 	for _, cond := range conditions {
-		if isCoveringIndex(expression.ExtractColumns(cond), indexColumns, idxColLens, table.PKIsHandle) {
+		if IsCoveringIndex(expression.ExtractColumns(cond), indexColumns, idxColLens, table.PKIsHandle) {
 			indexConditions = append(indexConditions, cond)
 		} else {
 			tableConditions = append(tableConditions, cond)
@@ -1076,8 +1076,8 @@ func (s *LogicalTableScan) GetPhysicalScan(schema *expression.Schema, stats *pro
 		TableAsName:     ds.TableAsName,
 		DBName:          ds.DBName,
 		isPartition:     ds.isPartition,
-		physicalTableID: ds.physicalTableID,
-		HandleCol:       ds.getHandleCol(),
+		PhysicalTableID: ds.physicalTableID,
+		HandleCol:       s.Handle,
 		Ranges:          s.Ranges,
 		AccessCondition: s.AccessConds,
 	}.Init(s.ctx, s.blockOffset)
@@ -1117,11 +1117,11 @@ func (s *LogicalIndexScan) GetPhysicalIndexScan(schema *expression.Schema, stats
 		IdxColLens:       s.IdxColLens,
 		AccessCondition:  s.AccessConds,
 		Ranges:           s.Ranges,
-		dataSourceSchema: ds.schema,
+		DataSourceSchema: ds.schema,
 		isPartition:      ds.isPartition,
-		physicalTableID:  ds.physicalTableID,
+		PhysicalTableID:  ds.physicalTableID,
 	}.Init(ds.ctx, ds.blockOffset)
-	is.initSchema(s.Index, s.FullIdxCols, s.IsDoubleRead)
+	is.InitSchema(s.Index, s.FullIdxCols, s.IsDoubleRead)
 	rowCount := s.CountAfterAccess
 	// Only use expectedCnt when it's smaller than the count we calculated.
 	// e.g. IndexScan(count1)->After Filter(count2). The `ds.stats.RowCount` is count2. count1 is the one we need to calculate
@@ -1330,7 +1330,7 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		TableAsName:     ds.TableAsName,
 		DBName:          ds.DBName,
 		isPartition:     ds.isPartition,
-		physicalTableID: ds.physicalTableID,
+		PhysicalTableID: ds.physicalTableID,
 		Ranges:          path.Ranges,
 		AccessCondition: path.AccessConds,
 		filterCondition: path.TableFilters,
@@ -1406,16 +1406,16 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 		IdxColLens:       path.IdxColLens,
 		AccessCondition:  path.AccessConds,
 		Ranges:           path.Ranges,
-		dataSourceSchema: ds.schema,
+		DataSourceSchema: ds.schema,
 		isPartition:      ds.isPartition,
-		physicalTableID:  ds.physicalTableID,
+		PhysicalTableID:  ds.physicalTableID,
 	}.Init(ds.ctx, ds.blockOffset)
 	statsTbl := ds.statisticTable
 	if statsTbl.Indices[idx.ID] != nil {
 		is.Hist = &statsTbl.Indices[idx.ID].Histogram
 	}
 	rowCount := path.CountAfterAccess
-	is.initSchema(idx, path.FullIdxCols, !isSingleScan)
+	is.InitSchema(idx, path.FullIdxCols, !isSingleScan)
 	// Only use expectedCnt when it's smaller than the count we calculated.
 	// e.g. IndexScan(count1)->After Filter(count2). The `ds.stats.RowCount` is count2. count1 is the one we need to calculate
 	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.
@@ -1424,7 +1424,7 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 		rowCount = math.Min(prop.ExpectedCnt/selectivity, rowCount)
 	}
 	is.stats = ds.TableStats.ScaleByExpectCnt(rowCount)
-	rowSize := is.indexScanRowSize(idx, ds, true)
+	rowSize := is.IndexScanRowSize(idx, ds, true)
 	sessVars := ds.ctx.GetSessionVars()
 	cost := rowCount * rowSize * sessVars.ScanFactor
 	if isMatchProp {

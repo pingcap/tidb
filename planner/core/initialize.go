@@ -406,7 +406,7 @@ func (p PhysicalIndexMergeReader) Init(ctx sessionctx.Context, offset int) *Phys
 			p.schema = p.PartialPlans[0][0].Schema()
 		default:
 			is := p.PartialPlans[0][0].(*PhysicalIndexScan)
-			p.schema = is.dataSourceSchema
+			p.schema = is.DataSourceSchema
 		}
 	}
 	return &p

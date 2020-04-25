@@ -355,11 +355,12 @@ func (r *PushSelDownDoubleGather) OnTransform(old *memo.ExprIter) (newExprs []*m
 		}
 	}
 	newGather := plannercore.TiKVDoubleGather{
-		Source:       gather.Source	,
-		IndexCols:    gather.IndexCols,
-		IndexColLens: gather.IndexColLens,
-		HandleCol:    gather.HandleCol,
-		Index:        gather.Index,
+		Source:          gather.Source,
+		PushedDownConds: pushed,
+		IndexCols:       gather.IndexCols,
+		IndexColLens:    gather.IndexColLens,
+		HandleCol:       gather.HandleCol,
+		Index:           gather.Index,
 	}.Init(sctx, gather.SelectBlockOffset())
 	newTableGroup := tableGroup
 	newIndexGroup := indexGroup

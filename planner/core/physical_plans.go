@@ -128,7 +128,7 @@ func (p *PhysicalIndexReader) SetSchema(_ *expression.Schema) {
 			p.schema = p.indexPlan.Schema()
 		default:
 			is := p.IndexPlans[0].(*PhysicalIndexScan)
-			p.schema = is.dataSourceSchema
+			p.schema = is.DataSourceSchema
 		}
 		p.OutputColumns = p.schema.Clone().Columns
 	}
@@ -193,18 +193,18 @@ type PhysicalIndexScan struct {
 
 	TableAsName *model.CIStr
 
-	// dataSourceSchema is the original schema of DataSource. The schema of index scan in KV and index reader in TiDB
+	// DataSourceSchema is the original schema of DataSource. The schema of index scan in KV and index reader in TiDB
 	// will be different. The schema of index scan will decode all columns of index but the TiDB only need some of them.
-	dataSourceSchema *expression.Schema
+	DataSourceSchema *expression.Schema
 
 	// Hist is the histogram when the query was issued.
 	// It is used for query feedback.
 	Hist *statistics.Histogram
 
-	rangeInfo string
+	RangeInfo string
 
 	// The index scan may be on a partition.
-	physicalTableID int64
+	PhysicalTableID int64
 
 	GenExprs map[model.TableColumnID]expression.Expression
 
@@ -214,6 +214,10 @@ type PhysicalIndexScan struct {
 	// DoubleRead means if the index executor will read kv two times.
 	// If the query requires the columns that don't belong to index, DoubleRead will be true.
 	DoubleRead bool
+}
+
+func (is *PhysicalIndexScan) SetStats(stats *property.StatsInfo) {
+	is.stats = stats
 }
 
 // PhysicalMemTable reads memory table.
@@ -247,7 +251,7 @@ type PhysicalTableScan struct {
 	// It is used for query feedback.
 	Hist *statistics.Histogram
 
-	physicalTableID int64
+	PhysicalTableID int64
 
 	RangeDecidedBy []*expression.Column
 
@@ -267,7 +271,7 @@ type PhysicalTableScan struct {
 
 // IsPartition returns true and partition ID if it's actually a partition.
 func (ts *PhysicalTableScan) IsPartition() (bool, int64) {
-	return ts.isPartition, ts.physicalTableID
+	return ts.isPartition, ts.PhysicalTableID
 }
 
 // ExpandVirtualColumn expands the virtual column's dependent columns to ts's schema and column.
@@ -567,7 +571,7 @@ type PhysicalUnionScan struct {
 
 // IsPartition returns true and partition ID if it works on a partition.
 func (p *PhysicalIndexScan) IsPartition() (bool, int64) {
-	return p.isPartition, p.physicalTableID
+	return p.isPartition, p.PhysicalTableID
 }
 
 // IsPointGetByUniqueKey checks whether is a point get by unique key.

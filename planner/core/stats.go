@@ -722,6 +722,6 @@ func (p *TiKVDoubleGather) DeriveStats(childStats []*property.StatsInfo, selfSch
 		err := ErrInternal.GenWithStack("There are no enough children stats during deriving stats for TiKVDoubleGather.")
 		return nil, err
 	}
-	p.stats = childStats[1]
+	p.stats = p.Source.deriveStatsByFilter(p.PushedDownConds, nil)
 	return p.stats, nil
 }

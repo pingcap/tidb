@@ -77,6 +77,9 @@ func (a *recordSet) Fields() []*ast.ResultField {
 func colNames2ResultFields(schema *expression.Schema, names []*types.FieldName, defaultDB string) []*ast.ResultField {
 	rfs := make([]*ast.ResultField, 0, schema.Len())
 	defaultDBCIStr := model.NewCIStr(defaultDB)
+	if schema.Len() != len(names) {
+		return nil
+	}
 	for i := 0; i < schema.Len(); i++ {
 		dbName := names[i].DBName
 		if dbName.L == "" && names[i].TblName.L != "" {

@@ -824,13 +824,13 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		Index:            path.Index,
 		IdxCols:          path.IdxCols,
 		IdxColLens:       path.IdxColLens,
-		dataSourceSchema: ds.schema,
+		DataSourceSchema: ds.schema,
 		KeepOrder:        keepOrder,
 		Ranges:           ranger.FullRange(),
-		rangeInfo:        rangeInfo,
+		RangeInfo:        rangeInfo,
 		Desc:             desc,
 		isPartition:      ds.isPartition,
-		physicalTableID:  ds.physicalTableID,
+		PhysicalTableID:  ds.physicalTableID,
 	}.Init(ds.ctx, ds.blockOffset)
 	cop := &copTask{
 		indexPlan:   is,
@@ -838,24 +838,24 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		tblCols:     ds.TblCols,
 		keepOrder:   is.KeepOrder,
 	}
-	if !isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, is.Table.PKIsHandle) {
+	if !IsCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, is.Table.PKIsHandle) {
 		// On this way, it's double read case.
 		ts := PhysicalTableScan{
 			Columns:         ds.Columns,
 			Table:           is.Table,
 			TableAsName:     ds.TableAsName,
 			isPartition:     ds.isPartition,
-			physicalTableID: ds.physicalTableID,
+			PhysicalTableID: ds.physicalTableID,
 		}.Init(ds.ctx, ds.blockOffset)
-		ts.schema = is.dataSourceSchema.Clone()
+		ts.schema = is.DataSourceSchema.Clone()
 		// If inner cop task need keep order, the extraHandleCol should be set.
 		if cop.keepOrder {
 			cop.extraHandleCol, cop.doubleReadNeedProj = ts.AppendExtraHandleCol(ds)
 		}
 		cop.tablePlan = ts
 	}
-	is.initSchema(path.Index, path.FullIdxCols, cop.tablePlan != nil)
-	indexConds, tblConds := splitIndexFilterConditions(filterConds, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo)
+	is.InitSchema(path.Index, path.FullIdxCols, cop.tablePlan != nil)
+	indexConds, tblConds := SplitIndexFilterConditions(filterConds, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo)
 	// Specially handle cases when input rowCount is 0, which can only happen in 2 scenarios:
 	// - estimated row count of outer plan is 0;
 	// - estimated row count of inner "DataSource + filters" is 0;
@@ -907,7 +907,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		tmpPath.CountAfterAccess = cnt
 	}
 	is.stats = ds.TableStats.ScaleByExpectCnt(tmpPath.CountAfterAccess)
-	rowSize := is.indexScanRowSize(path.Index, ds, true)
+	rowSize := is.IndexScanRowSize(path.Index, ds, true)
 	sessVars := ds.ctx.GetSessionVars()
 	cop.cst = tmpPath.CountAfterAccess * rowSize * sessVars.ScanFactor
 	finalStats := ds.TableStats.ScaleByExpectCnt(rowCount)
@@ -929,31 +929,31 @@ var symmetricOp = map[string]string{
 // It stores the compare functions and build ranges in execution phase.
 type ColWithCmpFuncManager struct {
 	TargetCol         *expression.Column
-	colLength         int
+	ColLength         int
 	OpType            []string
-	opArg             []expression.Expression
+	OpArg             []expression.Expression
 	TmpConstant       []*expression.Constant
-	affectedColSchema *expression.Schema
-	compareFuncs      []chunk.CompareFunc
+	AffectedColSchema *expression.Schema
+	CompareFuncs      []chunk.CompareFunc
 }
 
-func (cwc *ColWithCmpFuncManager) appendNewExpr(opName string, arg expression.Expression, affectedCols []*expression.Column) {
+func (cwc *ColWithCmpFuncManager) AppendNewExpr(opName string, arg expression.Expression, affectedCols []*expression.Column) {
 	cwc.OpType = append(cwc.OpType, opName)
-	cwc.opArg = append(cwc.opArg, arg)
+	cwc.OpArg = append(cwc.OpArg, arg)
 	cwc.TmpConstant = append(cwc.TmpConstant, &expression.Constant{RetType: cwc.TargetCol.RetType})
 	for _, col := range affectedCols {
-		if cwc.affectedColSchema.Contains(col) {
+		if cwc.AffectedColSchema.Contains(col) {
 			continue
 		}
-		cwc.compareFuncs = append(cwc.compareFuncs, chunk.GetCompareFunc(col.RetType))
-		cwc.affectedColSchema.Append(col)
+		cwc.CompareFuncs = append(cwc.CompareFuncs, chunk.GetCompareFunc(col.RetType))
+		cwc.AffectedColSchema.Append(col)
 	}
 }
 
 // CompareRow compares the rows for deduplicate.
 func (cwc *ColWithCmpFuncManager) CompareRow(lhs, rhs chunk.Row) int {
-	for i, col := range cwc.affectedColSchema.Columns {
-		ret := cwc.compareFuncs[i](lhs, col.Index, rhs, col.Index)
+	for i, col := range cwc.AffectedColSchema.Columns {
+		ret := cwc.CompareFuncs[i](lhs, col.Index, rhs, col.Index)
 		if ret != 0 {
 			return ret
 		}
@@ -965,7 +965,7 @@ func (cwc *ColWithCmpFuncManager) CompareRow(lhs, rhs chunk.Row) int {
 func (cwc *ColWithCmpFuncManager) BuildRangesByRow(ctx sessionctx.Context, row chunk.Row) ([]*ranger.Range, error) {
 	exprs := make([]expression.Expression, len(cwc.OpType))
 	for i, opType := range cwc.OpType {
-		constantArg, err := cwc.opArg[i].Eval(row)
+		constantArg, err := cwc.OpArg[i].Eval(row)
 		if err != nil {
 			return nil, err
 		}
@@ -976,7 +976,7 @@ func (cwc *ColWithCmpFuncManager) BuildRangesByRow(ctx sessionctx.Context, row c
 		}
 		exprs = append(exprs, newExpr)
 	}
-	ranges, err := ranger.BuildColumnRange(exprs, ctx.GetSessionVars().StmtCtx, cwc.TargetCol.RetType, cwc.colLength)
+	ranges, err := ranger.BuildColumnRange(exprs, ctx.GetSessionVars().StmtCtx, cwc.TargetCol.RetType, cwc.ColLength)
 	if err != nil {
 		return nil, err
 	}
@@ -984,8 +984,8 @@ func (cwc *ColWithCmpFuncManager) BuildRangesByRow(ctx sessionctx.Context, row c
 }
 
 func (cwc *ColWithCmpFuncManager) resolveIndices(schema *expression.Schema) (err error) {
-	for i := range cwc.opArg {
-		cwc.opArg[i], err = cwc.opArg[i].ResolveIndices(schema)
+	for i := range cwc.OpArg {
+		cwc.OpArg[i], err = cwc.OpArg[i].ResolveIndices(schema)
 		if err != nil {
 			return err
 		}
@@ -997,7 +997,7 @@ func (cwc *ColWithCmpFuncManager) resolveIndices(schema *expression.Schema) (err
 func (cwc *ColWithCmpFuncManager) String() string {
 	buffer := bytes.NewBufferString("")
 	for i := range cwc.OpType {
-		buffer.WriteString(fmt.Sprintf("%v(%v, %v)", cwc.OpType[i], cwc.TargetCol, cwc.opArg[i]))
+		buffer.WriteString(fmt.Sprintf("%v(%v, %v)", cwc.OpType[i], cwc.TargetCol, cwc.OpArg[i]))
 		if i < len(cwc.OpType)-1 {
 			buffer.WriteString(" ")
 		}
@@ -1072,7 +1072,7 @@ loopOtherConds:
 			}
 		}
 		lastColAccesses = append(lastColAccesses, sf)
-		cwc.appendNewExpr(funcName, anotherArg, affectedCols)
+		cwc.AppendNewExpr(funcName, anotherArg, affectedCols)
 	}
 	return lastColAccesses
 }
@@ -1153,8 +1153,8 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 	lastPossibleCol := path.IdxCols[lastColPos]
 	lastColManager := &ColWithCmpFuncManager{
 		TargetCol:         lastPossibleCol,
-		colLength:         path.IdxColLens[lastColPos],
-		affectedColSchema: expression.NewSchema(),
+		ColLength:         path.IdxColLens[lastColPos],
+		AffectedColSchema: expression.NewSchema(),
 	}
 	lastColAccess := ijHelper.buildLastColManager(lastPossibleCol, innerPlan, lastColManager)
 	// If the column manager holds no expression, then we fallback to find whether there're useful normal filters

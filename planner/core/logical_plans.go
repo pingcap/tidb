@@ -544,6 +544,10 @@ type DataSource struct {
 	preferStoreType int
 }
 
+func (ds *DataSource) GetPhysicalTableID() int64 {
+	return ds.physicalTableID
+}
+
 // GetTableInfo returns datasource's tableInfo.
 func (ds *DataSource) GetTableInfo() *model.TableInfo {
 	return ds.tableInfo
@@ -581,6 +585,7 @@ type TiKVSingleGather struct {
 type TiKVDoubleGather struct {
 	logicalSchemaProducer
 
+	PushedDownConds []expression.Expression
 	Source       *DataSource
 	IndexCols    []*expression.Column
 	IndexColLens []int
@@ -666,7 +671,11 @@ func getTablePath(paths []*util.AccessPath) *util.AccessPath {
 }
 
 func (ds *DataSource) buildTableGather() LogicalPlan {
-	ts := LogicalTableScan{Source: ds, Handle: ds.getHandleCol()}.Init(ds.ctx, ds.blockOffset)
+	handle := ds.getHandleCol()
+	if handle == nil {
+		handle = ds.newExtraHandleSchemaCol()
+	}
+	ts := LogicalTableScan{Source: ds, Handle: handle}.Init(ds.ctx, ds.blockOffset)
 	ts.SetSchema(ds.Schema())
 	sg := TiKVSingleGather{Source: ds, IsIndexGather: false}.Init(ds.ctx, ds.blockOffset)
 	sg.SetSchema(ds.Schema())
@@ -726,6 +735,10 @@ func (ds *DataSource) buildIndexLookupGather(path *util.AccessPath) LogicalPlan 
 			}
 		}
 	}
+	handle := ds.getHandleCol()
+	if handle == nil {
+		handle = ds.newExtraHandleSchemaCol()
+	}
 	is := LogicalIndexScan{
 		Source:         ds,
 		IsDoubleRead:   true,
@@ -739,14 +752,14 @@ func (ds *DataSource) buildIndexLookupGather(path *util.AccessPath) LogicalPlan 
 	}.Init(ds.ctx, ds.blockOffset)
 	is.initSchema(true)
 
-	ts := LogicalTableScan{Source: ds, Handle: ds.getHandleCol()}.Init(ds.ctx, ds.blockOffset)
+	ts := LogicalTableScan{Source: ds, Handle: handle}.Init(ds.ctx, ds.blockOffset)
 	ts.SetSchema(ds.Schema())
 	dg := TiKVDoubleGather{
 		Source:       ds,
 		IndexCols:    path.IdxCols,
 		IndexColLens: path.IdxColLens,
 		Index:        path.Index,
-		HandleCol:    ds.getHandleCol(),
+		HandleCol:    handle,
 	}.Init(ds.ctx, ds.blockOffset)
 	dg.SetSchema(ds.Schema())
 	dg.SetChildren(is, ts)
@@ -762,7 +775,7 @@ func (ds *DataSource) Convert2Gathers() (gathers []LogicalPlan) {
 			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.Index)
 			path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.Index)
 			// If index columns can cover all of the needed columns, we can use a IndexGather + IndexScan.
-			if isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo.PKIsHandle) {
+			if IsCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo.PKIsHandle) {
 				gathers = append(gathers, ds.buildIndexGather(path))
 			} else if len(path.IdxCols) > 0 {
 				gathers = append(gathers, ds.buildIndexLookupGather(path))
@@ -917,7 +930,7 @@ func (ds *DataSource) deriveIndexPathStats(path *util.AccessPath, conds []expres
 			}
 		}
 	}
-	path.IndexFilters, path.TableFilters = splitIndexFilterConditions(path.TableFilters, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo)
+	path.IndexFilters, path.TableFilters = SplitIndexFilterConditions(path.TableFilters, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo)
 	// If the `CountAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
 	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
 	if path.CountAfterAccess < ds.stats.RowCount && !isIm {

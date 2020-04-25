@@ -73,7 +73,7 @@ func (p *PhysicalIndexScan) AccessObject() string {
 	fmt.Fprintf(buffer, "table:%s", tblName)
 	if p.isPartition {
 		if pi := p.Table.GetPartitionInfo(); pi != nil {
-			partitionName := pi.GetNameByID(p.physicalTableID)
+			partitionName := pi.GetNameByID(p.PhysicalTableID)
 			fmt.Fprintf(buffer, ", partition:%s", partitionName)
 		}
 	}
@@ -93,8 +93,8 @@ func (p *PhysicalIndexScan) AccessObject() string {
 // OperatorInfo implements dataAccesser interface.
 func (p *PhysicalIndexScan) OperatorInfo(normalized bool) string {
 	buffer := bytes.NewBufferString("")
-	if len(p.rangeInfo) > 0 {
-		fmt.Fprintf(buffer, "range: decided by %v, ", p.rangeInfo)
+	if len(p.RangeInfo) > 0 {
+		fmt.Fprintf(buffer, "range: decided by %v, ", p.RangeInfo)
 	} else if p.haveCorCol() {
 		if normalized {
 			fmt.Fprintf(buffer, "range: decided by %s, ", expression.SortedExplainNormalizedExpressionList(p.AccessCondition))
@@ -132,7 +132,7 @@ func (p *PhysicalIndexScan) haveCorCol() bool {
 }
 
 func (p *PhysicalIndexScan) isFullScan() bool {
-	if len(p.rangeInfo) > 0 || p.haveCorCol() {
+	if len(p.RangeInfo) > 0 || p.haveCorCol() {
 		return false
 	}
 	for _, ran := range p.Ranges {
@@ -175,7 +175,7 @@ func (p *PhysicalTableScan) AccessObject() string {
 	fmt.Fprintf(buffer, "table:%s", tblName)
 	if p.isPartition {
 		if pi := p.Table.GetPartitionInfo(); pi != nil {
-			partitionName := pi.GetNameByID(p.physicalTableID)
+			partitionName := pi.GetNameByID(p.PhysicalTableID)
 			fmt.Fprintf(buffer, ", partition:%s", partitionName)
 		}
 	}

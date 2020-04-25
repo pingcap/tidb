@@ -324,7 +324,7 @@ func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column) error {
 		joinCol := p.schema.Columns[len(p.schema.Columns)-1]
 		parentUsedCols = append(parentUsedCols, joinCol)
 	}
-	p.inlineProjection(parentUsedCols)
+	//p.inlineProjection(parentUsedCols)
 	return nil
 }
 

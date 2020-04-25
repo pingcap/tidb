@@ -97,7 +97,7 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
 		Desc:    p.Desc,
 	}
 	if p.isPartition {
-		tsExec.TableId = p.physicalTableID
+		tsExec.TableId = p.PhysicalTableID
 	}
 	err := SetPBColumnsDefaultValue(ctx, tsExec.Columns, p.Columns)
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tsExec}, err
@@ -145,7 +145,7 @@ func (p *PhysicalIndexScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
 		Desc:    p.Desc,
 	}
 	if p.isPartition {
-		idxExec.TableId = p.physicalTableID
+		idxExec.TableId = p.PhysicalTableID
 	}
 	unique := checkCoverIndex(p.Index, p.Ranges)
 	idxExec.Unique = &unique

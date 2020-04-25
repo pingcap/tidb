@@ -14,7 +14,14 @@
 package cascades
 
 import (
+	"bytes"
+	"fmt"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"math"
 	"sort"
 
@@ -217,9 +224,6 @@ func (r *ImplTiKVDoubleReadGather) OnImplement(expr *memo.GroupExpr, reqProp *pr
 	reader = dg.GetPhysicalIndexLookUpReader(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), indexScanProp, tableScanProp)
 	// Since the handle column is not primary key and double read need to keep order. Then we need to inject a projection
 	// to filter the tidb_rowid.
-	if !reqProp.IsEmpty() && dg.HandleCol == nil {
-		return nil, nil
-	}
 	if !reqProp.IsEmpty() && reader.Schema().ColumnIndex(dg.HandleCol) == -1 {
 		reader.Schema().Append(dg.HandleCol)
 		reader.(*plannercore.PhysicalIndexLookUpReader).ExtraHandleCol = dg.HandleCol
@@ -814,8 +818,10 @@ func (r *ImplIndexJoin) getIndexJoinByOuterIdx(expr *memo.GroupExpr, prop *prope
 	}
 
 	indexJoins := r.buildIndexJoinInner2TableScan(expr, prop, innerChildGroup, innerJoinKeys, outerJoinKeys, outerIdx, avgInnerRowCnt)
-	// TODO: Support use IndexPath to build IndexJoin.
-	return indexJoins
+	if len(indexJoins) > 0 {
+		return indexJoins
+	}
+    return r.buildIndexJoinInner2IndexScan(expr, prop, innerChildGroup, innerJoinKeys, outerJoinKeys, outerIdx, avgInnerRowCnt)
 }
 
 func (r *ImplIndexJoin) buildIndexJoinInner2TableScan(
@@ -869,7 +875,6 @@ func (r *ImplIndexJoin) buildIndexJoinInner2TableScan(
 		innerJoinKeys, outerJoinKeys, nil,
 		keyOff2IdxOff, nil, nil)
 	joins = append(joins, indexJoinImpl)
-	// TODO: Support IndexHashJoin & IndexMergeJoin.
 	innerImplForIMJ := r.constructInnerTableScan(tableGatherExpr, tableScanExpr, outerJoinKeys, true, !prop.IsEmpty()&&prop.Items[0].Desc, avgInnerRowCnt)
 	indexMergeJoinImpl := r.constructIndexMergeJoin(
 		joinExpr, prop, outerIdx, innerImplForIMJ,
@@ -1076,6 +1081,141 @@ func (r *ImplIndexJoin) constructInnerTableScan(
 	return readerImpl
 }
 
+// constructInnerIndexScanTask is specially used to construct the inner plan for PhysicalIndexJoin.
+func (r *ImplIndexJoin) constructInnerIndexScan(
+	path *indexJoinAccessPath, filterConds []expression.Expression,
+	outerJoinKeys []*expression.Column, rangeInfo string,
+	keepOrder bool, desc bool, rowCount float64, maxOneRow bool) memo.Implementation {
+	ds := path.indexScan.Source
+	is := plannercore.PhysicalIndexScan{
+		Table:   ds.GetTableInfo(),
+		TableAsName: ds.TableAsName,
+		DBName:      ds.DBName,
+		Columns:     path.indexScan.Columns,
+		Index:       path.indexScan.Index,
+		IdxCols:     path.indexScan.IdxCols,
+		IdxColLens:  path.indexScan.IdxColLens,
+		DataSourceSchema: ds.Schema(),
+		KeepOrder:   keepOrder,
+		Ranges:      ranger.FullRange(),
+		RangeInfo:   rangeInfo,
+		Desc:        desc,
+		PhysicalTableID: ds.GetPhysicalTableID(),
+	}.Init(ds.SCtx(), ds.SelectBlockOffset())
+	is.InitSchema(is.Index, path.indexScan.FullIdxCols, path.tableScan != nil)
+	indexConds, tblConds := plannercore.SplitIndexFilterConditions(filterConds, path.indexScan.FullIdxCols, path.indexScan.FullIdxColLens, is.Table)
+	// Specially handle cases when input rowCount is 0, which can only happen in 2 scenarios:
+	// - estimated row count of outer plan is 0;
+	// - estimated row count of inner "DataSource + filters" is 0;
+	// if it is the first case, it does not matter what row count we set for inner task, since the cost of index join would
+	// always be 0 then;
+	// if it is the second case, HashJoin should always be cheaper than IndexJoin then, so we set row count of inner task
+	// to table size, to simply make it more expensive.
+	if rowCount <= 0 {
+		rowCount = ds.TableStats.RowCount
+	}
+	if maxOneRow {
+		// Theoretically, this line is unnecessary because row count estimation of join should guarantee rowCount is not larger
+		// than 1.0; however, there may be rowCount larger than 1.0 in reality, e.g, pseudo statistics cases, which does not reflect
+		// unique constraint in NDV.
+		rowCount = math.Min(rowCount, 1.0)
+	}
+	finalStats := ds.TableStats.ScaleByExpectCnt(rowCount)
+	tmpPath := &util.AccessPath{
+		IndexFilters:     indexConds,
+		TableFilters:     tblConds,
+		CountAfterIndex:  rowCount,
+		CountAfterAccess: rowCount,
+	}
+	// Assume equal conditions used by index join and other conditions are independent.
+	if len(tblConds) > 0 {
+		selectivity, _, err := ds.TableStats.HistColl.Selectivity(ds.SCtx(), tblConds, nil)
+		if err != nil || selectivity <= 0 {
+			logutil.BgLogger().Debug("unexpected selectivity, use selection factor", zap.Float64("selectivity", selectivity), zap.String("table", ds.TableAsName.L))
+			selectivity = plannercore.SelectionFactor
+		}
+		// rowCount is computed from result row count of join, which has already accounted the filters on DataSource,
+		// i.e, rowCount equals to `countAfterIndex * selectivity`.
+		cnt := rowCount / selectivity
+		if maxOneRow {
+			cnt = math.Min(cnt, 1.0)
+		}
+		tmpPath.CountAfterIndex = cnt
+		tmpPath.CountAfterAccess = cnt
+	}
+	if len(indexConds) > 0 {
+		selectivity, _, err := ds.TableStats.HistColl.Selectivity(ds.SCtx(), indexConds, nil)
+		if err != nil || selectivity <= 0 {
+			logutil.BgLogger().Debug("unexpected selectivity, use selection factor", zap.Float64("selectivity", selectivity), zap.String("table", ds.TableAsName.L))
+			selectivity = plannercore.SelectionFactor
+		}
+		cnt := tmpPath.CountAfterIndex / selectivity
+		if maxOneRow {
+			cnt = math.Min(cnt, 1.0)
+		}
+		tmpPath.CountAfterAccess = cnt
+	}
+	is.SetStats(ds.TableStats.ScaleByExpectCnt(tmpPath.CountAfterAccess))
+	var indexPathImpl memo.Implementation
+	indexPathImpl = impl.NewIndexScanImpl(is, ds.TblColHists)
+	indexPathImpl.CalcCost(tmpPath.CountAfterAccess, nil)
+	if len(indexConds) > 0 {
+		indexPathSel := plannercore.PhysicalSelection{
+			Conditions: indexConds,
+		}.Init(ds.SCtx(), ds.TableStats.ScaleByExpectCnt(tmpPath.CountAfterIndex), ds.SelectBlockOffset())
+		selImpl := impl.NewTiKVSelectionImpl(indexPathSel)
+		selImpl.CalcCost(tmpPath.CountAfterIndex, indexPathImpl)
+		indexPathImpl = selImpl.AttachChildren(indexPathImpl)
+	}
+
+	if path.tableScan == nil {
+		gather := path.gatherExpr.ExprNode.(*plannercore.TiKVSingleGather)
+		reader := gather.GetPhysicalIndexReader(path.gatherExpr.Schema(), ds.TableStats.ScaleByExpectCnt(tmpPath.CountAfterIndex))
+		indexReaderImpl := impl.NewIndexReaderImpl(reader, ds.TblColHists)
+		indexReaderImpl.CalcCost(rowCount, indexPathImpl)
+		indexReaderImpl.AttachChildren(indexPathImpl)
+		return indexReaderImpl
+	}
+	// index lookup reader
+	gather := path.gatherExpr.ExprNode.(*plannercore.TiKVDoubleGather)
+	ts := plannercore.PhysicalTableScan{
+		Columns:	     ds.Columns,
+		Table:   		 is.Table,
+		TableAsName: 	 ds.TableAsName,
+		HandleCol:       path.tableScan.Handle,
+		PhysicalTableID: ds.GetPhysicalTableID(),
+	}.Init(ds.SCtx(), ds.SelectBlockOffset())
+	ts.SetStats(ds.TableStats.ScaleByExpectCnt(tmpPath.CountAfterIndex))
+	ts.SetSchema(is.DataSourceSchema.Clone())
+	var tsImpl memo.Implementation = impl.NewTableScanImpl(ts, ds.TblCols, ds.TblColHists)
+	tsImpl.CalcCost(rowCount)
+	if len(tblConds) > 0 {
+		sel := plannercore.PhysicalSelection{
+			Conditions:tblConds,
+		}.Init(ds.SCtx(), finalStats, ds.SelectBlockOffset())
+		selImpl := impl.NewTiKVSelectionImpl(sel)
+		selImpl.CalcCost(finalStats.RowCount, tsImpl)
+		selImpl.AttachChildren(tsImpl)
+		tsImpl = selImpl
+	}
+	reader := gather.GetPhysicalIndexLookUpReader(path.gatherExpr.Schema().Clone(), finalStats)
+	var proj *plannercore.PhysicalProjection
+	if keepOrder && gather.HandleCol == nil {
+		return nil
+	}
+	if keepOrder && !reader.Schema().Contains(gather.HandleCol) {
+		reader.Schema().Append(gather.HandleCol)
+		reader.ExtraHandleCol = gather.HandleCol
+		proj = plannercore.PhysicalProjection{Exprs: expression.Column2Exprs(path.gatherExpr.Schema().Columns)}.Init(gather.SCtx(), reader.Stats(), reader.SelectBlockOffset())
+		proj.SetSchema(path.gatherExpr.Schema())
+		proj.SetChildren(reader)
+	}
+	readerImpl := impl.NewIndexLookUpReaderImpl(reader, ds.TblColHists, proj)
+	readerImpl.CalcCost(finalStats.RowCount, indexPathImpl, tsImpl)
+	readerImpl.AttachChildren(indexPathImpl, tsImpl)
+	return readerImpl
+}
+
 func (r *ImplIndexJoin) getAllFilterConditions(expr *memo.GroupExpr) []expression.Expression {
 	switch plan := expr.ExprNode.(type) {
 	case *plannercore.TiKVSingleGather:
@@ -1087,4 +1227,417 @@ func (r *ImplIndexJoin) getAllFilterConditions(expr *memo.GroupExpr) []expressio
 	default:
 		return nil
 	}
+}
+
+type indexJoinBuildHelper struct {
+	joinExpr *memo.GroupExpr
+
+	chosenIndexInfo *model.IndexInfo
+	maxUsedCols     int
+	chosenAccess    []expression.Expression
+	chosenRemained  []expression.Expression
+	idxOff2KeyOff   []int
+	lastColManager  *plannercore.ColWithCmpFuncManager
+	chosenRanges    []*ranger.Range
+	chosenPath		*indexJoinAccessPath
+	chosenIndex     *model.IndexInfo
+
+	curPossibleUsedKeys []*expression.Column
+	curNotUsedIndexCols []*expression.Column
+	curNotUsedColLens   []int
+	curIdxOff2KeyOff    []int
+}
+
+type indexJoinAccessPath struct {
+	gatherExpr *memo.GroupExpr
+	indexScan *plannercore.LogicalIndexScan
+	tableScan *plannercore.LogicalTableScan
+	conditions    []expression.Expression
+}
+
+func (r *ImplIndexJoin) collectIndexPath(group *memo.Group) []*indexJoinAccessPath {
+	res := make([]*indexJoinAccessPath, 0, group.Equivalents.Len())
+	for iter := group.Equivalents.Front(); iter != nil; iter = iter.Next() {
+		expr := iter.Value.(*memo.GroupExpr)
+		switch gather := expr.ExprNode.(type) {
+		case *plannercore.TiKVSingleGather:
+			if !gather.IsIndexGather {
+				continue
+			}
+			if idxScan, ok := expr.Children[0].GetFirstGroupExpr().ExprNode.(*plannercore.LogicalIndexScan); ok {
+				path := indexJoinAccessPath{gatherExpr:expr, indexScan:idxScan}
+				path.conditions = idxScan.AllConds
+				res = append(res, &path)
+			}
+		case *plannercore.TiKVDoubleGather:
+			idxScan, ok := expr.Children[0].GetFirstGroupExpr().ExprNode.(*plannercore.LogicalIndexScan)
+			if !ok {
+				continue
+			}
+			tblScan, ok := expr.Children[1].GetFirstGroupExpr().ExprNode.(*plannercore.LogicalTableScan)
+			if !ok {
+				continue
+			}
+			path := indexJoinAccessPath{gatherExpr:expr, indexScan:idxScan, tableScan:tblScan}
+			path.conditions = make([]expression.Expression, 0, len(idxScan.AllConds)+len(tblScan.AllConds))
+			path.conditions = append(path.conditions, idxScan.AllConds...)
+			path.conditions = append(path.conditions, tblScan.AllConds...)
+			res = append(res, &path)
+		default:
+			continue
+		}
+	}
+	return res
+}
+
+func(r *ImplIndexJoin) buildIndexJoinInner2IndexScan(
+	joinExpr *memo.GroupExpr, prop *property.PhysicalProperty, innerGroup *memo.Group,
+	innerJoinKeys []*expression.Column, outerJoinKeys []*expression.Column,
+	outerIdx int, avgInnerRowCnt float64) []memo.Implementation {
+	helper := &indexJoinBuildHelper{joinExpr:joinExpr}
+	indexPaths := r.collectIndexPath(innerGroup)
+	for _, path := range indexPaths {
+		emptyRange, _ := helper.analyzeLookUpFilters(path, innerGroup, innerJoinKeys)
+		if emptyRange {
+			return nil
+		}
+	}
+	if helper.chosenPath == nil {
+		return nil
+	}
+	keyOff2IdxOff := make([]int, len(innerJoinKeys))
+	for i := range keyOff2IdxOff {
+		keyOff2IdxOff[i] = -1
+	}
+	for idxOff, keyOff := range helper.idxOff2KeyOff {
+		if keyOff != -1 {
+			keyOff2IdxOff[keyOff] = idxOff
+		}
+	}
+	impls := make([]memo.Implementation, 0, 3)
+	rangeInfo := helper.buildRangeDecidedByInformation(helper.chosenPath.indexScan.IdxCols, outerJoinKeys)
+	maxOneRow := false
+	if helper.chosenPath.indexScan.Index.Unique && helper.maxUsedCols == len(helper.chosenPath.indexScan.FullIdxCols) {
+		l := len(helper.chosenAccess)
+		if l == 0 {
+			maxOneRow = true
+		} else {
+			sf, ok := helper.chosenAccess[l-1].(*expression.ScalarFunction)
+			maxOneRow = ok && (sf.FuncName.L == ast.EQ)
+		}
+	}
+	innerImpl := r.constructInnerIndexScan(helper.chosenPath, helper.chosenRemained, outerJoinKeys, rangeInfo, false, false, avgInnerRowCnt, maxOneRow)
+	impls = append(impls, r.constructIndexJoin(joinExpr, prop, outerIdx, innerImpl, innerJoinKeys, outerJoinKeys, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath.indexScan.IdxColLens, helper.lastColManager))
+	impls = append(impls, r.constructIndexHashJoin(joinExpr, prop, outerIdx, innerImpl, innerJoinKeys, outerJoinKeys, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath.indexScan.IdxColLens, helper.lastColManager))
+	innerImplForILMJ := r.constructInnerIndexScan(helper.chosenPath, helper.chosenRemained, outerJoinKeys, rangeInfo, true, !prop.IsEmpty() && prop.Items[0].Desc, avgInnerRowCnt, maxOneRow)
+	impls = append(impls, r.constructIndexMergeJoin(joinExpr, prop, outerIdx, innerImplForILMJ, innerJoinKeys, outerJoinKeys, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath.indexScan.IdxColLens, helper.lastColManager))
+	return impls
+}
+
+func (ijHelper *indexJoinBuildHelper) buildRangeDecidedByInformation(idxCols []*expression.Column, outerJoinKeys []*expression.Column) string {
+	buffer := bytes.NewBufferString("[")
+	isFirst := true
+	for idxOff, keyOff := range ijHelper.idxOff2KeyOff {
+		if keyOff == -1 {
+			continue
+		}
+		if !isFirst {
+			buffer.WriteString(" ")
+		} else {
+			isFirst = false
+		}
+		buffer.WriteString(fmt.Sprintf("eq(%v, %v)", idxCols[idxOff], outerJoinKeys[keyOff]))
+	}
+	for _, access := range ijHelper.chosenAccess {
+		if !isFirst {
+			buffer.WriteString(" ")
+		} else {
+			isFirst = false
+		}
+		buffer.WriteString(fmt.Sprintf("%v", access))
+	}
+	buffer.WriteString("]")
+	return buffer.String()
+}
+
+func (ijHelper *indexJoinBuildHelper) resetContextForIndex(innerKeys []*expression.Column, idxCols []*expression.Column, colLens []int) {
+	tmpSchema := expression.NewSchema(innerKeys...)
+	ijHelper.curIdxOff2KeyOff = make([]int, len(idxCols))
+	ijHelper.curNotUsedIndexCols = make([]*expression.Column, 0, len(idxCols))
+	ijHelper.curNotUsedColLens = make([]int, 0, len(idxCols))
+	for i, idxCol := range idxCols {
+		ijHelper.curIdxOff2KeyOff[i] = tmpSchema.ColumnIndex(idxCol)
+		if ijHelper.curIdxOff2KeyOff[i] >= 0 {
+			continue
+		}
+		ijHelper.curNotUsedIndexCols = append(ijHelper.curNotUsedIndexCols, idxCol)
+		ijHelper.curNotUsedColLens = append(ijHelper.curNotUsedColLens, colLens[i])
+	}
+}
+
+// findUsefulEqAndInFilters analyzes the pushedDownConds held by inner child and split them to three parts.
+// usefulEqOrInFilters is the continuous eq/in conditions on current unused index columns.
+// uselessFilters is the conditions which cannot be used for building ranges.
+// remainingRangeCandidates is the other conditions for future use.
+func (ijHelper *indexJoinBuildHelper) findUsefulEqAndInFilters(conds []expression.Expression) (usefulEqOrInFilters, uselessFilters, remainingRangeCandidates []expression.Expression) {
+	uselessFilters = make([]expression.Expression, 0, len(conds))
+	var remainedEqOrIn []expression.Expression
+	// Extract the eq/in functions of possible join key.
+	// you can see the comment of ExtractEqAndInCondition to get the meaning of the second return value.
+	usefulEqOrInFilters, remainedEqOrIn, remainingRangeCandidates, _ = ranger.ExtractEqAndInCondition(
+		ijHelper.joinExpr.ExprNode.SCtx(), conds,
+		ijHelper.curNotUsedIndexCols,
+		ijHelper.curNotUsedColLens,
+	)
+	uselessFilters = append(uselessFilters, remainedEqOrIn...)
+	return usefulEqOrInFilters, uselessFilters, remainingRangeCandidates
+}
+
+// removeUselessEqAndInFunc removes the useless eq/in conditions. It's designed for the following case:
+//   t1 join t2 on t1.a=t2.a and t1.c=t2.c where t1.b > t2.b-10 and t1.b < t2.b+10 there's index(a, b, c) on t1.
+//   In this case the curIdxOff2KeyOff is [0 -1 1] and the notKeyEqAndIn is [].
+//   It's clearly that the column c cannot be used to access data. So we need to remove it and reset the IdxOff2KeyOff to
+//   [0 -1 -1].
+//   So that we can use t1.a=t2.a and t1.b > t2.b-10 and t1.b < t2.b+10 to build ranges then access data.
+func (ijHelper *indexJoinBuildHelper) removeUselessEqAndInFunc(
+	idxCols []*expression.Column,
+	notKeyEqAndIn []expression.Expression) (
+	usefulEqAndIn, uselessOnes []expression.Expression,
+) {
+	ijHelper.curPossibleUsedKeys = make([]*expression.Column, 0, len(idxCols))
+	for idxColPos, notKeyColPos := 0, 0; idxColPos < len(idxCols); idxColPos++ {
+		if ijHelper.curIdxOff2KeyOff[idxColPos] != -1 {
+			ijHelper.curPossibleUsedKeys = append(ijHelper.curPossibleUsedKeys, idxCols[idxColPos])
+			continue
+		}
+		if notKeyColPos < len(notKeyEqAndIn) && ijHelper.curNotUsedIndexCols[notKeyColPos].Equal(nil, idxCols[idxColPos]) {
+			notKeyColPos++
+			continue
+		}
+		for i := idxColPos + 1; i < len(idxCols); i++ {
+			ijHelper.curIdxOff2KeyOff[i] = -1
+		}
+		remained := make([]expression.Expression, 0, len(notKeyEqAndIn)-notKeyColPos)
+		remained = append(remained, notKeyEqAndIn[notKeyColPos:]...)
+		notKeyEqAndIn = notKeyEqAndIn[:notKeyColPos]
+		return notKeyEqAndIn, remained
+	}
+	return notKeyEqAndIn, nil
+}
+
+func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAndInFuncs []expression.Expression, nextColRange []*ranger.Range, haveExtraCol bool) (ranges []*ranger.Range, emptyRange bool, err error) {
+	pointLength := matchedKeyCnt + len(eqAndInFuncs)
+	if nextColRange != nil {
+		for _, colRan := range nextColRange {
+			// The range's exclude status is the same with last col's.
+			ran := &ranger.Range{
+				LowVal:      make([]types.Datum, pointLength, pointLength+1),
+				HighVal:     make([]types.Datum, pointLength, pointLength+1),
+				LowExclude:  colRan.LowExclude,
+				HighExclude: colRan.HighExclude,
+			}
+			ran.LowVal = append(ran.LowVal, colRan.LowVal[0])
+			ran.HighVal = append(ran.HighVal, colRan.HighVal[0])
+			ranges = append(ranges, ran)
+		}
+	} else if haveExtraCol {
+		// Reserve a position for the last col.
+		ranges = append(ranges, &ranger.Range{
+			LowVal:  make([]types.Datum, pointLength+1),
+			HighVal: make([]types.Datum, pointLength+1),
+		})
+	} else {
+		ranges = append(ranges, &ranger.Range{
+			LowVal:  make([]types.Datum, pointLength),
+			HighVal: make([]types.Datum, pointLength),
+		})
+	}
+	sc := ijHelper.joinExpr.ExprNode.SCtx().GetSessionVars().StmtCtx
+	for i, j := 0, 0; j < len(eqAndInFuncs); i++ {
+		// This position is occupied by join key.
+		if ijHelper.curIdxOff2KeyOff[i] != -1 {
+			continue
+		}
+		oneColumnRan, err := ranger.BuildColumnRange([]expression.Expression{eqAndInFuncs[j]}, sc, ijHelper.curNotUsedIndexCols[j].RetType, ijHelper.curNotUsedColLens[j])
+		if err != nil {
+			return nil, false, err
+		}
+		if len(oneColumnRan) == 0 {
+			return nil, true, nil
+		}
+		for _, ran := range ranges {
+			ran.LowVal[i] = oneColumnRan[0].LowVal[0]
+			ran.HighVal[i] = oneColumnRan[0].HighVal[0]
+		}
+		curRangeLen := len(ranges)
+		for ranIdx := 1; ranIdx < len(oneColumnRan); ranIdx++ {
+			newRanges := make([]*ranger.Range, 0, curRangeLen)
+			for oldRangeIdx := 0; oldRangeIdx < curRangeLen; oldRangeIdx++ {
+				newRange := ranges[oldRangeIdx].Clone()
+				newRange.LowVal[i] = oneColumnRan[ranIdx].LowVal[0]
+				newRange.HighVal[i] = oneColumnRan[ranIdx].HighVal[0]
+				newRanges = append(newRanges, newRange)
+			}
+			ranges = append(ranges, newRanges...)
+		}
+		j++
+	}
+	return ranges, false, nil
+}
+
+func (ijHelper *indexJoinBuildHelper) updateBestChoice(ranges []*ranger.Range, path *indexJoinAccessPath, accesses,
+	remained []expression.Expression, lastColManager *plannercore.ColWithCmpFuncManager) {
+	// We choose the index by the number of used columns of the range, the much the better.
+	// Notice that there may be the cases like `t1.a=t2.a and b > 2 and b < 1`. So ranges can be nil though the conditions are valid.
+	// But obviously when the range is nil, we don't need index join.
+	if len(ranges) > 0 && len(ranges[0].LowVal) > ijHelper.maxUsedCols {
+		ijHelper.chosenPath = path
+		ijHelper.maxUsedCols = len(ranges[0].LowVal)
+		ijHelper.chosenRanges = ranges
+		ijHelper.chosenAccess = accesses
+		ijHelper.chosenRemained = remained
+		ijHelper.idxOff2KeyOff = ijHelper.curIdxOff2KeyOff
+		ijHelper.lastColManager = lastColManager
+	}
+}
+
+var symmetricOp = map[string]string{
+	ast.LT: ast.GT,
+	ast.GE: ast.LE,
+	ast.GT: ast.LT,
+	ast.LE: ast.GE,
+}
+
+// buildLastColManager analyze the `OtherConditions` of join to see whether there're some filters can be used in manager.
+// The returned value is just for outputting explain information
+func (ijHelper *indexJoinBuildHelper) buildLastColManager(nextCol *expression.Column,
+	innerSchema *expression.Schema, cwc *plannercore.ColWithCmpFuncManager) []expression.Expression {
+	var lastColAccesses []expression.Expression
+	join := ijHelper.joinExpr.ExprNode.(*plannercore.LogicalJoin)
+loopOtherConds:
+	for _, filter := range join.OtherConditions {
+		sf, ok := filter.(*expression.ScalarFunction)
+		if !ok || !(sf.FuncName.L == ast.LE || sf.FuncName.L == ast.LT || sf.FuncName.L == ast.GE || sf.FuncName.L == ast.GT) {
+			continue
+		}
+		var funcName string
+		var anotherArg expression.Expression
+		if lCol, ok := sf.GetArgs()[0].(*expression.Column); ok && lCol.Equal(nil, nextCol) {
+			anotherArg = sf.GetArgs()[1]
+			funcName = sf.FuncName.L
+		} else if rCol, ok := sf.GetArgs()[1].(*expression.Column); ok && rCol.Equal(nil, nextCol) {
+			anotherArg = sf.GetArgs()[0]
+			// The column manager always build expression in the form of col op arg1.
+			// So we need use the symmetric one of the current function.
+			funcName = symmetricOp[sf.FuncName.L]
+		} else {
+			continue
+		}
+		affectedCols := expression.ExtractColumns(anotherArg)
+		if len(affectedCols) == 0 {
+			continue
+		}
+		for _, col := range affectedCols {
+			if innerSchema.Contains(col) {
+				continue loopOtherConds
+			}
+		}
+		lastColAccesses = append(lastColAccesses, sf)
+		cwc.AppendNewExpr(funcName, anotherArg, affectedCols)
+	}
+	return lastColAccesses
+}
+
+func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *indexJoinAccessPath, innerGroup *memo.Group, innerJoinKeys []*expression.Column) (emptyRange bool, err error) {
+	if len(path.indexScan.IdxCols) == 0 {
+		return false, nil
+	}
+	ctx := ijHelper.joinExpr.ExprNode.SCtx()
+	accesses := make([]expression.Expression, 0, len(path.indexScan.IdxCols))
+	ijHelper.resetContextForIndex(innerJoinKeys, path.indexScan.IdxCols, path.indexScan.IdxColLens)
+	notKeyEqAndIn, remained, rangeFilterCandidates := ijHelper.findUsefulEqAndInFilters(path.conditions)
+	var remainedEqAndIn []expression.Expression
+	notKeyEqAndIn, remainedEqAndIn = ijHelper.removeUselessEqAndInFunc(path.indexScan.IdxCols, notKeyEqAndIn)
+	matchedKeyCnt := len(ijHelper.curPossibleUsedKeys)
+	// If no join key is matched while join keys actually are not empty. We don't choose index join for now.
+	if matchedKeyCnt <= 0 && len(innerJoinKeys) > 0 {
+		return false, nil
+	}
+	accesses = append(accesses, notKeyEqAndIn...)
+	remained = append(remained, remainedEqAndIn...)
+	lastColPos := matchedKeyCnt + len(notKeyEqAndIn)
+	// There should be some equal conditions. But we don't need that there must be some join key in accesses here.
+	// A more strict check is applied later.
+	if lastColPos <= 0 {
+		return false, nil
+	}
+	// If all the index columns are covered by eq/in conditions, we don't need to consider other conditions anymore.
+	if lastColPos == len(path.indexScan.IdxCols) {
+		// If there's join key matched index column. Then choose hash join is always a better idea.
+		// e.g. select * from t1, t2 where t2.a=1 and t2.b=1. And t2 has index(a, b).
+		//      If we don't have the following check, TiDB will build index join for this case.
+		if matchedKeyCnt <= 0 {
+			return false, nil
+		}
+		remained = append(remained, rangeFilterCandidates...)
+		ranges, emptyRange, err := ijHelper.buildTemplateRange(matchedKeyCnt, notKeyEqAndIn, nil, false)
+		if err != nil {
+			return false, err
+		}
+		if emptyRange {
+			return true, nil
+		}
+		ijHelper.updateBestChoice(ranges, path, accesses, remained, nil)
+		return false, nil
+	}
+	lastPossibleCol := path.indexScan.IdxCols[lastColPos]
+	lastColManager := &plannercore.ColWithCmpFuncManager{
+		TargetCol:         lastPossibleCol,
+		ColLength:         path.indexScan.IdxColLens[lastColPos],
+		AffectedColSchema: expression.NewSchema(),
+	}
+	lastColAccess := ijHelper.buildLastColManager(lastPossibleCol, innerGroup.Prop.Schema, lastColManager)
+	// If the column manager holds no expression, then we fallback to find whether there're useful normal filters
+	if len(lastColAccess) == 0 {
+		// If there's join key matched index column. Then choose hash join is always a better idea.
+		// e.g. select * from t1, t2 where t2.a=1 and t2.b=1 and t2.c > 10 and t2.c < 20. And t2 has index(a, b, c).
+		//      If we don't have the following check, TiDB will build index join for this case.
+		if matchedKeyCnt <= 0 {
+			return false, nil
+		}
+		colAccesses, colRemained := ranger.DetachCondsForColumn(ctx, rangeFilterCandidates, lastPossibleCol)
+		var ranges, nextColRange []*ranger.Range
+		var err error
+		if len(colAccesses) > 0 {
+			nextColRange, err = ranger.BuildColumnRange(colAccesses, ctx.GetSessionVars().StmtCtx, lastPossibleCol.RetType, path.indexScan.IdxColLens[lastColPos])
+			if err != nil {
+				return false, err
+			}
+		}
+		ranges, emptyRange, err = ijHelper.buildTemplateRange(matchedKeyCnt, notKeyEqAndIn, nextColRange, false)
+		if err != nil {
+			return false, err
+		}
+		if emptyRange {
+			return true, nil
+		}
+		remained = append(remained, colRemained...)
+		if path.indexScan.IdxColLens[lastColPos] != types.UnspecifiedLength {
+			remained = append(remained, colAccesses...)
+		}
+		accesses = append(accesses, colAccesses...)
+		ijHelper.updateBestChoice(ranges, path, accesses, remained, nil)
+		return false, nil
+	}
+	accesses = append(accesses, lastColAccess...)
+	remained = append(remained, rangeFilterCandidates...)
+	ranges, emptyRange, err := ijHelper.buildTemplateRange(matchedKeyCnt, notKeyEqAndIn, nil, true)
+	if err != nil {
+		return false, err
+	}
+	if emptyRange {
+		return true, nil
+	}
+	ijHelper.updateBestChoice(ranges, path, accesses, remained, lastColManager)
+	return false, nil
 }
