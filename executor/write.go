@@ -106,7 +106,7 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h int64, oldData
 				if err != nil {
 					return false, false, 0, err
 				}
-				if err = t.RebaseAutoID(sctx, recordID, true); err != nil {
+				if err = t.RebaseAutoID(sctx, recordID, true, autoid.RowIDAllocType); err != nil {
 					return false, false, 0, err
 				}
 			}
