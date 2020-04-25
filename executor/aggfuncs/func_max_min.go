@@ -271,6 +271,7 @@ func (e *maxMin4Uint) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinUint)(pr)
 	p.val = 0
 	p.isNull = true
+	p.Reset()
 }
 
 func (e *maxMin4Uint) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
