@@ -25,6 +25,7 @@ var UnCacheableFunctions = map[string]struct{}{
 	ast.User:         {},
 	ast.ConnectionID: {},
 	ast.LastInsertId: {},
+	ast.RowCount:     {},
 	ast.Version:      {},
 	ast.Like:         {},
 }

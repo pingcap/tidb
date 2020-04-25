@@ -76,7 +76,7 @@ func splitPreSplitedTable(store kv.SplittableStore, tbInfo *model.TableInfo, sca
 	for p := step; p < max; p += step {
 		recordID := p << (64 - tbInfo.ShardRowIDBits - 1)
 		recordPrefix := tablecodec.GenTableRecordPrefix(tbInfo.ID)
-		key := tablecodec.EncodeRecordKey(recordPrefix, recordID)
+		key := tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(recordID))
 		splitTableKeys = append(splitTableKeys, key)
 	}
 	var err error

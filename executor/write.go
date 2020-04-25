@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
@@ -105,7 +106,7 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h int64, oldData
 				if err != nil {
 					return false, false, 0, err
 				}
-				if err = t.RebaseAutoID(sctx, recordID, true); err != nil {
+				if err = t.RebaseAutoID(sctx, recordID, true, autoid.RowIDAllocType); err != nil {
 					return false, false, 0, err
 				}
 			}
@@ -143,7 +144,7 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h int64, oldData
 			physicalID = p.GetPhysicalID()
 		}
 
-		unchangedRowKey := tablecodec.EncodeRowKeyWithHandle(physicalID, h)
+		unchangedRowKey := tablecodec.EncodeRowKeyWithHandle(physicalID, kv.IntHandle(h))
 		txnCtx := sctx.GetSessionVars().TxnCtx
 		if txnCtx.IsPessimistic {
 			txnCtx.AddUnchangedRowKey(unchangedRowKey)
