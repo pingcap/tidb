@@ -99,6 +99,7 @@ func (m *maxMinQueue) Pop(val interface{}) {
 func (m *maxMinQueue) Reset() {
 	m.queue = m.queue[:0]
 	m.counter = make(map[interface{}]int64)
+	m.dirty = false
 }
 
 type partialResult4MaxMinInt struct {
@@ -107,6 +108,7 @@ type partialResult4MaxMinInt struct {
 	// 1. whether the partial result is the initialization value which should not be compared during evaluation;
 	// 2. whether all the values of arg are all null, if so, we should return null as the default value for MAX/MIN.
 	isNull bool
+	// maxMinQueue is a ordered queue, using to evaluate the maximum or minimum value in a sliding window.
 	*maxMinQueue
 }
 
