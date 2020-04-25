@@ -27,6 +27,7 @@ type maxMinQueue struct {
 	queue   []interface{}
 	counter map[interface{}]int64
 	isMax   bool
+	dirty   bool
 	cmpFunc func(i, j interface{}) int
 }
 
@@ -54,6 +55,10 @@ func (m *maxMinQueue) Top() (val interface{}, isEmpty bool) {
 	if len(m.queue) == 0 {
 		return nil, true
 	}
+	if m.dirty {
+		m.Resort()
+		m.dirty = false
+	}
 	return m.queue[0], false
 }
 
@@ -75,7 +80,7 @@ func (m *maxMinQueue) Push(val interface{}) {
 	} else {
 		m.counter[val] = 1
 		m.queue = append(m.queue, val)
-		m.Resort()
+		m.dirty = true
 	}
 }
 
@@ -86,7 +91,7 @@ func (m *maxMinQueue) Pop(val interface{}) {
 		if v == 1 {
 			m.Del(val)
 			delete(m.counter, val)
-			m.Resort()
+			m.dirty = true
 		}
 	}
 }
