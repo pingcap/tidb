@@ -820,7 +820,7 @@ func (w *addIndexWorker) getIndexRecord(handle int64, recordKey []byte, rawRecor
 	cols := t.Cols()
 	idxInfo := w.index.Meta()
 	sysZone := timeutil.SystemLocation()
-	_, err := w.rowDecoder.DecodeAndEvalRowWithMap(w.sessCtx, handle, rawRecord, time.UTC, sysZone, w.rowMap)
+	_, err := w.rowDecoder.DecodeAndEvalRowWithMap(w.sessCtx, kv.IntHandle(handle), rawRecord, time.UTC, sysZone, w.rowMap)
 	if err != nil {
 		return nil, errors.Trace(errCantDecodeIndex.GenWithStackByArgs(err))
 	}
@@ -1223,7 +1223,7 @@ func decodeHandleRange(keyRange kv.KeyRange) (int64, int64, error) {
 		return 0, 0, errors.Trace(err)
 	}
 
-	return startHandle, endHandle, nil
+	return startHandle.IntValue(), endHandle.IntValue(), nil
 }
 
 func closeAddIndexWorkers(workers []*addIndexWorker) {
@@ -1584,14 +1584,14 @@ func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version 
 			break
 		}
 
-		var handle int64
+		var handle kv.Handle
 		handle, err = tablecodec.DecodeRowKey(it.Key())
 		if err != nil {
 			return errors.Trace(err)
 		}
-		rk := t.RecordKey(handle)
+		rk := t.RecordKey(handle.IntValue())
 
-		more, err := fn(handle, rk, it.Value())
+		more, err := fn(handle.IntValue(), rk, it.Value())
 		if !more || err != nil {
 			return errors.Trace(err)
 		}
