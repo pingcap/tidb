@@ -24,14 +24,16 @@ import (
 
 type hashPartitionPruner struct {
 	unionSet    *disjointset.IntSet // unionSet stores the relations like col_i = col_j
-	constantMap [][]*Constant
+	constantMap []vector
 	conditions  []Expression
 	colMapper   map[int64]int
 	numColumn   int
 	ctx         sessionctx.Context
 }
 
-func Equal(a, b []*Constant, ctx sessionctx.Context) bool {
+type vector []*Constant
+
+func Equal(a, b vector, ctx sessionctx.Context) bool {
 	if len(a) != len(b) {
 		return false
 	}
@@ -43,8 +45,8 @@ func Equal(a, b []*Constant, ctx sessionctx.Context) bool {
 	return true
 }
 
-func Intersect(a, b []*Constant, ctx sessionctx.Context) []*Constant {
-	ret := make([]*Constant, 0, len(a))
+func Intersect(a, b vector, ctx sessionctx.Context) []*Constant {
+	ret := make(vector, 0, len(a))
 	for _, c := range a {
 		for _, cb := range b {
 			if c.Equal(ctx, cb) {
@@ -293,12 +295,12 @@ func (p *hashPartitionPruner) solve(ctx sessionctx.Context, conds []Expression, 
 	p.ctx = ctx
 	for _, cond := range conds {
 		p.conditions = append(p.conditions, SplitCNFItems(cond)...)
-		for _, col := range ExtractColumns(cond) {
+		fmt.Println(cond)
+		cols := ExtractColumns(cond)
+		for _, col := range cols {
+			fmt.Println(col)
 			p.insertCol(col)
 		}
-	}
-	for _, col := range ExtractColumns(piExpr) {
-		p.insertCol(col)
 	}
 	p.constantMap = make([][]*Constant, p.numColumn)
 	conflict := p.reduceConstantEQ()
@@ -329,12 +331,5 @@ func intersect(a, b []int64) []int64 {
 
 // FastLocateHashPartition is used to get hash partition quickly.
 func FastLocateHashPartition(ctx sessionctx.Context, conds []Expression, piExpr Expression) ([]int64, bool, bool) {
-	var ret []int64
-	for _, cond := range conds {
-		cnfs := SplitDNFItems(cond)
-		for _, cnf := range cnfs {
-			newHashPartitionPruner().solve(ctx, cnf, piExpr)
-		}
-	}
-	return
+	return newHashPartitionPruner().solve(ctx, conds, piExpr)
 }
