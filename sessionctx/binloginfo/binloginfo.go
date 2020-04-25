@@ -14,11 +14,6 @@
 package binloginfo
 
 import (
-<<<<<<< HEAD
-	"context"
-	"fmt"
-=======
->>>>>>> ff47c8d... parser: apply feature-ids special comments to auto_random (#15412)
 	"math"
 	"regexp"
 	"strings"
