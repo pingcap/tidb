@@ -349,15 +349,11 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	e.names = names
 	e.Plan = p
 	_, isTableDual := p.(*PhysicalTableDual)
-<<<<<<< HEAD
 	if !isTableDual && prepared.UseCache {
-=======
-	if !isTableDual && prepared.UseCache && !isRange {
 		err = e.setFoundInPlanCache(sctx, true)
 		if err != nil {
 			return err
 		}
->>>>>>> ff7413f... planner, sessionctx : Add 'last_plan_from_cache' to help know whether sql's plan is from plan cache (#16321)
 		cached := NewPSTMTPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan)
 		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
