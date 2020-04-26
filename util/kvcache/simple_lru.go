@@ -42,6 +42,7 @@ var (
 )
 
 const (
+	// ProfileName is the function name in heap profile
 	ProfileName = "github.com/pingcap/tidb/util/kvcache.(*SimpleLRUCache).Put"
 )
 

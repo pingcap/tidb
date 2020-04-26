@@ -175,7 +175,7 @@ func main() {
 	}
 	setGlobalVars()
 	setCPUAffinity()
-	setMemoryProfileTracker()
+	setHeapProfileTracker()
 	setupLog()
 	setupTracing() // Should before createServer and after setup config.
 	printInfo()
@@ -276,9 +276,9 @@ func setCPUAffinity() {
 	runtime.GOMAXPROCS(len(cpu))
 }
 
-func setMemoryProfileTracker() {
+func setHeapProfileTracker() {
 	// TODO expose the time duration into config
-	go profile.MemProfileForGlobalMemTracker(1 * time.Minute)
+	go profile.HeapProfileForGlobalMemTracker(1 * time.Minute)
 }
 
 func registerStores() {

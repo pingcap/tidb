@@ -22,14 +22,15 @@ import (
 
 var col = &Collector{}
 
-func MemProfileForGlobalMemTracker(d time.Duration) {
+// HeapProfileForGlobalMemTracker record heap profile data into each global function memory tracker
+func HeapProfileForGlobalMemTracker(d time.Duration) {
 	log.Info("Mem Profile Tracker started")
 	t := time.NewTicker(d)
 	defer t.Stop()
 	for {
 		select {
 		case <-t.C:
-			err := memProfileForGlobalMemTracker()
+			err := heapProfileForGlobalMemTracker()
 			if err != nil {
 				log.Warnf("profile memory into tracker failed, err: %v", err)
 			}
@@ -37,7 +38,7 @@ func MemProfileForGlobalMemTracker(d time.Duration) {
 	}
 }
 
-func memProfileForGlobalMemTracker() error {
+func heapProfileForGlobalMemTracker() error {
 	bytes, err := col.getFuncMemUsage(kvcache.ProfileName)
 	if err != nil {
 		return err
