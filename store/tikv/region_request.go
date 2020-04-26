@@ -19,10 +19,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"go.uber.org/zap"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
@@ -32,6 +28,10 @@ import (
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/storeutil"
+	"go.uber.org/zap"
+	"golang.org/x/sync/singleflight"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // ShuttingDown is a flag to indicate tidb-server is exiting (Ctrl+C signal
@@ -236,6 +236,51 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 		return nil, true, nil
 	}
 	return
+}
+
+var resolveRegionSf singleflight.Group
+
+func (s *RegionRequestSender) sendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	canCollapse, resp, err := s.tryCollapseRequest(ctx, addr, req, timeout)
+	if canCollapse {
+		return resp, err
+	}
+	return s.client.SendRequest(ctx, addr, req, timeout)
+}
+
+func (s *RegionRequestSender) tryCollapseRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (canCollapse bool, resp *tikvrpc.Response, err error) {
+	switch req.Type {
+	case tikvrpc.CmdResolveLock:
+		resolveLock := req.ResolveLock()
+		if len(resolveLock.Keys) > 0 {
+			// can not collapse resolveLite
+			return
+		}
+		canCollapse = true
+		rsC := resolveRegionSf.DoChan(addr+"-"+strconv.FormatUint(resolveLock.StartVersion, 10)+"-"+strconv.FormatUint(resolveLock.CommitVersion, 10), func() (interface{}, error) {
+			return s.client.SendRequest(context.Background(), addr, req, ReadTimeoutMedium) // set longer timeout than outer's.
+		})
+		timer := time.NewTimer(timeout)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			err = errors.Trace(ctx.Err())
+			return
+		case <-timer.C:
+			err = errors.Trace(context.DeadlineExceeded)
+			return
+		case rs := <-rsC:
+			if rs.Err != nil {
+				err = errors.Trace(rs.Err)
+				return
+			}
+			resp = rs.Val.(*tikvrpc.Response)
+			return
+		}
+	default:
+		// now we only support collapse resolve lock.
+		return
+	}
 }
 
 func (s *RegionRequestSender) getStoreToken(st *Store, limit int64) error {
