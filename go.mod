@@ -32,41 +32,22 @@ require (
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.0.2
-<<<<<<< HEAD
 	github.com/pingcap/check v0.0.0-20190102082844-67f458068fc8
 	github.com/pingcap/errors v0.11.4
 	github.com/pingcap/failpoint v0.0.0-20190512135322-30cc7431d99c
 	github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e
 	github.com/pingcap/kvproto v0.0.0-20200311073257-e53d835099b0
 	github.com/pingcap/log v0.0.0-20190715063458-479153f07ebd
-	github.com/pingcap/parser v3.0.13-0.20200415122949-7873549f01a5+incompatible
+	github.com/pingcap/parser v3.0.13-0.20200422071807-70ac9ca4680d+incompatible
 	github.com/pingcap/pd v1.1.0-beta.0.20191223090411-ea2b748f6ee2
 	github.com/pingcap/tidb-tools v3.0.6-0.20191119150227-ff0a3c6e5763+incompatible
-	github.com/pingcap/tipb v0.0.0-20200401051346-bec3080a5428
+	github.com/pingcap/tipb v0.0.0-20200426072559-d2c068e96eb3
 	github.com/prometheus/client_golang v0.9.0
 	github.com/prometheus/client_model v0.0.0-20180712105110-5c3871d89910
 	github.com/prometheus/common v0.0.0-20181020173914-7e9e6cabbd39 // indirect
 	github.com/prometheus/procfs v0.0.0-20181005140218-185b4288413d // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20190512091148-babf20351dd7 // indirect
 	github.com/shirou/gopsutil v2.18.10+incompatible
-=======
-	github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712
-	github.com/pingcap/errors v0.11.5-0.20190809092503-95897b64e011
-	github.com/pingcap/failpoint v0.0.0-20200210140405-f8f9fb234798
-	github.com/pingcap/fn v0.0.0-20191016082858-07623b84a47d
-	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
-	github.com/pingcap/kvproto v0.0.0-20200409034505-a5af800ca2ef
-	github.com/pingcap/log v0.0.0-20200117041106-d28c14d3b1cd
-	github.com/pingcap/parser v0.0.0-20200413043052-ef80f4de418c
-	github.com/pingcap/pd/v4 v4.0.0-beta.1.0.20200305072537-61d9f9cc35d3
-	github.com/pingcap/sysutil v0.0.0-20200408114249-ed3bd6f7fdb1
-	github.com/pingcap/tidb-tools v4.0.0-beta.1.0.20200306084441-875bd09aa3d5+incompatible
-	github.com/pingcap/tipb v0.0.0-20200417094153-7316d94df1ee
-	github.com/prometheus/client_golang v1.0.0
-	github.com/prometheus/client_model v0.0.0-20190812154241-14fe0d1b01d4
-	github.com/prometheus/common v0.4.1
-	github.com/shirou/gopsutil v2.19.10+incompatible
->>>>>>> 8b6d53a... expression: split isTrue and isFalse expression sig (#16542)
 	github.com/shurcooL/httpfs v0.0.0-20171119174359-809beceb2371 // indirect
 	github.com/shurcooL/vfsgen v0.0.0-20181020040650-a97a25d856ca // indirect
 	github.com/sirupsen/logrus v1.2.0
