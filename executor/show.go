@@ -878,6 +878,10 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		}
 	}
 
+	if tableInfo.AutoIdCache != 0 {
+		fmt.Fprintf(buf, " /*T![auto_id_cache] AUTO_ID_CACHE=%d */", tableInfo.AutoIdCache)
+	}
+
 	if tableInfo.AutoRandID != 0 {
 		fmt.Fprintf(buf, " /*T![auto_rand_base] AUTO_RANDOM_BASE=%d */", tableInfo.AutoRandID)
 	}
