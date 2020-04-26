@@ -67,11 +67,11 @@ func (c *logicAndFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err != nil {
 		return nil, err
 	}
-	args[0], err = wrapWithIsTrue(ctx, true, args[0], false)
+	args[0], err = wrapWithIsTrue(ctx, true, args[0])
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	args[1], err = wrapWithIsTrue(ctx, true, args[1], false)
+	args[1], err = wrapWithIsTrue(ctx, true, args[1])
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -117,11 +117,11 @@ func (c *logicOrFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if err != nil {
 		return nil, err
 	}
-	args[0], err = wrapWithIsTrue(ctx, true, args[0], false)
+	args[0], err = wrapWithIsTrue(ctx, true, args[0])
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	args[1], err = wrapWithIsTrue(ctx, true, args[1], false)
+	args[1], err = wrapWithIsTrue(ctx, true, args[1])
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
