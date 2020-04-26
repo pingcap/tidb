@@ -522,6 +522,15 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 	return nil, ErrUnsupportedType.GenWithStack("Unsupported type %T", node)
 }
 
+<<<<<<< HEAD
+=======
+func (b *PlanBuilder) buildSetConfig(ctx context.Context, v *ast.SetConfigStmt) (Plan, error) {
+	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+	expr, _, err := b.rewrite(ctx, v.Value, mockTablePlan, nil, true)
+	return &SetConfig{Name: v.Name, Type: v.Type, Instance: v.Instance, Value: expr}, err
+}
+
+>>>>>>> a731265... executor: do not quote numbers in JSON data when using `set config` #16829 (#16835)
 func (b *PlanBuilder) buildChange(v *ast.ChangeStmt) (Plan, error) {
 	exe := &Change{
 		ChangeStmt: v,
