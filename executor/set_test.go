@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"github.com/pingcap/tidb/util/mock"
 	"io/ioutil"
 	"net/http"
 	"strconv"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
