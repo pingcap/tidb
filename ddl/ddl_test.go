@@ -125,7 +125,7 @@ func TestT(t *testing.T) {
 	testleak.AfterTestT(t)()
 }
 
-func testNewDDLAndStart(c *C, ctx context.Context, options ...Option) *ddl {
+func testNewDDLAndStart(ctx context.Context, c *C, options ...Option) *ddl {
 	d := newDDL(ctx, options...)
 	err := d.Start(nil)
 	c.Assert(err, IsNil)

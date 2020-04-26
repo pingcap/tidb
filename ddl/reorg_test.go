@@ -36,8 +36,9 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	store := testCreateStore(c, "test_reorg")
 	defer store.Close()
 
-	d := testNewDDLAndStart(c,
+	d := testNewDDLAndStart(
 		context.Background(),
+		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
@@ -162,8 +163,9 @@ func (s *testDDLSuite) TestReorgOwner(c *C) {
 	store := testCreateStore(c, "test_reorg_owner")
 	defer store.Close()
 
-	d1 := testNewDDLAndStart(c,
+	d1 := testNewDDLAndStart(
 		context.Background(),
+		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
@@ -173,8 +175,9 @@ func (s *testDDLSuite) TestReorgOwner(c *C) {
 
 	testCheckOwner(c, d1, true)
 
-	d2 := testNewDDLAndStart(c,
+	d2 := testNewDDLAndStart(
 		context.Background(),
+		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
