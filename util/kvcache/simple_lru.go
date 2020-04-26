@@ -47,7 +47,7 @@ const (
 )
 
 func init() {
-	GlobalLRUMemUsageTracker = memory.NewGlobalTracker(stringutil.StringerStr("GlobalSimpleLRUCache"), -1)
+	GlobalLRUMemUsageTracker = memory.NewTracker(stringutil.StringerStr("GlobalSimpleLRUCache"), -1)
 }
 
 // SimpleLRUCache is a simple least recently used cache, not thread-safe, use it carefully.

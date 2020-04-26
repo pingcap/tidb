@@ -324,6 +324,8 @@ func (t *Tracker) DetachFromGlobalTracker() {
 	}
 	parent := t.parent
 	parent.Consume(-t.BytesConsumed())
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	t.parent = nil
 }
 
