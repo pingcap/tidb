@@ -1708,11 +1708,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-<<<<<<< HEAD
-	currentBootstrapVersion = version38
-=======
-	currentBootstrapVersion = version44
->>>>>>> 493b971... session: boostrap delete isolation engines from global variables (#16622)
+	currentBootstrapVersion = version39
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {

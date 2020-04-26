@@ -361,19 +361,8 @@ const (
 	version36 = 36
 	version37 = 37
 	version38 = 38
-<<<<<<< HEAD
-=======
+	// version39 delete tidb_isolation_read_engines from mysql.global_variables to avoid unexpected behavior after upgrade.
 	version39 = 39
-	// version40 is the version that introduce new collation in TiDB,
-	// see https://github.com/pingcap/tidb/pull/14574 for more details.
-	version40 = 40
-	version41 = 41
-	// version42 add storeType and reason column in expr_pushdown_blacklist
-	version42 = 42
-	// version43 updates global variables related to statement summary.
-	version43 = 43
-	// version44 delete tidb_isolation_read_engines from mysql.global_variables to avoid unexpected behavior after upgrade.
-	version44 = 44
 )
 
 var (
@@ -416,13 +405,7 @@ var (
 		upgradeToVer37,
 		upgradeToVer38,
 		upgradeToVer39,
-		upgradeToVer40,
-		upgradeToVer41,
-		upgradeToVer42,
-		upgradeToVer43,
-		upgradeToVer44,
 	}
->>>>>>> 493b971... session: boostrap delete isolation engines from global variables (#16622)
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -487,157 +470,8 @@ func upgrade(s Session) {
 		return
 	}
 	// Do upgrade works then update bootstrap version.
-<<<<<<< HEAD
-	if ver < version2 {
-		upgradeToVer2(s)
-		ver = version2
-	}
-	if ver < version3 {
-		upgradeToVer3(s)
-	}
-	if ver < version4 {
-		upgradeToVer4(s)
-	}
-
-	if ver < version5 {
-		upgradeToVer5(s)
-	}
-
-	if ver < version6 {
-		upgradeToVer6(s)
-	}
-
-	if ver < version7 {
-		upgradeToVer7(s)
-	}
-
-	if ver < version8 {
-		upgradeToVer8(s)
-	}
-
-	if ver < version9 {
-		upgradeToVer9(s)
-	}
-
-	if ver < version10 {
-		upgradeToVer10(s)
-	}
-
-	if ver < version11 {
-		upgradeToVer11(s)
-	}
-
-	if ver < version12 {
-		upgradeToVer12(s)
-	}
-
-	if ver < version13 {
-		upgradeToVer13(s)
-	}
-
-	if ver < version14 {
-		upgradeToVer14(s)
-	}
-
-	if ver < version15 {
-		upgradeToVer15(s)
-	}
-
-	if ver < version16 {
-		upgradeToVer16(s)
-	}
-
-	if ver < version17 {
-		upgradeToVer17(s)
-	}
-
-	if ver < version18 {
-		upgradeToVer18(s)
-	}
-
-	if ver < version19 {
-		upgradeToVer19(s)
-	}
-
-	if ver < version20 {
-		upgradeToVer20(s)
-	}
-
-	if ver < version21 {
-		upgradeToVer21(s)
-	}
-
-	if ver < version22 {
-		upgradeToVer22(s)
-	}
-
-	if ver < version23 {
-		upgradeToVer23(s)
-	}
-
-	if ver < version24 {
-		upgradeToVer24(s)
-	}
-
-	if ver < version25 {
-		upgradeToVer25(s)
-	}
-
-	if ver < version26 {
-		upgradeToVer26(s)
-	}
-
-	if ver < version27 {
-		upgradeToVer27(s)
-	}
-
-	if ver < version28 {
-		upgradeToVer28(s)
-	}
-
-	// upgradeToVer29 only need to be run when the current version is 28.
-	if ver == version28 {
-		upgradeToVer29(s)
-	}
-
-	if ver < version30 {
-		upgradeToVer30(s)
-	}
-
-	if ver < version31 {
-		upgradeToVer31(s)
-	}
-
-	if ver < version32 {
-		upgradeToVer32(s)
-	}
-
-	if ver < version33 {
-		upgradeToVer33(s)
-	}
-
-	if ver < version34 {
-		upgradeToVer34(s)
-	}
-
-	if ver < version35 {
-		upgradeToVer35(s)
-	}
-
-	if ver < version36 {
-		upgradeToVer36(s)
-	}
-
-	if ver < version37 {
-		upgradeToVer37(s)
-	}
-
-	if ver < version38 {
-		upgradeToVer38(s)
-=======
 	for _, upgrade := range bootstrapVersion {
 		upgrade(s, ver)
->>>>>>> 493b971... session: boostrap delete isolation engines from global variables (#16622)
 	}
 
 	updateBootstrapVer(s)
@@ -1093,88 +927,13 @@ func upgradeToVer38(s Session, ver int64) {
 	}
 }
 
-<<<<<<< HEAD
-=======
 func upgradeToVer39(s Session, ver int64) {
 	if ver >= version39 {
-		return
-	}
-	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Reload_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
-	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `File_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
-	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Reload_priv='Y' where Super_priv='Y'")
-	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET File_priv='Y' where Super_priv='Y'")
-}
-
-func writeNewCollationParameter(s Session, flag bool) {
-	comment := "If the new collations are enabled. Do not edit it."
-	b := varFalse
-	if flag {
-		b = varTrue
-	}
-	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES ("%s", '%s', '%s') ON DUPLICATE KEY UPDATE VARIABLE_VALUE='%s'`,
-		mysql.SystemDB, mysql.TiDBTable, tidbNewCollationEnabled, b, comment, b)
-	mustExecute(s, sql)
-}
-
-func upgradeToVer40(s Session, ver int64) {
-	if ver >= version40 {
-		return
-	}
-	// There is no way to enable new collation for an existing TiDB cluster.
-	writeNewCollationParameter(s, false)
-}
-
-func upgradeToVer41(s Session, ver int64) {
-	if ver >= version41 {
-		return
-	}
-	doReentrantDDL(s, "ALTER TABLE mysql.user CHANGE `password` `authentication_string` TEXT", infoschema.ErrColumnExists, infoschema.ErrColumnNotExists)
-	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `password` TEXT as (`authentication_string`)", infoschema.ErrColumnExists)
-}
-
-// writeDefaultExprPushDownBlacklist writes default expr pushdown blacklist into mysql.expr_pushdown_blacklist
-func writeDefaultExprPushDownBlacklist(s Session) {
-	mustExecute(s, "INSERT HIGH_PRIORITY INTO mysql.expr_pushdown_blacklist VALUES"+
-		"('date_add','tiflash', 'DST(daylight saving time) does not take effect in TiFlash date_add'),"+
-		"('cast','tiflash', 'Behavior of some corner cases(overflow, truncate etc) is different in TiFlash and TiDB')")
-}
-
-func upgradeToVer42(s Session, ver int64) {
-	if ver >= version42 {
-		return
-	}
-	doReentrantDDL(s, "ALTER TABLE mysql.expr_pushdown_blacklist ADD COLUMN `store_type` char(100) NOT NULL DEFAULT 'tikv,tiflash,tidb'", infoschema.ErrColumnExists)
-	doReentrantDDL(s, "ALTER TABLE mysql.expr_pushdown_blacklist ADD COLUMN `reason` varchar(200)", infoschema.ErrColumnExists)
-	writeDefaultExprPushDownBlacklist(s)
-}
-
-// Convert statement summary global variables to non-empty values.
-func writeStmtSummaryVars(s Session) {
-	sql := fmt.Sprintf("UPDATE %s.%s SET variable_value='%%s' WHERE variable_name='%%s' AND variable_value=''", mysql.SystemDB, mysql.GlobalVariablesTable)
-	stmtSummaryConfig := config.GetGlobalConfig().StmtSummary
-	mustExecute(s, fmt.Sprintf(sql, variable.BoolToIntStr(stmtSummaryConfig.Enable), variable.TiDBEnableStmtSummary))
-	mustExecute(s, fmt.Sprintf(sql, variable.BoolToIntStr(stmtSummaryConfig.EnableInternalQuery), variable.TiDBStmtSummaryInternalQuery))
-	mustExecute(s, fmt.Sprintf(sql, strconv.Itoa(stmtSummaryConfig.RefreshInterval), variable.TiDBStmtSummaryRefreshInterval))
-	mustExecute(s, fmt.Sprintf(sql, strconv.Itoa(stmtSummaryConfig.HistorySize), variable.TiDBStmtSummaryHistorySize))
-	mustExecute(s, fmt.Sprintf(sql, strconv.FormatUint(uint64(stmtSummaryConfig.MaxStmtCount), 10), variable.TiDBStmtSummaryMaxStmtCount))
-	mustExecute(s, fmt.Sprintf(sql, strconv.FormatUint(uint64(stmtSummaryConfig.MaxSQLLength), 10), variable.TiDBStmtSummaryMaxSQLLength))
-}
-
-func upgradeToVer43(s Session, ver int64) {
-	if ver >= version43 {
-		return
-	}
-	writeStmtSummaryVars(s)
-}
-
-func upgradeToVer44(s Session, ver int64) {
-	if ver >= version44 {
 		return
 	}
 	mustExecute(s, "DELETE FROM mysql.global_variables where variable_name = \"tidb_isolation_read_engines\"")
 }
 
->>>>>>> 493b971... session: boostrap delete isolation engines from global variables (#16622)
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
