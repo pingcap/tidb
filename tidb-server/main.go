@@ -175,7 +175,7 @@ func main() {
 	}
 	setGlobalVars()
 	setCPUAffinity()
-	//setHeapProfileTracker()
+	setHeapProfileTracker()
 	setupLog()
 	setupTracing() // Should before createServer and after setup config.
 	printInfo()
