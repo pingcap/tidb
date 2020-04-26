@@ -37,13 +37,8 @@ require (
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
 	github.com/pingcap/kvproto v0.0.0-20200420075417-e0c6e8842f22
 	github.com/pingcap/log v0.0.0-20200117041106-d28c14d3b1cd
-<<<<<<< HEAD
 	github.com/pingcap/parser v0.0.0-20200422082501-7329d80eaf2c
 	github.com/pingcap/pd/v4 v4.0.0-rc.1.0.20200422143320-428acd53eba2
-=======
-	github.com/pingcap/parser v0.0.0-20200413043052-ef80f4de418c
-	github.com/pingcap/pd/v4 v4.0.0-beta.1.0.20200305072537-61d9f9cc35d3
->>>>>>> ff7413f... planner, sessionctx : Add 'last_plan_from_cache' to help know whether sql's plan is from plan cache (#16321)
 	github.com/pingcap/sysutil v0.0.0-20200408114249-ed3bd6f7fdb1
 	github.com/pingcap/tidb-tools v4.0.0-beta.1.0.20200306084441-875bd09aa3d5+incompatible
 	github.com/pingcap/tipb v0.0.0-20200417094153-7316d94df1ee
