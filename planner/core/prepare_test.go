@@ -676,8 +676,6 @@ func (s *testPlanSerialSuite) TestPlanCacheUnionScan(c *C) {
 	c.Check(cnt, Equals, float64(6))
 }
 
-<<<<<<< HEAD
-=======
 func (s *testPlanSerialSuite) TestPlanCacheHitInfo(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
@@ -720,7 +718,6 @@ func (s *testPlanSerialSuite) TestPlanCacheHitInfo(c *C) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 }
 
->>>>>>> 4ded1e2... planner : change the define of 'last_plan_from_cache' (#16594)
 func (s *testPrepareSuite) TestPrepareForGroupByMultiItems(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
