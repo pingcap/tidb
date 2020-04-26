@@ -43,11 +43,14 @@ type Tracker struct {
 		// The children memory trackers. If the Tracker is the Global Tracker, like executor.GlobalDiskUsageTracker,
 		// we wouldn't maintain its children in order to avoiding mutex contention.
 		children []*Tracker
-		parent   *Tracker // The parent memory tracker.
 	}
 	actionMu struct {
 		sync.Mutex
 		actionOnExceed ActionOnExceed
+	}
+	parMu struct{
+		sync.Mutex
+		parent   *Tracker // The parent memory tracker.
 	}
 
 	label         fmt.Stringer // Label of this "Tracker".
@@ -337,13 +340,13 @@ func (t *Tracker) ReplaceBytesUsed(bytes int64) {
 }
 
 func (t *Tracker) getParent() *Tracker {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.mu.parent
+	t.parMu.Lock()
+	defer t.parMu.Unlock()
+	return t.parMu.parent
 }
 
 func (t *Tracker) setParent(parent *Tracker) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.mu.parent = parent
+	t.parMu.Lock()
+	defer t.parMu.Unlock()
+	t.parMu.parent = parent
 }
