@@ -60,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/printer"
+	"github.com/pingcap/tidb/util/profile"
 	"github.com/pingcap/tidb/util/signal"
 	"github.com/pingcap/tidb/util/storeutil"
 	"github.com/pingcap/tidb/util/sys/linux"
@@ -272,6 +273,11 @@ func setCPUAffinity() {
 		exit()
 	}
 	runtime.GOMAXPROCS(len(cpu))
+}
+
+func setMemoryProfileTracker() {
+	// TODO expose the time duration into config
+	profile.MemProfileForGlobalMemTracker(1 * time.Minute)
 }
 
 func registerStores() {

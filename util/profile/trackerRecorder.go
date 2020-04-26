@@ -13,17 +13,39 @@
 
 package profile
 
-import "github.com/pingcap/tidb/util/kvcache"
+import (
+	"time"
+
+	"github.com/pingcap/tidb/util/kvcache"
+	log "github.com/sirupsen/logrus"
+)
 
 var col = &Collector{}
 
-// TODO: add worker to run this function periodically
+func MemProfileForGlobalMemTracker(d time.Duration) {
+	t := time.NewTicker(d)
+	defer t.Stop()
+	for {
+		select {
+		case <-t.C:
+			err := memProfileForGlobalMemTracker()
+			if err != nil {
+				log.Warnf("profile memory into tracker failed, err: %v", err)
+			}
+		}
+	}
+}
+
 func memProfileForGlobalMemTracker() error {
 	bytes, err := col.getFuncMemUsage(kvcache.ProfileName)
 	if err != nil {
 		return err
 	}
-	// TODO: add recover for the panic in Consume
+	defer func() {
+		if p := recover(); p != nil {
+			log.Warnf("GlobalLRUMemUsageTracker meet panic: %s", p)
+		}
+	}()
 	kvcache.GlobalLRUMemUsageTracker.ReplaceBytesUsed(bytes)
 	return nil
 }
