@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -1897,6 +1898,12 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 		switch op.Tp {
 		case ast.TableOptionAutoIncrement:
 			tbInfo.AutoIncID = int64(op.UintValue)
+		case ast.TableOptionAutoIdCache:
+			if op.UintValue > uint64(math.MaxInt64) {
+				// TODO: Refine this error.
+				return errors.New("table option auto_id_cache overflows int64")
+			}
+			tbInfo.AutoIdCache = int64(op.UintValue)
 		case ast.TableOptionAutoRandomBase:
 			tbInfo.AutoRandID = int64(op.UintValue)
 		case ast.TableOptionComment:
@@ -2083,6 +2090,12 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 					err = d.ShardRowID(ctx, ident, opt.UintValue)
 				case ast.TableOptionAutoIncrement:
 					err = d.RebaseAutoID(ctx, ident, int64(opt.UintValue), autoid.RowIDAllocType)
+				case ast.TableOptionAutoIdCache:
+					if opt.UintValue > uint64(math.MaxInt64) {
+						// TODO: Refine this error.
+						return errors.New("table option auto_id_cache overflows int64")
+					}
+					err = d.AlterTableAutoIDCache(ctx, ident, int64(opt.UintValue))
 				case ast.TableOptionAutoRandomBase:
 					err = d.RebaseAutoID(ctx, ident, int64(opt.UintValue), autoid.AutoRandomType)
 				case ast.TableOptionComment:
@@ -3034,6 +3047,27 @@ func (d *ddl) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, spec *a
 		Type:       model.ActionModifyTableComment,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{spec.Comment},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+// AlterTableAutoIDCache updates the table comment information.
+func (d *ddl) AlterTableAutoIDCache(ctx sessionctx.Context, ident ast.Ident, newCache int64) error {
+	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tb.Meta().ID,
+		SchemaName: schema.Name.L,
+		Type:       model.ActionModifyTableAutoIdCache,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{newCache},
 	}
 
 	err = d.doDDLJob(ctx, job)
