@@ -20,6 +20,7 @@ import (
 	"math/rand"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/google/btree"
 	. "github.com/pingcap/check"
@@ -1031,6 +1032,44 @@ func (s *testRegionCacheSuite) TestMixedMeetEpochNotMatch(c *C) {
 	regionErr := &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}}
 	reqSend.onRegionError(s.bo, ctxFollower1, &followReqSeed, regionErr)
 	c.Assert(followReqSeed, Equals, uint32(1))
+}
+
+func (s *testRegionRequestSuite) TestGetRegionByIDFromCache(c *C) {
+	region, err := s.cache.LocateRegionByID(s.bo, s.region)
+	c.Assert(err, IsNil)
+	c.Assert(region, NotNil)
+
+	// test kv epochNotMatch return empty regions
+	s.cache.OnRegionEpochNotMatch(s.bo, &RPCContext{Region: region.Region, Store: &Store{storeID: s.store}}, []*metapb.Region{})
+	c.Assert(err, IsNil)
+	r := s.cache.getRegionByIDFromCache(s.region)
+	c.Assert(r, IsNil)
+
+	// refill cache
+	region, err = s.cache.LocateRegionByID(s.bo, s.region)
+	c.Assert(err, IsNil)
+	c.Assert(region, NotNil)
+
+	// test kv load new region with new start-key and new epoch
+	v2 := region.Region.confVer + 1
+	r2 := metapb.Region{Id: region.Region.id, RegionEpoch: &metapb.RegionEpoch{Version: region.Region.ver, ConfVer: v2}, StartKey: []byte{1}}
+	st := &Store{storeID: s.store}
+	s.cache.insertRegionToCache(&Region{meta: &r2, store: unsafe.Pointer(st), lastAccess: time.Now().Unix()})
+	region, err = s.cache.LocateRegionByID(s.bo, s.region)
+	c.Assert(err, IsNil)
+	c.Assert(region, NotNil)
+	c.Assert(region.Region.confVer, Equals, v2)
+	c.Assert(region.Region.ver, Equals, region.Region.ver)
+
+	v3 := region.Region.confVer + 1
+	r3 := metapb.Region{Id: region.Region.id, RegionEpoch: &metapb.RegionEpoch{Version: v3, ConfVer: region.Region.confVer}, StartKey: []byte{2}}
+	st = &Store{storeID: s.store}
+	s.cache.insertRegionToCache(&Region{meta: &r3, store: unsafe.Pointer(st), lastAccess: time.Now().Unix()})
+	region, err = s.cache.LocateRegionByID(s.bo, s.region)
+	c.Assert(err, IsNil)
+	c.Assert(region, NotNil)
+	c.Assert(region.Region.confVer, Equals, region.Region.confVer)
+	c.Assert(region.Region.ver, Equals, v3)
 }
 
 func createSampleRegion(startKey, endKey []byte) *Region {

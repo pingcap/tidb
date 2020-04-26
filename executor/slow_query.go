@@ -98,8 +98,8 @@ func (e *slowQueryRetriever) initialize(sctx sessionctx.Context) error {
 	}
 	if e.extractor != nil {
 		e.checker.enableTimeCheck = e.extractor.Enable
-		e.checker.startTime = e.extractor.StartTime
-		e.checker.endTime = e.extractor.EndTime
+		e.checker.startTime = types.NewTime(types.FromGoTime(e.extractor.StartTime), mysql.TypeDatetime, types.MaxFsp)
+		e.checker.endTime = types.NewTime(types.FromGoTime(e.extractor.EndTime), mysql.TypeDatetime, types.MaxFsp)
 	}
 	e.initialized = true
 	e.files, err = e.getAllFiles(sctx, sctx.GetSessionVars().SlowQueryFile)
@@ -171,16 +171,16 @@ type slowLogChecker struct {
 	user           *auth.UserIdentity
 	// Below fields is used to check slow log time valid.
 	enableTimeCheck bool
-	startTime       time.Time
-	endTime         time.Time
+	startTime       types.Time
+	endTime         types.Time
 }
 
 func (sc *slowLogChecker) hasPrivilege(userName string) bool {
 	return sc.hasProcessPriv || sc.user == nil || userName == sc.user.Username
 }
 
-func (sc *slowLogChecker) isTimeValid(t time.Time) bool {
-	if sc.enableTimeCheck && (t.Before(sc.startTime) || t.After(sc.endTime)) {
+func (sc *slowLogChecker) isTimeValid(t types.Time) bool {
+	if sc.enableTimeCheck && (t.Compare(sc.startTime) < 0 || t.Compare(sc.endTime) > 0) {
 		return false
 	}
 	return true
@@ -298,7 +298,7 @@ func getOneLine(reader *bufio.Reader) ([]byte, error) {
 }
 
 type slowQueryTuple struct {
-	time                   time.Time
+	time                   types.Time
 	txnStartTs             uint64
 	user                   string
 	host                   string
@@ -350,13 +350,15 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 	valid = true
 	switch field {
 	case variable.SlowLogTimeStr:
-		st.time, err = ParseTime(value)
+		var t time.Time
+		t, err = ParseTime(value)
 		if err != nil {
 			break
 		}
-		if st.time.Location() != tz {
-			st.time = st.time.In(tz)
+		if t.Location() != tz {
+			t = t.In(tz)
 		}
+		st.time = types.NewTime(types.FromGoTime(t), mysql.TypeDatetime, types.MaxFsp)
 		if checker != nil {
 			valid = checker.isTimeValid(st.time)
 		}
@@ -464,7 +466,7 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 
 func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	record := make([]types.Datum, 0, 64)
-	record = append(record, types.NewTimeDatum(types.NewTime(types.FromGoTime(st.time), mysql.TypeDatetime, types.MaxFsp)))
+	record = append(record, types.NewTimeDatum(st.time))
 	record = append(record, types.NewUintDatum(st.txnStartTs))
 	record = append(record, types.NewStringDatum(st.user))
 	record = append(record, types.NewStringDatum(st.host))
