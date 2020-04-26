@@ -17,6 +17,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mock"
 	"io/ioutil"
 	"net/http"
 	"strconv"
@@ -982,4 +985,31 @@ func (s *testSuite5) TestSetClusterConfig(c *C) {
 	tk.MustExec("set config tikv log.level='info'")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Warning 1105 bad request to http://127.0.0.1:5555/config: WRONG", "Warning 1105 bad request to http://127.0.0.1:6666/config: WRONG"))
+}
+
+func (s *testSuite5) TestSetClusterConfigJSONData(c *C) {
+	var d types.MyDecimal
+	c.Assert(d.FromFloat64(123.456), IsNil)
+	cases := []struct {
+		val    expression.Expression
+		result string
+		succ   bool
+	}{
+		{&expression.Constant{Value: types.NewIntDatum(2333), RetType: types.NewFieldType(mysql.TypeLong)}, `{"k":2333}`, true},
+		{&expression.Constant{Value: types.NewFloat64Datum(23.33), RetType: types.NewFieldType(mysql.TypeDouble)}, `{"k":23.33}`, true},
+		{&expression.Constant{Value: types.NewStringDatum("abcd"), RetType: types.NewFieldType(mysql.TypeString)}, `{"k":"abcd"}`, true},
+		{&expression.Constant{Value: types.NewDecimalDatum(&d), RetType: types.NewFieldType(mysql.TypeNewDecimal)}, `{"k":123.456}`, true},
+		{&expression.Constant{Value: types.NewDatum(nil), RetType: types.NewFieldType(mysql.TypeLonglong)}, "", false},
+		{nil, "", false},
+	}
+
+	ctx := mock.NewContext()
+	for _, t := range cases {
+		result, err := executor.ConvertConfigItem2JSON(ctx, "k", t.val)
+		if t.succ {
+			c.Assert(t.result, Equals, result)
+		} else {
+			c.Assert(err, NotNil)
+		}
+	}
 }
