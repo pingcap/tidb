@@ -60,8 +60,10 @@ func (ft *FieldType) Clone() *FieldType {
 func (ft *FieldType) Equal(other *FieldType) bool {
 	// We do not need to compare whole `ft.Flag == other.Flag` when wrapping cast upon an Expression.
 	// but need compare unsigned_flag of ft.Flag.
+	// When tp is float or double, do not check whether flen is equal,
+	// because flen for them is only used to distinguish float and double.
 	partialEqual := ft.Tp == other.Tp &&
-		ft.Flen == other.Flen &&
+		(ft.Flen == other.Flen || ft.EvalType() == ETReal) &&
 		ft.Decimal == other.Decimal &&
 		ft.Charset == other.Charset &&
 		ft.Collate == other.Collate &&
