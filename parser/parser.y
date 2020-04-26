@@ -263,7 +263,6 @@ import (
 	union             "UNION"
 	unlock            "UNLOCK"
 	unsigned          "UNSIGNED"
-	until             "UNTIL"
 	update            "UPDATE"
 	usage             "USAGE"
 	use               "USE"
@@ -289,301 +288,303 @@ import (
 	natural           "NATURAL"
 
 	/* The following tokens belong to UnReservedKeyword. Notice: make sure these tokens are contained in UnReservedKeyword. */
-	account                 "ACCOUNT"
-	action                  "ACTION"
-	advise                  "ADVISE"
-	after                   "AFTER"
-	against                 "AGAINST"
-	ago                     "AGO"
-	algorithm               "ALGORITHM"
-	always                  "ALWAYS"
-	any                     "ANY"
-	ascii                   "ASCII"
-	autoIdCache             "AUTO_ID_CACHE"
-	autoIncrement           "AUTO_INCREMENT"
-	autoRandom              "AUTO_RANDOM"
-	autoRandomBase          "AUTO_RANDOM_BASE"
-	avg                     "AVG"
-	avgRowLength            "AVG_ROW_LENGTH"
-	backup                  "BACKUP"
-	begin                   "BEGIN"
-	binding                 "BINDING"
-	bindings                "BINDINGS"
-	binlog                  "BINLOG"
-	bitType                 "BIT"
-	block                   "BLOCK"
-	booleanType             "BOOLEAN"
-	boolType                "BOOL"
-	btree                   "BTREE"
-	byteType                "BYTE"
-	cache                   "CACHE"
-	capture                 "CAPTURE"
-	cascaded                "CASCADED"
-	charsetKwd              "CHARSET"
-	checksum                "CHECKSUM"
-	cipher                  "CIPHER"
-	cleanup                 "CLEANUP"
-	client                  "CLIENT"
-	coalesce                "COALESCE"
-	collation               "COLLATION"
-	columnFormat            "COLUMN_FORMAT"
-	columns                 "COLUMNS"
-	comment                 "COMMENT"
-	commit                  "COMMIT"
-	committed               "COMMITTED"
-	compact                 "COMPACT"
-	compressed              "COMPRESSED"
-	compression             "COMPRESSION"
-	concurrency             "CONCURRENCY"
-	connection              "CONNECTION"
-	consistent              "CONSISTENT"
-	context                 "CONTEXT"
-	cpu                     "CPU"
-	current                 "CURRENT"
-	cycle                   "CYCLE"
-	data                    "DATA"
-	datetimeType            "DATETIME"
-	dateType                "DATE"
-	day                     "DAY"
-	deallocate              "DEALLOCATE"
-	definer                 "DEFINER"
-	delayKeyWrite           "DELAY_KEY_WRITE"
-	directory               "DIRECTORY"
-	disable                 "DISABLE"
-	discard                 "DISCARD"
-	disk                    "DISK"
-	do                      "DO"
-	duplicate               "DUPLICATE"
-	dynamic                 "DYNAMIC"
-	enable                  "ENABLE"
-	encryption              "ENCRYPTION"
-	end                     "END"
-	enforced                "ENFORCED"
-	engine                  "ENGINE"
-	engines                 "ENGINES"
-	enum                    "ENUM"
-	escape                  "ESCAPE"
-	event                   "EVENT"
-	events                  "EVENTS"
-	evolve                  "EVOLVE"
-	exchange                "EXCHANGE"
-	exclusive               "EXCLUSIVE"
-	execute                 "EXECUTE"
-	expansion               "EXPANSION"
-	expire                  "EXPIRE"
-	extended                "EXTENDED"
-	faultsSym               "FAULTS"
-	fields                  "FIELDS"
-	file                    "FILE"
-	first                   "FIRST"
-	fixed                   "FIXED"
-	flush                   "FLUSH"
-	following               "FOLLOWING"
-	format                  "FORMAT"
-	full                    "FULL"
-	function                "FUNCTION"
-	gcsCredentialsFile      "GCS_CREDENTIALS_FILE"
-	gcsEndpoint             "GCS_ENDPOINT"
-	gcsPredefinedACL        "GCS_PREDEFINED_ACL"
-	gcsStorageClass         "GCS_STORAGE_CLASS"
-	global                  "GLOBAL"
-	grants                  "GRANTS"
-	hash                    "HASH"
-	history                 "HISTORY"
-	hosts                   "HOSTS"
-	hour                    "HOUR"
-	identified              "IDENTIFIED"
-	identSQLErrors          "ERRORS"
-	importKwd               "IMPORT"
-	increment               "INCREMENT"
-	incremental             "INCREMENTAL"
-	indexes                 "INDEXES"
-	insertMethod            "INSERT_METHOD"
-	instance                "INSTANCE"
-	invisible               "INVISIBLE"
-	invoker                 "INVOKER"
-	io                      "IO"
-	ipc                     "IPC"
-	isolation               "ISOLATION"
-	issuer                  "ISSUER"
-	jsonType                "JSON"
-	keyBlockSize            "KEY_BLOCK_SIZE"
-	labels                  "LABELS"
-	language                "LANGUAGE"
-	last                    "LAST"
-	lastval                 "LASTVAL"
-	less                    "LESS"
-	level                   "LEVEL"
-	list                    "LIST"
-	local                   "LOCAL"
-	location                "LOCATION"
-	logs                    "LOGS"
-	master                  "MASTER"
-	max_idxnum              "MAX_IDXNUM"
-	max_minutes             "MAX_MINUTES"
-	maxConnectionsPerHour   "MAX_CONNECTIONS_PER_HOUR"
-	maxQueriesPerHour       "MAX_QUERIES_PER_HOUR"
-	maxRows                 "MAX_ROWS"
-	maxUpdatesPerHour       "MAX_UPDATES_PER_HOUR"
-	maxUserConnections      "MAX_USER_CONNECTIONS"
-	mb                      "MB"
-	memory                  "MEMORY"
-	merge                   "MERGE"
-	microsecond             "MICROSECOND"
-	minRows                 "MIN_ROWS"
-	minute                  "MINUTE"
-	minValue                "MINVALUE"
-	mode                    "MODE"
-	modify                  "MODIFY"
-	month                   "MONTH"
-	names                   "NAMES"
-	national                "NATIONAL"
-	ncharType               "NCHAR"
-	never                   "NEVER"
-	next                    "NEXT"
-	nextval                 "NEXTVAL"
-	no                      "NO"
-	nocache                 "NOCACHE"
-	nocycle                 "NOCYCLE"
-	nodegroup               "NODEGROUP"
-	nomaxvalue              "NOMAXVALUE"
-	nominvalue              "NOMINVALUE"
-	none                    "NONE"
-	nowait                  "NOWAIT"
-	nulls                   "NULLS"
-	offset                  "OFFSET"
-	online                  "ONLINE"
-	only                    "ONLY"
-	open                    "OPEN"
-	pageSym                 "PAGE"
-	partial                 "PARTIAL"
-	partitioning            "PARTITIONING"
-	partitions              "PARTITIONS"
-	password                "PASSWORD"
-	per_db                  "PER_DB"
-	per_table               "PER_TABLE"
+	account               "ACCOUNT"
+	action                "ACTION"
+	advise                "ADVISE"
+	after                 "AFTER"
+	against               "AGAINST"
+	ago                   "AGO"
+	algorithm             "ALGORITHM"
+	always                "ALWAYS"
+	any                   "ANY"
+	ascii                 "ASCII"
+	autoIdCache           "AUTO_ID_CACHE"
+	autoIncrement         "AUTO_INCREMENT"
+	autoRandom            "AUTO_RANDOM"
+	autoRandomBase        "AUTO_RANDOM_BASE"
+	avg                   "AVG"
+	avgRowLength          "AVG_ROW_LENGTH"
+	backend               "BACKEND"
+	backup                "BACKUP"
+	backups               "BACKUPS"
+	begin                 "BEGIN"
+	binding               "BINDING"
+	bindings              "BINDINGS"
+	binlog                "BINLOG"
+	bitType               "BIT"
+	block                 "BLOCK"
+	booleanType           "BOOLEAN"
+	boolType              "BOOL"
+	btree                 "BTREE"
+	byteType              "BYTE"
+	cache                 "CACHE"
+	capture               "CAPTURE"
+	cascaded              "CASCADED"
+	charsetKwd            "CHARSET"
+	checkpoint            "CHECKPOINT"
+	checksum              "CHECKSUM"
+	cipher                "CIPHER"
+	cleanup               "CLEANUP"
+	client                "CLIENT"
+	coalesce              "COALESCE"
+	collation             "COLLATION"
+	columnFormat          "COLUMN_FORMAT"
+	columns               "COLUMNS"
+	comment               "COMMENT"
+	commit                "COMMIT"
+	committed             "COMMITTED"
+	compact               "COMPACT"
+	compressed            "COMPRESSED"
+	compression           "COMPRESSION"
+	concurrency           "CONCURRENCY"
+	connection            "CONNECTION"
+	consistent            "CONSISTENT"
+	context               "CONTEXT"
+	cpu                   "CPU"
+	csvBackslashEscape    "CSV_BACKSLASH_ESCAPE"
+	csvDelimiter          "CSV_DELIMITER"
+	csvHeader             "CSV_HEADER"
+	csvNotNull            "CSV_NOT_NULL"
+	csvNull               "CSV_NULL"
+	csvSeparator          "CSV_SEPARATOR"
+	csvTrimLastSeparators "CSV_TRIM_LAST_SEPARATORS"
+	current               "CURRENT"
+	cycle                 "CYCLE"
+	data                  "DATA"
+	datetimeType          "DATETIME"
+	dateType              "DATE"
+	day                   "DAY"
+	deallocate            "DEALLOCATE"
+	definer               "DEFINER"
+	delayKeyWrite         "DELAY_KEY_WRITE"
+	directory             "DIRECTORY"
+	disable               "DISABLE"
+	discard               "DISCARD"
+	disk                  "DISK"
+	do                    "DO"
+	duplicate             "DUPLICATE"
+	dynamic               "DYNAMIC"
+	enable                "ENABLE"
+	encryption            "ENCRYPTION"
+	end                   "END"
+	enforced              "ENFORCED"
+	engine                "ENGINE"
+	engines               "ENGINES"
+	enum                  "ENUM"
+	escape                "ESCAPE"
+	event                 "EVENT"
+	events                "EVENTS"
+	evolve                "EVOLVE"
+	exchange              "EXCHANGE"
+	exclusive             "EXCLUSIVE"
+	execute               "EXECUTE"
+	expansion             "EXPANSION"
+	expire                "EXPIRE"
+	extended              "EXTENDED"
+	faultsSym             "FAULTS"
+	fields                "FIELDS"
+	file                  "FILE"
+	first                 "FIRST"
+	fixed                 "FIXED"
+	flush                 "FLUSH"
+	following             "FOLLOWING"
+	format                "FORMAT"
+	full                  "FULL"
+	function              "FUNCTION"
+	global                "GLOBAL"
+	grants                "GRANTS"
+	hash                  "HASH"
+	history               "HISTORY"
+	hosts                 "HOSTS"
+	hour                  "HOUR"
+	identified            "IDENTIFIED"
+	identSQLErrors        "ERRORS"
+	importKwd             "IMPORT"
+	imports               "IMPORTS"
+	increment             "INCREMENT"
+	incremental           "INCREMENTAL"
+	indexes               "INDEXES"
+	insertMethod          "INSERT_METHOD"
+	instance              "INSTANCE"
+	invisible             "INVISIBLE"
+	invoker               "INVOKER"
+	io                    "IO"
+	ipc                   "IPC"
+	isolation             "ISOLATION"
+	issuer                "ISSUER"
+	jsonType              "JSON"
+	keyBlockSize          "KEY_BLOCK_SIZE"
+	labels                "LABELS"
+	language              "LANGUAGE"
+	last                  "LAST"
+	lastBackup            "LAST_BACKUP"
+	lastval               "LASTVAL"
+	less                  "LESS"
+	level                 "LEVEL"
+	list                  "LIST"
+	local                 "LOCAL"
+	location              "LOCATION"
+	logs                  "LOGS"
+	master                "MASTER"
+	max_idxnum            "MAX_IDXNUM"
+	max_minutes           "MAX_MINUTES"
+	maxConnectionsPerHour "MAX_CONNECTIONS_PER_HOUR"
+	maxQueriesPerHour     "MAX_QUERIES_PER_HOUR"
+	maxRows               "MAX_ROWS"
+	maxUpdatesPerHour     "MAX_UPDATES_PER_HOUR"
+	maxUserConnections    "MAX_USER_CONNECTIONS"
+	mb                    "MB"
+	memory                "MEMORY"
+	merge                 "MERGE"
+	microsecond           "MICROSECOND"
+	minRows               "MIN_ROWS"
+	minute                "MINUTE"
+	minValue              "MINVALUE"
+	mode                  "MODE"
+	modify                "MODIFY"
+	month                 "MONTH"
+	names                 "NAMES"
+	national              "NATIONAL"
+	ncharType             "NCHAR"
+	never                 "NEVER"
+	next                  "NEXT"
+	nextval               "NEXTVAL"
+	no                    "NO"
+	nocache               "NOCACHE"
+	nocycle               "NOCYCLE"
+	nodegroup             "NODEGROUP"
+	nomaxvalue            "NOMAXVALUE"
+	nominvalue            "NOMINVALUE"
+	none                  "NONE"
+	nowait                "NOWAIT"
+	nulls                 "NULLS"
+	offset                "OFFSET"
+	onDuplicate           "ON_DUPLICATE"
+	online                "ONLINE"
+	only                  "ONLY"
+	open                  "OPEN"
+	pageSym               "PAGE"
+	partial               "PARTIAL"
+	partitioning          "PARTITIONING"
+	partitions            "PARTITIONS"
+	password              "PASSWORD"
+	per_db                "PER_DB"
+	per_table             "PER_TABLE"
 	pipesAsOr
-	plugins                 "PLUGINS"
-	preceding               "PRECEDING"
-	prepare                 "PREPARE"
-	privileges              "PRIVILEGES"
-	process                 "PROCESS"
-	processlist             "PROCESSLIST"
-	profile                 "PROFILE"
-	profiles                "PROFILES"
-	quarter                 "QUARTER"
-	queries                 "QUERIES"
-	query                   "QUERY"
-	quick                   "QUICK"
-	rateLimit               "RATE_LIMIT"
-	rebuild                 "REBUILD"
-	recover                 "RECOVER"
-	redundant               "REDUNDANT"
-	reload                  "RELOAD"
-	remove                  "REMOVE"
-	reorganize              "REORGANIZE"
-	repair                  "REPAIR"
-	repeatable              "REPEATABLE"
-	replica                 "REPLICA"
-	replication             "REPLICATION"
-	respect                 "RESPECT"
-	restore                 "RESTORE"
-	reverse                 "REVERSE"
-	role                    "ROLE"
-	rollback                "ROLLBACK"
-	routine                 "ROUTINE"
-	rowCount                "ROW_COUNT"
-	rowFormat               "ROW_FORMAT"
-	rtree                   "RTREE"
-	s3AccessKey             "S3_ACCESS_KEY"
-	s3ACL                   "S3_ACL"
-	s3Endpoint              "S3_ENDPOINT"
-	s3ForcePathStyle        "S3_FORCE_PATH_STYLE"
-	s3Provider              "S3_PROVIDER"
-	s3Region                "S3_REGION"
-	s3SecretAccessKey       "S3_SECRET_ACCESS_KEY"
-	s3SSE                   "S3_SSE"
-	s3StorageClass          "S3_STORAGE_CLASS"
-	s3UseAccelerateEndpoint "S3_USE_ACCELERATE_ENDPOINT"
-	second                  "SECOND"
-	secondaryEngine         "SECONDARY_ENGINE"
-	secondaryLoad           "SECONDARY_LOAD"
-	secondaryUnload         "SECONDARY_UNLOAD"
-	security                "SECURITY"
-	sendCredentialsToTiKV   "SEND_CREDENTIALS_TO_TIKV"
-	separator               "SEPARATOR"
-	sequence                "SEQUENCE"
-	serial                  "SERIAL"
-	serializable            "SERIALIZABLE"
-	session                 "SESSION"
-	setval                  "SETVAL"
-	share                   "SHARE"
-	shared                  "SHARED"
-	shutdown                "SHUTDOWN"
-	signed                  "SIGNED"
-	simple                  "SIMPLE"
-	slave                   "SLAVE"
-	slow                    "SLOW"
-	snapshot                "SNAPSHOT"
-	some                    "SOME"
-	source                  "SOURCE"
-	sqlBufferResult         "SQL_BUFFER_RESULT"
-	sqlCache                "SQL_CACHE"
-	sqlNoCache              "SQL_NO_CACHE"
-	sqlTsiDay               "SQL_TSI_DAY"
-	sqlTsiHour              "SQL_TSI_HOUR"
-	sqlTsiMinute            "SQL_TSI_MINUTE"
-	sqlTsiMonth             "SQL_TSI_MONTH"
-	sqlTsiQuarter           "SQL_TSI_QUARTER"
-	sqlTsiSecond            "SQL_TSI_SECOND"
-	sqlTsiWeek              "SQL_TSI_WEEK"
-	sqlTsiYear              "SQL_TSI_YEAR"
-	start                   "START"
-	statsAutoRecalc         "STATS_AUTO_RECALC"
-	statsPersistent         "STATS_PERSISTENT"
-	statsSamplePages        "STATS_SAMPLE_PAGES"
-	status                  "STATUS"
-	storage                 "STORAGE"
-	subject                 "SUBJECT"
-	subpartition            "SUBPARTITION"
-	subpartitions           "SUBPARTITIONS"
-	super                   "SUPER"
-	swaps                   "SWAPS"
-	switchesSym             "SWITCHES"
-	systemTime              "SYSTEM_TIME"
-	tableChecksum           "TABLE_CHECKSUM"
-	tables                  "TABLES"
-	tablespace              "TABLESPACE"
-	temporary               "TEMPORARY"
-	temptable               "TEMPTABLE"
-	textType                "TEXT"
-	than                    "THAN"
-	timestampOracle         "TIMESTAMP_ORACLE"
-	timestampType           "TIMESTAMP"
-	timeType                "TIME"
-	tp                      "TYPE"
-	trace                   "TRACE"
-	traditional             "TRADITIONAL"
-	transaction             "TRANSACTION"
-	triggers                "TRIGGERS"
-	truncate                "TRUNCATE"
-	unbounded               "UNBOUNDED"
-	uncommitted             "UNCOMMITTED"
-	undefined               "UNDEFINED"
-	unicodeSym              "UNICODE"
-	unknown                 "UNKNOWN"
-	user                    "USER"
-	validation              "VALIDATION"
-	value                   "VALUE"
-	variables               "VARIABLES"
-	view                    "VIEW"
-	visible                 "VISIBLE"
-	warnings                "WARNINGS"
-	week                    "WEEK"
-	weightString            "WEIGHT_STRING"
-	without                 "WITHOUT"
-	x509                    "X509"
-	yearType                "YEAR"
+	plugins               "PLUGINS"
+	preceding             "PRECEDING"
+	prepare               "PREPARE"
+	privileges            "PRIVILEGES"
+	process               "PROCESS"
+	processlist           "PROCESSLIST"
+	profile               "PROFILE"
+	profiles              "PROFILES"
+	quarter               "QUARTER"
+	queries               "QUERIES"
+	query                 "QUERY"
+	quick                 "QUICK"
+	rateLimit             "RATE_LIMIT"
+	rebuild               "REBUILD"
+	recover               "RECOVER"
+	redundant             "REDUNDANT"
+	reload                "RELOAD"
+	remove                "REMOVE"
+	reorganize            "REORGANIZE"
+	repair                "REPAIR"
+	repeatable            "REPEATABLE"
+	replica               "REPLICA"
+	replication           "REPLICATION"
+	respect               "RESPECT"
+	restore               "RESTORE"
+	restores              "RESTORES"
+	reverse               "REVERSE"
+	role                  "ROLE"
+	rollback              "ROLLBACK"
+	routine               "ROUTINE"
+	rowCount              "ROW_COUNT"
+	rowFormat             "ROW_FORMAT"
+	rtree                 "RTREE"
+	second                "SECOND"
+	secondaryEngine       "SECONDARY_ENGINE"
+	secondaryLoad         "SECONDARY_LOAD"
+	secondaryUnload       "SECONDARY_UNLOAD"
+	security              "SECURITY"
+	sendCredentialsToTiKV "SEND_CREDENTIALS_TO_TIKV"
+	separator             "SEPARATOR"
+	sequence              "SEQUENCE"
+	serial                "SERIAL"
+	serializable          "SERIALIZABLE"
+	session               "SESSION"
+	setval                "SETVAL"
+	share                 "SHARE"
+	shared                "SHARED"
+	shutdown              "SHUTDOWN"
+	signed                "SIGNED"
+	simple                "SIMPLE"
+	skipSchemaFiles       "SKIP_SCHEMA_FILES"
+	slave                 "SLAVE"
+	slow                  "SLOW"
+	snapshot              "SNAPSHOT"
+	some                  "SOME"
+	source                "SOURCE"
+	sqlBufferResult       "SQL_BUFFER_RESULT"
+	sqlCache              "SQL_CACHE"
+	sqlNoCache            "SQL_NO_CACHE"
+	sqlTsiDay             "SQL_TSI_DAY"
+	sqlTsiHour            "SQL_TSI_HOUR"
+	sqlTsiMinute          "SQL_TSI_MINUTE"
+	sqlTsiMonth           "SQL_TSI_MONTH"
+	sqlTsiQuarter         "SQL_TSI_QUARTER"
+	sqlTsiSecond          "SQL_TSI_SECOND"
+	sqlTsiWeek            "SQL_TSI_WEEK"
+	sqlTsiYear            "SQL_TSI_YEAR"
+	start                 "START"
+	statsAutoRecalc       "STATS_AUTO_RECALC"
+	statsPersistent       "STATS_PERSISTENT"
+	statsSamplePages      "STATS_SAMPLE_PAGES"
+	status                "STATUS"
+	storage               "STORAGE"
+	strictFormat          "STRICT_FORMAT"
+	subject               "SUBJECT"
+	subpartition          "SUBPARTITION"
+	subpartitions         "SUBPARTITIONS"
+	super                 "SUPER"
+	swaps                 "SWAPS"
+	switchesSym           "SWITCHES"
+	systemTime            "SYSTEM_TIME"
+	tableChecksum         "TABLE_CHECKSUM"
+	tables                "TABLES"
+	tablespace            "TABLESPACE"
+	temporary             "TEMPORARY"
+	temptable             "TEMPTABLE"
+	textType              "TEXT"
+	than                  "THAN"
+	tikvImporter          "TIKV_IMPORTER"
+	timestampType         "TIMESTAMP"
+	timeType              "TIME"
+	tp                    "TYPE"
+	trace                 "TRACE"
+	traditional           "TRADITIONAL"
+	transaction           "TRANSACTION"
+	triggers              "TRIGGERS"
+	truncate              "TRUNCATE"
+	unbounded             "UNBOUNDED"
+	uncommitted           "UNCOMMITTED"
+	undefined             "UNDEFINED"
+	unicodeSym            "UNICODE"
+	unknown               "UNKNOWN"
+	user                  "USER"
+	validation            "VALIDATION"
+	value                 "VALUE"
+	variables             "VARIABLES"
+	view                  "VIEW"
+	visible               "VISIBLE"
+	warnings              "WARNINGS"
+	week                  "WEEK"
+	weightString          "WEIGHT_STRING"
+	without               "WITHOUT"
+	x509                  "X509"
+	yearType              "YEAR"
 
 	/* The following tokens belong to NotKeywordToken. Notice: make sure these tokens are contained in NotKeywordToken. */
 	addDate               "ADDDATE"
@@ -841,6 +842,7 @@ import (
 	AssignmentListOpt                      "assignment list opt"
 	AuthOption                             "User auth option"
 	AuthString                             "Password string value"
+	Boolean                                "Boolean (0, 1, false, true)"
 	OptionalBraces                         "optional braces"
 	CastType                               "Cast function target type"
 	CharsetName                            "Character set name"
@@ -1175,11 +1177,12 @@ import (
 	PerDB                                  "Max index number PER_DB"
 	BRIETables                             "List of tables or databases for BRIE statements"
 	DBNameList                             "List of database names"
-	BackupTypeSpec                         "Backup type (FULL or INCREMENTAL)"
 	BRIEOption                             "Single BRIE option"
 	BRIEOptions                            "List of BRIE options"
 	BRIEIntegerOptionName                  "Name of a BRIE option which takes an integer as input"
+	BRIEBooleanOptionName                  "Name of a BRIE option which takes a boolean as input"
 	BRIEStringOptionName                   "Name of a BRIE option which takes a string as input"
+	BRIEKeywordOptionName                  "Name of a BRIE option which takes a case-insensitive string as input"
 
 %type	<ident>
 	AsOpt             "AS or EmptyString"
@@ -1231,6 +1234,7 @@ import (
 	FunctionNameDateArithMultiForms "Date arith function call names (adddate or subdate)"
 	VariableName                    "A simple Identifier like xx or the xx.xx form"
 	ConfigItemName                  "A config item like aa or aa.bb or aa.bb-cc.dd"
+	StringNameOrBRIEOptionKeyword   "string literal or identifier or keyword used for BRIE options"
 
 %precedence empty
 %precedence sqlBufferResult
@@ -4064,34 +4068,38 @@ ExplainFormatType:
 	}
 
 /*******************************************************************
- * Backup / restore statements
+ * Backup / restore / import statements
  *
- *	BACKUP DATABASE [ * | db1, db2, db3 ] [ FULL ] TO 'scheme://location' [ options... ]
- *	BACKUP TABLE [ db1.tbl1, db2.tbl2 ] [ FULL ] TO 'scheme://location' [ options... ]
- *	RESTORE DATABASE [ * | db1, db2, db3 ] [ FULL ] FROM 'scheme://location' [ options... ]
- *	RESTORE TABLE [ db1.tbl1, db2.tbl2 ] [ FULL ] FROM 'scheme://location' [ options... ]
+ *	BACKUP DATABASE [ * | db1, db2, db3 ] TO 'scheme://location' [ options... ]
+ *	BACKUP TABLE [ db1.tbl1, db2.tbl2 ] TO 'scheme://location' [ options... ]
+ *	RESTORE DATABASE [ * | db1, db2, db3 ] FROM 'scheme://location' [ options... ]
+ *	RESTORE TABLE [ db1.tbl1, db2.tbl2 ] FROM 'scheme://location' [ options... ]
+ *	IMPORT DATABASE [ * | db1, db2, db3 ] FROM 'scheme://location' [ options... ]
+ *	IMPORT TABLE [ db1.tbl1, db2.tbl2 ] FROM 'scheme://location' [ options... ]
  */
 BRIEStmt:
-	"BACKUP" BRIETables BackupTypeSpec "TO" stringLit BRIEOptions
+	"BACKUP" BRIETables "TO" stringLit BRIEOptions
 	{
 		stmt := $2.(*ast.BRIEStmt)
 		stmt.Kind = ast.BRIEKindBackup
-		stmt.Storage = $5
-		stmt.Options = $6.([]*ast.BRIEOption)
-		if $3 != nil {
-			stmt.Incremental = $3.(*ast.BRIEOption)
-		}
+		stmt.Storage = $4
+		stmt.Options = $5.([]*ast.BRIEOption)
 		$$ = stmt
 	}
-|	"RESTORE" BRIETables BackupTypeSpec "FROM" stringLit BRIEOptions
+|	"RESTORE" BRIETables "FROM" stringLit BRIEOptions
 	{
 		stmt := $2.(*ast.BRIEStmt)
 		stmt.Kind = ast.BRIEKindRestore
-		stmt.Storage = $5
-		stmt.Options = $6.([]*ast.BRIEOption)
-		if $3 != nil {
-			stmt.Incremental = $3.(*ast.BRIEOption)
-		}
+		stmt.Storage = $4
+		stmt.Options = $5.([]*ast.BRIEOption)
+		$$ = stmt
+	}
+|	"IMPORT" BRIETables "FROM" stringLit BRIEOptions
+	{
+		stmt := $2.(*ast.BRIEStmt)
+		stmt.Kind = ast.BRIEKindImport
+		stmt.Storage = $4
+		stmt.Options = $5.([]*ast.BRIEOption)
 		$$ = stmt
 	}
 
@@ -4119,30 +4127,6 @@ DBNameList:
 		$$ = append($1.([]string), $3.(string))
 	}
 
-BackupTypeSpec:
-	%prec empty
-	{
-		$$ = nil
-	}
-|	"FULL"
-	{
-		$$ = nil
-	}
-|	"INCREMENTAL" "UNTIL" "TIMESTAMP" stringLit
-	{
-		$$ = &ast.BRIEOption{
-			Tp:       ast.BRIEOptionLastBackupTS,
-			StrValue: $4,
-		}
-	}
-|	"INCREMENTAL" "UNTIL" "TIMESTAMP_ORACLE" LengthNum
-	{
-		$$ = &ast.BRIEOption{
-			Tp:        ast.BRIEOptionLastBackupTSO,
-			UintValue: $4.(uint64),
-		}
-	}
-
 BRIEOptions:
 	%prec empty
 	{
@@ -4158,7 +4142,9 @@ BRIEIntegerOptionName:
 	{
 		$$ = ast.BRIEOptionConcurrency
 	}
-|	"CHECKSUM"
+
+BRIEBooleanOptionName:
+	"CHECKSUM"
 	{
 		$$ = ast.BRIEOptionChecksum
 	}
@@ -4170,63 +4156,65 @@ BRIEIntegerOptionName:
 	{
 		$$ = ast.BRIEOptionOnline
 	}
-|	"S3_FORCE_PATH_STYLE"
+|	"CHECKPOINT"
 	{
-		$$ = ast.BRIEOptionS3ForcePathStyle
+		$$ = ast.BRIEOptionCheckpoint
 	}
-|	"S3_USE_ACCELERATE_ENDPOINT"
+|	"ANALYZE"
 	{
-		$$ = ast.BRIEOptionS3UseAccelerateEndpoint
+		$$ = ast.BRIEOptionAnalyze
+	}
+|	"SKIP_SCHEMA_FILES"
+	{
+		$$ = ast.BRIEOptionSkipSchemaFiles
+	}
+|	"STRICT_FORMAT"
+	{
+		$$ = ast.BRIEOptionStrictFormat
+	}
+|	"CSV_NOT_NULL"
+	{
+		$$ = ast.BRIEOptionCSVNotNull
+	}
+|	"CSV_BACKSLASH_ESCAPE"
+	{
+		$$ = ast.BRIEOptionCSVBackslashEscape
+	}
+|	"CSV_TRIM_LAST_SEPARATORS"
+	{
+		$$ = ast.BRIEOptionCSVTrimLastSeparators
 	}
 
 BRIEStringOptionName:
-	"S3_ENDPOINT"
+	"TIKV_IMPORTER"
 	{
-		$$ = ast.BRIEOptionS3Endpoint
+		$$ = ast.BRIEOptionTiKVImporter
 	}
-|	"S3_REGION"
+|	"CSV_SEPARATOR"
 	{
-		$$ = ast.BRIEOptionS3Region
+		$$ = ast.BRIEOptionCSVSeparator
 	}
-|	"S3_STORAGE_CLASS"
+|	"CSV_DELIMITER"
 	{
-		$$ = ast.BRIEOptionS3StorageClass
+		$$ = ast.BRIEOptionCSVDelimiter
 	}
-|	"S3_SSE"
+|	"CSV_NULL"
 	{
-		$$ = ast.BRIEOptionS3SSE
+		$$ = ast.BRIEOptionCSVNull
 	}
-|	"S3_ACL"
+
+BRIEKeywordOptionName:
+	"BACKEND"
 	{
-		$$ = ast.BRIEOptionS3ACL
+		$$ = ast.BRIEOptionBackend
 	}
-|	"S3_ACCESS_KEY"
+|	"ON_DUPLICATE"
 	{
-		$$ = ast.BRIEOptionS3AccessKey
+		$$ = ast.BRIEOptionOnDuplicate
 	}
-|	"S3_SECRET_ACCESS_KEY"
+|	"ON" "DUPLICATE"
 	{
-		$$ = ast.BRIEOptionS3SecretAccessKey
-	}
-|	"S3_PROVIDER"
-	{
-		$$ = ast.BRIEOptionS3Provider
-	}
-|	"GCS_ENDPOINT"
-	{
-		$$ = ast.BRIEOptionGCSEndpoint
-	}
-|	"GCS_STORAGE_CLASS"
-	{
-		$$ = ast.BRIEOptionGCSStorageClass
-	}
-|	"GCS_PREDEFINED_ACL"
-	{
-		$$ = ast.BRIEOptionGCSPredefinedACL
-	}
-|	"GCS_CREDENTIALS_FILE"
-	{
-		$$ = ast.BRIEOptionGCSCredentialsFile
+		$$ = ast.BRIEOptionOnDuplicate
 	}
 
 BRIEOption:
@@ -4237,11 +4225,29 @@ BRIEOption:
 			UintValue: $3.(uint64),
 		}
 	}
+|	BRIEBooleanOptionName EqOpt Boolean
+	{
+		value := uint64(0)
+		if $3.(bool) {
+			value = 1
+		}
+		$$ = &ast.BRIEOption{
+			Tp:        $1.(ast.BRIEOptionType),
+			UintValue: value,
+		}
+	}
 |	BRIEStringOptionName EqOpt stringLit
 	{
 		$$ = &ast.BRIEOption{
 			Tp:       $1.(ast.BRIEOptionType),
 			StrValue: $3,
+		}
+	}
+|	BRIEKeywordOptionName EqOpt StringNameOrBRIEOptionKeyword
+	{
+		$$ = &ast.BRIEOption{
+			Tp:       $1.(ast.BRIEOptionType),
+			StrValue: strings.ToLower($3),
 		}
 	}
 |	"SNAPSHOT" EqOpt LengthNum TimestampUnit "AGO"
@@ -4273,12 +4279,40 @@ BRIEOption:
 			UintValue: $3.(uint64),
 		}
 	}
+|	"LAST_BACKUP" EqOpt stringLit
+	{
+		$$ = &ast.BRIEOption{
+			Tp:       ast.BRIEOptionLastBackupTS,
+			StrValue: $3,
+		}
+	}
+|	"LAST_BACKUP" EqOpt LengthNum
+	{
+		$$ = &ast.BRIEOption{
+			Tp:        ast.BRIEOptionLastBackupTSO,
+			UintValue: $3.(uint64),
+		}
+	}
 |	"RATE_LIMIT" EqOpt LengthNum "MB" '/' "SECOND"
 	{
 		// TODO: check overflow?
 		$$ = &ast.BRIEOption{
 			Tp:        ast.BRIEOptionRateLimit,
 			UintValue: $3.(uint64) * 1048576,
+		}
+	}
+|	"CSV_HEADER" EqOpt FieldsOrColumns
+	{
+		$$ = &ast.BRIEOption{
+			Tp:        ast.BRIEOptionCSVHeader,
+			UintValue: ast.BRIECSVHeaderIsColumns,
+		}
+	}
+|	"CSV_HEADER" EqOpt LengthNum
+	{
+		$$ = &ast.BRIEOption{
+			Tp:        ast.BRIEOptionCSVHeader,
+			UintValue: $3.(uint64),
 		}
 	}
 
@@ -4301,6 +4335,20 @@ Int64Num:
 
 NUM:
 	intLit
+
+Boolean:
+	NUM
+	{
+		$$ = $1.(int64) != 0
+	}
+|	"FALSE"
+	{
+		$$ = false
+	}
+|	"TRUE"
+	{
+		$$ = true
+	}
 
 Expression:
 	singleAtIdentifier assignmentEq Expression %prec assignmentEq
@@ -5129,6 +5177,7 @@ UnReservedKeyword:
 |	"COLUMN_FORMAT"
 |	"REPAIR"
 |	"IMPORT"
+|	"IMPORTS"
 |	"DISCARD"
 |	"TABLE_CHECKSUM"
 |	"UNICODE"
@@ -5174,27 +5223,28 @@ UnReservedKeyword:
 |	"SETVAL"
 |	"AGO"
 |	"BACKUP"
+|	"BACKUPS"
 |	"CONCURRENCY"
-|	"GCS_CREDENTIALS_FILE"
-|	"GCS_ENDPOINT"
-|	"GCS_PREDEFINED_ACL"
-|	"GCS_STORAGE_CLASS"
 |	"MB"
 |	"ONLINE"
 |	"RATE_LIMIT"
 |	"RESTORE"
-|	"S3_ACCESS_KEY"
-|	"S3_ACL"
-|	"S3_ENDPOINT"
-|	"S3_FORCE_PATH_STYLE"
-|	"S3_PROVIDER"
-|	"S3_REGION"
-|	"S3_SECRET_ACCESS_KEY"
-|	"S3_SSE"
-|	"S3_STORAGE_CLASS"
-|	"S3_USE_ACCELERATE_ENDPOINT"
+|	"RESTORES"
 |	"SEND_CREDENTIALS_TO_TIKV"
-|	"TIMESTAMP_ORACLE"
+|	"LAST_BACKUP"
+|	"CHECKPOINT"
+|	"SKIP_SCHEMA_FILES"
+|	"STRICT_FORMAT"
+|	"BACKEND"
+|	"CSV_BACKSLASH_ESCAPE"
+|	"CSV_NOT_NULL"
+|	"CSV_TRIM_LAST_SEPARATORS"
+|	"CSV_DELIMITER"
+|	"CSV_HEADER"
+|	"CSV_NULL"
+|	"CSV_SEPARATOR"
+|	"ON_DUPLICATE"
+|	"TIKV_IMPORTER"
 
 TiDBKeyword:
 	"ADMIN"
@@ -9034,13 +9084,17 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowAnalyzeStatus}
 	}
-|	"BACKUP"
+|	"BACKUPS"
 	{
-		$$ = &ast.ShowStmt{Tp: ast.ShowBackup}
+		$$ = &ast.ShowStmt{Tp: ast.ShowBackups}
 	}
-|	"RESTORE"
+|	"RESTORES"
 	{
-		$$ = &ast.ShowStmt{Tp: ast.ShowRestore}
+		$$ = &ast.ShowStmt{Tp: ast.ShowRestores}
+	}
+|	"IMPORTS"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowImports}
 	}
 
 ShowLikeOrWhereOpt:
@@ -10273,6 +10327,13 @@ StringName:
 	{
 		$$ = $1
 	}
+
+StringNameOrBRIEOptionKeyword:
+	stringLit
+|	Identifier
+|	"ERROR"
+|	"IGNORE"
+|	"REPLACE"
 
 /***********************************************************************************
  * Update Statement
