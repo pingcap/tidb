@@ -788,7 +788,7 @@
       },
       {
         "SQL": "select a from t where c not in (1)",
-        "Best": "IndexReader(Index(t.c_d_e)[(NULL,1) (1,+inf]])->Projection"
+        "Best": "IndexReader(Index(t.c_d_e)[[-inf,1) (1,+inf]])->Projection"
       },
       {
         "SQL": "select a from t use index(c_d_e) where c != 1",
