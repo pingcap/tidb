@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"fmt"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -33,7 +32,10 @@ type hashPartitionPruner struct {
 
 type vector []*Constant
 
-func Equal(a, b vector, ctx sessionctx.Context) bool {
+func equal(a, b vector, ctx sessionctx.Context) bool {
+	if a == nil || b == nil {
+		return false
+	}
 	if len(a) != len(b) {
 		return false
 	}
@@ -45,7 +47,10 @@ func Equal(a, b vector, ctx sessionctx.Context) bool {
 	return true
 }
 
-func Intersect(a, b vector, ctx sessionctx.Context) []*Constant {
+func intersect(a, b vector, ctx sessionctx.Context) vector {
+	if a == nil || b == nil {
+		return nil
+	}
 	ret := make(vector, 0, len(a))
 	for _, c := range a {
 		for _, cb := range b {
@@ -53,6 +58,9 @@ func Intersect(a, b vector, ctx sessionctx.Context) []*Constant {
 				ret = append(ret, c)
 			}
 		}
+	}
+	if len(ret) == 0 {
+		return nil
 	}
 	return ret
 }
@@ -87,14 +95,8 @@ func (p *hashPartitionPruner) reduceColumnEQ() bool {
 		if p.constantMap[i] != nil {
 			if p.constantMap[father] != nil {
 				// May has conflict here.
-				// if !p.constantMap[father].Equal(p.ctx, p.constantMap[i]) {
-				// 	return true
-				// }
-				// if !Equal(p.constantMap[father], p.constantMap[i], p.ctx) {
-				//	return true
-				// }
-				p.constantMap[father] = Intersect(p.constantMap[father], p.constantMap[i], p.ctx)
-				if len(p.constantMap[father]) == 0 {
+				p.constantMap[father] = intersect(p.constantMap[father], p.constantMap[i], p.ctx)
+				if p.constantMap[father] == nil {
 					return true
 				}
 			} else {
@@ -118,11 +120,8 @@ func (p *hashPartitionPruner) reduceConstantEQ() bool {
 			id := p.getColID(col)
 			tmp := []*Constant{cond}
 			if p.constantMap[id] != nil {
-				// if p.constantMap[id].Equal(p.ctx, cond) {
-				//	 continue
-				// }
-				tmp = Intersect(p.constantMap[id], tmp, p.ctx)
-				if len(tmp) != 0 {
+				tmp = intersect(p.constantMap[id], tmp, p.ctx)
+				if tmp != nil {
 					p.constantMap[id] = tmp
 					continue
 				}
@@ -131,29 +130,25 @@ func (p *hashPartitionPruner) reduceConstantEQ() bool {
 			p.constantMap[id] = tmp
 		} else {
 			if in, ok := con.(*ScalarFunction); ok {
-				fmt.Println(in)
 				if in.FuncName.L == ast.In {
-					tmp := make([]*Constant, 0, len(in.GetArgs()))
+					tmp := make(vector, 0, len(in.GetArgs()))
 					col := in.GetArgs()[0].(*Column)
 					id := p.getColID(col)
-					flag := true
 					for i := 1; i < len(in.GetArgs()); i++ {
 						exp := in.GetArgs()[i]
 						if cons, ok := exp.(*Constant); ok {
 							tmp = append(tmp, cons)
 						} else {
-							flag = false
+							return true
 						}
 					}
-					if flag {
-						if p.constantMap[id] != nil {
-							tmp = Intersect(tmp, p.constantMap[id], p.ctx)
-							if len(tmp) == 0 {
-								p.constantMap[id] = nil
-								return true
-							}
-						}
+					if p.constantMap[id] == nil {
 						p.constantMap[id] = tmp
+					} else {
+						p.constantMap[id] = intersect(tmp, p.constantMap[id], p.ctx)
+					}
+					if p.constantMap[id] == nil {
+						return true
 					}
 				}
 			}
@@ -168,25 +163,25 @@ func calc(a, b []int64, op string) []int64 {
 	case ast.Plus:
 		for _, x := range a {
 			for _, y := range b {
-				ret = append(ret, x + y)
+				ret = append(ret, x+y)
 			}
 		}
 	case ast.Minus:
 		for _, x := range a {
 			for _, y := range b {
-				ret = append(ret, x - y)
+				ret = append(ret, x-y)
 			}
 		}
 	case ast.Mul:
 		for _, x := range a {
 			for _, y := range b {
-				ret = append(ret, x * y)
+				ret = append(ret, x*y)
 			}
 		}
 	case ast.Div:
 		for _, x := range a {
 			for _, y := range b {
-				ret = append(ret, x / y)
+				ret = append(ret, x/y)
 			}
 		}
 	}
@@ -266,7 +261,7 @@ func (p *hashPartitionPruner) tryEvalPartitionExpr(piExpr Expression) (val []int
 	return nil, false, false
 }
 
-func evalConstantToInt(pi *Constant) (ret int64, success bool, isNil bool)  {
+func evalConstantToInt(pi *Constant) (ret int64, success bool, isNil bool) {
 	val, err := pi.Eval(chunk.Row{})
 	if err != nil {
 		return 0, false, false
@@ -295,14 +290,12 @@ func (p *hashPartitionPruner) solve(ctx sessionctx.Context, conds []Expression, 
 	p.ctx = ctx
 	for _, cond := range conds {
 		p.conditions = append(p.conditions, SplitCNFItems(cond)...)
-		fmt.Println(cond)
 		cols := ExtractColumns(cond)
 		for _, col := range cols {
-			fmt.Println(col)
 			p.insertCol(col)
 		}
 	}
-	p.constantMap = make([][]*Constant, p.numColumn)
+	p.constantMap = make([]vector, p.numColumn)
 	conflict := p.reduceConstantEQ()
 	if conflict {
 		return nil, false, conflict
@@ -312,21 +305,7 @@ func (p *hashPartitionPruner) solve(ctx sessionctx.Context, conds []Expression, 
 		return nil, false, conflict
 	}
 	res, ok, isNil := p.tryEvalPartitionExpr(piExpr)
-	fmt.Println(res)
 	return res, ok, isNil
-}
-
-func intersect(a, b []int64) []int64 {
-	ret := make([]int64, 0, len(a))
-	for _, ea := range a {
-		for _, eb := range b {
-			if  ea == eb {
-				ret = append(ret, ea)
-				break
-			}
-		}
-	}
-	return ret
 }
 
 // FastLocateHashPartition is used to get hash partition quickly.
