@@ -278,7 +278,7 @@ func setCPUAffinity() {
 
 func setMemoryProfileTracker() {
 	// TODO expose the time duration into config
-	profile.MemProfileForGlobalMemTracker(1 * time.Minute)
+	go profile.MemProfileForGlobalMemTracker(1 * time.Minute)
 }
 
 func registerStores() {
