@@ -16,12 +16,12 @@ package executor_test
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"math/rand"
 	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
 )

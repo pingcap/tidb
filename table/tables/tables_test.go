@@ -161,7 +161,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	alc := tb.Allocators(nil).Get(autoid.RowIDAllocType)
 	c.Assert(alc, NotNil)
 
-	err = tb.RebaseAutoID(nil, 0, false)
+	err = tb.RebaseAutoID(nil, 0, false, autoid.RowIDAllocType)
 	c.Assert(err, IsNil)
 }
 
@@ -279,15 +279,15 @@ func (ts *testSuite) TestRowKeyCodec(c *C) {
 	}
 
 	for _, t := range tableVal {
-		b := tablecodec.EncodeRowKeyWithHandle(t.tableID, t.h)
+		b := tablecodec.EncodeRowKeyWithHandle(t.tableID, kv.IntHandle(t.h))
 		tableID, handle, err := tablecodec.DecodeRecordKey(b)
 		c.Assert(err, IsNil)
 		c.Assert(tableID, Equals, t.tableID)
-		c.Assert(handle, Equals, t.h)
+		c.Assert(handle.IntValue(), Equals, t.h)
 
 		handle, err = tablecodec.DecodeRowKey(b)
 		c.Assert(err, IsNil)
-		c.Assert(handle, Equals, t.h)
+		c.Assert(handle.IntValue(), Equals, t.h)
 	}
 
 	// test error
@@ -388,7 +388,7 @@ func (ts *testSuite) TestTableFromMeta(c *C) {
 	c.Assert(err, IsNil)
 
 	maxID := 1<<(64-15-1) - 1
-	err = tb.RebaseAutoID(tk.Se, int64(maxID), false)
+	err = tb.RebaseAutoID(tk.Se, int64(maxID), false, autoid.RowIDAllocType)
 	c.Assert(err, IsNil)
 
 	_, err = tables.AllocHandle(tk.Se, tb)
