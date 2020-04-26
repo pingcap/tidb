@@ -439,6 +439,7 @@ func (s *testSuiteAgg) TestAggPrune(c *C) {
 }
 
 func (s *testSuiteAgg) TestGroupConcatAggr(c *C) {
+	var err error
 	// issue #5411
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -521,6 +522,26 @@ func (s *testSuiteAgg) TestGroupConcatAggr(c *C) {
 
 	result = tk.MustQuery("select group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test2;")
 	result.Check(testkit.Rows("500++30++200++20++20++10 3--1--3--1--2--1"))
+
+	// test Position Expr
+	tk.MustQuery("select 1, 2, 3, 4, 5 , group_concat(name, id ORDER BY 1 desc, id SEPARATOR '++') from test;").Check(testkit.Rows("1 2 3 4 5 5003++2003++301++201++202++101"))
+	tk.MustQuery("select 1, 2, 3, 4, 5 , group_concat(name, id ORDER BY 2 desc, name SEPARATOR '++') from test;").Check(testkit.Rows("1 2 3 4 5 2003++5003++202++101++201++301"))
+	err = tk.ExecToErr("select 1, 2, 3, 4, 5 , group_concat(name, id ORDER BY 3 desc, name SEPARATOR '++') from test;")
+	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column '3' in 'order clause'")
+
+	// test Param Marker
+	tk.MustExec(`prepare s1 from "select 1, 2, 3, 4, 5 , group_concat(name, id ORDER BY floor(id/?) desc, name SEPARATOR '++') from test";`)
+	tk.MustExec("set @a=2;")
+	tk.MustQuery("execute s1 using @a;").Check(testkit.Rows("1 2 3 4 5 202++2003++5003++101++201++301"))
+
+	tk.MustExec(`prepare s1 from "select 1, 2, 3, 4, 5 , group_concat(name, id ORDER BY ? desc, name SEPARATOR '++') from test";`)
+	tk.MustExec("set @a=2;")
+	tk.MustQuery("execute s1 using @a;").Check(testkit.Rows("1 2 3 4 5 2003++5003++202++101++201++301"))
+	tk.MustExec("set @a=3;")
+	err = tk.ExecToErr("execute s1 using @a;")
+	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column '?' in 'order clause'")
+	tk.MustExec("set @a=3.0;")
+	tk.MustQuery("execute s1 using @a;").Check(testkit.Rows("1 2 3 4 5 101++202++201++301++2003++5003"))
 
 	// test partition table
 	tk.MustExec("drop table if exists ptest;")
