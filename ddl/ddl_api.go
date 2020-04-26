@@ -21,7 +21,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"math"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -2127,7 +2126,7 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 	if err != nil {
 		return errors.Trace(err)
 	}
-	autoIncID, err := t.Allocators(ctx).Get(tp).NextGlobalAutoID(t.Meta().ID)
+	autoIncID, err := t.Allocator(ctx, tp).NextGlobalAutoID(t.Meta().ID)
 	if err != nil {
 		return errors.Trace(err)
 	}
