@@ -80,7 +80,7 @@ func InjectProjBelowAgg(aggPlan PhysicalPlan, aggFuncs []*aggregation.AggFuncDes
 			_, isScalarFunc := arg.(*expression.ScalarFunction)
 			hasScalarFunc = hasScalarFunc || isScalarFunc
 		}
-		for _, byItem := range aggFuncs[i].ByItems {
+		for _, byItem := range aggFuncs[i].OrderByItems {
 			_, isScalarFunc := byItem.Expr.(*expression.ScalarFunction)
 			hasScalarFunc = hasScalarFunc || isScalarFunc
 		}
@@ -112,7 +112,7 @@ func InjectProjBelowAgg(aggPlan PhysicalPlan, aggFuncs []*aggregation.AggFuncDes
 			f.Args[i] = newArg
 			cursor++
 		}
-		for _, byItem := range f.ByItems {
+		for _, byItem := range f.OrderByItems {
 			if _, isCnst := byItem.Expr.(*expression.Constant); isCnst {
 				continue
 			}

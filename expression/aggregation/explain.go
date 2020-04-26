@@ -29,15 +29,15 @@ func ExplainAggFunc(agg *AggFuncDesc) string {
 	}
 	for i, arg := range agg.Args {
 		if agg.Name == ast.AggFuncGroupConcat && i == len(agg.Args)-1 {
-			if len(agg.ByItems) > 0 {
+			if len(agg.OrderByItems) > 0 {
 				buffer.WriteString(" order by ")
-				for i, item := range agg.ByItems {
+				for i, item := range agg.OrderByItems {
 					order := "asc"
 					if item.Desc {
 						order = "desc"
 					}
 					fmt.Fprintf(&buffer, "%s %s", item.Expr.ExplainInfo(), order)
-					if i+1 < len(agg.ByItems) {
+					if i+1 < len(agg.OrderByItems) {
 						buffer.WriteString(", ")
 					}
 				}

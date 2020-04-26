@@ -97,7 +97,7 @@ func (s *testSuite) testMergePartialResult(c *C, p aggTest) {
 	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, false)
 	c.Assert(err, IsNil)
 	if p.orderBy {
-		desc.ByItems = []*util.ByItems{
+		desc.OrderByItems = []*util.ByItems{
 			{Expr: args[0], Desc: true},
 		}
 	}
@@ -185,7 +185,7 @@ func (s *testSuite) testMultiArgsMergePartialResult(c *C, p multiArgsAggTest) {
 	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, false)
 	c.Assert(err, IsNil)
 	if p.orderBy {
-		desc.ByItems = []*util.ByItems{
+		desc.OrderByItems = []*util.ByItems{
 			{Expr: args[0], Desc: true},
 		}
 	}
@@ -314,7 +314,7 @@ func (s *testSuite) testAggFunc(c *C, p aggTest) {
 	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, false)
 	c.Assert(err, IsNil)
 	if p.orderBy {
-		desc.ByItems = []*util.ByItems{
+		desc.OrderByItems = []*util.ByItems{
 			{Expr: args[0], Desc: true},
 		}
 	}
@@ -345,7 +345,7 @@ func (s *testSuite) testAggFunc(c *C, p aggTest) {
 	desc, err = aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, true)
 	c.Assert(err, IsNil)
 	if p.orderBy {
-		desc.ByItems = []*util.ByItems{
+		desc.OrderByItems = []*util.ByItems{
 			{Expr: args[0], Desc: true},
 		}
 	}
@@ -397,7 +397,7 @@ func (s *testSuite) testMultiArgsAggFunc(c *C, p multiArgsAggTest) {
 	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, false)
 	c.Assert(err, IsNil)
 	if p.orderBy {
-		desc.ByItems = []*util.ByItems{
+		desc.OrderByItems = []*util.ByItems{
 			{Expr: args[0], Desc: true},
 		}
 	}
@@ -428,7 +428,7 @@ func (s *testSuite) testMultiArgsAggFunc(c *C, p multiArgsAggTest) {
 	desc, err = aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, true)
 	c.Assert(err, IsNil)
 	if p.orderBy {
-		desc.ByItems = []*util.ByItems{
+		desc.OrderByItems = []*util.ByItems{
 			{Expr: args[0], Desc: true},
 		}
 	}
@@ -476,7 +476,7 @@ func (s *testSuite) benchmarkAggFunc(b *testing.B, p aggTest) {
 		b.Fatal(err)
 	}
 	if p.orderBy {
-		desc.ByItems = []*util.ByItems{
+		desc.OrderByItems = []*util.ByItems{
 			{Expr: args[0], Desc: true},
 		}
 	}
@@ -496,7 +496,7 @@ func (s *testSuite) benchmarkAggFunc(b *testing.B, p aggTest) {
 		b.Fatal(err)
 	}
 	if p.orderBy {
-		desc.ByItems = []*util.ByItems{
+		desc.OrderByItems = []*util.ByItems{
 			{Expr: args[0], Desc: true},
 		}
 	}
@@ -530,7 +530,7 @@ func (s *testSuite) benchmarkMultiArgsAggFunc(b *testing.B, p multiArgsAggTest) 
 		b.Fatal(err)
 	}
 	if p.orderBy {
-		desc.ByItems = []*util.ByItems{
+		desc.OrderByItems = []*util.ByItems{
 			{Expr: args[0], Desc: true},
 		}
 	}
@@ -550,7 +550,7 @@ func (s *testSuite) benchmarkMultiArgsAggFunc(b *testing.B, p multiArgsAggTest) 
 		b.Fatal(err)
 	}
 	if p.orderBy {
-		desc.ByItems = []*util.ByItems{
+		desc.OrderByItems = []*util.ByItems{
 			{Expr: args[0], Desc: true},
 		}
 	}

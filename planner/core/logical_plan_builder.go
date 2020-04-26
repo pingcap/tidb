@@ -212,7 +212,7 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 					return nil, nil, err
 				}
 				p = np
-				newFunc.ByItems = append(newFunc.ByItems, &util.ByItems{Expr: newByItem, Desc: byItem.Desc})
+				newFunc.OrderByItems = append(newFunc.OrderByItems, &util.ByItems{Expr: newByItem, Desc: byItem.Desc})
 			}
 		}
 		combined := false

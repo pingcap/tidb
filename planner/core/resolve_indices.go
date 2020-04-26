@@ -343,7 +343,7 @@ func (p *basePhysicalAgg) ResolveIndices() (err error) {
 				return err
 			}
 		}
-		for _, byItem := range aggFun.ByItems {
+		for _, byItem := range aggFun.OrderByItems {
 			byItem.Expr, err = byItem.Expr.ResolveIndices(p.children[0].Schema())
 			if err != nil {
 				return err

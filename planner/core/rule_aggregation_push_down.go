@@ -34,7 +34,7 @@ type aggregationPushDownSolver struct {
 // count(distinct) is not.
 // Currently we don't support avg and concat.
 func (a *aggregationPushDownSolver) isDecomposableWithJoin(fun *aggregation.AggFuncDesc) bool {
-	if len(fun.ByItems) > 0 {
+	if len(fun.OrderByItems) > 0 {
 		return false
 	}
 	switch fun.Name {
@@ -51,7 +51,7 @@ func (a *aggregationPushDownSolver) isDecomposableWithJoin(fun *aggregation.AggF
 }
 
 func (a *aggregationPushDownSolver) isDecomposableWithUnion(fun *aggregation.AggFuncDesc) bool {
-	if len(fun.ByItems) > 0 {
+	if len(fun.OrderByItems) > 0 {
 		return false
 	}
 	switch fun.Name {

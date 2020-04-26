@@ -346,18 +346,18 @@ func buildGroupConcat(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDe
 				args:    aggFuncDesc.Args[:len(aggFuncDesc.Args)-1],
 				ordinal: ordinal,
 			},
-			byItems:   aggFuncDesc.ByItems,
+			byItems:   aggFuncDesc.OrderByItems,
 			sep:       sep,
 			maxLen:    maxLen,
 			truncated: &truncated,
 		}
 		if aggFuncDesc.HasDistinct {
-			if len(aggFuncDesc.ByItems) > 0 {
+			if len(aggFuncDesc.OrderByItems) > 0 {
 				return &groupConcatDistinctOrder{base}
 			}
 			return &groupConcatDistinct{base}
 		}
-		if len(aggFuncDesc.ByItems) > 0 {
+		if len(aggFuncDesc.OrderByItems) > 0 {
 			return &groupConcatOrder{base}
 		}
 		return &groupConcat{base}
