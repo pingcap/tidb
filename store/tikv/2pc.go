@@ -50,7 +50,7 @@ type twoPhaseCommitAction interface {
 }
 
 type actionPrewrite struct{}
-type actionCommit struct{}
+type actionCommit struct{ inRetry bool }
 type actionCleanup struct{}
 type actionPessimisticLock struct {
 	*kv.LockCtx
@@ -463,7 +463,7 @@ func (c *twoPhaseCommitter) doActionOnMutations(bo *Backoffer, action twoPhaseCo
 		firstIsPrimary = true
 	}
 
-	_, actionIsCommit := action.(actionCommit)
+	commitAction, actionIsCommit := action.(actionCommit)
 	_, actionIsCleanup := action.(actionCleanup)
 	_, actionIsPessimiticLock := action.(actionPessimisticLock)
 
@@ -499,7 +499,7 @@ func (c *twoPhaseCommitter) doActionOnMutations(bo *Backoffer, action twoPhaseCo
 		}
 		batches = batches[1:]
 	}
-	if actionIsCommit {
+	if actionIsCommit && !commitAction.inRetry {
 		// Commit secondary batches in background goroutine to reduce latency.
 		// The backoffer instance is created outside of the goroutine to avoid
 		// potential data race in unit test since `CommitMaxBackoff` will be updated
@@ -527,7 +527,7 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 		return nil
 	}
 
-	if len(batches) == 1 {
+	if len(batches) == 1 || action.(actionCommit).inRetry {
 		e := action.handleSingleBatch(c, bo, batches[0])
 		if e != nil {
 			logutil.BgLogger().Debug("2PC doActionOnBatches failed",
@@ -998,7 +998,7 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 			return errors.Trace(err)
 		}
 		// re-split keys and commit again.
-		err = c.commitMutations(bo, batch.mutations)
+		err = c.doActionOnMutations(bo, actionCommit{inRetry: true}, batch.mutations)
 		return errors.Trace(err)
 	}
 	if resp.Resp == nil {
