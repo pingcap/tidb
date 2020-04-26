@@ -348,9 +348,8 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	}
 	e.names = names
 	e.Plan = p
-	isRange := e.isRangePartition(p)
 	_, isTableDual := p.(*PhysicalTableDual)
-	if !isTableDual && prepared.UseCache && !isRange {
+	if !isTableDual && prepared.UseCache {
 		err = e.setFoundInPlanCache(sctx, true)
 		if err != nil {
 			return err
@@ -359,9 +358,8 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
 		sctx.PreparedPlanCache().Put(cacheKey, cached)
-	} else {
-		err = e.setFoundInPlanCache(sctx, false)
 	}
+	err = e.setFoundInPlanCache(sctx, false)
 	return err
 }
 
@@ -531,36 +529,6 @@ func (e *Execute) rebuildRange(p Plan) error {
 	return nil
 }
 
-func checkRangePartitionInfo(pi *model.PartitionInfo) bool {
-	if pi != nil && pi.Type == model.PartitionTypeRange {
-		return true
-	}
-	return false
-}
-
-// Prepare plan cache is not support query plan on range partition table.
-func (e *Execute) isRangePartition(p Plan) bool {
-	isRange := false
-	switch x := p.(type) {
-	case *PhysicalTableReader:
-		ts := x.TablePlans[0].(*PhysicalTableScan)
-		return checkRangePartitionInfo(ts.Table.Partition)
-	case *PhysicalIndexLookUpReader:
-		is := x.IndexPlans[0].(*PhysicalIndexScan)
-		return checkRangePartitionInfo(is.Table.Partition)
-	case *PhysicalIndexReader:
-		is := x.IndexPlans[0].(*PhysicalIndexScan)
-		return checkRangePartitionInfo(is.Table.Partition)
-	case PhysicalPlan:
-		for _, child := range x.Children() {
-			if e.isRangePartition(child) {
-				isRange = true
-			}
-		}
-	}
-	return isRange
-}
-
 func (e *Execute) buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) ([]*ranger.Range, error) {
 	if len(is.IdxCols) == 0 {
 		return ranger.FullRange(), nil
@@ -584,6 +552,16 @@ type Set struct {
 	baseSchemaProducer
 
 	VarAssigns []*expression.VarAssignment
+}
+
+// SetConfig represents a plan for set config stmt.
+type SetConfig struct {
+	baseSchemaProducer
+
+	Type     string
+	Instance string
+	Name     string
+	Value    expression.Expression
 }
 
 // SQLBindOpType repreents the SQL bind type

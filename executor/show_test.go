@@ -741,6 +741,35 @@ func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
 			"  PRIMARY KEY (`a`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
+	// Test show auto_random table option.
+	tk.MustExec("create table auto_random_tbl4 (a bigint primary key auto_random(5), b varchar(255)) auto_random_base = 100")
+	tk.MustQuery("show create table `auto_random_tbl4`").Check(testutil.RowsWithSep("|",
+		""+
+			"auto_random_tbl4 CREATE TABLE `auto_random_tbl4` (\n"+
+			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
+			"  `b` varchar(255) DEFAULT NULL,\n"+
+			"  PRIMARY KEY (`a`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_rand] AUTO_RANDOM_BASE=100 */",
+	))
+	// Test implicit auto_random with auto_random table option.
+	tk.MustExec("create table auto_random_tbl5 (a bigint auto_random primary key, b char) auto_random_base 50")
+	tk.MustQuery("show create table auto_random_tbl5").Check(testutil.RowsWithSep("|",
+		""+
+			"auto_random_tbl5 CREATE TABLE `auto_random_tbl5` (\n"+
+			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
+			"  `b` char(1) DEFAULT NULL,\n"+
+			"  PRIMARY KEY (`a`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_rand] AUTO_RANDOM_BASE=50 */",
+	))
+	// Test auto_random table option already with special comment.
+	tk.MustExec("create table auto_random_tbl6 (a bigint /*T![auto_rand] auto_random */ primary key) auto_random_base 200")
+	tk.MustQuery("show create table auto_random_tbl6").Check(testutil.RowsWithSep("|",
+		""+
+			"auto_random_tbl6 CREATE TABLE `auto_random_tbl6` (\n"+
+			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
+			"  PRIMARY KEY (`a`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_rand] AUTO_RANDOM_BASE=200 */",
+	))
 }
 
 // Override testAutoRandomSuite to test auto id cache.

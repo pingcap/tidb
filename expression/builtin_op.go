@@ -427,13 +427,25 @@ func (c *isTrueOrFalseFunctionClass) getFunction(ctx sessionctx.Context, args []
 		switch argTp {
 		case types.ETReal:
 			sig = &builtinRealIsTrueSig{bf, c.keepNull}
-			sig.setPbCode(tipb.ScalarFuncSig_RealIsTrue)
+			if c.keepNull {
+				sig.setPbCode(tipb.ScalarFuncSig_RealIsTrueWithNull)
+			} else {
+				sig.setPbCode(tipb.ScalarFuncSig_RealIsTrue)
+			}
 		case types.ETDecimal:
 			sig = &builtinDecimalIsTrueSig{bf, c.keepNull}
-			sig.setPbCode(tipb.ScalarFuncSig_DecimalIsTrue)
+			if c.keepNull {
+				sig.setPbCode(tipb.ScalarFuncSig_DecimalIsTrueWithNull)
+			} else {
+				sig.setPbCode(tipb.ScalarFuncSig_DecimalIsTrue)
+			}
 		case types.ETInt:
 			sig = &builtinIntIsTrueSig{bf, c.keepNull}
-			sig.setPbCode(tipb.ScalarFuncSig_IntIsTrue)
+			if c.keepNull {
+				sig.setPbCode(tipb.ScalarFuncSig_IntIsTrueWithNull)
+			} else {
+				sig.setPbCode(tipb.ScalarFuncSig_IntIsTrue)
+			}
 		default:
 			return nil, errors.Errorf("unexpected types.EvalType %v", argTp)
 		}
@@ -441,13 +453,25 @@ func (c *isTrueOrFalseFunctionClass) getFunction(ctx sessionctx.Context, args []
 		switch argTp {
 		case types.ETReal:
 			sig = &builtinRealIsFalseSig{bf, c.keepNull}
-			sig.setPbCode(tipb.ScalarFuncSig_RealIsFalse)
+			if c.keepNull {
+				sig.setPbCode(tipb.ScalarFuncSig_RealIsFalseWithNull)
+			} else {
+				sig.setPbCode(tipb.ScalarFuncSig_RealIsFalse)
+			}
 		case types.ETDecimal:
 			sig = &builtinDecimalIsFalseSig{bf, c.keepNull}
-			sig.setPbCode(tipb.ScalarFuncSig_DecimalIsFalse)
+			if c.keepNull {
+				sig.setPbCode(tipb.ScalarFuncSig_DecimalIsFalseWithNull)
+			} else {
+				sig.setPbCode(tipb.ScalarFuncSig_DecimalIsFalse)
+			}
 		case types.ETInt:
 			sig = &builtinIntIsFalseSig{bf, c.keepNull}
-			sig.setPbCode(tipb.ScalarFuncSig_IntIsFalse)
+			if c.keepNull {
+				sig.setPbCode(tipb.ScalarFuncSig_IntIsFalseWithNull)
+			} else {
+				sig.setPbCode(tipb.ScalarFuncSig_IntIsFalse)
+			}
 		default:
 			return nil, errors.Errorf("unexpected types.EvalType %v", argTp)
 		}

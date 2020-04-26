@@ -203,6 +203,10 @@ func (c *mockPDClient) UpdateGCSafePoint(ctx context.Context, safePoint uint64) 
 	panic("unimplemented")
 }
 
+func (c *mockPDClient) UpdateServiceGCSafePoint(ctx context.Context, serviceID string, ttl int64, safePoint uint64) (uint64, error) {
+	panic("unimplemented")
+}
+
 func (c *mockPDClient) Close() {}
 
 func (c *mockPDClient) ScatterRegion(ctx context.Context, regionID uint64) error {
@@ -224,8 +228,10 @@ func (c *checkRequestClient) SendRequest(ctx context.Context, addr string, req *
 	resp, err := c.Client.SendRequest(ctx, addr, req, timeout)
 	if c.priority != req.Priority {
 		if resp.Resp != nil {
-			(resp.Resp.(*pb.GetResponse)).Error = &pb.KeyError{
-				Abort: "request check error",
+			if getResp, ok := resp.Resp.(*pb.GetResponse); ok {
+				getResp.Error = &pb.KeyError{
+					Abort: "request check error",
+				}
 			}
 		}
 	}
