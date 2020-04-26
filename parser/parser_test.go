@@ -1043,6 +1043,7 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{"show config", true, "SHOW CONFIG"},
 		{"show config where type='tidb'", true, "SHOW CONFIG WHERE `type`='tidb'"},
 		{"show config where instance='127.0.0.1:3306'", true, "SHOW CONFIG WHERE `instance`='127.0.0.1:3306'"},
+		{"create table CONFIG (a int)", true, "CREATE TABLE `CONFIG` (`a` INT)"}, // check that `CONFIG` is unreserved keyword
 
 		// for FLUSH statement
 		{"flush no_write_to_binlog tables tbl1 with read lock", true, "FLUSH NO_WRITE_TO_BINLOG TABLES `tbl1` WITH READ LOCK"},
