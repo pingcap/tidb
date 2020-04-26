@@ -208,7 +208,7 @@ func ConvertConfigItem2JSON(ctx sessionctx.Context, key string, val expression.E
 		return
 	}
 	if isNull {
-		return "", errors.Errorf("cannot set config to null")
+		return "", errors.Errorf("can't set config to null")
 	}
 	body = fmt.Sprintf(`{"%s":%s}`, key, str)
 	return body, nil
