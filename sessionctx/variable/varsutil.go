@@ -154,8 +154,6 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return CapturePlanBaseline.GetVal(), true, nil
 	case TiDBFoundInPlanCache:
 		return BoolToIntStr(s.PrevFoundInPlanCache), true, nil
-	case TiDBEnableCollectExecutionInfo:
-		return BoolToIntStr(config.GetGlobalConfig().EnableCollectExecutionInfo), true, nil
 	}
 	sVal, ok := s.GetSystemVar(key)
 	if ok {
