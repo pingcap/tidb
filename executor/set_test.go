@@ -17,14 +17,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"io/ioutil"
 	"net/http"
 	"strconv"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -1000,6 +1000,7 @@ func (s *testSuite5) TestSetClusterConfigJSONData(c *C) {
 		{&expression.Constant{Value: types.NewStringDatum("abcd"), RetType: types.NewFieldType(mysql.TypeString)}, `{"k":"abcd"}`, true},
 		{&expression.Constant{Value: types.NewDecimalDatum(&d), RetType: types.NewFieldType(mysql.TypeNewDecimal)}, `{"k":123.456}`, true},
 		{&expression.Constant{Value: types.NewDatum(nil), RetType: types.NewFieldType(mysql.TypeLonglong)}, "", false},
+		{&expression.Constant{RetType: types.NewFieldType(mysql.TypeJSON)}, "", false}, // unsupported type
 		{nil, "", false},
 	}
 
