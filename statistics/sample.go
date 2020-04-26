@@ -284,7 +284,7 @@ func (c *SampleCollector) ExtractTopN(numTop uint32, sc *stmtctx.StatementContex
 		if err != nil {
 			return err
 		}
-		data, err := tablecodec.EncodeValue(sc, nil, d)
+		data, err := tablecodec.EncodeValue(sc, d)
 		if err != nil {
 			return err
 		}
