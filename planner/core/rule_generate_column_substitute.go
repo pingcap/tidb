@@ -17,7 +17,6 @@ import (
 	"context"
 
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -45,27 +44,6 @@ func (gc *gcSubstituter) optimize(ctx context.Context, lp LogicalPlan) (LogicalP
 	return gc.substitute(ctx, lp, exprToColumn), nil
 }
 
-// When Tp is an integer or real type, we don't check whether Flen is equal.
-// Because their Flen is useless for them in TiDB now, and may be unequal for some reasons.
-// For example, Tp for default real is 22, and Tp for sum of real is -1.
-func checkSubstitutability(c1, c2 *types.FieldType) bool {
-	partialEqual := c1.Tp == c2.Tp &&
-		(mysql.IsIntegerType(c1.Tp) || c1.EvalType() == types.ETReal || c1.Flen == c2.Flen) &&
-		c1.Decimal == c2.Decimal &&
-		c1.Charset == c2.Charset &&
-		c1.Collate == c2.Collate &&
-		mysql.HasUnsignedFlag(c1.Flag) == mysql.HasUnsignedFlag(c2.Flag)
-	if !partialEqual || len(c1.Elems) != len(c2.Elems) {
-		return false
-	}
-	for i := range c1.Elems {
-		if c1.Elems[i] != c2.Elems[i] {
-			return false
-		}
-	}
-	return true
-}
-
 // collectGenerateColumn collect the generate column and save them to a map from their expressions to themselves.
 // For the sake of simplicity, we don't collect the stored generate column because we can't get their expressions directly.
 // TODO: support stored generate column.
@@ -84,7 +62,7 @@ func collectGenerateColumn(lp LogicalPlan, exprToColumn ExprColumnMap) {
 			if colInfo.IsGenerated() && !colInfo.GeneratedStored {
 				s := ds.schema.Columns
 				col := expression.ColInfo2Col(s, colInfo)
-				if col != nil && checkSubstitutability(col.GetType(), col.VirtualExpr.GetType()) {
+				if col != nil && col.GetType().Equal(col.VirtualExpr.GetType()) {
 					exprToColumn[col.VirtualExpr] = col
 				}
 			}
