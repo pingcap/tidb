@@ -241,6 +241,12 @@ distinct-agg-push-down = false
 # If binlog is not enabled, this value should be less than 10737418240(10G).
 txn-total-size-limit = 104857600
 
+# The max number of running concurrency two phase committer request for an SQL.
+committer-concurrency = 16
+
+# max lifetime of transaction ttl manager.
+max-txn-ttl = 600000
+
 [proxy-protocol]
 # PROXY protocol acceptable client networks.
 # Empty string means disable PROXY protocol, * means all networks.
