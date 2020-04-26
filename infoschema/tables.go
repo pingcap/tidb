@@ -815,6 +815,8 @@ var TableTiKVRegionStatusCols = []columnInfo{
 	{name: "READ_BYTES", tp: mysql.TypeLonglong, size: 21},
 	{name: "APPROXIMATE_SIZE", tp: mysql.TypeLonglong, size: 21},
 	{name: "APPROXIMATE_KEYS", tp: mysql.TypeLonglong, size: 21},
+	{name: "REPLICATIONSTATUS_STATE", tp: mysql.TypeVarchar, size: 64},
+	{name: "REPLICATIONSTATUS_STATEID", tp: mysql.TypeLonglong, size: 21},
 }
 
 // TableTiKVRegionPeersCols is TiKV region peers mem table columns.
@@ -1250,10 +1252,10 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 			return nil, errors.Trace(err)
 		}
 		pdVersion, err := ioutil.ReadAll(resp.Body)
+		terror.Log(resp.Body.Close())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		terror.Log(resp.Body.Close())
 		version := strings.Trim(strings.Trim(string(pdVersion), "\n"), "\"")
 
 		// Get PD git_hash
@@ -1271,10 +1273,11 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 			GitHash        string `json:"git_hash"`
 			StartTimestamp int64  `json:"start_timestamp"`
 		}{}
-		if err := json.NewDecoder(resp.Body).Decode(&content); err != nil {
+		err = json.NewDecoder(resp.Body).Decode(&content)
+		terror.Log(resp.Body.Close())
+		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		terror.Log(resp.Body.Close())
 
 		servers = append(servers, ServerInfo{
 			ServerType:     "pd",
@@ -1578,7 +1581,7 @@ func (it *infoschemaTable) Allocators(_ sessionctx.Context) autoid.Allocators {
 }
 
 // RebaseAutoID implements table.Table RebaseAutoID interface.
-func (it *infoschemaTable) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool) error {
+func (it *infoschemaTable) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool, tp autoid.AllocatorType) error {
 	return table.ErrUnsupportedOp
 }
 
@@ -1705,7 +1708,7 @@ func (vt *VirtualTable) Allocators(_ sessionctx.Context) autoid.Allocators {
 }
 
 // RebaseAutoID implements table.Table RebaseAutoID interface.
-func (vt *VirtualTable) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool) error {
+func (vt *VirtualTable) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool, tp autoid.AllocatorType) error {
 	return table.ErrUnsupportedOp
 }
 
