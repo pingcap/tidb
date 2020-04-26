@@ -23,6 +23,7 @@ import (
 var col = &Collector{}
 
 func MemProfileForGlobalMemTracker(d time.Duration) {
+	log.Info("Mem Profile Tracker started")
 	t := time.NewTicker(d)
 	defer t.Stop()
 	for {

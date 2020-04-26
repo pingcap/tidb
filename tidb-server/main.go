@@ -175,6 +175,7 @@ func main() {
 	}
 	setGlobalVars()
 	setCPUAffinity()
+	setMemoryProfileTracker()
 	setupLog()
 	setupTracing() // Should before createServer and after setup config.
 	printInfo()
