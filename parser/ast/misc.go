@@ -2242,12 +2242,14 @@ type BRIEOptionType uint16
 const (
 	BRIEKindBackup BRIEKind = iota
 	BRIEKindRestore
+	BRIEKindImport
 
 	// common BRIE options
 	BRIEOptionRateLimit BRIEOptionType = iota + 1
 	BRIEOptionConcurrency
 	BRIEOptionChecksum
 	BRIEOptionSendCreds
+	BRIEOptionCheckpoint
 	// backup options
 	BRIEOptionBackupTimeAgo
 	BRIEOptionBackupTS
@@ -2256,22 +2258,23 @@ const (
 	BRIEOptionLastBackupTSO
 	// restore options
 	BRIEOptionOnline
-	// S3 storage options
-	BRIEOptionS3Endpoint
-	BRIEOptionS3Region
-	BRIEOptionS3StorageClass
-	BRIEOptionS3SSE
-	BRIEOptionS3ACL
-	BRIEOptionS3AccessKey
-	BRIEOptionS3SecretAccessKey
-	BRIEOptionS3Provider
-	BRIEOptionS3ForcePathStyle
-	BRIEOptionS3UseAccelerateEndpoint
-	// GCS storage options
-	BRIEOptionGCSEndpoint
-	BRIEOptionGCSStorageClass
-	BRIEOptionGCSPredefinedACL
-	BRIEOptionGCSCredentialsFile
+	// import options
+	BRIEOptionAnalyze
+	BRIEOptionBackend
+	BRIEOptionOnDuplicate
+	BRIEOptionSkipSchemaFiles
+	BRIEOptionStrictFormat
+	BRIEOptionTiKVImporter
+	// CSV options
+	BRIEOptionCSVBackslashEscape
+	BRIEOptionCSVDelimiter
+	BRIEOptionCSVHeader
+	BRIEOptionCSVNotNull
+	BRIEOptionCSVNull
+	BRIEOptionCSVSeparator
+	BRIEOptionCSVTrimLastSeparators
+
+	BRIECSVHeaderIsColumns = ^uint64(0)
 )
 
 func (kind BRIEKind) String() string {
@@ -2280,6 +2283,8 @@ func (kind BRIEKind) String() string {
 		return "BACKUP"
 	case BRIEKindRestore:
 		return "RESTORE"
+	case BRIEKindImport:
+		return "IMPORT"
 	default:
 		return ""
 	}
@@ -2297,40 +2302,38 @@ func (kind BRIEOptionType) String() string {
 		return "SEND_CREDENTIALS_TO_TIKV"
 	case BRIEOptionBackupTimeAgo, BRIEOptionBackupTS, BRIEOptionBackupTSO:
 		return "SNAPSHOT"
-	case BRIEOptionLastBackupTS:
-		return "INCREMENTAL UNTIL TIMESTAMP"
-	case BRIEOptionLastBackupTSO:
-		return "INCREMENTAL UNTIL TIMESTAMP_ORACLE"
+	case BRIEOptionLastBackupTS, BRIEOptionLastBackupTSO:
+		return "LAST_BACKUP"
 	case BRIEOptionOnline:
 		return "ONLINE"
-	case BRIEOptionS3Endpoint:
-		return "S3_ENDPOINT"
-	case BRIEOptionS3Region:
-		return "S3_REGION"
-	case BRIEOptionS3StorageClass:
-		return "S3_STORAGE_CLASS"
-	case BRIEOptionS3SSE:
-		return "S3_SSE"
-	case BRIEOptionS3ACL:
-		return "S3_ACL"
-	case BRIEOptionS3AccessKey:
-		return "S3_ACCESS_KEY"
-	case BRIEOptionS3SecretAccessKey:
-		return "S3_SECRET_ACCESS_KEY"
-	case BRIEOptionS3Provider:
-		return "S3_PROVIDER"
-	case BRIEOptionS3ForcePathStyle:
-		return "S3_FORCE_PATH_STYLE"
-	case BRIEOptionS3UseAccelerateEndpoint:
-		return "S3_USE_ACCELERATE_ENDPOINT"
-	case BRIEOptionGCSEndpoint:
-		return "GCS_ENDPOINT"
-	case BRIEOptionGCSStorageClass:
-		return "GCS_STORAGE_CLASS"
-	case BRIEOptionGCSPredefinedACL:
-		return "GCS_PREDEFINED_ACL"
-	case BRIEOptionGCSCredentialsFile:
-		return "GCS_CREDENTIALS_FILE"
+	case BRIEOptionCheckpoint:
+		return "CHECKPOINT"
+	case BRIEOptionAnalyze:
+		return "ANALYZE"
+	case BRIEOptionBackend:
+		return "BACKEND"
+	case BRIEOptionOnDuplicate:
+		return "ON_DUPLICATE"
+	case BRIEOptionSkipSchemaFiles:
+		return "SKIP_SCHEMA_FILES"
+	case BRIEOptionStrictFormat:
+		return "STRICT_FORMAT"
+	case BRIEOptionTiKVImporter:
+		return "TIKV_IMPORTER"
+	case BRIEOptionCSVBackslashEscape:
+		return "CSV_BACKSLASH_ESCAPE"
+	case BRIEOptionCSVDelimiter:
+		return "CSV_DELIMITER"
+	case BRIEOptionCSVHeader:
+		return "CSV_HEADER"
+	case BRIEOptionCSVNotNull:
+		return "CSV_NOT_NULL"
+	case BRIEOptionCSVNull:
+		return "CSV_NULL"
+	case BRIEOptionCSVSeparator:
+		return "CSV_SEPARATOR"
+	case BRIEOptionCSVTrimLastSeparators:
+		return "CSV_TRIM_LAST_SEPARATORS"
 	default:
 		return ""
 	}
@@ -2346,12 +2349,11 @@ type BRIEOption struct {
 type BRIEStmt struct {
 	stmtNode
 
-	Kind        BRIEKind
-	Schemas     []string
-	Tables      []*TableName
-	Storage     string
-	Options     []*BRIEOption
-	Incremental *BRIEOption
+	Kind    BRIEKind
+	Schemas []string
+	Tables  []*TableName
+	Storage string
+	Options []*BRIEOption
 }
 
 func (n *BRIEStmt) Accept(v Visitor) (Node, bool) {
@@ -2397,21 +2399,10 @@ func (n *BRIEStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain(" *")
 	}
 
-	if n.Incremental != nil {
-		switch n.Incremental.Tp {
-		case BRIEOptionLastBackupTS:
-			ctx.WriteKeyWord(" INCREMENTAL UNTIL TIMESTAMP ")
-			ctx.WriteString(n.Incremental.StrValue)
-		case BRIEOptionLastBackupTSO:
-			ctx.WriteKeyWord(" INCREMENTAL UNTIL TIMESTAMP_ORACLE")
-			ctx.WritePlainf(" %d", n.Incremental.UintValue)
-		}
-	}
-
 	switch n.Kind {
 	case BRIEKindBackup:
 		ctx.WriteKeyWord(" TO ")
-	case BRIEKindRestore:
+	case BRIEKindRestore, BRIEKindImport:
 		ctx.WriteKeyWord(" FROM ")
 	}
 	ctx.WriteString(n.Storage)
@@ -2421,8 +2412,8 @@ func (n *BRIEStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord(opt.Tp.String())
 		ctx.WritePlain(" = ")
 		switch opt.Tp {
-		case BRIEOptionConcurrency, BRIEOptionChecksum, BRIEOptionSendCreds, BRIEOptionOnline, BRIEOptionS3ForcePathStyle, BRIEOptionS3UseAccelerateEndpoint, BRIEOptionBackupTSO:
-			ctx.WritePlainf("%d", opt.UintValue)
+		case BRIEOptionBackupTS, BRIEOptionLastBackupTS, BRIEOptionBackend, BRIEOptionOnDuplicate, BRIEOptionTiKVImporter, BRIEOptionCSVDelimiter, BRIEOptionCSVNull, BRIEOptionCSVSeparator:
+			ctx.WriteString(opt.StrValue)
 		case BRIEOptionBackupTimeAgo:
 			ctx.WritePlainf("%d ", opt.UintValue/1000)
 			ctx.WriteKeyWord("MICROSECOND AGO")
@@ -2431,8 +2422,14 @@ func (n *BRIEStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("MB")
 			ctx.WritePlain("/")
 			ctx.WriteKeyWord("SECOND")
+		case BRIEOptionCSVHeader:
+			if opt.UintValue == BRIECSVHeaderIsColumns {
+				ctx.WriteKeyWord("COLUMNS")
+			} else {
+				ctx.WritePlainf("%d", opt.UintValue)
+			}
 		default:
-			ctx.WriteString(opt.StrValue)
+			ctx.WritePlainf("%d", opt.UintValue)
 		}
 	}
 
