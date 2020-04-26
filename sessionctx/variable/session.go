@@ -1254,13 +1254,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		atomic.StoreUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen, uint64(tidbOptInt64(val, logutil.DefaultQueryLogMaxLen)))
 	case TiDBCheckMb4ValueInUTF8:
 		config.GetGlobalConfig().CheckMb4ValueInUTF8 = TiDBOptOn(val)
-<<<<<<< HEAD
-=======
 	case TiDBFoundInPlanCache:
 		s.FoundInPlanCache = TiDBOptOn(val)
-	case TiDBEnableCollectExecutionInfo:
-		config.GetGlobalConfig().EnableCollectExecutionInfo = TiDBOptOn(val)
->>>>>>> ff7413f... planner, sessionctx : Add 'last_plan_from_cache' to help know whether sql's plan is from plan cache (#16321)
 	}
 	s.systems[name] = val
 	return nil
