@@ -15,6 +15,7 @@ package privileges_test
 
 import (
 	"fmt"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"

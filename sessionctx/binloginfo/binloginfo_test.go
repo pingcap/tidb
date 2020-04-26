@@ -560,6 +560,14 @@ func (s *testBinlogSuite) TestAddSpecialComment(c *C) {
 			"create table t1 (id int  /*T![auto_rand] auto_random  (   4    ) */ primary key);",
 		},
 		{
+			"create table t1 (id int auto_random ( 3 ) primary key) auto_random_base = 100;",
+			"create table t1 (id int /*T![auto_rand] auto_random ( 3 ) */ primary key) /*T![auto_rand_base] auto_random_base = 100 */ ;",
+		},
+		{
+			"create table t1 (id int auto_random primary key) auto_random_base = 50;",
+			"create table t1 (id int /*T![auto_rand] auto_random */ primary key) /*T![auto_rand_base] auto_random_base = 50 */ ;",
+		},
+		{
 			"create table t1 (id int auto_increment key) auto_id_cache 100;",
 			"create table t1 (id int auto_increment key) /*T![auto_id_cache] auto_id_cache 100 */ ;",
 		},
