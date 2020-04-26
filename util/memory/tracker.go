@@ -48,9 +48,9 @@ type Tracker struct {
 		sync.Mutex
 		actionOnExceed ActionOnExceed
 	}
-	parMu struct{
+	parMu struct {
 		sync.Mutex
-		parent   *Tracker // The parent memory tracker.
+		parent *Tracker // The parent memory tracker.
 	}
 
 	label         fmt.Stringer // Label of this "Tracker".
