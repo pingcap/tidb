@@ -288,7 +288,7 @@
         "Plan": [
           "HashAgg_14 1.00 root  funcs:avg(Column#6, Column#7)->Column#5",
           "└─TableReader_15 1.00 root  data:HashAgg_16",
-          "  └─HashAgg_16 1.00 cop[tikv]  funcs:avg(test.t.b)->Column#6",
+          "  └─HashAgg_16 1.00 cop[tikv]  funcs:count(test.t.b)->Column#6, funcs:sum(test.t.b)->Column#7",
           "    └─TableFullScan_12 10000.00 cop[tikv] table:a keep order:false, stats:pseudo"
         ],
         "Result": [
@@ -489,7 +489,7 @@
           "Projection_8 8000.00 root  Column#5, test.t.c, Column#5, Column#6, Column#7, Column#8, Column#9",
           "└─HashAgg_13 8000.00 root  group by:test.t.c, funcs:avg(Column#11, Column#12)->Column#5, funcs:count(distinct test.t.a, test.t.b)->Column#6, funcs:count(distinct test.t.a)->Column#7, funcs:count(distinct test.t.c)->Column#8, funcs:sum(Column#13)->Column#9, funcs:firstrow(test.t.c)->test.t.c",
           "  └─TableReader_14 8000.00 root  data:HashAgg_15",
-          "    └─HashAgg_15 8000.00 cop[tikv]  group by:test.t.a, test.t.b, test.t.c, funcs:avg(test.t.b)->Column#11, funcs:sum(test.t.b)->Column#12",
+          "    └─HashAgg_15 8000.00 cop[tikv]  group by:test.t.a, test.t.b, test.t.c, funcs:count(test.t.b)->Column#11, funcs:sum(test.t.b)->Column#12, funcs:sum(test.t.b)->Column#13",
           "      └─TableFullScan_11 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Result": [
