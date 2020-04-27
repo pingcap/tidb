@@ -44,23 +44,23 @@ import (
 
 const (
 	// CreateUserTable is the SQL statement creates User table in system db.
-	CreateUserTable = `CREATE TABLE if not exists mysql.user (
-		Host				CHAR(64),
-		User				CHAR(32),
+	CreateUserTable = `CREATE TABLE IF NOT EXISTS mysql.user (
+		Host					CHAR(64),
+		User					CHAR(32),
 		authentication_string	TEXT,
-		Select_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Insert_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Update_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Delete_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Create_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Drop_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Select_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Insert_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Update_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Delete_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Create_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Drop_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Process_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Grant_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Grant_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		References_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Alter_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Alter_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Show_db_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Super_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Create_tmp_table_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Super_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Create_tmp_table_priv	ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Lock_tables_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Execute_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_view_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
@@ -79,41 +79,41 @@ const (
 		FILE_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		PRIMARY KEY (Host, User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
-	CreateGlobalPrivTable = "CREATE TABLE if not exists mysql.global_priv (" +
-		"Host char(60) NOT NULL DEFAULT ''," +
-		"User char(80) NOT NULL DEFAULT ''," +
-		"Priv longtext NOT NULL DEFAULT ''," +
+	CreateGlobalPrivTable = "CREATE TABLE IF NOT EXISTS mysql.global_priv (" +
+		"Host CHAR(60) NOT NULL DEFAULT ''," +
+		"User CHAR(80) NOT NULL DEFAULT ''," +
+		"Priv LONGTEXT NOT NULL DEFAULT ''," +
 		"PRIMARY KEY (Host, User)" +
 		")"
 	// CreateDBPrivTable is the SQL statement creates DB scope privilege table in system db.
-	CreateDBPrivTable = `CREATE TABLE if not exists mysql.db (
-		Host			CHAR(60),
-		DB			CHAR(64),
-		User			CHAR(32),
-		Select_priv		ENUM('N','Y') Not Null DEFAULT 'N',
-		Insert_priv		ENUM('N','Y') Not Null DEFAULT 'N',
-		Update_priv		ENUM('N','Y') Not Null DEFAULT 'N',
-		Delete_priv		ENUM('N','Y') Not Null DEFAULT 'N',
-		Create_priv		ENUM('N','Y') Not Null DEFAULT 'N',
-		Drop_priv		ENUM('N','Y') Not Null DEFAULT 'N',
-		Grant_priv		ENUM('N','Y') Not Null DEFAULT 'N',
-		References_priv 	ENUM('N','Y') Not Null DEFAULT 'N',
-		Index_priv		ENUM('N','Y') Not Null DEFAULT 'N',
-		Alter_priv		ENUM('N','Y') Not Null DEFAULT 'N',
+	CreateDBPrivTable = `CREATE TABLE IF NOT EXISTS mysql.db (
+		Host					CHAR(60),
+		DB						CHAR(64),
+		User					CHAR(32),
+		Select_priv				ENUM('N','Y') Not Null DEFAULT 'N',
+		Insert_priv				ENUM('N','Y') Not Null DEFAULT 'N',
+		Update_priv				ENUM('N','Y') Not Null DEFAULT 'N',
+		Delete_priv				ENUM('N','Y') Not Null DEFAULT 'N',
+		Create_priv				ENUM('N','Y') Not Null DEFAULT 'N',
+		Drop_priv				ENUM('N','Y') Not Null DEFAULT 'N',
+		Grant_priv				ENUM('N','Y') Not Null DEFAULT 'N',
+		References_priv 		ENUM('N','Y') Not Null DEFAULT 'N',
+		Index_priv				ENUM('N','Y') Not Null DEFAULT 'N',
+		Alter_priv				ENUM('N','Y') Not Null DEFAULT 'N',
 		Create_tmp_table_priv	ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Lock_tables_priv	ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Create_view_priv	ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Show_view_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Create_routine_priv	ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Alter_routine_priv	ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Execute_priv		ENUM('N','Y') Not Null DEFAULT 'N',
-		Event_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Trigger_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Lock_tables_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Create_view_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Show_view_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Create_routine_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Alter_routine_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Execute_priv			ENUM('N','Y') Not Null DEFAULT 'N',
+		Event_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Trigger_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		PRIMARY KEY (Host, DB, User));`
 	// CreateTablePrivTable is the SQL statement creates table scope privilege table in system db.
-	CreateTablePrivTable = `CREATE TABLE if not exists mysql.tables_priv (
+	CreateTablePrivTable = `CREATE TABLE IF NOT EXISTS mysql.tables_priv (
 		Host		CHAR(60),
-		DB		CHAR(64),
+		DB			CHAR(64),
 		User		CHAR(32),
 		Table_name	CHAR(64),
 		Grantor		CHAR(77),
@@ -122,166 +122,166 @@ const (
 		Column_priv	SET('Select','Insert','Update'),
 		PRIMARY KEY (Host, DB, User, Table_name));`
 	// CreateColumnPrivTable is the SQL statement creates column scope privilege table in system db.
-	CreateColumnPrivTable = `CREATE TABLE if not exists mysql.columns_priv(
+	CreateColumnPrivTable = `CREATE TABLE IF NOT EXISTS mysql.columns_priv(
 		Host		CHAR(60),
-		DB		CHAR(64),
+		DB			CHAR(64),
 		User		CHAR(32),
 		Table_name	CHAR(64),
 		Column_name	CHAR(64),
-		Timestamp	Timestamp DEFAULT CURRENT_TIMESTAMP,
+		Timestamp	TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		Column_priv	SET('Select','Insert','Update'),
 		PRIMARY KEY (Host, DB, User, Table_name, Column_name));`
 	// CreateGlobalVariablesTable is the SQL statement creates global variable table in system db.
 	// TODO: MySQL puts GLOBAL_VARIABLES table in INFORMATION_SCHEMA db.
 	// INFORMATION_SCHEMA is a virtual db in TiDB. So we put this table in system db.
 	// Maybe we will put it back to INFORMATION_SCHEMA.
-	CreateGlobalVariablesTable = `CREATE TABLE if not exists mysql.GLOBAL_VARIABLES(
-		VARIABLE_NAME  VARCHAR(64) Not Null PRIMARY KEY,
-		VARIABLE_VALUE VARCHAR(1024) DEFAULT Null);`
+	CreateGlobalVariablesTable = `CREATE TABLE IF NOT EXISTS mysql.GLOBAL_VARIABLES(
+		VARIABLE_NAME  VARCHAR(64) NOT Null PRIMARY KEY,
+		VARIABLE_VALUE VARCHAR(1024) DEFAULT NULL);`
 	// CreateTiDBTable is the SQL statement creates a table in system db.
 	// This table is a key-value struct contains some information used by TiDB.
 	// Currently we only put bootstrapped in it which indicates if the system is already bootstrapped.
-	CreateTiDBTable = `CREATE TABLE if not exists mysql.tidb(
-		VARIABLE_NAME  VARCHAR(64) Not Null PRIMARY KEY,
-		VARIABLE_VALUE VARCHAR(1024) DEFAULT Null,
-		COMMENT VARCHAR(1024));`
+	CreateTiDBTable = `CREATE TABLE IF NOT EXISTS mysql.tidb(
+		VARIABLE_NAME  	VARCHAR(64) NOT NULL PRIMARY KEY,
+		VARIABLE_VALUE 	VARCHAR(1024) DEFAULT NUll,
+		COMMENT 		VARCHAR(1024));`
 
 	// CreateHelpTopic is the SQL statement creates help_topic table in system db.
 	// See: https://dev.mysql.com/doc/refman/5.5/en/system-database.html#system-database-help-tables
-	CreateHelpTopic = `CREATE TABLE if not exists mysql.help_topic (
-  		help_topic_id int(10) unsigned NOT NULL,
-  		name char(64) NOT NULL,
-  		help_category_id smallint(5) unsigned NOT NULL,
-  		description text NOT NULL,
-  		example text NOT NULL,
-  		url text NOT NULL,
+	CreateHelpTopic = `CREATE TABLE IF NOT EXISTS mysql.help_topic (
+  		help_topic_id 		INT(10) UNSIGNED NOT NULL,
+  		name char(64) 		NOT NULL,
+  		help_category_id 	SMALLINT(5) UNSIGNED NOT NULL,
+  		description 		TEXT NOT NULL,
+  		example 			TEXT NOT NULL,
+  		url 				TEXT NOT NULL,
   		PRIMARY KEY (help_topic_id),
   		UNIQUE KEY name (name)
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8 STATS_PERSISTENT=0 COMMENT='help topics';`
 
 	// CreateStatsMetaTable stores the meta of table statistics.
-	CreateStatsMetaTable = `CREATE TABLE if not exists mysql.stats_meta (
-		version bigint(64) unsigned NOT NULL,
-		table_id bigint(64) NOT NULL,
-		modify_count bigint(64) NOT NULL DEFAULT 0,
-		count bigint(64) unsigned NOT NULL DEFAULT 0,
-		index idx_ver(version),
-		unique index tbl(table_id)
+	CreateStatsMetaTable = `CREATE TABLE IF NOT EXISTS mysql.stats_meta (
+		version 		BIGINT(64) UNSIGNED NOT NULL,
+		table_id 		BIGINT(64) NOT NULL,
+		modify_count 	BIGINT(64) NOT NULL DEFAULT 0,
+		count 			BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
+		INDEX idx_ver(version),
+		UNIQUE INDEX tbl(table_id)
 	);`
 
 	// CreateStatsColsTable stores the statistics of table columns.
-	CreateStatsColsTable = `CREATE TABLE if not exists mysql.stats_histograms (
-		table_id bigint(64) NOT NULL,
-		is_index tinyint(2) NOT NULL,
-		hist_id bigint(64) NOT NULL,
-		distinct_count bigint(64) NOT NULL,
-		null_count bigint(64) NOT NULL DEFAULT 0,
-		tot_col_size bigint(64) NOT NULL DEFAULT 0,
-		modify_count bigint(64) NOT NULL DEFAULT 0,
-		version bigint(64) unsigned NOT NULL DEFAULT 0,
-		cm_sketch blob,
-		stats_ver bigint(64) NOT NULL DEFAULT 0,
-		flag bigint(64) NOT NULL DEFAULT 0,
-		correlation double NOT NULL DEFAULT 0,
-		last_analyze_pos blob DEFAULT NULL,
-		unique index tbl(table_id, is_index, hist_id)
+	CreateStatsColsTable = `CREATE TABLE IF NOT EXISTS mysql.stats_histograms (
+		table_id 			BIGINT(64) NOT NULL,
+		is_index 			TINYINT(2) NOT NULL,
+		hist_id 			BIGINT(64) NOT NULL,
+		distinct_count 		BIGINT(64) NOT NULL,
+		null_count 			BIGINT(64) NOT NULL DEFAULT 0,
+		tot_col_size 		BIGINT(64) NOT NULL DEFAULT 0,
+		modify_count 		BIGINT(64) NOT NULL DEFAULT 0,
+		version 			BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
+		cm_sketch 			BLOB,
+		stats_ver 			BIGINT(64) NOT NULL DEFAULT 0,
+		flag 				BIGINT(64) NOT NULL DEFAULT 0,
+		correlation 		DOUBLE NOT NULL DEFAULT 0,
+		last_analyze_pos 	BLOB DEFAULT NULL,
+		UNIQUE INDEX tbl(table_id, is_index, hist_id)
 	);`
 
 	// CreateStatsBucketsTable stores the histogram info for every table columns.
-	CreateStatsBucketsTable = `CREATE TABLE if not exists mysql.stats_buckets (
-		table_id bigint(64) NOT NULL,
-		is_index tinyint(2) NOT NULL,
-		hist_id bigint(64) NOT NULL,
-		bucket_id bigint(64) NOT NULL,
-		count bigint(64) NOT NULL,
-		repeats bigint(64) NOT NULL,
-		upper_bound blob NOT NULL,
-		lower_bound blob ,
-		unique index tbl(table_id, is_index, hist_id, bucket_id)
+	CreateStatsBucketsTable = `CREATE TABLE IF NOT EXISTS mysql.stats_buckets (
+		table_id 	BIGINT(64) NOT NULL,
+		is_index 	TINYINT(2) NOT NULL,
+		hist_id 	BIGINT(64) NOT NULL,
+		bucket_id 	BIGINT(64) NOT NULL,
+		count 		BIGINT(64) NOT NULL,
+		repeats 	BIGINT(64) NOT NULL,
+		upper_bound BLOB NOT NULL,
+		lower_bound BLOB ,
+		UNIQUE INDEX tbl(table_id, is_index, hist_id, bucket_id)
 	);`
 
 	// CreateGCDeleteRangeTable stores schemas which can be deleted by DeleteRange.
 	CreateGCDeleteRangeTable = `CREATE TABLE IF NOT EXISTS mysql.gc_delete_range (
-		job_id BIGINT NOT NULL COMMENT "the DDL job ID",
-		element_id BIGINT NOT NULL COMMENT "the schema element ID",
-		start_key VARCHAR(255) NOT NULL COMMENT "encoded in hex",
-		end_key VARCHAR(255) NOT NULL COMMENT "encoded in hex",
-		ts BIGINT NOT NULL COMMENT "timestamp in uint64",
+		job_id 		BIGINT NOT NULL COMMENT "the DDL job ID",
+		element_id 	BIGINT NOT NULL COMMENT "the schema element ID",
+		start_key 	VARCHAR(255) NOT NULL COMMENT "encoded in hex",
+		end_key 	VARCHAR(255) NOT NULL COMMENT "encoded in hex",
+		ts 			BIGINT NOT NULL COMMENT "timestamp in uint64",
 		UNIQUE KEY delete_range_index (job_id, element_id)
 	);`
 
 	// CreateGCDeleteRangeDoneTable stores schemas which are already deleted by DeleteRange.
 	CreateGCDeleteRangeDoneTable = `CREATE TABLE IF NOT EXISTS mysql.gc_delete_range_done (
-		job_id BIGINT NOT NULL COMMENT "the DDL job ID",
-		element_id BIGINT NOT NULL COMMENT "the schema element ID",
-		start_key VARCHAR(255) NOT NULL COMMENT "encoded in hex",
-		end_key VARCHAR(255) NOT NULL COMMENT "encoded in hex",
-		ts BIGINT NOT NULL COMMENT "timestamp in uint64",
+		job_id 		BIGINT NOT NULL COMMENT "the DDL job ID",
+		element_id 	BIGINT NOT NULL COMMENT "the schema element ID",
+		start_key 	VARCHAR(255) NOT NULL COMMENT "encoded in hex",
+		end_key 	VARCHAR(255) NOT NULL COMMENT "encoded in hex",
+		ts 			BIGINT NOT NULL COMMENT "timestamp in uint64",
 		UNIQUE KEY delete_range_done_index (job_id, element_id)
 	);`
 
 	// CreateStatsFeedbackTable stores the feedback info which is used to update stats.
 	CreateStatsFeedbackTable = `CREATE TABLE IF NOT EXISTS mysql.stats_feedback (
-		table_id bigint(64) NOT NULL,
-		is_index tinyint(2) NOT NULL,
-		hist_id bigint(64) NOT NULL,
-		feedback blob NOT NULL,
-		index hist(table_id, is_index, hist_id)
+		table_id 	BIGINT(64) NOT NULL,
+		is_index 	TINYINT(2) NOT NULL,
+		hist_id 	BIGINT(64) NOT NULL,
+		feedback 	BLOB NOT NULL,
+		INDEX hist(table_id, is_index, hist_id)
 	);`
 
 	// CreateBindInfoTable stores the sql bind info which is used to update globalBindCache.
 	CreateBindInfoTable = `CREATE TABLE IF NOT EXISTS mysql.bind_info (
-		original_sql text NOT NULL  ,
-      	bind_sql text NOT NULL ,
-      	default_db text  NOT NULL,
-		status text NOT NULL,
-		create_time timestamp(3) NOT NULL,
-		update_time timestamp(3) NOT NULL,
-		charset text NOT NULL,
-		collation text NOT NULL,
+		original_sql 	TEXT NOT NULL  ,
+      	bind_sql 		TEXT NOT NULL ,
+      	default_db 		TEXT NOT NULL,
+		status 			TEXT NOT NULL,
+		create_time 	TIMESTAMP(3) NOT NULL,
+		update_time 	TIMESTAMP(3) NOT NULL,
+		charset 		TEXT NOT NULL,
+		collation 		TEXT NOT NULL,
 		INDEX sql_index(original_sql(1024),default_db(1024)) COMMENT "accelerate the speed when add global binding query",
 		INDEX time_index(update_time) COMMENT "accelerate the speed when querying with last update time"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
 	// CreateRoleEdgesTable stores the role and user relationship information.
 	CreateRoleEdgesTable = `CREATE TABLE IF NOT EXISTS mysql.role_edges (
-		FROM_HOST char(60) COLLATE utf8_bin NOT NULL DEFAULT '',
-		FROM_USER char(32) COLLATE utf8_bin NOT NULL DEFAULT '',
-		TO_HOST char(60) COLLATE utf8_bin NOT NULL DEFAULT '',
-		TO_USER char(32) COLLATE utf8_bin NOT NULL DEFAULT '',
+		FROM_HOST 	CHAR(60) COLLATE utf8_bin NOT NULL DEFAULT '',
+		FROM_USER 	CHAR(32) COLLATE utf8_bin NOT NULL DEFAULT '',
+		TO_HOST 	CHAR(60) COLLATE utf8_bin NOT NULL DEFAULT '',
+		TO_USER 	CHAR(32) COLLATE utf8_bin NOT NULL DEFAULT '',
 		WITH_ADMIN_OPTION enum('N','Y') CHARACTER SET utf8 COLLATE utf8_general_ci NOT NULL DEFAULT 'N',
 		PRIMARY KEY (FROM_HOST,FROM_USER,TO_HOST,TO_USER)
 	);`
 
 	// CreateDefaultRolesTable stores the active roles for a user.
 	CreateDefaultRolesTable = `CREATE TABLE IF NOT EXISTS mysql.default_roles (
-		HOST char(60) COLLATE utf8_bin NOT NULL DEFAULT '',
-		USER char(32) COLLATE utf8_bin NOT NULL DEFAULT '',
-		DEFAULT_ROLE_HOST char(60) COLLATE utf8_bin NOT NULL DEFAULT '%',
-		DEFAULT_ROLE_USER char(32) COLLATE utf8_bin NOT NULL DEFAULT '',
+		HOST 				CHAR(60) COLLATE utf8_bin NOT NULL DEFAULT '',
+		USER 				CHAR(32) COLLATE utf8_bin NOT NULL DEFAULT '',
+		DEFAULT_ROLE_HOST 	CHAR(60) COLLATE utf8_bin NOT NULL DEFAULT '%',
+		DEFAULT_ROLE_USER 	CHAR(32) COLLATE utf8_bin NOT NULL DEFAULT '',
 		PRIMARY KEY (HOST,USER,DEFAULT_ROLE_HOST,DEFAULT_ROLE_USER)
 	)`
 
 	// CreateStatsTopNTable stores topn data of a cmsketch with top n.
-	CreateStatsTopNTable = `CREATE TABLE if not exists mysql.stats_top_n (
-		table_id bigint(64) NOT NULL,
-		is_index tinyint(2) NOT NULL,
-		hist_id bigint(64) NOT NULL,
-		value longblob,
-		count bigint(64) UNSIGNED NOT NULL,
-		index tbl(table_id, is_index, hist_id)
+	CreateStatsTopNTable = `CREATE TABLE IF NOT EXISTS mysql.stats_top_n (
+		table_id 	BIGINT(64) NOT NULL,
+		is_index 	TINYINT(2) NOT NULL,
+		hist_id 	BIGINT(64) NOT NULL,
+		value 		LONGBLOB,
+		count 		BIGINT(64) UNSIGNED NOT NULL,
+		INDEX tbl(table_id, is_index, hist_id)
 	);`
 
 	// CreateExprPushdownBlacklist stores the expressions which are not allowed to be pushed down.
 	CreateExprPushdownBlacklist = `CREATE TABLE IF NOT EXISTS mysql.expr_pushdown_blacklist (
-		name char(100) NOT NULL,
-		store_type char(100) NOT NULL DEFAULT 'tikv,tiflash,tidb',
-		reason varchar(200)
+		name 		CHAR(100) NOT NULL,
+		store_type 	CHAR(100) NOT NULL DEFAULT 'tikv,tiflash,tidb',
+		reason 		VARCHAR(200)
 	);`
 
 	// CreateOptRuleBlacklist stores the list of disabled optimizing operations.
 	CreateOptRuleBlacklist = `CREATE TABLE IF NOT EXISTS mysql.opt_rule_blacklist (
-		name char(100) NOT NULL
+		name CHAR(100) NOT NULL
 	);`
 )
 
