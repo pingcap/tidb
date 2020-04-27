@@ -2698,19 +2698,11 @@ func (s *testDBSuite7) TestModifyColumnRollBack(c *C) {
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	done := make(chan error, 1)
 	go backgroundExec(s.store, "alter table t1 change c2 c2 bigint not null;", done)
-	ticker := time.NewTicker(s.lease / 2)
-	defer ticker.Stop()
-LOOP:
-	for {
-		select {
-		case err := <-done:
-			c.Assert(err, NotNil)
-			c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
-			break LOOP
-		case <-ticker.C:
-			s.mustExec(c, "insert into t1(c2) values (null);")
-		}
-	}
+
+	err := <-done
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+	s.mustExec(c, "insert into t1(c2) values (null);")
 
 	t := s.testGetTable(c, "t1")
 	for _, col := range t.Cols() {
