@@ -161,13 +161,13 @@ func (s *testSplitIndex) TestSplitIndex(c *C) {
 	index := tables.NewIndex(tbInfo.ID, tbInfo, idxInfo)
 	for _, ca := range cases {
 		// test for minInt64 handle
-		idxValue, _, err := index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, math.MinInt64, nil)
+		idxValue, _, err := index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MinInt64), nil)
 		c.Assert(err, IsNil)
 		idx := searchLessEqualIdx(valueList, idxValue)
 		c.Assert(idx, Equals, ca.lessEqualIdx, Commentf("%#v", ca))
 
 		// Test for max int64 handle.
-		idxValue, _, err = index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, math.MaxInt64, nil)
+		idxValue, _, err = index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MaxInt64), nil)
 		c.Assert(err, IsNil)
 		idx = searchLessEqualIdx(valueList, idxValue)
 		c.Assert(idx, Equals, ca.lessEqualIdx, Commentf("%#v", ca))
@@ -208,13 +208,13 @@ func (s *testSplitIndex) TestSplitIndex(c *C) {
 
 	for _, ca := range cases2 {
 		// test for minInt64 handle
-		idxValue, _, err := index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, math.MinInt64, nil)
+		idxValue, _, err := index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MinInt64), nil)
 		c.Assert(err, IsNil)
 		idx := searchLessEqualIdx(valueList, idxValue)
 		c.Assert(idx, Equals, ca.lessEqualIdx, Commentf("%#v", ca))
 
 		// Test for max int64 handle.
-		idxValue, _, err = index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, math.MaxInt64, nil)
+		idxValue, _, err = index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MaxInt64), nil)
 		c.Assert(err, IsNil)
 		idx = searchLessEqualIdx(valueList, idxValue)
 		c.Assert(idx, Equals, ca.lessEqualIdx, Commentf("%#v", ca))
@@ -265,13 +265,13 @@ func (s *testSplitIndex) TestSplitIndex(c *C) {
 	for _, ca := range cases3 {
 		value := types.NewTime(ca.value, mysql.TypeTimestamp, types.DefaultFsp)
 		// test for min int64 handle
-		idxValue, _, err := index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(value)}, math.MinInt64, nil)
+		idxValue, _, err := index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(value)}, kv.IntHandle(math.MinInt64), nil)
 		c.Assert(err, IsNil)
 		idx := searchLessEqualIdx(valueList, idxValue)
 		c.Assert(idx, Equals, ca.lessEqualIdx, Commentf("%#v", ca))
 
 		// Test for max int64 handle.
-		idxValue, _, err = index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(value)}, math.MaxInt64, nil)
+		idxValue, _, err = index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(value)}, kv.IntHandle(math.MaxInt64), nil)
 		c.Assert(err, IsNil)
 		idx = searchLessEqualIdx(valueList, idxValue)
 		c.Assert(idx, Equals, ca.lessEqualIdx, Commentf("%#v", ca))
