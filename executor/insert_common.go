@@ -682,7 +682,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 		}
 		// Use the value if it's not null and not 0.
 		if recordID != 0 {
-			err = e.Table.RebaseAutoID(e.ctx, recordID, true)
+			err = e.Table.RebaseAutoID(e.ctx, recordID, true, autoid.RowIDAllocType)
 			if err != nil {
 				return nil, err
 			}
@@ -769,7 +769,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 	}
 	// Use the value if it's not null and not 0.
 	if recordID != 0 {
-		err = e.Table.RebaseAutoID(e.ctx, recordID, true)
+		err = e.Table.RebaseAutoID(e.ctx, recordID, true, autoid.RowIDAllocType)
 		if err != nil {
 			return types.Datum{}, err
 		}
@@ -904,6 +904,9 @@ func (e *InsertValues) allocAutoRandomID(fieldType *types.FieldType) (int64, err
 }
 
 func (e *InsertValues) rebaseAutoRandomID(recordID int64, fieldType *types.FieldType) error {
+	if recordID < 0 {
+		return nil
+	}
 	alloc := e.Table.Allocators(e.ctx).Get(autoid.AutoRandomType)
 	tableInfo := e.Table.Meta()
 
@@ -993,7 +996,7 @@ func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.
 	if !e.ctx.GetSessionVars().ConstraintCheckInPlace {
 		txn.SetOption(kv.PresumeKeyNotExists, nil)
 	}
-	var h int64
+	var h kv.Handle
 	if reserveAutoIDCount > 0 {
 		h, err = e.Table.AddRecord(e.ctx, row, table.WithCtx(ctx), table.WithReserveAutoIDHint(reserveAutoIDCount))
 	} else {
@@ -1006,5 +1009,5 @@ func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.
 	if e.lastInsertID != 0 {
 		e.ctx.GetSessionVars().SetLastInsertID(e.lastInsertID)
 	}
-	return h, nil
+	return h.IntValue(), nil
 }

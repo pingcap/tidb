@@ -90,7 +90,7 @@ func VecCompareUI(x []uint64, y, res []int64) {
 func VecCompareIU(x []int64, y []uint64, res []int64) {
 	n := len(x)
 	for i := 0; i < n; i++ {
-		if x[i] < 0 || uint64(y[i]) > math.MaxInt64 {
+		if x[i] < 0 || y[i] > math.MaxInt64 {
 			res[i] = -1
 		} else if x[i] < int64(y[i]) {
 			res[i] = -1

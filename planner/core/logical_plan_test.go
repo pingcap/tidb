@@ -1221,7 +1221,8 @@ func (s *testPlanSuite) TestNameResolver(c *C) {
 		{"delete a from (select * from t ) as a, t", "[planner:1288]The target table a of the DELETE is not updatable"},
 		{"delete b from (select * from t ) as a, t", "[planner:1109]Unknown table 'b' in MULTI DELETE"},
 		{"select '' as fakeCol from t group by values(fakeCol)", "[planner:1054]Unknown column '' in 'VALUES() function'"},
-		{"update t, (select * from t) as b set b.a = t.a", "[planner:1288]The target table b of the UPDATE is not updatable"},
+		{"update t, (select * from ht) as b set b.a = t.a", "[planner:1288]The target table b of the UPDATE is not updatable"},
+		{"select row_number() over () from t group by 1", "[planner:1056]Can't group on 'row_number() over ()'"},
 	}
 
 	ctx := context.Background()
@@ -1577,4 +1578,24 @@ func (s *testPlanSuite) TestConflictedJoinTypeHints(c *C) {
 	c.Assert(ok, IsTrue)
 	c.Assert(join.hintInfo, IsNil)
 	c.Assert(join.preferJoinType, Equals, uint(0))
+}
+
+func (s *testPlanSuite) TestSimplyOuterJoinWithOnlyOuterExpr(c *C) {
+	defer testleak.AfterTest(c)()
+	sql := "select * from t t1 right join t t0 ON TRUE where CONCAT_WS(t0.e=t0.e, 0, NULL) IS NULL"
+	ctx := context.TODO()
+	stmt, err := s.ParseOneStmt(sql, "", "")
+	c.Assert(err, IsNil)
+	Preprocess(s.ctx, stmt, s.is)
+	builder := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
+	p, err := builder.Build(ctx, stmt)
+	c.Assert(err, IsNil)
+	p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
+	c.Assert(err, IsNil)
+	proj, ok := p.(*LogicalProjection)
+	c.Assert(ok, IsTrue)
+	join, ok := proj.Children()[0].(*LogicalJoin)
+	c.Assert(ok, IsTrue)
+	// previous wrong JoinType is InnerJoin
+	c.Assert(join.JoinType, Equals, RightOuterJoin)
 }

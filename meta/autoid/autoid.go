@@ -76,6 +76,20 @@ const (
 	SequenceType
 )
 
+// CustomAutoIncCacheOption is one kind of AllocOption to customize the allocator step length.
+type CustomAutoIncCacheOption int64
+
+// ApplyOn is implement the AllocOption interface.
+func (step CustomAutoIncCacheOption) ApplyOn(alloc *allocator) {
+	alloc.step = int64(step)
+	alloc.customStep = true
+}
+
+// AllocOption is a interface to define allocator custom options coming in future.
+type AllocOption interface {
+	ApplyOn(*allocator)
+}
+
 // Allocator is an auto increment id generator.
 // Just keep id unique actually.
 type Allocator interface {
@@ -138,6 +152,7 @@ type allocator struct {
 	isUnsigned    bool
 	lastAllocTime time.Time
 	step          int64
+	customStep    bool
 	allocType     AllocatorType
 	sequence      *model.SequenceInfo
 }
@@ -370,8 +385,8 @@ func NextStep(curStep int64, consumeDur time.Duration) int64 {
 }
 
 // NewAllocator returns a new auto increment id generator on the store.
-func NewAllocator(store kv.Storage, dbID int64, isUnsigned bool, allocType AllocatorType) Allocator {
-	return &allocator{
+func NewAllocator(store kv.Storage, dbID int64, isUnsigned bool, allocType AllocatorType, opts ...AllocOption) Allocator {
+	alloc := &allocator{
 		store:         store,
 		dbID:          dbID,
 		isUnsigned:    isUnsigned,
@@ -379,6 +394,10 @@ func NewAllocator(store kv.Storage, dbID int64, isUnsigned bool, allocType Alloc
 		lastAllocTime: time.Now(),
 		allocType:     allocType,
 	}
+	for _, fn := range opts {
+		fn.ApplyOn(alloc)
+	}
+	return alloc
 }
 
 // NewSequenceAllocator returns a new sequence value generator on the store.
@@ -398,7 +417,11 @@ func NewSequenceAllocator(store kv.Storage, dbID int64, info *model.SequenceInfo
 func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.TableInfo) Allocators {
 	var allocs []Allocator
 	dbID := tblInfo.GetDBID(schemaID)
-	allocs = append(allocs, NewAllocator(store, dbID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType))
+	if tblInfo.AutoIdCache > 0 {
+		allocs = append(allocs, NewAllocator(store, dbID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType, CustomAutoIncCacheOption(tblInfo.AutoIdCache)))
+	} else {
+		allocs = append(allocs, NewAllocator(store, dbID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType))
+	}
 	if tblInfo.ContainsAutoRandomBits() {
 		allocs = append(allocs, NewAllocator(store, dbID, tblInfo.IsAutoRandomBitColUnsigned(), AutoRandomType))
 	}
@@ -606,13 +629,18 @@ func (alloc *allocator) alloc4Signed(tableID int64, n uint64, increment, offset 
 	if alloc.base+n1 > alloc.end {
 		var newBase, newEnd int64
 		startTime := time.Now()
-		// Although it may skip a segment here, we still think it is consumed.
-		consumeDur := startTime.Sub(alloc.lastAllocTime)
-		nextStep := NextStep(alloc.step, consumeDur)
-		// Make sure nextStep is big enough.
+		nextStep := alloc.step
+		if !alloc.customStep {
+			// Although it may skip a segment here, we still think it is consumed.
+			consumeDur := startTime.Sub(alloc.lastAllocTime)
+			nextStep = NextStep(alloc.step, consumeDur)
+		}
+		// Although the step is customized by user, we still need to make sure nextStep is big enough for insert batch.
 		if nextStep <= n1 {
-			alloc.step = mathutil.MinInt64(n1*2, maxStep)
-		} else {
+			nextStep = mathutil.MinInt64(n1*2, maxStep)
+		}
+		// Store the step for non-customized-step allocator to calculate next dynamic step.
+		if !alloc.customStep {
 			alloc.step = nextStep
 		}
 		err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
@@ -622,7 +650,7 @@ func (alloc *allocator) alloc4Signed(tableID int64, n uint64, increment, offset 
 			if err1 != nil {
 				return err1
 			}
-			tmpStep := mathutil.MinInt64(math.MaxInt64-newBase, alloc.step)
+			tmpStep := mathutil.MinInt64(math.MaxInt64-newBase, nextStep)
 			// The global rest is not enough for alloc.
 			if tmpStep < n1 {
 				return ErrAutoincReadFailed
@@ -668,13 +696,18 @@ func (alloc *allocator) alloc4Unsigned(tableID int64, n uint64, increment, offse
 	if uint64(alloc.base)+uint64(n1) > uint64(alloc.end) {
 		var newBase, newEnd int64
 		startTime := time.Now()
-		// Although it may skip a segment here, we still treat it as consumed.
-		consumeDur := startTime.Sub(alloc.lastAllocTime)
-		nextStep := NextStep(alloc.step, consumeDur)
-		// Make sure nextStep is big enough.
+		nextStep := alloc.step
+		if !alloc.customStep {
+			// Although it may skip a segment here, we still treat it as consumed.
+			consumeDur := startTime.Sub(alloc.lastAllocTime)
+			nextStep = NextStep(alloc.step, consumeDur)
+		}
+		// Although the step is customized by user, we still need to make sure nextStep is big enough for insert batch.
 		if nextStep <= n1 {
-			alloc.step = mathutil.MinInt64(n1*2, maxStep)
-		} else {
+			nextStep = mathutil.MinInt64(n1*2, maxStep)
+		}
+		// Store the step for non-customized-step allocator to calculate next dynamic step.
+		if !alloc.customStep {
 			alloc.step = nextStep
 		}
 		err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
@@ -684,7 +717,7 @@ func (alloc *allocator) alloc4Unsigned(tableID int64, n uint64, increment, offse
 			if err1 != nil {
 				return err1
 			}
-			tmpStep := int64(mathutil.MinUint64(math.MaxUint64-uint64(newBase), uint64(alloc.step)))
+			tmpStep := int64(mathutil.MinUint64(math.MaxUint64-uint64(newBase), uint64(nextStep)))
 			// The global rest is not enough for alloc.
 			if tmpStep < n1 {
 				return ErrAutoincReadFailed

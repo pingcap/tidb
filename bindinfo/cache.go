@@ -117,13 +117,19 @@ func (br *BindRecord) prepareHints(sctx sessionctx.Context) error {
 				return err
 			}
 		}
-		hintsSet, err := hint.ParseHintsSet(p, bind.BindSQL, bind.Charset, bind.Collation, br.Db)
+		hintsSet, warns, err := hint.ParseHintsSet(p, bind.BindSQL, bind.Charset, bind.Collation, br.Db)
 		if err != nil {
 			return err
 		}
 		hintsStr, err := hintsSet.Restore()
 		if err != nil {
 			return err
+		}
+		// For `create global binding for select * from t using select * from t`, we allow it though hintsStr is empty.
+		// For `create global binding for select * from t using select /*+ non_exist_hint() */ * from t`,
+		// the hint is totally invaild, we escalate warning to error.
+		if hintsStr == "" && len(warns) > 0 {
+			return warns[0]
 		}
 		br.Bindings[i].Hint = hintsSet
 		br.Bindings[i].ID = hintsStr

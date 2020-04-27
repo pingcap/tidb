@@ -100,7 +100,7 @@ func (s testMockSuite) TestIsPoint(c *C) {
 
 	kr = KeyRange{
 		StartKey: Key(""),
-		EndKey:   Key([]byte{0}),
+		EndKey:   []byte{0},
 	}
 	c.Check(kr.IsPoint(), IsTrue)
 }

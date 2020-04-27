@@ -35,7 +35,7 @@ var (
 			Subsystem: "domain",
 			Name:      "load_schema_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) in load schema.",
-			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 4000s
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
 		})
 
 	// LoadPrivilegeCounter records the counter of load privilege.

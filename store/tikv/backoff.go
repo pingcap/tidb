@@ -51,6 +51,7 @@ var (
 	tikvBackoffHistogramRegionMiss   = metrics.TiKVBackoffHistogram.WithLabelValues("regionMiss")
 	tikvBackoffHistogramUpdateLeader = metrics.TiKVBackoffHistogram.WithLabelValues("updateLeader")
 	tikvBackoffHistogramServerBusy   = metrics.TiKVBackoffHistogram.WithLabelValues("serverBusy")
+	tikvBackoffHistogramStaleCmd     = metrics.TiKVBackoffHistogram.WithLabelValues("staleCommand")
 	tikvBackoffHistogramEmpty        = metrics.TiKVBackoffHistogram.WithLabelValues("")
 )
 
@@ -70,6 +71,8 @@ func (t backoffType) metric() prometheus.Observer {
 		return tikvBackoffHistogramUpdateLeader
 	case boServerBusy:
 		return tikvBackoffHistogramServerBusy
+	case boStaleCmd:
+		return tikvBackoffHistogramStaleCmd
 	}
 	return tikvBackoffHistogramEmpty
 }
@@ -134,6 +137,7 @@ const (
 	BoUpdateLeader
 	boServerBusy
 	boTxnNotFound
+	boStaleCmd
 )
 
 func (t backoffType) createFn(vars *kv.Variables) func(context.Context, int) int {
@@ -158,6 +162,8 @@ func (t backoffType) createFn(vars *kv.Variables) func(context.Context, int) int
 		return NewBackoffFn(1, 10, NoJitter)
 	case boServerBusy:
 		return NewBackoffFn(2000, 10000, EqualJitter)
+	case boStaleCmd:
+		return NewBackoffFn(2, 1000, NoJitter)
 	}
 	return nil
 }
@@ -178,6 +184,8 @@ func (t backoffType) String() string {
 		return "updateLeader"
 	case boServerBusy:
 		return "serverBusy"
+	case boStaleCmd:
+		return "staleCommand"
 	case boTxnNotFound:
 		return "txnNotFound"
 	}
@@ -196,6 +204,8 @@ func (t backoffType) TError() error {
 		return ErrRegionUnavailable
 	case boServerBusy:
 		return ErrTiKVServerBusy
+	case boStaleCmd:
+		return ErrTiKVStaleCommand
 	}
 	return ErrUnknown
 }

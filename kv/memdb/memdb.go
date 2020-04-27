@@ -456,6 +456,7 @@ func (ms *mergeState) calculateRecomputeHeight(key []byte, sb *Sandbox) int {
 			!prev.addr.isNull() &&
 			bytes.Compare(key, prev.getKey(arena.getFrom(prev.addr))) <= 0 {
 			// Key is before splice.
+			// For merge operation this branch unused actually, because keys are added in ascending order.
 			for prev.addr == ms.prev[recomputeHeight].addr {
 				recomputeHeight++
 			}
