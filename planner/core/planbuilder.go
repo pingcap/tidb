@@ -1596,8 +1596,8 @@ func buildBRIESchema() (*expression.Schema, types.NameSlice) {
 	schema.Append(buildColumnWithName("", "Destination", mysql.TypeVarchar, 255))
 	schema.Append(buildColumnWithName("", "Size", mysql.TypeLonglong, longlongSize))
 	schema.Append(buildColumnWithName("", "BackupTS", mysql.TypeLonglong, longlongSize))
-	schema.Append(buildColumnWithName("", "Queue_Time", mysql.TypeDatetime, datetimeSize))
-	schema.Append(buildColumnWithName("", "Execution_Time", mysql.TypeDatetime, datetimeSize))
+	schema.Append(buildColumnWithName("", "Queue Time", mysql.TypeDatetime, datetimeSize))
+	schema.Append(buildColumnWithName("", "Execution Time", mysql.TypeDatetime, datetimeSize))
 	return schema.col2Schema(), schema.names
 }
 
