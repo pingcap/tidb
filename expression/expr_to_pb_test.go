@@ -153,10 +153,9 @@ func (s *testEvaluatorSuite) TestColumn2Pb(c *C) {
 	c.Assert(len(pushed), Equals, 0)
 	c.Assert(len(remained), Equals, len(colExprs))
 
-	pbExprs, err := ExpressionsToPBList(sc, colExprs, client)
-	c.Assert(err, IsNil)
-	for _, pbExpr := range pbExprs {
-		c.Assert(pbExpr, IsNil)
+	for _, col := range colExprs { // cannot be pushed down
+		_, err := ExpressionsToPBList(sc, []Expression{col}, client)
+		c.Assert(err, NotNil)
 	}
 
 	colExprs = colExprs[:0]
@@ -186,7 +185,7 @@ func (s *testEvaluatorSuite) TestColumn2Pb(c *C) {
 	c.Assert(len(pushed), Equals, len(colExprs))
 	c.Assert(len(remained), Equals, 0)
 
-	pbExprs, err = ExpressionsToPBList(sc, colExprs, client)
+	pbExprs, err := ExpressionsToPBList(sc, colExprs, client)
 	c.Assert(err, IsNil)
 	jsons := []string{
 		"{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":1,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"\"}}",
