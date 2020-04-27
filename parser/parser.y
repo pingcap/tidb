@@ -11017,6 +11017,10 @@ PrivType:
 	{
 		$$ = mysql.FilePriv
 	}
+|	"CONFIG"
+	{
+		$$ = mysql.ConfigPriv
+	}
 |	"CREATE" "TEMPORARY" "TABLES"
 	{
 		$$ = mysql.CreateTMPTablePriv
