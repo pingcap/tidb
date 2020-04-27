@@ -279,7 +279,7 @@ func (d *Datum) SetMysqlDuration(b Duration) {
 
 // GetMysqlEnum gets Enum value
 func (d *Datum) GetMysqlEnum() Enum {
-	str := string(hack.String(d.b))
+	str := string(d.b)
 	return Enum{Value: uint64(d.i), Name: str}
 }
 
@@ -294,7 +294,7 @@ func (d *Datum) SetMysqlEnum(b Enum, collation string) {
 
 // GetMysqlSet gets Set value
 func (d *Datum) GetMysqlSet() Set {
-	str := string(hack.String(d.b))
+	str := string(d.b)
 	return Set{Value: uint64(d.i), Name: str}
 }
 
