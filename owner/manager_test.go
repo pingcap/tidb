@@ -20,17 +20,36 @@ import (
 	"testing"
 	"time"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
 	. "github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/testleak"
 	"go.etcd.io/etcd/clientv3"
 	"go.etcd.io/etcd/clientv3/concurrency"
 	"go.etcd.io/etcd/integration"
 	goctx "golang.org/x/net/context"
 )
+
+func TestT(t *testing.T) {
+	TestingT(t)
+}
+
+var _ = SerialSuites(&testSuite{})
+
+type testSuite struct {
+}
+
+func (s *testSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
+}
+
+func (s *testSuite) TearDownSuite(c *C) {
+	testleak.AfterTest(c)
+}
 
 const testLease = 5 * time.Millisecond
 
@@ -50,15 +69,13 @@ func checkOwner(d DDL, fbVal bool) (isOwner bool) {
 
 // Ignore this test on the windows platform, because calling unix socket with address in
 // host:port format fails on windows.
-func TestSingle(t *testing.T) {
+func (s *testSuite) TestSingle(c *C) {
 	store, err := mockstore.NewMockTikvStore()
-	if err != nil {
-		t.Fatal(err)
-	}
+	c.Assert(err, IsNil)
 	defer store.Close()
 
-	clus := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
-	defer clus.Terminate(t)
+	clus := integration.NewClusterV3(nil, &integration.ClusterConfig{Size: 1})
+	defer clus.Terminate(nil)
 	cli := clus.RandClient()
 	ctx := goctx.Background()
 	d := NewDDL(
@@ -70,38 +87,27 @@ func TestSingle(t *testing.T) {
 	defer d.Stop()
 
 	isOwner := checkOwner(d, true)
-	if !isOwner {
-		t.Fatalf("expect true, got isOwner:%v", isOwner)
-	}
+	c.Assert(isOwner, IsTrue)
 
 	// test for newSession failed
 	ctx, cancel := goctx.WithCancel(ctx)
 	cancel()
 	manager := owner.NewOwnerManager(cli, "ddl", "ddl_id", DDLOwnerKey, nil)
 	err = manager.CampaignOwner(ctx)
-	if !terror.ErrorEqual(err, goctx.Canceled) &&
-		!terror.ErrorEqual(err, goctx.DeadlineExceeded) {
-		t.Fatalf("campaigned result don't match, err %v", err)
-	}
+	c.Assert(terror.ErrorEqual(err, goctx.Canceled) || terror.ErrorEqual(err, goctx.DeadlineExceeded), IsTrue)
 	isOwner = checkOwner(d, true)
-	if !isOwner {
-		t.Fatalf("expect true, got isOwner:%v", isOwner)
-	}
+	c.Assert(isOwner, IsTrue)
 	// The test is used to exit campaign loop.
 	d.OwnerManager().Cancel()
 	isOwner = checkOwner(d, false)
-	if isOwner {
-		t.Fatalf("expect false, got isOwner:%v", isOwner)
-	}
+	c.Assert(isOwner, IsFalse)
 	time.Sleep(200 * time.Millisecond)
 	ownerID, _ := manager.GetOwnerID(goctx.Background())
 	// The error is ok to be not nil since we canceled the manager.
-	if ownerID != "" {
-		t.Fatalf("owner %s is not empty", ownerID)
-	}
+	c.Assert(ownerID, Equals, "")
 }
 
-func TestCluster(t *testing.T) {
+func (s *testSuite) TestCluster(c *C) {
 	tmpTTL := 3
 	orignalTTL := owner.ManagerSessionTTL
 	owner.ManagerSessionTTL = tmpTTL
@@ -109,12 +115,10 @@ func TestCluster(t *testing.T) {
 		owner.ManagerSessionTTL = orignalTTL
 	}()
 	store, err := mockstore.NewMockTikvStore()
-	if err != nil {
-		t.Fatal(err)
-	}
+	c.Assert(err, IsNil)
 	defer store.Close()
-	clus := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 4})
-	defer clus.Terminate(t)
+	clus := integration.NewClusterV3(nil, &integration.ClusterConfig{Size: 4})
+	defer clus.Terminate(nil)
 
 	cli := clus.Client(0)
 	d := NewDDL(
@@ -124,9 +128,7 @@ func TestCluster(t *testing.T) {
 		WithLease(testLease),
 	)
 	isOwner := checkOwner(d, true)
-	if !isOwner {
-		t.Fatalf("expect true, got isOwner:%v", isOwner)
-	}
+	c.Assert(isOwner, IsTrue)
 	cli1 := clus.Client(1)
 	d1 := NewDDL(
 		goctx.Background(),
@@ -135,20 +137,14 @@ func TestCluster(t *testing.T) {
 		WithLease(testLease),
 	)
 	isOwner = checkOwner(d1, false)
-	if isOwner {
-		t.Fatalf("expect false, got isOwner:%v", isOwner)
-	}
+	c.Assert(isOwner, IsFalse)
 
 	// Delete the leader key, the d1 become the owner.
 	cliRW := clus.Client(2)
 	err = deleteLeader(cliRW, DDLOwnerKey)
-	if err != nil {
-		t.Fatal(err)
-	}
+	c.Assert(err, IsNil)
 	isOwner = checkOwner(d, false)
-	if isOwner {
-		t.Fatalf("expect false, got isOwner:%v", isOwner)
-	}
+	c.Assert(isOwner, IsFalse)
 	d.Stop()
 
 	// d3 (not owner) stop
@@ -161,25 +157,19 @@ func TestCluster(t *testing.T) {
 	)
 	defer d3.Stop()
 	isOwner = checkOwner(d3, false)
-	if isOwner {
-		t.Fatalf("expect false, got isOwner:%v", isOwner)
-	}
+	c.Assert(isOwner, IsFalse)
 	d3.Stop()
 
 	// Cancel the owner context, there is no owner.
 	d1.Stop()
 	time.Sleep(time.Duration(tmpTTL+1) * time.Second)
 	session, err := concurrency.NewSession(cliRW)
-	if err != nil {
-		t.Fatalf("new session failed %v", err)
-	}
+	c.Assert(err, IsNil)
 	elec := concurrency.NewElection(session, DDLOwnerKey)
 	logPrefix := fmt.Sprintf("[ddl] %s ownerManager %s", DDLOwnerKey, "useless id")
 	logCtx := logutil.WithKeyValue(context.Background(), "owner info", logPrefix)
 	_, err = owner.GetOwnerInfo(goctx.Background(), logCtx, elec, "useless id")
-	if !terror.ErrorEqual(err, concurrency.ErrElectionNoLeader) {
-		t.Fatalf("get owner info result don't match, err %v", err)
-	}
+	c.Assert(terror.ErrorEqual(err, concurrency.ErrElectionNoLeader), IsTrue)
 }
 
 func deleteLeader(cli *clientv3.Client, prefixKey string) error {

@@ -28,6 +28,7 @@ import (
 	. "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util/testleak"
 	"go.etcd.io/etcd/clientv3"
 	"go.etcd.io/etcd/etcdserver"
 	"go.etcd.io/etcd/integration"
@@ -41,9 +42,22 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
+var _ = SerialSuites(&testSuite{})
+
+type testSuite struct {
+}
+
+func (s *testSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
+}
+
+func (s *testSuite) TearDownSuite(c *C) {
+	testleak.AfterTest(c)
+}
+
 const minInterval = 10 * time.Nanosecond // It's used to test timeout.
 
-func TestSyncerSimple(t *testing.T) {
+func (s *testSuite) TestSyncerSimple(c *C) {
 	testLease := 5 * time.Millisecond
 	origin := CheckVersFirstWaitTime
 	CheckVersFirstWaitTime = 0
@@ -52,13 +66,11 @@ func TestSyncerSimple(t *testing.T) {
 	}()
 
 	store, err := mockstore.NewMockTikvStore()
-	if err != nil {
-		t.Fatal(err)
-	}
+	c.Assert(err, IsNil)
 	defer store.Close()
 
-	clus := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
-	defer clus.Terminate(t)
+	clus := integration.NewClusterV3(nil, &integration.ClusterConfig{Size: 1})
+	defer clus.Terminate(nil)
 	cli := clus.RandClient()
 	ctx := goctx.Background()
 	d := NewDDL(
@@ -70,28 +82,19 @@ func TestSyncerSimple(t *testing.T) {
 	defer d.Stop()
 
 	// for init function
-	if err = d.SchemaSyncer().Init(ctx); err != nil {
-		t.Fatalf("schema version syncer init failed %v", err)
-	}
+	err = d.SchemaSyncer().Init(ctx)
+	c.Assert(err, IsNil)
 	resp, err := cli.Get(ctx, DDLAllSchemaVersions, clientv3.WithPrefix())
-	if err != nil {
-		t.Fatalf("client get version failed %v", err)
-	}
+	c.Assert(err, IsNil)
 	key := DDLAllSchemaVersions + "/" + d.OwnerManager().ID()
-	checkRespKV(t, 1, key, InitialVersion, resp.Kvs...)
+	checkRespKV(c, 1, key, InitialVersion, resp.Kvs...)
 	// for MustGetGlobalVersion function
 	globalVer, err := d.SchemaSyncer().MustGetGlobalVersion(ctx)
-	if err != nil {
-		t.Fatalf("client get global version failed %v", err)
-	}
-	if InitialVersion != fmt.Sprintf("%d", globalVer) {
-		t.Fatalf("client get global version %d isn't equal to init version %s", globalVer, InitialVersion)
-	}
+	c.Assert(err, IsNil)
+	c.Assert(InitialVersion, Equals, fmt.Sprintf("%d", globalVer))
 	childCtx, _ := goctx.WithTimeout(ctx, minInterval)
 	_, err = d.SchemaSyncer().MustGetGlobalVersion(childCtx)
-	if !isTimeoutError(err) {
-		t.Fatalf("client get global version result not match, err %v", err)
-	}
+	c.Assert(isTimeoutError(err), IsTrue)
 
 	d1 := NewDDL(
 		ctx,
@@ -100,9 +103,8 @@ func TestSyncerSimple(t *testing.T) {
 		WithLease(testLease),
 	)
 	defer d1.Stop()
-	if err = d1.SchemaSyncer().Init(ctx); err != nil {
-		t.Fatalf("schema version syncer init failed %v", err)
-	}
+	err = d1.SchemaSyncer().Init(ctx)
+	c.Assert(err, IsNil)
 
 	// for watchCh
 	wg := sync.WaitGroup{}
@@ -112,60 +114,42 @@ func TestSyncerSimple(t *testing.T) {
 		defer wg.Done()
 		select {
 		case resp := <-d.SchemaSyncer().GlobalVersionCh():
-			if len(resp.Events) < 1 {
-				t.Fatalf("get chan events count less than 1")
-			}
-			checkRespKV(t, 1, DDLGlobalSchemaVersion, fmt.Sprintf("%v", currentVer), resp.Events[0].Kv)
+			c.Assert(len(resp.Events), GreaterEqual, 1)
+			checkRespKV(c, 1, DDLGlobalSchemaVersion, fmt.Sprintf("%v", currentVer), resp.Events[0].Kv)
 		case <-time.After(3 * time.Second):
-			t.Fatalf("get udpate version failed")
+			c.Fail()
 		}
 	}()
 
 	// for update latestSchemaVersion
 	err = d.SchemaSyncer().OwnerUpdateGlobalVersion(ctx, currentVer)
-	if err != nil {
-		t.Fatalf("update latest schema version failed %v", err)
-	}
+	c.Assert(err, IsNil)
 
 	wg.Wait()
 
 	// for CheckAllVersions
 	childCtx, cancel := goctx.WithTimeout(ctx, 200*time.Millisecond)
 	err = d.SchemaSyncer().OwnerCheckAllVersions(childCtx, currentVer)
-	if err == nil {
-		t.Fatalf("check result not match")
-	}
+	c.Assert(err, NotNil)
 	cancel()
 
 	// for UpdateSelfVersion
 	err = d.SchemaSyncer().UpdateSelfVersion(context.Background(), currentVer)
-	if err != nil {
-		t.Fatalf("update self version failed %v", errors.ErrorStack(err))
-	}
+	c.Assert(err, IsNil)
 	err = d1.SchemaSyncer().UpdateSelfVersion(context.Background(), currentVer)
-	if err != nil {
-		t.Fatalf("update self version failed %v", errors.ErrorStack(err))
-	}
+	c.Assert(err, IsNil)
 	childCtx, _ = goctx.WithTimeout(ctx, minInterval)
 	err = d1.SchemaSyncer().UpdateSelfVersion(childCtx, currentVer)
-	if !isTimeoutError(err) {
-		t.Fatalf("update self version result not match, err %v", err)
-	}
+	c.Assert(isTimeoutError(err), IsTrue)
 
 	// for CheckAllVersions
 	err = d.SchemaSyncer().OwnerCheckAllVersions(context.Background(), currentVer-1)
-	if err != nil {
-		t.Fatalf("check all versions failed %v", err)
-	}
+	c.Assert(err, IsNil)
 	err = d.SchemaSyncer().OwnerCheckAllVersions(context.Background(), currentVer)
-	if err != nil {
-		t.Fatalf("check all versions failed %v", err)
-	}
+	c.Assert(err, IsNil)
 	childCtx, _ = goctx.WithTimeout(ctx, minInterval)
 	err = d.SchemaSyncer().OwnerCheckAllVersions(childCtx, currentVer)
-	if !isTimeoutError(err) {
-		t.Fatalf("check all versions result not match, err %v", err)
-	}
+	c.Assert(isTimeoutError(err), IsTrue)
 
 	// for StartCleanWork
 	go d.SchemaSyncer().StartCleanWork()
@@ -175,19 +159,13 @@ func TestSyncerSimple(t *testing.T) {
 	ttlKey := "session_ttl_key"
 	ttlVal := "session_ttl_val"
 	session, err := owner.NewSession(ctx, "", cli, owner.NewSessionDefaultRetryCnt, ttl)
-	if err != nil {
-		t.Fatalf("new session failed %v", err)
-	}
+	c.Assert(err, IsNil)
 	err = PutKVToEtcd(context.Background(), cli, 5, ttlKey, ttlVal, clientv3.WithLease(session.Lease()))
-	if err != nil {
-		t.Fatalf("put kv to etcd failed %v", err)
-	}
+	c.Assert(err, IsNil)
 	// Make sure the ttlKey is exist in etcd.
 	resp, err = cli.Get(ctx, ttlKey)
-	if err != nil {
-		t.Fatalf("client get version failed %v", err)
-	}
-	checkRespKV(t, 1, ttlKey, ttlVal, resp.Kvs...)
+	c.Assert(err, IsNil)
+	checkRespKV(c, 1, ttlKey, ttlVal, resp.Kvs...)
 	d.SchemaSyncer().NotifyCleanExpiredPaths()
 	// Make sure the clean worker is done.
 	notifiedCnt := 1
@@ -203,31 +181,21 @@ func TestSyncerSimple(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if notifiedCnt != 3 {
-		t.Fatal("clean worker don't finish")
-	}
+	c.Assert(notifiedCnt, Equals, 3)
 	// Make sure the ttlKey is removed in etcd.
 	resp, err = cli.Get(ctx, ttlKey)
-	if err != nil {
-		t.Fatalf("client get version failed %v", err)
-	}
-	checkRespKV(t, 0, ttlKey, "", resp.Kvs...)
+	c.Assert(err, IsNil)
+	checkRespKV(c, 0, ttlKey, "", resp.Kvs...)
 
 	// for RemoveSelfVersionPath
 	resp, err = cli.Get(goctx.Background(), key)
-	if err != nil {
-		t.Fatalf("get key %s failed %v", key, err)
-	}
+	c.Assert(err, IsNil)
 	currVer := fmt.Sprintf("%v", currentVer)
-	checkRespKV(t, 1, key, currVer, resp.Kvs...)
+	checkRespKV(c, 1, key, currVer, resp.Kvs...)
 	d.SchemaSyncer().RemoveSelfVersionPath()
 	resp, err = cli.Get(goctx.Background(), key)
-	if err != nil {
-		t.Fatalf("get key %s failed %v", key, err)
-	}
-	if len(resp.Kvs) != 0 {
-		t.Fatalf("remove key %s failed %v", key, err)
-	}
+	c.Assert(err, IsNil)
+	c.Assert(len(resp.Kvs), Equals, 0)
 }
 
 func isTimeoutError(err error) bool {
@@ -238,20 +206,13 @@ func isTimeoutError(err error) bool {
 	return false
 }
 
-func checkRespKV(t *testing.T, kvCount int, key, val string,
-	kvs ...*mvccpb.KeyValue) {
-	if len(kvs) != kvCount {
-		t.Fatalf("resp key %s kvs %v length is != %d", key, kvs, kvCount)
-	}
+func checkRespKV(c *C, kvCount int, key, val string, kvs ...*mvccpb.KeyValue) {
+	c.Assert(len(kvs), Equals, kvCount)
 	if kvCount == 0 {
 		return
 	}
 
 	kv := kvs[0]
-	if string(kv.Key) != key {
-		t.Fatalf("key resp %s, exported %s", kv.Key, key)
-	}
-	if string(kv.Value) != val {
-		t.Fatalf("val resp %s, exported %s", kv.Value, val)
-	}
+	c.Assert(string(kv.Key), Equals, key)
+	c.Assert(string(kv.Value), Equals, val)
 }

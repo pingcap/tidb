@@ -48,9 +48,17 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-var _ = Suite(&testSuite{})
+var _ = SerialSuites(&testSuite{})
 
 type testSuite struct {
+}
+
+func (s *testSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
+}
+
+func (s *testSuite) TearDownSuite(c *C) {
+	testleak.AfterTest(c)
 }
 
 func mockFactory() (pools.Resource, error) {
@@ -86,26 +94,22 @@ func unixSocketAvailable() bool {
 	return false
 }
 
-func TestInfo(t *testing.T) {
+func (s *testSuite) TestInfo(c *C) {
 	if !unixSocketAvailable() {
 		return
 	}
-	testleak.BeforeTest()
-	defer testleak.AfterTestT(t)()
 	ddlLease := 80 * time.Millisecond
-	s, err := mockstore.NewMockTikvStore()
-	if err != nil {
-		t.Fatal(err)
-	}
-	clus := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
-	defer clus.Terminate(t)
+	store, err := mockstore.NewMockTikvStore()
+	c.Assert(err, IsNil)
+	clus := integration.NewClusterV3(nil, &integration.ClusterConfig{Size: 1})
+	defer clus.Terminate(nil)
 	mockStore := &mockEtcdBackend{
-		Storage: s,
+		Storage: store,
 		pdAddrs: []string{clus.Members[0].GRPCAddr()}}
 	dom := NewDomain(mockStore, ddlLease, 0, mockFactory)
 	defer func() {
 		dom.Close()
-		s.Close()
+		store.Close()
 	}()
 
 	cli := clus.RandClient()
@@ -115,60 +119,40 @@ func TestInfo(t *testing.T) {
 	dom.ddl = ddl.NewDDL(
 		goCtx,
 		ddl.WithEtcdClient(dom.GetEtcdClient()),
-		ddl.WithStore(s),
+		ddl.WithStore(store),
 		ddl.WithInfoHandle(dom.infoHandle),
 		ddl.WithLease(ddlLease),
 	)
 	err = failpoint.Enable("github.com/pingcap/tidb/domain/MockReplaceDDL", `return(true)`)
-	if err != nil {
-		t.Fatal(err)
-	}
+	c.Assert(err, IsNil)
 	err = dom.Init(ddlLease, sysMockFactory)
-	if err != nil {
-		t.Fatal(err)
-	}
+	c.Assert(err, IsNil)
 	err = failpoint.Disable("github.com/pingcap/tidb/domain/MockReplaceDDL")
-	if err != nil {
-		t.Fatal(err)
-	}
+	c.Assert(err, IsNil)
 
 	// Test for GetServerInfo and GetServerInfoByID.
 	ddlID := dom.ddl.GetID()
 	serverInfo, err := infosync.GetServerInfo()
-	if err != nil {
-		t.Fatal(err)
-	}
+	c.Assert(err, IsNil)
 	info, err := infosync.GetServerInfoByID(goCtx, ddlID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if serverInfo.ID != info.ID {
-		t.Fatalf("server self info %v, info %v", serverInfo, info)
-	}
+	c.Assert(err, IsNil)
+	c.Assert(serverInfo.ID, Equals, info.ID)
 	_, err = infosync.GetServerInfoByID(goCtx, "not_exist_id")
-	if err == nil || (err != nil && err.Error() != "[info-syncer] get /tidb/server/info/not_exist_id failed") {
-		t.Fatal(err)
-	}
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[info-syncer] get /tidb/server/info/not_exist_id failed")
 
 	// Test for GetAllServerInfo.
 	infos, err := infosync.GetAllServerInfo(goCtx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(infos) != 1 || infos[ddlID].ID != info.ID {
-		t.Fatalf("server one info %v, info %v", infos[ddlID], info)
-	}
+	c.Assert(err, IsNil)
+	c.Assert(len(infos), Equals, 1)
+	c.Assert(infos[ddlID].ID, Equals, info.ID)
 
 	// Test the scene where syncer.Done() gets the information.
 	err = failpoint.Enable("github.com/pingcap/tidb/ddl/util/ErrorMockSessionDone", `return(true)`)
-	if err != nil {
-		t.Fatal(err)
-	}
+	c.Assert(err, IsNil)
 	<-dom.ddl.SchemaSyncer().Done()
 	err = failpoint.Disable("github.com/pingcap/tidb/ddl/util/ErrorMockSessionDone")
-	if err != nil {
-		t.Fatal(err)
-	}
+	c.Assert(err, IsNil)
 	time.Sleep(15 * time.Millisecond)
 	syncerStarted := false
 	for i := 0; i < 1000; i++ {
@@ -178,9 +162,7 @@ func TestInfo(t *testing.T) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	if !syncerStarted {
-		t.Fatal("start syncer failed")
-	}
+	c.Assert(syncerStarted, IsTrue)
 	// Make sure loading schema is normal.
 	cs := &ast.CharsetOpt{
 		Chs: "utf8",
@@ -188,23 +170,16 @@ func TestInfo(t *testing.T) {
 	}
 	ctx := mock.NewContext()
 	err = dom.ddl.CreateSchema(ctx, model.NewCIStr("aaa"), cs)
-	if err != nil {
-		t.Fatal(err)
-	}
+	c.Assert(err, IsNil)
 	err = dom.Reload()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if dom.InfoSchema().SchemaMetaVersion() != 1 {
-		t.Fatalf("update schema version failed, ver %d", dom.InfoSchema().SchemaMetaVersion())
-	}
+	c.Assert(err, IsNil)
+	c.Assert(dom.InfoSchema().SchemaMetaVersion(), Equals, int64(1))
 
 	// Test for RemoveServerInfo.
 	dom.info.RemoveServerInfo()
 	infos, err = infosync.GetAllServerInfo(goCtx)
-	if err != nil || len(infos) != 0 {
-		t.Fatalf("err %v, infos %v", err, infos)
-	}
+	c.Assert(err, IsNil)
+	c.Assert(len(infos), Equals, 0)
 }
 
 type mockSessionManager struct {
@@ -233,7 +208,6 @@ func (msm *mockSessionManager) Kill(cid uint64, query bool) {}
 func (msm *mockSessionManager) UpdateTLSConfig(cfg *tls.Config) {}
 
 func (*testSuite) TestT(c *C) {
-	defer testleak.AfterTest(c)()
 	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	ddlLease := 80 * time.Millisecond
