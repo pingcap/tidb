@@ -363,12 +363,13 @@ func (ds *DataSource) isInIndexMergeHints(name string) bool {
 	return false
 }
 
-// If AccessConds is empty or tableFilter is not empty, we ignore the access path.
-// Now these conditions are too strict.
-// For example, a sql `select * from t where a > 1 or (b < 2 and c > 3)` and table `t` with indexes
-// on a and b separately. we can generate a `IndexMergePath` with table filter `a > 1 or (b < 2 and c > 3)`.
-// TODO: solve the above case
+// ConvertToIndexMergePath : to be implemented
 func (ds *DataSource) ConvertToIndexMergePath(path *util.AccessPath) bool {
+	// If AccessConds is empty or tableFilter is not empty, we ignore the access path.
+	// Now these conditions are too strict.
+	// For example, a sql `select * from t where a > 1 or (b < 2 and c > 3)` and table `t` with indexes
+	// on a and b separately. we can generate a `IndexMergePath` with table filter `a > 1 or (b < 2 and c > 3)`.
+	// TODO: solve the above case
 	return false
 }
 
