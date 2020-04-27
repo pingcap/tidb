@@ -789,6 +789,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, succ bool, hasMoreResults boo
 	}
 }
 
+// CloseRecordSet will finish the execution of current statement and do some record work
 func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
 	a.FinishExecuteStmt(txnStartTS, lastErr == nil, false)
 	a.logAudit()
