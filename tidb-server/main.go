@@ -277,8 +277,9 @@ func setCPUAffinity() {
 }
 
 func setHeapProfileTracker() {
-	// TODO expose the time duration into config
-	go profile.HeapProfileForGlobalMemTracker(1 * time.Minute)
+	c := config.GetGlobalConfig()
+	d := parseDuration(c.Performance.MemProfileInterval)
+	go profile.HeapProfileForGlobalMemTracker(d)
 }
 
 func registerStores() {
