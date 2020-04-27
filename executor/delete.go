@@ -17,6 +17,7 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
@@ -178,7 +179,7 @@ func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h int64, d
 		return err
 	}
 	memUsageOfTxnState := txnState.Size()
-	err = t.RemoveRecord(ctx, h, data)
+	err = t.RemoveRecord(ctx, kv.IntHandle(h), data)
 	if err != nil {
 		return err
 	}
