@@ -179,7 +179,7 @@ func checkIndexExists(ctx sessionctx.Context, tbl table.Table, indexValue interf
 	if err != nil {
 		return errors.Trace(err)
 	}
-	doesExist, _, err := idx.Exist(ctx.GetSessionVars().StmtCtx, txn, types.MakeDatums(indexValue), handle)
+	doesExist, _, err := idx.Exist(ctx.GetSessionVars().StmtCtx, txn, types.MakeDatums(indexValue), kv.IntHandle(handle))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -218,7 +218,7 @@ func (s *testIndexChangeSuite) checkAddWriteOnly(d *ddl, ctx sessionctx.Context,
 	}
 
 	// WriteOnlyTable: update t set c2 = 1 where c1 = 4 and c2 = 4
-	err = writeOnlyTbl.UpdateRecord(ctx, 4, types.MakeDatums(4, 4), types.MakeDatums(4, 1), touchedSlice(writeOnlyTbl))
+	err = writeOnlyTbl.UpdateRecord(ctx, kv.IntHandle(4), types.MakeDatums(4, 4), types.MakeDatums(4, 1), touchedSlice(writeOnlyTbl))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -228,7 +228,7 @@ func (s *testIndexChangeSuite) checkAddWriteOnly(d *ddl, ctx sessionctx.Context,
 	}
 
 	// DeleteOnlyTable: update t set c2 = 3 where c1 = 4 and c2 = 1
-	err = delOnlyTbl.UpdateRecord(ctx, 4, types.MakeDatums(4, 1), types.MakeDatums(4, 3), touchedSlice(writeOnlyTbl))
+	err = delOnlyTbl.UpdateRecord(ctx, kv.IntHandle(4), types.MakeDatums(4, 1), types.MakeDatums(4, 3), touchedSlice(writeOnlyTbl))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -244,7 +244,7 @@ func (s *testIndexChangeSuite) checkAddWriteOnly(d *ddl, ctx sessionctx.Context,
 	}
 
 	// WriteOnlyTable: delete t where c1 = 4 and c2 = 3
-	err = writeOnlyTbl.RemoveRecord(ctx, 4, types.MakeDatums(4, 3))
+	err = writeOnlyTbl.RemoveRecord(ctx, kv.IntHandle(4), types.MakeDatums(4, 3))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -254,7 +254,7 @@ func (s *testIndexChangeSuite) checkAddWriteOnly(d *ddl, ctx sessionctx.Context,
 	}
 
 	// DeleteOnlyTable: delete t where c1 = 5
-	err = delOnlyTbl.RemoveRecord(ctx, 5, types.MakeDatums(5, 5))
+	err = delOnlyTbl.RemoveRecord(ctx, kv.IntHandle(5), types.MakeDatums(5, 5))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -290,7 +290,7 @@ func (s *testIndexChangeSuite) checkAddPublic(d *ddl, ctx sessionctx.Context, wr
 	}
 
 	// WriteOnlyTable: update t set c2 = 5 where c1 = 7 and c2 = 7
-	err = writeTbl.UpdateRecord(ctx, 7, types.MakeDatums(7, 7), types.MakeDatums(7, 5), touchedSlice(writeTbl))
+	err = writeTbl.UpdateRecord(ctx, kv.IntHandle(7), types.MakeDatums(7, 7), types.MakeDatums(7, 5), touchedSlice(writeTbl))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -303,7 +303,7 @@ func (s *testIndexChangeSuite) checkAddPublic(d *ddl, ctx sessionctx.Context, wr
 		return errors.Trace(err)
 	}
 	// WriteOnlyTable: delete t where c1 = 6
-	err = writeTbl.RemoveRecord(ctx, 6, types.MakeDatums(6, 6))
+	err = writeTbl.RemoveRecord(ctx, kv.IntHandle(6), types.MakeDatums(6, 6))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -353,7 +353,7 @@ func (s *testIndexChangeSuite) checkDropWriteOnly(d *ddl, ctx sessionctx.Context
 	}
 
 	// WriteOnlyTable update t set c2 = 7 where c1 = 8 and c2 = 8
-	err = writeTbl.UpdateRecord(ctx, 8, types.MakeDatums(8, 8), types.MakeDatums(8, 7), touchedSlice(writeTbl))
+	err = writeTbl.UpdateRecord(ctx, kv.IntHandle(8), types.MakeDatums(8, 8), types.MakeDatums(8, 7), touchedSlice(writeTbl))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -364,7 +364,7 @@ func (s *testIndexChangeSuite) checkDropWriteOnly(d *ddl, ctx sessionctx.Context
 	}
 
 	// WriteOnlyTable delete t where c1 = 8
-	err = writeTbl.RemoveRecord(ctx, 8, types.MakeDatums(8, 7))
+	err = writeTbl.RemoveRecord(ctx, kv.IntHandle(8), types.MakeDatums(8, 7))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -408,7 +408,7 @@ func (s *testIndexChangeSuite) checkDropDeleteOnly(d *ddl, ctx sessionctx.Contex
 	}
 
 	// DeleteOnlyTable update t set c2 = 10 where c1 = 9
-	err = delTbl.UpdateRecord(ctx, 9, types.MakeDatums(9, 9), types.MakeDatums(9, 10), touchedSlice(delTbl))
+	err = delTbl.UpdateRecord(ctx, kv.IntHandle(9), types.MakeDatums(9, 9), types.MakeDatums(9, 10), touchedSlice(delTbl))
 	if err != nil {
 		return errors.Trace(err)
 	}

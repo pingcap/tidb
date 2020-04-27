@@ -1286,7 +1286,7 @@ func (e *TableScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if err != nil {
 			return err
 		}
-		e.seekHandle = handle + 1
+		e.seekHandle = handle.IntValue() + 1
 		mutableRow.SetDatums(row...)
 		req.AppendRow(mutableRow.ToRow())
 	}
@@ -1322,15 +1322,15 @@ func (e *TableScanExec) nextChunk4InfoSchema(ctx context.Context, chk *chunk.Chu
 }
 
 // nextHandle gets the unique handle for next row.
-func (e *TableScanExec) nextHandle() (handle int64, found bool, err error) {
-	handle, found, err = e.t.Seek(e.ctx, e.seekHandle)
+func (e *TableScanExec) nextHandle() (handle kv.Handle, found bool, err error) {
+	handle, found, err = e.t.Seek(e.ctx, kv.IntHandle(e.seekHandle))
 	if err != nil || !found {
-		return 0, false, err
+		return nil, false, err
 	}
 	return handle, true, nil
 }
 
-func (e *TableScanExec) getRow(handle int64) ([]types.Datum, error) {
+func (e *TableScanExec) getRow(handle kv.Handle) ([]types.Datum, error) {
 	columns := make([]*table.Column, e.schema.Len())
 	for i, v := range e.columns {
 		columns[i] = table.ToColumn(v)
