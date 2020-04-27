@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -67,10 +68,14 @@ func ExpressionsToPB(sc *stmtctx.StatementContext, exprs []Expression, client kv
 }
 
 // ExpressionsToPBList converts expressions to tipb.Expr list for new plan.
-func ExpressionsToPBList(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client) (pbExpr []*tipb.Expr) {
+func ExpressionsToPBList(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client) (pbExpr []*tipb.Expr, err error) {
 	pc := PbConverter{client: client, sc: sc}
 	for _, expr := range exprs {
 		v := pc.ExprToPB(expr)
+		if v == nil {
+			return nil, terror.ClassOptimizer.New(mysql.ErrInternal, mysql.MySQLErrName[mysql.ErrInternal]).
+				GenWithStack("expression %v cannot be pushed down", expr)
+		}
 		pbExpr = append(pbExpr, v)
 	}
 	return
