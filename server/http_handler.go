@@ -247,7 +247,7 @@ func (t *tikvHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	encodedKey, _, err := idx.GenIndexKey(sc, idxRow, handle, nil)
+	encodedKey, _, err := idx.GenIndexKey(sc, idxRow, kv.IntHandle(handle), nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
