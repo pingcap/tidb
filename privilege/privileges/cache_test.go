@@ -385,6 +385,7 @@ func (s *testCacheSuite) TestAbnormalMySQLTable(c *C) {
   Shutdown_priv enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
   Process_priv enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
   File_priv enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
+  Config_priv enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
   Grant_priv enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
   References_priv enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
   Index_priv enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
@@ -420,7 +421,7 @@ func (s *testCacheSuite) TestAbnormalMySQLTable(c *C) {
   password_expired enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
   PRIMARY KEY (Host,User)
 ) ENGINE=MyISAM DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMMENT='Users and global privileges';`)
-	mustExec(c, se, `INSERT INTO user VALUES ('localhost','root','','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','','','','',0,0,0,0,'mysql_native_password','','N');
+	mustExec(c, se, `INSERT INTO user VALUES ('localhost','root','','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','','','','',0,0,0,0,'mysql_native_password','','N');
 `)
 	var p privileges.MySQLPrivilege
 	err = p.LoadUserTable(se)
