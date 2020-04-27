@@ -1616,7 +1616,7 @@ func getPartitionTableRecordsNum(c *C, ctx sessionctx.Context, tbl table.Partiti
 	for _, def := range info.Definitions {
 		pid := def.ID
 		partition := tbl.(table.PartitionedTable).GetPartition(pid)
-		startKey := partition.RecordKey(math.MinInt64)
+		startKey := partition.RecordKey(kv.IntHandle(math.MinInt64))
 		c.Assert(ctx.NewTxn(context.Background()), IsNil)
 		err := partition.IterRecords(ctx, startKey, partition.Cols(),
 			func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {

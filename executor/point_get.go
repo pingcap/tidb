@@ -171,7 +171,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			}
 			return e.lockKeyIfNeeded(ctx, e.idxKey)
 		}
-		e.handle, err = tables.DecodeHandle(e.handleVal)
+		e.handle, err = tables.DecodeHandleInUniqueIndexValue(e.handleVal)
 		if err != nil {
 			return err
 		}
