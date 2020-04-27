@@ -152,6 +152,8 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return BoolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUTF8), true, nil
 	case TiDBCapturePlanBaseline:
 		return CapturePlanBaseline.GetVal(), true, nil
+	case TiDBFoundInPlanCache:
+		return BoolToIntStr(s.PrevFoundInPlanCache), true, nil
 	case TiDBEnableCollectExecutionInfo:
 		return BoolToIntStr(config.GetGlobalConfig().EnableCollectExecutionInfo), true, nil
 	}
@@ -211,7 +213,7 @@ func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) erro
 	if err != nil {
 		return err
 	}
-	sVal, err = ValidateSetSystemVar(vars, name, sVal)
+	sVal, err = ValidateSetSystemVar(vars, name, sVal, ScopeSession)
 	if err != nil {
 		return err
 	}
@@ -288,7 +290,7 @@ const (
 )
 
 // ValidateSetSystemVar checks if system variable satisfies specific restriction.
-func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string, error) {
+func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope ScopeFlag) (string, error) {
 	if strings.EqualFold(value, "DEFAULT") {
 		if val := GetSysVar(name); val != nil {
 			return val.Value, nil
@@ -419,8 +421,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		TiDBBatchDelete, TiDBBatchCommit, TiDBEnableCascadesPlanner, TiDBEnableWindowFunction, TiDBPProfSQLCPU,
 		TiDBLowResolutionTSO, TiDBEnableIndexMerge, TiDBEnableNoopFuncs,
 		TiDBCheckMb4ValueInUTF8, TiDBEnableSlowLog, TiDBRecordPlanInSlowLog,
-		TiDBScatterRegion, TiDBGeneralLog, TiDBConstraintCheckInPlace, TiDBEnableVectorizedExpression,
-		TiDBEnableCollectExecutionInfo:
+		TiDBScatterRegion, TiDBGeneralLog, TiDBConstraintCheckInPlace,
+		TiDBEnableVectorizedExpression, TiDBFoundInPlanCache, TiDBEnableCollectExecutionInfo:
 		fallthrough
 	case GeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, LogBin,
 		CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode, PseudoSlaveMode, LowPriorityUpdates,
@@ -685,26 +687,28 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		case strings.EqualFold(value, "OFF") || value == "0":
 			return "0", nil
 		case value == "":
-			return "", nil
+			if scope == ScopeSession {
+				return "", nil
+			}
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case TiDBStmtSummaryRefreshInterval:
-		if value == "" {
+		if value == "" && scope == ScopeSession {
 			return "", nil
 		}
 		return checkUInt64SystemVar(name, value, 1, math.MaxInt32, vars)
 	case TiDBStmtSummaryHistorySize:
-		if value == "" {
+		if value == "" && scope == ScopeSession {
 			return "", nil
 		}
 		return checkUInt64SystemVar(name, value, 0, math.MaxUint8, vars)
 	case TiDBStmtSummaryMaxStmtCount:
-		if value == "" {
+		if value == "" && scope == ScopeSession {
 			return "", nil
 		}
 		return checkInt64SystemVar(name, value, 1, math.MaxInt16, vars)
 	case TiDBStmtSummaryMaxSQLLength:
-		if value == "" {
+		if value == "" && scope == ScopeSession {
 			return "", nil
 		}
 		return checkInt64SystemVar(name, value, 0, math.MaxInt32, vars)

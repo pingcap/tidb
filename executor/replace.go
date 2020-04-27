@@ -58,15 +58,15 @@ func (e *ReplaceExec) Open(ctx context.Context) error {
 
 // removeRow removes the duplicate row and cleanup its keys in the key-value map,
 // but if the to-be-removed row equals to the to-be-added row, no remove or add things to do.
-func (e *ReplaceExec) removeRow(ctx context.Context, txn kv.Transaction, handle int64, r toBeCheckedRow) (bool, error) {
+func (e *ReplaceExec) removeRow(ctx context.Context, txn kv.Transaction, handle kv.Handle, r toBeCheckedRow) (bool, error) {
 	newRow := r.row
 	oldRow, err := getOldRow(ctx, e.ctx, txn, r.t, handle, e.GenExprs)
 	if err != nil {
 		logutil.BgLogger().Error("get old row failed when replace",
-			zap.Int64("handle", handle),
+			zap.String("handle", handle.String()),
 			zap.String("toBeInsertedRow", types.DatumsToStrNoErr(r.row)))
 		if kv.IsErrNotFound(err) {
-			err = errors.NotFoundf("can not be duplicated row, due to old row not found. handle %d", handle)
+			err = errors.NotFoundf("can not be duplicated row, due to old row not found. handle %s", handle)
 		}
 		return false, err
 	}
@@ -155,11 +155,11 @@ func (e *ReplaceExec) removeIndexRow(ctx context.Context, txn kv.Transaction, r 
 			return false, false, err
 		}
 
-		handle, err := tables.DecodeHandle(val)
+		handle, err := tables.DecodeHandleInUniqueIndexValue(val)
 		if err != nil {
 			return false, true, err
 		}
-		rowUnchanged, err := e.removeRow(ctx, txn, handle, r)
+		rowUnchanged, err := e.removeRow(ctx, txn, kv.IntHandle(handle), r)
 		if err != nil {
 			return false, true, err
 		}

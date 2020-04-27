@@ -46,32 +46,31 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.CreateTableStmt) (*m
 		return nil, nil
 	}
 
+	if ctx.GetSessionVars().EnableTablePartition == "off" {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errTablePartitionDisabled)
+		return nil, nil
+	}
+
 	var enable bool
-	switch ctx.GetSessionVars().EnableTablePartition {
-	case "on":
-		enable = true
-	case "off":
-		enable = false
-	default:
-		// When tidb_enable_table_partition = 'auto',
-		if s.Partition.Tp == model.PartitionTypeRange {
-			// Partition by range expression is enabled by default.
-			if s.Partition.ColumnNames == nil {
-				enable = true
-			}
-			// Partition by range columns and just one column.
-			if len(s.Partition.ColumnNames) == 1 {
-				enable = true
-			}
+	// When tidb_enable_table_partition is 'on' or 'auto'.
+	if s.Partition.Tp == model.PartitionTypeRange {
+		// Partition by range expression is enabled by default.
+		if s.Partition.ColumnNames == nil {
+			enable = true
 		}
-		// Partition by hash is enabled by default.
-		// Note that linear hash is not enabled.
-		if s.Partition.Tp == model.PartitionTypeHash {
+		// Partition by range columns and just one column.
+		if len(s.Partition.ColumnNames) == 1 {
 			enable = true
 		}
 	}
+	// Partition by hash is enabled by default.
+	// Note that linear hash is not enabled.
+	if s.Partition.Tp == model.PartitionTypeHash {
+		enable = true
+	}
+
 	if !enable {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errTablePartitionDisabled)
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errUnsupportedCreatePartition)
 		return nil, nil
 	}
 
@@ -470,7 +469,7 @@ func checkPartitionFuncType(ctx sessionctx.Context, s *ast.CreateTableStmt, tblI
 func checkCreatePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) error {
 	pi := tblInfo.Partition
 	defs := pi.Definitions
-	if len(defs) <= 1 {
+	if len(defs) == 0 {
 		return nil
 	}
 

@@ -2161,7 +2161,7 @@ func (b *builtinLocate2ArgsUTF8Sig) vecEvalInt(input *chunk.Chunk, result *chunk
 			i64s[i] = 1
 			continue
 		}
-		slice := string([]rune(str))
+		slice := str
 		slice = strings.ToLower(slice)
 		subStr = strings.ToLower(subStr)
 		idx := strings.Index(slice, subStr)
