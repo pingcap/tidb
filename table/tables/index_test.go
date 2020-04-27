@@ -82,7 +82,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 
 	values := types.MakeDatums(1, 2)
 	mockCtx := mock.NewContext()
-	_, err = index.Create(mockCtx, txn, values, 1)
+	_, err = index.Create(mockCtx, txn, values, kv.IntHandle(1))
 	c.Assert(err, IsNil)
 
 	it, err := index.SeekFirst(txn)
@@ -93,18 +93,18 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	c.Assert(getValues, HasLen, 2)
 	c.Assert(getValues[0].GetInt64(), Equals, int64(1))
 	c.Assert(getValues[1].GetInt64(), Equals, int64(2))
-	c.Assert(h, Equals, int64(1))
+	c.Assert(h.IntValue(), Equals, int64(1))
 	it.Close()
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	exist, _, err := index.Exist(sc, txn, values, 100)
+	exist, _, err := index.Exist(sc, txn, values, kv.IntHandle(100))
 	c.Assert(err, IsNil)
 	c.Assert(exist, IsFalse)
 
-	exist, _, err = index.Exist(sc, txn, values, 1)
+	exist, _, err = index.Exist(sc, txn, values, kv.IntHandle(1))
 	c.Assert(err, IsNil)
 	c.Assert(exist, IsTrue)
 
-	err = index.Delete(sc, txn, values, 1)
+	err = index.Delete(sc, txn, values, kv.IntHandle(1))
 	c.Assert(err, IsNil)
 
 	it, err = index.SeekFirst(txn)
@@ -114,7 +114,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	c.Assert(terror.ErrorEqual(err, io.EOF), IsTrue, Commentf("err %v", err))
 	it.Close()
 
-	_, err = index.Create(mockCtx, txn, values, 0)
+	_, err = index.Create(mockCtx, txn, values, kv.IntHandle(0))
 	c.Assert(err, IsNil)
 
 	_, err = index.SeekFirst(txn)
@@ -169,10 +169,10 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	txn, err = s.s.Begin()
 	c.Assert(err, IsNil)
 
-	_, err = index.Create(mockCtx, txn, values, 1)
+	_, err = index.Create(mockCtx, txn, values, kv.IntHandle(1))
 	c.Assert(err, IsNil)
 
-	_, err = index.Create(mockCtx, txn, values, 2)
+	_, err = index.Create(mockCtx, txn, values, kv.IntHandle(2))
 	c.Assert(err, NotNil)
 
 	it, err = index.SeekFirst(txn)
@@ -183,17 +183,17 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	c.Assert(getValues, HasLen, 2)
 	c.Assert(getValues[0].GetInt64(), Equals, int64(1))
 	c.Assert(getValues[1].GetInt64(), Equals, int64(2))
-	c.Assert(h, Equals, int64(1))
+	c.Assert(h.IntValue(), Equals, int64(1))
 	it.Close()
 
-	exist, h, err = index.Exist(sc, txn, values, 1)
+	exist, h, err = index.Exist(sc, txn, values, kv.IntHandle(1))
 	c.Assert(err, IsNil)
-	c.Assert(h, Equals, int64(1))
+	c.Assert(h.IntValue(), Equals, int64(1))
 	c.Assert(exist, IsTrue)
 
-	exist, h, err = index.Exist(sc, txn, values, 2)
+	exist, h, err = index.Exist(sc, txn, values, kv.IntHandle(2))
 	c.Assert(err, NotNil)
-	c.Assert(h, Equals, int64(1))
+	c.Assert(h.IntValue(), Equals, int64(1))
 	c.Assert(exist, IsTrue)
 
 	err = txn.Commit(context.Background())
@@ -204,7 +204,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 
 	// Test the function of Next when the value of unique key is nil.
 	values2 := types.MakeDatums(nil, nil)
-	_, err = index.Create(mockCtx, txn, values2, 2)
+	_, err = index.Create(mockCtx, txn, values2, kv.IntHandle(2))
 	c.Assert(err, IsNil)
 	it, err = index.SeekFirst(txn)
 	c.Assert(err, IsNil)
@@ -213,7 +213,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	c.Assert(getValues, HasLen, 2)
 	c.Assert(getValues[0].GetInterface(), Equals, nil)
 	c.Assert(getValues[1].GetInterface(), Equals, nil)
-	c.Assert(h, Equals, int64(2))
+	c.Assert(h.IntValue(), Equals, int64(2))
 	it.Close()
 }
 
@@ -243,7 +243,7 @@ func (s *testIndexSuite) TestCombineIndexSeek(c *C) {
 
 	mockCtx := mock.NewContext()
 	values := types.MakeDatums("abc", "def")
-	_, err = index.Create(mockCtx, txn, values, 1)
+	_, err = index.Create(mockCtx, txn, values, kv.IntHandle(1))
 	c.Assert(err, IsNil)
 
 	index2 := tables.NewIndex(tblInfo.ID, tblInfo, tblInfo.Indices[0])
@@ -254,5 +254,5 @@ func (s *testIndexSuite) TestCombineIndexSeek(c *C) {
 	c.Assert(hit, IsFalse)
 	_, h, err := iter.Next()
 	c.Assert(err, IsNil)
-	c.Assert(h, Equals, int64(1))
+	c.Assert(h.IntValue(), Equals, int64(1))
 }

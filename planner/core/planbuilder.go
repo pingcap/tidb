@@ -529,7 +529,6 @@ func (b *PlanBuilder) buildSetConfig(ctx context.Context, v *ast.SetConfigStmt) 
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ConfigPriv, "", "", "", privErr)
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 	expr, _, err := b.rewrite(ctx, v.Value, mockTablePlan, nil, true)
-	expr = expression.WrapWithCastAsString(b.ctx, expr)
 	return &SetConfig{Name: v.Name, Type: v.Type, Instance: v.Instance, Value: expr}, err
 }
 
