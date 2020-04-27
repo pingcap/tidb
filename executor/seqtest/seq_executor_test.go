@@ -837,7 +837,7 @@ func HelperTestAdminShowNextID(c *C, s *seqTestSuite, str string) {
 		config.GetGlobalConfig().Experimental.AllowAutoRandom = oldAutoRandom
 	}()
 
-	// test for a table with auto_random primary key
+	// Test for a table with auto_random primary key.
 	tk.MustExec("create table t3(id int primary key auto_random(5), c int)")
 	// Start handle is 1.
 	r = tk.MustQuery(str + " t3 next_row_id")
@@ -851,7 +851,7 @@ func HelperTestAdminShowNextID(c *C, s *seqTestSuite, str string) {
 	r = tk.MustQuery(str + " t3 next_row_id")
 	r.Check(testkit.Rows("test1 t3 _tidb_rowid 1 AUTO_INCREMENT", "test1 t3 id 114 AUTO_RANDOM"))
 
-	// test for a sequence.
+	// Test for a sequence.
 	tk.MustExec("create sequence seq1 start 15 cache 57")
 	r = tk.MustQuery(str + " seq1 next_row_id")
 	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 AUTO_INCREMENT", "test1 seq1  15 SEQUENCE"))
