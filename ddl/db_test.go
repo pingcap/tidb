@@ -2785,7 +2785,7 @@ func (s *testDBSuite7) TestModifyColumnRollBack(c *C) {
 
 	err := <-done
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:12]Cancelled DDL job")
+	c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
 	s.mustExec(c, "insert into t1(c2) values (null);")
 
 	t := s.testGetTable(c, "t1")
