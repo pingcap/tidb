@@ -309,7 +309,7 @@ func (s *testEvaluatorSuite) TestArithmeticalFunc2Pb(c *C) {
 	client := new(mock.Client)
 	dg := new(dataGen4Expr2PbTest)
 
-	funcNames := []string{ast.Plus, ast.Minus, ast.Mul, ast.Div, ast.Mod, ast.IntDiv}
+	funcNames := []string{ast.Plus, ast.Minus, ast.Mul, ast.Div}
 	for _, funcName := range funcNames {
 		fc, err := NewFunction(
 			mock.NewContext(),
@@ -330,15 +330,23 @@ func (s *testEvaluatorSuite) TestArithmeticalFunc2Pb(c *C) {
 	pbExprs, err := ExpressionsToPBList(sc, arithmeticalFuncs, client)
 	c.Assert(err, IsNil)
 	for i, pbExpr := range pbExprs {
-		switch funcNames[i] {
-		case ast.Mod, ast.IntDiv:
-			c.Assert(pbExpr, IsNil, Commentf("%v\n", funcNames[i]))
-		default:
-			c.Assert(pbExpr, NotNil)
-			js, err := json.Marshal(pbExpr)
-			c.Assert(err, IsNil)
-			c.Assert(string(js), Equals, jsons[funcNames[i]], Commentf("%v\n", funcNames[i]))
-		}
+		c.Assert(pbExpr, NotNil)
+		js, err := json.Marshal(pbExpr)
+		c.Assert(err, IsNil)
+		c.Assert(string(js), Equals, jsons[funcNames[i]], Commentf("%v\n", funcNames[i]))
+	}
+
+	funcNames = []string{ast.Mod, ast.IntDiv} // cannot be pushed down
+	for _, funcName := range funcNames {
+		fc, err := NewFunction(
+			mock.NewContext(),
+			funcName,
+			types.NewFieldType(mysql.TypeUnspecified),
+			dg.genColumn(mysql.TypeDouble, 1),
+			dg.genColumn(mysql.TypeDouble, 2))
+		c.Assert(err, IsNil)
+		_, err = ExpressionsToPBList(sc, []Expression{fc}, client)
+		c.Assert(err, NotNil)
 	}
 }
 
