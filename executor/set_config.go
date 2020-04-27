@@ -23,11 +23,9 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -46,12 +44,6 @@ type SetConfigExec struct {
 
 // Open implements the Executor Open interface.
 func (s *SetConfigExec) Open(ctx context.Context) error {
-	// TODO: create a new privilege for this operation instead of using the SuperPriv
-	checker := privilege.GetPrivilegeManager(s.ctx)
-	if checker != nil && !checker.RequestVerification(s.ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.SuperPriv) {
-		return core.ErrSpecificAccessDenied.GenWithStackByArgs("SET CONFIG")
-	}
-
 	if s.p.Type != "" {
 		s.p.Type = strings.ToLower(s.p.Type)
 		if s.p.Type != "tikv" && s.p.Type != "tidb" && s.p.Type != "pd" {
