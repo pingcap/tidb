@@ -75,6 +75,4 @@ require (
 
 go 1.13
 
-replace github.com/pingcap/parser => /Users/zhangyuanjia/Workspace/go/src/github.com/pingcap/parser
-
-replace github.com/pingcap/tidb/parser => github.com/qw4990/parser v0.0.0-20200426130046-d562ff5af771
+replace github.com/pingcap/parser => github.com/qw4990/parser v0.0.0-20200426130046-d562ff5af771
