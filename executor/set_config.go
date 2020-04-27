@@ -24,10 +24,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/pdapi"
@@ -38,8 +40,8 @@ import (
 // SetConfigExec executes 'SET CONFIG' statement.
 type SetConfigExec struct {
 	baseExecutor
-	p *core.SetConfig
-	v string
+	p        *core.SetConfig
+	jsonBody string
 }
 
 // Open implements the Executor Open interface.
@@ -67,15 +69,9 @@ func (s *SetConfigExec) Open(ctx context.Context) error {
 	}
 	s.p.Name = strings.ToLower(s.p.Name)
 
-	val, isNull, err := s.p.Value.EvalString(s.ctx, chunk.Row{})
-	if err != nil {
-		return err
-	}
-	if isNull {
-		return errors.Errorf("can't set config to null")
-	}
-	s.v = val
-	return nil
+	body, err := ConvertConfigItem2JSON(s.ctx, s.p.Name, s.p.Value)
+	s.jsonBody = body
+	return err
 }
 
 // TestSetConfigServerInfoKey is used as the key to store 'TestSetConfigServerInfoFunc' in the context.
@@ -124,7 +120,7 @@ func (s *SetConfigExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func (s *SetConfigExec) doRequest(url string) (retErr error) {
-	body := bytes.NewBufferString(fmt.Sprintf(`{"%s":"%s"}`, s.p.Name, s.v))
+	body := bytes.NewBufferString(s.jsonBody)
 	req, err := http.NewRequest(http.MethodPost, url, body)
 	if err != nil {
 		return err
@@ -168,4 +164,52 @@ func isValidInstance(instance string) bool {
 	}
 	v := net.ParseIP(ip)
 	return v != nil
+}
+
+// ConvertConfigItem2JSON converts the config item specified by key and val to json.
+// For example:
+// 	set config x key="val" ==> {"key":"val"}
+// 	set config x key=233 ==> {"key":233}
+func ConvertConfigItem2JSON(ctx sessionctx.Context, key string, val expression.Expression) (body string, err error) {
+	if val == nil {
+		return "", errors.Errorf("cannot set config to null")
+	}
+	isNull := false
+	str := ""
+	switch val.GetType().EvalType() {
+	case types.ETString:
+		var s string
+		s, isNull, err = val.EvalString(ctx, chunk.Row{})
+		if err == nil && !isNull {
+			str = fmt.Sprintf(`"%s"`, s)
+		}
+	case types.ETInt:
+		var i int64
+		i, isNull, err = val.EvalInt(ctx, chunk.Row{})
+		if err == nil && !isNull {
+			str = fmt.Sprintf("%v", i)
+		}
+	case types.ETReal:
+		var f float64
+		f, isNull, err = val.EvalReal(ctx, chunk.Row{})
+		if err == nil && !isNull {
+			str = fmt.Sprintf("%v", f)
+		}
+	case types.ETDecimal:
+		d := new(types.MyDecimal)
+		d, isNull, err = val.EvalDecimal(ctx, chunk.Row{})
+		if err == nil && !isNull {
+			str = string(d.ToString())
+		}
+	default:
+		return "", errors.Errorf("unsupported config value type")
+	}
+	if err != nil {
+		return
+	}
+	if isNull {
+		return "", errors.Errorf("can't set config to null")
+	}
+	body = fmt.Sprintf(`{"%s":%s}`, key, str)
+	return body, nil
 }
