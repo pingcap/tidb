@@ -148,12 +148,7 @@ func (a *recordSet) NewChunk() *chunk.Chunk {
 
 func (a *recordSet) Close() error {
 	err := a.executor.Close()
-	a.stmt.FinishExecuteStmt(a.txnStartTS, a.lastErr == nil, false)
-	a.stmt.logAudit()
-	// Detach the disk tracker from GlobalDiskUsageTracker after every execution
-	if stmtCtx := a.stmt.Ctx.GetSessionVars().StmtCtx; stmtCtx != nil && stmtCtx.DiskTracker != nil {
-		stmtCtx.DiskTracker.DetachFromGlobalTracker()
-	}
+	a.stmt.CloseRecordSet(a.txnStartTS, a.lastErr)
 	return err
 }
 
@@ -438,12 +433,7 @@ func (c *chunkRowRecordSet) NewChunk() *chunk.Chunk {
 }
 
 func (c *chunkRowRecordSet) Close() error {
-	c.execStmt.FinishExecuteStmt(c.execStmt.Ctx.GetSessionVars().TxnCtx.StartTS, true, false)
-	c.execStmt.logAudit()
-	// Detach the disk tracker from GlobalDiskUsageTracker after every execution
-	if stmtCtx := c.execStmt.Ctx.GetSessionVars().StmtCtx; stmtCtx != nil && stmtCtx.DiskTracker != nil {
-		stmtCtx.DiskTracker.DetachFromGlobalTracker()
-	}
+	c.execStmt.CloseRecordSet(c.execStmt.Ctx.GetSessionVars().TxnCtx.StartTS, nil)
 	return nil
 }
 
@@ -796,6 +786,15 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, succ bool, hasMoreResults boo
 		sessionExecuteRunDurationInternal.Observe(executeDuration.Seconds())
 	} else {
 		sessionExecuteRunDurationGeneral.Observe(executeDuration.Seconds())
+	}
+}
+
+func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
+	a.FinishExecuteStmt(txnStartTS, lastErr == nil, false)
+	a.logAudit()
+	// Detach the disk tracker from GlobalDiskUsageTracker after every execution
+	if stmtCtx := a.Ctx.GetSessionVars().StmtCtx; stmtCtx != nil && stmtCtx.DiskTracker != nil {
+		stmtCtx.DiskTracker.DetachFromGlobalTracker()
 	}
 }
 
