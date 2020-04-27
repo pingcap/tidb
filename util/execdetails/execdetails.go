@@ -66,10 +66,6 @@ type CommitDetails struct {
 	TxnRetry          int
 }
 
-type TxnDetails struct {
-	WaitStartTsTime time.Duration
-}
-
 const (
 	// CopTimeStr represents the sum of cop-task time spend in TiDB distSQL.
 	CopTimeStr = "Cop_time"

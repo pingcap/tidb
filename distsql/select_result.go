@@ -107,9 +107,6 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 				// final round of fetch
 				// TODO: Add a label to distinguish between success or failure.
 				// https://github.com/pingcap/tidb/issues/11397
-				if r.ctx.GetSessionVars().User != nil && r.ctx.GetSessionVars().User.Username == "root" && !r.ctx.GetSessionVars().InRestrictedSQL {
-					fmt.Printf("cop query time: %v     -----------------\n", r.fetchDuration.Seconds())
-				}
 				metrics.DistSQLQueryHistogram.WithLabelValues(r.label, r.sqlType).Observe(r.fetchDuration.Seconds())
 				r.durationReported = true
 			}
