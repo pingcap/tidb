@@ -92,7 +92,7 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 		}
 
 		// Update row
-		changed, _, _, err1 := updateRecord(ctx, e.ctx, handle, oldData, newTableData, flags, tbl, false, e.memTracker)
+		changed, err1 := updateRecord(ctx, e.ctx, kv.IntHandle(handle), oldData, newTableData, flags, tbl, false, e.memTracker)
 		if err1 == nil {
 			e.updatedRowKeys[content.TblID][handle] = changed
 			continue

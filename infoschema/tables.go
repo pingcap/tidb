@@ -1491,12 +1491,12 @@ func (it *infoschemaTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, 
 }
 
 // RowWithCols implements table.Table RowWithCols interface.
-func (it *infoschemaTable) RowWithCols(ctx sessionctx.Context, h int64, cols []*table.Column) ([]types.Datum, error) {
+func (it *infoschemaTable) RowWithCols(ctx sessionctx.Context, h kv.Handle, cols []*table.Column) ([]types.Datum, error) {
 	return nil, table.ErrUnsupportedOp
 }
 
 // Row implements table.Table Row interface.
-func (it *infoschemaTable) Row(ctx sessionctx.Context, h int64) ([]types.Datum, error) {
+func (it *infoschemaTable) Row(ctx sessionctx.Context, h kv.Handle) ([]types.Datum, error) {
 	return nil, table.ErrUnsupportedOp
 }
 
@@ -1556,22 +1556,22 @@ func (it *infoschemaTable) FirstKey() kv.Key {
 }
 
 // RecordKey implements table.Table RecordKey interface.
-func (it *infoschemaTable) RecordKey(h int64) kv.Key {
+func (it *infoschemaTable) RecordKey(h kv.Handle) kv.Key {
 	return nil
 }
 
 // AddRecord implements table.Table AddRecord interface.
-func (it *infoschemaTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID int64, err error) {
-	return 0, table.ErrUnsupportedOp
+func (it *infoschemaTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
+	return nil, table.ErrUnsupportedOp
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
-func (it *infoschemaTable) RemoveRecord(ctx sessionctx.Context, h int64, r []types.Datum) error {
+func (it *infoschemaTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []types.Datum) error {
 	return table.ErrUnsupportedOp
 }
 
 // UpdateRecord implements table.Table UpdateRecord interface.
-func (it *infoschemaTable) UpdateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
+func (it *infoschemaTable) UpdateRecord(ctx sessionctx.Context, h kv.Handle, oldData, newData []types.Datum, touched []bool) error {
 	return table.ErrUnsupportedOp
 }
 
@@ -1596,8 +1596,8 @@ func (it *infoschemaTable) GetPhysicalID() int64 {
 }
 
 // Seek implements table.Table Seek interface.
-func (it *infoschemaTable) Seek(ctx sessionctx.Context, h int64) (int64, bool, error) {
-	return 0, false, table.ErrUnsupportedOp
+func (it *infoschemaTable) Seek(ctx sessionctx.Context, h kv.Handle) (kv.Handle, bool, error) {
+	return nil, false, table.ErrUnsupportedOp
 }
 
 // Type implements table.Table Type interface.
@@ -1618,12 +1618,12 @@ func (vt *VirtualTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, col
 }
 
 // RowWithCols implements table.Table RowWithCols interface.
-func (vt *VirtualTable) RowWithCols(ctx sessionctx.Context, h int64, cols []*table.Column) ([]types.Datum, error) {
+func (vt *VirtualTable) RowWithCols(ctx sessionctx.Context, h kv.Handle, cols []*table.Column) ([]types.Datum, error) {
 	return nil, table.ErrUnsupportedOp
 }
 
 // Row implements table.Table Row interface.
-func (vt *VirtualTable) Row(ctx sessionctx.Context, h int64) ([]types.Datum, error) {
+func (vt *VirtualTable) Row(ctx sessionctx.Context, h kv.Handle) ([]types.Datum, error) {
 	return nil, table.ErrUnsupportedOp
 }
 
@@ -1683,22 +1683,22 @@ func (vt *VirtualTable) FirstKey() kv.Key {
 }
 
 // RecordKey implements table.Table RecordKey interface.
-func (vt *VirtualTable) RecordKey(h int64) kv.Key {
+func (vt *VirtualTable) RecordKey(h kv.Handle) kv.Key {
 	return nil
 }
 
 // AddRecord implements table.Table AddRecord interface.
-func (vt *VirtualTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID int64, err error) {
-	return 0, table.ErrUnsupportedOp
+func (vt *VirtualTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
+	return nil, table.ErrUnsupportedOp
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
-func (vt *VirtualTable) RemoveRecord(ctx sessionctx.Context, h int64, r []types.Datum) error {
+func (vt *VirtualTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []types.Datum) error {
 	return table.ErrUnsupportedOp
 }
 
 // UpdateRecord implements table.Table UpdateRecord interface.
-func (vt *VirtualTable) UpdateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
+func (vt *VirtualTable) UpdateRecord(ctx sessionctx.Context, h kv.Handle, oldData, newData []types.Datum, touched []bool) error {
 	return table.ErrUnsupportedOp
 }
 
@@ -1723,8 +1723,8 @@ func (vt *VirtualTable) GetPhysicalID() int64 {
 }
 
 // Seek implements table.Table Seek interface.
-func (vt *VirtualTable) Seek(ctx sessionctx.Context, h int64) (int64, bool, error) {
-	return 0, false, table.ErrUnsupportedOp
+func (vt *VirtualTable) Seek(ctx sessionctx.Context, h kv.Handle) (kv.Handle, bool, error) {
+	return nil, false, table.ErrUnsupportedOp
 }
 
 // Type implements table.Table Type interface.
