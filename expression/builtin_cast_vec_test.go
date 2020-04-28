@@ -121,7 +121,7 @@ type randJSONDuration struct{}
 
 func (g *randJSONDuration) gen() interface{} {
 	d := types.Duration{
-		Duration: time.Duration(time.Duration(rand.Intn(12))*time.Hour + time.Duration(rand.Intn(60))*time.Minute + time.Duration(rand.Intn(60))*time.Second + time.Duration(rand.Intn(1000))*time.Millisecond),
+		Duration: time.Duration(rand.Intn(12))*time.Hour + time.Duration(rand.Intn(60))*time.Minute + time.Duration(rand.Intn(60))*time.Second + time.Duration(rand.Intn(1000))*time.Millisecond,
 		Fsp:      3}
 	return json.CreateBinary(d.String())
 }

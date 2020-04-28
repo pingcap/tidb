@@ -72,6 +72,14 @@ type PointGetExecutor struct {
 	lock         bool
 	lockWaitTime int64
 	rowDecoder   *rowcodec.ChunkDecoder
+
+	columns []*model.ColumnInfo
+	// virtualColumnIndex records all the indices of virtual columns and sort them in definition
+	// to make sure we can compute the virtual column in right order.
+	virtualColumnIndex []int
+
+	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
+	virtualColumnRetFieldTypes []*types.FieldType
 }
 
 // Init set fields needed for PointGetExecutor reuse, this does NOT change baseExecutor field
@@ -87,6 +95,19 @@ func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan, startTs uint64) {
 	e.lockWaitTime = p.LockWaitTime
 	e.rowDecoder = decoder
 	e.partInfo = p.PartitionInfo
+	e.columns = p.Columns
+	e.buildVirtualColumnInfo()
+}
+
+// buildVirtualColumnInfo saves virtual column indices and sort them in definition order
+func (e *PointGetExecutor) buildVirtualColumnInfo() {
+	e.virtualColumnIndex = buildVirtualColumnIndex(e.Schema(), e.columns)
+	if len(e.virtualColumnIndex) > 0 {
+		e.virtualColumnRetFieldTypes = make([]*types.FieldType, len(e.virtualColumnIndex))
+		for i, idx := range e.virtualColumnIndex {
+			e.virtualColumnRetFieldTypes[i] = e.schema.Columns[idx].RetType
+		}
+	}
 }
 
 // Open implements the Executor interface.
@@ -140,13 +161,17 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 
 		e.handleVal, err = e.get(ctx, e.idxKey)
-		if err != nil && !kv.ErrNotExist.Equal(err) {
-			return err
-		}
-		if len(e.handleVal) == 0 {
+		if err != nil {
+			if !kv.ErrNotExist.Equal(err) {
+				return err
+			}
+			// handle is not found, try lock the index key if isolation level is not read consistency
+			if e.ctx.GetSessionVars().IsPessimisticReadConsistency() {
+				return nil
+			}
 			return e.lockKeyIfNeeded(ctx, e.idxKey)
 		}
-		e.handle, err = tables.DecodeHandle(e.handleVal)
+		e.handle, err = tables.DecodeHandleInUniqueIndexValue(e.handleVal)
 		if err != nil {
 			return err
 		}
@@ -166,14 +191,9 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		})
 	}
 
-	key := tablecodec.EncodeRowKeyWithHandle(tblID, e.handle)
-	// Lock the key before get, then get will get the value from the cache.
-	err = e.lockKeyIfNeeded(ctx, key)
+	key := tablecodec.EncodeRowKeyWithHandle(tblID, kv.IntHandle(e.handle))
+	val, err := e.getAndLock(ctx, key)
 	if err != nil {
-		return err
-	}
-	val, err := e.get(ctx, key)
-	if err != nil && !kv.ErrNotExist.Equal(err) {
 		return err
 	}
 	if len(val) == 0 {
@@ -183,7 +203,48 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		return nil
 	}
-	return decodeRowValToChunk(e.base(), e.tblInfo, e.handle, val, req, e.rowDecoder)
+	err = decodeRowValToChunk(e.base(), e.tblInfo, e.handle, val, req, e.rowDecoder)
+	if err != nil {
+		return err
+	}
+
+	err = FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex,
+		e.schema, e.columns, e.ctx, req)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (e *PointGetExecutor) getAndLock(ctx context.Context, key kv.Key) (val []byte, err error) {
+	if e.ctx.GetSessionVars().IsPessimisticReadConsistency() {
+		// Only Lock the exist keys in RC isolation.
+		val, err = e.get(ctx, key)
+		if err != nil {
+			if !kv.ErrNotExist.Equal(err) {
+				return nil, err
+			}
+			return nil, nil
+		}
+		err = e.lockKeyIfNeeded(ctx, key)
+		if err != nil {
+			return nil, err
+		}
+		return val, nil
+	}
+	// Lock the key before get in RR isolation, then get will get the value from the cache.
+	err = e.lockKeyIfNeeded(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	val, err = e.get(ctx, key)
+	if err != nil {
+		if !kv.ErrNotExist.Equal(err) {
+			return nil, err
+		}
+		return nil, nil
+	}
+	return val, nil
 }
 
 func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) error {
@@ -210,21 +271,24 @@ func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) erro
 	return nil
 }
 
-func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) (val []byte, err error) {
+// get will first try to get from txn buffer, then check the pessimistic lock cache,
+// then the store. Kv.ErrNotExist will be returned if key is not found
+func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) {
 	if e.txn.Valid() && !e.txn.IsReadOnly() {
 		// We cannot use txn.Get directly here because the snapshot in txn and the snapshot of e.snapshot may be
 		// different for pessimistic transaction.
-		val, err = e.txn.GetMemBuffer().Get(ctx, key)
+		val, err := e.txn.GetMemBuffer().Get(ctx, key)
 		if err == nil {
 			return val, err
 		}
 		if !kv.IsErrNotFound(err) {
 			return nil, err
 		}
+		// key does not exist in mem buffer, check the lock cache
 		var ok bool
 		val, ok = e.ctx.GetSessionVars().TxnCtx.GetKeyInPessimisticLockCache(key)
 		if ok {
-			return
+			return val, nil
 		}
 		// fallthrough to snapshot get.
 	}
@@ -259,7 +323,7 @@ func encodeIndexKey(e *baseExecutor, tblInfo *model.TableInfo, idxInfo *model.In
 
 func decodeRowValToChunk(e *baseExecutor, tblInfo *model.TableInfo, handle int64, rowVal []byte, chk *chunk.Chunk, rd *rowcodec.ChunkDecoder) error {
 	if rowcodec.IsNewFormat(rowVal) {
-		return rd.DecodeToChunk(rowVal, handle, chk)
+		return rd.DecodeToChunk(rowVal, kv.IntHandle(handle), chk)
 	}
 	return decodeOldRowValToChunk(e, tblInfo, handle, rowVal, chk)
 }
@@ -280,6 +344,11 @@ func decodeOldRowValToChunk(e *baseExecutor, tblInfo *model.TableInfo, handle in
 	}
 	decoder := codec.NewDecoder(chk, e.ctx.GetSessionVars().Location())
 	for i, col := range e.schema.Columns {
+		// fill the virtual column value after row calculation
+		if col.VirtualExpr != nil {
+			chk.AppendNull(i)
+			continue
+		}
 		if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.Flag) {
 			chk.AppendInt64(i, handle)
 			continue

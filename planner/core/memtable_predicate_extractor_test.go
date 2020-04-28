@@ -27,6 +27,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/set"
 )
 
@@ -62,7 +63,7 @@ func (s *extractorSuite) getLogicalMemTable(c *C, se session.Session, parser *pa
 	c.Assert(err, IsNil)
 
 	ctx := context.Background()
-	builder := plannercore.NewPlanBuilder(se, s.dom.InfoSchema(), &plannercore.BlockHintProcessor{})
+	builder := plannercore.NewPlanBuilder(se, s.dom.InfoSchema(), &hint.BlockHintProcessor{})
 	plan, err := builder.Build(ctx, stmt)
 	c.Assert(err, IsNil)
 

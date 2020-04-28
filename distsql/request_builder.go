@@ -17,6 +17,7 @@ import (
 	"math"
 
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -137,6 +138,12 @@ func (builder *RequestBuilder) SetStoreType(storeType kv.StoreType) *RequestBuil
 	return builder
 }
 
+// SetAllowBatchCop sets `BatchCop` property.
+func (builder *RequestBuilder) SetAllowBatchCop(batchCop bool) *RequestBuilder {
+	builder.Request.BatchCop = batchCop
+	return builder
+}
+
 func (builder *RequestBuilder) getIsolationLevel() kv.IsoLevel {
 	switch builder.Tp {
 	case kv.ReqTypeAnalyze:
@@ -165,7 +172,11 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	builder.Request.NotFillCache = sv.StmtCtx.NotFillCache
 	builder.Request.Priority = builder.getKVPriority(sv)
 	builder.Request.ReplicaRead = sv.GetReplicaRead()
-	builder.Request.SchemaVar = sv.TxnCtx.SchemaVersion
+	if sv.SnapshotInfoschema != nil {
+		builder.Request.SchemaVar = infoschema.GetInfoSchemaBySessionVars(sv).SchemaMetaVersion()
+	} else {
+		builder.Request.SchemaVar = sv.TxnCtx.SchemaVersion
+	}
 	return builder
 }
 
@@ -192,7 +203,7 @@ func TableRangesToKVRanges(tid int64, ranges []*ranger.Range, fb *statistics.Que
 		low := codec.EncodeInt(nil, ran.LowVal[0].GetInt64())
 		high := codec.EncodeInt(nil, ran.HighVal[0].GetInt64())
 		if ran.LowExclude {
-			low = []byte(kv.Key(low).PrefixNext())
+			low = kv.Key(low).PrefixNext()
 		}
 		// If this range is split by histogram, then the high val will equal to one bucket's upper bound,
 		// since we need to guarantee each range falls inside the exactly one bucket, `PerfixNext` will make the
@@ -202,7 +213,7 @@ func TableRangesToKVRanges(tid int64, ranges []*ranger.Range, fb *statistics.Que
 		feedbackRanges = append(feedbackRanges, r)
 
 		if !ran.HighExclude {
-			high = []byte(kv.Key(high).PrefixNext())
+			high = kv.Key(high).PrefixNext()
 		}
 		startKey := tablecodec.EncodeRowKey(tid, low)
 		endKey := tablecodec.EncodeRowKey(tid, high)
@@ -227,10 +238,10 @@ func encodeHandleKey(ran *ranger.Range) ([]byte, []byte) {
 	low := codec.EncodeInt(nil, ran.LowVal[0].GetInt64())
 	high := codec.EncodeInt(nil, ran.HighVal[0].GetInt64())
 	if ran.LowExclude {
-		low = []byte(kv.Key(low).PrefixNext())
+		low = kv.Key(low).PrefixNext()
 	}
 	if !ran.HighExclude {
-		high = []byte(kv.Key(high).PrefixNext())
+		high = kv.Key(high).PrefixNext()
 	}
 	return low, high
 }
@@ -249,7 +260,7 @@ func TableHandlesToKVRanges(tid int64, handles []int64) []kv.KeyRange {
 		}
 		low := codec.EncodeInt(nil, handles[i])
 		high := codec.EncodeInt(nil, handles[j-1])
-		high = []byte(kv.Key(high).PrefixNext())
+		high = kv.Key(high).PrefixNext()
 		startKey := tablecodec.EncodeRowKey(tid, low)
 		endKey := tablecodec.EncodeRowKey(tid, high)
 		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
@@ -318,7 +329,7 @@ func encodeIndexKey(sc *stmtctx.StatementContext, ran *ranger.Range) ([]byte, []
 		return nil, nil, err
 	}
 	if ran.LowExclude {
-		low = []byte(kv.Key(low).PrefixNext())
+		low = kv.Key(low).PrefixNext()
 	}
 	high, err := codec.EncodeKey(sc, nil, ran.HighVal...)
 	if err != nil {
@@ -326,7 +337,7 @@ func encodeIndexKey(sc *stmtctx.StatementContext, ran *ranger.Range) ([]byte, []
 	}
 
 	if !ran.HighExclude {
-		high = []byte(kv.Key(high).PrefixNext())
+		high = kv.Key(high).PrefixNext()
 	}
 
 	var hasNull bool
@@ -339,7 +350,7 @@ func encodeIndexKey(sc *stmtctx.StatementContext, ran *ranger.Range) ([]byte, []
 
 	if hasNull {
 		// Append 0 to make unique-key range [null, null] to be a scan rather than point-get.
-		high = []byte(kv.Key(high).Next())
+		high = kv.Key(high).Next()
 	}
 	return low, high, nil
 }

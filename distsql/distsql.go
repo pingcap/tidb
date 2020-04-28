@@ -188,7 +188,7 @@ func GetSystemEndian() tipb.Endian {
 }
 
 func init() {
-	var i int = 0x0100
+	i := 0x0100
 	ptr := unsafe.Pointer(&i)
 	if 0x01 == *(*byte)(ptr) {
 		systemEndian = tipb.Endian_BigEndian

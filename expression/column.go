@@ -448,7 +448,7 @@ func (col *Column) HashCode(_ *stmtctx.StatementContext) []byte {
 	}
 	col.hashcode = make([]byte, 0, 9)
 	col.hashcode = append(col.hashcode, columnFlag)
-	col.hashcode = codec.EncodeInt(col.hashcode, int64(col.UniqueID))
+	col.hashcode = codec.EncodeInt(col.hashcode, col.UniqueID)
 	return col.hashcode
 }
 

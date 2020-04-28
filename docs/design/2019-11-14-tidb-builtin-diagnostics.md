@@ -294,7 +294,7 @@ Each TiDB instance can access the information of other nodes through the HTTP AP
 
 - End User: Users can obtain cluster information directly through SQL query to troubleshooting problem
 - Operation and maintenance system: The ability to obtain cluster information through SQL will make it easier for users to integrate TiDB into their own operation and maintenance systems.
-- Eco-system tools: External tools get the cluster information through SQL to realize function customization. For example, `[sqltop](https://github.com/ngaut/sqltop)` can directly obtain the SQL sampling information of the entire cluster through the `events_statements_summary_by_digest` table of the cluster.
+- Eco-system tools: External tools get the cluster information through SQL to realize function customization. For example, `[sqltop](https://github.com/ngaut/sqltop)` can directly obtain the SQL sampling information of the entire cluster through the `statements_summary` table of the cluster.
 
 #### Cluster Topology System Table
 
@@ -480,7 +480,7 @@ This proposal needs to implement the following performance profiling table:
 
 #### Globalized memory system table
 
-Current the `slow_query`/`events_statements_summary_by_digest`/`processlist` memory tables only contain single-node data. This proposal allows any TiDB instance to view information about the entire cluster by adding the following three cluster-level system tables:
+Current the `slow_query`/`statements_summary`/`processlist` memory tables only contain single-node data. This proposal allows any TiDB instance to view information about the entire cluster by adding the following three cluster-level system tables:
 
 | Table Name | Description |
 |------|-----|

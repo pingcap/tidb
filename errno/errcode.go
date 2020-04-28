@@ -1070,6 +1070,7 @@ const (
 	ErrCannotCancelDDLJob             = 8226
 	ErrSequenceUnsupportedTableOption = 8227
 	ErrColumnTypeUnsupportedNextValue = 8228
+	ErrLockExpire                     = 8229
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout        = 9001
@@ -1081,4 +1082,5 @@ const (
 	ErrWriteConflict          = 9007
 	ErrTiKVStoreLimit         = 9008
 	ErrPrometheusAddrIsNotSet = 9009
+	ErrTiKVStaleCommand       = 9010
 )

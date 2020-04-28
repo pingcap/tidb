@@ -372,7 +372,7 @@ func (c *Column) nullCount() int {
 	var cnt, i int
 	for ; i+8 <= c.length; i += 8 {
 		// 0 is null and 1 is not null
-		cnt += 8 - bits.OnesCount8(uint8(c.nullBitmap[i>>3]))
+		cnt += 8 - bits.OnesCount8(c.nullBitmap[i>>3])
 	}
 	for ; i < c.length; i++ {
 		if c.IsNull(i) {

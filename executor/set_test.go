@@ -14,15 +14,24 @@
 package executor_test
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"io/ioutil"
+	"net/http"
 	"strconv"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -136,6 +145,15 @@ func (s *testSuite5) TestSetVar(c *C) {
 	charset, collation = vars.GetCharsetInfo()
 	c.Assert(charset, Equals, "utf8")
 	c.Assert(collation, Equals, "utf8_bin")
+
+	expectErrMsg := "[ddl:1273]Unknown collation: 'non_exist_collation'"
+	tk.MustGetErrMsg("set names utf8 collate non_exist_collation", expectErrMsg)
+	tk.MustGetErrMsg("set @@session.collation_server='non_exist_collation'", expectErrMsg)
+	tk.MustGetErrMsg("set @@session.collation_database='non_exist_collation'", expectErrMsg)
+	tk.MustGetErrMsg("set @@session.collation_connection='non_exist_collation'", expectErrMsg)
+	tk.MustGetErrMsg("set @@global.collation_server='non_exist_collation'", expectErrMsg)
+	tk.MustGetErrMsg("set @@global.collation_database='non_exist_collation'", expectErrMsg)
+	tk.MustGetErrMsg("set @@global.collation_connection='non_exist_collation'", expectErrMsg)
 
 	tk.MustExec("set character_set_results = NULL")
 	tk.MustQuery("select @@character_set_results").Check(testkit.Rows(""))
@@ -916,4 +934,83 @@ func (s *testSuite5) TestEnableNoopFunctionsVar(c *C) {
 	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("1"))
 	tk.MustExec(`set tidb_enable_noop_functions=0;`)
 	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("0"))
+}
+
+func (s *testSuite5) TestSetClusterConfig(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	serversInfo := []infoschema.ServerInfo{
+		{ServerType: "tidb", Address: "127.0.0.1:1111", StatusAddr: "127.0.0.1:1111"},
+		{ServerType: "tidb", Address: "127.0.0.1:2222", StatusAddr: "127.0.0.1:2222"},
+		{ServerType: "pd", Address: "127.0.0.1:3333", StatusAddr: "127.0.0.1:3333"},
+		{ServerType: "pd", Address: "127.0.0.1:4444", StatusAddr: "127.0.0.1:4444"},
+		{ServerType: "tikv", Address: "127.0.0.1:5555", StatusAddr: "127.0.0.1:5555"},
+		{ServerType: "tikv", Address: "127.0.0.1:6666", StatusAddr: "127.0.0.1:6666"},
+	}
+	var serverInfoErr error
+	serverInfoFunc := func(sessionctx.Context) ([]infoschema.ServerInfo, error) {
+		return serversInfo, serverInfoErr
+	}
+	tk.Se.SetValue(executor.TestSetConfigServerInfoKey, serverInfoFunc)
+
+	c.Assert(tk.ExecToErr("set config xxx log.level='info'"), ErrorMatches, "unknown type xxx")
+	c.Assert(tk.ExecToErr("set config tidb log.level='info'"), ErrorMatches, "TiDB doesn't support to change configs online, please use SQL variables")
+	c.Assert(tk.ExecToErr("set config '127.a.b.c:1234' log.level='info'"), ErrorMatches, "invalid instance 127.a.b.c:1234")
+	c.Assert(tk.ExecToErr("set config tikv log.level=null"), ErrorMatches, "can't set config to null")
+
+	httpCnt := 0
+	tk.Se.SetValue(executor.TestSetConfigHTTPHandlerKey, func(*http.Request) (*http.Response, error) {
+		httpCnt++
+		return &http.Response{StatusCode: http.StatusOK, Body: ioutil.NopCloser(nil)}, nil
+	})
+	tk.MustExec("set config tikv log.level='info'")
+	c.Assert(httpCnt, Equals, 2)
+
+	httpCnt = 0
+	tk.MustExec("set config '127.0.0.1:5555' log.level='info'")
+	c.Assert(httpCnt, Equals, 1)
+
+	httpCnt = 0
+	tk.Se.SetValue(executor.TestSetConfigHTTPHandlerKey, func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("something wrong")
+	})
+	tk.MustExec("set config tikv log.level='info'")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 something wrong", "Warning 1105 something wrong"))
+
+	tk.Se.SetValue(executor.TestSetConfigHTTPHandlerKey, func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusBadRequest, Body: ioutil.NopCloser(bytes.NewBufferString("WRONG"))}, nil
+	})
+	tk.MustExec("set config tikv log.level='info'")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 bad request to http://127.0.0.1:5555/config: WRONG", "Warning 1105 bad request to http://127.0.0.1:6666/config: WRONG"))
+}
+
+func (s *testSuite5) TestSetClusterConfigJSONData(c *C) {
+	var d types.MyDecimal
+	c.Assert(d.FromFloat64(123.456), IsNil)
+	cases := []struct {
+		val    expression.Expression
+		result string
+		succ   bool
+	}{
+		{&expression.Constant{Value: types.NewIntDatum(2333), RetType: types.NewFieldType(mysql.TypeLong)}, `{"k":2333}`, true},
+		{&expression.Constant{Value: types.NewFloat64Datum(23.33), RetType: types.NewFieldType(mysql.TypeDouble)}, `{"k":23.33}`, true},
+		{&expression.Constant{Value: types.NewStringDatum("abcd"), RetType: types.NewFieldType(mysql.TypeString)}, `{"k":"abcd"}`, true},
+		{&expression.Constant{Value: types.NewDecimalDatum(&d), RetType: types.NewFieldType(mysql.TypeNewDecimal)}, `{"k":123.456}`, true},
+		{&expression.Constant{Value: types.NewDatum(nil), RetType: types.NewFieldType(mysql.TypeLonglong)}, "", false},
+		{&expression.Constant{RetType: types.NewFieldType(mysql.TypeJSON)}, "", false}, // unsupported type
+		{nil, "", false},
+	}
+
+	ctx := mock.NewContext()
+	for _, t := range cases {
+		result, err := executor.ConvertConfigItem2JSON(ctx, "k", t.val)
+		if t.succ {
+			c.Assert(t.result, Equals, result)
+		} else {
+			c.Assert(err, NotNil)
+		}
+	}
 }

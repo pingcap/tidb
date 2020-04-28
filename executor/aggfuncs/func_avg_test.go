@@ -14,6 +14,8 @@
 package aggfuncs_test
 
 import (
+	"testing"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
@@ -36,5 +38,19 @@ func (s *testSuite) TestAvg(c *C) {
 	}
 	for _, test := range tests {
 		s.testAggFunc(c, test)
+	}
+}
+
+func BenchmarkAvg(b *testing.B) {
+	s := testSuite{}
+	s.SetUpSuite(nil)
+
+	rowNum := 50000
+	tests := []aggTest{
+		buildAggTester(ast.AggFuncAvg, mysql.TypeNewDecimal, rowNum, nil, 2.0),
+		buildAggTester(ast.AggFuncAvg, mysql.TypeDouble, rowNum, nil, 2.0),
+	}
+	for _, test := range tests {
+		s.benchmarkAggFunc(b, test)
 	}
 }

@@ -1067,6 +1067,7 @@ var MySQLErrName = map[uint16]string{
 	ErrInvalidWildCard:                     "Wildcard fields without any table name appears in wrong place",
 	ErrMixOfGroupFuncAndFieldsIncompatible: "In aggregated query without GROUP BY, expression #%d of SELECT list contains nonaggregated column '%s'; this is incompatible with sql_mode=only_full_group_by",
 	ErrUnsupportedSecondArgumentType:       "JSON_OBJECTAGG: unsupported second argument type %v",
+	ErrLockExpire:                          "TTL manager has timed out, pessimistic locks may expire, please commit or rollback this transaction",
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout:        "PD server timeout",
@@ -1078,4 +1079,5 @@ var MySQLErrName = map[uint16]string{
 	ErrWriteConflict:          "Write conflict, txnStartTS=%d, conflictStartTS=%d, conflictCommitTS=%d, key=%s",
 	ErrTiKVStoreLimit:         "Store token is up to the limit, store id = %d",
 	ErrPrometheusAddrIsNotSet: "Prometheus address is not set in PD and etcd",
+	ErrTiKVStaleCommand:       "TiKV server reports stale command",
 }

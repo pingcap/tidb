@@ -64,6 +64,7 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.IndexSerialScanConcurrency, Equals, DefIndexSerialScanConcurrency)
 	c.Assert(vars.IndexLookupJoinConcurrency, Equals, DefIndexLookupJoinConcurrency)
 	c.Assert(vars.HashJoinConcurrency, Equals, DefTiDBHashJoinConcurrency)
+	c.Assert(vars.AllowBatchCop, Equals, DefTiDBAllowBatchCop)
 	c.Assert(vars.ProjectionConcurrency, Equals, int64(DefTiDBProjectionConcurrency))
 	c.Assert(vars.HashAggPartialConcurrency, Equals, DefTiDBHashAggPartialConcurrency)
 	c.Assert(vars.HashAggFinalConcurrency, Equals, DefTiDBHashAggFinalConcurrency)
@@ -83,6 +84,7 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.AllowWriteRowID, Equals, DefOptWriteRowID)
 	c.Assert(vars.TiDBOptJoinReorderThreshold, Equals, DefTiDBOptJoinReorderThreshold)
 	c.Assert(vars.EnableFastAnalyze, Equals, DefTiDBUseFastAnalyze)
+	c.Assert(vars.FoundInPlanCache, Equals, DefTiDBFoundInPlanCache)
 
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.Concurrency))
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.MemQuota))
@@ -265,6 +267,19 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(val, Equals, "5")
 	c.Assert(v.TiDBOptJoinReorderThreshold, Equals, 5)
 
+	err = SetSessionSystemVar(v, TiDBCheckMb4ValueInUTF8, types.NewStringDatum("1"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBCheckMb4ValueInUTF8)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "1")
+	c.Assert(config.GetGlobalConfig().CheckMb4ValueInUTF8, Equals, true)
+	err = SetSessionSystemVar(v, TiDBCheckMb4ValueInUTF8, types.NewStringDatum("0"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBCheckMb4ValueInUTF8)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "0")
+	c.Assert(config.GetGlobalConfig().CheckMb4ValueInUTF8, Equals, false)
+
 	SetSessionSystemVar(v, TiDBLowResolutionTSO, types.NewStringDatum("1"))
 	val, err = GetSessionSystemVar(v, TiDBLowResolutionTSO)
 	c.Assert(err, IsNil)
@@ -372,20 +387,61 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(val, Equals, "leader-and-follower")
 	c.Assert(v.GetReplicaRead(), Equals, kv.ReplicaReadMixed)
 
-	SetSessionSystemVar(v, TiDBEnableStmtSummary, types.NewStringDatum("on"))
+	err = SetSessionSystemVar(v, TiDBEnableStmtSummary, types.NewStringDatum("on"))
+	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, TiDBEnableStmtSummary)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "1")
 
-	SetSessionSystemVar(v, TiDBStmtSummaryRefreshInterval, types.NewStringDatum("10"))
+	err = SetSessionSystemVar(v, TiDBStmtSummaryRefreshInterval, types.NewStringDatum("10"))
+	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, TiDBStmtSummaryRefreshInterval)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "10")
 
-	SetSessionSystemVar(v, TiDBStmtSummaryHistorySize, types.NewStringDatum("10"))
+	err = SetSessionSystemVar(v, TiDBStmtSummaryHistorySize, types.NewStringDatum("10"))
+	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, TiDBStmtSummaryHistorySize)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "10")
+
+	err = SetSessionSystemVar(v, TiDBStmtSummaryMaxStmtCount, types.NewStringDatum("10"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBStmtSummaryMaxStmtCount)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "10")
+	err = SetSessionSystemVar(v, TiDBStmtSummaryMaxStmtCount, types.NewStringDatum("0"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBStmtSummaryMaxStmtCount)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "1")
+	err = SetSessionSystemVar(v, TiDBStmtSummaryMaxStmtCount, types.NewStringDatum("1000000"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBStmtSummaryMaxStmtCount)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "32767")
+	err = SetSessionSystemVar(v, TiDBStmtSummaryMaxStmtCount, types.NewStringDatum("a"))
+	c.Assert(err, ErrorMatches, ".*Incorrect argument type to variable 'tidb_stmt_summary_max_stmt_count'")
+
+	err = SetSessionSystemVar(v, TiDBStmtSummaryMaxSQLLength, types.NewStringDatum("10"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBStmtSummaryMaxSQLLength)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "10")
+	err = SetSessionSystemVar(v, TiDBStmtSummaryMaxSQLLength, types.NewStringDatum("-1"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBStmtSummaryMaxSQLLength)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "0")
+	err = SetSessionSystemVar(v, TiDBStmtSummaryMaxSQLLength, types.NewStringDatum("a"))
+	c.Assert(err, ErrorMatches, ".*Incorrect argument type to variable 'tidb_stmt_summary_max_sql_length'")
+
+	err = SetSessionSystemVar(v, TiDBFoundInPlanCache, types.NewStringDatum("1"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBFoundInPlanCache)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "0")
+	c.Assert(v.systems[TiDBFoundInPlanCache], Equals, "1")
 }
 
 func (s *testVarsutilSuite) TestSetOverflowBehave(c *C) {
@@ -481,17 +537,10 @@ func (s *testVarsutilSuite) TestValidate(c *C) {
 		{TiDBIsolationReadEngines, "tikv", false},
 		{TiDBIsolationReadEngines, "TiKV,tiflash", false},
 		{TiDBIsolationReadEngines, "   tikv,   tiflash  ", false},
-		{TiDBEnableStmtSummary, "a", true},
-		{TiDBEnableStmtSummary, "-1", true},
-		{TiDBEnableStmtSummary, "", false},
-		{TiDBStmtSummaryRefreshInterval, "a", true},
-		{TiDBStmtSummaryRefreshInterval, "", false},
-		{TiDBStmtSummaryHistorySize, "a", true},
-		{TiDBStmtSummaryHistorySize, "", false},
 	}
 
 	for _, t := range tests {
-		_, err := ValidateSetSystemVar(v, t.key, t.value)
+		_, err := ValidateSetSystemVar(v, t.key, t.value, ScopeGlobal)
 		if t.error {
 			c.Assert(err, NotNil, Commentf("%v got err=%v", t, err))
 		} else {
@@ -499,4 +548,47 @@ func (s *testVarsutilSuite) TestValidate(c *C) {
 		}
 	}
 
+}
+
+func (s *testVarsutilSuite) TestValidateStmtSummary(c *C) {
+	v := NewSessionVars()
+	v.GlobalVarsAccessor = NewMockGlobalAccessor()
+	v.TimeZone = time.UTC
+
+	tests := []struct {
+		key   string
+		value string
+		error bool
+		scope ScopeFlag
+	}{
+		{TiDBEnableStmtSummary, "a", true, ScopeSession},
+		{TiDBEnableStmtSummary, "-1", true, ScopeSession},
+		{TiDBEnableStmtSummary, "", false, ScopeSession},
+		{TiDBEnableStmtSummary, "", true, ScopeGlobal},
+		{TiDBStmtSummaryInternalQuery, "a", true, ScopeSession},
+		{TiDBStmtSummaryInternalQuery, "-1", true, ScopeSession},
+		{TiDBStmtSummaryInternalQuery, "", false, ScopeSession},
+		{TiDBStmtSummaryInternalQuery, "", true, ScopeGlobal},
+		{TiDBStmtSummaryRefreshInterval, "a", true, ScopeSession},
+		{TiDBStmtSummaryRefreshInterval, "", false, ScopeSession},
+		{TiDBStmtSummaryRefreshInterval, "", true, ScopeGlobal},
+		{TiDBStmtSummaryHistorySize, "a", true, ScopeSession},
+		{TiDBStmtSummaryHistorySize, "", false, ScopeSession},
+		{TiDBStmtSummaryHistorySize, "", true, ScopeGlobal},
+		{TiDBStmtSummaryMaxStmtCount, "a", true, ScopeSession},
+		{TiDBStmtSummaryMaxStmtCount, "", false, ScopeSession},
+		{TiDBStmtSummaryMaxStmtCount, "", true, ScopeGlobal},
+		{TiDBStmtSummaryMaxSQLLength, "a", true, ScopeSession},
+		{TiDBStmtSummaryMaxSQLLength, "", false, ScopeSession},
+		{TiDBStmtSummaryMaxSQLLength, "", true, ScopeGlobal},
+	}
+
+	for _, t := range tests {
+		_, err := ValidateSetSystemVar(v, t.key, t.value, t.scope)
+		if t.error {
+			c.Assert(err, NotNil, Commentf("%v got err=%v", t, err))
+		} else {
+			c.Assert(err, IsNil, Commentf("%v got err=%v", t, err))
+		}
+	}
 }

@@ -619,6 +619,13 @@ create table t(
 			filterConds: "[eq(test.t.f, B)]",
 			resultStr:   "[[\"a\",\"a\"]]",
 		},
+		{
+			indexPos:    4,
+			exprStr:     "f like '@%' collate utf8mb4_bin",
+			accessConds: "[]",
+			filterConds: "[like(test.t.f, @%, 92)]",
+			resultStr:   "[[NULL,+inf]]",
+		},
 	}
 
 	collate.SetNewCollationEnabledForTest(true)
@@ -1120,11 +1127,11 @@ func (s *testRangerSuite) TestIndexRangeElimininatedProjection(c *C) {
 	testKit.MustExec("insert into t values(1,2)")
 	testKit.MustExec("analyze table t")
 	testKit.MustQuery("explain select * from (select * from t union all select ifnull(a,b), b from t) sub where a > 0").Check(testkit.Rows(
-		"Union_11 2.00 root ",
-		"├─IndexReader_14 1.00 root index:IndexRangeScan_13",
-		"│ └─IndexRangeScan_13 1.00 cop[tikv] table:t, index:a, b, range:(0,+inf], keep order:false",
-		"└─IndexReader_17 1.00 root index:IndexRangeScan_16",
-		"  └─IndexRangeScan_16 1.00 cop[tikv] table:t, index:a, b, range:(0,+inf], keep order:false",
+		"Union_11 2.00 root  ",
+		"├─IndexReader_14 1.00 root  index:IndexRangeScan_13",
+		"│ └─IndexRangeScan_13 1.00 cop[tikv] table:t, index:PRIMARY(a, b) range:(0,+inf], keep order:false",
+		"└─IndexReader_17 1.00 root  index:IndexRangeScan_16",
+		"  └─IndexRangeScan_16 1.00 cop[tikv] table:t, index:PRIMARY(a, b) range:(0,+inf], keep order:false",
 	))
 	testKit.MustQuery("select * from (select * from t union all select ifnull(a,b), b from t) sub where a > 0").Check(testkit.Rows(
 		"1 2",
@@ -1146,6 +1153,37 @@ func (s *testRangerSuite) TestCompIndexInExprCorrCol(c *C) {
 	testKit.MustExec("create table t(a int primary key, b int, c int, d int, e int, index idx(b,c,d))")
 	testKit.MustExec("insert into t values(1,1,1,1,2),(2,1,2,1,0)")
 	testKit.MustExec("analyze table t")
+
+	var input []string
+	var output []struct {
+		SQL    string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Result = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+		})
+		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+	}
+}
+
+func (s *testRangerSuite) TestIndexStringIsTrueRange(c *C) {
+	defer testleak.AfterTest(c)()
+	dom, store, err := newDomainStoreWithBootstrap(c)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t0")
+	testKit.MustExec("CREATE TABLE t0(c0 TEXT(10));")
+	testKit.MustExec("INSERT INTO t0(c0) VALUES (1);")
+	testKit.MustExec("CREATE INDEX i0 ON t0(c0(10));")
+	testKit.MustExec("analyze table t0;")
 
 	var input []string
 	var output []struct {

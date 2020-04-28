@@ -26,9 +26,11 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/stringutil"
+	"go.uber.org/zap"
 )
 
 // IndexLookUpMergeJoin realizes IndexLookUpJoin by merge join
@@ -295,6 +297,9 @@ func (omw *outerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancel
 		close(omw.innerCh)
 		wg.Done()
 		if r := recover(); r != nil {
+			logutil.Logger(ctx).Error("panic in outerMergeWorker.run",
+				zap.Reflect("r", r),
+				zap.Stack("stack trace"))
 			cancelFunc()
 		}
 	}()
@@ -383,6 +388,9 @@ func (imw *innerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancel
 	defer func() {
 		wg.Done()
 		if r := recover(); r != nil {
+			logutil.Logger(ctx).Error("panic in innerMergeWorker.run",
+				zap.Reflect("r", r),
+				zap.Stack("stack trace"))
 			cancelFunc()
 		}
 	}()

@@ -33,7 +33,7 @@ var (
 			Subsystem: "tikvclient",
 			Name:      "gc_seconds",
 			Help:      "Bucketed histogram of gc duration.",
-			Buckets:   prometheus.ExponentialBuckets(1, 2, 20), // 1s ~ 12days
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 20), // 1s ~ 6days
 		}, []string{"stage"})
 
 	GCConfigGauge = prometheus.NewGaugeVec(

@@ -59,6 +59,22 @@ func (s *testSuite3) TestDo(c *C) {
 	tk.MustQuery("select @a").Check(testkit.Rows("1"))
 }
 
+func (s *testSuite3) TestSetRoleAllCorner(c *C) {
+	// For user with no role, `SET ROLE ALL` should active
+	// a empty slice, rather than nil.
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create user set_role_all")
+	se, err := session.CreateSession4Test(s.store)
+	c.Check(err, IsNil)
+	defer se.Close()
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "set_role_all", Hostname: "localhost"}, nil, nil), IsTrue)
+	ctx := context.Background()
+	_, err = se.Execute(ctx, `set role all`)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(ctx, `select current_role`)
+	c.Assert(err, IsNil)
+}
+
 func (s *testSuite3) TestCreateRole(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create user testCreateRole;")
@@ -309,6 +325,19 @@ func (s *testSuite3) TestDefaultRole(c *C) {
 
 	dropRoleSQL := `DROP USER r_1, r_2, r_3, u_1;`
 	tk.MustExec(dropRoleSQL)
+}
+
+func (s *testSuite7) TestSetDefaultRoleAll(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create user test_all;")
+	se, err := session.CreateSession4Test(s.store)
+	c.Check(err, IsNil)
+	defer se.Close()
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "test_all", Hostname: "localhost"}, nil, nil), IsTrue)
+
+	ctx := context.Background()
+	_, err = se.Execute(ctx, "set default role all to test_all;")
+	c.Assert(err, IsNil)
 }
 
 func (s *testSuite7) TestUser(c *C) {

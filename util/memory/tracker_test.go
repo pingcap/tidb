@@ -155,6 +155,23 @@ func (s *testSuite) TestAttachTo(c *C) {
 	c.Assert(len(oldParent.mu.children), Equals, 0)
 }
 
+func (s *testSuite) TestDetach(c *C) {
+	parent := NewTracker(stringutil.StringerStr("parent"), -1)
+	child := NewTracker(stringutil.StringerStr("child"), -1)
+	child.Consume(100)
+	child.AttachTo(parent)
+	c.Assert(child.BytesConsumed(), Equals, int64(100))
+	c.Assert(parent.BytesConsumed(), Equals, int64(100))
+	c.Assert(len(parent.mu.children), Equals, 1)
+	c.Assert(parent.mu.children[0], DeepEquals, child)
+
+	child.Detach()
+	c.Assert(child.BytesConsumed(), Equals, int64(100))
+	c.Assert(parent.BytesConsumed(), Equals, int64(0))
+	c.Assert(len(parent.mu.children), Equals, 0)
+	c.Assert(child.parent, IsNil)
+}
+
 func (s *testSuite) TestReplaceChild(c *C) {
 	oldChild := NewTracker(stringutil.StringerStr("old child"), -1)
 	oldChild.Consume(100)
@@ -260,6 +277,55 @@ func (s *testSuite) TestMaxConsumed(c *C) {
 		c.Assert(r.BytesConsumed(), Equals, consumed)
 		c.Assert(r.MaxConsumed(), Equals, maxConsumed)
 	}
+}
+
+func (s *testSuite) TestGlobalTracker(c *C) {
+	r := NewGlobalTracker(stringutil.StringerStr("root"), -1)
+	c1 := NewTracker(stringutil.StringerStr("child 1"), -1)
+	c2 := NewTracker(stringutil.StringerStr("child 2"), -1)
+	c1.Consume(100)
+	c2.Consume(200)
+
+	c1.AttachToGlobalTracker(r)
+	c2.AttachToGlobalTracker(r)
+	c.Assert(r.BytesConsumed(), Equals, int64(300))
+	c.Assert(c1.parent, DeepEquals, r)
+	c.Assert(c2.parent, DeepEquals, r)
+	c.Assert(len(r.mu.children), Equals, 0)
+
+	c1.DetachFromGlobalTracker()
+	c2.DetachFromGlobalTracker()
+	c.Assert(r.BytesConsumed(), Equals, int64(0))
+	c.Assert(c1.parent, IsNil)
+	c.Assert(c2.parent, IsNil)
+	c.Assert(len(r.mu.children), Equals, 0)
+
+	defer func() {
+		v := recover()
+		c.Assert(v, Equals, "Attach to a non-GlobalTracker")
+	}()
+	commonTracker := NewTracker(stringutil.StringerStr("common"), -1)
+	c1.AttachToGlobalTracker(commonTracker)
+
+	c1.AttachTo(commonTracker)
+	c.Assert(commonTracker.BytesConsumed(), Equals, int64(100))
+	c.Assert(len(commonTracker.mu.children), Equals, 1)
+	c.Assert(c1.parent, DeepEquals, commonTracker)
+
+	c1.AttachToGlobalTracker(r)
+	c.Assert(commonTracker.BytesConsumed(), Equals, int64(0))
+	c.Assert(len(commonTracker.mu.children), Equals, 0)
+	c.Assert(r.BytesConsumed(), Equals, int64(100))
+	c.Assert(c1.parent, DeepEquals, r)
+	c.Assert(len(r.mu.children), Equals, 0)
+
+	defer func() {
+		v := recover()
+		c.Assert(v, Equals, "Detach from a non-GlobalTracker")
+	}()
+	c2.AttachTo(commonTracker)
+	c2.DetachFromGlobalTracker()
+
 }
 
 func BenchmarkConsume(b *testing.B) {
