@@ -533,7 +533,7 @@ func (s *testSuite) TestCapturePlanBaseline(c *C) {
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][0], Equals, "select a from t1 order by a")
-	c.Assert(rows[0][1], Equals, "SELECT /*+ USE_INDEX(@`sel_1` `test`.`t1` )*/ `a` FROM `t1` ORDER BY `a`")
+	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t1` )*/ `a` FROM `t1` ORDER BY `a`")
 }
 
 func (s *testSuite) TestCaptureBaselinesDefaultDB(c *C) {
