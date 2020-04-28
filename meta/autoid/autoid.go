@@ -92,12 +92,7 @@ type allocator struct {
 	isUnsigned    bool
 	lastAllocTime time.Time
 	step          int64
-<<<<<<< HEAD
-=======
 	customStep    bool
-	allocType     AllocatorType
-	sequence      *model.SequenceInfo
->>>>>>> 1c73dec... ddl: add syntax for setting the cache step of auto id explicitly. (#15409)
 }
 
 // GetStep is only used by tests
@@ -267,13 +262,8 @@ func NextStep(curStep int64, consumeDur time.Duration) int64 {
 }
 
 // NewAllocator returns a new auto increment id generator on the store.
-<<<<<<< HEAD
-func NewAllocator(store kv.Storage, dbID int64, isUnsigned bool) Allocator {
-	return &allocator{
-=======
-func NewAllocator(store kv.Storage, dbID int64, isUnsigned bool, allocType AllocatorType, opts ...AllocOption) Allocator {
+func NewAllocator(store kv.Storage, dbID int64, isUnsigned bool, opts ...AllocOption) Allocator {
 	alloc := &allocator{
->>>>>>> 1c73dec... ddl: add syntax for setting the cache step of auto id explicitly. (#15409)
 		store:         store,
 		dbID:          dbID,
 		isUnsigned:    isUnsigned,
@@ -289,30 +279,11 @@ func NewAllocator(store kv.Storage, dbID int64, isUnsigned bool, allocType Alloc
 //codeInvalidTableID is the code of autoid error.
 const codeInvalidTableID terror.ErrCode = 1
 
-<<<<<<< HEAD
 var localSchemaID = int64(math.MaxInt64)
 
 // GenLocalSchemaID generates a local schema ID.
 func GenLocalSchemaID() int64 {
 	return atomic.AddInt64(&localSchemaID, -1)
-=======
-// NewAllocatorsFromTblInfo creates an array of allocators of different types with the information of model.TableInfo.
-func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.TableInfo) Allocators {
-	var allocs []Allocator
-	dbID := tblInfo.GetDBID(schemaID)
-	if tblInfo.AutoIdCache > 0 {
-		allocs = append(allocs, NewAllocator(store, dbID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType, CustomAutoIncCacheOption(tblInfo.AutoIdCache)))
-	} else {
-		allocs = append(allocs, NewAllocator(store, dbID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType))
-	}
-	if tblInfo.ContainsAutoRandomBits() {
-		allocs = append(allocs, NewAllocator(store, dbID, tblInfo.IsAutoRandomBitColUnsigned(), AutoRandomType))
-	}
-	if tblInfo.IsSequence() {
-		allocs = append(allocs, NewSequenceAllocator(store, dbID, tblInfo.Sequence))
-	}
-	return NewAllocators(allocs...)
->>>>>>> 1c73dec... ddl: add syntax for setting the cache step of auto id explicitly. (#15409)
 }
 
 // Alloc implements autoid.Allocator Alloc interface.

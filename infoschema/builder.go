@@ -73,13 +73,8 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	// We try to reuse the old allocator, so the cached auto ID can be reused.
 	var alloc autoid.Allocator
 	if tableIDIsValid(oldTableID) {
-<<<<<<< HEAD
-		if oldTableID == newTableID && diff.Type != model.ActionRenameTable && diff.Type != model.ActionRebaseAutoID {
-			alloc, _ = b.is.AllocByID(oldTableID)
-=======
 		if oldTableID == newTableID && diff.Type != model.ActionRenameTable && diff.Type != model.ActionRebaseAutoID && diff.Type != model.ActionModifyTableAutoIdCache {
-			allocs, _ = b.is.AllocByID(oldTableID)
->>>>>>> 1c73dec... ddl: add syntax for setting the cache step of auto id explicitly. (#15409)
+			alloc, _ = b.is.AllocByID(oldTableID)
 		}
 
 		tmpIDs := tblIDs

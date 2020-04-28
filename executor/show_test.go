@@ -631,11 +631,8 @@ func (s *testSuite2) TestShowCreateTable(c *C) {
 	))
 }
 
-<<<<<<< HEAD
-func (s *testSuite2) TestShowEscape(c *C) {
-=======
-// Override testAutoRandomSuite to test auto id cache.
-func (s *testAutoRandomSuite) TestAutoIdCache(c *C) {
+// Override testSuite2 to test auto id cache.
+func (s *testSuite2) TestAutoIdCache(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -668,10 +665,10 @@ func (s *testAutoRandomSuite) TestAutoIdCache(c *C) {
 			"  PRIMARY KEY (`a`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=5 */",
 	))
+	tk.MustExec("drop table if exists t")
 }
 
-func (s *testSuite5) TestShowEscape(c *C) {
->>>>>>> 1c73dec... ddl: add syntax for setting the cache step of auto id explicitly. (#15409)
+func (s *testSuite2) TestShowEscape(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
