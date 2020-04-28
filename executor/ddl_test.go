@@ -930,12 +930,6 @@ func (s *testAutoRandomSuite) TestAutoRandomTableOption(c *C) {
 	allHandles, err := ddltestutil.ExtractAllTableHandles(tk.Se, "test", "auto_random_table_option")
 	c.Assert(err, IsNil)
 	c.Assert(len(allHandles), Equals, 5)
-	// Test the high bits of handles are not all zero.
-	allZero := true
-	for _, h := range allHandles {
-		allZero = allZero && (h>>(64-6)) == 0
-	}
-	c.Assert(allZero, IsFalse)
 	// Test non-shard-bits part of auto random id is monotonic increasing and continuous.
 	orderedHandles := testutil.ConfigTestUtils.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
 	size := int64(len(allHandles))
