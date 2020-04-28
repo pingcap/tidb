@@ -885,7 +885,7 @@ func (s *testStmtSummarySuite) TestGetMoreThanOnceSelect(c *C) {
 	stmtExecInfo1 := generateAnyExecInfo()
 	stmtExecInfo1.OriginalSQL = "insert 1"
 	stmtExecInfo1.NormalizedSQL = "insert ?"
-	stmtExecInfo1.StmtCtx.StmtType = "insert"
+	stmtExecInfo1.StmtCtx.StmtType = "Insert"
 	s.ssMap.AddStatement(stmtExecInfo1)
 	schemas, sqls := s.ssMap.GetMoreThanOnceSelect()
 	c.Assert(len(schemas), Equals, 0)
@@ -893,7 +893,7 @@ func (s *testStmtSummarySuite) TestGetMoreThanOnceSelect(c *C) {
 
 	stmtExecInfo1.NormalizedSQL = "select ?"
 	stmtExecInfo1.Digest = "digest1"
-	stmtExecInfo1.StmtCtx.StmtType = "select"
+	stmtExecInfo1.StmtCtx.StmtType = "Select"
 	s.ssMap.AddStatement(stmtExecInfo1)
 	schemas, sqls = s.ssMap.GetMoreThanOnceSelect()
 	c.Assert(len(schemas), Equals, 0)
