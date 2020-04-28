@@ -461,12 +461,6 @@ func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor
 // Build builds the ast node to a Plan.
 func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 	b.optFlag |= flagPrunColumns
-	defer func() {
-		// if there is something after flagPrunColumns, do flagPrunColumnsAgain
-		if b.optFlag&flagPrunColumns > 0 && b.optFlag-flagPrunColumns > flagPrunColumns {
-			b.optFlag |= flagPrunColumnsAgain
-		}
-	}()
 	switch x := node.(type) {
 	case *ast.AdminStmt:
 		return b.buildAdmin(ctx, x)
@@ -531,9 +525,10 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 }
 
 func (b *PlanBuilder) buildSetConfig(ctx context.Context, v *ast.SetConfigStmt) (Plan, error) {
+	privErr := ErrSpecificAccessDenied.GenWithStackByArgs("CONFIG")
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ConfigPriv, "", "", "", privErr)
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 	expr, _, err := b.rewrite(ctx, v.Value, mockTablePlan, nil, true)
-	expr = expression.WrapWithCastAsString(b.ctx, expr)
 	return &SetConfig{Name: v.Name, Type: v.Type, Instance: v.Instance, Value: expr}, err
 }
 

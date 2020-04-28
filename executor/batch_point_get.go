@@ -184,7 +184,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			if len(handleVal) == 0 {
 				continue
 			}
-			handle, err1 := tables.DecodeHandle(handleVal)
+			handle, err1 := tables.DecodeHandleInUniqueIndexValue(handleVal)
 			if err1 != nil {
 				return err1
 			}
