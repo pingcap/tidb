@@ -36,8 +36,12 @@ func (p *basePhysicalPlan) ToPB(_ sessionctx.Context) (*tipb.Executor, error) {
 func (p *PhysicalHashAgg) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	client := ctx.GetClient()
+	groupByExprs, err := expression.ExpressionsToPBList(sc, p.GroupByItems, client)
+	if err != nil {
+		return nil, err
+	}
 	aggExec := &tipb.Aggregation{
-		GroupBy: expression.ExpressionsToPBList(sc, p.GroupByItems, client),
+		GroupBy: groupByExprs,
 	}
 	for _, aggFunc := range p.AggFuncs {
 		aggExec.AggFunc = append(aggExec.AggFunc, aggregation.AggFuncToPBExpr(sc, client, aggFunc))
@@ -49,8 +53,12 @@ func (p *PhysicalHashAgg) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 func (p *PhysicalStreamAgg) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	client := ctx.GetClient()
+	groupByExprs, err := expression.ExpressionsToPBList(sc, p.GroupByItems, client)
+	if err != nil {
+		return nil, err
+	}
 	aggExec := &tipb.Aggregation{
-		GroupBy: expression.ExpressionsToPBList(sc, p.GroupByItems, client),
+		GroupBy: groupByExprs,
 	}
 	for _, aggFunc := range p.AggFuncs {
 		aggExec.AggFunc = append(aggExec.AggFunc, aggregation.AggFuncToPBExpr(sc, client, aggFunc))
@@ -62,8 +70,12 @@ func (p *PhysicalStreamAgg) ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
 func (p *PhysicalSelection) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	client := ctx.GetClient()
+	conditions, err := expression.ExpressionsToPBList(sc, p.Conditions, client)
+	if err != nil {
+		return nil, err
+	}
 	selExec := &tipb.Selection{
-		Conditions: expression.ExpressionsToPBList(sc, p.Conditions, client),
+		Conditions: conditions,
 	}
 	return &tipb.Executor{Tp: tipb.ExecType_TypeSelection, Selection: selExec}, nil
 }

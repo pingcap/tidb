@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -341,16 +342,38 @@ func (s *testSuite) TestGlobalAndSessionBindingBothExist(c *C) {
 
 	tk.MustExec("create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id")
 
+	// Test bindingUsage, which indicates how many times the binding is used.
 	metrics.BindUsageCounter.Reset()
 	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin"), IsTrue)
 	pb := &dto.Metric{}
 	metrics.BindUsageCounter.WithLabelValues(metrics.ScopeGlobal).Write(pb)
 	c.Assert(pb.GetCounter().GetValue(), Equals, float64(1))
+
+	// Test 'tidb_use_plan_baselines'
 	tk.MustExec("set @@tidb_use_plan_baselines = 0")
 	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin"), IsTrue)
-
-	tk.MustExec("drop global binding for SELECT * from t1,t2 where t1.id = t2.id")
 	tk.MustExec("set @@tidb_use_plan_baselines = 1")
+
+	// Test 'drop global binding'
+	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin"), IsTrue)
+	tk.MustExec("drop global binding for SELECT * from t1,t2 where t1.id = t2.id")
+	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin"), IsTrue)
+
+	// Test the case when global and session binding both exist
+	// PART1 : session binding should totally cover global binding
+	// use merge join as session binding here since the optimizer will choose hash join for this stmt in default
+	tk.MustExec("create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_HJ(t1, t2) */  * from t1,t2 where t1.id = t2.id")
+	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin"), IsTrue)
+	tk.MustExec("create binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id")
+	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin"), IsTrue)
+	tk.MustExec("drop global binding for SELECT * from t1,t2 where t1.id = t2.id")
+	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin"), IsTrue)
+
+	// PART2 : the dropped session binding should continue to block the effect of global binding
+	tk.MustExec("create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id")
+	tk.MustExec("drop binding for SELECT * from t1,t2 where t1.id = t2.id")
+	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin"), IsTrue)
+	tk.MustExec("drop global binding for SELECT * from t1,t2 where t1.id = t2.id")
 	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin"), IsTrue)
 }
 
@@ -427,10 +450,19 @@ func (s *testSuite) TestBestPlanInBaselines(c *C) {
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:ib")
 	c.Assert(tk.MustUseIndex("select a, b from t where b = 3 limit 1, 100", "ib(b)"), IsTrue)
 
-	tk.MustExec(`create global binding for select a, b from t where a = 1 limit 0, 1 using select a, b from t use index (ia) where a = 1 limit 0, 1`)
-	tk.MustExec(`create global binding for select a, b from t where b = 1 limit 0, 1 using select a, b from t use index (ib) where b = 1 limit 0, 1`)
+	tk.MustExec(`create global binding for select a, b from t where a = 1 limit 0, 1 using select /*+ use_index(@sel_1 test.t, ia) */ a, b from t where a = 1 limit 0, 1`)
+	tk.MustExec(`create global binding for select a, b from t where b = 1 limit 0, 1 using select /*+ use_index(@sel_1 test.t, ib) */ a, b from t where b = 1 limit 0, 1`)
 
-	tk.MustQuery("select a, b from t where a = 3 limit 1, 100")
+	sql, hash := parser.NormalizeDigest("select a, b from t where a = 1 limit 0, 1")
+	bindData := s.domain.BindHandle().GetBindRecord(hash, sql, "test")
+	c.Check(bindData, NotNil)
+	c.Check(bindData.OriginalSQL, Equals, "select a , b from t where a = ? limit ...")
+	bind := bindData.Bindings[0]
+	c.Check(bind.BindSQL, Equals, "select /*+ use_index(@sel_1 test.t, ia) */ a, b from t where a = 1 limit 0, 1")
+	c.Check(bindData.Db, Equals, "test")
+	c.Check(bind.Status, Equals, "using")
+
+	tk.MustQuery("select a, b from t where a = 3 limit 1, 10")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:ia")
 	c.Assert(tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "ia(a)"), IsTrue)
 
@@ -954,6 +986,17 @@ func (s *testSuite) TestHintsSetID(c *C) {
 	c.Assert(len(bindData.Bindings), Equals, 1)
 	bind = bindData.Bindings[0]
 	c.Assert(bind.ID, Equals, "use_index(@`sel_1` `test`.`t` `idx_a`)")
+
+	s.cleanBindingEnv(tk)
+	err := tk.ExecToErr("create global binding for select * from t using select /*+ non_exist_hint() */ * from t")
+	c.Assert(terror.ErrorEqual(err, parser.ErrWarnOptimizerHintParseError), IsTrue)
+	tk.MustExec("create global binding for select * from t where a > 10 using select * from t where a > 10")
+	bindData = bindHandle.GetBindRecord(hash, sql, "test")
+	c.Check(bindData, NotNil)
+	c.Check(bindData.OriginalSQL, Equals, "select * from t where a > ?")
+	c.Assert(len(bindData.Bindings), Equals, 1)
+	bind = bindData.Bindings[0]
+	c.Assert(bind.ID, Equals, "")
 }
 
 func (s *testSuite) TestCapturePlanBaselineIgnoreTiFlash(c *C) {

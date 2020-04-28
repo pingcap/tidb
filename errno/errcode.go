@@ -1081,4 +1081,5 @@ const (
 	ErrWriteConflict          = 9007
 	ErrTiKVStoreLimit         = 9008
 	ErrPrometheusAddrIsNotSet = 9009
+	ErrTiKVStaleCommand       = 9010
 )

@@ -64,7 +64,7 @@ var inspectionSummaryRules = map[string][]string{
 		"pd_start_tso_wait_duration",
 		"tidb_transaction_local_latch_wait_duration",
 		"tidb_transaction_duration",
-		"pd_handle_request_duration",
+		"pd_request_rpc_duration",
 		"tidb_cop_duration",
 		"tidb_batch_client_wait_duration",
 		"tidb_batch_client_unavailable_duration",
@@ -355,9 +355,9 @@ var inspectionSummaryRules = map[string][]string{
 		"pd_cluster_status",
 		"pd_grpc_completed_commands_duration",
 		"pd_grpc_completed_commands_rate",
-		"pd_handle_request_duration",
-		"pd_handle_request_ops",
-		"pd_handle_request_duration_avg",
+		"pd_request_rpc_duration",
+		"pd_request_rpc_ops",
+		"pd_request_rpc_duration_avg",
 		"pd_handle_transactions_duration",
 		"pd_handle_transactions_rate",
 		"pd_hotspot_status",
@@ -422,7 +422,7 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 	condition := e.timeRange.Condition()
 	var finalRows [][]types.Datum
 	for rule, tables := range inspectionSummaryRules {
-		if !rules.exist(rule) {
+		if len(rules.set) != 0 && !rules.set.Exist(rule) {
 			continue
 		}
 		for _, name := range tables {
@@ -435,6 +435,7 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 				continue
 			}
 			cols := def.Labels
+			comment := def.Comment
 			cond := condition
 			if def.Quantile > 0 {
 				cols = append(cols, "quantile")
@@ -493,6 +494,7 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 					row.GetFloat64(0), // avg
 					row.GetFloat64(1), // min
 					row.GetFloat64(2), // max
+					comment,
 				))
 			}
 		}

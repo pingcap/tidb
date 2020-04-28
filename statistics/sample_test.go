@@ -72,7 +72,7 @@ func (s *testSampleSuite) TestCollectColumnStats(c *C) {
 	c.Assert(collectors[0].NullCount+collectors[0].Count, Equals, int64(s.count))
 	c.Assert(collectors[0].FMSketch.NDV(), Equals, int64(6232))
 	c.Assert(collectors[0].CMSketch.TotalCount(), Equals, uint64(collectors[0].Count))
-	c.Assert(int64(pkBuilder.Count), Equals, int64(s.count))
+	c.Assert(pkBuilder.Count, Equals, int64(s.count))
 	c.Assert(pkBuilder.Hist().NDV, Equals, int64(s.count))
 }
 

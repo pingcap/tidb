@@ -745,7 +745,7 @@ func (s *TestDDLSuite) TestSimpleConflictUpdate(c *C) {
 				k := randomNum(rowCount)
 				s.mustExec(c, fmt.Sprintf("update test_conflict_update set c2 = %d where c1 = %d", defaultValue, k))
 				mu.Lock()
-				keysMap[int64(k)] = int64(defaultValue)
+				keysMap[int64(k)] = defaultValue
 				mu.Unlock()
 			}
 		}()

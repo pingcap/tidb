@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -54,7 +55,9 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
 	log "github.com/sirupsen/logrus"
@@ -152,7 +155,7 @@ func (t *tikvHandlerTool) getRegionIDByKey(encodedKey []byte) (uint64, error) {
 }
 
 func (t *tikvHandlerTool) getMvccByHandle(tableID, handle int64) (*mvccKV, error) {
-	encodedKey := tablecodec.EncodeRowKeyWithHandle(tableID, handle)
+	encodedKey := tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(handle))
 	data, err := t.GetMvccByEncodedKey(encodedKey)
 	if err != nil {
 		return nil, err
@@ -244,7 +247,7 @@ func (t *tikvHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	encodedKey, _, err := idx.GenIndexKey(sc, idxRow, handle, nil)
+	encodedKey, _, err := idx.GenIndexKey(sc, idxRow, kv.IntHandle(handle), nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -482,7 +485,7 @@ func (vh valueHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	// Decode a column.
 	m := make(map[int64]*types.FieldType, 1)
-	m[int64(colID)] = ft
+	m[colID] = ft
 	loc := time.UTC
 	vals, err := tablecodec.DecodeRow(valData, m, loc)
 	if err != nil {
@@ -490,7 +493,7 @@ func (vh valueHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	v := vals[int64(colID)]
+	v := vals[colID]
 	val, err := v.ToString()
 	if err != nil {
 		writeError(w, err)
@@ -720,32 +723,92 @@ func (h flashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 	replicaInfos := make([]*tableFlashReplicaInfo, 0)
 	allDBs := schema.AllSchemas()
 	for _, db := range allDBs {
-		tables := schema.SchemaTables(db.Name)
-		for _, tbl := range tables {
-			tblInfo := tbl.Meta()
-			if tblInfo.TiFlashReplica == nil {
-				continue
-			}
-			if pi := tblInfo.GetPartitionInfo(); pi != nil {
-				for _, p := range pi.Definitions {
-					replicaInfos = append(replicaInfos, &tableFlashReplicaInfo{
-						ID:             p.ID,
-						ReplicaCount:   tblInfo.TiFlashReplica.Count,
-						LocationLabels: tblInfo.TiFlashReplica.LocationLabels,
-						Available:      tblInfo.TiFlashReplica.IsPartitionAvailable(p.ID),
-					})
-				}
-				continue
-			}
-			replicaInfos = append(replicaInfos, &tableFlashReplicaInfo{
-				ID:             tblInfo.ID,
-				ReplicaCount:   tblInfo.TiFlashReplica.Count,
-				LocationLabels: tblInfo.TiFlashReplica.LocationLabels,
-				Available:      tblInfo.TiFlashReplica.Available,
-			})
+		tbls := schema.SchemaTables(db.Name)
+		for _, tbl := range tbls {
+			replicaInfos = h.getTiFlashReplicaInfo(tbl.Meta(), replicaInfos)
 		}
 	}
+	dropedOrTruncateReplicaInfos, err := h.getDropOrTruncateTableTiflash(schema)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	replicaInfos = append(replicaInfos, dropedOrTruncateReplicaInfos...)
 	writeData(w, replicaInfos)
+}
+
+func (h flashReplicaHandler) getTiFlashReplicaInfo(tblInfo *model.TableInfo, replicaInfos []*tableFlashReplicaInfo) []*tableFlashReplicaInfo {
+	if tblInfo.TiFlashReplica == nil {
+		return replicaInfos
+	}
+	if pi := tblInfo.GetPartitionInfo(); pi != nil {
+		for _, p := range pi.Definitions {
+			replicaInfos = append(replicaInfos, &tableFlashReplicaInfo{
+				ID:             p.ID,
+				ReplicaCount:   tblInfo.TiFlashReplica.Count,
+				LocationLabels: tblInfo.TiFlashReplica.LocationLabels,
+				Available:      tblInfo.TiFlashReplica.IsPartitionAvailable(p.ID),
+			})
+		}
+		return replicaInfos
+	}
+	replicaInfos = append(replicaInfos, &tableFlashReplicaInfo{
+		ID:             tblInfo.ID,
+		ReplicaCount:   tblInfo.TiFlashReplica.Count,
+		LocationLabels: tblInfo.TiFlashReplica.LocationLabels,
+		Available:      tblInfo.TiFlashReplica.Available,
+	})
+	return replicaInfos
+}
+
+func (h flashReplicaHandler) getDropOrTruncateTableTiflash(currentSchema infoschema.InfoSchema) ([]*tableFlashReplicaInfo, error) {
+	s, err := session.CreateSession(h.Store.(kv.Storage))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if s != nil {
+		defer s.Close()
+	}
+
+	store := domain.GetDomain(s).Store()
+	txn, err := store.Begin()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	gcSafePoint, err := gcutil.GetGCSafePoint(s)
+	if err != nil {
+		return nil, err
+	}
+	replicaInfos := make([]*tableFlashReplicaInfo, 0)
+	uniqueIDMap := make(map[int64]struct{})
+	handleJobAndTableInfo := func(job *model.Job, tblInfo *model.TableInfo) (bool, error) {
+		// Avoid duplicate table ID info.
+		if _, ok := currentSchema.TableByID(tblInfo.ID); ok {
+			return false, nil
+		}
+		if _, ok := uniqueIDMap[tblInfo.ID]; ok {
+			return false, nil
+		}
+		uniqueIDMap[tblInfo.ID] = struct{}{}
+		replicaInfos = h.getTiFlashReplicaInfo(tblInfo, replicaInfos)
+		return false, nil
+	}
+	dom := domain.GetDomain(s)
+	fn := func(jobs []*model.Job) (bool, error) {
+		return executor.GetDropOrTruncateTableInfoFromJobs(jobs, gcSafePoint, dom, handleJobAndTableInfo)
+	}
+
+	err = admin.IterAllDDLJobs(txn, fn)
+	if err != nil {
+		if terror.ErrorEqual(variable.ErrSnapshotTooOld, err) {
+			// The err indicate that current ddl job and remain DDL jobs was been deleted by GC,
+			// just ignore the error and return directly.
+			return replicaInfos, nil
+		}
+		return nil, err
+	}
+	return replicaInfos, nil
 }
 
 type tableFlashReplicaStatus struct {
@@ -1540,7 +1603,7 @@ func (h *mvccTxnHandler) handleMvccGetByTxn(params map[string]string) (interface
 		return nil, errors.Trace(err)
 	}
 	startKey := tablecodec.EncodeTablePrefix(tableID)
-	endKey := tablecodec.EncodeRowKeyWithHandle(tableID, math.MaxInt64)
+	endKey := tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(math.MaxInt64))
 	return h.getMvccByStartTs(uint64(startTS), startKey, endKey)
 }
 

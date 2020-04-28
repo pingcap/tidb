@@ -65,7 +65,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
@@ -124,7 +123,7 @@ var _ = Suite(&testMemTableReaderSuite{&testClusterTableBase{}})
 var _ = SerialSuites(&testFlushSuite{})
 var _ = SerialSuites(&testAutoRandomSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testClusterTableSuite{})
-var _ = SerialSuites(&testSuite10{&baseTestSuite{}})
+var _ = SerialSuites(&testPrepareSerialSuite{&baseTestSuite{}})
 
 type testSuite struct{ *baseTestSuite }
 type testSuiteP1 struct{ *baseTestSuite }
@@ -397,7 +396,7 @@ func (s *testSuite3) TestAdmin(c *C) {
 	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("admin_test"))
 	c.Assert(err, IsNil)
 	c.Assert(tb.Indices(), HasLen, 1)
-	_, err = tb.Indices()[0].Create(mock.NewContext(), txn, types.MakeDatums(int64(10)), 1)
+	_, err = tb.Indices()[0].Create(mock.NewContext(), txn, types.MakeDatums(int64(10)), kv.IntHandle(1))
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -3326,9 +3325,9 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	_, err = idx.Create(mockCtx, txn, types.MakeDatums(int64(30)), 3)
+	_, err = idx.Create(mockCtx, txn, types.MakeDatums(int64(30)), kv.IntHandle(3))
 	c.Assert(err, IsNil)
-	key := tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 4))
+	key := tablecodec.EncodeRowKey(tb.Meta().ID, kv.IntHandle(4).Encoded())
 	setColValue(c, txn, key, types.NewDatum(int64(40)))
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -3341,7 +3340,7 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	_, err = idx.Create(mockCtx, txn, types.MakeDatums(int64(40)), 4)
+	_, err = idx.Create(mockCtx, txn, types.MakeDatums(int64(40)), kv.IntHandle(4))
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -3353,9 +3352,9 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = idx.Delete(sc, txn, types.MakeDatums(int64(30)), 3)
+	err = idx.Delete(sc, txn, types.MakeDatums(int64(30)), kv.IntHandle(3))
 	c.Assert(err, IsNil)
-	err = idx.Delete(sc, txn, types.MakeDatums(int64(20)), 2)
+	err = idx.Delete(sc, txn, types.MakeDatums(int64(20)), kv.IntHandle(2))
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -4338,6 +4337,24 @@ func (s *testSuiteP2) TestShowTableRegion(c *C) {
 	c.Assert(rows[1][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[1].ID))
 	c.Assert(rows[2][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[2].ID))
 
+	// Test split partition region when add new partition.
+	tk.MustExec("drop table if exists partition_t;")
+	tk.MustExec(`create table partition_t (a int, b int,index(a)) PARTITION BY RANGE (a) (
+		PARTITION p0 VALUES LESS THAN (10),
+		PARTITION p1 VALUES LESS THAN (20),
+		PARTITION p2 VALUES LESS THAN (30));`)
+	tk.MustExec(`alter table partition_t add partition ( partition p3 values less than (40), partition p4 values less than (50) );`)
+	re = tk.MustQuery("show table partition_t regions")
+	rows = re.Rows()
+	c.Assert(len(rows), Equals, 5)
+	tbl = testGetTableByName(c, tk.Se, "test", "partition_t")
+	partitionDef = tbl.Meta().GetPartitionInfo().Definitions
+	c.Assert(rows[0][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[0].ID))
+	c.Assert(rows[1][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[1].ID))
+	c.Assert(rows[2][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[2].ID))
+	c.Assert(rows[3][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[3].ID))
+	c.Assert(rows[4][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[4].ID))
+
 	// Test pre-split table region when create table.
 	tk.MustExec("drop table if exists t_pre")
 	tk.MustExec("create table t_pre (a int, b int) shard_row_id_bits = 2 pre_split_regions=2;")
@@ -4616,8 +4633,8 @@ func (s *testRecoverTable) TestRecoverTable(c *C) {
 	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
 	ddl.EmulatorGCDisable()
 	gcTimeFormat := "20060102-15:04:05 -0700 MST"
-	timeBeforeDrop := time.Now().Add(0 - time.Duration(48*60*60*time.Second)).Format(gcTimeFormat)
-	timeAfterDrop := time.Now().Add(time.Duration(48 * 60 * 60 * time.Second)).Format(gcTimeFormat)
+	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
+	timeAfterDrop := time.Now().Add(48 * 60 * 60 * time.Second).Format(gcTimeFormat)
 	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
 			       ON DUPLICATE KEY
 			       UPDATE variable_value = '%[1]s'`
@@ -4637,7 +4654,7 @@ func (s *testRecoverTable) TestRecoverTable(c *C) {
 	// if GC enable is not exists in mysql.tidb
 	_, err = tk.Exec("recover table t_recover")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:-1]current error msg: Cancelled DDL job, original error msg: can not get 'tikv_gc_enable'")
+	c.Assert(err.Error(), Equals, "[ddl:-1]can not get 'tikv_gc_enable'")
 
 	err = gcutil.EnableGC(tk.Se)
 	c.Assert(err, IsNil)
@@ -4695,6 +4712,12 @@ func (s *testRecoverTable) TestRecoverTable(c *C) {
 	tk.MustExec("insert into t_recover values (10)")
 	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "7", "8", "9", "10"))
 
+	// Test for recover one table multiple time.
+	tk.MustExec("drop table t_recover")
+	tk.MustExec("flashback table t_recover to t_recover_tmp")
+	_, err = tk.Exec(fmt.Sprintf("recover table t_recover"))
+	c.Assert(infoschema.ErrTableExists.Equal(err), IsTrue)
+
 	gcEnable, err := gcutil.CheckGCEnable(tk.Se)
 	c.Assert(err, IsNil)
 	c.Assert(gcEnable, Equals, false)
@@ -4722,7 +4745,7 @@ func (s *testRecoverTable) TestFlashbackTable(c *C) {
 	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
 	ddl.EmulatorGCDisable()
 	gcTimeFormat := "20060102-15:04:05 -0700 MST"
-	timeBeforeDrop := time.Now().Add(0 - time.Duration(48*60*60*time.Second)).Format(gcTimeFormat)
+	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
 	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
 			       ON DUPLICATE KEY
 			       UPDATE variable_value = '%[1]s'`
@@ -4825,8 +4848,10 @@ func (s *testSuiteP2) TestPointGetPreparedPlan(c *C) {
 
 	pspk1Id, _, _, err := tk1.Se.PrepareStmt("select * from t where a = ?")
 	c.Assert(err, IsNil)
+	tk1.Se.GetSessionVars().PreparedStmts[pspk1Id].(*plannercore.CachedPrepareStmt).PreparedAst.UseCache = false
 	pspk2Id, _, _, err := tk1.Se.PrepareStmt("select * from t where ? = a ")
 	c.Assert(err, IsNil)
+	tk1.Se.GetSessionVars().PreparedStmts[pspk2Id].(*plannercore.CachedPrepareStmt).PreparedAst.UseCache = false
 
 	ctx := context.Background()
 	// first time plan generated
@@ -4866,6 +4891,7 @@ func (s *testSuiteP2) TestPointGetPreparedPlan(c *C) {
 	// unique index
 	psuk1Id, _, _, err := tk1.Se.PrepareStmt("select * from t where b = ? ")
 	c.Assert(err, IsNil)
+	tk1.Se.GetSessionVars().PreparedStmts[psuk1Id].(*plannercore.CachedPrepareStmt).PreparedAst.UseCache = false
 
 	rs, err = tk1.Se.ExecutePreparedStmt(ctx, psuk1Id, []types.Datum{types.NewDatum(1)})
 	c.Assert(err, IsNil)
@@ -4979,6 +5005,7 @@ func (s *testSuiteP2) TestPointGetPreparedPlanWithCommitMode(c *C) {
 
 	pspk1Id, _, _, err := tk1.Se.PrepareStmt("select * from t where a = ?")
 	c.Assert(err, IsNil)
+	tk1.Se.GetSessionVars().PreparedStmts[pspk1Id].(*plannercore.CachedPrepareStmt).PreparedAst.UseCache = false
 
 	ctx := context.Background()
 	// first time plan generated
@@ -5042,9 +5069,11 @@ func (s *testSuiteP2) TestPointUpdatePreparedPlan(c *C) {
 
 	updateID1, pc, _, err := tk1.Se.PrepareStmt(`update t set c = c + 1 where a = ?`)
 	c.Assert(err, IsNil)
+	tk1.Se.GetSessionVars().PreparedStmts[updateID1].(*plannercore.CachedPrepareStmt).PreparedAst.UseCache = false
 	c.Assert(pc, Equals, 1)
 	updateID2, pc, _, err := tk1.Se.PrepareStmt(`update t set c = c + 2 where ? = a`)
 	c.Assert(err, IsNil)
+	tk1.Se.GetSessionVars().PreparedStmts[updateID2].(*plannercore.CachedPrepareStmt).PreparedAst.UseCache = false
 	c.Assert(pc, Equals, 1)
 
 	ctx := context.Background()
@@ -5079,6 +5108,7 @@ func (s *testSuiteP2) TestPointUpdatePreparedPlan(c *C) {
 	// unique index
 	updUkID1, _, _, err := tk1.Se.PrepareStmt(`update t set c = c + 10 where b = ?`)
 	c.Assert(err, IsNil)
+	tk1.Se.GetSessionVars().PreparedStmts[updUkID1].(*plannercore.CachedPrepareStmt).PreparedAst.UseCache = false
 	rs, err = tk1.Se.ExecutePreparedStmt(ctx, updUkID1, []types.Datum{types.NewDatum(3)})
 	c.Assert(rs, IsNil)
 	c.Assert(err, IsNil)
@@ -5143,6 +5173,7 @@ func (s *testSuiteP2) TestPointUpdatePreparedPlanWithCommitMode(c *C) {
 
 	ctx := context.Background()
 	updateID1, _, _, err := tk1.Se.PrepareStmt(`update t set c = c + 1 where a = ?`)
+	tk1.Se.GetSessionVars().PreparedStmts[updateID1].(*plannercore.CachedPrepareStmt).PreparedAst.UseCache = false
 	c.Assert(err, IsNil)
 
 	// first time plan generated
@@ -5371,4 +5402,59 @@ func (s *testSuite1) TestIssue15718(c *C) {
 	tk.MustExec("create table tt(a decimal(10, 0), b varchar(1), c time);")
 	tk.MustExec("insert into tt values(0, '2', null), (7, null, '1122'), (NULL, 'w', null), (NULL, '2', '3344'), (NULL, NULL, '0'), (7, 'f', '33');")
 	tk.MustQuery("select a and b as d, a or c as e from tt;").Check(testkit.Rows("0 <nil>", "<nil> 1", "0 <nil>", "<nil> 1", "<nil> <nil>", "0 1"))
+
+	tk.MustExec("drop table if exists tt;")
+	tk.MustExec("create table tt(a decimal(10, 0), b varchar(1), c time);")
+	tk.MustExec("insert into tt values(0, '2', '123'), (7, null, '1122'), (null, 'w', null);")
+	tk.MustQuery("select a and b as d, a, b from tt order by d limit 1;").Check(testkit.Rows("<nil> 7 <nil>"))
+	tk.MustQuery("select b or c as d, b, c from tt order by d limit 1;").Check(testkit.Rows("<nil> w <nil>"))
+
+	tk.MustExec("drop table if exists t0;")
+	tk.MustExec("CREATE TABLE t0(c0 FLOAT);")
+	tk.MustExec("INSERT INTO t0(c0) VALUES (NULL);")
+	tk.MustQuery("SELECT * FROM t0 WHERE NOT(0 OR t0.c0);").Check(testkit.Rows())
+}
+
+func (s *testSuite1) TestIssue15767(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists tt;")
+	tk.MustExec("create table t(a int, b char);")
+	tk.MustExec("insert into t values (1,'s'),(2,'b'),(1,'c'),(2,'e'),(1,'a');")
+	tk.MustExec("insert into t select * from t;")
+	tk.MustExec("insert into t select * from t;")
+	tk.MustExec("insert into t select * from t;")
+	tk.MustQuery("select b, count(*) from ( select b from t order by a limit 20 offset 2) as s group by b order by b;").Check(testkit.Rows("a 6", "c 7", "s 7"))
+}
+
+func (s *testSuite1) TestIssue16025(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t0;")
+	tk.MustExec("CREATE TABLE t0(c0 NUMERIC PRIMARY KEY);")
+	tk.MustExec("INSERT IGNORE INTO t0(c0) VALUES (NULL);")
+	tk.MustQuery("SELECT * FROM t0 WHERE c0;").Check(testkit.Rows())
+}
+
+func (s *testSuite1) TestIssue16854(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE `t` (	`a` enum('WAITING','PRINTED','STOCKUP','CHECKED','OUTSTOCK','PICKEDUP','WILLBACK','BACKED') DEFAULT NULL)")
+	tk.MustExec("insert into t values(1),(2),(3),(4),(5),(6),(7);")
+	for i := 0; i < 7; i++ {
+		tk.MustExec("insert into t select * from t;")
+	}
+	tk.MustExec("set @@tidb_max_chunk_size=100;")
+	tk.MustQuery("select distinct a from t order by a").Check(testkit.Rows("WAITING", "PRINTED", "STOCKUP", "CHECKED", "OUTSTOCK", "PICKEDUP", "WILLBACK"))
+	tk.MustExec("drop table t")
+
+	tk.MustExec("CREATE TABLE `t` (	`a` set('WAITING','PRINTED','STOCKUP','CHECKED','OUTSTOCK','PICKEDUP','WILLBACK','BACKED') DEFAULT NULL)")
+	tk.MustExec("insert into t values(1),(2),(3),(4),(5),(6),(7);")
+	for i := 0; i < 7; i++ {
+		tk.MustExec("insert into t select * from t;")
+	}
+	tk.MustExec("set @@tidb_max_chunk_size=100;")
+	tk.MustQuery("select distinct a from t order by a").Check(testkit.Rows("WAITING", "PRINTED", "WAITING,PRINTED", "STOCKUP", "WAITING,STOCKUP", "PRINTED,STOCKUP", "WAITING,PRINTED,STOCKUP"))
+	tk.MustExec("drop table t")
 }
