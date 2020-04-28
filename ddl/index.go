@@ -310,6 +310,61 @@ func onRenameIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return ver, nil
 }
 
+func validateAlterIndexVisibility(indexName model.CIStr, invisible bool, tbl *model.TableInfo) (bool, error){
+	if idx := tbl.FindIndexByName(indexName.L); idx == nil {
+		return false, errors.Trace(infoschema.ErrKeyNotExists.GenWithStackByArgs(indexName.O, tbl.Name))
+	} else {
+		if idx.Invisible == invisible {
+			return true, nil
+		}
+	}
+	return false,  nil
+}
+
+func checkAlterIndexVisibility(t *meta.Meta, job *model.Job) (*model.TableInfo, model.CIStr, bool, error) {
+	var (
+		indexName model.CIStr
+		invisible bool
+	)
+
+	schemaID := job.SchemaID
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
+	if err != nil {
+		return nil, indexName, invisible, errors.Trace(err)
+	}
+
+	if err := job.DecodeArgs(&indexName, &invisible); err != nil {
+		job.State = model.JobStateCancelled
+		return nil, indexName, invisible, errors.Trace(err)
+	}
+
+	skip, err := validateAlterIndexVisibility(indexName, invisible, tblInfo)
+	if skip {
+		// TODO: fix this
+		return nil, indexName, invisible, nil
+	}
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return nil, indexName, invisible, errors.Trace(err)
+	}
+	return tblInfo, indexName, invisible, nil
+}
+
+func onAlterIndexVisibility(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	tblInfo, from, invisible, err := checkAlterIndexVisibility(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	idx := tblInfo.FindIndexByName(from.L)
+	idx.Invisible = invisible
+	if ver, err = updateVersionAndTableInfo(t, job, tblInfo, true); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, nil
+}
+
 func getNullColInfos(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) ([]*model.ColumnInfo, error) {
 	nullCols := make([]*model.ColumnInfo, 0, len(indexInfo.Columns))
 	for _, colName := range indexInfo.Columns {
