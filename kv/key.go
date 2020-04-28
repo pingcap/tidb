@@ -164,9 +164,6 @@ func (ih IntHandle) IntValue() int64 {
 
 // Next implements the Handle interface.
 func (ih IntHandle) Next() Handle {
-	//if ih.IsMax() {
-	//	return ih
-	//}
 	return IntHandle(int64(ih) + 1)
 }
 

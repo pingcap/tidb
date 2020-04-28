@@ -371,13 +371,9 @@ func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 }
 
 func (w *partialTableWorker) buildTableTask(handles []kv.Handle, retChk *chunk.Chunk) *lookupTableTask {
-	var indexOrder *kv.HandleMap
-	var duplicatedIndexOrder *kv.HandleMap
 	task := &lookupTableTask{
-		handles:              handles,
-		indexOrder:           indexOrder,
-		duplicatedIndexOrder: duplicatedIndexOrder,
-		idxRows:              retChk,
+		handles: handles,
+		idxRows: retChk,
 	}
 
 	task.doneCh = make(chan error, 1)
