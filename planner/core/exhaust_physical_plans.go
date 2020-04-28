@@ -448,8 +448,16 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 			keyOffMap[idxOff] = i
 		}
 		sort.Slice(keyOffMapList, func(i, j int) bool { return keyOffMapList[i] < keyOffMapList[j] })
+		keyIsIndexPrefix := true
 		for keyOff, idxOff := range keyOffMapList {
+			if keyOff != idxOff {
+				keyIsIndexPrefix = false
+				break
+			}
 			keyOff2KeyOffOrderByIdx[keyOffMap[idxOff]] = keyOff
+		}
+		if !keyIsIndexPrefix {
+			continue
 		}
 		// isOuterKeysPrefix means whether the outer join keys are the prefix of the prop items.
 		isOuterKeysPrefix := len(join.OuterJoinKeys) <= len(prop.Items)
