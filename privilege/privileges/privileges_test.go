@@ -827,6 +827,24 @@ func (s *testPrivilegeSuite) TestCreateDropUser(c *C) {
 	mustExec(c, se, `DROP USER tcd3`)
 }
 
+func (s *testPrivilegeSuite) TestConfigPrivilege(c *C) {
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, se, `DROP USER IF EXISTS tcd1`)
+	mustExec(c, se, `CREATE USER tcd1`)
+	mustExec(c, se, `GRANT ALL ON *.* to tcd1`)
+	mustExec(c, se, `DROP USER IF EXISTS tcd2`)
+	mustExec(c, se, `CREATE USER tcd2`)
+	mustExec(c, se, `GRANT ALL ON *.* to tcd2`)
+	mustExec(c, se, `REVOKE CONFIG ON *.* FROM tcd2`)
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "tcd1", Hostname: "localhost", AuthHostname: "tcd1", AuthUsername: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, `SET CONFIG TIKV testkey="testval"`)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "tcd2", Hostname: "localhost", AuthHostname: "tcd2", AuthUsername: "%"}, nil, nil), IsTrue)
+	_, err := se.Execute(context.Background(), `SET CONFIG TIKV testkey="testval"`)
+	c.Assert(err, ErrorMatches, ".*you need \\(at least one of\\) the CONFIG privilege\\(s\\) for this operation")
+	mustExec(c, se, `DROP USER tcd1, tcd2`)
+}
+
 func (s *testPrivilegeSuite) TestShowCreateTable(c *C) {
 	se := newSession(c, s.store, s.dbName)
 	mustExec(c, se, `CREATE USER tsct1, tsct2`)

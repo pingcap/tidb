@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -78,7 +79,7 @@ func (s *testSuite3) TestCopClientSend(c *C) {
 	rs.Close()
 
 	// Split one region.
-	key := tablecodec.EncodeRowKeyWithHandle(tblID, 500)
+	key := tablecodec.EncodeRowKeyWithHandle(tblID, kv.IntHandle(500))
 	region, _ := s.cluster.GetRegionByKey(key)
 	peerID := s.cluster.AllocID()
 	s.cluster.Split(region.GetId(), s.cluster.AllocID(), key, []uint64{peerID}, peerID)
@@ -214,7 +215,7 @@ func (s *testSuite3) TestInconsistentIndex(c *C) {
 	for i := 0; i < 10; i++ {
 		txn, err := s.store.Begin()
 		c.Assert(err, IsNil)
-		_, err = idxOp.Create(ctx, txn, types.MakeDatums(i+10), int64(100+i))
+		_, err = idxOp.Create(ctx, txn, types.MakeDatums(i+10), kv.IntHandle(100+i))
 		c.Assert(err, IsNil)
 		err = txn.Commit(context.Background())
 		c.Assert(err, IsNil)
@@ -231,7 +232,7 @@ func (s *testSuite3) TestInconsistentIndex(c *C) {
 	for i := 0; i < 10; i++ {
 		txn, err := s.store.Begin()
 		c.Assert(err, IsNil)
-		err = idxOp.Delete(ctx.GetSessionVars().StmtCtx, txn, types.MakeDatums(i+10), int64(100+i))
+		err = idxOp.Delete(ctx.GetSessionVars().StmtCtx, txn, types.MakeDatums(i+10), kv.IntHandle(100+i))
 		c.Assert(err, IsNil)
 		err = txn.Commit(context.Background())
 		c.Assert(err, IsNil)
