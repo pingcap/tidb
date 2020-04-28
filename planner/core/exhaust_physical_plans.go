@@ -1063,7 +1063,7 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 // If the hint is not figured, we will pick all candidates.
 func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
 	mergeJoins := p.getMergeJoin(prop)
-	if (p.preferJoinType & preferMergeJoin) > 0 && len(mergeJoins) > 0 {
+	if (p.preferJoinType&preferMergeJoin) > 0 && len(mergeJoins) > 0 {
 		return mergeJoins, true
 	}
 	joins := make([]PhysicalPlan, 0, 5)
@@ -1167,7 +1167,6 @@ func matchItems(p *property.PhysicalProperty, items []*ByItems) bool {
 	}
 	return true
 }
-
 
 func (lt *LogicalTopN) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
 	if matchItems(prop, lt.ByItems) {
