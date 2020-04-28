@@ -127,6 +127,8 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 		backoffTypes:         make(map[fmt.Stringer]int),
 		sumMem:               stmtExecInfo1.MemMax,
 		maxMem:               stmtExecInfo1.MemMax,
+		sumDisk:              stmtExecInfo1.DiskMax,
+		maxDisk:              stmtExecInfo1.DiskMax,
 		sumAffectedRows:      stmtExecInfo1.StmtCtx.AffectedRows(),
 		firstSeen:            stmtExecInfo1.StartTime,
 		lastSeen:             stmtExecInfo1.StartTime,
@@ -204,6 +206,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 			IndexNames: indexes,
 		},
 		MemMax:    20000,
+		DiskMax:   20000,
 		StartTime: time.Date(2019, 1, 1, 10, 10, 20, 10, time.UTC),
 		Succeed:   true,
 	}
@@ -254,6 +257,8 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 	expectedSummaryElement.backoffTypes[tikv.BoTxnLock] = 1
 	expectedSummaryElement.sumMem += stmtExecInfo2.MemMax
 	expectedSummaryElement.maxMem = stmtExecInfo2.MemMax
+	expectedSummaryElement.sumDisk += stmtExecInfo2.DiskMax
+	expectedSummaryElement.maxDisk = stmtExecInfo2.DiskMax
 	expectedSummaryElement.sumAffectedRows += stmtExecInfo2.StmtCtx.AffectedRows()
 	expectedSummaryElement.lastSeen = stmtExecInfo2.StartTime
 
@@ -469,6 +474,8 @@ func matchStmtSummaryByDigest(first, second *stmtSummaryByDigest) bool {
 			ssElement1.sumBackoffTimes != ssElement2.sumBackoffTimes ||
 			ssElement1.sumMem != ssElement2.sumMem ||
 			ssElement1.maxMem != ssElement2.maxMem ||
+			ssElement1.sumDisk != ssElement2.sumDisk ||
+			ssElement1.maxDisk != ssElement2.maxDisk ||
 			ssElement1.sumAffectedRows != ssElement2.sumAffectedRows ||
 			ssElement1.firstSeen != ssElement2.firstSeen ||
 			ssElement1.lastSeen != ssElement2.lastSeen {
@@ -564,6 +571,7 @@ func generateAnyExecInfo() *StmtExecInfo {
 			IndexNames: indexes,
 		},
 		MemMax:    10000,
+		DiskMax:   10000,
 		StartTime: time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
 		Succeed:   true,
 	}
@@ -605,7 +613,7 @@ func (s *testStmtSummarySuite) TestToDatum(c *C) {
 		stmtExecInfo1.ExecDetail.CommitDetail.WriteSize, stmtExecInfo1.ExecDetail.CommitDetail.WriteSize,
 		stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum, stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum,
 		stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, 1,
-		"txnLock:1", stmtExecInfo1.MemMax, stmtExecInfo1.MemMax, stmtExecInfo1.StmtCtx.AffectedRows(),
+		"txnLock:1", stmtExecInfo1.MemMax, stmtExecInfo1.MemMax, stmtExecInfo1.DiskMax, stmtExecInfo1.DiskMax, stmtExecInfo1.StmtCtx.AffectedRows(),
 		t, t, stmtExecInfo1.OriginalSQL, stmtExecInfo1.PrevSQL, "plan_digest", ""}
 	match(c, datums[0], expectedDatum...)
 

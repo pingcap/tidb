@@ -170,7 +170,10 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 		copTasks.TotBackoffTimes[backoff] = 200
 	}
 
-	var memMax int64 = 2333
+	var (
+		memMax  int64 = 2333
+		diskMax int64 = 2333
+	)
 	resultString := `# Txn_start_ts: 406649736972468225
 # User: root@192.168.0.1
 # Conn_ID: 1
@@ -190,6 +193,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 # Cop_backoff_rpcPD_total_times: 200 Cop_backoff_rpcPD_total_time: 0.2 Cop_backoff_rpcPD_max_time: 0.2 Cop_backoff_rpcPD_max_addr: 127.0.0.1 Cop_backoff_rpcPD_avg_time: 0.2 Cop_backoff_rpcPD_p90_time: 0.2
 # Cop_backoff_rpcTiKV_total_times: 200 Cop_backoff_rpcTiKV_total_time: 0.2 Cop_backoff_rpcTiKV_max_time: 0.2 Cop_backoff_rpcTiKV_max_addr: 127.0.0.1 Cop_backoff_rpcTiKV_avg_time: 0.2 Cop_backoff_rpcTiKV_p90_time: 0.2
 # Mem_max: 2333
+# Disk_max: 2333
 # Prepared: true
 # Has_more_results: true
 # Succ: true
@@ -208,6 +212,7 @@ select * from t;`
 		CopTasks:       copTasks,
 		ExecDetail:     execDetail,
 		MemMax:         memMax,
+		DiskMax:        diskMax,
 		Prepared:       true,
 		HasMoreResults: true,
 		Succ:           true,

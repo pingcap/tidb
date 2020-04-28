@@ -339,6 +339,7 @@ type slowQueryTuple struct {
 	maxWaitTime            float64
 	maxWaitAddress         string
 	memMax                 int64
+	diskMax                int64
 	prevStmt               string
 	sql                    string
 	isInternal             bool
@@ -452,6 +453,8 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 		st.maxWaitAddress = value
 	case variable.SlowLogMemMax:
 		st.memMax, err = strconv.ParseInt(value, 10, 64)
+	case variable.SlowLogDiskMax:
+		st.diskMax, err = strconv.ParseInt(value, 10, 64)
 	case variable.SlowLogSucc:
 		st.succ, err = strconv.ParseBool(value)
 	case variable.SlowLogPlan:
@@ -511,6 +514,7 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	record = append(record, types.NewFloat64Datum(st.maxWaitTime))
 	record = append(record, types.NewStringDatum(st.maxWaitAddress))
 	record = append(record, types.NewIntDatum(st.memMax))
+	record = append(record, types.NewIntDatum(st.diskMax))
 	if st.succ {
 		record = append(record, types.NewIntDatum(1))
 	} else {
