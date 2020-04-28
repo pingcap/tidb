@@ -2277,6 +2277,8 @@ func (s *testIntegrationSuite4) TestAlterIndexVisibility(c *C) {
 	tk.MustExec("alter table t alter index b invisible")
 	tk.MustQuery(query).Check(testkit.Rows("a NO", "b NO"))
 
+	tk.MustGetErrMsg("alter table t alter index non_exists_idx visible", "[schema:1176]Key 'non_exists_idx' doesn't exist in table 't'")
+
 	// Alter implicit primary key to invisible index should throw error
 	tk.MustExec("create table t1(a int NOT NULL, unique(a))")
 	// TODO: error here
