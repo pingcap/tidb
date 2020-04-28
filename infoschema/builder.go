@@ -73,8 +73,9 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	// We try to reuse the old allocator, so the cached auto ID can be reused.
 	var allocs autoid.Allocators
 	if tableIDIsValid(oldTableID) {
-		if oldTableID == newTableID && diff.Type != model.ActionRenameTable && diff.Type != model.ActionRebaseAutoID {
-			allocs, _ = b.is.AllocByID(oldTableID)
+		if oldTableID == newTableID && diff.Type != model.ActionRenameTable {
+			oldAllocs, _ := b.is.AllocByID(oldTableID)
+			allocs = filterAllocators(diff, oldAllocs)
 		}
 
 		tmpIDs := tblIDs
@@ -99,12 +100,38 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	if tableIDIsValid(newTableID) {
 		// All types except DropTableOrView.
 		var err error
-		tblIDs, err = b.applyCreateTable(m, dbInfo, newTableID, allocs, tblIDs)
+		tblIDs, err = b.applyCreateTable(m, dbInfo, newTableID, allocs, diff.Type, tblIDs)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
 	return tblIDs, nil
+}
+
+func filterAllocators(diff *model.SchemaDiff, oldAllocs autoid.Allocators) autoid.Allocators {
+	var newAllocs autoid.Allocators
+	switch diff.Type {
+	case model.ActionRebaseAutoID, model.ActionModifyTableAutoIdCache:
+		// Only drop auto-increment allocator.
+		for _, alloc := range oldAllocs {
+			if alloc.GetType() == autoid.RowIDAllocType || alloc.GetType() == autoid.AutoIncrementType {
+				continue
+			}
+			newAllocs = append(newAllocs, alloc)
+		}
+	case model.ActionRebaseAutoRandomBase:
+		// Only drop auto-random allocator.
+		for _, alloc := range oldAllocs {
+			if alloc.GetType() == autoid.AutoRandomType {
+				continue
+			}
+			newAllocs = append(newAllocs, alloc)
+		}
+	default:
+		// Keep all allocators.
+		newAllocs = oldAllocs
+	}
+	return newAllocs
 }
 
 func appendAffectedIDs(affected []int64, tblInfo *model.TableInfo) []int64 {
@@ -193,7 +220,7 @@ func (b *Builder) copySortedTablesBucket(bucketIdx int) {
 	b.is.sortedTablesBuckets[bucketIdx] = newSortedTables
 }
 
-func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID int64, allocs autoid.Allocators, affected []int64) ([]int64, error) {
+func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID int64, allocs autoid.Allocators, tp model.ActionType, affected []int64) ([]int64, error) {
 	tblInfo, err := m.GetTable(dbInfo.ID, tableID)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -213,6 +240,15 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 
 	if len(allocs) == 0 {
 		allocs = autoid.NewAllocatorsFromTblInfo(b.handle.store, dbInfo.ID, tblInfo)
+	} else {
+		switch tp {
+		case model.ActionRebaseAutoID, model.ActionModifyTableAutoIdCache:
+			newAlloc := autoid.NewAllocator(b.handle.store, dbInfo.ID, tblInfo.IsAutoIncColUnsigned(), autoid.RowIDAllocType)
+			allocs = append(allocs, newAlloc)
+		case model.ActionRebaseAutoRandomBase:
+			newAlloc := autoid.NewAllocator(b.handle.store, dbInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), autoid.AutoRandomType)
+			allocs = append(allocs, newAlloc)
+		}
 	}
 	tbl, err := tables.TableFromMeta(allocs, tblInfo)
 	if err != nil {

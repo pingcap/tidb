@@ -94,7 +94,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 				if err != nil {
 					return false, false, 0, err
 				}
-				if err = t.RebaseAutoID(ctx, recordID, true); err != nil {
+				if err = t.RebaseAutoID(ctx, recordID, true, autoid.RowIDAllocType); err != nil {
 					return false, false, 0, err
 				}
 			}
