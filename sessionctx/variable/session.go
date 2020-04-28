@@ -594,6 +594,11 @@ type SessionVars struct {
 	// WindowingUseHighPrecision determines whether to compute window operations without loss of precision.
 	// see https://dev.mysql.com/doc/refman/8.0/en/window-function-optimization.html for more details.
 	WindowingUseHighPrecision bool
+
+	// FoundInPlanCache indicates whether this statement was found in plan cache.
+	FoundInPlanCache bool
+	// PrevFoundInPlanCache indicates whether the last statement was found in plan cache.
+	PrevFoundInPlanCache bool
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -679,6 +684,8 @@ func NewSessionVars() *SessionVars {
 		MetricSchemaRangeDuration:   DefTiDBMetricSchemaRangeDuration,
 		SequenceState:               NewSequenceState(),
 		WindowingUseHighPrecision:   true,
+		PrevFoundInPlanCache:        DefTiDBFoundInPlanCache,
+		FoundInPlanCache:            DefTiDBFoundInPlanCache,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1247,6 +1254,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		atomic.StoreUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen, uint64(tidbOptInt64(val, logutil.DefaultQueryLogMaxLen)))
 	case TiDBCheckMb4ValueInUTF8:
 		config.GetGlobalConfig().CheckMb4ValueInUTF8 = TiDBOptOn(val)
+	case TiDBFoundInPlanCache:
+		s.FoundInPlanCache = TiDBOptOn(val)
 	case TiDBEnableCollectExecutionInfo:
 		config.GetGlobalConfig().EnableCollectExecutionInfo = TiDBOptOn(val)
 	}

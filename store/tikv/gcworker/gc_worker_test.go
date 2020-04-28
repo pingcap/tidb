@@ -140,6 +140,34 @@ func (s *testGCWorkerSuite) mustGetSafePointFromPd(c *C) uint64 {
 	return safePoint
 }
 
+func (s *testGCWorkerSuite) mustGetMinServiceSafePointFromPd(c *C) uint64 {
+	// UpdateServiceGCSafePoint returns the minimal service safePoint. If trying to update it with a value less than the
+	// current minimal safePoint, nothing will be updated and the current minimal one will be returned. So we can use
+	// this API to check the current safePoint.
+	// This function shouldn't be invoked when there's no service safePoint set.
+	minSafePoint, err := s.pdClient.UpdateServiceGCSafePoint(context.Background(), "test", 0, 0)
+	c.Assert(err, IsNil)
+	return minSafePoint
+}
+
+func (s *testGCWorkerSuite) mustUpdateServiceGCSafePoint(c *C, serviceID string, safePoint, expectedMinSafePoint uint64) {
+	minSafePoint, err := s.pdClient.UpdateServiceGCSafePoint(context.Background(), serviceID, math.MaxInt64, safePoint)
+	c.Assert(err, IsNil)
+	c.Assert(minSafePoint, Equals, expectedMinSafePoint)
+}
+
+func (s *testGCWorkerSuite) mustRemoveServiceGCSafePoint(c *C, serviceID string, safePoint, expectedMinSafePoint uint64) {
+	minSafePoint, err := s.pdClient.UpdateServiceGCSafePoint(context.Background(), serviceID, 0, safePoint)
+	c.Assert(err, IsNil)
+	c.Assert(minSafePoint, Equals, expectedMinSafePoint)
+}
+
+func (s *testGCWorkerSuite) mustSetTiDBServiceSafePoint(c *C, safePoint, expectedMinSafePoint uint64) {
+	minSafePoint, err := s.gcWorker.setGCWorkerServiceSafePoint(context.Background(), safePoint)
+	c.Assert(err, IsNil)
+	c.Assert(minSafePoint, Equals, expectedMinSafePoint)
+}
+
 // gcProbe represents a key that contains multiple versions, one of which should be collected. Execution of GC with
 // greater ts will be detected, but it may not work properly if there are newer versions of the key.
 // This is not used to check the correctness of GC algorithm, but only for checking whether GC has been executed on the
@@ -821,12 +849,50 @@ func (s *testGCWorkerSuite) TestRunGCJob(c *C) {
 	c.Assert(etcdSafePoint, Equals, safePoint)
 }
 
+func (s *testGCWorkerSuite) TestSetServiceSafePoint(c *C) {
+	// SafePoint calculations are based on time rather than ts value.
+	safePoint := s.mustAllocTs(c)
+	s.mustSetTiDBServiceSafePoint(c, safePoint, safePoint)
+	c.Assert(s.mustGetMinServiceSafePointFromPd(c), Equals, safePoint)
+
+	// Advance the service safe point
+	safePoint += 100
+	s.mustSetTiDBServiceSafePoint(c, safePoint, safePoint)
+	c.Assert(s.mustGetMinServiceSafePointFromPd(c), Equals, safePoint)
+
+	// It doesn't matter if there is a greater safePoint from other services.
+	safePoint += 100
+	// Returns the last service safePoint that were uploaded.
+	s.mustUpdateServiceGCSafePoint(c, "svc1", safePoint+10, safePoint-100)
+	s.mustSetTiDBServiceSafePoint(c, safePoint, safePoint)
+	c.Assert(s.mustGetMinServiceSafePointFromPd(c), Equals, safePoint)
+
+	// Test the case when there is a smaller safePoint from other services.
+	safePoint += 100
+	// Returns the last service safePoint that were uploaded.
+	s.mustUpdateServiceGCSafePoint(c, "svc1", safePoint-10, safePoint-100)
+	s.mustSetTiDBServiceSafePoint(c, safePoint, safePoint-10)
+	c.Assert(s.mustGetMinServiceSafePointFromPd(c), Equals, safePoint-10)
+
+	// Test removing the minimum service safe point.
+	s.mustRemoveServiceGCSafePoint(c, "svc1", safePoint-10, safePoint)
+	c.Assert(s.mustGetMinServiceSafePointFromPd(c), Equals, safePoint)
+
+	// Test the case when there are many safePoints.
+	safePoint += 100
+	for i := 0; i < 10; i++ {
+		svcName := fmt.Sprintf("svc%d", i)
+		s.mustUpdateServiceGCSafePoint(c, svcName, safePoint+uint64(i)*10, safePoint-100)
+	}
+	s.mustSetTiDBServiceSafePoint(c, safePoint+50, safePoint)
+}
+
 func (s *testGCWorkerSuite) TestRunGCJobAPI(c *C) {
 	gcSafePointCacheInterval = 0
 
 	p := s.createGCProbe(c, "k1")
 	safePoint := s.mustAllocTs(c)
-	err := RunGCJob(context.Background(), s.store, safePoint, "mock", 1)
+	err := RunGCJob(context.Background(), s.store, s.pdClient, safePoint, "mock", 1)
 	c.Assert(err, IsNil)
 	s.checkCollected(c, p)
 	etcdSafePoint := s.loadEtcdSafePoint(c)
@@ -1056,5 +1122,49 @@ func (s *testGCWorkerSuite) TestMergeLockScanner(c *C) {
 		close(sendCh[2])
 		c.Assert(<-resCh, DeepEquals, makeLockList("1", "a", "a\x00", "a\x00\x00", "a\x00\x00\x00", "b", "b\x00", "c"))
 		c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(storeIDs, 0, 1, 2))
+	}
+}
+
+func (s *testGCWorkerSuite) TestPhyscailScanLockDeadlock(c *C) {
+	ctx := context.Background()
+	stores := s.cluster.GetAllStores()
+	c.Assert(len(stores), Greater, 1)
+
+	s.client.physicalScanLockHandler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+		c.Assert(addr, Equals, stores[0].Address)
+		scanReq := req.PhysicalScanLock()
+		scanLockLimit := int(scanReq.Limit)
+		locks := make([]*kvrpcpb.LockInfo, 0, scanReq.Limit)
+		for i := 0; i < scanLockLimit; i++ {
+			// The order of keys doesn't matter.
+			locks = append(locks, &kvrpcpb.LockInfo{Key: []byte{byte(i)}})
+		}
+		return &tikvrpc.Response{
+			Resp: &kvrpcpb.PhysicalScanLockResponse{
+				Locks: locks,
+				Error: "",
+			},
+		}, nil
+	}
+
+	// Sleep 1000ms to let the main goroutine block on sending tasks.
+	// Inject error to the goroutine resolving locks so that the main goroutine will block forever if it doesn't handle channels properly.
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/gcworker/resolveLocksAcrossRegionsErr", "return(1000)"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/gcworker/resolveLocksAcrossRegionsErr"), IsNil)
+	}()
+
+	done := make(chan interface{})
+	go func() {
+		defer close(done)
+		storesMap := map[uint64]*metapb.Store{stores[0].Id: stores[0]}
+		succeeded, err := s.gcWorker.physicalScanAndResolveLocks(ctx, 10000, storesMap)
+		c.Assert(succeeded, IsNil)
+		c.Assert(err, ErrorMatches, "injectedError")
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		c.Fatal("physicalScanAndResolveLocks blocks")
 	}
 }
