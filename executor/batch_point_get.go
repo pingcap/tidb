@@ -184,7 +184,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			if len(handleVal) == 0 {
 				continue
 			}
-			handle, err1 := tables.DecodeHandle(handleVal)
+			handle, err1 := tables.DecodeHandleInUniqueIndexValue(handleVal)
 			if err1 != nil {
 				return err1
 			}
@@ -224,7 +224,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		} else {
 			tID = getPhysID(e.tblInfo, handle)
 		}
-		key := tablecodec.EncodeRowKeyWithHandle(tID, handle)
+		key := tablecodec.EncodeRowKeyWithHandle(tID, kv.IntHandle(handle))
 		keys[i] = key
 	}
 
