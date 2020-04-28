@@ -723,6 +723,7 @@ var slowQueryCols = []columnInfo{
 	{name: execdetails.WriteSizeStr, tp: mysql.TypeLonglong, size: 22},
 	{name: execdetails.PrewriteRegionStr, tp: mysql.TypeLonglong, size: 22},
 	{name: execdetails.TxnRetryStr, tp: mysql.TypeLonglong, size: 22},
+	{name: execdetails.CopTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: execdetails.ProcessTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: execdetails.WaitTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: execdetails.BackoffTimeStr, tp: mysql.TypeDouble, size: 22},
