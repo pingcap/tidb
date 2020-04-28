@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -31,7 +32,6 @@ import (
 	"github.com/pingcap/parser/terror"
 	pd "github.com/pingcap/pd/v4/client"
 	"github.com/pingcap/tidb-tools/pkg/filter"
-	"go.uber.org/zap"
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
@@ -43,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
 )
@@ -186,9 +185,10 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 			Cert: tidbCfg.Security.ClusterSSLCert,
 			Key:  tidbCfg.Security.ClusterSSLKey,
 		},
-		PD:            []string{tidbCfg.Path},
+		PD:            strings.Split(tidbCfg.Path, ","),
 		Concurrency:   4,
 		Checksum:      true,
+		SendCreds:     true,
 		LogProgress:   true,
 		CaseSensitive: tidbCfg.LowerCaseTableNames == 0,
 		Filter: filter.Rules{
@@ -276,7 +276,7 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		}
 
 	default:
-		logutil.BgLogger().Fatal("unexpected BRIE statement kind", zap.Stringer("kind", s.Kind))
+		b.err = errors.Errorf("unsupported BRIE statement kind: %s", s.Kind)
 		return nil
 	}
 
@@ -292,10 +292,11 @@ type BRIEExec struct {
 	info       *brieTaskInfo
 }
 
-// Open implements the Executor Open interface.
-func (e *BRIEExec) Open(ctx context.Context) error {
-	if err := e.baseExecutor.Open(ctx); err != nil {
-		return err
+// Next implements the Executor Next interface.
+func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	req.Reset()
+	if e.info == nil {
+		return nil
 	}
 
 	bq := globalBRIEQueue
@@ -333,19 +334,16 @@ func (e *BRIEExec) Open(ctx context.Context) error {
 
 	switch e.info.kind {
 	case ast.BRIEKindBackup:
-		return handleBRIEError(task.RunBackup(taskCtx, glue, "Backup", e.backupCfg), ErrBRIEBackupFailed)
+		err = handleBRIEError(task.RunBackup(taskCtx, glue, "Backup", e.backupCfg), ErrBRIEBackupFailed)
 	case ast.BRIEKindRestore:
-		return handleBRIEError(task.RunRestore(taskCtx, glue, "Restore", e.restoreCfg), ErrBRIERestoreFailed)
+		err = handleBRIEError(task.RunRestore(taskCtx, glue, "Restore", e.restoreCfg), ErrBRIERestoreFailed)
+	default:
+		err = errors.Errorf("unsupported BRIE statement kind: %s", e.info.kind)
 	}
-	return nil
-}
+	if err != nil {
+		return err
+	}
 
-// Next implements the Executor Next interface.
-func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	req.Reset()
-	if e.info == nil {
-		return nil
-	}
 	req.AppendString(0, e.info.storage)
 	req.AppendUint64(1, e.info.archiveSize)
 	req.AppendUint64(2, e.info.backupTS)
