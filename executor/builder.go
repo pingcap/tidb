@@ -1566,13 +1566,27 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) *NestedLoopAp
 		defaultValues, otherConditions, retTypes(leftChild), retTypes(rightChild), nil)
 	e := &NestedLoopApplyExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), outerExec, innerExec),
-		innerExec:    innerExec,
 		outerExec:    outerExec,
 		outerFilter:  outerFilter,
-		innerFilter:  innerFilter,
 		outer:        v.JoinType != plannercore.InnerJoin,
 		joiner:       tupleJoiner,
-		outerSchema:  v.OuterSchema,
+		concurrency:  4,
+	}
+	e.innerWorkers = make([]*applyInnerWorker, e.concurrency)
+	for i := uint(0); i < e.concurrency; i++ {
+		w := &applyInnerWorker{
+			baseExecutor: newBaseExecutor(b.ctx, innerExec.Schema(), applyInnerWorkerLabel),
+		}
+		w.outerSchema = make([]*expression.CorrelatedColumn, len(v.OuterSchema))
+		for i := 0; i < len(v.OuterSchema); i++ {
+			w.outerSchema[i] = v.OuterSchema[i].Clone().(*expression.CorrelatedColumn)
+		}
+		if v.InnerChildIdx == 0 {
+			w.innerExec = b.build(v.Children()[0])
+		} else {
+			w.innerExec = b.build(v.Children()[1])
+		}
+		w.innerFilter = innerFilter
 	}
 	executorCounterNestedLoopApplyExec.Inc()
 	return e
