@@ -207,7 +207,7 @@ func (st *TxnState) changeToInvalid() {
 type dirtyTableOperation struct {
 	kind   int
 	tid    int64
-	handle int64
+	handle kv.Handle
 }
 
 var hasMockAutoIncIDRetry = int64(0)
@@ -599,6 +599,6 @@ func (s *session) StmtGetMutation(tableID int64) *binlog.TableMutation {
 	return st.mutations[tableID]
 }
 
-func (s *session) StmtAddDirtyTableOP(op int, tid int64, handle int64) {
+func (s *session) StmtAddDirtyTableOP(op int, tid int64, handle kv.Handle) {
 	s.txn.dirtyTableOP = append(s.txn.dirtyTableOP, dirtyTableOperation{op, tid, handle})
 }
