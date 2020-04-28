@@ -15,7 +15,11 @@
 
 package tikv
 
-import . "github.com/pingcap/check"
+import (
+	"context"
+
+	. "github.com/pingcap/check"
+)
 
 // TestCommitMultipleRegions tests commit multiple regions.
 // The test takes too long under the race detector.
@@ -34,4 +38,30 @@ func (s *testCommitterSuite) TestCommitMultipleRegions(c *C) {
 		m[k] = v
 	}
 	s.mustCommit(c, m)
+}
+
+func (s *testTiclientSuite) TestSplitRegionIn2PC(c *C) {
+	bo := NewBackoffer(context.Background(), 1)
+	startKey := encodeKey(s.prefix, s08d("key", 0))
+	endKey := encodeKey(s.prefix, s08d("key", presplitKeyCount-1))
+	checkKeyRegion := func(bo *Backoffer, start, end []byte, checker Checker) {
+		// Check regions after split.
+		loc1, err := s.store.regionCache.LocateKey(bo, start)
+		c.Assert(err, IsNil)
+		loc2, err := s.store.regionCache.LocateKey(bo, end)
+		c.Assert(err, IsNil)
+		c.Assert(loc1.Region.id, checker, loc2.Region.id)
+	}
+
+	// Check before test.
+	checkKeyRegion(bo, startKey, endKey, Equals)
+	txn := s.beginTxn(c)
+	for i := 0; i < presplitKeyCount+1; i++ {
+		err := txn.Set(encodeKey(s.prefix, s08d("key", i)), valueBytes(i))
+		c.Assert(err, IsNil)
+	}
+	err := txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+	// Check region split after test.
+	checkKeyRegion(bo, startKey, endKey, Not(Equals))
 }

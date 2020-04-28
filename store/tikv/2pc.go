@@ -423,6 +423,8 @@ func txnLockTTL(startTime time.Time, txnSize int) uint64 {
 	return lockTTL + uint64(elapsed)
 }
 
+const presplitKeyCount = 20000
+
 // doActionOnMutations groups keys into primary batch and secondary batches, if primary batch exists in the key,
 // it does action on primary batch first, then on secondary batches. If action is commit, secondary batches
 // is done in background goroutine.
@@ -435,6 +437,46 @@ func (c *twoPhaseCommitter) doActionOnMutations(bo *Backoffer, action twoPhaseCo
 		return errors.Trace(err)
 	}
 
+	// Pre-split regions to avoid too much write workload into a single region.
+	// In the large transaction case, this operation is important to avoid TiKV 'server is busy' error.
+	var preSplited bool
+	for _, group := range groups {
+		if group.mutations.len() > presplitKeyCount {
+			logutil.BgLogger().Info("2PC pre-split and scatter regions", zap.Uint64("region", group.region.GetID()), zap.Int("mutations count", group.mutations.len()))
+			preSplitAndScatterIn2PC(bo.ctx, c.store, group)
+			preSplited = true
+		}
+	}
+	// Reload region cache again.
+	if preSplited {
+		groups, err = c.store.regionCache.GroupSortedMutationsByRegion(bo, mutations)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	return c.doActionOnGroupMutations(bo, action, groups)
+}
+
+func preSplitAndScatterIn2PC(ctx context.Context, store *tikvStore, group groupedMutations) {
+	length := group.mutations.len()
+	splitKeys := make([][]byte, 0, presplitKeyCount/10000)
+	for i := 0; i < length; i = i + 10000 {
+		splitKeys = append(splitKeys, group.mutations.keys[i])
+	}
+	regionIDs, err := store.SplitRegions(ctx, splitKeys, true)
+	if err != nil {
+		logutil.BgLogger().Warn("2PC split regions failed", zap.Uint64("regionID", group.region.id), zap.Int("keys count", length), zap.Error(err))
+	}
+	for _, regionID := range regionIDs {
+		err := store.WaitScatterRegionFinish(regionID, 0)
+		if err != nil {
+			logutil.BgLogger().Warn("2PC wait scatter region failed", zap.Uint64("regionID", regionID), zap.Error(err))
+		}
+	}
+}
+
+func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPhaseCommitAction, groups []groupedMutations) error {
 	action.tiKVTxnRegionsNumHistogram().Observe(float64(len(groups)))
 
 	var batches []batchMutations
@@ -467,6 +509,7 @@ func (c *twoPhaseCommitter) doActionOnMutations(bo *Backoffer, action twoPhaseCo
 	_, actionIsCleanup := action.(actionCleanup)
 	_, actionIsPessimiticLock := action.(actionPessimisticLock)
 
+	var err error
 	failpoint.Inject("skipKeyReturnOK", func(val failpoint.Value) {
 		valStr, ok := val.(string)
 		if ok && c.connID > 0 {
