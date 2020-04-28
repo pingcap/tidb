@@ -54,11 +54,11 @@ func (r reqCollapse) tryCollapseRequest(ctx context.Context, addr string, req *t
 	case tikvrpc.CmdResolveLock:
 		resolveLock := req.ResolveLock()
 		if len(resolveLock.Keys) > 0 {
-			// can not collapse resolveLite
+			// can not collapse resolve lock lite
 			return
 		}
 		canCollapse = true
-		key := addr + "-" + strconv.FormatUint(resolveLock.StartVersion, 10) + "-" + strconv.FormatUint(resolveLock.CommitVersion, 10)
+		key := strconv.FormatUint(resolveLock.Context.RegionId, 10) + "-" + strconv.FormatUint(resolveLock.StartVersion, 10)
 		resp, err = r.collapse(ctx, key, &resolveRegionSf, addr, req, timeout)
 		return
 	default:
