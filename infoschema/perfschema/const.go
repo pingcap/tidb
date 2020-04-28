@@ -13,12 +13,10 @@
 
 package perfschema
 
-import "github.com/pingcap/tidb/util"
-
 // Performance Schema Name.
-var (
-	Name      = util.PerformanceSchemaName.O
-	LowerName = util.PerformanceSchemaName.L
+const (
+	Name      = "PERFORMANCE_SCHEMA"
+	LowerName = "performance_schema"
 )
 
 // perfSchemaTables is a shortcut to involve all table names.

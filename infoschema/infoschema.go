@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -100,9 +99,9 @@ type InfoSchema interface {
 }
 
 // Information Schema Name.
-var (
-	Name      = util.InformationSchemaName.O
-	LowerName = util.InformationSchemaName.L
+const (
+	Name      = "INFORMATION_SCHEMA"
+	LowerName = "information_schema"
 )
 
 type sortedTables []table.Table
