@@ -38,7 +38,7 @@ func (e Set) String() string {
 func (e Set) ToNumber() float64 {
 	return float64(e.Value)
 }
-
+executor/executor_test.go
 // Copy deep copy a Set.
 func (e Set) Copy() Set {
 	return Set{
