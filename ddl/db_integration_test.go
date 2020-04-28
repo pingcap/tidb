@@ -2258,7 +2258,7 @@ func (s *testIntegrationSuite3) TestCreateTableWithAutoIdCache(c *C) {
 	c.Assert(err.Error(), Equals, "table option auto_id_cache overflows int64")
 }
 
-func (s *testIntegrationSuite3) TestAlterIndexVisibility(c *C) {
+func (s *testIntegrationSuite4) TestAlterIndexVisibility(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists alter_index_test")
 	tk.MustExec("USE alter_index_test;")
@@ -2277,7 +2277,7 @@ func (s *testIntegrationSuite3) TestAlterIndexVisibility(c *C) {
 	tk.MustExec("alter table t alter index b invisible")
 	tk.MustQuery(query).Check(testkit.Rows("a NO", "b NO"))
 
-	// Modify implicit primary key to invisible index should throw error
+	// Alter implicit primary key to invisible index should throw error
 	tk.MustExec("create table t1(a int NOT NULL, unique(a))")
 	// TODO: error here
 	//tk.MustGetErrMsg("alter table t1 alter index a invisible", "")

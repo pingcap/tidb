@@ -321,35 +321,6 @@ func validateAlterIndexVisibility(indexName model.CIStr, invisible bool, tbl *mo
 	return false,  nil
 }
 
-func checkAlterIndexVisibility(t *meta.Meta, job *model.Job) (*model.TableInfo, model.CIStr, bool, error) {
-	var (
-		indexName model.CIStr
-		invisible bool
-	)
-
-	schemaID := job.SchemaID
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
-	if err != nil {
-		return nil, indexName, invisible, errors.Trace(err)
-	}
-
-	if err := job.DecodeArgs(&indexName, &invisible); err != nil {
-		job.State = model.JobStateCancelled
-		return nil, indexName, invisible, errors.Trace(err)
-	}
-
-	skip, err := validateAlterIndexVisibility(indexName, invisible, tblInfo)
-	if skip {
-		// TODO: fix this
-		return nil, indexName, invisible, nil
-	}
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return nil, indexName, invisible, errors.Trace(err)
-	}
-	return tblInfo, indexName, invisible, nil
-}
-
 func onAlterIndexVisibility(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	tblInfo, from, invisible, err := checkAlterIndexVisibility(t, job)
 	if err != nil {
@@ -765,6 +736,31 @@ func checkRenameIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, model.CIS
 		return nil, from, to, errors.Trace(err)
 	}
 	return tblInfo, from, to, errors.Trace(err)
+}
+
+func checkAlterIndexVisibility(t *meta.Meta, job *model.Job) (*model.TableInfo, model.CIStr, bool, error) {
+	var (
+		indexName model.CIStr
+		invisible bool
+	)
+
+	schemaID := job.SchemaID
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
+	if err != nil {
+		return nil, indexName, invisible, errors.Trace(err)
+	}
+
+	if err := job.DecodeArgs(&indexName, &invisible); err != nil {
+		job.State = model.JobStateCancelled
+		return nil, indexName, invisible, errors.Trace(err)
+	}
+
+	_, err = validateAlterIndexVisibility(indexName, invisible, tblInfo)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return nil, indexName, invisible, errors.Trace(err)
+	}
+	return tblInfo, indexName, invisible, nil
 }
 
 const (
