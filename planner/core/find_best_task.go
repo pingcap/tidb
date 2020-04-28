@@ -68,50 +68,8 @@ func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty) (task, 
 	return &rootTask{p: dual}, nil
 }
 
-<<<<<<< HEAD
-// findBestTask implements LogicalPlan interface.
-func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTask task, err error) {
-	// If p is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
-	// and set inner child prop nil, so here we do nothing.
-	if prop == nil {
-		return nil, nil
-	}
-	// Look up the task with this prop in the task map.
-	// It's used to reduce double counting.
-	bestTask = p.getTask(prop)
-	if bestTask != nil {
-		return bestTask, nil
-	}
-
-	if prop.TaskTp != property.RootTaskType {
-		// Currently all plan cannot totally push down.
-		p.storeTask(prop, invalidTask)
-		return invalidTask, nil
-	}
-
-	bestTask = invalidTask
-=======
-func (p *LogicalShow) findBestTask(prop *property.PhysicalProperty) (task, error) {
-	if !prop.IsEmpty() {
-		return invalidTask, nil
-	}
-	pShow := PhysicalShow{ShowContents: p.ShowContents}.Init(p.ctx)
-	pShow.SetSchema(p.schema)
-	return &rootTask{p: pShow}, nil
-}
-
-func (p *LogicalShowDDLJobs) findBestTask(prop *property.PhysicalProperty) (task, error) {
-	if !prop.IsEmpty() {
-		return invalidTask, nil
-	}
-	pShow := PhysicalShowDDLJobs{JobNumber: p.JobNumber}.Init(p.ctx)
-	pShow.SetSchema(p.schema)
-	return &rootTask{p: pShow}, nil
-}
-
 func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPlan, prop *property.PhysicalProperty) (task, error) {
 	var bestTask task = invalidTask
->>>>>>> b6fcc15... planner: enforce the required property when hint cannot satisf… (#15650)
 	childTasks := make([]task, 0, len(p.children))
 	for _, pp := range physicalPlans {
 		// find best child tasks firstly.

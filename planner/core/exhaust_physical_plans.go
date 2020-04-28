@@ -37,16 +37,8 @@ import (
 
 func (p *LogicalUnionScan) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
 	childProp := prop.Clone()
-<<<<<<< HEAD
 	us := PhysicalUnionScan{Conditions: p.conditions}.Init(p.ctx, p.stats, childProp)
-	return []PhysicalPlan{us}
-=======
-	us := PhysicalUnionScan{
-		Conditions: p.conditions,
-		HandleCol:  p.handleCol,
-	}.Init(p.ctx, p.stats, p.blockOffset, childProp)
 	return []PhysicalPlan{us}, true
->>>>>>> b6fcc15... planner: enforce the required property when hint cannot satisf… (#15650)
 }
 
 func getMaxSortPrefix(sortCols, allCols []*expression.Column) []int {
@@ -1005,14 +997,7 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 	hasIndexJoinHint := leftOuter || rightOuter
 
 	defer func() {
-<<<<<<< HEAD
-		if !forced && hasIndexJoinHint {
-=======
-		// refine error message
-		// If the required property is not empty, we will enforce it and try the hint again.
-		// So we only need to generate warning message when the property is empty.
-		if !canForced && needForced && prop.IsEmpty() {
->>>>>>> b6fcc15... planner: enforce the required property when hint cannot satisf… (#15650)
+		if !forced && hasIndexJoinHint && prop.IsEmpty() {
 			// Construct warning message prefix.
 			errMsg := "Optimizer Hint INL_JOIN or TIDB_INLJ is inapplicable"
 			if p.hintInfo != nil {
@@ -1076,30 +1061,16 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 // Firstly we check the hint, if hint is figured by user, we force to choose the corresponding physical plan.
 // If the hint is not matched, it will get other candidates.
 // If the hint is not figured, we will pick all candidates.
-<<<<<<< HEAD
-func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
-	mergeJoins := p.getMergeJoin(prop)
-	if (p.preferJoinType & preferMergeJoin) > 0 {
-		return mergeJoins
-=======
 func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
-	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
-		if val.(bool) {
-			indexJoins, _ := p.tryToGetIndexJoin(prop)
-			failpoint.Return(indexJoins, true)
-		}
-	})
-
-	mergeJoins := p.GetMergeJoin(prop, p.schema, p.Stats(), p.children[0].statsInfo(), p.children[1].statsInfo())
-	if (p.preferJoinType&preferMergeJoin) > 0 && len(mergeJoins) > 0 {
+	mergeJoins := p.getMergeJoin(prop)
+	if (p.preferJoinType & preferMergeJoin) > 0 && len(mergeJoins) > 0 {
 		return mergeJoins, true
->>>>>>> b6fcc15... planner: enforce the required property when hint cannot satisf… (#15650)
 	}
 	joins := make([]PhysicalPlan, 0, 5)
 	joins = append(joins, mergeJoins...)
 
 	indexJoins, forced := p.tryToGetIndexJoin(prop)
-	if forced {
+	if forced && len(indexJoins) > 0 {
 		return indexJoins, true
 	}
 	joins = append(joins, indexJoins...)
@@ -1138,13 +1109,8 @@ func (p *LogicalProjection) tryToGetChildProp(prop *property.PhysicalProperty) (
 	return newProp, true
 }
 
-<<<<<<< HEAD
-func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
-	newProp, ok := p.tryToGetChildProp(prop)
-=======
 func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
-	newProp, ok := p.TryToGetChildProp(prop)
->>>>>>> b6fcc15... planner: enforce the required property when hint cannot satisf… (#15650)
+	newProp, ok := p.tryToGetChildProp(prop)
 	if !ok {
 		return nil, true
 	}
@@ -1202,29 +1168,15 @@ func matchItems(p *property.PhysicalProperty, items []*ByItems) bool {
 	return true
 }
 
-<<<<<<< HEAD
-func (lt *LogicalTopN) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
-	if matchItems(prop, lt.ByItems) {
-		return append(lt.getPhysTopN(), lt.getPhysLimits()...)
-=======
+
 func (lt *LogicalTopN) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
-	if MatchItems(prop, lt.ByItems) {
+	if matchItems(prop, lt.ByItems) {
 		return append(lt.getPhysTopN(), lt.getPhysLimits()...), true
->>>>>>> b6fcc15... planner: enforce the required property when hint cannot satisf… (#15650)
 	}
 	return nil, true
 }
 
-<<<<<<< HEAD
-func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
-=======
-// GetHashJoin is public for cascades planner.
-func (la *LogicalApply) GetHashJoin(prop *property.PhysicalProperty) *PhysicalHashJoin {
-	return la.LogicalJoin.getHashJoin(prop, 1, false)
-}
-
 func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
->>>>>>> b6fcc15... planner: enforce the required property when hint cannot satisf… (#15650)
 	if !prop.AllColsFromSchema(la.children[0].Schema()) { // for convenient, we don't pass through any prop
 		return nil, true
 	}
@@ -1381,26 +1333,7 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	return hashAggs
 }
 
-<<<<<<< HEAD
-func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
-=======
-// ResetHintIfConflicted resets the aggHints.preferAggType if they are conflicted,
-// and returns the two preferAggType hints.
-func (la *LogicalAggregation) ResetHintIfConflicted() (preferHash bool, preferStream bool) {
-	preferHash = (la.aggHints.preferAggType & preferHashAgg) > 0
-	preferStream = (la.aggHints.preferAggType & preferStreamAgg) > 0
-	if preferHash && preferStream {
-		errMsg := "Optimizer aggregation hints are conflicted"
-		warning := ErrInternal.GenWithStack(errMsg)
-		la.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
-		la.aggHints.preferAggType = 0
-		preferHash, preferStream = false, false
-	}
-	return
-}
-
 func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
->>>>>>> b6fcc15... planner: enforce the required property when hint cannot satisf… (#15650)
 	if la.aggHints.preferAggToCop {
 		if !la.canPushToCop() {
 			errMsg := "Optimizer Hint AGG_TO_COP is inapplicable"
@@ -1445,13 +1378,8 @@ func (p *LogicalSelection) exhaustPhysicalPlans(prop *property.PhysicalProperty)
 	childProp := prop.Clone()
 	sel := PhysicalSelection{
 		Conditions: p.Conditions,
-<<<<<<< HEAD
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
-	return []PhysicalPlan{sel}
-=======
-	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, childProp)
 	return []PhysicalPlan{sel}, true
->>>>>>> b6fcc15... planner: enforce the required property when hint cannot satisf… (#15650)
 }
 
 func (p *LogicalLimit) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
@@ -1508,13 +1436,8 @@ func (ls *LogicalSort) getNominalSort(reqProp *property.PhysicalProperty) *Nomin
 	return ps
 }
 
-<<<<<<< HEAD
-func (ls *LogicalSort) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
-	if matchItems(prop, ls.ByItems) {
-=======
 func (ls *LogicalSort) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
-	if MatchItems(prop, ls.ByItems) {
->>>>>>> b6fcc15... planner: enforce the required property when hint cannot satisf… (#15650)
+	if matchItems(prop, ls.ByItems) {
 		ret := make([]PhysicalPlan, 0, 2)
 		ret = append(ret, ls.getPhysicalSort(prop))
 		ns := ls.getNominalSort(prop)
@@ -1530,11 +1453,6 @@ func (p *LogicalMaxOneRow) exhaustPhysicalPlans(prop *property.PhysicalProperty)
 	if !prop.IsEmpty() {
 		return nil, true
 	}
-<<<<<<< HEAD
 	mor := PhysicalMaxOneRow{}.Init(p.ctx, p.stats, &property.PhysicalProperty{ExpectedCnt: 2})
-	return []PhysicalPlan{mor}
-=======
-	mor := PhysicalMaxOneRow{}.Init(p.ctx, p.stats, p.blockOffset, &property.PhysicalProperty{ExpectedCnt: 2})
 	return []PhysicalPlan{mor}, true
->>>>>>> b6fcc15... planner: enforce the required property when hint cannot satisf… (#15650)
 }

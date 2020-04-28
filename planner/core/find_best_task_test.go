@@ -38,14 +38,14 @@ type mockDataSource struct {
 }
 
 func (ds mockDataSource) Init(ctx sessionctx.Context) *mockDataSource {
-	ds.baseLogicalPlan = newBaseLogicalPlan(ctx, "mockDS", &ds, 0)
+	ds.baseLogicalPlan = newBaseLogicalPlan(ctx, "mockDS", &ds)
 	return &ds
 }
 
 func (ds *mockDataSource) findBestTask(prop *property.PhysicalProperty) (task, error) {
 	// It can satisfy any of the property!
 	// Just use a TableDual for convenience.
-	p := PhysicalTableDual{}.Init(ds.ctx, &property.StatsInfo{RowCount: 1}, 0)
+	p := PhysicalTableDual{}.Init(ds.ctx, &property.StatsInfo{RowCount: 1})
 	task := &rootTask{
 		p:   p,
 		cst: 10000,
@@ -75,7 +75,7 @@ type mockLogicalPlan4Test struct {
 }
 
 func (p mockLogicalPlan4Test) Init(ctx sessionctx.Context) *mockLogicalPlan4Test {
-	p.baseLogicalPlan = newBaseLogicalPlan(ctx, "mockPlan", &p, 0)
+	p.baseLogicalPlan = newBaseLogicalPlan(ctx, "mockPlan", &p)
 	return &p
 }
 
@@ -128,7 +128,7 @@ type mockPhysicalPlan4Test struct {
 }
 
 func (p mockPhysicalPlan4Test) Init(ctx sessionctx.Context) *mockPhysicalPlan4Test {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, "mockPlan", &p, 0)
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, "mockPlan", &p)
 	return &p
 }
 
