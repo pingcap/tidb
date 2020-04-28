@@ -35,6 +35,8 @@ var (
 
 	// ErrUnsupportedCollation is returned when an unsupported collation is specified.
 	ErrUnsupportedCollation = terror.ClassDDL.New(mysql.ErrUnknownCollation, "Unsupported collation when new collation is enabled: '%-.64s'")
+	// ErrIllegalMixCollation is returned when illegal mix of collations.
+	ErrIllegalMixCollation = terror.ClassExpression.New(mysql.ErrCantAggregate2collations, mysql.MySQLErrName[mysql.ErrCantAggregate2collations])
 )
 
 // DefaultLen is set for datum if the string datum don't know its length.

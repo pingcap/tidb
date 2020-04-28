@@ -129,8 +129,7 @@ const (
 
 	// tidb_enable_table_partition is used to control table partition feature.
 	// The valid value include auto/on/off:
-	// auto: enable table partition when that feature is implemented.
-	// on: always enable table partition.
+	// on or auto: enable table partition if the partition type is implemented.
 	// off: always disable table partition.
 	TiDBEnableTablePartition = "tidb_enable_table_partition"
 
@@ -169,6 +168,9 @@ const (
 
 	// TiDBCheckMb4ValueInUTF8 is used to control whether to enable the check wrong utf8 value.
 	TiDBCheckMb4ValueInUTF8 = "tidb_check_mb4_value_in_utf8"
+
+	// TiDBFoundInPlanCache indicates whether the last statement was found in plan cache
+	TiDBFoundInPlanCache = "last_plan_from_cache"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -242,6 +244,11 @@ const (
 
 	// TiDBMaxChunkSize is used to control the max chunk size during query execution.
 	TiDBMaxChunkSize = "tidb_max_chunk_size"
+
+	// TiDBAllowBatchCop means if we should send batch coprocessor to TiFlash. It can be set to 0, 1 and 2.
+	// 0 means never use batch cop, 1 means use batch cop in case of aggregation and join, 2, means to force to send batch cop for any query.
+	// The default value is 0
+	TiDBAllowBatchCop = "tidb_allow_batch_cop"
 
 	// TiDBInitChunkSize is used to control the init chunk size during query execution.
 	TiDBInitChunkSize = "tidb_init_chunk_size"
@@ -383,6 +390,9 @@ const (
 
 	// TiDBMetricSchemaRangeDuration indicates the range duration when query metric schema.
 	TiDBMetricSchemaRangeDuration = "tidb_metric_query_range_duration"
+
+	// TiDBEnableCollectExecutionInfo indicates that whether execution info is collected.
+	TiDBEnableCollectExecutionInfo = "tidb_enable_collect_execution_info"
 )
 
 // Default TiDB system variable values.
@@ -403,7 +413,6 @@ const (
 	DefChecksumTableConcurrency        = 4
 	DefSkipUTF8Check                   = false
 	DefOptAggPushDown                  = false
-	DefOptDistinctAggPushDown          = false
 	DefOptWriteRowID                   = false
 	DefOptCorrelationThreshold         = 0.9
 	DefOptCorrelationExpFactor         = 1
@@ -442,6 +451,7 @@ const (
 	DefTiDBHashJoinConcurrency         = 5
 	DefTiDBProjectionConcurrency       = 4
 	DefTiDBOptimizerSelectivityLevel   = 0
+	DefTiDBAllowBatchCop               = 0
 	DefTiDBTxnMode                     = ""
 	DefTiDBRowFormatV1                 = 1
 	DefTiDBRowFormatV2                 = 2
@@ -475,6 +485,8 @@ const (
 	DefTiDBStoreLimit                  = 0
 	DefTiDBMetricSchemaStep            = 60 // 60s
 	DefTiDBMetricSchemaRangeDuration   = 60 // 60s
+	DefTiDBFoundInPlanCache            = false
+	DefTidbEnableCollectExecutionInfo  = false
 )
 
 // Process global variables.
