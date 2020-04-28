@@ -1748,7 +1748,12 @@ func checkCharsetAndCollation(cs string, co string) error {
 // handleAutoIncID handles auto_increment option in DDL. It creates a ID counter for the table and initiates the counter to a proper value.
 // For example if the option sets auto_increment to 10. The counter will be set to 9. So the next allocated ID will be 10.
 func (d *ddl) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64) error {
-	alloc := autoid.NewAllocator(d.store, tbInfo.GetDBID(schemaID), tbInfo.IsAutoIncColUnsigned(), autoid.CustomAutoIncCacheOption(tbInfo.AutoIdCache))
+	var alloc autoid.Allocator
+	if tbInfo.AutoIdCache > 0 {
+		alloc = autoid.NewAllocator(d.store, tbInfo.GetDBID(schemaID), tbInfo.IsAutoIncColUnsigned(), autoid.CustomAutoIncCacheOption(tbInfo.AutoIdCache))
+	} else {
+		alloc = autoid.NewAllocator(d.store, tbInfo.GetDBID(schemaID), tbInfo.IsAutoIncColUnsigned())
+	}
 	tbInfo.State = model.StatePublic
 	tb, err := table.TableFromMeta(alloc, tbInfo)
 	if err != nil {

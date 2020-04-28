@@ -213,7 +213,11 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 
 	if alloc == nil {
 		schemaID := dbInfo.ID
-		alloc = autoid.NewAllocator(b.handle.store, tblInfo.GetDBID(schemaID), tblInfo.IsAutoIncColUnsigned(), autoid.CustomAutoIncCacheOption(tblInfo.AutoIdCache))
+		if tblInfo.AutoIdCache > 0 {
+			alloc = autoid.NewAllocator(b.handle.store, tblInfo.GetDBID(schemaID), tblInfo.IsAutoIncColUnsigned(), autoid.CustomAutoIncCacheOption(tblInfo.AutoIdCache))
+		} else {
+			alloc = autoid.NewAllocator(b.handle.store, tblInfo.GetDBID(schemaID), tblInfo.IsAutoIncColUnsigned())
+		}
 	}
 	tbl, err := tables.TableFromMeta(alloc, tblInfo)
 	if err != nil {
@@ -360,7 +364,12 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 	b.is.schemaMap[di.Name.L] = schTbls
 	for _, t := range di.Tables {
 		schemaID := di.ID
-		alloc := autoid.NewAllocator(b.handle.store, t.GetDBID(schemaID), t.IsAutoIncColUnsigned(), autoid.CustomAutoIncCacheOption(t.AutoIdCache))
+		var alloc autoid.Allocator
+		if t.AutoIdCache > 0 {
+			alloc = autoid.NewAllocator(b.handle.store, t.GetDBID(schemaID), t.IsAutoIncColUnsigned(), autoid.CustomAutoIncCacheOption(t.AutoIdCache))
+		} else {
+			alloc = autoid.NewAllocator(b.handle.store, t.GetDBID(schemaID), t.IsAutoIncColUnsigned())
+		}
 		var tbl table.Table
 		tbl, err := tableFromMeta(alloc, t)
 		if err != nil {
