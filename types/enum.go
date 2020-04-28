@@ -18,12 +18,21 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/util/stringutil"
 )
 
 // Enum is for MySQL enum type.
 type Enum struct {
 	Name  string
 	Value uint64
+}
+
+// Copy deep copy an Enum.
+func (e Enum) Copy() Enum {
+	return Enum{
+		Name:  stringutil.Copy(e.Name),
+		Value: e.Value,
+	}
 }
 
 // String implements fmt.Stringer interface.
