@@ -2169,7 +2169,7 @@
             {
               "expr": "process_resident_memory_bytes{job=\"tidb\"}",
               "format": "time_series",
-              "intervalFactor": 1,
+              "intervalFactor": 2,
               "legendFormat": "process-{{instance}}",
               "refId": "A",
               "step": 10
@@ -2178,7 +2178,7 @@
               "expr": "go_memstats_heap_inuse_bytes{job=\"tidb\"}",
               "legendFormat": "HeapInuse-{{instance}}",
               "format": "time_series",
-              "intervalFactor": 1,
+              "intervalFactor": 2,
               "refId": "B",
               "step": 10
             }
