@@ -31,7 +31,6 @@ import (
 //    This is only required if the new feature is contained in DDL,
 //    and we want to comment out this part of SQL in binlog.
 func init() {
-	parser.SpecialCommentsController.Register(string(FeatureIDAutoRandom))
 	parser.SpecialCommentsController.Register(string(FeatureIDAutoIDCache))
 }
 
@@ -51,14 +50,11 @@ func BuildSpecialCommentPrefix(featureID featureID) string {
 type featureID string
 
 const (
-	// FeatureIDAutoRandom is the `auto_random` feature.
-	FeatureIDAutoRandom featureID = "auto_rand"
 	// FeatureIDAutoIDCache is the `auto_id_cache` feature.
 	FeatureIDAutoIDCache featureID = "auto_id_cache"
 )
 
 // FeatureIDPatterns is used to record special comments patterns.
 var FeatureIDPatterns = map[featureID]*regexp.Regexp{
-	FeatureIDAutoRandom:  regexp.MustCompile(`(?i)AUTO_RANDOM\s*(\(\s*\d+\s*\))?\s*`),
 	FeatureIDAutoIDCache: regexp.MustCompile(`(?i)AUTO_ID_CACHE\s*=?\s*\d+\s*`),
 }

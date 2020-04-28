@@ -15,6 +15,7 @@ package binloginfo
 
 import (
 	"context"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"math"
 	"regexp"
 	"strings"
@@ -302,14 +303,18 @@ const specialPrefix = `/*!90000 `
 // AddSpecialComment uses to add comment for table option in DDL query.
 // Export for testing.
 func AddSpecialComment(ddlQuery string) string {
-	if strings.Contains(ddlQuery, specialPrefix) {
+	if strings.Contains(ddlQuery, specialPrefix) || strings.Contains(ddlQuery, driver.SpecialCommentVersionPrefix) {
 		return ddlQuery
 	}
-	return addSpecialCommentByRegexps(ddlQuery, shardPat, preSplitPat)
+	ddlQuery = addSpecialCommentByRegexps(ddlQuery, specialPrefix, shardPat, preSplitPat)
+	for featureID, pattern := range driver.FeatureIDPatterns {
+		ddlQuery = addSpecialCommentByRegexps(ddlQuery, driver.BuildSpecialCommentPrefix(featureID), pattern)
+	}
+	return ddlQuery
 }
 
 // addSpecialCommentByRegexps uses to add special comment for the worlds in the ddlQuery with match the regexps.
-func addSpecialCommentByRegexps(ddlQuery string, regs ...*regexp.Regexp) string {
+func addSpecialCommentByRegexps(ddlQuery string, prefix string, regs ...*regexp.Regexp) string {
 	upperQuery := strings.ToUpper(ddlQuery)
 	var specialComments []string
 	minIdx := math.MaxInt64
@@ -328,7 +333,7 @@ func addSpecialCommentByRegexps(ddlQuery string, regs ...*regexp.Regexp) string 
 		upperQuery = upperQuery[:loc[0]] + upperQuery[loc[1]:]
 	}
 	if minIdx != math.MaxInt64 {
-		query := ddlQuery[:minIdx] + specialPrefix
+		query := ddlQuery[:minIdx] + prefix
 		for _, comment := range specialComments {
 			if query[len(query)-1] != ' ' {
 				query += " "
