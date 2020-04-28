@@ -491,6 +491,7 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 
 		{act: model.ActionExchangeTablePartition, jobIDs: []int64{firstID + 53}, cancelRetErrs: noErrs, cancelState: model.StateNone},
 		{act: model.ActionExchangeTablePartition, jobIDs: []int64{firstID + 54}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 54)}, cancelState: model.StatePublic},
+		{act: model.ActionRenameDatabase, jobIDs: []int64{firstID + 55}, cancelRetErrs: noErrs, cancelState: model.StateNone},
 	}
 
 	return tests
@@ -1014,6 +1015,12 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	changedPtTable = testGetTable(c, d, dbInfo.ID, pt.ID)
 	c.Assert(changedNtTable.Meta().ID == nt.ID, IsFalse)
 	c.Assert(changedPtTable.Meta().Partition.Definitions[0].ID == nt.ID, IsTrue)
+
+	// for rename database
+	updateTest(&tests[33])
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo1.ID, 0, model.ActionRenameDatabase, []interface{}{"newDB"}, &cancelState)
+	c.Check(checkErr, IsNil)
+	testCheckSchemaState(c, d, dbInfo, model.StatePublic)
 }
 
 func (s *testDDLSuite) TestIgnorableSpec(c *C) {

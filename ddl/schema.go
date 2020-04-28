@@ -32,7 +32,7 @@ func onCreateSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 	dbInfo.ID = schemaID
 	dbInfo.State = model.StateNone
 
-	err := checkSchemaNotExists(d, t, schemaID, dbInfo)
+	err := checkSchemaNotExists(d, t, schemaID, dbInfo.Name)
 	if err != nil {
 		if infoschema.ErrDatabaseExists.Equal(err) {
 			// The database already exists, can't create it, we should cancel this job now.
@@ -63,10 +63,10 @@ func onCreateSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 	}
 }
 
-func checkSchemaNotExists(d *ddlCtx, t *meta.Meta, schemaID int64, dbInfo *model.DBInfo) error {
+func checkSchemaNotExists(d *ddlCtx, t *meta.Meta, schemaID int64, dbName model.CIStr) error {
 	// d.infoHandle maybe nil in some test.
 	if d.infoHandle == nil {
-		return checkSchemaNotExistsFromStore(t, schemaID, dbInfo)
+		return checkSchemaNotExistsFromStore(t, schemaID, dbName)
 	}
 	// Try to use memory schema info to check first.
 	currVer, err := t.GetSchemaVersion()
@@ -75,35 +75,34 @@ func checkSchemaNotExists(d *ddlCtx, t *meta.Meta, schemaID int64, dbInfo *model
 	}
 	is := d.infoHandle.Get()
 	if is.SchemaMetaVersion() == currVer {
-		return checkSchemaNotExistsFromInfoSchema(is, schemaID, dbInfo)
+		return checkSchemaNotExistsFromInfoSchema(is, schemaID, dbName)
 	}
-	return checkSchemaNotExistsFromStore(t, schemaID, dbInfo)
+	return checkSchemaNotExistsFromStore(t, schemaID, dbName)
 }
 
-func checkSchemaNotExistsFromInfoSchema(is infoschema.InfoSchema, schemaID int64, dbInfo *model.DBInfo) error {
+func checkSchemaNotExistsFromInfoSchema(is infoschema.InfoSchema, schemaID int64, dbName model.CIStr) error {
 	// Check database exists by name.
-	if is.SchemaExists(dbInfo.Name) {
-		return infoschema.ErrDatabaseExists.GenWithStackByArgs(dbInfo.Name)
+	if is.SchemaExists(dbName) {
+		return infoschema.ErrDatabaseExists.GenWithStackByArgs(dbName)
 	}
 	// Check database exists by ID.
 	if _, ok := is.SchemaByID(schemaID); ok {
-		return infoschema.ErrDatabaseExists.GenWithStackByArgs(dbInfo.Name)
+		return infoschema.ErrDatabaseExists.GenWithStackByArgs(dbName)
 	}
 	return nil
 }
 
-func checkSchemaNotExistsFromStore(t *meta.Meta, schemaID int64, dbInfo *model.DBInfo) error {
+func checkSchemaNotExistsFromStore(t *meta.Meta, schemaID int64, dbName model.CIStr) error {
 	dbs, err := t.ListDatabases()
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	for _, db := range dbs {
-		if db.Name.L == dbInfo.Name.L {
+		if db.Name.L == dbName.L {
 			if db.ID != schemaID {
 				return infoschema.ErrDatabaseExists.GenWithStackByArgs(db.Name)
 			}
-			dbInfo = db
 		}
 	}
 	return nil
@@ -129,6 +128,34 @@ func onModifySchemaCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _
 	dbInfo.Charset = toCharset
 	dbInfo.Collate = toCollate
 
+	if err = t.UpdateDatabase(dbInfo); err != nil {
+		return ver, errors.Trace(err)
+	}
+	if ver, err = updateSchemaVersion(t, job); err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
+	return ver, nil
+}
+
+func onRenameSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	var newDBName model.CIStr
+	if err := job.DecodeArgs(&newDBName); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	dbInfo, err := t.GetDatabase(job.SchemaID)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	if err = checkSchemaNotExistsFromStore(t, job.SchemaID, newDBName); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	dbInfo.Name = newDBName
 	if err = t.UpdateDatabase(dbInfo); err != nil {
 		return ver, errors.Trace(err)
 	}

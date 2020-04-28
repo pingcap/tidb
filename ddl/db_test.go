@@ -2815,6 +2815,28 @@ func (s *testDBSuite3) TestTruncateTable(c *C) {
 
 }
 
+func (s *testDBSuite3) TestRenameDatabase(c *C) {
+	s.tk = testkit.NewTestKitWithInit(c, s.store)
+	s.tk.MustExec("create database db charset utf8 collate utf8_general_ci;")
+	s.tk.MustExec("use db")
+	s.tk.MustExec("create table t(c1 int, c2 int)")
+	ctx := s.tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	dbInfo, ok := is.SchemaByName(model.NewCIStr("db"))
+	c.Assert(ok, IsTrue)
+	oldDatabaseID := dbInfo.ID
+	s.tk.MustExec("rename database db to newDB")
+	is = domain.GetDomain(ctx).InfoSchema()
+	newDBInfo, ok := is.SchemaByName(model.NewCIStr("newDB"))
+	c.Assert(ok, IsTrue)
+	c.Assert(oldDatabaseID, Equals, newDBInfo.ID)
+
+	// for failure cases
+	s.tk.MustGetErrCode("rename database db_not_exit to db", errno.ErrBadDB)
+	s.tk.MustGetErrCode("rename database newDB to test", errno.ErrDBCreateExists)
+	s.tk.MustGetErrCode("rename database newDB to dbxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", errno.ErrTooLongIdent)
+}
+
 func (s *testDBSuite4) TestRenameTable(c *C) {
 	isAlterTable := false
 	s.testRenameTable(c, "rename table %s to %s", isAlterTable)

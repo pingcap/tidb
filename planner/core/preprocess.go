@@ -143,6 +143,8 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkCreateDatabaseGrammar(node)
 	case *ast.AlterDatabaseStmt:
 		p.checkAlterDatabaseGrammar(node)
+	case *ast.RenameDatabaseStmt:
+		p.checkRenameDatabaseGrammar(node)
 	case *ast.DropDatabaseStmt:
 		p.checkDropDatabaseGrammar(node)
 	case *ast.ShowStmt:
@@ -426,6 +428,16 @@ func (p *preprocessor) checkAlterDatabaseGrammar(stmt *ast.AlterDatabaseStmt) {
 	// for 'ALTER DATABASE' statement, database name can be empty to alter default database.
 	if isIncorrectName(stmt.Name) && !stmt.AlterDefaultDatabase {
 		p.err = ddl.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
+	}
+}
+
+func (p *preprocessor) checkRenameDatabaseGrammar(stmt *ast.RenameDatabaseStmt) {
+	if isIncorrectName(stmt.OldDB) {
+		p.err = ddl.ErrWrongDBName.GenWithStackByArgs(stmt.OldDB)
+		return
+	}
+	if isIncorrectName(stmt.NewDB) {
+		p.err = ddl.ErrWrongDBName.GenWithStackByArgs(stmt.NewDB)
 	}
 }
 

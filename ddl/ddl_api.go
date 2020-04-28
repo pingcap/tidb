@@ -175,6 +175,33 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 	return errors.Trace(err)
 }
 
+func (d *ddl) RenameSchema(ctx sessionctx.Context, oldDB, newDB model.CIStr) error {
+	is := d.GetInfoSchemaWithInterceptor(ctx)
+	oldSchema, ok := is.SchemaByName(oldDB)
+	if !ok {
+		return errors.Trace(infoschema.ErrDatabaseNotExists)
+	}
+	_, ok = is.SchemaByName(newDB)
+	if ok {
+		return errors.Trace(infoschema.ErrDatabaseExists)
+	}
+	if err := checkTooLongSchema(newDB); err != nil {
+		return errors.Trace(err)
+	}
+
+	job := &model.Job{
+		SchemaID:   oldSchema.ID,
+		SchemaName: oldSchema.Name.L,
+		Type:       model.ActionRenameDatabase,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{newDB},
+	}
+
+	err := d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
 func (d *ddl) DropSchema(ctx sessionctx.Context, schema model.CIStr) (err error) {
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	old, ok := is.SchemaByName(schema)

@@ -48,6 +48,9 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	} else if diff.Type == model.ActionModifySchemaCharsetAndCollate {
 		return nil, b.applyModifySchemaCharsetAndCollate(m, diff)
 	}
+	if diff.Type == model.ActionRenameDatabase {
+		return nil, b.applyRenameSchema(m, diff)
+	}
 	roDBInfo, ok := b.is.SchemaByID(diff.SchemaID)
 	if !ok {
 		return nil, ErrDatabaseNotExists.GenWithStackByArgs(
@@ -209,6 +212,24 @@ func (b *Builder) applyModifySchemaCharsetAndCollate(m *meta.Meta, diff *model.S
 	newDbInfo := b.copySchemaTables(di.Name.O)
 	newDbInfo.Charset = di.Charset
 	newDbInfo.Collate = di.Collate
+	return nil
+}
+
+func (b *Builder) applyRenameSchema(m *meta.Meta, diff *model.SchemaDiff) error {
+	di, err := m.GetDatabase(diff.SchemaID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	oldDB, ok := b.is.SchemaByID(diff.SchemaID)
+	if di == nil || ok {
+		// This should never happen.
+		return ErrDatabaseNotExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
+		)
+	}
+
+	newDbInfo := b.copySchemaTables(oldDB.Name.O)
+	newDbInfo.Name = di.Name
 	return nil
 }
 
