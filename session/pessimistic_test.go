@@ -796,8 +796,13 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeoutWaitStart(c *C) {
 	waitErr := <-done
 	c.Assert(waitErr, NotNil)
 	c.Check(waitErr.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
+<<<<<<< HEAD
 	c.Check(duration, GreaterEqual, time.Duration(1000*time.Millisecond))
 	c.Check(duration, LessEqual, time.Duration(1100*time.Millisecond))
+=======
+	c.Check(duration, GreaterEqual, 1000*time.Millisecond)
+	c.Check(duration, LessEqual, 3000*time.Millisecond)
+>>>>>>> 2c60f3d... test: stable test cases (#16913)
 	tk2.MustExec("rollback")
 	tk3.MustExec("commit")
 }
