@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/prometheus/client_golang/prometheus"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
@@ -1434,7 +1433,10 @@ retry:
 
 type livenessState uint32
 
-var livenessSf singleflight.Group
+var (
+	livenessSf           singleflight.Group
+	storeLivenessTimeout time.Duration
+)
 
 const (
 	unknown livenessState = iota
@@ -1443,6 +1445,15 @@ const (
 	offline
 )
 
+func init() {
+	t, err := time.ParseDuration(config.GetGlobalConfig().TiKVClient.StoreLivenessTimeout)
+	if err != nil {
+		logutil.BgLogger().Fatal("invalid duration value for store-liveness-timeout",
+			zap.String("currentValue", config.GetGlobalConfig().TiKVClient.StoreLivenessTimeout))
+	}
+	storeLivenessTimeout = t
+}
+
 func (s *Store) requestLiveness(bo *Backoffer) (l livenessState) {
 	saddr := s.saddr
 	if len(saddr) == 0 {
@@ -1450,7 +1461,7 @@ func (s *Store) requestLiveness(bo *Backoffer) (l livenessState) {
 		return
 	}
 	rsCh := livenessSf.DoChan(saddr, func() (interface{}, error) {
-		return invokeKVStatusAPI(saddr, time.Duration(config.GetGlobalConfig().TiKVClient.StoreLivenessTimeout)*time.Second), nil
+		return invokeKVStatusAPI(saddr, storeLivenessTimeout), nil
 	})
 	var ctx context.Context
 	if bo != nil {
@@ -1468,8 +1479,6 @@ func (s *Store) requestLiveness(bo *Backoffer) (l livenessState) {
 	return
 }
 
-var kvStatusDurationCache sync.Map
-
 func invokeKVStatusAPI(saddr string, timeout time.Duration) (l livenessState) {
 	start := time.Now()
 	defer func() {
@@ -1478,13 +1487,7 @@ func invokeKVStatusAPI(saddr string, timeout time.Duration) (l livenessState) {
 		} else {
 			tikvStatusCountWithError.Inc()
 		}
-
-		v, ok := kvStatusDurationCache.Load(saddr)
-		if !ok {
-			v = metrics.TiKVStatusDuration.WithLabelValues(saddr)
-			kvStatusDurationCache.Store(saddr, v)
-		}
-		v.(prometheus.Observer).Observe(time.Since(start).Seconds())
+		metrics.TiKVStatusDuration.WithLabelValues(saddr).Observe(time.Since(start).Seconds())
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
