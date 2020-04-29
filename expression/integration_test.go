@@ -6177,6 +6177,7 @@ func (s *testIntegrationSuite) TestIssue15986(c *C) {
 func (s *testIntegrationSuite) TestNegativeZeroForHashJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t0, t1")
 	tk.MustExec("CREATE TABLE t0(c0 float);")
 	tk.MustExec("CREATE TABLE t1(c0 float);")
 	tk.MustExec("INSERT INTO t1(c0) VALUES (0);")
@@ -6199,6 +6200,7 @@ func (s *testIntegrationSuite) TestIssue15725(c *C) {
 func (s *testIntegrationSuite) TestIssue15790(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t0")
 	tk.MustExec("CREATE TABLE t0(c0 INT);")
 	tk.MustExec("INSERT INTO t0(c0) VALUES (0);")
 	tk.MustQuery("SELECT * FROM t0 WHERE -10000000000000000000 | t0.c0 UNION SELECT * FROM t0;").Check(testkit.Rows("0"))
@@ -6209,6 +6211,7 @@ func (s *testIntegrationSuite) TestIssue15790(c *C) {
 func (s *testIntegrationSuite) TestIssue15992(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t0")
 	tk.MustExec("CREATE TABLE t0(c0 INT, c1 INT AS (c0));")
 	tk.MustExec("CREATE INDEX i0 ON t0(c1);")
 	tk.MustQuery("SELECT t0.c0 FROM t0 UNION ALL SELECT 0 FROM t0;").Check(testkit.Rows())
