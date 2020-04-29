@@ -2673,6 +2673,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	updt.SetSchema(p.Schema())
 	// We cannot apply projection elimination when building the subplan, because
 	// columns in orderedList cannot be resolved.
+	b.ctx.GetSessionVars().NeedntCBOPointGet = true
 	updt.SelectPlan, err = DoOptimize(ctx, b.optFlag&^flagEliminateProjection, p)
 	if err != nil {
 		return nil, err
@@ -2921,6 +2922,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 		IsMultiTable: delete.IsMultiTable,
 	}.Init(b.ctx)
 
+	b.ctx.GetSessionVars().NeedntCBOPointGet = true
 	del.SelectPlan, err = DoOptimize(ctx, b.optFlag, p)
 	if err != nil {
 		return nil, err

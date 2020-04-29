@@ -48,7 +48,6 @@ type PointGetPlan struct {
 	UnsignedHandle   bool
 	IndexValues      []types.Datum
 	IndexValueParams []*driver.ParamMarkerExpr
-	expr             expression.Expression
 	ctx              sessionctx.Context
 	IsTableDual      bool
 	Lock             bool
@@ -60,6 +59,13 @@ type nameValuePair struct {
 	colName string
 	value   types.Datum
 	param   *driver.ParamMarkerExpr
+}
+
+// Init initializes PointGetPlan.
+func (p PointGetPlan) Init(ctx sessionctx.Context, stats *property.StatsInfo) *PointGetPlan {
+	p.basePlan = newBasePlan(ctx, plancodec.TypePointGet)
+	p.stats = stats
+	return &p
 }
 
 // Schema implements the Plan interface.

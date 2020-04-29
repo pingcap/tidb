@@ -1876,6 +1876,7 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 		}
 	}
 
+	b.ctx.GetSessionVars().NeedntCBOPointGet = true
 	insertPlan.SelectPlan, err = DoOptimize(ctx, b.optFlag, selectPlan.(LogicalPlan))
 	if err != nil {
 		return err

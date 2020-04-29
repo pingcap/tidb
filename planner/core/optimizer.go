@@ -181,6 +181,15 @@ func existsCartesianProduct(p LogicalPlan) bool {
 	return false
 }
 
+func iteratePhysicalPlan(p PhysicalPlan, f func(p PhysicalPlan) bool) {
+	if !f(p) {
+		return
+	}
+	for _, child := range p.Children() {
+		iteratePhysicalPlan(child, f)
+	}
+}
+
 // DefaultDisabledLogicalRulesList indicates the logical rules which should be banned.
 var DefaultDisabledLogicalRulesList *atomic.Value
 

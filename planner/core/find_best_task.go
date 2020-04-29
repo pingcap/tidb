@@ -420,6 +420,29 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 				p: dual,
 			}, nil
 		}
+		canConvertPointGet := len(path.ranges) == 1 && !ds.isPartition && !ds.ctx.GetSessionVars().NeedntCBOPointGet
+		if !candidate.path.isTablePath {
+			canConvertPointGet = canConvertPointGet &&
+				candidate.path.index.Unique &&
+				!candidate.path.index.HasPrefixIndex() &&
+				len(candidate.path.ranges[0].LowVal) == len(candidate.path.index.Columns)
+		}
+		if canConvertPointGet {
+			allRangeIsPoint := true
+			for _, ran := range path.ranges {
+				if !ran.IsPoint(ds.ctx.GetSessionVars().StmtCtx) {
+					allRangeIsPoint = false
+					break
+				}
+			}
+			if allRangeIsPoint {
+				pointGetTask := ds.convertToPointGet(prop, candidate)
+				if pointGetTask.cost() < t.cost() {
+					t = pointGetTask
+					continue
+				}
+			}
+		}
 		if path.isTablePath {
 			tblTask, err := ds.convertToTableScan(prop, candidate)
 			if err != nil {
@@ -794,6 +817,58 @@ func (ds *DataSource) crossEstimateRowCount(path *accessPath, expectedCnt float6
 	}
 	scanCount = math.Min(scanCount, path.countAfterAccess)
 	return scanCount, true, 0
+}
+
+func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candidate *candidatePath) task {
+	if !prop.IsEmpty() && !candidate.isMatchProp {
+		return invalidTask
+	}
+	if prop.TaskTp == property.CopDoubleReadTaskType && candidate.isSingleScan ||
+		prop.TaskTp == property.CopSingleReadTaskType && !candidate.isSingleScan {
+		return invalidTask
+	}
+
+	pointGetPlan := PointGetPlan{
+		ctx:          ds.ctx,
+		schema:       ds.schema.Clone(),
+		dbName:       ds.DBName.L,
+		TblInfo:      ds.TableInfo(),
+		LockWaitTime: ds.ctx.GetSessionVars().LockWaitTimeout,
+	}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(1.0))
+	rTsk := &rootTask{p: pointGetPlan}
+	var cost float64
+	if candidate.path.isTablePath {
+		pointGetPlan.Handle = candidate.path.ranges[0].LowVal[0].GetInt64()
+		if ds.getPKIsHandleCol() != nil {
+			pointGetPlan.UnsignedHandle = mysql.HasUnsignedFlag(ds.getPKIsHandleCol().RetType.Flag)
+		}
+		cost = 1.0
+		// Add filter condition to table plan now.
+		if len(candidate.path.tableFilters) > 0 {
+			cost += pointGetPlan.stats.RowCount * cpuFactor
+			sel := PhysicalSelection{
+				Conditions: candidate.path.tableFilters,
+			}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt))
+			sel.SetChildren(pointGetPlan)
+			rTsk.p = sel
+		}
+	} else {
+		pointGetPlan.IndexInfo = candidate.path.index
+		pointGetPlan.IndexValues = candidate.path.ranges[0].LowVal
+		cost = 1.0
+		// Add index condition to table plan now.
+		if len(candidate.path.indexFilters)+len(candidate.path.tableFilters) > 0 {
+			cost += pointGetPlan.stats.RowCount * cpuFactor
+			sel := PhysicalSelection{
+				Conditions: append(candidate.path.indexFilters, candidate.path.tableFilters...),
+			}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt))
+			sel.SetChildren(pointGetPlan)
+			rTsk.p = sel
+		}
+	}
+
+	rTsk.cst = cost
+	return rTsk
 }
 
 // convertToTableScan converts the DataSource to table scan.

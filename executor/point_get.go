@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"

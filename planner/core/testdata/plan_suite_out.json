@@ -136,11 +136,11 @@
       },
       {
         "SQL": "select * from t use index(f) where f = 1 and a = 1",
-        "Best": "IndexLookUp(Index(t.f)[[1,1]]->Sel([eq(test.t.a, 1)]), Table(t))"
+        "Best": "*core.PointGetPlan->Sel([eq(test.t.a, 1)])"
       },
       {
         "SQL": "select * from t2 use index(b) where b = 1 and a = 1",
-        "Best": "IndexLookUp(Index(t2.b)[[1,1]]->Sel([eq(test.t2.a, 1)]), Table(t2))"
+        "Best": "*core.PointGetPlan->Sel([eq(test.t2.a, 1)])"
       }
     ]
   },
@@ -181,7 +181,7 @@
       },
       {
         "SQL": "select * from t t1 join t t2 on t1.b = t2.a and t1.c = 1 and t1.d = 1 and t1.e = 1 order by t1.a limit 1",
-        "Best": "IndexJoin{IndexLookUp(Index(t.c_d_e)[[1 1 1,1 1 1]], Table(t))->TableReader(Table(t))}(test.t1.b,test.t2.a)->TopN([test.t1.a],0,1)"
+        "Best": "IndexJoin{*core.PointGetPlan->TableReader(Table(t))}(test.t1.b,test.t2.a)->TopN([test.t1.a],0,1)"
       },
       {
         "SQL": "select * from t t1 join t t2 on t1.b = t2.b join t t3 on t1.b = t3.b",
@@ -333,7 +333,7 @@
       },
       {
         "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t1.b = t2.c and t2.c=1 and t2.d=2 and t2.e=4",
-        "Best": "LeftHashJoin{TableReader(Table(t)->Sel([eq(test.t1.b, 1)]))->IndexLookUp(Index(t.c_d_e)[[1 2 4,1 2 4]], Table(t))}"
+        "Best": "LeftHashJoin{TableReader(Table(t)->Sel([eq(test.t1.b, 1)]))->*core.PointGetPlan}"
       },
       {
         "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t2.c=1 and t2.d=1 and t2.e > 10 and t2.e < 20",
@@ -639,7 +639,7 @@
       },
       {
         "SQL": "select a from t where c = 4 and d = 5 and e = 6",
-        "Best": "IndexReader(Index(t.c_d_e)[[4 5 6,4 5 6]])->Projection"
+        "Best": "*core.PointGetPlan->Projection"
       },
       {
         "SQL": "select a from t where d = 4 and c = 5",

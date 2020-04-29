@@ -446,6 +446,8 @@ type SessionVars struct {
 	// LockWaitTimeout is the duration waiting for pessimistic lock in milliseconds
 	// negative value means nowait, 0 means default behavior, others means actual wait time
 	LockWaitTimeout int64
+
+	NeedntCBOPointGet bool
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
