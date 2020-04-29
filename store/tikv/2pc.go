@@ -423,7 +423,9 @@ func txnLockTTL(startTime time.Time, txnSize int) uint64 {
 	return lockTTL + uint64(elapsed)
 }
 
-const presplitKeyCount = 20000
+var testSplitRegionFlag bool
+
+const preSplitKeyThreshold = 100000
 
 // doActionOnMutations groups keys into primary batch and secondary batches, if primary batch exists in the key,
 // it does action on primary batch first, then on secondary batches. If action is commit, secondary batches
@@ -441,7 +443,7 @@ func (c *twoPhaseCommitter) doActionOnMutations(bo *Backoffer, action twoPhaseCo
 	// In the large transaction case, this operation is important to avoid TiKV 'server is busy' error.
 	var preSplited bool
 	for _, group := range groups {
-		if group.mutations.len() > presplitKeyCount {
+		if group.mutations.len() > preSplitKeyThreshold || testSplitRegionFlag {
 			logutil.BgLogger().Info("2PC pre-split and scatter regions", zap.Uint64("region", group.region.GetID()), zap.Int("mutations count", group.mutations.len()))
 			preSplitAndScatterIn2PC(bo.ctx, c.store, group)
 			preSplited = true
@@ -460,10 +462,18 @@ func (c *twoPhaseCommitter) doActionOnMutations(bo *Backoffer, action twoPhaseCo
 
 func preSplitAndScatterIn2PC(ctx context.Context, store *tikvStore, group groupedMutations) {
 	length := group.mutations.len()
-	splitKeys := make([][]byte, 0, presplitKeyCount/10000)
-	for i := 0; i < length; i = i + 10000 {
-		splitKeys = append(splitKeys, group.mutations.keys[i])
+	splitKeys := make([][]byte, 0, 4)
+
+	const sz40M = (40 << 20)
+	regionSize := 0
+	for i := 0; i < length; i++ {
+		regionSize = regionSize + len(group.mutations.keys[i]) + len(group.mutations.values[i])
+		if regionSize >= sz40M || (testSplitRegionFlag && i == length/2) {
+			regionSize = 0
+			splitKeys = append(splitKeys, group.mutations.keys[i])
+		}
 	}
+
 	regionIDs, err := store.SplitRegions(ctx, splitKeys, true)
 	if err != nil {
 		logutil.BgLogger().Warn("2PC split regions failed", zap.Uint64("regionID", group.region.id), zap.Int("keys count", length), zap.Error(err))
@@ -474,6 +484,8 @@ func preSplitAndScatterIn2PC(ctx context.Context, store *tikvStore, group groupe
 			logutil.BgLogger().Warn("2PC wait scatter region failed", zap.Uint64("regionID", regionID), zap.Error(err))
 		}
 	}
+	// Invalidate the old region cache information.
+	store.regionCache.InvalidateCachedRegion(group.region)
 }
 
 func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPhaseCommitAction, groups []groupedMutations) error {
