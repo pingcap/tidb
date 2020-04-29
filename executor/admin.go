@@ -254,13 +254,13 @@ func (e *RecoverIndexExec) buildDAGPB(txn kv.Transaction, limitCnt uint64) (*tip
 	return dagReq, nil
 }
 
-func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transaction, t table.Table, startHandle int64, limitCnt uint64) (distsql.SelectResult, error) {
+func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transaction, t table.Table, startHandle kv.Handle, limitCnt uint64) (distsql.SelectResult, error) {
 	dagPB, err := e.buildDAGPB(txn, limitCnt)
 	if err != nil {
 		return nil, err
 	}
 	tblInfo := e.table.Meta()
-	ranges := []*ranger.Range{{LowVal: []types.Datum{types.NewIntDatum(startHandle)}, HighVal: []types.Datum{types.NewIntDatum(math.MaxInt64)}}}
+	ranges := []*ranger.Range{{LowVal: []types.Datum{types.NewIntDatum(startHandle.IntValue())}, HighVal: []types.Datum{types.NewIntDatum(math.MaxInt64)}}}
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetTableRanges(tblInfo.ID, ranges, nil).
 		SetDAGRequest(dagPB).
@@ -284,17 +284,17 @@ func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transactio
 }
 
 type backfillResult struct {
-	nextHandle   int64
+	nextHandle   kv.Handle
 	addedCount   int64
 	scanRowCount int64
 }
 
 func (e *RecoverIndexExec) backfillIndex(ctx context.Context) (int64, int64, error) {
 	var (
-		nextHandle    = int64(math.MinInt64)
-		totalAddedCnt = int64(0)
-		totalScanCnt  = int64(0)
-		lastLogCnt    = int64(0)
+		nextHandle    kv.Handle = kv.IntHandle(math.MinInt64)
+		totalAddedCnt           = int64(0)
+		totalScanCnt            = int64(0)
+		lastLogCnt              = int64(0)
 		result        backfillResult
 	)
 	for {
@@ -312,7 +312,7 @@ func (e *RecoverIndexExec) backfillIndex(ctx context.Context) (int64, int64, err
 			lastLogCnt = totalScanCnt
 			logutil.Logger(ctx).Info("recover index", zap.String("table", e.table.Meta().Name.O),
 				zap.String("index", e.index.Meta().Name.O), zap.Int64("totalAddedCnt", totalAddedCnt),
-				zap.Int64("totalScanCnt", totalScanCnt), zap.Int64("nextHandle", result.nextHandle))
+				zap.Int64("totalScanCnt", totalScanCnt), zap.Stringer("nextHandle", result.nextHandle))
 		}
 
 		// no more rows
@@ -325,7 +325,7 @@ func (e *RecoverIndexExec) backfillIndex(ctx context.Context) (int64, int64, err
 }
 
 type recoverRows struct {
-	handle  int64
+	handle  kv.Handle
 	idxVals []types.Datum
 	skip    bool
 }
@@ -349,12 +349,12 @@ func (e *RecoverIndexExec) fetchRecoverRows(ctx context.Context, srcResult dists
 			if result.scanRowCount >= int64(e.batchSize) {
 				return e.recoverRows, nil
 			}
-			handle := row.GetInt64(handleIdx)
+			handle := kv.IntHandle(row.GetInt64(handleIdx))
 			idxVals := extractIdxVals(row, e.idxValsBufs[result.scanRowCount], e.colFieldTypes)
 			e.idxValsBufs[result.scanRowCount] = idxVals
 			e.recoverRows = append(e.recoverRows, recoverRows{handle: handle, idxVals: idxVals, skip: false})
 			result.scanRowCount++
-			result.nextHandle = handle + 1
+			result.nextHandle = handle.Next()
 		}
 	}
 
@@ -369,7 +369,7 @@ func (e *RecoverIndexExec) batchMarkDup(txn kv.Transaction, rows []recoverRows) 
 	sc := e.ctx.GetSessionVars().StmtCtx
 	distinctFlags := make([]bool, len(rows))
 	for i, row := range rows {
-		idxKey, distinct, err := e.index.GenIndexKey(sc, row.idxVals, kv.IntHandle(row.handle), e.idxKeyBufs[i])
+		idxKey, distinct, err := e.index.GenIndexKey(sc, row.idxVals, row.handle, e.idxKeyBufs[i])
 		if err != nil {
 			return err
 		}
@@ -395,10 +395,10 @@ func (e *RecoverIndexExec) batchMarkDup(txn kv.Transaction, rows []recoverRows) 
 					return err1
 				}
 
-				if handle != rows[i].handle {
+				if handle != rows[i].handle.IntValue() {
 					logutil.BgLogger().Warn("recover index: the constraint of unique index is broken, handle in index is not equal to handle in table",
 						zap.String("index", e.index.Meta().Name.O), zap.ByteString("indexKey", key),
-						zap.Int64("handleInTable", rows[i].handle), zap.Int64("handleInIndex", handle))
+						zap.Stringer("handleInTable", rows[i].handle), zap.Int64("handleInIndex", handle))
 				}
 			}
 			rows[i].skip = true
@@ -407,7 +407,7 @@ func (e *RecoverIndexExec) batchMarkDup(txn kv.Transaction, rows []recoverRows) 
 	return nil
 }
 
-func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transaction, startHandle int64) (result backfillResult, err error) {
+func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transaction, startHandle kv.Handle) (result backfillResult, err error) {
 	result.nextHandle = startHandle
 	srcResult, err := e.buildTableScan(ctx, txn, e.table, startHandle, uint64(e.batchSize))
 	if err != nil {
@@ -432,13 +432,13 @@ func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transa
 			continue
 		}
 
-		recordKey := e.table.RecordKey(kv.IntHandle(row.handle))
+		recordKey := e.table.RecordKey(row.handle)
 		err := txn.LockKeys(ctx, new(kv.LockCtx), recordKey)
 		if err != nil {
 			return result, err
 		}
 
-		_, err = e.index.Create(e.ctx, txn, row.idxVals, kv.IntHandle(row.handle))
+		_, err = e.index.Create(e.ctx, txn, row.idxVals, row.handle)
 		if err != nil {
 			return result, err
 		}
