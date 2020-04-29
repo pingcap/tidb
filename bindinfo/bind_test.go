@@ -521,19 +521,6 @@ func (s *testSuite) TestCapturePlanBaseline(c *C) {
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][0], Equals, "select * from t where a > ?")
 	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `t` WHERE `a`>10")
-	s.cleanBindingEnv(tk)
-	stmtsummary.StmtSummaryByDigestMap.Clear()
-
-	// Capture plan baseline on invisible index.
-	tk.MustExec("create table t1(a int, unique (a) invisible)")
-	tk.MustExec("insert into t1 values (1), (2)")
-	tk.MustQuery("select a from t1 order by a").Check(testkit.Rows("1", "2"))
-	tk.MustQuery("select a from t1 order by a").Check(testkit.Rows("1", "2"))
-	tk.MustExec("admin capture bindings")
-	rows = tk.MustQuery("show global bindings").Rows()
-	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0][0], Equals, "select a from t1 order by a")
-	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t1` )*/ `a` FROM `t1` ORDER BY `a`")
 }
 
 func (s *testSuite) TestCaptureBaselinesDefaultDB(c *C) {
@@ -1108,4 +1095,36 @@ func (s *testSuite) TestReCreateBindAfterEvolvePlan(c *C) {
 	c.Assert(len(rows), Equals, 1)
 	tk.MustQuery("select * from t where a >= 4 and b >= 1")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_b")
+}
+
+func (s *testSuite) TestInvisibleIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, unique idx_a(a), index idx_b(b) invisible)")
+	tk.MustGetErrMsg(
+		"create global binding for select * from t using select * from t use index(idx_b) ",
+		"[planner:1176]Key 'idx_b' doesn't exist in table 't'")
+	tk.MustExec("create global binding for select * from t using select * from t use index(idx_a) ")
+
+	tk.MustQuery("select * from t")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_a")
+	c.Assert(tk.MustUseIndex("select * from t", "idx_a(a)"), IsTrue)
+
+	tk.MustExec(`prepare stmt1 from 'select * from t'`)
+	tk.MustExec("execute stmt1")
+	c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 1)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_a")
+
+	// TODO: Add these test
+	//tk.MustExec("alter table t alter index idx_a invisible")
+	//tk.MustQuery("select * from t where a > 3")
+	//c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_a")
+	//c.Assert(tk.MustUseIndex("select * from t where a > 3", "idx_a(a)"), IsTrue)
+	//
+	//tk.MustExec("execute stmt1")
+	//c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 0)
+
+	tk.MustExec("drop binding for select * from t")
 }

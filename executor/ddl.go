@@ -310,10 +310,7 @@ func (e *DDLExec) dropTableObject(objects []*ast.TableName, obt objectType, ifEx
 				zap.String("table", fullti.Name.O),
 			)
 			sql := fmt.Sprintf("admin check table `%s`.`%s`", fullti.Schema.O, fullti.Name.O)
-			orig := e.ctx.GetSessionVars().OptimizerUseInvisibleIndexes
-			e.ctx.GetSessionVars().OptimizerUseInvisibleIndexes = true
 			_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
-			e.ctx.GetSessionVars().OptimizerUseInvisibleIndexes = orig
 			if err != nil {
 				return err
 			}
