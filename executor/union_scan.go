@@ -17,7 +17,6 @@ import (
 	"context"
 	"sync"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
@@ -312,24 +311,4 @@ func (us *UnionScanExec) compare(a, b []types.Datum) (int, error) {
 		cmp = -1
 	}
 	return cmp, nil
-}
-
-// Len implements sort.Interface interface.
-func (us *UnionScanExec) Len() int {
-	return len(us.addedRows)
-}
-
-// Less implements sort.Interface interface.
-func (us *UnionScanExec) Less(i, j int) bool {
-	cmp, err := us.compare(us.addedRows[i], us.addedRows[j])
-	if err != nil {
-		us.sortErr = errors.Trace(err)
-		return true
-	}
-	return cmp < 0
-}
-
-// Swap implements sort.Interface interface.
-func (us *UnionScanExec) Swap(i, j int) {
-	us.addedRows[i], us.addedRows[j] = us.addedRows[j], us.addedRows[i]
 }
