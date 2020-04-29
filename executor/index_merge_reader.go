@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -348,8 +347,8 @@ func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan str
 }
 
 func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, handleOffset int) (
-	handles []int64, retChk *chunk.Chunk, err error) {
-	handles = make([]int64, 0, w.batchSize)
+	handles []kv.Handle, retChk *chunk.Chunk, err error) {
+	handles = make([]kv.Handle, 0, w.batchSize)
 	for len(handles) < w.batchSize {
 		chk.SetRequiredRows(w.batchSize-len(handles), w.maxChunkSize)
 		err = errors.Trace(w.tableReader.Next(ctx, chk))
@@ -360,7 +359,7 @@ func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 			return handles, retChk, nil
 		}
 		for i := 0; i < chk.NumRows(); i++ {
-			h := chk.GetRow(i).GetInt64(handleOffset)
+			h := kv.IntHandle(chk.GetRow(i).GetInt64(handleOffset))
 			handles = append(handles, h)
 		}
 	}
@@ -371,14 +370,10 @@ func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 	return handles, retChk, nil
 }
 
-func (w *partialTableWorker) buildTableTask(handles []int64, retChk *chunk.Chunk) *lookupTableTask {
-	var indexOrder map[int64]int
-	var duplicatedIndexOrder map[int64]int
+func (w *partialTableWorker) buildTableTask(handles []kv.Handle, retChk *chunk.Chunk) *lookupTableTask {
 	task := &lookupTableTask{
-		handles:              handles,
-		indexOrder:           indexOrder,
-		duplicatedIndexOrder: duplicatedIndexOrder,
-		idxRows:              retChk,
+		handles: handles,
+		idxRows: retChk,
 	}
 
 	task.doneCh = make(chan error, 1)
@@ -409,7 +404,7 @@ func (e *IndexMergeReaderExecutor) startIndexMergeTableScanWorker(ctx context.Co
 	}
 }
 
-func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, handles []int64) (Executor, error) {
+func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, handles []kv.Handle) (Executor, error) {
 	tableReaderExec := &TableReaderExecutor{
 		baseExecutor: newBaseExecutor(e.ctx, e.schema, stringutil.MemoizeStr(func() string { return e.id.String() + "_tableReader" })),
 		table:        e.table,
@@ -516,15 +511,15 @@ func (w *indexMergeProcessWorker) fetchLoop(ctx context.Context, fetchCh <-chan 
 		close(resultCh)
 	}()
 
-	distinctHandles := set.NewInt64Set()
+	distinctHandles := kv.NewHandleMap()
 
 	for task := range fetchCh {
 		handles := task.handles
-		fhs := make([]int64, 0, 8)
+		fhs := make([]kv.Handle, 0, 8)
 		for _, h := range handles {
-			if !distinctHandles.Exist(h) {
+			if _, ok := distinctHandles.Get(h); !ok {
 				fhs = append(fhs, h)
-				distinctHandles.Insert(h)
+				distinctHandles.Set(h, true)
 			}
 		}
 		if len(fhs) == 0 {
@@ -597,9 +592,9 @@ func (w *partialIndexWorker) fetchHandles(ctx context.Context, result distsql.Se
 }
 
 func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult) (
-	handles []int64, retChk *chunk.Chunk, err error) {
+	handles []kv.Handle, retChk *chunk.Chunk, err error) {
 	handleOffset := chk.NumCols() - 1
-	handles = make([]int64, 0, w.batchSize)
+	handles = make([]kv.Handle, 0, w.batchSize)
 	for len(handles) < w.batchSize {
 		chk.SetRequiredRows(w.batchSize-len(handles), w.maxChunkSize)
 		err = errors.Trace(idxResult.Next(ctx, chk))
@@ -610,7 +605,7 @@ func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 			return handles, retChk, nil
 		}
 		for i := 0; i < chk.NumRows(); i++ {
-			h := chk.GetRow(i).GetInt64(handleOffset)
+			h := kv.IntHandle(chk.GetRow(i).GetInt64(handleOffset))
 			handles = append(handles, h)
 		}
 	}
@@ -621,14 +616,10 @@ func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 	return handles, retChk, nil
 }
 
-func (w *partialIndexWorker) buildTableTask(handles []int64, retChk *chunk.Chunk) *lookupTableTask {
-	var indexOrder map[int64]int
-	var duplicatedIndexOrder map[int64]int
+func (w *partialIndexWorker) buildTableTask(handles []kv.Handle, retChk *chunk.Chunk) *lookupTableTask {
 	task := &lookupTableTask{
-		handles:              handles,
-		indexOrder:           indexOrder,
-		duplicatedIndexOrder: duplicatedIndexOrder,
-		idxRows:              retChk,
+		handles: handles,
+		idxRows: retChk,
 	}
 
 	task.doneCh = make(chan error, 1)
@@ -638,7 +629,7 @@ func (w *partialIndexWorker) buildTableTask(handles []int64, retChk *chunk.Chunk
 type indexMergeTableScanWorker struct {
 	workCh         <-chan *lookupTableTask
 	finished       <-chan struct{}
-	buildTblReader func(ctx context.Context, handles []int64) (Executor, error)
+	buildTblReader func(ctx context.Context, handles []kv.Handle) (Executor, error)
 	tblPlans       []plannercore.PhysicalPlan
 
 	// memTracker is used to track the memory usage of this executor.

@@ -465,13 +465,15 @@ func (e *Execute) rebuildRange(p Plan) error {
 		}
 	case *PointGetPlan:
 		if x.HandleParam != nil {
-			x.Handle, err = x.HandleParam.Datum.ToInt64(sc)
+			var iv int64
+			iv, err = x.HandleParam.Datum.ToInt64(sc)
 			if err != nil {
 				return err
 			}
+			x.Handle = kv.IntHandle(iv)
 			if x.PartitionInfo != nil {
 				num := x.TblInfo.Partition.Num
-				pos := math.Abs(x.Handle) % int64(num)
+				pos := math.Abs(iv) % int64(num)
 				x.PartitionInfo = &x.TblInfo.Partition.Definitions[pos]
 			}
 			return nil
@@ -490,10 +492,12 @@ func (e *Execute) rebuildRange(p Plan) error {
 	case *BatchPointGetPlan:
 		for i, param := range x.HandleParams {
 			if param != nil {
-				x.Handles[i], err = param.Datum.ToInt64(sc)
+				var iv int64
+				iv, err = param.Datum.ToInt64(sc)
 				if err != nil {
 					return err
 				}
+				x.Handles[i] = kv.IntHandle(iv)
 			}
 		}
 		for i, params := range x.IndexValueParams {
