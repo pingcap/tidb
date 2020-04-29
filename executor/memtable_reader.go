@@ -488,6 +488,8 @@ func (e *clusterLogRetriever) initialize(ctx context.Context, sctx sessionctx.Co
 		levels = append(levels, sysutil.ParseLogLevel(l))
 	}
 
+	// To avoid search log interface overload, the user should specify the time range, and at least one pattern
+	// in normally SQL.
 	if e.extractor.StartTime == 0 {
 		return nil, errors.New("denied to scan logs, please specified the start time, such as `time > '2020-01-01 00:00:00'`")
 	}
@@ -495,8 +497,6 @@ func (e *clusterLogRetriever) initialize(ctx context.Context, sctx sessionctx.Co
 		return nil, errors.New("denied to scan logs, please specified the end time, such as `time < '2020-01-01 00:00:00'`")
 	}
 	patterns := e.extractor.Patterns
-	// To avoid search log interface overload, the user should specify at least one pattern
-	// in normally SQL. (But in test mode we should relax this limitation)
 	if len(patterns) == 0 && len(levels) == 0 && len(instances) == 0 && len(nodeTypes) == 0 {
 		return nil, errors.New("denied to scan full logs (use `SELECT * FROM cluster_log WHERE message LIKE '%'` explicitly if intentionally)")
 	}
