@@ -634,9 +634,6 @@ func getEvalTp4FloorAndCeil(arg Expression) (retTp, argTp types.EvalType) {
 	retTp, argTp = types.ETInt, fieldTp.EvalType()
 	switch argTp {
 	case types.ETInt:
-		if fieldTp.Tp == mysql.TypeLonglong {
-			retTp = types.ETDecimal
-		}
 	case types.ETDecimal:
 		if fieldTp.Flen-fieldTp.Decimal > mysql.MaxIntWidth-2 { // len(math.MaxInt64) - 1
 			retTp = types.ETDecimal

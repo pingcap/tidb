@@ -1844,3 +1844,9 @@ func (s *testIntegrationSuite3) TestCommitWhenSchemaChange(c *C) {
 	tk.MustExec("admin check table schema_change")
 	tk.MustQuery("select * from schema_change").Check(testkit.Rows())
 }
+
+func (s *testIntegrationSuite3) TestIssue16935(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t2 (a int, b int) partition by hash (CEILING(a - b)) partitions 10;")
+}
