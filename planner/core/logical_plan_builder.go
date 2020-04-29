@@ -2631,9 +2631,6 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		if dbName == "" {
 			dbName = b.ctx.GetSessionVars().CurrentDB
 		}
-		if t.TableInfo.IsView() {
-			return nil, errors.Errorf("update view %s is not supported now.", t.Name.O)
-		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, t.Name.L, "", nil)
 	}
 
@@ -2828,8 +2825,12 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 	}
 
 	tblDbMap := make(map[string]string, len(tableList))
+	views := make(map[string]struct{}, len(tableList))
 	for _, tbl := range tableList {
 		tblDbMap[tbl.Name.L] = tbl.DBInfo.Name.L
+		if tbl.TableInfo.IsView() {
+			views[tbl.DBInfo.Name.L+"."+tbl.Name.L] = struct{}{}
+		}
 	}
 	for _, assign := range newList {
 		col := assign.Col
@@ -2838,6 +2839,9 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 		// To solve issue#10028, we need to get database name by the table alias name.
 		if dbNameTmp, ok := tblDbMap[col.TblName.L]; ok {
 			dbName = dbNameTmp
+		}
+		if _, ok := views[dbName+"."+col.TblName.L]; ok {
+			return nil, nil, errors.Errorf("update view %s is not supported now.", col.TblName.O)
 		}
 		if dbName == "" {
 			dbName = b.ctx.GetSessionVars().CurrentDB
