@@ -573,14 +573,6 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
 		{
 			conditions: []string{
 				"time>='2019/08/26 06:18:13.011'",
-				"time<='2019/08/26 06:28:19.011'",
-				"message like '%'",
-			},
-			expected: fullLogs,
-		},
-		{
-			conditions: []string{
-				"time>='2019/08/26 06:18:13.011'",
 				"time<='2099/08/26 06:28:19.011'",
 				"message like '%'",
 			},
