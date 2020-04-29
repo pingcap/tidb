@@ -48,7 +48,7 @@ type PointGetPlan struct {
 	TblInfo            *model.TableInfo
 	IndexInfo          *model.IndexInfo
 	PartitionInfo      *model.PartitionDefinition
-	Handle             int64
+	Handle             kv.Handle
 	HandleParam        *driver.ParamMarkerExpr
 	IndexValues        []types.Datum
 	IndexValueParams   []*driver.ParamMarkerExpr
@@ -140,9 +140,9 @@ func (p *PointGetPlan) OperatorInfo(normalized bool) string {
 			fmt.Fprintf(buffer, "handle:?, ")
 		} else {
 			if p.UnsignedHandle {
-				fmt.Fprintf(buffer, "handle:%d, ", uint64(p.Handle))
+				fmt.Fprintf(buffer, "handle:%d, ", uint64(p.Handle.IntValue()))
 			} else {
-				fmt.Fprintf(buffer, "handle:%d, ", p.Handle)
+				fmt.Fprintf(buffer, "handle:%s, ", p.Handle)
 			}
 		}
 	}
@@ -225,7 +225,7 @@ type BatchPointGetPlan struct {
 	dbName           string
 	TblInfo          *model.TableInfo
 	IndexInfo        *model.IndexInfo
-	Handles          []int64
+	Handles          []kv.Handle
 	HandleParams     []*driver.ParamMarkerExpr
 	IndexValues      [][]types.Datum
 	IndexValueParams [][]*driver.ParamMarkerExpr
@@ -421,7 +421,7 @@ func newBatchPointGetPlan(
 		return nil
 	}
 	if handleCol != nil {
-		var handles = make([]int64, len(patternInExpr.List))
+		var handles = make([]kv.Handle, len(patternInExpr.List))
 		var handleParams = make([]*driver.ParamMarkerExpr, len(patternInExpr.List))
 		for i, item := range patternInExpr.List {
 			// SELECT * FROM t WHERE (key) in ((1), (2))
@@ -451,7 +451,7 @@ func newBatchPointGetPlan(
 			if err != nil || cmp != 0 {
 				return nil
 			}
-			handles[i] = intDatum.GetInt64()
+			handles[i] = kv.IntHandle(intDatum.GetInt64())
 			handleParams[i] = param
 		}
 		return BatchPointGetPlan{
@@ -699,7 +699,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		}
 
 		p := newPointGetPlan(ctx, dbName, schema, tbl, names)
-		p.Handle = handlePair.value.GetInt64()
+		p.Handle = kv.IntHandle(handlePair.value.GetInt64())
 		p.UnsignedHandle = mysql.HasUnsignedFlag(fieldType.Flag)
 		p.HandleParam = handlePair.param
 		p.PartitionInfo = partitionInfo
