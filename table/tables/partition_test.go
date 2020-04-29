@@ -84,10 +84,10 @@ PARTITION BY RANGE ( id ) (
 	// Check that add record writes to the partition, rather than the table.
 	txn, err := ts.se.Txn(true)
 	c.Assert(err, IsNil)
-	val, err := txn.Get(context.TODO(), tables.PartitionRecordKey(p0.ID, rid))
+	val, err := txn.Get(context.TODO(), tables.PartitionRecordKey(p0.ID, rid.IntValue()))
 	c.Assert(err, IsNil)
 	c.Assert(len(val), Greater, 0)
-	_, err = txn.Get(context.TODO(), tables.PartitionRecordKey(tbInfo.ID, rid))
+	_, err = txn.Get(context.TODO(), tables.PartitionRecordKey(tbInfo.ID, rid.IntValue()))
 	c.Assert(kv.ErrNotExist.Equal(err), IsTrue)
 
 	// Cover more code.
@@ -175,10 +175,10 @@ func (ts *testSuite) TestHashPartitionAddRecord(c *C) {
 	// Check that add record writes to the partition, rather than the table.
 	txn, err := ts.se.Txn(true)
 	c.Assert(err, IsNil)
-	val, err := txn.Get(context.TODO(), tables.PartitionRecordKey(p0.ID, rid))
+	val, err := txn.Get(context.TODO(), tables.PartitionRecordKey(p0.ID, rid.IntValue()))
 	c.Assert(err, IsNil)
 	c.Assert(len(val), Greater, 0)
-	_, err = txn.Get(context.TODO(), tables.PartitionRecordKey(tbInfo.ID, rid))
+	_, err = txn.Get(context.TODO(), tables.PartitionRecordKey(tbInfo.ID, rid.IntValue()))
 	c.Assert(kv.ErrNotExist.Equal(err), IsTrue)
 
 	// Cover more code.
@@ -211,10 +211,10 @@ func (ts *testSuite) TestHashPartitionAddRecord(c *C) {
 		c.Assert(err, IsNil)
 		txn, err = ts.se.Txn(true)
 		c.Assert(err, IsNil)
-		val, err = txn.Get(context.TODO(), tables.PartitionRecordKey(tbInfo.Partition.Definitions[i].ID, rid))
+		val, err = txn.Get(context.TODO(), tables.PartitionRecordKey(tbInfo.Partition.Definitions[i].ID, rid.IntValue()))
 		c.Assert(err, IsNil)
 		c.Assert(len(val), Greater, 0)
-		_, err = txn.Get(context.TODO(), tables.PartitionRecordKey(tbInfo.ID, rid))
+		_, err = txn.Get(context.TODO(), tables.PartitionRecordKey(tbInfo.ID, rid.IntValue()))
 		c.Assert(kv.ErrNotExist.Equal(err), IsTrue)
 	}
 	_, err = ts.se.Execute(context.Background(), "drop table if exists t1, t2;")
@@ -299,7 +299,7 @@ func (ts *testSuite) TestTimeZoneChange(c *C) {
 	tk.MustExec("use test")
 	createTable := `CREATE TABLE timezone_test (
 	id int(11) NOT NULL,
-	creation_dt timestamp DEFAULT CURRENT_TIMESTAMP ) PARTITION BY RANGE ( unix_timestamp(creation_dt) )
+	creation_dt timestamp DEFAULT CURRENT_TIMESTAMP ) PARTITION BY RANGE ( ` + "UNIX_TIMESTAMP(`creation_dt`)" + ` )
 ( PARTITION p5 VALUES LESS THAN ( UNIX_TIMESTAMP('2020-01-03 15:10:00') ),
 	PARTITION p6 VALUES LESS THAN ( UNIX_TIMESTAMP('2020-01-03 15:15:00') ),
 	PARTITION p7 VALUES LESS THAN ( UNIX_TIMESTAMP('2020-01-03 15:20:00') ),
@@ -311,7 +311,7 @@ func (ts *testSuite) TestTimeZoneChange(c *C) {
 		"  `id` int(11) NOT NULL,\n" +
 		"  `creation_dt` timestamp DEFAULT CURRENT_TIMESTAMP\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-		"PARTITION BY RANGE ( unix_timestamp(`creation_dt`) ) (\n" +
+		"PARTITION BY RANGE ( UNIX_TIMESTAMP(`creation_dt`) ) (\n" +
 		"  PARTITION `p5` VALUES LESS THAN (1578035400),\n" +
 		"  PARTITION `p6` VALUES LESS THAN (1578035700),\n" +
 		"  PARTITION `p7` VALUES LESS THAN (1578036000),\n" +
@@ -326,7 +326,7 @@ func (ts *testSuite) TestTimeZoneChange(c *C) {
 		"  `id` int(11) NOT NULL,\n" +
 		"  `creation_dt` timestamp DEFAULT CURRENT_TIMESTAMP\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-		"PARTITION BY RANGE ( unix_timestamp(`creation_dt`) ) (\n" +
+		"PARTITION BY RANGE ( UNIX_TIMESTAMP(`creation_dt`) ) (\n" +
 		"  PARTITION `p5` VALUES LESS THAN (1578064200),\n" +
 		"  PARTITION `p6` VALUES LESS THAN (1578064500),\n" +
 		"  PARTITION `p7` VALUES LESS THAN (1578064800),\n" +

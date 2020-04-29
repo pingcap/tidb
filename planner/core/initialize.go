@@ -126,9 +126,10 @@ func (p PhysicalSort) Init(ctx sessionctx.Context, stats *property.StatsInfo, of
 }
 
 // Init initializes NominalSort.
-func (p NominalSort) Init(ctx sessionctx.Context, offset int, props ...*property.PhysicalProperty) *NominalSort {
+func (p NominalSort) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *NominalSort {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeSort, &p, offset)
 	p.childrenReqProps = props
+	p.stats = stats
 	return &p
 }
 
@@ -376,8 +377,8 @@ func (p PhysicalIndexMergeReader) Init(ctx sessionctx.Context, offset int) *Phys
 		for _, partPlan := range p.partialPlans {
 			totalRowCount += partPlan.StatsCount()
 		}
-		p.stats.StatsVersion = p.partialPlans[0].statsInfo().StatsVersion
 		p.stats = p.partialPlans[0].statsInfo().ScaleByExpectCnt(totalRowCount)
+		p.stats.StatsVersion = p.partialPlans[0].statsInfo().StatsVersion
 	}
 	p.PartialPlans = make([][]PhysicalPlan, 0, len(p.partialPlans))
 	for _, partialPlan := range p.partialPlans {

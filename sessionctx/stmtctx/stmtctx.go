@@ -143,6 +143,7 @@ type StatementContext struct {
 	PessimisticLockWaited int32
 	LockKeysDuration      time.Duration
 	LockKeysCount         int32
+	TblInfo2UnionScan     map[*model.TableInfo]bool
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -457,6 +458,7 @@ func (sc *StatementContext) ResetForRetry() {
 func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, commitDetails *execdetails.CommitDetails) {
 	sc.mu.Lock()
 	if details != nil {
+		sc.mu.execDetails.CopTime += details.CopTime
 		sc.mu.execDetails.ProcessTime += details.ProcessTime
 		sc.mu.execDetails.WaitTime += details.WaitTime
 		sc.mu.execDetails.BackoffTime += details.BackoffTime

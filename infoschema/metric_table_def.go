@@ -387,13 +387,13 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels:  []string{"instance", "type"},
 		Comment: "The total count of pd client command fail",
 	},
-	"pd_handle_request_ops": {
+	"pd_request_rpc_ops": {
 		PromQL:  "sum(rate(pd_client_request_handle_requests_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION]))",
 		Labels:  []string{"instance", "type"},
-		Comment: "pd handle request operation per second",
+		Comment: "pd client handle request operation per second",
 	},
-	"pd_handle_request_duration": {
-		Comment:  "The quantile of pd handle request duration(second)",
+	"pd_request_rpc_duration": {
+		Comment:  "The quantile of pd client handle request duration(second)",
 		PromQL:   "histogram_quantile($QUANTILE, sum(rate(pd_client_request_handle_requests_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,type,instance))",
 		Labels:   []string{"instance", "type"},
 		Quantile: 0.999,
@@ -839,7 +839,7 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels:  []string{"instance", "type"},
 		Comment: "The current term of Raft",
 	},
-	"pd_handle_request_duration_avg": {
+	"pd_request_rpc_duration_avg": {
 		PromQL: `avg(rate(pd_client_request_handle_requests_duration_seconds_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type) / avg(rate(pd_client_request_handle_requests_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type)`,
 		Labels: []string{"type"},
 	},
@@ -2030,10 +2030,14 @@ var MetricTableMap = map[string]MetricTableDef{
 		PromQL: `node_memory_MemAvailable_bytes{$LABEL_CONDITIONS}`,
 		Labels: []string{"instance"},
 	},
-	"node_total_memory_swap": {
-		PromQL:  `node_memory_SwapTotal_bytes{$LABEL_CONDITIONS}`,
+	"node_memory_usage": {
+		PromQL: `100* (1-(node_memory_MemAvailable_bytes{$LABEL_CONDITIONS}/node_memory_MemTotal_bytes{$LABEL_CONDITIONS}))`,
+		Labels: []string{"instance"},
+	},
+	"node_memory_swap_used": {
+		PromQL:  `node_memory_SwapTotal_bytes{$LABEL_CONDITIONS} - node_memory_SwapFree_bytes{$LABEL_CONDITIONS}`,
 		Labels:  []string{"instance"},
-		Comment: "node total memory swap",
+		Comment: "bytes used of node swap memory",
 	},
 	"node_uptime": {
 		PromQL:  `node_time_seconds{$LABEL_CONDITIONS} - node_boot_time_seconds{$LABEL_CONDITIONS}`,
@@ -2146,7 +2150,7 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels:  []string{"instance", "device"},
 		Comment: "Units is byte",
 	},
-	"node_filesystem_space_used": {
+	"node_disk_usage": {
 		PromQL:  `((node_filesystem_size_bytes{$LABEL_CONDITIONS} - node_filesystem_avail_bytes{$LABEL_CONDITIONS}) / node_filesystem_size_bytes{$LABEL_CONDITIONS}) * 100`,
 		Labels:  []string{"instance", "device"},
 		Comment: "Filesystem used space. If is > 80% then is Critical.",
@@ -2259,15 +2263,15 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels:  []string{"instance", "grpc_method"},
 		Comment: "The total time of completing each kind of gRPC commands",
 	},
-	"pd_handle_request_total_count": {
+	"pd_request_rpc_total_count": {
 		PromQL:  "sum(increase(pd_client_request_handle_requests_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,type)",
 		Labels:  []string{"instance", "type"},
-		Comment: "The total count of pd handle request duration(second)",
+		Comment: "The total count of pd client handle request duration(second)",
 	},
-	"pd_handle_request_total_time": {
+	"pd_request_rpc_total_time": {
 		PromQL:  "sum(increase(pd_client_request_handle_requests_duration_seconds_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,type)",
 		Labels:  []string{"instance", "type"},
-		Comment: "The total time of pd handle request duration(second)",
+		Comment: "The total time of pd client handle request duration(second)",
 	},
 	"pd_handle_transactions_total_count": {
 		PromQL:  "sum(increase(pd_txn_handle_txns_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,result)",
@@ -2330,22 +2334,22 @@ var MetricTableMap = map[string]MetricTableDef{
 		Comment: "The total time of duration of the waiting time for getting the start timestamp oracle",
 	},
 	"pd_tso_rpc_total_count": {
-		PromQL:  "sum(increase(pd_client_request_handle_requests_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)",
+		PromQL:  "sum(increase(pd_client_request_handle_requests_duration_seconds_count{type=\"tso\"}[$RANGE_DURATION])) by (instance)",
 		Labels:  []string{"instance"},
 		Comment: "The total count of a client sending TSO request until received the response.",
 	},
 	"pd_tso_rpc_total_time": {
-		PromQL:  "sum(increase(pd_client_request_handle_requests_duration_seconds_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)",
+		PromQL:  "sum(increase(pd_client_request_handle_requests_duration_seconds_sum{type=\"tso\"}[$RANGE_DURATION])) by (instance)",
 		Labels:  []string{"instance"},
 		Comment: "The total time of a client sending TSO request until received the response.",
 	},
 	"pd_tso_wait_total_count": {
-		PromQL:  "sum(increase(pd_client_cmd_handle_cmds_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)",
+		PromQL:  "sum(increase(pd_client_cmd_handle_cmds_duration_seconds_count{type=\"wait\"}[$RANGE_DURATION])) by (instance)",
 		Labels:  []string{"instance"},
 		Comment: "The total count of a client starting to wait for the TS until received the TS result.",
 	},
 	"pd_tso_wait_total_time": {
-		PromQL:  "sum(increase(pd_client_cmd_handle_cmds_duration_seconds_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)",
+		PromQL:  "sum(increase(pd_client_cmd_handle_cmds_duration_seconds_sum{type=\"wait\"}[$RANGE_DURATION])) by (instance)",
 		Labels:  []string{"instance"},
 		Comment: "The total time of a client starting to wait for the TS until received the TS result.",
 	},

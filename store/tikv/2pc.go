@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
@@ -49,7 +50,7 @@ type twoPhaseCommitAction interface {
 }
 
 type actionPrewrite struct{}
-type actionCommit struct{}
+type actionCommit struct{ retry bool }
 type actionCleanup struct{}
 type actionPessimisticLock struct {
 	*kv.LockCtx
@@ -462,7 +463,7 @@ func (c *twoPhaseCommitter) doActionOnMutations(bo *Backoffer, action twoPhaseCo
 		firstIsPrimary = true
 	}
 
-	_, actionIsCommit := action.(actionCommit)
+	actionCommit, actionIsCommit := action.(actionCommit)
 	_, actionIsCleanup := action.(actionCleanup)
 	_, actionIsPessimiticLock := action.(actionPessimisticLock)
 
@@ -498,7 +499,7 @@ func (c *twoPhaseCommitter) doActionOnMutations(bo *Backoffer, action twoPhaseCo
 		}
 		batches = batches[1:]
 	}
-	if actionIsCommit {
+	if actionIsCommit && !actionCommit.retry {
 		// Commit secondary batches in background goroutine to reduce latency.
 		// The backoffer instance is created outside of the goroutine to avoid
 		// potential data race in unit test since `CommitMaxBackoff` will be updated
@@ -526,24 +527,33 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 		return nil
 	}
 
-	if len(batches) == 1 {
-		e := action.handleSingleBatch(c, bo, batches[0])
-		if e != nil {
-			logutil.BgLogger().Debug("2PC doActionOnBatches failed",
-				zap.Uint64("conn", c.connID),
-				zap.Stringer("action type", action),
-				zap.Error(e),
-				zap.Uint64("txnStartTS", c.startTS))
+	noNeedFork := len(batches) == 1
+	if !noNeedFork {
+		if ac, ok := action.(actionCommit); ok && ac.retry {
+			noNeedFork = true
 		}
-		return errors.Trace(e)
+	}
+	if noNeedFork {
+		for _, b := range batches {
+			e := action.handleSingleBatch(c, bo, b)
+			if e != nil {
+				logutil.BgLogger().Debug("2PC doActionOnBatches failed",
+					zap.Uint64("conn", c.connID),
+					zap.Stringer("action type", action),
+					zap.Error(e),
+					zap.Uint64("txnStartTS", c.startTS))
+				return errors.Trace(e)
+			}
+		}
+		return nil
 	}
 	rateLim := len(batches)
 	// Set rateLim here for the large transaction.
 	// If the rate limit is too high, tikv will report service is busy.
 	// If the rate limit is too low, we can't full utilize the tikv's throughput.
 	// TODO: Find a self-adaptive way to control the rate limit here.
-	if rateLim > 16 {
-		rateLim = 16
+	if rateLim > config.GetGlobalConfig().Performance.CommitterConcurrency {
+		rateLim = config.GetGlobalConfig().Performance.CommitterConcurrency
 	}
 	batchExecutor := newBatchExecutor(rateLim, c, action, bo)
 	err := batchExecutor.process(batches)
@@ -729,12 +739,13 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 			}
 
 			uptime := uint64(oracle.ExtractPhysical(now) - oracle.ExtractPhysical(c.startTS))
-			const c10min = 10 * 60 * 1000
-			if uptime > c10min {
-				// Set a 10min maximum lifetime for the ttlManager, so when something goes wrong
+			if uptime > config.GetGlobalConfig().Performance.MaxTxnTTL {
+				// Checks maximum lifetime for the ttlManager, so when something goes wrong
 				// the key will not be locked forever.
 				logutil.Logger(bo.ctx).Info("ttlManager live up to its lifetime",
-					zap.Uint64("txnStartTS", c.startTS))
+					zap.Uint64("txnStartTS", c.startTS),
+					zap.Uint64("uptime", uptime),
+					zap.Uint64("maxTxnTTL", config.GetGlobalConfig().Performance.MaxTxnTTL))
 				metrics.TiKVTTLLifeTimeReachCounter.Inc()
 				// the pessimistic locks may expire if the ttl manager has timed out, set `LockExpired` flag
 				// so that this transaction could only commit or rollback with no more statement executions
@@ -996,7 +1007,7 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 			return errors.Trace(err)
 		}
 		// re-split keys and commit again.
-		err = c.commitMutations(bo, batch.mutations)
+		err = c.doActionOnMutations(bo, actionCommit{retry: true}, batch.mutations)
 		return errors.Trace(err)
 	}
 	if resp.Resp == nil {
@@ -1408,7 +1419,7 @@ func (c *twoPhaseCommitter) appendBatchMutationsBySize(b []batchMutations, regio
 func newBatchExecutor(rateLimit int, committer *twoPhaseCommitter,
 	action twoPhaseCommitAction, backoffer *Backoffer) *batchExecutor {
 	return &batchExecutor{rateLimit, nil, committer,
-		action, backoffer, time.Duration(1 * time.Millisecond)}
+		action, backoffer, 1 * time.Millisecond}
 }
 
 // initUtils do initialize batchExecutor related policies like rateLimit util

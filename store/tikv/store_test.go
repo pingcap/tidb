@@ -203,6 +203,10 @@ func (c *mockPDClient) UpdateGCSafePoint(ctx context.Context, safePoint uint64) 
 	panic("unimplemented")
 }
 
+func (c *mockPDClient) UpdateServiceGCSafePoint(ctx context.Context, serviceID string, ttl int64, safePoint uint64) (uint64, error) {
+	panic("unimplemented")
+}
+
 func (c *mockPDClient) Close() {}
 
 func (c *mockPDClient) ScatterRegion(ctx context.Context, regionID uint64) error {
@@ -224,8 +228,10 @@ func (c *checkRequestClient) SendRequest(ctx context.Context, addr string, req *
 	resp, err := c.Client.SendRequest(ctx, addr, req, timeout)
 	if c.priority != req.Priority {
 		if resp.Resp != nil {
-			(resp.Resp.(*pb.GetResponse)).Error = &pb.KeyError{
-				Abort: "request check error",
+			if getResp, ok := resp.Resp.(*pb.GetResponse); ok {
+				getResp.Error = &pb.KeyError{
+					Abort: "request check error",
+				}
 			}
 		}
 	}
@@ -276,15 +282,16 @@ func (s *testStoreSuite) TestRequestPriority(c *C) {
 
 func (s *testStoreSuite) TestOracleChangeByFailpoint(c *C) {
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/oracle/changeTSFromPD"), IsNil)
+		failpoint.Disable("github.com/pingcap/tidb/store/tikv/oracle/changeTSFromPD")
 	}()
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/oracle/changeTSFromPD",
-		"1*return(10000)"), IsNil)
+		"return(10000)"), IsNil)
 	o := &mockoracle.MockOracle{}
 	s.store.oracle = o
 	ctx := context.Background()
 	t1, err := s.store.getTimestampWithRetry(NewBackoffer(ctx, 100))
 	c.Assert(err, IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/oracle/changeTSFromPD"), IsNil)
 	t2, err := s.store.getTimestampWithRetry(NewBackoffer(ctx, 100))
 	c.Assert(err, IsNil)
 	c.Assert(t1, Greater, t2)

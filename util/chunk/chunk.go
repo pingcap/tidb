@@ -350,7 +350,7 @@ func (c *Chunk) GetRow(idx int) Row {
 		//	logical 2 -> physical 6.
 		// Then when we iterate this Chunk according to Row, only selected rows will be
 		// accessed while all filtered rows will be ignored.
-		return Row{c: c, idx: int(c.sel[idx])}
+		return Row{c: c, idx: c.sel[idx]}
 	}
 	return Row{c: c, idx: idx}
 }

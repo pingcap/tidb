@@ -346,6 +346,11 @@ func (s *testSuiteAgg) TestAggregation(c *C) {
 	tk.MustQuery("select group_concat(a), group_concat(distinct a) from t").Check(testkit.Rows("<nil> <nil>"))
 	tk.MustExec("insert into t value(1, null), (null, 1), (1, 2), (3, 4)")
 	tk.MustQuery("select group_concat(a, b), group_concat(distinct a,b) from t").Check(testkit.Rows("12,34 12,34"))
+	tk.MustExec("set @@session.tidb_opt_distinct_agg_push_down = 0")
+	tk.MustQuery("select count(distinct a) from t;").Check(testkit.Rows("2"))
+	tk.MustExec("set @@session.tidb_opt_distinct_agg_push_down = 1")
+	tk.MustQuery("select count(distinct a) from t;").Check(testkit.Rows("2"))
+	tk.MustExec("set @@session.tidb_opt_distinct_agg_push_down = 0")
 
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t(a decimal(10, 4))")
@@ -614,6 +619,17 @@ func (s *testSuiteAgg) TestOnlyFullGroupBy(c *C) {
 	// test ambiguous column
 	err = tk.ExecToErr("select c from t,x group by t.c")
 	c.Assert(terror.ErrorEqual(err, plannercore.ErrAmbiguous), IsTrue, Commentf("err %v", err))
+}
+
+func (s *testSuiteAgg) TestIssue16279(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set sql_mode = 'ONLY_FULL_GROUP_BY'")
+	tk.MustExec("drop table if exists s")
+	tk.MustExec("create table s(a int);")
+	tk.MustQuery("select count(a) , date_format(a, '%Y-%m-%d') from s group by date_format(a, '%Y-%m-%d');")
+	tk.MustQuery("select count(a) , date_format(a, '%Y-%m-%d') as xx from s group by date_format(a, '%Y-%m-%d');")
+	tk.MustQuery("select count(a) , date_format(a, '%Y-%m-%d') as xx from s group by xx")
 }
 
 func (s *testSuiteAgg) TestIssue13652(c *C) {
