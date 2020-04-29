@@ -196,7 +196,7 @@ func (s *testPessimisticSuite) TestSingleStatementRollback(c *C) {
 	tk.MustExec("create table single_statement (id int primary key, v int)")
 	tk.MustExec("insert into single_statement values (1, 1), (2, 1), (3, 1), (4, 1)")
 	tblID := tk.GetTableID("single_statement")
-	s.cluster.SplitTable(s.mvccStore, tblID, 2)
+	s.cluster.SplitTable(tblID, 2)
 	region1Key := codec.EncodeBytes(nil, tablecodec.EncodeRowKeyWithHandle(tblID, kv.IntHandle(1)))
 	region1, _ := s.cluster.GetRegionByKey(region1Key)
 	region1ID := region1.Id
