@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -28,11 +29,15 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	pd "github.com/pingcap/pd/v4/client"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/prometheus/client_golang/prometheus"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
+	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -56,6 +61,9 @@ var (
 	tikvRegionCacheCounterWithGetStoreOK                  = metrics.TiKVRegionCacheCounter.WithLabelValues("get_store", "ok")
 	tikvRegionCacheCounterWithGetStoreError               = metrics.TiKVRegionCacheCounter.WithLabelValues("get_store", "err")
 	tikvRegionCacheCounterWithInvalidateStoreRegionsOK    = metrics.TiKVRegionCacheCounter.WithLabelValues("invalidate_store_regions", "ok")
+
+	tikvStatusCountWithOK    = metrics.TiKVStatusCounter.WithLabelValues("ok")
+	tikvStatusCountWithError = metrics.TiKVStatusCounter.WithLabelValues("err")
 )
 
 const (
@@ -492,11 +500,32 @@ func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload 
 	tikvRegionCacheCounterWithSendFail.Inc()
 	r := c.getCachedRegionWithRLock(ctx.Region)
 	if r != nil {
-		if ctx.Store.storeType == kv.TiKV {
-			c.switchNextPeer(r, ctx.PeerIdx, err)
-		} else {
-			c.switchNextFlashPeer(r, ctx.PeerIdx, err)
+		rs := r.getStore()
+		s := rs.stores[ctx.PeerIdx]
+
+		// send fail but store is reachable, keep retry current peer.
+		if s.requestLiveness(bo) == reachable {
+			return
 		}
+
+		// invalidate regions in store.
+		epoch := rs.storeFails[ctx.PeerIdx]
+		if atomic.CompareAndSwapUint32(&s.fail, epoch, epoch+1) {
+			logutil.BgLogger().Info("mark store's regions need be refill", zap.String("store", s.addr))
+			tikvRegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
+		}
+
+		// schedule a store addr resolve.
+		s.markNeedCheck(c.notifyCheckCh)
+
+		// try next peer to found new leader.
+		if ctx.Store.storeType == kv.TiKV {
+			rs.switchNextPeer(r, ctx.PeerIdx)
+		} else {
+			rs.switchNextFlashPeer(r, ctx.PeerIdx)
+		}
+
+		// force reload region when retry all known peers in region.
 		if scheduleReload {
 			r.scheduleReload()
 		}
@@ -705,7 +734,8 @@ func (c *RegionCache) UpdateLeader(regionID RegionVerID, leaderStoreID uint64, c
 	}
 
 	if leaderStoreID == 0 {
-		c.switchNextPeer(r, currentPeerIdx, nil)
+		rs := r.getStore()
+		rs.switchNextPeer(r, currentPeerIdx)
 		logutil.BgLogger().Info("switch region peer to next due to NotLeader with NULL leader",
 			zap.Int("currIdx", currentPeerIdx),
 			zap.Uint64("regionID", regionID.GetID()))
@@ -1169,38 +1199,14 @@ func (c *RegionCache) switchToPeer(r *Region, targetStoreID uint64) (found bool)
 	return
 }
 
-func (c *RegionCache) switchNextFlashPeer(r *Region, currentPeerIdx int, err error) {
-	rs := r.getStore()
-
-	if err != nil { // TODO: refine err, only do this for some errors.
-		s := rs.stores[currentPeerIdx]
-		epoch := rs.storeFails[currentPeerIdx]
-		if atomic.CompareAndSwapUint32(&s.fail, epoch, epoch+1) {
-			logutil.BgLogger().Info("mark store's regions need be refill", zap.String("store", s.addr))
-			tikvRegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
-		}
-		s.markNeedCheck(c.notifyCheckCh)
-	}
-
+func (rs *RegionStore) switchNextFlashPeer(r *Region, currentPeerIdx int) {
 	nextIdx := (currentPeerIdx + 1) % len(rs.stores)
 	newRegionStore := rs.clone()
 	newRegionStore.workTiFlashIdx = int32(nextIdx)
 	r.compareAndSwapStore(rs, newRegionStore)
 }
 
-func (c *RegionCache) switchNextPeer(r *Region, currentPeerIdx int, err error) {
-	rs := r.getStore()
-
-	if err != nil { // TODO: refine err, only do this for some errors.
-		s := rs.stores[currentPeerIdx]
-		epoch := rs.storeFails[currentPeerIdx]
-		if atomic.CompareAndSwapUint32(&s.fail, epoch, epoch+1) {
-			logutil.BgLogger().Info("mark store's regions need be refill", zap.String("store", s.addr))
-			tikvRegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
-		}
-		s.markNeedCheck(c.notifyCheckCh)
-	}
-
+func (rs *RegionStore) switchNextPeer(r *Region, currentPeerIdx int) {
 	if int(rs.workTiKVIdx) != currentPeerIdx {
 		return
 	}
@@ -1260,6 +1266,7 @@ func (r *Region) ContainsByEnd(key []byte) bool {
 // Store contains a kv process's address.
 type Store struct {
 	addr         string        // loaded store address
+	saddr        string        // loaded store status address
 	storeID      uint64        // store's id
 	state        uint64        // unsafe store storeState
 	resolveMutex sync.Mutex    // protect pd from concurrent init requests
@@ -1310,6 +1317,7 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 		}
 		addr = store.GetAddress()
 		s.addr = addr
+		s.saddr = store.GetStatusAddress()
 		s.storeType = GetStoreTypeByMeta(store)
 	retry:
 		state = s.getResolveState()
@@ -1365,7 +1373,7 @@ func (s *Store) reResolve(c *RegionCache) {
 	addr = store.GetAddress()
 	if s.addr != addr {
 		state := resolved
-		newStore := &Store{storeID: s.storeID, addr: addr, storeType: storeType}
+		newStore := &Store{storeID: s.storeID, addr: addr, saddr: store.GetStatusAddress(), storeType: storeType}
 		newStore.state = *(*uint64)(&state)
 		c.storeMu.Lock()
 		c.storeMu.stores[newStore.storeID] = newStore
@@ -1420,4 +1428,88 @@ retry:
 	default:
 	}
 
+}
+
+type livenessState uint32
+
+var livenessSf singleflight.Group
+
+const (
+	unknown livenessState = iota
+	reachable
+	unreachable
+	offline
+)
+
+func (s *Store) requestLiveness(bo *Backoffer) (l livenessState) {
+	saddr := s.saddr
+	if len(saddr) == 0 {
+		l = unknown
+		return
+	}
+	rsCh := livenessSf.DoChan(saddr, func() (interface{}, error) {
+		return invokeKVStatusAPI(saddr, time.Duration(config.GetGlobalConfig().TiKVClient.StoreLivenessTimeout)*time.Second), nil
+	})
+	var ctx context.Context
+	if bo != nil {
+		ctx = bo.ctx
+	} else {
+		ctx = context.Background()
+	}
+	select {
+	case rs := <-rsCh:
+		l = rs.Val.(livenessState)
+	case <-ctx.Done():
+		l = unknown
+		return
+	}
+	return
+}
+
+var kvStatusDurationCache sync.Map
+
+func invokeKVStatusAPI(saddr string, timeout time.Duration) (l livenessState) {
+	start := time.Now()
+	defer func() {
+		if l == reachable {
+			tikvStatusCountWithOK.Inc()
+		} else {
+			tikvStatusCountWithError.Inc()
+		}
+
+		v, ok := kvStatusDurationCache.Load(saddr)
+		if !ok {
+			v = metrics.TiKVStatusDuration.WithLabelValues(saddr)
+			kvStatusDurationCache.Store(saddr, v)
+		}
+		v.(prometheus.Observer).Observe(time.Since(start).Seconds())
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	url := fmt.Sprintf("%s://%s/status", util.InternalHTTPSchema(), saddr)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		logutil.BgLogger().Info("[liveness] build kv status request fail", zap.String("store", saddr), zap.Error(err))
+		l = unreachable
+		return
+	}
+	resp, err := util.InternalHTTPClient().Do(req)
+	if err != nil {
+		logutil.BgLogger().Info("[liveness] request kv status fail", zap.String("store", saddr), zap.Error(err))
+		l = unreachable
+		return
+	}
+	defer func() {
+		err1 := resp.Body.Close()
+		if err1 != nil {
+			logutil.BgLogger().Debug("[liveness] close kv status api body failed", zap.String("store", saddr), zap.Error(err))
+		}
+	}()
+	if resp.StatusCode != http.StatusOK {
+		logutil.BgLogger().Info("[liveness] request kv status fail", zap.String("store", saddr), zap.String("status", resp.Status))
+		l = unreachable
+		return
+	}
+	l = reachable
+	return
 }
