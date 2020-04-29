@@ -797,39 +797,76 @@ func HelperTestAdminShowNextID(c *C, s *seqTestSuite, str string) {
 	tk.MustExec("create table t(id int, c int)")
 	// Start handle is 1.
 	r := tk.MustQuery(str + " t next_row_id")
-	r.Check(testkit.Rows("test t _tidb_rowid 1"))
+	r.Check(testkit.Rows("test t _tidb_rowid 1 AUTO_INCREMENT"))
 	// Row ID is step + 1.
 	tk.MustExec("insert into t values(1, 1)")
 	r = tk.MustQuery(str + " t next_row_id")
-	r.Check(testkit.Rows("test t _tidb_rowid 11"))
+	r.Check(testkit.Rows("test t _tidb_rowid 11 AUTO_INCREMENT"))
 	// Row ID is original + step.
 	for i := 0; i < int(step); i++ {
 		tk.MustExec("insert into t values(10000, 1)")
 	}
 	r = tk.MustQuery(str + " t next_row_id")
-	r.Check(testkit.Rows("test t _tidb_rowid 21"))
+	r.Check(testkit.Rows("test t _tidb_rowid 21 AUTO_INCREMENT"))
 	tk.MustExec("drop table t")
 
 	// test for a table with the primary key
 	tk.MustExec("create table tt(id int primary key auto_increment, c int)")
 	// Start handle is 1.
 	r = tk.MustQuery(str + " tt next_row_id")
-	r.Check(testkit.Rows("test tt id 1"))
+	r.Check(testkit.Rows("test tt id 1 AUTO_INCREMENT"))
 	// After rebasing auto ID, row ID is 20 + step + 1.
 	tk.MustExec("insert into tt values(20, 1)")
 	r = tk.MustQuery(str + " tt next_row_id")
-	r.Check(testkit.Rows("test tt id 31"))
+	r.Check(testkit.Rows("test tt id 31 AUTO_INCREMENT"))
 	// test for renaming the table
 	tk.MustExec("drop database if exists test1")
 	tk.MustExec("create database test1")
 	tk.MustExec("rename table test.tt to test1.tt")
 	tk.MustExec("use test1")
 	r = tk.MustQuery(str + " tt next_row_id")
-	r.Check(testkit.Rows("test1 tt id 31"))
+	r.Check(testkit.Rows("test1 tt id 31 AUTO_INCREMENT"))
 	tk.MustExec("insert test1.tt values ()")
 	r = tk.MustQuery(str + " tt next_row_id")
-	r.Check(testkit.Rows("test1 tt id 41"))
+	r.Check(testkit.Rows("test1 tt id 41 AUTO_INCREMENT"))
 	tk.MustExec("drop table tt")
+
+	oldAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
+	config.GetGlobalConfig().Experimental.AllowAutoRandom = true
+	defer func() {
+		config.GetGlobalConfig().Experimental.AllowAutoRandom = oldAutoRandom
+	}()
+
+	// Test for a table with auto_random primary key.
+	tk.MustExec("create table t3(id int primary key auto_random(5), c int)")
+	// Start handle is 1.
+	r = tk.MustQuery(str + " t3 next_row_id")
+	r.Check(testkit.Rows("test1 t3 _tidb_rowid 1 AUTO_INCREMENT", "test1 t3 id 1 AUTO_RANDOM"))
+	// Insert some rows.
+	tk.MustExec("insert into t3 (c) values (1), (2);")
+	r = tk.MustQuery(str + " t3 next_row_id")
+	r.Check(testkit.Rows("test1 t3 _tidb_rowid 1 AUTO_INCREMENT", "test1 t3 id 11 AUTO_RANDOM"))
+	// Rebase.
+	tk.MustExec("insert into t3 (id, c) values (103, 3);")
+	r = tk.MustQuery(str + " t3 next_row_id")
+	r.Check(testkit.Rows("test1 t3 _tidb_rowid 1 AUTO_INCREMENT", "test1 t3 id 114 AUTO_RANDOM"))
+
+	// Test for a sequence.
+	tk.MustExec("create sequence seq1 start 15 cache 57")
+	r = tk.MustQuery(str + " seq1 next_row_id")
+	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 AUTO_INCREMENT", "test1 seq1  15 SEQUENCE"))
+	r = tk.MustQuery("select nextval(seq1)")
+	r.Check(testkit.Rows("15"))
+	r = tk.MustQuery(str + " seq1 next_row_id")
+	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 AUTO_INCREMENT", "test1 seq1  72 SEQUENCE"))
+	r = tk.MustQuery("select nextval(seq1)")
+	r.Check(testkit.Rows("16"))
+	r = tk.MustQuery(str + " seq1 next_row_id")
+	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 AUTO_INCREMENT", "test1 seq1  72 SEQUENCE"))
+	r = tk.MustQuery("select setval(seq1, 96)")
+	r.Check(testkit.Rows("96"))
+	r = tk.MustQuery(str + " seq1 next_row_id")
+	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 AUTO_INCREMENT", "test1 seq1  97 SEQUENCE"))
 }
 
 func (s *seqTestSuite) TestNoHistoryWhenDisableRetry(c *C) {
