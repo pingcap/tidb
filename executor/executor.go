@@ -1261,7 +1261,7 @@ type TableScanExec struct {
 	baseExecutor
 
 	t                     table.Table
-	seekHandle            int64
+	seekHandle            kv.Handle
 	iter                  kv.Iterator
 	columns               []*model.ColumnInfo
 	isVirtualTable        bool
@@ -1286,7 +1286,7 @@ func (e *TableScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if err != nil {
 			return err
 		}
-		e.seekHandle = handle.IntValue() + 1
+		e.seekHandle = handle.Next()
 		mutableRow.SetDatums(row...)
 		req.AppendRow(mutableRow.ToRow())
 	}
@@ -1323,7 +1323,7 @@ func (e *TableScanExec) nextChunk4InfoSchema(ctx context.Context, chk *chunk.Chu
 
 // nextHandle gets the unique handle for next row.
 func (e *TableScanExec) nextHandle() (handle kv.Handle, found bool, err error) {
-	handle, found, err = e.t.Seek(e.ctx, kv.IntHandle(e.seekHandle))
+	handle, found, err = e.t.Seek(e.ctx, e.seekHandle)
 	if err != nil || !found {
 		return nil, false, err
 	}
