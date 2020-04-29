@@ -177,9 +177,9 @@ func (cc *clientConn) String() string {
 func (cc *clientConn) handshake(ctx context.Context) error {
 	if err := cc.writeInitialHandshake(); err != nil {
 		if errors.Cause(err) == io.EOF {
-			logutil.Logger(ctx).Info("Could not send handshake due to connection has be closed by client-side")
+			logutil.Logger(ctx).Debug("Could not send handshake due to connection has be closed by client-side")
 		} else {
-			terror.Log(err)
+			logutil.Logger(ctx).Debug("Write init handshake to client fail", zap.Error(errors.SuspendStack(err)))
 		}
 		return err
 	}
@@ -494,9 +494,9 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	if err != nil {
 		err = errors.SuspendStack(err)
 		if errors.Cause(err) == io.EOF {
-			logutil.Logger(ctx).Info("wait handshake response fail due to connection has be closed by client-side")
+			logutil.Logger(ctx).Debug("wait handshake response fail due to connection has be closed by client-side")
 		} else {
-			logutil.Logger(ctx).Error("wait handshake response fail", zap.Error(err))
+			logutil.Logger(ctx).Debug("wait handshake response fail", zap.Error(err))
 		}
 		return err
 	}
@@ -1272,6 +1272,10 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	if err != nil {
 		metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
 		return err
+	}
+
+	if len(stmts) == 0 {
+		return cc.writeOK()
 	}
 
 	for i, stmt := range stmts {
