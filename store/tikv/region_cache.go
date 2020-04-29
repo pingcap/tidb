@@ -84,18 +84,18 @@ type RegionStore struct {
 	workTiKVIdx    int32    // point to current work peer in meta.Peers and work store in stores(same idx) for tikv peer
 	workTiFlashIdx int32    // point to current work peer in meta.Peers and work store in stores(same idx) for tiflash peer
 	stores         []*Store // stores in this region
-	storeFails     []uint32 // snapshots of store's fail, need reload when `storeFails[curr] != stores[cur].fail`
+	storeEpochs    []uint32 // snapshots of store's epoch, need reload when `storeEpochs[curr] != stores[cur].fail`
 }
 
 // clone clones region store struct.
 func (r *RegionStore) clone() *RegionStore {
-	storeFails := make([]uint32, len(r.stores))
-	copy(storeFails, r.storeFails)
+	storeEpochs := make([]uint32, len(r.stores))
+	copy(storeEpochs, r.storeEpochs)
 	return &RegionStore{
 		workTiFlashIdx: r.workTiFlashIdx,
 		workTiKVIdx:    r.workTiKVIdx,
 		stores:         r.stores,
-		storeFails:     storeFails,
+		storeEpochs:    storeEpochs,
 	}
 }
 
@@ -114,7 +114,7 @@ func (r *RegionStore) follower(seed uint32) int32 {
 		if r.stores[followerIdx].storeType != kv.TiKV {
 			continue
 		}
-		if r.storeFails[followerIdx] == atomic.LoadUint32(&r.stores[followerIdx].fail) {
+		if r.storeEpochs[followerIdx] == atomic.LoadUint32(&r.stores[followerIdx].epoch) {
 			return followerIdx
 		}
 		seed++
@@ -129,7 +129,7 @@ func (r *RegionStore) peer(seed uint32) int32 {
 		if r.stores[i].storeType != kv.TiKV {
 			continue
 		}
-		if r.storeFails[i] != atomic.LoadUint32(&r.stores[i].fail) {
+		if r.storeEpochs[i] != atomic.LoadUint32(&r.stores[i].epoch) {
 			continue
 		}
 		candidates = append(candidates, int32(i))
@@ -149,7 +149,7 @@ func (r *Region) init(c *RegionCache) {
 		workTiKVIdx:    0,
 		workTiFlashIdx: 0,
 		stores:         make([]*Store, 0, len(r.meta.Peers)),
-		storeFails:     make([]uint32, 0, len(r.meta.Peers)),
+		storeEpochs:    make([]uint32, 0, len(r.meta.Peers)),
 	}
 	for _, p := range r.meta.Peers {
 		c.storeMu.RLock()
@@ -159,7 +159,7 @@ func (r *Region) init(c *RegionCache) {
 			store = c.getStoreByStoreID(p.StoreId)
 		}
 		rs.stores = append(rs.stores, store)
-		rs.storeFails = append(rs.storeFails, atomic.LoadUint32(&store.fail))
+		rs.storeEpochs = append(rs.storeEpochs, atomic.LoadUint32(&store.epoch))
 	}
 	atomic.StorePointer(&r.store, unsafe.Pointer(rs))
 
@@ -345,8 +345,8 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 		return nil, nil
 	}
 
-	storeFailEpoch := atomic.LoadUint32(&store.fail)
-	if storeFailEpoch != regionStore.storeFails[storeIdx] {
+	storeFailEpoch := atomic.LoadUint32(&store.epoch)
+	if storeFailEpoch != regionStore.storeEpochs[storeIdx] {
 		cachedRegion.invalidate()
 		logutil.BgLogger().Info("invalidate current region, because others failed on same store",
 			zap.Uint64("region", id.GetID()),
@@ -400,8 +400,8 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID) (*RPCC
 		}
 		atomic.StoreInt32(&regionStore.workTiFlashIdx, int32(storeIdx))
 		peer := cachedRegion.meta.Peers[storeIdx]
-		storeFailEpoch := atomic.LoadUint32(&store.fail)
-		if storeFailEpoch != regionStore.storeFails[storeIdx] {
+		storeFailEpoch := atomic.LoadUint32(&store.epoch)
+		if storeFailEpoch != regionStore.storeEpochs[storeIdx] {
 			cachedRegion.invalidate()
 			logutil.BgLogger().Info("invalidate current region, because others failed on same store",
 				zap.Uint64("region", id.GetID()),
@@ -509,8 +509,8 @@ func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload 
 			}
 
 			// invalidate regions in store.
-			epoch := rs.storeFails[ctx.PeerIdx]
-			if atomic.CompareAndSwapUint32(&s.fail, epoch, epoch+1) {
+			epoch := rs.storeEpochs[ctx.PeerIdx]
+			if atomic.CompareAndSwapUint32(&s.epoch, epoch, epoch+1) {
 				logutil.BgLogger().Info("mark store's regions need be refill", zap.String("store", s.addr))
 				tikvRegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
 			}
@@ -1271,7 +1271,7 @@ type Store struct {
 	storeID      uint64        // store's id
 	state        uint64        // unsafe store storeState
 	resolveMutex sync.Mutex    // protect pd from concurrent init requests
-	fail         uint32        // store fail count, see RegionStore.storeFails
+	epoch        uint32        // store fail epoch, see RegionStore.storeEpochs
 	storeType    kv.StoreType  // type of the store
 	tokenCount   atomic2.Int64 // used store token count
 }
@@ -1365,7 +1365,7 @@ func (s *Store) reResolve(c *RegionCache) {
 		// store has be removed in PD, we should invalidate all regions using those store.
 		logutil.BgLogger().Info("invalidate regions in removed store",
 			zap.Uint64("store", s.storeID), zap.String("add", s.addr))
-		atomic.AddUint32(&s.fail, 1)
+		atomic.AddUint32(&s.epoch, 1)
 		tikvRegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
 		return
 	}
