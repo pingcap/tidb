@@ -104,7 +104,10 @@ func GetPropByOrderByItemsContainScalarFunc(items []*ByItems) (*property.Physica
 }
 
 func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty) (task, error) {
-	if !prop.IsEmpty() {
+	// If the required property is not empty and the row count > 0,
+	// we cannot ensure this required property.
+	// But if the row count is 0, we don't need to care about the property.
+	if !prop.IsEmpty() && p.RowCount > 0 {
 		return invalidTask, nil
 	}
 	dual := PhysicalTableDual{
