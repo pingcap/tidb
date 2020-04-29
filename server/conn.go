@@ -1267,21 +1267,10 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
 		return err
 	}
-<<<<<<< HEAD
 	status := atomic.LoadInt32(&cc.status)
 	if rss != nil && (status == connStatusShutdown || status == connStatusWaitShutdown) {
 		for _, rs := range rss {
 			terror.Call(rs.Close)
-=======
-
-	if len(stmts) == 0 {
-		return cc.writeOK()
-	}
-
-	for i, stmt := range stmts {
-		if err = cc.handleStmt(ctx, stmt, i == len(stmts)-1); err != nil {
-			break
->>>>>>> fbea0b3... server: fix no response when execute 0 statment (#16770)
 		}
 		return executor.ErrQueryInterrupted
 	}
