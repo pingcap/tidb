@@ -25,5 +25,66 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestIndexStringIsTrueRange",
+    "Cases": [
+      {
+        "SQL": "explain select * from t0 where c0",
+        "Result": [
+          "IndexReader_7 0.80 root index:Selection_6",
+          "└─Selection_6 0.80 cop test.t0.c0",
+          "  └─IndexScan_5 1.00 cop table:t0, index:c0, range:[NULL,+inf], keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain select * from t0 where c0 and c0 > '123'",
+        "Result": [
+          "IndexReader_7 0.00 root index:Selection_6",
+          "└─Selection_6 0.00 cop test.t0.c0",
+          "  └─IndexScan_5 0.00 cop table:t0, index:c0, range:(\"123\",+inf], keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain select * from t0 where c0 and c0 <> '123'",
+        "Result": [
+          "IndexReader_7 0.80 root index:Selection_6",
+          "└─Selection_6 0.80 cop test.t0.c0",
+          "  └─IndexScan_5 1.00 cop table:t0, index:c0, range:[-inf,\"123\"), (\"123\",+inf], keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain select * from t0 where c0 is true",
+        "Result": [
+          "Selection_5 0.80 root istrue(cast(test.t0.c0))",
+          "└─IndexReader_7 1.00 root index:IndexScan_6",
+          "  └─IndexScan_6 1.00 cop table:t0, index:c0, range:[NULL,+inf], keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain select * from t0 where c0 is false",
+        "Result": [
+          "Selection_5 0.80 root isfalse(cast(test.t0.c0))",
+          "└─IndexReader_7 1.00 root index:IndexScan_6",
+          "  └─IndexScan_6 1.00 cop table:t0, index:c0, range:[NULL,+inf], keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain select * from t0 where c0 and c0 in ('123','456','789')",
+        "Result": [
+          "IndexReader_7 0.00 root index:Selection_6",
+          "└─Selection_6 0.00 cop test.t0.c0",
+          "  └─IndexScan_5 0.00 cop table:t0, index:c0, range:[\"123\",\"123\"], [\"456\",\"456\"], [\"789\",\"789\"], keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain SELECT * FROM t0 WHERE ('a' != t0.c0) AND t0.c0;",
+        "Result": [
+          "IndexReader_7 0.80 root index:Selection_6",
+          "└─Selection_6 0.80 cop test.t0.c0",
+          "  └─IndexScan_5 1.00 cop table:t0, index:c0, range:[-inf,\"a\"), (\"a\",+inf], keep order:false"
+        ]
+      }
+    ]
   }
 ]
