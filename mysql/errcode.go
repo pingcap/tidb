@@ -906,5 +906,6 @@ const (
 	ErrRegionUnavailable  = 9005
 	ErrGCTooEarly         = 9006
 
-	ErrTxnTooLarge = 9500
+	ErrTiKVStaleCommand = 9010
+	ErrTxnTooLarge      = 9500
 )

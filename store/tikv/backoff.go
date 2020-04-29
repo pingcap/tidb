@@ -52,6 +52,7 @@ var (
 	tikvBackoffCounterRegionMiss     = metrics.TiKVBackoffCounter.WithLabelValues("regionMiss")
 	tikvBackoffCounterUpdateLeader   = metrics.TiKVBackoffCounter.WithLabelValues("updateLeader")
 	tikvBackoffCounterServerBusy     = metrics.TiKVBackoffCounter.WithLabelValues("serverBusy")
+	tikvBackoffCounterStaleCmd       = metrics.TiKVBackoffCounter.WithLabelValues("staleCommand")
 	tikvBackoffCounterEmpty          = metrics.TiKVBackoffCounter.WithLabelValues("")
 	tikvBackoffHistogramRPC          = metrics.TiKVBackoffHistogram.WithLabelValues("tikvRPC")
 	tikvBackoffHistogramLock         = metrics.TiKVBackoffHistogram.WithLabelValues("txnLock")
@@ -60,6 +61,7 @@ var (
 	tikvBackoffHistogramRegionMiss   = metrics.TiKVBackoffHistogram.WithLabelValues("regionMiss")
 	tikvBackoffHistogramUpdateLeader = metrics.TiKVBackoffHistogram.WithLabelValues("updateLeader")
 	tikvBackoffHistogramServerBusy   = metrics.TiKVBackoffHistogram.WithLabelValues("serverBusy")
+	tikvBackoffHistogramStaleCmd     = metrics.TiKVBackoffHistogram.WithLabelValues("staleCommand")
 	tikvBackoffHistogramEmpty        = metrics.TiKVBackoffHistogram.WithLabelValues("")
 )
 
@@ -79,6 +81,8 @@ func (t backoffType) metric() (prometheus.Counter, prometheus.Histogram) {
 		return tikvBackoffCounterUpdateLeader, tikvBackoffHistogramUpdateLeader
 	case boServerBusy:
 		return tikvBackoffCounterServerBusy, tikvBackoffHistogramServerBusy
+	case boStaleCmd:
+		return tikvBackoffCounterStaleCmd, tikvBackoffHistogramStaleCmd
 	}
 	return tikvBackoffCounterEmpty, tikvBackoffHistogramEmpty
 }
@@ -136,6 +140,7 @@ const (
 	BoRegionMiss
 	BoUpdateLeader
 	boServerBusy
+	boStaleCmd
 )
 
 func (t backoffType) createFn(vars *kv.Variables) func(context.Context) int {
@@ -157,6 +162,8 @@ func (t backoffType) createFn(vars *kv.Variables) func(context.Context) int {
 		return NewBackoffFn(1, 10, NoJitter)
 	case boServerBusy:
 		return NewBackoffFn(2000, 10000, EqualJitter)
+	case boStaleCmd:
+		return NewBackoffFn(2, 1000, NoJitter)
 	}
 	return nil
 }
@@ -177,6 +184,8 @@ func (t backoffType) String() string {
 		return "updateLeader"
 	case boServerBusy:
 		return "serverBusy"
+	case boStaleCmd:
+		return "staleCommand"
 	}
 	return ""
 }
@@ -193,6 +202,8 @@ func (t backoffType) TError() error {
 		return ErrRegionUnavailable
 	case boServerBusy:
 		return ErrTiKVServerBusy
+	case boStaleCmd:
+		return ErrTiKVStaleCommand
 	}
 	return terror.ClassTiKV.New(mysql.ErrUnknown, mysql.MySQLErrName[mysql.ErrUnknown])
 }
