@@ -313,11 +313,9 @@ func onRenameIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 func validateAlterIndexVisibility(indexName model.CIStr, invisible bool, tbl *model.TableInfo) (bool, error){
 	if idx := tbl.FindIndexByName(indexName.L); idx == nil {
 		return false, errors.Trace(infoschema.ErrKeyNotExists.GenWithStackByArgs(indexName.O, tbl.Name))
-	} else {
-		if idx.Invisible == invisible {
+	} else if idx.Invisible == invisible {
 			return true, nil
 		}
-	}
 	return false,  nil
 }
 
