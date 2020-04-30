@@ -19,12 +19,13 @@ import (
 	"fmt"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 )
 
 type testRawKVSuite struct {
 	OneByOneSuite
-	cluster *mocktikv.Cluster
+	cluster cluster.Cluster
 	client  *RawKVClient
 	bo      *Backoffer
 }
@@ -32,15 +33,16 @@ type testRawKVSuite struct {
 var _ = Suite(&testRawKVSuite{})
 
 func (s *testRawKVSuite) SetUpTest(c *C) {
-	s.cluster = mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(s.cluster)
-	pdClient := mocktikv.NewPDClient(s.cluster)
+	cluster := mocktikv.NewCluster()
+	mocktikv.BootstrapWithSingleStore(cluster)
+	s.cluster = cluster
+	pdClient := mocktikv.NewPDClient(cluster)
 	mvccStore := mocktikv.MustNewMVCCStore()
 	s.client = &RawKVClient{
 		clusterID:   0,
 		regionCache: NewRegionCache(pdClient),
 		pdClient:    pdClient,
-		rpcClient:   mocktikv.NewRPCClient(s.cluster, mvccStore),
+		rpcClient:   mocktikv.NewRPCClient(cluster, mvccStore),
 	}
 	s.bo = NewBackoffer(context.Background(), 5000)
 }
