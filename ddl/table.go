@@ -481,7 +481,15 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 	return ver, nil
 }
 
-func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onRebaseRowIDType(store kv.Storage, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	return onRebaseAutoID(store, t, job, autoid.RowIDAllocType)
+}
+
+func onRebaseAutoRandomType(store kv.Storage, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	return onRebaseAutoID(store, t, job, autoid.AutoRandomType)
+}
+
+func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job, tp autoid.AllocatorType) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	var newBase int64
 	err := job.DecodeArgs(&newBase)
@@ -495,7 +503,12 @@ func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job) (ver int64, 
 		return ver, errors.Trace(err)
 	}
 	// No need to check `newBase` again, because `RebaseAutoID` will do this check.
-	tblInfo.AutoIncID = newBase
+	if tp == autoid.RowIDAllocType {
+		tblInfo.AutoIncID = newBase
+	} else {
+		tblInfo.AutoRandID = newBase
+	}
+
 	tbl, err := getTable(store, schemaID, tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -504,7 +517,7 @@ func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job) (ver int64, 
 	// The operation of the minus 1 to make sure that the current value doesn't be used,
 	// the next Alloc operation will get this value.
 	// Its behavior is consistent with MySQL.
-	err = tbl.RebaseAutoID(nil, tblInfo.AutoIncID-1, false)
+	err = tbl.RebaseAutoID(nil, newBase-1, false, tp)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
