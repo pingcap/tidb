@@ -791,7 +791,7 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeoutWaitStart(c *C) {
 	c.Assert(waitErr, NotNil)
 	c.Check(waitErr.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
 	c.Check(duration, GreaterEqual, 1000*time.Millisecond)
-	c.Check(duration, LessEqual, 1100*time.Millisecond)
+	c.Check(duration, LessEqual, 3000*time.Millisecond)
 	tk2.MustExec("rollback")
 	tk3.MustExec("commit")
 }
