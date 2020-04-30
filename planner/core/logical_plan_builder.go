@@ -3248,6 +3248,9 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		if t.TableInfo.IsView() {
 			return nil, errors.Errorf("update view %s is not supported now.", t.Name.O)
 		}
+		if t.TableInfo.IsSequence() {
+			return nil, errors.Errorf("update sequence %s is not supported now.", t.Name.O)
+		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, t.Name.L, "", nil)
 	}
 
@@ -3610,6 +3613,9 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 			if tn.TableInfo.IsView() {
 				return nil, errors.Errorf("delete view %s is not supported now.", tn.Name.O)
 			}
+			if tn.TableInfo.IsSequence() {
+				return nil, errors.Errorf("delete sequence %s is not supported now.", tn.Name.O)
+			}
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, tn.Schema.L, tn.TableInfo.Name.L, "", nil)
 		}
 	} else {
@@ -3617,6 +3623,9 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 		for _, v := range tableList {
 			if v.TableInfo.IsView() {
 				return nil, errors.Errorf("delete view %s is not supported now.", v.Name.O)
+			}
+			if v.TableInfo.IsSequence() {
+				return nil, errors.Errorf("delete sequence %s is not supported now.", v.Name.O)
 			}
 			dbName := v.Schema.L
 			if dbName == "" {

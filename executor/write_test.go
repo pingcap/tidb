@@ -300,6 +300,13 @@ func (s *testSuite) TestInsert(c *C) {
 	_, err = tk.Exec("replace into v values(1,2)")
 	c.Assert(err.Error(), Equals, "replace into view v is not supported now.")
 	tk.MustExec("drop view v")
+
+	tk.MustExec("create sequence seq")
+	_, err = tk.Exec("insert into seq values()")
+	c.Assert(err.Error(), Equals, "insert into sequence seq is not supported now.")
+	_, err = tk.Exec("replace into seq values()")
+	c.Assert(err.Error(), Equals, "replace into sequence seq is not supported now.")
+	tk.MustExec("drop sequence seq")
 }
 
 func (s *testSuiteP2) TestMultiBatch(c *C) {
@@ -1511,6 +1518,11 @@ func (s *testSuite8) TestUpdate(c *C) {
 	c.Assert(err.Error(), Equals, core.ErrViewInvalid.GenWithStackByArgs("test", "v").Error())
 	tk.MustExec("drop view v")
 
+	tk.MustExec("create sequence seq")
+	_, err = tk.Exec("update seq set minvalue=1")
+	c.Assert(err.Error(), Equals, "update sequence seq is not supported now.")
+	tk.MustExec("drop sequence seq")
+
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int, b int, c int, d int, e int, index idx(a))")
 	tk.MustExec("create table t2(a int, b int, c int)")
@@ -1811,6 +1823,11 @@ func (s *testSuite) TestDelete(c *C) {
 	_, err = tk.Exec("delete from v where name = 'aaa'")
 	c.Assert(err.Error(), Equals, core.ErrViewInvalid.GenWithStackByArgs("test", "v").Error())
 	tk.MustExec("drop view v")
+
+	tk.MustExec("create sequence seq")
+	_, err = tk.Exec("delete from seq")
+	c.Assert(err.Error(), Equals, "delete sequence seq is not supported now.")
+	tk.MustExec("drop sequence seq")
 }
 
 func (s *testSuite4) TestPartitionedTableDelete(c *C) {
