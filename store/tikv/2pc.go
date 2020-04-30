@@ -423,9 +423,7 @@ func txnLockTTL(startTime time.Time, txnSize int) uint64 {
 	return lockTTL + uint64(elapsed)
 }
 
-var testSplitRegionFlag bool
-
-const preSplitThreshold = 100000
+var preSplitThreshold uint32 = 100000
 
 // doActionOnMutations groups keys into primary batch and secondary batches, if primary batch exists in the key,
 // it does action on primary batch first, then on secondary batches. If action is commit, secondary batches
@@ -442,13 +440,14 @@ func (c *twoPhaseCommitter) doActionOnMutations(bo *Backoffer, action twoPhaseCo
 	// Pre-split regions to avoid too much write workload into a single region.
 	// In the large transaction case, this operation is important to avoid TiKV 'server is busy' error.
 	var preSplited bool
+	preSplitThresholdVal := atomic.LoadUint32(&preSplitThreshold)
 	for _, group := range groups {
-		if group.mutations.len() > preSplitThreshold || testSplitRegionFlag {
+		if uint32(group.mutations.len()) >= preSplitThresholdVal {
 			logutil.BgLogger().Info("2PC detect large amount of mutations on a single region",
 				zap.Uint64("region", group.region.GetID()),
 				zap.Int("mutations count", group.mutations.len()))
 			// Use context.Background, this time should not add up to Backoffer.
-			if preSplitAndScatterIn2PC(context.Background(), c.store, group) {
+			if preSplitAndScatterIn2PC(context.Background(), c.store, group, preSplitThresholdVal) {
 				preSplited = true
 			}
 		}
@@ -464,7 +463,7 @@ func (c *twoPhaseCommitter) doActionOnMutations(bo *Backoffer, action twoPhaseCo
 	return c.doActionOnGroupMutations(bo, action, groups)
 }
 
-func preSplitAndScatterIn2PC(ctx context.Context, store *tikvStore, group groupedMutations) bool {
+func preSplitAndScatterIn2PC(ctx context.Context, store *tikvStore, group groupedMutations, preSplitThreshold uint32) bool {
 	length := group.mutations.len()
 	splitKeys := make([][]byte, 0, 4)
 
@@ -472,7 +471,8 @@ func preSplitAndScatterIn2PC(ctx context.Context, store *tikvStore, group groupe
 	regionSize := 0
 	for i := 0; i < length; i++ {
 		regionSize = regionSize + len(group.mutations.keys[i]) + len(group.mutations.values[i])
-		if regionSize >= sz32M || (testSplitRegionFlag && i == length/2) {
+		// The second condition is used for testing.
+		if regionSize >= sz32M || (preSplitThreshold < 100000 && i == length/2) {
 			regionSize = 0
 			splitKeys = append(splitKeys, group.mutations.keys[i])
 		}

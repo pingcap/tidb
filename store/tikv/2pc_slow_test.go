@@ -17,6 +17,7 @@ package tikv
 
 import (
 	"context"
+	"sync/atomic"
 
 	. "github.com/pingcap/check"
 )
@@ -41,10 +42,14 @@ func (s *testCommitterSuite) TestCommitMultipleRegions(c *C) {
 }
 
 func (s *testTiclientSuite) TestSplitRegionIn2PC(c *C) {
-	testSplitRegionFlag = true
+	const preSplitThresholdInTest = 500
+	old := atomic.LoadUint32(&preSplitThreshold)
+	defer atomic.StoreUint32(&preSplitThreshold, old)
+	atomic.StoreUint32(&preSplitThreshold, preSplitThresholdInTest)
+
 	bo := NewBackoffer(context.Background(), 1)
 	startKey := encodeKey(s.prefix, s08d("key", 0))
-	endKey := encodeKey(s.prefix, s08d("key", 1000))
+	endKey := encodeKey(s.prefix, s08d("key", preSplitThresholdInTest))
 	checkKeyRegion := func(bo *Backoffer, start, end []byte, checker Checker) {
 		// Check regions after split.
 		loc1, err := s.store.regionCache.LocateKey(bo, start)
@@ -57,7 +62,7 @@ func (s *testTiclientSuite) TestSplitRegionIn2PC(c *C) {
 	// Check before test.
 	checkKeyRegion(bo, startKey, endKey, Equals)
 	txn := s.beginTxn(c)
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < preSplitThresholdInTest; i++ {
 		err := txn.Set(encodeKey(s.prefix, s08d("key", i)), valueBytes(i))
 		c.Assert(err, IsNil)
 	}
