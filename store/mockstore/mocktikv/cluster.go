@@ -45,6 +45,8 @@ type Cluster struct {
 	stores  map[uint64]*Store
 	regions map[uint64]*Region
 
+	mvccStore MVCCStore
+
 	// delayEvents is used to control the execution sequence of rpc requests for test.
 	delayEvents map[delayKey]time.Duration
 	delayMu     sync.Mutex
@@ -63,6 +65,11 @@ func NewCluster() *Cluster {
 		regions:     make(map[uint64]*Region),
 		delayEvents: make(map[delayKey]time.Duration),
 	}
+}
+
+// SetMvccStore sets the the mvccStore used by SplitTable, SplitIndex and SplitKeys.
+func (c *Cluster) SetMvccStore(s MVCCStore) {
+	c.mvccStore = s
 }
 
 // AllocID creates an unique ID in cluster. The ID could be used as either
@@ -393,24 +400,24 @@ func (c *Cluster) Merge(regionID1, regionID2 uint64) {
 
 // SplitTable evenly splits the data in table into count regions.
 // Only works for single store.
-func (c *Cluster) SplitTable(mvccStore MVCCStore, tableID int64, count int) {
+func (c *Cluster) SplitTable(tableID int64, count int) {
 	tableStart := tablecodec.GenTableRecordPrefix(tableID)
 	tableEnd := tableStart.PrefixNext()
-	c.splitRange(mvccStore, NewMvccKey(tableStart), NewMvccKey(tableEnd), count)
+	c.splitRange(c.mvccStore, NewMvccKey(tableStart), NewMvccKey(tableEnd), count)
 }
 
 // SplitIndex evenly splits the data in index into count regions.
 // Only works for single store.
-func (c *Cluster) SplitIndex(mvccStore MVCCStore, tableID, indexID int64, count int) {
+func (c *Cluster) SplitIndex(tableID, indexID int64, count int) {
 	indexStart := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
 	indexEnd := indexStart.PrefixNext()
-	c.splitRange(mvccStore, NewMvccKey(indexStart), NewMvccKey(indexEnd), count)
+	c.splitRange(c.mvccStore, NewMvccKey(indexStart), NewMvccKey(indexEnd), count)
 }
 
 // SplitKeys evenly splits the start, end key into "count" regions.
 // Only works for single store.
-func (c *Cluster) SplitKeys(mvccStore MVCCStore, start, end kv.Key, count int) {
-	c.splitRange(mvccStore, NewMvccKey(start), NewMvccKey(end), count)
+func (c *Cluster) SplitKeys(start, end kv.Key, count int) {
+	c.splitRange(c.mvccStore, NewMvccKey(start), NewMvccKey(end), count)
 }
 
 // ScheduleDelay schedules a delay event for a transaction on a region.
