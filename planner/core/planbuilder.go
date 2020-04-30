@@ -1485,6 +1485,7 @@ func buildShowNextRowID() (*expression.Schema, types.NameSlice) {
 	schema.Append(buildColumnWithName("", "TABLE_NAME", mysql.TypeVarchar, mysql.MaxTableNameLength))
 	schema.Append(buildColumnWithName("", "COLUMN_NAME", mysql.TypeVarchar, mysql.MaxColumnNameLength))
 	schema.Append(buildColumnWithName("", "NEXT_GLOBAL_ROW_ID", mysql.TypeLonglong, 4))
+	schema.Append(buildColumnWithName("", "ID_TYPE", mysql.TypeVarchar, 15))
 	return schema.col2Schema(), schema.names
 }
 
@@ -2156,7 +2157,12 @@ func (b *PlanBuilder) buildSetValuesOfInsert(ctx context.Context, insert *ast.In
 			return ErrBadGeneratedColumn.GenWithStackByArgs(assign.Column.Name.O, tableInfo.Name.O)
 		}
 		b.curClause = fieldList
-		expr, _, err := b.rewriteWithPreprocess(ctx, assign.Expr, mockTablePlan, nil, nil, true, checkRefColumn)
+		// subquery in insert values should not reference upper scope
+		usingPlan := mockTablePlan
+		if _, ok := assign.Expr.(*ast.SubqueryExpr); ok {
+			usingPlan = LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+		}
+		expr, _, err := b.rewriteWithPreprocess(ctx, assign.Expr, usingPlan, nil, nil, true, checkRefColumn)
 		if err != nil {
 			return err
 		}
@@ -2229,7 +2235,12 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 				}
 			default:
 				b.curClause = fieldList
-				expr, _, err = b.rewriteWithPreprocess(ctx, valueItem, mockTablePlan, nil, nil, true, checkRefColumn)
+				// subquery in insert values should not reference upper scope
+				usingPlan := mockTablePlan
+				if _, ok := valueItem.(*ast.SubqueryExpr); ok {
+					usingPlan = LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+				}
+				expr, _, err = b.rewriteWithPreprocess(ctx, valueItem, usingPlan, nil, nil, true, checkRefColumn)
 			}
 			if err != nil {
 				return err
