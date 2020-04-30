@@ -43,9 +43,13 @@ func (s *testCommitterSuite) TestCommitMultipleRegions(c *C) {
 
 func (s *testTiclientSuite) TestSplitRegionIn2PC(c *C) {
 	const preSplitThresholdInTest = 500
-	old := atomic.LoadUint32(&preSplitThreshold)
-	defer atomic.StoreUint32(&preSplitThreshold, old)
-	atomic.StoreUint32(&preSplitThreshold, preSplitThresholdInTest)
+	old := atomic.LoadUint32(&preSplitDetectThreshold)
+	defer atomic.StoreUint32(&preSplitDetectThreshold, old)
+	atomic.StoreUint32(&preSplitDetectThreshold, preSplitThresholdInTest)
+
+	old = atomic.LoadUint32(&preSplitSizeThreshold)
+	defer atomic.StoreUint32(&preSplitSizeThreshold, old)
+	atomic.StoreUint32(&preSplitSizeThreshold, 5000)
 
 	bo := NewBackoffer(context.Background(), 1)
 	startKey := encodeKey(s.prefix, s08d("key", 0))
