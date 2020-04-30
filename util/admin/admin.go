@@ -310,9 +310,7 @@ const (
 // otherwise it returns an error and the corresponding index's offset.
 func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices []string) (byte, int, error) {
 	// Here we need check all indexes, includes invisible index
-	origVals := ctx.GetSessionVars().StmtCtx.OptimizerUseInvisibleIndexes
 	ctx.GetSessionVars().StmtCtx.OptimizerUseInvisibleIndexes = true
-	defer func() {ctx.GetSessionVars().StmtCtx.OptimizerUseInvisibleIndexes = origVals}()
 	// Add `` for some names like `table name`.
 	sql := fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s` USE INDEX()", dbName, tableName)
 	tblCnt, err := getCount(ctx, sql)
