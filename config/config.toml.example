@@ -347,7 +347,7 @@ region-cache-ttl = 600
 # default 0 means shutting off store limit.
 store-limit = 0
 
-# store-liveness-timeout is used to control timeout for store liveness after sending request failed(unit: ms).
+# store-liveness-timeout is used to control timeout for store liveness after sending request failed.
 store-liveness-timeout = "120s"
 
 [tikv-client.copr-cache]
