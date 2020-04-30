@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/collate"
@@ -52,8 +53,9 @@ import (
 var _ = SerialSuites(&testSerialSuite{})
 
 type testSerialSuite struct {
-	store kv.Storage
-	dom   *domain.Domain
+	store   kv.Storage
+	cluster cluster.Cluster
+	dom     *domain.Domain
 }
 
 func (s *testSerialSuite) SetUpSuite(c *C) {
@@ -67,8 +69,18 @@ func (s *testSerialSuite) SetUpSuite(c *C) {
 	config.StoreGlobalConfig(&newCfg)
 
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
+
+	cluster := mocktikv.NewCluster()
+	mocktikv.BootstrapWithSingleStore(cluster)
+	s.cluster = cluster
+
 	var err error
-	s.store, err = mockstore.NewMockTikvStore()
+	mvccStore := mocktikv.MustNewMVCCStore()
+	cluster.SetMvccStore(mvccStore)
+	s.store, err = mockstore.NewMockTikvStore(
+		mockstore.WithCluster(cluster),
+		mockstore.WithMVCCStore(mvccStore),
+	)
 	c.Assert(err, IsNil)
 
 	s.dom, err = session.BootstrapSession(s.store)
@@ -186,10 +198,7 @@ func (s *testSerialSuite) TestMultiRegionGetTableEndHandle(c *C) {
 	testCtx := newTestMaxTableRowIDContext(c, d, tbl)
 
 	// Split the table.
-	cluster := mocktikv.NewCluster()
-	mvccStore := mocktikv.MustNewMVCCStore()
-	defer mvccStore.Close()
-	cluster.SplitTable(mvccStore, tblID, 100)
+	s.cluster.SplitTable(tblID, 100)
 
 	maxID, emptyTable := getMaxTableRowID(testCtx, s.store)
 	c.Assert(emptyTable, IsFalse)
