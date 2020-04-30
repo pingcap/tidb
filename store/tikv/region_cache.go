@@ -1393,13 +1393,8 @@ func (s *Store) reResolve(c *RegionCache) {
 	addr = store.GetAddress()
 	if s.addr != addr {
 		state := resolved
-<<<<<<< HEAD
-		newStore := &Store{storeID: s.storeID, addr: addr, storeType: storeType}
-		newStore.state = *(*uint64)(unsafe.Pointer(&state))
-=======
 		newStore := &Store{storeID: s.storeID, addr: addr, saddr: store.GetStatusAddress(), storeType: storeType}
 		newStore.state = *(*uint64)(&state)
->>>>>>> 94e12e6... tikv: recheck kv status before invalidate region on sending fail (#16933)
 		c.storeMu.Lock()
 		c.storeMu.stores[newStore.storeID] = newStore
 		c.storeMu.Unlock()
