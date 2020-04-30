@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -130,10 +131,9 @@ type testSuiteP1 struct{ *baseTestSuite }
 type testSuiteP2 struct{ *baseTestSuite }
 
 type baseTestSuite struct {
-	cluster   *mocktikv.Cluster
-	mvccStore mocktikv.MVCCStore
-	store     kv.Storage
-	domain    *domain.Domain
+	cluster cluster.Cluster
+	store   kv.Storage
+	domain  *domain.Domain
 	*parser.Parser
 	ctx *mock.Context
 }
@@ -145,12 +145,15 @@ func (s *baseTestSuite) SetUpSuite(c *C) {
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
 	if useMockTikv {
-		s.cluster = mocktikv.NewCluster()
-		mocktikv.BootstrapWithSingleStore(s.cluster)
-		s.mvccStore = mocktikv.MustNewMVCCStore()
+		cluster := mocktikv.NewCluster()
+		mocktikv.BootstrapWithSingleStore(cluster)
+		s.cluster = cluster
+
+		mvccStore := mocktikv.MustNewMVCCStore()
+		cluster.SetMvccStore(mvccStore)
 		store, err := mockstore.NewMockTikvStore(
-			mockstore.WithCluster(s.cluster),
-			mockstore.WithMVCCStore(s.mvccStore),
+			mockstore.WithCluster(cluster),
+			mockstore.WithMVCCStore(mvccStore),
 		)
 		c.Assert(err, IsNil)
 		s.store = store
@@ -448,7 +451,7 @@ func (s *testSuite3) TestAdmin(c *C) {
 	m := meta.NewMeta(txn)
 	startKey := meta.DDLJobHistoryKey(m, 0)
 	endKey := meta.DDLJobHistoryKey(m, historyJobs[0].ID)
-	s.cluster.SplitKeys(s.mvccStore, startKey, endKey, int(historyJobs[0].ID/5))
+	s.cluster.SplitKeys(startKey, endKey, int(historyJobs[0].ID/5))
 
 	historyJobs2, err := admin.GetHistoryDDLJobs(txn, 20)
 	c.Assert(err, IsNil)
@@ -4582,7 +4585,7 @@ func setOOMAction(action string) {
 type testRecoverTable struct {
 	store   kv.Storage
 	dom     *domain.Domain
-	cluster *mocktikv.Cluster
+	cluster cluster.Cluster
 	cli     *regionProperityClient
 }
 
@@ -4595,11 +4598,12 @@ func (s *testRecoverTable) SetUpSuite(c *C) {
 	s.cli = cli
 
 	var err error
-	s.cluster = mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(s.cluster)
+	cluster := mocktikv.NewCluster()
+	mocktikv.BootstrapWithSingleStore(cluster)
+	s.cluster = cluster
 	s.store, err = mockstore.NewMockTikvStore(
 		mockstore.WithHijackClient(hijackClient),
-		mockstore.WithCluster(s.cluster),
+		mockstore.WithCluster(cluster),
 	)
 	c.Assert(err, IsNil)
 	s.dom, err = session.BootstrapSession(s.store)
