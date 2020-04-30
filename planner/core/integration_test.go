@@ -898,14 +898,14 @@ func (s *testIntegrationSuite) TestIssue16290And16292(c *C) {
 	}
 }
 
-<<<<<<< HEAD
 func (s *testIntegrationSuite) TestIssue15858(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key)")
 	tk.MustExec("select * from t t1, (select a from t order by a+1) t2 where t1.a = t2.a")
-=======
+}
+
 func (s *testIntegrationSerialSuite) TestIssue16837(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -918,5 +918,4 @@ func (s *testIntegrationSerialSuite) TestIssue16837(c *C) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 IndexMerge is inapplicable or disabled"))
 	tk.MustExec("insert into t values (2, 1, 1, 1, 2)")
 	tk.MustQuery("select /*+ use_index_merge(t,c,idx_ab) */ * from t where a = 1 or (e = 1 and c = 1)").Check(testkit.Rows())
->>>>>>> 556e43e... planner: refine function `accessPathsForConds` to avoid wrong indexmerge plan (#16863)
 }
