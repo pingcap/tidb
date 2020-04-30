@@ -348,6 +348,9 @@ region-cache-ttl = 600
 # default 0 means shutting off store limit.
 store-limit = 0
 
+# store-liveness-timeout is used to control timeout for store liveness after sending request failed.
+store-liveness-timeout = "120s"
+
 [tikv-client.copr-cache]
 # Whether to enable the copr cache. The copr cache saves the result from TiKV Coprocessor in the memory and
 # reuses the result when corresponding data in TiKV is unchanged, on a region basis.
