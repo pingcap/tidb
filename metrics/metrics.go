@@ -149,6 +149,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TotalCopProcHistogram)
 	prometheus.MustRegister(TotalCopWaitHistogram)
 	prometheus.MustRegister(TiKVPendingBatchRequests)
+	prometheus.MustRegister(TiKVStatusDuration)
+	prometheus.MustRegister(TiKVStatusCounter)
 	prometheus.MustRegister(TiKVBatchWaitDuration)
 	prometheus.MustRegister(TiKVBatchClientUnavailable)
 	prometheus.MustRegister(TiKVBatchClientWaitEstablish)
