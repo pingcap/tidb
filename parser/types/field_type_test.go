@@ -240,3 +240,31 @@ func (s *testFieldTypeSuite) TestHasCharsetFromStmt(c *C) {
 		c.Assert(HasCharset(col.Tp), Equals, t.hasCharset)
 	}
 }
+
+func (s *testFieldTypeSuite) TestFieldTypeEqual(c *C) {
+
+	// Tp not equal
+	ft1 := NewFieldType(mysql.TypeDouble)
+	ft2 := NewFieldType(mysql.TypeFloat)
+	c.Assert(ft1.Equal(ft2), Equals, false)
+
+	// Decimal not equal
+	ft2 = NewFieldType(mysql.TypeDouble)
+	ft2.Decimal = 5
+	c.Assert(ft1.Equal(ft2), Equals, false)
+
+	// Flen not equal and decimal not -1
+	ft1.Decimal = 5
+	ft1.Flen = 22
+	c.Assert(ft1.Equal(ft2), Equals, false)
+
+	// Flen equal
+	ft2.Flen = 22
+	c.Assert(ft1.Equal(ft2), Equals, true)
+
+	// Decimal is -1
+	ft1.Decimal = -1
+	ft2.Decimal = -1
+	ft1.Flen = 23
+	c.Assert(ft1.Equal(ft2), Equals, true)
+}
