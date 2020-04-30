@@ -60,13 +60,13 @@ func (ft *FieldType) Clone() *FieldType {
 func (ft *FieldType) Equal(other *FieldType) bool {
 	// We do not need to compare whole `ft.Flag == other.Flag` when wrapping cast upon an Expression.
 	// but need compare unsigned_flag of ft.Flag.
-	// When tp is float or double, do not check whether flen is equal,
-	// because flen for them is only used to distinguish float and double.
+	// When Tp is float or double with Decimal unspecified, do not check whether Flen is equal,
+	// because Flen for them is useless.
 	partialEqual := ft.Tp == other.Tp &&
-		(ft.Flen == other.Flen || ft.EvalType() == ETReal) &&
 		ft.Decimal == other.Decimal &&
 		ft.Charset == other.Charset &&
 		ft.Collate == other.Collate &&
+		(ft.Flen == other.Flen || (ft.EvalType() == ETReal && ft.Decimal == UnspecifiedLength)) &&
 		mysql.HasUnsignedFlag(ft.Flag) == mysql.HasUnsignedFlag(other.Flag)
 	if !partialEqual || len(ft.Elems) != len(other.Elems) {
 		return false
