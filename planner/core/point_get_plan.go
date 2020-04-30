@@ -216,16 +216,11 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 	if tbl == nil {
 		return nil
 	}
-<<<<<<< HEAD
 	// Do not handle partitioned table.
 	// Table partition implementation translates LogicalPlan from `DataSource` to
 	// `Union -> DataSource` in the logical plan optimization pass, since PointGetPlan
 	// bypass the logical plan optimization, it can't support partitioned table.
 	if tbl.GetPartitionInfo() != nil {
-=======
-	pi := tbl.GetPartitionInfo()
-	if pi != nil && pi.Type != model.PartitionTypeHash {
->>>>>>> e521ea9... *: fix the problem that PointGet returns wrong results in the case of overflow (#14776)
 		return nil
 	}
 	for _, col := range tbl.Columns {
@@ -238,7 +233,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 			return nil
 		}
 	}
-	schema, names := buildSchemaFromFields(tblName.Schema, tbl, tblAlias, selStmt.Fields.Fields)
+	schema := buildSchemaFromFields(ctx, tblName.Schema, tbl, tblAlias, selStmt.Fields.Fields)
 	if schema == nil {
 		return nil
 	}
@@ -252,54 +247,16 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 	if pairs == nil && !isTableDual {
 		return nil
 	}
-<<<<<<< HEAD
-	handlePair, fieldType := findPKHandle(tbl, pairs)
-	if handlePair.value.Kind() != types.KindNull && len(pairs) == 1 {
-		schema := buildSchemaFromFields(ctx, tblName.Schema, tbl, tblAlias, selStmt.Fields.Fields)
-		if schema == nil {
-			return nil
-		}
-		dbName := tblName.Schema.L
-		if dbName == "" {
-			dbName = ctx.GetSessionVars().CurrentDB
-		}
-		p := newPointGetPlan(ctx, dbName, schema, tbl)
-		intDatum, err := handlePair.value.ConvertTo(ctx.GetSessionVars().StmtCtx, fieldType)
-		if err != nil {
-			if terror.ErrorEqual(types.ErrOverflow, err) {
-				p.IsTableDual = true
-				return p
-			}
-			// some scenarios cast to int with error, but we may use this value in point get
-			if !terror.ErrorEqual(types.ErrTruncatedWrongVal, err) {
-				return nil
-			}
-		}
-		cmp, err := intDatum.CompareDatum(ctx.GetSessionVars().StmtCtx, &handlePair.value)
-		if err != nil {
-			return nil
-		} else if cmp != 0 {
-=======
-
-	var partitionInfo *model.PartitionDefinition
-	var pos int
-	if pi != nil {
-		partitionInfo, pos = getPartitionInfo(ctx, tbl, pairs)
-		if partitionInfo == nil {
-			return nil
-		}
-	}
 
 	handlePair, fieldType := findPKHandle(tbl, pairs)
 	if handlePair.value.Kind() != types.KindNull && len(pairs) == 1 {
 		if isTableDual {
-			p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
->>>>>>> e521ea9... *: fix the problem that PointGet returns wrong results in the case of overflow (#14776)
+			p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl)
 			p.IsTableDual = true
 			return p
 		}
 
-		p := newPointGetPlan(ctx, dbName, schema, tbl, names)
+		p := newPointGetPlan(ctx, dbName, schema, tbl)
 		p.Handle = handlePair.value.GetInt64()
 		p.UnsignedHandle = mysql.HasUnsignedFlag(fieldType.Flag)
 		p.HandleParam = handlePair.param
@@ -314,7 +271,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 			continue
 		}
 		if isTableDual {
-			p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
+			p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl)
 			p.IsTableDual = true
 			return p
 		}
@@ -323,19 +280,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		if idxValues == nil {
 			continue
 		}
-<<<<<<< HEAD
-		schema := buildSchemaFromFields(ctx, tblName.Schema, tbl, tblAlias, selStmt.Fields.Fields)
-		if schema == nil {
-			return nil
-		}
-		dbName := tblName.Schema.L
-		if dbName == "" {
-			dbName = ctx.GetSessionVars().CurrentDB
-		}
 		p := newPointGetPlan(ctx, dbName, schema, tbl)
-=======
-		p := newPointGetPlan(ctx, dbName, schema, tbl, names)
->>>>>>> e521ea9... *: fix the problem that PointGet returns wrong results in the case of overflow (#14776)
 		p.IndexInfo = idxInfo
 		p.IndexValues = idxValues
 		p.IndexValueParams = idxValueParams
