@@ -417,17 +417,47 @@
             {
               "expr": "process_resident_memory_bytes{job=\"tidb\"}",
               "format": "time_series",
-              "hide": false,
               "intervalFactor": 1,
               "legendFormat": "process-{{instance}}",
               "refId": "A"
             },
             {
-              "expr": "go_memstats_heap_alloc_bytes{job=\"tidb\"}",
+              "expr": "go_memstats_heap_sys_bytes{job=\"tidb\"}",
+              "legendFormat": "HeapSys-{{instance}}",
               "format": "time_series",
               "intervalFactor": 1,
-              "legendFormat": "heap-{{instance}}",
-              "refId": "B"
+              "refId": "B",
+              "hide": true
+            },
+            {
+              "expr": "go_memstats_heap_inuse_bytes{job=\"tidb\"}",
+              "legendFormat": "HeapInuse-{{instance}}",
+              "format": "time_series",
+              "intervalFactor": 1,
+              "refId": "C"
+            },
+            {
+              "expr": "go_memstats_heap_alloc_bytes{job=\"tidb\"}",
+              "legendFormat": "HeapAlloc-{{instance}}",
+              "format": "time_series",
+              "intervalFactor": 1,
+              "refId": "D",
+              "hide": true
+            },
+            {
+              "expr": "go_memstats_heap_idle_bytes{job=\"tidb\"}",
+              "legendFormat": "HeapIdle-{{instance}}",
+              "format": "time_series",
+              "intervalFactor": 1,
+              "refId": "E",
+              "hide": true
+            },
+            {
+              "expr": "go_memstats_heap_released_bytes{job=\"tidb\"}",
+              "legendFormat": "HeapReleased-{{instance}}",
+              "interval": "",
+              "refId": "F",
+              "hide": true
             }
           ],
           "thresholds": [],
