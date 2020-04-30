@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -50,7 +51,7 @@ func TestT(t *testing.T) {
 
 type testGCWorkerSuite struct {
 	store    tikv.Storage
-	cluster  *mocktikv.Cluster
+	cluster  cluster.Cluster
 	oracle   *mockoracle.MockOracle
 	gcWorker *GCWorker
 	dom      *domain.Domain
@@ -71,10 +72,11 @@ func (s *testGCWorkerSuite) SetUpTest(c *C) {
 		return client
 	}
 
-	s.cluster = mocktikv.NewCluster()
-	mocktikv.BootstrapWithMultiStores(s.cluster, 3)
+	cluster := mocktikv.NewCluster()
+	mocktikv.BootstrapWithMultiStores(cluster, 3)
+	s.cluster = cluster
 	store, err := mockstore.NewMockTikvStore(
-		mockstore.WithCluster(s.cluster),
+		mockstore.WithCluster(cluster),
 		mockstore.WithHijackClient(hijackClient))
 
 	s.store = store.(tikv.Storage)
@@ -84,7 +86,7 @@ func (s *testGCWorkerSuite) SetUpTest(c *C) {
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 
-	s.pdClient = mocktikv.NewPDClient(s.cluster)
+	s.pdClient = mocktikv.NewPDClient(cluster)
 	gcWorker, err := NewGCWorker(s.store, s.pdClient)
 	c.Assert(err, IsNil)
 	gcWorker.Start()
@@ -1163,5 +1165,49 @@ func (s *testGCWorkerSuite) TestMergeLockScanner(c *C) {
 		c.Assert(<-resCh, DeepEquals, makeLockList(makeLock("a", 0), makeLock("a", 1), makeLock("b", 0), makeLock("c", 0),
 			makeLock("d", 0), makeLock("d", 1), makeLock("e", 0), makeLock("g", 0), makeLock("g", 1), makeLock("g", 2), makeLock("h", 0)))
 		c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(storeIDs, 0, 1, 2))
+	}
+}
+
+func (s *testGCWorkerSuite) TestPhyscailScanLockDeadlock(c *C) {
+	ctx := context.Background()
+	stores := s.cluster.GetAllStores()
+	c.Assert(len(stores), Greater, 1)
+
+	s.client.physicalScanLockHandler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+		c.Assert(addr, Equals, stores[0].Address)
+		scanReq := req.PhysicalScanLock()
+		scanLockLimit := int(scanReq.Limit)
+		locks := make([]*kvrpcpb.LockInfo, 0, scanReq.Limit)
+		for i := 0; i < scanLockLimit; i++ {
+			// The order of keys doesn't matter.
+			locks = append(locks, &kvrpcpb.LockInfo{Key: []byte{byte(i)}})
+		}
+		return &tikvrpc.Response{
+			Resp: &kvrpcpb.PhysicalScanLockResponse{
+				Locks: locks,
+				Error: "",
+			},
+		}, nil
+	}
+
+	// Sleep 1000ms to let the main goroutine block on sending tasks.
+	// Inject error to the goroutine resolving locks so that the main goroutine will block forever if it doesn't handle channels properly.
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/gcworker/resolveLocksAcrossRegionsErr", "return(1000)"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/gcworker/resolveLocksAcrossRegionsErr"), IsNil)
+	}()
+
+	done := make(chan interface{})
+	go func() {
+		defer close(done)
+		storesMap := map[uint64]*metapb.Store{stores[0].Id: stores[0]}
+		succeeded, err := s.gcWorker.physicalScanAndResolveLocks(ctx, 10000, storesMap)
+		c.Assert(succeeded, IsNil)
+		c.Assert(err, ErrorMatches, "injectedError")
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		c.Fatal("physicalScanAndResolveLocks blocks")
 	}
 }

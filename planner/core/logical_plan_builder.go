@@ -2704,7 +2704,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	var indexMergeHints []*ast.IndexHint
 	if hints := b.TableHints(); hints != nil {
 		for i, hint := range hints.indexMergeHintList {
-			if hint.tblName.L == tblName.L {
+			if hint.tblName.L == tblName.L && hint.dbName.L == dbName.L {
 				hints.indexMergeHintList[i].matched = true
 				// check whether the index names in IndexMergeHint are valid.
 				invalidIdxNames := make([]string, 0, len(hint.indexHint.IndexNames))
@@ -3259,7 +3259,10 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		}
 	}
 	if b.ctx.GetSessionVars().TxnCtx.IsPessimistic {
-		if !update.MultipleTable {
+		if update.TableRefs.TableRefs.Right == nil {
+			// buildSelectLock is an optimization that can reduce RPC call.
+			// We only need do this optimization for single table update which is the most common case.
+			// When TableRefs.Right is nil, it is single table update.
 			p = b.buildSelectLock(p, ast.SelectLockForUpdate)
 		}
 	}

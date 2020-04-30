@@ -461,12 +461,6 @@ func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor
 // Build builds the ast node to a Plan.
 func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 	b.optFlag |= flagPrunColumns
-	defer func() {
-		// if there is something after flagPrunColumns, do flagPrunColumnsAgain
-		if b.optFlag&flagPrunColumns > 0 && b.optFlag-flagPrunColumns > flagPrunColumns {
-			b.optFlag |= flagPrunColumnsAgain
-		}
-	}()
 	switch x := node.(type) {
 	case *ast.AdminStmt:
 		return b.buildAdmin(ctx, x)
@@ -507,6 +501,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 		return b.buildDo(ctx, x)
 	case *ast.SetStmt:
 		return b.buildSet(ctx, x)
+	case *ast.SetConfigStmt:
+		return b.buildSetConfig(ctx, x)
 	case *ast.AnalyzeTableStmt:
 		return b.buildAnalyze(x)
 	case *ast.BinlogStmt, *ast.FlushStmt, *ast.UseStmt,
@@ -526,6 +522,14 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 		return b.buildSplitRegion(x)
 	}
 	return nil, ErrUnsupportedType.GenWithStack("Unsupported type %T", node)
+}
+
+func (b *PlanBuilder) buildSetConfig(ctx context.Context, v *ast.SetConfigStmt) (Plan, error) {
+	privErr := ErrSpecificAccessDenied.GenWithStackByArgs("CONFIG")
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ConfigPriv, "", "", "", privErr)
+	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+	expr, _, err := b.rewrite(ctx, v.Value, mockTablePlan, nil, true)
+	return &SetConfig{Name: v.Name, Type: v.Type, Instance: v.Instance, Value: expr}, err
 }
 
 func (b *PlanBuilder) buildChange(v *ast.ChangeStmt) (Plan, error) {
@@ -1481,6 +1485,7 @@ func buildShowNextRowID() (*expression.Schema, types.NameSlice) {
 	schema.Append(buildColumnWithName("", "TABLE_NAME", mysql.TypeVarchar, mysql.MaxTableNameLength))
 	schema.Append(buildColumnWithName("", "COLUMN_NAME", mysql.TypeVarchar, mysql.MaxColumnNameLength))
 	schema.Append(buildColumnWithName("", "NEXT_GLOBAL_ROW_ID", mysql.TypeLonglong, 4))
+	schema.Append(buildColumnWithName("", "ID_TYPE", mysql.TypeVarchar, 15))
 	return schema.col2Schema(), schema.names
 }
 
