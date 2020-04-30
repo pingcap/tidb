@@ -73,7 +73,8 @@ func (r *streamResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 func (r *streamResult) readDataFromResponse(ctx context.Context, resp kv.Response, result *tipb.Chunk) (bool, error) {
 	startTime := time.Now()
 	resultSubset, err := resp.Next(ctx)
-	r.fetchDuration += time.Since(startTime)
+	duration := time.Since(startTime)
+	r.fetchDuration += duration
 	if err != nil {
 		return false, err
 	}
@@ -105,7 +106,11 @@ func (r *streamResult) readDataFromResponse(ctx context.Context, resp kv.Respons
 	}
 	r.feedback.Update(resultSubset.GetStartKey(), stream.OutputCounts)
 	r.partialCount++
-	r.ctx.GetSessionVars().StmtCtx.MergeExecDetails(resultSubset.GetExecDetails(), nil)
+	resultDetail := resultSubset.GetExecDetails()
+	if resultDetail != nil {
+		resultDetail.CopTime = duration
+	}
+	r.ctx.GetSessionVars().StmtCtx.MergeExecDetails(resultDetail, nil)
 	return false, nil
 }
 
