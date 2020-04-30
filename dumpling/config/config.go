@@ -50,6 +50,8 @@ const (
 	DefPort = 4000
 	// DefStatusPort is the default status port of TiBD
 	DefStatusPort = 10080
+	// DefStoreLivenessTimeout is the default value for store liveness timeout.
+	DefStoreLivenessTimeout = "120s"
 )
 
 // Valid config maps
@@ -451,6 +453,8 @@ type TiKVClient struct {
 	// If a store has been up to the limit, it will return error for successive request to
 	// prevent the store occupying too much token in dispatching level.
 	StoreLimit int64 `toml:"store-limit" json:"store-limit"`
+	// StoreLivenessTimeout is the timeout for store liveness check request.
+	StoreLivenessTimeout string `toml:"store-liveness-timeout" json:"store-liveness-timeout"`
 
 	CoprCache CoprocessorCache `toml:"copr-cache" json:"copr-cache"`
 }
@@ -629,8 +633,9 @@ var defaultConf = Config{
 
 		EnableChunkRPC: true,
 
-		RegionCacheTTL: 600,
-		StoreLimit:     0,
+		RegionCacheTTL:       600,
+		StoreLimit:           0,
+		StoreLivenessTimeout: DefStoreLivenessTimeout,
 
 		CoprCache: CoprocessorCache{
 			Enabled:               true,
