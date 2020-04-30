@@ -1325,7 +1325,10 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 	p := &Analyze{Opts: opts}
 	for _, tbl := range as.TableNames {
 		if tbl.TableInfo.IsView() {
-			return nil, errors.Errorf("analyze %s is not supported now.", tbl.Name.O)
+			return nil, errors.Errorf("analyze view %s is not supported now.", tbl.Name.O)
+		}
+		if tbl.TableInfo.IsSequence() {
+			return nil, errors.Errorf("analyze sequence %s is not supported now.", tbl.Name.O)
 		}
 		idxInfo, colInfo, pkInfo := getColsInfo(tbl)
 		physicalIDs, names, err := getPhysicalIDsAndPartitionNames(tbl.TableInfo, as.PartitionNames)
@@ -1941,6 +1944,13 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		err := errors.Errorf("insert into view %s is not supported now.", tableInfo.Name.O)
 		if insert.IsReplace {
 			err = errors.Errorf("replace into view %s is not supported now.", tableInfo.Name.O)
+		}
+		return nil, err
+	}
+	if tableInfo.IsSequence() {
+		err := errors.Errorf("insert into sequence %s is not supported now.", tableInfo.Name.O)
+		if insert.IsReplace {
+			err = errors.Errorf("replace into sequence %s is not supported now.", tableInfo.Name.O)
 		}
 		return nil, err
 	}
