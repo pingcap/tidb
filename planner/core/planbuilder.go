@@ -1325,7 +1325,10 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 	p := &Analyze{Opts: opts}
 	for _, tbl := range as.TableNames {
 		if tbl.TableInfo.IsView() {
-			return nil, errors.Errorf("analyze %s is not supported now.", tbl.Name.O)
+			return nil, errors.Errorf("analyze view %s is not supported now.", tbl.Name.O)
+		}
+		if tbl.TableInfo.IsSequence() {
+			return nil, errors.Errorf("analyze sequence %s is not supported now.", tbl.Name.O)
 		}
 		idxInfo, colInfo, pkInfo := getColsInfo(tbl)
 		physicalIDs, names, err := getPhysicalIDsAndPartitionNames(tbl.TableInfo, as.PartitionNames)
@@ -1944,6 +1947,13 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		}
 		return nil, err
 	}
+	if tableInfo.IsSequence() {
+		err := errors.Errorf("insert into sequence %s is not supported now.", tableInfo.Name.O)
+		if insert.IsReplace {
+			err = errors.Errorf("replace into sequence %s is not supported now.", tableInfo.Name.O)
+		}
+		return nil, err
+	}
 	// Build Schema with DBName otherwise ColumnRef with DBName cannot match any Column in Schema.
 	schema, names := expression.TableInfo2SchemaAndNames(b.ctx, tn.Schema, tableInfo)
 	tableInPlan, ok := b.is.TableByID(tableInfo.ID)
@@ -2140,7 +2150,12 @@ func (b *PlanBuilder) buildSetValuesOfInsert(ctx context.Context, insert *ast.In
 			return ErrBadGeneratedColumn.GenWithStackByArgs(assign.Column.Name.O, tableInfo.Name.O)
 		}
 		b.curClause = fieldList
-		expr, _, err := b.rewriteWithPreprocess(ctx, assign.Expr, mockTablePlan, nil, nil, true, checkRefColumn)
+		// subquery in insert values should not reference upper scope
+		usingPlan := mockTablePlan
+		if _, ok := assign.Expr.(*ast.SubqueryExpr); ok {
+			usingPlan = LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+		}
+		expr, _, err := b.rewriteWithPreprocess(ctx, assign.Expr, usingPlan, nil, nil, true, checkRefColumn)
 		if err != nil {
 			return err
 		}
@@ -2213,7 +2228,12 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 				}
 			default:
 				b.curClause = fieldList
-				expr, _, err = b.rewriteWithPreprocess(ctx, valueItem, mockTablePlan, nil, nil, true, checkRefColumn)
+				// subquery in insert values should not reference upper scope
+				usingPlan := mockTablePlan
+				if _, ok := valueItem.(*ast.SubqueryExpr); ok {
+					usingPlan = LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+				}
+				expr, _, err = b.rewriteWithPreprocess(ctx, valueItem, usingPlan, nil, nil, true, checkRefColumn)
 			}
 			if err != nil {
 				return err
