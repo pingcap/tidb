@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -52,7 +53,7 @@ func TestT(t *testing.T) {
 
 type testGCWorkerSuite struct {
 	store    tikv.Storage
-	cluster  *mocktikv.Cluster
+	cluster  cluster.Cluster
 	oracle   *mockoracle.MockOracle
 	gcWorker *GCWorker
 	dom      *domain.Domain
@@ -73,10 +74,11 @@ func (s *testGCWorkerSuite) SetUpTest(c *C) {
 		return client
 	}
 
-	s.cluster = mocktikv.NewCluster()
-	mocktikv.BootstrapWithMultiStores(s.cluster, 3)
+	cluster := mocktikv.NewCluster()
+	mocktikv.BootstrapWithMultiStores(cluster, 3)
+	s.cluster = cluster
 	store, err := mockstore.NewMockTikvStore(
-		mockstore.WithCluster(s.cluster),
+		mockstore.WithCluster(cluster),
 		mockstore.WithHijackClient(hijackClient))
 
 	s.store = store.(tikv.Storage)
@@ -86,7 +88,7 @@ func (s *testGCWorkerSuite) SetUpTest(c *C) {
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 
-	s.pdClient = mocktikv.NewPDClient(s.cluster)
+	s.pdClient = mocktikv.NewPDClient(cluster)
 	gcWorker, err := NewGCWorker(s.store, s.pdClient)
 	c.Assert(err, IsNil)
 	gcWorker.Start()

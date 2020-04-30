@@ -36,7 +36,7 @@ type BatchPointGetExec struct {
 
 	tblInfo    *model.TableInfo
 	idxInfo    *model.IndexInfo
-	handles    []int64
+	handles    []kv.Handle
 	physIDs    []int64
 	partPos    int
 	idxVals    [][]types.Datum
@@ -175,7 +175,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			return err
 		}
 
-		e.handles = make([]int64, 0, len(keys))
+		e.handles = make([]kv.Handle, 0, len(keys))
 		if e.tblInfo.Partition != nil {
 			e.physIDs = make([]int64, 0, len(keys))
 		}
@@ -188,7 +188,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			if err1 != nil {
 				return err1
 			}
-			e.handles = append(e.handles, handle)
+			e.handles = append(e.handles, kv.IntHandle(handle))
 			if e.tblInfo.Partition != nil {
 				e.physIDs = append(e.physIDs, tablecodec.DecodeTableID(key))
 			}
@@ -210,9 +210,9 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	} else if e.keepOrder {
 		sort.Slice(e.handles, func(i int, j int) bool {
 			if e.desc {
-				return e.handles[i] > e.handles[j]
+				return e.handles[i].Compare(e.handles[j]) > 0
 			}
-			return e.handles[i] < e.handles[j]
+			return e.handles[i].Compare(e.handles[j]) < 0
 		})
 	}
 
@@ -222,9 +222,9 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		if len(e.physIDs) > 0 {
 			tID = e.physIDs[i]
 		} else {
-			tID = getPhysID(e.tblInfo, handle)
+			tID = getPhysID(e.tblInfo, handle.IntValue())
 		}
-		key := tablecodec.EncodeRowKeyWithHandle(tID, kv.IntHandle(handle))
+		key := tablecodec.EncodeRowKeyWithHandle(tID, handle)
 		keys[i] = key
 	}
 
@@ -250,7 +250,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	handles := make([]int64, 0, len(values))
+	handles := make([]kv.Handle, 0, len(values))
 	var existKeys []kv.Key
 	if e.lock && rc {
 		existKeys = make([]kv.Key, 0, len(values))

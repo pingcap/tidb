@@ -378,6 +378,14 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 				logutil.BgLogger().Debug("can not derive statistics of a path", zap.Error(err))
 				continue
 			}
+			if len(path.TableFilters) > 0 || len(path.AccessConds) == 0 {
+				// If AccessConds is empty or tableFilter is not empty, we ignore the access path.
+				// Now these conditions are too strict.
+				// For example, a sql `select * from t where a > 1 or (b < 2 and c > 3)` and table `t` with indexes
+				// on a and b separately. we can generate a `IndexMergePath` with table filter `a > 1 or (b < 2 and c > 3)`.
+				// TODO: solve the above case
+				continue
+			}
 			// If we have point or empty range, just remove other possible paths.
 			if noIntervalRanges || len(path.Ranges) == 0 {
 				if len(results) == 0 {
@@ -399,6 +407,14 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 				continue
 			}
 			noIntervalRanges := ds.deriveIndexPathStats(path, conditions, true)
+			if len(path.TableFilters) > 0 || len(path.AccessConds) == 0 {
+				// If AccessConds is empty or tableFilter is not empty, we ignore the access path.
+				// Now these conditions are too strict.
+				// For example, a sql `select * from t where a > 1 or (b < 2 and c > 3)` and table `t` with indexes
+				// on a and b separately. we can generate a `IndexMergePath` with table filter `a > 1 or (b < 2 and c > 3)`.
+				// TODO: solve the above case
+				continue
+			}
 			// If we have empty range, or point range on unique index, just remove other possible paths.
 			if (noIntervalRanges && path.Index.Unique) || len(path.Ranges) == 0 {
 				if len(results) == 0 {
@@ -409,14 +425,6 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 				}
 				break
 			}
-		}
-		// If AccessConds is empty or tableFilter is not empty, we ignore the access path.
-		// Now these conditions are too strict.
-		// For example, a sql `select * from t where a > 1 or (b < 2 and c > 3)` and table `t` with indexes
-		// on a and b separately. we can generate a `IndexMergePath` with table filter `a > 1 or (b < 2 and c > 3)`.
-		// TODO: solve the above case
-		if len(path.TableFilters) > 0 || len(path.AccessConds) == 0 {
-			continue
 		}
 		results = append(results, path)
 	}
