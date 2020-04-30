@@ -42,4 +42,8 @@ type Cluster interface {
 	SplitIndex(tableID, indexID int64, count int)
 	// SplitKeys evenly splits the start, end key into "count" regions.
 	SplitKeys(start, end kv.Key, count int)
+	// AddStore adds a new Store to the cluster.
+	AddStore(storeID uint64, addr string)
+	// RemoveStore removes a Store from the cluster.
+	RemoveStore(storeID uint64)
 }
