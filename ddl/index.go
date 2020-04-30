@@ -972,7 +972,7 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 	w.initBatchCheckBufs(len(idxRecords))
 	stmtCtx := w.sessCtx.GetSessionVars().StmtCtx
 	for i, record := range idxRecords {
-		idxKey, distinct, err := w.index.GenIndexKey(stmtCtx, record.vals, record.handle, w.idxKeyBufs[i])
+		idxKey, distinct, err := w.index.GenIndexKey(stmtCtx, record.vals, kv.IntHandle(record.handle), w.idxKeyBufs[i])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -994,7 +994,7 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 	for i, key := range w.batchCheckKeys {
 		if val, found := batchVals[string(key)]; found {
 			if w.distinctCheckFlags[i] {
-				handle, err1 := tables.DecodeHandle(val)
+				handle, err1 := tables.DecodeHandleInUniqueIndexValue(val)
 				if err1 != nil {
 					return errors.Trace(err1)
 				}
@@ -1008,7 +1008,7 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 			// The keys in w.batchCheckKeys also maybe duplicate,
 			// so we need to backfill the not found key into `batchVals` map.
 			if w.distinctCheckFlags[i] {
-				batchVals[string(key)] = tables.EncodeHandle(idxRecords[i].handle)
+				batchVals[string(key)] = tables.EncodeHandleInUniqueIndexValue(idxRecords[i].handle)
 			}
 		}
 	}
@@ -1062,9 +1062,9 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (taskCtx
 			}
 
 			// Create the index.
-			handle, err := w.index.Create(w.sessCtx, txn, idxRecord.vals, idxRecord.handle)
+			handle, err := w.index.Create(w.sessCtx, txn, idxRecord.vals, kv.IntHandle(idxRecord.handle))
 			if err != nil {
-				if kv.ErrKeyExists.Equal(err) && idxRecord.handle == handle {
+				if kv.ErrKeyExists.Equal(err) && idxRecord.handle == handle.IntValue() {
 					// Index already exists, skip it.
 					continue
 				}
@@ -1190,8 +1190,8 @@ func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table, indexInfo *mo
 // to speed up adding index in table with disperse handle.
 // The `t` should be a non-partitioned table or a partition.
 func splitTableRanges(t table.PhysicalTable, store kv.Storage, startHandle, endHandle int64) ([]kv.KeyRange, error) {
-	startRecordKey := t.RecordKey(startHandle)
-	endRecordKey := t.RecordKey(endHandle).Next()
+	startRecordKey := t.RecordKey(kv.IntHandle(startHandle))
+	endRecordKey := t.RecordKey(kv.IntHandle(endHandle)).Next()
 
 	logutil.BgLogger().Info("[ddl] split table range from PD", zap.Int64("physicalTableID", t.GetPhysicalID()), zap.Int64("startHandle", startHandle), zap.Int64("endHandle", endHandle))
 	kvRange := kv.KeyRange{StartKey: startRecordKey, EndKey: endRecordKey}
@@ -1309,7 +1309,7 @@ func (w *worker) sendRangeTaskToWorkers(t table.Table, workers []*addIndexWorker
 			return nil, errors.Trace(err)
 		}
 
-		endKey := t.RecordKey(endHandle)
+		endKey := t.RecordKey(kv.IntHandle(endHandle))
 		endIncluded := false
 		if endKey.Cmp(keyRange.EndKey) < 0 {
 			endIncluded = true
@@ -1558,19 +1558,19 @@ func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	firstKey := t.RecordKey(startHandle)
+	firstKey := t.RecordKey(kv.IntHandle(startHandle))
 
 	// Calculate the exclusive upper bound
 	var upperBound kv.Key
 	if endIncluded {
 		if endHandle == math.MaxInt64 {
-			upperBound = t.RecordKey(endHandle).PrefixNext()
+			upperBound = t.RecordKey(kv.IntHandle(endHandle)).PrefixNext()
 		} else {
 			// PrefixNext is time costing. Try to avoid it if possible.
-			upperBound = t.RecordKey(endHandle + 1)
+			upperBound = t.RecordKey(kv.IntHandle(endHandle + 1))
 		}
 	} else {
-		upperBound = t.RecordKey(endHandle)
+		upperBound = t.RecordKey(kv.IntHandle(endHandle))
 	}
 
 	it, err := snap.Iter(firstKey, upperBound)
@@ -1589,7 +1589,7 @@ func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version 
 		if err != nil {
 			return errors.Trace(err)
 		}
-		rk := t.RecordKey(handle.IntValue())
+		rk := t.RecordKey(handle)
 
 		more, err := fn(handle.IntValue(), rk, it.Value())
 		if !more || err != nil {

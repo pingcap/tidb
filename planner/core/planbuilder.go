@@ -525,9 +525,10 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 }
 
 func (b *PlanBuilder) buildSetConfig(ctx context.Context, v *ast.SetConfigStmt) (Plan, error) {
+	privErr := ErrSpecificAccessDenied.GenWithStackByArgs("CONFIG")
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ConfigPriv, "", "", "", privErr)
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 	expr, _, err := b.rewrite(ctx, v.Value, mockTablePlan, nil, true)
-	expr = expression.WrapWithCastAsString(b.ctx, expr)
 	return &SetConfig{Name: v.Name, Type: v.Type, Instance: v.Instance, Value: expr}, err
 }
 
@@ -1484,6 +1485,7 @@ func buildShowNextRowID() (*expression.Schema, types.NameSlice) {
 	schema.Append(buildColumnWithName("", "TABLE_NAME", mysql.TypeVarchar, mysql.MaxTableNameLength))
 	schema.Append(buildColumnWithName("", "COLUMN_NAME", mysql.TypeVarchar, mysql.MaxColumnNameLength))
 	schema.Append(buildColumnWithName("", "NEXT_GLOBAL_ROW_ID", mysql.TypeLonglong, 4))
+	schema.Append(buildColumnWithName("", "ID_TYPE", mysql.TypeVarchar, 15))
 	return schema.col2Schema(), schema.names
 }
 
