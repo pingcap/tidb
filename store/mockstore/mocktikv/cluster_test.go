@@ -42,6 +42,7 @@ func (s *testClusterSuite) TestClusterSplit(c *C) {
 	cluster := mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(cluster)
 	mvccStore := mocktikv.MustNewMVCCStore()
+	cluster.SetMvccStore(mvccStore)
 	store, err := mockstore.NewMockTikvStore(
 		mockstore.WithCluster(cluster),
 		mockstore.WithMVCCStore(mvccStore),
@@ -76,7 +77,7 @@ func (s *testClusterSuite) TestClusterSplit(c *C) {
 	c.Assert(err, IsNil)
 
 	// Split Table into 10 regions.
-	cluster.SplitTable(mvccStore, tblID, 10)
+	cluster.SplitTable(tblID, 10)
 
 	// 10 table regions and first region and last region.
 	regions := cluster.GetAllRegions()
@@ -100,7 +101,7 @@ func (s *testClusterSuite) TestClusterSplit(c *C) {
 	}
 	c.Assert(allKeysMap, HasLen, 1000)
 
-	cluster.SplitIndex(mvccStore, tblID, idxID, 10)
+	cluster.SplitIndex(tblID, idxID, 10)
 
 	allIndexMap := make(map[string]bool)
 	indexPrefix := tablecodec.EncodeTableIndexPrefix(tblID, idxID)
