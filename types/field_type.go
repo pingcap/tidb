@@ -72,6 +72,7 @@ func AggFieldType(tps []*FieldType) *FieldType {
 		}
 		mtp := MergeFieldType(currType.Tp, t.Tp)
 		currType.Tp = mtp
+		currType.Flag = mergeTypeFlag(currType.Flag, t.Flag)
 	}
 
 	return &currType
@@ -306,6 +307,15 @@ func MergeFieldType(a byte, b byte) byte {
 	ia := getFieldTypeIndex(a)
 	ib := getFieldTypeIndex(b)
 	return fieldTypeMergeRules[ia][ib]
+}
+
+// mergeTypeFlag merges two MySQL type flag to a new one
+// currently only NotNullFlag is checked
+// todo more flag need to be checked, for example: UnsignedFlag
+func mergeTypeFlag(a, b uint) uint {
+	ret := a
+	ret &= (a & b & mysql.NotNullFlag) | ^mysql.NotNullFlag
+	return ret
 }
 
 func getFieldTypeIndex(tp byte) int {
