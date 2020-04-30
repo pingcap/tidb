@@ -313,9 +313,7 @@ func MergeFieldType(a byte, b byte) byte {
 // currently only NotNullFlag is checked
 // todo more flag need to be checked, for example: UnsignedFlag
 func mergeTypeFlag(a, b uint) uint {
-	ret := a
-	ret &= (a & b & mysql.NotNullFlag) | ^mysql.NotNullFlag
-	return ret
+	return a & (b&mysql.NotNullFlag | ^mysql.NotNullFlag)
 }
 
 func getFieldTypeIndex(tp byte) int {
