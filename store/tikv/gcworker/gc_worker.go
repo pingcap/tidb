@@ -1853,7 +1853,8 @@ func (r mergeReceiver) Less(i, j int) bool {
 		// lhs != nil, so lhs < rhs
 		return true
 	}
-	return bytes.Compare(lhs.Key, rhs.Key) < 0 || (bytes.Equal(lhs.Key, rhs.Key) && lhs.TxnID < rhs.TxnID)
+	ord := bytes.Compare(lhs.Key, rhs.Key)
+	return ord < 0 || (ord == 0 && lhs.TxnID < rhs.TxnID)
 }
 
 func (r mergeReceiver) Swap(i, j int) {
