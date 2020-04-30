@@ -49,10 +49,16 @@ import (
 
 // brieTaskProgress tracks a task's current progress.
 type brieTaskProgress struct {
-	current int64 // the `current` field will be atomically updated outside of the lock.
+	// current progress of the task.
+	// this field is atomically updated outside of the lock below.
+	current int64
 
-	lock  sync.Mutex
-	cmd   string
+	// lock is the mutex protected the two fields below.
+	lock sync.Mutex
+	// cmd is the name of the step the BRIE task is currently performing.
+	cmd string
+	// total is the total progress of the task.
+	// the percentage of completeness is `(100%) * current / total`.
 	total int64
 }
 
@@ -230,6 +236,8 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	if len(s.Tables) != 0 {
 		cfg.Filter.DoTables = make([]*filter.Table, 0, len(s.Tables))
 		for _, tbl := range s.Tables {
+			// the `tbl.Schema` is always not empty if a database is used.
+			// this is handled by (*preprocessor).handleTableName().
 			cfg.Filter.DoTables = append(cfg.Filter.DoTables, &filter.Table{
 				Name:   tbl.Name.O,
 				Schema: tbl.Schema.O,
@@ -306,15 +314,6 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	taskCtx, taskID := bq.registerTask(ctx, e.info)
 	defer bq.cancelTask(taskID)
 
-	progress, err := bq.acquireTask(taskCtx, taskID)
-	if err != nil {
-		return err
-	}
-	defer bq.releaseTask()
-
-	e.info.execTime = types.CurrentTime(mysql.TypeDatetime)
-	glue := &tidbGlueSession{se: e.ctx, progress: progress, info: e.info}
-
 	// manually monitor the Killed status...
 	go func() {
 		ticker := time.NewTicker(3 * time.Second)
@@ -331,6 +330,15 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			}
 		}
 	}()
+
+	progress, err := bq.acquireTask(taskCtx, taskID)
+	if err != nil {
+		return err
+	}
+	defer bq.releaseTask()
+
+	e.info.execTime = types.CurrentTime(mysql.TypeDatetime)
+	glue := &tidbGlueSession{se: e.ctx, progress: progress, info: e.info}
 
 	switch e.info.kind {
 	case ast.BRIEKindBackup:
