@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -36,9 +37,8 @@ import (
 
 type testCommitterSuite struct {
 	OneByOneSuite
-	cluster   *mocktikv.Cluster
-	store     *tikvStore
-	mvccStore mocktikv.MVCCStore
+	cluster cluster.Cluster
+	store   *tikvStore
 }
 
 var _ = SerialSuites(&testCommitterSuite{})
@@ -49,13 +49,14 @@ func (s *testCommitterSuite) SetUpSuite(c *C) {
 }
 
 func (s *testCommitterSuite) SetUpTest(c *C) {
-	s.cluster = mocktikv.NewCluster()
-	mocktikv.BootstrapWithMultiRegions(s.cluster, []byte("a"), []byte("b"), []byte("c"))
+	cluster := mocktikv.NewCluster()
+	mocktikv.BootstrapWithMultiRegions(cluster, []byte("a"), []byte("b"), []byte("c"))
+	s.cluster = cluster
 	mvccStore, err := mocktikv.NewMVCCLevelDB("")
 	c.Assert(err, IsNil)
-	s.mvccStore = mvccStore
-	client := mocktikv.NewRPCClient(s.cluster, mvccStore)
-	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
+	cluster.SetMvccStore(mvccStore)
+	client := mocktikv.NewRPCClient(cluster, mvccStore)
+	pdCli := &codecPDClient{mocktikv.NewPDClient(cluster)}
 	spkv := NewMockSafePointKV()
 	store, err := newTikvStore("mocktikv-store", pdCli, spkv, client, false, nil)
 	c.Assert(err, IsNil)
@@ -845,7 +846,7 @@ func (c *twoPhaseCommitter) mutationsOfKeys(keys [][]byte) committerMutations {
 
 func (s *testCommitterSuite) TestCommitDeadLock(c *C) {
 	// Split into two region and let k1 k2 in different regions.
-	s.cluster.SplitKeys(s.mvccStore, kv.Key("z"), kv.Key("a"), 2)
+	s.cluster.SplitKeys(kv.Key("z"), kv.Key("a"), 2)
 	k1 := kv.Key("a_deadlock_k1")
 	k2 := kv.Key("y_deadlock_k2")
 
