@@ -167,7 +167,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				return err
 			}
 		}
-		if kv.ErrNotExist.Equal(err) || len(e.handleVal) == 0 {
+		if len(e.handleVal) == 0 {
 			// handle is not found, try lock the index key if isolation level is not read consistency
 			if e.ctx.GetSessionVars().IsPessimisticReadConsistency() {
 				return nil
