@@ -50,7 +50,7 @@ type twoPhaseCommitAction interface {
 }
 
 type actionPrewrite struct{}
-type actionCommit struct{}
+type actionCommit struct{ retry bool }
 type actionCleanup struct{}
 type actionPessimisticLock struct {
 	*kv.LockCtx
@@ -423,6 +423,9 @@ func txnLockTTL(startTime time.Time, txnSize int) uint64 {
 	return lockTTL + uint64(elapsed)
 }
 
+var preSplitDetectThreshold uint32 = 100000
+var preSplitSizeThreshold uint32 = 32 << 20
+
 // doActionOnMutations groups keys into primary batch and secondary batches, if primary batch exists in the key,
 // it does action on primary batch first, then on secondary batches. If action is commit, secondary batches
 // is done in background goroutine.
@@ -435,6 +438,68 @@ func (c *twoPhaseCommitter) doActionOnMutations(bo *Backoffer, action twoPhaseCo
 		return errors.Trace(err)
 	}
 
+	// Pre-split regions to avoid too much write workload into a single region.
+	// In the large transaction case, this operation is important to avoid TiKV 'server is busy' error.
+	var preSplited bool
+	preSplitDetectThresholdVal := atomic.LoadUint32(&preSplitDetectThreshold)
+	for _, group := range groups {
+		if uint32(group.mutations.len()) >= preSplitDetectThresholdVal {
+			logutil.BgLogger().Info("2PC detect large amount of mutations on a single region",
+				zap.Uint64("region", group.region.GetID()),
+				zap.Int("mutations count", group.mutations.len()))
+			// Use context.Background, this time should not add up to Backoffer.
+			if preSplitAndScatterIn2PC(context.Background(), c.store, group) {
+				preSplited = true
+			}
+		}
+	}
+	// Reload region cache again.
+	if preSplited {
+		groups, err = c.store.regionCache.GroupSortedMutationsByRegion(bo, mutations)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	return c.doActionOnGroupMutations(bo, action, groups)
+}
+
+func preSplitAndScatterIn2PC(ctx context.Context, store *tikvStore, group groupedMutations) bool {
+	length := group.mutations.len()
+	splitKeys := make([][]byte, 0, 4)
+
+	preSplitSizeThresholdVal := atomic.LoadUint32(&preSplitSizeThreshold)
+	regionSize := 0
+	for i := 0; i < length; i++ {
+		regionSize = regionSize + len(group.mutations.keys[i]) + len(group.mutations.values[i])
+		// The second condition is used for testing.
+		if regionSize >= int(preSplitSizeThresholdVal) {
+			regionSize = 0
+			splitKeys = append(splitKeys, group.mutations.keys[i])
+		}
+	}
+	if len(splitKeys) == 0 {
+		return false
+	}
+
+	regionIDs, err := store.SplitRegions(ctx, splitKeys, true)
+	if err != nil {
+		logutil.BgLogger().Warn("2PC split regions failed", zap.Uint64("regionID", group.region.id), zap.Int("keys count", length), zap.Error(err))
+		return false
+	}
+
+	for _, regionID := range regionIDs {
+		err := store.WaitScatterRegionFinish(regionID, 0)
+		if err != nil {
+			logutil.BgLogger().Warn("2PC wait scatter region failed", zap.Uint64("regionID", regionID), zap.Error(err))
+		}
+	}
+	// Invalidate the old region cache information.
+	store.regionCache.InvalidateCachedRegion(group.region)
+	return true
+}
+
+func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPhaseCommitAction, groups []groupedMutations) error {
 	action.tiKVTxnRegionsNumHistogram().Observe(float64(len(groups)))
 
 	var batches []batchMutations
@@ -463,10 +528,11 @@ func (c *twoPhaseCommitter) doActionOnMutations(bo *Backoffer, action twoPhaseCo
 		firstIsPrimary = true
 	}
 
-	_, actionIsCommit := action.(actionCommit)
+	actionCommit, actionIsCommit := action.(actionCommit)
 	_, actionIsCleanup := action.(actionCleanup)
 	_, actionIsPessimiticLock := action.(actionPessimisticLock)
 
+	var err error
 	failpoint.Inject("skipKeyReturnOK", func(val failpoint.Value) {
 		valStr, ok := val.(string)
 		if ok && c.connID > 0 {
@@ -499,7 +565,7 @@ func (c *twoPhaseCommitter) doActionOnMutations(bo *Backoffer, action twoPhaseCo
 		}
 		batches = batches[1:]
 	}
-	if actionIsCommit {
+	if actionIsCommit && !actionCommit.retry {
 		// Commit secondary batches in background goroutine to reduce latency.
 		// The backoffer instance is created outside of the goroutine to avoid
 		// potential data race in unit test since `CommitMaxBackoff` will be updated
@@ -527,16 +593,25 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 		return nil
 	}
 
-	if len(batches) == 1 {
-		e := action.handleSingleBatch(c, bo, batches[0])
-		if e != nil {
-			logutil.BgLogger().Debug("2PC doActionOnBatches failed",
-				zap.Uint64("conn", c.connID),
-				zap.Stringer("action type", action),
-				zap.Error(e),
-				zap.Uint64("txnStartTS", c.startTS))
+	noNeedFork := len(batches) == 1
+	if !noNeedFork {
+		if ac, ok := action.(actionCommit); ok && ac.retry {
+			noNeedFork = true
 		}
-		return errors.Trace(e)
+	}
+	if noNeedFork {
+		for _, b := range batches {
+			e := action.handleSingleBatch(c, bo, b)
+			if e != nil {
+				logutil.BgLogger().Debug("2PC doActionOnBatches failed",
+					zap.Uint64("conn", c.connID),
+					zap.Stringer("action type", action),
+					zap.Error(e),
+					zap.Uint64("txnStartTS", c.startTS))
+				return errors.Trace(e)
+			}
+		}
+		return nil
 	}
 	rateLim := len(batches)
 	// Set rateLim here for the large transaction.
@@ -998,7 +1073,7 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 			return errors.Trace(err)
 		}
 		// re-split keys and commit again.
-		err = c.commitMutations(bo, batch.mutations)
+		err = c.doActionOnMutations(bo, actionCommit{retry: true}, batch.mutations)
 		return errors.Trace(err)
 	}
 	if resp.Resp == nil {

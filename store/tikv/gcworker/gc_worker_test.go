@@ -20,6 +20,8 @@ import (
 	"math"
 	"sort"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -38,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -50,7 +53,7 @@ func TestT(t *testing.T) {
 
 type testGCWorkerSuite struct {
 	store    tikv.Storage
-	cluster  *mocktikv.Cluster
+	cluster  cluster.Cluster
 	oracle   *mockoracle.MockOracle
 	gcWorker *GCWorker
 	dom      *domain.Domain
@@ -71,10 +74,11 @@ func (s *testGCWorkerSuite) SetUpTest(c *C) {
 		return client
 	}
 
-	s.cluster = mocktikv.NewCluster()
-	mocktikv.BootstrapWithMultiStores(s.cluster, 3)
+	cluster := mocktikv.NewCluster()
+	mocktikv.BootstrapWithMultiStores(cluster, 3)
+	s.cluster = cluster
 	store, err := mockstore.NewMockTikvStore(
-		mockstore.WithCluster(s.cluster),
+		mockstore.WithCluster(cluster),
 		mockstore.WithHijackClient(hijackClient))
 
 	s.store = store.(tikv.Storage)
@@ -84,7 +88,7 @@ func (s *testGCWorkerSuite) SetUpTest(c *C) {
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 
-	s.pdClient = mocktikv.NewPDClient(s.cluster)
+	s.pdClient = mocktikv.NewPDClient(cluster)
 	gcWorker, err := NewGCWorker(s.store, s.pdClient)
 	c.Assert(err, IsNil)
 	gcWorker.Start()
@@ -468,7 +472,7 @@ func (s *testGCWorkerSuite) TestCheckGCMode(c *C) {
 func (s *testGCWorkerSuite) TestCheckScanLockMode(c *C) {
 	usePhysical, err := s.gcWorker.checkUsePhysicalScanLock()
 	c.Assert(err, IsNil)
-	c.Assert(usePhysical, Equals, false)
+	c.Assert(usePhysical, Equals, true)
 	// This is a hidden config, so default value will not be inserted to table.
 	str, err := s.gcWorker.loadValueFromSysTable(gcScanLockModeKey)
 	c.Assert(err, IsNil)
@@ -694,8 +698,11 @@ Loop:
 
 type testGCWorkerClient struct {
 	tikv.Client
-	unsafeDestroyRangeHandler handler
-	physicalScanLockHandler   handler
+	unsafeDestroyRangeHandler   handler
+	physicalScanLockHandler     handler
+	registerLockObserverHandler handler
+	checkLockObserverHandler    handler
+	removeLockObserverHandler   handler
 }
 
 type handler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error)
@@ -706,6 +713,15 @@ func (c *testGCWorkerClient) SendRequest(ctx context.Context, addr string, req *
 	}
 	if req.Type == tikvrpc.CmdPhysicalScanLock && c.physicalScanLockHandler != nil {
 		return c.physicalScanLockHandler(addr, req)
+	}
+	if req.Type == tikvrpc.CmdRegisterLockObserver && c.registerLockObserverHandler != nil {
+		return c.registerLockObserverHandler(addr, req)
+	}
+	if req.Type == tikvrpc.CmdCheckLockObserver && c.checkLockObserverHandler != nil {
+		return c.checkLockObserverHandler(addr, req)
+	}
+	if req.Type == tikvrpc.CmdRemoveLockObserver && c.removeLockObserverHandler != nil {
+		return c.removeLockObserverHandler(addr, req)
 	}
 
 	return c.Client.SendRequest(ctx, addr, req, timeout)
@@ -925,6 +941,7 @@ func makeMergedChannel(c *C, count int) (*mergeLockScanner, []chan scanLockResul
 	scanner := &mergeLockScanner{}
 	channels := make([]chan scanLockResult, 0, count)
 	receivers := make([]*receiver, 0, count)
+	storeIDs := make([]uint64, 0, count)
 
 	for i := 0; i < count; i++ {
 		ch := make(chan scanLockResult, 10)
@@ -935,6 +952,7 @@ func makeMergedChannel(c *C, count int) (*mergeLockScanner, []chan scanLockResul
 
 		channels = append(channels, ch)
 		receivers = append(receivers, receiver)
+		storeIDs = append(storeIDs, uint64(i))
 	}
 
 	resultCh := make(chan []*tikv.Lock)
@@ -946,11 +964,6 @@ func makeMergedChannel(c *C, count int) (*mergeLockScanner, []chan scanLockResul
 		c.Assert(len(result), Less, 1000)
 		resultCh <- result
 	}()
-
-	storeIDs := make([]uint64, count)
-	for i := 0; i < count; i++ {
-		storeIDs[i] = uint64(i)
-	}
 
 	return scanner, channels, storeIDs, resultCh
 }
@@ -992,7 +1005,7 @@ func (s *testGCWorkerSuite) makeMergedMockClient(c *C, count int) (*mergeLockSca
 						locks = nil
 						break
 					}
-					lockInfo := &kvrpcpb.LockInfo{Key: res.Lock.Key}
+					lockInfo := &kvrpcpb.LockInfo{Key: res.Lock.Key, LockVersion: res.Lock.TxnID}
 					locks = append(locks, lockInfo)
 				}
 
@@ -1033,53 +1046,86 @@ func (s *testGCWorkerSuite) TestMergeLockScanner(c *C) {
 		return res
 	}
 
-	makeLock := func(key string) *tikv.Lock {
-		return &tikv.Lock{Key: []byte(key)}
+	makeLock := func(key string, ts uint64) *tikv.Lock {
+		return &tikv.Lock{Key: []byte(key), TxnID: ts}
 	}
 
-	makeLockList := func(keys ...string) []*tikv.Lock {
-		res := make([]*tikv.Lock, 0, len(keys))
-		for _, k := range keys {
-			res = append(res, makeLock(k))
+	makeLockList := func(locks ...*tikv.Lock) []*tikv.Lock {
+		res := make([]*tikv.Lock, 0, len(locks))
+		for _, lock := range locks {
+			res = append(res, lock)
 		}
 		return res
 	}
 
-	sendLocks := func(ch chan<- scanLockResult, keys ...string) {
-		for _, k := range keys {
-			ch <- scanLockResult{Lock: makeLock(k)}
+	makeLockListByKey := func(keys ...string) []*tikv.Lock {
+		res := make([]*tikv.Lock, 0, len(keys))
+		for _, key := range keys {
+			res = append(res, makeLock(key, 0))
 		}
+		return res
+	}
+
+	sendLocks := func(ch chan<- scanLockResult, locks ...*tikv.Lock) {
+		for _, lock := range locks {
+			ch <- scanLockResult{Lock: lock}
+		}
+	}
+
+	sendLocksByKey := func(ch chan<- scanLockResult, keys ...string) []*tikv.Lock {
+		locks := make([]*tikv.Lock, 0, len(keys))
+		for _, key := range keys {
+			locks = append(locks, makeLock(key, 0))
+		}
+		sendLocks(ch, locks...)
+		return locks
 	}
 
 	sendErr := func(ch chan<- scanLockResult) {
 		ch <- scanLockResult{Err: errors.New("error")}
 	}
 
+	// No lock.
 	scanner, sendCh, storeIDs, resCh := makeMergedChannel(c, 1)
 	close(sendCh[0])
 	c.Assert(len(<-resCh), Equals, 0)
 	c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(storeIDs, 0))
 
 	scanner, sendCh, storeIDs, resCh = makeMergedChannel(c, 1)
-	sendLocks(sendCh[0], "a", "b", "c")
+	locks := sendLocksByKey(sendCh[0], "a", "b", "c")
 	close(sendCh[0])
-	c.Assert(<-resCh, DeepEquals, makeLockList("a", "b", "c"))
+	c.Assert(<-resCh, DeepEquals, locks)
 	c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(storeIDs, 0))
 
+	// Send locks with error
 	scanner, sendCh, storeIDs, resCh = makeMergedChannel(c, 1)
-	sendLocks(sendCh[0], "a", "b", "c")
+	locks = sendLocksByKey(sendCh[0], "a", "b", "c")
 	sendErr(sendCh[0])
 	close(sendCh[0])
-	c.Assert(<-resCh, DeepEquals, makeLockList("a", "b", "c"))
+	c.Assert(<-resCh, DeepEquals, locks)
 	c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(storeIDs))
 
+	// Merge sort locks with different keys.
 	scanner, sendCh, storeIDs, resCh = makeMergedChannel(c, 2)
-	sendLocks(sendCh[0], "a", "c", "e")
+	locks = sendLocksByKey(sendCh[0], "a", "c", "e")
 	time.Sleep(time.Millisecond * 100)
-	sendLocks(sendCh[1], "b", "d", "f")
+	locks = append(locks, sendLocksByKey(sendCh[1], "b", "d", "f")...)
 	close(sendCh[0])
 	close(sendCh[1])
-	c.Assert(<-resCh, DeepEquals, makeLockList("a", "b", "c", "d", "e", "f"))
+	sort.Slice(locks, func(i, j int) bool {
+		return bytes.Compare(locks[i].Key, locks[j].Key) < 0
+	})
+	c.Assert(<-resCh, DeepEquals, locks)
+	c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(storeIDs, 0, 1))
+
+	// Merge sort locks with different timestamps.
+	scanner, sendCh, storeIDs, resCh = makeMergedChannel(c, 2)
+	sendLocks(sendCh[0], makeLock("a", 0), makeLock("a", 1))
+	time.Sleep(time.Millisecond * 100)
+	sendLocks(sendCh[1], makeLock("a", 1), makeLock("a", 2), makeLock("b", 0))
+	close(sendCh[0])
+	close(sendCh[1])
+	c.Assert(<-resCh, DeepEquals, makeLockList(makeLock("a", 0), makeLock("a", 1), makeLock("a", 2), makeLock("b", 0)))
 	c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(storeIDs, 0, 1))
 
 	for _, useMock := range []bool{false, true} {
@@ -1089,38 +1135,263 @@ func (s *testGCWorkerSuite) TestMergeLockScanner(c *C) {
 		}
 
 		scanner, sendCh, storeIDs, resCh = channel(c, 3)
-		sendLocks(sendCh[0], "a", "d", "g", "h")
+		sendLocksByKey(sendCh[0], "a", "d", "g", "h")
 		time.Sleep(time.Millisecond * 100)
-		sendLocks(sendCh[1], "a", "d", "f", "h")
+		sendLocksByKey(sendCh[1], "a", "d", "f", "h")
 		time.Sleep(time.Millisecond * 100)
-		sendLocks(sendCh[2], "b", "c", "e", "h")
+		sendLocksByKey(sendCh[2], "b", "c", "e", "h")
 		close(sendCh[0])
 		close(sendCh[1])
 		close(sendCh[2])
-		c.Assert(<-resCh, DeepEquals, makeLockList("a", "b", "c", "d", "e", "f", "g", "h"))
+		c.Assert(<-resCh, DeepEquals, makeLockListByKey("a", "b", "c", "d", "e", "f", "g", "h"))
 		c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(storeIDs, 0, 1, 2))
 
 		scanner, sendCh, storeIDs, resCh = channel(c, 3)
-		sendLocks(sendCh[0], "a", "d", "g", "h")
+		sendLocksByKey(sendCh[0], "a", "d", "g", "h")
 		time.Sleep(time.Millisecond * 100)
-		sendLocks(sendCh[1], "a", "d", "f", "h")
+		sendLocksByKey(sendCh[1], "a", "d", "f", "h")
 		time.Sleep(time.Millisecond * 100)
-		sendLocks(sendCh[2], "b", "c", "e", "h")
+		sendLocksByKey(sendCh[2], "b", "c", "e", "h")
 		sendErr(sendCh[0])
 		close(sendCh[0])
 		close(sendCh[1])
 		close(sendCh[2])
-		c.Assert(<-resCh, DeepEquals, makeLockList("a", "b", "c", "d", "e", "f", "g", "h"))
+		c.Assert(<-resCh, DeepEquals, makeLockListByKey("a", "b", "c", "d", "e", "f", "g", "h"))
 		c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(storeIDs, 1, 2))
 
 		scanner, sendCh, storeIDs, resCh = channel(c, 3)
-		sendLocks(sendCh[0], "a\x00", "a\x00\x00", "b", "b\x00")
-		sendLocks(sendCh[1], "a", "a\x00\x00", "a\x00\x00\x00", "c")
-		sendLocks(sendCh[2], "1", "a\x00", "a\x00\x00", "b")
+		sendLocksByKey(sendCh[0], "a\x00", "a\x00\x00", "b", "b\x00")
+		sendLocksByKey(sendCh[1], "a", "a\x00\x00", "a\x00\x00\x00", "c")
+		sendLocksByKey(sendCh[2], "1", "a\x00", "a\x00\x00", "b")
 		close(sendCh[0])
 		close(sendCh[1])
 		close(sendCh[2])
-		c.Assert(<-resCh, DeepEquals, makeLockList("1", "a", "a\x00", "a\x00\x00", "a\x00\x00\x00", "b", "b\x00", "c"))
+		c.Assert(<-resCh, DeepEquals, makeLockListByKey("1", "a", "a\x00", "a\x00\x00", "a\x00\x00\x00", "b", "b\x00", "c"))
 		c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(storeIDs, 0, 1, 2))
+
+		scanner, sendCh, storeIDs, resCh = channel(c, 3)
+		sendLocks(sendCh[0], makeLock("a", 0), makeLock("d", 0), makeLock("g", 0), makeLock("h", 0))
+		sendLocks(sendCh[1], makeLock("a", 1), makeLock("b", 0), makeLock("c", 0), makeLock("d", 1))
+		sendLocks(sendCh[2], makeLock("e", 0), makeLock("g", 1), makeLock("g", 2), makeLock("h", 0))
+		close(sendCh[0])
+		close(sendCh[1])
+		close(sendCh[2])
+		c.Assert(<-resCh, DeepEquals, makeLockList(makeLock("a", 0), makeLock("a", 1), makeLock("b", 0), makeLock("c", 0),
+			makeLock("d", 0), makeLock("d", 1), makeLock("e", 0), makeLock("g", 0), makeLock("g", 1), makeLock("g", 2), makeLock("h", 0)))
+		c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(storeIDs, 0, 1, 2))
+	}
+}
+
+func (s *testGCWorkerSuite) TestResolveLocksPhysical(c *C) {
+	alwaysSucceedHanlder := func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+		switch req.Type {
+		case tikvrpc.CmdPhysicalScanLock:
+			return &tikvrpc.Response{Resp: &kvrpcpb.PhysicalScanLockResponse{Locks: nil, Error: ""}}, nil
+		case tikvrpc.CmdRegisterLockObserver:
+			return &tikvrpc.Response{Resp: &kvrpcpb.RegisterLockObserverResponse{Error: ""}}, nil
+		case tikvrpc.CmdCheckLockObserver:
+			return &tikvrpc.Response{Resp: &kvrpcpb.CheckLockObserverResponse{Error: "", IsClean: true, Locks: nil}}, nil
+		case tikvrpc.CmdRemoveLockObserver:
+			return &tikvrpc.Response{Resp: &kvrpcpb.RemoveLockObserverResponse{Error: ""}}, nil
+		default:
+			panic("unreachable")
+		}
+	}
+	alwaysFailHandler := func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+		switch req.Type {
+		case tikvrpc.CmdPhysicalScanLock:
+			return &tikvrpc.Response{Resp: &kvrpcpb.PhysicalScanLockResponse{Locks: nil, Error: "error"}}, nil
+		case tikvrpc.CmdRegisterLockObserver:
+			return &tikvrpc.Response{Resp: &kvrpcpb.RegisterLockObserverResponse{Error: "error"}}, nil
+		case tikvrpc.CmdCheckLockObserver:
+			return &tikvrpc.Response{Resp: &kvrpcpb.CheckLockObserverResponse{Error: "error", IsClean: false, Locks: nil}}, nil
+		case tikvrpc.CmdRemoveLockObserver:
+			return &tikvrpc.Response{Resp: &kvrpcpb.RemoveLockObserverResponse{Error: "error"}}, nil
+		default:
+			panic("unreachable")
+		}
+	}
+	reset := func() {
+		s.client.physicalScanLockHandler = alwaysSucceedHanlder
+		s.client.registerLockObserverHandler = alwaysSucceedHanlder
+		s.client.checkLockObserverHandler = alwaysSucceedHanlder
+		s.client.removeLockObserverHandler = alwaysSucceedHanlder
+	}
+
+	ctx := context.Background()
+
+	// No lock
+	reset()
+	err := s.gcWorker.resolveLocksPhysical(ctx, 10000)
+	c.Assert(err, IsNil)
+
+	// Should return error when fails to register lock observers.
+	reset()
+	s.client.registerLockObserverHandler = alwaysFailHandler
+	err = s.gcWorker.resolveLocksPhysical(ctx, 10000)
+	c.Assert(err, ErrorMatches, "register lock observer.*")
+
+	// Should return error when fails to resolve locks.
+	reset()
+	s.client.physicalScanLockHandler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+		locks := []*kvrpcpb.LockInfo{{Key: []byte{0}}}
+		return &tikvrpc.Response{Resp: &kvrpcpb.PhysicalScanLockResponse{Locks: locks, Error: ""}}, nil
+	}
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/gcworker/resolveLocksAcrossRegionsErr", "return(100)"), IsNil)
+	err = s.gcWorker.resolveLocksPhysical(ctx, 10000)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/gcworker/resolveLocksAcrossRegionsErr"), IsNil)
+	c.Assert(err, ErrorMatches, "injectedError")
+
+	// Shouldn't return error when fails to scan locks.
+	reset()
+	var returnError uint32 = 1
+	s.client.physicalScanLockHandler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+		if atomic.CompareAndSwapUint32(&returnError, 1, 0) {
+			return alwaysFailHandler(addr, req)
+		}
+		return alwaysSucceedHanlder(addr, req)
+	}
+	err = s.gcWorker.resolveLocksPhysical(ctx, 10000)
+	c.Assert(err, IsNil)
+
+	// Should return error if reaches retry limit
+	reset()
+	s.client.physicalScanLockHandler = alwaysFailHandler
+	err = s.gcWorker.resolveLocksPhysical(ctx, 10000)
+	c.Assert(err, ErrorMatches, ".*dirty.*")
+
+	// Should return error when one registered store is dirty.
+	reset()
+	s.client.checkLockObserverHandler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+		return &tikvrpc.Response{Resp: &kvrpcpb.CheckLockObserverResponse{Error: "", IsClean: false, Locks: nil}}, nil
+	}
+	err = s.gcWorker.resolveLocksPhysical(ctx, 10000)
+	c.Assert(err, ErrorMatches, "store.*dirty")
+
+	// Should return error when fails to check lock observers.
+	reset()
+	s.client.checkLockObserverHandler = alwaysFailHandler
+	err = s.gcWorker.resolveLocksPhysical(ctx, 10000)
+	// When fails to check lock observer in a store, we assume the store is dirty.
+	c.Assert(err, ErrorMatches, "store.*dirty")
+
+	// Shouldn't return error when the dirty store is newly added.
+	reset()
+	var wg sync.WaitGroup
+	wg.Add(1)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/gcworker/beforeCheckLockObservers", "pause"), IsNil)
+	go func() {
+		defer wg.Done()
+		err := s.gcWorker.resolveLocksPhysical(ctx, 10000)
+		c.Assert(err, IsNil)
+	}()
+	// Sleep to let the goroutine pause.
+	time.Sleep(500 * time.Millisecond)
+	s.cluster.AddStore(100, "store100")
+	once := true
+	s.client.checkLockObserverHandler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+		// The newly added store returns IsClean=false for the first time.
+		if addr == "store100" && once {
+			once = false
+			return &tikvrpc.Response{Resp: &kvrpcpb.CheckLockObserverResponse{Error: "", IsClean: false, Locks: nil}}, nil
+		}
+		return alwaysSucceedHanlder(addr, req)
+	}
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/gcworker/beforeCheckLockObservers"), IsNil)
+	wg.Wait()
+
+	// Shouldn't return error when a store is removed.
+	reset()
+	wg.Add(1)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/gcworker/beforeCheckLockObservers", "pause"), IsNil)
+	go func() {
+		defer wg.Done()
+		err := s.gcWorker.resolveLocksPhysical(ctx, 10000)
+		c.Assert(err, IsNil)
+	}()
+	// Sleep to let the goroutine pause.
+	time.Sleep(500 * time.Millisecond)
+	s.cluster.RemoveStore(100)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/gcworker/beforeCheckLockObservers"), IsNil)
+	wg.Wait()
+
+	// Should return error when a cleaned store becomes dirty.
+	reset()
+	wg.Add(1)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/gcworker/beforeCheckLockObservers", "pause"), IsNil)
+	go func() {
+		defer wg.Done()
+		err := s.gcWorker.resolveLocksPhysical(ctx, 10000)
+		c.Assert(err, ErrorMatches, "store.*dirty")
+	}()
+	// Sleep to let the goroutine pause.
+	time.Sleep(500 * time.Millisecond)
+	store := s.cluster.GetAllStores()[0]
+	var onceClean uint32 = 1
+	s.cluster.AddStore(100, "store100")
+	var onceDirty uint32 = 1
+	s.client.checkLockObserverHandler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+		switch addr {
+		case "store100":
+			// The newly added store returns IsClean=false for the first time.
+			if atomic.CompareAndSwapUint32(&onceDirty, 1, 0) {
+				return &tikvrpc.Response{Resp: &kvrpcpb.CheckLockObserverResponse{Error: "", IsClean: false, Locks: nil}}, nil
+			}
+			return alwaysSucceedHanlder(addr, req)
+		case store.Address:
+			// The store returns IsClean=true for the first time.
+			if atomic.CompareAndSwapUint32(&onceClean, 1, 0) {
+				return alwaysSucceedHanlder(addr, req)
+			}
+			return &tikvrpc.Response{Resp: &kvrpcpb.CheckLockObserverResponse{Error: "", IsClean: false, Locks: nil}}, nil
+		default:
+			return alwaysSucceedHanlder(addr, req)
+		}
+	}
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/gcworker/beforeCheckLockObservers"), IsNil)
+	wg.Wait()
+}
+
+func (s *testGCWorkerSuite) TestPhyscailScanLockDeadlock(c *C) {
+	ctx := context.Background()
+	stores := s.cluster.GetAllStores()
+	c.Assert(len(stores), Greater, 1)
+
+	s.client.physicalScanLockHandler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+		c.Assert(addr, Equals, stores[0].Address)
+		scanReq := req.PhysicalScanLock()
+		scanLockLimit := int(scanReq.Limit)
+		locks := make([]*kvrpcpb.LockInfo, 0, scanReq.Limit)
+		for i := 0; i < scanLockLimit; i++ {
+			// The order of keys doesn't matter.
+			locks = append(locks, &kvrpcpb.LockInfo{Key: []byte{byte(i)}})
+		}
+		return &tikvrpc.Response{
+			Resp: &kvrpcpb.PhysicalScanLockResponse{
+				Locks: locks,
+				Error: "",
+			},
+		}, nil
+	}
+
+	// Sleep 1000ms to let the main goroutine block on sending tasks.
+	// Inject error to the goroutine resolving locks so that the main goroutine will block forever if it doesn't handle channels properly.
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/gcworker/resolveLocksAcrossRegionsErr", "return(1000)"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/gcworker/resolveLocksAcrossRegionsErr"), IsNil)
+	}()
+
+	done := make(chan interface{})
+	go func() {
+		defer close(done)
+		storesMap := map[uint64]*metapb.Store{stores[0].Id: stores[0]}
+		succeeded, err := s.gcWorker.physicalScanAndResolveLocks(ctx, 10000, storesMap)
+		c.Assert(succeeded, IsNil)
+		c.Assert(err, ErrorMatches, "injectedError")
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		c.Fatal("physicalScanAndResolveLocks blocks")
 	}
 }
