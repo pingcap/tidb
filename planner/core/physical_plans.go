@@ -571,40 +571,87 @@ type PhysicalWindow struct {
 	Frame           *WindowFrame
 }
 
-// PhysicalShuffle represents a shuffle plan.
-// `Tail` and `DataSource` are the last plan within and the first plan following the "shuffle", respectively,
-//  to build the child executors chain.
-// Take `Window` operator for example:
-//  Shuffle -> Window -> Sort -> DataSource, will be separated into:
-//    ==> Shuffle: for main thread
-//    ==> Window -> Sort(:Tail) -> shuffleWorker: for workers
-//    ==> DataSource: for `fetchDataAndSplit` thread
+// PhysicalShuffle represents a Shuffle plan.
+// Between the Shuffles, executors are running in a parallel manner.
 type PhysicalShuffle struct {
 	basePhysicalPlan
 
+	// Concurrency is the degree of parallelism of children executors.
 	Concurrency int
-	Tail        PhysicalPlan
-	DataSource  PhysicalPlan
+	// MergerType is the type of merger, which merges tuples from children executors.
+	MergerType ShuffleMergerType
+	// MergeByItems used by some merger, e.g. `MergeSortMerger`.
+	MergeByItems []property.ItemExpression
 
-	SplitterType PartitionSplitterType
-	HashByItems  []expression.Expression
+	// FanOut the number of partitions which Shuffle should split tuples to.
+	// And `FanOut` should be the same as the degree of parallelism of parent executors.
+	FanOut int
+	// SplitterType is the type of splitter, which splits tuples for parent executors.
+	SplitterType ShuffleSplitterType
+	// SplitByItems used by some splitter, e.g. `HashSpliter`.
+	SplitByItems []*expression.Column
 }
 
-// PartitionSplitterType is the type of `Shuffle` executor splitter, which splits data source into partitions.
-type PartitionSplitterType int
+// ShuffleSplitterType is the type of `Shuffle` executor splitter, which splits children tuples into partitions.
+type ShuffleSplitterType int
 
 const (
-	// PartitionHashSplitterType is the splitter splits by hash.
-	PartitionHashSplitterType = iota
+	// ShuffleNoneSplitterType is used for FullMerge (i.e. parent is serial executing, so splitting is not necessary).
+	// Should be 0 as default value.
+	ShuffleNoneSplitterType = 0
+	// ShuffleRandomSplitterType splits tuples by chunks, resulting random order.
+	ShuffleRandomSplitterType = iota + 10
+	// ShuffleHashSplitterType splits by hash.
+	ShuffleHashSplitterType
 )
 
-// PhysicalShuffleDataSourceStub represents a data source stub of `PhysicalShuffle`,
-// and actually, is executed by `executor.shuffleWorker`.
+func getShuffleSplitterName4Explain(tp ShuffleSplitterType) string {
+	switch tp {
+	case ShuffleNoneSplitterType:
+		return "none"
+	case ShuffleRandomSplitterType:
+		return "random"
+	case ShuffleHashSplitterType:
+		return "hash"
+	default:
+		return "<unknown>"
+	}
+}
+
+// ShuffleMergerType is the type of `Shuffle` merger, which merges results from children partitions.
+type ShuffleMergerType int
+
+const (
+	// ShuffleNoneMergerType is used for initial partitioning (i.e. child is serial executing, so merging is not necessary).
+	// Should be 0 as default value.
+	ShuffleNoneMergerType = 0
+	// ShuffleRandomMergerType merges results by the chunk, resulting random order.
+	ShuffleRandomMergerType = iota + 10
+	// ShuffleMergeSortMergerType merges tuples by `Merge-Sort`
+	ShuffleMergeSortMergerType
+)
+
+func getShuffleMergerName4Explain(tp ShuffleMergerType) string {
+	switch tp {
+	case ShuffleNoneMergerType:
+		return "none"
+	case ShuffleRandomMergerType:
+		return "random"
+	case ShuffleMergeSortMergerType:
+		return "merge-sort"
+	default:
+		return "<unknown>"
+	}
+}
+
+// PhysicalShuffleDataSourceStub represents a data source stub of `PhysicalShuffle`.
 type PhysicalShuffleDataSourceStub struct {
 	physicalSchemaProducer
 
-	// Worker points to `executor.shuffleWorker`.
-	Worker unsafe.Pointer
+	// WorkerIdx represents worker index.
+	WorkerIdx int
+	// ChildShuffleExec points to child `executor.ShuffleExec`.
+	ChildShuffleExec unsafe.Pointer
 }
 
 // CollectPlanStatsVersion uses to collect the statistics version of the plan.

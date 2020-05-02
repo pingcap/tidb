@@ -573,7 +573,33 @@ func (p *PhysicalWindow) ExplainInfo() string {
 // ExplainInfo implements Plan interface.
 func (p *PhysicalShuffle) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
-	fmt.Fprintf(buffer, "execution info: concurrency:%v, data source:%v", p.Concurrency, p.DataSource.ExplainID())
+	fmt.Fprintf(buffer, "execution info: concurrency:%v, fan out:%v", p.Concurrency, p.FanOut)
+	fmt.Fprintf(buffer, ", splitter:%v", getShuffleSplitterName4Explain(p.SplitterType))
+	if len(p.SplitByItems) > 0 {
+		buffer.WriteString("(")
+		for i, col := range p.SplitByItems {
+			buffer.WriteString(col.ExplainInfo())
+			if i+1 < len(p.SplitByItems) {
+				buffer.WriteString(",")
+			}
+		}
+		buffer.WriteString(")")
+	}
+	fmt.Fprintf(buffer, ", merger:%v", getShuffleMergerName4Explain(p.MergerType))
+	if len(p.MergeByItems) > 0 {
+		buffer.WriteString("(")
+		for i, item := range p.MergeByItems {
+			order := ""
+			if item.Desc {
+				order = " desc"
+			}
+			fmt.Fprintf(buffer, "%s%s", item.Expr.ExplainInfo(), order)
+			if i+1 < len(p.MergeByItems) {
+				buffer.WriteString(",")
+			}
+		}
+		buffer.WriteString(")")
+	}
 	return buffer.String()
 }
 

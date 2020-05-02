@@ -230,6 +230,42 @@ func buildMockDataSourceWithIndex(opt mockDataSourceParameters, index []int) *mo
 	return buildMockDataSource(opt)
 }
 
+func buildExecutorWithShuffle(ctx sessionctx.Context, plan core.PhysicalPlan,
+	dataSource Executor, concurrency int,
+	splitterType core.ShuffleSplitterType, splitByItems []*expression.Column,
+	mergerType core.ShuffleMergerType, mergeByItems []property.ItemExpression,
+) Executor {
+	src := &mockDataPhysicalPlan{
+		schema: dataSource.Schema(),
+		exec:   dataSource,
+	}
+
+	shuffleSplitter := core.PhysicalShuffle{
+		Concurrency:  1,
+		FanOut:       concurrency,
+		SplitterType: splitterType,
+		SplitByItems: splitByItems,
+	}.Init(ctx, nil, 0)
+	shuffleSplitter.SetChildren(src)
+
+	tail := plan
+	for len(tail.Children()) > 0 {
+		tail = tail.Children()[0]
+	}
+	tail.SetChildren(shuffleSplitter)
+
+	shuffleMerger := core.PhysicalShuffle{
+		Concurrency:  concurrency,
+		MergerType:   mergerType,
+		MergeByItems: mergeByItems,
+		FanOut:       1,
+	}.Init(ctx, nil, 0)
+	shuffleMerger.SetChildren(plan)
+
+	builder := newExecutorBuilder(ctx, nil)
+	return builder.build(shuffleMerger)
+}
+
 // aggTestCase has a fixed schema (aggCol Double, groupBy LongLong).
 type aggTestCase struct {
 	execType    string // "hash" or "stream"
@@ -474,35 +510,25 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 			byItems = append(byItems, &core.ByItems{Expr: col, Desc: false})
 		}
 		sort := &core.PhysicalSort{ByItems: byItems}
-		sort.SetChildren(src)
 		win.SetChildren(sort)
 		tail = sort
-	} else {
-		win.SetChildren(src)
 	}
 
-	var plan core.PhysicalPlan
-	if concurrency > 1 {
-		byItems := make([]expression.Expression, 0, len(win.PartitionBy))
-		for _, item := range win.PartitionBy {
-			byItems = append(byItems, item.Col)
-		}
-
-		plan = core.PhysicalShuffle{
-			Concurrency:  concurrency,
-			Tail:         tail,
-			DataSource:   src,
-			SplitterType: core.PartitionHashSplitterType,
-			HashByItems:  byItems,
-		}.Init(ctx, nil, 0)
-		plan.SetChildren(win)
-	} else {
-		plan = win
+	if concurrency <= 1 {
+		tail.SetChildren(src)
+		b := newExecutorBuilder(ctx, nil)
+		return b.build(win)
 	}
 
-	b := newExecutorBuilder(ctx, nil)
-	exec := b.build(plan)
-	return exec
+	byItems := make([]*expression.Column, 0, len(win.PartitionBy))
+	for _, item := range win.PartitionBy {
+		byItems = append(byItems, item.Col)
+	}
+	return buildExecutorWithShuffle(
+		ctx, win, srcExec, concurrency,
+		core.ShuffleHashSplitterType, byItems,
+		core.ShuffleRandomMergerType, nil,
+	)
 }
 
 // windowTestCase has a fixed schema (col Double, partitionBy LongLong, rawData VarString(16), col LongLong).

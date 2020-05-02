@@ -26,6 +26,14 @@ type Item struct {
 	Desc bool
 }
 
+// ItemExpression represents underlying expression of `property.Item`.
+// ONLY used for partition delivering properties.
+// (The same as planner.core.ByItems, but redefine to avoid circular dependency)
+type ItemExpression struct {
+	Expr expression.Expression
+	Desc bool
+}
+
 // PhysicalProperty stands for the required physical property by parents.
 // It contains the orders and the task types.
 type PhysicalProperty struct {

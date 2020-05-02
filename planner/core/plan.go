@@ -117,19 +117,27 @@ func optimizeByShuffle4Window(pp *PhysicalWindow, ctx sessionctx.Context) *Physi
 	}
 	concurrency = mathutil.Min(concurrency, NDV)
 
-	byItems := make([]expression.Expression, 0, len(pp.PartitionBy))
+	byItems := make([]*expression.Column, 0, len(pp.PartitionBy))
 	for _, item := range pp.PartitionBy {
 		byItems = append(byItems, item.Col)
 	}
 	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
-	shuffle := PhysicalShuffle{
-		Concurrency:  concurrency,
-		Tail:         tail,
-		DataSource:   dataSource,
-		SplitterType: PartitionHashSplitterType,
-		HashByItems:  byItems,
+
+	shuffleSplitter := PhysicalShuffle{
+		Concurrency:  1,
+		FanOut:       concurrency,
+		SplitterType: ShuffleHashSplitterType,
+		SplitByItems: byItems,
+	}.Init(ctx, dataSource.statsInfo(), dataSource.SelectBlockOffset(), reqProp)
+	shuffleSplitter.SetChildren(dataSource)
+	tail.SetChildren(shuffleSplitter)
+
+	shuffleMerger := PhysicalShuffle{
+		Concurrency: concurrency,
+		FanOut:      1,
+		MergerType:  ShuffleRandomMergerType,
 	}.Init(ctx, pp.statsInfo(), pp.SelectBlockOffset(), reqProp)
-	return shuffle
+	return shuffleMerger
 }
 
 // LogicalPlan is a tree of logical operators.

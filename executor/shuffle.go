@@ -19,74 +19,94 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/sessionctx"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/spaolacci/murmur3"
 	"go.uber.org/zap"
 )
 
-// ShuffleExec is the executor to run other executors in a parallel manner.
-//  1. It fetches chunks from `DataSource`.
-//  2. It splits tuples from `DataSource` into N partitions (Only "split by hash" is implemented so far).
-//  3. It invokes N workers in parallel, assign each partition as input to each worker and execute child executors.
-//  4. It collects outputs from each worker, then sends outputs to its parent.
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Shuffle redistributes data, to run executors in a parallel manner.
+// It changes the data property from one distribution to another, to meet the requirements of parallel executing.
 //
-//                                +-------------+
-//                        +-------| Main Thread |
-//                        |       +------+------+
-//                        |              ^
-//                        |              |
-//                        |              +
-//                        v             +++
-//                 outputHolderCh       | | outputCh (1 x Concurrency)
-//                        v             +++
-//                        |              ^
-//                        |              |
-//                        |      +-------+-------+
-//                        v      |               |
-//                 +--------------+             +--------------+
-//          +----- |    worker    |   .......   |    worker    |  worker (N Concurrency): child executor, eg. WindowExec (+SortExec)
-//          |      +------------+-+             +-+------------+
-//          |                 ^                 ^
-//          |                 |                 |
-//          |                +-+  +-+  ......  +-+
-//          |                | |  | |          | |
-//          |                ...  ...          ...  inputCh (Concurrency x 1)
-//          v                | |  | |          | |
-//    inputHolderCh          +++  +++          +++
-//          v                 ^    ^            ^
-//          |                 |    |            |
-//          |          +------o----+            |
-//          |          |      +-----------------+-----+
-//          |          |                              |
-//          |      +---+------------+------------+----+-----------+
-//          |      |              Partition Splitter              |
-//          |      +--------------+-+------------+-+--------------+
-//          |                             ^
-//          |                             |
-//          |             +---------------v-----------------+
-//          +---------->  |    fetch data from DataSource   |
-//                        +---------------------------------+
+//                                +------------------------------+
+//                                |            Parent            |
+//                                +---------------^--------------+
+//                                                |
+//     +------------------------------------------^-------------------------------------------+
+//     |                                       merger#0                                       |
+//     |                                          |                                           |
+//     |                   +----------+-----------+-----+          <Shuffle(Full-Merge)>      |
+//     |                   ^          ^                 ^                (M x 1)              |
+//     |              splitter#1     ...           splitter#M                                 |
+//     +--------------------------------------------------------------------------------------+
+//                         ^          ^                 ^
+//                         |          |                 |
+//                         |          |                 |
+//                         |          |                 |
+//                 +---------------+             +---------------+
+//                 | Executor(s) A |     ....    | Executor(s) A | (M Concurrency)
+//                 +---------------+             +---------------+
+//                         ^          ^                 ^
+//                         |          |                 |
+//                         |          |                 |
+//                         |          |                 |
+//     +-------------------^----------^-----------------^-------------------------------------+
+//     |                merger#1   merger#2     ...  merger#M                                 |
+//     |                   ^          ^                 ^                                     |
+//     |                +--+--------+-+--------- ... ---+---+     <Shuffle(Repartitioning)>   |
+//     |                ^           ^            ...        ^             (N x M)             |
+//     |           splitter#1  splitter#2        ...    splitter#N                            |
+//     +--------------------------------------------------------------------------------------+
+//                      ^           ^             ^         ^
+//                      |           |             |         |
+//                      |           |             |         |
+//                      |           |             |         |
+//              +---------------+                    +---------------+
+//              | Executor(s) B |        .....       | Executor(s) B | (N Concurrency)
+//              +---------------+                    +---------------+
+//                      ^           ^             ^         ^
+//                      |           |             |         |
+//                      |           |             |         |
+//                      |           |             |         |
+//     +----------------^-----------^-------------^---------^---------------------------------+
+//     |            merger#1    merger#2         ...    merger#N                              |
+//     |                ^           ^            ...        ^                                 |
+//     |                |           |            ...        |   <Shuffle(Init-partitioning)>  |
+//     |                +-----------+------v------+---------+             (1 x N)             |
+//     |                               splitter#0                                             |
+//     +--------------------------------------------------------------------------------------+
+//                                         ^
+//                                         |
+//                         +---------------v---------------+
+//                         |          Data Source          |
+//                         +-------------------------------+
 //
-////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// ShuffleExec is the executor of Shuffle.
 type ShuffleExec struct {
 	baseExecutor
-	concurrency int
-	workers     []*shuffleWorker
+
+	concurrency   int
+	workers       []*shuffleWorker
+	childShuffles []*childShuffle
+
+	fanOut  int
+	mergers []shuffleMerger
 
 	prepared bool
-	executed bool
-
-	splitter   partitionSplitter
-	dataSource Executor
-
 	finishCh chan struct{}
-	outputCh chan *shuffleOutput
 }
 
-type shuffleOutput struct {
+type childShuffle struct {
+	parent   plannercore.PhysicalPlan
+	childIdx int
+	plan     *plannercore.PhysicalShuffle
+	exec     *ShuffleExec
+}
+
+type shuffleData struct {
 	chk        *chunk.Chunk
 	err        error
 	giveBackCh chan *chunk.Chunk
@@ -94,91 +114,102 @@ type shuffleOutput struct {
 
 // Open implements the Executor Open interface.
 func (e *ShuffleExec) Open(ctx context.Context) error {
-	if err := e.dataSource.Open(ctx); err != nil {
-		return err
-	}
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
-
-	e.prepared = false
-	e.finishCh = make(chan struct{}, 1)
-	e.outputCh = make(chan *shuffleOutput, e.concurrency)
-
-	for _, w := range e.workers {
-		w.finishCh = e.finishCh
-
-		w.inputCh = make(chan *chunk.Chunk, 1)
-		w.inputHolderCh = make(chan *chunk.Chunk, 1)
-		w.outputCh = e.outputCh
-		w.outputHolderCh = make(chan *chunk.Chunk, 1)
-
-		if err := w.childExec.Open(ctx); err != nil {
+	for _, child := range e.childShuffles {
+		if err := child.exec.Open(ctx); err != nil {
 			return err
 		}
-
-		w.inputHolderCh <- newFirstChunk(e.dataSource)
-		w.outputHolderCh <- newFirstChunk(e)
 	}
 
+	// open mergers before workers, to get data channels ready.
+	for _, merger := range e.mergers {
+		if err := merger.Open(ctx); err != nil {
+			return err
+		}
+	}
+	for _, w := range e.workers {
+		if err := w.Open(ctx); err != nil {
+			return err
+		}
+	}
+
+	e.finishCh = make(chan struct{}, 1)
+	e.prepared = false
 	return nil
 }
 
 // Close implements the Executor Close interface.
 func (e *ShuffleExec) Close() error {
-	if !e.prepared {
-		for _, w := range e.workers {
-			close(w.inputHolderCh)
-			close(w.inputCh)
-			close(w.outputHolderCh)
-		}
-		close(e.outputCh)
-	}
+	// Notify workers to terminate.
 	close(e.finishCh)
-	for _, w := range e.workers {
-		for range w.inputCh {
-		}
-	}
-	for range e.outputCh { // workers exit before `e.outputCh` is closed.
-	}
-	e.executed = false
 
 	if e.runtimeStats != nil {
 		e.runtimeStats.SetConcurrencyInfo("ShuffleConcurrency", e.concurrency)
 	}
 
-	err := e.dataSource.Close()
-	err1 := e.baseExecutor.Close()
-	if err != nil {
-		return errors.Trace(err)
+	var errs []error
+
+	// Closes mergers first.
+	// Mergers wait for dataCh to be closed, which is closed by workers.
+	for _, merger := range e.mergers {
+		errs = append(errs, merger.Close())
 	}
-	return errors.Trace(err1)
+	for _, worker := range e.workers {
+		errs = append(errs, worker.Close())
+	}
+	for _, child := range e.childShuffles {
+		errs = append(errs, child.exec.Close())
+	}
+	errs = append(errs, e.baseExecutor.Close())
+
+	for _, err := range errs {
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }
 
-func (e *ShuffleExec) prepare4ParallelExec(ctx context.Context) {
-	go e.fetchDataAndSplit(ctx)
+// Prepare prepares channels & threads for executing.
+func (e *ShuffleExec) Prepare(ctx context.Context) {
+	if e.prepared {
+		return
+	}
+
+	for _, child := range e.childShuffles {
+		// full-merge Shuffle prepares in `Next`.
+		child.exec.Prepare(ctx)
+	}
+
+	// prepare mergers before workers, to get channels ready.
+	for _, merger := range e.mergers {
+		merger.Prepare(ctx, e.finishCh)
+	}
 
 	waitGroup := &sync.WaitGroup{}
 	waitGroup.Add(len(e.workers))
-	for _, w := range e.workers {
-		go w.run(ctx, waitGroup)
+	for _, worker := range e.workers {
+		worker.Prepare(ctx, e.finishCh)
+		go worker.run(ctx, waitGroup)
 	}
+	go e.waitWorker(waitGroup)
 
-	go e.waitWorkerAndCloseOutput(waitGroup)
+	e.prepared = true
 }
 
-func (e *ShuffleExec) waitWorkerAndCloseOutput(waitGroup *sync.WaitGroup) {
+func (e *ShuffleExec) waitWorker(waitGroup *sync.WaitGroup) {
 	waitGroup.Wait()
-	close(e.outputCh)
+	for _, merger := range e.mergers {
+		merger.WorkersAllFinished()
+	}
 }
 
 // Next implements the Executor Next interface.
+// Only used for full-merge.
 func (e *ShuffleExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	req.Reset()
-	if !e.prepared {
-		e.prepare4ParallelExec(ctx)
-		e.prepared = true
-	}
+	e.Prepare(ctx)
 
 	failpoint.Inject("shuffleError", func(val failpoint.Value) {
 		if val.(bool) {
@@ -186,195 +217,136 @@ func (e *ShuffleExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 	})
 
-	if e.executed {
-		return nil
-	}
-
-	result, ok := <-e.outputCh
-	if !ok {
-		e.executed = true
-		return nil
-	}
-	if result.err != nil {
-		return result.err
-	}
-	req.SwapColumns(result.chk) // `shuffleWorker` will not send an empty `result.chk` to `e.outputCh`.
-	result.giveBackCh <- result.chk
-
-	return nil
+	return e.mergers[0].Next(ctx, req)
 }
 
-func recoveryShuffleExec(output chan *shuffleOutput, r interface{}) {
-	err := errors.Errorf("%v", r)
-	output <- &shuffleOutput{err: errors.Errorf("%v", r)}
-	logutil.BgLogger().Error("shuffle panicked", zap.Error(err), zap.Stack("stack"))
+// WorkerNext is the `Next` for parent Shuffle's workers.
+func (e *ShuffleExec) WorkerNext(ctx context.Context, workerIdx int, req *chunk.Chunk) error {
+	failpoint.Inject("shuffleError", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(errors.New("ShuffleExec.WorkerNext error"))
+		}
+	})
+
+	return e.mergers[workerIdx].Next(ctx, req)
 }
 
-func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context) {
-	var (
-		err           error
-		workerIndices []int
-	)
-	results := make([]*chunk.Chunk, len(e.workers))
-	chk := newFirstChunk(e.dataSource)
+// PushToMerger is used by worker.splitter for pushing data to merger.
+func (e *ShuffleExec) PushToMerger(partitionIdx int, workerIdx int, data *shuffleData) {
+	e.mergers[partitionIdx].PushToMerger(workerIdx, data)
+}
 
-	defer func() {
-		if r := recover(); r != nil {
-			recoveryShuffleExec(e.outputCh, r)
-		}
-		for _, w := range e.workers {
-			close(w.inputCh)
-		}
-	}()
-
-	for {
-		err = Next(ctx, e.dataSource, chk)
-		if err != nil {
-			e.outputCh <- &shuffleOutput{err: err}
-			return
-		}
-		if chk.NumRows() == 0 {
-			break
-		}
-
-		workerIndices, err = e.splitter.split(e.ctx, chk, workerIndices)
-		if err != nil {
-			e.outputCh <- &shuffleOutput{err: err}
-			return
-		}
-		numRows := chk.NumRows()
-		for i := 0; i < numRows; i++ {
-			workerIdx := workerIndices[i]
-			w := e.workers[workerIdx]
-
-			if results[workerIdx] == nil {
-				select {
-				case <-e.finishCh:
-					return
-				case results[workerIdx] = <-w.inputHolderCh:
-					break
-				}
-			}
-			results[workerIdx].AppendRow(chk.GetRow(i))
-			if results[workerIdx].IsFull() {
-				w.inputCh <- results[workerIdx]
-				results[workerIdx] = nil
-			}
-		}
-	}
-	for i, w := range e.workers {
-		if results[i] != nil {
-			w.inputCh <- results[i]
-			results[i] = nil
-		}
+// WorkerFinished notify all mergers that a worker is finished.
+func (e *ShuffleExec) WorkerFinished(workerIdx int) {
+	for _, merger := range e.mergers {
+		merger.WorkerFinished(workerIdx)
 	}
 }
 
-var _ Executor = &shuffleWorker{}
-
-// shuffleWorker is the multi-thread worker executing child executors within "partition".
+// shuffleWorker is the multi-thread worker executing child executors within Shuffle.
 type shuffleWorker struct {
-	baseExecutor
+	workerIdx int
+	shuffle   *ShuffleExec
+	splitter  shuffleSplitter
 	childExec Executor
 
-	finishCh <-chan struct{}
 	executed bool
-
-	// Workers get inputs from dataFetcherThread by `inputCh`,
-	//   and output results to main thread by `outputCh`.
-	// `inputHolderCh` and `outputHolderCh` are "Chunk Holder" channels of `inputCh` and `outputCh` respectively,
-	//   which give the `*Chunk` back, to implement the data transport in a streaming manner.
-	inputCh        chan *chunk.Chunk
-	inputHolderCh  chan *chunk.Chunk
-	outputCh       chan *shuffleOutput
-	outputHolderCh chan *chunk.Chunk
 }
 
-// Open implements the Executor Open interface.
-func (e *shuffleWorker) Open(ctx context.Context) error {
-	if err := e.baseExecutor.Open(ctx); err != nil {
+// Open initializes worker
+func (w *shuffleWorker) Open(ctx context.Context) error {
+	if err := w.childExec.Open(ctx); err != nil {
 		return err
 	}
-	e.executed = false
+	if err := w.splitter.Open(ctx); err != nil {
+		return err
+	}
+	w.executed = false
 	return nil
+}
+
+func (w *shuffleWorker) Prepare(ctx context.Context, finishCh <-chan struct{}) {
+	w.splitter.Prepare(ctx, finishCh)
 }
 
 // Close implements the Executor Close interface.
-func (e *shuffleWorker) Close() error {
-	return errors.Trace(e.baseExecutor.Close())
-}
-
-// Next implements the Executor Next interface.
-// It is called by `Tail` executor within "shuffle", to fetch data from `DataSource` by `inputCh`.
-func (e *shuffleWorker) Next(ctx context.Context, req *chunk.Chunk) error {
-	req.Reset()
-	if e.executed {
-		return nil
+func (w *shuffleWorker) Close() error {
+	errs := []error{
+		w.splitter.Close(),
+		w.childExec.Close(),
 	}
-	select {
-	case <-e.finishCh:
-		e.executed = true
-		return nil
-	case result, ok := <-e.inputCh:
-		if !ok || result.NumRows() == 0 {
-			e.executed = true
-			return nil
+	for _, err := range errs {
+		if err != nil {
+			return errors.Trace(err)
 		}
-		req.SwapColumns(result)
-		e.inputHolderCh <- result
-		return nil
 	}
+	return nil
 }
 
-func (e *shuffleWorker) run(ctx context.Context, waitGroup *sync.WaitGroup) {
+func (w *shuffleWorker) reportError(err error) {
+	data := &shuffleData{err: err}
+	w.shuffle.PushToMerger(0, 0, data) // any merger will do.
+}
+
+func (w *shuffleWorker) run(ctx context.Context, waitGroup *sync.WaitGroup) {
 	defer func() {
 		if r := recover(); r != nil {
-			recoveryShuffleExec(e.outputCh, r)
+			err := errors.Errorf("%v", r)
+			logutil.BgLogger().Error("shuffle worker panicked", zap.Error(err))
+			w.reportError(err)
 		}
+		w.shuffle.WorkerFinished(w.workerIdx)
 		waitGroup.Done()
 	}()
 
+	chk := newFirstChunk(w.childExec)
+	executed := false
 	for {
-		select {
-		case <-e.finishCh:
-			return
-		case chk := <-e.outputHolderCh:
-			if err := Next(ctx, e.childExec, chk); err != nil {
-				e.outputCh <- &shuffleOutput{err: err}
+		if !executed {
+			if err := Next(ctx, w.childExec, chk); err != nil {
+				w.reportError(err)
 				return
 			}
-
-			// Should not send an empty `chk` to `e.outputCh`.
 			if chk.NumRows() == 0 {
-				return
+				executed = true
 			}
-			e.outputCh <- &shuffleOutput{chk: chk, giveBackCh: e.outputHolderCh}
+		} else {
+			chk.Reset()
+		}
+
+		finished, err := w.splitter.PushResult(ctx, chk)
+		if err != nil {
+			w.reportError(err)
+			return
+		}
+		if finished {
+			return
 		}
 	}
 }
 
-var _ partitionSplitter = &partitionHashSplitter{}
+var _ Executor = (*shuffleDataSourceStub)(nil)
 
-type partitionSplitter interface {
-	split(ctx sessionctx.Context, input *chunk.Chunk, workerIndices []int) ([]int, error)
+// shuffleDataSourceStub is the stub for executors within Shuffle to read data source.
+type shuffleDataSourceStub struct {
+	baseExecutor
+	workerIdx int
+	childExec *ShuffleExec
 }
 
-type partitionHashSplitter struct {
-	byItems    []expression.Expression
-	numWorkers int
-	hashKeys   [][]byte
+// Open implements the Executor Open interface.
+func (s *shuffleDataSourceStub) Open(ctx context.Context) error {
+	return s.baseExecutor.Open(ctx)
 }
 
-func (s *partitionHashSplitter) split(ctx sessionctx.Context, input *chunk.Chunk, workerIndices []int) ([]int, error) {
-	var err error
-	s.hashKeys, err = getGroupKey(ctx, input, s.hashKeys, s.byItems)
-	if err != nil {
-		return workerIndices, err
-	}
-	workerIndices = workerIndices[:0]
-	numRows := input.NumRows()
-	for i := 0; i < numRows; i++ {
-		workerIndices = append(workerIndices, int(murmur3.Sum32(s.hashKeys[i]))%s.numWorkers)
-	}
-	return workerIndices, nil
+// Close implements the Executor Close interface.
+func (s *shuffleDataSourceStub) Close() error {
+	return s.baseExecutor.Close()
+}
+
+// Next implements the Executor Next interface.
+// It is called by `Tail` executor within Shuffle, to fetch data from child Shuffle.
+// Initial-partition scheme will not reach here.
+func (s *shuffleDataSourceStub) Next(ctx context.Context, req *chunk.Chunk) error {
+	return s.childExec.WorkerNext(ctx, s.workerIdx, req)
 }
