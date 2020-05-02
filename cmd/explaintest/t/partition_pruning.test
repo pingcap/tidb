@@ -6,7 +6,7 @@ set @@session.tidb_enable_table_partition=1;
 -- source include/have_partition.inc
 
 --disable_warnings
-drop table if exists t1,t2,t3,t4,t5,t6,t7,t8,t9;
+drop table if exists t0,t1,t2,t3,t4,t5,t6,t7,t8,t9;
 --enable_warnings
 
 --echo #
