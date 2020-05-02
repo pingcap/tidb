@@ -238,7 +238,7 @@ OUTER:
 		if options.exhaustor != nil {
 			physicals = options.exhaustor(prop)
 		} else {
-			physicals = lp.exhaustPhysicalPlans(prop)
+			physicals, _ = lp.exhaustPhysicalPlans(prop)
 		}
 		if physicals == nil {
 			return nil

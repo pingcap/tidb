@@ -19,8 +19,6 @@ import (
 	"math/rand"
 	"strings"
 
-	"github.com/pingcap/tidb/sessionctx/variable"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/variable"

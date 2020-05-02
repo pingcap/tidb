@@ -198,11 +198,15 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 	// when it is changed. So we clone a new one for the temporary changes.
 	newProp := prop.Clone()
 	newProp.Enforced = prop.Enforced
+	newProp.IsPartitioning = prop.IsPartitioning
+	newProp.PartitionGroupingCols = prop.PartitionGroupingCols
+
 	var plansFitsProp, plansNeedEnforce []PhysicalPlan
 	var hintWorksWithProp bool
 	// Maybe the plan can satisfy the required property,
 	// so we try to get the task without the enforced sort first.
 	plansFitsProp, hintWorksWithProp = p.self.exhaustPhysicalPlans(newProp)
+	plansFitsProp = append(plansFitsProp, p.self.exhaustParallelPhysicalPlans(newProp)...)
 	if !hintWorksWithProp && !newProp.IsEmpty() {
 		// If there is a hint in the plan and the hint cannot satisfy the property,
 		// we enforce this property and try to generate the PhysicalPlan again to
@@ -217,6 +221,7 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 		newProp.ExpectedCnt = math.MaxFloat64
 		var hintCanWork bool
 		plansNeedEnforce, hintCanWork = p.self.exhaustPhysicalPlans(newProp)
+		plansNeedEnforce = append(plansNeedEnforce, p.self.exhaustParallelPhysicalPlans(newProp)...)
 		if hintCanWork && !hintWorksWithProp {
 			// If the hint can work with the empty property, but cannot work with
 			// the required property, we give up `plansFitProp` to make sure the hint
