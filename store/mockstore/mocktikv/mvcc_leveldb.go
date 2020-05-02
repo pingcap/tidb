@@ -471,6 +471,7 @@ type lockCtx struct {
 	forUpdateTS uint64
 	primary     []byte
 	ttl         uint64
+	minCommitTs uint64
 
 	returnValues bool
 	values       [][]byte
@@ -487,6 +488,7 @@ func (mvcc *MVCCLevelDB) PessimisticLock(req *kvrpcpb.PessimisticLockRequest) *k
 		forUpdateTS:  req.ForUpdateTs,
 		primary:      req.PrimaryLock,
 		ttl:          req.LockTtl,
+		minCommitTs:  req.MinCommitTs,
 		returnValues: req.ReturnValues,
 	}
 	lockWaitTime := req.WaitTimeout
@@ -571,6 +573,7 @@ func (mvcc *MVCCLevelDB) pessimisticLockMutation(batch *leveldb.Batch, mutation 
 		op:          kvrpcpb.Op_PessimisticLock,
 		ttl:         lctx.ttl,
 		forUpdateTS: forUpdateTS,
+		minCommitTS: lctx.minCommitTs,
 	}
 	writeKey := mvccEncode(mutation.Key, lockVer)
 	writeValue, err := lock.MarshalBinary()
@@ -698,7 +701,7 @@ func checkConflictValue(iter *Iterator, m *kvrpcpb.Mutation, forUpdateTS uint64,
 	}
 
 	// Note that it's a write conflict here, even if the value is a rollback one, or a op_lock record
-	if dec.value.commitTS >= forUpdateTS {
+	if dec.value.commitTS > forUpdateTS {
 		return nil, &ErrConflict{
 			StartTS:          forUpdateTS,
 			ConflictTS:       dec.value.startTS,
@@ -796,6 +799,10 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch,
 		if ttl < dec.lock.ttl {
 			// Maybe ttlManager has already set the lock TTL, don't decrease it.
 			ttl = dec.lock.ttl
+		}
+		if minCommitTS < dec.lock.minCommitTS {
+			// The minCommitTS has been pushed forward.
+			minCommitTS = dec.lock.minCommitTS
 		}
 	} else {
 		if isPessimisticLock {
@@ -1155,9 +1162,15 @@ func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS
 				return 0, 0, kvrpcpb.Action_TTLExpireRollback, nil
 			}
 
-			// If this is a large transaction and the lock is active, push forward the minCommitTS.
-			// lock.minCommitTS == 0 may be a secondary lock, or not a large transaction (old version TiDB).
-			if lock.minCommitTS > 0 {
+			// If the caller_start_ts is MaxUint64, it's a point get in the autocommit transaction.
+			// Even though the MinCommitTs is not pushed, the point get can ingore the lock
+			// next time because it's not committed. So we pretend it has been pushed.
+			if callerStartTS == math.MaxUint64 {
+				action = kvrpcpb.Action_MinCommitTSPushed
+
+				// If this is a large transaction and the lock is active, push forward the minCommitTS.
+				// lock.minCommitTS == 0 may be a secondary lock, or not a large transaction (old version TiDB).
+			} else if lock.minCommitTS > 0 {
 				action = kvrpcpb.Action_MinCommitTSPushed
 				// We *must* guarantee the invariance lock.minCommitTS >= callerStartTS + 1
 				if lock.minCommitTS < callerStartTS+1 {

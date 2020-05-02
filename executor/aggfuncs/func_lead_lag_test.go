@@ -22,8 +22,8 @@ import (
 )
 
 func (s *testSuite) TestLeadLag(c *C) {
-	zero := expression.Zero
-	one := expression.One
+	zero := expression.NewZero()
+	one := expression.NewOne()
 	two := &expression.Constant{
 		Value:   types.NewDatum(2),
 		RetType: types.NewFieldType(mysql.TypeTiny),

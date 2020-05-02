@@ -15,6 +15,7 @@ package core
 
 import (
 	"context"
+
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -107,6 +108,22 @@ func (p *LogicalSelection) BuildKeyInfo(selfSchema *expression.Schema, childSche
 func (p *LogicalLimit) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	p.baseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
 	if p.Count == 1 {
+		p.maxOneRow = true
+	}
+}
+
+// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
+func (p *LogicalTopN) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
+	p.baseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
+	if p.Count == 1 {
+		p.maxOneRow = true
+	}
+}
+
+// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
+func (p *LogicalTableDual) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
+	p.baseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
+	if p.RowCount == 1 {
 		p.maxOneRow = true
 	}
 }

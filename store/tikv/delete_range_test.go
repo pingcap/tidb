@@ -20,21 +20,23 @@ import (
 	"sort"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 )
 
 type testDeleteRangeSuite struct {
 	OneByOneSuite
-	cluster *mocktikv.Cluster
+	cluster cluster.Cluster
 	store   *tikvStore
 }
 
 var _ = Suite(&testDeleteRangeSuite{})
 
 func (s *testDeleteRangeSuite) SetUpTest(c *C) {
-	s.cluster = mocktikv.NewCluster()
-	mocktikv.BootstrapWithMultiRegions(s.cluster, []byte("b"), []byte("c"), []byte("d"))
-	client, pdClient, err := mocktikv.NewTiKVAndPDClient(s.cluster, nil, "")
+	cluster := mocktikv.NewCluster()
+	mocktikv.BootstrapWithMultiRegions(cluster, []byte("b"), []byte("c"), []byte("d"))
+	s.cluster = cluster
+	client, pdClient, err := mocktikv.NewTiKVAndPDClient(cluster, nil, "")
 	c.Assert(err, IsNil)
 
 	store, err := NewTestTiKVStore(client, pdClient, nil, nil, 0)
@@ -118,7 +120,7 @@ func (s *testDeleteRangeSuite) TestDeleteRange(c *C) {
 	// Generate a sequence of keys and random values
 	for _, i := range []byte("abcd") {
 		for j := byte('0'); j <= byte('9'); j++ {
-			key := []byte{byte(i), byte(j)}
+			key := []byte{i, j}
 			value := []byte{byte(rand.Intn(256)), byte(rand.Intn(256))}
 			testData[string(key)] = string(value)
 			err := txn.Set(key, value)
