@@ -17,6 +17,7 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
@@ -53,7 +54,7 @@ func (e *DeleteExec) deleteOneRow(tbl table.Table, handleIndex int, isExtraHandl
 	if isExtraHandle {
 		end--
 	}
-	handle := row[handleIndex].GetInt64()
+	handle := kv.IntHandle(row[handleIndex].GetInt64())
 	err := e.removeRow(e.ctx, tbl, handle, row[:end])
 	if err != nil {
 		return err
@@ -122,11 +123,11 @@ func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []p
 	// iterate all the joined tables, and got the copresonding rows in joinedRow.
 	for _, info := range colPosInfos {
 		if tblRowMap[info.TblID] == nil {
-			tblRowMap[info.TblID] = make(map[int64][]types.Datum)
+			tblRowMap[info.TblID] = kv.NewHandleMap()
 		}
-		handle := joinedRow[info.HandleOrdinal].GetInt64()
+		handle := kv.IntHandle(joinedRow[info.HandleOrdinal].GetInt64())
 		// tblRowMap[info.TblID][handle] hold the row datas binding to this table and this handle.
-		tblRowMap[info.TblID][handle] = joinedRow[info.Start:info.End]
+		tblRowMap[info.TblID].Set(handle, joinedRow[info.Start:info.End])
 	}
 }
 
@@ -161,18 +162,23 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 
 func (e *DeleteExec) removeRowsInTblRowMap(tblRowMap tableRowMapType) error {
 	for id, rowMap := range tblRowMap {
-		for handle, data := range rowMap {
-			err := e.removeRow(e.ctx, e.tblID2Table[id], handle, data)
+		var err error
+		rowMap.Range(func(h kv.Handle, val interface{}) bool {
+			err = e.removeRow(e.ctx, e.tblID2Table[id], h, val.([]types.Datum))
 			if err != nil {
-				return err
+				return false
 			}
+			return true
+		})
+		if err != nil {
+			return err
 		}
 	}
 
 	return nil
 }
 
-func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h int64, data []types.Datum) error {
+func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handle, data []types.Datum) error {
 	txnState, err := e.ctx.Txn(false)
 	if err != nil {
 		return err
@@ -203,4 +209,4 @@ func (e *DeleteExec) Open(ctx context.Context) error {
 // tableRowMapType is a map for unique (Table, Row) pair. key is the tableID.
 // the key in map[int64]Row is the joined table handle, which represent a unique reference row.
 // the value in map[int64]Row is the deleting row.
-type tableRowMapType map[int64]map[int64][]types.Datum
+type tableRowMapType map[int64]*kv.HandleMap

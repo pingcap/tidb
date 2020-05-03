@@ -50,6 +50,8 @@ const (
 	DefPort = 4000
 	// DefStatusPort is the default status port of TiBD
 	DefStatusPort = 10080
+	// DefStoreLivenessTimeout is the default value for store liveness timeout.
+	DefStoreLivenessTimeout = "120s"
 )
 
 // Valid config maps
@@ -68,21 +70,24 @@ var (
 
 // Config contains configuration options.
 type Config struct {
-	Host             string          `toml:"host" json:"host"`
-	AdvertiseAddress string          `toml:"advertise-address" json:"advertise-address"`
-	Port             uint            `toml:"port" json:"port"`
-	Cors             string          `toml:"cors" json:"cors"`
-	Store            string          `toml:"store" json:"store"`
-	Path             string          `toml:"path" json:"path"`
-	Socket           string          `toml:"socket" json:"socket"`
-	Lease            string          `toml:"lease" json:"lease"`
-	RunDDL           bool            `toml:"run-ddl" json:"run-ddl"`
-	SplitTable       bool            `toml:"split-table" json:"split-table"`
-	TokenLimit       uint            `toml:"token-limit" json:"token-limit"`
-	OOMUseTmpStorage bool            `toml:"oom-use-tmp-storage" json:"oom-use-tmp-storage"`
-	TempStoragePath  string          `toml:"tmp-storage-path" json:"tmp-storage-path"`
-	OOMAction        string          `toml:"oom-action" json:"oom-action"`
-	MemQuotaQuery    int64           `toml:"mem-quota-query" json:"mem-quota-query"`
+	Host             string `toml:"host" json:"host"`
+	AdvertiseAddress string `toml:"advertise-address" json:"advertise-address"`
+	Port             uint   `toml:"port" json:"port"`
+	Cors             string `toml:"cors" json:"cors"`
+	Store            string `toml:"store" json:"store"`
+	Path             string `toml:"path" json:"path"`
+	Socket           string `toml:"socket" json:"socket"`
+	Lease            string `toml:"lease" json:"lease"`
+	RunDDL           bool   `toml:"run-ddl" json:"run-ddl"`
+	SplitTable       bool   `toml:"split-table" json:"split-table"`
+	TokenLimit       uint   `toml:"token-limit" json:"token-limit"`
+	OOMUseTmpStorage bool   `toml:"oom-use-tmp-storage" json:"oom-use-tmp-storage"`
+	TempStoragePath  string `toml:"tmp-storage-path" json:"tmp-storage-path"`
+	OOMAction        string `toml:"oom-action" json:"oom-action"`
+	MemQuotaQuery    int64  `toml:"mem-quota-query" json:"mem-quota-query"`
+	// TempStorageQuota describe the temporary storage Quota during query exector when OOMUseTmpStorage is enabled
+	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error
+	TempStorageQuota int64           `toml:"tmp-storage-quota" json:"tmp-storage-quota"` // Bytes
 	EnableStreaming  bool            `toml:"enable-streaming" json:"enable-streaming"`
 	EnableBatchDML   bool            `toml:"enable-batch-dml" json:"enable-batch-dml"`
 	TxnLocalLatches  TxnLocalLatches `toml:"-" json:"-"`
@@ -126,9 +131,8 @@ type Config struct {
 	NewCollationsEnabledOnFirstBootstrap bool `toml:"new_collations_enabled_on_first_bootstrap" json:"new_collations_enabled_on_first_bootstrap"`
 	// Experimental contains parameters for experimental features.
 	Experimental Experimental `toml:"experimental" json:"experimental"`
-	// EnableDynamicConfig enables the TiDB to fetch configs from PD and update itself during runtime.
-	// see https://github.com/pingcap/tidb/pull/13660 for more details.
-	EnableDynamicConfig bool `toml:"enable-dynamic-config" json:"enable-dynamic-config"`
+	// EnableCollectExecutionInfo enables the TiDB to collect execution info.
+	EnableCollectExecutionInfo bool `toml:"enable-collect-execution-info" json:"enable-collect-execution-info"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -344,19 +348,22 @@ type Status struct {
 
 // Performance is the performance section of the config.
 type Performance struct {
-	MaxProcs            uint    `toml:"max-procs" json:"max-procs"`
-	MaxMemory           uint64  `toml:"max-memory" json:"max-memory"`
-	StatsLease          string  `toml:"stats-lease" json:"stats-lease"`
-	StmtCountLimit      uint    `toml:"stmt-count-limit" json:"stmt-count-limit"`
-	FeedbackProbability float64 `toml:"feedback-probability" json:"feedback-probability"`
-	QueryFeedbackLimit  uint    `toml:"query-feedback-limit" json:"query-feedback-limit"`
-	PseudoEstimateRatio float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
-	ForcePriority       string  `toml:"force-priority" json:"force-priority"`
-	BindInfoLease       string  `toml:"bind-info-lease" json:"bind-info-lease"`
-	TxnTotalSizeLimit   uint64  `toml:"txn-total-size-limit" json:"txn-total-size-limit"`
-	TCPKeepAlive        bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
-	CrossJoin           bool    `toml:"cross-join" json:"cross-join"`
-	RunAutoAnalyze      bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
+	MaxProcs             uint    `toml:"max-procs" json:"max-procs"`
+	MaxMemory            uint64  `toml:"max-memory" json:"max-memory"`
+	StatsLease           string  `toml:"stats-lease" json:"stats-lease"`
+	StmtCountLimit       uint    `toml:"stmt-count-limit" json:"stmt-count-limit"`
+	FeedbackProbability  float64 `toml:"feedback-probability" json:"feedback-probability"`
+	QueryFeedbackLimit   uint    `toml:"query-feedback-limit" json:"query-feedback-limit"`
+	PseudoEstimateRatio  float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
+	ForcePriority        string  `toml:"force-priority" json:"force-priority"`
+	BindInfoLease        string  `toml:"bind-info-lease" json:"bind-info-lease"`
+	TxnTotalSizeLimit    uint64  `toml:"txn-total-size-limit" json:"txn-total-size-limit"`
+	TCPKeepAlive         bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
+	CrossJoin            bool    `toml:"cross-join" json:"cross-join"`
+	RunAutoAnalyze       bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
+	DistinctAggPushDown  bool    `toml:"distinct-agg-push-down" json:"agg-push-down-join"`
+	CommitterConcurrency int     `toml:"committer-concurrency" json:"committer-concurrency"`
+	MaxTxnTTL            uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -446,6 +453,8 @@ type TiKVClient struct {
 	// If a store has been up to the limit, it will return error for successive request to
 	// prevent the store occupying too much token in dispatching level.
 	StoreLimit int64 `toml:"store-limit" json:"store-limit"`
+	// StoreLivenessTimeout is the timeout for store liveness check request.
+	StoreLivenessTimeout string `toml:"store-liveness-timeout" json:"store-liveness-timeout"`
 
 	CoprCache CoprocessorCache `toml:"copr-cache" json:"copr-cache"`
 }
@@ -533,6 +542,7 @@ var defaultConf = Config{
 	Lease:                        "45s",
 	TokenLimit:                   1000,
 	OOMUseTmpStorage:             true,
+	TempStorageQuota:             -1,
 	TempStoragePath:              tempStorageDirName,
 	OOMAction:                    OOMActionCancel,
 	MemQuotaQuery:                1 << 30,
@@ -577,18 +587,21 @@ var defaultConf = Config{
 		RecordQPSbyDB:   false,
 	},
 	Performance: Performance{
-		MaxMemory:           0,
-		TCPKeepAlive:        true,
-		CrossJoin:           true,
-		StatsLease:          "3s",
-		RunAutoAnalyze:      true,
-		StmtCountLimit:      5000,
-		FeedbackProbability: 0.05,
-		QueryFeedbackLimit:  1024,
-		PseudoEstimateRatio: 0.8,
-		ForcePriority:       "NO_PRIORITY",
-		BindInfoLease:       "3s",
-		TxnTotalSizeLimit:   DefTxnTotalSizeLimit,
+		MaxMemory:            0,
+		TCPKeepAlive:         true,
+		CrossJoin:            true,
+		StatsLease:           "3s",
+		RunAutoAnalyze:       true,
+		StmtCountLimit:       5000,
+		FeedbackProbability:  0.05,
+		QueryFeedbackLimit:   1024,
+		PseudoEstimateRatio:  0.8,
+		ForcePriority:        "NO_PRIORITY",
+		BindInfoLease:        "3s",
+		TxnTotalSizeLimit:    DefTxnTotalSizeLimit,
+		DistinctAggPushDown:  false,
+		CommitterConcurrency: 16,
+		MaxTxnTTL:            10 * 60 * 1000, // 10min
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
@@ -620,22 +633,15 @@ var defaultConf = Config{
 
 		EnableChunkRPC: true,
 
-		RegionCacheTTL: 600,
-		StoreLimit:     0,
+		RegionCacheTTL:       600,
+		StoreLimit:           0,
+		StoreLivenessTimeout: DefStoreLivenessTimeout,
 
 		CoprCache: CoprocessorCache{
-			// WARNING: Currently Coprocessor Cache may lead to inconsistent result. Do not open it.
-			// These config items are hidden from user, so that fill them with zero value instead of default value.
-			Enabled:               false,
-			CapacityMB:            0,
-			AdmissionMaxResultMB:  0,
-			AdmissionMinProcessMs: 0,
-
-			// If you still want to use Coprocessor Cache, here are some recommended configurations:
-			// Enabled:               true,
-			// CapacityMB:            1000,
-			// AdmissionMaxResultMB:  10,
-			// AdmissionMinProcessMs: 5,
+			Enabled:               true,
+			CapacityMB:            1000,
+			AdmissionMaxResultMB:  10,
+			AdmissionMinProcessMs: 5,
 		},
 	},
 	Binlog: Binlog{
@@ -661,7 +667,7 @@ var defaultConf = Config{
 		AllowAutoRandom:       false,
 		AllowsExpressionIndex: false,
 	},
-	EnableDynamicConfig: false,
+	EnableCollectExecutionInfo: false,
 }
 
 var (
@@ -827,9 +833,6 @@ func (c *Config) Valid() error {
 		return fmt.Errorf("grpc-connection-count should be greater than 0")
 	}
 
-	if c.Performance.TxnTotalSizeLimit > 100<<20 && c.Binlog.Enable {
-		return fmt.Errorf("txn-total-size-limit should be less than %d with binlog enabled", 100<<20)
-	}
 	if c.Performance.TxnTotalSizeLimit > 10<<30 {
 		return fmt.Errorf("txn-total-size-limit should be less than %d", 10<<30)
 	}
@@ -849,6 +852,9 @@ func (c *Config) Valid() error {
 	}
 	if c.PreparedPlanCache.Capacity < 1 {
 		return fmt.Errorf("capacity in [prepared-plan-cache] should be at least 1")
+	}
+	if c.PreparedPlanCache.MemoryGuardRatio < 0 || c.PreparedPlanCache.MemoryGuardRatio > 1 {
+		return fmt.Errorf("memory-guard-ratio in [prepared-plan-cache] must be NOT less than 0 and more than 1")
 	}
 	if len(c.IsolationRead.Engines) < 1 {
 		return fmt.Errorf("the number of [isolation-read]engines for isolation read should be at least 1")

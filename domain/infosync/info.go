@@ -19,12 +19,14 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
@@ -299,8 +301,9 @@ func (is *InfoSyncer) RemoveServerInfo() {
 
 type topologyInfo struct {
 	ServerVersionInfo
-	StatusPort uint   `json:"status_port"`
-	BinaryPath string `json:"binary_path"`
+	StatusPort     uint   `json:"status_port"`
+	DeployPath     string `json:"deploy_path"`
+	StartTimestamp int64  `json:"start_timestamp"`
 }
 
 func (is *InfoSyncer) getTopologyInfo() topologyInfo {
@@ -308,13 +311,15 @@ func (is *InfoSyncer) getTopologyInfo() topologyInfo {
 	if err != nil {
 		s = ""
 	}
+	dir := path.Dir(s)
 	return topologyInfo{
 		ServerVersionInfo: ServerVersionInfo{
 			Version: mysql.TiDBReleaseVersion,
 			GitHash: is.info.ServerVersionInfo.GitHash,
 		},
-		StatusPort: is.info.StatusPort,
-		BinaryPath: s,
+		StatusPort:     is.info.StatusPort,
+		DeployPath:     dir,
+		StartTimestamp: is.info.StartTimestamp,
 	}
 }
 
@@ -606,5 +611,12 @@ func getServerInfo(id string) *ServerInfo {
 	}
 	info.Version = mysql.ServerVersion
 	info.GitHash = printer.TiDBGitHash
+
+	failpoint.Inject("mockServerInfo", func(val failpoint.Value) {
+		if val.(bool) {
+			info.StartTimestamp = 1282967700000
+		}
+	})
+
 	return info
 }
