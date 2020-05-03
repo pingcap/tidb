@@ -143,6 +143,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		logutil.BgLogger().Info("[ddl] run reorg job done", zap.Int64("handled rows", rowCount))
 		// Update a job's RowCount.
 		job.SetRowCount(rowCount)
+		updateAddIndexProgress(w, tblInfo, rowCount)
 		if err == nil {
 			metrics.AddIndexProgress.Set(100)
 		}
@@ -193,8 +194,14 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 	}
 	defer w.sessPool.put(ctx)
 
+	executor, ok := ctx.(sqlexec.RestrictedSQLExecutor)
+	// fix issue 15597
+	// return PseudoRowCount to avoid panic for `ctx` which doesn't implement RestrictedSQLExecutor
+	if !ok {
+		return statistics.PseudoRowCount
+	}
 	sql := fmt.Sprintf("select table_rows from information_schema.tables where tidb_table_id=%v;", tblInfo.ID)
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	rows, _, err := executor.ExecRestrictedSQL(sql)
 	if err != nil {
 		return statistics.PseudoRowCount
 	}
