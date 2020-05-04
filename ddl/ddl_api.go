@@ -2690,6 +2690,57 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 	return errors.Trace(err)
 }
 
+func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) error {
+	err := ErrTablesDifferentMetadata
+	if len(source.Cols()) != len(target.Cols()) {
+		return err
+	}
+	// Col compatible check
+	for i, sourceCol := range source.Cols() {
+		targetCol := target.Cols()[i]
+		if sourceCol.IsGenerated() != targetCol.IsGenerated() ||
+			!strings.EqualFold(sourceCol.Name.L, targetCol.Name.L) ||
+			!sourceCol.FieldType.Equal(&targetCol.FieldType) {
+			return err
+		}
+	}
+	if len(source.Indices) != len(target.Indices) {
+		return err
+	}
+	for _, sourceIdx := range source.Indices {
+		var compatIdx *model.IndexInfo
+		for _, targetIdx := range target.Indices {
+			if strings.EqualFold(sourceIdx.Name.O, targetIdx.Name.O) {
+				compatIdx = targetIdx
+			}
+		}
+		// No match index
+		if compatIdx == nil {
+			return err
+		}
+		// Index type is not compatiable
+		if sourceIdx.Tp != compatIdx.Tp ||
+			sourceIdx.Unique != compatIdx.Unique ||
+			sourceIdx.Primary != compatIdx.Primary ||
+			sourceIdx.Invisible != compatIdx.Invisible {
+			return err
+		}
+		// The index column
+		if len(sourceIdx.Columns) != len(compatIdx.Columns) {
+			return err
+		}
+		for i, sourceIdxCol := range sourceIdx.Columns {
+			compatIdxCol := compatIdx.Columns[i]
+			if sourceIdxCol.Name.L != compatIdxCol.Name.L ||
+				sourceIdxCol.Length != compatIdxCol.Length {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
 func (d *ddl) ExchangeTableParition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	is := d.infoHandle.Get()
 	ptSchema, ok := is.SchemaByName(ident.Schema)
@@ -2702,18 +2753,6 @@ func (d *ddl) ExchangeTableParition(ctx sessionctx.Context, ident ast.Ident, spe
 	}
 
 	ptMeta := pt.Meta()
-	if ptMeta.GetPartitionInfo() == nil {
-		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
-	}
-
-	partName := spec.PartitionNames[0].L
-
-	// NOTE: if pt is subPartitioned, it should be checked
-
-	_, err = getPartitionDef(ptMeta, partName)
-	if err != nil {
-		return errors.Trace(err)
-	}
 
 	ntIdent := ast.Ident{Schema: spec.NewTable.Schema, Name: spec.NewTable.Name}
 
@@ -2728,22 +2767,27 @@ func (d *ddl) ExchangeTableParition(ctx sessionctx.Context, ident ast.Ident, spe
 
 	ntMeta := nt.Meta()
 
-	// NOTE: if nt is temporary table, it should be checked
-
+	if ptMeta.GetPartitionInfo() == nil {
+		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
+	}
 	if ntMeta.GetPartitionInfo() != nil {
 		return errors.Trace(ErrPartitionExchangePartTable.GenWithStackByArgs(ntIdent.Name))
 	}
 
-	// err = checkDropTablePartition(meta, partName)
-	// if err != nil {
-	// if ErrDropPartitionNonExistent.Equal(err) && spec.IfExists {
-	// ctx.GetSessionVars().StmtCtx.AppendNote(err)
-	// return nil
-	// }
-	// return errors.Trace(err)
-	// }
+	// NOTE: if nt is temporary table, it should be checked here
+	partName := spec.PartitionNames[0].L
 
-	// TODO check table structure is same
+	_, err = getPartitionDef(ptMeta, partName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// NOTE: if pt is subPartitioned, it should be checked
+
+	err = checkTableDefCompatible(ptMeta, ntMeta)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	job := &model.Job{
 		SchemaID:   ntSchema.ID,
