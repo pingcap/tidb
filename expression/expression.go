@@ -389,7 +389,7 @@ func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Colum
 			if buf.IsNull(i) {
 				isZero[i] = -1
 			} else {
-				if types.RoundFloat(f64s[i]) == 0 {
+				if f64s[i] == 0 {
 					isZero[i] = 0
 				} else {
 					isZero[i] = 1
@@ -444,11 +444,7 @@ func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Colum
 			if buf.IsNull(i) {
 				isZero[i] = -1
 			} else {
-				v, err := d64s[i].ToFloat64()
-				if err != nil {
-					return err
-				}
-				if types.RoundFloat(v) == 0 {
+				if d64s[i].IsZero() {
 					isZero[i] = 0
 				} else {
 					isZero[i] = 1
