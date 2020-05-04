@@ -385,10 +385,6 @@ func (s *testConfigSuite) TestTxnTotalSizeLimitValid(c *C) {
 		conf.Performance.TxnTotalSizeLimit = tt.limit
 		c.Assert(conf.Valid() == nil, Equals, tt.valid)
 	}
-
-	conf.Binlog.Enable = true
-	conf.Performance.TxnTotalSizeLimit = 100<<20 + 1
-	c.Assert(conf.Valid(), NotNil)
 }
 
 func (s *testConfigSuite) TestAllowAutoRandomValid(c *C) {
@@ -402,6 +398,21 @@ func (s *testConfigSuite) TestAllowAutoRandomValid(c *C) {
 	checkValid(true, false, true)
 	checkValid(false, true, true)
 	checkValid(false, false, true)
+}
+
+func (s *testConfigSuite) TestPreparePlanCacheValid(c *C) {
+	conf := NewConfig()
+	tests := map[PreparedPlanCache]bool{
+		{Enabled: true, Capacity: 0}:                        false,
+		{Enabled: true, Capacity: 2}:                        true,
+		{Enabled: true, MemoryGuardRatio: -0.1}:             false,
+		{Enabled: true, MemoryGuardRatio: 2.2}:              false,
+		{Enabled: true, Capacity: 2, MemoryGuardRatio: 0.5}: true,
+	}
+	for testCase, res := range tests {
+		conf.PreparedPlanCache = testCase
+		c.Assert(conf.Valid() == nil, Equals, res)
+	}
 }
 
 func (s *testConfigSuite) TestMaxIndexLength(c *C) {

@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/tools/container/intsets"
@@ -215,6 +216,7 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 		if v.InOperand {
 			newExpr = setExprColumnInOperand(newExpr)
 		}
+		newExpr.SetCoercibility(v.Coercibility())
 		return true, newExpr
 	case *ScalarFunction:
 		if v.FuncName.L == ast.Cast {
@@ -226,8 +228,25 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 		// when expr in args is changed
 		refExprArr := cowExprRef{v.GetArgs(), nil}
 		substituted := false
+		_, coll, _ := DeriveCollationFromExprs(v.GetCtx(), v.GetArgs()...)
 		for idx, arg := range v.GetArgs() {
 			changed, newFuncExpr := ColumnSubstituteImpl(arg, schema, newExprs)
+			if collate.NewCollationEnabled() {
+				// Make sure the collation used by the ScalarFunction isn't changed and its result collation is not weaker than the collation used by the ScalarFunction.
+				if changed {
+					changed = false
+					tmpArgs := make([]Expression, 0, len(v.GetArgs()))
+					_ = append(append(append(tmpArgs, refExprArr.Result()[0:idx]...), refExprArr.Result()[idx+1:]...), newFuncExpr)
+					_, newColl, _ := DeriveCollationFromExprs(v.GetCtx(), append(v.GetArgs(), newFuncExpr)...)
+					if coll == newColl {
+						collStrictness, ok1 := CollationStrictness[coll]
+						newResStrictness, ok2 := CollationStrictness[newFuncExpr.GetType().Collate]
+						if ok1 && ok2 && newResStrictness >= collStrictness {
+							changed = true
+						}
+					}
+				}
+			}
 			refExprArr.Set(idx, changed, newFuncExpr)
 			if changed {
 				substituted = true
@@ -746,6 +765,27 @@ func BuildNotNullExpr(ctx sessionctx.Context, expr Expression) Expression {
 	isNull := NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr)
 	notNull := NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNull)
 	return notNull
+}
+
+// IsRuntimeConstExpr checks if a expr can be treated as a constant in **executor**.
+func IsRuntimeConstExpr(expr Expression) bool {
+	switch x := expr.(type) {
+	case *ScalarFunction:
+		if _, ok := unFoldableFunctions[x.FuncName.L]; ok {
+			return false
+		}
+		for _, arg := range x.GetArgs() {
+			if !IsRuntimeConstExpr(arg) {
+				return false
+			}
+		}
+		return true
+	case *Column:
+		return false
+	case *Constant, *CorrelatedColumn:
+		return true
+	}
+	return false
 }
 
 // IsMutableEffectsExpr checks if expr contains function which is mutable or has side effects.

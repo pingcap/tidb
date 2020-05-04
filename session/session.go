@@ -321,7 +321,11 @@ func (s *session) SetCollation(coID int) error {
 	for _, v := range variable.SetNamesVariables {
 		terror.Log(s.sessionVars.SetSystemVar(v, cs))
 	}
-	terror.Log(s.sessionVars.SetSystemVar(variable.CollationConnection, co))
+	err = s.sessionVars.SetSystemVar(variable.CollationConnection, co)
+	if err != nil {
+		// Some clients may use the unsupported collations, such as utf8mb4_0900_ai_ci, We shouldn't return error or use the ERROR level log.
+		logutil.BgLogger().Warn(err.Error())
+	}
 	return nil
 }
 
@@ -979,7 +983,7 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 	}
 	var sVal string
 	var err error
-	sVal, err = variable.ValidateSetSystemVar(s.sessionVars, name, value)
+	sVal, err = variable.ValidateSetSystemVar(s.sessionVars, name, value, variable.ScopeGlobal)
 	if err != nil {
 		return err
 	}
@@ -1825,7 +1829,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = version42
+	currentBootstrapVersion = version45
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -2139,6 +2143,8 @@ func logQuery(query string, vars *variable.SessionVars) {
 			zap.Stringer("user", vars.User),
 			zap.Int64("schemaVersion", vars.TxnCtx.SchemaVersion),
 			zap.Uint64("txnStartTS", vars.TxnCtx.StartTS),
+			zap.Uint64("forUpdateTS", vars.TxnCtx.GetForUpdateTS()),
+			zap.Bool("isReadConsistency", vars.IsReadConsistencyTxn()),
 			zap.String("current_db", vars.CurrentDB),
 			zap.String("txn_mode", vars.GetReadableTxnMode()),
 			zap.String("sql", query+vars.PreparedParams.String()))

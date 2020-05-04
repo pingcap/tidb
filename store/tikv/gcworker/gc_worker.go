@@ -18,6 +18,7 @@ import (
 	"container/heap"
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"sort"
 	"strconv"
@@ -134,10 +135,12 @@ const (
 	gcScanLockModeKey      = "tikv_gc_scan_lock_mode"
 	gcScanLockModeLegacy   = "legacy"
 	gcScanLockModePhysical = "physical"
-	gcScanLockModeDefault  = gcScanLockModeLegacy
+	gcScanLockModeDefault  = gcScanLockModePhysical
 
 	gcAutoConcurrencyKey     = "tikv_gc_auto_concurrency"
 	gcDefaultAutoConcurrency = true
+
+	gcWorkerServiceSafePointID = "gc_worker"
 )
 
 var gcSafePointCacheInterval = tikv.GcSafePointCacheInterval
@@ -311,7 +314,7 @@ func (w *GCWorker) checkPrepare(ctx context.Context) (bool, uint64, error) {
 	if err != nil || !ok {
 		return false, 0, errors.Trace(err)
 	}
-	newSafePoint, err := w.calculateNewSafePoint(now)
+	newSafePoint, newSafePointValue, err := w.calculateNewSafePoint(ctx, now)
 	if err != nil || newSafePoint == nil {
 		return false, 0, errors.Trace(err)
 	}
@@ -323,7 +326,7 @@ func (w *GCWorker) checkPrepare(ctx context.Context) (bool, uint64, error) {
 	if err != nil {
 		return false, 0, errors.Trace(err)
 	}
-	return true, oracle.ComposeTS(oracle.GetPhysical(*newSafePoint), 0), nil
+	return true, newSafePointValue, nil
 }
 
 // calculateNewSafePoint uses the current global transaction min start timestamp to calculate the new safe point.
@@ -461,21 +464,29 @@ func (w *GCWorker) validateGCLiftTime(lifeTime time.Duration) (time.Duration, er
 	return gcMinLifeTime, err
 }
 
-func (w *GCWorker) calculateNewSafePoint(now time.Time) (*time.Time, error) {
+func (w *GCWorker) calculateNewSafePoint(ctx context.Context, now time.Time) (*time.Time, uint64, error) {
 	lifeTime, err := w.loadDurationWithDefault(gcLifeTimeKey, gcDefaultLifeTime)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, 0, errors.Trace(err)
 	}
 	*lifeTime, err = w.validateGCLiftTime(*lifeTime)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	metrics.GCConfigGauge.WithLabelValues(gcLifeTimeKey).Set(lifeTime.Seconds())
 	lastSafePoint, err := w.loadTime(gcSafePointKey)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, 0, errors.Trace(err)
 	}
 	safePoint := w.calSafePointByMinStartTS(now.Add(-*lifeTime))
+
+	safePointValue := oracle.ComposeTS(oracle.GetPhysical(safePoint), 0)
+	safePointValue, err = w.setGCWorkerServiceSafePoint(ctx, safePointValue)
+	safePoint = oracle.GetTimeFromTS(safePointValue)
+
+	if err != nil {
+		return nil, 0, errors.Trace(err)
+	}
 	// We should never decrease safePoint.
 	if lastSafePoint != nil && safePoint.Before(*lastSafePoint) {
 		logutil.BgLogger().Info("[gc worker] last safe point is later than current one."+
@@ -484,9 +495,33 @@ func (w *GCWorker) calculateNewSafePoint(now time.Time) (*time.Time, error) {
 			zap.String("leaderTick on", w.uuid),
 			zap.Time("last safe point", *lastSafePoint),
 			zap.Time("current safe point", safePoint))
-		return nil, nil
+		return nil, 0, nil
 	}
-	return &safePoint, nil
+	return &safePoint, safePointValue, nil
+}
+
+// setGCWorkerServiceSafePoint sets the given safePoint as TiDB's service safePoint to PD, and returns the current minimal
+// service safePoint among all services.
+func (w *GCWorker) setGCWorkerServiceSafePoint(ctx context.Context, safePoint uint64) (uint64, error) {
+	// Sets TTL to MAX to make it permanently valid.
+	minSafePoint, err := w.pdClient.UpdateServiceGCSafePoint(ctx, gcWorkerServiceSafePointID, math.MaxInt64, safePoint)
+	if err != nil {
+		logutil.Logger(ctx).Error("[gc worker] failed to update service safe point",
+			zap.String("uuid", w.uuid),
+			zap.Error(err))
+		metrics.GCJobFailureCounter.WithLabelValues("update_service_safe_point").Inc()
+		return 0, errors.Trace(err)
+	}
+	if minSafePoint < safePoint {
+		logutil.Logger(ctx).Info("[gc worker] there's another service in the cluster requires an earlier safe point. "+
+			"gc will continue with the earlier one",
+			zap.String("uuid", w.uuid),
+			zap.Uint64("ourSafePoint", safePoint),
+			zap.Uint64("minSafePoint", minSafePoint),
+		)
+		safePoint = minSafePoint
+	}
+	return safePoint, nil
 }
 
 func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency int) error {
@@ -1659,19 +1694,25 @@ func (w *GCWorker) saveValueToSysTable(key, value string) error {
 }
 
 // RunGCJob sends GC command to KV. It is exported for kv api, do not use it with GCWorker at the same time.
-func RunGCJob(ctx context.Context, s tikv.Storage, safePoint uint64, identifier string, concurrency int) error {
+func RunGCJob(ctx context.Context, s tikv.Storage, pd pd.Client, safePoint uint64, identifier string, concurrency int) error {
 	gcWorker := &GCWorker{
-		store: s,
-		uuid:  identifier,
-	}
-
-	err := gcWorker.resolveLocks(ctx, safePoint, concurrency, false)
-	if err != nil {
-		return errors.Trace(err)
+		store:    s,
+		uuid:     identifier,
+		pdClient: pd,
 	}
 
 	if concurrency <= 0 {
 		return errors.Errorf("[gc worker] gc concurrency should greater than 0, current concurrency: %v", concurrency)
+	}
+
+	safePoint, err := gcWorker.setGCWorkerServiceSafePoint(ctx, safePoint)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = gcWorker.resolveLocks(ctx, safePoint, concurrency, false)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	err = gcWorker.saveSafePoint(gcWorker.store.GetSafePointKV(), safePoint)
@@ -1680,7 +1721,6 @@ func RunGCJob(ctx context.Context, s tikv.Storage, safePoint uint64, identifier 
 	}
 	// Sleep to wait for all other tidb instances update their safepoint cache.
 	time.Sleep(gcSafePointCacheInterval)
-
 	err = gcWorker.doGC(ctx, safePoint, concurrency)
 	if err != nil {
 		return errors.Trace(err)
@@ -1698,7 +1738,12 @@ func RunDistributedGCJob(ctx context.Context, s tikv.Storage, pd pd.Client, safe
 		pdClient: pd,
 	}
 
-	err := gcWorker.resolveLocks(ctx, safePoint, concurrency, false)
+	safePoint, err := gcWorker.setGCWorkerServiceSafePoint(ctx, safePoint)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = gcWorker.resolveLocks(ctx, safePoint, concurrency, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1755,12 +1800,12 @@ const scanLockResultBufferSize = 128
 // mergeLockScanner is used to scan specified stores by using PhysicalScanLock. For multiple stores, the scanner will
 // merge the scan results of each store, and remove the duplicating items from different stores.
 type mergeLockScanner struct {
-	safePoint      uint64
-	client         tikv.Client
-	stores         map[uint64]*metapb.Store
-	receivers      mergeReceiver
-	currentLockKey []byte
-	scanLockLimit  uint32
+	safePoint     uint64
+	client        tikv.Client
+	stores        map[uint64]*metapb.Store
+	receivers     mergeReceiver
+	currentLock   *tikv.Lock
+	scanLockLimit uint32
 }
 
 type receiver struct {
@@ -1808,8 +1853,8 @@ func (r mergeReceiver) Less(i, j int) bool {
 		// lhs != nil, so lhs < rhs
 		return true
 	}
-
-	return bytes.Compare(lhs.Key, rhs.Key) < 0
+	ord := bytes.Compare(lhs.Key, rhs.Key)
+	return ord < 0 || (ord == 0 && lhs.TxnID < rhs.TxnID)
 }
 
 func (r mergeReceiver) Swap(i, j int) {
@@ -1875,15 +1920,15 @@ func (s *mergeLockScanner) startWithReceivers(receivers []*receiver) {
 
 func (s *mergeLockScanner) Next() *tikv.Lock {
 	for {
-		nextReceiver := heap.Pop(&s.receivers).(*receiver)
+		nextReceiver := s.receivers[0]
 		nextLock := nextReceiver.TakeNextLock()
-		heap.Push(&s.receivers, nextReceiver)
+		heap.Fix(&s.receivers, 0)
 
 		if nextLock == nil {
 			return nil
 		}
-		if s.currentLockKey == nil || !bytes.Equal(s.currentLockKey, nextLock.Key) {
-			s.currentLockKey = nextLock.Key
+		if s.currentLock == nil || !bytes.Equal(s.currentLock.Key, nextLock.Key) || s.currentLock.TxnID != nextLock.TxnID {
+			s.currentLock = nextLock
 			return nextLock
 		}
 	}

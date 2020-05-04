@@ -46,3 +46,8 @@ func (s StringSet) Intersection(rhs StringSet) StringSet {
 	}
 	return newSet
 }
+
+// Count returns the number in Set s.
+func (s StringSet) Count() int {
+	return len(s)
+}

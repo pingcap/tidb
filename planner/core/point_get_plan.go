@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
@@ -652,6 +653,9 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		return nil
 	}
 	pi := tbl.GetPartitionInfo()
+	if pi != nil && pi.Type != model.PartitionTypeHash {
+		return nil
+	}
 	for _, col := range tbl.Columns {
 		// Do not handle generated columns.
 		if col.IsGenerated() {
@@ -662,53 +666,40 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 			return nil
 		}
 	}
+	schema, names := buildSchemaFromFields(tblName.Schema, tbl, tblAlias, selStmt.Fields.Fields)
+	if schema == nil {
+		return nil
+	}
+	dbName := tblName.Schema.L
+	if dbName == "" {
+		dbName = ctx.GetSessionVars().CurrentDB
+	}
+
 	pairs := make([]nameValuePair, 0, 4)
-	pairs = getNameValuePairs(pairs, tblAlias, selStmt.Where)
-	if pairs == nil {
+	pairs, isTableDual := getNameValuePairs(ctx.GetSessionVars().StmtCtx, tbl, tblAlias, pairs, selStmt.Where)
+	if pairs == nil && !isTableDual {
 		return nil
 	}
 
 	var partitionInfo *model.PartitionDefinition
 	var pos int
 	if pi != nil {
-		if pi.Type != model.PartitionTypeHash {
-			return nil
-		}
 		partitionInfo, pos = getPartitionInfo(ctx, tbl, pairs)
 		if partitionInfo == nil {
 			return nil
 		}
 	}
+
 	handlePair, fieldType := findPKHandle(tbl, pairs)
 	if handlePair.value.Kind() != types.KindNull && len(pairs) == 1 {
-		schema, names := buildSchemaFromFields(tblName.Schema, tbl, tblAlias, selStmt.Fields.Fields)
-		if schema == nil {
-			return nil
-		}
-		dbName := tblName.Schema.L
-		if dbName == "" {
-			dbName = ctx.GetSessionVars().CurrentDB
-		}
-		p := newPointGetPlan(ctx, dbName, schema, tbl, names)
-		intDatum, err := handlePair.value.ConvertTo(ctx.GetSessionVars().StmtCtx, fieldType)
-		if err != nil {
-			if terror.ErrorEqual(types.ErrOverflow, err) {
-				p.IsTableDual = true
-				return p
-			}
-			// some scenarios cast to int with error, but we may use this value in point get
-			if !terror.ErrorEqual(types.ErrTruncatedWrongVal, err) {
-				return nil
-			}
-		}
-		cmp, err := intDatum.CompareDatum(ctx.GetSessionVars().StmtCtx, &handlePair.value)
-		if err != nil {
-			return nil
-		} else if cmp != 0 {
+		if isTableDual {
+			p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
 			p.IsTableDual = true
 			return p
 		}
-		p.Handle = intDatum.GetInt64()
+
+		p := newPointGetPlan(ctx, dbName, schema, tbl, names)
+		p.Handle = handlePair.value.GetInt64()
 		p.UnsignedHandle = mysql.HasUnsignedFlag(fieldType.Flag)
 		p.HandleParam = handlePair.param
 		p.PartitionInfo = partitionInfo
@@ -722,17 +713,15 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		if idxInfo.State != model.StatePublic {
 			continue
 		}
+		if isTableDual {
+			p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
+			p.IsTableDual = true
+			return p
+		}
+
 		idxValues, idxValueParams := getIndexValues(idxInfo, pairs)
 		if idxValues == nil {
 			continue
-		}
-		schema, names := buildSchemaFromFields(tblName.Schema, tbl, tblAlias, selStmt.Fields.Fields)
-		if schema == nil {
-			return nil
-		}
-		dbName := tblName.Schema.L
-		if dbName == "" {
-			dbName = ctx.GetSessionVars().CurrentDB
 		}
 		p := newPointGetPlan(ctx, dbName, schema, tbl, names)
 		p.IndexInfo = idxInfo
@@ -864,21 +853,22 @@ func getSingleTableNameAndAlias(tableRefs *ast.TableRefsClause) (tblName *ast.Ta
 }
 
 // getNameValuePairs extracts `column = constant/paramMarker` conditions from expr as name value pairs.
-func getNameValuePairs(nvPairs []nameValuePair, tblName model.CIStr, expr ast.ExprNode) []nameValuePair {
+func getNameValuePairs(stmtCtx *stmtctx.StatementContext, tbl *model.TableInfo, tblName model.CIStr, nvPairs []nameValuePair, expr ast.ExprNode) (
+	pairs []nameValuePair, isTableDual bool) {
 	binOp, ok := expr.(*ast.BinaryOperationExpr)
 	if !ok {
-		return nil
+		return nil, false
 	}
 	if binOp.Op == opcode.LogicAnd {
-		nvPairs = getNameValuePairs(nvPairs, tblName, binOp.L)
-		if nvPairs == nil {
-			return nil
+		nvPairs, isTableDual = getNameValuePairs(stmtCtx, tbl, tblName, nvPairs, binOp.L)
+		if nvPairs == nil || isTableDual {
+			return nil, isTableDual
 		}
-		nvPairs = getNameValuePairs(nvPairs, tblName, binOp.R)
-		if nvPairs == nil {
-			return nil
+		nvPairs, isTableDual = getNameValuePairs(stmtCtx, tbl, tblName, nvPairs, binOp.R)
+		if nvPairs == nil || isTableDual {
+			return nil, isTableDual
 		}
-		return nvPairs
+		return nvPairs, isTableDual
 	} else if binOp.Op == opcode.EQ {
 		var d types.Datum
 		var colName *ast.ColumnNameExpr
@@ -901,17 +891,44 @@ func getNameValuePairs(nvPairs []nameValuePair, tblName model.CIStr, expr ast.Ex
 				param = x
 			}
 		} else {
-			return nil
+			return nil, false
 		}
 		if d.IsNull() {
-			return nil
+			return nil, false
+		}
+		// Views' columns have no FieldType.
+		if tbl.IsView() {
+			return nil, false
 		}
 		if colName.Name.Table.L != "" && colName.Name.Table.L != tblName.L {
-			return nil
+			return nil, false
 		}
-		return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, value: d, param: param})
+		col := model.FindColumnInfo(tbl.Cols(), colName.Name.Name.L)
+		if col == nil || // Handling the case when the column is _tidb_rowid.
+			(col.Tp == mysql.TypeString && col.Collate == charset.CollationBin) { // This type we needn't to pad `\0` in here.
+			return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, value: d, param: param}), false
+		}
+		dVal, err := d.ConvertTo(stmtCtx, &col.FieldType)
+		if err != nil {
+			if terror.ErrorEqual(types.ErrOverflow, err) {
+				return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, value: d, param: param}), true
+			}
+			// Some scenarios cast to int with error, but we may use this value in point get.
+			if !terror.ErrorEqual(types.ErrTruncatedWrongVal, err) {
+				return nil, false
+			}
+		}
+		// The converted result must be same as original datum.
+		cmp, err := d.CompareDatum(stmtCtx, &dVal)
+		if err != nil {
+			return nil, false
+		} else if cmp != 0 {
+			return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, value: dVal, param: param}), true
+		}
+
+		return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, value: dVal, param: param}), false
 	}
-	return nil
+	return nil, false
 }
 
 func findPKHandle(tblInfo *model.TableInfo, pairs []nameValuePair) (handlePair nameValuePair, fieldType *types.FieldType) {
