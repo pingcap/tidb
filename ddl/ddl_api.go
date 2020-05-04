@@ -2120,6 +2120,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			err = d.DropTablePartition(ctx, ident, spec)
 		case ast.AlterTableTruncatePartition:
 			err = d.TruncateTablePartition(ctx, ident, spec)
+		case ast.AlterTableExchangePartition:
+			err = d.ExchangeTableParition(ctx, ident, spec)
 		case ast.AlterTableAddConstraint:
 			constr := spec.Constraint
 			switch spec.Constraint.Tp {
@@ -2682,6 +2684,82 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			return nil
 		}
+		return errors.Trace(err)
+	}
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func (d *ddl) ExchangeTableParition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	is := d.infoHandle.Get()
+	ptSchema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ptSchema))
+	}
+	pt, err := is.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
+	}
+
+	ptMeta := pt.Meta()
+	if ptMeta.GetPartitionInfo() == nil {
+		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
+	}
+
+	partName := spec.PartitionNames[0].L
+
+	// NOTE: if pt is subPartitioned, it should be checked
+
+	_, err = getPartitionDef(ptMeta, partName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	ntIdent := ast.Ident{Schema: spec.NewTable.Schema, Name: spec.NewTable.Name}
+
+	ntSchema, ok := is.SchemaByName(ntIdent.Schema)
+	if !ok {
+		return errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ntSchema))
+	}
+	nt, err := is.TableByName(ntIdent.Schema, ntIdent.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ntIdent.Schema, ntIdent.Name))
+	}
+
+	ntMeta := nt.Meta()
+
+	// NOTE: if nt is temporary table, it should be checked
+
+	if ntMeta.GetPartitionInfo() != nil {
+		return errors.Trace(ErrPartitionExchangePartTable.GenWithStackByArgs(ntIdent.Name))
+	}
+
+	// err = checkDropTablePartition(meta, partName)
+	// if err != nil {
+	// if ErrDropPartitionNonExistent.Equal(err) && spec.IfExists {
+	// ctx.GetSessionVars().StmtCtx.AppendNote(err)
+	// return nil
+	// }
+	// return errors.Trace(err)
+	// }
+
+	// TODO check table structure is same
+
+	job := &model.Job{
+		SchemaID:   ntSchema.ID,
+		TableID:    ntMeta.ID,
+		SchemaName: ntSchema.Name.L,
+		Type:       model.ActionExchangeTablePartition,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{ptSchema.ID, ptMeta, partName, spec.WithValidation},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	if err != nil {
+		// if ErrDropPartitionNonExistent.Equal(err) && spec.IfExists {
+		// ctx.GetSessionVars().StmtCtx.AppendNote(err)
+		// return nil
+		// }
 		return errors.Trace(err)
 	}
 	err = d.callHookOnChanged(err)
