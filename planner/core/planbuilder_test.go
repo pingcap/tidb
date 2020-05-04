@@ -57,6 +57,8 @@ func (s *testPlanBuilderSuite) TestShow(c *C) {
 		ast.ShowCreateDatabase,
 		ast.ShowEvents,
 		ast.ShowMasterStatus,
+		ast.ShowBackups,
+		ast.ShowRestores,
 	}
 	for _, tp := range tps {
 		node.Tp = tp

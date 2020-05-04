@@ -66,7 +66,7 @@ func (s *testSuite3) TestCopClientSend(c *C) {
 	tblID := tbl.Meta().ID
 
 	// Split the table.
-	s.cluster.SplitTable(s.mvccStore, tblID, 100)
+	s.cluster.SplitTable(tblID, 100)
 
 	ctx := context.Background()
 	// Send coprocessor request when the table split.
