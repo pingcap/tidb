@@ -714,6 +714,15 @@ func onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int6
 		return ver, errors.Trace(err)
 	}
 
+	err = checkTableDefCompatible(pt, nt)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	if withValidation {
+
+	}
+
 	tempID := partDef.ID
 
 	partDef.ID = nt.ID
