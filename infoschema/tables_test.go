@@ -516,7 +516,7 @@ func prepareSlowLogfile(c *C, slowLogFileName string) {
 # Parse_time: 0.4
 # Compile_time: 0.2
 # LockKeys_time: 1.71 Request_count: 1 Prewrite_time: 0.19 Wait_prewrite_binlog_time: 0.21 Commit_time: 0.01 Commit_backoff_time: 0.18 Backoff_types: [txnLock] Resolve_lock_time: 0.03 Write_keys: 15 Write_size: 480 Prewrite_region: 1 Txn_retry: 8
-# Process_time: 0.161 Request_count: 1 Total_keys: 100001 Process_keys: 100000
+# Cop_time: 0.3824278 Process_time: 0.161 Request_count: 1 Total_keys: 100001 Process_keys: 100000
 # Wait_time: 0.101
 # Backoff_time: 0.092
 # DB: test
@@ -597,10 +597,10 @@ func (s *testTableSuite) TestSlowQuery(c *C) {
 	tk.MustExec("set time_zone = '+08:00';")
 	re := tk.MustQuery("select * from information_schema.slow_query")
 	re.Check(testutil.RowsWithSep("|",
-		"2019-02-12 19:33:56.571953|406315658548871171|root|127.0.0.1|6|4.895492|0.4|0.2|0.19|0.21|0.01|0|0.18|[txnLock]|0.03|0|15|480|1|8|0.161|0.101|0.092|1.71|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|1|abcd|60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4|update t set i = 2;|select * from t_slim;"))
+		"2019-02-12 19:33:56.571953|406315658548871171|root|127.0.0.1|6|4.895492|0.4|0.2|0.19|0.21|0.01|0|0.18|[txnLock]|0.03|0|15|480|1|8|0.3824278|0.161|0.101|0.092|1.71|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|1|abcd|60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4|update t set i = 2;|select * from t_slim;"))
 	tk.MustExec("set time_zone = '+00:00';")
 	re = tk.MustQuery("select * from information_schema.slow_query")
-	re.Check(testutil.RowsWithSep("|", "2019-02-12 11:33:56.571953|406315658548871171|root|127.0.0.1|6|4.895492|0.4|0.2|0.19|0.21|0.01|0|0.18|[txnLock]|0.03|0|15|480|1|8|0.161|0.101|0.092|1.71|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|1|abcd|60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4|update t set i = 2;|select * from t_slim;"))
+	re.Check(testutil.RowsWithSep("|", "2019-02-12 11:33:56.571953|406315658548871171|root|127.0.0.1|6|4.895492|0.4|0.2|0.19|0.21|0.01|0|0.18|[txnLock]|0.03|0|15|480|1|8|0.3824278|0.161|0.101|0.092|1.71|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|1|abcd|60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4|update t set i = 2;|select * from t_slim;"))
 
 	// Test for long query.
 	f, err := os.OpenFile(slowLogFileName, os.O_CREATE|os.O_WRONLY, 0644)
@@ -754,6 +754,7 @@ func (s *testClusterTableSuite) TestSelectClusterTable(c *C) {
 		tk.MustExec(fmt.Sprintf("set @@tidb_enable_streaming=%d", i))
 		tk.MustExec("set @@global.tidb_enable_stmt_summary=1")
 		tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY`").Check(testkit.Rows("1"))
+		tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` where time='2019-02-12 19:33:56.571953'").Check(testkit.Rows("1"))
 		tk.MustQuery("select count(*) from `CLUSTER_PROCESSLIST`").Check(testkit.Rows("1"))
 		tk.MustQuery("select * from `CLUSTER_PROCESSLIST`").Check(testkit.Rows(fmt.Sprintf(":10080 1 root 127.0.0.1 <nil> Query 9223372036 %s <nil> 0 ", "")))
 		tk.MustQuery("select query_time, conn_id from `CLUSTER_SLOW_QUERY` order by time limit 1").Check(testkit.Rows("4.895492 6"))
@@ -886,7 +887,6 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	tk.MustExec("set session tidb_enable_stmt_summary = ''")
 
 	tk.MustExec("set global tidb_enable_stmt_summary = 1")
-	defer tk.MustExec("set global tidb_enable_stmt_summary = ''")
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
 
 	// Invalidate the cache manually so that tidb_enable_stmt_summary works immediately.
@@ -974,7 +974,7 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	// Disable it again.
 	tk.MustExec("set global tidb_enable_stmt_summary = false")
 	tk.MustExec("set session tidb_enable_stmt_summary = false")
-	defer tk.MustExec("set global tidb_enable_stmt_summary = ''")
+	defer tk.MustExec("set global tidb_enable_stmt_summary = 1")
 	defer tk.MustExec("set session tidb_enable_stmt_summary = ''")
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("0"))
 
@@ -1069,7 +1069,7 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		from information_schema.statements_summary
 		where digest_text like 'select * from t%'`,
 	)
-	// Super user can query all reocrds
+	// Super user can query all records.
 	c.Assert(len(result.Rows()), Equals, 1)
 	result = tk.MustQuery(`select *
 		from information_schema.statements_summary_history
@@ -1112,7 +1112,6 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		AuthUsername: "root",
 		AuthHostname: "%",
 	}, nil, nil)
-	tk.MustExec("set global tidb_enable_stmt_summary = off")
 }
 
 // Test statements_summary_history.
@@ -1124,7 +1123,6 @@ func (s *testTableSuite) TestStmtSummaryHistoryTable(c *C) {
 
 	tk.MustExec("set global tidb_enable_stmt_summary = 1")
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
-	defer tk.MustExec("set global tidb_enable_stmt_summary = ''")
 
 	// Invalidate the cache manually so that tidb_enable_stmt_summary works immediately.
 	s.dom.GetGlobalVarsCache().Disable()
@@ -1168,7 +1166,6 @@ func (s *testTableSuite) TestStmtSummaryInternalQuery(c *C) {
 	tk.MustExec("create global binding for select * from t where t.a = 1 using select * from t ignore index(k) where t.a = 1")
 	tk.MustExec("set global tidb_enable_stmt_summary = 1")
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
-	defer tk.MustExec("set global tidb_enable_stmt_summary = ''")
 	// Invalidate the cache manually so that tidb_enable_stmt_summary works immediately.
 	s.dom.GetGlobalVarsCache().Disable()
 	// Disable refreshing summary.
@@ -1209,7 +1206,6 @@ func (s *testTableSuite) TestStmtSummaryErrorCount(c *C) {
 	// Clear summaries.
 	tk.MustExec("set global tidb_enable_stmt_summary = 0")
 	tk.MustExec("set global tidb_enable_stmt_summary = 1")
-	defer tk.MustExec("set global tidb_enable_stmt_summary = ''")
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists stmt_summary_test")

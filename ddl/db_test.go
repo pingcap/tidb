@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -74,8 +75,7 @@ var _ = SerialSuites(&testSerialDBSuite{&testDBSuite{}})
 const defaultBatchSize = 1024
 
 type testDBSuite struct {
-	cluster    *mocktikv.Cluster
-	mvccStore  mocktikv.MVCCStore
+	cluster    cluster.Cluster
 	store      kv.Storage
 	dom        *domain.Domain
 	schemaName string
@@ -95,12 +95,15 @@ func setUpSuite(s *testDBSuite, c *C) {
 	s.autoIDStep = autoid.GetStep()
 	ddl.SetWaitTimeWhenErrorOccurred(0)
 
-	s.cluster = mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(s.cluster)
-	s.mvccStore = mocktikv.MustNewMVCCStore()
+	cluster := mocktikv.NewCluster()
+	mocktikv.BootstrapWithSingleStore(cluster)
+	s.cluster = cluster
+
+	mvccStore := mocktikv.MustNewMVCCStore()
+	cluster.SetMvccStore(mvccStore)
 	s.store, err = mockstore.NewMockTikvStore(
-		mockstore.WithCluster(s.cluster),
-		mockstore.WithMVCCStore(s.mvccStore),
+		mockstore.WithCluster(cluster),
+		mockstore.WithMVCCStore(mvccStore),
 	)
 	c.Assert(err, IsNil)
 
@@ -1082,7 +1085,7 @@ LOOP:
 	c.Assert(ctx.NewTxn(context.Background()), IsNil)
 	t := testGetTableByName(c, ctx, "test_db", "test_add_index")
 	handles := make(map[int64]struct{})
-	startKey := t.RecordKey(math.MinInt64)
+	startKey := t.RecordKey(kv.IntHandle(math.MinInt64))
 	err := t.IterRecords(ctx, startKey, t.Cols(),
 		func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
 			handles[h] = struct{}{}
@@ -1122,9 +1125,9 @@ LOOP:
 		}
 
 		c.Assert(err, IsNil)
-		_, ok := handles[h]
+		_, ok := handles[h.IntValue()]
 		c.Assert(ok, IsTrue)
-		delete(handles, h)
+		delete(handles, h.IntValue())
 	}
 	c.Assert(handles, HasLen, 0)
 	tk.MustExec("drop table test_add_index")
@@ -1491,7 +1494,7 @@ func checkDelRangeDone(c *C, ctx sessionctx.Context, idx table.Index) {
 			}
 
 			c.Assert(err, IsNil)
-			handles[h] = struct{}{}
+			handles[h.IntValue()] = struct{}{}
 		}
 		return handles
 	}
@@ -3527,10 +3530,10 @@ func (s *testDBSuite4) TestAddColumn2(c *C) {
 	ctx := context.Background()
 	err = s.tk.Se.NewTxn(ctx)
 	c.Assert(err, IsNil)
-	oldRow, err := writeOnlyTable.RowWithCols(s.tk.Se, 1, writeOnlyTable.WritableCols())
+	oldRow, err := writeOnlyTable.RowWithCols(s.tk.Se, kv.IntHandle(1), writeOnlyTable.WritableCols())
 	c.Assert(err, IsNil)
 	c.Assert(len(oldRow), Equals, 3)
-	err = writeOnlyTable.RemoveRecord(s.tk.Se, 1, oldRow)
+	err = writeOnlyTable.RemoveRecord(s.tk.Se, kv.IntHandle(1), oldRow)
 	c.Assert(err, IsNil)
 	_, err = writeOnlyTable.AddRecord(s.tk.Se, types.MakeDatums(oldRow[0].GetInt64(), 2, oldRow[2].GetInt64()), table.IsUpdate)
 	c.Assert(err, IsNil)

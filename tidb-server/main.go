@@ -210,10 +210,10 @@ func initializeTempDir() {
 	if err != nil {
 		switch err {
 		case fslock.ErrLockHeld:
-			fmt.Fprintf(os.Stderr, "The current temporary storage dir(%s) has been occupied by another instance, "+
-				"check tmp-storage-path config and make sure they are different.", tempDir)
+			log.Error("The current temporary storage dir has been occupied by another instance, "+
+				"check tmp-storage-path config and make sure they are different.", zap.String("TempStoragePath", tempDir), zap.Error(err))
 		default:
-			fmt.Fprintf(os.Stderr, "Failed to acquire exclusive lock on the temporary storage dir(%s). Error detail: {%s}", tempDir, err)
+			log.Error("Failed to acquire exclusive lock on the temporary storage dir.", zap.String("TempStoragePath", tempDir), zap.Error(err))
 		}
 		os.Exit(1)
 	}
@@ -559,6 +559,7 @@ func setGlobalVars() {
 	priority := mysql.Str2Priority(cfg.Performance.ForcePriority)
 	variable.ForcePriority = int32(priority)
 	variable.SysVars[variable.TiDBForcePriority].Value = mysql.Priority2Str[priority]
+	variable.SysVars[variable.TiDBOptDistinctAggPushDown].Value = variable.BoolToIntStr(cfg.Performance.DistinctAggPushDown)
 
 	variable.SysVars[variable.TIDBMemQuotaQuery].Value = strconv.FormatInt(cfg.MemQuotaQuery, 10)
 	variable.SysVars["lower_case_table_names"].Value = strconv.Itoa(cfg.LowerCaseTableNames)
