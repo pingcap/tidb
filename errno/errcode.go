@@ -1038,6 +1038,10 @@ const (
 	ErrPrivilegeCheckFail                  = 8121
 	ErrInvalidWildCard                     = 8122
 	ErrMixOfGroupFuncAndFieldsIncompatible = 8123
+	ErrBRIEBackupFailed                    = 8124
+	ErrBRIERestoreFailed                   = 8125
+	ErrBRIEImportFailed                    = 8126
+	ErrBRIEExportFailed                    = 8127
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation        = 8200
