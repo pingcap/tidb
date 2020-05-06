@@ -86,9 +86,12 @@ func (b *baseBuiltinFunc) collator() collate.Collator {
 	return b.ctor
 }
 
-func newBaseBuiltinFunc(ctx sessionctx.Context, args []Expression) baseBuiltinFunc {
+func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expression) (baseBuiltinFunc, error) {
 	if ctx == nil {
 		panic("ctx should not be nil")
+	}
+	if err := checkIllegalMixCollation(funcName, args); err != nil {
+		return baseBuiltinFunc{}, err
 	}
 	derivedCharset, derivedCollate, derivedFlen := DeriveCollationFromExprs(ctx, args...)
 	bf := baseBuiltinFunc{
@@ -102,13 +105,30 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, args []Expression) baseBuiltinFu
 	}
 	bf.SetCharsetAndCollation(derivedCharset, derivedCollate, derivedFlen)
 	bf.setCollator(collate.GetCollator(derivedCollate))
-	return bf
+	return bf, nil
+}
+
+func checkIllegalMixCollation(funcName string, args []Expression) error {
+	firstExplicitCollation := ""
+	for _, arg := range args {
+		if arg.GetType().EvalType() != types.ETString {
+			continue
+		}
+		if arg.Coercibility() == CoercibilityExplicit {
+			if firstExplicitCollation == "" {
+				firstExplicitCollation = arg.GetType().Collate
+			} else if firstExplicitCollation != arg.GetType().Collate {
+				return collate.ErrIllegalMixCollation.GenWithStackByArgs(firstExplicitCollation, "EXPLICIT", arg.GetType().Collate, "EXPLICIT", funcName)
+			}
+		}
+	}
+	return nil
 }
 
 // newBaseBuiltinFuncWithTp creates a built-in function signature with specified types of arguments and the return type of the function.
 // argTps indicates the types of the args, retType indicates the return type of the built-in function.
 // Every built-in function needs determined argTps and retType when we create it.
-func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType types.EvalType, argTps ...types.EvalType) (bf baseBuiltinFunc) {
+func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Expression, retType types.EvalType, argTps ...types.EvalType) (bf baseBuiltinFunc, err error) {
 	if len(args) != len(argTps) {
 		panic("unexpected length of args and argTps")
 	}
@@ -135,6 +155,10 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 		case types.ETJson:
 			args[i] = WrapWithCastAsJSON(ctx, args[i])
 		}
+	}
+
+	if err = checkIllegalMixCollation(funcName, args); err != nil {
+		return
 	}
 
 	// derive collation information for string function, and we must do it
@@ -216,7 +240,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 	}
 	bf.SetCharsetAndCollation(derivedCharset, derivedCollate, derivedFlen)
 	bf.setCollator(collate.GetCollator(derivedCollate))
-	return bf
+	return bf, nil
 }
 
 func (b *baseBuiltinFunc) getArgs() []Expression {
@@ -497,18 +521,6 @@ func (b *baseFunctionClass) verifyArgs(args []Expression) error {
 	l := len(args)
 	if l < b.minArgs || (b.maxArgs != -1 && l > b.maxArgs) {
 		return ErrIncorrectParameterCount.GenWithStackByArgs(b.funcName)
-	}
-	if l > 1 {
-		firstExplicitCollation := ""
-		for _, arg := range args {
-			if arg.Coercibility() == CoercibilityExplicit {
-				if firstExplicitCollation == "" {
-					firstExplicitCollation = arg.GetType().Collate
-				} else if firstExplicitCollation != arg.GetType().Collate {
-					return collate.ErrIllegalMixCollation.GenWithStackByArgs(firstExplicitCollation, "EXPLICIT", arg.GetType().Collate, "EXPLICIT", b.funcName)
-				}
-			}
-		}
 	}
 	return nil
 }
