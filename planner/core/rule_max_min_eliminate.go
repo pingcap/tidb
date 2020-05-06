@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
 )
@@ -179,13 +180,8 @@ func (a *maxMinEliminator) eliminateSingleMaxMin(agg *LogicalAggregation) *Logic
 		// For max function, the sort order should be desc.
 		desc := f.Name == ast.AggFuncMax
 		// Compose Sort operator.
-<<<<<<< HEAD
 		sort := LogicalSort{}.Init(ctx)
-		sort.ByItems = append(sort.ByItems, &ByItems{f.Args[0], desc})
-=======
-		sort := LogicalSort{}.Init(ctx, agg.blockOffset)
-		sort.ByItems = append(sort.ByItems, &util.ByItems{Expr: f.Args[0], Desc: desc})
->>>>>>> 7ebcc20... executor: support GROUP_CONCAT(ORDER BY) (#16591)
+		sort.ByItems = append(sort.ByItems, &util.ByItems{f.Args[0], desc})
 		sort.SetChildren(child)
 		child = sort
 	}

@@ -23,11 +23,8 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/infoschema"
-=======
 	"github.com/pingcap/tidb/planner/util"
->>>>>>> 7ebcc20... executor: support GROUP_CONCAT(ORDER BY) (#16591)
 	"github.com/pingcap/tidb/types"
 )
 
@@ -162,18 +159,10 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 	return child.PruneColumns(selfUsedCols)
 }
 
-<<<<<<< HEAD
-// PruneColumns implements LogicalPlan interface.
-func (ls *LogicalSort) PruneColumns(parentUsedCols []*expression.Column) error {
-	child := ls.children[0]
-	for i := len(ls.ByItems) - 1; i >= 0; i-- {
-		cols := expression.ExtractColumns(ls.ByItems[i].Expr)
-=======
 func pruneByItems(old []*util.ByItems) (new []*util.ByItems, parentUsedCols []*expression.Column) {
 	new = make([]*util.ByItems, 0, len(old))
 	for _, byItem := range old {
 		cols := expression.ExtractColumns(byItem.Expr)
->>>>>>> 7ebcc20... executor: support GROUP_CONCAT(ORDER BY) (#16591)
 		if len(cols) == 0 {
 			if !expression.IsRuntimeConstExpr(byItem.Expr) {
 				new = append(new, byItem)
@@ -200,23 +189,11 @@ func (ls *LogicalSort) PruneColumns(parentUsedCols []*expression.Column) error {
 }
 
 // PruneColumns implements LogicalPlan interface.
-<<<<<<< HEAD
 func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column) error {
 	used, err := getUsedList(parentUsedCols, p.schema)
 	if err != nil {
 		return err
 	}
-=======
-// If any expression can view as a constant in execution stage, such as correlated column, constant,
-// we do prune them. Note that we can't prune the expressions contain non-deterministic functions, such as rand().
-func (lt *LogicalTopN) PruneColumns(parentUsedCols []*expression.Column) error {
-	child := lt.children[0]
-	var cols []*expression.Column
-	lt.ByItems, cols = pruneByItems(lt.ByItems)
-	parentUsedCols = append(parentUsedCols, cols...)
-	return child.PruneColumns(parentUsedCols)
-}
->>>>>>> 7ebcc20... executor: support GROUP_CONCAT(ORDER BY) (#16591)
 
 	hasBeenUsed := false
 	for i := range used {

@@ -397,21 +397,17 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan) (_ LogicalPlan, e
 				projChild := proj.children[0]
 				agg.SetChildren(projChild)
 			} else if union, ok1 := child.(*LogicalUnionAll); ok1 {
-<<<<<<< HEAD
+				for _, aggFunc := range agg.AggFuncs {
+					if !a.isDecomposableWithUnion(aggFunc) {
+						return p, nil
+					}
+				}
 				var gbyCols []*expression.Column
 				gbyCols = expression.ExtractColumnsFromExpressions(gbyCols, agg.GroupByItems, nil)
 				pushedAgg, err := a.makeNewAgg(agg.ctx, agg.AggFuncs, gbyCols)
 				if err != nil {
 					return nil, err
 				}
-=======
-				for _, aggFunc := range agg.AggFuncs {
-					if !a.isDecomposableWithUnion(aggFunc) {
-						return p, nil
-					}
-				}
-				pushedAgg := a.splitPartialAgg(agg)
->>>>>>> 7ebcc20... executor: support GROUP_CONCAT(ORDER BY) (#16591)
 				newChildren := make([]LogicalPlan, 0, len(union.children))
 				for _, child := range union.children {
 					newChild := a.pushAggCrossUnion(pushedAgg, union.Schema(), child)

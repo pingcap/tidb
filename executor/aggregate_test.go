@@ -399,12 +399,8 @@ func (s *testSuite1) TestAggPrune(c *C) {
 	tk.MustQuery("SELECT a, MIN(b), MAX(b) FROM t GROUP BY a").Check(testkit.Rows("1 11 11", "3 <nil> <nil>"))
 }
 
-<<<<<<< HEAD
 func (s *testSuite1) TestGroupConcatAggr(c *C) {
-=======
-func (s *testSuiteAgg) TestGroupConcatAggr(c *C) {
 	var err error
->>>>>>> 7ebcc20... executor: support GROUP_CONCAT(ORDER BY) (#16591)
 	// issue #5411
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

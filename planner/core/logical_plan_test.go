@@ -2678,20 +2678,6 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 			case *LogicalSort:
 				byItems = v.ByItems
 				lp = lp.Children()[0]
-<<<<<<< HEAD
-=======
-			case *LogicalProjection:
-				newItems := make([]*util.ByItems, 0, len(byItems))
-				for _, col := range byItems {
-					idx := v.schema.ColumnIndex(col.Expr.(*expression.Column))
-					switch expr := v.Exprs[idx].(type) {
-					case *expression.Column:
-						newItems = append(newItems, &util.ByItems{Expr: expr, Desc: col.Desc})
-					}
-				}
-				byItems = newItems
-				lp = lp.Children()[0]
->>>>>>> 7ebcc20... executor: support GROUP_CONCAT(ORDER BY) (#16591)
 			default:
 				lp = lp.Children()[0]
 			}

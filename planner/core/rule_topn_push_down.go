@@ -142,13 +142,8 @@ func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int) LogicalPla
 
 	newTopN := LogicalTopN{
 		Count:   topN.Count + topN.Offset,
-<<<<<<< HEAD
-		ByItems: make([]*ByItems, len(topN.ByItems)),
-	}.Init(topN.ctx)
-=======
 		ByItems: make([]*util.ByItems, len(topN.ByItems)),
-	}.Init(topN.ctx, topN.blockOffset)
->>>>>>> 7ebcc20... executor: support GROUP_CONCAT(ORDER BY) (#16591)
+	}.Init(topN.ctx)
 	for i := range topN.ByItems {
 		newTopN.ByItems[i] = topN.ByItems[i].Clone()
 	}

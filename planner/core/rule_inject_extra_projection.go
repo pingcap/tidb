@@ -165,11 +165,7 @@ func injectProjBelowAgg(aggPlan PhysicalPlan, aggFuncs []*aggregation.AggFuncDes
 // PhysicalTopN, some extra columns will be added into the schema of the
 // Projection, thus we need to add another Projection upon them to prune the
 // redundant columns.
-<<<<<<< HEAD
-func injectProjBelowSort(p PhysicalPlan, orderByItems []*ByItems) PhysicalPlan {
-=======
-func InjectProjBelowSort(p PhysicalPlan, orderByItems []*util.ByItems) PhysicalPlan {
->>>>>>> 7ebcc20... executor: support GROUP_CONCAT(ORDER BY) (#16591)
+func injectProjBelowSort(p PhysicalPlan, orderByItems []*util.ByItems) PhysicalPlan {
 	hasScalarFunc, numOrderByItems := false, len(orderByItems)
 	for i := 0; !hasScalarFunc && i < numOrderByItems; i++ {
 		_, isScalarFunc := orderByItems[i].Expr.(*expression.ScalarFunction)
@@ -233,67 +229,3 @@ func InjectProjBelowSort(p PhysicalPlan, orderByItems []*util.ByItems) PhysicalP
 
 	return topProj
 }
-<<<<<<< HEAD
-=======
-
-// TurnNominalSortIntoProj will turn nominal sort into two projections. This is to check if the scalar functions will
-// overflow.
-func TurnNominalSortIntoProj(p PhysicalPlan, onlyColumn bool, orderByItems []*util.ByItems) PhysicalPlan {
-	if onlyColumn {
-		return p.Children()[0]
-	}
-
-	numOrderByItems := len(orderByItems)
-	childPlan := p.Children()[0]
-
-	bottomProjSchemaCols := make([]*expression.Column, 0, len(childPlan.Schema().Columns)+numOrderByItems)
-	bottomProjExprs := make([]expression.Expression, 0, len(childPlan.Schema().Columns)+numOrderByItems)
-	for _, col := range childPlan.Schema().Columns {
-		newCol := col.Clone().(*expression.Column)
-		newCol.Index = childPlan.Schema().ColumnIndex(newCol)
-		bottomProjSchemaCols = append(bottomProjSchemaCols, newCol)
-		bottomProjExprs = append(bottomProjExprs, newCol)
-	}
-
-	for _, item := range orderByItems {
-		itemExpr := item.Expr
-		if _, isScalarFunc := itemExpr.(*expression.ScalarFunction); !isScalarFunc {
-			continue
-		}
-		bottomProjExprs = append(bottomProjExprs, itemExpr)
-		newArg := &expression.Column{
-			UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
-			RetType:  itemExpr.GetType(),
-			Index:    len(bottomProjSchemaCols),
-		}
-		bottomProjSchemaCols = append(bottomProjSchemaCols, newArg)
-	}
-
-	childProp := p.GetChildReqProps(0).Clone()
-	bottomProj := PhysicalProjection{
-		Exprs:                bottomProjExprs,
-		AvoidColumnEvaluator: false,
-	}.Init(p.SCtx(), childPlan.statsInfo().ScaleByExpectCnt(childProp.ExpectedCnt), p.SelectBlockOffset(), childProp)
-	bottomProj.SetSchema(expression.NewSchema(bottomProjSchemaCols...))
-	bottomProj.SetChildren(childPlan)
-
-	topProjExprs := make([]expression.Expression, 0, childPlan.Schema().Len())
-	for i := range childPlan.Schema().Columns {
-		col := childPlan.Schema().Columns[i].Clone().(*expression.Column)
-		col.Index = i
-		topProjExprs = append(topProjExprs, col)
-	}
-	topProj := PhysicalProjection{
-		Exprs:                topProjExprs,
-		AvoidColumnEvaluator: false,
-	}.Init(p.SCtx(), childPlan.statsInfo().ScaleByExpectCnt(childProp.ExpectedCnt), p.SelectBlockOffset(), childProp)
-	topProj.SetSchema(childPlan.Schema().Clone())
-	topProj.SetChildren(bottomProj)
-
-	if origChildProj, isChildProj := childPlan.(*PhysicalProjection); isChildProj {
-		refine4NeighbourProj(bottomProj, origChildProj)
-	}
-
-	return topProj
-}
->>>>>>> 7ebcc20... executor: support GROUP_CONCAT(ORDER BY) (#16591)

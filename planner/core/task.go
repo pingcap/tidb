@@ -22,12 +22,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
->>>>>>> 7ebcc20... executor: support GROUP_CONCAT(ORDER BY) (#16591)
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/plancodec"
@@ -364,13 +359,8 @@ func (p *NominalSort) attach2Task(tasks ...task) task {
 	return tasks[0]
 }
 
-<<<<<<< HEAD
 func (p *PhysicalTopN) getPushedDownTopN() *PhysicalTopN {
-	newByItems := make([]*ByItems, 0, len(p.ByItems))
-=======
-func (p *PhysicalTopN) getPushedDownTopN(childPlan PhysicalPlan) *PhysicalTopN {
 	newByItems := make([]*util.ByItems, 0, len(p.ByItems))
->>>>>>> 7ebcc20... executor: support GROUP_CONCAT(ORDER BY) (#16591)
 	for _, expr := range p.ByItems {
 		newByItems = append(newByItems, expr.Clone())
 	}
