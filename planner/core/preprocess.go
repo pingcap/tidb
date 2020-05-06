@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/domainutil"
 )
@@ -154,6 +154,10 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		if node.FnName.L == ast.NextVal || node.FnName.L == ast.LastVal || node.FnName.L == ast.SetVal {
 			p.flag |= inSequenceFunction
 		}
+	case *ast.BRIEStmt:
+		if node.Kind == ast.BRIEKindRestore {
+			p.flag |= inCreateOrDropTable
+		}
 	default:
 		p.flag &= ^parentIsJoin
 	}
@@ -247,6 +251,10 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		p.flag &= ^inRepairTable
 	case *ast.CreateSequenceStmt:
 		p.flag &= ^inCreateOrDropTable
+	case *ast.BRIEStmt:
+		if x.Kind == ast.BRIEKindRestore {
+			p.flag &= ^inCreateOrDropTable
+		}
 	}
 
 	return in, p.err == nil
