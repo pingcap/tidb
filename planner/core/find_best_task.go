@@ -1176,7 +1176,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 	rTsk := &rootTask{p: pointGetPlan}
 	var cost float64
 	if candidate.path.IsTablePath {
-		pointGetPlan.Handle = candidate.path.Ranges[0].LowVal[0].GetInt64()
+		pointGetPlan.Handle = kv.IntHandle(candidate.path.Ranges[0].LowVal[0].GetInt64())
 		pointGetPlan.UnsignedHandle = mysql.HasUnsignedFlag(ds.getHandleCol().RetType.Flag)
 		pointGetPlan.PartitionInfo = partitionInfo
 		cost = pointGetPlan.GetCost(ds.TblCols)
@@ -1237,7 +1237,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 	var cost float64
 	if candidate.path.IsTablePath {
 		for _, ran := range candidate.path.Ranges {
-			batchPointGetPlan.Handles = append(batchPointGetPlan.Handles, ran.LowVal[0].GetInt64())
+			batchPointGetPlan.Handles = append(batchPointGetPlan.Handles, kv.IntHandle(ran.LowVal[0].GetInt64()))
 		}
 		cost = batchPointGetPlan.GetCost(ds.TblCols)
 		// Add filter condition to table plan now.
