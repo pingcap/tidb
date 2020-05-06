@@ -305,7 +305,7 @@ func (s *testRegionCacheSuite) TestSendFailedButLeaderNotChange(c *C) {
 	c.Assert(ctxFollower1.Peer.Id, Equals, ctxFollower2.Peer.Id)
 
 	// send fail leader switch to 2
-	s.cache.OnSendFail(s.bo, ctx, false, nil)
+	s.cache.OnSendFail(s.bo, ctx, false, nil, nil)
 	ctx, err = s.cache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadLeader, 0)
 	c.Assert(err, IsNil)
 	c.Assert(ctx.Peer.Id, Equals, s.peer2)
@@ -385,7 +385,7 @@ func (s *testRegionCacheSuite) TestSendFailedInHibernateRegion(c *C) {
 	c.Assert(ctxFollower1.Peer.Id, Equals, ctxFollower2.Peer.Id)
 
 	// send fail leader switch to 2
-	s.cache.OnSendFail(s.bo, ctx, false, nil)
+	s.cache.OnSendFail(s.bo, ctx, false, nil, nil)
 	ctx, err = s.cache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadLeader, 0)
 	c.Assert(err, IsNil)
 	c.Assert(ctx.Peer.Id, Equals, s.peer2)
@@ -474,7 +474,7 @@ func (s *testRegionCacheSuite) TestSendFailInvalidateRegionsInSameStore(c *C) {
 	// Send fail on region1
 	ctx, _ := s.cache.GetTiKVRPCContext(s.bo, loc1.Region, kv.ReplicaReadLeader, 0)
 	s.checkCache(c, 2)
-	s.cache.OnSendFail(s.bo, ctx, false, errors.New("test error"))
+	s.cache.OnSendFail(s.bo, ctx, false, errors.New("test error"), nil)
 
 	// Get region2 cache will get nil then reload.
 	ctx2, err := s.cache.GetTiKVRPCContext(s.bo, loc2.Region, kv.ReplicaReadLeader, 0)
@@ -516,7 +516,7 @@ func (s *testRegionCacheSuite) TestSendFailedInMultipleNode(c *C) {
 	c.Assert(ctxFollower1.Peer.Id, Equals, ctxFollower2.Peer.Id)
 
 	// send fail leader switch to 2
-	s.cache.OnSendFail(s.bo, ctx, false, nil)
+	s.cache.OnSendFail(s.bo, ctx, false, nil, nil)
 	ctx, err = s.cache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadLeader, 0)
 	c.Assert(err, IsNil)
 	c.Assert(ctx.Peer.Id, Equals, s.peer2)
@@ -539,7 +539,7 @@ func (s *testRegionCacheSuite) TestSendFailedInMultipleNode(c *C) {
 	c.Assert(ctxFollower1.Peer.Id, Not(Equals), ctxFollower2.Peer.Id)
 
 	// send 2 fail leader switch to 3
-	s.cache.OnSendFail(s.bo, ctx, false, nil)
+	s.cache.OnSendFail(s.bo, ctx, false, nil, nil)
 	ctx, err = s.cache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadLeader, 0)
 	c.Assert(err, IsNil)
 	c.Assert(ctx.Peer.Id, Equals, peer3)
@@ -939,8 +939,9 @@ func (s *testRegionCacheSuite) TestFollowerReadFallback(c *C) {
 	c.Assert(ctxFollower1.Peer.Id, Not(Equals), ctxFollower2.Peer.Id)
 
 	// send fail on store2, next follower read is going to fallback to store3
-	s.cache.OnSendFail(s.bo, ctxFollower1, false, errors.New("test error"))
-	ctx, err = s.cache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadFollower, 0)
+	var seedRevise uint32
+	s.cache.OnSendFail(s.bo, ctxFollower1, false, errors.New("test error"), &seedRevise)
+	ctx, err = s.cache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadFollower, 0+seedRevise)
 	c.Assert(err, IsNil)
 	c.Assert(ctx.Peer.Id, Equals, peer3)
 }
@@ -974,8 +975,9 @@ func (s *testRegionCacheSuite) TestMixedReadFallback(c *C) {
 	c.Assert(ctxFollower3.Peer.Id, Equals, peer3)
 
 	// send fail on store2, next follower read is going to fallback to store3
-	s.cache.OnSendFail(s.bo, ctxFollower1, false, errors.New("test error"))
-	ctx, err = s.cache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadMixed, 0)
+	var seedRevise uint32
+	s.cache.OnSendFail(s.bo, ctxFollower1, false, errors.New("test error"), &seedRevise)
+	ctx, err = s.cache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadMixed, 0+seedRevise)
 	c.Assert(err, IsNil)
 	c.Assert(ctx.Peer.Id, Equals, s.peer2)
 }

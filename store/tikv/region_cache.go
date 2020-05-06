@@ -114,10 +114,7 @@ func (r *RegionStore) follower(seed uint32) int32 {
 		if r.stores[followerIdx].storeType != kv.TiKV {
 			continue
 		}
-		if r.storeEpochs[followerIdx] == atomic.LoadUint32(&r.stores[followerIdx].epoch) {
-			return followerIdx
-		}
-		seed++
+		return followerIdx
 	}
 	return r.workTiKVIdx
 }
@@ -127,9 +124,6 @@ func (r *RegionStore) peer(seed uint32) int32 {
 	candidates := make([]int32, 0, len(r.stores))
 	for i := 0; i < len(r.stores); i++ {
 		if r.stores[i].storeType != kv.TiKV {
-			continue
-		}
-		if r.storeEpochs[i] != atomic.LoadUint32(&r.stores[i].epoch) {
 			continue
 		}
 		candidates = append(candidates, int32(i))
@@ -290,12 +284,13 @@ func (c *RegionCache) checkAndResolve(needCheckStores []*Store) {
 
 // RPCContext contains data that is needed to send RPC to a region.
 type RPCContext struct {
-	Region  RegionVerID
-	Meta    *metapb.Region
-	Peer    *metapb.Peer
-	PeerIdx int
-	Store   *Store
-	Addr    string
+	Region      RegionVerID
+	Meta        *metapb.Region
+	Peer        *metapb.Peer
+	PeerIdx     int
+	Store       *Store
+	Addr        string
+	replicaRead kv.ReplicaReadType
 }
 
 func (c *RPCContext) String() string {
@@ -355,12 +350,13 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 	}
 
 	return &RPCContext{
-		Region:  id,
-		Meta:    cachedRegion.meta,
-		Peer:    peer,
-		PeerIdx: storeIdx,
-		Store:   store,
-		Addr:    addr,
+		Region:      id,
+		Meta:        cachedRegion.meta,
+		Peer:        peer,
+		PeerIdx:     storeIdx,
+		Store:       store,
+		Addr:        addr,
+		replicaRead: replicaRead,
 	}, nil
 }
 
@@ -495,7 +491,7 @@ func (c *RegionCache) findRegionByKey(bo *Backoffer, key []byte, isEndKey bool) 
 }
 
 // OnSendFail handles send request fail logic.
-func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload bool, err error) {
+func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload bool, err error, seedRevise *uint32) {
 	tikvRegionCacheCounterWithSendFail.Inc()
 	r := c.getCachedRegionWithRLock(ctx.Region)
 	if r != nil {
@@ -521,7 +517,16 @@ func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload 
 
 		// try next peer to found new leader.
 		if ctx.Store.storeType == kv.TiKV {
-			rs.switchNextPeer(r, ctx.PeerIdx)
+			switch ctx.replicaRead {
+			case kv.ReplicaReadFollower, kv.ReplicaReadMixed:
+				if seedRevise != nil {
+					*seedRevise = *seedRevise + 1
+				}
+			case kv.ReplicaReadLeader:
+				rs.switchNextPeer(r, ctx.PeerIdx)
+			default:
+				panic(fmt.Sprintf("unsupported replica read type: %d", ctx.replicaRead))
+			}
 		} else {
 			rs.switchNextFlashPeer(r, ctx.PeerIdx)
 		}

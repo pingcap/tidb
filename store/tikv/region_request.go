@@ -60,6 +60,7 @@ type RegionRequestSender struct {
 	storeAddr    string
 	rpcError     error
 	failStoreIDs map[uint64]struct{}
+	seedRevise   uint32
 }
 
 // RegionBatchRequestSender sends BatchCop requests to TiFlash server by stream way.
@@ -156,7 +157,7 @@ func (s *RegionRequestSender) SendReqCtx(
 	for {
 		switch sType {
 		case kv.TiKV:
-			rpcCtx, err = s.regionCache.GetTiKVRPCContext(bo, regionID, replicaRead, seed)
+			rpcCtx, err = s.regionCache.GetTiKVRPCContext(bo, regionID, replicaRead, seed+s.seedRevise)
 		case kv.TiFlash:
 			rpcCtx, err = s.regionCache.GetTiFlashRPCContext(bo, regionID)
 		case kv.TiDB:
@@ -281,7 +282,7 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 	}
 
 	if ctx.Meta != nil {
-		s.regionCache.OnSendFail(bo, ctx, s.needReloadRegion(ctx), err)
+		s.regionCache.OnSendFail(bo, ctx, s.needReloadRegion(ctx), err, &s.seedRevise)
 	}
 
 	// Retry on send request failure when it's not canceled.
