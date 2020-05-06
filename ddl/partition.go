@@ -32,8 +32,10 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 const (
@@ -692,7 +694,7 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 }
 
 // onExchangeTablePartition exchange partition data
-func onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var (
 		ptSchemaID     int64
 		pt             *model.TableInfo
@@ -702,6 +704,11 @@ func onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int6
 	if err := job.DecodeArgs(&ptSchemaID, &pt, &partName, &withValidation); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
+	}
+
+	ntDbInfo, err := t.GetDatabase(job.SchemaID)
+	if err != nil {
+		return ver, err
 	}
 
 	nt, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
@@ -720,7 +727,10 @@ func onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int6
 	}
 
 	if withValidation {
-
+		err = checkExchangePartitionRecordValidation(w, pt.Partition, partName, ntDbInfo.Name, nt.Name)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 	}
 
 	tempID := partDef.ID
@@ -754,6 +764,64 @@ func onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int6
 
 	job.FinishTableJob(model.JobStateDone, model.StateNone, ver, nt)
 	return ver, nil
+}
+
+func checkExchangePartitionRecordValidation(w *worker, pi *model.PartitionInfo, partName string, schemaName, tableName model.CIStr) error {
+	var (
+		sql   string
+		index int
+	)
+
+	for i, def := range pi.Definitions {
+		if strings.EqualFold(def.Name.L, strings.ToLower(partName)) {
+			index = i
+		}
+		if len(pi.Definitions) == i {
+			return table.ErrUnknownPartition.GenWithStackByArgs(partName, tableName.O)
+		}
+	}
+
+	switch pi.Type {
+	case model.PartitionTypeHash:
+		sql = fmt.Sprint("select 1 from `%s`.`%s` where mod(%s, %d) = %d", schemaName.L, tableName.L, pi.Expr, pi.Num, index)
+		break
+	case model.PartitionTypeRange:
+		rangeRrun, err := tables.DataForRangePruning(pi)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		// Table has only one partition and has the maximum value
+		if len(pi.Definitions) == 1 && rangeRrun.MaxValue {
+			return nil
+		}
+		if index == 0 {
+			sql = fmt.Sprintf("select 1 from `%s`.`%s` where %s <= %d limit 1", schemaName.L, tableName.L, pi.Expr, rangeRrun.LessThan[index])
+		} else if index == len(pi.Definitions)-1 && rangeRrun.MaxValue {
+			sql = fmt.Sprintf("select 1 from `%s`.`%s` where %s > %d limit 1", schemaName.L, tableName.L, pi.Expr, rangeRrun.LessThan[index])
+		} else {
+			sql = fmt.Sprintf("select 1 from `%s`.`%s` where %s > %d and %s <= %d limit 1", schemaName.L, tableName.L, pi.Expr, rangeRrun.LessThan[index-1], pi.Expr, rangeRrun.LessThan[index])
+		}
+		break
+	default:
+		panic("cannot reach here")
+	}
+
+	var ctx sessionctx.Context
+	ctx, err := w.sessPool.get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer w.sessPool.put(ctx)
+
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	rowCount := len(rows)
+	if rowCount != 0 {
+		return ErrTablesDifferentMetadata
+	}
+	return nil
 }
 
 func checkAddPartitionTooManyPartitions(piDefs uint64) error {
