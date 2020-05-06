@@ -1573,21 +1573,20 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) *NestedLoopAp
 		joiner:       tupleJoiner,
 		concurrency:  4,
 	}
-	e.innerWorkers = make([]*applyInnerWorker, e.concurrency)
+	e.outerSchema = make([][]*expression.CorrelatedColumn, e.concurrency)
+	e.innerExec = make([]Executor, e.concurrency)
+	e.innerFilter = make([]expression.CNFExprs, e.concurrency)
 	for i := uint(0); i < e.concurrency; i++ {
-		w := &applyInnerWorker{
-			baseExecutor: newBaseExecutor(b.ctx, innerExec.Schema(), applyInnerWorkerLabel),
-		}
-		w.outerSchema = make([]*expression.CorrelatedColumn, len(v.OuterSchema))
-		for i := 0; i < len(v.OuterSchema); i++ {
-			w.outerSchema[i] = v.OuterSchema[i].Clone().(*expression.CorrelatedColumn)
+		e.outerSchema[i] = make([]*expression.CorrelatedColumn, len(v.OuterSchema))
+		for j := 0; j < len(v.OuterSchema); j++ {
+			e.outerSchema[i][j] = v.OuterSchema[j].Clone().(*expression.CorrelatedColumn)
 		}
 		if v.InnerChildIdx == 0 {
-			w.innerExec = b.build(v.Children()[0])
+			e.innerExec[i] = b.build(v.Children()[0])
 		} else {
-			w.innerExec = b.build(v.Children()[1])
+			e.innerExec[i] = b.build(v.Children()[1])
 		}
-		w.innerFilter = innerFilter
+		e.innerFilter[i] = innerFilter.Clone()
 	}
 	executorCounterNestedLoopApplyExec.Inc()
 	return e
