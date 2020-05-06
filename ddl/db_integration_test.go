@@ -2288,6 +2288,10 @@ func (s *testIntegrationSuite4) TestAlterIndexVisibility(c *C) {
 	// TODO: error here
 	//tk.MustGetErrMsg("alter table t1 alter index a invisible", "")
 
+	// Alter explicit primary key to invisible index should throw error
+	tk.MustExec("create table t2(a int, primary key(a))")
+	tk.MustGetErrMsg("alter table t2 alter index PRIMARY invisible", `[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 34 near "PRIMARY invisible" `)
+
 	// Alter expression index
 	tk.MustExec("create table t3(a int NOT NULL, b int)")
 	tk.MustExec("alter table t3 add index idx((a+b));")

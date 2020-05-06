@@ -2204,7 +2204,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 		case ast.AlterTableOrderByColumns:
 			err = d.OrderByColumns(ctx, ident)
 		case ast.AlterTableIndexInvisible:
-			err = d.AlterIndexVisibility(ctx, ident, spec.KeyName, spec.Visibility)
+			err = d.AlterIndexVisibility(ctx, ident, spec.IndexName, spec.Visibility)
 		default:
 			// Nothing to do now.
 		}
