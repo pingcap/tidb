@@ -90,7 +90,6 @@ var innerListLabel fmt.Stringer = stringutil.StringerStr("innerList")
 // Close implements the Executor interface.
 func (e *NestedLoopApplyExec) Close() error {
 	close(e.closeCh)
-	close(e.outer2Inner)
 	e.finished.Store(true)
 	if e.prepared {
 		if e.applyResultCh != nil {
@@ -213,6 +212,7 @@ func (e *NestedLoopApplyExec) fetchOuterSideChunks(ctx context.Context) {
 		}
 
 		if outerSideResult.NumRows() == 0 {
+			close(e.outer2Inner)
 			return
 		}
 
