@@ -17,9 +17,9 @@ import (
 	"context"
 	"sync"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -44,8 +44,8 @@ func (udb *DirtyDB) GetDirtyTable(tid int64) *DirtyTable {
 	if !ok {
 		dt = &DirtyTable{
 			tid:         tid,
-			addedRows:   make(map[int64]struct{}),
-			deletedRows: make(map[int64]struct{}),
+			addedRows:   kv.NewHandleMap(),
+			deletedRows: kv.NewHandleMap(),
 		}
 		udb.tables[tid] = dt
 	}
@@ -58,24 +58,24 @@ type DirtyTable struct {
 	tid int64
 	// addedRows ...
 	// the key is handle.
-	addedRows   map[int64]struct{}
-	deletedRows map[int64]struct{}
+	addedRows   *kv.HandleMap
+	deletedRows *kv.HandleMap
 }
 
 // AddRow adds a row to the DirtyDB.
-func (dt *DirtyTable) AddRow(handle int64) {
-	dt.addedRows[handle] = struct{}{}
+func (dt *DirtyTable) AddRow(handle kv.Handle) {
+	dt.addedRows.Set(handle, true)
 }
 
 // DeleteRow deletes a row from the DirtyDB.
-func (dt *DirtyTable) DeleteRow(handle int64) {
-	delete(dt.addedRows, handle)
-	dt.deletedRows[handle] = struct{}{}
+func (dt *DirtyTable) DeleteRow(handle kv.Handle) {
+	dt.addedRows.Delete(handle)
+	dt.deletedRows.Set(handle, true)
 }
 
 // IsEmpty checks whether the table is empty.
 func (dt *DirtyTable) IsEmpty() bool {
-	return len(dt.addedRows)+len(dt.deletedRows) == 0
+	return dt.addedRows.Len()+dt.deletedRows.Len() == 0
 }
 
 // GetDirtyDB returns the DirtyDB bind to the context.
@@ -244,11 +244,11 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 		}
 		iter := chunk.NewIterator4Chunk(us.snapshotChunkBuffer)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			snapshotHandle := row.GetInt64(us.belowHandleIndex)
-			if _, ok := us.dirty.deletedRows[snapshotHandle]; ok {
+			snapshotHandle := kv.IntHandle(row.GetInt64(us.belowHandleIndex))
+			if _, ok := us.dirty.deletedRows.Get(snapshotHandle); ok {
 				continue
 			}
-			if _, ok := us.dirty.addedRows[snapshotHandle]; ok {
+			if _, ok := us.dirty.addedRows.Get(snapshotHandle); ok {
 				// If src handle appears in added rows, it means there is conflict and the transaction will fail to
 				// commit, but for simplicity, we don't handle it here.
 				continue
@@ -312,24 +312,4 @@ func (us *UnionScanExec) compare(a, b []types.Datum) (int, error) {
 		cmp = -1
 	}
 	return cmp, nil
-}
-
-// Len implements sort.Interface interface.
-func (us *UnionScanExec) Len() int {
-	return len(us.addedRows)
-}
-
-// Less implements sort.Interface interface.
-func (us *UnionScanExec) Less(i, j int) bool {
-	cmp, err := us.compare(us.addedRows[i], us.addedRows[j])
-	if err != nil {
-		us.sortErr = errors.Trace(err)
-		return true
-	}
-	return cmp < 0
-}
-
-// Swap implements sort.Interface interface.
-func (us *UnionScanExec) Swap(i, j int) {
-	us.addedRows[i], us.addedRows[j] = us.addedRows[j], us.addedRows[i]
 }
