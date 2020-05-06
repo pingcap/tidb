@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"unsafe"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
@@ -206,6 +207,7 @@ func (e *HashAggExec) Close() error {
 		e.memTracker.Consume(-e.childResult.MemoryUsage())
 		e.childResult = nil
 		e.groupSet = nil
+		e.memTracker.Consume(-int64(unsafe.Sizeof(e.partialResultMap)))
 		e.partialResultMap = nil
 		return e.baseExecutor.Close()
 	}
@@ -798,6 +800,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 
 func (e *HashAggExec) getPartialResults(groupKey string) []aggfuncs.PartialResult {
 	partialResults, ok := e.partialResultMap[groupKey]
+	mSize := int64(unsafe.Sizeof(e.partialResultMap))
 	if !ok {
 		partialResults = make([]aggfuncs.PartialResult, 0, len(e.PartialAggFuncs))
 		for _, af := range e.PartialAggFuncs {
@@ -805,6 +808,7 @@ func (e *HashAggExec) getPartialResults(groupKey string) []aggfuncs.PartialResul
 		}
 		e.partialResultMap[groupKey] = partialResults
 	}
+	e.memTracker.Consume(int64(unsafe.Sizeof(e.partialResultMap)) - mSize)
 	return partialResults
 }
 
