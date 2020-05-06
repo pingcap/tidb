@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/stringutil"
 )
@@ -674,7 +675,7 @@ func (p *LogicalUnionScan) ExplainInfo() string {
 	return buffer.String()
 }
 
-func explainByItems(buffer *bytes.Buffer, byItems []*ByItems) *bytes.Buffer {
+func explainByItems(buffer *bytes.Buffer, byItems []*util.ByItems) *bytes.Buffer {
 	for i, item := range byItems {
 		order := "asc"
 		if item.Desc {
@@ -688,7 +689,7 @@ func explainByItems(buffer *bytes.Buffer, byItems []*ByItems) *bytes.Buffer {
 	return buffer
 }
 
-func explainNormalizedByItems(buffer *bytes.Buffer, byItems []*ByItems) *bytes.Buffer {
+func explainNormalizedByItems(buffer *bytes.Buffer, byItems []*util.ByItems) *bytes.Buffer {
 	for i, item := range byItems {
 		order := "asc"
 		if item.Desc {
