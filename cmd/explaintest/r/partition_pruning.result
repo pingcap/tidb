@@ -1,5 +1,5 @@
 set @@session.tidb_enable_table_partition=1;
-drop table if exists t1,t2,t3,t4,t5,t6,t7,t8,t9;
+drop table if exists t0,t1,t2,t3,t4,t5,t6,t7,t8,t9;
 #
 # Bug#53806: Wrong estimates for range query in partitioned MyISAM table
 # Bug#46754: 'rows' field doesn't reflect partition pruning
