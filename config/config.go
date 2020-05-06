@@ -50,6 +50,8 @@ const (
 	DefPort = 4000
 	// DefStatusPort is the default status port of TiBD
 	DefStatusPort = 10080
+	// DefStoreLivenessTimeout is the default value for store liveness timeout.
+	DefStoreLivenessTimeout = "120s"
 )
 
 // Valid config maps
@@ -346,20 +348,22 @@ type Status struct {
 
 // Performance is the performance section of the config.
 type Performance struct {
-	MaxProcs            uint    `toml:"max-procs" json:"max-procs"`
-	MaxMemory           uint64  `toml:"max-memory" json:"max-memory"`
-	StatsLease          string  `toml:"stats-lease" json:"stats-lease"`
-	StmtCountLimit      uint    `toml:"stmt-count-limit" json:"stmt-count-limit"`
-	FeedbackProbability float64 `toml:"feedback-probability" json:"feedback-probability"`
-	QueryFeedbackLimit  uint    `toml:"query-feedback-limit" json:"query-feedback-limit"`
-	PseudoEstimateRatio float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
-	ForcePriority       string  `toml:"force-priority" json:"force-priority"`
-	BindInfoLease       string  `toml:"bind-info-lease" json:"bind-info-lease"`
-	TxnTotalSizeLimit   uint64  `toml:"txn-total-size-limit" json:"txn-total-size-limit"`
-	TCPKeepAlive        bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
-	CrossJoin           bool    `toml:"cross-join" json:"cross-join"`
-	RunAutoAnalyze      bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
-	DistinctAggPushDown bool    `toml:"distinct-agg-push-down" json:"agg-push-down-join"`
+	MaxProcs             uint    `toml:"max-procs" json:"max-procs"`
+	MaxMemory            uint64  `toml:"max-memory" json:"max-memory"`
+	StatsLease           string  `toml:"stats-lease" json:"stats-lease"`
+	StmtCountLimit       uint    `toml:"stmt-count-limit" json:"stmt-count-limit"`
+	FeedbackProbability  float64 `toml:"feedback-probability" json:"feedback-probability"`
+	QueryFeedbackLimit   uint    `toml:"query-feedback-limit" json:"query-feedback-limit"`
+	PseudoEstimateRatio  float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
+	ForcePriority        string  `toml:"force-priority" json:"force-priority"`
+	BindInfoLease        string  `toml:"bind-info-lease" json:"bind-info-lease"`
+	TxnTotalSizeLimit    uint64  `toml:"txn-total-size-limit" json:"txn-total-size-limit"`
+	TCPKeepAlive         bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
+	CrossJoin            bool    `toml:"cross-join" json:"cross-join"`
+	RunAutoAnalyze       bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
+	DistinctAggPushDown  bool    `toml:"distinct-agg-push-down" json:"agg-push-down-join"`
+	CommitterConcurrency int     `toml:"committer-concurrency" json:"committer-concurrency"`
+	MaxTxnTTL            uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -449,6 +453,8 @@ type TiKVClient struct {
 	// If a store has been up to the limit, it will return error for successive request to
 	// prevent the store occupying too much token in dispatching level.
 	StoreLimit int64 `toml:"store-limit" json:"store-limit"`
+	// StoreLivenessTimeout is the timeout for store liveness check request.
+	StoreLivenessTimeout string `toml:"store-liveness-timeout" json:"store-liveness-timeout"`
 
 	CoprCache CoprocessorCache `toml:"copr-cache" json:"copr-cache"`
 }
@@ -581,19 +587,21 @@ var defaultConf = Config{
 		RecordQPSbyDB:   false,
 	},
 	Performance: Performance{
-		MaxMemory:           0,
-		TCPKeepAlive:        true,
-		CrossJoin:           true,
-		StatsLease:          "3s",
-		RunAutoAnalyze:      true,
-		StmtCountLimit:      5000,
-		FeedbackProbability: 0.05,
-		QueryFeedbackLimit:  1024,
-		PseudoEstimateRatio: 0.8,
-		ForcePriority:       "NO_PRIORITY",
-		BindInfoLease:       "3s",
-		TxnTotalSizeLimit:   DefTxnTotalSizeLimit,
-		DistinctAggPushDown: false,
+		MaxMemory:            0,
+		TCPKeepAlive:         true,
+		CrossJoin:            true,
+		StatsLease:           "3s",
+		RunAutoAnalyze:       true,
+		StmtCountLimit:       5000,
+		FeedbackProbability:  0.05,
+		QueryFeedbackLimit:   1024,
+		PseudoEstimateRatio:  0.8,
+		ForcePriority:        "NO_PRIORITY",
+		BindInfoLease:        "3s",
+		TxnTotalSizeLimit:    DefTxnTotalSizeLimit,
+		DistinctAggPushDown:  false,
+		CommitterConcurrency: 16,
+		MaxTxnTTL:            10 * 60 * 1000, // 10min
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
@@ -625,8 +633,9 @@ var defaultConf = Config{
 
 		EnableChunkRPC: true,
 
-		RegionCacheTTL: 600,
-		StoreLimit:     0,
+		RegionCacheTTL:       600,
+		StoreLimit:           0,
+		StoreLivenessTimeout: DefStoreLivenessTimeout,
 
 		CoprCache: CoprocessorCache{
 			Enabled:               true,
@@ -824,9 +833,6 @@ func (c *Config) Valid() error {
 		return fmt.Errorf("grpc-connection-count should be greater than 0")
 	}
 
-	if c.Performance.TxnTotalSizeLimit > 100<<20 && c.Binlog.Enable {
-		return fmt.Errorf("txn-total-size-limit should be less than %d with binlog enabled", 100<<20)
-	}
 	if c.Performance.TxnTotalSizeLimit > 10<<30 {
 		return fmt.Errorf("txn-total-size-limit should be less than %d", 10<<30)
 	}

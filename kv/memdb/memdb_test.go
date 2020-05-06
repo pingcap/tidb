@@ -47,6 +47,19 @@ func (s testMemDBSuite) TestGetSet(c *C) {
 	}
 }
 
+func (s testMemDBSuite) TestBigKV(c *C) {
+	p := NewSandbox()
+	p.Put([]byte{1}, make([]byte, 80<<20))
+	c.Check(p.arena.blockSize, Equals, maxBlockSize)
+	c.Check(len(p.arena.blocks), Equals, 1)
+	p1 := p.Derive()
+	p1.Put([]byte{2}, make([]byte, 127<<20))
+	p1.Flush()
+	c.Check(p.arena.blockSize, Equals, maxBlockSize)
+	c.Check(len(p.arena.blocks), Equals, 2)
+	c.Check(func() { p.Put([]byte{3}, make([]byte, maxBlockSize+1)) }, Panics, "alloc size is larger than max block size")
+}
+
 func (s testMemDBSuite) TestIterator(c *C) {
 	const cnt = 10000
 	p := s.fillDB(cnt)
@@ -71,6 +84,15 @@ func (s testMemDBSuite) TestIterator(c *C) {
 		i--
 	}
 	c.Check(i, Equals, -1)
+}
+
+func (s testMemDBSuite) TestRuntimeAssertion(c *C) {
+	p := NewSandbox()
+	p1 := p.Derive()
+	c.Check(func() { p.Put([]byte{0}, []byte{}) }, Panics, "cannot write to a sandbox when it has forked a new sanbox")
+	c.Check(func() { p.Derive() }, Panics, "cannot start second sandbox")
+	c.Check(func() { p.Discard() }, Panics, "root sandbox is freezed")
+	p1.Discard()
 }
 
 func (s testMemDBSuite) TestDiscard(c *C) {
