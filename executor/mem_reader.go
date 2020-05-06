@@ -58,7 +58,7 @@ func buildMemIndexReader(us *UnionScanExec, idxReader *IndexReaderExecutor) *mem
 		kvRanges:         kvRanges,
 		desc:             us.desc,
 		conditions:       us.conditions,
-		addedRows:        make([][]types.Datum, 0, len(us.dirty.addedRows)),
+		addedRows:        make([][]types.Datum, 0, us.dirty.addedRows.Len()),
 		retFieldTypes:    retTypes(us),
 		outputOffset:     outputOffset,
 		belowHandleIndex: us.belowHandleIndex,
@@ -188,7 +188,7 @@ func buildMemTableReader(us *UnionScanExec, tblReader *TableReaderExecutor) *mem
 		kvRanges:      tblReader.kvRanges,
 		desc:          us.desc,
 		conditions:    us.conditions,
-		addedRows:     make([][]types.Datum, 0, len(us.dirty.addedRows)),
+		addedRows:     make([][]types.Datum, 0, us.dirty.addedRows.Len()),
 		retFieldTypes: retTypes(us),
 		colIDs:        colIDs,
 		buffer: allocBuf{
@@ -231,11 +231,11 @@ func (m *memTableReader) decodeRecordKeyValue(key, value []byte) ([]types.Datum,
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return decodeRowData(m.ctx, m.table, m.columns, m.colIDs, handle.IntValue(), value, &m.buffer)
+	return decodeRowData(m.ctx, m.table, m.columns, m.colIDs, handle, value, &m.buffer)
 }
 
 // decodeRowData uses to decode row data value.
-func decodeRowData(ctx sessionctx.Context, tb *model.TableInfo, columns []*model.ColumnInfo, colIDs map[int64]int, handle int64, value []byte, buffer *allocBuf) ([]types.Datum, error) {
+func decodeRowData(ctx sessionctx.Context, tb *model.TableInfo, columns []*model.ColumnInfo, colIDs map[int64]int, handle kv.Handle, value []byte, buffer *allocBuf) ([]types.Datum, error) {
 	values, err := getRowData(ctx.GetSessionVars().StmtCtx, tb, columns, colIDs, handle, value, buffer)
 	if err != nil {
 		return nil, err
@@ -253,10 +253,10 @@ func decodeRowData(ctx sessionctx.Context, tb *model.TableInfo, columns []*model
 }
 
 // getRowData decodes raw byte slice to row data.
-func getRowData(ctx *stmtctx.StatementContext, tb *model.TableInfo, columns []*model.ColumnInfo, colIDs map[int64]int, handle int64, value []byte, buffer *allocBuf) ([][]byte, error) {
+func getRowData(ctx *stmtctx.StatementContext, tb *model.TableInfo, columns []*model.ColumnInfo, colIDs map[int64]int, handle kv.Handle, value []byte, buffer *allocBuf) ([][]byte, error) {
 	pkIsHandle := tb.PKIsHandle
 	if rowcodec.IsNewFormat(value) {
-		return buffer.rd.DecodeToBytes(colIDs, kv.IntHandle(handle), value, buffer.handleBytes)
+		return buffer.rd.DecodeToBytes(colIDs, handle, value, buffer.handleBytes)
 	}
 	values, err := tablecodec.CutRowNew(value, colIDs)
 	if err != nil {
@@ -273,9 +273,9 @@ func getRowData(ctx *stmtctx.StatementContext, tb *model.TableInfo, columns []*m
 			var handleDatum types.Datum
 			if mysql.HasUnsignedFlag(col.Flag) {
 				// PK column is Unsigned.
-				handleDatum = types.NewUintDatum(uint64(handle))
+				handleDatum = types.NewUintDatum(uint64(handle.IntValue()))
 			} else {
-				handleDatum = types.NewIntDatum(handle)
+				handleDatum = types.NewIntDatum(handle.IntValue())
 			}
 			handleData, err1 := codec.EncodeValue(ctx, buffer.handleBytes, handleDatum)
 			if err1 != nil {
@@ -337,7 +337,7 @@ func reverseDatumSlice(rows [][]types.Datum) {
 	}
 }
 
-func (m *memIndexReader) getMemRowsHandle() ([]int64, error) {
+func (m *memIndexReader) getMemRowsHandle() ([]kv.Handle, error) {
 	pkTp := types.NewFieldType(mysql.TypeLonglong)
 	if m.table.PKIsHandle {
 		for _, col := range m.table.Columns {
@@ -347,13 +347,13 @@ func (m *memIndexReader) getMemRowsHandle() ([]int64, error) {
 			}
 		}
 	}
-	handles := make([]int64, 0, m.addedRowsLen)
+	handles := make([]kv.Handle, 0, m.addedRowsLen)
 	err := iterTxnMemBuffer(m.ctx, m.kvRanges, func(key, value []byte) error {
 		handle, err := tablecodec.DecodeIndexHandle(key, value, len(m.index.Columns), pkTp)
 		if err != nil {
 			return err
 		}
-		handles = append(handles, handle)
+		handles = append(handles, kv.IntHandle(handle))
 		return nil
 	})
 	if err != nil {
@@ -389,7 +389,7 @@ func buildMemIndexLookUpReader(us *UnionScanExec, idxLookUpReader *IndexLookUpEx
 		table:            idxLookUpReader.table.Meta(),
 		kvRanges:         kvRanges,
 		desc:             idxLookUpReader.desc,
-		addedRowsLen:     len(us.dirty.addedRows),
+		addedRowsLen:     us.dirty.addedRows.Len(),
 		retFieldTypes:    retTypes(us),
 		outputOffset:     outputOffset,
 		belowHandleIndex: us.belowHandleIndex,

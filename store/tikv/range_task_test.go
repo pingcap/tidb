@@ -21,12 +21,13 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 )
 
 type testRangeTaskSuite struct {
 	OneByOneSuite
-	cluster *mocktikv.Cluster
+	cluster cluster.Cluster
 	store   *tikvStore
 
 	testRanges     []kv.KeyRange
@@ -59,9 +60,10 @@ func (s *testRangeTaskSuite) SetUpTest(c *C) {
 	}
 	allRegionRanges = append(allRegionRanges, makeRange("z", ""))
 
-	s.cluster = mocktikv.NewCluster()
-	mocktikv.BootstrapWithMultiRegions(s.cluster, splitKeys...)
-	client, pdClient, err := mocktikv.NewTiKVAndPDClient(s.cluster, nil, "")
+	cluster := mocktikv.NewCluster()
+	mocktikv.BootstrapWithMultiRegions(cluster, splitKeys...)
+	s.cluster = cluster
+	client, pdClient, err := mocktikv.NewTiKVAndPDClient(cluster, nil, "")
 	c.Assert(err, IsNil)
 
 	store, err := NewTestTiKVStore(client, pdClient, nil, nil, 0)
