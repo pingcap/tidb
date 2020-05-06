@@ -318,6 +318,7 @@ func (e *NestedLoopApplyExec) innerWorker(ctx context.Context, id uint, applyRes
 		if req.IsFull() {
 			e.applyResultCh <- applyResult
 			ok, applyResult = e.getNewApplyResult(id)
+			req = applyResult.chk
 			if !ok {
 				return false, applyResult
 			}
@@ -348,6 +349,7 @@ func (e *NestedLoopApplyExec) innerWorker(ctx context.Context, id uint, applyRes
 		if req.IsFull() {
 			e.applyResultCh <- applyResult
 			ok, applyResult = e.getNewApplyResult(id)
+			req = applyResult.chk
 			if !ok {
 				return false, applyResult
 			}
