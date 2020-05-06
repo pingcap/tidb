@@ -144,6 +144,7 @@ func pruneByItems(old []*util.ByItems) (new []*util.ByItems, parentUsedCols []*e
 				new = append(new, byItem)
 			}
 		} else if byItem.Expr.GetType().Tp == mysql.TypeNull {
+			// do nothing, should be filtered
 		} else {
 			parentUsedCols = append(parentUsedCols, cols...)
 			new = append(new, byItem)
