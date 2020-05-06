@@ -230,8 +230,9 @@ func (e *NestedLoopApplyExec) fetchOuterSideChunks(ctx context.Context) {
 	}
 }
 
-func (e *NestedLoopApplyExec) runApplyWorker(ctx context.Context, id uint) (err error) {
+func (e *NestedLoopApplyExec) runApplyWorker(ctx context.Context, id uint) {
 	defer e.applyWorkerWaitGroup.Done()
+	var outerRow outerRow
 	ok, applyResult := e.getNewApplyResult(id)
 	if !ok {
 		return
@@ -241,16 +242,18 @@ func (e *NestedLoopApplyExec) runApplyWorker(ctx context.Context, id uint) (err 
 		if e.finished.Load().(bool) {
 			break
 		}
-		//select {
-		//case <-e.closeCh:
-		//	return
-		//}
+		select {
+		case <-e.closeCh:
+			return
+		case outerRow, ok = <-e.outer2Inner:
+		}
 		if !ok {
 			break
 		}
-		applyResult, err = e.innerWorker(ctx, id, applyResult)
-		if err != nil {
-			return err
+
+		ok, applyResult = e.innerWorker(ctx, id, applyResult, outerRow.chk, outerRow.selected)
+		if !ok {
+			break
 		}
 	}
 	// note applyResult.chk may be nil when getNewApplyResult fails in loops
@@ -274,6 +277,7 @@ func (e *NestedLoopApplyExec) getNewApplyResult(id uint) (bool, *applyWorkerResu
 		ok = false
 	case applyResult.chk, ok = <-e.applyChkResourceCh[id]:
 	}
+	applyResult.chk.Reset()
 	return ok, applyResult
 }
 
@@ -307,47 +311,50 @@ func (e *NestedLoopApplyExec) fetchAllInners(ctx context.Context, id uint) error
 	}
 }
 
-func (e *NestedLoopApplyExec) innerWorker(ctx context.Context, id uint, applyResult *applyWorkerResult) (*applyWorkerResult, error) {
+func (e *NestedLoopApplyExec) innerWorker(ctx context.Context, id uint, applyResult *applyWorkerResult, row chunk.Row, selected bool) (ok bool, _ *applyWorkerResult) {
 	req := applyResult.chk
-	req.Reset()
-	for outer := range e.outer2Inner {
-		row := outer.chk
-		selected := outer.selected
-		if !selected {
-			e.joiner.onMissMatch(false, row, req)
-			if req.IsFull() {
-				return applyResult, nil
+	if !selected {
+		e.joiner.onMissMatch(false, row, req)
+		if req.IsFull() {
+			e.applyResultCh <- applyResult
+			ok, applyResult = e.getNewApplyResult(id)
+			if !ok {
+				return false, applyResult
 			}
-		}
-
-		e.hasMatch[id] = false
-		e.hasNull[id] = false
-		for _, col := range e.outerSchema[id] {
-			*col.Data = row.GetDatum(col.Index, col.RetType)
-		}
-		err := e.fetchAllInners(ctx, id)
-		if err != nil {
-			return applyResult, err
-		}
-		e.innerIter[id] = chunk.NewIterator4List(e.innerList[id])
-		e.innerIter[id].Begin()
-
-		for e.innerIter[id] != nil && e.innerIter[id].Current() != e.innerIter[id].End() {
-			matched, isNull, err := e.joiner.tryToMatchInners(row, e.innerIter[id], req)
-			e.hasMatch[id] = e.hasMatch[id] || matched
-			e.hasNull[id] = e.hasNull[id] || isNull
-			if err != nil {
-				return applyResult, err
-			}
-			if req.IsFull() {
-				e.applyResultCh <- applyResult
-				_, applyResult = e.getNewApplyResult(id)
-				return applyResult, nil
-			}
-		}
-		if &row != nil && !e.hasMatch[id] {
-			e.joiner.onMissMatch(e.hasNull[id], row, req)
 		}
 	}
-	return applyResult, nil
+
+	e.hasMatch[id] = false
+	e.hasNull[id] = false
+	for _, col := range e.outerSchema[id] {
+		*col.Data = row.GetDatum(col.Index, col.RetType)
+	}
+	err := e.fetchAllInners(ctx, id)
+	if err != nil {
+		applyResult.err = err
+		return false, applyResult
+	}
+	e.innerIter[id] = chunk.NewIterator4List(e.innerList[id])
+	e.innerIter[id].Begin()
+
+	for e.innerIter[id] != nil && e.innerIter[id].Current() != e.innerIter[id].End() {
+		matched, isNull, err := e.joiner.tryToMatchInners(row, e.innerIter[id], req)
+		e.hasMatch[id] = e.hasMatch[id] || matched
+		e.hasNull[id] = e.hasNull[id] || isNull
+		if err != nil {
+			applyResult.err = err
+			return false, applyResult
+		}
+		if req.IsFull() {
+			e.applyResultCh <- applyResult
+			ok, applyResult = e.getNewApplyResult(id)
+			if !ok {
+				return false, applyResult
+			}
+		}
+	}
+	if &row != nil && !e.hasMatch[id] {
+		e.joiner.onMissMatch(e.hasNull[id], row, req)
+	}
+	return true, applyResult
 }
