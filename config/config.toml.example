@@ -237,8 +237,9 @@ distinct-agg-push-down = false
 
 # The limitation of the size in byte for the entries in one transaction.
 # If using TiKV as the storage, the entry represents a key/value pair.
-# NOTE: If binlog is enabled, this value should be less than 104857600(10M) because this is the maximum size that can be handled by Pumper.
-# If binlog is not enabled, this value should be less than 10737418240(10G).
+# NOTE: If binlog is enabled with Kafka (e.g. arbiter cluster),
+# this value should be less than 1073741824(1G) because this is the maximum size that can be handled by Kafka.
+# If binlog is disabled or binlog is enabled without Kafka, this value should be less than 10737418240(10G).
 txn-total-size-limit = 104857600
 
 # The max number of running concurrency two phase committer request for an SQL.
@@ -346,6 +347,9 @@ region-cache-ttl = 600
 # If a store has been up to the limit, it will return error for the successive request in same store.
 # default 0 means shutting off store limit.
 store-limit = 0
+
+# store-liveness-timeout is used to control timeout for store liveness after sending request failed.
+store-liveness-timeout = "120s"
 
 [tikv-client.copr-cache]
 # Whether to enable the copr cache. The copr cache saves the result from TiKV Coprocessor in the memory and
