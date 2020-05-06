@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/memo"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
@@ -1146,7 +1147,7 @@ func pushTopNDownOuterJoinToChild(topN *plannercore.LogicalTopN, outerGroup *mem
 
 	newTopN := plannercore.LogicalTopN{
 		Count:   topN.Count + topN.Offset,
-		ByItems: make([]*plannercore.ByItems, len(topN.ByItems)),
+		ByItems: make([]*util.ByItems, len(topN.ByItems)),
 	}.Init(topN.SCtx(), topN.SelectBlockOffset())
 
 	for i := range topN.ByItems {
@@ -1225,9 +1226,9 @@ func (r *PushTopNDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*me
 		Count:  topN.Count,
 	}.Init(topN.SCtx(), topN.SelectBlockOffset())
 
-	newTopN.ByItems = make([]*plannercore.ByItems, 0, len(topN.ByItems))
+	newTopN.ByItems = make([]*util.ByItems, 0, len(topN.ByItems))
 	for _, by := range topN.ByItems {
-		newTopN.ByItems = append(newTopN.ByItems, &plannercore.ByItems{
+		newTopN.ByItems = append(newTopN.ByItems, &util.ByItems{
 			Expr: expression.ColumnSubstitute(by.Expr, old.Children[0].Group.Prop.Schema, proj.Exprs),
 			Desc: by.Desc,
 		})
@@ -1538,8 +1539,8 @@ func (r *EliminateSingleMaxMin) OnTransform(old *memo.ExprIter) (newExprs []*mem
 		// Add top(1) operators.
 		// For max function, the sort order should be desc.
 		desc := f.Name == ast.AggFuncMax
-		var byItems []*plannercore.ByItems
-		byItems = append(byItems, &plannercore.ByItems{
+		var byItems []*util.ByItems
+		byItems = append(byItems, &util.ByItems{
 			Expr: f.Args[0],
 			Desc: desc,
 		})
@@ -2180,7 +2181,7 @@ func (r *InjectProjectionBelowTopN) OnTransform(old *memo.ExprIter) (newExprs []
 		bottomProjExprs = append(bottomProjExprs, col)
 		bottomProjSchema = append(bottomProjSchema, col)
 	}
-	newByItems := make([]*plannercore.ByItems, 0, len(topN.ByItems))
+	newByItems := make([]*util.ByItems, 0, len(topN.ByItems))
 	for _, item := range topN.ByItems {
 		itemExpr := item.Expr
 		if _, isScalarFunc := itemExpr.(*expression.ScalarFunction); !isScalarFunc {
@@ -2193,7 +2194,7 @@ func (r *InjectProjectionBelowTopN) OnTransform(old *memo.ExprIter) (newExprs []
 			RetType:  itemExpr.GetType(),
 		}
 		bottomProjSchema = append(bottomProjSchema, newCol)
-		newByItems = append(newByItems, &plannercore.ByItems{Expr: newCol, Desc: item.Desc})
+		newByItems = append(newByItems, &util.ByItems{Expr: newCol, Desc: item.Desc})
 	}
 	bottomProj := plannercore.LogicalProjection{
 		Exprs: bottomProjExprs,
