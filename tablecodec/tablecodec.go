@@ -843,17 +843,6 @@ func appendTableIndexPrefix(buf []byte, tableID int64) []byte {
 	return buf
 }
 
-// ReplaceRecordKeyTableID replace the tableID in the recordKey buf.
-func ReplaceRecordKeyTableID(buf []byte, tableID int64) []byte {
-	if len(buf) < len(tablePrefix)+8 {
-		return buf
-	}
-
-	u := codec.EncodeIntToCmpUint(tableID)
-	binary.BigEndian.PutUint64(buf[len(tablePrefix):], u)
-	return buf
-}
-
 // GenTableRecordPrefix composes record prefix with tableID: "t[tableID]_r".
 func GenTableRecordPrefix(tableID int64) kv.Key {
 	buf := make([]byte, 0, len(tablePrefix)+8+len(recordPrefixSep))
