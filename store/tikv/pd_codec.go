@@ -59,7 +59,7 @@ func (c *codecPDClient) ScanRegions(ctx context.Context, startKey []byte, endKey
 	}
 	for _, region := range regions {
 		if region != nil {
-			err = decodeRegionMetaKey(region)
+			err = decodeRegionMetaKeyInPlace(region)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
@@ -75,14 +75,14 @@ func processRegionResult(region *metapb.Region, peer *metapb.Peer, err error) (*
 	if region == nil {
 		return nil, nil, nil
 	}
-	err = decodeRegionMetaKey(region)
+	err = decodeRegionMetaKeyInPlace(region)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 	return region, peer, nil
 }
 
-func decodeRegionMetaKey(r *metapb.Region) error {
+func decodeRegionMetaKeyInPlace(r *metapb.Region) error {
 	if len(r.StartKey) != 0 {
 		_, decoded, err := codec.DecodeBytes(r.StartKey, nil)
 		if err != nil {
@@ -98,4 +98,23 @@ func decodeRegionMetaKey(r *metapb.Region) error {
 		r.EndKey = decoded
 	}
 	return nil
+}
+
+func decodeRegionMetaKeyWithShallowCopy(r *metapb.Region) (*metapb.Region, error) {
+	nr := *r
+	if len(r.StartKey) != 0 {
+		_, decoded, err := codec.DecodeBytes(r.StartKey, nil)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		nr.StartKey = decoded
+	}
+	if len(r.EndKey) != 0 {
+		_, decoded, err := codec.DecodeBytes(r.EndKey, nil)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		nr.EndKey = decoded
+	}
+	return &nr, nil
 }

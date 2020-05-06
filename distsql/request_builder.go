@@ -68,7 +68,7 @@ func (builder *RequestBuilder) SetIndexRanges(sc *stmtctx.StatementContext, tid,
 
 // SetTableHandles sets "KeyRanges" for "kv.Request" by converting table handles
 // "handles" to "KeyRanges" firstly.
-func (builder *RequestBuilder) SetTableHandles(tid int64, handles []int64) *RequestBuilder {
+func (builder *RequestBuilder) SetTableHandles(tid int64, handles []kv.Handle) *RequestBuilder {
 	builder.Request.KeyRanges = TableHandlesToKVRanges(tid, handles)
 	return builder
 }
@@ -203,7 +203,7 @@ func TableRangesToKVRanges(tid int64, ranges []*ranger.Range, fb *statistics.Que
 		low := codec.EncodeInt(nil, ran.LowVal[0].GetInt64())
 		high := codec.EncodeInt(nil, ran.HighVal[0].GetInt64())
 		if ran.LowExclude {
-			low = []byte(kv.Key(low).PrefixNext())
+			low = kv.Key(low).PrefixNext()
 		}
 		// If this range is split by histogram, then the high val will equal to one bucket's upper bound,
 		// since we need to guarantee each range falls inside the exactly one bucket, `PerfixNext` will make the
@@ -213,7 +213,7 @@ func TableRangesToKVRanges(tid int64, ranges []*ranger.Range, fb *statistics.Que
 		feedbackRanges = append(feedbackRanges, r)
 
 		if !ran.HighExclude {
-			high = []byte(kv.Key(high).PrefixNext())
+			high = kv.Key(high).PrefixNext()
 		}
 		startKey := tablecodec.EncodeRowKey(tid, low)
 		endKey := tablecodec.EncodeRowKey(tid, high)
@@ -238,29 +238,29 @@ func encodeHandleKey(ran *ranger.Range) ([]byte, []byte) {
 	low := codec.EncodeInt(nil, ran.LowVal[0].GetInt64())
 	high := codec.EncodeInt(nil, ran.HighVal[0].GetInt64())
 	if ran.LowExclude {
-		low = []byte(kv.Key(low).PrefixNext())
+		low = kv.Key(low).PrefixNext()
 	}
 	if !ran.HighExclude {
-		high = []byte(kv.Key(high).PrefixNext())
+		high = kv.Key(high).PrefixNext()
 	}
 	return low, high
 }
 
 // TableHandlesToKVRanges converts sorted handle to kv ranges.
 // For continuous handles, we should merge them to a single key range.
-func TableHandlesToKVRanges(tid int64, handles []int64) []kv.KeyRange {
+func TableHandlesToKVRanges(tid int64, handles []kv.Handle) []kv.KeyRange {
 	krs := make([]kv.KeyRange, 0, len(handles))
 	i := 0
 	for i < len(handles) {
 		j := i + 1
-		for ; j < len(handles) && handles[j-1] != math.MaxInt64; j++ {
-			if handles[j] != handles[j-1]+1 {
+		for ; j < len(handles) && handles[j-1].IntValue() != math.MaxInt64; j++ {
+			if handles[j].IntValue() != handles[j-1].IntValue()+1 {
 				break
 			}
 		}
-		low := codec.EncodeInt(nil, handles[i])
-		high := codec.EncodeInt(nil, handles[j-1])
-		high = []byte(kv.Key(high).PrefixNext())
+		low := codec.EncodeInt(nil, handles[i].IntValue())
+		high := codec.EncodeInt(nil, handles[j-1].IntValue())
+		high = kv.Key(high).PrefixNext()
 		startKey := tablecodec.EncodeRowKey(tid, low)
 		endKey := tablecodec.EncodeRowKey(tid, high)
 		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
@@ -329,7 +329,7 @@ func encodeIndexKey(sc *stmtctx.StatementContext, ran *ranger.Range) ([]byte, []
 		return nil, nil, err
 	}
 	if ran.LowExclude {
-		low = []byte(kv.Key(low).PrefixNext())
+		low = kv.Key(low).PrefixNext()
 	}
 	high, err := codec.EncodeKey(sc, nil, ran.HighVal...)
 	if err != nil {
@@ -337,7 +337,7 @@ func encodeIndexKey(sc *stmtctx.StatementContext, ran *ranger.Range) ([]byte, []
 	}
 
 	if !ran.HighExclude {
-		high = []byte(kv.Key(high).PrefixNext())
+		high = kv.Key(high).PrefixNext()
 	}
 
 	var hasNull bool
@@ -350,7 +350,7 @@ func encodeIndexKey(sc *stmtctx.StatementContext, ran *ranger.Range) ([]byte, []
 
 	if hasNull {
 		// Append 0 to make unique-key range [null, null] to be a scan rather than point-get.
-		high = []byte(kv.Key(high).Next())
+		high = kv.Key(high).Next()
 	}
 	return low, high, nil
 }
