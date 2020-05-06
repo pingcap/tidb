@@ -24,10 +24,12 @@ import (
 // Key is the interface that every key in LRU Cache should implement.
 type Key interface {
 	Hash() []byte
+	MemUsage() int64
 }
 
 // Value is the interface that every value in LRU Cache should implement.
 type Value interface {
+	MemUsage() int64
 }
 
 // cacheEntry wraps Key and Value. It's the value of list.Element.
