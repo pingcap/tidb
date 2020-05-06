@@ -884,7 +884,7 @@ type LogicalUnionAll struct {
 type LogicalSort struct {
 	baseLogicalPlan
 
-	ByItems []*ByItems
+	ByItems []*util.ByItems
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
@@ -900,7 +900,7 @@ func (ls *LogicalSort) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 type LogicalTopN struct {
 	baseLogicalPlan
 
-	ByItems []*ByItems
+	ByItems []*util.ByItems
 	Offset  uint64
 	Count   uint64
 }
