@@ -2699,7 +2699,7 @@ func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) e
 	for i, sourceCol := range source.Cols() {
 		targetCol := target.Cols()[i]
 		if sourceCol.IsGenerated() != targetCol.IsGenerated() ||
-			!strings.EqualFold(sourceCol.Name.L, targetCol.Name.L) ||
+			sourceCol.Name.L != targetCol.Name.L ||
 			!sourceCol.FieldType.Equal(&targetCol.FieldType) {
 			return err
 		}
@@ -2760,6 +2760,7 @@ func (d *ddl) ExchangeTableParition(ctx sessionctx.Context, ident ast.Ident, spe
 	if !ok {
 		return errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ntSchema))
 	}
+
 	nt, err := is.TableByName(ntIdent.Schema, ntIdent.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ntIdent.Schema, ntIdent.Name))
@@ -2795,15 +2796,11 @@ func (d *ddl) ExchangeTableParition(ctx sessionctx.Context, ident ast.Ident, spe
 		SchemaName: ntSchema.Name.L,
 		Type:       model.ActionExchangeTablePartition,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{ptSchema.ID, ptMeta, partName, spec.WithValidation},
+		Args:       []interface{}{ptSchema.ID, ptMeta.ID, partName, spec.WithValidation},
 	}
 
 	err = d.doDDLJob(ctx, job)
 	if err != nil {
-		// if ErrDropPartitionNonExistent.Equal(err) && spec.IfExists {
-		// ctx.GetSessionVars().StmtCtx.AppendNote(err)
-		// return nil
-		// }
 		return errors.Trace(err)
 	}
 	err = d.callHookOnChanged(err)

@@ -697,11 +697,11 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var (
 		ptSchemaID     int64
-		pt             *model.TableInfo
+		ptID           int64
 		partName       string
 		withValidation bool
 	)
-	if err := job.DecodeArgs(&ptSchemaID, &pt, &partName, &withValidation); err != nil {
+	if err := job.DecodeArgs(&ptSchemaID, &ptID, &partName, &withValidation); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -716,19 +716,27 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
+	pt, err := t.GetTable(ptSchemaID, ptID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
 	partDef, err := getPartitionDef(pt, partName)
 	if err != nil {
+		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
 	err = checkTableDefCompatible(pt, nt)
 	if err != nil {
+		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
 	if withValidation {
 		err = checkExchangePartitionRecordValidation(w, pt.Partition, partName, ntDbInfo.Name, nt.Name)
 		if err != nil {
+			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
 	}
@@ -743,7 +751,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
-	err = t.DropTableOrView(job.SchemaID, nt.ID, true)
+	err = t.DropTableOrView(job.SchemaID, nt.ID, false)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -783,7 +791,7 @@ func checkExchangePartitionRecordValidation(w *worker, pi *model.PartitionInfo, 
 
 	switch pi.Type {
 	case model.PartitionTypeHash:
-		sql = fmt.Sprint("select 1 from `%s`.`%s` where mod(%s, %d) = %d", schemaName.L, tableName.L, pi.Expr, pi.Num, index)
+		sql = fmt.Sprintf("select 1 from `%s`.`%s` where mod(%s, %d) not in (%d) limit 1", schemaName.L, tableName.L, pi.Expr, pi.Num, index)
 		break
 	case model.PartitionTypeRange:
 		rangeRrun, err := tables.DataForRangePruning(pi)
@@ -795,11 +803,11 @@ func checkExchangePartitionRecordValidation(w *worker, pi *model.PartitionInfo, 
 			return nil
 		}
 		if index == 0 {
-			sql = fmt.Sprintf("select 1 from `%s`.`%s` where %s <= %d limit 1", schemaName.L, tableName.L, pi.Expr, rangeRrun.LessThan[index])
-		} else if index == len(pi.Definitions)-1 && rangeRrun.MaxValue {
 			sql = fmt.Sprintf("select 1 from `%s`.`%s` where %s > %d limit 1", schemaName.L, tableName.L, pi.Expr, rangeRrun.LessThan[index])
+		} else if index == len(pi.Definitions)-1 && rangeRrun.MaxValue {
+			sql = fmt.Sprintf("select 1 from `%s`.`%s` where %s <= %d limit 1", schemaName.L, tableName.L, pi.Expr, rangeRrun.LessThan[index])
 		} else {
-			sql = fmt.Sprintf("select 1 from `%s`.`%s` where %s > %d and %s <= %d limit 1", schemaName.L, tableName.L, pi.Expr, rangeRrun.LessThan[index-1], pi.Expr, rangeRrun.LessThan[index])
+			sql = fmt.Sprintf("select 1 from `%s`.`%s` where %s <= %d and %s > %d limit 1", schemaName.L, tableName.L, pi.Expr, rangeRrun.LessThan[index-1], pi.Expr, rangeRrun.LessThan[index])
 		}
 		break
 	default:
@@ -819,7 +827,7 @@ func checkExchangePartitionRecordValidation(w *worker, pi *model.PartitionInfo, 
 	}
 	rowCount := len(rows)
 	if rowCount != 0 {
-		return ErrTablesDifferentMetadata
+		return ErrRowDoesNotMatchPartition
 	}
 	return nil
 }

@@ -204,4 +204,6 @@ var (
 	ErrPartitionExchangePartTable = terror.ClassDDL.New(mysql.ErrPartitionExchangePartTable, mysql.MySQLErrName[mysql.ErrPartitionExchangePartTable])
 	// ErrTableDifferentMetadata is returned when exchanges tables is not compatible
 	ErrTablesDifferentMetadata = terror.ClassDDL.New(mysql.ErrTablesDifferentMetadata, mysql.MySQLErrName[mysql.ErrTablesDifferentMetadata])
+	// ErrRowDoesNotMatchPartition is return when the row record of exchange table does not match the partition rule
+	ErrRowDoesNotMatchPartition = terror.ClassDDL.New(mysql.ErrRowDoesNotMatchPartition, mysql.MySQLErrName[mysql.ErrRowDoesNotMatchPartition])
 )
