@@ -314,8 +314,8 @@ func validateAlterIndexVisibility(indexName model.CIStr, invisible bool, tbl *mo
 	if idx := tbl.FindIndexByName(indexName.L); idx == nil {
 		return false, errors.Trace(infoschema.ErrKeyNotExists.GenWithStackByArgs(indexName.O, tbl.Name))
 	} else if idx.Invisible == invisible {
-			return true, nil
-		}
+		return true, nil
+	}
 	return false,  nil
 }
 

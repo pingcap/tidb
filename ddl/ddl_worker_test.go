@@ -477,7 +477,7 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 		{act: model.ActionDropColumns, jobIDs: []int64{firstID + 44}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenWithStackByArgs(firstID + 44)}, cancelState: model.StateWriteReorganization},
 
 		{act: model.ActionAlterIndexVisibility, jobIDs: []int64{firstID + 46}, cancelRetErrs: noErrs, cancelState: model.StateNone},
-		{act: model.ActionAlterIndexVisibility, jobIDs: []int64{firstID + 48}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenWithStackByArgs(firstID + 45)}, cancelState: model.StatePublic},
+		{act: model.ActionAlterIndexVisibility, jobIDs: []int64{firstID + 47}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 47)}, cancelState: model.StatePublic},
 	}
 
 	return tests
@@ -537,7 +537,7 @@ func checkIdxVisibility(changedTable table.Table, idxName string, expected bool)
 	return
 }
 
-func (s *testDDLSuite) TestCancelJob(c *C) {
+func (s *testDDLSuite) TestCancelJob1(c *C) {
 	store := testCreateStore(c, "test_cancel_job")
 	defer store.Close()
 	d := newDDL(
@@ -953,7 +953,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	s.checkCancelDropColumns(c, d, dbInfo.ID, tblInfo.ID, dropColNames, true)
 
-	// test modify schema charset failed caused by canceled.
+	// test alter index visibility failed caused by canceled.
 	indexName := "idx_c3"
 	testCreateIndex(c, ctx, d, dbInfo, tblInfo, false, indexName, "c3")
 	c.Check(errors.ErrorStack(checkErr), Equals, "")

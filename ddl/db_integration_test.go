@@ -2259,13 +2259,17 @@ func (s *testIntegrationSuite3) TestCreateTableWithAutoIdCache(c *C) {
 }
 
 func (s *testIntegrationSuite4) TestAlterIndexVisibility(c *C) {
+	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = true
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists alter_index_test")
 	tk.MustExec("USE alter_index_test;")
-	tk.MustExec("drop table if exists t, t1;")
+	tk.MustExec("drop table if exists t, t1, t2, t3;")
 
 	tk.MustExec("create table t(a int NOT NULL, b int, key(a), unique(b) invisible)")
-	query := "select index_name, is_visible from information_schema.statistics where table_schema = 'alter_index_test' and table_name = 't'"
+	queryIndexOnTable := func(tableName string) string{
+		return fmt.Sprintf("select index_name, is_visible from information_schema.statistics where table_schema = 'alter_index_test' and table_name = '%s' order by index_name", tableName)
+	}
+	query := queryIndexOnTable("t")
 	tk.MustQuery(query).Check(testkit.Rows("a YES", "b NO"))
 
 	tk.MustExec("alter table t alter index a invisible")
@@ -2283,4 +2287,13 @@ func (s *testIntegrationSuite4) TestAlterIndexVisibility(c *C) {
 	tk.MustExec("create table t1(a int NOT NULL, unique(a))")
 	// TODO: error here
 	//tk.MustGetErrMsg("alter table t1 alter index a invisible", "")
+
+	// Alter expression index
+	tk.MustExec("create table t3(a int NOT NULL, b int)")
+	tk.MustExec("alter table t3 add index idx((a+b));")
+	query = queryIndexOnTable("t3")
+	tk.MustQuery(query).Check(testkit.Rows("idx YES"))
+
+	tk.MustExec("alter table t3 alter index idx invisible")
+	tk.MustQuery(query).Check(testkit.Rows("idx NO"))
 }
