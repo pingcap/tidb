@@ -6143,6 +6143,37 @@ func (s *testIntegrationSerialSuite) TestCollateDDL(c *C) {
 	tk.MustExec("drop database t;")
 }
 
+func (s *testIntegrationSuite) TestIssue15986(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("CREATE TABLE t0(c0 int)")
+	tk.MustExec("INSERT INTO t0 VALUES (0)")
+	tk.MustQuery("SELECT t0.c0 FROM t0 WHERE CHAR(204355900);").Check(testkit.Rows("0"))
+	tk.MustQuery("SELECT t0.c0 FROM t0 WHERE not CHAR(204355900);").Check(testkit.Rows())
+	tk.MustQuery("SELECT t0.c0 FROM t0 WHERE '.0';").Check(testkit.Rows())
+	tk.MustQuery("SELECT t0.c0 FROM t0 WHERE not '.0';").Check(testkit.Rows("0"))
+	// If the number does not exceed the range of float64 and its value is not 0, it will be converted to true.
+	tk.MustQuery("select * from t0 where '.000000000000000000000000000000000000000000000000000000" +
+		"00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" +
+		"00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" +
+		"0000000000000000000000000000000000000000000000000000000000000000009';").Check(testkit.Rows("0"))
+	tk.MustQuery("select * from t0 where not '.000000000000000000000000000000000000000000000000000000" +
+		"00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" +
+		"00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" +
+		"0000000000000000000000000000000000000000000000000000000000000000009';").Check(testkit.Rows())
+
+	// If the number is truncated beyond the range of float64, it will be converted to true when the truncated result is 0.
+	tk.MustQuery("select * from t0 where '.0000000000000000000000000000000000000000000000000000000" +
+		"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" +
+		"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" +
+		"00000000000000000000000000000000000000000000000000000000000000000000000000000000000009';").Check(testkit.Rows())
+	tk.MustQuery("select * from t0 where not '.0000000000000000000000000000000000000000000000000000000" +
+		"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" +
+		"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" +
+		"00000000000000000000000000000000000000000000000000000000000000000000000000000000000009';").Check(testkit.Rows("0"))
+}
+
 func (s *testIntegrationSuite) TestNegativeZeroForHashJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
@@ -6154,6 +6185,15 @@ func (s *testIntegrationSuite) TestNegativeZeroForHashJoin(c *C) {
 	tk.MustQuery("SELECT t1.c0 FROM t1, t0 WHERE t0.c0=-t1.c0;").Check(testkit.Rows("0"))
 	tk.MustExec("drop TABLE t0;")
 	tk.MustExec("drop table t1;")
+}
+
+func (s *testIntegrationSuite) TestIssue15743(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("CREATE TABLE t0(c0 int)")
+	tk.MustExec("INSERT INTO t0 VALUES (1)")
+	tk.MustQuery("SELECT * FROM t0 WHERE 1 AND 0.4").Check(testkit.Rows("1"))
 }
 
 func (s *testIntegrationSuite) TestIssue15725(c *C) {
@@ -6209,4 +6249,16 @@ func (s *testIntegrationSuite) TestIssue16029(c *C) {
 	tk.MustQuery("SELECT t0.c0 FROM t0 JOIN t1 ON (t0.c0 REGEXP 1) | t1.c0  WHERE BINARY STRCMP(t1.c0, t0.c0);").Check(testkit.Rows("1"))
 	tk.MustExec("drop table t0;")
 	tk.MustExec("drop table t1;")
+}
+
+func (s *testIntegrationSuite) TestIssue16426(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert into t values (42)")
+	tk.MustQuery("select a from t where a/10000").Check(testkit.Rows("42"))
+	tk.MustQuery("select a from t where a/100000").Check(testkit.Rows("42"))
+	tk.MustQuery("select a from t where a/1000000").Check(testkit.Rows("42"))
+	tk.MustQuery("select a from t where a/10000000").Check(testkit.Rows("42"))
 }
