@@ -31,10 +31,17 @@ func evalBuiltinFuncConcurrent(f builtinFunc, row chunk.Row) (d types.Datum, err
 	wg := sync.WaitGroup{}
 	concurrency := 10
 	wg.Add(concurrency)
+	var lock sync.Mutex
+	err = nil
 	for i := 0; i < concurrency; i++ {
 		go func() {
 			defer wg.Done()
-			d, err = evalBuiltinFunc(f, chunk.Row{})
+			di, erri := evalBuiltinFunc(f, chunk.Row{})
+			lock.Lock()
+			if err == nil {
+				d, err = di, erri
+			}
+			lock.Unlock()
 		}()
 	}
 	wg.Wait()
