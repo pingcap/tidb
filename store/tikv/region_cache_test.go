@@ -1139,8 +1139,8 @@ func BenchmarkOnRequestFail(b *testing.B) {
 				Store:   store,
 			}
 			r := cache.getCachedRegionWithRLock(rpcCtx.Region)
-			if r == nil {
-				cache.switchNextPeer(r, rpcCtx.PeerIdx, nil)
+			if r != nil {
+				r.getStore().switchNextPeer(r, rpcCtx.PeerIdx)
 			}
 		}
 	})
