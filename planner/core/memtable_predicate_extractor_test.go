@@ -15,7 +15,6 @@ package core_test
 
 import (
 	"context"
-	"math"
 	"regexp"
 	"sort"
 	"time"
@@ -451,14 +450,12 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
 			startTime: timestamp(c, "2019-10-10 10:10:10"),
-			endTime:   math.MaxInt64,
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where time>='2019-10-10 10:10:10' and  time>='2019-10-11 10:10:10' and  time>='2019-10-12 10:10:10'",
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
 			startTime: timestamp(c, "2019-10-12 10:10:10"),
-			endTime:   math.MaxInt64,
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where time>='2019-10-10 10:10:10' and  time>='2019-10-11 10:10:10' and  time>='2019-10-12 10:10:10' and time='2019-10-13 10:10:10'",
@@ -487,7 +484,6 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
 			startTime: timestamp(c, "2019-10-10 10:10:10"),
-			endTime:   math.MaxInt64,
 			patterns:  []string{".*a.*"},
 		},
 		{
