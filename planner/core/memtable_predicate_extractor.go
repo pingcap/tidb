@@ -996,10 +996,13 @@ func (e *TableStorageStatsExtractor) explainInfo(p *PhysicalMemTable) string {
 
 	r := new(bytes.Buffer)
 	if len(e.TableSchema) > 0 {
-		r.WriteString(fmt.Sprintf("Schema:%s", extractStringFromStringSet(e.TableSchema)))
+		r.WriteString(fmt.Sprintf("schema:[%s]", extractStringFromStringSet(e.TableSchema)))
+	}
+	if r.Len() > 0 && len(e.TableName) > 0{
+		r.WriteString(", ")
 	}
 	if len(e.TableName) > 0 {
-		r.WriteString(fmt.Sprintf(" table:%s", extractStringFromStringSet(e.TableName)))
+		r.WriteString(fmt.Sprintf("table:[%s]", extractStringFromStringSet(e.TableName)))
 	}
 	return r.String()
 }

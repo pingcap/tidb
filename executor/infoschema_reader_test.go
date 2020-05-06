@@ -762,8 +762,8 @@ func (s *testInfoschemaClusterTableSuite) TestTiDBClusterInfo(c *C) {
 
 func (s *testInfoschemaClusterTableSuite) TestTableStorageStats(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	err := tk.QueryToErr("select * from information_schema.TABLE_STORAGE_STATS")
-	c.Assert(err, NotNil)
+	err := tk.QueryToErr("select * from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'test'")
+	c.Assert(err.Error(), Equals, "pd unavailable")
 	mockAddr := s.mockAddr
 	store := &mockStore{
 		s.store.(tikv.Storage),

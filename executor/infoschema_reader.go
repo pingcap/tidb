@@ -1537,7 +1537,6 @@ func (e *tableStorageStatsRetriever) initialize(sctx sessionctx.Context) error {
 
 func (e *tableStorageStatsRetriever) setDataForTableStorageStats(ctx sessionctx.Context) ([][]types.Datum, error) {
 	rows := make([][]types.Datum, 0, 1024)
-
 	count := 0
 	for e.curTable < len(e.initialTables) && count < 1024 {
 		table := (e.initialTables)[e.curTable]
