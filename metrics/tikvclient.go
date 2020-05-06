@@ -156,6 +156,23 @@ var (
 			Help:      "Pending batch requests",
 		}, []string{"store"})
 
+	TiKVStatusDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "kv_status_api_duration",
+			Help:      "duration for kv status api.",
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20), // 0.5ms ~ 262s
+		}, []string{"store"})
+
+	TiKVStatusCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "kv_status_api_count",
+			Help:      "Counter of access kv status api.",
+		}, []string{LblResult})
+
 	TiKVBatchWaitDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
