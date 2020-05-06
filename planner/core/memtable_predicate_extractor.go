@@ -534,7 +534,7 @@ func (e *ClusterTableExtractor) Extract(_ sessionctx.Context,
 
 func (e *ClusterTableExtractor) explainInfo(p *PhysicalMemTable) string {
 	if e.SkipRequest {
-		return "skip_request: true"
+		return "skip_request:true"
 	}
 	r := new(bytes.Buffer)
 	if len(e.NodeTypes) > 0 {
