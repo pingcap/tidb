@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/planner/implementation"
 	"github.com/pingcap/tidb/planner/memo"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/planner/util"
 )
 
 // Enforcer defines the interface for enforcer rules.
@@ -55,11 +56,18 @@ func (e *OrderEnforcer) NewProperty(prop *property.PhysicalProperty) (newProp *p
 
 // OnEnforce adds sort operator to satisfy required order property.
 func (e *OrderEnforcer) OnEnforce(reqProp *property.PhysicalProperty, child memo.Implementation) (impl memo.Implementation) {
+<<<<<<< HEAD
 	sort := &plannercore.PhysicalSort{
 		ByItems: make([]*plannercore.ByItems, 0, len(reqProp.Items)),
 	}
+=======
+	childPlan := child.GetPlan()
+	sort := plannercore.PhysicalSort{
+		ByItems: make([]*util.ByItems, 0, len(reqProp.Items)),
+	}.Init(childPlan.SCtx(), childPlan.Stats(), childPlan.SelectBlockOffset(), &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64})
+>>>>>>> 7ebcc20... executor: support GROUP_CONCAT(ORDER BY) (#16591)
 	for _, item := range reqProp.Items {
-		item := &plannercore.ByItems{
+		item := &util.ByItems{
 			Expr: item.Col,
 			Desc: item.Desc,
 		}

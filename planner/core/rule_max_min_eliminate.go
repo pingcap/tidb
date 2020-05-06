@@ -179,8 +179,13 @@ func (a *maxMinEliminator) eliminateSingleMaxMin(agg *LogicalAggregation) *Logic
 		// For max function, the sort order should be desc.
 		desc := f.Name == ast.AggFuncMax
 		// Compose Sort operator.
+<<<<<<< HEAD
 		sort := LogicalSort{}.Init(ctx)
 		sort.ByItems = append(sort.ByItems, &ByItems{f.Args[0], desc})
+=======
+		sort := LogicalSort{}.Init(ctx, agg.blockOffset)
+		sort.ByItems = append(sort.ByItems, &util.ByItems{Expr: f.Args[0], Desc: desc})
+>>>>>>> 7ebcc20... executor: support GROUP_CONCAT(ORDER BY) (#16591)
 		sort.SetChildren(child)
 		child = sort
 	}

@@ -1120,8 +1120,13 @@ func (lt *LogicalTopN) getPhysLimits() []PhysicalPlan {
 	return ret
 }
 
+<<<<<<< HEAD
 // Check if this prop's columns can match by items totally.
 func matchItems(p *property.PhysicalProperty, items []*ByItems) bool {
+=======
+// MatchItems checks if this prop's columns can match by items totally.
+func MatchItems(p *property.PhysicalProperty, items []*util.ByItems) bool {
+>>>>>>> 7ebcc20... executor: support GROUP_CONCAT(ORDER BY) (#16591)
 	if len(items) < len(p.Items) {
 		return false
 	}

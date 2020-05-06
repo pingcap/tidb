@@ -19,6 +19,11 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/planner/property"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/sessionctx"
+>>>>>>> 7ebcc20... executor: support GROUP_CONCAT(ORDER BY) (#16591)
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
@@ -195,7 +200,7 @@ type PhysicalProjection struct {
 type PhysicalTopN struct {
 	basePhysicalPlan
 
-	ByItems []*ByItems
+	ByItems []*util.ByItems
 	Offset  uint64
 	Count   uint64
 }
@@ -353,13 +358,22 @@ type PhysicalStreamAgg struct {
 type PhysicalSort struct {
 	basePhysicalPlan
 
-	ByItems []*ByItems
+	ByItems []*util.ByItems
 }
 
 // NominalSort asks sort properties for its child. It is a fake operator that will not
 // appear in final physical operator tree.
 type NominalSort struct {
 	basePhysicalPlan
+<<<<<<< HEAD
+=======
+
+	// These two fields are used to switch ScalarFunctions to Constants. For these
+	// NominalSorts, we need to converted to Projections check if the ScalarFunctions
+	// are out of bounds. (issue #11653)
+	ByItems    []*util.ByItems
+	OnlyColumn bool
+>>>>>>> 7ebcc20... executor: support GROUP_CONCAT(ORDER BY) (#16591)
 }
 
 // PhysicalUnionScan represents a union scan operator.

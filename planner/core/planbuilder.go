@@ -1377,12 +1377,23 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		}
 		return substitutePlaceHolderDual(physical, p), nil
 	}
+<<<<<<< HEAD
 	return p, nil
 }
 
 func substitutePlaceHolderDual(src PhysicalPlan, dst PhysicalPlan) PhysicalPlan {
 	if dual, ok := src.(*PhysicalTableDual); ok && dual.placeHolder {
 		return dst
+=======
+	if show.Tp == ast.ShowVariables || show.Tp == ast.ShowStatus {
+		b.curClause = orderByClause
+		orderByCol := np.Schema().Columns[0].Clone().(*expression.Column)
+		sort := LogicalSort{
+			ByItems: []*util.ByItems{{Expr: orderByCol}},
+		}.Init(b.ctx, b.getSelectOffset())
+		sort.SetChildren(np)
+		np = sort
+>>>>>>> 7ebcc20... executor: support GROUP_CONCAT(ORDER BY) (#16591)
 	}
 	for i, child := range src.Children() {
 		newChild := substitutePlaceHolderDual(child, dst)

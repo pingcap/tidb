@@ -250,3 +250,31 @@ func IsAllFirstRow(aggFuncs []*AggFuncDesc) bool {
 	}
 	return true
 }
+<<<<<<< HEAD
+=======
+
+// CheckAggPushDown checks whether an agg function can be pushed to storage.
+func CheckAggPushDown(aggFunc *AggFuncDesc, storeType kv.StoreType) bool {
+	if len(aggFunc.OrderByItems) > 0 {
+		return false
+	}
+	ret := true
+	switch storeType {
+	case kv.TiFlash:
+		ret = CheckAggPushFlash(aggFunc)
+	}
+	if ret {
+		ret = expression.IsPushDownEnabled(strings.ToLower(aggFunc.Name), storeType)
+	}
+	return ret
+}
+
+// CheckAggPushFlash checks whether an agg function can be pushed to flash storage.
+func CheckAggPushFlash(aggFunc *AggFuncDesc) bool {
+	switch aggFunc.Name {
+	case ast.AggFuncSum, ast.AggFuncCount, ast.AggFuncMin, ast.AggFuncMax, ast.AggFuncAvg, ast.AggFuncFirstRow:
+		return true
+	}
+	return false
+}
+>>>>>>> 7ebcc20... executor: support GROUP_CONCAT(ORDER BY) (#16591)
