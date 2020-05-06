@@ -238,7 +238,7 @@ func (*testExpressionSuite) TestDeferredExprNullConstantFold(c *C) {
 	nullConst := &Constant{
 		Value:        types.NewDatum(nil),
 		RetType:      types.NewFieldType(mysql.TypeTiny),
-		DeferredExpr: Null,
+		DeferredExpr: NewNull(),
 	}
 	tests := []struct {
 		condition Expression

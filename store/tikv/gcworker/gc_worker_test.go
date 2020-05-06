@@ -140,6 +140,34 @@ func (s *testGCWorkerSuite) mustGetSafePointFromPd(c *C) uint64 {
 	return safePoint
 }
 
+func (s *testGCWorkerSuite) mustGetMinServiceSafePointFromPd(c *C) uint64 {
+	// UpdateServiceGCSafePoint returns the minimal service safePoint. If trying to update it with a value less than the
+	// current minimal safePoint, nothing will be updated and the current minimal one will be returned. So we can use
+	// this API to check the current safePoint.
+	// This function shouldn't be invoked when there's no service safePoint set.
+	minSafePoint, err := s.pdClient.UpdateServiceGCSafePoint(context.Background(), "test", 0, 0)
+	c.Assert(err, IsNil)
+	return minSafePoint
+}
+
+func (s *testGCWorkerSuite) mustUpdateServiceGCSafePoint(c *C, serviceID string, safePoint, expectedMinSafePoint uint64) {
+	minSafePoint, err := s.pdClient.UpdateServiceGCSafePoint(context.Background(), serviceID, math.MaxInt64, safePoint)
+	c.Assert(err, IsNil)
+	c.Assert(minSafePoint, Equals, expectedMinSafePoint)
+}
+
+func (s *testGCWorkerSuite) mustRemoveServiceGCSafePoint(c *C, serviceID string, safePoint, expectedMinSafePoint uint64) {
+	minSafePoint, err := s.pdClient.UpdateServiceGCSafePoint(context.Background(), serviceID, 0, safePoint)
+	c.Assert(err, IsNil)
+	c.Assert(minSafePoint, Equals, expectedMinSafePoint)
+}
+
+func (s *testGCWorkerSuite) mustSetTiDBServiceSafePoint(c *C, safePoint, expectedMinSafePoint uint64) {
+	minSafePoint, err := s.gcWorker.setGCWorkerServiceSafePoint(context.Background(), safePoint)
+	c.Assert(err, IsNil)
+	c.Assert(minSafePoint, Equals, expectedMinSafePoint)
+}
+
 // gcProbe represents a key that contains multiple versions, one of which should be collected. Execution of GC with
 // greater ts will be detected, but it may not work properly if there are newer versions of the key.
 // This is not used to check the correctness of GC algorithm, but only for checking whether GC has been executed on the
@@ -440,7 +468,7 @@ func (s *testGCWorkerSuite) TestCheckGCMode(c *C) {
 func (s *testGCWorkerSuite) TestCheckScanLockMode(c *C) {
 	usePhysical, err := s.gcWorker.checkUsePhysicalScanLock()
 	c.Assert(err, IsNil)
-	c.Assert(usePhysical, Equals, false)
+	c.Assert(usePhysical, Equals, true)
 	// This is a hidden config, so default value will not be inserted to table.
 	str, err := s.gcWorker.loadValueFromSysTable(gcScanLockModeKey)
 	c.Assert(err, IsNil)
@@ -821,12 +849,50 @@ func (s *testGCWorkerSuite) TestRunGCJob(c *C) {
 	c.Assert(etcdSafePoint, Equals, safePoint)
 }
 
+func (s *testGCWorkerSuite) TestSetServiceSafePoint(c *C) {
+	// SafePoint calculations are based on time rather than ts value.
+	safePoint := s.mustAllocTs(c)
+	s.mustSetTiDBServiceSafePoint(c, safePoint, safePoint)
+	c.Assert(s.mustGetMinServiceSafePointFromPd(c), Equals, safePoint)
+
+	// Advance the service safe point
+	safePoint += 100
+	s.mustSetTiDBServiceSafePoint(c, safePoint, safePoint)
+	c.Assert(s.mustGetMinServiceSafePointFromPd(c), Equals, safePoint)
+
+	// It doesn't matter if there is a greater safePoint from other services.
+	safePoint += 100
+	// Returns the last service safePoint that were uploaded.
+	s.mustUpdateServiceGCSafePoint(c, "svc1", safePoint+10, safePoint-100)
+	s.mustSetTiDBServiceSafePoint(c, safePoint, safePoint)
+	c.Assert(s.mustGetMinServiceSafePointFromPd(c), Equals, safePoint)
+
+	// Test the case when there is a smaller safePoint from other services.
+	safePoint += 100
+	// Returns the last service safePoint that were uploaded.
+	s.mustUpdateServiceGCSafePoint(c, "svc1", safePoint-10, safePoint-100)
+	s.mustSetTiDBServiceSafePoint(c, safePoint, safePoint-10)
+	c.Assert(s.mustGetMinServiceSafePointFromPd(c), Equals, safePoint-10)
+
+	// Test removing the minimum service safe point.
+	s.mustRemoveServiceGCSafePoint(c, "svc1", safePoint-10, safePoint)
+	c.Assert(s.mustGetMinServiceSafePointFromPd(c), Equals, safePoint)
+
+	// Test the case when there are many safePoints.
+	safePoint += 100
+	for i := 0; i < 10; i++ {
+		svcName := fmt.Sprintf("svc%d", i)
+		s.mustUpdateServiceGCSafePoint(c, svcName, safePoint+uint64(i)*10, safePoint-100)
+	}
+	s.mustSetTiDBServiceSafePoint(c, safePoint+50, safePoint)
+}
+
 func (s *testGCWorkerSuite) TestRunGCJobAPI(c *C) {
 	gcSafePointCacheInterval = 0
 
 	p := s.createGCProbe(c, "k1")
 	safePoint := s.mustAllocTs(c)
-	err := RunGCJob(context.Background(), s.store, safePoint, "mock", 1)
+	err := RunGCJob(context.Background(), s.store, s.pdClient, safePoint, "mock", 1)
 	c.Assert(err, IsNil)
 	s.checkCollected(c, p)
 	etcdSafePoint := s.loadEtcdSafePoint(c)
@@ -859,6 +925,7 @@ func makeMergedChannel(c *C, count int) (*mergeLockScanner, []chan scanLockResul
 	scanner := &mergeLockScanner{}
 	channels := make([]chan scanLockResult, 0, count)
 	receivers := make([]*receiver, 0, count)
+	storeIDs := make([]uint64, 0, count)
 
 	for i := 0; i < count; i++ {
 		ch := make(chan scanLockResult, 10)
@@ -869,6 +936,7 @@ func makeMergedChannel(c *C, count int) (*mergeLockScanner, []chan scanLockResul
 
 		channels = append(channels, ch)
 		receivers = append(receivers, receiver)
+		storeIDs = append(storeIDs, uint64(i))
 	}
 
 	resultCh := make(chan []*tikv.Lock)
@@ -880,11 +948,6 @@ func makeMergedChannel(c *C, count int) (*mergeLockScanner, []chan scanLockResul
 		c.Assert(len(result), Less, 1000)
 		resultCh <- result
 	}()
-
-	storeIDs := make([]uint64, count)
-	for i := 0; i < count; i++ {
-		storeIDs[i] = uint64(i)
-	}
 
 	return scanner, channels, storeIDs, resultCh
 }
@@ -926,7 +989,7 @@ func (s *testGCWorkerSuite) makeMergedMockClient(c *C, count int) (*mergeLockSca
 						locks = nil
 						break
 					}
-					lockInfo := &kvrpcpb.LockInfo{Key: res.Lock.Key}
+					lockInfo := &kvrpcpb.LockInfo{Key: res.Lock.Key, LockVersion: res.Lock.TxnID}
 					locks = append(locks, lockInfo)
 				}
 
@@ -967,53 +1030,86 @@ func (s *testGCWorkerSuite) TestMergeLockScanner(c *C) {
 		return res
 	}
 
-	makeLock := func(key string) *tikv.Lock {
-		return &tikv.Lock{Key: []byte(key)}
+	makeLock := func(key string, ts uint64) *tikv.Lock {
+		return &tikv.Lock{Key: []byte(key), TxnID: ts}
 	}
 
-	makeLockList := func(keys ...string) []*tikv.Lock {
-		res := make([]*tikv.Lock, 0, len(keys))
-		for _, k := range keys {
-			res = append(res, makeLock(k))
+	makeLockList := func(locks ...*tikv.Lock) []*tikv.Lock {
+		res := make([]*tikv.Lock, 0, len(locks))
+		for _, lock := range locks {
+			res = append(res, lock)
 		}
 		return res
 	}
 
-	sendLocks := func(ch chan<- scanLockResult, keys ...string) {
-		for _, k := range keys {
-			ch <- scanLockResult{Lock: makeLock(k)}
+	makeLockListByKey := func(keys ...string) []*tikv.Lock {
+		res := make([]*tikv.Lock, 0, len(keys))
+		for _, key := range keys {
+			res = append(res, makeLock(key, 0))
 		}
+		return res
+	}
+
+	sendLocks := func(ch chan<- scanLockResult, locks ...*tikv.Lock) {
+		for _, lock := range locks {
+			ch <- scanLockResult{Lock: lock}
+		}
+	}
+
+	sendLocksByKey := func(ch chan<- scanLockResult, keys ...string) []*tikv.Lock {
+		locks := make([]*tikv.Lock, 0, len(keys))
+		for _, key := range keys {
+			locks = append(locks, makeLock(key, 0))
+		}
+		sendLocks(ch, locks...)
+		return locks
 	}
 
 	sendErr := func(ch chan<- scanLockResult) {
 		ch <- scanLockResult{Err: errors.New("error")}
 	}
 
+	// No lock.
 	scanner, sendCh, storeIDs, resCh := makeMergedChannel(c, 1)
 	close(sendCh[0])
 	c.Assert(len(<-resCh), Equals, 0)
 	c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(storeIDs, 0))
 
 	scanner, sendCh, storeIDs, resCh = makeMergedChannel(c, 1)
-	sendLocks(sendCh[0], "a", "b", "c")
+	locks := sendLocksByKey(sendCh[0], "a", "b", "c")
 	close(sendCh[0])
-	c.Assert(<-resCh, DeepEquals, makeLockList("a", "b", "c"))
+	c.Assert(<-resCh, DeepEquals, locks)
 	c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(storeIDs, 0))
 
+	// Send locks with error
 	scanner, sendCh, storeIDs, resCh = makeMergedChannel(c, 1)
-	sendLocks(sendCh[0], "a", "b", "c")
+	locks = sendLocksByKey(sendCh[0], "a", "b", "c")
 	sendErr(sendCh[0])
 	close(sendCh[0])
-	c.Assert(<-resCh, DeepEquals, makeLockList("a", "b", "c"))
+	c.Assert(<-resCh, DeepEquals, locks)
 	c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(storeIDs))
 
+	// Merge sort locks with different keys.
 	scanner, sendCh, storeIDs, resCh = makeMergedChannel(c, 2)
-	sendLocks(sendCh[0], "a", "c", "e")
+	locks = sendLocksByKey(sendCh[0], "a", "c", "e")
 	time.Sleep(time.Millisecond * 100)
-	sendLocks(sendCh[1], "b", "d", "f")
+	locks = append(locks, sendLocksByKey(sendCh[1], "b", "d", "f")...)
 	close(sendCh[0])
 	close(sendCh[1])
-	c.Assert(<-resCh, DeepEquals, makeLockList("a", "b", "c", "d", "e", "f"))
+	sort.Slice(locks, func(i, j int) bool {
+		return bytes.Compare(locks[i].Key, locks[j].Key) < 0
+	})
+	c.Assert(<-resCh, DeepEquals, locks)
+	c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(storeIDs, 0, 1))
+
+	// Merge sort locks with different timestamps.
+	scanner, sendCh, storeIDs, resCh = makeMergedChannel(c, 2)
+	sendLocks(sendCh[0], makeLock("a", 0), makeLock("a", 1))
+	time.Sleep(time.Millisecond * 100)
+	sendLocks(sendCh[1], makeLock("a", 1), makeLock("a", 2), makeLock("b", 0))
+	close(sendCh[0])
+	close(sendCh[1])
+	c.Assert(<-resCh, DeepEquals, makeLockList(makeLock("a", 0), makeLock("a", 1), makeLock("a", 2), makeLock("b", 0)))
 	c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(storeIDs, 0, 1))
 
 	for _, useMock := range []bool{false, true} {
@@ -1023,38 +1119,49 @@ func (s *testGCWorkerSuite) TestMergeLockScanner(c *C) {
 		}
 
 		scanner, sendCh, storeIDs, resCh = channel(c, 3)
-		sendLocks(sendCh[0], "a", "d", "g", "h")
+		sendLocksByKey(sendCh[0], "a", "d", "g", "h")
 		time.Sleep(time.Millisecond * 100)
-		sendLocks(sendCh[1], "a", "d", "f", "h")
+		sendLocksByKey(sendCh[1], "a", "d", "f", "h")
 		time.Sleep(time.Millisecond * 100)
-		sendLocks(sendCh[2], "b", "c", "e", "h")
+		sendLocksByKey(sendCh[2], "b", "c", "e", "h")
 		close(sendCh[0])
 		close(sendCh[1])
 		close(sendCh[2])
-		c.Assert(<-resCh, DeepEquals, makeLockList("a", "b", "c", "d", "e", "f", "g", "h"))
+		c.Assert(<-resCh, DeepEquals, makeLockListByKey("a", "b", "c", "d", "e", "f", "g", "h"))
 		c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(storeIDs, 0, 1, 2))
 
 		scanner, sendCh, storeIDs, resCh = channel(c, 3)
-		sendLocks(sendCh[0], "a", "d", "g", "h")
+		sendLocksByKey(sendCh[0], "a", "d", "g", "h")
 		time.Sleep(time.Millisecond * 100)
-		sendLocks(sendCh[1], "a", "d", "f", "h")
+		sendLocksByKey(sendCh[1], "a", "d", "f", "h")
 		time.Sleep(time.Millisecond * 100)
-		sendLocks(sendCh[2], "b", "c", "e", "h")
+		sendLocksByKey(sendCh[2], "b", "c", "e", "h")
 		sendErr(sendCh[0])
 		close(sendCh[0])
 		close(sendCh[1])
 		close(sendCh[2])
-		c.Assert(<-resCh, DeepEquals, makeLockList("a", "b", "c", "d", "e", "f", "g", "h"))
+		c.Assert(<-resCh, DeepEquals, makeLockListByKey("a", "b", "c", "d", "e", "f", "g", "h"))
 		c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(storeIDs, 1, 2))
 
 		scanner, sendCh, storeIDs, resCh = channel(c, 3)
-		sendLocks(sendCh[0], "a\x00", "a\x00\x00", "b", "b\x00")
-		sendLocks(sendCh[1], "a", "a\x00\x00", "a\x00\x00\x00", "c")
-		sendLocks(sendCh[2], "1", "a\x00", "a\x00\x00", "b")
+		sendLocksByKey(sendCh[0], "a\x00", "a\x00\x00", "b", "b\x00")
+		sendLocksByKey(sendCh[1], "a", "a\x00\x00", "a\x00\x00\x00", "c")
+		sendLocksByKey(sendCh[2], "1", "a\x00", "a\x00\x00", "b")
 		close(sendCh[0])
 		close(sendCh[1])
 		close(sendCh[2])
-		c.Assert(<-resCh, DeepEquals, makeLockList("1", "a", "a\x00", "a\x00\x00", "a\x00\x00\x00", "b", "b\x00", "c"))
+		c.Assert(<-resCh, DeepEquals, makeLockListByKey("1", "a", "a\x00", "a\x00\x00", "a\x00\x00\x00", "b", "b\x00", "c"))
+		c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(storeIDs, 0, 1, 2))
+
+		scanner, sendCh, storeIDs, resCh = channel(c, 3)
+		sendLocks(sendCh[0], makeLock("a", 0), makeLock("d", 0), makeLock("g", 0), makeLock("h", 0))
+		sendLocks(sendCh[1], makeLock("a", 1), makeLock("b", 0), makeLock("c", 0), makeLock("d", 1))
+		sendLocks(sendCh[2], makeLock("e", 0), makeLock("g", 1), makeLock("g", 2), makeLock("h", 0))
+		close(sendCh[0])
+		close(sendCh[1])
+		close(sendCh[2])
+		c.Assert(<-resCh, DeepEquals, makeLockList(makeLock("a", 0), makeLock("a", 1), makeLock("b", 0), makeLock("c", 0),
+			makeLock("d", 0), makeLock("d", 1), makeLock("e", 0), makeLock("g", 0), makeLock("g", 1), makeLock("g", 2), makeLock("h", 0)))
 		c.Assert(scanner.GetSucceededStores(), DeepEquals, makeIDSet(storeIDs, 0, 1, 2))
 	}
 }

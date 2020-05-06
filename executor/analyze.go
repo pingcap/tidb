@@ -509,7 +509,10 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range) (hists []*statis
 		cms = append(cms, nil)
 	}
 	for i, col := range e.colsInfo {
-		collectors[i].ExtractTopN(uint32(e.opts[ast.AnalyzeOptNumTopN]))
+		err := collectors[i].ExtractTopN(uint32(e.opts[ast.AnalyzeOptNumTopN]), e.ctx.GetSessionVars().StmtCtx, &col.FieldType, timeZone)
+		if err != nil {
+			return nil, nil, err
+		}
 		for j, s := range collectors[i].Samples {
 			collectors[i].Samples[j].Ordinal = j
 			collectors[i].Samples[j].Value, err = tablecodec.DecodeColumnValue(s.Value.GetBytes(), &col.FieldType, timeZone)

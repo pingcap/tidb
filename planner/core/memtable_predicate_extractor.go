@@ -371,7 +371,7 @@ func (helper extractHelper) extractTimeRange(
 	timezone *time.Location,
 ) (
 	remained []expression.Expression,
-	// unix timestamp in millisecond
+	// unix timestamp in nanoseconds
 	startTime int64,
 	endTime int64,
 ) {
@@ -398,7 +398,7 @@ func (helper extractHelper) extractTimeRange(
 
 		if colName == extractColName {
 			timeType := types.NewFieldType(mysql.TypeDatetime)
-			timeType.Decimal = 3
+			timeType.Decimal = 6
 			timeDatum, err := datums[0].ConvertTo(ctx.GetSessionVars().StmtCtx, timeType)
 			if err != nil || timeDatum.Kind() == types.KindNull {
 				remained = append(remained, expr)
@@ -414,7 +414,7 @@ func (helper extractHelper) extractTimeRange(
 				mysqlTime.Second(),
 				mysqlTime.Microsecond()*1000,
 				timezone,
-			).UnixNano() / int64(time.Millisecond)
+			).UnixNano()
 
 			switch fnName {
 			case ast.EQ:
@@ -425,14 +425,15 @@ func (helper extractHelper) extractTimeRange(
 					endTime = mathutil.MinInt64(endTime, timestamp)
 				}
 			case ast.GT:
-				startTime = mathutil.MaxInt64(startTime, timestamp+1)
+				// FixMe: add 1ms is not absolutely correct here, just because the log search precision is millisecond.
+				startTime = mathutil.MaxInt64(startTime, timestamp+int64(time.Millisecond))
 			case ast.GE:
 				startTime = mathutil.MaxInt64(startTime, timestamp)
 			case ast.LT:
 				if endTime == 0 {
-					endTime = timestamp - 1
+					endTime = timestamp - int64(time.Millisecond)
 				} else {
-					endTime = mathutil.MinInt64(endTime, timestamp-1)
+					endTime = mathutil.MinInt64(endTime, timestamp-int64(time.Millisecond))
 				}
 			case ast.LE:
 				if endTime == 0 {
@@ -495,7 +496,7 @@ func (helper extractHelper) convertToTime(t int64) time.Time {
 	if t == 0 || t == math.MaxInt64 {
 		return time.Now()
 	}
-	return time.Unix(t/1000, (t%1000)*int64(time.Millisecond))
+	return time.Unix(0, t)
 }
 
 // ClusterTableExtractor is used to extract some predicates of cluster table.
@@ -589,6 +590,9 @@ func (e *ClusterLogTableExtractor) Extract(
 	}
 
 	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, remained, "time", time.Local)
+	// The time unit for search log is millisecond.
+	startTime = startTime / int64(time.Millisecond)
+	endTime = endTime / int64(time.Millisecond)
 	if endTime == 0 {
 		endTime = math.MaxInt64
 	}

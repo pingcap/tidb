@@ -461,12 +461,6 @@ func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor
 // Build builds the ast node to a Plan.
 func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 	b.optFlag |= flagPrunColumns
-	defer func() {
-		// if there is something after flagPrunColumns, do flagPrunColumnsAgain
-		if b.optFlag&flagPrunColumns > 0 && b.optFlag-flagPrunColumns > flagPrunColumns {
-			b.optFlag |= flagPrunColumnsAgain
-		}
-	}()
 	switch x := node.(type) {
 	case *ast.AdminStmt:
 		return b.buildAdmin(ctx, x)
@@ -507,6 +501,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 		return b.buildDo(ctx, x)
 	case *ast.SetStmt:
 		return b.buildSet(ctx, x)
+	case *ast.SetConfigStmt:
+		return b.buildSetConfig(ctx, x)
 	case *ast.AnalyzeTableStmt:
 		return b.buildAnalyze(x)
 	case *ast.BinlogStmt, *ast.FlushStmt, *ast.UseStmt,
@@ -526,6 +522,14 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 		return b.buildSplitRegion(x)
 	}
 	return nil, ErrUnsupportedType.GenWithStack("Unsupported type %T", node)
+}
+
+func (b *PlanBuilder) buildSetConfig(ctx context.Context, v *ast.SetConfigStmt) (Plan, error) {
+	privErr := ErrSpecificAccessDenied.GenWithStackByArgs("CONFIG")
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ConfigPriv, "", "", "", privErr)
+	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+	expr, _, err := b.rewrite(ctx, v.Value, mockTablePlan, nil, true)
+	return &SetConfig{Name: v.Name, Type: v.Type, Instance: v.Instance, Value: expr}, err
 }
 
 func (b *PlanBuilder) buildChange(v *ast.ChangeStmt) (Plan, error) {
@@ -2135,7 +2139,12 @@ func (b *PlanBuilder) buildSetValuesOfInsert(ctx context.Context, insert *ast.In
 			return ErrBadGeneratedColumn.GenWithStackByArgs(assign.Column.Name.O, tableInfo.Name.O)
 		}
 		b.curClause = fieldList
-		expr, _, err := b.rewriteWithPreprocess(ctx, assign.Expr, mockTablePlan, nil, nil, true, checkRefColumn)
+		// subquery in insert values should not reference upper scope
+		usingPlan := mockTablePlan
+		if _, ok := assign.Expr.(*ast.SubqueryExpr); ok {
+			usingPlan = LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+		}
+		expr, _, err := b.rewriteWithPreprocess(ctx, assign.Expr, usingPlan, nil, nil, true, checkRefColumn)
 		if err != nil {
 			return err
 		}
@@ -2208,7 +2217,12 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 				}
 			default:
 				b.curClause = fieldList
-				expr, _, err = b.rewriteWithPreprocess(ctx, valueItem, mockTablePlan, nil, nil, true, checkRefColumn)
+				// subquery in insert values should not reference upper scope
+				usingPlan := mockTablePlan
+				if _, ok := valueItem.(*ast.SubqueryExpr); ok {
+					usingPlan = LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+				}
+				expr, _, err = b.rewriteWithPreprocess(ctx, valueItem, usingPlan, nil, nil, true, checkRefColumn)
 			}
 			if err != nil {
 				return err
@@ -2305,6 +2319,12 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 		LinesInfo:   ld.LinesInfo,
 		IgnoreLines: ld.IgnoreLines,
 	}
+	user := b.ctx.GetSessionVars().User
+	var insertErr error
+	if user != nil {
+		insertErr = ErrTableaccessDenied.GenWithStackByArgs("INSERT", user.AuthUsername, user.AuthHostname, p.Table.Name.O)
+	}
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, p.Table.Schema.O, p.Table.Name.O, "", insertErr)
 	tableInfo := p.Table.TableInfo
 	tableInPlan, ok := b.is.TableByID(tableInfo.ID)
 	if !ok {
@@ -2920,6 +2940,8 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		return buildTableRegionsSchema()
 	case ast.ShowEngines:
 		names = []string{"Engine", "Support", "Comment", "Transactions", "XA", "Savepoints"}
+	case ast.ShowConfig:
+		names = []string{"Type", "Instance", "Name", "Value"}
 	case ast.ShowDatabases:
 		names = []string{"Database"}
 	case ast.ShowOpenTables:
