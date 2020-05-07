@@ -16,6 +16,8 @@ package aggregation
 import (
 	"bytes"
 	"fmt"
+
+	"github.com/pingcap/parser/ast"
 )
 
 // ExplainAggFunc generates explain information for a aggregation function.
@@ -26,10 +28,25 @@ func ExplainAggFunc(agg *AggFuncDesc) string {
 		buffer.WriteString("distinct ")
 	}
 	for i, arg := range agg.Args {
-		buffer.WriteString(arg.ExplainInfo())
-		if i+1 < len(agg.Args) {
+		if agg.Name == ast.AggFuncGroupConcat && i == len(agg.Args)-1 {
+			if len(agg.OrderByItems) > 0 {
+				buffer.WriteString(" order by ")
+				for i, item := range agg.OrderByItems {
+					order := "asc"
+					if item.Desc {
+						order = "desc"
+					}
+					fmt.Fprintf(&buffer, "%s %s", item.Expr.ExplainInfo(), order)
+					if i+1 < len(agg.OrderByItems) {
+						buffer.WriteString(", ")
+					}
+				}
+			}
+			buffer.WriteString(" separator ")
+		} else if i != 0 {
 			buffer.WriteString(", ")
 		}
+		buffer.WriteString(arg.ExplainInfo())
 	}
 	buffer.WriteString(")")
 	return buffer.String()

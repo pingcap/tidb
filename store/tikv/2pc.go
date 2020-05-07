@@ -423,6 +423,9 @@ func txnLockTTL(startTime time.Time, txnSize int) uint64 {
 	return lockTTL + uint64(elapsed)
 }
 
+var preSplitDetectThreshold uint32 = 100000
+var preSplitSizeThreshold uint32 = 32 << 20
+
 // doActionOnMutations groups keys into primary batch and secondary batches, if primary batch exists in the key,
 // it does action on primary batch first, then on secondary batches. If action is commit, secondary batches
 // is done in background goroutine.
@@ -435,6 +438,74 @@ func (c *twoPhaseCommitter) doActionOnMutations(bo *Backoffer, action twoPhaseCo
 		return errors.Trace(err)
 	}
 
+	// Pre-split regions to avoid too much write workload into a single region.
+	// In the large transaction case, this operation is important to avoid TiKV 'server is busy' error.
+	var preSplited bool
+	preSplitDetectThresholdVal := atomic.LoadUint32(&preSplitDetectThreshold)
+	for _, group := range groups {
+		if uint32(group.mutations.len()) >= preSplitDetectThresholdVal {
+			logutil.BgLogger().Info("2PC detect large amount of mutations on a single region",
+				zap.Uint64("region", group.region.GetID()),
+				zap.Int("mutations count", group.mutations.len()))
+			// Use context.Background, this time should not add up to Backoffer.
+			if preSplitAndScatterIn2PC(context.Background(), c.store, group) {
+				preSplited = true
+			}
+		}
+	}
+	// Reload region cache again.
+	if preSplited {
+		groups, err = c.store.regionCache.GroupSortedMutationsByRegion(bo, mutations)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	return c.doActionOnGroupMutations(bo, action, groups)
+}
+
+func preSplitAndScatterIn2PC(ctx context.Context, store *tikvStore, group groupedMutations) bool {
+	splitKeys := make([][]byte, 0, 4)
+
+	preSplitSizeThresholdVal := atomic.LoadUint32(&preSplitSizeThreshold)
+	regionSize := 0
+	keysLength := group.mutations.len()
+	valsLength := len(group.mutations.values)
+	// The value length maybe zero for pessimistic lock keys
+	for i := 0; i < keysLength; i++ {
+		regionSize = regionSize + len(group.mutations.keys[i])
+		if i < valsLength {
+			regionSize = regionSize + len(group.mutations.values[i])
+		}
+		// The second condition is used for testing.
+		if regionSize >= int(preSplitSizeThresholdVal) {
+			regionSize = 0
+			splitKeys = append(splitKeys, group.mutations.keys[i])
+		}
+	}
+	if len(splitKeys) == 0 {
+		return false
+	}
+
+	regionIDs, err := store.SplitRegions(ctx, splitKeys, true)
+	if err != nil {
+		logutil.BgLogger().Warn("2PC split regions failed", zap.Uint64("regionID", group.region.id),
+			zap.Int("keys count", keysLength), zap.Int("values count", valsLength), zap.Error(err))
+		return false
+	}
+
+	for _, regionID := range regionIDs {
+		err := store.WaitScatterRegionFinish(regionID, 0)
+		if err != nil {
+			logutil.BgLogger().Warn("2PC wait scatter region failed", zap.Uint64("regionID", regionID), zap.Error(err))
+		}
+	}
+	// Invalidate the old region cache information.
+	store.regionCache.InvalidateCachedRegion(group.region)
+	return true
+}
+
+func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPhaseCommitAction, groups []groupedMutations) error {
 	action.tiKVTxnRegionsNumHistogram().Observe(float64(len(groups)))
 
 	var batches []batchMutations
@@ -467,6 +538,7 @@ func (c *twoPhaseCommitter) doActionOnMutations(bo *Backoffer, action twoPhaseCo
 	_, actionIsCleanup := action.(actionCleanup)
 	_, actionIsPessimiticLock := action.(actionPessimisticLock)
 
+	var err error
 	failpoint.Inject("skipKeyReturnOK", func(val failpoint.Value) {
 		valStr, ok := val.(string)
 		if ok && c.connID > 0 {
