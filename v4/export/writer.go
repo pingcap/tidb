@@ -3,8 +3,10 @@ package export
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/errors"
 	"os"
 	"path"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -22,6 +24,10 @@ type SimpleWriter struct {
 }
 
 func NewSimpleWriter(config *Config) (Writer, error) {
+	if config.Sql != "" {
+		log.Error("unsupported dump data in sql format", zap.String("sql", config.Sql))
+		return nil, errors.New("unsupported dump data in sql format when specific sql")
+	}
 	sw := &SimpleWriter{cfg: config}
 	return sw, os.MkdirAll(config.OutputDirPath, 0755)
 }
@@ -116,7 +122,12 @@ func (f *CsvWriter) WriteTableData(ctx context.Context, ir TableDataIR) error {
 	log.Debug("start dumping table in csv format...", zap.String("table", ir.TableName()))
 
 	chunkIndex := ir.ChunkIndex()
-	fileName := fmt.Sprintf("%s.%s.%d.csv", ir.DatabaseName(), ir.TableName(), ir.ChunkIndex())
+	fileName := ""
+	if ir.DatabaseName() != "" && ir.TableName() != "" {
+		fileName = fmt.Sprintf("%s.%s.%d.csv", ir.DatabaseName(), ir.TableName(), ir.ChunkIndex())
+	} else {
+		fileName = fmt.Sprintf("%d.csv", time.Now().Unix())
+	}
 	chunksIter := buildChunksIter(ir, f.cfg.FileSize, f.cfg.StatementSize)
 	defer chunksIter.Rows().Close()
 
