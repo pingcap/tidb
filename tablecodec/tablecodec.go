@@ -729,7 +729,7 @@ func decodeIndexKvOldCollation(key, value []byte, colsLen int, hdStatus HandleSt
 // DecodeIndexKV uses to decode index key values.
 func DecodeIndexKV(key, value []byte, colsLen int, hdStatus HandleStatus, columns []rowcodec.ColInfo) ([][]byte, error) {
 	if len(value) > MaxOldEncodeValueLen {
-		if value[0] == 0 && value[1] == CommonHandleFlag {
+		if value[0] <= 1 && value[1] == CommonHandleFlag {
 			return decodeIndexKVUniqueCommonHandle(key, value, colsLen, hdStatus, columns)
 		}
 		return decodeIndexKvNewCollation(key, value, hdStatus, columns)
@@ -738,6 +738,8 @@ func DecodeIndexKV(key, value []byte, colsLen int, hdStatus HandleStatus, column
 }
 
 func decodeIndexKVUniqueCommonHandle(key, value []byte, colsLen int, hdStatus HandleStatus, columns []rowcodec.ColInfo) ([][]byte, error) {
+	tailLen := int(value[0])
+	value = value[:len(value)-tailLen]
 	handleLen := uint16(value[2])<<8 + uint16(value[3])
 	handleEndOff := 4 + handleLen
 	var resultValues [][]byte

@@ -312,6 +312,12 @@ func (s *testIndexSuite) TestSingleColumnCommonHandle(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(handle.IsInt(), IsFalse)
 		c.Assert(handle.Encoded(), BytesEquals, commonHandle.Encoded())
+
+		unTouchedVal := append([]byte{1}, val[1:]...)
+		unTouchedVal = append(unTouchedVal, kv.UnCommitIndexKVFlag)
+		colVals, err = tablecodec.DecodeIndexKV(key, unTouchedVal, 1, tablecodec.HandleDefault,
+			createRowcodecColInfo(tblInfo, idx.Meta()))
+		c.Assert(err, IsNil)
 	}
 }
 
