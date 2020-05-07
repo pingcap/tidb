@@ -510,17 +510,14 @@ func (s *testSuite1) TestGroupConcatAggr(c *C) {
 		"(PARTITION `p0` VALUES LESS THAN (2), PARTITION `p1` VALUES LESS THAN (11))")
 	tk.MustExec("insert into ptest select * from test;")
 
-	for i := 0; i <= 1; i++ {
-		for j := 0; j <= 1; j++ {
-			tk.MustExec(fmt.Sprintf("set session tidb_opt_distinct_agg_push_down = %v", i))
-			tk.MustExec(fmt.Sprintf("set session tidb_opt_agg_push_down = %v", j))
+	for j := 0; j <= 1; j++ {
+		tk.MustExec(fmt.Sprintf("set session tidb_opt_agg_push_down = %v", j))
 
-			result = tk.MustQuery("select /*+ agg_to_cop */ group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from ptest;")
-			result.Check(testkit.Rows("500++200++30++20++20++10 3--3--1--1--2--1"))
+		result = tk.MustQuery("select /*+ agg_to_cop */ group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from ptest;")
+		result.Check(testkit.Rows("500++200++30++20++20++10 3--3--1--1--2--1"))
 
-			result = tk.MustQuery("select /*+ agg_to_cop */ group_concat(distinct name order by name desc) from ptest;")
-			result.Check(testkit.Rows("500,200,30,20,10"))
-		}
+		result = tk.MustQuery("select /*+ agg_to_cop */ group_concat(distinct name order by name desc) from ptest;")
+		result.Check(testkit.Rows("500,200,30,20,10"))
 	}
 
 	// issue #9920
