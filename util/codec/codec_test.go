@@ -956,15 +956,44 @@ func (s *testCodecSuite) TestDecodeOneToChunk(c *C) {
 			if got.IsNull() {
 				c.Assert(expect.IsNull(), IsTrue)
 			} else {
-				cmp, err := got.CompareDatum(sc, &expect)
-				c.Assert(err, IsNil)
-				c.Assert(cmp, Equals, 0)
+				if got.Kind() != types.KindMysqlDecimal {
+					cmp, err := got.CompareDatum(sc, &expect)
+					c.Assert(err, IsNil)
+					c.Assert(cmp, Equals, 0)
+				} else {
+					c.Assert(got.GetString(), Equals, expect.GetString())
+				}
 			}
 		}
 	}
 }
 
+func (s *testCodecSuite) TestHashGroup(c *C) {
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	tp := types.NewFieldType(mysql.TypeNewDecimal)
+	tps := []*types.FieldType{tp}
+	chk1 := chunk.New(tps, 3, 3)
+	chk1.Reset()
+	chk1.Column(0).AppendMyDecimal(types.NewDecFromStringForTest("-123.123456789"))
+	chk1.Column(0).AppendMyDecimal(types.NewDecFromStringForTest("-123.123456789"))
+	chk1.Column(0).AppendMyDecimal(types.NewDecFromStringForTest("-123.123456789"))
+
+	buf1 := make([][]byte, 3)
+	tp1 := tp
+	tp1.Flen = 20
+	tp1.Decimal = 5
+	_, err := HashGroupKey(sc, 3, chk1.Column(0), buf1, tp1)
+	c.Assert(err, NotNil)
+	tp2 := tp
+	tp2.Flen = 12
+	tp2.Decimal = 10
+	_, err = HashGroupKey(sc, 3, chk1.Column(0), buf1, tp2)
+	c.Assert(err, NotNil)
+}
+
 func datumsForTest(sc *stmtctx.StatementContext) ([]types.Datum, []*types.FieldType) {
+	decType := types.NewFieldType(mysql.TypeNewDecimal)
+	decType.Decimal = 2
 	table := []struct {
 		value interface{}
 		tp    *types.FieldType
@@ -991,6 +1020,7 @@ func datumsForTest(sc *stmtctx.StatementContext) ([]types.Datum, []*types.FieldT
 		{float32(1), types.NewFieldType(mysql.TypeFloat)},
 		{float64(1), types.NewFieldType(mysql.TypeDouble)},
 		{types.NewDecFromInt(1), types.NewFieldType(mysql.TypeNewDecimal)},
+		{types.NewDecFromStringForTest("1.123"), decType},
 		{"abc", types.NewFieldType(mysql.TypeString)},
 		{"def", types.NewFieldType(mysql.TypeVarchar)},
 		{"ghi", types.NewFieldType(mysql.TypeVarString)},
