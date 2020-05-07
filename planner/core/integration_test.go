@@ -699,3 +699,47 @@ partition p2 values less than (unix_timestamp('2020-04-15 00:00:00')))`)
 	tk.MustQuery("select count(*) from floor_unix_timestamp where ts <= '2020-04-05 23:00:00'").Check(testkit.Rows("4"))
 	tk.MustQuery("select * from floor_unix_timestamp partition(p1, p2) where ts > '2020-04-14 00:00:00'").Check(testkit.Rows("2020-04-14 00:00:42.000"))
 }
+<<<<<<< HEAD
+=======
+
+func (s *testIntegrationSuite) TestIssue16290And16292(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b int, primary key(a));")
+	tk.MustExec("insert into t values(1, 1);")
+
+	for i := 0; i <= 1; i++ {
+		tk.MustExec(fmt.Sprintf("set session tidb_opt_agg_push_down = %v", i))
+
+		tk.MustQuery("select avg(a) from (select * from t ta union all select * from t tb) t;").Check(testkit.Rows("1.0000"))
+		tk.MustQuery("select avg(b) from (select * from t ta union all select * from t tb) t;").Check(testkit.Rows("1.0000"))
+		tk.MustQuery("select count(distinct a) from (select * from t ta union all select * from t tb) t;").Check(testkit.Rows("1"))
+		tk.MustQuery("select count(distinct b) from (select * from t ta union all select * from t tb) t;").Check(testkit.Rows("1"))
+	}
+}
+
+func (s *testIntegrationSuite) TestTableDualWithRequiredProperty(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1 (a int, b int) partition by range(a) " +
+		"(partition p0 values less than(10), partition p1 values less than MAXVALUE)")
+	tk.MustExec("create table t2 (a int, b int)")
+	tk.MustExec("select /*+ MERGE_JOIN(t1, t2) */ * from t1 partition (p0), t2  where t1.a > 100 and t1.a = t2.a")
+}
+
+func (s *testIntegrationSerialSuite) TestIssue16837(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int,b int,c int,d int,e int,unique key idx_ab(a,b),unique key(c),unique key(d))")
+	tk.MustQuery("explain select /*+ use_index_merge(t,c,idx_ab) */ * from t where a = 1 or (e = 1 and c = 1)").Check(testkit.Rows(
+		"TableReader_7 8000.00 root  data:Selection_6",
+		"└─Selection_6 8000.00 cop[tikv]  or(eq(test.t.a, 1), and(eq(test.t.e, 1), eq(test.t.c, 1)))",
+		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 IndexMerge is inapplicable or disabled"))
+	tk.MustExec("insert into t values (2, 1, 1, 1, 2)")
+	tk.MustQuery("select /*+ use_index_merge(t,c,idx_ab) */ * from t where a = 1 or (e = 1 and c = 1)").Check(testkit.Rows())
+}
+>>>>>>> 014d101... planner: allow TableDual to match the required property if the row count is 0 (#16927)
