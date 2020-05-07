@@ -741,6 +741,18 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		}
 	}
 
+	ptBaseID, err := t.GetAutoTableID(ptSchemaID, pt.ID)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	ntBaseID, err := t.GetAutoTableID(job.SchemaID, nt.ID)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
 	tempID := partDef.ID
 
 	partDef.ID = nt.ID
@@ -751,7 +763,13 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
-	err = t.DropTableOrView(job.SchemaID, nt.ID, false)
+	_, err = t.GenAutoTableID(ptSchemaID, partDef.ID, ntBaseID)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	err = t.DropTableOrView(job.SchemaID, nt.ID, true)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -760,6 +778,12 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	nt.ID = tempID
 
 	err = t.CreateTableOrView(job.SchemaID, nt)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	_, err = t.GenAutoTableID(job.SchemaID, nt.ID, ptBaseID)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -803,11 +827,11 @@ func checkExchangePartitionRecordValidation(w *worker, pi *model.PartitionInfo, 
 			return nil
 		}
 		if index == 0 {
-			sql = fmt.Sprintf("select 1 from `%s`.`%s` where %s > %d limit 1", schemaName.L, tableName.L, pi.Expr, rangeRrun.LessThan[index])
+			sql = fmt.Sprintf("select 1 from `%s`.`%s` where %s >= %d limit 1", schemaName.L, tableName.L, pi.Expr, rangeRrun.LessThan[index])
 		} else if index == len(pi.Definitions)-1 && rangeRrun.MaxValue {
-			sql = fmt.Sprintf("select 1 from `%s`.`%s` where %s <= %d limit 1", schemaName.L, tableName.L, pi.Expr, rangeRrun.LessThan[index])
+			sql = fmt.Sprintf("select 1 from `%s`.`%s` where %s <= %d limit 1", schemaName.L, tableName.L, pi.Expr, rangeRrun.LessThan[index-1])
 		} else {
-			sql = fmt.Sprintf("select 1 from `%s`.`%s` where %s <= %d and %s > %d limit 1", schemaName.L, tableName.L, pi.Expr, rangeRrun.LessThan[index-1], pi.Expr, rangeRrun.LessThan[index])
+			sql = fmt.Sprintf("select 1 from `%s`.`%s` where %s < %d and %s >= %d limit 1", schemaName.L, tableName.L, pi.Expr, rangeRrun.LessThan[index-1], pi.Expr, rangeRrun.LessThan[index])
 		}
 		break
 	default:
