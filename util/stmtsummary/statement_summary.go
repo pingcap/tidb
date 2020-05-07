@@ -62,11 +62,6 @@ func (key *stmtSummaryByDigestKey) Hash() []byte {
 	return key.hash
 }
 
-func (key *stmtSummaryByDigestKey) MemUsage() int64 {
-	//TODO: fulfill the MemUsage logic
-	return 0
-}
-
 // stmtSummaryByDigestMap is a LRU cache that stores statement summaries.
 type stmtSummaryByDigestMap struct {
 	// It's rare to read concurrently, so RWMutex is not needed.
@@ -99,11 +94,6 @@ type stmtSummaryByDigest struct {
 	normalizedSQL string
 	tableNames    string
 	isInternal    bool
-}
-
-func (ssDigest *stmtSummaryByDigest) MemUsage() int64 {
-	//TODO: fulfill the MemUsage logic
-	return 0
 }
 
 // stmtSummaryByDigestElement is the summary for each type of statements in current interval.

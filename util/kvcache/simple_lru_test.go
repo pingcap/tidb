@@ -35,20 +35,6 @@ type mockCacheKey struct {
 	key  int64
 }
 
-func (key *mockCacheKey) MemUsage() int64 {
-	//TODO: fulfill the MemUsage logic
-	return 0
-}
-
-type mockCacheValue struct {
-	value interface{}
-}
-
-func (value *mockCacheValue) MemUsage() int64 {
-	//TODO: fulfill the MemUsage logic
-	return 0
-}
-
 func (mk *mockCacheKey) Hash() []byte {
 	if mk.hash != nil {
 		return mk.hash
@@ -79,10 +65,7 @@ func (s *testLRUCacheSuite) TestPut(c *C) {
 	for i := 0; i < 5; i++ {
 		keys[i] = newMockHashKey(int64(i))
 		vals[i] = int64(i)
-		mockv := mockCacheValue{
-			value: vals[i],
-		}
-		lru.Put(keys[i], &mockv)
+		lru.Put(keys[i], vals[i])
 	}
 	c.Assert(lru.size, Equals, lru.capacity)
 	c.Assert(lru.size, Equals, uint(3))
@@ -113,9 +96,9 @@ func (s *testLRUCacheSuite) TestPut(c *C) {
 		c.Assert(element, Equals, root)
 
 		// test value
-		value, ok := entry.value.(*mockCacheValue)
+		value, ok := entry.value.(int64)
 		c.Assert(ok, IsTrue)
-		c.Assert(value.value, Equals, vals[i])
+		c.Assert(value, Equals, vals[i])
 
 		root = root.Next()
 	}
@@ -133,10 +116,7 @@ func (s *testLRUCacheSuite) TestZeroQuota(c *C) {
 	for i := 0; i < 100; i++ {
 		keys[i] = newMockHashKey(int64(i))
 		vals[i] = int64(i)
-		mockv := &mockCacheValue{
-			value: vals[i],
-		}
-		lru.Put(keys[i], mockv)
+		lru.Put(keys[i], vals[i])
 	}
 	c.Assert(lru.size, Equals, lru.capacity)
 	c.Assert(lru.size, Equals, uint(100))
@@ -155,10 +135,7 @@ func (s *testLRUCacheSuite) TestOOMGuard(c *C) {
 	for i := 0; i < 5; i++ {
 		keys[i] = newMockHashKey(int64(i))
 		vals[i] = int64(i)
-		mockv := &mockCacheValue{
-			value: vals[i],
-		}
-		lru.Put(keys[i], mockv)
+		lru.Put(keys[i], vals[i])
 	}
 	c.Assert(lru.size, Equals, uint(0))
 
@@ -182,10 +159,7 @@ func (s *testLRUCacheSuite) TestGet(c *C) {
 	for i := 0; i < 5; i++ {
 		keys[i] = newMockHashKey(int64(i))
 		vals[i] = int64(i)
-		mockv := &mockCacheValue{
-			value: vals[i],
-		}
-		lru.Put(keys[i], mockv)
+		lru.Put(keys[i], vals[i])
 	}
 
 	// test for non-existent elements
@@ -199,8 +173,7 @@ func (s *testLRUCacheSuite) TestGet(c *C) {
 		value, exists := lru.Get(keys[i])
 		c.Assert(exists, IsTrue)
 		c.Assert(value, NotNil)
-		mvalue := value.(*mockCacheValue)
-		c.Assert(mvalue.value, Equals, vals[i])
+		c.Assert(value, Equals, vals[i])
 		c.Assert(lru.size, Equals, uint(3))
 		c.Assert(lru.capacity, Equals, uint(3))
 
@@ -211,9 +184,9 @@ func (s *testLRUCacheSuite) TestGet(c *C) {
 		c.Assert(ok, IsTrue)
 		c.Assert(entry.key, Equals, keys[i])
 
-		mvalue, ok = entry.value.(*mockCacheValue)
+		value, ok = entry.value.(int64)
 		c.Assert(ok, IsTrue)
-		c.Assert(mvalue.value, Equals, vals[i])
+		c.Assert(value, Equals, vals[i])
 	}
 }
 
@@ -229,10 +202,7 @@ func (s *testLRUCacheSuite) TestDelete(c *C) {
 	for i := 0; i < 3; i++ {
 		keys[i] = newMockHashKey(int64(i))
 		vals[i] = int64(i)
-		mockv := &mockCacheValue{
-			value: vals[i],
-		}
-		lru.Put(keys[i], mockv)
+		lru.Put(keys[i], vals[i])
 	}
 	c.Assert(int(lru.size), Equals, 3)
 
@@ -261,10 +231,7 @@ func (s *testLRUCacheSuite) TestDeleteAll(c *C) {
 	for i := 0; i < 3; i++ {
 		keys[i] = newMockHashKey(int64(i))
 		vals[i] = int64(i)
-		mockv := &mockCacheValue{
-			value: vals[i],
-		}
-		lru.Put(keys[i], mockv)
+		lru.Put(keys[i], vals[i])
 	}
 	c.Assert(int(lru.size), Equals, 3)
 
@@ -290,16 +257,12 @@ func (s *testLRUCacheSuite) TestValues(c *C) {
 	for i := 0; i < 5; i++ {
 		keys[i] = newMockHashKey(int64(i))
 		vals[i] = int64(i)
-		mockv := &mockCacheValue{
-			value: vals[i],
-		}
-		lru.Put(keys[i], mockv)
+		lru.Put(keys[i], vals[i])
 	}
 
 	values := lru.Values()
 	c.Assert(len(values), Equals, 5)
 	for i := 0; i < 5; i++ {
-		mvalue := values[i].(*mockCacheValue)
-		c.Assert(mvalue.value, Equals, int64(4-i))
+		c.Assert(values[i], Equals, int64(4-i))
 	}
 }

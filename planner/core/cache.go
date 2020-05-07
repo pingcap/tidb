@@ -95,11 +95,6 @@ func (key *pstmtPlanCacheKey) Hash() []byte {
 	return key.hash
 }
 
-func (key *pstmtPlanCacheKey) MemUsage() int64 {
-	//TODO: fulfill the MemUsage logic
-	return 0
-}
-
 // SetPstmtIDSchemaVersion implements PstmtCacheKeyMutator interface to change pstmtID and schemaVersion of cacheKey.
 // so we can reuse Key instead of new every time.
 func SetPstmtIDSchemaVersion(key kvcache.Key, pstmtID uint32, schemaVersion int64) {
@@ -147,11 +142,6 @@ func NewPSTMTPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*mod
 		OutPutNames:       names,
 		TblInfo2UnionScan: dstMap,
 	}
-}
-
-func (value *PSTMTPlanCacheValue) MemUsage() int64 {
-	//TODO: fulfill the MemUsage logic
-	return 0
 }
 
 // CachedPrepareStmt store prepared ast from PrepareExec and other related fields
