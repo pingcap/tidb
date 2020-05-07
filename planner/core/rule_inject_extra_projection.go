@@ -119,8 +119,9 @@ func injectProjBelowAgg(aggPlan PhysicalPlan, aggFuncs []*aggregation.AggFuncDes
 			}
 			projExprs = append(projExprs, byItem.Expr)
 			newArg := &expression.Column{
-				UniqueID: aggPlan.SCtx().GetSessionVars().AllocPlanColumnID(),
+				UniqueID: aggPlan.context().GetSessionVars().AllocPlanColumnID(),
 				RetType:  byItem.Expr.GetType(),
+				ColName:  model.NewCIStr(fmt.Sprintf("col_%d", len(projSchemaCols))),
 				Index:    cursor,
 			}
 			projSchemaCols = append(projSchemaCols, newArg)

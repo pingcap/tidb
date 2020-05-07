@@ -72,8 +72,6 @@ type aggTest struct {
 	orderBy  bool
 }
 
-<<<<<<< HEAD
-=======
 type multiArgsAggTest struct {
 	dataTypes []*types.FieldType
 	retType   *types.FieldType
@@ -84,7 +82,6 @@ type multiArgsAggTest struct {
 	orderBy   bool
 }
 
->>>>>>> 7ebcc20... executor: support GROUP_CONCAT(ORDER BY) (#16591)
 func (s *testSuite) testMergePartialResult(c *C, p aggTest) {
 	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{p.dataType}, p.numRows)
 	for i := 0; i < p.numRows; i++ {
@@ -170,8 +167,6 @@ func buildAggTesterWithFieldType(funcName string, ft *types.FieldType, numRows i
 	return pt
 }
 
-<<<<<<< HEAD
-=======
 func (s *testSuite) testMultiArgsMergePartialResult(c *C, p multiArgsAggTest) {
 	srcChk := chunk.NewChunkWithCapacity(p.dataTypes, p.numRows)
 	for i := 0; i < p.numRows; i++ {
@@ -270,7 +265,6 @@ func buildMultiArgsAggTesterWithFieldType(funcName string, fts []*types.FieldTyp
 	return mt
 }
 
->>>>>>> 7ebcc20... executor: support GROUP_CONCAT(ORDER BY) (#16591)
 func getDataGenFunc(ft *types.FieldType) func(i int) types.Datum {
 	switch ft.Tp {
 	case mysql.TypeLonglong:
@@ -381,8 +375,6 @@ func (s *testSuite) testAggFunc(c *C, p aggTest) {
 	c.Assert(err, IsNil)
 	c.Assert(result, Equals, 0, Commentf("%v != %v", dt.String(), p.results[0]))
 }
-<<<<<<< HEAD
-=======
 
 func (s *testSuite) testMultiArgsAggFunc(c *C, p multiArgsAggTest) {
 	srcChk := chunk.NewChunkWithCapacity(p.dataTypes, p.numRows)
@@ -581,4 +573,3 @@ func (s *testSuite) baseBenchmarkAggFunc(b *testing.B,
 		b.StartTimer()
 	}
 }
->>>>>>> 7ebcc20... executor: support GROUP_CONCAT(ORDER BY) (#16591)
