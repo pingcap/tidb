@@ -15,7 +15,7 @@ require (
 	github.com/go-ole/go-ole v1.2.1 // indirect
 	github.com/go-sql-driver/mysql v0.0.0-20170715192408-3955978caca4
 	github.com/gogo/protobuf v1.2.0
-	github.com/golang/protobuf v1.4.1
+	github.com/golang/protobuf v1.2.0
 	github.com/golang/snappy v0.0.1
 	github.com/google/btree v1.0.0
 	github.com/google/pprof v0.0.0-20190930153522-6ce02741cba3
@@ -50,7 +50,7 @@ require (
 	github.com/shirou/gopsutil v2.18.10+incompatible
 	github.com/shurcooL/httpfs v0.0.0-20171119174359-809beceb2371 // indirect
 	github.com/shurcooL/vfsgen v0.0.0-20181020040650-a97a25d856ca // indirect
-	github.com/sirupsen/logrus v1.6.0
+	github.com/sirupsen/logrus v1.2.0
 	github.com/spaolacci/murmur3 v0.0.0-20180118202830-f09979ecbc72
 	github.com/struCoder/pidusage v0.1.2
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
@@ -62,10 +62,10 @@ require (
 	go.etcd.io/etcd v0.0.0-20190320044326-77d4b742cdbf
 	go.uber.org/atomic v1.3.2
 	go.uber.org/zap v1.9.1
-	golang.org/x/crypto v0.0.0-20200429183012-4b2356b1ed79 // indirect
+	golang.org/x/crypto v0.0.0-20190909091759-094676da4a83 // indirect
 	golang.org/x/net v0.0.0-20190909003024-a7b16738d86b
-	golang.org/x/sys v0.0.0-20200501145240-bc7a7d42d5c3 // indirect
-	golang.org/x/text v0.3.2
+	golang.org/x/sync v0.0.0-20190423024810-112230192c58 // indirect
+	golang.org/x/text v0.3.0
 	golang.org/x/tools v0.0.0-20190130214255-bb1329dc71a0
 	google.golang.org/genproto v0.0.0-20190108161440-ae2f86662275 // indirect
 	google.golang.org/grpc v1.17.0
