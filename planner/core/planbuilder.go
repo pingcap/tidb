@@ -723,8 +723,13 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl ta
 	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
 		publicPaths = append(publicPaths, &util.AccessPath{IsTablePath: true, StoreType: kv.TiFlash})
 	}
+	optimizerUseInvisibleIndexes := b.ctx.GetSessionVars().StmtCtx.OptimizerUseInvisibleIndexes
 	for _, index := range tblInfo.Indices {
 		if index.State == model.StatePublic {
+			// Filter out invisible index, because they are not visible for optimizer
+			if !optimizerUseInvisibleIndexes && index.Invisible {
+				continue
+			}
 			publicPaths = append(publicPaths, &util.AccessPath{Index: index})
 		}
 	}
