@@ -525,6 +525,8 @@ const (
 	DefTiDBSlowLogMasking              = false
 	DefTiDBShardAllocateStep           = math.MaxInt64
 	DefTiDBEnableTelemetry             = true
+	DefMaxLoginAttempts                = 10
+	DefLoginBlockInterval              = 3600
 )
 
 // Process global variables.

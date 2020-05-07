@@ -199,6 +199,12 @@ type roleGraphEdgesTable struct {
 	roleList map[string]*auth.RoleIdentity
 }
 
+type blackListItem struct {
+	baseRecord
+
+	startTime time.Time
+}
+
 // Find method is used to find role from table
 func (g roleGraphEdgesTable) Find(user, host string) bool {
 	if host == "" {
@@ -236,6 +242,8 @@ type MySQLPrivilege struct {
 	ColumnsPriv   []columnsPrivRecord
 	DefaultRoles  []defaultRoleRecord
 	RoleGraph     map[string]roleGraphEdgesTable
+	PwdErrorCnt   map[string]int
+	BlackList     map[string][]blackListItem
 }
 
 // FindAllRole is used to find all roles grant to this user.
@@ -263,6 +271,66 @@ func (p *MySQLPrivilege) FindAllRole(activeRoles []*auth.RoleIdentity) []*auth.R
 	return ret
 }
 
+func (p *MySQLPrivilege) IncLoginFail(user, host string) int {
+	key := user + "@" + host
+	cnt, exist := p.PwdErrorCnt[key]
+	if exist {
+		p.PwdErrorCnt[key] = cnt + 1
+		return cnt + 1
+	}
+	p.PwdErrorCnt[key] = 1
+	return 1
+}
+
+func (p *MySQLPrivilege) ClearLoginFail(user, host string) {
+	key := user + "@" + host
+	if p.PwdErrorCnt == nil {
+		p.PwdErrorCnt = make(map[string]int)
+	}
+	p.PwdErrorCnt[key] = 0
+}
+
+func (p *MySQLPrivilege) LockAccount(user, host string, sctx sessionctx.Context) error {
+	lock := types.CurrentTime(0)
+	ctx := context.Background()
+	sql := fmt.Sprintf("insert into mysql.login_blacklist(USER, HOST, lock_time) values('%s', '%s', '%s') on duplicate key update lock_time = '%s'", user, host, lock.String(), lock.String())
+	_, err := sctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
+	return err
+}
+
+func (p *MySQLPrivilege) CheckAccountLock(user, host string, sctx sessionctx.Context, limit time.Duration) bool {
+	recs, exist := p.BlackList[user]
+	if exist {
+		for _, r := range recs {
+			if r.Host == host {
+				t := r.startTime
+				if time.Now().Sub(t) > limit*time.Second {
+					ctx := context.Background()
+					sql := fmt.Sprintf("delete from mysql.login_blacklist where user = '%s' and host = '%s'", user, host)
+					_, err := sctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
+					if err != nil {
+						// ignore
+					}
+					return false
+				} else {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func (p *MySQLPrivilege) LoadBlackList(ctx sessionctx.Context) error {
+	p.BlackList = make(map[string][]blackListItem)
+	err := p.loadTable(ctx, "select HOST, USER, lock_time from mysql.login_blacklist;", p.decodeBlackListRow)
+	if err != nil {
+		logutil.BgLogger().Warn("load mysql.user fail", zap.Error(err))
+		return errLoadPrivilege.FastGen("mysql.login_blacklist")
+	}
+	return nil
+}
+
 // FindRole is used to detect whether there is edges between users and roles.
 func (p *MySQLPrivilege) FindRole(user string, host string, role *auth.RoleIdentity) bool {
 	rec := p.matchUser(user, host)
@@ -276,6 +344,9 @@ func (p *MySQLPrivilege) FindRole(user string, host string, role *auth.RoleIdent
 
 // LoadAll loads the tables from database to memory.
 func (p *MySQLPrivilege) LoadAll(ctx sessionctx.Context) error {
+	if p.PwdErrorCnt == nil {
+		p.PwdErrorCnt = make(map[string]int)
+	}
 	err := p.LoadUserTable(ctx)
 	if err != nil {
 		logutil.BgLogger().Warn("load mysql.user fail", zap.Error(err))
@@ -330,6 +401,11 @@ func (p *MySQLPrivilege) LoadAll(ctx sessionctx.Context) error {
 			return errLoadPrivilege.FastGen("mysql.role_edges")
 		}
 		logutil.BgLogger().Warn("mysql.role_edges missing")
+	}
+
+	err = p.LoadBlackList(ctx)
+	if err != nil {
+		return errLoadPrivilege.FastGen("mysql.login_blacklist")
 	}
 	return nil
 }
@@ -589,6 +665,30 @@ func (record *baseRecord) assignUserOrHost(row chunk.Row, i int, f *ast.ResultFi
 		record.patChars, record.patTypes = stringutil.CompilePattern(record.Host, '\\')
 		record.hostIPNet = parseHostIPNet(record.Host)
 	}
+}
+
+func (p *MySQLPrivilege) decodeBlackListRow(row chunk.Row, fs []*ast.ResultField) error {
+	var value blackListItem
+	for i, f := range fs {
+		switch {
+		case f.ColumnAsName.L == "host":
+			value.Host = row.GetString(i)
+		case f.ColumnAsName.L == "user":
+			value.User = row.GetString(i)
+		case f.ColumnAsName.L == "lock_time":
+			ti := row.GetTime(i)
+			var err error
+			value.startTime, err = ti.GoTime(time.Local)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	if p.BlackList == nil {
+		p.BlackList = make(map[string][]blackListItem)
+	}
+	p.BlackList[value.User] = append(p.BlackList[value.User], value)
+	return nil
 }
 
 func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*ast.ResultField) error {

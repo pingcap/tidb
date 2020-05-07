@@ -728,6 +728,9 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, TiDBSlowLogMasking, BoolToIntStr(DefTiDBSlowLogMasking)},
 	{ScopeGlobal | ScopeSession, TiDBShardAllocateStep, strconv.Itoa(DefTiDBShardAllocateStep)},
 	{ScopeGlobal, TiDBEnableTelemetry, BoolToIntStr(DefTiDBEnableTelemetry)},
+	// Used to block DoS.
+	{ScopeGlobal, MaxLoginAttempts, strconv.Itoa(DefMaxLoginAttempts)},
+	{ScopeGlobal, LoginBlockInterval, strconv.Itoa(DefLoginBlockInterval)},
 }
 
 // SynonymsSysVariables is synonyms of system variables.
@@ -995,6 +998,10 @@ const (
 	ThreadPoolSize = "thread_pool_size"
 	// WindowingUseHighPrecision is the name of 'windowing_use_high_precision' system variable.
 	WindowingUseHighPrecision = "windowing_use_high_precision"
+	// MaxLoginAttempts is the name for 'max_login_attempts' system variable.
+	MaxLoginAttempts = "max_login_attempts"
+	// LoginBlockInterval is the name for 'login_block_interval' system variable.
+	LoginBlockInterval = "login_block_interval"
 )
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.

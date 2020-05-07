@@ -285,6 +285,13 @@ const (
 	CreateOptRuleBlacklist = `CREATE TABLE IF NOT EXISTS mysql.opt_rule_blacklist (
 		name char(100) NOT NULL
 	);`
+
+	CreateLoginBlackList = `CREATE TABLE IF NOT EXISTS mysql.login_blacklist (
+		HOST char(60) COLLATE utf8_bin NOT NULL DEFAULT '',
+		USER char(32) COLLATE utf8_bin NOT NULL DEFAULT '',
+		lock_time timestamp default null,
+		primary key(USER, HOST)
+	)`
 )
 
 // bootstrap initiates system DB for a store.
@@ -391,6 +398,8 @@ const (
 	version47 = 47
 	// version48 reset all deprecated concurrency related system-variables if they were all default value.
 	version48 = 48
+	// version49 add login fail limit.
+	version49 = 49
 )
 
 var (
@@ -442,6 +451,7 @@ var (
 		upgradeToVer46,
 		upgradeToVer47,
 		upgradeToVer48,
+		upgradeToVer49,
 	}
 )
 
@@ -1121,6 +1131,19 @@ func upgradeToVer48(s Session, ver int64) {
 	mustExecute(s, "COMMIT")
 }
 
+func upgradeToVer49(s Session, ver int64) {
+	if ver >= version49 {
+		return
+	}
+	mustExecute(s, CreateLoginBlackList)
+	sql := fmt.Sprintf("INSERT IGNORE INTO  %s.%s (`VARIABLE_NAME`, `VARIABLE_VALUE`) VALUES ('%s', '%d')",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.MaxLoginAttempts, 10)
+	mustExecute(s, sql)
+	sql = fmt.Sprintf("INSERT IGNORE INTO  %s.%s (`VARIABLE_NAME`, `VARIABLE_VALUE`) VALUES ('%s', '%d')",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.LoginBlockInterval, 3600)
+	mustExecute(s, sql)
+}
+
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
@@ -1184,6 +1207,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateExprPushdownBlacklist)
 	// Create opt_rule_blacklist table.
 	mustExecute(s, CreateOptRuleBlacklist)
+	// Create login_blacklist table.
+	mustExecute(s, CreateLoginBlackList)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.

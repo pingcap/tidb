@@ -17,7 +17,9 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
@@ -25,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/infoschema/perfschema"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
@@ -146,6 +149,81 @@ func (p *UserPrivileges) GetAuthWithoutVerification(user, host string) (u string
 	return
 }
 
+// CheckAccountLock return if the account has been locked.
+func (p *UserPrivileges) CheckAccountLocked(ctx sessionctx.Context, user, host string) bool {
+	if SkipWithGrant {
+		return false
+	}
+
+	mysqlPriv := p.Handle.Get()
+	record := mysqlPriv.connectionVerification(user, host)
+	if record == nil {
+		logutil.BgLogger().Error("get user privilege record fail",
+			zap.String("user", user), zap.String("host", host))
+		return true
+	}
+
+	u := record.User
+	h := record.Host
+
+	sessionVars := ctx.GetSessionVars()
+	lockTimeVar, err := variable.GetSessionSystemVar(sessionVars, variable.LoginBlockInterval)
+	if err != nil {
+		logutil.BgLogger().Error("Get locktime fail.", zap.Error(err))
+		return true
+	}
+	lockTime, err := strconv.ParseInt(lockTimeVar, 10, 0)
+	if err != nil {
+		logutil.BgLogger().Error("Parse password limit fail.", zap.Error(err))
+		return true
+	}
+	if mysqlPriv.CheckAccountLock(u, h, ctx, time.Duration(lockTime)) {
+		return true
+	}
+
+	return false
+}
+
+func (p *UserPrivileges) IncFailTimer(ctx sessionctx.Context, user, host string) {
+	if SkipWithGrant {
+		return
+	}
+
+	mysqlPriv := p.Handle.Get()
+	record := mysqlPriv.connectionVerification(user, host)
+	if record == nil {
+		logutil.BgLogger().Error("get user privilege record fail",
+			zap.String("user", user), zap.String("host", host))
+		return
+	}
+
+	u := record.User
+	h := record.Host
+
+	sessionVars := ctx.GetSessionVars()
+	cnt := mysqlPriv.IncLoginFail(u, h)
+	limitVar, err := variable.GetSessionSystemVar(sessionVars, variable.MaxLoginAttempts)
+	if err != nil {
+		logutil.BgLogger().Error("Get password limit fail.", zap.Error(err))
+		return
+	}
+	limit, err := strconv.ParseInt(limitVar, 10, 0)
+	if err != nil {
+		logutil.BgLogger().Error("Parse password limit fail.", zap.Error(err))
+		return
+	}
+	if cnt > int(limit) {
+		err := mysqlPriv.LockAccount(u, h, ctx)
+		if err != nil {
+			logutil.BgLogger().Error("error occuer while locking account", zap.Error(err))
+		}
+		err = p.Update(ctx)
+		if err != nil {
+			logutil.BgLogger().Error("error occuer while updating account lock info", zap.Error(err))
+		}
+	}
+}
+
 // ConnectionVerification implements the Manager interface.
 func (p *UserPrivileges) ConnectionVerification(user, host string, authentication, salt []byte, tlsState *tls.ConnectionState) (u string, h string, success bool) {
 	if SkipWithGrant {
@@ -215,6 +293,7 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 
 	p.user = user
 	p.host = h
+	mysqlPriv.ClearLoginFail(u, h)
 	success = true
 	return
 }
