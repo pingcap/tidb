@@ -527,17 +527,16 @@ func checkColumnsNotFound(t table.Table, colNames []string) bool {
 	return notFound
 }
 
-func checkIdxVisibility(changedTable table.Table, idxName string, expected bool) (flag bool) {
+func checkIdxVisibility(changedTable table.Table, idxName string, expected bool) bool {
 	for _, idxInfo := range changedTable.Meta().Indices {
 		if idxInfo.Name.O == idxName && idxInfo.Invisible == expected {
-			flag = true
-			break
+			return true
 		}
 	}
-	return
+	return false
 }
 
-func (s *testDDLSuite) TestCancelJob1(c *C) {
+func (s *testDDLSuite) TestCancelJob(c *C) {
 	store := testCreateStore(c, "test_cancel_job")
 	defer store.Close()
 	d := newDDL(
