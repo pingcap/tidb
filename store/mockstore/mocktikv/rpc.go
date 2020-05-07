@@ -252,7 +252,7 @@ func (h *rpcHandler) checkRequest(ctx *kvrpcpb.Context, size int) *errorpb.Error
 }
 
 func (h *rpcHandler) checkKeyInRegion(key []byte) bool {
-	return regionContains(h.startKey, h.endKey, []byte(NewMvccKey(key)))
+	return regionContains(h.startKey, h.endKey, NewMvccKey(key))
 }
 
 func (h *rpcHandler) handleKvGet(req *kvrpcpb.GetRequest) *kvrpcpb.GetResponse {

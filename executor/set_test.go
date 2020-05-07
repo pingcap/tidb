@@ -14,15 +14,24 @@
 package executor_test
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"io/ioutil"
+	"net/http"
 	"strconv"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -927,54 +936,81 @@ func (s *testSuite5) TestEnableNoopFunctionsVar(c *C) {
 	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("0"))
 }
 
-type testSuite10 struct {
-	*baseTestSuite
+func (s *testSuite5) TestSetClusterConfig(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	serversInfo := []infoschema.ServerInfo{
+		{ServerType: "tidb", Address: "127.0.0.1:1111", StatusAddr: "127.0.0.1:1111"},
+		{ServerType: "tidb", Address: "127.0.0.1:2222", StatusAddr: "127.0.0.1:2222"},
+		{ServerType: "pd", Address: "127.0.0.1:3333", StatusAddr: "127.0.0.1:3333"},
+		{ServerType: "pd", Address: "127.0.0.1:4444", StatusAddr: "127.0.0.1:4444"},
+		{ServerType: "tikv", Address: "127.0.0.1:5555", StatusAddr: "127.0.0.1:5555"},
+		{ServerType: "tikv", Address: "127.0.0.1:6666", StatusAddr: "127.0.0.1:6666"},
+	}
+	var serverInfoErr error
+	serverInfoFunc := func(sessionctx.Context) ([]infoschema.ServerInfo, error) {
+		return serversInfo, serverInfoErr
+	}
+	tk.Se.SetValue(executor.TestSetConfigServerInfoKey, serverInfoFunc)
+
+	c.Assert(tk.ExecToErr("set config xxx log.level='info'"), ErrorMatches, "unknown type xxx")
+	c.Assert(tk.ExecToErr("set config tidb log.level='info'"), ErrorMatches, "TiDB doesn't support to change configs online, please use SQL variables")
+	c.Assert(tk.ExecToErr("set config '127.a.b.c:1234' log.level='info'"), ErrorMatches, "invalid instance 127.a.b.c:1234")
+	c.Assert(tk.ExecToErr("set config tikv log.level=null"), ErrorMatches, "can't set config to null")
+
+	httpCnt := 0
+	tk.Se.SetValue(executor.TestSetConfigHTTPHandlerKey, func(*http.Request) (*http.Response, error) {
+		httpCnt++
+		return &http.Response{StatusCode: http.StatusOK, Body: ioutil.NopCloser(nil)}, nil
+	})
+	tk.MustExec("set config tikv log.level='info'")
+	c.Assert(httpCnt, Equals, 2)
+
+	httpCnt = 0
+	tk.MustExec("set config '127.0.0.1:5555' log.level='info'")
+	c.Assert(httpCnt, Equals, 1)
+
+	httpCnt = 0
+	tk.Se.SetValue(executor.TestSetConfigHTTPHandlerKey, func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("something wrong")
+	})
+	tk.MustExec("set config tikv log.level='info'")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 something wrong", "Warning 1105 something wrong"))
+
+	tk.Se.SetValue(executor.TestSetConfigHTTPHandlerKey, func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusBadRequest, Body: ioutil.NopCloser(bytes.NewBufferString("WRONG"))}, nil
+	})
+	tk.MustExec("set config tikv log.level='info'")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 bad request to http://127.0.0.1:5555/config: WRONG", "Warning 1105 bad request to http://127.0.0.1:6666/config: WRONG"))
 }
 
-func (s *testSuite10) TestSetConflictConfigItems(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	c.Assert(config.GetGlobalConfig().EnableDynamicConfig, IsFalse)
-	tk.MustExec("set tidb_slow_log_threshold=123")
-	tk.MustQuery("select @@tidb_slow_log_threshold").Check(testkit.Rows("123"))
-	tk.MustExec("set tidb_query_log_max_len=123")
-	tk.MustQuery("select @@tidb_query_log_max_len").Check(testkit.Rows("123"))
-	tk.MustExec("set tidb_record_plan_in_slow_log=1")
-	tk.MustQuery("select @@tidb_record_plan_in_slow_log").Check(testkit.Rows("1"))
-	tk.MustExec("set tidb_check_mb4_value_in_utf8=1")
-	tk.MustQuery("select @@tidb_check_mb4_value_in_utf8").Check(testkit.Rows("1"))
-	tk.MustExec("set tidb_enable_slow_log=1")
-	tk.MustQuery("select @@tidb_enable_slow_log").Check(testkit.Rows("1"))
+func (s *testSuite5) TestSetClusterConfigJSONData(c *C) {
+	var d types.MyDecimal
+	c.Assert(d.FromFloat64(123.456), IsNil)
+	cases := []struct {
+		val    expression.Expression
+		result string
+		succ   bool
+	}{
+		{&expression.Constant{Value: types.NewIntDatum(2333), RetType: types.NewFieldType(mysql.TypeLong)}, `{"k":2333}`, true},
+		{&expression.Constant{Value: types.NewFloat64Datum(23.33), RetType: types.NewFieldType(mysql.TypeDouble)}, `{"k":23.33}`, true},
+		{&expression.Constant{Value: types.NewStringDatum("abcd"), RetType: types.NewFieldType(mysql.TypeString)}, `{"k":"abcd"}`, true},
+		{&expression.Constant{Value: types.NewDecimalDatum(&d), RetType: types.NewFieldType(mysql.TypeNewDecimal)}, `{"k":123.456}`, true},
+		{&expression.Constant{Value: types.NewDatum(nil), RetType: types.NewFieldType(mysql.TypeLonglong)}, "", false},
+		{&expression.Constant{RetType: types.NewFieldType(mysql.TypeJSON)}, "", false}, // unsupported type
+		{nil, "", false},
+	}
 
-	config.GetGlobalConfig().EnableDynamicConfig = true
-	tk.MustExec("set tidb_slow_log_threshold=222")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 cannot update tidb_slow_log_threshold when enabling dynamic configs"))
-	tk.MustQuery("select @@tidb_slow_log_threshold").Check(testkit.Rows("123"))
-
-	tk.MustExec("set tidb_query_log_max_len=222")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 cannot update tidb_query_log_max_len when enabling dynamic configs"))
-	tk.MustQuery("select @@tidb_query_log_max_len").Check(testkit.Rows("123"))
-
-	tk.MustExec("set tidb_record_plan_in_slow_log=0")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 cannot update tidb_record_plan_in_slow_log when enabling dynamic configs"))
-	tk.MustQuery("select @@tidb_record_plan_in_slow_log").Check(testkit.Rows("1"))
-
-	tk.MustExec("set tidb_check_mb4_value_in_utf8=0")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 cannot update tidb_check_mb4_value_in_utf8 when enabling dynamic configs"))
-	tk.MustQuery("select @@tidb_check_mb4_value_in_utf8").Check(testkit.Rows("1"))
-
-	tk.MustExec("set tidb_enable_slow_log=0")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 cannot update tidb_enable_slow_log when enabling dynamic configs"))
-	tk.MustQuery("select @@tidb_enable_slow_log").Check(testkit.Rows("1"))
-
-	config.GetGlobalConfig().EnableDynamicConfig = false
-	tk.MustExec("set tidb_slow_log_threshold=222")
-	tk.MustQuery("select @@tidb_slow_log_threshold").Check(testkit.Rows("222"))
-	tk.MustExec("set tidb_query_log_max_len=222")
-	tk.MustQuery("select @@tidb_query_log_max_len").Check(testkit.Rows("222"))
-	tk.MustExec("set tidb_record_plan_in_slow_log=0")
-	tk.MustQuery("select @@tidb_record_plan_in_slow_log").Check(testkit.Rows("0"))
-	tk.MustExec("set tidb_check_mb4_value_in_utf8=0")
-	tk.MustQuery("select @@tidb_check_mb4_value_in_utf8").Check(testkit.Rows("0"))
-	tk.MustExec("set tidb_enable_slow_log=0")
-	tk.MustQuery("select @@tidb_enable_slow_log").Check(testkit.Rows("0"))
+	ctx := mock.NewContext()
+	for _, t := range cases {
+		result, err := executor.ConvertConfigItem2JSON(ctx, "k", t.val)
+		if t.succ {
+			c.Assert(t.result, Equals, result)
+		} else {
+			c.Assert(err, NotNil)
+		}
+	}
 }

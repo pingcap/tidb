@@ -858,6 +858,7 @@ func (s *testPlanSuite) TestPushdownDistinctEnable(c *C) {
 	s.testData.GetTestCases(c, &input, &output)
 	vars := []string{
 		fmt.Sprintf("set @@session.%s = 1", variable.TiDBOptDistinctAggPushDown),
+		"set session tidb_opt_agg_push_down = 1",
 	}
 	s.doTestPushdownDistinct(c, vars, input, output)
 }
@@ -875,6 +876,24 @@ func (s *testPlanSuite) TestPushdownDistinctDisable(c *C) {
 	s.testData.GetTestCases(c, &input, &output)
 	vars := []string{
 		fmt.Sprintf("set @@session.%s = 0", variable.TiDBOptDistinctAggPushDown),
+		"set session tidb_opt_agg_push_down = 1",
+	}
+	s.doTestPushdownDistinct(c, vars, input, output)
+}
+
+func (s *testPlanSuite) TestPushdownDistinctEnableAggPushDownDisable(c *C) {
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Plan   []string
+			Result []string
+		}
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	vars := []string{
+		fmt.Sprintf("set @@session.%s = 1", variable.TiDBOptDistinctAggPushDown),
+		"set session tidb_opt_agg_push_down = 0",
 	}
 	s.doTestPushdownDistinct(c, vars, input, output)
 }
@@ -892,9 +911,24 @@ func (s *testPlanSuite) doTestPushdownDistinct(c *C, vars, input []string, outpu
 	}()
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
+
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int, index(c))")
 	tk.MustExec("insert into t values (1, 1, 1), (1, 1, 3), (1, 2, 3), (2, 1, 3), (1, 2, NULL);")
+
+	tk.MustExec("drop table if exists pt")
+	tk.MustExec(`CREATE TABLE pt (a int, b int) PARTITION BY RANGE (a) (
+		PARTITION p0 VALUES LESS THAN (2),
+		PARTITION p1 VALUES LESS THAN (100)
+	);`)
+
+	tk.MustExec("drop table if exists ta")
+	tk.MustExec("create table ta(a int);")
+	tk.MustExec("insert into ta values(1), (1);")
+	tk.MustExec("drop table if exists tb")
+	tk.MustExec("create table tb(a int);")
+	tk.MustExec("insert into tb values(1), (1);")
+
 	tk.MustExec("set session sql_mode=''")
 	tk.MustExec(fmt.Sprintf("set session %s=1", variable.TiDBHashAggPartialConcurrency))
 	tk.MustExec(fmt.Sprintf("set session %s=1", variable.TiDBHashAggFinalConcurrency))
@@ -911,6 +945,51 @@ func (s *testPlanSuite) doTestPushdownDistinct(c *C, vars, input []string, outpu
 		})
 		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(ts).Sort().Check(testkit.Rows(output[i].Result...))
+	}
+}
+
+func (s *testPlanSuite) TestGroupConcatOrderby(c *C) {
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Plan   []string
+			Result []string
+		}
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test;")
+	tk.MustExec("create table test(id int, name int)")
+	tk.MustExec("insert into test values(1, 10);")
+	tk.MustExec("insert into test values(1, 20);")
+	tk.MustExec("insert into test values(1, 30);")
+	tk.MustExec("insert into test values(2, 20);")
+	tk.MustExec("insert into test values(3, 200);")
+	tk.MustExec("insert into test values(3, 500);")
+
+	tk.MustExec("drop table if exists ptest;")
+	tk.MustExec("CREATE TABLE ptest (id int,name int) PARTITION BY RANGE ( id ) " +
+		"(PARTITION `p0` VALUES LESS THAN (2), PARTITION `p1` VALUES LESS THAN (11))")
+	tk.MustExec("insert into ptest select * from test;")
+	tk.MustExec(fmt.Sprintf("set session tidb_opt_distinct_agg_push_down = %v", 1))
+	tk.MustExec(fmt.Sprintf("set session tidb_opt_agg_push_down = %v", 1))
+
+	for i, ts := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
+			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
+		})
+		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(ts).Check(testkit.Rows(output[i].Result...))
 	}
 }
 
