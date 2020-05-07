@@ -100,6 +100,10 @@ func (s *testCodecSuite) TestCodecKey(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(args, DeepEquals, t.Expect)
 	}
+	var raw types.Datum
+	raw.SetRaw([]byte("raw"))
+	_, err := EncodeKey(sc, nil, raw)
+	c.Assert(err, NotNil)
 }
 
 func estimateValuesSize(sc *stmtctx.StatementContext, vals []types.Datum) (int, error) {
@@ -963,6 +967,16 @@ func datumsForTest(sc *stmtctx.StatementContext) ([]types.Datum, []*types.FieldT
 	}{
 		{nil, types.NewFieldType(mysql.TypeNull)},
 		{nil, types.NewFieldType(mysql.TypeLonglong)},
+		{nil, types.NewFieldType(mysql.TypeFloat)},
+		{nil, types.NewFieldType(mysql.TypeDate)},
+		{nil, types.NewFieldType(mysql.TypeDuration)},
+		{nil, types.NewFieldType(mysql.TypeNewDecimal)},
+		{nil, types.NewFieldType(mysql.TypeEnum)},
+		{nil, types.NewFieldType(mysql.TypeSet)},
+		{nil, types.NewFieldType(mysql.TypeBit)},
+		{nil, types.NewFieldType(mysql.TypeJSON)},
+		{nil, types.NewFieldType(mysql.TypeVarchar)},
+		{nil, types.NewFieldType(mysql.TypeDouble)},
 		{int64(1), types.NewFieldType(mysql.TypeTiny)},
 		{int64(1), types.NewFieldType(mysql.TypeShort)},
 		{int64(1), types.NewFieldType(mysql.TypeInt24)},
@@ -995,7 +1009,8 @@ func datumsForTest(sc *stmtctx.StatementContext) ([]types.Datum, []*types.FieldT
 	tps := make([]*types.FieldType, 0, len(table)+2)
 	for _, t := range table {
 		tps = append(tps, t.tp)
-		datums = append(datums, types.NewDatum(t.value))
+		d := types.NewDatum(t.value)
+		datums = append(datums, d)
 	}
 	return datums, tps
 }
@@ -1178,17 +1193,19 @@ func (s *testCodecSuite) TestHashChunkColumns(c *C) {
 	vecHash := []hash.Hash64{fnv.New64(), fnv.New64(), fnv.New64()}
 	rowHash := []hash.Hash64{fnv.New64(), fnv.New64(), fnv.New64()}
 
-	// Test hash value of the first two `Null` columns
-	for i := 0; i < 2; i++ {
+	// Test hash value of the first 12 `Null` columns
+	for i := 0; i < 12; i++ {
 		c.Assert(chk.GetRow(0).IsNull(i), Equals, true)
 		err1 := HashChunkColumns(sc, vecHash, chk, tps[i], i, buf, hasNull)
-		err2 := HashChunkRow(sc, rowHash[0], chk.GetRow(0), tps, colIdx[i:i+1], buf)
-		err3 := HashChunkRow(sc, rowHash[1], chk.GetRow(1), tps, colIdx[i:i+1], buf)
-		err4 := HashChunkRow(sc, rowHash[2], chk.GetRow(2), tps, colIdx[i:i+1], buf)
+		err2 := HashChunkSelected(sc, vecHash, chk, tps[i], i, buf, hasNull, make([]bool, len(datums)))
+		err3 := HashChunkRow(sc, rowHash[0], chk.GetRow(0), tps, colIdx[i:i+1], buf)
+		err4 := HashChunkRow(sc, rowHash[1], chk.GetRow(1), tps, colIdx[i:i+1], buf)
+		err5 := HashChunkRow(sc, rowHash[2], chk.GetRow(2), tps, colIdx[i:i+1], buf)
 		c.Assert(err1, IsNil)
 		c.Assert(err2, IsNil)
 		c.Assert(err3, IsNil)
 		c.Assert(err4, IsNil)
+		c.Assert(err5, IsNil)
 
 		c.Assert(hasNull[0], Equals, true)
 		c.Assert(hasNull[1], Equals, true)
@@ -1200,7 +1217,7 @@ func (s *testCodecSuite) TestHashChunkColumns(c *C) {
 	}
 
 	// Test hash value of every single column that is not `Null`
-	for i := 2; i < len(tps); i++ {
+	for i := 13; i < len(tps); i++ {
 		hasNull = []bool{false, false, false}
 		vecHash = []hash.Hash64{fnv.New64(), fnv.New64(), fnv.New64()}
 		rowHash = []hash.Hash64{fnv.New64(), fnv.New64(), fnv.New64()}
