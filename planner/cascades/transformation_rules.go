@@ -2323,7 +2323,7 @@ type PushProjDownUnionAll struct {
 }
 
 // NewRulePushProjDownUnionAll creates a new Transformation PushProjDownUnionAll.
-// The pattern of this rule is: `Proj -> UnionAll)`.
+// The pattern of this rule is: `Projection -> UnionAll`.
 func NewRulePushProjDownUnionAll() Transformation {
 	rule := &PushProjDownUnionAll{}
 	rule.pattern = memo.BuildPattern(
