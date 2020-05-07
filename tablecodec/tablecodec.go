@@ -619,8 +619,9 @@ const (
 	HandleNotNeeded
 )
 
-// reEncodeHandle first decode the value into a int or uint decided by the unsigned, then encode it so that it can
-// be properly decoded.
+// reEncodeHandle encodes the handle as a Datum so it can be properly decoded later.
+// If it is common handle, it is encoded as Bytes Datum.
+// If it is int handle, it is encoded as int Datum or uint Datum decided by the unsigned.
 func reEncodeHandle(handle kv.Handle, unsigned bool) ([]byte, error) {
 	if !handle.IsInt() {
 		return codec.EncodeValue(nil, nil, types.NewBytesDatum(handle.Encoded()))
