@@ -268,7 +268,7 @@ func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.
 //		|
 //		|   	 The length >= 11 always since size(RestoreData) > 0.
 //		|
-//		+--Without Restore Data(same with old layout)
+//		+--Without Restore Data
 //		|
 //		+--Non Unique
 //		|  |
@@ -345,7 +345,8 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 		if err != nil {
 			return nil, err
 		}
-		idxValCap := 1 + 3 + h.Len() + len(rowRestoredValue)
+		// tailLen(1) + commonHandleFlag(1) + handleLen(2) + handle + restoredValue
+		idxValCap := 1 + 1 + 2 + h.Len() + len(rowRestoredValue)
 		idxVal = make([]byte, 1, idxValCap)
 		if !h.IsInt() && distinct {
 			idxVal = encodeCommonHandle(idxVal, h)
