@@ -231,8 +231,8 @@ const (
 
 	// CreateBindInfoTable stores the sql bind info which is used to update globalBindCache.
 	CreateBindInfoTable = `CREATE TABLE IF NOT EXISTS mysql.bind_info (
-		original_sql 	TEXT NOT NULL  ,
-      	bind_sql 		TEXT NOT NULL ,
+		original_sql 	TEXT NOT NULL,
+      	bind_sql 		TEXT NOT NULL,
       	default_db 		TEXT NOT NULL,
 		status 			TEXT NOT NULL,
 		create_time 	TIMESTAMP(3) NOT NULL,
