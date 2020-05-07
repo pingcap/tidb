@@ -315,7 +315,7 @@ func (s *testIndexSuite) TestSingleColumnCommonHandle(c *C) {
 
 		unTouchedVal := append([]byte{1}, val[1:]...)
 		unTouchedVal = append(unTouchedVal, kv.UnCommitIndexKVFlag)
-		colVals, err = tablecodec.DecodeIndexKV(key, unTouchedVal, 1, tablecodec.HandleDefault,
+		_, err = tablecodec.DecodeIndexKV(key, unTouchedVal, 1, tablecodec.HandleDefault,
 			createRowcodecColInfo(tblInfo, idx.Meta()))
 		c.Assert(err, IsNil)
 	}
