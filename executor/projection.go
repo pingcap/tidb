@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/execdetails"
 	"sync"
 	"sync/atomic"
 
@@ -307,11 +308,10 @@ func (e *ProjectionExec) Close() error {
 		}
 	}
 	if e.runtimeStats != nil {
-		e.runtimeStats.ClearConcurrencyInfo()
 		if e.isUnparallelExec() {
-			e.runtimeStats.SetConcurrencyInfo("Concurrency", 0)
+			e.runtimeStats.SetConcurrencyInfo([]*execdetails.ConcurrencyInfo{execdetails.NewConcurrencyInfo("Concurrency", 0)})
 		} else {
-			e.runtimeStats.SetConcurrencyInfo("Concurrency", int(e.numWorkers))
+			e.runtimeStats.SetConcurrencyInfo([]*execdetails.ConcurrencyInfo{execdetails.NewConcurrencyInfo("Concurrency", int(e.numWorkers))})
 		}
 	}
 	return e.baseExecutor.Close()

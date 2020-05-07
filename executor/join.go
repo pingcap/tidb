@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/execdetails"
 	"sync"
 	"sync/atomic"
 
@@ -138,8 +139,7 @@ func (e *HashJoinExec) Close() error {
 
 	if e.runtimeStats != nil {
 		concurrency := cap(e.joiners)
-		e.runtimeStats.ClearConcurrencyInfo()
-		e.runtimeStats.SetConcurrencyInfo("Concurrency", concurrency)
+		e.runtimeStats.SetConcurrencyInfo([]*execdetails.ConcurrencyInfo{execdetails.NewConcurrencyInfo("Concurrency", concurrency)})
 		if e.rowContainer != nil {
 			e.runtimeStats.SetAdditionalInfo(e.rowContainer.stat.String())
 		}

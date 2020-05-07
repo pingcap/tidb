@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"github.com/pingcap/tidb/util/execdetails"
 	"hash"
 	"hash/fnv"
 	"sync"
@@ -295,8 +296,7 @@ func (e *IndexNestedLoopHashJoin) Close() error {
 	}
 	if e.runtimeStats != nil {
 		concurrency := cap(e.joinChkResourceCh)
-		e.runtimeStats.ClearConcurrencyInfo()
-		e.runtimeStats.SetConcurrencyInfo("Concurrency", concurrency)
+		e.runtimeStats.SetConcurrencyInfo([]*execdetails.ConcurrencyInfo{execdetails.NewConcurrencyInfo("Concurrency", concurrency)})
 	}
 	for i := range e.joinChkResourceCh {
 		close(e.joinChkResourceCh[i])

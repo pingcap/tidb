@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/execdetails"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -694,8 +695,7 @@ func (e *IndexLookUpMergeJoin) Close() error {
 	e.memTracker = nil
 	if e.runtimeStats != nil {
 		concurrency := cap(e.resultCh)
-		e.runtimeStats.ClearConcurrencyInfo()
-		e.runtimeStats.SetConcurrencyInfo("Concurrency", concurrency)
+		e.runtimeStats.SetConcurrencyInfo([]*execdetails.ConcurrencyInfo{execdetails.NewConcurrencyInfo("Concurrency", concurrency)})
 	}
 	return e.baseExecutor.Close()
 }

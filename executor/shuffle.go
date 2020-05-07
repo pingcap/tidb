@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"github.com/pingcap/tidb/util/execdetails"
 	"sync"
 
 	"github.com/pingcap/errors"
@@ -144,8 +145,7 @@ func (e *ShuffleExec) Close() error {
 	e.executed = false
 
 	if e.runtimeStats != nil {
-		e.runtimeStats.ClearConcurrencyInfo()
-		e.runtimeStats.SetConcurrencyInfo("ShuffleConcurrency", e.concurrency)
+		e.runtimeStats.SetConcurrencyInfo([]*execdetails.ConcurrencyInfo{execdetails.NewConcurrencyInfo("ShuffleConcurrency", e.concurrency)})
 	}
 
 	err := e.dataSource.Close()

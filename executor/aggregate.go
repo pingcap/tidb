@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/execdetails"
 	"sync"
 
 	"github.com/cznic/mathutil"
@@ -243,9 +244,10 @@ func (e *HashAggExec) Close() error {
 			partialConcurrency = cap(e.partialWorkers)
 			finalConcurrency = cap(e.finalWorkers)
 		}
-		e.runtimeStats.ClearConcurrencyInfo()
-		e.runtimeStats.SetConcurrencyInfo("PartialConcurrency", partialConcurrency)
-		e.runtimeStats.SetConcurrencyInfo("FinalConcurrency", finalConcurrency)
+		var hashAggConcurrencyInfo []*execdetails.ConcurrencyInfo
+		hashAggConcurrencyInfo = append(hashAggConcurrencyInfo, execdetails.NewConcurrencyInfo("PartialConcurrency", partialConcurrency))
+		hashAggConcurrencyInfo = append(hashAggConcurrencyInfo, execdetails.NewConcurrencyInfo("FinalConcurrency", finalConcurrency))
+		e.runtimeStats.SetConcurrencyInfo(hashAggConcurrencyInfo)
 	}
 	return e.baseExecutor.Close()
 }
