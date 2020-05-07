@@ -32,6 +32,10 @@ func (c *conditionChecker) check(condition expression.Expression) bool {
 	case *expression.ScalarFunction:
 		return c.checkScalarFunction(x)
 	case *expression.Column:
+		s, _ := condition.(*expression.Column)
+		if s.RetType.EvalType() == types.ETString {
+			return false
+		}
 		return c.checkColumn(x)
 	case *expression.Constant:
 		return true
@@ -63,7 +67,14 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 				return scalar.FuncName.L != ast.NE || c.length == types.UnspecifiedLength
 			}
 		}
-	case ast.IsNull, ast.IsTruth, ast.IsFalsity:
+	case ast.IsNull:
+		return c.checkColumn(scalar.GetArgs()[0])
+	case ast.IsTruth, ast.IsFalsity:
+		if s, ok := scalar.GetArgs()[0].(*expression.Column); ok {
+			if s.RetType.EvalType() == types.ETString {
+				return false
+			}
+		}
 		return c.checkColumn(scalar.GetArgs()[0])
 	case ast.UnaryNot:
 		// TODO: support "not like" convert to access conditions.
