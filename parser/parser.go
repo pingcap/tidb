@@ -10326,7 +10326,7 @@ yynewstate:
 		{
 			parser.yyVAL.item = &ast.AlterTableSpec{
 				Tp:         ast.AlterTableIndexInvisible,
-				Name:       yyS[yypt-1].ident,
+				IndexName:  model.NewCIStr(yyS[yypt-1].ident),
 				Visibility: yyS[yypt-0].item.(ast.IndexVisibility),
 			}
 		}
