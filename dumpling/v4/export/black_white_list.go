@@ -63,10 +63,12 @@ func NewBWList(conf BWListConf) (BWList, error) {
 func filterDirtySchemaTables(conf *Config) {
 	switch conf.ServerInfo.ServerType {
 	case ServerTypeTiDB:
-		for dbName := range conf.Tables {
-			if filter.IsSystemSchema(dbName) {
-				log.Warn("unsupported dump schema in TiDB now", zap.String("schema", dbName))
-				delete(conf.Tables, dbName)
+		if conf.Sql == "" {
+			for dbName := range conf.Tables {
+				if filter.IsSystemSchema(dbName) {
+					log.Warn("unsupported dump schema in TiDB now", zap.String("schema", dbName))
+					delete(conf.Tables, dbName)
+				}
 			}
 		}
 	}

@@ -87,8 +87,15 @@ func Dump(conf *Config) (err error) {
 	if err != nil {
 		return err
 	}
-	if err = dumpDatabases(context.Background(), conf, pool, writer); err != nil {
-		return err
+
+	if conf.Sql == "" {
+		if err = dumpDatabases(context.Background(), conf, pool, writer); err != nil {
+			return err
+		}
+	} else {
+		if err = dumpSql(context.Background(), conf, pool, writer); err != nil {
+			return err
+		}
 	}
 
 	m.recordFinishTime(time.Now())
@@ -125,6 +132,15 @@ func dumpDatabases(ctx context.Context, conf *Config, db *sql.DB, writer Writer)
 		}
 	}
 	return nil
+}
+
+func dumpSql(ctx context.Context, conf *Config, db *sql.DB, writer Writer) error {
+	tableIR, err := SelectFromSql(conf, db)
+	if err != nil {
+		return err
+	}
+
+	return writer.WriteTableData(ctx, tableIR)
 }
 
 func dumpTable(ctx context.Context, conf *Config, db *sql.DB, dbName string, table *TableInfo, writer Writer) error {
