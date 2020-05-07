@@ -133,6 +133,28 @@ func SelectAllFromTable(conf *Config, db *sql.DB, database, table string) (Table
 	}, nil
 }
 
+func SelectFromSql(conf *Config, db *sql.DB) (TableDataIR, error) {
+	rows, err := db.Query(conf.Sql)
+	if err != nil {
+		return nil, withStack(errors.WithMessage(err, conf.Sql))
+	}
+	colTypes, err := rows.ColumnTypes()
+	if err != nil {
+		return nil, withStack(errors.WithMessage(err, conf.Sql))
+	}
+	return &tableData{
+		database:        "",
+		table:           "",
+		rows:            rows,
+		colTypes:        colTypes,
+		selectedField:   "",
+		escapeBackslash: conf.EscapeBackslash,
+		specCmts: []string{
+			"/*!40101 SET NAMES binary*/;",
+		},
+	}, nil
+}
+
 func buildSelectQuery(database, table string, fields string, where string, orderByClause string) string {
 	var query strings.Builder
 	query.WriteString("SELECT ")
