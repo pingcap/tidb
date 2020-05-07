@@ -480,6 +480,7 @@ func (s *testFastAnalyze) TestFastAnalyzeRetryRowCount(c *C) {
 	cluster := mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(cluster)
 	mvccStore := mocktikv.MustNewMVCCStore()
+	cluster.SetMvccStore(mvccStore)
 	store, err := mockstore.NewMockTikvStore(
 		mockstore.WithHijackClient(hijackClient),
 		mockstore.WithCluster(cluster),
@@ -504,7 +505,7 @@ func (s *testFastAnalyze) TestFastAnalyzeRetryRowCount(c *C) {
 	for i := 0; i < 30; i++ {
 		tk.MustExec(fmt.Sprintf("insert into retry_row_count values (%d)", i))
 	}
-	cluster.SplitTable(mvccStore, tid, 6)
+	cluster.SplitTable(tid, 6)
 	// Flush the region cache first.
 	tk.MustQuery("select * from retry_row_count")
 	tk.MustExec("analyze table retry_row_count")

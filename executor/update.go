@@ -36,7 +36,7 @@ type UpdateExec struct {
 
 	// updatedRowKeys is a map for unique (Table, handle) pair.
 	// The value is true if the row is changed, or false otherwise
-	updatedRowKeys map[int64]map[int64]bool
+	updatedRowKeys map[int64]*kv.HandleMap
 	tblID2table    map[int64]table.Table
 
 	matched uint64 // a counter of matched rows during update
@@ -55,18 +55,18 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 		return err
 	}
 	if e.updatedRowKeys == nil {
-		e.updatedRowKeys = make(map[int64]map[int64]bool)
+		e.updatedRowKeys = make(map[int64]*kv.HandleMap)
 	}
 	for _, content := range e.tblColPosInfos {
 		tbl := e.tblID2table[content.TblID]
 		if e.updatedRowKeys[content.TblID] == nil {
-			e.updatedRowKeys[content.TblID] = make(map[int64]bool)
+			e.updatedRowKeys[content.TblID] = kv.NewHandleMap()
 		}
 		handleDatum := row[content.HandleOrdinal]
 		if e.canNotUpdate(handleDatum) {
 			continue
 		}
-		handle := row[content.HandleOrdinal].GetInt64()
+		handle := kv.IntHandle(row[content.HandleOrdinal].GetInt64())
 		oldData := row[content.Start:content.End]
 		newTableData := newData[content.Start:content.End]
 		updatable := false
@@ -81,10 +81,13 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 			// If there's nothing to update, we can just skip current row
 			continue
 		}
-		changed, ok := e.updatedRowKeys[content.TblID][handle]
+		var changed bool
+		v, ok := e.updatedRowKeys[content.TblID].Get(handle)
 		if !ok {
 			// Row is matched for the first time, increment `matched` counter
 			e.matched++
+		} else {
+			changed = v.(bool)
 		}
 		if changed {
 			// Each matched row is updated once, even if it matches the conditions multiple times.
@@ -92,9 +95,9 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 		}
 
 		// Update row
-		changed, err1 := updateRecord(ctx, e.ctx, kv.IntHandle(handle), oldData, newTableData, flags, tbl, false, e.memTracker)
+		changed, err1 := updateRecord(ctx, e.ctx, handle, oldData, newTableData, flags, tbl, false, e.memTracker)
 		if err1 == nil {
-			e.updatedRowKeys[content.TblID][handle] = changed
+			e.updatedRowKeys[content.TblID].Set(handle, changed)
 			continue
 		}
 
