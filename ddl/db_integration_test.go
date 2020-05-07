@@ -2269,7 +2269,7 @@ func (s *testIntegrationSuite4) TestAlterIndexVisibility(c *C) {
 	tk.MustExec("drop table if exists t, t1, t2, t3;")
 
 	tk.MustExec("create table t(a int NOT NULL, b int, key(a), unique(b) invisible)")
-	queryIndexOnTable := func(tableName string) string{
+	queryIndexOnTable := func(tableName string) string {
 		return fmt.Sprintf("select index_name, is_visible from information_schema.statistics where table_schema = 'alter_index_test' and table_name = '%s' order by index_name", tableName)
 	}
 	query := queryIndexOnTable("t")
@@ -2288,8 +2288,7 @@ func (s *testIntegrationSuite4) TestAlterIndexVisibility(c *C) {
 
 	// Alter implicit primary key to invisible index should throw error
 	tk.MustExec("create table t1(a int NOT NULL, unique(a))")
-	// TODO: error here
-	//tk.MustGetErrMsg("alter table t1 alter index a invisible", "")
+	tk.MustGetErrMsg("alter table t1 alter index a invisible", "[ddl:3522]A primary key index cannot be invisible")
 
 	// Alter explicit primary key to invisible index should throw error
 	tk.MustExec("create table t2(a int, primary key(a))")

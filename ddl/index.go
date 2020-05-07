@@ -310,13 +310,13 @@ func onRenameIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return ver, nil
 }
 
-func validateAlterIndexVisibility(indexName model.CIStr, invisible bool, tbl *model.TableInfo) (bool, error){
+func validateAlterIndexVisibility(indexName model.CIStr, invisible bool, tbl *model.TableInfo) (bool, error) {
 	if idx := tbl.FindIndexByName(indexName.L); idx == nil {
 		return false, errors.Trace(infoschema.ErrKeyNotExists.GenWithStackByArgs(indexName.O, tbl.Name))
 	} else if idx.Invisible == invisible {
 		return true, nil
 	}
-	return false,  nil
+	return false, nil
 }
 
 func onAlterIndexVisibility(t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -326,7 +326,7 @@ func onAlterIndexVisibility(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	}
 	idx := tblInfo.FindIndexByName(from.L)
 	idx.Invisible = invisible
-	if ver, err = updateVersionAndTableInfo(t, job, tblInfo, true); err != nil {
+	if ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, true); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}

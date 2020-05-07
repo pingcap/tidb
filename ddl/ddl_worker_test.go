@@ -527,7 +527,7 @@ func checkColumnsNotFound(t table.Table, colNames []string) bool {
 	return notFound
 }
 
-func checkIdxVisibility(changedTable table.Table, idxName string, expected bool) (flag bool){
+func checkIdxVisibility(changedTable table.Table, idxName string, expected bool) (flag bool) {
 	for _, idxInfo := range changedTable.Meta().Indices {
 		if idxInfo.Name.O == idxName && idxInfo.Invisible == expected {
 			flag = true
