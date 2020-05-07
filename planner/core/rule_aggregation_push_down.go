@@ -33,7 +33,10 @@ type aggregationPushDownSolver struct {
 // It's easy to see that max, min, first row is decomposable, no matter whether it's distinct, but sum(distinct) and
 // count(distinct) is not.
 // Currently we don't support avg and concat.
-func (a *aggregationPushDownSolver) isDecomposable(fun *aggregation.AggFuncDesc) bool {
+func (a *aggregationPushDownSolver) isDecomposableWithJoin(fun *aggregation.AggFuncDesc) bool {
+	if len(fun.OrderByItems) > 0 {
+		return false
+	}
 	switch fun.Name {
 	case ast.AggFuncAvg, ast.AggFuncGroupConcat, ast.AggFuncVarPop, ast.AggFuncJsonObjectAgg:
 		// TODO: Support avg push down.
@@ -42,6 +45,22 @@ func (a *aggregationPushDownSolver) isDecomposable(fun *aggregation.AggFuncDesc)
 		return true
 	case ast.AggFuncSum, ast.AggFuncCount:
 		return !fun.HasDistinct
+	default:
+		return false
+	}
+}
+
+func (a *aggregationPushDownSolver) isDecomposableWithUnion(fun *aggregation.AggFuncDesc) bool {
+	if len(fun.OrderByItems) > 0 {
+		return false
+	}
+	switch fun.Name {
+	case ast.AggFuncGroupConcat, ast.AggFuncVarPop, ast.AggFuncJsonObjectAgg:
+		return false
+	case ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncFirstRow:
+		return true
+	case ast.AggFuncSum, ast.AggFuncCount, ast.AggFuncAvg:
+		return true
 	default:
 		return false
 	}
@@ -74,7 +93,7 @@ func (a *aggregationPushDownSolver) collectAggFuncs(agg *LogicalAggregation, joi
 	valid = true
 	leftChild := join.children[0]
 	for _, aggFunc := range agg.AggFuncs {
-		if !a.isDecomposable(aggFunc) {
+		if !a.isDecomposableWithJoin(aggFunc) {
 			return false, nil, nil
 		}
 		index := a.getAggFuncChildIdx(aggFunc, leftChild.Schema())
@@ -403,6 +422,11 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan) (_ LogicalPlan, e
 				projChild := proj.children[0]
 				agg.SetChildren(projChild)
 			} else if union, ok1 := child.(*LogicalUnionAll); ok1 {
+				for _, aggFunc := range agg.AggFuncs {
+					if !a.isDecomposableWithUnion(aggFunc) {
+						return p, nil
+					}
+				}
 				pushedAgg := a.splitPartialAgg(agg)
 				newChildren := make([]LogicalPlan, 0, len(union.children))
 				for _, child := range union.children {

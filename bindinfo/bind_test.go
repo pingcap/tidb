@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stmtsummary"
@@ -52,10 +53,9 @@ func TestT(t *testing.T) {
 var _ = Suite(&testSuite{})
 
 type testSuite struct {
-	cluster   *mocktikv.Cluster
-	mvccStore mocktikv.MVCCStore
-	store     kv.Storage
-	domain    *domain.Domain
+	cluster cluster.Cluster
+	store   kv.Storage
+	domain  *domain.Domain
 	*parser.Parser
 }
 
@@ -67,12 +67,15 @@ func (s *testSuite) SetUpSuite(c *C) {
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
 	if useMockTikv {
-		s.cluster = mocktikv.NewCluster()
-		mocktikv.BootstrapWithSingleStore(s.cluster)
-		s.mvccStore = mocktikv.MustNewMVCCStore()
+		cluster := mocktikv.NewCluster()
+		mocktikv.BootstrapWithSingleStore(cluster)
+		s.cluster = cluster
+
+		mvccStore := mocktikv.MustNewMVCCStore()
+		cluster.SetMvccStore(mvccStore)
 		store, err := mockstore.NewMockTikvStore(
-			mockstore.WithCluster(s.cluster),
-			mockstore.WithMVCCStore(s.mvccStore),
+			mockstore.WithCluster(cluster),
+			mockstore.WithMVCCStore(mvccStore),
 		)
 		c.Assert(err, IsNil)
 		s.store = store
@@ -431,6 +434,44 @@ func (s *testSuite) TestBindingSymbolList(c *C) {
 	c.Check(bind.Collation, NotNil)
 	c.Check(bind.CreateTime, NotNil)
 	c.Check(bind.UpdateTime, NotNil)
+}
+
+func (s *testSuite) TestBestPlanInBaselines(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, INDEX ia (a), INDEX ib (b));")
+	tk.MustExec("insert into t value(1, 1);")
+
+	// before binding
+	tk.MustQuery("select a, b from t where a = 3 limit 1, 100")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:ia")
+	c.Assert(tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "ia(a)"), IsTrue)
+
+	tk.MustQuery("select a, b from t where b = 3 limit 1, 100")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:ib")
+	c.Assert(tk.MustUseIndex("select a, b from t where b = 3 limit 1, 100", "ib(b)"), IsTrue)
+
+	tk.MustExec(`create global binding for select a, b from t where a = 1 limit 0, 1 using select /*+ use_index(@sel_1 test.t, ia) */ a, b from t where a = 1 limit 0, 1`)
+	tk.MustExec(`create global binding for select a, b from t where b = 1 limit 0, 1 using select /*+ use_index(@sel_1 test.t, ib) */ a, b from t where b = 1 limit 0, 1`)
+
+	sql, hash := parser.NormalizeDigest("select a, b from t where a = 1 limit 0, 1")
+	bindData := s.domain.BindHandle().GetBindRecord(hash, sql, "test")
+	c.Check(bindData, NotNil)
+	c.Check(bindData.OriginalSQL, Equals, "select a , b from t where a = ? limit ...")
+	bind := bindData.Bindings[0]
+	c.Check(bind.BindSQL, Equals, "select /*+ use_index(@sel_1 test.t, ia) */ a, b from t where a = 1 limit 0, 1")
+	c.Check(bindData.Db, Equals, "test")
+	c.Check(bind.Status, Equals, "using")
+
+	tk.MustQuery("select a, b from t where a = 3 limit 1, 10")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:ia")
+	c.Assert(tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "ia(a)"), IsTrue)
+
+	tk.MustQuery("select a, b from t where b = 3 limit 1, 100")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:ib")
+	c.Assert(tk.MustUseIndex("select a, b from t where b = 3 limit 1, 100", "ib(b)"), IsTrue)
 }
 
 func (s *testSuite) TestErrorBind(c *C) {

@@ -505,7 +505,7 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 		return b.buildSetConfig(ctx, x)
 	case *ast.AnalyzeTableStmt:
 		return b.buildAnalyze(x)
-	case *ast.BinlogStmt, *ast.FlushStmt, *ast.UseStmt,
+	case *ast.BinlogStmt, *ast.FlushStmt, *ast.UseStmt, *ast.BRIEStmt,
 		*ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt, *ast.AlterInstanceStmt,
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt,
 		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt, *ast.SetDefaultRoleStmt, *ast.ShutdownStmt:
@@ -1330,7 +1330,10 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 	p := &Analyze{Opts: opts}
 	for _, tbl := range as.TableNames {
 		if tbl.TableInfo.IsView() {
-			return nil, errors.Errorf("analyze %s is not supported now.", tbl.Name.O)
+			return nil, errors.Errorf("analyze view %s is not supported now.", tbl.Name.O)
+		}
+		if tbl.TableInfo.IsSequence() {
+			return nil, errors.Errorf("analyze sequence %s is not supported now.", tbl.Name.O)
 		}
 		idxInfo, colInfo, pkInfo := getColsInfo(tbl)
 		physicalIDs, names, err := getPhysicalIDsAndPartitionNames(tbl.TableInfo, as.PartitionNames)
@@ -1595,6 +1598,19 @@ func buildCancelDDLJobsFields() (*expression.Schema, types.NameSlice) {
 	return schema.col2Schema(), schema.names
 }
 
+func buildBRIESchema() (*expression.Schema, types.NameSlice) {
+	longlongSize, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
+	datetimeSize, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeDatetime)
+
+	schema := newColumnsWithNames(5)
+	schema.Append(buildColumnWithName("", "Destination", mysql.TypeVarchar, 255))
+	schema.Append(buildColumnWithName("", "Size", mysql.TypeLonglong, longlongSize))
+	schema.Append(buildColumnWithName("", "BackupTS", mysql.TypeLonglong, longlongSize))
+	schema.Append(buildColumnWithName("", "Queue Time", mysql.TypeDatetime, datetimeSize))
+	schema.Append(buildColumnWithName("", "Execution Time", mysql.TypeDatetime, datetimeSize))
+	return schema.col2Schema(), schema.names
+}
+
 func buildColumnWithName(tableName, name string, tp byte, size int) (*expression.Column, *types.FieldName) {
 	cs, cl := types.DefaultCharsetForType(tp)
 	flag := mysql.UnsignedFlag
@@ -1695,6 +1711,9 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 	case ast.ShowCreateView:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("SHOW VIEW")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
+	case ast.ShowBackups, ast.ShowRestores:
+		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER")
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", err)
 	case ast.ShowTableNextRowId:
 		p := &ShowNextRowID{TableName: show.Table}
 		p.setSchemaAndNames(buildShowNextRowID())
@@ -1745,7 +1764,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		b.curClause = orderByClause
 		orderByCol := np.Schema().Columns[0].Clone().(*expression.Column)
 		sort := LogicalSort{
-			ByItems: []*ByItems{{Expr: orderByCol}},
+			ByItems: []*util.ByItems{{Expr: orderByCol}},
 		}.Init(b.ctx, b.getSelectOffset())
 		sort.SetChildren(np)
 		np = sort
@@ -1773,14 +1792,15 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 			}
 		}
 		b.visitInfo = collectVisitInfoFromGrantStmt(b.ctx, b.visitInfo, raw)
-	case *ast.GrantRoleStmt:
+	case *ast.BRIEStmt:
+		p.setSchemaAndNames(buildBRIESchema())
+		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER")
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", err)
+	case *ast.GrantRoleStmt, *ast.RevokeRoleStmt:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", err)
 	case *ast.RevokeStmt:
 		b.visitInfo = collectVisitInfoFromRevokeStmt(b.ctx, b.visitInfo, raw)
-	case *ast.RevokeRoleStmt:
-		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER")
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", err)
 	case *ast.KillStmt:
 		// If you have the SUPER privilege, you can kill all threads and statements.
 		// Otherwise, you can kill only your own threads and statements.
@@ -1946,6 +1966,13 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		err := errors.Errorf("insert into view %s is not supported now.", tableInfo.Name.O)
 		if insert.IsReplace {
 			err = errors.Errorf("replace into view %s is not supported now.", tableInfo.Name.O)
+		}
+		return nil, err
+	}
+	if tableInfo.IsSequence() {
+		err := errors.Errorf("insert into sequence %s is not supported now.", tableInfo.Name.O)
+		if insert.IsReplace {
+			err = errors.Errorf("replace into sequence %s is not supported now.", tableInfo.Name.O)
 		}
 		return nil, err
 	}
@@ -2145,7 +2172,12 @@ func (b *PlanBuilder) buildSetValuesOfInsert(ctx context.Context, insert *ast.In
 			return ErrBadGeneratedColumn.GenWithStackByArgs(assign.Column.Name.O, tableInfo.Name.O)
 		}
 		b.curClause = fieldList
-		expr, _, err := b.rewriteWithPreprocess(ctx, assign.Expr, mockTablePlan, nil, nil, true, checkRefColumn)
+		// subquery in insert values should not reference upper scope
+		usingPlan := mockTablePlan
+		if _, ok := assign.Expr.(*ast.SubqueryExpr); ok {
+			usingPlan = LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+		}
+		expr, _, err := b.rewriteWithPreprocess(ctx, assign.Expr, usingPlan, nil, nil, true, checkRefColumn)
 		if err != nil {
 			return err
 		}
@@ -2218,7 +2250,12 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 				}
 			default:
 				b.curClause = fieldList
-				expr, _, err = b.rewriteWithPreprocess(ctx, valueItem, mockTablePlan, nil, nil, true, checkRefColumn)
+				// subquery in insert values should not reference upper scope
+				usingPlan := mockTablePlan
+				if _, ok := valueItem.(*ast.SubqueryExpr); ok {
+					usingPlan = LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+				}
+				expr, _, err = b.rewriteWithPreprocess(ctx, valueItem, usingPlan, nil, nil, true, checkRefColumn)
 			}
 			if err != nil {
 				return err
@@ -3047,6 +3084,9 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	case ast.ShowBuiltins:
 		names = []string{"Supported_builtin_functions"}
 		ftypes = []byte{mysql.TypeVarchar}
+	case ast.ShowBackups, ast.ShowRestores:
+		names = []string{"Destination", "State", "Progress", "Queue_time", "Execution_time", "Finish_time", "Connection"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDouble, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeLonglong}
 	}
 
 	schema = expression.NewSchema(make([]*expression.Column, 0, len(names))...)

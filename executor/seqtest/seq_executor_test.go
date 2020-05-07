@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -73,10 +74,9 @@ var _ = SerialSuites(&seqTestSuite{})
 var _ = SerialSuites(&seqTestSuite1{})
 
 type seqTestSuite struct {
-	cluster   *mocktikv.Cluster
-	mvccStore mocktikv.MVCCStore
-	store     kv.Storage
-	domain    *domain.Domain
+	cluster cluster.Cluster
+	store   kv.Storage
+	domain  *domain.Domain
 	*parser.Parser
 	ctx *mock.Context
 }
@@ -88,12 +88,15 @@ func (s *seqTestSuite) SetUpSuite(c *C) {
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
 	if useMockTikv {
-		s.cluster = mocktikv.NewCluster()
-		mocktikv.BootstrapWithSingleStore(s.cluster)
-		s.mvccStore = mocktikv.MustNewMVCCStore()
+		cluster := mocktikv.NewCluster()
+		mocktikv.BootstrapWithSingleStore(cluster)
+		s.cluster = cluster
+
+		mvccStore := mocktikv.MustNewMVCCStore()
+		cluster.SetMvccStore(mvccStore)
 		store, err := mockstore.NewMockTikvStore(
-			mockstore.WithCluster(s.cluster),
-			mockstore.WithMVCCStore(s.mvccStore),
+			mockstore.WithCluster(cluster),
+			mockstore.WithMVCCStore(mvccStore),
 		)
 		c.Assert(err, IsNil)
 		s.store = store
@@ -132,7 +135,7 @@ func (s *seqTestSuite) TestEarlyClose(c *C) {
 	tblID := tbl.Meta().ID
 
 	// Split the table.
-	s.cluster.SplitTable(s.mvccStore, tblID, N/2)
+	s.cluster.SplitTable(tblID, N/2)
 
 	ctx := context.Background()
 	for i := 0; i < N/2; i++ {
