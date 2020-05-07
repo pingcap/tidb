@@ -35,7 +35,7 @@ type mockCacheKey struct {
 	key  int64
 }
 
-func (mk *mockCacheKey) MemUsage() int64 {
+func (key *mockCacheKey) MemUsage() int64 {
 	//TODO: fulfill the MemUsage logic
 	return 0
 }
