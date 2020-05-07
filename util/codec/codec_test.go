@@ -882,6 +882,10 @@ func (s *testCodecSuite) TestCut(c *C) {
 			types.MakeDatums(types.NewDecFromInt(0), types.NewDecFromFloatForTest(-1.3)),
 			types.MakeDatums(types.NewDecFromInt(0), types.NewDecFromFloatForTest(-1.3)),
 		},
+		{
+			types.MakeDatums(json.CreateBinary("abc")),
+			types.MakeDatums(json.CreateBinary("abc")),
+		},
 	}
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	for i, t := range table {
