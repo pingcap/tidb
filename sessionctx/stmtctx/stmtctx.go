@@ -71,6 +71,8 @@ type StatementContext struct {
 	BatchCheck             bool
 	InNullRejectCheck      bool
 	AllowInvalidDate       bool
+	// OptimizerUseInvisibleIndexes indicates whether optimizer can use invisible index
+	OptimizerUseInvisibleIndexes bool
 
 	// mu struct holds variables that change during execution.
 	mu struct {
