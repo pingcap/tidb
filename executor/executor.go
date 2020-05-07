@@ -1710,6 +1710,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	errCount, warnCount := vars.StmtCtx.NumErrorWarnings()
 	vars.SysErrorCount = errCount
 	vars.SysWarningCount = warnCount
+	sc.OptimizerUseInvisibleIndexes = vars.StmtCtx.OptimizerUseInvisibleIndexes
 	vars.StmtCtx = sc
 	vars.PrevFoundInPlanCache = vars.FoundInPlanCache
 	vars.FoundInPlanCache = false
