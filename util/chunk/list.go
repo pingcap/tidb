@@ -56,6 +56,19 @@ func NewList(fieldTypes []*types.FieldType, initChunkSize, maxChunkSize int) *Li
 	return l
 }
 
+// Copy returns the copy of the List.
+func (l *List) Copy() *List {
+	list := NewList(l.fieldTypes, l.initChunkSize, l.maxChunkSize)
+	list.length = l.length
+	for i := 0; i < len(l.chunks); i++ {
+		list.chunks[i] = l.chunks[i].CopyConstruct()
+	}
+	for i := 0; i < len(l.freelist); i++ {
+		list.freelist[i] = l.freelist[i].CopyConstruct()
+	}
+	return list
+}
+
 // GetMemTracker returns the memory tracker of this List.
 func (l *List) GetMemTracker() *memory.Tracker {
 	return l.memTracker

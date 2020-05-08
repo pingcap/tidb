@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/bitmap"
@@ -754,6 +755,7 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 type NestedLoopApplyExec struct {
 	baseExecutor
 
+	ctx         sessionctx.Context
 	innerRows   []chunk.Row
 	cursor      int
 	innerExec   Executor
@@ -762,6 +764,8 @@ type NestedLoopApplyExec struct {
 	outerFilter expression.CNFExprs
 
 	joiner joiner
+
+	cache *applyCache
 
 	outerSchema []*expression.CorrelatedColumn
 
@@ -808,6 +812,11 @@ func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 
 	e.innerList.GetMemTracker().SetLabel(innerListLabel)
 	e.innerList.GetMemTracker().AttachTo(e.memTracker)
+
+	e.cache, err = newApplyCache()
+	if err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -888,12 +897,24 @@ func (e *NestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk) (err e
 			e.hasMatch = false
 			e.hasNull = false
 
+			var key []byte
 			for _, col := range e.outerSchema {
 				*col.Data = e.outerRow.GetDatum(col.Index, col.RetType)
+				key, err = codec.EncodeValue(e.ctx.GetSessionVars().StmtCtx, key, *col.Data)
+				if err != nil {
+					return err
+				}
 			}
-			err = e.fetchAllInners(ctx)
-			if err != nil {
-				return err
+			value := e.cache.Get(key)
+			if value != nil {
+				e.innerList = value.Data
+			} else {
+				err = e.fetchAllInners(ctx)
+				if err != nil {
+					return err
+				}
+				innerList := e.innerList.Copy()
+				e.cache.Set(key, &applyCacheValue{key, innerList})
 			}
 			e.innerIter = chunk.NewIterator4List(e.innerList)
 			e.innerIter.Begin()
