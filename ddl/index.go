@@ -296,7 +296,7 @@ func validateRenameIndex(from, to model.CIStr, tbl *model.TableInfo) (ignore boo
 
 func onRenameIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	tblInfo, from, to, err := checkRenameIndex(t, job)
-	if err != nil {
+	if err != nil || tblInfo == nil {
 		return ver, errors.Trace(err)
 	}
 
@@ -321,7 +321,7 @@ func validateAlterIndexVisibility(indexName model.CIStr, invisible bool, tbl *mo
 
 func onAlterIndexVisibility(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	tblInfo, from, invisible, err := checkAlterIndexVisibility(t, job)
-	if err != nil {
+	if err != nil || tblInfo == nil {
 		return ver, errors.Trace(err)
 	}
 	idx := tblInfo.FindIndexByName(from.L)
@@ -753,10 +753,13 @@ func checkAlterIndexVisibility(t *meta.Meta, job *model.Job) (*model.TableInfo, 
 		return nil, indexName, invisible, errors.Trace(err)
 	}
 
-	_, err = validateAlterIndexVisibility(indexName, invisible, tblInfo)
+	skip, err := validateAlterIndexVisibility(indexName, invisible, tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return nil, indexName, invisible, errors.Trace(err)
+	}
+	if skip {
+		return nil, indexName, invisible, nil
 	}
 	return tblInfo, indexName, invisible, nil
 }

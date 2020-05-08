@@ -4786,11 +4786,11 @@ func (d *ddl) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident, inde
 	}
 
 	skip, err := validateAlterIndexVisibility(indexName, invisible, tb.Meta())
-	if skip {
-		return nil
-	}
 	if err != nil {
 		return errors.Trace(err)
+	}
+	if skip {
+		return nil
 	}
 
 	job := &model.Job{
