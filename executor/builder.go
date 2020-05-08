@@ -2644,8 +2644,8 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(plan planner
 	// Then we need a Projection upon IndexLookupReader to prune the redundant column.
 	case *plannercore.PhysicalProjection:
 		return builder.buildProjectionForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc)
-	// Need to support physical selection because after PR 16513, TiDB will push down all the expr supported by TiKV or TiFlash
-	// in predicate push down stage, so if there is an expr which only supported by TiFlash, a physical selection will be added after index read
+	// Need to support physical selection because after PR 16389, TiDB will push down all the expr supported by TiKV or TiFlash
+	// in predicate push down stage, so if there is an expr which only supported by TiKV, a physical selection will be added after index read
 	case *plannercore.PhysicalSelection:
 		childExec, err := builder.buildExecutorForIndexJoinInternal(v.Children()[0], ctx, lookUpContents, IndexRanges, keyOff2IdxOff, cwc)
 		if err != nil {
