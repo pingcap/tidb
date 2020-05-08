@@ -162,7 +162,9 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 		lastVersion = 0
 	}
 	sql := fmt.Sprintf("SELECT version, table_id, modify_count, count from mysql.stats_meta where version > %d order by version", lastVersion)
+	h.mu.Lock()
 	rows, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
+	h.mu.Unlock()
 	if err != nil {
 		return errors.Trace(err)
 	}
