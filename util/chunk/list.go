@@ -60,9 +60,11 @@ func NewList(fieldTypes []*types.FieldType, initChunkSize, maxChunkSize int) *Li
 func (l *List) Copy() *List {
 	list := NewList(l.fieldTypes, l.initChunkSize, l.maxChunkSize)
 	list.length = l.length
+	list.chunks = make([]*Chunk, len(l.chunks))
 	for i := 0; i < len(l.chunks); i++ {
 		list.chunks[i] = l.chunks[i].CopyConstruct()
 	}
+	list.freelist = make([]*Chunk, len(l.chunks))
 	for i := 0; i < len(l.freelist); i++ {
 		list.freelist[i] = l.freelist[i].CopyConstruct()
 	}
