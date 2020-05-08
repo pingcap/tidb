@@ -200,6 +200,10 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowTableRegions()
 	case ast.ShowBuiltins:
 		return e.fetchShowBuiltins()
+	case ast.ShowBackups:
+		return e.fetchShowBRIE(ast.BRIEKindBackup)
+	case ast.ShowRestores:
+		return e.fetchShowBRIE(ast.BRIEKindRestore)
 	}
 	return nil
 }
@@ -913,7 +917,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	}
 
 	if tableInfo.AutoRandID != 0 {
-		fmt.Fprintf(buf, " /*T![auto_rand] AUTO_RANDOM_BASE=%d */", tableInfo.AutoRandID)
+		fmt.Fprintf(buf, " /*T![auto_rand_base] AUTO_RANDOM_BASE=%d */", tableInfo.AutoRandID)
 	}
 
 	if tableInfo.ShardRowIDBits > 0 {

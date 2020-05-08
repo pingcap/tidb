@@ -68,7 +68,7 @@ var invalidTask = &rootTask{cst: math.MaxFloat64}
 
 // GetPropByOrderByItems will check if this sort property can be pushed or not. In order to simplify the problem, we only
 // consider the case that all expression are columns.
-func GetPropByOrderByItems(items []*ByItems) (*property.PhysicalProperty, bool) {
+func GetPropByOrderByItems(items []*util.ByItems) (*property.PhysicalProperty, bool) {
 	propItems := make([]property.Item, 0, len(items))
 	for _, item := range items {
 		col, ok := item.Expr.(*expression.Column)
@@ -82,7 +82,7 @@ func GetPropByOrderByItems(items []*ByItems) (*property.PhysicalProperty, bool) 
 
 // GetPropByOrderByItemsContainScalarFunc will check if this sort property can be pushed or not. In order to simplify the
 // problem, we only consider the case that all expression are columns or some special scalar functions.
-func GetPropByOrderByItemsContainScalarFunc(items []*ByItems) (*property.PhysicalProperty, bool, bool) {
+func GetPropByOrderByItemsContainScalarFunc(items []*util.ByItems) (*property.PhysicalProperty, bool, bool) {
 	propItems := make([]property.Item, 0, len(items))
 	onlyColumn := true
 	for _, item := range items {
@@ -104,7 +104,10 @@ func GetPropByOrderByItemsContainScalarFunc(items []*ByItems) (*property.Physica
 }
 
 func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty) (task, error) {
-	if !prop.IsEmpty() {
+	// If the required property is not empty and the row count > 1,
+	// we cannot ensure this required property.
+	// But if the row count is 0 or 1, we don't need to care about the property.
+	if !prop.IsEmpty() && p.RowCount > 1 {
 		return invalidTask, nil
 	}
 	dual := PhysicalTableDual{
@@ -1176,7 +1179,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 	rTsk := &rootTask{p: pointGetPlan}
 	var cost float64
 	if candidate.path.IsTablePath {
-		pointGetPlan.Handle = candidate.path.Ranges[0].LowVal[0].GetInt64()
+		pointGetPlan.Handle = kv.IntHandle(candidate.path.Ranges[0].LowVal[0].GetInt64())
 		pointGetPlan.UnsignedHandle = mysql.HasUnsignedFlag(ds.getHandleCol().RetType.Flag)
 		pointGetPlan.PartitionInfo = partitionInfo
 		cost = pointGetPlan.GetCost(ds.TblCols)
@@ -1237,7 +1240,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 	var cost float64
 	if candidate.path.IsTablePath {
 		for _, ran := range candidate.path.Ranges {
-			batchPointGetPlan.Handles = append(batchPointGetPlan.Handles, ran.LowVal[0].GetInt64())
+			batchPointGetPlan.Handles = append(batchPointGetPlan.Handles, kv.IntHandle(ran.LowVal[0].GetInt64()))
 		}
 		cost = batchPointGetPlan.GetCost(ds.TblCols)
 		// Add filter condition to table plan now.

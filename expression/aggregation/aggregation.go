@@ -191,6 +191,9 @@ func IsAllFirstRow(aggFuncs []*AggFuncDesc) bool {
 
 // CheckAggPushDown checks whether an agg function can be pushed to storage.
 func CheckAggPushDown(aggFunc *AggFuncDesc, storeType kv.StoreType) bool {
+	if len(aggFunc.OrderByItems) > 0 {
+		return false
+	}
 	ret := true
 	switch storeType {
 	case kv.TiFlash:
