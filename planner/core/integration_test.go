@@ -401,6 +401,10 @@ func (s *testIntegrationSerialSuite) TestBroadcastJoin(c *C) {
 	_, err = tk.Exec("explain select /*+ tidb_bcj(fact_t, d1_t) */ count(*) from fact_t join d1_t on fact_t.d1_k = d1_t.d1_k and fact_t.col1 > d1_t.value")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can't find a proper physical plan for this query")
+	// cartsian join not supported
+	_, err = tk.Exec("explain select /*+ tidb_bcj(fact_t, d1_t) */ count(*) from fact_t join d1_t")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can't find a proper physical plan for this query")
 }
 
 func (s *testIntegrationSerialSuite) TestIssue15110(c *C) {
