@@ -71,6 +71,8 @@ type StatementContext struct {
 	BatchCheck             bool
 	InNullRejectCheck      bool
 	AllowInvalidDate       bool
+	// OptimizerUseInvisibleIndexes indicates whether optimizer can use invisible index
+	OptimizerUseInvisibleIndexes bool
 
 	// mu struct holds variables that change during execution.
 	mu struct {
@@ -458,6 +460,7 @@ func (sc *StatementContext) ResetForRetry() {
 func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, commitDetails *execdetails.CommitDetails) {
 	sc.mu.Lock()
 	if details != nil {
+		sc.mu.execDetails.CopTime += details.CopTime
 		sc.mu.execDetails.ProcessTime += details.ProcessTime
 		sc.mu.execDetails.WaitTime += details.WaitTime
 		sc.mu.execDetails.BackoffTime += details.BackoffTime

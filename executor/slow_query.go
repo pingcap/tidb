@@ -318,6 +318,7 @@ type slowQueryTuple struct {
 	writeSize              uint64
 	prewriteRegion         uint64
 	txnRetry               uint64
+	copTime                float64
 	processTime            float64
 	waitTime               float64
 	backOffTime            float64
@@ -407,6 +408,8 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 		st.prewriteRegion, err = strconv.ParseUint(value, 10, 64)
 	case execdetails.TxnRetryStr:
 		st.txnRetry, err = strconv.ParseUint(value, 10, 64)
+	case execdetails.CopTimeStr:
+		st.copTime, err = strconv.ParseFloat(value, 64)
 	case execdetails.ProcessTimeStr:
 		st.processTime, err = strconv.ParseFloat(value, 64)
 	case execdetails.WaitTimeStr:
@@ -486,6 +489,7 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	record = append(record, types.NewUintDatum(st.writeSize))
 	record = append(record, types.NewUintDatum(st.prewriteRegion))
 	record = append(record, types.NewUintDatum(st.txnRetry))
+	record = append(record, types.NewFloat64Datum(st.copTime))
 	record = append(record, types.NewFloat64Datum(st.processTime))
 	record = append(record, types.NewFloat64Datum(st.waitTime))
 	record = append(record, types.NewFloat64Datum(st.backOffTime))

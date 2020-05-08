@@ -148,10 +148,10 @@ type Table interface {
 	IterRecords(ctx sessionctx.Context, startKey kv.Key, cols []*Column, fn RecordIterFunc) error
 
 	// RowWithCols returns a row that contains the given cols.
-	RowWithCols(ctx sessionctx.Context, h int64, cols []*Column) ([]types.Datum, error)
+	RowWithCols(ctx sessionctx.Context, h kv.Handle, cols []*Column) ([]types.Datum, error)
 
 	// Row returns a row for all columns.
-	Row(ctx sessionctx.Context, h int64) ([]types.Datum, error)
+	Row(ctx sessionctx.Context, h kv.Handle) ([]types.Datum, error)
 
 	// Cols returns the columns of the table which is used in select, including hidden columns.
 	Cols() []*Column
@@ -189,16 +189,16 @@ type Table interface {
 	FirstKey() kv.Key
 
 	// RecordKey returns the key in KV storage for the row.
-	RecordKey(h int64) kv.Key
+	RecordKey(h kv.Handle) kv.Key
 
 	// AddRecord inserts a row which should contain only public columns
-	AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...AddRecordOption) (recordID int64, err error)
+	AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...AddRecordOption) (recordID kv.Handle, err error)
 
 	// UpdateRecord updates a row which should contain only writable columns.
-	UpdateRecord(ctx sessionctx.Context, h int64, currData, newData []types.Datum, touched []bool) error
+	UpdateRecord(ctx sessionctx.Context, h kv.Handle, currData, newData []types.Datum, touched []bool) error
 
 	// RemoveRecord removes a row in the table.
-	RemoveRecord(ctx sessionctx.Context, h int64, r []types.Datum) error
+	RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []types.Datum) error
 
 	// Allocators returns all allocators.
 	Allocators(ctx sessionctx.Context) autoid.Allocators
@@ -212,7 +212,7 @@ type Table interface {
 	Meta() *model.TableInfo
 
 	// Seek returns the handle greater or equal to h.
-	Seek(ctx sessionctx.Context, h int64) (handle int64, found bool, err error)
+	Seek(ctx sessionctx.Context, h kv.Handle) (handle kv.Handle, found bool, err error)
 
 	// Type returns the type of table
 	Type() Type

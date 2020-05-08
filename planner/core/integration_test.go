@@ -649,6 +649,38 @@ func (s *testIntegrationSuite) TestIndexMerge(c *C) {
 	}
 }
 
+func (s *testIntegrationSuite) TestInvisibleIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+
+	// Optimizer cannot see invisible indexes.
+	tk.MustExec("create table t(a int, b int, unique index i_a (a) invisible, unique index i_b(b))")
+	tk.MustExec("insert into t values (1,2)")
+
+	// Optimizer cannot use invisible indexes.
+	tk.MustQuery("select a from t order by a").Check(testkit.Rows("1"))
+	c.Check(tk.MustUseIndex("select a from t order by a", "i_a"), IsFalse)
+	tk.MustQuery("select a from t where a > 0").Check(testkit.Rows("1"))
+	c.Check(tk.MustUseIndex("select a from t where a > 1", "i_a"), IsFalse)
+
+	// If use invisible indexes in index hint and sql hint, throw an error.
+	errStr := "[planner:1176]Key 'i_a' doesn't exist in table 't'"
+	tk.MustGetErrMsg("select * from t use index(i_a)", errStr)
+	tk.MustGetErrMsg("select * from t force index(i_a)", errStr)
+	tk.MustGetErrMsg("select * from t ignore index(i_a)", errStr)
+	tk.MustQuery("select /*+ USE_INDEX(t, i_a) */ * from t")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), Equals, errStr)
+	tk.MustQuery("select /*+ IGNORE_INDEX(t, i_a), USE_INDEX(t, i_b) */ a from t order by a")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), Equals, errStr)
+
+	tk.MustExec("admin check table t")
+	tk.MustExec("admin check index t i_a")
+}
+
 // for issue #14822
 func (s *testIntegrationSuite) TestIndexJoinTableRange(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -905,4 +937,28 @@ func (s *testIntegrationSuite) TestIssue16290And16292(c *C) {
 		tk.MustQuery("select count(distinct a) from (select * from t ta union all select * from t tb) t;").Check(testkit.Rows("1"))
 		tk.MustQuery("select count(distinct b) from (select * from t ta union all select * from t tb) t;").Check(testkit.Rows("1"))
 	}
+}
+
+func (s *testIntegrationSuite) TestTableDualWithRequiredProperty(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1 (a int, b int) partition by range(a) " +
+		"(partition p0 values less than(10), partition p1 values less than MAXVALUE)")
+	tk.MustExec("create table t2 (a int, b int)")
+	tk.MustExec("select /*+ MERGE_JOIN(t1, t2) */ * from t1 partition (p0), t2  where t1.a > 100 and t1.a = t2.a")
+}
+
+func (s *testIntegrationSerialSuite) TestIssue16837(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int,b int,c int,d int,e int,unique key idx_ab(a,b),unique key(c),unique key(d))")
+	tk.MustQuery("explain select /*+ use_index_merge(t,c,idx_ab) */ * from t where a = 1 or (e = 1 and c = 1)").Check(testkit.Rows(
+		"TableReader_7 8000.00 root  data:Selection_6",
+		"└─Selection_6 8000.00 cop[tikv]  or(eq(test.t.a, 1), and(eq(test.t.e, 1), eq(test.t.c, 1)))",
+		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 IndexMerge is inapplicable or disabled"))
+	tk.MustExec("insert into t values (2, 1, 1, 1, 2)")
+	tk.MustQuery("select /*+ use_index_merge(t,c,idx_ab) */ * from t where a = 1 or (e = 1 and c = 1)").Check(testkit.Rows())
 }

@@ -862,7 +862,7 @@ func getAutoIDByAllocType(m *meta.Meta, dbID, tableID int64, allocType Allocator
 	case SequenceType:
 		return m.GetSequenceValue(dbID, tableID)
 	default:
-		return 0, errInvalidAllocatorType.GenWithStackByArgs()
+		return 0, ErrInvalidAllocatorType.GenWithStackByArgs()
 	}
 }
 
@@ -875,7 +875,7 @@ func generateAutoIDByAllocType(m *meta.Meta, dbID, tableID, step int64, allocTyp
 	case SequenceType:
 		return m.GenSequenceValue(dbID, tableID, step)
 	default:
-		return 0, errInvalidAllocatorType.GenWithStackByArgs()
+		return 0, ErrInvalidAllocatorType.GenWithStackByArgs()
 	}
 }
 

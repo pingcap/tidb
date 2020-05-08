@@ -78,8 +78,8 @@ func (s *TestDDLSuite) checkAddIndex(c *C, indexInfo *model.IndexInfo) {
 		}
 
 		c.Assert(err, IsNil)
-		c.Assert(handles, HasKey, h)
-		delete(handles, h)
+		c.Assert(handles, HasKey, h.IntValue())
+		delete(handles, h.IntValue())
 	}
 
 	c.Assert(handles, HasLen, 0)
@@ -116,7 +116,7 @@ func (s *TestDDLSuite) checkDropIndex(c *C, indexInfo *model.IndexInfo) {
 		}
 
 		c.Assert(err, IsNil)
-		handles[h] = struct{}{}
+		handles[h.IntValue()] = struct{}{}
 	}
 
 	// TODO: Uncomment this after apply pool is finished
