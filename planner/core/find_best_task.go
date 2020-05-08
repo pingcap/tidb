@@ -491,7 +491,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 
 	for _, candidate := range candidates {
 		path := candidate.path
-		if path.PartialIndexPaths != nil {
+		if path.PartialIndexPaths != nil && ds.preferStoreType&preferTiFlash == 0 {
 			idxMergeTask, err := ds.convertToIndexMergeScan(prop, candidate)
 			if err != nil {
 				return nil, err
@@ -510,7 +510,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 			}, nil
 		}
 		canConvertPointGet := (!ds.isPartition && len(path.Ranges) > 0) || (ds.isPartition && len(path.Ranges) == 1)
-		canConvertPointGet = canConvertPointGet && candidate.path.StoreType != kv.TiFlash
+		canConvertPointGet = canConvertPointGet && candidate.path.StoreType != kv.TiFlash && ds.preferStoreType&preferTiFlash == 0
 		if !candidate.path.IsTablePath {
 			canConvertPointGet = canConvertPointGet &&
 				candidate.path.Index.Unique &&

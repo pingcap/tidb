@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/statistics"
@@ -182,8 +183,12 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	for i, expr := range ds.pushedDownConds {
 		ds.pushedDownConds[i] = expression.PushDownNot(ds.ctx, expr)
 	}
+	var tiflashPath *util.AccessPath
 	for _, path := range ds.possibleAccessPaths {
 		if path.IsTablePath {
+			if path.StoreType == kv.TiFlash {
+				tiflashPath = path
+			}
 			continue
 		}
 		err := ds.fillIndexPath(path, ds.pushedDownConds)
@@ -199,9 +204,12 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 				return nil, err
 			}
 			// If we have point or empty range, just remove other possible paths.
-			if noIntervalRanges || len(path.Ranges) == 0 {
+			if (noIntervalRanges || len(path.Ranges) == 0) && path.StoreType == kv.TiKV {
 				ds.possibleAccessPaths[0] = path
 				ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
+				if tiflashPath != nil {
+					ds.possibleAccessPaths = append(ds.possibleAccessPaths, tiflashPath)
+				}
 				break
 			}
 			continue
@@ -211,6 +219,9 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		if (noIntervalRanges && path.Index.Unique) || len(path.Ranges) == 0 {
 			ds.possibleAccessPaths[0] = path
 			ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
+			if tiflashPath != nil {
+				ds.possibleAccessPaths = append(ds.possibleAccessPaths, tiflashPath)
+			}
 			break
 		}
 	}

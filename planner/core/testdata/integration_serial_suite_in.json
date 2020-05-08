@@ -41,6 +41,14 @@
     ]
   },
   {
+    "name": "TestHintReadTiFlashNotChoosePointGet",
+    "cases": [
+      "explain select /*+ read_from_storage(tiflash[t]) */ * from t where t.a = 1",
+      "explain select /*+ read_from_storage(tiflash[t]) */ * from t where t.a in (1, 2, 3)",
+      "explain select /*+ read_from_storage(tikv[t]) */ * from t where t.a = 1"
+    ]
+  },
+  {
     "name": "TestIsolationReadTiFlashUseIndexHint",
     "cases": [
       "explain select * from t",

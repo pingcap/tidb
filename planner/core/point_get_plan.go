@@ -541,7 +541,19 @@ func newBatchPointGetPlan(
 	}.Init(ctx, statsInfo, schema, names, 0)
 }
 
+func selStmtHasTiFlashHint(selStmt *ast.SelectStmt) bool {
+	for _, hint := range selStmt.TableHints {
+		if hint.HintName.L == "read_from_storage" && hint.HintData.(model.CIStr).L == "tiflash" {
+			return true
+		}
+	}
+	return false
+}
+
 func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) *BatchPointGetPlan {
+	if selStmtHasTiFlashHint(selStmt) {
+		return nil
+	}
 	if selStmt.OrderBy != nil || selStmt.GroupBy != nil ||
 		selStmt.Limit != nil || selStmt.Having != nil ||
 		len(selStmt.WindowSpecs) > 0 {
@@ -636,6 +648,9 @@ func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) *
 // 3. All the columns must be public and generated.
 // 4. The condition is an access path that the range is a unique key.
 func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetPlan {
+	if selStmtHasTiFlashHint(selStmt) {
+		return nil
+	}
 	if selStmt.Having != nil {
 		return nil
 	} else if selStmt.Limit != nil {

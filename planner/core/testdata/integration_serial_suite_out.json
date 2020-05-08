@@ -221,6 +221,29 @@
     ]
   },
   {
+    "Name": "TestHintReadTiFlashNotChoosePointGet",
+    "Cases": [
+      {
+        "SQL": "explain select /*+ read_from_storage(tiflash[t]) */ * from t where t.a = 1",
+        "Result": [
+          "TableDual_5 1.00 root  rows:0"
+        ]
+      },
+      {
+        "SQL": "explain select /*+ read_from_storage(tiflash[t]) */ * from t where t.a in (1, 2, 3)",
+        "Result": [
+          "TableDual_5 3.00 root  rows:0"
+        ]
+      },
+      {
+        "SQL": "explain select /*+ read_from_storage(tikv[t]) */ * from t where t.a = 1",
+        "Result": [
+          "Point_Get_1 1.00 root table:t handle:1"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestIsolationReadTiFlashUseIndexHint",
     "Cases": [
       {
