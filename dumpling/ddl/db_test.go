@@ -4336,11 +4336,18 @@ func (s *testDBSuite2) TestLockTables(c *C) {
 	_, err = tk.Exec("create view v1 as select * from t1;")
 	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotLocked), IsTrue)
 
-	// Test for lock view was not supported.
+	// Test for locking view was not supported.
 	tk.MustExec("unlock tables")
 	tk.MustExec("create view v1 as select * from t1;")
 	_, err = tk.Exec("lock tables v1 read")
 	c.Assert(terror.ErrorEqual(err, table.ErrUnsupportedOp), IsTrue)
+
+	// Test for locking sequence was not supported.
+	tk.MustExec("unlock tables")
+	tk.MustExec("create sequence seq")
+	_, err = tk.Exec("lock tables seq read")
+	c.Assert(terror.ErrorEqual(err, table.ErrUnsupportedOp), IsTrue)
+	tk.MustExec("drop sequence seq")
 
 	// Test for create/drop/alter database when session is holding the table locks.
 	tk.MustExec("unlock tables")
