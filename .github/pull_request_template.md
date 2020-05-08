@@ -43,4 +43,5 @@ Side effects
 - Breaking backward compatibility
 
 ### Release note <!-- bugfixes or new feature need a release note -->
-- No release note
+
+- <!-- write release note here, `No release note` if there's no release note -->
