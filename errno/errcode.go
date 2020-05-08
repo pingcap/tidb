@@ -906,6 +906,7 @@ const (
 	ErrUserAlreadyExists                                            = 3163
 	ErrInvalidJSONPathArrayCell                                     = 3165
 	ErrInvalidEncryptionOption                                      = 3184
+	ErrPKIndexCantBeInvisible                                       = 3522
 	ErrRoleNotGranted                                               = 3530
 	ErrLockAcquireFailAndNoWaitSet                                  = 3572
 	ErrWindowNoSuchWindow                                           = 3579
@@ -1038,6 +1039,10 @@ const (
 	ErrPrivilegeCheckFail                  = 8121
 	ErrInvalidWildCard                     = 8122
 	ErrMixOfGroupFuncAndFieldsIncompatible = 8123
+	ErrBRIEBackupFailed                    = 8124
+	ErrBRIERestoreFailed                   = 8125
+	ErrBRIEImportFailed                    = 8126
+	ErrBRIEExportFailed                    = 8127
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation        = 8200

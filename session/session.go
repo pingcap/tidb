@@ -762,6 +762,10 @@ func (s *session) ExecRestrictedSQLWithContext(ctx context.Context, sql string) 
 		se.sessionVars.InspectionTableCache = cache
 		defer func() { se.sessionVars.InspectionTableCache = nil }()
 	}
+	if ok := s.sessionVars.StmtCtx.OptimizerUseInvisibleIndexes; ok {
+		se.sessionVars.StmtCtx.OptimizerUseInvisibleIndexes = true
+		defer func() { se.sessionVars.StmtCtx.OptimizerUseInvisibleIndexes = false }()
+	}
 	defer func() {
 		if se != nil && se.GetSessionVars().StmtCtx.WarningCount() > 0 {
 			warnings := se.GetSessionVars().StmtCtx.GetWarnings()
@@ -821,6 +825,10 @@ func (s *session) ExecRestrictedSQLWithSnapshot(sql string) ([]chunk.Row, []*ast
 			}
 			se.sessionVars.SnapshotInfoschema = nil
 		}()
+	}
+	if ok := s.sessionVars.StmtCtx.OptimizerUseInvisibleIndexes; ok {
+		se.sessionVars.StmtCtx.OptimizerUseInvisibleIndexes = true
+		defer func() { se.sessionVars.StmtCtx.OptimizerUseInvisibleIndexes = false }()
 	}
 	return execRestrictedSQL(ctx, se, sql)
 }
@@ -1917,7 +1925,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = version44
+	currentBootstrapVersion = version45
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {

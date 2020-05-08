@@ -309,3 +309,75 @@ func (ch *CommonHandle) String() string {
 	}
 	return fmt.Sprintf("{%s}", strings.Join(strs, ", "))
 }
+
+// HandleMap is the map for Handle.
+type HandleMap struct {
+	ints map[int64]interface{}
+	strs map[string]strHandleVal
+}
+
+type strHandleVal struct {
+	h   Handle
+	val interface{}
+}
+
+// NewHandleMap creates a new map for handle.
+func NewHandleMap() *HandleMap {
+	// Initialize the two maps to avoid checking nil.
+	return &HandleMap{
+		ints: map[int64]interface{}{},
+		strs: map[string]strHandleVal{},
+	}
+}
+
+// Get gets a value by a Handle.
+func (m *HandleMap) Get(h Handle) (v interface{}, ok bool) {
+	if h.IsInt() {
+		v, ok = m.ints[h.IntValue()]
+	} else {
+		var strVal strHandleVal
+		strVal, ok = m.strs[string(h.Encoded())]
+		v = strVal.val
+	}
+	return
+}
+
+// Set sets a value with a Handle.
+func (m *HandleMap) Set(h Handle, val interface{}) {
+	if h.IsInt() {
+		m.ints[h.IntValue()] = val
+	} else {
+		m.strs[string(h.Encoded())] = strHandleVal{
+			h:   h,
+			val: val,
+		}
+	}
+}
+
+// Delete deletes a entry from the map.
+func (m *HandleMap) Delete(h Handle) {
+	if h.IsInt() {
+		delete(m.ints, h.IntValue())
+	} else {
+		delete(m.strs, string(h.Encoded()))
+	}
+}
+
+// Len returns the length of the map.
+func (m *HandleMap) Len() int {
+	return len(m.ints) + len(m.strs)
+}
+
+// Range iterates the HandleMap with fn, the fn returns true to continue, returns false to stop.
+func (m *HandleMap) Range(fn func(h Handle, val interface{}) bool) {
+	for h, val := range m.ints {
+		if !fn(IntHandle(h), val) {
+			return
+		}
+	}
+	for _, strVal := range m.strs {
+		if !fn(strVal.h, strVal.val) {
+			return
+		}
+	}
+}

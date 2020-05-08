@@ -22,6 +22,7 @@ import (
 	"io/ioutil"
 	"net/url"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -48,8 +49,14 @@ const (
 	DefMaxOfMaxIndexLength = 3072 * 4
 	// DefPort is the default port of TiDB
 	DefPort = 4000
-	// DefStatusPort is the default status port of TiBD
+	// DefStatusPort is the default status port of TiDB
 	DefStatusPort = 10080
+	// DefHost is the default host of TiDB
+	DefHost = "0.0.0.0"
+	// DefStatusHost is the default status host of TiDB
+	DefStatusHost = "0.0.0.0"
+	// DefStoreLivenessTimeout is the default value for store liveness timeout.
+	DefStoreLivenessTimeout = "120s"
 )
 
 // Valid config maps
@@ -63,7 +70,7 @@ var (
 	// checkBeforeDropLDFlag is a go build flag.
 	checkBeforeDropLDFlag = "None"
 	// tempStorageDirName is the default temporary storage dir name by base64 encoding a string `port/statusPort`
-	tempStorageDirName = encodeDefTempStorageDir(DefPort, DefStatusPort)
+	tempStorageDirName = encodeDefTempStorageDir(DefHost, DefStatusHost, DefPort, DefStatusPort)
 )
 
 // Config contains configuration options.
@@ -137,13 +144,20 @@ type Config struct {
 // and the `tmp-storage-path` was not specified in the conf.toml or was specified the same as the default value.
 func (c *Config) UpdateTempStoragePath() {
 	if c.TempStoragePath == tempStorageDirName {
-		c.TempStoragePath = encodeDefTempStorageDir(c.Port, c.Status.StatusPort)
+		c.TempStoragePath = encodeDefTempStorageDir(c.Host, c.Status.StatusHost, c.Port, c.Status.StatusPort)
 	}
 }
 
-func encodeDefTempStorageDir(port, statusPort uint) string {
-	dirName := base64.URLEncoding.EncodeToString([]byte(fmt.Sprintf("%v/%v", port, statusPort)))
-	return filepath.Join(os.TempDir(), "tidb", dirName, "tmp-storage")
+func encodeDefTempStorageDir(host, statusHost string, port, statusPort uint) string {
+	dirName := base64.URLEncoding.EncodeToString([]byte(fmt.Sprintf("%v:%v/%v:%v", host, port, statusHost, statusPort)))
+	var osUID string
+	currentUser, err := user.Current()
+	if err != nil {
+		osUID = ""
+	} else {
+		osUID = currentUser.Uid
+	}
+	return filepath.Join(os.TempDir(), osUID+"_tidb", dirName, "tmp-storage")
 }
 
 // nullableBool defaults unset bool options to unset instead of false, which enables us to know if the user has set 2
@@ -451,6 +465,8 @@ type TiKVClient struct {
 	// If a store has been up to the limit, it will return error for successive request to
 	// prevent the store occupying too much token in dispatching level.
 	StoreLimit int64 `toml:"store-limit" json:"store-limit"`
+	// StoreLivenessTimeout is the timeout for store liveness check request.
+	StoreLivenessTimeout string `toml:"store-liveness-timeout" json:"store-liveness-timeout"`
 
 	CoprCache CoprocessorCache `toml:"copr-cache" json:"copr-cache"`
 }
@@ -527,7 +543,7 @@ type Experimental struct {
 }
 
 var defaultConf = Config{
-	Host:                         "0.0.0.0",
+	Host:                         DefHost,
 	AdvertiseAddress:             "",
 	Port:                         DefPort,
 	Cors:                         "",
@@ -577,7 +593,7 @@ var defaultConf = Config{
 	},
 	Status: Status{
 		ReportStatus:    true,
-		StatusHost:      "0.0.0.0",
+		StatusHost:      DefStatusHost,
 		StatusPort:      DefStatusPort,
 		MetricsInterval: 15,
 		RecordQPSbyDB:   false,
@@ -629,8 +645,9 @@ var defaultConf = Config{
 
 		EnableChunkRPC: true,
 
-		RegionCacheTTL: 600,
-		StoreLimit:     0,
+		RegionCacheTTL:       600,
+		StoreLimit:           0,
+		StoreLivenessTimeout: DefStoreLivenessTimeout,
 
 		CoprCache: CoprocessorCache{
 			Enabled:               true,
@@ -828,9 +845,6 @@ func (c *Config) Valid() error {
 		return fmt.Errorf("grpc-connection-count should be greater than 0")
 	}
 
-	if c.Performance.TxnTotalSizeLimit > 100<<20 && c.Binlog.Enable {
-		return fmt.Errorf("txn-total-size-limit should be less than %d with binlog enabled", 100<<20)
-	}
 	if c.Performance.TxnTotalSizeLimit > 10<<30 {
 		return fmt.Errorf("txn-total-size-limit should be less than %d", 10<<30)
 	}
