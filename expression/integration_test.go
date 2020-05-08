@@ -4988,7 +4988,7 @@ func (s *testIntegrationSuite) TestIssue16973(c *C) {
 	tk.MustExec("insert into t1 value (1,1,1,'a');")
 	tk.MustExec("insert into t1 value (2,1,2,'a');")
 	tk.MustExec("insert into t1 value (3,1,3,'a');")
-	tk.MustExec("insert into t2 value (1,2,CURRENT_TIMESTAMP(3));")
+	tk.MustExec("insert into t2 value (1,2,date'2020-05-08');")
 
 	rows := tk.MustQuery("explain SELECT /*+ INL_MERGE_JOIN(t1,t2) */ COUNT(*) FROM  t1 LEFT JOIN t2 ON t1.id = t2.order_id WHERE t1.ns = 'a' AND t1.org_id IN (1) " +
 		"AND t1.status IN (2,6,10) AND timestampdiff(month, t2.begin_time, date'2020-05-06') < 100;").Rows()
