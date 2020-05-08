@@ -4626,6 +4626,48 @@ func (s *testIntegrationSuite) TestMySQLExtAssignment(c *C) {
 	tk.MustExec("set @count := @count + 5;")
 }
 
+func (s *testIntegrationSuite) TestExprPushdown(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int, col1 varchar(10), col2 varchar(10), col3 int, col4 int, col5 int, index key1" +
+		" (col1, col2, col3, col4), index key2 (col4, col3, col2, col1))")
+	tk.MustExec("insert into t values(1,'211111','311',4,5,6),(2,'311111','411',5,6,7),(3,'411111','511',6,7,8)," +
+		"(4,'511111','611',7,8,9),(5,'611111','711',8,9,10)")
+
+	// case 1, index scan without double read, some filters can not be pushed to cop task
+	rows := tk.MustQuery("explain select col2, col1 from t use index(key1) where col2 like '5%' and substr(col1, 1, 1) = '4'").Rows()
+	c.Assert(fmt.Sprintf("%v", rows[1][2]), Equals, "root")
+	c.Assert(fmt.Sprintf("%v", rows[1][3]), Equals, "eq(substr(test.t.col1, 1, 1), \"4\")")
+	c.Assert(fmt.Sprintf("%v", rows[3][2]), Equals, "cop[tikv]")
+	c.Assert(fmt.Sprintf("%v", rows[3][3]), Equals, "like(test.t.col2, \"5%\", 92)")
+	tk.MustQuery("select col2, col1 from t use index(key1) where col2 like '5%' and substr(col1, 1, 1) = '4'").Check(testkit.Rows("511 411111"))
+	tk.MustQuery("select count(col2) from t use index(key1) where col2 like '5%' and substr(col1, 1, 1) = '4'").Check(testkit.Rows("1"))
+
+	// case 2, index scan without double read, none of the filters can be pushed to cop task
+	rows = tk.MustQuery("explain select col1, col2 from t use index(key2) where substr(col2, 1, 1) = '5' and substr(col1, 1, 1) = '4'").Rows()
+	c.Assert(fmt.Sprintf("%v", rows[0][2]), Equals, "root")
+	c.Assert(fmt.Sprintf("%v", rows[0][3]), Equals, "eq(substr(test.t.col1, 1, 1), \"4\"), eq(substr(test.t.col2, 1, 1), \"5\")")
+	tk.MustQuery("select col1, col2 from t use index(key2) where substr(col2, 1, 1) = '5' and substr(col1, 1, 1) = '4'").Check(testkit.Rows("411111 511"))
+	tk.MustQuery("select count(col1) from t use index(key2) where substr(col2, 1, 1) = '5' and substr(col1, 1, 1) = '4'").Check(testkit.Rows("1"))
+
+	// case 3, index scan with double read, some filters can not be pushed to cop task
+	rows = tk.MustQuery("explain select id from t use index(key1) where col2 like '5%' and substr(col1, 1, 1) = '4'").Rows()
+	c.Assert(fmt.Sprintf("%v", rows[1][2]), Equals, "root")
+	c.Assert(fmt.Sprintf("%v", rows[1][3]), Equals, "eq(substr(test.t.col1, 1, 1), \"4\")")
+	c.Assert(fmt.Sprintf("%v", rows[3][2]), Equals, "cop[tikv]")
+	c.Assert(fmt.Sprintf("%v", rows[3][3]), Equals, "like(test.t.col2, \"5%\", 92)")
+	tk.MustQuery("select id from t use index(key1) where col2 like '5%' and substr(col1, 1, 1) = '4'").Check(testkit.Rows("3"))
+	tk.MustQuery("select count(id) from t use index(key1) where col2 like '5%' and substr(col1, 1, 1) = '4'").Check(testkit.Rows("1"))
+
+	// case 4, index scan with double read, none of the filters can be pushed to cop task
+	rows = tk.MustQuery("explain select id from t use index(key2) where substr(col2, 1, 1) = '5' and substr(col1, 1, 1) = '4'").Rows()
+	c.Assert(fmt.Sprintf("%v", rows[1][2]), Equals, "root")
+	c.Assert(fmt.Sprintf("%v", rows[1][3]), Equals, "eq(substr(test.t.col1, 1, 1), \"4\"), eq(substr(test.t.col2, 1, 1), \"5\")")
+	tk.MustQuery("select id from t use index(key2) where substr(col2, 1, 1) = '5' and substr(col1, 1, 1) = '4'").Check(testkit.Rows("3"))
+	tk.MustQuery("select count(id) from t use index(key2) where substr(col2, 1, 1) = '5' and substr(col1, 1, 1) = '4'").Check(testkit.Rows("1"))
+}
+
 func (s *testIntegrationSuite) TestExprPushdownBlacklist(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery(`select * from mysql.expr_pushdown_blacklist`).Check(testkit.Rows())
@@ -4932,9 +4974,53 @@ func (s *testIntegrationSuite) TestIssue15725(c *C) {
 func (s *testIntegrationSuite) TestIssue15790(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t0;")
 	tk.MustExec("CREATE TABLE t0(c0 INT);")
 	tk.MustExec("INSERT INTO t0(c0) VALUES (0);")
 	tk.MustQuery("SELECT * FROM t0 WHERE -10000000000000000000 | t0.c0 UNION SELECT * FROM t0;").Check(testkit.Rows("0"))
 	tk.MustQuery("SELECT * FROM t0 WHERE -10000000000000000000 | t0.c0 UNION all SELECT * FROM t0;").Check(testkit.Rows("0", "0"))
 	tk.MustExec("drop table t0;")
+}
+
+func (s *testIntegrationSuite) TestIssue16505(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t(c varchar(100), index idx(c(100)));")
+	tk.MustExec("INSERT INTO t VALUES (NULL),('1'),('0'),(''),('aaabbb'),('0abc'),('123e456'),('0.0001deadsfeww');")
+	tk.MustQuery("select * from t where c;").Sort().Check(testkit.Rows("0.0001deadsfeww", "1", "123e456"))
+	tk.MustQuery("select /*+ USE_INDEX(t, idx) */ * from t where c;").Sort().Check(testkit.Rows("0.0001deadsfeww", "1", "123e456"))
+	tk.MustQuery("select /*+ IGNORE_INDEX(t, idx) */* from t where c;").Sort().Check(testkit.Rows("0.0001deadsfeww", "1", "123e456"))
+	tk.MustExec("drop table t;")
+}
+
+func (s *testIntegrationSuite) TestIssue15986(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("CREATE TABLE t0(c0 int)")
+	tk.MustExec("INSERT INTO t0 VALUES (0)")
+	tk.MustQuery("SELECT t0.c0 FROM t0 WHERE CHAR(204355900);").Check(testkit.Rows("0"))
+	tk.MustQuery("SELECT t0.c0 FROM t0 WHERE not CHAR(204355900);").Check(testkit.Rows())
+	tk.MustQuery("SELECT t0.c0 FROM t0 WHERE '.0';").Check(testkit.Rows())
+	tk.MustQuery("SELECT t0.c0 FROM t0 WHERE not '.0';").Check(testkit.Rows("0"))
+	// If the number does not exceed the range of float64 and its value is not 0, it will be converted to true.
+	tk.MustQuery("select * from t0 where '.000000000000000000000000000000000000000000000000000000" +
+		"00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" +
+		"00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" +
+		"0000000000000000000000000000000000000000000000000000000000000000009';").Check(testkit.Rows("0"))
+	tk.MustQuery("select * from t0 where not '.000000000000000000000000000000000000000000000000000000" +
+		"00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" +
+		"00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" +
+		"0000000000000000000000000000000000000000000000000000000000000000009';").Check(testkit.Rows())
+
+	// If the number is truncated beyond the range of float64, it will be converted to true when the truncated result is 0.
+	tk.MustQuery("select * from t0 where '.0000000000000000000000000000000000000000000000000000000" +
+		"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" +
+		"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" +
+		"00000000000000000000000000000000000000000000000000000000000000000000000000000000000009';").Check(testkit.Rows())
+	tk.MustQuery("select * from t0 where not '.0000000000000000000000000000000000000000000000000000000" +
+		"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" +
+		"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" +
+		"00000000000000000000000000000000000000000000000000000000000000000000000000000000000009';").Check(testkit.Rows("0"))
 }

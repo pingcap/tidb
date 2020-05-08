@@ -729,7 +729,6 @@ func (s *testPlanSuite) TestAggregationHints(c *C) {
 		{
 			sql:         "select /*+ STREAM_AGG(), USE_INDEX(t1), USE_INDEX(t2) */ sum(t1.a) from t t1 join t t2 on t1.b = t2.b group by t1.b",
 			best:        "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))->Sort->Projection->StreamAgg}(test.t2.b,test.t1.b)->HashAgg",
-			warning:     "[planner:1815]Optimizer Hint STREAM_AGG is inapplicable",
 			aggPushDown: true,
 		},
 	}
