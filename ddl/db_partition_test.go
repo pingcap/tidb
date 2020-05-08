@@ -761,6 +761,36 @@ func (s *testIntegrationSuite5) TestAlterTableDropPartition(c *C) {
 	tk.MustGetErrCode("alter table t1 drop partition p2", tmysql.ErrOnlyOnRangeListPartition)
 }
 
+func (s *testIntegrationSuite5) TestAlterTableExchangePartition(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists e")
+	tk.MustExec("drop table if exists e2")
+	tk.MustExec(`CREATE TABLE e (
+		id INT NOT NULL
+	)
+    PARTITION BY RANGE (id) (
+        PARTITION p0 VALUES LESS THAN (50),
+        PARTITION p1 VALUES LESS THAN (100),
+        PARTITION p2 VALUES LESS THAN (150),
+        PARTITION p3 VALUES LESS THAN (MAXVALUE)
+	);`)
+	tk.MustExec(`CREATE TABLE e2 (
+		id INT NOT NULL
+	);`)
+	tk.MustExec(`INSERT INTO e VALUES
+		(1669),
+		(337),
+		(16),
+		(2005)`)
+	tk.MustExec("ALTER TABLE e EXCHANGE PARTITION p0 WITH TABLE e2")
+	tk.MustQuery("select * from e2").Check(testkit.Rows("16"))
+	tk.MustQuery("select * from e").Check(testkit.Rows("1669", "337", "2005"))
+	tk.MustGetErrCode("ALTER TABLE e EXCHANGE PARTITION p1 WITH TABLE e2", tmysql.ErrRowDoesNotMatchPartition)
+	tk.MustGetErrCode("ALTER TABLE e EXCHANGE PARTITION p2 WITH TABLE e2", tmysql.ErrRowDoesNotMatchPartition)
+	tk.MustGetErrCode("ALTER TABLE e EXCHANGE PARTITION p3 WITH TABLE e2", tmysql.ErrRowDoesNotMatchPartition)
+}
+
 func (s *testIntegrationSuite4) TestAddPartitionTooManyPartitions(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

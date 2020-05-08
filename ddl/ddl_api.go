@@ -2775,7 +2775,8 @@ func (d *ddl) ExchangeTableParition(ctx sessionctx.Context, ident ast.Ident, spe
 		return errors.Trace(ErrPartitionExchangePartTable.GenWithStackByArgs(ntIdent.Name))
 	}
 
-	// NOTE: if nt is temporary table, it should be checked here
+	// NOTE: if nt is temporary table, it should be checked
+
 	partName := spec.PartitionNames[0].L
 
 	_, err = getPartitionDef(ptMeta, partName)
