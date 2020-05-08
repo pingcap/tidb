@@ -80,9 +80,9 @@ const (
 		PRIMARY KEY (Host, User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
 	CreateGlobalPrivTable = "CREATE TABLE IF NOT EXISTS mysql.global_priv (" +
-		"Host CHAR(60) NOT NULL DEFAULT ''," +
-		"User CHAR(80) NOT NULL DEFAULT ''," +
-		"Priv LONGTEXT NOT NULL DEFAULT ''," +
+		"Host 	CHAR(60) NOT NULL DEFAULT ''," +
+		"User 	CHAR(80) NOT NULL DEFAULT ''," +
+		"Priv 	LONGTEXT NOT NULL DEFAULT ''," +
 		"PRIMARY KEY (Host, User)" +
 		")"
 	// CreateDBPrivTable is the SQL statement creates DB scope privilege table in system db.
@@ -281,7 +281,7 @@ const (
 
 	// CreateOptRuleBlacklist stores the list of disabled optimizing operations.
 	CreateOptRuleBlacklist = `CREATE TABLE IF NOT EXISTS mysql.opt_rule_blacklist (
-		name CHAR(100) NOT NULL
+		name	CHAR(100) NOT NULL
 	);`
 )
 
@@ -545,7 +545,7 @@ func upgradeToVer3(s Session, ver int64) {
 		return
 	}
 	// Version 3 fix tx_read_only variable value.
-	sql := fmt.Sprintf("UPDATE HIGH_PRIORITY %s.%s set variable_value = '0' where variable_name = 'tx_read_only';",
+	sql := fmt.Sprintf("UPDATE HIGH_PRIORITY %s.%s SET variable_value = '0' WHERE variable_name = 'tx_read_only';",
 		mysql.SystemDB, mysql.GlobalVariablesTable)
 	mustExecute(s, sql)
 }
@@ -571,7 +571,7 @@ func upgradeToVer6(s Session, ver int64) {
 	if ver >= version6 {
 		return
 	}
-	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Super_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Show_db_priv`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Super_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Show_db_priv`", infoschema.ErrColumnExists)
 	// For reasons of compatibility, set the non-exists privilege column value to 'Y', as TiDB doesn't check them in older versions.
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Super_priv='Y'")
 }
@@ -580,7 +580,7 @@ func upgradeToVer7(s Session, ver int64) {
 	if ver >= version7 {
 		return
 	}
-	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Process_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Drop_priv`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Process_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Drop_priv`", infoschema.ErrColumnExists)
 	// For reasons of compatibility, set the non-exists privilege column value to 'Y', as TiDB doesn't check them in older versions.
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Process_priv='Y'")
 }
@@ -859,7 +859,7 @@ func upgradeToVer27(s Session, ver int64) {
 	if ver >= version27 {
 		return
 	}
-	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `correlation` double NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `correlation` DOUBLE NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
 }
 
 func upgradeToVer28(s Session, ver int64) {
