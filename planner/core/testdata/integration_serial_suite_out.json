@@ -226,13 +226,15 @@
       {
         "SQL": "explain select /*+ read_from_storage(tiflash[t]) */ * from t where t.a = 1",
         "Result": [
-          "TableDual_5 1.00 root  rows:0"
+          "TableReader_6 1.00 root  data:TableRangeScan_5",
+          "└─TableRangeScan_5 1.00 cop[tiflash] table:t range:[1,1], keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "explain select /*+ read_from_storage(tiflash[t]) */ * from t where t.a in (1, 2, 3)",
         "Result": [
-          "TableDual_5 3.00 root  rows:0"
+          "TableReader_6 3.00 root  data:TableRangeScan_5",
+          "└─TableRangeScan_5 3.00 cop[tiflash] table:t range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo"
         ]
       },
       {

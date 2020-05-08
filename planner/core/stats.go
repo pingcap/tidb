@@ -197,7 +197,16 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		}
 	}
 	ds.stats = ds.deriveStatsByFilter(ds.pushedDownConds, ds.possibleAccessPaths)
+	if tiflashPath != nil {
+		_, err := ds.deriveTablePathStats(tiflashPath, ds.pushedDownConds, false)
+		if err != nil {
+			return nil, err
+		}
+	}
 	for _, path := range ds.possibleAccessPaths {
+		if path.StoreType == kv.TiFlash {
+			continue
+		}
 		if path.IsTablePath {
 			noIntervalRanges, err := ds.deriveTablePathStats(path, ds.pushedDownConds, false)
 			if err != nil {
