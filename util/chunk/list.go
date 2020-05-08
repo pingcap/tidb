@@ -64,7 +64,7 @@ func (l *List) Copy() *List {
 	for i := 0; i < len(l.chunks); i++ {
 		list.chunks[i] = l.chunks[i].CopyConstruct()
 	}
-	list.freelist = make([]*Chunk, len(l.chunks))
+	list.freelist = make([]*Chunk, len(l.freelist))
 	for i := 0; i < len(l.freelist); i++ {
 		list.freelist[i] = l.freelist[i].CopyConstruct()
 	}
