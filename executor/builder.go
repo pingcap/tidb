@@ -2091,16 +2091,6 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 		return builder.buildIndexLookUpReaderForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc)
 	case *plannercore.PhysicalUnionScan:
 		return builder.buildUnionScanForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc)
-<<<<<<< HEAD
-=======
-	// The inner child of IndexJoin might be Projection when a combination of the following conditions is true:
-	// 	1. The inner child fetch data using indexLookupReader
-	// 	2. PK is not handle
-	// 	3. The inner child needs to keep order
-	// In this case, an extra column tidb_rowid will be appended in the output result of IndexLookupReader(see copTask.doubleReadNeedProj).
-	// Then we need a Projection upon IndexLookupReader to prune the redundant column.
-	case *plannercore.PhysicalProjection:
-		return builder.buildProjectionForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc)
 	// Need to support physical selection because after PR 16389, TiDB will push down all the expr supported by TiKV or TiFlash
 	// in predicate push down stage, so if there is an expr which only supported by TiFlash, a physical selection will be added after index read
 	case *plannercore.PhysicalSelection:
@@ -2114,9 +2104,6 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 		}
 		err = exec.open(ctx)
 		return exec, err
-	case *mockPhysicalIndexReader:
-		return v.e, nil
->>>>>>> 3224393... executor: fix wrong plan type for dataReaderBuilder error (#17028)
 	}
 	return nil, errors.New("Wrong plan type for dataReaderBuilder")
 }
