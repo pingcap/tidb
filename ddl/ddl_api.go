@@ -2251,6 +2251,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			err = d.AlterTableSetTiFlashReplica(ctx, ident, spec.TiFlashReplica)
 		case ast.AlterTableOrderByColumns:
 			err = d.OrderByColumns(ctx, ident)
+		case ast.AlterTableIndexInvisible:
+			err = d.AlterIndexVisibility(ctx, ident, spec.IndexName, spec.Visibility)
 		default:
 			// Nothing to do now.
 		}
@@ -4768,6 +4770,39 @@ func (d *ddl) DropSequence(ctx sessionctx.Context, ti ast.Ident, ifExists bool) 
 		SchemaName: schema.Name.L,
 		Type:       model.ActionDropSequence,
 		BinlogInfo: &model.HistoryInfo{},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func (d *ddl) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident, indexName model.CIStr, visibility ast.IndexVisibility) error {
+	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
+	if err != nil {
+		return err
+	}
+
+	invisible := false
+	if visibility == ast.IndexVisibilityInvisible {
+		invisible = true
+	}
+
+	skip, err := validateAlterIndexVisibility(indexName, invisible, tb.Meta())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if skip {
+		return nil
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tb.Meta().ID,
+		SchemaName: schema.Name.L,
+		Type:       model.ActionAlterIndexVisibility,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{indexName, invisible},
 	}
 
 	err = d.doDDLJob(ctx, job)
