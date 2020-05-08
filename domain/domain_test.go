@@ -18,6 +18,9 @@ import (
 	"crypto/tls"
 	"math"
 	"net"
+	"runtime"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -86,12 +89,64 @@ func unixSocketAvailable() bool {
 	return false
 }
 
+// For debug only, will be removed later.
+func interestingGoroutines() (gs []string) {
+	buf := make([]byte, 2<<20)
+	buf = buf[:runtime.Stack(buf, true)]
+	for _, g := range strings.Split(string(buf), "\n\n") {
+		sl := strings.SplitN(g, "\n", 2)
+		if len(sl) != 2 {
+			continue
+		}
+		stack := strings.TrimSpace(sl[1])
+		if stack == "" ||
+			strings.Contains(stack, "created by github.com/pingcap/tidb.init") ||
+			strings.Contains(stack, "testing.RunTests") ||
+			strings.Contains(stack, "check.(*resultTracker).start") ||
+			strings.Contains(stack, "check.(*suiteRunner).runFunc") ||
+			strings.Contains(stack, "check.(*suiteRunner).parallelRun") ||
+			strings.Contains(stack, "localstore.(*dbStore).scheduler") ||
+			strings.Contains(stack, "tikv.(*noGCHandler).Start") ||
+			strings.Contains(stack, "ddl.(*ddl).start") ||
+			strings.Contains(stack, "ddl.(*delRange).startEmulator") ||
+			strings.Contains(stack, "domain.NewDomain") ||
+			strings.Contains(stack, "testing.(*T).Run") ||
+			strings.Contains(stack, "domain.(*Domain).LoadPrivilegeLoop") ||
+			strings.Contains(stack, "domain.(*Domain).UpdateTableStatsLoop") ||
+			strings.Contains(stack, "testing.Main(") ||
+			strings.Contains(stack, "runtime.goexit") ||
+			strings.Contains(stack, "created by runtime.gc") ||
+			strings.Contains(stack, "interestingGoroutines") ||
+			strings.Contains(stack, "runtime.MHeap_Scavenger") ||
+			// these go routines are async terminated, so they may still alive after test end, thus cause
+			// false positive leak failures
+			strings.Contains(stack, "google.golang.org/grpc.(*addrConn).resetTransport") ||
+			strings.Contains(stack, "google.golang.org/grpc.(*ccBalancerWrapper).watcher") ||
+			strings.Contains(stack, "github.com/pingcap/goleveldb/leveldb/util.(*BufferPool).drain") ||
+			strings.Contains(stack, "github.com/pingcap/goleveldb/leveldb.(*DB).compactionError") ||
+			strings.Contains(stack, "github.com/pingcap/goleveldb/leveldb.(*DB).mpoolDrain") {
+			continue
+		}
+		gs = append(gs, stack)
+	}
+	sort.Strings(gs)
+	return
+}
+
 func TestInfo(t *testing.T) {
 	if !unixSocketAvailable() {
 		return
 	}
+	for _, str := range interestingGoroutines() {
+		t.Logf("TestInfo: BeforeTest %s", str)
+	}
 	testleak.BeforeTest()
-	defer testleak.AfterTestT(t)()
+	defer func() {
+		for _, str := range interestingGoroutines() {
+			t.Logf("TestInfo: AfterTest %s", str)
+		}
+		testleak.AfterTestT(t)()
+	}()
 	ddlLease := 80 * time.Millisecond
 	s, err := mockstore.NewMockTikvStore()
 	if err != nil {

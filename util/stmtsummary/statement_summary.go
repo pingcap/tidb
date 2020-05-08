@@ -330,7 +330,7 @@ func (ssMap *stmtSummaryByDigestMap) GetMoreThanOnceSelect() ([]string, []string
 		func() {
 			ssbd.Lock()
 			defer ssbd.Unlock()
-			if ssbd.initialized && ssbd.stmtType == "select" {
+			if ssbd.initialized && ssbd.stmtType == "Select" {
 				if ssbd.history.Len() > 0 {
 					ssElement := ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
 					ssElement.Lock()
@@ -455,7 +455,7 @@ func (ssbd *stmtSummaryByDigest) init(sei *StmtExecInfo, beginTime int64, interv
 	ssbd.schemaName = sei.SchemaName
 	ssbd.digest = sei.Digest
 	ssbd.planDigest = planDigest
-	ssbd.stmtType = strings.ToLower(sei.StmtCtx.StmtType)
+	ssbd.stmtType = sei.StmtCtx.StmtType
 	ssbd.normalizedSQL = formatSQL(sei.NormalizedSQL)
 	ssbd.tableNames = tableNames
 	ssbd.history = list.New()
