@@ -736,9 +736,7 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 
 func (h *Handle) execAutoAnalyze(sql string) {
 	startTime := time.Now()
-	h.mu.Lock()
 	_, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
-	h.mu.Unlock()
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {
