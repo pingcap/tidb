@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/statistics"
 )
 
@@ -459,7 +460,7 @@ func (p *PhysicalWindow) formatFrameBound(buffer *bytes.Buffer, bound *FrameBoun
 	}
 }
 
-func explainNormalizedByItems(buffer *bytes.Buffer, byItems []*ByItems) *bytes.Buffer {
+func explainNormalizedByItems(buffer *bytes.Buffer, byItems []*util.ByItems) *bytes.Buffer {
 	for i, item := range byItems {
 		order := "asc"
 		if item.Desc {
