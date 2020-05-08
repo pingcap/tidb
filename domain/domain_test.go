@@ -28,7 +28,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl"
@@ -45,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 	dto "github.com/prometheus/client_model/go"
 	"go.etcd.io/etcd/integration"
-	"go.uber.org/zap"
 )
 
 func TestT(t *testing.T) {
@@ -140,12 +138,12 @@ func TestInfo(t *testing.T) {
 		return
 	}
 	for _, str := range interestingGoroutines() {
-		log.Info("TestInfo: ", zap.String("BeforeTest", str))
+		t.Logf("TestInfo: BeforeTest %s", str)
 	}
 	testleak.BeforeTest()
 	defer func() {
 		for _, str := range interestingGoroutines() {
-			log.Info("TestInfo: ", zap.String("AfterTest", str))
+			t.Logf("TestInfo: AfterTest %s", str)
 		}
 		testleak.AfterTestT(t)()
 	}()
