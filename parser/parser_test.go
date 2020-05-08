@@ -2963,6 +2963,13 @@ func (s *testParserSuite) TestHintError(c *C) {
 	c.Assert(err.Error(), Equals, "line 1 column 47 near \"t1, t2 where t1.c1 = t2.c1\" ")
 	_, _, err = parser.Parse("SELECT 1 FROM DUAL WHERE 1 IN (SELECT /*+ DEBUG_HINT3 */ 1)", "", "")
 	c.Assert(err, IsNil)
+	stmt, _, err = parser.Parse("insert into t select /*+ memory_quota(1 MB) */ * from t;", "", "")
+	c.Assert(err, IsNil)
+	c.Assert(len(stmt[0].(*ast.InsertStmt).TableHints), Equals, 0)
+	c.Assert(len(stmt[0].(*ast.InsertStmt).Select.(*ast.SelectStmt).TableHints), Equals, 1)
+	stmt, _, err = parser.Parse("insert /*+ memory_quota(1 MB) */ into t select * from t;", "", "")
+	c.Assert(err, IsNil)
+	c.Assert(len(stmt[0].(*ast.InsertStmt).TableHints), Equals, 1)
 }
 
 func (s *testParserSuite) TestErrorMsg(c *C) {
