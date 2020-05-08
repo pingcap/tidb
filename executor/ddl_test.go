@@ -287,6 +287,19 @@ func (s *testSuite6) TestIssue16250(c *C) {
 	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.view_issue16250' doesn't exist")
 }
 
+func (s testSuite6) TestTruncateSequence(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create sequence if not exists seq")
+	_, err := tk.Exec("truncate table seq")
+	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.seq' doesn't exist")
+	tk.MustExec("create sequence if not exists seq1 start 10 increment 2 maxvalue 10000 cycle")
+	_, err = tk.Exec("truncate table seq1")
+	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.seq1' doesn't exist")
+	tk.MustExec("drop sequence if exists seq")
+	tk.MustExec("drop sequence if exists seq1")
+}
+
 func (s *testSuite6) TestCreateViewWithOverlongColName(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
