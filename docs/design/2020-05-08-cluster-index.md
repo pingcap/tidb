@@ -150,6 +150,10 @@ The unique index key is unchanged.
 #### Handle Primary Key Index differently
 For common handle tables, treat the primary index access path is table path instead of index path, builds TableScan plan instead of IndexLookUp plan.
 
+There may be some places implicit assume the TableScan plan use int handle, we need to carefully review the logic.
+
+The cost model may need to be adjusted for clustered index tables.
+
 #### IndexScan Schema
 
 If any of the primary key columns are used, or it is in an IndexLookUp executor, the index scan schema should be:
@@ -252,3 +256,7 @@ implement the Handle interface for IntHandle and CommonHandle.
     |
     +-+ support common handle in other packages thats need minor change.
 ```
+
+## Open Issues
+
+TiFlash and CDC also need to update to support the clustered index feature.
