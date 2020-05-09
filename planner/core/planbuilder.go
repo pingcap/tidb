@@ -723,8 +723,13 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl ta
 	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
 		publicPaths = append(publicPaths, &util.AccessPath{IsTablePath: true, StoreType: kv.TiFlash})
 	}
+	optimizerUseInvisibleIndexes := b.ctx.GetSessionVars().OptimizerUseInvisibleIndexes
 	for _, index := range tblInfo.Indices {
 		if index.State == model.StatePublic {
+			// Filter out invisible index, because they are not visible for optimizer
+			if !optimizerUseInvisibleIndexes && index.Invisible {
+				continue
+			}
 			publicPaths = append(publicPaths, &util.AccessPath{Index: index})
 		}
 	}
@@ -1759,7 +1764,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		b.curClause = orderByClause
 		orderByCol := np.Schema().Columns[0].Clone().(*expression.Column)
 		sort := LogicalSort{
-			ByItems: []*ByItems{{Expr: orderByCol}},
+			ByItems: []*util.ByItems{{Expr: orderByCol}},
 		}.Init(b.ctx, b.getSelectOffset())
 		sort.SetChildren(np)
 		np = sort
