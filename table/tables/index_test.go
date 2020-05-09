@@ -19,17 +19,25 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -122,7 +130,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 
 	_, hit, err := index.Seek(sc, txn, values)
 	c.Assert(err, IsNil)
-	c.Assert(hit, IsTrue)
+	c.Assert(hit, IsFalse)
 
 	err = index.Drop(txn)
 	c.Assert(err, IsNil)
@@ -255,4 +263,136 @@ func (s *testIndexSuite) TestCombineIndexSeek(c *C) {
 	_, h, err := iter.Next()
 	c.Assert(err, IsNil)
 	c.Assert(h.IntValue(), Equals, int64(1))
+}
+
+func (s *testIndexSuite) TestSingleColumnCommonHandle(c *C) {
+	tblInfo := buildTableInfo(c, "create table t (a varchar(255) primary key, u int unique, nu int, index nu (nu))")
+	var idxUnique, idxNonUnique table.Index
+	for _, idxInfo := range tblInfo.Indices {
+		idx := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+		if idxInfo.Name.L == "u" {
+			idxUnique = idx
+		} else if idxInfo.Name.L == "nu" {
+			idxNonUnique = idx
+		}
+	}
+	txn, err := s.s.Begin()
+	c.Assert(err, IsNil)
+
+	mockCtx := mock.NewContext()
+	sc := mockCtx.GetSessionVars().StmtCtx
+	// create index for "insert t values ('abc', 1, 1)"
+	idxColVals := types.MakeDatums(1)
+	handleColVals := types.MakeDatums("abc")
+	encodedHandle, err := codec.EncodeKey(sc, nil, handleColVals...)
+	c.Assert(err, IsNil)
+	commonHandle, err := kv.NewCommonHandle(encodedHandle)
+	c.Assert(err, IsNil)
+
+	for _, idx := range []table.Index{idxUnique, idxNonUnique} {
+		key, _, err := idx.GenIndexKey(sc, idxColVals, commonHandle, nil)
+		c.Assert(err, IsNil)
+		_, err = idx.Create(mockCtx, txn, idxColVals, commonHandle)
+		c.Assert(err, IsNil)
+		val, err := txn.Get(context.Background(), key)
+		c.Assert(err, IsNil)
+		colVals, err := tablecodec.DecodeIndexKV(key, val, 1, tablecodec.HandleDefault,
+			createRowcodecColInfo(tblInfo, idx.Meta()))
+		c.Assert(err, IsNil)
+		c.Assert(colVals, HasLen, 2)
+		_, d, err := codec.DecodeOne(colVals[0])
+		c.Assert(err, IsNil)
+		c.Assert(d.GetInt64(), Equals, int64(1))
+		_, d, err = codec.DecodeOne(colVals[1])
+		c.Assert(err, IsNil)
+		_, d, err = codec.DecodeOne(d.GetBytes())
+		c.Assert(err, IsNil)
+		c.Assert(d.GetString(), Equals, "abc")
+		handle, err := tablecodec.DecodeIndexHandle(key, val, 1)
+		c.Assert(err, IsNil)
+		c.Assert(handle.IsInt(), IsFalse)
+		c.Assert(handle.Encoded(), BytesEquals, commonHandle.Encoded())
+
+		unTouchedVal := append([]byte{1}, val[1:]...)
+		unTouchedVal = append(unTouchedVal, kv.UnCommitIndexKVFlag)
+		_, err = tablecodec.DecodeIndexKV(key, unTouchedVal, 1, tablecodec.HandleDefault,
+			createRowcodecColInfo(tblInfo, idx.Meta()))
+		c.Assert(err, IsNil)
+	}
+}
+
+func (s *testIndexSuite) TestMultiColumnCommonHandle(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tblInfo := buildTableInfo(c, "create table t (a int, b int, u varchar(64) unique, nu varchar(64), primary key (a, b), index nu (nu))")
+	var idxUnique, idxNonUnique table.Index
+	for _, idxInfo := range tblInfo.Indices {
+		idx := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+		if idxInfo.Name.L == "u" {
+			idxUnique = idx
+		} else if idxInfo.Name.L == "nu" {
+			idxNonUnique = idx
+		}
+	}
+
+	txn, err := s.s.Begin()
+	c.Assert(err, IsNil)
+	mockCtx := mock.NewContext()
+	sc := mockCtx.GetSessionVars().StmtCtx
+	// create index for "insert t values (3, 2, "abc", "abc")
+	idxColVals := types.MakeDatums("abc")
+	handleColVals := types.MakeDatums(3, 2)
+	encodedHandle, err := codec.EncodeKey(sc, nil, handleColVals...)
+	c.Assert(err, IsNil)
+	commonHandle, err := kv.NewCommonHandle(encodedHandle)
+	c.Assert(err, IsNil)
+	_ = idxNonUnique
+	for _, idx := range []table.Index{idxUnique, idxNonUnique} {
+		key, _, err := idx.GenIndexKey(sc, idxColVals, commonHandle, nil)
+		c.Assert(err, IsNil)
+		_, err = idx.Create(mockCtx, txn, idxColVals, commonHandle)
+		c.Assert(err, IsNil)
+		val, err := txn.Get(context.Background(), key)
+		c.Assert(err, IsNil)
+		colVals, err := tablecodec.DecodeIndexKV(key, val, 1, tablecodec.HandleDefault,
+			createRowcodecColInfo(tblInfo, idx.Meta()))
+		c.Assert(err, IsNil)
+		c.Assert(colVals, HasLen, 2)
+		_, d, err := codec.DecodeOne(colVals[0])
+		c.Assert(err, IsNil)
+		c.Assert(d.GetString(), Equals, "abc")
+		_, d, err = codec.DecodeOne(colVals[1])
+		c.Assert(err, IsNil)
+		handleColVals2, err := codec.Decode(d.GetBytes(), 2)
+		c.Assert(err, IsNil)
+		c.Assert(handleColVals2, HasLen, 2)
+		c.Assert(handleColVals2[0].GetInt64(), Equals, int64(3))
+		c.Assert(handleColVals2[1].GetInt64(), Equals, int64(2))
+		handle, err := tablecodec.DecodeIndexHandle(key, val, 1)
+		c.Assert(err, IsNil)
+		c.Assert(handle.IsInt(), IsFalse)
+		c.Assert(handle.Encoded(), BytesEquals, commonHandle.Encoded())
+	}
+}
+
+func buildTableInfo(c *C, sql string) *model.TableInfo {
+	stmt, err := parser.New().ParseOneStmt(sql, "", "")
+	c.Assert(err, IsNil)
+	tblInfo, err := ddl.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
+	c.Assert(err, IsNil)
+	return tblInfo
+}
+
+func createRowcodecColInfo(table *model.TableInfo, index *model.IndexInfo) []rowcodec.ColInfo {
+	colInfos := make([]rowcodec.ColInfo, 0, len(index.Columns))
+	for _, idxCol := range index.Columns {
+		col := table.Columns[idxCol.Offset]
+		colInfos = append(colInfos, rowcodec.ColInfo{
+			ID:         col.ID,
+			Tp:         int32(col.Tp),
+			Flag:       int32(col.Flag),
+			IsPKHandle: table.PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
+		})
+	}
+	return colInfos
 }
