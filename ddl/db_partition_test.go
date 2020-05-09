@@ -778,11 +778,7 @@ func (s *testIntegrationSuite5) TestAlterTableExchangePartition(c *C) {
 	tk.MustExec(`CREATE TABLE e2 (
 		id INT NOT NULL
 	);`)
-	tk.MustExec(`INSERT INTO e VALUES
-		(1669),
-		(337),
-		(16),
-		(2005)`)
+	tk.MustExec(`INSERT INTO e VALUES (1669),(337),(16),(2005)`)
 	tk.MustExec("ALTER TABLE e EXCHANGE PARTITION p0 WITH TABLE e2")
 	tk.MustQuery("select * from e2").Check(testkit.Rows("16"))
 	tk.MustQuery("select * from e").Check(testkit.Rows("1669", "337", "2005"))
