@@ -1399,7 +1399,7 @@ func (c *locateFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		return nil, err
 	}
 	var sig builtinFunc
-	// Loacte is multibyte safe.
+	// Locate is multibyte safe.
 	useBinary := bf.collation == charset.CollationBin
 	switch {
 	case hasStartPos && useBinary:
