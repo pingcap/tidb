@@ -20,11 +20,11 @@ When certain errors occur in TiDB components, users are often unaware of the mea
 ### Requirement
 
 In order to let TiUP know the the errors every component may throw, the components developers should
-keep a meta file in the code repository. The meta file can be a json file, a toml file or a markdown file.
+keep a metafile in the code repository. The metafile can be a json file, a toml file or a markdown file.
 
-#### Meta file in JSON
+#### metafile in JSON
 
-The json format of meta file is like:
+The json format of metafile is like:
 
 ```json
 [
@@ -50,7 +50,7 @@ Tradeoff:
 - Poor readability when multiple lines are involved.
 - The markdown content can't be previewed on writing.
 
-#### Meta file in toml
+#### metafile in toml
 
 ```toml
 [error.8005]
@@ -73,7 +73,7 @@ Benefit:
 Tradeoff:
 - The markdown content can't be previewed on writing.
 
-#### Meta file in markdown
+#### metafile in markdown
 
 ```md
 ## Code: 8005
@@ -129,6 +129,11 @@ See [the Troubleshoot section](https://pingcap.com/docs/stable/faq/tidb#troubles
 
 In this case, we must define the grammar and write a parser. Writing parser increase much complexity. What's worse
 is that I found no grammar that fits it.
+
+#### Summary
+
+Through the above discussion, we recommend the toml version of metafile. 
+In addition, the error codes should be adding only in case of conflict between versions.
 
 ### Principle
 
