@@ -121,13 +121,9 @@ func createColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnInfo, pos *
 	colInfo.Offset = len(cols)
 
 	// Append the column info to the end of the tblInfo.Columns.
-	// It will reorder to the right position in "Columns" when it state change to public.
-	newCols := make([]*model.ColumnInfo, 0, len(cols)+1)
-	newCols = append(newCols, cols...)
-	newCols = append(newCols, colInfo)
-
-	tblInfo.Columns = newCols
-	return colInfo, position, nil
+	// It will reorder to the right offset in "Columns" when it state change to public.
+	tblInfo.Columns = append(cols, colInfo)
+	return colInfo, pos, offset, nil
 }
 
 func checkAddColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.ColumnInfo, *model.ColumnInfo, *ast.ColumnPosition, int, error) {

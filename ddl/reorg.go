@@ -193,8 +193,13 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 	}
 	defer w.sessPool.put(ctx)
 
+	executor, ok := ctx.(sqlexec.RestrictedSQLExecutor)
+	// `mock.Context` is used in tests, which doesn't implement RestrictedSQLExecutor
+	if !ok {
+		return statistics.PseudoRowCount
+	}
 	sql := fmt.Sprintf("select table_rows from information_schema.tables where tidb_table_id=%v;", tblInfo.ID)
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	rows, _, err := executor.ExecRestrictedSQL(sql)
 	if err != nil {
 		return statistics.PseudoRowCount
 	}
