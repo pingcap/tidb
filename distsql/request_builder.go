@@ -120,6 +120,7 @@ func (builder *RequestBuilder) SetStartTS(startTS uint64) *RequestBuilder {
 	return builder
 }
 
+// SetStartTS sets "SnapshotRead" for "kv.Request".
 func (builder *RequestBuilder) SetSnapshotRead(snapshotRead bool) *RequestBuilder {
 	builder.Request.SnapshotRead = snapshotRead
 	return builder
