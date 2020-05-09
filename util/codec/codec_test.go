@@ -1251,7 +1251,7 @@ func (s *testCodecSuite) TestHashChunkColumns(c *C) {
 	}
 
 	// Test hash value of every single column that is not `Null`
-	for i := 13; i < len(tps); i++ {
+	for i := 12; i < len(tps); i++ {
 		hasNull = []bool{false, false, false}
 		vecHash = []hash.Hash64{fnv.New64(), fnv.New64(), fnv.New64()}
 		rowHash = []hash.Hash64{fnv.New64(), fnv.New64(), fnv.New64()}
