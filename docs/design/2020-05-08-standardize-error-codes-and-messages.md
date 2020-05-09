@@ -30,13 +30,15 @@ The json format of metafile is like:
 [
     {
         "code": 8005,
-        "error": "Transactions in TiDB encounter write conflicts.",
-        "message": "See [the Troubleshoot section](https://pingcap.com/docs/stable/faq/tidb#troubleshoot) for the cause and solution.",
+        "error": "Write Conflict, txnStartTS is stale",
+        "message": "Transactions in TiDB encounter write conflicts.",
+        "workaround": "Check whether `tidb_disable_txn_auto_retry` is set to `on`. If so, set it to `off`; if it is already `off`, increase the value of `tidb_retry_limit` until the error no longer occurs."
     },
     {
-        "code": 8110,
-        "error": "The Cartesian product operation cannot be executed.",
-        "message": "Set cross-join in the configuration to true.\nThe second line."
+        "code": 9005,
+        "error": "Region is unavailable",
+        "message": "A certain Raft Group is not available, such as the number of replicas is not enough.\nThis error usually occurs when the TiKV server is busy or the TiKV node is down.",
+        "workaround": "Check the status, monitoring data and log of the TiKV server."
     }
 ]
 ```
@@ -54,15 +56,19 @@ Tradeoff:
 
 ```toml
 [error.8005]
-error = '''Transactions in TiDB encounter write conflicts.'''
-message = '''See [the Troubleshoot section](https://pingcap.com/docs/stable/faq/tidb#troubleshoot) for the cause and solution.'''
-
-[error.8110]
-error = '''The Cartesian product operation cannot be executed.'''
-message = '''
-Set cross-join in the configuration to true.
-The second line.
+error = '''Write Conflict, txnStartTS is stale'''
+message = '''Transactions in TiDB encounter write conflicts.'''
+workaround = '''
+Check whether `tidb_disable_txn_auto_retry` is set to `on`. If so, set it to `off`; if it is already `off`, increase the value of `tidb_retry_limit` until the error no longer occurs.
 '''
+
+[error.9005]
+error = '''Region is unavailable'''
+message = '''
+A certain Raft Group is not available, such as the number of replicas is not enough.
+This error usually occurs when the TiKV server is busy or the TiKV node is down.
+'''
+workaround = '''Check the status, monitoring data and log of the TiKV server.'''
 ```
 
 Benefit:
@@ -78,17 +84,21 @@ Tradeoff:
 ```md
 ## Code: 8005
 ### Error
-Transactions in TiDB encounter write conflicts.
+Write Conflict, txnStartTS is stale
 ### Message
-See [the Troubleshoot section](https://pingcap.com/docs/stable/faq/tidb#troubleshoot) for the cause and solution.
+A certain Raft Group is not available, such as the number of replicas is not enough.
+This error usually occurs when the TiKV server is busy or the TiKV node is down.
+### Workaround
+Check whether `tidb_disable_txn_auto_retry` is set to `on`. If so, set it to `off`; if it is already `off`, increase the value of `tidb_retry_limit` until the error no longer occurs.
 
-## Code: 8110
+## Code: 9005
 ### Error
-The Cartesian product operation cannot be executed.
+Region is unavailable
 ### Message
-Set cross-join in the configuration to true.
-The second line.
-```
+A certain Raft Group is not available, such as the number of replicas is not enough.
+This error usually occurs when the TiKV server is busy or the TiKV node is down.
+### Workaround
+Check the status, monitoring data and log of the TiKV server.
 
 Benefit:
 - It's easy to write.
@@ -102,28 +112,38 @@ Tradeoff:
 Tradeoff Example:
 
 ```md
-## Code: 8110
-### Error
-The Cartesian product operation cannot be executed.
-### Message
 ## Code: 8005
 ### Error
-Transactions in TiDB encounter write conflicts.
+Write Conflict, txnStartTS is stale
 ### Message
-See [the Troubleshoot section](https://pingcap.com/docs/stable/faq/tidb#troubleshoot) for the cause and solution.
+A certain Raft Group is not available, such as the number of replicas is not enough.
+This error usually occurs when the TiKV server is busy or the TiKV node is down.
+### Workaround
+## Code: 9005
+### Error
+Region is unavailable
+### Message
+A certain Raft Group is not available, such as the number of replicas is not enough.
+This error usually occurs when the TiKV server is busy or the TiKV node is down.
+### Workaround
+Check the status, monitoring data and log of the TiKV server.
 ```
 
 As the syntax above, the 8005 block is the message part of 8110 block, so we expect it's result is the same as this toml:
 
 ```toml
-[error.8110]
-error = '''The Cartesian product operation cannot be executed.'''
-message = '''
-## Code: 8005
+[error.8005]
+error = '''Write Conflict, txnStartTS is stale'''
+message = '''Transactions in TiDB encounter write conflicts.'''
+workaround = '''
+## Code: 9005
 ### Error
-Transactions in TiDB encounter write conflicts.
+Region is unavailable
 ### Message
-See [the Troubleshoot section](https://pingcap.com/docs/stable/faq/tidb#troubleshoot) for the cause and solution.
+A certain Raft Group is not available, such as the number of replicas is not enough.
+This error usually occurs when the TiKV server is busy or the TiKV node is down.
+### Workaround
+Check the status, monitoring data and log of the TiKV server.
 '''
 ```
 
@@ -133,6 +153,7 @@ is that I found no grammar that fits it.
 #### Summary
 
 Through the above discussion, we recommend the toml version of metafile. 
+
 In addition, the error codes should be adding only in case of conflict between versions.
 
 ### Principle
