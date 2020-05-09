@@ -792,11 +792,11 @@ func (s *testIntegrationSuite5) TestAlterTableExchangePartition(c *C) {
 		id int not null
 	) PARTITION BY HASH (id)
 	PARTITIONS 4;`)
-	tk.MustGetErrCode("ALTER TABLE e EXCHANGE PARTITION p1 WITH TABLE e2;", tmysql.ErrPartitionExchangePartTable)
-	tk.MustExec("truncate tabl e2")
+	tk.MustGetErrCode("ALTER TABLE e EXCHANGE PARTITION p1 WITH TABLE e3;", tmysql.ErrPartitionExchangePartTable)
+	tk.MustExec("truncate table e2")
 	tk.MustExec(`INSERT INTO e3 VALUES (1),(5)`)
 
-	tk.MustExec("ALTER TABLE e3 exchange partition p1 with tabl e2;")
+	tk.MustExec("ALTER TABLE e3 EXCHANGE PARTITION p1 WITH TABLE e2;")
 	tk.MustGetErrCode("ALTER TABLE e3 EXCHANGE PARTITION p0 WITH TABLE e2", tmysql.ErrRowDoesNotMatchPartition)
 	tk.MustGetErrCode("ALTER TABLE e3 EXCHANGE PARTITION p2 WITH TABLE e2", tmysql.ErrRowDoesNotMatchPartition)
 	tk.MustGetErrCode("ALTER TABLE e3 EXCHANGE PARTITION p3 WITH TABLE e2", tmysql.ErrRowDoesNotMatchPartition)
