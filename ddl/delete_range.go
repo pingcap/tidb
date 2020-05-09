@@ -96,7 +96,7 @@ func (dr *delRange) addDelRangeJob(job *model.Job) error {
 
 	err = insertJobIntoDeleteRangeTable(ctx, job)
 	if err != nil {
-		logutil.BgLogger().Warn("[ddl] add job into delete-range table failed", zap.Int64("jobID", job.ID), zap.String("jobType", job.Type.String()), zap.Error(err))
+		logutil.BgLogger().Error("[ddl] add job into delete-range table failed", zap.Int64("jobID", job.ID), zap.String("jobType", job.Type.String()), zap.Error(err))
 		return errors.Trace(err)
 	}
 	if !dr.storeSupport {
