@@ -1217,7 +1217,7 @@ func (s *testCodecSuite) TestHashChunkColumns(c *C) {
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	buf := make([]byte, 1)
 	datums, tps := datumsForTest(sc)
-	chk := chunkForTest(c, sc, datums, tps, 3)
+	chk := chunkForTest(c, sc, datums, tps, 4)
 
 	colIdx := make([]int, len(tps))
 	for i := 0; i < len(tps); i++ {
@@ -1227,19 +1227,22 @@ func (s *testCodecSuite) TestHashChunkColumns(c *C) {
 	vecHash := []hash.Hash64{fnv.New64(), fnv.New64(), fnv.New64()}
 	rowHash := []hash.Hash64{fnv.New64(), fnv.New64(), fnv.New64()}
 
+	sel := make([]bool, len(datums))
+	for i := 0; i < 3; i++ {
+		sel[i] = true
+	}
+
 	// Test hash value of the first 12 `Null` columns
 	for i := 0; i < 12; i++ {
 		c.Assert(chk.GetRow(0).IsNull(i), Equals, true)
-		err1 := HashChunkColumns(sc, vecHash, chk, tps[i], i, buf, hasNull)
-		err2 := HashChunkSelected(sc, vecHash, chk, tps[i], i, buf, hasNull, make([]bool, len(datums)))
-		err3 := HashChunkRow(sc, rowHash[0], chk.GetRow(0), tps, colIdx[i:i+1], buf)
-		err4 := HashChunkRow(sc, rowHash[1], chk.GetRow(1), tps, colIdx[i:i+1], buf)
-		err5 := HashChunkRow(sc, rowHash[2], chk.GetRow(2), tps, colIdx[i:i+1], buf)
+		err1 := HashChunkSelected(sc, vecHash, chk, tps[i], i, buf, hasNull, sel)
+		err2 := HashChunkRow(sc, rowHash[0], chk.GetRow(0), tps, colIdx[i:i+1], buf)
+		err3 := HashChunkRow(sc, rowHash[1], chk.GetRow(1), tps, colIdx[i:i+1], buf)
+		err4 := HashChunkRow(sc, rowHash[2], chk.GetRow(2), tps, colIdx[i:i+1], buf)
 		c.Assert(err1, IsNil)
 		c.Assert(err2, IsNil)
 		c.Assert(err3, IsNil)
 		c.Assert(err4, IsNil)
-		c.Assert(err5, IsNil)
 
 		c.Assert(hasNull[0], Equals, true)
 		c.Assert(hasNull[1], Equals, true)
@@ -1257,7 +1260,7 @@ func (s *testCodecSuite) TestHashChunkColumns(c *C) {
 		rowHash = []hash.Hash64{fnv.New64(), fnv.New64(), fnv.New64()}
 
 		c.Assert(chk.GetRow(0).IsNull(i), Equals, false)
-		err1 := HashChunkColumns(sc, vecHash, chk, tps[i], i, buf, hasNull)
+		err1 := HashChunkSelected(sc, vecHash, chk, tps[i], i, buf, hasNull, sel)
 		err2 := HashChunkRow(sc, rowHash[0], chk.GetRow(0), tps, colIdx[i:i+1], buf)
 		err3 := HashChunkRow(sc, rowHash[1], chk.GetRow(1), tps, colIdx[i:i+1], buf)
 		err4 := HashChunkRow(sc, rowHash[2], chk.GetRow(2), tps, colIdx[i:i+1], buf)
