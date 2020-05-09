@@ -789,6 +789,26 @@ func (s *testIntegrationSuite5) TestAlterTableExchangePartition(c *C) {
 	tk.MustGetErrCode("ALTER TABLE e EXCHANGE PARTITION p1 WITH TABLE e2", tmysql.ErrRowDoesNotMatchPartition)
 	tk.MustGetErrCode("ALTER TABLE e EXCHANGE PARTITION p2 WITH TABLE e2", tmysql.ErrRowDoesNotMatchPartition)
 	tk.MustGetErrCode("ALTER TABLE e EXCHANGE PARTITION p3 WITH TABLE e2", tmysql.ErrRowDoesNotMatchPartition)
+
+	tk.MustExec("drop table if exists e3")
+
+	tk.MustExec(`CREATE TABLE e3 (
+		id int not null
+	) PARTITION BY HASH (id)
+	PARTITIONS 4;`)
+	tk.MustGetErrCode("ALTER TABLE e EXCHANGE PARTITION p1 WITH TABLE e2;", tmysql.ErrPartitionExchangePartTable)
+	tk.MustExec("truncate tabl e2")
+	tk.MustExec(`INSERT INTO e3 VALUES (1),(5)`)
+
+	tk.MustExec("ALTER TABLE e3 exchange partition p1 with tabl e2;")
+	tk.MustGetErrCode("ALTER TABLE e3 EXCHANGE PARTITION p0 WITH TABLE e2", tmysql.ErrRowDoesNotMatchPartition)
+	tk.MustGetErrCode("ALTER TABLE e3 EXCHANGE PARTITION p2 WITH TABLE e2", tmysql.ErrRowDoesNotMatchPartition)
+	tk.MustGetErrCode("ALTER TABLE e3 EXCHANGE PARTITION p3 WITH TABLE e2", tmysql.ErrRowDoesNotMatchPartition)
+	tk.MustExec("ALTER TABLE e3 EXCHANGE PARTITION p0 with TABLE e2 WITHOUT VALIDATION")
+
+	tk.MustQuery("select * from e3 partition(p0)").Check(testkit.Rows("1", "5"))
+	tk.MustQuery("select * from e2").Check(testkit.Rows())
+
 }
 
 func (s *testIntegrationSuite4) TestAddPartitionTooManyPartitions(c *C) {
