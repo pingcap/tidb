@@ -289,7 +289,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		names := prepared.CachedNames.(types.NameSlice)
 		err := e.rebuildRange(plan)
 		if err != nil {
-			logutil.BgLogger().Warn("rebuild range failed", zap.Error(err))
+			logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
 			goto REBUILD
 		}
 		if metrics.ResettablePlanCacheCounterFortTest {
@@ -325,7 +325,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 			if planValid {
 				err := e.rebuildRange(cachedVal.Plan)
 				if err != nil {
-					logutil.BgLogger().Warn("rebuild range failed", zap.Error(err))
+					logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
 					goto REBUILD
 				}
 				err = e.setFoundInPlanCache(sctx, true)
