@@ -78,6 +78,12 @@ func (s *testTableSuiteBase) TearDownSuite(c *C) {
 	testleak.AfterTest(c)()
 }
 
+func (s *testTableSuiteBase) newTestKitWithRoot(c *C) *testkit.TestKit {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	return tk
+}
+
 type testClusterTableSuite struct {
 	*testTableSuiteBase
 	rpcserver  *grpc.Server
@@ -745,7 +751,7 @@ func (s *testTableSuite) checkSystemSchemaTableID(c *C, dbName string, dbID, sta
 }
 
 func (s *testClusterTableSuite) TestSelectClusterTable(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+	tk := s.newTestKitWithRoot(c)
 	slowLogFileName := "tidb-slow.log"
 	prepareSlowLogfile(c, slowLogFileName)
 	defer os.Remove(slowLogFileName)
@@ -873,7 +879,7 @@ func (s *testTableSuite) TestFormatVersion(c *C) {
 
 // Test statements_summary.
 func (s *testTableSuite) TestStmtSummaryTable(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk := s.newTestKitWithRoot(c)
 
 	tk.MustQuery("select column_comment from information_schema.columns " +
 		"where table_name='STATEMENTS_SUMMARY' and column_name='STMT_TYPE'",
@@ -896,7 +902,7 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	tk.MustQuery("select @@global.tidb_stmt_summary_refresh_interval").Check(testkit.Rows("999999999"))
 
 	// Create a new session to test.
-	tk = testkit.NewTestKitWithInit(c, s.store)
+	tk = s.newTestKitWithRoot(c)
 
 	// Test INSERT
 	tk.MustExec("insert into t values(1, 'a')")
@@ -908,7 +914,7 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
 		from information_schema.statements_summary
 		where digest_text like 'insert into t%'`,
-	).Check(testkit.Rows("insert test test.t <nil> 4 0 0 0 0 0 2 2 1 1 1 insert into t values(1, 'a') "))
+	).Check(testkit.Rows("Insert test test.t <nil> 4 0 0 0 0 0 2 2 1 1 1 insert into t values(1, 'a') "))
 
 	// Test point get.
 	tk.MustExec("drop table if exists p")
@@ -947,7 +953,7 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
 		from information_schema.statements_summary
 		where digest_text like 'select * from t%'`,
-	).Check(testkit.Rows("select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tIndexLookUp_10\troot\t100\t\n" +
+	).Check(testkit.Rows("Select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tIndexLookUp_10\troot\t100\t\n" +
 		"\t├─IndexScan_8 \tcop \t100\ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
 		"\t└─TableScan_9 \tcop \t100\ttable:t, keep order:false, stats:pseudo"))
 
@@ -957,7 +963,7 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
 		from information_schema.statements_summary
 		order by exec_count desc limit 1`,
-	).Check(testkit.Rows("insert test test.t <nil> 4 0 0 0 0 0 2 2 1 1 1 insert into t values(1, 'a') "))
+	).Check(testkit.Rows("Insert test test.t <nil> 4 0 0 0 0 0 2 2 1 1 1 insert into t values(1, 'a') "))
 
 	// Test different plans with same digest.
 	c.Assert(failpoint.Enable(failpointName, "return(1000)"), IsNil)
@@ -967,7 +973,7 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
 		from information_schema.statements_summary
 		where digest_text like 'select * from t%'`,
-	).Check(testkit.Rows("select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tIndexLookUp_10\troot\t100\t\n" +
+	).Check(testkit.Rows("Select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tIndexLookUp_10\troot\t100\t\n" +
 		"\t├─IndexScan_8 \tcop \t100\ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
 		"\t└─TableScan_9 \tcop \t100\ttable:t, keep order:false, stats:pseudo"))
 
@@ -979,7 +985,7 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("0"))
 
 	// Create a new session to test
-	tk = testkit.NewTestKitWithInit(c, s.store)
+	tk = s.newTestKitWithRoot(c)
 
 	// This statement shouldn't be summarized.
 	tk.MustQuery("select * from t where a=2")
@@ -1002,13 +1008,13 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		max_prewrite_regions, avg_affected_rows, query_sample_text, prev_sample_text, plan
 		from information_schema.statements_summary
 		where digest_text like 'insert into t%'`,
-	).Check(testkit.Rows("insert test test.t <nil> 1 0 0 0 0 0 0 0 0 0 1 insert into t values(1, 'a')  "))
+	).Check(testkit.Rows("Insert test test.t <nil> 1 0 0 0 0 0 0 0 0 0 1 insert into t values(1, 'a')  "))
 	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys,
 		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions,
 		max_prewrite_regions, avg_affected_rows, query_sample_text, prev_sample_text, plan
 		from information_schema.statements_summary
 		where digest_text='commit'`,
-	).Check(testkit.Rows("commit test <nil> <nil> 1 0 0 0 0 0 2 2 1 1 0 commit insert into t values(1, 'a') "))
+	).Check(testkit.Rows("Commit test <nil> <nil> 1 0 0 0 0 0 2 2 1 1 0 commit insert into t values(1, 'a') "))
 
 	tk.MustQuery("select * from t where a=2")
 	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys,
@@ -1016,7 +1022,7 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
 		from information_schema.statements_summary
 		where digest_text like 'select * from t%'`,
-	).Check(testkit.Rows("select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tIndexLookUp_10\troot\t1000\t\n" +
+	).Check(testkit.Rows("Select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tIndexLookUp_10\troot\t1000\t\n" +
 		"\t├─IndexScan_8 \tcop \t1000\ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
 		"\t└─TableScan_9 \tcop \t1000\ttable:t, keep order:false, stats:pseudo"))
 
@@ -1024,7 +1030,7 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	tk.MustExec("set global tidb_enable_stmt_summary = false")
 
 	// Create a new session to test.
-	tk = testkit.NewTestKitWithInit(c, s.store)
+	tk = s.newTestKitWithRoot(c)
 
 	tk.MustQuery("select * from t where a=2")
 
@@ -1034,7 +1040,7 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
 		from information_schema.statements_summary
 		where digest_text like 'select * from t%'`,
-	).Check(testkit.Rows("select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tIndexLookUp_10\troot\t1000\t\n" +
+	).Check(testkit.Rows("Select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tIndexLookUp_10\troot\t1000\t\n" +
 		"\t├─IndexScan_8 \tcop \t1000\ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
 		"\t└─TableScan_9 \tcop \t1000\ttable:t, keep order:false, stats:pseudo"))
 
@@ -1050,7 +1056,7 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	).Check(testkit.Rows())
 
 	// Create a new session to test
-	tk = testkit.NewTestKitWithInit(c, s.store)
+	tk = s.newTestKitWithRoot(c)
 
 	tk.MustExec("set global tidb_enable_stmt_summary = on")
 	tk.MustExec("set global tidb_stmt_summary_history_size = 24")
@@ -1116,8 +1122,7 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 
 // Test statements_summary_history.
 func (s *testTableSuite) TestStmtSummaryHistoryTable(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-
+	tk := s.newTestKitWithRoot(c)
 	tk.MustExec("drop table if exists test_summary")
 	tk.MustExec("create table test_summary(a int, b varchar(10), key k(a))")
 
@@ -1131,7 +1136,7 @@ func (s *testTableSuite) TestStmtSummaryHistoryTable(c *C) {
 	tk.MustQuery("select @@global.tidb_stmt_summary_refresh_interval").Check(testkit.Rows("999999999"))
 
 	// Create a new session to test.
-	tk = testkit.NewTestKitWithInit(c, s.store)
+	tk = s.newTestKitWithRoot(c)
 
 	// Test INSERT
 	tk.MustExec("insert into test_summary values(1, 'a')")
@@ -1143,7 +1148,7 @@ func (s *testTableSuite) TestStmtSummaryHistoryTable(c *C) {
 		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
 		from information_schema.statements_summary_history
 		where digest_text like 'insert into test_summary%'`,
-	).Check(testkit.Rows("insert test test.test_summary <nil> 4 0 0 0 0 0 2 2 1 1 1 insert into test_summary values(1, 'a') "))
+	).Check(testkit.Rows("Insert test test.test_summary <nil> 4 0 0 0 0 0 2 2 1 1 1 insert into test_summary values(1, 'a') "))
 
 	tk.MustExec("set global tidb_stmt_summary_history_size = 0")
 	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys,
@@ -1155,7 +1160,7 @@ func (s *testTableSuite) TestStmtSummaryHistoryTable(c *C) {
 
 // Test statements_summary_history.
 func (s *testTableSuite) TestStmtSummaryInternalQuery(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk := s.newTestKitWithRoot(c)
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b varchar(10), key k(a))")
@@ -1175,7 +1180,7 @@ func (s *testTableSuite) TestStmtSummaryInternalQuery(c *C) {
 	// Test Internal
 
 	// Create a new session to test.
-	tk = testkit.NewTestKitWithInit(c, s.store)
+	tk = s.newTestKitWithRoot(c)
 
 	tk.MustExec("select * from t where t.a = 1")
 	tk.MustQuery(`select exec_count, digest_text
@@ -1187,7 +1192,7 @@ func (s *testTableSuite) TestStmtSummaryInternalQuery(c *C) {
 	defer tk.MustExec("set global tidb_stmt_summary_internal_query = false")
 
 	// Create a new session to test.
-	tk = testkit.NewTestKitWithInit(c, s.store)
+	tk = s.newTestKitWithRoot(c)
 
 	tk.MustExec("admin flush bindings")
 	tk.MustExec("admin evolve bindings")
@@ -1201,7 +1206,7 @@ func (s *testTableSuite) TestStmtSummaryInternalQuery(c *C) {
 
 // Test error count and warning count.
 func (s *testTableSuite) TestStmtSummaryErrorCount(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk := s.newTestKitWithRoot(c)
 
 	// Clear summaries.
 	tk.MustExec("set global tidb_enable_stmt_summary = 0")
