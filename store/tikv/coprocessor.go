@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"sort"
 	"strconv"
 	"strings"
@@ -716,7 +715,6 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 			if cValue != nil && cValue.RegionID == task.region.id {
 				if worker.req.SnapshotRead {
 					if cValue.TimeStamp == worker.req.StartTs {
-						log.Println("!!!!!!!!!!!")
 						resp := &copResponse{
 							pbResp: &coprocessor.Response{IsCacheHit: true},
 							detail: &execdetails.ExecDetails{},
