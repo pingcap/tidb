@@ -1249,7 +1249,7 @@ func buildTableInfo(
 				switch lastCol.Tp {
 				case mysql.TypeLong, mysql.TypeLonglong,
 					mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24:
-					// Primary key cannot be invisible
+					// Primary key cannot be invisible.
 					if constr.Option != nil && constr.Option.Visibility == ast.IndexVisibilityInvisible {
 						return nil, ErrPKIndexCantBeInvisible
 					}

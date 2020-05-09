@@ -164,7 +164,7 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 	_, err = tk.Exec("drop index `primary` on tt")
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when alter-primary-key is false")
 
-	// primary key cannot be invisible, for the case pk_is_handle
+	// The primary key cannot be invisible, for the case pk_is_handle.
 	tk.MustExec("drop table if exists t1, t2;")
 	_, err = tk.Exec("create table t1(c1 int not null, primary key(c1) invisible);")
 	c.Assert(ddl.ErrPKIndexCantBeInvisible.Equal(err), IsTrue)
