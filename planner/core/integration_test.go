@@ -380,6 +380,7 @@ func (s *testIntegrationSerialSuite) TestBroadcastJoin(c *C) {
 	}
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@session.tidb_allow_batch_cop = 1")
 	tk.MustExec("set @@session.tidb_opt_broadcast_join = 1")
 	var input []string
 	var output []struct {

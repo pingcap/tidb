@@ -415,7 +415,12 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 			return "ON", nil
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-	case TiDBSkipUTF8Check, TiDBOptAggPushDown, TiDBOptDistinctAggPushDown, TiDBOptBCJ,
+	case TiDBOptBCJ:
+		if (strings.EqualFold(value, "ON") || value == "1") && vars.AllowBatchCop == 0 {
+			return value, ErrWrongValueForVar.GenWithStackByArgs("Can't set BCJ to 1 but tidb_allow_batch_cop is 0, please active batch cop at first.")
+		}
+		return value, nil
+	case TiDBSkipUTF8Check, TiDBOptAggPushDown, TiDBOptDistinctAggPushDown,
 		TiDBOptInSubqToJoinAndAgg, TiDBEnableFastAnalyze,
 		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming, TiDBEnableChunkRPC,
 		TiDBBatchDelete, TiDBBatchCommit, TiDBEnableCascadesPlanner, TiDBEnableWindowFunction, TiDBPProfSQLCPU,
@@ -525,6 +530,9 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		v, err := strconv.ParseInt(value, 10, 64)
 		if err != nil {
 			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
+		}
+		if v == 0 && vars.AllowBCJ {
+			return value, ErrWrongValueForVar.GenWithStackByArgs("Can't set batch cop 0 but tidb_opt_broadcast_join is 1, please set bcj 0 at first")
 		}
 		if v < 0 || v > 2 {
 			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
