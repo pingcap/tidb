@@ -2174,17 +2174,11 @@ func (b *builtinLocate2ArgsUTF8Sig) vecEvalInt(input *chunk.Chunk, result *chunk
 			i64s[i] = 1
 			continue
 		}
-<<<<<<< HEAD
-		slice := string([]rune(str))
-		slice = strings.ToLower(slice)
-		subStr = strings.ToLower(subStr)
-=======
 		slice := str
 		if ci {
 			slice = strings.ToLower(slice)
 			subStr = strings.ToLower(subStr)
 		}
->>>>>>> d823deb... expression: fix case-sensitive problem for function INSTR and LOCATE (#16792)
 		idx := strings.Index(slice, subStr)
 		if idx != -1 {
 			i64s[i] = int64(utf8.RuneCountInString(slice[:idx])) + 1
