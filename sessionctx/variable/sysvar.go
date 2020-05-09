@@ -609,7 +609,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, WindowingUseHighPrecision, "ON"},
 	/* TiDB specific variables */
 	{ScopeSession, TiDBSnapshot, ""},
-	{ScopeSession, TiDBReadonlyTable, ""},
+	{ScopeGlobal | ScopeSession, TiDBReadonlyTable, ""},
 	{ScopeSession, TiDBOptAggPushDown, BoolToIntStr(DefOptAggPushDown)},
 	{ScopeSession, TiDBOptDistinctAggPushDown, BoolToIntStr(config.GetGlobalConfig().Performance.DistinctAggPushDown)},
 	{ScopeSession, TiDBOptWriteRowID, BoolToIntStr(DefOptWriteRowID)},
