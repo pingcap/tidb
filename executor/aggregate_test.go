@@ -621,6 +621,17 @@ func (s *testSuiteAgg) TestOnlyFullGroupBy(c *C) {
 	c.Assert(terror.ErrorEqual(err, plannercore.ErrAmbiguous), IsTrue, Commentf("err %v", err))
 }
 
+func (s *testSuiteAgg) TestIssue16279(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set sql_mode = 'ONLY_FULL_GROUP_BY'")
+	tk.MustExec("drop table if exists s")
+	tk.MustExec("create table s(a int);")
+	tk.MustQuery("select count(a) , date_format(a, '%Y-%m-%d') from s group by date_format(a, '%Y-%m-%d');")
+	tk.MustQuery("select count(a) , date_format(a, '%Y-%m-%d') as xx from s group by date_format(a, '%Y-%m-%d');")
+	tk.MustQuery("select count(a) , date_format(a, '%Y-%m-%d') as xx from s group by xx")
+}
+
 func (s *testSuiteAgg) TestIssue13652(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

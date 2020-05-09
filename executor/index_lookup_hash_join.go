@@ -166,7 +166,7 @@ func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
 		e.resultCh = nil
 	}
 	e.joinChkResourceCh = make([]chan *chunk.Chunk, concurrency)
-	for i := int(0); i < concurrency; i++ {
+	for i := 0; i < concurrency; i++ {
 		if !e.keepOuterOrder {
 			e.joinChkResourceCh[i] = make(chan *chunk.Chunk, 1)
 			e.joinChkResourceCh[i] <- newFirstChunk(e)
@@ -179,7 +179,7 @@ func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
 	}
 
 	e.workerWg.Add(concurrency)
-	for i := int(0); i < concurrency; i++ {
+	for i := 0; i < concurrency; i++ {
 		workerID := i
 		go util.WithRecovery(func() { e.newInnerWorker(innerCh, workerID).run(workerCtx, cancelFunc) }, e.finishJoinWorkers)
 	}

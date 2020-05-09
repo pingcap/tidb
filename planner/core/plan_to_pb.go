@@ -39,8 +39,12 @@ func (p *basePhysicalPlan) ToPB(_ sessionctx.Context, _ kv.StoreType) (*tipb.Exe
 func (p *PhysicalHashAgg) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	client := ctx.GetClient()
+	groupByExprs, err := expression.ExpressionsToPBList(sc, p.GroupByItems, client)
+	if err != nil {
+		return nil, err
+	}
 	aggExec := &tipb.Aggregation{
-		GroupBy: expression.ExpressionsToPBList(sc, p.GroupByItems, client),
+		GroupBy: groupByExprs,
 	}
 	for _, aggFunc := range p.AggFuncs {
 		aggExec.AggFunc = append(aggExec.AggFunc, aggregation.AggFuncToPBExpr(sc, client, aggFunc))
@@ -61,8 +65,12 @@ func (p *PhysicalHashAgg) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (
 func (p *PhysicalStreamAgg) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	client := ctx.GetClient()
+	groupByExprs, err := expression.ExpressionsToPBList(sc, p.GroupByItems, client)
+	if err != nil {
+		return nil, err
+	}
 	aggExec := &tipb.Aggregation{
-		GroupBy: expression.ExpressionsToPBList(sc, p.GroupByItems, client),
+		GroupBy: groupByExprs,
 	}
 	for _, aggFunc := range p.AggFuncs {
 		aggExec.AggFunc = append(aggExec.AggFunc, aggregation.AggFuncToPBExpr(sc, client, aggFunc))
@@ -83,8 +91,12 @@ func (p *PhysicalStreamAgg) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 func (p *PhysicalSelection) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	client := ctx.GetClient()
+	conditions, err := expression.ExpressionsToPBList(sc, p.Conditions, client)
+	if err != nil {
+		return nil, err
+	}
 	selExec := &tipb.Selection{
-		Conditions: expression.ExpressionsToPBList(sc, p.Conditions, client),
+		Conditions: conditions,
 	}
 	executorId := ""
 	if storeType == kv.TiFlash {
@@ -233,12 +245,20 @@ func (p *PhysicalBroadCastJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreT
 		return nil, errors.Trace(err)
 	}
 
+	left, leftErr := expression.ExpressionsToPBList(sc, leftJoinKeys, client)
+	if leftErr != nil {
+		return nil, leftErr
+	}
+	right, rightErr := expression.ExpressionsToPBList(sc, rightJoinKeys, client)
+	if rightErr != nil {
+		return nil, rightErr
+	}
 	join := &tipb.Join{
 		JoinType:      tipb.JoinType_TypeInnerJoin,
 		JoinExecType:  tipb.JoinExecType_TypeHashJoin,
 		InnerIdx:      int64(p.InnerChildIdx),
-		LeftJoinKeys:  expression.ExpressionsToPBList(sc, leftJoinKeys, client),
-		RightJoinKeys: expression.ExpressionsToPBList(sc, rightJoinKeys, client),
+		LeftJoinKeys:  left,
+		RightJoinKeys: right,
 		Children:      []*tipb.Executor{lChildren, rChildren},
 	}
 

@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testkit"
@@ -53,25 +54,27 @@ func TestT(t *testing.T) {
 var _ = Suite(&testFailDBSuite{})
 
 type testFailDBSuite struct {
-	cluster   *mocktikv.Cluster
-	mvccStore mocktikv.MVCCStore
-	lease     time.Duration
-	store     kv.Storage
-	dom       *domain.Domain
-	se        session.Session
-	p         *parser.Parser
+	cluster cluster.Cluster
+	lease   time.Duration
+	store   kv.Storage
+	dom     *domain.Domain
+	se      session.Session
+	p       *parser.Parser
 }
 
 func (s *testFailDBSuite) SetUpSuite(c *C) {
 	s.lease = 200 * time.Millisecond
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
 	var err error
-	s.cluster = mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(s.cluster)
-	s.mvccStore = mocktikv.MustNewMVCCStore()
+	cluster := mocktikv.NewCluster()
+	mocktikv.BootstrapWithSingleStore(cluster)
+	s.cluster = cluster
+
+	mvccStore := mocktikv.MustNewMVCCStore()
+	cluster.SetMvccStore(mvccStore)
 	s.store, err = mockstore.NewMockTikvStore(
-		mockstore.WithCluster(s.cluster),
-		mockstore.WithMVCCStore(s.mvccStore),
+		mockstore.WithCluster(cluster),
+		mockstore.WithMVCCStore(mvccStore),
 	)
 	c.Assert(err, IsNil)
 	session.SetSchemaLease(s.lease)
@@ -225,7 +228,7 @@ func (s *testFailDBSuite) TestAddIndexFailed(c *C) {
 	tblID := tbl.Meta().ID
 
 	// Split the table.
-	s.cluster.SplitTable(s.mvccStore, tblID, 100)
+	s.cluster.SplitTable(tblID, 100)
 
 	tk.MustExec("alter table t add index idx_b(b)")
 	tk.MustExec("admin check index t idx_b")
@@ -358,7 +361,7 @@ func (s *testFailDBSuite) TestAddIndexWorkerNum(c *C) {
 
 	splitCount := 100
 	// Split table to multi region.
-	s.cluster.SplitTable(s.mvccStore, tbl.Meta().ID, splitCount)
+	s.cluster.SplitTable(tbl.Meta().ID, splitCount)
 
 	err = ddlutil.LoadDDLReorgVars(tk.Se)
 	c.Assert(err, IsNil)

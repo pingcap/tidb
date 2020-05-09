@@ -107,7 +107,7 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 				// final round of fetch
 				// TODO: Add a label to distinguish between success or failure.
 				// https://github.com/pingcap/tidb/issues/11397
-				metrics.DistSQLQueryHistgram.WithLabelValues(r.label, r.sqlType).Observe(r.fetchDuration.Seconds())
+				metrics.DistSQLQueryHistogram.WithLabelValues(r.label, r.sqlType).Observe(r.fetchDuration.Seconds())
 				r.durationReported = true
 			}
 			return nil
@@ -130,10 +130,14 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		for _, warning := range r.selectResp.Warnings {
 			sc.AppendWarning(terror.ClassTiKV.Synthesize(terror.ErrCode(warning.Code), warning.Msg))
 		}
-		r.updateCopRuntimeStats(resultSubset.GetExecDetails(), resultSubset.RespTime())
+		resultDetail := resultSubset.GetExecDetails()
+		r.updateCopRuntimeStats(resultDetail, resultSubset.RespTime())
 		r.feedback.Update(resultSubset.GetStartKey(), r.selectResp.OutputCounts)
 		r.partialCount++
-		sc.MergeExecDetails(resultSubset.GetExecDetails(), nil)
+		if resultDetail != nil {
+			resultDetail.CopTime = duration
+		}
+		sc.MergeExecDetails(resultDetail, nil)
 		if len(r.selectResp.Chunks) != 0 {
 			break
 		}

@@ -254,7 +254,7 @@ const (
 
 	fspTtForDate         uint8  = 0b1110
 	fspBitFieldMask      uint64 = 0b1110
-	coreTimeBitFieldMask uint64 = ^fspTtBitFieldMask
+	coreTimeBitFieldMask        = ^fspTtBitFieldMask
 )
 
 // NewTime constructs time from core time, type and fsp.

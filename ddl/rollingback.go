@@ -14,6 +14,8 @@
 package ddl
 
 import (
+	"fmt"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -347,7 +349,7 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		model.ActionModifyColumn, model.ActionAddForeignKey,
 		model.ActionDropForeignKey, model.ActionRenameTable,
 		model.ActionModifyTableCharsetAndCollate, model.ActionTruncateTablePartition,
-		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable:
+		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable, model.ActionModifyTableAutoIdCache:
 		ver, err = cancelOnlyNotHandledJob(job)
 	default:
 		job.State = model.JobStateCancelled
@@ -355,16 +357,23 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 	}
 
 	if err != nil {
+		if job.Error == nil {
+			job.Error = toTError(err)
+		}
+		if !job.Error.Equal(errCancelledDDLJob) {
+			job.Error = job.Error.Class().Synthesize(job.Error.Code(),
+				fmt.Sprintf("DDL job rollback, error msg: %s", job.Error.ToSQLError().Message))
+		}
+		job.ErrorCount++
+
 		if job.State != model.JobStateRollingback && job.State != model.JobStateCancelled {
 			logutil.Logger(w.logCtx).Error("[ddl] run DDL job failed", zap.String("job", job.String()), zap.Error(err))
 		} else {
 			logutil.Logger(w.logCtx).Info("[ddl] the DDL job is cancelled normally", zap.String("job", job.String()), zap.Error(err))
+			// If job is cancelled, we shouldn't return an error.
+			return ver, nil
 		}
-
-		if job.Error == nil {
-			job.Error = toTError(err)
-		}
-		job.ErrorCount++
 	}
+
 	return
 }
