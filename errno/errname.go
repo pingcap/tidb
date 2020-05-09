@@ -902,6 +902,7 @@ var MySQLErrName = map[uint16]string{
 	ErrUserAlreadyExists:                                     "User %s already exists.",
 	ErrInvalidJSONPathArrayCell:                              "A path expression is not a path to a cell in an array.",
 	ErrInvalidEncryptionOption:                               "Invalid encryption option.",
+	ErrPKIndexCantBeInvisible:                                "A primary key index cannot be invisible",
 	ErrWindowNoSuchWindow:                                    "Window name '%s' is not defined.",
 	ErrWindowCircularityInWindowGraph:                        "There is a circularity in the window dependency graph.",
 	ErrWindowNoChildPartitioning:                             "A window which depends on another cannot define partitioning.",
