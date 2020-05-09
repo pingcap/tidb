@@ -1230,7 +1230,7 @@ func (s *testTableSuite) TestStmtSummaryErrorCount(c *C) {
 }
 
 func (s *testTableSuite) TestStmtSummaryPreparedStatements(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk := s.newTestKitWithRoot(c)
 
 	// Clear summaries.
 	tk.MustExec("set global tidb_enable_stmt_summary = 0")
