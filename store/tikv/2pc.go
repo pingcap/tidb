@@ -465,13 +465,18 @@ func (c *twoPhaseCommitter) doActionOnMutations(bo *Backoffer, action twoPhaseCo
 }
 
 func preSplitAndScatterIn2PC(ctx context.Context, store *tikvStore, group groupedMutations) bool {
-	length := group.mutations.len()
 	splitKeys := make([][]byte, 0, 4)
 
 	preSplitSizeThresholdVal := atomic.LoadUint32(&preSplitSizeThreshold)
 	regionSize := 0
-	for i := 0; i < length; i++ {
-		regionSize = regionSize + len(group.mutations.keys[i]) + len(group.mutations.values[i])
+	keysLength := group.mutations.len()
+	valsLength := len(group.mutations.values)
+	// The value length maybe zero for pessimistic lock keys
+	for i := 0; i < keysLength; i++ {
+		regionSize = regionSize + len(group.mutations.keys[i])
+		if i < valsLength {
+			regionSize = regionSize + len(group.mutations.values[i])
+		}
 		// The second condition is used for testing.
 		if regionSize >= int(preSplitSizeThresholdVal) {
 			regionSize = 0
@@ -484,7 +489,8 @@ func preSplitAndScatterIn2PC(ctx context.Context, store *tikvStore, group groupe
 
 	regionIDs, err := store.SplitRegions(ctx, splitKeys, true)
 	if err != nil {
-		logutil.BgLogger().Warn("2PC split regions failed", zap.Uint64("regionID", group.region.id), zap.Int("keys count", length), zap.Error(err))
+		logutil.BgLogger().Warn("2PC split regions failed", zap.Uint64("regionID", group.region.id),
+			zap.Int("keys count", keysLength), zap.Int("values count", valsLength), zap.Error(err))
 		return false
 	}
 
