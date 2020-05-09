@@ -762,6 +762,10 @@ func (s *session) ExecRestrictedSQLWithContext(ctx context.Context, sql string) 
 		se.sessionVars.InspectionTableCache = cache
 		defer func() { se.sessionVars.InspectionTableCache = nil }()
 	}
+	if ok := s.sessionVars.OptimizerUseInvisibleIndexes; ok {
+		se.sessionVars.OptimizerUseInvisibleIndexes = true
+		defer func() { se.sessionVars.OptimizerUseInvisibleIndexes = false }()
+	}
 	defer func() {
 		if se != nil && se.GetSessionVars().StmtCtx.WarningCount() > 0 {
 			warnings := se.GetSessionVars().StmtCtx.GetWarnings()
@@ -821,6 +825,10 @@ func (s *session) ExecRestrictedSQLWithSnapshot(sql string) ([]chunk.Row, []*ast
 			}
 			se.sessionVars.SnapshotInfoschema = nil
 		}()
+	}
+	if ok := s.sessionVars.OptimizerUseInvisibleIndexes; ok {
+		se.sessionVars.OptimizerUseInvisibleIndexes = true
+		defer func() { se.sessionVars.OptimizerUseInvisibleIndexes = false }()
 	}
 	return execRestrictedSQL(ctx, se, sql)
 }
