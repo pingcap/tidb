@@ -225,6 +225,8 @@ github.com/hanfei1991/parser v0.0.0-20200506100705-497ab5ecbc16 h1:zlhQFwi+d+tkw
 github.com/hanfei1991/parser v0.0.0-20200506100705-497ab5ecbc16/go.mod h1:9v0Edh8IbgjGYW2ArJr19E+bvL8zKahsFp+ixWeId+4=
 github.com/hanfei1991/parser v0.0.0-20200506102604-dde82b00618d h1:m2LqNBUncEXeUo44rcIlrKv0v5fbvBUihcidWDDdg2E=
 github.com/hanfei1991/parser v0.0.0-20200506102604-dde82b00618d/go.mod h1:9v0Edh8IbgjGYW2ArJr19E+bvL8zKahsFp+ixWeId+4=
+github.com/hanfei1991/parser v0.0.0-20200509083937-95b513acb77d h1:28vZByxR413Q0JIqNu/cPQVkj+yfqEYnTdo1bg21y6U=
+github.com/hanfei1991/parser v0.0.0-20200509083937-95b513acb77d/go.mod h1:9v0Edh8IbgjGYW2ArJr19E+bvL8zKahsFp+ixWeId+4=
 github.com/hanfei1991/tipb v0.0.0-20200506100205-b17edac4757f h1:zO5fnD8Wmce+3D9ukaP/2dUL7pgGNVrfiLWwx6kdMYs=
 github.com/hanfei1991/tipb v0.0.0-20200506100205-b17edac4757f/go.mod h1:nPMpOLbGpW71jAalpqgYYjMAZfCGk+DdSPhoIVVizkU=
 github.com/hashicorp/golang-lru v0.5.0/go.mod h1:/m3WP610KZHVQ1SGc6re/UDhFvYD7pJ4Ao+sR/qLZy8=
@@ -378,8 +380,8 @@ github.com/pingcap/log v0.0.0-20200117041106-d28c14d3b1cd h1:CV3VsP3Z02MVtdpTMfE
 github.com/pingcap/log v0.0.0-20200117041106-d28c14d3b1cd/go.mod h1:4rbK1p9ILyIfb6hU7OG2CiWSqMXnp3JMbiaVJ6mvoY8=
 github.com/pingcap/log v0.0.0-20200117041106-d28c14d3b1cd/go.mod h1:4rbK1p9ILyIfb6hU7OG2CiWSqMXnp3JMbiaVJ6mvoY8=
 github.com/pingcap/parser v0.0.0-20200424075042-8222d8b724a4/go.mod h1:9v0Edh8IbgjGYW2ArJr19E+bvL8zKahsFp+ixWeId+4=
-github.com/pingcap/parser v0.0.0-20200430071110-a1bca4f6cf2a h1:e/Lcw6VDQgtErYKszjeCi+nN4pB9zMzY0bTwMqfazps=
-github.com/pingcap/parser v0.0.0-20200430071110-a1bca4f6cf2a/go.mod h1:9v0Edh8IbgjGYW2ArJr19E+bvL8zKahsFp+ixWeId+4=
+github.com/pingcap/parser v0.0.0-20200507022230-f3bf29096657 h1:2ceTso30kmgMeddZ4iZ6zrK8N9eFF8zmCa1hSSE1tXc=
+github.com/pingcap/parser v0.0.0-20200507022230-f3bf29096657/go.mod h1:9v0Edh8IbgjGYW2ArJr19E+bvL8zKahsFp+ixWeId+4=
 github.com/pingcap/pd/v4 v4.0.0-rc.1.0.20200422143320-428acd53eba2 h1:JTzYYukREvxVSKW/ncrzNjFitd8snoQ/Xz32pw8i+s8=
 github.com/pingcap/pd/v4 v4.0.0-rc.1.0.20200422143320-428acd53eba2/go.mod h1:s+utZtXDznOiL24VK0qGmtoHjjXNsscJx3m1n8cC56s=
 github.com/pingcap/sysutil v0.0.0-20200206130906-2bfa6dc40bcd/go.mod h1:EB/852NMQ+aRKioCpToQ94Wl7fktV+FNnxf3CX/TTXI=

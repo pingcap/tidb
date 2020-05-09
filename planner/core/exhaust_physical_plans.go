@@ -1608,8 +1608,8 @@ func (lt *LogicalTopN) getPhysLimits(prop *property.PhysicalProperty) []Physical
 }
 
 // MatchItems checks if this prop's columns can match by items totally.
-func MatchItems(p *property.PhysicalProperty, items []*ByItems) bool {
-	if len(items) < len(p.Items) || p.IsFlashOnlyProp() {
+func MatchItems(p *property.PhysicalProperty, items []*util.ByItems) bool {
+	if len(items) < len(p.Items) {
 		return false
 	}
 	for i, col := range p.Items {
