@@ -283,10 +283,11 @@ func (t StoreType) Name() string {
 // Request represents a kv request.
 type Request struct {
 	// Tp is the request type.
-	Tp        int64
-	StartTs   uint64
-	Data      []byte
-	KeyRanges []KeyRange
+	Tp           int64
+	StartTs      uint64
+	SnapshotRead bool
+	Data         []byte
+	KeyRanges    []KeyRange
 
 	// Concurrency is 1, if it only sends the request to a single storage unit when
 	// ResponseIterator.Next is called. If concurrency is greater than 1, the request will be

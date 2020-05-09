@@ -514,6 +514,17 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 				!candidate.path.Index.HasPrefixIndex() &&
 				len(candidate.path.Ranges[0].LowVal) == len(candidate.path.Index.Columns)
 		}
+		// if meets readonly table, forbid canConvertPointGet for using copr cache.
+		dbName, tblName := ds.DBName.L, ds.tableInfo.Name.L
+		if roTbl := ds.ctx.GetSessionVars().ReadonlyTable; roTbl != nil {
+			if dbName == "" {
+				dbName = ds.ctx.GetSessionVars().CurrentDB
+			}
+			if _, ok := roTbl[dbName+"."+tblName]; ok {
+				canConvertPointGet = false
+			}
+		}
+
 		if canConvertPointGet {
 			allRangeIsPoint := true
 			for _, ran := range path.Ranges {

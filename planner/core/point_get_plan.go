@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tipb/go-tipb"
@@ -673,6 +673,15 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 	dbName := tblName.Schema.L
 	if dbName == "" {
 		dbName = ctx.GetSessionVars().CurrentDB
+	}
+	// if meets readonly table, forbid canConvertPointGet for using copr cache.
+	if roTbl := ctx.GetSessionVars().ReadonlyTable; roTbl != nil {
+		if dbName == "" {
+			dbName = ctx.GetSessionVars().CurrentDB
+		}
+		if _, ok := roTbl[dbName+"."+tblName.Name.L]; ok {
+			return nil
+		}
 	}
 
 	pairs := make([]nameValuePair, 0, 4)

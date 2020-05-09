@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"sort"
 	"strconv"
 	"strings"
@@ -711,11 +712,26 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 			cacheKey = cKey
 			cValue := worker.store.coprCache.Get(cKey)
 			copReq.IsCacheEnabled = true
-			if cValue != nil && cValue.RegionID == task.region.id && cValue.TimeStamp <= worker.req.StartTs {
-				// Append cache version to the request to skip Coprocessor computation if possible
-				// when request result is cached
-				copReq.CacheIfMatchVersion = cValue.RegionDataVersion
-				cacheValue = cValue
+
+			if cValue != nil && cValue.RegionID == task.region.id {
+				if worker.req.SnapshotRead {
+					if cValue.TimeStamp == worker.req.StartTs {
+						log.Println("!!!!!!!!!!!")
+						resp := &copResponse{
+							pbResp: &coprocessor.Response{IsCacheHit: true},
+							detail: &execdetails.ExecDetails{},
+						}
+						cacheValue = cValue
+						return worker.handleCopResponse(bo, nil, resp, cacheKey, cacheValue, task, ch, nil, 0)
+					}
+				} else {
+					if cValue.TimeStamp <= worker.req.StartTs {
+						// Append cache version to the request to skip Coprocessor computation if possible
+						// when request result is cached
+						copReq.CacheIfMatchVersion = cValue.RegionDataVersion
+						cacheValue = cValue
+					}
+				}
 			} else {
 				copReq.CacheIfMatchVersion = 0
 			}

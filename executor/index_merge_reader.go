@@ -71,6 +71,7 @@ type IndexMergeReaderExecutor struct {
 	ranges       [][]*ranger.Range
 	dagPBs       []*tipb.DAGRequest
 	startTS      uint64
+	snapshotRead bool
 	tableRequest *tipb.DAGRequest
 	// columns are only required by union scan.
 	columns           []*model.ColumnInfo
@@ -185,6 +186,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 	kvReq, err := builder.SetKeyRanges(keyRange).
 		SetDAGRequest(e.dagPBs[workID]).
 		SetStartTS(e.startTS).
+		SetSnapshotRead(e.snapshotRead).
 		SetDesc(e.descs[workID]).
 		SetKeepOrder(false).
 		SetStreaming(e.partialStreamings[workID]).
@@ -244,6 +246,7 @@ func (e *IndexMergeReaderExecutor) buildPartialTableReader(ctx context.Context, 
 		table:        e.table,
 		dagPB:        e.dagPBs[workID],
 		startTS:      e.startTS,
+		snapshotRead: e.snapshotRead,
 		streaming:    e.partialStreamings[workID],
 		feedback:     statistics.NewQueryFeedback(0, nil, 0, false),
 		plans:        e.partialPlans[workID],
@@ -415,6 +418,7 @@ func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, ha
 		table:        e.table,
 		dagPB:        e.tableRequest,
 		startTS:      e.startTS,
+		snapshotRead: e.snapshotRead,
 		streaming:    e.tableStreaming,
 		columns:      e.columns,
 		feedback:     statistics.NewQueryFeedback(0, nil, 0, false),

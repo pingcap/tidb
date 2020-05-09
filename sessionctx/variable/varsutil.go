@@ -809,25 +809,31 @@ func parseTimeZone(s string) (*time.Location, error) {
 	return nil, ErrUnknownTimeZone.GenWithStackByArgs(s)
 }
 
-func setSnapshotTS(s *SessionVars, sVal string) error {
+func parseSnapshotTS(s *SessionVars, sVal string) (uint64, error) {
 	if sVal == "" {
-		s.SnapshotTS = 0
-		return nil
+		return 0, nil
 	}
 
 	if tso, err := strconv.ParseUint(sVal, 10, 64); err == nil {
-		s.SnapshotTS = tso
-		return nil
+		return tso, nil
 	}
 
 	t, err := types.ParseTime(s.StmtCtx, sVal, mysql.TypeTimestamp, types.MaxFsp)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	t1, err := t.GoTime(s.TimeZone)
-	s.SnapshotTS = GoTimeToTS(t1)
-	return err
+	return GoTimeToTS(t1), err
+}
+
+func setSnapshotTS(s *SessionVars, sVal string) error {
+	ts, err := parseSnapshotTS(s, sVal)
+	if err != nil {
+		return err
+	}
+	s.SnapshotTS = ts
+	return nil
 }
 
 // GoTimeToTS converts a Go time to uint64 timestamp.

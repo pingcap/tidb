@@ -319,7 +319,7 @@ func (rrs *ReaderRuntimeStats) recordOneCopTask(t time.Duration, detail *ExecDet
 func (rrs *ReaderRuntimeStats) String() string {
 	size := len(rrs.copRespTime)
 	if size == 0 {
-		return ""
+		return "rpc num: 0"
 	}
 	if size == 1 {
 		return fmt.Sprintf("rpc num: 1, rpc time:%v, proc keys:%v", rrs.copRespTime[0], rrs.procKeys[0])

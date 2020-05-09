@@ -162,7 +162,7 @@ func (e *IndexLookUpMergeJoin) Open(ctx context.Context) error {
 	// The trick here is `getSnapshotTS` will cache snapshot ts in the dataReaderBuilder,
 	// so even txn is destroyed later, the dataReaderBuilder could still use the
 	// cached snapshot ts to construct DAG.
-	_, err := e.innerMergeCtx.readerBuilder.getSnapshotTS()
+	_, _, err := e.innerMergeCtx.readerBuilder.getSnapshotTS("", "")
 	if err != nil {
 		return err
 	}

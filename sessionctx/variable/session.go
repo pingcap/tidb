@@ -369,6 +369,10 @@ type SessionVars struct {
 	// version, we load an old version schema for query.
 	SnapshotInfoschema interface{}
 
+	// ReadonlyTable
+	// tableName -> SnapshotTS
+	ReadonlyTable map[string]uint64
+
 	// BinlogClient is used to write binlog.
 	BinlogClient *pumpcli.PumpsClient
 
@@ -1021,6 +1025,23 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		err := setSnapshotTS(s, val)
 		if err != nil {
 			return err
+		}
+	case TiDBReadonlyTable:
+		// The format is '<tableName>/<tsoString>,<tableName2>/<tsoString2>'
+		s.ReadonlyTable = make(map[string]uint64)
+		if val != "" {
+			entris := strings.Split(val, ",")
+			for _, entry := range entris {
+				t := strings.Split(entry, "/")
+				if len(t) < 2 {
+					continue
+				}
+				ts, err := parseSnapshotTS(s, t[1])
+				if err != nil {
+					return err
+				}
+				s.ReadonlyTable[t[0]] = ts
+			}
 		}
 	case AutoCommit:
 		isAutocommit := TiDBOptOn(val)
