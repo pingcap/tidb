@@ -113,7 +113,7 @@ func TestCopRuntimeStats(t *testing.T) {
 
 func TestReaderStats(t *testing.T) {
 	r := new(ReaderRuntimeStats)
-	if r.String() != "" {
+	if r.String() != "rpc num: 0" {
 		t.Fatal()
 	}
 
