@@ -194,7 +194,6 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 	defer w.sessPool.put(ctx)
 
 	executor, ok := ctx.(sqlexec.RestrictedSQLExecutor)
-	// fix issue 15597
 	// return PseudoRowCount to avoid panic for `ctx` which doesn't implement RestrictedSQLExecutor
 	if !ok {
 		return statistics.PseudoRowCount
