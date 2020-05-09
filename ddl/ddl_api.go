@@ -1106,6 +1106,12 @@ func checkConstraintNames(constraints []*ast.Constraint) error {
 
 // checkInvisibleIndexOnPK check if primary key is invisible index.
 func checkInvisibleIndexOnPK(tblInfo *model.TableInfo) error {
+	// PKIsHandle == true means the table already has a visible primary key,
+	// we do not need do a check for this case and return directly,
+	// because whether primary key is invisible has been check when create table.
+	if tblInfo.PKIsHandle {
+		return nil
+	}
 	pk := getPrimaryKey(tblInfo)
 	if pk != nil && pk.Invisible {
 		return ErrPKIndexCantBeInvisible
@@ -1243,11 +1249,12 @@ func buildTableInfo(
 				switch lastCol.Tp {
 				case mysql.TypeLong, mysql.TypeLonglong,
 					mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24:
-					tbInfo.PKIsHandle = true
 					// Primary key cannot be invisible
 					if constr.Option != nil && constr.Option.Visibility == ast.IndexVisibilityInvisible {
 						return nil, ErrPKIndexCantBeInvisible
 					}
+
+					tbInfo.PKIsHandle = true
 					// Avoid creating index for PK handle column.
 					continue
 				}
