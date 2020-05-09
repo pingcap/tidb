@@ -615,7 +615,7 @@ func (h *BindHandle) CaptureBaselines() {
 		h.sctx.GetSessionVars().IsolationReadEngines = oriIsolationRead
 		h.sctx.Unlock()
 		if err != nil {
-			logutil.BgLogger().Info("generate hints failed", zap.String("SQL", sqls[i]), zap.Error(err))
+			logutil.BgLogger().Debug("generate hints failed", zap.String("SQL", sqls[i]), zap.Error(err))
 			continue
 		}
 		bindSQL := GenerateBindSQL(context.TODO(), stmt, hints)

@@ -15,6 +15,7 @@ package expression
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -456,6 +457,18 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinRealIsFalseSig{base, false}
 	case tipb.ScalarFuncSig_DecimalIsFalse:
 		f = &builtinDecimalIsFalseSig{base, false}
+	case tipb.ScalarFuncSig_IntIsTrueWithNull:
+		f = &builtinIntIsTrueSig{base, true}
+	case tipb.ScalarFuncSig_RealIsTrueWithNull:
+		f = &builtinRealIsTrueSig{base, true}
+	case tipb.ScalarFuncSig_DecimalIsTrueWithNull:
+		f = &builtinDecimalIsTrueSig{base, true}
+	case tipb.ScalarFuncSig_IntIsFalseWithNull:
+		f = &builtinIntIsFalseSig{base, true}
+	case tipb.ScalarFuncSig_RealIsFalseWithNull:
+		f = &builtinRealIsFalseSig{base, true}
+	case tipb.ScalarFuncSig_DecimalIsFalseWithNull:
+		f = &builtinDecimalIsFalseSig{base, true}
 	case tipb.ScalarFuncSig_LeftShift:
 		f = &builtinLeftShiftSig{base}
 	case tipb.ScalarFuncSig_RightShift:
@@ -618,7 +631,7 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_UUID:
 		f = &builtinUUIDSig{base}
 	case tipb.ScalarFuncSig_LikeSig:
-		f = &builtinLikeSig{base, nil, false}
+		f = &builtinLikeSig{base, nil, false, sync.Once{}}
 	//case tipb.ScalarFuncSig_RegexpSig:
 	//	f = &builtinRegexpSig{base}
 	//case tipb.ScalarFuncSig_RegexpUTF8Sig:

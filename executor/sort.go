@@ -249,6 +249,8 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 			e.generatePartition()
 		}
 		e.rowChunks.SetOnExceededCallback(onExceededCallback)
+		e.rowChunks.GetDiskTracker().AttachTo(e.diskTracker)
+		e.rowChunks.GetDiskTracker().SetLabel(rowChunksLabel)
 	}
 	for {
 		chk := newFirstChunk(e.children[0])
@@ -269,6 +271,8 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 			e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
 			e.rowChunks.SetOnExceededCallback(onExceededCallback)
 			e.spillAction.ResetOnceAndSetRowContainer(e.rowChunks)
+			e.rowChunks.GetDiskTracker().AttachTo(e.diskTracker)
+			e.rowChunks.GetDiskTracker().SetLabel(rowChunksLabel)
 		}
 	}
 	if e.rowChunks.NumRow() > 0 {
