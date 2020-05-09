@@ -6,7 +6,7 @@
 
 ## Abstract
 
-This proposal proposes to create a document to display error codes and error messages.
+This issue proposes that TiDB components maintain standard error codes and error messages according to a consistent specification.
 
 ## Motivation
 
@@ -149,7 +149,7 @@ is that I found no grammar that fits it.
 
 ### Principle
 
-In every build, the pipeline should fetch all these meta files from all repositories:
+In every build, the pipeline should fetch all these metafiles from all repositories:
 
 ```bash
 mkdir -p errors
