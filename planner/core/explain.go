@@ -542,7 +542,7 @@ func (p *PhysicalWindow) ExplainInfo() string {
 		}
 		buffer.WriteString("order by ")
 		for i, item := range p.OrderBy {
-			order := "asc"
+			var order string
 			if item.Desc {
 				order = "desc"
 			}
@@ -677,11 +677,11 @@ func (p *LogicalUnionScan) ExplainInfo() string {
 
 func explainByItems(buffer *bytes.Buffer, byItems []*util.ByItems) *bytes.Buffer {
 	for i, item := range byItems {
-		order := "asc"
+		var order string
 		if item.Desc {
-			order = "desc"
+			order = ":desc"
 		}
-		fmt.Fprintf(buffer, "%s:%s", item.Expr.ExplainInfo(), order)
+		fmt.Fprintf(buffer, "%s%s", item.Expr.ExplainInfo(), order)
 		if i+1 < len(byItems) {
 			buffer.WriteString(", ")
 		}
@@ -691,11 +691,11 @@ func explainByItems(buffer *bytes.Buffer, byItems []*util.ByItems) *bytes.Buffer
 
 func explainNormalizedByItems(buffer *bytes.Buffer, byItems []*util.ByItems) *bytes.Buffer {
 	for i, item := range byItems {
-		order := "asc"
+		var order string
 		if item.Desc {
-			order = "desc"
+			order = ":desc"
 		}
-		fmt.Fprintf(buffer, "%s:%s", item.Expr.ExplainNormalizedInfo(), order)
+		fmt.Fprintf(buffer, "%s%s", item.Expr.ExplainNormalizedInfo(), order)
 		if i+1 < len(byItems) {
 			buffer.WriteString(", ")
 		}
