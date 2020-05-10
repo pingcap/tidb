@@ -706,18 +706,21 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
-	ntDbInfo, err := t.GetDatabase(job.SchemaID)
-	if err != nil {
-		return ver, err
-	}
-
 	nt, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 
-	pt, err := t.GetTable(ptSchemaID, ptID)
+	ntDbInfo, err := t.GetDatabase(job.SchemaID)
 	if err != nil {
+		return ver, err
+	}
+
+	pt, err := getTableInfo(t, ptID, ptSchemaID)
+	if err != nil {
+		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
+			job.State = model.JobStateCancelled
+		}
 		return ver, errors.Trace(err)
 	}
 

@@ -2829,7 +2829,7 @@ func (d *ddl) ExchangeTableParition(ctx sessionctx.Context, ident ast.Ident, spe
 
 	partName := spec.PartitionNames[0].L
 
-	_, err = getPartitionDef(ptMeta, partName)
+	_, err = tables.FindPartitionByName(ptMeta, partName)
 	if err != nil {
 		return errors.Trace(err)
 	}

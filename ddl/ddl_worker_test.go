@@ -488,6 +488,9 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 
 		{act: model.ActionAlterIndexVisibility, jobIDs: []int64{firstID + 46}, cancelRetErrs: noErrs, cancelState: model.StateNone},
 		{act: model.ActionAlterIndexVisibility, jobIDs: []int64{firstID + 47}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 47)}, cancelState: model.StatePublic},
+
+		{act: model.ActionExchangeTablePartition, jobIDs: []int64{firstID + 48}, cancelRetErrs: noErrs, cancelState: model.StateNone},
+		{act: model.ActionExchangeTablePartition, jobIDs: []int64{firstID + 49}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 49)}, cancelState: model.StatePublic},
 	}
 
 	return tests
@@ -986,6 +989,25 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	c.Check(checkErr, IsNil)
 	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
 	c.Assert(checkIdxVisibility(changedTable, indexName, true), IsTrue)
+
+	// test exchange partition failed  caused by canceled
+	updateTest(&tests[43])
+	exchangeTablePartition := []interface{}{dbInfo.ID, partitionTblInfo.ID, "p0", true}
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, test.act, exchangeTablePartition, &test.cancelState)
+	changedNtTable := testGetTable(c, d, dbInfo.ID, tblInfo.ID)
+	changedPtTable := testGetTable(c, d, dbInfo.ID, partitionTblInfo.ID)
+	c.Assert(changedNtTable.Meta().ID == tblInfo.ID, IsTrue)
+	c.Assert(changedPtTable.Meta().Partition.Definitions[0].ID == partitionTblInfo.Partition.Definitions[0].ID, IsTrue)
+
+	// canel exchange partition successfully
+	updateTest(&tests[44])
+	doDDLJobSuccess(ctx, d, c, dbInfo.ID, tblInfo.ID, test.act, exchangeTablePartition)
+	c.Check(checkErr, IsNil)
+	changedNtTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
+	changedPtTable = testGetTable(c, d, dbInfo.ID, partitionTblInfo.ID)
+	c.Assert(changedNtTable.Meta().ID == tblInfo.ID, IsFalse)
+	c.Assert(changedPtTable.Meta().Partition.Definitions[0].ID == partitionTblInfo.Partition.Definitions[0].ID, IsFalse)
+
 }
 
 func (s *testDDLSuite) TestIgnorableSpec(c *C) {
