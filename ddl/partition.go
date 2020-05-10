@@ -701,8 +701,14 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		partName       string
 		withValidation bool
 	)
+
 	if err := job.DecodeArgs(&ptSchemaID, &ptID, &partName, &withValidation); err != nil {
 		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	ntDbInfo, err := t.GetDatabase(job.SchemaID)
+	if err != nil {
 		return ver, errors.Trace(err)
 	}
 
@@ -711,22 +717,11 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
-	ntDbInfo, err := t.GetDatabase(job.SchemaID)
-	if err != nil {
-		return ver, err
-	}
-
 	pt, err := getTableInfo(t, ptID, ptSchemaID)
 	if err != nil {
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
 			job.State = model.JobStateCancelled
 		}
-		return ver, errors.Trace(err)
-	}
-
-	partDef, err := getPartitionDef(pt, partName)
-	if err != nil {
-		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
@@ -756,17 +751,16 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
-	tempID := partDef.ID
-
-	partDef.ID = nt.ID
-
-	err = t.UpdateTable(ptSchemaID, pt)
+	partDef, err := getPartitionDef(pt, partName)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
-	_, err = t.GenAutoTableID(ptSchemaID, partDef.ID, ntBaseID)
+	tempID := partDef.ID
+	partDef.ID = nt.ID
+
+	err = t.UpdateTable(ptSchemaID, pt)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -781,6 +775,12 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	nt.ID = tempID
 
 	err = t.CreateTableOrView(job.SchemaID, nt)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	_, err = t.GenAutoTableID(ptSchemaID, pt.ID, ntBaseID)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
