@@ -599,6 +599,9 @@ type SessionVars struct {
 	FoundInPlanCache bool
 	// PrevFoundInPlanCache indicates whether the last statement was found in plan cache.
 	PrevFoundInPlanCache bool
+
+	// OptimizerUseInvisibleIndexes indicates whether optimizer can use invisible index
+	OptimizerUseInvisibleIndexes bool
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
