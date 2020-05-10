@@ -375,11 +375,10 @@ func doDDLJobErrWithSchemaState(ctx sessionctx.Context, d *ddl, c *C, schemaID, 
 		Args:       args,
 		BinlogInfo: &model.HistoryInfo{},
 	}
-	// err := d.doDDLJob(ctx, job)
-	d.doDDLJob(ctx, job)
+	err := d.doDDLJob(ctx, job)
 	// TODO: Add the detail error check.
-	// c.Assert(err, NotNil, Commentf("err:%v", err))
-	// testCheckJobCancelled(c, d, job, state)
+	c.Assert(err, NotNil, Commentf("err:%v", err))
+	testCheckJobCancelled(c, d, job, state)
 
 	return job
 }
@@ -490,8 +489,8 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 		{act: model.ActionAlterIndexVisibility, jobIDs: []int64{firstID + 46}, cancelRetErrs: noErrs, cancelState: model.StateNone},
 		{act: model.ActionAlterIndexVisibility, jobIDs: []int64{firstID + 47}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 47)}, cancelState: model.StatePublic},
 
-		{act: model.ActionExchangeTablePartition, jobIDs: []int64{firstID + 48}, cancelRetErrs: noErrs, cancelState: model.StateNone},
-		{act: model.ActionExchangeTablePartition, jobIDs: []int64{firstID + 49}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 49)}, cancelState: model.StatePublic},
+		{act: model.ActionExchangeTablePartition, jobIDs: []int64{firstID + 53}, cancelRetErrs: noErrs, cancelState: model.StateNone},
+		{act: model.ActionExchangeTablePartition, jobIDs: []int64{firstID + 54}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 54)}, cancelState: model.StatePublic},
 	}
 
 	return tests
@@ -999,13 +998,11 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 
 	updateTest(&tests[43])
 	exchangeTablePartition := []interface{}{dbInfo.ID, pt.ID, "p0", true}
-	c.Assert(test.act, Equals, model.ActionExchangeTablePartition)
-	job6 := doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, nt.ID, test.act, exchangeTablePartition, &test.cancelState)
-	c.Assert(job6.ID, Equals, test.jobIDs[0])
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, nt.ID, test.act, exchangeTablePartition, &test.cancelState)
 	c.Check(checkErr, IsNil)
 	changedNtTable := testGetTable(c, d, dbInfo.ID, nt.ID)
 	changedPtTable := testGetTable(c, d, dbInfo.ID, pt.ID)
-	c.Assert(changedNtTable.Meta().ID == tblInfo.ID, IsTrue)
+	c.Assert(changedNtTable.Meta().ID == nt.ID, IsTrue)
 	c.Assert(changedPtTable.Meta().Partition.Definitions[0].ID == pt.Partition.Definitions[0].ID, IsTrue)
 
 	// canel exchange partition successfully
