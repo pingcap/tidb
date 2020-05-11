@@ -14,7 +14,7 @@ Please answer these questions before submitting your issue. Thanks!
 
 ### 2. What did you expect to see? (Required)
 
-### 3. Affeted version (Required)
+### 3. Affected version (Required)
 
 <!-- v3.0.0, v4.0.0, etc -->
 
