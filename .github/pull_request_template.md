@@ -44,4 +44,4 @@ Side effects
 
 ### Release note <!-- bugfixes or new feature need a release note -->
 
-- <!-- write release note here, `No release note` if there's no release note -->
+- <!-- Please write a release note here to describe the change you made when it is released to the users of TiDB. If your PR doesn't involve any change to TiDB(like test enhancements, RFC proposals...), you can write `No release note`. -->
