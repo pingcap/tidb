@@ -765,7 +765,8 @@ type NestedLoopApplyExec struct {
 
 	joiner joiner
 
-	cache *applyCache
+	cache       *applyCache
+	canUseCache bool
 
 	outerSchema []*expression.CorrelatedColumn
 
@@ -813,11 +814,12 @@ func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 	e.innerList.GetMemTracker().SetLabel(innerListLabel)
 	e.innerList.GetMemTracker().AttachTo(e.memTracker)
 
-	e.cache, err = newApplyCache()
-	if err != nil {
-		return err
+	if e.canUseCache {
+		e.cache, err = newApplyCache()
+		if err != nil {
+			return err
+		}
 	}
-
 	return nil
 }
 
@@ -897,24 +899,34 @@ func (e *NestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk) (err e
 			e.hasMatch = false
 			e.hasNull = false
 
-			var key []byte
-			for _, col := range e.outerSchema {
-				*col.Data = e.outerRow.GetDatum(col.Index, col.RetType)
-				key, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, key, *col.Data)
-				if err != nil {
-					return err
+			if e.canUseCache {
+				var key []byte
+				for _, col := range e.outerSchema {
+					*col.Data = e.outerRow.GetDatum(col.Index, col.RetType)
+					key, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, key, *col.Data)
+					if err != nil {
+						return err
+					}
 				}
-			}
-			value := e.cache.Get(key)
-			if value != nil {
-				e.innerList = value.Data
+				value := e.cache.Get(key)
+				if value != nil {
+					e.innerList = value.Data
+				} else {
+					err = e.fetchAllInners(ctx)
+					if err != nil {
+						return err
+					}
+					innerList := e.innerList.Copy()
+					e.cache.Set(key, &applyCacheValue{key, innerList})
+				}
 			} else {
+				for _, col := range e.outerSchema {
+					*col.Data = e.outerRow.GetDatum(col.Index, col.RetType)
+				}
 				err = e.fetchAllInners(ctx)
 				if err != nil {
 					return err
 				}
-				innerList := e.innerList.Copy()
-				e.cache.Set(key, &applyCacheValue{key, innerList})
 			}
 			e.innerIter = chunk.NewIterator4List(e.innerList)
 			e.innerIter.Begin()

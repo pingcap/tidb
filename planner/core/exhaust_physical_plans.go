@@ -1546,9 +1546,23 @@ func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 		return nil, true
 	}
 	join := la.GetHashJoin(prop)
+	var columns []*expression.Column
+	for _, colColumn := range la.CorCols {
+		columns = append(columns, &colColumn.Column)
+	}
+	count := getCardinality(columns, la.schema, la.stats) / la.stats.RowCount
+
+	var canUseCache bool
+	if count < 0.5 {
+		canUseCache = true
+	} else {
+		canUseCache = false
+	}
+
 	apply := PhysicalApply{
 		PhysicalHashJoin: *join,
 		OuterSchema:      la.CorCols,
+		CanUseCache:      canUseCache,
 	}.Init(la.ctx,
 		la.stats.ScaleByExpectCnt(prop.ExpectedCnt),
 		la.blockOffset,

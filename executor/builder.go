@@ -1576,6 +1576,7 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) *NestedLoopAp
 		joiner:       tupleJoiner,
 		outerSchema:  v.OuterSchema,
 		ctx:          b.ctx,
+		canUseCache:  v.CanUseCache,
 	}
 	executorCounterNestedLoopApplyExec.Inc()
 	return e
