@@ -820,3 +820,302 @@ func (s *testSerialSuite) TestTableLocksEnable(c *C) {
 	tk.MustExec("lock tables t1 write")
 	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
 }
+<<<<<<< HEAD
+=======
+
+func (s *testSerialSuite) TestAutoRandom(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists auto_random_db")
+	defer tk.MustExec("drop database if exists auto_random_db")
+	tk.MustExec("use auto_random_db")
+	tk.MustExec("drop table if exists t")
+
+	assertInvalidAutoRandomErr := func(sql string, errMsg string, args ...interface{}) {
+		_, err := tk.Exec(sql)
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, ddl.ErrInvalidAutoRandom.GenWithStackByArgs(fmt.Sprintf(errMsg, args...)).Error())
+	}
+
+	assertPKIsNotHandle := func(sql, errCol string) {
+		assertInvalidAutoRandomErr(sql, autoid.AutoRandomPKisNotHandleErrMsg, errCol)
+	}
+	assertExperimentDisabled := func(sql string) {
+		assertInvalidAutoRandomErr(sql, autoid.AutoRandomExperimentalDisabledErrMsg)
+	}
+	assertAlterValue := func(sql string) {
+		assertInvalidAutoRandomErr(sql, autoid.AutoRandomAlterErrMsg)
+	}
+	assertWithAutoInc := func(sql string) {
+		assertInvalidAutoRandomErr(sql, autoid.AutoRandomIncompatibleWithAutoIncErrMsg)
+	}
+	assertOverflow := func(sql, colType string, autoRandBits, maxFieldLength uint64) {
+		assertInvalidAutoRandomErr(sql, autoid.AutoRandomOverflowErrMsg, colType, maxFieldLength, autoRandBits, colType, maxFieldLength-1)
+	}
+	assertModifyColType := func(sql string) {
+		assertInvalidAutoRandomErr(sql, autoid.AutoRandomModifyColTypeErrMsg)
+	}
+	assertDefault := func(sql string) {
+		assertInvalidAutoRandomErr(sql, autoid.AutoRandomIncompatibleWithDefaultValueErrMsg)
+	}
+	assertNonPositive := func(sql string) {
+		assertInvalidAutoRandomErr(sql, autoid.AutoRandomNonPositive)
+	}
+	mustExecAndDrop := func(sql string, fns ...func()) {
+		tk.MustExec(sql)
+		for _, f := range fns {
+			f()
+		}
+		tk.MustExec("drop table t")
+	}
+
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+	// PKIsHandle, but auto_random is defined on non-primary key.
+	assertPKIsNotHandle("create table t (a bigint auto_random (3) primary key, b int auto_random (3))", "b")
+	assertPKIsNotHandle("create table t (a bigint auto_random (3), b int auto_random(3), primary key(a))", "b")
+	assertPKIsNotHandle("create table t (a bigint auto_random (3), b int auto_random(3) primary key)", "a")
+
+	// PKIsNotHandle: no primary key.
+	assertPKIsNotHandle("create table t (a int auto_random(3), b int)", "a")
+	assertPKIsNotHandle("create table t (a bigint auto_random(3), b int)", "a")
+	// PKIsNotHandle: primary key is not integer column.
+	assertPKIsNotHandle("create table t (a char primary key auto_random(3), b int)", "a")
+	assertPKIsNotHandle("create table t (a varchar(255) primary key auto_random(3), b int)", "a")
+	assertPKIsNotHandle("create table t (a timestamp primary key auto_random(3), b int)", "a")
+	// PKIsNotHandle: primary key is not a single column.
+	assertPKIsNotHandle("create table t (a bigint auto_random(3), b int, primary key (a, b))", "a")
+	assertPKIsNotHandle("create table t (a int auto_random(3), b int, c char, primary key (a, c))", "a")
+
+	// Can not set auto_random along with auto_increment.
+	assertWithAutoInc("create table t (a bigint auto_random(3) primary key auto_increment)")
+	assertWithAutoInc("create table t (a bigint primary key auto_increment auto_random(3))")
+	assertWithAutoInc("create table t (a bigint auto_increment primary key auto_random(3))")
+	assertWithAutoInc("create table t (a bigint auto_random(3) auto_increment, primary key (a))")
+
+	// Overflow data type max length.
+	assertOverflow("create table t (a bigint auto_random(65) primary key)", "a", 65, 64)
+	assertOverflow("create table t (a int auto_random(33) primary key)", "a", 33, 32)
+	assertOverflow("create table t (a mediumint auto_random(25) primary key)", "a", 25, 24)
+	assertOverflow("create table t (a smallint auto_random(17) primary key)", "a", 17, 16)
+	assertOverflow("create table t (a tinyint auto_random(9) primary key)", "a", 9, 8)
+
+	assertNonPositive("create table t (a bigint auto_random(0) primary key)")
+
+	// Can not set auto_random along with default.
+	assertDefault("create table t (a int auto_random primary key default 3)")
+	assertDefault("create table t (a bigint auto_random(2) primary key default 5)")
+	mustExecAndDrop("create table t (a int auto_random primary key)", func() {
+		assertDefault("alter table t modify column a int auto_random default 3")
+	})
+
+	// Basic usage.
+	mustExecAndDrop("create table t (a bigint auto_random(4) primary key, b varchar(255))")
+	mustExecAndDrop("create table t (a bigint primary key auto_random(4), b varchar(255))")
+	mustExecAndDrop("create table t (a bigint auto_random(4), b varchar(255), primary key (a))")
+
+	// Different primary key field types.
+	mustExecAndDrop("create table t (a bigint auto_random(4) primary key)")
+	mustExecAndDrop("create table t (a int auto_random(4) primary key)")
+	mustExecAndDrop("create table t (a mediumint auto_random(4) primary key)")
+	mustExecAndDrop("create table t (a smallint auto_random(4) primary key)")
+	mustExecAndDrop("create table t (a tinyint auto_random(4) primary key)")
+
+	// Auto_random can occur multiple times like other column attributes.
+	mustExecAndDrop("create table t (a bigint auto_random(3) auto_random(2) primary key)")
+	mustExecAndDrop("create table t (a int, b bigint auto_random(3) primary key auto_random(2))")
+	mustExecAndDrop("create table t (a int auto_random(1) auto_random(2) auto_random(3), primary key (a))")
+
+	// Add/drop the auto_random attribute is not allowed.
+	mustExecAndDrop("create table t (a bigint auto_random(3) primary key)", func() {
+		assertAlterValue("alter table t modify column a bigint")
+		assertAlterValue("alter table t change column a b bigint")
+	})
+	mustExecAndDrop("create table t (a int, b char, c int auto_random(3), primary key(c))", func() {
+		assertAlterValue("alter table t modify column c bigint")
+		assertAlterValue("alter table t change column c d bigint")
+	})
+	mustExecAndDrop("create table t (a bigint primary key)", func() {
+		assertAlterValue("alter table t modify column a bigint auto_random(3)")
+		assertAlterValue("alter table t change column a b bigint auto_random(3)")
+	})
+
+	// Modifying the field type of a auto_random column is not allowed.
+	mustExecAndDrop("create table t (a tinyint primary key auto_random(3))", func() {
+		assertModifyColType("alter table t modify column a int auto_random(3)")
+		assertModifyColType("alter table t modify column a mediumint auto_random(3)")
+		assertModifyColType("alter table t modify column a smallint auto_random(3)")
+	})
+
+	// Test show warnings when create auto_random table.
+	assertShowWarningCorrect := func(sql string, times int) {
+		mustExecAndDrop(sql, func() {
+			note := fmt.Sprintf(autoid.AutoRandomAvailableAllocTimesNote, times)
+			result := fmt.Sprintf("Note|1105|%s", note)
+			tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", result))
+			c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
+		})
+	}
+	assertShowWarningCorrect("create table t (a tinyint unsigned auto_random(6) primary key)", 3)
+	assertShowWarningCorrect("create table t (a tinyint unsigned auto_random(5) primary key)", 7)
+	assertShowWarningCorrect("create table t (a tinyint auto_random(4) primary key)", 7)
+	assertShowWarningCorrect("create table t (a bigint auto_random(62) primary key)", 1)
+	assertShowWarningCorrect("create table t (a bigint unsigned auto_random(61) primary key)", 7)
+	assertShowWarningCorrect("create table t (a int auto_random(30) primary key)", 1)
+	assertShowWarningCorrect("create table t (a int auto_random(29) primary key)", 3)
+
+	// Disallow using it when allow-auto-random is not enabled.
+	config.GetGlobalConfig().Experimental.AllowAutoRandom = false
+	assertExperimentDisabled("create table auto_random_table (a int primary key auto_random(3))")
+}
+
+func (s *testSerialSuite) TestModifyingColumn4NewCollations(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database dct")
+	tk.MustExec("use dct")
+	tk.MustExec("create table t(b varchar(10) collate utf8_bin, c varchar(10) collate utf8_general_ci) collate utf8_bin")
+	// Column collation can be changed as long as there is no index defined.
+	tk.MustExec("alter table t modify b varchar(10) collate utf8_general_ci")
+	tk.MustExec("alter table t modify c varchar(10) collate utf8_bin")
+	tk.MustExec("alter table t charset utf8 collate utf8_general_ci")
+	tk.MustExec("alter table t convert to charset utf8 collate utf8_bin")
+	tk.MustExec("alter table t convert to charset utf8 collate utf8_general_ci")
+	tk.MustExec("alter table t modify b varchar(10) collate utf8_bin")
+
+	tk.MustExec("alter table t add index b_idx(b)")
+	tk.MustExec("alter table t add index c_idx(c)")
+	tk.MustGetErrMsg("alter table t modify b varchar(10) collate utf8_general_ci", "[ddl:8200]Unsupported modifying collation of column 'b' from 'utf8_bin' to 'utf8_general_ci' when index is defined on it.")
+	tk.MustGetErrMsg("alter table t modify c varchar(10) collate utf8_bin", "[ddl:8200]Unsupported modifying collation of column 'c' from 'utf8_general_ci' to 'utf8_bin' when index is defined on it.")
+	tk.MustGetErrMsg("alter table t convert to charset utf8 collate utf8_general_ci", "[ddl:8200]Unsupported converting collation of column 'b' from 'utf8_bin' to 'utf8_general_ci' when index is defined on it.")
+	// Change to a compatible collation is allowed.
+	tk.MustExec("alter table t modify c varchar(10) collate utf8mb4_general_ci")
+	// Change the default collation of table is allowed.
+	tk.MustExec("alter table t collate utf8mb4_general_ci")
+	tk.MustExec("alter table t charset utf8mb4 collate utf8mb4_bin")
+	// Change the default collation of database is allowed.
+	tk.MustExec("alter database dct charset utf8mb4 collate utf8mb4_general_ci")
+}
+
+func (s *testSerialSuite) TestForbidUnsupportedCollations(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+
+	mustGetUnsupportedCollation := func(sql string, coll string) {
+		tk.MustGetErrMsg(sql, fmt.Sprintf("[ddl:1273]Unsupported collation when new collation is enabled: '%s'", coll))
+	}
+	// Test default collation of database.
+	mustGetUnsupportedCollation("create database ucd charset utf8mb4 collate utf8mb4_unicode_ci", "utf8mb4_unicode_ci")
+	mustGetUnsupportedCollation("create database ucd charset utf8 collate utf8_unicode_ci", "utf8_unicode_ci")
+	tk.MustExec("create database ucd")
+	mustGetUnsupportedCollation("alter database ucd charset utf8mb4 collate utf8mb4_unicode_ci", "utf8mb4_unicode_ci")
+	mustGetUnsupportedCollation("alter database ucd collate utf8mb4_unicode_ci", "utf8mb4_unicode_ci")
+
+	// Test default collation of table.
+	tk.MustExec("use ucd")
+	mustGetUnsupportedCollation("create table t(a varchar(20)) charset utf8mb4 collate utf8mb4_unicode_ci", "utf8mb4_unicode_ci")
+	mustGetUnsupportedCollation("create table t(a varchar(20)) collate utf8_unicode_ci", "utf8_unicode_ci")
+	tk.MustExec("create table t(a varchar(20)) collate utf8mb4_general_ci")
+	mustGetUnsupportedCollation("alter table t default collate utf8mb4_unicode_ci", "utf8mb4_unicode_ci")
+	mustGetUnsupportedCollation("alter table t convert to charset utf8mb4 collate utf8mb4_unicode_ci", "utf8mb4_unicode_ci")
+
+	// Test collation of columns.
+	mustGetUnsupportedCollation("create table t1(a varchar(20)) collate utf8mb4_unicode_ci", "utf8mb4_unicode_ci")
+	mustGetUnsupportedCollation("create table t1(a varchar(20)) charset utf8 collate utf8_unicode_ci", "utf8_unicode_ci")
+	tk.MustExec("create table t1(a varchar(20))")
+	mustGetUnsupportedCollation("alter table t1 modify a varchar(20) collate utf8mb4_unicode_ci", "utf8mb4_unicode_ci")
+	mustGetUnsupportedCollation("alter table t1 modify a varchar(20) charset utf8 collate utf8_unicode_ci", "utf8_unicode_ci")
+	mustGetUnsupportedCollation("alter table t1 modify a varchar(20) charset utf8 collate utf8_unicode_ci", "utf8_unicode_ci")
+
+	// TODO(bb7133): fix the following cases by setting charset from collate firstly.
+	// mustGetUnsupportedCollation("create database ucd collate utf8mb4_unicode_ci", errMsgUnsupportedUnicodeCI)
+	// mustGetUnsupportedCollation("alter table t convert to collate utf8mb4_unicode_ci", "utf8mb4_unicode_ci")
+}
+
+func (s *testSerialSuite) TestInvisibleIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t,t1,t2,t3,t4,t5,t6")
+
+	// The DDL statement related to invisible index.
+	showIndexes := "select index_name, is_visible from information_schema.statistics where table_schema = 'test' and table_name = 't'"
+	// 1. Create table with invisible index
+	tk.MustExec("create table t (a int, b int, unique (a) invisible)")
+	tk.MustQuery(showIndexes).Check(testkit.Rows("a NO"))
+	tk.MustExec("insert into t values (1, 2)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2"))
+	// 2. Drop invisible index
+	tk.MustGetErrMsg("alter table t drop column a", "[ddl:8200]can't drop column a with index covered now")
+	tk.MustExec("alter table t drop index a")
+	tk.MustQuery(showIndexes).Check(testkit.Rows())
+	tk.MustExec("insert into t values (3, 4)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2", "3 4"))
+	// 3. Add an invisible index
+	tk.MustExec("alter table t add index (b) invisible")
+	tk.MustQuery(showIndexes).Check(testkit.Rows("b NO"))
+	tk.MustExec("insert into t values (5, 6)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2", "3 4", "5 6"))
+	// 4. Drop it
+	tk.MustExec("alter table t drop index b")
+	tk.MustQuery(showIndexes).Check(testkit.Rows())
+	tk.MustExec("insert into t values (7, 8)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2", "3 4", "5 6", "7 8"))
+	// 5. Create a multiple-column invisible index
+	tk.MustExec("alter table t add index a_b(a, b) invisible")
+	tk.MustQuery(showIndexes).Check(testkit.Rows("a_b NO", "a_b NO"))
+	tk.MustExec("insert into t values (9, 10)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2", "3 4", "5 6", "7 8", "9 10"))
+	// 6. Drop it
+	tk.MustExec("alter table t drop index a_b")
+	tk.MustQuery(showIndexes).Check(testkit.Rows())
+	tk.MustExec("insert into t values (11, 12)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2", "3 4", "5 6", "7 8", "9 10", "11 12"))
+
+	cfg := config.GetGlobalConfig()
+	newCfg := *cfg
+	orignalAlterPrimaryKey := newCfg.AlterPrimaryKey
+	newCfg.AlterPrimaryKey = true
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		newCfg.AlterPrimaryKey = orignalAlterPrimaryKey
+		config.StoreGlobalConfig(&newCfg)
+	}()
+
+	// Limitation: Primary key cannot be invisible index
+	tk.MustGetErrCode("create table t1 (a int, primary key (a) invisible)", errno.ErrPKIndexCantBeInvisible)
+	tk.MustGetErrCode("create table t1 (a int, b int, primary key (a, b) invisible)", errno.ErrPKIndexCantBeInvisible)
+	tk.MustExec("create table t1 (a int, b int)")
+	tk.MustGetErrCode("alter table t1 add primary key(a) invisible", errno.ErrPKIndexCantBeInvisible)
+	tk.MustGetErrCode("alter table t1 add primary key(a, b) invisible", errno.ErrPKIndexCantBeInvisible)
+
+	// Implicit primary key cannot be invisible index
+	// Create a implicit primary key
+	tk.MustGetErrCode("create table t2(a int not null, unique (a) invisible)", errno.ErrPKIndexCantBeInvisible)
+	// Column `a` become implicit primary key after DDL statement on itself
+	tk.MustExec("create table t2(a int not null)")
+	tk.MustGetErrCode("alter table t2 add unique (a) invisible", errno.ErrPKIndexCantBeInvisible)
+	tk.MustExec("create table t3(a int, unique index (a) invisible)")
+	tk.MustGetErrCode("alter table t3 modify column a int not null", errno.ErrPKIndexCantBeInvisible)
+	// Only first unique column can be implicit primary
+	tk.MustExec("create table t4(a int not null, b int not null, unique (a), unique (b) invisible)")
+	showIndexes = "select index_name, is_visible from information_schema.statistics where table_schema = 'test' and table_name = 't4'"
+	tk.MustQuery(showIndexes).Check(testkit.Rows("a YES", "b NO"))
+	tk.MustExec("insert into t4 values (1, 2)")
+	tk.MustQuery("select * from t4").Check(testkit.Rows("1 2"))
+	tk.MustGetErrCode("create table t5(a int not null, b int not null, unique (b) invisible, unique (a))", errno.ErrPKIndexCantBeInvisible)
+	// Column `b` become implicit primary key after DDL statement on other columns
+	tk.MustExec("create table t5(a int not null, b int not null, unique (a), unique (b) invisible)")
+	tk.MustGetErrCode("alter table t5 drop index a", errno.ErrPKIndexCantBeInvisible)
+	tk.MustGetErrCode("alter table t5 modify column a int null", errno.ErrPKIndexCantBeInvisible)
+	// If these is a explicit primary key, no key will become implicit primary key
+	tk.MustExec("create table t6 (a int not null, b int, unique (a) invisible, primary key(b))")
+	showIndexes = "select index_name, is_visible from information_schema.statistics where table_schema = 'test' and table_name = 't6'"
+	tk.MustQuery(showIndexes).Check(testkit.Rows("a NO", "PRIMARY YES"))
+	tk.MustExec("insert into t6 values (1, 2)")
+	tk.MustQuery("select * from t6").Check(testkit.Rows("1 2"))
+	tk.MustGetErrCode("alter table t6 drop primary key", errno.ErrPKIndexCantBeInvisible)
+}
+>>>>>>> ce923ac... executor: only reserve the sign bit when auto_random column is signed (#15566)

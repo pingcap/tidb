@@ -706,6 +706,102 @@ func getAutoRecordID(d types.Datum, target *types.FieldType, isInsert bool) (int
 	return recordID, nil
 }
 
+<<<<<<< HEAD
+=======
+func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum, hasValue bool, c *table.Column) (types.Datum, error) {
+	retryInfo := e.ctx.GetSessionVars().RetryInfo
+	if retryInfo.Retrying {
+		autoRandomID, err := retryInfo.GetCurrAutoRandomID()
+		if err != nil {
+			return types.Datum{}, err
+		}
+		d.SetAutoID(autoRandomID, c.Flag)
+		return d, nil
+	}
+
+	var err error
+	var recordID int64
+	if !hasValue {
+		d.SetNull()
+	}
+	if !d.IsNull() {
+		recordID, err = getAutoRecordID(d, &c.FieldType, true)
+		if err != nil {
+			return types.Datum{}, err
+		}
+	}
+	// Use the value if it's not null and not 0.
+	if recordID != 0 {
+		err = e.rebaseAutoRandomID(recordID, &c.FieldType)
+		if err != nil {
+			return types.Datum{}, err
+		}
+		e.ctx.GetSessionVars().StmtCtx.InsertID = uint64(recordID)
+		d.SetAutoID(recordID, c.Flag)
+		retryInfo.AddAutoRandomID(recordID)
+		return d, nil
+	}
+
+	// Change NULL to auto id.
+	// Change value 0 to auto id, if NoAutoValueOnZero SQL mode is not set.
+	if d.IsNull() || e.ctx.GetSessionVars().SQLMode&mysql.ModeNoAutoValueOnZero == 0 {
+		_, err := e.ctx.Txn(true)
+		if err != nil {
+			return types.Datum{}, errors.Trace(err)
+		}
+		recordID, err = e.allocAutoRandomID(&c.FieldType)
+		if err != nil {
+			return types.Datum{}, err
+		}
+		// It's compatible with mysql setting the first allocated autoID to lastInsertID.
+		// Cause autoID may be specified by user, judge only the first row is not suitable.
+		if e.lastInsertID == 0 {
+			e.lastInsertID = uint64(recordID)
+		}
+	}
+
+	d.SetAutoID(recordID, c.Flag)
+	retryInfo.AddAutoRandomID(recordID)
+
+	casted, err := table.CastValue(e.ctx, d, c.ToInfo())
+	if err != nil {
+		return types.Datum{}, err
+	}
+	return casted, nil
+}
+
+// allocAutoRandomID allocates a random id for primary key column. It assumes tableInfo.AutoRandomBits > 0.
+func (e *InsertValues) allocAutoRandomID(fieldType *types.FieldType) (int64, error) {
+	alloc := e.Table.Allocators(e.ctx).Get(autoid.AutoRandomType)
+	tableInfo := e.Table.Meta()
+	_, autoRandomID, err := alloc.Alloc(tableInfo.ID, 1, 1, 1)
+	if err != nil {
+		return 0, err
+	}
+
+	layout := autoid.NewAutoRandomIDLayout(fieldType, tableInfo.AutoRandomBits)
+	if tables.OverflowShardBits(autoRandomID, tableInfo.AutoRandomBits, layout.TypeBitsLength, layout.HasSignBit) {
+		return 0, autoid.ErrAutoRandReadFailed
+	}
+	shard := tables.CalcShard(tableInfo.AutoRandomBits, e.ctx.GetSessionVars().TxnCtx.StartTS, layout.TypeBitsLength, layout.HasSignBit)
+	autoRandomID |= shard
+	return autoRandomID, nil
+}
+
+func (e *InsertValues) rebaseAutoRandomID(recordID int64, fieldType *types.FieldType) error {
+	if recordID < 0 {
+		return nil
+	}
+	alloc := e.Table.Allocators(e.ctx).Get(autoid.AutoRandomType)
+	tableInfo := e.Table.Meta()
+
+	layout := autoid.NewAutoRandomIDLayout(fieldType, tableInfo.AutoRandomBits)
+	autoRandomID := layout.IncrementalMask() & recordID
+
+	return alloc.Rebase(tableInfo.ID, autoRandomID, true)
+}
+
+>>>>>>> ce923ac... executor: only reserve the sign bit when auto_random column is signed (#15566)
 func (e *InsertValues) handleWarning(err error) {
 	sc := e.ctx.GetSessionVars().StmtCtx
 	sc.AppendWarning(err)

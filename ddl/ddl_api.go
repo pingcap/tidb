@@ -1096,7 +1096,117 @@ func checkConstraintNames(constraints []*ast.Constraint) error {
 	return nil
 }
 
+<<<<<<< HEAD
 func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols []*table.Column, constraints []*ast.Constraint) (tbInfo *model.TableInfo, err error) {
+=======
+// checkInvisibleIndexOnPK check if primary key is invisible index.
+func checkInvisibleIndexOnPK(tblInfo *model.TableInfo) error {
+	pk := getPrimaryKey(tblInfo)
+	if pk != nil && pk.Invisible {
+		return ErrPKIndexCantBeInvisible
+	}
+	return nil
+}
+
+// getPrimaryKey extract the primary key in a table and return `IndexInfo`
+// The returned primary key could be explicit or implicit.
+// If there is no explicit primary key in table,
+// the first UNIQUE INDEX on NOT NULL columns will be the implicit primary key.
+// For more information about implicit primary key, see
+// https://dev.mysql.com/doc/refman/8.0/en/invisible-indexes.html
+func getPrimaryKey(tblInfo *model.TableInfo) *model.IndexInfo {
+	var implicitPK *model.IndexInfo
+
+	for _, key := range tblInfo.Indices {
+		if key.Primary {
+			// table has explicit primary key
+			return key
+		}
+		// find the first unique key with NOT NULL columns
+		if implicitPK == nil && key.Unique {
+			// ensure all columns in unique key have NOT NULL flag
+			allColNotNull := true
+			for _, idxCol := range key.Columns {
+				col := model.FindColumnInfo(tblInfo.Cols(), idxCol.Name.L)
+				if !mysql.HasNotNullFlag(col.Flag) {
+					allColNotNull = false
+				}
+			}
+			if allColNotNull {
+				implicitPK = key
+			}
+		}
+	}
+	return implicitPK
+}
+
+func setTableAutoRandomBits(ctx sessionctx.Context, tbInfo *model.TableInfo, colDefs []*ast.ColumnDef) error {
+	allowAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
+	pkColName := tbInfo.GetPkName()
+	for _, col := range colDefs {
+		if containsColumnOption(col, ast.ColumnOptionAutoRandom) {
+			if !allowAutoRandom {
+				return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomExperimentalDisabledErrMsg)
+			}
+			if !tbInfo.PKIsHandle || col.Name.Name.L != pkColName.L {
+				errMsg := fmt.Sprintf(autoid.AutoRandomPKisNotHandleErrMsg, col.Name.Name.O)
+				return ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
+			}
+			if containsColumnOption(col, ast.ColumnOptionAutoIncrement) {
+				return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomIncompatibleWithAutoIncErrMsg)
+			}
+			if containsColumnOption(col, ast.ColumnOptionDefaultValue) {
+				return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomIncompatibleWithDefaultValueErrMsg)
+			}
+
+			autoRandBits, err := extractAutoRandomBitsFromColDef(col)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			layout := autoid.NewAutoRandomIDLayout(col.Tp, autoRandBits)
+			if autoRandBits == 0 {
+				return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomNonPositive)
+			} else if autoRandBits >= layout.TypeBitsLength {
+				errMsg := fmt.Sprintf(autoid.AutoRandomOverflowErrMsg, col.Name.Name.L,
+					layout.TypeBitsLength, autoRandBits, col.Name.Name.L, layout.TypeBitsLength-1)
+				return ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
+			}
+			tbInfo.AutoRandomBits = autoRandBits
+
+			msg := fmt.Sprintf(autoid.AutoRandomAvailableAllocTimesNote, layout.IncrementalBitsCapacity())
+			ctx.GetSessionVars().StmtCtx.AppendNote(errors.Errorf(msg))
+		}
+	}
+	return nil
+}
+
+func extractAutoRandomBitsFromColDef(colDef *ast.ColumnDef) (uint64, error) {
+	for _, op := range colDef.Options {
+		if op.Tp == ast.ColumnOptionAutoRandom {
+			return convertAutoRandomBitsToUnsigned(op.AutoRandomBitLength)
+		}
+	}
+	return 0, nil
+}
+
+func convertAutoRandomBitsToUnsigned(autoRandomBits int) (uint64, error) {
+	if autoRandomBits == types.UnspecifiedLength {
+		return autoid.DefaultAutoRandomBits, nil
+	} else if autoRandomBits < 0 {
+		return 0, ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomNonPositive)
+	}
+	return uint64(autoRandomBits), nil
+}
+
+func buildTableInfo(
+	ctx sessionctx.Context,
+	tableName model.CIStr,
+	cols []*table.Column,
+	constraints []*ast.Constraint,
+	charset string,
+	collate string) (tbInfo *model.TableInfo, err error) {
+>>>>>>> ce923ac... executor: only reserve the sign bit when auto_random column is signed (#15566)
 	tbInfo = &model.TableInfo{
 		Name:    tableName,
 		Version: model.CurrLatestTableInfoVersion,
