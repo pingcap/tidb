@@ -78,6 +78,12 @@ func (s *testTableSuiteBase) TearDownSuite(c *C) {
 	testleak.AfterTest(c)()
 }
 
+func (s *testTableSuiteBase) newTestKitWithRoot(c *C) *testkit.TestKit {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	return tk
+}
+
 type testClusterTableSuite struct {
 	*testTableSuiteBase
 	rpcserver  *grpc.Server
@@ -745,7 +751,7 @@ func (s *testTableSuite) checkSystemSchemaTableID(c *C, dbName string, dbID, sta
 }
 
 func (s *testClusterTableSuite) TestSelectClusterTable(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+	tk := s.newTestKitWithRoot(c)
 	slowLogFileName := "tidb-slow.log"
 	prepareSlowLogfile(c, slowLogFileName)
 	defer os.Remove(slowLogFileName)
@@ -855,7 +861,7 @@ func (s *testTableSuite) TestSelectHiddenColumn(c *C) {
 
 // Test statements_summary.
 func (s *testTableSuite) TestStmtSummaryTable(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk := s.newTestKitWithRoot(c)
 
 	tk.MustQuery("select column_comment from information_schema.columns " +
 		"where table_name='STATEMENTS_SUMMARY' and column_name='STMT_TYPE'",
@@ -878,7 +884,7 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	tk.MustQuery("select @@global.tidb_stmt_summary_refresh_interval").Check(testkit.Rows("999999999"))
 
 	// Create a new session to test.
-	tk = testkit.NewTestKitWithInit(c, s.store)
+	tk = s.newTestKitWithRoot(c)
 
 	// Test INSERT
 	tk.MustExec("insert into t values(1, 'a')")
@@ -961,7 +967,7 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("0"))
 
 	// Create a new session to test
-	tk = testkit.NewTestKitWithInit(c, s.store)
+	tk = s.newTestKitWithRoot(c)
 
 	// This statement shouldn't be summarized.
 	tk.MustQuery("select * from t where a=2")
@@ -1006,7 +1012,7 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	tk.MustExec("set global tidb_enable_stmt_summary = false")
 
 	// Create a new session to test.
-	tk = testkit.NewTestKitWithInit(c, s.store)
+	tk = s.newTestKitWithRoot(c)
 
 	tk.MustQuery("select * from t where a=2")
 
@@ -1032,7 +1038,7 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	).Check(testkit.Rows())
 
 	// Create a new session to test
-	tk = testkit.NewTestKitWithInit(c, s.store)
+	tk = s.newTestKitWithRoot(c)
 
 	tk.MustExec("set global tidb_enable_stmt_summary = on")
 	tk.MustExec("set global tidb_stmt_summary_history_size = 24")
@@ -1098,8 +1104,7 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 
 // Test statements_summary_history.
 func (s *testTableSuite) TestStmtSummaryHistoryTable(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-
+	tk := s.newTestKitWithRoot(c)
 	tk.MustExec("drop table if exists test_summary")
 	tk.MustExec("create table test_summary(a int, b varchar(10), key k(a))")
 
@@ -1113,7 +1118,7 @@ func (s *testTableSuite) TestStmtSummaryHistoryTable(c *C) {
 	tk.MustQuery("select @@global.tidb_stmt_summary_refresh_interval").Check(testkit.Rows("999999999"))
 
 	// Create a new session to test.
-	tk = testkit.NewTestKitWithInit(c, s.store)
+	tk = s.newTestKitWithRoot(c)
 
 	// Test INSERT
 	tk.MustExec("insert into test_summary values(1, 'a')")
@@ -1137,7 +1142,7 @@ func (s *testTableSuite) TestStmtSummaryHistoryTable(c *C) {
 
 // Test statements_summary_history.
 func (s *testTableSuite) TestStmtSummaryInternalQuery(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk := s.newTestKitWithRoot(c)
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b varchar(10), key k(a))")
@@ -1157,7 +1162,7 @@ func (s *testTableSuite) TestStmtSummaryInternalQuery(c *C) {
 	// Test Internal
 
 	// Create a new session to test.
-	tk = testkit.NewTestKitWithInit(c, s.store)
+	tk = s.newTestKitWithRoot(c)
 
 	tk.MustExec("select * from t where t.a = 1")
 	tk.MustQuery(`select exec_count, digest_text
@@ -1169,7 +1174,7 @@ func (s *testTableSuite) TestStmtSummaryInternalQuery(c *C) {
 	defer tk.MustExec("set global tidb_stmt_summary_internal_query = false")
 
 	// Create a new session to test.
-	tk = testkit.NewTestKitWithInit(c, s.store)
+	tk = s.newTestKitWithRoot(c)
 
 	tk.MustExec("admin flush bindings")
 	tk.MustExec("admin evolve bindings")
@@ -1183,7 +1188,7 @@ func (s *testTableSuite) TestStmtSummaryInternalQuery(c *C) {
 
 // Test error count and warning count.
 func (s *testTableSuite) TestStmtSummaryErrorCount(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk := s.newTestKitWithRoot(c)
 
 	// Clear summaries.
 	tk.MustExec("set global tidb_enable_stmt_summary = 0")
