@@ -1068,6 +1068,11 @@ var MySQLErrName = map[uint16]string{
 	ErrUnsupportedSecondArgumentType:       "JSON_OBJECTAGG: unsupported second argument type %v",
 	ErrLockExpire:                          "TTL manager has timed out, pessimistic locks may expire, please commit or rollback this transaction",
 
+	ErrBRIEBackupFailed:  "Backup failed: %s",
+	ErrBRIERestoreFailed: "Restore failed: %s",
+	ErrBRIEImportFailed:  "Import failed: %s",
+	ErrBRIEExportFailed:  "Export failed: %s",
+
 	// TiKV/PD errors.
 	ErrPDServerTimeout:        "PD server timeout",
 	ErrTiKVServerTimeout:      "TiKV server timeout",
