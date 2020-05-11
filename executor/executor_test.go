@@ -4841,6 +4841,16 @@ func (s *testRecoverTable) TestFlashbackTable(c *C) {
 	tk.MustExec("create table t (a int);")
 	tk.MustExec("drop table t")
 	tk.MustExec("flashback table t")
+
+	tk.MustExec("drop table t")
+	tk.MustExec("drop database if exists Test3")
+	tk.MustExec("create database Test3")
+	tk.MustExec("use Test3")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("drop table t")
+	tk.MustExec("drop database Test3")
+	tk.MustExec("use Test2")
+	tk.MustExec("flashback table t")
 }
 
 func (s *testSuiteP2) TestPointGetPreparedPlan(c *C) {
