@@ -6378,3 +6378,13 @@ func (s *testIntegrationSuite) TestIssue16779(c *C) {
 	tk.MustExec("create table t1 (c0 int)")
 	tk.MustQuery("SELECT * FROM t1 LEFT JOIN t0 ON TRUE WHERE BINARY EXPORT_SET(0, 0, 0 COLLATE 'binary', t0.c0, 0 COLLATE 'binary')")
 }
+
+func (s *testIntegrationSuite) TestIssue17045(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int,b varchar(20),c datetime,d double,e int,f int as(a+b),key(a),key(b),key(c),key(d),key(e),key(f));")
+	tk.MustExec("insert into t(a,b,e) values(null,\"5\",null);")
+	tk.MustExec("insert into t(a,b,e) values(\"5\",null,null);")
+	tk.MustQuery("select /*+ use_index_merge(t)*/ * from t where t.e=5 or t.a=5;").Check(testkit.Rows("5 <nil> <nil> <nil> <nil> <nil>"))
+}
