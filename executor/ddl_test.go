@@ -869,6 +869,7 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 	}
 
 	// Test explicit insert.
+	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 	tk.MustExec("create table t (a tinyint primary key auto_random(2), b int)")
 	for i := 1; i <= 100; i++ {
 		tk.MustExec("insert into t values (?, ?)", i, i)

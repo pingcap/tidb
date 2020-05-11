@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"github.com/pingcap/tidb/ddl"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -847,6 +848,9 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 	}
 	// Use the value if it's not null and not 0.
 	if recordID != 0 {
+		if !e.ctx.GetSessionVars().AllowAutoRandExplicitInsert {
+			return types.Datum{}, ddl.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomExplicitInsertDisabledErrMsg)
+		}
 		err = e.rebaseAutoRandomID(recordID, &c.FieldType)
 		if err != nil {
 			return types.Datum{}, err
