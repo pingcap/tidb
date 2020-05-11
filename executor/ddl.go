@@ -500,7 +500,7 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.J
 	}
 	schemaName := tableName.Schema.L
 	if schemaName == "" {
-		schemaName = e.ctx.GetSessionVars().CurrentDB
+		schemaName = strings.ToLower(e.ctx.GetSessionVars().CurrentDB)
 	}
 	if schemaName == "" {
 		return nil, nil, errors.Trace(core.ErrNoDB)
