@@ -1228,3 +1228,23 @@ func (s *testTableSuite) TestStmtSummaryErrorCount(c *C) {
 		from information_schema.statements_summary
 		where digest_text like "insert ignore into stmt_summary_test%"`).Check(testkit.Rows("1 0 1"))
 }
+
+func (s *testTableSuite) TestStmtSummaryPreparedStatements(c *C) {
+	tk := s.newTestKitWithRoot(c)
+
+	// Clear summaries.
+	tk.MustExec("set global tidb_enable_stmt_summary = 0")
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+
+	tk.MustExec("use test")
+	tk.MustExec("prepare stmt from 'select ?'")
+	tk.MustExec("set @number=1")
+	tk.MustExec("execute stmt using @number")
+
+	tk.MustQuery(`select exec_count
+		from information_schema.statements_summary
+		where digest_text like "prepare%"`).Check(testkit.Rows())
+	tk.MustQuery(`select exec_count
+		from information_schema.statements_summary
+		where digest_text like "select ?"`).Check(testkit.Rows("1"))
+}
