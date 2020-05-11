@@ -900,7 +900,7 @@ func (e *NestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk) (err e
 			var key []byte
 			for _, col := range e.outerSchema {
 				*col.Data = e.outerRow.GetDatum(col.Index, col.RetType)
-				key, err = codec.EncodeValue(e.ctx.GetSessionVars().StmtCtx, key, *col.Data)
+				key, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, key, *col.Data)
 				if err != nil {
 					return err
 				}
