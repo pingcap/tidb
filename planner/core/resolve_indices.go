@@ -300,6 +300,10 @@ func (p *PhysicalIndexLookUpReader) ResolveIndices() (err error) {
 
 // ResolveIndices implements Plan interface.
 func (p *PhysicalIndexMergeReader) ResolveIndices() (err error) {
+	err = resolveIndicesForVirtualColumn(p.tablePlan.Schema().Columns, p.schema)
+	if err != nil {
+		return err
+	}
 	if p.tablePlan != nil {
 		err = p.tablePlan.ResolveIndices()
 		if err != nil {

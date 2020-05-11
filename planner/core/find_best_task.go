@@ -671,6 +671,7 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 		physicalTableID: ds.physicalTableID,
 	}.Init(ds.ctx, ds.blockOffset)
 	ts.SetSchema(ds.schema.Clone())
+	ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
 	if ts.Table.PKIsHandle {
 		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
 			if ds.statisticTable.Columns[pkColInfo.ID] != nil {
