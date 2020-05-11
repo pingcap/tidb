@@ -53,7 +53,7 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	defer dm.mu.Unlock()
 
 	if store == nil {
-		return
+		return nil, errors.New("kv.Storage is nil")
 	}
 
 	// If this is the only domain instance, and the caller doesn't provide store.
