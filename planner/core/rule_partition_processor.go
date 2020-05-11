@@ -135,6 +135,12 @@ func (s *partitionProcessor) pruneHashPartition(ds *DataSource, pi *model.Partit
 	}
 	if ok {
 		idx := math.Abs(val) % int64(pi.Num)
+		if len(ds.partitionNames) > 0 && !s.findByName(ds.partitionNames, pi.Definitions[idx].Name.L) {
+			// For condition like `from t partition (p1) where a = 5`, but they are conflict, return TableDual directly.
+			tableDual := LogicalTableDual{RowCount: 0}.Init(ds.context())
+			tableDual.schema = ds.Schema()
+			return tableDual, nil
+		}
 		newDataSource := *ds
 		newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.context(), plancodec.TypeTableScan, &newDataSource)
 		newDataSource.isPartition = true
