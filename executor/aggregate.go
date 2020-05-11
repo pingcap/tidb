@@ -1074,7 +1074,7 @@ func (e *vecGroupChecker) splitIntoGroups(chk *chunk.Chunk) (isFirstGroupSameAsP
 
 	if bytes.Equal(e.firstGroupKey, e.lastGroupKey) {
 		e.groupOffset = append(e.groupOffset, numRows)
-		e.groupCount = len(e.groupOffset)
+		e.groupCount = 1
 		return isFirstGroupSameAsPrev, nil
 	}
 
