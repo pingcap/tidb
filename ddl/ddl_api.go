@@ -1105,10 +1105,10 @@ func checkConstraintNames(constraints []*ast.Constraint) error {
 }
 
 // checkInvisibleIndexOnPK check if primary key is invisible index.
+// Note: PKIsHandle == true means the table already has a visible primary key,
+// we do not need do a check for this case and return directly,
+// because whether primary key is invisible has been check when creating table.
 func checkInvisibleIndexOnPK(tblInfo *model.TableInfo) error {
-	// PKIsHandle == true means the table already has a visible primary key,
-	// we do not need do a check for this case and return directly,
-	// because whether primary key is invisible has been check when create table.
 	if tblInfo.PKIsHandle {
 		return nil
 	}
