@@ -17,7 +17,7 @@ When certain errors occur in TiDB components, users are often unaware of the mea
 
 ## Proposal
 
-### Requirement
+### The Metafiles
 
 In order to let TiUP know the the errors every component may throw, the components developers should
 keep a metafile in the code repository. The metafile can be a json file, a toml file or a markdown file.
@@ -99,6 +99,7 @@ A certain Raft Group is not available, such as the number of replicas is not eno
 This error usually occurs when the TiKV server is busy or the TiKV node is down.
 ### Workaround
 Check the status, monitoring data and log of the TiKV server.
+```
 
 Benefit:
 - It's easy to write.
@@ -129,7 +130,7 @@ This error usually occurs when the TiKV server is busy or the TiKV node is down.
 Check the status, monitoring data and log of the TiKV server.
 ```
 
-As the syntax above, the 8005 block is the message part of 8110 block, so we expect it's result is the same as this toml:
+As the syntax above, the 9005 block is the message part of 8005 block, so we expect it's result is the same as this toml:
 
 ```toml
 [error.8005]
@@ -156,15 +157,64 @@ Through the above discussion, we recommend the toml version of metafile.
 
 In addition, the error codes should be adding only in case of conflict between versions.
 
-### Principle
+### The Error Definition
+
+In the discussion above, an error has at least 4 parts:
+- The error code: it's the identity of an error
+- The error field: it's the error itself the user can view in TiDB system
+- the message field: the description of the error, what happened and why happend?
+- the workaround filed: how to workaround this error
+
+Besides, we can append a optional tags field to it:
+```toml
+[error.9005]
+error = ""
+message = ""
+workaround = ""
+tags = ["tikv"]
+```
+
+The tags is used to classify errors.
+
+#### The Error Code Range
+
+There are two options for code range:
+- The code should be number only
+- The code transmitted through the mysql protocol should be number only, others can be a number with a prefix string
+
+For the option 1, the code reserved for each components are:
+- TiDB: [0, 9000)
+- TiKV: [9000, 9010), [9010, 9800),
+  - server: [9100, 9200)
+  - storage: [9200, 9220),
+  - storage.txn: [9220, 9250),
+  - storage.mvcc: [9250, 9300)
+  - raft-store: [9300, 9350)
+  - raft: [9350, 9400)
+  - engine: [9400, 9500)
+  - coprocessor: [9500, 9550)
+  - codec: [9550, 9570)
+  - IO error: [9600, 9650)
+- PD: [9000, 9010), [9800, 10000)
+- DM: [10000, 47000)
+
+For the option 2, the code reserved for each components are:
+- TiDB: [0, 9000), DB\d+
+- TiKV: [9000, 9010), KV\d+
+- PD: [9000, 9010), [9800, 10000), PD\d+
+- DM: [10000, 47000), DM\d+
+
+
+
+### How It Works
 
 In every build, the pipeline should fetch all these metafiles from all repositories:
 
 ```bash
 mkdir -p errors
-curl https://raw.githubusercontent.com/pingcap/tidb/master/errors.toml -o errors/tidb.json
-curl https://raw.githubusercontent.com/tikv/tikv/master/errors.toml -o errors/tikv.json
-curl https://raw.githubusercontent.com/tikv/pd/master/errors.toml -o errors/pd.json
+curl https://raw.githubusercontent.com/pingcap/tidb/master/errors.toml -o errors/tidb.toml
+curl https://raw.githubusercontent.com/tikv/tikv/master/errors.toml -o errors/tikv.toml
+curl https://raw.githubusercontent.com/tikv/pd/master/errors.toml -o errors/pd.toml
 ```
 
 Then there are two tasks will be execute on the errors directory:
