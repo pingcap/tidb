@@ -1,4 +1,4 @@
-# TiDB SEQUENCE GENERATOR
+# Heap Profile Recorder
 
 - Author(s):     [Yisaer](https://github.com/Yisaer) (Song Gao)
 - Last updated:  2020-05-11
