@@ -52,8 +52,12 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
 
+	if store == nil {
+		return
+	}
+
 	// If this is the only domain instance, and the caller doesn't provide store.
-	if len(dm.domains) == 1 && store == nil {
+	if len(dm.domains) == 1 {
 		for _, r := range dm.domains {
 			return r, nil
 		}
