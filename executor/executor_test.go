@@ -1652,6 +1652,15 @@ func (s *testSuiteP1) TestJSON(c *C) {
 	result = tk.MustQuery(`select CAST('3' AS JSON), CAST('{}' AS JSON), CAST(null AS JSON)`)
 	result.Check(testkit.Rows(`3 {} <nil>`))
 
+	tk.MustQuery("select a, count(1) from test_json group by a order by a").Check(testkit.Rows(
+		"<nil> 1",
+		"null 1",
+		"3 1",
+		"4 1",
+		`"string" 1`,
+		"{\"a\": [1, \"2\", {\"aa\": \"bb\"}, 4], \"b\": true} 1",
+		"true 1"))
+
 	// Check cast json to decimal.
 	// NOTE: this test case contains a bug, it should be uncommented after the bug is fixed.
 	// TODO: Fix bug https://github.com/pingcap/tidb/issues/12178
