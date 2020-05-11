@@ -22,6 +22,8 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mock"
 )
 
 func (s *testEvaluatorSuite) TestNewValuesFunc(c *C) {
@@ -185,4 +187,39 @@ func tableInfoToSchemaForTest(tableInfo *model.TableInfo) *Schema {
 		})
 	}
 	return schema
+}
+
+func (s *testEvaluatorSuite) TestEvalExpr(c *C) {
+	ctx := mock.NewContext()
+	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
+	tNames := []string{"int", "real", "decimal", "string", "timestamp", "datetime", "duration"}
+	for i := 0; i < len(tNames); i++ {
+		ft := eType2FieldType(eTypes[i])
+		colExpr := &Column{Index: 0, RetType: ft}
+		input := chunk.New([]*types.FieldType{ft}, 1024, 1024)
+		fillColumnWithGener(eTypes[i], input, 0, nil)
+		colBuf := chunk.NewColumn(ft, 1024)
+		colBuf2 := chunk.NewColumn(ft, 1024)
+		var err error
+		c.Assert(colExpr.Vectorized(), IsTrue)
+		ctx.GetSessionVars().EnableVectorizedExpression = false
+		err = EvalExpr(ctx, colExpr, input, colBuf)
+		if err != nil {
+			c.Fatal(err)
+		}
+		ctx.GetSessionVars().EnableVectorizedExpression = true
+		err = EvalExpr(ctx, colExpr, input, colBuf2)
+		if err != nil {
+			c.Fatal(err)
+		}
+		for j := 0; j < 1024; j++ {
+			isNull := colBuf.IsNull(j)
+			isNull2 := colBuf2.IsNull(j)
+			c.Assert(isNull, Equals, isNull2)
+			if isNull {
+				continue
+			}
+			c.Assert(string(colBuf.GetRaw(j)), Equals, string(colBuf2.GetRaw(j)))
+		}
+	}
 }
