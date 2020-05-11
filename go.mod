@@ -2,7 +2,7 @@ module github.com/pingcap/tidb
 
 replace github.com/pingcap/tipb v0.0.0-20200417094153-7316d94df1ee => github.com/hanfei1991/tipb v0.0.0-20200506100205-b17edac4757f
 
-replace github.com/pingcap/parser v0.0.0-20200507022230-f3bf29096657 => github.com/hanfei1991/parser v0.0.0-20200509083937-95b513acb77d
+replace github.com/pingcap/parser => github.com/hanfei1991/parser v0.0.0-20200511041744-9942139265ca
 
 require (
 	github.com/BurntSushi/toml v0.3.1

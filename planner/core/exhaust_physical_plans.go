@@ -1509,8 +1509,12 @@ func (p *LogicalJoin) tryToGetBroadCastJoin(prop *property.PhysicalProperty) []P
 		preferredBuildIndex = 1
 	}
 	preferredGlobalIndex := preferredBuildIndex
-	if prop.TaskTp != property.CopTiFlashGlobalReadTaskType && getAllDataSourceTotalRowSize(p.children[preferredGlobalIndex]) > getAllDataSourceTotalRowSize(p.children[1-preferredGlobalIndex]) {
-		preferredGlobalIndex = 1 - preferredGlobalIndex
+	if prop.TaskTp != property.CopTiFlashGlobalReadTaskType {
+		if hasPrefer, idx := p.getPreferredBCJLocalIndex(); hasPrefer {
+			preferredGlobalIndex = 1 - idx
+		} else if getAllDataSourceTotalRowSize(p.children[preferredGlobalIndex]) > getAllDataSourceTotalRowSize(p.children[1-preferredGlobalIndex]) {
+			preferredGlobalIndex = 1 - preferredGlobalIndex
+		}
 	}
 	// todo: currently, build side is the one has less rowcount and global read side
 	//  is the one has less datasource row size(which mean less remote read), need
