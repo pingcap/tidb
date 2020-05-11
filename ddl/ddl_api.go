@@ -2740,6 +2740,25 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 	return errors.Trace(err)
 }
 
+func checkFielTypeCompatible(ft *types.FieldType, other *types.FieldType) bool {
+	// int(1) could match the type with int(8)
+	partialEqual := ft.Tp == other.Tp &&
+		ft.Decimal == other.Decimal &&
+		ft.Charset == other.Charset &&
+		ft.Collate == other.Collate &&
+		(ft.Flen == other.Flen || (ft.StorageLength() == other.StorageLength() && ft.StorageLength() != types.VarStorageLen && other.StorageLength() != types.VarStorageLen)) &&
+		mysql.HasUnsignedFlag(ft.Flag) == mysql.HasUnsignedFlag(other.Flag)
+	if !partialEqual || len(ft.Elems) != len(other.Elems) {
+		return false
+	}
+	for i := range ft.Elems {
+		if ft.Elems[i] != other.Elems[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) error {
 	err := ErrTablesDifferentMetadata
 	if len(source.Cols()) != len(target.Cols()) {
@@ -2750,7 +2769,7 @@ func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) e
 		targetCol := target.Cols()[i]
 		if sourceCol.IsGenerated() != targetCol.IsGenerated() ||
 			sourceCol.Name.L != targetCol.Name.L ||
-			!sourceCol.FieldType.Equal(&targetCol.FieldType) {
+			!checkFielTypeCompatible(&sourceCol.FieldType, &targetCol.FieldType) {
 			return err
 		}
 	}

@@ -807,6 +807,52 @@ func (s *testIntegrationSuite5) TestAlterTableExchangePartition(c *C) {
 
 }
 
+func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
+
+	type testCase struct {
+		pt                         string
+		nt                         string
+		exchange                   string
+		ErrTablesDifferentMetadata bool
+	}
+	cases := []testCase{
+		{
+			"create table pt (id int not null) partition by hash (id) partitions 4;",
+			"create table nt (id int(1) not null);",
+			"alter table pt exchange partition p0 with table nt;",
+			false,
+		},
+		{
+			"create table pt1 (id int not null, fname varchar(3)) partition by hash (id) partitions 4;",
+			"create table nt1 (id int not null, fname varchar(4));",
+			"alter table pt1 exchange partition p0 with table nt1;",
+			true,
+		},
+		{
+			"create table pt2 (id int not null, salary decimal) partition by hash(id) partitions 4",
+			"create table nt2 (id int not null, salary decimal(3,2));",
+			"alter table pt2 exchange partition p0 with table nt2;",
+			false,
+		},
+	}
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	for i, t := range cases {
+		tk.MustExec(t.pt)
+		tk.MustExec(t.nt)
+		if t.ErrTablesDifferentMetadata {
+			_, err := tk.Exec(t.exchange)
+			c.Assert(ddl.ErrTablesDifferentMetadata.Equal(err), IsTrue, Commentf(
+				"case %d fail, sql = `%s`\nexpected error = `%v`\n  actual error = `%v`",
+				i, t.exchange, ddl.ErrTablesDifferentMetadata, err,
+			))
+		} else {
+			tk.MustExec(t.exchange)
+		}
+	}
+
+}
+
 func (s *testIntegrationSuite4) TestAddPartitionTooManyPartitions(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
