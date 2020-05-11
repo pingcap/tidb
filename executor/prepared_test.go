@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"fmt"
+	plannercore "github.com/pingcap/tidb/planner/core"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
@@ -96,4 +97,8 @@ func (s *testSuite1) TestPrepareStmtAfterIsolationReadChange(c *C) {
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
 	c.Assert(rows[len(rows)-1][2], Equals, "cop[tiflash]")
+
+	c.Assert(len(tk.Se.GetSessionVars().PreparedStmts), Equals, 1)
+	c.Assert(tk.Se.GetSessionVars().PreparedStmts[1].(*plannercore.CachedPrepareStmt).NormalizedSQL, Equals, "select * from t")
+	c.Assert(tk.Se.GetSessionVars().PreparedStmts[1].(*plannercore.CachedPrepareStmt).NormalizedPlan, Equals, "")
 }
