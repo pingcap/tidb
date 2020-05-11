@@ -815,7 +815,7 @@ func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 	e.innerList.GetMemTracker().AttachTo(e.memTracker)
 
 	if e.canUseCache {
-		e.cache, err = newApplyCache()
+		e.cache, err = newApplyCache(e.ctx)
 		if err != nil {
 			return err
 		}

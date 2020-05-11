@@ -18,6 +18,7 @@ import (
 
 	"github.com/dgraph-io/ristretto"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -30,10 +31,10 @@ type applyCacheValue struct {
 	Data *chunk.List
 }
 
-func newApplyCache() (*applyCache, error) {
+func newApplyCache(ctx sessionctx.Context) (*applyCache, error) {
 	cache, err := ristretto.NewCache(&ristretto.Config{
-		NumCounters: 1e7,
-		MaxCost:     1e7,
+		NumCounters: ctx.GetSessionVars().ApplyCacheQuota * 10,
+		MaxCost:     ctx.GetSessionVars().ApplyCacheQuota,
 		BufferItems: 64,
 	})
 	if err != nil {
