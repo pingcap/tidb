@@ -106,6 +106,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"always", "stats", "stats_meta", "stats_histogram", "stats_buckets", "stats_healthy", "tidb_version", "replication", "slave", "client",
 		"max_connections_per_hour", "max_queries_per_hour", "max_updates_per_hour", "max_user_connections", "event", "reload", "routine", "temporary",
 		"following", "preceding", "unbounded", "respect", "nulls", "current", "last", "against", "expansion",
+		"chain", "error", "general", "nvarchar", "pack_keys", "parser", "shard_row_id_bits", "pre_split_regions",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
