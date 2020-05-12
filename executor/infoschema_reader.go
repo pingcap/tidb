@@ -1441,7 +1441,6 @@ type tableStorageStatsRetriever struct {
 	extractor     *plannercore.TableStorageStatsExtractor
 	initialTables []*initialTable
 	curTable      int
-	pdAddress     string
 	helper        *helper.Helper
 	stats         helper.PDRegionStats
 }
@@ -1490,7 +1489,7 @@ func (e *tableStorageStatsRetriever) initialize(sctx sessionctx.Context) error {
 	schemas := e.extractor.TableSchema
 	tables := e.extractor.TableName
 
-	// If not specify the table_schema, it would traverse all schemas and their tables.
+	// If not specify the table_schema, return an error to avoid traverse all schemas and their tables.
 	if len(schemas) == 0 {
 		return errors.Errorf("Please specify the 'table_schema'")
 	}
@@ -1519,18 +1518,6 @@ func (e *tableStorageStatsRetriever) initialize(sctx sessionctx.Context) error {
 			}
 		}
 	}
-
-	// Cache the PD address.
-	tikvStore, ok := sctx.GetStore().(tikv.Storage)
-	if !ok {
-		return errors.New("Information about TiKV region status can be gotten only when the storage is TiKV")
-	}
-	e.helper = helper.NewHelper(tikvStore)
-	pdAddrs, err := e.helper.GetPDAddr()
-	if err != nil {
-		return err
-	}
-	e.pdAddress = pdAddrs[0]
 	e.initialized = true
 	return nil
 }
