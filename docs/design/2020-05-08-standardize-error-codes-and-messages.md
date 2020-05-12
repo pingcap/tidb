@@ -20,7 +20,37 @@ When certain errors occur in TiDB components, users are often unaware of the mea
 ### The Metafiles
 
 In order to let TiUP know the the errors every component may throw, the components developers should
-keep a metafile in the code repository. The metafile can be a json file, a toml file or a markdown file.
+keep a metafile in the code repository. The metafile should be a toml file which looks like:
+
+```toml
+[error.8005]
+error = '''Write Conflict, txnStartTS is stale'''
+message = '''Transactions in TiDB encounter write conflicts.'''
+workaround = '''
+Check whether `tidb_disable_txn_auto_retry` is set to `on`. If so, set it to `off`; if it is already `off`, increase the value of `tidb_retry_limit` until the error no longer occurs.
+'''
+
+[error.9005]
+error = '''Region is unavailable'''
+message = '''
+A certain Raft Group is not available, such as the number of replicas is not enough.
+This error usually occurs when the TiKV server is busy or the TiKV node is down.
+'''
+workaround = '''Check the status, monitoring data and log of the TiKV server.'''
+```
+
+Benefit:
+- It's easy to write.
+- It handles multiple lines well.
+
+Tradeoff:
+- The markdown content can't be previewed on writing.
+
+Except toml, we also considered json and markdown format, see `rationale` section.
+
+### Rationale
+
+This section introduce two candidate formats, which is deprecated.
 
 #### metafile in JSON
 
@@ -44,39 +74,11 @@ The json format of metafile is like:
 ```
 
 Benefit:
-- It's easy to write (I think every developer knows json).
-- It's easy to parse (I think every programming language can handle json).
-- It's easy to implement (parse json and render markdown content)
+- It's easy to write (every developer knows json).
+- It's easy to parse (every programming language can handle json).
 
 Tradeoff:
 - Poor readability when multiple lines are involved.
-- The markdown content can't be previewed on writing.
-
-#### metafile in toml
-
-```toml
-[error.8005]
-error = '''Write Conflict, txnStartTS is stale'''
-message = '''Transactions in TiDB encounter write conflicts.'''
-workaround = '''
-Check whether `tidb_disable_txn_auto_retry` is set to `on`. If so, set it to `off`; if it is already `off`, increase the value of `tidb_retry_limit` until the error no longer occurs.
-'''
-
-[error.9005]
-error = '''Region is unavailable'''
-message = '''
-A certain Raft Group is not available, such as the number of replicas is not enough.
-This error usually occurs when the TiKV server is busy or the TiKV node is down.
-'''
-workaround = '''Check the status, monitoring data and log of the TiKV server.'''
-```
-
-Benefit:
-- It's easy to write.
-- It handles multiple lines well.
-- It's easy to implement (parse toml and render markdown content)
-
-Tradeoff:
 - The markdown content can't be previewed on writing.
 
 #### metafile in markdown
