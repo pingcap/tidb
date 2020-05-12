@@ -944,7 +944,6 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 // prepareOperatorInfo generates the following information for every plan:
 // operator id, estimated rows, task type, access object and other operator info.
 func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent string, isLastChild bool) {
-	// The `_0` come form a Execute or other plans, which we don't need to explain it.
 	if p.ExplainID().String() == "_0" {
 		return
 	}
