@@ -1092,6 +1092,10 @@ func (e *SelectionExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
+	return e.open(ctx)
+}
+
+func (e *SelectionExec) open(ctx context.Context) error {
 	e.childResult = newFirstChunk(e.children[0])
 	e.batched = expression.Vectorizable(e.filters)
 	if e.batched {
