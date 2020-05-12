@@ -869,7 +869,7 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 	}
 
 	// Test explicit insert.
-	autoRandBitsUpperBound := 2 << 47 - 1
+	autoRandBitsUpperBound := 2<<47 - 1
 	tk.MustExec("create table t (a bigint primary key auto_random(15), b int)")
 	for i := -10; i < 10; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values(%d, %d)", i+autoRandBitsUpperBound, i))
