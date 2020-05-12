@@ -90,7 +90,7 @@ func (c *Compiler) compile(ctx context.Context, stmtNode ast.StmtNode, skipBind 
 		InfoSchema:    infoSchema,
 		Plan:          finalPlan,
 		LowerPriority: lowerPriority,
-		Cacheable:     plannercore.Cacheable(stmtNode),
+		Cacheable:     plannercore.Cacheable(stmtNode, infoSchema),
 		Text:          stmtNode.Text(),
 		StmtNode:      stmtNode,
 		Ctx:           c.Ctx,

@@ -109,6 +109,13 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		err = e.executeRenameTable(x)
 	case *ast.TruncateTableStmt:
 		err = e.executeTruncateTable(x)
+	case *ast.LockTablesStmt:
+		err = e.executeLockTables(x)
+	case *ast.UnlockTablesStmt:
+		err = e.executeUnlockTables(x)
+	case *ast.CleanupTableLockStmt:
+		err = e.executeCleanupTableLock(x)
+
 	}
 	if err != nil {
 		return e.toErr(err)
@@ -432,4 +439,24 @@ func (e *DDLExec) getRecoverTableByTableName(s *ast.RecoverTableStmt, t *meta.Me
 		return nil, nil, errors.Errorf("Can't found drop table: %v in ddl history jobs", s.Table.Name)
 	}
 	return job, tblInfo, nil
+}
+
+func (e *DDLExec) executeLockTables(s *ast.LockTablesStmt) error {
+	if !config.TableLockEnabled() {
+		return nil
+	}
+	return domain.GetDomain(e.ctx).DDL().LockTables(e.ctx, s)
+}
+
+func (e *DDLExec) executeUnlockTables(s *ast.UnlockTablesStmt) error {
+	if !config.TableLockEnabled() {
+		return nil
+	}
+	lockedTables := e.ctx.GetAllTableLocks()
+	return domain.GetDomain(e.ctx).DDL().UnlockTables(e.ctx, lockedTables)
+}
+
+func (e *DDLExec) executeCleanupTableLock(s *ast.CleanupTableLockStmt) error {
+	err := domain.GetDomain(e.ctx).DDL().CleanupTableLock(e.ctx, s.Tables)
+	return err
 }
