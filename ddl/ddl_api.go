@@ -2410,6 +2410,19 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 				return nil, errors.Trace(err)
 			}
 		}
+		// Specially, since sequence has been supported, if a new added column has a
+		// sequence nextval function as it's default value option, it won't fill the
+		// known rows with specific sequence next value under current add column logic.
+		// More explanation can refer: TestSequenceDefaultLogic's comment in sequence_test.go
+		if option.Tp == ast.ColumnOptionDefaultValue {
+			isExpr, err := checkDefaultValueIsExpr(option)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if isExpr {
+				return nil, errors.Trace(ErrAddColumnWithSequenceAsDefault.GenWithStackByArgs(specNewColumn.Name.Name.O))
+			}
+		}
 	}
 
 	tableCharset, tableCollate, err := ResolveCharsetCollation(
@@ -2959,6 +2972,14 @@ func checkModifyTypes(origin *types.FieldType, to *types.FieldType, needRewriteC
 
 	err := checkModifyCharsetAndCollation(to.Charset, to.Collate, origin.Charset, origin.Collate, needRewriteCollationData)
 	return errors.Trace(err)
+}
+
+func checkDefaultValueIsExpr(option *ast.ColumnOption) (bool, error) {
+	_, isSeqExpr, err := tryToGetSequenceDefaultValue(option)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return isSeqExpr, nil
 }
 
 func setDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) (bool, error) {
