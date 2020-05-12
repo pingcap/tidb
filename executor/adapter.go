@@ -913,6 +913,10 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		sessVars.SetPrevStmtDigest("")
 		return
 	}
+	// Ignore `PREPARE` statements, but record `EXECUTE` statements.
+	if _, ok := a.StmtNode.(*ast.PrepareStmt); ok {
+		return
+	}
 	stmtCtx := sessVars.StmtCtx
 	normalizedSQL, digest := stmtCtx.SQLDigest()
 	costTime := time.Since(sessVars.StartTime)
