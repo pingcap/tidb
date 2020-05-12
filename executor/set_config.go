@@ -101,8 +101,10 @@ func (s *SetConfigExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			url = fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), serverInfo.StatusAddr, pdapi.Config)
 		case "tikv":
 			url = fmt.Sprintf("%s://%s/config", util.InternalHTTPSchema(), serverInfo.StatusAddr)
+		case "tidb":
+			return errors.Errorf("TiDB doesn't support to change configs online, please use SQL variables")
 		default:
-			continue
+			return errors.Errorf("Unknown server type %s", serverInfo.ServerType)
 		}
 		if err := s.doRequest(url); err != nil {
 			s.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
