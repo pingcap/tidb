@@ -6318,4 +6318,3 @@ func (s *testIntegrationSuite) TestIssue17098(c *C) {
 	tk.MustExec("insert into t2 values('a');")
 	tk.MustQuery("select collation(t1.a) from t1 union select collation(t2.a) from t2;").Check(testkit.Rows("utf8mb4_bin"))
 }
-
