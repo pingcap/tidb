@@ -978,7 +978,17 @@ func (e *TableStorageStatsExtractor) explainInfo(p *PhysicalMemTable) string {
 }
 
 func (e *SlowQueryExtractor) explainInfo(p *PhysicalMemTable) string {
-	return ""
+	if e.SkipRequest {
+		return "skip_request: true"
+	}
+	if !e.Enable {
+		return fmt.Sprintf("only search in the current '%v' file", p.ctx.GetSessionVars().SlowQueryFile)
+	}
+	startTime := e.StartTime.In(p.ctx.GetSessionVars().StmtCtx.TimeZone)
+	endTime := e.EndTime.In(p.ctx.GetSessionVars().StmtCtx.TimeZone)
+	return fmt.Sprintf("start_time:%v, end_time:%v",
+		types.NewTime(types.FromGoTime(startTime), mysql.TypeDatetime, types.MaxFsp).String(),
+		types.NewTime(types.FromGoTime(endTime), mysql.TypeDatetime, types.MaxFsp).String())
 }
 
 // TiFlashSystemTableExtractor is used to extract some predicates of tiflash system table.
