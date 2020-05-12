@@ -541,9 +541,13 @@ func newBatchPointGetPlan(
 	}.Init(ctx, statsInfo, schema, names, 0)
 }
 
+func isHintReadFromTiFlash(hint *ast.TableOptimizerHint) bool {
+	return hint.HintName.L == "read_from_storage" && hint.HintData.(model.CIStr).L == "tiflash"
+}
+
 func selStmtHasTiFlashHint(selStmt *ast.SelectStmt) bool {
 	for _, hint := range selStmt.TableHints {
-		if hint.HintName.L == "read_from_storage" && hint.HintData.(model.CIStr).L == "tiflash" {
+		if isHintReadFromTiFlash(hint) {
 			return true
 		}
 	}
