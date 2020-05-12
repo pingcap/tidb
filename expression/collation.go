@@ -45,13 +45,13 @@ func (c *collationInfo) SetCoercibility(val Coercibility) {
 	c.coerInit = true
 }
 
-func (c *collationInfo) SetCharsetAndCollation(chs, coll string, flen int) {
-	c.charset, c.collation, c.flen = chs, coll, flen
+func (c *collationInfo) SetCharsetAndCollation(chs, coll string) {
+	c.charset, c.collation = chs, coll
 }
 
-func (c *collationInfo) CharsetAndCollation(ctx sessionctx.Context) (string, string, int) {
+func (c *collationInfo) CharsetAndCollation(ctx sessionctx.Context) (string, string) {
 	if c.charset != "" || c.collation != "" {
-		return c.charset, c.collation, c.flen
+		return c.charset, c.collation
 	}
 
 	if ctx != nil && ctx.GetSessionVars() != nil {
@@ -61,7 +61,7 @@ func (c *collationInfo) CharsetAndCollation(ctx sessionctx.Context) (string, str
 		c.charset, c.collation = charset.GetDefaultCharsetAndCollate()
 	}
 	c.flen = types.UnspecifiedLength
-	return c.charset, c.collation, c.flen
+	return c.charset, c.collation
 }
 
 // CollationInfo contains all interfaces about dealing with collation.
@@ -76,10 +76,10 @@ type CollationInfo interface {
 	SetCoercibility(val Coercibility)
 
 	// CharsetAndCollation ...
-	CharsetAndCollation(ctx sessionctx.Context) (string, string, int)
+	CharsetAndCollation(ctx sessionctx.Context) (string, string)
 
 	// SetCharsetAndCollation ...
-	SetCharsetAndCollation(chs, coll string, flen int)
+	SetCharsetAndCollation(chs, coll string)
 }
 
 // Coercibility values are used to check whether the collation of one item can be coerced to
@@ -169,7 +169,7 @@ func deriveCoercibilityForColumn(c *Column) Coercibility {
 }
 
 // DeriveCollationFromExprs derives collation information from these expressions.
-func DeriveCollationFromExprs(ctx sessionctx.Context, exprs ...Expression) (dstCharset, dstCollation string, dstFlen int) {
+func DeriveCollationFromExprs(ctx sessionctx.Context, exprs ...Expression) (dstCharset, dstCollation string) {
 	curCoer := CoercibilityCoercible
 	curCollationPriority := -1
 	dstCharset, dstCollation = charset.GetDefaultCharsetAndCollate()
@@ -179,7 +179,6 @@ func DeriveCollationFromExprs(ctx sessionctx.Context, exprs ...Expression) (dstC
 			dstCharset, dstCollation = charset.GetDefaultCharsetAndCollate()
 		}
 	}
-	dstFlen = types.UnspecifiedLength
 	hasStrArg := false
 	// see https://dev.mysql.com/doc/refman/8.0/en/charset-collation-coercibility.html
 	for _, e := range exprs {
@@ -196,17 +195,17 @@ func DeriveCollationFromExprs(ctx sessionctx.Context, exprs ...Expression) (dstC
 		}
 		if coer != curCoer {
 			if coer < curCoer {
-				curCoer, curCollationPriority, dstCharset, dstCollation, dstFlen = coer, collationPriority, ft.Charset, ft.Collate, ft.Flen
+				curCoer, curCollationPriority, dstCharset, dstCollation = coer, collationPriority, ft.Charset, ft.Collate
 			}
 			continue
 		}
 		if !ok || collationPriority <= curCollationPriority {
 			continue
 		}
-		curCollationPriority, dstCharset, dstCollation, dstFlen = collationPriority, ft.Charset, ft.Collate, ft.Flen
+		curCollationPriority, dstCharset, dstCollation = collationPriority, ft.Charset, ft.Collate
 	}
 	if !hasStrArg {
-		dstCharset, dstCollation, dstFlen = charset.CharsetBin, charset.CollationBin, types.UnspecifiedLength
+		dstCharset, dstCollation = charset.CharsetBin, charset.CollationBin
 	}
 	return
 }
