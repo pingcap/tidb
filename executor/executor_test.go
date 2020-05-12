@@ -5472,6 +5472,19 @@ func (s *testSuite1) TestIssue16854(c *C) {
 	tk.MustExec("drop table t")
 }
 
+func (s *testSuite) TestIssue16921(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a float);")
+	tk.MustExec("create index a on t(a);")
+	tk.MustExec("insert into t values (1.0), (NULL);")
+	tk.MustQuery("select `a` from `t` use index (a) where !`a`;").Check(testkit.Rows())
+	tk.MustQuery("select `a` from `t` ignore index (a) where !`a`;").Check(testkit.Rows())
+	tk.MustQuery("select `a` from `t` use index (a) where `a`;").Check(testkit.Rows("1"))
+	tk.MustQuery("select `a` from `t` ignore index (a) where `a`;").Check(testkit.Rows("1"))
+}
+
 // this is from jira issue #5856
 func (s *testSuite1) TestInsertValuesWithSubQuery(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -5496,17 +5509,4 @@ func (s *testSuite1) TestInsertValuesWithSubQuery(c *C) {
 	tk.MustQuery("select * from t2").Check(testkit.Rows("2 4 2"))
 	tk.MustExec("insert into t2 set a = 3, b = 5, c = b")
 	tk.MustQuery("select * from t2").Check(testkit.Rows("2 4 2", "3 5 5"))
-}
-
-func (s *testSuite) TestIssue16921(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (a float);")
-	tk.MustExec("create index a on t(a);")
-	tk.MustExec("insert into t values (1.0), (NULL);")
-	tk.MustQuery("select `a` from `t` use index (a) where !`a`;").Check(testkit.Rows())
-	tk.MustQuery("select `a` from `t` ignore index (a) where !`a`;").Check(testkit.Rows())
-	tk.MustQuery("select `a` from `t` use index (a) where `a`;").Check(testkit.Rows("1"))
-	tk.MustQuery("select `a` from `t` ignore index (a) where `a`;").Check(testkit.Rows("1"))
 }
