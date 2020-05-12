@@ -843,6 +843,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		PlanDigest:     planDigest,
 		Prepared:       a.isPreparedStmt,
 		HasMoreResults: hasMoreResults,
+		PlanFromCache:  sessVars.FoundInPlanCache,
 	}
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {
 		slowItems.PrevStmt = sessVars.PrevStmt.String()
