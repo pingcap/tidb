@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -72,7 +73,7 @@ func (s *testChunkSuite) TestListInDisk(c *check.C) {
 		err := l.Add(chk)
 		c.Check(err, check.IsNil)
 	}
-	c.Assert(strings.HasPrefix(l.disk.Name(), "/tmp/tidb/test-temp-storage"), check.Equals, true)
+	c.Assert(strings.HasPrefix(l.disk.Name(), filepath.Join(os.TempDir(), "oom-use-tmp-storage")), check.Equals, true)
 	c.Check(l.NumChunks(), check.Equals, numChk)
 	c.Check(l.GetDiskTracker().BytesConsumed() > 0, check.IsTrue)
 

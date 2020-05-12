@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -74,8 +75,7 @@ var _ = SerialSuites(&testSerialDBSuite{&testDBSuite{}})
 const defaultBatchSize = 1024
 
 type testDBSuite struct {
-	cluster    *mocktikv.Cluster
-	mvccStore  mocktikv.MVCCStore
+	cluster    cluster.Cluster
 	store      kv.Storage
 	dom        *domain.Domain
 	schemaName string
@@ -95,12 +95,15 @@ func setUpSuite(s *testDBSuite, c *C) {
 	s.autoIDStep = autoid.GetStep()
 	ddl.SetWaitTimeWhenErrorOccurred(0)
 
-	s.cluster = mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(s.cluster)
-	s.mvccStore = mocktikv.MustNewMVCCStore()
+	cluster := mocktikv.NewCluster()
+	mocktikv.BootstrapWithSingleStore(cluster)
+	s.cluster = cluster
+
+	mvccStore := mocktikv.MustNewMVCCStore()
+	cluster.SetMvccStore(mvccStore)
 	s.store, err = mockstore.NewMockTikvStore(
-		mockstore.WithCluster(s.cluster),
-		mockstore.WithMVCCStore(s.mvccStore),
+		mockstore.WithCluster(cluster),
+		mockstore.WithMVCCStore(mvccStore),
 	)
 	c.Assert(err, IsNil)
 
@@ -4333,11 +4336,18 @@ func (s *testDBSuite2) TestLockTables(c *C) {
 	_, err = tk.Exec("create view v1 as select * from t1;")
 	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotLocked), IsTrue)
 
-	// Test for lock view was not supported.
+	// Test for locking view was not supported.
 	tk.MustExec("unlock tables")
 	tk.MustExec("create view v1 as select * from t1;")
 	_, err = tk.Exec("lock tables v1 read")
 	c.Assert(terror.ErrorEqual(err, table.ErrUnsupportedOp), IsTrue)
+
+	// Test for locking sequence was not supported.
+	tk.MustExec("unlock tables")
+	tk.MustExec("create sequence seq")
+	_, err = tk.Exec("lock tables seq read")
+	c.Assert(terror.ErrorEqual(err, table.ErrUnsupportedOp), IsTrue)
+	tk.MustExec("drop sequence seq")
 
 	// Test for create/drop/alter database when session is holding the table locks.
 	tk.MustExec("unlock tables")

@@ -370,8 +370,8 @@ func (t *TableCommon) UpdateRecord(ctx sessionctx.Context, h kv.Handle, oldData,
 	if _, err := execBuf.Flush(); err != nil {
 		return err
 	}
-	ctx.StmtAddDirtyTableOP(table.DirtyTableDeleteRow, t.physicalTableID, h.IntValue())
-	ctx.StmtAddDirtyTableOP(table.DirtyTableAddRow, t.physicalTableID, h.IntValue())
+	ctx.StmtAddDirtyTableOP(table.DirtyTableDeleteRow, t.physicalTableID, h)
+	ctx.StmtAddDirtyTableOP(table.DirtyTableAddRow, t.physicalTableID, h)
 	if shouldWriteBinlog(ctx) {
 		if !t.meta.PKIsHandle {
 			binlogColIDs = append(binlogColIDs, model.ExtraHandleID)
@@ -566,7 +566,7 @@ func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 	if _, err := execBuf.Flush(); err != nil {
 		return nil, err
 	}
-	ctx.StmtAddDirtyTableOP(table.DirtyTableAddRow, t.physicalTableID, recordID.IntValue())
+	ctx.StmtAddDirtyTableOP(table.DirtyTableAddRow, t.physicalTableID, recordID)
 
 	if shouldWriteBinlog(ctx) {
 		// For insert, TiDB and Binlog can use same row and schema.
@@ -746,7 +746,7 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 		return err
 	}
 
-	ctx.StmtAddDirtyTableOP(table.DirtyTableDeleteRow, t.physicalTableID, h.IntValue())
+	ctx.StmtAddDirtyTableOP(table.DirtyTableDeleteRow, t.physicalTableID, h)
 	if shouldWriteBinlog(ctx) {
 		cols := t.Cols()
 		colIDs := make([]int64, 0, len(cols)+1)
@@ -1030,7 +1030,7 @@ func allocHandleIDs(ctx sessionctx.Context, t table.Table, n uint64) (int64, int
 	}
 	if meta.ShardRowIDBits > 0 {
 		// Use max record ShardRowIDBits to check overflow.
-		if OverflowShardBits(maxID, meta.MaxShardRowIDBits, autoid.RowIDBitLength) {
+		if OverflowShardBits(maxID, meta.MaxShardRowIDBits, autoid.RowIDBitLength, true) {
 			// If overflow, the rowID may be duplicated. For examples,
 			// t.meta.ShardRowIDBits = 4
 			// rowID = 0010111111111111111111111111111111111111111111111111111111111111
@@ -1042,7 +1042,7 @@ func allocHandleIDs(ctx sessionctx.Context, t table.Table, n uint64) (int64, int
 		}
 		txnCtx := ctx.GetSessionVars().TxnCtx
 		if txnCtx.Shard == nil {
-			shard := CalcShard(meta.ShardRowIDBits, txnCtx.StartTS, autoid.RowIDBitLength)
+			shard := CalcShard(meta.ShardRowIDBits, txnCtx.StartTS, autoid.RowIDBitLength, true)
 			txnCtx.Shard = &shard
 		}
 		base |= *txnCtx.Shard
@@ -1052,17 +1052,25 @@ func allocHandleIDs(ctx sessionctx.Context, t table.Table, n uint64) (int64, int
 }
 
 // OverflowShardBits checks whether the recordID overflow `1<<(typeBitsLength-shardRowIDBits-1) -1`.
-func OverflowShardBits(recordID int64, shardRowIDBits uint64, typeBitsLength uint64) bool {
-	mask := (1<<shardRowIDBits - 1) << (typeBitsLength - shardRowIDBits - 1)
+func OverflowShardBits(recordID int64, shardRowIDBits uint64, typeBitsLength uint64, reservedSignBit bool) bool {
+	var signBit uint64
+	if reservedSignBit {
+		signBit = 1
+	}
+	mask := (1<<shardRowIDBits - 1) << (typeBitsLength - shardRowIDBits - signBit)
 	return recordID&int64(mask) > 0
 }
 
 // CalcShard calculates the shard prefix by hashing the startTS. Make sure OverflowShardBits is false before calling it.
-func CalcShard(shardRowIDBits uint64, startTS uint64, typeBitsLength uint64) int64 {
+func CalcShard(shardRowIDBits uint64, startTS uint64, typeBitsLength uint64, reserveSignBit bool) int64 {
 	var buf [8]byte
 	binary.LittleEndian.PutUint64(buf[:], startTS)
 	hashVal := int64(murmur3.Sum32(buf[:]))
-	return (hashVal & (1<<shardRowIDBits - 1)) << (typeBitsLength - shardRowIDBits - 1)
+	var signBitLength uint64
+	if reserveSignBit {
+		signBitLength = 1
+	}
+	return (hashVal & (1<<shardRowIDBits - 1)) << (typeBitsLength - shardRowIDBits - signBitLength)
 }
 
 // Allocators implements table.Table Allocators interface.

@@ -111,7 +111,8 @@ func (s *testSuite) getExpectedRanges(tid int64, hrs []*handleRange) []kv.KeyRan
 }
 
 func (s *testSuite) TestTableHandlesToKVRanges(c *C) {
-	handles := []int64{0, 2, 3, 4, 5, 10, 11, 100, 9223372036854775806, 9223372036854775807}
+	handles := []kv.Handle{kv.IntHandle(0), kv.IntHandle(2), kv.IntHandle(3), kv.IntHandle(4), kv.IntHandle(5),
+		kv.IntHandle(10), kv.IntHandle(11), kv.IntHandle(100), kv.IntHandle(9223372036854775806), kv.IntHandle(9223372036854775807)}
 
 	// Build expected key ranges.
 	hrs := make([]*handleRange, 0, len(handles))
@@ -402,7 +403,8 @@ func (s *testSuite) TestRequestBuilder2(c *C) {
 }
 
 func (s *testSuite) TestRequestBuilder3(c *C) {
-	handles := []int64{0, 2, 3, 4, 5, 10, 11, 100}
+	handles := []kv.Handle{kv.IntHandle(0), kv.IntHandle(2), kv.IntHandle(3), kv.IntHandle(4),
+		kv.IntHandle(5), kv.IntHandle(10), kv.IntHandle(11), kv.IntHandle(100)}
 
 	actual, err := (&RequestBuilder{}).SetTableHandles(15, handles).
 		SetDAGRequest(&tipb.DAGRequest{}).
