@@ -2979,10 +2979,7 @@ func checkModifyTypes(origin *types.FieldType, to *types.FieldType, needRewriteC
 
 func checkDefaultValueIsExpr(option *ast.ColumnOption) (bool, error) {
 	_, isSeqExpr, err := tryToGetSequenceDefaultValue(option)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	return isSeqExpr, nil
+	return isSeqExpr, errors.Trace(err)
 }
 
 func setDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) (bool, error) {
