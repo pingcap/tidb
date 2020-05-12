@@ -1550,10 +1550,13 @@ func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 	for _, colColumn := range la.CorCols {
 		columns = append(columns, &colColumn.Column)
 	}
-	count := getCardinality(columns, la.schema, la.stats) / la.stats.RowCount
+	count := 1.0
+	if la.stats.RowCount != 0 {
+		count = getCardinality(columns, la.schema, la.stats) / la.stats.RowCount
+	}
 
 	var canUseCache bool
-	if count < 0.5 {
+	if count < 0.9 {
 		canUseCache = true
 	} else {
 		canUseCache = false
