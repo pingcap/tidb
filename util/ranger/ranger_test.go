@@ -996,7 +996,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			exprStr:     "a IS NOT TRUE",
 			accessConds: "[not(istrue(test.t.a))]",
 			filterConds: "[]",
-			resultStr:   "[[NULL,NULL] [0,0]]",
+			resultStr:   "[[0,0]]",
 			length:      types.UnspecifiedLength,
 		},
 		{
