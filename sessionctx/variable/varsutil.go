@@ -289,7 +289,7 @@ func checkInt64SystemVarWithError(name, value string, min, max int64) (string, e
 		return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
 	}
 	if val < min || val > max {
-		return value, errors.Errorf("%v(%d) cannot be smaller than %v or larger than %v", name, val, min, max)
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	}
 	return value, nil
 }
