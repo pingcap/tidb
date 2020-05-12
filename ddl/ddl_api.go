@@ -1129,12 +1129,6 @@ func setTableAutoRandomBits(tbInfo *model.TableInfo, colDefs []*ast.ColumnDef) e
 				return ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
 			}
 			tbInfo.AutoRandomBits = autoRandBits
-<<<<<<< HEAD
-=======
-
-			msg := fmt.Sprintf(autoid.AutoRandomAvailableAllocTimesNote, layout.IncrementalBitsCapacity())
-			ctx.GetSessionVars().StmtCtx.AppendNote(errors.Errorf(msg))
->>>>>>> ce923ac... executor: only reserve the sign bit when auto_random column is signed (#15566)
 		}
 	}
 	return nil

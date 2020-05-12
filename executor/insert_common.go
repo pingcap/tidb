@@ -797,6 +797,9 @@ func (e *InsertValues) allocAutoRandomID(fieldType *types.FieldType) (int64, err
 }
 
 func (e *InsertValues) rebaseAutoRandomID(recordID int64, fieldType *types.FieldType) error {
+	if recordID < 0 {
+		return nil
+	}
 	alloc := e.Table.Allocator(e.ctx, autoid.AutoRandomType)
 	tableInfo := e.Table.Meta()
 

@@ -905,8 +905,6 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, autoid.ErrAutoRandReadFailed.GenWithStackByArgs().Error())
 	tk.MustExec("drop table t")
-<<<<<<< HEAD
-=======
 
 	// Test insert negative integers explicitly won't trigger rebase.
 	tk.MustExec("create table t (a bigint primary key auto_random(15), b int)")
@@ -951,7 +949,6 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 	// Sign bit should be used for shard.
 	c.Assert(signBitUnused, IsFalse)
 	tk.MustExec("drop table t")
->>>>>>> ce923ac... executor: only reserve the sign bit when auto_random column is signed (#15566)
 }
 
 func (s *testAutoRandomSuite) TestAutoRandomTableOption(c *C) {

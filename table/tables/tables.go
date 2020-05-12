@@ -924,11 +924,7 @@ func (t *tableCommon) AllocHandle(ctx sessionctx.Context) (int64, error) {
 	}
 	if t.meta.ShardRowIDBits > 0 {
 		// Use max record ShardRowIDBits to check overflow.
-<<<<<<< HEAD
-		if OverflowShardBits(rowID, t.meta.MaxShardRowIDBits, autoid.RowIDBitLength) {
-=======
-		if OverflowShardBits(maxID, meta.MaxShardRowIDBits, autoid.RowIDBitLength, true) {
->>>>>>> ce923ac... executor: only reserve the sign bit when auto_random column is signed (#15566)
+		if OverflowShardBits(rowID, t.meta.MaxShardRowIDBits, autoid.RowIDBitLength, true) {
 			// If overflow, the rowID may be duplicated. For examples,
 			// t.meta.ShardRowIDBits = 4
 			// rowID = 0010111111111111111111111111111111111111111111111111111111111111
@@ -940,11 +936,7 @@ func (t *tableCommon) AllocHandle(ctx sessionctx.Context) (int64, error) {
 		}
 		txnCtx := ctx.GetSessionVars().TxnCtx
 		if txnCtx.Shard == nil {
-<<<<<<< HEAD
-			shard := CalcShard(t.meta.ShardRowIDBits, txnCtx.StartTS, autoid.RowIDBitLength)
-=======
-			shard := CalcShard(meta.ShardRowIDBits, txnCtx.StartTS, autoid.RowIDBitLength, true)
->>>>>>> ce923ac... executor: only reserve the sign bit when auto_random column is signed (#15566)
+			shard := CalcShard(t.meta.ShardRowIDBits, txnCtx.StartTS, autoid.RowIDBitLength, true)
 			txnCtx.Shard = &shard
 		}
 		rowID |= *txnCtx.Shard

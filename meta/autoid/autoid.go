@@ -565,20 +565,6 @@ func generateAutoIDByAllocType(m *meta.Meta, dbID, tableID, step int64, allocTyp
 		return 0, errInvalidAllocatorType.GenWithStackByArgs()
 	}
 }
-<<<<<<< HEAD
-=======
-
-const signMask uint64 = 0x8000000000000000
-
-// EncodeIntToCmpUint make int v to comparable uint type
-func EncodeIntToCmpUint(v int64) uint64 {
-	return uint64(v) ^ signMask
-}
-
-// DecodeCmpUintToInt decodes the u that encoded by EncodeIntToCmpUint
-func DecodeCmpUintToInt(u uint64) int64 {
-	return int64(u ^ signMask)
-}
 
 // AutoRandomIDLayout is used to calculate the bits length of different section in auto_random id.
 // Layout(64 bits):
@@ -617,4 +603,3 @@ func (l *AutoRandomIDLayout) IncrementalBitsCapacity() uint64 {
 func (l *AutoRandomIDLayout) IncrementalMask() int64 {
 	return (1 << l.IncrementalBits) - 1
 }
->>>>>>> ce923ac... executor: only reserve the sign bit when auto_random column is signed (#15566)
