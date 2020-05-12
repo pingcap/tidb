@@ -6307,18 +6307,6 @@ func (s *testIntegrationSuite) TestIssue16505(c *C) {
 	tk.MustQuery("select /*+ IGNORE_INDEX(t, idx) */* from t where c;").Sort().Check(testkit.Rows("0.0001deadsfeww", "1", "123e456"))
 	tk.MustExec("drop table t;")
 }
-<<<<<<< HEAD
-=======
-
-func (s *testIntegrationSuite) TestIssue16779(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t0")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t0 (c0 int)")
-	tk.MustExec("create table t1 (c0 int)")
-	tk.MustQuery("SELECT * FROM t1 LEFT JOIN t0 ON TRUE WHERE BINARY EXPORT_SET(0, 0, 0 COLLATE 'binary', t0.c0, 0 COLLATE 'binary')")
-}
 
 func (s *testIntegrationSuite) TestIssue17045(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -6329,4 +6317,3 @@ func (s *testIntegrationSuite) TestIssue17045(c *C) {
 	tk.MustExec("insert into t(a,b,e) values(\"5\",null,null);")
 	tk.MustQuery("select /*+ use_index_merge(t)*/ * from t where t.e=5 or t.a=5;").Check(testkit.Rows("5 <nil> <nil> <nil> <nil> <nil>"))
 }
->>>>>>> d8c0659... planner: fix TiDB server panic when uses indexMerge with the virtual generated column (#17065)
