@@ -16,6 +16,7 @@ package ast
 import (
 	"bytes"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -2434,6 +2435,38 @@ func (n *BRIEStmt) Restore(ctx *format.RestoreCtx) error {
 	}
 
 	return nil
+}
+
+// SecureText implements SensitiveStmtNode
+func (n *BRIEStmt) SecureText() string {
+	// FIXME: this solution is not scalable, and duplicates some logic from BR.
+	redactedStorage := n.Storage
+	u, err := url.Parse(n.Storage)
+	if err == nil {
+		if u.Scheme == "s3" {
+			query := u.Query()
+			for key := range query {
+				switch strings.ToLower(strings.ReplaceAll(key, "_", "-")) {
+				case "access-key", "secret-access-key":
+					query[key] = []string{"xxxxxx"}
+				}
+			}
+			u.RawQuery = query.Encode()
+			redactedStorage = u.String()
+		}
+	}
+
+	redactedStmt := &BRIEStmt{
+		Kind:    n.Kind,
+		Schemas: n.Schemas,
+		Tables:  n.Tables,
+		Storage: redactedStorage,
+		Options: n.Options,
+	}
+
+	var sb strings.Builder
+	_ = redactedStmt.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
+	return sb.String()
 }
 
 // Ident is the table identifier composed of schema name and table name.
