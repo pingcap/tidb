@@ -314,14 +314,12 @@ func handleUnsignedIntCol(ft *types.FieldType, val types.Datum, op string) (type
 
 func (r *builder) buildFromIsTrue(expr *expression.ScalarFunction, isNot int) []point {
 	if isNot == 1 {
-		// NOT TRUE range is {[null null] [0, 0]}
+		// NOT TRUE range is {[0, 0]}
 		startPoint1 := point{start: true}
+		startPoint1.value.SetInt64(0)
 		endPoint1 := point{}
-		startPoint2 := point{start: true}
-		startPoint2.value.SetInt64(0)
-		endPoint2 := point{}
-		endPoint2.value.SetInt64(0)
-		return []point{startPoint1, endPoint1, startPoint2, endPoint2}
+		endPoint1.value.SetInt64(0)
+		return []point{startPoint1, endPoint1}
 	}
 	// TRUE range is {[-inf 0) (0 +inf]}
 	startPoint1 := point{value: types.MinNotNullDatum(), start: true}
