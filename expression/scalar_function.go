@@ -517,11 +517,11 @@ func (sf *ScalarFunction) SetCoercibility(val Coercibility) {
 }
 
 // CharsetAndCollation ...
-func (sf *ScalarFunction) CharsetAndCollation(ctx sessionctx.Context) (string, string, int) {
+func (sf *ScalarFunction) CharsetAndCollation(ctx sessionctx.Context) (string, string) {
 	return sf.Function.CharsetAndCollation(ctx)
 }
 
 // SetCharsetAndCollation ...
-func (sf *ScalarFunction) SetCharsetAndCollation(chs, coll string, flen int) {
-	sf.Function.SetCharsetAndCollation(chs, coll, flen)
+func (sf *ScalarFunction) SetCharsetAndCollation(chs, coll string) {
+	sf.Function.SetCharsetAndCollation(chs, coll)
 }
