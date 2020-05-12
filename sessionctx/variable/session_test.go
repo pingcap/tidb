@@ -193,6 +193,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 # Mem_max: 2333
 # Disk_usage: 6666
 # Prepared: true
+# Plan_from_cache: true
 # Has_more_results: true
 # Succ: true
 select * from t;`
@@ -212,6 +213,7 @@ select * from t;`
 		MemMax:         memMax,
 		DiskUsage:      diskUsage,
 		Prepared:       true,
+		PlanFromCache:  true,
 		HasMoreResults: true,
 		Succ:           true,
 	})
