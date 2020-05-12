@@ -810,10 +810,10 @@ func (s *testIntegrationSuite5) TestAlterTableExchangePartition(c *C) {
 func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
 
 	type testCase struct {
-		pt                         string
-		nt                         string
-		exchange                   string
-		ErrTablesDifferentMetadata bool
+		ptSQL       string
+		ntSQL       string
+		exchangeSQL string
+		err         bool
 	}
 	cases := []testCase{
 		{
@@ -829,25 +829,61 @@ func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
 			true,
 		},
 		{
-			"create table pt2 (id int not null, salary decimal) partition by hash(id) partitions 4",
+			"create table pt2 (id int not null, salary decimal) partition by hash(id) partitions 4;",
 			"create table nt2 (id int not null, salary decimal(3,2));",
 			"alter table pt2 exchange partition p0 with table nt2;",
+			true,
+		},
+		{
+			"create table pt3 (id int not null, salary decimal) partition by hash(id) partitions 1;",
+			"create table nt3 (id int not null, salary decimal(10, 1));",
+			"alter table pt3 exchange partition p0 with table nt3",
+			true,
+		},
+		{
+			"create table pt4 (id int not null) partition by hash(id) partitions 1;",
+			"create table nt4 (id1 int not null);",
+			"alter table pt4 exchange partition p0 with table nt4;",
+			true,
+		},
+		{
+			"create table pt5 (id int not null, primary key (id)) partition by hash(id) partitions 1;",
+			"create table nt5 (id int not null);",
+			"alter table pt5 exchange partition p0 with table nt5;",
+			true,
+		},
+		{
+			"create table pt6 (id int not null, salary decimal, index idx (id, salary)) partition by hash(id) partitions 1;",
+			"create table nt6 (id int not null, salary decimal, index idx (salary, id));",
+			"alter table pt6 exchange partition p0 with table nt6;",
+			true,
+		},
+		{
+			"create table pt7 (id int not null, index idx (id) invisible) partition by hash(id) partitions 1;",
+			"create table nt7 (id int not null, index idx (id));",
+			"alter table pt7 exchange partition p0 with table nt7;",
 			false,
+		},
+		{
+			"create table pt8 (id int not null, index idx (id)) partition by hash(id) partitions 1;",
+			"create table nt8 (id int not null, index id_idx (id));",
+			"alter table pt8 exchange partition p0 with table nt8;",
+			true,
 		},
 	}
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	for i, t := range cases {
-		tk.MustExec(t.pt)
-		tk.MustExec(t.nt)
-		if t.ErrTablesDifferentMetadata {
-			_, err := tk.Exec(t.exchange)
+		tk.MustExec(t.ptSQL)
+		tk.MustExec(t.ntSQL)
+		if t.err {
+			_, err := tk.Exec(t.exchangeSQL)
 			c.Assert(ddl.ErrTablesDifferentMetadata.Equal(err), IsTrue, Commentf(
 				"case %d fail, sql = `%s`\nexpected error = `%v`\n  actual error = `%v`",
-				i, t.exchange, ddl.ErrTablesDifferentMetadata, err,
+				i, t.exchangeSQL, ddl.ErrTablesDifferentMetadata, err,
 			))
 		} else {
-			tk.MustExec(t.exchange)
+			tk.MustExec(t.exchangeSQL)
 		}
 	}
 

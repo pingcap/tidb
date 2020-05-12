@@ -2746,7 +2746,7 @@ func checkFielTypeCompatible(ft *types.FieldType, other *types.FieldType) bool {
 		ft.Decimal == other.Decimal &&
 		ft.Charset == other.Charset &&
 		ft.Collate == other.Collate &&
-		(ft.Flen == other.Flen || (ft.StorageLength() == other.StorageLength() && ft.StorageLength() != types.VarStorageLen && other.StorageLength() != types.VarStorageLen)) &&
+		(ft.Flen == other.Flen || ft.StorageLength() != types.VarStorageLen) &&
 		mysql.HasUnsignedFlag(ft.Flag) == mysql.HasUnsignedFlag(other.Flag)
 	if !partialEqual || len(ft.Elems) != len(other.Elems) {
 		return false
@@ -2790,8 +2790,7 @@ func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) e
 		// Index type is not compatiable
 		if sourceIdx.Tp != compatIdx.Tp ||
 			sourceIdx.Unique != compatIdx.Unique ||
-			sourceIdx.Primary != compatIdx.Primary ||
-			sourceIdx.Invisible != compatIdx.Invisible {
+			sourceIdx.Primary != compatIdx.Primary {
 			return err
 		}
 		// The index column
