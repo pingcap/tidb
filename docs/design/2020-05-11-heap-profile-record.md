@@ -6,14 +6,12 @@
 
 ## Abstract
 
-"Heap Profiler Recorder" profile the flat heap usage periodically in an extra goroutine to record the global `SimpleLRUCache` memory usage with an
-similar value.
+"Heap Profiler Recorder" profile the flat heap usage periodically in an extra goroutine to record the global `SimpleLRUCache` memory usage with an similar value.
 
 ## Background
 
 Currently, we have support memory usage and disk usage tracker for `Executor`. In [#15407](https://github.com/pingcap/tidb/issues/15407), we are going to support the `Global Memory Tracker`.
-However, it would be too much work to realize calculating the memory usage of each Implementation of `Plan` and it might also causing much cpu consuming. To track the memory usage of `SimpleLRUCache`,
-we are trying to search the memory usage from `runtime/pprof`.
+However, it would be too much work to realize calculating the memory usage of each Implementation of `Plan` and it might also causing much cpu consuming. To track the memory usage of `SimpleLRUCache`, we are trying to search the memory usage from `runtime/pprof`.
 
 ## Proposal
 
@@ -22,12 +20,11 @@ We will record the whole `SimpleLRUCache` memory usage in the `GlobalLRUMemUsage
 ## Rationale
 
 When an golang application started, the runtime would [startProfile](https://github.com/golang/go/blob/48a90d639d578d2b33fdc1903f03e028b4d40fa9/src/cmd/oldlink/internal/ld/main.go#L155) in default including heap usage.
-And `runtime.MemProfileRate` controls the fraction of memory allocations that are recorded and reported in the memory profile. In default, `runtime.MemProfileRate` is 512 KB which is also can be configured. When the whole heap usage
-of `SimpleLRUCache` is larger than the `runtime.MemProfileRate`, it would be reflected in the flat value of the pprof heap profile.
+And `runtime.MemProfileRate` controls the fraction of memory allocations that are recorded and reported in the memory profile. In default, `runtime.MemProfileRate` is 512 KB which is also can be configured. When the whole heap usage of `SimpleLRUCache` is larger than the `runtime.MemProfileRate`, it would be reflected in the flat value of the pprof heap profile.
 
 To verify whether `kvcache.(*SimpleLRUCache).Put` would reflect the real heap usage, I use following test to ensure it:
 
-1. fufill the SimpleLRUCache byset @randomString = ? with 20000 times.
+1. fufill the `SimpleLRUCache` by `set @randomString = ? with 20000 times`.
 2. profile the heap Usage of `github.com/pingcap/tidb/util/kvcache.(*SimpleLRUCache).Put` and the result is 2.55 MB
 
 Let's dig into the Put then we can find the where the heap consumed:
