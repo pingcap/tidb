@@ -300,6 +300,10 @@ func (p *PhysicalIndexLookUpReader) ResolveIndices() (err error) {
 
 // ResolveIndices implements Plan interface.
 func (p *PhysicalIndexMergeReader) ResolveIndices() (err error) {
+	err = resolveIndicesForVirtualColumn(p.tablePlan.Schema().Columns, p.schema)
+	if err != nil {
+		return err
+	}
 	if p.tablePlan != nil {
 		err = p.tablePlan.ResolveIndices()
 		if err != nil {
@@ -339,6 +343,12 @@ func (p *basePhysicalAgg) ResolveIndices() (err error) {
 	for _, aggFun := range p.AggFuncs {
 		for i, arg := range aggFun.Args {
 			aggFun.Args[i], err = arg.ResolveIndices(p.children[0].Schema())
+			if err != nil {
+				return err
+			}
+		}
+		for _, byItem := range aggFun.OrderByItems {
+			byItem.Expr, err = byItem.Expr.ResolveIndices(p.children[0].Schema())
 			if err != nil {
 				return err
 			}

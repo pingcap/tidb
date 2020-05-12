@@ -534,7 +534,22 @@ func (e *ClusterTableExtractor) Extract(_ sessionctx.Context,
 }
 
 func (e *ClusterTableExtractor) explainInfo(p *PhysicalMemTable) string {
-	return ""
+	if e.SkipRequest {
+		return "skip_request:true"
+	}
+	r := new(bytes.Buffer)
+	if len(e.NodeTypes) > 0 {
+		r.WriteString(fmt.Sprintf("node_types:[%s], ", extractStringFromStringSet(e.NodeTypes)))
+	}
+	if len(e.Instances) > 0 {
+		r.WriteString(fmt.Sprintf("instances:[%s], ", extractStringFromStringSet(e.Instances)))
+	}
+	// remove the last ", " in the message info
+	s := r.String()
+	if len(s) > 2 {
+		return s[:len(s)-2]
+	}
+	return s
 }
 
 // ClusterLogTableExtractor is used to extract some predicates of `cluster_config`
@@ -593,12 +608,11 @@ func (e *ClusterLogTableExtractor) Extract(
 	// The time unit for search log is millisecond.
 	startTime = startTime / int64(time.Millisecond)
 	endTime = endTime / int64(time.Millisecond)
-	if endTime == 0 {
-		endTime = math.MaxInt64
-	}
 	e.StartTime = startTime
 	e.EndTime = endTime
-	e.SkipRequest = startTime > endTime
+	if startTime != 0 && endTime != 0 {
+		e.SkipRequest = startTime > endTime
+	}
 
 	if e.SkipRequest {
 		return nil
@@ -614,12 +628,12 @@ func (e *ClusterLogTableExtractor) explainInfo(p *PhysicalMemTable) string {
 		return "skip_request: true"
 	}
 	r := new(bytes.Buffer)
-	st, et := e.GetTimeRange(false)
+	st, et := e.StartTime, e.EndTime
 	if st > 0 {
 		st := time.Unix(0, st*1e6)
 		r.WriteString(fmt.Sprintf("start_time:%v, ", st.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat)))
 	}
-	if et < math.MaxInt64 {
+	if et > 0 {
 		et := time.Unix(0, et*1e6)
 		r.WriteString(fmt.Sprintf("end_time:%v, ", et.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat)))
 	}
@@ -639,27 +653,6 @@ func (e *ClusterLogTableExtractor) explainInfo(p *PhysicalMemTable) string {
 		return s[:len(s)-2]
 	}
 	return s
-}
-
-// GetTimeRange extract startTime and endTime
-func (e *ClusterLogTableExtractor) GetTimeRange(isFailpointTestModeSkipCheck bool) (int64, int64) {
-	startTime := e.StartTime
-	endTime := e.EndTime
-	if endTime == 0 {
-		endTime = math.MaxInt64
-	}
-	if !isFailpointTestModeSkipCheck {
-		// Just search the recent half an hour logs if the user doesn't specify the start time
-		const defaultSearchLogDuration = 30 * time.Minute / time.Millisecond
-		if startTime == 0 {
-			if endTime == math.MaxInt64 {
-				startTime = time.Now().UnixNano()/int64(time.Millisecond) - int64(defaultSearchLogDuration)
-			} else {
-				startTime = endTime - int64(defaultSearchLogDuration)
-			}
-		}
-	}
-	return startTime, endTime
 }
 
 // MetricTableExtractor is used to extract some predicates of metrics_schema tables.

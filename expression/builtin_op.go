@@ -179,6 +179,14 @@ func (c *logicXorFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err != nil {
 		return nil, err
 	}
+	args[0], err = wrapWithIsTrue(ctx, true, args[0], false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	args[1], err = wrapWithIsTrue(ctx, true, args[1], false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt, types.ETInt)
 	if err != nil {

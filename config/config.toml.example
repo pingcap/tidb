@@ -38,9 +38,9 @@ mem-quota-query = 1073741824
 oom-use-tmp-storage = true
 
 # Specifies the temporary storage path for some operators when a single SQL statement exceeds the memory quota specified by mem-quota-query.
-# It defaults to a generated directory in `<TMPDIR>/tidb/` if it is unset.
+# It defaults to a generated directory in `<TMPDIR>/<os/user.Current().Uid>_tidb/` if it is unset.
 # It only takes effect when `oom-use-tmp-storage` is `true`.
-# tmp-storage-path = "/tmp/tidb/NDAwMC8xMDA4MA==/tmp-storage"
+# tmp-storage-path = "/tmp/<os/user.Current().Uid>_tidb/MC4wLjAuMDo0MDAwLzAuMC4wLjA6MTAwODA=/tmp-storage"
 
 # Specifies the maximum use of temporary storage (bytes) for all active queries when `oom-use-tmp-storage` is enabled.
 # If the `tmp-storage-quota` exceeds the capacity of the temporary storage directory, tidb-server would return an error and exit.
@@ -366,7 +366,8 @@ admission-min-process-ms = 5
 
 [binlog]
 # enable to write binlog.
-# NOTE: If binlog is enabled, txn-total-size-limit should be less than 104857600(10M).
+# NOTE: If binlog is enabled with Kafka (e.g. arbiter cluster),
+# txn-total-size-limit should be less than 1073741824(1G) because this is the maximum size that can be handled by Kafka.
 enable = false
 
 # WriteTimeout specifies how long it will wait for writing binlog to pump.
