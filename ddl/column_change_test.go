@@ -59,8 +59,9 @@ func (s *testColumnChangeSuite) TearDownSuite(c *C) {
 }
 
 func (s *testColumnChangeSuite) TestColumnChange(c *C) {
-	d := newDDL(
+	d := testNewDDLAndStart(
 		context.Background(),
+		c,
 		WithStore(s.store),
 		WithLease(testLease),
 	)
@@ -224,7 +225,7 @@ func (s *testColumnChangeSuite) testColumnDrop(c *C, ctx sessionctx.Context, d *
 	testDropColumn(c, ctx, d, s.dbInfo, tbl.Meta(), dropCol.Name.L, false)
 }
 
-func (s *testColumnChangeSuite) checkAddWriteOnly(ctx sessionctx.Context, d *ddl, deleteOnlyTable, writeOnlyTable table.Table, h int64) error {
+func (s *testColumnChangeSuite) checkAddWriteOnly(ctx sessionctx.Context, d *ddl, deleteOnlyTable, writeOnlyTable table.Table, h kv.Handle) error {
 	// WriteOnlyTable: insert t values (2, 3)
 	err := ctx.NewTxn(context.Background())
 	if err != nil {
@@ -259,7 +260,7 @@ func (s *testColumnChangeSuite) checkAddWriteOnly(ctx sessionctx.Context, d *ddl
 		return errors.Trace(err)
 	}
 	// WriteOnlyTable: update t set c1 = 2 where c1 = 1
-	h, _, err = writeOnlyTable.Seek(ctx, 0)
+	h, _, err = writeOnlyTable.Seek(ctx, kv.IntHandle(0))
 	if err != nil {
 		return errors.Trace(err)
 	}

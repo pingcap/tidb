@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/text/transform"
@@ -366,7 +367,7 @@ func (b *builtinLocate3ArgsUTF8Sig) vectorized() bool {
 	return true
 }
 
-// vecEvalInt evals LOCATE(substr,str,pos), non case-sensitive.
+// vecEvalInt evals LOCATE(substr,str,pos).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocate3ArgsUTF8Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
@@ -393,6 +394,7 @@ func (b *builtinLocate3ArgsUTF8Sig) vecEvalInt(input *chunk.Chunk, result *chunk
 
 	result.MergeNulls(buf, buf1)
 	i64s := result.Int64s()
+	ci := collate.IsCICollation(b.collation)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -413,8 +415,10 @@ func (b *builtinLocate3ArgsUTF8Sig) vecEvalInt(input *chunk.Chunk, result *chunk
 			continue
 		}
 		slice := string([]rune(str)[pos:])
-		subStr = strings.ToLower(subStr)
-		slice = strings.ToLower(slice)
+		if ci {
+			subStr = strings.ToLower(subStr)
+			slice = strings.ToLower(slice)
+		}
 		idx := strings.Index(slice, subStr)
 		if idx != -1 {
 			i64s[i] = pos + int64(utf8.RuneCountInString(slice[:idx])) + 1
@@ -1631,12 +1635,20 @@ func (b *builtinInstrUTF8Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 	result.ResizeInt64(n, false)
 	result.MergeNulls(str, substr)
 	res := result.Int64s()
+	ci := collate.IsCICollation(b.collation)
+	var strI string
+	var substrI string
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		strI := strings.ToLower(str.GetString(i))
-		substrI := strings.ToLower(substr.GetString(i))
+		if ci {
+			strI = strings.ToLower(str.GetString(i))
+			substrI = strings.ToLower(substr.GetString(i))
+		} else {
+			strI = str.GetString(i)
+			substrI = substr.GetString(i)
+		}
 		idx := strings.Index(strI, substrI)
 		if idx == -1 {
 			res[i] = 0
@@ -2126,7 +2138,7 @@ func (b *builtinLocate2ArgsUTF8Sig) vectorized() bool {
 	return true
 }
 
-// vecEvalInt evals LOCATE(substr,str), non case-sensitive.
+// vecEvalInt evals LOCATE(substr,str).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocate2ArgsUTF8Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
@@ -2150,6 +2162,7 @@ func (b *builtinLocate2ArgsUTF8Sig) vecEvalInt(input *chunk.Chunk, result *chunk
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf, buf1)
 	i64s := result.Int64s()
+	ci := collate.IsCICollation(b.collation)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -2162,8 +2175,10 @@ func (b *builtinLocate2ArgsUTF8Sig) vecEvalInt(input *chunk.Chunk, result *chunk
 			continue
 		}
 		slice := str
-		slice = strings.ToLower(slice)
-		subStr = strings.ToLower(subStr)
+		if ci {
+			slice = strings.ToLower(slice)
+			subStr = strings.ToLower(subStr)
+		}
 		idx := strings.Index(slice, subStr)
 		if idx != -1 {
 			i64s[i] = int64(utf8.RuneCountInString(slice[:idx])) + 1

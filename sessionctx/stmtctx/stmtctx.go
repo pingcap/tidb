@@ -326,6 +326,20 @@ func (sc *StatementContext) GetWarnings() []SQLWarn {
 	return warns
 }
 
+// TruncateWarnings truncates wanrings begin from start and returns the truncated warnings.
+func (sc *StatementContext) TruncateWarnings(start int) []SQLWarn {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	sz := len(sc.mu.warnings) - start
+	if sz <= 0 {
+		return nil
+	}
+	ret := make([]SQLWarn, sz)
+	copy(ret, sc.mu.warnings[start:])
+	sc.mu.warnings = sc.mu.warnings[:start]
+	return ret
+}
+
 // WarningCount gets warning count.
 func (sc *StatementContext) WarningCount() uint16 {
 	if sc.InShowWarning {
@@ -458,6 +472,7 @@ func (sc *StatementContext) ResetForRetry() {
 func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, commitDetails *execdetails.CommitDetails) {
 	sc.mu.Lock()
 	if details != nil {
+		sc.mu.execDetails.CopTime += details.CopTime
 		sc.mu.execDetails.ProcessTime += details.ProcessTime
 		sc.mu.execDetails.WaitTime += details.WaitTime
 		sc.mu.execDetails.BackoffTime += details.BackoffTime
