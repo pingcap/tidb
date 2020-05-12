@@ -413,17 +413,6 @@ func pushNotAcrossArgs(ctx sessionctx.Context, exprs []Expression, not bool) ([]
 func pushNotAcrossExpr(ctx sessionctx.Context, expr Expression, not bool) (_ Expression, changed bool) {
 	if f, ok := expr.(*ScalarFunction); ok {
 		switch f.FuncName.L {
-		case ast.UnaryNot:
-			child, err := wrapWithIsTrue(ctx, true, f.GetArgs()[0], true)
-			if err != nil {
-				return expr, false
-			}
-			var childExpr Expression
-			childExpr, changed = pushNotAcrossExpr(f.GetCtx(), child, !not)
-			if !changed && !not {
-				return expr, false
-			}
-			return childExpr, true
 		case ast.LT, ast.GE, ast.GT, ast.LE, ast.EQ, ast.NE:
 			if not {
 				return NewFunctionInternal(f.GetCtx(), oppositeOp[f.FuncName.L], f.GetType(), f.GetArgs()...), true

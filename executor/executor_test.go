@@ -5483,6 +5483,7 @@ func (s *testSuite) TestIssue16921(c *C) {
 	tk.MustQuery("select `a` from `t` ignore index (a) where !`a`;").Check(testkit.Rows())
 	tk.MustQuery("select `a` from `t` use index (a) where `a`;").Check(testkit.Rows("1"))
 	tk.MustQuery("select `a` from `t` ignore index (a) where `a`;").Check(testkit.Rows("1"))
+	tk.MustQuery("select a from t use index (a) where not a is true;").Check(testkit.Rows("<nil>"))
 }
 
 // this is from jira issue #5856
