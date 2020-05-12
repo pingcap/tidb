@@ -38,9 +38,11 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/texttree"
+	"go.uber.org/zap"
 )
 
 var planCacheCounter = metrics.PlanCacheCounter.WithLabelValues("prepare")
@@ -273,6 +275,11 @@ func (e *Execute) setFoundInPlanCache(sctx sessionctx.Context, opt bool) error {
 func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt) error {
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	prepared := preparedStmt.PreparedAst
+	stmtCtx.UseCache = prepared.UseCache
+	var cacheKey kvcache.Key
+	if prepared.UseCache {
+		cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
+	}
 	if prepared.CachedPlan != nil {
 		// Rewriting the expression in the select.where condition  will convert its
 		// type from "paramMarker" to "Constant".When Point Select queries are executed,
@@ -282,7 +289,8 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		names := prepared.CachedNames.(types.NameSlice)
 		err := e.rebuildRange(plan)
 		if err != nil {
-			return err
+			logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
+			goto REBUILD
 		}
 		if metrics.ResettablePlanCacheCounterFortTest {
 			metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
@@ -298,10 +306,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		stmtCtx.PointExec = true
 		return nil
 	}
-	var cacheKey kvcache.Key
-	stmtCtx.UseCache = prepared.UseCache
 	if prepared.UseCache {
-		cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
 		if cacheValue, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
 			if err := e.checkPreparedPriv(ctx, sctx, preparedStmt, is); err != nil {
 				return err
@@ -318,7 +323,12 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 				}
 			}
 			if planValid {
-				err := e.setFoundInPlanCache(sctx, true)
+				err := e.rebuildRange(cachedVal.Plan)
+				if err != nil {
+					logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
+					goto REBUILD
+				}
+				err = e.setFoundInPlanCache(sctx, true)
 				if err != nil {
 					return err
 				}
@@ -327,10 +337,6 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 				} else {
 					planCacheCounter.Inc()
 				}
-				err = e.rebuildRange(cachedVal.Plan)
-				if err != nil {
-					return err
-				}
 				e.names = cachedVal.OutPutNames
 				e.Plan = cachedVal.Plan
 				stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
@@ -338,6 +344,8 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 			}
 		}
 	}
+
+REBUILD:
 	p, names, err := OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
 	if err != nil {
 		return err
