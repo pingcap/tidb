@@ -21,7 +21,7 @@
 | -s 或--statement-size | 控制 Insert Statement 的大小，单位 bytes |
 | -F 或 --filesize | 将 table 数据划分出来的文件大小, 单位 bytes |
 | --filetype| 导出文件类型 csv/sql (默认 sql) |
-| -o 或 --outputdir | 设置导出文件路径 |
+| -o 或 --output | 设置导出文件路径 |
 | --consistency | flush: dump 前用 FTWRL <br> snapshot: 通过 tso 指定 dump 位置 <br> lock: 对需要 dump 的所有表执行 lock tables read <br> none: 不加锁 dump，无法保证一致性 <br> auto: MySQL flush, TiDB snapshot|
 | --snapshot | snapshot tso, 只在 consistency=snapshot 下生效 |
 | --where | 对备份的数据表通过 where 条件指定范围 |
