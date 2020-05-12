@@ -1518,6 +1518,13 @@ func (e *tableStorageStatsRetriever) initialize(sctx sessionctx.Context) error {
 			}
 		}
 	}
+
+	// Cache the helper.
+	tikvStore, ok := sctx.GetStore().(tikv.Storage)
+	if !ok {
+		return errors.Errorf("Information about TiKV region status can be gotten only when the storage is TiKV")
+	}
+	e.helper = helper.NewHelper(tikvStore)
 	e.initialized = true
 	return nil
 }
