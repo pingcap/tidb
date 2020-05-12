@@ -1519,12 +1519,16 @@ func (e *tableStorageStatsRetriever) initialize(sctx sessionctx.Context) error {
 		}
 	}
 
-	// Cache the helper.
+	// Cache the helper and return an error if pd unavailable.
 	tikvStore, ok := sctx.GetStore().(tikv.Storage)
 	if !ok {
 		return errors.Errorf("Information about TiKV region status can be gotten only when the storage is TiKV")
 	}
 	e.helper = helper.NewHelper(tikvStore)
+	_, err := e.helper.GetPDAddr()
+	if err != nil {
+		return err
+	}
 	e.initialized = true
 	return nil
 }
