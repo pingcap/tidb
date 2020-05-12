@@ -157,7 +157,7 @@ is that I found no grammar that fits it.
 
 Through the above discussion, we recommend the toml version of metafile. 
 
-In addition, the error codes should be adding only in case of conflict between versions.
+In addition, the error codes should be append only in case of conflict between versions.
 
 ### The Error Definition
 
@@ -180,33 +180,13 @@ The tags is used to classify errors.
 
 #### The Error Code Range
 
-There are two options for code range:
-- The code should be number only
-- The code transmitted through the mysql protocol should be number only, others can be a number with a prefix string
+For compatibility with MySQL protocol, the code transmitted through the mysql protocol should be number only, others can be a number with a prefix string.
 
-For the option 1, the code reserved for each components are:
-- TiDB: [0, 9000)
-- TiKV: [9000, 9010), [9010, 9800),
-  - server: [9100, 9200)
-  - storage: [9200, 9220),
-  - storage.txn: [9220, 9250),
-  - storage.mvcc: [9250, 9300)
-  - raft-store: [9300, 9350)
-  - raft: [9350, 9400)
-  - engine: [9400, 9500)
-  - coprocessor: [9500, 9550)
-  - codec: [9550, 9570)
-  - IO error: [9600, 9650)
-- PD: [9000, 9010), [9800, 10000)
-- DM: [10000, 47000)
-
-For the option 2, the code reserved for each components are:
+The code of each components looks like:
 - TiDB: [0, 9000), DB\d+
 - TiKV: [9000, 9010), KV\d+
-- PD: [9000, 9010), [9800, 10000), PD\d+
-- DM: [10000, 47000), DM\d+
-
-
+- PD: [9000, 9010), PD\d+
+- DM: DM\d+, DM-S-\d+
 
 ### How It Works
 
