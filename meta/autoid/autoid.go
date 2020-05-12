@@ -898,9 +898,13 @@ func DecodeCmpUintToInt(u uint64) int64 {
 
 // AutoRandomIDLayout is used to calculate the bits length of different section in auto_random id.
 // The primary key with auto_random can only be `bigint` column, the total layout length of auto random is 64 bits.
-// Layout and Length:
-// | [sign_bit] | [shard_bits] | [incremental_bits] |
-// sign_bit(1 fixed) + shard_bits(15 max) + incremental_bits(the rest) = total_layout_bits(64 fixed)
+// These are two type of layout:
+// 1. Signed bigint:
+//   | [sign_bit] | [shard_bits] | [incremental_bits] |
+//   sign_bit(1 fixed) + shard_bits(15 max) + incremental_bits(the rest) = total_layout_bits(64 fixed)
+// 2. Unsigned bigint:
+//   | [shard_bits] | [incremental_bits] |
+//   shard_bits(15 max) + incremental_bits(the rest) = total_layout_bits(64 fixed)
 // Please always use NewAutoRandomIDLayout() to instantiate.
 type AutoRandomIDLayout struct {
 	FieldType *types.FieldType

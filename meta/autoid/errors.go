@@ -48,5 +48,5 @@ const (
 	// AutoRandomAvailableAllocTimesNote is reported when a table containing auto_random is created.
 	AutoRandomAvailableAllocTimesNote = "Available implicit allocation times: %d"
 	// AutoRandomOnNonBigIntColumn is reported when define auto random to non bigint column
-	AutoRandomOnNonBigIntColumn = "auto_random option must be defined on `bigint` column, but not on `%s`"
+	AutoRandomOnNonBigIntColumn = "auto_random option must be defined on `bigint` column, but not on `%s` column"
 )

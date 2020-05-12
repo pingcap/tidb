@@ -881,7 +881,7 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 
 	// Test overflow.
 	tk.MustExec("create table t (a bigint primary key auto_random(15), b int)")
-	// Here we cannot fill the all values for column `bigint`,
+	// Here we cannot fill the all values for a `bigint` column,
 	// so firstly we rebase auto_rand to the position before overflow.
 	tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", autoRandBitsUpperBound, 1))
 	_, err = tk.Exec("insert into t (b) values (0)")
@@ -889,14 +889,13 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 	c.Assert(err.Error(), Equals, autoid.ErrAutoRandReadFailed.GenWithStackByArgs().Error())
 	tk.MustExec("drop table t")
 
-	// FIXME
-	//tk.MustExec("create table t (a bigint primary key auto_random(15), b int)")
-	//tk.MustExec("insert into t values (1, 2)")
-	//tk.MustExec(fmt.Sprintf("update t set a = %d where a = 1", autoRandBitsUpperBound))
-	//_, err = tk.Exec("insert into t (b) values (0)")
-	//c.Assert(err, NotNil)
-	//c.Assert(err.Error(), Equals, autoid.ErrAutoRandReadFailed.GenWithStackByArgs().Error())
-	//tk.MustExec("drop table t")
+	tk.MustExec("create table t (a bigint primary key auto_random(15), b int)")
+	tk.MustExec("insert into t values (1, 2)")
+	tk.MustExec(fmt.Sprintf("update t set a = %d where a = 1", autoRandBitsUpperBound))
+	_, err = tk.Exec("insert into t (b) values (0)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, autoid.ErrAutoRandReadFailed.GenWithStackByArgs().Error())
+	tk.MustExec("drop table t")
 
 	// Test insert negative integers explicitly won't trigger rebase.
 	tk.MustExec("create table t (a bigint primary key auto_random(15), b int)")
