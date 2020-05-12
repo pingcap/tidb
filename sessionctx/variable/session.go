@@ -1482,6 +1482,8 @@ const (
 	SlowLogCopBackoffPrefix = "Cop_backoff_"
 	// SlowLogMemMax is the max number bytes of memory used in this statement.
 	SlowLogMemMax = "Mem_max"
+	// SlowLogDiskUsage is used to record the disk usage
+	SlowLogDiskUsage = "Disk_usage"
 	// SlowLogPrepared is used to indicate whether this sql execute in prepare.
 	SlowLogPrepared = "Prepared"
 	// SlowLogHasMoreResults is used to indicate whether this sql has more following results.
@@ -1516,6 +1518,7 @@ type SlowQueryLogItems struct {
 	CopTasks       *stmtctx.CopTasksDetails
 	ExecDetail     execdetails.ExecDetails
 	MemMax         int64
+	DiskUsage      int64
 	Succ           bool
 	Prepared       bool
 	HasMoreResults bool
@@ -1644,6 +1647,9 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	}
 	if logItems.MemMax > 0 {
 		writeSlowLogItem(&buf, SlowLogMemMax, strconv.FormatInt(logItems.MemMax, 10))
+	}
+	if logItems.DiskUsage > 0 {
+		writeSlowLogItem(&buf, SlowLogDiskUsage, strconv.FormatInt(logItems.DiskUsage, 10))
 	}
 
 	writeSlowLogItem(&buf, SlowLogPrepared, strconv.FormatBool(logItems.Prepared))
