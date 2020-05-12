@@ -791,12 +791,12 @@ func (s *testEvalSerialSuite) TestPushCollationDown(c *C) {
 
 	tps := []*types.FieldType{types.NewFieldType(mysql.TypeVarchar), types.NewFieldType(mysql.TypeVarchar)}
 	for _, coll := range []string{charset.CollationBin, charset.CollationLatin1, charset.CollationUTF8, charset.CollationUTF8MB4} {
-		fc.SetCharsetAndCollation("binary", coll, types.UnspecifiedLength) // only collation matters
+		fc.SetCharsetAndCollation("binary", coll) // only collation matters
 		pbExpr, err := ExpressionsToPBList(sc, []Expression{fc}, client)
 		c.Assert(err, IsNil)
 		expr, err := PBToExpr(pbExpr[0], tps, sc)
 		c.Assert(err, IsNil)
-		_, eColl, _ := expr.CharsetAndCollation(nil)
+		_, eColl := expr.CharsetAndCollation(nil)
 		c.Assert(eColl, Equals, coll)
 	}
 }
