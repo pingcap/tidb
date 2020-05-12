@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/parser/mysql"
 	"io/ioutil"
 	"net"
 	"net/http"
@@ -181,7 +182,14 @@ func ConvertConfigItem2JSON(ctx sessionctx.Context, key string, val expression.E
 		var i int64
 		i, isNull, err = val.EvalInt(ctx, chunk.Row{})
 		if err == nil && !isNull {
-			str = fmt.Sprintf("%v", i)
+			if mysql.HasIsBooleanFlag(val.GetType().Flag) {
+				str = "true"
+				if i == 0 {
+					str = "false"
+				}
+			} else {
+				str = fmt.Sprintf("%v", i)
+			}
 		}
 	case types.ETReal:
 		var f float64
