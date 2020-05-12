@@ -888,7 +888,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "rate(tidb_server_query_total[1m])",
+              "expr": "sum(rate(tidb_server_query_total[1m])) by (instance)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{instance}} ",
@@ -1082,7 +1082,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "rate(tidb_server_query_total[1m])",
+              "expr": "sum(rate(tidb_server_query_total[1m])) by (type)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": " {{type}}",
