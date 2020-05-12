@@ -125,7 +125,10 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		fieldEvalTps = append(fieldEvalTps, retEvalTp)
 	}
 
-	bf := newBaseBuiltinFuncWithTp(ctx, args, retEvalTp, fieldEvalTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, retEvalTp, fieldEvalTps...)
+	if err != nil {
+		return nil, err
+	}
 
 	bf.tp.Flag |= resultFieldType.Flag
 	resultFieldType.Flen, resultFieldType.Decimal = 0, types.UnspecifiedLength
@@ -430,7 +433,10 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	for i := range args {
 		argTps[i] = tp
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, tp, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, tp, argTps...)
+	if err != nil {
+		return nil, err
+	}
 	if cmpAsDatetime {
 		tp = types.ETDatetime
 	}
@@ -629,7 +635,10 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	for i := range args {
 		argTps[i] = tp
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, tp, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, tp, argTps...)
+	if err != nil {
+		return nil, err
+	}
 	if cmpAsDatetime {
 		tp = types.ETDatetime
 	}
@@ -840,7 +849,10 @@ func (c *intervalFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	for range args {
 		argTps = append(argTps, argTp)
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTps...)
+	if err != nil {
+		return nil, err
+	}
 	var sig builtinFunc
 	if allInt {
 		sig = &builtinIntervalIntSig{bf}
@@ -1282,7 +1294,10 @@ func (c *compareFunctionClass) getFunction(ctx sessionctx.Context, rawArgs []Exp
 
 // generateCmpSigs generates compare function signatures.
 func (c *compareFunctionClass) generateCmpSigs(ctx sessionctx.Context, args []Expression, tp types.EvalType) (sig builtinFunc, err error) {
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, tp, tp)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, tp, tp)
+	if err != nil {
+		return nil, err
+	}
 	if tp == types.ETJson {
 		// In compare, if we cast string to JSON, we shouldn't parse it.
 		for i := range args {
