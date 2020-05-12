@@ -283,6 +283,17 @@ func checkInt64SystemVar(name, value string, min, max int64, vars *SessionVars) 
 	return value, nil
 }
 
+func checkInt64SystemVarWithError(name, value string, min, max int64) (string, error) {
+	val, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
+	}
+	if val < min || val > max {
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	}
+	return value, nil
+}
+
 const (
 	// initChunkSizeUpperBound indicates upper bound value of tidb_init_chunk_size.
 	initChunkSizeUpperBound = 32
@@ -703,22 +714,22 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		if value == "" && scope == ScopeSession {
 			return "", nil
 		}
-		return checkUInt64SystemVar(name, value, 1, math.MaxInt32, vars)
+		return checkInt64SystemVarWithError(name, value, 1, math.MaxInt32)
 	case TiDBStmtSummaryHistorySize:
 		if value == "" && scope == ScopeSession {
 			return "", nil
 		}
-		return checkUInt64SystemVar(name, value, 0, math.MaxUint8, vars)
+		return checkInt64SystemVarWithError(name, value, 0, math.MaxUint8)
 	case TiDBStmtSummaryMaxStmtCount:
 		if value == "" && scope == ScopeSession {
 			return "", nil
 		}
-		return checkInt64SystemVar(name, value, 1, math.MaxInt16, vars)
+		return checkInt64SystemVarWithError(name, value, 1, math.MaxInt16)
 	case TiDBStmtSummaryMaxSQLLength:
 		if value == "" && scope == ScopeSession {
 			return "", nil
 		}
-		return checkInt64SystemVar(name, value, 0, math.MaxInt32, vars)
+		return checkInt64SystemVarWithError(name, value, 0, math.MaxInt32)
 	case TiDBIsolationReadEngines:
 		engines := strings.Split(value, ",")
 		var formatVal string
