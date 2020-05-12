@@ -90,7 +90,14 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, args []Expression) baseBuiltinFu
 	if ctx == nil {
 		panic("ctx should not be nil")
 	}
+<<<<<<< HEAD
 	derivedCharset, derivedCollate, derivedFlen := DeriveCollationFromExprs(ctx, args...)
+=======
+	if err := checkIllegalMixCollation(funcName, args); err != nil {
+		return baseBuiltinFunc{}, err
+	}
+	derivedCharset, derivedCollate := DeriveCollationFromExprs(ctx, args...)
+>>>>>>> 6a49bb4... *: fix a bug which causes function return truncated result (#17101)
 	bf := baseBuiltinFunc{
 		bufAllocator:           newLocalSliceBuffer(len(args)),
 		childrenVectorizedOnce: new(sync.Once),
@@ -100,7 +107,7 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, args []Expression) baseBuiltinFu
 		ctx:  ctx,
 		tp:   types.NewFieldType(mysql.TypeUnspecified),
 	}
-	bf.SetCharsetAndCollation(derivedCharset, derivedCollate, derivedFlen)
+	bf.SetCharsetAndCollation(derivedCharset, derivedCollate)
 	bf.setCollator(collate.GetCollator(derivedCollate))
 	return bf
 }
@@ -139,7 +146,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 
 	// derive collation information for string function, and we must do it
 	// before doing implicit cast.
-	derivedCharset, derivedCollate, derivedFlen := DeriveCollationFromExprs(ctx, args...)
+	derivedCharset, derivedCollate := DeriveCollationFromExprs(ctx, args...)
 	var fieldType *types.FieldType
 	switch retType {
 	case types.ETInt:
@@ -169,7 +176,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 			Decimal: types.UnspecifiedLength,
 			Charset: derivedCharset,
 			Collate: derivedCollate,
-			Flen:    derivedFlen,
+			Flen:    types.UnspecifiedLength,
 		}
 	case types.ETDatetime:
 		fieldType = &types.FieldType{
@@ -214,7 +221,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 		ctx:  ctx,
 		tp:   fieldType,
 	}
-	bf.SetCharsetAndCollation(derivedCharset, derivedCollate, derivedFlen)
+	bf.SetCharsetAndCollation(derivedCharset, derivedCollate)
 	bf.setCollator(collate.GetCollator(derivedCollate))
 	return bf
 }
