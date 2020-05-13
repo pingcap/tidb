@@ -107,3 +107,18 @@ func (s *testExecutorSuite) TestResolvedLargeTxnLocks(c *C) {
 	_, ok := errors.Cause(pairs[0].Err).(*mocktikv.ErrLocked)
 	c.Assert(ok, IsTrue)
 }
+
+func (s *testExecutorSuite) TestIssue15662(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+
+	tk.MustExec("create table V (id int primary key, col_int int)")
+	tk.MustExec("insert into V values (1, 8)")
+
+	tk.MustExec("create table F (id int primary key, col_int int)")
+	tk.MustExec("insert into F values (1, 8)")
+
+	tk.MustQuery("select table1.`col_int` as field1, table1.`col_int` as field2 from V as table1 left join F as table2 on table1.`col_int` = table2.`col_int` order by field1, field2 desc limit 2").
+		Check(testkit.Rows("8 8"))
+}
