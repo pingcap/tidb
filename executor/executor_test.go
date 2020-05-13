@@ -5364,8 +5364,9 @@ select 6;`
 	tk.Se.GetSessionVars().TimeZone = loc
 	tk.MustExec("use information_schema")
 	cases := []struct {
-		sql    string
-		result []string
+		prepareSQL string
+		sql        string
+		result     []string
 	}{
 		{
 			sql:    "select count(*),min(time),max(time) from %s where time > '2019-01-26 21:51:00' and time < now()",
@@ -5399,8 +5400,22 @@ select 6;`
 			sql:    "select query from %s where time > '2019-01-26 21:51:00' and time < now()",
 			result: []string{"select 1;", "select 2;", "select 3;", "select 4;", "select 5;", "select 6;"},
 		},
+		// Test for different timezone.
+		{
+			prepareSQL: "set @@time_zone = '+00:00'",
+			sql:        "select time from %s where time = '2020-02-17 10:00:05.000000'",
+			result:     []string{"2020-02-17 10:00:05.000000"},
+		},
+		{
+			prepareSQL: "set @@time_zone = '+02:00'",
+			sql:        "select time from %s where time = '2020-02-17 12:00:05.000000'",
+			result:     []string{"2020-02-17 12:00:05.000000"},
+		},
 	}
 	for _, cas := range cases {
+		if len(cas.prepareSQL) > 0 {
+			tk.MustExec(cas.prepareSQL)
+		}
 		sql := fmt.Sprintf(cas.sql, "slow_query")
 		tk.MustQuery(sql).Check(testutil.RowsWithSep("|", cas.result...))
 		sql = fmt.Sprintf(cas.sql, "cluster_slow_query")
