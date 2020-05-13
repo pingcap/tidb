@@ -154,7 +154,35 @@ func (b *builtinInIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 
 // builtinInStringSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInStringSig struct {
+<<<<<<< HEAD
 	baseBuiltinFunc
+=======
+	baseInSig
+	hashSet set.StringSet
+}
+
+func (b *builtinInStringSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
+	b.nonConstArgs = []Expression{b.args[0]}
+	b.hashSet = set.NewStringSet()
+	collator := collate.GetCollator(b.collation)
+	for i := 1; i < len(b.args); i++ {
+		if b.args[i].ConstItem(b.ctx.GetSessionVars().StmtCtx) {
+			val, isNull, err := b.args[i].EvalString(ctx, chunk.Row{})
+			if err != nil {
+				return err
+			}
+			if isNull {
+				b.hasNull = true
+				continue
+			}
+			b.hashSet.Insert(string(collator.Key(val))) // should do memory copy here
+		} else {
+			b.nonConstArgs = append(b.nonConstArgs, b.args[i])
+		}
+	}
+
+	return nil
+>>>>>>> a1763c1... executor: fix memory corrupt in COUNT/JSON_OBJECTAGG/GROUP_CONCAT (#17106)
 }
 
 func (b *builtinInStringSig) Clone() builtinFunc {

@@ -622,8 +622,13 @@ func (d *Datum) compareMysqlDuration(sc *stmtctx.StatementContext, dur Duration)
 
 func (d *Datum) compareMysqlEnum(sc *stmtctx.StatementContext, enum Enum) (int, error) {
 	switch d.k {
+<<<<<<< HEAD
 	case KindString, KindBytes:
 		return CompareString(d.GetString(), enum.String()), nil
+=======
+	case KindString, KindBytes, KindMysqlEnum, KindMysqlSet:
+		return CompareString(d.GetString(), enum.String(), d.collation), nil
+>>>>>>> a1763c1... executor: fix memory corrupt in COUNT/JSON_OBJECTAGG/GROUP_CONCAT (#17106)
 	default:
 		return d.compareFloat64(sc, enum.ToNumber())
 	}
@@ -647,8 +652,13 @@ func (d *Datum) compareBinaryLiteral(sc *stmtctx.StatementContext, b BinaryLiter
 
 func (d *Datum) compareMysqlSet(sc *stmtctx.StatementContext, set Set) (int, error) {
 	switch d.k {
+<<<<<<< HEAD
 	case KindString, KindBytes:
 		return CompareString(d.GetString(), set.String()), nil
+=======
+	case KindString, KindBytes, KindMysqlEnum, KindMysqlSet:
+		return CompareString(d.GetString(), set.String(), d.collation), nil
+>>>>>>> a1763c1... executor: fix memory corrupt in COUNT/JSON_OBJECTAGG/GROUP_CONCAT (#17106)
 	default:
 		return d.compareFloat64(sc, set.ToNumber())
 	}

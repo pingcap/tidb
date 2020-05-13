@@ -707,11 +707,22 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 		if e.childResult.NumRows() == 0 {
 			return nil
 		}
+<<<<<<< HEAD
 		for row := inputIter.Begin(); row != inputIter.End(); row = inputIter.Next() {
 			groupKey, err := e.getGroupKey(row)
 			if err != nil {
 				return err
 			}
+=======
+
+		e.groupKeyBuffer, err = getGroupKey(e.ctx, e.childResult, e.groupKeyBuffer, e.GroupByItems)
+		if err != nil {
+			return err
+		}
+
+		for j := 0; j < e.childResult.NumRows(); j++ {
+			groupKey := string(e.groupKeyBuffer[j]) // do memory copy here, because e.groupKeyBuffer may be reused.
+>>>>>>> a1763c1... executor: fix memory corrupt in COUNT/JSON_OBJECTAGG/GROUP_CONCAT (#17106)
 			if !e.groupSet.Exist(groupKey) {
 				e.groupSet.Insert(groupKey)
 				e.groupKeys = append(e.groupKeys, groupKey)
