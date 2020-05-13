@@ -183,10 +183,14 @@ The tags is used to classify errors.
 For compatibility with MySQL protocol, the code transmitted through the mysql protocol should be number only, others can be a number with a prefix string.
 
 The code of each components looks like:
-- TiDB: [0, 9000), DB\d+
-- TiKV: [9000, 9010), KV\d+
-- PD: [9000, 9010), PD\d+
-- DM: DM\d+, DM-S-\d+
+- TiDB: [0, 9000), DB-([A-Z]+-)?[0-9]{3,}
+- TiKV: [9000, 9010), KV-([A-Z]+-)?[0-9]{3,}
+- PD: [9000, 9010), PD-([A-Z]+-)?[0-9]{3,}
+- DM: DM-([A-Z]+-)?[0-9]{3,}
+- BR: BR-([A-Z]+-)?[0-9]{3,}
+- CDC: CDC-([A-Z]+-)?[0-9]{3,}
+- Lightning: LN-([A-Z]+-)?[0-9]{3,}
+- Dumpling: DP-([A-Z]+-)?[0-9]{3,}
 
 ### How It Works
 
