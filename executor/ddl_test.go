@@ -287,6 +287,19 @@ func (s *testSuite6) TestIssue16250(c *C) {
 	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.view_issue16250' doesn't exist")
 }
 
+func (s testSuite6) TestTruncateSequence(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create sequence if not exists seq")
+	_, err := tk.Exec("truncate table seq")
+	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.seq' doesn't exist")
+	tk.MustExec("create sequence if not exists seq1 start 10 increment 2 maxvalue 10000 cycle")
+	_, err = tk.Exec("truncate table seq1")
+	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.seq1' doesn't exist")
+	tk.MustExec("drop sequence if exists seq")
+	tk.MustExec("drop sequence if exists seq1")
+}
+
 func (s *testSuite6) TestCreateViewWithOverlongColName(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -806,7 +819,7 @@ func (s *testSuite8) TestShardRowIDBits(c *C) {
 	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	maxID := 1<<(64-15-1) - 1
-	err = tbl.RebaseAutoID(tk.Se, int64(maxID)-1, false)
+	err = tbl.RebaseAutoID(tk.Se, int64(maxID)-1, false, autoid.RowIDAllocType)
 	c.Assert(err, IsNil)
 	tk.MustExec("insert into t1 values(1)")
 
@@ -867,9 +880,7 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 
 	// Test overflow.
 	tk.MustExec("create table t (a tinyint primary key auto_random(2), b int)")
-	fieldLength := uint64(mysql.DefaultLengthOfMysqlTypes[mysql.TypeTiny] * 8)
-	signBit := uint64(1)
-	for i := 0; i < (1<<(fieldLength-2-signBit))-1; i++ {
+	for i := 0; i < 31; /* 2^(8-2-1)-1 */ i++ {
 		tk.MustExec(fmt.Sprintf("insert into t (b) values (%d)", i))
 	}
 	_, err = tk.Exec("insert into t (b) values (0)")
@@ -911,6 +922,150 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 		c.Assert(orderedHandles[i], Equals, i-99)
 	}
 	tk.MustExec("drop table t")
+
+	// Test signed/unsigned types.
+	tk.MustExec("create table t (a bigint primary key auto_random(10), b int)")
+	for i := 0; i < 100; i++ {
+		tk.MustExec("insert into t (b) values(?)", i)
+	}
+	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Se, "test_auto_random_bits", "t")
+	for _, h := range allHandles {
+		// Sign bit should be reserved.
+		c.Assert(h > 0, IsTrue)
+	}
+	tk.MustExec("drop table t")
+
+	tk.MustExec("create table t (a bigint unsigned primary key auto_random(10), b int)")
+	for i := 0; i < 100; i++ {
+		tk.MustExec("insert into t (b) values(?)", i)
+	}
+	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Se, "test_auto_random_bits", "t")
+	signBitUnused := true
+	for _, h := range allHandles {
+		signBitUnused = signBitUnused && (h > 0)
+	}
+	// Sign bit should be used for shard.
+	c.Assert(signBitUnused, IsFalse)
+	tk.MustExec("drop table t")
+}
+
+func (s *testAutoRandomSuite) TestAutoRandomTableOption(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// test table option is auto-random
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+
+	tk.MustExec("drop table if exists auto_random_table_option")
+	tk.MustExec("create table auto_random_table_option (a bigint auto_random(5) key) auto_random_base = 1000")
+	t, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("auto_random_table_option"))
+	c.Assert(err, IsNil)
+	c.Assert(t.Meta().AutoRandID, Equals, int64(1000))
+	tk.MustExec("insert into auto_random_table_option values (),(),(),(),()")
+	allHandles, err := ddltestutil.ExtractAllTableHandles(tk.Se, "test", "auto_random_table_option")
+	c.Assert(err, IsNil)
+	c.Assert(len(allHandles), Equals, 5)
+	// Test non-shard-bits part of auto random id is monotonic increasing and continuous.
+	orderedHandles := testutil.ConfigTestUtils.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
+	size := int64(len(allHandles))
+	for i := int64(0); i < size; i++ {
+		c.Assert(i+1000, Equals, orderedHandles[i])
+	}
+
+	tk.MustExec("drop table if exists alter_table_auto_random_option")
+	tk.MustExec("create table alter_table_auto_random_option (a bigint primary key auto_random(4), b int)")
+	t, err = domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("alter_table_auto_random_option"))
+	c.Assert(err, IsNil)
+	c.Assert(t.Meta().AutoRandID, Equals, int64(0))
+	tk.MustExec("insert into alter_table_auto_random_option values(),(),(),(),()")
+	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Se, "test", "alter_table_auto_random_option")
+	c.Assert(err, IsNil)
+	orderedHandles = testutil.ConfigTestUtils.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
+	size = int64(len(allHandles))
+	for i := int64(0); i < size; i++ {
+		c.Assert(orderedHandles[i], Equals, i+1)
+	}
+	tk.MustExec("delete from alter_table_auto_random_option")
+
+	// alter table to change the auto_random option (it will dismiss the local allocator cache)
+	// To avoid the new base is in the range of local cache, which will leading the next
+	// value is not what we rebased, because the local cache is dropped, here we choose
+	// a quite big value to do this.
+	tk.MustExec("alter table alter_table_auto_random_option auto_random_base = 3000000")
+	t, err = domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("alter_table_auto_random_option"))
+	c.Assert(err, IsNil)
+	c.Assert(t.Meta().AutoRandID, Equals, int64(3000000))
+	tk.MustExec("insert into alter_table_auto_random_option values(),(),(),(),()")
+	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Se, "test", "alter_table_auto_random_option")
+	c.Assert(err, IsNil)
+	orderedHandles = testutil.ConfigTestUtils.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
+	size = int64(len(allHandles))
+	for i := int64(0); i < size; i++ {
+		c.Assert(orderedHandles[i], Equals, i+3000000)
+	}
+	tk.MustExec("drop table alter_table_auto_random_option")
+}
+
+// Test filter different kind of allocators.
+// In special ddl type, for example:
+// 1: ActionRenameTable             : it will abandon all the old allocators.
+// 2: ActionRebaseAutoID            : it will drop row-id-type allocator.
+// 3: ActionModifyTableAutoIdCache  : it will drop row-id-type allocator.
+// 3: ActionRebaseAutoRandomBase    : it will drop auto-rand-type allocator.
+func (s *testAutoRandomSuite) TestFilterDifferentAllocators(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+
+	tk.MustExec("create table t(a bigint auto_random(5) key, b int auto_increment unique)")
+	tk.MustExec("insert into t values()")
+	tk.MustQuery("select b from t").Check(testkit.Rows("1"))
+	allHandles, err := ddltestutil.ExtractAllTableHandles(tk.Se, "test", "t")
+	c.Assert(err, IsNil)
+	c.Assert(len(allHandles), Equals, 1)
+	orderedHandles := testutil.ConfigTestUtils.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
+	c.Assert(orderedHandles[0], Equals, int64(1))
+	tk.MustExec("delete from t")
+
+	// Test rebase auto_increment.
+	tk.MustExec("alter table t auto_increment 3000000")
+	tk.MustExec("insert into t values()")
+	tk.MustQuery("select b from t").Check(testkit.Rows("3000000"))
+	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Se, "test", "t")
+	c.Assert(err, IsNil)
+	c.Assert(len(allHandles), Equals, 1)
+	orderedHandles = testutil.ConfigTestUtils.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
+	c.Assert(orderedHandles[0], Equals, int64(2))
+	tk.MustExec("delete from t")
+
+	// Test rebase auto_random.
+	tk.MustExec("alter table t auto_random_base 3000000")
+	tk.MustExec("insert into t values()")
+	tk.MustQuery("select b from t").Check(testkit.Rows("3000001"))
+	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Se, "test", "t")
+	c.Assert(err, IsNil)
+	c.Assert(len(allHandles), Equals, 1)
+	orderedHandles = testutil.ConfigTestUtils.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
+	c.Assert(orderedHandles[0], Equals, int64(3000000))
+	tk.MustExec("delete from t")
+
+	// Test rename table.
+	tk.MustExec("rename table t to t1")
+	tk.MustExec("insert into t1 values()")
+	res := tk.MustQuery("select b from t1")
+	strInt64, err := strconv.ParseInt(res.Rows()[0][0].(string), 10, 64)
+	c.Assert(err, IsNil)
+	c.Assert(strInt64, Greater, int64(3000002))
+	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Se, "test", "t1")
+	c.Assert(err, IsNil)
+	c.Assert(len(allHandles), Equals, 1)
+	orderedHandles = testutil.ConfigTestUtils.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
+	c.Assert(orderedHandles[0], Greater, int64(3000001))
 }
 
 func (s *testSuite6) TestMaxHandleAddIndex(c *C) {
@@ -975,12 +1130,12 @@ func (s *testSuite6) TestSetDDLReorgBatchSize(c *C) {
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_reorg_batch_size value: '1'"))
 	err = ddlutil.LoadDDLReorgVars(tk.Se)
 	c.Assert(err, IsNil)
-	c.Assert(variable.GetDDLReorgBatchSize(), Equals, int32(variable.MinDDLReorgBatchSize))
+	c.Assert(variable.GetDDLReorgBatchSize(), Equals, variable.MinDDLReorgBatchSize)
 	tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_batch_size = %v", variable.MaxDDLReorgBatchSize+1))
 	tk.MustQuery("show warnings;").Check(testkit.Rows(fmt.Sprintf("Warning 1292 Truncated incorrect tidb_ddl_reorg_batch_size value: '%d'", variable.MaxDDLReorgBatchSize+1)))
 	err = ddlutil.LoadDDLReorgVars(tk.Se)
 	c.Assert(err, IsNil)
-	c.Assert(variable.GetDDLReorgBatchSize(), Equals, int32(variable.MaxDDLReorgBatchSize))
+	c.Assert(variable.GetDDLReorgBatchSize(), Equals, variable.MaxDDLReorgBatchSize)
 	_, err = tk.Exec("set @@global.tidb_ddl_reorg_batch_size = invalid_val")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
 	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 100")

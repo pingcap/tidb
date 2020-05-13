@@ -38,9 +38,11 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/texttree"
+	"go.uber.org/zap"
 )
 
 var planCacheCounter = metrics.PlanCacheCounter.WithLabelValues("prepare")
@@ -274,6 +276,11 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	stmtCtx.IsExecute = true
 	prepared := preparedStmt.PreparedAst
+	stmtCtx.UseCache = prepared.UseCache
+	var cacheKey kvcache.Key
+	if prepared.UseCache {
+		cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
+	}
 	if prepared.CachedPlan != nil {
 		// Rewriting the expression in the select.where condition  will convert its
 		// type from "paramMarker" to "Constant".When Point Select queries are executed,
@@ -283,7 +290,8 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		names := prepared.CachedNames.(types.NameSlice)
 		err := e.rebuildRange(plan)
 		if err != nil {
-			return err
+			logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
+			goto REBUILD
 		}
 		if metrics.ResettablePlanCacheCounterFortTest {
 			metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
@@ -300,10 +308,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		stmtCtx.PointExec = true
 		return nil
 	}
-	var cacheKey kvcache.Key
-	stmtCtx.UseCache = prepared.UseCache
 	if prepared.UseCache {
-		cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
 		if cacheValue, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
 			if err := e.checkPreparedPriv(ctx, sctx, preparedStmt, is); err != nil {
 				return err
@@ -320,8 +325,12 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 				}
 			}
 			if planValid {
-				stmtCtx.AddPlanCacheHitInfo(true)
-				err := e.setFoundInPlanCache(sctx, true)
+				err := e.rebuildRange(cachedVal.Plan)
+				if err != nil {
+					logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
+					goto REBUILD
+				}
+				err = e.setFoundInPlanCache(sctx, true)
 				if err != nil {
 					return err
 				}
@@ -330,10 +339,6 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 				} else {
 					planCacheCounter.Inc()
 				}
-				err = e.rebuildRange(cachedVal.Plan)
-				if err != nil {
-					return err
-				}
 				e.names = cachedVal.OutPutNames
 				e.Plan = cachedVal.Plan
 				stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
@@ -341,6 +346,8 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 			}
 		}
 	}
+
+REBUILD:
 	p, names, err := OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
 	if err != nil {
 		return err
@@ -351,9 +358,8 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	}
 	e.names = names
 	e.Plan = p
-	isRange := e.isRangePartition(p)
 	_, isTableDual := p.(*PhysicalTableDual)
-	if !isTableDual && prepared.UseCache && !isRange {
+	if !isTableDual && prepared.UseCache {
 		cached := NewPSTMTPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan)
 		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
@@ -465,13 +471,15 @@ func (e *Execute) rebuildRange(p Plan) error {
 		}
 	case *PointGetPlan:
 		if x.HandleParam != nil {
-			x.Handle, err = x.HandleParam.Datum.ToInt64(sc)
+			var iv int64
+			iv, err = x.HandleParam.Datum.ToInt64(sc)
 			if err != nil {
 				return err
 			}
+			x.Handle = kv.IntHandle(iv)
 			if x.PartitionInfo != nil {
 				num := x.TblInfo.Partition.Num
-				pos := math.Abs(x.Handle) % int64(num)
+				pos := math.Abs(iv) % int64(num)
 				x.PartitionInfo = &x.TblInfo.Partition.Definitions[pos]
 			}
 			return nil
@@ -490,10 +498,12 @@ func (e *Execute) rebuildRange(p Plan) error {
 	case *BatchPointGetPlan:
 		for i, param := range x.HandleParams {
 			if param != nil {
-				x.Handles[i], err = param.Datum.ToInt64(sc)
+				var iv int64
+				iv, err = param.Datum.ToInt64(sc)
 				if err != nil {
 					return err
 				}
+				x.Handles[i] = kv.IntHandle(iv)
 			}
 		}
 		for i, params := range x.IndexValueParams {
@@ -529,36 +539,6 @@ func (e *Execute) rebuildRange(p Plan) error {
 	return nil
 }
 
-func checkRangePartitionInfo(pi *model.PartitionInfo) bool {
-	if pi != nil && pi.Type == model.PartitionTypeRange {
-		return true
-	}
-	return false
-}
-
-// Prepare plan cache is not support query plan on range partition table.
-func (e *Execute) isRangePartition(p Plan) bool {
-	isRange := false
-	switch x := p.(type) {
-	case *PhysicalTableReader:
-		ts := x.TablePlans[0].(*PhysicalTableScan)
-		return checkRangePartitionInfo(ts.Table.Partition)
-	case *PhysicalIndexLookUpReader:
-		is := x.IndexPlans[0].(*PhysicalIndexScan)
-		return checkRangePartitionInfo(is.Table.Partition)
-	case *PhysicalIndexReader:
-		is := x.IndexPlans[0].(*PhysicalIndexScan)
-		return checkRangePartitionInfo(is.Table.Partition)
-	case PhysicalPlan:
-		for _, child := range x.Children() {
-			if e.isRangePartition(child) {
-				isRange = true
-			}
-		}
-	}
-	return isRange
-}
-
 func (e *Execute) buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) ([]*ranger.Range, error) {
 	if len(is.IdxCols) == 0 {
 		return ranger.FullRange(), nil
@@ -582,6 +562,16 @@ type Set struct {
 	baseSchemaProducer
 
 	VarAssigns []*expression.VarAssignment
+}
+
+// SetConfig represents a plan for set config stmt.
+type SetConfig struct {
+	baseSchemaProducer
+
+	Type     string
+	Instance string
+	Name     string
+	Value    expression.Expression
 }
 
 // SQLBindOpType repreents the SQL bind type

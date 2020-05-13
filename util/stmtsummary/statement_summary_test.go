@@ -585,7 +585,7 @@ func (s *testStmtSummarySuite) TestToDatum(c *C) {
 	n := types.NewTime(types.FromGoTime(time.Unix(s.ssMap.beginTimeForCurInterval, 0)), mysql.TypeTimestamp, types.DefaultFsp)
 	e := types.NewTime(types.FromGoTime(time.Unix(s.ssMap.beginTimeForCurInterval+1800, 0)), mysql.TypeTimestamp, types.DefaultFsp)
 	t := types.NewTime(types.FromGoTime(stmtExecInfo1.StartTime), mysql.TypeTimestamp, types.DefaultFsp)
-	expectedDatum := []interface{}{n, e, "select", stmtExecInfo1.SchemaName, stmtExecInfo1.Digest, stmtExecInfo1.NormalizedSQL,
+	expectedDatum := []interface{}{n, e, "Select", stmtExecInfo1.SchemaName, stmtExecInfo1.Digest, stmtExecInfo1.NormalizedSQL,
 		"db1.tb1,db2.tb2", "a", stmtExecInfo1.User, 1, 0, 0, int64(stmtExecInfo1.TotalLatency),
 		int64(stmtExecInfo1.TotalLatency), int64(stmtExecInfo1.TotalLatency), int64(stmtExecInfo1.TotalLatency),
 		int64(stmtExecInfo1.ParseLatency), int64(stmtExecInfo1.ParseLatency), int64(stmtExecInfo1.CompileLatency),
@@ -885,7 +885,7 @@ func (s *testStmtSummarySuite) TestGetMoreThanOnceSelect(c *C) {
 	stmtExecInfo1 := generateAnyExecInfo()
 	stmtExecInfo1.OriginalSQL = "insert 1"
 	stmtExecInfo1.NormalizedSQL = "insert ?"
-	stmtExecInfo1.StmtCtx.StmtType = "insert"
+	stmtExecInfo1.StmtCtx.StmtType = "Insert"
 	s.ssMap.AddStatement(stmtExecInfo1)
 	schemas, sqls := s.ssMap.GetMoreThanOnceSelect()
 	c.Assert(len(schemas), Equals, 0)
@@ -893,7 +893,7 @@ func (s *testStmtSummarySuite) TestGetMoreThanOnceSelect(c *C) {
 
 	stmtExecInfo1.NormalizedSQL = "select ?"
 	stmtExecInfo1.Digest = "digest1"
-	stmtExecInfo1.StmtCtx.StmtType = "select"
+	stmtExecInfo1.StmtCtx.StmtType = "Select"
 	s.ssMap.AddStatement(stmtExecInfo1)
 	schemas, sqls = s.ssMap.GetMoreThanOnceSelect()
 	c.Assert(len(schemas), Equals, 0)
