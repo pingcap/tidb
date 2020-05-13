@@ -797,6 +797,9 @@ func (s *testIntegrationSuite5) TestAlterTableExchangePartition(c *C) {
 	tk.MustExec(`INSERT INTO e3 VALUES (1),(5)`)
 
 	tk.MustExec("ALTER TABLE e3 EXCHANGE PARTITION p1 WITH TABLE e2;")
+	tk.MustQuery("select * from e3 partition(p0)").Check(testkit.Rows())
+	tk.MustQuery("select * from e2").Check(testkit.Rows("1", "5"))
+
 	tk.MustGetErrCode("ALTER TABLE e3 EXCHANGE PARTITION p0 WITH TABLE e2", tmysql.ErrRowDoesNotMatchPartition)
 	tk.MustGetErrCode("ALTER TABLE e3 EXCHANGE PARTITION p2 WITH TABLE e2", tmysql.ErrRowDoesNotMatchPartition)
 	tk.MustGetErrCode("ALTER TABLE e3 EXCHANGE PARTITION p3 WITH TABLE e2", tmysql.ErrRowDoesNotMatchPartition)
@@ -813,75 +816,136 @@ func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
 		ptSQL       string
 		ntSQL       string
 		exchangeSQL string
-		err         bool
+		err         *terror.Error
 	}
 	cases := []testCase{
 		{
 			"create table pt (id int not null) partition by hash (id) partitions 4;",
 			"create table nt (id int(1) not null);",
 			"alter table pt exchange partition p0 with table nt;",
-			false,
+			nil,
 		},
 		{
 			"create table pt1 (id int not null, fname varchar(3)) partition by hash (id) partitions 4;",
 			"create table nt1 (id int not null, fname varchar(4));",
 			"alter table pt1 exchange partition p0 with table nt1;",
-			true,
+			ddl.ErrTablesDifferentMetadata,
 		},
 		{
 			"create table pt2 (id int not null, salary decimal) partition by hash(id) partitions 4;",
 			"create table nt2 (id int not null, salary decimal(3,2));",
 			"alter table pt2 exchange partition p0 with table nt2;",
-			true,
+			ddl.ErrTablesDifferentMetadata,
 		},
 		{
 			"create table pt3 (id int not null, salary decimal) partition by hash(id) partitions 1;",
 			"create table nt3 (id int not null, salary decimal(10, 1));",
 			"alter table pt3 exchange partition p0 with table nt3",
-			true,
+			ddl.ErrTablesDifferentMetadata,
 		},
 		{
 			"create table pt4 (id int not null) partition by hash(id) partitions 1;",
 			"create table nt4 (id1 int not null);",
 			"alter table pt4 exchange partition p0 with table nt4;",
-			true,
+			ddl.ErrTablesDifferentMetadata,
 		},
 		{
 			"create table pt5 (id int not null, primary key (id)) partition by hash(id) partitions 1;",
 			"create table nt5 (id int not null);",
 			"alter table pt5 exchange partition p0 with table nt5;",
-			true,
+			ddl.ErrTablesDifferentMetadata,
 		},
 		{
 			"create table pt6 (id int not null, salary decimal, index idx (id, salary)) partition by hash(id) partitions 1;",
 			"create table nt6 (id int not null, salary decimal, index idx (salary, id));",
 			"alter table pt6 exchange partition p0 with table nt6;",
-			true,
+			ddl.ErrTablesDifferentMetadata,
 		},
 		{
 			"create table pt7 (id int not null, index idx (id) invisible) partition by hash(id) partitions 1;",
 			"create table nt7 (id int not null, index idx (id));",
 			"alter table pt7 exchange partition p0 with table nt7;",
-			false,
+			nil,
 		},
 		{
 			"create table pt8 (id int not null, index idx (id)) partition by hash(id) partitions 1;",
 			"create table nt8 (id int not null, index id_idx (id));",
 			"alter table pt8 exchange partition p0 with table nt8;",
-			true,
+			ddl.ErrTablesDifferentMetadata,
+		},
+		{
+			// foreign key test
+			// Partition table is yet not supports to add foreign keys in mysql
+			"create table pt9 (id int not null primary key auto_increment,t_id int not null) partition by hash(id) partitions 1;",
+			"create table nt9 (id int not null primary key auto_increment, t_id int not null,foreign key fk_id (t_id) references pt5(id));",
+			"alter table pt9 exchange partition p0 with table pt9;",
+			ddl.ErrPartitionExchangeForeignKey,
+		},
+		{
+			// Generated column (virtual)
+			"create table pt10 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname,' ')) virtual) partition by hash(id) partitions 1;",
+			"create table nt10 (id int not null, lname varchar(30), fname varchar(100));",
+			"alter table pt10 exchange partition p0 with table nt10;",
+			ddl.ErrUnsupportedOnGeneratedColumn,
+		},
+		{
+			"create table pt11 (id int not null, lname varchar(30), fname varchar(100)) partition by hash(id) partitions 1;",
+			"create table nt11 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname, ' ')) virtual);",
+			"alter table pt11 exchange partition p0 with table nt11;",
+			ddl.ErrUnsupportedOnGeneratedColumn,
+		},
+		{
+
+			"create table pt12 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname,' ')) stored) partition by hash(id) partitions 1;",
+			"create table nt12 (id int not null, lname varchar(30), fname varchar(100));",
+			"alter table pt12 exchange partition p0 with table nt12;",
+			nil,
+		},
+		{
+			"create table pt13 (id int not null, lname varchar(30), fname varchar(100)) partition by hash(id) partitions 1;",
+			"create table nt13 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname, ' ')) stored);",
+			"alter table pt13 exchange partition p0 with table nt13;",
+			nil,
+		},
+		{
+			"create table pt14 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname, ' ')) virtual) partition by hash(id) partitions 1;",
+			"create table nt14 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname, ' ')) virtual);",
+			"alter table pt14 exchange partition p0 with table nt14;",
+			nil,
+		},
+		{
+			"create table pt15 (id int not null, unique index uk_id (id)) partition by hash(id) partitions 1;",
+			"create table nt15 (id int not null, index uk_id (id));",
+			"alter table pt15 exchange partition p0 with table nt15",
+			ddl.ErrTablesDifferentMetadata,
+		},
+		{
+			"create table pt16 (id int not null primary key auto_increment) partition by hash(id) partitions 1;",
+			"create table nt16 (id int not null primary key);",
+			"alter table pt16 exchange partition p0 with table nt16;",
+			ddl.ErrTablesDifferentMetadata,
+		},
+		{
+			"create table pt17 (id int not null default 1) partition by hash(id) partitions 1;",
+			"create table nt17 (id int not null);",
+			"alter table pt17 exchange partition p0 with table nt17;",
+			nil,
+		},
+		{
+			"create table pt18 (id int not null) partition by hash(id) partitions 1;",
+			"create view nt18 as select id from nt17;",
+			"alter table pt18 exchange partition p0 with table nt18",
+			ddl.ErrCheckNoSuchTable,
 		},
 	}
+
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	for i, t := range cases {
+	for _, t := range cases {
 		tk.MustExec(t.ptSQL)
 		tk.MustExec(t.ntSQL)
-		if t.err {
-			_, err := tk.Exec(t.exchangeSQL)
-			c.Assert(ddl.ErrTablesDifferentMetadata.Equal(err), IsTrue, Commentf(
-				"case %d fail, sql = `%s`\nexpected error = `%v`\n  actual error = `%v`",
-				i, t.exchangeSQL, ddl.ErrTablesDifferentMetadata, err,
-			))
+		if t.err != nil {
+			tk.MustGetErrCode(t.exchangeSQL, t.err.Code())
 		} else {
 			tk.MustExec(t.exchangeSQL)
 		}

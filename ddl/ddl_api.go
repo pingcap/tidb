@@ -2391,7 +2391,7 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 			}
 
 			if option.Stored {
-				return nil, errUnsupportedOnGeneratedColumn.GenWithStackByArgs("Adding generated stored column through ALTER TABLE")
+				return nil, ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("Adding generated stored column through ALTER TABLE")
 			}
 
 			_, dependColNames := findDependedColumnNames(specNewColumn)
@@ -2767,8 +2767,10 @@ func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) e
 	// Col compatible check
 	for i, sourceCol := range source.Cols() {
 		targetCol := target.Cols()[i]
-		if sourceCol.IsGenerated() != targetCol.IsGenerated() ||
-			sourceCol.Name.L != targetCol.Name.L ||
+		if sourceCol.GeneratedStored != targetCol.GeneratedStored {
+			return ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("Exchanging partitions for non-generated columns")
+		}
+		if sourceCol.Name.L != targetCol.Name.L ||
 			!checkFielTypeCompatible(&sourceCol.FieldType, &targetCol.FieldType) {
 			return err
 		}
@@ -2809,6 +2811,26 @@ func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) e
 	return nil
 }
 
+func checkExchangePartition(pt *model.TableInfo, nt *model.TableInfo) error {
+
+	if nt.IsView() || nt.IsSequence() {
+		return errors.Trace(ErrCheckNoSuchTable)
+	}
+	if pt.GetPartitionInfo() == nil {
+		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
+	}
+	if nt.GetPartitionInfo() != nil {
+		return errors.Trace(ErrPartitionExchangePartTable.GenWithStackByArgs(nt.Name))
+	}
+
+	if nt.ForeignKeys != nil {
+		return errors.Trace(ErrPartitionExchangeForeignKey.GenWithStackByArgs(nt.Name))
+	}
+
+	// NOTE: if nt is temporary table, it should be checked
+	return nil
+}
+
 func (d *ddl) ExchangeTableParition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	is := d.infoHandle.Get()
 	ptSchema, ok := is.SchemaByName(ident.Schema)
@@ -2836,23 +2858,19 @@ func (d *ddl) ExchangeTableParition(ctx sessionctx.Context, ident ast.Ident, spe
 
 	ntMeta := nt.Meta()
 
-	if ptMeta.GetPartitionInfo() == nil {
-		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
+	err = checkExchangePartition(ptMeta, ntMeta)
+	if err != nil {
+		return errors.Trace(err)
 	}
-	if ntMeta.GetPartitionInfo() != nil {
-		return errors.Trace(ErrPartitionExchangePartTable.GenWithStackByArgs(ntIdent.Name))
-	}
-
-	// NOTE: if nt is temporary table, it should be checked
 
 	partName := spec.PartitionNames[0].L
+
+	// NOTE: if pt is subPartitioned, it should be checked
 
 	_, err = tables.FindPartitionByName(ptMeta, partName)
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	// NOTE: if pt is subPartitioned, it should be checked
 
 	err = checkTableDefCompatible(ptMeta, ntMeta)
 	if err != nil {
