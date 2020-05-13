@@ -224,7 +224,7 @@ func (e *groupConcatDistinct) GetTruncated() *int32 {
 
 type sortRow struct {
 	buffer  *bytes.Buffer
-	byItems []types.Datum
+	byItems []*types.Datum
 }
 
 type topNRows struct {
@@ -245,7 +245,7 @@ func (h topNRows) Len() int {
 func (h topNRows) Less(i, j int) bool {
 	n := len(h.rows[i].byItems)
 	for k := 0; k < n; k++ {
-		ret, err := h.rows[i].byItems[k].CompareDatum(h.sctx.GetSessionVars().StmtCtx, &h.rows[j].byItems[k])
+		ret, err := h.rows[i].byItems[k].CompareDatum(h.sctx.GetSessionVars().StmtCtx, h.rows[j].byItems[k])
 		if err != nil {
 			h.err = err
 			return false
@@ -384,14 +384,14 @@ func (e *groupConcatOrder) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 		}
 		sortRow := sortRow{
 			buffer:  buffer,
-			byItems: make([]types.Datum, 0, len(e.byItems)),
+			byItems: make([]*types.Datum, 0, len(e.byItems)),
 		}
 		for _, byItem := range e.byItems {
 			d, err := byItem.Expr.Eval(row)
 			if err != nil {
 				return err
 			}
-			sortRow.byItems = append(sortRow.byItems, d)
+			sortRow.byItems = append(sortRow.byItems, d.Clone())
 		}
 		truncated := p.topN.tryToAdd(sortRow)
 		if p.topN.err != nil {
@@ -493,14 +493,14 @@ func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx sessionctx.Context, 
 		p.valSet.Insert(joinedVal)
 		sortRow := sortRow{
 			buffer:  buffer,
-			byItems: make([]types.Datum, 0, len(e.byItems)),
+			byItems: make([]*types.Datum, 0, len(e.byItems)),
 		}
 		for _, byItem := range e.byItems {
 			d, err := byItem.Expr.Eval(row)
 			if err != nil {
 				return err
 			}
-			sortRow.byItems = append(sortRow.byItems, d)
+			sortRow.byItems = append(sortRow.byItems, d.Clone())
 		}
 		truncated := p.topN.tryToAdd(sortRow)
 		if p.topN.err != nil {
