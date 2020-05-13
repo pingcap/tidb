@@ -2437,11 +2437,11 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 		// known rows with specific sequence next value under current add column logic.
 		// More explanation can refer: TestSequenceDefaultLogic's comment in sequence_test.go
 		if option.Tp == ast.ColumnOptionDefaultValue {
-			isExpr, err := checkDefaultValueIsExpr(option)
+			_, isSeqExpr, err := tryToGetSequenceDefaultValue(option)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			if isExpr {
+			if isSeqExpr {
 				return nil, errors.Trace(ErrAddColumnWithSequenceAsDefault.GenWithStackByArgs(specNewColumn.Name.Name.O))
 			}
 		}
@@ -2994,11 +2994,6 @@ func checkModifyTypes(origin *types.FieldType, to *types.FieldType, needRewriteC
 
 	err := checkModifyCharsetAndCollation(to.Charset, to.Collate, origin.Charset, origin.Collate, needRewriteCollationData)
 	return errors.Trace(err)
-}
-
-func checkDefaultValueIsExpr(option *ast.ColumnOption) (bool, error) {
-	_, isSeqExpr, err := tryToGetSequenceDefaultValue(option)
-	return isSeqExpr, errors.Trace(err)
 }
 
 func setDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) (bool, error) {
