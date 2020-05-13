@@ -926,7 +926,7 @@ func (s *testSequenceSuite) TestSequenceFunctionPrivilege(c *C) {
 	s.tk.MustExec("drop user myuser@localhost")
 }
 
-// Background: the new added column in TiDB won't fill the known rows with specific
+// Background: the newly added column in TiDB won't fill the known rows with specific
 // sequence next value immediately. Every time TiDB select the data from storage, kvDB
 // will fill the originDefaultValue to these incomplete rows (but not store).
 //
