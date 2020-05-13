@@ -1469,19 +1469,6 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 	return joins, true
 }
 
-func getAllDataSourceTotalRowSize(plan LogicalPlan) float64 {
-	if ds, ok := plan.(*DataSource); ok {
-		rowCount := ds.statsInfo().Count()
-		rowSize := ds.TblColHists.GetTableAvgRowSize(ds.ctx, ds.schema.Columns, kv.StoreType(ds.preferStoreType), ds.handleCol != nil)
-		return float64(rowCount) * rowSize
-	}
-	ret := float64(0)
-	for _, child := range plan.Children() {
-		ret += getAllDataSourceTotalRowSize(child)
-	}
-	return ret
-}
-
 func (p *LogicalJoin) tryToGetBroadCastJoin(prop *property.PhysicalProperty) []PhysicalPlan {
 	if !prop.IsEmpty() {
 		return nil
@@ -1494,6 +1481,15 @@ func (p *LogicalJoin) tryToGetBroadCastJoin(prop *property.PhysicalProperty) []P
 		return nil
 	}
 
+	if hasPrefer, idx := p.getPreferredBCJLocalIndex(); hasPrefer {
+		return p.tryToGetBroadCastJoinByPreferGlobalIdx(prop, 1-idx)
+	}
+	results := p.tryToGetBroadCastJoinByPreferGlobalIdx(prop, 0)
+	results = append(results, p.tryToGetBroadCastJoinByPreferGlobalIdx(prop, 1)...)
+	return results
+}
+
+func (p *LogicalJoin) tryToGetBroadCastJoinByPreferGlobalIdx(prop *property.PhysicalProperty, preferredGlobalIndex int) []PhysicalPlan {
 	lkeys, rkeys := p.GetJoinKeys()
 	baseJoin := basePhysicalJoin{
 		JoinType:        p.JoinType,
@@ -1508,18 +1504,6 @@ func (p *LogicalJoin) tryToGetBroadCastJoin(prop *property.PhysicalProperty) []P
 	if p.children[0].statsInfo().Count() > p.children[1].statsInfo().Count() {
 		preferredBuildIndex = 1
 	}
-	preferredGlobalIndex := preferredBuildIndex
-	if prop.TaskTp != property.CopTiFlashGlobalReadTaskType {
-		if hasPrefer, idx := p.getPreferredBCJLocalIndex(); hasPrefer {
-			preferredGlobalIndex = 1 - idx
-		} else if getAllDataSourceTotalRowSize(p.children[preferredGlobalIndex]) > getAllDataSourceTotalRowSize(p.children[1-preferredGlobalIndex]) {
-			preferredGlobalIndex = 1 - preferredGlobalIndex
-		}
-	}
-	// todo: currently, build side is the one has less rowcount and global read side
-	//  is the one has less datasource row size(which mean less remote read), need
-	//  to use cbo to decide the build side and global read side if preferred build index
-	//  is not equal to preferred global index
 	baseJoin.InnerChildIdx = preferredBuildIndex
 	childrenReqProps := make([]*property.PhysicalProperty, 2)
 	childrenReqProps[preferredGlobalIndex] = &property.PhysicalProperty{TaskTp: property.CopTiFlashGlobalReadTaskType, ExpectedCnt: math.MaxFloat64}

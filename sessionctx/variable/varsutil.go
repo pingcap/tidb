@@ -546,6 +546,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		}
 		return value, nil
 	case TiDBOptCPUFactor,
+		TiDBOptTiFlashConcurrencyFactor,
 		TiDBOptCopCPUFactor,
 		TiDBOptNetworkFactor,
 		TiDBOptScanFactor,

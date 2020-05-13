@@ -552,10 +552,8 @@ func (p *PhysicalBroadCastJoin) GetCost(lCnt, rCnt float64) float64 {
 	}
 	numPairs := helper.estimate()
 	probeCost := numPairs * sessVars.CopCPUFactor
-	// should divided by the cop concurrency, which is decide by TiFlash, but TiDB
-	// can not get the information from TiFlash, so just use `sessVars.HashJoinConcurrency`
-	// as a workaround
-	probeCost /= float64(sessVars.HashJoinConcurrency)
+	// should divided by the concurrency in tiflash, which should be the number of core in tiflash nodes.
+	probeCost /= float64(sessVars.CopTiFlashConcurrencyFactor)
 	cpuCost += probeCost
 
 	// todo since TiFlash join is significant faster than TiDB join, maybe
