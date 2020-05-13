@@ -108,5 +108,98 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestHintWithRequiredProperty",
+    "Cases": [
+      {
+        "SQL": "desc select /*+ INL_JOIN(t2) */ * from t t1, t t2 where t1.a = t2.b order by t2.a",
+        "Plan": [
+          "Sort_7 12487.50 root test.t2.a:asc",
+          "└─IndexJoin_15 12487.50 root inner join, inner:IndexLookUp_14, outer key:test.t1.a, inner key:test.t2.b",
+          "  ├─TableReader_17 10000.00 root data:TableScan_16",
+          "  │ └─TableScan_16 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "  └─IndexLookUp_14 9.99 root ",
+          "    ├─Selection_13 9.99 cop[tikv] not(isnull(test.t2.b))",
+          "    │ └─IndexScan_11 10.00 cop[tikv] table:t2, index:b, range: decided by [eq(test.t2.b, test.t1.a)], keep order:false, stats:pseudo",
+          "    └─TableScan_12 9.99 cop[tikv] table:t2, keep order:false, stats:pseudo"
+        ],
+        "Warnings": []
+      },
+      {
+        "SQL": "desc select * from t t1, (select /*+ HASH_AGG() */ b, max(a) from t t2 group by b) t2 where t1.b = t2.b order by t1.b",
+        "Plan": [
+          "Sort_10 9990.00 root test.t1.b:asc",
+          "└─Projection_12 9990.00 root test.t1.a, test.t1.b, test.t1.c, test.t2.b, max(a)",
+          "  └─HashLeftJoin_18 9990.00 root inner join, inner:HashAgg_22, equal:[eq(test.t1.b, test.t2.b)]",
+          "    ├─TableReader_30 9990.00 root data:Selection_29",
+          "    │ └─Selection_29 9990.00 cop[tikv] not(isnull(test.t1.b))",
+          "    │   └─TableScan_28 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "    └─HashAgg_22 7992.00 root group by:test.t2.b, funcs:max(test.t2.a), firstrow(test.t2.b)",
+          "      └─IndexReader_27 9990.00 root index:IndexScan_26",
+          "        └─IndexScan_26 9990.00 cop[tikv] table:t2, index:b, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Warnings": []
+      },
+      {
+        "SQL": "desc select /*+ INL_JOIN(t2) */ * from t t1, t t2 where t1.a = t2.c order by t1.a",
+        "Plan": [
+          "Sort_7 12487.50 root test.t1.a:asc",
+          "└─HashLeftJoin_13 12487.50 root inner join, inner:TableReader_17, equal:[eq(test.t1.a, test.t2.c)]",
+          "  ├─TableReader_19 10000.00 root data:TableScan_18",
+          "  │ └─TableScan_18 10000.00 cop[tikv] table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "  └─TableReader_17 9990.00 root data:Selection_16",
+          "    └─Selection_16 9990.00 cop[tikv] not(isnull(test.t2.c))",
+          "      └─TableScan_15 10000.00 cop[tikv] table:t2, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Warnings": [
+          "[planner:1815]Optimizer Hint /*+ INL_JOIN(t2) */ or /*+ TIDB_INLJ(t2) */ is inapplicable",
+          "[planner:1815]Optimizer Hint /*+ INL_JOIN(t2) */ or /*+ TIDB_INLJ(t2) */ is inapplicable"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestIndexHintWarning",
+    "Cases": [
+      {
+        "SQL": "select /*+ USE_INDEX(t1, j) */ * from t1",
+        "Warnings": [
+          "[planner:1176]Key 'j' doesn't exist in table 't1'"
+        ]
+      },
+      {
+        "SQL": "select /*+ IGNORE_INDEX(t1, j) */ * from t1",
+        "Warnings": [
+          "[planner:1176]Key 'j' doesn't exist in table 't1'"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t2, a, b, c) */ * from t1",
+        "Warnings": [
+          "[planner:1815]use_index(t2, a, b, c) is inapplicable, check whether the table(t2) exists"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t2) */ * from t1",
+        "Warnings": [
+          "[planner:1815]use_index(t2) is inapplicable, check whether the table(t2) exists"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t1, a), USE_INDEX(t2, a), USE_INDEX(t3, a) */ * from t1, t2 where t1.a=t2.a",
+        "Warnings": [
+          "[planner:1815]use_index(t3, a) is inapplicable, check whether the table(t3) exists"
+        ]
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t3, a), USE_INDEX(t4, b), IGNORE_INDEX(t3, a) */ * from t1, t2 where t1.a=t2.a",
+        "Warnings": [
+          "[planner:1815]use_index(t3, a) is inapplicable, check whether the table(t3) exists",
+          "[planner:1815]use_index(t4, b) is inapplicable, check whether the table(t4) exists",
+          "[planner:1815]ignore_index(t3, a) is inapplicable, check whether the table(t3) exists"
+        ]
+      }
+    ]
   }
 ]

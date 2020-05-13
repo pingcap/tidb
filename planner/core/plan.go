@@ -101,7 +101,10 @@ type LogicalPlan interface {
 	preparePossibleProperties() [][]*expression.Column
 
 	// exhaustPhysicalPlans generates all possible plans that can match the required property.
-	exhaustPhysicalPlans(*property.PhysicalProperty) []PhysicalPlan
+	// It will return:
+	// 1. All possible plans that can match the required property.
+	// 2. Whether the SQL hint can work. Return true if there is no hint.
+	exhaustPhysicalPlans(*property.PhysicalProperty) (physicalPlans []PhysicalPlan, hintCanWork bool)
 
 	extractCorrelatedCols() []*expression.CorrelatedColumn
 
