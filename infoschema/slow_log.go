@@ -252,8 +252,18 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 		if err != nil {
 			break
 		}
+<<<<<<< HEAD:infoschema/slow_log.go
 		if st.time.Location() != tz {
 			st.time = st.time.In(tz)
+=======
+		st.time = types.NewTime(types.FromGoTime(t), mysql.TypeDatetime, types.MaxFsp)
+		if checker != nil {
+			valid = checker.isTimeValid(st.time)
+>>>>>>> 22f0c7f... executor: fix slow_query bug when query with time equal condition and in different time zone (#17082):executor/slow_query.go
+		}
+		if t.Location() != tz {
+			t = t.In(tz)
+			st.time = types.NewTime(types.FromGoTime(t), mysql.TypeDatetime, types.MaxFsp)
 		}
 	case variable.SlowLogTxnStartTSStr:
 		st.txnStartTs, err = strconv.ParseUint(value, 10, 64)
