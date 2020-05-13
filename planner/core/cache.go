@@ -39,7 +39,7 @@ var (
 	// PreparedPlanCacheMemoryGuardRatio stores the global config "prepared-plan-cache-memory-guard-ratio".
 	PreparedPlanCacheMemoryGuardRatio = 0.1
 	// PreparedPlanCacheMaxMemory stores the max memory size defined in the global config "performance-max-memory".
-	PreparedPlanCacheMaxMemory atomic2.Uint64 = *atomic2.NewUint64(math.MaxUint64)
+	PreparedPlanCacheMaxMemory = *atomic2.NewUint64(math.MaxUint64)
 )
 
 const (

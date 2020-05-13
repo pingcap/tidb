@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -127,7 +128,7 @@ func (s *testDecoderSuite) TestRowDecoder(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(bs, NotNil)
 
-		r, err := de.DecodeAndEvalRowWithMap(ctx, int64(i), bs, time.UTC, timeZoneIn8, nil)
+		r, err := de.DecodeAndEvalRowWithMap(ctx, kv.IntHandle(i), bs, time.UTC, timeZoneIn8, nil)
 		c.Assert(err, IsNil)
 		// Last column is primary-key column, and the table primary-key is handle, then the primary-key value won't be
 		// stored in raw data, but store in the raw key.
@@ -145,7 +146,7 @@ func (s *testDecoderSuite) TestRowDecoder(c *C) {
 			}
 		}
 		// test decode with no generated column.
-		r2, err := deWithNoGenCols.DecodeAndEvalRowWithMap(ctx, int64(i), bs, time.UTC, timeZoneIn8, nil)
+		r2, err := deWithNoGenCols.DecodeAndEvalRowWithMap(ctx, kv.IntHandle(i), bs, time.UTC, timeZoneIn8, nil)
 		c.Assert(err, IsNil)
 		for k, v := range r2 {
 			v1, ok := r[k]

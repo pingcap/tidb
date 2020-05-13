@@ -628,7 +628,9 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionTruncateTable:
 		ver, err = onTruncateTable(d, t, job)
 	case model.ActionRebaseAutoID:
-		ver, err = onRebaseAutoID(d.store, t, job)
+		ver, err = onRebaseRowIDType(d.store, t, job)
+	case model.ActionRebaseAutoRandomBase:
+		ver, err = onRebaseAutoRandomType(d.store, t, job)
 	case model.ActionRenameTable:
 		ver, err = onRenameTable(d, t, job)
 	case model.ActionShardRowID:
@@ -653,6 +655,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onUpdateFlashReplicaStatus(t, job)
 	case model.ActionCreateSequence:
 		ver, err = onCreateSequence(d, t, job)
+	case model.ActionAlterIndexVisibility:
+		ver, err = onAlterIndexVisibility(t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled
