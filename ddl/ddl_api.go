@@ -1138,6 +1138,10 @@ IndicesLoop:
 		if implicitPK == nil && key.Unique {
 			// ensure all columns in unique key have NOT NULL flag
 			allColNotNull := true
+			// The case index without any columns should never happen, but still do a check here
+			if key.Columns == nil || len(key.Columns) == 0 {
+				continue
+			}
 			for _, idxCol := range key.Columns {
 				col := model.FindColumnInfo(tblInfo.Cols(), idxCol.Name.L)
 				// This Index has a column in DeleteOnly state,
@@ -1148,6 +1152,7 @@ IndicesLoop:
 				}
 				if !mysql.HasNotNullFlag(col.Flag) {
 					allColNotNull = false
+					break
 				}
 			}
 			if allColNotNull {
