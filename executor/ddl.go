@@ -422,6 +422,7 @@ func (e *DDLExec) getRecoverTableByTableName(s *ast.RecoverTableStmt, t *meta.Me
 				fmt.Sprintf("(Table ID %d)", job.TableID),
 			)
 		}
+<<<<<<< HEAD
 		if table.Meta().Name.L == s.Table.Name.L {
 			schema, ok := dom.InfoSchema().SchemaByID(job.SchemaID)
 			if !ok {
@@ -433,6 +434,57 @@ func (e *DDLExec) getRecoverTableByTableName(s *ast.RecoverTableStmt, t *meta.Me
 				tblInfo = table.Meta()
 				break
 			}
+=======
+		finish, err := fn(job, table.Meta())
+		if err != nil || finish {
+			return finish, err
+		}
+	}
+	return false, nil
+}
+
+func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.Job, *model.TableInfo, error) {
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		return nil, nil, err
+	}
+	schemaName := tableName.Schema.L
+	if schemaName == "" {
+		schemaName = strings.ToLower(e.ctx.GetSessionVars().CurrentDB)
+	}
+	if schemaName == "" {
+		return nil, nil, errors.Trace(core.ErrNoDB)
+	}
+	gcSafePoint, err := gcutil.GetGCSafePoint(e.ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	var jobInfo *model.Job
+	var tableInfo *model.TableInfo
+	dom := domain.GetDomain(e.ctx)
+	handleJobAndTableInfo := func(job *model.Job, tblInfo *model.TableInfo) (bool, error) {
+		if tblInfo.Name.L != tableName.Name.L {
+			return false, nil
+		}
+		schema, ok := dom.InfoSchema().SchemaByID(job.SchemaID)
+		if !ok {
+			return false, nil
+		}
+		if schema.Name.L == schemaName {
+			tableInfo = tblInfo
+			jobInfo = job
+			return true, nil
+		}
+		return false, nil
+	}
+	fn := func(jobs []*model.Job) (bool, error) {
+		return GetDropOrTruncateTableInfoFromJobs(jobs, gcSafePoint, dom, handleJobAndTableInfo)
+	}
+	err = admin.IterHistoryDDLJobs(txn, fn)
+	if err != nil {
+		if terror.ErrorEqual(variable.ErrSnapshotTooOld, err) {
+			return nil, nil, errors.Errorf("Can't find dropped/truncated table '%s' in GC safe point %s", tableName.Name.O, model.TSConvert2Time(gcSafePoint).String())
+>>>>>>> 5a0787d... executor: fix flashback table faild in uppercase database name (#17093)
 		}
 	}
 	if tblInfo == nil {
