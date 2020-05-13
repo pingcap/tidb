@@ -879,7 +879,7 @@ func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
 			// Partition table is yet not supports to add foreign keys in mysql
 			"create table pt9 (id int not null primary key auto_increment,t_id int not null) partition by hash(id) partitions 1;",
 			"create table nt9 (id int not null primary key auto_increment, t_id int not null,foreign key fk_id (t_id) references pt5(id));",
-			"alter table pt9 exchange partition p0 with table pt9;",
+			"alter table pt9 exchange partition p0 with table nt9;",
 			ddl.ErrPartitionExchangeForeignKey,
 		},
 		{
@@ -938,15 +938,30 @@ func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
 			"alter table pt18 exchange partition p0 with table nt18",
 			ddl.ErrCheckNoSuchTable,
 		},
+		{
+			"create table pt19 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname, ' ')) stored) partition by hash(id) partitions 1;",
+			"create table nt19 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname, ' ')) virtual);",
+			"alter table pt19 exchange partition p0 with table nt19;",
+			ddl.ErrUnsupportedOnGeneratedColumn,
+		},
 	}
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	for _, t := range cases {
+	for i, t := range cases {
 		tk.MustExec(t.ptSQL)
 		tk.MustExec(t.ntSQL)
 		if t.err != nil {
-			tk.MustGetErrCode(t.exchangeSQL, t.err.Code())
+			_, err := tk.Exec(t.exchangeSQL)
+			originErr := errors.Cause(err)
+			tErr, ok := originErr.(*terror.Error)
+			c.Assert(ok, IsTrue, Commentf("case %d fail, sql = `%s`\nexpect type 'terror.Error', but obtain '%T'", i,
+				t.exchangeSQL, originErr))
+			sqlErr := tErr.ToSQLError()
+			c.Assert(int(t.err.Code()), Equals, int(sqlErr.Code), Commentf(
+				"case %d fail, sql = `%s`\nexpected error = `%v`\n  actual error = `%v`",
+				i, t.exchangeSQL, t.err, err,
+			))
 		} else {
 			tk.MustExec(t.exchangeSQL)
 		}
@@ -1872,8 +1887,6 @@ func (s *testIntegrationSuite3) TestPartitionErrorCode(c *C) {
 	tk.MustGetErrCode("alter table t_part optimize partition p0,p1;", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t_part rebuild partition p0,p1;", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t_part remove partitioning;", errno.ErrUnsupportedDDLOperation)
-	tk.MustExec("create table t_part2 like t_part")
-	tk.MustGetErrCode("alter table t_part exchange partition p0 with table t_part2", errno.ErrUnsupportedDDLOperation)
 }
 
 func (s *testIntegrationSuite5) TestConstAndTimezoneDepent(c *C) {

@@ -2176,8 +2176,6 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			err = errors.Trace(errUnsupportedOptimizePartition)
 		case ast.AlterTableRemovePartitioning:
 			err = errors.Trace(errUnsupportedRemovePartition)
-		case ast.AlterTableExchangePartition:
-			err = errors.Trace(errUnsupportedExchangePartition)
 		case ast.AlterTableDropColumn:
 			err = d.DropColumn(ctx, ident, spec)
 		case ast.AlterTableDropIndex:
@@ -2769,7 +2767,8 @@ func checkFielTypeCompatible(ft *types.FieldType, other *types.FieldType) bool {
 		ft.Charset == other.Charset &&
 		ft.Collate == other.Collate &&
 		(ft.Flen == other.Flen || ft.StorageLength() != types.VarStorageLen) &&
-		mysql.HasUnsignedFlag(ft.Flag) == mysql.HasUnsignedFlag(other.Flag)
+		mysql.HasUnsignedFlag(ft.Flag) == mysql.HasUnsignedFlag(other.Flag) &&
+		mysql.HasAutoIncrementFlag(ft.Flag) == mysql.HasAutoIncrementFlag(other.Flag)
 	if !partialEqual || len(ft.Elems) != len(other.Elems) {
 		return false
 	}
@@ -2781,6 +2780,13 @@ func checkFielTypeCompatible(ft *types.FieldType, other *types.FieldType) bool {
 	return true
 }
 
+func checkColumnVirtual(col *model.ColumnInfo) bool {
+	if col.IsGenerated() && !col.GeneratedStored {
+		return true
+	}
+	return false
+}
+
 func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) error {
 	err := ErrTablesDifferentMetadata
 	if len(source.Cols()) != len(target.Cols()) {
@@ -2789,7 +2795,7 @@ func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) e
 	// Col compatible check
 	for i, sourceCol := range source.Cols() {
 		targetCol := target.Cols()[i]
-		if sourceCol.GeneratedStored != targetCol.GeneratedStored {
+		if checkColumnVirtual(sourceCol) != checkColumnVirtual(targetCol) {
 			return ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("Exchanging partitions for non-generated columns")
 		}
 		if sourceCol.Name.L != targetCol.Name.L ||
