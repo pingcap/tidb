@@ -1140,7 +1140,7 @@ IndicesLoop:
 			allColNotNull := true
 			for _, idxCol := range key.Columns {
 				col := model.FindColumnInfo(tblInfo.Cols(), idxCol.Name.L)
-				// This Index has a column in DeleteOnly state,
+				// This index has a column in DeleteOnly state,
 				// or it is expression index (it defined on a hidden column),
 				// it can not be implicit PK, go to next index iterator
 				if col == nil || col.Hidden {
