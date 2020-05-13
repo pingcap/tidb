@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -2583,7 +2584,7 @@ func (s *testPlanSuite) optimize(ctx context.Context, sql string) (PhysicalPlan,
 	return p.(PhysicalPlan), stmt, err
 }
 
-func byItemsToProperty(byItems []*ByItems) *property.PhysicalProperty {
+func byItemsToProperty(byItems []*util.ByItems) *property.PhysicalProperty {
 	pp := &property.PhysicalProperty{}
 	for _, item := range byItems {
 		pp.Items = append(pp.Items, property.Item{Col: item.Expr.(*expression.Column), Desc: item.Desc})
@@ -2669,7 +2670,7 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 		_, err = lp.recursiveDeriveStats()
 		c.Assert(err, IsNil)
 		var ds *DataSource
-		var byItems []*ByItems
+		var byItems []*util.ByItems
 		for ds == nil {
 			switch v := lp.(type) {
 			case *DataSource:
