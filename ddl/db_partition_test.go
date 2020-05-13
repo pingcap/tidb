@@ -1679,6 +1679,9 @@ func (s *testIntegrationSuite3) TestPartitionErrorCode(c *C) {
 	tk.MustGetErrCode("alter table t_part check partition p0, p1;", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t_part optimize partition p0,p1;", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t_part rebuild partition p0,p1;", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t_part remove partitioning;", errno.ErrUnsupportedDDLOperation)
+	tk.MustExec("create table t_part2 like t_part")
+	tk.MustGetErrCode("alter table t_part exchange partition p0 with table t_part2", errno.ErrUnsupportedDDLOperation)
 }
 
 func (s *testIntegrationSuite5) TestConstAndTimezoneDepent(c *C) {

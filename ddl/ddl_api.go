@@ -2174,6 +2174,10 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			err = errors.Trace(errUnsupportedRebuildPartition)
 		case ast.AlterTableOptimizePartition:
 			err = errors.Trace(errUnsupportedOptimizePartition)
+		case ast.AlterTableRemovePartitioning:
+			err = errors.Trace(errUnsupportedRemovePartition)
+		case ast.AlterTableExchangePartition:
+			err = errors.Trace(errUnsupportedExchangePartition)
 		case ast.AlterTableDropColumn:
 			err = d.DropColumn(ctx, ident, spec)
 		case ast.AlterTableDropIndex:
