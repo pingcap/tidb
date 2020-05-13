@@ -72,7 +72,7 @@ func TestLoadPluginSuccess(t *testing.T) {
 	}()
 
 	// trigger load.
-	err := Load(ctx, cfg)
+	err := LoadDeprecated(ctx, cfg)
 	if err != nil {
 		t.Errorf("load plugin [%s] fail", pluginSign)
 	}
@@ -164,7 +164,7 @@ func TestLoadPluginSkipError(t *testing.T) {
 	}()
 
 	// trigger load.
-	err := Load(ctx, cfg)
+	err := LoadDeprecated(ctx, cfg)
 	if err != nil {
 		t.Errorf("load plugin [%s] fail %v", pluginSign, err)
 	}
@@ -258,7 +258,7 @@ func TestLoadFail(t *testing.T) {
 		testHook = nil
 	}()
 
-	err := Load(ctx, cfg)
+	err := LoadDeprecated(ctx, cfg)
 	if err == nil {
 		t.Errorf("load plugin should fail")
 	}

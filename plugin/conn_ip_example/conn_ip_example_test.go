@@ -32,7 +32,7 @@ func LoadRunShutdownPluginExample() {
 		PluginVarNames: &pluginVarNames,
 	}
 
-	err := plugin.Load(ctx, cfg)
+	err := plugin.LoadDeprecated(ctx, cfg)
 	if err != nil {
 		panic(err)
 	}
