@@ -16,7 +16,6 @@ package infoschema_test
 import (
 	"crypto/tls"
 	"fmt"
-	plannercore "github.com/pingcap/tidb/planner/core"
 	"net"
 	"net/http/httptest"
 	"os"
@@ -37,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/helper"
