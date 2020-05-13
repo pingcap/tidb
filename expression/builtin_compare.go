@@ -125,7 +125,10 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		fieldEvalTps = append(fieldEvalTps, retEvalTp)
 	}
 
-	bf := newBaseBuiltinFuncWithTp(ctx, args, retEvalTp, fieldEvalTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, retEvalTp, fieldEvalTps...)
+	if err != nil {
+		return nil, err
+	}
 
 	bf.tp.Flag |= resultFieldType.Flag
 	resultFieldType.Flen, resultFieldType.Decimal = 0, types.UnspecifiedLength
@@ -430,7 +433,10 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	for i := range args {
 		argTps[i] = tp
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, tp, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, tp, argTps...)
+	if err != nil {
+		return nil, err
+	}
 	if cmpAsDatetime {
 		tp = types.ETDatetime
 	}
@@ -629,7 +635,10 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	for i := range args {
 		argTps[i] = tp
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, tp, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, tp, argTps...)
+	if err != nil {
+		return nil, err
+	}
 	if cmpAsDatetime {
 		tp = types.ETDatetime
 	}
@@ -840,7 +849,10 @@ func (c *intervalFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	for range args {
 		argTps = append(argTps, argTp)
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTps...)
+	if err != nil {
+		return nil, err
+	}
 	var sig builtinFunc
 	if allInt {
 		sig = &builtinIntervalIntSig{bf}
@@ -1053,8 +1065,8 @@ func GetCmpFunction(ctx sessionctx.Context, lhs, rhs Expression) CompareFunc {
 	case types.ETDecimal:
 		return CompareDecimal
 	case types.ETString:
-		_, dstCollation, dstFlen := DeriveCollationFromExprs(ctx, lhs, rhs)
-		return genCompareString(dstCollation, dstFlen)
+		_, dstCollation := DeriveCollationFromExprs(ctx, lhs, rhs)
+		return genCompareString(dstCollation)
 	case types.ETDuration:
 		return CompareDuration
 	case types.ETDatetime, types.ETTimestamp:
@@ -1249,21 +1261,21 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	}
 	if isExceptional && (c.op == opcode.EQ || c.op == opcode.NullEQ) {
 		// This will always be false.
-		return []Expression{Zero, One}
+		return []Expression{NewZero(), NewOne()}
 	}
 	if isPositiveInfinite {
 		// If the op is opcode.LT, opcode.LE
 		// This will always be true.
 		// If the op is opcode.GT, opcode.GE
 		// This will always be false.
-		return []Expression{Zero, One}
+		return []Expression{NewZero(), NewOne()}
 	}
 	if isNegativeInfinite {
 		// If the op is opcode.GT, opcode.GE
 		// This will always be true.
 		// If the op is opcode.LT, opcode.LE
 		// This will always be false.
-		return []Expression{One, Zero}
+		return []Expression{NewOne(), NewZero()}
 	}
 
 	return []Expression{finalArg0, finalArg1}
@@ -1282,7 +1294,10 @@ func (c *compareFunctionClass) getFunction(ctx sessionctx.Context, rawArgs []Exp
 
 // generateCmpSigs generates compare function signatures.
 func (c *compareFunctionClass) generateCmpSigs(ctx sessionctx.Context, args []Expression, tp types.EvalType) (sig builtinFunc, err error) {
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, tp, tp)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, tp, tp)
+	if err != nil {
+		return nil, err
+	}
 	if tp == types.ETJson {
 		// In compare, if we cast string to JSON, we shouldn't parse it.
 		for i := range args {
@@ -2421,7 +2436,7 @@ func CompareInt(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhsR
 	return int64(res), false, nil
 }
 
-func genCompareString(collation string, flen int) func(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhsRow chunk.Row) (int64, bool, error) {
+func genCompareString(collation string) func(sctx sessionctx.Context, lhsArg Expression, rhsArg Expression, lhsRow chunk.Row, rhsRow chunk.Row) (int64, bool, error) {
 	return func(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhsRow chunk.Row) (int64, bool, error) {
 		return CompareStringWithCollationInfo(sctx, lhsArg, rhsArg, lhsRow, rhsRow, collation)
 	}

@@ -791,6 +791,7 @@ func (s *testEvaluatorSuite) TestJSONSearch(c *C) {
 		{[]interface{}{jsonString, `one`, `abc`}, `"$[0]"`, true},
 		{[]interface{}{jsonString, `all`, `abc`}, `["$[0]", "$[2].x"]`, true},
 		{[]interface{}{jsonString, `all`, `ghi`}, nil, true},
+		{[]interface{}{jsonString, `ALL`, `ghi`}, nil, true},
 		{[]interface{}{jsonString, `all`, `10`}, `"$[1][0].k"`, true},
 		{[]interface{}{jsonString, `all`, `10`, nil, `$`}, `"$[1][0].k"`, true},
 		{[]interface{}{jsonString, `all`, `10`, nil, `$[*]`}, `"$[1][0].k"`, true},
@@ -825,6 +826,7 @@ func (s *testEvaluatorSuite) TestJSONSearch(c *C) {
 		{[]interface{}{jsonString, `all`, `abc`, `??`}, nil, false},       // wrong escape_char
 		{[]interface{}{jsonString, `all`, `abc`, nil, nil}, nil, true},    // NULL path
 		{[]interface{}{jsonString, `all`, `abc`, nil, `$xx`}, nil, false}, // wrong path
+		{[]interface{}{jsonString, nil, `abc`}, nil, true},
 	}
 	for _, t := range tbl {
 		args := types.MakeDatums(t.input...)

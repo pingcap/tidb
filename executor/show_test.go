@@ -27,6 +27,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -675,6 +676,31 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 			"  `a` varchar(10) DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin", // non-binary collate is kept.
 	))
+	// Test for issue #17 in bug competition, default num and sequence should be shown without quote.
+	tk.MustExec(`drop table if exists default_num`)
+	tk.MustExec("create table default_num(a int default 11)")
+	tk.MustQuery("show create table default_num").Check(testutil.RowsWithSep("|",
+		""+
+			"default_num CREATE TABLE `default_num` (\n"+
+			"  `a` int(11) DEFAULT 11\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+	tk.MustExec(`drop table if exists default_varchar`)
+	tk.MustExec("create table default_varchar(a varchar(10) default \"haha\")")
+	tk.MustQuery("show create table default_varchar").Check(testutil.RowsWithSep("|",
+		""+
+			"default_varchar CREATE TABLE `default_varchar` (\n"+
+			"  `a` varchar(10) DEFAULT 'haha'\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+	tk.MustExec(`drop table if exists default_sequence`)
+	tk.MustExec("create table default_sequence(a int default nextval(seq))")
+	tk.MustQuery("show create table default_sequence").Check(testutil.RowsWithSep("|",
+		""+
+			"default_sequence CREATE TABLE `default_sequence` (\n"+
+			"  `a` int(11) DEFAULT nextval(`test`.`seq`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
 }
 
 func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
@@ -714,6 +740,35 @@ func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
 			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
 			"  PRIMARY KEY (`a`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+	// Test show auto_random table option.
+	tk.MustExec("create table auto_random_tbl4 (a bigint primary key auto_random(5), b varchar(255)) auto_random_base = 100")
+	tk.MustQuery("show create table `auto_random_tbl4`").Check(testutil.RowsWithSep("|",
+		""+
+			"auto_random_tbl4 CREATE TABLE `auto_random_tbl4` (\n"+
+			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
+			"  `b` varchar(255) DEFAULT NULL,\n"+
+			"  PRIMARY KEY (`a`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_rand_base] AUTO_RANDOM_BASE=100 */",
+	))
+	// Test implicit auto_random with auto_random table option.
+	tk.MustExec("create table auto_random_tbl5 (a bigint auto_random primary key, b char) auto_random_base 50")
+	tk.MustQuery("show create table auto_random_tbl5").Check(testutil.RowsWithSep("|",
+		""+
+			"auto_random_tbl5 CREATE TABLE `auto_random_tbl5` (\n"+
+			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
+			"  `b` char(1) DEFAULT NULL,\n"+
+			"  PRIMARY KEY (`a`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_rand_base] AUTO_RANDOM_BASE=50 */",
+	))
+	// Test auto_random table option already with special comment.
+	tk.MustExec("create table auto_random_tbl6 (a bigint /*T![auto_rand] auto_random */ primary key) auto_random_base 200")
+	tk.MustQuery("show create table auto_random_tbl6").Check(testutil.RowsWithSep("|",
+		""+
+			"auto_random_tbl6 CREATE TABLE `auto_random_tbl6` (\n"+
+			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
+			"  PRIMARY KEY (`a`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_rand_base] AUTO_RANDOM_BASE=200 */",
 	))
 }
 
@@ -790,4 +845,38 @@ func (s *testSuite5) TestShowBuiltin(c *C) {
 	c.Assert(268, Equals, len(rows))
 	c.Assert("abs", Equals, rows[0][0].(string))
 	c.Assert("yearweek", Equals, rows[267][0].(string))
+}
+
+func (s *testSuite5) TestShowClusterConfig(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	var confItems [][]types.Datum
+	var confErr error
+	var confFunc executor.TestShowClusterConfigFunc = func() ([][]types.Datum, error) {
+		return confItems, confErr
+	}
+	tk.Se.SetValue(executor.TestShowClusterConfigKey, confFunc)
+	strs2Items := func(strs ...string) []types.Datum {
+		items := make([]types.Datum, 0, len(strs))
+		for _, s := range strs {
+			items = append(items, types.NewStringDatum(s))
+		}
+		return items
+	}
+	confItems = append(confItems, strs2Items("tidb", "127.0.0.1:1111", "log.level", "info"))
+	confItems = append(confItems, strs2Items("pd", "127.0.0.1:2222", "log.level", "info"))
+	confItems = append(confItems, strs2Items("tikv", "127.0.0.1:3333", "log.level", "info"))
+	tk.MustQuery("show config").Check(testkit.Rows(
+		"tidb 127.0.0.1:1111 log.level info",
+		"pd 127.0.0.1:2222 log.level info",
+		"tikv 127.0.0.1:3333 log.level info"))
+	tk.MustQuery("show config where type='tidb'").Check(testkit.Rows(
+		"tidb 127.0.0.1:1111 log.level info"))
+	tk.MustQuery("show config where type like '%ti%'").Check(testkit.Rows(
+		"tidb 127.0.0.1:1111 log.level info",
+		"tikv 127.0.0.1:3333 log.level info"))
+
+	confErr = fmt.Errorf("something unknown error")
+	c.Assert(tk.QueryToErr("show config"), ErrorMatches, confErr.Error())
 }

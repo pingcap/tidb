@@ -16,13 +16,14 @@ package tikv
 import (
 	"context"
 	"fmt"
-	"sync/atomic"
+	"sync"
 	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -130,83 +131,101 @@ func (s *testClientSuite) TestSendWhenReconnect(c *C) {
 	server.Stop()
 }
 
-func (s *testClientSuite) TestIdleHeartbeat(c *C) {
-	server, port := startMockTikvService()
-	c.Assert(port > 0, IsTrue)
-	defer server.Stop()
+// chanClient sends received requests to the channel.
+type chanClient struct {
+	wg *sync.WaitGroup
+	ch chan<- *tikvrpc.Request
+}
 
-	rpcClient := newRPCClient(config.Security{})
-	addr := fmt.Sprintf("%s:%d", "127.0.0.1", port)
-	conn, err := rpcClient.getConnArray(addr, true)
-	c.Assert(err, IsNil)
+func (c *chanClient) Close() error {
+	return nil
+}
 
-	sendIdleReq := "github.com/pingcap/tidb/store/tikv/sendIdleHeartbeatReq"
-	noStripResp := "github.com/pingcap/tidb/store/tikv/forceReturnIdleHeartbeatResp"
-	noAvConn := "github.com/pingcap/tidb/store/tikv/noAvConn"
-	failBeforeSend := "github.com/pingcap/tidb/store/tikv/failBeforeSend"
+func (c *chanClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	c.wg.Wait()
+	c.ch <- req
+	return nil, nil
+}
 
-	c.Assert(failpoint.Enable(sendIdleReq, `return()`), IsNil)
-	c.Assert(failpoint.Enable(noStripResp, `return()`), IsNil)
-	c.Assert(failpoint.Enable(noAvConn, `return()`), IsNil)
-	c.Assert(failpoint.Enable(failBeforeSend, `return()`), IsNil)
-	defer func() {
-		c.Assert(failpoint.Disable(sendIdleReq), IsNil)
-		c.Assert(failpoint.Disable(noStripResp), IsNil)
-		c.Assert(failpoint.Disable(noAvConn), IsNil)
-		c.Assert(failpoint.Disable(failBeforeSend), IsNil)
-	}()
-
-	// 1. test trigger idle heartbeat and return success by a live store.
-	ctx := failpoint.WithHook(context.TODO(), func(ctx context.Context, fpname string) bool {
-		if fpname == sendIdleReq || fpname == noStripResp {
-			return true
-		}
-		return false
-	})
-	req := tikvrpc.NewRequest(tikvrpc.CmdEmpty, &tikvpb.BatchCommandsEmptyRequest{}).ToBatchCommandsRequest()
-	_, err = sendBatchRequest(ctx, addr, conn.batchConn, req, 100*time.Second)
-	c.Assert(err, IsNil)
-
-	// 2. test trigger idle heartbeat and cannot found any conn.
-	ctx = failpoint.WithHook(context.TODO(), func(ctx context.Context, fpname string) bool {
-		if fpname == sendIdleReq || fpname == noStripResp || fpname == noAvConn {
-			return true
-		}
-		return false
-	})
-	var dieNode []string
-	rpcClient.dieEventListener = func(addr []string) {
-		dieNode = append(dieNode, addr...)
+func (s *testClientSuite) TestCollapseResolveLock(c *C) {
+	buildResolveLockReq := func(regionID uint64, startTS uint64, commitTS uint64, keys [][]byte) *tikvrpc.Request {
+		region := &metapb.Region{Id: regionID}
+		req := tikvrpc.NewRequest(tikvrpc.CmdResolveLock, &kvrpcpb.ResolveLockRequest{
+			StartVersion:  startTS,
+			CommitVersion: commitTS,
+			Keys:          keys,
+		})
+		tikvrpc.SetContext(req, region, nil)
+		return req
 	}
-	_, err = sendBatchRequest(ctx, addr, conn.batchConn, req, 100*time.Second)
-	c.Assert(err, NotNil) // no available connections
-	c.Assert(conn.batchConn.isDie(), IsTrue)
-	c.Assert(atomic.LoadUint32(conn.batchConn.dieNotify), Equals, uint32(1))
-	rpcClient.recycleDieConnArray()
-	c.Assert(len(dieNode), Equals, 1)
-	c.Assert(dieNode[0], Equals, addr)
-
-	// 3. test trigger idle heartbeat and send fail before send.
-	conn, err = rpcClient.getConnArray(addr, true)
-	c.Assert(err, IsNil)
-	ctx = failpoint.WithHook(context.TODO(), func(ctx context.Context, fpname string) bool {
-		if fpname == sendIdleReq || fpname == noStripResp || fpname == failBeforeSend {
-			return true
-		}
-		return false
-	})
-	dieNode = dieNode[:0]
-	rpcClient.dieEventListener = func(addr []string) {
-		dieNode = append(dieNode, addr...)
+	buildBatchResolveLockReq := func(regionID uint64, txnInfos []*kvrpcpb.TxnInfo) *tikvrpc.Request {
+		region := &metapb.Region{Id: regionID}
+		req := tikvrpc.NewRequest(tikvrpc.CmdResolveLock, &kvrpcpb.ResolveLockRequest{
+			TxnInfos: txnInfos,
+		})
+		tikvrpc.SetContext(req, region, nil)
+		return req
 	}
-	_, err = sendBatchRequest(ctx, addr, conn.batchConn, req, 100*time.Second)
-	c.Assert(err, NotNil) // no available connections
-	c.Assert(conn.batchConn.isDie(), IsTrue)
-	c.Assert(atomic.LoadUint32(conn.batchConn.dieNotify), Equals, uint32(1))
-	rpcClient.recycleDieConnArray()
-	c.Assert(len(dieNode), Greater, 0)
-	c.Assert(dieNode[0], Equals, addr)
-	rpcClient.recycleDieConnArray()
-	c.Assert(len(dieNode), Equals, 1)
-	c.Assert(dieNode[0], Equals, addr)
+
+	var wg sync.WaitGroup
+	reqCh := make(chan *tikvrpc.Request)
+	client := reqCollapse{&chanClient{wg: &wg, ch: reqCh}}
+	ctx := context.Background()
+
+	// Collapse ResolveLock.
+	resolveLockReq := buildResolveLockReq(1, 10, 20, nil)
+	wg.Add(1)
+	go client.SendRequest(ctx, "", resolveLockReq, time.Second)
+	go client.SendRequest(ctx, "", resolveLockReq, time.Second)
+	time.Sleep(300 * time.Millisecond)
+	wg.Done()
+	req := <-reqCh
+	c.Assert(*req, DeepEquals, *resolveLockReq)
+	select {
+	case <-reqCh:
+		c.Fatal("fail to collapse ResolveLock")
+	default:
+	}
+
+	// Don't collapse ResolveLockLite.
+	resolveLockLiteReq := buildResolveLockReq(1, 10, 20, [][]byte{[]byte("foo")})
+	wg.Add(1)
+	go client.SendRequest(ctx, "", resolveLockLiteReq, time.Second)
+	go client.SendRequest(ctx, "", resolveLockLiteReq, time.Second)
+	time.Sleep(300 * time.Millisecond)
+	wg.Done()
+	for i := 0; i < 2; i++ {
+		req := <-reqCh
+		c.Assert(*req, DeepEquals, *resolveLockLiteReq)
+	}
+
+	// Don't collapse BatchResolveLock.
+	batchResolveLockReq := buildBatchResolveLockReq(1, []*kvrpcpb.TxnInfo{
+		{Txn: 10, Status: 20},
+	})
+	wg.Add(1)
+	go client.SendRequest(ctx, "", batchResolveLockReq, time.Second)
+	go client.SendRequest(ctx, "", batchResolveLockReq, time.Second)
+	time.Sleep(300 * time.Millisecond)
+	wg.Done()
+	for i := 0; i < 2; i++ {
+		req := <-reqCh
+		c.Assert(*req, DeepEquals, *batchResolveLockReq)
+	}
+
+	// Mixed
+	wg.Add(1)
+	go client.SendRequest(ctx, "", resolveLockReq, time.Second)
+	go client.SendRequest(ctx, "", resolveLockLiteReq, time.Second)
+	go client.SendRequest(ctx, "", batchResolveLockReq, time.Second)
+	time.Sleep(300 * time.Millisecond)
+	wg.Done()
+	for i := 0; i < 3; i++ {
+		<-reqCh
+	}
+	select {
+	case <-reqCh:
+		c.Fatal("unexpected request")
+	default:
+	}
 }
