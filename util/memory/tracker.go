@@ -48,13 +48,25 @@ type Tracker struct {
 		sync.Mutex
 		actionOnExceed ActionOnExceed
 	}
+	parMu struct {
+		sync.Mutex
+		parent *Tracker // The parent memory tracker.
+	}
 
+<<<<<<< HEAD
 	label         int      // Label of this "Tracker".
 	bytesConsumed int64    // Consumed bytes.
 	bytesLimit    int64    // bytesLimit <= 0 means no limit.
 	maxConsumed   int64    // max number of bytes consumed during execution.
 	parent        *Tracker // The parent memory tracker.
 	isGlobal      bool     // isGlobal indicates whether this tracker is global tracker
+=======
+	label         fmt.Stringer // Label of this "Tracker".
+	bytesConsumed int64        // Consumed bytes.
+	bytesLimit    int64        // bytesLimit <= 0 means no limit.
+	maxConsumed   int64        // max number of bytes consumed during execution.
+	isGlobal      bool         // isGlobal indicates whether this tracker is global tracker
+>>>>>>> 3f2d35a... RFC + executor: Support global memory tracker (#16777)
 }
 
 // NewTracker creates a memory tracker.
@@ -135,26 +147,28 @@ func (t *Tracker) Label() int {
 // already has a parent, this function will remove it from the old parent.
 // Its consumed memory usage is used to update all its ancestors.
 func (t *Tracker) AttachTo(parent *Tracker) {
-	if t.parent != nil {
-		t.parent.remove(t)
+	oldParent := t.getParent()
+	if oldParent != nil {
+		oldParent.remove(t)
 	}
 	parent.mu.Lock()
 	parent.mu.children = append(parent.mu.children, t)
 	parent.mu.Unlock()
 
-	t.parent = parent
-	t.parent.Consume(t.BytesConsumed())
+	t.setParent(parent)
+	parent.Consume(t.BytesConsumed())
 }
 
 // Detach de-attach the tracker child from its parent, then set its parent property as nil
 func (t *Tracker) Detach() {
-	if t.parent == nil {
+	parent := t.getParent()
+	if parent == nil {
 		return
 	}
-	t.parent.remove(t)
+	parent.remove(t)
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.parent = nil
+	t.setParent(nil)
 }
 
 func (t *Tracker) remove(oldChild *Tracker) {
@@ -166,11 +180,19 @@ func (t *Tracker) remove(oldChild *Tracker) {
 			found = true
 			break
 		}
+<<<<<<< HEAD
 	}
 	t.mu.Unlock()
 	if found {
 		oldChild.parent = nil
 		t.Consume(-oldChild.BytesConsumed())
+=======
+
+		t.Consume(-oldChild.BytesConsumed())
+		oldChild.setParent(nil)
+		t.mu.children = append(t.mu.children[:i], t.mu.children[i+1:]...)
+		break
+>>>>>>> 3f2d35a... RFC + executor: Support global memory tracker (#16777)
 	}
 }
 
@@ -184,7 +206,7 @@ func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
 	}
 
 	newConsumed := newChild.BytesConsumed()
-	newChild.parent = t
+	newChild.setParent(t)
 
 	t.mu.Lock()
 	for i, child := range t.mu.children {
@@ -193,7 +215,7 @@ func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
 		}
 
 		newConsumed -= oldChild.BytesConsumed()
-		oldChild.parent = nil
+		oldChild.setParent(nil)
 		t.mu.children[i] = newChild
 		break
 	}
@@ -207,7 +229,7 @@ func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
 // exceeds its bytesLimit, the tracker calls its action, so does each of its ancestors.
 func (t *Tracker) Consume(bytes int64) {
 	var rootExceed *Tracker
-	for tracker := t; tracker != nil; tracker = tracker.parent {
+	for tracker := t; tracker != nil; tracker = tracker.getParent() {
 		if atomic.AddInt64(&tracker.bytesConsumed, bytes) >= tracker.bytesLimit && tracker.bytesLimit > 0 {
 			rootExceed = tracker
 		}
@@ -321,30 +343,49 @@ func (t *Tracker) AttachToGlobalTracker(globalTracker *Tracker) {
 	if !globalTracker.isGlobal {
 		panic("Attach to a non-GlobalTracker")
 	}
-	if t.parent != nil {
-		if t.parent.isGlobal {
-			t.parent.Consume(-t.BytesConsumed())
+	parent := t.getParent()
+	if parent != nil {
+		if parent.isGlobal {
+			parent.Consume(-t.BytesConsumed())
 		} else {
-			t.parent.remove(t)
+			parent.remove(t)
 		}
 	}
-	t.parent = globalTracker
-	t.parent.Consume(t.BytesConsumed())
+	t.setParent(globalTracker)
+	globalTracker.Consume(t.BytesConsumed())
 }
 
 // DetachFromGlobalTracker detach itself from its parent
 // Note that only the parent of this tracker is Global Tracker could call this function
 // Otherwise it should use Detach
 func (t *Tracker) DetachFromGlobalTracker() {
-	if t.parent == nil {
+	parent := t.getParent()
+	if parent == nil {
 		return
 	}
-	if !t.parent.isGlobal {
+	if !parent.isGlobal {
 		panic("Detach from a non-GlobalTracker")
 	}
-	parent := t.parent
 	parent.Consume(-t.BytesConsumed())
-	t.parent = nil
+	t.setParent(nil)
+}
+
+// ReplaceBytesUsed replace bytesConsume for the tracker
+func (t *Tracker) ReplaceBytesUsed(bytes int64) {
+	t.Consume(-t.BytesConsumed())
+	t.Consume(bytes)
+}
+
+func (t *Tracker) getParent() *Tracker {
+	t.parMu.Lock()
+	defer t.parMu.Unlock()
+	return t.parMu.parent
+}
+
+func (t *Tracker) setParent(parent *Tracker) {
+	t.parMu.Lock()
+	defer t.parMu.Unlock()
+	t.parMu.parent = parent
 }
 
 const (

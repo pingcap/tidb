@@ -47,13 +47,13 @@ func (s *testSuite) TestSetLabel(c *C) {
 	c.Assert(tracker.label, Equals, 1)
 	c.Assert(tracker.BytesConsumed(), Equals, int64(0))
 	c.Assert(tracker.bytesLimit, Equals, int64(-1))
-	c.Assert(tracker.parent, IsNil)
+	c.Assert(tracker.getParent(), IsNil)
 	c.Assert(len(tracker.mu.children), Equals, 0)
 	tracker.SetLabel(2)
 	c.Assert(tracker.label, Equals, 2)
 	c.Assert(tracker.BytesConsumed(), Equals, int64(0))
 	c.Assert(tracker.bytesLimit, Equals, int64(-1))
-	c.Assert(tracker.parent, IsNil)
+	c.Assert(tracker.getParent(), IsNil)
 	c.Assert(len(tracker.mu.children), Equals, 0)
 }
 
@@ -140,7 +140,7 @@ func (s *testSuite) TestAttachTo(c *C) {
 	child.AttachTo(oldParent)
 	c.Assert(child.BytesConsumed(), Equals, int64(100))
 	c.Assert(oldParent.BytesConsumed(), Equals, int64(100))
-	c.Assert(child.parent, DeepEquals, oldParent)
+	c.Assert(child.getParent(), DeepEquals, oldParent)
 	c.Assert(len(oldParent.mu.children), Equals, 1)
 	c.Assert(oldParent.mu.children[0], DeepEquals, child)
 
@@ -148,7 +148,7 @@ func (s *testSuite) TestAttachTo(c *C) {
 	c.Assert(child.BytesConsumed(), Equals, int64(100))
 	c.Assert(oldParent.BytesConsumed(), Equals, int64(0))
 	c.Assert(newParent.BytesConsumed(), Equals, int64(100))
-	c.Assert(child.parent, DeepEquals, newParent)
+	c.Assert(child.getParent(), DeepEquals, newParent)
 	c.Assert(len(newParent.mu.children), Equals, 1)
 	c.Assert(newParent.mu.children[0], DeepEquals, child)
 	c.Assert(len(oldParent.mu.children), Equals, 0)
@@ -168,7 +168,7 @@ func (s *testSuite) TestDetach(c *C) {
 	c.Assert(child.BytesConsumed(), Equals, int64(100))
 	c.Assert(parent.BytesConsumed(), Equals, int64(0))
 	c.Assert(len(parent.mu.children), Equals, 0)
-	c.Assert(child.parent, IsNil)
+	c.Assert(child.getParent(), IsNil)
 }
 
 func (s *testSuite) TestReplaceChild(c *C) {
@@ -185,21 +185,21 @@ func (s *testSuite) TestReplaceChild(c *C) {
 	c.Assert(parent.BytesConsumed(), Equals, int64(500))
 	c.Assert(len(parent.mu.children), Equals, 1)
 	c.Assert(parent.mu.children[0], DeepEquals, newChild)
-	c.Assert(newChild.parent, DeepEquals, parent)
-	c.Assert(oldChild.parent, IsNil)
+	c.Assert(newChild.getParent(), DeepEquals, parent)
+	c.Assert(oldChild.getParent(), IsNil)
 
 	parent.ReplaceChild(oldChild, nil)
 	c.Assert(parent.BytesConsumed(), Equals, int64(500))
 	c.Assert(len(parent.mu.children), Equals, 1)
 	c.Assert(parent.mu.children[0], DeepEquals, newChild)
-	c.Assert(newChild.parent, DeepEquals, parent)
-	c.Assert(oldChild.parent, IsNil)
+	c.Assert(newChild.getParent(), DeepEquals, parent)
+	c.Assert(oldChild.getParent(), IsNil)
 
 	parent.ReplaceChild(newChild, nil)
 	c.Assert(parent.BytesConsumed(), Equals, int64(0))
 	c.Assert(len(parent.mu.children), Equals, 0)
-	c.Assert(newChild.parent, IsNil)
-	c.Assert(oldChild.parent, IsNil)
+	c.Assert(newChild.getParent(), IsNil)
+	c.Assert(oldChild.getParent(), IsNil)
 
 	node1 := NewTracker(1, -1)
 	node2 := NewTracker(2, -1)
@@ -287,15 +287,15 @@ func (s *testSuite) TestGlobalTracker(c *C) {
 	c1.AttachToGlobalTracker(r)
 	c2.AttachToGlobalTracker(r)
 	c.Assert(r.BytesConsumed(), Equals, int64(300))
-	c.Assert(c1.parent, DeepEquals, r)
-	c.Assert(c2.parent, DeepEquals, r)
+	c.Assert(c1.getParent(), DeepEquals, r)
+	c.Assert(c2.getParent(), DeepEquals, r)
 	c.Assert(len(r.mu.children), Equals, 0)
 
 	c1.DetachFromGlobalTracker()
 	c2.DetachFromGlobalTracker()
 	c.Assert(r.BytesConsumed(), Equals, int64(0))
-	c.Assert(c1.parent, IsNil)
-	c.Assert(c2.parent, IsNil)
+	c.Assert(c1.getParent(), IsNil)
+	c.Assert(c2.getParent(), IsNil)
 	c.Assert(len(r.mu.children), Equals, 0)
 
 	defer func() {
@@ -308,13 +308,13 @@ func (s *testSuite) TestGlobalTracker(c *C) {
 	c1.AttachTo(commonTracker)
 	c.Assert(commonTracker.BytesConsumed(), Equals, int64(100))
 	c.Assert(len(commonTracker.mu.children), Equals, 1)
-	c.Assert(c1.parent, DeepEquals, commonTracker)
+	c.Assert(c1.getParent(), DeepEquals, commonTracker)
 
 	c1.AttachToGlobalTracker(r)
 	c.Assert(commonTracker.BytesConsumed(), Equals, int64(0))
 	c.Assert(len(commonTracker.mu.children), Equals, 0)
 	c.Assert(r.BytesConsumed(), Equals, int64(100))
-	c.Assert(c1.parent, DeepEquals, r)
+	c.Assert(c1.getParent(), DeepEquals, r)
 	c.Assert(len(r.mu.children), Equals, 0)
 
 	defer func() {

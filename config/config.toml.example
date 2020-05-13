@@ -258,6 +258,9 @@ committer-concurrency = 16
 # max lifetime of transaction ttl manager.
 max-txn-ttl = 600000
 
+# the interval duration between two memory profile into global tracker
+mem-profile-interval = "1m"
+
 [proxy-protocol]
 # PROXY protocol acceptable client networks.
 # Empty string means disable PROXY protocol, * means all networks.

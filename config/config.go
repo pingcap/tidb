@@ -383,6 +383,7 @@ type Performance struct {
 	DistinctAggPushDown  bool    `toml:"distinct-agg-push-down" json:"agg-push-down-join"`
 	CommitterConcurrency int     `toml:"committer-concurrency" json:"committer-concurrency"`
 	MaxTxnTTL            uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
+	MemProfileInterval   string  `toml:"mem-profile-interval" json:"mem-profile-interval"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -619,6 +620,7 @@ var defaultConf = Config{
 		DistinctAggPushDown:  false,
 		CommitterConcurrency: 16,
 		MaxTxnTTL:            10 * 60 * 1000, // 10min
+		MemProfileInterval:   "1m",
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",

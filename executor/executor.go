@@ -86,6 +86,8 @@ var (
 	_ Executor = &TopNExec{}
 	_ Executor = &UnionExec{}
 
+	// GlobalMemoryUsageTracker is the ancestor of all the Executors' memory tracker and GlobalMemory Tracker
+	GlobalMemoryUsageTracker *memory.Tracker
 	// GlobalDiskUsageTracker is the ancestor of all the Executors' disk tracker
 	GlobalDiskUsageTracker *disk.Tracker
 )
@@ -101,9 +103,28 @@ type baseExecutor struct {
 	runtimeStats  *execdetails.BasicRuntimeStats
 }
 
+const (
+	// globalStorageLabel represents the label of the GlobalDiskUsageTracker
+	globalStorageLabel string = "GlobalStorageLabel"
+	// globalMemoryLabel represents the label of the GlobalMemoryUsageTracker
+	globalMemoryLabel string = "GlobalMemoryLabel"
+	// globalPanicStorageExceed represents the panic message when out of storage quota.
+	globalPanicStorageExceed string = "Out Of Global Storage Quota!"
+	// globalPanicMemoryExceed represents the panic message when out of memory limit.
+	globalPanicMemoryExceed string = "Out Of Global Memory Limit!"
+)
+
 // globalPanicOnExceed panics when GlobalDisTracker storage usage exceeds storage quota.
 type globalPanicOnExceed struct {
 	mutex sync.Mutex // For synchronization.
+}
+
+func init() {
+	action := &globalPanicOnExceed{}
+	GlobalMemoryUsageTracker = memory.NewGlobalTracker(stringutil.StringerStr(globalMemoryLabel), -1)
+	GlobalMemoryUsageTracker.SetActionOnExceed(action)
+	GlobalDiskUsageTracker = disk.NewGlobalTrcaker(stringutil.StringerStr(globalStorageLabel), -1)
+	GlobalDiskUsageTracker.SetActionOnExceed(action)
 }
 
 // SetLogHook sets a hook for PanicOnExceed.
@@ -113,12 +134,22 @@ func (a *globalPanicOnExceed) SetLogHook(hook func(uint64)) {}
 func (a *globalPanicOnExceed) Action(t *memory.Tracker) {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
-	panic(globalPanicStorageExceed)
+	msg := ""
+	switch t.Label().String() {
+	case globalStorageLabel:
+		msg = globalPanicStorageExceed
+	case globalMemoryLabel:
+		msg = globalPanicMemoryExceed
+	default:
+		msg = "Out of Unknown Resource Quota!"
+	}
+	panic(msg)
 }
 
 // SetFallback sets a fallback action.
 func (a *globalPanicOnExceed) SetFallback(memory.ActionOnExceed) {}
 
+<<<<<<< HEAD
 const (
 	// globalPanicStorageExceed represents the panic message when out of storage quota.
 	globalPanicStorageExceed string = "Out Of Global Storage Quota!"
@@ -130,6 +161,8 @@ func init() {
 	GlobalDiskUsageTracker.SetActionOnExceed(action)
 }
 
+=======
+>>>>>>> 3f2d35a... RFC + executor: Support global memory tracker (#16777)
 // base returns the baseExecutor of an executor, don't override this method!
 func (e *baseExecutor) base() *baseExecutor {
 	return e
@@ -1535,9 +1568,14 @@ func (e *UnionExec) Close() error {
 // Before every execution, we must clear statement context.
 func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars := ctx.GetSessionVars()
-	// Detach the disk tracker for the previous stmtctx from GlobalDiskUsageTracker
-	if vars.StmtCtx != nil && vars.StmtCtx.DiskTracker != nil {
-		vars.StmtCtx.DiskTracker.DetachFromGlobalTracker()
+	// Detach the Memory and disk tracker for the previous stmtCtx from GlobalMemoryUsageTracker and GlobalDiskUsageTracker
+	if stmtCtx := vars.StmtCtx; stmtCtx != nil {
+		if stmtCtx.DiskTracker != nil {
+			stmtCtx.DiskTracker.DetachFromGlobalTracker()
+		}
+		if stmtCtx.MemTracker != nil {
+			stmtCtx.MemTracker.DetachFromGlobalTracker()
+		}
 	}
 	sc := &stmtctx.StatementContext{
 		TimeZone:    vars.Location(),
@@ -1545,8 +1583,13 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		DiskTracker: disk.NewTracker(memory.LabelForSQLText, -1),
 		TaskID:      stmtctx.AllocateTaskID(),
 	}
+<<<<<<< HEAD
 	globalConfig := config.GetGlobalConfig()
 	if globalConfig.OOMUseTmpStorage && GlobalDiskUsageTracker != nil {
+=======
+	sc.MemTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
+	if config.GetGlobalConfig().OOMUseTmpStorage && GlobalDiskUsageTracker != nil {
+>>>>>>> 3f2d35a... RFC + executor: Support global memory tracker (#16777)
 		sc.DiskTracker.AttachToGlobalTracker(GlobalDiskUsageTracker)
 	}
 	switch globalConfig.OOMAction {
