@@ -196,7 +196,7 @@ func (helper extractHelper) extractCol(
 			continue
 		}
 		var colName string
-		var datums []types.Datum
+		var datums []types.Datum // the memory of datums should not be reused, they will be put into result.
 		switch fn.FuncName.L {
 		case ast.EQ:
 			colName, datums = helper.extractColBinaryOpConsExpr(extractCols, fn)
