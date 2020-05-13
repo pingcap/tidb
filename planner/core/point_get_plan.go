@@ -542,7 +542,7 @@ func newBatchPointGetPlan(
 }
 
 func isHintReadFromTiFlash(hint *ast.TableOptimizerHint) bool {
-	return hint.HintName.L == "read_from_storage" && hint.HintData.(model.CIStr).L == "tiflash"
+	return hint.HintName.L == HintReadFromStorage && hint.HintData.(model.CIStr).L == HintTiFlash
 }
 
 func selStmtHasTiFlashHint(selStmt *ast.SelectStmt) bool {
