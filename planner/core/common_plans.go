@@ -592,7 +592,17 @@ func (e *Explain) RenderResult() error {
 			return err
 		}
 	case ast.ExplainFormatDOT:
+<<<<<<< HEAD
 		e.prepareDotInfo(e.StmtPlan.(PhysicalPlan))
+=======
+		if physicalPlan, ok := e.TargetPlan.(PhysicalPlan); ok {
+			e.prepareDotInfo(physicalPlan)
+		}
+	case ast.ExplainFormatHint:
+		hints := GenHintsFromPhysicalPlan(e.TargetPlan)
+		hints = append(hints, hint.ExtractTableHintsFromStmtNode(e.ExecStmt)...)
+		e.Rows = append(e.Rows, []string{hint.RestoreOptimizerHints(hints)})
+>>>>>>> 44a894d... planner: check plan type when executing `explain format="dot"`. (#17144)
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
