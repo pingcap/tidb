@@ -16,6 +16,7 @@ import (
 	"context"
 	"sort"
 	"strings"
+	"fmt"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -406,8 +407,8 @@ func makePartitionByFnCol(sctx sessionctx.Context, columns []*expression.Column,
 
 func partitionRangeForCNFExpr(sctx sessionctx.Context, exprs []expression.Expression,
 	pruner partitionRangePruner, result partitionRangeOR) partitionRangeOR {
-	for i := 0; i < len(exprs); i++ {
-		result = partitionRangeForExpr(sctx, exprs[i], pruner, result)
+	for _, expr := range exprs {
+		result = partitionRangeForExpr(sctx, expr, pruner, result)
 	}
 	return result
 }
@@ -423,9 +424,17 @@ func partitionRangeForExpr(sctx sessionctx.Context, expr expression.Expression,
 			args := op.GetArgs()
 			newRange := partitionRangeForOrExpr(sctx, args[0], args[1], pruner)
 			return result.intersection(newRange)
+		} else if op.FuncName.L == ast.In {
+			if p, ok := pruner.(*rangePruner); ok {
+			fmt.Println("prune for in expression . . .")
+				return partitionRangeForInExpr(sctx, op.GetArgs(), p, result)		
+			} 
+			return result
 		}
 	}
 
+	return pruner.partitionRangeForExpr(sctx, expr, result)
+/*
 	// Handle a single expression.
 	start, end, ok := pruner.partitionRangeForExpr(sctx, expr)
 	if !ok {
@@ -433,10 +442,11 @@ func partitionRangeForExpr(sctx sessionctx.Context, expr expression.Expression,
 		return result
 	}
 	return result.intersectionRange(start, end)
+*/
 }
 
 type partitionRangePruner interface {
-	partitionRangeForExpr(sessionctx.Context, expression.Expression) (start, end int, succ bool)
+	partitionRangeForExpr(sessionctx.Context, expression.Expression, partitionRangeOR) partitionRangeOR
 	fullRange() partitionRangeOR
 }
 
@@ -449,15 +459,15 @@ type rangePruner struct {
 	partFn   *expression.ScalarFunction
 }
 
-func (p *rangePruner) partitionRangeForExpr(sctx sessionctx.Context, expr expression.Expression) (int, int, bool) {
+func (p *rangePruner) partitionRangeForExpr(sctx sessionctx.Context, expr expression.Expression, result partitionRangeOR) partitionRangeOR {
 	dataForPrune, ok := p.extractDataForPrune(sctx, expr)
 	if !ok {
-		return 0, 0, false
+		return result
 	}
 
 	unsigned := mysql.HasUnsignedFlag(p.col.RetType.Flag)
 	start, end := pruneUseBinarySearch(p.lessThan, dataForPrune, unsigned)
-	return start, end, true
+	return result.intersectionRange(start, end)
 }
 
 func (p *rangePruner) fullRange() partitionRangeOR {
@@ -470,6 +480,35 @@ func partitionRangeForOrExpr(sctx sessionctx.Context, expr1, expr2 expression.Ex
 	tmp1 := partitionRangeForExpr(sctx, expr1, pruner, pruner.fullRange())
 	tmp2 := partitionRangeForExpr(sctx, expr2, pruner, pruner.fullRange())
 	return tmp1.union(tmp2)
+}
+
+// TODO: handle range column
+func partitionRangeForInExpr(sctx sessionctx.Context, args []expression.Expression,
+	pruner *rangePruner, result partitionRangeOR) partitionRangeOR {
+	if len(args) <= 1 {
+		return result
+	}
+	col, ok := args[0].(*expression.Column)
+	if !ok {
+		return result
+	}
+
+	unsigned := mysql.HasUnsignedFlag(col.RetType.Flag)
+	for i := 1; i<len(args); i++ {
+		constExpr, ok := args[i].(*expression.Constant)
+		if !ok {
+			fmt.Println("not constant???")
+			return pruner.fullRange()
+		}
+		val, isNull, err := constExpr.EvalInt(sctx, chunk.Row{})
+		if err != nil || isNull {
+			fmt.Println("is null or error???")
+			return pruner.fullRange()	
+		}
+		start, end := pruneUseBinarySearch(pruner.lessThan, dataForPrune{op: ast.EQ, c: val}, unsigned)
+		result = result.intersectionRange(start, end)
+	}
+	return result
 }
 
 // monotoneIncFuncs are those functions that for any x y, if x > y => f(x) > f(y)
@@ -746,10 +785,10 @@ func (p *rangeColumnPruner) fullRange() partitionRangeOR {
 	return fullRange(len(p.data))
 }
 
-func (p *rangeColumnPruner) partitionRangeForExpr(sctx sessionctx.Context, expr expression.Expression) (int, int, bool) {
+func (p *rangeColumnPruner) partitionRangeForExpr(sctx sessionctx.Context, expr expression.Expression, result partitionRangeOR) partitionRangeOR  {
 	op, ok := expr.(*expression.ScalarFunction)
 	if !ok {
-		return 0, len(p.data), false
+		return result
 	}
 
 	switch op.FuncName.L {
@@ -757,11 +796,11 @@ func (p *rangeColumnPruner) partitionRangeForExpr(sctx sessionctx.Context, expr 
 	case ast.IsNull:
 		// isnull(col)
 		if arg0, ok := op.GetArgs()[0].(*expression.Column); ok && arg0.ID == p.partCol.ID {
-			return 0, 1, true
+			return []partitionRange{partitionRange{0,1}}
 		}
-		return 0, len(p.data), false
+		return result
 	default:
-		return 0, len(p.data), false
+		return result
 	}
 	opName := op.FuncName.L
 
@@ -778,11 +817,11 @@ func (p *rangeColumnPruner) partitionRangeForExpr(sctx sessionctx.Context, expr 
 		}
 	}
 	if col == nil || con == nil {
-		return 0, len(p.data), false
+		return result
 	}
 
 	start, end := p.pruneUseBinarySearch(sctx, opName, con)
-	return start, end, true
+	return result.intersectionRange(start, end)
 }
 
 func (p *rangeColumnPruner) pruneUseBinarySearch(sctx sessionctx.Context, op string, data *expression.Constant) (start int, end int) {
