@@ -26,11 +26,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
-	tmysql "github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
+	tmysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/session"
@@ -320,6 +320,16 @@ func (s *testIntegrationSuite2) TestCreateTableWithHashPartition(c *C) {
     job_code INT,
     store_id INT
 ) PARTITION BY HASH(store_id) PARTITIONS 102400000000;`, tmysql.ErrTooManyPartitions)
+
+	tk.MustExec("CREATE TABLE t_linear (a int, b varchar(128)) PARTITION BY LINEAR HASH(a) PARTITIONS 4")
+	tk.MustGetErrCode("select * from t_linear partition (p0)", tmysql.ErrPartitionClauseOnNonpartitioned)
+
+	tk.MustExec(`CREATE TABLE t_sub (a int, b varchar(128)) PARTITION BY RANGE( a ) SUBPARTITION BY HASH( a )
+                                   SUBPARTITIONS 2 (
+                                       PARTITION p0 VALUES LESS THAN (100),
+                                       PARTITION p1 VALUES LESS THAN (200),
+                                       PARTITION p2 VALUES LESS THAN MAXVALUE)`)
+	tk.MustGetErrCode("select * from t_sub partition (p0)", tmysql.ErrPartitionClauseOnNonpartitioned)
 }
 
 func (s *testIntegrationSuite1) TestCreateTableWithRangeColumnPartition(c *C) {
