@@ -22,13 +22,6 @@ var _ = Suite(&testTableSuite{})
 
 type testTableSuite struct{}
 
-func (t *testTableSuite) TestSlice(c *C) {
-	sl := make(Slice, 2)
-	length := sl.Len()
-	c.Assert(length, Equals, 2)
-	sl.Swap(0, 1)
-}
-
 func (t *testTableSuite) TestErrorCode(c *C) {
 	c.Assert(int(ErrColumnCantNull.ToSQLError().Code), Equals, mysql.ErrBadNull)
 	c.Assert(int(ErrUnknownColumn.ToSQLError().Code), Equals, mysql.ErrBadField)

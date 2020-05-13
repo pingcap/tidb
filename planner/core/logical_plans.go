@@ -312,6 +312,16 @@ type LogicalAggregation struct {
 	inputCount         float64 // inputCount is the input count of this plan.
 }
 
+// HasDistinct shows whether LogicalAggregation has functions with distinct.
+func (la *LogicalAggregation) HasDistinct() bool {
+	for _, aggFunc := range la.AggFuncs {
+		if aggFunc.HasDistinct {
+			return true
+		}
+	}
+	return false
+}
+
 // CopyAggHints copies the aggHints from another LogicalAggregation.
 func (la *LogicalAggregation) CopyAggHints(agg *LogicalAggregation) {
 	// TODO: Copy the hint may make the un-applicable hint throw the
@@ -752,7 +762,7 @@ func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Ex
 func (ds *DataSource) deriveIndexPathStats(path *util.AccessPath, conds []expression.Expression, isIm bool) bool {
 	sc := ds.ctx.GetSessionVars().StmtCtx
 	if path.EqOrInCondCount == len(path.AccessConds) {
-		accesses, remained := path.SplitCorColAccessCondFromFilters(path.EqOrInCondCount)
+		accesses, remained := path.SplitCorColAccessCondFromFilters(ds.ctx, path.EqOrInCondCount)
 		path.AccessConds = append(path.AccessConds, accesses...)
 		path.TableFilters = remained
 		if len(accesses) > 0 && ds.statisticTable.Pseudo {
@@ -874,7 +884,7 @@ type LogicalUnionAll struct {
 type LogicalSort struct {
 	baseLogicalPlan
 
-	ByItems []*ByItems
+	ByItems []*util.ByItems
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
@@ -890,7 +900,7 @@ func (ls *LogicalSort) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 type LogicalTopN struct {
 	baseLogicalPlan
 
-	ByItems []*ByItems
+	ByItems []*util.ByItems
 	Offset  uint64
 	Count   uint64
 }

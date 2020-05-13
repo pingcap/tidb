@@ -62,6 +62,57 @@ type RegionRequestSender struct {
 	failStoreIDs map[uint64]struct{}
 }
 
+// RegionBatchRequestSender sends BatchCop requests to TiFlash server by stream way.
+type RegionBatchRequestSender struct {
+	RegionRequestSender
+}
+
+// NewRegionBatchRequestSender creates a RegionBatchRequestSender object.
+func NewRegionBatchRequestSender(cache *RegionCache, client Client) *RegionBatchRequestSender {
+	return &RegionBatchRequestSender{RegionRequestSender: RegionRequestSender{regionCache: cache, client: client}}
+}
+
+func (ss *RegionBatchRequestSender) sendReqToAddr(bo *Backoffer, ctxs []copTaskAndRPCContext, req *tikvrpc.Request, timout time.Duration) (resp *tikvrpc.Response, retry bool, err error) {
+	// use the first ctx to send request, because every ctx has same address.
+	ctx := ctxs[0].ctx
+	if e := tikvrpc.SetContext(req, ctx.Meta, ctx.Peer); e != nil {
+		return nil, false, errors.Trace(e)
+	}
+	resp, err = ss.client.SendRequest(bo.ctx, ctx.Addr, req, timout)
+	if err != nil {
+		ss.rpcError = err
+		for _, failedCtx := range ctxs {
+			e := ss.onSendFail(bo, failedCtx.ctx, err)
+			if e != nil {
+				return nil, false, errors.Trace(e)
+			}
+		}
+		return nil, true, nil
+	}
+	// We don't need to process region error or lock error. Because TiFlash will retry by itself.
+	return
+}
+
+func (ss *RegionBatchRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err error) error {
+	// If it failed because the context is cancelled by ourself, don't retry.
+	if errors.Cause(err) == context.Canceled || status.Code(errors.Cause(err)) == codes.Canceled {
+		return errors.Trace(err)
+	} else if atomic.LoadUint32(&ShuttingDown) > 0 {
+		return errTiDBShuttingDown
+	}
+
+	if ctx.Meta != nil {
+		ss.regionCache.OnSendFail(bo, ctx, ss.needReloadRegion(ctx), err)
+	}
+
+	// Retry on send request failure when it's not canceled.
+	// When a store is not available, the leader of related region should be elected quickly.
+	// TODO: the number of retry time should be limited:since region may be unavailable
+	// when some unrecoverable disaster happened.
+	err = bo.Backoff(boTiKVRPC, errors.Errorf("send tikv request error: %v, ctx: %v, try next peer later", err, ctx))
+	return errors.Trace(err)
+}
+
 // NewRegionRequestSender creates a new sender.
 func NewRegionRequestSender(regionCache *RegionCache, client Client) *RegionRequestSender {
 	return &RegionRequestSender{
@@ -347,6 +398,10 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 	}
 	if regionErr.GetStaleCommand() != nil {
 		logutil.BgLogger().Debug("tikv reports `StaleCommand`", zap.Stringer("ctx", ctx))
+		err = bo.Backoff(boStaleCmd, errors.Errorf("stale command, ctx: %v", ctx))
+		if err != nil {
+			return false, errors.Trace(err)
+		}
 		return true, nil
 	}
 	if regionErr.GetRaftEntryTooLarge() != nil {

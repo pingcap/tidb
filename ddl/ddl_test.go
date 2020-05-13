@@ -87,7 +87,7 @@ func (d *ddl) restartWorkers(ctx context.Context) {
 		return
 	}
 
-	err := d.ownerManager.CampaignOwner(ctx)
+	err := d.ownerManager.CampaignOwner()
 	terror.Log(err)
 	for _, worker := range d.workers {
 		worker.wg.Add(1)
@@ -110,6 +110,7 @@ func TestT(t *testing.T) {
 	logutil.InitLogger(logutil.NewLogConfig(logLevel, "", "", logutil.EmptyFileLogConfig, false))
 	autoid.SetStep(5000)
 	ReorgWaitTimeout = 30 * time.Millisecond
+	batchInsertDeleteRangeSize = 2
 
 	cfg := config.GetGlobalConfig()
 	newCfg := *cfg
@@ -123,6 +124,14 @@ func TestT(t *testing.T) {
 	testleak.BeforeTest()
 	TestingT(t)
 	testleak.AfterTestT(t)()
+}
+
+func testNewDDLAndStart(ctx context.Context, c *C, options ...Option) *ddl {
+	d := newDDL(ctx, options...)
+	err := d.Start(nil)
+	c.Assert(err, IsNil)
+
+	return d
 }
 
 func testCreateStore(c *C, name string) kv.Storage {
@@ -229,6 +238,21 @@ func testAddColumn(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, t
 		SchemaID:   dbInfo.ID,
 		TableID:    tblInfo.ID,
 		Type:       model.ActionAddColumn,
+		Args:       args,
+		BinlogInfo: &model.HistoryInfo{},
+	}
+	err := d.doDDLJob(ctx, job)
+	c.Assert(err, IsNil)
+	v := getSchemaVer(c, ctx)
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	return job
+}
+
+func testAddColumns(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, args []interface{}) *model.Job {
+	job := &model.Job{
+		SchemaID:   dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionAddColumns,
 		Args:       args,
 		BinlogInfo: &model.HistoryInfo{},
 	}

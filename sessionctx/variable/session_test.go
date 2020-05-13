@@ -43,6 +43,7 @@ func (*testSessionSuite) TestSetSystemVariable(c *C) {
 		{variable.TxnIsolation, "SERIALIZABLE", true},
 		{variable.TimeZone, "xyz", true},
 		{variable.TiDBOptAggPushDown, "1", false},
+		{variable.TiDBOptDistinctAggPushDown, "1", false},
 		{variable.TIDBMemQuotaQuery, "1024", false},
 		{variable.TIDBMemQuotaHashJoin, "1024", false},
 		{variable.TIDBMemQuotaMergeJoin, "1024", false},
@@ -190,6 +191,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 # Cop_backoff_rpcTiKV_total_times: 200 Cop_backoff_rpcTiKV_total_time: 0.2 Cop_backoff_rpcTiKV_max_time: 0.2 Cop_backoff_rpcTiKV_max_addr: 127.0.0.1 Cop_backoff_rpcTiKV_avg_time: 0.2 Cop_backoff_rpcTiKV_p90_time: 0.2
 # Mem_max: 2333
 # Prepared: true
+# Plan_from_cache: true
 # Has_more_results: true
 # Succ: true
 select * from t;`
@@ -208,6 +210,7 @@ select * from t;`
 		ExecDetail:     execDetail,
 		MemMax:         memMax,
 		Prepared:       true,
+		PlanFromCache:  true,
 		HasMoreResults: true,
 		Succ:           true,
 	})

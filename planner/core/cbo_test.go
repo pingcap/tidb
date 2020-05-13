@@ -131,7 +131,7 @@ func (s *testAnalyzeSuite) TestCBOWithoutAnalyze(c *C) {
 		"    └─TableFullScan_10 6.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
 	))
 	testKit.MustQuery("explain format = 'hint' select * from t1, t2 where t1.a = t2.a").Check(testkit.Rows(
-		"USE_INDEX(@`sel_1` `test`.`t1` ), USE_INDEX(@`sel_1` `test`.`t2` ), HASH_JOIN(@`sel_1` `test`.`t1`)"))
+		"use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` ), hash_join(@`sel_1` `test`.`t1`)"))
 }
 
 func (s *testAnalyzeSuite) TestStraightJoin(c *C) {
@@ -355,8 +355,13 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 
 	testKit.MustExec("create view v as select * from t")
 	_, err = testKit.Exec("analyze table v")
-	c.Assert(err.Error(), Equals, "analyze v is not supported now.")
+	c.Assert(err.Error(), Equals, "analyze view v is not supported now.")
 	testKit.MustExec("drop view v")
+
+	testKit.MustExec("create sequence seq")
+	_, err = testKit.Exec("analyze table seq")
+	c.Assert(err.Error(), Equals, "analyze sequence seq is not supported now.")
+	testKit.MustExec("drop sequence seq")
 
 	var input, output []string
 	s.testData.GetTestCases(c, &input, &output)

@@ -77,7 +77,7 @@ type ErrAlreadyRollbacked struct {
 }
 
 func (e *ErrAlreadyRollbacked) Error() string {
-	return fmt.Sprintf("txn=%v on key=%s is already rollbacked", e.startTS, hex.EncodeToString(e.key))
+	return fmt.Sprintf("txn=%v on key=%s is already rolled back", e.startTS, hex.EncodeToString(e.key))
 }
 
 // ErrConflict is returned when the commitTS of key in the DB is greater than startTS.

@@ -32,23 +32,26 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
 )
 
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
 func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, error) {
-	fp := plannercore.TryFastPlan(sctx, node)
-	if fp != nil {
-		if !useMaxTS(sctx, fp) {
-			sctx.PrepareTSFuture(ctx)
+	if _, isolationReadContainTiKV := sctx.GetSessionVars().GetIsolationReadEngines()[kv.TiKV]; isolationReadContainTiKV {
+		fp := plannercore.TryFastPlan(sctx, node)
+		if fp != nil {
+			if !useMaxTS(sctx, fp) {
+				sctx.PrepareTSFuture(ctx)
+			}
+			return fp, fp.OutputNames(), nil
 		}
-		return fp, fp.OutputNames(), nil
 	}
 
 	sctx.PrepareTSFuture(ctx)
 
-	tableHints := extractTableHintsFromStmtNode(node)
+	tableHints := hint.ExtractTableHintsFromStmtNode(node)
 	stmtHints, warns := handleStmtHints(tableHints)
 	defer func() {
 		sctx.GetSessionVars().StmtCtx.StmtHints = stmtHints
@@ -73,7 +76,17 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		return bestPlan, names, nil
 	}
 	bestPlanHint := plannercore.GenHintsFromPhysicalPlan(bestPlan)
-	binding := bindRecord.FindBinding(bestPlanHint)
+	if len(bindRecord.Bindings) > 0 {
+		orgBinding := bindRecord.Bindings[0] // the first is the original binding
+		for _, tbHint := range tableHints {  // consider table hints which contained by the original binding
+			if orgBinding.Hint.ContainTableHint(tbHint.HintName.String()) {
+				bestPlanHint = append(bestPlanHint, tbHint)
+			}
+		}
+	}
+	bestPlanHintStr := hint.RestoreOptimizerHints(bestPlanHint)
+
+	binding := bindRecord.FindBinding(bestPlanHintStr)
 	// If the best bestPlan is in baselines, just use it.
 	if binding != nil && binding.Status == bindinfo.Using {
 		if sctx.GetSessionVars().UsePlanBaselines {
@@ -83,14 +96,14 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 	bestCostAmongHints := math.MaxFloat64
 	var bestPlanAmongHints plannercore.Plan
-	originHints := bindinfo.CollectHint(stmtNode)
+	originHints := hint.CollectHint(stmtNode)
 	// Try to find the best binding.
 	for _, binding := range bindRecord.Bindings {
 		if binding.Status != bindinfo.Using {
 			continue
 		}
 		metrics.BindUsageCounter.WithLabelValues(scope).Inc()
-		bindinfo.BindHint(stmtNode, binding.Hint)
+		hint.BindHint(stmtNode, binding.Hint)
 		curStmtHints, curWarns := handleStmtHints(binding.Hint.GetFirstTableHints())
 		sctx.GetSessionVars().StmtCtx.StmtHints = curStmtHints
 		plan, _, cost, err := optimize(ctx, sctx, node, is)
@@ -111,12 +124,16 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			bestPlanAmongHints = plan
 		}
 	}
-	// If there is already a evolution task, we do not need to handle it again.
-	if sctx.GetSessionVars().EvolvePlanBaselines && binding == nil {
-		handleEvolveTasks(ctx, sctx, bindRecord, stmtNode, bestPlanHint)
+	// 1. If there is already a evolution task, we do not need to handle it again.
+	// 2. If the origin binding contain `read_from_storage` hint, we should ignore the evolve task.
+	// 3. If the best plan contain TiFlash hint, we should ignore the evolve task.
+	if sctx.GetSessionVars().EvolvePlanBaselines && binding == nil &&
+		!originHints.ContainTableHint(plannercore.HintReadFromStorage) &&
+		!bindRecord.Bindings[0].Hint.ContainTableHint(plannercore.HintReadFromStorage) {
+		handleEvolveTasks(ctx, sctx, bindRecord, stmtNode, bestPlanHintStr)
 	}
 	// Restore the hint to avoid changing the stmt node.
-	bindinfo.BindHint(stmtNode, originHints)
+	hint.BindHint(stmtNode, originHints)
 	if sctx.GetSessionVars().UsePlanBaselines && bestPlanAmongHints != nil {
 		return bestPlanAmongHints, names, nil
 	}
@@ -127,7 +144,7 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	// build logical plan
 	sctx.GetSessionVars().PlanID = 0
 	sctx.GetSessionVars().PlanColumnID = 0
-	hintProcessor := &plannercore.BlockHintProcessor{Ctx: sctx}
+	hintProcessor := &hint.BlockHintProcessor{Ctx: sctx}
 	node.Accept(hintProcessor)
 	builder := plannercore.NewPlanBuilder(sctx, is, hintProcessor)
 	p, err := builder.Build(ctx, node)
@@ -214,6 +231,9 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 		return nil, ""
 	}
 	globalHandle := domain.GetDomain(ctx).BindHandle()
+	if globalHandle == nil {
+		return nil, ""
+	}
 	bindRecord = globalHandle.GetBindRecord(hash, normalizedSQL, ctx.GetSessionVars().CurrentDB)
 	if bindRecord == nil {
 		bindRecord = globalHandle.GetBindRecord(hash, normalizedSQL, "")
@@ -241,17 +261,11 @@ func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinf
 		return
 	}
 	charset, collation := sctx.GetSessionVars().GetCharsetInfo()
-	hintsSet, err := bindinfo.ParseHintsSet(parser.New(), bindSQL, charset, collation)
-	if err != nil {
-		return
-	}
 	binding := bindinfo.Binding{
 		BindSQL:   bindSQL,
 		Status:    bindinfo.PendingVerify,
 		Charset:   charset,
 		Collation: collation,
-		Hint:      hintsSet,
-		ID:        planHint,
 	}
 	globalHandle := domain.GetDomain(sctx).BindHandle()
 	globalHandle.AddEvolvePlanTask(br.OriginalSQL, br.Db, binding)
@@ -286,22 +300,6 @@ func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 	}
 	err = errors.Errorf("invalid result plan type, should be Execute")
 	return nil, err
-}
-
-func extractTableHintsFromStmtNode(node ast.Node) []*ast.TableOptimizerHint {
-	switch x := node.(type) {
-	case *ast.SelectStmt:
-		return x.TableHints
-	case *ast.UpdateStmt:
-		return x.TableHints
-	case *ast.DeleteStmt:
-		return x.TableHints
-	// TODO: support hint for InsertStmt
-	case *ast.ExplainStmt:
-		return extractTableHintsFromStmtNode(x.Stmt)
-	default:
-		return nil
-	}
 }
 
 func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHints, warns []error) {

@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -39,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/collate"
@@ -52,8 +54,9 @@ import (
 var _ = SerialSuites(&testSerialSuite{})
 
 type testSerialSuite struct {
-	store kv.Storage
-	dom   *domain.Domain
+	store   kv.Storage
+	cluster cluster.Cluster
+	dom     *domain.Domain
 }
 
 func (s *testSerialSuite) SetUpSuite(c *C) {
@@ -67,8 +70,18 @@ func (s *testSerialSuite) SetUpSuite(c *C) {
 	config.StoreGlobalConfig(&newCfg)
 
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
+
+	cluster := mocktikv.NewCluster()
+	mocktikv.BootstrapWithSingleStore(cluster)
+	s.cluster = cluster
+
 	var err error
-	s.store, err = mockstore.NewMockTikvStore()
+	mvccStore := mocktikv.MustNewMVCCStore()
+	cluster.SetMvccStore(mvccStore)
+	s.store, err = mockstore.NewMockTikvStore(
+		mockstore.WithCluster(cluster),
+		mockstore.WithMVCCStore(mvccStore),
+	)
 	c.Assert(err, IsNil)
 
 	s.dom, err = session.BootstrapSession(s.store)
@@ -150,6 +163,20 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 	tk.MustExec("alter table tt add index (`primary`);")
 	_, err = tk.Exec("drop index `primary` on tt")
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when alter-primary-key is false")
+
+	// The primary key cannot be invisible, for the case pk_is_handle.
+	tk.MustExec("drop table if exists t1, t2;")
+	_, err = tk.Exec("create table t1(c1 int not null, primary key(c1) invisible);")
+	c.Assert(ddl.ErrPKIndexCantBeInvisible.Equal(err), IsTrue)
+	tk.MustExec("create table t2 (a int, b int not null, primary key(a), unique(b) invisible);")
+}
+
+func (s *testSerialSuite) TestDropAutoIncrementIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int(11) not null auto_increment key, b int(11), c bigint, unique key (a, b, c))")
+	tk.MustExec("alter table t1 drop index a")
 }
 
 func (s *testSerialSuite) TestMultiRegionGetTableEndHandle(c *C) {
@@ -178,10 +205,7 @@ func (s *testSerialSuite) TestMultiRegionGetTableEndHandle(c *C) {
 	testCtx := newTestMaxTableRowIDContext(c, d, tbl)
 
 	// Split the table.
-	cluster := mocktikv.NewCluster()
-	mvccStore := mocktikv.MustNewMVCCStore()
-	defer mvccStore.Close()
-	cluster.SplitTable(mvccStore, tblID, 100)
+	s.cluster.SplitTable(tblID, 100)
 
 	maxID, emptyTable := getMaxTableRowID(testCtx, s.store)
 	c.Assert(emptyTable, IsFalse)
@@ -370,9 +394,19 @@ func (s *testSerialSuite) TestCreateTableWithLike(c *C) {
 	c.Assert(rows[1][1], Equals, fmt.Sprintf("t_%d_r_2305843009213693952", tbl.Meta().ID))
 	c.Assert(rows[2][1], Equals, fmt.Sprintf("t_%d_r_4611686018427387904", tbl.Meta().ID))
 	c.Assert(rows[3][1], Equals, fmt.Sprintf("t_%d_r_6917529027641081856", tbl.Meta().ID))
+	// Test after truncate table the region is also splited.
+	tk.MustExec("truncate table t2")
+	re = tk.MustQuery("show table t2 regions")
+	rows = re.Rows()
+	c.Assert(len(rows), Equals, 4)
+	tbl = testGetTableByName(c, tk.Se, "test", "t2")
+	c.Assert(rows[1][1], Equals, fmt.Sprintf("t_%d_r_2305843009213693952", tbl.Meta().ID))
+	c.Assert(rows[2][1], Equals, fmt.Sprintf("t_%d_r_4611686018427387904", tbl.Meta().ID))
+	c.Assert(rows[3][1], Equals, fmt.Sprintf("t_%d_r_6917529027641081856", tbl.Meta().ID))
+
 	defer atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
 
-	// for failure cases
+	// for failure table cases
 	tk.MustExec("use ctwl_db")
 	failSQL := fmt.Sprintf("create table t1 like test_not_exist.t")
 	tk.MustGetErrCode(failSQL, mysql.ErrNoSuchTable)
@@ -384,6 +418,14 @@ func (s *testSerialSuite) TestCreateTableWithLike(c *C) {
 	tk.MustGetErrCode(failSQL, mysql.ErrBadDB)
 	failSQL = fmt.Sprintf("create table t1 like ctwl_db.t")
 	tk.MustGetErrCode(failSQL, mysql.ErrTableExists)
+
+	// test failure for wrong object cases
+	tk.MustExec("drop view if exists v")
+	tk.MustExec("create view v as select 1 from dual")
+	tk.MustGetErrCode("create table viewTable like v", mysql.ErrWrongObject)
+	tk.MustExec("drop sequence if exists seq")
+	tk.MustExec("create sequence seq")
+	tk.MustGetErrCode("create table sequenceTable like seq", mysql.ErrWrongObject)
 
 	tk.MustExec("drop database ctwl_db")
 	tk.MustExec("drop database ctwl_db1")
@@ -470,8 +512,8 @@ func (s *testSerialSuite) TestRecoverTableByJobID(c *C) {
 	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
 	ddl.EmulatorGCDisable()
 	gcTimeFormat := "20060102-15:04:05 -0700 MST"
-	timeBeforeDrop := time.Now().Add(0 - time.Duration(48*60*60*time.Second)).Format(gcTimeFormat)
-	timeAfterDrop := time.Now().Add(time.Duration(48 * 60 * 60 * time.Second)).Format(gcTimeFormat)
+	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
+	timeAfterDrop := time.Now().Add(48 * 60 * 60 * time.Second).Format(gcTimeFormat)
 	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
 			       ON DUPLICATE KEY
 			       UPDATE variable_value = '%[1]s'`
@@ -587,7 +629,7 @@ func (s *testSerialSuite) TestRecoverTableByJobIDFail(c *C) {
 	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
 	ddl.EmulatorGCDisable()
 	gcTimeFormat := "20060102-15:04:05 -0700 MST"
-	timeBeforeDrop := time.Now().Add(0 - time.Duration(48*60*60*time.Second)).Format(gcTimeFormat)
+	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
 	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
 			       ON DUPLICATE KEY
 			       UPDATE variable_value = '%[1]s'`
@@ -656,7 +698,7 @@ func (s *testSerialSuite) TestRecoverTableByTableNameFail(c *C) {
 	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
 	ddl.EmulatorGCDisable()
 	gcTimeFormat := "20060102-15:04:05 -0700 MST"
-	timeBeforeDrop := time.Now().Add(0 - time.Duration(48*60*60*time.Second)).Format(gcTimeFormat)
+	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
 	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
 			       ON DUPLICATE KEY
 			       UPDATE variable_value = '%[1]s'`
@@ -715,7 +757,7 @@ func (s *testSerialSuite) TestCancelJobByErrorCountLimit(c *C) {
 
 	_, err = tk.Exec("create table t (a int)")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
+	c.Assert(err.Error(), Equals, "[ddl:-1]DDL job rollback, error msg: mock do job error")
 }
 
 func (s *testSerialSuite) TestCanceledJobTakeTime(c *C) {
@@ -899,11 +941,11 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 			c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
 		})
 	}
-	assertShowWarningCorrect("create table t (a tinyint unsigned auto_random(6) primary key)", 1)
-	assertShowWarningCorrect("create table t (a tinyint unsigned auto_random(5) primary key)", 3)
+	assertShowWarningCorrect("create table t (a tinyint unsigned auto_random(6) primary key)", 3)
+	assertShowWarningCorrect("create table t (a tinyint unsigned auto_random(5) primary key)", 7)
 	assertShowWarningCorrect("create table t (a tinyint auto_random(4) primary key)", 7)
 	assertShowWarningCorrect("create table t (a bigint auto_random(62) primary key)", 1)
-	assertShowWarningCorrect("create table t (a bigint unsigned auto_random(61) primary key)", 3)
+	assertShowWarningCorrect("create table t (a bigint unsigned auto_random(61) primary key)", 7)
 	assertShowWarningCorrect("create table t (a int auto_random(30) primary key)", 1)
 	assertShowWarningCorrect("create table t (a int auto_random(29) primary key)", 3)
 
@@ -935,6 +977,11 @@ func (s *testSerialSuite) TestModifyingColumn4NewCollations(c *C) {
 	tk.MustGetErrMsg("alter table t convert to charset utf8 collate utf8_general_ci", "[ddl:8200]Unsupported converting collation of column 'b' from 'utf8_bin' to 'utf8_general_ci' when index is defined on it.")
 	// Change to a compatible collation is allowed.
 	tk.MustExec("alter table t modify c varchar(10) collate utf8mb4_general_ci")
+	// Change the default collation of table is allowed.
+	tk.MustExec("alter table t collate utf8mb4_general_ci")
+	tk.MustExec("alter table t charset utf8mb4 collate utf8mb4_bin")
+	// Change the default collation of database is allowed.
+	tk.MustExec("alter database dct charset utf8mb4 collate utf8mb4_general_ci")
 }
 
 func (s *testSerialSuite) TestForbidUnsupportedCollations(c *C) {
@@ -971,4 +1018,89 @@ func (s *testSerialSuite) TestForbidUnsupportedCollations(c *C) {
 	// TODO(bb7133): fix the following cases by setting charset from collate firstly.
 	// mustGetUnsupportedCollation("create database ucd collate utf8mb4_unicode_ci", errMsgUnsupportedUnicodeCI)
 	// mustGetUnsupportedCollation("alter table t convert to collate utf8mb4_unicode_ci", "utf8mb4_unicode_ci")
+}
+
+func (s *testSerialSuite) TestInvisibleIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t,t1,t2,t3,t4,t5,t6")
+
+	// The DDL statement related to invisible index.
+	showIndexes := "select index_name, is_visible from information_schema.statistics where table_schema = 'test' and table_name = 't'"
+	// 1. Create table with invisible index
+	tk.MustExec("create table t (a int, b int, unique (a) invisible)")
+	tk.MustQuery(showIndexes).Check(testkit.Rows("a NO"))
+	tk.MustExec("insert into t values (1, 2)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2"))
+	// 2. Drop invisible index
+	tk.MustGetErrMsg("alter table t drop column a", "[ddl:8200]can't drop column a with index covered now")
+	tk.MustExec("alter table t drop index a")
+	tk.MustQuery(showIndexes).Check(testkit.Rows())
+	tk.MustExec("insert into t values (3, 4)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2", "3 4"))
+	// 3. Add an invisible index
+	tk.MustExec("alter table t add index (b) invisible")
+	tk.MustQuery(showIndexes).Check(testkit.Rows("b NO"))
+	tk.MustExec("insert into t values (5, 6)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2", "3 4", "5 6"))
+	// 4. Drop it
+	tk.MustExec("alter table t drop index b")
+	tk.MustQuery(showIndexes).Check(testkit.Rows())
+	tk.MustExec("insert into t values (7, 8)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2", "3 4", "5 6", "7 8"))
+	// 5. Create a multiple-column invisible index
+	tk.MustExec("alter table t add index a_b(a, b) invisible")
+	tk.MustQuery(showIndexes).Check(testkit.Rows("a_b NO", "a_b NO"))
+	tk.MustExec("insert into t values (9, 10)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2", "3 4", "5 6", "7 8", "9 10"))
+	// 6. Drop it
+	tk.MustExec("alter table t drop index a_b")
+	tk.MustQuery(showIndexes).Check(testkit.Rows())
+	tk.MustExec("insert into t values (11, 12)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2", "3 4", "5 6", "7 8", "9 10", "11 12"))
+
+	cfg := config.GetGlobalConfig()
+	newCfg := *cfg
+	orignalAlterPrimaryKey := newCfg.AlterPrimaryKey
+	newCfg.AlterPrimaryKey = true
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		newCfg.AlterPrimaryKey = orignalAlterPrimaryKey
+		config.StoreGlobalConfig(&newCfg)
+	}()
+
+	// Limitation: Primary key cannot be invisible index
+	tk.MustGetErrCode("create table t1 (a int, primary key (a) invisible)", errno.ErrPKIndexCantBeInvisible)
+	tk.MustGetErrCode("create table t1 (a int, b int, primary key (a, b) invisible)", errno.ErrPKIndexCantBeInvisible)
+	tk.MustExec("create table t1 (a int, b int)")
+	tk.MustGetErrCode("alter table t1 add primary key(a) invisible", errno.ErrPKIndexCantBeInvisible)
+	tk.MustGetErrCode("alter table t1 add primary key(a, b) invisible", errno.ErrPKIndexCantBeInvisible)
+
+	// Implicit primary key cannot be invisible index
+	// Create a implicit primary key
+	tk.MustGetErrCode("create table t2(a int not null, unique (a) invisible)", errno.ErrPKIndexCantBeInvisible)
+	// Column `a` become implicit primary key after DDL statement on itself
+	tk.MustExec("create table t2(a int not null)")
+	tk.MustGetErrCode("alter table t2 add unique (a) invisible", errno.ErrPKIndexCantBeInvisible)
+	tk.MustExec("create table t3(a int, unique index (a) invisible)")
+	tk.MustGetErrCode("alter table t3 modify column a int not null", errno.ErrPKIndexCantBeInvisible)
+	// Only first unique column can be implicit primary
+	tk.MustExec("create table t4(a int not null, b int not null, unique (a), unique (b) invisible)")
+	showIndexes = "select index_name, is_visible from information_schema.statistics where table_schema = 'test' and table_name = 't4'"
+	tk.MustQuery(showIndexes).Check(testkit.Rows("a YES", "b NO"))
+	tk.MustExec("insert into t4 values (1, 2)")
+	tk.MustQuery("select * from t4").Check(testkit.Rows("1 2"))
+	tk.MustGetErrCode("create table t5(a int not null, b int not null, unique (b) invisible, unique (a))", errno.ErrPKIndexCantBeInvisible)
+	// Column `b` become implicit primary key after DDL statement on other columns
+	tk.MustExec("create table t5(a int not null, b int not null, unique (a), unique (b) invisible)")
+	tk.MustGetErrCode("alter table t5 drop index a", errno.ErrPKIndexCantBeInvisible)
+	tk.MustGetErrCode("alter table t5 modify column a int null", errno.ErrPKIndexCantBeInvisible)
+	// If these is a explicit primary key, no key will become implicit primary key
+	tk.MustExec("create table t6 (a int not null, b int, unique (a) invisible, primary key(b))")
+	showIndexes = "select index_name, is_visible from information_schema.statistics where table_schema = 'test' and table_name = 't6'"
+	tk.MustQuery(showIndexes).Check(testkit.Rows("a NO", "PRIMARY YES"))
+	tk.MustExec("insert into t6 values (1, 2)")
+	tk.MustQuery("select * from t6").Check(testkit.Rows("1 2"))
+	tk.MustGetErrCode("alter table t6 drop primary key", errno.ErrPKIndexCantBeInvisible)
 }

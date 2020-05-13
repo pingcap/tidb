@@ -469,7 +469,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 				}
 			})
 			if job.IsCancelled() {
-				txn.Reset()
+				txn.Discard()
 				err = w.finishDDLJob(t, job)
 				return errors.Trace(err)
 			}
@@ -511,12 +511,26 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 	}
 }
 
+func skipWriteBinlog(job *model.Job) bool {
+	switch job.Type {
+	// ActionUpdateTiFlashReplicaStatus is a TiDB internal DDL,
+	// it's used to update table's TiFlash replica available status.
+	case model.ActionUpdateTiFlashReplicaStatus:
+		return true
+	}
+
+	return false
+}
+
 func writeBinlog(binlogCli *pumpcli.PumpsClient, txn kv.Transaction, job *model.Job) {
 	if job.IsDone() || job.IsRollbackDone() ||
 		// When this column is in the "delete only" and "delete reorg" states, the binlog of "drop column" has not been written yet,
 		// but the column has been removed from the binlog of the write operation.
 		// So we add this binlog to enable downstream components to handle DML correctly in this schema state.
-		(job.Type == model.ActionDropColumn && job.SchemaState == model.StateDeleteOnly) {
+		((job.Type == model.ActionDropColumn || job.Type == model.ActionDropColumns) && job.SchemaState == model.StateDeleteOnly) {
+		if skipWriteBinlog(job) {
+			return
+		}
 		binloginfo.SetDDLBinlog(binlogCli, txn, job.ID, int32(job.SchemaState), job.Query)
 	}
 }
@@ -589,8 +603,12 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onTruncateTablePartition(d, t, job)
 	case model.ActionAddColumn:
 		ver, err = onAddColumn(d, t, job)
+	case model.ActionAddColumns:
+		ver, err = onAddColumns(d, t, job)
 	case model.ActionDropColumn:
 		ver, err = onDropColumn(t, job)
+	case model.ActionDropColumns:
+		ver, err = onDropColumns(t, job)
 	case model.ActionModifyColumn:
 		ver, err = w.onModifyColumn(t, job)
 	case model.ActionSetDefaultValue:
@@ -610,13 +628,17 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionTruncateTable:
 		ver, err = onTruncateTable(d, t, job)
 	case model.ActionRebaseAutoID:
-		ver, err = onRebaseAutoID(d.store, t, job)
+		ver, err = onRebaseRowIDType(d.store, t, job)
+	case model.ActionRebaseAutoRandomBase:
+		ver, err = onRebaseAutoRandomType(d.store, t, job)
 	case model.ActionRenameTable:
 		ver, err = onRenameTable(d, t, job)
 	case model.ActionShardRowID:
 		ver, err = w.onShardRowID(d, t, job)
 	case model.ActionModifyTableComment:
 		ver, err = onModifyTableComment(t, job)
+	case model.ActionModifyTableAutoIdCache:
+		ver, err = onModifyTableAutoIDCache(t, job)
 	case model.ActionAddTablePartition:
 		ver, err = onAddTablePartition(d, t, job)
 	case model.ActionModifyTableCharsetAndCollate:
@@ -633,6 +655,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onUpdateFlashReplicaStatus(t, job)
 	case model.ActionCreateSequence:
 		ver, err = onCreateSequence(d, t, job)
+	case model.ActionAlterIndexVisibility:
+		ver, err = onAlterIndexVisibility(t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled

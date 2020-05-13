@@ -174,7 +174,7 @@ func (s *testMiscSuite) TestBasicFunc(c *C) {
 		Command: mysql.ComSleep,
 		Plan:    nil,
 		Time:    time.Now(),
-		State:   1,
+		State:   3,
 		Info:    "test",
 		StmtCtx: &stmtctx.StatementContext{
 			MemTracker: memory.NewTracker(stringutil.StringerStr(""), -1),
@@ -190,7 +190,7 @@ func (s *testMiscSuite) TestBasicFunc(c *C) {
 	c.Assert(row[3], Equals, pi.DB)
 	c.Assert(row[4], Equals, "Sleep")
 	c.Assert(row[5], Equals, uint64(0))
-	c.Assert(row[6], Equals, "1")
+	c.Assert(row[6], Equals, "in transaction; autocommit")
 	c.Assert(row[7], Equals, "test")
 
 	row3 := pi.ToRow(time.UTC)

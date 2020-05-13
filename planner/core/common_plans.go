@@ -31,14 +31,18 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/texttree"
+	"go.uber.org/zap"
 )
 
 var planCacheCounter = metrics.PlanCacheCounter.WithLabelValues("prepare")
@@ -262,9 +266,20 @@ func (e *Execute) checkPreparedPriv(ctx context.Context, sctx sessionctx.Context
 	return err
 }
 
+func (e *Execute) setFoundInPlanCache(sctx sessionctx.Context, opt bool) error {
+	vars := sctx.GetSessionVars()
+	err := vars.SetSystemVar(variable.TiDBFoundInPlanCache, variable.BoolToIntStr(opt))
+	return err
+}
+
 func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt) error {
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	prepared := preparedStmt.PreparedAst
+	stmtCtx.UseCache = prepared.UseCache
+	var cacheKey kvcache.Key
+	if prepared.UseCache {
+		cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
+	}
 	if prepared.CachedPlan != nil {
 		// Rewriting the expression in the select.where condition  will convert its
 		// type from "paramMarker" to "Constant".When Point Select queries are executed,
@@ -274,42 +289,63 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		names := prepared.CachedNames.(types.NameSlice)
 		err := e.rebuildRange(plan)
 		if err != nil {
-			return err
+			logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
+			goto REBUILD
 		}
 		if metrics.ResettablePlanCacheCounterFortTest {
 			metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
 		} else {
 			planCacheCounter.Inc()
 		}
+		err = e.setFoundInPlanCache(sctx, true)
+		if err != nil {
+			return err
+		}
 		e.names = names
 		e.Plan = plan
 		stmtCtx.PointExec = true
 		return nil
 	}
-	var cacheKey kvcache.Key
-	stmtCtx.UseCache = prepared.UseCache
 	if prepared.UseCache {
-		cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
 		if cacheValue, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
 			if err := e.checkPreparedPriv(ctx, sctx, preparedStmt, is); err != nil {
 				return err
 			}
-			if metrics.ResettablePlanCacheCounterFortTest {
-				metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
-			} else {
-				planCacheCounter.Inc()
-			}
 			cachedVal := cacheValue.(*PSTMTPlanCacheValue)
-			err := e.rebuildRange(cachedVal.Plan)
-			if err != nil {
-				return err
+			planValid := true
+			for tblInfo, unionScan := range cachedVal.TblInfo2UnionScan {
+				if !unionScan && tableHasDirtyContent(sctx, tblInfo) {
+					planValid = false
+					// TODO we can inject UnionScan into cached plan to avoid invalidating it, though
+					// rebuilding the filters in UnionScan is pretty trivial.
+					sctx.PreparedPlanCache().Delete(cacheKey)
+					break
+				}
 			}
-			e.names = cachedVal.OutPutNames
-			e.Plan = cachedVal.Plan
-			stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
-			return nil
+			if planValid {
+				err := e.rebuildRange(cachedVal.Plan)
+				if err != nil {
+					logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
+					goto REBUILD
+				}
+				err = e.setFoundInPlanCache(sctx, true)
+				if err != nil {
+					return err
+				}
+				if metrics.ResettablePlanCacheCounterFortTest {
+					metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
+				} else {
+					planCacheCounter.Inc()
+				}
+				e.names = cachedVal.OutPutNames
+				e.Plan = cachedVal.Plan
+				stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
+				return nil
+			}
 		}
 	}
+
+REBUILD:
 	p, names, err := OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
 	if err != nil {
 		return err
@@ -322,11 +358,12 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	e.Plan = p
 	_, isTableDual := p.(*PhysicalTableDual)
 	if !isTableDual && prepared.UseCache {
-		cached := NewPSTMTPlanCacheValue(p, names)
+		cached := NewPSTMTPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan)
 		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
 		sctx.PreparedPlanCache().Put(cacheKey, cached)
 	}
+	err = e.setFoundInPlanCache(sctx, false)
 	return err
 }
 
@@ -386,7 +423,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 			if err != nil {
 				return err
 			}
-			if ts.Table.Partition != nil {
+			if ts.Table.Partition != nil && ts.Table.Partition.Type == model.PartitionTypeHash {
 				pID, err := rebuildNewTableIDFromTable(e.ctx, ts, sc, pkCol)
 				if err != nil {
 					return err
@@ -404,7 +441,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 		if err != nil {
 			return err
 		}
-		if is.Table.Partition != nil {
+		if is.Table.Partition != nil && is.Table.Partition.Type == model.PartitionTypeHash {
 			pID, err := rebuildNewTableIDFromIndex(e.ctx, is, sc)
 			if err != nil {
 				return err
@@ -419,7 +456,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 		if err != nil {
 			return err
 		}
-		if is.Table.Partition != nil {
+		if is.Table.Partition != nil && is.Table.Partition.Type == model.PartitionTypeHash {
 			pID, err := rebuildNewTableIDFromIndex(e.ctx, is, sc)
 			if err != nil {
 				return err
@@ -432,13 +469,15 @@ func (e *Execute) rebuildRange(p Plan) error {
 		}
 	case *PointGetPlan:
 		if x.HandleParam != nil {
-			x.Handle, err = x.HandleParam.Datum.ToInt64(sc)
+			var iv int64
+			iv, err = x.HandleParam.Datum.ToInt64(sc)
 			if err != nil {
 				return err
 			}
+			x.Handle = kv.IntHandle(iv)
 			if x.PartitionInfo != nil {
 				num := x.TblInfo.Partition.Num
-				pos := math.Abs(x.Handle) % int64(num)
+				pos := math.Abs(iv) % int64(num)
 				x.PartitionInfo = &x.TblInfo.Partition.Definitions[pos]
 			}
 			return nil
@@ -457,10 +496,12 @@ func (e *Execute) rebuildRange(p Plan) error {
 	case *BatchPointGetPlan:
 		for i, param := range x.HandleParams {
 			if param != nil {
-				x.Handles[i], err = param.Datum.ToInt64(sc)
+				var iv int64
+				iv, err = param.Datum.ToInt64(sc)
 				if err != nil {
 					return err
 				}
+				x.Handles[i] = kv.IntHandle(iv)
 			}
 		}
 		for i, params := range x.IndexValueParams {
@@ -521,6 +562,16 @@ type Set struct {
 	VarAssigns []*expression.VarAssignment
 }
 
+// SetConfig represents a plan for set config stmt.
+type SetConfig struct {
+	baseSchemaProducer
+
+	Type     string
+	Instance string
+	Name     string
+	Value    expression.Expression
+}
+
 // SQLBindOpType repreents the SQL bind type
 type SQLBindOpType int
 
@@ -535,6 +586,8 @@ const (
 	OpCaptureBindings
 	// OpEvolveBindings is used to evolve plan binding.
 	OpEvolveBindings
+	// OpReloadBindings is used to reload plan binding.
+	OpReloadBindings
 )
 
 // SQLBindPlan represents a plan for SQL bind.
@@ -778,9 +831,13 @@ func (e *Explain) RenderResult() error {
 			return err
 		}
 	case ast.ExplainFormatDOT:
-		e.prepareDotInfo(e.TargetPlan.(PhysicalPlan))
+		if physicalPlan, ok := e.TargetPlan.(PhysicalPlan); ok {
+			e.prepareDotInfo(physicalPlan)
+		}
 	case ast.ExplainFormatHint:
-		e.Rows = append(e.Rows, []string{GenHintsFromPhysicalPlan(e.TargetPlan)})
+		hints := GenHintsFromPhysicalPlan(e.TargetPlan)
+		hints = append(hints, hint.ExtractTableHintsFromStmtNode(e.ExecStmt)...)
+		e.Rows = append(e.Rows, []string{hint.RestoreOptimizerHints(hints)})
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
@@ -860,16 +917,10 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 		err = e.explainPlanInRowFormat(x.indexPlan, "cop[tikv]", "(Build)", childIndent, false)
 		err = e.explainPlanInRowFormat(x.tablePlan, "cop[tikv]", "(Probe)", childIndent, true)
 	case *PhysicalIndexMergeReader:
-		for i, pchild := range x.partialPlans {
-			if x.tablePlan != nil || i < len(x.partialPlans)-1 {
-				err = e.explainPlanInRowFormat(pchild, "cop[tikv]", "(Build)", childIndent, false)
-			} else {
-				err = e.explainPlanInRowFormat(pchild, "cop[tikv]", "(Probe)", childIndent, true)
-			}
+		for _, pchild := range x.partialPlans {
+			err = e.explainPlanInRowFormat(pchild, "cop[tikv]", "(Build)", childIndent, false)
 		}
-		if x.tablePlan != nil {
-			err = e.explainPlanInRowFormat(x.tablePlan, "cop[tikv]", "(Probe)", childIndent, true)
-		}
+		err = e.explainPlanInRowFormat(x.tablePlan, "cop[tikv]", "(Probe)", childIndent, true)
 	case *Insert:
 		if x.SelectPlan != nil {
 			err = e.explainPlanInRowFormat(x.SelectPlan, "root", "", childIndent, true)

@@ -351,6 +351,36 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 		"test t2  a 0 1 2 1 18446744073709551615 18446744073709551615"))
 }
 
+func (s *testSuite1) TestIssue15993(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("CREATE TABLE t0(c0 INT PRIMARY KEY);")
+	tk.MustExec("set @@tidb_enable_fast_analyze=1;")
+	tk.MustExec("ANALYZE TABLE t0 INDEX PRIMARY;")
+}
+
+func (s *testSuite1) TestIssue15751(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("CREATE TABLE t0(c0 INT, c1 INT, PRIMARY KEY(c0, c1))")
+	tk.MustExec("INSERT INTO t0 VALUES (0, 0)")
+	tk.MustExec("set @@tidb_enable_fast_analyze=1")
+	tk.MustExec("ANALYZE TABLE t0")
+}
+
+func (s *testSuite1) TestIssue15752(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("CREATE TABLE t0(c0 INT)")
+	tk.MustExec("INSERT INTO t0 VALUES (0)")
+	tk.MustExec("CREATE INDEX i0 ON t0(c0)")
+	tk.MustExec("set @@tidb_enable_fast_analyze=1")
+	tk.MustExec("ANALYZE TABLE t0 INDEX i0")
+}
+
 func (s *testSuite1) TestAnalyzeIncremental(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -450,6 +480,7 @@ func (s *testFastAnalyze) TestFastAnalyzeRetryRowCount(c *C) {
 	cluster := mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(cluster)
 	mvccStore := mocktikv.MustNewMVCCStore()
+	cluster.SetMvccStore(mvccStore)
 	store, err := mockstore.NewMockTikvStore(
 		mockstore.WithHijackClient(hijackClient),
 		mockstore.WithCluster(cluster),
@@ -474,7 +505,7 @@ func (s *testFastAnalyze) TestFastAnalyzeRetryRowCount(c *C) {
 	for i := 0; i < 30; i++ {
 		tk.MustExec(fmt.Sprintf("insert into retry_row_count values (%d)", i))
 	}
-	cluster.SplitTable(mvccStore, tid, 6)
+	cluster.SplitTable(tid, 6)
 	// Flush the region cache first.
 	tk.MustQuery("select * from retry_row_count")
 	tk.MustExec("analyze table retry_row_count")
@@ -520,4 +551,42 @@ func (s *testSuite1) TestExtractTopN(c *C) {
 	c.Assert(len(idxStats.CMSketch.TopN()), Equals, 1)
 	item = idxStats.CMSketch.TopN()[0]
 	c.Assert(item.Count, Equals, uint64(11))
+}
+
+func (s *testSuite1) TestHashInTopN(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b float, c decimal(30, 10), d varchar(20))")
+	tk.MustExec(`insert into t values
+				(1, 1.1, 11.1, "0110"),
+				(2, 2.2, 22.2, "0110"),
+				(3, 3.3, 33.3, "0110"),
+				(4, 4.4, 44.4, "0440")`)
+	for i := 0; i < 3; i++ {
+		tk.MustExec("insert into t select * from t")
+	}
+	// get stats of normal analyze
+	tk.MustExec("analyze table t")
+	is := s.dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo := tbl.Meta()
+	tblStats1 := s.dom.StatsHandle().GetTableStats(tblInfo).Copy()
+	// get stats of fast analyze
+	tk.MustExec("set @@tidb_enable_fast_analyze = 1")
+	tk.MustExec("analyze table t")
+	tblStats2 := s.dom.StatsHandle().GetTableStats(tblInfo).Copy()
+	// check the hash for topn
+	for _, col := range tblInfo.Columns {
+		topn1 := tblStats1.Columns[col.ID].CMSketch.TopNMap()
+		cm2 := tblStats2.Columns[col.ID].CMSketch
+		for h1, topnMetas := range topn1 {
+			for _, topnMeta1 := range topnMetas {
+				count2, exists := cm2.QueryTopN(h1, topnMeta1.GetH2(), topnMeta1.Data)
+				c.Assert(exists, Equals, true)
+				c.Assert(count2, Equals, topnMeta1.Count)
+			}
+		}
+	}
 }
