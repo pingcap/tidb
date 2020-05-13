@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/stringutil"
 )
 
 type jsonObjectAgg struct {
@@ -91,8 +92,9 @@ func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 		if err != nil {
 			return errors.Trace(err)
 		}
+		keyString = stringutil.Copy(keyString)
 
-		realVal := value.GetValue()
+		realVal := value.Clone().GetValue()
 		switch x := realVal.(type) {
 		case nil, bool, int64, uint64, float64, string, json.BinaryJSON, *types.MyDecimal, []uint8, types.Time, types.Duration:
 			p.entries[keyString] = realVal
