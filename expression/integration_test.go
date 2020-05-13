@@ -6420,7 +6420,7 @@ func (s *testIntegrationSuite) TestIssue17098(c *C) {
 	tk.MustQuery("select collation(t1.a) from t1 union select collation(t2.a) from t2;").Check(testkit.Rows("utf8mb4_bin"))
 }
 
-func (s *testIntegrationSuite) TestIssue17176(c *C) {
+func (s *testIntegrationSerialSuite) TestIssue17176(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 
