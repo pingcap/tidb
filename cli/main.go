@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/session"
@@ -710,7 +709,6 @@ func cleanup() {
 	} else {
 		svr.TryGracefulDown()
 	}
-	plugin.Shutdown(context.Background())
 	closeDomainAndStorage()
 	if tempDirLock != nil {
 		err := tempDirLock.Unlock()

@@ -15,6 +15,7 @@ package plugin
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	gplugin "plugin"
 	"strconv"
@@ -140,9 +141,9 @@ func (p *Plugin) validate(ctx context.Context, tiPlugins *plugins) error {
 	return nil
 }
 
-// Load load plugin by config param.
+// LoadDeprecated load plugin by config param.
 // This method need be called before domain init to inject global variable info during bootstrap.
-func Load(ctx context.Context, cfg Config) (err error) {
+func LoadDeprecated(ctx context.Context, cfg Config) (err error) {
 	tiPlugins := &plugins{
 		plugins:      make(map[Kind][]Plugin),
 		versions:     make(map[string]uint16, len(cfg.EnvVersion)),
@@ -211,6 +212,16 @@ func Load(ctx context.Context, cfg Config) (err error) {
 	pluginGlobal = copyOnWriteContext{tiPlugins: unsafe.Pointer(tiPlugins)}
 	err = nil
 	return
+}
+
+// Register new plugin when TiDB-Sever init.
+func Register(ps ...Plugin) {
+	tiPlugins := &plugins{plugins: make(map[Kind][]Plugin), versions: make(map[string]uint16)}
+	for _, p := range ps {
+		tiPlugins.add(&p)
+		logutil.BgLogger().Info(fmt.Sprintf("register plugin: %s success", p.Name))
+	}
+	pluginGlobal = copyOnWriteContext{tiPlugins: unsafe.Pointer(tiPlugins)}
 }
 
 // Init initializes the loaded plugin by config param.

@@ -1732,19 +1732,6 @@ func loadParameter(se *session, name string) (string, error) {
 
 // BootstrapSession runs the first time when the TiDB server start.
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
-	cfg := config.GetGlobalConfig()
-	if len(cfg.Plugin.Load) > 0 {
-		err := plugin.Load(context.Background(), plugin.Config{
-			Plugins:        strings.Split(cfg.Plugin.Load, ","),
-			PluginDir:      cfg.Plugin.Dir,
-			GlobalSysVar:   &variable.SysVars,
-			PluginVarNames: &variable.PluginVarNames,
-		})
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	initLoadCommonGlobalVarsSQL()
 
 	ver := getStoreBootstrapVersion(store)
@@ -1801,11 +1788,9 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		}
 	}
 
-	if len(cfg.Plugin.Load) > 0 {
-		err := plugin.Init(context.Background(), plugin.Config{EtcdClient: dom.GetEtcdClient()})
-		if err != nil {
-			return nil, err
-		}
+	err = plugin.Init(context.Background(), plugin.Config{EtcdClient: dom.GetEtcdClient()})
+	if err != nil {
+		return nil, err
 	}
 
 	err = executor.LoadExprPushdownBlacklist(se)
