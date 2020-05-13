@@ -163,6 +163,12 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 	tk.MustExec("alter table tt add index (`primary`);")
 	_, err = tk.Exec("drop index `primary` on tt")
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when alter-primary-key is false")
+
+	// The primary key cannot be invisible, for the case pk_is_handle.
+	tk.MustExec("drop table if exists t1, t2;")
+	_, err = tk.Exec("create table t1(c1 int not null, primary key(c1) invisible);")
+	c.Assert(ddl.ErrPKIndexCantBeInvisible.Equal(err), IsTrue)
+	tk.MustExec("create table t2 (a int, b int not null, primary key(a), unique(b) invisible);")
 }
 
 func (s *testSerialSuite) TestDropAutoIncrementIndex(c *C) {
