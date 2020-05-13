@@ -750,7 +750,7 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			util.WithRecovery(func() {
 				err1 := e.checkIndexHandle(ctx, e.srcs[num])
 				if err1 != nil {
-					logutil.Logger(ctx).Info("check index handle failed", zap.Error(err))
+					logutil.Logger(ctx).Info("check index handle failed", zap.Error(err1))
 				}
 			}, e.handlePanic)
 		}(i)
