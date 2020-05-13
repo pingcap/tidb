@@ -831,7 +831,9 @@ func (e *Explain) RenderResult() error {
 			return err
 		}
 	case ast.ExplainFormatDOT:
-		e.prepareDotInfo(e.TargetPlan.(PhysicalPlan))
+		if physicalPlan, ok := e.TargetPlan.(PhysicalPlan); ok {
+			e.prepareDotInfo(physicalPlan)
+		}
 	case ast.ExplainFormatHint:
 		hints := GenHintsFromPhysicalPlan(e.TargetPlan)
 		hints = append(hints, hint.ExtractTableHintsFromStmtNode(e.ExecStmt)...)
