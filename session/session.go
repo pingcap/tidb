@@ -762,6 +762,10 @@ func (s *session) ExecRestrictedSQLWithContext(ctx context.Context, sql string) 
 		se.sessionVars.InspectionTableCache = cache
 		defer func() { se.sessionVars.InspectionTableCache = nil }()
 	}
+	if ok := s.sessionVars.OptimizerUseInvisibleIndexes; ok {
+		se.sessionVars.OptimizerUseInvisibleIndexes = true
+		defer func() { se.sessionVars.OptimizerUseInvisibleIndexes = false }()
+	}
 	defer func() {
 		if se != nil && se.GetSessionVars().StmtCtx.WarningCount() > 0 {
 			warnings := se.GetSessionVars().StmtCtx.GetWarnings()
@@ -821,6 +825,10 @@ func (s *session) ExecRestrictedSQLWithSnapshot(sql string) ([]chunk.Row, []*ast
 			}
 			se.sessionVars.SnapshotInfoschema = nil
 		}()
+	}
+	if ok := s.sessionVars.OptimizerUseInvisibleIndexes; ok {
+		se.sessionVars.OptimizerUseInvisibleIndexes = true
+		defer func() { se.sessionVars.OptimizerUseInvisibleIndexes = false }()
 	}
 	return execRestrictedSQL(ctx, se, sql)
 }
@@ -1917,7 +1925,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = version43
+	currentBootstrapVersion = version45
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -2231,6 +2239,8 @@ func logQuery(query string, vars *variable.SessionVars) {
 			zap.Stringer("user", vars.User),
 			zap.Int64("schemaVersion", vars.TxnCtx.SchemaVersion),
 			zap.Uint64("txnStartTS", vars.TxnCtx.StartTS),
+			zap.Uint64("forUpdateTS", vars.TxnCtx.GetForUpdateTS()),
+			zap.Bool("isReadConsistency", vars.IsReadConsistencyTxn()),
 			zap.String("current_db", vars.CurrentDB),
 			zap.String("txn_mode", vars.GetReadableTxnMode()),
 			zap.String("sql", query+vars.PreparedParams.String()))

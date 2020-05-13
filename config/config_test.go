@@ -16,6 +16,7 @@ package config
 import (
 	"encoding/json"
 	"os"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -385,10 +386,6 @@ func (s *testConfigSuite) TestTxnTotalSizeLimitValid(c *C) {
 		conf.Performance.TxnTotalSizeLimit = tt.limit
 		c.Assert(conf.Valid() == nil, Equals, tt.valid)
 	}
-
-	conf.Binlog.Enable = true
-	conf.Performance.TxnTotalSizeLimit = 100<<20 + 1
-	c.Assert(conf.Valid(), NotNil)
 }
 
 func (s *testConfigSuite) TestAllowAutoRandomValid(c *C) {
@@ -442,4 +439,33 @@ func (s *testConfigSuite) TestParsePath(c *C) {
 	_, disableGC, err = ParsePath("tikv://node1:2379?disableGC=true")
 	c.Assert(err, IsNil)
 	c.Assert(disableGC, IsTrue)
+}
+
+func (s *testConfigSuite) TestEncodeDefTempStorageDir(c *C) {
+
+	tests := []struct {
+		host       string
+		statusHost string
+		port       uint
+		statusPort uint
+		expect     string
+	}{
+		{"0.0.0.0", "0.0.0.0", 4000, 10080, "MC4wLjAuMDo0MDAwLzAuMC4wLjA6MTAwODA="},
+		{"127.0.0.1", "127.16.5.1", 4000, 10080, "MTI3LjAuMC4xOjQwMDAvMTI3LjE2LjUuMToxMDA4MA=="},
+		{"127.0.0.1", "127.16.5.1", 4000, 15532, "MTI3LjAuMC4xOjQwMDAvMTI3LjE2LjUuMToxNTUzMg=="},
+	}
+
+	var osUID string
+	currentUser, err := user.Current()
+	if err != nil {
+		osUID = ""
+	} else {
+		osUID = currentUser.Uid
+	}
+
+	dirPrefix := filepath.Join(os.TempDir(), osUID+"_tidb")
+	for _, test := range tests {
+		tempStorageDir := encodeDefTempStorageDir(test.host, test.statusHost, test.port, test.statusPort)
+		c.Assert(tempStorageDir, Equals, filepath.Join(dirPrefix, test.expect, "tmp-storage"))
+	}
 }

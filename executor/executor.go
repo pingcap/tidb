@@ -295,21 +295,41 @@ func (e *ShowNextRowIDExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
-	colName := model.ExtraHandleName
-	for _, col := range tbl.Meta().Columns {
-		if mysql.HasAutoIncrementFlag(col.Flag) {
-			colName = col.Name
-			break
+	tblMeta := tbl.Meta()
+
+	allocators := tbl.Allocators(e.ctx)
+	for _, alloc := range allocators {
+		nextGlobalID, err := alloc.NextGlobalAutoID(tblMeta.ID)
+		if err != nil {
+			return err
 		}
+
+		var colName, idType string
+		switch alloc.GetType() {
+		case autoid.RowIDAllocType, autoid.AutoIncrementType:
+			idType = "AUTO_INCREMENT"
+			if col := tblMeta.GetAutoIncrementColInfo(); col != nil {
+				colName = col.Name.O
+			} else {
+				colName = model.ExtraHandleName.O
+			}
+		case autoid.AutoRandomType:
+			idType = "AUTO_RANDOM"
+			colName = tblMeta.GetPkName().O
+		case autoid.SequenceType:
+			idType = "SEQUENCE"
+			colName = ""
+		default:
+			return autoid.ErrInvalidAllocatorType.GenWithStackByArgs()
+		}
+
+		req.AppendString(0, e.tblName.Schema.O)
+		req.AppendString(1, e.tblName.Name.O)
+		req.AppendString(2, colName)
+		req.AppendInt64(3, nextGlobalID)
+		req.AppendString(4, idType)
 	}
-	nextGlobalID, err := tbl.Allocators(e.ctx).Get(autoid.RowIDAllocType).NextGlobalAutoID(tbl.Meta().ID)
-	if err != nil {
-		return err
-	}
-	req.AppendString(0, e.tblName.Schema.O)
-	req.AppendString(1, e.tblName.Name.O)
-	req.AppendString(2, colName.O)
-	req.AppendInt64(3, nextGlobalID)
+
 	e.done = true
 	return nil
 }
@@ -930,7 +950,7 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 				}
 
 				for _, col := range cols {
-					e.keys = append(e.keys, tablecodec.EncodeRowKeyWithHandle(physicalID, row.GetInt64(col.Index)))
+					e.keys = append(e.keys, tablecodec.EncodeRowKeyWithHandle(physicalID, kv.IntHandle(row.GetInt64(col.Index))))
 				}
 			}
 		}
@@ -1169,6 +1189,10 @@ func (e *SelectionExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
+	return e.open(ctx)
+}
+
+func (e *SelectionExec) open(ctx context.Context) error {
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	e.childResult = newFirstChunk(e.children[0])
@@ -1261,7 +1285,7 @@ type TableScanExec struct {
 	baseExecutor
 
 	t                     table.Table
-	seekHandle            int64
+	seekHandle            kv.Handle
 	iter                  kv.Iterator
 	columns               []*model.ColumnInfo
 	isVirtualTable        bool
@@ -1286,7 +1310,7 @@ func (e *TableScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if err != nil {
 			return err
 		}
-		e.seekHandle = handle + 1
+		e.seekHandle = handle.Next()
 		mutableRow.SetDatums(row...)
 		req.AppendRow(mutableRow.ToRow())
 	}
@@ -1322,15 +1346,15 @@ func (e *TableScanExec) nextChunk4InfoSchema(ctx context.Context, chk *chunk.Chu
 }
 
 // nextHandle gets the unique handle for next row.
-func (e *TableScanExec) nextHandle() (handle int64, found bool, err error) {
+func (e *TableScanExec) nextHandle() (handle kv.Handle, found bool, err error) {
 	handle, found, err = e.t.Seek(e.ctx, e.seekHandle)
 	if err != nil || !found {
-		return 0, false, err
+		return nil, false, err
 	}
 	return handle, true, nil
 }
 
-func (e *TableScanExec) getRow(handle int64) ([]types.Datum, error) {
+func (e *TableScanExec) getRow(handle kv.Handle) ([]types.Datum, error) {
 	columns := make([]*table.Column, e.schema.Len())
 	for i, v := range e.columns {
 		columns[i] = table.ToColumn(v)
@@ -1558,6 +1582,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		TimeZone:    vars.Location(),
 		MemTracker:  memory.NewTracker(stringutil.MemoizeStr(s.Text), vars.MemQuotaQuery),
 		DiskTracker: disk.NewTracker(stringutil.MemoizeStr(s.Text), -1),
+		TaskID:      stmtctx.AllocateTaskID(),
 	}
 	if config.GetGlobalConfig().OOMUseTmpStorage && GlobalDiskUsageTracker != nil {
 		sc.DiskTracker.AttachToGlobalTracker(GlobalDiskUsageTracker)

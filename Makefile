@@ -60,7 +60,7 @@ VB_FILE =
 VB_FUNC =
 
 
-.PHONY: all build update clean todo test gotest interpreter server dev benchkv benchraw check checklist parser tidy ddltest
+.PHONY: all build clean test gotest server dev benchkv benchraw check checklist parser tidy ddltest
 
 default: server buildsucc
 
@@ -90,6 +90,7 @@ check-fail: goword check-slow
 fmt:
 	@echo "gofmt (simplify)"
 	@gofmt -s -l -w $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
+	@cd cmd/importcheck && $(GO) run . ../..
 
 goword:tools/bin/goword
 	tools/bin/goword $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
@@ -294,12 +295,6 @@ tools/bin/unconvert: tools/check/go.mod
 tools/bin/failpoint-ctl: go.mod
 	$(GO) build -o $@ github.com/pingcap/failpoint/failpoint-ctl
 
-tools/bin/misspell:tools/check/go.mod
-	$(GO) get -u github.com/client9/misspell/cmd/misspell
-
-tools/bin/ineffassign:tools/check/go.mod
-	cd tools/check; \
-	$(GO) build -o ../bin/ineffassign github.com/gordonklaus/ineffassign
 tools/bin/golangci-lint:
 	curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh| sh -s -- -b ./tools/bin v1.21.0
 
