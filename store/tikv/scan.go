@@ -201,6 +201,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdScan, sreq, s.snapshot.replicaRead, s.snapshot.replicaReadSeed, pb.Context{
 			Priority:     s.snapshot.priority,
 			NotFillCache: s.snapshot.notFillCache,
+			TaskId:       s.snapshot.taskID,
 		})
 		resp, err := sender.SendReq(bo, req, loc.Region, ReadTimeoutMedium)
 		if err != nil {
