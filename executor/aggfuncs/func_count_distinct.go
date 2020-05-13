@@ -15,7 +15,6 @@ package aggfuncs
 
 import (
 	"encoding/binary"
-	"github.com/pingcap/tidb/util/collate"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/stringutil"
