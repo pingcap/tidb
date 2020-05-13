@@ -56,9 +56,11 @@ import (
 	"github.com/pingcap/tidb/store/tikv/gcworker"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/domainutil"
+	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/printer"
+	"github.com/pingcap/tidb/util/profile"
 	"github.com/pingcap/tidb/util/signal"
 	"github.com/pingcap/tidb/util/storeutil"
 	"github.com/pingcap/tidb/util/sys/linux"
@@ -173,6 +175,7 @@ func main() {
 	}
 	setGlobalVars()
 	setCPUAffinity()
+	setHeapProfileTracker()
 	setupLog()
 	setupTracing() // Should before createServer and after setup config.
 	printInfo()
@@ -271,6 +274,12 @@ func setCPUAffinity() {
 		exit()
 	}
 	runtime.GOMAXPROCS(len(cpu))
+}
+
+func setHeapProfileTracker() {
+	c := config.GetGlobalConfig()
+	d := parseDuration(c.Performance.MemProfileInterval)
+	go profile.HeapProfileForGlobalMemTracker(d)
 }
 
 func registerStores() {
@@ -591,7 +600,15 @@ func setGlobalVars() {
 	tikv.RegionCacheTTLSec = int64(cfg.TiKVClient.RegionCacheTTL)
 	domainutil.RepairInfo.SetRepairMode(cfg.RepairMode)
 	domainutil.RepairInfo.SetRepairTableList(cfg.RepairTableList)
-	executor.GlobalDiskUsageTracker.SetBytesLimit(config.GetGlobalConfig().TempStorageQuota)
+	c := config.GetGlobalConfig()
+	executor.GlobalDiskUsageTracker.SetBytesLimit(c.TempStorageQuota)
+	if c.Performance.MaxMemory < 1 {
+		// If MaxMemory equals 0, it means unlimited
+		executor.GlobalMemoryUsageTracker.SetBytesLimit(-1)
+	} else {
+		executor.GlobalMemoryUsageTracker.SetBytesLimit(int64(c.Performance.MaxMemory))
+	}
+	kvcache.GlobalLRUMemUsageTracker.AttachToGlobalTracker(executor.GlobalMemoryUsageTracker)
 }
 
 func setupLog() {
