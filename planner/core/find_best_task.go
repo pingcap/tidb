@@ -68,7 +68,7 @@ var invalidTask = &rootTask{cst: math.MaxFloat64}
 
 // GetPropByOrderByItems will check if this sort property can be pushed or not. In order to simplify the problem, we only
 // consider the case that all expression are columns.
-func GetPropByOrderByItems(items []*ByItems) (*property.PhysicalProperty, bool) {
+func GetPropByOrderByItems(items []*util.ByItems) (*property.PhysicalProperty, bool) {
 	propItems := make([]property.Item, 0, len(items))
 	for _, item := range items {
 		col, ok := item.Expr.(*expression.Column)
@@ -82,7 +82,7 @@ func GetPropByOrderByItems(items []*ByItems) (*property.PhysicalProperty, bool) 
 
 // GetPropByOrderByItemsContainScalarFunc will check if this sort property can be pushed or not. In order to simplify the
 // problem, we only consider the case that all expression are columns or some special scalar functions.
-func GetPropByOrderByItemsContainScalarFunc(items []*ByItems) (*property.PhysicalProperty, bool, bool) {
+func GetPropByOrderByItemsContainScalarFunc(items []*util.ByItems) (*property.PhysicalProperty, bool, bool) {
 	propItems := make([]property.Item, 0, len(items))
 	onlyColumn := true
 	for _, item := range items {
@@ -104,7 +104,10 @@ func GetPropByOrderByItemsContainScalarFunc(items []*ByItems) (*property.Physica
 }
 
 func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty) (task, error) {
-	if !prop.IsEmpty() {
+	// If the required property is not empty and the row count > 1,
+	// we cannot ensure this required property.
+	// But if the row count is 0 or 1, we don't need to care about the property.
+	if !prop.IsEmpty() && p.RowCount > 1 {
 		return invalidTask, nil
 	}
 	dual := PhysicalTableDual{
@@ -132,46 +135,9 @@ func (p *LogicalShowDDLJobs) findBestTask(prop *property.PhysicalProperty) (task
 	return &rootTask{p: pShow}, nil
 }
 
-// findBestTask implements LogicalPlan interface.
-func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTask task, err error) {
-	// If p is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
-	// and set inner child prop nil, so here we do nothing.
-	if prop == nil {
-		return nil, nil
-	}
-	// Look up the task with this prop in the task map.
-	// It's used to reduce double counting.
-	bestTask = p.getTask(prop)
-	if bestTask != nil {
-		return bestTask, nil
-	}
-
-	if prop.TaskTp != property.RootTaskType {
-		// Currently all plan cannot totally push down.
-		p.storeTask(prop, invalidTask)
-		return invalidTask, nil
-	}
-
-	bestTask = invalidTask
+func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPlan, prop *property.PhysicalProperty) (task, error) {
+	var bestTask task = invalidTask
 	childTasks := make([]task, 0, len(p.children))
-
-	// If prop.enforced is true, cols of prop as parameter in exhaustPhysicalPlans should be nil
-	// And reset it for enforcing task prop and storing map<prop,task>
-	oldPropCols := prop.Items
-	if prop.Enforced {
-		// First, get the bestTask without enforced prop
-		prop.Enforced = false
-		bestTask, err = p.findBestTask(prop)
-		if err != nil {
-			return nil, err
-		}
-		prop.Enforced = true
-		// Next, get the bestTask with enforced prop
-		prop.Items = []property.Item{}
-	}
-	physicalPlans := p.self.exhaustPhysicalPlans(prop)
-	prop.Items = oldPropCols
-
 	for _, pp := range physicalPlans {
 		// find best child tasks firstly.
 		childTasks = childTasks[:0]
@@ -205,9 +171,83 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 		}
 
 		// get the most efficient one.
-		if curTask.cost() < bestTask.cost() {
+		if curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()) {
 			bestTask = curTask
 		}
+	}
+	return bestTask, nil
+}
+
+// findBestTask implements LogicalPlan interface.
+func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTask task, err error) {
+	// If p is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
+	// and set inner child prop nil, so here we do nothing.
+	if prop == nil {
+		return nil, nil
+	}
+	// Look up the task with this prop in the task map.
+	// It's used to reduce double counting.
+	bestTask = p.getTask(prop)
+	if bestTask != nil {
+		return bestTask, nil
+	}
+
+	if prop.TaskTp != property.RootTaskType {
+		// Currently all plan cannot totally push down.
+		p.storeTask(prop, invalidTask)
+		return invalidTask, nil
+	}
+
+	bestTask = invalidTask
+	// prop should be read only because its cached hashcode might be not consistent
+	// when it is changed. So we clone a new one for the temporary changes.
+	newProp := prop.Clone()
+	newProp.Enforced = prop.Enforced
+	var plansFitsProp, plansNeedEnforce []PhysicalPlan
+	var hintWorksWithProp bool
+	// Maybe the plan can satisfy the required property,
+	// so we try to get the task without the enforced sort first.
+	plansFitsProp, hintWorksWithProp = p.self.exhaustPhysicalPlans(newProp)
+	if !hintWorksWithProp && !newProp.IsEmpty() {
+		// If there is a hint in the plan and the hint cannot satisfy the property,
+		// we enforce this property and try to generate the PhysicalPlan again to
+		// make sure the hint can work.
+		newProp.Enforced = true
+	}
+
+	if newProp.Enforced {
+		// Then, we use the empty property to get physicalPlans and
+		// try to get the task with an enforced sort.
+		newProp.Items = []property.Item{}
+		newProp.ExpectedCnt = math.MaxFloat64
+		var hintCanWork bool
+		plansNeedEnforce, hintCanWork = p.self.exhaustPhysicalPlans(newProp)
+		if hintCanWork && !hintWorksWithProp {
+			// If the hint can work with the empty property, but cannot work with
+			// the required property, we give up `plansFitProp` to make sure the hint
+			// can work.
+			plansFitsProp = nil
+		}
+		if !hintCanWork && !hintWorksWithProp && !prop.Enforced {
+			// If the original property is not enforced and hint cannot
+			// work anyway, we give up `plansNeedEnforce` for efficiency,
+			plansNeedEnforce = nil
+		}
+		newProp.Items = prop.Items
+		newProp.ExpectedCnt = prop.ExpectedCnt
+	}
+
+	newProp.Enforced = false
+	if bestTask, err = p.enumeratePhysicalPlans4Task(plansFitsProp, newProp); err != nil {
+		return nil, err
+	}
+	newProp.Enforced = true
+	curTask, err := p.enumeratePhysicalPlans4Task(plansNeedEnforce, newProp)
+	if err != nil {
+		return nil, err
+	}
+	if curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()) {
+		bestTask = curTask
 	}
 
 	p.storeTask(prop, bestTask)
@@ -631,6 +671,7 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 		physicalTableID: ds.physicalTableID,
 	}.Init(ds.ctx, ds.blockOffset)
 	ts.SetSchema(ds.schema.Clone())
+	ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
 	if ts.Table.PKIsHandle {
 		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
 			if ds.statisticTable.Columns[pkColInfo.ID] != nil {
@@ -1139,7 +1180,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 	rTsk := &rootTask{p: pointGetPlan}
 	var cost float64
 	if candidate.path.IsTablePath {
-		pointGetPlan.Handle = candidate.path.Ranges[0].LowVal[0].GetInt64()
+		pointGetPlan.Handle = kv.IntHandle(candidate.path.Ranges[0].LowVal[0].GetInt64())
 		pointGetPlan.UnsignedHandle = mysql.HasUnsignedFlag(ds.getHandleCol().RetType.Flag)
 		pointGetPlan.PartitionInfo = partitionInfo
 		cost = pointGetPlan.GetCost(ds.TblCols)
@@ -1200,7 +1241,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 	var cost float64
 	if candidate.path.IsTablePath {
 		for _, ran := range candidate.path.Ranges {
-			batchPointGetPlan.Handles = append(batchPointGetPlan.Handles, ran.LowVal[0].GetInt64())
+			batchPointGetPlan.Handles = append(batchPointGetPlan.Handles, kv.IntHandle(ran.LowVal[0].GetInt64()))
 		}
 		cost = batchPointGetPlan.GetCost(ds.TblCols)
 		// Add filter condition to table plan now.

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
@@ -297,7 +298,7 @@ type PhysicalProjection struct {
 type PhysicalTopN struct {
 	basePhysicalPlan
 
-	ByItems []*ByItems
+	ByItems []*util.ByItems
 	Offset  uint64
 	Count   uint64
 }
@@ -491,7 +492,7 @@ type PhysicalStreamAgg struct {
 type PhysicalSort struct {
 	basePhysicalPlan
 
-	ByItems []*ByItems
+	ByItems []*util.ByItems
 }
 
 // NominalSort asks sort properties for its child. It is a fake operator that will not
@@ -502,7 +503,7 @@ type NominalSort struct {
 	// These two fields are used to switch ScalarFunctions to Constants. For these
 	// NominalSorts, we need to converted to Projections check if the ScalarFunctions
 	// are out of bounds. (issue #11653)
-	ByItems    []*ByItems
+	ByItems    []*util.ByItems
 	OnlyColumn bool
 }
 

@@ -902,6 +902,7 @@ var MySQLErrName = map[uint16]string{
 	ErrUserAlreadyExists:                                     "User %s already exists.",
 	ErrInvalidJSONPathArrayCell:                              "A path expression is not a path to a cell in an array.",
 	ErrInvalidEncryptionOption:                               "Invalid encryption option.",
+	ErrPKIndexCantBeInvisible:                                "A primary key index cannot be invisible",
 	ErrWindowNoSuchWindow:                                    "Window name '%s' is not defined.",
 	ErrWindowCircularityInWindowGraph:                        "There is a circularity in the window dependency graph.",
 	ErrWindowNoChildPartitioning:                             "A window which depends on another cannot define partitioning.",
@@ -1067,6 +1068,11 @@ var MySQLErrName = map[uint16]string{
 	ErrMixOfGroupFuncAndFieldsIncompatible: "In aggregated query without GROUP BY, expression #%d of SELECT list contains nonaggregated column '%s'; this is incompatible with sql_mode=only_full_group_by",
 	ErrUnsupportedSecondArgumentType:       "JSON_OBJECTAGG: unsupported second argument type %v",
 	ErrLockExpire:                          "TTL manager has timed out, pessimistic locks may expire, please commit or rollback this transaction",
+
+	ErrBRIEBackupFailed:  "Backup failed: %s",
+	ErrBRIERestoreFailed: "Restore failed: %s",
+	ErrBRIEImportFailed:  "Import failed: %s",
+	ErrBRIEExportFailed:  "Export failed: %s",
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout:        "PD server timeout",

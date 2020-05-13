@@ -57,8 +57,9 @@ func (s *testDDLSuite) TestCheckOwner(c *C) {
 	store := testCreateStore(c, "test_owner")
 	defer store.Close()
 
-	d1 := newDDL(
+	d1 := testNewDDLAndStart(
 		context.Background(),
+		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
@@ -75,8 +76,9 @@ func (s *testDDLSerialSuite) testRunWorker(c *C) {
 	defer store.Close()
 
 	RunWorker = false
-	d := newDDL(
+	d := testNewDDLAndStart(
 		context.Background(),
+		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
@@ -88,8 +90,9 @@ func (s *testDDLSerialSuite) testRunWorker(c *C) {
 	c.Assert(worker, IsNil)
 	// Make sure the DDL job can be done and exit that goroutine.
 	RunWorker = true
-	d1 := newDDL(
+	d1 := testNewDDLAndStart(
 		context.Background(),
+		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
@@ -103,8 +106,9 @@ func (s *testDDLSuite) TestSchemaError(c *C) {
 	store := testCreateStore(c, "test_schema_error")
 	defer store.Close()
 
-	d := newDDL(
+	d := testNewDDLAndStart(
 		context.Background(),
+		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
@@ -118,8 +122,9 @@ func (s *testDDLSuite) TestTableError(c *C) {
 	store := testCreateStore(c, "test_table_error")
 	defer store.Close()
 
-	d := newDDL(
+	d := testNewDDLAndStart(
 		context.Background(),
+		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
@@ -163,8 +168,9 @@ func (s *testDDLSuite) TestViewError(c *C) {
 	store := testCreateStore(c, "test_view_error")
 	defer store.Close()
 
-	d := newDDL(
+	d := testNewDDLAndStart(
 		context.Background(),
+		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
@@ -190,8 +196,9 @@ func (s *testDDLSuite) TestViewError(c *C) {
 func (s *testDDLSuite) TestInvalidDDLJob(c *C) {
 	store := testCreateStore(c, "test_invalid_ddl_job_type_error")
 	defer store.Close()
-	d := newDDL(
+	d := testNewDDLAndStart(
 		context.Background(),
+		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
@@ -213,8 +220,9 @@ func (s *testDDLSuite) TestForeignKeyError(c *C) {
 	store := testCreateStore(c, "test_foreign_key_error")
 	defer store.Close()
 
-	d := newDDL(
+	d := testNewDDLAndStart(
 		context.Background(),
+		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
@@ -235,8 +243,9 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 	store := testCreateStore(c, "test_index_error")
 	defer store.Close()
 
-	d := newDDL(
+	d := testNewDDLAndStart(
 		context.Background(),
+		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
@@ -274,8 +283,9 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 func (s *testDDLSuite) TestColumnError(c *C) {
 	store := testCreateStore(c, "test_column_error")
 	defer store.Close()
-	d := newDDL(
+	d := testNewDDLAndStart(
 		context.Background(),
+		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
@@ -475,6 +485,9 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 		{act: model.ActionDropColumns, jobIDs: []int64{firstID + 42}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenWithStackByArgs(firstID + 42)}, cancelState: model.StateDeleteOnly},
 		{act: model.ActionDropColumns, jobIDs: []int64{firstID + 43}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenWithStackByArgs(firstID + 43)}, cancelState: model.StateWriteOnly},
 		{act: model.ActionDropColumns, jobIDs: []int64{firstID + 44}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenWithStackByArgs(firstID + 44)}, cancelState: model.StateWriteReorganization},
+
+		{act: model.ActionAlterIndexVisibility, jobIDs: []int64{firstID + 46}, cancelRetErrs: noErrs, cancelState: model.StateNone},
+		{act: model.ActionAlterIndexVisibility, jobIDs: []int64{firstID + 47}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 47)}, cancelState: model.StatePublic},
 	}
 
 	return tests
@@ -524,11 +537,21 @@ func checkColumnsNotFound(t table.Table, colNames []string) bool {
 	return notFound
 }
 
+func checkIdxVisibility(changedTable table.Table, idxName string, expected bool) bool {
+	for _, idxInfo := range changedTable.Meta().Indices {
+		if idxInfo.Name.O == idxName && idxInfo.Invisible == expected {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *testDDLSuite) TestCancelJob(c *C) {
 	store := testCreateStore(c, "test_cancel_job")
 	defer store.Close()
-	d := newDDL(
+	d := testNewDDLAndStart(
 		context.Background(),
+		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
@@ -939,6 +962,30 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	testDropColumns(c, ctx, d, dbInfo, tblInfo, dropColNames, false)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	s.checkCancelDropColumns(c, d, dbInfo.ID, tblInfo.ID, dropColNames, true)
+
+	// test alter index visibility failed caused by canceled.
+	indexName := "idx_c3"
+	testCreateIndex(c, ctx, d, dbInfo, tblInfo, false, indexName, "c3")
+	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	txn, err = ctx.Txn(true)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Commit(context.Background()), IsNil)
+	s.checkAddIdx(c, d, dbInfo.ID, tblInfo.ID, indexName, true)
+
+	updateTest(&tests[41])
+	alterIndexVisibility := []interface{}{model.NewCIStr(indexName), true}
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, test.act, alterIndexVisibility, &test.cancelState)
+	c.Check(checkErr, IsNil)
+	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
+	c.Assert(checkIdxVisibility(changedTable, indexName, false), IsTrue)
+
+	// cancel alter index visibility successfully
+	updateTest(&tests[42])
+	alterIndexVisibility = []interface{}{model.NewCIStr(indexName), true}
+	doDDLJobSuccess(ctx, d, c, dbInfo.ID, tblInfo.ID, test.act, alterIndexVisibility)
+	c.Check(checkErr, IsNil)
+	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
+	c.Assert(checkIdxVisibility(changedTable, indexName, true), IsTrue)
 }
 
 func (s *testDDLSuite) TestIgnorableSpec(c *C) {
@@ -1050,8 +1097,9 @@ func addDDLJob(c *C, d *ddl, job *model.Job) {
 func (s *testDDLSuite) TestParallelDDL(c *C) {
 	store := testCreateStore(c, "test_parallel_ddl")
 	defer store.Close()
-	d := newDDL(
+	d := testNewDDLAndStart(
 		context.Background(),
+		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
@@ -1244,8 +1292,9 @@ func (s *testDDLSuite) TestDDLPackageExecuteSQL(c *C) {
 	store := testCreateStore(c, "test_run_sql")
 	defer store.Close()
 
-	d := newDDL(
+	d := testNewDDLAndStart(
 		context.Background(),
+		c,
 		WithStore(store),
 		WithLease(testLease),
 	)

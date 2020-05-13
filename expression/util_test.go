@@ -48,8 +48,9 @@ func (s *testUtilSuite) checkPanic(f func()) (ret bool) {
 
 func (s *testUtilSuite) TestBaseBuiltin(c *check.C) {
 	ctx := mock.NewContext()
-	bf := newBaseBuiltinFuncWithTp(ctx, nil, types.ETTimestamp)
-	_, _, err := bf.evalInt(chunk.Row{})
+	bf, err := newBaseBuiltinFuncWithTp(ctx, "", nil, types.ETTimestamp)
+	c.Assert(err, check.IsNil)
+	_, _, err = bf.evalInt(chunk.Row{})
 	c.Assert(err, check.NotNil)
 	_, _, err = bf.evalReal(chunk.Row{})
 	c.Assert(err, check.NotNil)
@@ -550,7 +551,7 @@ func (m *MockExpr) HasCoercibility() bool                             { return f
 func (m *MockExpr) Coercibility() Coercibility                        { return 0 }
 func (m *MockExpr) SetCoercibility(Coercibility)                      {}
 
-func (m *MockExpr) CharsetAndCollation(ctx sessionctx.Context) (string, string, int) {
-	return "", "", 0
+func (m *MockExpr) CharsetAndCollation(ctx sessionctx.Context) (string, string) {
+	return "", ""
 }
-func (m *MockExpr) SetCharsetAndCollation(chs, coll string, flen int) {}
+func (m *MockExpr) SetCharsetAndCollation(chs, coll string) {}
