@@ -78,7 +78,10 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	for i := range args {
 		argTps[i] = args[0].GetType().EvalType()
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTps...)
+	if err != nil {
+		return nil, err
+	}
 	bf.tp.Flen = 1
 	switch args[0].GetType().EvalType() {
 	case types.ETInt:
@@ -639,7 +642,10 @@ func (c *rowFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	for i := range argTps {
 		argTps[i] = args[i].GetType().EvalType()
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
+	if err != nil {
+		return nil, err
+	}
 	sig = &builtinRowSig{bf}
 	return sig, nil
 }
@@ -667,7 +673,10 @@ func (c *setVarFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
 	bf.tp.Flen = args[1].GetType().Flen
 	// TODO: we should consider the type of the argument, but not take it as string for all situations.
 	sig = &builtinSetVarSig{bf}
@@ -719,7 +728,10 @@ func (c *getVarFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		return nil, err
 	}
 	// TODO: we should consider the type of the argument, but not take it as string for all situations.
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
 	bf.tp.Flen = mysql.MaxFieldVarCharLength
 	if err := c.resolveCollation(ctx, args, &bf); err != nil {
 		return nil, err
@@ -786,7 +798,10 @@ func (c *valuesFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFunc(ctx, args)
+	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args)
+	if err != nil {
+		return nil, err
+	}
 	bf.tp = c.tp
 	switch c.tp.EvalType() {
 	case types.ETInt:
@@ -1058,7 +1073,10 @@ func (c *bitCountFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt)
+	if err != nil {
+		return nil, err
+	}
 	bf.tp.Flen = 2
 	sig := &builtinBitCountSig{bf}
 	return sig, nil
@@ -1098,7 +1116,10 @@ func (c *getParamFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETInt)
+	if err != nil {
+		return nil, err
+	}
 	bf.tp.Flen = mysql.MaxFieldVarCharLength
 	sig := &builtinGetParamStringSig{bf}
 	return sig, nil

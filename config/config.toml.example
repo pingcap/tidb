@@ -38,9 +38,9 @@ mem-quota-query = 1073741824
 oom-use-tmp-storage = true
 
 # Specifies the temporary storage path for some operators when a single SQL statement exceeds the memory quota specified by mem-quota-query.
-# It defaults to a generated directory in `<TMPDIR>/tidb/` if it is unset.
+# It defaults to a generated directory in `<TMPDIR>/<os/user.Current().Uid>_tidb/` if it is unset.
 # It only takes effect when `oom-use-tmp-storage` is `true`.
-# tmp-storage-path = "/tmp/tidb/NDAwMC8xMDA4MA==/tmp-storage"
+# tmp-storage-path = "/tmp/<os/user.Current().Uid>_tidb/MC4wLjAuMDo0MDAwLzAuMC4wLjA6MTAwODA=/tmp-storage"
 
 # Specifies the maximum use of temporary storage (bytes) for all active queries when `oom-use-tmp-storage` is enabled.
 # If the `tmp-storage-quota` exceeds the capacity of the temporary storage directory, tidb-server would return an error and exit.
@@ -237,8 +237,9 @@ distinct-agg-push-down = false
 
 # The limitation of the size in byte for the entries in one transaction.
 # If using TiKV as the storage, the entry represents a key/value pair.
-# NOTE: If binlog is enabled, this value should be less than 104857600(10M) because this is the maximum size that can be handled by Pumper.
-# If binlog is not enabled, this value should be less than 10737418240(10G).
+# NOTE: If binlog is enabled with Kafka (e.g. arbiter cluster),
+# this value should be less than 1073741824(1G) because this is the maximum size that can be handled by Kafka.
+# If binlog is disabled or binlog is enabled without Kafka, this value should be less than 10737418240(10G).
 txn-total-size-limit = 104857600
 
 # The max number of running concurrency two phase committer request for an SQL.
@@ -347,6 +348,9 @@ region-cache-ttl = 600
 # default 0 means shutting off store limit.
 store-limit = 0
 
+# store-liveness-timeout is used to control timeout for store liveness after sending request failed.
+store-liveness-timeout = "120s"
+
 [tikv-client.copr-cache]
 # Whether to enable the copr cache. The copr cache saves the result from TiKV Coprocessor in the memory and
 # reuses the result when corresponding data in TiKV is unchanged, on a region basis.
@@ -362,7 +366,8 @@ admission-min-process-ms = 5
 
 [binlog]
 # enable to write binlog.
-# NOTE: If binlog is enabled, txn-total-size-limit should be less than 104857600(10M).
+# NOTE: If binlog is enabled with Kafka (e.g. arbiter cluster),
+# txn-total-size-limit should be less than 1073741824(1G) because this is the maximum size that can be handled by Kafka.
 enable = false
 
 # WriteTimeout specifies how long it will wait for writing binlog to pump.

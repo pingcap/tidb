@@ -287,6 +287,19 @@ func (s *testSuite6) TestIssue16250(c *C) {
 	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.view_issue16250' doesn't exist")
 }
 
+func (s testSuite6) TestTruncateSequence(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create sequence if not exists seq")
+	_, err := tk.Exec("truncate table seq")
+	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.seq' doesn't exist")
+	tk.MustExec("create sequence if not exists seq1 start 10 increment 2 maxvalue 10000 cycle")
+	_, err = tk.Exec("truncate table seq1")
+	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.seq1' doesn't exist")
+	tk.MustExec("drop sequence if exists seq")
+	tk.MustExec("drop sequence if exists seq1")
+}
+
 func (s *testSuite6) TestCreateViewWithOverlongColName(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -867,9 +880,7 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 
 	// Test overflow.
 	tk.MustExec("create table t (a tinyint primary key auto_random(2), b int)")
-	fieldLength := uint64(mysql.DefaultLengthOfMysqlTypes[mysql.TypeTiny] * 8)
-	signBit := uint64(1)
-	for i := 0; i < (1<<(fieldLength-2-signBit))-1; i++ {
+	for i := 0; i < 31; /* 2^(8-2-1)-1 */ i++ {
 		tk.MustExec(fmt.Sprintf("insert into t (b) values (%d)", i))
 	}
 	_, err = tk.Exec("insert into t (b) values (0)")
@@ -910,6 +921,31 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 	for i := int64(100); i < size; i++ {
 		c.Assert(orderedHandles[i], Equals, i-99)
 	}
+	tk.MustExec("drop table t")
+
+	// Test signed/unsigned types.
+	tk.MustExec("create table t (a bigint primary key auto_random(10), b int)")
+	for i := 0; i < 100; i++ {
+		tk.MustExec("insert into t (b) values(?)", i)
+	}
+	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Se, "test_auto_random_bits", "t")
+	for _, h := range allHandles {
+		// Sign bit should be reserved.
+		c.Assert(h > 0, IsTrue)
+	}
+	tk.MustExec("drop table t")
+
+	tk.MustExec("create table t (a bigint unsigned primary key auto_random(10), b int)")
+	for i := 0; i < 100; i++ {
+		tk.MustExec("insert into t (b) values(?)", i)
+	}
+	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Se, "test_auto_random_bits", "t")
+	signBitUnused := true
+	for _, h := range allHandles {
+		signBitUnused = signBitUnused && (h > 0)
+	}
+	// Sign bit should be used for shard.
+	c.Assert(signBitUnused, IsFalse)
 	tk.MustExec("drop table t")
 }
 

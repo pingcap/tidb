@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -57,13 +58,12 @@ var _ = Suite(&testIntegrationSuite6{&testIntegrationSuite{}})
 var _ = SerialSuites(&testIntegrationSuite7{&testIntegrationSuite{}})
 
 type testIntegrationSuite struct {
-	lease     time.Duration
-	cluster   *mocktikv.Cluster
-	mvccStore mocktikv.MVCCStore
-	store     kv.Storage
-	dom       *domain.Domain
-	ctx       sessionctx.Context
-	tk        *testkit.TestKit
+	lease   time.Duration
+	cluster cluster.Cluster
+	store   kv.Storage
+	dom     *domain.Domain
+	ctx     sessionctx.Context
+	tk      *testkit.TestKit
 }
 
 func setupIntegrationSuite(s *testIntegrationSuite, c *C) {
@@ -71,12 +71,15 @@ func setupIntegrationSuite(s *testIntegrationSuite, c *C) {
 	s.lease = 50 * time.Millisecond
 	ddl.SetWaitTimeWhenErrorOccurred(0)
 
-	s.cluster = mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(s.cluster)
-	s.mvccStore = mocktikv.MustNewMVCCStore()
+	cluster := mocktikv.NewCluster()
+	mocktikv.BootstrapWithSingleStore(cluster)
+	s.cluster = cluster
+
+	mvccStore := mocktikv.MustNewMVCCStore()
+	cluster.SetMvccStore(mvccStore)
 	s.store, err = mockstore.NewMockTikvStore(
-		mockstore.WithCluster(s.cluster),
-		mockstore.WithMVCCStore(s.mvccStore),
+		mockstore.WithCluster(cluster),
+		mockstore.WithMVCCStore(mvccStore),
 	)
 	c.Assert(err, IsNil)
 	session.SetSchemaLease(s.lease)
@@ -1154,7 +1157,7 @@ func (s *testIntegrationSuite5) TestBackwardCompatibility(c *C) {
 	c.Assert(err, IsNil)
 
 	// Split the table.
-	s.cluster.SplitTable(s.mvccStore, tbl.Meta().ID, 100)
+	s.cluster.SplitTable(tbl.Meta().ID, 100)
 
 	unique := false
 	indexName := model.NewCIStr("idx_b")
@@ -1232,7 +1235,7 @@ func (s *testIntegrationSuite3) TestMultiRegionGetTableEndHandle(c *C) {
 	testCtx := newTestMaxTableRowIDContext(c, d, tbl)
 
 	// Split the table.
-	s.cluster.SplitTable(s.mvccStore, tblID, 100)
+	s.cluster.SplitTable(tblID, 100)
 
 	maxID, emptyTable := getMaxTableRowID(testCtx, s.store)
 	c.Assert(emptyTable, IsFalse)
@@ -2256,4 +2259,47 @@ func (s *testIntegrationSuite3) TestCreateTableWithAutoIdCache(c *C) {
 	_, err = tk.Exec("alter table t auto_id_cache = 9223372036854775808")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "table option auto_id_cache overflows int64")
+}
+
+func (s *testIntegrationSuite4) TestAlterIndexVisibility(c *C) {
+	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = true
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists alter_index_test")
+	tk.MustExec("USE alter_index_test;")
+	tk.MustExec("drop table if exists t, t1, t2, t3;")
+
+	tk.MustExec("create table t(a int NOT NULL, b int, key(a), unique(b) invisible)")
+	queryIndexOnTable := func(tableName string) string {
+		return fmt.Sprintf("select index_name, is_visible from information_schema.statistics where table_schema = 'alter_index_test' and table_name = '%s' order by index_name", tableName)
+	}
+	query := queryIndexOnTable("t")
+	tk.MustQuery(query).Check(testkit.Rows("a YES", "b NO"))
+
+	tk.MustExec("alter table t alter index a invisible")
+	tk.MustQuery(query).Check(testkit.Rows("a NO", "b NO"))
+
+	tk.MustExec("alter table t alter index b visible")
+	tk.MustQuery(query).Check(testkit.Rows("a NO", "b YES"))
+
+	tk.MustExec("alter table t alter index b invisible")
+	tk.MustQuery(query).Check(testkit.Rows("a NO", "b NO"))
+
+	tk.MustGetErrMsg("alter table t alter index non_exists_idx visible", "[schema:1176]Key 'non_exists_idx' doesn't exist in table 't'")
+
+	// Alter implicit primary key to invisible index should throw error
+	tk.MustExec("create table t1(a int NOT NULL, unique(a))")
+	tk.MustGetErrMsg("alter table t1 alter index a invisible", "[ddl:3522]A primary key index cannot be invisible")
+
+	// Alter explicit primary key to invisible index should throw error
+	tk.MustExec("create table t2(a int, primary key(a))")
+	tk.MustGetErrMsg("alter table t2 alter index PRIMARY invisible", `[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 34 near "PRIMARY invisible" `)
+
+	// Alter expression index
+	tk.MustExec("create table t3(a int NOT NULL, b int)")
+	tk.MustExec("alter table t3 add index idx((a+b));")
+	query = queryIndexOnTable("t3")
+	tk.MustQuery(query).Check(testkit.Rows("idx YES"))
+
+	tk.MustExec("alter table t3 alter index idx invisible")
+	tk.MustQuery(query).Check(testkit.Rows("idx NO"))
 }

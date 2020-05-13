@@ -309,6 +309,8 @@ const (
 // It returns nil if the count from the index is equal to the count from the table columns,
 // otherwise it returns an error and the corresponding index's offset.
 func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices []string) (byte, int, error) {
+	// Here we need check all indexes, includes invisible index
+	ctx.GetSessionVars().OptimizerUseInvisibleIndexes = true
 	// Add `` for some names like `table name`.
 	sql := fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s` USE INDEX()", dbName, tableName)
 	tblCnt, err := getCount(ctx, sql)
