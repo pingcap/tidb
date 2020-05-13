@@ -1502,24 +1502,24 @@ func (e *tableStorageStatsRetriever) initialize(sctx sessionctx.Context) error {
 	}
 
 	// Extract the tables to the initialTable.
-	for _, db := range databases {
+	for _, DB := range databases {
 		// The user didn't specified the table, extract all tables of this db to initialTable.
 		if len(tables) == 0 {
-			tbs := is.SchemaTables(model.NewCIStr(db))
+			tbs := is.SchemaTables(model.NewCIStr(DB))
 			for _, tb := range tbs {
-				e.initialTables = append(e.initialTables, &initialTable{db, tb.Meta()})
+				e.initialTables = append(e.initialTables, &initialTable{DB, tb.Meta()})
 			}
 		} else {
 			// The user specified the table, extract the specified tables of this db to initialTable.
 			for tb := range tables {
-				if tb, err := is.TableByName(model.NewCIStr(db), model.NewCIStr(tb)); err == nil {
-					e.initialTables = append(e.initialTables, &initialTable{db, tb.Meta()})
+				if tb, err := is.TableByName(model.NewCIStr(DB), model.NewCIStr(tb)); err == nil {
+					e.initialTables = append(e.initialTables, &initialTable{DB, tb.Meta()})
 				}
 			}
 		}
 	}
 
-	// Cache the helper and return an error if pd unavailable.
+	// Cache the helper and return an error if PD unavailable.
 	tikvStore, ok := sctx.GetStore().(tikv.Storage)
 	if !ok {
 		return errors.Errorf("Information about TiKV region status can be gotten only when the storage is TiKV")
@@ -1537,7 +1537,7 @@ func (e *tableStorageStatsRetriever) setDataForTableStorageStats(ctx sessionctx.
 	rows := make([][]types.Datum, 0, 1024)
 	count := 0
 	for e.curTable < len(e.initialTables) && count < 1024 {
-		table := (e.initialTables)[e.curTable]
+		table := e.initialTables[e.curTable]
 		tableID := table.ID
 		err := e.helper.GetPDRegionStats(tableID, &e.stats)
 		if err != nil {

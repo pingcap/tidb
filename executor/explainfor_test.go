@@ -186,6 +186,24 @@ func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 	))
 }
 
+func (s *testPrepareSerialSuite) TestExplainDotForExplainPlan(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	rows := tk.MustQuery("select connection_id()").Rows()
+	c.Assert(len(rows), Equals, 1)
+	connID := rows[0][0].(string)
+	tk.MustQuery("explain select 1").Check(testkit.Rows(
+		"Projection_3 1.00 root  1->Column#1",
+		"└─TableDual_4 1.00 root  rows:1",
+	))
+
+	tkProcess := tk.Se.ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+
+	tk.MustQuery(fmt.Sprintf("explain format=\"dot\" for connection %s", connID)).Check(nil)
+}
+
 func (s *testSuite) TestExplainTableStorage(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema'")).Check(testkit.Rows(
