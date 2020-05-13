@@ -80,7 +80,7 @@ type CheckTable struct {
 	Table              table.Table
 	IndexInfos         []*model.IndexInfo
 	IndexLookUpReaders []*PhysicalIndexLookUpReader
-	CheckIndex     bool
+	CheckIndex         bool
 }
 
 // RecoverIndex is used for backfilling corrupted index data.
