@@ -484,6 +484,9 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		indexInfo.ID = allocateIndexID(tblInfo)
 		tblInfo.Indices = append(tblInfo.Indices, indexInfo)
 
+		// Here we need do this check before set state to `DeleteOnly`,
+		// because if hidden columns has been set to `DeleteOnly`,
+		// the `DeleteOnly` columns are missing when we do this check.
 		if err := checkInvisibleIndexOnPK(tblInfo); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, err
