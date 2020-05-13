@@ -15,6 +15,7 @@ package aggfuncs
 
 import (
 	"encoding/binary"
+	"github.com/pingcap/tidb/util/collate"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -242,6 +243,8 @@ func (e *countOriginalWithDistinct4String) AppendFinalResult2Chunk(sctx sessionc
 
 func (e *countOriginalWithDistinct4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4CountDistinctString)(pr)
+	_, coll := e.args[0].CharsetAndCollation(sctx)
+	collator := collate.GetCollator(coll)
 
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalString(sctx, row)
@@ -251,6 +254,7 @@ func (e *countOriginalWithDistinct4String) UpdatePartialResult(sctx sessionctx.C
 		if isNull {
 			continue
 		}
+		input = string(collator.Key(input))
 
 		if p.valSet.Exist(input) {
 			continue
