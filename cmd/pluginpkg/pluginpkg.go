@@ -141,10 +141,10 @@ func main() {
 		os.Exit(1)
 	}
 	defer func() {
-		//err1 := os.Remove(genFileName)
-		//if err1 != nil {
-		//	log.Printf("remove tmp file %s failure, please clean up manually at %v", genFileName, err1)
-		//}
+		err1 := os.Remove(genFileName)
+		if err1 != nil {
+			log.Printf("remove tmp file %s failure, please clean up manually at %v", genFileName, err1)
+		}
 	}()
 
 	err = tmpl.Execute(genFile, manifest)
