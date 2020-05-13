@@ -170,6 +170,7 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	builder.Request.Concurrency = sv.DistSQLScanConcurrency
 	builder.Request.IsolationLevel = builder.getIsolationLevel()
 	builder.Request.NotFillCache = sv.StmtCtx.NotFillCache
+	builder.Request.TaskID = sv.StmtCtx.TaskID
 	builder.Request.Priority = builder.getKVPriority(sv)
 	builder.Request.ReplicaRead = sv.GetReplicaRead()
 	if sv.SnapshotInfoschema != nil {
