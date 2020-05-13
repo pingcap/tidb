@@ -169,9 +169,8 @@ type stmtSummaryByDigestElement struct {
 	// The last time this type of SQL executes.
 	lastSeen time.Time
 	// plan cache
-	planInCache     bool
-	planCacheHits   int64
-	planCacheMisses int64
+	planInCache   bool
+	planCacheHits int64
 }
 
 // StmtExecInfo records execution information of each statement.
@@ -572,16 +571,15 @@ func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalS
 		// PrevSQL is already truncated to cfg.Log.QueryLogMaxLen.
 		prevSQL: sei.PrevSQL,
 		// samplePlan needs to be decoded so it can't be truncated.
-		samplePlan:      sei.PlanGenerator(),
-		indexNames:      sei.StmtCtx.IndexNames,
-		minLatency:      sei.TotalLatency,
-		firstSeen:       sei.StartTime,
-		lastSeen:        sei.StartTime,
-		backoffTypes:    make(map[fmt.Stringer]int),
-		authUsers:       make(map[string]struct{}),
-		planInCache:     false,
-		planCacheMisses: 0,
-		planCacheHits:   0,
+		samplePlan:    sei.PlanGenerator(),
+		indexNames:    sei.StmtCtx.IndexNames,
+		minLatency:    sei.TotalLatency,
+		firstSeen:     sei.StartTime,
+		lastSeen:      sei.StartTime,
+		backoffTypes:  make(map[fmt.Stringer]int),
+		authUsers:     make(map[string]struct{}),
+		planInCache:   false,
+		planCacheHits: 0,
 	}
 	ssElement.add(sei, intervalSeconds)
 	return ssElement
@@ -734,7 +732,6 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 			ssElement.planInCache = true
 			ssElement.planCacheHits += 1
 		} else {
-			ssElement.planCacheMisses += 1
 			ssElement.planInCache = false
 		}
 	}
@@ -835,7 +832,6 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		types.NewTime(types.FromGoTime(ssElement.lastSeen), mysql.TypeTimestamp, 0),
 		ssElement.planInCache,
 		ssElement.planCacheHits,
-		ssElement.planCacheMisses,
 		ssElement.sampleSQL,
 		ssElement.prevSQL,
 		ssbd.planDigest,

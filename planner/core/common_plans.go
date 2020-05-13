@@ -330,6 +330,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 					logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
 					goto REBUILD
 				}
+				stmtCtx.AddPlanCacheHitInfo(true)
 				err = e.setFoundInPlanCache(sctx, true)
 				if err != nil {
 					return err
@@ -365,6 +366,7 @@ REBUILD:
 		stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
 		sctx.PreparedPlanCache().Put(cacheKey, cached)
 	}
+	stmtCtx.AddPlanCacheHitInfo(false)
 	err = e.setFoundInPlanCache(sctx, false)
 	return err
 }

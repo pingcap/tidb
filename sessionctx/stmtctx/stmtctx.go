@@ -153,8 +153,7 @@ type StatementContext struct {
 	LockKeysCount         int32
 	TblInfo2UnionScan     map[*model.TableInfo]bool
 	PlanCacheHit          bool
-	IsExecute             bool // If it is executing a prepared statement
-	CacheUpdatedTime      time.Time
+	IsExecute             bool   // If it is executing a prepared statement
 	TaskID                uint64 // unique ID for an execution of a statement
 }
 
