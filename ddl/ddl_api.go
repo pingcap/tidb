@@ -2826,7 +2826,7 @@ func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) e
 		if compatIdx == nil {
 			return err
 		}
-		// Index type is not compatiable
+		// Index type is not compatible
 		if sourceIdx.Tp != compatIdx.Tp ||
 			sourceIdx.Unique != compatIdx.Unique ||
 			sourceIdx.Primary != compatIdx.Primary {
