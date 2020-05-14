@@ -175,8 +175,8 @@ func main() {
 	}
 	setGlobalVars()
 	setCPUAffinity()
-	setHeapProfileTracker()
 	setupLog()
+	setHeapProfileTracker()
 	setupTracing() // Should before createServer and after setup config.
 	printInfo()
 	setupBinlogClient()
