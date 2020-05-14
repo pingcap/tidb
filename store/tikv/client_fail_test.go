@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
 
@@ -57,7 +58,7 @@ func (s *testClientFailSuite) TestPanicInRecvLoop(c *C) {
 	rpcClient := newRPCClient(config.Security{})
 
 	// Start batchRecvLoop, and it should panic in `failPendingRequests`.
-	_, err := rpcClient.getConnArray(addr, true)
+	_, err := rpcClient.getConnArray(addr, true, kv.TiKV)
 	c.Assert(err, IsNil)
 
 	time.Sleep(time.Second)

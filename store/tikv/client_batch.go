@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/logutil"
@@ -614,7 +615,7 @@ func (c *rpcClient) recycleIdleConnArray() {
 	var addrs []string
 	c.RLock()
 	for _, conn := range c.conns {
-		if conn.batchConn != nil && conn.isIdle() {
+		if conn.batchConn != nil && conn.storeType != kv.TiFlash && conn.isIdle() {
 			addrs = append(addrs, conn.target)
 		}
 	}

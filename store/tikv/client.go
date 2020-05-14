@@ -84,23 +84,26 @@ type connArray struct {
 	// batchConn is not null when batch is enabled.
 	*batchConn
 	done chan struct{}
+	// storeType means the type of target store.
+	storeType kv.StoreType
 }
 
-func newConnArray(maxSize uint, addr string, security config.Security, idleNotify *uint32, enableBatch bool) (*connArray, error) {
+func newConnArray(maxSize uint, addr string, security config.Security, idleNotify *uint32, enableBatch bool, storeType kv.StoreType) (*connArray, error) {
 	a := &connArray{
 		index:         0,
 		v:             make([]*grpc.ClientConn, maxSize),
 		streamTimeout: make(chan *tikvrpc.Lease, 1024),
 		done:          make(chan struct{}),
 	}
-	if err := a.Init(addr, security, idleNotify, enableBatch); err != nil {
+	if err := a.Init(addr, security, idleNotify, enableBatch, storeType); err != nil {
 		return nil, err
 	}
 	return a, nil
 }
 
-func (a *connArray) Init(addr string, security config.Security, idleNotify *uint32, enableBatch bool) error {
+func (a *connArray) Init(addr string, security config.Security, idleNotify *uint32, enableBatch bool, storeType kv.StoreType) error {
 	a.target = addr
+	a.storeType = storeType
 
 	opt := grpc.WithInsecure()
 	if len(security.ClusterSSLCA) != 0 {
@@ -232,7 +235,7 @@ func NewTestRPCClient(security config.Security) Client {
 	return newRPCClient(security)
 }
 
-func (c *rpcClient) getConnArray(addr string, enableBatch bool) (*connArray, error) {
+func (c *rpcClient) getConnArray(addr string, enableBatch bool, storeType kv.StoreType) (*connArray, error) {
 	c.RLock()
 	if c.isClosed {
 		c.RUnlock()
@@ -242,7 +245,7 @@ func (c *rpcClient) getConnArray(addr string, enableBatch bool) (*connArray, err
 	c.RUnlock()
 	if !ok {
 		var err error
-		array, err = c.createConnArray(addr, enableBatch)
+		array, err = c.createConnArray(addr, enableBatch, storeType)
 		if err != nil {
 			return nil, err
 		}
@@ -250,14 +253,14 @@ func (c *rpcClient) getConnArray(addr string, enableBatch bool) (*connArray, err
 	return array, nil
 }
 
-func (c *rpcClient) createConnArray(addr string, enableBatch bool) (*connArray, error) {
+func (c *rpcClient) createConnArray(addr string, enableBatch bool, storeType kv.StoreType) (*connArray, error) {
 	c.Lock()
 	defer c.Unlock()
 	array, ok := c.conns[addr]
 	if !ok {
 		var err error
 		connCount := config.GetGlobalConfig().TiKVClient.GrpcConnectionCount
-		array, err = newConnArray(connCount, addr, c.security, &c.idleNotify, enableBatch)
+		array, err = newConnArray(connCount, addr, c.security, &c.idleNotify, enableBatch, storeType)
 		if err != nil {
 			return nil, err
 		}
@@ -318,7 +321,7 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	}
 
 	enableBatch := req.StoreTp != kv.TiDB
-	connArray, err := c.getConnArray(addr, enableBatch)
+	connArray, err := c.getConnArray(addr, enableBatch, req.StoreTp)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
 
@@ -59,15 +60,15 @@ func (s *testClientSerialSuite) TestConn(c *C) {
 	client := newRPCClient(config.Security{})
 
 	addr := "127.0.0.1:6379"
-	conn1, err := client.getConnArray(addr, true)
+	conn1, err := client.getConnArray(addr, true, kv.TiKV)
 	c.Assert(err, IsNil)
 
-	conn2, err := client.getConnArray(addr, true)
+	conn2, err := client.getConnArray(addr, true, kv.TiKV)
 	c.Assert(err, IsNil)
 	c.Assert(conn2.Get(), Not(Equals), conn1.Get())
 
 	client.Close()
-	conn3, err := client.getConnArray(addr, true)
+	conn3, err := client.getConnArray(addr, true, kv.TiKV)
 	c.Assert(err, NotNil)
 	c.Assert(conn3, IsNil)
 	setMaxBatchSize(maxBatchSize)
@@ -116,7 +117,7 @@ func (s *testClientSuite) TestSendWhenReconnect(c *C) {
 
 	rpcClient := newRPCClient(config.Security{})
 	addr := fmt.Sprintf("%s:%d", "127.0.0.1", port)
-	conn, err := rpcClient.getConnArray(addr, true)
+	conn, err := rpcClient.getConnArray(addr, true, kv.TiKV)
 	c.Assert(err, IsNil)
 
 	// Suppose all connections are re-establishing.
