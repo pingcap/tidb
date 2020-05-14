@@ -176,7 +176,7 @@ workaround = ""
 tags = ["tikv"]
 ```
 
-The tags is used to classify errors.
+The tags is used to classify errors (e.g. the level of seriousness). At the very beginning, we can ignore it since we don't have enough errors listed. Once we have enough data, we need to classify all errors by different dimensions. Then we will make out a standard abount how to classify errors.
 
 #### The Error Code Range
 
