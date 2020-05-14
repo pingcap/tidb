@@ -379,7 +379,7 @@ type RuntimeStats struct {
 	mu sync.Mutex
 	// executor concurrency information
 	concurrency []concurrencyInfo
-	useCache    bool
+	applyCache  bool
 	cache       cacheInfo
 
 	// additional information for executors
@@ -390,14 +390,16 @@ type RuntimeStats struct {
 type cacheInfo struct {
 	hitNum   int
 	hitRatio float64
+	useCache bool
 }
 
 // SetCacheInfo sets the cache information. Only used for apply executor.
 func (e *RuntimeStats) SetCacheInfo(useCache bool, totalNum int, hitNum int) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.useCache = useCache
-	if e.useCache {
+	e.applyCache = true
+	e.cache.useCache = useCache
+	if useCache {
 		e.cache.hitNum = hitNum
 		if totalNum != 0 {
 			e.cache.hitRatio = float64(hitNum) / float64(totalNum)
@@ -520,9 +522,14 @@ func (e *RuntimeStats) String() string {
 			}
 		}
 	}
-	if e.useCache {
-		result += fmt.Sprintf(", cache:ON, cacheHitNum:%d, cacheHitRatio:%f", e.cache.hitNum, e.cache.hitRatio)
+	if e.applyCache {
+		if e.cache.useCache {
+			result += fmt.Sprintf(", cache:ON, cacheHitNum:%d, cacheHitRatio:%f", e.cache.hitNum, e.cache.hitRatio)
+		} else {
+			result += fmt.Sprintf(", cache:OFF")
+		}
 	}
+
 	if len(e.additionalInfo) > 0 {
 		result += ", " + e.additionalInfo
 	}
