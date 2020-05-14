@@ -26,6 +26,9 @@ func AggFuncToPBExpr(sc *stmtctx.StatementContext, client kv.Client, aggFunc *Ag
 	if aggFunc.HasDistinct {
 		return nil
 	}
+	if len(aggFunc.OrderByItems) > 0 {
+		return nil
+	}
 	pc := expression.NewPBConverter(client, sc)
 	var tp tipb.ExprType
 	switch aggFunc.Name {
