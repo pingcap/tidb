@@ -126,7 +126,7 @@ type ForRangePruning struct {
 	Unsigned bool
 }
 
-// dataForRangePruning extracts the less than parts from 'partition p0 less than xx ... partitoin p1 less than ...'
+// DataForRangePruning extracts the less than parts from 'partition p0 less than xx ... partitoin p1 less than ...'
 func DataForRangePruning(pi *model.PartitionInfo) (*ForRangePruning, error) {
 	var maxValue bool
 	var unsigned bool

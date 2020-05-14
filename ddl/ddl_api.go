@@ -2781,7 +2781,10 @@ func checkFielTypeCompatible(ft *types.FieldType, other *types.FieldType) bool {
 		ft.Collate == other.Collate &&
 		(ft.Flen == other.Flen || ft.StorageLength() != types.VarStorageLen) &&
 		mysql.HasUnsignedFlag(ft.Flag) == mysql.HasUnsignedFlag(other.Flag) &&
-		mysql.HasAutoIncrementFlag(ft.Flag) == mysql.HasAutoIncrementFlag(other.Flag)
+		mysql.HasAutoIncrementFlag(ft.Flag) == mysql.HasAutoIncrementFlag(other.Flag) &&
+		mysql.HasNotNullFlag(ft.Flag) == mysql.HasNotNullFlag(other.Flag) &&
+		mysql.HasZerofillFlag(ft.Flag) == mysql.HasZerofillFlag(other.Flag) &&
+		mysql.HasBinaryFlag(ft.Flag) == mysql.HasBinaryFlag(other.Flag)
 	if !partialEqual || len(ft.Elems) != len(other.Elems) {
 		return false
 	}
@@ -2793,13 +2796,6 @@ func checkFielTypeCompatible(ft *types.FieldType, other *types.FieldType) bool {
 	return true
 }
 
-func checkColumnVirtual(col *model.ColumnInfo) bool {
-	if col.IsGenerated() && !col.GeneratedStored {
-		return true
-	}
-	return false
-}
-
 func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) error {
 	err := ErrTablesDifferentMetadata
 	if len(source.Cols()) != len(target.Cols()) {
@@ -2808,7 +2804,7 @@ func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) e
 	// Col compatible check
 	for i, sourceCol := range source.Cols() {
 		targetCol := target.Cols()[i]
-		if checkColumnVirtual(sourceCol) != checkColumnVirtual(targetCol) {
+		if IsVirtualGeneratedColumn(sourceCol) != IsVirtualGeneratedColumn(targetCol) {
 			return ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("Exchanging partitions for non-generated columns")
 		}
 		if sourceCol.Name.L != targetCol.Name.L ||

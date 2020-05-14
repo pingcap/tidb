@@ -792,6 +792,7 @@ func (s *testIntegrationSuite5) TestAlterTableExchangePartition(c *C) {
 	tk.MustExec("ALTER TABLE e EXCHANGE PARTITION p0 WITH TABLE e2")
 	tk.MustQuery("select * from e2").Check(testkit.Rows("16"))
 	tk.MustQuery("select * from e").Check(testkit.Rows("1669", "337", "2005"))
+	// validation check for range partition
 	tk.MustGetErrCode("ALTER TABLE e EXCHANGE PARTITION p1 WITH TABLE e2", tmysql.ErrRowDoesNotMatchPartition)
 	tk.MustGetErrCode("ALTER TABLE e EXCHANGE PARTITION p2 WITH TABLE e2", tmysql.ErrRowDoesNotMatchPartition)
 	tk.MustGetErrCode("ALTER TABLE e EXCHANGE PARTITION p3 WITH TABLE e2", tmysql.ErrRowDoesNotMatchPartition)
@@ -810,6 +811,7 @@ func (s *testIntegrationSuite5) TestAlterTableExchangePartition(c *C) {
 	tk.MustQuery("select * from e3 partition(p0)").Check(testkit.Rows())
 	tk.MustQuery("select * from e2").Check(testkit.Rows("1", "5"))
 
+	// check validation fot hash partition
 	tk.MustGetErrCode("ALTER TABLE e3 EXCHANGE PARTITION p0 WITH TABLE e2", tmysql.ErrRowDoesNotMatchPartition)
 	tk.MustGetErrCode("ALTER TABLE e3 EXCHANGE PARTITION p2 WITH TABLE e2", tmysql.ErrRowDoesNotMatchPartition)
 	tk.MustGetErrCode("ALTER TABLE e3 EXCHANGE PARTITION p3 WITH TABLE e2", tmysql.ErrRowDoesNotMatchPartition)
@@ -924,24 +926,28 @@ func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
 			nil,
 		},
 		{
+			// unique index
 			"create table pt15 (id int not null, unique index uk_id (id)) partition by hash(id) partitions 1;",
 			"create table nt15 (id int not null, index uk_id (id));",
 			"alter table pt15 exchange partition p0 with table nt15",
 			ddl.ErrTablesDifferentMetadata,
 		},
 		{
+			// auto_increment
 			"create table pt16 (id int not null primary key auto_increment) partition by hash(id) partitions 1;",
 			"create table nt16 (id int not null primary key);",
 			"alter table pt16 exchange partition p0 with table nt16;",
 			ddl.ErrTablesDifferentMetadata,
 		},
 		{
+			// default
 			"create table pt17 (id int not null default 1) partition by hash(id) partitions 1;",
 			"create table nt17 (id int not null);",
 			"alter table pt17 exchange partition p0 with table nt17;",
 			nil,
 		},
 		{
+			// view test
 			"create table pt18 (id int not null) partition by hash(id) partitions 1;",
 			"create view nt18 as select id from nt17;",
 			"alter table pt18 exchange partition p0 with table nt18",
@@ -952,6 +958,38 @@ func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
 			"create table nt19 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname, ' ')) virtual);",
 			"alter table pt19 exchange partition p0 with table nt19;",
 			ddl.ErrUnsupportedOnGeneratedColumn,
+		},
+		{
+			"create table pt20 (id int not null) partition by hash(id) partitions 1;",
+			"create table nt20 (id int default null);",
+			"alter table pt20 exchange partition p0 with table nt20;",
+			ddl.ErrTablesDifferentMetadata,
+		},
+		{
+			// unsigned
+			"create table pt21 (id int unsigned) partition by hash(id) partitions 1;",
+			"create table nt21 (id int);",
+			"alter table pt21 exchange partition p0 with table nt21;",
+			ddl.ErrTablesDifferentMetadata,
+		},
+		{
+			// zerofill
+			"create table pt22 (id int) partition by hash(id) partitions 1;",
+			"create table nt22 (id int zerofill);",
+			"alter table pt22 exchange partition p0 with table nt22;",
+			ddl.ErrTablesDifferentMetadata,
+		},
+		{
+			"create table pt23 (id int, lname varchar(10) charset binary) partition by hash(id) partitions 1;",
+			"create table nt23 (id int, lname varchar(10));",
+			"alter table pt23 exchange partition p0 with table nt23;",
+			ddl.ErrTablesDifferentMetadata,
+		},
+		{
+			"create table pt25 (id int, a datetime on update current_timestamp) partition by hash(id) partitions 1;",
+			"create table nt25 (id int, a datetime);",
+			"alter table pt25 exchange partition p0 with table nt25;",
+			nil,
 		},
 	}
 
@@ -1908,10 +1946,10 @@ func (s *testIntegrationSuite3) TestPartitionErrorCode(c *C) {
 	tk.MustGetErrCode(`alter table t_part reorganize partition p0, p1 into (
 			partition p0 values less than (1980));`, tmysql.ErrUnsupportedDDLOperation)
 
-	tk.MustGetErrCode("alter table t_part check partition p0, p1;", errno.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t_part optimize partition p0,p1;", errno.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t_part rebuild partition p0,p1;", errno.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t_part remove partitioning;", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t_part check partition p0, p1;", tmysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t_part optimize partition p0,p1;", tmysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t_part rebuild partition p0,p1;", tmysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t_part remove partitioning;", tmysql.ErrUnsupportedDDLOperation)
 }
 
 func (s *testIntegrationSuite5) TestConstAndTimezoneDepent(c *C) {
