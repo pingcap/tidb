@@ -78,7 +78,7 @@ Read the [Roadmap](https://pingcap.com/docs/ROADMAP).
     tiup playground nightly
     ```
 
-- For other ways, see [TiDB documentation](https://pingcap.com/docs/).
+- For other methods, see [TiDB Quick Start Guide](https://pingcap.com/docs/stable/quick-start-with-tidb/).
 
 ## Getting Help
 
