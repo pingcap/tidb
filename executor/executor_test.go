@@ -5478,12 +5478,16 @@ func (s *testSuite) TestIssue16921(c *C) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a float);")
 	tk.MustExec("create index a on t(a);")
-	tk.MustExec("insert into t values (1.0), (NULL);")
-	tk.MustQuery("select `a` from `t` use index (a) where !`a`;").Check(testkit.Rows())
-	tk.MustQuery("select `a` from `t` ignore index (a) where !`a`;").Check(testkit.Rows())
-	tk.MustQuery("select `a` from `t` use index (a) where `a`;").Check(testkit.Rows("1"))
-	tk.MustQuery("select `a` from `t` ignore index (a) where `a`;").Check(testkit.Rows("1"))
-	tk.MustQuery("select a from t use index (a) where not a is true;").Check(testkit.Rows("<nil>"))
+	tk.MustExec("insert into t values (1.0), (NULL), (0), (2.0);")
+	tk.MustQuery("select `a` from `t` use index (a) where !`a`;").Check(testkit.Rows("0"))
+	tk.MustQuery("select `a` from `t` ignore index (a) where !`a`;").Check(testkit.Rows("0"))
+	tk.MustQuery("select `a` from `t` use index (a) where `a`;").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select `a` from `t` ignore index (a) where `a`;").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select a from t use index (a) where not a is true;").Check(testkit.Rows("<nil>", "0"))
+	tk.MustQuery("select a from t use index (a) where not not a is true;").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select a from t use index (a) where not not a;").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select a from t use index (a) where not not not a is true;").Check(testkit.Rows("<nil>", "0"))
+	tk.MustQuery("select a from t use index (a) where not not not a;").Check(testkit.Rows("0"))
 }
 
 // this is from jira issue #5856
