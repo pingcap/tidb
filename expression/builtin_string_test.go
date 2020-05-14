@@ -945,7 +945,7 @@ func (s *testEvaluatorSuite) TestLocate(c *C) {
 		{[]interface{}{"好世", "你好世界"}, 2},
 		{[]interface{}{"界面", "你好世界"}, 0},
 		{[]interface{}{"b", "中a英b文"}, 4},
-		{[]interface{}{"BaR", "foobArbar"}, 4},
+		{[]interface{}{"bAr", "foobArbar"}, 4},
 		{[]interface{}{nil, "foobar"}, nil},
 		{[]interface{}{"bar", nil}, nil},
 		{[]interface{}{"bar", "foobarbar", 5}, 7},
@@ -957,7 +957,7 @@ func (s *testEvaluatorSuite) TestLocate(c *C) {
 		{[]interface{}{"A", "大A写的A", 1}, 2},
 		{[]interface{}{"A", "大A写的A", 2}, 2},
 		{[]interface{}{"A", "大A写的A", 3}, 5},
-		{[]interface{}{"bAr", "foobarBaR", 5}, 7},
+		{[]interface{}{"BaR", "foobarBaR", 5}, 7},
 		{[]interface{}{nil, nil}, nil},
 		{[]interface{}{"", nil}, nil},
 		{[]interface{}{nil, ""}, nil},
@@ -1624,11 +1624,11 @@ func (s *testEvaluatorSuite) TestInstr(c *C) {
 		{[]interface{}{"中文美好", "世界"}, 0},
 		{[]interface{}{"中文abc", "a"}, 3},
 
-		{[]interface{}{"live LONG and prosper", "long"}, 6},
+		{[]interface{}{"live long and prosper", "long"}, 6},
 
-		{[]interface{}{"not BINARY string", "binary"}, 5},
-		{[]interface{}{"UPPER case", "upper"}, 1},
-		{[]interface{}{"UPPER case", "CASE"}, 7},
+		{[]interface{}{"not binary string", "binary"}, 5},
+		{[]interface{}{"upper case", "upper"}, 1},
+		{[]interface{}{"UPPER CASE", "CASE"}, 7},
 		{[]interface{}{"中文abc", "abc"}, 3},
 
 		{[]interface{}{"foobar", nil}, nil},
