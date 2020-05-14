@@ -163,6 +163,12 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 	tk.MustExec("alter table tt add index (`primary`);")
 	_, err = tk.Exec("drop index `primary` on tt")
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when alter-primary-key is false")
+
+	// The primary key cannot be invisible, for the case pk_is_handle.
+	tk.MustExec("drop table if exists t1, t2;")
+	_, err = tk.Exec("create table t1(c1 int not null, primary key(c1) invisible);")
+	c.Assert(ddl.ErrPKIndexCantBeInvisible.Equal(err), IsTrue)
+	tk.MustExec("create table t2 (a int, b int not null, primary key(a), unique(b) invisible);")
 }
 
 func (s *testSerialSuite) TestDropAutoIncrementIndex(c *C) {
@@ -935,11 +941,11 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 			c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
 		})
 	}
-	assertShowWarningCorrect("create table t (a tinyint unsigned auto_random(6) primary key)", 1)
-	assertShowWarningCorrect("create table t (a tinyint unsigned auto_random(5) primary key)", 3)
+	assertShowWarningCorrect("create table t (a tinyint unsigned auto_random(6) primary key)", 3)
+	assertShowWarningCorrect("create table t (a tinyint unsigned auto_random(5) primary key)", 7)
 	assertShowWarningCorrect("create table t (a tinyint auto_random(4) primary key)", 7)
 	assertShowWarningCorrect("create table t (a bigint auto_random(62) primary key)", 1)
-	assertShowWarningCorrect("create table t (a bigint unsigned auto_random(61) primary key)", 3)
+	assertShowWarningCorrect("create table t (a bigint unsigned auto_random(61) primary key)", 7)
 	assertShowWarningCorrect("create table t (a int auto_random(30) primary key)", 1)
 	assertShowWarningCorrect("create table t (a int auto_random(29) primary key)", 3)
 

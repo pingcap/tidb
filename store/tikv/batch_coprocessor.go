@@ -331,11 +331,12 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *Backoffer, ta
 		NotFillCache:   b.req.NotFillCache,
 		HandleTime:     true,
 		ScanDetail:     true,
+		TaskId:         b.req.TaskID,
 	})
 	req.StoreTp = kv.TiFlash
 
 	logutil.BgLogger().Debug("send batch request to ", zap.String("req info", req.String()), zap.Int("cop task len", len(task.copTasks)))
-	resp, retry, err := sender.sendReqToAddr(bo, task.copTasks, req, ReadTimeoutMedium)
+	resp, retry, err := sender.sendReqToAddr(bo, task.copTasks, req, ReadTimeoutUltraLong)
 	// If there are store errors, we should retry for all regions.
 	if retry {
 		return b.retryBatchCopTask(ctx, bo, task)
