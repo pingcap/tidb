@@ -199,97 +199,6 @@ func (alloc *allocator) NextGlobalAutoID(tableID int64) (int64, error) {
 	return autoID + 1, err
 }
 
-func (alloc *allocator) rebase4Unsigned(tableID int64, requiredBase uint64, allocIDs bool) error {
-	// Satisfied by alloc.base, nothing to do.
-	if requiredBase <= uint64(alloc.base) {
-		return nil
-	}
-	// Satisfied by alloc.end, need to update alloc.base.
-	if requiredBase <= uint64(alloc.end) {
-		alloc.base = int64(requiredBase)
-		return nil
-	}
-	var newBase, newEnd uint64
-	startTime := time.Now()
-	err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		currentEnd, err1 := getAutoIDByAllocType(m, alloc.dbID, tableID, alloc.allocType)
-		if err1 != nil {
-			return err1
-		}
-		uCurrentEnd := uint64(currentEnd)
-		if allocIDs {
-			newBase = mathutil.MaxUint64(uCurrentEnd, requiredBase)
-			newEnd = mathutil.MinUint64(math.MaxUint64-uint64(alloc.step), newBase) + uint64(alloc.step)
-		} else {
-			if uCurrentEnd >= requiredBase {
-				newBase = uCurrentEnd
-				newEnd = uCurrentEnd
-				// Required base satisfied, we don't need to update KV.
-				return nil
-			}
-			// If we don't want to allocate IDs, for example when creating a table with a given base value,
-			// We need to make sure when other TiDB server allocates ID for the first time, requiredBase + 1
-			// will be allocated, so we need to increase the end to exactly the requiredBase.
-			newBase = requiredBase
-			newEnd = requiredBase
-		}
-		_, err1 = generateAutoIDByAllocType(m, alloc.dbID, tableID, int64(newEnd-uCurrentEnd), alloc.allocType)
-		return err1
-	})
-	metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDRebase, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
-	if err != nil {
-		return err
-	}
-	alloc.base, alloc.end = int64(newBase), int64(newEnd)
-	return nil
-}
-
-func (alloc *allocator) rebase4Signed(tableID, requiredBase int64, allocIDs bool) error {
-	// Satisfied by alloc.base, nothing to do.
-	if requiredBase <= alloc.base {
-		return nil
-	}
-	// Satisfied by alloc.end, need to update alloc.base.
-	if requiredBase <= alloc.end {
-		alloc.base = requiredBase
-		return nil
-	}
-	var newBase, newEnd int64
-	startTime := time.Now()
-	err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		currentEnd, err1 := getAutoIDByAllocType(m, alloc.dbID, tableID, alloc.allocType)
-		if err1 != nil {
-			return err1
-		}
-		if allocIDs {
-			newBase = mathutil.MaxInt64(currentEnd, requiredBase)
-			newEnd = mathutil.MinInt64(math.MaxInt64-alloc.step, newBase) + alloc.step
-		} else {
-			if currentEnd >= requiredBase {
-				newBase = currentEnd
-				newEnd = currentEnd
-				// Required base satisfied, we don't need to update KV.
-				return nil
-			}
-			// If we don't want to allocate IDs, for example when creating a table with a given base value,
-			// We need to make sure when other TiDB server allocates ID for the first time, requiredBase + 1
-			// will be allocated, so we need to increase the end to exactly the requiredBase.
-			newBase = requiredBase
-			newEnd = requiredBase
-		}
-		_, err1 = generateAutoIDByAllocType(m, alloc.dbID, tableID, newEnd-currentEnd, alloc.allocType)
-		return err1
-	})
-	metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDRebase, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
-	if err != nil {
-		return err
-	}
-	alloc.base, alloc.end = newBase, newEnd
-	return nil
-}
-
 // rebase4Sequence won't alloc batch immediately, cause it won't cache value in allocator.
 func (alloc *allocator) rebase4Sequence(tableID, requiredBase int64) (int64, bool, error) {
 	startTime := time.Now()
@@ -341,11 +250,133 @@ func (alloc *allocator) Rebase(tableID, requiredBase int64, allocIDs bool) error
 
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
+	return alloc.rebase(tableID, requiredBase, allocIDs)
+}
 
-	if alloc.isUnsigned {
-		return alloc.rebase4Unsigned(tableID, uint64(requiredBase), allocIDs)
+func (alloc *allocator) rebase(tableID, requiredBase int64, allocIDs bool) error {
+	// Satisfied by alloc.base, nothing to do.
+	if alloc.cmp(requiredBase, alloc.base).is(lessEq) {
+		return nil
 	}
-	return alloc.rebase4Signed(tableID, requiredBase, allocIDs)
+	// Satisfied by alloc.end, need to update alloc.base.
+	if alloc.cmp(requiredBase, alloc.end).is(lessEq) {
+		alloc.base = requiredBase
+		return nil
+	}
+
+	var newBase, newEnd int64
+	startTime := time.Now()
+	err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		currentEnd, err1 := getAutoIDByAllocType(m, alloc.dbID, tableID, alloc.allocType)
+		if err1 != nil {
+			return err1
+		}
+		if allocIDs {
+			newBase = alloc.max(currentEnd, requiredBase)
+			_, newEnd = alloc.plus(newBase, alloc.step)
+		} else {
+			if alloc.cmp(currentEnd, requiredBase).is(greaterEq) {
+				newBase = currentEnd
+				newEnd = currentEnd
+				// Required base satisfied, we don't need to update KV.
+				return nil
+			}
+			// If we don't want to allocate IDs, for example when creating a table with a given base value,
+			// We need to make sure when other TiDB server allocates ID for the first time, requiredBase + 1
+			// will be allocated, so we need to increase the end to exactly the requiredBase.
+			newBase = requiredBase
+			newEnd = requiredBase
+		}
+		_, err1 = generateAutoIDByAllocType(m, alloc.dbID, tableID, newEnd-currentEnd, alloc.allocType)
+		return err1
+	})
+	metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDRebase, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+	if err != nil {
+		return err
+	}
+	alloc.base, alloc.end = newBase, newEnd
+	return nil
+}
+
+type compareResult int8
+const (
+	eq compareResult = 0b010
+	lessEq compareResult = 0b110
+	less compareResult = 0b100
+	greater compareResult = 0b001
+	greaterEq compareResult = 0b011
+)
+
+func (c compareResult) is(result compareResult) bool {
+	return (c & result) == c
+}
+
+func (alloc *allocator) cmp(a int64, b int64) compareResult {
+	if a == b {
+		return eq
+	}
+	if alloc.isUnsigned {
+		if uint64(a) < uint64(b) {
+			return less
+		}
+		return greater
+	}
+	if a < b {
+		return less
+	}
+	return greater
+}
+
+func (alloc *allocator) max(a, b int64) int64 {
+	if alloc.cmp(a, b).is(less) {
+		return b
+	}
+	return a
+}
+
+func (alloc *allocator) min (a, b int64) int64 {
+	if alloc.cmp(a, b).is(greater) {
+		return b
+	}
+	return a
+}
+
+func (alloc *allocator) isOverflow(a, b int64) bool {
+	if alloc.isUnsigned {
+		return math.MaxUint64 - uint64(a) < uint64(b)
+	}
+	return math.MaxInt64 - a < b
+}
+
+func (alloc *allocator) maxConstant() int64 {
+	if alloc.isUnsigned {
+		return -1 // int64(math.MaxUint64)
+	}
+	return math.MaxInt64
+}
+
+func (alloc *allocator) plus(a, b int64) (overflow bool, result int64) {
+	if alloc.isUnsigned {
+		isOverflow := math.MaxUint64 - uint64(a) < uint64(b)
+		if isOverflow {
+			return true, -1 // int64(math.MaxUint64)
+		}
+		return false, a + b
+	}
+	isOverflow := math.MaxInt64 - a < b
+	if isOverflow {
+		return true, math.MaxInt64
+	}
+	return false, a + b
+}
+
+func (alloc *allocator) calcMaxStep(base, step int64) int64 {
+	if alloc.isUnsigned {
+		return int64(mathutil.MinUint64(math.MaxUint64-uint64(base), uint64(step)))
+	} else {
+		return mathutil.MinInt64(math.MaxInt64-base, step)
+	}
 }
 
 // Rebase implements autoid.Allocator RebaseSeq interface.
@@ -460,10 +491,75 @@ func (alloc *allocator) Alloc(tableID int64, n uint64, increment, offset int64) 
 	}
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
-	if alloc.isUnsigned {
-		return alloc.alloc4Unsigned(tableID, n, increment, offset)
+	return alloc.alloc(tableID, n, increment, offset)
+}
+
+func (alloc *allocator) alloc(tableID int64, n uint64, increment, offset int64) (int64, int64, error) {
+	// Check offset rebase if necessary.
+	if alloc.cmp(offset-1, alloc.base).is(greater) {
+		if err := alloc.rebase(tableID, offset-1, true); err != nil {
+			return 0, 0, err
+		}
 	}
-	return alloc.alloc4Signed(tableID, n, increment, offset)
+	// CalcNeededBatchSize calculates the total batch size needed.
+	n1 := CalcNeededBatchSize(alloc.base, int64(n), increment, offset, alloc.isUnsigned)
+
+	isOverflow, expectedEnd := alloc.plus(alloc.base, n1)
+	if isOverflow {
+		return 0, 0, ErrAutoincReadFailed
+	}
+	// The local rest is not enough for alloc, skip it.
+	if alloc.cmp(expectedEnd, alloc.end).is(greater) {
+		var newBase, newEnd int64
+		startTime := time.Now()
+		nextStep := alloc.step
+		if !alloc.customStep {
+			// Although it may skip a segment here, we still treat it as consumed.
+			consumeDur := startTime.Sub(alloc.lastAllocTime)
+			nextStep = NextStep(alloc.step, consumeDur)
+		}
+		// Although the step is customized by user, we still need to make sure nextStep is big enough for insert batch.
+		if nextStep <= n1 {
+			nextStep = mathutil.MinInt64(n1*2, maxStep)
+		}
+		// Store the step for non-customized-step allocator to calculate next dynamic step.
+		if !alloc.customStep {
+			alloc.step = nextStep
+		}
+		err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
+			m := meta.NewMeta(txn)
+			var err1 error
+			newBase, err1 = getAutoIDByAllocType(m, alloc.dbID, tableID, alloc.allocType)
+			if err1 != nil {
+				return err1
+			}
+			tmpStep := alloc.calcMaxStep(newBase, nextStep)
+			// The global rest is not enough for alloc.
+			if tmpStep < n1 {
+				return ErrAutoincReadFailed
+			}
+			newEnd, err1 = generateAutoIDByAllocType(m, alloc.dbID, tableID, tmpStep, alloc.allocType)
+			return err1
+		})
+		metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+		if err != nil {
+			return 0, 0, err
+		}
+		alloc.lastAllocTime = time.Now()
+		if newBase == alloc.maxConstant() {
+			return 0, 0, ErrAutoincReadFailed
+		}
+		alloc.base, alloc.end = newBase, newEnd
+	}
+
+	logutil.Logger(context.TODO()).Debug("alloc ID",
+		zap.Uint64("from ID", uint64(alloc.base)),
+		zap.Uint64("to ID", uint64(alloc.base+n1)),
+		zap.Int64("table ID", tableID),
+		zap.Int64("database ID", alloc.dbID))
+	min := alloc.base
+	_, alloc.base = alloc.plus(alloc.base, n1)
+	return min, alloc.base, nil
 }
 
 func (alloc *allocator) AllocSeqCache(tableID int64) (int64, int64, int64, error) {
@@ -611,141 +707,6 @@ func SeekToFirstAutoIDUnSigned(base, increment, offset uint64) uint64 {
 	nr := (base + increment - offset) / increment
 	nr = nr*increment + offset
 	return nr
-}
-
-func (alloc *allocator) alloc4Signed(tableID int64, n uint64, increment, offset int64) (int64, int64, error) {
-	// Check offset rebase if necessary.
-	if offset-1 > alloc.base {
-		if err := alloc.rebase4Signed(tableID, offset-1, true); err != nil {
-			return 0, 0, err
-		}
-	}
-	// CalcNeededBatchSize calculates the total batch size needed.
-	n1 := CalcNeededBatchSize(alloc.base, int64(n), increment, offset, alloc.isUnsigned)
-
-	// Condition alloc.base+N1 > alloc.end will overflow when alloc.base + N1 > MaxInt64. So need this.
-	if math.MaxInt64-alloc.base <= n1 {
-		return 0, 0, ErrAutoincReadFailed
-	}
-	// The local rest is not enough for allocN, skip it.
-	if alloc.base+n1 > alloc.end {
-		var newBase, newEnd int64
-		startTime := time.Now()
-		nextStep := alloc.step
-		if !alloc.customStep {
-			// Although it may skip a segment here, we still think it is consumed.
-			consumeDur := startTime.Sub(alloc.lastAllocTime)
-			nextStep = NextStep(alloc.step, consumeDur)
-		}
-		// Although the step is customized by user, we still need to make sure nextStep is big enough for insert batch.
-		if nextStep <= n1 {
-			nextStep = mathutil.MinInt64(n1*2, maxStep)
-		}
-		// Store the step for non-customized-step allocator to calculate next dynamic step.
-		if !alloc.customStep {
-			alloc.step = nextStep
-		}
-		err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
-			m := meta.NewMeta(txn)
-			var err1 error
-			newBase, err1 = getAutoIDByAllocType(m, alloc.dbID, tableID, alloc.allocType)
-			if err1 != nil {
-				return err1
-			}
-			tmpStep := mathutil.MinInt64(math.MaxInt64-newBase, nextStep)
-			// The global rest is not enough for alloc.
-			if tmpStep < n1 {
-				return ErrAutoincReadFailed
-			}
-			newEnd, err1 = generateAutoIDByAllocType(m, alloc.dbID, tableID, tmpStep, alloc.allocType)
-			return err1
-		})
-		metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
-		if err != nil {
-			return 0, 0, err
-		}
-		alloc.lastAllocTime = time.Now()
-		if newBase == math.MaxInt64 {
-			return 0, 0, ErrAutoincReadFailed
-		}
-		alloc.base, alloc.end = newBase, newEnd
-	}
-	logutil.Logger(context.TODO()).Debug("alloc N signed ID",
-		zap.Uint64("from ID", uint64(alloc.base)),
-		zap.Uint64("to ID", uint64(alloc.base+n1)),
-		zap.Int64("table ID", tableID),
-		zap.Int64("database ID", alloc.dbID))
-	min := alloc.base
-	alloc.base += n1
-	return min, alloc.base, nil
-}
-
-func (alloc *allocator) alloc4Unsigned(tableID int64, n uint64, increment, offset int64) (int64, int64, error) {
-	// Check offset rebase if necessary.
-	if uint64(offset-1) > uint64(alloc.base) {
-		if err := alloc.rebase4Unsigned(tableID, uint64(offset-1), true); err != nil {
-			return 0, 0, err
-		}
-	}
-	// CalcNeededBatchSize calculates the total batch size needed.
-	n1 := CalcNeededBatchSize(alloc.base, int64(n), increment, offset, alloc.isUnsigned)
-
-	// Condition alloc.base+n1 > alloc.end will overflow when alloc.base + n1 > MaxInt64. So need this.
-	if math.MaxUint64-uint64(alloc.base) <= uint64(n1) {
-		return 0, 0, ErrAutoincReadFailed
-	}
-	// The local rest is not enough for alloc, skip it.
-	if uint64(alloc.base)+uint64(n1) > uint64(alloc.end) {
-		var newBase, newEnd int64
-		startTime := time.Now()
-		nextStep := alloc.step
-		if !alloc.customStep {
-			// Although it may skip a segment here, we still treat it as consumed.
-			consumeDur := startTime.Sub(alloc.lastAllocTime)
-			nextStep = NextStep(alloc.step, consumeDur)
-		}
-		// Although the step is customized by user, we still need to make sure nextStep is big enough for insert batch.
-		if nextStep <= n1 {
-			nextStep = mathutil.MinInt64(n1*2, maxStep)
-		}
-		// Store the step for non-customized-step allocator to calculate next dynamic step.
-		if !alloc.customStep {
-			alloc.step = nextStep
-		}
-		err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
-			m := meta.NewMeta(txn)
-			var err1 error
-			newBase, err1 = getAutoIDByAllocType(m, alloc.dbID, tableID, alloc.allocType)
-			if err1 != nil {
-				return err1
-			}
-			tmpStep := int64(mathutil.MinUint64(math.MaxUint64-uint64(newBase), uint64(nextStep)))
-			// The global rest is not enough for alloc.
-			if tmpStep < n1 {
-				return ErrAutoincReadFailed
-			}
-			newEnd, err1 = generateAutoIDByAllocType(m, alloc.dbID, tableID, tmpStep, alloc.allocType)
-			return err1
-		})
-		metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
-		if err != nil {
-			return 0, 0, err
-		}
-		alloc.lastAllocTime = time.Now()
-		if uint64(newBase) == math.MaxUint64 {
-			return 0, 0, ErrAutoincReadFailed
-		}
-		alloc.base, alloc.end = newBase, newEnd
-	}
-	logutil.Logger(context.TODO()).Debug("alloc unsigned ID",
-		zap.Uint64(" from ID", uint64(alloc.base)),
-		zap.Uint64("to ID", uint64(alloc.base+n1)),
-		zap.Int64("table ID", tableID),
-		zap.Int64("database ID", alloc.dbID))
-	min := alloc.base
-	// Use uint64 n directly.
-	alloc.base = int64(uint64(alloc.base) + uint64(n1))
-	return min, alloc.base, nil
 }
 
 // alloc4Sequence is used to alloc value for sequence, there are several aspects different from autoid logic.

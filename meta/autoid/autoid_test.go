@@ -344,7 +344,7 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 	c.Assert(id, Equals, int64(6544))
 
 	// Test the MaxUint64 is the upper bound of `alloc` func but not `rebase`.
-	var n uint64 = math.MaxUint64 - 1
+	var n uint64 = math.MaxUint64
 	un := int64(n)
 	err = alloc.Rebase(3, un, true)
 	c.Assert(err, IsNil)
@@ -386,8 +386,6 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 	// Test increment & offset for unsigned. Using AutoRandomType to avoid valid range check for increment and offset.
 	alloc = autoid.NewAllocator(store, 1, true, autoid.AutoRandomType)
 	c.Assert(alloc, NotNil)
-	c.Assert(err, IsNil)
-	c.Assert(globalAutoID, Equals, int64(1))
 
 	increment := int64(2)
 	n = math.MaxUint64 - 100
@@ -401,7 +399,6 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 	c.Assert(max-min, Equals, autoid.CalcNeededBatchSize(int64(uint64(offset)-1), 2, increment, offset, true))
 	firstID := autoid.SeekToFirstAutoIDUnSigned(uint64(min), uint64(increment), uint64(offset))
 	c.Assert(firstID, Equals, uint64(math.MaxUint64-100))
-
 }
 
 // TestConcurrentAlloc is used for the test that
