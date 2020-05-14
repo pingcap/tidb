@@ -583,16 +583,15 @@ func (e *Explain) RenderResult() error {
 	if e.StmtPlan == nil {
 		return nil
 	}
+	if _, ok := e.StmtPlan.(PhysicalPlan); !ok {
+		return nil
+	}
 	switch strings.ToLower(e.Format) {
 	case ast.ExplainFormatROW:
 		e.explainedPlans = map[int]bool{}
-		if physicalPlan, ok := e.TargetPlan.(PhysicalPlan); ok {
-			e.explainPlanInRowFormat(physicalPlan, "root", "", true)
-		}
+		e.explainPlanInRowFormat(e.StmtPlan.(PhysicalPlan), "root", "", true)
 	case ast.ExplainFormatDOT:
-		if physicalPlan, ok := e.TargetPlan.(PhysicalPlan); ok {
-			e.prepareDotInfo(physicalPlan)
-		}
+		e.prepareDotInfo(e.StmtPlan.(PhysicalPlan))
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
