@@ -586,7 +586,9 @@ func (e *Explain) RenderResult() error {
 	switch strings.ToLower(e.Format) {
 	case ast.ExplainFormatROW:
 		e.explainedPlans = map[int]bool{}
-		e.explainPlanInRowFormat(e.StmtPlan.(PhysicalPlan), "root", "", true)
+		if physicalPlan, ok := e.TargetPlan.(PhysicalPlan); ok {
+			e.explainPlanInRowFormat(physicalPlan, "root", "", true)
+		}
 	case ast.ExplainFormatDOT:
 		if physicalPlan, ok := e.TargetPlan.(PhysicalPlan); ok {
 			e.prepareDotInfo(physicalPlan)
