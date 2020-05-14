@@ -70,9 +70,9 @@
       {
         "SQL": "SELECT * from t1 where a!=1 order by c limit 1",
         "Plan": [
-          " TopN_8             root test.t1.c:asc",
+          " TopN_8             root test.t1.c",
           " └─TableReader_16   root data:TopN_15",
-          "   └─TopN_15        cop  test.t1.c:asc",
+          "   └─TopN_15        cop  test.t1.c",
           "     └─TableScan_14 cop  table:t1, range:[?,?], keep order:false"
         ]
       },
