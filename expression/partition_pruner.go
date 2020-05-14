@@ -163,9 +163,8 @@ func newHashPartitionPruner() *hashPartitionPruner {
 	return pruner
 }
 
-// solve eval the hash partition expression, the first return value represent the result of partition expression. 
-// The second return value is whether eval success.
-// The third return value represent whether the eval result of partition value is null.
+// solve eval the hash partition expression, the first return value represent the result of partition expression. The second
+// return value is whether eval success. The third return value represent whether the eval result of partition value is null.
 func (p *hashPartitionPruner) solve(ctx sessionctx.Context, conds []Expression, piExpr Expression) (val int64, ok bool, isNil bool) {
 	p.ctx = ctx
 	for _, cond := range conds {
