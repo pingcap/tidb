@@ -360,7 +360,7 @@ type RuntimeStatsColl struct {
 	readerStats map[string]*ReaderRuntimeStats
 }
 
-// concurrencyInfo is used to save the concurrency information of the executor operator
+// ConcurrencyInfo is used to save the concurrency information of the executor operator
 type ConcurrencyInfo struct {
 	concurrencyName string
 	concurrencyNum  int
