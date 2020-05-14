@@ -233,6 +233,7 @@ func (c *batchCommandsClient) send(request *tikvpb.BatchCommandsRequest, entries
 		logutil.BgLogger().Info(
 			"sending batch commands meets error",
 			zap.String("target", c.target),
+			zap.Uint64s("requestIDs", request.RequestIds),
 			zap.Error(err),
 		)
 		c.failPendingRequests(err)
