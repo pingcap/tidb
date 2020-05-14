@@ -2417,11 +2417,9 @@ func buildTableReq(b *executorBuilder, schemaLen int, plans []plannercore.Physic
 	ts := plans[0].(*plannercore.PhysicalTableScan)
 	tbl, _ := b.is.TableByID(ts.Table.ID)
 	isPartition, physicalTableID := ts.IsPartition()
-	fmt.Printf("%v, %v -------cscscs-----\n\n", isPartition, physicalTableID)
 	if isPartition {
 		pt := tbl.(table.PartitionedTable)
 		tbl = pt.GetPartition(physicalTableID)
-		fmt.Printf("%v   %v, -%#v------cscscs-----\n\n", tbl, physicalTableID, pt.Meta().GetPartitionInfo())
 	}
 	return tableReq, tableStreaming, tbl, err
 }
