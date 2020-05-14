@@ -168,6 +168,10 @@ func handleWrongUtf8Value(ctx sessionctx.Context, col *model.ColumnInfo, casted 
 }
 
 // CastValue casts a value based on column type.
+// If forceIgnoreTruncate is true, the err returned will be always nil.
+// It's safe now and it's the same as the behavior of select statement.
+// Set it to true only in FillVirtualColumnValue and UnionScanExec.Next()
+// If the handle of err is changed latter, the behavior of forceIgnoreTruncate also need to change.
 // TODO: change the third arg to TypeField. Not pass ColumnInfo.
 func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, forceIgnoreTruncate bool) (casted types.Datum, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
