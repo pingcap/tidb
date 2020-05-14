@@ -110,6 +110,7 @@ func TestT(t *testing.T) {
 	logutil.InitLogger(logutil.NewLogConfig(logLevel, "", "", logutil.EmptyFileLogConfig, false))
 	autoid.SetStep(5000)
 	ReorgWaitTimeout = 30 * time.Millisecond
+	batchInsertDeleteRangeSize = 2
 
 	cfg := config.GetGlobalConfig()
 	newCfg := *cfg
