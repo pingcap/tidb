@@ -244,10 +244,9 @@ func (e *HashAggExec) Close() error {
 			partialConcurrency = cap(e.partialWorkers)
 			finalConcurrency = cap(e.finalWorkers)
 		}
-		var hashAggConcurrencyInfo []*execdetails.ConcurrencyInfo
-		hashAggConcurrencyInfo = append(hashAggConcurrencyInfo, execdetails.NewConcurrencyInfo("PartialConcurrency", partialConcurrency))
-		hashAggConcurrencyInfo = append(hashAggConcurrencyInfo, execdetails.NewConcurrencyInfo("FinalConcurrency", finalConcurrency))
-		e.runtimeStats.SetConcurrencyInfo(hashAggConcurrencyInfo...)
+		partialConcurrencyInfo := execdetails.NewConcurrencyInfo("PartialConcurrency", partialConcurrency)
+		finalConcurrencyInfo := execdetails.NewConcurrencyInfo("FinalConcurrency", finalConcurrency)
+		e.runtimeStats.SetConcurrencyInfo(partialConcurrencyInfo, finalConcurrencyInfo)
 	}
 	return e.baseExecutor.Close()
 }
