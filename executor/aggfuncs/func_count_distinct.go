@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/util/stringutil"
 )
 
 type partialResult4CountDistinctInt struct {
@@ -254,6 +255,7 @@ func (e *countOriginalWithDistinct4String) UpdatePartialResult(sctx sessionctx.C
 		if p.valSet.Exist(input) {
 			continue
 		}
+		input = stringutil.Copy(input)
 		p.valSet.Insert(input)
 	}
 
