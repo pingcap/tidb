@@ -204,6 +204,7 @@ func (t *TableCommon) WritableIndices() []table.Index {
 	return writable
 }
 
+// GetWritableIndexByName gets the index meta from the table by the index name.
 func GetWritableIndexByName(idxName string, t table.Table) table.Index {
 	indices := t.WritableIndices()
 	for _, idx := range indices {
