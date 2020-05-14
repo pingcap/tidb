@@ -69,6 +69,8 @@ func (t *trackRecorderSuite) TestHeapProfileRecorder(c *C) {
 		v := getRandomString(10)
 		lru.Put(keys[i], v)
 	}
+	// wait 10 sec to ensure runtime have scraped the heap profile sample
+	time.Sleep(10 * time.Second)
 
 	bytes, err := col.getFuncMemUsage(kvcache.ProfileName)
 	c.Assert(err, IsNil)
