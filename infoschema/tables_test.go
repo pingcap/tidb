@@ -16,6 +16,8 @@ package infoschema_test
 import (
 	"crypto/tls"
 	"fmt"
+	"github.com/pingcap/tidb/util/kvcache"
+	"math"
 	"net"
 	"net/http/httptest"
 	"os"
@@ -81,6 +83,18 @@ func (s *testTableSuiteBase) TearDownSuite(c *C) {
 
 func (s *testTableSuiteBase) newTestKitWithRoot(c *C) *testkit.TestKit {
 	tk := testkit.NewTestKitWithInit(c, s.store)
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	return tk
+}
+
+func (s *testTableSuiteBase) newTestKitWithPlanCache(c *C) *testkit.TestKit {
+	tk := testkit.NewTestKit(c, s.store)
+	var err error
+	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+	tk.GetConnectionID()
 	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
 	return tk
 }
@@ -1252,12 +1266,15 @@ func (s *testTableSuite) TestStmtSummaryPreparedStatements(c *C) {
 }
 
 func (s *testTableSuite) TestPerformanceSchemaforPlanCache(c *C) {
-	tk := s.newTestKitWithRoot(c)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
 	}()
 	plannercore.SetPreparedPlanCache(true)
+
+	tk := s.newTestKitWithPlanCache(c)
+
+	// Clear summaries.
 	tk.MustExec("set global tidb_enable_stmt_summary = 0")
 	tk.MustExec("set global tidb_enable_stmt_summary = 1")
 	tk.MustExec("use test")
@@ -1265,7 +1282,7 @@ func (s *testTableSuite) TestPerformanceSchemaforPlanCache(c *C) {
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("prepare stmt from 'select * from t'")
 	tk.MustExec("execute stmt")
-	tk.MustQuery("select digest_text, plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from t'").Check(
+	tk.MustQuery("select plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from t'").Check(
 		testkit.Rows("0 0"))
 	tk.MustExec("execute stmt")
 	tk.MustExec("execute stmt")
