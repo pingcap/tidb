@@ -458,10 +458,6 @@ func (e *RecoverIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	var err error
 	if tbl, ok := e.table.(table.PartitionedTable); ok {
 		pi := e.table.Meta().GetPartitionInfo()
-		if pi == nil {
-
-		}
-		// pi should never be nil, if so, it's a bug, just let it panic to report error.
 		for _, p := range pi.Definitions {
 			e.table = tbl.GetPartition(p.ID)
 			e.index = tables.GetWritableIndexByName(e.index.Meta().Name.L, e.table)
