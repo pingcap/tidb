@@ -78,7 +78,7 @@ Read the [Roadmap](https://pingcap.com/docs/ROADMAP).
     tiup playground nightly
     ```
 
-- Read the [Quick Start Guide](https://pingcap.com/docs/QUICKSTART), which includes deployment methods using Ansible, Docker, and Kubernetes.
+- For other ways, see [TiDB documentation](https://pingcap.com/docs/).
 
 ## Getting Help
 
