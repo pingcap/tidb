@@ -128,7 +128,7 @@ type Allocator interface {
 
 type IDIterator struct {
 	restCount uint64
-	current int64
+	current   int64
 	increment int64
 }
 
@@ -147,7 +147,7 @@ func (iter *IDIterator) First() int64 {
 }
 
 func (iter *IDIterator) Last() int64 {
-	return iter.current + int64(iter.restCount - 1) * iter.increment
+	return iter.current + int64(iter.restCount-1)*iter.increment
 }
 
 func (iter *IDIterator) Skip() *IDIterator {
@@ -337,11 +337,12 @@ func (alloc *allocator) rebase(tableID, requiredBase int64, allocIDs bool) error
 }
 
 type compareResult int8
+
 const (
-	eq compareResult = 0b010
-	lessEq compareResult = 0b110
-	less compareResult = 0b100
-	greater compareResult = 0b001
+	eq        compareResult = 0b010
+	lessEq    compareResult = 0b110
+	less      compareResult = 0b100
+	greater   compareResult = 0b001
 	greaterEq compareResult = 0b011
 )
 
@@ -372,7 +373,7 @@ func (alloc *allocator) max(a, b int64) int64 {
 	return a
 }
 
-func (alloc *allocator) min (a, b int64) int64 {
+func (alloc *allocator) min(a, b int64) int64 {
 	if alloc.cmp(a, b).is(greater) {
 		return b
 	}
@@ -381,9 +382,9 @@ func (alloc *allocator) min (a, b int64) int64 {
 
 func (alloc *allocator) isOverflow(a, b int64) bool {
 	if alloc.isUnsigned {
-		return math.MaxUint64 - uint64(a) < uint64(b)
+		return math.MaxUint64-uint64(a) < uint64(b)
 	}
-	return math.MaxInt64 - a < b
+	return math.MaxInt64-a < b
 }
 
 func (alloc *allocator) maxConstant() int64 {
@@ -395,13 +396,13 @@ func (alloc *allocator) maxConstant() int64 {
 
 func (alloc *allocator) plus(a, b int64) (overflow bool, result int64) {
 	if alloc.isUnsigned {
-		isOverflow := math.MaxUint64 - uint64(a) < uint64(b)
+		isOverflow := math.MaxUint64-uint64(a) < uint64(b)
 		if isOverflow {
 			return true, -1 // int64(math.MaxUint64)
 		}
 		return false, a + b
 	}
-	isOverflow := math.MaxInt64 - a < b
+	isOverflow := math.MaxInt64-a < b
 	if isOverflow {
 		return true, math.MaxInt64
 	}
@@ -519,7 +520,7 @@ func (alloc *allocator) Alloc(tableID int64, n uint64, increment, offset int64) 
 		return nil, errInvalidTableID.GenWithStackByArgs("Invalid tableID")
 	}
 	if n == 0 {
-		return &IDIterator{ restCount:0 }, nil
+		return &IDIterator{restCount: 0}, nil
 	}
 	if alloc.allocType == AutoIncrementType || alloc.allocType == RowIDAllocType {
 		if !validIncrementAndOffset(increment, offset) {
@@ -755,7 +756,7 @@ func (alloc *allocator) seekToFirstAutoID(base, increment, offset int64) int64 {
 	if alloc.isUnsigned {
 		uBase, uInc, uOff := uint64(base), uint64(increment), uint64(offset)
 		nr := (uBase + uInc - uOff) / uInc
-		nr = nr *uInc + uOff
+		nr = nr*uInc + uOff
 		return int64(nr)
 	}
 	nr := (base + increment - offset) / increment
