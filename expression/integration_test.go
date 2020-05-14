@@ -6352,3 +6352,13 @@ func (s *testIntegrationSuite) TestIssue16505(c *C) {
 	tk.MustQuery("select /*+ IGNORE_INDEX(t, idx) */* from t where c;").Sort().Check(testkit.Rows("0.0001deadsfeww", "1", "123e456"))
 	tk.MustExec("drop table t;")
 }
+
+func (s *testIntegrationSuite) TestIssue17045(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int,b varchar(20),c datetime,d double,e int,f int as(a+b),key(a),key(b),key(c),key(d),key(e),key(f));")
+	tk.MustExec("insert into t(a,b,e) values(null,\"5\",null);")
+	tk.MustExec("insert into t(a,b,e) values(\"5\",null,null);")
+	tk.MustQuery("select /*+ use_index_merge(t)*/ * from t where t.e=5 or t.a=5;").Check(testkit.Rows("5 <nil> <nil> <nil> <nil> <nil>"))
+}
