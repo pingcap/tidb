@@ -64,7 +64,7 @@ var (
 	errWrongKeyColumn = terror.ClassDDL.New(mysql.ErrWrongKeyColumn, mysql.MySQLErrName[mysql.ErrWrongKeyColumn])
 	// errWrongFKOptionForGeneratedColumn is for wrong foreign key reference option on generated columns.
 	errWrongFKOptionForGeneratedColumn = terror.ClassDDL.New(mysql.ErrWrongFKOptionForGeneratedColumn, mysql.MySQLErrName[mysql.ErrWrongFKOptionForGeneratedColumn])
-	// errUnsupportedOnGeneratedColumn is for unsupported actions on generated columns.
+	// ErrUnsupportedOnGeneratedColumn is for unsupported actions on generated columns.
 	ErrUnsupportedOnGeneratedColumn = terror.ClassDDL.New(mysql.ErrUnsupportedOnGeneratedColumn, mysql.MySQLErrName[mysql.ErrUnsupportedOnGeneratedColumn])
 	// errGeneratedColumnNonPrior forbids to refer generated column non prior to it.
 	errGeneratedColumnNonPrior = terror.ClassDDL.New(mysql.ErrGeneratedColumnNonPrior, mysql.MySQLErrName[mysql.ErrGeneratedColumnNonPrior])
@@ -212,12 +212,12 @@ var (
 	ErrUnsupportedExpressionIndex = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "creating expression index without allow-expression-index in config"))
 	// ErrPartitionExchangePartTable is returned when exchange table partition with another table is partitioned
 	ErrPartitionExchangePartTable = terror.ClassDDL.New(mysql.ErrPartitionExchangePartTable, mysql.MySQLErrName[mysql.ErrPartitionExchangePartTable])
-	// ErrTableDifferentMetadata is returned when exchanges tables is not compatible
+	// ErrTablesDifferentMetadata is returned when exchanges tables is not compatible
 	ErrTablesDifferentMetadata = terror.ClassDDL.New(mysql.ErrTablesDifferentMetadata, mysql.MySQLErrName[mysql.ErrTablesDifferentMetadata])
 	// ErrRowDoesNotMatchPartition is returned when the row record of exchange table does not match the partition rule
 	ErrRowDoesNotMatchPartition = terror.ClassDDL.New(mysql.ErrRowDoesNotMatchPartition, mysql.MySQLErrName[mysql.ErrRowDoesNotMatchPartition])
 	// ErrPartitionExchangeForeignKey is returned when exchanged non-partition table has foreign keys
 	ErrPartitionExchangeForeignKey = terror.ClassDDL.New(mysql.ErrPartitionExchangeForeignKey, mysql.MySQLErrName[mysql.ErrPartitionExchangeForeignKey])
-	// ErrCheckNoSunchTable is returned when exchaned non-partition table is view or sequence
+	// ErrCheckNoSuchTable is returned when exchaned non-partition table is view or sequence
 	ErrCheckNoSuchTable = terror.ClassDDL.New(mysql.ErrCheckNoSuchTable, mysql.MySQLErrName[mysql.ErrCheckNoSuchTable])
 )
