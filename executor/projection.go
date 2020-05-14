@@ -309,9 +309,9 @@ func (e *ProjectionExec) Close() error {
 	}
 	if e.runtimeStats != nil {
 		if e.isUnparallelExec() {
-			e.runtimeStats.SetConcurrencyInfo([]*execdetails.ConcurrencyInfo{execdetails.NewConcurrencyInfo("Concurrency", 0)})
+			e.runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", 0))
 		} else {
-			e.runtimeStats.SetConcurrencyInfo([]*execdetails.ConcurrencyInfo{execdetails.NewConcurrencyInfo("Concurrency", int(e.numWorkers))})
+			e.runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", int(e.numWorkers)))
 		}
 	}
 	return e.baseExecutor.Close()

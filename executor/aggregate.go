@@ -247,7 +247,7 @@ func (e *HashAggExec) Close() error {
 		var hashAggConcurrencyInfo []*execdetails.ConcurrencyInfo
 		hashAggConcurrencyInfo = append(hashAggConcurrencyInfo, execdetails.NewConcurrencyInfo("PartialConcurrency", partialConcurrency))
 		hashAggConcurrencyInfo = append(hashAggConcurrencyInfo, execdetails.NewConcurrencyInfo("FinalConcurrency", finalConcurrency))
-		e.runtimeStats.SetConcurrencyInfo(hashAggConcurrencyInfo)
+		e.runtimeStats.SetConcurrencyInfo(hashAggConcurrencyInfo...)
 	}
 	return e.baseExecutor.Close()
 }

@@ -474,7 +474,7 @@ func (e *RuntimeStats) SetRowNum(rowNum int64) {
 // SetConcurrencyInfo sets the concurrency informations.
 // We must clear the concurrencyInfo first when we call the SetConcurrencyInfo.
 // When the num <= 0, it means the exector operator is not executed parallel.
-func (e *RuntimeStats) SetConcurrencyInfo(infos []*ConcurrencyInfo) {
+func (e *RuntimeStats) SetConcurrencyInfo(infos ...*ConcurrencyInfo) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.concurrency = e.concurrency[:0]
