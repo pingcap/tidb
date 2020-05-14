@@ -765,8 +765,10 @@ type NestedLoopApplyExec struct {
 
 	joiner joiner
 
-	cache       *applyCache
-	canUseCache bool
+	cache          *applyCache
+	canUseCache    bool
+	cacheHitNumber int
+	totalNumber    int
 
 	outerSchema []*expression.CorrelatedColumn
 
@@ -789,8 +791,14 @@ type NestedLoopApplyExec struct {
 // Close implements the Executor interface.
 func (e *NestedLoopApplyExec) Close() error {
 	e.innerRows = nil
-
 	e.memTracker = nil
+	if e.runtimeStats != nil {
+		if e.canUseCache {
+			e.runtimeStats.SetCacheInfo(true, e.totalNumber, e.cacheHitNumber)
+		} else {
+			e.runtimeStats.SetCacheInfo(false, e.totalNumber, e.cacheHitNumber)
+		}
+	}
 	return e.outerExec.Close()
 }
 
@@ -816,6 +824,8 @@ func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 
 	if e.canUseCache {
 		e.cache, err = newApplyCache(e.ctx)
+		e.cacheHitNumber = 0
+		e.totalNumber = 0
 		if err != nil {
 			return err
 		}
@@ -908,9 +918,11 @@ func (e *NestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk) (err e
 						return err
 					}
 				}
+				e.totalNumber++
 				value := e.cache.Get(key)
 				if value != nil {
 					e.innerList = value.Data
+					e.cacheHitNumber++
 				} else {
 					err = e.fetchAllInners(ctx)
 					if err != nil {
