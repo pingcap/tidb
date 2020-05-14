@@ -1240,30 +1240,6 @@ func (b *PlanBuilder) buildCheckIndex(ctx context.Context, dbName model.CIStr, a
 	return b.buildPhysicalIndexLookUpReader(ctx, dbName, tbl, idx)
 }
 
-func (b *PlanBuilder) buildAdminCheckIndex(ctx context.Context, as *ast.AdminStmt) (*CheckTable, error) {
-	tbl := as.Tables[0]
-	tableInfo := as.Tables[0].TableInfo
-	table, ok := b.is.TableByID(tableInfo.ID)
-	if !ok {
-		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(tbl.DBInfo.Name.O, tableInfo.Name.O)
-	}
-	p := &CheckTable{
-		DBName: tbl.Schema.O,
-		Table:  table,
-	}
-	readerPlans, indexInfos, err := b.buildPhysicalIndexLookUpReaders(ctx, tbl.Schema, table, table.Indices())
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	readers := make([]*PhysicalIndexLookUpReader, 0, len(readerPlans))
-	for _, plan := range readerPlans {
-		readers = append(readers, plan.(*PhysicalIndexLookUpReader))
-	}
-	p.IndexInfos = indexInfos
-	p.IndexLookUpReaders = readers
-	return p, nil
-}
-
 func (b *PlanBuilder) buildCheckIndexSchema(tn *ast.TableName, indexName string) (*expression.Schema, types.NameSlice, error) {
 	schema := expression.NewSchema()
 	var names types.NameSlice
