@@ -61,27 +61,30 @@ func getRandomString(l int) string {
 }
 
 func (t *trackRecorderSuite) TestHeapProfileRecorder(c *C) {
-	lru := kvcache.NewSimpleLRUCache(10000, 0, 0)
+	// As runtime.MemProfileRate default values is 512 KB , so the num should be greater than 60000
+	// that the memory usage of the values would be greater than 512 KB.
+	num := 60000
+	lru := kvcache.NewSimpleLRUCache(uint(num), 0, 0)
 
-	keys := make([]*mockCacheKey, 10000)
-	for i := 0; i < 10000; i++ {
+	keys := make([]*mockCacheKey, num)
+	for i := 0; i < 60000; i++ {
 		keys[i] = newMockHashKey(int64(i))
 		v := getRandomString(10)
 		lru.Put(keys[i], v)
 	}
-	// wait 15 sec to make runtime have scraped the heap profile sample
-	time.Sleep(15 * time.Second)
+	// wait 10 sec to make runtime have scraped the heap profile sample
+	time.Sleep(10 * time.Second)
 
 	bytes, err := col.getFuncMemUsage(kvcache.ProfileName)
 	c.Assert(err, IsNil)
 	valueSize := int(unsafe.Sizeof(getRandomString(10)))
 	// ensure that the consumed bytes is at least larger than 10000 * size of value
-	c.Assert(int64(valueSize*10000), LessEqual, bytes)
+	c.Assert(int64(valueSize*num), LessEqual, bytes)
 
 	// wait 10 sec then reference lru to avoid gc
 	time.Sleep(10 * time.Second)
 	// we should assert lru size last and value size to reference lru in order to avoid gc
-	c.Assert(lru.Size(), Equals, 10000)
+	c.Assert(lru.Size(), Equals, num)
 	for _, v := range lru.Values() {
 		val := v.(string)
 		c.Assert(len(val), Equals, 10)
