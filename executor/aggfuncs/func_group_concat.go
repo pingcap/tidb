@@ -391,7 +391,7 @@ func (e *groupConcatOrder) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 			if err != nil {
 				return err
 			}
-			sortRow.byItems = append(sortRow.byItems, d.Clone())
+			sortRow.byItems = append(sortRow.byItems, d.Copy())
 		}
 		truncated := p.topN.tryToAdd(sortRow)
 		if p.topN.err != nil {
@@ -500,7 +500,7 @@ func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx sessionctx.Context, 
 			if err != nil {
 				return err
 			}
-			sortRow.byItems = append(sortRow.byItems, d.Clone())
+			sortRow.byItems = append(sortRow.byItems, d.Copy())
 		}
 		truncated := p.topN.tryToAdd(sortRow)
 		if p.topN.err != nil {
