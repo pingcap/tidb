@@ -1105,7 +1105,13 @@ func checkConstraintNames(constraints []*ast.Constraint) error {
 }
 
 // checkInvisibleIndexOnPK check if primary key is invisible index.
+// Note: PKIsHandle == true means the table already has a visible primary key,
+// we do not need do a check for this case and return directly,
+// because whether primary key is invisible has been check when creating table.
 func checkInvisibleIndexOnPK(tblInfo *model.TableInfo) error {
+	if tblInfo.PKIsHandle {
+		return nil
+	}
 	pk := getPrimaryKey(tblInfo)
 	if pk != nil && pk.Invisible {
 		return ErrPKIndexCantBeInvisible
@@ -1154,7 +1160,8 @@ func setTableAutoRandomBits(ctx sessionctx.Context, tbInfo *model.TableInfo, col
 				return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomExperimentalDisabledErrMsg)
 			}
 			if !tbInfo.PKIsHandle || col.Name.Name.L != pkColName.L {
-				return ErrInvalidAutoRandom.GenWithStackByArgs(fmt.Sprintf(autoid.AutoRandomPKisNotHandleErrMsg, col.Name.Name.O))
+				errMsg := fmt.Sprintf(autoid.AutoRandomPKisNotHandleErrMsg, col.Name.Name.O)
+				return ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
 			}
 			if containsColumnOption(col, ast.ColumnOptionAutoIncrement) {
 				return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomIncompatibleWithAutoIncErrMsg)
@@ -1167,16 +1174,18 @@ func setTableAutoRandomBits(ctx sessionctx.Context, tbInfo *model.TableInfo, col
 			if err != nil {
 				return errors.Trace(err)
 			}
-			maxFieldTypeBitsLength := uint64(mysql.DefaultLengthOfMysqlTypes[col.Tp.Tp] * 8)
+
+			layout := autoid.NewAutoRandomIDLayout(col.Tp, autoRandBits)
 			if autoRandBits == 0 {
 				return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomNonPositive)
-			} else if autoRandBits >= maxFieldTypeBitsLength {
-				return ErrInvalidAutoRandom.GenWithStackByArgs(fmt.Sprintf(autoid.AutoRandomOverflowErrMsg, col.Name.Name.L, maxFieldTypeBitsLength, autoRandBits, col.Name.Name.L, maxFieldTypeBitsLength-1))
+			} else if autoRandBits >= layout.TypeBitsLength {
+				errMsg := fmt.Sprintf(autoid.AutoRandomOverflowErrMsg, col.Name.Name.L,
+					layout.TypeBitsLength, autoRandBits, col.Name.Name.L, layout.TypeBitsLength-1)
+				return ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
 			}
 			tbInfo.AutoRandomBits = autoRandBits
 
-			availableBits := maxFieldTypeBitsLength - 1 - autoRandBits
-			msg := fmt.Sprintf(autoid.AutoRandomAvailableAllocTimesNote, uint64(math.Pow(2, float64(availableBits)))-1)
+			msg := fmt.Sprintf(autoid.AutoRandomAvailableAllocTimesNote, layout.IncrementalBitsCapacity())
 			ctx.GetSessionVars().StmtCtx.AppendNote(errors.Errorf(msg))
 		}
 	}
@@ -1243,6 +1252,11 @@ func buildTableInfo(
 				switch lastCol.Tp {
 				case mysql.TypeLong, mysql.TypeLonglong,
 					mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24:
+					// Primary key cannot be invisible.
+					if constr.Option != nil && constr.Option.Visibility == ast.IndexVisibilityInvisible {
+						return nil, ErrPKIndexCantBeInvisible
+					}
+
 					tbInfo.PKIsHandle = true
 					// Avoid creating index for PK handle column.
 					continue
@@ -1468,10 +1482,6 @@ func buildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 	}
 
 	if err = handleTableOptions(s.Options, tbInfo); err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	if err = checkInvisibleIndexOnPK(tbInfo); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -2156,6 +2166,18 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			err = d.AddTablePartitions(ctx, ident, spec)
 		case ast.AlterTableCoalescePartitions:
 			err = d.CoalescePartitions(ctx, ident, spec)
+		case ast.AlterTableReorganizePartition:
+			err = errors.Trace(errUnsupportedReorganizePartition)
+		case ast.AlterTableCheckPartitions:
+			err = errors.Trace(errUnsupportedCheckPartition)
+		case ast.AlterTableRebuildPartition:
+			err = errors.Trace(errUnsupportedRebuildPartition)
+		case ast.AlterTableOptimizePartition:
+			err = errors.Trace(errUnsupportedOptimizePartition)
+		case ast.AlterTableRemovePartitioning:
+			err = errors.Trace(errUnsupportedRemovePartition)
+		case ast.AlterTableExchangePartition:
+			err = errors.Trace(errUnsupportedExchangePartition)
 		case ast.AlterTableDropColumn:
 			err = d.DropColumn(ctx, ident, spec)
 		case ast.AlterTableDropIndex:
@@ -2251,6 +2273,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			err = d.AlterTableSetTiFlashReplica(ctx, ident, spec.TiFlashReplica)
 		case ast.AlterTableOrderByColumns:
 			err = d.OrderByColumns(ctx, ident)
+		case ast.AlterTableIndexInvisible:
+			err = d.AlterIndexVisibility(ctx, ident, spec.IndexName, spec.Visibility)
 		default:
 			// Nothing to do now.
 		}
@@ -2406,6 +2430,19 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 
 			if err = verifyColumnGenerationSingle(duplicateColNames, cols, spec.Position); err != nil {
 				return nil, errors.Trace(err)
+			}
+		}
+		// Specially, since sequence has been supported, if a newly added column has a
+		// sequence nextval function as it's default value option, it won't fill the
+		// known rows with specific sequence next value under current add column logic.
+		// More explanation can refer: TestSequenceDefaultLogic's comment in sequence_test.go
+		if option.Tp == ast.ColumnOptionDefaultValue {
+			_, isSeqExpr, err := tryToGetSequenceDefaultValue(option)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if isSeqExpr {
+				return nil, errors.Trace(ErrAddColumnWithSequenceAsDefault.GenWithStackByArgs(specNewColumn.Name.Name.O))
 			}
 		}
 	}
@@ -3801,6 +3838,9 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if tb.Meta().IsView() || tb.Meta().IsSequence() {
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(schema.Name.O, tb.Meta().Name.O)
+	}
 	genIDs, err := d.genGlobalIDs(1)
 	if err != nil {
 		return errors.Trace(err)
@@ -4496,7 +4536,7 @@ func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if t.Meta().IsView() {
+		if t.Meta().IsView() || t.Meta().IsSequence() {
 			return table.ErrUnsupportedOp.GenWithStackByArgs()
 		}
 		err = checkTableLocked(t.Meta(), tl.Type, sessionInfo)
@@ -4586,7 +4626,7 @@ func (d *ddl) CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) 
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if t.Meta().IsView() {
+		if t.Meta().IsView() || t.Meta().IsSequence() {
 			return table.ErrUnsupportedOp
 		}
 		// Maybe the table t was not locked, but still try to unlock this table.
@@ -4765,6 +4805,39 @@ func (d *ddl) DropSequence(ctx sessionctx.Context, ti ast.Ident, ifExists bool) 
 		SchemaName: schema.Name.L,
 		Type:       model.ActionDropSequence,
 		BinlogInfo: &model.HistoryInfo{},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func (d *ddl) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident, indexName model.CIStr, visibility ast.IndexVisibility) error {
+	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
+	if err != nil {
+		return err
+	}
+
+	invisible := false
+	if visibility == ast.IndexVisibilityInvisible {
+		invisible = true
+	}
+
+	skip, err := validateAlterIndexVisibility(indexName, invisible, tb.Meta())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if skip {
+		return nil
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tb.Meta().ID,
+		SchemaName: schema.Name.L,
+		Type:       model.ActionAlterIndexVisibility,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{indexName, invisible},
 	}
 
 	err = d.doDDLJob(ctx, job)

@@ -1399,16 +1399,16 @@ func (c *locateFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		return nil, err
 	}
 	var sig builtinFunc
-	// Loacte is multibyte safe, and is case-sensitive only if at least one argument is a binary string.
-	hasBianryInput := types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[1].GetType())
+	// Locate is multibyte safe.
+	useBinary := bf.collation == charset.CollationBin
 	switch {
-	case hasStartPos && hasBianryInput:
+	case hasStartPos && useBinary:
 		sig = &builtinLocate3ArgsSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Locate3Args)
 	case hasStartPos:
 		sig = &builtinLocate3ArgsUTF8Sig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Locate3ArgsUTF8)
-	case hasBianryInput:
+	case useBinary:
 		sig = &builtinLocate2ArgsSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Locate2Args)
 	default:
@@ -1460,7 +1460,7 @@ func (b *builtinLocate2ArgsUTF8Sig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalInt evals LOCATE(substr,str), non case-sensitive.
+// evalInt evals LOCATE(substr,str).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocate2ArgsUTF8Sig) evalInt(row chunk.Row) (int64, bool, error) {
 	subStr, isNull, err := b.args[0].EvalString(b.ctx, row)
@@ -1474,10 +1474,13 @@ func (b *builtinLocate2ArgsUTF8Sig) evalInt(row chunk.Row) (int64, bool, error) 
 	if int64(len([]rune(subStr))) == 0 {
 		return 1, false, nil
 	}
-	slice := strings.ToLower(str)
-	ret, idx := 0, strings.Index(slice, strings.ToLower(subStr))
+	if collate.IsCICollation(b.collation) {
+		str = strings.ToLower(str)
+		subStr = strings.ToLower(subStr)
+	}
+	ret, idx := 0, strings.Index(str, subStr)
 	if idx != -1 {
-		ret = utf8.RuneCountInString(slice[:idx]) + 1
+		ret = utf8.RuneCountInString(str[:idx]) + 1
 	}
 	return int64(ret), false, nil
 }
@@ -1533,7 +1536,7 @@ func (b *builtinLocate3ArgsUTF8Sig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalInt evals LOCATE(substr,str,pos), non case-sensitive.
+// evalInt evals LOCATE(substr,str,pos).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocate3ArgsUTF8Sig) evalInt(row chunk.Row) (int64, bool, error) {
 	subStr, isNull, err := b.args[0].EvalString(b.ctx, row)
@@ -1544,6 +1547,10 @@ func (b *builtinLocate3ArgsUTF8Sig) evalInt(row chunk.Row) (int64, bool, error) 
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
+	if collate.IsCICollation(b.collation) {
+		subStr = strings.ToLower(subStr)
+		str = strings.ToLower(str)
+	}
 	pos, isNull, err := b.args[2].EvalInt(b.ctx, row)
 	// Transfer the argument which starts from 1 to real index which starts from 0.
 	pos--
@@ -1551,13 +1558,13 @@ func (b *builtinLocate3ArgsUTF8Sig) evalInt(row chunk.Row) (int64, bool, error) 
 		return 0, isNull, err
 	}
 	subStrLen := len([]rune(subStr))
-	if pos < 0 || pos > int64(len([]rune(strings.ToLower(str)))-subStrLen) {
+	if pos < 0 || pos > int64(len([]rune(str))-subStrLen) {
 		return 0, false, nil
 	} else if subStrLen == 0 {
 		return pos + 1, false, nil
 	}
-	slice := string([]rune(strings.ToLower(str))[pos:])
-	idx := strings.Index(slice, strings.ToLower(subStr))
+	slice := string([]rune(str)[pos:])
+	idx := strings.Index(slice, subStr)
 	if idx != -1 {
 		return pos + int64(utf8.RuneCountInString(slice[:idx])) + 1, false, nil
 	}
@@ -3722,7 +3729,7 @@ func (c *instrFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		return nil, err
 	}
 	bf.tp.Flen = 11
-	if types.IsBinaryStr(bf.args[0].GetType()) || types.IsBinaryStr(bf.args[1].GetType()) {
+	if bf.collation == charset.CollationBin {
 		sig := &builtinInstrSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Instr)
 		return sig, nil
@@ -3748,20 +3755,21 @@ func (b *builtinInstrSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalInt evals INSTR(str,substr), case insensitive
+// evalInt evals INSTR(str,substr).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_instr
 func (b *builtinInstrUTF8Sig) evalInt(row chunk.Row) (int64, bool, error) {
 	str, IsNull, err := b.args[0].EvalString(b.ctx, row)
 	if IsNull || err != nil {
 		return 0, true, err
 	}
-	str = strings.ToLower(str)
-
 	substr, IsNull, err := b.args[1].EvalString(b.ctx, row)
 	if IsNull || err != nil {
 		return 0, true, err
 	}
-	substr = strings.ToLower(substr)
+	if collate.IsCICollation(b.collation) {
+		str = strings.ToLower(str)
+		substr = strings.ToLower(substr)
+	}
 
 	idx := strings.Index(str, substr)
 	if idx == -1 {
@@ -3770,7 +3778,7 @@ func (b *builtinInstrUTF8Sig) evalInt(row chunk.Row) (int64, bool, error) {
 	return int64(utf8.RuneCountInString(str[:idx]) + 1), false, nil
 }
 
-// evalInt evals INSTR(str,substr), case sensitive
+// evalInt evals INSTR(str,substr), case sensitive.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_instr
 func (b *builtinInstrSig) evalInt(row chunk.Row) (int64, bool, error) {
 	str, IsNull, err := b.args[0].EvalString(b.ctx, row)
