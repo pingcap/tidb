@@ -248,6 +248,9 @@ committer-concurrency = 16
 # max lifetime of transaction ttl manager.
 max-txn-ttl = 600000
 
+# the interval duration between two memory profile into global tracker
+mem-profile-interval = "1m"
+
 [proxy-protocol]
 # PROXY protocol acceptable client networks.
 # Empty string means disable PROXY protocol, * means all networks.
@@ -366,7 +369,8 @@ admission-min-process-ms = 5
 
 [binlog]
 # enable to write binlog.
-# NOTE: If binlog is enabled, txn-total-size-limit should be less than 104857600(10M).
+# NOTE: If binlog is enabled with Kafka (e.g. arbiter cluster),
+# txn-total-size-limit should be less than 1073741824(1G) because this is the maximum size that can be handled by Kafka.
 enable = false
 
 # WriteTimeout specifies how long it will wait for writing binlog to pump.
