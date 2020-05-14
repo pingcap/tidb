@@ -72,6 +72,26 @@ type aggTest struct {
 	orderBy  bool
 }
 
+func (p *aggTest) genSrcChk() *chunk.Chunk {
+	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{p.dataType}, p.numRows)
+	for i := 0; i < p.numRows; i++ {
+		dt := p.dataGen(i)
+		srcChk.AppendDatum(0, &dt)
+	}
+	srcChk.AppendDatum(0, &types.Datum{})
+	return srcChk
+}
+
+// messUpChunk messes up the chunk for testing memory reference.
+func (p *aggTest) messUpChunk(c *chunk.Chunk) {
+	for i := 0; i < p.numRows; i++ {
+		raw := c.Column(0).GetRaw(i)
+		for i := range raw {
+			raw[i] = 255
+		}
+	}
+}
+
 type multiArgsAggTest struct {
 	dataTypes []*types.FieldType
 	retType   *types.FieldType
@@ -82,12 +102,32 @@ type multiArgsAggTest struct {
 	orderBy   bool
 }
 
-func (s *testSuite) testMergePartialResult(c *C, p aggTest) {
-	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{p.dataType}, p.numRows)
+func (p *multiArgsAggTest) genSrcChk() *chunk.Chunk {
+	srcChk := chunk.NewChunkWithCapacity(p.dataTypes, p.numRows)
 	for i := 0; i < p.numRows; i++ {
-		dt := p.dataGen(i)
-		srcChk.AppendDatum(0, &dt)
+		for j := 0; j < len(p.dataGens); j++ {
+			fdt := p.dataGens[j](i)
+			srcChk.AppendDatum(j, &fdt)
+		}
 	}
+	srcChk.AppendDatum(0, &types.Datum{})
+	return srcChk
+}
+
+// messUpChunk messes up the chunk for testing memory reference.
+func (p *multiArgsAggTest) messUpChunk(c *chunk.Chunk) {
+	for i := 0; i < p.numRows; i++ {
+		for j := 0; j < len(p.dataGens); j++ {
+			raw := c.Column(j).GetRaw(i)
+			for i := range raw {
+				raw[i] = 255
+			}
+		}
+	}
+}
+
+func (s *testSuite) testMergePartialResult(c *C, p aggTest) {
+	srcChk := p.genSrcChk()
 	iter := chunk.NewIterator4Chunk(srcChk)
 
 	args := []expression.Expression{&expression.Column{RetType: p.dataType, Index: 0}}
@@ -116,6 +156,7 @@ func (s *testSuite) testMergePartialResult(c *C, p aggTest) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		partialFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialResult)
 	}
+	p.messUpChunk(srcChk)
 	partialFunc.AppendFinalResult2Chunk(s.ctx, partialResult, resultChk)
 	dt := resultChk.GetRow(0).GetDatum(0, p.dataType)
 	result, err := dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[0])
@@ -126,11 +167,14 @@ func (s *testSuite) testMergePartialResult(c *C, p aggTest) {
 	c.Assert(err, IsNil)
 	partialFunc.ResetPartialResult(partialResult)
 
+	srcChk = p.genSrcChk()
+	iter = chunk.NewIterator4Chunk(srcChk)
 	iter.Begin()
 	iter.Next()
 	for row := iter.Next(); row != iter.End(); row = iter.Next() {
 		partialFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialResult)
 	}
+	p.messUpChunk(srcChk)
 	resultChk.Reset()
 	partialFunc.AppendFinalResult2Chunk(s.ctx, partialResult, resultChk)
 	dt = resultChk.GetRow(0).GetDatum(0, p.dataType)
@@ -168,13 +212,7 @@ func buildAggTesterWithFieldType(funcName string, ft *types.FieldType, numRows i
 }
 
 func (s *testSuite) testMultiArgsMergePartialResult(c *C, p multiArgsAggTest) {
-	srcChk := chunk.NewChunkWithCapacity(p.dataTypes, p.numRows)
-	for i := 0; i < p.numRows; i++ {
-		for j := 0; j < len(p.dataGens); j++ {
-			fdt := p.dataGens[j](i)
-			srcChk.AppendDatum(j, &fdt)
-		}
-	}
+	srcChk := p.genSrcChk()
 	iter := chunk.NewIterator4Chunk(srcChk)
 
 	args := make([]expression.Expression, len(p.dataTypes))
@@ -204,6 +242,7 @@ func (s *testSuite) testMultiArgsMergePartialResult(c *C, p multiArgsAggTest) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		partialFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialResult)
 	}
+	p.messUpChunk(srcChk)
 	partialFunc.AppendFinalResult2Chunk(s.ctx, partialResult, resultChk)
 	dt := resultChk.GetRow(0).GetDatum(0, p.retType)
 	result, err := dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[0])
@@ -214,11 +253,14 @@ func (s *testSuite) testMultiArgsMergePartialResult(c *C, p multiArgsAggTest) {
 	c.Assert(err, IsNil)
 	partialFunc.ResetPartialResult(partialResult)
 
+	srcChk = p.genSrcChk()
+	iter = chunk.NewIterator4Chunk(srcChk)
 	iter.Begin()
 	iter.Next()
 	for row := iter.Next(); row != iter.End(); row = iter.Next() {
 		partialFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialResult)
 	}
+	p.messUpChunk(srcChk)
 	resultChk.Reset()
 	partialFunc.AppendFinalResult2Chunk(s.ctx, partialResult, resultChk)
 	dt = resultChk.GetRow(0).GetDatum(0, p.retType)
@@ -300,12 +342,7 @@ func getDataGenFunc(ft *types.FieldType) func(i int) types.Datum {
 }
 
 func (s *testSuite) testAggFunc(c *C, p aggTest) {
-	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{p.dataType}, p.numRows)
-	for i := 0; i < p.numRows; i++ {
-		dt := p.dataGen(i)
-		srcChk.AppendDatum(0, &dt)
-	}
-	srcChk.AppendDatum(0, &types.Datum{})
+	srcChk := p.genSrcChk()
 
 	args := []expression.Expression{&expression.Column{RetType: p.dataType, Index: 0}}
 	if p.funcName == ast.AggFuncGroupConcat {
@@ -326,6 +363,7 @@ func (s *testSuite) testAggFunc(c *C, p aggTest) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
 	}
+	p.messUpChunk(srcChk)
 	finalFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
 	dt := resultChk.GetRow(0).GetDatum(0, desc.RetTp)
 	result, err := dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[1])
@@ -353,13 +391,18 @@ func (s *testSuite) testAggFunc(c *C, p aggTest) {
 	finalPr = finalFunc.AllocPartialResult()
 
 	resultChk.Reset()
+	srcChk = p.genSrcChk()
 	iter = chunk.NewIterator4Chunk(srcChk)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
 	}
+	p.messUpChunk(srcChk)
+	srcChk = p.genSrcChk()
+	iter = chunk.NewIterator4Chunk(srcChk)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
 	}
+	p.messUpChunk(srcChk)
 	finalFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
 	dt = resultChk.GetRow(0).GetDatum(0, desc.RetTp)
 	result, err = dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[1])
@@ -377,14 +420,7 @@ func (s *testSuite) testAggFunc(c *C, p aggTest) {
 }
 
 func (s *testSuite) testMultiArgsAggFunc(c *C, p multiArgsAggTest) {
-	srcChk := chunk.NewChunkWithCapacity(p.dataTypes, p.numRows)
-	for i := 0; i < p.numRows; i++ {
-		for j := 0; j < len(p.dataGens); j++ {
-			fdt := p.dataGens[j](i)
-			srcChk.AppendDatum(j, &fdt)
-		}
-	}
-	srcChk.AppendDatum(0, &types.Datum{})
+	srcChk := p.genSrcChk()
 
 	args := make([]expression.Expression, len(p.dataTypes))
 	for k := 0; k < len(p.dataTypes); k++ {
@@ -409,6 +445,7 @@ func (s *testSuite) testMultiArgsAggFunc(c *C, p multiArgsAggTest) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
 	}
+	p.messUpChunk(srcChk)
 	finalFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
 	dt := resultChk.GetRow(0).GetDatum(0, desc.RetTp)
 	result, err := dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[1])
@@ -436,13 +473,18 @@ func (s *testSuite) testMultiArgsAggFunc(c *C, p multiArgsAggTest) {
 	finalPr = finalFunc.AllocPartialResult()
 
 	resultChk.Reset()
+	srcChk = p.genSrcChk()
 	iter = chunk.NewIterator4Chunk(srcChk)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
 	}
+	p.messUpChunk(srcChk)
+	srcChk = p.genSrcChk()
+	iter = chunk.NewIterator4Chunk(srcChk)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
 	}
+	p.messUpChunk(srcChk)
 	finalFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
 	dt = resultChk.GetRow(0).GetDatum(0, desc.RetTp)
 	result, err = dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[1])
