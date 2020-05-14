@@ -59,7 +59,26 @@ Read the [Roadmap](https://pingcap.com/docs/ROADMAP).
 
 ## Quick start
 
-Read the [Quick Start Guide](https://pingcap.com/docs/QUICKSTART), which includes deployment methods using Ansible, Docker, and Kubernetes.
+- Have a try via [TiUP](https://tiup.io)
+  - Install TiUP
+    
+    ```shell script
+    curl --proto '=https' --tlsv1.2 -sSf https://tiup-mirrors.pingcap.com/install.sh | sh 
+    ```
+    
+  - Run a TiDB cluster (the latest stable version)
+  
+    ```shell script
+    tiup playground
+    ```
+    
+  - Run a nightly TiDB cluster (the nightly built version)
+  
+    ```shell script
+    tiup playground nightly
+    ```
+
+- Read the [Quick Start Guide](https://pingcap.com/docs/QUICKSTART), which includes deployment methods using Ansible, Docker, and Kubernetes.
 
 ## Getting Help
 
