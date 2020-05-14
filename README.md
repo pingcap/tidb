@@ -59,26 +59,25 @@ Read the [Roadmap](https://pingcap.com/docs/ROADMAP).
 
 ## Quick start
 
-- Have a try via [TiUP](https://tiup.io)
-  - Install TiUP
-    
+- Install [TiUP](https://tiup.io)
+
     ```shell script
     curl --proto '=https' --tlsv1.2 -sSf https://tiup-mirrors.pingcap.com/install.sh | sh 
     ```
-    
-  - Run a TiDB cluster (the latest stable version)
   
+- Run a TiDB cluster (the latest stable version)
+
     ```shell script
     tiup playground
     ```
+
+- Run a nightly TiDB cluster (the nightly built version)
     
-  - Run a nightly TiDB cluster (the nightly built version)
-  
     ```shell script
     tiup playground nightly
     ```
 
-- For other methods, see [TiDB Quick Start Guide](https://pingcap.com/docs/stable/quick-start-with-tidb/).
+See [TiDB Quick Start Guide](https://pingcap.com/docs/stable/quick-start-with-tidb/) for other quick start methods.
 
 ## Getting Help
 
