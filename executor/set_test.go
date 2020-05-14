@@ -992,11 +992,15 @@ func (s *testSuite5) TestSetClusterConfig(c *C) {
 func (s *testSuite5) TestSetClusterConfigJSONData(c *C) {
 	var d types.MyDecimal
 	c.Assert(d.FromFloat64(123.456), IsNil)
+	tyBool := types.NewFieldType(mysql.TypeTiny)
+	tyBool.Flag |= mysql.IsBooleanFlag
 	cases := []struct {
 		val    expression.Expression
 		result string
 		succ   bool
 	}{
+		{&expression.Constant{Value: types.NewIntDatum(1), RetType: tyBool}, `{"k":true}`, true},
+		{&expression.Constant{Value: types.NewIntDatum(0), RetType: tyBool}, `{"k":false}`, true},
 		{&expression.Constant{Value: types.NewIntDatum(2333), RetType: types.NewFieldType(mysql.TypeLong)}, `{"k":2333}`, true},
 		{&expression.Constant{Value: types.NewFloat64Datum(23.33), RetType: types.NewFieldType(mysql.TypeDouble)}, `{"k":23.33}`, true},
 		{&expression.Constant{Value: types.NewStringDatum("abcd"), RetType: types.NewFieldType(mysql.TypeString)}, `{"k":"abcd"}`, true},
