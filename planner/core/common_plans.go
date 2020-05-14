@@ -584,9 +584,6 @@ func (e *Explain) RenderResult() error {
 	if e.StmtPlan == nil {
 		return nil
 	}
-	if _, ok := e.StmtPlan.(PhysicalPlan); !ok {
-		return nil
-	}
 	switch strings.ToLower(e.Format) {
 	case ast.ExplainFormatROW:
 		e.explainedPlans = map[int]bool{}
