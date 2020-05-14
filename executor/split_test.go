@@ -18,6 +18,7 @@ import (
 	"encoding/binary"
 	"math"
 	"math/rand"
+	"sort"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
@@ -103,12 +104,16 @@ func (s *testSplitIndex) TestSplitIndex(c *C) {
 	}
 	idxCols := []*model.IndexColumn{{Name: tbInfo.Columns[0].Name, Offset: 0, Length: types.UnspecifiedLength}}
 	idxInfo := &model.IndexInfo{
-		ID:      1,
+		ID:      2,
 		Name:    model.NewCIStr("idx1"),
 		Table:   model.NewCIStr("t1"),
 		Columns: idxCols,
 		State:   model.StatePublic,
 	}
+	firstIdxInfo0 := idxInfo.Clone()
+	firstIdxInfo0.ID = 1
+	firstIdxInfo0.Name = model.NewCIStr("idx")
+	tbInfo.Indices = []*model.IndexInfo{firstIdxInfo0, idxInfo}
 
 	// Test for int index.
 	// range is 0 ~ 100, and split into 10 region.
@@ -133,8 +138,9 @@ func (s *testSplitIndex) TestSplitIndex(c *C) {
 		num:          10,
 	}
 	valueList, err := e.getSplitIdxKeys()
+	sort.Slice(valueList, func(i, j int) bool { return bytes.Compare(valueList[i], valueList[j]) < 0 })
 	c.Assert(err, IsNil)
-	c.Assert(len(valueList), Equals, e.num)
+	c.Assert(len(valueList), Equals, e.num+1)
 
 	cases := []struct {
 		value        int
@@ -161,13 +167,13 @@ func (s *testSplitIndex) TestSplitIndex(c *C) {
 	index := tables.NewIndex(tbInfo.ID, tbInfo, idxInfo)
 	for _, ca := range cases {
 		// test for minInt64 handle
-		idxValue, _, err := index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, math.MinInt64, nil)
+		idxValue, _, err := index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MinInt64), nil)
 		c.Assert(err, IsNil)
 		idx := searchLessEqualIdx(valueList, idxValue)
 		c.Assert(idx, Equals, ca.lessEqualIdx, Commentf("%#v", ca))
 
 		// Test for max int64 handle.
-		idxValue, _, err = index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, math.MaxInt64, nil)
+		idxValue, _, err = index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MaxInt64), nil)
 		c.Assert(err, IsNil)
 		idx = searchLessEqualIdx(valueList, idxValue)
 		c.Assert(idx, Equals, ca.lessEqualIdx, Commentf("%#v", ca))
@@ -188,8 +194,9 @@ func (s *testSplitIndex) TestSplitIndex(c *C) {
 	tbInfo.Columns[0].FieldType = *types.NewFieldType(mysql.TypeVarchar)
 
 	valueList, err = e.getSplitIdxKeys()
+	sort.Slice(valueList, func(i, j int) bool { return bytes.Compare(valueList[i], valueList[j]) < 0 })
 	c.Assert(err, IsNil)
-	c.Assert(len(valueList), Equals, e.num)
+	c.Assert(len(valueList), Equals, e.num+1)
 
 	cases2 := []struct {
 		value        string
@@ -208,13 +215,13 @@ func (s *testSplitIndex) TestSplitIndex(c *C) {
 
 	for _, ca := range cases2 {
 		// test for minInt64 handle
-		idxValue, _, err := index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, math.MinInt64, nil)
+		idxValue, _, err := index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MinInt64), nil)
 		c.Assert(err, IsNil)
 		idx := searchLessEqualIdx(valueList, idxValue)
 		c.Assert(idx, Equals, ca.lessEqualIdx, Commentf("%#v", ca))
 
 		// Test for max int64 handle.
-		idxValue, _, err = index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, math.MaxInt64, nil)
+		idxValue, _, err = index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MaxInt64), nil)
 		c.Assert(err, IsNil)
 		idx = searchLessEqualIdx(valueList, idxValue)
 		c.Assert(idx, Equals, ca.lessEqualIdx, Commentf("%#v", ca))
@@ -239,8 +246,9 @@ func (s *testSplitIndex) TestSplitIndex(c *C) {
 	tbInfo.Columns[0].FieldType = *types.NewFieldType(mysql.TypeTimestamp)
 
 	valueList, err = e.getSplitIdxKeys()
+	sort.Slice(valueList, func(i, j int) bool { return bytes.Compare(valueList[i], valueList[j]) < 0 })
 	c.Assert(err, IsNil)
-	c.Assert(len(valueList), Equals, e.num)
+	c.Assert(len(valueList), Equals, e.num+1)
 
 	cases3 := []struct {
 		value        types.CoreTime
@@ -265,13 +273,13 @@ func (s *testSplitIndex) TestSplitIndex(c *C) {
 	for _, ca := range cases3 {
 		value := types.NewTime(ca.value, mysql.TypeTimestamp, types.DefaultFsp)
 		// test for min int64 handle
-		idxValue, _, err := index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(value)}, math.MinInt64, nil)
+		idxValue, _, err := index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(value)}, kv.IntHandle(math.MinInt64), nil)
 		c.Assert(err, IsNil)
 		idx := searchLessEqualIdx(valueList, idxValue)
 		c.Assert(idx, Equals, ca.lessEqualIdx, Commentf("%#v", ca))
 
 		// Test for max int64 handle.
-		idxValue, _, err = index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(value)}, math.MaxInt64, nil)
+		idxValue, _, err = index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(value)}, kv.IntHandle(math.MaxInt64), nil)
 		c.Assert(err, IsNil)
 		idx = searchLessEqualIdx(valueList, idxValue)
 		c.Assert(idx, Equals, ca.lessEqualIdx, Commentf("%#v", ca))

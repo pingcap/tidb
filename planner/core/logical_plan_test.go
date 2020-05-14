@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/hint"
@@ -1382,7 +1383,7 @@ func (s *testPlanSuite) optimize(ctx context.Context, sql string) (PhysicalPlan,
 	return p.(PhysicalPlan), stmt, err
 }
 
-func byItemsToProperty(byItems []*ByItems) *property.PhysicalProperty {
+func byItemsToProperty(byItems []*util.ByItems) *property.PhysicalProperty {
 	pp := &property.PhysicalProperty{}
 	for _, item := range byItems {
 		pp.Items = append(pp.Items, property.Item{Col: item.Expr.(*expression.Column), Desc: item.Desc})
@@ -1464,7 +1465,7 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 		_, err = lp.recursiveDeriveStats()
 		c.Assert(err, IsNil, comment)
 		var ds *DataSource
-		var byItems []*ByItems
+		var byItems []*util.ByItems
 		for ds == nil {
 			switch v := lp.(type) {
 			case *DataSource:
@@ -1473,12 +1474,12 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 				byItems = v.ByItems
 				lp = lp.Children()[0]
 			case *LogicalProjection:
-				newItems := make([]*ByItems, 0, len(byItems))
+				newItems := make([]*util.ByItems, 0, len(byItems))
 				for _, col := range byItems {
 					idx := v.schema.ColumnIndex(col.Expr.(*expression.Column))
 					switch expr := v.Exprs[idx].(type) {
 					case *expression.Column:
-						newItems = append(newItems, &ByItems{Expr: expr, Desc: col.Desc})
+						newItems = append(newItems, &util.ByItems{Expr: expr, Desc: col.Desc})
 					}
 				}
 				byItems = newItems

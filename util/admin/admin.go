@@ -309,6 +309,8 @@ const (
 // It returns nil if the count from the index is equal to the count from the table columns,
 // otherwise it returns an error and the corresponding index's offset.
 func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices []string) (byte, int, error) {
+	// Here we need check all indexes, includes invisible index
+	ctx.GetSessionVars().OptimizerUseInvisibleIndexes = true
 	// Add `` for some names like `table name`.
 	sql := fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s` USE INDEX()", dbName, tableName)
 	tblCnt, err := getCount(ctx, sql)
@@ -346,7 +348,7 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 		cols[i] = t.Cols()[col.Offset]
 	}
 
-	startKey := t.RecordKey(math.MinInt64)
+	startKey := t.RecordKey(kv.IntHandle(math.MinInt64))
 	filterFunc := func(h1 int64, vals1 []types.Datum, cols []*table.Column) (bool, error) {
 		for i, val := range vals1 {
 			col := cols[i]
@@ -362,10 +364,10 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 				vals1[i] = colDefVal
 			}
 		}
-		isExist, h2, err := idx.Exist(sc, txn, vals1, h1)
+		isExist, h2, err := idx.Exist(sc, txn, vals1, kv.IntHandle(h1))
 		if kv.ErrKeyExists.Equal(err) {
 			record1 := &RecordData{Handle: h1, Values: vals1}
-			record2 := &RecordData{Handle: h2, Values: vals1}
+			record2 := &RecordData{Handle: h2.IntValue(), Values: vals1}
 			return false, ErrDataInConsistent.GenWithStack("index:%#v != record:%#v", record2, record1)
 		}
 		if err != nil {
@@ -452,7 +454,7 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 			return errors.Trace(err)
 		}
 
-		rk := t.RecordKey(handle.IntValue())
+		rk := t.RecordKey(handle)
 		err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
 		if err != nil {
 			return errors.Trace(err)

@@ -22,6 +22,7 @@ import (
 	"strconv"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
@@ -29,6 +30,8 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -953,8 +956,10 @@ func (s *testSuite5) TestSetClusterConfig(c *C) {
 
 	c.Assert(tk.ExecToErr("set config xxx log.level='info'"), ErrorMatches, "unknown type xxx")
 	c.Assert(tk.ExecToErr("set config tidb log.level='info'"), ErrorMatches, "TiDB doesn't support to change configs online, please use SQL variables")
+	c.Assert(tk.ExecToErr("set config '127.0.0.1:1111' log.level='info'"), ErrorMatches, "TiDB doesn't support to change configs online, please use SQL variables")
 	c.Assert(tk.ExecToErr("set config '127.a.b.c:1234' log.level='info'"), ErrorMatches, "invalid instance 127.a.b.c:1234")
 	c.Assert(tk.ExecToErr("set config tikv log.level=null"), ErrorMatches, "can't set config to null")
+	c.Assert(tk.ExecToErr("set config '1.1.1.1:1111' log.level='info'"), ErrorMatches, "instance 1.1.1.1:1111 is not found in this cluster")
 
 	httpCnt := 0
 	tk.Se.SetValue(executor.TestSetConfigHTTPHandlerKey, func(*http.Request) (*http.Response, error) {
@@ -982,4 +987,36 @@ func (s *testSuite5) TestSetClusterConfig(c *C) {
 	tk.MustExec("set config tikv log.level='info'")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Warning 1105 bad request to http://127.0.0.1:5555/config: WRONG", "Warning 1105 bad request to http://127.0.0.1:6666/config: WRONG"))
+}
+
+func (s *testSuite5) TestSetClusterConfigJSONData(c *C) {
+	var d types.MyDecimal
+	c.Assert(d.FromFloat64(123.456), IsNil)
+	tyBool := types.NewFieldType(mysql.TypeTiny)
+	tyBool.Flag |= mysql.IsBooleanFlag
+	cases := []struct {
+		val    expression.Expression
+		result string
+		succ   bool
+	}{
+		{&expression.Constant{Value: types.NewIntDatum(1), RetType: tyBool}, `{"k":true}`, true},
+		{&expression.Constant{Value: types.NewIntDatum(0), RetType: tyBool}, `{"k":false}`, true},
+		{&expression.Constant{Value: types.NewIntDatum(2333), RetType: types.NewFieldType(mysql.TypeLong)}, `{"k":2333}`, true},
+		{&expression.Constant{Value: types.NewFloat64Datum(23.33), RetType: types.NewFieldType(mysql.TypeDouble)}, `{"k":23.33}`, true},
+		{&expression.Constant{Value: types.NewStringDatum("abcd"), RetType: types.NewFieldType(mysql.TypeString)}, `{"k":"abcd"}`, true},
+		{&expression.Constant{Value: types.NewDecimalDatum(&d), RetType: types.NewFieldType(mysql.TypeNewDecimal)}, `{"k":123.456}`, true},
+		{&expression.Constant{Value: types.NewDatum(nil), RetType: types.NewFieldType(mysql.TypeLonglong)}, "", false},
+		{&expression.Constant{RetType: types.NewFieldType(mysql.TypeJSON)}, "", false}, // unsupported type
+		{nil, "", false},
+	}
+
+	ctx := mock.NewContext()
+	for _, t := range cases {
+		result, err := executor.ConvertConfigItem2JSON(ctx, "k", t.val)
+		if t.succ {
+			c.Assert(t.result, Equals, result)
+		} else {
+			c.Assert(err, NotNil)
+		}
+	}
 }

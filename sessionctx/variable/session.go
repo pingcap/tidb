@@ -599,6 +599,9 @@ type SessionVars struct {
 	FoundInPlanCache bool
 	// PrevFoundInPlanCache indicates whether the last statement was found in plan cache.
 	PrevFoundInPlanCache bool
+
+	// OptimizerUseInvisibleIndexes indicates whether optimizer can use invisible index
+	OptimizerUseInvisibleIndexes bool
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -1481,6 +1484,8 @@ const (
 	SlowLogMemMax = "Mem_max"
 	// SlowLogPrepared is used to indicate whether this sql execute in prepare.
 	SlowLogPrepared = "Prepared"
+	// SlowLogPlanFromCache is used to indicate whether this plan is from plan cache.
+	SlowLogPlanFromCache = "Plan_from_cache"
 	// SlowLogHasMoreResults is used to indicate whether this sql has more following results.
 	SlowLogHasMoreResults = "Has_more_results"
 	// SlowLogSucc is used to indicate whether this sql execute successfully.
@@ -1515,6 +1520,7 @@ type SlowQueryLogItems struct {
 	MemMax         int64
 	Succ           bool
 	Prepared       bool
+	PlanFromCache  bool
 	HasMoreResults bool
 	PrevStmt       string
 	Plan           string
@@ -1644,6 +1650,7 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	}
 
 	writeSlowLogItem(&buf, SlowLogPrepared, strconv.FormatBool(logItems.Prepared))
+	writeSlowLogItem(&buf, SlowLogPlanFromCache, strconv.FormatBool(logItems.PlanFromCache))
 	writeSlowLogItem(&buf, SlowLogHasMoreResults, strconv.FormatBool(logItems.HasMoreResults))
 	writeSlowLogItem(&buf, SlowLogSucc, strconv.FormatBool(logItems.Succ))
 	if len(logItems.Plan) != 0 {

@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -65,7 +66,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
@@ -125,16 +125,17 @@ var _ = SerialSuites(&testFlushSuite{})
 var _ = SerialSuites(&testAutoRandomSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testClusterTableSuite{})
 var _ = SerialSuites(&testPrepareSerialSuite{&baseTestSuite{}})
+var _ = SerialSuites(&testSplitTable{&baseTestSuite{}})
 
 type testSuite struct{ *baseTestSuite }
 type testSuiteP1 struct{ *baseTestSuite }
 type testSuiteP2 struct{ *baseTestSuite }
+type testSplitTable struct{ *baseTestSuite }
 
 type baseTestSuite struct {
-	cluster   *mocktikv.Cluster
-	mvccStore mocktikv.MVCCStore
-	store     kv.Storage
-	domain    *domain.Domain
+	cluster cluster.Cluster
+	store   kv.Storage
+	domain  *domain.Domain
 	*parser.Parser
 	ctx *mock.Context
 }
@@ -146,12 +147,15 @@ func (s *baseTestSuite) SetUpSuite(c *C) {
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
 	if useMockTikv {
-		s.cluster = mocktikv.NewCluster()
-		mocktikv.BootstrapWithSingleStore(s.cluster)
-		s.mvccStore = mocktikv.MustNewMVCCStore()
+		cluster := mocktikv.NewCluster()
+		mocktikv.BootstrapWithSingleStore(cluster)
+		s.cluster = cluster
+
+		mvccStore := mocktikv.MustNewMVCCStore()
+		cluster.SetMvccStore(mvccStore)
 		store, err := mockstore.NewMockTikvStore(
-			mockstore.WithCluster(s.cluster),
-			mockstore.WithMVCCStore(s.mvccStore),
+			mockstore.WithCluster(cluster),
+			mockstore.WithMVCCStore(mvccStore),
 		)
 		c.Assert(err, IsNil)
 		s.store = store
@@ -397,7 +401,7 @@ func (s *testSuite3) TestAdmin(c *C) {
 	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("admin_test"))
 	c.Assert(err, IsNil)
 	c.Assert(tb.Indices(), HasLen, 1)
-	_, err = tb.Indices()[0].Create(mock.NewContext(), txn, types.MakeDatums(int64(10)), 1)
+	_, err = tb.Indices()[0].Create(mock.NewContext(), txn, types.MakeDatums(int64(10)), kv.IntHandle(1))
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -449,7 +453,7 @@ func (s *testSuite3) TestAdmin(c *C) {
 	m := meta.NewMeta(txn)
 	startKey := meta.DDLJobHistoryKey(m, 0)
 	endKey := meta.DDLJobHistoryKey(m, historyJobs[0].ID)
-	s.cluster.SplitKeys(s.mvccStore, startKey, endKey, int(historyJobs[0].ID/5))
+	s.cluster.SplitKeys(startKey, endKey, int(historyJobs[0].ID/5))
 
 	historyJobs2, err := admin.GetHistoryDDLJobs(txn, 20)
 	c.Assert(err, IsNil)
@@ -1649,6 +1653,15 @@ func (s *testSuiteP1) TestJSON(c *C) {
 	// check CAST AS JSON.
 	result = tk.MustQuery(`select CAST('3' AS JSON), CAST('{}' AS JSON), CAST(null AS JSON)`)
 	result.Check(testkit.Rows(`3 {} <nil>`))
+
+	tk.MustQuery("select a, count(1) from test_json group by a order by a").Check(testkit.Rows(
+		"<nil> 1",
+		"null 1",
+		"3 1",
+		"4 1",
+		`"string" 1`,
+		"{\"a\": [1, \"2\", {\"aa\": \"bb\"}, 4], \"b\": true} 1",
+		"true 1"))
 
 	// Check cast json to decimal.
 	// NOTE: this test case contains a bug, it should be uncommented after the bug is fixed.
@@ -3326,9 +3339,9 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	_, err = idx.Create(mockCtx, txn, types.MakeDatums(int64(30)), 3)
+	_, err = idx.Create(mockCtx, txn, types.MakeDatums(int64(30)), kv.IntHandle(3))
 	c.Assert(err, IsNil)
-	key := tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 4))
+	key := tablecodec.EncodeRowKey(tb.Meta().ID, kv.IntHandle(4).Encoded())
 	setColValue(c, txn, key, types.NewDatum(int64(40)))
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -3341,7 +3354,7 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	_, err = idx.Create(mockCtx, txn, types.MakeDatums(int64(40)), 4)
+	_, err = idx.Create(mockCtx, txn, types.MakeDatums(int64(40)), kv.IntHandle(4))
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -3353,9 +3366,9 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = idx.Delete(sc, txn, types.MakeDatums(int64(30)), 3)
+	err = idx.Delete(sc, txn, types.MakeDatums(int64(30)), kv.IntHandle(3))
 	c.Assert(err, IsNil)
-	err = idx.Delete(sc, txn, types.MakeDatums(int64(20)), 2)
+	err = idx.Delete(sc, txn, types.MakeDatums(int64(20)), kv.IntHandle(2))
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -4231,12 +4244,12 @@ func (s *testSuiteP2) TestSplitRegion(c *C) {
 	tk.MustQuery("split region for partition table t partition (p3,p4) between (100000000) and (1000000000) regions 5;").Check(testkit.Rows("8 1"))
 }
 
-func (s *testSuiteP2) TestShowTableRegion(c *C) {
+func (s *testSplitTable) TestShowTableRegion(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t_regions")
+	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	tk.MustExec("create table t_regions (a int key, b int, c int, index idx(b), index idx2(c))")
-
 	// Test show table regions.
 	tk.MustQuery(`split table t_regions between (-10000) and (10000) regions 4;`).Check(testkit.Rows("4 1"))
 	re := tk.MustQuery("show table t_regions regions")
@@ -4255,13 +4268,13 @@ func (s *testSuiteP2) TestShowTableRegion(c *C) {
 	c.Assert(rows[4][2], Equals, fmt.Sprintf("t_%d_r", tbl.Meta().ID))
 
 	// Test show table index regions.
-	tk.MustQuery(`split table t_regions index idx between (-1000) and (1000) regions 4;`).Check(testkit.Rows("5 1"))
+	tk.MustQuery(`split table t_regions index idx between (-1000) and (1000) regions 4;`).Check(testkit.Rows("4 1"))
 	re = tk.MustQuery("show table t_regions index idx regions")
 	rows = re.Rows()
 	// The index `idx` of table t_regions should have 4 regions now.
 	c.Assert(len(rows), Equals, 4)
 	// Check the region start key.
-	c.Assert(rows[0][1], Equals, fmt.Sprintf("t_%d_i_1_", tbl.Meta().ID))
+	c.Assert(rows[0][1], Matches, fmt.Sprintf("t_%d.*", tbl.Meta().ID))
 	c.Assert(rows[1][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
 	c.Assert(rows[2][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
 	c.Assert(rows[3][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
@@ -4278,7 +4291,7 @@ func (s *testSuiteP2) TestShowTableRegion(c *C) {
 	c.Assert(rows[1][1], Equals, fmt.Sprintf("t_%d_r_-5000", tbl.Meta().ID))
 	c.Assert(rows[2][1], Equals, fmt.Sprintf("t_%d_r_0", tbl.Meta().ID))
 	c.Assert(rows[3][1], Equals, fmt.Sprintf("t_%d_r_5000", tbl.Meta().ID))
-	c.Assert(rows[4][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
+	c.Assert(rows[4][1], Matches, fmt.Sprintf("t_%d_", tbl.Meta().ID))
 	c.Assert(rows[5][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
 	c.Assert(rows[6][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
 	c.Assert(rows[7][2], Equals, fmt.Sprintf("t_%d_i_2_", tbl.Meta().ID))
@@ -4286,6 +4299,7 @@ func (s *testSuiteP2) TestShowTableRegion(c *C) {
 
 	// Test unsigned primary key and wait scatter finish.
 	tk.MustExec("drop table if exists t_regions")
+	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	tk.MustExec("create table t_regions (a int unsigned key, b int, index idx(b))")
 
 	// Test show table regions.
@@ -4309,7 +4323,7 @@ func (s *testSuiteP2) TestShowTableRegion(c *C) {
 	// The index `idx` of table t_regions should have 4 regions now.
 	c.Assert(len(rows), Equals, 4)
 	// Check the region start key.
-	c.Assert(rows[0][1], Equals, fmt.Sprintf("t_%d_i_1_", tbl.Meta().ID))
+	c.Assert(rows[0][1], Equals, fmt.Sprintf("t_%d_", tbl.Meta().ID))
 	c.Assert(rows[1][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
 	c.Assert(rows[2][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
 	c.Assert(rows[3][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
@@ -4429,7 +4443,7 @@ func (s *testSuiteP2) TestShowTableRegion(c *C) {
 		c.Assert(rows[i*8+1][1], Equals, fmt.Sprintf("t_%d_r_1000000", p.ID))
 		c.Assert(rows[i*8+2][1], Equals, fmt.Sprintf("t_%d_r_2000000", p.ID))
 		c.Assert(rows[i*8+3][1], Equals, fmt.Sprintf("t_%d_r_3000000", p.ID))
-		c.Assert(rows[i*8+4][1], Equals, fmt.Sprintf("t_%d_i_1_", p.ID))
+		c.Assert(rows[i*8+4][1], Equals, fmt.Sprintf("t_%d_", p.ID))
 		c.Assert(rows[i*8+5][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
 		c.Assert(rows[i*8+6][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
 		c.Assert(rows[i*8+7][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
@@ -4448,7 +4462,7 @@ func (s *testSuiteP2) TestShowTableRegion(c *C) {
 		c.Assert(rows[i*8+1][1], Equals, fmt.Sprintf("t_%d_r_1000000", p.ID))
 		c.Assert(rows[i*8+2][1], Equals, fmt.Sprintf("t_%d_r_2000000", p.ID))
 		c.Assert(rows[i*8+3][1], Equals, fmt.Sprintf("t_%d_r_3000000", p.ID))
-		c.Assert(rows[i*8+4][1], Equals, fmt.Sprintf("t_%d_i_1_", p.ID))
+		c.Assert(rows[i*8+4][1], Equals, fmt.Sprintf("t_%d_", p.ID))
 		c.Assert(rows[i*8+5][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
 		c.Assert(rows[i*8+6][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
 		c.Assert(rows[i*8+7][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
@@ -4459,7 +4473,7 @@ func (s *testSuiteP2) TestShowTableRegion(c *C) {
 		c.Assert(rows[i*8+1][1], Equals, fmt.Sprintf("t_%d_r_1000000", p.ID))
 		c.Assert(rows[i*8+2][1], Equals, fmt.Sprintf("t_%d_r_2000000", p.ID))
 		c.Assert(rows[i*8+3][1], Equals, fmt.Sprintf("t_%d_r_3000000", p.ID))
-		c.Assert(rows[i*8+4][1], Equals, fmt.Sprintf("t_%d_i_1_", p.ID))
+		c.Assert(rows[i*8+4][1], Equals, fmt.Sprintf("t_%d_", p.ID))
 		c.Assert(rows[i*8+5][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
 		c.Assert(rows[i*8+6][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
 		c.Assert(rows[i*8+7][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
@@ -4468,6 +4482,19 @@ func (s *testSuiteP2) TestShowTableRegion(c *C) {
 		c.Assert(rows[i*8+10][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
 		c.Assert(rows[i*8+11][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
 	}
+
+	// Test split for the second index.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int,b int,index idx(a), index idx2(b))")
+	tk.MustQuery("split table t index idx2 between (0) and (4000000) regions 2;").Check(testkit.Rows("3 1"))
+	re = tk.MustQuery("show table t regions")
+	rows = re.Rows()
+	c.Assert(len(rows), Equals, 4)
+	tbl = testGetTableByName(c, tk.Se, "test", "t")
+	c.Assert(rows[0][1], Equals, fmt.Sprintf("t_%d_i_3_", tbl.Meta().ID))
+	c.Assert(rows[1][1], Equals, fmt.Sprintf("t_%d_", tbl.Meta().ID))
+	c.Assert(rows[2][1], Matches, fmt.Sprintf("t_%d_i_2_.*", tbl.Meta().ID))
+	c.Assert(rows[3][1], Matches, fmt.Sprintf("t_%d_i_2_.*", tbl.Meta().ID))
 }
 
 func testGetTableByName(c *C, ctx sessionctx.Context, db, table string) table.Table {
@@ -4583,7 +4610,7 @@ func setOOMAction(action string) {
 type testRecoverTable struct {
 	store   kv.Storage
 	dom     *domain.Domain
-	cluster *mocktikv.Cluster
+	cluster cluster.Cluster
 	cli     *regionProperityClient
 }
 
@@ -4596,11 +4623,12 @@ func (s *testRecoverTable) SetUpSuite(c *C) {
 	s.cli = cli
 
 	var err error
-	s.cluster = mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(s.cluster)
+	cluster := mocktikv.NewCluster()
+	mocktikv.BootstrapWithSingleStore(cluster)
+	s.cluster = cluster
 	s.store, err = mockstore.NewMockTikvStore(
 		mockstore.WithHijackClient(hijackClient),
-		mockstore.WithCluster(s.cluster),
+		mockstore.WithCluster(cluster),
 	)
 	c.Assert(err, IsNil)
 	s.dom, err = session.BootstrapSession(s.store)
@@ -4831,6 +4859,27 @@ func (s *testRecoverTable) TestFlashbackTable(c *C) {
 	// Check flashback table autoID.
 	tk.MustExec("insert into t_p_flashback1 values (6)")
 	tk.MustQuery("select a,_tidb_rowid from t_p_flashback1 order by a;").Check(testkit.Rows("1 1", "2 2", "3 3", "4 5001", "5 5002", "6 10001"))
+
+	tk.MustExec("drop database if exists Test2")
+	tk.MustExec("create database Test2")
+	tk.MustExec("use Test2")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values (1),(2)")
+	tk.MustExec("drop table t")
+	tk.MustExec("flashback table t")
+	tk.MustQuery("select a from t order by a").Check(testkit.Rows("1", "2"))
+
+	tk.MustExec("drop table t")
+	tk.MustExec("drop database if exists Test3")
+	tk.MustExec("create database Test3")
+	tk.MustExec("use Test3")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("drop table t")
+	tk.MustExec("drop database Test3")
+	tk.MustExec("use Test2")
+	tk.MustExec("flashback table t")
+	tk.MustExec("insert into t values (3)")
+	tk.MustQuery("select a from t order by a").Check(testkit.Rows("1", "2", "3"))
 }
 
 func (s *testSuiteP2) TestPointGetPreparedPlan(c *C) {
@@ -5352,8 +5401,9 @@ select 6;`
 	tk.Se.GetSessionVars().TimeZone = loc
 	tk.MustExec("use information_schema")
 	cases := []struct {
-		sql    string
-		result []string
+		prepareSQL string
+		sql        string
+		result     []string
 	}{
 		{
 			sql:    "select count(*),min(time),max(time) from %s where time > '2019-01-26 21:51:00' and time < now()",
@@ -5387,8 +5437,22 @@ select 6;`
 			sql:    "select query from %s where time > '2019-01-26 21:51:00' and time < now()",
 			result: []string{"select 1;", "select 2;", "select 3;", "select 4;", "select 5;", "select 6;"},
 		},
+		// Test for different timezone.
+		{
+			prepareSQL: "set @@time_zone = '+00:00'",
+			sql:        "select time from %s where time = '2020-02-17 10:00:05.000000'",
+			result:     []string{"2020-02-17 10:00:05.000000"},
+		},
+		{
+			prepareSQL: "set @@time_zone = '+02:00'",
+			sql:        "select time from %s where time = '2020-02-17 12:00:05.000000'",
+			result:     []string{"2020-02-17 12:00:05.000000"},
+		},
 	}
 	for _, cas := range cases {
+		if len(cas.prepareSQL) > 0 {
+			tk.MustExec(cas.prepareSQL)
+		}
 		sql := fmt.Sprintf(cas.sql, "slow_query")
 		tk.MustQuery(sql).Check(testutil.RowsWithSep("|", cas.result...))
 		sql = fmt.Sprintf(cas.sql, "cluster_slow_query")
@@ -5435,4 +5499,53 @@ func (s *testSuite1) TestIssue16025(c *C) {
 	tk.MustExec("CREATE TABLE t0(c0 NUMERIC PRIMARY KEY);")
 	tk.MustExec("INSERT IGNORE INTO t0(c0) VALUES (NULL);")
 	tk.MustQuery("SELECT * FROM t0 WHERE c0;").Check(testkit.Rows())
+}
+
+func (s *testSuite1) TestIssue16854(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE `t` (	`a` enum('WAITING','PRINTED','STOCKUP','CHECKED','OUTSTOCK','PICKEDUP','WILLBACK','BACKED') DEFAULT NULL)")
+	tk.MustExec("insert into t values(1),(2),(3),(4),(5),(6),(7);")
+	for i := 0; i < 7; i++ {
+		tk.MustExec("insert into t select * from t;")
+	}
+	tk.MustExec("set @@tidb_max_chunk_size=100;")
+	tk.MustQuery("select distinct a from t order by a").Check(testkit.Rows("WAITING", "PRINTED", "STOCKUP", "CHECKED", "OUTSTOCK", "PICKEDUP", "WILLBACK"))
+	tk.MustExec("drop table t")
+
+	tk.MustExec("CREATE TABLE `t` (	`a` set('WAITING','PRINTED','STOCKUP','CHECKED','OUTSTOCK','PICKEDUP','WILLBACK','BACKED') DEFAULT NULL)")
+	tk.MustExec("insert into t values(1),(2),(3),(4),(5),(6),(7);")
+	for i := 0; i < 7; i++ {
+		tk.MustExec("insert into t select * from t;")
+	}
+	tk.MustExec("set @@tidb_max_chunk_size=100;")
+	tk.MustQuery("select distinct a from t order by a").Check(testkit.Rows("WAITING", "PRINTED", "WAITING,PRINTED", "STOCKUP", "WAITING,STOCKUP", "PRINTED,STOCKUP", "WAITING,PRINTED,STOCKUP"))
+	tk.MustExec("drop table t")
+}
+
+// this is from jira issue #5856
+func (s *testSuite1) TestInsertValuesWithSubQuery(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2(a int, b int, c int)")
+	defer tk.MustExec("drop table if exists t2")
+
+	// should not reference upper scope
+	c.Assert(tk.ExecToErr("insert into t2 values (11, 8, (select not b))"), NotNil)
+	c.Assert(tk.ExecToErr("insert into t2 set a = 11, b = 8, c = (select b))"), NotNil)
+
+	// subquery reference target table is allowed
+	tk.MustExec("insert into t2 values(1, 1, (select b from t2))")
+	tk.MustQuery("select * from t2").Check(testkit.Rows("1 1 <nil>"))
+	tk.MustExec("insert into t2 set a = 1, b = 1, c = (select b+1 from t2)")
+	tk.MustQuery("select * from t2").Check(testkit.Rows("1 1 <nil>", "1 1 2"))
+
+	// insert using column should work normally
+	tk.MustExec("delete from t2")
+	tk.MustExec("insert into t2 values(2, 4, a)")
+	tk.MustQuery("select * from t2").Check(testkit.Rows("2 4 2"))
+	tk.MustExec("insert into t2 set a = 3, b = 5, c = b")
+	tk.MustQuery("select * from t2").Check(testkit.Rows("2 4 2", "3 5 5"))
 }

@@ -32,10 +32,11 @@ type mockManager struct {
 }
 
 // NewMockManager creates a new mock Manager.
-func NewMockManager(id string, cancel context.CancelFunc) Manager {
+func NewMockManager(ctx context.Context, id string) Manager {
+	_, cancelFunc := context.WithCancel(ctx)
 	return &mockManager{
 		id:     id,
-		cancel: cancel,
+		cancel: cancelFunc,
 	}
 }
 
@@ -72,7 +73,7 @@ func (m *mockManager) GetOwnerID(ctx context.Context) (string, error) {
 }
 
 // CampaignOwner implements Manager.CampaignOwner interface.
-func (m *mockManager) CampaignOwner(_ context.Context) error {
+func (m *mockManager) CampaignOwner() error {
 	m.toBeOwner()
 	return nil
 }
