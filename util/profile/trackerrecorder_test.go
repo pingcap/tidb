@@ -69,7 +69,7 @@ func (t *trackRecorderSuite) TestHeapProfileRecorder(c *C) {
 		v := getRandomString(10)
 		lru.Put(keys[i], v)
 	}
-	// wait 10 sec to ensure runtime have scraped the heap profile sample
+	// wait 10 sec to make runtime have scraped the heap profile sample
 	time.Sleep(10 * time.Second)
 
 	bytes, err := col.getFuncMemUsage(kvcache.ProfileName)
@@ -77,6 +77,9 @@ func (t *trackRecorderSuite) TestHeapProfileRecorder(c *C) {
 	valueSize := int(unsafe.Sizeof(getRandomString(10)))
 	// ensure that the consumed bytes is at least larger than 10000 * size of value
 	c.Assert(int64(valueSize*10000), LessEqual, bytes)
+
+	// wait 10 sec then reference lru to avoid gc
+	time.Sleep(10 * time.Second)
 	// we should assert lru size last to reference lru in order to avoid gc
 	c.Assert(lru.Size(), Equals, 10000)
 }
