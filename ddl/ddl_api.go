@@ -1133,12 +1133,12 @@ func getPrimaryKey(tblInfo *model.TableInfo) *model.IndexInfo {
 			// table has explicit primary key
 			return key
 		}
+		// The case index without any columns should never happen, but still do a check here
+		if key.Columns == nil || len(key.Columns) == 0 {
+			continue
+		}
 		// find the first unique key with NOT NULL columns
 		if implicitPK == nil && key.Unique {
-			// The case index without any columns should never happen, but still do a check here
-			if key.Columns == nil || len(key.Columns) == 0 {
-				continue
-			}
 			// ensure all columns in unique key have NOT NULL flag
 			allColNotNull := true
 			skip := false
