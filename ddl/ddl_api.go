@@ -2804,7 +2804,7 @@ func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) e
 	// Col compatible check
 	for i, sourceCol := range source.Cols() {
 		targetCol := target.Cols()[i]
-		if IsVirtualGeneratedColumn(sourceCol) != IsVirtualGeneratedColumn(targetCol) {
+		if isVirtualGeneratedColumn(sourceCol) != isVirtualGeneratedColumn(targetCol) {
 			return ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("Exchanging partitions for non-generated columns")
 		}
 		if sourceCol.Name.L != targetCol.Name.L ||
