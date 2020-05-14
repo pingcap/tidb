@@ -254,11 +254,11 @@ func (t *testTableSuite) TestCastValue(c *C) {
 		State:     model.StatePublic,
 	}
 	colInfo.Charset = mysql.UTF8Charset
-	val, err := CastValue(ctx, types.Datum{}, &colInfo)
+	val, err := CastValue(ctx, types.Datum{}, &colInfo, false)
 	c.Assert(err, Equals, nil)
 	c.Assert(val.GetInt64(), Equals, int64(0))
 
-	val, err = CastValue(ctx, types.NewDatum("test"), &colInfo)
+	val, err = CastValue(ctx, types.NewDatum("test"), &colInfo, false)
 	c.Assert(err, Not(Equals), nil)
 	c.Assert(val.GetInt64(), Equals, int64(0))
 
@@ -278,16 +278,16 @@ func (t *testTableSuite) TestCastValue(c *C) {
 		FieldType: *types.NewFieldType(mysql.TypeString),
 		State:     model.StatePublic,
 	}
-	val, err = CastValue(ctx, types.NewDatum("test"), &colInfoS)
+	val, err = CastValue(ctx, types.NewDatum("test"), &colInfoS, false)
 	c.Assert(err, IsNil)
 	c.Assert(val, NotNil)
 
 	colInfoS.Charset = mysql.UTF8Charset
-	_, err = CastValue(ctx, types.NewDatum([]byte{0xf0, 0x9f, 0x8c, 0x80}), &colInfoS)
+	_, err = CastValue(ctx, types.NewDatum([]byte{0xf0, 0x9f, 0x8c, 0x80}), &colInfoS, false)
 	c.Assert(err, NotNil)
 
 	colInfoS.Charset = mysql.UTF8MB4Charset
-	_, err = CastValue(ctx, types.NewDatum([]byte{0xf0, 0x9f, 0x80}), &colInfoS)
+	_, err = CastValue(ctx, types.NewDatum([]byte{0xf0, 0x9f, 0x80}), &colInfoS, false)
 	c.Assert(err, NotNil)
 }
 
