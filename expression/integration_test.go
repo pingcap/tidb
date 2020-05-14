@@ -6379,6 +6379,26 @@ func (s *testIntegrationSuite) TestIssue16779(c *C) {
 	tk.MustQuery("SELECT * FROM t1 LEFT JOIN t0 ON TRUE WHERE BINARY EXPORT_SET(0, 0, 0 COLLATE 'binary', t0.c0, 0 COLLATE 'binary')")
 }
 
+func (s *testIntegrationSuite) TestIssue16697(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (`a` int(11) DEFAULT NULL,`b` int(11) DEFAULT NULL)")
+	tk.MustExec("insert into t values (1, 1)")
+	for i := 0; i < 8; i++ {
+		tk.MustExec("insert into t select * from t")
+	}
+	rows := tk.MustQuery("explain analyze  select t1.a, t1.a +1 from t t1 join t t2 join t t3 order by t1.a").Rows()
+	for _, row := range rows {
+		line := fmt.Sprintf("%v", row)
+		if strings.Contains(line, "Projection") {
+			c.Assert(strings.Contains(line, "KB"), IsTrue)
+			c.Assert(strings.Contains(line, "MB"), IsFalse)
+			c.Assert(strings.Contains(line, "GB"), IsFalse)
+		}
+	}
+}
+
 func (s *testIntegrationSuite) TestIssue17045(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
