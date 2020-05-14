@@ -2432,6 +2432,19 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 				return nil, errors.Trace(err)
 			}
 		}
+		// Specially, since sequence has been supported, if a newly added column has a
+		// sequence nextval function as it's default value option, it won't fill the
+		// known rows with specific sequence next value under current add column logic.
+		// More explanation can refer: TestSequenceDefaultLogic's comment in sequence_test.go
+		if option.Tp == ast.ColumnOptionDefaultValue {
+			_, isSeqExpr, err := tryToGetSequenceDefaultValue(option)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if isSeqExpr {
+				return nil, errors.Trace(ErrAddColumnWithSequenceAsDefault.GenWithStackByArgs(specNewColumn.Name.Name.O))
+			}
+		}
 	}
 
 	tableCharset, tableCollate, err := ResolveCharsetCollation(
