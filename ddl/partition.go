@@ -861,7 +861,13 @@ type stringSlice interface {
 func checkUniqueKeyIncludePartKey(partCols stringSlice, idxCols []*model.IndexColumn) bool {
 	for i := 0; i < partCols.Len(); i++ {
 		partCol := partCols.At(i)
-		if !findColumnInIndexCols(partCol, idxCols) {
+		idxCol := findColumnInIndexCols(partCol, idxCols)
+		if idxCol == nil {
+			// Partition column is not found in the index columns.
+			return false
+		}
+		if idxCol.Length > 0 {
+			// The partition column is found in the index columns, but the index column is a prefix index
 			return false
 		}
 	}
