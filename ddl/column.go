@@ -619,13 +619,20 @@ func generateOriginDefaultValue(col *model.ColumnInfo) (interface{}, error) {
 	return odValue, nil
 }
 
+<<<<<<< HEAD
 func findColumnInIndexCols(c string, cols []*ast.IndexColName) bool {
 	for _, c1 := range cols {
 		if c == c1.Column.Name.L {
 			return true
+=======
+func findColumnInIndexCols(c string, cols []*model.IndexColumn) *model.IndexColumn {
+	for _, c1 := range cols {
+		if c == c1.Name.L {
+			return c1
+>>>>>>> a81e2c3... ddl: fix creating partition table with unique prefix index (#17196)
 		}
 	}
-	return false
+	return nil
 }
 
 func getColumnInfoByName(tbInfo *model.TableInfo, column string) *model.ColumnInfo {
