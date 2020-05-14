@@ -325,6 +325,14 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(val, Equals, "5.0")
 	c.Assert(v.CopCPUFactor, Equals, 5.0)
 
+	c.Assert(v.CopTiFlashConcurrencyFactor, Equals, 24.0)
+	err = SetSessionSystemVar(v, TiDBOptTiFlashConcurrencyFactor, types.NewStringDatum("5.0"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBOptTiFlashConcurrencyFactor)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "5.0")
+	c.Assert(v.CopCPUFactor, Equals, 5.0)
+
 	c.Assert(v.NetworkFactor, Equals, 1.0)
 	err = SetSessionSystemVar(v, TiDBOptNetworkFactor, types.NewStringDatum("3.0"))
 	c.Assert(err, IsNil)
@@ -500,6 +508,7 @@ func (s *testVarsutilSuite) TestValidate(c *C) {
 		{TiDBOptCorrelationThreshold, "-2", true},
 		{TiDBOptCPUFactor, "a", true},
 		{TiDBOptCPUFactor, "-2", true},
+		{TiDBOptTiFlashConcurrencyFactor, "-2", true},
 		{TiDBOptCopCPUFactor, "a", true},
 		{TiDBOptCopCPUFactor, "-2", true},
 		{TiDBOptNetworkFactor, "a", true},
