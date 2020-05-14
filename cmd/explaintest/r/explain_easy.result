@@ -32,7 +32,7 @@ IndexLookUp_12	10000.00	root
 └─TableRowIDScan_11(Probe)	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain select * from t2 order by c2;
 id	estRows	task	access object	operator info
-Sort_4	10000.00	root		test.t2.c2:asc
+Sort_4	10000.00	root		test.t2.c2
 └─TableReader_8	10000.00	root		data:TableFullScan_7
   └─TableFullScan_7	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain select * from t1 where t1.c1 > 0;
@@ -74,9 +74,9 @@ Projection_11	9990.00	root		cast(Column#8, bigint(21) BINARY)->Column#7
     └─TableFullScan_33	10000.00	cop[tikv]	table:a	keep order:false, stats:pseudo
 explain select * from t2 order by t2.c2 limit 0, 1;
 id	estRows	task	access object	operator info
-TopN_7	1.00	root		test.t2.c2:asc, offset:0, count:1
+TopN_7	1.00	root		test.t2.c2, offset:0, count:1
 └─TableReader_15	1.00	root		data:TopN_14
-  └─TopN_14	1.00	cop[tikv]		test.t2.c2:asc, offset:0, count:1
+  └─TopN_14	1.00	cop[tikv]		test.t2.c2, offset:0, count:1
     └─TableFullScan_13	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain select * from t1 where c1 > 1 and c2 = 1 and c3 < 1;
 id	estRows	task	access object	operator info
@@ -653,20 +653,20 @@ drop table if exists t;
 create table t(a int, b int, c int);
 explain select * from (select * from t order by (select 2)) t order by a, b;
 id	estRows	task	access object	operator info
-Sort_12	10000.00	root		test.t.a:asc, test.t.b:asc
+Sort_12	10000.00	root		test.t.a, test.t.b
 └─TableReader_18	10000.00	root		data:TableFullScan_17
   └─TableFullScan_17	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain select * from (select * from t order by c) t order by a, b;
 id	estRows	task	access object	operator info
-Sort_6	10000.00	root		test.t.a:asc, test.t.b:asc
-└─Sort_9	10000.00	root		test.t.c:asc
+Sort_6	10000.00	root		test.t.a, test.t.b
+└─Sort_9	10000.00	root		test.t.c
   └─TableReader_12	10000.00	root		data:TableFullScan_11
     └─TableFullScan_11	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t;
 set @@session.tidb_opt_insubq_to_join_and_agg=1;
 explain SELECT 0 AS a FROM dual UNION SELECT 1 AS a FROM dual ORDER BY a;
 id	estRows	task	access object	operator info
-Sort_13	2.00	root		Column#3:asc
+Sort_13	2.00	root		Column#3
 └─HashAgg_17	2.00	root		group by:Column#3, funcs:firstrow(Column#6)->Column#3
   └─Union_18	2.00	root		
     ├─HashAgg_19	1.00	root		group by:1, funcs:firstrow(0)->Column#6
@@ -746,7 +746,7 @@ id	estRows	task	access object	operator info
 Projection_8	2666.67	root		test.t.a, test.t.b
 └─Selection_9	2666.67	root		gt(cast(test.t.a), Column#5), lt(test.t.b, 10)
   └─Window_10	3333.33	root		avg(cast(test.t.b, decimal(65,4) BINARY))->Column#5 over(partition by test.t.a)
-    └─Sort_14	3333.33	root		test.t.a:asc
+    └─Sort_14	3333.33	root		test.t.a
       └─TableReader_13	3333.33	root		data:Selection_12
         └─Selection_12	3333.33	cop[tikv]		gt(test.t.a, 10)
           └─TableFullScan_11	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
