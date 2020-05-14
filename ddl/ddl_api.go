@@ -1128,7 +1128,6 @@ func checkInvisibleIndexOnPK(tblInfo *model.TableInfo) error {
 func getPrimaryKey(tblInfo *model.TableInfo) *model.IndexInfo {
 	var implicitPK *model.IndexInfo
 
-IndicesLoop:
 	for _, key := range tblInfo.Indices {
 		if key.Primary {
 			// table has explicit primary key
@@ -1136,24 +1135,29 @@ IndicesLoop:
 		}
 		// find the first unique key with NOT NULL columns
 		if implicitPK == nil && key.Unique {
-			// ensure all columns in unique key have NOT NULL flag
-			allColNotNull := true
 			// The case index without any columns should never happen, but still do a check here
 			if key.Columns == nil || len(key.Columns) == 0 {
 				continue
 			}
+			// ensure all columns in unique key have NOT NULL flag
+			allColNotNull := true
+			skip := false
 			for _, idxCol := range key.Columns {
 				col := model.FindColumnInfo(tblInfo.Cols(), idxCol.Name.L)
 				// This index has a column in DeleteOnly state,
 				// or it is expression index (it defined on a hidden column),
 				// it can not be implicit PK, go to next index iterator
 				if col == nil || col.Hidden {
-					continue IndicesLoop
+					skip = true
+					break
 				}
 				if !mysql.HasNotNullFlag(col.Flag) {
 					allColNotNull = false
 					break
 				}
+			}
+			if skip {
+				continue
 			}
 			if allColNotNull {
 				implicitPK = key
