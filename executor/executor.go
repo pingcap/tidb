@@ -1760,10 +1760,7 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 			}
 			// Because the expression might return different type from
 			// the generated column, we should wrap a CAST on the result.
-			castDatum, err := table.CastValue(sctx, datum, columns[idx])
-			if err != nil {
-				return err
-			}
+			castDatum, _ := table.CastValue(sctx, datum, columns[idx])
 			virCols.AppendDatum(i, &castDatum)
 		}
 		req.SetCol(idx, virCols.Column(i))
