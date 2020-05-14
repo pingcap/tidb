@@ -118,7 +118,7 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.
 		if err != nil {
 			return nil, err
 		}
-		val, err = table.CastValue(ctx, val, col.Col.ColumnInfo)
+		val, err = table.CastValue(ctx, val, col.Col.ColumnInfo, false)
 		if err != nil {
 			return nil, err
 		}
