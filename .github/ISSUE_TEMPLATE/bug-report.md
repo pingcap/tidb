@@ -8,12 +8,16 @@ labels: type/bug
 
 Please answer these questions before submitting your issue. Thanks!
 
-### 1. What did you do?
+### 1. Minimal reproduce step (Required)
 
-<!-- If possible, provide a recipe for reproducing the error. -->
+<!-- a step by step guide for reproducing the bug. -->
 
-### 2. What did you expect to see?
+### 2. What did you expect to see? (Required)
 
-### 3. What did you see instead?
+### 3. Affected version (Required)
 
-### 4. What version of TiDB are you using? (`tidb-server -V` or run `select tidb_version();` on TiDB)
+<!-- v3.0.0, v4.0.0, etc -->
+
+### 4. Root Cause Analysis
+
+<!-- should be filled by the investigator before it's closed -->
