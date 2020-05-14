@@ -67,7 +67,7 @@ func (t *trackRecorderSuite) TestHeapProfileRecorder(c *C) {
 	lru := kvcache.NewSimpleLRUCache(uint(num), 0, 0)
 
 	keys := make([]*mockCacheKey, num)
-	for i := 0; i < 60000; i++ {
+	for i := 0; i < num; i++ {
 		keys[i] = newMockHashKey(int64(i))
 		v := getRandomString(10)
 		lru.Put(keys[i], v)
@@ -78,11 +78,8 @@ func (t *trackRecorderSuite) TestHeapProfileRecorder(c *C) {
 	bytes, err := col.getFuncMemUsage(kvcache.ProfileName)
 	c.Assert(err, IsNil)
 	valueSize := int(unsafe.Sizeof(getRandomString(10)))
-	// ensure that the consumed bytes is at least larger than 10000 * size of value
+	// ensure that the consumed bytes is at least larger than num * size of value
 	c.Assert(int64(valueSize*num), LessEqual, bytes)
-
-	// wait 10 sec then reference lru to avoid gc
-	time.Sleep(10 * time.Second)
 	// we should assert lru size last and value size to reference lru in order to avoid gc
 	c.Assert(lru.Size(), Equals, num)
 	for _, v := range lru.Values() {
