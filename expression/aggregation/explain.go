@@ -32,11 +32,12 @@ func ExplainAggFunc(agg *AggFuncDesc) string {
 			if len(agg.OrderByItems) > 0 {
 				buffer.WriteString(" order by ")
 				for i, item := range agg.OrderByItems {
-					order := "asc"
 					if item.Desc {
-						order = "desc"
+						fmt.Fprintf(&buffer, "%s desc", item.Expr.ExplainInfo())
+					} else {
+						fmt.Fprintf(&buffer, "%s", item.Expr.ExplainInfo())
 					}
-					fmt.Fprintf(&buffer, "%s %s", item.Expr.ExplainInfo(), order)
+
 					if i+1 < len(agg.OrderByItems) {
 						buffer.WriteString(", ")
 					}
