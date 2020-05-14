@@ -331,6 +331,7 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *Backoffer, ta
 		NotFillCache:   b.req.NotFillCache,
 		HandleTime:     true,
 		ScanDetail:     true,
+		TaskId:         b.req.TaskID,
 	})
 	req.StoreTp = kv.TiFlash
 
