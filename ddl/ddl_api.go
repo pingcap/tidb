@@ -2166,6 +2166,18 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			err = d.AddTablePartitions(ctx, ident, spec)
 		case ast.AlterTableCoalescePartitions:
 			err = d.CoalescePartitions(ctx, ident, spec)
+		case ast.AlterTableReorganizePartition:
+			err = errors.Trace(errUnsupportedReorganizePartition)
+		case ast.AlterTableCheckPartitions:
+			err = errors.Trace(errUnsupportedCheckPartition)
+		case ast.AlterTableRebuildPartition:
+			err = errors.Trace(errUnsupportedRebuildPartition)
+		case ast.AlterTableOptimizePartition:
+			err = errors.Trace(errUnsupportedOptimizePartition)
+		case ast.AlterTableRemovePartitioning:
+			err = errors.Trace(errUnsupportedRemovePartition)
+		case ast.AlterTableExchangePartition:
+			err = errors.Trace(errUnsupportedExchangePartition)
 		case ast.AlterTableDropColumn:
 			err = d.DropColumn(ctx, ident, spec)
 		case ast.AlterTableDropIndex:
@@ -2418,6 +2430,19 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 
 			if err = verifyColumnGenerationSingle(duplicateColNames, cols, spec.Position); err != nil {
 				return nil, errors.Trace(err)
+			}
+		}
+		// Specially, since sequence has been supported, if a newly added column has a
+		// sequence nextval function as it's default value option, it won't fill the
+		// known rows with specific sequence next value under current add column logic.
+		// More explanation can refer: TestSequenceDefaultLogic's comment in sequence_test.go
+		if option.Tp == ast.ColumnOptionDefaultValue {
+			_, isSeqExpr, err := tryToGetSequenceDefaultValue(option)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if isSeqExpr {
+				return nil, errors.Trace(ErrAddColumnWithSequenceAsDefault.GenWithStackByArgs(specNewColumn.Name.Name.O))
 			}
 		}
 	}

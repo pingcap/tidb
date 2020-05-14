@@ -474,16 +474,16 @@ func (s *testEvaluatorSerialSuites) TestPushDownSwitcher(c *C) {
 		sig    tipb.ScalarFuncSig
 		enable bool
 	}{
-		{ast.And, tipb.ScalarFuncSig_BitAndSig, true},
-		{ast.Or, tipb.ScalarFuncSig_BitOrSig, false},
-		{ast.UnaryNot, tipb.ScalarFuncSig_UnaryNotInt, true},
+		// Note that so far ScalarFuncSigs here are not be pushed down when the failpoint PushDownTestSwitcher
+		// is disable, which is the prerequisite to pass this test.
+		// Need to be replaced with other non pushed down ScalarFuncSigs if they are pushed down one day.
+		{ast.Sin, tipb.ScalarFuncSig_Sin, true},
+		{ast.Cos, tipb.ScalarFuncSig_Cos, false},
+		{ast.Tan, tipb.ScalarFuncSig_Tan, true},
 	}
 	var enabled []string
-	for i, funcName := range cases {
+	for _, funcName := range cases {
 		args := []Expression{dg.genColumn(mysql.TypeLong, 1)}
-		if i+1 < len(cases) {
-			args = append(args, dg.genColumn(mysql.TypeLong, 2))
-		}
 		fc, err := NewFunction(
 			mock.NewContext(),
 			funcName.name,
