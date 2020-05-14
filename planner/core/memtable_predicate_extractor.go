@@ -834,7 +834,7 @@ func (e *InspectionResultTableExtractor) explainInfo(p *PhysicalMemTable) string
 	s := make([]string, 0, 2)
 	s = append(s, fmt.Sprintf("rules:[%s]", extractStringFromStringSet(e.Rules)))
 	s = append(s, fmt.Sprintf("items:[%s]", extractStringFromStringSet(e.Items)))
-	return strings.Join(s, ",")
+	return strings.Join(s, ", ")
 }
 
 // InspectionSummaryTableExtractor is used to extract some predicates of `inspection_summary`
