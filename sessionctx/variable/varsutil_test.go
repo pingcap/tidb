@@ -410,16 +410,6 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	val, err = GetSessionSystemVar(v, TiDBStmtSummaryMaxStmtCount)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "10")
-	err = SetSessionSystemVar(v, TiDBStmtSummaryMaxStmtCount, types.NewStringDatum("0"))
-	c.Assert(err, IsNil)
-	val, err = GetSessionSystemVar(v, TiDBStmtSummaryMaxStmtCount)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, "1")
-	err = SetSessionSystemVar(v, TiDBStmtSummaryMaxStmtCount, types.NewStringDatum("1000000"))
-	c.Assert(err, IsNil)
-	val, err = GetSessionSystemVar(v, TiDBStmtSummaryMaxStmtCount)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, "32767")
 	err = SetSessionSystemVar(v, TiDBStmtSummaryMaxStmtCount, types.NewStringDatum("a"))
 	c.Assert(err, ErrorMatches, ".*Incorrect argument type to variable 'tidb_stmt_summary_max_stmt_count'")
 
@@ -428,11 +418,6 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	val, err = GetSessionSystemVar(v, TiDBStmtSummaryMaxSQLLength)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "10")
-	err = SetSessionSystemVar(v, TiDBStmtSummaryMaxSQLLength, types.NewStringDatum("-1"))
-	c.Assert(err, IsNil)
-	val, err = GetSessionSystemVar(v, TiDBStmtSummaryMaxSQLLength)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, "0")
 	err = SetSessionSystemVar(v, TiDBStmtSummaryMaxSQLLength, types.NewStringDatum("a"))
 	c.Assert(err, ErrorMatches, ".*Incorrect argument type to variable 'tidb_stmt_summary_max_sql_length'")
 
@@ -572,15 +557,25 @@ func (s *testVarsutilSuite) TestValidateStmtSummary(c *C) {
 		{TiDBStmtSummaryRefreshInterval, "a", true, ScopeSession},
 		{TiDBStmtSummaryRefreshInterval, "", false, ScopeSession},
 		{TiDBStmtSummaryRefreshInterval, "", true, ScopeGlobal},
+		{TiDBStmtSummaryRefreshInterval, "0", true, ScopeGlobal},
+		{TiDBStmtSummaryRefreshInterval, "99999999999", true, ScopeGlobal},
 		{TiDBStmtSummaryHistorySize, "a", true, ScopeSession},
 		{TiDBStmtSummaryHistorySize, "", false, ScopeSession},
 		{TiDBStmtSummaryHistorySize, "", true, ScopeGlobal},
+		{TiDBStmtSummaryHistorySize, "0", false, ScopeGlobal},
+		{TiDBStmtSummaryHistorySize, "-1", true, ScopeGlobal},
+		{TiDBStmtSummaryHistorySize, "99999999", true, ScopeGlobal},
 		{TiDBStmtSummaryMaxStmtCount, "a", true, ScopeSession},
 		{TiDBStmtSummaryMaxStmtCount, "", false, ScopeSession},
 		{TiDBStmtSummaryMaxStmtCount, "", true, ScopeGlobal},
+		{TiDBStmtSummaryMaxStmtCount, "0", true, ScopeGlobal},
+		{TiDBStmtSummaryMaxStmtCount, "99999999", true, ScopeGlobal},
 		{TiDBStmtSummaryMaxSQLLength, "a", true, ScopeSession},
 		{TiDBStmtSummaryMaxSQLLength, "", false, ScopeSession},
 		{TiDBStmtSummaryMaxSQLLength, "", true, ScopeGlobal},
+		{TiDBStmtSummaryMaxSQLLength, "0", false, ScopeGlobal},
+		{TiDBStmtSummaryMaxSQLLength, "-1", true, ScopeGlobal},
+		{TiDBStmtSummaryMaxSQLLength, "99999999999", true, ScopeGlobal},
 	}
 
 	for _, t := range tests {
