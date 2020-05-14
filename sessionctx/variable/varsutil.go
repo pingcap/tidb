@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
@@ -280,6 +281,17 @@ func checkInt64SystemVar(name, value string, min, max int64, vars *SessionVars) 
 	return value, nil
 }
 
+func checkInt64SystemVarWithError(name, value string, min, max int64) (string, error) {
+	val, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
+	}
+	if val < min || val > max {
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	}
+	return value, nil
+}
+
 const (
 	// initChunkSizeUpperBound indicates upper bound value of tidb_init_chunk_size.
 	initChunkSizeUpperBound = 32
@@ -322,9 +334,15 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case GroupConcatMaxLen:
-		// The reasonable range of 'group_concat_max_len' is 4~18446744073709551615(64-bit platforms)
-		// See https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_group_concat_max_len for details
-		return checkUInt64SystemVar(name, value, 4, math.MaxUint64, vars)
+		// https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_group_concat_max_len
+		// Minimum Value 4
+		// Maximum Value (64-bit platforms) 18446744073709551615
+		// Maximum Value (32-bit platforms) 4294967295
+		maxLen := uint64(math.MaxUint64)
+		if mathutil.IntBits == 32 {
+			maxLen = uint64(math.MaxUint32)
+		}
+		return checkUInt64SystemVar(name, value, 4, maxLen, vars)
 	case InteractiveTimeout:
 		return checkUInt64SystemVar(name, value, 1, secondsPerYear, vars)
 	case InnodbCommitConcurrency:
@@ -694,22 +712,22 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		if value == "" && scope == ScopeSession {
 			return "", nil
 		}
-		return checkUInt64SystemVar(name, value, 1, math.MaxInt32, vars)
+		return checkInt64SystemVarWithError(name, value, 1, math.MaxInt32)
 	case TiDBStmtSummaryHistorySize:
 		if value == "" && scope == ScopeSession {
 			return "", nil
 		}
-		return checkUInt64SystemVar(name, value, 0, math.MaxUint8, vars)
+		return checkInt64SystemVarWithError(name, value, 0, math.MaxUint8)
 	case TiDBStmtSummaryMaxStmtCount:
 		if value == "" && scope == ScopeSession {
 			return "", nil
 		}
-		return checkInt64SystemVar(name, value, 1, math.MaxInt16, vars)
+		return checkInt64SystemVarWithError(name, value, 1, math.MaxInt16)
 	case TiDBStmtSummaryMaxSQLLength:
 		if value == "" && scope == ScopeSession {
 			return "", nil
 		}
-		return checkInt64SystemVar(name, value, 0, math.MaxInt32, vars)
+		return checkInt64SystemVarWithError(name, value, 0, math.MaxInt32)
 	case TiDBIsolationReadEngines:
 		engines := strings.Split(value, ",")
 		var formatVal string
