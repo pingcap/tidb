@@ -61,7 +61,7 @@ func (s *testSuite5) TestAdminCheckIndex(c *C) {
 	// Test for hash partition table.
 	tk.MustExec("drop table if exists admin_test")
 	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, index (c1), unique key(c2)) partition by hash(c2) partitions 5;")
-	tk.MustExec("insert admin_test (c1, c2) values (1, 1), (2, 2), (NULL, NULL)")
+	check()
 
 	// Test for range partition table.
 	tk.MustExec("drop table if exists admin_test")
@@ -69,7 +69,7 @@ func (s *testSuite5) TestAdminCheckIndex(c *C) {
 		PARTITION p0 VALUES LESS THAN (5),
 		PARTITION p1 VALUES LESS THAN (10),
 		PARTITION p2 VALUES LESS THAN (MAXVALUE))`)
-	tk.MustExec("insert admin_test (c1, c2) values (1, 1), (2, 2), (NULL, NULL)")
+	check()
 }
 
 func (s *testSuite5) TestAdminRecoverIndex(c *C) {
