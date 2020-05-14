@@ -1075,6 +1075,7 @@ const (
 	ErrSequenceUnsupportedTableOption = 8227
 	ErrColumnTypeUnsupportedNextValue = 8228
 	ErrLockExpire                     = 8229
+	ErrAddColumnWithSequenceAsDefault = 8230
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout        = 9001
