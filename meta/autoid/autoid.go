@@ -102,7 +102,7 @@ type Allocator interface {
 	// The returned range is (min, max]:
 	// case increment=1 & offset=1: you can derive the ids like min+1, min+2... max.
 	// case increment=x & offset=y: you firstly need to seek to firstID by `SeekToFirstAutoIDXXX`, then derive the IDs like firstID, firstID + increment * 2... in the caller.
-	Alloc(tableID int64, n uint64, increment, offset int64) (*IDIterator, error)
+	Alloc(tableID int64, n uint64, increment, offset int64) (IDIterator, error)
 
 	// AllocSeqCache allocs sequence batch value cached in table level（rather than in alloc), the returned range covering
 	// the size of sequence cache with it's increment. The returned round indicates the sequence cycle times if it is with
@@ -515,16 +515,16 @@ func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.T
 // but actually we don't care about it, all we need is to calculate the new autoID corresponding to the
 // increment and offset at this time now. To simplify the rule is like (ID - offset) % increment = 0,
 // so the first autoID should be 9, then add increment to it to get 13.
-func (alloc *allocator) Alloc(tableID int64, n uint64, increment, offset int64) (*IDIterator, error) {
+func (alloc *allocator) Alloc(tableID int64, n uint64, increment, offset int64) (IDIterator, error) {
 	if tableID == 0 {
-		return nil, errInvalidTableID.GenWithStackByArgs("Invalid tableID")
+		return IDIterator{}, errInvalidTableID.GenWithStackByArgs("Invalid tableID")
 	}
 	if n == 0 {
-		return &IDIterator{restCount: 0}, nil
+		return IDIterator{}, nil
 	}
 	if alloc.allocType == AutoIncrementType || alloc.allocType == RowIDAllocType {
 		if !validIncrementAndOffset(increment, offset) {
-			return nil, errInvalidIncrementAndOffset.GenWithStackByArgs(increment, offset)
+			return IDIterator{}, errInvalidIncrementAndOffset.GenWithStackByArgs(increment, offset)
 		}
 	}
 	alloc.mu.Lock()
@@ -532,11 +532,11 @@ func (alloc *allocator) Alloc(tableID int64, n uint64, increment, offset int64) 
 	return alloc.alloc(tableID, n, increment, offset)
 }
 
-func (alloc *allocator) alloc(tableID int64, n uint64, increment, offset int64) (*IDIterator, error) {
+func (alloc *allocator) alloc(tableID int64, n uint64, increment, offset int64) (IDIterator, error) {
 	// Check offset rebase if necessary.
 	if alloc.cmp(offset-1, alloc.base).is(greater) {
 		if err := alloc.rebase(tableID, offset-1, true); err != nil {
-			return nil, err
+			return IDIterator{}, err
 		}
 	}
 	// CalcNeededBatchSize calculates the total batch size needed.
@@ -544,7 +544,7 @@ func (alloc *allocator) alloc(tableID int64, n uint64, increment, offset int64) 
 
 	isOverflow, expectedEnd := alloc.plus(alloc.base, n1)
 	if isOverflow {
-		return nil, ErrAutoincReadFailed
+		return IDIterator{}, ErrAutoincReadFailed
 	}
 	// The local rest is not enough for alloc, skip it.
 	if alloc.cmp(expectedEnd, alloc.end).is(greater) {
@@ -581,11 +581,11 @@ func (alloc *allocator) alloc(tableID int64, n uint64, increment, offset int64) 
 		})
 		metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 		if err != nil {
-			return nil, err
+			return IDIterator{}, err
 		}
 		alloc.lastAllocTime = time.Now()
 		if newBase == alloc.maxConstant() {
-			return nil, ErrAutoincReadFailed
+			return IDIterator{}, ErrAutoincReadFailed
 		}
 		alloc.base, alloc.end = newBase, newEnd
 	}
@@ -595,8 +595,15 @@ func (alloc *allocator) alloc(tableID int64, n uint64, increment, offset int64) 
 		zap.Uint64("to ID", uint64(alloc.base+n1)),
 		zap.Int64("table ID", tableID),
 		zap.Int64("database ID", alloc.dbID))
+	if increment == 1 && offset == 1 {
+		return IDIterator{
+			restCount: 1,
+			current:   alloc.base + 1,
+			increment: 1,
+		}, nil
+	}
 	firstID := alloc.seekToFirstAutoID(alloc.base, increment, offset)
-	iter := &IDIterator{
+	iter := IDIterator{
 		restCount: n,
 		current:   firstID,
 		increment: increment,
