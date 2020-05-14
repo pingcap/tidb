@@ -1218,6 +1218,11 @@ func (s *testIntegrationSuite5) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
 			partition p1 values less than ('bbbbb'),
 			partition p2 values less than ('ccccc'))`)
 	tk.MustGetErrCode("alter table part12 add unique index (a(5))", tmysql.ErrUniqueKeyNeedAllFieldsInPf)
+	sql13 := `create table part13 (a varchar(20), b varchar(10), unique index (a(5),b)) partition by range columns (b) (
+			partition p0 values less than ('aaaaa'),
+			partition p1 values less than ('bbbbb'),
+			partition p2 values less than ('ccccc'))`
+	tk.MustExec(sql13)
 }
 
 func (s *testIntegrationSuite2) TestPartitionDropPrimaryKey(c *C) {

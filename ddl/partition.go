@@ -741,13 +741,11 @@ func checkPartitioningKeysConstraints(sctx sessionctx.Context, s *ast.CreateTabl
 	// Every unique key on the table must use every column in the table's partitioning expression.
 	// See https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations-partitioning-keys-unique-keys.html
 	for _, index := range tblInfo.Indices {
-		if index.Unique {
-			if hasPrefixIndexColumn(index.Columns) || !checkUniqueKeyIncludePartKey(partCols, index.Columns) {
-				if index.Primary {
-					return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY KEY")
-				}
-				return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
+		if index.Unique && !checkUniqueKeyIncludePartKey(partCols, index.Columns) {
+			if index.Primary {
+				return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY KEY")
 			}
+			return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
 		}
 	}
 	// when PKIsHandle, tblInfo.Indices will not contain the primary key.
@@ -761,15 +759,6 @@ func checkPartitioningKeysConstraints(sctx sessionctx.Context, s *ast.CreateTabl
 		}
 	}
 	return nil
-}
-
-func hasPrefixIndexColumn(idxCols []*model.IndexColumn) bool {
-	for _, col := range idxCols {
-		if col.Length > 0 {
-			return true
-		}
-	}
-	return false
 }
 
 func checkPartitionKeysConstraint(pi *model.PartitionInfo, indexColumns []*model.IndexColumn, tblInfo *model.TableInfo, isPK bool) error {
@@ -799,7 +788,7 @@ func checkPartitionKeysConstraint(pi *model.PartitionInfo, indexColumns []*model
 	// Every unique key on the table must use every column in the table's partitioning expression.(This
 	// also includes the table's primary key.)
 	// See https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations-partitioning-keys-unique-keys.html
-	if hasPrefixIndexColumn(indexColumns) || !checkUniqueKeyIncludePartKey(columnInfoSlice(partCols), indexColumns) {
+	if !checkUniqueKeyIncludePartKey(columnInfoSlice(partCols), indexColumns) {
 		if isPK {
 			return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY")
 		}
@@ -868,7 +857,13 @@ type stringSlice interface {
 func checkUniqueKeyIncludePartKey(partCols stringSlice, idxCols []*model.IndexColumn) bool {
 	for i := 0; i < partCols.Len(); i++ {
 		partCol := partCols.At(i)
-		if !findColumnInIndexCols(partCol, idxCols) {
+		idxCol := findColumnInIndexCols(partCol, idxCols)
+		if idxCol == nil {
+			// Partition column is not found in the index columns.
+			return false
+		}
+		if idxCol.Length > 0 {
+			// The partition column is found in the index columns, but the index column is a prefix index
 			return false
 		}
 	}
