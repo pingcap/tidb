@@ -16,7 +16,6 @@ package infoschema_test
 import (
 	"crypto/tls"
 	"fmt"
-	"github.com/pingcap/tidb/util/kvcache"
 	"math"
 	"net"
 	"net/http/httptest"
@@ -44,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/testkit"
