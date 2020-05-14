@@ -85,7 +85,7 @@ func (p *aggTest) genSrcChk() *chunk.Chunk {
 // messUpChunk messes up the chunk for testing memory reference.
 func (p *aggTest) messUpChunk(c *chunk.Chunk) {
 	for i := 0; i < p.numRows; i++ {
-		raw := c.Column(0).GetRaw(i)
+		raw := c.GetRow(i).GetRaw(0)
 		for i := range raw {
 			raw[i] = 255
 		}
@@ -118,7 +118,7 @@ func (p *multiArgsAggTest) genSrcChk() *chunk.Chunk {
 func (p *multiArgsAggTest) messUpChunk(c *chunk.Chunk) {
 	for i := 0; i < p.numRows; i++ {
 		for j := 0; j < len(p.dataGens); j++ {
-			raw := c.Column(j).GetRaw(i)
+			raw := c.GetRow(i).GetRaw(j)
 			for i := range raw {
 				raw[i] = 255
 			}
