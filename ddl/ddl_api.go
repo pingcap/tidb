@@ -2367,10 +2367,10 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 		if option.Tp == ast.ColumnOptionDefaultValue {
 			_, isSeqExpr, err := tryToGetSequenceDefaultValue(option)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return errors.Trace(err)
 			}
 			if isSeqExpr {
-				return nil, errors.Trace(ErrAddColumnWithSequenceAsDefault.GenWithStackByArgs(specNewColumn.Name.Name.O))
+				return errors.Trace(ErrAddColumnWithSequenceAsDefault.GenWithStackByArgs(specNewColumn.Name.Name.O))
 			}
 		}
 	}
