@@ -243,8 +243,7 @@ func (e *countOriginalWithDistinct4String) AppendFinalResult2Chunk(sctx sessionc
 
 func (e *countOriginalWithDistinct4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4CountDistinctString)(pr)
-	_, coll := e.args[0].CharsetAndCollation(sctx)
-	collator := collate.GetCollator(coll)
+	collator := collate.GetCollator(e.args[0].GetType().Collate)
 
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalString(sctx, row)

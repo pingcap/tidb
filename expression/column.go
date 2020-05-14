@@ -203,16 +203,6 @@ type Column struct {
 	collationInfo
 }
 
-// CharsetAndCollation returns the charset and collation of this column.
-func (col *Column) CharsetAndCollation(ctx sessionctx.Context) (string, string) {
-	if col.charset != "" && col.collation != "" {
-		// if these two fields are not empty, its charset and collation are specially set by SetCharsetAndCollation
-		return col.charset, col.collation
-	}
-	col.SetCharsetAndCollation(col.RetType.Charset, col.RetType.Collate)
-	return col.charset, col.collation
-}
-
 // Equal implements Expression interface.
 func (col *Column) Equal(_ sessionctx.Context, expr Expression) bool {
 	if newCol, ok := expr.(*Column); ok {
