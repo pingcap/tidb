@@ -829,7 +829,7 @@ func (e *InspectionResultTableExtractor) Extract(
 
 func (e *InspectionResultTableExtractor) explainInfo(p *PhysicalMemTable) string {
 	if e.SkipInspection {
-		return "skip_inspection: true"
+		return "skip_inspection:true"
 	}
 	s := make([]string, 0, 2)
 	s = append(s, fmt.Sprintf("rules:[%s]", extractStringFromStringSet(e.Rules)))
