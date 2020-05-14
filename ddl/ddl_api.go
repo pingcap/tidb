@@ -2084,6 +2084,18 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			err = d.AddTablePartitions(ctx, ident, spec)
 		case ast.AlterTableCoalescePartitions:
 			err = d.CoalescePartitions(ctx, ident, spec)
+		case ast.AlterTableReorganizePartition:
+			err = errors.Trace(errUnsupportedReorganizePartition)
+		case ast.AlterTableCheckPartitions:
+			err = errors.Trace(errUnsupportedCheckPartition)
+		case ast.AlterTableRebuildPartition:
+			err = errors.Trace(errUnsupportedRebuildPartition)
+		case ast.AlterTableOptimizePartition:
+			err = errors.Trace(errUnsupportedOptimizePartition)
+		case ast.AlterTableRemovePartitioning:
+			err = errors.Trace(errUnsupportedRemovePartition)
+		case ast.AlterTableExchangePartition:
+			err = errors.Trace(errUnsupportedExchangePartition)
 		case ast.AlterTableDropColumn:
 			err = d.DropColumn(ctx, ident, spec)
 		case ast.AlterTableDropIndex:
@@ -3565,6 +3577,9 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if tb.Meta().IsView() || tb.Meta().IsSequence() {
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(schema.Name.O, tb.Meta().Name.O)
+	}
 	genIDs, err := d.genGlobalIDs(1)
 	if err != nil {
 		return errors.Trace(err)
@@ -4260,7 +4275,7 @@ func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if t.Meta().IsView() {
+		if t.Meta().IsView() || t.Meta().IsSequence() {
 			return table.ErrUnsupportedOp.GenWithStackByArgs()
 		}
 		err = checkTableLocked(t.Meta(), tl.Type, sessionInfo)
@@ -4350,7 +4365,7 @@ func (d *ddl) CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) 
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if t.Meta().IsView() {
+		if t.Meta().IsView() || t.Meta().IsSequence() {
 			return table.ErrUnsupportedOp
 		}
 		// Maybe the table t was not locked, but still try to unlock this table.

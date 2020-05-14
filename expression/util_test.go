@@ -48,8 +48,9 @@ func (s *testUtilSuite) checkPanic(f func()) (ret bool) {
 
 func (s *testUtilSuite) TestBaseBuiltin(c *check.C) {
 	ctx := mock.NewContext()
-	bf := newBaseBuiltinFuncWithTp(ctx, nil, types.ETTimestamp)
-	_, _, err := bf.evalInt(chunk.Row{})
+	bf, err := newBaseBuiltinFuncWithTp(ctx, "", nil, types.ETTimestamp)
+	c.Assert(err, check.IsNil)
+	_, _, err = bf.evalInt(chunk.Row{})
 	c.Assert(err, check.NotNil)
 	_, _, err = bf.evalReal(chunk.Row{})
 	c.Assert(err, check.NotNil)
@@ -370,7 +371,7 @@ func (s *testUtilSuite) TestHashGroupKey(c *check.C) {
 			bufs[j] = bufs[j][:0]
 		}
 		var err error
-		err = VecEval(ctx, colExpr, input, colBuf)
+		err = EvalExpr(ctx, colExpr, input, colBuf)
 		if err != nil {
 			c.Fatal(err)
 		}

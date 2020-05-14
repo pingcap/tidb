@@ -229,6 +229,18 @@
         "Best": "IndexMergeReader(PartialPlans->[Index(t.c_d_e)[[-inf,1)], Index(t.f_g)[(2,+inf]]], TablePlan->Table(t))",
         "HasWarn": false,
         "Hints": "use_index_merge(@`sel_1` `t` `c_d_e`, `f_g`)"
+      },
+      {
+        "SQL": "select /*+ USE_INDEX_MERGE(db2.t) */ * from t where c < 1 or f > 2",
+        "Best": "TableReader(Table(t)->Sel([or(lt(test.t.c, 1), gt(test.t.f, 2))]))",
+        "HasWarn": true,
+        "Hints": "use_index(@`sel_1` `test`.`t` )"
+      },
+      {
+        "SQL": "select /*+ USE_INDEX_MERGE(db2.t, c_d_e, f_g) */ * from t where c < 1 or f > 2",
+        "Best": "TableReader(Table(t)->Sel([or(lt(test.t.c, 1), gt(test.t.f, 2))]))",
+        "HasWarn": true,
+        "Hints": "use_index(@`sel_1` `test`.`t` )"
       }
     ]
   },
@@ -1737,6 +1749,65 @@
         ],
         "Result": [
           "1"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestGroupConcatOrderby",
+    "Cases": [
+      {
+        "SQL": "select /*+ agg_to_cop */ group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;",
+        "Plan": [
+          "HashAgg_5 1.00 root  funcs:group_concat(Column#6 order by Column#7 desc separator \"++\")->Column#4, funcs:group_concat(Column#8 order by Column#9 desc, Column#10 asc separator \"--\")->Column#5",
+          "└─Projection_18 10000.00 root  cast(test.test.name, var_string(20))->Column#6, test.test.name, cast(test.test.id, var_string(20))->Column#8, test.test.name, test.test.id",
+          "  └─TableReader_11 10000.00 root  data:TableFullScan_10",
+          "    └─TableFullScan_10 10000.00 cop[tikv] table:test keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "500++200++30++20++20++10 3--3--1--1--2--1"
+        ]
+      },
+      {
+        "SQL": "select /*+ agg_to_cop */ group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from ptest;",
+        "Plan": [
+          "HashAgg_10 1.00 root  funcs:group_concat(Column#6 order by Column#7 desc separator \"++\")->Column#4, funcs:group_concat(Column#8 order by Column#9 desc, Column#10 asc separator \"--\")->Column#5",
+          "└─Projection_23 20000.00 root  cast(test.ptest.name, var_string(20))->Column#6, test.ptest.name, cast(test.ptest.id, var_string(20))->Column#8, test.ptest.name, test.ptest.id",
+          "  └─Union_13 20000.00 root  ",
+          "    ├─TableReader_15 10000.00 root  data:TableFullScan_14",
+          "    │ └─TableFullScan_14 10000.00 cop[tikv] table:ptest, partition:p0 keep order:false, stats:pseudo",
+          "    └─TableReader_17 10000.00 root  data:TableFullScan_16",
+          "      └─TableFullScan_16 10000.00 cop[tikv] table:ptest, partition:p1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "500++200++30++20++20++10 3--3--1--1--2--1"
+        ]
+      },
+      {
+        "SQL": "select /*+ agg_to_cop */ group_concat(distinct name order by name desc) from test;",
+        "Plan": [
+          "HashAgg_5 1.00 root  funcs:group_concat(distinct Column#5 order by Column#6 desc separator \",\")->Column#4",
+          "└─Projection_9 10000.00 root  cast(test.test.name, var_string(20))->Column#5, test.test.name",
+          "  └─TableReader_8 10000.00 root  data:TableFullScan_7",
+          "    └─TableFullScan_7 10000.00 cop[tikv] table:test keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "500,200,30,20,10"
+        ]
+      },
+      {
+        "SQL": "select /*+ agg_to_cop */ group_concat(distinct name order by name desc) from ptest;",
+        "Plan": [
+          "StreamAgg_9 1.00 root  funcs:group_concat(distinct Column#5 order by Column#6 desc separator \",\")->Column#4",
+          "└─Projection_20 20000.00 root  cast(test.ptest.name, var_string(20))->Column#5, test.ptest.name",
+          "  └─Union_15 20000.00 root  ",
+          "    ├─TableReader_17 10000.00 root  data:TableFullScan_16",
+          "    │ └─TableFullScan_16 10000.00 cop[tikv] table:ptest, partition:p0 keep order:false, stats:pseudo",
+          "    └─TableReader_19 10000.00 root  data:TableFullScan_18",
+          "      └─TableFullScan_18 10000.00 cop[tikv] table:ptest, partition:p1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "500,200,30,20,10"
         ]
       }
     ]
