@@ -79,7 +79,7 @@
       {
         "SQL": "select b from t order by b",
         "Plan": [
-          "Sort_11 10000.00 root  test.t.b:asc",
+          "Sort_11 10000.00 root  test.t.b",
           "└─TableReader_9 10000.00 root  data:TableFullScan_10",
           "  └─TableFullScan_10 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
@@ -95,7 +95,7 @@
         "Plan": [
           "Projection_7 10000.00 root  test.t.b",
           "└─Projection_12 10000.00 root  test.t.b, test.t.a",
-          "  └─Sort_8 10000.00 root  Column#4:asc",
+          "  └─Sort_8 10000.00 root  Column#4",
           "    └─Projection_13 10000.00 root  test.t.b, test.t.a, plus(test.t.a, test.t.b)->Column#4",
           "      └─Projection_9 10000.00 root  test.t.b, test.t.a",
           "        └─TableReader_10 10000.00 root  data:TableFullScan_11",
@@ -113,7 +113,7 @@
         "Plan": [
           "Projection_7 10000.00 root  test.t.b",
           "└─Projection_12 10000.00 root  test.t.b, test.t.a",
-          "  └─Sort_8 10000.00 root  test.t.b:asc, Column#4:asc, test.t.a:asc",
+          "  └─Sort_8 10000.00 root  test.t.b, Column#4, test.t.a",
           "    └─Projection_13 10000.00 root  test.t.b, test.t.a, plus(test.t.a, test.t.b)->Column#4",
           "      └─Projection_9 10000.00 root  test.t.b, test.t.a",
           "        └─TableReader_10 10000.00 root  data:TableFullScan_11",
@@ -159,7 +159,7 @@
         "SQL": "select b, avg(a) from t group by b order by b",
         "Plan": [
           "Projection_10 8000.00 root  test.t.b, Column#3",
-          "└─Sort_19 8000.00 root  test.t.b:asc",
+          "└─Sort_19 8000.00 root  test.t.b",
           "  └─HashAgg_12 8000.00 root  group by:Column#9, funcs:avg(Column#7)->Column#3, funcs:firstrow(Column#8)->test.t.b",
           "    └─Projection_15 10000.00 root  cast(test.t.a, decimal(65,4) BINARY)->Column#7, test.t.b, test.t.b",
           "      └─TableReader_13 10000.00 root  data:TableFullScan_14",
@@ -176,7 +176,7 @@
         "SQL": "select b, sum(a) from t group by b order by b",
         "Plan": [
           "Projection_10 8000.00 root  test.t.b, Column#3",
-          "└─Sort_19 8000.00 root  test.t.b:asc",
+          "└─Sort_19 8000.00 root  test.t.b",
           "  └─HashAgg_16 8000.00 root  group by:test.t.b, funcs:sum(Column#4)->Column#3, funcs:firstrow(test.t.b)->test.t.b",
           "    └─TableReader_17 8000.00 root  data:HashAgg_18",
           "      └─HashAgg_18 8000.00 cop[tikv]  group by:test.t.b, funcs:sum(test.t.a)->Column#4",
@@ -194,7 +194,7 @@
         "Plan": [
           "Projection_12 6400.00 root  test.t.b, Column#3",
           "└─Projection_14 6400.00 root  test.t.b, Column#3, Column#4",
-          "  └─Sort_27 6400.00 root  test.t.b:asc",
+          "  └─Sort_27 6400.00 root  test.t.b",
           "    └─Selection_26 6400.00 root  gt(Column#4, 1)",
           "      └─HashAgg_17 8000.00 root  group by:Column#14, funcs:avg(Column#11)->Column#3, funcs:sum(Column#12)->Column#4, funcs:firstrow(Column#13)->test.t.b",
           "        └─Projection_20 10000.00 root  cast(test.t.a, decimal(65,4) BINARY)->Column#11, cast(test.t.a, decimal(65,0) BINARY)->Column#12, test.t.b, test.t.b",
@@ -238,7 +238,7 @@
         "SQL": "select b, sum(a) from t group by b having b > 1 order by b",
         "Plan": [
           "Projection_14 6400.00 root  test.t.b, Column#3",
-          "└─Sort_24 6400.00 root  test.t.b:asc",
+          "└─Sort_24 6400.00 root  test.t.b",
           "  └─HashAgg_21 6400.00 root  group by:test.t.b, funcs:sum(Column#4)->Column#3, funcs:firstrow(test.t.b)->test.t.b",
           "    └─TableReader_22 6400.00 root  data:HashAgg_23",
           "      └─HashAgg_23 6400.00 cop[tikv]  group by:test.t.b, funcs:sum(test.t.a)->Column#4",
@@ -256,7 +256,7 @@
         "SQL": "select c, sum(a) from (select a+b as c, a from t) t1 group by c having c > 1 order by c",
         "Plan": [
           "Projection_18 6400.00 root  Column#3, Column#4",
-          "└─Sort_30 6400.00 root  Column#3:asc",
+          "└─Sort_30 6400.00 root  Column#3",
           "  └─HashAgg_26 6400.00 root  group by:Column#7, funcs:sum(Column#8)->Column#4, funcs:firstrow(Column#7)->Column#3",
           "    └─TableReader_27 6400.00 root  data:HashAgg_28",
           "      └─HashAgg_28 6400.00 cop[tikv]  group by:plus(test.t.a, test.t.b), funcs:sum(test.t.a)->Column#8",
@@ -440,7 +440,7 @@
         "Plan": [
           "Projection_13 8000.00 root  Column#3, Column#4, Column#5, test.t.b, Column#6, Column#7, Column#8, Column#9, Column#10",
           "└─Projection_15 8000.00 root  if(isnull(test.t.b), 0, 1)->Column#3, cast(test.t.b, decimal(65,0) BINARY)->Column#4, cast(test.t.b, decimal(65,4) BINARY)->Column#5, test.t.b, cast(test.t.b, int(11))->Column#6, cast(test.t.b, int(11))->Column#7, ifnull(cast(test.t.b, bigint(21) UNSIGNED BINARY), 18446744073709551615)->Column#8, ifnull(cast(test.t.b, bigint(21) UNSIGNED BINARY), 0)->Column#9, ifnull(cast(test.t.b, bigint(21) UNSIGNED BINARY), 0)->Column#10, cast(test.t.b, decimal(65,0) BINARY)->Column#4, if(isnull(test.t.b), 0, 1)->Column#3",
-          "  └─Sort_22 8000.00 root  test.t.b:asc",
+          "  └─Sort_22 8000.00 root  test.t.b",
           "    └─TableReader_19 8000.00 root  data:Selection_20",
           "      └─Selection_20 8000.00 cop[tikv]  ge(cast(test.t.b), 0), ge(if(isnull(test.t.b), 0, 1), 0)",
           "        └─TableFullScan_21 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
@@ -687,9 +687,9 @@
       {
         "SQL": "select b from t order by b limit 3",
         "Plan": [
-          "TopN_9 3.00 root  test.t.b:asc, offset:0, count:3",
+          "TopN_9 3.00 root  test.t.b, offset:0, count:3",
           "└─TableReader_11 3.00 root  data:TopN_12",
-          "  └─TopN_12 3.00 cop[tikv]  test.t.b:asc, offset:0, count:3",
+          "  └─TopN_12 3.00 cop[tikv]  test.t.b, offset:0, count:3",
           "    └─TableFullScan_14 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Result": [
@@ -713,7 +713,7 @@
       {
         "SQL": "select * from ((select a as aa from t t1) union all (select b as aa from t t2)) as t3 order by aa",
         "Plan": [
-          "Sort_23 20000.00 root  Column#5:asc",
+          "Sort_23 20000.00 root  Column#5",
           "└─Union_16 20000.00 root  ",
           "  ├─Projection_17 10000.00 root  test.t.a",
           "  │ └─TableReader_18 10000.00 root  data:TableFullScan_19",
@@ -736,8 +736,8 @@
       {
         "SQL": "select a, b, lag(a,1) over (order by b) from t order by b",
         "Plan": [
-          "Window_10 10000.00 root  lag(test.t.a, 1)->Column#4 over(order by test.t.b asc)",
-          "└─Sort_15 10000.00 root  test.t.b:asc",
+          "Window_10 10000.00 root  lag(test.t.a, 1)->Column#4 over(order by test.t.b)",
+          "└─Sort_15 10000.00 root  test.t.b",
           "  └─TableReader_13 10000.00 root  data:TableFullScan_14",
           "    └─TableFullScan_14 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
@@ -752,10 +752,10 @@
         "SQL": "select * from (select a+1 as c, a+b as d from t) as t1 order by c+d limit 10",
         "Plan": [
           "Projection_22 10.00 root  plus(test.t.a, 1)->Column#3, plus(test.t.a, test.t.b)->Column#4",
-          "└─TopN_23 10.00 root  Column#5:asc, offset:0, count:10",
+          "└─TopN_23 10.00 root  Column#5, offset:0, count:10",
           "  └─Projection_25 10.00 root  test.t.a, test.t.b, plus(plus(test.t.a, 1), plus(test.t.a, test.t.b))->Column#5",
           "    └─TableReader_26 10.00 root  data:TopN_27",
-          "      └─TopN_27 10.00 cop[tikv]  plus(plus(test.t.a, 1), plus(test.t.a, test.t.b)):asc, offset:0, count:10",
+          "      └─TopN_27 10.00 cop[tikv]  plus(plus(test.t.a, 1), plus(test.t.a, test.t.b)), offset:0, count:10",
           "        └─TableFullScan_28 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Result": [
@@ -1083,9 +1083,9 @@
       {
         "SQL": "select b from (select b from t order by b limit 10 offset 10) as t1 order by b limit 10 offset 5",
         "Plan": [
-          "TopN_14 5.00 root  test.t.b:asc, offset:15, count:5",
+          "TopN_14 5.00 root  test.t.b, offset:15, count:5",
           "└─TableReader_16 20.00 root  data:TopN_17",
-          "  └─TopN_17 20.00 cop[tikv]  test.t.b:asc, offset:0, count:20",
+          "  └─TopN_17 20.00 cop[tikv]  test.t.b, offset:0, count:20",
           "    └─TableFullScan_19 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Result": null
@@ -1093,9 +1093,9 @@
       {
         "SQL": "select b from (select b from t order by b limit 10 offset 2) as t1 order by b limit 3 offset 5",
         "Plan": [
-          "TopN_14 3.00 root  test.t.b:asc, offset:7, count:3",
+          "TopN_14 3.00 root  test.t.b, offset:7, count:3",
           "└─TableReader_16 10.00 root  data:TopN_17",
-          "  └─TopN_17 10.00 cop[tikv]  test.t.b:asc, offset:0, count:10",
+          "  └─TopN_17 10.00 cop[tikv]  test.t.b, offset:0, count:10",
           "    └─TableFullScan_19 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Result": null
@@ -1111,9 +1111,9 @@
         "SQL": "select a from (select a from t where b > 2 order by a, b limit 3 offset 1) as t1 order by a limit 2 offset 1",
         "Plan": [
           "Projection_22 2.00 root  test.t.a",
-          "└─TopN_23 2.00 root  test.t.a:asc, test.t.b:asc, offset:2, count:2",
+          "└─TopN_23 2.00 root  test.t.a, test.t.b, offset:2, count:2",
           "  └─TableReader_25 4.00 root  data:TopN_26",
-          "    └─TopN_26 4.00 cop[tikv]  test.t.a:asc, test.t.b:asc, offset:0, count:4",
+          "    └─TopN_26 4.00 cop[tikv]  test.t.a, test.t.b, offset:0, count:4",
           "      └─Selection_28 8000.00 cop[tikv]  gt(test.t.b, 2)",
           "        └─TableFullScan_29 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
@@ -1126,7 +1126,7 @@
         "SQL": "select * from (select * from t order by a limit 3) as t1 order by a, b limit 5",
         "Plan": [
           "Limit_14 3.00 root  offset:0, count:5",
-          "└─Sort_26 3.00 root  test.t.a:asc, test.t.b:asc",
+          "└─Sort_26 3.00 root  test.t.a, test.t.b",
           "  └─Limit_16 3.00 root  offset:0, count:3",
           "    └─TableReader_22 3.00 root  data:Limit_23",
           "      └─Limit_23 3.00 cop[tikv]  offset:0, count:3",
