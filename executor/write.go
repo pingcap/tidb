@@ -73,7 +73,7 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 	for i, col := range t.Cols() {
 		if modified[i] {
 			// Cast changed fields with respective columns.
-			v, err := table.CastValue(sctx, newData[i], col.ToInfo(), false)
+			v, err := table.CastValue(sctx, newData[i], col.ToInfo(), false, false)
 			if err != nil {
 				return false, err
 			}
