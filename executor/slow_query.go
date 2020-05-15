@@ -610,7 +610,8 @@ func (e *slowQueryRetriever) getAllFiles(sctx sessionctx.Context, logFilePath st
 		if err != nil {
 			return handleErr(err)
 		}
-		if types.NewTime(types.FromGoTime(fileStartTime), mysql.TypeDatetime, types.MaxFsp).Compare(e.checker.endTime) > 0 {
+		start := types.NewTime(types.FromGoTime(fileStartTime), mysql.TypeDatetime, types.MaxFsp)
+		if start.Compare(e.checker.endTime) > 0 {
 			return nil
 		}
 
@@ -619,10 +620,10 @@ func (e *slowQueryRetriever) getAllFiles(sctx sessionctx.Context, logFilePath st
 		if err != nil {
 			return handleErr(err)
 		}
-		if types.NewTime(types.FromGoTime(fileEndTime), mysql.TypeDatetime, types.MaxFsp).Compare(e.checker.startTime) < 0 {
+		end := types.NewTime(types.FromGoTime(fileEndTime), mysql.TypeDatetime, types.MaxFsp)
+		if end.Compare(e.checker.startTime) < 0 {
 			return nil
 		}
-
 		_, err = file.Seek(0, io.SeekStart)
 		if err != nil {
 			return handleErr(err)
