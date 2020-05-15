@@ -8,7 +8,7 @@ require (
 	github.com/danjacques/gofslock v0.0.0-20191023191349-0a45f885bc37
 	github.com/dgraph-io/ristretto v0.0.1
 	github.com/dgryski/go-farm v0.0.0-20190423205320-6a90982ecee2
-	github.com/go-sql-driver/mysql v1.4.1
+	github.com/go-sql-driver/mysql v1.5.0
 	github.com/gogo/protobuf v1.3.1
 	github.com/golang/protobuf v1.3.4
 	github.com/golang/snappy v0.0.1
@@ -62,3 +62,5 @@ require (
 )
 
 go 1.13
+
+replace github.com/pingcap/parser => github.com/crazycs520/parser v0.0.0-20200515031726-5d824298d85c
