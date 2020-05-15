@@ -1498,7 +1498,7 @@ func (e *ShowExec) fetchShowTableRegions() error {
 		if indexInfo == nil {
 			return plannercore.ErrKeyDoesNotExist.GenWithStackByArgs(e.IndexName, tb.Meta().Name)
 		}
-		regions, err = getTableIndexRegions(physicalIDs, indexInfo, tikvStore, splitStore)
+		regions, err = getTableIndexRegions(indexInfo, physicalIDs, tikvStore, splitStore)
 	} else {
 		regions, err = getTableRegions(tb, physicalIDs, tikvStore, splitStore)
 	}
@@ -1523,7 +1523,7 @@ func getTableRegions(tb table.Table, physicalIDs []int64, tikvStore tikv.Storage
 	return regions, nil
 }
 
-func getTableIndexRegions(physicalIDs []int64, indexInfo *model.IndexInfo, tikvStore tikv.Storage, splitStore kv.SplittableStore) ([]regionMeta, error) {
+func getTableIndexRegions(indexInfo *model.IndexInfo, physicalIDs []int64, tikvStore tikv.Storage, splitStore kv.SplittableStore) ([]regionMeta, error) {
 	regions := make([]regionMeta, 0, len(physicalIDs))
 	uniqueRegionMap := make(map[uint64]struct{})
 	for _, id := range physicalIDs {

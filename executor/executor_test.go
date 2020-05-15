@@ -4511,6 +4511,10 @@ func (s *testSplitTable) TestShowTableRegion(c *C) {
 		c.Assert(rows[i*8+11][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
 	}
 
+	// Test show table partition region on unknown-partition.
+	err := tk.QueryToErr("show table t partition (p_unknown) index idx regions")
+	c.Assert(terror.ErrorEqual(err, table.ErrUnknownPartition), IsTrue)
+
 	// Test show table partition index.
 	for i := 0; i < 4; i++ {
 		re = tk.MustQuery(fmt.Sprintf("show table t partition (p%v) index idx regions", i))
@@ -4554,7 +4558,7 @@ func (s *testSplitTable) TestShowTableRegion(c *C) {
 	c.Assert(rows[3][1], Matches, fmt.Sprintf("t_%d_i_2_.*", tbl.Meta().ID))
 
 	// Test show table partition region on non-partition table.
-	err := tk.QueryToErr("show table t partition (p3,p4) index idx regions")
+	err = tk.QueryToErr("show table t partition (p3,p4) index idx regions")
 	c.Assert(terror.ErrorEqual(err, plannercore.ErrPartitionClauseOnNonpartitioned), IsTrue)
 }
 
