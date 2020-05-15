@@ -1134,7 +1134,7 @@ func getPrimaryKey(tblInfo *model.TableInfo) *model.IndexInfo {
 			return key
 		}
 		// The case index without any columns should never happen, but still do a check here
-		if key.Columns == nil || len(key.Columns) == 0 {
+		if len(key.Columns) == 0 {
 			continue
 		}
 		// find the first unique key with NOT NULL columns
