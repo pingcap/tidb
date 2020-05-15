@@ -126,12 +126,14 @@ type Allocator interface {
 	GetType() AllocatorType
 }
 
+// IDIterator represent a list of values allocated by Alloc.alloc().
 type IDIterator struct {
 	restCount uint64
 	current   int64
 	increment int64
 }
 
+// Next returns the next allocated value.
 func (iter *IDIterator) Next() (bool, int64) {
 	if iter.restCount == 0 {
 		return false, 0
@@ -142,14 +144,17 @@ func (iter *IDIterator) Next() (bool, int64) {
 	return true, ret
 }
 
+// First returns the first allocated value. Note: if there is no values, 0 is returned.
 func (iter *IDIterator) First() int64 {
 	return iter.current
 }
 
+// Last returns the last allocated value. Note: if there is no values, 0 is returned.
 func (iter *IDIterator) Last() int64 {
 	return iter.current + int64(iter.restCount-1)*iter.increment
 }
 
+// Skip skip one value in the IDIterator, and return the IDIterator itself(for chain call).
 func (iter *IDIterator) Skip() *IDIterator {
 	if iter.restCount == 0 {
 		return iter
@@ -159,6 +164,7 @@ func (iter *IDIterator) Skip() *IDIterator {
 	return iter
 }
 
+// Count returns the remaining number of values in IDIterator.
 func (iter *IDIterator) Count() uint64 {
 	return iter.restCount
 }
@@ -506,17 +512,7 @@ func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.T
 // TODO: update comments.
 // Alloc implements autoid.Allocator Alloc interface.
 // For autoIncrement allocator, the increment and offset should always be positive in [1, 65535].
-// Attention:
-// When increment and offset is not the default value(1), the return range (min, max] need to
-// calculate the correct start position rather than simply the add 1 to min. Then you can derive
-// the successive autoID by adding increment * cnt to firstID for (n-1) times.
-//
-// Example:
-// (6, 13] is returned, increment = 4, offset = 1, n = 2.
-// 6 is the last allocated value for other autoID or handle, maybe with different increment and step,
-// but actually we don't care about it, all we need is to calculate the new autoID corresponding to the
-// increment and offset at this time now. To simplify the rule is like (ID - offset) % increment = 0,
-// so the first autoID should be 9, then add increment to it to get 13.
+// The values(ID) returned by the IDIterator satisfy the equation `(ID - offset) % increment = 0`.
 func (alloc *allocator) Alloc(tableID int64, n uint64, increment, offset int64) (IDIterator, error) {
 	if tableID == 0 {
 		return IDIterator{}, errInvalidTableID.GenWithStackByArgs("Invalid tableID")

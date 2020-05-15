@@ -976,7 +976,7 @@ func (s *testSerialSuite) TestAutoRandomIncBitsIncrementAndOffset(c *C) {
 		tk.MustExec("insert into t values ()")
 	}
 	assertIncBitsValues := func(values ...int) {
-		mask := strings.Repeat("1", 64 - 1 - 6)
+		mask := strings.Repeat("1", 64-1-6)
 		sql := fmt.Sprintf(`select a & b'%s' from t order by a & b'%s' asc`, mask, mask)
 		vs := make([]string, len(values))
 		for i, value := range values {
@@ -988,10 +988,10 @@ func (s *testSerialSuite) TestAutoRandomIncBitsIncrementAndOffset(c *C) {
 	const truncate, recreate = true, false
 	expect := func(vs ...int) []int { return vs }
 	testCase := []struct {
-		setupAction bool // truncate or recreate
-		increment int    // @@auto_increment_increment
-		offset int       // @@auto_increment_offset
-		results []int    // the implicit allocated auto_random incremental-bit part of values
+		setupAction bool  // truncate or recreate
+		increment   int   // @@auto_increment_increment
+		offset      int   // @@auto_increment_offset
+		results     []int // the implicit allocated auto_random incremental-bit part of values
 	}{
 		{recreate, 5, 10, expect(10, 15, 20)},
 		{recreate, 2, 10, expect(10, 12, 14)},
@@ -1001,8 +1001,10 @@ func (s *testSerialSuite) TestAutoRandomIncBitsIncrementAndOffset(c *C) {
 	}
 	for _, tc := range testCase {
 		switch tc.setupAction {
-		case recreate: recreateTable()
-		case truncate: truncateTable()
+		case recreate:
+			recreateTable()
+		case truncate:
+			truncateTable()
 		}
 		tk.Se.GetSessionVars().AutoIncrementIncrement = tc.increment
 		tk.Se.GetSessionVars().AutoIncrementOffset = tc.offset
