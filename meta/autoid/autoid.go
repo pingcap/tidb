@@ -503,6 +503,7 @@ func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.T
 	return NewAllocators(allocs...)
 }
 
+// TODO: update comments.
 // Alloc implements autoid.Allocator Alloc interface.
 // For autoIncrement allocator, the increment and offset should always be positive in [1, 65535].
 // Attention:
@@ -523,7 +524,8 @@ func (alloc *allocator) Alloc(tableID int64, n uint64, increment, offset int64) 
 	if n == 0 {
 		return IDIterator{}, nil
 	}
-	if alloc.allocType == AutoIncrementType || alloc.allocType == RowIDAllocType {
+	switch alloc.allocType {
+	case AutoIncrementType, RowIDAllocType, AutoRandomType:
 		if !validIncrementAndOffset(increment, offset) {
 			return IDIterator{}, errInvalidIncrementAndOffset.GenWithStackByArgs(increment, offset)
 		}
