@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/printer"
 )
 
 // ScopeFlag is for system variable whether can be changed in global/session dynamically or not.
@@ -385,7 +386,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "binlog_format", "STATEMENT"},
 	{ScopeGlobal | ScopeSession, "optimizer_trace", "enabled=off,one_line=off"},
 	{ScopeGlobal | ScopeSession, "read_rnd_buffer_size", "262144"},
-	{ScopeNone, "version_comment", "TiDB Server (Apache License 2.0), MySQL 5.7 compatible"},
+	{ScopeNone, "version_comment", "TiDB Server (Apache License 2.0) " + printer.TiDBEdition + " Edition, MySQL 5.7 compatible"},
 	{ScopeGlobal | ScopeSession, NetWriteTimeout, "60"},
 	{ScopeGlobal, InnodbBufferPoolLoadAbort, "0"},
 	{ScopeGlobal | ScopeSession, TxnIsolation, "REPEATABLE-READ"},
