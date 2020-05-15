@@ -211,7 +211,6 @@ func (*testSuite) TestT(c *C) {
 	iter, err = alloc.Alloc(5, 2, increment, offset)
 	c.Assert(err, IsNil)
 	c.Assert(iter.Count() == 2, IsTrue)
-	c.Assert(iter.Last()-100, Equals, autoid.CalcNeededBatchSize(100, 2, increment, offset, false))
 	c.Assert(iter.First(), Equals, int64(102))
 	c.Assert(iter.Skip().First(), Equals, int64(104))
 
@@ -219,7 +218,6 @@ func (*testSuite) TestT(c *C) {
 	iter, err = alloc.Alloc(5, 3, increment, offset)
 	c.Assert(err, IsNil)
 	c.Assert(iter.Count() == 3, IsTrue)
-	c.Assert(iter.Last()-104, Equals, autoid.CalcNeededBatchSize(104, 3, increment, offset, false))
 	c.Assert(iter.First(), Equals, int64(105))
 	c.Assert(iter.Last(), Equals, int64(115))
 	firstID := autoid.SeekToFirstAutoIDSigned(104, increment, offset)
@@ -229,7 +227,6 @@ func (*testSuite) TestT(c *C) {
 	iter, err = alloc.Alloc(5, 2, increment, offset)
 	c.Assert(err, IsNil)
 	c.Assert(iter.Count() == 2, IsTrue)
-	c.Assert(iter.Last()-115, Equals, autoid.CalcNeededBatchSize(115, 2, increment, offset, false))
 	c.Assert(iter.First(), Equals, int64(130))
 	c.Assert(iter.Last(), Equals, int64(145))
 	firstID = autoid.SeekToFirstAutoIDSigned(115, increment, offset)
@@ -240,7 +237,6 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(iter.Count() == 2, IsTrue)
 	// offset-1 > base will cause alloc rebase to offset-1.
-	c.Assert(iter.Last()-(offset-1), Equals, autoid.CalcNeededBatchSize(offset-1, 2, increment, offset, false))
 	c.Assert(iter.First(), Equals, int64(200))
 	c.Assert(iter.Last(), Equals, int64(215))
 	firstID = autoid.SeekToFirstAutoIDSigned(offset-1, increment, offset)
@@ -399,7 +395,6 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 	c.Assert(uint64(iter.First()), Equals, n)
 	c.Assert(uint64(iter.Last()), Equals, n+2)
 
-	c.Assert(iter.Last()-int64(uint64(offset)-1), Equals, autoid.CalcNeededBatchSize(int64(uint64(offset)-1), 2, increment, offset, true))
 	firstID := autoid.SeekToFirstAutoIDUnSigned(uint64(iter.First()-1), uint64(increment), uint64(offset))
 	c.Assert(firstID, Equals, uint64(math.MaxUint64-100))
 }
