@@ -489,6 +489,68 @@ func (s *testTableSuite) TestSlowQuery(c *C) {
 select * from t_slim;`))
 	c.Assert(f.Sync(), IsNil)
 	c.Assert(err, IsNil)
+<<<<<<< HEAD
+=======
+}
+
+func (s *testTableSuite) TestTableRowIDShardingInfo(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("DROP DATABASE IF EXISTS `sharding_info_test_db`")
+	tk.MustExec("CREATE DATABASE `sharding_info_test_db`")
+
+	assertShardingInfo := func(tableName string, expectInfo interface{}) {
+		querySQL := fmt.Sprintf("select tidb_row_id_sharding_info from information_schema.tables where table_schema = 'sharding_info_test_db' and table_name = '%s'", tableName)
+		info := tk.MustQuery(querySQL).Rows()[0][0]
+		if expectInfo == nil {
+			c.Assert(info, Equals, "<nil>")
+		} else {
+			c.Assert(info, Equals, expectInfo)
+		}
+	}
+	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t1` (a int)")
+	assertShardingInfo("t1", "NOT_SHARDED")
+
+	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t2` (a int key)")
+	assertShardingInfo("t2", "NOT_SHARDED(PK_IS_HANDLE)")
+
+	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t3` (a int) SHARD_ROW_ID_BITS=4")
+	assertShardingInfo("t3", "SHARD_BITS=4")
+
+	tk.MustExec("CREATE VIEW `sharding_info_test_db`.`tv` AS select 1")
+	assertShardingInfo("tv", nil)
+
+	testFunc := func(dbName string, expectInfo interface{}) {
+		dbInfo := model.DBInfo{Name: model.NewCIStr(dbName)}
+		tableInfo := model.TableInfo{}
+
+		info := infoschema.GetShardingInfo(&dbInfo, &tableInfo)
+		c.Assert(info, Equals, expectInfo)
+	}
+
+	testFunc("information_schema", nil)
+	testFunc("mysql", nil)
+	testFunc("performance_schema", nil)
+	testFunc("uucc", "NOT_SHARDED")
+
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+
+	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t4` (a bigint key auto_random)")
+	assertShardingInfo("t4", "PK_AUTO_RANDOM_BITS=5")
+
+	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t5` (a bigint key auto_random(1))")
+	assertShardingInfo("t5", "PK_AUTO_RANDOM_BITS=1")
+
+	tk.MustExec("DROP DATABASE `sharding_info_test_db`")
+}
+
+func (s *testTableSuite) TestSlowQuery(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// Prepare slow log file.
+	slowLogFileName := "tidb_slow.log"
+	prepareSlowLogfile(c, slowLogFileName)
+	defer os.Remove(slowLogFileName)
+>>>>>>> 0de6925... ddl: Add some limit for `auto_random` (#17119)
 
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", slowLogFileName))
 	tk.MustExec("set time_zone = '+08:00';")

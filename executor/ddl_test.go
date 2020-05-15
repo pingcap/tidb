@@ -871,9 +871,10 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 	}
 
 	// Test explicit insert.
-	tk.MustExec("create table t (a tinyint primary key auto_random(2), b int)")
-	for i := 1; i <= 100; i++ {
-		tk.MustExec("insert into t values (?, ?)", i, i)
+	autoRandBitsUpperBound := 2<<47 - 1
+	tk.MustExec("create table t (a bigint primary key auto_random(15), b int)")
+	for i := -10; i < 10; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values(%d, %d)", i+autoRandBitsUpperBound, i))
 	}
 	_, err = tk.Exec("insert into t (b) values (0)")
 	c.Assert(err, NotNil)
@@ -881,6 +882,7 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 	tk.MustExec("drop table t")
 
 	// Test overflow.
+<<<<<<< HEAD
 	tk.MustExec("create table t (a tinyint primary key auto_random(2), b int)")
 	fieldLength := uint64(mysql.DefaultLengthOfMysqlTypes[mysql.TypeTiny] * 8)
 	signBit := uint64(1)
@@ -895,14 +897,20 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 	// Test rebase.
 	tk.MustExec("create table t (a tinyint primary key auto_random(2), b int)")
 	tk.MustExec("insert into t values (31, 2)")
+=======
+	tk.MustExec("create table t (a bigint primary key auto_random(15), b int)")
+	// Here we cannot fill the all values for a `bigint` column,
+	// so firstly we rebase auto_rand to the position before overflow.
+	tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", autoRandBitsUpperBound, 1))
+>>>>>>> 0de6925... ddl: Add some limit for `auto_random` (#17119)
 	_, err = tk.Exec("insert into t (b) values (0)")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, autoid.ErrAutoRandReadFailed.GenWithStackByArgs().Error())
 	tk.MustExec("drop table t")
 
-	tk.MustExec("create table t (a tinyint primary key auto_random(2), b int)")
+	tk.MustExec("create table t (a bigint primary key auto_random(15), b int)")
 	tk.MustExec("insert into t values (1, 2)")
-	tk.MustExec("update t set a = 31 where a = 1")
+	tk.MustExec(fmt.Sprintf("update t set a = %d where a = 1", autoRandBitsUpperBound))
 	_, err = tk.Exec("insert into t (b) values (0)")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, autoid.ErrAutoRandReadFailed.GenWithStackByArgs().Error())
