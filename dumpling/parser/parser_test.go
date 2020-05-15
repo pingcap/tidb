@@ -995,8 +995,8 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{"SET @@global.autocommit = default", true, "SET @@GLOBAL.`autocommit`=DEFAULT"},
 		{"SET @@session.autocommit = default", true, "SET @@SESSION.`autocommit`=DEFAULT"},
 		// SET CHARACTER SET
-		{"SET CHARACTER SET utf8mb4;", true, "SET NAMES 'utf8mb4'"},
-		{"SET CHARACTER SET 'utf8mb4';", true, "SET NAMES 'utf8mb4'"},
+		{"SET CHARACTER SET utf8mb4;", true, "SET CHARSET 'utf8mb4'"},
+		{"SET CHARACTER SET 'utf8mb4';", true, "SET CHARSET 'utf8mb4'"},
 		// set password
 		{"SET PASSWORD = 'password';", true, "SET PASSWORD='password'"},
 		{"SET PASSWORD FOR 'root'@'localhost' = 'password';", true, "SET PASSWORD FOR `root`@`localhost`='password'"},
@@ -1021,9 +1021,9 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 
 		// for set character set | name default
 		{"set names default", true, "SET NAMES DEFAULT"},
-		{"set character set default", true, "SET NAMES DEFAULT"},
-		{"set charset default", true, "SET NAMES DEFAULT"},
-		{"set char set default", true, "SET NAMES DEFAULT"},
+		{"set character set default", true, "SET CHARSET DEFAULT"},
+		{"set charset default", true, "SET CHARSET DEFAULT"},
+		{"set char set default", true, "SET CHARSET DEFAULT"},
 
 		{"set role `role1`", true, "SET ROLE `role1`@`%`"},
 		{"SET ROLE DEFAULT", true, "SET ROLE DEFAULT"},
@@ -1032,7 +1032,7 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{"SET DEFAULT ROLE administrator, developer TO `joe`@`10.0.0.1`", true, "SET DEFAULT ROLE `administrator`@`%`, `developer`@`%` TO `joe`@`10.0.0.1`"},
 		// for set names and set vars
 		{"set names utf8, @@session.sql_mode=1;", true, "SET NAMES 'utf8', @@SESSION.`sql_mode`=1"},
-		{"set @@session.sql_mode=1, names utf8, charset utf8;", true, "SET @@SESSION.`sql_mode`=1, NAMES 'utf8', NAMES 'utf8'"},
+		{"set @@session.sql_mode=1, names utf8, charset utf8;", true, "SET @@SESSION.`sql_mode`=1, NAMES 'utf8', CHARSET 'utf8'"},
 
 		// for set/show config
 		{"set config TIKV LOG.LEVEL='info'", true, "SET CONFIG TIKV LOG.LEVEL = 'info'"},
