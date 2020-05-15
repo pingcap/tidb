@@ -5382,19 +5382,26 @@ select 4;`
 select 5;
 # Time: 2020-02-17T18:00:05.000000+08:00
 select 6;`
+	logData4 := `
+# Time: 2020-05-14T19:03:54.314615176+08:00
+select 7;`
+
 	fileName0 := "tidb-slow-2020-02-14T19-04-05.01.log"
 	fileName1 := "tidb-slow-2020-02-15T19-04-05.01.log"
 	fileName2 := "tidb-slow-2020-02-16T19-04-05.01.log"
-	fileName3 := "tidb-slow.log"
+	fileName3 := "tidb-slow-2020-02-17T18-00-05.01.log"
+	fileName4 := "tidb-slow.log"
 	writeFile(fileName0, logData0)
 	writeFile(fileName1, logData1)
 	writeFile(fileName2, logData2)
 	writeFile(fileName3, logData3)
+	writeFile(fileName4, logData4)
 	defer func() {
 		os.Remove(fileName0)
 		os.Remove(fileName1)
 		os.Remove(fileName2)
 		os.Remove(fileName3)
+		os.Remove(fileName4)
 	}()
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	loc, err := time.LoadLocation("Asia/Shanghai")
@@ -5408,7 +5415,7 @@ select 6;`
 	}{
 		{
 			sql:    "select count(*),min(time),max(time) from %s where time > '2019-01-26 21:51:00' and time < now()",
-			result: []string{"6|2020-02-15 18:00:01.000000|2020-02-17 18:00:05.000000"},
+			result: []string{"7|2020-02-15 18:00:01.000000|2020-05-14 19:03:54.314615"},
 		},
 		{
 			sql:    "select count(*),min(time),max(time) from %s where time > '2020-02-15 19:00:00' and time < '2020-02-16 18:00:02'",
@@ -5424,7 +5431,7 @@ select 6;`
 		},
 		{
 			sql:    "select count(*),min(time),max(time) from %s",
-			result: []string{"2|2020-02-16 19:00:00.000000|2020-02-17 18:00:05.000000"},
+			result: []string{"1|2020-05-14 19:03:54.314615|2020-05-14 19:03:54.314615"},
 		},
 		{
 			sql:    "select count(*),min(time) from %s where time > '2020-02-16 20:00:00'",
@@ -5436,7 +5443,7 @@ select 6;`
 		},
 		{
 			sql:    "select query from %s where time > '2019-01-26 21:51:00' and time < now()",
-			result: []string{"select 1;", "select 2;", "select 3;", "select 4;", "select 5;", "select 6;"},
+			result: []string{"select 1;", "select 2;", "select 3;", "select 4;", "select 5;", "select 6;", "select 7;"},
 		},
 		// Test for different timezone.
 		{
@@ -5448,6 +5455,12 @@ select 6;`
 			prepareSQL: "set @@time_zone = '+02:00'",
 			sql:        "select time from %s where time = '2020-02-17 12:00:05.000000'",
 			result:     []string{"2020-02-17 12:00:05.000000"},
+		},
+		// Test for issue 17224
+		{
+			prepareSQL: "set @@time_zone = '+08:00'",
+			sql:        "select time from %s where time = '2020-05-14 19:03:54.314615'",
+			result:     []string{"2020-05-14 19:03:54.314615"},
 		},
 	}
 	for _, cas := range cases {
