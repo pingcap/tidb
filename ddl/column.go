@@ -125,11 +125,7 @@ func createColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnInfo, pos *
 
 	// Append the column info to the end of the tblInfo.Columns.
 	// It will reorder to the right offset in "Columns" when it state change to public.
-	newCols := make([]*model.ColumnInfo, 0, len(cols)+1)
-	newCols = append(newCols, cols...)
-	newCols = append(newCols, colInfo)
-
-	tblInfo.Columns = newCols
+	tblInfo.Columns = append(cols, colInfo)
 	return colInfo, pos, offset, nil
 }
 
@@ -878,13 +874,13 @@ func generateOriginDefaultValue(col *model.ColumnInfo) (interface{}, error) {
 	return odValue, nil
 }
 
-func findColumnInIndexCols(c string, cols []*model.IndexColumn) bool {
+func findColumnInIndexCols(c string, cols []*model.IndexColumn) *model.IndexColumn {
 	for _, c1 := range cols {
 		if c == c1.Name.L {
-			return true
+			return c1
 		}
 	}
-	return false
+	return nil
 }
 
 func getColumnInfoByName(tbInfo *model.TableInfo, column string) *model.ColumnInfo {
