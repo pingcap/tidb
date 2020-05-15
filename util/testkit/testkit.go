@@ -240,6 +240,7 @@ func (tk *TestKit) MustPointGet(sql string, args ...interface{}) *Result {
 func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 	comment := check.Commentf("sql:%s, args:%v", sql, args)
 	rs, err := tk.Exec(sql, args...)
+	print(rs)
 	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
 	tk.c.Assert(rs, check.NotNil, comment)
 	return tk.ResultSetToResult(rs, comment)

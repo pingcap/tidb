@@ -195,6 +195,7 @@ type StmtExecInfo struct {
 	StartTime      time.Time
 	IsInternal     bool
 	Succeed        bool
+	PlanInCache    bool
 }
 
 // newStmtSummaryByDigestMap creates an empty stmtSummaryByDigestMap.
@@ -727,13 +728,11 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	}
 
 	//plan cache
-	if sei.StmtCtx.IsExecute { //For the execution of prepared statements
-		if sei.StmtCtx.PlanCacheHit {
-			ssElement.planInCache = true
-			ssElement.planCacheHits += 1
-		} else {
-			ssElement.planInCache = false
-		}
+	if sei.PlanInCache {
+		ssElement.planInCache = true
+		ssElement.planCacheHits += 1
+	} else {
+		ssElement.planInCache = false
 	}
 
 	// other

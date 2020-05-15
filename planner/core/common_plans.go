@@ -274,7 +274,6 @@ func (e *Execute) setFoundInPlanCache(sctx sessionctx.Context, opt bool) error {
 
 func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt) error {
 	stmtCtx := sctx.GetSessionVars().StmtCtx
-	stmtCtx.IsExecute = true
 	prepared := preparedStmt.PreparedAst
 	stmtCtx.UseCache = prepared.UseCache
 	var cacheKey kvcache.Key
@@ -298,7 +297,6 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		} else {
 			planCacheCounter.Inc()
 		}
-		stmtCtx.AddPlanCacheHitInfo(true)
 		err = e.setFoundInPlanCache(sctx, true)
 		if err != nil {
 			return err
@@ -330,7 +328,6 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 					logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
 					goto REBUILD
 				}
-				stmtCtx.AddPlanCacheHitInfo(true)
 				err = e.setFoundInPlanCache(sctx, true)
 				if err != nil {
 					return err
@@ -366,7 +363,6 @@ REBUILD:
 		stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
 		sctx.PreparedPlanCache().Put(cacheKey, cached)
 	}
-	stmtCtx.AddPlanCacheHitInfo(false)
 	err = e.setFoundInPlanCache(sctx, false)
 	return err
 }
