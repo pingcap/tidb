@@ -1176,6 +1176,10 @@ func setTableAutoRandomBits(ctx sessionctx.Context, tbInfo *model.TableInfo, col
 			if !allowAutoRandom {
 				return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomExperimentalDisabledErrMsg)
 			}
+			if col.Tp.Tp != mysql.TypeLonglong {
+				return ErrInvalidAutoRandom.GenWithStackByArgs(
+					fmt.Sprintf(autoid.AutoRandomOnNonBigIntColumn, types.TypeStr(col.Tp.Tp)))
+			}
 			if !tbInfo.PKIsHandle || col.Name.Name.L != pkColName.L {
 				errMsg := fmt.Sprintf(autoid.AutoRandomPKisNotHandleErrMsg, col.Name.Name.O)
 				return ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
@@ -1195,9 +1199,9 @@ func setTableAutoRandomBits(ctx sessionctx.Context, tbInfo *model.TableInfo, col
 			layout := autoid.NewAutoRandomIDLayout(col.Tp, autoRandBits)
 			if autoRandBits == 0 {
 				return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomNonPositive)
-			} else if autoRandBits >= layout.TypeBitsLength {
-				errMsg := fmt.Sprintf(autoid.AutoRandomOverflowErrMsg, col.Name.Name.L,
-					layout.TypeBitsLength, autoRandBits, col.Name.Name.L, layout.TypeBitsLength-1)
+			} else if autoRandBits > autoid.MaxAutoRandomBits {
+				errMsg := fmt.Sprintf(autoid.AutoRandomOverflowErrMsg,
+					autoid.MaxAutoRandomBits, autoRandBits, col.Name.Name.O)
 				return ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
 			}
 			tbInfo.AutoRandomBits = autoRandBits
