@@ -6420,6 +6420,12 @@ func (s *testIntegrationSuite) TestIssue17098(c *C) {
 	tk.MustQuery("select collation(t1.a) from t1 union select collation(t2.a) from t2;").Check(testkit.Rows("utf8mb4_bin"))
 }
 
+func (s *testIntegrationSuite) TestIssue17115(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("select collation(user());").Check(testkit.Rows("utf8mb4_bin"))
+	tk.MustQuery("select collation(compress('abc'));").Check(testkit.Rows("binary"))
+}
+
 func (s *testIntegrationSuite) TestIndexedVirtualGeneratedColumnTruncate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
