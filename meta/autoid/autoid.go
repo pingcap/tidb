@@ -598,6 +598,11 @@ func (alloc *allocator) AllocSeqCache(tableID int64) (int64, int64, int64, error
 }
 
 func validIncrementAndOffset(increment, offset int64) bool {
+	failpoint.Inject("skipIncrementOffsetValidation", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(true)
+		}
+	})
 	return (increment >= minIncrement && increment <= maxIncrement) && (offset >= minIncrement && offset <= maxIncrement)
 }
 

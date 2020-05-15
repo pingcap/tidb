@@ -376,8 +376,11 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 	c.Assert(iter.Count() == 5, IsTrue)
 	c.Assert(iter.First(), Greater, lastRemainOne)
 
-	// Test increment & offset for unsigned. Using AutoRandomType to avoid valid range check for increment and offset.
-	alloc = autoid.NewAllocator(store, 1, true, autoid.AutoRandomType)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/skipIncrementOffsetValidation", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/skipIncrementOffsetValidation"), IsNil)
+	}()
+	alloc = autoid.NewAllocator(store, 1, true, autoid.RowIDAllocType)
 	c.Assert(alloc, NotNil)
 
 	increment := int64(2)
