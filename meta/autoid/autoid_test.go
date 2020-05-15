@@ -220,8 +220,6 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(iter.Count() == 3, IsTrue)
 	c.Assert(iter.First(), Equals, int64(105))
 	c.Assert(iter.Last(), Equals, int64(115))
-	firstID := autoid.SeekToFirstAutoIDSigned(104, increment, offset)
-	c.Assert(firstID, Equals, int64(105))
 
 	increment = int64(15)
 	iter, err = alloc.Alloc(5, 2, increment, offset)
@@ -229,8 +227,6 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(iter.Count() == 2, IsTrue)
 	c.Assert(iter.First(), Equals, int64(130))
 	c.Assert(iter.Last(), Equals, int64(145))
-	firstID = autoid.SeekToFirstAutoIDSigned(115, increment, offset)
-	c.Assert(firstID, Equals, int64(130))
 
 	offset = int64(200)
 	iter, err = alloc.Alloc(5, 2, increment, offset)
@@ -239,8 +235,6 @@ func (*testSuite) TestT(c *C) {
 	// offset-1 > base will cause alloc rebase to offset-1.
 	c.Assert(iter.First(), Equals, int64(200))
 	c.Assert(iter.Last(), Equals, int64(215))
-	firstID = autoid.SeekToFirstAutoIDSigned(offset-1, increment, offset)
-	c.Assert(firstID, Equals, int64(200))
 }
 
 func (*testSuite) TestUnsignedAutoid(c *C) {
@@ -394,9 +388,6 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(uint64(iter.First()), Equals, n)
 	c.Assert(uint64(iter.Last()), Equals, n+2)
-
-	firstID := autoid.SeekToFirstAutoIDUnSigned(uint64(iter.First()-1), uint64(increment), uint64(offset))
-	c.Assert(firstID, Equals, uint64(math.MaxUint64-100))
 }
 
 // TestConcurrentAlloc is used for the test that

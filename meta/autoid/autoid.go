@@ -755,20 +755,6 @@ func SeekToFirstSequenceValue(base, increment, offset, MIN, MAX int64) (int64, b
 	return first, true
 }
 
-// SeekToFirstAutoIDSigned seeks to the next valid signed position.
-func SeekToFirstAutoIDSigned(base, increment, offset int64) int64 {
-	nr := (base + increment - offset) / increment
-	nr = nr*increment + offset
-	return nr
-}
-
-// SeekToFirstAutoIDUnSigned seeks to the next valid unsigned position.
-func SeekToFirstAutoIDUnSigned(base, increment, offset uint64) uint64 {
-	nr := (base + increment - offset) / increment
-	nr = nr*increment + offset
-	return nr
-}
-
 func (alloc *allocator) seekToFirstAutoID(base, increment, offset int64) int64 {
 	if alloc.isUnsigned {
 		if increment == 1 && offset == 1 {
