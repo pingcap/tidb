@@ -357,7 +357,7 @@ store-liveness-timeout = "120s"
 [tikv-client.copr-cache]
 # Whether to enable the copr cache. The copr cache saves the result from TiKV Coprocessor in the memory and
 # reuses the result when corresponding data in TiKV is unchanged, on a region basis.
-enabled = true
+enable = true
 
 # The capacity in MB of the cache.
 capacity-mb = 1000.0
