@@ -1350,6 +1350,7 @@ func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo
 		return errors.Trace(err)
 	}
 	if s.Partition != nil {
+		//err := chec
 		err := checkPartitionExprValid(ctx, tbInfo, s.Partition.Expr)
 		if err != nil {
 			return errors.Trace(err)
@@ -4454,6 +4455,9 @@ func buildPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, d *ddl, s
 	for ith, def := range spec.PartDefinitions {
 		if err := def.Clause.Validate(part.Type, len(part.Columns)); err != nil {
 			return nil, errors.Trace(err)
+		}
+		if err := checkTooLongTable(def.Name); err != nil {
+			return nil, err
 		}
 		// For RANGE partition only VALUES LESS THAN should be possible.
 		clause := def.Clause.(*ast.PartitionDefinitionClauseLessThan)
