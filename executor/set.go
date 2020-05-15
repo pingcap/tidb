@@ -253,7 +253,7 @@ func (e *SetExecutor) setCharset(cs, co string) error {
 			return errors.Trace(err)
 		}
 	}
-	return errors.Trace(sessionVars.SetSystemVar(variable.CollationConnection, co))
+	return sessionVars.SetSystemVar(variable.CollationConnection, co)
 }
 
 func (e *SetExecutor) getVarValue(v *expression.VarAssignment, sysVar *variable.SysVar) (value types.Datum, err error) {
