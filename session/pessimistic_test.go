@@ -196,7 +196,7 @@ func (s *testPessimisticSuite) TestSingleStatementRollback(c *C) {
 	tk.MustExec("create table single_statement (id int primary key, v int)")
 	tk.MustExec("insert into single_statement values (1, 1), (2, 1), (3, 1), (4, 1)")
 	tblID := tk.GetTableID("single_statement")
-	s.cluster.SplitTable(s.mvccStore, tblID, 2)
+	s.cluster.SplitTable(tblID, 2)
 	region1Key := codec.EncodeBytes(nil, tablecodec.EncodeRowKeyWithHandle(tblID, kv.IntHandle(1)))
 	region1, _ := s.cluster.GetRegionByKey(region1Key)
 	region1ID := region1.Id
@@ -791,7 +791,7 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeoutWaitStart(c *C) {
 	c.Assert(waitErr, NotNil)
 	c.Check(waitErr.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
 	c.Check(duration, GreaterEqual, 1000*time.Millisecond)
-	c.Check(duration, LessEqual, 1100*time.Millisecond)
+	c.Check(duration, LessEqual, 3000*time.Millisecond)
 	tk2.MustExec("rollback")
 	tk3.MustExec("commit")
 }
@@ -1362,4 +1362,30 @@ func (s *testPessimisticSuite) TestUseLockCacheInRCMode(c *C) {
 	tk.MustExec("rollback")
 	tk2.MustExec("rollback")
 	tk3.MustExec("rollback")
+}
+
+func (s *testPessimisticSuite) TestPointGetWithDeleteInMem(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists uk")
+	tk.MustExec("create table uk (c1 int primary key, c2 int, unique key uk(c2))")
+	tk.MustExec("insert uk values (1, 77), (2, 88), (3, 99)")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("delete from uk where c1 = 1")
+	tk.MustQuery("select * from uk where c2 = 77").Check(testkit.Rows())
+	tk.MustQuery("select * from uk where c2 in(77, 88, 99)").Check(testkit.Rows("2 88", "3 99"))
+	tk.MustQuery("select * from uk").Check(testkit.Rows("2 88", "3 99"))
+	tk.MustQuery("select * from uk where c2 = 77 for update").Check(testkit.Rows())
+	tk.MustQuery("select * from uk where c2 in(77, 88, 99) for update").Check(testkit.Rows("2 88", "3 99"))
+	tk.MustExec("rollback")
+	tk2.MustQuery("select * from uk where c1 = 1").Check(testkit.Rows("1 77"))
+	tk.MustExec("begin")
+	tk.MustExec("update uk set c1 = 10 where c1 = 1")
+	tk.MustQuery("select * from uk where c2 = 77").Check(testkit.Rows("10 77"))
+	tk.MustQuery("select * from uk where c2 in(77, 88, 99)").Check(testkit.Rows("10 77", "2 88", "3 99"))
+	tk.MustExec("commit")
+	tk2.MustQuery("select * from uk where c1 = 1").Check(testkit.Rows())
+	tk2.MustQuery("select * from uk where c2 = 77").Check(testkit.Rows("10 77"))
+	tk2.MustQuery("select * from uk where c1 = 10").Check(testkit.Rows("10 77"))
+	tk.MustExec("drop table if exists uk")
 }

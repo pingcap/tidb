@@ -2167,11 +2167,19 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "go_memstats_heap_inuse_bytes{job=~\"tidb.*\"}",
+              "expr": "process_resident_memory_bytes{job=\"tidb\"}",
+              "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "{{instance}}-{{job}}",
-              "metric": "go_memstats_heap_inuse_bytes",
+              "legendFormat": "process-{{instance}}",
               "refId": "A",
+              "step": 10
+            },
+            {
+              "expr": "go_memstats_heap_inuse_bytes{job=\"tidb\"}",
+              "legendFormat": "HeapInuse-{{instance}}",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "refId": "B",
               "step": 10
             }
           ],
@@ -2179,7 +2187,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Heap Memory Usage",
+          "title": "Memory Usage",
           "tooltip": {
             "shared": true,
             "sort": 0,

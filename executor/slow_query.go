@@ -318,6 +318,7 @@ type slowQueryTuple struct {
 	writeSize              uint64
 	prewriteRegion         uint64
 	txnRetry               uint64
+	copTime                float64
 	processTime            float64
 	waitTime               float64
 	backOffTime            float64
@@ -342,6 +343,7 @@ type slowQueryTuple struct {
 	sql                    string
 	isInternal             bool
 	succ                   bool
+	planFromCache          bool
 	plan                   string
 	planDigest             string
 }
@@ -355,12 +357,13 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 		if err != nil {
 			break
 		}
-		if t.Location() != tz {
-			t = t.In(tz)
-		}
 		st.time = types.NewTime(types.FromGoTime(t), mysql.TypeDatetime, types.MaxFsp)
 		if checker != nil {
 			valid = checker.isTimeValid(st.time)
+		}
+		if t.Location() != tz {
+			t = t.In(tz)
+			st.time = types.NewTime(types.FromGoTime(t), mysql.TypeDatetime, types.MaxFsp)
 		}
 	case variable.SlowLogTxnStartTSStr:
 		st.txnStartTs, err = strconv.ParseUint(value, 10, 64)
@@ -407,6 +410,8 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 		st.prewriteRegion, err = strconv.ParseUint(value, 10, 64)
 	case execdetails.TxnRetryStr:
 		st.txnRetry, err = strconv.ParseUint(value, 10, 64)
+	case execdetails.CopTimeStr:
+		st.copTime, err = strconv.ParseFloat(value, 64)
 	case execdetails.ProcessTimeStr:
 		st.processTime, err = strconv.ParseFloat(value, 64)
 	case execdetails.WaitTimeStr:
@@ -451,6 +456,8 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 		st.memMax, err = strconv.ParseInt(value, 10, 64)
 	case variable.SlowLogSucc:
 		st.succ, err = strconv.ParseBool(value)
+	case variable.SlowLogPlanFromCache:
+		st.planFromCache, err = strconv.ParseBool(value)
 	case variable.SlowLogPlan:
 		st.plan = value
 	case variable.SlowLogPlanDigest:
@@ -486,6 +493,7 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	record = append(record, types.NewUintDatum(st.writeSize))
 	record = append(record, types.NewUintDatum(st.prewriteRegion))
 	record = append(record, types.NewUintDatum(st.txnRetry))
+	record = append(record, types.NewFloat64Datum(st.copTime))
 	record = append(record, types.NewFloat64Datum(st.processTime))
 	record = append(record, types.NewFloat64Datum(st.waitTime))
 	record = append(record, types.NewFloat64Datum(st.backOffTime))
@@ -508,6 +516,11 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	record = append(record, types.NewStringDatum(st.maxWaitAddress))
 	record = append(record, types.NewIntDatum(st.memMax))
 	if st.succ {
+		record = append(record, types.NewIntDatum(1))
+	} else {
+		record = append(record, types.NewIntDatum(0))
+	}
+	if st.planFromCache {
 		record = append(record, types.NewIntDatum(1))
 	} else {
 		record = append(record, types.NewIntDatum(0))
