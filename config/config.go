@@ -476,7 +476,7 @@ type TiKVClient struct {
 type CoprocessorCache struct {
 	// Whether to enable the copr cache. The copr cache saves the result from TiKV Coprocessor in the memory and
 	// reuses the result when corresponding data in TiKV is unchanged, on a region basis.
-	Enabled bool `toml:"enabled" json:"enabled"`
+	Enable bool `toml:"enable" json:"enable"`
 	// The capacity in MB of the cache.
 	CapacityMB float64 `toml:"capacity-mb" json:"capacity-mb"`
 	// Only cache requests whose result set is small.
@@ -652,7 +652,7 @@ var defaultConf = Config{
 		StoreLivenessTimeout: DefStoreLivenessTimeout,
 
 		CoprCache: CoprocessorCache{
-			Enabled:               true,
+			Enable:                true,
 			CapacityMB:            1000,
 			AdmissionMaxResultMB:  10,
 			AdmissionMinProcessMs: 5,
