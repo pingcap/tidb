@@ -823,6 +823,9 @@ func checkExchangePartitionRecordValidation(w *worker, pi *model.PartitionInfo, 
 
 	switch pi.Type {
 	case model.PartitionTypeHash:
+		if pi.Num == 1 {
+			return nil
+		}
 		sql = fmt.Sprintf("select 1 from `%s`.`%s` where mod(%s, %d) != %d limit 1", schemaName.L, tableName.L, pi.Expr, pi.Num, index)
 		break
 	case model.PartitionTypeRange:

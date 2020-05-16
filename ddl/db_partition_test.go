@@ -771,7 +771,7 @@ func (s *testIntegrationSuite5) TestAlterTableDropPartition(c *C) {
 	tk.MustGetErrCode("alter table t1 drop partition p2", tmysql.ErrOnlyOnRangeListPartition)
 }
 
-func (s *testIntegrationSuite5) TestAlterTableExchangePartition(c *C) {
+func (s *testIntegrationSuite4) TestAlterTableExchangePartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists e")
@@ -792,7 +792,7 @@ func (s *testIntegrationSuite5) TestAlterTableExchangePartition(c *C) {
 	tk.MustExec("ALTER TABLE e EXCHANGE PARTITION p0 WITH TABLE e2")
 	tk.MustQuery("select * from e2").Check(testkit.Rows("16"))
 	tk.MustQuery("select * from e").Check(testkit.Rows("1669", "337", "2005"))
-	// validation check for range partition
+	// validation test for range partition
 	tk.MustGetErrCode("ALTER TABLE e EXCHANGE PARTITION p1 WITH TABLE e2", tmysql.ErrRowDoesNotMatchPartition)
 	tk.MustGetErrCode("ALTER TABLE e EXCHANGE PARTITION p2 WITH TABLE e2", tmysql.ErrRowDoesNotMatchPartition)
 	tk.MustGetErrCode("ALTER TABLE e EXCHANGE PARTITION p3 WITH TABLE e2", tmysql.ErrRowDoesNotMatchPartition)
@@ -811,19 +811,22 @@ func (s *testIntegrationSuite5) TestAlterTableExchangePartition(c *C) {
 	tk.MustQuery("select * from e3 partition(p0)").Check(testkit.Rows())
 	tk.MustQuery("select * from e2").Check(testkit.Rows("1", "5"))
 
-	// check validation fot hash partition
+	// validation test fot hash partition
 	tk.MustGetErrCode("ALTER TABLE e3 EXCHANGE PARTITION p0 WITH TABLE e2", tmysql.ErrRowDoesNotMatchPartition)
 	tk.MustGetErrCode("ALTER TABLE e3 EXCHANGE PARTITION p2 WITH TABLE e2", tmysql.ErrRowDoesNotMatchPartition)
 	tk.MustGetErrCode("ALTER TABLE e3 EXCHANGE PARTITION p3 WITH TABLE e2", tmysql.ErrRowDoesNotMatchPartition)
+
+	// without validation test
 	tk.MustExec("ALTER TABLE e3 EXCHANGE PARTITION p0 with TABLE e2 WITHOUT VALIDATION")
 
 	tk.MustQuery("select * from e3 partition(p0)").Check(testkit.Rows("1", "5"))
 	tk.MustQuery("select * from e2").Check(testkit.Rows())
 
+	// expression index test for hash partition
+
 }
 
 func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
-
 	type testCase struct {
 		ptSQL       string
 		ntSQL       string
@@ -991,6 +994,12 @@ func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
 			"alter table pt25 exchange partition p0 with table nt25;",
 			nil,
 		},
+		{
+			"create table pt26 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname, ' ')) virtual) partition by hash(id) partitions 1;",
+			"create table nt26 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(id, ' ')) virtual);",
+			"alter table pt26 exchange partition p0 with table nt26;",
+			nil,
+		},
 	}
 
 	tk := testkit.NewTestKit(c, s.store)
@@ -1013,6 +1022,32 @@ func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
 			tk.MustExec(t.exchangeSQL)
 		}
 	}
+
+}
+
+func (s *testIntegrationSuite7) TestExchangePartitionExpressIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists pt1;")
+	tk.MustExec("create table pt1(a int, b int, c int) PARTITION BY hash (a) partitions 1;")
+	tk.MustExec("alter table pt1 add index idx((a+c));")
+
+	tk.MustExec("drop table if exists nt1;")
+	tk.MustExec("create table nt1(a int, b int, c int);")
+	tk.MustGetErrCode("alter table pt1 exchange partition p0 with table nt1;", tmysql.ErrTablesDifferentMetadata)
+
+	tk.MustExec("alter table nt1 add column (`_V$_idx_0` bigint(20) generated always as (a+b) virtual);")
+	tk.MustGetErrCode("alter table pt1 exchange partition p0 with table nt1;", tmysql.ErrTablesDifferentMetadata)
+
+	// test different expression index when expression return same field type
+	tk.MustExec("alter table nt1 drop column `_V$_idx_0`;")
+	tk.MustExec("alter table nt1 add index idx((b-c));")
+	tk.MustExec("alter table pt1 exchange partition p0 with table nt1;")
+
+	// test different expression index when expression return different field type
+	tk.MustExec("alter table nt1 drop index idx;")
+	tk.MustExec("alter table nt1 add index idx((concat(a, b)));")
+	tk.MustGetErrCode("alter table pt1 exchange partition p0 with table nt1;", tmysql.ErrTablesDifferentMetadata)
 
 }
 

@@ -2829,6 +2829,7 @@ func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) e
 			return ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("Exchanging partitions for non-generated columns")
 		}
 		if sourceCol.Name.L != targetCol.Name.L ||
+			sourceCol.Hidden != targetCol.Hidden ||
 			!checkFielTypeCompatible(&sourceCol.FieldType, &targetCol.FieldType) {
 			return err
 		}
