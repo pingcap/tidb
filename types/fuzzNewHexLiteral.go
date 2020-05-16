@@ -1,5 +1,6 @@
 package types
 
+// FuzzNewHexLiteral implements the fuzzer
 func FuzzNewHexLiteral(data []byte) int {
 	_, err := NewHexLiteral(string(data))
 	if err != nil {

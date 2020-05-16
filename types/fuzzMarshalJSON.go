@@ -2,6 +2,7 @@ package types
 
 import "github.com/pingcap/tidb/types/json"
 
+// FuzzMarshalJSON implements the fuzzer
 func FuzzMarshalJSON(data []byte) int {
 	bj, err := json.ParseBinaryFromString(string(data))
 	if err != nil {
