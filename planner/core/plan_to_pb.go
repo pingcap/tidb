@@ -49,16 +49,16 @@ func (p *PhysicalHashAgg) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (
 	for _, aggFunc := range p.AggFuncs {
 		aggExec.AggFunc = append(aggExec.AggFunc, aggregation.AggFuncToPBExpr(sc, client, aggFunc))
 	}
-	executorId := ""
+	executorID := ""
 	if storeType == kv.TiFlash {
 		var err error
 		aggExec.Child, err = p.children[0].ToPB(ctx, storeType)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		executorId = p.ExplainID().String()
+		executorID = p.ExplainID().String()
 	}
-	return &tipb.Executor{Tp: tipb.ExecType_TypeAggregation, Aggregation: aggExec, ExecutorId: &executorId}, nil
+	return &tipb.Executor{Tp: tipb.ExecType_TypeAggregation, Aggregation: aggExec, ExecutorId: &executorID}, nil
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
@@ -75,16 +75,16 @@ func (p *PhysicalStreamAgg) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 	for _, aggFunc := range p.AggFuncs {
 		aggExec.AggFunc = append(aggExec.AggFunc, aggregation.AggFuncToPBExpr(sc, client, aggFunc))
 	}
-	executorId := ""
+	executorID := ""
 	if storeType == kv.TiFlash {
 		var err error
 		aggExec.Child, err = p.children[0].ToPB(ctx, storeType)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		executorId = p.ExplainID().String()
+		executorID = p.ExplainID().String()
 	}
-	return &tipb.Executor{Tp: tipb.ExecType_TypeStreamAgg, Aggregation: aggExec, ExecutorId: &executorId}, nil
+	return &tipb.Executor{Tp: tipb.ExecType_TypeStreamAgg, Aggregation: aggExec, ExecutorId: &executorID}, nil
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
@@ -98,16 +98,16 @@ func (p *PhysicalSelection) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 	selExec := &tipb.Selection{
 		Conditions: conditions,
 	}
-	executorId := ""
+	executorID := ""
 	if storeType == kv.TiFlash {
 		var err error
 		selExec.Child, err = p.children[0].ToPB(ctx, storeType)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		executorId = p.ExplainID().String()
+		executorID = p.ExplainID().String()
 	}
-	return &tipb.Executor{Tp: tipb.ExecType_TypeSelection, Selection: selExec, ExecutorId: &executorId}, nil
+	return &tipb.Executor{Tp: tipb.ExecType_TypeSelection, Selection: selExec, ExecutorId: &executorID}, nil
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
@@ -120,16 +120,16 @@ func (p *PhysicalTopN) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*ti
 	for _, item := range p.ByItems {
 		topNExec.OrderBy = append(topNExec.OrderBy, expression.SortByItemToPB(sc, client, item.Expr, item.Desc))
 	}
-	executorId := ""
+	executorID := ""
 	if storeType == kv.TiFlash {
 		var err error
 		topNExec.Child, err = p.children[0].ToPB(ctx, storeType)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		executorId = p.ExplainID().String()
+		executorID = p.ExplainID().String()
 	}
-	return &tipb.Executor{Tp: tipb.ExecType_TypeTopN, TopN: topNExec, ExecutorId: &executorId}, nil
+	return &tipb.Executor{Tp: tipb.ExecType_TypeTopN, TopN: topNExec, ExecutorId: &executorID}, nil
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
@@ -137,16 +137,16 @@ func (p *PhysicalLimit) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*t
 	limitExec := &tipb.Limit{
 		Limit: p.Count,
 	}
-	executorId := ""
+	executorID := ""
 	if storeType == kv.TiFlash {
 		var err error
 		limitExec.Child, err = p.children[0].ToPB(ctx, storeType)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		executorId = p.ExplainID().String()
+		executorID = p.ExplainID().String()
 	}
-	return &tipb.Executor{Tp: tipb.ExecType_TypeLimit, Limit: limitExec, ExecutorId: &executorId}, nil
+	return &tipb.Executor{Tp: tipb.ExecType_TypeLimit, Limit: limitExec, ExecutorId: &executorID}, nil
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
@@ -159,7 +159,7 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 	if p.isPartition {
 		tsExec.TableId = p.physicalTableID
 	}
-	executorId := ""
+	executorID := ""
 	if storeType == kv.TiFlash && p.IsGlobalRead {
 		tsExec.NextReadEngine = tipb.EngineType_TiFlash
 		ranges := distsql.TableRangesToKVRanges(tsExec.TableId, p.Ranges, nil)
@@ -169,10 +169,10 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 		logutil.BgLogger().Info("make range for table.")
 	}
 	if storeType == kv.TiFlash {
-		executorId = p.ExplainID().String()
+		executorID = p.ExplainID().String()
 	}
 	err := SetPBColumnsDefaultValue(ctx, tsExec.Columns, p.Columns)
-	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tsExec, ExecutorId: &executorId}, err
+	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tsExec, ExecutorId: &executorID}, err
 }
 
 // checkCoverIndex checks whether we can pass unique info to TiKV. We should push it if and only if the length of
@@ -262,8 +262,8 @@ func (p *PhysicalBroadCastJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreT
 		Children:      []*tipb.Executor{lChildren, rChildren},
 	}
 
-	executorId := p.ExplainID().String()
-	return &tipb.Executor{Tp: tipb.ExecType_TypeJoin, Join: join, ExecutorId: &executorId}, nil
+	executorID := p.ExplainID().String()
+	return &tipb.Executor{Tp: tipb.ExecType_TypeJoin, Join: join, ExecutorId: &executorID}, nil
 }
 
 // SetPBColumnsDefaultValue sets the default values of tipb.ColumnInfos.
