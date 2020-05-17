@@ -648,7 +648,7 @@ var defaultConf = Config{
 		StoreLivenessTimeout: DefStoreLivenessTimeout,
 
 		CoprCache: CoprocessorCache{
-			Enable:                true,
+			Enable:                false,
 			CapacityMB:            1000,
 			AdmissionMaxResultMB:  10,
 			AdmissionMinProcessMs: 5,
