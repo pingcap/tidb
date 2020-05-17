@@ -73,7 +73,7 @@ func (s *testCoprocessorSuite) TestBuildCacheKey(c *C) {
 }
 
 func (s *testCoprocessorSuite) TestDisable(c *C) {
-	cache, err := newCoprCache(&config.CoprocessorCache{Enable: false})
+	cache, err := newCoprCache(&config.CoprocessorCache{})
 	c.Assert(err, IsNil)
 	c.Assert(cache, IsNil)
 
