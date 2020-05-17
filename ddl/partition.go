@@ -729,6 +729,12 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
+	err = checkExchangePartition(pt, nt)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
 	err = checkTableDefCompatible(pt, nt)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -743,12 +749,14 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		}
 	}
 
+	// partition table base auto id
 	ptBaseID, err := t.GetAutoTableID(ptSchemaID, pt.ID)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
+	// non-partition table base auto id
 	ntBaseID, err := t.GetAutoTableID(job.SchemaID, nt.ID)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -762,6 +770,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	}
 
 	tempID := partDef.ID
+	// exchange table meta id
 	partDef.ID = nt.ID
 
 	err = t.UpdateTable(ptSchemaID, pt)
@@ -770,6 +779,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
+	// recreate non-partition table meta info
 	err = t.DropTableOrView(job.SchemaID, nt.ID, true)
 	if err != nil {
 		job.State = model.JobStateCancelled
