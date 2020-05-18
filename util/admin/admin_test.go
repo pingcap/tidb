@@ -43,7 +43,7 @@ type testSuite struct {
 func (s *testSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	var err error
-	s.store, err = mockstore.NewMockTikvStore()
+	s.store, err = mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	s.ctx = mock.NewContext()
 	s.ctx.Store = s.store

@@ -33,7 +33,7 @@ type testRawKVSuite struct {
 var _ = Suite(&testRawKVSuite{})
 
 func (s *testRawKVSuite) SetUpTest(c *C) {
-	cluster := mocktikv.NewCluster()
+	cluster := mocktikv.NewCluster(mocktikv.MustNewMVCCStore())
 	mocktikv.BootstrapWithSingleStore(cluster)
 	s.cluster = cluster
 	pdClient := mocktikv.NewPDClient(cluster)

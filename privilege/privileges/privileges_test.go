@@ -1056,7 +1056,7 @@ func mustExec(c *C, se session.Session, sql string) {
 }
 
 func newStore(c *C, dbPath string) (*domain.Domain, kv.Storage) {
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	session.SetSchemaLease(0)
 	session.DisableStats4Test()
 	c.Assert(err, IsNil)

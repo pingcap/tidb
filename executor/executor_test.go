@@ -56,7 +56,6 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -147,15 +146,11 @@ func (s *baseTestSuite) SetUpSuite(c *C) {
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
 	if useMockTikv {
-		cluster := mocktikv.NewCluster()
-		mocktikv.BootstrapWithSingleStore(cluster)
-		s.cluster = cluster
-
-		mvccStore := mocktikv.MustNewMVCCStore()
-		cluster.SetMvccStore(mvccStore)
-		store, err := mockstore.NewMockTikvStore(
-			mockstore.WithCluster(cluster),
-			mockstore.WithMVCCStore(mvccStore),
+		store, err := mockstore.NewMockStore(
+			mockstore.WithClusterInspector(func(c cluster.Cluster) {
+				mockstore.BootstrapWithSingleStore(c)
+				s.cluster = c
+			}),
 		)
 		c.Assert(err, IsNil)
 		s.store = store
@@ -2887,8 +2882,8 @@ func (s *testSuiteWithCliBase) SetUpSuite(c *C) {
 	s.cli = cli
 
 	var err error
-	s.store, err = mockstore.NewMockTikvStore(
-		mockstore.WithHijackClient(hijackClient),
+	s.store, err = mockstore.NewMockStore(
+		mockstore.WithClientHijacker(hijackClient),
 	)
 	c.Assert(err, IsNil)
 	session.SetStatsLease(0)
@@ -2919,8 +2914,8 @@ func (s *testSuite2) TestAddIndexPriority(c *C) {
 		return cli
 	}
 
-	store, err := mockstore.NewMockTikvStore(
-		mockstore.WithHijackClient(hijackClient),
+	store, err := mockstore.NewMockStore(
+		mockstore.WithClientHijacker(hijackClient),
 	)
 	c.Assert(err, IsNil)
 	dom, err := session.BootstrapSession(store)
@@ -4251,6 +4246,9 @@ func (s *testSplitTable) TestShowTableRegion(c *C) {
 	tk.MustExec("set global tidb_scatter_region = 1")
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	tk.MustExec("create table t_regions (a int key, b int, c int, index idx(b), index idx2(c))")
+	_, err := tk.Exec("split partition table t_regions partition (p1,p2) index idx between (0) and (20000) regions 2;")
+	c.Assert(err.Error(), Equals, plannercore.ErrPartitionClauseOnNonpartitioned.Error())
+
 	// Test show table regions.
 	tk.MustQuery(`split table t_regions between (-10000) and (10000) regions 4;`).Check(testkit.Rows("4 1"))
 	re := tk.MustQuery("show table t_regions regions")
@@ -4624,12 +4622,12 @@ func (s *testRecoverTable) SetUpSuite(c *C) {
 	s.cli = cli
 
 	var err error
-	cluster := mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(cluster)
-	s.cluster = cluster
-	s.store, err = mockstore.NewMockTikvStore(
-		mockstore.WithHijackClient(hijackClient),
-		mockstore.WithCluster(cluster),
+	s.store, err = mockstore.NewMockStore(
+		mockstore.WithClientHijacker(hijackClient),
+		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+			mockstore.BootstrapWithSingleStore(c)
+			s.cluster = c
+		}),
 	)
 	c.Assert(err, IsNil)
 	s.dom, err = session.BootstrapSession(s.store)
