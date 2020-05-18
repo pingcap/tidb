@@ -2394,6 +2394,9 @@ func (b *PlanBuilder) buildIndexAdvise(node *ast.IndexAdviseStmt) Plan {
 }
 
 func (b *PlanBuilder) buildSplitRegion(node *ast.SplitRegionStmt) (Plan, error) {
+	if node.SplitSyntaxOpt != nil && node.SplitSyntaxOpt.HasPartition && node.Table.TableInfo.Partition == nil {
+		return nil, ErrPartitionClauseOnNonpartitioned
+	}
 	if len(node.IndexName.L) != 0 {
 		return b.buildSplitIndexRegion(node)
 	}

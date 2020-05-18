@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/gcutil"
@@ -72,16 +71,12 @@ func (s *testSerialSuite) SetUpSuite(c *C) {
 
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
 
-	cluster := mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(cluster)
-	s.cluster = cluster
-
 	var err error
-	mvccStore := mocktikv.MustNewMVCCStore()
-	cluster.SetMvccStore(mvccStore)
-	s.store, err = mockstore.NewMockTikvStore(
-		mockstore.WithCluster(cluster),
-		mockstore.WithMVCCStore(mvccStore),
+	s.store, err = mockstore.NewMockStore(
+		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+			mockstore.BootstrapWithSingleStore(c)
+			s.cluster = c
+		}),
 	)
 	c.Assert(err, IsNil)
 

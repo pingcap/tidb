@@ -47,7 +47,7 @@ func (*testSuite) TestT(c *C) {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
 	}()
 
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 
@@ -243,7 +243,7 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
 	}()
 
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 
@@ -396,7 +396,7 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 // TestConcurrentAlloc is used for the test that
 // multiple allocators allocate ID with the same table ID concurrently.
 func (*testSuite) TestConcurrentAlloc(c *C) {
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 	autoid.SetStep(100)
@@ -488,7 +488,7 @@ func (*testSuite) TestConcurrentAlloc(c *C) {
 // TestRollbackAlloc tests that when the allocation transaction commit failed,
 // the local variable base and end doesn't change.
 func (*testSuite) TestRollbackAlloc(c *C) {
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 	dbID := int64(1)
@@ -530,7 +530,7 @@ func (*testSuite) TestNextStep(c *C) {
 
 func BenchmarkAllocator_Alloc(b *testing.B) {
 	b.StopTimer()
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	if err != nil {
 		return
 	}
@@ -561,7 +561,7 @@ func BenchmarkAllocator_Alloc(b *testing.B) {
 
 func BenchmarkAllocator_SequenceAlloc(b *testing.B) {
 	b.StopTimer()
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	if err != nil {
 		return
 	}
@@ -616,7 +616,7 @@ func BenchmarkAllocator_Seek(b *testing.B) {
 }
 
 func (*testSuite) TestSequenceAutoid(c *C) {
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 
@@ -737,7 +737,7 @@ func (*testSuite) TestSequenceAutoid(c *C) {
 }
 
 func (*testSuite) TestConcurrentAllocSequence(c *C) {
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 

@@ -540,15 +540,10 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		}
 
 		err = w.runReorgJob(t, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
-			defer func() {
-				r := recover()
-				if r != nil {
-					buf := util.GetStack()
-					logutil.BgLogger().Error("[ddl] add table index panic", zap.Any("panic", r), zap.String("stack", string(buf)))
-					metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
+			defer util.Recover(metrics.LabelDDL, "onCreateIndex",
+				func() {
 					addIndexErr = errCancelledDDLJob.GenWithStack("add table `%v` index `%v` panic", tblInfo.Name, indexInfo.Name)
-				}
-			}()
+				}, false)
 			return w.addTableIndex(tbl, indexInfo, reorgInfo)
 		})
 		if err != nil {
@@ -1192,14 +1187,9 @@ func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *ad
 func (w *addIndexWorker) run(d *ddlCtx) {
 	logutil.BgLogger().Info("[ddl] add index worker start", zap.Int("workerID", w.id))
 	defer func() {
-		r := recover()
-		if r != nil {
-			buf := util.GetStack()
-			logutil.BgLogger().Error("[ddl] add index worker panic", zap.Any("panic", r), zap.String("stack", string(buf)))
-			metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
-		}
 		w.resultCh <- &addIndexResult{err: errReorgPanic}
 	}()
+	defer util.Recover(metrics.LabelDDL, "addIndexWorker.run", nil, false)
 	for {
 		task, more := <-w.taskCh
 		if !more {
