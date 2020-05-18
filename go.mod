@@ -17,9 +17,10 @@ require (
 	github.com/google/uuid v1.1.1
 	github.com/gorilla/mux v1.7.3
 	github.com/grpc-ecosystem/go-grpc-middleware v1.0.1-0.20190118093823-f849b5445de4
-	github.com/klauspost/cpuid v1.2.0
+	github.com/klauspost/cpuid v1.2.1
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
+	github.com/ngaut/unistore v0.0.0-20200515074342-406feebf3ca9
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.1.0
 	github.com/pingcap/br v0.0.0-20200426093517-dd11ae28b885
@@ -29,7 +30,7 @@ require (
 	github.com/pingcap/fn v0.0.0-20191016082858-07623b84a47d
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
 	github.com/pingcap/kvproto v0.0.0-20200428135407-0f5ffe459677
-	github.com/pingcap/log v0.0.0-20200117041106-d28c14d3b1cd
+	github.com/pingcap/log v0.0.0-20200511115504-543df19646ad
 	github.com/pingcap/parser v0.0.0-20200507022230-f3bf29096657
 	github.com/pingcap/pd/v4 v4.0.0-rc.1.0.20200422143320-428acd53eba2
 	github.com/pingcap/sysutil v0.0.0-20200408114249-ed3bd6f7fdb1
@@ -45,7 +46,6 @@ require (
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/uber-go/atomic v1.3.2
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
-	github.com/uber/jaeger-lib v2.2.0+incompatible // indirect
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20191023171146-3cf2f69b5738
 	go.uber.org/atomic v1.6.0
 	go.uber.org/automaxprocs v1.2.0
@@ -57,6 +57,7 @@ require (
 	golang.org/x/tools v0.0.0-20200325203130-f53864d0dba1
 	google.golang.org/grpc v1.25.1
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0
+	honnef.co/go/tools v0.0.1-2020.1.4 // indirect
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20180531100431-4c381bd170b4
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
