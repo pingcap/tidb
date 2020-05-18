@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
-	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -318,18 +317,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	d.quitCh = make(chan struct{})
 
 	d.wg.Add(1)
-	go func() {
-		defer d.wg.Done()
-		tidbutil.WithRecovery(
-			func() { d.limitDDLJobs() },
-			func(r interface{}) {
-				if r != nil {
-					logutil.BgLogger().Error("[ddl] limit DDL jobs meet panic",
-						zap.String("ID", d.uuid), zap.Reflect("r", r), zap.Stack("stack trace"))
-					metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
-				}
-			})
-	}()
+	go d.limitDDLJobs()
 
 	// If RunWorker is true, we need campaign owner and do DDL job.
 	// Otherwise, we needn't do that.
@@ -347,14 +335,8 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 		for _, worker := range d.workers {
 			worker.wg.Add(1)
 			w := worker
-			go tidbutil.WithRecovery(
-				func() { w.start(d.ddlCtx) },
-				func(r interface{}) {
-					if r != nil {
-						logutil.Logger(w.logCtx).Error("[ddl] DDL worker meet panic", zap.String("ID", d.uuid))
-						metrics.PanicCounter.WithLabelValues(metrics.LabelDDLWorker).Inc()
-					}
-				})
+			go w.start(d.ddlCtx)
+
 			metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, worker.String())).Inc()
 
 			// When the start function is called, we will send a fake job to let worker
@@ -362,15 +344,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 			asyncNotify(worker.ddlJobCh)
 		}
 
-		go tidbutil.WithRecovery(
-			func() { d.schemaSyncer.StartCleanWork() },
-			func(r interface{}) {
-				if r != nil {
-					logutil.BgLogger().Error("[ddl] DDL syncer clean worker meet panic",
-						zap.String("ID", d.uuid), zap.Reflect("r", r), zap.Stack("stack trace"))
-					metrics.PanicCounter.WithLabelValues(metrics.LabelDDLSyncer).Inc()
-				}
-			})
+		go d.schemaSyncer.StartCleanWork()
 		metrics.DDLCounter.WithLabelValues(metrics.StartCleanWork).Inc()
 	}
 
