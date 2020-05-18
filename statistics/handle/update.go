@@ -1020,6 +1020,13 @@ func (h *Handle) DumpFeedbackForIndex(q *statistics.QueryFeedback, t *statistics
 			LowVal:  []types.Datum{ran.LowVal[rangePosition]},
 			HighVal: []types.Datum{ran.HighVal[rangePosition]},
 		}
+		if rangePosition >= len(idx.Info.Columns) {
+			logutil.BgLogger().Error("eureka: panic happens", zap.Int("rangePosition", rangePosition), zap.Int("idxColLen", len(idx.Info.Columns)), zap.Int("ranLowLen", len(ran.LowVal)))
+			logutil.BgLogger().Error("eureka: feedback details", zap.String("feedback.Lower", fmt.Sprintf("%#v", *q.Feedback[i].Lower)))
+			for _, d := range ran.LowVal {
+				logutil.BgLogger().Error("eureka: range details", zap.String("ran.LowVal", fmt.Sprintf("%#v", d)))
+			}
+		}
 		colName := idx.Info.Columns[rangePosition].Name.L
 		var rangeCount float64
 		rangeFB := &statistics.QueryFeedback{PhysicalID: q.PhysicalID}
