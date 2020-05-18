@@ -172,19 +172,16 @@ func (e *SplitIndexRegionExec) getSplitIdxPhysicalKeysFromValueList(physicalID i
 }
 
 func (e *SplitIndexRegionExec) getSplitIdxPhysicalStartAndOtherIdxKeys(physicalID int64, keys [][]byte) [][]byte {
-	// Split in the start of the index key.
-	startIdxKey := tablecodec.EncodeTableIndexPrefix(physicalID, e.indexInfo.ID)
-	keys = append(keys, startIdxKey)
-
-	// Split in the end for the other index key.
-	for _, idx := range e.tableInfo.Indices {
-		if idx.ID <= e.indexInfo.ID {
-			continue
-		}
-		endIdxKey := tablecodec.EncodeTableIndexPrefix(physicalID, idx.ID)
-		keys = append(keys, endIdxKey)
-		break
+	// 1. Split in the start key for the index if the index is not the first index.
+	// For the first index, split the start key is useless.
+	if len(e.tableInfo.Indices) > 0 && e.tableInfo.Indices[0].ID != e.indexInfo.ID {
+		startKey := tablecodec.EncodeTableIndexPrefix(physicalID, e.indexInfo.ID)
+		keys = append(keys, startKey)
 	}
+
+	// 2. Split in the end key.
+	endKey := tablecodec.EncodeTableIndexPrefix(physicalID, e.indexInfo.ID+1)
+	keys = append(keys, endKey)
 	return keys
 }
 
