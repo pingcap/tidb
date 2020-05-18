@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/israce"
@@ -71,15 +70,11 @@ func setupIntegrationSuite(s *testIntegrationSuite, c *C) {
 	s.lease = 50 * time.Millisecond
 	ddl.SetWaitTimeWhenErrorOccurred(0)
 
-	cluster := mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(cluster)
-	s.cluster = cluster
-
-	mvccStore := mocktikv.MustNewMVCCStore()
-	cluster.SetMvccStore(mvccStore)
-	s.store, err = mockstore.NewMockTikvStore(
-		mockstore.WithCluster(cluster),
-		mockstore.WithMVCCStore(mvccStore),
+	s.store, err = mockstore.NewMockStore(
+		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+			mockstore.BootstrapWithSingleStore(c)
+			s.cluster = c
+		}),
 	)
 	c.Assert(err, IsNil)
 	session.SetSchemaLease(s.lease)
