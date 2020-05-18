@@ -421,10 +421,9 @@ func (w *projectionWorker) run(ctx context.Context) {
 			return
 		}
 
-		mSize := output.chk.MemoryUsage()
-		// TODO: trace memory used by the evaluatorSuit including all temporal buffers it uses
+		mSize := output.chk.MemoryUsage() + input.chk.MemoryUsage()
 		err := w.evaluatorSuit.Run(w.sctx, input.chk, output.chk)
-		w.proj.memTracker.Consume(output.chk.MemoryUsage() - mSize)
+		w.proj.memTracker.Consume(output.chk.MemoryUsage() + input.chk.MemoryUsage() - mSize)
 		output.done <- err
 
 		if err != nil {

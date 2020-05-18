@@ -26,12 +26,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
-	tmysql "github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/errno"
+	tmysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/session"
@@ -321,6 +320,16 @@ func (s *testIntegrationSuite2) TestCreateTableWithHashPartition(c *C) {
     job_code INT,
     store_id INT
 ) PARTITION BY HASH(store_id) PARTITIONS 102400000000;`, tmysql.ErrTooManyPartitions)
+
+	tk.MustExec("CREATE TABLE t_linear (a int, b varchar(128)) PARTITION BY LINEAR HASH(a) PARTITIONS 4")
+	tk.MustGetErrCode("select * from t_linear partition (p0)", tmysql.ErrPartitionClauseOnNonpartitioned)
+
+	tk.MustExec(`CREATE TABLE t_sub (a int, b varchar(128)) PARTITION BY RANGE( a ) SUBPARTITION BY HASH( a )
+                                   SUBPARTITIONS 2 (
+                                       PARTITION p0 VALUES LESS THAN (100),
+                                       PARTITION p1 VALUES LESS THAN (200),
+                                       PARTITION p2 VALUES LESS THAN MAXVALUE)`)
+	tk.MustGetErrCode("select * from t_sub partition (p0)", tmysql.ErrPartitionClauseOnNonpartitioned)
 }
 
 func (s *testIntegrationSuite1) TestCreateTableWithRangeColumnPartition(c *C) {
@@ -1674,14 +1683,14 @@ func (s *testIntegrationSuite3) TestPartitionErrorCode(c *C) {
 	c.Assert(ddl.ErrCoalesceOnlyOnHashPartition.Equal(err), IsTrue)
 
 	tk.MustGetErrCode(`alter table t_part reorganize partition p0, p1 into (
-			partition p0 values less than (1980));`, errno.ErrUnsupportedDDLOperation)
+			partition p0 values less than (1980));`, tmysql.ErrUnsupportedDDLOperation)
 
-	tk.MustGetErrCode("alter table t_part check partition p0, p1;", errno.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t_part optimize partition p0,p1;", errno.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t_part rebuild partition p0,p1;", errno.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t_part remove partitioning;", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t_part check partition p0, p1;", tmysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t_part optimize partition p0,p1;", tmysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t_part rebuild partition p0,p1;", tmysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t_part remove partitioning;", tmysql.ErrUnsupportedDDLOperation)
 	tk.MustExec("create table t_part2 like t_part")
-	tk.MustGetErrCode("alter table t_part exchange partition p0 with table t_part2", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t_part exchange partition p0 with table t_part2", tmysql.ErrUnsupportedDDLOperation)
 }
 
 func (s *testIntegrationSuite5) TestConstAndTimezoneDepent(c *C) {
