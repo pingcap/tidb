@@ -822,8 +822,6 @@ func (s *testIntegrationSuite4) TestAlterTableExchangePartition(c *C) {
 	tk.MustQuery("select * from e3 partition(p0)").Check(testkit.Rows("1", "5"))
 	tk.MustQuery("select * from e2").Check(testkit.Rows())
 
-	// expression index test for hash partition
-
 }
 
 func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
@@ -890,7 +888,7 @@ func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
 		},
 		{
 			// foreign key test
-			// Partition table is yet not supports to add foreign keys in mysql
+			// Partition table doesn't support to add foreign keys in mysql
 			"create table pt9 (id int not null primary key auto_increment,t_id int not null) partition by hash(id) partitions 1;",
 			"create table nt9 (id int not null primary key auto_increment, t_id int not null,foreign key fk_id (t_id) references pt5(id));",
 			"alter table pt9 exchange partition p0 with table nt9;",
@@ -1039,12 +1037,12 @@ func (s *testIntegrationSuite7) TestExchangePartitionExpressIndex(c *C) {
 	tk.MustExec("alter table nt1 add column (`_V$_idx_0` bigint(20) generated always as (a+b) virtual);")
 	tk.MustGetErrCode("alter table pt1 exchange partition p0 with table nt1;", tmysql.ErrTablesDifferentMetadata)
 
-	// test different expression index when expression return same field type
+	// test different expression index when expression returns same field type
 	tk.MustExec("alter table nt1 drop column `_V$_idx_0`;")
 	tk.MustExec("alter table nt1 add index idx((b-c));")
 	tk.MustExec("alter table pt1 exchange partition p0 with table nt1;")
 
-	// test different expression index when expression return different field type
+	// test different expression index when expression returns different field type
 	tk.MustExec("alter table nt1 drop index idx;")
 	tk.MustExec("alter table nt1 add index idx((concat(a, b)));")
 	tk.MustGetErrCode("alter table pt1 exchange partition p0 with table nt1;", tmysql.ErrTablesDifferentMetadata)
