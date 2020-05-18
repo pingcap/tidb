@@ -256,7 +256,7 @@ func (e *SetExecutor) setCharset(cs, co string, isSetName bool) error {
 		}
 		return errors.Trace(sessionVars.SetSystemVar(variable.CollationConnection, co))
 	}
-	// Set charset statement
+	// Set charset statement, see also https://dev.mysql.com/doc/refman/8.0/en/set-character-set.html.
 	for _, v := range variable.SetCharsetVariables {
 		if err = sessionVars.SetSystemVar(v, cs); err != nil {
 			return errors.Trace(err)
