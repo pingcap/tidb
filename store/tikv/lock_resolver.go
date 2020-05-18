@@ -19,8 +19,13 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sort"
+	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -30,7 +35,9 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
+	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -64,6 +71,7 @@ type LockResolver struct {
 		resolved       map[uint64]TxnStatus
 		recentResolved *list.List
 	}
+	indexProfile unsafe.Pointer // point to sync.Map
 }
 
 func newLockResolver(store Storage) *LockResolver {
@@ -307,7 +315,12 @@ func (lr *LockResolver) resolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 		pushed = make([]uint64, 0, len(locks))
 	}
 
+	profileEnable := lr.ProfileEnable()
 	for _, l := range locks {
+		if profileEnable {
+			tbl, idx := decodeLockTableIndex(l.Key)
+			lr.RecordMeetLock(tbl, idx, forWrite, 1)
+		}
 		status, err := lr.getTxnStatusFromLock(bo, l, callerStartTS)
 		if err != nil {
 			msBeforeTxnExpired.update(0)
@@ -368,6 +381,106 @@ func (lr *LockResolver) resolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 		tikvLockResolverCountWithWaitExpired.Inc()
 	}
 	return msBeforeTxnExpired.value(), pushed, nil
+}
+
+// LockIdxStat indicates lock table/index info.
+type LockIdxStat struct {
+	Tbl   int64
+	Idx   int64
+	Write bool
+	Count uint64
+}
+
+// StartProfile uses to start profile.
+func (lr *LockResolver) StartProfile() error {
+	var m sync.Map
+	if !atomic.CompareAndSwapPointer(&lr.indexProfile, nil, unsafe.Pointer(&m)) {
+		return errors.New("LockResolver Profile has be started by others")
+	}
+	return nil
+}
+
+// StopProfile uses to stop profile and collect profile info.
+func (lr *LockResolver) StopProfile() (cs []LockIdxStat, err error) {
+	p := (*sync.Map)(atomic.LoadPointer(&lr.indexProfile))
+	if p == nil {
+		err = errors.New("LockResolver Profile has not be started by others")
+		return
+	}
+	if !atomic.CompareAndSwapPointer(&lr.indexProfile, unsafe.Pointer(p), nil) {
+		err = errors.New("LockResolver Profile has be stopped by others")
+		return
+	}
+	p.Range(func(key, value interface{}) bool {
+		keys := strings.Split(key.(string), "-")
+		if len(keys) != 3 {
+			return true
+		}
+		tbl, err := strconv.ParseInt(keys[0], 10, 64)
+		if err != nil {
+			tbl = -1
+		}
+		idx, err := strconv.ParseInt(keys[1], 10, 64)
+		if err != nil {
+			idx = -1
+		}
+		write, err := strconv.ParseBool(keys[2])
+		if err != nil {
+			write = false
+		}
+		cs = append(cs, LockIdxStat{
+			Tbl:   tbl,
+			Idx:   idx,
+			Write: write,
+			Count: value.(*atomic2.Uint64).Load(),
+		})
+		return true
+	})
+	sort.Slice(cs, func(i, j int) bool {
+		return cs[i].Count > cs[j].Count
+	})
+	return
+}
+
+// ProfileEnable indicates does profile enabled.
+func (lr *LockResolver) ProfileEnable() bool {
+	return (*sync.Map)(atomic.LoadPointer(&lr.indexProfile)) != nil
+}
+
+// RecordMeetLock uses to record new meet locks.
+func (lr *LockResolver) RecordMeetLock(tlb, idx string, write bool, n uint64) {
+	p := (*sync.Map)(atomic.LoadPointer(&lr.indexProfile))
+	if p == nil {
+		return
+	}
+	key := tlb + "-" + idx + "-" + strconv.FormatBool(write)
+	var zero atomic2.Uint64
+	v, _ := p.LoadOrStore(key, &zero)
+	v.(*atomic2.Uint64).Add(n)
+}
+
+func decodeLockTableIndex(key []byte) (tblName, idxName string) {
+	tableID, indexID, _, err := tablecodec.DecodeIndexKey(key)
+	if err == nil {
+		tblName = strconv.FormatInt(tableID, 10)
+		idxName = strconv.FormatInt(indexID, 10)
+		return
+	}
+
+	tableID, _, err = tablecodec.DecodeRecordKey(key)
+	if err == nil {
+		tblName = strconv.FormatInt(tableID, 10)
+		return
+	}
+
+	_, _, err = tablecodec.DecodeMetaKey(key)
+	if err == nil {
+		tblName = "meta"
+		return
+	}
+
+	tblName, idxName = "unknown", "unknown"
+	return
 }
 
 func (lr *LockResolver) resolveLocksForWrite(bo *Backoffer, callerStartTS uint64, locks []*Lock) (int64, error) {

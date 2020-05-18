@@ -418,6 +418,89 @@ type mvccTxnHandler struct {
 	op string
 }
 
+type locksHandler struct {
+	*tikvHandlerTool
+}
+
+type indexLock struct {
+	TblName string `json:"tbl_name"`
+	IdxName string `json:"idx_name"`
+	RW      string `json:"rw"`
+	Count   uint64 `json:"count"`
+}
+
+func (l locksHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	lr := l.Store.GetLockResolver()
+
+	sec, err := strconv.ParseInt(r.FormValue("seconds"), 10, 64)
+	if sec <= 0 || err != nil {
+		sec = 30
+	}
+	w.Header().Set("Content-Type", "application/json")
+
+	err = lr.StartProfile()
+	if err != nil {
+		serveError(w, http.StatusInternalServerError,
+			fmt.Sprintf("Could not enable locks profiling: %s", err))
+		return
+	}
+	time.Sleep(time.Duration(sec) * time.Second)
+	cs, err := lr.StopProfile()
+	if err != nil {
+		serveError(w, http.StatusInternalServerError,
+			fmt.Sprintf("Could not get locks profiling result: %s", err))
+		return
+	}
+	schema, err := l.schema()
+	if err != nil {
+		serveError(w, http.StatusInternalServerError,
+			fmt.Sprintf("Could not get info schema: %s", err))
+		return
+	}
+
+	var ls []indexLock
+	for _, c := range cs {
+		tbl, idx, rw := "unknown", "unknown", "r"
+		if c.Tbl == -2 {
+			tbl = "meta"
+			idx = ""
+		} else {
+			t, ok := schema.TableByID(c.Tbl)
+			if !ok {
+				t, _ = schema.FindTableByPartitionID(c.Tbl)
+			}
+			tbl = t.Meta().Name.L
+			if c.Idx == -1 {
+				idx = ""
+			} else {
+				for _, i := range t.Indices() {
+					if i.Meta().ID == c.Idx {
+						idx = i.Meta().Name.L
+						break
+					}
+				}
+			}
+		}
+		if c.Write {
+			rw = "w"
+		}
+		ls = append(ls, indexLock{
+			TblName: tbl,
+			IdxName: idx,
+			RW:      rw,
+			Count:   c.Count,
+		})
+	}
+
+	en := json.NewEncoder(w)
+	err = en.Encode(ls)
+	if err != nil {
+		serveError(w, http.StatusInternalServerError,
+			fmt.Sprintf("Could not get locks profiling result: %s", err))
+		return
+	}
+}
+
 const (
 	opMvccGetByHex = "hex"
 	opMvccGetByKey = "key"
