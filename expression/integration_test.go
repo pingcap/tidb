@@ -938,7 +938,7 @@ func (s *testIntegrationSuite2) TestStringBuiltin(c *C) {
 	tk.MustQuery(`select quote(null) REGEXP binary 'null'`).Check(testkit.Rows(`0`))
 	tk.MustQuery(`select quote(null) REGEXP binary 'NULL'`).Check(testkit.Rows(`1`))
 	tk.MustQuery(`select quote(null) REGEXP 'NULL'`).Check(testkit.Rows(`1`))
-	tk.MustQuery(`select quote(null) REGEXP 'null'`).Check(testkit.Rows(`1`))
+	tk.MustQuery(`select quote(null) REGEXP 'null'`).Check(testkit.Rows(`0`))
 
 	// for convert
 	result = tk.MustQuery(`select convert("123" using "binary"), convert("中文" using "binary"), convert("中文" using "utf8"), convert("中文" using "utf8mb4"), convert(cast("中文" as binary) using "utf8");`)
@@ -2783,9 +2783,9 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t (a char(10), b varchar(10), c binary(10), d varbinary(10));`)
 	tk.MustExec(`insert into t values ('text','text','text','text');`)
-	result = tk.MustQuery(`select a regexp 'Xt' from t;`)
+	result = tk.MustQuery(`select a regexp 'xt' from t;`)
 	result.Check(testkit.Rows("1"))
-	result = tk.MustQuery(`select b regexp 'Xt' from t;`)
+	result = tk.MustQuery(`select b regexp 'xt' from t;`)
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery(`select b regexp binary 'Xt' from t;`)
 	result.Check(testkit.Rows("0"))
@@ -2793,18 +2793,18 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("0"))
 	result = tk.MustQuery(`select d regexp 'Xt' from t;`)
 	result.Check(testkit.Rows("0"))
-	result = tk.MustQuery(`select a rlike 'Xt' from t;`)
+	result = tk.MustQuery(`select a rlike 'xt' from t;`)
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery(`select a rlike binary 'Xt' from t;`)
 	result.Check(testkit.Rows("0"))
-	result = tk.MustQuery(`select b rlike 'Xt' from t;`)
+	result = tk.MustQuery(`select b rlike 'xt' from t;`)
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery(`select c rlike 'Xt' from t;`)
 	result.Check(testkit.Rows("0"))
 	result = tk.MustQuery(`select d rlike 'Xt' from t;`)
 	result.Check(testkit.Rows("0"))
 	result = tk.MustQuery(`select 'a' regexp 'A', 'a' regexp binary 'A'`)
-	result.Check(testkit.Rows("1 0"))
+	result.Check(testkit.Rows("0 0"))
 
 	// testCase is for like and regexp
 	type testCase struct {
