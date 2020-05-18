@@ -33,7 +33,7 @@ type testIntegrationSuite struct {
 }
 
 func newStoreWithBootstrap() (kv.Storage, error) {
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	if err != nil {
 		return nil, err
 	}
