@@ -483,6 +483,14 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		indexInfo.Unique = unique
 		indexInfo.ID = allocateIndexID(tblInfo)
 		tblInfo.Indices = append(tblInfo.Indices, indexInfo)
+
+		// Here we need do this check before set state to `DeleteOnly`,
+		// because if hidden columns has been set to `DeleteOnly`,
+		// the `DeleteOnly` columns are missing when we do this check.
+		if err := checkInvisibleIndexOnPK(tblInfo); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, err
+		}
 		logutil.BgLogger().Info("[ddl] run add index job", zap.String("job", job.String()), zap.Reflect("indexInfo", indexInfo))
 	}
 	originalState := indexInfo.State
