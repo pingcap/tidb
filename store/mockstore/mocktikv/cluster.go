@@ -59,17 +59,13 @@ type delayKey struct {
 
 // NewCluster creates an empty cluster. It needs to be bootstrapped before
 // providing service.
-func NewCluster() *Cluster {
+func NewCluster(mvccStore MVCCStore) *Cluster {
 	return &Cluster{
 		stores:      make(map[uint64]*Store),
 		regions:     make(map[uint64]*Region),
 		delayEvents: make(map[delayKey]time.Duration),
+		mvccStore:   mvccStore,
 	}
-}
-
-// SetMvccStore sets the the mvccStore used by SplitTable, SplitIndex and SplitKeys.
-func (c *Cluster) SetMvccStore(s MVCCStore) {
-	c.mvccStore = s
 }
 
 // AllocID creates an unique ID in cluster. The ID could be used as either

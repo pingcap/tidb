@@ -97,7 +97,7 @@ func (s *inspectionSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 
 	var err error
-	s.store, err = mockstore.NewMockTikvStore()
+	s.store, err = mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	session.DisableStats4Test()
 	s.dom, err = session.BootstrapSession(s.store)
