@@ -40,7 +40,7 @@ func newApplyCache(ctx sessionctx.Context) (*applyCache, error) {
 }
 
 // Get gets a cache item according to cache key.
-func (c *applyCache) Get(key []byte) *applyCacheValue {
+func (c *applyCache) Get(key string) *applyCacheValue {
 	if c == nil {
 		return nil
 	}
@@ -53,7 +53,7 @@ func (c *applyCache) Get(key []byte) *applyCacheValue {
 }
 
 // Set inserts an item to the cache.
-func (c *applyCache) Set(key []byte, value *applyCacheValue) bool {
+func (c *applyCache) Set(key string, value *applyCacheValue) bool {
 	if c == nil {
 		return false
 	}

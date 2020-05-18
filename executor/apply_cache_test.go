@@ -14,14 +14,12 @@
 package executor
 
 import (
-	"strconv"
-	"time"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
+	"strconv"
 )
 
 var _ = SerialSuites(&testApplyCacheSuite{})
@@ -40,35 +38,29 @@ func (s *testApplyCacheSuite) TestApplyCache(c *C) {
 	}
 	l := make([]*chunk.List, 3)
 	value := make([]applyCacheValue, 3)
-	key := make([][]byte, 3)
+	key := make([]string, 3)
 	for i := 0; i < 3; i++ {
 		l[i] = chunk.NewList(fields, 1, 1)
 		srcChunk := chunk.NewChunkWithCapacity(fields, 1)
 		srcChunk.AppendInt64(0, int64(i))
 		srcRow := srcChunk.GetRow(0)
 		l[i].AppendRow(srcRow)
-		key[i] = []byte(strconv.Itoa(i))
+		key[i] = strconv.Itoa(i)
 		value[i].Data = l[i]
 	}
 
-	setSuccess := applyCache.Set(key[0], &value[0])
-	c.Assert(setSuccess, Equals, true)
-	// wait for value to pass through buffers
-	time.Sleep(10 * time.Millisecond)
+	evicted := applyCache.Set(key[0], &value[0])
+	c.Assert(evicted, Equals, false)
 	result := applyCache.Get(key[0])
 	c.Assert(result, NotNil)
 
-	setSuccess = applyCache.Set(key[1], &value[1])
-	c.Assert(setSuccess, Equals, true)
-	// wait for value to pass through buffers
-	time.Sleep(10 * time.Millisecond)
+	evicted = applyCache.Set(key[1], &value[1])
+	c.Assert(evicted, Equals, true)
 	result = applyCache.Get(key[1])
 	c.Assert(result, NotNil)
 
-	setSuccess = applyCache.Set(key[2], &value[2])
-	c.Assert(setSuccess, Equals, true)
-	// wait for value to pass through buffers
-	time.Sleep(10 * time.Millisecond)
+	evicted = applyCache.Set(key[2], &value[2])
+	c.Assert(evicted, Equals, true)
 	result = applyCache.Get(key[2])
 	c.Assert(result, NotNil)
 

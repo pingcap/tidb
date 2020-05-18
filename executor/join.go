@@ -910,15 +910,16 @@ func (e *NestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk) (err e
 			e.hasNull = false
 
 			if e.canUseCache {
-				var key []byte
+				var keyByte []byte
 				for _, col := range e.outerSchema {
 					*col.Data = e.outerRow.GetDatum(col.Index, col.RetType)
-					key, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, key, *col.Data)
+					keyByte, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, keyByte, *col.Data)
 					if err != nil {
 						return err
 					}
 				}
 				e.totalNumber++
+				key := string(keyByte)
 				value := e.cache.Get(key)
 				if value != nil {
 					e.innerList = value.Data
