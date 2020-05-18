@@ -20,7 +20,6 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
@@ -28,15 +27,12 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
-	"go.uber.org/zap"
 )
 
 type DDLForTest interface {
@@ -73,16 +69,7 @@ func (d *ddl) restartWorkers(ctx context.Context) {
 	d.quitCh = make(chan struct{})
 
 	d.wg.Add(1)
-	go func() {
-		defer d.wg.Done()
-		util.WithRecovery(
-			func() { d.limitDDLJobs() },
-			func(r interface{}) {
-				logutil.BgLogger().Error("[ddl] DDL add batch DDL jobs meet panic",
-					zap.String("ID", d.uuid), zap.Reflect("r", r), zap.Stack("stack trace"))
-				metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
-			})
-	}()
+	go d.limitDDLJobs()
 	if !RunWorker {
 		return
 	}
@@ -93,12 +80,7 @@ func (d *ddl) restartWorkers(ctx context.Context) {
 		worker.wg.Add(1)
 		worker.quitCh = make(chan struct{})
 		w := worker
-		go util.WithRecovery(func() { w.start(d.ddlCtx) },
-			func(r interface{}) {
-				if r != nil {
-					log.Error("[ddl] restart DDL worker meet panic", zap.String("worker", w.String()), zap.String("ID", d.uuid))
-				}
-			})
+		go w.start(d.ddlCtx)
 		asyncNotify(worker.ddlJobCh)
 	}
 }
