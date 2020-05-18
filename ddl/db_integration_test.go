@@ -2094,6 +2094,12 @@ func (s *testIntegrationSuite7) TestAddExpressionIndex(c *C) {
 
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2.1"))
 
+	// Issue #17111
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a varchar(10), b varchar(10));")
+	tk.MustExec("alter table t1 add unique index ei_ab ((concat(a, b)));")
+	tk.MustExec("alter table t1 alter index ei_ab invisible;")
+
 	// Test experiment switch.
 	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = false
 	tk.MustGetErrMsg("create index d on t((a+1))", "[ddl:8200]Unsupported creating expression index without allow-expression-index in config")

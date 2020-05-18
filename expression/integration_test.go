@@ -6097,6 +6097,17 @@ func (s *testIntegrationSerialSuite) TestCollateIndexLookup(c *C) {
 	tk.MustQuery("select id from t_bin where v < 'b' and v > ' '").Sort().Check(testkit.Rows("1"))
 }
 
+func (s *testIntegrationSerialSuite) TestIssue16668(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tx")
+	tk.MustExec("CREATE TABLE `tx` ( `a` int(11) NOT NULL,`b` varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL)")
+	tk.MustExec("insert into tx values (1, 'a'), (2, 'À'), (3, 'á'), (4, 'à'), (5, 'b'), (6, 'c'), (7, ' ')")
+	tk.MustQuery("select count(distinct(b)) from tx").Check(testkit.Rows("4"))
+}
+
 func (s *testIntegrationSerialSuite) TestCollateStringFunction(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
@@ -6418,6 +6429,27 @@ func (s *testIntegrationSuite) TestIssue17098(c *C) {
 	tk.MustExec("insert into t1 values('a');")
 	tk.MustExec("insert into t2 values('a');")
 	tk.MustQuery("select collation(t1.a) from t1 union select collation(t2.a) from t2;").Check(testkit.Rows("utf8mb4_bin"))
+}
+
+func (s *testIntegrationSerialSuite) TestIssue17176(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustGetErrMsg("create table t(a enum('a', 'a ')) charset utf8 collate utf8_bin;", "[types:1291]Column 'a' has duplicated value 'a ' in ENUM")
+	tk.MustGetErrMsg("create table t(a enum('a', 'Á')) charset utf8 collate utf8_general_ci;", "[types:1291]Column 'a' has duplicated value 'Á' in ENUM")
+	tk.MustGetErrMsg("create table t(a enum('a', 'a ')) charset utf8mb4 collate utf8mb4_bin;", "[types:1291]Column 'a' has duplicated value 'a ' in ENUM")
+	tk.MustExec("create table t(a enum('a', 'A')) charset utf8 collate utf8_bin;")
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t3(a enum('a', 'A')) charset utf8mb4 collate utf8mb4_bin;")
+}
+
+func (s *testIntegrationSuite) TestIssue17115(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("select collation(user());").Check(testkit.Rows("utf8mb4_bin"))
+	tk.MustQuery("select collation(compress('abc'));").Check(testkit.Rows("binary"))
 }
 
 func (s *testIntegrationSuite) TestIndexedVirtualGeneratedColumnTruncate(c *C) {
