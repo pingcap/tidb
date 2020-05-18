@@ -584,10 +584,10 @@ func (s *testTableSuite) TestTableRowIDShardingInfo(c *C) {
 	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
 	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
 
-	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t4` (a int key auto_random)")
+	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t4` (a bigint key auto_random)")
 	assertShardingInfo("t4", "PK_AUTO_RANDOM_BITS=5")
 
-	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t5` (a int key auto_random(1))")
+	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t5` (a bigint key auto_random(1))")
 	assertShardingInfo("t5", "PK_AUTO_RANDOM_BITS=1")
 
 	tk.MustExec("DROP DATABASE `sharding_info_test_db`")
