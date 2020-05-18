@@ -648,7 +648,7 @@ func (alloc *allocator) alloc4Signed(tableID int64, n uint64, increment, offset 
 				return err1
 			}
 			// CalcNeededBatchSize calculates the total batch size needed on global base.
-			n1 := CalcNeededBatchSize(newBase, int64(n), increment, offset, alloc.isUnsigned)
+			n1 = CalcNeededBatchSize(newBase, int64(n), increment, offset, alloc.isUnsigned)
 			// Although the step is customized by user, we still need to make sure nextStep is big enough for insert batch.
 			if nextStep < n1 {
 				nextStep = n1
