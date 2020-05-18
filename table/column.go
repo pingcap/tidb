@@ -168,7 +168,7 @@ func handleWrongUtf8Value(ctx sessionctx.Context, col *model.ColumnInfo, casted 
 }
 
 // CastValue casts a value based on column type.
-// If forceIgnoreTruncate is true, the err returned will be always nil.
+// If forceIgnoreTruncate is true, truncated errors will be ignored.
 // If returnOverflow is true, don't handle overflow errors in this function.
 // It's safe now and it's the same as the behavior of select statement.
 // Set it to true only in FillVirtualColumnValue and UnionScanExec.Next()
