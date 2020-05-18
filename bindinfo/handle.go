@@ -628,6 +628,7 @@ func (h *BindHandle) CaptureBaselines() {
 			Status:    Using,
 			Charset:   charset,
 			Collation: collation,
+			CreateWay: Captured,
 		}
 		// We don't need to pass the `sctx` because the BindSQL has been validated already.
 		err = h.AddBindRecord(nil, &BindRecord{OriginalSQL: normalizedSQL, Db: dbName, Bindings: []Binding{binding}})

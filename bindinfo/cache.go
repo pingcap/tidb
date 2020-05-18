@@ -36,6 +36,12 @@ const (
 	// Rejected means that the bind has been rejected after verify process.
 	// We can retry it after certain time has passed.
 	Rejected = "rejected"
+	// The binding is created by SQL like "create binding for ...".
+	SQLcreated = "sqlcreated"
+	// The binding is captured by TiDB automatically.
+	Captured = "captured"
+	// The binding is evolved by TiDB from old bindings.
+	Evolved = "evolved"
 )
 
 // Binding stores the basic bind hint info.
@@ -47,6 +53,7 @@ type Binding struct {
 	Status     string
 	CreateTime types.Time
 	UpdateTime types.Time
+	CreateWay  string
 	Charset    string
 	Collation  string
 	// Hint is the parsed hints, it is used to bind hints to stmt node.

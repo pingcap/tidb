@@ -1170,3 +1170,55 @@ func (s *testSuite) TestInvisibleIndex(c *C) {
 
 	tk.MustExec("drop binding for select * from t")
 }
+
+func (s *testSuite) TestbindingCreateWay(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, index idx_a(a))")
+
+	// Test CreateWay for SQL created sql
+	tk.MustExec("create global binding for select * from t where a > 10 using select * from t ignore index(idx_a) where a > 10")
+	bindHandle := s.domain.BindHandle()
+	sql, hash := parser.NormalizeDigest("select * from t where a > ?")
+	bindData := bindHandle.GetBindRecord(hash, sql, "test")
+	c.Check(bindData, NotNil)
+	c.Check(bindData.OriginalSQL, Equals, "select * from t where a > ?")
+	c.Assert(len(bindData.Bindings), Equals, 1)
+	bind := bindData.Bindings[0]
+	c.Assert(bind.CreateWay, Equals, bindinfo.SQLcreated)
+
+	// Test CreateWay for evolved sql
+	tk.MustExec("set @@tidb_evolve_plan_baselines=1")
+	tk.MustQuery("select * from t where a > 10")
+	bindHandle.SaveEvolveTasksToStore()
+	sql, hash = parser.NormalizeDigest("select * from t where a > ?")
+	bindData = bindHandle.GetBindRecord(hash, sql, "test")
+	c.Check(bindData, NotNil)
+	c.Check(bindData.OriginalSQL, Equals, "select * from t where a > ?")
+	c.Assert(len(bindData.Bindings), Equals, 2)
+	bind = bindData.Bindings[1]
+	c.Assert(bind.CreateWay, Equals, bindinfo.Evolved)
+	tk.MustExec("set @@tidb_evolve_plan_baselines=0")
+
+	// Test CreateWay for captured sqls
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec("set @@tidb_capture_plan_baselines = on")
+	defer func() {
+		tk.MustExec("set @@tidb_capture_plan_baselines = off")
+	}()
+	tk.MustExec("use test")
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	tk.MustExec("select * from t ignore index(idx_a) where a < 10")
+	tk.MustExec("select * from t ignore index(idx_a) where a < 10")
+	tk.MustExec("admin capture bindings")
+	bindHandle.CaptureBaselines()
+	sql, hash = parser.NormalizeDigest("select * from t where a < ?")
+	bindData = bindHandle.GetBindRecord(hash, sql, "test")
+	c.Check(bindData, NotNil)
+	c.Check(bindData.OriginalSQL, Equals, "select * from t where a < ?")
+	c.Assert(len(bindData.Bindings), Equals, 1)
+	bind = bindData.Bindings[0]
+	c.Assert(bind.CreateWay, Equals, bindinfo.Captured)
+}
