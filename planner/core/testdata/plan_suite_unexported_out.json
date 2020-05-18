@@ -809,17 +809,17 @@
   {
     "Name": "TestTablePartition",
     "Cases": [
-      "Partition(41)->Partition(42)->Partition(43)->Partition(44)->Partition(45)->*core.LogicalPartitionUnionAll->Projection",
-      "Partition(41)->Partition(42)->*core.LogicalPartitionUnionAll->Projection",
-      "Partition(41)->Partition(42)->Partition(43)->*core.LogicalPartitionUnionAll->Projection",
-      "Partition(42)->Partition(43)->*core.LogicalPartitionUnionAll->Projection",
-      "Partition(42)->Partition(43)->*core.LogicalPartitionUnionAll->Projection->Projection->UnionAll{Partition(42)->Partition(43)->*core.LogicalPartitionUnionAll->Projection->Projection}",
-      "Partition(42)->Partition(43)->*core.LogicalPartitionUnionAll->Projection->Projection->UnionAll{Partition(42)->Partition(43)->*core.LogicalPartitionUnionAll->Projection->Projection}",
+      "PartitionUnionAll{Partition(41)->Partition(42)->Partition(43)->Partition(44)->Partition(45)}->Projection",
+      "PartitionUnionAll{Partition(41)->Partition(42)}->Projection",
+      "PartitionUnionAll{Partition(41)->Partition(42)->Partition(43)}->Projection",
+      "PartitionUnionAll{Partition(42)->Partition(43)}->Projection",
+      "UnionAll{PartitionUnionAll{Partition(42)->Partition(43)}->Projection->Projection->PartitionUnionAll{Partition(42)->Partition(43)}->Projection->Projection}",
+      "UnionAll{PartitionUnionAll{Partition(42)->Partition(43)}->Projection->Projection->PartitionUnionAll{Partition(42)->Partition(43)}->Projection->Projection}",
       "Partition(41)->Projection",
       "Partition(45)->Projection",
       "Dual->Projection",
       "Partition(41)->Projection",
-      "Partition(41)->Partition(44)->*core.LogicalPartitionUnionAll->Projection"
+      "PartitionUnionAll{Partition(41)->Partition(44)}->Projection"
     ]
   },
   {
