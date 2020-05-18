@@ -141,13 +141,22 @@ func buildHashPartitionDefinitions(ctx sessionctx.Context, d *ddl, s *ast.Create
 	return nil
 }
 
+<<<<<<< HEAD
 func buildRangePartitionDefinitions(ctx sessionctx.Context, d *ddl, s *ast.CreateTableStmt, pi *model.PartitionInfo) error {
 	genIDs, err := d.genGlobalIDs(int(pi.Num))
 	if err != nil {
 		return err
 	}
 	for ith, def := range s.Partition.Definitions {
+=======
+func buildRangePartitionDefinitions(ctx sessionctx.Context, s *ast.CreateTableStmt, pi *model.PartitionInfo) (err error) {
+	for _, def := range s.Partition.Definitions {
+>>>>>>> 121c153... ddl: check too long ident for partition (#17236)
 		comment, _ := def.Comment()
+		err = checkTooLongTable(def.Name)
+		if err != nil {
+			return err
+		}
 		piDef := model.PartitionDefinition{
 			Name:    def.Name,
 			ID:      genIDs[ith],
