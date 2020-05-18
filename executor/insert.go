@@ -333,7 +333,7 @@ func (e *InsertExec) doDupRowUpdate(ctx context.Context, handle int64, oldRow []
 		if err1 != nil {
 			return nil, false, 0, err1
 		}
-		e.row4Update[col.Col.Index], err1 = table.CastValue(e.ctx, val, col.Col.ToInfo())
+		e.row4Update[col.Col.Index], err1 = table.CastValue(e.ctx, val, col.Col.ToInfo(), false)
 		if err1 != nil {
 			return nil, false, 0, err1
 		}
