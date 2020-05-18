@@ -117,7 +117,7 @@ func testNewDDLAndStart(ctx context.Context, c *C, options ...Option) *ddl {
 }
 
 func testCreateStore(c *C, name string) kv.Storage {
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	return store
 }

@@ -35,7 +35,7 @@ var smallCount = 100
 var bigCount = 10000
 
 func prepareBenchSession() (Session, *domain.Domain, kv.Storage) {
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	if err != nil {
 		logutil.BgLogger().Fatal(err.Error())
 	}
