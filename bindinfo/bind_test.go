@@ -123,8 +123,9 @@ func (s *testSuite) TestBindParse(c *C) {
 	status := "using"
 	charset := "utf8mb4"
 	collation := "utf8mb4_bin"
-	sql := fmt.Sprintf(`INSERT INTO mysql.bind_info(original_sql,bind_sql,default_db,status,create_time,update_time,charset,collation) VALUES ('%s', '%s', '%s', '%s', NOW(), NOW(),'%s', '%s')`,
-		originSQL, bindSQL, defaultDb, status, charset, collation)
+	createWay := bindinfo.SQLcreated
+	sql := fmt.Sprintf(`INSERT INTO mysql.bind_info(original_sql,bind_sql,default_db,status,create_time,update_time,charset,collation,create_way) VALUES ('%s', '%s', '%s', '%s', NOW(), NOW(),'%s', '%s', '%s')`,
+		originSQL, bindSQL, defaultDb, status, charset, collation, createWay)
 	tk.MustExec(sql)
 	bindHandle := bindinfo.NewBindHandle(tk.Se)
 	err := bindHandle.Update(true)
@@ -863,7 +864,8 @@ func (s *testSuite) TestEvolveInvalidBindings(c *C) {
 	tk.MustExec("create table t(a int, b int, index idx_a(a))")
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ USE_INDEX(t) */ * from t where a > 10")
 	// Manufacture a rejected binding by hacking mysql.bind_info.
-	tk.MustExec("insert into mysql.bind_info values('select * from t where a > ?', 'select /*+ USE_INDEX(t,idx_a) */ * from t where a > 10', 'test', 'rejected', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '')")
+	tk.MustExec("insert into mysql.bind_info values('select * from t where a > ?', 'select /*+ USE_INDEX(t,idx_a) */ * from t where a > 10', 'test', 'rejected', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
+		bindinfo.SQLcreated + "')")
 	tk.MustQuery("select bind_sql, status from mysql.bind_info").Sort().Check(testkit.Rows(
 		"select /*+ USE_INDEX(t) */ * from t where a > 10 using",
 		"select /*+ USE_INDEX(t,idx_a) */ * from t where a > 10 rejected",
