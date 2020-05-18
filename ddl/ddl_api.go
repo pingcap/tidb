@@ -613,7 +613,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	err = checkColumnValueConstraint(col)
+	err = checkColumnValueConstraint(col, col.Collate)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -881,21 +881,22 @@ func checkPriKeyConstraint(col *table.Column, hasDefaultValue, hasNullFlag bool,
 	return nil
 }
 
-func checkColumnValueConstraint(col *table.Column) error {
+func checkColumnValueConstraint(col *table.Column, collation string) error {
 	if col.Tp != mysql.TypeEnum && col.Tp != mysql.TypeSet {
 		return nil
 	}
-	valueMap := make(map[string]string, len(col.Elems))
+	valueMap := make(map[string]bool, len(col.Elems))
+	ctor := collate.GetCollator(collation)
 	for i := range col.Elems {
-		val := strings.ToLower(col.Elems[i])
+		val := string(ctor.Key(col.Elems[i]))
 		if _, ok := valueMap[val]; ok {
 			tpStr := "ENUM"
 			if col.Tp == mysql.TypeSet {
 				tpStr = "SET"
 			}
-			return types.ErrDuplicatedValueInType.GenWithStackByArgs(col.Name, valueMap[val], tpStr)
+			return types.ErrDuplicatedValueInType.GenWithStackByArgs(col.Name, col.Elems[i], tpStr)
 		}
-		valueMap[val] = col.Elems[i]
+		valueMap[val] = true
 	}
 	return nil
 }
@@ -1133,15 +1134,31 @@ func getPrimaryKey(tblInfo *model.TableInfo) *model.IndexInfo {
 			// table has explicit primary key
 			return key
 		}
+		// The case index without any columns should never happen, but still do a check here
+		if len(key.Columns) == 0 {
+			continue
+		}
 		// find the first unique key with NOT NULL columns
 		if implicitPK == nil && key.Unique {
 			// ensure all columns in unique key have NOT NULL flag
 			allColNotNull := true
+			skip := false
 			for _, idxCol := range key.Columns {
 				col := model.FindColumnInfo(tblInfo.Cols(), idxCol.Name.L)
+				// This index has a column in DeleteOnly state,
+				// or it is expression index (it defined on a hidden column),
+				// it can not be implicit PK, go to next index iterator
+				if col == nil || col.Hidden {
+					skip = true
+					break
+				}
 				if !mysql.HasNotNullFlag(col.Flag) {
 					allColNotNull = false
+					break
 				}
+			}
+			if skip {
+				continue
 			}
 			if allColNotNull {
 				implicitPK = key
@@ -1158,6 +1175,10 @@ func setTableAutoRandomBits(ctx sessionctx.Context, tbInfo *model.TableInfo, col
 		if containsColumnOption(col, ast.ColumnOptionAutoRandom) {
 			if !allowAutoRandom {
 				return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomExperimentalDisabledErrMsg)
+			}
+			if col.Tp.Tp != mysql.TypeLonglong {
+				return ErrInvalidAutoRandom.GenWithStackByArgs(
+					fmt.Sprintf(autoid.AutoRandomOnNonBigIntColumn, types.TypeStr(col.Tp.Tp)))
 			}
 			if !tbInfo.PKIsHandle || col.Name.Name.L != pkColName.L {
 				errMsg := fmt.Sprintf(autoid.AutoRandomPKisNotHandleErrMsg, col.Name.Name.O)
@@ -1178,9 +1199,9 @@ func setTableAutoRandomBits(ctx sessionctx.Context, tbInfo *model.TableInfo, col
 			layout := autoid.NewAutoRandomIDLayout(col.Tp, autoRandBits)
 			if autoRandBits == 0 {
 				return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomNonPositive)
-			} else if autoRandBits >= layout.TypeBitsLength {
-				errMsg := fmt.Sprintf(autoid.AutoRandomOverflowErrMsg, col.Name.Name.L,
-					layout.TypeBitsLength, autoRandBits, col.Name.Name.L, layout.TypeBitsLength-1)
+			} else if autoRandBits > autoid.MaxAutoRandomBits {
+				errMsg := fmt.Sprintf(autoid.AutoRandomOverflowErrMsg,
+					autoid.MaxAutoRandomBits, autoRandBits, col.Name.Name.O)
 				return ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
 			}
 			tbInfo.AutoRandomBits = autoRandBits
