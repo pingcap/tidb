@@ -713,14 +713,14 @@
       {
         "SQL": "select * from ((select a as aa from t t1) union all (select b as aa from t t2)) as t3 order by aa",
         "Plan": [
-          "Sort_23 20000.00 root  Column#5:asc",
-          "└─Union_16 20000.00 root  ",
-          "  ├─Projection_17 10000.00 root  test.t.a",
-          "  │ └─TableReader_18 10000.00 root  data:TableFullScan_19",
-          "  │   └─TableFullScan_19 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─Projection_20 10000.00 root  test.t.b",
-          "    └─TableReader_21 10000.00 root  data:TableFullScan_22",
-          "      └─TableFullScan_22 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "Sort_28 20000.00 root  Column#5:asc",
+          "└─Union_18 20000.00 root  ",
+          "  ├─Projection_19 10000.00 root  test.t.a",
+          "  │ └─TableReader_20 10000.00 root  data:TableFullScan_21",
+          "  │   └─TableFullScan_21 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─Projection_22 10000.00 root  test.t.b",
+          "    └─TableReader_23 10000.00 root  data:TableFullScan_24",
+          "      └─TableFullScan_24 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Result": [
           "1",
@@ -781,16 +781,16 @@
       {
         "SQL": "select a+b*a*b, a / b from (select * from t union all select * from t union all select * from t) k",
         "Plan": [
-          "Union_23 30000.00 root  ",
-          "├─Projection_24 10000.00 root  plus(test.t.a, mul(mul(test.t.b, test.t.a), test.t.b))->Column#9, div(cast(test.t.a, decimal(20,0) BINARY), cast(test.t.b, decimal(20,0) BINARY))->Column#10",
-          "│ └─TableReader_25 10000.00 root  data:TableFullScan_26",
-          "│   └─TableFullScan_26 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
-          "├─Projection_27 10000.00 root  plus(test.t.a, mul(mul(test.t.b, test.t.a), test.t.b))->Column#9, div(cast(test.t.a, decimal(20,0) BINARY), cast(test.t.b, decimal(20,0) BINARY))->Column#10",
-          "│ └─TableReader_28 10000.00 root  data:TableFullScan_29",
-          "│   └─TableFullScan_29 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
-          "└─Projection_30 10000.00 root  plus(test.t.a, mul(mul(test.t.b, test.t.a), test.t.b))->Column#9, div(cast(test.t.a, decimal(20,0) BINARY), cast(test.t.b, decimal(20,0) BINARY))->Column#10",
-          "  └─TableReader_31 10000.00 root  data:TableFullScan_32",
-          "    └─TableFullScan_32 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "Union_21 30000.00 root  ",
+          "├─Projection_22 10000.00 root  plus(test.t.a, mul(mul(test.t.b, test.t.a), test.t.b))->Column#9, div(cast(test.t.a, decimal(20,0) BINARY), cast(test.t.b, decimal(20,0) BINARY))->Column#10",
+          "│ └─TableReader_23 10000.00 root  data:TableFullScan_24",
+          "│   └─TableFullScan_24 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "├─Projection_25 10000.00 root  plus(test.t.a, mul(mul(test.t.b, test.t.a), test.t.b))->Column#9, div(cast(test.t.a, decimal(20,0) BINARY), cast(test.t.b, decimal(20,0) BINARY))->Column#10",
+          "│ └─TableReader_26 10000.00 root  data:TableFullScan_27",
+          "│   └─TableFullScan_27 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "└─Projection_28 10000.00 root  plus(test.t.a, mul(mul(test.t.b, test.t.a), test.t.b))->Column#9, div(cast(test.t.a, decimal(20,0) BINARY), cast(test.t.b, decimal(20,0) BINARY))->Column#10",
+          "  └─TableReader_29 10000.00 root  data:TableFullScan_30",
+          "    └─TableFullScan_30 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Result": [
           "122 0.0909",

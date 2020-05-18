@@ -210,7 +210,8 @@
     "name": "TestPushProjDownUnionAll",
     "cases": [
       "select a+b+c+d, a / c from (select * from t union all select * from t union all select * from t) k",
-      "select a, b, 'fd', c from (select * from t union all select * from t union all select * from t) k"
+      "select a, b, 'fd', c from (select * from t union all select * from t union all select * from t) k",
+      "select a, 'b', 'fd', 'c' from (select * from t union all select * from t union all select * from t) k"
     ]
   }
 ]

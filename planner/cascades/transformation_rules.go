@@ -2340,42 +2340,35 @@ func (r *PushProjDownUnionAll) Match(expr *memo.ExprIter) bool {
 		return false
 	}
 
+	constantCount := 0
 	proj := expr.GetExpr().ExprNode.(*plannercore.LogicalProjection)
 	for _, expr := range proj.Exprs {
-		_, ok := expr.(*expression.ScalarFunction)
-		if ok {
+		switch expr.(type) {
+		case *expression.Constant:
+			constantCount++
+		case *expression.ScalarFunction:
 			return true
+		default:
 		}
 	}
-	return false
+
+	return (constantCount << 1) <= len(proj.Exprs)
 }
 
 // OnTransform implements Transformation interface.
-// It will transform `Projection->UnionAll->x` to `top Projection->UnionAll->bottom Projection->x`.
+// It will transform `Projection->UnionAll->x` to `UnionAll->Projection->x`.
 func (r *PushProjDownUnionAll) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	proj := old.GetExpr().ExprNode.(*plannercore.LogicalProjection)
 	unionAll := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalUnionAll)
 
-	// Construct GroupExpr, Group (TopProj -> UnionAll -> BottomProj -> Child)
-	bottomProj := plannercore.LogicalProjection{Exprs: proj.Exprs}.Init(proj.SCtx(), proj.SelectBlockOffset())
-	bottomProj.SetSchema(old.GetExpr().Group.Prop.Schema)
-
+	// Construct GroupExpr, Group (UnionAll -> Proj -> Child)
 	newUnionAllExpr := memo.NewGroupExpr(unionAll)
 	for _, child := range old.Children[0].GetExpr().Children {
-		bottomProjExpr := memo.NewGroupExpr(bottomProj)
-		bottomProjExpr.SetChildren(child)
-		bottomProjGroup := memo.NewGroupWithSchema(bottomProjExpr, bottomProj.Schema())
-		newUnionAllExpr.Children = append(newUnionAllExpr.Children, bottomProjGroup)
+		newProjExpr := memo.NewGroupExpr(proj)
+		newProjExpr.SetChildren(child)
+		newProjGroup := memo.NewGroupWithSchema(newProjExpr, old.GetExpr().Group.Prop.Schema)
+		newUnionAllExpr.Children = append(newUnionAllExpr.Children, newProjGroup)
 	}
-	newUnionAllGroup := memo.NewGroupWithSchema(newUnionAllExpr, old.GetExpr().Group.Prop.Schema)
 
-	topProj := plannercore.LogicalProjection{Exprs: make([]expression.Expression, len(proj.Exprs))}.Init(proj.SCtx(), proj.SelectBlockOffset())
-	topProj.SetSchema(old.GetExpr().Group.Prop.Schema)
-	for index := range proj.Exprs {
-		topProj.Exprs[index] = topProj.Schema().Columns[index]
-	}
-	topProjExpr := memo.NewGroupExpr(topProj)
-	topProjExpr.SetChildren(newUnionAllGroup)
-
-	return []*memo.GroupExpr{topProjExpr}, true, false, nil
+	return []*memo.GroupExpr{newUnionAllExpr}, true, false, nil
 }
