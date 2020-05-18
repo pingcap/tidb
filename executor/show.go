@@ -275,6 +275,7 @@ func (e *ShowExec) fetchShowBind() error {
 				hint.UpdateTime,
 				hint.Charset,
 				hint.Collation,
+				hint.CreateWay,
 			})
 		}
 	}

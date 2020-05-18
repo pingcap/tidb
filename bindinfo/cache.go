@@ -36,11 +36,11 @@ const (
 	// Rejected means that the bind has been rejected after verify process.
 	// We can retry it after certain time has passed.
 	Rejected = "rejected"
-	// The binding is created by SQL like "create binding for ...".
-	SQLcreated = "sqlcreated"
-	// The binding is captured by TiDB automatically.
+	// SQLcreated indicates the binding is created by SQL like "create binding for ...".
+	SQLcreated = "sql_created"
+	// Captured indicates the binding is captured by TiDB automatically.
 	Captured = "captured"
-	// The binding is evolved by TiDB from old bindings.
+	// Evolved indicates the binding is evolved by TiDB from old bindings.
 	Evolved = "evolved"
 )
 
