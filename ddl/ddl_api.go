@@ -1350,7 +1350,6 @@ func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo
 		return errors.Trace(err)
 	}
 	if s.Partition != nil {
-		//err := chec
 		err := checkPartitionExprValid(ctx, tbInfo, s.Partition.Expr)
 		if err != nil {
 			return errors.Trace(err)
