@@ -14,29 +14,22 @@
 package executor
 
 import (
-	"bytes"
-
-	"github.com/dgraph-io/ristretto"
+	"github.com/hashicorp/golang-lru"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
 type applyCache struct {
-	cache *ristretto.Cache
+	cache *lru.Cache
 }
 
 type applyCacheValue struct {
-	Key  []byte
 	Data *chunk.List
 }
 
 func newApplyCache(ctx sessionctx.Context) (*applyCache, error) {
-	cache, err := ristretto.NewCache(&ristretto.Config{
-		NumCounters: ctx.GetSessionVars().ApplyCacheQuota * 10,
-		MaxCost:     ctx.GetSessionVars().ApplyCacheQuota,
-		BufferItems: 64,
-	})
+	cache, err := lru.New(int(ctx.GetSessionVars().ApplyCacheQuota))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -56,10 +49,6 @@ func (c *applyCache) Get(key []byte) *applyCacheValue {
 		return nil
 	}
 	typedValue := value.(*applyCacheValue)
-	// ristretto does not handle hash collision, so check the key equality after getting a value.
-	if !bytes.Equal(typedValue.Key, key) {
-		return nil
-	}
 	return typedValue
 }
 
@@ -68,7 +57,5 @@ func (c *applyCache) Set(key []byte, value *applyCacheValue) bool {
 	if c == nil {
 		return false
 	}
-	// Always ensure that the `Key` in `value` is the `key` we received.
-	value.Key = key
-	return c.cache.Set(key, value, 1)
+	return c.cache.Add(key, value)
 }

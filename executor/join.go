@@ -929,7 +929,7 @@ func (e *NestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk) (err e
 						return err
 					}
 					innerList := e.innerList.Copy()
-					e.cache.Set(key, &applyCacheValue{key, innerList})
+					e.cache.Set(key, &applyCacheValue{innerList})
 				}
 			} else {
 				for _, col := range e.outerSchema {

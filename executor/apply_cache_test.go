@@ -49,7 +49,6 @@ func (s *testApplyCacheSuite) TestApplyCache(c *C) {
 		l[i].AppendRow(srcRow)
 		key[i] = []byte(strconv.Itoa(i))
 		value[i].Data = l[i]
-		value[i].Key = key[i]
 	}
 
 	setSuccess := applyCache.Set(key[0], &value[0])
@@ -58,7 +57,6 @@ func (s *testApplyCacheSuite) TestApplyCache(c *C) {
 	time.Sleep(10 * time.Millisecond)
 	result := applyCache.Get(key[0])
 	c.Assert(result, NotNil)
-	c.Assert(string(result.Key), Equals, string(key[0]))
 
 	setSuccess = applyCache.Set(key[1], &value[1])
 	c.Assert(setSuccess, Equals, true)
@@ -66,7 +64,6 @@ func (s *testApplyCacheSuite) TestApplyCache(c *C) {
 	time.Sleep(10 * time.Millisecond)
 	result = applyCache.Get(key[1])
 	c.Assert(result, NotNil)
-	c.Assert(string(result.Key), Equals, string(key[1]))
 
 	setSuccess = applyCache.Set(key[2], &value[2])
 	c.Assert(setSuccess, Equals, true)
@@ -74,7 +71,6 @@ func (s *testApplyCacheSuite) TestApplyCache(c *C) {
 	time.Sleep(10 * time.Millisecond)
 	result = applyCache.Get(key[2])
 	c.Assert(result, NotNil)
-	c.Assert(string(result.Key), Equals, string(key[2]))
 
 	// Both key[0] and key[1] are not in the cache
 	result = applyCache.Get(key[0])
