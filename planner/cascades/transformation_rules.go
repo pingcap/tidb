@@ -142,6 +142,9 @@ var PostTransformationBatch = TransformationRuleBatch{
 	memo.OperandTopN: {
 		NewRuleInjectProjectionBelowTopN(),
 	},
+	memo.OperandSort: {
+		NewRuleInjectProjectionBelowSort(),
+	},
 }
 
 type baseRule struct {
@@ -2219,6 +2222,102 @@ func (r *InjectProjectionBelowTopN) OnTransform(old *memo.ExprIter) (newExprs []
 
 	topProjGroupExpr := memo.NewGroupExpr(topProj)
 	topProjGroupExpr.SetChildren(topNGroup)
+	return []*memo.GroupExpr{topProjGroupExpr}, true, false, nil
+}
+
+// InjectProjectionBelowSort injects two Projections below and upon Sort if Sort's ByItems
+// contain ScalarFunctions.
+type InjectProjectionBelowSort struct {
+	baseRule
+}
+
+// NewRuleInjectProjectionBelowSort creates a new Transformation NewRuleInjectProjectionBelowSort.
+// The behavior and reason of this rule is almost the same as `InjectProjectionBelowTopN` above.
+// It will extract the ScalarFunctions of `ByItems` into a Projection and injects the Projection
+// below Sort. Then, we need to add another Projection upon Sort to prune the extra Columns.
+// The reason why we need this rule is that, SortExecutor in TiDB does not support ScalarFunction
+// in `ByItems`. So we have to use a Projection to calculate the ScalarFunctions in advance.
+// The pattern of this rule is: a single Sort
+func NewRuleInjectProjectionBelowSort() Transformation {
+	rule := &InjectProjectionBelowSort{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandSort,
+		memo.EngineTiDBOnly,
+	)
+	return rule
+}
+
+// Match implements Transformation interface.
+func (r *InjectProjectionBelowSort) Match(expr *memo.ExprIter) bool {
+	sort := expr.GetExpr().ExprNode.(*plannercore.LogicalSort)
+	for _, item := range sort.ByItems {
+		if _, ok := item.Expr.(*expression.ScalarFunction); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// OnTransform implements Transformation interface.
+// It will convert `Sort -> X` to `Projection -> Sort -> Projection -> X`.
+func (r *InjectProjectionBelowSort) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	oldSort := old.GetExpr().ExprNode.(*plannercore.LogicalSort)
+	oldSortSchema := old.GetExpr().Schema()
+
+	// Construct top Projection.
+	topProjExprs := make([]expression.Expression, oldSortSchema.Len())
+	for i := range oldSortSchema.Columns {
+		topProjExprs[i] = oldSortSchema.Columns[i]
+	}
+	topProj := plannercore.LogicalProjection{
+		Exprs: topProjExprs,
+	}.Init(oldSort.SCtx(), oldSort.SelectBlockOffset())
+	topProj.SetSchema(oldSortSchema)
+
+	// Construct bottom Projection.
+	bottomProjExprs := make([]expression.Expression, 0, oldSortSchema.Len()+len(oldSort.ByItems))
+	bottomProjSchema := make([]*expression.Column, 0, oldSortSchema.Len()+len(oldSort.ByItems))
+	for _, col := range oldSortSchema.Columns {
+		bottomProjExprs = append(bottomProjExprs, col)
+		bottomProjSchema = append(bottomProjSchema, col)
+	}
+	newSortByItems := make([]*util.ByItems, 0, len(oldSort.ByItems))
+	for _, item := range oldSort.ByItems {
+		itemExpr := item.Expr
+		if _, isScalarFunc := itemExpr.(*expression.ScalarFunction); !isScalarFunc {
+			newSortByItems = append(newSortByItems, item)
+			continue
+		}
+		bottomProjExprs = append(bottomProjExprs, itemExpr)
+		newCol := &expression.Column{
+			UniqueID: oldSort.SCtx().GetSessionVars().AllocPlanColumnID(),
+			RetType:  itemExpr.GetType(),
+		}
+		bottomProjSchema = append(bottomProjSchema, newCol)
+		newSortByItems = append(newSortByItems, &util.ByItems{Expr: newCol, Desc: item.Desc})
+	}
+	bottomProj := plannercore.LogicalProjection{
+		Exprs: bottomProjExprs,
+	}.Init(oldSort.SCtx(), oldSort.SelectBlockOffset())
+	newSchema := expression.NewSchema(bottomProjSchema...)
+	bottomProj.SetSchema(newSchema)
+
+	newSort := plannercore.LogicalSort{
+		ByItems: newSortByItems,
+	}.Init(oldSort.SCtx(), oldSort.SelectBlockOffset())
+
+	// Construct GroupExpr, Group (TopProj -> Sort -> BottomProj -> Child)
+	bottomProjGroupExpr := memo.NewGroupExpr(bottomProj)
+	bottomProjGroupExpr.SetChildren(old.GetExpr().Children[0])
+	bottomProjGroup := memo.NewGroupWithSchema(bottomProjGroupExpr, newSchema)
+
+	newSortGroupExpr := memo.NewGroupExpr(newSort)
+	newSortGroupExpr.SetChildren(bottomProjGroup)
+	newSortGroup := memo.NewGroupWithSchema(newSortGroupExpr, newSchema)
+
+	topProjGroupExpr := memo.NewGroupExpr(topProj)
+	topProjGroupExpr.SetChildren(newSortGroup)
+
 	return []*memo.GroupExpr{topProjGroupExpr}, true, false, nil
 }
 

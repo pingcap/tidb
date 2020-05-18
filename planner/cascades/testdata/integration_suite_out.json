@@ -93,13 +93,11 @@
       {
         "SQL": "select b from t order by a+b",
         "Plan": [
-          "Projection_7 10000.00 root  test.t.b",
-          "└─Projection_12 10000.00 root  test.t.b, test.t.a",
-          "  └─Sort_8 10000.00 root  Column#4",
-          "    └─Projection_13 10000.00 root  test.t.b, test.t.a, plus(test.t.a, test.t.b)->Column#4",
-          "      └─Projection_9 10000.00 root  test.t.b, test.t.a",
-          "        └─TableReader_10 10000.00 root  data:TableFullScan_11",
-          "          └─TableFullScan_11 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "Projection_12 10000.00 root  test.t.b",
+          "└─Sort_18 10000.00 root  Column#4",
+          "  └─Projection_15 10000.00 root  test.t.b, test.t.a, plus(test.t.a, test.t.b)->Column#4",
+          "    └─TableReader_16 10000.00 root  data:TableFullScan_17",
+          "      └─TableFullScan_17 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Result": [
           "11",
@@ -111,13 +109,11 @@
       {
         "SQL": "select b from t order by b, a+b, a",
         "Plan": [
-          "Projection_7 10000.00 root  test.t.b",
-          "└─Projection_12 10000.00 root  test.t.b, test.t.a",
-          "  └─Sort_8 10000.00 root  test.t.b, Column#4, test.t.a",
-          "    └─Projection_13 10000.00 root  test.t.b, test.t.a, plus(test.t.a, test.t.b)->Column#4",
-          "      └─Projection_9 10000.00 root  test.t.b, test.t.a",
-          "        └─TableReader_10 10000.00 root  data:TableFullScan_11",
-          "          └─TableFullScan_11 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "Projection_12 10000.00 root  test.t.b",
+          "└─Sort_18 10000.00 root  test.t.b, Column#4, test.t.a",
+          "  └─Projection_15 10000.00 root  test.t.b, test.t.a, plus(test.t.a, test.t.b)->Column#4",
+          "    └─TableReader_16 10000.00 root  data:TableFullScan_17",
+          "      └─TableFullScan_17 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Result": [
           "11",
