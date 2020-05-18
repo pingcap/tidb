@@ -469,14 +469,16 @@ func (l locksHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				t, _ = schema.FindTableByPartitionID(c.Tbl)
 			}
-			tbl = t.Meta().Name.L
-			if c.Idx == -1 {
-				idx = ""
-			} else {
-				for _, i := range t.Indices() {
-					if i.Meta().ID == c.Idx {
-						idx = i.Meta().Name.L
-						break
+			if t != nil {
+				tbl = t.Meta().Name.L
+				if c.Idx == -1 {
+					idx = ""
+				} else {
+					for _, i := range t.Indices() {
+						if i.Meta().ID == c.Idx {
+							idx = i.Meta().Name.L
+							break
+						}
 					}
 				}
 			}
