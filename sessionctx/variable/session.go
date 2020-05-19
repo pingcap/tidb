@@ -1027,7 +1027,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 			return err
 		}
 	case TiDBReadonlyTable:
-		// The format is '<tableName>/<tsoString>,<tableName2>/<tsoString2>'
+		// The format is '<dbName>.<tableName>/<tsoString>,<dbName2>.<tableName2>/<tsoString2>'
 		s.ReadonlyTable = make(map[string]uint64)
 		if val != "" {
 			entris := strings.Split(val, ",")
@@ -1040,7 +1040,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 				if err != nil {
 					return err
 				}
-				s.ReadonlyTable[t[0]] = ts
+				s.ReadonlyTable[strings.ToLower(t[0])] = ts
 			}
 		}
 	case AutoCommit:

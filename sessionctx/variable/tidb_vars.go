@@ -43,7 +43,7 @@ const (
 	TiDBSnapshot = "tidb_snapshot"
 
 	// tidb_readonly_table is used to set some table is readonly.
-	// The format is '<tableName>/<tsoString>,<tableName2>/<tsoString2>'
+	// The format is '<dbName>.<tableName>/<tsoString>,<dbName2>.<tableName2>/<tsoString2>'
 	TiDBReadonlyTable = "tidb_readonly_table"
 
 	// tidb_opt_agg_push_down is used to enable/disable the optimizer rule of aggregation push down.
