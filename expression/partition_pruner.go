@@ -117,7 +117,7 @@ func (p *hashPartitionPruner) tryEvalPartitionExpr(piExpr Expression) (val int64
 			rightVal, ok, isNull := p.tryEvalPartitionExpr(right)
 			if !ok || isNull{
 				return 0, ok, isNull
-			} 
+			}
 			switch pi.FuncName.L {
 			case ast.Plus:
 				return rightVal + leftVal, true, false
@@ -177,8 +177,8 @@ func newHashPartitionPruner() *hashPartitionPruner {
 }
 
 // solve eval the hash partition expression, the first return value represent the result of partition expression. The second
-// return value is whether eval success. The third return value represent whether there is conflict in query conditions.
-func (p *hashPartitionPruner) solve(ctx sessionctx.Context, conds []Expression, piExpr Expression) (val int64, ok bool, conflict bool) {
+// return value is whether eval success. The third return value represent whether the query conditions is always false.
+func (p *hashPartitionPruner) solve(ctx sessionctx.Context, conds []Expression, piExpr Expression) (val int64, ok bool, isAlwaysFalse bool) {
 	p.ctx = ctx
 	for _, cond := range conds {
 		p.conditions = append(p.conditions, SplitCNFItems(cond)...)
@@ -190,13 +190,13 @@ func (p *hashPartitionPruner) solve(ctx sessionctx.Context, conds []Expression, 
 		p.insertCol(col)
 	}
 	p.constantMap = make([]*Constant, p.numColumn)
-	conflict = p.reduceConstantEQ()
-	if conflict {
-		return 0, false, conflict
+	isAlwaysFalse = p.reduceConstantEQ()
+	if isAlwaysFalse {
+		return 0, false, isAlwaysFalse
 	}
-	conflict = p.reduceColumnEQ()
-	if conflict {
-		return 0, false, conflict
+	isAlwaysFalse = p.reduceColumnEQ()
+	if isAlwaysFalse {
+		return 0, false, isAlwaysFalse
 	}
 	res, ok, isNull := p.tryEvalPartitionExpr(piExpr)
 	if isNull && ok {
