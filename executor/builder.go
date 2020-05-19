@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
@@ -1640,10 +1641,29 @@ func (b *executorBuilder) buildSplitRegion(v *plannercore.SplitRegion) Executor 
 	}
 }
 
+func partitionNamesToIDs(meta *model.TableInfo, partitionNames []model.CIStr) (map[int64]struct{}, error) {
+	res := make(map[int64]struct{}, len(partitionNames))
+	for i := 0; i < len(partitionNames); i++ {
+		pid, err := tables.FindPartitionByName(meta, partitionNames[i].L)
+		if err != nil {
+			return nil, err
+		}
+		res[pid] = struct{}{}
+	}
+	return res, nil
+}
+
 func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 	tblID2table := make(map[int64]table.Table, len(v.TblColPosInfos))
 	for _, info := range v.TblColPosInfos {
-		tblID2table[info.TblID], _ = b.is.TableByID(info.TblID)
+		tbl, _ := b.is.TableByID(info.TblID)
+		tblID2table[info.TblID] = tbl
+		if v.PartitionNames != nil && tbl.Meta().GetPartitionInfo() != nil {
+			pids, err := partitionNamesToIDs(tbl.Meta(), v.PartitionNames)
+			if err == nil {
+				tblID2table[info.TblID] = tables.WithPartitionSelection(tbl, pids)
+			}
+		}
 	}
 	if b.err = b.updateForUpdateTSIfNeeded(v.SelectPlan); b.err != nil {
 		return nil

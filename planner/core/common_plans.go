@@ -657,6 +657,9 @@ type Update struct {
 	SelectPlan PhysicalPlan
 
 	TblColPosInfos TblColPosInfoSlice
+
+	// Partition selection for the update statement if exists.
+	PartitionNames []model.CIStr
 }
 
 // Delete represents a delete plan.

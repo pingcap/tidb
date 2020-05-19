@@ -3358,6 +3358,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	if err != nil {
 		return nil, err
 	}
+	updt.PartitionNames = hasPartitionSelection(update.TableRefs)
 	err = updt.ResolveIndices()
 	if err != nil {
 		return nil, err
@@ -3375,6 +3376,22 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		err = checkUpdateList(b.ctx, tblID2table, updt)
 	}
 	return updt, err
+}
+
+func hasPartitionSelection(tblRef *ast.TableRefsClause) []model.CIStr {
+	if tblRef.TableRefs.Right != nil {
+		return nil
+	}
+	tbl := tblRef.TableRefs.Left
+	ts, ok := tbl.(*ast.TableSource)
+	if !ok {
+		return nil
+	}
+	tn, ok := ts.Source.(*ast.TableName)
+	if !ok {
+		return nil
+	}
+	return tn.PartitionNames
 }
 
 // GetUpdateColumns gets the columns of updated lists.
