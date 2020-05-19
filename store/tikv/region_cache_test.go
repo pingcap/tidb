@@ -45,7 +45,7 @@ type testRegionCacheSuite struct {
 var _ = Suite(&testRegionCacheSuite{})
 
 func (s *testRegionCacheSuite) SetUpTest(c *C) {
-	s.cluster = mocktikv.NewCluster()
+	s.cluster = mocktikv.NewCluster(mocktikv.MustNewMVCCStore())
 	storeIDs, peerIDs, regionID, _ := mocktikv.BootstrapWithMultiStores(s.cluster, 2)
 	s.region1 = regionID
 	s.store1 = storeIDs[0]
@@ -678,7 +678,7 @@ func (s *testRegionCacheSuite) TestRegionEpochAheadOfTiKV(c *C) {
 const regionSplitKeyFormat = "t%08d"
 
 func createClusterWithStoresAndRegions(regionCnt, storeCount int) *mocktikv.Cluster {
-	cluster := mocktikv.NewCluster()
+	cluster := mocktikv.NewCluster(mocktikv.MustNewMVCCStore())
 	_, _, regionID, _ := mocktikv.BootstrapWithMultiStores(cluster, storeCount)
 	for i := 0; i < regionCnt; i++ {
 		rawKey := []byte(fmt.Sprintf(regionSplitKeyFormat, i))
