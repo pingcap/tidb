@@ -44,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
@@ -1639,18 +1638,6 @@ func (b *executorBuilder) buildSplitRegion(v *plannercore.SplitRegion) Executor 
 		upper:          v.Upper[0],
 		num:            v.Num,
 	}
-}
-
-func partitionNamesToIDs(meta *model.TableInfo, partitionNames []model.CIStr) (map[int64]struct{}, error) {
-	res := make(map[int64]struct{}, len(partitionNames))
-	for i := 0; i < len(partitionNames); i++ {
-		pid, err := tables.FindPartitionByName(meta, partitionNames[i].L)
-		if err != nil {
-			return nil, err
-		}
-		res[pid] = struct{}{}
-	}
-	return res, nil
 }
 
 func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
