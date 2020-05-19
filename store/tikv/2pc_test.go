@@ -49,18 +49,32 @@ func (s *testCommitterSuite) SetUpSuite(c *C) {
 }
 
 func (s *testCommitterSuite) SetUpTest(c *C) {
-	cluster := mocktikv.NewCluster()
-	mocktikv.BootstrapWithMultiRegions(cluster, []byte("a"), []byte("b"), []byte("c"))
-	s.cluster = cluster
 	mvccStore, err := mocktikv.NewMVCCLevelDB("")
 	c.Assert(err, IsNil)
-	cluster.SetMvccStore(mvccStore)
+	cluster := mocktikv.NewCluster(mvccStore)
+	mocktikv.BootstrapWithMultiRegions(cluster, []byte("a"), []byte("b"), []byte("c"))
+	s.cluster = cluster
 	client := mocktikv.NewRPCClient(cluster, mvccStore)
 	pdCli := &codecPDClient{mocktikv.NewPDClient(cluster)}
 	spkv := NewMockSafePointKV()
 	store, err := newTikvStore("mocktikv-store", pdCli, spkv, client, false, nil)
-	c.Assert(err, IsNil)
 	store.EnableTxnLocalLatches(1024000)
+	c.Assert(err, IsNil)
+
+	// TODO: make it possible
+	// store, err := mockstore.NewMockStore(
+	// 	mockstore.WithStoreType(mockstore.MockTiKV),
+	// 	mockstore.WithClusterInspector(func(c cluster.Cluster) {
+	// 		mockstore.BootstrapWithMultiRegions(c, []byte("a"), []byte("b"), []byte("c"))
+	// 		s.cluster = c
+	// 	}),
+	// 	mockstore.WithPDClientHijacker(func(c pd.Client) pd.Client {
+	// 		return &codecPDClient{c}
+	// 	}),
+	// 	mockstore.WithTxnLocalLatches(1024000),
+	// )
+	// c.Assert(err, IsNil)
+
 	s.store = store
 	CommitMaxBackoff = 1000
 }

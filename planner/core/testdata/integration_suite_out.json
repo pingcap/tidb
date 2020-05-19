@@ -144,7 +144,7 @@
       {
         "SQL": "explain select * from t order by a",
         "Result": [
-          "Sort_8 10005.00 root  test.t.a:asc",
+          "Sort_8 10005.00 root  test.t.a",
           "└─Union_11 10005.00 root  ",
           "  ├─TableReader_13 10000.00 root  data:TableFullScan_12",
           "  │ └─TableFullScan_12 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
@@ -167,18 +167,18 @@
       {
         "SQL": "explain select * from t order by a limit 3",
         "Result": [
-          "TopN_16 3.00 root  test.t.a:asc, offset:0, count:3",
+          "TopN_16 3.00 root  test.t.a, offset:0, count:3",
           "└─Union_20 7.00 root  ",
-          "  ├─TopN_21 3.00 root  test.t.a:asc, offset:0, count:3",
+          "  ├─TopN_21 3.00 root  test.t.a, offset:0, count:3",
           "  │ └─TableReader_29 3.00 root  data:TopN_28",
-          "  │   └─TopN_28 3.00 cop[tikv]  test.t.a:asc, offset:0, count:3",
+          "  │   └─TopN_28 3.00 cop[tikv]  test.t.a, offset:0, count:3",
           "  │     └─TableFullScan_27 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
-          "  ├─TopN_34 1.00 root  test.t.a:asc, offset:0, count:3",
+          "  ├─TopN_34 1.00 root  test.t.a, offset:0, count:3",
           "  │ └─TableReader_42 1.00 root  data:TableFullScan_41",
           "  │   └─TableFullScan_41 1.00 cop[tikv] table:t, partition:p1 keep order:false",
-          "  └─TopN_43 3.00 root  test.t.a:asc, offset:0, count:3",
+          "  └─TopN_43 3.00 root  test.t.a, offset:0, count:3",
           "    └─TableReader_51 3.00 root  data:TopN_50",
-          "      └─TopN_50 3.00 cop[tikv]  test.t.a:asc, offset:0, count:3",
+          "      └─TopN_50 3.00 cop[tikv]  test.t.a, offset:0, count:3",
           "        └─TableFullScan_49 4.00 cop[tikv] table:t, partition:p2 keep order:false"
         ]
       },
@@ -236,10 +236,10 @@
           "  │   └─TableFullScan_14 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "  └─Selection_17(Probe) 0.80 root  not(isnull(test.t.a))",
           "    └─Projection_26 1.00 root  test.t.a",
-          "      └─TopN_18 1.00 root  Column#7:asc, offset:0, count:1",
+          "      └─TopN_18 1.00 root  Column#7, offset:0, count:1",
           "        └─Projection_27 1.00 root  test.t.a, plus(test.t.a, test.t.a)->Column#7",
           "          └─TableReader_23 1.00 root  data:TopN_22",
-          "            └─TopN_22 1.00 cop[tikv]  plus(test.t.a, test.t.a):asc, offset:0, count:1",
+          "            └─TopN_22 1.00 cop[tikv]  plus(test.t.a, test.t.a), offset:0, count:1",
           "              └─TableFullScan_21 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ]
       }
@@ -278,7 +278,7 @@
       {
         "SQL": "desc select /*+ INL_JOIN(t2) */ * from t t1, t t2 where t1.a = t2.b order by t2.a",
         "Plan": [
-          "Sort_7 12487.50 root  test.t.a:asc",
+          "Sort_7 12487.50 root  test.t.a",
           "└─IndexJoin_15 12487.50 root  inner join, inner:IndexLookUp_14, outer key:test.t.a, inner key:test.t.b",
           "  ├─TableReader_25(Build) 10000.00 root  data:TableFullScan_24",
           "  │ └─TableFullScan_24 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
@@ -292,7 +292,7 @@
       {
         "SQL": "desc select /*+ INL_HASH_JOIN(t2) */ * from t t1, t t2 where t1.a = t2.b order by t2.a",
         "Plan": [
-          "Sort_7 12487.50 root  test.t.a:asc",
+          "Sort_7 12487.50 root  test.t.a",
           "└─IndexHashJoin_23 12487.50 root  inner join, inner:IndexLookUp_14, outer key:test.t.a, inner key:test.t.b",
           "  ├─TableReader_25(Build) 10000.00 root  data:TableFullScan_24",
           "  │ └─TableFullScan_24 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
@@ -320,7 +320,7 @@
       {
         "SQL": "desc select * from t t1, (select /*+ HASH_AGG() */ b, max(a) from t t2 group by b) t2 where t1.b = t2.b order by t1.b",
         "Plan": [
-          "Sort_10 9990.00 root  test.t.b:asc",
+          "Sort_10 9990.00 root  test.t.b",
           "└─Projection_12 9990.00 root  test.t.a, test.t.b, test.t.c, test.t.b, Column#7",
           "  └─HashJoin_27 9990.00 root  inner join, equal:[eq(test.t.b, test.t.b)]",
           "    ├─HashAgg_47(Build) 7992.00 root  group by:test.t.b, funcs:max(Column#10)->Column#7, funcs:firstrow(test.t.b)->test.t.b",
@@ -348,7 +348,7 @@
       {
         "SQL": "desc select /*+ INL_JOIN(t2) */ * from t t1, t t2 where t1.a = t2.c order by t1.a",
         "Plan": [
-          "Sort_7 12487.50 root  test.t.a:asc",
+          "Sort_7 12487.50 root  test.t.a",
           "└─HashJoin_19 12487.50 root  inner join, equal:[eq(test.t.a, test.t.c)]",
           "  ├─TableReader_23(Build) 9990.00 root  data:Selection_22",
           "  │ └─Selection_22 9990.00 cop[tikv]  not(isnull(test.t.c))",

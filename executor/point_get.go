@@ -313,7 +313,7 @@ func encodeIndexKey(e *baseExecutor, tblInfo *model.TableInfo, idxInfo *model.In
 			str, err = idxVals[i].ToString()
 			idxVals[i].SetString(str, colInfo.FieldType.Collate)
 		} else {
-			idxVals[i], err = table.CastValue(e.ctx, idxVals[i], colInfo)
+			idxVals[i], err = table.CastValue(e.ctx, idxVals[i], colInfo, false)
 		}
 		if err != nil {
 			return nil, err

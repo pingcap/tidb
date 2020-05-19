@@ -499,7 +499,7 @@ func (s *testSuite5) TestSetCharset(c *C) {
 	tk.MustExec(`SET CHARACTER SET latin1`)
 	check(
 		"latin1",
-		"latin1",
+		"utf8mb4",
 		"latin1",
 		"utf8mb4",
 		"utf8mb4",

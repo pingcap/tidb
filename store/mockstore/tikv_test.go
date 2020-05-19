@@ -40,7 +40,7 @@ func (s testSuite) TestConfig(c *C) {
 		IsLatchEnabled() bool
 	}
 
-	var driver MockDriver
+	var driver MockTiKVDriver
 	store, err := driver.Open("mocktikv://")
 	c.Assert(err, IsNil)
 	c.Assert(store.(LatchEnableChecker).IsLatchEnabled(), IsTrue)
