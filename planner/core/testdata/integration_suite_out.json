@@ -500,5 +500,22 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestPartitionPruningForInExpr",
+    "Cases": [
+      {
+        "SQL": "explain select * from t where a in (1,2,'11');",
+        "Plan": [
+          "Union_8 60.00 root  ",
+          "├─TableReader_11 30.00 root  data:Selection_10",
+          "│ └─Selection_10 30.00 cop[tikv]  in(test.t.a, 1, 2, 11)",
+          "│   └─TableFullScan_9 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
+          "└─TableReader_14 30.00 root  data:Selection_13",
+          "  └─Selection_13 30.00 cop[tikv]  in(test.t.a, 1, 2, 11)",
+          "    └─TableFullScan_12 10000.00 cop[tikv] table:t, partition:p2 keep order:false, stats:pseudo"
+        ]
+      }
+    ]
   }
 ]

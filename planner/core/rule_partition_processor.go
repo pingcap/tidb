@@ -480,29 +480,29 @@ func partitionRangeForOrExpr(sctx sessionctx.Context, expr1, expr2 expression.Ex
 
 func partitionRangeForInExpr(sctx sessionctx.Context, args []expression.Expression,
 	pruner *rangePruner) partitionRangeOR {
-	result := pruner.fullRange()
 	if len(args) <= 1 {
-		return result
+		return pruner.fullRange()
 	}
 	col, ok := args[0].(*expression.Column)
 	if !ok || col.ID != pruner.col.ID {
-		return result
+		return pruner.fullRange()
 	}
 
+	var result partitionRangeOR
 	unsigned := mysql.HasUnsignedFlag(col.RetType.Flag)
 	for i := 1; i < len(args); i++ {
 		constExpr, ok := args[i].(*expression.Constant)
 		if !ok {
 			return pruner.fullRange()
 		}
-		val, isNull, err := constExpr.EvalInt(sctx, chunk.Row{})
-		if err != nil || isNull {
+		val, err := constExpr.Value.ToInt64(sctx.GetSessionVars().StmtCtx)
+		if err != nil {
 			return pruner.fullRange()
 		}
 		start, end := pruneUseBinarySearch(pruner.lessThan, dataForPrune{op: ast.EQ, c: val}, unsigned)
-		result = result.intersectionRange(start, end)
+		result = append(result, partitionRange{start, end})
 	}
-	return result
+	return result.simplify()
 }
 
 // monotoneIncFuncs are those functions that for any x y, if x > y => f(x) > f(y)

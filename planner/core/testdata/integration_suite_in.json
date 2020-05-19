@@ -115,5 +115,11 @@
       "select /*+ IGNORE_INDEX() */ * from t1, t2 where t1.a=t2.a",
       "select /*+ USE_INDEX_MERGE() */ * from t1, t2 where t1.a=t2.a"
     ]
+  },
+  {
+    "name": "TestPartitionPruningForInExpr",
+    "cases": [
+      "explain select * from t where a in (1,2,'11');"
+    ]
   }
 ]
