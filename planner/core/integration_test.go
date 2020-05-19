@@ -567,7 +567,7 @@ func (s *testIntegrationSuite) TestPartitionPruningForInExpr(c *C) {
 
 	var input []string
 	var output []struct {
-		SQL    string
+		SQL  string
 		Plan []string
 	}
 	s.testData.GetTestCases(c, &input, &output)
