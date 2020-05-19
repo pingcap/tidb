@@ -1048,6 +1048,8 @@ func upgradeToVer45(s Session, ver int64) {
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Config_priv='Y' where Super_priv='Y'")
 }
 
+// In v3.1.1, we wrongly replace the context of upgradeToVer39 with upgradeToVer44. If we upgrade from v3.1.1 to a newer version,
+// upgradeToVer39 will be missed. So we redo upgradeToVer39 here to make sure the upgrading from v3.1.1 succeed.
 func upgradeToVer46(s Session, ver int64) {
 	if ver >= version46 {
 		return
