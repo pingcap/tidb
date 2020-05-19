@@ -40,7 +40,7 @@ type testSuite struct {
 
 func (s *testSuite) TestMeta(c *C) {
 	defer testleak.AfterTest(c)()
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 
@@ -268,7 +268,7 @@ func (s *testSuite) TestMeta(c *C) {
 
 func (s *testSuite) TestSnapshot(c *C) {
 	defer testleak.AfterTest(c)()
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 
@@ -299,7 +299,7 @@ func (s *testSuite) TestSnapshot(c *C) {
 
 func (s *testSuite) TestDDL(c *C) {
 	defer testleak.AfterTest(c)()
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 
@@ -443,7 +443,7 @@ func (s *testSuite) TestDDL(c *C) {
 
 func (s *testSuite) BenchmarkGenGlobalIDs(c *C) {
 	defer testleak.AfterTest(c)()
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 
@@ -464,7 +464,7 @@ func (s *testSuite) BenchmarkGenGlobalIDs(c *C) {
 
 func (s *testSuite) BenchmarkGenGlobalIDOneByOne(c *C) {
 	defer testleak.AfterTest(c)()
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 
