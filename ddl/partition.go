@@ -133,13 +133,9 @@ func buildHashPartitionDefinitions(ctx sessionctx.Context, s *ast.CreateTableStm
 	return nil
 }
 
-func buildRangePartitionDefinitions(ctx sessionctx.Context, s *ast.CreateTableStmt, pi *model.PartitionInfo) (err error) {
+func buildRangePartitionDefinitions(ctx sessionctx.Context, s *ast.CreateTableStmt, pi *model.PartitionInfo) error {
 	for _, def := range s.Partition.Definitions {
 		comment, _ := def.Comment()
-		err = checkTooLongTable(def.Name)
-		if err != nil {
-			return err
-		}
 		piDef := model.PartitionDefinition{
 			Name:    def.Name,
 			Comment: comment,
