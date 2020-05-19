@@ -5597,7 +5597,6 @@ func (s *testSuite1) TestUpdateGivenPartitionSet(c *C) {
 	tk.MustExec("update t1 partition(p0) set a = 3 where a = 2")
 	tk.MustExec("update t1 partition(p0, p3) set a = 33 where a = 1")
 
-
 	// update without partition change
 	tk.MustExec("insert into t2 values(1, 'a'), (2, 'b'), (11, 'c'), (21, 'd')")
 	err = tk.ExecToErr("update t2 partition(p0, p1) set a = 40")
