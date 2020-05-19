@@ -18,6 +18,7 @@ import (
 	"encoding/binary"
 	"math"
 	"math/rand"
+	"sort"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
@@ -102,12 +103,16 @@ func (s *testSplitIndex) TestSplitIndex(c *C) {
 	}
 	idxCols := []*model.IndexColumn{{Name: tbInfo.Columns[0].Name, Offset: 0, Length: types.UnspecifiedLength}}
 	idxInfo := &model.IndexInfo{
-		ID:      1,
+		ID:      2,
 		Name:    model.NewCIStr("idx1"),
 		Table:   model.NewCIStr("t1"),
 		Columns: idxCols,
 		State:   model.StatePublic,
 	}
+	firstIdxInfo0 := idxInfo.Clone()
+	firstIdxInfo0.ID = 1
+	firstIdxInfo0.Name = model.NewCIStr("idx")
+	tbInfo.Indices = []*model.IndexInfo{firstIdxInfo0, idxInfo}
 
 	// Test for int index.
 	// range is 0 ~ 100, and split into 10 region.
@@ -132,8 +137,9 @@ func (s *testSplitIndex) TestSplitIndex(c *C) {
 		num:          10,
 	}
 	valueList, err := e.getSplitIdxKeys()
+	sort.Slice(valueList, func(i, j int) bool { return bytes.Compare(valueList[i], valueList[j]) < 0 })
 	c.Assert(err, IsNil)
-	c.Assert(len(valueList), Equals, e.num)
+	c.Assert(len(valueList), Equals, e.num+1)
 
 	cases := []struct {
 		value        int
@@ -187,8 +193,9 @@ func (s *testSplitIndex) TestSplitIndex(c *C) {
 	tbInfo.Columns[0].FieldType = *types.NewFieldType(mysql.TypeVarchar)
 
 	valueList, err = e.getSplitIdxKeys()
+	sort.Slice(valueList, func(i, j int) bool { return bytes.Compare(valueList[i], valueList[j]) < 0 })
 	c.Assert(err, IsNil)
-	c.Assert(len(valueList), Equals, e.num)
+	c.Assert(len(valueList), Equals, e.num+1)
 
 	cases2 := []struct {
 		value        string
@@ -238,8 +245,9 @@ func (s *testSplitIndex) TestSplitIndex(c *C) {
 	tbInfo.Columns[0].FieldType = *types.NewFieldType(mysql.TypeTimestamp)
 
 	valueList, err = e.getSplitIdxKeys()
+	sort.Slice(valueList, func(i, j int) bool { return bytes.Compare(valueList[i], valueList[j]) < 0 })
 	c.Assert(err, IsNil)
-	c.Assert(len(valueList), Equals, e.num)
+	c.Assert(len(valueList), Equals, e.num+1)
 
 	cases3 := []struct {
 		value        types.CoreTime

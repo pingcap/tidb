@@ -125,7 +125,7 @@ const (
 )
 
 func init() {
-	GlobalDiskUsageTracker = disk.NewTracker(stringutil.StringerStr("GlobalStorageLabel"), -1)
+	GlobalDiskUsageTracker = disk.NewGlobalTrcaker(stringutil.StringerStr("GlobalStorageLabel"), -1)
 	action := &globalPanicOnExceed{}
 	GlobalDiskUsageTracker.SetActionOnExceed(action)
 }
@@ -1556,7 +1556,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars := ctx.GetSessionVars()
 	// Detach the disk tracker for the previous stmtctx from GlobalDiskUsageTracker
 	if vars.StmtCtx != nil && vars.StmtCtx.DiskTracker != nil {
-		vars.StmtCtx.DiskTracker.Detach()
+		vars.StmtCtx.DiskTracker.DetachFromGlobalTracker()
 	}
 	sc := &stmtctx.StatementContext{
 		TimeZone:    vars.Location(),
@@ -1565,7 +1565,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		TaskID:      stmtctx.AllocateTaskID(),
 	}
 	if config.GetGlobalConfig().OOMUseTmpStorage && GlobalDiskUsageTracker != nil {
-		sc.DiskTracker.AttachTo(GlobalDiskUsageTracker)
+		sc.DiskTracker.AttachToGlobalTracker(GlobalDiskUsageTracker)
 	}
 	switch config.GetGlobalConfig().OOMAction {
 	case config.OOMActionCancel:
@@ -1715,7 +1715,7 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 			}
 			// Because the expression might return different type from
 			// the generated column, we should wrap a CAST on the result.
-			castDatum, err := table.CastValue(sctx, datum, columns[idx])
+			castDatum, err := table.CastValue(sctx, datum, columns[idx], true)
 			if err != nil {
 				return err
 			}
