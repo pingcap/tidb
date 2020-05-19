@@ -5611,6 +5611,10 @@ func (s *testSuite1) TestInsertIntoGivenPartitionSet(c *C) {
 	tk.MustExec("create table t(a int, b char(10))")
 	defer tk.MustExec("drop table if exists t")
 
+	// insert into general table
+	err = tk.ExecToErr("insert into t partition(p0, p1) values(1, 'a')")
+	c.Assert(err.Error(), Equals, "[planner:1747]PARTITION () clause on non partitioned table")
+
 	// insert into from select
 	tk.MustExec("insert into t values(1, 'a'), (2, 'b')")
 	tk.MustExec("insert into t1 partition(p0) select * from t")
