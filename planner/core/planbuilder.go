@@ -1992,16 +1992,17 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		IsReplace:     insert.IsReplace,
 	}.Init(b.ctx)
 
-	if tableInfo.GetPartitionInfo() != nil {
-		insertPlan.Partitions = make(map[int64]struct{}, len(insert.PartitionNames))
+	if tableInfo.GetPartitionInfo() != nil && len(insert.PartitionNames) != 0 {
+		givenPartitionSets := make(map[int64]struct{}, len(insert.PartitionNames))
 		// check partition by name.
 		for _, name := range insert.PartitionNames {
 			id, err := tables.FindPartitionByName(tableInfo, name.L)
 			if err != nil {
 				return nil, err
 			}
-			insertPlan.Partitions[id] = struct{}{}
+			givenPartitionSets[id] = struct{}{}
 		}
+		insertPlan.Table = tables.NewPartitionedTableWithGivenSets(tableInPlan, givenPartitionSets)
 	} else if len(insert.PartitionNames) != 0 {
 		return nil, ErrPartitionClauseOnNonpartitioned
 	}

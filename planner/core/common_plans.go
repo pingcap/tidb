@@ -644,7 +644,6 @@ type Insert struct {
 	NeedFillDefaultValue bool
 
 	AllAssignmentsAreConstant bool
-	Partitions                map[int64]struct{}
 }
 
 // Update represents Update plan.

@@ -218,10 +218,10 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 	rows := make([][]types.Datum, 0, len(e.Lists))
 	memUsageOfRows := int64(0)
 	memTracker := e.memTracker
-	var partitionTable table.PartitionedTable
-	if len(e.Partitions) != 0 {
-		partitionTable = e.Table.(table.PartitionedTable)
-	}
+	//var partitionTable table.PartitionedTable
+	//if len(e.Partitions) != 0 {
+	//	partitionTable = e.Table.(table.PartitionedTable)
+	//}
 	for i, list := range e.Lists {
 		e.rowCount++
 		var row []types.Datum
@@ -229,10 +229,10 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 		if err != nil {
 			return err
 		}
-		err = checkRowDoesNotMatchGivenPartitionSet(e, partitionTable, row)
-		if err != nil {
-			return err
-		}
+		//err = checkRowDoesNotMatchGivenPartitionSet(e, partitionTable, row)
+		//if err != nil {
+		//	return err
+		//}
 		rows = append(rows, row)
 		if batchInsert && e.rowCount%uint64(batchSize) == 0 {
 			memUsageOfRows = types.EstimatedMemUsage(rows[0], len(rows))
@@ -268,20 +268,6 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 	}
 	rows = rows[:0]
 	memTracker.Consume(-memUsageOfRows)
-	return nil
-}
-
-func checkRowDoesNotMatchGivenPartitionSet(e *InsertValues, partitionTable table.PartitionedTable, row []types.Datum) error {
-	if partitionTable == nil {
-		return nil
-	}
-	p, err := partitionTable.GetPartitionByRow(e.ctx, row)
-	if err != nil {
-		return err
-	}
-	if _, ok := e.Partitions[p.GetPhysicalID()]; !ok {
-		return ErrRowDoesNotMatchGivenPartitionSet
-	}
 	return nil
 }
 
@@ -430,10 +416,6 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 	batchSize := sessVars.DMLBatchSize
 	memUsageOfRows := int64(0)
 	memTracker := e.memTracker
-	var partitionTable table.PartitionedTable
-	if len(e.Partitions) != 0 {
-		partitionTable = e.Table.(table.PartitionedTable)
-	}
 	for {
 		err := Next(ctx, selectExec, chk)
 		if err != nil {
@@ -452,7 +434,6 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 				return err
 			}
 			rows = append(rows, row)
-			err = checkRowDoesNotMatchGivenPartitionSet(e, partitionTable, row)
 			if err != nil {
 				return err
 			}

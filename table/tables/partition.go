@@ -60,6 +60,22 @@ func (p *partition) GetPhysicalID() int64 {
 	return p.physicalTableID
 }
 
+// partitionedTableWithGivenSets indicates a table with specified partition sets.
+type partitionedTableWithGivenSets struct {
+	*partitionedTable
+	givenPartitionSets map[int64]struct{}
+}
+
+func NewPartitionedTableWithGivenSets(tbl table.Table, givenPartitionSets map[int64]struct{}) table.Table {
+	if raw, ok := tbl.(*partitionedTable); ok {
+		return &partitionedTableWithGivenSets{
+			partitionedTable:   raw,
+			givenPartitionSets: givenPartitionSets,
+		}
+	}
+	return tbl
+}
+
 // partitionedTable implements the table.PartitionedTable interface.
 // partitionedTable is a table, it contains many Partitions.
 type partitionedTable struct {
@@ -342,16 +358,30 @@ func (t *partitionedTable) GetPartitionByRow(ctx sessionctx.Context, r []types.D
 	return t.partitions[pid], nil
 }
 
-// AddRecord implements the AddRecord method for the table.Table interface.
-func (t *partitionedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
+func partitionTableAddRecord(ctx sessionctx.Context, r []types.Datum, t *partitionedTable, givenPartitionSets map[int64]struct{}, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
 	partitionInfo := t.meta.GetPartitionInfo()
 	pid, err := t.locatePartition(ctx, partitionInfo, r)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
+	if givenPartitionSets != nil {
+		if _, ok := givenPartitionSets[pid]; !ok {
+			return nil, table.ErrRowDoesNotMatchGivenPartitionSet
+		}
+	}
+
 	tbl := t.GetPartition(pid)
 	return tbl.AddRecord(ctx, r, opts...)
+}
+
+// AddRecord implements the AddRecord method for the table.Table interface.
+func (t *partitionedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
+	return partitionTableAddRecord(ctx, r, t, nil, opts...)
+}
+
+func (t *partitionedTableWithGivenSets) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
+	return partitionTableAddRecord(ctx, r, t.partitionedTable, t.givenPartitionSets, opts...)
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
