@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
@@ -1469,6 +1470,27 @@ func (e *ShowExec) fetchShowTableRegions() error {
 		return errors.Trace(err)
 	}
 
+	physicalIDs := []int64{}
+	if pi := tb.Meta().GetPartitionInfo(); pi != nil {
+		for _, name := range e.Table.PartitionNames {
+			pid, err := tables.FindPartitionByName(tb.Meta(), name.L)
+			if err != nil {
+				return err
+			}
+			physicalIDs = append(physicalIDs, pid)
+		}
+		if len(physicalIDs) == 0 {
+			for _, p := range pi.Definitions {
+				physicalIDs = append(physicalIDs, p.ID)
+			}
+		}
+	} else {
+		if len(e.Table.PartitionNames) != 0 {
+			return plannercore.ErrPartitionClauseOnNonpartitioned
+		}
+		physicalIDs = append(physicalIDs, tb.Meta().ID)
+	}
+
 	// Get table regions from from pd, not from regionCache, because the region cache maybe outdated.
 	var regions []regionMeta
 	if len(e.IndexName.L) != 0 {
@@ -1476,9 +1498,9 @@ func (e *ShowExec) fetchShowTableRegions() error {
 		if indexInfo == nil {
 			return plannercore.ErrKeyDoesNotExist.GenWithStackByArgs(e.IndexName, tb.Meta().Name)
 		}
-		regions, err = getTableIndexRegions(tb, indexInfo, tikvStore, splitStore)
+		regions, err = getTableIndexRegions(indexInfo, physicalIDs, tikvStore, splitStore)
 	} else {
-		regions, err = getTableRegions(tb, tikvStore, splitStore)
+		regions, err = getTableRegions(tb, physicalIDs, tikvStore, splitStore)
 	}
 
 	if err != nil {
@@ -1488,48 +1510,28 @@ func (e *ShowExec) fetchShowTableRegions() error {
 	return nil
 }
 
-func getTableRegions(tb table.Table, tikvStore tikv.Storage, splitStore kv.SplittableStore) ([]regionMeta, error) {
-	if info := tb.Meta().GetPartitionInfo(); info != nil {
-		return getPartitionTableRegions(info, tb.(table.PartitionedTable), tikvStore, splitStore)
-	}
-	return getPhysicalTableRegions(tb.Meta().ID, tb.Meta(), tikvStore, splitStore, nil)
-}
-
-func getTableIndexRegions(tb table.Table, indexInfo *model.IndexInfo, tikvStore tikv.Storage, splitStore kv.SplittableStore) ([]regionMeta, error) {
-	if info := tb.Meta().GetPartitionInfo(); info != nil {
-		return getPartitionIndexRegions(info, tb.(table.PartitionedTable), indexInfo, tikvStore, splitStore)
-	}
-	return getPhysicalIndexRegions(tb.Meta().ID, indexInfo, tikvStore, splitStore, nil)
-}
-
-func getPartitionTableRegions(info *model.PartitionInfo, tbl table.PartitionedTable, tikvStore tikv.Storage, splitStore kv.SplittableStore) ([]regionMeta, error) {
-	regions := make([]regionMeta, 0, len(info.Definitions))
+func getTableRegions(tb table.Table, physicalIDs []int64, tikvStore tikv.Storage, splitStore kv.SplittableStore) ([]regionMeta, error) {
+	regions := make([]regionMeta, 0, len(physicalIDs))
 	uniqueRegionMap := make(map[uint64]struct{})
-	for _, def := range info.Definitions {
-		pid := def.ID
-		partition := tbl.GetPartition(pid)
-		partition.GetPhysicalID()
-		partitionRegions, err := getPhysicalTableRegions(partition.GetPhysicalID(), tbl.Meta(), tikvStore, splitStore, uniqueRegionMap)
+	for _, id := range physicalIDs {
+		rs, err := getPhysicalTableRegions(id, tb.Meta(), tikvStore, splitStore, uniqueRegionMap)
 		if err != nil {
 			return nil, err
 		}
-		regions = append(regions, partitionRegions...)
+		regions = append(regions, rs...)
 	}
 	return regions, nil
 }
 
-func getPartitionIndexRegions(info *model.PartitionInfo, tbl table.PartitionedTable, indexInfo *model.IndexInfo, tikvStore tikv.Storage, splitStore kv.SplittableStore) ([]regionMeta, error) {
-	var regions []regionMeta
+func getTableIndexRegions(indexInfo *model.IndexInfo, physicalIDs []int64, tikvStore tikv.Storage, splitStore kv.SplittableStore) ([]regionMeta, error) {
+	regions := make([]regionMeta, 0, len(physicalIDs))
 	uniqueRegionMap := make(map[uint64]struct{})
-	for _, def := range info.Definitions {
-		pid := def.ID
-		partition := tbl.GetPartition(pid)
-		partition.GetPhysicalID()
-		partitionRegions, err := getPhysicalIndexRegions(partition.GetPhysicalID(), indexInfo, tikvStore, splitStore, uniqueRegionMap)
+	for _, id := range physicalIDs {
+		rs, err := getPhysicalIndexRegions(id, indexInfo, tikvStore, splitStore, uniqueRegionMap)
 		if err != nil {
 			return nil, err
 		}
-		regions = append(regions, partitionRegions...)
+		regions = append(regions, rs...)
 	}
 	return regions, nil
 }
