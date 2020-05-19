@@ -221,9 +221,6 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 	var partitionTable table.PartitionedTable
 	if len(e.Partitions) != 0 {
 		partitionTable = e.Table.(table.PartitionedTable)
-		if len(e.Partitions) != 0 {
-			partitionTable = e.Table.(table.PartitionedTable)
-		}
 	}
 	for i, list := range e.Lists {
 		e.rowCount++
@@ -436,9 +433,6 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 	var partitionTable table.PartitionedTable
 	if len(e.Partitions) != 0 {
 		partitionTable = e.Table.(table.PartitionedTable)
-		if len(e.Partitions) != 0 {
-			partitionTable = e.Table.(table.PartitionedTable)
-		}
 	}
 	for {
 		err := Next(ctx, selectExec, chk)
