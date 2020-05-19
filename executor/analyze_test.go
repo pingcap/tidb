@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/table"
@@ -181,10 +181,12 @@ func (s *testSuite1) TestAnalyzeTooLongColumns(c *C) {
 }
 
 func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
-	cluster := mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(cluster)
-	store, err := mockstore.NewMockTikvStore(
-		mockstore.WithCluster(cluster),
+	var cls cluster.Cluster
+	store, err := mockstore.NewMockStore(
+		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+			mockstore.BootstrapWithSingleStore(c)
+			cls = c
+		}),
 	)
 	c.Assert(err, IsNil)
 	defer store.Close()
@@ -207,7 +209,7 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 
 	// construct 5 regions split by {12, 24, 36, 48}
 	splitKeys := generateTableSplitKeyForInt(tid, []int{12, 24, 36, 48})
-	manipulateCluster(cluster, splitKeys)
+	manipulateCluster(cls, splitKeys)
 
 	for i := 0; i < 60; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
@@ -274,10 +276,12 @@ func checkHistogram(sc *stmtctx.StatementContext, hg *statistics.Histogram) (boo
 }
 
 func (s *testFastAnalyze) TestFastAnalyze(c *C) {
-	cluster := mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(cluster)
-	store, err := mockstore.NewMockTikvStore(
-		mockstore.WithCluster(cluster),
+	var cls cluster.Cluster
+	store, err := mockstore.NewMockStore(
+		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+			mockstore.BootstrapWithSingleStore(c)
+			cls = c
+		}),
 	)
 	c.Assert(err, IsNil)
 	defer store.Close()
@@ -303,7 +307,7 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 
 	// construct 6 regions split by {10, 20, 30, 40, 50}
 	splitKeys := generateTableSplitKeyForInt(tid, []int{10, 20, 30, 40, 50})
-	manipulateCluster(cluster, splitKeys)
+	manipulateCluster(cls, splitKeys)
 
 	for i := 0; i < 20; i++ {
 		tk.MustExec(fmt.Sprintf(`insert into t values (%d, %d, "char")`, i*3, i*3))
@@ -477,14 +481,13 @@ func (s *testFastAnalyze) TestFastAnalyzeRetryRowCount(c *C) {
 		return cli
 	}
 
-	cluster := mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(cluster)
-	mvccStore := mocktikv.MustNewMVCCStore()
-	cluster.SetMvccStore(mvccStore)
-	store, err := mockstore.NewMockTikvStore(
-		mockstore.WithHijackClient(hijackClient),
-		mockstore.WithCluster(cluster),
-		mockstore.WithMVCCStore(mvccStore),
+	var cls cluster.Cluster
+	store, err := mockstore.NewMockStore(
+		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+			mockstore.BootstrapWithSingleStore(c)
+			cls = c
+		}),
+		mockstore.WithClientHijacker(hijackClient),
 	)
 	c.Assert(err, IsNil)
 	defer store.Close()
@@ -505,7 +508,7 @@ func (s *testFastAnalyze) TestFastAnalyzeRetryRowCount(c *C) {
 	for i := 0; i < 30; i++ {
 		tk.MustExec(fmt.Sprintf("insert into retry_row_count values (%d)", i))
 	}
-	cluster.SplitTable(tid, 6)
+	cls.SplitTable(tid, 6)
 	// Flush the region cache first.
 	tk.MustQuery("select * from retry_row_count")
 	tk.MustExec("analyze table retry_row_count")

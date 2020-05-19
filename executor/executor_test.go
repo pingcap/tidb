@@ -56,7 +56,6 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -147,15 +146,11 @@ func (s *baseTestSuite) SetUpSuite(c *C) {
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
 	if useMockTikv {
-		cluster := mocktikv.NewCluster()
-		mocktikv.BootstrapWithSingleStore(cluster)
-		s.cluster = cluster
-
-		mvccStore := mocktikv.MustNewMVCCStore()
-		cluster.SetMvccStore(mvccStore)
-		store, err := mockstore.NewMockTikvStore(
-			mockstore.WithCluster(cluster),
-			mockstore.WithMVCCStore(mvccStore),
+		store, err := mockstore.NewMockStore(
+			mockstore.WithClusterInspector(func(c cluster.Cluster) {
+				mockstore.BootstrapWithSingleStore(c)
+				s.cluster = c
+			}),
 		)
 		c.Assert(err, IsNil)
 		s.store = store
@@ -2887,8 +2882,8 @@ func (s *testSuiteWithCliBase) SetUpSuite(c *C) {
 	s.cli = cli
 
 	var err error
-	s.store, err = mockstore.NewMockTikvStore(
-		mockstore.WithHijackClient(hijackClient),
+	s.store, err = mockstore.NewMockStore(
+		mockstore.WithClientHijacker(hijackClient),
 	)
 	c.Assert(err, IsNil)
 	session.SetStatsLease(0)
@@ -2919,8 +2914,8 @@ func (s *testSuite2) TestAddIndexPriority(c *C) {
 		return cli
 	}
 
-	store, err := mockstore.NewMockTikvStore(
-		mockstore.WithHijackClient(hijackClient),
+	store, err := mockstore.NewMockStore(
+		mockstore.WithClientHijacker(hijackClient),
 	)
 	c.Assert(err, IsNil)
 	dom, err := session.BootstrapSession(store)
@@ -4251,6 +4246,9 @@ func (s *testSplitTable) TestShowTableRegion(c *C) {
 	tk.MustExec("set global tidb_scatter_region = 1")
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	tk.MustExec("create table t_regions (a int key, b int, c int, index idx(b), index idx2(c))")
+	_, err := tk.Exec("split partition table t_regions partition (p1,p2) index idx between (0) and (20000) regions 2;")
+	c.Assert(err.Error(), Equals, plannercore.ErrPartitionClauseOnNonpartitioned.Error())
+
 	// Test show table regions.
 	tk.MustQuery(`split table t_regions between (-10000) and (10000) regions 4;`).Check(testkit.Rows("4 1"))
 	re := tk.MustQuery("show table t_regions regions")
@@ -4624,12 +4622,12 @@ func (s *testRecoverTable) SetUpSuite(c *C) {
 	s.cli = cli
 
 	var err error
-	cluster := mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(cluster)
-	s.cluster = cluster
-	s.store, err = mockstore.NewMockTikvStore(
-		mockstore.WithHijackClient(hijackClient),
-		mockstore.WithCluster(cluster),
+	s.store, err = mockstore.NewMockStore(
+		mockstore.WithClientHijacker(hijackClient),
+		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+			mockstore.BootstrapWithSingleStore(c)
+			s.cluster = c
+		}),
 	)
 	c.Assert(err, IsNil)
 	s.dom, err = session.BootstrapSession(s.store)
@@ -5382,19 +5380,26 @@ select 4;`
 select 5;
 # Time: 2020-02-17T18:00:05.000000+08:00
 select 6;`
+	logData4 := `
+# Time: 2020-05-14T19:03:54.314615176+08:00
+select 7;`
+
 	fileName0 := "tidb-slow-2020-02-14T19-04-05.01.log"
 	fileName1 := "tidb-slow-2020-02-15T19-04-05.01.log"
 	fileName2 := "tidb-slow-2020-02-16T19-04-05.01.log"
-	fileName3 := "tidb-slow.log"
+	fileName3 := "tidb-slow-2020-02-17T18-00-05.01.log"
+	fileName4 := "tidb-slow.log"
 	writeFile(fileName0, logData0)
 	writeFile(fileName1, logData1)
 	writeFile(fileName2, logData2)
 	writeFile(fileName3, logData3)
+	writeFile(fileName4, logData4)
 	defer func() {
 		os.Remove(fileName0)
 		os.Remove(fileName1)
 		os.Remove(fileName2)
 		os.Remove(fileName3)
+		os.Remove(fileName4)
 	}()
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	loc, err := time.LoadLocation("Asia/Shanghai")
@@ -5408,7 +5413,7 @@ select 6;`
 	}{
 		{
 			sql:    "select count(*),min(time),max(time) from %s where time > '2019-01-26 21:51:00' and time < now()",
-			result: []string{"6|2020-02-15 18:00:01.000000|2020-02-17 18:00:05.000000"},
+			result: []string{"7|2020-02-15 18:00:01.000000|2020-05-14 19:03:54.314615"},
 		},
 		{
 			sql:    "select count(*),min(time),max(time) from %s where time > '2020-02-15 19:00:00' and time < '2020-02-16 18:00:02'",
@@ -5424,7 +5429,7 @@ select 6;`
 		},
 		{
 			sql:    "select count(*),min(time),max(time) from %s",
-			result: []string{"2|2020-02-16 19:00:00.000000|2020-02-17 18:00:05.000000"},
+			result: []string{"1|2020-05-14 19:03:54.314615|2020-05-14 19:03:54.314615"},
 		},
 		{
 			sql:    "select count(*),min(time) from %s where time > '2020-02-16 20:00:00'",
@@ -5436,7 +5441,7 @@ select 6;`
 		},
 		{
 			sql:    "select query from %s where time > '2019-01-26 21:51:00' and time < now()",
-			result: []string{"select 1;", "select 2;", "select 3;", "select 4;", "select 5;", "select 6;"},
+			result: []string{"select 1;", "select 2;", "select 3;", "select 4;", "select 5;", "select 6;", "select 7;"},
 		},
 		// Test for different timezone.
 		{
@@ -5448,6 +5453,12 @@ select 6;`
 			prepareSQL: "set @@time_zone = '+02:00'",
 			sql:        "select time from %s where time = '2020-02-17 12:00:05.000000'",
 			result:     []string{"2020-02-17 12:00:05.000000"},
+		},
+		// Test for issue 17224
+		{
+			prepareSQL: "set @@time_zone = '+08:00'",
+			sql:        "select time from %s where time = '2020-05-14 19:03:54.314615'",
+			result:     []string{"2020-05-14 19:03:54.314615"},
 		},
 	}
 	for _, cas := range cases {
