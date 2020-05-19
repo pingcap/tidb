@@ -620,7 +620,7 @@ func (e *maxMin4Decimal) Slide(sctx sessionctx.Context, rows []chunk.Row, lastSt
 		if isNull {
 			continue
 		}
-		p.Push(input)
+		p.Push(*input)
 	}
 	for i := uint64(0); i < shiftStart; i++ {
 		input, isNull, err := e.args[0].EvalDecimal(sctx, rows[lastStart+i])
@@ -630,7 +630,7 @@ func (e *maxMin4Decimal) Slide(sctx sessionctx.Context, rows []chunk.Row, lastSt
 		if isNull {
 			continue
 		}
-		p.Pop(input)
+		p.Pop(*input)
 	}
 	if val, isEmpty := p.Top(); !isEmpty {
 		p.val = val.(types.MyDecimal)
