@@ -240,7 +240,7 @@ const (
 		update_time timestamp(3) NOT NULL,
 		charset text NOT NULL,
 		collation text NOT NULL,
-		create_way text NOT NULL,
+		create_way varchar(20) NOT NULL default 'unknow',
 		INDEX sql_index(original_sql(1024),default_db(1024)) COMMENT "accelerate the speed when add global binding query",
 		INDEX time_index(update_time) COMMENT "accelerate the speed when querying with last update time"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
@@ -385,6 +385,8 @@ const (
 	version44 = 44
 	// version45 introduces CONFIG_PRIV for SET CONFIG statements.
 	version45 = 45
+	// version46 add CreateWay to bindings to indicate the way binding created.
+	version46 = 46
 )
 
 var (
@@ -433,6 +435,7 @@ var (
 		upgradeToVer43,
 		upgradeToVer44,
 		upgradeToVer45,
+		upgradeToVer46,
 	}
 )
 
@@ -1044,6 +1047,13 @@ func upgradeToVer45(s Session, ver int64) {
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Config_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Config_priv='Y' where Super_priv='Y'")
+}
+
+func upgradeToVer46(s Session, ver int64) {
+	if ver >= version46 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN `create_way` varchar(20) NOT NULL", infoschema.ErrColumnExists)
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
