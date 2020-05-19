@@ -31,6 +31,7 @@ GOBUILDCOVERAGE := GOPATH=$(GOPATH) cd tidb-server; $(GO) test -coverpkg="../...
 GOTEST          := $(GO) test -p $(P)
 OVERALLS        := GO111MODULE=on overalls
 STATICCHECK     := GO111MODULE=on staticcheck
+TIDB_EDITION    ?= Community
 
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
@@ -47,6 +48,7 @@ LDFLAGS += -X "github.com/pingcap/parser/mysql.TiDBReleaseVersion=$(shell git de
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBBuildTS=$(shell date -u '+%Y-%m-%d %I:%M:%S')"
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitHash=$(shell git rev-parse HEAD)"
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitBranch=$(shell git rev-parse --abbrev-ref HEAD)"
+LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBEdition=$(TIDB_EDITION)"
 
 TEST_LDFLAGS =  -X "github.com/pingcap/tidb/config.checkBeforeDropLDFlag=1"
 COVERAGE_SERVER_LDFLAGS =  -X "github.com/pingcap/tidb/tidb-server.isCoverageServer=1"
@@ -60,7 +62,7 @@ VB_FILE =
 VB_FUNC =
 
 
-.PHONY: all build update clean todo test gotest interpreter server dev benchkv benchraw check checklist parser tidy ddltest
+.PHONY: all build clean test gotest server dev benchkv benchraw check checklist parser tidy ddltest
 
 default: server buildsucc
 
@@ -295,12 +297,6 @@ tools/bin/unconvert: tools/check/go.mod
 tools/bin/failpoint-ctl: go.mod
 	$(GO) build -o $@ github.com/pingcap/failpoint/failpoint-ctl
 
-tools/bin/misspell:tools/check/go.mod
-	$(GO) get -u github.com/client9/misspell/cmd/misspell
-
-tools/bin/ineffassign:tools/check/go.mod
-	cd tools/check; \
-	$(GO) build -o ../bin/ineffassign github.com/gordonklaus/ineffassign
 tools/bin/golangci-lint:
 	curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh| sh -s -- -b ./tools/bin v1.21.0
 

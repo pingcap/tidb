@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/testkit"
@@ -67,15 +66,11 @@ func (s *testSuite) SetUpSuite(c *C) {
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
 	if useMockTikv {
-		cluster := mocktikv.NewCluster()
-		mocktikv.BootstrapWithSingleStore(cluster)
-		s.cluster = cluster
-
-		mvccStore := mocktikv.MustNewMVCCStore()
-		cluster.SetMvccStore(mvccStore)
-		store, err := mockstore.NewMockTikvStore(
-			mockstore.WithCluster(cluster),
-			mockstore.WithMVCCStore(mvccStore),
+		store, err := mockstore.NewMockStore(
+			mockstore.WithClusterInspector(func(c cluster.Cluster) {
+				mockstore.BootstrapWithSingleStore(c)
+				s.cluster = c
+			}),
 		)
 		c.Assert(err, IsNil)
 		s.store = store
@@ -1147,6 +1142,8 @@ func (s *testSuite) TestInvisibleIndex(c *C) {
 	tk.MustGetErrMsg(
 		"create global binding for select * from t using select * from t use index(idx_b) ",
 		"[planner:1176]Key 'idx_b' doesn't exist in table 't'")
+
+	// Create bind using index
 	tk.MustExec("create global binding for select * from t using select * from t use index(idx_a) ")
 
 	tk.MustQuery("select * from t")
@@ -1158,14 +1155,13 @@ func (s *testSuite) TestInvisibleIndex(c *C) {
 	c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 1)
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_a")
 
-	// TODO: Add these test
-	//tk.MustExec("alter table t alter index idx_a invisible")
-	//tk.MustQuery("select * from t where a > 3")
-	//c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_a")
-	//c.Assert(tk.MustUseIndex("select * from t where a > 3", "idx_a(a)"), IsTrue)
-	//
-	//tk.MustExec("execute stmt1")
-	//c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 0)
+	// And then make this index invisible
+	tk.MustExec("alter table t alter index idx_a invisible")
+	tk.MustQuery("select * from t")
+	c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 0)
+
+	tk.MustExec("execute stmt1")
+	c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 0)
 
 	tk.MustExec("drop binding for select * from t")
 }
