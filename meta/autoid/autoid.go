@@ -97,13 +97,9 @@ type AllocOption interface {
 // Allocator is an auto increment id generator.
 // Just keep id unique actually.
 type Allocator interface {
-	// Alloc allocs N consecutive autoID for table with tableID, returning (min, max] of the allocated autoID batch.
+	// Alloc allocates N consecutive autoIDs.
 	// It gets a batch of autoIDs at a time. So it does not need to access storage for each call.
 	// The consecutive feature is used to insert multiple rows in a statement.
-	// increment & offset is used to validate the start position (the allocator's base is not always the last allocated id).
-	// The returned range is (min, max]:
-	// case increment=1 & offset=1: you can derive the ids like min+1, min+2... max.
-	// case increment=x & offset=y: you firstly need to seek to firstID by `SeekToFirstAutoIDXXX`, then derive the IDs like firstID, firstID + increment * 2... in the caller.
 	Alloc(tableID int64, n uint64, increment, offset int64) (IDIterator, error)
 
 	// AllocSeqCache allocs sequence batch value cached in table level（rather than in alloc), the returned range covering
@@ -619,12 +615,13 @@ func (alloc *allocator) adjustStep(startTime time.Time) {
 }
 
 func (alloc *allocator) calcActualStep(base, batchSize int64) (actualStep int64) {
-	actualStep = alloc.step
-	if isOverflow, _ := alloc.plus(base, actualStep); isOverflow {
+	if isOverflow, _ := alloc.plus(base, alloc.step); isOverflow {
 		// base < batchSize < alloc.step
-		actualStep = batchSize
+		// Because `base + batchSize` doesn't overflow but `base + alloc.step` does.
+		// The overflow check of `base+batchSize` has been done in `calcNeededBatchSize` already.
+		return batchSize
 	}
-	return actualStep
+	return alloc.step
 }
 
 // CalcSequenceBatchSize calculate the next sequence batch size.
@@ -730,7 +727,7 @@ func SeekToFirstSequenceValue(base, increment, offset, MIN, MAX int64) (int64, b
 func (alloc *allocator) seekToFirstAutoID(base, increment, offset int64) int64 {
 	if alloc.isUnsigned {
 		if increment == 1 && offset == 1 {
-			return int64(uint(base) + 1)
+			return int64(uint64(base) + 1)
 		}
 		uBase, uInc, uOff := uint64(base), uint64(increment), uint64(offset)
 		nr := (uBase + uInc - uOff) / uInc
