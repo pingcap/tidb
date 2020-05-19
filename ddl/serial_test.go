@@ -853,7 +853,9 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 		assertInvalidAutoRandomErr(sql, autoid.AutoRandomOverflowErrMsg, autoid.MaxAutoRandomBits, autoRandBits, colName)
 	}
 	assertModifyColType := func(sql string) {
-		tk.MustGetErrCode(sql, errno.ErrUnsupportedDDLOperation)
+		_, err := tk.Exec(sql)
+		c.Assert(err, NotNil)
+		c.Assert(strings.Contains(err.Error(), "[ddl:203]unsupported modify column length"), IsTrue)
 	}
 	assertDefault := func(sql string) {
 		assertInvalidAutoRandomErr(sql, autoid.AutoRandomIncompatibleWithDefaultValueErrMsg)
@@ -909,8 +911,9 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	assertOverflow("create table t (a bigint auto_random(16) primary key)", "a", 16)
 
 	assertNonPositive("create table t (a bigint auto_random(0) primary key)")
-	tk.MustGetErrMsg("create table t (a bigint auto_random(-1) primary key)",
-		`[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 38 near "-1) primary key)" `)
+	_, err := tk.Exec("create table t (a bigint auto_random(-1) primary key)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, `[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 38 near "-1) primary key)" `)
 
 	// Basic usage.
 	mustExecAndDrop("create table t (a bigint auto_random(1) primary key)")
@@ -948,21 +951,6 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 		assertModifyColType("alter table t modify column a smallint auto_random(3)")
 	})
 
-<<<<<<< HEAD
-=======
-	// Test show warnings when create auto_random table.
-	assertShowWarningCorrect := func(sql string, times int) {
-		mustExecAndDrop(sql, func() {
-			note := fmt.Sprintf(autoid.AutoRandomAvailableAllocTimesNote, times)
-			result := fmt.Sprintf("Note|1105|%s", note)
-			tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", result))
-			c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
-		})
-	}
-	assertShowWarningCorrect("create table t (a bigint auto_random(15) primary key)", 281474976710655)
-	assertShowWarningCorrect("create table t (a bigint unsigned auto_random(15) primary key)", 562949953421311)
-
->>>>>>> 0de6925... ddl: Add some limit for `auto_random` (#17119)
 	// Disallow using it when allow-auto-random is not enabled.
 	config.GetGlobalConfig().Experimental.AllowAutoRandom = false
 	assertExperimentDisabled("create table auto_random_table (a int primary key auto_random(3))")

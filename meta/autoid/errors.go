@@ -58,11 +58,8 @@ const (
 	AutoRandomAlterErrMsg = "adding/dropping/modifying auto_random is not supported"
 	// AutoRandomNonPositive is reported then a user specifies a non-positive value for auto_random.
 	AutoRandomNonPositive = "the value of auto_random should be positive"
-<<<<<<< HEAD
-=======
 	// AutoRandomAvailableAllocTimesNote is reported when a table containing auto_random is created.
 	AutoRandomAvailableAllocTimesNote = "Available implicit allocation times: %d"
 	// AutoRandomOnNonBigIntColumn is reported when define auto random to non bigint column
 	AutoRandomOnNonBigIntColumn = "auto_random option must be defined on `bigint` column, but not on `%s` column"
->>>>>>> 0de6925... ddl: Add some limit for `auto_random` (#17119)
 )
