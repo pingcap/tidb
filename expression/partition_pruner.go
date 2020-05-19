@@ -111,17 +111,13 @@ func (p *hashPartitionPruner) tryEvalPartitionExpr(piExpr Expression) (val int64
 		if pi.FuncName.L == ast.Plus || pi.FuncName.L == ast.Minus || pi.FuncName.L == ast.Mul || pi.FuncName.L == ast.Div {
 			left, right := pi.GetArgs()[0], pi.GetArgs()[1]
 			leftVal, ok, isNull := p.tryEvalPartitionExpr(left)
-			if !ok {
-				return 0, ok, isNull
-			} else if isNull {
+			if !ok || isNull{
 				return 0, ok, isNull
 			}
 			rightVal, ok, isNull := p.tryEvalPartitionExpr(right)
-			if !ok {
+			if !ok || isNull{
 				return 0, ok, isNull
-			} else if isNull {
-				return 0, ok, isNull
-			}
+			} 
 			switch pi.FuncName.L {
 			case ast.Plus:
 				return rightVal + leftVal, true, false
@@ -181,7 +177,7 @@ func newHashPartitionPruner() *hashPartitionPruner {
 }
 
 // solve eval the hash partition expression, the first return value represent the result of partition expression. The second
-// return value is whether eval success. The third return value represent whether the eval result of partition value is null.
+// return value is whether eval success. The third return value represent whether there is conflict in query conditions.
 func (p *hashPartitionPruner) solve(ctx sessionctx.Context, conds []Expression, piExpr Expression) (val int64, ok bool, conflict bool) {
 	p.ctx = ctx
 	for _, cond := range conds {
