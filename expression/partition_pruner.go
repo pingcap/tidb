@@ -87,9 +87,9 @@ func (p *hashPartitionPruner) reduceConstantEQ() bool {
 				if ok {
 					cond = NewNull()
 				}
+			} else {
+				col, cond = validEqualCond(p.ctx, con)
 			}
-		} else {
-			col, cond = validEqualCond(p.ctx, con)
 		}
 		if col != nil {
 			id := p.getColID(col)
