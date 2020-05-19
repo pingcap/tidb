@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -74,12 +73,18 @@ func (s *testGCWorkerSuite) SetUpTest(c *C) {
 		return client
 	}
 
-	cluster := mocktikv.NewCluster()
-	mocktikv.BootstrapWithMultiStores(cluster, 3)
-	s.cluster = cluster
-	store, err := mockstore.NewMockTikvStore(
-		mockstore.WithCluster(cluster),
-		mockstore.WithHijackClient(hijackClient))
+	store, err := mockstore.NewMockStore(
+		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+			mockstore.BootstrapWithMultiStores(c, 3)
+			s.cluster = c
+		}),
+		mockstore.WithClientHijacker(hijackClient),
+		mockstore.WithPDClientHijacker(func(c pd.Client) pd.Client {
+			s.pdClient = c
+			return c
+		}),
+	)
+	c.Assert(err, IsNil)
 
 	s.store = store.(tikv.Storage)
 	c.Assert(err, IsNil)
@@ -88,7 +93,6 @@ func (s *testGCWorkerSuite) SetUpTest(c *C) {
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 
-	s.pdClient = mocktikv.NewPDClient(cluster)
 	gcWorker, err := NewGCWorker(s.store, s.pdClient)
 	c.Assert(err, IsNil)
 	gcWorker.Start()
@@ -127,7 +131,11 @@ func (s *testGCWorkerSuite) mustGetNone(c *C, key string, ts uint64) {
 	snap, err := s.store.GetSnapshot(kv.Version{Ver: ts})
 	c.Assert(err, IsNil)
 	_, err = snap.Get(context.TODO(), []byte(key))
-	c.Assert(err, Equals, kv.ErrNotExist)
+	if err != nil {
+		// Unistore's gc is based on compaction filter.
+		// So skip the error check if err == nil.
+		c.Assert(err, Equals, kv.ErrNotExist)
+	}
 }
 
 func (s *testGCWorkerSuite) mustAllocTs(c *C) uint64 {
