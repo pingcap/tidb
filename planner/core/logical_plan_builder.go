@@ -2688,14 +2688,20 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 
 	if tableInfo.GetPartitionInfo() != nil {
 		b.optFlag = b.optFlag | flagPartitionProcessor
-		b.partitionedTable = append(b.partitionedTable, tbl.(table.PartitionedTable))
+		pt := tbl.(table.PartitionedTable)
 		// check partition by name.
-		for _, name := range tn.PartitionNames {
-			_, err = tables.FindPartitionByName(tableInfo, name.L)
-			if err != nil {
-				return nil, err
+		if len(tn.PartitionNames) > 0 {
+			pids := make(map[int64]struct{}, len(tn.PartitionNames))
+			for _, name := range tn.PartitionNames {
+				pid, err := tables.FindPartitionByName(tableInfo, name.L)
+				if err != nil {
+					return nil, err
+				}
+				pids[pid] = struct{}{}
 			}
+			pt = tables.WithPartitionSelection(pt, pids)
 		}
+		b.partitionedTable = append(b.partitionedTable, pt)
 	} else if len(tn.PartitionNames) != 0 {
 		return nil, ErrPartitionClauseOnNonpartitioned
 	}
@@ -3358,7 +3364,6 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	if err != nil {
 		return nil, err
 	}
-	updt.PartitionNames = hasPartitionSelection(update.TableRefs)
 	err = updt.ResolveIndices()
 	if err != nil {
 		return nil, err
@@ -3375,23 +3380,8 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	if err == nil {
 		err = checkUpdateList(b.ctx, tblID2table, updt)
 	}
+	updt.PartitionedTable = b.partitionedTable
 	return updt, err
-}
-
-func hasPartitionSelection(tblRef *ast.TableRefsClause) []model.CIStr {
-	if tblRef.TableRefs.Right != nil {
-		return nil
-	}
-	tbl := tblRef.TableRefs.Left
-	ts, ok := tbl.(*ast.TableSource)
-	if !ok {
-		return nil
-	}
-	tn, ok := ts.Source.(*ast.TableName)
-	if !ok {
-		return nil
-	}
-	return tn.PartitionNames
 }
 
 // GetUpdateColumns gets the columns of updated lists.

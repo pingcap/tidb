@@ -1658,10 +1658,13 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 	for _, info := range v.TblColPosInfos {
 		tbl, _ := b.is.TableByID(info.TblID)
 		tblID2table[info.TblID] = tbl
-		if v.PartitionNames != nil && tbl.Meta().GetPartitionInfo() != nil {
-			pids, err := partitionNamesToIDs(tbl.Meta(), v.PartitionNames)
-			if err == nil {
-				tblID2table[info.TblID] = tables.WithPartitionSelection(tbl, pids)
+		if len(v.PartitionedTable) > 0 {
+			// Replace the table to support partition selection.
+			// The v.PartitionedTable collects the partitioned table.
+			for _, p := range v.PartitionedTable {
+				if info.TblID == p.Meta().ID {
+					tblID2table[info.TblID] = p
+				}
 			}
 		}
 	}

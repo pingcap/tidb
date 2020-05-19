@@ -658,8 +658,8 @@ type Update struct {
 
 	TblColPosInfos TblColPosInfoSlice
 
-	// Partition selection for the update statement if exists.
-	PartitionNames []model.CIStr
+	// Used by partition selection.
+	PartitionedTable []table.PartitionedTable
 }
 
 // Delete represents a delete plan.

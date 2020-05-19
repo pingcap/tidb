@@ -363,12 +363,16 @@ func partitionedTableAddRecord(ctx sessionctx.Context, t *partitionedTable, r []
 	return tbl.AddRecord(ctx, r, opts...)
 }
 
+// partitionedTableWithSelection is used for this kind of grammar: partition (p0,p1)
+// Basically it is the same as partitionedTable except that partitionedTableWithSelection
+// checks the given partition set for AddRecord/UpdateRecord operations.
 type partitionedTableWithSelection struct {
 	*partitionedTable
 	partitions map[int64]struct{}
 }
 
-func WithPartitionSelection(tbl table.Table, partitions map[int64]struct{}) table.Table {
+// WithPartitionSelection upgrades a `partitionTable` to a `partitionedTableWithSelection`.
+func WithPartitionSelection(tbl table.PartitionedTable, partitions map[int64]struct{}) table.PartitionedTable {
 	if raw, ok := tbl.(*partitionedTable); ok {
 		return &partitionedTableWithSelection{
 			partitionedTable: raw,
