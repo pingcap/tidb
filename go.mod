@@ -30,11 +30,7 @@ require (
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
 	github.com/pingcap/kvproto v0.0.0-20200428135407-0f5ffe459677
 	github.com/pingcap/log v0.0.0-20200117041106-d28c14d3b1cd
-<<<<<<< HEAD
-	github.com/pingcap/parser v0.0.0-20200427031542-879c7bd4f27d
-=======
 	github.com/pingcap/parser v0.0.0-20200515063435-34703eeb52b3
->>>>>>> 838de2a... executor: fix wrong behavior of set charset statement (#16984)
 	github.com/pingcap/pd/v4 v4.0.0-rc.1.0.20200422143320-428acd53eba2
 	github.com/pingcap/sysutil v0.0.0-20200408114249-ed3bd6f7fdb1
 	github.com/pingcap/tidb-tools v4.0.0-rc.1.0.20200421113014-507d2bb3a15e+incompatible
