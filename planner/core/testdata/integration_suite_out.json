@@ -543,16 +543,9 @@
       {
         "SQL": "explain select * from t where a in (15, 0.12, 3.47)",
         "Plan": [
-          "Union_9 30.00 root  ",
-          "├─TableReader_12 10.00 root  data:Selection_11",
-          "│ └─Selection_11 10.00 cop[tikv]  or(eq(test.t.a, 15), 0)",
-          "│   └─TableFullScan_10 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
-          "├─TableReader_15 10.00 root  data:Selection_14",
-          "│ └─Selection_14 10.00 cop[tikv]  or(eq(test.t.a, 15), 0)",
-          "│   └─TableFullScan_13 10000.00 cop[tikv] table:t, partition:p1 keep order:false, stats:pseudo",
-          "└─TableReader_18 10.00 root  data:Selection_17",
-          "  └─Selection_17 10.00 cop[tikv]  or(eq(test.t.a, 15), 0)",
-          "    └─TableFullScan_16 10000.00 cop[tikv] table:t, partition:p2 keep order:false, stats:pseudo"
+          "TableReader_8 10.00 root  data:Selection_7",
+          "└─Selection_7 10.00 cop[tikv]  or(eq(test.t.a, 15), 0)",
+          "  └─TableFullScan_6 10000.00 cop[tikv] table:t, partition:p2 keep order:false, stats:pseudo"
         ]
       },
       {

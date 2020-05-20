@@ -456,6 +456,13 @@ type rangePruner struct {
 }
 
 func (p *rangePruner) partitionRangeForExpr(sctx sessionctx.Context, expr expression.Expression) (int, int, bool) {
+	if constExpr, ok := expr.(*expression.Constant); ok {
+		kind := constExpr.Value.Kind()
+		if (kind == types.KindUint64 || kind == types.KindInt64) && constExpr.Value.GetInt64() == 0 {
+			// A constant false expression.
+			return 0, 0, true
+		}
+	}
 	dataForPrune, ok := p.extractDataForPrune(sctx, expr)
 	if !ok {
 		return 0, 0, false
