@@ -19,13 +19,15 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/mock"
 )
 
-var _ = Suite(&testSessionSuite{})
+var _ = SerialSuites(&testSessionSuite{})
 
 type testSessionSuite struct {
 }
@@ -159,4 +161,19 @@ select * from t;`
 		Succ:           true,
 	})
 	c.Assert(logString, Equals, resultString)
+}
+
+func (*testSessionSuite) TestIsolationRead(c *C) {
+	originIsolationEngines := config.GetGlobalConfig().IsolationRead.Engines
+	defer func() {
+		config.GetGlobalConfig().IsolationRead.Engines = originIsolationEngines
+	}()
+	config.GetGlobalConfig().IsolationRead.Engines = []string{"tiflash", "tidb"}
+	sessVars := variable.NewSessionVars()
+	_, ok := sessVars.IsolationReadEngines[kv.TiDB]
+	c.Assert(ok, Equals, true)
+	_, ok = sessVars.IsolationReadEngines[kv.TiKV]
+	c.Assert(ok, Equals, false)
+	_, ok = sessVars.IsolationReadEngines[kv.TiFlash]
+	c.Assert(ok, Equals, true)
 }

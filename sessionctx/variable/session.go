@@ -571,6 +571,12 @@ func NewSessionVars() *SessionVars {
 		WaitSplitRegionTimeout:      DefWaitSplitRegionTimeout,
 		ReplicaRead:                 kv.ReplicaReadLeader,
 		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
+<<<<<<< HEAD
+=======
+		UsePlanBaselines:            DefTiDBUsePlanBaselines,
+		EvolvePlanBaselines:         DefTiDBEvolvePlanBaselines,
+		IsolationReadEngines:        make(map[kv.StoreType]struct{}),
+>>>>>>> 0d33a84... session: fix unsecessfully set the isolation read engines (#17258)
 		LockWaitTimeout:             DefInnodbLockWaitTimeout * 1000,
 		isolationReadEngines:        map[kv.StoreType]struct{}{kv.TiKV: {}, kv.TiFlash: {}},
 	}
@@ -610,6 +616,29 @@ func NewSessionVars() *SessionVars {
 		enableStreaming = "0"
 	}
 	terror.Log(vars.SetSystemVar(TiDBEnableStreaming, enableStreaming))
+<<<<<<< HEAD
+=======
+
+	vars.AllowBatchCop = DefTiDBAllowBatchCop
+
+	var enableChunkRPC string
+	if config.GetGlobalConfig().TiKVClient.EnableChunkRPC {
+		enableChunkRPC = "1"
+	} else {
+		enableChunkRPC = "0"
+	}
+	terror.Log(vars.SetSystemVar(TiDBEnableChunkRPC, enableChunkRPC))
+	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
+		switch engine {
+		case kv.TiFlash.Name():
+			vars.IsolationReadEngines[kv.TiFlash] = struct{}{}
+		case kv.TiKV.Name():
+			vars.IsolationReadEngines[kv.TiKV] = struct{}{}
+		case kv.TiDB.Name():
+			vars.IsolationReadEngines[kv.TiDB] = struct{}{}
+		}
+	}
+>>>>>>> 0d33a84... session: fix unsecessfully set the isolation read engines (#17258)
 	return vars
 }
 
