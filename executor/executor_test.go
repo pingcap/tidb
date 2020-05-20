@@ -5642,6 +5642,7 @@ func (s *testSuite1) TestDIVZeroInPartitionExpr(c *C) {
 	tk.MustExec("create table t1(a int) partition by range (10 div a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
 	defer tk.MustExec("drop table if exists t1")
 
+	tk.MustExec("set @@sql_mode=''")
 	tk.MustExec("insert into t1 values (NULL), (0), (1)")
 	tk.MustExec("set @@sql_mode='STRICT_ALL_TABLES,ERROR_FOR_DIVISION_BY_ZERO'")
 	tk.MustGetErrCode("insert into t1 values (NULL), (0), (1)", mysql.ErrDivisionByZero)
