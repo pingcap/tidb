@@ -118,22 +118,22 @@ type PartitionExpr struct {
 	// Used in the range pruning process.
 	*ForRangePruning
 	// Used in the range column pruning process.
-	*ForRangeColumnPruning
+	*ForRangeColumnsPruning
 }
 
-// ForRangeColumnPruning is used for range partition pruning.
-type ForRangeColumnPruning struct {
+// ForRangeColumnsPruning is used for range partition pruning.
+type ForRangeColumnsPruning struct {
 	LessThan []expression.Expression
 	Column   ast.ExprNode
 	MaxValue bool
 }
 
-func dataForRangeColumnPruning(ctx sessionctx.Context, pi *model.PartitionInfo, schema *expression.Schema, names []*types.FieldName, p *parser.Parser) (*ForRangeColumnPruning, error) {
+func dataForRangeColumnsPruning(ctx sessionctx.Context, pi *model.PartitionInfo, schema *expression.Schema, names []*types.FieldName, p *parser.Parser) (*ForRangeColumnsPruning, error) {
 	col, err := parseExpr(p, pi.Columns[0].L)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	var res ForRangeColumnPruning
+	var res ForRangeColumnsPruning
 	res.Column = col
 	res.LessThan = make([]expression.Expression, len(pi.Definitions))
 	for i := 0; i < len(pi.Definitions); i++ {
@@ -252,11 +252,11 @@ func generateRangePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 		}
 		ret.ForRangePruning = tmp
 	case 1:
-		tmp, err := dataForRangeColumnPruning(ctx, pi, schema, names, p)
+		tmp, err := dataForRangeColumnsPruning(ctx, pi, schema, names, p)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		ret.ForRangeColumnPruning = tmp
+		ret.ForRangeColumnsPruning = tmp
 	default:
 		logutil.BgLogger().Error("range column partition currently support only one column")
 	}
