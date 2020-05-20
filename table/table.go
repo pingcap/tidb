@@ -85,7 +85,15 @@ var (
 	// ErrNoPartitionForGivenValue returns table has no partition for value.
 	ErrNoPartitionForGivenValue = terror.ClassTable.New(codeNoPartitionForGivenValue, mysql.MySQLErrName[mysql.ErrNoPartitionForGivenValue])
 	// ErrLockOrActiveTransaction returns when execute unsupported statement in a lock session or an active transaction.
+<<<<<<< HEAD
 	ErrLockOrActiveTransaction = terror.ClassTable.New(codeLockOrActiveTransaction, mysql.MySQLErrName[mysql.ErrLockOrActiveTransaction])
+=======
+	ErrLockOrActiveTransaction = terror.ClassTable.New(mysql.ErrLockOrActiveTransaction, mysql.MySQLErrName[mysql.ErrLockOrActiveTransaction])
+	// ErrSequenceHasRunOut returns when sequence has run out.
+	ErrSequenceHasRunOut = terror.ClassTable.New(mysql.ErrSequenceRunOut, mysql.MySQLErrName[mysql.ErrSequenceRunOut])
+	// ErrRowDoesNotMatchGivenPartitionSet returns when the destination partition conflict with the partition selection.
+	ErrRowDoesNotMatchGivenPartitionSet = terror.ClassTable.NewStd(mysql.ErrRowDoesNotMatchGivenPartitionSet)
+>>>>>>> c60ea27... *: fix partition selection for the update statement (#17285)
 )
 
 // RecordIterFunc is used for low-level record iteration.

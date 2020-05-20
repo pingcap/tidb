@@ -442,6 +442,15 @@ type Update struct {
 	OrderedList []*expression.Assignment
 
 	SelectPlan PhysicalPlan
+<<<<<<< HEAD
+=======
+
+	TblColPosInfos TblColPosInfoSlice
+
+	// Used when partition sets are given.
+	// e.g. update t partition(p0) set a = 1;
+	PartitionedTable []table.PartitionedTable
+>>>>>>> c60ea27... *: fix partition selection for the update statement (#17285)
 }
 
 // Delete represents a delete plan.

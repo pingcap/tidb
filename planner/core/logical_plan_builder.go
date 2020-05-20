@@ -2294,14 +2294,20 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName) (L
 
 	if tableInfo.GetPartitionInfo() != nil {
 		b.optFlag = b.optFlag | flagPartitionProcessor
-		b.partitionedTable = append(b.partitionedTable, tbl.(table.PartitionedTable))
+		pt := tbl.(table.PartitionedTable)
 		// check partition by name.
-		for _, name := range tn.PartitionNames {
-			_, err = tables.FindPartitionByName(tableInfo, name.L)
-			if err != nil {
-				return nil, err
+		if len(tn.PartitionNames) > 0 {
+			pids := make(map[int64]struct{}, len(tn.PartitionNames))
+			for _, name := range tn.PartitionNames {
+				pid, err := tables.FindPartitionByName(tableInfo, name.L)
+				if err != nil {
+					return nil, err
+				}
+				pids[pid] = struct{}{}
 			}
+			pt = tables.NewPartitionTableithGivenSets(pt, pids)
 		}
+		b.partitionedTable = append(b.partitionedTable, pt)
 	} else if len(tn.PartitionNames) != 0 {
 		return nil, ErrPartitionClauseOnNonpartitioned
 	}
@@ -2733,8 +2739,24 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	if err != nil {
 		return nil, err
 	}
+<<<<<<< HEAD
 
 	err = b.checkUpdateList(updt)
+=======
+	tblID2Handle, err := resolveIndicesForTblID2Handle(b.handleHelper.tailMap(), updt.SelectPlan.Schema())
+	if err != nil {
+		return nil, err
+	}
+	tblID2table := make(map[int64]table.Table, len(tblID2Handle))
+	for id := range tblID2Handle {
+		tblID2table[id], _ = b.is.TableByID(id)
+	}
+	updt.TblColPosInfos, err = buildColumns2Handle(updt.OutputNames(), tblID2Handle, tblID2table, true)
+	if err == nil {
+		err = checkUpdateList(b.ctx, tblID2table, updt)
+	}
+	updt.PartitionedTable = b.partitionedTable
+>>>>>>> c60ea27... *: fix partition selection for the update statement (#17285)
 	return updt, err
 }
 
