@@ -744,6 +744,12 @@ var SetNamesVariables = []string{
 	"character_set_results",
 }
 
+// SetCharsetVariables is the system variable names related to set charset statements.
+var SetCharsetVariables = []string{
+	"character_set_client",
+	"character_set_results",
+}
+
 const (
 	// CharacterSetConnection is the name for character_set_connection system variable.
 	CharacterSetConnection = "character_set_connection"
