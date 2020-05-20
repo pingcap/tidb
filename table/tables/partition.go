@@ -363,18 +363,18 @@ func partitionedTableAddRecord(ctx sessionctx.Context, t *partitionedTable, r []
 	return tbl.AddRecord(ctx, r, opts...)
 }
 
-// partitionedTableWithSelection is used for this kind of grammar: partition (p0,p1)
-// Basically it is the same as partitionedTable except that partitionedTableWithSelection
+// partitionTableWithGivenSets is used for this kind of grammar: partition (p0,p1)
+// Basically it is the same as partitionedTable except that partitionTableWithGivenSets
 // checks the given partition set for AddRecord/UpdateRecord operations.
-type partitionedTableWithSelection struct {
+type partitionTableWithGivenSets struct {
 	*partitionedTable
 	partitions map[int64]struct{}
 }
 
-// WithPartitionSelection upgrades a `partitionTable` to a `partitionedTableWithSelection`.
-func WithPartitionSelection(tbl table.PartitionedTable, partitions map[int64]struct{}) table.PartitionedTable {
+// NewPartitionTableithGivenSets creates a new partition table from a partition table.
+func NewPartitionTableithGivenSets(tbl table.PartitionedTable, partitions map[int64]struct{}) table.PartitionedTable {
 	if raw, ok := tbl.(*partitionedTable); ok {
-		return &partitionedTableWithSelection{
+		return &partitionTableWithGivenSets{
 			partitionedTable: raw,
 			partitions:       partitions,
 		}
@@ -383,7 +383,7 @@ func WithPartitionSelection(tbl table.PartitionedTable, partitions map[int64]str
 }
 
 // AddRecord implements the AddRecord method for the table.Table interface.
-func (t *partitionedTableWithSelection) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
+func (t *partitionTableWithGivenSets) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
 	return partitionedTableAddRecord(ctx, t.partitionedTable, r, t.partitions, opts)
 }
 
@@ -406,7 +406,7 @@ func (t *partitionedTable) UpdateRecord(ctx sessionctx.Context, h kv.Handle, cur
 	return partitionedTableUpdateRecord(ctx, t, h, currData, newData, touched, nil)
 }
 
-func (t *partitionedTableWithSelection) UpdateRecord(ctx sessionctx.Context, h kv.Handle, currData, newData []types.Datum, touched []bool) error {
+func (t *partitionTableWithGivenSets) UpdateRecord(ctx sessionctx.Context, h kv.Handle, currData, newData []types.Datum, touched []bool) error {
 	return partitionedTableUpdateRecord(ctx, t.partitionedTable, h, currData, newData, touched, t.partitions)
 }
 

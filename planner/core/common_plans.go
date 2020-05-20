@@ -658,7 +658,8 @@ type Update struct {
 
 	TblColPosInfos TblColPosInfoSlice
 
-	// Used by partition selection.
+	// Used when partition sets are given.
+	// e.g. update t partition(p0) set a = 1;
 	PartitionedTable []table.PartitionedTable
 }
 
