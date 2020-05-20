@@ -340,6 +340,7 @@ func (a *aggregationPushDownSolver) pushAggCrossUnion(agg *LogicalAggregation, u
 	for _, gbyExpr := range agg.GroupByItems {
 		newExpr := expression.ColumnSubstitute(gbyExpr, unionSchema, expression.Column2Exprs(unionChild.Schema().Columns))
 		newAgg.GroupByItems = append(newAgg.GroupByItems, newExpr)
+		// TODO: if there is a duplicated first_row function, we can delete it.
 		firstRow, err := aggregation.NewAggFuncDesc(agg.ctx, ast.AggFuncFirstRow, []expression.Expression{gbyExpr}, false)
 		if err != nil {
 			return nil, err
