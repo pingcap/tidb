@@ -262,9 +262,6 @@ func (e *SetExecutor) setCharset(cs, co string, isSetName bool) error {
 			return errors.Trace(err)
 		}
 	}
-<<<<<<< HEAD
-	return errors.Trace(sessionVars.SetSystemVar(variable.CollationConnection, co))
-=======
 	csDb, err := sessionVars.GlobalVarsAccessor.GetGlobalSysVar(variable.CharsetDatabase)
 	if err != nil {
 		return err
@@ -278,7 +275,6 @@ func (e *SetExecutor) setCharset(cs, co string, isSetName bool) error {
 		return errors.Trace(err)
 	}
 	return errors.Trace(sessionVars.SetSystemVar(variable.CollationConnection, coDb))
->>>>>>> 838de2a... executor: fix wrong behavior of set charset statement (#16984)
 }
 
 func (e *SetExecutor) getVarValue(v *expression.VarAssignment, sysVar *variable.SysVar) (value types.Datum, err error) {
