@@ -111,11 +111,11 @@ func (p *hashPartitionPruner) tryEvalPartitionExpr(piExpr Expression) (val int64
 		if pi.FuncName.L == ast.Plus || pi.FuncName.L == ast.Minus || pi.FuncName.L == ast.Mul || pi.FuncName.L == ast.Div {
 			left, right := pi.GetArgs()[0], pi.GetArgs()[1]
 			leftVal, ok, isNull := p.tryEvalPartitionExpr(left)
-			if !ok || isNull{
+			if !ok || isNull {
 				return 0, ok, isNull
 			}
 			rightVal, ok, isNull := p.tryEvalPartitionExpr(right)
-			if !ok || isNull{
+			if !ok || isNull {
 				return 0, ok, isNull
 			}
 			switch pi.FuncName.L {
