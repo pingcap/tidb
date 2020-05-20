@@ -5663,7 +5663,7 @@ func (s *testSuite1) TestInsertIntoGivenPartitionSet(c *C) {
 	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'p_non_exist' in table 't1'")
 
 	err = tk.ExecToErr("insert into t1 partition(p0, p1) values(40, 'a')")
-	c.Assert(err.Error(), Equals, "[executor:1748]Found a row not matching the given partition set")
+	c.Assert(err.Error(), Equals, "[table:1748]Found a row not matching the given partition set")
 
 	// replace into
 	tk.MustExec("replace into t1 partition(p0) values(1, 'replace')")
@@ -5676,7 +5676,7 @@ func (s *testSuite1) TestInsertIntoGivenPartitionSet(c *C) {
 	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'p_non_exist' in table 't1'")
 
 	err = tk.ExecToErr("replace into t1 partition(p0, p1) values(40, 'a')")
-	c.Assert(err.Error(), Equals, "[executor:1748]Found a row not matching the given partition set")
+	c.Assert(err.Error(), Equals, "[table:1748]Found a row not matching the given partition set")
 
 	tk.MustExec("truncate table t1")
 
@@ -5706,7 +5706,7 @@ func (s *testSuite1) TestInsertIntoGivenPartitionSet(c *C) {
 	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'p_non_exist' in table 't1'")
 
 	err = tk.ExecToErr("insert into t1 partition(p0, p1) select 40, 'a'")
-	c.Assert(err.Error(), Equals, "[executor:1748]Found a row not matching the given partition set")
+	c.Assert(err.Error(), Equals, "[table:1748]Found a row not matching the given partition set")
 
 	// replace into from select
 	tk.MustExec("replace into t1 partition(p0) select 1, 'replace'")
@@ -5721,7 +5721,7 @@ func (s *testSuite1) TestInsertIntoGivenPartitionSet(c *C) {
 	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'p_non_exist' in table 't1'")
 
 	err = tk.ExecToErr("replace into t1 partition(p0, p1) select 40, 'a'")
-	c.Assert(err.Error(), Equals, "[executor:1748]Found a row not matching the given partition set")
+	c.Assert(err.Error(), Equals, "[table:1748]Found a row not matching the given partition set")
 }
 
 func (s *testSuite1) TestUpdateGivenPartitionSet(c *C) {
