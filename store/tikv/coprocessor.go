@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -76,6 +77,11 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		memTracker:      req.MemTracker,
 		replicaReadSeed: c.replicaReadSeed,
 	}
+	it.mu.exceeded = 0
+	it.actionEndCopWorker = &EndCopWorkerAction{
+		copIterator: it,
+	}
+
 	it.minCommitTSPushed.data = make(map[uint64]struct{}, 5)
 	it.tasks = tasks
 	if it.concurrency > len(tasks) {
@@ -90,6 +96,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 	} else {
 		it.respChan = make(chan *copResponse, it.concurrency)
 	}
+	it.mu.aliveWorker = it.concurrency
 	it.open(ctx)
 	return it
 }
@@ -396,11 +403,25 @@ type copIterator struct {
 	// when the Close is called. we use atomic.CompareAndSwap `closed` to to make sure the channel is not closed twice.
 	closed uint32
 
+	mu struct {
+		sync.Mutex
+		// exceeded indicates that datasource have exceeded memQuota.
+		// It's for concurrency usage, so access it with atomic.
+		exceeded uint32
+
+		// aliveWorker indicates that the number of current running copIteratorWorker
+		// It's for concurrency usage, so access it with atomic.
+		aliveWorker int
+	}
+
+	actionEndCopWorker *EndCopWorkerAction
+
 	minCommitTSPushed
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
 type copIteratorWorker struct {
+	id       fmt.Stringer
 	taskCh   <-chan *copTask
 	wg       *sync.WaitGroup
 	store    *tikvStore
@@ -411,6 +432,8 @@ type copIteratorWorker struct {
 	clientHelper
 
 	memTracker *memory.Tracker
+
+	actionEndCopWorker *EndCopWorkerAction
 
 	replicaReadSeed uint32
 }
@@ -498,6 +521,17 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 			return
 		default:
 		}
+		copIt := worker.actionEndCopWorker.copIterator
+		copIt.mu.Lock()
+		defer copIt.mu.Unlock()
+		if copIt.mu.exceeded != 0 && copIt.mu.aliveWorker > 1 {
+			copIt.mu.exceeded = 0
+			copIt.mu.aliveWorker = copIt.mu.aliveWorker - 1
+			// gc memory usage
+			worker.memTracker.Consume(-worker.memTracker.BytesConsumed())
+			// end this worker
+			return
+		}
 	}
 }
 
@@ -507,7 +541,9 @@ func (it *copIterator) open(ctx context.Context) {
 	it.wg.Add(it.concurrency)
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency; i++ {
+		id := stringutil.StringerStr(fmt.Sprintf("copIteratorWorker-%d", i))
 		worker := &copIteratorWorker{
+			id:       id,
 			taskCh:   taskCh,
 			wg:       &it.wg,
 			store:    it.store,
@@ -522,10 +558,13 @@ func (it *copIterator) open(ctx context.Context) {
 				Client:            it.store.client,
 			},
 
-			memTracker: it.memTracker,
+			memTracker: memory.NewTracker(id, -1),
+
+			actionEndCopWorker: it.actionEndCopWorker,
 
 			replicaReadSeed: it.replicaReadSeed,
 		}
+		worker.memTracker.AttachTo(it.memTracker)
 		go worker.run(ctx)
 	}
 	taskSender := &copIteratorTaskSender{
@@ -1118,4 +1157,38 @@ func (it copErrorResponse) Next(ctx context.Context) (kv.ResultSubset, error) {
 
 func (it copErrorResponse) Close() error {
 	return nil
+}
+
+// EndCopWorkAction implements memory.ActionOnExceed for copIteratorWorker. If
+// the memory quota of a query is exceeded, EndCopWorkAction.Action would end one copIteratorWorker.
+// EndCopWorkAction would ensure that there should be at least one copIteratorWorker running.
+type EndCopWorkerAction struct {
+	once           sync.Once
+	fallbackAction memory.ActionOnExceed
+	m              sync.Mutex
+	copIterator    *copIterator
+}
+
+// Action sends a signal to trigger end one copIterator worker.
+func (e *EndCopWorkerAction) Action(t *memory.Tracker) {
+	e.m.Lock()
+	defer e.m.Unlock()
+	// make sure at least one worker running
+	if e.copIterator.mu.aliveWorker < 2 {
+		return
+	}
+	// set exceeded as 1
+	e.once.Do(func() {
+		atomic.StoreUint32(&e.copIterator.mu.exceeded, 1)
+		logutil.BgLogger().Info("memory exceeds quota, end one copIterator worker.",
+			zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
+	})
+}
+
+func (e *EndCopWorkerAction) SetLogHook(hook func(uint64)) {
+
+}
+
+func (e *EndCopWorkerAction) SetFallback(a memory.ActionOnExceed) {
+
 }
