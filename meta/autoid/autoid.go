@@ -905,6 +905,7 @@ func DecodeCmpUintToInt(u uint64) int64 {
 	return int64(u ^ signMask)
 }
 
+// TestModifyBaseAndEndInjection exported for testing modifying the base and end.
 func TestModifyBaseAndEndInjection(alloc Allocator, base, end int64) {
 	alloc.(*allocator).mu.Lock()
 	alloc.(*allocator).base = base
