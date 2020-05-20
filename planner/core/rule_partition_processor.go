@@ -423,6 +423,12 @@ func partitionRangeForExpr(sctx sessionctx.Context, expr expression.Expression,
 			args := op.GetArgs()
 			newRange := partitionRangeForOrExpr(sctx, args[0], args[1], pruner)
 			return result.intersection(newRange)
+		} else if op.FuncName.L == ast.In {
+			if p, ok := pruner.(*rangePruner); ok {
+				newRange := partitionRangeForInExpr(sctx, op.GetArgs(), p)
+				return result.intersection(newRange)
+			}
+			return result
 		}
 	}
 
@@ -450,6 +456,12 @@ type rangePruner struct {
 }
 
 func (p *rangePruner) partitionRangeForExpr(sctx sessionctx.Context, expr expression.Expression) (int, int, bool) {
+	if constExpr, ok := expr.(*expression.Constant); ok {
+		if b, err := constExpr.Value.ToBool(sctx.GetSessionVars().StmtCtx); err == nil && b == 0 {
+			// A constant false expression.
+			return 0, 0, true
+		}
+	}
 	dataForPrune, ok := p.extractDataForPrune(sctx, expr)
 	if !ok {
 		return 0, 0, false
@@ -470,6 +482,39 @@ func partitionRangeForOrExpr(sctx sessionctx.Context, expr1, expr2 expression.Ex
 	tmp1 := partitionRangeForExpr(sctx, expr1, pruner, pruner.fullRange())
 	tmp2 := partitionRangeForExpr(sctx, expr2, pruner, pruner.fullRange())
 	return tmp1.union(tmp2)
+}
+
+func partitionRangeForInExpr(sctx sessionctx.Context, args []expression.Expression,
+	pruner *rangePruner) partitionRangeOR {
+	col, ok := args[0].(*expression.Column)
+	if !ok || col.ID != pruner.col.ID {
+		return pruner.fullRange()
+	}
+
+	var result partitionRangeOR
+	unsigned := mysql.HasUnsignedFlag(col.RetType.Flag)
+	for i := 1; i < len(args); i++ {
+		constExpr, ok := args[i].(*expression.Constant)
+		if !ok {
+			return pruner.fullRange()
+		}
+		switch constExpr.Value.Kind() {
+		case types.KindInt64, types.KindUint64:
+		case types.KindNull:
+			result = append(result, partitionRange{0, 1})
+			continue
+		default:
+			return pruner.fullRange()
+		}
+		val, err := constExpr.Value.ToInt64(sctx.GetSessionVars().StmtCtx)
+		if err != nil {
+			return pruner.fullRange()
+		}
+
+		start, end := pruneUseBinarySearch(pruner.lessThan, dataForPrune{op: ast.EQ, c: val}, unsigned)
+		result = append(result, partitionRange{start, end})
+	}
+	return result.simplify()
 }
 
 // monotoneIncFuncs are those functions that for any x y, if x > y => f(x) > f(y)

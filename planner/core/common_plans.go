@@ -657,6 +657,10 @@ type Update struct {
 	SelectPlan PhysicalPlan
 
 	TblColPosInfos TblColPosInfoSlice
+
+	// Used when partition sets are given.
+	// e.g. update t partition(p0) set a = 1;
+	PartitionedTable []table.PartitionedTable
 }
 
 // Delete represents a delete plan.
