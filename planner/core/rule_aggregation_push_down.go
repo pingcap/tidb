@@ -299,7 +299,7 @@ func (a *aggregationPushDownSolver) makeNewAgg(ctx sessionctx.Context, aggFuncs 
 
 // pushAggCrossUnion will try to push the agg down to the union. If the new aggregation's group-by columns doesn't contain unique key.
 // We will return the new aggregation. Otherwise we will transform the aggregation to projection.
-func (a *aggregationPushDownSolver) pushAggCrossUnion(agg *LogicalAggregation, unionSchema *expression.Schema, unionChild LogicalPlan) LogicalPlan {
+func (a *aggregationPushDownSolver) pushAggCrossUnion(agg *LogicalAggregation, unionSchema *expression.Schema, unionChild LogicalPlan) (LogicalPlan, error) {
 	ctx := agg.ctx
 	newAgg := LogicalAggregation{
 		AggFuncs:     make([]*aggregation.AggFuncDesc, 0, len(agg.AggFuncs)),
@@ -319,6 +319,12 @@ func (a *aggregationPushDownSolver) pushAggCrossUnion(agg *LogicalAggregation, u
 	for _, gbyExpr := range agg.GroupByItems {
 		newExpr := expression.ColumnSubstitute(gbyExpr, unionSchema, expression.Column2Exprs(unionChild.Schema().Columns))
 		newAgg.GroupByItems = append(newAgg.GroupByItems, newExpr)
+		// TODO: if there is a duplicated first_row function, we can delete it.
+		firstRow, err := aggregation.NewAggFuncDesc(agg.ctx, ast.AggFuncFirstRow, []expression.Expression{gbyExpr}, false)
+		if err != nil {
+			return nil, err
+		}
+		newAgg.AggFuncs = append(newAgg.AggFuncs, firstRow)
 	}
 	newAgg.collectGroupByColumns()
 	tmpSchema := expression.NewSchema(newAgg.groupByCols...)
@@ -327,13 +333,21 @@ func (a *aggregationPushDownSolver) pushAggCrossUnion(agg *LogicalAggregation, u
 	// this will cause error during executor phase.
 	for _, key := range unionChild.Schema().Keys {
 		if tmpSchema.ColumnsIndices(key) != nil {
+<<<<<<< HEAD
 			proj := a.convertAggToProj(newAgg)
 			proj.SetChildren(unionChild)
 			return proj
+=======
+			if ok, proj := ConvertAggToProj(newAgg, newAgg.schema); ok {
+				proj.SetChildren(unionChild)
+				return proj, nil
+			}
+			break
+>>>>>>> b248783... planner: fix wrong agg function when agg push down union (#17022)
 		}
 	}
 	newAgg.SetChildren(unionChild)
-	return newAgg
+	return newAgg, nil
 }
 
 func (a *aggregationPushDownSolver) optimize(ctx context.Context, p LogicalPlan) (LogicalPlan, error) {
@@ -412,7 +426,10 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan) (_ LogicalPlan, e
 				}
 				newChildren := make([]LogicalPlan, 0, len(union.children))
 				for _, child := range union.children {
-					newChild := a.pushAggCrossUnion(pushedAgg, union.Schema(), child)
+					newChild, err := a.pushAggCrossUnion(pushedAgg, union.Schema(), child)
+					if err != nil {
+						return p, err
+					}
 					newChildren = append(newChildren, newChild)
 				}
 				union.SetSchema(expression.NewSchema(newChildren[0].Schema().Columns...))
