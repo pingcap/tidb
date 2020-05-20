@@ -18,8 +18,10 @@ type Config struct {
 	Password string
 	Threads  int
 
-	LogLevel string
-	Logger   *zap.Logger
+	LogLevel  string
+	LogFile   string
+	LogFormat string
+	Logger    *zap.Logger
 
 	FileSize      uint64
 	StatementSize uint64
