@@ -42,7 +42,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/types/parser_driver"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hint"
@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/util/set"
 
 	"github.com/cznic/mathutil"
+	"github.com/pingcap/tidb/table/tables"
 	"go.uber.org/zap"
 )
 
@@ -1991,6 +1992,22 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		IsReplace:     insert.IsReplace,
 	}.Init(b.ctx)
 
+	if tableInfo.GetPartitionInfo() != nil && len(insert.PartitionNames) != 0 {
+		givenPartitionSets := make(map[int64]struct{}, len(insert.PartitionNames))
+		// check partition by name.
+		for _, name := range insert.PartitionNames {
+			id, err := tables.FindPartitionByName(tableInfo, name.L)
+			if err != nil {
+				return nil, err
+			}
+			givenPartitionSets[id] = struct{}{}
+		}
+		pt := tableInPlan.(table.PartitionedTable)
+		insertPlan.Table = tables.NewPartitionTableithGivenSets(pt, givenPartitionSets)
+	} else if len(insert.PartitionNames) != 0 {
+		return nil, ErrPartitionClauseOnNonpartitioned
+	}
+
 	var authErr error
 	if b.ctx.GetSessionVars().User != nil {
 		authErr = ErrTableaccessDenied.GenWithStackByArgs("INSERT", b.ctx.GetSessionVars().User.Hostname,
@@ -2394,6 +2411,9 @@ func (b *PlanBuilder) buildIndexAdvise(node *ast.IndexAdviseStmt) Plan {
 }
 
 func (b *PlanBuilder) buildSplitRegion(node *ast.SplitRegionStmt) (Plan, error) {
+	if node.SplitSyntaxOpt != nil && node.SplitSyntaxOpt.HasPartition && node.Table.TableInfo.Partition == nil {
+		return nil, ErrPartitionClauseOnNonpartitioned
+	}
 	if len(node.IndexName.L) != 0 {
 		return b.buildSplitIndexRegion(node)
 	}
