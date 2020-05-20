@@ -34,6 +34,8 @@ type Config struct {
 	FileMaxDays int `toml:"max-days" json:"max-days"`
 	// Maximum number of old log files to retain.
 	FileMaxBackups int `toml:"max-backups" json:"max-backups"`
+	// Format of the log, one of `text`, `json` or `console`.
+	Format string `toml:"format" json:"format"`
 }
 
 func InitAppLogger(cfg *Config) error {
@@ -45,6 +47,7 @@ func InitAppLogger(cfg *Config) error {
 			MaxDays:    cfg.FileMaxDays,
 			MaxBackups: cfg.FileMaxBackups,
 		},
+		Format: cfg.Format,
 	})
 	if err != nil {
 		return errors.WithStack(err)

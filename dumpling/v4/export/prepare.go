@@ -12,7 +12,11 @@ func adjustConfig(conf *Config) error {
 	if conf.Logger != nil {
 		log.SetAppLogger(conf.Logger)
 	} else {
-		err := log.InitAppLogger(&log.Config{Level: conf.LogLevel})
+		err := log.InitAppLogger(&log.Config{
+			Level:  conf.LogLevel,
+			File:   conf.LogFile,
+			Format: conf.LogFormat,
+		})
 		if err != nil {
 			return err
 		}
