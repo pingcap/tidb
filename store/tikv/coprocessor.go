@@ -1159,7 +1159,7 @@ func (it copErrorResponse) Close() error {
 	return nil
 }
 
-// EndCopWorkAction implements memory.ActionOnExceed for copIteratorWorker. If
+// EndCopWorkerAction implements memory.ActionOnExceed for copIteratorWorker. If
 // the memory quota of a query is exceeded, EndCopWorkAction.Action would end one copIteratorWorker.
 // EndCopWorkAction would ensure that there should be at least one copIteratorWorker running.
 type EndCopWorkerAction struct {
@@ -1185,10 +1185,12 @@ func (e *EndCopWorkerAction) Action(t *memory.Tracker) {
 	})
 }
 
+// SetLogHook implements ActionOnExceed.SetLogHook
 func (e *EndCopWorkerAction) SetLogHook(hook func(uint64)) {
 
 }
 
+// SetFallback implements ActionOnExceed.SetFallback
 func (e *EndCopWorkerAction) SetFallback(a memory.ActionOnExceed) {
 
 }
