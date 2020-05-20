@@ -137,10 +137,8 @@ func (p *hashPartitionPruner) tryEvalPartitionExpr(piExpr Expression) (val int64
 				ret, isNull, err := pi.EvalInt(p.ctx, chunk.Row{})
 				if err != nil {
 					return 0, false, false
-				} else if isNull {
-					return 0, true, isNull
 				}
-				return ret, true, false
+				return ret, true, isNull
 			}
 			return 0, false, false
 		}
