@@ -47,8 +47,8 @@ func (s *testPointGetSuite) SetUpSuite(c *C) {
 	s.cli = cli
 
 	var err error
-	s.store, err = mockstore.NewMockTikvStore(
-		mockstore.WithHijackClient(hijackClient),
+	s.store, err = mockstore.NewMockStore(
+		mockstore.WithClientHijacker(hijackClient),
 	)
 	c.Assert(err, IsNil)
 	s.dom, err = session.BootstrapSession(s.store)

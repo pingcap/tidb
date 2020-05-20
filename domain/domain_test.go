@@ -148,7 +148,7 @@ func TestInfo(t *testing.T) {
 		testleak.AfterTestT(t)()
 	}()
 	ddlLease := 80 * time.Millisecond
-	s, err := mockstore.NewMockTikvStore()
+	s, err := mockstore.NewMockStore()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +293,7 @@ func (msm *mockSessionManager) UpdateTLSConfig(cfg *tls.Config) {}
 
 func (*testSuite) TestT(c *C) {
 	defer testleak.AfterTest(c)()
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	ddlLease := 80 * time.Millisecond
 	dom := NewDomain(store, ddlLease, 0, mockFactory)

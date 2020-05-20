@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
@@ -133,14 +132,14 @@ func (s *testChunkSizeControlSuite) SetUpSuite(c *C) {
 		kit := new(testChunkSizeControlKit)
 		s.m[name] = kit
 		kit.client = &testSlowClient{regionDelay: make(map[uint64]time.Duration)}
-		cluster := mocktikv.NewCluster()
-		mocktikv.BootstrapWithSingleStore(cluster)
-		kit.cluster = cluster
 
 		var err error
-		kit.store, err = mockstore.NewMockTikvStore(
-			mockstore.WithCluster(cluster),
-			mockstore.WithHijackClient(func(c tikv.Client) tikv.Client {
+		kit.store, err = mockstore.NewMockStore(
+			mockstore.WithClusterInspector(func(c cluster.Cluster) {
+				mockstore.BootstrapWithSingleStore(c)
+				kit.cluster = c
+			}),
+			mockstore.WithClientHijacker(func(c tikv.Client) tikv.Client {
 				kit.client.Client = c
 				return kit.client
 			}),
