@@ -47,5 +47,4 @@ var (
 	ErrBRIERestoreFailed                = terror.ClassExecutor.New(mysql.ErrBRIERestoreFailed, mysql.MySQLErrName[mysql.ErrBRIERestoreFailed])
 	ErrBRIEImportFailed                 = terror.ClassExecutor.New(mysql.ErrBRIEImportFailed, mysql.MySQLErrName[mysql.ErrBRIEImportFailed])
 	ErrBRIEExportFailed                 = terror.ClassExecutor.New(mysql.ErrBRIEExportFailed, mysql.MySQLErrName[mysql.ErrBRIEExportFailed])
-	ErrRowDoesNotMatchGivenPartitionSet = terror.ClassExecutor.New(mysql.ErrRowDoesNotMatchGivenPartitionSet, mysql.MySQLErrName[mysql.ErrRowDoesNotMatchGivenPartitionSet])
 )
