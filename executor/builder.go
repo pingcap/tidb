@@ -1646,8 +1646,10 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 		tbl, _ := b.is.TableByID(info.TblID)
 		tblID2table[info.TblID] = tbl
 		if len(v.PartitionedTable) > 0 {
-			// Replace the table to support partition selection.
 			// The v.PartitionedTable collects the partitioned table.
+			// Replace the original table with the partitioned table to support partition selection.
+			// e.g. update t partition (p0, p1), the new values are not belong to the given set p0, p1
+			// Using the table in v.PartitionedTable returns a proper error, while using the original table can't.
 			for _, p := range v.PartitionedTable {
 				if info.TblID == p.Meta().ID {
 					tblID2table[info.TblID] = p
