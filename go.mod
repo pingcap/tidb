@@ -31,6 +31,7 @@ require (
 	github.com/opentracing/opentracing-go v1.0.2
 	github.com/pingcap/check v0.0.0-20191216031241-8a5a85928f12
 	github.com/pingcap/errors v0.11.5-0.20190809092503-95897b64e011
+<<<<<<< HEAD
 	github.com/pingcap/failpoint v0.0.0-20191029060244-12f4ac2fd11d
 	github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e
 	github.com/pingcap/kvproto v0.0.0-20200317043902-2838e21ca222
@@ -39,6 +40,18 @@ require (
 	github.com/pingcap/pd/v3 v3.1.0-beta.2.0.20200312100832-1206736bd050
 	github.com/pingcap/tidb-tools v4.0.0-beta.1.0.20200317092225-ed6b2a87af54+incompatible
 	github.com/pingcap/tipb v0.0.0-20200426072603-ce17d2d03251
+=======
+	github.com/pingcap/failpoint v0.0.0-20200210140405-f8f9fb234798
+	github.com/pingcap/fn v0.0.0-20191016082858-07623b84a47d
+	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
+	github.com/pingcap/kvproto v0.0.0-20200428135407-0f5ffe459677
+	github.com/pingcap/log v0.0.0-20200511115504-543df19646ad
+	github.com/pingcap/parser v0.0.0-20200518090819-ec1e13b948b1
+	github.com/pingcap/pd/v4 v4.0.0-rc.1.0.20200422143320-428acd53eba2
+	github.com/pingcap/sysutil v0.0.0-20200408114249-ed3bd6f7fdb1
+	github.com/pingcap/tidb-tools v4.0.0-rc.1.0.20200421113014-507d2bb3a15e+incompatible
+	github.com/pingcap/tipb v0.0.0-20200417094153-7316d94df1ee
+>>>>>>> 5274e48... planner, executor: support insert/replace into partition (#17280)
 	github.com/prometheus/client_golang v1.0.0
 	github.com/prometheus/client_model v0.0.0-20190812154241-14fe0d1b01d4
 	github.com/remyoudompheng/bigfft v0.0.0-20190512091148-babf20351dd7 // indirect
@@ -53,10 +66,19 @@ require (
 	github.com/uber/jaeger-client-go v2.15.0+incompatible
 	github.com/uber/jaeger-lib v1.5.0 // indirect
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20191023171146-3cf2f69b5738
+<<<<<<< HEAD
 	go.uber.org/atomic v1.5.0
 	go.uber.org/zap v1.13.0
 	golang.org/x/crypto v0.0.0-20191227163750-53104e6ec876 // indirect
 	golang.org/x/net v0.0.0-20200202094626-16171245cfb2
+=======
+	go.uber.org/atomic v1.6.0
+	go.uber.org/automaxprocs v1.2.0
+	go.uber.org/zap v1.15.0
+	golang.org/x/net v0.0.0-20200324143707-d3edc9973b7e
+	golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e
+	golang.org/x/sys v0.0.0-20200323222414-85ca7c5b95cd
+>>>>>>> 5274e48... planner, executor: support insert/replace into partition (#17280)
 	golang.org/x/text v0.3.2
 	golang.org/x/tools v0.0.0-20200216192241-b320d3a0f5a2
 	google.golang.org/grpc v1.25.1
