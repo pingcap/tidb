@@ -37,11 +37,22 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+<<<<<<< HEAD
 	driver "github.com/pingcap/tidb/types/parser_driver"
+=======
+	"github.com/pingcap/tidb/types/parser_driver"
+	util2 "github.com/pingcap/tidb/util"
+>>>>>>> 5274e48... planner, executor: support insert/replace into partition (#17280)
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
+<<<<<<< HEAD
+=======
+
+	"github.com/cznic/mathutil"
+	"github.com/pingcap/tidb/table/tables"
+>>>>>>> 5274e48... planner, executor: support insert/replace into partition (#17280)
 	"go.uber.org/zap"
 )
 
@@ -1588,6 +1599,22 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		tableSchema: schema,
 		IsReplace:   insert.IsReplace,
 	}.Init(b.ctx)
+
+	if tableInfo.GetPartitionInfo() != nil && len(insert.PartitionNames) != 0 {
+		givenPartitionSets := make(map[int64]struct{}, len(insert.PartitionNames))
+		// check partition by name.
+		for _, name := range insert.PartitionNames {
+			id, err := tables.FindPartitionByName(tableInfo, name.L)
+			if err != nil {
+				return nil, err
+			}
+			givenPartitionSets[id] = struct{}{}
+		}
+		pt := tableInPlan.(table.PartitionedTable)
+		insertPlan.Table = tables.NewPartitionTableithGivenSets(pt, givenPartitionSets)
+	} else if len(insert.PartitionNames) != 0 {
+		return nil, ErrPartitionClauseOnNonpartitioned
+	}
 
 	var authErr error
 	if b.ctx.GetSessionVars().User != nil {
