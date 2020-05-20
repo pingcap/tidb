@@ -123,7 +123,11 @@ func (s *testSuite) TestExplainMetricTable(c *C) {
 		`MemTableScan_5 10000.00 root table:CLUSTER_LOG start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, node_types:["high_cpu_1","high_memory_1"]`))
 }
 
-func (s *testSuite) TestExplainForConnPlanCache(c *C) {
+type testPrepareSerialSuite struct {
+	*baseTestSuite
+}
+
+func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer func() {
@@ -153,4 +157,22 @@ func (s *testSuite) TestExplainForConnPlanCache(c *C) {
 		"└─Selection_6 8000.00 cop[tikv]  eq(cast(test.t.a), 1)",
 		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
+}
+
+func (s *testPrepareSerialSuite) TestExplainDotForExplainPlan(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	rows := tk.MustQuery("select connection_id()").Rows()
+	c.Assert(len(rows), Equals, 1)
+	connID := rows[0][0].(string)
+	tk.MustQuery("explain select 1").Check(testkit.Rows(
+		"Projection_3 1.00 root  1->Column#1",
+		"└─TableDual_4 1.00 root  rows:1",
+	))
+
+	tkProcess := tk.Se.ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+
+	tk.MustQuery(fmt.Sprintf("explain format=\"dot\" for connection %s", connID)).Check(nil)
 }

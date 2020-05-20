@@ -1049,6 +1049,7 @@ var MySQLErrName = map[uint16]string{
 
 	ErrSequenceUnsupportedTableOption:      "Unsupported sequence table-option %s",
 	ErrColumnTypeUnsupportedNextValue:      "Unsupported sequence default value for column type '%s'",
+	ErrAddColumnWithSequenceAsDefault:      "Unsupported using sequence as default value in add column '%s'",
 	ErrUnsupportedType:                     "Unsupported type %T",
 	ErrAnalyzeMissIndex:                    "Index '%s' in field list does not exist in table '%s'",
 	ErrCartesianProductUnsupported:         "Cartesian product is unsupported",
@@ -1068,6 +1069,11 @@ var MySQLErrName = map[uint16]string{
 	ErrUnsupportedSecondArgumentType:       "JSON_OBJECTAGG: unsupported second argument type %v",
 	ErrLockExpire:                          "TTL manager has timed out, pessimistic locks may expire, please commit or rollback this transaction",
 
+	ErrBRIEBackupFailed:  "Backup failed: %s",
+	ErrBRIERestoreFailed: "Restore failed: %s",
+	ErrBRIEImportFailed:  "Import failed: %s",
+	ErrBRIEExportFailed:  "Export failed: %s",
+
 	// TiKV/PD errors.
 	ErrPDServerTimeout:        "PD server timeout",
 	ErrTiKVServerTimeout:      "TiKV server timeout",
@@ -1078,4 +1084,5 @@ var MySQLErrName = map[uint16]string{
 	ErrWriteConflict:          "Write conflict, txnStartTS=%d, conflictStartTS=%d, conflictCommitTS=%d, key=%s",
 	ErrTiKVStoreLimit:         "Store token is up to the limit, store id = %d",
 	ErrPrometheusAddrIsNotSet: "Prometheus address is not set in PD and etcd",
+	ErrTiKVStaleCommand:       "TiKV server reports stale command",
 }

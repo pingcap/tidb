@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	plannerutil "github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
@@ -166,6 +167,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildSimple(v)
 	case *plannercore.Set:
 		return b.buildSet(v)
+	case *plannercore.SetConfig:
+		return b.buildSetConfig(v)
 	case *plannercore.PhysicalSort:
 		return b.buildSort(v)
 	case *plannercore.PhysicalTopN:
@@ -669,6 +672,8 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) Executor {
 		return b.buildGrant(s)
 	case *ast.RevokeStmt:
 		return b.buildRevoke(s)
+	case *ast.BRIEStmt:
+		return b.buildBRIE(s, v.Schema())
 	}
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID())
 	base.initCap = chunk.ZeroCapacity
@@ -688,6 +693,13 @@ func (b *executorBuilder) buildSet(v *plannercore.Set) Executor {
 		vars:         v.VarAssigns,
 	}
 	return e
+}
+
+func (b *executorBuilder) buildSetConfig(v *plannercore.SetConfig) Executor {
+	return &SetConfigExec{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		p:            v,
+	}
 }
 
 func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
@@ -860,7 +872,7 @@ func (b *executorBuilder) buildTrace(v *plannercore.Trace) Executor {
 	if t.format == plannercore.TraceFormatLog {
 		return &SortExec{
 			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), t),
-			ByItems: []*plannercore.ByItems{
+			ByItems: []*plannerutil.ByItems{
 				{Expr: &expression.Column{
 					Index:   0,
 					RetType: types.NewFieldType(mysql.TypeTimestamp),
@@ -1187,7 +1199,7 @@ func (b *executorBuilder) buildHashAgg(v *plannercore.PhysicalHashAgg) Executor 
 		e.defaultVal = chunk.NewChunkWithCapacity(retTypes(e), 1)
 	}
 	for _, aggDesc := range v.AggFuncs {
-		if aggDesc.HasDistinct {
+		if aggDesc.HasDistinct || len(aggDesc.OrderByItems) > 0 {
 			e.isUnparallelExec = true
 		}
 	}
@@ -2392,6 +2404,11 @@ func buildTableReq(b *executorBuilder, schemaLen int, plans []plannercore.Physic
 	}
 	ts := plans[0].(*plannercore.PhysicalTableScan)
 	tbl, _ := b.is.TableByID(ts.Table.ID)
+	isPartition, physicalTableID := ts.IsPartition()
+	if isPartition {
+		pt := tbl.(table.PartitionedTable)
+		tbl = pt.GetPartition(physicalTableID)
+	}
 	return tableReq, tableStreaming, tbl, err
 }
 
@@ -2415,10 +2432,6 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		return nil, err
 	}
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
-	if isPartition, physicalTableID := ts.IsPartition(); isPartition {
-		pt := tbl.(table.PartitionedTable)
-		tbl = pt.GetPartition(physicalTableID)
-	}
 	startTS, err := b.getSnapshotTS()
 	if err != nil {
 		return nil, err
@@ -2599,7 +2612,12 @@ type mockPhysicalIndexReader struct {
 
 func (builder *dataReaderBuilder) buildExecutorForIndexJoin(ctx context.Context, lookUpContents []*indexJoinLookUpContent,
 	IndexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager) (Executor, error) {
-	switch v := builder.Plan.(type) {
+	return builder.buildExecutorForIndexJoinInternal(ctx, builder.Plan, lookUpContents, IndexRanges, keyOff2IdxOff, cwc)
+}
+
+func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.Context, plan plannercore.Plan, lookUpContents []*indexJoinLookUpContent,
+	IndexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager) (Executor, error) {
+	switch v := plan.(type) {
 	case *plannercore.PhysicalTableReader:
 		return builder.buildTableReaderForIndexJoin(ctx, v, lookUpContents)
 	case *plannercore.PhysicalIndexReader:
@@ -2616,6 +2634,19 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoin(ctx context.Context,
 	// Then we need a Projection upon IndexLookupReader to prune the redundant column.
 	case *plannercore.PhysicalProjection:
 		return builder.buildProjectionForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc)
+	// Need to support physical selection because after PR 16389, TiDB will push down all the expr supported by TiKV or TiFlash
+	// in predicate push down stage, so if there is an expr which only supported by TiFlash, a physical selection will be added after index read
+	case *plannercore.PhysicalSelection:
+		childExec, err := builder.buildExecutorForIndexJoinInternal(ctx, v.Children()[0], lookUpContents, IndexRanges, keyOff2IdxOff, cwc)
+		if err != nil {
+			return nil, err
+		}
+		exec := &SelectionExec{
+			baseExecutor: newBaseExecutor(builder.ctx, v.Schema(), v.ExplainID(), childExec),
+			filters:      v.Conditions,
+		}
+		err = exec.open(ctx)
+		return exec, err
 	case *mockPhysicalIndexReader:
 		return v.e, nil
 	}

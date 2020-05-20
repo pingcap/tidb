@@ -88,7 +88,7 @@ type testDBSuite struct {
 func setUpSuite(s *testDBSuite, c *C) {
 	var err error
 
-	s.lease = 100 * time.Millisecond
+	s.lease = 600 * time.Millisecond
 	session.SetSchemaLease(s.lease)
 	session.DisableStats4Test()
 	s.schemaName = "test_db"
@@ -3207,19 +3207,11 @@ func (s *testDBSuite5) TestModifyColumnRollBack(c *C) {
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	done := make(chan error, 1)
 	go backgroundExec(s.store, "alter table t1 change c2 c2 bigint not null;", done)
-	ticker := time.NewTicker(s.lease / 2)
-	defer ticker.Stop()
-LOOP:
-	for {
-		select {
-		case err := <-done:
-			c.Assert(err, NotNil)
-			c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
-			break LOOP
-		case <-ticker.C:
-			s.mustExec(c, "insert into t1(c2) values (null);")
-		}
-	}
+
+	err := <-done
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
+	s.mustExec(c, "insert into t1(c2) values (null);")
 
 	t := s.testGetTable(c, "t1")
 	for _, col := range t.Cols() {
@@ -4256,11 +4248,18 @@ func (s *testDBSuite2) TestLockTables(c *C) {
 	_, err = tk.Exec("create view v1 as select * from t1;")
 	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotLocked), IsTrue)
 
-	// Test for lock view was not supported.
+	// Test for locking view was not supported.
 	tk.MustExec("unlock tables")
 	tk.MustExec("create view v1 as select * from t1;")
 	_, err = tk.Exec("lock tables v1 read")
 	c.Assert(terror.ErrorEqual(err, table.ErrUnsupportedOp), IsTrue)
+
+	// Test for locking sequence was not supported.
+	tk.MustExec("unlock tables")
+	tk.MustExec("create sequence seq")
+	_, err = tk.Exec("lock tables seq read")
+	c.Assert(terror.ErrorEqual(err, table.ErrUnsupportedOp), IsTrue)
+	tk.MustExec("drop sequence seq")
 
 	// Test for create/drop/alter database when session is holding the table locks.
 	tk.MustExec("unlock tables")

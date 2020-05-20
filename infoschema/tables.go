@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -701,7 +702,7 @@ var tableTiDBIndexesCols = []columnInfo{
 }
 
 var slowQueryCols = []columnInfo{
-	{name: variable.SlowLogTimeStr, tp: mysql.TypeTimestamp, size: 26},
+	{name: variable.SlowLogTimeStr, tp: mysql.TypeTimestamp, size: 26, decimal: 6},
 	{name: variable.SlowLogTxnStartTSStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
 	{name: variable.SlowLogUserStr, tp: mysql.TypeVarchar, size: 64},
 	{name: variable.SlowLogHostStr, tp: mysql.TypeVarchar, size: 64},
@@ -721,6 +722,7 @@ var slowQueryCols = []columnInfo{
 	{name: execdetails.WriteSizeStr, tp: mysql.TypeLonglong, size: 22},
 	{name: execdetails.PrewriteRegionStr, tp: mysql.TypeLonglong, size: 22},
 	{name: execdetails.TxnRetryStr, tp: mysql.TypeLonglong, size: 22},
+	{name: execdetails.CopTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: execdetails.ProcessTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: execdetails.WaitTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: execdetails.BackoffTimeStr, tp: mysql.TypeDouble, size: 22},
@@ -743,6 +745,7 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogCopWaitAddr, tp: mysql.TypeVarchar, size: 64},
 	{name: variable.SlowLogMemMax, tp: mysql.TypeLonglong, size: 20},
 	{name: variable.SlowLogSucc, tp: mysql.TypeTiny, size: 1},
+	{name: variable.SlowLogPlanFromCache, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogPlan, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: variable.SlowLogPlanDigest, tp: mysql.TypeVarchar, size: 128},
 	{name: variable.SlowLogPrevStmt, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
@@ -1264,7 +1267,7 @@ func GetClusterServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 
 	type retriever func(ctx sessionctx.Context) ([]ServerInfo, error)
 	var servers []ServerInfo
-	for _, r := range []retriever{GetTiDBServerInfo, GetPDServerInfo, GetTiKVServerInfo} {
+	for _, r := range []retriever{GetTiDBServerInfo, GetPDServerInfo, GetStoreServerInfo} {
 		nodes, err := r(ctx)
 		if err != nil {
 			return nil, err
@@ -1320,10 +1323,10 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 			return nil, errors.Trace(err)
 		}
 		pdVersion, err := ioutil.ReadAll(resp.Body)
+		terror.Log(resp.Body.Close())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		terror.Log(resp.Body.Close())
 		version := strings.Trim(strings.Trim(string(pdVersion), "\n"), "\"")
 
 		// Get PD git_hash
@@ -1341,10 +1344,11 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 			GitHash        string `json:"git_hash"`
 			StartTimestamp int64  `json:"start_timestamp"`
 		}{}
-		if err := json.NewDecoder(resp.Body).Decode(&content); err != nil {
+		err = json.NewDecoder(resp.Body).Decode(&content)
+		terror.Log(resp.Body.Close())
+		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		terror.Log(resp.Body.Close())
 
 		servers = append(servers, ServerInfo{
 			ServerType:     "pd",
@@ -1358,13 +1362,23 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	return servers, nil
 }
 
-// GetTiKVServerInfo returns all TiKV nodes information of cluster
-func GetTiKVServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
+// GetStoreServerInfo returns all store nodes(TiKV or TiFlash) cluster information
+func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
+	isTiFlashStore := func(store *metapb.Store) bool {
+		isTiFlash := false
+		for _, label := range store.Labels {
+			if label.GetKey() == "engine" && label.GetValue() == "tiflash" {
+				isTiFlash = true
+			}
+		}
+		return isTiFlash
+	}
+
 	store := ctx.GetStore()
 	// Get TiKV servers info.
 	tikvStore, ok := store.(tikv.Storage)
 	if !ok {
-		return nil, errors.Errorf("%T is not an TiKV store instance", store)
+		return nil, errors.Errorf("%T is not an TiKV or TiFlash store instance", store)
 	}
 	pdClient := tikvStore.GetRegionCache().PDClient()
 	if pdClient == nil {
@@ -1376,7 +1390,12 @@ func GetTiKVServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	}
 	var servers []ServerInfo
 	for _, store := range stores {
-		tp := tikv.GetStoreTypeByMeta(store).Name()
+		var tp string
+		if isTiFlashStore(store) {
+			tp = "tiflash"
+		} else {
+			tp = tikv.GetStoreTypeByMeta(store).Name()
+		}
 		servers = append(servers, ServerInfo{
 			ServerType:     tp,
 			Address:        store.Address,
@@ -1637,7 +1656,7 @@ func (it *infoschemaTable) Allocators(_ sessionctx.Context) autoid.Allocators {
 }
 
 // RebaseAutoID implements table.Table RebaseAutoID interface.
-func (it *infoschemaTable) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool) error {
+func (it *infoschemaTable) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool, tp autoid.AllocatorType) error {
 	return table.ErrUnsupportedOp
 }
 
@@ -1764,7 +1783,7 @@ func (vt *VirtualTable) Allocators(_ sessionctx.Context) autoid.Allocators {
 }
 
 // RebaseAutoID implements table.Table RebaseAutoID interface.
-func (vt *VirtualTable) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool) error {
+func (vt *VirtualTable) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool, tp autoid.AllocatorType) error {
 	return table.ErrUnsupportedOp
 }
 

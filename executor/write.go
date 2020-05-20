@@ -76,7 +76,7 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h int64, oldData
 	for i, col := range t.Cols() {
 		if modified[i] {
 			// Cast changed fields with respective columns.
-			v, err := table.CastValue(sctx, newData[i], col.ToInfo())
+			v, err := table.CastValue(sctx, newData[i], col.ToInfo(), false)
 			if err != nil {
 				return false, false, 0, err
 			}
@@ -107,7 +107,7 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h int64, oldData
 				if err != nil {
 					return false, false, 0, err
 				}
-				if err = t.RebaseAutoID(sctx, recordID, true); err != nil {
+				if err = t.RebaseAutoID(sctx, recordID, true, autoid.RowIDAllocType); err != nil {
 					return false, false, 0, err
 				}
 			}

@@ -125,7 +125,7 @@ const (
 )
 
 func init() {
-	GlobalDiskUsageTracker = disk.NewTracker(stringutil.StringerStr("GlobalStorageLabel"), -1)
+	GlobalDiskUsageTracker = disk.NewGlobalTrcaker(stringutil.StringerStr("GlobalStorageLabel"), -1)
 	action := &globalPanicOnExceed{}
 	GlobalDiskUsageTracker.SetActionOnExceed(action)
 }
@@ -1086,7 +1086,7 @@ func init() {
 	// While doing optimization in the plan package, we need to execute uncorrelated subquery,
 	// but the plan package cannot import the executor package because of the dependency cycle.
 	// So we assign a function implemented in the executor package to the plan package to avoid the dependency cycle.
-	plannercore.EvalSubquery = func(ctx context.Context, p plannercore.PhysicalPlan, is infoschema.InfoSchema, sctx sessionctx.Context) (rows [][]types.Datum, err error) {
+	plannercore.EvalSubqueryFirstRow = func(ctx context.Context, p plannercore.PhysicalPlan, is infoschema.InfoSchema, sctx sessionctx.Context) ([]types.Datum, error) {
 		if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 			span1 := span.Tracer().StartSpan("executor.EvalSubQuery", opentracing.ChildOf(span.Context()))
 			defer span1.Finish()
@@ -1096,28 +1096,24 @@ func init() {
 		e := &executorBuilder{is: is, ctx: sctx}
 		exec := e.build(p)
 		if e.err != nil {
-			return rows, e.err
+			return nil, e.err
 		}
-		err = exec.Open(ctx)
+		err := exec.Open(ctx)
 		defer terror.Call(exec.Close)
 		if err != nil {
-			return rows, err
+			return nil, err
 		}
 		chk := newFirstChunk(exec)
 		for {
 			err = Next(ctx, exec, chk)
 			if err != nil {
-				return rows, err
+				return nil, err
 			}
 			if chk.NumRows() == 0 {
-				return rows, nil
+				return nil, nil
 			}
-			iter := chunk.NewIterator4Chunk(chk)
-			for r := iter.Begin(); r != iter.End(); r = iter.Next() {
-				row := r.GetDatumRow(retTypes(exec))
-				rows = append(rows, row)
-			}
-			chk = chunk.Renew(chk, sctx.GetSessionVars().MaxChunkSize)
+			row := chk.GetRow(0).GetDatumRow(retTypes(exec))
+			return row, err
 		}
 	}
 }
@@ -1173,6 +1169,10 @@ func (e *SelectionExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
+	return e.open(ctx)
+}
+
+func (e *SelectionExec) open(ctx context.Context) error {
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	e.childResult = newFirstChunk(e.children[0])
@@ -1556,15 +1556,16 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars := ctx.GetSessionVars()
 	// Detach the disk tracker for the previous stmtctx from GlobalDiskUsageTracker
 	if vars.StmtCtx != nil && vars.StmtCtx.DiskTracker != nil {
-		vars.StmtCtx.DiskTracker.Detach()
+		vars.StmtCtx.DiskTracker.DetachFromGlobalTracker()
 	}
 	sc := &stmtctx.StatementContext{
 		TimeZone:    vars.Location(),
 		MemTracker:  memory.NewTracker(stringutil.MemoizeStr(s.Text), vars.MemQuotaQuery),
 		DiskTracker: disk.NewTracker(stringutil.MemoizeStr(s.Text), -1),
+		TaskID:      stmtctx.AllocateTaskID(),
 	}
 	if config.GetGlobalConfig().OOMUseTmpStorage && GlobalDiskUsageTracker != nil {
-		sc.DiskTracker.AttachTo(GlobalDiskUsageTracker)
+		sc.DiskTracker.AttachToGlobalTracker(GlobalDiskUsageTracker)
 	}
 	switch config.GetGlobalConfig().OOMAction {
 	case config.OOMActionCancel:
@@ -1695,6 +1696,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.SysErrorCount = errCount
 	vars.SysWarningCount = warnCount
 	vars.StmtCtx = sc
+	vars.PrevFoundInPlanCache = vars.FoundInPlanCache
+	vars.FoundInPlanCache = false
 	return
 }
 
@@ -1712,7 +1715,7 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 			}
 			// Because the expression might return different type from
 			// the generated column, we should wrap a CAST on the result.
-			castDatum, err := table.CastValue(sctx, datum, columns[idx])
+			castDatum, err := table.CastValue(sctx, datum, columns[idx], true)
 			if err != nil {
 				return err
 			}

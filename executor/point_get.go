@@ -148,6 +148,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 		e.snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
+	e.snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
 	var tblID int64
 	if e.partInfo != nil {
 		tblID = e.partInfo.ID
@@ -161,10 +162,13 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 
 		e.handleVal, err = e.get(ctx, e.idxKey)
-		if err != nil && !kv.ErrNotExist.Equal(err) {
-			return err
+		if err != nil {
+			if !kv.ErrNotExist.Equal(err) {
+				return err
+			}
 		}
 		if len(e.handleVal) == 0 {
+			// handle is not found, try lock the index key if isolation level is not read consistency
 			if e.ctx.GetSessionVars().IsPessimisticReadConsistency() {
 				return nil
 			}
@@ -217,13 +221,13 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *PointGetExecutor) getAndLock(ctx context.Context, key kv.Key) (val []byte, err error) {
 	if e.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-		// Lock the got keys in RC isolation.
+		// Only Lock the exist keys in RC isolation.
 		val, err = e.get(ctx, key)
-		if kv.ErrNotExist.Equal(err) {
-			return nil, nil
-		}
 		if err != nil {
-			return nil, err
+			if !kv.ErrNotExist.Equal(err) {
+				return nil, err
+			}
+			return nil, nil
 		}
 		err = e.lockKeyIfNeeded(ctx, key)
 		if err != nil {
@@ -237,8 +241,11 @@ func (e *PointGetExecutor) getAndLock(ctx context.Context, key kv.Key) (val []by
 		return nil, err
 	}
 	val, err = e.get(ctx, key)
-	if err != nil && !kv.ErrNotExist.Equal(err) {
-		return nil, err
+	if err != nil {
+		if !kv.ErrNotExist.Equal(err) {
+			return nil, err
+		}
+		return nil, nil
 	}
 	return val, nil
 }
@@ -267,21 +274,24 @@ func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) erro
 	return nil
 }
 
-func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) (val []byte, err error) {
+// get will first try to get from txn buffer, then check the pessimistic lock cache,
+// then the store. Kv.ErrNotExist will be returned if key is not found
+func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) {
 	if e.txn.Valid() && !e.txn.IsReadOnly() {
 		// We cannot use txn.Get directly here because the snapshot in txn and the snapshot of e.snapshot may be
 		// different for pessimistic transaction.
-		val, err = e.txn.GetMemBuffer().Get(ctx, key)
+		val, err := e.txn.GetMemBuffer().Get(ctx, key)
 		if err == nil {
 			return val, err
 		}
 		if !kv.IsErrNotFound(err) {
 			return nil, err
 		}
+		// key does not exist in mem buffer, check the lock cache
 		var ok bool
 		val, ok = e.ctx.GetSessionVars().TxnCtx.GetKeyInPessimisticLockCache(key)
 		if ok {
-			return
+			return val, nil
 		}
 		// fallthrough to snapshot get.
 	}
@@ -300,7 +310,7 @@ func encodeIndexKey(e *baseExecutor, tblInfo *model.TableInfo, idxInfo *model.In
 			str, err = idxVals[i].ToString()
 			idxVals[i].SetString(str, colInfo.FieldType.Collate)
 		} else {
-			idxVals[i], err = table.CastValue(e.ctx, idxVals[i], colInfo)
+			idxVals[i], err = table.CastValue(e.ctx, idxVals[i], colInfo, false)
 		}
 		if err != nil {
 			return nil, err

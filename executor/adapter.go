@@ -148,17 +148,7 @@ func (a *recordSet) NewChunk() *chunk.Chunk {
 
 func (a *recordSet) Close() error {
 	err := a.executor.Close()
-	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
-	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil, false)
-	a.stmt.SummaryStmt(a.lastErr == nil)
-	sessVars := a.stmt.Ctx.GetSessionVars()
-	pps := types.CloneRow(sessVars.PreparedParams)
-	sessVars.PrevStmt = FormatSQL(a.stmt.OriginText(), pps)
-	a.stmt.logAudit()
-	// Detach the disk tracker from GlobalDiskUsageTracker after every execution
-	if stmtCtx := a.stmt.Ctx.GetSessionVars().StmtCtx; stmtCtx != nil && stmtCtx.DiskTracker != nil {
-		stmtCtx.DiskTracker.Detach()
-	}
+	a.stmt.CloseRecordSet(a.txnStartTS, a.lastErr)
 	return err
 }
 
@@ -418,10 +408,11 @@ func getMaxExecutionTime(sctx sessionctx.Context) uint64 {
 }
 
 type chunkRowRecordSet struct {
-	rows   []chunk.Row
-	idx    int
-	fields []*ast.ResultField
-	e      Executor
+	rows     []chunk.Row
+	idx      int
+	fields   []*ast.ResultField
+	e        Executor
+	execStmt *ExecStmt
 }
 
 func (c *chunkRowRecordSet) Fields() []*ast.ResultField {
@@ -442,6 +433,7 @@ func (c *chunkRowRecordSet) NewChunk() *chunk.Chunk {
 }
 
 func (c *chunkRowRecordSet) Close() error {
+	c.execStmt.CloseRecordSet(c.execStmt.Ctx.GetSessionVars().TxnCtx.StartTS, nil)
 	return nil
 }
 
@@ -473,7 +465,7 @@ func (a *ExecStmt) runPessimisticSelectForUpdate(ctx context.Context, e Executor
 		}
 		if req.NumRows() == 0 {
 			fields := colNames2ResultFields(e.Schema(), a.OutputNames, a.Ctx.GetSessionVars().CurrentDB)
-			return &chunkRowRecordSet{rows: rows, fields: fields, e: e}, nil
+			return &chunkRowRecordSet{rows: rows, fields: fields, e: e, execStmt: a}, nil
 		}
 		iter := chunk.NewIterator4Chunk(req)
 		for r := iter.Begin(); r != iter.End(); r = iter.Next() {
@@ -772,6 +764,21 @@ func FormatSQL(sql string, pps variable.PreparedParams) stringutil.StringerFunc 
 	}
 }
 
+// CloseRecordSet will finish the execution of current statement and do some record work
+func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
+	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
+	a.LogSlowQuery(txnStartTS, lastErr == nil, false)
+	a.SummaryStmt(lastErr == nil)
+	sessVars := a.Ctx.GetSessionVars()
+	pps := types.CloneRow(sessVars.PreparedParams)
+	sessVars.PrevStmt = FormatSQL(a.OriginText(), pps)
+	a.logAudit()
+	// Detach the disk tracker from GlobalDiskUsageTracker after every execution
+	if stmtCtx := a.Ctx.GetSessionVars().StmtCtx; stmtCtx != nil && stmtCtx.DiskTracker != nil {
+		stmtCtx.DiskTracker.DetachFromGlobalTracker()
+	}
+}
+
 // LogSlowQuery is used to print the slow query in the log files.
 func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	sessVars := a.Ctx.GetSessionVars()
@@ -816,6 +823,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		PlanDigest:     planDigest,
 		Prepared:       a.isPreparedStmt,
 		HasMoreResults: hasMoreResults,
+		PlanFromCache:  sessVars.FoundInPlanCache,
 	}
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {
 		slowItems.PrevStmt = sessVars.PrevStmt.String()
@@ -876,9 +884,18 @@ func getPlanDigest(sctx sessionctx.Context, p plannercore.Plan) (normalized, pla
 // SummaryStmt collects statements for information_schema.statements_summary
 func (a *ExecStmt) SummaryStmt(succ bool) {
 	sessVars := a.Ctx.GetSessionVars()
+	var userString string
+	if sessVars.User != nil {
+		userString = sessVars.User.Username
+	}
+
 	// Internal SQLs must also be recorded to keep the consistency of `PrevStmt` and `PrevStmtDigest`.
-	if !stmtsummary.StmtSummaryByDigestMap.Enabled() || (sessVars.InRestrictedSQL && !stmtsummary.StmtSummaryByDigestMap.EnabledInternal()) {
+	if !stmtsummary.StmtSummaryByDigestMap.Enabled() || ((sessVars.InRestrictedSQL || len(userString) == 0) && !stmtsummary.StmtSummaryByDigestMap.EnabledInternal()) {
 		sessVars.SetPrevStmtDigest("")
+		return
+	}
+	// Ignore `PREPARE` statements, but record `EXECUTE` statements.
+	if _, ok := a.StmtNode.(*ast.PrepareStmt); ok {
 		return
 	}
 	stmtCtx := sessVars.StmtCtx
@@ -917,10 +934,6 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	execDetail := stmtCtx.GetExecDetails()
 	copTaskInfo := stmtCtx.CopTasksDetails()
 	memMax := stmtCtx.MemTracker.MaxConsumed()
-	var userString string
-	if sessVars.User != nil {
-		userString = sessVars.User.Username
-	}
 
 	stmtsummary.StmtSummaryByDigestMap.AddStatement(&stmtsummary.StmtExecInfo{
 		SchemaName:     strings.ToLower(sessVars.CurrentDB),
