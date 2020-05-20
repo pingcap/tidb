@@ -312,15 +312,11 @@ func (t *partitionedTable) GetPartitionByRow(ctx sessionctx.Context, r []types.D
 }
 
 // AddRecord implements the AddRecord method for the table.Table interface.
-<<<<<<< HEAD
 func (t *partitionedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID int64, err error) {
-=======
-func (t *partitionedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
 	return partitionedTableAddRecord(ctx, t, r, nil, opts)
 }
 
-func partitionedTableAddRecord(ctx sessionctx.Context, t *partitionedTable, r []types.Datum, partitionSelection map[int64]struct{}, opts []table.AddRecordOption) (recordID kv.Handle, err error) {
->>>>>>> c60ea27... *: fix partition selection for the update statement (#17285)
+func partitionedTableAddRecord(ctx sessionctx.Context, t *partitionedTable, r []types.Datum, partitionSelection map[int64]struct{}, opts []table.AddRecordOption) (recordID int64, err error) {
 	partitionInfo := t.meta.GetPartitionInfo()
 	pid, err := t.locatePartition(ctx, partitionInfo, r)
 	if err != nil {
@@ -329,7 +325,7 @@ func partitionedTableAddRecord(ctx sessionctx.Context, t *partitionedTable, r []
 
 	if partitionSelection != nil {
 		if _, ok := partitionSelection[pid]; !ok {
-			return nil, errors.WithStack(table.ErrRowDoesNotMatchGivenPartitionSet)
+			return 0, errors.WithStack(table.ErrRowDoesNotMatchGivenPartitionSet)
 		}
 	}
 	tbl := t.GetPartition(pid)
@@ -356,7 +352,7 @@ func NewPartitionTableithGivenSets(tbl table.PartitionedTable, partitions map[in
 }
 
 // AddRecord implements the AddRecord method for the table.Table interface.
-func (t *partitionTableWithGivenSets) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
+func (t *partitionTableWithGivenSets) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID int64, err error) {
 	return partitionedTableAddRecord(ctx, t.partitionedTable, r, t.partitions, opts)
 }
 
@@ -375,19 +371,15 @@ func (t *partitionedTable) RemoveRecord(ctx sessionctx.Context, h int64, r []typ
 // UpdateRecord implements table.Table UpdateRecord interface.
 // `touched` means which columns are really modified, used for secondary indices.
 // Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
-<<<<<<< HEAD
 func (t *partitionedTable) UpdateRecord(ctx sessionctx.Context, h int64, currData, newData []types.Datum, touched []bool) error {
-=======
-func (t *partitionedTable) UpdateRecord(ctx sessionctx.Context, h kv.Handle, currData, newData []types.Datum, touched []bool) error {
 	return partitionedTableUpdateRecord(ctx, t, h, currData, newData, touched, nil)
 }
 
-func (t *partitionTableWithGivenSets) UpdateRecord(ctx sessionctx.Context, h kv.Handle, currData, newData []types.Datum, touched []bool) error {
+func (t *partitionTableWithGivenSets) UpdateRecord(ctx sessionctx.Context, h int64, currData, newData []types.Datum, touched []bool) error {
 	return partitionedTableUpdateRecord(ctx, t.partitionedTable, h, currData, newData, touched, t.partitions)
 }
 
-func partitionedTableUpdateRecord(ctx sessionctx.Context, t *partitionedTable, h kv.Handle, currData, newData []types.Datum, touched []bool, partitionSelection map[int64]struct{}) error {
->>>>>>> c60ea27... *: fix partition selection for the update statement (#17285)
+func partitionedTableUpdateRecord(ctx sessionctx.Context, t *partitionedTable, h int64, currData, newData []types.Datum, touched []bool, partitionSelection map[int64]struct{}) error {
 	partitionInfo := t.meta.GetPartitionInfo()
 	from, err := t.locatePartition(ctx, partitionInfo, currData)
 	if err != nil {
