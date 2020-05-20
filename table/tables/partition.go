@@ -358,30 +358,49 @@ func (t *partitionedTable) GetPartitionByRow(ctx sessionctx.Context, r []types.D
 	return t.partitions[pid], nil
 }
 
-func partitionTableAddRecord(ctx sessionctx.Context, r []types.Datum, t *partitionedTable, givenPartitionSets map[int64]struct{}, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
+// AddRecord implements the AddRecord method for the table.Table interface.
+func (t *partitionedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
+	return partitionedTableAddRecord(ctx, t, r, nil, opts)
+}
+
+func partitionedTableAddRecord(ctx sessionctx.Context, t *partitionedTable, r []types.Datum, partitionSelection map[int64]struct{}, opts []table.AddRecordOption) (recordID kv.Handle, err error) {
 	partitionInfo := t.meta.GetPartitionInfo()
 	pid, err := t.locatePartition(ctx, partitionInfo, r)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	if givenPartitionSets != nil {
-		if _, ok := givenPartitionSets[pid]; !ok {
-			return nil, table.ErrRowDoesNotMatchGivenPartitionSet
+	if partitionSelection != nil {
+		if _, ok := partitionSelection[pid]; !ok {
+			return nil, errors.WithStack(table.ErrRowDoesNotMatchGivenPartitionSet)
 		}
 	}
-
 	tbl := t.GetPartition(pid)
 	return tbl.AddRecord(ctx, r, opts...)
 }
 
-// AddRecord implements the AddRecord method for the table.Table interface.
-func (t *partitionedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
-	return partitionTableAddRecord(ctx, r, t, nil, opts...)
+// partitionTableWithGivenSets is used for this kind of grammar: partition (p0,p1)
+// Basically it is the same as partitionedTable except that partitionTableWithGivenSets
+// checks the given partition set for AddRecord/UpdateRecord operations.
+type partitionTableWithGivenSets struct {
+	*partitionedTable
+	partitions map[int64]struct{}
 }
 
-func (t *partitionedTableWithGivenSets) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
-	return partitionTableAddRecord(ctx, r, t.partitionedTable, t.givenPartitionSets, opts...)
+// NewPartitionTableithGivenSets creates a new partition table from a partition table.
+func NewPartitionTableithGivenSets(tbl table.PartitionedTable, partitions map[int64]struct{}) table.PartitionedTable {
+	if raw, ok := tbl.(*partitionedTable); ok {
+		return &partitionTableWithGivenSets{
+			partitionedTable: raw,
+			partitions:       partitions,
+		}
+	}
+	return tbl
+}
+
+// AddRecord implements the AddRecord method for the table.Table interface.
+func (t *partitionTableWithGivenSets) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
+	return partitionedTableAddRecord(ctx, t.partitionedTable, r, t.partitions, opts)
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
@@ -400,6 +419,14 @@ func (t *partitionedTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r [
 // `touched` means which columns are really modified, used for secondary indices.
 // Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
 func (t *partitionedTable) UpdateRecord(ctx sessionctx.Context, h kv.Handle, currData, newData []types.Datum, touched []bool) error {
+	return partitionedTableUpdateRecord(ctx, t, h, currData, newData, touched, nil)
+}
+
+func (t *partitionTableWithGivenSets) UpdateRecord(ctx sessionctx.Context, h kv.Handle, currData, newData []types.Datum, touched []bool) error {
+	return partitionedTableUpdateRecord(ctx, t.partitionedTable, h, currData, newData, touched, t.partitions)
+}
+
+func partitionedTableUpdateRecord(ctx sessionctx.Context, t *partitionedTable, h kv.Handle, currData, newData []types.Datum, touched []bool, partitionSelection map[int64]struct{}) error {
 	partitionInfo := t.meta.GetPartitionInfo()
 	from, err := t.locatePartition(ctx, partitionInfo, currData)
 	if err != nil {
@@ -408,6 +435,11 @@ func (t *partitionedTable) UpdateRecord(ctx sessionctx.Context, h kv.Handle, cur
 	to, err := t.locatePartition(ctx, partitionInfo, newData)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	if partitionSelection != nil {
+		if _, ok := partitionSelection[to]; !ok {
+			return errors.WithStack(table.ErrRowDoesNotMatchGivenPartitionSet)
+		}
 	}
 
 	// The old and new data locate in different partitions.
