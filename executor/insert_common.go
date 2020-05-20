@@ -71,7 +71,6 @@ type InsertValues struct {
 	// https://dev.mysql.com/doc/refman/8.0/en/innodb-auto-increment-handling.html
 	lazyFillAutoID bool
 	memTracker     *memory.Tracker
-	Partitions     map[int64]struct{}
 }
 
 type defaultVal struct {
