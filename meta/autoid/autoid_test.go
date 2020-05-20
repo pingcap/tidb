@@ -826,7 +826,7 @@ func (*testSuite) TestConcurrentAllocSequence(c *C) {
 	c.Assert(err, IsNil)
 }
 
-// Fix a issue111 in allocator computation.
+// Fix a computation logic bug in allocator computation.
 func (*testSuite) TestAllocComputationIssue(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDCustomize", `return(true)`), IsNil)
 	defer func() {
