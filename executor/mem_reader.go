@@ -110,7 +110,7 @@ func (m *memIndexReader) getMemRows() ([][]types.Datum, error) {
 }
 
 func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.FieldType) ([]types.Datum, error) {
-	hdStatus := tablecodec.HandleIsSigned
+	hdStatus := tablecodec.HandleDefault
 	if mysql.HasUnsignedFlag(tps[len(tps)-1].Flag) {
 		hdStatus = tablecodec.HandleIsUnsigned
 	}
@@ -336,22 +336,13 @@ func reverseDatumSlice(rows [][]types.Datum) {
 }
 
 func (m *memIndexReader) getMemRowsHandle() ([]kv.Handle, error) {
-	pkTp := types.NewFieldType(mysql.TypeLonglong)
-	if m.table.PKIsHandle {
-		for _, col := range m.table.Columns {
-			if mysql.HasPriKeyFlag(col.Flag) {
-				pkTp = &col.FieldType
-				break
-			}
-		}
-	}
 	handles := make([]kv.Handle, 0, m.addedRowsLen)
 	err := iterTxnMemBuffer(m.ctx, m.kvRanges, func(key, value []byte) error {
-		handle, err := tablecodec.DecodeIndexHandle(key, value, len(m.index.Columns), pkTp)
+		handle, err := tablecodec.DecodeIndexHandle(key, value, len(m.index.Columns))
 		if err != nil {
 			return err
 		}
-		handles = append(handles, kv.IntHandle(handle))
+		handles = append(handles, handle)
 		return nil
 	})
 	if err != nil {

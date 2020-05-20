@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
 	tracing "github.com/uber/jaeger-client-go/config"
+
 	"go.uber.org/zap"
 )
 
@@ -64,6 +65,7 @@ var (
 	ValidStorage = map[string]bool{
 		"mocktikv": true,
 		"tikv":     true,
+		"unistore": true,
 	}
 	// checkTableBeforeDrop enable to execute `admin check table` before `drop table`.
 	CheckTableBeforeDrop = false
@@ -376,6 +378,7 @@ type Performance struct {
 	DistinctAggPushDown  bool    `toml:"distinct-agg-push-down" json:"agg-push-down-join"`
 	CommitterConcurrency int     `toml:"committer-concurrency" json:"committer-concurrency"`
 	MaxTxnTTL            uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
+	MemProfileInterval   string  `toml:"mem-profile-interval" json:"mem-profile-interval"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -475,7 +478,7 @@ type TiKVClient struct {
 type CoprocessorCache struct {
 	// Whether to enable the copr cache. The copr cache saves the result from TiKV Coprocessor in the memory and
 	// reuses the result when corresponding data in TiKV is unchanged, on a region basis.
-	Enabled bool `toml:"enabled" json:"enabled"`
+	Enable bool `toml:"enable" json:"enable"`
 	// The capacity in MB of the cache.
 	CapacityMB float64 `toml:"capacity-mb" json:"capacity-mb"`
 	// Only cache requests whose result set is small.
@@ -614,6 +617,7 @@ var defaultConf = Config{
 		DistinctAggPushDown:  false,
 		CommitterConcurrency: 16,
 		MaxTxnTTL:            10 * 60 * 1000, // 10min
+		MemProfileInterval:   "1m",
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
@@ -650,7 +654,7 @@ var defaultConf = Config{
 		StoreLivenessTimeout: DefStoreLivenessTimeout,
 
 		CoprCache: CoprocessorCache{
-			Enabled:               true,
+			Enable:                true,
 			CapacityMB:            1000,
 			AdmissionMaxResultMB:  10,
 			AdmissionMinProcessMs: 5,

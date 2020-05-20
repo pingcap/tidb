@@ -201,11 +201,15 @@ func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.
 	key = c.getIndexKeyBuf(buf, len(c.prefix)+len(indexedValues)*9+9)
 	key = append(key, []byte(c.prefix)...)
 	key, err = codec.EncodeKey(sc, key, indexedValues...)
-	if !distinct && err == nil {
-		key, err = codec.EncodeKey(sc, key, types.NewDatum(h.IntValue()))
-	}
 	if err != nil {
 		return nil, false, err
+	}
+	if !distinct && h != nil {
+		if h.IsInt() {
+			key, err = codec.EncodeKey(sc, key, types.NewDatum(h.IntValue()))
+		} else {
+			key = append(key, h.Encoded()...)
+		}
 	}
 	return
 }
@@ -232,7 +236,23 @@ func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.
 //		|  |
 //		|  |     The length >= 11 always because of padding.
 //		|  |
-//		|  +--Unique (TailLen = len(Handle) + len(Flag), TailLen == 8 || TailLen == 9)
+//		|  +--Unique Common Handle
+//		|  |  |
+//		|  |  +--Without Untouched Flag:
+//		|  |  |
+//		|  |  |  Layout: 0x00 | CHandle Flag | CHandle Len | CHandle       | RestoreData
+//		|  |  |  Length: 1    | 1            | 2           | size(CHandle) | size(RestoreData)
+//		|  |  |
+//		|  |  |  The length > 10 always because of CHandle size.
+//		|  |  |
+//		|  |  +--With Untouched Flag:
+//		|  |
+//		|  |     Layout: 0x01 | CHandle Flag | CHandle Len | CHandle       | RestoreData       | Flag
+//		|  |     Length: 1    | 1            | 2           | size(CHandle) | size(RestoreData) | 1
+//		|  |
+//		|  |     The length > 10 always because of CHandle size.
+//		|  |
+//		|  +--Unique Integer Handle (TailLen = len(Handle) + len(Flag), TailLen == 8 || TailLen == 9)
 //		|     |
 //		|     +--Without Untouched Flag:
 //		|     |
@@ -248,7 +268,7 @@ func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.
 //		|
 //		|   	 The length >= 11 always since size(RestoreData) > 0.
 //		|
-//		+--Without Restore Data(same with old layout)
+//		+--Without Restore Data
 //		|
 //		+--Non Unique
 //		|  |
@@ -261,8 +281,19 @@ func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.
 //		|
 //		|     Layout: Flag
 //		|     Length:  1
+//		+--Unique Common Handle
+//		|  |
+//		|  +--Without Untouched Flag:
+//		|  |
+//		|  |  Layout: 0x00 | CHandle Flag | CHandle Len | CHandle
+//      |  |  Length: 1    | 1            | 2           | size(CHandle)
+//		|  |
+//		|  +--With Untouched Flag:
 //		|
-//		+--Unique
+//		|     Layout: 0x01 | CHandle Flag | CHandle Len | CHandle       | Flag
+//		|     Length: 1    | 1            | 2           | size(CHandle) | 1
+//		|
+//		+--Unique Integer Handle
 //		|
 //		+--Without Untouched Flag:
 //		|
@@ -314,10 +345,15 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 		if err != nil {
 			return nil, err
 		}
-		idxVal = make([]byte, 1+len(rowRestoredValue))
-		copy(idxVal[1:], rowRestoredValue)
+		// tailLen(1) + commonHandleFlag(1) + handleLen(2) + handle + restoredValue
+		idxValCap := 1 + 1 + 2 + h.Len() + len(rowRestoredValue)
+		idxVal = make([]byte, 1, idxValCap)
+		if !h.IsInt() && distinct {
+			idxVal = encodeCommonHandle(idxVal, h)
+		}
+		idxVal = append(idxVal, rowRestoredValue...)
 		tailLen := 0
-		if distinct {
+		if h.IsInt() && distinct {
 			// The len of the idxVal is always >= 10 since len (restoredValue) > 0.
 			tailLen += 8
 			idxVal = append(idxVal, EncodeHandleInUniqueIndexValue(h.IntValue())...)
@@ -338,7 +374,16 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 	} else {
 		idxVal = make([]byte, 0)
 		if distinct {
-			idxVal = EncodeHandleInUniqueIndexValue(h.IntValue())
+			if h.IsInt() {
+				idxVal = EncodeHandleInUniqueIndexValue(h.IntValue())
+			} else {
+				if opt.Untouched {
+					idxVal = append(idxVal, 1)
+				} else {
+					idxVal = append(idxVal, 0)
+				}
+				idxVal = encodeCommonHandle(idxVal, h)
+			}
 		}
 		if opt.Untouched {
 			// If index is untouched and fetch here means the key is exists in TiKV, but not in txn mem-buffer,
@@ -382,6 +427,14 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 	return kv.IntHandle(handle), kv.ErrKeyExists
 }
 
+func encodeCommonHandle(idxVal []byte, h kv.Handle) []byte {
+	idxVal = append(idxVal, tablecodec.CommonHandleFlag)
+	hLen := uint16(len(h.Encoded()))
+	idxVal = append(idxVal, byte(hLen>>8), byte(hLen))
+	idxVal = append(idxVal, h.Encoded()...)
+	return idxVal
+}
+
 // Delete removes the entry for handle h and indexdValues from KV index.
 func (c *index) Delete(sc *stmtctx.StatementContext, m kv.Mutator, indexedValues []types.Datum, h kv.Handle) error {
 	key, _, err := c.GenIndexKey(sc, indexedValues, h, nil)
@@ -419,7 +472,7 @@ func (c *index) Drop(rm kv.RetrieverMutator) error {
 
 // Seek searches KV index for the entry with indexedValues.
 func (c *index) Seek(sc *stmtctx.StatementContext, r kv.Retriever, indexedValues []types.Datum) (iter table.IndexIterator, hit bool, err error) {
-	key, _, err := c.GenIndexKey(sc, indexedValues, kv.IntHandle(0), nil)
+	key, _, err := c.GenIndexKey(sc, indexedValues, nil, nil)
 	if err != nil {
 		return nil, false, err
 	}
