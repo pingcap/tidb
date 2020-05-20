@@ -21,11 +21,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/executor"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/table"
->>>>>>> 4078eb4... util/admin: support admin recover index on the partition table (#17195)
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
@@ -183,7 +179,7 @@ func (s *testSuite5) TestAdminRecoverPartitionTableIndex(c *C) {
 		sc := s.ctx.GetSessionVars().StmtCtx
 		txn, err := s.store.Begin()
 		c.Assert(err, IsNil)
-		err = indexOpr.Delete(sc, txn, types.MakeDatums(idxValue), kv.IntHandle(idxValue))
+		err = indexOpr.Delete(sc, txn, types.MakeDatums(idxValue), int64(idxValue))
 		c.Assert(err, IsNil)
 		err = txn.Commit(context.Background())
 		c.Assert(err, IsNil)

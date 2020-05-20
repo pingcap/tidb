@@ -255,21 +255,12 @@ func (e *RecoverIndexExec) buildDAGPB(txn kv.Transaction, limitCnt uint64) (*tip
 	return dagReq, nil
 }
 
-<<<<<<< HEAD
-func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transaction, t table.Table, startHandle int64, limitCnt uint64) (distsql.SelectResult, error) {
-=======
-func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transaction, startHandle kv.Handle, limitCnt uint64) (distsql.SelectResult, error) {
->>>>>>> 4078eb4... util/admin: support admin recover index on the partition table (#17195)
+func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transaction, startHandle int64, limitCnt uint64) (distsql.SelectResult, error) {
 	dagPB, err := e.buildDAGPB(txn, limitCnt)
 	if err != nil {
 		return nil, err
 	}
-<<<<<<< HEAD
-	tblInfo := e.table.Meta()
 	ranges := []*ranger.Range{{LowVal: []types.Datum{types.NewIntDatum(startHandle)}, HighVal: []types.Datum{types.NewIntDatum(math.MaxInt64)}}}
-=======
-	ranges := []*ranger.Range{{LowVal: []types.Datum{types.NewIntDatum(startHandle.IntValue())}, HighVal: []types.Datum{types.NewIntDatum(math.MaxInt64)}}}
->>>>>>> 4078eb4... util/admin: support admin recover index on the partition table (#17195)
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetTableRanges(e.physicalID, ranges, nil).
 		SetDAGRequest(dagPB).
