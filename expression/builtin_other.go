@@ -257,7 +257,7 @@ func (b *builtinInStringSig) buildHashMapForConstArgs(ctx sessionctx.Context) er
 				b.hasNull = true
 				continue
 			}
-			b.hashSet.Insert(string(collator.Key(val)))
+			b.hashSet.Insert(string(collator.Key(val))) // should do memory copy here
 		} else {
 			b.nonConstArgs = append(b.nonConstArgs, b.args[i])
 		}

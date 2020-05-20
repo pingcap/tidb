@@ -169,7 +169,7 @@ LIMIT 0, 5;
 id	estRows	task	access object	operator info
 Limit_19	0.00	root		offset:0, count:5
 └─IndexJoin_118	0.00	root		left outer join, inner:IndexReader_117, outer key:test.tr.id, inner key:test.p.relate_id
-  ├─TopN_127(Build)	0.00	root		test.te.expect_time:asc, offset:0, count:5
+  ├─TopN_127(Build)	0.00	root		test.te.expect_time, offset:0, count:5
   │ └─IndexMergeJoin_51	0.00	root		inner join, inner:Projection_49, outer key:test.tr.id, inner key:test.te.trade_id
   │   ├─IndexLookUp_98(Build)	0.00	root		
   │   │ ├─Selection_96(Build)	0.00	cop[tikv]		eq(test.tr.business_type, 18), eq(test.tr.trade_type, 1)

@@ -358,12 +358,13 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 		if err != nil {
 			break
 		}
-		if t.Location() != tz {
-			t = t.In(tz)
-		}
 		st.time = types.NewTime(types.FromGoTime(t), mysql.TypeDatetime, types.MaxFsp)
 		if checker != nil {
 			valid = checker.isTimeValid(st.time)
+		}
+		if t.Location() != tz {
+			t = t.In(tz)
+			st.time = types.NewTime(types.FromGoTime(t), mysql.TypeDatetime, types.MaxFsp)
 		}
 	case variable.SlowLogTxnStartTSStr:
 		st.txnStartTs, err = strconv.ParseUint(value, 10, 64)
@@ -613,7 +614,8 @@ func (e *slowQueryRetriever) getAllFiles(sctx sessionctx.Context, logFilePath st
 		if err != nil {
 			return handleErr(err)
 		}
-		if fileStartTime.After(e.extractor.EndTime) {
+		start := types.NewTime(types.FromGoTime(fileStartTime), mysql.TypeDatetime, types.MaxFsp)
+		if start.Compare(e.checker.endTime) > 0 {
 			return nil
 		}
 
@@ -622,7 +624,8 @@ func (e *slowQueryRetriever) getAllFiles(sctx sessionctx.Context, logFilePath st
 		if err != nil {
 			return handleErr(err)
 		}
-		if fileEndTime.Before(e.extractor.StartTime) {
+		end := types.NewTime(types.FromGoTime(fileEndTime), mysql.TypeDatetime, types.MaxFsp)
+		if end.Compare(e.checker.startTime) < 0 {
 			return nil
 		}
 		_, err = file.Seek(0, io.SeekStart)
