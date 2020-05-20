@@ -138,7 +138,7 @@ func (p *hashPartitionPruner) tryEvalPartitionExpr(piExpr Expression) (val int64
 				if err != nil {
 					return 0, false, false
 				} else if isNull {
-					return 0, true, true
+					return 0, true, isNull
 				}
 				return ret, true, false
 			}
