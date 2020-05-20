@@ -4416,15 +4416,51 @@ func (s *testSplitTable) TestShowTableRegion(c *C) {
 		p := tbl.Meta().GetPartitionInfo().Definitions[i]
 		c.Assert(rows[i*4+0][1], Equals, fmt.Sprintf("t_%d_", p.ID))
 		c.Assert(rows[i*4+1][1], Equals, fmt.Sprintf("t_%d_r_1000000", p.ID))
-
 		c.Assert(rows[i*4+2][1], Equals, fmt.Sprintf("t_%d_r_1200000", p.ID))
 		c.Assert(rows[i*4+3][1], Equals, fmt.Sprintf("t_%d_r_1400000", p.ID))
 		c.Assert(rows[i*4+4][1], Equals, fmt.Sprintf("t_%d_r_1600000", p.ID))
 		c.Assert(rows[i*4+5][1], Equals, fmt.Sprintf("t_%d_r_1800000", p.ID))
-
 		c.Assert(rows[i*4+6][1], Equals, fmt.Sprintf("t_%d_r_2000000", p.ID))
 		c.Assert(rows[i*4+7][1], Equals, fmt.Sprintf("t_%d_r_3000000", p.ID))
 	}
+
+	// Test for show table partition regions.
+	for i := 0; i < 4; i++ {
+		re = tk.MustQuery(fmt.Sprintf("show table t partition (p%v) regions", i))
+		rows = re.Rows()
+		c.Assert(len(rows), Equals, 4)
+		p := tbl.Meta().GetPartitionInfo().Definitions[i]
+		c.Assert(rows[0][1], Equals, fmt.Sprintf("t_%d_", p.ID))
+		c.Assert(rows[1][1], Equals, fmt.Sprintf("t_%d_r_1000000", p.ID))
+		c.Assert(rows[2][1], Equals, fmt.Sprintf("t_%d_r_2000000", p.ID))
+		c.Assert(rows[3][1], Equals, fmt.Sprintf("t_%d_r_3000000", p.ID))
+	}
+	re = tk.MustQuery("show table t partition (p0, p4) regions")
+	rows = re.Rows()
+	c.Assert(len(rows), Equals, 12)
+	p := tbl.Meta().GetPartitionInfo().Definitions[0]
+	c.Assert(rows[0][1], Equals, fmt.Sprintf("t_%d_", p.ID))
+	c.Assert(rows[1][1], Equals, fmt.Sprintf("t_%d_r_1000000", p.ID))
+	c.Assert(rows[2][1], Equals, fmt.Sprintf("t_%d_r_2000000", p.ID))
+	c.Assert(rows[3][1], Equals, fmt.Sprintf("t_%d_r_3000000", p.ID))
+	p = tbl.Meta().GetPartitionInfo().Definitions[4]
+	c.Assert(rows[4][1], Equals, fmt.Sprintf("t_%d_", p.ID))
+	c.Assert(rows[5][1], Equals, fmt.Sprintf("t_%d_r_1000000", p.ID))
+	c.Assert(rows[6][1], Equals, fmt.Sprintf("t_%d_r_1200000", p.ID))
+	c.Assert(rows[7][1], Equals, fmt.Sprintf("t_%d_r_1400000", p.ID))
+	c.Assert(rows[8][1], Equals, fmt.Sprintf("t_%d_r_1600000", p.ID))
+	c.Assert(rows[9][1], Equals, fmt.Sprintf("t_%d_r_1800000", p.ID))
+	c.Assert(rows[10][1], Equals, fmt.Sprintf("t_%d_r_2000000", p.ID))
+	c.Assert(rows[11][1], Equals, fmt.Sprintf("t_%d_r_3000000", p.ID))
+	// Test for duplicate partition names.
+	re = tk.MustQuery("show table t partition (p0, p0, p0) regions")
+	rows = re.Rows()
+	c.Assert(len(rows), Equals, 4)
+	p = tbl.Meta().GetPartitionInfo().Definitions[0]
+	c.Assert(rows[0][1], Equals, fmt.Sprintf("t_%d_", p.ID))
+	c.Assert(rows[1][1], Equals, fmt.Sprintf("t_%d_r_1000000", p.ID))
+	c.Assert(rows[2][1], Equals, fmt.Sprintf("t_%d_r_2000000", p.ID))
+	c.Assert(rows[3][1], Equals, fmt.Sprintf("t_%d_r_3000000", p.ID))
 
 	// Test split partition table index.
 	tk.MustExec("drop table if exists t")
@@ -4482,6 +4518,39 @@ func (s *testSplitTable) TestShowTableRegion(c *C) {
 		c.Assert(rows[i*8+11][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
 	}
 
+	// Test show table partition region on unknown-partition.
+	err = tk.QueryToErr("show table t partition (p_unknown) index idx regions")
+	c.Assert(terror.ErrorEqual(err, table.ErrUnknownPartition), IsTrue)
+
+	// Test show table partition index.
+	for i := 0; i < 4; i++ {
+		re = tk.MustQuery(fmt.Sprintf("show table t partition (p%v) index idx regions", i))
+		rows = re.Rows()
+		c.Assert(len(rows), Equals, 4)
+		p := tbl.Meta().GetPartitionInfo().Definitions[i]
+		c.Assert(rows[0][1], Equals, fmt.Sprintf("t_%d_", p.ID))
+		c.Assert(rows[1][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+		c.Assert(rows[2][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+		c.Assert(rows[3][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+	}
+	re = tk.MustQuery("show table t partition (p3,p4) index idx regions")
+	rows = re.Rows()
+	c.Assert(len(rows), Equals, 12)
+	p = tbl.Meta().GetPartitionInfo().Definitions[3]
+	c.Assert(rows[0][1], Equals, fmt.Sprintf("t_%d_", p.ID))
+	c.Assert(rows[1][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+	c.Assert(rows[2][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+	c.Assert(rows[3][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+	p = tbl.Meta().GetPartitionInfo().Definitions[4]
+	c.Assert(rows[4][1], Equals, fmt.Sprintf("t_%d_", p.ID))
+	c.Assert(rows[5][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+	c.Assert(rows[6][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+	c.Assert(rows[7][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+	c.Assert(rows[8][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+	c.Assert(rows[9][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+	c.Assert(rows[10][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+	c.Assert(rows[11][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+
 	// Test split for the second index.
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int,b int,index idx(a), index idx2(b))")
@@ -4494,6 +4563,10 @@ func (s *testSplitTable) TestShowTableRegion(c *C) {
 	c.Assert(rows[1][1], Equals, fmt.Sprintf("t_%d_", tbl.Meta().ID))
 	c.Assert(rows[2][1], Matches, fmt.Sprintf("t_%d_i_2_.*", tbl.Meta().ID))
 	c.Assert(rows[3][1], Matches, fmt.Sprintf("t_%d_i_2_.*", tbl.Meta().ID))
+
+	// Test show table partition region on non-partition table.
+	err = tk.QueryToErr("show table t partition (p3,p4) index idx regions")
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrPartitionClauseOnNonpartitioned), IsTrue)
 }
 
 func testGetTableByName(c *C, ctx sessionctx.Context, db, table string) table.Table {
