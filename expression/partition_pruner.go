@@ -79,22 +79,18 @@ func (p *hashPartitionPruner) reduceColumnEQ() bool {
 
 func (p *hashPartitionPruner) reduceConstantEQ() bool {
 	for _, con := range p.conditions {
-<<<<<<< HEAD
-		col, cond := validEqualCond(con)
-=======
 		var col *Column
 		var cond *Constant
 		if fn, ok := con.(*ScalarFunction); ok {
 			if fn.FuncName.L == ast.IsNull {
 				col, ok = fn.GetArgs()[0].(*Column)
 				if ok {
-					cond = NewNull()
+					cond = Null.Clone().(*Constant)
 				}
 			} else {
-				col, cond = validEqualCond(p.ctx, con)
+				col, cond = validEqualCond(con)
 			}
 		}
->>>>>>> f17da4a... plan, expression: support `is null` in hash partition pruning (#17281)
 		if col != nil {
 			id := p.getColID(col)
 			if p.constantMap[id] != nil {
@@ -191,12 +187,6 @@ func (p *hashPartitionPruner) solve(ctx sessionctx.Context, conds []Expression, 
 	for _, col := range ExtractColumns(piExpr) {
 		p.insertCol(col)
 	}
-<<<<<<< HEAD
-	p.constantMap = make([]*Constant, p.numColumn, p.numColumn)
-	conflict := p.reduceConstantEQ()
-	if conflict {
-		return 0, false, conflict
-=======
 	p.constantMap = make([]*Constant, p.numColumn)
 	isAlwaysFalse = p.reduceConstantEQ()
 	if isAlwaysFalse {
@@ -205,7 +195,6 @@ func (p *hashPartitionPruner) solve(ctx sessionctx.Context, conds []Expression, 
 	isAlwaysFalse = p.reduceColumnEQ()
 	if isAlwaysFalse {
 		return 0, false, isAlwaysFalse
->>>>>>> f17da4a... plan, expression: support `is null` in hash partition pruning (#17281)
 	}
 	res, ok, isNull := p.tryEvalPartitionExpr(piExpr)
 	if isNull && ok {
