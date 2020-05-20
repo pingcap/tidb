@@ -2002,7 +2002,8 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 			}
 			givenPartitionSets[id] = struct{}{}
 		}
-		insertPlan.Table = tables.NewPartitionedTableWithGivenSets(tableInPlan, givenPartitionSets)
+		pt := tableInPlan.(table.PartitionedTable)
+		insertPlan.Table = tables.NewPartitionTableithGivenSets(pt, givenPartitionSets)
 	} else if len(insert.PartitionNames) != 0 {
 		return nil, ErrPartitionClauseOnNonpartitioned
 	}

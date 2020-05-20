@@ -218,10 +218,6 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 	rows := make([][]types.Datum, 0, len(e.Lists))
 	memUsageOfRows := int64(0)
 	memTracker := e.memTracker
-	//var partitionTable table.PartitionedTable
-	//if len(e.Partitions) != 0 {
-	//	partitionTable = e.Table.(table.PartitionedTable)
-	//}
 	for i, list := range e.Lists {
 		e.rowCount++
 		var row []types.Datum
@@ -229,10 +225,6 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 		if err != nil {
 			return err
 		}
-		//err = checkRowDoesNotMatchGivenPartitionSet(e, partitionTable, row)
-		//if err != nil {
-		//	return err
-		//}
 		rows = append(rows, row)
 		if batchInsert && e.rowCount%uint64(batchSize) == 0 {
 			memUsageOfRows = types.EstimatedMemUsage(rows[0], len(rows))
@@ -434,9 +426,6 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 				return err
 			}
 			rows = append(rows, row)
-			if err != nil {
-				return err
-			}
 			if batchInsert && e.rowCount%uint64(batchSize) == 0 {
 				memUsageOfRows = types.EstimatedMemUsage(rows[0], len(rows))
 				memTracker.Consume(memUsageOfRows)

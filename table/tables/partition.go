@@ -60,22 +60,6 @@ func (p *partition) GetPhysicalID() int64 {
 	return p.physicalTableID
 }
 
-// partitionedTableWithGivenSets indicates a table with specified partition sets.
-type partitionedTableWithGivenSets struct {
-	*partitionedTable
-	givenPartitionSets map[int64]struct{}
-}
-
-func NewPartitionedTableWithGivenSets(tbl table.Table, givenPartitionSets map[int64]struct{}) table.Table {
-	if raw, ok := tbl.(*partitionedTable); ok {
-		return &partitionedTableWithGivenSets{
-			partitionedTable:   raw,
-			givenPartitionSets: givenPartitionSets,
-		}
-	}
-	return tbl
-}
-
 // partitionedTable implements the table.PartitionedTable interface.
 // partitionedTable is a table, it contains many Partitions.
 type partitionedTable struct {
