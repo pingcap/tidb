@@ -4492,7 +4492,7 @@ func (s *testSplitTable) TestShowTableRegion(c *C) {
 	}
 
 	// Test show table partition region on unknown-partition.
-	err = tk.QueryToErr("show table t partition (p_unknown) index idx regions")
+	err := tk.QueryToErr("show table t partition (p_unknown) index idx regions")
 	c.Assert(terror.ErrorEqual(err, table.ErrUnknownPartition), IsTrue)
 
 	// Test show table partition index.
