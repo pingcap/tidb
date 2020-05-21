@@ -494,13 +494,7 @@ const minLogCopTaskTime = 300 * time.Millisecond
 // run is a worker function that get a copTask from channel, handle it and
 // send the result back.
 func (worker *copIteratorWorker) run(ctx context.Context) {
-	clean := func() {
-		worker.actionOnExceed.mu.Lock()
-		worker.actionOnExceed.mu.aliveWorker--
-		worker.actionOnExceed.mu.Unlock()
-		worker.wg.Done()
-	}
-	defer clean()
+	defer worker.wg.Done()
 
 	for task := range worker.taskCh {
 		respCh := worker.respChan
@@ -513,23 +507,26 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		close(task.respChan)
 		select {
 		case <-worker.finishCh:
+			worker.actionOnExceed.mu.Lock()
+			defer worker.actionOnExceed.mu.Unlock()
+			worker.actionOnExceed.mu.aliveWorker--
 			return
 		default:
 		}
 
 		worker.actionOnExceed.mu.Lock()
+		defer worker.actionOnExceed.mu.Unlock()
 		if worker.actionOnExceed.mu.exceeded != 0 {
 			logutil.BgLogger().Info("memory exceeds quota, end one copIterator worker.",
 				zap.String("copIteratorWorker id ", worker.id))
 
+			worker.actionOnExceed.mu.aliveWorker--
 			// reset action
 			worker.actionOnExceed.mu.exceeded = 0
 			worker.actionOnExceed.once = sync.Once{}
-
 			// end this worker
 			return
 		}
-		worker.actionOnExceed.mu.Unlock()
 	}
 }
 
