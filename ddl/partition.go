@@ -54,19 +54,23 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.CreateTableStmt) (*m
 	var enable bool
 	// When tidb_enable_table_partition is 'on' or 'auto'.
 	if s.Partition.Tp == model.PartitionTypeRange {
-		// Partition by range expression is enabled by default.
-		if s.Partition.ColumnNames == nil {
-			enable = true
-		}
-		// Partition by range columns and just one column.
-		if len(s.Partition.ColumnNames) == 1 {
-			enable = true
+		if s.Partition.Sub == nil {
+			// Partition by range expression is enabled by default.
+			if s.Partition.ColumnNames == nil {
+				enable = true
+			}
+			// Partition by range columns and just one column.
+			if len(s.Partition.ColumnNames) == 1 {
+				enable = true
+			}
 		}
 	}
 	// Partition by hash is enabled by default.
 	// Note that linear hash is not enabled.
 	if s.Partition.Tp == model.PartitionTypeHash {
-		enable = true
+		if !s.Partition.Linear && s.Partition.Sub == nil {
+			enable = true
+		}
 	}
 
 	if !enable {
@@ -129,9 +133,13 @@ func buildHashPartitionDefinitions(ctx sessionctx.Context, s *ast.CreateTableStm
 	return nil
 }
 
-func buildRangePartitionDefinitions(ctx sessionctx.Context, s *ast.CreateTableStmt, pi *model.PartitionInfo) error {
+func buildRangePartitionDefinitions(ctx sessionctx.Context, s *ast.CreateTableStmt, pi *model.PartitionInfo) (err error) {
 	for _, def := range s.Partition.Definitions {
 		comment, _ := def.Comment()
+		err = checkTooLongTable(def.Name)
+		if err != nil {
+			return err
+		}
 		piDef := model.PartitionDefinition{
 			Name:    def.Name,
 			Comment: comment,
@@ -857,7 +865,13 @@ type stringSlice interface {
 func checkUniqueKeyIncludePartKey(partCols stringSlice, idxCols []*model.IndexColumn) bool {
 	for i := 0; i < partCols.Len(); i++ {
 		partCol := partCols.At(i)
-		if !findColumnInIndexCols(partCol, idxCols) {
+		idxCol := findColumnInIndexCols(partCol, idxCols)
+		if idxCol == nil {
+			// Partition column is not found in the index columns.
+			return false
+		}
+		if idxCol.Length > 0 {
+			// The partition column is found in the index columns, but the index column is a prefix index
 			return false
 		}
 	}

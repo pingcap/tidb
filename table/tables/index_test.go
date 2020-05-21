@@ -50,7 +50,7 @@ type testIndexSuite struct {
 
 func (s *testIndexSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	s.s = store
 	s.dom, err = session.BootstrapSession(store)

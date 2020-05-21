@@ -729,6 +729,38 @@ func (s *testSuiteAgg) TestIssue16279(c *C) {
 	tk.MustQuery("select count(a) , date_format(a, '%Y-%m-%d') as xx from s group by xx")
 }
 
+func (s *testSuiteAgg) TestAggPushDownPartitionTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec(`CREATE TABLE t1 (
+		a int(11) DEFAULT NULL,
+		b tinyint(4) NOT NULL,
+		PRIMARY KEY (b)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+	PARTITION BY RANGE ( b ) (
+		PARTITION p0 VALUES LESS THAN (10),
+		PARTITION p1 VALUES LESS THAN (20),
+		PARTITION p2 VALUES LESS THAN (30),
+		PARTITION p3 VALUES LESS THAN (40),
+		PARTITION p4 VALUES LESS THAN (MAXVALUE)
+	)`)
+	tk.MustExec("insert into t1 values (0, 0), (1, 1), (1, 2), (1, 3), (2, 4), (2, 5), (2, 6), (3, 7), (3, 10), (3, 11), (12, 12), (12, 13), (14, 14), (14, 15), (20, 20), (20, 21), (20, 22), (23, 23), (23, 24), (23, 25), (31, 30), (31, 31), (31, 32), (33, 33), (33, 34), (33, 35), (36, 36), (80, 80), (90, 90), (100, 100)")
+	tk.MustExec("set @@tidb_opt_agg_push_down = 1")
+	tk.MustQuery("select /*+ AGG_TO_COP() */ sum(a), sum(b) from t1 where a < 40 group by a").Sort().Check(testkit.Rows(
+		"0 0",
+		"24 25",
+		"28 29",
+		"3 6",
+		"36 36",
+		"6 15",
+		"60 63",
+		"69 72",
+		"9 28",
+		"93 93",
+		"99 102"))
+}
+
 func (s *testSuiteAgg) TestIssue13652(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
