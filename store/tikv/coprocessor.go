@@ -521,7 +521,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		worker.actionOnExceed.mu.Lock()
 		if worker.actionOnExceed.mu.exceeded != 0 {
 			logutil.BgLogger().Info("memory exceeds quota, end one copIterator worker.",
-				zap.String("copIterator id ", worker.id.String()))
+				zap.String("copIteratorWorker id ", worker.id.String()))
 
 			// reset action
 			worker.actionOnExceed.mu.exceeded = 0
