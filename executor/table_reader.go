@@ -168,10 +168,12 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 		if actionExceed != nil {
 			originalAction := e.ctx.GetSessionVars().StmtCtx.MemTracker.GetActionOnExceed()
 			switch originalAction.(type) {
-			case *chunk.SpillDiskAction:
-				// If the origin originalAction is SpillDiskAction, TableReader's Action won't cover it.
-			default:
+			case *memory.PanicOnExceed:
 				e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionExceed)
+			case *memory.LogOnExceed:
+				e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionExceed)
+			default:
+				// If the origin originalAction is not above, TableReader's Action won't cover it.
 			}
 		}
 	}

@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -410,7 +409,7 @@ type copIterator struct {
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
 type copIteratorWorker struct {
-	id       fmt.Stringer
+	id       string
 	taskCh   <-chan *copTask
 	wg       *sync.WaitGroup
 	store    *tikvStore
@@ -521,7 +520,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		worker.actionOnExceed.mu.Lock()
 		if worker.actionOnExceed.mu.exceeded != 0 {
 			logutil.BgLogger().Info("memory exceeds quota, end one copIterator worker.",
-				zap.String("copIteratorWorker id ", worker.id.String()))
+				zap.String("copIteratorWorker id ", worker.id))
 
 			// reset action
 			worker.actionOnExceed.mu.exceeded = 0
@@ -540,9 +539,8 @@ func (it *copIterator) open(ctx context.Context) {
 	it.wg.Add(it.concurrency)
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency; i++ {
-		id := stringutil.StringerStr(fmt.Sprintf("copIteratorWorker-%d", i))
 		worker := &copIteratorWorker{
-			id:       id,
+			id:       fmt.Sprintf("copIteratorWorker-%d", i),
 			taskCh:   taskCh,
 			wg:       &it.wg,
 			store:    it.store,
