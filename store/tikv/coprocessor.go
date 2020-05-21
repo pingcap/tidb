@@ -526,8 +526,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 			// reset action
 			worker.actionOnExceed.mu.exceeded = 0
 			worker.actionOnExceed.once = sync.Once{}
-			// gc memory usage
-			worker.memTracker.Consume(-worker.memTracker.BytesConsumed())
+
 			// end this worker
 			return
 		}
@@ -558,13 +557,10 @@ func (it *copIterator) open(ctx context.Context) {
 				Client:            it.store.client,
 			},
 
-			memTracker: memory.NewTracker(id, -1),
+			memTracker: it.memTracker,
 
 			replicaReadSeed: it.replicaReadSeed,
 			actionOnExceed:  it.actionOnExceed,
-		}
-		if it.memTracker != nil {
-			worker.memTracker.AttachTo(it.memTracker)
 		}
 		go worker.run(ctx)
 	}
