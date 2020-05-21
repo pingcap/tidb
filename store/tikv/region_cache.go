@@ -832,8 +832,11 @@ func (c *RegionCache) getRegionByIDFromCache(regionID uint64) *Region {
 }
 
 func filterUnavailablePeers(region *pd.Region) {
-	for i := len(region.Meta.Peers) - 1; i >= 0; i-- {
-		peer := region.Meta.Peers[i]
+	if len(region.DownPeers) == 0 {
+		return
+	}
+	new := region.Meta.Peers[:0]
+	for _, p := range region.Meta.Peers {
 		available := true
 		for _, downPeer := range region.DownPeers {
 			if peer.Id == downPeer.Id && peer.StoreId == downPeer.StoreId {
@@ -841,10 +844,14 @@ func filterUnavailablePeers(region *pd.Region) {
 				break
 			}
 		}
-		if !available {
-			region.Meta.Peers = append(region.Meta.Peers[:i], region.Meta.Peers[i+1:]...)
+		if available {
+			new = append(new, p)
 		}
 	}
+	for i := len(new); i < len(region.Meta.Peers); i++ {
+		region.Meta.Peers[i] = nil
+	}
+	region.Meta.Peers = new
 }
 
 // loadRegion loads region from pd client, and picks the first peer as leader.
