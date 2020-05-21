@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -259,8 +260,28 @@ func (e *ProjectionExec) Close() error {
 	}
 	if e.outputCh != nil {
 		close(e.finishCh)
+<<<<<<< HEAD
 		// Wait for "projectionInputFetcher" to finish and exit.
 		for range e.outputCh {
+=======
+		e.wg.Wait() // Wait for fetcher and workers to finish and exit.
+
+		// clear fetcher
+		e.drainInputCh(e.fetcher.inputCh)
+		e.drainOutputCh(e.fetcher.outputCh)
+
+		// clear workers
+		for _, w := range e.workers {
+			e.drainInputCh(w.inputCh)
+			e.drainOutputCh(w.outputCh)
+		}
+	}
+	if e.runtimeStats != nil {
+		if e.isUnparallelExec() {
+			e.runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", 0))
+		} else {
+			e.runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", int(e.numWorkers)))
+>>>>>>> 0d95b09... executor: Remove unnecessary information in explain analyze output (#16248)
 		}
 		e.outputCh = nil
 	}
