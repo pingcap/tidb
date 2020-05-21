@@ -832,7 +832,7 @@ func (c *RegionCache) getRegionByIDFromCache(regionID uint64) *Region {
 }
 
 func filterUnavailablePeers(region *pd.Region) {
-	for i := len(region.Meta.Peers)-1; i >= 0; i-- {
+	for i := len(region.Meta.Peers) - 1; i >= 0; i-- {
 		peer := region.Meta.Peers[i]
 		available := true
 		for _, downPeer := range region.DownPeers {
