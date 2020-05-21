@@ -163,6 +163,10 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 		}
 		return tableName
 	}), e.ranges)
+	actionExceed := e.memTracker.GetActionOnExceed()
+	if actionExceed != nil {
+		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionExceed)
+	}
 	if err := e.resultHandler.nextChunk(ctx, req); err != nil {
 		e.feedback.Invalidate()
 		return err
