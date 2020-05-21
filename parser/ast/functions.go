@@ -687,6 +687,8 @@ const (
 	AggFuncStddevSamp = "stddev_samp"
 	// AggFuncJsonObjectAgg is the name of json_objectagg function
 	AggFuncJsonObjectAgg = "json_objectagg"
+	// AggFuncApproxCountDistinct is the name of approx_count_distinct function.
+	AggFuncApproxCountDistinct = "approx_count_distinct"
 )
 
 // AggregateFuncExpr represents aggregate function expression.

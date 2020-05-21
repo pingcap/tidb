@@ -595,6 +595,7 @@ import (
 	cast                  "CAST"
 	copyKwd               "COPY"
 	count                 "COUNT"
+	approxCountDistinct   "APPROX_COUNT_DISTINCT"
 	curTime               "CURTIME"
 	dateAdd               "DATE_ADD"
 	dateSub               "DATE_SUB"
@@ -642,40 +643,41 @@ import (
 	tls                   "TLS"
 
 	/* The following tokens belong to TiDBKeyword. Notice: make sure these tokens are contained in TiDBKeyword. */
-	admin              "ADMIN"
-	buckets            "BUCKETS"
-	builtins           "BUILTINS"
-	cancel             "CANCEL"
-	cmSketch           "CMSKETCH"
-	ddl                "DDL"
-	depth              "DEPTH"
-	drainer            "DRAINER"
-	jobs               "JOBS"
-	job                "JOB"
-	nodeID             "NODE_ID"
-	nodeState          "NODE_STATE"
-	optimistic         "OPTIMISTIC"
-	pessimistic        "PESSIMISTIC"
-	pump               "PUMP"
-	samples            "SAMPLES"
-	stats              "STATS"
-	statsMeta          "STATS_META"
-	statsHistograms    "STATS_HISTOGRAMS"
-	statsBuckets       "STATS_BUCKETS"
-	statsHealthy       "STATS_HEALTHY"
-	tidb               "TIDB"
-	tiFlash            "TIFLASH"
-	topn               "TOPN"
-	split              "SPLIT"
-	width              "WIDTH"
-	regions            "REGIONS"
-	region             "REGION"
+	admin                      "ADMIN"
+	buckets                    "BUCKETS"
+	builtins                   "BUILTINS"
+	cancel                     "CANCEL"
+	cmSketch                   "CMSKETCH"
+	ddl                        "DDL"
+	depth                      "DEPTH"
+	drainer                    "DRAINER"
+	jobs                       "JOBS"
+	job                        "JOB"
+	nodeID                     "NODE_ID"
+	nodeState                  "NODE_STATE"
+	optimistic                 "OPTIMISTIC"
+	pessimistic                "PESSIMISTIC"
+	pump                       "PUMP"
+	samples                    "SAMPLES"
+	stats                      "STATS"
+	statsMeta                  "STATS_META"
+	statsHistograms            "STATS_HISTOGRAMS"
+	statsBuckets               "STATS_BUCKETS"
+	statsHealthy               "STATS_HEALTHY"
+	tidb                       "TIDB"
+	tiFlash                    "TIFLASH"
+	topn                       "TOPN"
+	split                      "SPLIT"
+	width                      "WIDTH"
+	regions                    "REGIONS"
+	region                     "REGION"
 	builtinAddDate
 	builtinBitAnd
 	builtinBitOr
 	builtinBitXor
 	builtinCast
 	builtinCount
+	builtinApproxCountDistinct
 	builtinCurDate
 	builtinCurTime
 	builtinDateAdd
@@ -5227,6 +5229,7 @@ NotKeywordToken:
 |	"CAST"
 |	"COPY"
 |	"COUNT"
+|	"APPROX_COUNT_DISTINCT"
 |	"CURTIME"
 |	"DATE_ADD"
 |	"DATE_SUB"
@@ -6317,6 +6320,10 @@ SumExpr:
 		} else {
 			$$ = &ast.AggregateFuncExpr{F: $1, Args: args}
 		}
+	}
+|	builtinApproxCountDistinct '(' ExpressionList ')'
+	{
+		$$ = &ast.AggregateFuncExpr{F: $1, Args: $3.([]ast.ExprNode), Distinct: false}
 	}
 |	builtinGroupConcat '(' BuggyDefaultFalseDistinctOpt ExpressionList OrderByOptional OptGConcatSeparator ')' OptWindowingClause
 	{
