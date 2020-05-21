@@ -137,7 +137,7 @@ func (iter *IDIterator) Next() (bool, int64) {
 		return false, 0
 	}
 	ret := iter.current
-	iter.current = iter.current + iter.increment
+	iter.current = int64(uint64(iter.current) + uint64(iter.increment))
 	iter.restCount = iter.restCount - 1
 	return true, ret
 }
@@ -515,7 +515,7 @@ func (alloc *allocator) alloc(tableID int64, n uint64, increment, offset int64) 
 		}
 	}
 	// calcNeededBatchSize calculates the total batch size needed.
-	batchSize, expectedEnd, isOverflow := alloc.calcNeededBatchSize(alloc.base, int64(n), increment, offset)
+	firstID, batchSize, expectedEnd, isOverflow := alloc.calcNeededBatchSize(alloc.base, int64(n), increment, offset)
 	if isOverflow {
 		return IDIterator{}, ErrAutoincReadFailed
 	}
@@ -523,7 +523,7 @@ func (alloc *allocator) alloc(tableID int64, n uint64, increment, offset int64) 
 	if alloc.cmp(expectedEnd, alloc.end).is(greater) {
 		var newBase, newEnd int64
 		startTime := time.Now()
-		alloc.adjustStep(startTime)
+		alloc.adjustStepByTime(startTime)
 		err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
 			m := meta.NewMeta(txn)
 			var err1 error
@@ -531,14 +531,12 @@ func (alloc *allocator) alloc(tableID int64, n uint64, increment, offset int64) 
 			if err1 != nil {
 				return err1
 			}
-			batchSizeIsOutdated := newBase != alloc.base
-			if batchSizeIsOutdated {
-				batchSize, _, isOverflow = alloc.calcNeededBatchSize(newBase, int64(n), increment, offset)
-				if isOverflow {
-					return ErrAutoincReadFailed
-				}
+			// recalculate the actual batch size.
+			firstID, batchSize, _, isOverflow = alloc.calcNeededBatchSize(newBase, int64(n), increment, offset)
+			if isOverflow {
+				return ErrAutoincReadFailed
 			}
-			actualStep := alloc.calcActualStep(newBase, batchSize)
+			actualStep := alloc.calcActualStepAndAdjust(newBase, batchSize)
 			newEnd, err1 = generateAutoIDByAllocType(m, alloc.dbID, tableID, actualStep, alloc.allocType)
 			return err1
 		})
@@ -555,7 +553,6 @@ func (alloc *allocator) alloc(tableID int64, n uint64, increment, offset int64) 
 		zap.Uint64("to ID", uint64(alloc.base+batchSize)),
 		zap.Int64("table ID", tableID),
 		zap.Int64("database ID", alloc.dbID))
-	firstID := alloc.seekToFirstAutoID(alloc.base, increment, offset)
 	iter := IDIterator{
 		restCount: n,
 		current:   firstID,
@@ -586,27 +583,34 @@ func validIncrementAndOffset(increment, offset int64) bool {
 // calcNeededBatchSize is used to calculate batch size for autoID allocation.
 // It firstly seeks to the first valid position based on increment and offset,
 // then plus the length remained, which could be (n-1) * increment.
-func (alloc *allocator) calcNeededBatchSize(base, n, increment, offset int64) (batchSize int64, expectedEnd int64, isOverflow bool) {
+func (alloc *allocator) calcNeededBatchSize(base, n, increment, offset int64) (firstID, batchSize, expectedEnd int64, isOverflow bool) {
 	if increment == 1 {
 		overflow, expectedEnd := alloc.plus(base, n)
 		if overflow {
-			return n, 0, true
+			return 0, n, 0, true
 		}
-		return n, expectedEnd, false
+		overflow, firstID := alloc.seekToFirstAutoID(base, increment, offset)
+		if overflow {
+			return 0, n, 0, true
+		}
+		return firstID, n, expectedEnd, false
 	}
 	overflow, diff := alloc.multiply(n-1, increment)
 	if overflow {
-		return 0, 0, true
+		return 0, 0, 0, true
 	}
-	firstID := alloc.seekToFirstAutoID(base, increment, offset)
+	overflow, firstID = alloc.seekToFirstAutoID(base, increment, offset)
+	if overflow {
+		return 0, 0, 0, true
+	}
 	overflow, expectedEnd = alloc.plus(firstID, diff)
 	if overflow {
-		return 0, 0, true
+		return 0, 0, 0, true
 	}
-	return expectedEnd - base, expectedEnd, false
+	return firstID, expectedEnd - base, expectedEnd, false
 }
 
-func (alloc *allocator) adjustStep(startTime time.Time) {
+func (alloc *allocator) adjustStepByTime(startTime time.Time) {
 	if alloc.customStep {
 		return
 	}
@@ -614,14 +618,20 @@ func (alloc *allocator) adjustStep(startTime time.Time) {
 	alloc.step = NextStep(alloc.step, consumeDur)
 }
 
-func (alloc *allocator) calcActualStep(base, batchSize int64) (actualStep int64) {
+// calcActualStep assumes `base + batchSize` doesn't overflow.
+func (alloc *allocator) calcActualStepAndAdjust(base, batchSize int64) (actualStep int64) {
+	actualStep = alloc.step
 	if isOverflow, _ := alloc.plus(base, alloc.step); isOverflow {
 		// base < batchSize < alloc.step
-		// Because `base + batchSize` doesn't overflow but `base + alloc.step` does.
-		// The overflow check of `base+batchSize` has been done in `calcNeededBatchSize` already.
-		return batchSize
+		actualStep = batchSize
 	}
-	return alloc.step
+	if alloc.cmp(actualStep, batchSize).is(less) {
+		actualStep = batchSize
+	}
+	if !alloc.customStep {
+		alloc.step = actualStep
+	}
+	return actualStep
 }
 
 // CalcSequenceBatchSize calculate the next sequence batch size.
@@ -724,22 +734,24 @@ func SeekToFirstSequenceValue(base, increment, offset, MIN, MAX int64) (int64, b
 	return first, true
 }
 
-func (alloc *allocator) seekToFirstAutoID(base, increment, offset int64) int64 {
+func (alloc *allocator) seekToFirstAutoID(base, increment, offset int64) (isOverflow bool, firstID int64) {
 	if alloc.isUnsigned {
 		if increment == 1 && offset == 1 {
-			return int64(uint64(base) + 1)
+			firstID := uint64(base) + 1
+			return uint64(base) >= firstID, int64(firstID)
 		}
 		uBase, uInc, uOff := uint64(base), uint64(increment), uint64(offset)
 		nr := (uBase + uInc - uOff) / uInc
 		nr = nr*uInc + uOff
-		return int64(nr)
+		return uBase >= nr, int64(nr)
 	}
 	if increment == 1 && offset == 1 {
-		return base + 1
+		firstID := base + 1
+		return base >= firstID, firstID
 	}
 	nr := (base + increment - offset) / increment
 	nr = nr*increment + offset
-	return nr
+	return base >= nr, nr
 }
 
 // alloc4Sequence is used to alloc value for sequence, there are several aspects different from autoid logic.
