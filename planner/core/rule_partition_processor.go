@@ -474,9 +474,20 @@ func intersectionRange(start, end, newStart, newEnd int) (int, int) {
 }
 
 func (s *partitionProcessor) pruneRangePartition(ds *DataSource, pi *model.PartitionInfo) (LogicalPlan, error) {
+<<<<<<< HEAD
 	pExpr, err := ds.table.(partitionTable).PartitionExpr(ds.ctx, nil)
 	if err != nil {
 		return nil, err
+=======
+	partExpr, err := ds.table.(partitionTable).PartitionExpr()
+	if err != nil {
+		return nil, err
+	}
+
+	// Partition by range columns.
+	if len(pi.Columns) > 0 {
+		return s.pruneRangeColumnsPartition(ds, pi, partExpr)
+>>>>>>> 38d63c2... planner,table: optimize partition pruning performance for range columns (#17249)
 	}
 
 	lessThan := lessThanData{
@@ -491,7 +502,19 @@ func (s *partitionProcessor) pruneRangePartition(ds *DataSource, pi *model.Parti
 
 	result := fullRange(len(pi.Definitions))
 	if col != nil {
+<<<<<<< HEAD
 		result = partitionRangeForCNFExpr(ds.ctx, ds.allConds, lessThan, col, fn, result)
+=======
+		pruner := rangePruner{
+			lessThan: lessThanDataInt{
+				data:     partExpr.ForRangePruning.LessThan,
+				maxvalue: partExpr.ForRangePruning.MaxValue,
+			},
+			col:    col,
+			partFn: fn,
+		}
+		result = partitionRangeForCNFExpr(ds.ctx, ds.allConds, &pruner, result)
+>>>>>>> 38d63c2... planner,table: optimize partition pruning performance for range columns (#17249)
 	}
 
 	return s.makeUnionAllChildren(ds, pi, result)
@@ -809,3 +832,134 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 	unionAll.SetSchema(ds.schema)
 	return unionAll, nil
 }
+<<<<<<< HEAD
+=======
+
+func (s *partitionProcessor) pruneRangeColumnsPartition(ds *DataSource, pi *model.PartitionInfo, pe *tables.PartitionExpr) (LogicalPlan, error) {
+	result := fullRange(len(pi.Definitions))
+
+	if len(pi.Columns) != 1 {
+		// We only support single column.
+		return s.makeUnionAllChildren(ds, pi, result)
+	}
+
+	pruner, err := makeRangeColumnPruner(ds, pe.ForRangeColumnsPruning)
+	if err == nil {
+		result = partitionRangeForCNFExpr(ds.ctx, ds.allConds, pruner, result)
+	}
+	return s.makeUnionAllChildren(ds, pi, result)
+}
+
+var _ partitionRangePruner = &rangeColumnPruner{}
+
+// rangeColumnPruner is used by 'partition by range columns'.
+type rangeColumnPruner struct {
+	data     []expression.Expression
+	partCol  *expression.Column
+	maxvalue bool
+}
+
+func makeRangeColumnPruner(ds *DataSource, from *tables.ForRangeColumnsPruning) (*rangeColumnPruner, error) {
+	schema := expression.NewSchema(ds.TblCols...)
+	expr, err := expression.RewriteSimpleExprWithNames(ds.ctx, from.Column, schema, ds.names)
+	if err != nil {
+		return nil, err
+	}
+	partCol := expr.(*expression.Column)
+	data := make([]expression.Expression, len(from.LessThan))
+	for i := 0; i < len(from.LessThan); i++ {
+		if from.LessThan[i] != nil {
+			data[i] = from.LessThan[i].Clone()
+		}
+	}
+	return &rangeColumnPruner{data, partCol, from.MaxValue}, nil
+}
+
+func (p *rangeColumnPruner) fullRange() partitionRangeOR {
+	return fullRange(len(p.data))
+}
+
+func (p *rangeColumnPruner) partitionRangeForExpr(sctx sessionctx.Context, expr expression.Expression) (int, int, bool) {
+	op, ok := expr.(*expression.ScalarFunction)
+	if !ok {
+		return 0, len(p.data), false
+	}
+
+	switch op.FuncName.L {
+	case ast.EQ, ast.LT, ast.GT, ast.LE, ast.GE:
+	case ast.IsNull:
+		// isnull(col)
+		if arg0, ok := op.GetArgs()[0].(*expression.Column); ok && arg0.ID == p.partCol.ID {
+			return 0, 1, true
+		}
+		return 0, len(p.data), false
+	default:
+		return 0, len(p.data), false
+	}
+	opName := op.FuncName.L
+
+	var col *expression.Column
+	var con *expression.Constant
+	if arg0, ok := op.GetArgs()[0].(*expression.Column); ok && arg0.ID == p.partCol.ID {
+		if arg1, ok := op.GetArgs()[1].(*expression.Constant); ok {
+			col, con = arg0, arg1
+		}
+	} else if arg0, ok := op.GetArgs()[1].(*expression.Column); ok && arg0.ID == p.partCol.ID {
+		if arg1, ok := op.GetArgs()[0].(*expression.Constant); ok {
+			opName = opposite(opName)
+			col, con = arg0, arg1
+		}
+	}
+	if col == nil || con == nil {
+		return 0, len(p.data), false
+	}
+
+	start, end := p.pruneUseBinarySearch(sctx, opName, con)
+	return start, end, true
+}
+
+func (p *rangeColumnPruner) pruneUseBinarySearch(sctx sessionctx.Context, op string, data *expression.Constant) (start int, end int) {
+	var err error
+	var isNull bool
+	compare := func(ith int, op string, v *expression.Constant) bool {
+		if ith == len(p.data)-1 {
+			if p.maxvalue {
+				return true
+			}
+		}
+		var expr expression.Expression
+		expr, err = expression.NewFunction(sctx, op, types.NewFieldType(mysql.TypeLonglong), p.data[ith], v)
+		var val int64
+		val, isNull, err = expr.EvalInt(sctx, chunk.Row{})
+		return val > 0
+	}
+
+	length := len(p.data)
+	switch op {
+	case ast.EQ:
+		pos := sort.Search(length, func(i int) bool { return compare(i, ast.GT, data) })
+		start, end = pos, pos+1
+	case ast.LT:
+		pos := sort.Search(length, func(i int) bool { return compare(i, ast.GE, data) })
+		start, end = 0, pos+1
+	case ast.GE, ast.GT:
+		pos := sort.Search(length, func(i int) bool { return compare(i, ast.GT, data) })
+		start, end = pos, length
+	case ast.LE:
+		pos := sort.Search(length, func(i int) bool { return compare(i, ast.GT, data) })
+		start, end = 0, pos+1
+	default:
+		start, end = 0, length
+	}
+
+	// Something goes wrong, abort this prunning.
+	if err != nil || isNull {
+		return 0, len(p.data)
+	}
+
+	if end > length {
+		end = length
+	}
+	return start, end
+}
+>>>>>>> 38d63c2... planner,table: optimize partition pruning performance for range columns (#17249)
