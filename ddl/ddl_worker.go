@@ -474,6 +474,9 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 				err = w.finishDDLJob(t, job)
 				return errors.Trace(err)
 			}
+			if runJobErr != nil {
+				txn.Discard()
+			}
 			err = w.updateDDLJob(t, job, runJobErr != nil)
 			if err = w.handleUpdateJobError(t, job, err); err != nil {
 				return errors.Trace(err)
