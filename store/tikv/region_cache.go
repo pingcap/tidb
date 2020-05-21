@@ -831,6 +831,29 @@ func (c *RegionCache) getRegionByIDFromCache(regionID uint64) *Region {
 	return newestRegion
 }
 
+func filterUnavailablePeers(region *pd.Region) {
+	if len(region.DownPeers) == 0 {
+		return
+	}
+	new := region.Meta.Peers[:0]
+	for _, p := range region.Meta.Peers {
+		available := true
+		for _, downPeer := range region.DownPeers {
+			if p.Id == downPeer.Id && p.StoreId == downPeer.StoreId {
+				available = false
+				break
+			}
+		}
+		if available {
+			new = append(new, p)
+		}
+	}
+	for i := len(new); i < len(region.Meta.Peers); i++ {
+		region.Meta.Peers[i] = nil
+	}
+	region.Meta.Peers = new
+}
+
 // loadRegion loads region from pd client, and picks the first peer as leader.
 // If the given key is the end key of the region that you want, you may set the second argument to true. This is useful
 // when processing in reverse order.
@@ -844,13 +867,12 @@ func (c *RegionCache) loadRegion(bo *Backoffer, key []byte, isEndKey bool) (*Reg
 				return nil, errors.Trace(err)
 			}
 		}
-		var meta *metapb.Region
-		var leader *metapb.Peer
+		var reg *pd.Region
 		var err error
 		if searchPrev {
-			meta, leader, err = c.pdClient.GetPrevRegion(bo.ctx, key)
+			reg, err = c.pdClient.GetPrevRegion(bo.ctx, key)
 		} else {
-			meta, leader, err = c.pdClient.GetRegion(bo.ctx, key)
+			reg, err = c.pdClient.GetRegion(bo.ctx, key)
 		}
 		if err != nil {
 			tikvRegionCacheCounterWithGetRegionError.Inc()
@@ -861,21 +883,22 @@ func (c *RegionCache) loadRegion(bo *Backoffer, key []byte, isEndKey bool) (*Reg
 			backoffErr = errors.Errorf("loadRegion from PD failed, key: %q, err: %v", key, err)
 			continue
 		}
-		if meta == nil {
+		if reg == nil || reg.Meta == nil {
 			backoffErr = errors.Errorf("region not found for key %q", key)
 			continue
 		}
-		if len(meta.Peers) == 0 {
-			return nil, errors.New("receive Region with no peer")
+		filterUnavailablePeers(reg)
+		if len(reg.Meta.Peers) == 0 {
+			return nil, errors.New("receive Region with no available peer")
 		}
-		if isEndKey && !searchPrev && bytes.Equal(meta.StartKey, key) && len(meta.StartKey) != 0 {
+		if isEndKey && !searchPrev && bytes.Equal(reg.Meta.StartKey, key) && len(reg.Meta.StartKey) != 0 {
 			searchPrev = true
 			continue
 		}
-		region := &Region{meta: meta}
+		region := &Region{meta: reg.Meta}
 		region.init(c)
-		if leader != nil {
-			c.switchToPeer(region, leader.StoreId)
+		if reg.Leader != nil {
+			c.switchToPeer(region, reg.Leader.StoreId)
 		}
 		return region, nil
 	}
@@ -891,7 +914,7 @@ func (c *RegionCache) loadRegionByID(bo *Backoffer, regionID uint64) (*Region, e
 				return nil, errors.Trace(err)
 			}
 		}
-		meta, leader, err := c.pdClient.GetRegionByID(bo.ctx, regionID)
+		reg, err := c.pdClient.GetRegionByID(bo.ctx, regionID)
 		if err != nil {
 			tikvRegionCacheCounterWithGetRegionByIDError.Inc()
 		} else {
@@ -901,16 +924,17 @@ func (c *RegionCache) loadRegionByID(bo *Backoffer, regionID uint64) (*Region, e
 			backoffErr = errors.Errorf("loadRegion from PD failed, regionID: %v, err: %v", regionID, err)
 			continue
 		}
-		if meta == nil {
+		if reg == nil || reg.Meta == nil {
 			return nil, errors.Errorf("region not found for regionID %d", regionID)
 		}
-		if len(meta.Peers) == 0 {
-			return nil, errors.New("receive Region with no peer")
+		filterUnavailablePeers(reg)
+		if len(reg.Meta.Peers) == 0 {
+			return nil, errors.New("receive Region with no available peer")
 		}
-		region := &Region{meta: meta}
+		region := &Region{meta: reg.Meta}
 		region.init(c)
-		if leader != nil {
-			c.switchToPeer(region, leader.GetStoreId())
+		if reg.Leader != nil {
+			c.switchToPeer(region, reg.Leader.GetStoreId())
 		}
 		return region, nil
 	}
