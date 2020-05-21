@@ -160,7 +160,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	alc := tb.Allocator(nil, autoid.RowIDAllocType)
 	c.Assert(alc, NotNil)
 
-	err = tb.RebaseAutoID(nil, 0, false)
+	err = tb.RebaseAutoID(nil, 0, false, autoid.RowIDAllocType)
 	c.Assert(err, IsNil)
 }
 
@@ -387,7 +387,7 @@ func (ts *testSuite) TestTableFromMeta(c *C) {
 	c.Assert(err, IsNil)
 
 	maxID := 1<<(64-15-1) - 1
-	err = tb.RebaseAutoID(tk.Se, int64(maxID), false)
+	err = tb.RebaseAutoID(tk.Se, int64(maxID), false, autoid.RowIDAllocType)
 	c.Assert(err, IsNil)
 
 	_, err = tb.AllocHandle(tk.Se)

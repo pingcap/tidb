@@ -328,16 +328,22 @@ func pushNotAcrossExpr(ctx sessionctx.Context, expr Expression, not bool) (_ Exp
 	if f, ok := expr.(*ScalarFunction); ok {
 		switch f.FuncName.L {
 		case ast.UnaryNot:
-			child, err := wrapWithIsTrue(ctx, true, f.GetArgs()[0], true)
-			if err != nil {
-				return expr, false
-			}
 			var childExpr Expression
-			childExpr, changed = pushNotAcrossExpr(f.GetCtx(), child, !not)
-			if !changed && !not {
+			// UnaryNot only returns 0/1/NULL, thus we should not eliminate the
+			// innermost NOT if the arg is not a logical operator.
+			switch child := f.GetArgs()[0].(type) {
+			case *ScalarFunction:
+				if _, isLogicalOp := logicalOps[child.FuncName.L]; !isLogicalOp {
+					return expr, false
+				}
+				childExpr, changed = pushNotAcrossExpr(f.GetCtx(), f.GetArgs()[0], !not)
+				if !changed && !not {
+					return expr, false
+				}
+				return childExpr, true
+			case *Column:
 				return expr, false
 			}
-			return childExpr, true
 		case ast.LT, ast.GE, ast.GT, ast.LE, ast.EQ, ast.NE:
 			if not {
 				return NewFunctionInternal(f.GetCtx(), oppositeOp[f.FuncName.L], f.GetType(), f.GetArgs()...), true
@@ -681,6 +687,27 @@ func BuildNotNullExpr(ctx sessionctx.Context, expr Expression) Expression {
 	isNull := NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr)
 	notNull := NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNull)
 	return notNull
+}
+
+// IsRuntimeConstExpr checks if a expr can be treated as a constant in **executor**.
+func IsRuntimeConstExpr(expr Expression) bool {
+	switch x := expr.(type) {
+	case *ScalarFunction:
+		if _, ok := unFoldableFunctions[x.FuncName.L]; ok {
+			return false
+		}
+		for _, arg := range x.GetArgs() {
+			if !IsRuntimeConstExpr(arg) {
+				return false
+			}
+		}
+		return true
+	case *Column:
+		return false
+	case *Constant, *CorrelatedColumn:
+		return true
+	}
+	return false
 }
 
 // isMutableEffectsExpr checks if expr contains function which is mutable or has side effects.

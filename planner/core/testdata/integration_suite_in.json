@@ -29,6 +29,15 @@
     ]
   },
   {
+    "name": "TestHintWithRequiredProperty",
+    "cases": [
+      "desc select /*+ INL_JOIN(t2) */ * from t t1, t t2 where t1.a = t2.b order by t2.a",
+      "desc select * from t t1, (select /*+ HASH_AGG() */ b, max(a) from t t2 group by b) t2 where t1.b = t2.b order by t1.b",
+      // This hint cannot work, so choose another plan.
+      "desc select /*+ INL_JOIN(t2) */ * from t t1, t t2 where t1.a = t2.c order by t1.a"
+    ]
+  },
+  {
     "name": "TestIndexHintWarning",
     "cases": [
       "select /*+ USE_INDEX(t1, j) */ * from t1",
