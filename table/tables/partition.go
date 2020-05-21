@@ -258,7 +258,7 @@ func generateRangePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 		}
 		ret.ForRangeColumnsPruning = tmp
 	default:
-		logutil.BgLogger().Error("range column partition currently support only one column")
+		panic("range column partition currently support only one column")
 	}
 	return ret, nil
 }
