@@ -30,6 +30,11 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/util/disk"
+	"github.com/pingcap/tidb/util/execdetails"
+>>>>>>> 0d95b09... executor: Remove unnecessary information in explain analyze output (#16248)
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -138,6 +143,16 @@ func (e *HashJoinExec) Close() error {
 	}
 	e.memTracker = nil
 
+<<<<<<< HEAD
+=======
+	if e.runtimeStats != nil {
+		concurrency := cap(e.joiners)
+		e.runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", concurrency))
+		if e.rowContainer != nil {
+			e.runtimeStats.SetAdditionalInfo(e.rowContainer.stat.String())
+		}
+	}
+>>>>>>> 0d95b09... executor: Remove unnecessary information in explain analyze output (#16248)
 	err := e.baseExecutor.Close()
 	return err
 }

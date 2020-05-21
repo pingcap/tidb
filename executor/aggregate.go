@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/spaolacci/murmur3"
@@ -225,6 +226,23 @@ func (e *HashAggExec) Close() error {
 	for range e.finalOutputCh {
 	}
 	e.executed = false
+<<<<<<< HEAD
+=======
+
+	if e.runtimeStats != nil {
+		var partialConcurrency, finalConcurrency int
+		if e.isUnparallelExec {
+			partialConcurrency = 0
+			finalConcurrency = 0
+		} else {
+			partialConcurrency = cap(e.partialWorkers)
+			finalConcurrency = cap(e.finalWorkers)
+		}
+		partialConcurrencyInfo := execdetails.NewConcurrencyInfo("PartialConcurrency", partialConcurrency)
+		finalConcurrencyInfo := execdetails.NewConcurrencyInfo("FinalConcurrency", finalConcurrency)
+		e.runtimeStats.SetConcurrencyInfo(partialConcurrencyInfo, finalConcurrencyInfo)
+	}
+>>>>>>> 0d95b09... executor: Remove unnecessary information in explain analyze output (#16248)
 	return e.baseExecutor.Close()
 }
 

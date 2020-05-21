@@ -328,6 +328,20 @@ type RuntimeStatsColl struct {
 	readerStats map[string]*ReaderRuntimeStats
 }
 
+<<<<<<< HEAD
+=======
+// ConcurrencyInfo is used to save the concurrency information of the executor operator
+type ConcurrencyInfo struct {
+	concurrencyName string
+	concurrencyNum  int
+}
+
+// NewConcurrencyInfo creates new executor's concurrencyInfo.
+func NewConcurrencyInfo(name string, num int) *ConcurrencyInfo {
+	return &ConcurrencyInfo{name, num}
+}
+
+>>>>>>> 0d95b09... executor: Remove unnecessary information in explain analyze output (#16248)
 // RuntimeStats collects one executor's execution info.
 type RuntimeStats struct {
 	// executor's Next() called times.
@@ -336,6 +350,17 @@ type RuntimeStats struct {
 	consume int64
 	// executor return row count.
 	rows int64
+<<<<<<< HEAD
+=======
+
+	// protect concurrency
+	mu sync.Mutex
+	// executor concurrency information
+	concurrency []*ConcurrencyInfo
+
+	// additional information for executors
+	additionalInfo string
+>>>>>>> 0d95b09... executor: Remove unnecessary information in explain analyze output (#16248)
 }
 
 // NewRuntimeStatsColl creates new executor collector.
@@ -420,6 +445,33 @@ func (e *RuntimeStats) SetRowNum(rowNum int64) {
 	atomic.StoreInt64(&e.rows, rowNum)
 }
 
+<<<<<<< HEAD
+=======
+// SetConcurrencyInfo sets the concurrency informations.
+// We must clear the concurrencyInfo first when we call the SetConcurrencyInfo.
+// When the num <= 0, it means the exector operator is not executed parallel.
+func (e *RuntimeStats) SetConcurrencyInfo(infos ...*ConcurrencyInfo) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.concurrency = e.concurrency[:0]
+	for _, info := range infos {
+		e.concurrency = append(e.concurrency, info)
+	}
+}
+
+// SetAdditionalInfo sets the additional information.
+func (e *RuntimeStats) SetAdditionalInfo(info string) {
+	e.mu.Lock()
+	e.additionalInfo = info
+	e.mu.Unlock()
+}
+
+// GetActRows return rows of CopRuntimeStats.
+func (e *RuntimeStats) GetActRows() int64 {
+	return e.rows
+}
+
+>>>>>>> 0d95b09... executor: Remove unnecessary information in explain analyze output (#16248)
 func (e *RuntimeStats) String() string {
 	if e == nil {
 		return ""
