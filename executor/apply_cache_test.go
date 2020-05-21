@@ -14,12 +14,13 @@
 package executor
 
 import (
+	"strconv"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
-	"strconv"
 )
 
 var _ = SerialSuites(&testApplyCacheSuite{})
