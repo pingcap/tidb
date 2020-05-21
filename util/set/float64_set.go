@@ -20,7 +20,7 @@ type Float64Set map[float64]struct{}
 func NewFloat64Set(fs ...float64) Float64Set {
 	x := make(Float64Set, len(fs))
 	for _, f := range fs {
-		x[f] = struct{}{}
+		x.Insert(f)
 	}
 	return x
 }
