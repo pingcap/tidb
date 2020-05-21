@@ -173,9 +173,10 @@ type RecoverIndexExec struct {
 
 	done bool
 
-	index     table.Index
-	table     table.Table
-	batchSize int
+	index      table.Index
+	table      table.Table
+	physicalID int64
+	batchSize  int
 
 	columns       []*model.ColumnInfo
 	colFieldTypes []*types.FieldType
@@ -216,7 +217,7 @@ func (e *RecoverIndexExec) Open(ctx context.Context) error {
 
 func (e *RecoverIndexExec) constructTableScanPB(pbColumnInfos []*tipb.ColumnInfo) *tipb.Executor {
 	tblScan := &tipb.TableScan{
-		TableId: e.table.Meta().ID,
+		TableId: e.physicalID,
 		Columns: pbColumnInfos,
 	}
 
@@ -254,15 +255,14 @@ func (e *RecoverIndexExec) buildDAGPB(txn kv.Transaction, limitCnt uint64) (*tip
 	return dagReq, nil
 }
 
-func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transaction, t table.Table, startHandle kv.Handle, limitCnt uint64) (distsql.SelectResult, error) {
+func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transaction, startHandle kv.Handle, limitCnt uint64) (distsql.SelectResult, error) {
 	dagPB, err := e.buildDAGPB(txn, limitCnt)
 	if err != nil {
 		return nil, err
 	}
-	tblInfo := e.table.Meta()
 	ranges := []*ranger.Range{{LowVal: []types.Datum{types.NewIntDatum(startHandle.IntValue())}, HighVal: []types.Datum{types.NewIntDatum(math.MaxInt64)}}}
 	var builder distsql.RequestBuilder
-	kvReq, err := builder.SetTableRanges(tblInfo.ID, ranges, nil).
+	kvReq, err := builder.SetTableRanges(e.physicalID, ranges, nil).
 		SetDAGRequest(dagPB).
 		SetStartTS(txn.StartTS()).
 		SetKeepOrder(true).
@@ -409,7 +409,7 @@ func (e *RecoverIndexExec) batchMarkDup(txn kv.Transaction, rows []recoverRows) 
 
 func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transaction, startHandle kv.Handle) (result backfillResult, err error) {
 	result.nextHandle = startHandle
-	srcResult, err := e.buildTableScan(ctx, txn, e.table, startHandle, uint64(e.batchSize))
+	srcResult, err := e.buildTableScan(ctx, txn, startHandle, uint64(e.batchSize))
 	if err != nil {
 		return result, err
 	}
@@ -454,9 +454,26 @@ func (e *RecoverIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 
-	totalAddedCnt, totalScanCnt, err := e.backfillIndex(ctx)
-	if err != nil {
-		return err
+	var totalAddedCnt, totalScanCnt int64
+	var err error
+	if tbl, ok := e.table.(table.PartitionedTable); ok {
+		pi := e.table.Meta().GetPartitionInfo()
+		for _, p := range pi.Definitions {
+			e.table = tbl.GetPartition(p.ID)
+			e.index = tables.GetWritableIndexByName(e.index.Meta().Name.L, e.table)
+			e.physicalID = p.ID
+			addedCnt, scanCnt, err := e.backfillIndex(ctx)
+			totalAddedCnt += addedCnt
+			totalScanCnt += scanCnt
+			if err != nil {
+				return err
+			}
+		}
+	} else {
+		totalAddedCnt, totalScanCnt, err = e.backfillIndex(ctx)
+		if err != nil {
+			return err
+		}
 	}
 
 	req.AppendInt64(0, totalAddedCnt)
