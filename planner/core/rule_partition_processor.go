@@ -15,7 +15,6 @@ package core
 import (
 	"context"
 	"sort"
-	"strings"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -331,9 +330,14 @@ func intersectionRange(start, end, newStart, newEnd int) (int, int) {
 }
 
 func (s *partitionProcessor) pruneRangePartition(ds *DataSource, pi *model.PartitionInfo) (LogicalPlan, error) {
+	partExpr, err := ds.table.(partitionTable).PartitionExpr()
+	if err != nil {
+		return nil, err
+	}
+
 	// Partition by range columns.
 	if len(pi.Columns) > 0 {
-		return s.pruneRangeColumnsPartition(ds, pi)
+		return s.pruneRangeColumnsPartition(ds, pi, partExpr)
 	}
 
 	// Partition by range.
@@ -345,10 +349,6 @@ func (s *partitionProcessor) pruneRangePartition(ds *DataSource, pi *model.Parti
 	result := fullRange(len(pi.Definitions))
 	// Extract the partition column, if the column is not null, it's possible to prune.
 	if col != nil {
-		partExpr, err := ds.table.(partitionTable).PartitionExpr()
-		if err != nil {
-			return nil, err
-		}
 		pruner := rangePruner{
 			lessThan: lessThanDataInt{
 				data:     partExpr.ForRangePruning.LessThan,
@@ -739,7 +739,7 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 	return unionAll, nil
 }
 
-func (s *partitionProcessor) pruneRangeColumnsPartition(ds *DataSource, pi *model.PartitionInfo) (LogicalPlan, error) {
+func (s *partitionProcessor) pruneRangeColumnsPartition(ds *DataSource, pi *model.PartitionInfo, pe *tables.PartitionExpr) (LogicalPlan, error) {
 	result := fullRange(len(pi.Definitions))
 
 	if len(pi.Columns) != 1 {
@@ -747,7 +747,7 @@ func (s *partitionProcessor) pruneRangeColumnsPartition(ds *DataSource, pi *mode
 		return s.makeUnionAllChildren(ds, pi, result)
 	}
 
-	pruner, err := makeRangeColumnPruner(ds, pi)
+	pruner, err := makeRangeColumnPruner(ds, pe.ForRangeColumnsPruning)
 	if err == nil {
 		result = partitionRangeForCNFExpr(ds.ctx, ds.allConds, pruner, result)
 	}
@@ -763,28 +763,20 @@ type rangeColumnPruner struct {
 	maxvalue bool
 }
 
-func makeRangeColumnPruner(ds *DataSource, pi *model.PartitionInfo) (*rangeColumnPruner, error) {
-	var maxValue bool
-	data := make([]expression.Expression, len(pi.Definitions))
+func makeRangeColumnPruner(ds *DataSource, from *tables.ForRangeColumnsPruning) (*rangeColumnPruner, error) {
 	schema := expression.NewSchema(ds.TblCols...)
-	exprs, err := expression.ParseSimpleExprsWithNames(ds.ctx, pi.Columns[0].L, schema, ds.names)
+	expr, err := expression.RewriteSimpleExprWithNames(ds.ctx, from.Column, schema, ds.names)
 	if err != nil {
 		return nil, err
 	}
-	partCol := exprs[0].(*expression.Column)
-	for i := 0; i < len(pi.Definitions); i++ {
-		if strings.EqualFold(pi.Definitions[i].LessThan[0], "MAXVALUE") {
-			// Use a bool flag instead of math.MaxInt64 to avoid the corner cases.
-			maxValue = true
-		} else {
-			tmp, err := expression.ParseSimpleExprsWithNames(ds.ctx, pi.Definitions[i].LessThan[0], schema, ds.names)
-			if err != nil {
-				return nil, err
-			}
-			data[i] = tmp[0]
+	partCol := expr.(*expression.Column)
+	data := make([]expression.Expression, len(from.LessThan))
+	for i := 0; i < len(from.LessThan); i++ {
+		if from.LessThan[i] != nil {
+			data[i] = from.LessThan[i].Clone()
 		}
 	}
-	return &rangeColumnPruner{data, partCol, maxValue}, nil
+	return &rangeColumnPruner{data, partCol, from.MaxValue}, nil
 }
 
 func (p *rangeColumnPruner) fullRange() partitionRangeOR {
