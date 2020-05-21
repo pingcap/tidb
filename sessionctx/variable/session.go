@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
@@ -681,7 +682,7 @@ func NewSessionVars() *SessionVars {
 		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
 		UsePlanBaselines:            DefTiDBUsePlanBaselines,
 		EvolvePlanBaselines:         DefTiDBEvolvePlanBaselines,
-		IsolationReadEngines:        map[kv.StoreType]struct{}{kv.TiKV: {}, kv.TiFlash: {}, kv.TiDB: {}},
+		IsolationReadEngines:        make(map[kv.StoreType]struct{}),
 		LockWaitTimeout:             DefInnodbLockWaitTimeout * 1000,
 		MetricSchemaStep:            DefTiDBMetricSchemaStep,
 		MetricSchemaRangeDuration:   DefTiDBMetricSchemaRangeDuration,
@@ -740,6 +741,16 @@ func NewSessionVars() *SessionVars {
 		enableChunkRPC = "0"
 	}
 	terror.Log(vars.SetSystemVar(TiDBEnableChunkRPC, enableChunkRPC))
+	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
+		switch engine {
+		case kv.TiFlash.Name():
+			vars.IsolationReadEngines[kv.TiFlash] = struct{}{}
+		case kv.TiKV.Name():
+			vars.IsolationReadEngines[kv.TiKV] = struct{}{}
+		case kv.TiDB.Name():
+			vars.IsolationReadEngines[kv.TiDB] = struct{}{}
+		}
+	}
 	return vars
 }
 
@@ -1245,7 +1256,25 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.MetricSchemaRangeDuration = tidbOptInt64(val, DefTiDBMetricSchemaRangeDuration)
 	case CollationConnection, CollationDatabase, CollationServer:
 		if _, err := collate.GetCollationByName(val); err != nil {
-			return errors.Trace(err)
+			var ok bool
+			var charsetVal string
+			var err2 error
+			if name == CollationConnection {
+				charsetVal, ok = s.systems[CharacterSetConnection]
+			} else if name == CollationDatabase {
+				charsetVal, ok = s.systems[CharsetDatabase]
+			} else {
+				// CollationServer
+				charsetVal, ok = s.systems[CharacterSetServer]
+			}
+			if !ok {
+				return err
+			}
+			val, err2 = charset.GetDefaultCollation(charsetVal)
+			if err2 != nil {
+				return err2
+			}
+			logutil.BgLogger().Warn(err.Error())
 		}
 	case TiDBSlowLogThreshold:
 		atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
