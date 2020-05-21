@@ -508,14 +508,13 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		select {
 		case <-worker.finishCh:
 			worker.actionOnExceed.mu.Lock()
-			defer worker.actionOnExceed.mu.Unlock()
 			worker.actionOnExceed.mu.aliveWorker--
+			worker.actionOnExceed.mu.Unlock()
 			return
 		default:
 		}
 
 		worker.actionOnExceed.mu.Lock()
-		defer worker.actionOnExceed.mu.Unlock()
 		if worker.actionOnExceed.mu.exceeded != 0 {
 			logutil.BgLogger().Info("memory exceeds quota, end one copIterator worker.",
 				zap.String("copIteratorWorker id ", worker.id))
@@ -524,9 +523,12 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 			// reset action
 			worker.actionOnExceed.mu.exceeded = 0
 			worker.actionOnExceed.once = sync.Once{}
+
+			worker.actionOnExceed.mu.Unlock()
 			// end this worker
 			return
 		}
+		worker.actionOnExceed.mu.Unlock()
 	}
 }
 
