@@ -876,7 +876,7 @@ func (c *RegionCache) loadRegion(bo *Backoffer, key []byte, isEndKey bool) (*Reg
 			backoffErr = errors.Errorf("loadRegion from PD failed, key: %q, err: %v", key, err)
 			continue
 		}
-		if reg.Meta == nil {
+		if reg == nil || reg.Meta == nil {
 			backoffErr = errors.Errorf("region not found for key %q", key)
 			continue
 		}
@@ -917,7 +917,7 @@ func (c *RegionCache) loadRegionByID(bo *Backoffer, regionID uint64) (*Region, e
 			backoffErr = errors.Errorf("loadRegion from PD failed, regionID: %v, err: %v", regionID, err)
 			continue
 		}
-		if reg.Meta == nil {
+		if reg == nil || reg.Meta == nil {
 			return nil, errors.Errorf("region not found for regionID %d", regionID)
 		}
 		filterUnavailablePeers(reg)
