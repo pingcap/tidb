@@ -173,15 +173,11 @@ func (s *testSessionSuiteBase) SetUpSuite(c *C) {
 		session.ResetStoreForWithTiKVTest(store)
 		s.store = store
 	} else {
-		cluster := mocktikv.NewCluster()
-		mocktikv.BootstrapWithSingleStore(cluster)
-		s.cluster = cluster
-
-		mvccStore := mocktikv.MustNewMVCCStore()
-		cluster.SetMvccStore(mvccStore)
-		store, err := mockstore.NewMockTikvStore(
-			mockstore.WithCluster(cluster),
-			mockstore.WithMVCCStore(mvccStore),
+		store, err := mockstore.NewMockStore(
+			mockstore.WithClusterInspector(func(c cluster.Cluster) {
+				mockstore.BootstrapWithSingleStore(c)
+				s.cluster = c
+			}),
 		)
 		c.Assert(err, IsNil)
 		s.store = store
@@ -1941,15 +1937,11 @@ func (s *testSchemaSuiteBase) TearDownTest(c *C) {
 
 func (s *testSchemaSuiteBase) SetUpSuite(c *C) {
 	testleak.BeforeTest()
-	cluster := mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(cluster)
-	s.cluster = cluster
-
-	mvccStore := mocktikv.MustNewMVCCStore()
-	cluster.SetMvccStore(mvccStore)
-	store, err := mockstore.NewMockTikvStore(
-		mockstore.WithCluster(cluster),
-		mockstore.WithMVCCStore(mvccStore),
+	store, err := mockstore.NewMockStore(
+		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+			mockstore.BootstrapWithSingleStore(c)
+			s.cluster = c
+		}),
 	)
 	c.Assert(err, IsNil)
 	s.store = store
@@ -3204,4 +3196,18 @@ func (s *testSchemaSuite) TestTxnSize(c *C) {
 	txn, err := tk.Se.Txn(false)
 	c.Assert(err, IsNil)
 	c.Assert(txn.Size() > 0, IsTrue)
+}
+
+func (s *testSessionSuite2) TestPerStmtTaskID(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table task_id (v int)")
+
+	tk.MustExec("begin")
+	tk.MustExec("select * from task_id where v > 10")
+	taskID1 := tk.Se.GetSessionVars().StmtCtx.TaskID
+	tk.MustExec("select * from task_id where v < 5")
+	taskID2 := tk.Se.GetSessionVars().StmtCtx.TaskID
+	tk.MustExec("commit")
+
+	c.Assert(taskID1 != taskID2, IsTrue)
 }

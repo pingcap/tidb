@@ -148,7 +148,7 @@ func TestInfo(t *testing.T) {
 		testleak.AfterTestT(t)()
 	}()
 	ddlLease := 80 * time.Millisecond
-	s, err := mockstore.NewMockTikvStore()
+	s, err := mockstore.NewMockStore()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,6 +174,10 @@ func TestInfo(t *testing.T) {
 		ddl.WithInfoHandle(dom.infoHandle),
 		ddl.WithLease(ddlLease),
 	)
+	err = dom.ddl.Start(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	err = failpoint.Enable("github.com/pingcap/tidb/domain/MockReplaceDDL", `return(true)`)
 	if err != nil {
 		t.Fatal(err)
@@ -289,7 +293,7 @@ func (msm *mockSessionManager) UpdateTLSConfig(cfg *tls.Config) {}
 
 func (*testSuite) TestT(c *C) {
 	defer testleak.AfterTest(c)()
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	ddlLease := 80 * time.Millisecond
 	dom := NewDomain(store, ddlLease, 0, mockFactory)
