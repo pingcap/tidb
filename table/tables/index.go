@@ -187,8 +187,9 @@ func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.
 		// An error occurs if you try to add a new row with a key value that matches an existing row.
 		// For all engines, a UNIQUE index permits multiple NULL values for columns that can contain NULL.
 		distinct = true
-		for _, cv := range indexedValues {
-			if cv.IsNull() {
+
+		for i := range indexedValues {
+			if indexedValues[i].IsNull() {
 				distinct = false
 				break
 			}

@@ -207,11 +207,13 @@ func (t *TableCommon) WritableIndices() []table.Index {
 // GetWritableIndexByName gets the index meta from the table by the index name.
 func GetWritableIndexByName(idxName string, t table.Table) table.Index {
 	indices := t.WritableIndices()
-	for _, idx := range indices {
-		if idxName == idx.Meta().Name.L {
-			return idx
+
+	for i := range indices {
+		if idxName == indices[i].Meta().Name.L {
+			return indices[i]
 		}
 	}
+
 	return nil
 }
 
@@ -608,17 +610,19 @@ func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 func (t *TableCommon) genIndexKeyStr(colVals []types.Datum) (string, error) {
 	// Pass pre-composed error to txn.
 	strVals := make([]string, 0, len(colVals))
-	for _, cv := range colVals {
+
+	for i := range colVals {
 		cvs := "NULL"
 		var err error
-		if !cv.IsNull() {
-			cvs, err = types.ToString(cv.GetValue())
+		if colVals[i].IsNull() {
+			cvs, err = types.ToString(colVals[i].GetValue())
 			if err != nil {
 				return "", err
 			}
 		}
 		strVals = append(strVals, cvs)
 	}
+
 	return strings.Join(strVals, "-"), nil
 }
 
@@ -1418,12 +1422,17 @@ func (t *TableCommon) GetSequenceCommon() *sequenceCommon {
 	return t.sequence
 }
 
-func getSequenceAllocator(allocs autoid.Allocators) (autoid.Allocator, error) {
-	for _, alloc := range allocs {
-		if alloc.GetType() == autoid.SequenceType {
-			return alloc, nil
+func getSequenceAllocator(allocators autoid.Allocators) (autoid.Allocator, error) {
+
+	if allocators == nil {
+		return nil, errors.New("sequence allocators is nil")
+	}
+
+	for i := range allocators {
+		if allocators[i].GetType() == autoid.SequenceType {
+			return allocators[i], nil
 		}
 	}
-	// TODO: refine the error.
-	return nil, errors.New("sequence allocator is nil")
+
+	return nil, errors.New("there is no sequence that meets the requirements")
 }
