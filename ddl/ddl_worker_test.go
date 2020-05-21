@@ -990,7 +990,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
 	c.Assert(checkIdxVisibility(changedTable, indexName, true), IsTrue)
 
-	// test exchange partition failed  caused by canceled
+	// test exchange partition failed caused by canceled
 	pt := testTableInfoWithPartition(c, d, "pt", 5)
 	nt := testTableInfo(c, d, "nt", 5)
 	testCreateTable(c, ctx, d, dbInfo, pt)

@@ -820,6 +820,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 }
 
 func checkExchangePartitionRecordValidation(w *worker, pi *model.PartitionInfo, partName string, schemaName, tableName model.CIStr) error {
+	// make sure that pi contains the partName before this function runs
 	var (
 		sql   string
 		index int
@@ -830,9 +831,6 @@ func checkExchangePartitionRecordValidation(w *worker, pi *model.PartitionInfo, 
 			index = i
 			break
 		}
-		if len(pi.Definitions) == i {
-			return table.ErrUnknownPartition.GenWithStackByArgs(partName, tableName.O)
-		}
 	}
 
 	switch pi.Type {
@@ -841,7 +839,6 @@ func checkExchangePartitionRecordValidation(w *worker, pi *model.PartitionInfo, 
 			return nil
 		}
 		sql = fmt.Sprintf("select 1 from `%s`.`%s` where mod(%s, %d) != %d limit 1", schemaName.L, tableName.L, pi.Expr, pi.Num, index)
-		break
 	case model.PartitionTypeRange:
 		rangeRrun, err := tables.DataForRangePruning(pi)
 		if err != nil {
@@ -858,9 +855,8 @@ func checkExchangePartitionRecordValidation(w *worker, pi *model.PartitionInfo, 
 		} else {
 			sql = fmt.Sprintf("select 1 from `%s`.`%s` where %s < %d or %s >= %d limit 1", schemaName.L, tableName.L, pi.Expr, rangeRrun.LessThan[index-1], pi.Expr, rangeRrun.LessThan[index])
 		}
-		break
 	default:
-		panic("cannot reach here")
+		return errors.Trace(errors.Errorf("unsupported partition type for checkExchangePartitionRecordValidation"))
 	}
 
 	var ctx sessionctx.Context
@@ -876,7 +872,7 @@ func checkExchangePartitionRecordValidation(w *worker, pi *model.PartitionInfo, 
 	}
 	rowCount := len(rows)
 	if rowCount != 0 {
-		return ErrRowDoesNotMatchPartition
+		return errors.Trace(ErrRowDoesNotMatchPartition)
 	}
 	return nil
 }
