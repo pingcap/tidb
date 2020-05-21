@@ -839,7 +839,7 @@ func filterUnavailablePeers(region *pd.Region) {
 	for _, p := range region.Meta.Peers {
 		available := true
 		for _, downPeer := range region.DownPeers {
-			if peer.Id == downPeer.Id && peer.StoreId == downPeer.StoreId {
+			if p.Id == downPeer.Id && p.StoreId == downPeer.StoreId {
 				available = false
 				break
 			}
