@@ -985,3 +985,29 @@ func (s *testIntegrationSerialSuite) TestIssue16837(c *C) {
 	tk.MustExec("insert into t values (2, 1, 1, 1, 2)")
 	tk.MustQuery("select /*+ use_index_merge(t,c,idx_ab) */ * from t where a = 1 or (e = 1 and c = 1)").Check(testkit.Rows())
 }
+
+func (s *testIntegrationSuite) TestStreamAggProp(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1),(1),(2)")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Res  []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
+			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Res...))
+	}
+}

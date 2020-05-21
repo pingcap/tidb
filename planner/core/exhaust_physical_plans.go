@@ -1599,7 +1599,9 @@ func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalPrope
 		Enforced:    true,
 		Items:       property.ItemsFromCols(la.groupByCols, desc),
 	}
-
+	if !prop.IsPrefix(childProp) {
+		return enforcedAggs
+	}
 	taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType}
 	if la.HasDistinct() {
 		// TODO: remove AllowDistinctAggPushDown after the cost estimation of distinct pushdown is implemented.
