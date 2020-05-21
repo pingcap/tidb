@@ -112,6 +112,8 @@ func (t *Tracker) SetActionOnExceed(a ActionOnExceed) {
 
 // GetActionOnExceed return the actionOnExceed
 func (t *Tracker) GetActionOnExceed() ActionOnExceed {
+	t.actionMu.Lock()
+	defer t.actionMu.Unlock()
 	return t.actionMu.actionOnExceed
 }
 
