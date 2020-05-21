@@ -98,6 +98,9 @@ type AllocOption interface {
 // Allocator is an auto increment id generator.
 // Just keep id unique actually.
 type Allocator interface {
+	// Allocator interface will contain sequence allocator interface if it's type is sequence type.
+	SequenceAllocator
+
 	// Alloc allocs N consecutive autoID for table with tableID, returning (min, max] of the allocated autoID batch.
 	// It gets a batch of autoIDs at a time. So it does not need to access storage for each call.
 	// The consecutive feature is used to insert multiple rows in a statement.
@@ -107,18 +110,10 @@ type Allocator interface {
 	// case increment=x & offset=y: you firstly need to seek to firstID by `SeekToFirstAutoIDXXX`, then derive the IDs like firstID, firstID + increment * 2... in the caller.
 	Alloc(tableID int64, n uint64, increment, offset int64) (int64, int64, error)
 
-	// AllocSeqCache allocs sequence batch value cached in table level（rather than in alloc), the returned range covering
-	// the size of sequence cache with it's increment. The returned round indicates the sequence cycle times if it is with
-	// cycle option.
-	AllocSeqCache(sequenceID int64) (min int64, max int64, round int64, err error)
-
 	// Rebase rebases the autoID base for table with tableID and the new base value.
 	// If allocIDs is true, it will allocate some IDs and save to the cache.
 	// If allocIDs is false, it will not allocate IDs.
 	Rebase(tableID, newBase int64, allocIDs bool) error
-
-	// RebaseSeq rebases the sequence value in number axis with tableID and the new base value.
-	RebaseSeq(table, newBase int64) (int64, bool, error)
 
 	// Base return the current base of Allocator.
 	Base() int64
@@ -127,6 +122,20 @@ type Allocator interface {
 	// NextGlobalAutoID returns the next global autoID.
 	NextGlobalAutoID(tableID int64) (int64, error)
 	GetType() AllocatorType
+}
+
+// SequenceAllocator has implemented the special interface for sequence allocation and backup-use.
+type SequenceAllocator interface {
+	// RebaseSeq rebases the sequence value in number axis with tableID and the new base value.
+	RebaseSeq(tableID, newBase int64) (int64, bool, error)
+
+	// AllocSeqCache allocs sequence batch value cached in table level（rather than in alloc), the returned range covering
+	// the size of sequence cache with it's increment. The returned round indicates the sequence cycle times if it is with
+	// cycle option.
+	AllocSeqCache(tableID int64) (min int64, max int64, round int64, err error)
+
+	GetSequenceCycleRound(tableID int64) (int64, error)
+	GetSequenceBackUpBase(tableID int64) (int64, error)
 }
 
 // Allocators represents a set of `Allocator`s.
@@ -361,7 +370,9 @@ func (alloc *allocator) RebaseSeq(tableID, requiredBase int64) (int64, bool, err
 	if tableID == 0 {
 		return 0, false, errInvalidTableID.GenWithStack("Invalid tableID")
 	}
-
+	if alloc.sequence == nil {
+		return 0, false, ErrInvalidAllocatorType.GenWithStackByArgs()
+	}
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
 	return alloc.rebase4Sequence(tableID, requiredBase)
@@ -472,6 +483,9 @@ func (alloc *allocator) Alloc(tableID int64, n uint64, increment, offset int64) 
 func (alloc *allocator) AllocSeqCache(tableID int64) (int64, int64, int64, error) {
 	if tableID == 0 {
 		return 0, 0, 0, errInvalidTableID.GenWithStackByArgs("Invalid tableID")
+	}
+	if alloc.sequence == nil {
+		return 0, 0, 0, ErrInvalidAllocatorType.GenWithStackByArgs()
 	}
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
@@ -940,4 +954,68 @@ func (l *AutoRandomIDLayout) IncrementalBitsCapacity() uint64 {
 // IncrementalMask returns 00..0[11..1], where [xxx] is the incremental section of the current layout.
 func (l *AutoRandomIDLayout) IncrementalMask() int64 {
 	return (1 << l.IncrementalBits) - 1
+}
+
+// GetSequenceBackUpBase implements autoid.Allocator GetSequenceBackUpBase interface.
+// This function is used for backup with sequence setval.
+func (alloc *allocator) GetSequenceBackUpBase(tableID int64) (int64, error) {
+	// There is a little bit difference when BR the sequence object.
+	// When backup the next global base with setval(seq, num) function
+	// will pass the base and find the next valid value.
+	if tableID == 0 {
+		return 0, errInvalidTableID.GenWithStackByArgs("Invalid tableID")
+	}
+	if alloc.sequence == nil {
+		return 0, ErrInvalidAllocatorType.GenWithStackByArgs()
+	}
+	var sequenceBase int64
+	startTime := time.Now()
+	err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
+		var err1 error
+		m := meta.NewMeta(txn)
+		sequenceBase, err1 = getAutoIDByAllocType(m, alloc.dbID, tableID, alloc.allocType)
+		if err1 != nil {
+			return errors.Trace(err1)
+		}
+		return nil
+	})
+	// Todo: refine the metrics
+	metrics.AutoIDHistogram.WithLabelValues(metrics.GlobalAutoID, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+	if err != nil {
+		return 0, err
+	}
+	// Because setval will disuse the new base and it is corresponding to the global sequenceBase.
+	// So here can return the global sequence base directly.
+	return sequenceBase, nil
+}
+
+// GetSequenceCycleRound implements autoid.Allocator GetSequenceCycleRound interface.
+func (alloc *allocator) GetSequenceCycleRound(tableID int64) (int64, error) {
+	// For backup action, cycle round is necessary for setval target base in new TiDB cluster.
+	// Because there is a difference in nextval computation logic when sequence is between first
+	// and the other cycle round.
+	if tableID == 0 {
+		return 0, errInvalidTableID.GenWithStackByArgs("Invalid tableID")
+	}
+	if alloc.sequence == nil {
+		return 0, ErrInvalidAllocatorType.GenWithStackByArgs()
+	}
+	var round int64
+	startTime := time.Now()
+	err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
+		var err1 error
+		m := meta.NewMeta(txn)
+		// GetSequenceCycle is used to get the flag `round`, which indicates whether the sequence is already in cycle.
+		round, err1 = m.GetSequenceCycle(alloc.dbID, tableID)
+		if err1 != nil {
+			return errors.Trace(err1)
+		}
+		return nil
+	})
+	// Todo: refine the metrics
+	metrics.AutoIDHistogram.WithLabelValues(metrics.GlobalAutoID, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+	if err != nil {
+		return 0, err
+	}
+	return round, nil
 }

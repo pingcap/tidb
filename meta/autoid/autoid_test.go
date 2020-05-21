@@ -825,3 +825,76 @@ func (*testSuite) TestConcurrentAllocSequence(c *C) {
 	err = <-errCh
 	c.Assert(err, IsNil)
 }
+
+func (*testSuite) TestSequenceInterface(c *C) {
+	store, err := mockstore.NewMockStore()
+	c.Assert(err, IsNil)
+	defer store.Close()
+
+	var seq *model.SequenceInfo
+	var sequenceBase int64
+	err = kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: model.NewCIStr("test")})
+		c.Assert(err, IsNil)
+		seq = &model.SequenceInfo{
+			Start:      1,
+			Cycle:      true,
+			Cache:      true,
+			MinValue:   -10,
+			MaxValue:   10,
+			Increment:  2,
+			CacheValue: 3,
+		}
+		seqTable := &model.TableInfo{
+			ID:       1,
+			Name:     model.NewCIStr("seq"),
+			Sequence: seq,
+		}
+		sequenceBase = seq.Start - 1
+		err = m.CreateSequenceAndSetSeqValue(1, seqTable, sequenceBase)
+		c.Assert(err, IsNil)
+		return nil
+	})
+	c.Assert(err, IsNil)
+
+	alloc := autoid.NewSequenceAllocator(store, 1, seq)
+	c.Assert(alloc, NotNil)
+
+	// Trigger a sequence cache allocation.
+	base, end, round, err := alloc.AllocSeqCache(1)
+	c.Assert(err, IsNil)
+	c.Assert(base, Equals, int64(0))
+	c.Assert(end, Equals, int64(5))
+	c.Assert(round, Equals, int64(0))
+
+	nextGlobalID, err := alloc.NextGlobalAutoID(1)
+	c.Assert(err, IsNil)
+	// NextGlobalAutoID will return next usable id.
+	c.Assert(nextGlobalID, Equals, int64(6))
+	nextSequenceBRBase, err := alloc.GetSequenceBackUpBase(1)
+	c.Assert(err, IsNil)
+	// GetSequenceBackUpBase will return disused base directly.
+	c.Assert(nextSequenceBRBase, Equals, int64(5))
+	sequenceCycleRound, err := alloc.GetSequenceCycleRound(1)
+	c.Assert(err, IsNil)
+	c.Assert(sequenceCycleRound, Equals, int64(0))
+	num, ok, err := alloc.RebaseSeq(1, 10)
+	c.Assert(err, IsNil)
+	c.Assert(ok, Equals, false)
+	c.Assert(num, Equals, int64(10))
+
+	nextSequenceBRBase, err = alloc.GetSequenceBackUpBase(1)
+	c.Assert(err, IsNil)
+	c.Assert(nextSequenceBRBase, Equals, int64(10))
+	sequenceCycleRound, err = alloc.GetSequenceCycleRound(1)
+	c.Assert(err, IsNil)
+	c.Assert(sequenceCycleRound, Equals, int64(0))
+
+	// Trigger a new sequence cache.
+	base, end, round, err = alloc.AllocSeqCache(1)
+	c.Assert(err, IsNil)
+	c.Assert(base, Equals, int64(-11))
+	c.Assert(end, Equals, int64(-6))
+	c.Assert(round, Equals, int64(1))
+}
