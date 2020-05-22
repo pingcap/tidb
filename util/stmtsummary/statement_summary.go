@@ -190,7 +190,7 @@ type StmtExecInfo struct {
 	CopTasks       *stmtctx.CopTasksDetails
 	ExecDetail     *execdetails.ExecDetails
 	MemMax         int64
-	DiskUsage      int64
+	DiskMax        int64
 	StartTime      time.Time
 	IsInternal     bool
 	Succeed        bool
@@ -726,7 +726,7 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	// other
 	ssElement.sumAffectedRows += sei.StmtCtx.AffectedRows()
 	ssElement.sumMem += sei.MemMax
-	ssElement.sumDisk += sei.DiskUsage
+	ssElement.sumDisk += sei.DiskMax
 	if sei.MemMax > ssElement.maxMem {
 		ssElement.maxMem = sei.MemMax
 	}

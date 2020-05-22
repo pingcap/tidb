@@ -532,7 +532,7 @@ func prepareSlowLogfile(c *C, slowLogFileName string) {
 # Cop_proc_avg: 0.1 Cop_proc_p90: 0.2 Cop_proc_max: 0.03 Cop_proc_addr: 127.0.0.1:20160
 # Cop_wait_avg: 0.05 Cop_wait_p90: 0.6 Cop_wait_max: 0.8 Cop_wait_addr: 0.0.0.0:20160
 # Mem_max: 70724
-# Disk_usage: 65536
+# Disk_max: 65536
 # Plan_from_cache: true
 # Succ: true
 # Plan: abcd
