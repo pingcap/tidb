@@ -91,6 +91,20 @@ func points2Ranges(sc *stmtctx.StatementContext, rangePoints []point, tp *types.
 	return ranges, nil
 }
 
+// convertPoint converts this point according to the specified type.
+// isLeft is used to specify if this point is the left point in a range.
+// for any range (leftPoint, rightPoint),
+//		if the leftPoint is larger than the upperBound of this type, or
+//		the rightPoint is less than the lowerBound of this type,
+//		we think it's an invalid range and return with invalid=true.
+//	Here are some examples with the bound range of this type is [10, 20]:
+//		ranges		results
+//	1:	[0, 15]		[10, 15]
+//	2:	[0, 8]		invalid
+//	3:	[25, 30]	invalid
+//	4:	[12, 30]	[12, 20]
+//	5:	[0, 10)		invalid
+//	5:	(10, 13]	(10, 13]
 func convertPoint(sc *stmtctx.StatementContext, point point, isLeft bool, tp *types.FieldType) (_ point, invalid bool, _ error) {
 	switch point.value.Kind() {
 	case types.KindMaxValue, types.KindMinNotNull:
@@ -98,36 +112,33 @@ func convertPoint(sc *stmtctx.StatementContext, point point, isLeft bool, tp *ty
 	}
 	casted, err := point.value.ConvertTo(sc, tp)
 	if err != nil {
-		if types.ErrOverflow.Equal(err) && tp.EvalType() == types.ETInt {
-			lowBound, upBound := types.GetMinValue(tp), types.GetMaxValue(tp)
-			if r, err := casted.CompareDatum(sc, &lowBound); err != nil {
-				return point, false, errors.Trace(err)
-			} else if r == 0 { // point < lowBound
-				if isLeft {
-					// (-inf < lowBound => [lowBound
-					point.value = lowBound
-					point.excl = false
-					return point, false, nil
-				} else {
-					// right) < lowBound => invalid range
-					return point, true, nil
-				}
-			}
-			if r, err := casted.CompareDatum(sc, &upBound); err != nil {
-				return point, false, errors.Trace(err)
-			} else if r == 0 { // point > upBound
-				if isLeft {
-					// (left > upBound => invalid range
-					return point, true, nil
-				} else {
-					// +inf) > upBound => upBound]
-					point.value = upBound
-					point.excl = false
-					return point, false, nil
-				}
+		if !types.ErrOverflow.Equal(err) || tp.EvalType() != types.ETInt {
+			return point, false, errors.Trace(err)
+		}
+		// handle overflow errors for int especially
+		lowBound, upBound := types.GetMinValue(tp), types.GetMaxValue(tp)
+		var r int
+		if r, err = casted.CompareDatum(sc, &lowBound); err != nil {
+			return point, false, errors.Trace(err)
+		} else if r == 0 { // point < lowBound
+			if isLeft { // example 1
+				point.value = lowBound
+				point.excl = false
+			} else { // example 2
+				invalid = true
 			}
 		}
-		return point, false, errors.Trace(err)
+		if r, err := casted.CompareDatum(sc, &upBound); err != nil {
+			return point, false, errors.Trace(err)
+		} else if r == 0 { // point > upBound
+			if isLeft { // example 3
+				invalid = true
+			} else { // example 4
+				point.value = upBound
+				point.excl = false
+			}
+		}
+		return point, invalid, errors.Trace(err)
 	}
 	valCmpCasted, err := point.value.CompareDatum(sc, &casted)
 	if err != nil {
