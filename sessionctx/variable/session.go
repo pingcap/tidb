@@ -682,7 +682,7 @@ func NewSessionVars() *SessionVars {
 		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
 		UsePlanBaselines:            DefTiDBUsePlanBaselines,
 		EvolvePlanBaselines:         DefTiDBEvolvePlanBaselines,
-		IsolationReadEngines:        map[kv.StoreType]struct{}{kv.TiKV: {}, kv.TiFlash: {}, kv.TiDB: {}},
+		IsolationReadEngines:        make(map[kv.StoreType]struct{}),
 		LockWaitTimeout:             DefInnodbLockWaitTimeout * 1000,
 		MetricSchemaStep:            DefTiDBMetricSchemaStep,
 		MetricSchemaRangeDuration:   DefTiDBMetricSchemaRangeDuration,
@@ -741,6 +741,16 @@ func NewSessionVars() *SessionVars {
 		enableChunkRPC = "0"
 	}
 	terror.Log(vars.SetSystemVar(TiDBEnableChunkRPC, enableChunkRPC))
+	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
+		switch engine {
+		case kv.TiFlash.Name():
+			vars.IsolationReadEngines[kv.TiFlash] = struct{}{}
+		case kv.TiKV.Name():
+			vars.IsolationReadEngines[kv.TiKV] = struct{}{}
+		case kv.TiDB.Name():
+			vars.IsolationReadEngines[kv.TiDB] = struct{}{}
+		}
+	}
 	return vars
 }
 
