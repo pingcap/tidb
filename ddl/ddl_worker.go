@@ -474,7 +474,12 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 				err = w.finishDDLJob(t, job)
 				return errors.Trace(err)
 			}
-			if runJobErr != nil {
+			if runJobErr != nil && job.IsRunning() {
+				// If running job meets error,
+				// and job state is running, we should discard the kv modification when running job,
+				// but if the job state is not running, it means we already handled this error,
+				// and such as rolling back, some DDL job like add index may need to update the table info
+				// and the schema version, then shouldn't discard the kv modification.
 				txn.Discard()
 			}
 			err = w.updateDDLJob(t, job, runJobErr != nil)
