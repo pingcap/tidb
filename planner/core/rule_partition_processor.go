@@ -747,7 +747,7 @@ func (s *partitionProcessor) pruneRangeColumnsPartition(ds *DataSource, pi *mode
 		return s.makeUnionAllChildren(ds, pi, result)
 	}
 
-	pruner, err := makeRangeColumnPruner(ds, pe.ForRangeColumnsPruning)
+	pruner, err := makeRangeColumnPruner(ds, pi, pe.ForRangeColumnsPruning)
 	if err == nil {
 		result = partitionRangeForCNFExpr(ds.ctx, ds.allConds, pruner, result)
 	}
@@ -763,13 +763,10 @@ type rangeColumnPruner struct {
 	maxvalue bool
 }
 
-func makeRangeColumnPruner(ds *DataSource, from *tables.ForRangeColumnsPruning) (*rangeColumnPruner, error) {
+func makeRangeColumnPruner(ds *DataSource, pi *model.PartitionInfo, from *tables.ForRangeColumnsPruning) (*rangeColumnPruner, error) {
 	schema := expression.NewSchema(ds.TblCols...)
-	expr, err := expression.RewriteSimpleExprWithNames(ds.ctx, from.Column, schema, ds.names)
-	if err != nil {
-		return nil, err
-	}
-	partCol := expr.(*expression.Column)
+	idx := expression.FindFieldNameIdxByColName(ds.names, pi.Columns[0].L)
+	partCol := schema.Columns[idx]
 	data := make([]expression.Expression, len(from.LessThan))
 	for i := 0; i < len(from.LessThan); i++ {
 		if from.LessThan[i] != nil {
