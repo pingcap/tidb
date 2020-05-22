@@ -127,5 +127,14 @@
       "explain select * from t where a in (14, floor(3.47))",
       "explain select * from t where b in (3, 4)"
     ]
+  },
+  {
+    "name": "TestStreamAggProp",
+    "cases": [
+      "select /*+ stream_agg() */ count(*) c from t group by a order by c limit 1",
+      "select /*+ stream_agg() */ count(*) c from t group by a order by c",
+      "select /*+ stream_agg() */ count(*) c from t group by a order by a limit 1",
+      "select /*+ stream_agg() */ count(*) c from t group by a order by a"
+    ]
   }
 ]
