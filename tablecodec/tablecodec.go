@@ -54,6 +54,9 @@ const (
 	metaPrefixLength      = 1
 	// MaxOldEncodeValueLen is the maximum len of the old encoding of index value.
 	MaxOldEncodeValueLen = 9
+
+	// CommonHandleFlag is the flag used to decode the common handle in an unique index value.
+	CommonHandleFlag byte = 127
 )
 
 // TableSplitKeyLen is the length of key 't{table_id}' which is used for table split.
@@ -608,67 +611,77 @@ func CutIndexKeyNew(key kv.Key, length int) (values [][]byte, b []byte, err erro
 type HandleStatus int
 
 const (
-	// HandleNotExists means no need to decode handle value when DecodeIndexKV.
-	HandleNotExists HandleStatus = iota
-	// HandleIsSigned means decode handle value as int64 when DecodeIndexKV.
-	HandleIsSigned
+	// HandleDefault means decode handle value as int64 or bytes when DecodeIndexKV.
+	HandleDefault HandleStatus = iota
 	// HandleIsUnsigned means decode handle value as uint64 when DecodeIndexKV.
 	HandleIsUnsigned
+	// HandleNotNeeded means no need to decode handle value when DecodeIndexKV.
+	HandleNotNeeded
 )
 
-func handleExists(hdStatus HandleStatus) bool {
-	return hdStatus != HandleNotExists
+// reEncodeHandle encodes the handle as a Datum so it can be properly decoded later.
+// If it is common handle, it is encoded as Bytes Datum.
+// If it is int handle, it is encoded as int Datum or uint Datum decided by the unsigned.
+func reEncodeHandle(handle kv.Handle, unsigned bool) ([]byte, error) {
+	if !handle.IsInt() {
+		return codec.EncodeValue(nil, nil, types.NewBytesDatum(handle.Encoded()))
+	}
+	handleDatum := types.NewIntDatum(handle.IntValue())
+	if unsigned {
+		handleDatum.SetUint64(handleDatum.GetUint64())
+	}
+	return codec.EncodeValue(nil, nil, handleDatum)
 }
 
-// reEncodeHandleByStatus first decode the value into a int or uint decided by the hdStatus, then encode it so that it can
-// be properly decoded.
-func reEncodeHandleByStatus(value []byte, hdStatus HandleStatus) ([]byte, error) {
-	handle, err := DecodeIndexValueAsHandle(value)
+func decodeIndexKvNewCollation(key, value []byte, hdStatus HandleStatus, columns []rowcodec.ColInfo) ([][]byte, error) {
+	vLen := len(value)
+	tailLen := int(value[0])
+	restoredVal := value[1 : vLen-tailLen]
+	resultValues, err := decodeRestoredValues(columns, restoredVal)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	var handleDatum types.Datum
-	if hdStatus == HandleIsUnsigned {
-		handleDatum = types.NewUintDatum(uint64(handle))
+	if hdStatus == HandleNotNeeded {
+		return resultValues, nil
+	}
+
+	if tailLen < 8 {
+		// In non-unique index.
+		_, keySuffix, err := CutIndexKeyNew(key, len(columns))
+		if err != nil {
+			return nil, err
+		}
+		handle, err := decodeHandleInIndexKey(keySuffix)
+		if err != nil {
+			return nil, err
+		}
+		handleBytes, err := reEncodeHandle(handle, hdStatus == HandleIsUnsigned)
+		if err != nil {
+			return nil, err
+		}
+		resultValues = append(resultValues, handleBytes)
 	} else {
-		handleDatum = types.NewIntDatum(handle)
+		// In unique index.
+		handle := decodeIntHandleInIndexValue(value[vLen-tailLen:])
+		handleBytes, err := reEncodeHandle(handle, hdStatus == HandleIsUnsigned)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		resultValues = append(resultValues, handleBytes)
 	}
-	handleBytes := make([]byte, 0, 8)
-	handleBytes, err = codec.EncodeValue(nil, handleBytes, handleDatum)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return handleBytes, nil
+	return resultValues, nil
 }
 
-func decodeIndexKvNewCollation(key, value []byte, colsLen int, hdStatus HandleStatus, columns []rowcodec.ColInfo) ([][]byte, error) {
+func decodeRestoredValues(columns []rowcodec.ColInfo, restoredVal []byte) ([][]byte, error) {
 	colIDs := make(map[int64]int, len(columns))
 	for i, col := range columns {
 		colIDs[col.ID] = i
 	}
 	// We don't need to decode handle here, and colIDs >= 0 always.
 	rd := rowcodec.NewByteDecoder(columns, []int64{-1}, nil, nil)
-	vLen := len(value)
-	tailLen := int(value[0])
-	resultValues, err := rd.DecodeToBytesNoHandle(colIDs, value[1:vLen-tailLen])
+	resultValues, err := rd.DecodeToBytesNoHandle(colIDs, restoredVal)
 	if err != nil {
 		return nil, errors.Trace(err)
-	}
-
-	if tailLen < 8 {
-		// In non-unique index.
-		if handleExists(hdStatus) {
-			resultValues = append(resultValues, key[len(key)-9:])
-		}
-	} else {
-		// In unique index.
-		if handleExists(hdStatus) {
-			handleBytes, err := reEncodeHandleByStatus(value[vLen-tailLen:], hdStatus)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			resultValues = append(resultValues, handleBytes)
-		}
 	}
 	return resultValues, nil
 }
@@ -678,14 +691,34 @@ func decodeIndexKvOldCollation(key, value []byte, colsLen int, hdStatus HandleSt
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	if hdStatus == HandleNotNeeded {
+		return resultValues, nil
+	}
+	var handle kv.Handle
 	if len(b) > 0 {
 		// non-unique index
-		if handleExists(hdStatus) {
+		handle, err = decodeHandleInIndexKey(b)
+		if err != nil {
+			return nil, err
+		}
+		if !handle.IsInt() {
+			// Re-encode handle to bytes datum.
+			var handleBytes []byte
+			handleBytes, err = codec.EncodeValue(nil, nil, types.NewBytesDatum(b))
+			if err != nil {
+				return nil, err
+			}
+			resultValues = append(resultValues, handleBytes)
+		} else {
 			resultValues = append(resultValues, b)
 		}
-	} else if handleExists(hdStatus) {
+	} else {
 		// unique index
-		handleBytes, err := reEncodeHandleByStatus(value, hdStatus)
+		handle, err = decodeHandleInIndexValue(value)
+		if err != nil {
+			return nil, err
+		}
+		handleBytes, err := reEncodeHandle(handle, hdStatus == HandleIsUnsigned)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -697,37 +730,87 @@ func decodeIndexKvOldCollation(key, value []byte, colsLen int, hdStatus HandleSt
 // DecodeIndexKV uses to decode index key values.
 func DecodeIndexKV(key, value []byte, colsLen int, hdStatus HandleStatus, columns []rowcodec.ColInfo) ([][]byte, error) {
 	if len(value) > MaxOldEncodeValueLen {
-		return decodeIndexKvNewCollation(key, value, colsLen, hdStatus, columns)
+		if value[0] <= 1 && value[1] == CommonHandleFlag {
+			return decodeIndexKVUniqueCommonHandle(key, value, colsLen, hdStatus, columns)
+		}
+		return decodeIndexKvNewCollation(key, value, hdStatus, columns)
 	}
 	return decodeIndexKvOldCollation(key, value, colsLen, hdStatus)
 }
 
-// DecodeIndexHandle uses to decode the handle from index key/value.
-func DecodeIndexHandle(key, value []byte, colsLen int, pkTp *types.FieldType) (int64, error) {
-	_, b, err := CutIndexKeyNew(key, colsLen)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	if len(b) > 0 {
-		d, err := DecodeColumnValue(b, pkTp, nil)
+func decodeIndexKVUniqueCommonHandle(key, value []byte, colsLen int, hdStatus HandleStatus, columns []rowcodec.ColInfo) ([][]byte, error) {
+	tailLen := int(value[0])
+	value = value[:len(value)-tailLen]
+	handleLen := uint16(value[2])<<8 + uint16(value[3])
+	handleEndOff := 4 + handleLen
+	var resultValues [][]byte
+	var err error
+	if int(handleEndOff) < len(value) {
+		// new collation values.
+		restoredValue := value[handleEndOff:]
+		resultValues, err = decodeRestoredValues(columns, restoredValue)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
-		return d.GetInt64(), nil
-
-	} else if len(value) >= 8 {
-		return DecodeIndexValueAsHandle(value)
+	} else {
+		resultValues, _, err = CutIndexKeyNew(key, colsLen)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
-	// Should never execute to here.
-	return 0, errors.Errorf("no handle in index key: %v, value: %v", key, value)
+	if hdStatus == HandleNotNeeded {
+		return resultValues, nil
+	}
+	// reEncode the common handle to a bytes column
+	reEncodedHandle, err1 := codec.EncodeValue(nil, nil, types.NewBytesDatum(value[4:handleEndOff]))
+	if err1 != nil {
+		return nil, err1
+	}
+	resultValues = append(resultValues, reEncodedHandle)
+	return resultValues, nil
 }
 
-// DecodeIndexValueAsHandle uses to decode index value as handle id.
-func DecodeIndexValueAsHandle(data []byte) (int64, error) {
-	var h int64
-	buf := bytes.NewBuffer(data)
-	err := binary.Read(buf, binary.BigEndian, &h)
-	return h, errors.Trace(err)
+// DecodeIndexHandle uses to decode the handle from index key/value.
+func DecodeIndexHandle(key, value []byte, colsLen int) (kv.Handle, error) {
+	_, b, err := CutIndexKeyNew(key, colsLen)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(b) > 0 {
+		return decodeHandleInIndexKey(b)
+	} else if len(value) >= 8 {
+		return decodeHandleInIndexValue(value)
+	}
+	// Should never execute to here.
+	return nil, errors.Errorf("no handle in index key: %v, value: %v", key, value)
+}
+
+func decodeHandleInIndexKey(keySuffix []byte) (kv.Handle, error) {
+	remain, d, err := codec.DecodeOne(keySuffix)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(remain) == 0 && d.Kind() == types.KindInt64 {
+		return kv.IntHandle(d.GetInt64()), nil
+	}
+	return kv.NewCommonHandle(keySuffix)
+}
+
+func decodeHandleInIndexValue(value []byte) (kv.Handle, error) {
+	if len(value) > MaxOldEncodeValueLen {
+		tailLen := value[0]
+		if tailLen >= 8 {
+			return decodeIntHandleInIndexValue(value[len(value)-int(tailLen):]), nil
+		}
+		handleLen := uint16(value[2])<<8 + uint16(value[3])
+		return kv.NewCommonHandle(value[4 : 4+handleLen])
+	}
+	return decodeIntHandleInIndexValue(value), nil
+}
+
+// decodeIntHandleInIndexValue uses to decode index value as int handle id.
+func decodeIntHandleInIndexValue(data []byte) kv.Handle {
+	return kv.IntHandle(binary.BigEndian.Uint64(data))
 }
 
 // EncodeTableIndexPrefix encodes index prefix with tableID and idxID.

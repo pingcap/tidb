@@ -104,7 +104,10 @@ func GetPropByOrderByItemsContainScalarFunc(items []*util.ByItems) (*property.Ph
 }
 
 func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty) (task, error) {
-	if !prop.IsEmpty() {
+	// If the required property is not empty and the row count > 1,
+	// we cannot ensure this required property.
+	// But if the row count is 0 or 1, we don't need to care about the property.
+	if !prop.IsEmpty() && p.RowCount > 1 {
 		return invalidTask, nil
 	}
 	dual := PhysicalTableDual{
@@ -668,6 +671,7 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 		physicalTableID: ds.physicalTableID,
 	}.Init(ds.ctx, ds.blockOffset)
 	ts.SetSchema(ds.schema.Clone())
+	ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
 	if ts.Table.PKIsHandle {
 		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
 			if ds.statisticTable.Columns[pkColInfo.ID] != nil {
