@@ -432,43 +432,36 @@ func estimateCount(dbName, tableName string, db *sql.DB, field string, conf *Con
 		query += conf.Where
 	}
 
-	var estRows int
-	if conf.ServerInfo.ServerType == ServerTypeTiDB {
-		/* tidb results field name is estrows
+	estRows := detectEstimateRows(db, query, []string{"rows", "estRows", "count"})
+	/* tidb results field name is estRows (before 4.0.0-beta.2: count)
 		+-----------------------+----------+-----------+---------------------------------------------------------+
-		| id                    | estrows  | task      | access object | operator info                           |
+		| id                    | estRows  | task      | access object | operator info                           |
 		+-----------------------+----------+-----------+---------------------------------------------------------+
 		| tablereader_5         | 10000.00 | root      |               | data:tablefullscan_4                    |
 		| └─tablefullscan_4     | 10000.00 | cop[tikv] | table:a       | table:a, keep order:false, stats:pseudo |
 		+-----------------------+----------+-----------+----------------------------------------------------------
-		*/
-		estRows = detectEstimateRows(db, query, "tidb", "estrows")
-	} else if conf.ServerInfo.ServerType == ServerTypeMariaDB {
-		/* mariadb result field name is rows
+
+	mariadb result field name is rows
 		+------+-------------+---------+-------+---------------+------+---------+------+----------+-------------+
 		| id   | select_type | table   | type  | possible_keys | key  | key_len | ref  | rows     | Extra       |
 		+------+-------------+---------+-------+---------------+------+---------+------+----------+-------------+
 		|    1 | SIMPLE      | sbtest1 | index | NULL          | k_1  | 4       | NULL | 15000049 | Using index |
 		+------+-------------+---------+-------+---------------+------+---------+------+----------+-------------+
-		*/
-		estRows = detectEstimateRows(db, query, "mariadb", "rows")
-	} else if conf.ServerInfo.ServerType == ServerTypeMySQL {
-		/* mysql result field name is rows
+
+	mysql result field name is rows
 		+----+-------------+-------+------------+-------+---------------+-----------+---------+------+------+----------+-------------+
 		| id | select_type | table | partitions | type  | possible_keys | key       | key_len | ref  | rows | filtered | Extra       |
 		+----+-------------+-------+------------+-------+---------------+-----------+---------+------+------+----------+-------------+
 		|  1 | SIMPLE      | t1    | NULL       | index | NULL          | multi_col | 10      | NULL |    5 |   100.00 | Using index |
 		+----+-------------+-------+------------+-------+---------------+-----------+---------+------+------+----------+-------------+
-		*/
-		estRows = detectEstimateRows(db, query, "mysql", "rows")
-	}
+	*/
 	if estRows > 0 {
 		return uint64(estRows)
 	}
 	return 0
 }
 
-func detectEstimateRows(db *sql.DB, query string, dbType string, fieldName string) int {
+func detectEstimateRows(db *sql.DB, query string, fieldNames []string) int {
 	row, err := db.Query(query)
 	if err != nil {
 		log.Warn("can't execute query from db",
@@ -480,16 +473,19 @@ func detectEstimateRows(db *sql.DB, query string, dbType string, fieldName strin
 	addr := make([]interface{}, len(columns))
 	oneRow := make([]sql.NullString, len(columns))
 	var fieldIndex = -1
-	for i := range oneRow {
-		addr[i] = &oneRow[i]
-		if strings.ToLower(columns[i]) == fieldName {
-			fieldIndex = i
+found:
+	for i, row := range oneRow {
+		addr[i] = &row
+		for _, fieldName := range fieldNames {
+			if strings.EqualFold(columns[i], fieldName) {
+				fieldIndex = i
+				break found
+			}
 		}
 	}
 	err = row.Scan(addr...)
 	if err != nil || fieldIndex < 0 {
 		log.Warn("can't get estimate count from db",
-			zap.String("db", dbType),
 			zap.String("query", query), zap.Error(err))
 		return 0
 	}
@@ -497,7 +493,6 @@ func detectEstimateRows(db *sql.DB, query string, dbType string, fieldName strin
 	estRows, err := strconv.ParseFloat(oneRow[fieldIndex].String, 64)
 	if err != nil {
 		log.Warn("can't get parse rows from db",
-			zap.String("db", dbType),
 			zap.String("query", query), zap.Error(err))
 		return 0
 	}
