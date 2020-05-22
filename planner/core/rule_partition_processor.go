@@ -754,16 +754,16 @@ func (s *partitionProcessor) pruneRangeColumnsPartition(ds *DataSource, pi *mode
 	return s.makeUnionAllChildren(ds, pi, result)
 }
 
-var _ partitionRangePruner = &rangeColumnPruner{}
+var _ partitionRangePruner = &rangeColumnsPruner{}
 
-// rangeColumnPruner is used by 'partition by range columns'.
-type rangeColumnPruner struct {
+// rangeColumnsPruner is used by 'partition by range columns'.
+type rangeColumnsPruner struct {
 	data     []expression.Expression
 	partCol  *expression.Column
 	maxvalue bool
 }
 
-func makeRangeColumnPruner(ds *DataSource, pi *model.PartitionInfo, from *tables.ForRangeColumnsPruning) (*rangeColumnPruner, error) {
+func makeRangeColumnPruner(ds *DataSource, pi *model.PartitionInfo, from *tables.ForRangeColumnsPruning) (*rangeColumnsPruner, error) {
 	schema := expression.NewSchema(ds.TblCols...)
 	idx := expression.FindFieldNameIdxByColName(ds.names, pi.Columns[0].L)
 	partCol := schema.Columns[idx]
@@ -773,14 +773,14 @@ func makeRangeColumnPruner(ds *DataSource, pi *model.PartitionInfo, from *tables
 			data[i] = from.LessThan[i].Clone()
 		}
 	}
-	return &rangeColumnPruner{data, partCol, from.MaxValue}, nil
+	return &rangeColumnsPruner{data, partCol, from.MaxValue}, nil
 }
 
-func (p *rangeColumnPruner) fullRange() partitionRangeOR {
+func (p *rangeColumnsPruner) fullRange() partitionRangeOR {
 	return fullRange(len(p.data))
 }
 
-func (p *rangeColumnPruner) partitionRangeForExpr(sctx sessionctx.Context, expr expression.Expression) (int, int, bool) {
+func (p *rangeColumnsPruner) partitionRangeForExpr(sctx sessionctx.Context, expr expression.Expression) (int, int, bool) {
 	op, ok := expr.(*expression.ScalarFunction)
 	if !ok {
 		return 0, len(p.data), false
@@ -819,7 +819,7 @@ func (p *rangeColumnPruner) partitionRangeForExpr(sctx sessionctx.Context, expr 
 	return start, end, true
 }
 
-func (p *rangeColumnPruner) pruneUseBinarySearch(sctx sessionctx.Context, op string, data *expression.Constant) (start int, end int) {
+func (p *rangeColumnsPruner) pruneUseBinarySearch(sctx sessionctx.Context, op string, data *expression.Constant) (start int, end int) {
 	var err error
 	var isNull bool
 	compare := func(ith int, op string, v *expression.Constant) bool {
