@@ -3734,12 +3734,13 @@ DoStmt:
  *
  *******************************************************************/
 DeleteFromStmt:
-	"DELETE" TableOptimizerHints PriorityOpt QuickOptional IgnoreOptional "FROM" TableName TableAsNameOpt IndexHintListOpt WhereClauseOptional OrderByOptional LimitClause
+	"DELETE" TableOptimizerHints PriorityOpt QuickOptional IgnoreOptional "FROM" TableName PartitionNameListOpt TableAsNameOpt IndexHintListOpt WhereClauseOptional OrderByOptional LimitClause
 	{
 		// Single Table
 		tn := $7.(*ast.TableName)
-		tn.IndexHints = $9.([]*ast.IndexHint)
-		join := &ast.Join{Left: &ast.TableSource{Source: tn, AsName: $8.(model.CIStr)}, Right: nil}
+		tn.IndexHints = $10.([]*ast.IndexHint)
+		tn.PartitionNames = $8.([]model.CIStr)
+		join := &ast.Join{Left: &ast.TableSource{Source: tn, AsName: $9.(model.CIStr)}, Right: nil}
 		x := &ast.DeleteStmt{
 			TableRefs: &ast.TableRefsClause{TableRefs: join},
 			Priority:  $3.(mysql.PriorityEnum),
@@ -3749,14 +3750,14 @@ DeleteFromStmt:
 		if $2 != nil {
 			x.TableHints = $2.([]*ast.TableOptimizerHint)
 		}
-		if $10 != nil {
-			x.Where = $10.(ast.ExprNode)
-		}
 		if $11 != nil {
-			x.Order = $11.(*ast.OrderByClause)
+			x.Where = $11.(ast.ExprNode)
 		}
 		if $12 != nil {
-			x.Limit = $12.(*ast.Limit)
+			x.Order = $12.(*ast.OrderByClause)
+		}
+		if $13 != nil {
+			x.Limit = $13.(*ast.Limit)
 		}
 
 		$$ = x
