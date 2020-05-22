@@ -54,13 +54,19 @@ func validInterval(sc *stmtctx.StatementContext, low, high point) (bool, error) 
 func points2Ranges(sc *stmtctx.StatementContext, rangePoints []point, tp *types.FieldType) ([]*Range, error) {
 	ranges := make([]*Range, 0, len(rangePoints)/2)
 	for i := 0; i < len(rangePoints); i += 2 {
-		startPoint, err := convertPoint(sc, rangePoints[i], tp)
+		startPoint, invalid, err := convertPoint(sc, rangePoints[i], true, tp)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		endPoint, err := convertPoint(sc, rangePoints[i+1], tp)
+		if invalid {
+			continue
+		}
+		endPoint, invalid, err := convertPoint(sc, rangePoints[i+1], false, tp)
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+		if invalid {
+			continue
 		}
 		less, err := validInterval(sc, startPoint, endPoint)
 		if err != nil {
@@ -85,22 +91,51 @@ func points2Ranges(sc *stmtctx.StatementContext, rangePoints []point, tp *types.
 	return ranges, nil
 }
 
-func convertPoint(sc *stmtctx.StatementContext, point point, tp *types.FieldType) (point, error) {
+func convertPoint(sc *stmtctx.StatementContext, point point, isLeft bool, tp *types.FieldType) (_ point, invalid bool, _ error) {
 	switch point.value.Kind() {
 	case types.KindMaxValue, types.KindMinNotNull:
-		return point, nil
+		return point, false, nil
 	}
 	casted, err := point.value.ConvertTo(sc, tp)
 	if err != nil {
-		return point, errors.Trace(err)
+		if types.ErrOverflow.Equal(err) && tp.EvalType() == types.ETInt {
+			lowBound, upBound := types.GetMinValue(tp), types.GetMaxValue(tp)
+			if r, err := casted.CompareDatum(sc, &lowBound); err != nil {
+				return point, false, errors.Trace(err)
+			} else if r == 0 { // point < lowBound
+				if isLeft {
+					// (-inf < lowBound => [lowBound
+					point.value = lowBound
+					point.excl = false
+					return point, false, nil
+				} else {
+					// right) < lowBound => invalid range
+					return point, true, nil
+				}
+			}
+			if r, err := casted.CompareDatum(sc, &upBound); err != nil {
+				return point, false, errors.Trace(err)
+			} else if r == 0 { // point > upBound
+				if isLeft {
+					// (left > upBound => invalid range
+					return point, true, nil
+				} else {
+					// +inf) > upBound => upBound]
+					point.value = upBound
+					point.excl = false
+					return point, false, nil
+				}
+			}
+		}
+		return point, false, errors.Trace(err)
 	}
 	valCmpCasted, err := point.value.CompareDatum(sc, &casted)
 	if err != nil {
-		return point, errors.Trace(err)
+		return point, false, errors.Trace(err)
 	}
 	point.value = casted
 	if valCmpCasted == 0 {
-		return point, nil
+		return point, false, nil
 	}
 	if point.start {
 		if point.excl {
@@ -127,7 +162,7 @@ func convertPoint(sc *stmtctx.StatementContext, point point, tp *types.FieldType
 			}
 		}
 	}
-	return point, nil
+	return point, false, nil
 }
 
 // appendPoints2Ranges appends additional column ranges for multi-column index.
@@ -156,13 +191,19 @@ func appendPoints2IndexRange(sc *stmtctx.StatementContext, origin *Range, rangeP
 	ft *types.FieldType) ([]*Range, error) {
 	newRanges := make([]*Range, 0, len(rangePoints)/2)
 	for i := 0; i < len(rangePoints); i += 2 {
-		startPoint, err := convertPoint(sc, rangePoints[i], ft)
+		startPoint, invalid, err := convertPoint(sc, rangePoints[i], true, ft)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		endPoint, err := convertPoint(sc, rangePoints[i+1], ft)
+		if invalid {
+			continue
+		}
+		endPoint, invalid, err := convertPoint(sc, rangePoints[i+1], false, ft)
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+		if invalid {
+			continue
 		}
 		less, err := validInterval(sc, startPoint, endPoint)
 		if err != nil {
@@ -205,9 +246,12 @@ func points2TableRanges(sc *stmtctx.StatementContext, rangePoints []point, tp *t
 		maxValueDatum.SetInt64(math.MaxInt64)
 	}
 	for i := 0; i < len(rangePoints); i += 2 {
-		startPoint, err := convertPoint(sc, rangePoints[i], tp)
+		startPoint, invalid, err := convertPoint(sc, rangePoints[i], true, tp)
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+		if invalid {
+			continue
 		}
 		if startPoint.value.Kind() == types.KindNull {
 			startPoint.value = minValueDatum
@@ -215,9 +259,12 @@ func points2TableRanges(sc *stmtctx.StatementContext, rangePoints []point, tp *t
 		} else if startPoint.value.Kind() == types.KindMinNotNull {
 			startPoint.value = minValueDatum
 		}
-		endPoint, err := convertPoint(sc, rangePoints[i+1], tp)
+		endPoint, invalid, err := convertPoint(sc, rangePoints[i+1], false, tp)
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+		if invalid {
+			continue
 		}
 		if endPoint.value.Kind() == types.KindMaxValue {
 			endPoint.value = maxValueDatum
