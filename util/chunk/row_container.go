@@ -44,6 +44,11 @@ type RowContainer struct {
 	// spilled indicates that records have spilled out into disk.
 	// It's for concurrency usage, so access it with atomic.
 	spilled uint32
+	// readOnly indicates that the rowContainer is read-only and
+	// can spill to disk asynchronously.
+	readOnly uint32
+	// m guarantees spill and get operator for rowContainer is mutually.
+	m sync.Mutex
 
 	memTracker         *memory.Tracker
 	diskTracker        *disk.Tracker
@@ -61,6 +66,8 @@ func NewRowContainer(fieldType []*types.FieldType, chunkSize int) *RowContainer 
 }
 
 func (c *RowContainer) spillToDisk() (err error) {
+	c.m.Lock()
+	defer c.m.Unlock()
 	N := c.records.NumChunks()
 	c.recordsInDisk = NewListInDisk(c.records.FieldTypes())
 	c.recordsInDisk.diskTracker.AttachTo(c.diskTracker)
@@ -72,6 +79,7 @@ func (c *RowContainer) spillToDisk() (err error) {
 		}
 	}
 	c.records.Clear()
+	atomic.StoreUint32(&c.spilled, 1)
 	return
 }
 
@@ -97,6 +105,11 @@ func (c *RowContainer) AlreadySpilled() bool { return c.recordsInDisk != nil }
 
 // AlreadySpilledSafe indicates that records have spilled out into disk. It's thread-safe.
 func (c *RowContainer) AlreadySpilledSafe() bool { return atomic.LoadUint32(&c.spilled) == 1 }
+
+// SetReadOnly sets the rowContainer's status to read-only.
+func (c *RowContainer) SetReadOnly() {
+	atomic.StoreUint32(&c.readOnly, 1)
+}
 
 // NumRow returns the number of rows in the container
 func (c *RowContainer) NumRow() int {
@@ -136,7 +149,6 @@ func (c *RowContainer) Add(chk *Chunk) (err error) {
 			if err != nil {
 				return err
 			}
-			atomic.StoreUint32(&c.spilled, 1)
 		}
 	}
 	return
@@ -167,6 +179,8 @@ func (c *RowContainer) GetList() *List {
 
 // GetRow returns the row the ptr pointed to.
 func (c *RowContainer) GetRow(ptr RowPtr) (Row, error) {
+	c.m.Lock()
+	defer c.m.Unlock()
 	if c.AlreadySpilled() {
 		return c.recordsInDisk.GetRow(ptr)
 	}
@@ -229,6 +243,12 @@ func (a *SpillDiskAction) Action(t *memory.Tracker) {
 		logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
 			zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
 	})
+	if atomic.LoadUint32(&a.c.readOnly) == 1 {
+		err := a.c.spillToDisk()
+		if err != nil {
+			panic(err)
+		}
+	}
 }
 
 // SetFallback sets the fallback action.

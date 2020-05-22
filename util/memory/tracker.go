@@ -47,6 +47,7 @@ type Tracker struct {
 	actionMu struct {
 		sync.Mutex
 		actionOnExceed ActionOnExceed
+		actionDoing    uint32
 	}
 	parMu struct {
 		sync.Mutex
@@ -220,8 +221,13 @@ func (t *Tracker) Consume(bytes int64) {
 		}
 	}
 	if rootExceed != nil {
+		if atomic.LoadUint32(&rootExceed.actionMu.actionDoing) == 1 {
+			return
+		}
 		rootExceed.actionMu.Lock()
 		defer rootExceed.actionMu.Unlock()
+		atomic.StoreUint32(&rootExceed.actionMu.actionDoing, 1)
+		defer atomic.StoreUint32(&rootExceed.actionMu.actionDoing, 0)
 		if rootExceed.actionMu.actionOnExceed != nil {
 			rootExceed.actionMu.actionOnExceed.Action(rootExceed)
 		}

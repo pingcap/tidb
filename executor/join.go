@@ -748,6 +748,7 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 			return err
 		}
 	}
+	e.rowContainer.SetReadOnly()
 	return nil
 }
 

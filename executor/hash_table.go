@@ -256,6 +256,11 @@ func (c *hashRowContainer) ActionSpill() memory.ActionOnExceed {
 	return c.rowContainer.ActionSpill()
 }
 
+// SetReadOnly sets the hashRowContainer's status to read-only.
+func (c *hashRowContainer) SetReadOnly() {
+	c.rowContainer.SetReadOnly()
+}
+
 const (
 	initialEntrySliceLen = 64
 	maxEntrySliceLen     = 8 * 1024

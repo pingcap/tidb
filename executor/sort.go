@@ -141,25 +141,14 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			return err
 		}
 	} else {
-		// Check whether the one partition is spilled.
-		// If the partition is in memory, use List.GetRow() to get better performance.
-		if !e.partitionList[0].AlreadySpilled() {
-			rowChunks := e.partitionList[0].GetList()
-			for !req.IsFull() && e.Idx < len(e.rowPtrs) {
-				rowPtr := e.partitionRowPtrs[0][e.Idx]
-				req.AppendRow(rowChunks.GetRow(rowPtr))
-				e.Idx++
+		for !req.IsFull() && e.Idx < len(e.rowPtrs) {
+			rowPtr := e.partitionRowPtrs[0][e.Idx]
+			row, err := e.partitionList[0].GetRow(rowPtr)
+			if err != nil {
+				return err
 			}
-		} else {
-			for !req.IsFull() && e.Idx < len(e.rowPtrs) {
-				rowPtr := e.partitionRowPtrs[0][e.Idx]
-				row, err := e.partitionList[0].GetRow(rowPtr)
-				if err != nil {
-					return err
-				}
-				req.AppendRow(row)
-				e.Idx++
-			}
+			req.AppendRow(row)
+			e.Idx++
 		}
 	}
 	return nil
@@ -279,6 +268,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	if e.rowChunks.NumRow() > 0 {
 		e.generatePartition()
 	}
+	e.rowChunks.SetReadOnly()
 	return nil
 }
 
