@@ -372,7 +372,7 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			msBeforeExpired, err := cli.ResolveLocks(bo, s.version.Ver, []*Lock{lock})
+			msBeforeExpired, err := cli.resolveLocksLite(bo, s.version.Ver, []*Lock{lock})
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
