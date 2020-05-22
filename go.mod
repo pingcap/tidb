@@ -8,7 +8,7 @@ require (
 	github.com/danjacques/gofslock v0.0.0-20191023191349-0a45f885bc37
 	github.com/dgraph-io/ristretto v0.0.1
 	github.com/dgryski/go-farm v0.0.0-20190423205320-6a90982ecee2
-	github.com/go-sql-driver/mysql v1.4.1
+	github.com/go-sql-driver/mysql v1.5.0
 	github.com/gogo/protobuf v1.3.1
 	github.com/golang/protobuf v1.3.4
 	github.com/golang/snappy v0.0.1
@@ -20,10 +20,6 @@ require (
 	github.com/klauspost/cpuid v1.2.0
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
-<<<<<<< HEAD
-=======
-	github.com/ngaut/unistore v0.0.0-20200521040325-2af94f1b0c83
->>>>>>> d5aaaae... tikv: fix region cache do not filter the down peers (#17337)
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.1.0
 	github.com/pingcap/br v0.0.0-20200521085655-53201addd4ad
@@ -34,13 +30,8 @@ require (
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
 	github.com/pingcap/kvproto v0.0.0-20200518112156-d4aeb467de29
 	github.com/pingcap/log v0.0.0-20200511115504-543df19646ad
-<<<<<<< HEAD
 	github.com/pingcap/parser v0.0.0-20200521064712-8dc0fb6ce6f4
-	github.com/pingcap/pd/v4 v4.0.0-rc.1.0.20200422143320-428acd53eba2
-=======
-	github.com/pingcap/parser v0.0.0-20200518090819-ec1e13b948b1
 	github.com/pingcap/pd/v4 v4.0.0-rc.2.0.20200520083007-2c251bd8f181
->>>>>>> d5aaaae... tikv: fix region cache do not filter the down peers (#17337)
 	github.com/pingcap/sysutil v0.0.0-20200408114249-ed3bd6f7fdb1
 	github.com/pingcap/tidb-tools v4.0.0-rc.1.0.20200514040632-f76b3e428e19+incompatible
 	github.com/pingcap/tipb v0.0.0-20200417094153-7316d94df1ee
@@ -54,7 +45,6 @@ require (
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/uber-go/atomic v1.3.2
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
-	github.com/uber/jaeger-lib v2.2.0+incompatible // indirect
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20191023171146-3cf2f69b5738
 	go.uber.org/atomic v1.6.0
 	go.uber.org/automaxprocs v1.2.0
