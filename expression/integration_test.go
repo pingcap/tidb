@@ -6108,6 +6108,22 @@ func (s *testIntegrationSerialSuite) TestIssue16668(c *C) {
 	tk.MustQuery("select count(distinct(b)) from tx").Check(testkit.Rows("4"))
 }
 
+func (s *testIntegrationSerialSuite) TestIssue17253(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a bigint)")
+	tk.MustExec("insert into t values(9223372036854775807)")
+	tk.MustExec("alter table t add unique key idx(a)")
+	tk.MustQuery("select * from t where a != 9223372036854775808").Check(testkit.Rows("9223372036854775807"))
+	tk.MustQuery("select * from t where a <= 9223372036854775808").Check(testkit.Rows("9223372036854775807"))
+	tk.MustQuery("select * from t where a < 9223372036854775808").Check(testkit.Rows("9223372036854775807"))
+	tk.MustQuery("select * from t where a <= 9223372036854775807").Check(testkit.Rows("9223372036854775807"))
+	tk.MustQuery("select * from t where a > 9223372036854775807").Check(testkit.Rows())
+	tk.MustQuery("select * from t where a > 9223372036854775808").Check(testkit.Rows())
+	tk.MustQuery("select * from t where a >= 9223372036854775808").Check(testkit.Rows())
+}
+
 func (s *testIntegrationSerialSuite) TestCollateStringFunction(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
