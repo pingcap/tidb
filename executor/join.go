@@ -414,10 +414,10 @@ func (e *HashJoinExec) handleUnmatchedRowsFromHashTableInDisk(workerID uint) {
 func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
 	e.joinWorkerWaitGroup.Wait()
 	if e.useOuterToBuild {
-		inMemory := !e.rowContainer.alreadySpilled()
+		inMemory := !e.rowContainer.alreadySpilledSafe()
 		if inMemory {
-			e.rowContainer.rowContainer.GetMutex().Lock()
-			inMemory = !e.rowContainer.alreadySpilled()
+			e.rowContainer.rowContainer.GetMutex().RLock()
+			inMemory = !e.rowContainer.alreadySpilledSafe()
 			if inMemory {
 				// Concurrently handling unmatched rows from the hash table at the tail
 				for i := uint(0); i < e.concurrency; i++ {
@@ -427,7 +427,7 @@ func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
 				}
 				e.joinWorkerWaitGroup.Wait()
 			}
-			e.rowContainer.rowContainer.GetMutex().Unlock()
+			e.rowContainer.rowContainer.GetMutex().RUnlock()
 		}
 		if !inMemory {
 			// Sequentially handling unmatched rows from the hash table to avoid random accessing IO

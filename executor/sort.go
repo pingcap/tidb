@@ -145,7 +145,7 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		// If the partition is in memory, use List.GetRow() to get better performance.
 		inMemory := !e.partitionList[0].AlreadySpilledSafe()
 		if inMemory {
-			e.partitionList[0].GetMutex().Lock()
+			e.partitionList[0].GetMutex().RLock()
 			inMemory = !e.partitionList[0].AlreadySpilledSafe()
 			if inMemory {
 				rowChunks := e.partitionList[0].GetList()
@@ -155,7 +155,7 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 					e.Idx++
 				}
 			}
-			e.partitionList[0].GetMutex().Unlock()
+			e.partitionList[0].GetMutex().RUnlock()
 		}
 		if !inMemory {
 			for !req.IsFull() && e.Idx < len(e.rowPtrs) {

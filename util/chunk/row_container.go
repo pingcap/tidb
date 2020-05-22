@@ -48,7 +48,7 @@ type RowContainer struct {
 	// can spill to disk asynchronously.
 	readOnly uint32
 	// m guarantees spill and get operator for rowContainer is mutually.
-	m sync.Mutex
+	m sync.RWMutex
 
 	memTracker         *memory.Tracker
 	diskTracker        *disk.Tracker
@@ -179,8 +179,8 @@ func (c *RowContainer) GetList() *List {
 
 // GetRow returns the row the ptr pointed to.
 func (c *RowContainer) GetRow(ptr RowPtr) (Row, error) {
-	c.m.Lock()
-	defer c.m.Unlock()
+	c.m.RLock()
+	defer c.m.RUnlock()
 	if c.AlreadySpilled() {
 		return c.recordsInDisk.GetRow(ptr)
 	}
@@ -219,7 +219,7 @@ func (c *RowContainer) SetOnExceededCallback(f func(rowContainer *RowContainer))
 }
 
 // GetMutex gets the rowContainer mutex for better performance.
-func (c *RowContainer) GetMutex() *sync.Mutex {
+func (c *RowContainer) GetMutex() *sync.RWMutex {
 	return &c.m
 }
 
