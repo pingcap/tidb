@@ -201,6 +201,10 @@ func (sr *simpleRewriter) rewriteColumn(nodeColName *ast.ColumnNameExpr) (*Colum
 }
 
 func (sr *simpleRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
+	if raw, ok := inNode.(*ast.ColumnNameExpr); ok {
+		newNode := *raw
+		return &newNode, false
+	}
 	return inNode, false
 }
 
