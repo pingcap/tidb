@@ -741,30 +741,53 @@ func ParseDateFormat(format string) []string {
 	// (the fractional second part is usually removed by `splitDateTime`).
 	// Setting `seps`'s capacity to 6 avoids reallocation in this common case.
 	seps := make([]string, 0, 6)
+	// insep is true whenever a separator has been found and the next digit is
+	// not found yet.
+	insep := false
 	for i := 0; i < len(format); i++ {
 		// Date format must start and end with number.
 		if i == 0 || i == len(format)-1 {
-			if !unicode.IsNumber(rune(format[i])) {
+			if !isDigit(format[i]) {
 				return nil
 			}
-
 			continue
 		}
 
-		// Separator is a single none-number char.
-		if !unicode.IsNumber(rune(format[i])) {
-			if !unicode.IsNumber(rune(format[i-1])) {
-				return nil
+		if isValidSeparator(format[i], insep, len(seps)) {
+			if isValidSeparator(format[i-1], insep, len(seps)) {
+				start++
+				continue
 			}
 
 			seps = append(seps, format[start:i])
 			start = i + 1
+			insep = true
+			continue
 		}
 
+		if !isDigit(format[i]) {
+			return nil
+		}
+
+		insep = false
 	}
 
 	seps = append(seps, format[start:])
 	return seps
+}
+
+// helper for date part splitting, punctuation characters are valid separators anywhere,
+// while space and 'T' are valid separators only between date and time.
+func isValidSeparator(c byte, betweenDateAndTime bool, prevParts int) bool {
+	if isPunctuation(c) {
+		return true
+	}
+
+	if !betweenDateAndTime && prevParts == 2 || betweenDateAndTime && prevParts == 3 {
+		return c == ' ' || c == 'T'
+	}
+
+	return false
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
@@ -782,9 +805,6 @@ func splitDateTime(format string) (seps []string, fracStr string) {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
 func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat bool) (Time, error) {
-	// Try to split str with delimiter.
-	// TODO: only punctuation can be the delimiter for date parts or time parts.
-	// But only space and T can be the delimiter between the date and time part.
 	var (
 		year, month, day, hour, minute, second int
 		fracStr                                string
