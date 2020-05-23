@@ -3,10 +3,10 @@ package export
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/errors"
 	"os"
 	"path"
-	"time"
+
+	"github.com/pingcap/errors"
 
 	"go.uber.org/zap"
 
@@ -118,16 +118,33 @@ func (f *CsvWriter) WriteTableMeta(ctx context.Context, db, table, createSQL str
 	return writeMetaToFile(db, createSQL, filePath)
 }
 
+type outputFileNamer struct {
+	chunkIndex int
+	dbName     string
+	tableName  string
+}
+
+func newOutputFileNamer(ir TableDataIR) *outputFileNamer {
+	return &outputFileNamer{
+		chunkIndex: ir.ChunkIndex(),
+		dbName:     ir.DatabaseName(),
+		tableName:  ir.TableName(),
+	}
+}
+
+func (namer *outputFileNamer) NextName() string {
+	defer func() { namer.chunkIndex++ }()
+	if namer.dbName == "" || namer.tableName == "" {
+		return fmt.Sprintf("result.%d", namer.chunkIndex)
+	}
+	return fmt.Sprintf("%s.%s.%d", namer.dbName, namer.tableName, namer.chunkIndex)
+}
+
 func (f *CsvWriter) WriteTableData(ctx context.Context, ir TableDataIR) error {
 	log.Debug("start dumping table in csv format...", zap.String("table", ir.TableName()))
 
-	chunkIndex := ir.ChunkIndex()
-	fileName := ""
-	if ir.DatabaseName() != "" && ir.TableName() != "" {
-		fileName = fmt.Sprintf("%s.%s.%d.csv", ir.DatabaseName(), ir.TableName(), ir.ChunkIndex())
-	} else {
-		fileName = fmt.Sprintf("%d.csv", time.Now().Unix())
-	}
+	namer := newOutputFileNamer(ir)
+	fileName := fmt.Sprintf("%s.csv", namer.NextName())
 	chunksIter := buildChunksIter(ir, f.cfg.FileSize, f.cfg.StatementSize)
 	defer chunksIter.Rows().Close()
 
@@ -147,8 +164,7 @@ func (f *CsvWriter) WriteTableData(ctx context.Context, ir TableDataIR) error {
 		if f.cfg.FileSize == UnspecifiedSize {
 			break
 		}
-		chunkIndex += 1
-		fileName = fmt.Sprintf("%s.%s.%d.csv", ir.DatabaseName(), ir.TableName(), chunkIndex)
+		fileName = fmt.Sprintf("%s.csv", namer.NextName())
 	}
 	log.Debug("dumping table in csv format successfully",
 		zap.String("table", ir.TableName()))
