@@ -38,6 +38,10 @@ func (iter *rowIter) Decode(row RowReceiver) error {
 	return decodeFromRows(iter.rows, iter.args, row)
 }
 
+func (iter *rowIter) Error() error {
+	return iter.rows.Err()
+}
+
 func (iter *rowIter) Next() {
 	iter.hasNext = iter.rows.Next()
 }
@@ -76,6 +80,10 @@ func (c *fileRowIter) Decode(row RowReceiver) error {
 	c.currentFileSize += size
 	c.currentStatementSize += size
 	return nil
+}
+
+func (c *fileRowIter) Error() error {
+	return c.rowIter.Error()
 }
 
 func (c *fileRowIter) Next() {

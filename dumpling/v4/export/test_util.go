@@ -84,6 +84,7 @@ type mockTableIR struct {
 	colTypes        []string
 	colNames        []string
 	escapeBackSlash bool
+	rowErr          error
 }
 
 func (m *mockTableIR) DatabaseName() string {
@@ -132,6 +133,9 @@ func (m *mockTableIR) Rows() SQLRowIter {
 	}
 	defer db.Close()
 	mock.ExpectQuery("select 1").WillReturnRows(mockRows)
+	if m.rowErr != nil {
+		mockRows.RowError(len(m.data)-1, m.rowErr)
+	}
 	rows, err := db.Query("select 1")
 	if err != nil {
 		panic(fmt.Sprintf("sqlmock.New return error: %v", err))
@@ -152,5 +156,17 @@ func newMockTableIR(databaseName, tableName string, data [][]driver.Value, speci
 		specCmt:       specialComments,
 		selectedField: "*",
 		colTypes:      colTypes,
+	}
+}
+
+func newMockTableIRWithError(databaseName, tableName string, data [][]driver.Value, specialComments, colTypes []string, err error) TableDataIR {
+	return &mockTableIR{
+		dbName:        databaseName,
+		tblName:       tableName,
+		data:          data,
+		specCmt:       specialComments,
+		selectedField: "*",
+		colTypes:      colTypes,
+		rowErr:        err,
 	}
 }

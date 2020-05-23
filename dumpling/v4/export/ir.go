@@ -24,6 +24,7 @@ type TableDataIR interface {
 type SQLRowIter interface {
 	Decode(RowReceiver) error
 	Next()
+	Error() error
 	HasNext() bool
 	HasNextSQLRowIter() bool
 	NextSQLRowIter() SQLRowIter
