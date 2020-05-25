@@ -580,6 +580,27 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				}
 			case ast.ColumnOptionFulltext:
 				ctx.GetSessionVars().StmtCtx.AppendWarning(ErrTableCantHandleFt)
+			case ast.ColumnOptionCheck:
+				// Check the column check constraint dependency.
+				// Refer: https://dev.mysql.com/doc/refman/8.0/en/create-table-check-constraints.html
+				colMap := findDependedColsMapInCheckConstraintExpr(v.Expr)
+				if len(colMap) != 1 {
+					// Refine the error.
+					return nil, nil, errors.New("column check option can only refer the column itself")
+				}
+				if _, ok := colMap[colDef.Name.Name.L]; !ok {
+					// Refine the error.
+					return nil, nil, errors.New("column check option can only refer the column itself")
+				}
+				// Extract column constraint from column option.
+				constraint := &ast.Constraint{
+					Tp:       ast.ConstraintCheck,
+					Expr:     v.Expr,
+					Enforced: v.Enforced,
+					Name:     v.Name,
+					InColumn: true,
+				}
+				constraints = append(constraints, constraint)
 			}
 		}
 	}
@@ -1051,6 +1072,26 @@ func checkDuplicateConstraint(namesMap map[string]bool, name string, foreign boo
 	return nil
 }
 
+func setEmptyCheckConstraintName(tableLowerName string, namesMap map[string]bool, constrs []*ast.Constraint) {
+	cnt := 1
+	constraintPrefix := tableLowerName + "_chk_"
+	for _, constr := range constrs {
+		if constr.Name == "" {
+			constrName := fmt.Sprintf("%s%d", constraintPrefix, cnt)
+			for {
+				// loop until find constrName that haven't been used.
+				if !namesMap[constrName] {
+					namesMap[constrName] = true
+					break
+				}
+				cnt++
+				constrName = fmt.Sprintf("%s%d", constraintPrefix, cnt)
+			}
+			constr.Name = constrName
+		}
+	}
+}
+
 func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint, foreign bool) {
 	if constr.Name == "" && len(constr.Keys) > 0 {
 		colName := constr.Keys[0].Column.Name.L
@@ -1074,7 +1115,7 @@ func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint, fo
 	}
 }
 
-func checkConstraintNames(constraints []*ast.Constraint) error {
+func checkConstraintNames(tableName model.CIStr, constraints []*ast.Constraint) error {
 	constrNames := map[string]bool{}
 	fkNames := map[string]bool{}
 
@@ -1092,16 +1133,24 @@ func checkConstraintNames(constraints []*ast.Constraint) error {
 			}
 		}
 	}
-
+	// Set the length of checkConstraints equal 0, following code will
+	// judge whether there is some check constraints according the length.
+	checkConstraints := make([]*ast.Constraint, 0, len(constraints))
 	// Set empty constraint names.
 	for _, constr := range constraints {
+		if constr.Tp == ast.ConstraintCheck {
+			checkConstraints = append(checkConstraints, constr)
+		}
 		if constr.Tp == ast.ConstraintForeignKey {
 			setEmptyConstraintName(fkNames, constr, true)
 		} else {
 			setEmptyConstraintName(constrNames, constr, false)
 		}
 	}
-
+	// Set check constraint name under its order.
+	if len(checkConstraints) > 0 {
+		setEmptyCheckConstraintName(tableName.L, constrNames, checkConstraints)
+	}
 	return nil
 }
 
@@ -1244,9 +1293,12 @@ func buildTableInfo(
 		Charset: charset,
 		Collate: collate,
 	}
+	// existedColsMap can be used to check the depended-column whether exists.
+	existedColsMap := make(map[string]struct{})
 	for _, v := range cols {
 		v.ID = allocateColumnID(tbInfo)
 		tbInfo.Columns = append(tbInfo.Columns, v.ToInfo())
+		existedColsMap[v.Name.L] = struct{}{}
 	}
 	for _, constr := range constraints {
 		if constr.Tp == ast.ConstraintForeignKey {
@@ -1290,6 +1342,45 @@ func buildTableInfo(
 			sc.AppendWarning(ErrTableCantHandleFt)
 			continue
 		}
+
+		if constr.Tp == ast.ConstraintCheck {
+			// Since column check constraint dependency has been done in colDefToCol.
+			// Here do the table check constraint dependency check, table constraint
+			// can only refer the columns in defined columns of the table.
+			var dependedCols []model.CIStr
+			if !constr.InColumn {
+				dependedColsMap := findDependedColsMapInCheckConstraintExpr(constr.Expr)
+				dependedCols = make([]model.CIStr, 0, len(dependedColsMap))
+				for k := range dependedColsMap {
+					if _, ok := existedColsMap[k]; !ok {
+						// The table constraint depended on a non-existed column.
+						// Todo: refine the error.
+						return nil, errors.New("table check option can only refer the public columns in the table")
+					}
+					dependedCols = append(dependedCols, model.NewCIStr(k))
+				}
+			} else {
+				// Since column check constraint dependency has been done in colDefToCol.
+				// Here extract single column name out of map directly.
+				dependedColsMap := findDependedColsMapInCheckConstraintExpr(constr.Expr)
+				singleColumnName := ""
+				for k := range dependedColsMap {
+					singleColumnName = k
+					break
+				}
+				dependedCols = []model.CIStr{model.NewCIStr(singleColumnName)}
+			}
+
+			// build constraint meta info.
+			constraintInfo, err := buildConstraintInfo(tbInfo, dependedCols, constr, model.StatePublic)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			constraintInfo.ID = allocateConstraintID(tbInfo)
+			tbInfo.Constraints = append(tbInfo.Constraints, constraintInfo)
+			continue
+		}
+
 		// build index info.
 		idxInfo, err := buildIndexInfo(tbInfo, model.NewCIStr(constr.Name), constr.Keys, model.StatePublic)
 		if err != nil {
@@ -1482,7 +1573,7 @@ func buildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	err = checkConstraintNames(newConstraints)
+	err = checkConstraintNames(s.Table.Name, newConstraints)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

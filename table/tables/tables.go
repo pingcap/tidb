@@ -51,17 +51,19 @@ import (
 type TableCommon struct {
 	tableID int64
 	// physicalTableID is a unique int64 to identify a physical table.
-	physicalTableID int64
-	Columns         []*table.Column
-	PublicColumns   []*table.Column
-	VisibleColumns  []*table.Column
-	HiddenColumns   []*table.Column
-	WritableColumns []*table.Column
-	writableIndices []table.Index
-	indices         []table.Index
-	meta            *model.TableInfo
-	allocs          autoid.Allocators
-	sequence        *sequenceCommon
+	physicalTableID   int64
+	Columns           []*table.Column
+	PublicColumns     []*table.Column
+	VisibleColumns    []*table.Column
+	HiddenColumns     []*table.Column
+	WritableColumns   []*table.Column
+	writableIndices   []table.Index
+	indices           []table.Index
+	PublicConstraints []table.Constraint
+	Constraints       []table.Constraint
+	meta              *model.TableInfo
+	allocs            autoid.Allocators
+	sequence          *sequenceCommon
 
 	// recordPrefix and indexPrefix are generated using physicalTableID.
 	recordPrefix kv.Key
