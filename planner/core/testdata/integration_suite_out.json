@@ -263,8 +263,8 @@
         "SQL": "desc select /*+ TIDB_INLJ(t2)*/ * from t1, t2 where t1.a = t2.a and t1.b = t2.a and t1.b = t2.b",
         "Plan": [
           "IndexJoin_12 12487.50 root  inner join, inner:TableReader_11, outer key:test.t1.a, test.t1.b, inner key:test.t2.a, test.t2.a, other cond:eq(test.t1.b, test.t2.b)",
-          "├─IndexReader_21(Build) 9990.00 root  index:IndexFullScan_20",
-          "│ └─IndexFullScan_20 9990.00 cop[tikv] table:t1, index:idx_t1_b(b) keep order:false, stats:pseudo",
+          "├─IndexReader_20(Build) 9990.00 root  index:IndexFullScan_19",
+          "│ └─IndexFullScan_19 9990.00 cop[tikv] table:t1, index:idx_t1_b(b) keep order:false, stats:pseudo",
           "└─TableReader_11(Probe) 1.00 root  data:Selection_10",
           "  └─Selection_10 1.00 cop[tikv]  not(isnull(test.t2.b))",
           "    └─TableRangeScan_9 1.00 cop[tikv] table:t2 range: decided by [test.t1.a test.t1.b], keep order:false, stats:pseudo"
@@ -579,6 +579,66 @@
           "└─TableReader_18 20.00 root  data:Selection_17",
           "  └─Selection_17 20.00 cop[tikv]  in(test.t.b, 3, 4)",
           "    └─TableFullScan_16 10000.00 cop[tikv] table:t, partition:p2 keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestStreamAggProp",
+    "Cases": [
+      {
+        "SQL": "select /*+ stream_agg() */ count(*) c from t group by a order by c limit 1",
+        "Plan": [
+          "TopN_10 1.00 root  Column#3, offset:0, count:1",
+          "└─StreamAgg_17 8000.00 root  group by:test.t.a, funcs:count(1)->Column#3",
+          "  └─Sort_22 10000.00 root  test.t.a",
+          "    └─TableReader_21 10000.00 root  data:TableFullScan_20",
+          "      └─TableFullScan_20 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "select /*+ stream_agg() */ count(*) c from t group by a order by c",
+        "Plan": [
+          "Sort_5 8000.00 root  Column#3",
+          "└─StreamAgg_11 8000.00 root  group by:test.t.a, funcs:count(1)->Column#3",
+          "  └─Sort_16 10000.00 root  test.t.a",
+          "    └─TableReader_15 10000.00 root  data:TableFullScan_14",
+          "      └─TableFullScan_14 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "1",
+          "2"
+        ]
+      },
+      {
+        "SQL": "select /*+ stream_agg() */ count(*) c from t group by a order by a limit 1",
+        "Plan": [
+          "Projection_8 1.00 root  Column#3",
+          "└─Limit_14 1.00 root  offset:0, count:1",
+          "  └─StreamAgg_27 1.00 root  group by:test.t.a, funcs:count(1)->Column#3, funcs:firstrow(test.t.a)->test.t.a",
+          "    └─Sort_32 1.25 root  test.t.a",
+          "      └─TableReader_31 1.25 root  data:TableFullScan_30",
+          "        └─TableFullScan_30 1.25 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "2"
+        ]
+      },
+      {
+        "SQL": "select /*+ stream_agg() */ count(*) c from t group by a order by a",
+        "Plan": [
+          "Projection_6 8000.00 root  Column#3",
+          "└─StreamAgg_21 8000.00 root  group by:test.t.a, funcs:count(1)->Column#3, funcs:firstrow(test.t.a)->test.t.a",
+          "  └─Sort_17 10000.00 root  test.t.a",
+          "    └─TableReader_16 10000.00 root  data:TableFullScan_15",
+          "      └─TableFullScan_15 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "2",
+          "1"
         ]
       }
     ]
