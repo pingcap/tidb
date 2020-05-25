@@ -255,7 +255,7 @@ func assertEqualStrings(c *C, got []field, expect []string) {
 }
 
 func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
-	c.Skip("Closed the feature temporarily.")
+	c.Skip("Close the feature temporarily.")
 	originCfg := config.GetGlobalConfig()
 	newConf := *originCfg
 	newConf.OOMUseTmpStorage = true
