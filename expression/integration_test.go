@@ -6372,8 +6372,6 @@ func (s *testIntegrationSuite) TestIssue16697(c *C) {
 		}
 	}
 }
-<<<<<<< HEAD
-=======
 
 func (s *testIntegrationSuite) TestIssue17045(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -6447,4 +6445,3 @@ func (s *testIntegrationSuite) TestIndexedVirtualGeneratedColumnTruncate(c *C) {
 	tk.MustExec("commit")
 	tk.MustExec("admin check table t")
 }
->>>>>>> 78d6900... ddl: consider collation when checks enum value in create table statement (#17177)
