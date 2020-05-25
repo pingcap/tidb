@@ -325,6 +325,28 @@ func (s *testFieldTypeSuite) TestAggFieldTypeForTypeFlag(c *C) {
 	aggTp = AggFieldType(types)
 	c.Assert(aggTp.Tp, Equals, mysql.TypeLonglong)
 	c.Assert(aggTp.Flag, Equals, mysql.NotNullFlag)
+
+	types[0].Flag = mysql.UnsignedFlag
+	aggTp = AggFieldType(types)
+	c.Assert(aggTp.Tp, Equals, mysql.TypeLonglong)
+	c.Assert(aggTp.Flag, Equals, uint(0))
+
+	types[0].Flag = 0
+	types[1].Flag = mysql.UnsignedFlag
+	aggTp = AggFieldType(types)
+	c.Assert(aggTp.Tp, Equals, mysql.TypeLonglong)
+	c.Assert(aggTp.Flag, Equals, uint(0))
+
+	types[0].Flag = mysql.UnsignedFlag
+	aggTp = AggFieldType(types)
+	c.Assert(aggTp.Tp, Equals, mysql.TypeLonglong)
+	c.Assert(aggTp.Flag, Equals, mysql.UnsignedFlag)
+
+	types[0].Flag = mysql.UnsignedFlag | mysql.NotNullFlag
+	types[1].Flag = mysql.UnsignedFlag | mysql.NotNullFlag
+	aggTp = AggFieldType(types)
+	c.Assert(aggTp.Tp, Equals, mysql.TypeLonglong)
+	c.Assert(aggTp.Flag, Equals, mysql.UnsignedFlag|mysql.NotNullFlag)
 }
 
 func (s *testFieldTypeSuite) TestAggregateEvalType(c *C) {
