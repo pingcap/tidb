@@ -15,13 +15,14 @@ package executor
 
 import (
 	"fmt"
+	"unsafe"
+
 	"github.com/hashicorp/golang-lru"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stringutil"
-	"unsafe"
 )
 
 type applyCache struct {

@@ -1,7 +1,7 @@
 port = 4001
 lease = "0"
 mem-quota-query = 34359738368
-apply-cache-quota = 1048576
+apply-cache-quota = 104857600
 
 [status]
 status-port = 10081
