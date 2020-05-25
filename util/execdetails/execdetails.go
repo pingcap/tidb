@@ -371,6 +371,29 @@ func NewConcurrencyInfo(name string, num int) *ConcurrencyInfo {
 	return &ConcurrencyInfo{name, num}
 }
 
+// cacheInfo is used to save the concurrency information of the executor operator
+type cacheInfo struct {
+	hitNum   int
+	hitRatio float64
+	useCache bool
+}
+
+// SetCacheInfo sets the cache information. Only used for apply executor.
+func (e *RuntimeStats) SetCacheInfo(useCache bool, totalNum int, hitNum int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.applyCache = true
+	e.cache.useCache = useCache
+	if useCache {
+		e.cache.hitNum = hitNum
+		if totalNum != 0 {
+			e.cache.hitRatio = float64(hitNum) / float64(totalNum)
+		} else {
+			e.cache.hitRatio = 0
+		}
+	}
+}
+
 // RuntimeStats collects one executor's execution info.
 type RuntimeStats struct {
 	// executor's Next() called times.
@@ -384,6 +407,8 @@ type RuntimeStats struct {
 	mu sync.Mutex
 	// executor concurrency information
 	concurrency []*ConcurrencyInfo
+	applyCache  bool
+	cache       cacheInfo
 
 	// additional information for executors
 	additionalInfo string
@@ -504,6 +529,13 @@ func (e *RuntimeStats) String() string {
 			} else {
 				result += fmt.Sprintf(", %s:OFF", concurrency.concurrencyName)
 			}
+		}
+	}
+	if e.applyCache {
+		if e.cache.useCache {
+			result += fmt.Sprintf(", cache:ON, cacheHitNum:%d, cacheHitRatio:%f", e.cache.hitNum, e.cache.hitRatio)
+		} else {
+			result += fmt.Sprintf(", cache:OFF")
 		}
 	}
 	if len(e.additionalInfo) > 0 {
