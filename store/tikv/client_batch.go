@@ -232,6 +232,7 @@ func (c *batchCommandsClient) send(request *tikvpb.BatchCommandsRequest, entries
 		logutil.BgLogger().Info(
 			"sending batch commands meets error",
 			zap.String("target", c.target),
+			zap.Uint64s("requestIDs", request.RequestIds),
 			zap.Error(err),
 		)
 		c.failPendingRequests(err)
@@ -345,10 +346,10 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient, tikvTransport
 		for i, requestID := range resp.GetRequestIds() {
 			value, ok := c.batched.Load(requestID)
 			if !ok {
-				// There shouldn't be any unknown responses because if the old entries
-				// are cleaned by `failPendingRequests`, the stream must be re-created
-				// so that old responses will be never received.
-				panic("batchRecvLoop receives a unknown response")
+				// this maybe caused by batchCommandsClient#send meets ambiguous error that request has be sent to TiKV but still report a error.
+				// then TiKV will send response back though stream and reach here.
+				logutil.BgLogger().Warn("batchRecvLoop receives outdated response", zap.Uint64("requestID", requestID))
+				continue
 			}
 			entry := value.(*batchCommandsEntry)
 			logutil.Eventf(entry.ctx, "receive %T response with other %d batched requests from %s", responses[i].GetCmd(), len(responses), c.target)
