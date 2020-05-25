@@ -103,7 +103,7 @@ const (
 )
 
 // plan id.
-// Attention: For compatibility of encode/decode plan, The plan id shouldn't be changed.
+// Attention: for compatibility of encode/decode plan, The plan id shouldn't be changed.
 const (
 	typeSelID                 int = 1
 	typeSetID                     = 2
