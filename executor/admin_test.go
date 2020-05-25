@@ -47,6 +47,32 @@ func (s *testSuite1) TestAdminCheckIndexRange(c *C) {
 	result.Check(testkit.Rows("-1 hi 4", "2 cd 2"))
 }
 
+func (s *testSuite5) TestAdminCheckIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	check := func() {
+		tk.MustExec("insert admin_test (c1, c2) values (1, 1), (2, 2), (5, 5), (10, 10), (11, 11), (NULL, NULL)")
+		tk.MustExec("admin check index admin_test c1")
+		tk.MustExec("admin check index admin_test c2")
+	}
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, index (c1), unique key(c2))")
+	check()
+
+	// Test for hash partition table.
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, index (c1), unique key(c2)) partition by hash(c2) partitions 5;")
+	check()
+
+	// Test for range partition table.
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec(`create table admin_test (c1 int, c2 int, c3 int default 1, index (c1), unique key(c2)) PARTITION BY RANGE ( c2 ) (
+		PARTITION p0 VALUES LESS THAN (5),
+		PARTITION p1 VALUES LESS THAN (10),
+		PARTITION p2 VALUES LESS THAN (MAXVALUE))`)
+	check()
+}
+
 func (s *testSuite5) TestAdminRecoverIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
