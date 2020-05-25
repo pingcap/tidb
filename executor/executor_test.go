@@ -4389,15 +4389,51 @@ func (s *testSplitTable) TestShowTableRegion(c *C) {
 		p := tbl.Meta().GetPartitionInfo().Definitions[i]
 		c.Assert(rows[i*4+0][1], Equals, fmt.Sprintf("t_%d_", p.ID))
 		c.Assert(rows[i*4+1][1], Equals, fmt.Sprintf("t_%d_r_1000000", p.ID))
-
 		c.Assert(rows[i*4+2][1], Equals, fmt.Sprintf("t_%d_r_1200000", p.ID))
 		c.Assert(rows[i*4+3][1], Equals, fmt.Sprintf("t_%d_r_1400000", p.ID))
 		c.Assert(rows[i*4+4][1], Equals, fmt.Sprintf("t_%d_r_1600000", p.ID))
 		c.Assert(rows[i*4+5][1], Equals, fmt.Sprintf("t_%d_r_1800000", p.ID))
-
 		c.Assert(rows[i*4+6][1], Equals, fmt.Sprintf("t_%d_r_2000000", p.ID))
 		c.Assert(rows[i*4+7][1], Equals, fmt.Sprintf("t_%d_r_3000000", p.ID))
 	}
+
+	// Test for show table partition regions.
+	for i := 0; i < 4; i++ {
+		re = tk.MustQuery(fmt.Sprintf("show table t partition (p%v) regions", i))
+		rows = re.Rows()
+		c.Assert(len(rows), Equals, 4)
+		p := tbl.Meta().GetPartitionInfo().Definitions[i]
+		c.Assert(rows[0][1], Equals, fmt.Sprintf("t_%d_", p.ID))
+		c.Assert(rows[1][1], Equals, fmt.Sprintf("t_%d_r_1000000", p.ID))
+		c.Assert(rows[2][1], Equals, fmt.Sprintf("t_%d_r_2000000", p.ID))
+		c.Assert(rows[3][1], Equals, fmt.Sprintf("t_%d_r_3000000", p.ID))
+	}
+	re = tk.MustQuery("show table t partition (p0, p4) regions")
+	rows = re.Rows()
+	c.Assert(len(rows), Equals, 12)
+	p := tbl.Meta().GetPartitionInfo().Definitions[0]
+	c.Assert(rows[0][1], Equals, fmt.Sprintf("t_%d_", p.ID))
+	c.Assert(rows[1][1], Equals, fmt.Sprintf("t_%d_r_1000000", p.ID))
+	c.Assert(rows[2][1], Equals, fmt.Sprintf("t_%d_r_2000000", p.ID))
+	c.Assert(rows[3][1], Equals, fmt.Sprintf("t_%d_r_3000000", p.ID))
+	p = tbl.Meta().GetPartitionInfo().Definitions[4]
+	c.Assert(rows[4][1], Equals, fmt.Sprintf("t_%d_", p.ID))
+	c.Assert(rows[5][1], Equals, fmt.Sprintf("t_%d_r_1000000", p.ID))
+	c.Assert(rows[6][1], Equals, fmt.Sprintf("t_%d_r_1200000", p.ID))
+	c.Assert(rows[7][1], Equals, fmt.Sprintf("t_%d_r_1400000", p.ID))
+	c.Assert(rows[8][1], Equals, fmt.Sprintf("t_%d_r_1600000", p.ID))
+	c.Assert(rows[9][1], Equals, fmt.Sprintf("t_%d_r_1800000", p.ID))
+	c.Assert(rows[10][1], Equals, fmt.Sprintf("t_%d_r_2000000", p.ID))
+	c.Assert(rows[11][1], Equals, fmt.Sprintf("t_%d_r_3000000", p.ID))
+	// Test for duplicate partition names.
+	re = tk.MustQuery("show table t partition (p0, p0, p0) regions")
+	rows = re.Rows()
+	c.Assert(len(rows), Equals, 4)
+	p = tbl.Meta().GetPartitionInfo().Definitions[0]
+	c.Assert(rows[0][1], Equals, fmt.Sprintf("t_%d_", p.ID))
+	c.Assert(rows[1][1], Equals, fmt.Sprintf("t_%d_r_1000000", p.ID))
+	c.Assert(rows[2][1], Equals, fmt.Sprintf("t_%d_r_2000000", p.ID))
+	c.Assert(rows[3][1], Equals, fmt.Sprintf("t_%d_r_3000000", p.ID))
 
 	// Test split partition table index.
 	tk.MustExec("drop table if exists t")
@@ -4455,6 +4491,39 @@ func (s *testSplitTable) TestShowTableRegion(c *C) {
 		c.Assert(rows[i*8+11][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
 	}
 
+	// Test show table partition region on unknown-partition.
+	err := tk.QueryToErr("show table t partition (p_unknown) index idx regions")
+	c.Assert(terror.ErrorEqual(err, table.ErrUnknownPartition), IsTrue)
+
+	// Test show table partition index.
+	for i := 0; i < 4; i++ {
+		re = tk.MustQuery(fmt.Sprintf("show table t partition (p%v) index idx regions", i))
+		rows = re.Rows()
+		c.Assert(len(rows), Equals, 4)
+		p := tbl.Meta().GetPartitionInfo().Definitions[i]
+		c.Assert(rows[0][1], Equals, fmt.Sprintf("t_%d_", p.ID))
+		c.Assert(rows[1][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+		c.Assert(rows[2][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+		c.Assert(rows[3][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+	}
+	re = tk.MustQuery("show table t partition (p3,p4) index idx regions")
+	rows = re.Rows()
+	c.Assert(len(rows), Equals, 12)
+	p = tbl.Meta().GetPartitionInfo().Definitions[3]
+	c.Assert(rows[0][1], Equals, fmt.Sprintf("t_%d_", p.ID))
+	c.Assert(rows[1][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+	c.Assert(rows[2][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+	c.Assert(rows[3][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+	p = tbl.Meta().GetPartitionInfo().Definitions[4]
+	c.Assert(rows[4][1], Equals, fmt.Sprintf("t_%d_", p.ID))
+	c.Assert(rows[5][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+	c.Assert(rows[6][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+	c.Assert(rows[7][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+	c.Assert(rows[8][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+	c.Assert(rows[9][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+	c.Assert(rows[10][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+	c.Assert(rows[11][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
+
 	// Test split for the second index.
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int,b int,index idx(a), index idx2(b))")
@@ -4467,6 +4536,10 @@ func (s *testSplitTable) TestShowTableRegion(c *C) {
 	c.Assert(rows[1][1], Equals, fmt.Sprintf("t_%d_", tbl.Meta().ID))
 	c.Assert(rows[2][1], Matches, fmt.Sprintf("t_%d_i_2_.*", tbl.Meta().ID))
 	c.Assert(rows[3][1], Matches, fmt.Sprintf("t_%d_i_2_.*", tbl.Meta().ID))
+
+	// Test show table partition region on non-partition table.
+	err = tk.QueryToErr("show table t partition (p3,p4) index idx regions")
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrPartitionClauseOnNonpartitioned), IsTrue)
 }
 
 func testGetTableByName(c *C, ctx sessionctx.Context, db, table string) table.Table {
@@ -5532,6 +5605,95 @@ func (s *testSuite1) TestInsertValuesWithSubQuery(c *C) {
 	tk.MustQuery("select * from t2").Check(testkit.Rows("2 4 2"))
 	tk.MustExec("insert into t2 set a = 3, b = 5, c = b")
 	tk.MustQuery("select * from t2").Check(testkit.Rows("2 4 2", "3 5 5"))
+}
+
+func (s *testSuite1) TestInsertIntoGivenPartitionSet(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec(`create table t1(
+	a int(11) DEFAULT NULL, 
+	b varchar(10) DEFAULT NULL,
+	UNIQUE KEY idx_a (a)) PARTITION BY RANGE (a)
+	(PARTITION p0 VALUES LESS THAN (10) ENGINE = InnoDB,
+	 PARTITION p1 VALUES LESS THAN (20) ENGINE = InnoDB,
+	 PARTITION p2 VALUES LESS THAN (30) ENGINE = InnoDB,
+	 PARTITION p3 VALUES LESS THAN (40) ENGINE = InnoDB,
+	 PARTITION p4 VALUES LESS THAN MAXVALUE ENGINE = InnoDB)`)
+	defer tk.MustExec("drop table if exists t1")
+
+	// insert into
+	tk.MustExec("insert into t1 partition(p0) values(1, 'a'), (2, 'b')")
+	tk.MustQuery("select * from t1 partition(p0) order by a").Check(testkit.Rows("1 a", "2 b"))
+	tk.MustExec("insert into t1 partition(p0, p1) values(3, 'c'), (4, 'd')")
+	tk.MustQuery("select * from t1 partition(p1)").Check(testkit.Rows())
+
+	err := tk.ExecToErr("insert into t1 values(1, 'a')")
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1' for key 'idx_a'")
+
+	err = tk.ExecToErr("insert into t1 partition(p0, p_non_exist) values(1, 'a')")
+	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'p_non_exist' in table 't1'")
+
+	err = tk.ExecToErr("insert into t1 partition(p0, p1) values(40, 'a')")
+	c.Assert(err.Error(), Equals, "[table:1748]Found a row not matching the given partition set")
+
+	// replace into
+	tk.MustExec("replace into t1 partition(p0) values(1, 'replace')")
+	tk.MustExec("replace into t1 partition(p0, p1) values(3, 'replace'), (4, 'replace')")
+
+	err = tk.ExecToErr("replace into t1 values(1, 'a')")
+	tk.MustQuery("select * from t1 partition (p0) order by a").Check(testkit.Rows("1 a", "2 b", "3 replace", "4 replace"))
+
+	err = tk.ExecToErr("replace into t1 partition(p0, p_non_exist) values(1, 'a')")
+	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'p_non_exist' in table 't1'")
+
+	err = tk.ExecToErr("replace into t1 partition(p0, p1) values(40, 'a')")
+	c.Assert(err.Error(), Equals, "[table:1748]Found a row not matching the given partition set")
+
+	tk.MustExec("truncate table t1")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b char(10))")
+	defer tk.MustExec("drop table if exists t")
+
+	// insert into general table
+	err = tk.ExecToErr("insert into t partition(p0, p1) values(1, 'a')")
+	c.Assert(err.Error(), Equals, "[planner:1747]PARTITION () clause on non partitioned table")
+
+	// insert into from select
+	tk.MustExec("insert into t values(1, 'a'), (2, 'b')")
+	tk.MustExec("insert into t1 partition(p0) select * from t")
+	tk.MustQuery("select * from t1 partition(p0) order by a").Check(testkit.Rows("1 a", "2 b"))
+
+	tk.MustExec("truncate table t")
+	tk.MustExec("insert into t values(3, 'c'), (4, 'd')")
+	tk.MustExec("insert into t1 partition(p0, p1) select * from t")
+	tk.MustQuery("select * from t1 partition(p1) order by a").Check(testkit.Rows())
+	tk.MustQuery("select * from t1 partition(p0) order by a").Check(testkit.Rows("1 a", "2 b", "3 c", "4 d"))
+
+	err = tk.ExecToErr("insert into t1 select 1, 'a'")
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1' for key 'idx_a'")
+
+	err = tk.ExecToErr("insert into t1 partition(p0, p_non_exist) select 1, 'a'")
+	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'p_non_exist' in table 't1'")
+
+	err = tk.ExecToErr("insert into t1 partition(p0, p1) select 40, 'a'")
+	c.Assert(err.Error(), Equals, "[table:1748]Found a row not matching the given partition set")
+
+	// replace into from select
+	tk.MustExec("replace into t1 partition(p0) select 1, 'replace'")
+	tk.MustExec("truncate table t")
+	tk.MustExec("insert into t values(3, 'replace'), (4, 'replace')")
+	tk.MustExec("replace into t1 partition(p0, p1) select * from t")
+
+	err = tk.ExecToErr("replace into t1 values select 1, 'a'")
+	tk.MustQuery("select * from t1 partition (p0) order by a").Check(testkit.Rows("1 replace", "2 b", "3 replace", "4 replace"))
+
+	err = tk.ExecToErr("replace into t1 partition(p0, p_non_exist) select 1, 'a'")
+	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'p_non_exist' in table 't1'")
+
+	err = tk.ExecToErr("replace into t1 partition(p0, p1) select 40, 'a'")
+	c.Assert(err.Error(), Equals, "[table:1748]Found a row not matching the given partition set")
 }
 
 func (s *testSuite1) TestUpdateGivenPartitionSet(c *C) {
