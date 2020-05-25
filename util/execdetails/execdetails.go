@@ -360,10 +360,15 @@ type RuntimeStatsColl struct {
 	readerStats map[string]*ReaderRuntimeStats
 }
 
-// concurrencyInfo is used to save the concurrency information of the executor operator
-type concurrencyInfo struct {
+// ConcurrencyInfo is used to save the concurrency information of the executor operator
+type ConcurrencyInfo struct {
 	concurrencyName string
 	concurrencyNum  int
+}
+
+// NewConcurrencyInfo creates new executor's concurrencyInfo.
+func NewConcurrencyInfo(name string, num int) *ConcurrencyInfo {
+	return &ConcurrencyInfo{name, num}
 }
 
 // RuntimeStats collects one executor's execution info.
@@ -378,35 +383,10 @@ type RuntimeStats struct {
 	// protect concurrency
 	mu sync.Mutex
 	// executor concurrency information
-	concurrency []concurrencyInfo
-	applyCache  bool
-	cache       cacheInfo
+	concurrency []*ConcurrencyInfo
 
 	// additional information for executors
 	additionalInfo string
-}
-
-// cacheInfo is used to save the concurrency information of the executor operator
-type cacheInfo struct {
-	hitNum   int
-	hitRatio float64
-	useCache bool
-}
-
-// SetCacheInfo sets the cache information. Only used for apply executor.
-func (e *RuntimeStats) SetCacheInfo(useCache bool, totalNum int, hitNum int) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.applyCache = true
-	e.cache.useCache = useCache
-	if useCache {
-		e.cache.hitNum = hitNum
-		if totalNum != 0 {
-			e.cache.hitRatio = float64(hitNum) / float64(totalNum)
-		} else {
-			e.cache.hitRatio = 0
-		}
-	}
 }
 
 // NewRuntimeStatsColl creates new executor collector.
@@ -491,12 +471,16 @@ func (e *RuntimeStats) SetRowNum(rowNum int64) {
 	atomic.StoreInt64(&e.rows, rowNum)
 }
 
-// SetConcurrencyInfo sets the concurrency information.
+// SetConcurrencyInfo sets the concurrency informations.
+// We must clear the concurrencyInfo first when we call the SetConcurrencyInfo.
 // When the num <= 0, it means the exector operator is not executed parallel.
-func (e *RuntimeStats) SetConcurrencyInfo(name string, num int) {
+func (e *RuntimeStats) SetConcurrencyInfo(infos ...*ConcurrencyInfo) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.concurrency = append(e.concurrency, concurrencyInfo{concurrencyName: name, concurrencyNum: num})
+	e.concurrency = e.concurrency[:0]
+	for _, info := range infos {
+		e.concurrency = append(e.concurrency, info)
+	}
 }
 
 // SetAdditionalInfo sets the additional information.
@@ -522,14 +506,6 @@ func (e *RuntimeStats) String() string {
 			}
 		}
 	}
-	if e.applyCache {
-		if e.cache.useCache {
-			result += fmt.Sprintf(", cache:ON, cacheHitNum:%d, cacheHitRatio:%f", e.cache.hitNum, e.cache.hitRatio)
-		} else {
-			result += fmt.Sprintf(", cache:OFF")
-		}
-	}
-
 	if len(e.additionalInfo) > 0 {
 		result += ", " + e.additionalInfo
 	}
