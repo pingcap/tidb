@@ -14,27 +14,38 @@
 package executor
 
 import (
+	"fmt"
 	"github.com/hashicorp/golang-lru"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/stringutil"
+	"unsafe"
 )
 
 type applyCache struct {
-	cache *lru.Cache
+	cache      *lru.Cache
+	memQuota   int64
+	memTracker *memory.Tracker // track memory usage.
 }
 
 type applyCacheValue struct {
 	Data *chunk.List
 }
 
+var applyCacheLabel fmt.Stringer = stringutil.StringerStr("applyCache")
+
 func newApplyCache(ctx sessionctx.Context) (*applyCache, error) {
-	cache, err := lru.New(int(ctx.GetSessionVars().ApplyCacheQuota))
+	num := int(ctx.GetSessionVars().ApplyCacheQuota / 100)
+	cache, err := lru.New(num)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	c := applyCache{
-		cache: cache,
+		cache:      cache,
+		memQuota:   ctx.GetSessionVars().ApplyCacheQuota,
+		memTracker: memory.NewTracker(applyCacheLabel, -1),
 	}
 	return &c, nil
 }
@@ -57,5 +68,19 @@ func (c *applyCache) Set(key string, value *applyCacheValue) bool {
 	if c == nil {
 		return false
 	}
+	mem := int64(unsafe.Sizeof(key)) + value.Data.GetMemTracker().BytesConsumed()
+	for mem+c.memTracker.BytesConsumed() > c.memQuota {
+		evictedKey, evictedValue, evicted := c.cache.RemoveOldest()
+		if !evicted {
+			return false
+		}
+		c.memTracker.Consume(-(int64(unsafe.Sizeof(evictedKey)) + evictedValue.(*applyCacheValue).Data.GetMemTracker().BytesConsumed()))
+	}
+	c.memTracker.Consume(mem)
 	return c.cache.Add(key, value)
+}
+
+// GetMemTracker returns the memory tracker of this apply cache.
+func (c *applyCache) GetMemTracker() *memory.Tracker {
+	return c.memTracker
 }

@@ -30,7 +30,7 @@ type testApplyCacheSuite struct {
 
 func (s *testApplyCacheSuite) TestApplyCache(c *C) {
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().ApplyCacheQuota = 1
+	ctx.GetSessionVars().ApplyCacheQuota = 100
 	applyCache, err := newApplyCache(ctx)
 	c.Assert(err, IsNil)
 

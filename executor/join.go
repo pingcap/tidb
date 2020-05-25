@@ -803,6 +803,7 @@ func (e *NestedLoopApplyExec) Close() error {
 }
 
 var innerListLabel fmt.Stringer = stringutil.StringerStr("innerList")
+var cacheLabel fmt.Stringer = stringutil.StringerStr("cache")
 
 // Open implements the Executor interface.
 func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
@@ -824,11 +825,13 @@ func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 
 	if e.canUseCache {
 		e.cache, err = newApplyCache(e.ctx)
-		e.cacheHitNumber = 0
-		e.totalNumber = 0
 		if err != nil {
 			return err
 		}
+		e.cacheHitNumber = 0
+		e.totalNumber = 0
+		e.cache.GetMemTracker().SetLabel(applyCacheLabel)
+		e.cache.GetMemTracker().AttachTo(e.memTracker)
 	}
 	return nil
 }
