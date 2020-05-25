@@ -138,6 +138,25 @@ func myMinInt8(a, b int8) int8 {
 	return b
 }
 
+// Returns the length of the longer prefix of the given string that contains
+// only digits, capped to the given maximum length.
+func digitPrefixLen(s string, maxLen int) int {
+	l := 0
+	if len(s) < maxLen {
+		maxLen = len(s)
+	}
+
+	for l < maxLen {
+		if !isDigit(s[l]) {
+			break
+		}
+
+		l++
+	}
+
+	return l
+}
+
 const (
 	maxUint    = uint64(math.MaxUint64)
 	uintCutOff = maxUint/uint64(10) + 1

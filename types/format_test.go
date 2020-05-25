@@ -14,6 +14,8 @@
 package types_test
 
 import (
+	"testing"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
@@ -142,5 +144,17 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 	for _, tt := range errTests {
 		var t types.Time
 		c.Assert(t.StrToDate(sc, tt.input, tt.format), IsFalse)
+	}
+}
+
+func BenchmarkStrToDate(b *testing.B) {
+	sc := mock.NewContext().GetSessionVars().StmtCtx
+	date := "15-01-2001 1:9:8.999"
+	format := "%d-%m-%Y %H:%i:%S.%f"
+
+	b.ResetTimer()
+	for n := 0; n < b.N; n++ {
+		var t types.Time
+		t.StrToDate(sc, date, format)
 	}
 }
