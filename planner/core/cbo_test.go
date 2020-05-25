@@ -871,12 +871,16 @@ func (s *testAnalyzeSuite) TestIndexEqualUnknown(c *C) {
 	err = s.loadTableStats("analyzeSuiteTestIndexEqualUnknownT.json", dom)
 	c.Assert(err, IsNil)
 	var input []string
-	var output [][]string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
 	s.testData.GetTestCases(c, &input, &output)
 	for i, tt := range input {
 		s.testData.OnRecord(func() {
-			output[i] = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
-		testKit.MustQuery(tt).Check(testkit.Rows(output[i]...))
+		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}
 }
