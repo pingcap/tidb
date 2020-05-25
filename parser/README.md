@@ -41,6 +41,7 @@ found you are one of the users but not listed here:
 - [XiaoMi/soar](https://github.com/XiaoMi/soar)
 - [XiaoMi/Gaea](https://github.com/XiaoMi/Gaea)
 - [sql-machine-learning/sqlflow](https://github.com/sql-machine-learning/sqlflow)
+- [nooncall/shazam](https://github.com/nooncall/shazam)
 
 ## Contributing
 
