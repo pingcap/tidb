@@ -1878,6 +1878,23 @@ func BenchmarkTimeCompare(b *testing.B) {
 	}
 }
 
+func benchmarkDateFormat(b *testing.B, name, str string) {
+	b.Run(name, func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			types.ParseDateFormat(str)
+		}
+	})
+}
+
+func BenchmarkParseDateFormat(b *testing.B) {
+	benchmarkDateFormat(b, "date basic", "2011-12-13")
+	benchmarkDateFormat(b, "date internal", "20111213")
+	benchmarkDateFormat(b, "datetime basic", "2011-12-13 14:15:16")
+	benchmarkDateFormat(b, "datetime internal", "20111213141516")
+	benchmarkDateFormat(b, "datetime basic frac", "2011-12-13 14:15:16.123456")
+	benchmarkDateFormat(b, "datetime repeated delimiters", "2011---12---13 14::15::16..123456")
+}
+
 func BenchmarkParseDatetime(b *testing.B) {
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	str := "2011-10-10 11:11:11.123456"
