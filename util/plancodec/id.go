@@ -103,6 +103,7 @@ const (
 )
 
 // plan id.
+// Attention: For compatibility of encode/decode plan, The plan id shouldn't be changed.
 const (
 	typeSelID int = iota + 1
 	typeSetID
