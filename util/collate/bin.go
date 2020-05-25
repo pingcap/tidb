@@ -32,6 +32,13 @@ func (bc *binCollator) Key(str string) []byte {
 	return []byte(str)
 }
 
+// KeyByBytes implements Collator interface.
+func (bc *binCollator) KeyByBytes(buf *Buffer, str []byte) []byte {
+	buf.init()
+	buf.key = append(buf.key, str...)
+	return buf.key
+}
+
 // Pattern implements Collator interface.
 func (bc *binCollator) Pattern() WildcardPattern {
 	return &binPattern{}
@@ -46,6 +53,14 @@ func (bpc *binPaddingCollator) Compare(a, b string) int {
 
 func (bpc *binPaddingCollator) Key(str string) []byte {
 	return []byte(truncateTailingSpace(str))
+}
+
+// KeyByBytes implements Collator interface.
+func (bpc *binPaddingCollator) KeyByBytes(buf *Buffer, str []byte) []byte {
+	buf.init()
+	str = truncateTailingSpaceByBytes(str)
+	buf.key = append(buf.key, str...)
+	return buf.key
 }
 
 // Pattern implements Collator interface.
