@@ -45,7 +45,7 @@ var _ = Suite(&ConnTestSuite{})
 func (ts *ConnTestSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	var err error
-	ts.store, err = mockstore.NewMockTikvStore()
+	ts.store, err = mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	ts.dom, err = session.BootstrapSession(ts.store)
 	c.Assert(err, IsNil)
