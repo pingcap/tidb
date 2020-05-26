@@ -19,6 +19,7 @@ package session
 
 import (
 	"context"
+	"github.com/ngaut/pools"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -43,9 +44,30 @@ import (
 	"go.uber.org/zap"
 )
 
+type domainInitializer func(
+	dom *domain.Domain,
+	ddlLease time.Duration,
+	sysFactory func(*domain.Domain) (pools.Resource, error),
+) error
+
 type domainMap struct {
-	domains map[string]*domain.Domain
-	mu      sync.Mutex
+	domains           map[string]*domain.Domain
+	mu                sync.Mutex
+	domInit 	      domainInitializer
+}
+
+// NewDomainMap makes a new empty domain map.
+func NewDomainMap() *domainMap {
+	return &domainMap{
+		domains: map[string]*domain.Domain{},
+		domInit: (*domain.Domain).Init,
+	}
+}
+
+// NoRegister tells this map when creating new Domain, don't register this domain to PD.
+// this function is useful when you want to use TiDB as a library instead of server.
+func (dm *domainMap) NoRegister() {
+	dm.domInit = (*domain.Domain).InitWithNoRegister
 }
 
 func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
@@ -75,7 +97,7 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 		factory := createSessionFunc(store)
 		sysFactory := createSessionWithDomainFunc(store)
 		d = domain.NewDomain(store, ddlLease, statisticLease, factory)
-		err1 = d.Init(ddlLease, sysFactory)
+		err1 = dm.domInit(d, ddlLease, sysFactory)
 		if err1 != nil {
 			// If we don't clean it, there are some dirty data when retrying the function of Init.
 			d.Close()
@@ -99,9 +121,7 @@ func (dm *domainMap) Delete(store kv.Storage) {
 }
 
 var (
-	domap = &domainMap{
-		domains: map[string]*domain.Domain{},
-	}
+	domap = NewDomainMap()
 	// store.UUID()-> IfBootstrapped
 	storeBootstrapped     = make(map[string]bool)
 	storeBootstrappedLock sync.Mutex
@@ -117,6 +137,13 @@ var (
 	// statsLease is the time for reload stats table.
 	statsLease = int64(3 * time.Second)
 )
+
+// NoRegister tells TiDB don't register itself to PD.
+// Some of TiDB components will use TiDB as a library(instead of server),
+// this function prevents those fake 'TiDB' present on metrics like dashboard.
+func NoRegister() {
+	domap.NoRegister()
+}
 
 // ResetStoreForWithTiKVTest is only used in the test code.
 // TODO: Remove domap and storeBootstrapped. Use store.SetOption() to do it.
