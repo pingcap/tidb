@@ -829,10 +829,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 
 func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, partName string, schemaName, tableName model.CIStr) error {
 	// make sure that pi contains the partName before this function runs
-	var (
-		sql   string
-		index int
-	)
+	var sql string
 
 	pi := pt.Partition
 	index, _, err := getPartitionDef(pt, partName)
