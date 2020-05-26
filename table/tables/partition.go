@@ -117,6 +117,42 @@ type PartitionExpr struct {
 	Expr expression.Expression
 	// Used in the range pruning process.
 	*ForRangePruning
+	// Used in the range column pruning process.
+	*ForRangeColumnsPruning
+}
+
+// ForRangeColumnsPruning is used for range partition pruning.
+type ForRangeColumnsPruning struct {
+	LessThan []expression.Expression
+	MaxValue bool
+}
+
+func dataForRangeColumnsPruning(ctx sessionctx.Context, pi *model.PartitionInfo, schema *expression.Schema, names []*types.FieldName, p *parser.Parser) (*ForRangeColumnsPruning, error) {
+	var res ForRangeColumnsPruning
+	res.LessThan = make([]expression.Expression, len(pi.Definitions))
+	for i := 0; i < len(pi.Definitions); i++ {
+		if strings.EqualFold(pi.Definitions[i].LessThan[0], "MAXVALUE") {
+			// Use a bool flag instead of math.MaxInt64 to avoid the corner cases.
+			res.MaxValue = true
+		} else {
+			tmp, err := parseSimpleExprWithNames(p, ctx, pi.Definitions[i].LessThan[0], schema, names)
+			if err != nil {
+				return nil, err
+			}
+			res.LessThan[i] = tmp
+		}
+	}
+	return &res, nil
+}
+
+// parseSimpleExprWithNames parses simple expression string to Expression.
+// The expression string must only reference the column in the given NameSlice.
+func parseSimpleExprWithNames(p *parser.Parser, ctx sessionctx.Context, exprStr string, schema *expression.Schema, names types.NameSlice) (expression.Expression, error) {
+	exprNode, err := parseExpr(p, exprStr)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return expression.RewriteSimpleExprWithNames(ctx, exprNode, schema, names)
 }
 
 // ForRangePruning is used for range partition pruning.
@@ -180,6 +216,7 @@ func generateRangePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 	var buf bytes.Buffer
 	schema := expression.NewSchema(columns...)
 	partStr := rangePartitionString(pi)
+	p := parser.New()
 	for i := 0; i < len(pi.Definitions); i++ {
 		if strings.EqualFold(pi.Definitions[i].LessThan[0], "MAXVALUE") {
 			// Expr less than maxvalue is always true.
@@ -188,24 +225,34 @@ func generateRangePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 			fmt.Fprintf(&buf, "((%s) < (%s))", partStr, pi.Definitions[i].LessThan[0])
 		}
 
-		exprs, err := expression.ParseSimpleExprsWithNames(ctx, buf.String(), schema, names)
+		expr, err := parseSimpleExprWithNames(p, ctx, buf.String(), schema, names)
 		if err != nil {
 			// If it got an error here, ddl may hang forever, so this error log is important.
 			logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", buf.String()), zap.Error(err))
 			return nil, errors.Trace(err)
 		}
-		locateExprs = append(locateExprs, exprs[0])
+		locateExprs = append(locateExprs, expr)
 		buf.Reset()
 	}
 	ret := &PartitionExpr{
 		UpperBounds: locateExprs,
 	}
-	if len(pi.Columns) == 0 {
+
+	switch len(pi.Columns) {
+	case 0:
 		tmp, err := dataForRangePruning(pi)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		ret.ForRangePruning = tmp
+	case 1:
+		tmp, err := dataForRangeColumnsPruning(ctx, pi, schema, names, p)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		ret.ForRangeColumnsPruning = tmp
+	default:
+		panic("range column partition currently support only one column")
 	}
 	return ret, nil
 }
@@ -214,7 +261,7 @@ func generateHashPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 	columns []*expression.Column, names types.NameSlice) (*PartitionExpr, error) {
 	// The caller should assure partition info is not nil.
 	schema := expression.NewSchema(columns...)
-	origExpr, err := parsePartitionExpr(ctx, pi.Expr, schema, names)
+	origExpr, err := parseExpr(parser.New(), pi.Expr)
 	if err != nil {
 		return nil, err
 	}
@@ -233,14 +280,7 @@ func generateHashPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 
 // PartitionExpr returns the partition expression.
 func (t *partitionedTable) PartitionExpr() (*PartitionExpr, error) {
-	pi := t.meta.GetPartitionInfo()
-	switch pi.Type {
-	case model.PartitionTypeHash:
-		return t.partitionExpr, nil
-	case model.PartitionTypeRange:
-		return t.partitionExpr, nil
-	}
-	panic("cannot reach here")
+	return t.partitionExpr, nil
 }
 
 func partitionRecordKey(pid int64, handle int64) kv.Key {
@@ -344,14 +384,47 @@ func (t *partitionedTable) GetPartitionByRow(ctx sessionctx.Context, r []types.D
 
 // AddRecord implements the AddRecord method for the table.Table interface.
 func (t *partitionedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
+	return partitionedTableAddRecord(ctx, t, r, nil, opts)
+}
+
+func partitionedTableAddRecord(ctx sessionctx.Context, t *partitionedTable, r []types.Datum, partitionSelection map[int64]struct{}, opts []table.AddRecordOption) (recordID kv.Handle, err error) {
 	partitionInfo := t.meta.GetPartitionInfo()
 	pid, err := t.locatePartition(ctx, partitionInfo, r)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
+	if partitionSelection != nil {
+		if _, ok := partitionSelection[pid]; !ok {
+			return nil, errors.WithStack(table.ErrRowDoesNotMatchGivenPartitionSet)
+		}
+	}
 	tbl := t.GetPartition(pid)
 	return tbl.AddRecord(ctx, r, opts...)
+}
+
+// partitionTableWithGivenSets is used for this kind of grammar: partition (p0,p1)
+// Basically it is the same as partitionedTable except that partitionTableWithGivenSets
+// checks the given partition set for AddRecord/UpdateRecord operations.
+type partitionTableWithGivenSets struct {
+	*partitionedTable
+	partitions map[int64]struct{}
+}
+
+// NewPartitionTableithGivenSets creates a new partition table from a partition table.
+func NewPartitionTableithGivenSets(tbl table.PartitionedTable, partitions map[int64]struct{}) table.PartitionedTable {
+	if raw, ok := tbl.(*partitionedTable); ok {
+		return &partitionTableWithGivenSets{
+			partitionedTable: raw,
+			partitions:       partitions,
+		}
+	}
+	return tbl
+}
+
+// AddRecord implements the AddRecord method for the table.Table interface.
+func (t *partitionTableWithGivenSets) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
+	return partitionedTableAddRecord(ctx, t.partitionedTable, r, t.partitions, opts)
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
@@ -370,6 +443,14 @@ func (t *partitionedTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r [
 // `touched` means which columns are really modified, used for secondary indices.
 // Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
 func (t *partitionedTable) UpdateRecord(ctx sessionctx.Context, h kv.Handle, currData, newData []types.Datum, touched []bool) error {
+	return partitionedTableUpdateRecord(ctx, t, h, currData, newData, touched, nil)
+}
+
+func (t *partitionTableWithGivenSets) UpdateRecord(ctx sessionctx.Context, h kv.Handle, currData, newData []types.Datum, touched []bool) error {
+	return partitionedTableUpdateRecord(ctx, t.partitionedTable, h, currData, newData, touched, t.partitions)
+}
+
+func partitionedTableUpdateRecord(ctx sessionctx.Context, t *partitionedTable, h kv.Handle, currData, newData []types.Datum, touched []bool, partitionSelection map[int64]struct{}) error {
 	partitionInfo := t.meta.GetPartitionInfo()
 	from, err := t.locatePartition(ctx, partitionInfo, currData)
 	if err != nil {
@@ -378,6 +459,11 @@ func (t *partitionedTable) UpdateRecord(ctx sessionctx.Context, h kv.Handle, cur
 	to, err := t.locatePartition(ctx, partitionInfo, newData)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	if partitionSelection != nil {
+		if _, ok := partitionSelection[to]; !ok {
+			return errors.WithStack(table.ErrRowDoesNotMatchGivenPartitionSet)
+		}
 	}
 
 	// The old and new data locate in different partitions.
@@ -417,12 +503,9 @@ func FindPartitionByName(meta *model.TableInfo, parName string) (int64, error) {
 	return -1, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs(parName, meta.Name.O))
 }
 
-func parsePartitionExpr(ctx sessionctx.Context, exprStr string, schema *expression.Schema, names types.NameSlice) (ast.ExprNode, error) {
+func parseExpr(p *parser.Parser, exprStr string) (ast.ExprNode, error) {
 	exprStr = "select " + exprStr
-	stmts, warns, err := parser.New().Parse(exprStr, "", "")
-	for _, warn := range warns {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
-	}
+	stmts, _, err := p.Parse(exprStr, "", "")
 	if err != nil {
 		return nil, util.SyntaxWarn(err)
 	}
