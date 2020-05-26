@@ -1050,6 +1050,7 @@ var MySQLErrName = map[uint16]string{
 
 	ErrSequenceUnsupportedTableOption:      "Unsupported sequence table-option %s",
 	ErrColumnTypeUnsupportedNextValue:      "Unsupported sequence default value for column type '%s'",
+	ErrAddColumnWithSequenceAsDefault:      "Unsupported using sequence as default value in add column '%s'",
 	ErrUnsupportedType:                     "Unsupported type %T",
 	ErrAnalyzeMissIndex:                    "Index '%s' in field list does not exist in table '%s'",
 	ErrCartesianProductUnsupported:         "Cartesian product is unsupported",
