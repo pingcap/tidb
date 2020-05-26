@@ -23,20 +23,35 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
+type varSetKeyFunc func(val interface{}) (interface{}, error)
+
+func myDecimalVarSetKey(val interface{}) (interface{}, error) {
+	myDecimal := val.(types.MyDecimal)
+	hash, err := myDecimal.ToHashKey()
+	return string(hash), err
+}
+
 type maxMinQueue struct {
-	queue   []interface{}
-	counter map[interface{}]int64
-	isMax   bool
-	dirty   bool
-	cmpFunc func(i, j interface{}) int
+	queue     []interface{}
+	varSet    map[interface{}]int64
+	varSetKey varSetKeyFunc
+	isMax     bool
+	dirty     bool
+	cmpFunc   func(i, j interface{}) int
 }
 
 func newMaxMinQueue(isMax bool) *maxMinQueue {
 	return &maxMinQueue{
-		queue:   make([]interface{}, 0),
-		counter: make(map[interface{}]int64),
-		isMax:   isMax,
+		queue:  make([]interface{}, 0),
+		varSet: make(map[interface{}]int64),
+		isMax:  isMax,
 	}
+}
+
+func newMyDecimalMaxMinQueue(isMax bool) *maxMinQueue {
+	queue := newMaxMinQueue(isMax)
+	queue.varSetKey = myDecimalVarSetKey
+	return queue
 }
 
 func (m *maxMinQueue) Resort() {
@@ -62,7 +77,7 @@ func (m *maxMinQueue) Top() (val interface{}, isEmpty bool) {
 	return m.queue[0], false
 }
 
-func (m *maxMinQueue) Del(val interface{}) {
+func (m *maxMinQueue) del(val interface{}) {
 	for i, qVal := range m.queue {
 		if m.cmpFunc(qVal, val) == 0 {
 			if i < len(m.queue) {
@@ -74,31 +89,49 @@ func (m *maxMinQueue) Del(val interface{}) {
 	}
 }
 
-func (m *maxMinQueue) Push(val interface{}) {
-	if v, ok := m.counter[val]; ok {
-		m.counter[val] = v + 1
+func (m *maxMinQueue) Push(val interface{}) error {
+	key := val
+	if m.varSetKey != nil {
+		if hash, err := m.varSetKey(val); err != nil {
+			return err
+		} else {
+			key = hash
+		}
+	}
+	if v, ok := m.varSet[key]; ok {
+		m.varSet[key] = v + 1
 	} else {
-		m.counter[val] = 1
+		m.varSet[key] = 1
 		m.queue = append(m.queue, val)
 		m.dirty = true
 	}
+	return nil
 }
 
-func (m *maxMinQueue) Pop(val interface{}) {
-	v, ok := m.counter[val]
+func (m *maxMinQueue) Pop(val interface{}) error {
+	key := val
+	if m.varSetKey != nil {
+		if hash, err := m.varSetKey(val); err != nil {
+			return err
+		} else {
+			key = hash
+		}
+	}
+	v, ok := m.varSet[key]
 	if ok {
-		m.counter[val] = v - 1
+		m.varSet[key] = v - 1
 		if v == 1 {
-			m.Del(val)
-			delete(m.counter, val)
+			m.del(val)
+			delete(m.varSet, key)
 			m.dirty = true
 		}
 	}
+	return nil
 }
 
 func (m *maxMinQueue) Reset() {
 	m.queue = m.queue[:0]
-	m.counter = make(map[interface{}]int64)
+	m.varSet = make(map[interface{}]int64)
 	m.dirty = false
 }
 
@@ -564,7 +597,7 @@ type maxMin4Decimal struct {
 func (e *maxMin4Decimal) AllocPartialResult() PartialResult {
 	p := new(partialResult4MaxMinDecimal)
 	p.isNull = true
-	p.maxMinQueue = newMaxMinQueue(e.isMax)
+	p.maxMinQueue = newMyDecimalMaxMinQueue(e.isMax)
 	p.maxMinQueue.cmpFunc = func(i, j interface{}) int {
 		src := i.(types.MyDecimal)
 		dst := j.(types.MyDecimal)
@@ -599,7 +632,9 @@ func (e *maxMin4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGrou
 		if isNull {
 			continue
 		}
-		p.Push(*input)
+		if err := p.Push(*input); err != nil {
+			return err
+		}
 	}
 	if val, isEmpty := p.Top(); !isEmpty {
 		p.val = val.(types.MyDecimal)
@@ -620,7 +655,9 @@ func (e *maxMin4Decimal) Slide(sctx sessionctx.Context, rows []chunk.Row, lastSt
 		if isNull {
 			continue
 		}
-		p.Push(*input)
+		if err := p.Push(*input); err != nil {
+			return err
+		}
 	}
 	for i := uint64(0); i < shiftStart; i++ {
 		input, isNull, err := e.args[0].EvalDecimal(sctx, rows[lastStart+i])
@@ -630,7 +667,9 @@ func (e *maxMin4Decimal) Slide(sctx sessionctx.Context, rows []chunk.Row, lastSt
 		if isNull {
 			continue
 		}
-		p.Pop(*input)
+		if err := p.Pop(*input); err != nil {
+			return err
+		}
 	}
 	if val, isEmpty := p.Top(); !isEmpty {
 		p.val = val.(types.MyDecimal)
