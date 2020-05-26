@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execdetails"
 )
 
 // UpdateExec represents a new update executor.
@@ -146,13 +148,16 @@ func (e *UpdateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	req.Reset()
 	if !e.fetched {
+		start := time.Now()
 		err := e.fetchChunkRows(ctx)
 		if err != nil {
 			return err
 		}
 		e.fetched = true
 		e.ctx.GetSessionVars().StmtCtx.AddRecordRows(uint64(len(e.rows)))
+		updateFetchTime := time.Since(start)
 
+		start = time.Now()
 		for {
 			row, err := e.exec(ctx, e.children[0].Schema())
 			if err != nil {
@@ -162,6 +167,11 @@ func (e *UpdateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			// once "row == nil" there is no more data waiting to be updated,
 			// the execution of UpdateExec is finished.
 			if row == nil {
+				updateExecTime := time.Since(start)
+				e.ctx.GetSessionVars().StmtCtx.MergeExecDetails(
+					&execdetails.ExecDetails{UpdateFetchTime: updateFetchTime, UpdateExecTime: updateExecTime},
+					nil,
+				)
 				break
 			}
 		}
