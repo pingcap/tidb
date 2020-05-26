@@ -21,11 +21,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/executor"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/table"
->>>>>>> 4078eb4... util/admin: support admin recover index on the partition table (#17195)
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
@@ -163,10 +159,7 @@ func (s *testSuite2) TestAdminRecoverIndex(c *C) {
 	tk.MustExec("admin check table admin_test")
 }
 
-<<<<<<< HEAD
-func (s *testSuite2) TestAdminRecoverIndex1(c *C) {
-=======
-func (s *testSuite5) TestAdminRecoverPartitionTableIndex(c *C) {
+func (s *testSuite2) TestAdminRecoverPartitionTableIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	getTable := func() table.Table {
@@ -186,7 +179,7 @@ func (s *testSuite5) TestAdminRecoverPartitionTableIndex(c *C) {
 		sc := s.ctx.GetSessionVars().StmtCtx
 		txn, err := s.store.Begin()
 		c.Assert(err, IsNil)
-		err = indexOpr.Delete(sc, txn, types.MakeDatums(idxValue), kv.IntHandle(idxValue))
+		err = indexOpr.Delete(sc, txn, types.MakeDatums(idxValue), int64(idxValue), txn)
 		c.Assert(err, IsNil)
 		err = txn.Commit(context.Background())
 		c.Assert(err, IsNil)
@@ -235,8 +228,7 @@ func (s *testSuite5) TestAdminRecoverPartitionTableIndex(c *C) {
 	}
 }
 
-func (s *testSuite5) TestAdminRecoverIndex1(c *C) {
->>>>>>> 4078eb4... util/admin: support admin recover index on the partition table (#17195)
+func (s *testSuite2) TestAdminRecoverIndex1(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.ctx = mock.NewContext()
 	s.ctx.Store = s.store
