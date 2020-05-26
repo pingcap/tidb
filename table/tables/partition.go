@@ -124,17 +124,11 @@ type PartitionExpr struct {
 // ForRangeColumnsPruning is used for range partition pruning.
 type ForRangeColumnsPruning struct {
 	LessThan []expression.Expression
-	Column   ast.ExprNode
 	MaxValue bool
 }
 
 func dataForRangeColumnsPruning(ctx sessionctx.Context, pi *model.PartitionInfo, schema *expression.Schema, names []*types.FieldName, p *parser.Parser) (*ForRangeColumnsPruning, error) {
-	col, err := parseExpr(p, pi.Columns[0].L)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	var res ForRangeColumnsPruning
-	res.Column = col
 	res.LessThan = make([]expression.Expression, len(pi.Definitions))
 	for i := 0; i < len(pi.Definitions); i++ {
 		if strings.EqualFold(pi.Definitions[i].LessThan[0], "MAXVALUE") {
