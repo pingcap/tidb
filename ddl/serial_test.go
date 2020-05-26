@@ -826,10 +826,16 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	assertAlterValue := func(sql string) {
 		assertInvalidAutoRandomErr(sql, autoid.AutoRandomAlterErrMsg)
 	}
+	assertDecreaseBitErr := func(sql string) {
+		assertInvalidAutoRandomErr(sql, autoid.AutoRandomDecreaseBitErrMsg)
+	}
 	assertWithAutoInc := func(sql string) {
 		assertInvalidAutoRandomErr(sql, autoid.AutoRandomIncompatibleWithAutoIncErrMsg)
 	}
-	assertOverflow := func(sql, colName string, autoRandBits uint64) {
+	assertOverflow := func(sql, colName string, maxAutoRandBits, actualAutoRandBits uint64) {
+		assertInvalidAutoRandomErr(sql, autoid.AutoRandomOverflowErrMsg, maxAutoRandBits, actualAutoRandBits, colName)
+	}
+	assertMaxOverflow := func(sql, colName string, autoRandBits uint64) {
 		assertInvalidAutoRandomErr(sql, autoid.AutoRandomOverflowErrMsg, autoid.MaxAutoRandomBits, autoRandBits, colName)
 	}
 	assertModifyColType := func(sql string) {
@@ -885,8 +891,12 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	})
 
 	// Overflow data type max length.
-	assertOverflow("create table t (a bigint auto_random(64) primary key)", "a", 64)
-	assertOverflow("create table t (a bigint auto_random(16) primary key)", "a", 16)
+	assertMaxOverflow("create table t (a bigint auto_random(64) primary key)", "a", 64)
+	assertMaxOverflow("create table t (a bigint auto_random(16) primary key)", "a", 16)
+	mustExecAndDrop("create table t (a bigint auto_random(5) primary key)", func() {
+		assertMaxOverflow("alter table t modify a bigint auto_random(64)", "a", 64)
+		assertMaxOverflow("alter table t modify a bigint auto_random(16)", "a", 16)
+	})
 
 	assertNonPositive("create table t (a bigint auto_random(0) primary key)")
 	tk.MustGetErrMsg("create table t (a bigint auto_random(-1) primary key)",
@@ -898,6 +908,13 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	mustExecAndDrop("create table t (a bigint auto_random(15) primary key)")
 	mustExecAndDrop("create table t (a bigint primary key auto_random(4))")
 	mustExecAndDrop("create table t (a bigint auto_random(4), primary key (a))")
+
+	// Increase auto_random bits.
+	mustExecAndDrop("create table t (a bigint auto_random(5) primary key)", func() {
+		tk.MustExec("alter table t modify a bigint auto_random(8)")
+		tk.MustExec("alter table t modify a bigint auto_random(10)")
+		tk.MustExec("alter table t modify a bigint auto_random(12)")
+	})
 
 	// Auto_random can occur multiple times like other column attributes.
 	mustExecAndDrop("create table t (a bigint auto_random(3) auto_random(2) primary key)")
@@ -915,8 +932,28 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	})
 	mustExecAndDrop("create table t (a bigint primary key)", func() {
 		assertAlterValue("alter table t modify column a bigint auto_random(3)")
-		assertAlterValue("alter table t change column a b bigint auto_random(3)")
 	})
+
+	// Decrease auto_random bits is not allowed.
+	mustExecAndDrop("create table t (a bigint auto_random(10) primary key)", func() {
+		assertDecreaseBitErr("alter table t modify column a bigint auto_random(6)")
+	})
+	mustExecAndDrop("create table t (a bigint auto_random(10) primary key)", func() {
+		assertDecreaseBitErr("alter table t modify column a bigint auto_random(1)")
+	})
+
+	originStep := autoid.GetStep()
+	autoid.SetStep(1)
+	// Increase auto_random bits but it will overlap with incremental bits.
+	mustExecAndDrop("create table t (a bigint unsigned auto_random(5) primary key)", func() {
+		// Insert 0..001..110 (53 `1`s).
+		insertSQL := fmt.Sprintf("insert into t values (%d)", (1<<(64-10))-2)
+		tk.MustExec(insertSQL)
+		tk.MustExec("alter table t modify a bigint unsigned auto_random(6)")
+		tk.MustExec("alter table t modify a bigint unsigned auto_random(10)")
+		assertOverflow("alter table t modify a bigint unsigned auto_random(11)", "a", 10, 11)
+	})
+	autoid.SetStep(originStep)
 
 	// Modifying the field type of a auto_random column is not allowed.
 	// Here the throw error is `ERROR 8200 (HY000): Unsupported modify column: length 11 is less than origin 20`,

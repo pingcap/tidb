@@ -43,6 +43,8 @@ const (
 	AutoRandomModifyColTypeErrMsg = "modifying the auto_random column type is not supported"
 	// AutoRandomAlterErrMsg is reported when a user is trying to add/drop/modify the value of auto_random attribute.
 	AutoRandomAlterErrMsg = "adding/dropping/modifying auto_random is not supported"
+	// AutoRandomDecreaseBitErrMsg is reported when the auto_random bits is decreased.
+	AutoRandomDecreaseBitErrMsg = "decreasing auto_random bits is not supported"
 	// AutoRandomNonPositive is reported then a user specifies a non-positive value for auto_random.
 	AutoRandomNonPositive = "the value of auto_random should be positive"
 	// AutoRandomAvailableAllocTimesNote is reported when a table containing auto_random is created.

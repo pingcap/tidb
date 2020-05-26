@@ -15,10 +15,12 @@ package ddl
 
 import (
 	"fmt"
+	"math/bits"
 	"strings"
 	"sync/atomic"
 	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
@@ -27,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -585,17 +588,20 @@ func (w *worker) onModifyColumn(t *meta.Meta, job *model.Job) (ver int64, _ erro
 	oldColName := &model.CIStr{}
 	pos := &ast.ColumnPosition{}
 	var modifyColumnTp byte
-	err := job.DecodeArgs(newCol, oldColName, pos, &modifyColumnTp)
+	var updatedAutoRandomBits uint64
+	err := job.DecodeArgs(newCol, oldColName, pos, &modifyColumnTp, &updatedAutoRandomBits)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
-	return w.doModifyColumn(t, job, newCol, oldColName, pos, modifyColumnTp)
+	return w.doModifyColumn(t, job, newCol, oldColName, pos, modifyColumnTp, updatedAutoRandomBits)
 }
 
 // doModifyColumn updates the column information and reorders all columns.
-func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldName *model.CIStr, pos *ast.ColumnPosition, modifyColumnTp byte) (ver int64, _ error) {
+func (w *worker) doModifyColumn(
+	t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldName *model.CIStr,
+	pos *ast.ColumnPosition, modifyColumnTp byte, newAutoRandBits uint64) (ver int64, _ error) {
 	dbInfo, err := t.GetDatabase(job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -636,6 +642,13 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 			}
 		}
 	})
+
+	if newAutoRandBits > 0 {
+		if err := checkAndApplyNewAutoRandomBits(t, job.SchemaID, tblInfo, newCol, oldName, newAutoRandBits); err != nil {
+			job.State = model.JobStateRollingback
+			return ver, errors.Trace(err)
+		}
+	}
 
 	// Column from null to not null.
 	if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
@@ -725,6 +738,25 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
+}
+
+func checkAndApplyNewAutoRandomBits(t *meta.Meta, schemaID int64, tblInfo *model.TableInfo,
+	newCol *model.ColumnInfo, oldName *model.CIStr, newAutoRandBits uint64) error {
+	newLayout := autoid.NewAutoRandomIDLayout(&newCol.FieldType, newAutoRandBits)
+	currentIncBitsVal, err := t.GetAutoRandomID(schemaID, tblInfo.ID)
+	if err != nil {
+		return err
+	}
+	availableBits := bits.LeadingZeros64(uint64(currentIncBitsVal))
+	isOccupyingIncBits := newLayout.TypeBitsLength-newLayout.IncrementalBits > uint64(availableBits)
+	if isOccupyingIncBits {
+		availableBits := mathutil.Min(autoid.MaxAutoRandomBits, availableBits)
+		errMsg := fmt.Sprintf(autoid.AutoRandomOverflowErrMsg, availableBits, newAutoRandBits, oldName.O)
+		return ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
+	} else {
+		tblInfo.AutoRandomBits = newAutoRandBits
+	}
+	return nil
 }
 
 // checkForNullValue ensure there are no null values of the column of this table.
