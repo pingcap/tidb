@@ -380,6 +380,9 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case SQLSelectLimit:
+		if strings.EqualFold(value, "default") {
+			return value, nil
+		}
 		return checkUInt64SystemVar(name, value, 0, math.MaxUint64, vars)
 	case TiDBStoreLimit:
 		return checkInt64SystemVar(name, value, 0, math.MaxInt64, vars)

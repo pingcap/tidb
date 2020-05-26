@@ -47,6 +47,33 @@ func InTxnRetry(p *preprocessor) {
 	p.flag |= inTxnRetry
 }
 
+func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) (ast.StmtNode, bool) {
+	if ctx.GetSessionVars().SelectLimit == math.MaxUint64 {
+		return node, false
+	}
+
+	if sel, ok := node.(*ast.SelectStmt); ok {
+		if sel.Limit != nil || sel.SelectIntoOpt != nil {
+			return node, false
+		}
+		newSel := *sel
+		newSel.Limit = &ast.Limit{
+			Count: ast.NewValueExpr(ctx.GetSessionVars().SelectLimit, "", ""),
+		}
+		return &newSel, true
+	} else if union, ok := node.(*ast.UnionStmt); ok {
+		if union.Limit != nil {
+			return node, false
+		}
+		newUnion := *union
+		newUnion.Limit = &ast.Limit{
+			Count: ast.NewValueExpr(ctx.GetSessionVars().SelectLimit, "", ""),
+		}
+		return &newUnion, true
+	}
+	return node, false
+}
+
 // Preprocess resolves table names of the node, and checks some statements validation.
 func Preprocess(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema, preprocessOpt ...PreprocessOpt) error {
 	v := preprocessor{is: is, ctx: ctx, tableAliasInJoin: make([]map[string]interface{}, 0)}

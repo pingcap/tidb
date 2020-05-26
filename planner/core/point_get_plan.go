@@ -16,6 +16,8 @@ package core
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/util/logutil"
+	math2 "math"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -362,6 +364,10 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 	ctx.GetSessionVars().PlanColumnID = 0
 	switch x := node.(type) {
 	case *ast.SelectStmt:
+		if ctx.GetSessionVars().SelectLimit != math2.MaxUint64 {
+			logutil.BgLogger().Info("sql_select_limit is set, so we will not get fast plan.")
+			return nil
+		}
 		// Try to convert the `SELECT a, b, c FROM t WHERE (a, b, c) in ((1, 2, 4), (1, 3, 5))` to
 		// `PhysicalUnionAll` which children are `PointGet` if exists an unique key (a, b, c) in table `t`
 		if fp := tryWhereIn2BatchPointGet(ctx, x); fp != nil {
