@@ -97,14 +97,14 @@ func points2Ranges(sc *stmtctx.StatementContext, rangePoints []point, tp *types.
 //		if the leftPoint is larger than the upperBound of this type, or
 //		the rightPoint is less than the lowerBound of this type,
 //		we think it's an invalid range and return with invalid=true.
-//	Here are some examples with the bound range of this type is [10, 20]:
-//		ranges		results
-//	1:	[0, 15]		[10, 15]
-//	2:	[0, 8]		invalid
-//	3:	[25, 30]	invalid
-//	4:	[12, 30]	[12, 20]
-//	5:	[0, 10)		invalid
-//	5:	(10, 13]	(10, 13]
+//	Here are some examples with the bound range of Tinyint [-128, 127]:
+//		ranges			results
+//	1:	[-200, 15]		[-128, 15]
+//	2:	[-200, -150]	invalid
+//	3:	[200, 230]		invalid
+//	4:	[-150, 300]		[-128, 127]
+//	5:	[-200, -128)	invalid
+//	5:	(-128, 100]		(128, 100]
 func convertPoint(sc *stmtctx.StatementContext, point point, isLeft bool, tp *types.FieldType) (_ point, invalid bool, _ error) {
 	switch point.value.Kind() {
 	case types.KindMaxValue, types.KindMinNotNull:
