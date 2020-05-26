@@ -2053,6 +2053,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEvolvePlanBaselines,
 	variable.TiDBIsolationReadEngines,
 	variable.TiDBStoreLimit,
+	variable.TiDBAllowAutoRandExplicitInsert,
 }
 
 var (
