@@ -37,8 +37,6 @@ github.com/StackExchange/wmi v0.0.0-20190523213315-cbe66965904d h1:G0m3OIz70MZUW
 github.com/StackExchange/wmi v0.0.0-20190523213315-cbe66965904d/go.mod h1:3eOhrUMpNV+6aFIbp5/iudMxNCF27Vw2OZgy4xEx0Fg=
 github.com/VividCortex/ewma v1.1.1 h1:MnEK4VOv6n0RSY4vtRe3h11qjxL3+t0B8yOL8iMXdcM=
 github.com/VividCortex/ewma v1.1.1/go.mod h1:2Tkkvm3sRDVXaiyucHiACn4cqf7DpdyLvmxzcbUokwA=
-github.com/ailinkid/parser v0.0.0-20200524084915-5f6e90eb8182 h1:u0qLWhPh1O6jG8a+o4Tt87pFsoAFym0K7sySYgMg/XI=
-github.com/ailinkid/parser v0.0.0-20200524084915-5f6e90eb8182/go.mod h1:vQdbJqobJAgFyiRNNtXahpMoGWwPEuWciVEK5A20NS0=
 github.com/ailinkid/parser v0.0.0-20200526025647-4ecb7a0f531c h1:EDYUEC1QCUPXBSI421QegwyZ83VtNiHT2yTCORwgu4E=
 github.com/ailinkid/parser v0.0.0-20200526025647-4ecb7a0f531c/go.mod h1:vQdbJqobJAgFyiRNNtXahpMoGWwPEuWciVEK5A20NS0=
 github.com/alecthomas/template v0.0.0-20160405071501-a0175ee3bccc/go.mod h1:LOuyumcjzFXgccqObfd/Ljyb9UuFJ6TxHnclSeseNhc=
