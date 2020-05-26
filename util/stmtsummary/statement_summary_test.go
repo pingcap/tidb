@@ -128,7 +128,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 		sumMem:               stmtExecInfo1.MemMax,
 		maxMem:               stmtExecInfo1.MemMax,
 		sumDisk:              stmtExecInfo1.DiskMax,
-		maxDisk:			  stmtExecInfo1.DiskMax,
+		maxDisk:              stmtExecInfo1.DiskMax,
 		sumAffectedRows:      stmtExecInfo1.StmtCtx.AffectedRows(),
 		firstSeen:            stmtExecInfo1.StartTime,
 		lastSeen:             stmtExecInfo1.StartTime,
