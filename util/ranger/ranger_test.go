@@ -16,6 +16,7 @@ package ranger_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/types"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -29,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testkit"
@@ -1073,6 +1073,31 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			resultStr:   "[[1,1] [2,2] [3,3]]",
 			length:      types.UnspecifiedLength,
 		},
+		These test cases check if we handle overflow errors on bigint rightly
+	{
+		colPos:      0,
+		exprStr:     "a != 9223372036854775808",
+		accessConds: "[ne(test.t.a, 9223372036854775808)]",
+		filterConds: "",
+		resultStr:   "[[-inf,+inf]]",
+		length:      types.UnspecifiedLength,
+	},
+	{
+		colPos:      0,
+		exprStr:     "a > 9223372036854775808",
+		accessConds: "[gt(test.t.a, 9223372036854775808)]",
+		filterConds: "",
+		resultStr:   "[]",
+		length:      types.UnspecifiedLength,
+	},
+	{
+		colPos:      0,
+		exprStr:     "a < 9223372036854775808",
+		accessConds: "[lt(test.t.a, 9223372036854775808)]",
+		filterConds: "",
+		resultStr:   "[[-inf,+inf]]",
+		length:      types.UnspecifiedLength,
+	},
 	}
 
 	ctx := context.Background()
