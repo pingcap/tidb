@@ -23,21 +23,12 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
-type varSetKeyFunc func(val interface{}) (interface{}, error)
-
-func myDecimalVarSetKey(val interface{}) (interface{}, error) {
-	myDecimal := val.(types.MyDecimal)
-	hash, err := myDecimal.ToHashKey()
-	return string(hash), err
-}
-
 type maxMinQueue struct {
-	queue     []interface{}
-	varSet    map[interface{}]int64
-	varSetKey varSetKeyFunc
-	isMax     bool
-	dirty     bool
-	cmpFunc   func(i, j interface{}) int
+	queue   []interface{}
+	varSet  map[interface{}]int64
+	isMax   bool
+	dirty   bool
+	cmpFunc func(i, j interface{}) int
 }
 
 func newMaxMinQueue(isMax bool) *maxMinQueue {
@@ -83,15 +74,23 @@ func (m *maxMinQueue) del(val interface{}) {
 	}
 }
 
-func (m *maxMinQueue) Push(val interface{}) error {
-	key := val
-	if m.varSetKey != nil {
-		if hash, err := m.varSetKey(val); err != nil {
-			return err
-		} else {
-			key = hash
-		}
+func (m *maxMinQueue) Push(val interface{}) {
+	if v, ok := m.varSet[val]; ok {
+		m.varSet[val] = v + 1
+	} else {
+		m.varSet[val] = 1
+		m.queue = append(m.queue, val)
+		m.dirty = true
 	}
+}
+
+func (m *maxMinQueue) PushMyDecimal(val interface{}) error {
+	myDecimal := val.(types.MyDecimal)
+	hash, err := myDecimal.ToHashKey()
+	if err != nil {
+		return err
+	}
+	key := string(hash)
 	if v, ok := m.varSet[key]; ok {
 		m.varSet[key] = v + 1
 	} else {
@@ -102,15 +101,25 @@ func (m *maxMinQueue) Push(val interface{}) error {
 	return nil
 }
 
-func (m *maxMinQueue) Pop(val interface{}) error {
-	key := val
-	if m.varSetKey != nil {
-		if hash, err := m.varSetKey(val); err != nil {
-			return err
-		} else {
-			key = hash
+func (m *maxMinQueue) Pop(val interface{}) {
+	v, ok := m.varSet[val]
+	if ok {
+		m.varSet[val] = v - 1
+		if v == 1 {
+			m.del(val)
+			delete(m.varSet, val)
+			m.dirty = true
 		}
 	}
+}
+
+func (m *maxMinQueue) PopMyDecimal(val interface{}) error {
+	myDecimal := val.(types.MyDecimal)
+	hash, err := myDecimal.ToHashKey()
+	if err != nil {
+		return err
+	}
+	key := string(hash)
 	v, ok := m.varSet[key]
 	if ok {
 		m.varSet[key] = v - 1
@@ -232,7 +241,7 @@ func (e *maxMin4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []
 		if isNull {
 			continue
 		}
-		_ = p.Push(input)
+		p.Push(input)
 	}
 	if val, isEmpty := p.Top(); !isEmpty {
 		p.val = val.(int64)
@@ -253,7 +262,7 @@ func (e *maxMin4Int) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart,
 		if isNull {
 			continue
 		}
-		_ = p.Push(input)
+		p.Push(input)
 	}
 	for i := uint64(0); i < shiftStart; i++ {
 		input, isNull, err := e.args[0].EvalInt(sctx, rows[lastStart+i])
@@ -263,7 +272,7 @@ func (e *maxMin4Int) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart,
 		if isNull {
 			continue
 		}
-		_ = p.Pop(input)
+		p.Pop(input)
 	}
 	if val, isEmpty := p.Top(); !isEmpty {
 		p.val = val.(int64)
@@ -330,7 +339,7 @@ func (e *maxMin4Uint) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 		if isNull {
 			continue
 		}
-		_ = p.Push(uint64(input))
+		p.Push(uint64(input))
 	}
 	if val, isEmpty := p.Top(); !isEmpty {
 		p.val = val.(uint64)
@@ -351,7 +360,7 @@ func (e *maxMin4Uint) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart
 		if isNull {
 			continue
 		}
-		_ = p.Push(uint64(input))
+		p.Push(uint64(input))
 	}
 	for i := uint64(0); i < shiftStart; i++ {
 		input, isNull, err := e.args[0].EvalInt(sctx, rows[lastStart+i])
@@ -361,7 +370,7 @@ func (e *maxMin4Uint) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart
 		if isNull {
 			continue
 		}
-		_ = p.Pop(uint64(input))
+		p.Pop(uint64(input))
 	}
 	if val, isEmpty := p.Top(); !isEmpty {
 		p.val = val.(uint64)
@@ -429,7 +438,7 @@ func (e *maxMin4Float32) UpdatePartialResult(sctx sessionctx.Context, rowsInGrou
 		if isNull {
 			continue
 		}
-		_ = p.Push(float32(input))
+		p.Push(float32(input))
 	}
 	if val, isEmpty := p.Top(); !isEmpty {
 		p.val = val.(float32)
@@ -450,7 +459,7 @@ func (e *maxMin4Float32) Slide(sctx sessionctx.Context, rows []chunk.Row, lastSt
 		if isNull {
 			continue
 		}
-		_ = p.Push(float32(input))
+		p.Push(float32(input))
 	}
 	for i := uint64(0); i < shiftStart; i++ {
 		input, isNull, err := e.args[0].EvalReal(sctx, rows[lastStart+i])
@@ -460,7 +469,7 @@ func (e *maxMin4Float32) Slide(sctx sessionctx.Context, rows []chunk.Row, lastSt
 		if isNull {
 			continue
 		}
-		_ = p.Pop(float32(input))
+		p.Pop(float32(input))
 	}
 	if val, isEmpty := p.Top(); !isEmpty {
 		p.val = val.(float32)
@@ -527,7 +536,7 @@ func (e *maxMin4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGrou
 		if isNull {
 			continue
 		}
-		_ = p.Push(input)
+		p.Push(input)
 	}
 	if val, isEmpty := p.Top(); !isEmpty {
 		p.val = val.(float64)
@@ -548,7 +557,7 @@ func (e *maxMin4Float64) Slide(sctx sessionctx.Context, rows []chunk.Row, lastSt
 		if isNull {
 			continue
 		}
-		_ = p.Push(input)
+		p.Push(input)
 	}
 	for i := uint64(0); i < shiftStart; i++ {
 		input, isNull, err := e.args[0].EvalReal(sctx, rows[lastStart+i])
@@ -558,7 +567,7 @@ func (e *maxMin4Float64) Slide(sctx sessionctx.Context, rows []chunk.Row, lastSt
 		if isNull {
 			continue
 		}
-		_ = p.Pop(input)
+		p.Pop(input)
 	}
 	if val, isEmpty := p.Top(); !isEmpty {
 		p.val = val.(float64)
@@ -592,7 +601,6 @@ func (e *maxMin4Decimal) AllocPartialResult() PartialResult {
 	p := new(partialResult4MaxMinDecimal)
 	p.isNull = true
 	p.maxMinQueue = newMaxMinQueue(e.isMax)
-	p.maxMinQueue.varSetKey = myDecimalVarSetKey
 	p.maxMinQueue.cmpFunc = func(i, j interface{}) int {
 		src := i.(types.MyDecimal)
 		dst := j.(types.MyDecimal)
@@ -627,7 +635,7 @@ func (e *maxMin4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGrou
 		if isNull {
 			continue
 		}
-		if err := p.Push(*input); err != nil {
+		if err := p.PushMyDecimal(*input); err != nil {
 			return err
 		}
 	}
@@ -650,7 +658,7 @@ func (e *maxMin4Decimal) Slide(sctx sessionctx.Context, rows []chunk.Row, lastSt
 		if isNull {
 			continue
 		}
-		if err := p.Push(*input); err != nil {
+		if err := p.PushMyDecimal(*input); err != nil {
 			return err
 		}
 	}
@@ -662,7 +670,7 @@ func (e *maxMin4Decimal) Slide(sctx sessionctx.Context, rows []chunk.Row, lastSt
 		if isNull {
 			continue
 		}
-		if err := p.Pop(*input); err != nil {
+		if err := p.PopMyDecimal(*input); err != nil {
 			return err
 		}
 	}
@@ -804,7 +812,7 @@ func (e *maxMin4Time) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 		if isNull {
 			continue
 		}
-		_ = p.Push(input)
+		p.Push(input)
 	}
 	if val, isEmpty := p.Top(); !isEmpty {
 		p.val = val.(types.Time)
@@ -825,7 +833,7 @@ func (e *maxMin4Time) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart
 		if isNull {
 			continue
 		}
-		_ = p.Push(input)
+		p.Push(input)
 	}
 	for i := uint64(0); i < shiftStart; i++ {
 		input, isNull, err := e.args[0].EvalTime(sctx, rows[lastStart+i])
@@ -835,7 +843,7 @@ func (e *maxMin4Time) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart
 		if isNull {
 			continue
 		}
-		_ = p.Pop(input)
+		p.Pop(input)
 	}
 	if val, isEmpty := p.Top(); !isEmpty {
 		p.val = val.(types.Time)
@@ -904,7 +912,7 @@ func (e *maxMin4Duration) UpdatePartialResult(sctx sessionctx.Context, rowsInGro
 		if isNull {
 			continue
 		}
-		_ = p.Push(input)
+		p.Push(input)
 	}
 	if val, isEmpty := p.Top(); !isEmpty {
 		p.val = val.(types.Duration)
@@ -925,7 +933,7 @@ func (e *maxMin4Duration) Slide(sctx sessionctx.Context, rows []chunk.Row, lastS
 		if isNull {
 			continue
 		}
-		_ = p.Push(input)
+		p.Push(input)
 	}
 	for i := uint64(0); i < shiftStart; i++ {
 		input, isNull, err := e.args[0].EvalDuration(sctx, rows[lastStart+i])
@@ -935,7 +943,7 @@ func (e *maxMin4Duration) Slide(sctx sessionctx.Context, rows []chunk.Row, lastS
 		if isNull {
 			continue
 		}
-		_ = p.Pop(input)
+		p.Pop(input)
 	}
 	if val, isEmpty := p.Top(); !isEmpty {
 		p.val = val.(types.Duration)
