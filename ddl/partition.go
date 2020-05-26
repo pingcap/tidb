@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/format"
@@ -600,14 +601,14 @@ func removePartitionInfo(tblInfo *model.TableInfo, partName string) int64 {
 	return pid
 }
 
-func getPartitionDef(tblInfo *model.TableInfo, partName string) (*model.PartitionDefinition, error) {
+func getPartitionDef(tblInfo *model.TableInfo, partName string) (index int, def *model.PartitionDefinition, _ error) {
 	defs := tblInfo.Partition.Definitions
 	for i := 0; i < len(defs); i++ {
 		if strings.EqualFold(defs[i].Name.L, strings.ToLower(partName)) {
-			return &(defs[i]), nil
+			return i, &(defs[i]), nil
 		}
 	}
-	return nil, table.ErrUnknownPartition.GenWithStackByArgs(partName, tblInfo.Name.O)
+	return index, nil, table.ErrUnknownPartition.GenWithStackByArgs(partName, tblInfo.Name.O)
 }
 
 // onDropTablePartition deletes old partition meta.
@@ -746,7 +747,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	}
 
 	if withValidation {
-		err = checkExchangePartitionRecordValidation(w, pt.Partition, partName, ntDbInfo.Name, nt.Name)
+		err = checkExchangePartitionRecordValidation(w, pt, partName, ntDbInfo.Name, nt.Name)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
@@ -767,7 +768,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
-	partDef, err := getPartitionDef(pt, partName)
+	_, partDef, err := getPartitionDef(pt, partName)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -782,6 +783,13 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+
+	failpoint.Inject("exchangePartitionErr", func(val failpoint.Value) {
+		if val.(bool) {
+			job.State = model.JobStateCancelled
+			failpoint.Return(ver, errors.New("occur an error after updating partition id"))
+		}
+	})
 
 	// recreate non-partition table meta info
 	err = t.DropTableOrView(job.SchemaID, nt.ID, true)
@@ -819,18 +827,17 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	return ver, nil
 }
 
-func checkExchangePartitionRecordValidation(w *worker, pi *model.PartitionInfo, partName string, schemaName, tableName model.CIStr) error {
+func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, partName string, schemaName, tableName model.CIStr) error {
 	// make sure that pi contains the partName before this function runs
 	var (
 		sql   string
 		index int
 	)
 
-	for i, def := range pi.Definitions {
-		if strings.EqualFold(def.Name.L, strings.ToLower(partName)) {
-			index = i
-			break
-		}
+	pi := pt.Partition
+	index, _, err := getPartitionDef(pt, partName)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	switch pi.Type {
@@ -860,7 +867,7 @@ func checkExchangePartitionRecordValidation(w *worker, pi *model.PartitionInfo, 
 	}
 
 	var ctx sessionctx.Context
-	ctx, err := w.sessPool.get()
+	ctx, err = w.sessPool.get()
 	if err != nil {
 		return errors.Trace(err)
 	}
