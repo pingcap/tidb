@@ -2140,7 +2140,7 @@ type InjectProjectionBelowTopN struct {
 // TopN to prune the extra Columns.
 // The reason why we need this rule is that, TopNExecutor in TiDB does not support ScalarFunction
 // as `ByItem`. So we have to use a Projection to calculate the ScalarFunctions in advance.
-// The pattern of this rule is: a single TopN
+// The pattern of this rule is: a single TopN.
 func NewRuleInjectProjectionBelowTopN() Transformation {
 	rule := &InjectProjectionBelowTopN{}
 	rule.pattern = memo.BuildPattern(
@@ -2165,45 +2165,9 @@ func (r *InjectProjectionBelowTopN) Match(expr *memo.ExprIter) bool {
 // It will convert `TopN -> X` to `Projection -> TopN -> Projection -> X`.
 func (r *InjectProjectionBelowTopN) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	topN := old.GetExpr().ExprNode.(*plannercore.LogicalTopN)
-	oldTopNSchema := old.GetExpr().Schema()
 
-	// Construct top Projection.
-	topProjExprs := make([]expression.Expression, oldTopNSchema.Len())
-	for i := range oldTopNSchema.Columns {
-		topProjExprs[i] = oldTopNSchema.Columns[i]
-	}
-	topProj := plannercore.LogicalProjection{
-		Exprs: topProjExprs,
-	}.Init(topN.SCtx(), topN.SelectBlockOffset())
-	topProj.SetSchema(oldTopNSchema)
-
-	// Construct bottom Projection.
-	bottomProjExprs := make([]expression.Expression, 0, oldTopNSchema.Len()+len(topN.ByItems))
-	bottomProjSchema := make([]*expression.Column, 0, oldTopNSchema.Len()+len(topN.ByItems))
-	for _, col := range oldTopNSchema.Columns {
-		bottomProjExprs = append(bottomProjExprs, col)
-		bottomProjSchema = append(bottomProjSchema, col)
-	}
-	newByItems := make([]*util.ByItems, 0, len(topN.ByItems))
-	for _, item := range topN.ByItems {
-		itemExpr := item.Expr
-		if _, isScalarFunc := itemExpr.(*expression.ScalarFunction); !isScalarFunc {
-			newByItems = append(newByItems, item)
-			continue
-		}
-		bottomProjExprs = append(bottomProjExprs, itemExpr)
-		newCol := &expression.Column{
-			UniqueID: topN.SCtx().GetSessionVars().AllocPlanColumnID(),
-			RetType:  itemExpr.GetType(),
-		}
-		bottomProjSchema = append(bottomProjSchema, newCol)
-		newByItems = append(newByItems, &util.ByItems{Expr: newCol, Desc: item.Desc})
-	}
-	bottomProj := plannercore.LogicalProjection{
-		Exprs: bottomProjExprs,
-	}.Init(topN.SCtx(), topN.SelectBlockOffset())
-	newSchema := expression.NewSchema(bottomProjSchema...)
-	bottomProj.SetSchema(newSchema)
+	topProj, bottomProj, newByItems := generateProj4Inject(old.GetExpr().ExprNode, old.GetExpr().Schema(), topN.ByItems)
+	newSchema := bottomProj.Schema()
 
 	newTopN := plannercore.LogicalTopN{
 		ByItems: newByItems,
@@ -2225,6 +2189,53 @@ func (r *InjectProjectionBelowTopN) OnTransform(old *memo.ExprIter) (newExprs []
 	return []*memo.GroupExpr{topProjGroupExpr}, true, false, nil
 }
 
+// generateProj4Inject generates a top Projection and a bottom Projection to be injected above and below the
+// TopN or Sort plan which contains scalar functions in `ByItems`. It also returns a new `ByItems` to construct
+// a new TopN or Sort plan in which scalar functions is replaced by columns.
+func generateProj4Inject(oldPlan plannercore.LogicalPlan, oldSchema *expression.Schema, oldByItems []*util.ByItems) (
+	topProj *plannercore.LogicalProjection,
+	bottomProj *plannercore.LogicalProjection,
+	newByItems []*util.ByItems) {
+
+	// Construct top Projection.
+	topProjExprs := make([]expression.Expression, oldSchema.Len())
+	for i := range oldSchema.Columns {
+		topProjExprs[i] = oldSchema.Columns[i]
+	}
+	topProj = plannercore.LogicalProjection{
+		Exprs: topProjExprs,
+	}.Init(oldPlan.SCtx(), oldPlan.SelectBlockOffset())
+	topProj.SetSchema(oldSchema)
+
+	// Construct bottom Projection.
+	bottomProjExprs := make([]expression.Expression, 0, oldSchema.Len()+len(oldByItems))
+	bottomProjSchemaCols := make([]*expression.Column, 0, oldSchema.Len()+len(oldByItems))
+	for _, col := range oldSchema.Columns {
+		bottomProjExprs = append(bottomProjExprs, col)
+		bottomProjSchemaCols = append(bottomProjSchemaCols, col)
+	}
+	for _, item := range oldByItems {
+		itemExpr := item.Expr
+		if _, isScalarFunc := itemExpr.(*expression.ScalarFunction); !isScalarFunc {
+			newByItems = append(newByItems, item)
+			continue
+		}
+		bottomProjExprs = append(bottomProjExprs, itemExpr)
+		newCol := &expression.Column{
+			UniqueID: oldPlan.SCtx().GetSessionVars().AllocPlanColumnID(),
+			RetType:  itemExpr.GetType(),
+		}
+		bottomProjSchemaCols = append(bottomProjSchemaCols, newCol)
+		newByItems = append(newByItems, &util.ByItems{Expr: newCol, Desc: item.Desc})
+	}
+	bottomProj = plannercore.LogicalProjection{
+		Exprs: bottomProjExprs,
+	}.Init(oldPlan.SCtx(), oldPlan.SelectBlockOffset())
+	newSchema := expression.NewSchema(bottomProjSchemaCols...)
+	bottomProj.SetSchema(newSchema)
+	return
+}
+
 // InjectProjectionBelowSort injects two Projections below and upon Sort if Sort's ByItems
 // contain ScalarFunctions.
 type InjectProjectionBelowSort struct {
@@ -2237,7 +2248,7 @@ type InjectProjectionBelowSort struct {
 // below Sort. Then, we need to add another Projection upon Sort to prune the extra Columns.
 // The reason why we need this rule is that, SortExecutor in TiDB does not support ScalarFunction
 // in `ByItems`. So we have to use a Projection to calculate the ScalarFunctions in advance.
-// The pattern of this rule is: a single Sort
+// The pattern of this rule is: a single Sort.
 func NewRuleInjectProjectionBelowSort() Transformation {
 	rule := &InjectProjectionBelowSort{}
 	rule.pattern = memo.BuildPattern(
@@ -2262,48 +2273,12 @@ func (r *InjectProjectionBelowSort) Match(expr *memo.ExprIter) bool {
 // It will convert `Sort -> X` to `Projection -> Sort -> Projection -> X`.
 func (r *InjectProjectionBelowSort) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	oldSort := old.GetExpr().ExprNode.(*plannercore.LogicalSort)
-	oldSortSchema := old.GetExpr().Schema()
 
-	// Construct top Projection.
-	topProjExprs := make([]expression.Expression, oldSortSchema.Len())
-	for i := range oldSortSchema.Columns {
-		topProjExprs[i] = oldSortSchema.Columns[i]
-	}
-	topProj := plannercore.LogicalProjection{
-		Exprs: topProjExprs,
-	}.Init(oldSort.SCtx(), oldSort.SelectBlockOffset())
-	topProj.SetSchema(oldSortSchema)
-
-	// Construct bottom Projection.
-	bottomProjExprs := make([]expression.Expression, 0, oldSortSchema.Len()+len(oldSort.ByItems))
-	bottomProjSchema := make([]*expression.Column, 0, oldSortSchema.Len()+len(oldSort.ByItems))
-	for _, col := range oldSortSchema.Columns {
-		bottomProjExprs = append(bottomProjExprs, col)
-		bottomProjSchema = append(bottomProjSchema, col)
-	}
-	newSortByItems := make([]*util.ByItems, 0, len(oldSort.ByItems))
-	for _, item := range oldSort.ByItems {
-		itemExpr := item.Expr
-		if _, isScalarFunc := itemExpr.(*expression.ScalarFunction); !isScalarFunc {
-			newSortByItems = append(newSortByItems, item)
-			continue
-		}
-		bottomProjExprs = append(bottomProjExprs, itemExpr)
-		newCol := &expression.Column{
-			UniqueID: oldSort.SCtx().GetSessionVars().AllocPlanColumnID(),
-			RetType:  itemExpr.GetType(),
-		}
-		bottomProjSchema = append(bottomProjSchema, newCol)
-		newSortByItems = append(newSortByItems, &util.ByItems{Expr: newCol, Desc: item.Desc})
-	}
-	bottomProj := plannercore.LogicalProjection{
-		Exprs: bottomProjExprs,
-	}.Init(oldSort.SCtx(), oldSort.SelectBlockOffset())
-	newSchema := expression.NewSchema(bottomProjSchema...)
-	bottomProj.SetSchema(newSchema)
+	topProj, bottomProj, newByItems := generateProj4Inject(old.GetExpr().ExprNode, old.GetExpr().Schema(), oldSort.ByItems)
+	newSchema := bottomProj.Schema()
 
 	newSort := plannercore.LogicalSort{
-		ByItems: newSortByItems,
+		ByItems: newByItems,
 	}.Init(oldSort.SCtx(), oldSort.SelectBlockOffset())
 
 	// Construct GroupExpr, Group (TopProj -> Sort -> BottomProj -> Child)
