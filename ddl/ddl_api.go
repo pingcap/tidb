@@ -2210,7 +2210,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 		case ast.AlterTableTruncatePartition:
 			err = d.TruncateTablePartition(ctx, ident, spec)
 		case ast.AlterTableExchangePartition:
-			err = d.ExchangeTableParition(ctx, ident, spec)
+			err = d.ExchangeTablePartition(ctx, ident, spec)
 		case ast.AlterTableAddConstraint:
 			constr := spec.Constraint
 			switch spec.Constraint.Tp {
@@ -2794,7 +2794,7 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 	return errors.Trace(err)
 }
 
-func checkFielTypeCompatible(ft *types.FieldType, other *types.FieldType) bool {
+func checkFieldTypeCompatible(ft *types.FieldType, other *types.FieldType) bool {
 	// int(1) could match the type with int(8)
 	partialEqual := ft.Tp == other.Tp &&
 		ft.Decimal == other.Decimal &&
@@ -2819,6 +2819,10 @@ func checkFielTypeCompatible(ft *types.FieldType, other *types.FieldType) bool {
 
 func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) error {
 	err := errors.Trace(ErrTablesDifferentMetadata)
+	// check auto_random
+	if source.AutoRandomBits != target.AutoRandomBits {
+		return err
+	}
 	if len(source.Cols()) != len(target.Cols()) {
 		return err
 	}
@@ -2830,7 +2834,7 @@ func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) e
 		}
 		if sourceCol.Name.L != targetCol.Name.L ||
 			sourceCol.Hidden != targetCol.Hidden ||
-			!checkFielTypeCompatible(&sourceCol.FieldType, &targetCol.FieldType) {
+			!checkFieldTypeCompatible(&sourceCol.FieldType, &targetCol.FieldType) {
 			return err
 		}
 	}
@@ -2890,7 +2894,7 @@ func checkExchangePartition(pt *model.TableInfo, nt *model.TableInfo) error {
 	return nil
 }
 
-func (d *ddl) ExchangeTableParition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+func (d *ddl) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	is := d.infoHandle.Get()
 	ptSchema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
