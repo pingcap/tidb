@@ -837,6 +837,9 @@ var funcs = map[string]functionClass{
 	ast.NextVal: &nextValFunctionClass{baseFunctionClass{ast.NextVal, 1, 1}},
 	ast.LastVal: &lastValFunctionClass{baseFunctionClass{ast.LastVal, 1, 1}},
 	ast.SetVal:  &setValFunctionClass{baseFunctionClass{ast.SetVal, 2, 2}},
+
+	// This function is used to show tidb-server mvcc info.
+	ast.GetMvccInfo: &mvccGetInfoFunctionClass{baseFunctionClass{ast.GetMvccInfo, 2, -1}},
 }
 
 // IsFunctionSupported check if given function name is a builtin sql function.
