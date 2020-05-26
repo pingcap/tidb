@@ -944,6 +944,8 @@ const (
 	ErrFunctionalIndexOnField                                       = 3762
 	ErrFKIncompatibleColumns                                        = 3780
 	ErrFunctionalIndexRowValueIsNotAllowed                          = 3800
+	ErrColumnCheckConstraintReferOther                              = 3813
+	ErrTableCheckConstraintReferUnknown                             = 3820
 	ErrDependentByFunctionalIndex                                   = 3837
 	ErrInvalidJSONValueForFuncIndex                                 = 3903
 	ErrJSONValueOutOfRangeForFuncIndex                              = 3904

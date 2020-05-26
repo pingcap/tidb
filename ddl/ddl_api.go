@@ -581,24 +581,15 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 			case ast.ColumnOptionFulltext:
 				ctx.GetSessionVars().StmtCtx.AppendWarning(ErrTableCantHandleFt)
 			case ast.ColumnOptionCheck:
-				// Check the column check constraint dependency.
-				// Refer: https://dev.mysql.com/doc/refman/8.0/en/create-table-check-constraints.html
-				colMap := findDependedColsMapInCheckConstraintExpr(v.Expr)
-				if len(colMap) != 1 {
-					// Refine the error.
-					return nil, nil, errors.New("column check option can only refer the column itself")
-				}
-				if _, ok := colMap[colDef.Name.Name.L]; !ok {
-					// Refine the error.
-					return nil, nil, errors.New("column check option can only refer the column itself")
-				}
+				// Check the column check constraint dependency lazily (after fill all the name).
 				// Extract column constraint from column option.
 				constraint := &ast.Constraint{
-					Tp:       ast.ConstraintCheck,
-					Expr:     v.Expr,
-					Enforced: v.Enforced,
-					Name:     v.Name,
-					InColumn: true,
+					Tp:           ast.ConstraintCheck,
+					Expr:         v.Expr,
+					Enforced:     v.Enforced,
+					Name:         v.ConstraintName,
+					InColumn:     true,
+					InColumnName: colDef.Name.Name.O,
 				}
 				constraints = append(constraints, constraint)
 			}
@@ -1347,6 +1338,7 @@ func buildTableInfo(
 			// Since column check constraint dependency has been done in colDefToCol.
 			// Here do the table check constraint dependency check, table constraint
 			// can only refer the columns in defined columns of the table.
+			// Refer: https://dev.mysql.com/doc/refman/8.0/en/create-table-check-constraints.html
 			var dependedCols []model.CIStr
 			if !constr.InColumn {
 				dependedColsMap := findDependedColsMapInCheckConstraintExpr(constr.Expr)
@@ -1354,21 +1346,20 @@ func buildTableInfo(
 				for k := range dependedColsMap {
 					if _, ok := existedColsMap[k]; !ok {
 						// The table constraint depended on a non-existed column.
-						// Todo: refine the error.
-						return nil, errors.New("table check option can only refer the public columns in the table")
+						return nil, ErrTableCheckConstraintReferUnknown.GenWithStackByArgs(constr.Name, k)
 					}
 					dependedCols = append(dependedCols, model.NewCIStr(k))
 				}
 			} else {
-				// Since column check constraint dependency has been done in colDefToCol.
-				// Here extract single column name out of map directly.
+				// Check the column-type constraint dependency.
 				dependedColsMap := findDependedColsMapInCheckConstraintExpr(constr.Expr)
-				singleColumnName := ""
-				for k := range dependedColsMap {
-					singleColumnName = k
-					break
+				if len(dependedColsMap) != 1 {
+					return nil, ErrColumnCheckConstraintReferOther.GenWithStackByArgs(constr.Name)
 				}
-				dependedCols = []model.CIStr{model.NewCIStr(singleColumnName)}
+				if _, ok := dependedColsMap[constr.InColumnName]; !ok {
+					return nil, ErrColumnCheckConstraintReferOther.GenWithStackByArgs(constr.Name)
+				}
+				dependedCols = []model.CIStr{model.NewCIStr(constr.InColumnName)}
 			}
 
 			// build constraint meta info.

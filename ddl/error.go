@@ -210,4 +210,8 @@ var (
 	ErrAddColumnWithSequenceAsDefault = terror.ClassDDL.New(mysql.ErrAddColumnWithSequenceAsDefault, mysql.MySQLErrName[mysql.ErrAddColumnWithSequenceAsDefault])
 	// ErrUnsupportedExpressionIndex is returned when create an expression index without allow-expression-index.
 	ErrUnsupportedExpressionIndex = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "creating expression index without allow-expression-index in config"))
+	// ErrColumnCheckConstraintReferOther is returned when create column check constraint referring other column.
+	ErrColumnCheckConstraintReferOther = terror.ClassDDL.New(mysql.ErrColumnCheckConstraintReferOther, mysql.MySQLErrName[mysql.ErrColumnCheckConstraintReferOther])
+	// ErrTableCheckConstraintReferUnknown is returned when create table check constraint referring non-existing column.
+	ErrTableCheckConstraintReferUnknown = terror.ClassDDL.New(mysql.ErrTableCheckConstraintReferUnknown, mysql.MySQLErrName[mysql.ErrTableCheckConstraintReferUnknown])
 )

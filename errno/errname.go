@@ -941,6 +941,8 @@ var MySQLErrName = map[uint16]string{
 	ErrFunctionalIndexOnField:                                "Functional index on a column is not supported. Consider using a regular index instead",
 	ErrFKIncompatibleColumns:                                 "Referencing column '%s' in foreign key constraint '%s' are incompatible",
 	ErrFunctionalIndexRowValueIsNotAllowed:                   "Expression of functional index '%s' cannot refer to a row value",
+	ErrColumnCheckConstraintReferOther:                       "Column check constraint '%s' references other column.",
+	ErrTableCheckConstraintReferUnknown:                      "Check constraint '%s' refers to non-existing column '%s'.",
 	ErrDependentByFunctionalIndex:                            "Column '%s' has a functional index dependency and cannot be dropped or renamed",
 	ErrInvalidJSONValueForFuncIndex:                          "Invalid JSON value for CAST for functional index '%s'",
 	ErrJSONValueOutOfRangeForFuncIndex:                       "Out of range JSON value for CAST for functional index '%s'",

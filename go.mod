@@ -64,4 +64,4 @@ require (
 
 go 1.13
 
-replace github.com/pingcap/parser => github.com/ailinkid/parser v0.0.0-20200524084915-5f6e90eb8182
+replace github.com/pingcap/parser => github.com/ailinkid/parser v0.0.0-20200526025647-4ecb7a0f531c

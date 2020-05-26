@@ -1,8 +1,4 @@
-// Copyright 2016 The ql Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSES/QL-LICENSE file.
-
-// Copyright 2015 PingCAP, Inc.
+// Copyright 2020 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,13 +13,4 @@
 
 package table
 
-import (
-	"github.com/pingcap/parser/ast"
-)
-
 // Constraint provides meta and map dependency describing a table constraint.
-type Constraint struct {
-	*ast.Constraint
-}
-
-// 有些东西还是必须跟随 tableInfo 走，涉及到其可见行问题，还需加上 SchemaState，虽然 ast.Constraint 定了完整的
