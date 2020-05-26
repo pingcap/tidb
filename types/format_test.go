@@ -62,7 +62,7 @@ func (s *testTimeSuite) TestTimeFormatMethod(c *C) {
 			// %W %w %a is not compatible in this case because Week() use GoTime() currently.
 			"0000-01-00 00:00:00.123456",
 			`%b %M %m %c %D %d %e %j %k %h %i %p %r %T %s %f %U %u %V %v %a %W %w %X %x %Y %y %%`,
-			`Jan January 01 1 0th 00 0 000 0 12 00 AM 12:00:00 AM 00:00:00 00 123456 00 00 00 52 Sun Sunday 0 4294967295 4294967295 0000 00 %`,
+			`Jan January 01 1 0th 00 0 000 0 12 00 AM 12:00:00 AM 00:00:00 00 123456 00 00 00 52 Fri Friday 5 4294967295 4294967295 0000 00 %`,
 		},
 	}
 	for i, t := range tblDate {

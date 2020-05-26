@@ -169,9 +169,9 @@ func (cc *clientConn) String() string {
 func (cc *clientConn) handshake(ctx context.Context) error {
 	if err := cc.writeInitialHandshake(); err != nil {
 		if errors.Cause(err) == io.EOF {
-			logutil.Logger(ctx).Info("Could not send handshake due to connection has be closed by client-side")
+			logutil.Logger(ctx).Debug("Could not send handshake due to connection has be closed by client-side")
 		} else {
-			terror.Log(err)
+			logutil.Logger(ctx).Debug("Write init handshake to client fail", zap.Error(errors.SuspendStack(err)))
 		}
 		return err
 	}
@@ -486,9 +486,9 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	if err != nil {
 		err = errors.SuspendStack(err)
 		if errors.Cause(err) == io.EOF {
-			logutil.Logger(ctx).Info("wait handshake response fail due to connection has be closed by client-side")
+			logutil.Logger(ctx).Debug("wait handshake response fail due to connection has be closed by client-side")
 		} else {
-			logutil.Logger(ctx).Error("wait handshake response fail", zap.Error(err))
+			logutil.Logger(ctx).Debug("wait handshake response fail", zap.Error(err))
 		}
 		return err
 	}
@@ -563,7 +563,9 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	cc.attrs = resp.Attrs
 
 	err = cc.openSessionAndDoAuth(resp.Auth)
-	logutil.Logger(ctx).Warn("open new session failure", zap.Error(err))
+	if err != nil {
+		logutil.Logger(ctx).Warn("open new session failure", zap.Error(err))
+	}
 	return err
 }
 
@@ -708,7 +710,8 @@ func (cc *clientConn) Run(ctx context.Context) {
 				metrics.CriticalErrorCounter.Add(1)
 				logutil.Logger(ctx).Fatal("critical error, stop the server", zap.Error(err))
 			}
-			logutil.Logger(ctx).Warn("dispatch error",
+
+			logutil.Logger(ctx).Error("dispatch error",
 				zap.String("connInfo", cc.String()),
 				zap.String("command", mysql.Command2Str[data[0]]),
 				zap.String("status", cc.SessionStatusToString()),
@@ -1039,7 +1042,13 @@ func (cc *clientConn) writeError(e error) error {
 	if te, ok = originErr.(*terror.Error); ok {
 		m = te.ToSQLError()
 	} else {
-		m = mysql.NewErrf(mysql.ErrUnknown, "%s", e.Error())
+		e := errors.Cause(originErr)
+		switch y := e.(type) {
+		case *terror.Error:
+			m = y.ToSQLError()
+		default:
+			m = mysql.NewErrf(mysql.ErrUnknown, "%s", e.Error())
+		}
 	}
 
 	cc.lastCode = m.Code

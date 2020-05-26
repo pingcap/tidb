@@ -112,6 +112,8 @@ type Server struct {
 	concurrentLimiter *TokenLimiter
 	clients           map[uint32]*clientConn
 	capability        uint32
+	statusAddr        string
+	statusListener    net.Listener
 	statusServer      *http.Server
 }
 
@@ -247,6 +249,9 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		s.listener = pplistener
 	}
 
+	if s.cfg.Status.ReportStatus && err == nil {
+		err = s.listenStatusHTTPServer()
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -443,6 +448,7 @@ func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 // ShowProcessList implements the SessionManager interface.
 func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
 	s.rwlock.RLock()
+	defer s.rwlock.RUnlock()
 	rs := make(map[uint64]*util.ProcessInfo, len(s.clients))
 	for _, client := range s.clients {
 		if atomic.LoadInt32(&client.status) == connStatusWaitShutdown {
@@ -452,7 +458,6 @@ func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
 			rs[pi.ID] = pi
 		}
 	}
-	s.rwlock.RUnlock()
 	return rs
 }
 

@@ -883,6 +883,10 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		}
 	}
 
+	if tb.Meta().AutoIdCache != 0 {
+		fmt.Fprintf(&buf, " /*T![auto_id_cache] AUTO_ID_CACHE=%d */", tb.Meta().AutoIdCache)
+	}
+
 	if tb.Meta().ShardRowIDBits > 0 {
 		fmt.Fprintf(&buf, "/*!90000 SHARD_ROW_ID_BITS=%d ", tb.Meta().ShardRowIDBits)
 		if tb.Meta().PreSplitRegions > 0 {
@@ -1078,6 +1082,19 @@ func (e *ShowExec) fetchShowGrants() error {
 	checker := privilege.GetPrivilegeManager(e.ctx)
 	if checker == nil {
 		return errors.New("miss privilege checker")
+	}
+	sessVars := e.ctx.GetSessionVars()
+	if !e.User.CurrentUser {
+		userName := sessVars.User.AuthUsername
+		hostName := sessVars.User.AuthHostname
+		// Show grant user requires the SELECT privilege on mysql schema.
+		// Ref https://dev.mysql.com/doc/refman/8.0/en/show-grants.html
+		if userName != e.User.Username || hostName != e.User.Hostname {
+			activeRoles := sessVars.ActiveRoles
+			if !checker.RequestVerification(activeRoles, mysql.SystemDB, "", "", mysql.SelectPriv) {
+				return ErrDBaccessDenied.GenWithStackByArgs(userName, hostName, mysql.SystemDB)
+			}
+		}
 	}
 	for _, r := range e.Roles {
 		if r.Hostname == "" {

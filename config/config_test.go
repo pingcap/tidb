@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/util/logutil"
 	tracing "github.com/uber/jaeger-client-go/config"
@@ -68,6 +69,8 @@ alter-primary-key = true
 split-region-max-num=10000
 server-version = "test_version"
 max-index-length = 3080
+enable-table-lock = true
+delay-clean-table-lock = 5
 [performance]
 txn-entry-count-limit=2000
 txn-total-size-limit=2000
@@ -114,6 +117,8 @@ history-size=100
 	c.Assert(conf.StmtSummary.RefreshInterval, Equals, 100)
 	c.Assert(conf.StmtSummary.HistorySize, Equals, 100)
 	c.Assert(conf.MaxIndexLength, Equals, 3080)
+	c.Assert(conf.EnableTableLock, IsTrue)
+	c.Assert(conf.DelayCleanTableLock, Equals, uint64(5))
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
 
@@ -124,8 +129,7 @@ history-size=100
 	c.Assert(conf, DeepEquals, GetGlobalConfig())
 
 	// Test for log config.
-	c.Assert(conf.Log.ToLogConfig(), DeepEquals, logutil.NewLogConfig("info", "text", "tidb-slow.log", conf.Log.File, false))
-
+	c.Assert(conf.Log.ToLogConfig(), DeepEquals, logutil.NewLogConfig("info", "text", "tidb-slow.log", conf.Log.File, false, func(config *zaplog.Config) { config.DisableErrorVerbose = conf.Log.DisableErrorStack }))
 	// Test for tracing config.
 	tracingConf := &tracing.Configuration{
 		Disabled: true,
