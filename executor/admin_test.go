@@ -407,9 +407,9 @@ func (s *testSuite5) TestAdminCleanupIndexForPartitionTable(c *C) {
 
 		txn, err := s.store.Begin()
 		c.Assert(err, IsNil)
-		_, err = indexOpr2.Create(s.ctx, txn, types.MakeDatums(idxValue), kv.IntHandle(handle))
+		_, err = indexOpr2.Create(s.ctx, txn, types.MakeDatums(idxValue), int64(handle))
 		c.Assert(err, IsNil)
-		_, err = indexOpr3.Create(s.ctx, txn, types.MakeDatums(idxValue), kv.IntHandle(handle))
+		_, err = indexOpr3.Create(s.ctx, txn, types.MakeDatums(idxValue), int64(handle))
 		c.Assert(err, IsNil)
 		err = txn.Commit(context.Background())
 		c.Assert(err, IsNil)
