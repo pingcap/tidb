@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"container/list"
 	"context"
+	"encoding/hex"
 	"fmt"
 	"sync"
 	"time"
@@ -141,8 +142,10 @@ func (l *Lock) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 128))
 	buf.WriteString("key: ")
 	prettyWriteKey(buf, l.Key)
+	buf.WriteString("(" + hex.EncodeToString(l.Key) + ")")
 	buf.WriteString(", primary: ")
 	prettyWriteKey(buf, l.Primary)
+	buf.WriteString("(" + hex.EncodeToString(l.Primary) + ")")
 	return fmt.Sprintf("%s, txnStartTS: %d, ttl: %d, type: %s", buf.String(), l.TxnID, l.TTL, l.LockType)
 }
 
@@ -321,7 +324,7 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (int64, error
 			err = lr.resolveLock(bo, l, status, cleanRegions)
 			if err != nil {
 				msBeforeTxnExpired.update(0)
-				err = errors.Trace(err)
+				err = errors.Annotatef(err, "TxnStatus: %+q, ", status)
 				return msBeforeTxnExpired.value(), err
 			}
 		} else {
@@ -439,6 +442,13 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 		if keyErr := cmdResp.GetError(); keyErr != nil {
 			// If the TTL of the primary lock is not outdated, the proto returns a ErrLocked contains the TTL.
 			if lockInfo := keyErr.GetLocked(); lockInfo != nil {
+				if status.ttl == 0 {
+					logutil.Logger(context.Background()).Info("tikv cleanup returned 0 ttl",
+						zap.Uint64("startTs", txnID),
+						zap.String("primary", hex.EncodeToString(primary)),
+						zap.Stringer("resp", cmdResp))
+				}
+
 				status.ttl = lockInfo.LockTtl
 				status.commitTS = 0
 				return status, nil
