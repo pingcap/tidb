@@ -37,11 +37,11 @@ const (
 	// We can retry it after certain time has passed.
 	Rejected = "rejected"
 	// SQLcreated indicates the binding is created by SQL like "create binding for ...".
-	SQLcreated = "sql_created"
+	SQLcreated = "manual"
 	// Captured indicates the binding is captured by TiDB automatically.
-	Captured = "captured"
+	Captured = "capture"
 	// Evolved indicates the binding is evolved by TiDB from old bindings.
-	Evolved = "evolved"
+	Evolved = "evolve"
 )
 
 // Binding stores the basic bind hint info.
@@ -53,7 +53,7 @@ type Binding struct {
 	Status     string
 	CreateTime types.Time
 	UpdateTime types.Time
-	CreateWay  string
+	Source     string
 	Charset    string
 	Collation  string
 	// Hint is the parsed hints, it is used to bind hints to stmt node.
