@@ -107,8 +107,6 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildChange(v)
 	case *plannercore.CheckTable:
 		return b.buildCheckTable(v)
-	case *plannercore.CheckIndex:
-		return b.buildCheckIndex(v)
 	case *plannercore.RecoverIndex:
 		return b.buildRecoverIndex(v)
 	case *plannercore.CleanupIndex:
@@ -332,26 +330,6 @@ func (b *executorBuilder) buildShowSlow(v *plannercore.ShowSlow) Executor {
 	return e
 }
 
-func (b *executorBuilder) buildCheckIndex(v *plannercore.CheckIndex) Executor {
-	readerExec, err := buildNoRangeIndexLookUpReader(b, v.IndexLookUpReader)
-	if err != nil {
-		b.err = err
-		return nil
-	}
-
-	buildIndexLookUpChecker(b, v.IndexLookUpReader, readerExec)
-
-	e := &CheckIndexExec{
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
-		dbName:       v.DBName,
-		tableName:    readerExec.table.Meta().Name.L,
-		idxName:      v.IdxName,
-		is:           b.is,
-		src:          readerExec,
-	}
-	return e
-}
-
 // buildIndexLookUpChecker builds check information to IndexLookUpReader.
 func buildIndexLookUpChecker(b *executorBuilder, readerPlan *plannercore.PhysicalIndexLookUpReader,
 	readerExec *IndexLookUpExecutor) {
@@ -404,6 +382,7 @@ func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) Executor {
 		srcs:         readerExecs,
 		exitCh:       make(chan struct{}),
 		retCh:        make(chan error, len(readerExecs)),
+		checkIndex:   v.CheckIndex,
 	}
 	return e
 }
