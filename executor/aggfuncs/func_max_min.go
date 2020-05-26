@@ -232,7 +232,7 @@ func (e *maxMin4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []
 		if isNull {
 			continue
 		}
-		p.Push(input)
+		_ = p.Push(input)
 	}
 	if val, isEmpty := p.Top(); !isEmpty {
 		p.val = val.(int64)
@@ -253,7 +253,7 @@ func (e *maxMin4Int) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart,
 		if isNull {
 			continue
 		}
-		p.Push(input)
+		_ = p.Push(input)
 	}
 	for i := uint64(0); i < shiftStart; i++ {
 		input, isNull, err := e.args[0].EvalInt(sctx, rows[lastStart+i])
@@ -263,7 +263,7 @@ func (e *maxMin4Int) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart,
 		if isNull {
 			continue
 		}
-		p.Pop(input)
+		_ = p.Pop(input)
 	}
 	if val, isEmpty := p.Top(); !isEmpty {
 		p.val = val.(int64)
@@ -527,7 +527,7 @@ func (e *maxMin4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGrou
 		if isNull {
 			continue
 		}
-		p.Push(input)
+		_ = p.Push(input)
 	}
 	if val, isEmpty := p.Top(); !isEmpty {
 		p.val = val.(float64)
@@ -548,7 +548,7 @@ func (e *maxMin4Float64) Slide(sctx sessionctx.Context, rows []chunk.Row, lastSt
 		if isNull {
 			continue
 		}
-		p.Push(input)
+		_ = p.Push(input)
 	}
 	for i := uint64(0); i < shiftStart; i++ {
 		input, isNull, err := e.args[0].EvalReal(sctx, rows[lastStart+i])
@@ -558,7 +558,7 @@ func (e *maxMin4Float64) Slide(sctx sessionctx.Context, rows []chunk.Row, lastSt
 		if isNull {
 			continue
 		}
-		p.Pop(input)
+		_ = p.Pop(input)
 	}
 	if val, isEmpty := p.Top(); !isEmpty {
 		p.val = val.(float64)
@@ -804,7 +804,7 @@ func (e *maxMin4Time) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 		if isNull {
 			continue
 		}
-		p.Push(input)
+		_ = p.Push(input)
 	}
 	if val, isEmpty := p.Top(); !isEmpty {
 		p.val = val.(types.Time)
@@ -825,7 +825,7 @@ func (e *maxMin4Time) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart
 		if isNull {
 			continue
 		}
-		p.Push(input)
+		_ = p.Push(input)
 	}
 	for i := uint64(0); i < shiftStart; i++ {
 		input, isNull, err := e.args[0].EvalTime(sctx, rows[lastStart+i])
@@ -835,7 +835,7 @@ func (e *maxMin4Time) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart
 		if isNull {
 			continue
 		}
-		p.Pop(input)
+		_ = p.Pop(input)
 	}
 	if val, isEmpty := p.Top(); !isEmpty {
 		p.val = val.(types.Time)
@@ -904,7 +904,7 @@ func (e *maxMin4Duration) UpdatePartialResult(sctx sessionctx.Context, rowsInGro
 		if isNull {
 			continue
 		}
-		p.Push(input)
+		_ = p.Push(input)
 	}
 	if val, isEmpty := p.Top(); !isEmpty {
 		p.val = val.(types.Duration)
@@ -925,7 +925,7 @@ func (e *maxMin4Duration) Slide(sctx sessionctx.Context, rows []chunk.Row, lastS
 		if isNull {
 			continue
 		}
-		p.Push(input)
+		_ = p.Push(input)
 	}
 	for i := uint64(0); i < shiftStart; i++ {
 		input, isNull, err := e.args[0].EvalDuration(sctx, rows[lastStart+i])
@@ -935,7 +935,7 @@ func (e *maxMin4Duration) Slide(sctx sessionctx.Context, rows []chunk.Row, lastS
 		if isNull {
 			continue
 		}
-		p.Pop(input)
+		_ = p.Pop(input)
 	}
 	if val, isEmpty := p.Top(); !isEmpty {
 		p.val = val.(types.Duration)
