@@ -832,6 +832,11 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	copTaskInfo := sessVars.StmtCtx.CopTasksDetails()
 	statsInfos := plannercore.GetStatsInfo(a.Plan)
 	memMax := sessVars.StmtCtx.MemTracker.MaxConsumed()
+<<<<<<< HEAD
+=======
+	diskMax := sessVars.StmtCtx.DiskTracker.MaxConsumed()
+	_, digest := sessVars.StmtCtx.SQLDigest()
+>>>>>>> 55d9d6c... sessionctx,infoschema,executor,util: Show disk usage of a query in slow query and statement summary (#17132)
 	_, planDigest := getPlanDigest(a.Ctx, a.Plan)
 	slowItems := &variable.SlowQueryLogItems{
 		TxnTS:          txnTS,
@@ -845,6 +850,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		CopTasks:       copTaskInfo,
 		ExecDetail:     execDetail,
 		MemMax:         memMax,
+		DiskMax:        diskMax,
 		Succ:           succ,
 		Plan:           getPlanTree(a.Plan),
 		PlanDigest:     planDigest,
@@ -961,10 +967,15 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	execDetail := stmtCtx.GetExecDetails()
 	copTaskInfo := stmtCtx.CopTasksDetails()
 	memMax := stmtCtx.MemTracker.MaxConsumed()
+<<<<<<< HEAD
 	sql := a.Text
 	if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
 		sql = sensitiveStmt.SecureText()
 	}
+=======
+	diskMax := stmtCtx.DiskTracker.MaxConsumed()
+
+>>>>>>> 55d9d6c... sessionctx,infoschema,executor,util: Show disk usage of a query in slow query and statement summary (#17132)
 	stmtsummary.StmtSummaryByDigestMap.AddStatement(&stmtsummary.StmtExecInfo{
 		SchemaName:     strings.ToLower(sessVars.CurrentDB),
 		OriginalSQL:    sql,
@@ -983,6 +994,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		CopTasks:       copTaskInfo,
 		ExecDetail:     &execDetail,
 		MemMax:         memMax,
+		DiskMax:        diskMax,
 		StartTime:      sessVars.StartTime,
 		IsInternal:     sessVars.InRestrictedSQL,
 		Succeed:        succ,
