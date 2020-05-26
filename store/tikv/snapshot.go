@@ -331,6 +331,7 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 		RegionCache:       s.store.regionCache,
 		minCommitTSPushed: &s.minCommitTSPushed,
 		Client:            s.store.client,
+		resolveLite:       true,
 	}
 
 	req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdGet,
