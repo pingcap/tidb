@@ -128,6 +128,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 		sumMem:               stmtExecInfo1.MemMax,
 		maxMem:               stmtExecInfo1.MemMax,
 		sumDisk:              stmtExecInfo1.DiskMax,
+		maxDisk:			  stmtExecInfo1.DiskMax,
 		sumAffectedRows:      stmtExecInfo1.StmtCtx.AffectedRows(),
 		firstSeen:            stmtExecInfo1.StartTime,
 		lastSeen:             stmtExecInfo1.StartTime,
@@ -257,6 +258,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 	expectedSummaryElement.sumMem += stmtExecInfo2.MemMax
 	expectedSummaryElement.maxMem = stmtExecInfo2.MemMax
 	expectedSummaryElement.sumDisk += stmtExecInfo2.DiskMax
+	expectedSummaryElement.maxDisk = stmtExecInfo2.DiskMax
 	expectedSummaryElement.sumAffectedRows += stmtExecInfo2.StmtCtx.AffectedRows()
 	expectedSummaryElement.lastSeen = stmtExecInfo2.StartTime
 
@@ -611,7 +613,7 @@ func (s *testStmtSummarySuite) TestToDatum(c *C) {
 		stmtExecInfo1.ExecDetail.CommitDetail.WriteSize, stmtExecInfo1.ExecDetail.CommitDetail.WriteSize,
 		stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum, stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum,
 		stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, 1,
-		"txnLock:1", stmtExecInfo1.MemMax, stmtExecInfo1.MemMax, stmtExecInfo1.DiskMax, stmtExecInfo1.StmtCtx.AffectedRows(),
+		"txnLock:1", stmtExecInfo1.MemMax, stmtExecInfo1.MemMax, stmtExecInfo1.DiskMax, stmtExecInfo1.DiskMax, stmtExecInfo1.StmtCtx.AffectedRows(),
 		t, t, stmtExecInfo1.OriginalSQL, stmtExecInfo1.PrevSQL, "plan_digest", ""}
 	match(c, datums[0], expectedDatum...)
 
