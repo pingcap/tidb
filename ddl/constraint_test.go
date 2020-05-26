@@ -121,4 +121,7 @@ func (s *testSequenceSuite) TestCreateTableWithCheckConstraints(c *C) {
 
 	s.tk.MustExec("create table t(a int not null primary key check(a > '12345'))")
 	s.tk.MustExec("drop table t")
+
+	s.tk.MustExec("create table t(a varchar(10) not null primary key check(a > '12345'))")
+	s.tk.MustExec("drop table t")
 }
