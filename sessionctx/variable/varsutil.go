@@ -407,10 +407,20 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case TiDBSkipUTF8Check, TiDBOptAggPushDown,
 		TiDBOptInSubqToJoinAndAgg, TiDBEnableFastAnalyze,
+<<<<<<< HEAD
 		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming,
 		TiDBBatchDelete, TiDBBatchCommit, TiDBEnableCascadesPlanner, TiDBEnableWindowFunction,
 		TiDBCheckMb4ValueInUTF8, TiDBLowResolutionTSO, TiDBScatterRegion,
 		TiDBGeneralLog, TiDBPProfSQLCPU, TiDBConstraintCheckInPlace, TiDBRecordPlanInSlowLog:
+=======
+		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming, TiDBEnableChunkRPC,
+		TiDBBatchDelete, TiDBBatchCommit, TiDBEnableCascadesPlanner, TiDBEnableWindowFunction, TiDBPProfSQLCPU,
+		TiDBLowResolutionTSO, TiDBEnableIndexMerge, TiDBEnableNoopFuncs,
+		TiDBCheckMb4ValueInUTF8, TiDBEnableSlowLog, TiDBRecordPlanInSlowLog,
+		TiDBScatterRegion, TiDBGeneralLog, TiDBConstraintCheckInPlace,
+		TiDBEnableVectorizedExpression, TiDBFoundInPlanCache, TiDBEnableCollectExecutionInfo,
+		TiDBAllowAutoRandExplicitInsert:
+>>>>>>> a3d5082... sessionctx, executor: add session var to control explicit insertion on auto_random column (#17102)
 		fallthrough
 	case GeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, LogBin,
 		CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode, PseudoSlaveMode, LowPriorityUpdates,

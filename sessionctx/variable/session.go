@@ -345,6 +345,9 @@ type SessionVars struct {
 	// AllowInSubqToJoinAndAgg can be set to false to forbid rewriting the semi join to inner join with agg.
 	AllowInSubqToJoinAndAgg bool
 
+	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
+	AllowAutoRandExplicitInsert bool
+
 	// CorrelationThreshold is the guard to enable row count estimation using column order correlation.
 	CorrelationThreshold float64
 
@@ -572,7 +575,17 @@ func NewSessionVars() *SessionVars {
 		ReplicaRead:                 kv.ReplicaReadLeader,
 		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
 		LockWaitTimeout:             DefInnodbLockWaitTimeout * 1000,
+<<<<<<< HEAD
 		isolationReadEngines:        map[kv.StoreType]struct{}{kv.TiKV: {}, kv.TiFlash: {}},
+=======
+		MetricSchemaStep:            DefTiDBMetricSchemaStep,
+		MetricSchemaRangeDuration:   DefTiDBMetricSchemaRangeDuration,
+		SequenceState:               NewSequenceState(),
+		WindowingUseHighPrecision:   true,
+		PrevFoundInPlanCache:        DefTiDBFoundInPlanCache,
+		FoundInPlanCache:            DefTiDBFoundInPlanCache,
+		AllowAutoRandExplicitInsert: DefTiDBAllowAutoRandExplicitInsert,
+>>>>>>> a3d5082... sessionctx, executor: add session var to control explicit insertion on auto_random column (#17102)
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -998,6 +1011,25 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 				s.isolationReadEngines[kv.TiDB] = struct{}{}
 			}
 		}
+<<<<<<< HEAD
+=======
+	case TiDBSlowLogThreshold:
+		atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
+	case TiDBRecordPlanInSlowLog:
+		atomic.StoreUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog, uint32(tidbOptInt64(val, logutil.DefaultRecordPlanInSlowLog)))
+	case TiDBEnableSlowLog:
+		config.GetGlobalConfig().Log.EnableSlowLog = TiDBOptOn(val)
+	case TiDBQueryLogMaxLen:
+		atomic.StoreUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen, uint64(tidbOptInt64(val, logutil.DefaultQueryLogMaxLen)))
+	case TiDBCheckMb4ValueInUTF8:
+		config.GetGlobalConfig().CheckMb4ValueInUTF8 = TiDBOptOn(val)
+	case TiDBFoundInPlanCache:
+		s.FoundInPlanCache = TiDBOptOn(val)
+	case TiDBEnableCollectExecutionInfo:
+		config.GetGlobalConfig().EnableCollectExecutionInfo = TiDBOptOn(val)
+	case TiDBAllowAutoRandExplicitInsert:
+		s.AllowAutoRandExplicitInsert = TiDBOptOn(val)
+>>>>>>> a3d5082... sessionctx, executor: add session var to control explicit insertion on auto_random column (#17102)
 	}
 	s.systems[name] = val
 	return nil

@@ -155,6 +155,38 @@ const (
 
 	// TiDBAllowRemoveAutoInc indicates whether a user can drop the auto_increment column attribute or not.
 	TiDBAllowRemoveAutoInc = "tidb_allow_remove_auto_inc"
+<<<<<<< HEAD
+=======
+
+	// TiDBEvolvePlanTaskMaxTime controls the max time of a single evolution task.
+	TiDBEvolvePlanTaskMaxTime = "tidb_evolve_plan_task_max_time"
+
+	// TiDBEvolvePlanTaskStartTime is the start time of evolution task.
+	TiDBEvolvePlanTaskStartTime = "tidb_evolve_plan_task_start_time"
+	// TiDBEvolvePlanTaskEndTime is the end time of evolution task.
+	TiDBEvolvePlanTaskEndTime = "tidb_evolve_plan_task_end_time"
+
+	// tidb_slow_log_threshold is used to set the slow log threshold in the server.
+	TiDBSlowLogThreshold = "tidb_slow_log_threshold"
+
+	// tidb_record_plan_in_slow_log is used to log the plan of the slow query.
+	TiDBRecordPlanInSlowLog = "tidb_record_plan_in_slow_log"
+
+	// tidb_enable_slow_log enables TiDB to log slow queries.
+	TiDBEnableSlowLog = "tidb_enable_slow_log"
+
+	// tidb_query_log_max_len is used to set the max length of the query in the log.
+	TiDBQueryLogMaxLen = "tidb_query_log_max_len"
+
+	// TiDBCheckMb4ValueInUTF8 is used to control whether to enable the check wrong utf8 value.
+	TiDBCheckMb4ValueInUTF8 = "tidb_check_mb4_value_in_utf8"
+
+	// TiDBFoundInPlanCache indicates whether the last statement was found in plan cache
+	TiDBFoundInPlanCache = "last_plan_from_cache"
+
+	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
+	TiDBAllowAutoRandExplicitInsert = "allow_auto_random_explicit_insert"
+>>>>>>> a3d5082... sessionctx, executor: add session var to control explicit insertion on auto_random column (#17102)
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -409,6 +441,14 @@ const (
 	DefTiDBAllowRemoveAutoInc          = false
 	DefInnodbLockWaitTimeout           = 50 // 50s
 	DefTiDBStoreLimit                  = 0
+<<<<<<< HEAD
+=======
+	DefTiDBMetricSchemaStep            = 60 // 60s
+	DefTiDBMetricSchemaRangeDuration   = 60 // 60s
+	DefTiDBFoundInPlanCache            = false
+	DefTidbEnableCollectExecutionInfo  = false
+	DefTiDBAllowAutoRandExplicitInsert = false
+>>>>>>> a3d5082... sessionctx, executor: add session var to control explicit insertion on auto_random column (#17102)
 )
 
 // Process global variables.
