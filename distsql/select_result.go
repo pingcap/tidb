@@ -171,10 +171,12 @@ func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 func (r *selectResult) getSelectResp() error {
 	r.respChkIdx = 0
 	for {
+		startTime := time.Now()
 		re := <-r.results
 		if re.err != nil {
 			return errors.Trace(re.err)
 		}
+		duration := time.Since(startTime)
 		if r.selectResp != nil {
 			r.memConsume(-int64(r.selectRespSize))
 		}
@@ -205,6 +207,9 @@ func (r *selectResult) getSelectResp() error {
 		r.updateCopRuntimeStats(re.result.GetExecDetails().CalleeAddress)
 		r.feedback.Update(re.result.GetStartKey(), r.selectResp.OutputCounts)
 		r.partialCount++
+		if re.result.GetExecDetails() != nil {
+			re.result.GetExecDetails().CopTime = duration
+		}
 		sc.MergeExecDetails(re.result.GetExecDetails(), nil)
 		if len(r.selectResp.Chunks) == 0 {
 			continue
