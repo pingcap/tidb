@@ -131,10 +131,9 @@ func (c *hashRowContainer) GetMatchedRowsAndPtrs(matched *[]chunk.Row, matchedPt
 	if lenInnerPtrs == 0 {
 		return
 	}
+	// the cap of `matched` is always the same with the cap of the `matchedPtrs`
 	if matched == nil || cap(*matched) < lenInnerPtrs {
 		*matched = make([]chunk.Row, 0, lenInnerPtrs)
-	}
-	if matchedPtrs == nil || cap(*matchedPtrs) < lenInnerPtrs {
 		*matchedPtrs = make([]chunk.RowPtr, 0, lenInnerPtrs)
 	}
 	var matchedRow chunk.Row
