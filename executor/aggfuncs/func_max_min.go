@@ -330,7 +330,7 @@ func (e *maxMin4Uint) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 		if isNull {
 			continue
 		}
-		p.Push(uint64(input))
+		_ = p.Push(uint64(input))
 	}
 	if val, isEmpty := p.Top(); !isEmpty {
 		p.val = val.(uint64)
@@ -351,7 +351,7 @@ func (e *maxMin4Uint) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart
 		if isNull {
 			continue
 		}
-		p.Push(uint64(input))
+		_ = p.Push(uint64(input))
 	}
 	for i := uint64(0); i < shiftStart; i++ {
 		input, isNull, err := e.args[0].EvalInt(sctx, rows[lastStart+i])
@@ -361,7 +361,7 @@ func (e *maxMin4Uint) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart
 		if isNull {
 			continue
 		}
-		p.Pop(uint64(input))
+		_ = p.Pop(uint64(input))
 	}
 	if val, isEmpty := p.Top(); !isEmpty {
 		p.val = val.(uint64)
@@ -429,7 +429,7 @@ func (e *maxMin4Float32) UpdatePartialResult(sctx sessionctx.Context, rowsInGrou
 		if isNull {
 			continue
 		}
-		p.Push(float32(input))
+		_ = p.Push(float32(input))
 	}
 	if val, isEmpty := p.Top(); !isEmpty {
 		p.val = val.(float32)
@@ -450,7 +450,7 @@ func (e *maxMin4Float32) Slide(sctx sessionctx.Context, rows []chunk.Row, lastSt
 		if isNull {
 			continue
 		}
-		p.Push(float32(input))
+		_ = p.Push(float32(input))
 	}
 	for i := uint64(0); i < shiftStart; i++ {
 		input, isNull, err := e.args[0].EvalReal(sctx, rows[lastStart+i])
@@ -460,7 +460,7 @@ func (e *maxMin4Float32) Slide(sctx sessionctx.Context, rows []chunk.Row, lastSt
 		if isNull {
 			continue
 		}
-		p.Pop(float32(input))
+		_ = p.Pop(float32(input))
 	}
 	if val, isEmpty := p.Top(); !isEmpty {
 		p.val = val.(float32)
