@@ -48,12 +48,6 @@ func newMaxMinQueue(isMax bool) *maxMinQueue {
 	}
 }
 
-func newMyDecimalMaxMinQueue(isMax bool) *maxMinQueue {
-	queue := newMaxMinQueue(isMax)
-	queue.varSetKey = myDecimalVarSetKey
-	return queue
-}
-
 func (m *maxMinQueue) Resort() {
 	if len(m.queue) == 0 {
 		return
@@ -597,7 +591,8 @@ type maxMin4Decimal struct {
 func (e *maxMin4Decimal) AllocPartialResult() PartialResult {
 	p := new(partialResult4MaxMinDecimal)
 	p.isNull = true
-	p.maxMinQueue = newMyDecimalMaxMinQueue(e.isMax)
+	p.maxMinQueue = newMaxMinQueue(e.isMax)
+	p.maxMinQueue.varSetKey = myDecimalVarSetKey
 	p.maxMinQueue.cmpFunc = func(i, j interface{}) int {
 		src := i.(types.MyDecimal)
 		dst := j.(types.MyDecimal)
