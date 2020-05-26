@@ -14,3 +14,5 @@
 package table
 
 // Constraint provides meta and map dependency describing a table constraint.
+type Constraint struct {
+}

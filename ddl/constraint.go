@@ -14,12 +14,13 @@
 package ddl
 
 import (
+	"strings"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"strings"
 )
 
 func allocateConstraintID(tblInfo *model.TableInfo) int64 {
