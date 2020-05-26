@@ -2577,6 +2577,10 @@ ColumnOption:
 			Expr:     $4,
 			Enforced: true,
 		}
+		// Keep the column type check constraint name.
+		if $1 != nil {
+			optionCheck.ConstraintName = $1.(string)
+		}
 		switch $6.(int) {
 		case 0:
 			$$ = []*ast.ColumnOption{optionCheck, {Tp: ast.ColumnOptionNotNull}}
