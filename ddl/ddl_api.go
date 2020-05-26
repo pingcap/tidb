@@ -2818,7 +2818,7 @@ func checkFielTypeCompatible(ft *types.FieldType, other *types.FieldType) bool {
 }
 
 func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) error {
-	err := ErrTablesDifferentMetadata
+	err := errors.Trace(ErrTablesDifferentMetadata)
 	if len(source.Cols()) != len(target.Cols()) {
 		return err
 	}
@@ -2860,8 +2860,8 @@ func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) e
 		}
 		for i, sourceIdxCol := range sourceIdx.Columns {
 			compatIdxCol := compatIdx.Columns[i]
-			if sourceIdxCol.Name.L != compatIdxCol.Name.L ||
-				sourceIdxCol.Length != compatIdxCol.Length {
+			if sourceIdxCol.Length != compatIdxCol.Length ||
+				sourceIdxCol.Name.L != compatIdxCol.Name.L {
 				return err
 			}
 		}
