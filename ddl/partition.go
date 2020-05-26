@@ -851,7 +851,7 @@ func checkExchangePartitionRecordValidation(w *worker, pi *model.PartitionInfo, 
 		if index == 0 {
 			sql = fmt.Sprintf("select 1 from `%s`.`%s` where %s >= %d limit 1", schemaName.L, tableName.L, pi.Expr, rangeRrun.LessThan[index])
 		} else if index == len(pi.Definitions)-1 && rangeRrun.MaxValue {
-			sql = fmt.Sprintf("select 1 from `%s`.`%s` where %s <= %d limit 1", schemaName.L, tableName.L, pi.Expr, rangeRrun.LessThan[index-1])
+			sql = fmt.Sprintf("select 1 from `%s`.`%s` where %s < %d limit 1", schemaName.L, tableName.L, pi.Expr, rangeRrun.LessThan[index-1])
 		} else {
 			sql = fmt.Sprintf("select 1 from `%s`.`%s` where %s < %d or %s >= %d limit 1", schemaName.L, tableName.L, pi.Expr, rangeRrun.LessThan[index-1], pi.Expr, rangeRrun.LessThan[index])
 		}
