@@ -637,11 +637,8 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 		if err != nil {
 			return nil, err
 		}
-<<<<<<< HEAD
-=======
+
 		a.Ctx.SetValue(sessionctx.QueryString, executorExec.stmt.Text())
-		a.OutputNames = executorExec.outputNames
->>>>>>> f72b598... executor: set the DDL query string instead of `execute` (#17407)
 		a.isPreparedStmt = true
 		a.Plan = executorExec.plan
 		if executorExec.lowerPriority {
