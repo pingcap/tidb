@@ -139,15 +139,10 @@ func (e *HashJoinExec) Close() error {
 
 	if e.runtimeStats != nil {
 		concurrency := cap(e.joiners)
-<<<<<<< HEAD
-		e.runtimeStats.SetConcurrencyInfo("Concurrency", concurrency)
-		e.runtimeStats.SetAdditionalInfo(e.rowContainer.stat.String())
-=======
 		e.runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", concurrency))
 		if e.rowContainer != nil {
 			e.runtimeStats.SetAdditionalInfo(e.rowContainer.stat.String())
 		}
->>>>>>> 0d95b09... executor: Remove unnecessary information in explain analyze output (#16248)
 	}
 	err := e.baseExecutor.Close()
 	return err
