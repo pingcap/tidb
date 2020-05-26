@@ -241,9 +241,9 @@ insert into t1 values(7, 8, 9);
 insert into t1 values(9, 10, 11);
 explain select a, c from t1 use index(idx) order by a limit 5;
 id	estRows	task	access object	operator info
-TopN_7	5.00	root		test.t1.a:asc, offset:0, count:5
+TopN_7	5.00	root		test.t1.a, offset:0, count:5
 └─IndexReader_15	5.00	root		index:TopN_14
-  └─TopN_14	5.00	cop[tikv]		test.t1.a:asc, offset:0, count:5
+  └─TopN_14	5.00	cop[tikv]		test.t1.a, offset:0, count:5
     └─IndexFullScan_13	10000.00	cop[tikv]	table:t1, index:idx(b, c)	keep order:false, stats:pseudo
 select c, a from t1 use index(idx) order by a limit 5;
 c	a
@@ -439,7 +439,7 @@ create table t(a int, b int);
 explain select a from t order by rand();
 id	estRows	task	access object	operator info
 Projection_8	10000.00	root		test.t.a
-└─Sort_4	10000.00	root		Column#4:asc
+└─Sort_4	10000.00	root		Column#4
   └─Projection_9	10000.00	root		test.t.a, rand()->Column#4
     └─TableReader_7	10000.00	root		data:TableFullScan_6
       └─TableFullScan_6	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
@@ -450,7 +450,7 @@ TableReader_8	10000.00	root		data:TableFullScan_7
 explain select a from t order by abs(rand())+1;
 id	estRows	task	access object	operator info
 Projection_8	10000.00	root		test.t.a
-└─Sort_4	10000.00	root		Column#4:asc
+└─Sort_4	10000.00	root		Column#4
   └─Projection_9	10000.00	root		test.t.a, plus(abs(rand()), 1)->Column#4
     └─TableReader_7	10000.00	root		data:TableFullScan_6
       └─TableFullScan_6	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
@@ -477,6 +477,6 @@ explain select row_number() over( partition by i ) - x as rnk from t;
 id	estRows	task	access object	operator info
 Projection_7	10000.00	root		minus(Column#5, test.t.x)->Column#7
 └─Window_8	10000.00	root		row_number()->Column#5 over(partition by test.t.i)
-  └─Sort_11	10000.00	root		test.t.i:asc
+  └─Sort_11	10000.00	root		test.t.i
     └─TableReader_10	10000.00	root		data:TableRangeScan_9
       └─TableRangeScan_9	10000.00	cop[tikv]	table:t	range:[0,+inf], keep order:false, stats:pseudo
