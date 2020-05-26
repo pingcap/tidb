@@ -114,4 +114,11 @@ func (s *testSequenceSuite) TestCreateTableWithCheckConstraints(c *C) {
 	c.Assert(err.Error(), Equals, "[ddl:3820]Check constraint 't_chk_1' refers to non-existing column 'c'.")
 
 	s.tk.MustExec("create table t(a int not null check(a>0), b int, constraint check(a>b))")
+	s.tk.MustExec("drop table t")
+
+	s.tk.MustExec("create table t(a int not null check(a > '12345'))")
+	s.tk.MustExec("drop table t")
+
+	s.tk.MustExec("create table t(a int not null primary key check(a > '12345'))")
+	s.tk.MustExec("drop table t")
 }
