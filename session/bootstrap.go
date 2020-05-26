@@ -385,8 +385,10 @@ const (
 	version44 = 44
 	// version45 introduces CONFIG_PRIV for SET CONFIG statements.
 	version45 = 45
-	// version46 add CreateWay to bindings to indicate the way binding created.
+	// version46 fix a bug in v3.1.1.
 	version46 = 46
+	// version47 add CreateWay to bindings to indicate the way binding created.
+	version47 = 47
 )
 
 var (
@@ -436,6 +438,7 @@ var (
 		upgradeToVer44,
 		upgradeToVer45,
 		upgradeToVer46,
+		upgradeToVer47,
 	}
 )
 
@@ -1049,8 +1052,20 @@ func upgradeToVer45(s Session, ver int64) {
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Config_priv='Y' where Super_priv='Y'")
 }
 
+// In v3.1.1, we wrongly replace the context of upgradeToVer39 with upgradeToVer44. If we upgrade from v3.1.1 to a newer version,
+// upgradeToVer39 will be missed. So we redo upgradeToVer39 here to make sure the upgrading from v3.1.1 succeed.
 func upgradeToVer46(s Session, ver int64) {
 	if ver >= version46 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Reload_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `File_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Reload_priv='Y' where Super_priv='Y'")
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET File_priv='Y' where Super_priv='Y'")
+}
+
+func upgradeToVer47(s Session, ver int64) {
+	if ver >= version47 {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN `create_way` varchar(20) NOT NULL", infoschema.ErrColumnExists)
