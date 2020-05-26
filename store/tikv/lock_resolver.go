@@ -442,7 +442,7 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 		if keyErr := cmdResp.GetError(); keyErr != nil {
 			// If the TTL of the primary lock is not outdated, the proto returns a ErrLocked contains the TTL.
 			if lockInfo := keyErr.GetLocked(); lockInfo != nil {
-				if status.ttl == 0 {
+				if lockInfo.LockTtl == 0 {
 					logutil.Logger(context.Background()).Info("tikv cleanup returned 0 ttl",
 						zap.Uint64("startTs", txnID),
 						zap.String("primary", hex.EncodeToString(primary)),
