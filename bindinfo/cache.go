@@ -36,12 +36,12 @@ const (
 	// Rejected means that the bind has been rejected after verify process.
 	// We can retry it after certain time has passed.
 	Rejected = "rejected"
-	// SQLcreated indicates the binding is created by SQL like "create binding for ...".
-	SQLcreated = "manual"
-	// Captured indicates the binding is captured by TiDB automatically.
-	Captured = "capture"
-	// Evolved indicates the binding is evolved by TiDB from old bindings.
-	Evolved = "evolve"
+	// Manual indicates the binding is created by SQL like "create binding for ...".
+	Manual = "manual"
+	// Capture indicates the binding is captured by TiDB automatically.
+	Capture = "capture"
+	// Evolve indicates the binding is evolved by TiDB from old bindings.
+	Evolve = "evolve"
 )
 
 // Binding stores the basic bind hint info.

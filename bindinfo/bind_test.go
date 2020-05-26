@@ -118,7 +118,7 @@ func (s *testSuite) TestBindParse(c *C) {
 	status := "using"
 	charset := "utf8mb4"
 	collation := "utf8mb4_bin"
-	source := bindinfo.SQLcreated
+	source := bindinfo.Manual
 	sql := fmt.Sprintf(`INSERT INTO mysql.bind_info(original_sql,bind_sql,default_db,status,create_time,update_time,charset,collation,source) VALUES ('%s', '%s', '%s', '%s', NOW(), NOW(),'%s', '%s', '%s')`,
 		originSQL, bindSQL, defaultDb, status, charset, collation, source)
 	tk.MustExec(sql)
@@ -860,7 +860,7 @@ func (s *testSuite) TestEvolveInvalidBindings(c *C) {
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ USE_INDEX(t) */ * from t where a > 10")
 	// Manufacture a rejected binding by hacking mysql.bind_info.
 	tk.MustExec("insert into mysql.bind_info values('select * from t where a > ?', 'select /*+ USE_INDEX(t,idx_a) */ * from t where a > 10', 'test', 'rejected', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
-		bindinfo.SQLcreated + "')")
+		bindinfo.Manual + "')")
 	tk.MustQuery("select bind_sql, status from mysql.bind_info").Sort().Check(testkit.Rows(
 		"select /*+ USE_INDEX(t) */ * from t where a > 10 using",
 		"select /*+ USE_INDEX(t,idx_a) */ * from t where a > 10 rejected",
@@ -1184,7 +1184,7 @@ func (s *testSuite) TestbindingSource(c *C) {
 	c.Check(bindData.OriginalSQL, Equals, "select * from t where a > ?")
 	c.Assert(len(bindData.Bindings), Equals, 1)
 	bind := bindData.Bindings[0]
-	c.Assert(bind.Source, Equals, bindinfo.SQLcreated)
+	c.Assert(bind.Source, Equals, bindinfo.Manual)
 
 	// Test Source for evolved sql
 	tk.MustExec("set @@tidb_evolve_plan_baselines=1")
@@ -1196,7 +1196,7 @@ func (s *testSuite) TestbindingSource(c *C) {
 	c.Check(bindData.OriginalSQL, Equals, "select * from t where a > ?")
 	c.Assert(len(bindData.Bindings), Equals, 2)
 	bind = bindData.Bindings[1]
-	c.Assert(bind.Source, Equals, bindinfo.Evolved)
+	c.Assert(bind.Source, Equals, bindinfo.Evolve)
 	tk.MustExec("set @@tidb_evolve_plan_baselines=0")
 
 	// Test Source for captured sqls
@@ -1217,5 +1217,5 @@ func (s *testSuite) TestbindingSource(c *C) {
 	c.Check(bindData.OriginalSQL, Equals, "select * from t where a < ?")
 	c.Assert(len(bindData.Bindings), Equals, 1)
 	bind = bindData.Bindings[0]
-	c.Assert(bind.Source, Equals, bindinfo.Captured)
+	c.Assert(bind.Source, Equals, bindinfo.Capture)
 }
