@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"os"
 	"runtime"
 	"strconv"
 	"strings"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -91,6 +93,34 @@ func WithRecovery(exec func(), recoverFn func(r interface{})) {
 		}
 	}()
 	exec()
+}
+
+// Recover includes operations such as recovering, clearing，and printing information.
+// It will dump current goroutine stack into log if catch any recover result.
+//   metricsLabel: The label of PanicCounter metrics.
+//   funcInfo:     Some information for the panic function.
+//   recoverFn:    Handler will be called after recover and before dump stack, passing `nil` means noop.
+//   quit:         If this value is true, the current program exits after recovery.
+func Recover(metricsLabel, funcInfo string, recoverFn func(), quit bool) {
+	r := recover()
+	if r == nil {
+		return
+	}
+
+	if recoverFn != nil {
+		recoverFn()
+	}
+	logutil.BgLogger().Error("panic in the recoverable goroutine",
+		zap.String("label", metricsLabel),
+		zap.String("funcInfo", funcInfo),
+		zap.Reflect("r", r),
+		zap.String("stack", string(GetStack())))
+	metrics.PanicCounter.WithLabelValues(metricsLabel).Inc()
+	if quit {
+		// Wait for metrics to be pushed.
+		time.Sleep(time.Second * 15)
+		os.Exit(1)
+	}
 }
 
 // CompatibleParseGCTime parses a string with `GCTimeFormat` and returns a time.Time. If `value` can't be parsed as that

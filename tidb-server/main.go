@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/pd/v4/client"
+	pd "github.com/pingcap/pd/v4/client"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
@@ -175,8 +175,8 @@ func main() {
 	}
 	setGlobalVars()
 	setCPUAffinity()
-	setHeapProfileTracker()
 	setupLog()
+	setHeapProfileTracker()
 	setupTracing() // Should before createServer and after setup config.
 	printInfo()
 	setupBinlogClient()
@@ -286,7 +286,9 @@ func registerStores() {
 	err := kvstore.Register("tikv", tikv.Driver{})
 	terror.MustNil(err)
 	tikv.NewGCHandlerFunc = gcworker.NewGCWorker
-	err = kvstore.Register("mocktikv", mockstore.MockDriver{})
+	err = kvstore.Register("mocktikv", mockstore.MockTiKVDriver{})
+	terror.MustNil(err)
+	err = kvstore.Register("unistore", mockstore.EmbedUnistoreDriver{})
 	terror.MustNil(err)
 }
 

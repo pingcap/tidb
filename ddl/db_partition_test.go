@@ -278,6 +278,17 @@ func (s *testIntegrationSuite3) TestCreateTableWithPartition(c *C) {
 	// Fix https://github.com/pingcap/tidb/issues/16333
 	tk.MustExec(`create table t35 (dt timestamp) partition by range (unix_timestamp(dt))
 (partition p0 values less than (unix_timestamp('2020-04-15 00:00:00')));`)
+
+	tk.MustExec(`drop table if exists too_long_identifier`)
+	tk.MustGetErrCode(`create table too_long_identifier(a int) 
+partition by range (a) 
+(partition p0pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp values less than (10));`, tmysql.ErrTooLongIdent)
+
+	tk.MustExec(`drop table if exists too_long_identifier`)
+	tk.MustExec("create table too_long_identifier(a int) partition by range(a) (partition p0 values less than(10))")
+	tk.MustGetErrCode("alter table too_long_identifier add partition "+
+		"(partition p0pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp values less than(20))", tmysql.ErrTooLongIdent)
+
 }
 
 func (s *testIntegrationSuite2) TestCreateTableWithHashPartition(c *C) {
