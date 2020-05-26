@@ -3892,6 +3892,26 @@ func (s *testSuiteP1) TestSelectPartition(c *C) {
 	tk.MustQuery("select a, b from th where b>10").Check(testkit.Rows("11 11"))
 }
 
+func (s *testSuiteP1) TestDeletePartition(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t1`)
+	tk.MustExec(`create table t1 (a int) partition by range (a) (
+ partition p0 values less than (10),
+ partition p1 values less than (20),
+ partition p2 values less than (30),
+ partition p3 values less than (40),
+ partition p4 values less than MAXVALUE
+ )`)
+	tk.MustExec("insert into t1 values (1),(11),(21),(31)")
+	tk.MustExec("delete from t1 partition (p4)")
+	tk.MustQuery("select * from t1 order by a").Check(testkit.Rows("1", "11", "21", "31"))
+	tk.MustExec("delete from t1 partition (p0) where a > 10")
+	tk.MustQuery("select * from t1 order by a").Check(testkit.Rows("1", "11", "21", "31"))
+	tk.MustExec("delete from t1 partition (p0,p1,p2)")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("31"))
+}
+
 func (s *testSuite) TestSelectView(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
