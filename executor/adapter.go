@@ -982,5 +982,6 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		StartTime:      sessVars.StartTime,
 		IsInternal:     sessVars.InRestrictedSQL,
 		Succeed:        succ,
+		PlanInCache:    sessVars.FoundInPlanCache,
 	})
 }

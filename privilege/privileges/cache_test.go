@@ -34,7 +34,7 @@ type testCacheSuite struct {
 }
 
 func (s *testCacheSuite) SetUpSuite(c *C) {
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	session.SetSchemaLease(0)
 	session.DisableStats4Test()
 	c.Assert(err, IsNil)
@@ -354,7 +354,7 @@ func (s *testCacheSuite) TestRoleGraphBFS(c *C) {
 }
 
 func (s *testCacheSuite) TestAbnormalMySQLTable(c *C) {
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 	session.SetSchemaLease(0)

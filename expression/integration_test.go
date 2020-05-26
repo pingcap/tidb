@@ -580,7 +580,7 @@ func (s *testIntegrationSuite2) TestMathBuiltin(c *C) {
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t values(1),(2),(3)")
 	tk.Se.GetSessionVars().MaxChunkSize = 1
-	tk.MustQuery("select rand(1) from t").Check(testkit.Rows("0.40540353712197724", "0.8716141803857071", "0.1418603212962489"))
+	tk.MustQuery("select rand(1) from t").Sort().Check(testkit.Rows("0.1418603212962489", "0.40540353712197724", "0.8716141803857071"))
 	tk.MustQuery("select rand(a) from t").Check(testkit.Rows("0.40540353712197724", "0.6555866465490187", "0.9057697559760601"))
 	tk.MustQuery("select rand(1), rand(2), rand(3)").Check(testkit.Rows("0.40540353712197724 0.6555866465490187 0.9057697559760601"))
 }
@@ -4420,7 +4420,7 @@ func (s *testIntegrationSuite) TestTiDBInternalFunc(c *C) {
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -6394,12 +6394,12 @@ func (s *testIntegrationSuite) TestIssue16697(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("CREATE TABLE `t` (`a` int(11) DEFAULT NULL,`b` int(11) DEFAULT NULL)")
-	tk.MustExec("insert into t values (1, 1)")
-	for i := 0; i < 8; i++ {
+	tk.MustExec("CREATE TABLE t (v varchar(1024))")
+	tk.MustExec("insert into t values (space(1024))")
+	for i := 0; i < 5; i++ {
 		tk.MustExec("insert into t select * from t")
 	}
-	rows := tk.MustQuery("explain analyze  select t1.a, t1.a +1 from t t1 join t t2 join t t3 order by t1.a").Rows()
+	rows := tk.MustQuery("explain analyze select * from t").Rows()
 	for _, row := range rows {
 		line := fmt.Sprintf("%v", row)
 		if strings.Contains(line, "Projection") {
