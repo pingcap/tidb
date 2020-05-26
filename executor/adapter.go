@@ -164,6 +164,7 @@ type ExecStmt struct {
 	isPreparedStmt    bool
 	isSelectForUpdate bool
 	retryCount        uint
+	InMultiQuery      bool
 }
 
 // OriginText returns original statement as a string.
@@ -735,6 +736,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		PlanDigest:     planDigest,
 		Prepared:       a.isPreparedStmt,
 		HasMoreResults: hasMoreResults,
+		InMultiQuery:   a.InMultiQuery,
 	}
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {
 		slowItems.PrevStmt = sessVars.PrevStmt.String()

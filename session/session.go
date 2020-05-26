@@ -1140,6 +1140,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 			sessionExecuteCompileDurationGeneral.Observe(durCompile.Seconds())
 		}
 		s.currentPlan = stmt.Plan
+		stmt.InMultiQuery = multiQuery
 
 		// Step3: Execute the physical plan.
 		if recordSets, err = s.executeStatement(ctx, connID, stmtNode, stmt, recordSets, multiQuery); err != nil {

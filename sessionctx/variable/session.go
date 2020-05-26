@@ -1106,6 +1106,8 @@ const (
 	SlowLogPrepared = "Prepared"
 	// SlowLogHasMoreResults is used to indicate whether this sql has more following results.
 	SlowLogHasMoreResults = "Has_more_results"
+	// SlowLogInMultiQueries is used to indicate whether this sql has in multiquery.
+	SlowLogInMultiQueries = "In_multi_queries"
 	// SlowLogSucc is used to indicate whether this sql execute successfully.
 	SlowLogSucc = "Succ"
 	// SlowLogPrevStmt is used to show the previous executed statement.
@@ -1139,6 +1141,7 @@ type SlowQueryLogItems struct {
 	Succ           bool
 	Prepared       bool
 	HasMoreResults bool
+	InMultiQuery   bool
 	PrevStmt       string
 	Plan           string
 	PlanDigest     string
@@ -1268,6 +1271,7 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 
 	writeSlowLogItem(&buf, SlowLogPrepared, strconv.FormatBool(logItems.Prepared))
 	writeSlowLogItem(&buf, SlowLogHasMoreResults, strconv.FormatBool(logItems.HasMoreResults))
+	writeSlowLogItem(&buf, SlowLogInMultiQueries, strconv.FormatBool(logItems.InMultiQuery))
 	writeSlowLogItem(&buf, SlowLogSucc, strconv.FormatBool(logItems.Succ))
 	if len(logItems.Plan) != 0 {
 		writeSlowLogItem(&buf, SlowLogPlan, logItems.Plan)
