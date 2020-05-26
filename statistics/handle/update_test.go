@@ -1700,4 +1700,7 @@ func (s *testStatsSuite) TestDeleteUpdateFeedback(c *C) {
 	testKit.MustExec("update t set a = 6 where a = 2")
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(len(h.GetQueryFeedback()), Equals, 0)
+	testKit.MustExec("explain analyze delete from t where a = 3")
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(len(h.GetQueryFeedback()), Equals, 0)
 }
