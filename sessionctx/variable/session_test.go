@@ -19,6 +19,8 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -26,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 )
 
-var _ = Suite(&testSessionSuite{})
+var _ = SerialSuites(&testSessionSuite{})
 
 type testSessionSuite struct {
 }
@@ -191,6 +193,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 # Cop_backoff_rpcTiKV_total_times: 200 Cop_backoff_rpcTiKV_total_time: 0.2 Cop_backoff_rpcTiKV_max_time: 0.2 Cop_backoff_rpcTiKV_max_addr: 127.0.0.1 Cop_backoff_rpcTiKV_avg_time: 0.2 Cop_backoff_rpcTiKV_p90_time: 0.2
 # Mem_max: 2333
 # Prepared: true
+# Plan_from_cache: true
 # Has_more_results: true
 # Succ: true
 select * from t;`
@@ -209,8 +212,24 @@ select * from t;`
 		ExecDetail:     execDetail,
 		MemMax:         memMax,
 		Prepared:       true,
+		PlanFromCache:  true,
 		HasMoreResults: true,
 		Succ:           true,
 	})
 	c.Assert(logString, Equals, resultString)
+}
+
+func (*testSessionSuite) TestIsolationRead(c *C) {
+	originIsolationEngines := config.GetGlobalConfig().IsolationRead.Engines
+	defer func() {
+		config.GetGlobalConfig().IsolationRead.Engines = originIsolationEngines
+	}()
+	config.GetGlobalConfig().IsolationRead.Engines = []string{"tiflash", "tidb"}
+	sessVars := variable.NewSessionVars()
+	_, ok := sessVars.IsolationReadEngines[kv.TiDB]
+	c.Assert(ok, Equals, true)
+	_, ok = sessVars.IsolationReadEngines[kv.TiKV]
+	c.Assert(ok, Equals, false)
+	_, ok = sessVars.IsolationReadEngines[kv.TiFlash]
+	c.Assert(ok, Equals, true)
 }

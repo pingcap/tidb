@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -32,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/testkit"
@@ -51,10 +52,9 @@ func TestT(t *testing.T) {
 var _ = Suite(&testSuite{})
 
 type testSuite struct {
-	cluster   *mocktikv.Cluster
-	mvccStore mocktikv.MVCCStore
-	store     kv.Storage
-	domain    *domain.Domain
+	cluster cluster.Cluster
+	store   kv.Storage
+	domain  *domain.Domain
 	*parser.Parser
 }
 
@@ -66,12 +66,11 @@ func (s *testSuite) SetUpSuite(c *C) {
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
 	if useMockTikv {
-		s.cluster = mocktikv.NewCluster()
-		mocktikv.BootstrapWithSingleStore(s.cluster)
-		s.mvccStore = mocktikv.MustNewMVCCStore()
-		store, err := mockstore.NewMockTikvStore(
-			mockstore.WithCluster(s.cluster),
-			mockstore.WithMVCCStore(s.mvccStore),
+		store, err := mockstore.NewMockStore(
+			mockstore.WithClusterInspector(func(c cluster.Cluster) {
+				mockstore.BootstrapWithSingleStore(c)
+				s.cluster = c
+			}),
 		)
 		c.Assert(err, IsNil)
 		s.store = store
@@ -432,6 +431,44 @@ func (s *testSuite) TestBindingSymbolList(c *C) {
 	c.Check(bind.UpdateTime, NotNil)
 }
 
+func (s *testSuite) TestBestPlanInBaselines(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, INDEX ia (a), INDEX ib (b));")
+	tk.MustExec("insert into t value(1, 1);")
+
+	// before binding
+	tk.MustQuery("select a, b from t where a = 3 limit 1, 100")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:ia")
+	c.Assert(tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "ia(a)"), IsTrue)
+
+	tk.MustQuery("select a, b from t where b = 3 limit 1, 100")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:ib")
+	c.Assert(tk.MustUseIndex("select a, b from t where b = 3 limit 1, 100", "ib(b)"), IsTrue)
+
+	tk.MustExec(`create global binding for select a, b from t where a = 1 limit 0, 1 using select /*+ use_index(@sel_1 test.t, ia) */ a, b from t where a = 1 limit 0, 1`)
+	tk.MustExec(`create global binding for select a, b from t where b = 1 limit 0, 1 using select /*+ use_index(@sel_1 test.t, ib) */ a, b from t where b = 1 limit 0, 1`)
+
+	sql, hash := parser.NormalizeDigest("select a, b from t where a = 1 limit 0, 1")
+	bindData := s.domain.BindHandle().GetBindRecord(hash, sql, "test")
+	c.Check(bindData, NotNil)
+	c.Check(bindData.OriginalSQL, Equals, "select a , b from t where a = ? limit ...")
+	bind := bindData.Bindings[0]
+	c.Check(bind.BindSQL, Equals, "select /*+ use_index(@sel_1 test.t, ia) */ a, b from t where a = 1 limit 0, 1")
+	c.Check(bindData.Db, Equals, "test")
+	c.Check(bind.Status, Equals, "using")
+
+	tk.MustQuery("select a, b from t where a = 3 limit 1, 10")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:ia")
+	c.Assert(tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "ia(a)"), IsTrue)
+
+	tk.MustQuery("select a, b from t where b = 3 limit 1, 100")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:ib")
+	c.Assert(tk.MustUseIndex("select a, b from t where b = 3 limit 1, 100", "ib(b)"), IsTrue)
+}
+
 func (s *testSuite) TestErrorBind(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
@@ -502,7 +539,7 @@ func (s *testSuite) TestCapturePlanBaseline(c *C) {
 		tk.MustExec(" set @@tidb_capture_plan_baselines = off")
 	}()
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t, t1")
 	tk.MustExec("create table t(a int)")
 	s.domain.BindHandle().CaptureBaselines()
 	tk.MustQuery("show global bindings").Check(testkit.Rows())
@@ -947,6 +984,17 @@ func (s *testSuite) TestHintsSetID(c *C) {
 	c.Assert(len(bindData.Bindings), Equals, 1)
 	bind = bindData.Bindings[0]
 	c.Assert(bind.ID, Equals, "use_index(@`sel_1` `test`.`t` `idx_a`)")
+
+	s.cleanBindingEnv(tk)
+	err := tk.ExecToErr("create global binding for select * from t using select /*+ non_exist_hint() */ * from t")
+	c.Assert(terror.ErrorEqual(err, parser.ErrWarnOptimizerHintParseError), IsTrue)
+	tk.MustExec("create global binding for select * from t where a > 10 using select * from t where a > 10")
+	bindData = bindHandle.GetBindRecord(hash, sql, "test")
+	c.Check(bindData, NotNil)
+	c.Check(bindData.OriginalSQL, Equals, "select * from t where a > ?")
+	c.Assert(len(bindData.Bindings), Equals, 1)
+	bind = bindData.Bindings[0]
+	c.Assert(bind.ID, Equals, "")
 }
 
 func (s *testSuite) TestCapturePlanBaselineIgnoreTiFlash(c *C) {
@@ -1083,4 +1131,37 @@ func (s *testSuite) TestReCreateBindAfterEvolvePlan(c *C) {
 	c.Assert(len(rows), Equals, 1)
 	tk.MustQuery("select * from t where a >= 4 and b >= 1")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_b")
+}
+
+func (s *testSuite) TestInvisibleIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, unique idx_a(a), index idx_b(b) invisible)")
+	tk.MustGetErrMsg(
+		"create global binding for select * from t using select * from t use index(idx_b) ",
+		"[planner:1176]Key 'idx_b' doesn't exist in table 't'")
+
+	// Create bind using index
+	tk.MustExec("create global binding for select * from t using select * from t use index(idx_a) ")
+
+	tk.MustQuery("select * from t")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_a")
+	c.Assert(tk.MustUseIndex("select * from t", "idx_a(a)"), IsTrue)
+
+	tk.MustExec(`prepare stmt1 from 'select * from t'`)
+	tk.MustExec("execute stmt1")
+	c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 1)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_a")
+
+	// And then make this index invisible
+	tk.MustExec("alter table t alter index idx_a invisible")
+	tk.MustQuery("select * from t")
+	c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 0)
+
+	tk.MustExec("execute stmt1")
+	c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 0)
+
+	tk.MustExec("drop binding for select * from t")
 }

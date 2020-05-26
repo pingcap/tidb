@@ -300,6 +300,13 @@ func (s *testSuite) TestInsert(c *C) {
 	_, err = tk.Exec("replace into v values(1,2)")
 	c.Assert(err.Error(), Equals, "replace into view v is not supported now.")
 	tk.MustExec("drop view v")
+
+	tk.MustExec("create sequence seq")
+	_, err = tk.Exec("insert into seq values()")
+	c.Assert(err.Error(), Equals, "insert into sequence seq is not supported now.")
+	_, err = tk.Exec("replace into seq values()")
+	c.Assert(err.Error(), Equals, "replace into sequence seq is not supported now.")
+	tk.MustExec("drop sequence seq")
 }
 
 func (s *testSuiteP2) TestMultiBatch(c *C) {
@@ -1511,6 +1518,11 @@ func (s *testSuite8) TestUpdate(c *C) {
 	c.Assert(err.Error(), Equals, core.ErrViewInvalid.GenWithStackByArgs("test", "v").Error())
 	tk.MustExec("drop view v")
 
+	tk.MustExec("create sequence seq")
+	_, err = tk.Exec("update seq set minvalue=1")
+	c.Assert(err.Error(), Equals, "update sequence seq is not supported now.")
+	tk.MustExec("drop sequence seq")
+
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int, b int, c int, d int, e int, index idx(a))")
 	tk.MustExec("create table t2(a int, b int, c int)")
@@ -1811,6 +1823,11 @@ func (s *testSuite) TestDelete(c *C) {
 	_, err = tk.Exec("delete from v where name = 'aaa'")
 	c.Assert(err.Error(), Equals, core.ErrViewInvalid.GenWithStackByArgs("test", "v").Error())
 	tk.MustExec("drop view v")
+
+	tk.MustExec("create sequence seq")
+	_, err = tk.Exec("delete from seq")
+	c.Assert(err.Error(), Equals, "delete sequence seq is not supported now.")
+	tk.MustExec("drop sequence seq")
 }
 
 func (s *testSuite4) TestPartitionedTableDelete(c *C) {
@@ -2165,6 +2182,7 @@ func (s *testSuite4) TestLoadDataEscape(c *C) {
 		{nil, []byte("6\t\\r\\t\\n\\0\\Z\\b\n"), []string{"6|" + string([]byte{'\r', '\t', '\n', 0, 26, '\b'})}, nil, trivialMsg},
 		{nil, []byte("7\trtn0ZbN\n"), []string{"7|" + string([]byte{'r', 't', 'n', '0', 'Z', 'b', 'N'})}, nil, trivialMsg},
 		{nil, []byte("8\trtn0Zb\\N\n"), []string{"8|" + string([]byte{'r', 't', 'n', '0', 'Z', 'b', 'N'})}, nil, trivialMsg},
+		{nil, []byte("9\ttab\\	tab\n"), []string{"9|tab	tab"}, nil, trivialMsg},
 	}
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
@@ -2286,7 +2304,7 @@ func (s *testSuite4) TestNotNullDefault(c *C) {
 }
 
 func (s *testBypassSuite) TestLatch(c *C) {
-	store, err := mockstore.NewMockTikvStore(
+	store, err := mockstore.NewMockStore(
 		// Small latch slot size to make conflicts.
 		mockstore.WithTxnLocalLatches(64),
 	)
@@ -2555,7 +2573,7 @@ func (s *testSuite7) TestReplaceLog(c *C) {
 
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(1), 1)
+	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(1), kv.IntHandle(1))
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)

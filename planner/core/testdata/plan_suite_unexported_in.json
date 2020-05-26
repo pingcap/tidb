@@ -21,7 +21,10 @@
       "select max(a.b), max(b.b) from t a join t b on a.a = b.a group by a.c",
       "select max(c.b) from (select * from t a union all select * from t b) c group by c.a",
       "select max(a.c) from t a join t b on a.a=b.a and a.b=b.b group by a.b",
-      "select t1.a, count(t2.b) from t t1, t t2 where t1.a = t2.a group by t1.a"
+      "select t1.a, count(t2.b) from t t1, t t2 where t1.a = t2.a group by t1.a",
+      "select avg(a) from (select * from t t1 union all select * from t t2) t",
+      "select count(distinct a) from (select * from t t1 union all select * from t t2) t",
+      "select count(distinct b) from (select * from t t1 union all select * from t t2) t"
     ]
   },
   {

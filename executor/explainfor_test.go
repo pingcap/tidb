@@ -109,11 +109,11 @@ func (s *testSuite) TestIssue11124(c *C) {
 	}
 }
 
-func (s *testSuite) TestExplainMetricTable(c *C) {
+func (s *testSuite) TestExplainMemTablePredicate(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustQuery(fmt.Sprintf("desc select * from METRICS_SCHEMA.tidb_query_duration where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13' ")).Check(testkit.Rows(
+	tk.MustQuery("desc select * from METRICS_SCHEMA.tidb_query_duration where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13' ").Check(testkit.Rows(
 		"MemTableScan_5 10000.00 root table:tidb_query_duration PromQL:histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le,sql_type,instance)), start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, step:1m0s"))
-	tk.MustQuery(fmt.Sprintf("desc select * from METRICS_SCHEMA.up where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13' ")).Check(testkit.Rows(
+	tk.MustQuery("desc select * from METRICS_SCHEMA.up where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13' ").Check(testkit.Rows(
 		"MemTableScan_5 10000.00 root table:up PromQL:up{}, start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, step:1m0s"))
 	tk.MustQuery("desc select * from information_schema.cluster_log where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13'").Check(testkit.Rows(
 		"MemTableScan_5 10000.00 root table:CLUSTER_LOG start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13"))
@@ -121,6 +121,23 @@ func (s *testSuite) TestExplainMetricTable(c *C) {
 		`MemTableScan_5 10000.00 root table:CLUSTER_LOG start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, log_levels:["error","warn"]`))
 	tk.MustQuery("desc select * from information_schema.cluster_log where type in ('high_cpu_1','high_memory_1') and time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13'").Check(testkit.Rows(
 		`MemTableScan_5 10000.00 root table:CLUSTER_LOG start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, node_types:["high_cpu_1","high_memory_1"]`))
+	tk.MustQuery("desc select * from information_schema.slow_query").Check(testkit.Rows(
+		"MemTableScan_4 10000.00 root table:SLOW_QUERY only search in the current 'tidb-slow.log' file"))
+	tk.MustQuery("desc select * from information_schema.slow_query where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13'").Check(testkit.Rows(
+		"MemTableScan_5 10000.00 root table:SLOW_QUERY start_time:2019-12-23 16:10:13.000000, end_time:2019-12-23 16:30:13.000000"))
+	tk.MustExec("set @@time_zone = '+00:00';")
+	tk.MustQuery("desc select * from information_schema.slow_query where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13'").Check(testkit.Rows(
+		"MemTableScan_5 10000.00 root table:SLOW_QUERY start_time:2019-12-23 16:10:13.000000, end_time:2019-12-23 16:30:13.000000"))
+}
+
+func (s *testSuite) TestExplainClusterTable(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.cluster_config where type in ('tikv', 'tidb')")).Check(testkit.Rows(
+		`MemTableScan_5 10000.00 root table:CLUSTER_CONFIG node_types:["tidb","tikv"]`))
+	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.cluster_config where instance='192.168.1.7:2379'")).Check(testkit.Rows(
+		`MemTableScan_5 10000.00 root table:CLUSTER_CONFIG instances:["192.168.1.7:2379"]`))
+	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.cluster_config where type='tidb' and instance='192.168.1.7:2379'")).Check(testkit.Rows(
+		`MemTableScan_5 10000.00 root table:CLUSTER_CONFIG node_types:["tidb"], instances:["192.168.1.7:2379"]`))
 }
 
 func (s *testSuite) TestInspectionRuleTable(c *C) {
@@ -133,7 +150,11 @@ func (s *testSuite) TestInspectionRuleTable(c *C) {
 		`MemTableScan_5 10000.00 root table:INSPECTION_RULES skip_request: true`))
 }
 
-func (s *testSuite) TestExplainForConnPlanCache(c *C) {
+type testPrepareSerialSuite struct {
+	*baseTestSuite
+}
+
+func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer func() {
@@ -163,4 +184,22 @@ func (s *testSuite) TestExplainForConnPlanCache(c *C) {
 		"└─Selection_6 8000.00 cop[tikv]  eq(cast(test.t.a), 1)",
 		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
+}
+
+func (s *testPrepareSerialSuite) TestExplainDotForExplainPlan(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	rows := tk.MustQuery("select connection_id()").Rows()
+	c.Assert(len(rows), Equals, 1)
+	connID := rows[0][0].(string)
+	tk.MustQuery("explain select 1").Check(testkit.Rows(
+		"Projection_3 1.00 root  1->Column#1",
+		"└─TableDual_4 1.00 root  rows:1",
+	))
+
+	tkProcess := tk.Se.ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+
+	tk.MustQuery(fmt.Sprintf("explain format=\"dot\" for connection %s", connID)).Check(nil)
 }

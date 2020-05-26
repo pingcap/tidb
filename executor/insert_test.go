@@ -978,7 +978,7 @@ func (s *testSuite9) TestAutoRandomID(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists ar`)
-	tk.MustExec(`create table ar (id int key auto_random, name char(10))`)
+	tk.MustExec(`create table ar (id bigint key auto_random, name char(10))`)
 
 	tk.MustExec(`insert into ar(id) values (null)`)
 	rs := tk.MustQuery(`select id from ar`)
@@ -1021,7 +1021,7 @@ func (s *testSuite9) TestMultiAutoRandomID(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists ar`)
-	tk.MustExec(`create table ar (id int key auto_random, name char(10))`)
+	tk.MustExec(`create table ar (id bigint key auto_random, name char(10))`)
 
 	tk.MustExec(`insert into ar(id) values (null),(null),(null)`)
 	rs := tk.MustQuery(`select id from ar order by id`)
@@ -1070,7 +1070,7 @@ func (s *testSuite9) TestAutoRandomIDAllowZero(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists ar`)
-	tk.MustExec(`create table ar (id int key auto_random, name char(10))`)
+	tk.MustExec(`create table ar (id bigint key auto_random, name char(10))`)
 
 	rs := tk.MustQuery(`select @@session.sql_mode`)
 	sqlMode := rs.Rows()[0][0].(string)
@@ -1108,7 +1108,7 @@ func (s *testSuite9) TestAutoRandomIDExplicit(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists ar`)
-	tk.MustExec(`create table ar (id int key auto_random, name char(10))`)
+	tk.MustExec(`create table ar (id bigint key auto_random, name char(10))`)
 
 	tk.MustExec(`insert into ar(id) values (1)`)
 	tk.MustQuery(`select id from ar`).Check(testkit.Rows("1"))
@@ -1131,4 +1131,15 @@ func (s *testSuite9) TestInsertErrorMsg(c *C) {
 	_, err := tk.Exec(`insert into t values (1, '2019-02-11 30:00:00', '2019-01-31')`)
 	c.Assert(err, NotNil)
 	c.Assert(strings.Contains(err.Error(), "Incorrect datetime value: '2019-02-11 30:00:00' for column 'b' at row 1"), IsTrue, Commentf("%v", err))
+}
+
+func (s *testSuite9) TestIssue16366(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(c numeric primary key);`)
+	tk.MustExec("insert ignore into t values(null);")
+	_, err := tk.Exec(`insert into t values(0);`)
+	c.Assert(err, NotNil)
+	c.Assert(strings.Contains(err.Error(), "Duplicate entry '0' for key 'PRIMARY'"), IsTrue, Commentf("%v", err))
 }

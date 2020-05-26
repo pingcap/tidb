@@ -170,7 +170,7 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 
 	err := FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.schema, e.columns, e.ctx, req)
 	if err != nil {
-		return nil
+		return err
 	}
 
 	return nil
