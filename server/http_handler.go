@@ -591,25 +591,25 @@ type RegionFrameRange struct {
 func (t *tikvHandlerTool) getRegionsMeta(regionIDs []uint64) ([]RegionMeta, error) {
 	regions := make([]RegionMeta, len(regionIDs))
 	for i, regionID := range regionIDs {
-		meta, leader, err := t.RegionCache.PDClient().GetRegionByID(context.TODO(), regionID)
+		region, err := t.RegionCache.PDClient().GetRegionByID(context.TODO(), regionID)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 
 		failpoint.Inject("errGetRegionByIDEmpty", func(val failpoint.Value) {
 			if val.(bool) {
-				meta = nil
+				region.Meta = nil
 			}
 		})
 
-		if meta == nil {
+		if region.Meta == nil {
 			return nil, errors.Errorf("region not found for regionID %q", regionID)
 		}
 		regions[i] = RegionMeta{
 			ID:          regionID,
-			Leader:      leader,
-			Peers:       meta.Peers,
-			RegionEpoch: meta.RegionEpoch,
+			Leader:      region.Leader,
+			Peers:       region.Meta.Peers,
+			RegionEpoch: region.Meta.RegionEpoch,
 		}
 
 	}

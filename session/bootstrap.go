@@ -384,6 +384,8 @@ const (
 	version44 = 44
 	// version45 introduces CONFIG_PRIV for SET CONFIG statements.
 	version45 = 45
+	// version46 fix a bug in v3.1.1.
+	version46 = 46
 )
 
 var (
@@ -432,6 +434,7 @@ var (
 		upgradeToVer43,
 		upgradeToVer44,
 		upgradeToVer45,
+		upgradeToVer46,
 	}
 )
 
@@ -1043,6 +1046,18 @@ func upgradeToVer45(s Session, ver int64) {
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Config_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Config_priv='Y' where Super_priv='Y'")
+}
+
+// In v3.1.1, we wrongly replace the context of upgradeToVer39 with upgradeToVer44. If we upgrade from v3.1.1 to a newer version,
+// upgradeToVer39 will be missed. So we redo upgradeToVer39 here to make sure the upgrading from v3.1.1 succeed.
+func upgradeToVer46(s Session, ver int64) {
+	if ver >= version46 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Reload_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `File_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Reload_priv='Y' where Super_priv='Y'")
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET File_priv='Y' where Super_priv='Y'")
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
