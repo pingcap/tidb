@@ -50,9 +50,10 @@ var MaxRecvMsgSize = math.MaxInt64
 // Timeout durations.
 var (
 	dialTimeout               = 5 * time.Second
-	readTimeoutShort          = 20 * time.Second  // For requests that read/write several key-values.
-	ReadTimeoutMedium         = 60 * time.Second  // For requests that may need scan region.
-	ReadTimeoutLong           = 150 * time.Second // For requests that may need scan region multiple times.
+	readTimeoutShort          = 20 * time.Second   // For requests that read/write several key-values.
+	ReadTimeoutMedium         = 60 * time.Second   // For requests that may need scan region.
+	ReadTimeoutLong           = 150 * time.Second  // For requests that may need scan region multiple times.
+	ReadTimeoutUltraLong      = 3600 * time.Second // For requests that may scan many regions for tiflash.
 	GCTimeout                 = 5 * time.Minute
 	UnsafeDestroyRangeTimeout = 5 * time.Minute
 	AccessLockObserverTimeout = 10 * time.Second
@@ -316,7 +317,8 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		c.recycleIdleConnArray()
 	}
 
-	enableBatch := req.StoreTp != kv.TiDB
+	// TiDB will not send batch commands to TiFlash, to resolve the conflict with Batch Cop Request.
+	enableBatch := req.StoreTp != kv.TiDB && req.StoreTp != kv.TiFlash
 	connArray, err := c.getConnArray(addr, enableBatch)
 	if err != nil {
 		return nil, errors.Trace(err)
