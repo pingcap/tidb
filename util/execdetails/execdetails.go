@@ -43,6 +43,8 @@ type ExecDetails struct {
 	TotalKeys        int64
 	ProcessedKeys    int64
 	CommitDetail     *CommitDetails
+	UpdateFetchTime  time.Duration
+	UpdateExecTime   time.Duration
 }
 
 // CommitDetails contains commit detail information.
@@ -66,7 +68,9 @@ type CommitDetails struct {
 
 const (
 	// CopTimeStr represents the sum of cop-task time spend in TiDB distSQL.
-	CopTimeStr = "Cop_time"
+	CopTimeStr         = "Cop_time"
+	UpdateFetchTimeStr = "Update_fetch_time"
+	UpdateExecTimeStr  = "Update_exec_time"
 	// ProcessTimeStr represents the sum of process time of all the coprocessor tasks.
 	ProcessTimeStr = "Process_time"
 	// WaitTimeStr means the time of all coprocessor wait.
@@ -112,6 +116,12 @@ func (d ExecDetails) String() string {
 	parts := make([]string, 0, 8)
 	if d.CopTime > 0 {
 		parts = append(parts, CopTimeStr+": "+strconv.FormatFloat(d.CopTime.Seconds(), 'f', -1, 64))
+	}
+	if d.UpdateExecTime > 0 {
+		parts = append(parts, UpdateExecTimeStr+": "+strconv.FormatFloat(d.UpdateExecTime.Seconds(), 'f', -1, 64))
+	}
+	if d.UpdateFetchTime > 0 {
+		parts = append(parts, UpdateFetchTimeStr+": "+strconv.FormatFloat(d.UpdateFetchTime.Seconds(), 'f', -1, 64))
 	}
 	if d.ProcessTime > 0 {
 		parts = append(parts, ProcessTimeStr+": "+strconv.FormatFloat(d.ProcessTime.Seconds(), 'f', -1, 64))
@@ -186,6 +196,12 @@ func (d ExecDetails) ToZapFields() (fields []zap.Field) {
 	fields = make([]zap.Field, 0, 16)
 	if d.CopTime > 0 {
 		fields = append(fields, zap.String(strings.ToLower(CopTimeStr), strconv.FormatFloat(d.CopTime.Seconds(), 'f', -1, 64)+"s"))
+	}
+	if d.UpdateExecTime > 0 {
+		fields = append(fields, zap.String(strings.ToLower(UpdateExecTimeStr), strconv.FormatFloat(d.UpdateExecTime.Seconds(), 'f', -1, 64)))
+	}
+	if d.UpdateFetchTime > 0 {
+		fields = append(fields, zap.String(strings.ToLower(UpdateFetchTimeStr), strconv.FormatFloat(d.UpdateFetchTime.Seconds(), 'f', -1, 64)))
 	}
 	if d.ProcessTime > 0 {
 		fields = append(fields, zap.String(strings.ToLower(ProcessTimeStr), strconv.FormatFloat(d.ProcessTime.Seconds(), 'f', -1, 64)+"s"))
