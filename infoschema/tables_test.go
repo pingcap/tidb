@@ -16,6 +16,7 @@ package infoschema_test
 import (
 	"crypto/tls"
 	"fmt"
+	"math"
 	"net"
 	"net/http/httptest"
 	"os"
@@ -36,11 +37,13 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/testkit"
@@ -80,6 +83,18 @@ func (s *testTableSuiteBase) TearDownSuite(c *C) {
 
 func (s *testTableSuiteBase) newTestKitWithRoot(c *C) *testkit.TestKit {
 	tk := testkit.NewTestKitWithInit(c, s.store)
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	return tk
+}
+
+func (s *testTableSuiteBase) newTestKitWithPlanCache(c *C) *testkit.TestKit {
+	tk := testkit.NewTestKit(c, s.store)
+	var err error
+	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+	tk.GetConnectionID()
 	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
 	return tk
 }
@@ -1248,4 +1263,30 @@ func (s *testTableSuite) TestStmtSummaryPreparedStatements(c *C) {
 	tk.MustQuery(`select exec_count
 		from information_schema.statements_summary
 		where digest_text like "select ?"`).Check(testkit.Rows("1"))
+}
+
+func (s *testTableSuite) TestPerformanceSchemaforPlanCache(c *C) {
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+
+	tk := s.newTestKitWithPlanCache(c)
+
+	// Clear summaries.
+	tk.MustExec("set global tidb_enable_stmt_summary = 0")
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("prepare stmt from 'select * from t'")
+	tk.MustExec("execute stmt")
+	tk.MustQuery("select plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from t'").Check(
+		testkit.Rows("0 0"))
+	tk.MustExec("execute stmt")
+	tk.MustExec("execute stmt")
+	tk.MustExec("execute stmt")
+	tk.MustQuery("select plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from t'").Check(
+		testkit.Rows("3 1"))
 }
