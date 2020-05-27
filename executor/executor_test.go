@@ -2245,6 +2245,12 @@ func (s *testSuite7) TestSplitRegionTimeout(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/MockScatterRegionTimeout", `return(true)`), IsNil)
 	tk.MustQuery(`split table t between (0) and (10000) regions 10`).Check(testkit.Rows("10 1"))
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/MockScatterRegionTimeout"), IsNil)
+
+	// Test pre-split with timeout.
+	tk.MustExec("drop table if exists t")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/MockSplitRegionTimeout", `return(true)`), IsNil)
+	tk.MustExec("create table t (a int, b int) shard_row_id_bits = 2 pre_split_regions=2 partition by hash(a) partitions 5;")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/MockSplitRegionTimeout"), IsNil)
 }
 
 func (s *testSuiteP2) TestRow(c *C) {
@@ -5673,7 +5679,7 @@ func (s *testSuite1) TestInsertIntoGivenPartitionSet(c *C) {
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec(`create table t1(
-	a int(11) DEFAULT NULL, 
+	a int(11) DEFAULT NULL,
 	b varchar(10) DEFAULT NULL,
 	UNIQUE KEY idx_a (a)) PARTITION BY RANGE (a)
 	(PARTITION p0 VALUES LESS THAN (10) ENGINE = InnoDB,

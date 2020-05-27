@@ -169,7 +169,7 @@ func (s *tikvStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bo
 	}
 
 	for i, r := range spResp.Regions {
-		if err = s.scatterRegion(r.Id); err == nil {
+		if err = s.scatterRegion(bo.ctx, r.Id); err == nil {
 			logutil.BgLogger().Info("batch split regions, scatter region complete",
 				zap.Uint64("batch region ID", batch.regionID.id),
 				zap.Stringer("at", kv.Key(batch.keys[i])),
@@ -207,7 +207,7 @@ func (s *tikvStore) SplitRegions(ctx context.Context, splitKeys [][]byte, scatte
 	return regionIDs, errors.Trace(err)
 }
 
-func (s *tikvStore) scatterRegion(regionID uint64) error {
+func (s *tikvStore) scatterRegion(ctx context.Context, regionID uint64) error {
 	failpoint.Inject("MockScatterRegionTimeout", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(ErrPDServerTimeout)
@@ -216,7 +216,7 @@ func (s *tikvStore) scatterRegion(regionID uint64) error {
 
 	logutil.BgLogger().Info("start scatter region",
 		zap.Uint64("regionID", regionID))
-	bo := NewBackoffer(context.Background(), scatterRegionBackoff)
+	bo := NewBackoffer(ctx, scatterRegionBackoff)
 	for {
 		err := s.pdClient.ScatterRegion(context.Background(), regionID)
 		if err == nil {
