@@ -240,6 +240,7 @@ const (
 		update_time timestamp(3) NOT NULL,
 		charset text NOT NULL,
 		collation text NOT NULL,
+		source varchar(10) NOT NULL default 'unknown',
 		INDEX sql_index(original_sql(1024),default_db(1024)) COMMENT "accelerate the speed when add global binding query",
 		INDEX time_index(update_time) COMMENT "accelerate the speed when querying with last update time"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
@@ -386,6 +387,8 @@ const (
 	version45 = 45
 	// version46 fix a bug in v3.1.1.
 	version46 = 46
+	// version47 add Source to bindings to indicate the way binding created.
+	version47 = 47
 )
 
 var (
@@ -435,6 +438,7 @@ var (
 		upgradeToVer44,
 		upgradeToVer45,
 		upgradeToVer46,
+		upgradeToVer47,
 	}
 )
 
@@ -1058,6 +1062,13 @@ func upgradeToVer46(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `File_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Reload_priv='Y' where Super_priv='Y'")
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET File_priv='Y' where Super_priv='Y'")
+}
+
+func upgradeToVer47(s Session, ver int64) {
+	if ver >= version47 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN `source` varchar(10) NOT NULL default 'unknown'", infoschema.ErrColumnExists)
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
