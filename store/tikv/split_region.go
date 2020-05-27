@@ -208,17 +208,18 @@ func (s *tikvStore) SplitRegions(ctx context.Context, splitKeys [][]byte, scatte
 }
 
 func (s *tikvStore) scatterRegion(ctx context.Context, regionID uint64) error {
-	failpoint.Inject("MockScatterRegionTimeout", func(val failpoint.Value) {
-		if val.(bool) {
-			failpoint.Return(ErrPDServerTimeout)
-		}
-	})
-
 	logutil.BgLogger().Info("start scatter region",
 		zap.Uint64("regionID", regionID))
 	bo := NewBackoffer(ctx, scatterRegionBackoff)
 	for {
 		err := s.pdClient.ScatterRegion(context.Background(), regionID)
+
+		failpoint.Inject("MockScatterRegionTimeout", func(val failpoint.Value) {
+			if val.(bool) {
+				err = ErrPDServerTimeout
+			}
+		})
+
 		if err == nil {
 			break
 		}
