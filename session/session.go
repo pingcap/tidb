@@ -1816,6 +1816,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBStmtSummaryHistorySize,
 	variable.TiDBMaxDeltaSchemaCount,
 	variable.TiDBStoreLimit,
+	variable.TiDBIsolationReadEngines,
 	variable.TiDBAllowAutoRandExplicitInsert,
 }
 
