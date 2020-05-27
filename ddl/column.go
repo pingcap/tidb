@@ -747,6 +747,8 @@ func checkAndApplyNewAutoRandomBits(t *meta.Meta, schemaID int64, tblInfo *model
 	if err != nil {
 		return err
 	}
+	// Find the max number of available shard bits by
+	// counting leading zeros in current inc part of auto_random ID.
 	availableBits := bits.LeadingZeros64(uint64(currentIncBitsVal))
 	isOccupyingIncBits := newLayout.TypeBitsLength-newLayout.IncrementalBits > uint64(availableBits)
 	if isOccupyingIncBits {
