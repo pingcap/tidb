@@ -2818,13 +2818,12 @@ func checkFieldTypeCompatible(ft *types.FieldType, other *types.FieldType) bool 
 }
 
 func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) error {
-	err := errors.Trace(ErrTablesDifferentMetadata)
 	// check auto_random
 	if source.AutoRandomBits != target.AutoRandomBits {
-		return err
+		return errors.Trace(ErrTablesDifferentMetadata)
 	}
 	if len(source.Cols()) != len(target.Cols()) {
-		return err
+		return errors.Trace(ErrTablesDifferentMetadata)
 	}
 	// Col compatible check
 	for i, sourceCol := range source.Cols() {
@@ -2835,11 +2834,11 @@ func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) e
 		if sourceCol.Name.L != targetCol.Name.L ||
 			sourceCol.Hidden != targetCol.Hidden ||
 			!checkFieldTypeCompatible(&sourceCol.FieldType, &targetCol.FieldType) {
-			return err
+			return errors.Trace(ErrTablesDifferentMetadata)
 		}
 	}
 	if len(source.Indices) != len(target.Indices) {
-		return err
+		return errors.Trace(ErrTablesDifferentMetadata)
 	}
 	for _, sourceIdx := range source.Indices {
 		var compatIdx *model.IndexInfo
@@ -2850,23 +2849,23 @@ func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) e
 		}
 		// No match index
 		if compatIdx == nil {
-			return err
+			return errors.Trace(ErrTablesDifferentMetadata)
 		}
 		// Index type is not compatible
 		if sourceIdx.Tp != compatIdx.Tp ||
 			sourceIdx.Unique != compatIdx.Unique ||
 			sourceIdx.Primary != compatIdx.Primary {
-			return err
+			return errors.Trace(ErrTablesDifferentMetadata)
 		}
 		// The index column
 		if len(sourceIdx.Columns) != len(compatIdx.Columns) {
-			return err
+			return errors.Trace(ErrTablesDifferentMetadata)
 		}
 		for i, sourceIdxCol := range sourceIdx.Columns {
 			compatIdxCol := compatIdx.Columns[i]
 			if sourceIdxCol.Length != compatIdxCol.Length ||
 				sourceIdxCol.Name.L != compatIdxCol.Name.L {
-				return err
+				return errors.Trace(ErrTablesDifferentMetadata)
 			}
 		}
 	}
@@ -2875,7 +2874,6 @@ func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) e
 }
 
 func checkExchangePartition(pt *model.TableInfo, nt *model.TableInfo) error {
-
 	if nt.IsView() || nt.IsSequence() {
 		return errors.Trace(ErrCheckNoSuchTable)
 	}
@@ -2895,28 +2893,17 @@ func checkExchangePartition(pt *model.TableInfo, nt *model.TableInfo) error {
 }
 
 func (d *ddl) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
-	is := d.infoHandle.Get()
-	ptSchema, ok := is.SchemaByName(ident.Schema)
-	if !ok {
-		return errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ptSchema))
-	}
-	pt, err := is.TableByName(ident.Schema, ident.Name)
+	ptSchema, pt, err := d.getSchemaAndTableByIdent(ctx, ident)
 	if err != nil {
-		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
+		return errors.Trace(err)
 	}
 
 	ptMeta := pt.Meta()
 
 	ntIdent := ast.Ident{Schema: spec.NewTable.Schema, Name: spec.NewTable.Name}
-
-	ntSchema, ok := is.SchemaByName(ntIdent.Schema)
-	if !ok {
-		return errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ntSchema))
-	}
-
-	nt, err := is.TableByName(ntIdent.Schema, ntIdent.Name)
+	ntSchema, nt, err := d.getSchemaAndTableByIdent(ctx, ntIdent)
 	if err != nil {
-		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ntIdent.Schema, ntIdent.Name))
+		return errors.Trace(err)
 	}
 
 	ntMeta := nt.Meta()

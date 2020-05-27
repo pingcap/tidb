@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser"
@@ -806,13 +807,16 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
-	_, err = t.GenAutoTableID(ptSchemaID, pt.ID, ntBaseID)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+	// both pt and nt set the maximum auto_id between ntBaseID and ptBaseID
+	if ntBaseID > ptBaseID {
+		_, err = t.GenAutoTableID(ptSchemaID, pt.ID, ntBaseID-ptBaseID)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
 	}
 
-	_, err = t.GenAutoTableID(job.SchemaID, nt.ID, ptBaseID)
+	_, err = t.GenAutoTableID(job.SchemaID, nt.ID, mathutil.MaxInt64(ptBaseID, ntBaseID))
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)

@@ -957,6 +957,20 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 		tk.MustExec("insert into t values()")
 	})
 
+	// Test exchange partition
+	tk.MustExec("drop table if exists e1, e2, e3, e4;")
+
+	tk.MustExec("create table e1 (a bigint primary key auto_random(3)) partition by hash(a) partitions 1;")
+
+	tk.MustExec("create table e2 (a bigint primary key);")
+	tk.MustGetErrCode("alter table e1 exchange partition p0 with table e2;", errno.ErrTablesDifferentMetadata)
+
+	tk.MustExec("create table e3 (a bigint primary key auto_random(2));")
+	tk.MustGetErrCode("alter table e1 exchange partition p0 with table e3;", errno.ErrTablesDifferentMetadata)
+
+	tk.MustExec("create table e4 (a bigint primary key auto_random(3));")
+	tk.MustExec("alter table e1 exchange partition p0 with table e4;")
+
 	// Disallow using it when allow-auto-random is not enabled.
 	config.GetGlobalConfig().Experimental.AllowAutoRandom = false
 	assertExperimentDisabled("create table auto_random_table (a int primary key auto_random(3))")

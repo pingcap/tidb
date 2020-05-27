@@ -43,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
-	tutil "github.com/pingcap/tidb/util/testutil"
 )
 
 func (s *testIntegrationSuite3) TestCreateTableWithPartition(c *C) {
@@ -1097,26 +1096,6 @@ func (s *testIntegrationSuite7) TestExchangePartitionExpressIndex(c *C) {
 	tk.MustExec("alter table nt1 drop index idx;")
 	tk.MustExec("alter table nt1 add index idx((concat(a, b)));")
 	tk.MustGetErrCode("alter table pt1 exchange partition p0 with table nt1;", tmysql.ErrTablesDifferentMetadata)
-}
-
-func (s *testIntegrationSuite7) TestExchangePartitionAutoRandom(c *C) {
-	tutil.ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer tutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
-
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists e1, e2, e3, e4;")
-
-	tk.MustExec("create table e1 (a bigint primary key auto_random(3)) partition by hash(a) partitions 1;")
-
-	tk.MustExec("create table e2 (a bigint primary key);")
-	tk.MustGetErrCode("alter table e1 exchange partition p0 with table e2;", tmysql.ErrTablesDifferentMetadata)
-
-	tk.MustExec("create table e3 (a bigint primary key auto_random(2));")
-	tk.MustGetErrCode("alter table e1 exchange partition p0 with table e3;", tmysql.ErrTablesDifferentMetadata)
-
-	tk.MustExec("create table e4 (a bigint primary key auto_random(3));")
-	tk.MustExec("alter table e1 exchange partition p0 with table e4;")
 }
 
 func (s *testIntegrationSuite4) TestAddPartitionTooManyPartitions(c *C) {
