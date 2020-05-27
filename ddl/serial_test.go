@@ -810,6 +810,7 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	defer tk.MustExec("drop database if exists auto_random_db")
 	tk.MustExec("use auto_random_db")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 
 	assertInvalidAutoRandomErr := func(sql string, errMsg string, args ...interface{}) {
 		_, err := tk.Exec(sql)
