@@ -49,7 +49,7 @@ func InTxnRetry(p *preprocessor) {
 
 // TryAddExtraLimit trys to add an extra limit for SELECT or UNION statement when sql_select_limit is set.
 func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) (ast.StmtNode, bool) {
-	if ctx.GetSessionVars().SelectLimit == math.MaxUint64 {
+	if ctx.GetSessionVars().SelectLimit == math.MaxUint64 || ctx.GetSessionVars().InRestrictedSQL {
 		return node, false
 	}
 

@@ -1299,15 +1299,11 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBEnableCollectExecutionInfo:
 		config.GetGlobalConfig().EnableCollectExecutionInfo = TiDBOptOn(val)
 	case SQLSelectLimit:
-		if strings.EqualFold(val, "default") {
-			s.SelectLimit = math.MaxUint64
-		} else {
-			result, err := strconv.ParseUint(val, 10, 64)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			s.SelectLimit = result
+		result, err := strconv.ParseUint(val, 10, 64)
+		if err != nil {
+			return errors.Trace(err)
 		}
+		s.SelectLimit = result
 	case TiDBAllowAutoRandExplicitInsert:
 		s.AllowAutoRandExplicitInsert = TiDBOptOn(val)
 	}
