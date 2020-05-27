@@ -1816,11 +1816,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBStmtSummaryHistorySize,
 	variable.TiDBMaxDeltaSchemaCount,
 	variable.TiDBStoreLimit,
-<<<<<<< HEAD
-	variable.TiDBIsolationReadEngines,
-=======
 	variable.TiDBAllowAutoRandExplicitInsert,
->>>>>>> a3d5082... sessionctx, executor: add session var to control explicit insertion on auto_random column (#17102)
 }
 
 var (

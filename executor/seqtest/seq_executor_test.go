@@ -754,89 +754,8 @@ func (s *seqTestSuite) TestAdminShowNextID(c *C) {
 	r = tk.MustQuery("admin show tt next_row_id")
 	r.Check(testkit.Rows("test1 tt id 31"))
 	tk.MustExec("insert test1.tt values ()")
-<<<<<<< HEAD
 	r = tk.MustQuery("admin show tt next_row_id")
 	r.Check(testkit.Rows("test1 tt id 41"))
-=======
-	r = tk.MustQuery(str + " tt next_row_id")
-	r.Check(testkit.Rows("test1 tt id 41 AUTO_INCREMENT"))
-	tk.MustExec("drop table tt")
-
-	oldAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
-	config.GetGlobalConfig().Experimental.AllowAutoRandom = true
-	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
-	defer func() {
-		config.GetGlobalConfig().Experimental.AllowAutoRandom = oldAutoRandom
-	}()
-
-	// Test for a table with auto_random primary key.
-	tk.MustExec("create table t3(id bigint primary key auto_random(5), c int)")
-	// Start handle is 1.
-	r = tk.MustQuery(str + " t3 next_row_id")
-	r.Check(testkit.Rows("test1 t3 _tidb_rowid 1 AUTO_INCREMENT", "test1 t3 id 1 AUTO_RANDOM"))
-	// Insert some rows.
-	tk.MustExec("insert into t3 (c) values (1), (2);")
-	r = tk.MustQuery(str + " t3 next_row_id")
-	r.Check(testkit.Rows("test1 t3 _tidb_rowid 1 AUTO_INCREMENT", "test1 t3 id 11 AUTO_RANDOM"))
-	// Rebase.
-	tk.MustExec("insert into t3 (id, c) values (103, 3);")
-	r = tk.MustQuery(str + " t3 next_row_id")
-	r.Check(testkit.Rows("test1 t3 _tidb_rowid 1 AUTO_INCREMENT", "test1 t3 id 114 AUTO_RANDOM"))
-
-	// Test for a sequence.
-	tk.MustExec("create sequence seq1 start 15 cache 57")
-	r = tk.MustQuery(str + " seq1 next_row_id")
-	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 AUTO_INCREMENT", "test1 seq1  15 SEQUENCE"))
-	r = tk.MustQuery("select nextval(seq1)")
-	r.Check(testkit.Rows("15"))
-	r = tk.MustQuery(str + " seq1 next_row_id")
-	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 AUTO_INCREMENT", "test1 seq1  72 SEQUENCE"))
-	r = tk.MustQuery("select nextval(seq1)")
-	r.Check(testkit.Rows("16"))
-	r = tk.MustQuery(str + " seq1 next_row_id")
-	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 AUTO_INCREMENT", "test1 seq1  72 SEQUENCE"))
-	r = tk.MustQuery("select setval(seq1, 96)")
-	r.Check(testkit.Rows("96"))
-	r = tk.MustQuery(str + " seq1 next_row_id")
-	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 AUTO_INCREMENT", "test1 seq1  97 SEQUENCE"))
-}
-
-func (s *seqTestSuite) TestNoHistoryWhenDisableRetry(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists history")
-	tk.MustExec("create table history (a int)")
-	tk.MustExec("set @@autocommit = 0")
-
-	// retry_limit = 0 will not add history.
-	tk.MustExec("set @@tidb_retry_limit = 0")
-	tk.MustExec("insert history values (1)")
-	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 0)
-
-	// Disable auto_retry will add history for auto committed only
-	tk.MustExec("set @@autocommit = 1")
-	tk.MustExec("set @@tidb_retry_limit = 10")
-	tk.MustExec("set @@tidb_disable_txn_auto_retry = 1")
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/keepHistory", `return(true)`), IsNil)
-	tk.MustExec("insert history values (1)")
-	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 1)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/keepHistory"), IsNil)
-	tk.MustExec("begin")
-	tk.MustExec("insert history values (1)")
-	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 0)
-	tk.MustExec("commit")
-
-	// Enable auto_retry will add history for both.
-	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/keepHistory", `return(true)`), IsNil)
-	tk.MustExec("insert history values (1)")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/keepHistory"), IsNil)
-	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 1)
-	tk.MustExec("begin")
-	tk.MustExec("insert history values (1)")
-	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 2)
-	tk.MustExec("commit")
->>>>>>> a3d5082... sessionctx, executor: add session var to control explicit insertion on auto_random column (#17102)
 }
 
 func (s *seqTestSuite) TestPrepareMaxParamCountCheck(c *C) {

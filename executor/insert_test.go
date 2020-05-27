@@ -15,10 +15,12 @@ package executor_test
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -862,16 +864,7 @@ func (s *testSuite3) TestAutoIDIncrementAndOffset(c *C) {
 	c.Assert(err.Error(), Equals, "[autoid:8060]Invalid auto_increment settings: auto_increment_increment: 65536, auto_increment_offset: 65536, both of them must be in range [1..65535]")
 }
 
-<<<<<<< HEAD
-func (s *testSuite3) TestIssue16366(c *C) {
-=======
-var _ = SerialSuites(&testSuite9{&baseTestSuite{}})
-
-type testSuite9 struct {
-	*baseTestSuite
-}
-
-func (s *testSuite9) TestAutoRandomID(c *C) {
+func (s *testAutoRandomSuite) TestAutoRandomID(c *C) {
 	allowAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
 	if !allowAutoRandom {
 		config.GetGlobalConfig().Experimental.AllowAutoRandom = true
@@ -914,7 +907,7 @@ func (s *testSuite9) TestAutoRandomID(c *C) {
 	tk.MustExec(`drop table ar`)
 }
 
-func (s *testSuite9) TestMultiAutoRandomID(c *C) {
+func (s *testAutoRandomSuite) TestMultiAutoRandomID(c *C) {
 	allowAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
 	if !allowAutoRandom {
 		config.GetGlobalConfig().Experimental.AllowAutoRandom = true
@@ -963,7 +956,7 @@ func (s *testSuite9) TestMultiAutoRandomID(c *C) {
 	tk.MustExec(`drop table ar`)
 }
 
-func (s *testSuite9) TestAutoRandomIDAllowZero(c *C) {
+func (s *testAutoRandomSuite) TestAutoRandomIDAllowZero(c *C) {
 	allowAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
 	if !allowAutoRandom {
 		config.GetGlobalConfig().Experimental.AllowAutoRandom = true
@@ -1001,7 +994,7 @@ func (s *testSuite9) TestAutoRandomIDAllowZero(c *C) {
 	tk.MustExec(`drop table ar`)
 }
 
-func (s *testSuite9) TestAutoRandomIDExplicit(c *C) {
+func (s *testAutoRandomSuite) TestAutoRandomIDExplicit(c *C) {
 	allowAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
 	if !allowAutoRandom {
 		config.GetGlobalConfig().Experimental.AllowAutoRandom = true
@@ -1030,18 +1023,7 @@ func (s *testSuite9) TestAutoRandomIDExplicit(c *C) {
 	tk.MustExec(`drop table ar`)
 }
 
-func (s *testSuite9) TestInsertErrorMsg(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec(`use test`)
-	tk.MustExec(`drop table if exists t`)
-	tk.MustExec(`create table t (a int primary key, b datetime, d date)`)
-	_, err := tk.Exec(`insert into t values (1, '2019-02-11 30:00:00', '2019-01-31')`)
-	c.Assert(err, NotNil)
-	c.Assert(strings.Contains(err.Error(), "Incorrect datetime value: '2019-02-11 30:00:00' for column 'b' at row 1"), IsTrue, Commentf("%v", err))
-}
-
-func (s *testSuite9) TestIssue16366(c *C) {
->>>>>>> a3d5082... sessionctx, executor: add session var to control explicit insertion on auto_random column (#17102)
+func (s *testSuite3) TestIssue16366(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test;`)
 	tk.MustExec(`drop table if exists t;`)
