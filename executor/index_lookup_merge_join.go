@@ -399,9 +399,9 @@ func (imw *innerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancel
 				task.doneErr = errors.Errorf("%v", r)
 				close(task.results)
 			}
+			cancelFunc()
 		}
 		wg.Done()
-		cancelFunc()
 	}()
 
 	for ok := true; ok; {
