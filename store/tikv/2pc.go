@@ -503,14 +503,14 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 	var err error
 	for i := 0; i < len(batches); i++ {
 		if e := <-ch; e != nil {
-			logutil.Logger(context.Background()).Debug("2PC doActionOnBatches failed",
+			logutil.Logger(context.Background()).Info("2PC doActionOnBatches failed",
 				zap.Uint64("conn", c.connID),
 				zap.Stringer("action type", action),
 				zap.Error(e),
 				zap.Uint64("txnStartTS", c.startTS))
 			// Cancel other requests and return the first error.
 			if cancel != nil {
-				logutil.Logger(context.Background()).Debug("2PC doActionOnBatches to cancel other actions",
+				logutil.Logger(context.Background()).Info("2PC doActionOnBatches to cancel other actions",
 					zap.Uint64("conn", c.connID),
 					zap.Stringer("action type", action),
 					zap.Uint64("txnStartTS", c.startTS))
@@ -610,7 +610,7 @@ func (actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, bat
 				if conditionPair == nil {
 					return errors.Errorf("conn%d, conditionPair for key:%s should not be nil", c.connID, key)
 				}
-				logutil.Logger(context.Background()).Debug("key already exists",
+				logutil.Logger(context.Background()).Info("key already exists",
 					zap.Uint64("conn", c.connID),
 					zap.Binary("key", key))
 				return errors.Trace(conditionPair.Err())
@@ -1140,7 +1140,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	}
 	commitDetail.BinlogPrewriteTime = time.Since(binlogPrewriteStart)
 	if err != nil {
-		logutil.Logger(ctx).Debug("2PC failed on prewrite",
+		logutil.Logger(ctx).Info("2PC failed on prewrite",
 			zap.Error(err),
 			zap.Uint64("txnStartTS", c.startTS))
 		return errors.Trace(err)
