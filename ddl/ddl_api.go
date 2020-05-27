@@ -2844,7 +2844,7 @@ func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) e
 	for _, sourceIdx := range source.Indices {
 		var compatIdx *model.IndexInfo
 		for _, targetIdx := range target.Indices {
-			if strings.EqualFold(sourceIdx.Name.O, targetIdx.Name.O) {
+			if strings.EqualFold(sourceIdx.Name.L, targetIdx.Name.L) {
 				compatIdx = targetIdx
 			}
 		}
