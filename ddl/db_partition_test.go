@@ -2238,5 +2238,4 @@ func (s *testIntegrationSuite3) TestCommitWhenSchemaChange(c *C) {
 	tk.MustQuery("select * from pt").Check(testkit.Rows())
 	tk.MustExec("admin check table nt")
 	tk.MustQuery("select * from nt").Check(testkit.Rows())
-
 }
