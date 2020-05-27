@@ -68,6 +68,9 @@ func NewRowContainer(fieldType []*types.FieldType, chunkSize int) *RowContainer 
 func (c *RowContainer) spillToDisk() (err error) {
 	c.m.Lock()
 	defer c.m.Unlock()
+	if atomic.LoadUint32(&c.spilled) == 1 {
+		return nil
+	}
 	N := c.records.NumChunks()
 	c.recordsInDisk = NewListInDisk(c.records.FieldTypes())
 	c.recordsInDisk.diskTracker.AttachTo(c.diskTracker)
