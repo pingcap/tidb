@@ -502,9 +502,11 @@ func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload 
 		rs := r.getStore()
 		if err != nil {
 			s := rs.stores[ctx.PeerIdx]
+			followerRead := int(rs.workTiKVIdx) != ctx.PeerIdx
 
-			// send fail but store is reachable, keep retry current peer.
-			if s.requestLiveness(bo) == reachable {
+			// send fail but store is reachable, keep retry current peer for replica leader request.
+			// but we still need switch peer for follower-read or learner-read(i.e. tiflash)
+			if ctx.Store.storeType == kv.TiKV && !followerRead && s.requestLiveness(bo) == reachable {
 				return
 			}
 

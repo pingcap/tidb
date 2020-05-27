@@ -171,6 +171,9 @@ const (
 
 	// TiDBFoundInPlanCache indicates whether the last statement was found in plan cache
 	TiDBFoundInPlanCache = "last_plan_from_cache"
+
+	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
+	TiDBAllowAutoRandExplicitInsert = "allow_auto_random_explicit_insert"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -487,6 +490,7 @@ const (
 	DefTiDBMetricSchemaRangeDuration   = 60 // 60s
 	DefTiDBFoundInPlanCache            = false
 	DefTidbEnableCollectExecutionInfo  = false
+	DefTiDBAllowAutoRandExplicitInsert = false
 )
 
 // Process global variables.
