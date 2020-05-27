@@ -2204,4 +2204,39 @@ func (s *testIntegrationSuite3) TestCommitWhenSchemaChange(c *C) {
 	// That bug will cause data and index inconsistency!
 	tk.MustExec("admin check table schema_change")
 	tk.MustQuery("select * from schema_change").Check(testkit.Rows())
+
+	// Check iconsistency when exchanging partition
+	tk.MustExec(`drop table if exists pt, nt;`)
+	tk.MustExec(`create table pt (a int) partition by hash(a) partitions 2;`)
+	tk.MustExec(`create table nt (a int);`)
+
+	tk.MustExec("begin")
+	tk.MustExec("insert into nt values (1), (3), (5);")
+	tk2.MustExec("alter table pt exchange partition p1 with table nt;")
+	tk.MustExec("insert into nt values (7), (9);")
+
+	atomic.StoreUint32(&session.SchemaChangedWithoutRetry, 1)
+	_, err = tk.Se.Execute(context.Background(), "commit")
+	atomic.StoreUint32(&session.SchemaChangedWithoutRetry, 0)
+	c.Assert(domain.ErrInfoSchemaChanged.Equal(err), IsTrue)
+
+	tk.MustExec("admin check table pt")
+	tk.MustQuery("select * from pt").Check(testkit.Rows())
+	tk.MustExec("admin check table nt")
+	tk.MustQuery("select * from nt").Check(testkit.Rows())
+
+	tk.MustExec("begin")
+	tk.MustExec("insert into pt values (1), (3), (5);")
+	tk2.MustExec("alter table pt exchange partition p1 with table nt;")
+	tk.MustExec("insert into pt values (7), (9);")
+	atomic.StoreUint32(&session.SchemaChangedWithoutRetry, 1)
+	_, err = tk.Se.Execute(context.Background(), "commit")
+	atomic.StoreUint32(&session.SchemaChangedWithoutRetry, 0)
+	c.Assert(domain.ErrInfoSchemaChanged.Equal(err), IsTrue)
+
+	tk.MustExec("admin check table pt")
+	tk.MustQuery("select * from pt").Check(testkit.Rows())
+	tk.MustExec("admin check table nt")
+	tk.MustQuery("select * from nt").Check(testkit.Rows())
+
 }
