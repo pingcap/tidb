@@ -163,8 +163,8 @@ In addition, the error codes should be append only in case of conflict between v
 
 In the discussion above, an error has at least 4 parts:
 - The error code: it's the identity of an error
-- The error field: it's the error itself the user can view in TiDB system
-- the message field: the description of the error, what happened and why happend?
+- The message field: it's the error itself the user can view in TiDB system
+- the description field: the description of the error, what happened and why happend?
 - the workaround filed: how to workaround this error
 
 Besides, we can append a optional tags field to it:
