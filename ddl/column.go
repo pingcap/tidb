@@ -753,9 +753,8 @@ func checkAndApplyNewAutoRandomBits(t *meta.Meta, schemaID int64, tblInfo *model
 		availableBits := mathutil.Min(autoid.MaxAutoRandomBits, availableBits)
 		errMsg := fmt.Sprintf(autoid.AutoRandomOverflowErrMsg, availableBits, newAutoRandBits, oldName.O)
 		return ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
-	} else {
-		tblInfo.AutoRandomBits = newAutoRandBits
 	}
+	tblInfo.AutoRandomBits = newAutoRandBits
 	return nil
 }
 
