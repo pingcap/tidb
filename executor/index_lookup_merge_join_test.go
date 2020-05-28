@@ -8,7 +8,9 @@ import (
 
 func (s *testSuite9) TestIndexLookupMergeJoinHang(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/IndexMergeJoinMockOOM", `return(true)`), IsNil)
-	defer c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/IndexMergeJoinMockOOM"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/IndexMergeJoinMockOOM"), IsNil)
+	}()
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t1, t2")
@@ -17,5 +19,5 @@ func (s *testSuite9) TestIndexLookupMergeJoinHang(c *C) {
 	tk.MustExec("insert into t1 values (1,1),(2,2),(3,3),(2000,2000)")
 	tk.MustExec("insert into t2 values (1,1),(2,2),(3,3),(2000,2000)")
 	// Do not hang in index merge join when OOM occurs.
-	tk.MustExec("select /*+ INL_MERGE_JOIN(t1, t2) */ * from t1, t2 where t1.a = t2.a")
+	tk.MustQuery("select /*+ INL_MERGE_JOIN(t1, t2) */ * from t1, t2 where t1.a = t2.a")
 }
