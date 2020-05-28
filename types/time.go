@@ -2269,7 +2269,7 @@ var dateFormatParserTable = map[string]dateFormatParser{
 	"%d": dayOfMonthNumeric,     // Day of the month, numeric (0..31)
 	"%e": dayOfMonthNumeric,     // Day of the month, numeric (0..31)
 	"%f": microSeconds,          // Microseconds (000000..999999)
-	"%h": hour24TwoDigits,       // Hour (01..12)
+	"%h": hour12Numeric,         // Hour (01..12)
 	"%H": hour24Numeric,         // Hour (00..23)
 	"%I": hour12Numeric,         // Hour (01..12)
 	"%i": minutesNumeric,        // Minutes, numeric (00..59)
@@ -2351,6 +2351,7 @@ func parseDigits(input string, count int) (int, bool) {
 	return int(v), true
 }
 
+<<<<<<< HEAD
 func hour24TwoDigits(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
 	v, succ := parseDigits(input, 2)
 	if !succ || v >= 24 {
@@ -2361,6 +2362,9 @@ func hour24TwoDigits(t *MysqlTime, input string, ctx map[string]int) (string, bo
 }
 
 func secondsNumeric(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
+=======
+func secondsNumeric(t *CoreTime, input string, ctx map[string]int) (string, bool) {
+>>>>>>> 959ad88... types: fix StrToDate handling of %h and %p (#17395)
 	result := oneOrTwoDigitRegex.FindString(input)
 	length := len(result)
 
