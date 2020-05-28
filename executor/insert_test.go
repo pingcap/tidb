@@ -1106,6 +1106,8 @@ func (s *testSuite9) TestAutoRandomIDExplicit(c *C) {
 	}
 
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
+
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists ar`)
 	tk.MustExec(`create table ar (id bigint key auto_random, name char(10))`)
