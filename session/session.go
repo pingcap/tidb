@@ -1920,7 +1920,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = version46
+	currentBootstrapVersion = version47
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -2053,6 +2053,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEvolvePlanBaselines,
 	variable.TiDBIsolationReadEngines,
 	variable.TiDBStoreLimit,
+	variable.TiDBAllowAutoRandExplicitInsert,
 }
 
 var (
