@@ -416,7 +416,7 @@ func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
 	if e.useOuterToBuild {
 		e.rowContainer.rowContainer.GetMutex().RLock()
 		defer e.rowContainer.rowContainer.GetMutex().RUnlock()
-		if e.rowContainer.alreadySpilledSafe() {
+		if e.rowContainer.alreadySpilled() {
 			// Sequentially handling unmatched rows from the hash table to avoid random accessing IO
 			e.handleUnmatchedRowsFromHashTableInDisk(0)
 		} else {
