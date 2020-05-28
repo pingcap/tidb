@@ -393,8 +393,8 @@ func (imw *innerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancel
 		wg.Done()
 		if r := recover(); r != nil {
 			if task != nil {
-				close(task.results)
 				task.doneErr = errors.Errorf("%v", r)
+				close(task.results)
 			}
 			buf := make([]byte, 4096)
 			stackSize := runtime.Stack(buf, false)
