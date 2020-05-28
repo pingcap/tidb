@@ -254,7 +254,10 @@ func (a *SpillDiskAction) Action(t *memory.Tracker) {
 	if atomic.LoadUint32(&a.c.readOnly) == 1 {
 		err := a.c.spillToDisk()
 		if err != nil {
-			panic(err)
+			// Spill to disk failed, try the next oom-action.
+			if a.fallbackAction != nil {
+				a.fallbackAction.Action(t)
+			}
 		}
 	}
 }
