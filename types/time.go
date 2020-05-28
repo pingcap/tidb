@@ -2567,7 +2567,7 @@ var dateFormatParserTable = map[string]dateFormatParser{
 	"%d": dayOfMonthNumeric,     // Day of the month, numeric (0..31)
 	"%e": dayOfMonthNumeric,     // Day of the month, numeric (0..31)
 	"%f": microSeconds,          // Microseconds (000000..999999)
-	"%h": hour24TwoDigits,       // Hour (01..12)
+	"%h": hour12Numeric,         // Hour (01..12)
 	"%H": hour24Numeric,         // Hour (00..23)
 	"%I": hour12Numeric,         // Hour (01..12)
 	"%i": minutesNumeric,        // Minutes, numeric (00..59)
@@ -2647,15 +2647,6 @@ func parseDigits(input string, count int) (int, bool) {
 		return int(v), false
 	}
 	return int(v), true
-}
-
-func hour24TwoDigits(t *CoreTime, input string, ctx map[string]int) (string, bool) {
-	v, succ := parseDigits(input, 2)
-	if !succ || v >= 24 {
-		return input, false
-	}
-	t.setHour(uint8(v))
-	return input[2:], true
 }
 
 func secondsNumeric(t *CoreTime, input string, ctx map[string]int) (string, bool) {
