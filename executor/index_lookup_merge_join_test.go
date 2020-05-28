@@ -19,5 +19,7 @@ func (s *testSuite9) TestIndexLookupMergeJoinHang(c *C) {
 	tk.MustExec("insert into t1 values (1,1),(2,2),(3,3),(2000,2000)")
 	tk.MustExec("insert into t2 values (1,1),(2,2),(3,3),(2000,2000)")
 	// Do not hang in index merge join when OOM occurs.
-	tk.MustQuery("select /*+ INL_MERGE_JOIN(t1, t2) */ * from t1, t2 where t1.a = t2.a")
+	err := tk.QueryToErr("select /*+ INL_MERGE_JOIN(t1, t2) */ * from t1, t2 where t1.a = t2.a")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "OOM test index merge join doesn't hang here.")
 }
