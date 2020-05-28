@@ -14,7 +14,6 @@
 package stringutil
 
 import (
-	"bytes"
 	"fmt"
 	"strings"
 	"unicode/utf8"
@@ -165,8 +164,19 @@ func CompilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
 				}
 			}
 		case '_':
-			tp = PatOne
+			// %_ => _%
+			if patLen > 0 && patTypes[patLen-1] == PatAny {
+				tp = PatAny
+				c = '%'
+				patChars[patLen-1], patTypes[patLen-1] = '_', PatOne
+			} else {
+				tp = PatOne
+			}
 		case '%':
+			// %% => %
+			if patLen > 0 && patTypes[patLen-1] == PatAny {
+				continue
+			}
 			tp = PatAny
 		default:
 			tp = PatMatch
@@ -205,11 +215,7 @@ func CompileLike2Regexp(str string) string {
 		case PatOne:
 			result = append(result, '.')
 		case PatAny:
-			// .*.* == .*
-			if !bytes.HasSuffix(result, []byte{'.', '*'}) {
-				result = append(result, '.')
-				result = append(result, '*')
-			}
+			result = append(result, '.', '*')
 		}
 	}
 	return string(result)
