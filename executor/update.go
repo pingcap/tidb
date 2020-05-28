@@ -16,8 +16,10 @@ package executor
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util"
+	"sync/atomic"
 	"time"
+
+	"github.com/pingcap/tidb/util"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -180,8 +182,8 @@ func (e *UpdateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 						UpdateNextSub:    r.UpdateNextSub,
 						UpdateStartWork:  r.UpdateStartWork,
 						UpdateWaitResp:   r.UpdateWaitResp,
-						UpdateFetchIndex: r.UpdateFetchIndex,
-						UpdateFetchTable: r.UpdateFetchTable,
+						UpdateFetchIndex: atomic.LoadInt64(&r.UpdateFetchIndex),
+						UpdateFetchTable: atomic.LoadInt64(&r.UpdateFetchTable),
 					},
 					nil,
 				)
