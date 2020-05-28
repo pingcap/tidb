@@ -433,7 +433,10 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan) (_ LogicalPlan, e
 				pushedAgg := a.splitPartialAgg(agg)
 				newChildren := make([]LogicalPlan, 0, len(union.children))
 				for _, child := range union.children {
-					newChild := a.pushAggCrossUnion(pushedAgg, union.Schema(), child)
+					newChild, err := a.pushAggCrossUnion(pushedAgg, union.Schema(), child)
+					if err != nil {
+						return nil, err
+					}
 					newChildren = append(newChildren, newChild)
 				}
 				union.SetSchema(expression.NewSchema(newChildren[0].Schema().Columns...))
