@@ -506,7 +506,7 @@
       {
         "SQL": "explain select * from t where a in (1, 2,'11')",
         "Plan": [
-          "Union_8 60.00 root  ",
+          "PartitionUnion_8 60.00 root  ",
           "├─TableReader_11 30.00 root  data:Selection_10",
           "│ └─Selection_10 30.00 cop[tikv]  in(test.t.a, 1, 2, 11)",
           "│   └─TableFullScan_9 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
@@ -518,7 +518,7 @@
       {
         "SQL": "explain select * from t where a in (17, null)",
         "Plan": [
-          "Union_8 20.00 root  ",
+          "PartitionUnion_8 20.00 root  ",
           "├─TableReader_11 10.00 root  data:Selection_10",
           "│ └─Selection_10 10.00 cop[tikv]  in(test.t.a, 17, NULL)",
           "│   └─TableFullScan_9 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
@@ -530,7 +530,7 @@
       {
         "SQL": "explain select * from t where a in (16, 'abc')",
         "Plan": [
-          "Union_8 40.00 root  ",
+          "PartitionUnion_8 40.00 root  ",
           "├─TableReader_11 20.00 root  data:Selection_10",
           "│ └─Selection_10 20.00 cop[tikv]  in(test.t.a, 16, 0)",
           "│   └─TableFullScan_9 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
@@ -556,7 +556,7 @@
       {
         "SQL": "explain select * from t where a in (14, floor(3.47))",
         "Plan": [
-          "Union_8 40.00 root  ",
+          "PartitionUnion_8 40.00 root  ",
           "├─TableReader_11 20.00 root  data:Selection_10",
           "│ └─Selection_10 20.00 cop[tikv]  in(test.t.a, 14, 3)",
           "│   └─TableFullScan_9 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
@@ -568,7 +568,7 @@
       {
         "SQL": "explain select * from t where b in (3, 4)",
         "Plan": [
-          "Union_9 60.00 root  ",
+          "PartitionUnion_9 60.00 root  ",
           "├─TableReader_12 20.00 root  data:Selection_11",
           "│ └─Selection_11 20.00 cop[tikv]  in(test.t.b, 3, 4)",
           "│   └─TableFullScan_10 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
