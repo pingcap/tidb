@@ -57,6 +57,10 @@ func (r reqCollapse) tryCollapseRequest(ctx context.Context, addr string, req *t
 			// can not collapse resolve lock lite
 			return
 		}
+		if len(resolveLock.TxnInfos) > 0 {
+			// can not collapse batch resolve locks which is only used by GC worker.
+			return
+		}
 		canCollapse = true
 		key := strconv.FormatUint(resolveLock.Context.RegionId, 10) + "-" + strconv.FormatUint(resolveLock.StartVersion, 10)
 		resp, err = r.collapse(ctx, key, &resolveRegionSf, addr, req, timeout)

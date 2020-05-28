@@ -196,7 +196,7 @@ func (helper extractHelper) extractCol(
 			continue
 		}
 		var colName string
-		var datums []types.Datum
+		var datums []types.Datum // the memory of datums should not be reused, they will be put into result.
 		switch fn.FuncName.L {
 		case ast.EQ:
 			colName, datums = helper.extractColBinaryOpConsExpr(extractCols, fn)
@@ -861,7 +861,34 @@ func (e *InspectionSummaryTableExtractor) Extract(
 }
 
 func (e *InspectionSummaryTableExtractor) explainInfo(p *PhysicalMemTable) string {
-	return ""
+	if e.SkipInspection {
+		return "skip_inspection: true"
+	}
+
+	r := new(bytes.Buffer)
+	if len(e.Rules) > 0 {
+		r.WriteString(fmt.Sprintf("rules:[%s], ", extractStringFromStringSet(e.Rules)))
+	}
+	if len(e.MetricNames) > 0 {
+		r.WriteString(fmt.Sprintf("metric_names:[%s], ", extractStringFromStringSet(e.MetricNames)))
+	}
+	if len(e.Quantiles) > 0 {
+		r.WriteString("quantiles:[")
+		for i, quantile := range e.Quantiles {
+			if i > 0 {
+				r.WriteByte(',')
+			}
+			r.WriteString(fmt.Sprintf("%f", quantile))
+		}
+		r.WriteString("], ")
+	}
+
+	// remove the last ", " in the message info
+	s := r.String()
+	if len(s) > 2 {
+		return s[:len(s)-2]
+	}
+	return s
 }
 
 // InspectionRuleTableExtractor is used to extract some predicates of `inspection_rules`
@@ -950,5 +977,15 @@ func (e *SlowQueryExtractor) setTimeRange(start, end int64) {
 }
 
 func (e *SlowQueryExtractor) explainInfo(p *PhysicalMemTable) string {
-	return ""
+	if e.SkipRequest {
+		return "skip_request: true"
+	}
+	if !e.Enable {
+		return fmt.Sprintf("only search in the current '%v' file", p.ctx.GetSessionVars().SlowQueryFile)
+	}
+	startTime := e.StartTime.In(p.ctx.GetSessionVars().StmtCtx.TimeZone)
+	endTime := e.EndTime.In(p.ctx.GetSessionVars().StmtCtx.TimeZone)
+	return fmt.Sprintf("start_time:%v, end_time:%v",
+		types.NewTime(types.FromGoTime(startTime), mysql.TypeDatetime, types.MaxFsp).String(),
+		types.NewTime(types.FromGoTime(endTime), mysql.TypeDatetime, types.MaxFsp).String())
 }

@@ -243,17 +243,16 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) (*
 	columns := executor.IdxScan.Columns
 	ctx.evalCtx.setColumnInfo(columns)
 	length := len(columns)
-	pkStatus := tablecodec.HandleNotExists
+	hdStatus := tablecodec.HandleNotNeeded
 	// The PKHandle column info has been collected in ctx.
 	if columns[length-1].GetPkHandle() {
 		if mysql.HasUnsignedFlag(uint(columns[length-1].GetFlag())) {
-			pkStatus = tablecodec.HandleIsUnsigned
+			hdStatus = tablecodec.HandleIsUnsigned
 		} else {
-			pkStatus = tablecodec.HandleIsSigned
+			hdStatus = tablecodec.HandleDefault
 		}
 		columns = columns[:length-1]
 	} else if columns[length-1].ColumnId == model.ExtraHandleID {
-		pkStatus = tablecodec.HandleIsSigned
 		columns = columns[:length-1]
 	}
 	ranges, err := h.extractKVRanges(ctx.keyRanges, executor.IdxScan.Desc)
@@ -284,7 +283,7 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) (*
 		isolationLevel: h.isolationLevel,
 		resolvedLocks:  h.resolvedLocks,
 		mvccStore:      h.mvccStore,
-		hdStatus:       pkStatus,
+		hdStatus:       hdStatus,
 		execDetail:     new(execDetail),
 		colInfos:       colInfos,
 	}

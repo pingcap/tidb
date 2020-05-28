@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -320,7 +321,7 @@ func (e *InsertValues) evalRow(ctx context.Context, list []expression.Expression
 		if err = e.handleErr(e.insertColumns[i], &val, rowIdx, err); err != nil {
 			return nil, err
 		}
-		val1, err := table.CastValue(e.ctx, val, e.insertColumns[i].ToInfo())
+		val1, err := table.CastValue(e.ctx, val, e.insertColumns[i].ToInfo(), false, false)
 		if err = e.handleErr(e.insertColumns[i], &val, rowIdx, err); err != nil {
 			return nil, err
 		}
@@ -349,7 +350,7 @@ func (e *InsertValues) fastEvalRow(ctx context.Context, list []expression.Expres
 		if err = e.handleErr(e.insertColumns[i], &val, rowIdx, err); err != nil {
 			return nil, err
 		}
-		val1, err := table.CastValue(e.ctx, val, e.insertColumns[i].ToInfo())
+		val1, err := table.CastValue(e.ctx, val, e.insertColumns[i].ToInfo(), false, false)
 		if err = e.handleErr(e.insertColumns[i], &val, rowIdx, err); err != nil {
 			return nil, err
 		}
@@ -473,7 +474,7 @@ func (e *InsertValues) getRow(ctx context.Context, vals []types.Datum) ([]types.
 	row := make([]types.Datum, len(e.Table.Cols()))
 	hasValue := make([]bool, len(e.Table.Cols()))
 	for i, v := range vals {
-		casted, err := table.CastValue(e.ctx, v, e.insertColumns[i].ToInfo())
+		casted, err := table.CastValue(e.ctx, v, e.insertColumns[i].ToInfo(), false, false)
 		if e.handleErr(nil, &v, 0, err) != nil {
 			return nil, err
 		}
@@ -576,7 +577,7 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 		if e.handleErr(gCol, &val, 0, err) != nil {
 			return nil, err
 		}
-		row[colIdx], err = table.CastValue(e.ctx, val, gCol.ToInfo())
+		row[colIdx], err = table.CastValue(e.ctx, val, gCol.ToInfo(), false, false)
 		if err != nil {
 			return nil, err
 		}
@@ -723,7 +724,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 				retryInfo.AddAutoIncrementID(id)
 
 				// The value of d is adjusted by auto ID, so we need to cast it again.
-				d, err := table.CastValue(e.ctx, d, col.ToInfo())
+				d, err := table.CastValue(e.ctx, d, col.ToInfo(), false, false)
 				if err != nil {
 					return nil, err
 				}
@@ -736,7 +737,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 		retryInfo.AddAutoIncrementID(recordID)
 
 		// the value of d is adjusted by auto ID, so we need to cast it again.
-		autoDatum, err = table.CastValue(e.ctx, autoDatum, col.ToInfo())
+		autoDatum, err = table.CastValue(e.ctx, autoDatum, col.ToInfo(), false, false)
 		if err != nil {
 			return nil, err
 		}
@@ -796,7 +797,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 	retryInfo.AddAutoIncrementID(recordID)
 
 	// the value of d is adjusted by auto ID, so we need to cast it again.
-	casted, err := table.CastValue(e.ctx, d, c.ToInfo())
+	casted, err := table.CastValue(e.ctx, d, c.ToInfo(), false, false)
 	if err != nil {
 		return types.Datum{}, err
 	}
@@ -847,6 +848,9 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 	}
 	// Use the value if it's not null and not 0.
 	if recordID != 0 {
+		if !e.ctx.GetSessionVars().AllowAutoRandExplicitInsert {
+			return types.Datum{}, ddl.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomExplicitInsertDisabledErrMsg)
+		}
 		err = e.rebaseAutoRandomID(recordID, &c.FieldType)
 		if err != nil {
 			return types.Datum{}, err
@@ -878,7 +882,7 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 	d.SetAutoID(recordID, c.Flag)
 	retryInfo.AddAutoRandomID(recordID)
 
-	casted, err := table.CastValue(e.ctx, d, c.ToInfo())
+	casted, err := table.CastValue(e.ctx, d, c.ToInfo(), false, false)
 	if err != nil {
 		return types.Datum{}, err
 	}
@@ -894,11 +898,11 @@ func (e *InsertValues) allocAutoRandomID(fieldType *types.FieldType) (int64, err
 		return 0, err
 	}
 
-	typeBitsLength := uint64(mysql.DefaultLengthOfMysqlTypes[fieldType.Tp] * 8)
-	if tables.OverflowShardBits(autoRandomID, tableInfo.AutoRandomBits, typeBitsLength) {
+	layout := autoid.NewAutoRandomIDLayout(fieldType, tableInfo.AutoRandomBits)
+	if tables.OverflowShardBits(autoRandomID, tableInfo.AutoRandomBits, layout.TypeBitsLength, layout.HasSignBit) {
 		return 0, autoid.ErrAutoRandReadFailed
 	}
-	shard := tables.CalcShard(tableInfo.AutoRandomBits, e.ctx.GetSessionVars().TxnCtx.StartTS, typeBitsLength)
+	shard := tables.CalcShard(tableInfo.AutoRandomBits, e.ctx.GetSessionVars().TxnCtx.StartTS, layout.TypeBitsLength, layout.HasSignBit)
 	autoRandomID |= shard
 	return autoRandomID, nil
 }
@@ -910,10 +914,8 @@ func (e *InsertValues) rebaseAutoRandomID(recordID int64, fieldType *types.Field
 	alloc := e.Table.Allocators(e.ctx).Get(autoid.AutoRandomType)
 	tableInfo := e.Table.Meta()
 
-	typeBitsLength := uint64(mysql.DefaultLengthOfMysqlTypes[fieldType.Tp] * 8)
-	signBit := uint64(1)
-	mask := (1 << (typeBitsLength - tableInfo.AutoRandomBits - signBit)) - 1
-	autoRandomID := int64(mask) & recordID
+	layout := autoid.NewAutoRandomIDLayout(fieldType, tableInfo.AutoRandomBits)
+	autoRandomID := layout.IncrementalMask() & recordID
 
 	return alloc.Rebase(tableInfo.ID, autoRandomID, true)
 }
