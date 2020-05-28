@@ -880,6 +880,11 @@ type LogicalUnionAll struct {
 	logicalSchemaProducer
 }
 
+// LogicalPartitionUnionAll represents the LogicalUnionAll plan is for partition table.
+type LogicalPartitionUnionAll struct {
+	LogicalUnionAll
+}
+
 // LogicalSort stands for the order by plan.
 type LogicalSort struct {
 	baseLogicalPlan

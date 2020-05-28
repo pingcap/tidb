@@ -133,9 +133,13 @@ func buildHashPartitionDefinitions(ctx sessionctx.Context, s *ast.CreateTableStm
 	return nil
 }
 
-func buildRangePartitionDefinitions(ctx sessionctx.Context, s *ast.CreateTableStmt, pi *model.PartitionInfo) error {
+func buildRangePartitionDefinitions(ctx sessionctx.Context, s *ast.CreateTableStmt, pi *model.PartitionInfo) (err error) {
 	for _, def := range s.Partition.Definitions {
 		comment, _ := def.Comment()
+		err = checkTooLongTable(def.Name)
+		if err != nil {
+			return err
+		}
 		piDef := model.PartitionDefinition{
 			Name:    def.Name,
 			Comment: comment,
@@ -417,8 +421,12 @@ func checkResultOK(ok bool, err error) error {
 }
 
 func checkPartitionColumns(tblInfo *model.TableInfo, expr ast.ExprNode) ([]*model.ColumnInfo, error) {
-	buf := new(bytes.Buffer)
-	expr.Format(buf)
+	var buf strings.Builder
+	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &buf)
+	err := expr.Restore(restoreCtx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	partCols, err := extractPartitionColumns(buf.String(), tblInfo)
 	if err != nil {
 		return nil, err
@@ -436,8 +444,11 @@ func checkPartitionFuncType(ctx sessionctx.Context, s *ast.CreateTableStmt, tblI
 	if s.Partition.Expr == nil {
 		return nil
 	}
-	buf := new(bytes.Buffer)
-	s.Partition.Expr.Format(buf)
+	var buf strings.Builder
+	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &buf)
+	if err := s.Partition.Expr.Restore(restoreCtx); err != nil {
+		return errors.Trace(err)
+	}
 	exprStr := buf.String()
 	if s.Partition.Tp == model.PartitionTypeRange || s.Partition.Tp == model.PartitionTypeHash {
 		// if partition by columnExpr, check the column type
@@ -837,7 +848,7 @@ func extractPartitionColumns(partExpr string, tblInfo *model.TableInfo) ([]*mode
 	partExpr = "select " + partExpr
 	stmts, _, err := parser.New().Parse(partExpr, "", "")
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	extractor := &columnNameExtractor{
 		tblInfo:          tblInfo,
@@ -845,7 +856,7 @@ func extractPartitionColumns(partExpr string, tblInfo *model.TableInfo) ([]*mode
 	}
 	stmts[0].Accept(extractor)
 	if extractor.err != nil {
-		return nil, extractor.err
+		return nil, errors.Trace(extractor.err)
 	}
 	return extractor.extractedColumns, nil
 }

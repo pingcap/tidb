@@ -93,7 +93,7 @@ type testBinlogSuite struct {
 const maxRecvMsgSize = 64 * 1024
 
 func (s *testBinlogSuite) SetUpSuite(c *C) {
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	s.store = store
 	session.SetSchemaLease(0)
