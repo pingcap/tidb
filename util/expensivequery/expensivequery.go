@@ -59,16 +59,22 @@ func (eqh *Handle) Run() {
 		case <-ticker.C:
 			processInfo := sm.ShowProcessList()
 			for _, info := range processInfo {
-				if len(info.Info) == 0 || info.ExceedExpensiveTimeThresh {
+				if len(info.Info) == 0 {
 					continue
 				}
+				// kill the query whose run time exceeds its max execution time
 				costTime := time.Since(info.Time)
+				if info.MaxExecutionTime > 0 && costTime > time.Duration(info.MaxExecutionTime)*time.Microsecond {
+					sm.Kill(info.ID, true)
+				}
+
+				// log expensive query
+				if info.ExceedExpensiveTimeThresh {
+					continue
+				}
 				if costTime >= time.Second*time.Duration(threshold) && log.GetLevel() <= zapcore.WarnLevel {
 					logExpensiveQuery(costTime, info)
 					info.ExceedExpensiveTimeThresh = true
-
-				} else if info.MaxExecutionTime > 0 && costTime > time.Duration(info.MaxExecutionTime)*time.Millisecond {
-					sm.Kill(info.ID, true)
 				}
 			}
 			threshold = atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
