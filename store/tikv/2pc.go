@@ -612,7 +612,8 @@ func (actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, bat
 				}
 				logutil.Logger(context.Background()).Info("key already exists",
 					zap.Uint64("conn", c.connID),
-					zap.Binary("key", key))
+					zap.Binary("key", key),
+					zap.String("debug", decodeKeyInfo(key)))
 				return errors.Trace(conditionPair.Err())
 			}
 
@@ -1268,6 +1269,18 @@ func (c *twoPhaseCommitter) writeFinishBinlog(tp binlog.BinlogType, commitTS int
 
 func (c *twoPhaseCommitter) shouldWriteBinlog() bool {
 	return c.txn.us.GetOption(kv.BinlogInfo) != nil
+}
+
+func decodeKeyInfo(key []byte) string {
+	tableID, handle, err := tablecodec.DecodeRecordKey(key)
+	if err == nil {
+		return fmt.Sprintf("tableID=%v, handle=%v", tableID, handle)
+	}
+	tableID, index, values, err := tablecodec.DecodeIndexKey(key)
+	if err == nil {
+		return fmt.Sprintf("tableID=%v, indexID=%v, values=%v", tableID, index, values)
+	}
+	return fmt.Sprintf("decode key error=%v", err)
 }
 
 // TiKV recommends each RPC packet should be less than ~1MB. We keep each packet's
