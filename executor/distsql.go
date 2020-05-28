@@ -16,7 +16,6 @@ package executor
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util"
 	"math"
 	"runtime"
 	"sort"
@@ -25,6 +24,8 @@ import (
 	"sync/atomic"
 	"time"
 	"unsafe"
+
+	"github.com/pingcap/tidb/util"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -873,7 +874,7 @@ func (w *tableWorker) pickAndExecTask(ctx context.Context) {
 		}
 		r := ctx.Value(util.RecordKey{})
 		if r != nil {
-			rr := r.(util.Record)
+			rr := r.(*util.Record)
 			for {
 				o := atomic.LoadInt64(&rr.UpdateFetchTable)
 				n := int64(execDur)
