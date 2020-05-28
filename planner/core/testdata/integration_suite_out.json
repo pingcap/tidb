@@ -201,5 +201,65 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestStreamAggProp",
+    "Cases": [
+      {
+        "SQL": "select /*+ stream_agg() */ count(*) c from t group by a order by c limit 1",
+        "Plan": [
+          "TopN_10 1.00 root 2_col_0:asc, offset:0, count:1",
+          "└─StreamAgg_17 8000.00 root group by:test.t.a, funcs:count(1)",
+          "  └─Sort_22 10000.00 root test.t.a:asc",
+          "    └─TableReader_21 10000.00 root data:TableScan_20",
+          "      └─TableScan_20 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "select /*+ stream_agg() */ count(*) c from t group by a order by c",
+        "Plan": [
+          "Sort_5 8000.00 root c:asc",
+          "└─StreamAgg_11 8000.00 root group by:test.t.a, funcs:count(1)",
+          "  └─Sort_16 10000.00 root test.t.a:asc",
+          "    └─TableReader_15 10000.00 root data:TableScan_14",
+          "      └─TableScan_14 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "1",
+          "2"
+        ]
+      },
+      {
+        "SQL": "select /*+ stream_agg() */ count(*) c from t group by a order by a limit 1",
+        "Plan": [
+          "Projection_8 1.00 root c",
+          "└─Limit_14 1.00 root offset:0, count:1",
+          "  └─StreamAgg_27 1.00 root group by:test.t.a, funcs:count(1), firstrow(test.t.a)",
+          "    └─Sort_32 1.25 root test.t.a:asc",
+          "      └─TableReader_31 1.25 root data:TableScan_30",
+          "        └─TableScan_30 1.25 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "2"
+        ]
+      },
+      {
+        "SQL": "select /*+ stream_agg() */ count(*) c from t group by a order by a",
+        "Plan": [
+          "Projection_6 8000.00 root c",
+          "└─StreamAgg_21 8000.00 root group by:test.t.a, funcs:count(1), firstrow(test.t.a)",
+          "  └─Sort_17 10000.00 root test.t.a:asc",
+          "    └─TableReader_16 10000.00 root data:TableScan_15",
+          "      └─TableScan_15 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "2",
+          "1"
+        ]
+      }
+    ]
   }
 ]
