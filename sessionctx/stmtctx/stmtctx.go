@@ -452,6 +452,12 @@ func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, c
 		sc.mu.execDetails.ProcessedKeys += details.ProcessedKeys
 		sc.mu.execDetails.UpdateFetchTime += details.UpdateFetchTime
 		sc.mu.execDetails.UpdateExecTime += details.UpdateExecTime
+		sc.mu.execDetails.UpdateEvalExp += details.UpdateEvalExp
+		sc.mu.execDetails.UpdateNextSub += details.UpdateNextSub
+		sc.mu.execDetails.UpdateStartWork += details.UpdateStartWork
+		sc.mu.execDetails.UpdateWaitResp += details.UpdateWaitResp
+		sc.mu.execDetails.UpdateFetchIndex += details.UpdateFetchIndex
+		sc.mu.execDetails.UpdateFetchTable += details.UpdateFetchTable
 		sc.mu.allExecDetails = append(sc.mu.allExecDetails, details)
 	}
 	sc.mu.execDetails.CommitDetail = commitDetails

@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util"
 	"math"
 	"runtime"
 	"sort"
@@ -515,6 +516,12 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 	e.idxWorkerWg.Add(1)
 	go func() {
 		ctx1, cancel := context.WithCancel(ctx)
+		var rr *util.Record
+		r := ctx.Value(util.RecordKey{})
+		if r != nil {
+			rr = r.(*util.Record)
+		}
+		start := time.Now()
 		count, err := worker.fetchHandles(ctx1, result)
 		if err != nil {
 			e.feedback.Invalidate()
@@ -533,6 +540,9 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		close(workCh)
 		close(e.resultCh)
 		e.idxWorkerWg.Done()
+		if rr != nil {
+			atomic.AddInt64(&rr.UpdateFetchIndex, int64(time.Since(start)))
+		}
 	}()
 	return nil
 }
@@ -543,6 +553,7 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 	e.tblWorkerWg.Add(lookupConcurrencyLimit)
 	for i := 0; i < lookupConcurrencyLimit; i++ {
 		worker := &tableWorker{
+			start:           time.Now(),
 			idxLookup:       e,
 			workCh:          workCh,
 			finished:        e.finished,
@@ -610,12 +621,27 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 		start := time.Now()
 		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
+	r := ctx.Value(util.RecordKey{})
+	var rr *util.Record
+	if r != nil {
+		rr = r.(*util.Record)
+	}
 	if !e.workerStarted {
+		start := time.Now()
 		if err := e.startWorkers(ctx, req.RequiredRows()); err != nil {
 			return err
 		}
+		if rr != nil {
+			rr.UpdateStartWork += time.Since(start)
+		}
 	}
 	req.Reset()
+	if rr != nil {
+		start := time.Now()
+		defer func() {
+			atomic.AddInt64(&rr.UpdateWaitResp, int64(time.Since(start)))
+		}()
+	}
 	for {
 		resultTask, err := e.getResultTask()
 		if err != nil {
@@ -829,12 +855,14 @@ type tableWorker struct {
 
 	// checkIndexValue is used to check the consistency of the index data.
 	*checkIndexValue
+	start time.Time
 }
 
 // pickAndExecTask picks tasks from workCh, and execute them.
 func (w *tableWorker) pickAndExecTask(ctx context.Context) {
 	var task *lookupTableTask
 	var ok bool
+	var execDur time.Duration
 	defer func() {
 		if r := recover(); r != nil {
 			buf := make([]byte, 4096)
@@ -842,6 +870,20 @@ func (w *tableWorker) pickAndExecTask(ctx context.Context) {
 			buf = buf[:stackSize]
 			logutil.Logger(ctx).Error("tableWorker in IndexLookUpExecutor panicked", zap.String("stack", string(buf)))
 			task.doneCh <- errors.Errorf("%v", r)
+		}
+		r := ctx.Value(util.RecordKey{})
+		if r != nil {
+			rr := r.(util.Record)
+			for {
+				o := atomic.LoadInt64(&rr.UpdateFetchTable)
+				n := int64(execDur)
+				if o >= n {
+					break
+				}
+				if atomic.CompareAndSwapInt64(&rr.UpdateFetchTable, o, n) {
+					break
+				}
+			}
 		}
 	}()
 	for {
@@ -856,7 +898,9 @@ func (w *tableWorker) pickAndExecTask(ctx context.Context) {
 		case <-w.finished:
 			return
 		}
+		start := time.Now()
 		err := w.executeTask(ctx, task)
+		execDur += time.Since(start)
 		task.doneCh <- err
 	}
 }

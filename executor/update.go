@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -149,6 +150,8 @@ func (e *UpdateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if !e.fetched {
 		start := time.Now()
+		var r util.Record
+		ctx = context.WithValue(ctx, util.RecordKey{}, &r)
 		err := e.fetchChunkRows(ctx)
 		if err != nil {
 			return err
@@ -169,7 +172,17 @@ func (e *UpdateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			if row == nil {
 				updateExecTime := time.Since(start)
 				e.ctx.GetSessionVars().StmtCtx.MergeExecDetails(
-					&execdetails.ExecDetails{UpdateFetchTime: updateFetchTime, UpdateExecTime: updateExecTime},
+					&execdetails.ExecDetails{
+						UpdateFetchTime: updateFetchTime,
+						UpdateExecTime:  updateExecTime,
+
+						UpdateEvalExp:    r.UpdateEvalExp,
+						UpdateNextSub:    r.UpdateNextSub,
+						UpdateStartWork:  r.UpdateStartWork,
+						UpdateWaitResp:   r.UpdateWaitResp,
+						UpdateFetchIndex: r.UpdateFetchIndex,
+						UpdateFetchTable: r.UpdateFetchTable,
+					},
 					nil,
 				)
 				break
@@ -196,16 +209,20 @@ func (e *UpdateExec) fetchChunkRows(ctx context.Context) error {
 	globalRowIdx := 0
 	chk := newFirstChunk(e.children[0])
 	e.evalBuffer = chunk.MutRowFromTypes(fields)
+	rr := ctx.Value(util.RecordKey{}).(*util.Record)
 	for {
+		start := time.Now()
 		err := Next(ctx, e.children[0], chk)
 		if err != nil {
 			return err
 		}
+		rr.UpdateNextSub += time.Since(start)
 
 		if chk.NumRows() == 0 {
 			break
 		}
 
+		start = time.Now()
 		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
 			chunkRow := chk.GetRow(rowIdx)
 			datumRow := chunkRow.GetDatumRow(fields)
@@ -218,6 +235,7 @@ func (e *UpdateExec) fetchChunkRows(ctx context.Context) error {
 			globalRowIdx++
 		}
 		chk = chunk.Renew(chk, e.maxChunkSize)
+		rr.UpdateEvalExp += time.Since(start)
 	}
 	return nil
 }

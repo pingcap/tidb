@@ -43,6 +43,13 @@ type ExecDetails struct {
 	CommitDetail     *CommitDetails
 	UpdateFetchTime  time.Duration
 	UpdateExecTime   time.Duration
+
+	UpdateEvalExp    time.Duration
+	UpdateNextSub    time.Duration
+	UpdateStartWork  time.Duration
+	UpdateWaitResp   int64
+	UpdateFetchIndex int64
+	UpdateFetchTable int64
 }
 
 // CommitDetails contains commit detail information.
@@ -121,6 +128,25 @@ func (d ExecDetails) String() string {
 	if d.UpdateFetchTime > 0 {
 		parts = append(parts, UpdateFetchTimeStr+": "+strconv.FormatFloat(d.UpdateFetchTime.Seconds(), 'f', -1, 64))
 	}
+	if d.UpdateEvalExp > 0 {
+		parts = append(parts, "UpdateEvalExp: "+strconv.FormatFloat(d.UpdateEvalExp.Seconds(), 'f', -1, 64))
+	}
+	if d.UpdateNextSub > 0 {
+		parts = append(parts, "UpdateNextSub: "+strconv.FormatFloat(d.UpdateNextSub.Seconds(), 'f', -1, 64))
+	}
+	if d.UpdateStartWork > 0 {
+		parts = append(parts, "UpdateStartWork: "+strconv.FormatFloat(d.UpdateStartWork.Seconds(), 'f', -1, 64))
+	}
+	if d.UpdateWaitResp > 0 {
+		parts = append(parts, "UpdateWaitResp: "+strconv.FormatFloat(time.Duration(d.UpdateWaitResp).Seconds(), 'f', -1, 64))
+	}
+	if d.UpdateFetchIndex > 0 {
+		parts = append(parts, "UpdateFetchIndex: "+strconv.FormatFloat(time.Duration(d.UpdateFetchIndex).Seconds(), 'f', -1, 64))
+	}
+	if d.UpdateFetchTable > 0 {
+		parts = append(parts, "UpdateFetchTable: "+strconv.FormatFloat(time.Duration(d.UpdateFetchTable).Seconds(), 'f', -1, 64))
+	}
+
 	if d.ProcessTime > 0 {
 		parts = append(parts, ProcessTimeStr+": "+strconv.FormatFloat(d.ProcessTime.Seconds(), 'f', -1, 64))
 	}
