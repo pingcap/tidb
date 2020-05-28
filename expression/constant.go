@@ -15,7 +15,6 @@ package expression
 
 import (
 	"fmt"
-
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
@@ -24,8 +23,6 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 )
 
 // NewOne stands for a number 1.
@@ -86,12 +83,7 @@ func (c *Constant) String() string {
 		dt := c.ParamMarker.GetUserVar()
 		c.Value.SetValue(dt.GetValue(), c.RetType)
 	} else if c.DeferredExpr != nil {
-		dt, err := c.Eval(chunk.Row{})
-		if err != nil {
-			logutil.BgLogger().Error("eval constant failed", zap.Error(err))
-			return ""
-		}
-		c.Value.SetValue(dt.GetValue(), c.RetType)
+		return c.DeferredExpr.String()
 	}
 	return fmt.Sprintf("%v", c.Value.GetValue())
 }
