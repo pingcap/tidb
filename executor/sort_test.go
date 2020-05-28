@@ -66,10 +66,10 @@ func (s *testSuite) TestIssue16696(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE `t` (`a` int(11) DEFAULT NULL,`b` int(11) DEFAULT NULL)")
 	tk.MustExec("insert into t values (1, 1)")
-	for i := 0; i < 8; i++ {
+	for i := 0; i < 7; i++ {
 		tk.MustExec("insert into t select * from t")
 	}
-	tk.MustExec("set tidb_mem_quota_query = 200000000;") // 200 MB
+	tk.MustExec("set tidb_mem_quota_query = 25000000;") // 25 MB
 	rows := tk.MustQuery("explain analyze  select t1.a, t1.a +1 from t t1 join t t2 join t t3 order by t1.a").Rows()
 	for _, row := range rows {
 		length := len(row)

@@ -414,22 +414,18 @@ func (e *HashJoinExec) handleUnmatchedRowsFromHashTableInDisk(workerID uint) {
 func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
 	e.joinWorkerWaitGroup.Wait()
 	if e.useOuterToBuild {
+		e.rowContainer.rowContainer.GetMutex().RLock()
+		defer e.rowContainer.rowContainer.GetMutex().RUnlock()
 		inMemory := !e.rowContainer.alreadySpilledSafe()
 		if inMemory {
-			e.rowContainer.rowContainer.GetMutex().RLock()
-			inMemory = !e.rowContainer.alreadySpilledSafe()
-			if inMemory {
-				// Concurrently handling unmatched rows from the hash table at the tail
-				for i := uint(0); i < e.concurrency; i++ {
-					var workerID = i
-					e.joinWorkerWaitGroup.Add(1)
-					go util.WithRecovery(func() { e.handleUnmatchedRowsFromHashTableInMemory(workerID) }, e.handleJoinWorkerPanic)
-				}
-				e.joinWorkerWaitGroup.Wait()
+			// Concurrently handling unmatched rows from the hash table at the tail
+			for i := uint(0); i < e.concurrency; i++ {
+				var workerID = i
+				e.joinWorkerWaitGroup.Add(1)
+				go util.WithRecovery(func() { e.handleUnmatchedRowsFromHashTableInMemory(workerID) }, e.handleJoinWorkerPanic)
 			}
-			e.rowContainer.rowContainer.GetMutex().RUnlock()
-		}
-		if !inMemory {
+			e.joinWorkerWaitGroup.Wait()
+		} else {
 			// Sequentially handling unmatched rows from the hash table to avoid random accessing IO
 			e.handleUnmatchedRowsFromHashTableInDisk(0)
 		}

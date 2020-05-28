@@ -47,7 +47,7 @@ type Tracker struct {
 	actionMu struct {
 		sync.Mutex
 		actionOnExceed ActionOnExceed
-		actionDoing    uint32
+		actionDoing    uint32 // actionDoing indicates whether this tracker is running an oom-action.
 	}
 	parMu struct {
 		sync.Mutex
