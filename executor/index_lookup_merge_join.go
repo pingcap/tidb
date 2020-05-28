@@ -394,14 +394,12 @@ func (imw *innerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancel
 		if r := recover(); r != nil {
 			if task != nil {
 				close(task.results)
+				task.doneErr = errors.Errorf("%v", r)
 			}
 			buf := make([]byte, 4096)
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
 			logutil.Logger(ctx).Error("innerMergeWorker panicked", zap.String("stack", string(buf)))
-			if task != nil {
-				task.doneErr = errors.Errorf("%v", r)
-			}
 			cancelFunc()
 		}
 	}()
