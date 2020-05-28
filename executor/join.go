@@ -416,8 +416,10 @@ func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
 	if e.useOuterToBuild {
 		e.rowContainer.rowContainer.GetMutex().RLock()
 		defer e.rowContainer.rowContainer.GetMutex().RUnlock()
-		inMemory := !e.rowContainer.alreadySpilledSafe()
-		if inMemory {
+		if e.rowContainer.alreadySpilledSafe() {
+			// Sequentially handling unmatched rows from the hash table to avoid random accessing IO
+			e.handleUnmatchedRowsFromHashTableInDisk(0)
+		} else {
 			// Concurrently handling unmatched rows from the hash table at the tail
 			for i := uint(0); i < e.concurrency; i++ {
 				var workerID = i
@@ -425,9 +427,6 @@ func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
 				go util.WithRecovery(func() { e.handleUnmatchedRowsFromHashTableInMemory(workerID) }, e.handleJoinWorkerPanic)
 			}
 			e.joinWorkerWaitGroup.Wait()
-		} else {
-			// Sequentially handling unmatched rows from the hash table to avoid random accessing IO
-			e.handleUnmatchedRowsFromHashTableInDisk(0)
 		}
 	}
 	close(e.joinResultCh)
