@@ -151,6 +151,9 @@ func (s *testSuite) testMergePartialResult(c *C, p aggTest) {
 	finalFunc := aggfuncs.Build(s.ctx, finalDesc, 0)
 	finalPr := finalFunc.AllocPartialResult()
 	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{p.dataType}, 1)
+	if p.funcName == ast.AggFuncApproxCountDistinct {
+		resultChk = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 1)
+	}
 
 	// update partial result.
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
@@ -159,6 +162,9 @@ func (s *testSuite) testMergePartialResult(c *C, p aggTest) {
 	p.messUpChunk(srcChk)
 	partialFunc.AppendFinalResult2Chunk(s.ctx, partialResult, resultChk)
 	dt := resultChk.GetRow(0).GetDatum(0, p.dataType)
+	if p.funcName == ast.AggFuncApproxCountDistinct {
+		dt = resultChk.GetRow(0).GetDatum(0, types.NewFieldType(mysql.TypeString))
+	}
 	result, err := dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[0])
 	c.Assert(err, IsNil)
 	c.Assert(result, Equals, 0, Commentf("%v != %v", dt.String(), p.results[0]))
@@ -178,17 +184,26 @@ func (s *testSuite) testMergePartialResult(c *C, p aggTest) {
 	resultChk.Reset()
 	partialFunc.AppendFinalResult2Chunk(s.ctx, partialResult, resultChk)
 	dt = resultChk.GetRow(0).GetDatum(0, p.dataType)
+	if p.funcName == ast.AggFuncApproxCountDistinct {
+		dt = resultChk.GetRow(0).GetDatum(0, types.NewFieldType(mysql.TypeString))
+	}
 	result, err = dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[1])
 	c.Assert(err, IsNil)
 	c.Assert(result, Equals, 0, Commentf("%v != %v", dt.String(), p.results[1]))
 	err = finalFunc.MergePartialResult(s.ctx, partialResult, finalPr)
 	c.Assert(err, IsNil)
 
+	if p.funcName == ast.AggFuncApproxCountDistinct {
+		resultChk = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1)
+	}
 	resultChk.Reset()
 	err = finalFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
 	c.Assert(err, IsNil)
 
 	dt = resultChk.GetRow(0).GetDatum(0, p.dataType)
+	if p.funcName == ast.AggFuncApproxCountDistinct {
+		dt = resultChk.GetRow(0).GetDatum(0, types.NewFieldType(mysql.TypeLonglong))
+	}
 	result, err = dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[2])
 	c.Assert(err, IsNil)
 	c.Assert(result, Equals, 0, Commentf("%v != %v", dt.String(), p.results[2]))

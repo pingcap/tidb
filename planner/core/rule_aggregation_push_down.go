@@ -59,7 +59,7 @@ func (a *aggregationPushDownSolver) isDecomposableWithUnion(fun *aggregation.Agg
 		return false
 	case ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncFirstRow:
 		return true
-	case ast.AggFuncSum, ast.AggFuncCount, ast.AggFuncAvg:
+	case ast.AggFuncSum, ast.AggFuncCount, ast.AggFuncAvg, ast.AggFuncApproxCountDistinct:
 		return true
 	default:
 		return false

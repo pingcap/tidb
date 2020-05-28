@@ -123,6 +123,13 @@ func (a *AggFuncDesc) Split(ordinal []int) (partialAggDesc, finalAggDesc *AggFun
 			RetType: a.RetTp,
 		})
 		finalAggDesc.Args = args
+	case ast.AggFuncApproxCountDistinct:
+		args := make([]expression.Expression, 0, 1)
+		args = append(args, &expression.Column{
+			Index:   ordinal[0],
+			RetType: types.NewFieldType(mysql.TypeString),
+		})
+		finalAggDesc.Args = args
 	default:
 		args := make([]expression.Expression, 0, 1)
 		args = append(args, &expression.Column{
