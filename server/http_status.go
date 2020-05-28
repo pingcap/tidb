@@ -126,6 +126,14 @@ func (s *Server) startHTTPServer() {
 		return config.GetGlobalConfig(), nil
 	}))
 
+	// HTTP path for manual GC
+	router.Handle("/runtime/gc", fn.Wrap(func() (string, error) {
+		startTime := time.Now()
+		runtime.GC()
+		duration := time.Since(startTime)
+		return fmt.Sprintf("Manual GC successfully in %s", duration), nil
+	}))
+
 	// HTTP path for get server info.
 	router.Handle("/info", serverInfoHandler{tikvHandlerTool}).Name("Info")
 	router.Handle("/info/all", allServerInfoHandler{tikvHandlerTool}).Name("InfoALL")
