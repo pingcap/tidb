@@ -390,18 +390,20 @@ func (omw *outerMergeWorker) increaseBatchSize() {
 func (imw *innerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancelFunc context.CancelFunc) {
 	var task *lookUpMergeJoinTask
 	defer func() {
+		wg.Done()
 		if r := recover(); r != nil {
+			if task != nil {
+				close(task.results)
+			}
 			buf := make([]byte, 4096)
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
 			logutil.Logger(ctx).Error("innerMergeWorker panicked", zap.String("stack", string(buf)))
 			if task != nil {
 				task.doneErr = errors.Errorf("%v", r)
-				close(task.results)
 			}
 			cancelFunc()
 		}
-		wg.Done()
 	}()
 
 	for ok := true; ok; {
