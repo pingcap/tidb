@@ -279,8 +279,8 @@ func (e *HashAggExec) initForUnparallelExec() {
 
 func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 	sessionVars := e.ctx.GetSessionVars()
-	finalConcurrency := sessionVars.HashAggFinalConcurrency
-	partialConcurrency := sessionVars.HashAggPartialConcurrency
+	finalConcurrency := sessionVars.HashAggFinalConcurrency()
+	partialConcurrency := sessionVars.HashAggPartialConcurrency()
 	e.isChildReturnEmpty = true
 	e.finalOutputCh = make(chan *AfFinalResult, finalConcurrency)
 	e.inputCh = make(chan *HashAggInput, partialConcurrency)

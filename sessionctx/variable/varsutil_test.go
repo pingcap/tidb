@@ -60,16 +60,17 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 
 	c.Assert(vars.IndexJoinBatchSize, Equals, DefIndexJoinBatchSize)
 	c.Assert(vars.IndexLookupSize, Equals, DefIndexLookupSize)
-	c.Assert(vars.IndexLookupConcurrency, Equals, DefIndexLookupConcurrency)
-	c.Assert(vars.IndexSerialScanConcurrency, Equals, DefIndexSerialScanConcurrency)
-	c.Assert(vars.IndexLookupJoinConcurrency, Equals, DefIndexLookupJoinConcurrency)
-	c.Assert(vars.HashJoinConcurrency, Equals, DefTiDBHashJoinConcurrency)
+	c.Assert(vars.IndexLookupConcurrency(), Equals, DefExecutorConcurrency)
+	c.Assert(vars.IndexSerialScanConcurrency(), Equals, DefExecutorConcurrency)
+	c.Assert(vars.IndexLookupJoinConcurrency(), Equals, DefExecutorConcurrency)
+	c.Assert(vars.HashJoinConcurrency(), Equals, DefExecutorConcurrency)
 	c.Assert(vars.AllowBatchCop, Equals, DefTiDBAllowBatchCop)
-	c.Assert(vars.ProjectionConcurrency, Equals, int64(DefTiDBProjectionConcurrency))
-	c.Assert(vars.HashAggPartialConcurrency, Equals, DefTiDBHashAggPartialConcurrency)
-	c.Assert(vars.HashAggFinalConcurrency, Equals, DefTiDBHashAggFinalConcurrency)
-	c.Assert(vars.WindowConcurrency, Equals, DefTiDBWindowConcurrency)
-	c.Assert(vars.DistSQLScanConcurrency, Equals, DefDistSQLScanConcurrency)
+	c.Assert(vars.ProjectionConcurrency(), Equals, int64(DefExecutorConcurrency))
+	c.Assert(vars.HashAggPartialConcurrency(), Equals, DefExecutorConcurrency)
+	c.Assert(vars.HashAggFinalConcurrency(), Equals, DefExecutorConcurrency)
+	c.Assert(vars.WindowConcurrency(), Equals, DefExecutorConcurrency)
+	c.Assert(vars.DistSQLScanConcurrency(), Equals, DefExecutorConcurrency)
+	c.Assert(vars.ExecutorConcurrency, Equals, DefExecutorConcurrency)
 	c.Assert(vars.MaxChunkSize, Equals, DefMaxChunkSize)
 	c.Assert(vars.DMLBatchSize, Equals, DefDMLBatchSize)
 	c.Assert(vars.MemQuotaQuery, Equals, config.GetGlobalConfig().MemQuotaQuery)
@@ -87,7 +88,6 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.FoundInPlanCache, Equals, DefTiDBFoundInPlanCache)
 	c.Assert(vars.AllowAutoRandExplicitInsert, Equals, DefTiDBAllowAutoRandExplicitInsert)
 
-	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.Concurrency))
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.MemQuota))
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.BatchSize))
 }
@@ -199,9 +199,9 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(v.SQLMode, Equals, mysql.ModeRealAsFloat|mysql.ModeANSIQuotes)
 
 	// Test case for tidb_index_serial_scan_concurrency.
-	c.Assert(v.IndexSerialScanConcurrency, Equals, 1)
+	c.Assert(v.IndexSerialScanConcurrency(), Equals, DefExecutorConcurrency)
 	SetSessionSystemVar(v, TiDBIndexSerialScanConcurrency, types.NewStringDatum("4"))
-	c.Assert(v.IndexSerialScanConcurrency, Equals, 4)
+	c.Assert(v.IndexSerialScanConcurrency(), Equals, 4)
 
 	// Test case for tidb_batch_insert.
 	c.Assert(v.BatchInsert, IsFalse)

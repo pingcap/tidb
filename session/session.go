@@ -2008,6 +2008,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBHashAggPartialConcurrency,
 	variable.TiDBHashAggFinalConcurrency,
 	variable.TiDBWindowConcurrency,
+	variable.TiDBExecutorConcurrency,
 	variable.TiDBBackoffLockFast,
 	variable.TiDBBackOffWeight,
 	variable.TiDBConstraintCheckInPlace,

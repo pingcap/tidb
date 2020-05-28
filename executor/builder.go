@@ -1185,7 +1185,7 @@ func (b *executorBuilder) buildHashAgg(v *plannercore.PhysicalHashAgg) Executor 
 	// When we set both tidb_hashagg_final_concurrency and tidb_hashagg_partial_concurrency to 1,
 	// we do not need to parallelly execute hash agg,
 	// and this action can be a workaround when meeting some unexpected situation using parallelExec.
-	if finalCon, partialCon := sessionVars.HashAggFinalConcurrency, sessionVars.HashAggPartialConcurrency; finalCon <= 0 || partialCon <= 0 || finalCon == 1 && partialCon == 1 {
+	if finalCon, partialCon := sessionVars.HashAggFinalConcurrency(), sessionVars.HashAggPartialConcurrency(); finalCon <= 0 || partialCon <= 0 || finalCon == 1 && partialCon == 1 {
 		e.isUnparallelExec = true
 	}
 	partialOrdinal := 0
@@ -1268,7 +1268,7 @@ func (b *executorBuilder) buildProjection(v *plannercore.PhysicalProjection) Exe
 	}
 	e := &ProjectionExec{
 		baseExecutor:     newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), childExec),
-		numWorkers:       b.ctx.GetSessionVars().ProjectionConcurrency,
+		numWorkers:       b.ctx.GetSessionVars().ProjectionConcurrency(),
 		evaluatorSuit:    expression.NewEvaluatorSuite(v.Exprs, v.AvoidColumnEvaluator),
 		calculateNoDelay: v.CalculateNoDelay,
 	}
@@ -1734,7 +1734,7 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 		ctx:             b.ctx,
 		physicalTableID: task.PhysicalTableID,
 		idxInfo:         task.IndexInfo,
-		concurrency:     b.ctx.GetSessionVars().IndexSerialScanConcurrency,
+		concurrency:     b.ctx.GetSessionVars().IndexSerialScanConcurrency(),
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeIndex,
 			Flags:          sc.PushDownFlags(),
@@ -1801,7 +1801,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 		physicalTableID: task.PhysicalTableID,
 		colsInfo:        task.ColsInfo,
 		pkInfo:          task.PKInfo,
-		concurrency:     b.ctx.GetSessionVars().DistSQLScanConcurrency,
+		concurrency:     b.ctx.GetSessionVars().DistSQLScanConcurrency(),
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeColumn,
 			Flags:          sc.PushDownFlags(),
@@ -2185,8 +2185,8 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 		lastColHelper: v.CompareFilters,
 	}
 	childrenUsedSchema := markChildrenUsedCols(v.Schema(), v.Children()[0].Schema(), v.Children()[1].Schema())
-	joiners := make([]joiner, e.ctx.GetSessionVars().IndexLookupJoinConcurrency)
-	for i := 0; i < e.ctx.GetSessionVars().IndexLookupJoinConcurrency; i++ {
+	joiners := make([]joiner, e.ctx.GetSessionVars().IndexLookupJoinConcurrency())
+	for i := 0; i < len(joiners); i++ {
 		joiners[i] = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, leftTypes, rightTypes, childrenUsedSchema)
 	}
 	e.joiners = joiners
@@ -2199,9 +2199,9 @@ func (b *executorBuilder) buildIndexNestedLoopHashJoin(v *plannercore.PhysicalIn
 		IndexLookUpJoin: *e,
 		keepOuterOrder:  v.KeepOuterOrder,
 	}
-	concurrency := e.ctx.GetSessionVars().IndexLookupJoinConcurrency
-	idxHash.joiners = make([]joiner, concurrency)
-	for i := 0; i < concurrency; i++ {
+	currency := e.ctx.GetSessionVars().IndexLookupJoinConcurrency()
+	idxHash.joiners = make([]joiner, currency)
+	for i := 0; i < currency; i++ {
 		idxHash.joiners[i] = e.joiner.Clone()
 	}
 	return idxHash
@@ -2757,7 +2757,7 @@ func (builder *dataReaderBuilder) buildProjectionForIndexJoin(ctx context.Contex
 
 	e := &ProjectionExec{
 		baseExecutor:     newBaseExecutor(builder.ctx, v.Schema(), v.ExplainID(), childExec),
-		numWorkers:       builder.ctx.GetSessionVars().ProjectionConcurrency,
+		numWorkers:       builder.ctx.GetSessionVars().ProjectionConcurrency(),
 		evaluatorSuit:    expression.NewEvaluatorSuite(v.Exprs, v.AvoidColumnEvaluator),
 		calculateNoDelay: v.CalculateNoDelay,
 	}

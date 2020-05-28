@@ -511,7 +511,9 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		TiDBHashAggFinalConcurrency,
 		TiDBWindowConcurrency,
 		TiDBDistSQLScanConcurrency,
-		TiDBIndexSerialScanConcurrency, TiDBDDLReorgWorkerCount,
+		TiDBIndexSerialScanConcurrency,
+		TiDBExecutorConcurrency,
+		TiDBDDLReorgWorkerCount,
 		TiDBBackoffLockFast, TiDBBackOffWeight,
 		TiDBDMLBatchSize, TiDBOptimizerSelectivityLevel:
 		v, err := strconv.Atoi(value)

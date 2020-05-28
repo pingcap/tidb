@@ -466,7 +466,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		stmt, err := s.ParseOneStmt(ca, "", "")
 		c.Assert(err, IsNil, comment)
 
-		s.ctx.GetSessionVars().HashJoinConcurrency = 1
+		s.ctx.GetSessionVars().SetHashJoinConcurrency(1)
 		Preprocess(s.ctx, stmt, s.is)
 		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
@@ -1070,7 +1070,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
 		builder := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
-		builder.ctx.GetSessionVars().HashJoinConcurrency = 1
+		builder.ctx.GetSessionVars().SetHashJoinConcurrency(1)
 		_, err = builder.Build(context.TODO(), stmt)
 		c.Assert(err, IsNil, comment)
 
@@ -1231,7 +1231,7 @@ func (s *testPlanSuite) TestNameResolver(c *C) {
 		comment := Commentf("for %s", t.sql)
 		stmt, err := s.ParseOneStmt(t.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		s.ctx.GetSessionVars().HashJoinConcurrency = 1
+		s.ctx.GetSessionVars().SetHashJoinConcurrency(1)
 
 		_, _, err = BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		if t.err == "" {

@@ -15,6 +15,7 @@ package variable
 
 import (
 	"os"
+	"runtime"
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/uber-go/atomic"
@@ -396,6 +397,9 @@ const (
 
 	// TiDBEnableCollectExecutionInfo indicates that whether execution info is collected.
 	TiDBEnableCollectExecutionInfo = "tidb_enable_collect_execution_info"
+
+	// DefExecutorConcurrency is used for controlling the concurrency of all types of executors.
+	TiDBExecutorConcurrency = "tidb_executor_concurrency"
 )
 
 // Default TiDB system variable values.
@@ -513,4 +517,5 @@ var (
 	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
 	MinExpensiveQueryTimeThreshold uint64 = 10 //10s
 	CapturePlanBaseline                   = serverGlobalVariable{globalVal: "0"}
+	DefExecutorConcurrency                = runtime.NumCPU()
 )
