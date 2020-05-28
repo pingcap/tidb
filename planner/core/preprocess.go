@@ -52,8 +52,11 @@ func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) (ast.StmtNode, 
 	if ctx.GetSessionVars().SelectLimit == math.MaxUint64 || ctx.GetSessionVars().InRestrictedSQL {
 		return node, false
 	}
-
-	if sel, ok := node.(*ast.SelectStmt); ok {
+	if explain, ok := node.(*ast.ExplainStmt); ok {
+		var changed bool
+		explain.Stmt, changed = TryAddExtraLimit(ctx, explain.Stmt)
+		return explain, changed
+	} else if sel, ok := node.(*ast.SelectStmt); ok {
 		if sel.Limit != nil || sel.SelectIntoOpt != nil {
 			return node, false
 		}

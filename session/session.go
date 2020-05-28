@@ -1995,6 +1995,7 @@ var builtinGlobalVariable = []string{
 	variable.MaxExecutionTime,
 	variable.InnodbLockWaitTimeout,
 	variable.WindowingUseHighPrecision,
+	variable.SQLSelectLimit,
 
 	/* TiDB specific global variables: */
 	variable.TiDBSkipUTF8Check,
@@ -2054,7 +2055,6 @@ var builtinGlobalVariable = []string{
 	variable.TiDBIsolationReadEngines,
 	variable.TiDBStoreLimit,
 	variable.TiDBAllowAutoRandExplicitInsert,
-	variable.SQLSelectLimit,
 }
 
 var (
