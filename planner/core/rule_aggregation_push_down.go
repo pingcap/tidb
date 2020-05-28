@@ -369,6 +369,26 @@ func (a *aggregationPushDownSolver) optimize(ctx context.Context, p LogicalPlan)
 	return a.aggPushDown(p)
 }
 
+func (a *aggregationPushDownSolver) tryAggPushDownForUnion(union *LogicalUnionAll, agg *LogicalAggregation) error {
+	for _, aggFunc := range agg.AggFuncs {
+		if !a.isDecomposableWithUnion(aggFunc) {
+			return nil
+		}
+	}
+	pushedAgg := a.splitPartialAgg(agg)
+	newChildren := make([]LogicalPlan, 0, len(union.Children()))
+	for _, child := range union.Children() {
+		newChild, err := a.pushAggCrossUnion(pushedAgg, union.Schema(), child)
+		if err != nil {
+			return err
+		}
+		newChildren = append(newChildren, newChild)
+	}
+	union.SetSchema(expression.NewSchema(newChildren[0].Schema().Columns...))
+	union.SetChildren(newChildren...)
+	return nil
+}
+
 // aggPushDown tries to push down aggregate functions to join paths.
 func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan) (_ LogicalPlan, err error) {
 	if agg, ok := p.(*LogicalAggregation); ok {
@@ -425,39 +445,15 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan) (_ LogicalPlan, e
 				projChild := proj.children[0]
 				agg.SetChildren(projChild)
 			} else if union, ok1 := child.(*LogicalUnionAll); ok1 && p.SCtx().GetSessionVars().AllowAggPushDown {
-				for _, aggFunc := range agg.AggFuncs {
-					if !a.isDecomposableWithUnion(aggFunc) {
-						return p, nil
-					}
+				err := a.tryAggPushDownForUnion(union, agg)
+				if err != nil {
+					return nil, err
 				}
-				pushedAgg := a.splitPartialAgg(agg)
-				newChildren := make([]LogicalPlan, 0, len(union.children))
-				for _, child := range union.children {
-					newChild, err := a.pushAggCrossUnion(pushedAgg, union.Schema(), child)
-					if err != nil {
-						return nil, err
-					}
-					newChildren = append(newChildren, newChild)
-				}
-				union.SetSchema(expression.NewSchema(newChildren[0].Schema().Columns...))
-				union.SetChildren(newChildren...)
 			} else if union, ok1 := child.(*LogicalPartitionUnionAll); ok1 {
-				for _, aggFunc := range agg.AggFuncs {
-					if !a.isDecomposableWithUnion(aggFunc) {
-						return p, nil
-					}
+				err := a.tryAggPushDownForUnion(&union.LogicalUnionAll, agg)
+				if err != nil {
+					return nil, err
 				}
-				pushedAgg := a.splitPartialAgg(agg)
-				newChildren := make([]LogicalPlan, 0, len(union.children))
-				for _, child := range union.children {
-					newChild, err := a.pushAggCrossUnion(pushedAgg, union.Schema(), child)
-					if err != nil {
-						return p, err
-					}
-					newChildren = append(newChildren, newChild)
-				}
-				union.SetSchema(expression.NewSchema(newChildren[0].Schema().Columns...))
-				union.SetChildren(newChildren...)
 			}
 		}
 	}
