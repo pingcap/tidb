@@ -157,7 +157,7 @@ func (a *recordSet) Close() error {
 	a.stmt.logAudit()
 	// Detach the disk tracker from GlobalDiskUsageTracker after every execution
 	if stmtCtx := a.stmt.Ctx.GetSessionVars().StmtCtx; stmtCtx != nil && stmtCtx.DiskTracker != nil {
-		stmtCtx.DiskTracker.Detach()
+		stmtCtx.DiskTracker.DetachFromGlobalTracker()
 	}
 	return err
 }
