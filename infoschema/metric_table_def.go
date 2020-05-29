@@ -156,7 +156,7 @@ var MetricTableMap = map[string]MetricTableDef{
 		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_server_get_token_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance))",
 		Labels:   []string{"instance"},
 		Quantile: 0.99,
-		Comment:  " The quantile of Duration (us) for getting token, it should be small until concurrency limit is reached(second)",
+		Comment:  " The quantile of Duration (us) for getting token, it should be small until concurrency limit is reached(microsecond)",
 	},
 	"tidb_handshake_error_opm": {
 		PromQL:  "sum(increase(tidb_server_handshake_error_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)",
@@ -2496,12 +2496,12 @@ var MetricTableMap = map[string]MetricTableDef{
 	"tidb_get_token_total_count": {
 		PromQL:  "sum(increase(tidb_server_get_token_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)",
 		Labels:  []string{"instance"},
-		Comment: "The total count of Duration (us) for getting token, it should be small until concurrency limit is reached(second)",
+		Comment: "The total count of Duration (us) for getting token, it should be small until concurrency limit is reached",
 	},
 	"tidb_get_token_total_time": {
 		PromQL:  "sum(increase(tidb_server_get_token_duration_seconds_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)",
 		Labels:  []string{"instance"},
-		Comment: "The total time of Duration (us) for getting token, it should be small until concurrency limit is reached(second)",
+		Comment: "The total time of Duration (us) for getting token, it should be small until concurrency limit is reached(microsecond)",
 	},
 	"tidb_kv_backoff_total_count": {
 		PromQL:  "sum(increase(tidb_tikvclient_backoff_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,type)",
