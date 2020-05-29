@@ -1005,7 +1005,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	c.Assert(changedNtTable.Meta().ID == nt.ID, IsTrue)
 	c.Assert(changedPtTable.Meta().Partition.Definitions[0].ID == pt.Partition.Definitions[0].ID, IsTrue)
 
-	// canel exchange partition successfully
+	// cancel exchange partition successfully
 	updateTest(&tests[44])
 	doDDLJobSuccess(ctx, d, c, dbInfo.ID, nt.ID, test.act, exchangeTablePartition)
 	c.Check(checkErr, IsNil)
