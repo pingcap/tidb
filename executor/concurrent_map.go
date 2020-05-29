@@ -4,7 +4,7 @@ import (
 	"sync"
 )
 
-// control the shard maps within the concurrent map
+// ShardCount controls the shard maps within the concurrent map
 var ShardCount = 320
 
 // A "thread" safe map of type string:Anything.
