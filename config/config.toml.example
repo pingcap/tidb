@@ -198,7 +198,11 @@ record-db-qps = false
 max-procs = 0
 
 # Max memory size to use, 0 use the total usable memory in the machine.
+# The maximum memory limit for the Prepared Least Recently Used (LRU) caching
 max-memory = 0
+
+## Memory size quota for tidb server, 0 means unlimited
+server-memory-quota = 0
 
 # StmtCountLimit limits the max count of statement inside a transaction.
 stmt-count-limit = 5000
