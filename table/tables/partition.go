@@ -162,8 +162,8 @@ type ForRangePruning struct {
 	Unsigned bool
 }
 
-// DataForRangePruning extracts the less than parts from 'partition p0 less than xx ... partitoin p1 less than ...'
-func DataForRangePruning(pi *model.PartitionInfo) (*ForRangePruning, error) {
+// dataForRangePruning extracts the less than parts from 'partition p0 less than xx ... partitoin p1 less than ...'
+func dataForRangePruning(pi *model.PartitionInfo) (*ForRangePruning, error) {
 	var maxValue bool
 	var unsigned bool
 	lessThan := make([]int64, len(pi.Definitions))
@@ -240,7 +240,7 @@ func generateRangePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 
 	switch len(pi.Columns) {
 	case 0:
-		tmp, err := DataForRangePruning(pi)
+		tmp, err := dataForRangePruning(pi)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -882,19 +881,18 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, part
 		}
 		sql = fmt.Sprintf("select 1 from `%s`.`%s` where mod(%s, %d) != %d limit 1", schemaName.L, tableName.L, pi.Expr, pi.Num, index)
 	case model.PartitionTypeRange:
-		rangeRrun, err := tables.DataForRangePruning(pi)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		// Table has only one partition and has the maximum value
-		if len(pi.Definitions) == 1 && rangeRrun.MaxValue {
+		if len(pi.Definitions) == 1 && strings.EqualFold(pi.Definitions[index].LessThan[0], "MAXVALUE") {
 			return nil
 		}
 		// For range expression and range columns
 		if len(pi.Columns) == 0 {
-			sql = buildCheckSQLForRangeExprPartition(pi, rangeRrun, index, schemaName, tableName)
+			sql = buildCheckSQLForRangeExprPartition(pi, index, schemaName, tableName)
 		} else if len(pi.Columns) == 1 {
-			sql = buildCheckSQLForRangeColumnsPartition(pi, rangeRrun, index, schemaName, tableName)
+			sql = buildCheckSQLForRangeColumnsPartition(pi, index, schemaName, tableName)
 		}
 	default:
 		return errors.Trace(errors.Errorf("unsupported partition type for checkExchangePartitionRecordValidation"))
@@ -918,24 +916,24 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, part
 	return nil
 }
 
-func buildCheckSQLForRangeExprPartition(pi *model.PartitionInfo, rangeRrun *tables.ForRangePruning, index int, schemaName, tableName model.CIStr) string {
+func buildCheckSQLForRangeExprPartition(pi *model.PartitionInfo, index int, schemaName, tableName model.CIStr) string {
 	if index == 0 {
-		return fmt.Sprintf("select 1 from `%s`.`%s` where %s >= %d limit 1", schemaName.L, tableName.L, pi.Expr, rangeRrun.LessThan[index])
-	} else if index == len(pi.Definitions)-1 && rangeRrun.MaxValue {
-		return fmt.Sprintf("select 1 from `%s`.`%s` where %s < %d limit 1", schemaName.L, tableName.L, pi.Expr, rangeRrun.LessThan[index-1])
+		return fmt.Sprintf("select 1 from `%s`.`%s` where %s >= %s limit 1", schemaName.L, tableName.L, pi.Expr, pi.Definitions[index].LessThan[0])
+	} else if index == len(pi.Definitions)-1 && strings.EqualFold(pi.Definitions[index].LessThan[0], "MAXVALUE") {
+		return fmt.Sprintf("select 1 from `%s`.`%s` where %s < %s limit 1", schemaName.L, tableName.L, pi.Expr, pi.Definitions[index-1].LessThan[0])
 	} else {
-		return fmt.Sprintf("select 1 from `%s`.`%s` where %s < %d or %s >= %d limit 1", schemaName.L, tableName.L, pi.Expr, rangeRrun.LessThan[index-1], pi.Expr, rangeRrun.LessThan[index])
+		return fmt.Sprintf("select 1 from `%s`.`%s` where %s < %s or %s >= %s limit 1", schemaName.L, tableName.L, pi.Expr, pi.Definitions[index-1].LessThan[0], pi.Expr, pi.Definitions[index].LessThan[0])
 	}
 }
 
-func buildCheckSQLForRangeColumnsPartition(pi *model.PartitionInfo, rangeRrun *tables.ForRangePruning, index int, schemaName, tableName model.CIStr) string {
+func buildCheckSQLForRangeColumnsPartition(pi *model.PartitionInfo, index int, schemaName, tableName model.CIStr) string {
 	colName := pi.Columns[0].L
 	if index == 0 {
-		return fmt.Sprintf("select 1 from `%s`.`%s` where `%s` >= %d limit 1", schemaName.L, tableName.L, colName, rangeRrun.LessThan[index])
-	} else if index == len(pi.Definitions)-1 && rangeRrun.MaxValue {
-		return fmt.Sprintf("select 1 from `%s`.`%s` where `%s` < %d limit 1", schemaName.L, tableName.L, colName, rangeRrun.LessThan[index-1])
+		return fmt.Sprintf("select 1 from `%s`.`%s` where `%s` >= %s limit 1", schemaName.L, tableName.L, colName, pi.Definitions[index].LessThan[0])
+	} else if index == len(pi.Definitions)-1 && strings.EqualFold(pi.Definitions[index].LessThan[0], "MAXVALUE") {
+		return fmt.Sprintf("select 1 from `%s`.`%s` where `%s` < %s limit 1", schemaName.L, tableName.L, colName, pi.Definitions[index-1].LessThan[0])
 	} else {
-		return fmt.Sprintf("select 1 from `%s`.`%s` where `%s` < %d or `%s` >= %d limit 1", schemaName.L, tableName.L, colName, rangeRrun.LessThan[index-1], colName, rangeRrun.LessThan[index])
+		return fmt.Sprintf("select 1 from `%s`.`%s` where `%s` < %s or `%s` >= %s limit 1", schemaName.L, tableName.L, colName, pi.Definitions[index-1].LessThan[0], colName, pi.Definitions[index].LessThan[0])
 	}
 }
 

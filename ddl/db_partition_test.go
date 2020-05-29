@@ -884,13 +884,13 @@ func (s *testIntegrationSuite4) TestAlterTableExchangePartition(c *C) {
 	tk.MustQuery("select * from e4 partition(p3)").Check(testkit.Rows("9"))
 
 	// for columns range partition
-	tk.MustExec(`create table e6 (a int) partition by range columns (a) (
-		partition p0 values less than (3),
-		partition p1 values less than (6)
+	tk.MustExec(`create table e6 (a varchar(3)) partition by range columns (a) (
+		partition p0 values less than ('3'),
+		partition p1 values less than ('6')
 	);`)
-	tk.MustExec(`create table e7 (a int);`)
-	tk.MustExec(`insert into e6 values (1);`)
-	tk.MustExec(`insert into e7 values (2);`)
+	tk.MustExec(`create table e7 (a varchar(3));`)
+	tk.MustExec(`insert into e6 values ('1');`)
+	tk.MustExec(`insert into e7 values ('2');`)
 	tk.MustExec("alter table e6 exchange partition p0 with table e7")
 
 	tk.MustQuery("select * from e6 partition(p0)").Check(testkit.Rows("2"))
