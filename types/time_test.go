@@ -160,15 +160,65 @@ func (s *testTimeSuite) TestDate(c *C) {
 		Input  string
 		Expect string
 	}{
-		{"2012-12-31", "2012-12-31"},
-		{"00-12-31", "2000-12-31"},
-		{"20121231", "2012-12-31"},
-		{"121231", "2012-12-31"},
+		// standard format
+		{"0001-12-13", "0001-12-13"},
+		{"2011-12-13", "2011-12-13"},
+		{"2011-12-13 10:10:10", "2011-12-13"},
 		{"2015-06-01 12:12:12", "2015-06-01"},
 		{"0001-01-01 00:00:00", "0001-01-01"},
-		{"0001-01-01", "0001-01-01"},
-		{"2019.01.01", "2019-01-01"},
-		{"2019/01/01", "2019-01-01"},
+		// 2-digit year
+		{"00-12-31", "2000-12-31"},
+		// alternative delimiters, any ASCII punctuation character is a valid delimiter,
+		// punctuation character is defined by C++ std::ispunct: any graphical character
+		// that is not alphanumeric.
+		{"2011\"12\"13", "2011-12-13"},
+		{"2011#12#13", "2011-12-13"},
+		{"2011$12$13", "2011-12-13"},
+		{"2011%12%13", "2011-12-13"},
+		{"2011&12&13", "2011-12-13"},
+		{"2011'12'13", "2011-12-13"},
+		{"2011(12(13", "2011-12-13"},
+		{"2011)12)13", "2011-12-13"},
+		{"2011*12*13", "2011-12-13"},
+		{"2011+12+13", "2011-12-13"},
+		{"2011,12,13", "2011-12-13"},
+		{"2011.12.13", "2011-12-13"},
+		{"2011/12/13", "2011-12-13"},
+		{"2011:12:13", "2011-12-13"},
+		{"2011;12;13", "2011-12-13"},
+		{"2011<12<13", "2011-12-13"},
+		{"2011=12=13", "2011-12-13"},
+		{"2011>12>13", "2011-12-13"},
+		{"2011?12?13", "2011-12-13"},
+		{"2011@12@13", "2011-12-13"},
+		{"2011[12[13", "2011-12-13"},
+		{"2011\\12\\13", "2011-12-13"},
+		{"2011]12]13", "2011-12-13"},
+		{"2011^12^13", "2011-12-13"},
+		{"2011_12_13", "2011-12-13"},
+		{"2011`12`13", "2011-12-13"},
+		{"2011{12{13", "2011-12-13"},
+		{"2011|12|13", "2011-12-13"},
+		{"2011}12}13", "2011-12-13"},
+		{"2011~12~13", "2011-12-13"},
+		// alternative separators with time
+		{"2011~12~13 12~12~12", "2011-12-13"},
+		{"2011~12~13T12~12~12", "2011-12-13"},
+		{"2011~12~13~12~12~12", "2011-12-13"},
+		// internal format (YYYYMMDD, YYYYYMMDDHHMMSS)
+		{"20111213", "2011-12-13"},
+		{"111213", "2011-12-13"},
+		// leading and trailing space
+		{" 2011-12-13", "2011-12-13"},
+		{"2011-12-13 ", "2011-12-13"},
+		{"   2011-12-13    ", "2011-12-13"},
+		// extra separators
+		{"2011-12--13", "2011-12-13"},
+		{"2011--12-13", "2011-12-13"},
+		{"2011----12----13", "2011-12-13"},
+		{"2011~/.12)_#13T T.12~)12[~12", "2011-12-13"},
+		// combinations
+		{"   2011----12----13    ", "2011-12-13"},
 	}
 
 	for _, test := range table {
@@ -182,6 +232,13 @@ func (s *testTimeSuite) TestDate(c *C) {
 		"1201012736.0000",
 		"1201012736",
 		"2019.01",
+		// invalid separators
+		"2019 01 02",
+		"2019A01A02",
+		"2019-01T02",
+		"2011-12-13 10:10T10",
+		"2019–01–02", // en dash
+		"2019—01—02", // em dash
 	}
 
 	for _, test := range errTable {
@@ -944,10 +1001,10 @@ func (s *testTimeSuite) TestParseDateFormat(c *C) {
 		{"2011-11-11 10", []string{"2011", "11", "11", "10"}},
 		{"2011-11-11T10:10:10.123456", []string{"2011", "11", "11", "10", "10", "10", "123456"}},
 		{"2011:11:11T10:10:10.123456", []string{"2011", "11", "11", "10", "10", "10", "123456"}},
+		{"2011-11-11  10:10:10", []string{"2011", "11", "11", "10", "10", "10"}},
 		{"xx2011-11-11 10:10:10", nil},
 		{"T10:10:10", nil},
 		{"2011-11-11x", nil},
-		{"2011-11-11  10:10:10", nil},
 		{"xxx 10:10:10", nil},
 	}
 
@@ -1759,3 +1816,86 @@ func (s *testTimeSuite) TestFromGoTime(c *C) {
 	}
 
 }
+<<<<<<< HEAD
+=======
+
+func BenchmarkFormat(b *testing.B) {
+	t1 := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 0)
+	for i := 0; i < b.N; i++ {
+		t1.DateFormat("%Y-%m-%d %H:%i:%s")
+	}
+}
+
+func BenchmarkTimeAdd(b *testing.B) {
+	sc := &stmtctx.StatementContext{
+		TimeZone: time.UTC,
+	}
+	arg1, _ := types.ParseTime(sc, "2017-01-18", mysql.TypeDatetime, types.MaxFsp)
+	arg2, _ := types.ParseDuration(sc, "12:30:59", types.MaxFsp)
+	for i := 0; i < b.N; i++ {
+		arg1.Add(sc, arg2)
+	}
+}
+
+func BenchmarkTimeCompare(b *testing.B) {
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	mustParse := func(str string) types.Time {
+		t, err := types.ParseDatetime(sc, str)
+		if err != nil {
+			b.Fatal(err)
+		}
+		return t
+	}
+	tbl := []struct {
+		Arg1 types.Time
+		Arg2 types.Time
+	}{
+		{
+			mustParse("2011-10-10 11:11:11"),
+			mustParse("2011-10-10 11:11:11"),
+		},
+		{
+			mustParse("2011-10-10 11:11:11.123456"),
+			mustParse("2011-10-10 11:11:11.1"),
+		},
+		{
+			mustParse("2011-10-10 11:11:11"),
+			mustParse("2011-10-10 11:11:11.123"),
+		},
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for _, c := range tbl {
+			c.Arg1.Compare(c.Arg2)
+		}
+	}
+}
+
+func benchmarkDateFormat(b *testing.B, name, str string) {
+	b.Run(name, func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			types.ParseDateFormat(str)
+		}
+	})
+}
+
+func BenchmarkParseDateFormat(b *testing.B) {
+	benchmarkDateFormat(b, "date basic", "2011-12-13")
+	benchmarkDateFormat(b, "date internal", "20111213")
+	benchmarkDateFormat(b, "datetime basic", "2011-12-13 14:15:16")
+	benchmarkDateFormat(b, "datetime internal", "20111213141516")
+	benchmarkDateFormat(b, "datetime basic frac", "2011-12-13 14:15:16.123456")
+	benchmarkDateFormat(b, "datetime repeated delimiters", "2011---12---13 14::15::16..123456")
+}
+
+func BenchmarkParseDatetime(b *testing.B) {
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	str := "2011-10-10 11:11:11.123456"
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		types.ParseDatetime(sc, str)
+	}
+}
+>>>>>>> f1b21b5... types: match MySQL behavior with datetime delimiters (#17376)
