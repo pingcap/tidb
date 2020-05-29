@@ -1260,20 +1260,15 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 		}
 	case types.ETString:
 		ctor := collate.GetCollator(tp.Collate)
-		buf := &collate.Buffer{}
-		buf2 := &collate.Buffer{}
-		previousKey := ctor.KeyByBytes(buf, col.GetBytes(0))
+		previousKey := col.GetString(0)
 		for i := 1; i < numRows; i++ {
-			buf2.Reset()
-			key := ctor.KeyByBytes(buf2, col.GetBytes(i))
+			key := col.GetString(i)
 			isNull := col.IsNull(i)
 			if e.sameGroup[i] {
-				if isNull != previousIsNull || bytes.Compare(previousKey, key) != 0 {
+				if isNull != previousIsNull || ctor.Compare(previousKey, key) != 0 {
 					e.sameGroup[i] = false
 				}
 			}
-			buf.Reset()
-			previousKey = buf.SetByte(key)
 			previousIsNull = isNull
 		}
 		if !firstRowIsNull {
