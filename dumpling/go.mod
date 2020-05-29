@@ -10,7 +10,7 @@ require (
 	github.com/pingcap/check v0.0.0-20190102082844-67f458068fc8
 	github.com/pingcap/errors v0.11.4
 	github.com/pingcap/log v0.0.0-20200511115504-543df19646ad
-	github.com/pingcap/tidb-tools v3.0.13+incompatible
+	github.com/pingcap/tidb-tools v4.0.0-rc.2.0.20200521050818-6dd445d83fe0+incompatible
 	github.com/pkg/errors v0.9.1
 	github.com/soheilhy/cmux v0.1.4
 	github.com/spf13/pflag v1.0.3

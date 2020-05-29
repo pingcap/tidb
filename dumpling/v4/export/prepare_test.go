@@ -17,12 +17,12 @@ func (s *testPrepareSuite) TestPrepareDumpingDatabases(c *C) {
 	defer db.Close()
 
 	conf := DefaultConfig()
-	conf.Database = "db1,db2,db3"
+	conf.Databases = []string{"db1", "db2", "db3"}
 	result, err := prepareDumpingDatabases(conf, db)
 	c.Assert(err, IsNil)
 	c.Assert(result, DeepEquals, []string{"db1", "db2", "db3"})
 
-	conf.Database = ""
+	conf.Databases = nil
 	rows := sqlmock.NewRows([]string{"Database"}).
 		AddRow("db1").
 		AddRow("db2")

@@ -22,11 +22,12 @@ import (
 
 	"github.com/pingcap/dumpling/v4/cli"
 	"github.com/pingcap/dumpling/v4/export"
+	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/spf13/pflag"
 )
 
 var (
-	database      string
+	databases     []string
 	host          string
 	user          string
 	port          int
@@ -50,6 +51,8 @@ var (
 	noData        bool
 	csvNullValue  string
 	sql           string
+	filters       []string
+	caseSensitive bool
 
 	escapeBackslash bool
 )
@@ -67,7 +70,7 @@ func main() {
 	}
 	pflag.ErrHelp = errors.New("")
 
-	pflag.StringVarP(&database, "database", "B", "", "Database to dump")
+	pflag.StringSliceVarP(&databases, "database", "B", nil, "Databases to dump")
 	pflag.StringVarP(&host, "host", "H", "127.0.0.1", "The host to connect to")
 	pflag.StringVarP(&user, "user", "u", "root", "Username with privileges to run the dump")
 	pflag.IntVarP(&port, "port", "P", 4000, "TCP/IP port to connect to")
@@ -92,6 +95,8 @@ func main() {
 	pflag.BoolVarP(&noData, "no-data", "d", false, "Do not dump table data")
 	pflag.StringVar(&csvNullValue, "csv-null-value", "\\N", "The null value used when export to csv")
 	pflag.StringVarP(&sql, "sql", "s", "", "Dump data with given sql")
+	pflag.StringArrayVarP(&filters, "filter", "f", []string{"*.*"}, "filter to select which tables to dump")
+	pflag.BoolVar(&caseSensitive, "case-sensitive", false, "whether the filter should be case-sensitive")
 
 	printVersion := pflag.BoolP("version", "V", false, "Print Dumpling version")
 
@@ -103,8 +108,17 @@ func main() {
 		return
 	}
 
+	tableFilter, err := filter.Parse(filters)
+	if err != nil {
+		fmt.Printf("failed to parse filter: %s\n", err)
+		os.Exit(2)
+	}
+	if !caseSensitive {
+		tableFilter = filter.CaseInsensitive(tableFilter)
+	}
+
 	conf := export.DefaultConfig()
-	conf.Database = database
+	conf.Databases = databases
 	conf.Host = host
 	conf.User = user
 	conf.Port = port
@@ -128,8 +142,9 @@ func main() {
 	conf.NoData = noData
 	conf.CsvNullValue = csvNullValue
 	conf.Sql = sql
+	conf.TableFilter = tableFilter
 
-	err := export.Dump(conf)
+	err = export.Dump(conf)
 	if err != nil {
 		fmt.Printf("dump failed: %s\n", err.Error())
 		os.Exit(1)

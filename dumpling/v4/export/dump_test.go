@@ -45,7 +45,7 @@ func (m *mockWriter) WriteTableData(ctx context.Context, ir TableDataIR) error {
 func (s *testDumpSuite) TestDumpDatabase(c *C) {
 	mockConfig := DefaultConfig()
 	mockConfig.SortByPk = false
-	mockConfig.Database = "test"
+	mockConfig.Databases = []string{"test"}
 	mockConfig.Tables = NewDatabaseTables().AppendTables("test", "t")
 	db, mock, err := sqlmock.New()
 	c.Assert(err, IsNil)
