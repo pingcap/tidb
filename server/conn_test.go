@@ -33,7 +33,11 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/arena"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/util/chunk"
+=======
+	"github.com/pingcap/tidb/util/testkit"
+>>>>>>> 7096916... expensivequery: fix the issue that max_exec_time hint doesn't work if it exceeds the expensive-threshold  (#17359)
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -425,6 +429,17 @@ func (ts *ConnTestSuite) TestConnExecutionTimeout(c *C) {
 
 	err = cc.handleQuery(context.Background(), "select * FROM testTable2 WHERE SLEEP(1);")
 	c.Assert(err, IsNil)
+
+	_, err = se.Execute(context.Background(), "set @@max_execution_time = 1500;")
+	c.Assert(err, IsNil)
+
+	_, err = se.Execute(context.Background(), "set @@tidb_expensive_query_time_threshold = 1;")
+	c.Assert(err, IsNil)
+
+	records, err := se.Execute(context.Background(), "select SLEEP(2);")
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, ts.store)
+	tk.ResultSetToResult(records[0], Commentf("%v", records[0])).Check(testkit.Rows("1"))
 
 	_, err = se.Execute(context.Background(), "set @@max_execution_time = 0;")
 	c.Assert(err, IsNil)
