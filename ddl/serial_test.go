@@ -940,6 +940,23 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	assertShowWarningCorrect("create table t (a bigint auto_random(15) primary key)", 281474976710655)
 	assertShowWarningCorrect("create table t (a bigint unsigned auto_random(15) primary key)", 562949953421311)
 
+	// Test insert into auto_random column explicitly is not allowed by default.
+	assertExplicitInsertDisallowed := func(sql string) {
+		assertInvalidAutoRandomErr(sql, autoid.AutoRandomExplicitInsertDisabledErrMsg)
+	}
+	tk.MustExec("set @@allow_auto_random_explicit_insert = false")
+	mustExecAndDrop("create table t (a bigint auto_random primary key)", func() {
+		assertExplicitInsertDisallowed("insert into t values (1)")
+		assertExplicitInsertDisallowed("insert into t values (3)")
+		tk.MustExec("insert into t values()")
+	})
+	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
+	mustExecAndDrop("create table t (a bigint auto_random primary key)", func() {
+		tk.MustExec("insert into t values(1)")
+		tk.MustExec("insert into t values(3)")
+		tk.MustExec("insert into t values()")
+	})
+
 	// Disallow using it when allow-auto-random is not enabled.
 	config.GetGlobalConfig().Experimental.AllowAutoRandom = false
 	assertExperimentDisabled("create table auto_random_table (a int primary key auto_random(3))")
