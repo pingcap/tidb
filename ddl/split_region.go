@@ -15,7 +15,6 @@ package ddl
 
 import (
 	"context"
-
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -125,15 +124,10 @@ func splitIndexRegion(store kv.SplittableStore, tblInfo *model.TableInfo, scatte
 
 func waitScatterRegionFinish(ctx context.Context, store kv.SplittableStore, regionIDs ...uint64) {
 	for _, regionID := range regionIDs {
-		err := store.WaitScatterRegionFinish(regionID, 0)
+		err := store.WaitScatterRegionFinish(ctx, regionID, 0)
 		if err != nil {
 			logutil.BgLogger().Warn("[ddl] wait scatter region failed", zap.Uint64("regionID", regionID), zap.Error(err))
-		}
-		select {
-		case <-ctx.Done():
-			logutil.BgLogger().Warn("[ddl] wait scatter region timeout")
 			return
-		default:
 		}
 	}
 }

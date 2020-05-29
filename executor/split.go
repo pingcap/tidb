@@ -398,7 +398,7 @@ func waitScatterRegionFinish(ctxWithTimeout context.Context, sctx sessionctx.Con
 			remainMillisecond = int((sctx.GetSessionVars().GetSplitRegionTimeout().Seconds() - time.Since(startTime).Seconds()) * 1000)
 		}
 
-		err := store.WaitScatterRegionFinish(regionID, remainMillisecond)
+		err := store.WaitScatterRegionFinish(ctxWithTimeout, regionID, remainMillisecond)
 		if err == nil {
 			finishScatterNum++
 		} else {
