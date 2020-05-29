@@ -275,6 +275,7 @@ func (p *UserPrivileges) checkSSL(priv *globalPrivRecord, tlsState *tls.Connecti
 			hasCert      = false
 			matchIssuer  checkResult
 			matchSubject checkResult
+			matchSAN     checkResult
 		)
 		for _, chain := range tlsState.VerifiedChains {
 			if len(chain) == 0 {
@@ -301,11 +302,50 @@ func (p *UserPrivileges) checkSSL(priv *globalPrivRecord, tlsState *tls.Connecti
 						zap.String("require", priv.Priv.X509Subject), zap.String("given", given))
 				}
 			}
+			if priv.Priv.SANs != nil {
+				for k, requires := range priv.Priv.SANs {
+					var unsupported bool
+					var certValue []string
+					switch k {
+					case "URI":
+						for _, uri := range cert.URIs {
+							certValue = append(certValue, uri.String())
+						}
+					case "DNS":
+						certValue = cert.DNSNames
+					case "IP":
+						for _, ip := range cert.IPAddresses {
+							certValue = append(certValue, ip.String())
+						}
+					default:
+						unsupported = true
+					}
+					if unsupported {
+						continue
+					}
+					var matchOne bool
+					for _, req := range requires {
+						for _, give := range certValue {
+							if req == give {
+								matchOne = true
+								break
+							}
+						}
+					}
+					if matchOne {
+						matchSAN = pass
+					} else if matchSAN == notCheck {
+						matchSAN = fail
+						logutil.BgLogger().Info("ssl check failure for subject", zap.String("user", priv.User), zap.String("host", priv.Host),
+							zap.String("require", priv.Priv.SAN), zap.Strings("given", certValue))
+					}
+				}
+			}
 			hasCert = true
 		}
-		checkResult := hasCert && matchIssuer != fail && matchSubject != fail
+		checkResult := hasCert && matchIssuer != fail && matchSubject != fail && matchSAN != fail
 		if !checkResult && !hasCert {
-			logutil.BgLogger().Info("ssl check failure, require issuer/subject but no verified cert",
+			logutil.BgLogger().Info("ssl check failure, require issuer/subject/SAN but no verified cert",
 				zap.String("user", priv.User), zap.String("host", priv.Host))
 		}
 		return checkResult
