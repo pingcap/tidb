@@ -113,10 +113,12 @@ const (
 
 // GlobalPrivValue is store json format for priv column in mysql.global_priv.
 type GlobalPrivValue struct {
-	SSLType     SSLType `json:"ssl_type,omitempty"`
-	SSLCipher   string  `json:"ssl_cipher,omitempty"`
-	X509Issuer  string  `json:"x509_issuer,omitempty"`
-	X509Subject string  `json:"x509_subject,omitempty"`
+	SSLType     SSLType             `json:"ssl_type,omitempty"`
+	SSLCipher   string              `json:"ssl_cipher,omitempty"`
+	X509Issuer  string              `json:"x509_issuer,omitempty"`
+	X509Subject string              `json:"x509_subject,omitempty"`
+	SAN         string              `json:"san,omitempty"`
+	SANs        map[string][]string `json:"-"`
 }
 
 // RequireStr returns describe string after `REQUIRE` clause.
@@ -140,6 +142,10 @@ func (g *GlobalPrivValue) RequireStr() string {
 		if len(g.X509Subject) > 0 {
 			s = append(s, "SUBJECT")
 			s = append(s, "'"+g.X509Subject+"'")
+		}
+		if len(g.SAN) > 0 {
+			s = append(s, "SAN")
+			s = append(s, "'"+g.SAN+"'")
 		}
 		if len(s) > 0 {
 			require = strings.Join(s, " ")
@@ -629,6 +635,20 @@ func (p *MySQLPrivilege) decodeGlobalPrivTableRow(row chunk.Row, fs []*ast.Resul
 					value.Priv.SSLCipher = privValue.SSLCipher
 					value.Priv.X509Issuer = privValue.X509Issuer
 					value.Priv.X509Subject = privValue.X509Subject
+					value.Priv.SAN = privValue.SAN
+					if len(value.Priv.SAN) > 0 {
+						value.Priv.SANs = make(map[string][]string)
+						sans := strings.Split(value.Priv.SAN, ",")
+						for _, san := range sans {
+							kv := strings.SplitN(san, ":", 1)
+							if len(kv) != 2 {
+								continue
+							}
+							k, v := strings.TrimSpace(kv[0]), strings.TrimSpace(kv[1])
+							pre := value.Priv.SANs[k]
+							value.Priv.SANs[k] = append(pre, v)
+						}
+					}
 				}
 			}
 		default:
