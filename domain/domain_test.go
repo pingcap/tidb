@@ -92,6 +92,7 @@ func unixSocketAvailable() bool {
 }
 
 // For debug only, will be removed later.
+// TODO: remove these tests for investigating the leak problem.
 func interestingGoroutines() (gs []string) {
 	buf := make([]byte, 2<<20)
 	buf = buf[:runtime.Stack(buf, true)]
