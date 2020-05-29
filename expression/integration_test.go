@@ -1442,7 +1442,7 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("00:00:01"))
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a datetime, b timestamp, c time)")
-	tk.MustExec(`insert into t values("2017 01-01 12:30:31", "2017 01-01 12:30:31", "01:01:01")`)
+	tk.MustExec(`insert into t values("2017-01-01 12:30:31", "2017-01-01 12:30:31", "01:01:01")`)
 	result = tk.MustQuery("select addtime(a, b), addtime(cast(a as date), b), addtime(b,a), addtime(a,c), addtime(b," +
 		"c), addtime(c,a), addtime(c,b)" +
 		" from t;")
@@ -6394,12 +6394,12 @@ func (s *testIntegrationSuite) TestIssue16697(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("CREATE TABLE `t` (`a` int(11) DEFAULT NULL,`b` int(11) DEFAULT NULL)")
-	tk.MustExec("insert into t values (1, 1)")
-	for i := 0; i < 8; i++ {
+	tk.MustExec("CREATE TABLE t (v varchar(1024))")
+	tk.MustExec("insert into t values (space(1024))")
+	for i := 0; i < 5; i++ {
 		tk.MustExec("insert into t select * from t")
 	}
-	rows := tk.MustQuery("explain analyze  select t1.a, t1.a +1 from t t1 join t t2 join t t3 order by t1.a").Rows()
+	rows := tk.MustQuery("explain analyze select * from t").Rows()
 	for _, row := range rows {
 		line := fmt.Sprintf("%v", row)
 		if strings.Contains(line, "Projection") {
