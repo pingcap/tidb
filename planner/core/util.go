@@ -23,7 +23,9 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/set"
+	"go.uber.org/zap"
 )
 
 // AggregateFuncExtractor visits Expr tree.
@@ -217,7 +219,11 @@ func BuildPhysicalJoinSchema(joinType JoinType, join PhysicalPlan) *expression.S
 
 // GetStatsInfo gets the statistics info from a physical plan tree.
 func GetStatsInfo(i interface{}) map[string]uint64 {
-	p := i.(Plan)
+	p, ok := i.(Plan)
+	if !ok {
+		logutil.BgLogger().Warn("not expect in GetStatsInfo", zap.Reflect("i", i))
+		return nil
+	}
 	var physicalPlan PhysicalPlan
 	switch x := p.(type) {
 	case *Insert:

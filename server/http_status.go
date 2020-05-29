@@ -26,6 +26,7 @@ import (
 	"net/http/pprof"
 	"net/url"
 	"runtime"
+	"runtime/debug"
 	rpprof "runtime/pprof"
 	"strconv"
 	"strings"
@@ -208,6 +209,7 @@ func (s *Server) startHTTPServer() {
 			}
 			if item.gc > 0 {
 				runtime.GC()
+				debug.FreeOSMemory()
 			}
 			fw, err := zw.Create(item.name)
 			if err != nil {
