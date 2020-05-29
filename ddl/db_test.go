@@ -389,7 +389,7 @@ func testCancelAddIndex(c *C, store kv.Storage, d ddl.DDL, lease time.Duration, 
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (c1 int, c2 int unsigned, c3 int, unique key(c1))")
 	// defaultBatchSize is equal to ddl.defaultBatchSize
-	count := defaultBatchSize * 2
+	count := defaultBatchSize * 32
 	start := 0
 	// add some rows
 	if len(sqlModeSQL) != 0 {
@@ -400,8 +400,13 @@ func testCancelAddIndex(c *C, store kv.Storage, d ddl.DDL, lease time.Duration, 
 		tk.MustExec("insert into t1 set c3 = ?", 2)
 		start = 3
 	}
+	var values []string
 	for i := start; i < count; i++ {
-		tk.MustExec("insert into t1 values (?, ?, ?)", i, i, i)
+		values = append(values, fmt.Sprintf("(%d, %d, %d)", i, i, i))
+		if (i + 1) % defaultBatchSize == 0 {
+			tk.MustExec("insert into t1 values " + strings.Join(values, ","))
+			values = values[:0]
+		}
 	}
 
 	var c3IdxInfo *model.IndexInfo
