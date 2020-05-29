@@ -259,7 +259,7 @@ func (c *hashRowContainer) ActionSpill() memory.ActionOnExceed {
 
 const (
 	initialEntrySliceLen = 64
-	maxEntrySliceLen     = 8 * 1024
+	maxEntrySliceLen     = 8192
 )
 
 type entry struct {
@@ -274,7 +274,7 @@ type entryStore struct {
 
 func newEntryStore() *entryStore {
 	es := new(entryStore)
-	es.slices = [][]entry{make([]entry, initialEntrySliceLen, initialEntrySliceLen)}
+	es.slices = [][]entry{make([]entry, initialEntrySliceLen)}
 	es.cursor = 0
 	return es
 }
@@ -287,7 +287,7 @@ func (es *entryStore) GetStore() (e *entry) {
 		if size >= maxEntrySliceLen {
 			size = maxEntrySliceLen
 		}
-		slice = make([]entry, size, size)
+		slice = make([]entry, size)
 		es.slices = append(es.slices, slice)
 		sliceIdx++
 		es.cursor = 0
