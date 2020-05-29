@@ -6498,6 +6498,7 @@ func (s *testIntegrationSuite) TestIssue17287(c *C) {
 
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
+	tk.MustExec("set @@tidb_enable_vectorized_expression = false;")
 	tk.MustExec("create table t(a datetime);")
 	tk.MustExec("insert into t values(from_unixtime(1589873945)), (from_unixtime(1589873946));")
 	tk.MustExec("prepare stmt7 from 'SELECT unix_timestamp(a) FROM t WHERE a = from_unixtime(?);';")
