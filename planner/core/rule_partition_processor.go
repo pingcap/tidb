@@ -61,7 +61,7 @@ func (s *partitionProcessor) rewriteDataSource(lp LogicalPlan) (LogicalPlan, err
 		if err != nil {
 			return nil, err
 		}
-		if ua, ok := ds.(*LogicalUnionAll); ok {
+		if ua, ok := ds.(*LogicalPartitionUnionAll); ok {
 			// Adjust the UnionScan->Union->DataSource1, DataSource2 ... to
 			// Union->(UnionScan->DataSource1), (UnionScan->DataSource2)
 			children := make([]LogicalPlan, 0, len(ua.Children()))
@@ -733,7 +733,7 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 		// No need for the union all.
 		return children[0], nil
 	}
-	unionAll := LogicalUnionAll{}.Init(ds.SCtx(), ds.blockOffset)
+	unionAll := LogicalPartitionUnionAll{}.Init(ds.SCtx(), ds.blockOffset)
 	unionAll.SetChildren(children...)
 	unionAll.SetSchema(ds.schema.Clone())
 	return unionAll, nil
