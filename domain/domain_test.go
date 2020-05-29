@@ -177,10 +177,10 @@ func checkLeakAfterTest(errorFunc func(cnt int, g string)) func() {
 				if !beforeTestGoroutines[g] {
 					leaked = append(leaked, g)
 					for str := range beforeTestGoroutines {
-						logutil.BgLogger().Info("checkLeakAfterTest", zap.String("L180", str))
+						logutil.BgLogger().Info("checkLeakAfterTest", zap.String("L180", str), zap.Int("i", i))
 					}
 					for _, str := range interestingGoroutines() {
-						logutil.BgLogger().Info("checkLeakAfterTest", zap.String("L183", str))
+						logutil.BgLogger().Info("checkLeakAfterTest", zap.String("L183", str), zap.Int("i", i))
 					}
 				}
 			}
@@ -211,15 +211,15 @@ func TestInfo(t *testing.T) {
 	if !unixSocketAvailable() {
 		return
 	}
-	for _, str := range interestingGoroutines() {
-		t.Logf("TestInfo: BeforeTest %s", str)
+	for i, str := range interestingGoroutines() {
+		t.Logf("TestInfo: BeforeTest %d %s", i, str)
 	}
 	BeforeTest()
 	defer func() {
-		for _, str := range interestingGoroutines() {
-			t.Logf("TestInfo: AfterTest %s", str)
-		}
 		AfterTestT(t)()
+		for i, str := range interestingGoroutines() {
+			t.Logf("TestInfo: AfterTest %d %s", i, str)
+		}
 	}()
 	ddlLease := 80 * time.Millisecond
 	s, err := mockstore.NewMockStore()
