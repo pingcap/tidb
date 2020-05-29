@@ -3900,10 +3900,10 @@
               "refId": "B"
             },
             {
-              "expr": "histogram_quantile(0.80, sum(rate(tidb_tikvclient_local_latch_wait_seconds_bucket[1m])) by (le))",
+              "expr": "histogram_quantile(0.90, sum(rate(tidb_tikvclient_local_latch_wait_seconds_bucket[1m])) by (le))",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "80",
+              "legendFormat": "90",
               "refId": "C"
             }
           ],
