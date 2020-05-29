@@ -1269,6 +1269,7 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 					e.sameGroup[i] = false
 				}
 			}
+			previousKey = key
 			previousIsNull = isNull
 		}
 		if !firstRowIsNull {
