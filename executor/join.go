@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -678,6 +679,8 @@ func (e *HashJoinExec) fetchAndBuildHashTable(ctx context.Context) {
 
 	// e.concurrency goroutines concurrently fetch chunks from e.buildSideResultCh
 	// and put chunks into a hashtable
+	start := time.Now()
+	defer func() { e.rowContainer.stat.buildTableElapse += time.Since(start) }()
 	for i := uint(0); i < e.concurrency; i++ {
 		e.buildWorkerWaitGroup.Add(1)
 		workID := i

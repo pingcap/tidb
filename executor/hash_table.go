@@ -179,8 +179,6 @@ func (c *hashRowContainer) PutChunk(chk *chunk.Chunk, workID uint, useOuterToBui
 // key of hash table: hash value of key columns
 // value of hash table: RowPtr of the corresponded row
 func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected []bool, workID uint, useOuterToBuild bool) error {
-	start := time.Now()
-	defer func() { c.stat.buildTableElapse += time.Since(start) }()
 	// safely add chunks
 	c.lock.Lock()
 	chkIdx := uint32(c.rowContainer.NumChunks())
