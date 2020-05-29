@@ -131,8 +131,9 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/runtime/gc", fn.Wrap(func() (string, error) {
 		startTime := time.Now()
 		runtime.GC()
+		debug.FreeOSMemory()
 		duration := time.Since(startTime)
-		return fmt.Sprintf("Manual GC successfully in %s", duration), nil
+		return fmt.Sprintf("Manual GC and free os memory successfully in %s", duration), nil
 	}))
 
 	// HTTP path for get server info.
@@ -209,7 +210,6 @@ func (s *Server) startHTTPServer() {
 			}
 			if item.gc > 0 {
 				runtime.GC()
-				debug.FreeOSMemory()
 			}
 			fw, err := zw.Create(item.name)
 			if err != nil {
