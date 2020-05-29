@@ -60,11 +60,20 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 
 	c.Assert(vars.IndexJoinBatchSize, Equals, DefIndexJoinBatchSize)
 	c.Assert(vars.IndexLookupSize, Equals, DefIndexLookupSize)
+	c.Assert(vars.indexLookupConcurrency, Equals, concurrencyUnset)
+	c.Assert(vars.indexSerialScanConcurrency, Equals, DefIndexSerialScanConcurrency)
+	c.Assert(vars.indexLookupJoinConcurrency, Equals, concurrencyUnset)
+	c.Assert(vars.hashJoinConcurrency, Equals, concurrencyUnset)
 	c.Assert(vars.IndexLookupConcurrency(), Equals, DefExecutorConcurrency)
-	c.Assert(vars.IndexSerialScanConcurrency(), Equals, DefExecutorConcurrency)
+	c.Assert(vars.IndexSerialScanConcurrency(), Equals, DefIndexSerialScanConcurrency)
 	c.Assert(vars.IndexLookupJoinConcurrency(), Equals, DefExecutorConcurrency)
 	c.Assert(vars.HashJoinConcurrency(), Equals, DefExecutorConcurrency)
 	c.Assert(vars.AllowBatchCop, Equals, DefTiDBAllowBatchCop)
+	c.Assert(vars.projectionConcurrency, Equals, int64(concurrencyUnset))
+	c.Assert(vars.hashAggPartialConcurrency, Equals, concurrencyUnset)
+	c.Assert(vars.hashAggFinalConcurrency, Equals, concurrencyUnset)
+	c.Assert(vars.windowConcurrency, Equals, concurrencyUnset)
+	c.Assert(vars.distSQLScanConcurrency, Equals, concurrencyUnset)
 	c.Assert(vars.ProjectionConcurrency(), Equals, int64(DefExecutorConcurrency))
 	c.Assert(vars.HashAggPartialConcurrency(), Equals, DefExecutorConcurrency)
 	c.Assert(vars.HashAggFinalConcurrency(), Equals, DefExecutorConcurrency)
@@ -199,7 +208,7 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(v.SQLMode, Equals, mysql.ModeRealAsFloat|mysql.ModeANSIQuotes)
 
 	// Test case for tidb_index_serial_scan_concurrency.
-	c.Assert(v.IndexSerialScanConcurrency(), Equals, DefExecutorConcurrency)
+	c.Assert(v.IndexSerialScanConcurrency(), Equals, DefIndexSerialScanConcurrency)
 	SetSessionSystemVar(v, TiDBIndexSerialScanConcurrency, types.NewStringDatum("4"))
 	c.Assert(v.IndexSerialScanConcurrency(), Equals, 4)
 
@@ -587,4 +596,28 @@ func (s *testVarsutilSuite) TestValidateStmtSummary(c *C) {
 			c.Assert(err, IsNil, Commentf("%v got err=%v", t, err))
 		}
 	}
+}
+
+func (s *testVarsutilSuite) TestConcurrencyVariables(c *C) {
+	defer testleak.AfterTest(c)()
+	vars := NewSessionVars()
+	vars.GlobalVarsAccessor = NewMockGlobalAccessor()
+
+	hjConcurrency := 2
+	c.Assert(vars.hashJoinConcurrency, Equals, concurrencyUnset)
+	c.Assert(vars.HashJoinConcurrency(), Equals, DefExecutorConcurrency)
+	err := SetSessionSystemVar(vars, TiDBHashJoinConcurrency, types.NewIntDatum(int64(hjConcurrency)))
+	c.Assert(err, IsNil)
+	c.Assert(vars.hashJoinConcurrency, Equals, hjConcurrency)
+	c.Assert(vars.HashJoinConcurrency(), Equals, hjConcurrency)
+
+
+	c.Assert(vars.indexLookupConcurrency, Equals, concurrencyUnset)
+	c.Assert(vars.IndexLookupConcurrency(), Equals, DefExecutorConcurrency)
+	exeConcurrency := DefExecutorConcurrency + 1
+	err = SetSessionSystemVar(vars, TiDBExecutorConcurrency, types.NewIntDatum(int64(exeConcurrency)))
+	c.Assert(err, IsNil)
+	c.Assert(vars.indexLookupConcurrency, Equals, concurrencyUnset )
+	c.Assert(vars.IndexLookupConcurrency(), Equals, exeConcurrency)
+	c.Assert(vars.HashJoinConcurrency(), Equals, hjConcurrency)
 }

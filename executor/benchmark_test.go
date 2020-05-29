@@ -1249,8 +1249,9 @@ func prepare4IndexMergeJoin(tc *indexJoinTestCase, outerDS *mockDataSource, inne
 		keyOff2IdxOff: keyOff2IdxOff,
 		lastColHelper: nil,
 	}
-	joiners := make([]joiner, e.ctx.GetSessionVars().IndexLookupJoinConcurrency())
-	for i := 0; i < e.ctx.GetSessionVars().IndexLookupJoinConcurrency(); i++ {
+	concurrency := e.ctx.GetSessionVars().IndexLookupJoinConcurrency()
+	joiners := make([]joiner, concurrency)
+	for i := 0; i < concurrency; i++ {
 		joiners[i] = newJoiner(tc.ctx, 0, false, defaultValues, nil, leftTypes, rightTypes, nil)
 	}
 	e.joiners = joiners
