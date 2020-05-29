@@ -29,7 +29,7 @@ var _ = Suite(&testPlanIDSuite{})
 type testPlanIDSuite struct{}
 
 func (s *testPlanIDSuite) TestPlanIDChanged(c *C) {
-	// Attention: For compatibility, shouldn't modify the below test, you can only add test when add new plan ID.
+	// Attention: for compatibility, shouldn't modify the below test, you can only add test when add new plan ID.
 	c.Assert(typeSelID, Equals, 1)
 	c.Assert(typeSetID, Equals, 2)
 	c.Assert(typeProjID, Equals, 3)
