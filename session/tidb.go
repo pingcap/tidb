@@ -19,10 +19,11 @@ package session
 
 import (
 	"context"
-	"github.com/ngaut/pools"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/ngaut/pools"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -51,9 +52,9 @@ type domainInitializer func(
 ) error
 
 type domainMap struct {
-	domains           map[string]*domain.Domain
-	mu                sync.Mutex
-	domInit 	      domainInitializer
+	domains map[string]*domain.Domain
+	mu      sync.Mutex
+	domInit domainInitializer
 }
 
 // NewDomainMap makes a new empty domain map.
