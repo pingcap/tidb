@@ -2,14 +2,15 @@
 
 **Dumpling** is a tool and a Go library for creating SQL dump (CSV/SQL format) from a MySQL-compatible database.
 
-It is intended to replace `mysqldump` and `mydumper` when targeting TiDB; as a result, its basic usage is similar to that of Mydumper. 
+It is intended to replace `mysqldump` and `mydumper` when targeting TiDB; as a result, its basic usage is similar to that of Mydumper.
 
 The following table lists the major parameters of Dumpling.
 
 
 | Parameter | Description |
 | --------| --- |
-| -B or --database | Dump the specified database. |
+| -B or --database | Dump the specified databases. |
+| -f or --filter | Dump only the tables matching the patterns. See [table-filter](https://github.com/pingcap/tidb-tools/blob/master/pkg/table-filter/README.md) for syntax. |
 | -H or --host | Host to connect to. (default: `127.0.0.1`) |
 | -t or --threads | Number of threads for concurrent backup. |
 | -r or --rows | Split table into multiple files by number of rows. This allows Dumpling to generate multiple files concurrently. (default: unlimited) |

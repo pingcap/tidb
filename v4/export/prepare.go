@@ -39,10 +39,10 @@ func detectServerInfo(db *sql.DB) (ServerInfo, error) {
 }
 
 func prepareDumpingDatabases(conf *Config, db *sql.DB) ([]string, error) {
-	if conf.Database == "" {
+	if len(conf.Databases) == 0 {
 		return ShowDatabases(db)
 	} else {
-		return strings.Split(conf.Database, ","), nil
+		return conf.Databases, nil
 	}
 }
 
