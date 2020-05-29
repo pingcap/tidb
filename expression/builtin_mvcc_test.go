@@ -19,7 +19,7 @@ func (s *testServerSuite) TestMVCCGetInfo(c *C) {
 	tk.MustExec("create table tidb.test (a int auto_increment primary key, b varchar(20));")
 	tk.MustExec("insert tidb.test values (1, 1);")
 
-	// with txn
+	// prepare test table with txn
 	tk.MustExec(`
 begin;
 update tidb.test set b = b + 1 where a = 1;
@@ -29,7 +29,7 @@ insert tidb.test values (4, '');
 commit;
 `)
 
-	// with index
+	// prepare test table with index
 	tk.MustExec("alter table tidb.test add index idx1 (a, b);")
 	tk.MustExec("alter table tidb.test add unique index idx2 (a, b);")
 
@@ -76,7 +76,7 @@ func (s *testServerSuite) TestMVCCGetInfoPartitionTable(c *C) {
 
 	tk := s.tk
 
-	// with partition
+	// prepare test table with partition
 	tk.MustExec(`create table tidb.pt (a int primary key, b varchar(20), key idx(a, b))
 partition by range (a)
 (partition p0 values less than (256),
@@ -84,7 +84,7 @@ partition p1 values less than (512),
 partition p2 values less than (1024))`)
 	tk.MustExec("insert tidb.pt(p2) values (1000, 'a');")
 
-	// with partition and txn
+	// prepare test table with partition and txn
 	tk.MustExec(`
 begin;
 insert into tidb.pt values (42, '123');
