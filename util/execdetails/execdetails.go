@@ -50,6 +50,22 @@ type ExecDetails struct {
 	UpdateWaitResp   int64
 	UpdateFetchIndex int64
 	UpdateFetchTable int64
+
+	StoreFeedback        int64
+	ExtractHandles       int64
+	IndexResultNext      int64
+	IndexGetSelectResp   int64
+	IndexResultChan      int64
+	FetcherNext          int64
+	FetcherRetCh         int64
+	CopBuildRange        int64
+	CopDispatchWaitToken int64
+	CopDispatchChan      int64
+	CopSendIndex         int64
+	CopHandleOne         int64
+	CopRegionError       int64
+	CopLockError         int64
+	CopRetCh             int64
 }
 
 // CommitDetails contains commit detail information.
@@ -146,6 +162,21 @@ func (d ExecDetails) String() string {
 	if d.UpdateFetchTable > 0 {
 		parts = append(parts, "UpdateFetchTable: "+strconv.FormatFloat(time.Duration(d.UpdateFetchTable).Seconds(), 'f', -1, 64))
 	}
+	parts = d.appendInt64D("StoreFeedback", d.StoreFeedback, parts)
+	parts = d.appendInt64D("ExtractHandles", d.ExtractHandles, parts)
+	parts = d.appendInt64D("IndexResultNext", d.IndexResultNext, parts)
+	parts = d.appendInt64D("IndexGetSelectResp", d.IndexGetSelectResp, parts)
+	parts = d.appendInt64D("IndexResultChan", d.IndexResultChan, parts)
+	parts = d.appendInt64D("FetcherNext", d.FetcherNext, parts)
+	parts = d.appendInt64D("FetcherRetCh", d.FetcherRetCh, parts)
+	parts = d.appendInt64D("CopBuildRange", d.CopBuildRange, parts)
+	parts = d.appendInt64D("CopDispatchWaitToken", d.CopDispatchWaitToken, parts)
+	parts = d.appendInt64D("CopDispatchChan", d.CopDispatchChan, parts)
+	parts = d.appendInt64D("CopSendIndex", d.CopSendIndex, parts)
+	parts = d.appendInt64D("CopHandleOne", d.CopHandleOne, parts)
+	parts = d.appendInt64D("CopRegionError", d.CopRegionError, parts)
+	parts = d.appendInt64D("CopLockError", d.CopLockError, parts)
+	parts = d.appendInt64D("CopRetCh", d.CopRetCh, parts)
 
 	if d.ProcessTime > 0 {
 		parts = append(parts, ProcessTimeStr+": "+strconv.FormatFloat(d.ProcessTime.Seconds(), 'f', -1, 64))
@@ -213,6 +244,13 @@ func (d ExecDetails) String() string {
 		}
 	}
 	return strings.Join(parts, " ")
+}
+
+func (d ExecDetails) appendInt64D(l string, x int64, parts []string) []string {
+	if x > 0 {
+		parts = append(parts, l+": "+strconv.FormatFloat(time.Duration(x).Seconds(), 'f', -1, 64))
+	}
+	return parts
 }
 
 // ToZapFields wraps the ExecDetails as zap.Fields.

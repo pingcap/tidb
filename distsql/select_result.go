@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
@@ -106,7 +107,14 @@ func (r *selectResult) fetch(ctx context.Context) {
 		// https://github.com/pingcap/tidb/issues/11397
 		metrics.DistSQLQueryHistgram.WithLabelValues(r.label, r.sqlType).Observe(duration.Seconds())
 	}()
+	var rr *util.Record
+	rx := ctx.Value(util.RecordKey{})
+	if rx != nil {
+		rr = rx.(*util.Record)
+	}
+	foi := ctx.Value(util.FetchOfIndexLookup{}) != nil
 	for {
+		s := time.Now()
 		var result resultWithErr
 		resultSubset, err := r.resp.Next(ctx)
 		if err != nil {
@@ -118,7 +126,10 @@ func (r *selectResult) fetch(ctx context.Context) {
 			result.result = resultSubset
 			r.memConsume(int64(resultSubset.MemSize()))
 		}
-
+		if foi && rr != nil {
+			atomic.AddInt64(&rr.FetcherNext, int64(time.Since(s)))
+		}
+		s = time.Now()
 		select {
 		case r.results <- result:
 		case <-r.closed:
@@ -132,6 +143,9 @@ func (r *selectResult) fetch(ctx context.Context) {
 				r.memConsume(-int64(resultSubset.MemSize()))
 			}
 			return
+		}
+		if foi && rr != nil {
+			atomic.AddInt64(&rr.FetcherRetCh, int64(time.Since(s)))
 		}
 	}
 }
@@ -152,7 +166,7 @@ func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	for !chk.IsFull() {
 		if r.selectResp == nil || r.respChkIdx == len(r.selectResp.Chunks) {
-			err := r.getSelectResp()
+			err := r.getSelectResp(ctx)
 			if err != nil || r.selectResp == nil {
 				return err
 			}
@@ -168,8 +182,20 @@ func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
-func (r *selectResult) getSelectResp() error {
+func (r *selectResult) getSelectResp(ctx context.Context) error {
+	var rr *util.Record
+	rx := ctx.Value(util.RecordKey{})
+	if rx != nil {
+		rr = rx.(*util.Record)
+	}
+	ioi := ctx.Value(util.IndexOfIndexLookup{}) != nil
 	r.respChkIdx = 0
+	if ioi && rr != nil {
+		s := time.Now()
+		defer func() {
+			atomic.AddInt64(&rr.IndexGetSelectResp, int64(time.Since(s)))
+		}()
+	}
 	for {
 		startTime := time.Now()
 		re := <-r.results
@@ -177,6 +203,9 @@ func (r *selectResult) getSelectResp() error {
 			return errors.Trace(re.err)
 		}
 		duration := time.Since(startTime)
+		if ioi && rr != nil {
+			atomic.AddInt64(&rr.IndexResultChan, int64(duration))
+		}
 		if r.selectResp != nil {
 			r.memConsume(-int64(r.selectRespSize))
 		}

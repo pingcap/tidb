@@ -458,6 +458,23 @@ func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, c
 		sc.mu.execDetails.UpdateWaitResp += details.UpdateWaitResp
 		sc.mu.execDetails.UpdateFetchIndex += details.UpdateFetchIndex
 		sc.mu.execDetails.UpdateFetchTable += details.UpdateFetchTable
+
+		sc.mu.execDetails.StoreFeedback += details.StoreFeedback
+		sc.mu.execDetails.ExtractHandles += details.ExtractHandles
+		sc.mu.execDetails.IndexResultNext += details.IndexResultNext
+		sc.mu.execDetails.IndexGetSelectResp += details.IndexGetSelectResp
+		sc.mu.execDetails.IndexResultChan += details.IndexResultChan
+		sc.mu.execDetails.FetcherNext += details.FetcherNext
+		sc.mu.execDetails.FetcherRetCh += details.FetcherRetCh
+		sc.mu.execDetails.CopBuildRange += details.CopBuildRange
+		sc.mu.execDetails.CopDispatchWaitToken += details.CopDispatchWaitToken
+		sc.mu.execDetails.CopDispatchChan += details.CopDispatchChan
+		sc.mu.execDetails.CopSendIndex += details.CopSendIndex
+		sc.mu.execDetails.CopHandleOne += details.CopHandleOne
+		sc.mu.execDetails.CopRegionError += details.CopRegionError
+		sc.mu.execDetails.CopLockError += details.CopLockError
+		sc.mu.execDetails.CopRetCh += details.CopRetCh
+
 		sc.mu.allExecDetails = append(sc.mu.allExecDetails, details)
 	}
 	sc.mu.execDetails.CommitDetail = commitDetails

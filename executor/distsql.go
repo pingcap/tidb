@@ -494,11 +494,11 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		tps = e.idxColTps
 	}
 	// Since the first read only need handle information. So its returned col is only 1.
-	result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, tps, e.feedback, getPhysicalPlanIDs(e.idxPlans))
+	result, err := distsql.SelectWithRuntimeStats(context.WithValue(ctx, util.SendOfIndexLookup{}, 1), e.ctx, kvReq, tps, e.feedback, getPhysicalPlanIDs(e.idxPlans))
 	if err != nil {
 		return err
 	}
-	result.Fetch(ctx)
+	result.Fetch(context.WithValue(ctx, util.FetchOfIndexLookup{}, 1))
 	worker := &indexWorker{
 		idxLookup:       e,
 		workCh:          workCh,
@@ -537,7 +537,11 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 			copStats = e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.tblPlans[0].ExplainID().String())
 			copStats.SetRowNum(int64(count))
 		}
+		start2 := time.Now()
 		e.ctx.StoreQueryFeedback(e.feedback)
+		if rr != nil {
+			atomic.AddInt64(&rr.StoreFeedback, int64(time.Since(start2)))
+		}
 		close(workCh)
 		close(e.resultCh)
 		e.idxWorkerWg.Done()
@@ -727,8 +731,17 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 	} else {
 		chk = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, w.idxLookup.maxChunkSize)
 	}
+	var rr *util.Record
+	r := ctx.Value(util.RecordKey{})
+	if r != nil {
+		rr = r.(*util.Record)
+	}
 	for {
+		start := time.Now()
 		handles, retChunk, scannedKeys, err := w.extractTaskHandles(ctx, chk, result, count)
+		if rr != nil {
+			atomic.AddInt64(&rr.ExtractHandles, int64(time.Since(start)))
+		}
 		if err != nil {
 			doneCh := make(chan error, 1)
 			doneCh <- err
@@ -755,6 +768,11 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 
 func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult, count uint64) (
 	handles []int64, retChk *chunk.Chunk, scannedKeys uint64, err error) {
+	var rr *util.Record
+	r := ctx.Value(util.RecordKey{})
+	if r != nil {
+		rr = r.(*util.Record)
+	}
 	handleOffset := chk.NumCols() - 1
 	handles = make([]int64, 0, w.batchSize)
 	// PushedLimit would always be nil for CheckIndex or CheckTable, we add this check just for insurance.
@@ -771,7 +789,11 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 			}
 		}
 		chk.SetRequiredRows(requiredRows, w.maxChunkSize)
-		err = errors.Trace(idxResult.Next(ctx, chk))
+		start := time.Now()
+		err = errors.Trace(idxResult.Next(context.WithValue(ctx, util.IndexOfIndexLookup{}, 1), chk))
+		if rr != nil {
+			atomic.AddInt64(&rr.IndexResultNext, int64(time.Since(start)))
+		}
 		if err != nil {
 			return handles, nil, scannedKeys, err
 		}
