@@ -18,8 +18,11 @@ import (
 	"fmt"
 	_ "net/http/pprof"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/dumpling/v4/cli"
 	"github.com/pingcap/dumpling/v4/export"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
@@ -28,13 +31,14 @@ import (
 
 var (
 	databases     []string
+	tablesList    []string
 	host          string
 	user          string
 	port          int
 	password      string
 	threads       int
 	outputDir     string
-	fileSize      uint64
+	fileSizeStr   string
 	statementSize uint64
 	logLevel      string
 	logFile       string
@@ -71,13 +75,14 @@ func main() {
 	pflag.ErrHelp = errors.New("")
 
 	pflag.StringSliceVarP(&databases, "database", "B", nil, "Databases to dump")
-	pflag.StringVarP(&host, "host", "H", "127.0.0.1", "The host to connect to")
+	pflag.StringSliceVarP(&tablesList, "tables-list", "T", nil, "Comma delimited table list to dump; must be qualified table names")
+	pflag.StringVarP(&host, "host", "h", "127.0.0.1", "The host to connect to")
 	pflag.StringVarP(&user, "user", "u", "root", "Username with privileges to run the dump")
 	pflag.IntVarP(&port, "port", "P", 4000, "TCP/IP port to connect to")
 	pflag.StringVarP(&password, "password", "p", "", "User password")
 	pflag.IntVarP(&threads, "threads", "t", 4, "Number of goroutines to use, default 4")
-	pflag.Uint64VarP(&fileSize, "filesize", "F", export.UnspecifiedSize, "The approximate size of output file")
-	pflag.Uint64VarP(&statementSize, "statement-size", "S", export.UnspecifiedSize, "Attempted size of INSERT statement in bytes")
+	pflag.StringVarP(&fileSizeStr, "filesize", "F", "", "The approximate size of output file")
+	pflag.Uint64VarP(&statementSize, "statement-size", "s", export.UnspecifiedSize, "Attempted size of INSERT statement in bytes")
 	pflag.StringVarP(&outputDir, "output", "o", defaultOutputDir, "Output directory")
 	pflag.StringVar(&logLevel, "loglevel", "info", "Log level: {debug|info|warn|error|dpanic|panic|fatal}")
 	pflag.StringVarP(&logFile, "logfile", "L", "", "Log file `path`, leave empty to write to console")
@@ -94,7 +99,7 @@ func main() {
 	pflag.BoolVarP(&noSchemas, "no-schemas", "m", false, "Do not dump table schemas with the data")
 	pflag.BoolVarP(&noData, "no-data", "d", false, "Do not dump table data")
 	pflag.StringVar(&csvNullValue, "csv-null-value", "\\N", "The null value used when export to csv")
-	pflag.StringVarP(&sql, "sql", "s", "", "Dump data with given sql")
+	pflag.StringVarP(&sql, "sql", "S", "", "Dump data with given sql")
 	pflag.StringArrayVarP(&filters, "filter", "f", []string{"*.*"}, "filter to select which tables to dump")
 	pflag.BoolVar(&caseSensitive, "case-sensitive", false, "whether the filter should be case-sensitive")
 
@@ -108,13 +113,26 @@ func main() {
 		return
 	}
 
-	tableFilter, err := filter.Parse(filters)
+	tableFilter, err := parseTableFilter()
 	if err != nil {
 		fmt.Printf("failed to parse filter: %s\n", err)
 		os.Exit(2)
 	}
 	if !caseSensitive {
 		tableFilter = filter.CaseInsensitive(tableFilter)
+	}
+
+	var fileSize uint64
+	if len(fileSizeStr) == 0 {
+		fileSize = export.UnspecifiedSize
+	} else if fileSizeMB, err := strconv.ParseUint(fileSizeStr, 10, 64); err == nil {
+		fmt.Printf("Warning: -F without unit is not recommended, try using `-F '%dMiB'` in the future\n", fileSizeMB)
+		fileSize = fileSizeMB * units.MiB
+	} else if size, err := units.RAMInBytes(fileSizeStr); err == nil {
+		fileSize = uint64(size)
+	} else {
+		fmt.Printf("failed to parse filesize (-F '%s')\n", fileSizeStr)
+		os.Exit(2)
 	}
 
 	conf := export.DefaultConfig()
@@ -149,4 +167,26 @@ func main() {
 		fmt.Printf("dump failed: %s\n", err.Error())
 		os.Exit(1)
 	}
+}
+
+func parseTableFilter() (filter.Filter, error) {
+	if len(tablesList) == 0 {
+		return filter.Parse(filters)
+	}
+
+	// only parse -T when -f is default value. otherwise bail out.
+	if len(filters) != 1 || filters[0] != "*.*" {
+		return nil, errors.New("cannot pass --tables-list and --filter together")
+	}
+
+	tableNames := make([]filter.Table, 0, len(tablesList))
+	for _, table := range tablesList {
+		parts := strings.SplitN(table, ".", 2)
+		if len(parts) < 2 {
+			return nil, fmt.Errorf("--tables-list only accepts qualified table names, but `%s` lacks a dot", table)
+		}
+		tableNames = append(tableNames, filter.Table{Schema: parts[0], Name: parts[1]})
+	}
+
+	return filter.NewTablesFilter(tableNames...), nil
 }

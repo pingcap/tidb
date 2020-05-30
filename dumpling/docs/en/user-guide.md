@@ -11,7 +11,7 @@ The following table lists the major parameters of Dumpling.
 | --------| --- |
 | -B or --database | Dump the specified databases. |
 | -f or --filter | Dump only the tables matching the patterns. See [table-filter](https://github.com/pingcap/tidb-tools/blob/master/pkg/table-filter/README.md) for syntax. |
-| -H or --host | Host to connect to. (default: `127.0.0.1`) |
+| -h or --host | Host to connect to. (default: `127.0.0.1`) |
 | -t or --threads | Number of threads for concurrent backup. |
 | -r or --rows | Split table into multiple files by number of rows. This allows Dumpling to generate multiple files concurrently. (default: unlimited) |
 | --loglevel | Log level. {debug, info, warn, error, dpanic, panic, fatal}. (default: `info`) |
@@ -20,7 +20,7 @@ The following table lists the major parameters of Dumpling.
 | -W or --no-views | Don't dump views. (default: `true`) |
 | -m or --no-schemas | Don't dump schemas, dump data only. |
 | -s or --statement-size | Control the size of Insert Statement. Unit: byte. |
-| -F or --filesize | The approximate size of the output file. Unit: byte. |
+| -F or --filesize | The approximate size of the output file. The unit should be explicitly provided (such as `128B`, `64KiB`, `32MiB`, `1.5GiB`) |
 | --filetype| The type of dump file. (sql/csv, default "sql")           |
 | -o or --output | Output directory. The default value is based on time. |
 | --consistency | Which consistency control to use (default `auto`):<br>`flush`: Use FTWRL (flush tables with read lock)<br>`snapshot`: use a snapshot at a given timestamp<br>`lock`: execute lock tables read for all tables that need to be locked <br>`none`: dump without locking. It cannot guarantee consistency <br>`auto`: `flush` on MySQL, `snapshot` on TiDB |
