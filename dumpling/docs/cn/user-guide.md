@@ -11,7 +11,7 @@
 | --------| --- |
 | -B 或 --database | 导出指定数据库 |
 | -f 或 --filter | 导出能匹配模式的表，语法可参考 [table-filter](https://github.com/pingcap/tidb-tools/blob/master/pkg/table-filter/README.md)（只有英文版） |
-| -H 或 --host| 链接节点地址(默认 "127.0.0.1")|
+| -h 或 --host| 链接节点地址(默认 "127.0.0.1")|
 | -t 或 --threads | 备份并发线程数|
 | -r 或 --rows |将 table 划分成 row 行数据，一般针对大表操作并发生成多个文件。|
 | --loglevel | 日志级别 {debug,info,warn,error,dpanic,panic,fatal} (默认 "info") |
@@ -20,7 +20,7 @@
 | -W 或 --no-views| 不导出 view, 默认 true |
 | -m 或 --no-schemas | 不导出 schema , 只导出数据 |
 | -s 或--statement-size | 控制 Insert Statement 的大小，单位 bytes |
-| -F 或 --filesize | 将 table 数据划分出来的文件大小, 单位 bytes |
+| -F 或 --filesize | 将 table 数据划分出来的文件大小, 需指明单位 (如 `128B`, `64KiB`, `32MiB`, `1.5GiB`) |
 | --filetype| 导出文件类型 csv/sql (默认 sql) |
 | -o 或 --output | 设置导出文件路径 |
 | --consistency | flush: dump 前用 FTWRL <br> snapshot: 通过 tso 指定 dump 位置 <br> lock: 对需要 dump 的所有表执行 lock tables read <br> none: 不加锁 dump，无法保证一致性 <br> auto: MySQL flush, TiDB snapshot|
