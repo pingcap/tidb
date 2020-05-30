@@ -840,7 +840,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
-	if ntRandID != 0 && ptRandID != 0 {
+	if ntRandID != 0 || ptRandID != 0 {
 		if ntRandID > ptRandID {
 			_, err = t.GenAutoRandomID(ptSchemaID, pt.ID, ntRandID-ptRandID)
 			if err != nil {
