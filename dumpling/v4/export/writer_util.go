@@ -132,10 +132,10 @@ func WriteInsert(tblIR TableDataIR, w io.Writer) error {
 	// if has generated column
 	if selectedField != "" {
 		insertStatementPrefix = fmt.Sprintf("INSERT INTO %s %s VALUES\n",
-			wrapBackTicks(tblIR.TableName()), selectedField)
+			wrapBackTicks(escapeString(tblIR.TableName())), selectedField)
 	} else {
 		insertStatementPrefix = fmt.Sprintf("INSERT INTO %s VALUES\n",
-			wrapBackTicks(tblIR.TableName()))
+			wrapBackTicks(escapeString(tblIR.TableName())))
 	}
 
 	for fileRowIter.HasNextSQLRowIter() {

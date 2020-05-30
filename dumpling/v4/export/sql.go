@@ -34,7 +34,7 @@ func ShowCreateDatabase(db *sql.DB, database string) (string, error) {
 	handleOneRow := func(rows *sql.Rows) error {
 		return rows.Scan(&oneRow[0], &oneRow[1])
 	}
-	query := fmt.Sprintf("SHOW CREATE DATABASE %s", database)
+	query := fmt.Sprintf("SHOW CREATE DATABASE `%s`", escapeString(database))
 	err := simpleQuery(db, query, handleOneRow)
 	if err != nil {
 		return "", errors.WithMessage(err, query)
@@ -47,7 +47,7 @@ func ShowCreateTable(db *sql.DB, database, table string) (string, error) {
 	handleOneRow := func(rows *sql.Rows) error {
 		return rows.Scan(&oneRow[0], &oneRow[1])
 	}
-	query := fmt.Sprintf("SHOW CREATE TABLE %s.%s", database, table)
+	query := fmt.Sprintf("SHOW CREATE TABLE `%s`.`%s`", escapeString(database), escapeString(table))
 	err := simpleQuery(db, query, handleOneRow)
 	if err != nil {
 		return "", errors.WithMessage(err, query)
@@ -60,7 +60,7 @@ func ShowCreateView(db *sql.DB, database, view string) (string, error) {
 	handleOneRow := func(rows *sql.Rows) error {
 		return rows.Scan(&oneRow[0], &oneRow[1], &oneRow[2], &oneRow[3])
 	}
-	query := fmt.Sprintf("SHOW CREATE TABLE %s.%s", database, view)
+	query := fmt.Sprintf("SHOW CREATE TABLE `%s`.`%s`", escapeString(database), escapeString(view))
 	err := simpleQuery(db, query, handleOneRow)
 	if err != nil {
 		return "", errors.WithMessage(err, query)
@@ -70,8 +70,8 @@ func ShowCreateView(db *sql.DB, database, view string) (string, error) {
 
 func ListAllTables(db *sql.DB, database string) ([]string, error) {
 	var tables oneStrColumnTable
-	const query = "SELECT table_name FROM information_schema.tables WHERE table_schema = '%s' and table_type = 'BASE TABLE'"
-	if err := simpleQuery(db, fmt.Sprintf(query, database), tables.handleOneRow); err != nil {
+	const query = "SELECT table_name FROM information_schema.tables WHERE table_schema = ? and table_type = 'BASE TABLE'"
+	if err := simpleQueryWithArgs(db, tables.handleOneRow, query, database); err != nil {
 		return nil, errors.WithMessage(err, query)
 	}
 	return tables.data, nil
@@ -79,8 +79,8 @@ func ListAllTables(db *sql.DB, database string) ([]string, error) {
 
 func ListAllViews(db *sql.DB, database string) ([]string, error) {
 	var views oneStrColumnTable
-	const query = "SELECT table_name FROM information_schema.tables WHERE table_schema = '%s' and table_type = 'VIEW'"
-	if err := simpleQuery(db, fmt.Sprintf(query, database), views.handleOneRow); err != nil {
+	const query = "SELECT table_name FROM information_schema.tables WHERE table_schema = ? and table_type = 'VIEW'"
+	if err := simpleQueryWithArgs(db, views.handleOneRow, query, database); err != nil {
 		return nil, errors.WithMessage(err, query)
 	}
 	return views.data, nil
@@ -159,10 +159,11 @@ func buildSelectQuery(database, table string, fields string, where string, order
 	var query strings.Builder
 	query.WriteString("SELECT ")
 	query.WriteString(fields)
-	query.WriteString(" FROM ")
-	query.WriteString(database)
-	query.WriteString(".")
-	query.WriteString(table)
+	query.WriteString(" FROM `")
+	query.WriteString(escapeString(database))
+	query.WriteString("`.`")
+	query.WriteString(escapeString(table))
+	query.WriteString("`")
 
 	if where != "" {
 		query.WriteString(" ")
@@ -198,14 +199,14 @@ func buildOrderByClause(conf *Config, db *sql.DB, database, table string) (strin
 	}
 	tableContainsPriKey := pkName != ""
 	if tableContainsPriKey {
-		return fmt.Sprintf("ORDER BY %s", pkName), nil
+		return fmt.Sprintf("ORDER BY `%s`", escapeString(pkName)), nil
 	}
 	return "", nil
 }
 
 func SelectTiDBRowID(db *sql.DB, database, table string) (bool, error) {
 	const errBadFieldCode = 1054
-	tiDBRowIDQuery := fmt.Sprintf("SELECT _tidb_rowid from %s.%s LIMIT 0", database, table)
+	tiDBRowIDQuery := fmt.Sprintf("SELECT _tidb_rowid from `%s`.`%s` LIMIT 0", escapeString(database), escapeString(table))
 	_, err := db.Exec(tiDBRowIDQuery)
 	if err != nil {
 		errMsg := strings.ToLower(err.Error())
@@ -218,7 +219,7 @@ func SelectTiDBRowID(db *sql.DB, database, table string) (bool, error) {
 }
 
 func GetColumnTypes(db *sql.DB, fields, database, table string) ([]*sql.ColumnType, error) {
-	query := fmt.Sprintf("SELECT %s FROM %s.%s LIMIT 1", fields, database, table)
+	query := fmt.Sprintf("SELECT %s FROM `%s`.`%s` LIMIT 1", fields, escapeString(database), escapeString(table))
 	rows, err := db.Query(query)
 	if err != nil {
 		return nil, withStack(errors.WithMessage(err, query))
@@ -228,23 +229,15 @@ func GetColumnTypes(db *sql.DB, fields, database, table string) ([]*sql.ColumnTy
 }
 
 func GetPrimaryKeyName(db *sql.DB, database, table string) (string, error) {
-	priKeyQuery := `SELECT column_name FROM information_schema.columns
-		WHERE table_schema = ? AND table_name = ? AND column_key = 'PRI';`
-	stmt, err := db.Prepare(priKeyQuery)
-	if err != nil {
-		return "", err
-	}
-	defer stmt.Close()
-	rows, err := stmt.Query(database, table)
-	if err != nil {
-		return "", withStack(errors.WithMessage(err, priKeyQuery))
-	}
-
+	priKeyQuery := "SELECT column_name FROM information_schema.columns " +
+		"WHERE table_schema = ? AND table_name = ? AND column_key = 'PRI';"
 	var colName string
-	for rows.Next() {
-		if err := rows.Scan(&colName); err != nil {
-			rows.Close()
-			return "", withStack(err)
+	row := db.QueryRow(priKeyQuery, database, table)
+	if err := row.Scan(&colName); err != nil {
+		if err == sql.ErrNoRows {
+			return "", nil
+		} else {
+			return "", withStack(errors.WithMessage(err, priKeyQuery))
 		}
 	}
 	return colName, nil
@@ -271,7 +264,7 @@ func FlushTableWithReadLock(db *sql.DB) error {
 }
 
 func LockTables(db *sql.DB, database, table string) error {
-	_, err := db.Exec(fmt.Sprintf("LOCK TABLES `%s`.`%s` READ", database, table))
+	_, err := db.Exec(fmt.Sprintf("LOCK TABLES `%s`.`%s` READ", escapeString(database), escapeString(table)))
 	return withStack(err)
 }
 
@@ -281,7 +274,7 @@ func UnlockTables(db *sql.DB) error {
 }
 
 func UseDatabase(db *sql.DB, databaseName string) error {
-	_, err := db.Exec(fmt.Sprintf("USE %s", databaseName))
+	_, err := db.Exec(fmt.Sprintf("USE `%s`", escapeString(databaseName)))
 	return withStack(err)
 }
 
@@ -340,7 +333,7 @@ func buildSelectField(db *sql.DB, dbName, tableName string) (string, error) {
 			hasGenerateColumn = true
 			continue
 		}
-		availableFields = append(availableFields, wrapBackTicks(fieldName))
+		availableFields = append(availableFields, wrapBackTicks(escapeString(fieldName)))
 	}
 	if hasGenerateColumn {
 		return strings.Join(availableFields, ","), nil
@@ -362,7 +355,11 @@ func (o *oneStrColumnTable) handleOneRow(rows *sql.Rows) error {
 }
 
 func simpleQuery(db *sql.DB, sql string, handleOneRow func(*sql.Rows) error) error {
-	rows, err := db.Query(sql)
+	return simpleQueryWithArgs(db, handleOneRow, sql)
+}
+
+func simpleQueryWithArgs(db *sql.DB, handleOneRow func(*sql.Rows) error, sql string, args ...interface{}) error {
+	rows, err := db.Query(sql, args...)
 	if err != nil {
 		return withStack(err)
 	}
@@ -425,7 +422,7 @@ func pickupPossibleField(dbName, tableName string, db *sql.DB, conf *Config) (st
 }
 
 func estimateCount(dbName, tableName string, db *sql.DB, field string, conf *Config) uint64 {
-	query := fmt.Sprintf("EXPLAIN SELECT `%s` FROM `%s`.`%s`", field, dbName, tableName)
+	query := fmt.Sprintf("EXPLAIN SELECT `%s` FROM `%s`.`%s`", field, escapeString(dbName), escapeString(tableName))
 
 	if conf.Where != "" {
 		query += " WHERE "
@@ -516,4 +513,8 @@ func buildWhereCondition(conf *Config, where string) string {
 		query.WriteString(where)
 	}
 	return query.String()
+}
+
+func escapeString(s string) string {
+	return strings.ReplaceAll(s, "`", "``")
 }
