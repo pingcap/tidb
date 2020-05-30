@@ -255,7 +255,7 @@ func splitTableDataIntoChunks(
 	}
 
 	query := fmt.Sprintf("SELECT MIN(`%s`),MAX(`%s`) FROM `%s`.`%s` ",
-		field, field, dbName, tableName)
+		escapeString(field), escapeString(field), escapeString(dbName), escapeString(tableName))
 	if conf.Where != "" {
 		query = fmt.Sprintf("%s WHERE %s", query, conf.Where)
 	}
@@ -325,7 +325,7 @@ func splitTableDataIntoChunks(
 LOOP:
 	for cutoff <= max {
 		chunkIndex += 1
-		where := fmt.Sprintf("(`%s` >= %d AND `%s` < %d)", field, cutoff, field, cutoff+estimatedStep)
+		where := fmt.Sprintf("(`%s` >= %d AND `%s` < %d)", escapeString(field), cutoff, escapeString(field), cutoff+estimatedStep)
 		query = buildSelectQuery(dbName, tableName, selectedField, buildWhereCondition(conf, where), orderByClause)
 		rows, err := db.Query(query)
 		if err != nil {
