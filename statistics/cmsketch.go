@@ -55,7 +55,7 @@ type TopNMeta struct {
 func NewCMSketch(d, w int32) *CMSketch {
 	tbl := make([][]uint32, d)
 	for i := range tbl {
-		tbl[i] = make([]uint32, w)
+		tbl[i] = make([]uint32, w, w+1)
 	}
 	return &CMSketch{depth: d, width: w, table: tbl}
 }
