@@ -461,6 +461,7 @@ func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, c
 
 		sc.mu.execDetails.StoreFeedback += details.StoreFeedback
 		sc.mu.execDetails.ExtractHandles += details.ExtractHandles
+		sc.mu.execDetails.FetchHandleNewChunk += details.FetchHandleNewChunk
 		sc.mu.execDetails.IndexResultNext += details.IndexResultNext
 		sc.mu.execDetails.IndexGetSelectResp += details.IndexGetSelectResp
 		sc.mu.execDetails.IndexResultChan += details.IndexResultChan

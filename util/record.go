@@ -20,6 +20,7 @@ type Record struct {
 
 	StoreFeedback        int64
 	ExtractHandles       int64
+	FetchHandleNewChunk  int64
 	IndexResultNext      int64
 	IndexGetSelectResp   int64
 	IndexResultChan      int64

@@ -185,6 +185,7 @@ func (e *UpdateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 						UpdateFetchIndex:     atomic.LoadInt64(&r.UpdateFetchIndex),
 						UpdateFetchTable:     atomic.LoadInt64(&r.UpdateFetchTable),
 						StoreFeedback:        atomic.LoadInt64(&r.StoreFeedback),
+						FetchHandleNewChunk:  atomic.LoadInt64(&r.FetchHandleNewChunk),
 						ExtractHandles:       atomic.LoadInt64(&r.ExtractHandles),
 						IndexResultNext:      atomic.LoadInt64(&r.IndexResultNext),
 						IndexGetSelectResp:   atomic.LoadInt64(&r.IndexGetSelectResp),

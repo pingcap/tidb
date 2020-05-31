@@ -725,17 +725,23 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 			}
 		}
 	}()
+	var rr *util.Record
+	r := ctx.Value(util.RecordKey{})
+	if r != nil {
+		rr = r.(*util.Record)
+	}
+
+	start1 := time.Now()
 	var chk *chunk.Chunk
 	if w.checkIndexValue != nil {
 		chk = chunk.NewChunkWithCapacity(w.idxColTps, w.maxChunkSize)
 	} else {
 		chk = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, w.idxLookup.maxChunkSize)
 	}
-	var rr *util.Record
-	r := ctx.Value(util.RecordKey{})
-	if r != nil {
-		rr = r.(*util.Record)
+	if rr != nil {
+		atomic.AddInt64(&rr.FetchHandleNewChunk, int64(time.Since(start1)))
 	}
+
 	for {
 		start := time.Now()
 		handles, retChunk, scannedKeys, err := w.extractTaskHandles(ctx, chk, result, count)

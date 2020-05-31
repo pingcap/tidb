@@ -53,6 +53,7 @@ type ExecDetails struct {
 
 	StoreFeedback        int64
 	ExtractHandles       int64
+	FetchHandleNewChunk  int64
 	IndexResultNext      int64
 	IndexGetSelectResp   int64
 	IndexResultChan      int64
@@ -164,6 +165,7 @@ func (d ExecDetails) String() string {
 	}
 	parts = d.appendInt64D("StoreFeedback", d.StoreFeedback, parts)
 	parts = d.appendInt64D("ExtractHandles", d.ExtractHandles, parts)
+	parts = d.appendInt64D("FetchHandleNewChunk", d.FetchHandleNewChunk, parts)
 	parts = d.appendInt64D("IndexResultNext", d.IndexResultNext, parts)
 	parts = d.appendInt64D("IndexGetSelectResp", d.IndexGetSelectResp, parts)
 	parts = d.appendInt64D("IndexResultChan", d.IndexResultChan, parts)
