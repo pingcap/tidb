@@ -55,8 +55,17 @@ type TopNMeta struct {
 // NewCMSketch returns a new CM sketch.
 func NewCMSketch(d, w int32) *CMSketch {
 	tbl := make([][]uint32, d)
+	// Background: The Go's memory allocator will ask caller to sweep spans in some scenarios.
+	// This can cause memory allocation request latency unpredictable, if the list of spans which need sweep is too long.
+	// For memory allocation large than 32K, the allocator will never allocate memory from spans list.
+	//
+	// The memory referenced by the CMSketch will never be freed.
+	// If the number of table or index is extremely large, there will be a large amount of spans in global list.
+	// The default value of `d` is 5 and `w` is 2048, if we use a single slice for them the size will be 40K.
+	// This allocation will be handled by mheap and will never have impact on normal allocations.
+	arena := make([]uint32, d*w)
 	for i := range tbl {
-		tbl[i] = make([]uint32, w)
+		tbl[i] = arena[i*int(w) : (i+1)*int(w)]
 	}
 	return &CMSketch{depth: d, width: w, table: tbl}
 }
