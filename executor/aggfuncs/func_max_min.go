@@ -31,7 +31,7 @@ type maxMinHeap struct {
 	cmpFunc func(i, j interface{}) int
 }
 
-func NewMaxMinQueue(isMax bool, cmpFunc func(i, j interface{}) int) *maxMinHeap {
+func newMaxMinQueue(isMax bool, cmpFunc func(i, j interface{}) int) *maxMinHeap {
 	h := &maxMinHeap{
 		data:    make([]interface{}, 0),
 		varSet:  make(map[interface{}]int64),
@@ -193,7 +193,7 @@ type maxMin4Int struct {
 func (e *maxMin4Int) AllocPartialResult() PartialResult {
 	p := new(partialResult4MaxMinInt)
 	p.isNull = true
-	p.maxMinHeap = NewMaxMinQueue(e.isMax, func(i, j interface{}) int {
+	p.maxMinHeap = newMaxMinQueue(e.isMax, func(i, j interface{}) int {
 		return types.CompareInt64(i.(int64), j.(int64))
 	})
 	return PartialResult(p)
@@ -290,7 +290,7 @@ type maxMin4Uint struct {
 func (e *maxMin4Uint) AllocPartialResult() PartialResult {
 	p := new(partialResult4MaxMinUint)
 	p.isNull = true
-	p.maxMinHeap = NewMaxMinQueue(e.isMax, func(i, j interface{}) int {
+	p.maxMinHeap = newMaxMinQueue(e.isMax, func(i, j interface{}) int {
 		return types.CompareUint64(i.(uint64), j.(uint64))
 	})
 	return PartialResult(p)
@@ -388,7 +388,7 @@ type maxMin4Float32 struct {
 func (e *maxMin4Float32) AllocPartialResult() PartialResult {
 	p := new(partialResult4MaxMinFloat32)
 	p.isNull = true
-	p.maxMinHeap = NewMaxMinQueue(e.isMax, func(i, j interface{}) int {
+	p.maxMinHeap = newMaxMinQueue(e.isMax, func(i, j interface{}) int {
 		return types.CompareFloat64(float64(i.(float32)), float64(j.(float32)))
 	})
 	return PartialResult(p)
@@ -485,7 +485,7 @@ type maxMin4Float64 struct {
 func (e *maxMin4Float64) AllocPartialResult() PartialResult {
 	p := new(partialResult4MaxMinFloat64)
 	p.isNull = true
-	p.maxMinHeap = NewMaxMinQueue(e.isMax, func(i, j interface{}) int {
+	p.maxMinHeap = newMaxMinQueue(e.isMax, func(i, j interface{}) int {
 		return types.CompareFloat64(i.(float64), j.(float64))
 	})
 	return PartialResult(p)
@@ -582,7 +582,7 @@ type maxMin4Decimal struct {
 func (e *maxMin4Decimal) AllocPartialResult() PartialResult {
 	p := new(partialResult4MaxMinDecimal)
 	p.isNull = true
-	p.maxMinHeap = NewMaxMinQueue(e.isMax, func(i, j interface{}) int {
+	p.maxMinHeap = newMaxMinQueue(e.isMax, func(i, j interface{}) int {
 		src := i.(types.MyDecimal)
 		dst := j.(types.MyDecimal)
 		return src.Compare(&dst)
@@ -758,7 +758,7 @@ type maxMin4Time struct {
 func (e *maxMin4Time) AllocPartialResult() PartialResult {
 	p := new(partialResult4Time)
 	p.isNull = true
-	p.maxMinHeap = NewMaxMinQueue(e.isMax, func(i, j interface{}) int {
+	p.maxMinHeap = newMaxMinQueue(e.isMax, func(i, j interface{}) int {
 		src := i.(types.Time)
 		dst := j.(types.Time)
 		return src.Compare(dst)
@@ -857,7 +857,7 @@ type maxMin4Duration struct {
 func (e *maxMin4Duration) AllocPartialResult() PartialResult {
 	p := new(partialResult4MaxMinDuration)
 	p.isNull = true
-	p.maxMinHeap = NewMaxMinQueue(e.isMax, func(i, j interface{}) int {
+	p.maxMinHeap = newMaxMinQueue(e.isMax, func(i, j interface{}) int {
 		src := i.(types.Duration)
 		dst := j.(types.Duration)
 		return src.Compare(dst)
