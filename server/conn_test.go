@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/testkit"
 )
 
 type ConnTestSuite struct {
@@ -272,6 +273,17 @@ func (ts ConnTestSuite) TestConnExecutionTimeout(c *C) {
 	err = cc.handleQuery(context.Background(), "select * FROM testTable2 WHERE SLEEP(3);")
 	c.Assert(err, IsNil)
 	c.Assert(time.Since(now) < 3*time.Second, IsTrue)
+
+	_, err = se.Execute(context.Background(), "set @@max_execution_time = 1500;")
+	c.Assert(err, IsNil)
+
+	_, err = se.Execute(context.Background(), "set @@tidb_expensive_query_time_threshold = 1;")
+	c.Assert(err, IsNil)
+
+	records, err := se.Execute(context.Background(), "select SLEEP(2);")
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, ts.store)
+	tk.ResultSetToResult(records[0], Commentf("%v", records[0])).Check(testkit.Rows("1"))
 
 	_, err = se.Execute(context.Background(), "set @@max_execution_time = 0;")
 	c.Assert(err, IsNil)
