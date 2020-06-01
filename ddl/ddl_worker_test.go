@@ -997,7 +997,8 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	testCreateTable(c, ctx, d, dbInfo, nt)
 
 	updateTest(&tests[43])
-	exchangeTablePartition := []interface{}{dbInfo.ID, pt.ID, "p0", true}
+	defID := pt.Partition.Definitions[0].ID
+	exchangeTablePartition := []interface{}{defID, dbInfo.ID, pt.ID, "p0", true}
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, nt.ID, test.act, exchangeTablePartition, &test.cancelState)
 	c.Check(checkErr, IsNil)
 	changedNtTable := testGetTable(c, d, dbInfo.ID, nt.ID)

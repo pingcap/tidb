@@ -47,6 +47,8 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		return tblIDs, nil
 	} else if diff.Type == model.ActionModifySchemaCharsetAndCollate {
 		return nil, b.applyModifySchemaCharsetAndCollate(m, diff)
+	} else if diff.Type == model.ActionExchangeTablePartition {
+		return nil, b.applyExchangePartition(m, diff)
 	}
 	roDBInfo, ok := b.is.SchemaByID(diff.SchemaID)
 	if !ok {
@@ -60,7 +62,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		newTableID = diff.TableID
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
 		oldTableID = diff.TableID
-	case model.ActionTruncateTable, model.ActionCreateView:
+	case model.ActionTruncateTable, model.ActionCreateView, model.ActionExchangeTablePartition:
 		oldTableID = diff.OldTableID
 		newTableID = diff.TableID
 	default:
@@ -74,7 +76,8 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	// We try to reuse the old allocator, so the cached auto ID can be reused.
 	var allocs autoid.Allocators
 	if tableIDIsValid(oldTableID) {
-		if oldTableID == newTableID && diff.Type != model.ActionRenameTable {
+		if oldTableID == newTableID && diff.Type != model.ActionRenameTable &&
+			diff.Type != model.ActionExchangeTablePartition {
 			oldAllocs, _ := b.is.AllocByID(oldTableID)
 			allocs = filterAllocators(diff, oldAllocs)
 		}
@@ -153,6 +156,21 @@ func (b *Builder) copySortedTables(oldTableID, newTableID int64) {
 	if tableIDIsValid(newTableID) && newTableID != oldTableID {
 		b.copySortedTablesBucket(tableBucketIdx(newTableID))
 	}
+}
+
+func (b *Builder) applyExchangePartition(m *meta.Meta, diff *model.SchemaDiff) error {
+	ptDi, err := m.GetDatabase(diff.PtSchemaID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	tblIDs := make([]int64, 0, 2)
+	tblIDs = b.applyDropTable(ptDi, diff.PtTableID, tblIDs)
+	var allocs autoid.Allocators
+	tblIDs, err = b.applyCreateTable(m, ptDi, diff.PtTableID, allocs, diff.Type, tblIDs)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 func (b *Builder) applyCreateSchema(m *meta.Meta, diff *model.SchemaDiff) error {

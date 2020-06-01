@@ -2917,7 +2917,7 @@ func (d *ddl) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 
 	// NOTE: if pt is subPartitioned, it should be checked
 
-	_, err = tables.FindPartitionByName(ptMeta, partName)
+	defID, err := tables.FindPartitionByName(ptMeta, partName)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2933,7 +2933,7 @@ func (d *ddl) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 		SchemaName: ntSchema.Name.L,
 		Type:       model.ActionExchangeTablePartition,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{ptSchema.ID, ptMeta.ID, partName, spec.WithValidation},
+		Args:       []interface{}{defID, ptSchema.ID, ptMeta.ID, partName, spec.WithValidation},
 	}
 
 	err = d.doDDLJob(ctx, job)
