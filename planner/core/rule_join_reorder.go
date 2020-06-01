@@ -74,21 +74,11 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 			otherConds: otherConds,
 		}
 		if len(curJoinGroup) > ctx.GetSessionVars().TiDBOptJoinReorderThreshold {
-			comSolver := &joinReorderGreedySolver{
+			groupSolver := &joinReorderGreedySolver{
 				baseSingleGroupJoinOrderSolver: baseGroupSolver,
 				eqEdges:                        eqEdges,
 			}
-			if true {
-				groupSolver := cumCostBasedReorderGreedySolver{
-					joinReorderGreedySolver: comSolver,
-				}
-				p, err = groupSolver.solve(curJoinGroup)
-			} else {
-				groupSolver := curCostBasedReorderGreedySolver{
-					joinReorderGreedySolver: comSolver,
-				}
-				p, err = groupSolver.solve(curJoinGroup)
-			}
+			p, err = groupSolver.solve(curJoinGroup)
 		} else {
 			dpSolver := &joinReorderDPSolver{
 				baseSingleGroupJoinOrderSolver: baseGroupSolver,
@@ -126,6 +116,45 @@ func (s *baseSingleGroupJoinOrderSolver) baseNodeCumCost(groupNode LogicalPlan) 
 		cost += s.baseNodeCumCost(child)
 	}
 	return cost
+}
+
+// upMinCostPlan find the plan with minimum cost in cur[ips:] and swap it to cur[ips]
+func (s *baseSingleGroupJoinOrderSolver) upMinCostPlan(cur *[]LogicalPlan, ips int) {
+	length := len(*cur)
+	if length-ips <= 1 {
+		return
+	}
+	for i := ips + 1; i < length; i++ {
+		if (*cur)[i].statsInfo().RowCount < (*cur)[ips].statsInfo().RowCount {
+			it := (*cur)[i]
+			(*cur)[i] = (*cur)[ips]
+			(*cur)[ips] = it
+		}
+	}
+}
+
+// makeHuffJoin build a tree with greedy strategy used in building Huffman Tree for the nodes
+// which have no equal condition to connect them.
+func (s *baseSingleGroupJoinOrderSolver) makeHuffJoin(cartesianJoinGroup []LogicalPlan) (LogicalPlan, error) {
+	for len(cartesianJoinGroup) > 1 {
+		s.upMinCostPlan(&cartesianJoinGroup, 0)
+		s.upMinCostPlan(&cartesianJoinGroup, 1)
+		newJoin := s.newCartesianJoin(cartesianJoinGroup[0], cartesianJoinGroup[1])
+		_, err := newJoin.recursiveDeriveStats()
+		if err != nil {
+			return nil, err
+		}
+		for i := len(s.otherConds) - 1; i >= 0; i-- {
+			cols := expression.ExtractColumns(s.otherConds[i])
+			if newJoin.schema.ColumnsIndices(cols) != nil {
+				newJoin.OtherConditions = append(newJoin.OtherConditions, s.otherConds[i])
+				s.otherConds = append(s.otherConds[:i], s.otherConds[i+1:]...)
+			}
+		}
+		cartesianJoinGroup[0] = newJoin
+		cartesianJoinGroup = append(cartesianJoinGroup[:1], cartesianJoinGroup[2:]...)
+	}
+	return cartesianJoinGroup[0], nil
 }
 
 // makeBushyJoin build bushy tree for the nodes which have no equal condition to connect them.
