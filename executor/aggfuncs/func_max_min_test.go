@@ -19,6 +19,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 )
@@ -79,4 +80,76 @@ func (s *testSuite) TestMaxMin(c *C) {
 	for _, test := range tests {
 		s.testAggFunc(c, test)
 	}
+}
+
+func (s *testSuite) TestMaxMinHeap(c *C) {
+	intHeap := aggfuncs.NewMaxMinQueue(true, func(i, j interface{}) int {
+		return types.CompareInt64(i.(int64), j.(int64))
+	})
+	top, isEmpty := intHeap.Top()
+	c.Assert(isEmpty, Equals, true)
+
+	intHeap.Append(int64(1))
+	top, isEmpty = intHeap.Top()
+	c.Assert(isEmpty, Equals, false)
+	c.Assert(top, Equals, int64(1))
+
+	intHeap.Append(int64(4))
+	intHeap.Append(int64(3))
+	intHeap.Append(int64(2))
+	intHeap.Append(int64(1))
+	top, isEmpty = intHeap.Top()
+	c.Assert(isEmpty, Equals, false)
+	c.Assert(top, Equals, int64(4))
+
+	intHeap.Remove(int64(2))
+	intHeap.Remove(int64(3))
+	intHeap.Remove(int64(4))
+	top, isEmpty = intHeap.Top()
+	c.Assert(isEmpty, Equals, false)
+	c.Assert(top, Equals, int64(1))
+
+	intHeap.Remove(int64(1))
+	top, isEmpty = intHeap.Top()
+	c.Assert(isEmpty, Equals, false)
+	c.Assert(top, Equals, int64(1))
+
+	myDecimalHeap := aggfuncs.NewMaxMinQueue(true, func(i, j interface{}) int {
+		src := i.(types.MyDecimal)
+		dst := j.(types.MyDecimal)
+		return src.Compare(&dst)
+	})
+	top, isEmpty = myDecimalHeap.Top()
+	c.Assert(isEmpty, Equals, true)
+
+	var (
+		myDecimal1 = *types.NewDecFromInt(1)
+		myDecimal2 = *types.NewDecFromInt(2)
+		myDecimal3 = *types.NewDecFromInt(3)
+		myDecimal4 = *types.NewDecFromInt(4)
+	)
+	myDecimalHeap.Append(myDecimal1)
+	top, isEmpty = myDecimalHeap.Top()
+	c.Assert(isEmpty, Equals, false)
+	c.Assert(top, Equals, *types.NewDecFromInt(1))
+
+	myDecimalHeap.Append(myDecimal4)
+	myDecimalHeap.Append(myDecimal3)
+	myDecimalHeap.Append(myDecimal2)
+	myDecimalHeap.Append(myDecimal1)
+	top, isEmpty = myDecimalHeap.Top()
+	c.Assert(isEmpty, Equals, false)
+	c.Assert(top, Equals, myDecimal4)
+
+	myDecimalHeap.Remove(myDecimal2)
+	myDecimalHeap.Remove(myDecimal3)
+	myDecimalHeap.Remove(myDecimal4)
+	top, isEmpty = myDecimalHeap.Top()
+	c.Assert(isEmpty, Equals, false)
+	c.Assert(top, Equals, myDecimal1)
+
+	myDecimalHeap.Remove(myDecimal1)
+	top, isEmpty = myDecimalHeap.Top()
+	c.Assert(isEmpty, Equals, false)
+	c.Assert(top, Equals, myDecimal1)
 }
