@@ -342,7 +342,7 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient, tikvTransport
 			if !ok {
 				// this maybe caused by batchCommandsClient#send meets ambiguous error that request has be sent to TiKV but still report a error.
 				// then TiKV will send response back though stream and reach here.
-				logutil.BgLogger().Warn("batchRecvLoop receives outdated response", zap.Uint64("requestID", requestID))
+				logutil.Logger(context.Background()).Warn("batchRecvLoop receives outdated response", zap.Uint64("requestID", requestID))
 				continue
 			}
 			entry := value.(*batchCommandsEntry)
