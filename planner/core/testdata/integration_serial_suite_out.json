@@ -205,9 +205,9 @@
     "Name": "TestIsolationReadDoNotFilterSystemDB",
     "Cases": [
       {
-        "SQL": "desc select * from metrics_schema.tidb_query_duration",
+        "SQL": "desc select * from metrics_schema.tidb_query_duration where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13'",
         "Plan": [
-          "MemTableScan_4 10000.00 root table:tidb_query_duration PromQL:histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le,sql_type,instance)), start_time:2020-06-01 13:50:03.394, end_time:2020-06-01 14:00:03.394, step:1m0s"
+          "MemTableScan_5 10000.00 root table:tidb_query_duration PromQL:histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le,sql_type,instance)), start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, step:1m0s"
         ]
       },
       {
