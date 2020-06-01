@@ -1505,7 +1505,14 @@ func buildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 	if err = handleTableOptions(s.Options, tbInfo); err != nil {
 		return nil, errors.Trace(err)
 	}
-
+	if ctx.GetSessionVars().EnableClusteredIndex && !tbInfo.PKIsHandle && !config.GetGlobalConfig().AlterPrimaryKey {
+		for _, idx := range tbInfo.Indices {
+			if idx.Primary {
+				tbInfo.IsCommonHandle = true
+				break
+			}
+		}
+	}
 	return tbInfo, nil
 }
 
