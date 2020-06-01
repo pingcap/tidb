@@ -533,7 +533,7 @@ func (e *RuntimeStats) String() string {
 	}
 	if e.applyCache {
 		if e.cache.useCache {
-			result += fmt.Sprintf(", cache:ON, cacheHitNum:%d, cacheHitRatio:%f", e.cache.hitNum, e.cache.hitRatio)
+			result += fmt.Sprintf(", cache:ON, cacheHitNum:%d, cacheHitRatio:%.3f%%", e.cache.hitNum, e.cache.hitRatio*100)
 		} else {
 			result += fmt.Sprintf(", cache:OFF")
 		}
