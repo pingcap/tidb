@@ -826,6 +826,9 @@ func (b *PlanBuilder) filterPathByIsolationRead(paths []*util.AccessPath, dbName
 	availableEngine := map[kv.StoreType]struct{}{}
 	var availableEngineStr string
 	for i := len(paths) - 1; i >= 0; i-- {
+		if paths[i].StoreType == kv.TiDB {
+			continue
+		}
 		if _, ok := availableEngine[paths[i].StoreType]; !ok {
 			availableEngine[paths[i].StoreType] = struct{}{}
 			if availableEngineStr != "" {
