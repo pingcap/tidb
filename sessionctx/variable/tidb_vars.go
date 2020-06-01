@@ -155,6 +155,9 @@ const (
 
 	// TiDBAllowRemoveAutoInc indicates whether a user can drop the auto_increment column attribute or not.
 	TiDBAllowRemoveAutoInc = "tidb_allow_remove_auto_inc"
+
+	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
+	TiDBAllowAutoRandExplicitInsert = "allow_auto_random_explicit_insert"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -409,6 +412,7 @@ const (
 	DefTiDBAllowRemoveAutoInc          = false
 	DefInnodbLockWaitTimeout           = 50 // 50s
 	DefTiDBStoreLimit                  = 0
+	DefTiDBAllowAutoRandExplicitInsert = false
 )
 
 // Process global variables.
