@@ -15,6 +15,7 @@ package privileges
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"strings"
 
@@ -302,43 +303,12 @@ func (p *UserPrivileges) checkSSL(priv *globalPrivRecord, tlsState *tls.Connecti
 						zap.String("require", priv.Priv.X509Subject), zap.String("given", given))
 				}
 			}
-			if priv.Priv.SANs != nil {
-				for k, requires := range priv.Priv.SANs {
-					var unsupported bool
-					var certValue []string
-					switch k {
-					case util.URI:
-						for _, uri := range cert.URIs {
-							certValue = append(certValue, uri.String())
-						}
-					case util.DNS:
-						certValue = cert.DNSNames
-					case util.IP:
-						for _, ip := range cert.IPAddresses {
-							certValue = append(certValue, ip.String())
-						}
-					default:
-						unsupported = true
-					}
-					if unsupported {
-						continue
-					}
-					var matchOne bool
-					for _, req := range requires {
-						for _, give := range certValue {
-							if req == give {
-								matchOne = true
-								break
-							}
-						}
-					}
-					if matchOne {
-						matchSAN = pass
-					} else if matchSAN == notCheck {
-						matchSAN = fail
-						logutil.BgLogger().Info("ssl check failure for subject", zap.String("user", priv.User), zap.String("host", priv.Host),
-							zap.String("require", priv.Priv.SAN), zap.Strings("given", certValue))
-					}
+			if len(priv.Priv.SANs) > 0 {
+				matchOne := checkCertSAN(priv, cert, priv.Priv.SANs)
+				if matchOne {
+					matchSAN = pass
+				} else if matchSAN == notCheck {
+					matchSAN = fail
 				}
 			}
 			hasCert = true
@@ -352,6 +322,51 @@ func (p *UserPrivileges) checkSSL(priv *globalPrivRecord, tlsState *tls.Connecti
 	default:
 		panic(fmt.Sprintf("support ssl_type: %d", priv.Priv.SSLType))
 	}
+}
+
+func checkCertSAN(priv *globalPrivRecord, cert *x509.Certificate, sans map[util.SANType][]string) (r bool) {
+	r = true
+	for typ, requireOr := range sans {
+		var (
+			unsupported bool
+			given       []string
+		)
+		switch typ {
+		case util.URI:
+			for _, uri := range cert.URIs {
+				given = append(given, uri.String())
+			}
+		case util.DNS:
+			given = cert.DNSNames
+		case util.IP:
+			for _, ip := range cert.IPAddresses {
+				given = append(given, ip.String())
+			}
+		default:
+			unsupported = true
+		}
+		if unsupported {
+			logutil.BgLogger().Warn("skip unsupported SAN type", zap.String("type", string(typ)),
+				zap.String("user", priv.User), zap.String("host", priv.Host))
+			continue
+		}
+		var givenMatchOne bool
+		for _, req := range requireOr {
+			for _, give := range given {
+				if req == give {
+					givenMatchOne = true
+					break
+				}
+			}
+		}
+		if !givenMatchOne {
+			logutil.BgLogger().Info("ssl check failure for subject", zap.String("user", priv.User), zap.String("host", priv.Host),
+				zap.String("require", priv.Priv.SAN), zap.Strings("given", given), zap.String("type", string(typ)))
+			r = false
+			return
+		}
+	}
+	return
 }
 
 // DBIsVisible implements the Manager interface.
