@@ -1163,7 +1163,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 
 	// Execute the physical plan.
 	logStmt(stmtNode, s.sessionVars)
-	recordSet, err := runStmt(ctx, s, stmt)
+	recordSet, err := runStmtWrap(ctx, s, stmt)
 	if err != nil {
 		if !kv.ErrKeyExists.Equal(err) {
 			logutil.Logger(ctx).Warn("run statement failed",
@@ -1205,7 +1205,7 @@ func (rs *execStmtResult) Next(ctx context.Context, req *chunk.Chunk) error {
 func (rs *execStmtResult) Close() error {
 	defer rs.RecordSet.Close()
 	se := rs.se
-	err := se.finishStmt(context.Background(), rs.lastErr, rs.sql)
+	err := finishStmt(context.Background(), se, rs.lastErr, rs.sql)
 	if se.txn.pending() {
 		// After run statement finish, txn state is still pending means the
 		// statement never need a Txn(), such as:
