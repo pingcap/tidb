@@ -43,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -95,15 +94,11 @@ func setUpSuite(s *testDBSuite, c *C) {
 	s.autoIDStep = autoid.GetStep()
 	ddl.SetWaitTimeWhenErrorOccurred(0)
 
-	cluster := mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(cluster)
-	s.cluster = cluster
-
-	mvccStore := mocktikv.MustNewMVCCStore()
-	cluster.SetMvccStore(mvccStore)
-	s.store, err = mockstore.NewMockTikvStore(
-		mockstore.WithCluster(cluster),
-		mockstore.WithMVCCStore(mvccStore),
+	s.store, err = mockstore.NewMockStore(
+		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+			mockstore.BootstrapWithSingleStore(c)
+			s.cluster = c
+		}),
 	)
 	c.Assert(err, IsNil)
 
@@ -394,7 +389,7 @@ func testCancelAddIndex(c *C, store kv.Storage, d ddl.DDL, lease time.Duration, 
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (c1 int, c2 int unsigned, c3 int, unique key(c1))")
 	// defaultBatchSize is equal to ddl.defaultBatchSize
-	count := defaultBatchSize * 2
+	count := defaultBatchSize * 32
 	start := 0
 	// add some rows
 	if len(sqlModeSQL) != 0 {
@@ -405,8 +400,8 @@ func testCancelAddIndex(c *C, store kv.Storage, d ddl.DDL, lease time.Duration, 
 		tk.MustExec("insert into t1 set c3 = ?", 2)
 		start = 3
 	}
-	for i := start; i < count; i++ {
-		tk.MustExec("insert into t1 values (?, ?, ?)", i, i, i)
+	for i := start; i < count; i += defaultBatchSize {
+		batchInsert(tk, "t1", i, i+defaultBatchSize)
 	}
 
 	var c3IdxInfo *model.IndexInfo

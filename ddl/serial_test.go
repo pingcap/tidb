@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/gcutil"
@@ -71,16 +70,12 @@ func (s *testSerialSuite) SetUpSuite(c *C) {
 
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
 
-	cluster := mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(cluster)
-	s.cluster = cluster
-
 	var err error
-	mvccStore := mocktikv.MustNewMVCCStore()
-	cluster.SetMvccStore(mvccStore)
-	s.store, err = mockstore.NewMockTikvStore(
-		mockstore.WithCluster(cluster),
-		mockstore.WithMVCCStore(mvccStore),
+	s.store, err = mockstore.NewMockStore(
+		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+			mockstore.BootstrapWithSingleStore(c)
+			s.cluster = c
+		}),
 	)
 	c.Assert(err, IsNil)
 
@@ -944,6 +939,23 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	}
 	assertShowWarningCorrect("create table t (a bigint auto_random(15) primary key)", 281474976710655)
 	assertShowWarningCorrect("create table t (a bigint unsigned auto_random(15) primary key)", 562949953421311)
+
+	// Test insert into auto_random column explicitly is not allowed by default.
+	assertExplicitInsertDisallowed := func(sql string) {
+		assertInvalidAutoRandomErr(sql, autoid.AutoRandomExplicitInsertDisabledErrMsg)
+	}
+	tk.MustExec("set @@allow_auto_random_explicit_insert = false")
+	mustExecAndDrop("create table t (a bigint auto_random primary key)", func() {
+		assertExplicitInsertDisallowed("insert into t values (1)")
+		assertExplicitInsertDisallowed("insert into t values (3)")
+		tk.MustExec("insert into t values()")
+	})
+	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
+	mustExecAndDrop("create table t (a bigint auto_random primary key)", func() {
+		tk.MustExec("insert into t values(1)")
+		tk.MustExec("insert into t values(3)")
+		tk.MustExec("insert into t values()")
+	})
 
 	// Disallow using it when allow-auto-random is not enabled.
 	config.GetGlobalConfig().Experimental.AllowAutoRandom = false

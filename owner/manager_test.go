@@ -51,7 +51,7 @@ func checkOwner(d DDL, fbVal bool) (isOwner bool) {
 // Ignore this test on the windows platform, because calling unix socket with address in
 // host:port format fails on windows.
 func TestSingle(t *testing.T) {
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func TestCluster(t *testing.T) {
 	defer func() {
 		owner.ManagerSessionTTL = orignalTTL
 	}()
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	if err != nil {
 		t.Fatal(err)
 	}
