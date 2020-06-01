@@ -248,6 +248,9 @@ committer-concurrency = 16
 # max lifetime of transaction ttl manager.
 max-txn-ttl = 600000
 
+# the interval duration between two memory profile into global tracker
+mem-profile-interval = "1m"
+
 [proxy-protocol]
 # PROXY protocol acceptable client networks.
 # Empty string means disable PROXY protocol, * means all networks.
@@ -354,7 +357,7 @@ store-liveness-timeout = "120s"
 [tikv-client.copr-cache]
 # Whether to enable the copr cache. The copr cache saves the result from TiKV Coprocessor in the memory and
 # reuses the result when corresponding data in TiKV is unchanged, on a region basis.
-enabled = true
+enable = true
 
 # The capacity in MB of the cache.
 capacity-mb = 1000.0

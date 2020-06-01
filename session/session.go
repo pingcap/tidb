@@ -321,12 +321,7 @@ func (s *session) SetCollation(coID int) error {
 	for _, v := range variable.SetNamesVariables {
 		terror.Log(s.sessionVars.SetSystemVar(v, cs))
 	}
-	err = s.sessionVars.SetSystemVar(variable.CollationConnection, co)
-	if err != nil {
-		// Some clients may use the unsupported collations, such as utf8mb4_0900_ai_ci, We shouldn't return error or use the ERROR level log.
-		logutil.BgLogger().Warn(err.Error())
-	}
-	return nil
+	return s.sessionVars.SetSystemVar(variable.CollationConnection, co)
 }
 
 func (s *session) PreparedPlanCache() *kvcache.SimpleLRUCache {
@@ -1925,7 +1920,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = version45
+	currentBootstrapVersion = version47
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -2058,6 +2053,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEvolvePlanBaselines,
 	variable.TiDBIsolationReadEngines,
 	variable.TiDBStoreLimit,
+	variable.TiDBAllowAutoRandExplicitInsert,
 }
 
 var (

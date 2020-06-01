@@ -225,7 +225,7 @@ func (s *testLockSuite) TestCheckTxnStatusTTL(c *C) {
 	lock := s.mustGetLock(c, []byte("key"))
 	status = TxnStatus{}
 	cleanRegions := make(map[RegionVerID]struct{})
-	err = newLockResolver(s.store).resolveLock(bo, lock, status, cleanRegions)
+	err = newLockResolver(s.store).resolveLock(bo, lock, status, false, cleanRegions)
 	c.Assert(err, IsNil)
 
 	// Check its status is rollbacked.
@@ -261,7 +261,7 @@ func (s *testLockSuite) TestTxnHeartBeat(c *C) {
 	lock := s.mustGetLock(c, []byte("key"))
 	status := TxnStatus{ttl: newTTL}
 	cleanRegions := make(map[RegionVerID]struct{})
-	err = newLockResolver(s.store).resolveLock(bo, lock, status, cleanRegions)
+	err = newLockResolver(s.store).resolveLock(bo, lock, status, false, cleanRegions)
 	c.Assert(err, IsNil)
 
 	newTTL, err = sendTxnHeartBeat(bo, s.store, []byte("key"), txn.StartTS(), 6666)

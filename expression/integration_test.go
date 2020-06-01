@@ -580,7 +580,7 @@ func (s *testIntegrationSuite2) TestMathBuiltin(c *C) {
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t values(1),(2),(3)")
 	tk.Se.GetSessionVars().MaxChunkSize = 1
-	tk.MustQuery("select rand(1) from t").Check(testkit.Rows("0.40540353712197724", "0.8716141803857071", "0.1418603212962489"))
+	tk.MustQuery("select rand(1) from t").Sort().Check(testkit.Rows("0.1418603212962489", "0.40540353712197724", "0.8716141803857071"))
 	tk.MustQuery("select rand(a) from t").Check(testkit.Rows("0.40540353712197724", "0.6555866465490187", "0.9057697559760601"))
 	tk.MustQuery("select rand(1), rand(2), rand(3)").Check(testkit.Rows("0.40540353712197724 0.6555866465490187 0.9057697559760601"))
 }
@@ -1442,7 +1442,7 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("00:00:01"))
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a datetime, b timestamp, c time)")
-	tk.MustExec(`insert into t values("2017 01-01 12:30:31", "2017 01-01 12:30:31", "01:01:01")`)
+	tk.MustExec(`insert into t values("2017-01-01 12:30:31", "2017-01-01 12:30:31", "01:01:01")`)
 	result = tk.MustQuery("select addtime(a, b), addtime(cast(a as date), b), addtime(b,a), addtime(a,c), addtime(b," +
 		"c), addtime(c,a), addtime(c,b)" +
 		" from t;")
@@ -4420,7 +4420,7 @@ func (s *testIntegrationSuite) TestTiDBInternalFunc(c *C) {
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -6097,6 +6097,17 @@ func (s *testIntegrationSerialSuite) TestCollateIndexLookup(c *C) {
 	tk.MustQuery("select id from t_bin where v < 'b' and v > ' '").Sort().Check(testkit.Rows("1"))
 }
 
+func (s *testIntegrationSerialSuite) TestIssue16668(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tx")
+	tk.MustExec("CREATE TABLE `tx` ( `a` int(11) NOT NULL,`b` varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL)")
+	tk.MustExec("insert into tx values (1, 'a'), (2, 'À'), (3, 'á'), (4, 'à'), (5, 'b'), (6, 'c'), (7, ' ')")
+	tk.MustQuery("select count(distinct(b)) from tx").Check(testkit.Rows("4"))
+}
+
 func (s *testIntegrationSerialSuite) TestCollateStringFunction(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
@@ -6108,6 +6119,12 @@ func (s *testIntegrationSerialSuite) TestCollateStringFunction(c *C) {
 	tk.MustQuery("select field('a', 'b', 'a ' collate utf8mb4_bin);").Check(testkit.Rows("2"))
 	tk.MustQuery("select field('a', 'b', 'A' collate utf8mb4_general_ci);").Check(testkit.Rows("2"))
 	tk.MustQuery("select field('a', 'b', 'a ' collate utf8mb4_general_ci);").Check(testkit.Rows("2"))
+
+	tk.MustExec("USE test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10), b char (10)) collate utf8mb4_general_ci")
+	tk.MustExec("insert into t values ('a', 'A')")
+	tk.MustQuery("select field(a, b) from t").Check(testkit.Rows("1"))
 
 	tk.MustQuery("select FIND_IN_SET('a','b,a,c,d');").Check(testkit.Rows("2"))
 	tk.MustQuery("select FIND_IN_SET('a','b,A,c,d');").Check(testkit.Rows("0"))
@@ -6383,12 +6400,12 @@ func (s *testIntegrationSuite) TestIssue16697(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("CREATE TABLE `t` (`a` int(11) DEFAULT NULL,`b` int(11) DEFAULT NULL)")
-	tk.MustExec("insert into t values (1, 1)")
-	for i := 0; i < 8; i++ {
+	tk.MustExec("CREATE TABLE t (v varchar(1024))")
+	tk.MustExec("insert into t values (space(1024))")
+	for i := 0; i < 5; i++ {
 		tk.MustExec("insert into t select * from t")
 	}
-	rows := tk.MustQuery("explain analyze  select t1.a, t1.a +1 from t t1 join t t2 join t t3 order by t1.a").Rows()
+	rows := tk.MustQuery("explain analyze select * from t").Rows()
 	for _, row := range rows {
 		line := fmt.Sprintf("%v", row)
 		if strings.Contains(line, "Projection") {
@@ -6418,4 +6435,56 @@ func (s *testIntegrationSuite) TestIssue17098(c *C) {
 	tk.MustExec("insert into t1 values('a');")
 	tk.MustExec("insert into t2 values('a');")
 	tk.MustQuery("select collation(t1.a) from t1 union select collation(t2.a) from t2;").Check(testkit.Rows("utf8mb4_bin"))
+}
+
+func (s *testIntegrationSerialSuite) TestIssue17176(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustGetErrMsg("create table t(a enum('a', 'a ')) charset utf8 collate utf8_bin;", "[types:1291]Column 'a' has duplicated value 'a ' in ENUM")
+	tk.MustGetErrMsg("create table t(a enum('a', 'Á')) charset utf8 collate utf8_general_ci;", "[types:1291]Column 'a' has duplicated value 'Á' in ENUM")
+	tk.MustGetErrMsg("create table t(a enum('a', 'a ')) charset utf8mb4 collate utf8mb4_bin;", "[types:1291]Column 'a' has duplicated value 'a ' in ENUM")
+	tk.MustExec("create table t(a enum('a', 'A')) charset utf8 collate utf8_bin;")
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t3(a enum('a', 'A')) charset utf8mb4 collate utf8mb4_bin;")
+}
+
+func (s *testIntegrationSuite) TestIssue17115(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("select collation(user());").Check(testkit.Rows("utf8mb4_bin"))
+	tk.MustQuery("select collation(compress('abc'));").Check(testkit.Rows("binary"))
+}
+
+func (s *testIntegrationSuite) TestIndexedVirtualGeneratedColumnTruncate(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(a int, b tinyint as(a+100) unique key)")
+	tk.MustExec("insert ignore into t values(200, default)")
+	tk.MustExec("update t set a=1 where a=200")
+	tk.MustExec("admin check table t")
+	tk.MustExec("delete from t")
+	tk.MustExec("insert ignore into t values(200, default)")
+	tk.MustExec("admin check table t")
+	tk.MustExec("insert ignore into t values(200, default) on duplicate key update a=100")
+	tk.MustExec("admin check table t")
+	tk.MustExec("delete from t")
+	tk.MustExec("admin check table t")
+
+	tk.MustExec("begin")
+	tk.MustExec("insert ignore into t values(200, default)")
+	tk.MustExec("update t set a=1 where a=200")
+	tk.MustExec("admin check table t")
+	tk.MustExec("delete from t")
+	tk.MustExec("insert ignore into t values(200, default)")
+	tk.MustExec("admin check table t")
+	tk.MustExec("insert ignore into t values(200, default) on duplicate key update a=100")
+	tk.MustExec("admin check table t")
+	tk.MustExec("delete from t")
+	tk.MustExec("admin check table t")
+	tk.MustExec("commit")
+	tk.MustExec("admin check table t")
 }
