@@ -62,11 +62,7 @@ func (eqh *Handle) Run() {
 		case <-ticker.C:
 			processInfo := sm.ShowProcessList()
 			for _, info := range processInfo {
-<<<<<<< HEAD
-				if info.Info == nil || info.ExceedExpensiveTimeThresh {
-=======
-				if len(info.Info) == 0 {
->>>>>>> 7096916... expensivequery: fix the issue that max_exec_time hint doesn't work if it exceeds the expensive-threshold  (#17359)
+				if info.Info == nil {
 					continue
 				}
 				costTime := time.Since(info.Time)

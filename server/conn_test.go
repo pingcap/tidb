@@ -32,12 +32,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/arena"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/util/chunk"
-=======
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
->>>>>>> 7096916... expensivequery: fix the issue that max_exec_time hint doesn't work if it exceeds the expensive-threshold  (#17359)
 )
 
 type ConnTestSuite struct {
