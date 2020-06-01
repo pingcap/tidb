@@ -253,7 +253,8 @@ func decodePlanInfo(str string) (*planInfo, error) {
 }
 
 // EncodePlanNode is used to encode the plan to a string.
-func EncodePlanNode(depth, pid int, planType string, isRoot bool, rowCount float64, explainInfo string, buf *bytes.Buffer) {
+func EncodePlanNode(depth, pid int, planType string, isRoot bool, rowCount float64,
+	explainInfo, actRows, analyzeInfo, memoryInfo, diskInfo string, buf *bytes.Buffer) {
 	buf.WriteString(strconv.Itoa(depth))
 	buf.WriteByte(separator)
 	buf.WriteString(encodeID(planType, pid))
@@ -267,6 +268,14 @@ func EncodePlanNode(depth, pid int, planType string, isRoot bool, rowCount float
 	buf.WriteString(strconv.FormatFloat(rowCount, 'f', -1, 64))
 	buf.WriteByte(separator)
 	buf.WriteString(explainInfo)
+	buf.WriteByte(separator)
+	buf.WriteString(actRows)
+	buf.WriteByte(separator)
+	buf.WriteString(analyzeInfo)
+	buf.WriteByte(separator)
+	buf.WriteString(memoryInfo)
+	buf.WriteByte(separator)
+	buf.WriteString(diskInfo)
 	buf.WriteByte(lineBreaker)
 }
 
