@@ -64,10 +64,6 @@ func ExtractTableHintsFromStmtNode(node ast.Node) []*ast.TableOptimizerHint {
 	case *ast.DeleteStmt:
 		return x.TableHints
 	case *ast.InsertStmt:
-		// If the Select of Insert have hints, it would replace the Insert hints
-		if hints := ExtractTableHintsFromStmtNode(x.Select); hints != nil {
-			return hints
-		}
 		return x.TableHints
 	case *ast.ExplainStmt:
 		return ExtractTableHintsFromStmtNode(x.Stmt)

@@ -3097,12 +3097,8 @@ func (s *testSessionSuite2) TestStmtHints(c *C) {
 	val = int64(1) * 1024 * 1024
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.CheckBytesLimit(val), IsTrue)
 
-	tk.MustExec("insert into t1 select /*+ MEMORY_QUOTA(2 MB) */ * from t1;")
-	val = int64(2) * 1024 * 1024
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.CheckBytesLimit(val), IsTrue)
-
 	tk.MustExec("insert /*+ MEMORY_QUOTA(1 MB) */  into t1 select /*+ MEMORY_QUOTA(3 MB) */ * from t1;")
-	val = int64(3) * 1024 * 1024
+	val = int64(1) * 1024 * 1024
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.CheckBytesLimit(val), IsTrue)
 
 	// Test NO_INDEX_MERGE hint
