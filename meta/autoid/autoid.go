@@ -578,20 +578,6 @@ func generateAutoIDByAllocType(m *meta.Meta, dbID, tableID, step int64, allocTyp
 	}
 }
 
-<<<<<<< HEAD
-=======
-const signMask uint64 = 0x8000000000000000
-
-// EncodeIntToCmpUint make int v to comparable uint type
-func EncodeIntToCmpUint(v int64) uint64 {
-	return uint64(v) ^ signMask
-}
-
-// DecodeCmpUintToInt decodes the u that encoded by EncodeIntToCmpUint
-func DecodeCmpUintToInt(u uint64) int64 {
-	return int64(u ^ signMask)
-}
-
 // TestModifyBaseAndEndInjection exported for testing modifying the base and end.
 func TestModifyBaseAndEndInjection(alloc Allocator, base, end int64) {
 	alloc.(*allocator).mu.Lock()
@@ -600,7 +586,6 @@ func TestModifyBaseAndEndInjection(alloc Allocator, base, end int64) {
 	alloc.(*allocator).mu.Unlock()
 }
 
->>>>>>> 9162cfa... meta: fix the allocator batch size compute logic (#17271)
 // AutoRandomIDLayout is used to calculate the bits length of different section in auto_random id.
 // The primary key with auto_random can only be `bigint` column, the total layout length of auto random is 64 bits.
 // These are two type of layout:
