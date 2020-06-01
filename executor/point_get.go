@@ -280,6 +280,9 @@ func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) erro
 // get will first try to get from txn buffer, then check the pessimistic lock cache,
 // then the store. Kv.ErrNotExist will be returned if key is not found
 func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) {
+	if len(key) == 0 {
+		return nil, kv.ErrNotExist
+	}
 	if e.txn.Valid() && !e.txn.IsReadOnly() {
 		// We cannot use txn.Get directly here because the snapshot in txn and the snapshot of e.snapshot may be
 		// different for pessimistic transaction.
