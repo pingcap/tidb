@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	math2 "math"
 	"strconv"
 	"strings"
 
@@ -270,10 +269,6 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	prepared := preparedStmt.PreparedAst
 	stmtCtx.UseCache = prepared.UseCache
 	var cacheKey kvcache.Key
-	if sctx.GetSessionVars().SelectLimit != math2.MaxUint64 {
-		stmtCtx.UseCache = false
-		goto REBUILD
-	}
 	if prepared.UseCache {
 		cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
 	}
@@ -343,16 +338,14 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 REBUILD:
-	stmt, addLimit := TryAddExtraLimit(sctx, prepared.Stmt)
+	stmt := TryAddExtraLimit(sctx, prepared.Stmt)
 	p, names, err := OptimizeAstNode(ctx, sctx, stmt, is)
 	if err != nil {
 		return err
 	}
-	if !addLimit {
-		err = e.tryCachePointPlan(ctx, sctx, preparedStmt, is, p)
-		if err != nil {
-			return err
-		}
+	err = e.tryCachePointPlan(ctx, sctx, preparedStmt, is, p)
+	if err != nil {
+		return err
 	}
 	e.names = names
 	e.Plan = p

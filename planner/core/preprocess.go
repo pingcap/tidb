@@ -48,34 +48,33 @@ func InTxnRetry(p *preprocessor) {
 }
 
 // TryAddExtraLimit trys to add an extra limit for SELECT or UNION statement when sql_select_limit is set.
-func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) (ast.StmtNode, bool) {
+func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
 	if ctx.GetSessionVars().SelectLimit == math.MaxUint64 || ctx.GetSessionVars().InRestrictedSQL {
-		return node, false
+		return node
 	}
 	if explain, ok := node.(*ast.ExplainStmt); ok {
-		var changed bool
-		explain.Stmt, changed = TryAddExtraLimit(ctx, explain.Stmt)
-		return explain, changed
+		explain.Stmt = TryAddExtraLimit(ctx, explain.Stmt)
+		return explain
 	} else if sel, ok := node.(*ast.SelectStmt); ok {
 		if sel.Limit != nil || sel.SelectIntoOpt != nil {
-			return node, false
+			return node
 		}
 		newSel := *sel
 		newSel.Limit = &ast.Limit{
 			Count: ast.NewValueExpr(ctx.GetSessionVars().SelectLimit, "", ""),
 		}
-		return &newSel, true
+		return &newSel
 	} else if union, ok := node.(*ast.UnionStmt); ok {
 		if union.Limit != nil {
-			return node, false
+			return node
 		}
 		newUnion := *union
 		newUnion.Limit = &ast.Limit{
 			Count: ast.NewValueExpr(ctx.GetSessionVars().SelectLimit, "", ""),
 		}
-		return &newUnion, true
+		return &newUnion
 	}
-	return node, false
+	return node
 }
 
 // Preprocess resolves table names of the node, and checks some statements validation.

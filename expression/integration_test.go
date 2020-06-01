@@ -5623,6 +5623,38 @@ func (s *testIntegrationSuite) TestOrderByFuncPlanCache(c *C) {
 	tk.MustQuery("execute stmt").Check(testkit.Rows())
 }
 
+func (s *testIntegrationSuite) TestSelectLimitPlanCache(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	var err error
+	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1), (2), (3)")
+	tk.MustExec("set @@session.sql_select_limit = 1")
+	tk.MustExec("prepare stmt from 'SELECT * FROM t'")
+	tk.MustQuery("execute stmt").Check(testkit.Rows("1"))
+	tk.MustExec("set @@session.sql_select_limit = default")
+	tk.MustQuery("execute stmt").Check(testkit.Rows("1", "2", "3"))
+	tk.MustExec("set @@session.sql_select_limit = 2")
+	tk.MustQuery("execute stmt").Check(testkit.Rows("1", "2"))
+	tk.MustExec("set @@session.sql_select_limit = 1")
+	tk.MustQuery("execute stmt").Check(testkit.Rows("1"))
+	tk.MustExec("set @@session.sql_select_limit = default")
+	tk.MustQuery("execute stmt").Check(testkit.Rows("1", "2", "3"))
+	tk.MustExec("set @@session.sql_select_limit = 2")
+	tk.MustQuery("execute stmt").Check(testkit.Rows("1", "2"))
+}
+
 func (s *testIntegrationSuite) TestCollation(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

@@ -57,7 +57,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 	if err := plannercore.Preprocess(c.Ctx, stmtNode, infoSchema); err != nil {
 		return nil, err
 	}
-	stmtNode, _ = plannercore.TryAddExtraLimit(c.Ctx, stmtNode)
+	stmtNode = plannercore.TryAddExtraLimit(c.Ctx, stmtNode)
 
 	finalPlan, names, err := planner.Optimize(ctx, c.Ctx, stmtNode, infoSchema)
 	if err != nil {
