@@ -896,6 +896,33 @@ func (s *testIntegrationSuite4) TestAlterTableExchangePartition(c *C) {
 	tk.MustQuery("select * from e6 partition(p0)").Check(testkit.Rows("2"))
 	tk.MustQuery("select * from e7").Check(testkit.Rows("1"))
 	tk.MustGetErrCode("alter table e6 exchange partition p1 with table e7", tmysql.ErrRowDoesNotMatchPartition)
+
+	// test exchange partition from different databases
+	tk.MustExec("create table e8 (a int) partition by hash(a) partitions 2;")
+	tk.MustExec("create database if not exists exchange_partition")
+	tk.MustExec("insert into e8 values (1), (3), (5)")
+	tk.MustExec("use exchange_partition;")
+	tk.MustExec("create table e9 (a int);")
+	tk.MustExec("insert into e9 values (7), (9)")
+	tk.MustExec("alter table test.e8 exchange partition p1 with table e9")
+
+	tk.MustExec("insert into e9 values (11)")
+	tk.MustQuery("select * from e9").Check(testkit.Rows("1", "3", "5", "11"))
+	tk.MustExec("insert into test.e8 values (11)")
+	tk.MustQuery("select * from test.e8").Check(testkit.Rows("7", "9", "11"))
+
+	tk.MustExec("use test")
+	tk.MustExec("create table e10 (a int) partition by hash(a) partitions 2")
+	tk.MustExec("insert into e10 values (0), (2), (4)")
+	tk.MustExec("create table e11 (a int)")
+	tk.MustExec("insert into e11 values (1), (3)")
+	tk.MustExec("alter table e10 exchange partition p1 with table e11")
+	tk.MustExec("insert into e11 values (5)")
+	tk.MustQuery("select * from e11").Check(testkit.Rows("5"))
+	tk.MustExec("insert into e10 values (5), (6)")
+	tk.MustQuery("select * from e10 partition(p0)").Check(testkit.Rows("0", "2", "4", "6"))
+	tk.MustQuery("select * from e10 partition(p1)").Check(testkit.Rows("1", "3", "5"))
+
 }
 
 func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
