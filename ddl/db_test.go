@@ -400,13 +400,8 @@ func testCancelAddIndex(c *C, store kv.Storage, d ddl.DDL, lease time.Duration, 
 		tk.MustExec("insert into t1 set c3 = ?", 2)
 		start = 3
 	}
-	var values []string
-	for i := start; i < count; i++ {
-		values = append(values, fmt.Sprintf("(%d, %d, %d)", i, i, i))
-		if (i + 1) % defaultBatchSize == 0 {
-			tk.MustExec("insert into t1 values " + strings.Join(values, ","))
-			values = values[:0]
-		}
+	for i := start; i < count; i += defaultBatchSize {
+		batchInsert(tk, "t1", i, i+defaultBatchSize)
 	}
 
 	var c3IdxInfo *model.IndexInfo
