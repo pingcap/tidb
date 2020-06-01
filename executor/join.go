@@ -934,6 +934,7 @@ func (e *NestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk) (err e
 						return err
 					}
 					innerList := e.innerList.Copy()
+					innerList.GetMemTracker().AttachTo(e.memTracker)
 					e.cache.Set(key, &applyCacheValue{innerList})
 				}
 			} else {
