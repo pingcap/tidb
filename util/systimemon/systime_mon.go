@@ -85,7 +85,7 @@ func StartAutoFreeOSMemory() {
 			runtime.GC()
 			debug.FreeOSMemory()
 			count++
-			logutil.BgLogger().Warn("auto free os memory", zap.Int("count", count))
+			logutil.BgLogger().Warn("auto free os memory", zap.Int("rss", rss), zap.Int("threshold", threshold), zap.Int("count", count))
 		}
 	}
 }
