@@ -833,7 +833,7 @@ func (*testSuite) TestAllocComputationIssue(c *C) {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDCustomize"), IsNil)
 	}()
 
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 
