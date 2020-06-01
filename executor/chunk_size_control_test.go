@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -67,7 +68,7 @@ func (c *testSlowClient) GetDelay(regionID uint64) time.Duration {
 }
 
 // manipulateCluster splits this cluster's region by splitKeys and returns regionIDs after split
-func manipulateCluster(cluster *mocktikv.Cluster, splitKeys [][]byte) []uint64 {
+func manipulateCluster(cluster cluster.Cluster, splitKeys [][]byte) []uint64 {
 	if len(splitKeys) == 0 {
 		return nil
 	}
@@ -113,7 +114,7 @@ type testChunkSizeControlKit struct {
 	dom     *domain.Domain
 	tk      *testkit.TestKit
 	client  *testSlowClient
-	cluster *mocktikv.Cluster
+	cluster cluster.Cluster
 }
 
 type testChunkSizeControlSuite struct {
@@ -132,12 +133,13 @@ func (s *testChunkSizeControlSuite) SetUpSuite(c *C) {
 		kit := new(testChunkSizeControlKit)
 		s.m[name] = kit
 		kit.client = &testSlowClient{regionDelay: make(map[uint64]time.Duration)}
-		kit.cluster = mocktikv.NewCluster()
-		mocktikv.BootstrapWithSingleStore(kit.cluster)
+		cluster := mocktikv.NewCluster()
+		mocktikv.BootstrapWithSingleStore(cluster)
+		kit.cluster = cluster
 
 		var err error
 		kit.store, err = mockstore.NewMockTikvStore(
-			mockstore.WithCluster(kit.cluster),
+			mockstore.WithCluster(cluster),
 			mockstore.WithHijackClient(func(c tikv.Client) tikv.Client {
 				kit.client.Client = c
 				return kit.client
@@ -156,7 +158,7 @@ func (s *testChunkSizeControlSuite) SetUpSuite(c *C) {
 }
 
 func (s *testChunkSizeControlSuite) getKit(name string) (
-	kv.Storage, *domain.Domain, *testkit.TestKit, *testSlowClient, *mocktikv.Cluster) {
+	kv.Storage, *domain.Domain, *testkit.TestKit, *testSlowClient, cluster.Cluster) {
 	x := s.m[name]
 	return x.store, x.dom, x.tk, x.client, x.cluster
 }

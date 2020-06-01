@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/collate"
@@ -52,8 +53,9 @@ import (
 var _ = SerialSuites(&testSerialSuite{})
 
 type testSerialSuite struct {
-	store kv.Storage
-	dom   *domain.Domain
+	store   kv.Storage
+	cluster cluster.Cluster
+	dom     *domain.Domain
 }
 
 func (s *testSerialSuite) SetUpSuite(c *C) {
@@ -67,8 +69,18 @@ func (s *testSerialSuite) SetUpSuite(c *C) {
 	config.StoreGlobalConfig(&newCfg)
 
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
+
+	cluster := mocktikv.NewCluster()
+	mocktikv.BootstrapWithSingleStore(cluster)
+	s.cluster = cluster
+
 	var err error
-	s.store, err = mockstore.NewMockTikvStore()
+	mvccStore := mocktikv.MustNewMVCCStore()
+	cluster.SetMvccStore(mvccStore)
+	s.store, err = mockstore.NewMockTikvStore(
+		mockstore.WithCluster(cluster),
+		mockstore.WithMVCCStore(mvccStore),
+	)
 	c.Assert(err, IsNil)
 
 	s.dom, err = session.BootstrapSession(s.store)
@@ -186,10 +198,7 @@ func (s *testSerialSuite) TestMultiRegionGetTableEndHandle(c *C) {
 	testCtx := newTestMaxTableRowIDContext(c, d, tbl)
 
 	// Split the table.
-	cluster := mocktikv.NewCluster()
-	mvccStore := mocktikv.MustNewMVCCStore()
-	defer mvccStore.Close()
-	cluster.SplitTable(mvccStore, tblID, 100)
+	s.cluster.SplitTable(tblID, 100)
 
 	maxID, emptyTable := getMaxTableRowID(testCtx, s.store)
 	c.Assert(emptyTable, IsFalse)
@@ -378,9 +387,19 @@ func (s *testSerialSuite) TestCreateTableWithLike(c *C) {
 	c.Assert(rows[1][1], Equals, fmt.Sprintf("t_%d_r_2305843009213693952", tbl.Meta().ID))
 	c.Assert(rows[2][1], Equals, fmt.Sprintf("t_%d_r_4611686018427387904", tbl.Meta().ID))
 	c.Assert(rows[3][1], Equals, fmt.Sprintf("t_%d_r_6917529027641081856", tbl.Meta().ID))
+	// Test after truncate table the region is also splited.
+	tk.MustExec("truncate table t2")
+	re = tk.MustQuery("show table t2 regions")
+	rows = re.Rows()
+	c.Assert(len(rows), Equals, 4)
+	tbl = testGetTableByName(c, tk.Se, "test", "t2")
+	c.Assert(rows[1][1], Equals, fmt.Sprintf("t_%d_r_2305843009213693952", tbl.Meta().ID))
+	c.Assert(rows[2][1], Equals, fmt.Sprintf("t_%d_r_4611686018427387904", tbl.Meta().ID))
+	c.Assert(rows[3][1], Equals, fmt.Sprintf("t_%d_r_6917529027641081856", tbl.Meta().ID))
+
 	defer atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
 
-	// for failure cases
+	// for failure table cases
 	tk.MustExec("use ctwl_db")
 	failSQL := fmt.Sprintf("create table t1 like test_not_exist.t")
 	tk.MustGetErrCode(failSQL, mysql.ErrNoSuchTable)
@@ -392,6 +411,14 @@ func (s *testSerialSuite) TestCreateTableWithLike(c *C) {
 	tk.MustGetErrCode(failSQL, mysql.ErrBadDB)
 	failSQL = fmt.Sprintf("create table t1 like ctwl_db.t")
 	tk.MustGetErrCode(failSQL, mysql.ErrTableExists)
+
+	// test failure for wrong object cases
+	tk.MustExec("drop view if exists v")
+	tk.MustExec("create view v as select 1 from dual")
+	tk.MustGetErrCode("create table viewTable like v", mysql.ErrWrongObject)
+	tk.MustExec("drop sequence if exists seq")
+	tk.MustExec("create sequence seq")
+	tk.MustGetErrCode("create table sequenceTable like seq", mysql.ErrWrongObject)
 
 	tk.MustExec("drop database ctwl_db")
 	tk.MustExec("drop database ctwl_db1")

@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -57,13 +58,12 @@ var _ = Suite(&testIntegrationSuite6{&testIntegrationSuite{}})
 var _ = SerialSuites(&testIntegrationSuite7{&testIntegrationSuite{}})
 
 type testIntegrationSuite struct {
-	lease     time.Duration
-	cluster   *mocktikv.Cluster
-	mvccStore mocktikv.MVCCStore
-	store     kv.Storage
-	dom       *domain.Domain
-	ctx       sessionctx.Context
-	tk        *testkit.TestKit
+	lease   time.Duration
+	cluster cluster.Cluster
+	store   kv.Storage
+	dom     *domain.Domain
+	ctx     sessionctx.Context
+	tk      *testkit.TestKit
 }
 
 func setupIntegrationSuite(s *testIntegrationSuite, c *C) {
@@ -71,12 +71,15 @@ func setupIntegrationSuite(s *testIntegrationSuite, c *C) {
 	s.lease = 50 * time.Millisecond
 	ddl.SetWaitTimeWhenErrorOccurred(0)
 
-	s.cluster = mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(s.cluster)
-	s.mvccStore = mocktikv.MustNewMVCCStore()
+	cluster := mocktikv.NewCluster()
+	mocktikv.BootstrapWithSingleStore(cluster)
+	s.cluster = cluster
+
+	mvccStore := mocktikv.MustNewMVCCStore()
+	cluster.SetMvccStore(mvccStore)
 	s.store, err = mockstore.NewMockTikvStore(
-		mockstore.WithCluster(s.cluster),
-		mockstore.WithMVCCStore(s.mvccStore),
+		mockstore.WithCluster(cluster),
+		mockstore.WithMVCCStore(mvccStore),
 	)
 	c.Assert(err, IsNil)
 	session.SetSchemaLease(s.lease)
@@ -410,13 +413,13 @@ func (s *testIntegrationSuite1) TestIssue5092(c *C) {
 	tk.MustExec("alter table t_issue_5092 add column d int default 4 after c1, add column aa int default 0 first")
 	tk.MustQuery("select * from t_issue_5092").Check(testkit.Rows("0 1 2 22 3 33 4"))
 	tk.MustQuery("show create table t_issue_5092").Check(testkit.Rows("t_issue_5092 CREATE TABLE `t_issue_5092` (\n" +
-		"  `aa` int(11) DEFAULT '0',\n" +
-		"  `a` int(11) DEFAULT '1',\n" +
-		"  `b` int(11) DEFAULT '2',\n" +
-		"  `b1` int(11) DEFAULT '22',\n" +
-		"  `c` int(11) DEFAULT '3',\n" +
-		"  `c1` int(11) DEFAULT '33',\n" +
-		"  `d` int(11) DEFAULT '4'\n" +
+		"  `aa` int(11) DEFAULT 0,\n" +
+		"  `a` int(11) DEFAULT 1,\n" +
+		"  `b` int(11) DEFAULT 2,\n" +
+		"  `b1` int(11) DEFAULT 22,\n" +
+		"  `c` int(11) DEFAULT 3,\n" +
+		"  `c1` int(11) DEFAULT 33,\n" +
+		"  `d` int(11) DEFAULT 4\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("drop table t_issue_5092")
 
@@ -579,7 +582,7 @@ func (s *testIntegrationSuite5) TestErrnoErrorCode(c *C) {
 	sql = "alter table test_error_code_succ drop index idx_not_exist"
 	tk.MustGetErrCode(sql, errno.ErrCantDropFieldOrKey)
 	sql = "alter table test_error_code_succ drop column c3"
-	tk.MustGetErrCode(sql, int(errno.ErrUnsupportedDDLOperation))
+	tk.MustGetErrCode(sql, errno.ErrUnsupportedDDLOperation)
 	// modify column
 	sql = "alter table test_error_code_succ modify testx.test_error_code_succ.c1 bigint"
 	tk.MustGetErrCode(sql, errno.ErrWrongDBName)
@@ -1154,7 +1157,7 @@ func (s *testIntegrationSuite5) TestBackwardCompatibility(c *C) {
 	c.Assert(err, IsNil)
 
 	// Split the table.
-	s.cluster.SplitTable(s.mvccStore, tbl.Meta().ID, 100)
+	s.cluster.SplitTable(tbl.Meta().ID, 100)
 
 	unique := false
 	indexName := model.NewCIStr("idx_b")
@@ -1232,7 +1235,7 @@ func (s *testIntegrationSuite3) TestMultiRegionGetTableEndHandle(c *C) {
 	testCtx := newTestMaxTableRowIDContext(c, d, tbl)
 
 	// Split the table.
-	s.cluster.SplitTable(s.mvccStore, tblID, 100)
+	s.cluster.SplitTable(tblID, 100)
 
 	maxID, emptyTable := getMaxTableRowID(testCtx, s.store)
 	c.Assert(emptyTable, IsFalse)

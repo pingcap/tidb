@@ -143,14 +143,22 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	for i := 1; i < l; i += 2 {
 		fieldTps = append(fieldTps, args[i].GetType())
 		decimal = mathutil.Max(decimal, args[i].GetType().Decimal)
-		flen = mathutil.Max(flen, args[i].GetType().Flen)
+		if args[i].GetType().Flen == -1 {
+			flen = -1
+		} else if flen != -1 {
+			flen = mathutil.Max(flen, args[i].GetType().Flen)
+		}
 		isBinaryStr = isBinaryStr || types.IsBinaryStr(args[i].GetType())
 		isBinaryFlag = isBinaryFlag || !types.IsNonBinaryStr(args[i].GetType())
 	}
 	if l%2 == 1 {
 		fieldTps = append(fieldTps, args[l-1].GetType())
 		decimal = mathutil.Max(decimal, args[l-1].GetType().Decimal)
-		flen = mathutil.Max(flen, args[l-1].GetType().Flen)
+		if args[l-1].GetType().Flen == -1 {
+			flen = -1
+		} else if flen != -1 {
+			flen = mathutil.Max(flen, args[l-1].GetType().Flen)
+		}
 		isBinaryStr = isBinaryStr || types.IsBinaryStr(args[l-1].GetType())
 		isBinaryFlag = isBinaryFlag || !types.IsNonBinaryStr(args[l-1].GetType())
 	}
@@ -175,7 +183,7 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 	argTps := make([]types.EvalType, 0, l)
 	for i := 0; i < l-1; i += 2 {
-		if args[i], err = wrapWithIsTrue(ctx, true, args[i]); err != nil {
+		if args[i], err = wrapWithIsTrue(ctx, true, args[i], false); err != nil {
 			return nil, err
 		}
 		argTps = append(argTps, types.ETInt, tp)
@@ -183,7 +191,10 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if l%2 == 1 {
 		argTps = append(argTps, tp)
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, tp, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, tp, argTps...)
+	if err != nil {
+		return nil, err
+	}
 	bf.tp = fieldTp
 
 	switch tp {
@@ -475,11 +486,14 @@ func (c *ifFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	}
 	retTp := InferType4ControlFuncs(args[1].GetType(), args[2].GetType())
 	evalTps := retTp.EvalType()
-	args[0], err = wrapWithIsTrue(ctx, true, args[0])
+	args[0], err = wrapWithIsTrue(ctx, true, args[0], false)
 	if err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, evalTps, types.ETInt, evalTps, evalTps)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, evalTps, types.ETInt, evalTps, evalTps)
+	if err != nil {
+		return nil, err
+	}
 	retTp.Flag |= bf.tp.Flag
 	bf.tp = retTp
 	switch evalTps {
@@ -695,7 +709,10 @@ func (c *ifNullFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		types.SetBinChsClnFlag(retTp)
 	}
 	evalTps := retTp.EvalType()
-	bf := newBaseBuiltinFuncWithTp(ctx, args, evalTps, evalTps, evalTps)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, evalTps, evalTps, evalTps)
+	if err != nil {
+		return nil, err
+	}
 	bf.tp = retTp
 	switch evalTps {
 	case types.ETInt:

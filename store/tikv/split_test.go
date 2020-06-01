@@ -18,12 +18,13 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 )
 
 type testSplitSuite struct {
 	OneByOneSuite
-	cluster *mocktikv.Cluster
+	cluster cluster.Cluster
 	store   *tikvStore
 	bo      *Backoffer
 }
@@ -31,9 +32,10 @@ type testSplitSuite struct {
 var _ = Suite(&testSplitSuite{})
 
 func (s *testSplitSuite) SetUpTest(c *C) {
-	s.cluster = mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(s.cluster)
-	client, pdClient, err := mocktikv.NewTiKVAndPDClient(s.cluster, nil, "")
+	cluster := mocktikv.NewCluster()
+	mocktikv.BootstrapWithSingleStore(cluster)
+	s.cluster = cluster
+	client, pdClient, err := mocktikv.NewTiKVAndPDClient(cluster, nil, "")
 	c.Assert(err, IsNil)
 
 	store, err := NewTestTiKVStore(client, pdClient, nil, nil, 0)
