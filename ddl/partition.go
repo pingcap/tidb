@@ -725,6 +725,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 
 	ntDbInfo, err := t.GetDatabase(job.SchemaID)
 	if err != nil {
+		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
@@ -895,7 +896,7 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, part
 			sql = buildCheckSQLForRangeColumnsPartition(pi, index, schemaName, tableName)
 		}
 	default:
-		return errors.Trace(errors.Errorf("unsupported partition type for checkExchangePartitionRecordValidation"))
+		return errUnsupportedPartitionType.GenWithStackByArgs(pt.Name.O)
 	}
 
 	var ctx sessionctx.Context

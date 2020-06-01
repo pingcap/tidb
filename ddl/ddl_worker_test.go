@@ -1013,7 +1013,6 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	changedPtTable = testGetTable(c, d, dbInfo.ID, pt.ID)
 	c.Assert(changedNtTable.Meta().ID == nt.ID, IsFalse)
 	c.Assert(changedPtTable.Meta().Partition.Definitions[0].ID == nt.ID, IsTrue)
-
 }
 
 func (s *testDDLSuite) TestIgnorableSpec(c *C) {

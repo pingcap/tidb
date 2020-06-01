@@ -210,14 +210,15 @@ var (
 	ErrAddColumnWithSequenceAsDefault = terror.ClassDDL.New(mysql.ErrAddColumnWithSequenceAsDefault, mysql.MySQLErrName[mysql.ErrAddColumnWithSequenceAsDefault])
 	// ErrUnsupportedExpressionIndex is returned when create an expression index without allow-expression-index.
 	ErrUnsupportedExpressionIndex = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "creating expression index without allow-expression-index in config"))
-	// ErrPartitionExchangePartTable is returned when exchange table partition with another table is partitioned
+	// ErrPartitionExchangePartTable is returned when exchange table partition with another table is partitioned.
 	ErrPartitionExchangePartTable = terror.ClassDDL.New(mysql.ErrPartitionExchangePartTable, mysql.MySQLErrName[mysql.ErrPartitionExchangePartTable])
-	// ErrTablesDifferentMetadata is returned when exchanges tables is not compatible
+	// ErrTablesDifferentMetadata is returned when exchanges tables is not compatible.
 	ErrTablesDifferentMetadata = terror.ClassDDL.New(mysql.ErrTablesDifferentMetadata, mysql.MySQLErrName[mysql.ErrTablesDifferentMetadata])
-	// ErrRowDoesNotMatchPartition is returned when the row record of exchange table does not match the partition rule
+	// ErrRowDoesNotMatchPartition is returned when the row record of exchange table does not match the partition rule.
 	ErrRowDoesNotMatchPartition = terror.ClassDDL.New(mysql.ErrRowDoesNotMatchPartition, mysql.MySQLErrName[mysql.ErrRowDoesNotMatchPartition])
-	// ErrPartitionExchangeForeignKey is returned when exchanged non-partition table has foreign keys
+	// ErrPartitionExchangeForeignKey is returned when exchanged non-partition table has foreign keys.
 	ErrPartitionExchangeForeignKey = terror.ClassDDL.New(mysql.ErrPartitionExchangeForeignKey, mysql.MySQLErrName[mysql.ErrPartitionExchangeForeignKey])
-	// ErrCheckNoSuchTable is returned when exchaned non-partition table is view or sequence
-	ErrCheckNoSuchTable = terror.ClassDDL.New(mysql.ErrCheckNoSuchTable, mysql.MySQLErrName[mysql.ErrCheckNoSuchTable])
+	// ErrCheckNoSuchTable is returned when exchaned non-partition table is view or sequence.
+	ErrCheckNoSuchTable         = terror.ClassDDL.New(mysql.ErrCheckNoSuchTable, mysql.MySQLErrName[mysql.ErrCheckNoSuchTable])
+	errUnsupportedPartitionType = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "partition type of table: %s"))
 )
