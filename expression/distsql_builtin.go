@@ -15,6 +15,7 @@ package expression
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -633,7 +634,7 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_UUID:
 		f = &builtinUUIDSig{base}
 	case tipb.ScalarFuncSig_LikeSig:
-		f = &builtinLikeSig{base, nil, false}
+		f = &builtinLikeSig{base, nil, false, sync.Once{}}
 	//case tipb.ScalarFuncSig_RegexpSig:
 	//	f = &builtinRegexpSig{base}
 	//case tipb.ScalarFuncSig_RegexpUTF8Sig:
@@ -1134,7 +1135,7 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *stmtctx.StatementCont
 	// recover collation information
 	if collate.NewCollationEnabled() {
 		tp := sf.GetType()
-		sf.SetCharsetAndCollation(tp.Charset, tp.Collate, types.UnspecifiedLength)
+		sf.SetCharsetAndCollation(tp.Charset, tp.Collate)
 	}
 	return sf, nil
 }

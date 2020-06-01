@@ -906,6 +906,7 @@ const (
 	ErrUserAlreadyExists                                            = 3163
 	ErrInvalidJSONPathArrayCell                                     = 3165
 	ErrInvalidEncryptionOption                                      = 3184
+	ErrPKIndexCantBeInvisible                                       = 3522
 	ErrRoleNotGranted                                               = 3530
 	ErrLockAcquireFailAndNoWaitSet                                  = 3572
 	ErrWindowNoSuchWindow                                           = 3579
@@ -1074,6 +1075,7 @@ const (
 	ErrSequenceUnsupportedTableOption = 8227
 	ErrColumnTypeUnsupportedNextValue = 8228
 	ErrLockExpire                     = 8229
+	ErrAddColumnWithSequenceAsDefault = 8230
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout        = 9001

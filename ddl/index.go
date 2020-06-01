@@ -296,13 +296,37 @@ func validateRenameIndex(from, to model.CIStr, tbl *model.TableInfo) (ignore boo
 
 func onRenameIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	tblInfo, from, to, err := checkRenameIndex(t, job)
-	if err != nil {
+	if err != nil || tblInfo == nil {
 		return ver, errors.Trace(err)
 	}
 
 	idx := tblInfo.FindIndexByName(from.L)
 	idx.Name = to
 	if ver, err = updateVersionAndTableInfo(t, job, tblInfo, true); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, nil
+}
+
+func validateAlterIndexVisibility(indexName model.CIStr, invisible bool, tbl *model.TableInfo) (bool, error) {
+	if idx := tbl.FindIndexByName(indexName.L); idx == nil {
+		return false, errors.Trace(infoschema.ErrKeyNotExists.GenWithStackByArgs(indexName.O, tbl.Name))
+	} else if idx.Invisible == invisible {
+		return true, nil
+	}
+	return false, nil
+}
+
+func onAlterIndexVisibility(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	tblInfo, from, invisible, err := checkAlterIndexVisibility(t, job)
+	if err != nil || tblInfo == nil {
+		return ver, errors.Trace(err)
+	}
+	idx := tblInfo.FindIndexByName(from.L)
+	idx.Invisible = invisible
+	if ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, true); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -459,6 +483,14 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		indexInfo.Unique = unique
 		indexInfo.ID = allocateIndexID(tblInfo)
 		tblInfo.Indices = append(tblInfo.Indices, indexInfo)
+
+		// Here we need do this check before set state to `DeleteOnly`,
+		// because if hidden columns has been set to `DeleteOnly`,
+		// the `DeleteOnly` columns are missing when we do this check.
+		if err := checkInvisibleIndexOnPK(tblInfo); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, err
+		}
 		logutil.BgLogger().Info("[ddl] run add index job", zap.String("job", job.String()), zap.Reflect("indexInfo", indexInfo))
 	}
 	originalState := indexInfo.State
@@ -508,15 +540,10 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		}
 
 		err = w.runReorgJob(t, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
-			defer func() {
-				r := recover()
-				if r != nil {
-					buf := util.GetStack()
-					logutil.BgLogger().Error("[ddl] add table index panic", zap.Any("panic", r), zap.String("stack", string(buf)))
-					metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
+			defer util.Recover(metrics.LabelDDL, "onCreateIndex",
+				func() {
 					addIndexErr = errCancelledDDLJob.GenWithStack("add table `%v` index `%v` panic", tblInfo.Name, indexInfo.Name)
-				}
-			}()
+				}, false)
 			return w.addTableIndex(tbl, indexInfo, reorgInfo)
 		})
 		if err != nil {
@@ -610,7 +637,7 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 
 		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-len(dependentHiddenCols)]
 
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != model.StateNone)
+		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, originalState != model.StateNone)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -710,6 +737,34 @@ func checkRenameIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, model.CIS
 		return nil, from, to, errors.Trace(err)
 	}
 	return tblInfo, from, to, errors.Trace(err)
+}
+
+func checkAlterIndexVisibility(t *meta.Meta, job *model.Job) (*model.TableInfo, model.CIStr, bool, error) {
+	var (
+		indexName model.CIStr
+		invisible bool
+	)
+
+	schemaID := job.SchemaID
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
+	if err != nil {
+		return nil, indexName, invisible, errors.Trace(err)
+	}
+
+	if err := job.DecodeArgs(&indexName, &invisible); err != nil {
+		job.State = model.JobStateCancelled
+		return nil, indexName, invisible, errors.Trace(err)
+	}
+
+	skip, err := validateAlterIndexVisibility(indexName, invisible, tblInfo)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return nil, indexName, invisible, errors.Trace(err)
+	}
+	if skip {
+		return nil, indexName, invisible, nil
+	}
+	return tblInfo, indexName, invisible, nil
 }
 
 const (
@@ -1132,14 +1187,9 @@ func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *ad
 func (w *addIndexWorker) run(d *ddlCtx) {
 	logutil.BgLogger().Info("[ddl] add index worker start", zap.Int("workerID", w.id))
 	defer func() {
-		r := recover()
-		if r != nil {
-			buf := util.GetStack()
-			logutil.BgLogger().Error("[ddl] add index worker panic", zap.Any("panic", r), zap.String("stack", string(buf)))
-			metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
-		}
 		w.resultCh <- &addIndexResult{err: errReorgPanic}
 	}()
+	defer util.Recover(metrics.LabelDDL, "addIndexWorker.run", nil, false)
 	for {
 		task, more := <-w.taskCh
 		if !more {
