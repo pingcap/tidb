@@ -46,6 +46,7 @@ const (
 )
 
 var (
+<<<<<<< HEAD
 	tikvBackoffCounterRPC            = metrics.TiKVBackoffCounter.WithLabelValues("tikvRPC")
 	tikvBackoffCounterLock           = metrics.TiKVBackoffCounter.WithLabelValues("txnLock")
 	tikvBackoffCounterLockFast       = metrics.TiKVBackoffCounter.WithLabelValues("tikvLockFast")
@@ -64,6 +65,16 @@ var (
 	tikvBackoffHistogramServerBusy   = metrics.TiKVBackoffHistogram.WithLabelValues("serverBusy")
 	tikvBackoffHistogramStaleCmd     = metrics.TiKVBackoffHistogram.WithLabelValues("staleCommand")
 	tikvBackoffHistogramEmpty        = metrics.TiKVBackoffHistogram.WithLabelValues("")
+=======
+	tikvBackoffHistogramRPC        = metrics.TiKVBackoffHistogram.WithLabelValues("tikvRPC")
+	tikvBackoffHistogramLock       = metrics.TiKVBackoffHistogram.WithLabelValues("txnLock")
+	tikvBackoffHistogramLockFast   = metrics.TiKVBackoffHistogram.WithLabelValues("tikvLockFast")
+	tikvBackoffHistogramPD         = metrics.TiKVBackoffHistogram.WithLabelValues("pdRPC")
+	tikvBackoffHistogramRegionMiss = metrics.TiKVBackoffHistogram.WithLabelValues("regionMiss")
+	tikvBackoffHistogramServerBusy = metrics.TiKVBackoffHistogram.WithLabelValues("serverBusy")
+	tikvBackoffHistogramStaleCmd   = metrics.TiKVBackoffHistogram.WithLabelValues("staleCommand")
+	tikvBackoffHistogramEmpty      = metrics.TiKVBackoffHistogram.WithLabelValues("")
+>>>>>>> bd586dc... tikv: remove the update leader backoff (#17541)
 )
 
 func (t backoffType) metric() (prometheus.Counter, prometheus.Observer) {
@@ -77,9 +88,13 @@ func (t backoffType) metric() (prometheus.Counter, prometheus.Observer) {
 	case BoPDRPC:
 		return tikvBackoffCounterPD, tikvBackoffHistogramPD
 	case BoRegionMiss:
+<<<<<<< HEAD
 		return tikvBackoffCounterRegionMiss, tikvBackoffHistogramRegionMiss
 	case BoUpdateLeader:
 		return tikvBackoffCounterUpdateLeader, tikvBackoffHistogramUpdateLeader
+=======
+		return tikvBackoffHistogramRegionMiss
+>>>>>>> bd586dc... tikv: remove the update leader backoff (#17541)
 	case boServerBusy:
 		return tikvBackoffCounterServerBusy, tikvBackoffHistogramServerBusy
 	case boStaleCmd:
@@ -145,7 +160,6 @@ const (
 	boTxnLockFast
 	BoPDRPC
 	BoRegionMiss
-	BoUpdateLeader
 	boServerBusy
 	boStaleCmd
 )
@@ -166,8 +180,13 @@ func (t backoffType) createFn(vars *kv.Variables) func(context.Context, int) int
 	case BoRegionMiss:
 		// change base time to 2ms, because it may recover soon.
 		return NewBackoffFn(2, 500, NoJitter)
+<<<<<<< HEAD
 	case BoUpdateLeader:
 		return NewBackoffFn(1, 10, NoJitter)
+=======
+	case boTxnNotFound:
+		return NewBackoffFn(2, 500, NoJitter)
+>>>>>>> bd586dc... tikv: remove the update leader backoff (#17541)
 	case boServerBusy:
 		return NewBackoffFn(2000, 10000, EqualJitter)
 	case boStaleCmd:
@@ -188,8 +207,6 @@ func (t backoffType) String() string {
 		return "pdRPC"
 	case BoRegionMiss:
 		return "regionMiss"
-	case BoUpdateLeader:
-		return "updateLeader"
 	case boServerBusy:
 		return "serverBusy"
 	case boStaleCmd:
@@ -206,7 +223,7 @@ func (t backoffType) TError() error {
 		return ErrResolveLockTimeout
 	case BoPDRPC:
 		return ErrPDServerTimeout
-	case BoRegionMiss, BoUpdateLeader:
+	case BoRegionMiss:
 		return ErrRegionUnavailable
 	case boServerBusy:
 		return ErrTiKVServerBusy
