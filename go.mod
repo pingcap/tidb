@@ -20,7 +20,7 @@ require (
 	github.com/klauspost/cpuid v1.2.1
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
-	github.com/ngaut/unistore v0.0.0-20200521040325-2af94f1b0c83
+	github.com/ngaut/unistore v0.0.0-20200601072616-c5558b00c578
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.1.0
 	github.com/pingcap/br v0.0.0-20200521085655-53201addd4ad
