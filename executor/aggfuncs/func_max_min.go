@@ -65,7 +65,6 @@ func (h *maxMinHeap) delete(x interface{}) {
 	for i, val := range h.data {
 		if h.cmpFunc(x, val) == 0 {
 			heap.Remove(h, i)
-			heap.Init(h)
 			break
 		}
 	}
@@ -80,7 +79,6 @@ func (h *maxMinHeap) Append(val interface{}) {
 	h.varSet[val]++
 	if h.varSet[val] == 1 {
 		heap.Push(h, val)
-		heap.Init(h)
 	}
 }
 func (h *maxMinHeap) AppendMyDecimal(val interface{}) error {
@@ -93,7 +91,6 @@ func (h *maxMinHeap) AppendMyDecimal(val interface{}) error {
 	h.varSet[key]++
 	if h.varSet[key] == 1 {
 		heap.Push(h, val)
-		heap.Init(h)
 	}
 	return nil
 }
@@ -125,7 +122,6 @@ func (h *maxMinHeap) RemoveMyDecimal(val interface{}) error {
 func (h *maxMinHeap) Reset() {
 	h.data = h.data[:0]
 	h.varSet = make(map[interface{}]int64)
-	heap.Init(h)
 }
 
 type partialResult4MaxMinInt struct {
