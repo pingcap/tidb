@@ -1373,8 +1373,7 @@ func testPartitionCancelAddIndex(c *C, store kv.Storage, d ddl.DDL, lease time.D
     	partition p3 values less than (4096),
 		partition p4 values less than (maxvalue)
    	);`)
-	base := defaultBatchSize * 32
-	count := base
+	count := defaultBatchSize * 32
 	// add some rows
 	for i := 0; i < count; i += defaultBatchSize {
 		batchInsert(tk, "t1", i, i+defaultBatchSize)
