@@ -503,6 +503,7 @@ import (
 	rowCount              "ROW_COUNT"
 	rowFormat             "ROW_FORMAT"
 	rtree                 "RTREE"
+	san                   "SAN"
 	second                "SECOND"
 	secondaryEngine       "SECONDARY_ENGINE"
 	secondaryLoad         "SECONDARY_LOAD"
@@ -4910,6 +4911,7 @@ UnReservedKeyword:
 |	"CHARSET"
 |	"COLUMNS"
 |	"CONFIG"
+|	"SAN"
 |	"COMMIT"
 |	"COMPACT"
 |	"COMPRESSED"
@@ -10489,6 +10491,13 @@ RequireListElement:
 	{
 		$$ = &ast.TLSOption{
 			Type:  ast.Cipher,
+			Value: $2,
+		}
+	}
+|	"SAN" stringLit
+	{
+		$$ = &ast.TLSOption{
+			Type:  ast.SAN,
 			Value: $2,
 		}
 	}
