@@ -1283,7 +1283,9 @@ func buildTableInfo(
 					// Avoid creating index for PK handle column.
 					continue
 				}
-				tbInfo.IsCommonHandle = true
+				if clusteredIdx {
+					tbInfo.IsCommonHandle = true
+				}
 			}
 		}
 

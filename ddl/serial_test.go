@@ -1157,4 +1157,11 @@ func (s *testSerialSuite) TestCreateClusteredIndex(c *C) {
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t31"))
 	c.Assert(err, IsNil)
 	c.Assert(tbl.Meta().IsCommonHandle, IsTrue)
+
+	tk.Se.GetSessionVars().EnableClusteredIndex = false
+	tk.MustExec("CREATE TABLE t7 (a varchar(255) primary key, b int)")
+	is = domain.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t7"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().IsCommonHandle, IsFalse)
 }
