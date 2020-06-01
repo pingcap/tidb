@@ -1557,6 +1557,7 @@ func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 	join := la.GetHashJoin(prop)
 	apply := PhysicalApply{
 		PhysicalHashJoin: *join,
+		InnerCorCols:     la.InnerCorCols,
 		OuterSchema:      la.CorCols,
 	}.Init(la.ctx,
 		la.stats.ScaleByExpectCnt(prop.ExpectedCnt),

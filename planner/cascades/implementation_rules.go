@@ -558,6 +558,7 @@ func (r *ImplApply) OnImplement(expr *memo.GroupExpr, reqProp *property.Physical
 	join := la.GetHashJoin(reqProp)
 	physicalApply := plannercore.PhysicalApply{
 		PhysicalHashJoin: *join,
+		InnerCorCols:     la.InnerCorCols,
 		OuterSchema:      la.CorCols,
 	}.Init(
 		la.SCtx(),

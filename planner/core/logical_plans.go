@@ -404,7 +404,8 @@ func (p *LogicalSelection) ExtractCorrelatedCols() []*expression.CorrelatedColum
 type LogicalApply struct {
 	LogicalJoin
 
-	CorCols []*expression.CorrelatedColumn
+	InnerCorCols []*expression.CorrelatedColumn
+	CorCols      []*expression.CorrelatedColumn
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
@@ -1030,8 +1031,9 @@ func ExtractCorColumnsBySchema(corCols []*expression.CorrelatedColumn, schema *e
 // extractCorColumnsBySchema only extracts the correlated columns that match the specified schema.
 // e.g. If the correlated columns from plan are [t1.a, t2.a, t3.a] and specified schema is [t2.a, t2.b, t2.c],
 // only [t2.a] is returned.
-func extractCorColumnsBySchema(p LogicalPlan, schema *expression.Schema) []*expression.CorrelatedColumn {
+func extractCorColumnsBySchema(pFather LogicalPlan, p LogicalPlan, schema *expression.Schema) []*expression.CorrelatedColumn {
 	corCols := ExtractCorrelatedCols(p)
+	pFather.(*LogicalApply).InnerCorCols = corCols
 	return ExtractCorColumnsBySchema(corCols, schema)
 }
 

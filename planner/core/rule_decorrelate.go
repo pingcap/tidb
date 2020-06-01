@@ -112,7 +112,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 	if apply, ok := p.(*LogicalApply); ok {
 		outerPlan := apply.children[0]
 		innerPlan := apply.children[1]
-		apply.CorCols = extractCorColumnsBySchema(apply.children[1], apply.children[0].Schema())
+		apply.CorCols = extractCorColumnsBySchema(apply, apply.children[1], apply.children[0].Schema())
 		if len(apply.CorCols) == 0 {
 			// If the inner plan is non-correlated, the apply will be simplified to join.
 			join := &apply.LogicalJoin
@@ -206,7 +206,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 				if len(eqCondWithCorCol) > 0 {
 					originalExpr := sel.Conditions
 					sel.Conditions = remainedExpr
-					apply.CorCols = extractCorColumnsBySchema(apply.children[1], apply.children[0].Schema())
+					apply.CorCols = extractCorColumnsBySchema(apply, apply.children[1], apply.children[0].Schema())
 					// There's no other correlated column.
 					groupByCols := expression.NewSchema(agg.groupByCols...)
 					if len(apply.CorCols) == 0 {
@@ -252,7 +252,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 						return s.optimize(ctx, p)
 					}
 					sel.Conditions = originalExpr
-					apply.CorCols = extractCorColumnsBySchema(apply.children[1], apply.children[0].Schema())
+					apply.CorCols = extractCorColumnsBySchema(apply, apply.children[1], apply.children[0].Schema())
 				}
 			}
 		} else if sort, ok := innerPlan.(*LogicalSort); ok {
