@@ -28,6 +28,13 @@ import (
 	"go.uber.org/zap"
 )
 
+var supportedHintNameForInsertStmt = map[string]struct{}{}
+
+func init() {
+	supportedHintNameForInsertStmt["MEMORY_QUOTA"] = struct{}{}
+	supportedHintNameForInsertStmt["memory_quota"] = struct{}{}
+}
+
 // HintsSet contains all hints of a query.
 type HintsSet struct {
 	tableHints [][]*ast.TableOptimizerHint // Slice offset is the traversal order of `SelectStmt` in the ast.
@@ -55,7 +62,7 @@ func (hs *HintsSet) ContainTableHint(hint string) bool {
 }
 
 // ExtractTableHintsFromStmtNode extracts table hints from this node.
-func ExtractTableHintsFromStmtNode(node ast.Node) []*ast.TableOptimizerHint {
+func ExtractTableHintsFromStmtNode(node ast.Node, sctx sessionctx.Context) []*ast.TableOptimizerHint {
 	switch x := node.(type) {
 	case *ast.SelectStmt:
 		return x.TableHints
@@ -64,11 +71,45 @@ func ExtractTableHintsFromStmtNode(node ast.Node) []*ast.TableOptimizerHint {
 	case *ast.DeleteStmt:
 		return x.TableHints
 	case *ast.InsertStmt:
+		//check duplicated hints
+		checkInsertStmtHintDuplicated(node, sctx)
 		return x.TableHints
 	case *ast.ExplainStmt:
-		return ExtractTableHintsFromStmtNode(x.Stmt)
+		return ExtractTableHintsFromStmtNode(x.Stmt, sctx)
 	default:
 		return nil
+	}
+}
+
+// checkInsertStmtHintDuplicated check whether existed the duplicated hints in both insertStmt and its selectStmt.
+// If existed, it would send a warning message.
+func checkInsertStmtHintDuplicated(node ast.Node, sctx sessionctx.Context) {
+	switch x := node.(type) {
+	case *ast.InsertStmt:
+		if len(x.TableHints) > 0 {
+			var supportedHint *ast.TableOptimizerHint
+			for _, hint := range x.TableHints {
+				if _, ok := supportedHintNameForInsertStmt[hint.HintName.O]; ok {
+					supportedHint = hint
+					break
+				}
+			}
+			if supportedHint != nil {
+				var duplicatedHint *ast.TableOptimizerHint
+				for _, hint := range ExtractTableHintsFromStmtNode(x.Select, nil) {
+					if hint.HintName.O == supportedHint.HintName.O {
+						duplicatedHint = hint
+						break
+					}
+				}
+				if duplicatedHint != nil {
+					warning := fmt.Sprintf("Hint %s(`%v`) is ignored as conflicting/duplicated", duplicatedHint.HintName.O, duplicatedHint.HintData)
+					sctx.GetSessionVars().StmtCtx.AppendWarning(errors.New(warning))
+				}
+			}
+		}
+	default:
+		return
 	}
 }
 
