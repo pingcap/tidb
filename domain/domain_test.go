@@ -40,10 +40,12 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	dto "github.com/prometheus/client_model/go"
 	"go.etcd.io/etcd/integration"
+	"go.uber.org/zap"
 )
 
 func TestT(t *testing.T) {
@@ -90,6 +92,7 @@ func unixSocketAvailable() bool {
 }
 
 // For debug only, will be removed later.
+// TODO: remove these tests for investigating the leak problem.
 func interestingGoroutines() (gs []string) {
 	buf := make([]byte, 2<<20)
 	buf = buf[:runtime.Stack(buf, true)]
@@ -133,19 +136,91 @@ func interestingGoroutines() (gs []string) {
 	return
 }
 
+var beforeTestGoroutines = map[string]bool{}
+var testGoroutinesInited bool
+
+// BeforeTest gets the current goroutines.
+// It's used for check.Suite.SetUpSuite() function.
+// Now it's only used in the tidb_test.go.
+func BeforeTest() {
+	for _, g := range interestingGoroutines() {
+		beforeTestGoroutines[g] = true
+	}
+	testGoroutinesInited = true
+}
+
+const defaultCheckCnt = 50
+
+func checkLeakAfterTest(errorFunc func(cnt int, g string)) func() {
+	// After `BeforeTest`, `beforeTestGoroutines` may still be empty, in this case,
+	// we shouldn't init it again.
+	if !testGoroutinesInited && len(beforeTestGoroutines) == 0 {
+		for _, g := range interestingGoroutines() {
+			beforeTestGoroutines[g] = true
+		}
+	}
+
+	for str := range beforeTestGoroutines {
+		logutil.BgLogger().Info("checkLeakAfterTest", zap.String("L163", str))
+	}
+
+	cnt := defaultCheckCnt
+	return func() {
+		defer func() {
+			beforeTestGoroutines = map[string]bool{}
+			testGoroutinesInited = false
+		}()
+
+		var leaked []string
+		for i := 0; i < cnt; i++ {
+			leaked = leaked[:0]
+			for _, g := range interestingGoroutines() {
+				if !beforeTestGoroutines[g] {
+					leaked = append(leaked, g)
+					for str := range beforeTestGoroutines {
+						logutil.BgLogger().Info("checkLeakAfterTest", zap.String("L180", str), zap.Int("i", i))
+					}
+					for _, str := range interestingGoroutines() {
+						logutil.BgLogger().Info("checkLeakAfterTest", zap.String("L183", str), zap.Int("i", i))
+					}
+				}
+			}
+			// Bad stuff found, but goroutines might just still be
+			// shutting down, so give it some time.
+			if len(leaked) != 0 {
+				time.Sleep(50 * time.Millisecond)
+				continue
+			}
+
+			return
+		}
+		for _, g := range leaked {
+			errorFunc(cnt, g)
+		}
+	}
+}
+
+// AfterTestT is used after all the test cases is finished.
+func AfterTestT(t *testing.T) func() {
+	errorFunc := func(cnt int, g string) {
+		t.Errorf("Test %s check-count %d appears to have leaked: %v", t.Name(), cnt, g)
+	}
+	return checkLeakAfterTest(errorFunc)
+}
+
 func TestInfo(t *testing.T) {
 	if !unixSocketAvailable() {
 		return
 	}
-	for _, str := range interestingGoroutines() {
-		t.Logf("TestInfo: BeforeTest %s", str)
+	for i, str := range interestingGoroutines() {
+		t.Logf("TestInfo: BeforeTest %d %s", i, str)
 	}
-	testleak.BeforeTest()
+	BeforeTest()
 	defer func() {
-		for _, str := range interestingGoroutines() {
-			t.Logf("TestInfo: AfterTest %s", str)
+		AfterTestT(t)()
+		for i, str := range interestingGoroutines() {
+			t.Logf("TestInfo: AfterTest %d %s", i, str)
 		}
-		testleak.AfterTestT(t)()
 	}()
 	ddlLease := 80 * time.Millisecond
 	s, err := mockstore.NewMockStore()
