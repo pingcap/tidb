@@ -47,6 +47,8 @@ const (
 	AutoRandomNonPositive = "the value of auto_random should be positive"
 	// AutoRandomAvailableAllocTimesNote is reported when a table containing auto_random is created.
 	AutoRandomAvailableAllocTimesNote = "Available implicit allocation times: %d"
+	// AutoRandomExplicitInsertDisabledErrMsg is reported when auto_random column value is explicitly specified, but the session var 'allow_auto_random_explicit_insert' is false.
+	AutoRandomExplicitInsertDisabledErrMsg = "Explicit insertion on auto_random column is disabled. Try to set @@allow_auto_random_explicit_insert = true."
 	// AutoRandomOnNonBigIntColumn is reported when define auto random to non bigint column
 	AutoRandomOnNonBigIntColumn = "auto_random option must be defined on `bigint` column, but not on `%s` column"
 )
