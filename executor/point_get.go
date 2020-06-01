@@ -280,6 +280,9 @@ func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) erro
 // get will first try to get from txn buffer, then check the pessimistic lock cache,
 // then the store. Kv.ErrNotExist will be returned if key is not found
 func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) {
+	if len(key) == 0 {
+		return nil, kv.ErrNotExist
+	}
 	if e.txn.Valid() && !e.txn.IsReadOnly() {
 		// We cannot use txn.Get directly here because the snapshot in txn and the snapshot of e.snapshot may be
 		// different for pessimistic transaction.
@@ -313,7 +316,10 @@ func encodeIndexKey(e *baseExecutor, tblInfo *model.TableInfo, idxInfo *model.In
 			str, err = idxVals[i].ToString()
 			idxVals[i].SetString(str, colInfo.FieldType.Collate)
 		} else {
-			idxVals[i], err = table.CastValue(e.ctx, idxVals[i], colInfo)
+			idxVals[i], err = table.CastValue(e.ctx, idxVals[i], colInfo, true, false)
+			if types.ErrOverflow.Equal(err) {
+				return nil, kv.ErrNotExist
+			}
 		}
 		if err != nil {
 			return nil, err
