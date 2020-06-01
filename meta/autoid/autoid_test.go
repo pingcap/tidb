@@ -496,7 +496,7 @@ func (*testSuite) TestAllocComputationIssue(c *C) {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDCustomize"), IsNil)
 	}()
 
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 
@@ -504,18 +504,18 @@ func (*testSuite) TestAllocComputationIssue(c *C) {
 		m := meta.NewMeta(txn)
 		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: model.NewCIStr("a")})
 		c.Assert(err, IsNil)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: model.NewCIStr("t")})
+		err = m.CreateTable(1, &model.TableInfo{ID: 1, Name: model.NewCIStr("t")})
 		c.Assert(err, IsNil)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 2, Name: model.NewCIStr("t1")})
+		err = m.CreateTable(1, &model.TableInfo{ID: 2, Name: model.NewCIStr("t1")})
 		c.Assert(err, IsNil)
 		return nil
 	})
 	c.Assert(err, IsNil)
 
 	// Since the test here is applicable to any type of allocators, autoid.RowIDAllocType is chosen.
-	unsignedAlloc := autoid.NewAllocator(store, 1, true, autoid.RowIDAllocType)
+	unsignedAlloc := autoid.NewAllocator(store, 1, true)
 	c.Assert(unsignedAlloc, NotNil)
-	signedAlloc := autoid.NewAllocator(store, 1, false, autoid.RowIDAllocType)
+	signedAlloc := autoid.NewAllocator(store, 1, false)
 	c.Assert(signedAlloc, NotNil)
 
 	// the next valid two value must be 13 & 16, batch size = 6.
@@ -529,13 +529,13 @@ func (*testSuite) TestAllocComputationIssue(c *C) {
 	// Simulate the rest cache is not enough for next batch, assuming 10 & 13, batch size = 4.
 	autoid.TestModifyBaseAndEndInjection(signedAlloc, 4, 6)
 
-	// Here will recompute the new allocator batch size base on new base = 10, which will get 6.
-	min, max, err := unsignedAlloc.Alloc(1, 2, 3, 1)
+	// Here adjust the alloced N larger than step mocked step length equal to 3.
+	min, max, err := unsignedAlloc.Alloc(1, 4)
 	c.Assert(err, IsNil)
 	c.Assert(min, Equals, int64(10))
-	c.Assert(max, Equals, int64(16))
-	min, max, err = signedAlloc.Alloc(2, 2, 3, 1)
+	c.Assert(max, Equals, int64(14))
+	min, max, err = signedAlloc.Alloc(2, 4)
 	c.Assert(err, IsNil)
 	c.Assert(min, Equals, int64(7))
-	c.Assert(max, Equals, int64(13))
+	c.Assert(max, Equals, int64(11))
 }
