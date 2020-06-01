@@ -71,7 +71,6 @@ var (
 	_ Executor = &TableScanExec{}
 	_ Executor = &TopNExec{}
 	_ Executor = &UnionExec{}
-	_ Executor = &CheckIndexExec{}
 	_ Executor = &HashJoinExec{}
 	_ Executor = &IndexLookUpExecutor{}
 	_ Executor = &MergeJoinExec{}

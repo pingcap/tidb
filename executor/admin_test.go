@@ -44,10 +44,7 @@ func (s *testSuite1) TestAdminCheckIndexRange(c *C) {
 	result.Check(testkit.Rows("-1 hi 4", "2 cd 2"))
 }
 
-<<<<<<< HEAD
-func (s *testSuite2) TestAdminRecoverIndex(c *C) {
-=======
-func (s *testSuite5) TestAdminCheckIndex(c *C) {
+func (s *testSuite2) TestAdminCheckIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	check := func() {
@@ -73,8 +70,7 @@ func (s *testSuite5) TestAdminCheckIndex(c *C) {
 	check()
 }
 
-func (s *testSuite5) TestAdminRecoverIndex(c *C) {
->>>>>>> 2bdf6a0... util/admin: support admin check index on partition table (#17183)
+func (s *testSuite2) TestAdminRecoverIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
