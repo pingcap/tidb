@@ -49,7 +49,7 @@
       "Join{DataScan(t1)->DataScan(t2)}->Projection",
       "Join{DataScan(t1)->DataScan(t2)}->Projection",
       "LeftHashJoin{LeftHashJoin{TableReader(Table(t))->IndexLookUp(Index(t.c_d_e)[[666,666]], Table(t))}(test.t.a,test.t.b)->IndexReader(Index(t.c_d_e)[[42,42]])}(test.t.b,test.t.a)->Sel([or(Column#25, Column#38)])->Projection->Delete",
-      "LeftHashJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])->HashAgg}(test.t.b,test.t.c)->Update"
+      "RightHashJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]])->HashAgg->TableReader(Table(t))}(test.t.c,test.t.b)->Update"
     ]
   },
   {
@@ -886,10 +886,10 @@
   {
     "Name": "TestJoinReOrder",
     "Cases": [
-      "Join{Join{Join{Join{DataScan(t1)->DataScan(t2)}(test.t.a,test.t.b)->DataScan(t3)}(test.t.a,test.t.b)->DataScan(t4)}(test.t.c,test.t.a)(test.t.c,test.t.d)->Join{DataScan(t5)->DataScan(t6)}(test.t.d,test.t.d)}->Projection",
-      "Join{Join{Join{Join{DataScan(t1)->DataScan(t8)}(test.t.a,test.t.a)->DataScan(t2)}->Join{DataScan(t3)->DataScan(t4)}}->Join{Join{DataScan(t5)->DataScan(t6)}->DataScan(t7)}}->Projection",
+      "Join{Join{DataScan(t5)->DataScan(t6)}(test.t.d,test.t.d)->Join{Join{Join{DataScan(t1)->DataScan(t2)}(test.t.a,test.t.b)->DataScan(t3)}(test.t.a,test.t.b)->DataScan(t4)}(test.t.c,test.t.a)(test.t.c,test.t.d)}->Projection",
+      "Join{Join{Join{DataScan(t1)->DataScan(t8)}(test.t.a,test.t.a)->Join{DataScan(t4)->DataScan(t5)}}->Join{Join{DataScan(t2)->DataScan(t3)}->Join{DataScan(t6)->DataScan(t7)}}}->Projection",
       "Join{Join{Join{Join{DataScan(t5)->DataScan(t1)}(test.t.a,test.t.a)->DataScan(t2)}(test.t.a,test.t.a)->DataScan(t3)}(test.t.a,test.t.a)(test.t.a,test.t.a)->DataScan(t4)}(test.t.a,test.t.a)(test.t.a,test.t.a)(test.t.a,test.t.a)->Projection",
-      "Join{Join{Join{DataScan(t3)->DataScan(t1)}->Join{DataScan(t2)->DataScan(t4)}}->DataScan(t5)}->Projection",
+      "Join{Join{Join{Join{DataScan(t3)->DataScan(t1)}->DataScan(t2)}->DataScan(t4)}->DataScan(t5)}->Projection",
       "Apply{DataScan(o)->Join{Join{DataScan(t1)->DataScan(t3)}(test.t.a,test.t.a)->DataScan(t2)}(test.t.a,test.t.a)->Projection}->Projection",
       "Apply{DataScan(o)->Join{Join{DataScan(t1)->DataScan(t2)}->DataScan(t3)}->Projection}->Projection"
     ]
