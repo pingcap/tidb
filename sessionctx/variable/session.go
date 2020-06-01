@@ -282,10 +282,10 @@ type txnIsolationLevelOneShotState uint
 
 // RewritePhaseInfo records some information about the rewrite phase
 type RewritePhaseInfo struct {
-	// DurationRewrite is the duration of rewrite the SQL.
+	// DurationRewrite is the duration of rewriting the SQL.
 	DurationRewrite time.Duration
 
-	// DurationPreprocessSubQuery is the duration of pre-processed sub-queries.
+	// DurationPreprocessSubQuery is the duration of pre-processing sub-queries.
 	DurationPreprocessSubQuery time.Duration
 
 	// PreprocessSubQueries is the number of pre-processed sub-queries.
@@ -561,7 +561,7 @@ type SessionVars struct {
 	// DurationCompile is the duration of compiling AST to execution plan of the last query.
 	DurationCompile time.Duration
 
-	// RewritePhaseInfo records all information about the rewrite phase.
+	// RewritePhaseInfo records all information about the rewriting phase.
 	RewritePhaseInfo
 
 	// PrevStmt is used to store the previous executed statement in the current session.
@@ -1509,7 +1509,7 @@ const (
 	SlowLogRewriteTimeStr = "Rewrite_time"
 	// SlowLogPreprocSubQueriesStr is the number of pre-processed sub-queries.
 	SlowLogPreprocSubQueriesStr = "Preproc_subqueries"
-	// SlowLogPreProcSubQueryTimeStr is the total time of pre-processed sub-queries.
+	// SlowLogPreProcSubQueryTimeStr is the total time of pre-processing sub-queries.
 	SlowLogPreProcSubQueryTimeStr = "Preproc_subqueries_time"
 	// SlowLogDBStr is slow log field name.
 	SlowLogDBStr = "DB"
