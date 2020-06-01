@@ -1279,7 +1279,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		} else {
 			s.StmtCtx.AppendWarning(errors.Errorf("cannot update %s when enabling dynamic configs", TiDBEnableCollectExecutionInfo))
 		}
-	case TiDBFreeOSMemoryThreshold:
+	case TiDBAutoFreeOSMemoryThreshold:
 		atomic.StoreUint64(&config.GetGlobalConfig().FreeOSMemoryThreshold, uint64(tidbOptInt64(val, 0)))
 	}
 	s.systems[name] = val

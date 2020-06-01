@@ -51,19 +51,18 @@ func StartMonitor(now func() time.Time, systimeErrHandler func(), successCallbac
 // StartAutoFreeOSMemory used to auto free os memory when exceed the threshold.
 func StartAutoFreeOSMemory() {
 	logutil.BgLogger().Info("start process memory monitor")
-	tick := time.NewTicker(1 * time.Second)
+	tick := time.NewTicker(5 * time.Second)
 	defer tick.Stop()
 	var lastLogErrTime time.Time
 	logErrFn := func(msg string, fields ...zap.Field) {
-		if time.Since(lastLogErrTime).Seconds() < 10 {
+		if time.Since(lastLogErrTime).Seconds() < 30 {
 			return
 		}
 		lastLogErrTime = time.Now()
 		logutil.BgLogger().Error(msg, fields...)
 	}
 	count := 0
-	for {
-		<-tick.C
+	for _ = range tick.C {
 		threshold := int(atomic.LoadUint64(&config.GetGlobalConfig().FreeOSMemoryThreshold))
 		if threshold <= 0 {
 			continue
