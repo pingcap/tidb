@@ -1548,8 +1548,9 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) *NestedLoopAp
 		innerFilter:  innerFilter,
 		outer:        v.JoinType != plannercore.InnerJoin,
 		joiner:       tupleJoiner,
+		outerSchema:  v.OuterSchema,
 	}
-	e.outerSchema = plannercore.ExtractCorColumnsBySchema(v.InnerCorCols, rightChild.Schema())
+	// e.outerSchema = plannercore.ExtractCorColumnsBySchema(v.InnerCorCols, rightChild.Schema())
 	executorCounterNestedLoopApplyExec.Inc()
 	return e
 }
