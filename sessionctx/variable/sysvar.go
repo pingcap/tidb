@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/printer"
 )
 
 // ScopeFlag is for system variable whether can be changed in global/session dynamically or not.
@@ -385,7 +386,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "binlog_format", "STATEMENT"},
 	{ScopeGlobal | ScopeSession, "optimizer_trace", "enabled=off,one_line=off"},
 	{ScopeGlobal | ScopeSession, "read_rnd_buffer_size", "262144"},
-	{ScopeNone, "version_comment", "TiDB Server (Apache License 2.0), MySQL 5.7 compatible"},
+	{ScopeNone, "version_comment", "TiDB Server (Apache License 2.0) " + printer.TiDBEdition + " Edition, MySQL 5.7 compatible"},
 	{ScopeGlobal | ScopeSession, NetWriteTimeout, "60"},
 	{ScopeGlobal, InnodbBufferPoolLoadAbort, "0"},
 	{ScopeGlobal | ScopeSession, TxnIsolation, "REPEATABLE-READ"},
@@ -610,7 +611,7 @@ var defaultSysVars = []*SysVar{
 	/* TiDB specific variables */
 	{ScopeSession, TiDBSnapshot, ""},
 	{ScopeSession, TiDBOptAggPushDown, BoolToIntStr(DefOptAggPushDown)},
-	{ScopeSession, TiDBOptDistinctAggPushDown, BoolToIntStr(DefOptDistinctAggPushDown)},
+	{ScopeSession, TiDBOptDistinctAggPushDown, BoolToIntStr(config.GetGlobalConfig().Performance.DistinctAggPushDown)},
 	{ScopeSession, TiDBOptWriteRowID, BoolToIntStr(DefOptWriteRowID)},
 	{ScopeGlobal | ScopeSession, TiDBBuildStatsConcurrency, strconv.Itoa(DefBuildStatsConcurrency)},
 	{ScopeGlobal, TiDBAutoAnalyzeRatio, strconv.FormatFloat(DefAutoAnalyzeRatio, 'f', -1, 64)},
@@ -697,12 +698,12 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, TiDBEnableNoopFuncs, BoolToIntStr(DefTiDBEnableNoopFuncs)},
 	{ScopeSession, TiDBReplicaRead, "leader"},
 	{ScopeSession, TiDBAllowRemoveAutoInc, BoolToIntStr(DefTiDBAllowRemoveAutoInc)},
-	{ScopeGlobal | ScopeSession, TiDBEnableStmtSummary, ""},
-	{ScopeGlobal | ScopeSession, TiDBStmtSummaryInternalQuery, ""},
-	{ScopeGlobal | ScopeSession, TiDBStmtSummaryRefreshInterval, ""},
-	{ScopeGlobal | ScopeSession, TiDBStmtSummaryHistorySize, ""},
-	{ScopeGlobal | ScopeSession, TiDBStmtSummaryMaxStmtCount, ""},
-	{ScopeGlobal | ScopeSession, TiDBStmtSummaryMaxSQLLength, ""},
+	{ScopeGlobal | ScopeSession, TiDBEnableStmtSummary, BoolToIntStr(config.GetGlobalConfig().StmtSummary.Enable)},
+	{ScopeGlobal | ScopeSession, TiDBStmtSummaryInternalQuery, BoolToIntStr(config.GetGlobalConfig().StmtSummary.EnableInternalQuery)},
+	{ScopeGlobal | ScopeSession, TiDBStmtSummaryRefreshInterval, strconv.Itoa(config.GetGlobalConfig().StmtSummary.RefreshInterval)},
+	{ScopeGlobal | ScopeSession, TiDBStmtSummaryHistorySize, strconv.Itoa(config.GetGlobalConfig().StmtSummary.HistorySize)},
+	{ScopeGlobal | ScopeSession, TiDBStmtSummaryMaxStmtCount, strconv.FormatUint(uint64(config.GetGlobalConfig().StmtSummary.MaxStmtCount), 10)},
+	{ScopeGlobal | ScopeSession, TiDBStmtSummaryMaxSQLLength, strconv.FormatUint(uint64(config.GetGlobalConfig().StmtSummary.MaxSQLLength), 10)},
 	{ScopeGlobal | ScopeSession, TiDBCapturePlanBaseline, "off"},
 	{ScopeGlobal | ScopeSession, TiDBUsePlanBaselines, boolToOnOff(DefTiDBUsePlanBaselines)},
 	{ScopeGlobal | ScopeSession, TiDBEvolvePlanBaselines, boolToOnOff(DefTiDBEvolvePlanBaselines)},
@@ -720,6 +721,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBCheckMb4ValueInUTF8, BoolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUTF8)},
 	{ScopeSession, TiDBFoundInPlanCache, BoolToIntStr(DefTiDBFoundInPlanCache)},
 	{ScopeSession, TiDBEnableCollectExecutionInfo, BoolToIntStr(logutil.DefaultTiDBEnableSlowLog)},
+	{ScopeSession, TiDBAllowAutoRandExplicitInsert, boolToOnOff(DefTiDBAllowAutoRandExplicitInsert)},
 }
 
 // SynonymsSysVariables is synonyms of system variables.
@@ -740,6 +742,12 @@ func initSynonymsSysVariables() {
 var SetNamesVariables = []string{
 	"character_set_client",
 	"character_set_connection",
+	"character_set_results",
+}
+
+// SetCharsetVariables is the system variable names related to set charset statements.
+var SetCharsetVariables = []string{
+	"character_set_client",
 	"character_set_results",
 }
 

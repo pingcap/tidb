@@ -613,7 +613,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	err = checkColumnValueConstraint(col)
+	err = checkColumnValueConstraint(col, col.Collate)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -881,21 +881,22 @@ func checkPriKeyConstraint(col *table.Column, hasDefaultValue, hasNullFlag bool,
 	return nil
 }
 
-func checkColumnValueConstraint(col *table.Column) error {
+func checkColumnValueConstraint(col *table.Column, collation string) error {
 	if col.Tp != mysql.TypeEnum && col.Tp != mysql.TypeSet {
 		return nil
 	}
-	valueMap := make(map[string]string, len(col.Elems))
+	valueMap := make(map[string]bool, len(col.Elems))
+	ctor := collate.GetCollator(collation)
 	for i := range col.Elems {
-		val := strings.ToLower(col.Elems[i])
+		val := string(ctor.Key(col.Elems[i]))
 		if _, ok := valueMap[val]; ok {
 			tpStr := "ENUM"
 			if col.Tp == mysql.TypeSet {
 				tpStr = "SET"
 			}
-			return types.ErrDuplicatedValueInType.GenWithStackByArgs(col.Name, valueMap[val], tpStr)
+			return types.ErrDuplicatedValueInType.GenWithStackByArgs(col.Name, col.Elems[i], tpStr)
 		}
-		valueMap[val] = col.Elems[i]
+		valueMap[val] = true
 	}
 	return nil
 }
@@ -1104,6 +1105,69 @@ func checkConstraintNames(constraints []*ast.Constraint) error {
 	return nil
 }
 
+// checkInvisibleIndexOnPK check if primary key is invisible index.
+// Note: PKIsHandle == true means the table already has a visible primary key,
+// we do not need do a check for this case and return directly,
+// because whether primary key is invisible has been check when creating table.
+func checkInvisibleIndexOnPK(tblInfo *model.TableInfo) error {
+	if tblInfo.PKIsHandle {
+		return nil
+	}
+	pk := getPrimaryKey(tblInfo)
+	if pk != nil && pk.Invisible {
+		return ErrPKIndexCantBeInvisible
+	}
+	return nil
+}
+
+// getPrimaryKey extract the primary key in a table and return `IndexInfo`
+// The returned primary key could be explicit or implicit.
+// If there is no explicit primary key in table,
+// the first UNIQUE INDEX on NOT NULL columns will be the implicit primary key.
+// For more information about implicit primary key, see
+// https://dev.mysql.com/doc/refman/8.0/en/invisible-indexes.html
+func getPrimaryKey(tblInfo *model.TableInfo) *model.IndexInfo {
+	var implicitPK *model.IndexInfo
+
+	for _, key := range tblInfo.Indices {
+		if key.Primary {
+			// table has explicit primary key
+			return key
+		}
+		// The case index without any columns should never happen, but still do a check here
+		if len(key.Columns) == 0 {
+			continue
+		}
+		// find the first unique key with NOT NULL columns
+		if implicitPK == nil && key.Unique {
+			// ensure all columns in unique key have NOT NULL flag
+			allColNotNull := true
+			skip := false
+			for _, idxCol := range key.Columns {
+				col := model.FindColumnInfo(tblInfo.Cols(), idxCol.Name.L)
+				// This index has a column in DeleteOnly state,
+				// or it is expression index (it defined on a hidden column),
+				// it can not be implicit PK, go to next index iterator
+				if col == nil || col.Hidden {
+					skip = true
+					break
+				}
+				if !mysql.HasNotNullFlag(col.Flag) {
+					allColNotNull = false
+					break
+				}
+			}
+			if skip {
+				continue
+			}
+			if allColNotNull {
+				implicitPK = key
+			}
+		}
+	}
+	return implicitPK
+}
+
 func setTableAutoRandomBits(ctx sessionctx.Context, tbInfo *model.TableInfo, colDefs []*ast.ColumnDef) error {
 	allowAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
 	pkColName := tbInfo.GetPkName()
@@ -1112,8 +1176,13 @@ func setTableAutoRandomBits(ctx sessionctx.Context, tbInfo *model.TableInfo, col
 			if !allowAutoRandom {
 				return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomExperimentalDisabledErrMsg)
 			}
+			if col.Tp.Tp != mysql.TypeLonglong {
+				return ErrInvalidAutoRandom.GenWithStackByArgs(
+					fmt.Sprintf(autoid.AutoRandomOnNonBigIntColumn, types.TypeStr(col.Tp.Tp)))
+			}
 			if !tbInfo.PKIsHandle || col.Name.Name.L != pkColName.L {
-				return ErrInvalidAutoRandom.GenWithStackByArgs(fmt.Sprintf(autoid.AutoRandomPKisNotHandleErrMsg, col.Name.Name.O))
+				errMsg := fmt.Sprintf(autoid.AutoRandomPKisNotHandleErrMsg, col.Name.Name.O)
+				return ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
 			}
 			if containsColumnOption(col, ast.ColumnOptionAutoIncrement) {
 				return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomIncompatibleWithAutoIncErrMsg)
@@ -1126,16 +1195,18 @@ func setTableAutoRandomBits(ctx sessionctx.Context, tbInfo *model.TableInfo, col
 			if err != nil {
 				return errors.Trace(err)
 			}
-			maxFieldTypeBitsLength := uint64(mysql.DefaultLengthOfMysqlTypes[col.Tp.Tp] * 8)
+
+			layout := autoid.NewAutoRandomIDLayout(col.Tp, autoRandBits)
 			if autoRandBits == 0 {
 				return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomNonPositive)
-			} else if autoRandBits >= maxFieldTypeBitsLength {
-				return ErrInvalidAutoRandom.GenWithStackByArgs(fmt.Sprintf(autoid.AutoRandomOverflowErrMsg, col.Name.Name.L, maxFieldTypeBitsLength, autoRandBits, col.Name.Name.L, maxFieldTypeBitsLength-1))
+			} else if autoRandBits > autoid.MaxAutoRandomBits {
+				errMsg := fmt.Sprintf(autoid.AutoRandomOverflowErrMsg,
+					autoid.MaxAutoRandomBits, autoRandBits, col.Name.Name.O)
+				return ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
 			}
 			tbInfo.AutoRandomBits = autoRandBits
 
-			availableBits := maxFieldTypeBitsLength - 1 - autoRandBits
-			msg := fmt.Sprintf(autoid.AutoRandomAvailableAllocTimesNote, uint64(math.Pow(2, float64(availableBits)))-1)
+			msg := fmt.Sprintf(autoid.AutoRandomAvailableAllocTimesNote, layout.IncrementalBitsCapacity())
 			ctx.GetSessionVars().StmtCtx.AppendNote(errors.Errorf(msg))
 		}
 	}
@@ -1202,6 +1273,11 @@ func buildTableInfo(
 				switch lastCol.Tp {
 				case mysql.TypeLong, mysql.TypeLonglong,
 					mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24:
+					// Primary key cannot be invisible.
+					if constr.Option != nil && constr.Option.Visibility == ast.IndexVisibilityInvisible {
+						return nil, ErrPKIndexCantBeInvisible
+					}
+
 					tbInfo.PKIsHandle = true
 					// Avoid creating index for PK handle column.
 					continue
@@ -1323,7 +1399,10 @@ func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo
 // checkTableInfoValid uses to check table info valid. This is used to validate table info.
 func checkTableInfoValid(tblInfo *model.TableInfo) error {
 	_, err := tables.TableFromMeta(nil, tblInfo)
-	return err
+	if err != nil {
+		return err
+	}
+	return checkInvisibleIndexOnPK(tblInfo)
 }
 
 func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo) (*model.TableInfo, error) {
@@ -1575,11 +1654,18 @@ func (d *ddl) CreateTableWithInfo(
 			err = nil
 		}
 	} else if actionType == model.ActionCreateTable {
-		d.preSplitAndScatter(ctx, tbInfo)
+		d.preSplitAndScatter(ctx, tbInfo, tbInfo.GetPartitionInfo())
 		if tbInfo.AutoIncID > 1 {
 			// Default tableAutoIncID base is 0.
 			// If the first ID is expected to greater than 1, we need to do rebase.
-			err = d.handleAutoIncID(tbInfo, schema.ID)
+			if err = d.handleAutoIncID(tbInfo, schema.ID, autoid.RowIDAllocType); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		if tbInfo.AutoRandID > 1 {
+			// Default tableAutoRandID base is 0.
+			// If the first ID is expected to greater than 1, we need to do rebase.
+			err = d.handleAutoIncID(tbInfo, schema.ID, autoid.AutoRandomType)
 		}
 	}
 
@@ -1588,7 +1674,8 @@ func (d *ddl) CreateTableWithInfo(
 }
 
 // preSplitAndScatter performs pre-split and scatter of the table's regions.
-func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo) {
+// If `pi` is not nil, will only split region for `pi`, this is used when add partition.
+func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *model.PartitionInfo) {
 	sp, ok := d.store.(kv.SplittableStore)
 	if !ok || atomic.LoadUint32(&EnableSplitTableRegion) == 0 {
 		return
@@ -1603,7 +1690,6 @@ func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo
 	} else {
 		scatterRegion = variable.TiDBOptOn(val)
 	}
-	pi := tbInfo.GetPartitionInfo()
 	if pi != nil {
 		preSplit = func() { splitPartitionTableRegion(sp, pi, scatterRegion) }
 	} else {
@@ -1869,7 +1955,7 @@ func checkCharsetAndCollation(cs string, co string) error {
 
 // handleAutoIncID handles auto_increment option in DDL. It creates a ID counter for the table and initiates the counter to a proper value.
 // For example if the option sets auto_increment to 10. The counter will be set to 9. So the next allocated ID will be 10.
-func (d *ddl) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64) error {
+func (d *ddl) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64, tp autoid.AllocatorType) error {
 	allocs := autoid.NewAllocatorsFromTblInfo(d.store, schemaID, tbInfo)
 	tbInfo.State = model.StatePublic
 	tb, err := table.TableFromMeta(allocs, tbInfo)
@@ -1879,8 +1965,14 @@ func (d *ddl) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64) error {
 	// The operation of the minus 1 to make sure that the current value doesn't be used,
 	// the next Alloc operation will get this value.
 	// Its behavior is consistent with MySQL.
-	if err = tb.RebaseAutoID(nil, tbInfo.AutoIncID-1, false); err != nil {
-		return errors.Trace(err)
+	if tp == autoid.RowIDAllocType {
+		if err = tb.RebaseAutoID(nil, tbInfo.AutoIncID-1, false, tp); err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		if err = tb.RebaseAutoID(nil, tbInfo.AutoRandID-1, false, tp); err != nil {
+			return errors.Trace(err)
+		}
 	}
 	return nil
 }
@@ -1897,6 +1989,8 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 				return errors.New("table option auto_id_cache overflows int64")
 			}
 			tbInfo.AutoIdCache = int64(op.UintValue)
+		case ast.TableOptionAutoRandomBase:
+			tbInfo.AutoRandID = int64(op.UintValue)
 		case ast.TableOptionComment:
 			tbInfo.Comment = op.StrValue
 		case ast.TableOptionCompression:
@@ -2058,7 +2152,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 	}
 
 	is := d.infoHandle.Get()
-	if is.TableIsView(ident.Schema, ident.Name) {
+	if is.TableIsView(ident.Schema, ident.Name) || is.TableIsSequence(ident.Schema, ident.Name) {
 		return ErrWrongObject.GenWithStackByArgs(ident.Schema, ident.Name, "BASE TABLE")
 	}
 
@@ -2093,6 +2187,18 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			err = d.AddTablePartitions(ctx, ident, spec)
 		case ast.AlterTableCoalescePartitions:
 			err = d.CoalescePartitions(ctx, ident, spec)
+		case ast.AlterTableReorganizePartition:
+			err = errors.Trace(errUnsupportedReorganizePartition)
+		case ast.AlterTableCheckPartitions:
+			err = errors.Trace(errUnsupportedCheckPartition)
+		case ast.AlterTableRebuildPartition:
+			err = errors.Trace(errUnsupportedRebuildPartition)
+		case ast.AlterTableOptimizePartition:
+			err = errors.Trace(errUnsupportedOptimizePartition)
+		case ast.AlterTableRemovePartitioning:
+			err = errors.Trace(errUnsupportedRemovePartition)
+		case ast.AlterTableExchangePartition:
+			err = errors.Trace(errUnsupportedExchangePartition)
 		case ast.AlterTableDropColumn:
 			err = d.DropColumn(ctx, ident, spec)
 		case ast.AlterTableDropIndex:
@@ -2152,13 +2258,15 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 					}
 					err = d.ShardRowID(ctx, ident, opt.UintValue)
 				case ast.TableOptionAutoIncrement:
-					err = d.RebaseAutoID(ctx, ident, int64(opt.UintValue))
+					err = d.RebaseAutoID(ctx, ident, int64(opt.UintValue), autoid.RowIDAllocType)
 				case ast.TableOptionAutoIdCache:
 					if opt.UintValue > uint64(math.MaxInt64) {
 						// TODO: Refine this error.
 						return errors.New("table option auto_id_cache overflows int64")
 					}
 					err = d.AlterTableAutoIDCache(ctx, ident, int64(opt.UintValue))
+				case ast.TableOptionAutoRandomBase:
+					err = d.RebaseAutoID(ctx, ident, int64(opt.UintValue), autoid.AutoRandomType)
 				case ast.TableOptionComment:
 					spec.Comment = opt.StrValue
 					err = d.AlterTableComment(ctx, ident, spec)
@@ -2186,6 +2294,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			err = d.AlterTableSetTiFlashReplica(ctx, ident, spec.TiFlashReplica)
 		case ast.AlterTableOrderByColumns:
 			err = d.OrderByColumns(ctx, ident)
+		case ast.AlterTableIndexInvisible:
+			err = d.AlterIndexVisibility(ctx, ident, spec.IndexName, spec.Visibility)
 		default:
 			// Nothing to do now.
 		}
@@ -2198,12 +2308,12 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 	return nil
 }
 
-func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int64) error {
+func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int64, tp autoid.AllocatorType) error {
 	schema, t, err := d.getSchemaAndTableByIdent(ctx, ident)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	autoIncID, err := t.Allocators(ctx).Get(autoid.RowIDAllocType).NextGlobalAutoID(t.Meta().ID)
+	autoIncID, err := t.Allocators(ctx).Get(tp).NextGlobalAutoID(t.Meta().ID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2213,11 +2323,15 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 	// and TiDB-B finds 100 < 30001 but returns without any handling,
 	// then TiDB-A may still allocate 99 for auto_increment column. This doesn't make sense for the user.
 	newBase = mathutil.MaxInt64(newBase, autoIncID)
+	actionType := model.ActionRebaseAutoID
+	if tp == autoid.AutoRandomType {
+		actionType = model.ActionRebaseAutoRandomBase
+	}
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
 		SchemaName: schema.Name.L,
-		Type:       model.ActionRebaseAutoID,
+		Type:       actionType,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{newBase},
 	}
@@ -2337,6 +2451,19 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 
 			if err = verifyColumnGenerationSingle(duplicateColNames, cols, spec.Position); err != nil {
 				return nil, errors.Trace(err)
+			}
+		}
+		// Specially, since sequence has been supported, if a newly added column has a
+		// sequence nextval function as it's default value option, it won't fill the
+		// known rows with specific sequence next value under current add column logic.
+		// More explanation can refer: TestSequenceDefaultLogic's comment in sequence_test.go
+		if option.Tp == ast.ColumnOptionDefaultValue {
+			_, isSeqExpr, err := tryToGetSequenceDefaultValue(option)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if isSeqExpr {
+				return nil, errors.Trace(ErrAddColumnWithSequenceAsDefault.GenWithStackByArgs(specNewColumn.Name.Name.O))
 			}
 		}
 	}
@@ -2532,6 +2659,9 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	if ErrSameNamePartition.Equal(err) && spec.IfNotExists {
 		ctx.GetSessionVars().StmtCtx.AppendNote(err)
 		return nil
+	}
+	if err == nil {
+		d.preSplitAndScatter(ctx, meta, partInfo)
 	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
@@ -3729,6 +3859,9 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if tb.Meta().IsView() || tb.Meta().IsSequence() {
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(schema.Name.O, tb.Meta().Name.O)
+	}
 	genIDs, err := d.genGlobalIDs(1)
 	if err != nil {
 		return errors.Trace(err)
@@ -3757,6 +3890,13 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		}
 		return errors.Trace(err)
 	}
+	oldTblInfo := tb.Meta()
+	if oldTblInfo.PreSplitRegions > 0 {
+		if _, tb, err := d.getSchemaAndTableByIdent(ctx, ti); err == nil {
+			d.preSplitAndScatter(ctx, tb.Meta(), tb.Meta().GetPartitionInfo())
+		}
+	}
+
 	if !config.TableLockEnabled() {
 		return nil
 	}
@@ -4336,6 +4476,9 @@ func buildPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, d *ddl, s
 		if err := def.Clause.Validate(part.Type, len(part.Columns)); err != nil {
 			return nil, errors.Trace(err)
 		}
+		if err := checkTooLongTable(def.Name); err != nil {
+			return nil, err
+		}
 		// For RANGE partition only VALUES LESS THAN should be possible.
 		clause := def.Clause.(*ast.PartitionDefinitionClauseLessThan)
 		if len(part.Columns) > 0 {
@@ -4417,7 +4560,7 @@ func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if t.Meta().IsView() {
+		if t.Meta().IsView() || t.Meta().IsSequence() {
 			return table.ErrUnsupportedOp.GenWithStackByArgs()
 		}
 		err = checkTableLocked(t.Meta(), tl.Type, sessionInfo)
@@ -4507,7 +4650,7 @@ func (d *ddl) CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) 
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if t.Meta().IsView() {
+		if t.Meta().IsView() || t.Meta().IsSequence() {
 			return table.ErrUnsupportedOp
 		}
 		// Maybe the table t was not locked, but still try to unlock this table.
@@ -4686,6 +4829,39 @@ func (d *ddl) DropSequence(ctx sessionctx.Context, ti ast.Ident, ifExists bool) 
 		SchemaName: schema.Name.L,
 		Type:       model.ActionDropSequence,
 		BinlogInfo: &model.HistoryInfo{},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func (d *ddl) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident, indexName model.CIStr, visibility ast.IndexVisibility) error {
+	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
+	if err != nil {
+		return err
+	}
+
+	invisible := false
+	if visibility == ast.IndexVisibilityInvisible {
+		invisible = true
+	}
+
+	skip, err := validateAlterIndexVisibility(indexName, invisible, tb.Meta())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if skip {
+		return nil
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tb.Meta().ID,
+		SchemaName: schema.Name.L,
+		Type:       model.ActionAlterIndexVisibility,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{indexName, invisible},
 	}
 
 	err = d.doDDLJob(ctx, job)

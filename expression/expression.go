@@ -131,9 +131,9 @@ type Expression interface {
 	IsCorrelated() bool
 
 	// ConstItem checks if this expression is constant item, regardless of query evaluation state.
-	// A constant item can be eval() when build a plan.
 	// An expression is constant item if it:
 	// refers no tables.
+	// refers no correlated column.
 	// refers no subqueries that refers any tables.
 	// refers no non-deterministic functions.
 	// refers no statement parameters.
@@ -389,7 +389,7 @@ func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Colum
 			if buf.IsNull(i) {
 				isZero[i] = -1
 			} else {
-				if types.RoundFloat(f64s[i]) == 0 {
+				if f64s[i] == 0 {
 					isZero[i] = 0
 				} else {
 					isZero[i] = 1
@@ -444,11 +444,7 @@ func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Colum
 			if buf.IsNull(i) {
 				isZero[i] = -1
 			} else {
-				v, err := d64s[i].ToFloat64()
-				if err != nil {
-					return err
-				}
-				if types.RoundFloat(v) == 0 {
+				if d64s[i].IsZero() {
 					isZero[i] = 0
 				} else {
 					isZero[i] = 1
@@ -810,18 +806,18 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 	// Use the failpoint to control whether to push down an expression in the integration test.
 	// Push down all expression if the `failpoint expression` is `all`, otherwise, check
 	// whether scalar function's name is contained in the enabled expression list (e.g.`ne,eq,lt`).
-	failpoint.Inject("PushDownTestSwitcher", func(val failpoint.Value) bool {
+	// If neither of the above is true, switch to original logic.
+	failpoint.Inject("PushDownTestSwitcher", func(val failpoint.Value) {
 		enabled := val.(string)
 		if enabled == "all" {
-			return true
+			failpoint.Return(true)
 		}
 		exprs := strings.Split(enabled, ",")
 		for _, expr := range exprs {
 			if strings.ToLower(strings.TrimSpace(expr)) == sf.FuncName.L {
-				return true
+				failpoint.Return(true)
 			}
 		}
-		return false
 	})
 
 	ret := false

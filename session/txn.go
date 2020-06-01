@@ -207,7 +207,7 @@ func (st *TxnState) changeToInvalid() {
 type dirtyTableOperation struct {
 	kind   int
 	tid    int64
-	handle int64
+	handle kv.Handle
 }
 
 var hasMockAutoIncIDRetry = int64(0)
@@ -305,6 +305,14 @@ func (st *TxnState) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 		return nil, kv.ErrNotExist
 	}
 	return val, nil
+}
+
+// GetMemBuffer overrides the Transaction interface.
+func (st *TxnState) GetMemBuffer() kv.MemBuffer {
+	if st.stmtBuf == nil || st.stmtBuf.Size() == 0 {
+		return st.Transaction.GetMemBuffer()
+	}
+	return kv.NewBufferStoreFrom(st.Transaction.GetMemBuffer(), st.stmtBuf)
 }
 
 // BatchGet overrides the Transaction interface.
@@ -591,6 +599,6 @@ func (s *session) StmtGetMutation(tableID int64) *binlog.TableMutation {
 	return st.mutations[tableID]
 }
 
-func (s *session) StmtAddDirtyTableOP(op int, tid int64, handle int64) {
+func (s *session) StmtAddDirtyTableOP(op int, tid int64, handle kv.Handle) {
 	s.txn.dirtyTableOP = append(s.txn.dirtyTableOP, dirtyTableOperation{op, tid, handle})
 }
