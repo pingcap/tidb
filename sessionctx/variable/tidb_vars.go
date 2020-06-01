@@ -169,6 +169,9 @@ const (
 
 	// TiDBCheckMb4ValueInUTF8 is used to control whether to enable the check wrong utf8 value.
 	TiDBCheckMb4ValueInUTF8 = "tidb_check_mb4_value_in_utf8"
+
+	// TiDBFreeOSMemoryThreshold is used to set the auto free os memory threshold.
+	TiDBFreeOSMemoryThreshold = "tidb_free_os_memory_threshold"
 )
 
 // TiDB system variable names that both in session and global scope.

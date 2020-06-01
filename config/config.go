@@ -134,6 +134,8 @@ type Config struct {
 	EnableDynamicConfig bool `toml:"enable-dynamic-config" json:"enable-dynamic-config"`
 	// EnableCollectExecutionInfo enables the TiDB to collect execution info.
 	EnableCollectExecutionInfo bool `toml:"enable-collect-execution-info" json:"enable-collect-execution-info"`
+	// FreeOSMemoryThreshold is the threshold that auto free os memory.
+	FreeOSMemoryThreshold uint64
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
