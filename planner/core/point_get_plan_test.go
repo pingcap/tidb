@@ -16,7 +16,6 @@ package core_test
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util/testutil"
 	"math"
 	"strings"
 
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/testutil"
 	dto "github.com/prometheus/client_model/go"
 )
 

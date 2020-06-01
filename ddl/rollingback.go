@@ -349,7 +349,8 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		model.ActionModifyColumn, model.ActionAddForeignKey,
 		model.ActionDropForeignKey, model.ActionRenameTable,
 		model.ActionModifyTableCharsetAndCollate, model.ActionTruncateTablePartition,
-		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable, model.ActionModifyTableAutoIdCache:
+		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable,
+		model.ActionModifyTableAutoIdCache, model.ActionAlterIndexVisibility:
 		ver, err = cancelOnlyNotHandledJob(job)
 	default:
 		job.State = model.JobStateCancelled
@@ -357,12 +358,6 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 	}
 
 	if err != nil {
-		if job.State != model.JobStateRollingback && job.State != model.JobStateCancelled {
-			logutil.Logger(w.logCtx).Error("[ddl] run DDL job failed", zap.String("job", job.String()), zap.Error(err))
-		} else {
-			logutil.Logger(w.logCtx).Info("[ddl] the DDL job is cancelled normally", zap.String("job", job.String()), zap.Error(err))
-		}
-
 		if job.Error == nil {
 			job.Error = toTError(err)
 		}
@@ -371,6 +366,15 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 				fmt.Sprintf("DDL job rollback, error msg: %s", job.Error.ToSQLError().Message))
 		}
 		job.ErrorCount++
+
+		if job.State != model.JobStateRollingback && job.State != model.JobStateCancelled {
+			logutil.Logger(w.logCtx).Error("[ddl] run DDL job failed", zap.String("job", job.String()), zap.Error(err))
+		} else {
+			logutil.Logger(w.logCtx).Info("[ddl] the DDL job is cancelled normally", zap.String("job", job.String()), zap.Error(err))
+			// If job is cancelled, we shouldn't return an error.
+			return ver, nil
+		}
 	}
+
 	return
 }
