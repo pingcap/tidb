@@ -1184,28 +1184,12 @@ type execStmtResult struct {
 	sqlexec.RecordSet
 	se      *session
 	sql     sqlexec.Statement
-	lastErr error
-}
-
-func (rs *execStmtResult) Next(ctx context.Context, req *chunk.Chunk) error {
-	err := rs.RecordSet.Next(ctx, req)
-	if err != nil {
-		rs.lastErr = err
-		if err1 := rs.RecordSet.Close(); err1 != nil {
-			sessVars := rs.se.sessionVars
-			logutil.Logger(ctx).Warn("Close() error after Next() error",
-				zap.Int64("schemaVersion", sessVars.TxnCtx.SchemaVersion),
-				zap.Error(err1),
-				zap.String("session", rs.se.String()))
-		}
-	}
-	return err
 }
 
 func (rs *execStmtResult) Close() error {
-	defer rs.RecordSet.Close()
 	se := rs.se
-	err := finishStmt(context.Background(), se, rs.lastErr, rs.sql)
+	err := rs.RecordSet.Close()
+	err = finishStmt(context.Background(), se, err, rs.sql)
 	if se.txn.pending() {
 		// After run statement finish, txn state is still pending means the
 		// statement never need a Txn(), such as:
