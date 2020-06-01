@@ -192,8 +192,8 @@ func recordAbortTxnDuration(sessVars *variable.SessionVars) {
 	}
 }
 
-func finishStmt(ctx context.Context, sctx sessionctx.Context, se *session, sessVars *variable.SessionVars,
-	meetsErr error, sql sqlexec.Statement) error {
+func (se *session) finishStmt(ctx context.Context, meetsErr error, sql sqlexec.Statement) error {
+	sessVars := se.sessionVars
 	if meetsErr != nil {
 		if !sessVars.InTxn() {
 			logutil.BgLogger().Info("rollbackTxn for ddl/autocommit failed")
@@ -217,20 +217,20 @@ func finishStmt(ctx context.Context, sctx sessionctx.Context, se *session, sessV
 		return nil
 	}
 
-	return checkStmtLimit(ctx, sctx, se)
+	return checkStmtLimit(ctx, se)
 }
 
-func checkStmtLimit(ctx context.Context, sctx sessionctx.Context, se *session) error {
+func checkStmtLimit(ctx context.Context, se *session) error {
 	// If the user insert, insert, insert ... but never commit, TiDB would OOM.
 	// So we limit the statement count in a transaction here.
 	var err error
 	sessVars := se.GetSessionVars()
-	history := GetHistory(sctx)
+	history := GetHistory(se)
 	if history.Count() > int(config.GetGlobalConfig().Performance.StmtCountLimit) {
 		if !sessVars.BatchCommit {
 			se.RollbackTxn(ctx)
 			return errors.Errorf("statement count %d exceeds the transaction limitation, autocommit = %t",
-				history.Count(), sctx.GetSessionVars().IsAutocommit())
+				history.Count(), se.sessionVars.IsAutocommit())
 		}
 		err = se.NewTxn(ctx)
 		// The transaction does not committed yet, we need to keep it in transaction.
@@ -290,20 +290,14 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 			}
 		}
 	}
-	err = finishStmt(ctx, sctx, se, sessVars, err, s)
-
-	if se.txn.pending() {
-		// After run statement finish, txn state is still pending means the
-		// statement never need a Txn(), such as:
-		//
-		// set @@tidb_general_log = 1
-		// set @@autocommit = 0
-		// select 1
-		//
-		// Reset txn state to invalid to dispose the pending start ts.
-		se.txn.changeToInvalid()
+	if rs != nil {
+		return &execStmtResult{
+			RecordSet: rs,
+			sql:       s,
+			se:        se,
+		}, err
 	}
-	return rs, err
+	return nil, err
 }
 
 // GetHistory get all stmtHistory in current txn. Exported only for test.

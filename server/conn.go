@@ -1292,9 +1292,6 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 
 func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, lastStmt bool) error {
 	rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
-	if rs != nil {
-		defer terror.Call(rs.Close)
-	}
 	if err != nil {
 		return err
 	}
@@ -1307,13 +1304,14 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, lastStm
 	if rs != nil {
 		connStatus := atomic.LoadInt32(&cc.status)
 		if connStatus == connStatusShutdown || connStatus == connStatusWaitShutdown {
-			return executor.ErrQueryInterrupted
+			terror.Log(rs.Close())
+			return errors.Trace(executor.ErrQueryInterrupted)
 		}
-
 		err = cc.writeResultset(ctx, rs, false, status, 0)
 		if err != nil {
 			return err
 		}
+		return rs.Close()
 	} else {
 		err = cc.handleQuerySpecial(ctx, status)
 		if err != nil {

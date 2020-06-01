@@ -1176,6 +1176,50 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	return recordSet, nil
 }
 
+// execStmtResult is the return value of ExecuteStmt and it implements the sqlexec.RecordSet interface.
+// Why we need a struct to wrap a RecordSet and provide another RecordSet?
+// This is because there are so many session state related things that definitely not belongs to the original
+// RecordSet, so this struct exists and RecordSet.Close() is overrided handle that.
+type execStmtResult struct {
+	sqlexec.RecordSet
+	se      *session
+	sql     sqlexec.Statement
+	lastErr error
+}
+
+func (rs *execStmtResult) Next(ctx context.Context, req *chunk.Chunk) error {
+	err := rs.RecordSet.Next(ctx, req)
+	if err != nil {
+		rs.lastErr = err
+		if err1 := rs.RecordSet.Close(); err1 != nil {
+			sessVars := rs.se.sessionVars
+			logutil.Logger(ctx).Warn("Close() error after Next() error",
+				zap.Int64("schemaVersion", sessVars.TxnCtx.SchemaVersion),
+				zap.Error(err1),
+				zap.String("session", rs.se.String()))
+		}
+	}
+	return err
+}
+
+func (rs *execStmtResult) Close() error {
+	defer rs.RecordSet.Close()
+	se := rs.se
+	err := se.finishStmt(context.Background(), rs.lastErr, rs.sql)
+	if se.txn.pending() {
+		// After run statement finish, txn state is still pending means the
+		// statement never need a Txn(), such as:
+		//
+		// set @@tidb_general_log = 1
+		// set @@autocommit = 0
+		// select 1
+		//
+		// Reset txn state to invalid to dispose the pending start ts.
+		se.txn.changeToInvalid()
+	}
+	return err
+}
+
 func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec.RecordSet, err error) {
 	s.PrepareTxnCtx(ctx)
 	connID := s.sessionVars.ConnectionID
