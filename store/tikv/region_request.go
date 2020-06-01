@@ -172,10 +172,13 @@ func (s *RegionRequestSender) SendReqCtx(
 	} else {
 		replicaRead = kv.ReplicaReadLeader
 	}
-	seed := req.ReplicaReadSeed
 	for {
 		switch sType {
 		case kv.TiKV:
+			var seed uint32
+			if req.ReplicaReadSeed != nil {
+				seed = *req.ReplicaReadSeed
+			}
 			rpcCtx, err = s.regionCache.GetTiKVRPCContext(bo, regionID, replicaRead, seed)
 		case kv.TiFlash:
 			rpcCtx, err = s.regionCache.GetTiFlashRPCContext(bo, regionID)
@@ -224,7 +227,7 @@ func (s *RegionRequestSender) SendReqCtx(
 			return nil, nil, errors.Trace(err)
 		}
 		if regionErr != nil {
-			retry, err = s.onRegionError(bo, rpcCtx, &seed, regionErr)
+			retry, err = s.onRegionError(bo, rpcCtx, req.ReplicaReadSeed, regionErr)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
@@ -404,6 +407,11 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 	if regionErr.GetRaftEntryTooLarge() != nil {
 		logutil.BgLogger().Warn("tikv reports `RaftEntryTooLarge`", zap.Stringer("ctx", ctx))
 		return false, errors.New(regionErr.String())
+	}
+	if regionErr.GetRegionNotFound() != nil && seed != nil {
+		logutil.BgLogger().Debug("tikv reports `RegionNotFound` in follow-reader",
+			zap.Stringer("ctx", ctx), zap.Uint32("seed", *seed))
+		*seed = *seed + 1
 	}
 	// For other errors, we only drop cache here.
 	// Because caller may need to re-split the request.
