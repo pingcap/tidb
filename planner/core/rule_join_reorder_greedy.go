@@ -14,9 +14,9 @@
 package core
 
 import (
+	"math"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
-	"math"
 )
 
 type joinReorderGreedySolver struct {
