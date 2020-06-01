@@ -978,7 +978,7 @@ func (s *testSuite9) TestAutoRandomID(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists ar`)
-	tk.MustExec(`create table ar (id int key auto_random, name char(10))`)
+	tk.MustExec(`create table ar (id bigint key auto_random, name char(10))`)
 
 	tk.MustExec(`insert into ar(id) values (null)`)
 	rs := tk.MustQuery(`select id from ar`)
@@ -1021,7 +1021,7 @@ func (s *testSuite9) TestMultiAutoRandomID(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists ar`)
-	tk.MustExec(`create table ar (id int key auto_random, name char(10))`)
+	tk.MustExec(`create table ar (id bigint key auto_random, name char(10))`)
 
 	tk.MustExec(`insert into ar(id) values (null),(null),(null)`)
 	rs := tk.MustQuery(`select id from ar order by id`)
@@ -1070,7 +1070,7 @@ func (s *testSuite9) TestAutoRandomIDAllowZero(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists ar`)
-	tk.MustExec(`create table ar (id int key auto_random, name char(10))`)
+	tk.MustExec(`create table ar (id bigint key auto_random, name char(10))`)
 
 	rs := tk.MustQuery(`select @@session.sql_mode`)
 	sqlMode := rs.Rows()[0][0].(string)
@@ -1106,9 +1106,11 @@ func (s *testSuite9) TestAutoRandomIDExplicit(c *C) {
 	}
 
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
+
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists ar`)
-	tk.MustExec(`create table ar (id int key auto_random, name char(10))`)
+	tk.MustExec(`create table ar (id bigint key auto_random, name char(10))`)
 
 	tk.MustExec(`insert into ar(id) values (1)`)
 	tk.MustQuery(`select id from ar`).Check(testkit.Rows("1"))
