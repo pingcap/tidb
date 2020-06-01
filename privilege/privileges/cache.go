@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
@@ -113,12 +114,12 @@ const (
 
 // GlobalPrivValue is store json format for priv column in mysql.global_priv.
 type GlobalPrivValue struct {
-	SSLType     SSLType             `json:"ssl_type,omitempty"`
-	SSLCipher   string              `json:"ssl_cipher,omitempty"`
-	X509Issuer  string              `json:"x509_issuer,omitempty"`
-	X509Subject string              `json:"x509_subject,omitempty"`
-	SAN         string              `json:"san,omitempty"`
-	SANs        map[string][]string `json:"-"`
+	SSLType     SSLType                   `json:"ssl_type,omitempty"`
+	SSLCipher   string                    `json:"ssl_cipher,omitempty"`
+	X509Issuer  string                    `json:"x509_issuer,omitempty"`
+	X509Subject string                    `json:"x509_subject,omitempty"`
+	SAN         string                    `json:"san,omitempty"`
+	SANs        map[util.SANType][]string `json:"-"`
 }
 
 // RequireStr returns describe string after `REQUIRE` clause.
@@ -637,16 +638,9 @@ func (p *MySQLPrivilege) decodeGlobalPrivTableRow(row chunk.Row, fs []*ast.Resul
 					value.Priv.X509Subject = privValue.X509Subject
 					value.Priv.SAN = privValue.SAN
 					if len(value.Priv.SAN) > 0 {
-						value.Priv.SANs = make(map[string][]string)
-						sans := strings.Split(value.Priv.SAN, ",")
-						for _, san := range sans {
-							kv := strings.SplitN(san, ":", 1)
-							if len(kv) != 2 {
-								continue
-							}
-							k, v := strings.TrimSpace(kv[0]), strings.TrimSpace(kv[1])
-							pre := value.Priv.SANs[k]
-							value.Priv.SANs[k] = append(pre, v)
+						value.Priv.SANs, err = util.ParseAndCheckSAN(value.Priv.SAN)
+						if err != nil {
+							value.Broken = true
 						}
 					}
 				}

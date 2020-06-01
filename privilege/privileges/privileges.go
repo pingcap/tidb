@@ -307,13 +307,13 @@ func (p *UserPrivileges) checkSSL(priv *globalPrivRecord, tlsState *tls.Connecti
 					var unsupported bool
 					var certValue []string
 					switch k {
-					case "URI":
+					case util.URI:
 						for _, uri := range cert.URIs {
 							certValue = append(certValue, uri.String())
 						}
-					case "DNS":
+					case util.DNS:
 						certValue = cert.DNSNames
-					case "IP":
+					case util.IP:
 						for _, ip := range cert.IPAddresses {
 							certValue = append(certValue, ip.String())
 						}

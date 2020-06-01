@@ -330,6 +330,8 @@ func tlsOption2GlobalPriv(tlsOptions []*ast.TLSOption) (priv []byte, err error) 
 				typeName = "ISSUER"
 			case ast.Subject:
 				typeName = "SUBJECT"
+			case ast.SAN:
+				typeName = "SAN"
 			}
 			err = errors.Errorf("Duplicate require %s clause", typeName)
 			return
@@ -370,6 +372,10 @@ func tlsOption2GlobalPriv(tlsOptions []*ast.TLSOption) (priv []byte, err error) 
 			gp.X509Subject = tlsOpt.Value
 		case ast.SAN:
 			gp.SSLType = privileges.SslTypeSpecified
+			_, err = util.ParseAndCheckSAN(tlsOpt.Value)
+			if err != nil {
+				return
+			}
 			gp.SAN = tlsOpt.Value
 		default:
 			err = errors.Errorf("Unknown ssl type: %#v", tlsOpt.Type)
