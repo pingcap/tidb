@@ -566,11 +566,8 @@ func partitionRangeForExpr(sctx sessionctx.Context, expr expression.Expression, 
 			newRange := partitionRangeForOrExpr(sctx, args[0], args[1], lessThan, col, partFn)
 			return result.intersection(newRange)
 		} else if op.FuncName.L == ast.In {
-			if p, ok := pruner.(*rangePruner); ok {
-				newRange := partitionRangeForInExpr(sctx, op.GetArgs(), p)
-				return result.intersection(newRange)
-			}
-			return result
+			newRange := partitionRangeForInExpr(sctx, op.GetArgs(), lessThan, col, partFn)
+			return result.intersection(newRange)
 		}
 	}
 
@@ -585,44 +582,6 @@ func partitionRangeForExpr(sctx sessionctx.Context, expr expression.Expression, 
 	return result.intersectionRange(start, end)
 }
 
-<<<<<<< HEAD
-=======
-type partitionRangePruner interface {
-	partitionRangeForExpr(sessionctx.Context, expression.Expression) (start, end int, succ bool)
-	fullRange() partitionRangeOR
-}
-
-var _ partitionRangePruner = &rangePruner{}
-
-// rangePruner is used by 'partition by range'.
-type rangePruner struct {
-	lessThan lessThanDataInt
-	col      *expression.Column
-	partFn   *expression.ScalarFunction
-}
-
-func (p *rangePruner) partitionRangeForExpr(sctx sessionctx.Context, expr expression.Expression) (int, int, bool) {
-	if constExpr, ok := expr.(*expression.Constant); ok {
-		if b, err := constExpr.Value.ToBool(sctx.GetSessionVars().StmtCtx); err == nil && b == 0 {
-			// A constant false expression.
-			return 0, 0, true
-		}
-	}
-	dataForPrune, ok := p.extractDataForPrune(sctx, expr)
-	if !ok {
-		return 0, 0, false
-	}
-
-	unsigned := mysql.HasUnsignedFlag(p.col.RetType.Flag)
-	start, end := pruneUseBinarySearch(p.lessThan, dataForPrune, unsigned)
-	return start, end, true
-}
-
-func (p *rangePruner) fullRange() partitionRangeOR {
-	return fullRange(p.lessThan.length())
-}
-
->>>>>>> 3afb631... planner/core: support range partition pruning for 'in' expression (#17210)
 // partitionRangeForOrExpr calculate the partitions for or(expr1, expr2)
 func partitionRangeForOrExpr(sctx sessionctx.Context, expr1, expr2 expression.Expression, lessThan lessThanData,
 	col *expression.Column, partFn *expression.ScalarFunction) partitionRangeOR {
@@ -632,10 +591,10 @@ func partitionRangeForOrExpr(sctx sessionctx.Context, expr1, expr2 expression.Ex
 }
 
 func partitionRangeForInExpr(sctx sessionctx.Context, args []expression.Expression,
-	pruner *rangePruner) partitionRangeOR {
+	lessThan lessThanData, partCol *expression.Column, partFn *expression.ScalarFunction) partitionRangeOR {
 	col, ok := args[0].(*expression.Column)
-	if !ok || col.ID != pruner.col.ID {
-		return pruner.fullRange()
+	if !ok || col.ID != partCol.ID {
+		return fullRange(lessThan.length())
 	}
 
 	var result partitionRangeOR
@@ -643,7 +602,7 @@ func partitionRangeForInExpr(sctx sessionctx.Context, args []expression.Expressi
 	for i := 1; i < len(args); i++ {
 		constExpr, ok := args[i].(*expression.Constant)
 		if !ok {
-			return pruner.fullRange()
+			return fullRange(lessThan.length())
 		}
 		switch constExpr.Value.Kind() {
 		case types.KindInt64, types.KindUint64:
@@ -651,14 +610,14 @@ func partitionRangeForInExpr(sctx sessionctx.Context, args []expression.Expressi
 			result = append(result, partitionRange{0, 1})
 			continue
 		default:
-			return pruner.fullRange()
+			return fullRange(lessThan.length())
 		}
 		val, err := constExpr.Value.ToInt64(sctx.GetSessionVars().StmtCtx)
 		if err != nil {
-			return pruner.fullRange()
+			return fullRange(lessThan.length())
 		}
 
-		start, end := pruneUseBinarySearch(pruner.lessThan, dataForPrune{op: ast.EQ, c: val}, unsigned)
+		start, end := pruneUseBinarySearch(lessThan, dataForPrune{op: ast.EQ, c: val}, unsigned)
 		result = append(result, partitionRange{start, end})
 	}
 	return result.simplify()
