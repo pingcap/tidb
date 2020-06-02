@@ -118,6 +118,13 @@ func BoolToIntStr(b bool) string {
 	return "0"
 }
 
+func boolToOnOff(b bool) string {
+	if b {
+		return "on"
+	}
+	return "off"
+}
+
 // BoolToInt32 converts bool to int32
 func BoolToInt32(b bool) int32 {
 	if b {
@@ -730,6 +737,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, TiDBStmtSummaryHistorySize, strconv.Itoa(config.GetGlobalConfig().StmtSummary.HistorySize)},
 	{ScopeSession, TiDBIsolationReadEngines, strings.Join(config.GetGlobalConfig().IsolationRead.Engines, ", ")},
 	{ScopeGlobal | ScopeSession, TiDBStoreLimit, strconv.FormatInt(atomic.LoadInt64(&config.GetGlobalConfig().TiKVClient.StoreLimit), 10)},
+	{ScopeSession, TiDBAllowAutoRandExplicitInsert, boolToOnOff(DefTiDBAllowAutoRandExplicitInsert)},
 }
 
 // SynonymsSysVariables is synonyms of system variables.
