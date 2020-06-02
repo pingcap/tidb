@@ -47,8 +47,6 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		return tblIDs, nil
 	} else if diff.Type == model.ActionModifySchemaCharsetAndCollate {
 		return nil, b.applyModifySchemaCharsetAndCollate(m, diff)
-	} else if diff.Type == model.ActionExchangeTablePartition {
-		return nil, b.applyExchangePartition(m, diff)
 	}
 	roDBInfo, ok := b.is.SchemaByID(diff.SchemaID)
 	if !ok {
@@ -109,6 +107,13 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 			return nil, errors.Trace(err)
 		}
 	}
+	if diff.Type == model.ActionExchangeTablePartition {
+		var err error
+		tblIDs, err = b.applyExchangePartition(m, diff, tblIDs)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
 	return tblIDs, nil
 }
 
@@ -158,19 +163,18 @@ func (b *Builder) copySortedTables(oldTableID, newTableID int64) {
 	}
 }
 
-func (b *Builder) applyExchangePartition(m *meta.Meta, diff *model.SchemaDiff) error {
+func (b *Builder) applyExchangePartition(m *meta.Meta, diff *model.SchemaDiff, affected []int64) ([]int64, error) {
 	ptDi, err := m.GetDatabase(diff.PtSchemaID)
 	if err != nil {
-		return errors.Trace(err)
+		return affected, errors.Trace(err)
 	}
-	tblIDs := make([]int64, 0, 2)
-	tblIDs = b.applyDropTable(ptDi, diff.PtTableID, tblIDs)
+	affected = b.applyDropTable(ptDi, diff.PtTableID, affected)
 	var allocs autoid.Allocators
-	tblIDs, err = b.applyCreateTable(m, ptDi, diff.PtTableID, allocs, diff.Type, tblIDs)
+	affected, err = b.applyCreateTable(m, ptDi, diff.PtTableID, allocs, diff.Type, affected)
 	if err != nil {
-		return errors.Trace(err)
+		return affected, errors.Trace(err)
 	}
-	return nil
+	return affected, nil
 }
 
 func (b *Builder) applyCreateSchema(m *meta.Meta, diff *model.SchemaDiff) error {
