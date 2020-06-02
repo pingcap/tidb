@@ -743,6 +743,12 @@ func (w *worker) doModifyColumn(
 func checkAndApplyNewAutoRandomBits(t *meta.Meta, schemaID int64, tblInfo *model.TableInfo,
 	newCol *model.ColumnInfo, oldName *model.CIStr, newAutoRandBits uint64) error {
 	newLayout := autoid.NewAutoRandomIDLayout(&newCol.FieldType, newAutoRandBits)
+
+	// GenAutoRandomID first to prevent concurrent update.
+	_, err := t.GenAutoRandomID(schemaID, tblInfo.ID, 1)
+	if err != nil {
+		return err
+	}
 	currentIncBitsVal, err := t.GetAutoRandomID(schemaID, tblInfo.ID)
 	if err != nil {
 		return err

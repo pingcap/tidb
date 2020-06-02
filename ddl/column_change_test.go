@@ -16,7 +16,9 @@ package ddl
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/parser/mysql"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -149,6 +151,63 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 	mu.Unlock()
 	s.testColumnDrop(c, ctx, d, tb)
 	s.testAddColumnNoDefault(c, ctx, d, tblInfo)
+}
+
+func (s *testColumnChangeSuite) TestModifyAutoRandColumnWithMetaKeyChanged(c *C) {
+	d := testNewDDLAndStart(
+		context.Background(),
+		c,
+		WithStore(s.store),
+		WithLease(testLease),
+	)
+	defer d.Stop()
+
+	ids, err := d.genGlobalIDs(1)
+	tableID := ids[0]
+	c.Assert(err, IsNil)
+	colInfo := &model.ColumnInfo{
+		Name:         model.NewCIStr("a"),
+		Offset:       0,
+		State:        model.StatePublic,
+		FieldType:    *types.NewFieldType(mysql.TypeLonglong),
+	}
+	tblInfo := &model.TableInfo{
+		ID: tableID,
+		Name: model.NewCIStr("t"),
+		Columns: []*model.ColumnInfo{colInfo},
+		AutoRandomBits: 5,
+	}
+	colInfo.ID = allocateColumnID(tblInfo)
+	ctx := testNewContext(d)
+	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
+
+	tc := &TestDDLCallback{}
+	var errCount int32 = 3
+	var genAutoRandErr error
+	tc.onJobRunBefore = func(job *model.Job) {
+		if atomic.LoadInt32(&errCount) > 0 && job.Type == model.ActionModifyColumn {
+			atomic.AddInt32(&errCount, -1)
+			genAutoRandErr = kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+				t := meta.NewMeta(txn)
+				_, err1 := t.GenAutoRandomID(s.dbInfo.ID, tableID, 1)
+				return err1
+			})
+		}
+	}
+	d.SetHook(tc)
+	job := &model.Job{
+		SchemaID:   s.dbInfo.ID,
+		TableID:    tblInfo.ID,
+		SchemaName: s.dbInfo.Name.L,
+		Type:       model.ActionModifyColumn,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{colInfo, colInfo.Name, ast.ColumnPosition{}, 0, 3},
+	}
+	err = d.doDDLJob(ctx, job)
+	c.Assert(err, IsNil)
+	c.Assert(errCount == 0, IsTrue)
+	c.Assert(genAutoRandErr, IsNil)
+	testCheckJobDone(c, d, job, true)
 }
 
 func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx sessionctx.Context, d *ddl, tblInfo *model.TableInfo) {
