@@ -167,6 +167,30 @@ func (s *testHintParserSuite) TestParseHint(c *C) {
 			},
 		},
 		{
+			input: "USE_INDEX(@qb1 tbl1 partition(p0) x) USE_INDEX_MERGE(@qb2 tbl2@qb2 partition(p0, p1) x, y, z)",
+			output: []*ast.TableOptimizerHint{
+				{
+					HintName: model.NewCIStr("USE_INDEX"),
+					Tables: []ast.HintTable{{
+						TableName:     model.NewCIStr("tbl1"),
+						PartitionList: []model.CIStr{model.NewCIStr("p0")},
+					}},
+					QBName:  model.NewCIStr("qb1"),
+					Indexes: []model.CIStr{model.NewCIStr("x")},
+				},
+				{
+					HintName: model.NewCIStr("USE_INDEX_MERGE"),
+					Tables: []ast.HintTable{{
+						TableName:     model.NewCIStr("tbl2"),
+						QBName:        model.NewCIStr("qb2"),
+						PartitionList: []model.CIStr{model.NewCIStr("p0"), model.NewCIStr("p1")},
+					}},
+					QBName:  model.NewCIStr("qb2"),
+					Indexes: []model.CIStr{model.NewCIStr("x"), model.NewCIStr("y"), model.NewCIStr("z")},
+				},
+			},
+		},
+		{
 			input: `SET_VAR(sbs = 16M) SET_VAR(fkc=OFF) SET_VAR(os="mcb=off") set_var(abc=1)`,
 			errs: []string{
 				`.*Optimizer hint SET_VAR is not supported.*`,
