@@ -947,9 +947,10 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	autoid.SetStep(1)
 	// Increase auto_random bits but it will overlap with incremental bits.
 	mustExecAndDrop("create table t (a bigint unsigned auto_random(5) primary key)", func() {
-		// Insert 0..001..110 (53 `1`s).
-		insertSQL := fmt.Sprintf("insert into t values (%d)", (1<<(64-10))-2)
+		const alterTryCnt, rebaseOffset = 3, 1
+		insertSQL := fmt.Sprintf("insert into t values (%d)", ((1<<(64-10))-1)-rebaseOffset-alterTryCnt)
 		tk.MustExec(insertSQL)
+		// Try to rebase to 0..0011..1111 (54 `1`s).
 		tk.MustExec("alter table t modify a bigint unsigned auto_random(6)")
 		tk.MustExec("alter table t modify a bigint unsigned auto_random(10)")
 		assertOverflow("alter table t modify a bigint unsigned auto_random(11)", "a", 10, 11)

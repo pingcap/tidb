@@ -195,19 +195,32 @@ func (s *testColumnChangeSuite) TestModifyAutoRandColumnWithMetaKeyChanged(c *C)
 		}
 	}
 	d.SetHook(tc)
+	const newAutoRandomBits uint64 = 10
 	job := &model.Job{
 		SchemaID:   s.dbInfo.ID,
 		TableID:    tblInfo.ID,
 		SchemaName: s.dbInfo.Name.L,
 		Type:       model.ActionModifyColumn,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{colInfo, colInfo.Name, ast.ColumnPosition{}, 0, 3},
+		Args:       []interface{}{colInfo, colInfo.Name, ast.ColumnPosition{}, 0, newAutoRandomBits},
 	}
 	err = d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
 	c.Assert(errCount == 0, IsTrue)
 	c.Assert(genAutoRandErr, IsNil)
 	testCheckJobDone(c, d, job, true)
+	var newTbInfo *model.TableInfo
+	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		var err error
+		newTbInfo, err = t.GetTable(s.dbInfo.ID, tableID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		return nil
+	})
+	c.Assert(err, IsNil)
+	c.Assert(newTbInfo.AutoRandomBits, Equals, newAutoRandomBits)
 }
 
 func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx sessionctx.Context, d *ddl, tblInfo *model.TableInfo) {
