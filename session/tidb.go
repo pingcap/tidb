@@ -242,21 +242,33 @@ func checkStmtLimit(ctx context.Context, se *session) error {
 	return err
 }
 
-func runStmtRaw(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.RecordSet, err error) {
+// runStmt executes the sqlexec.Statement and commit or rollback the current transaction.
+func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) (rs sqlexec.RecordSet, err error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("session.runStmt", opentracing.ChildOf(span.Context()))
 		span1.LogKV("sql", s.OriginText())
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-	se.SetValue(sessionctx.QueryString, s.OriginText())
+	sctx.SetValue(sessionctx.QueryString, s.OriginText())
 	if _, ok := s.(*executor.ExecStmt).StmtNode.(ast.DDLNode); ok {
-		se.SetValue(sessionctx.LastExecuteDDL, true)
+		sctx.SetValue(sessionctx.LastExecuteDDL, true)
 	} else {
-		se.ClearValue(sessionctx.LastExecuteDDL)
+		sctx.ClearValue(sessionctx.LastExecuteDDL)
 	}
 
+	se := sctx.(*session)
 	sessVars := se.GetSessionVars()
+	// Save origTxnCtx here to avoid it reset in the transaction retry.
+	origTxnCtx := sessVars.TxnCtx
+	defer func() {
+		// If it is not a select statement, we record its slow log here,
+		// then it could include the transaction commit time.
+		if rs == nil {
+			s.(*executor.ExecStmt).FinishExecuteStmt(origTxnCtx.StartTS, err == nil, false)
+		}
+	}()
+
 	err = se.checkTxnAborted(s)
 	if err != nil {
 		return nil, err
@@ -266,28 +278,18 @@ func runStmtRaw(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlex
 	if !s.IsReadOnly(sessVars) {
 		// All the history should be added here.
 		if err == nil && sessVars.TxnCtx.CouldRetry {
-			GetHistory(se).Add(s, sessVars.StmtCtx)
+			GetHistory(sctx).Add(s, sessVars.StmtCtx)
 		}
 
 		// Handle the stmt commit/rollback.
 		if se.txn.Valid() {
 			if err != nil {
-				se.StmtRollback()
+				sctx.StmtRollback()
 			} else {
-				err = se.StmtCommit(se.GetSessionVars().StmtCtx.MemTracker)
+				err = sctx.StmtCommit(sctx.GetSessionVars().StmtCtx.MemTracker)
 			}
 		}
 	}
-
-	return rs, err
-}
-
-// runStmt executes the sqlexec.Statement and commit or rollback the current transaction.
-func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) (rs sqlexec.RecordSet, err error) {
-	se := sctx.(*session)
-	rs, err = runStmtRaw(ctx, se, s)
-	// Save origTxnCtx here to avoid it reset in the transaction retry.
-	origTxnCtx := se.sessionVars.TxnCtx
 	err = finishStmt(ctx, se, err, s)
 
 	if se.txn.pending() {
@@ -301,25 +303,8 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 		// Reset txn state to invalid to dispose the pending start ts.
 		se.txn.changeToInvalid()
 	}
-	// If it is not a select statement, we record its slow log here,
-	// then it could include the transaction commit time.
-	if rs == nil {
-		s.(*executor.ExecStmt).FinishExecuteStmt(origTxnCtx.StartTS, err == nil, false)
-	}
-	return rs, err
-}
 
-func runStmtWrap(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) (rs sqlexec.RecordSet, err error) {
-	se := sctx.(*session)
-	rs, err = runStmtRaw(ctx, se, s)
-	if rs != nil {
-		return &execStmtResult{
-			RecordSet: rs,
-			sql:       s,
-			se:        se,
-		}, err
-	}
-	return nil, err
+	return rs, err
 }
 
 // GetHistory get all stmtHistory in current txn. Exported only for test.
