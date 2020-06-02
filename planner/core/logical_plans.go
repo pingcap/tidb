@@ -1004,7 +1004,7 @@ func (p *LogicalWindow) GetWindowResultColumns() []*expression.Column {
 // only [t2.a] is returned.
 func ExtractCorColumnsBySchema(corCols []*expression.CorrelatedColumn, schema *expression.Schema) []*expression.CorrelatedColumn {
 	resultCorCols := make([]*expression.CorrelatedColumn, schema.Len())
-	for i, corCol := range corCols {
+	for _, corCol := range corCols {
 		idx := schema.ColumnIndex(&corCol.Column)
 		if idx != -1 {
 			if resultCorCols[idx] == nil {
@@ -1013,9 +1013,7 @@ func ExtractCorColumnsBySchema(corCols []*expression.CorrelatedColumn, schema *e
 					Data:   new(types.Datum),
 				}
 			}
-			newCorCol := corCol.Clone().(*expression.CorrelatedColumn)
-			newCorCol.Data = resultCorCols[idx].Data
-			corCols[i] = newCorCol
+			corCol.Data = resultCorCols[idx].Data
 		}
 	}
 	// Shrink slice. e.g. [col1, nil, col2, nil] will be changed to [col1, col2].
