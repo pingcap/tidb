@@ -6106,6 +6106,12 @@ func (s *testIntegrationSerialSuite) TestCollateStringFunction(c *C) {
 	tk.MustQuery("select field('a', 'b', 'A' collate utf8mb4_general_ci);").Check(testkit.Rows("2"))
 	tk.MustQuery("select field('a', 'b', 'a ' collate utf8mb4_general_ci);").Check(testkit.Rows("2"))
 
+	tk.MustExec("USE test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10), b char (10)) collate utf8mb4_general_ci")
+	tk.MustExec("insert into t values ('a', 'A')")
+	tk.MustQuery("select field(a, b) from t").Check(testkit.Rows("1"))
+
 	tk.MustQuery("select FIND_IN_SET('a','b,a,c,d');").Check(testkit.Rows("2"))
 	tk.MustQuery("select FIND_IN_SET('a','b,A,c,d');").Check(testkit.Rows("0"))
 	tk.MustQuery("select FIND_IN_SET('a','b,A,c,d' collate utf8mb4_bin);").Check(testkit.Rows("0"))
@@ -6391,6 +6397,17 @@ func (s *testIntegrationSuite) TestIssue16505(c *C) {
 	tk.MustExec("drop table t;")
 }
 
+func (s *testIntegrationSuite) TestIssue17098(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a char) collate utf8mb4_bin;")
+	tk.MustExec("create table t2(a char) collate utf8mb4_bin;;")
+	tk.MustExec("insert into t1 values('a');")
+	tk.MustExec("insert into t2 values('a');")
+	tk.MustQuery("select collation(t1.a) from t1 union select collation(t2.a) from t2;").Check(testkit.Rows("utf8mb4_bin"))
+}
+
 func (s *testIntegrationSuite) TestIssue16697(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -6409,6 +6426,21 @@ func (s *testIntegrationSuite) TestIssue16697(c *C) {
 			c.Assert(strings.Contains(line, "GB"), IsFalse)
 		}
 	}
+}
+
+func (s *testIntegrationSerialSuite) TestIssue17176(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustGetErrMsg("create table t(a enum('a', 'a ')) charset utf8 collate utf8_bin;", "[types:1291]Column 'a' has duplicated value 'a ' in ENUM")
+	tk.MustGetErrMsg("create table t(a enum('a', 'Á')) charset utf8 collate utf8_general_ci;", "[types:1291]Column 'a' has duplicated value 'Á' in ENUM")
+	tk.MustGetErrMsg("create table t(a enum('a', 'a ')) charset utf8mb4 collate utf8mb4_bin;", "[types:1291]Column 'a' has duplicated value 'a ' in ENUM")
+	tk.MustExec("create table t(a enum('a', 'A')) charset utf8 collate utf8_bin;")
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t3(a enum('a', 'A')) charset utf8mb4 collate utf8mb4_bin;")
 }
 
 func (s *testIntegrationSuite) TestIndexedVirtualGeneratedColumnTruncate(c *C) {
