@@ -93,7 +93,7 @@ func isColEqCorColOrConstant(ctx sessionctx.Context, filter expression.Expressio
 	if !ok || f.FuncName.L != ast.EQ {
 		return false
 	}
-	_, collation, _ := f.CharsetAndCollation(ctx)
+	_, collation := f.CharsetAndCollation(ctx)
 	if c, ok := f.GetArgs()[0].(*expression.Column); ok {
 		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(collation, c.RetType.Collate) {
 			return false
