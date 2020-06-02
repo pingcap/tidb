@@ -291,6 +291,32 @@ func (s *testFieldTypeSuite) TestAggFieldType(c *C) {
 		}
 	}
 }
+func (s *testFieldTypeSuite) TestAggFieldTypeForTypeFlag(c *C) {
+	types := []*FieldType{
+		NewFieldType(mysql.TypeLonglong),
+		NewFieldType(mysql.TypeLonglong),
+	}
+
+	aggTp := AggFieldType(types)
+	c.Assert(aggTp.Tp, Equals, mysql.TypeLonglong)
+	c.Assert(aggTp.Flag, Equals, uint(0))
+
+	types[0].Flag = mysql.NotNullFlag
+	aggTp = AggFieldType(types)
+	c.Assert(aggTp.Tp, Equals, mysql.TypeLonglong)
+	c.Assert(aggTp.Flag, Equals, uint(0))
+
+	types[0].Flag = 0
+	types[1].Flag = mysql.NotNullFlag
+	aggTp = AggFieldType(types)
+	c.Assert(aggTp.Tp, Equals, mysql.TypeLonglong)
+	c.Assert(aggTp.Flag, Equals, uint(0))
+
+	types[0].Flag = mysql.NotNullFlag
+	aggTp = AggFieldType(types)
+	c.Assert(aggTp.Tp, Equals, mysql.TypeLonglong)
+	c.Assert(aggTp.Flag, Equals, mysql.NotNullFlag)
+}
 
 func (s *testFieldTypeSuite) TestAggregateEvalType(c *C) {
 	defer testleak.AfterTest(c)()
