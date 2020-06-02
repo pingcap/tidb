@@ -155,6 +155,10 @@ func (p *PointGetPlan) OperatorInfo(normalized bool) string {
 	return buffer.String()
 }
 
+func (p *PointGetPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	return nil
+}
+
 // GetChildReqProps gets the required property by child index.
 func (p *PointGetPlan) GetChildReqProps(idx int) *property.PhysicalProperty {
 	return nil
@@ -235,6 +239,10 @@ type BatchPointGetPlan struct {
 	Lock             bool
 	LockWaitTime     int64
 	Columns          []*model.ColumnInfo
+}
+
+func (p *BatchPointGetPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	return nil
 }
 
 // attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of

@@ -37,7 +37,7 @@ type CorrelatedColumn struct {
 
 // Clone implements Expression interface.
 func (col *CorrelatedColumn) Clone() Expression {
-	return col
+	return &CorrelatedColumn{Column: *col.Column.Clone().(*Column), Data: col.Data}
 }
 
 // VecEvalInt evaluates this expression in a vectorized manner.

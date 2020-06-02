@@ -1004,7 +1004,7 @@ func (p *LogicalWindow) GetWindowResultColumns() []*expression.Column {
 // only [t2.a] is returned.
 func ExtractCorColumnsBySchema(corCols []*expression.CorrelatedColumn, schema *expression.Schema) []*expression.CorrelatedColumn {
 	resultCorCols := make([]*expression.CorrelatedColumn, schema.Len())
-	for _, corCol := range corCols {
+	for i, corCol := range corCols {
 		idx := schema.ColumnIndex(&corCol.Column)
 		if idx != -1 {
 			if resultCorCols[idx] == nil {
@@ -1013,7 +1013,9 @@ func ExtractCorColumnsBySchema(corCols []*expression.CorrelatedColumn, schema *e
 					Data:   new(types.Datum),
 				}
 			}
-			corCol.Data = resultCorCols[idx].Data
+			newCorCol := corCol.Clone().(*expression.CorrelatedColumn)
+			newCorCol.Data = resultCorCols[idx].Data
+			corCols[i] = newCorCol
 		}
 	}
 	// Shrink slice. e.g. [col1, nil, col2, nil] will be changed to [col1, col2].
@@ -1027,11 +1029,19 @@ func ExtractCorColumnsBySchema(corCols []*expression.CorrelatedColumn, schema *e
 	return resultCorCols[:length]
 }
 
-// extractCorColumnsBySchema only extracts the correlated columns that match the specified schema.
+// extractCorColumnsBySchema4LogicalPlan only extracts the correlated columns that match the specified schema.
 // e.g. If the correlated columns from plan are [t1.a, t2.a, t3.a] and specified schema is [t2.a, t2.b, t2.c],
 // only [t2.a] is returned.
-func extractCorColumnsBySchema(p LogicalPlan, schema *expression.Schema) []*expression.CorrelatedColumn {
-	corCols := ExtractCorrelatedCols(p)
+func extractCorColumnsBySchema4LogicalPlan(p LogicalPlan, schema *expression.Schema) []*expression.CorrelatedColumn {
+	corCols := ExtractCorrelatedCols4LogicalPlan(p)
+	return ExtractCorColumnsBySchema(corCols, schema)
+}
+
+// ExtractCorColumnsBySchema4PhysicalPlan only extracts the correlated columns that match the specified schema.
+// e.g. If the correlated columns from plan are [t1.a, t2.a, t3.a] and specified schema is [t2.a, t2.b, t2.c],
+// only [t2.a] is returned.
+func ExtractCorColumnsBySchema4PhysicalPlan(p PhysicalPlan, schema *expression.Schema) []*expression.CorrelatedColumn {
+	corCols := ExtractCorrelatedCols4PhysicalPlan(p)
 	return ExtractCorColumnsBySchema(corCols, schema)
 }
 
