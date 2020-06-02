@@ -65,7 +65,7 @@ Delete_4	N/A	root		N/A
 explain select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
 id	estRows	task	access object	operator info
 Projection_11	1985.00	root		cast(Column#8, bigint(21) BINARY)->Column#7
-└─HashJoin_21	1985.00	root		inner join, equal:[eq(test.t1.c1, test.t2.c2)]
+└─HashJoin_22	1985.00	root		inner join, equal:[eq(test.t2.c2, test.t1.c1)]
   ├─HashAgg_25(Build)	1985.00	root		group by:test.t2.c2, funcs:count(test.t2.c2)->Column#8, funcs:firstrow(test.t2.c2)->test.t2.c2
   │ └─TableReader_32	1985.00	root		data:Selection_31
   │   └─Selection_31	1985.00	cop[tikv]		not(isnull(test.t2.c2))
@@ -90,7 +90,7 @@ Selection_6	0.50	root		gt(test.t1.c2, 1)
 └─Point_Get_5	1.00	root	table:t1	handle:1
 explain select c1 from t1 where c1 in (select c2 from t2);
 id	estRows	task	access object	operator info
-HashJoin_19	1985.00	root		inner join, equal:[eq(test.t1.c1, test.t2.c2)]
+HashJoin_20	1985.00	root		inner join, equal:[eq(test.t2.c2, test.t1.c1)]
 ├─HashAgg_23(Build)	1985.00	root		group by:test.t2.c2, funcs:firstrow(test.t2.c2)->test.t2.c2
 │ └─TableReader_30	1985.00	root		data:Selection_29
 │   └─Selection_29	1985.00	cop[tikv]		not(isnull(test.t2.c2))

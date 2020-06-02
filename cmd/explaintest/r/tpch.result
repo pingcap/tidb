@@ -971,16 +971,16 @@ id	estRows	task	access object	operator info
 Projection_16	1.00	root		div(Column#46, 7.0)->Column#47
 └─StreamAgg_21	1.00	root		funcs:sum(tpch.lineitem.l_extendedprice)->Column#46
   └─HashJoin_53	293773.83	root		inner join, equal:[eq(tpch.part.p_partkey, tpch.lineitem.l_partkey)], other cond:lt(tpch.lineitem.l_quantity, mul(0.2, Column#44))
-    ├─HashJoin_37(Build)	293773.83	root		inner join, equal:[eq(tpch.part.p_partkey, tpch.lineitem.l_partkey)]
-    │ ├─TableReader_42(Build)	9736.49	root		data:Selection_41
-    │ │ └─Selection_41	9736.49	cop[tikv]		eq(tpch.part.p_brand, "Brand#44"), eq(tpch.part.p_container, "WRAP PKG")
-    │ │   └─TableFullScan_40	10000000.00	cop[tikv]	table:part	keep order:false
-    │ └─TableReader_39(Probe)	300005811.00	root		data:TableFullScan_38
-    │   └─TableFullScan_38	300005811.00	cop[tikv]	table:lineitem	keep order:false
-    └─HashAgg_47(Probe)	9943040.00	root		group by:tpch.lineitem.l_partkey, funcs:avg(Column#50, Column#51)->Column#44, funcs:firstrow(tpch.lineitem.l_partkey)->tpch.lineitem.l_partkey
-      └─TableReader_48	9943040.00	root		data:HashAgg_43
-        └─HashAgg_43	9943040.00	cop[tikv]		group by:tpch.lineitem.l_partkey, funcs:count(tpch.lineitem.l_quantity)->Column#50, funcs:sum(tpch.lineitem.l_quantity)->Column#51
-          └─TableFullScan_46	300005811.00	cop[tikv]	table:lineitem	keep order:false
+    ├─HashJoin_37(Build)	9736.49	root		inner join, equal:[eq(tpch.part.p_partkey, tpch.lineitem.l_partkey)]
+    │ ├─TableReader_48(Build)	9736.49	root		data:Selection_47
+    │ │ └─Selection_47	9736.49	cop[tikv]		eq(tpch.part.p_brand, "Brand#44"), eq(tpch.part.p_container, "WRAP PKG")
+    │ │   └─TableFullScan_46	10000000.00	cop[tikv]	table:part	keep order:false
+    │ └─HashAgg_42(Probe)	9943040.00	root		group by:tpch.lineitem.l_partkey, funcs:avg(Column#50, Column#51)->Column#44, funcs:firstrow(tpch.lineitem.l_partkey)->tpch.lineitem.l_partkey
+    │   └─TableReader_43	9943040.00	root		data:HashAgg_38
+    │     └─HashAgg_38	9943040.00	cop[tikv]		group by:tpch.lineitem.l_partkey, funcs:count(tpch.lineitem.l_quantity)->Column#50, funcs:sum(tpch.lineitem.l_quantity)->Column#51
+    │       └─TableFullScan_41	300005811.00	cop[tikv]	table:lineitem	keep order:false
+    └─TableReader_50(Probe)	300005811.00	root		data:TableFullScan_49
+      └─TableFullScan_49	300005811.00	cop[tikv]	table:lineitem	keep order:false
 /*
 Q18 Large Volume Customer Query
 The Large Volume Customer Query ranks customers based on their having placed a large quantity order. Large
