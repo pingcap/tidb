@@ -177,6 +177,19 @@ func (pd *planDecoder) alignFields(planInfos []*planInfo) {
 	if len(planInfos) == 0 {
 		return
 	}
+	// Align fields length. Some plan may doesn't have runtime info, need append `` to align with other plan fields.
+	maxLen := -1
+	for _, p := range planInfos {
+		if len(p.fields) > maxLen {
+			maxLen = len(p.fields)
+		}
+	}
+	for _, p := range planInfos {
+		for len(p.fields) < maxLen {
+			p.fields = append(p.fields, "")
+		}
+	}
+
 	fieldsLen := len(planInfos[0].fields)
 	// Last field no need to align.
 	fieldsLen--
