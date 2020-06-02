@@ -145,10 +145,15 @@ const (
 	TableStatementsSummary = "STATEMENTS_SUMMARY"
 	// TableStatementsSummaryHistory is the string constant of statements summary history table.
 	TableStatementsSummaryHistory = "STATEMENTS_SUMMARY_HISTORY"
+<<<<<<< HEAD
 	// TableTiFlashTables is the string constant of tiflash tables table.
 	TableTiFlashTables = "TIFLASH_TABLES"
 	// TableTiFlashSegments is the string constant of tiflash segments table.
 	TableTiFlashSegments = "TIFLASH_SEGMENTS"
+=======
+	// TableStorageStats is a table that contains all tables disk usage
+	TableStorageStats = "TABLE_STORAGE_STATS"
+>>>>>>> cfbd75465... planner,executor,infoschema: add system table `table_storage_stats` (#15056)
 )
 
 var tableIDMap = map[string]int64{
@@ -214,8 +219,12 @@ var tableIDMap = map[string]int64{
 	TableStatementsSummaryHistory:           autoid.InformationSchemaDBID + 60,
 	ClusterTableStatementsSummary:           autoid.InformationSchemaDBID + 61,
 	ClusterTableStatementsSummaryHistory:    autoid.InformationSchemaDBID + 62,
+<<<<<<< HEAD
 	TableTiFlashTables:                      autoid.InformationSchemaDBID + 64,
 	TableTiFlashSegments:                    autoid.InformationSchemaDBID + 65,
+=======
+	TableStorageStats:                       autoid.InformationSchemaDBID + 63,
+>>>>>>> cfbd75465... planner,executor,infoschema: add system table `table_storage_stats` (#15056)
 }
 
 type columnInfo struct {
@@ -1218,6 +1227,7 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: "PLAN", tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "Sampled execution plan"},
 }
 
+<<<<<<< HEAD
 var tableTableTiFlashTablesCols = []columnInfo{
 	{name: "DATABASE", tp: mysql.TypeVarchar, size: 64},
 	{name: "TABLE", tp: mysql.TypeVarchar, size: 64},
@@ -1295,6 +1305,17 @@ var tableTableTiFlashSegmentsCols = []columnInfo{
 	{name: "DELTA_CACHE_SIZE", tp: mysql.TypeLonglong, size: 64},
 	{name: "DELTA_INDEX_SIZE", tp: mysql.TypeLonglong, size: 64},
 	{name: "TIFLASH_INSTANCE", tp: mysql.TypeVarchar, size: 64},
+=======
+var tableStorageStatsCols = []columnInfo{
+	{name: "TABLE_SCHEMA", tp: mysql.TypeVarchar, size: 64},
+	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "PEER_COUNT", tp: mysql.TypeLonglong, size: 21},
+	{name: "REGION_COUNT", tp: mysql.TypeLonglong, size: 21, comment: "The region count of single replica of the table"},
+	{name: "EMPTY_REGION_COUNT", tp: mysql.TypeLonglong, size: 21, comment: "The region count of single replica of the table"},
+	{name: "TABLE_SIZE", tp: mysql.TypeLonglong, size: 64, comment: "The disk usage(MB) of single replica of the table, if the table size is empty or less than 1MB, it would show 1MB "},
+	{name: "TABLE_KEYS", tp: mysql.TypeLonglong, size: 64, comment: "The count of keys of single replica of the table"},
+>>>>>>> cfbd75465... planner,executor,infoschema: add system table `table_storage_stats` (#15056)
 }
 
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
@@ -1623,8 +1644,12 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableSequences:                          tableSequencesCols,
 	TableStatementsSummary:                  tableStatementsSummaryCols,
 	TableStatementsSummaryHistory:           tableStatementsSummaryCols,
+<<<<<<< HEAD
 	TableTiFlashTables:                      tableTableTiFlashTablesCols,
 	TableTiFlashSegments:                    tableTableTiFlashSegmentsCols,
+=======
+	TableStorageStats:                       tableStorageStatsCols,
+>>>>>>> cfbd75465... planner,executor,infoschema: add system table `table_storage_stats` (#15056)
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
