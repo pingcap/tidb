@@ -88,14 +88,14 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan) (LogicalPla
 
 func (s *joinReorderGreedySolver) constructConnectedJoinTree() (*jrNode, error) {
 	// find the jrNode with smallest cumCost as the root of Join Tree
-	root_ips := 0
+	rootIps := 0
 	for i, node := range s.curJoinGroup {
-		if node.cumCost < s.curJoinGroup[root_ips].cumCost {
-			root_ips = i
+		if node.cumCost < s.curJoinGroup[rootIps].cumCost {
+			rootIps = i
 		}
 	}
-	curJoinTree := s.curJoinGroup[root_ips]
-	s.curJoinGroup = append(s.curJoinGroup[:root_ips], s.curJoinGroup[root_ips+1:]...)
+	curJoinTree := s.curJoinGroup[rootIps]
+	s.curJoinGroup = append(s.curJoinGroup[:rootIps], s.curJoinGroup[rootIps+1:]...)
 
 	for {
 		bestCost := math.MaxFloat64
