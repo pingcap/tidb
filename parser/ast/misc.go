@@ -2540,9 +2540,10 @@ type HintTimeRange struct {
 
 // HintTable is table in the hint. It may have query block info.
 type HintTable struct {
-	DBName    model.CIStr
-	TableName model.CIStr
-	QBName    model.CIStr
+	DBName        model.CIStr
+	TableName     model.CIStr
+	QBName        model.CIStr
+	PartitionList []model.CIStr
 }
 
 func (ht *HintTable) Restore(ctx *format.RestoreCtx) {
@@ -2554,6 +2555,17 @@ func (ht *HintTable) Restore(ctx *format.RestoreCtx) {
 	if ht.QBName.L != "" {
 		ctx.WriteKeyWord("@")
 		ctx.WriteName(ht.QBName.String())
+	}
+	if len(ht.PartitionList) > 0 {
+		ctx.WriteKeyWord(" PARTITION")
+		ctx.WritePlain("(")
+		for i, p := range ht.PartitionList {
+			if i > 0 {
+				ctx.WritePlain(", ")
+			}
+			ctx.WriteName(p.String())
+		}
+		ctx.WritePlain(")")
 	}
 }
 
