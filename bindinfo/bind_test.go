@@ -1098,8 +1098,6 @@ func (s *testSuite) TestReCreateBindAfterEvolvePlan(c *C) {
 	tk.MustQuery("select * from t where a >= 4 and b >= 1")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_b")
 }
-<<<<<<< HEAD
-=======
 
 func (s *testSuite) TestInvisibleIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -1185,4 +1183,3 @@ func (s *testSuite) TestbindingSource(c *C) {
 	bind = bindData.Bindings[0]
 	c.Assert(bind.Source, Equals, bindinfo.Capture)
 }
->>>>>>> 7ca3d9c... bindinfo, record how bindings are created in SQL bindings. (#17254)
