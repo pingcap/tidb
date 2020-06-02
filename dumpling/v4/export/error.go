@@ -2,8 +2,9 @@ package export
 
 import (
 	"errors"
+	"fmt"
+	"io"
 	"runtime/debug"
-	"strings"
 )
 
 type errWithStack struct {
@@ -11,17 +12,35 @@ type errWithStack struct {
 	raw   error
 }
 
+func (e errWithStack) Is(err error) bool {
+	_, ok := err.(errWithStack)
+	return ok
+}
+
 func (e errWithStack) Unwrap() error {
 	return e.raw
 }
 
 func (e errWithStack) Error() string {
-	var b strings.Builder
-	b.WriteString("err = ")
-	b.WriteString(e.raw.Error())
-	b.WriteString("\n")
-	b.Write(e.stack)
-	return b.String()
+	return e.raw.Error()
+}
+
+func (e errWithStack) Format(s fmt.State, verb rune) {
+	switch verb {
+	case 'v':
+		if s.Flag('+') {
+			io.WriteString(s, "err = ")
+			io.WriteString(s, e.raw.Error())
+			io.WriteString(s, "\n")
+			io.WriteString(s, string(e.stack))
+			return
+		}
+		fallthrough
+	case 's':
+		io.WriteString(s, e.raw.Error())
+	case 'q':
+		fmt.Fprintf(s, "%q", e.raw.Error())
+	}
 }
 
 var stackErr errWithStack
