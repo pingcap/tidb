@@ -489,8 +489,9 @@ type CleanupIndexExec struct {
 	done      bool
 	removeCnt uint64
 
-	index table.Index
-	table table.Table
+	index      table.Index
+	table      table.Table
+	physicalID int64
 
 	idxCols          []*model.ColumnInfo
 	idxColFieldTypes []*types.FieldType
@@ -604,6 +605,34 @@ func (e *CleanupIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.done {
 		return nil
 	}
+	var err error
+	if tbl, ok := e.table.(table.PartitionedTable); ok {
+		pi := e.table.Meta().GetPartitionInfo()
+		for _, p := range pi.Definitions {
+			e.table = tbl.GetPartition(p.ID)
+			e.index = tables.GetWritableIndexByName(e.index.Meta().Name.L, e.table)
+			e.physicalID = p.ID
+			err = e.init()
+			if err != nil {
+				return err
+			}
+			err = e.cleanTableIndex(ctx)
+			if err != nil {
+				return err
+			}
+		}
+	} else {
+		err = e.cleanTableIndex(ctx)
+		if err != nil {
+			return err
+		}
+	}
+	e.done = true
+	req.AppendUint64(0, e.removeCnt)
+	return nil
+}
+
+func (e *CleanupIndexExec) cleanTableIndex(ctx context.Context) error {
 	for {
 		errInTxn := kv.RunInNewTxn(e.ctx.GetStore(), true, func(txn kv.Transaction) error {
 			err := e.fetchIndex(ctx, txn)
@@ -632,8 +661,6 @@ func (e *CleanupIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			delete(e.idxValues, k)
 		}
 	}
-	e.done = true
-	req.AppendUint64(0, e.removeCnt)
 	return nil
 }
 
@@ -645,7 +672,7 @@ func (e *CleanupIndexExec) buildIndexScan(ctx context.Context, txn kv.Transactio
 	sc := e.ctx.GetSessionVars().StmtCtx
 	var builder distsql.RequestBuilder
 	ranges := ranger.FullRange()
-	kvReq, err := builder.SetIndexRanges(sc, e.table.Meta().ID, e.index.Meta().ID, ranges).
+	kvReq, err := builder.SetIndexRanges(sc, e.physicalID, e.index.Meta().ID, ranges).
 		SetDAGRequest(dagPB).
 		SetKeepOrder(true).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
@@ -669,6 +696,10 @@ func (e *CleanupIndexExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
+	return e.init()
+}
+
+func (e *CleanupIndexExec) init() error {
 	e.idxChunk = chunk.New(e.getIdxColTypes(), e.initCap, e.maxChunkSize)
 	e.idxValues = make(map[int64][][]types.Datum, e.batchSize)
 	e.batchKeys = make([]kv.Key, 0, e.batchSize)
@@ -707,7 +738,7 @@ func (e *CleanupIndexExec) buildIdxDAGPB(txn kv.Transaction) (*tipb.DAGRequest, 
 
 func (e *CleanupIndexExec) constructIndexScanPB() *tipb.Executor {
 	idxExec := &tipb.IndexScan{
-		TableId: e.table.Meta().ID,
+		TableId: e.physicalID,
 		IndexId: e.index.Meta().ID,
 		Columns: model.ColumnsToProto(e.idxCols, e.table.Meta().PKIsHandle),
 	}
