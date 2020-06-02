@@ -490,7 +490,7 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 	// Use lease/2 here as recommend by paper.
 	ticker := time.NewTicker(lease / 2)
 	defer ticker.Stop()
-	defer recoverInDomain("loadSchemaInLoop", true)
+	defer util.Recover(metrics.LabelDomain, "loadSchemaInLoop", nil, true)
 	syncer := do.ddl.SchemaSyncer()
 
 	for {
