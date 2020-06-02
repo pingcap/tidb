@@ -360,10 +360,15 @@ type RuntimeStatsColl struct {
 	readerStats map[string]*ReaderRuntimeStats
 }
 
-// concurrencyInfo is used to save the concurrency information of the executor operator
-type concurrencyInfo struct {
+// ConcurrencyInfo is used to save the concurrency information of the executor operator
+type ConcurrencyInfo struct {
 	concurrencyName string
 	concurrencyNum  int
+}
+
+// NewConcurrencyInfo creates new executor's concurrencyInfo.
+func NewConcurrencyInfo(name string, num int) *ConcurrencyInfo {
+	return &ConcurrencyInfo{name, num}
 }
 
 // RuntimeStats collects one executor's execution info.
@@ -378,7 +383,7 @@ type RuntimeStats struct {
 	// protect concurrency
 	mu sync.Mutex
 	// executor concurrency information
-	concurrency []concurrencyInfo
+	concurrency []*ConcurrencyInfo
 
 	// additional information for executors
 	additionalInfo string
@@ -466,12 +471,16 @@ func (e *RuntimeStats) SetRowNum(rowNum int64) {
 	atomic.StoreInt64(&e.rows, rowNum)
 }
 
-// SetConcurrencyInfo sets the concurrency information.
+// SetConcurrencyInfo sets the concurrency informations.
+// We must clear the concurrencyInfo first when we call the SetConcurrencyInfo.
 // When the num <= 0, it means the exector operator is not executed parallel.
-func (e *RuntimeStats) SetConcurrencyInfo(name string, num int) {
+func (e *RuntimeStats) SetConcurrencyInfo(infos ...*ConcurrencyInfo) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.concurrency = append(e.concurrency, concurrencyInfo{concurrencyName: name, concurrencyNum: num})
+	e.concurrency = e.concurrency[:0]
+	for _, info := range infos {
+		e.concurrency = append(e.concurrency, info)
+	}
 }
 
 // SetAdditionalInfo sets the additional information.

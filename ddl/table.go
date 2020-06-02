@@ -438,7 +438,7 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	if tblInfo.IsView() {
+	if tblInfo.IsView() || tblInfo.IsSequence() {
 		job.State = model.JobStateCancelled
 		return ver, infoschema.ErrTableNotExists.GenWithStackByArgs(job.SchemaName, tblInfo.Name.O)
 	}
@@ -477,6 +477,12 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+
+	failpoint.Inject("mockTruncateTableUpdateVersionError", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(ver, errors.New("mock update version error"))
+		}
+	})
 
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
@@ -607,7 +613,7 @@ func verifyNoOverflowShardBits(s *sessionPool, tbl table.Table, shardRowIDBits u
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if tables.OverflowShardBits(autoIncID, shardRowIDBits, autoid.RowIDBitLength) {
+	if tables.OverflowShardBits(autoIncID, shardRowIDBits, autoid.RowIDBitLength, true) {
 		return autoid.ErrAutoincReadFailed.GenWithStack("shard_row_id_bits %d will cause next global auto ID %v overflow", shardRowIDBits, autoIncID)
 	}
 	return nil
