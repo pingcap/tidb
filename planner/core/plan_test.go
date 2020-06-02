@@ -84,6 +84,31 @@ func (s *testPlanNormalize) TestNormalizedPlan(c *C) {
 	}
 }
 
+func (s *testPlanNormalize) TestEncodeDecodePlan(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("create table t1 (a int key,b int,c int, index (b));")
+	tk.MustExec("set tidb_enable_collect_execution_info=1;")
+
+	tk.Se.GetSessionVars().PlanID = 0
+	tk.MustExec("select max(a) from t1 where a>0;")
+	info := tk.Se.ShowProcess()
+	c.Assert(info, NotNil)
+	p, ok := info.Plan.(core.Plan)
+	c.Assert(ok, IsTrue)
+	encodeStr := core.EncodePlan(p)
+	planTree, err := plancodec.DecodePlan(encodeStr)
+	c.Assert(err, IsNil)
+	result := "" +
+		"\tStreamAgg_13        \troot\t1\tfuncs:max(test.t1.a)->Column#4                               \t0\ttime:0s, loops:0 \t121 Bytes\tN/A\n" +
+		"\t└─Limit_17          \troot\t1\toffset:0, count:1                                            \t0\ttime:0s, loops:0 \tN/A      \tN/A\n" +
+		"\t  └─TableReader_27  \troot\t1\tdata:Limit_26                                                \t0\ttime:0s, loops:0 \t0 Bytes  \tN/A\n" +
+		"\t    └─Limit_26      \tcop \t1\toffset:0, count:1                                            \t \ttime:0ns, loops:0\tN/A      \tN/A\n" +
+		"\t      └─TableScan_25\tcop \t1\ttable:t1, range:(0,+inf], keep order:true, desc, stats:pseudo\t0\ttime:0s, loops:0 \tN/A      \tN/A"
+	c.Assert(planTree, Equals, result)
+}
+
 func (s *testPlanNormalize) TestNormalizedDigest(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

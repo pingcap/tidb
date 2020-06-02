@@ -269,7 +269,7 @@ func EncodePlanNode(depth, pid int, planType string, isRoot bool, rowCount float
 	buf.WriteByte(separator)
 	buf.WriteString(explainInfo)
 	// Check whether has runtime info.
-	if len(actRows) > 0 && len(analyzeInfo) > 0 && len(memoryInfo) > 0 && len(diskInfo) > 0 {
+	if len(actRows) > 0 || len(analyzeInfo) > 0 || len(memoryInfo) > 0 || len(diskInfo) > 0 {
 		buf.WriteByte(separator)
 		buf.WriteString(actRows)
 		buf.WriteByte(separator)
