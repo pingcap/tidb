@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
@@ -141,6 +140,9 @@ type DDL interface {
 		onExist OnExist,
 		tryRetainID bool) error
 
+	// Start campaigns the owner and starts workers.
+	// ctxPool is used for the worker's delRangeManager and creates sessions.
+	Start(ctxPool *pools.ResourcePool) error
 	// GetLease returns current schema lease time.
 	GetLease() time.Duration
 	// Stats returns the DDL statistics.
@@ -255,16 +257,15 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	}
 
 	id := uuid.New().String()
-	ctx, cancelFunc := context.WithCancel(ctx)
 	var manager owner.Manager
 	var syncer util.SchemaSyncer
 	if etcdCli := opt.EtcdCli; etcdCli == nil {
 		// The etcdCli is nil if the store is localstore which is only used for testing.
 		// So we use mockOwnerManager and MockSchemaSyncer.
-		manager = owner.NewMockManager(id, cancelFunc)
+		manager = owner.NewMockManager(ctx, id)
 		syncer = NewMockSchemaSyncer()
 	} else {
-		manager = owner.NewOwnerManager(etcdCli, ddlPrompt, id, DDLOwnerKey, cancelFunc)
+		manager = owner.NewOwnerManager(ctx, etcdCli, ddlPrompt, id, DDLOwnerKey)
 		syncer = util.NewSchemaSyncer(etcdCli, id, manager)
 	}
 
@@ -285,10 +286,6 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		limitJobCh: make(chan *limitJobTask, batchAddingJobs),
 	}
 
-	d.start(ctx, opt.ResourcePool)
-	variable.RegisterStatistics(d)
-
-	metrics.DDLCounter.WithLabelValues(metrics.CreateDDLInstance).Inc()
 	return d
 }
 
@@ -315,9 +312,8 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 	return delRangeMgr
 }
 
-// start campaigns the owner and starts workers.
-// ctxPool is used for the worker's delRangeManager and creates sessions.
-func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
+// Start implements DDL.Start interface.
+func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	logutil.BgLogger().Info("[ddl] start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", RunWorker))
 	d.quitCh = make(chan struct{})
 
@@ -338,8 +334,10 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 	// If RunWorker is true, we need campaign owner and do DDL job.
 	// Otherwise, we needn't do that.
 	if RunWorker {
-		err := d.ownerManager.CampaignOwner(ctx)
-		terror.Log(errors.Trace(err))
+		err := d.ownerManager.CampaignOwner()
+		if err != nil {
+			return errors.Trace(err)
+		}
 
 		d.workers = make(map[workerType]*worker, 2)
 		d.sessPool = newSessionPool(ctxPool)
@@ -375,6 +373,11 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 			})
 		metrics.DDLCounter.WithLabelValues(metrics.StartCleanWork).Inc()
 	}
+
+	variable.RegisterStatistics(d)
+
+	metrics.DDLCounter.WithLabelValues(metrics.CreateDDLInstance).Inc()
+	return nil
 }
 
 func (d *ddl) close() {
