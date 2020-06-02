@@ -1027,9 +1027,6 @@ func (b *PlanBuilder) buildAdminCheckTable(ctx context.Context, as *ast.AdminStm
 	return p, nil
 }
 
-<<<<<<< HEAD
-func (b *PlanBuilder) buildCheckIndexSchema(tn *ast.TableName, indexName string) (*expression.Schema, error) {
-=======
 func (b *PlanBuilder) buildCheckIndex(ctx context.Context, dbName model.CIStr, as *ast.AdminStmt) (Plan, error) {
 	tblName := as.Tables[0]
 	tbl, err := b.is.TableByName(dbName, tblName.Name)
@@ -1056,8 +1053,7 @@ func (b *PlanBuilder) buildCheckIndex(ctx context.Context, dbName model.CIStr, a
 	return b.buildPhysicalIndexLookUpReader(ctx, dbName, tbl, idx)
 }
 
-func (b *PlanBuilder) buildCheckIndexSchema(tn *ast.TableName, indexName string) (*expression.Schema, types.NameSlice, error) {
->>>>>>> 2bdf6a0... util/admin: support admin check index on partition table (#17183)
+func (b *PlanBuilder) buildCheckIndexSchema(tn *ast.TableName, indexName string) (*expression.Schema, error) {
 	schema := expression.NewSchema()
 	indexName = strings.ToLower(indexName)
 	indicesInfo := tn.TableInfo.Indices
