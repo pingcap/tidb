@@ -206,6 +206,17 @@ func (t *Table) GetPhysicalID() int64 {
 	return t.physicalTableID
 }
 
+// GetWritableIndexByName gets the index meta from the table by the index name.
+func GetWritableIndexByName(idxName string, t table.Table) table.Index {
+	indices := t.WritableIndices()
+	for _, idx := range indices {
+		if idxName == idx.Meta().Name.L {
+			return idx
+		}
+	}
+	return nil
+}
+
 // Cols implements table.Table Cols interface.
 func (t *tableCommon) Cols() []*table.Column {
 	if len(t.publicColumns) > 0 {
