@@ -14,6 +14,8 @@
 package expression
 
 import (
+	"context"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
@@ -38,7 +40,16 @@ type simpleRewriter struct {
 // The expression string must only reference the column in table Info.
 func ParseSimpleExprWithTableInfo(ctx sessionctx.Context, exprStr string, tableInfo *model.TableInfo) (Expression, error) {
 	exprStr = "select " + exprStr
-	stmts, warns, err := parser.New().Parse(exprStr, "", "")
+	var stmts []ast.StmtNode
+	var err error
+	var warns []error
+	if p, ok := ctx.(interface {
+		ParseSQL(context.Context, string, string, string) ([]ast.StmtNode, []error, error)
+	}); ok {
+		stmts, warns, err = p.ParseSQL(context.Background(), exprStr, "", "")
+	} else {
+		stmts, warns, err = parser.New().Parse(exprStr, "", "")
+	}
 	for _, warn := range warns {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
 	}
@@ -76,7 +87,16 @@ func RewriteSimpleExprWithTableInfo(ctx sessionctx.Context, tbl *model.TableInfo
 // The expression string must only reference the column in the given schema.
 func ParseSimpleExprsWithSchema(ctx sessionctx.Context, exprStr string, schema *Schema) ([]Expression, error) {
 	exprStr = "select " + exprStr
-	stmts, warns, err := parser.New().Parse(exprStr, "", "")
+	var stmts []ast.StmtNode
+	var err error
+	var warns []error
+	if p, ok := ctx.(interface {
+		ParseSQL(context.Context, string, string, string) ([]ast.StmtNode, []error, error)
+	}); ok {
+		stmts, warns, err = p.ParseSQL(context.Background(), exprStr, "", "")
+	} else {
+		stmts, warns, err = parser.New().Parse(exprStr, "", "")
+	}
 	for _, warn := range warns {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
 	}
