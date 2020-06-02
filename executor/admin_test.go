@@ -21,6 +21,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
@@ -288,10 +289,7 @@ func (s *testSuite2) TestAdminCleanupIndex(c *C) {
 	tk.MustExec("admin check table admin_test")
 }
 
-<<<<<<< HEAD
-func (s *testSuite2) TestAdminCleanupIndexPKNotHandle(c *C) {
-=======
-func (s *testSuite5) TestAdminCleanupIndexForPartitionTable(c *C) {
+func (s *testSuite2) TestAdminCleanupIndexForPartitionTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -314,9 +312,9 @@ func (s *testSuite5) TestAdminCleanupIndexForPartitionTable(c *C) {
 
 		txn, err := s.store.Begin()
 		c.Assert(err, IsNil)
-		_, err = indexOpr2.Create(s.ctx, txn, types.MakeDatums(idxValue), kv.IntHandle(handle))
+		_, err = indexOpr2.Create(s.ctx, txn, types.MakeDatums(idxValue), int64(handle))
 		c.Assert(err, IsNil)
-		_, err = indexOpr3.Create(s.ctx, txn, types.MakeDatums(idxValue), kv.IntHandle(handle))
+		_, err = indexOpr3.Create(s.ctx, txn, types.MakeDatums(idxValue), int64(handle))
 		c.Assert(err, IsNil)
 		err = txn.Commit(context.Background())
 		c.Assert(err, IsNil)
@@ -370,8 +368,7 @@ func (s *testSuite5) TestAdminCleanupIndexForPartitionTable(c *C) {
 	}
 }
 
-func (s *testSuite5) TestAdminCleanupIndexPKNotHandle(c *C) {
->>>>>>> b923b9e... util/admin: support admin cleanup index on the partition table (#17203)
+func (s *testSuite2) TestAdminCleanupIndexPKNotHandle(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
