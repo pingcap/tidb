@@ -76,7 +76,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		return bestPlan, names, nil
 	}
 	if sctx.GetSessionVars().SelectLimit != math.MaxUint64 {
-		sctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("sql_select_limit is set, so we will not active plan binding."))
+		sctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("sql_select_limit is set, so plan binding is not activated."))
 		return bestPlan, names, nil
 	}
 	bestPlanHint := plannercore.GenHintsFromPhysicalPlan(bestPlan)
