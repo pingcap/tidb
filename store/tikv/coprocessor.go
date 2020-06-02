@@ -655,7 +655,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 
 // Associate each region with an independent backoffer. In this way, when multiple regions are
 // unavailable, TiDB can execute very quickly without blocking
-func updateBackoffer(ctx context.Context, backoffermap map[uint64]*Backoffer, task *copTask, worker *copIteratorWorker) *Backoffer {
+func chooseBackoffer(ctx context.Context, backoffermap map[uint64]*Backoffer, task *copTask, worker *copIteratorWorker) *Backoffer {
 	bo, ok := backoffermap[task.region.id]
 	if ok {
 		return bo
@@ -682,8 +682,8 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 	backoffermap := make(map[uint64]*Backoffer)
 	for len(remainTasks) > 0 {
 		curTask := remainTasks[0]
-		bo := updateBackoffer(ctx, backoffermap, curTask, worker)
-		tasks, err := worker.handleTaskOnce(bo, remainTasks[0], respCh)
+		bo := chooseBackoffer(ctx, backoffermap, curTask, worker)
+		tasks, err := worker.handleTaskOnce(bo, curTask, respCh)
 		if err != nil {
 			resp := &copResponse{err: errors.Trace(err)}
 			worker.sendToRespCh(resp, respCh, true)
