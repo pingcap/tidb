@@ -1135,7 +1135,7 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *stmtctx.StatementCont
 	// recover collation information
 	if collate.NewCollationEnabled() {
 		tp := sf.GetType()
-		sf.SetCharsetAndCollation(tp.Charset, tp.Collate, types.UnspecifiedLength)
+		sf.SetCharsetAndCollation(tp.Charset, tp.Collate)
 	}
 	return sf, nil
 }
