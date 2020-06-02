@@ -362,7 +362,8 @@ type Status struct {
 
 // Performance is the performance section of the config.
 type Performance struct {
-	MaxProcs             uint    `toml:"max-procs" json:"max-procs"`
+	MaxProcs uint `toml:"max-procs" json:"max-procs"`
+	// Deprecated: use ServerMemoryQuota instead
 	MaxMemory            uint64  `toml:"max-memory" json:"max-memory"`
 	ServerMemoryQuota    uint64  `toml:"server-memory-quota" json:"server-memory-quota"`
 	StatsLease           string  `toml:"stats-lease" json:"stats-lease"`
@@ -716,6 +717,7 @@ var deprecatedConfig = map[string]struct{}{
 	"txn-local-latches":          {},
 	"txn-local-latches.enabled":  {},
 	"txn-local-latches.capacity": {},
+	"performance.max-memory":     {},
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
