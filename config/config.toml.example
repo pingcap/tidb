@@ -200,7 +200,7 @@ max-procs = 0
 # Max memory size to use, 0 use the total usable memory in the machine.
 max-memory = 0
 
-## Memory size quota for tidb server, 0 means unlimited
+# Memory size quota for tidb server, 0 means unlimited
 server-memory-quota = 0
 
 # StmtCountLimit limits the max count of statement inside a transaction.
