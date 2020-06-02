@@ -155,6 +155,7 @@ func (p *PointGetPlan) OperatorInfo(normalized bool) string {
 	return buffer.String()
 }
 
+// ExtractCorrelatedCols implements PhysicalPlan interface.
 func (p *PointGetPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	return nil
 }
@@ -241,6 +242,7 @@ type BatchPointGetPlan struct {
 	Columns          []*model.ColumnInfo
 }
 
+// ExtractCorrelatedCols implements PhysicalPlan interface.
 func (p *BatchPointGetPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	return nil
 }

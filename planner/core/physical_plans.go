@@ -294,7 +294,7 @@ type PhysicalProjection struct {
 	AvoidColumnEvaluator bool
 }
 
-// ExtractCorrelatedCols implements Plan interface.
+// ExtractCorrelatedCols implements PhysicalPlan interface.
 func (p *PhysicalProjection) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0, len(p.Exprs))
 	for _, expr := range p.Exprs {
@@ -312,7 +312,7 @@ type PhysicalTopN struct {
 	Count   uint64
 }
 
-// ExtractCorrelatedCols implements Plan interface.
+// ExtractCorrelatedCols implements PhysicalPlan interface.
 func (lt *PhysicalTopN) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0, len(lt.ByItems))
 	for _, item := range lt.ByItems {
@@ -328,7 +328,7 @@ type PhysicalApply struct {
 	OuterSchema []*expression.CorrelatedColumn
 }
 
-// ExtractCorrelatedCols implements LogicalPlan interface.
+// ExtractCorrelatedCols implements PhysicalPlan interface.
 func (la *PhysicalApply) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := la.PhysicalHashJoin.ExtractCorrelatedCols()
 	for i := len(corCols) - 1; i >= 0; i-- {
@@ -356,7 +356,7 @@ type basePhysicalJoin struct {
 	DefaultValues []types.Datum
 }
 
-// ExtractCorrelatedCols implements Plan interface.
+// ExtractCorrelatedCols implements PhysicalPlan interface.
 func (p *basePhysicalJoin) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0, len(p.LeftConditions)+len(p.RightConditions)+len(p.OtherConditions))
 	for _, fun := range p.LeftConditions {
@@ -382,7 +382,7 @@ type PhysicalHashJoin struct {
 	UseOuterToBuild bool
 }
 
-// ExtractCorrelatedCols implements Plan interface.
+// ExtractCorrelatedCols implements PhysicalPlan interface.
 func (p *PhysicalHashJoin) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0, len(p.EqualConditions)+len(p.LeftConditions)+len(p.RightConditions)+len(p.OtherConditions))
 	for _, fun := range p.EqualConditions {
@@ -531,13 +531,13 @@ func (p *basePhysicalAgg) getAggFuncCostFactor() (factor float64) {
 	return
 }
 
-// ExtractCorrelatedCols implements Plan interface.
-func (b *basePhysicalAgg) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0, len(b.GroupByItems)+len(b.AggFuncs))
-	for _, expr := range b.GroupByItems {
+// ExtractCorrelatedCols implements PhysicalPlan interface.
+func (p *basePhysicalAgg) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := make([]*expression.CorrelatedColumn, 0, len(p.GroupByItems)+len(p.AggFuncs))
+	for _, expr := range p.GroupByItems {
 		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
 	}
-	for _, fun := range b.AggFuncs {
+	for _, fun := range p.AggFuncs {
 		for _, arg := range fun.Args {
 			corCols = append(corCols, expression.ExtractCorColumns(arg)...)
 		}
@@ -571,7 +571,7 @@ type PhysicalSort struct {
 	ByItems []*util.ByItems
 }
 
-// ExtractCorrelatedCols implements Plan interface.
+// ExtractCorrelatedCols implements PhysicalPlan interface.
 func (ls *PhysicalSort) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0, len(ls.ByItems))
 	for _, item := range ls.ByItems {
@@ -621,7 +621,7 @@ type PhysicalSelection struct {
 	Conditions []expression.Expression
 }
 
-// ExtractCorrelatedCols implements Plan interface.
+// ExtractCorrelatedCols implements PhysicalPlan interface.
 func (p *PhysicalSelection) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0, len(p.Conditions))
 	for _, cond := range p.Conditions {
