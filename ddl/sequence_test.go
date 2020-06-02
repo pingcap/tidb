@@ -274,10 +274,17 @@ func (s *testSequenceSuite) TestSequenceAsDefaultValue(c *C) {
 
 	s.tk.MustGetErrMsg("alter table t5 alter column a set default (nextval(seq))", "[ddl:8228]Unsupported sequence default value for column type 'a'")
 
-	s.tk.MustGetErrMsg("alter table t5 add column b char(1) default next value for seq", "[ddl:8228]Unsupported sequence default value for column type 'b'")
+	// Specially, the new added column with sequence as it's default value is forbade.
+	// But alter table column with sequence as it's default value is allowed.
+	s.tk.MustGetErrMsg("alter table t5 add column c int default next value for seq", "[ddl:8230]Unsupported using sequence as default value in add column 'c'")
 
-	s.tk.MustExec("alter table t5 add column b int default nextval(seq)")
-
+	s.tk.MustExec("alter table t5 add column c int default -1")
+	// Alter with modify.
+	s.tk.MustExec("alter table t5 modify column c int default next value for seq")
+	// Alter with alter.
+	s.tk.MustExec("alter table t5 alter column c set default (next value for seq)")
+	// Alter with change.
+	s.tk.MustExec("alter table t5 change column c c int default next value for seq")
 }
 
 func (s *testSequenceSuite) TestSequenceFunction(c *C) {
@@ -917,4 +924,51 @@ func (s *testSequenceSuite) TestSequenceFunctionPrivilege(c *C) {
 	s.tk.MustExec("drop table t")
 	s.tk.MustExec("drop sequence seq")
 	s.tk.MustExec("drop user myuser@localhost")
+}
+
+// Background: the newly added column in TiDB won't fill the known rows with specific
+// sequence next value immediately. Every time TiDB select the data from storage, kvDB
+// will fill the originDefaultValue to these incomplete rows (but not store).
+//
+// In sequence case, every time filling these rows, kvDB should eval the sequence
+// expr for len(incomplete rows) times, and combine these row data together. That
+// means the select result is not always the same.
+//
+// However, the altered column with sequence as it's default value can work well.
+// Because this column has already been added before the alter action, which also
+// means originDefaultValue should be something but nil, so the back filling in kvDB
+// can work well.
+//
+// The new altered sequence default value for this column only take effect on the
+// subsequent inserted rows.
+//
+// So under current situation, TiDB will
+// [1]: forbid the new added column has sequence as it's default value.
+// [2]: allow the altered column with sequence as default value.
+func (s *testSequenceSuite) TestSequenceDefaultLogic(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+
+	s.tk.MustExec("drop sequence if exists seq")
+	s.tk.MustExec("drop table if exists t")
+	s.tk.MustExec("create sequence seq")
+	s.tk.MustExec("create table t(a int)")
+
+	// Alter table to use sequence as default value is ok.
+	s.tk.MustExec("insert into t values(-1),(-1),(-1)")
+	s.tk.MustExec("alter table t add column b int default -1")
+	s.tk.MustQuery("select * from t").Check(testkit.Rows("-1 -1", "-1 -1", "-1 -1"))
+	s.tk.MustExec("alter table t modify column b int default next value for seq")
+	s.tk.MustQuery("select * from t").Check(testkit.Rows("-1 -1", "-1 -1", "-1 -1"))
+	s.tk.MustExec("insert into t(a) values(-1),(-1)")
+	s.tk.MustQuery("select * from t").Check(testkit.Rows("-1 -1", "-1 -1", "-1 -1", "-1 1", "-1 2"))
+
+	// Add column to set sequence as default value is forbade.
+	s.tk.MustExec("drop sequence seq")
+	s.tk.MustExec("drop table t")
+	s.tk.MustExec("create sequence seq")
+	s.tk.MustExec("create table t(a int)")
+	s.tk.MustExec("insert into t values(-1),(-1),(-1)")
+	s.tk.MustGetErrMsg("alter table t add column b int default next value for seq", "[ddl:8230]Unsupported using sequence as default value in add column 'b'")
+	s.tk.MustQuery("select * from t").Check(testkit.Rows("-1", "-1", "-1"))
 }
