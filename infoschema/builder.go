@@ -168,11 +168,13 @@ func (b *Builder) applyExchangePartition(m *meta.Meta, diff *model.SchemaDiff, a
 	if err != nil {
 		return affected, errors.Trace(err)
 	}
-	affected = b.applyDropTable(ptDi, diff.PtTableID, affected)
-	var allocs autoid.Allocators
-	affected, err = b.applyCreateTable(m, ptDi, diff.PtTableID, allocs, diff.Type, affected)
-	if err != nil {
-		return affected, errors.Trace(err)
+	if tableIDIsValid(diff.PtTableID) {
+		affected = b.applyDropTable(ptDi, diff.PtTableID, affected)
+		var allocs autoid.Allocators
+		affected, err = b.applyCreateTable(m, ptDi, diff.PtTableID, allocs, diff.Type, affected)
+		if err != nil {
+			return affected, errors.Trace(err)
+		}
 	}
 	return affected, nil
 }

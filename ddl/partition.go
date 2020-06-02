@@ -712,7 +712,7 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 // onExchangeTablePartition exchange partition data
 func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var (
-		//defID only for updateVersion
+		//defID only for updateSchemaVersion
 		defID          int64
 		ptSchemaID     int64
 		ptID           int64
@@ -725,7 +725,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
-	ntDbInfo, err := t.GetDatabase(job.SchemaID)
+	ntDbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
