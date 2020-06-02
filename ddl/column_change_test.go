@@ -173,7 +173,7 @@ func (s *testColumnChangeSuite) TestModifyAutoRandColumnWithMetaKeyChanged(c *C)
 	}
 	tblInfo := &model.TableInfo{
 		ID:             tableID,
-		Name:           model.NewCIStr("t"),
+		Name:           model.NewCIStr("auto_random_table_name"),
 		Columns:        []*model.ColumnInfo{colInfo},
 		AutoRandomBits: 5,
 	}
