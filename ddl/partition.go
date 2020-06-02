@@ -712,18 +712,20 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 // onExchangeTablePartition exchange partition data
 func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var (
+		//defID only for updateSchemaVersion
+		defID          int64
 		ptSchemaID     int64
 		ptID           int64
 		partName       string
 		withValidation bool
 	)
 
-	if err := job.DecodeArgs(&ptSchemaID, &ptID, &partName, &withValidation); err != nil {
+	if err := job.DecodeArgs(&defID, &ptSchemaID, &ptID, &partName, &withValidation); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
-	ntDbInfo, err := t.GetDatabase(job.SchemaID)
+	ntDbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -754,8 +756,13 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
+	index, _, err := getPartitionDef(pt, partName)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
 	if withValidation {
-		err = checkExchangePartitionRecordValidation(w, pt, partName, ntDbInfo.Name, nt.Name)
+		err = checkExchangePartitionRecordValidation(w, pt, index, ntDbInfo.Name, nt.Name)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
@@ -866,14 +873,10 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	return ver, nil
 }
 
-func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, partName string, schemaName, tableName model.CIStr) error {
+func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, index int, schemaName, tableName model.CIStr) error {
 	var sql string
 
 	pi := pt.Partition
-	index, _, err := getPartitionDef(pt, partName)
-	if err != nil {
-		return errors.Trace(err)
-	}
 
 	switch pi.Type {
 	case model.PartitionTypeHash:
@@ -882,9 +885,6 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, part
 		}
 		sql = fmt.Sprintf("select 1 from `%s`.`%s` where mod(%s, %d) != %d limit 1", schemaName.L, tableName.L, pi.Expr, pi.Num, index)
 	case model.PartitionTypeRange:
-		if err != nil {
-			return errors.Trace(err)
-		}
 		// Table has only one partition and has the maximum value
 		if len(pi.Definitions) == 1 && strings.EqualFold(pi.Definitions[index].LessThan[0], partitionMaxValue) {
 			return nil
@@ -900,7 +900,7 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, part
 	}
 
 	var ctx sessionctx.Context
-	ctx, err = w.sessPool.get()
+	ctx, err := w.sessPool.get()
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -60,7 +60,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		newTableID = diff.TableID
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
 		oldTableID = diff.TableID
-	case model.ActionTruncateTable, model.ActionCreateView:
+	case model.ActionTruncateTable, model.ActionCreateView, model.ActionExchangeTablePartition:
 		oldTableID = diff.OldTableID
 		newTableID = diff.TableID
 	default:
@@ -74,7 +74,8 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	// We try to reuse the old allocator, so the cached auto ID can be reused.
 	var allocs autoid.Allocators
 	if tableIDIsValid(oldTableID) {
-		if oldTableID == newTableID && diff.Type != model.ActionRenameTable {
+		if oldTableID == newTableID && diff.Type != model.ActionRenameTable &&
+			diff.Type != model.ActionExchangeTablePartition {
 			oldAllocs, _ := b.is.AllocByID(oldTableID)
 			allocs = filterAllocators(diff, oldAllocs)
 		}
@@ -102,6 +103,13 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		// All types except DropTableOrView.
 		var err error
 		tblIDs, err = b.applyCreateTable(m, dbInfo, newTableID, allocs, diff.Type, tblIDs)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	if diff.Type == model.ActionExchangeTablePartition {
+		var err error
+		tblIDs, err = b.applyExchangePartition(m, diff, tblIDs)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -153,6 +161,22 @@ func (b *Builder) copySortedTables(oldTableID, newTableID int64) {
 	if tableIDIsValid(newTableID) && newTableID != oldTableID {
 		b.copySortedTablesBucket(tableBucketIdx(newTableID))
 	}
+}
+
+func (b *Builder) applyExchangePartition(m *meta.Meta, diff *model.SchemaDiff, affected []int64) ([]int64, error) {
+	ptDi, err := m.GetDatabase(diff.PtSchemaID)
+	if err != nil {
+		return affected, errors.Trace(err)
+	}
+	if tableIDIsValid(diff.PtTableID) {
+		affected = b.applyDropTable(ptDi, diff.PtTableID, affected)
+		var allocs autoid.Allocators
+		affected, err = b.applyCreateTable(m, ptDi, diff.PtTableID, allocs, diff.Type, affected)
+		if err != nil {
+			return affected, errors.Trace(err)
+		}
+	}
+	return affected, nil
 }
 
 func (b *Builder) applyCreateSchema(m *meta.Meta, diff *model.SchemaDiff) error {
