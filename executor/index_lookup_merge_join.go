@@ -16,10 +16,13 @@ package executor
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"sort"
 	"sync"
 	"sync/atomic"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -389,9 +392,14 @@ func (imw *innerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancel
 	defer func() {
 		wg.Done()
 		if r := recover(); r != nil {
-			logutil.Logger(ctx).Error("panic in innerMergeWorker.run",
-				zap.Reflect("r", r),
-				zap.Stack("stack trace"))
+			if task != nil {
+				task.doneErr = errors.Errorf("%v", r)
+				close(task.results)
+			}
+			buf := make([]byte, 4096)
+			stackSize := runtime.Stack(buf, false)
+			buf = buf[:stackSize]
+			logutil.Logger(ctx).Error("innerMergeWorker panicked", zap.String("stack", string(buf)))
 			cancelFunc()
 		}
 	}()
@@ -436,6 +444,11 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 		}
 	}
 	task.memTracker.Consume(int64(cap(task.outerOrderIdx)))
+	failpoint.Inject("IndexMergeJoinMockOOM", func(val failpoint.Value) {
+		if val.(bool) {
+			panic("OOM test index merge join doesn't hang here.")
+		}
+	})
 	// needOuterSort means the outer side property items can't guarantee the order of join keys.
 	// Because the necessary condition of merge join is both outer and inner keep order of join keys.
 	// In this case, we need sort the outer side.

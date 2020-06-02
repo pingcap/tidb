@@ -408,6 +408,9 @@ const (
 
 	// DefExecutorConcurrency is used for controlling the concurrency of all types of executors.
 	TiDBExecutorConcurrency = "tidb_executor_concurrency"
+
+	// TiDBEnableClusteredIndex indicates if clustered index feature is enabled.
+	TiDBEnableClusteredIndex = "tidb_enable_clustered_index"
 )
 
 // Default TiDB system variable values.
@@ -503,6 +506,7 @@ const (
 	DefTiDBFoundInPlanCache            = false
 	DefTidbEnableCollectExecutionInfo  = false
 	DefTiDBAllowAutoRandExplicitInsert = false
+	DefTiDBEnableClusteredIndex        = false
 )
 
 // Process global variables.
