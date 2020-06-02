@@ -64,7 +64,7 @@ Delete_4	N/A	root		N/A
 explain select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
 id	estRows	task	access object	operator info
 Projection_11	9990.00	root		cast(Column#8, bigint(21) BINARY)->Column#7
-└─HashJoin_21	9990.00	root		inner join, equal:[eq(test.t1.c1, test.t2.c2)]
+└─HashJoin_22	9990.00	root		inner join, equal:[eq(test.t2.c2, test.t1.c1)]
   ├─HashAgg_28(Build)	7992.00	root		group by:test.t2.c2, funcs:count(Column#9)->Column#8, funcs:firstrow(test.t2.c2)->test.t2.c2
   │ └─TableReader_29	7992.00	root		data:HashAgg_23
   │   └─HashAgg_23	7992.00	cop[tikv]		group by:test.t2.c2, funcs:count(test.t2.c2)->Column#9
@@ -99,7 +99,7 @@ StreamAgg_12	1.00	root		funcs:sum(Column#10)->Column#8
       └─TableFullScan_14	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain select c1 from t1 where c1 in (select c2 from t2);
 id	estRows	task	access object	operator info
-HashJoin_19	9990.00	root		inner join, equal:[eq(test.t1.c1, test.t2.c2)]
+HashJoin_20	9990.00	root		inner join, equal:[eq(test.t2.c2, test.t1.c1)]
 ├─HashAgg_23(Build)	7992.00	root		group by:test.t2.c2, funcs:firstrow(test.t2.c2)->test.t2.c2
 │ └─TableReader_30	9990.00	root		data:Selection_29
 │   └─Selection_29	9990.00	cop[tikv]		not(isnull(test.t2.c2))
@@ -586,15 +586,15 @@ Projection_12	10000.00	root		Column#14
   ├─TableReader_16(Build)	10000.00	root		data:TableFullScan_15
   │ └─TableFullScan_15	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
   └─HashAgg_19(Probe)	1.00	root		funcs:count(Column#15)->Column#13
-    └─HashJoin_20	9.99	root		inner join, equal:[eq(test.t.a, test.t.a)]
-      ├─HashAgg_30(Build)	7.99	root		group by:test.t.a, funcs:count(Column#16)->Column#15, funcs:firstrow(test.t.a)->test.t.a
-      │ └─TableReader_31	7.99	root		data:HashAgg_25
-      │   └─HashAgg_25	7.99	cop[tikv]		group by:test.t.a, funcs:count(1)->Column#16
-      │     └─Selection_29	9.99	cop[tikv]		eq(test.t.a, test.t.a), not(isnull(test.t.a))
-      │       └─TableFullScan_28	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-      └─TableReader_24(Probe)	9.99	root		data:Selection_23
-        └─Selection_23	9.99	cop[tikv]		eq(test.t.a, test.t.a), not(isnull(test.t.a))
-          └─TableFullScan_22	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
+    └─HashJoin_21	9.99	root		inner join, equal:[eq(test.t.a, test.t.a)]
+      ├─HashAgg_27(Build)	7.99	root		group by:test.t.a, funcs:count(Column#16)->Column#15, funcs:firstrow(test.t.a)->test.t.a
+      │ └─TableReader_28	7.99	root		data:HashAgg_22
+      │   └─HashAgg_22	7.99	cop[tikv]		group by:test.t.a, funcs:count(1)->Column#16
+      │     └─Selection_26	9.99	cop[tikv]		eq(test.t.a, test.t.a), not(isnull(test.t.a))
+      │       └─TableFullScan_25	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+      └─TableReader_34(Probe)	9.99	root		data:Selection_33
+        └─Selection_33	9.99	cop[tikv]		eq(test.t.a, test.t.a), not(isnull(test.t.a))
+          └─TableFullScan_32	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
 explain select * from t ta left outer join t tb on ta.nb = tb.nb and ta.a > 1 where ifnull(tb.a, 1) or tb.a is null;
 id	estRows	task	access object	operator info
 Selection_7	10000.00	root		or(ifnull(test.t.a, 1), isnull(test.t.a))
@@ -619,15 +619,15 @@ Projection_12	10000.00	root		Column#14
   ├─TableReader_16(Build)	10000.00	root		data:TableFullScan_15
   │ └─TableFullScan_15	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
   └─HashAgg_19(Probe)	1.00	root		funcs:count(Column#15)->Column#13
-    └─HashJoin_20	9.99	root		inner join, equal:[eq(test.t.a, test.t.a)]
-      ├─HashAgg_30(Build)	7.99	root		group by:test.t.a, funcs:count(Column#16)->Column#15, funcs:firstrow(test.t.a)->test.t.a
-      │ └─TableReader_31	7.99	root		data:HashAgg_25
-      │   └─HashAgg_25	7.99	cop[tikv]		group by:test.t.a, funcs:count(1)->Column#16
-      │     └─Selection_29	9.99	cop[tikv]		eq(test.t.a, test.t.a), not(isnull(test.t.a))
-      │       └─TableFullScan_28	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-      └─TableReader_24(Probe)	9.99	root		data:Selection_23
-        └─Selection_23	9.99	cop[tikv]		eq(test.t.a, test.t.a), not(isnull(test.t.a))
-          └─TableFullScan_22	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
+    └─HashJoin_21	9.99	root		inner join, equal:[eq(test.t.a, test.t.a)]
+      ├─HashAgg_27(Build)	7.99	root		group by:test.t.a, funcs:count(Column#16)->Column#15, funcs:firstrow(test.t.a)->test.t.a
+      │ └─TableReader_28	7.99	root		data:HashAgg_22
+      │   └─HashAgg_22	7.99	cop[tikv]		group by:test.t.a, funcs:count(1)->Column#16
+      │     └─Selection_26	9.99	cop[tikv]		eq(test.t.a, test.t.a), not(isnull(test.t.a))
+      │       └─TableFullScan_25	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+      └─TableReader_34(Probe)	9.99	root		data:Selection_33
+        └─Selection_33	9.99	cop[tikv]		eq(test.t.a, test.t.a), not(isnull(test.t.a))
+          └─TableFullScan_32	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int);
 explain select * from t where _tidb_rowid = 0;
