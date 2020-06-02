@@ -139,7 +139,6 @@ const (
 // CompilePattern handles escapes and wild cards convert pattern characters and
 // pattern types.
 func CompilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
-	var lastAny bool
 	patChars = make([]byte, len(pattern))
 	patTypes = make([]byte, len(pattern))
 	patLen := 0
@@ -148,7 +147,6 @@ func CompilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
 		var c = pattern[i]
 		switch c {
 		case escape:
-			lastAny = false
 			tp = PatMatch
 			if i < len(pattern)-1 {
 				i++
@@ -167,18 +165,10 @@ func CompilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
 				}
 			}
 		case '_':
-			if lastAny {
-				continue
-			}
 			tp = PatOne
 		case '%':
-			if lastAny {
-				continue
-			}
-			lastAny = true
 			tp = PatAny
 		default:
-			lastAny = false
 			tp = PatMatch
 		}
 		patChars[patLen] = c
@@ -213,16 +203,8 @@ func CompileLike2Regexp(str string) string {
 		case PatMatch:
 			result = append(result, patChars[i])
 		case PatOne:
-			// .*. == .*
-			if !bytes.HasSuffix(result, []byte{'.', '*'}) {
-				result = append(result, '.')
-			}
+			result = append(result, '.')
 		case PatAny:
-			// ..* == .*
-			if bytes.HasSuffix(result, []byte{'.'}) {
-				result = append(result, '*')
-				continue
-			}
 			// .*.* == .*
 			if !bytes.HasSuffix(result, []byte{'.', '*'}) {
 				result = append(result, '.')
