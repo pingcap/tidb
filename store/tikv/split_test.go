@@ -32,7 +32,7 @@ type testSplitSuite struct {
 var _ = Suite(&testSplitSuite{})
 
 func (s *testSplitSuite) SetUpTest(c *C) {
-	client, cluster, pdClient, err := mocktikv.NewTiKVAndPDClient("")
+	client, cluster, pdClient, err := mocktikv.NewTiKVAndPDClient("", nil)
 	c.Assert(err, IsNil)
 	mocktikv.BootstrapWithSingleStore(cluster)
 	s.cluster = cluster

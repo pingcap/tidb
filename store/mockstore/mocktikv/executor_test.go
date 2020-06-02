@@ -39,7 +39,7 @@ type testExecutorSuite struct {
 }
 
 func (s *testExecutorSuite) SetUpSuite(c *C) {
-	rpcClient, cluster, pdClient, err := mocktikv.NewTiKVAndPDClient("")
+	rpcClient, cluster, pdClient, err := mocktikv.NewTiKVAndPDClient("", nil)
 	c.Assert(err, IsNil)
 	mocktikv.BootstrapWithSingleStore(cluster)
 	s.cluster = cluster

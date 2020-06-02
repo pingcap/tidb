@@ -33,7 +33,7 @@ type testDeleteRangeSuite struct {
 var _ = Suite(&testDeleteRangeSuite{})
 
 func (s *testDeleteRangeSuite) SetUpTest(c *C) {
-	client, cluster, pdClient, err := mocktikv.NewTiKVAndPDClient("")
+	client, cluster, pdClient, err := mocktikv.NewTiKVAndPDClient("", nil)
 	c.Assert(err, IsNil)
 	mocktikv.BootstrapWithMultiRegions(cluster, []byte("b"), []byte("c"), []byte("d"))
 	s.cluster = cluster

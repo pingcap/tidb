@@ -84,12 +84,13 @@ const (
 )
 
 type mockOptions struct {
-	clusterInspector func(cluster.Cluster)
-	clientHijacker   func(tikv.Client) tikv.Client
-	pdClientHijacker func(pd.Client) pd.Client
-	path             string
-	txnLocalLatches  uint
-	storeType        StoreType
+	clusterInspector  func(cluster.Cluster)
+	clientHijacker    func(tikv.Client) tikv.Client
+	pdClientHijacker  func(pd.Client) pd.Client
+	mvccStoreHijacker func(mocktikv.MVCCStore) mocktikv.MVCCStore
+	path              string
+	txnLocalLatches   uint
+	storeType         StoreType
 }
 
 // MockTiKVStoreOption is used to control some behavior of mock tikv.
@@ -108,6 +109,14 @@ func WithClientHijacker(hijacker func(tikv.Client) tikv.Client) MockTiKVStoreOpt
 func WithPDClientHijacker(hijacker func(pd.Client) pd.Client) MockTiKVStoreOption {
 	return func(c *mockOptions) {
 		c.pdClientHijacker = hijacker
+	}
+}
+
+// WithMVCCStoreHijacker hijacks MVCCStore's behavior, makes it easy to capture read/write
+// operations performed on the MVCCStore. Not valid in Unistore mode.
+func WithMVCCStoreHijacker(hijacker func(mocktikv.MVCCStore) mocktikv.MVCCStore) MockTiKVStoreOption {
+	return func(c *mockOptions) {
+		c.mvccStoreHijacker = hijacker
 	}
 }
 

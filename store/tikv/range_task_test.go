@@ -60,7 +60,7 @@ func (s *testRangeTaskSuite) SetUpTest(c *C) {
 	}
 	allRegionRanges = append(allRegionRanges, makeRange("z", ""))
 
-	client, cluster, pdClient, err := mocktikv.NewTiKVAndPDClient("")
+	client, cluster, pdClient, err := mocktikv.NewTiKVAndPDClient("", nil)
 	c.Assert(err, IsNil)
 	mocktikv.BootstrapWithMultiRegions(cluster, splitKeys...)
 	s.cluster = cluster
