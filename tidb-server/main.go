@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/pprof"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -181,6 +182,7 @@ func main() {
 	printInfo()
 	setupBinlogClient()
 	setupMetrics()
+	monitorAndDumpProfile()
 	createStoreAndDomain()
 	createServer()
 	signal.SetupSignalHandler(serverShutdown)
@@ -729,4 +731,59 @@ func stringToList(repairString string) []string {
 	return strings.FieldsFunc(repairString, func(r rune) bool {
 		return r == ',' || r == ' ' || r == '"'
 	})
+}
+
+func monitorAndDumpProfile() {
+	tick := time.NewTicker(time.Second)
+	nextThresholdGiB := uint64(1)
+	c := config.GetGlobalConfig()
+	logDir := filepath.Dir(c.Log.SlowQueryFile)
+	profileDir := filepath.Join(logDir, "profile")
+	if err := os.MkdirAll(profileDir, 0755); err != nil {
+		log.Info("failed to create profile dump dir", zap.String("path", profileDir), zap.Error(err))
+		return
+	}
+
+	go func() {
+		for {
+			<-tick.C
+			var mem runtime.MemStats
+			runtime.ReadMemStats(&mem)
+			if mem.HeapAlloc < nextThresholdGiB<<30 {
+				continue
+			}
+			currentGiB := mem.HeapAlloc >> 30
+			if err := dumpProfile(profileDir, currentGiB); err != nil {
+				log.Info("dump profile failed", zap.Error(err))
+			}
+			nextThresholdGiB = currentGiB + 1
+			log.Info("dump profile due to heap usage is increasing", zap.Uint64("heap size", mem.HeapAlloc>>30), zap.Uint64("next threshold", nextThresholdGiB))
+		}
+	}()
+}
+
+func dumpProfile(path string, threshold uint64) error {
+	time := time.Now().Format("2006-01-02T15:04:05")
+	fname := func(t string) string {
+		return fmt.Sprintf("%s-%d-%dGiB-%s", time, os.Getpid(), threshold, t)
+	}
+
+	hf, err := os.Create(filepath.Join(path, fname("heap.pb.gz")))
+	if err != nil {
+		return err
+	}
+	defer hf.Close()
+	if err := pprof.Lookup("heap").WriteTo(hf, 0); err != nil {
+		return err
+	}
+
+	gf, err := os.Create(filepath.Join(path, fname("goroutines.txt")))
+	if err != nil {
+		return err
+	}
+	defer gf.Close()
+	if err := pprof.Lookup("goroutine").WriteTo(gf, 1); err != nil {
+		return err
+	}
+	return nil
 }
