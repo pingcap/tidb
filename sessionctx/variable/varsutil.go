@@ -515,7 +515,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		if err != nil {
 			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
 		}
-		if v <= 0 && v != concurrencyUnset {
+		if v <= 0 && v != ConcurrencyUnset {
 			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 		}
 		return value, nil

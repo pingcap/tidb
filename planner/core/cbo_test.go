@@ -241,6 +241,10 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		dom.Close()
 		store.Close()
 	}()
+	testKit.MustExec("set @@session.tidb_executor_concurrency = 4;")
+	testKit.MustExec("set @@session.tidb_hash_join_concurrency = 5;")
+	testKit.MustExec("set @@session.tidb_distsql_scan_concurrency = 15;")
+
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t, t1")
 	testKit.MustExec("create table t (a int primary key, b int, c varchar(200), d datetime DEFAULT CURRENT_TIMESTAMP, e int, ts timestamp DEFAULT CURRENT_TIMESTAMP)")

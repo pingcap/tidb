@@ -389,6 +389,8 @@ const (
 	version46 = 46
 	// version47 add Source to bindings to indicate the way binding created.
 	version47 = 47
+	// version48 reset all deprecated concurrency related system-variables if they were all default value.
+	version48 = 48
 )
 
 var (
@@ -439,6 +441,7 @@ var (
 		upgradeToVer45,
 		upgradeToVer46,
 		upgradeToVer47,
+		upgradeToVer48,
 	}
 )
 
@@ -1069,6 +1072,55 @@ func upgradeToVer47(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN `source` varchar(10) NOT NULL default 'unknown'", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer48(s Session, ver int64) {
+	if ver >= version48 {
+		return
+	}
+	defValues := map[string]string{
+		variable.TiDBIndexLookupConcurrency:     strconv.Itoa(variable.DefIndexLookupConcurrency),
+		variable.TiDBIndexLookupJoinConcurrency: strconv.Itoa(variable.DefIndexLookupJoinConcurrency),
+		variable.TiDBHashJoinConcurrency:        strconv.Itoa(variable.DefTiDBHashJoinConcurrency),
+		variable.TiDBHashAggFinalConcurrency:    strconv.Itoa(variable.DefTiDBHashAggFinalConcurrency),
+		variable.TiDBHashAggPartialConcurrency:  strconv.Itoa(variable.DefTiDBHashAggPartialConcurrency),
+		variable.TiDBWindowConcurrency:          strconv.Itoa(variable.DefTiDBWindowConcurrency),
+		variable.TiDBProjectionConcurrency:      strconv.Itoa(variable.DefTiDBProjectionConcurrency),
+		variable.TiDBDistSQLScanConcurrency:     strconv.Itoa(variable.DefDistSQLScanConcurrency),
+	}
+	names := make([]string, 0, len(defValues))
+	for n := range defValues {
+		names = append(names, n)
+	}
+
+	selectSQL := "select HIGH_PRIORITY * from mysql.global_variables where variable_name in ('" + strings.Join(names, quoteCommaQuote) + "')"
+	ctx := context.Background()
+	rs, err := s.Execute(ctx, selectSQL)
+	terror.MustNil(err)
+	r := rs[0]
+	defer terror.Call(r.Close)
+	req := r.NewChunk()
+	it := chunk.NewIterator4Chunk(req)
+	err = r.Next(ctx, req)
+	for err == nil && req.NumRows() != 0 {
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			n := strings.ToLower(row.GetString(0))
+			v := row.GetString(1)
+			if defValue, ok := defValues[n]; !ok || defValue != v {
+				return
+			}
+		}
+		err = r.Next(ctx, req)
+	}
+	terror.MustNil(err)
+
+	mustExecute(s, "BEGIN")
+	v := strconv.Itoa(variable.ConcurrencyUnset)
+	sql := fmt.Sprintf("UPDATE %s.%s SET variable_value='%%s' WHERE variable_name='%%s'", mysql.SystemDB, mysql.GlobalVariablesTable)
+	for _, name := range names {
+		mustExecute(s, fmt.Sprintf(sql, v, name))
+	}
+	mustExecute(s, "COMMIT")
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.

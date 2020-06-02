@@ -644,6 +644,20 @@ func main() {
 	if _, err = mdb.Exec("set @@tidb_hash_join_concurrency=1"); err != nil {
 		log.Fatal("set @@tidb_hash_join_concurrency=1 failed", zap.Error(err))
 	}
+	resets := []string{
+		"set @@tidb_index_lookup_concurrency=4",
+		"set @@tidb_index_lookup_join_concurrency=4",
+		"set @@tidb_hashagg_final_concurrency=4",
+		"set @@tidb_hashagg_partial_concurrency=4",
+		"set @@tidb_window_concurrency=4",
+		"set @@tidb_projection_concurrency=4",
+		"set @@tidb_distsql_scan_concurrency=15",
+	}
+	for _, sql := range resets {
+		if _, err = mdb.Exec(sql); err != nil {
+			log.Fatal(fmt.Sprintf("%s failed", sql), zap.Error(err))
+		}
+	}
 
 	if _, err = mdb.Exec("set sql_mode='STRICT_TRANS_TABLES'"); err != nil {
 		log.Fatal("set sql_mode='STRICT_TRANS_TABLES' failed", zap.Error(err))

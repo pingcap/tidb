@@ -120,6 +120,11 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
+	ctx := se.(sessionctx.Context)
+	sessionVars := ctx.GetSessionVars()
+	sessionVars.ExecutorConcurrency = 4
+	sessionVars.SetDistSQLScanConcurrency(15)
+	sessionVars.SetHashJoinConcurrency(5)
 
 	var input []string
 	var output []struct {
@@ -343,6 +348,8 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.SetHashAggFinalConcurrency(1)
 	sessionVars.SetHashAggPartialConcurrency(1)
+	sessionVars.SetDistSQLScanConcurrency(15)
+	sessionVars.ExecutorConcurrency = 4
 
 	var input []string
 	var output []struct {

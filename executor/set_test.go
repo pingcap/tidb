@@ -525,13 +525,13 @@ func (s *testSuite5) TestValidateSetVar(c *C) {
 	_, err := tk.Exec("set global tidb_distsql_scan_concurrency='fff';")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
 
-	_, err = tk.Exec("set global tidb_distsql_scan_concurrency=-1;")
+	_, err = tk.Exec("set global tidb_distsql_scan_concurrency=-2;")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
 
 	_, err = tk.Exec("set @@tidb_distsql_scan_concurrency='fff';")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
 
-	_, err = tk.Exec("set @@tidb_distsql_scan_concurrency=-1;")
+	_, err = tk.Exec("set @@tidb_distsql_scan_concurrency=-2;")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
 
 	_, err = tk.Exec("set @@tidb_batch_delete='ok';")
