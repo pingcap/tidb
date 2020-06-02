@@ -49,7 +49,7 @@ tmp-storage-quota = -1
 
 # Specifies what operation TiDB performs when a single SQL statement exceeds the memory quota specified by mem-quota-query and cannot be spilled over to disk.
 # Valid options: ["log", "cancel"]
-oom-action = "cancel"
+oom-action = "log"
 
 # Enable coprocessor streaming.
 enable-streaming = false
@@ -354,7 +354,7 @@ store-liveness-timeout = "120s"
 [tikv-client.copr-cache]
 # Whether to enable the copr cache. The copr cache saves the result from TiKV Coprocessor in the memory and
 # reuses the result when corresponding data in TiKV is unchanged, on a region basis.
-enabled = true
+enable = false
 
 # The capacity in MB of the cache.
 capacity-mb = 1000.0
