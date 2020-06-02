@@ -406,12 +406,8 @@ func (do *Domain) ShowSlowQuery(showSlow *ast.ShowSlow) []*SlowQueryInfo {
 }
 
 func (do *Domain) topNSlowQueryLoop() {
-<<<<<<< HEAD
-	defer recoverInDomain("topNSlowQueryLoop", false)
-	defer do.wg.Done()
-=======
 	defer util.Recover(metrics.LabelDomain, "topNSlowQueryLoop", nil, false)
->>>>>>> 51015c1... *: fix the way to use `recover` in ddl, and unify using `recover` in domain and ddl (#16798)
+	defer do.wg.Done()
 	ticker := time.NewTicker(time.Minute * 10)
 	defer ticker.Stop()
 	for {
@@ -439,16 +435,11 @@ func (do *Domain) topNSlowQueryLoop() {
 }
 
 func (do *Domain) infoSyncerKeeper() {
-<<<<<<< HEAD
-	defer do.wg.Done()
-	defer recoverInDomain("infoSyncerKeeper", false)
-=======
 	defer func() {
 		do.wg.Done()
 		logutil.BgLogger().Info("infoSyncerKeeper exited.")
 		util.Recover(metrics.LabelDomain, "infoSyncerKeeper", nil, false)
 	}()
->>>>>>> 51015c1... *: fix the way to use `recover` in ddl, and unify using `recover` in domain and ddl (#16798)
 	ticker := time.NewTicker(infosync.ReportInterval)
 	defer ticker.Stop()
 	for {
@@ -468,12 +459,8 @@ func (do *Domain) infoSyncerKeeper() {
 }
 
 func (do *Domain) topologySyncerKeeper() {
-<<<<<<< HEAD
 	defer do.wg.Done()
-	defer recoverInDomain("topologySyncerKeeper", false)
-=======
 	defer util.Recover(metrics.LabelDomain, "topologySyncerKeeper", nil, false)
->>>>>>> 51015c1... *: fix the way to use `recover` in ddl, and unify using `recover` in domain and ddl (#16798)
 	ticker := time.NewTicker(infosync.TopologyTimeToRefresh)
 	defer ticker.Stop()
 
@@ -497,11 +484,8 @@ func (do *Domain) topologySyncerKeeper() {
 }
 
 func (do *Domain) loadSchemaInLoop(lease time.Duration) {
-<<<<<<< HEAD
 	defer do.wg.Done()
-=======
 	defer util.Recover(metrics.LabelDomain, "loadSchemaInLoop", nil, true)
->>>>>>> 51015c1... *: fix the way to use `recover` in ddl, and unify using `recover` in domain and ddl (#16798)
 	// Lease renewal can run at any frequency.
 	// Use lease/2 here as recommend by paper.
 	ticker := time.NewTicker(lease / 2)
@@ -838,16 +822,11 @@ func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 
 	do.wg.Add(1)
 	go func() {
-<<<<<<< HEAD
-		defer do.wg.Done()
-		defer recoverInDomain("loadPrivilegeInLoop", false)
-=======
 		defer func() {
 			do.wg.Done()
 			logutil.BgLogger().Info("loadPrivilegeInLoop exited.")
 			util.Recover(metrics.LabelDomain, "loadPrivilegeInLoop", nil, false)
 		}()
->>>>>>> 51015c1... *: fix the way to use `recover` in ddl, and unify using `recover` in domain and ddl (#16798)
 		var count int
 		for {
 			ok := true
@@ -907,16 +886,11 @@ func (do *Domain) LoadBindInfoLoop(ctxForHandle sessionctx.Context, ctxForEvolve
 func (do *Domain) globalBindHandleWorkerLoop() {
 	do.wg.Add(1)
 	go func() {
-<<<<<<< HEAD
-		defer do.wg.Done()
-		defer recoverInDomain("globalBindHandleWorkerLoop", false)
-=======
 		defer func() {
 			do.wg.Done()
 			logutil.BgLogger().Info("globalBindHandleWorkerLoop exited.")
 			util.Recover(metrics.LabelDomain, "globalBindHandleWorkerLoop", nil, false)
 		}()
->>>>>>> 51015c1... *: fix the way to use `recover` in ddl, and unify using `recover` in domain and ddl (#16798)
 		bindWorkerTicker := time.NewTicker(bindinfo.Lease)
 		defer bindWorkerTicker.Stop()
 		for {
@@ -941,16 +915,11 @@ func (do *Domain) globalBindHandleWorkerLoop() {
 func (do *Domain) handleEvolvePlanTasksLoop(ctx sessionctx.Context) {
 	do.wg.Add(1)
 	go func() {
-<<<<<<< HEAD
-		defer do.wg.Done()
-		defer recoverInDomain("handleEvolvePlanTasksLoop", false)
-=======
 		defer func() {
 			do.wg.Done()
 			logutil.BgLogger().Info("handleEvolvePlanTasksLoop exited.")
 			util.Recover(metrics.LabelDomain, "handleEvolvePlanTasksLoop", nil, false)
 		}()
->>>>>>> 51015c1... *: fix the way to use `recover` in ddl, and unify using `recover` in domain and ddl (#16798)
 		owner := do.newOwnerManager(bindinfo.Prompt, bindinfo.OwnerKey)
 		for {
 			select {
@@ -1041,12 +1010,8 @@ func (do *Domain) newOwnerManager(prompt, ownerKey string) owner.Manager {
 }
 
 func (do *Domain) loadStatsWorker() {
-<<<<<<< HEAD
-	defer recoverInDomain("loadStatsWorker", false)
-	defer do.wg.Done()
-=======
 	defer util.Recover(metrics.LabelDomain, "loadStatsWorker", nil, false)
->>>>>>> 51015c1... *: fix the way to use `recover` in ddl, and unify using `recover` in domain and ddl (#16798)
+	defer do.wg.Done()
 	lease := do.statsLease
 	if lease == 0 {
 		lease = 3 * time.Second
