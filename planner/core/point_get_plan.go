@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tipb/go-tipb"
@@ -365,7 +364,7 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 	switch x := node.(type) {
 	case *ast.SelectStmt:
 		if ctx.GetSessionVars().SelectLimit != math2.MaxUint64 {
-			logutil.BgLogger().Info("sql_select_limit is set, so we will not get fast plan.")
+			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("sql_select_limit is set, so we will not get fast plan."))
 			return nil
 		}
 		// Try to convert the `SELECT a, b, c FROM t WHERE (a, b, c) in ((1, 2, 4), (1, 3, 5))` to
