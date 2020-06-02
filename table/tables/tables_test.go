@@ -119,7 +119,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	_, err = tb.AddRecord(ctx, types.MakeDatums(2, "abc"))
 	c.Assert(err, NotNil)
 
-	c.Assert(tb.UpdateRecord(ctx, rid, types.MakeDatums(1, "abc"), types.MakeDatums(1, "cba"), []bool{false, true}), IsNil)
+	c.Assert(tb.UpdateRecord(context.Background(), ctx, rid, types.MakeDatums(1, "abc"), types.MakeDatums(1, "cba"), []bool{false, true}), IsNil)
 
 	tb.IterRecords(ctx, tb.FirstKey(), tb.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
 		return true, nil

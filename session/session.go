@@ -1038,7 +1038,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	s.processInfo.Store(&pi)
 }
 
-func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode ast.StmtNode, stmt sqlexec.Statement, recordSets []sqlexec.RecordSet, inMulitQuery bool) ([]sqlexec.RecordSet, error) {
+func (s *session) executeStatement(ctx context.Context, stmtNode ast.StmtNode, stmt sqlexec.Statement, recordSets []sqlexec.RecordSet, inMulitQuery bool) ([]sqlexec.RecordSet, error) {
 	logStmt(stmtNode, s.sessionVars)
 	recordSet, err := runStmt(ctx, s, stmt)
 	if err != nil {
@@ -1178,7 +1178,6 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 
 func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec.RecordSet, err error) {
 	s.PrepareTxnCtx(ctx)
-	connID := s.sessionVars.ConnectionID
 	err = s.loadCommonGlobalVariablesIfNeeded()
 	if err != nil {
 		return nil, err
@@ -1212,6 +1211,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	multiQuery := len(stmtNodes) > 1
 	for _, stmtNode := range stmtNodes {
 		s.sessionVars.StartTime = time.Now()
+		ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 		s.PrepareTxnCtx(ctx)
 
 		// Step2: Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
@@ -1237,10 +1237,11 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		} else {
 			sessionExecuteCompileDurationGeneral.Observe(durCompile.Seconds())
 		}
+		stmt.IsInMultiQueries = multiQuery
 		s.currentPlan = stmt.Plan
 
 		// Step3: Execute the physical plan.
-		if recordSets, err = s.executeStatement(ctx, connID, stmtNode, stmt, recordSets, multiQuery); err != nil {
+		if recordSets, err = s.executeStatement(ctx, stmtNode, stmt, recordSets, multiQuery); err != nil {
 			return nil, err
 		}
 	}
@@ -1321,6 +1322,7 @@ func (s *session) CachedPlanExec(ctx context.Context,
 
 	stmtCtx := s.GetSessionVars().StmtCtx
 	stmt := &executor.ExecStmt{
+		GoCtx:       ctx,
 		InfoSchema:  is,
 		Plan:        execPlan,
 		StmtNode:    execAst,

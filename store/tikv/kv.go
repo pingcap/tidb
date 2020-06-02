@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/fastrand"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.etcd.io/etcd/clientv3"
@@ -94,6 +95,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 			PermitWithoutStream: true,
 		}),
 	))
+	pdCli = execdetails.InterceptedPDClient{Client: pdCli}
 
 	if err != nil {
 		return nil, errors.Trace(err)

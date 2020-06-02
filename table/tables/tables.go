@@ -321,7 +321,7 @@ func (t *TableCommon) FirstKey() kv.Key {
 // UpdateRecord implements table.Table UpdateRecord interface.
 // `touched` means which columns are really modified, used for secondary indices.
 // Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
-func (t *TableCommon) UpdateRecord(ctx sessionctx.Context, h kv.Handle, oldData, newData []types.Datum, touched []bool) error {
+func (t *TableCommon) UpdateRecord(gctx context.Context, ctx sessionctx.Context, h kv.Handle, oldData, newData []types.Datum, touched []bool) error {
 	txn, err := ctx.Txn(true)
 	if err != nil {
 		return err
@@ -331,7 +331,7 @@ func (t *TableCommon) UpdateRecord(ctx sessionctx.Context, h kv.Handle, oldData,
 	defer execBuf.Discard()
 
 	// rebuild index
-	err = t.rebuildIndices(ctx, execBuf, h, touched, oldData, newData)
+	err = t.rebuildIndices(ctx, execBuf, h, touched, oldData, newData, table.WithCtx(gctx))
 	if err != nil {
 		return err
 	}
@@ -412,7 +412,7 @@ func (t *TableCommon) UpdateRecord(ctx sessionctx.Context, h kv.Handle, oldData,
 	return nil
 }
 
-func (t *TableCommon) rebuildIndices(ctx sessionctx.Context, rm kv.RetrieverMutator, h kv.Handle, touched []bool, oldData []types.Datum, newData []types.Datum) error {
+func (t *TableCommon) rebuildIndices(ctx sessionctx.Context, rm kv.RetrieverMutator, h kv.Handle, touched []bool, oldData []types.Datum, newData []types.Datum, opts ...table.CreateIdxOptFunc) error {
 	txn, err := ctx.Txn(true)
 	if err != nil {
 		return err
@@ -449,7 +449,7 @@ func (t *TableCommon) rebuildIndices(ctx sessionctx.Context, rm kv.RetrieverMuta
 		if err != nil {
 			return err
 		}
-		if err := t.buildIndexForRow(ctx, rm, h, newVs, idx, txn, untouched); err != nil {
+		if err := t.buildIndexForRow(ctx, rm, h, newVs, idx, txn, untouched, opts...); err != nil {
 			return err
 		}
 	}
@@ -900,8 +900,9 @@ func (t *TableCommon) removeRowIndex(sc *stmtctx.StatementContext, rm kv.Retriev
 }
 
 // buildIndexForRow implements table.Table BuildIndexForRow interface.
-func (t *TableCommon) buildIndexForRow(ctx sessionctx.Context, rm kv.RetrieverMutator, h kv.Handle, vals []types.Datum, idx table.Index, txn kv.Transaction, untouched bool) error {
+func (t *TableCommon) buildIndexForRow(ctx sessionctx.Context, rm kv.RetrieverMutator, h kv.Handle, vals []types.Datum, idx table.Index, txn kv.Transaction, untouched bool, popts ...table.CreateIdxOptFunc) error {
 	var opts []table.CreateIdxOptFunc
+	opts = append(opts, popts...)
 	if untouched {
 		opts = append(opts, table.IndexIsUntouched)
 	}

@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/plancodec"
@@ -159,6 +160,8 @@ func (a *recordSet) OnFetchReturned() {
 
 // ExecStmt implements the sqlexec.Statement interface, it builds a planner.Plan to an sqlexec.Statement.
 type ExecStmt struct {
+	// GoCtx stores parent go context.Context for a stmt.
+	GoCtx context.Context
 	// InfoSchema stores a reference to the schema information.
 	InfoSchema infoschema.InfoSchema
 	// Plan stores a reference to the final physical plan.
@@ -175,6 +178,7 @@ type ExecStmt struct {
 	isPreparedStmt    bool
 	isSelectForUpdate bool
 	retryCount        uint
+	IsInMultiQueries  bool
 
 	// OutputNames will be set if using cached plan
 	OutputNames []*types.FieldName
@@ -814,7 +818,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	threshold := time.Duration(cfg.Log.SlowThreshold) * time.Millisecond
 	enable := cfg.Log.EnableSlowLog
 	// if the level is Debug, print slow logs anyway
-	if (!enable || costTime < threshold) && level > zapcore.DebugLevel {
+	if sessVars.InRestrictedSQL && (!enable || costTime < threshold) && level > zapcore.DebugLevel {
 		return
 	}
 	sql := FormatSQL(a.Text, sessVars.PreparedParams)
@@ -825,6 +829,11 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	}
 	if len(sessVars.StmtCtx.IndexNames) > 0 {
 		indexNames = strings.Replace(fmt.Sprintf("%v", sessVars.StmtCtx.IndexNames), " ", ",", -1)
+	}
+	var stmtDetail execdetails.StmtExecDetails
+	stmtDetailRaw := a.GoCtx.Value(execdetails.StmtExecDetailKey)
+	if stmtDetailRaw != nil {
+		stmtDetail = *(stmtDetailRaw.(*execdetails.StmtExecDetails))
 	}
 	execDetail := sessVars.StmtCtx.GetExecDetails()
 	copTaskInfo := sessVars.StmtCtx.CopTasksDetails()
@@ -851,7 +860,11 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		PlanDigest:     planDigest,
 		Prepared:       a.isPreparedStmt,
 		HasMoreResults: hasMoreResults,
+		InMultiQueries: a.IsInMultiQueries,
 		PlanFromCache:  sessVars.FoundInPlanCache,
+		KVTotal:        time.Duration(atomic.LoadInt64(&stmtDetail.WaitKVRespDuration)),
+		PDTotal:        time.Duration(atomic.LoadInt64(&stmtDetail.WaitPDRespDuration)),
+		BackoffTotal:   time.Duration(atomic.LoadInt64(&stmtDetail.BackoffDuration)),
 	}
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {
 		slowItems.PrevStmt = sessVars.PrevStmt.String()

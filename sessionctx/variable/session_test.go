@@ -197,6 +197,10 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 # Prepared: true
 # Plan_from_cache: true
 # Has_more_results: true
+# In_multi_queries: true
+# KV_total: 10
+# PD_total: 11
+# Backoff_total: 12
 # Succ: true
 select * from t;`
 	sql := "select * from t"
@@ -217,6 +221,10 @@ select * from t;`
 		Prepared:       true,
 		PlanFromCache:  true,
 		HasMoreResults: true,
+		InMultiQueries: true,
+		KVTotal:        10 * time.Second,
+		PDTotal:        11 * time.Second,
+		BackoffTotal:   12 * time.Second,
 		Succ:           true,
 	})
 	c.Assert(logString, Equals, resultString)
