@@ -367,7 +367,7 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 		// `PhysicalUnionAll` which children are `PointGet` if exists an unique key (a, b, c) in table `t`
 		if fp := tryWhereIn2BatchPointGet(ctx, x); fp != nil {
 			if ctx.GetSessionVars().SelectLimit != math2.MaxUint64 {
-				ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("sql_select_limit is set, so point get plan is not activated."))
+				ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("sql_select_limit is set, so point get plan is not activated"))
 				return nil
 			}
 			if checkFastPlanPrivilege(ctx, fp.dbName, fp.TblInfo.Name.L, mysql.SelectPriv) != nil {
