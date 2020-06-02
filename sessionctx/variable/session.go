@@ -599,6 +599,18 @@ type SessionVars struct {
 	FoundInPlanCache bool
 	// PrevFoundInPlanCache indicates whether the last statement was found in plan cache.
 	PrevFoundInPlanCache bool
+<<<<<<< HEAD
+=======
+
+	// OptimizerUseInvisibleIndexes indicates whether optimizer can use invisible index
+	OptimizerUseInvisibleIndexes bool
+
+	// SelectLimit limits the max counts of select statement's output
+	SelectLimit uint64
+
+	// EnableClusteredIndex indicates whether to enable clustered index when creating a new table.
+	EnableClusteredIndex bool
+>>>>>>> d53336b... planner: support sql_select_limit session / global variable (#17444)
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -686,6 +698,12 @@ func NewSessionVars() *SessionVars {
 		WindowingUseHighPrecision:   true,
 		PrevFoundInPlanCache:        DefTiDBFoundInPlanCache,
 		FoundInPlanCache:            DefTiDBFoundInPlanCache,
+<<<<<<< HEAD
+=======
+		SelectLimit:                 math.MaxUint64,
+		AllowAutoRandExplicitInsert: DefTiDBAllowAutoRandExplicitInsert,
+		EnableClusteredIndex:        DefTiDBEnableClusteredIndex,
+>>>>>>> d53336b... planner: support sql_select_limit session / global variable (#17444)
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1266,6 +1284,21 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		config.GetGlobalConfig().CheckMb4ValueInUTF8 = TiDBOptOn(val)
 	case TiDBFoundInPlanCache:
 		s.FoundInPlanCache = TiDBOptOn(val)
+<<<<<<< HEAD
+=======
+	case TiDBEnableCollectExecutionInfo:
+		config.GetGlobalConfig().EnableCollectExecutionInfo = TiDBOptOn(val)
+	case SQLSelectLimit:
+		result, err := strconv.ParseUint(val, 10, 64)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		s.SelectLimit = result
+	case TiDBAllowAutoRandExplicitInsert:
+		s.AllowAutoRandExplicitInsert = TiDBOptOn(val)
+	case TiDBEnableClusteredIndex:
+		s.EnableClusteredIndex = TiDBOptOn(val)
+>>>>>>> d53336b... planner: support sql_select_limit session / global variable (#17444)
 	}
 	s.systems[name] = val
 	return nil
