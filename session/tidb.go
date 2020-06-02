@@ -193,6 +193,25 @@ func recordAbortTxnDuration(sessVars *variable.SessionVars) {
 }
 
 func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.Statement) error {
+	err := autoCommitAfterStmt(ctx, se, meetsErr, sql)
+	if se.txn.pending() {
+		// After run statement finish, txn state is still pending means the
+		// statement never need a Txn(), such as:
+		//
+		// set @@tidb_general_log = 1
+		// set @@autocommit = 0
+		// select 1
+		//
+		// Reset txn state to invalid to dispose the pending start ts.
+		se.txn.changeToInvalid()
+	}
+	if err != nil {
+		return err
+	}
+	return checkStmtLimit(ctx, se)
+}
+
+func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.Statement) error {
 	sessVars := se.sessionVars
 	if meetsErr != nil {
 		if !sessVars.InTxn() {
@@ -216,8 +235,7 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 		}
 		return nil
 	}
-
-	return checkStmtLimit(ctx, se)
+	return nil
 }
 
 func checkStmtLimit(ctx context.Context, se *session) error {
@@ -291,19 +309,6 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 		}
 	}
 	err = finishStmt(ctx, se, err, s)
-
-	if se.txn.pending() {
-		// After run statement finish, txn state is still pending means the
-		// statement never need a Txn(), such as:
-		//
-		// set @@tidb_general_log = 1
-		// set @@autocommit = 0
-		// select 1
-		//
-		// Reset txn state to invalid to dispose the pending start ts.
-		se.txn.changeToInvalid()
-	}
-
 	return rs, err
 }
 

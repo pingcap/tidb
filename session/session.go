@@ -1224,17 +1224,7 @@ func runStmtWrap(ctx context.Context, se *session, s sqlexec.Statement) (rs sqle
 	}
 
 	err = finishStmt(ctx, se, err, s)
-	if se.txn.pending() {
-		// After run statement finish, txn state is still pending means the
-		// statement never need a Txn(), such as:
-		//
-		// set @@tidb_general_log = 1
-		// set @@autocommit = 0
-		// select 1
-		//
-		// Reset txn state to invalid to dispose the pending start ts.
-		se.txn.changeToInvalid()
-	}
+
 	// If it is not a select statement, we record its slow log here,
 	// then it could include the transaction commit time.
 	s.(*executor.ExecStmt).FinishExecuteStmt(origTxnCtx.StartTS, err == nil, false)
@@ -1254,19 +1244,7 @@ type execStmtResult struct {
 func (rs *execStmtResult) Close() error {
 	se := rs.se
 	err := rs.RecordSet.Close()
-	err = finishStmt(context.Background(), se, err, rs.sql)
-	if se.txn.pending() {
-		// After run statement finish, txn state is still pending means the
-		// statement never need a Txn(), such as:
-		//
-		// set @@tidb_general_log = 1
-		// set @@autocommit = 0
-		// select 1
-		//
-		// Reset txn state to invalid to dispose the pending start ts.
-		se.txn.changeToInvalid()
-	}
-	return err
+	return finishStmt(context.Background(), se, err, rs.sql)
 }
 
 func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec.RecordSet, err error) {
