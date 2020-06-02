@@ -42,7 +42,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/types/parser_driver"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hint"
@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/util/set"
 
 	"github.com/cznic/mathutil"
+	"github.com/pingcap/tidb/table/tables"
 	"go.uber.org/zap"
 )
 
@@ -879,52 +880,14 @@ func (b *PlanBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
 	return p
 }
 
-func (b *PlanBuilder) buildCheckIndex(ctx context.Context, dbName model.CIStr, as *ast.AdminStmt) (Plan, error) {
-	tblName := as.Tables[0]
-	tbl, err := b.is.TableByName(dbName, tblName.Name)
-	if err != nil {
-		return nil, err
-	}
-	tblInfo := tbl.Meta()
-
-	// get index information
-	var idx *model.IndexInfo
-	for _, index := range tblInfo.Indices {
-		if index.Name.L == strings.ToLower(as.Index) {
-			idx = index
-			break
-		}
-	}
-	if idx == nil {
-		return nil, errors.Errorf("index %s do not exist", as.Index)
-	}
-	if idx.State != model.StatePublic {
-		return nil, errors.Errorf("index %s state %s isn't public", as.Index, idx.State)
-	}
-
-	return b.buildPhysicalIndexLookUpReader(ctx, dbName, tbl, idx)
-}
-
 func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, error) {
 	var ret Plan
 	var err error
 	switch as.Tp {
-	case ast.AdminCheckTable:
+	case ast.AdminCheckTable, ast.AdminCheckIndex:
 		ret, err = b.buildAdminCheckTable(ctx, as)
 		if err != nil {
 			return ret, err
-		}
-	case ast.AdminCheckIndex:
-		dbName := as.Tables[0].Schema
-		readerPlan, err := b.buildCheckIndex(ctx, dbName, as)
-		if err != nil {
-			return ret, err
-		}
-
-		ret = &CheckIndex{
-			DBName:            dbName.L,
-			IdxName:           as.Index,
-			IndexLookUpReader: readerPlan.(*PhysicalIndexLookUpReader),
 		}
 	case ast.AdminRecoverIndex:
 		p := &RecoverIndex{Table: as.Tables[0], IndexName: as.Index}
@@ -1162,12 +1125,12 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 	return rootT.p, nil
 }
 
-func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbName model.CIStr, tbl table.Table) ([]Plan, []*model.IndexInfo, error) {
+func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbName model.CIStr, tbl table.Table, indices []table.Index) ([]Plan, []*model.IndexInfo, error) {
 	tblInfo := tbl.Meta()
 	// get index information
 	indexInfos := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 	indexLookUpReaders := make([]Plan, 0, len(tblInfo.Indices))
-	for _, idx := range tbl.Indices() {
+	for _, idx := range indices {
 		idxInfo := idx.Meta()
 		if idxInfo.State != model.StatePublic {
 			logutil.Logger(context.Background()).Info("build physical index lookup reader, the index isn't public",
@@ -1201,17 +1164,40 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbNam
 }
 
 func (b *PlanBuilder) buildAdminCheckTable(ctx context.Context, as *ast.AdminStmt) (*CheckTable, error) {
-	tbl := as.Tables[0]
+	tblName := as.Tables[0]
 	tableInfo := as.Tables[0].TableInfo
-	table, ok := b.is.TableByID(tableInfo.ID)
+	tbl, ok := b.is.TableByID(tableInfo.ID)
 	if !ok {
-		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(tbl.DBInfo.Name.O, tableInfo.Name.O)
+		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(tblName.DBInfo.Name.O, tableInfo.Name.O)
 	}
 	p := &CheckTable{
-		DBName: tbl.Schema.O,
-		Table:  table,
+		DBName: tblName.Schema.O,
+		Table:  tbl,
 	}
-	readerPlans, indexInfos, err := b.buildPhysicalIndexLookUpReaders(ctx, tbl.Schema, table)
+	var readerPlans []Plan
+	var indexInfos []*model.IndexInfo
+	var err error
+	if as.Tp == ast.AdminCheckIndex {
+		// get index information
+		var idx table.Index
+		idxName := strings.ToLower(as.Index)
+		for _, index := range tbl.Indices() {
+			if index.Meta().Name.L == idxName {
+				idx = index
+				break
+			}
+		}
+		if idx == nil {
+			return nil, errors.Errorf("index %s do not exist", as.Index)
+		}
+		if idx.Meta().State != model.StatePublic {
+			return nil, errors.Errorf("index %s state %s isn't public", as.Index, idx.Meta().State)
+		}
+		p.CheckIndex = true
+		readerPlans, indexInfos, err = b.buildPhysicalIndexLookUpReaders(ctx, tblName.Schema, tbl, []table.Index{idx})
+	} else {
+		readerPlans, indexInfos, err = b.buildPhysicalIndexLookUpReaders(ctx, tblName.Schema, tbl, tbl.Indices())
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1222,6 +1208,32 @@ func (b *PlanBuilder) buildAdminCheckTable(ctx context.Context, as *ast.AdminStm
 	p.IndexInfos = indexInfos
 	p.IndexLookUpReaders = readers
 	return p, nil
+}
+
+func (b *PlanBuilder) buildCheckIndex(ctx context.Context, dbName model.CIStr, as *ast.AdminStmt) (Plan, error) {
+	tblName := as.Tables[0]
+	tbl, err := b.is.TableByName(dbName, tblName.Name)
+	if err != nil {
+		return nil, err
+	}
+	tblInfo := tbl.Meta()
+
+	// get index information
+	var idx *model.IndexInfo
+	for _, index := range tblInfo.Indices {
+		if index.Name.L == strings.ToLower(as.Index) {
+			idx = index
+			break
+		}
+	}
+	if idx == nil {
+		return nil, errors.Errorf("index %s do not exist", as.Index)
+	}
+	if idx.State != model.StatePublic {
+		return nil, errors.Errorf("index %s state %s isn't public", as.Index, idx.State)
+	}
+
+	return b.buildPhysicalIndexLookUpReader(ctx, dbName, tbl, idx)
 }
 
 func (b *PlanBuilder) buildCheckIndexSchema(tn *ast.TableName, indexName string) (*expression.Schema, types.NameSlice, error) {
@@ -1758,7 +1770,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		b.curClause = orderByClause
 		orderByCol := np.Schema().Columns[0].Clone().(*expression.Column)
 		sort := LogicalSort{
-			ByItems: []*ByItems{{Expr: orderByCol}},
+			ByItems: []*util.ByItems{{Expr: orderByCol}},
 		}.Init(b.ctx, b.getSelectOffset())
 		sort.SetChildren(np)
 		np = sort
@@ -1984,6 +1996,22 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		tableColNames: names,
 		IsReplace:     insert.IsReplace,
 	}.Init(b.ctx)
+
+	if tableInfo.GetPartitionInfo() != nil && len(insert.PartitionNames) != 0 {
+		givenPartitionSets := make(map[int64]struct{}, len(insert.PartitionNames))
+		// check partition by name.
+		for _, name := range insert.PartitionNames {
+			id, err := tables.FindPartitionByName(tableInfo, name.L)
+			if err != nil {
+				return nil, err
+			}
+			givenPartitionSets[id] = struct{}{}
+		}
+		pt := tableInPlan.(table.PartitionedTable)
+		insertPlan.Table = tables.NewPartitionTableithGivenSets(pt, givenPartitionSets)
+	} else if len(insert.PartitionNames) != 0 {
+		return nil, ErrPartitionClauseOnNonpartitioned
+	}
 
 	var authErr error
 	if b.ctx.GetSessionVars().User != nil {

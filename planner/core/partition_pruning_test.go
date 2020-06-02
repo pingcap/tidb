@@ -118,7 +118,7 @@ func (s *testPartitionPruningSuite) TestPruneUseBinarySearch(c *C) {
 	}
 
 	for i, ca := range cases {
-		start, end := pruneUseBinarySearch(lessThan, ca.input)
+		start, end := pruneUseBinarySearch(lessThan, ca.input, false)
 		c.Assert(ca.result.start, Equals, start, Commentf("fail = %d", i))
 		c.Assert(ca.result.end, Equals, end, Commentf("fail = %d", i))
 	}
@@ -285,7 +285,7 @@ func (s *testPartitionPruningSuite) TestPartitionRangePrunner2VarChar(c *C) {
 		lessThan[i] = tmp[0]
 	}
 
-	prunner := &rangeColumnPruner{lessThan, tc.columns[0], true}
+	prunner := &rangeColumnsPruner{lessThan, tc.columns[0], true}
 	cases := []struct {
 		input  string
 		result partitionRangeOR
@@ -333,7 +333,7 @@ func (s *testPartitionPruningSuite) TestPartitionRangePrunner2Date(c *C) {
 		lessThan[i] = tmp[0]
 	}
 
-	prunner := &rangeColumnPruner{lessThan, tc.columns[0], false}
+	prunner := &rangeColumnsPruner{lessThan, tc.columns[0], false}
 	cases := []struct {
 		input  string
 		result partitionRangeOR

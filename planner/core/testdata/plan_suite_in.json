@@ -60,7 +60,9 @@
       "select /*+ NO_INDEX_MERGE(), USE_INDEX_MERGE(t, primary, f_g, c_d_e) */ * from t where a < 1 or f > 2",
       "select /*+ USE_INDEX_MERGE(t1, c_d_e, f_g) */ * from t where c < 1 or f > 2",
       "select /*+ NO_INDEX_MERGE(), USE_INDEX_MERGE(t, primary, f_g, c_d_e) */ * from t where a < 1 or f > 2",
-      "select /*+ USE_INDEX_MERGE(t) USE_INDEX_MERGE(t) */ * from t where c < 1 or f > 2"
+      "select /*+ USE_INDEX_MERGE(t) USE_INDEX_MERGE(t) */ * from t where c < 1 or f > 2",
+      "select /*+ USE_INDEX_MERGE(db2.t) */ * from t where c < 1 or f > 2",
+      "select /*+ USE_INDEX_MERGE(db2.t, c_d_e, f_g) */ * from t where c < 1 or f > 2"
     ]
   },
   {
@@ -571,6 +573,15 @@
     "cases": [
       "select /*+ HASH_AGG(), AGG_TO_COP() */ sum(distinct b) from pt;",
       "select /*+ HASH_AGG(), AGG_TO_COP() */ count(distinct a) from (select * from ta union all select * from tb) t;"
+    ]
+  },
+  {
+    "name": "TestGroupConcatOrderby",
+    "cases": [
+      "select /*+ agg_to_cop */ group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;",
+      "select /*+ agg_to_cop */ group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from ptest;",
+      "select /*+ agg_to_cop */ group_concat(distinct name order by name desc) from test;",
+      "select /*+ agg_to_cop */ group_concat(distinct name order by name desc) from ptest;"
     ]
   },
   {

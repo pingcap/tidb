@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/disk"
@@ -35,7 +36,7 @@ var rowChunksLabel fmt.Stringer = stringutil.StringerStr("rowChunks")
 type SortExec struct {
 	baseExecutor
 
-	ByItems []*plannercore.ByItems
+	ByItems []*util.ByItems
 	Idx     int
 	fetched bool
 	schema  *expression.Schema
@@ -242,7 +243,8 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 	e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
 	var onExceededCallback func(rowContainer *chunk.RowContainer)
-	if config.GetGlobalConfig().OOMUseTmpStorage {
+	var openSortSpillDisk = false
+	if openSortSpillDisk && config.GetGlobalConfig().OOMUseTmpStorage {
 		e.spillAction = e.rowChunks.ActionSpill()
 		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(e.spillAction)
 		onExceededCallback = func(rowContainer *chunk.RowContainer) {
@@ -265,7 +267,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		if err := e.rowChunks.Add(chk); err != nil {
 			return err
 		}
-		if e.rowChunks.AlreadySpilled() {
+		if openSortSpillDisk && e.rowChunks.AlreadySpilled() {
 			e.rowChunks = chunk.NewRowContainer(retTypes(e), e.maxChunkSize)
 			e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 			e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)

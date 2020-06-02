@@ -6083,6 +6083,17 @@ func (s *testIntegrationSerialSuite) TestCollateIndexLookup(c *C) {
 	tk.MustQuery("select id from t_bin where v < 'b' and v > ' '").Sort().Check(testkit.Rows("1"))
 }
 
+func (s *testIntegrationSerialSuite) TestIssue16668(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tx")
+	tk.MustExec("CREATE TABLE `tx` ( `a` int(11) NOT NULL,`b` varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL)")
+	tk.MustExec("insert into tx values (1, 'a'), (2, 'À'), (3, 'á'), (4, 'à'), (5, 'b'), (6, 'c'), (7, ' ')")
+	tk.MustQuery("select count(distinct(b)) from tx").Check(testkit.Rows("4"))
+}
+
 func (s *testIntegrationSerialSuite) TestCollateStringFunction(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
@@ -6108,6 +6119,51 @@ func (s *testIntegrationSerialSuite) TestCollateStringFunction(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a char)")
 	tk.MustGetErrMsg("select * from t t1 join t t2 on t1.a collate utf8mb4_bin = t2.a collate utf8mb4_general_ci;", "[expression:1267]Illegal mix of collations (utf8mb4_bin,EXPLICIT) and (utf8mb4_general_ci,EXPLICIT) for operation 'eq'")
+
+	tk.MustExec("DROP TABLE IF EXISTS t1;")
+	tk.MustExec("CREATE TABLE t1 ( a int, p1 VARCHAR(255) CHARACTER SET utf8 COLLATE utf8_bin,p2 VARCHAR(255) CHARACTER SET utf8 COLLATE utf8_general_ci , p3 VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin,p4 VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci ,n1 VARCHAR(255) CHARACTER SET utf8 COLLATE utf8_bin,n2 VARCHAR(255) CHARACTER SET utf8 COLLATE utf8_general_ci , n3 VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin,n4 VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci );")
+	tk.MustExec("insert into t1 (a,p1,p2,p3,p4,n1,n2,n3,n4) values(1,'  0aA1!测试テストמבחן  ','  0aA1!测试テストמבחן 	','  0aA1!测试テストמבחן 	','  0aA1!测试テストמבחן 	','  0Aa1!测试テストמבחן  ','  0Aa1!测试テストמבחן 	','  0Aa1!测试テストמבחן 	','  0Aa1!测试テストמבחן 	');")
+
+	tk.MustQuery("select INSTR(p1,n1) from t1;").Check(testkit.Rows("0"))
+	tk.MustQuery("select INSTR(p1,n2) from t1;").Check(testkit.Rows("0"))
+	tk.MustQuery("select INSTR(p1,n3) from t1;").Check(testkit.Rows("0"))
+	tk.MustQuery("select INSTR(p1,n4) from t1;").Check(testkit.Rows("0"))
+	tk.MustQuery("select INSTR(p2,n1) from t1;").Check(testkit.Rows("0"))
+	tk.MustQuery("select INSTR(p2,n2) from t1;").Check(testkit.Rows("1"))
+	tk.MustQuery("select INSTR(p2,n3) from t1;").Check(testkit.Rows("0"))
+	tk.MustQuery("select INSTR(p2,n4) from t1;").Check(testkit.Rows("1"))
+	tk.MustQuery("select INSTR(p3,n1) from t1;").Check(testkit.Rows("0"))
+	tk.MustQuery("select INSTR(p3,n2) from t1;").Check(testkit.Rows("0"))
+	tk.MustQuery("select INSTR(p3,n3) from t1;").Check(testkit.Rows("0"))
+	tk.MustQuery("select INSTR(p3,n4) from t1;").Check(testkit.Rows("0"))
+	tk.MustQuery("select INSTR(p4,n1) from t1;").Check(testkit.Rows("0"))
+	tk.MustQuery("select INSTR(p4,n2) from t1;").Check(testkit.Rows("1"))
+	tk.MustQuery("select INSTR(p4,n3) from t1;").Check(testkit.Rows("0"))
+	tk.MustQuery("select INSTR(p4,n4) from t1;").Check(testkit.Rows("1"))
+
+	tk.MustExec("truncate table t1;")
+	tk.MustExec("insert into t1 (a,p1,p2,p3,p4,n1,n2,n3,n4) values (2,'0aA1!测试テストמבחן  ','0aA1!测试テストמבחן 	','0aA1!测试テストמבחן 	','0aA1!测试テストמבחן 	','0Aa1!测试テストמבחן','0Aa1!测试テストמבחן','0Aa1!测试テストמבחן','0Aa1!测试テストמבחן');")
+	tk.MustExec("insert into t1 (a,p1,p2,p3,p4,n1,n2,n3,n4) values (2,'0aA1!测试テストמבחן','0aA1!测试テストמבחן','0aA1!测试テストמבחן','0aA1!测试テストמבחן','0Aa1!测试テストמבחן','0Aa1!测试テストמבחן','0Aa1!测试テストמבחן','0Aa1!测试テストמבחן');")
+	tk.MustExec("insert into t1 (a,p1,p2,p3,p4,n1,n2,n3,n4) values (3,'0aA1!测试テストמבחן','0aA1!测试テストמבחן','0aA1!测试テストמבחן','0aA1!测试テストמבחן','0Aa1!测试テストמבחן  ','0Aa1!测试テストמבחן  ','0Aa1!测试テストמבחן  ','0Aa1!测试テストמבחן  ');")
+
+	tk.MustQuery("select LOCATE(p1,n1) from t1;").Check(testkit.Rows("0", "0", "0"))
+	tk.MustQuery("select LOCATE(p1,n2) from t1;").Check(testkit.Rows("0", "0", "0"))
+	tk.MustQuery("select LOCATE(p1,n3) from t1;").Check(testkit.Rows("0", "0", "0"))
+	tk.MustQuery("select LOCATE(p1,n4) from t1;").Check(testkit.Rows("0", "1", "1"))
+	tk.MustQuery("select LOCATE(p2,n1) from t1;").Check(testkit.Rows("0", "0", "0"))
+	tk.MustQuery("select LOCATE(p2,n2) from t1;").Check(testkit.Rows("0", "1", "1"))
+	tk.MustQuery("select LOCATE(p2,n3) from t1;").Check(testkit.Rows("0", "0", "0"))
+	tk.MustQuery("select LOCATE(p2,n4) from t1;").Check(testkit.Rows("0", "1", "1"))
+	tk.MustQuery("select LOCATE(p3,n1) from t1;").Check(testkit.Rows("0", "0", "0"))
+	tk.MustQuery("select LOCATE(p3,n2) from t1;").Check(testkit.Rows("0", "0", "0"))
+	tk.MustQuery("select LOCATE(p3,n3) from t1;").Check(testkit.Rows("0", "0", "0"))
+	tk.MustQuery("select LOCATE(p3,n4) from t1;").Check(testkit.Rows("0", "0", "0"))
+	tk.MustQuery("select LOCATE(p4,n1) from t1;").Check(testkit.Rows("0", "1", "1"))
+	tk.MustQuery("select LOCATE(p4,n2) from t1;").Check(testkit.Rows("0", "1", "1"))
+	tk.MustQuery("select LOCATE(p4,n3) from t1;").Check(testkit.Rows("0", "0", "0"))
+	tk.MustQuery("select LOCATE(p4,n4) from t1;").Check(testkit.Rows("0", "1", "1"))
+
+	tk.MustExec("drop table t1;")
 }
 
 func (s *testIntegrationSerialSuite) TestCollateLike(c *C) {
@@ -6286,6 +6342,16 @@ func (s *testIntegrationSuite) TestIssue16426(c *C) {
 	tk.MustQuery("select a from t where a/10000000").Check(testkit.Rows("42"))
 }
 
+func (s *testIntegrationSuite) TestIssue16779(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t0 (c0 int)")
+	tk.MustExec("create table t1 (c0 int)")
+	tk.MustQuery("SELECT * FROM t1 LEFT JOIN t0 ON TRUE WHERE BINARY EXPORT_SET(0, 0, 0 COLLATE 'binary', t0.c0, 0 COLLATE 'binary')")
+}
+
 func (s *testIntegrationSuite) TestIssue16505(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
@@ -6296,4 +6362,55 @@ func (s *testIntegrationSuite) TestIssue16505(c *C) {
 	tk.MustQuery("select /*+ USE_INDEX(t, idx) */ * from t where c;").Sort().Check(testkit.Rows("0.0001deadsfeww", "1", "123e456"))
 	tk.MustQuery("select /*+ IGNORE_INDEX(t, idx) */* from t where c;").Sort().Check(testkit.Rows("0.0001deadsfeww", "1", "123e456"))
 	tk.MustExec("drop table t;")
+}
+
+func (s *testIntegrationSuite) TestIssue16697(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (`a` int(11) DEFAULT NULL,`b` int(11) DEFAULT NULL)")
+	tk.MustExec("insert into t values (1, 1)")
+	for i := 0; i < 8; i++ {
+		tk.MustExec("insert into t select * from t")
+	}
+	rows := tk.MustQuery("explain analyze  select t1.a, t1.a +1 from t t1 join t t2 join t t3 order by t1.a").Rows()
+	for _, row := range rows {
+		line := fmt.Sprintf("%v", row)
+		if strings.Contains(line, "Projection") {
+			c.Assert(strings.Contains(line, "KB"), IsTrue)
+			c.Assert(strings.Contains(line, "MB"), IsFalse)
+			c.Assert(strings.Contains(line, "GB"), IsFalse)
+		}
+	}
+}
+
+func (s *testIntegrationSuite) TestIndexedVirtualGeneratedColumnTruncate(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(a int, b tinyint as(a+100) unique key)")
+	tk.MustExec("insert ignore into t values(200, default)")
+	tk.MustExec("update t set a=1 where a=200")
+	tk.MustExec("admin check table t")
+	tk.MustExec("delete from t")
+	tk.MustExec("insert ignore into t values(200, default)")
+	tk.MustExec("admin check table t")
+	tk.MustExec("insert ignore into t values(200, default) on duplicate key update a=100")
+	tk.MustExec("admin check table t")
+	tk.MustExec("delete from t")
+	tk.MustExec("admin check table t")
+
+	tk.MustExec("begin")
+	tk.MustExec("insert ignore into t values(200, default)")
+	tk.MustExec("update t set a=1 where a=200")
+	tk.MustExec("admin check table t")
+	tk.MustExec("delete from t")
+	tk.MustExec("insert ignore into t values(200, default)")
+	tk.MustExec("admin check table t")
+	tk.MustExec("insert ignore into t values(200, default) on duplicate key update a=100")
+	tk.MustExec("admin check table t")
+	tk.MustExec("delete from t")
+	tk.MustExec("admin check table t")
+	tk.MustExec("commit")
+	tk.MustExec("admin check table t")
 }

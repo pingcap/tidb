@@ -718,6 +718,7 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 		if err != nil {
 			return nil, err
 		}
+		a.Ctx.SetValue(sessionctx.QueryString, executorExec.stmt.Text())
 		a.OutputNames = executorExec.outputNames
 		a.isPreparedStmt = true
 		a.Plan = executorExec.plan
@@ -764,18 +765,38 @@ func FormatSQL(sql string, pps variable.PreparedParams) stringutil.StringerFunc 
 	}
 }
 
+var (
+	sessionExecuteRunDurationInternal = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblInternal)
+	sessionExecuteRunDurationGeneral  = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblGeneral)
+)
+
 // CloseRecordSet will finish the execution of current statement and do some record work
 func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
-	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
-	a.LogSlowQuery(txnStartTS, lastErr == nil, false)
-	a.SummaryStmt(lastErr == nil)
-	sessVars := a.Ctx.GetSessionVars()
-	pps := types.CloneRow(sessVars.PreparedParams)
-	sessVars.PrevStmt = FormatSQL(a.OriginText(), pps)
+	a.FinishExecuteStmt(txnStartTS, lastErr == nil, false)
 	a.logAudit()
 	// Detach the disk tracker from GlobalDiskUsageTracker after every execution
 	if stmtCtx := a.Ctx.GetSessionVars().StmtCtx; stmtCtx != nil && stmtCtx.DiskTracker != nil {
-		stmtCtx.DiskTracker.Detach()
+		stmtCtx.DiskTracker.DetachFromGlobalTracker()
+	}
+}
+
+// FinishExecuteStmt is used to record some information after `ExecStmt` execution finished:
+// 1. record slow log if needed.
+// 2. record summary statement.
+// 3. record execute duration metric.
+// 4. update the `PrevStmt` in session variable.
+func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, succ bool, hasMoreResults bool) {
+	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
+	a.LogSlowQuery(txnTS, succ, hasMoreResults)
+	a.SummaryStmt(succ)
+	sessVars := a.Ctx.GetSessionVars()
+	pps := types.CloneRow(sessVars.PreparedParams)
+	sessVars.PrevStmt = FormatSQL(a.OriginText(), pps)
+	executeDuration := time.Since(sessVars.StartTime) - sessVars.DurationCompile
+	if sessVars.InRestrictedSQL {
+		sessionExecuteRunDurationInternal.Observe(executeDuration.Seconds())
+	} else {
+		sessionExecuteRunDurationGeneral.Observe(executeDuration.Seconds())
 	}
 }
 
@@ -823,6 +844,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		PlanDigest:     planDigest,
 		Prepared:       a.isPreparedStmt,
 		HasMoreResults: hasMoreResults,
+		PlanFromCache:  sessVars.FoundInPlanCache,
 	}
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {
 		slowItems.PrevStmt = sessVars.PrevStmt.String()
@@ -883,9 +905,18 @@ func getPlanDigest(sctx sessionctx.Context, p plannercore.Plan) (normalized, pla
 // SummaryStmt collects statements for information_schema.statements_summary
 func (a *ExecStmt) SummaryStmt(succ bool) {
 	sessVars := a.Ctx.GetSessionVars()
+	var userString string
+	if sessVars.User != nil {
+		userString = sessVars.User.Username
+	}
+
 	// Internal SQLs must also be recorded to keep the consistency of `PrevStmt` and `PrevStmtDigest`.
-	if !stmtsummary.StmtSummaryByDigestMap.Enabled() || (sessVars.InRestrictedSQL && !stmtsummary.StmtSummaryByDigestMap.EnabledInternal()) {
+	if !stmtsummary.StmtSummaryByDigestMap.Enabled() || ((sessVars.InRestrictedSQL || len(userString) == 0) && !stmtsummary.StmtSummaryByDigestMap.EnabledInternal()) {
 		sessVars.SetPrevStmtDigest("")
+		return
+	}
+	// Ignore `PREPARE` statements, but record `EXECUTE` statements.
+	if _, ok := a.StmtNode.(*ast.PrepareStmt); ok {
 		return
 	}
 	stmtCtx := sessVars.StmtCtx
@@ -924,10 +955,6 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	execDetail := stmtCtx.GetExecDetails()
 	copTaskInfo := stmtCtx.CopTasksDetails()
 	memMax := stmtCtx.MemTracker.MaxConsumed()
-	var userString string
-	if sessVars.User != nil {
-		userString = sessVars.User.Username
-	}
 
 	stmtsummary.StmtSummaryByDigestMap.AddStatement(&stmtsummary.StmtExecInfo{
 		SchemaName:     strings.ToLower(sessVars.CurrentDB),
@@ -950,5 +977,6 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		StartTime:      sessVars.StartTime,
 		IsInternal:     sessVars.InRestrictedSQL,
 		Succeed:        succ,
+		PlanInCache:    sessVars.FoundInPlanCache,
 	})
 }

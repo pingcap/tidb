@@ -448,8 +448,16 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 			keyOffMap[idxOff] = i
 		}
 		sort.Slice(keyOffMapList, func(i, j int) bool { return keyOffMapList[i] < keyOffMapList[j] })
+		keyIsIndexPrefix := true
 		for keyOff, idxOff := range keyOffMapList {
+			if keyOff != idxOff {
+				keyIsIndexPrefix = false
+				break
+			}
 			keyOff2KeyOffOrderByIdx[keyOffMap[idxOff]] = keyOff
+		}
+		if !keyIsIndexPrefix {
+			continue
 		}
 		// isOuterKeysPrefix means whether the outer join keys are the prefix of the prop items.
 		isOuterKeysPrefix := len(join.OuterJoinKeys) <= len(prop.Items)
@@ -1516,7 +1524,7 @@ func (lt *LogicalTopN) getPhysLimits() []PhysicalPlan {
 }
 
 // MatchItems checks if this prop's columns can match by items totally.
-func MatchItems(p *property.PhysicalProperty, items []*ByItems) bool {
+func MatchItems(p *property.PhysicalProperty, items []*util.ByItems) bool {
 	if len(items) < len(p.Items) {
 		return false
 	}
@@ -1599,7 +1607,9 @@ func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalPrope
 		Enforced:    true,
 		Items:       property.ItemsFromCols(la.groupByCols, desc),
 	}
-
+	if !prop.IsPrefix(childProp) {
+		return enforcedAggs
+	}
 	taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType}
 	if la.HasDistinct() {
 		// TODO: remove AllowDistinctAggPushDown after the cost estimation of distinct pushdown is implemented.
