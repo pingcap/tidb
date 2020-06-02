@@ -268,14 +268,17 @@ func EncodePlanNode(depth, pid int, planType string, isRoot bool, rowCount float
 	buf.WriteString(strconv.FormatFloat(rowCount, 'f', -1, 64))
 	buf.WriteByte(separator)
 	buf.WriteString(explainInfo)
-	buf.WriteByte(separator)
-	buf.WriteString(actRows)
-	buf.WriteByte(separator)
-	buf.WriteString(analyzeInfo)
-	buf.WriteByte(separator)
-	buf.WriteString(memoryInfo)
-	buf.WriteByte(separator)
-	buf.WriteString(diskInfo)
+	// Check whether has runtime info.
+	if len(actRows) > 0 && len(analyzeInfo) > 0 && len(memoryInfo) > 0 && len(diskInfo) > 0 {
+		buf.WriteByte(separator)
+		buf.WriteString(actRows)
+		buf.WriteByte(separator)
+		buf.WriteString(analyzeInfo)
+		buf.WriteByte(separator)
+		buf.WriteString(memoryInfo)
+		buf.WriteByte(separator)
+		buf.WriteString(diskInfo)
+	}
 	buf.WriteByte(lineBreaker)
 }
 
