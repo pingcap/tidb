@@ -1059,7 +1059,7 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 }
 
 func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType) bool {
-	if storeType == kv.TiFlash && (expr.GetType().Tp == mysql.TypeDuration || expr.GetType().Tp == mysql.TypeJSON || collate.NewCollationEnabled()) {
+	if storeType == kv.TiFlash && (expr.GetType().Tp == mysql.TypeDuration || collate.NewCollationEnabled()) {
 		return false
 	}
 	switch x := expr.(type) {
@@ -1119,7 +1119,8 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		ast.LT, ast.GT, ast.Ifnull, ast.IsNull, ast.Or,
 		ast.In, ast.Mod, ast.And, ast.LogicOr, ast.LogicAnd,
 		ast.Like, ast.UnaryNot, ast.Case, ast.Month, ast.Substr,
-		ast.Substring, ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime:
+		ast.Substring, ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime,
+		ast.JSONLength:
 		return true
 	case ast.Cast:
 		switch function.Function.PbCode() {
