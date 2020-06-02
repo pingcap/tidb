@@ -940,6 +940,23 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	assertShowWarningCorrect("create table t (a bigint auto_random(15) primary key)", 281474976710655)
 	assertShowWarningCorrect("create table t (a bigint unsigned auto_random(15) primary key)", 562949953421311)
 
+	// Test insert into auto_random column explicitly is not allowed by default.
+	assertExplicitInsertDisallowed := func(sql string) {
+		assertInvalidAutoRandomErr(sql, autoid.AutoRandomExplicitInsertDisabledErrMsg)
+	}
+	tk.MustExec("set @@allow_auto_random_explicit_insert = false")
+	mustExecAndDrop("create table t (a bigint auto_random primary key)", func() {
+		assertExplicitInsertDisallowed("insert into t values (1)")
+		assertExplicitInsertDisallowed("insert into t values (3)")
+		tk.MustExec("insert into t values()")
+	})
+	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
+	mustExecAndDrop("create table t (a bigint auto_random primary key)", func() {
+		tk.MustExec("insert into t values(1)")
+		tk.MustExec("insert into t values(3)")
+		tk.MustExec("insert into t values()")
+	})
+
 	// Disallow using it when allow-auto-random is not enabled.
 	config.GetGlobalConfig().Experimental.AllowAutoRandom = false
 	assertExperimentDisabled("create table auto_random_table (a int primary key auto_random(3))")
@@ -1094,4 +1111,57 @@ func (s *testSerialSuite) TestInvisibleIndex(c *C) {
 	tk.MustExec("insert into t6 values (1, 2)")
 	tk.MustQuery("select * from t6").Check(testkit.Rows("1 2"))
 	tk.MustGetErrCode("alter table t6 drop primary key", errno.ErrPKIndexCantBeInvisible)
+}
+
+func (s *testSerialSuite) TestCreateClusteredIndex(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.MustExec("CREATE TABLE t1 (a int primary key, b int)")
+	tk.MustExec("CREATE TABLE t2 (a varchar(255) primary key, b int)")
+	tk.MustExec("CREATE TABLE t3 (a int, b int, c int, primary key (a, b))")
+	tk.MustExec("CREATE TABLE t4 (a int, b int, c int)")
+	ctx := tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().PKIsHandle, IsTrue)
+	c.Assert(tbl.Meta().IsCommonHandle, IsFalse)
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().IsCommonHandle, IsTrue)
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t3"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().IsCommonHandle, IsTrue)
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t4"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().IsCommonHandle, IsFalse)
+
+	config.GetGlobalConfig().AlterPrimaryKey = true
+	tk.MustExec("CREATE TABLE t5 (a varchar(255) primary key, b int)")
+	tk.MustExec("CREATE TABLE t6 (a int, b int, c int, primary key (a, b))")
+	is = domain.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t5"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().IsCommonHandle, IsFalse)
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t6"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().IsCommonHandle, IsFalse)
+	config.GetGlobalConfig().AlterPrimaryKey = false
+
+	tk.MustExec("CREATE TABLE t21 like t2")
+	tk.MustExec("CREATE TABLE t31 like t3")
+	is = domain.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t21"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().IsCommonHandle, IsTrue)
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t31"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().IsCommonHandle, IsTrue)
+
+	tk.Se.GetSessionVars().EnableClusteredIndex = false
+	tk.MustExec("CREATE TABLE t7 (a varchar(255) primary key, b int)")
+	is = domain.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t7"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().IsCommonHandle, IsFalse)
 }
