@@ -15,12 +15,12 @@ package rowcodec
 
 import (
 	"encoding/binary"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/types"
 	"reflect"
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/types"
 )
 
 // CodecVer is the constant number that represent the new row format.
