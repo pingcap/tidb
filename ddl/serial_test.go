@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -783,16 +784,14 @@ func (s *testSerialSuite) TestTruncateTableUpdateSchemaVersionErr(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 
-	limit := variable.GetDDLErrorCountLimit()
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 5")
 	err := ddlutil.LoadDDLVars(tk.Se)
 	c.Assert(err, IsNil)
-	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %d", limit))
 
 	tk.MustExec("create table t (a int)")
 	_, err = tk.Exec("truncate table t")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:-1]DDL job rollback, error msg: mock update version error")
+	c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
 	// Disable fail point.
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockTruncateTableUpdateVersionError"), IsNil)
 	tk.MustExec("truncate table t")
