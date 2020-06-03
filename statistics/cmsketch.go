@@ -52,11 +52,25 @@ type TopNMeta struct {
 	Count uint64
 }
 
+// GetH2 get the the second part of `murmur3.Sum128()`, just for test.
+func (t *TopNMeta) GetH2() uint64 {
+	return t.h2
+}
+
 // NewCMSketch returns a new CM sketch.
 func NewCMSketch(d, w int32) *CMSketch {
 	tbl := make([][]uint32, d)
+	// Background: The Go's memory allocator will ask caller to sweep spans in some scenarios.
+	// This can cause memory allocation request latency unpredictable, if the list of spans which need sweep is too long.
+	// For memory allocation large than 32K, the allocator will never allocate memory from spans list.
+	//
+	// The memory referenced by the CMSketch will never be freed.
+	// If the number of table or index is extremely large, there will be a large amount of spans in global list.
+	// The default value of `d` is 5 and `w` is 2048, if we use a single slice for them the size will be 40K.
+	// This allocation will be handled by mheap and will never have impact on normal allocations.
+	arena := make([]uint32, d*w)
 	for i := range tbl {
-		tbl[i] = make([]uint32, w)
+		tbl[i] = arena[i*int(w) : (i+1)*int(w)]
 	}
 	return &CMSketch{depth: d, width: w, table: tbl}
 }
@@ -150,11 +164,11 @@ func buildCMSWithTopN(helper *topNHelper, d, w int32, scaleRatio uint64, default
 
 func calculateDefaultVal(helper *topNHelper, estimateNDV, scaleRatio, rowCount uint64) uint64 {
 	sampleNDV := uint64(len(helper.sorted))
-	if rowCount <= (helper.sampleSize-uint64(helper.onlyOnceItems))*scaleRatio {
+	if rowCount <= (helper.sampleSize-helper.onlyOnceItems)*scaleRatio {
 		return 1
 	}
-	estimateRemainingCount := rowCount - (helper.sampleSize-uint64(helper.onlyOnceItems))*scaleRatio
-	return estimateRemainingCount / mathutil.MaxUint64(1, estimateNDV-uint64(sampleNDV)+helper.onlyOnceItems)
+	estimateRemainingCount := rowCount - (helper.sampleSize-helper.onlyOnceItems)*scaleRatio
+	return estimateRemainingCount / mathutil.MaxUint64(1, estimateNDV-sampleNDV+helper.onlyOnceItems)
 }
 
 func (c *CMSketch) findTopNMeta(h1, h2 uint64, d []byte) *TopNMeta {
@@ -180,7 +194,8 @@ func (c *CMSketch) updateTopNWithDelta(h1, h2 uint64, d []byte, delta uint64) bo
 	return false
 }
 
-func (c *CMSketch) queryTopN(h1, h2 uint64, d []byte) (uint64, bool) {
+// QueryTopN returns the results for (h1, h2) in murmur3.Sum128(), if not exists, return (0, false).
+func (c *CMSketch) QueryTopN(h1, h2 uint64, d []byte) (uint64, bool) {
 	if c.topN == nil {
 		return 0, false
 	}
@@ -216,7 +231,7 @@ func (c *CMSketch) considerDefVal(cnt uint64) bool {
 // updateValueBytes updates value of d to count.
 func (c *CMSketch) updateValueBytes(d []byte, count uint64) {
 	h1, h2 := murmur3.Sum128(d)
-	if oriCount, ok := c.queryTopN(h1, h2, d); ok {
+	if oriCount, ok := c.QueryTopN(h1, h2, d); ok {
 		deltaCount := count - oriCount
 		c.updateTopNWithDelta(h1, h2, d, deltaCount)
 	}
@@ -264,7 +279,7 @@ func (c *CMSketch) queryValue(sc *stmtctx.StatementContext, val types.Datum) (ui
 // QueryBytes is used to query the count of specified bytes.
 func (c *CMSketch) QueryBytes(d []byte) uint64 {
 	h1, h2 := murmur3.Sum128(d)
-	if count, ok := c.queryTopN(h1, h2, d); ok {
+	if count, ok := c.QueryTopN(h1, h2, d); ok {
 		return count
 	}
 	return c.queryHashValue(h1, h2)
@@ -503,6 +518,11 @@ func (c *CMSketch) TopN() []*TopNMeta {
 		topN = append(topN, meta...)
 	}
 	return topN
+}
+
+// TopNMap gets the origin topN map.
+func (c *CMSketch) TopNMap() map[uint64][]*TopNMeta {
+	return c.topN
 }
 
 // AppendTopN appends a topn into the cm sketch.

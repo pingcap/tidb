@@ -103,6 +103,12 @@ func (p LogicalUnionAll) Init(ctx sessionctx.Context, offset int) *LogicalUnionA
 	return &p
 }
 
+// Init initializes LogicalPartitionUnionAll.
+func (p LogicalPartitionUnionAll) Init(ctx sessionctx.Context, offset int) *LogicalPartitionUnionAll {
+	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypePartitionUnion, &p, offset)
+	return &p
+}
+
 // Init initializes PhysicalUnionAll.
 func (p PhysicalUnionAll) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalUnionAll {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeUnion, &p, offset)
@@ -377,8 +383,8 @@ func (p PhysicalIndexMergeReader) Init(ctx sessionctx.Context, offset int) *Phys
 		for _, partPlan := range p.partialPlans {
 			totalRowCount += partPlan.StatsCount()
 		}
-		p.stats.StatsVersion = p.partialPlans[0].statsInfo().StatsVersion
 		p.stats = p.partialPlans[0].statsInfo().ScaleByExpectCnt(totalRowCount)
+		p.stats.StatsVersion = p.partialPlans[0].statsInfo().StatsVersion
 	}
 	p.PartialPlans = make([][]PhysicalPlan, 0, len(p.partialPlans))
 	for _, partialPlan := range p.partialPlans {

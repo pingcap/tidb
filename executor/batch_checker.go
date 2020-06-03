@@ -117,7 +117,7 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 		handle := row[handleCol.Offset].GetInt64()
 		handleKey = &keyValueWithDupInfo{
 			newKV: keyValue{
-				key:   t.RecordKey(handle),
+				key:   t.RecordKey(kv.IntHandle(handle)),
 				value: newRowValue,
 			},
 			dupErr: kv.ErrKeyExists.FastGenByArgs(strconv.FormatInt(handle, 10), "PRIMARY"),
@@ -136,7 +136,7 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 		// Pass handle = 0 to GenIndexKey,
 		// due to we only care about distinct key.
 		key, distinct, err1 := v.GenIndexKey(ctx.GetSessionVars().StmtCtx,
-			colVals, 0, nil)
+			colVals, kv.IntHandle(0), nil)
 		if err1 != nil {
 			return nil, err1
 		}
@@ -167,7 +167,7 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 
 // getOldRow gets the table record row from storage for batch check.
 // t could be a normal table or a partition, but it must not be a PartitionedTable.
-func getOldRow(ctx context.Context, sctx sessionctx.Context, txn kv.Transaction, t table.Table, handle int64,
+func getOldRow(ctx context.Context, sctx sessionctx.Context, txn kv.Transaction, t table.Table, handle kv.Handle,
 	genExprs []expression.Expression) ([]types.Datum, error) {
 	oldValue, err := txn.Get(ctx, t.RecordKey(handle))
 	if err != nil {
@@ -198,7 +198,7 @@ func getOldRow(ctx context.Context, sctx sessionctx.Context, txn kv.Transaction,
 				if err != nil {
 					return nil, err
 				}
-				oldRow[col.Offset], err = table.CastValue(sctx, val, col.ToInfo())
+				oldRow[col.Offset], err = table.CastValue(sctx, val, col.ToInfo(), false, false)
 				if err != nil {
 					return nil, err
 				}

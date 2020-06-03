@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -230,8 +231,8 @@ func buildMockDataSourceWithIndex(opt mockDataSourceParameters, index []int) *mo
 	return buildMockDataSource(opt)
 }
 
+// aggTestCase has a fixed schema (aggCol Double, groupBy LongLong).
 type aggTestCase struct {
-	// The test table's schema is fixed (aggCol Double, groupBy LongLong).
 	execType    string // "hash" or "stream"
 	aggFunc     string // sum, avg, count ....
 	groupByNDV  int    // the number of distinct group-by keys
@@ -469,9 +470,9 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 
 	var tail core.PhysicalPlan = win
 	if !dataSourceSorted {
-		byItems := make([]*core.ByItems, 0, len(partitionBy))
+		byItems := make([]*util.ByItems, 0, len(partitionBy))
 		for _, col := range partitionBy {
-			byItems = append(byItems, &core.ByItems{Expr: col, Desc: false})
+			byItems = append(byItems, &util.ByItems{Expr: col, Desc: false})
 		}
 		sort := &core.PhysicalSort{ByItems: byItems}
 		sort.SetChildren(src)
@@ -505,8 +506,8 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 	return exec
 }
 
+// windowTestCase has a fixed schema (col Double, partitionBy LongLong, rawData VarString(16), col LongLong).
 type windowTestCase struct {
-	// The test table's schema is fixed (col Double, partitionBy LongLong, rawData VarString(16), col LongLong).
 	windowFunc       string
 	numFunc          int // The number of windowFuncs. Default: 1.
 	frame            *core.WindowFrame
@@ -681,6 +682,7 @@ func baseBenchmarkWindowFunctionsWithSlidingWindow(b *testing.B, frameType ast.F
 		{ast.AggFuncCount, mysql.TypeLong},
 		{ast.AggFuncAvg, mysql.TypeFloat},
 		{ast.AggFuncAvg, mysql.TypeNewDecimal},
+		{ast.AggFuncBitXor, mysql.TypeLong},
 	}
 	row := 100000
 	ndv := 100
@@ -1341,12 +1343,28 @@ func BenchmarkIndexJoinExec(b *testing.B) {
 
 type mergeJoinTestCase struct {
 	indexJoinTestCase
+	childrenUsedSchema [][]bool
 }
 
 func prepare4MergeJoin(tc *mergeJoinTestCase, leftExec, rightExec *mockDataSource) *MergeJoinExec {
 	outerCols, innerCols := tc.columns(), tc.columns()
-	joinSchema := expression.NewSchema(outerCols...)
-	joinSchema.Append(innerCols...)
+
+	joinSchema := expression.NewSchema()
+	if tc.childrenUsedSchema != nil {
+		for i, used := range tc.childrenUsedSchema[0] {
+			if used {
+				joinSchema.Append(outerCols[i])
+			}
+		}
+		for i, used := range tc.childrenUsedSchema[1] {
+			if used {
+				joinSchema.Append(innerCols[i])
+			}
+		}
+	} else {
+		joinSchema.Append(outerCols...)
+		joinSchema.Append(innerCols...)
+	}
 
 	outerJoinKeys := make([]*expression.Column, 0, len(tc.outerJoinKeyIdx))
 	innerJoinKeys := make([]*expression.Column, 0, len(tc.innerJoinKeyIdx))
@@ -1370,18 +1388,19 @@ func prepare4MergeJoin(tc *mergeJoinTestCase, leftExec, rightExec *mockDataSourc
 		stmtCtx:      tc.ctx.GetSessionVars().StmtCtx,
 		baseExecutor: newBaseExecutor(tc.ctx, joinSchema, stringutil.StringerStr("MergeJoin"), leftExec, rightExec),
 		compareFuncs: compareFuncs,
-		joiner: newJoiner(
-			tc.ctx,
-			0,
-			false,
-			defaultValues,
-			nil,
-			retTypes(leftExec),
-			retTypes(rightExec),
-			nil,
-		),
-		isOuterJoin: false,
+		isOuterJoin:  false,
 	}
+
+	e.joiner = newJoiner(
+		tc.ctx,
+		0,
+		false,
+		defaultValues,
+		nil,
+		retTypes(leftExec),
+		retTypes(rightExec),
+		tc.childrenUsedSchema,
+	)
 
 	e.innerTable = &mergeJoinTable{
 		isInner:    true,
@@ -1399,7 +1418,7 @@ func prepare4MergeJoin(tc *mergeJoinTestCase, leftExec, rightExec *mockDataSourc
 }
 
 func defaultMergeJoinTestCase() *mergeJoinTestCase {
-	return &mergeJoinTestCase{*defaultIndexJoinTestCase()}
+	return &mergeJoinTestCase{*defaultIndexJoinTestCase(), nil}
 }
 
 func newMergeJoinBenchmark(numOuterRows, numInnerDup, numInnerRedundant int) (tc *mergeJoinTestCase, innerDS, outerDS *mockDataSource) {
@@ -1421,7 +1440,7 @@ func newMergeJoinBenchmark(numOuterRows, numInnerDup, numInnerRedundant int) (tc
 		innerIdx:        []int{0, 1},
 		rawData:         wideString,
 	}
-	tc = &mergeJoinTestCase{*itc}
+	tc = &mergeJoinTestCase{*itc, nil}
 	outerOpt := mockDataSourceParameters{
 		schema: expression.NewSchema(tc.columns()...),
 		rows:   numOuterRows,
@@ -1514,37 +1533,35 @@ func BenchmarkMergeJoinExec(b *testing.B) {
 
 	totalRows := 300000
 
-	{
-		numInnerDup := 1
-		tc, innerDS, outerDS := newMergeJoinBenchmark(totalRows/numInnerDup, numInnerDup, 0)
-		b.Run(fmt.Sprintf("merge join %v", tc), func(b *testing.B) {
-			benchmarkMergeJoinExecWithCase(b, tc, outerDS, innerDS, innerMergeJoin)
-		})
+	innerDupAndRedundant := [][]int{
+		{1, 0},
+		{100, 0},
+		{10000, 0},
+		{1, 30000},
 	}
 
-	{
-		numInnerDup := 100
-		tc, innerDS, outerDS := newMergeJoinBenchmark(totalRows/numInnerDup, numInnerDup, 0)
-		b.Run(fmt.Sprintf("merge join %v", tc), func(b *testing.B) {
-			benchmarkMergeJoinExecWithCase(b, tc, outerDS, innerDS, innerMergeJoin)
-		})
+	childrenUsedSchemas := [][][]bool{
+		nil,
+		{
+			{true, false, false},
+			{false, true, false},
+		},
 	}
 
-	{
-		numInnerDup := 10000
-		tc, innerDS, outerDS := newMergeJoinBenchmark(totalRows/numInnerDup, numInnerDup, 0)
-		b.Run(fmt.Sprintf("merge join %v", tc), func(b *testing.B) {
-			benchmarkMergeJoinExecWithCase(b, tc, outerDS, innerDS, innerMergeJoin)
-		})
-	}
+	for _, params := range innerDupAndRedundant {
+		numInnerDup, numInnerRedundant := params[0], params[1]
+		for _, childrenUsedSchema := range childrenUsedSchemas {
+			tc, innerDS, outerDS := newMergeJoinBenchmark(totalRows/numInnerDup, numInnerDup, numInnerRedundant)
+			inlineProj := false
+			if childrenUsedSchema != nil {
+				inlineProj = true
+				tc.childrenUsedSchema = childrenUsedSchema
+			}
 
-	{
-		numInnerDup := 1
-		numInnerRedundant := 30000
-		tc, innerDS, outerDS := newMergeJoinBenchmark(totalRows/numInnerDup, numInnerDup, numInnerRedundant)
-		b.Run(fmt.Sprintf("merge join %v", tc), func(b *testing.B) {
-			benchmarkMergeJoinExecWithCase(b, tc, outerDS, innerDS, innerMergeJoin)
-		})
+			b.Run(fmt.Sprintf("merge join %v InlineProj:%v", tc, inlineProj), func(b *testing.B) {
+				benchmarkMergeJoinExecWithCase(b, tc, outerDS, innerDS, innerMergeJoin)
+			})
+		}
 	}
 }
 
@@ -1585,11 +1602,11 @@ func benchmarkSortExec(b *testing.B, cas *sortCase) {
 	dataSource := buildMockDataSource(opt)
 	exec := &SortExec{
 		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, stringutil.StringerStr("sort"), dataSource),
-		ByItems:      make([]*core.ByItems, 0, len(cas.orderByIdx)),
+		ByItems:      make([]*util.ByItems, 0, len(cas.orderByIdx)),
 		schema:       dataSource.schema,
 	}
 	for _, idx := range cas.orderByIdx {
-		exec.ByItems = append(exec.ByItems, &core.ByItems{Expr: cas.columns()[idx]})
+		exec.ByItems = append(exec.ByItems, &util.ByItems{Expr: cas.columns()[idx]})
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
