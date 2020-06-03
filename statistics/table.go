@@ -20,6 +20,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -361,6 +362,41 @@ func isSingleColIdxNullRange(idx *Index, ran *ranger.Range) bool {
 	return false
 }
 
+<<<<<<< HEAD
+=======
+// getEqualCondSelectivity gets the selectivity of the equal conditions.
+func (coll *HistColl) getEqualCondSelectivity(idx *Index, bytes []byte, usedColsLen int) float64 {
+	coverAll := len(idx.Info.Columns) == usedColsLen
+	// In this case, the row count is at most 1.
+	if idx.Info.Unique && coverAll {
+		return 1.0 / float64(idx.TotalRowCount())
+	}
+	val := types.NewBytesDatum(bytes)
+	if idx.outOfRange(val) {
+		// When the value is out of range, we could not found this value in the CM Sketch,
+		// so we use heuristic methods to estimate the selectivity.
+		if idx.NDV > 0 && coverAll {
+			// for equality queries
+			return float64(coll.ModifyCount) / float64(idx.NDV) / idx.TotalRowCount()
+		}
+		// The equal condition only uses prefix columns of the index.
+		colIDs := coll.Idx2ColumnIDs[idx.ID]
+		var ndv int64
+		for i, colID := range colIDs {
+			if i >= usedColsLen {
+				break
+			}
+			ndv = mathutil.MaxInt64(ndv, coll.Columns[colID].NDV)
+		}
+		if ndv > 0 {
+			return float64(coll.ModifyCount) / float64(ndv) / idx.TotalRowCount()
+		}
+		return float64(coll.ModifyCount) / outOfRangeBetweenRate / idx.TotalRowCount()
+	}
+	return float64(idx.CMSketch.QueryBytes(bytes)) / float64(idx.TotalRowCount())
+}
+
+>>>>>>> 94a722e... statistics: improve estimation for index equal condition (#17366)
 func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.Range) (float64, error) {
 	idx := coll.Indices[idxID]
 	totalCount := float64(0)
@@ -400,8 +436,26 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 				// for range queries
 				selectivity = float64(coll.ModifyCount) / outOfRangeBetweenRate / idx.TotalRowCount()
 			}
+<<<<<<< HEAD
 		} else {
 			selectivity = float64(idx.CMSketch.QueryBytes(bytes)) / float64(idx.TotalRowCount())
+=======
+			selectivity = coll.getEqualCondSelectivity(idx, bytes, rangePosition)
+		} else {
+			bytes, err := codec.EncodeKey(sc, nil, ran.LowVal[:rangePosition-1]...)
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
+			prefixLen := len(bytes)
+			for _, val := range rangeVals {
+				bytes = bytes[:prefixLen]
+				bytes, err = codec.EncodeKey(sc, bytes, val)
+				if err != nil {
+					return 0, err
+				}
+				selectivity += coll.getEqualCondSelectivity(idx, bytes, rangePosition)
+			}
+>>>>>>> 94a722e... statistics: improve estimation for index equal condition (#17366)
 		}
 		// use histogram to estimate the range condition
 		if rangePosition != len(ran.LowVal) {
