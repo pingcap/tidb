@@ -120,8 +120,9 @@ func (s *testSuite) TestBindParse(c *C) {
 	status := "using"
 	charset := "utf8mb4"
 	collation := "utf8mb4_bin"
-	sql := fmt.Sprintf(`INSERT INTO mysql.bind_info(original_sql,bind_sql,default_db,status,create_time,update_time,charset,collation) VALUES ('%s', '%s', '%s', '%s', NOW(), NOW(),'%s', '%s')`,
-		originSQL, bindSQL, defaultDb, status, charset, collation)
+	source := bindinfo.Manual
+	sql := fmt.Sprintf(`INSERT INTO mysql.bind_info(original_sql,bind_sql,default_db,status,create_time,update_time,charset,collation,source) VALUES ('%s', '%s', '%s', '%s', NOW(), NOW(),'%s', '%s', '%s')`,
+		originSQL, bindSQL, defaultDb, status, charset, collation, source)
 	tk.MustExec(sql)
 	bindHandle := bindinfo.NewBindHandle(tk.Se)
 	err := bindHandle.Update(true)
@@ -822,7 +823,8 @@ func (s *testSuite) TestEvolveInvalidBindings(c *C) {
 	tk.MustExec("create table t(a int, b int, index idx_a(a))")
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ USE_INDEX(t) */ * from t where a > 10")
 	// Manufacture a rejected binding by hacking mysql.bind_info.
-	tk.MustExec("insert into mysql.bind_info values('select * from t where a > ?', 'select /*+ USE_INDEX(t,idx_a) */ * from t where a > 10', 'test', 'rejected', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '')")
+	tk.MustExec("insert into mysql.bind_info values('select * from t where a > ?', 'select /*+ USE_INDEX(t,idx_a) */ * from t where a > 10', 'test', 'rejected', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
+		bindinfo.Manual + "')")
 	tk.MustQuery("select bind_sql, status from mysql.bind_info").Sort().Check(testkit.Rows(
 		"select /*+ USE_INDEX(t) */ * from t where a > 10 using",
 		"select /*+ USE_INDEX(t,idx_a) */ * from t where a > 10 rejected",
@@ -1095,4 +1097,56 @@ func (s *testSuite) TestReCreateBindAfterEvolvePlan(c *C) {
 	c.Assert(len(rows), Equals, 1)
 	tk.MustQuery("select * from t where a >= 4 and b >= 1")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_b")
+}
+
+func (s *testSuite) TestbindingSource(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, index idx_a(a))")
+
+	// Test Source for SQL created sql
+	tk.MustExec("create global binding for select * from t where a > 10 using select * from t ignore index(idx_a) where a > 10")
+	bindHandle := s.domain.BindHandle()
+	sql, hash := parser.NormalizeDigest("select * from t where a > ?")
+	bindData := bindHandle.GetBindRecord(hash, sql, "test")
+	c.Check(bindData, NotNil)
+	c.Check(bindData.OriginalSQL, Equals, "select * from t where a > ?")
+	c.Assert(len(bindData.Bindings), Equals, 1)
+	bind := bindData.Bindings[0]
+	c.Assert(bind.Source, Equals, bindinfo.Manual)
+
+	// Test Source for evolved sql
+	tk.MustExec("set @@tidb_evolve_plan_baselines=1")
+	tk.MustQuery("select * from t where a > 10")
+	bindHandle.SaveEvolveTasksToStore()
+	sql, hash = parser.NormalizeDigest("select * from t where a > ?")
+	bindData = bindHandle.GetBindRecord(hash, sql, "test")
+	c.Check(bindData, NotNil)
+	c.Check(bindData.OriginalSQL, Equals, "select * from t where a > ?")
+	c.Assert(len(bindData.Bindings), Equals, 2)
+	bind = bindData.Bindings[1]
+	c.Assert(bind.Source, Equals, bindinfo.Evolve)
+	tk.MustExec("set @@tidb_evolve_plan_baselines=0")
+
+	// Test Source for captured sqls
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec("set @@tidb_capture_plan_baselines = on")
+	defer func() {
+		tk.MustExec("set @@tidb_capture_plan_baselines = off")
+	}()
+	tk.MustExec("use test")
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	tk.MustExec("select * from t ignore index(idx_a) where a < 10")
+	tk.MustExec("select * from t ignore index(idx_a) where a < 10")
+	tk.MustExec("admin capture bindings")
+	bindHandle.CaptureBaselines()
+	sql, hash = parser.NormalizeDigest("select * from t where a < ?")
+	bindData = bindHandle.GetBindRecord(hash, sql, "test")
+	c.Check(bindData, NotNil)
+	c.Check(bindData.OriginalSQL, Equals, "select * from t where a < ?")
+	c.Assert(len(bindData.Bindings), Equals, 1)
+	bind = bindData.Bindings[0]
+	c.Assert(bind.Source, Equals, bindinfo.Capture)
 }
