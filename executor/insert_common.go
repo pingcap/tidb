@@ -889,9 +889,7 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 func (e *InsertValues) allocAutoRandomID(fieldType *types.FieldType) (int64, error) {
 	alloc := e.Table.Allocators(e.ctx).Get(autoid.AutoRandomType)
 	tableInfo := e.Table.Meta()
-	increment := e.ctx.GetSessionVars().AutoIncrementIncrement
-	offset := e.ctx.GetSessionVars().AutoIncrementOffset
-	idIter, err := alloc.Alloc(tableInfo.ID, 1, int64(increment), int64(offset))
+	idIter, err := alloc.Alloc(tableInfo.ID, 1, 1, 1)
 	if err != nil {
 		return 0, err
 	}
