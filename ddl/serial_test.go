@@ -755,6 +755,27 @@ func (s *testSerialSuite) TestCancelJobByErrorCountLimit(c *C) {
 	c.Assert(err.Error(), Equals, "[ddl:-1]DDL job rollback, error msg: mock do job error")
 }
 
+func (s *testSerialSuite) TestTruncateTableUpdateSchemaVersionErr(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockTruncateTableUpdateVersionError", `return(true)`), IsNil)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+
+	limit := variable.GetDDLErrorCountLimit()
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 5")
+	err := ddlutil.LoadDDLVars(tk.Se)
+	c.Assert(err, IsNil)
+	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %d", limit))
+
+	tk.MustExec("create table t (a int)")
+	_, err = tk.Exec("truncate table t")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:-1]DDL job rollback, error msg: mock update version error")
+	// Disable fail point.
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockTruncateTableUpdateVersionError"), IsNil)
+	tk.MustExec("truncate table t")
+}
+
 func (s *testSerialSuite) TestCanceledJobTakeTime(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
