@@ -214,7 +214,6 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 		return errors.New("inject an error before start partialIndexWorker")
 	})
 
-	isSel := e.ctx.GetSessionVars().StmtCtx.InSelectStmt
 	go func() {
 		defer partialWorkerWg.Done()
 		ctx1, cancel := context.WithCancel(ctx)
@@ -232,9 +231,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 		if err := result.Close(); err != nil {
 			logutil.Logger(ctx).Error("close Select result failed:", zap.Error(err))
 		}
-		if isSel {
-			e.ctx.StoreQueryFeedback(e.feedbacks[workID])
-		}
+		e.ctx.StoreQueryFeedback(e.feedbacks[workID])
 	}()
 
 	return nil
@@ -274,7 +271,6 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 	if worker.batchSize > worker.maxBatchSize {
 		worker.batchSize = worker.maxBatchSize
 	}
-	isSel := e.ctx.GetSessionVars().StmtCtx.InSelectStmt
 	go func() {
 		defer partialWorkerWg.Done()
 		ctx1, cancel := context.WithCancel(ctx)
@@ -292,9 +288,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 		if err := worker.tableReader.Close(); err != nil {
 			logutil.Logger(ctx).Error("close Select result failed:", zap.Error(err))
 		}
-		if isSel {
-			e.ctx.StoreQueryFeedback(e.feedbacks[workID])
-		}
+		e.ctx.StoreQueryFeedback(e.feedbacks[workID])
 	}()
 	return nil
 }

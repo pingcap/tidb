@@ -186,9 +186,7 @@ func (e *TableReaderExecutor) Close() error {
 		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.plans[0].ExplainID().String())
 		copStats.SetRowNum(e.feedback.Actual())
 	}
-	if e.ctx.GetSessionVars().StmtCtx.InSelectStmt {
-		e.ctx.StoreQueryFeedback(e.feedback)
-	}
+	e.ctx.StoreQueryFeedback(e.feedback)
 	return err
 }
 

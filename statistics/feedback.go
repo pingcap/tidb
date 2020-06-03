@@ -103,9 +103,6 @@ func (q *QueryFeedback) CalcErrorRate() float64 {
 // 3: the number of scan ranges exceeds the limit because it may affect the performance;
 // 4: it does not pass the probabilistic sampler.
 func CollectFeedback(sc *stmtctx.StatementContext, q *QueryFeedback, numOfRanges int) bool {
-	if sc.RuntimeStatsColl != nil {
-		return true
-	}
 	if !sc.InSelectStmt {
 		return false
 	}

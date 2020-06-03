@@ -245,9 +245,7 @@ func (e *IndexReaderExecutor) Close() error {
 		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.plans[0].ExplainID().String())
 		copStats.SetRowNum(e.feedback.Actual())
 	}
-	if e.ctx.GetSessionVars().StmtCtx.InSelectStmt {
-		e.ctx.StoreQueryFeedback(e.feedback)
-	}
+	e.ctx.StoreQueryFeedback(e.feedback)
 	return err
 }
 
@@ -481,8 +479,6 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 	if worker.batchSize > worker.maxBatchSize {
 		worker.batchSize = worker.maxBatchSize
 	}
-	// Check if the query is SelectStmt before starting the new goroutine, otherwise data race may happen.
-	isSel := e.ctx.GetSessionVars().StmtCtx.InSelectStmt
 	e.idxWorkerWg.Add(1)
 	go func() {
 		ctx1, cancel := context.WithCancel(ctx)
@@ -500,9 +496,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 			copStats = e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.tblPlans[0].ExplainID().String())
 			copStats.SetRowNum(int64(count))
 		}
-		if isSel {
-			e.ctx.StoreQueryFeedback(e.feedback)
-		}
+		e.ctx.StoreQueryFeedback(e.feedback)
 		close(workCh)
 		close(e.resultCh)
 		e.idxWorkerWg.Done()
