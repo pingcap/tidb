@@ -782,8 +782,9 @@ func (h tableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		writeError(w, err)
 		return
 	}
+
 	// get table's schema.
-	tableVal, err := schema.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
+	tbl, err := h.getTable(dbName, tableName)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -791,13 +792,13 @@ func (h tableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	switch h.op {
 	case opTableRegions:
-		h.handleRegionRequest(schema, tableVal, w, req)
+		h.handleRegionRequest(schema, tbl, w, req)
 	case opTableDiskUsage:
-		h.handleDiskUsageRequest(schema, tableVal, w, req)
+		h.handleDiskUsageRequest(schema, tbl, w, req)
 	case opTableScatter:
-		h.handleScatterTableRequest(schema, tableVal, w, req)
+		h.handleScatterTableRequest(schema, tbl, w, req)
 	case opStopTableScatter:
-		h.handleStopScatterTableRequest(schema, tableVal, w, req)
+		h.handleStopScatterTableRequest(schema, tbl, w, req)
 	default:
 		writeError(w, errors.New("method not found"))
 	}
@@ -956,13 +957,13 @@ func (h tableHandler) deleteScatterSchedule(name string) error {
 	return nil
 }
 
-func (h tableHandler) handleScatterTableRequest(schema infoschema.InfoSchema, tbl table.Table, w http.ResponseWriter, req *http.Request) {
+func (h tableHandler) handleScatterTableRequest(schema infoschema.InfoSchema, tbl table.PhysicalTable, w http.ResponseWriter, req *http.Request) {
 	// for record
-	tableID := tbl.Meta().ID
+	tableID := tbl.GetPhysicalID()
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(tableID)
 	startKey = codec.EncodeBytes([]byte{}, startKey)
 	endKey = codec.EncodeBytes([]byte{}, endKey)
-	tableName := tbl.Meta().Name.String()
+	tableName := fmt.Sprintf("%s-%d", tbl.Meta().Name.String(), tableID)
 	err := h.addScatterSchedule(startKey, endKey, tableName)
 	if err != nil {
 		writeError(w, errors.Annotate(err, "scatter record error"))
@@ -985,9 +986,9 @@ func (h tableHandler) handleScatterTableRequest(schema infoschema.InfoSchema, tb
 	writeData(w, "success!")
 }
 
-func (h tableHandler) handleStopScatterTableRequest(schema infoschema.InfoSchema, tbl table.Table, w http.ResponseWriter, req *http.Request) {
+func (h tableHandler) handleStopScatterTableRequest(schema infoschema.InfoSchema, tbl table.PhysicalTable, w http.ResponseWriter, req *http.Request) {
 	// for record
-	tableName := tbl.Meta().Name.String()
+	tableName := fmt.Sprintf("%s-%d", tbl.Meta().Name.String(), tbl.GetPhysicalID())
 	err := h.deleteScatterSchedule(tableName)
 	if err != nil {
 		writeError(w, errors.Annotate(err, "stop scatter record error"))
