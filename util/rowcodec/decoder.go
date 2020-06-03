@@ -50,14 +50,6 @@ type ColInfo struct {
 	IsPKHandle    bool
 	VirtualGenCol bool
 	Ft            *types.FieldType
-
-	// no used and delete me after union store upgrade dependency.
-	Tp      int32
-	Flag    int32
-	Flen    int
-	Decimal int
-	Elems   []string
-	Collate string
 }
 
 // DatumMapDecoder decodes the row to datum map.
