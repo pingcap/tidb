@@ -368,13 +368,8 @@ func DecodeRowWithMapNew(b []byte, cols map[int64]*types.FieldType, loc *time.Lo
 	var idx int
 	for id, tp := range cols {
 		reqCols[idx] = rowcodec.ColInfo{
-			ID:      id,
-			Tp:      int32(tp.Tp),
-			Flag:    int32(tp.Flag),
-			Flen:    tp.Flen,
-			Decimal: tp.Decimal,
-			Elems:   tp.Elems,
-			Collate: tp.Collate,
+			ID: id,
+			Ft: tp,
 		}
 		idx++
 	}
