@@ -61,12 +61,8 @@ func (s *testSuite) TestEncodeLargeSmallReuseBug(c *C) {
 	bDecoder := rowcodec.NewDatumMapDecoder([]rowcodec.ColInfo{
 		{
 			ID:         largeColID,
-			Tp:         int32(colFt.Tp),
-			Flag:       int32(colFt.Flag),
+			Ft:         colFt,
 			IsPKHandle: false,
-			Flen:       colFt.Flen,
-			Decimal:    colFt.Decimal,
-			Elems:      colFt.Elems,
 		},
 	}, []int64{-1}, nil)
 	m, err := bDecoder.DecodeToDatumMap(b, kv.IntHandle(-1), nil)
@@ -81,12 +77,8 @@ func (s *testSuite) TestEncodeLargeSmallReuseBug(c *C) {
 	bDecoder = rowcodec.NewDatumMapDecoder([]rowcodec.ColInfo{
 		{
 			ID:         smallColID,
-			Tp:         int32(colFt.Tp),
-			Flag:       int32(colFt.Flag),
+			Ft:         colFt,
 			IsPKHandle: false,
-			Flen:       colFt.Flen,
-			Decimal:    colFt.Decimal,
-			Elems:      colFt.Elems,
 		},
 	}, []int64{-1}, nil)
 	m, err = bDecoder.DecodeToDatumMap(b, kv.IntHandle(-1), nil)
@@ -232,22 +224,12 @@ func (s *testSuite) TestEncodeKindNullDatum(c *C) {
 	c.Assert(err, IsNil)
 
 	cols := []rowcodec.ColInfo{{
-		ID:      1,
-		Tp:      int32(ft.Tp),
-		Flag:    int32(ft.Flag),
-		Flen:    ft.Flen,
-		Decimal: ft.Decimal,
-		Elems:   ft.Elems,
-		Collate: ft.Collate,
+		ID: 1,
+		Ft: ft,
 	},
 		{
-			ID:      2,
-			Tp:      int32(ft.Tp),
-			Flag:    int32(ft.Flag),
-			Flen:    ft.Flen,
-			Decimal: ft.Decimal,
-			Elems:   ft.Elems,
-			Collate: ft.Collate,
+			ID: 2,
+			Ft: ft,
 		}}
 	cDecoder := rowcodec.NewChunkDecoder(cols, []int64{-1}, nil, sc.TimeZone)
 	chk := chunk.New(fts, 1, 1)
