@@ -63,7 +63,6 @@ func PreparedPlanCacheEnabled() bool {
 }
 
 type pstmtPlanCacheKey struct {
-<<<<<<< HEAD
 	database       string
 	connID         uint64
 	pstmtID        uint32
@@ -71,17 +70,7 @@ type pstmtPlanCacheKey struct {
 	schemaVersion  int64
 	sqlMode        mysql.SQLMode
 	timezoneOffset int
-=======
-	database             string
-	connID               uint64
-	pstmtID              uint32
-	snapshot             uint64
-	schemaVersion        int64
-	sqlMode              mysql.SQLMode
-	timezoneOffset       int
-	isolationReadEngines map[kv.StoreType]struct{}
-	selectLimit          uint64
->>>>>>> d53336b... planner: support sql_select_limit session / global variable (#17444)
+	selectLimit    uint64
 
 	hash []byte
 }
@@ -103,19 +92,7 @@ func (key *pstmtPlanCacheKey) Hash() []byte {
 		key.hash = codec.EncodeInt(key.hash, key.schemaVersion)
 		key.hash = codec.EncodeInt(key.hash, int64(key.sqlMode))
 		key.hash = codec.EncodeInt(key.hash, int64(key.timezoneOffset))
-<<<<<<< HEAD
-=======
-		if _, ok := key.isolationReadEngines[kv.TiDB]; ok {
-			key.hash = append(key.hash, kv.TiDB.Name()...)
-		}
-		if _, ok := key.isolationReadEngines[kv.TiKV]; ok {
-			key.hash = append(key.hash, kv.TiKV.Name()...)
-		}
-		if _, ok := key.isolationReadEngines[kv.TiFlash]; ok {
-			key.hash = append(key.hash, kv.TiFlash.Name()...)
-		}
 		key.hash = codec.EncodeInt(key.hash, int64(key.selectLimit))
->>>>>>> d53336b... planner: support sql_select_limit session / global variable (#17444)
 	}
 	return key.hash
 }
@@ -138,7 +115,6 @@ func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, sch
 	if sessionVars.TimeZone != nil {
 		_, timezoneOffset = time.Now().In(sessionVars.TimeZone).Zone()
 	}
-<<<<<<< HEAD
 	return &pstmtPlanCacheKey{
 		database:       sessionVars.CurrentDB,
 		connID:         sessionVars.ConnectionID,
@@ -147,21 +123,7 @@ func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, sch
 		schemaVersion:  schemaVersion,
 		sqlMode:        sessionVars.SQLMode,
 		timezoneOffset: timezoneOffset,
-=======
-	key := &pstmtPlanCacheKey{
-		database:             sessionVars.CurrentDB,
-		connID:               sessionVars.ConnectionID,
-		pstmtID:              pstmtID,
-		snapshot:             sessionVars.SnapshotTS,
-		schemaVersion:        schemaVersion,
-		sqlMode:              sessionVars.SQLMode,
-		timezoneOffset:       timezoneOffset,
-		isolationReadEngines: make(map[kv.StoreType]struct{}),
-		selectLimit:          sessionVars.SelectLimit,
-	}
-	for k, v := range sessionVars.IsolationReadEngines {
-		key.isolationReadEngines[k] = v
->>>>>>> d53336b... planner: support sql_select_limit session / global variable (#17444)
+		selectLimit:    sessionVars.SelectLimit,
 	}
 }
 
