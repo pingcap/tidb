@@ -58,6 +58,7 @@ type tikvSnapshot struct {
 	vars            *kv.Variables
 	replicaRead     kv.ReplicaReadType
 	replicaReadSeed uint32
+	taskID          uint64
 	minCommitTSPushed
 
 	// Cache the result of BatchGet.
@@ -225,9 +226,10 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 		req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdBatchGet, &pb.BatchGetRequest{
 			Keys:    pending,
 			Version: s.version.Ver,
-		}, s.replicaRead, s.replicaReadSeed, pb.Context{
+		}, s.replicaRead, &s.replicaReadSeed, pb.Context{
 			Priority:     s.priority,
 			NotFillCache: s.notFillCache,
+			TaskId:       s.taskID,
 		})
 
 		resp, _, _, err := cli.SendReqCtx(bo, req, batch.region, ReadTimeoutMedium, kv.TiKV, "")
@@ -329,15 +331,17 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 		RegionCache:       s.store.regionCache,
 		minCommitTSPushed: &s.minCommitTSPushed,
 		Client:            s.store.client,
+		resolveLite:       true,
 	}
 
 	req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdGet,
 		&pb.GetRequest{
 			Key:     k,
 			Version: s.version.Ver,
-		}, s.replicaRead, s.replicaReadSeed, pb.Context{
+		}, s.replicaRead, &s.replicaReadSeed, pb.Context{
 			Priority:     s.priority,
 			NotFillCache: s.notFillCache,
+			TaskId:       s.taskID,
 		})
 	for {
 		loc, err := s.store.regionCache.LocateKey(bo, k)
@@ -405,6 +409,8 @@ func (s *tikvSnapshot) SetOption(opt kv.Option, val interface{}) {
 		s.replicaRead = val.(kv.ReplicaReadType)
 	case kv.Priority:
 		s.priority = kvPriorityToCommandPri(val.(int))
+	case kv.TaskID:
+		s.taskID = val.(uint64)
 	}
 }
 

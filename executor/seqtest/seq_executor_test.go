@@ -52,7 +52,6 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/collate"
@@ -88,18 +87,14 @@ func (s *seqTestSuite) SetUpSuite(c *C) {
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
 	if useMockTikv {
-		cluster := mocktikv.NewCluster()
-		mocktikv.BootstrapWithSingleStore(cluster)
-		s.cluster = cluster
-
-		mvccStore := mocktikv.MustNewMVCCStore()
-		cluster.SetMvccStore(mvccStore)
-		store, err := mockstore.NewMockTikvStore(
-			mockstore.WithCluster(cluster),
-			mockstore.WithMVCCStore(mvccStore),
+		var err error
+		s.store, err = mockstore.NewMockStore(
+			mockstore.WithClusterInspector(func(c cluster.Cluster) {
+				mockstore.BootstrapWithSingleStore(c)
+				s.cluster = c
+			}),
 		)
 		c.Assert(err, IsNil)
-		s.store = store
 		session.SetSchemaLease(0)
 		session.DisableStats4Test()
 	}
@@ -837,12 +832,13 @@ func HelperTestAdminShowNextID(c *C, s *seqTestSuite, str string) {
 
 	oldAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
 	config.GetGlobalConfig().Experimental.AllowAutoRandom = true
+	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 	defer func() {
 		config.GetGlobalConfig().Experimental.AllowAutoRandom = oldAutoRandom
 	}()
 
 	// Test for a table with auto_random primary key.
-	tk.MustExec("create table t3(id int primary key auto_random(5), c int)")
+	tk.MustExec("create table t3(id bigint primary key auto_random(5), c int)")
 	// Start handle is 1.
 	r = tk.MustQuery(str + " t3 next_row_id")
 	r.Check(testkit.Rows("test1 t3 _tidb_rowid 1 AUTO_INCREMENT", "test1 t3 id 1 AUTO_RANDOM"))
@@ -1134,8 +1130,8 @@ func (s *seqTestSuite1) SetUpSuite(c *C) {
 	s.cli = cli
 
 	var err error
-	s.store, err = mockstore.NewMockTikvStore(
-		mockstore.WithHijackClient(hijackClient),
+	s.store, err = mockstore.NewMockStore(
+		mockstore.WithClientHijacker(hijackClient),
 	)
 	c.Assert(err, IsNil)
 	s.dom, err = session.BootstrapSession(s.store)
@@ -1296,7 +1292,7 @@ func (s *seqTestSuite) TestAutoRandIDRetry(c *C) {
 	tk.MustExec("create database if not exists auto_random_retry")
 	tk.MustExec("use auto_random_retry")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id int auto_random(3) primary key)")
+	tk.MustExec("create table t (id bigint auto_random(3) primary key)")
 
 	extractMaskedOrderedHandles := func() []int64 {
 		handles, err := ddltestutil.ExtractAllTableHandles(tk.Se, "auto_random_retry", "t")
@@ -1372,7 +1368,7 @@ func (s *seqTestSuite) TestAutoRandRecoverTable(c *C) {
 	defer autoid.SetStep(stp)
 
 	// Check rebase auto_random id.
-	tk.MustExec("create table t_recover_auto_rand (a int auto_random(5) primary key);")
+	tk.MustExec("create table t_recover_auto_rand (a bigint auto_random(5) primary key);")
 	tk.MustExec("insert into t_recover_auto_rand values (),(),()")
 	tk.MustExec("drop table t_recover_auto_rand")
 	tk.MustExec("recover table t_recover_auto_rand")
