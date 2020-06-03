@@ -597,6 +597,8 @@ github.com/urfave/cli/v2 v2.1.1/go.mod h1:SE9GqnLQmjVa0iPEY0f1w3ygNIYcIJ0OKPMoW2
 github.com/urfave/negroni v0.3.0/go.mod h1:Meg73S6kFm/4PpbYdq35yYWoCZ9mS/YSx+lKnmiohz4=
 github.com/wshwsh12/unistore v0.0.0-20200603024839-30e08384d494 h1:tqQ+JpmYIDwAHHfkiPnZEZUAG1nR+5mIepeqFEShWEE=
 github.com/wshwsh12/unistore v0.0.0-20200603024839-30e08384d494/go.mod h1:9mpqZeS1CkNlgZwJ0LZXb+Qd7xVO5o55ngys7T1/oH8=
+github.com/wshwsh12/unistore v0.0.0-20200603025657-e850184de1f3 h1:VMsHGWt1MkAYm2a1ZRFeJ3MiLoK6lpRhhSQ07ENrMBs=
+github.com/wshwsh12/unistore v0.0.0-20200603025657-e850184de1f3/go.mod h1:4phH4myRgSHJ/sGN8cbydg9OqdjIkqvOc5NTmwgnvio=
 github.com/xiang90/probing v0.0.0-20190116061207-43a291ad63a2 h1:eY9dn8+vbi4tKz5Qo6v2eYzo7kUS51QINcR5jNpbZS8=
 github.com/xiang90/probing v0.0.0-20190116061207-43a291ad63a2/go.mod h1:UETIi67q53MR2AWcXfiuqkDkRtnGDLqkBTpCHuJHxtU=
 github.com/xordataexchange/crypt v0.0.3-0.20170626215501-b2862e3d0a77/go.mod h1:aYKd//L2LvnjZzWKhF00oedf4jCCReLcmhLdhm1A27Q=
