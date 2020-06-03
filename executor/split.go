@@ -96,7 +96,7 @@ func (e *SplitIndexRegionExec) splitIndexRegion(ctx context.Context) error {
 	start := time.Now()
 	ctxWithTimeout, cancel := context.WithTimeout(ctx, e.ctx.GetSessionVars().GetSplitRegionTimeout())
 	defer cancel()
-	regionIDs, err := s.SplitRegions(context.Background(), e.splitIdxKeys, true)
+	regionIDs, err := s.SplitRegions(ctxWithTimeout, e.splitIdxKeys, true)
 	if err != nil {
 		logutil.Logger(context.Background()).Warn("split table index region failed",
 			zap.String("table", e.tableInfo.Name.L),
@@ -401,7 +401,7 @@ func waitScatterRegionFinish(ctxWithTimeout context.Context, sctx sessionctx.Con
 			remainMillisecond = int((sctx.GetSessionVars().GetSplitRegionTimeout().Seconds() - time.Since(startTime).Seconds()) * 1000)
 		}
 
-		err := store.WaitScatterRegionFinish(regionID, remainMillisecond)
+		err := store.WaitScatterRegionFinish(ctxWithTimeout, regionID, remainMillisecond)
 		if err == nil {
 			finishScatterNum++
 		} else {
