@@ -170,8 +170,13 @@ func (s *tikvStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bo
 	}
 
 	for i, r := range spResp.Regions {
+<<<<<<< HEAD
 		if err = s.scatterRegion(r.Id); err == nil {
 			logutil.Logger(context.Background()).Info("batch split regions, scatter region complete",
+=======
+		if err = s.scatterRegion(bo.ctx, r.Id); err == nil {
+			logutil.BgLogger().Info("batch split regions, scatter region complete",
+>>>>>>> 6bb9b30... ddl: fix pre-split region timeout constraint not work when create table (#17459)
 				zap.Uint64("batch region ID", batch.regionID.id),
 				zap.Binary("at", batch.keys[i]),
 				zap.String("new region left", r.String()))
@@ -209,6 +214,7 @@ func (s *tikvStore) SplitRegions(ctx context.Context, splitKeys [][]byte, scatte
 	return regionIDs, errors.Trace(err)
 }
 
+<<<<<<< HEAD
 func (s *tikvStore) scatterRegion(regionID uint64) error {
 	failpoint.Inject("MockScatterRegionTimeout", func(val failpoint.Value) {
 		if val.(bool) {
@@ -217,10 +223,21 @@ func (s *tikvStore) scatterRegion(regionID uint64) error {
 	})
 
 	logutil.Logger(context.Background()).Info("start scatter region",
+=======
+func (s *tikvStore) scatterRegion(ctx context.Context, regionID uint64) error {
+	logutil.BgLogger().Info("start scatter region",
+>>>>>>> 6bb9b30... ddl: fix pre-split region timeout constraint not work when create table (#17459)
 		zap.Uint64("regionID", regionID))
-	bo := NewBackoffer(context.Background(), scatterRegionBackoff)
+	bo := NewBackoffer(ctx, scatterRegionBackoff)
 	for {
-		err := s.pdClient.ScatterRegion(context.Background(), regionID)
+		err := s.pdClient.ScatterRegion(ctx, regionID)
+
+		failpoint.Inject("MockScatterRegionTimeout", func(val failpoint.Value) {
+			if val.(bool) {
+				err = ErrPDServerTimeout
+			}
+		})
+
 		if err == nil {
 			break
 		}
@@ -237,17 +254,17 @@ func (s *tikvStore) scatterRegion(regionID uint64) error {
 // WaitScatterRegionFinish implements SplitableStore interface.
 // backOff is the back off time of the wait scatter region.(Milliseconds)
 // if backOff <= 0, the default wait scatter back off time will be used.
-func (s *tikvStore) WaitScatterRegionFinish(regionID uint64, backOff int) error {
+func (s *tikvStore) WaitScatterRegionFinish(ctx context.Context, regionID uint64, backOff int) error {
 	if backOff <= 0 {
 		backOff = waitScatterRegionFinishBackoff
 	}
 	logutil.Logger(context.Background()).Info("wait scatter region",
 		zap.Uint64("regionID", regionID), zap.Int("backoff(ms)", backOff))
 
-	bo := NewBackoffer(context.Background(), backOff)
+	bo := NewBackoffer(ctx, backOff)
 	logFreq := 0
 	for {
-		resp, err := s.pdClient.GetOperator(context.Background(), regionID)
+		resp, err := s.pdClient.GetOperator(ctx, regionID)
 		if err == nil && resp != nil {
 			if !bytes.Equal(resp.Desc, []byte("scatter-region")) || resp.Status != pdpb.OperatorStatus_RUNNING {
 				logutil.Logger(context.Background()).Info("wait scatter region finished",
