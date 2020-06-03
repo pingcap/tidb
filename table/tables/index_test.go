@@ -15,7 +15,6 @@ package tables_test
 
 import (
 	"context"
-	"github.com/pingcap/tidb/executor"
 	"io"
 	"time"
 
