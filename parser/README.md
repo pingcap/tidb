@@ -28,7 +28,9 @@ Please read the [quickstart](https://github.com/pingcap/parser/blob/master/docs/
 - [Stack Overflow](https://stackoverflow.com/questions/tagged/tidb)
 - [User Group (Chinese)](https://asktug.com/)
 
-If you have any questions, feel free to join and discuss in #sig-ddl channel of [Slack-community](https://pingcap.com/tidbslack/).
+If you have any questions, feel free to discuss in sig-ddl. Here are the steps to join:
+1. Join [TiDB Slack community](https://pingcap.com/tidbslack/), and then
+2. Join [sig-ddl Slack channel](https://slack.tidb.io/invite?team=tidb-community&channel=sig-ddl&ref=github_sig).
 
 If you want to join as a special interest group member, see [DDL Special Interest Group](https://github.com/pingcap/community/tree/master/special-interest-groups/sig-ddl).
 
