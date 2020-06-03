@@ -14,13 +14,13 @@ package core
 
 import (
 	"context"
+	"errors"
 	"sort"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -694,6 +694,87 @@ func pruneUseBinarySearch(lessThan lessThanDataInt, data dataForPrune, unsigned 
 	return start, end
 }
 
+func (s *partitionProcessor) resolveAccessPaths(ds *DataSource) error {
+	possiblePaths, err := getPossibleAccessPaths(
+		ds.ctx, &tableHintInfo{indexMergeHintList: ds.indexMergeHints, indexHintList: ds.IndexHints},
+		ds.astIndexHints, ds.table, ds.DBName, ds.tableInfo.Name)
+	if err != nil {
+		return err
+	}
+	possiblePaths, err = filterPathByIsolationRead(ds.ctx, possiblePaths, ds.DBName)
+	if err != nil {
+		return err
+	}
+	ds.possibleAccessPaths = possiblePaths
+	return nil
+}
+
+func (s *partitionProcessor) resolveOptimizeHint(ds *DataSource, partitionName model.CIStr) error {
+	// index hint
+	if len(ds.IndexHints) > 0 {
+		newIndexHint := make([]indexHintInfo, 0, len(ds.IndexHints))
+		for _, idxHint := range ds.IndexHints {
+			if len(idxHint.partitions) == 0 {
+				newIndexHint = append(newIndexHint, idxHint)
+			} else {
+				for _, p := range idxHint.partitions {
+					if p.String() == partitionName.String() {
+						newIndexHint = append(newIndexHint, idxHint)
+						break
+					}
+				}
+			}
+		}
+		ds.IndexHints = newIndexHint
+	}
+
+	// index merge hint
+	if len(ds.indexMergeHints) > 0 {
+		newIndexMergeHint := make([]indexHintInfo, 0, len(ds.indexMergeHints))
+		for _, idxHint := range ds.indexMergeHints {
+			if len(idxHint.partitions) == 0 {
+				newIndexMergeHint = append(newIndexMergeHint, idxHint)
+			} else {
+				for _, p := range idxHint.partitions {
+					if p.String() == partitionName.String() {
+						newIndexMergeHint = append(newIndexMergeHint, idxHint)
+						break
+					}
+				}
+			}
+		}
+		ds.indexMergeHints = newIndexMergeHint
+	}
+
+	// read from storage hint
+	if ds.preferStoreType & preferTiKV > 0 {
+		if len(ds.preferStoreTypePartitions[preferTiKV]) > 0 {
+			ds.preferStoreType ^= preferTiKV
+			for _, p := range ds.preferStoreTypePartitions[preferTiKV] {
+				if p.String() == partitionName.String() {
+					ds.preferStoreType |= preferTiKV
+				}
+			}
+		}
+	}
+	if ds.preferStoreType & preferTiFlash > 0 {
+		if len(ds.preferStoreTypePartitions[preferTiFlash]) > 0 {
+			ds.preferStoreType ^= preferTiFlash
+			for _, p := range ds.preferStoreTypePartitions[preferTiFlash] {
+				if p.String() == partitionName.String() {
+					ds.preferStoreType |= preferTiFlash
+				}
+			}
+		}
+	}
+	if ds.preferStoreType&preferTiFlash != 0 && ds.preferStoreType&preferTiKV != 0 {
+		ds.ctx.GetSessionVars().StmtCtx.AppendWarning(
+			errors.New("hint `read_from_storage` has conflict storage type for the partition " + partitionName.L))
+	}
+
+	return s.resolveAccessPaths(ds)
+}
+
 func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.PartitionInfo, or partitionRangeOR) (LogicalPlan, error) {
 	children := make([]LogicalPlan, 0, len(pi.Definitions))
 	for _, r := range or {
@@ -709,16 +790,13 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 			newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.SCtx(), plancodec.TypeTableScan, &newDataSource, ds.blockOffset)
 			newDataSource.isPartition = true
 			newDataSource.physicalTableID = pi.Definitions[i].ID
-			newDataSource.possibleAccessPaths = make([]*util.AccessPath, len(ds.possibleAccessPaths))
-			for i := range ds.possibleAccessPaths {
-				newPath := *ds.possibleAccessPaths[i]
-				newDataSource.possibleAccessPaths[i] = &newPath
-			}
+
 			// There are many expression nodes in the plan tree use the original datasource
 			// id as FromID. So we set the id of the newDataSource with the original one to
 			// avoid traversing the whole plan tree to update the references.
 			newDataSource.id = ds.id
 			newDataSource.statisticTable = getStatsTable(ds.SCtx(), ds.table.Meta(), pi.Definitions[i].ID)
+			s.resolveOptimizeHint(&newDataSource, pi.Definitions[i].Name)
 			children = append(children, &newDataSource)
 		}
 	}
