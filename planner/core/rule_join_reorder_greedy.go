@@ -83,7 +83,7 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan) (LogicalPla
 		cartesianGroup = append(cartesianGroup, newNode.p)
 	}
 
-	return s.makeHuffJoin(cartesianGroup)
+	return s.makeBushyJoin(cartesianGroup), nil
 }
 
 func (s *joinReorderGreedySolver) constructConnectedJoinTree() (*jrNode, error) {
