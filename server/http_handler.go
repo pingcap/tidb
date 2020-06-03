@@ -963,7 +963,7 @@ func (h tableHandler) handleScatterTableRequest(schema infoschema.InfoSchema, tb
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(tableID)
 	startKey = codec.EncodeBytes([]byte{}, startKey)
 	endKey = codec.EncodeBytes([]byte{}, endKey)
-	tableName := tbl.Meta().Name.String()
+	tableName := fmt.Sprintf("%s-%d", tbl.Meta().Name.String(), tableID)
 	err := h.addScatterSchedule(startKey, endKey, tableName)
 	if err != nil {
 		writeError(w, errors.Annotate(err, "scatter record error"))
@@ -986,9 +986,9 @@ func (h tableHandler) handleScatterTableRequest(schema infoschema.InfoSchema, tb
 	writeData(w, "success!")
 }
 
-func (h tableHandler) handleStopScatterTableRequest(schema infoschema.InfoSchema, tbl table.Table, w http.ResponseWriter, req *http.Request) {
+func (h tableHandler) handleStopScatterTableRequest(schema infoschema.InfoSchema, tbl table.PhysicalTable, w http.ResponseWriter, req *http.Request) {
 	// for record
-	tableName := tbl.Meta().Name.String()
+	tableName := fmt.Sprintf("%s-%d", tbl.Meta().Name.String(), tbl.GetPhysicalID())
 	err := h.deleteScatterSchedule(tableName)
 	if err != nil {
 		writeError(w, errors.Annotate(err, "stop scatter record error"))
