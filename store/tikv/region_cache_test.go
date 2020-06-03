@@ -1005,6 +1005,10 @@ func (s *testRegionCacheSuite) TestFollowerMeetEpochNotMatch(c *C) {
 	regionErr := &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}}
 	reqSend.onRegionError(s.bo, ctxFollower1, &followReqSeed, regionErr)
 	c.Assert(followReqSeed, Equals, uint32(1))
+
+	regionErr = &errorpb.Error{RegionNotFound: &errorpb.RegionNotFound{}}
+	reqSend.onRegionError(s.bo, ctxFollower1, &followReqSeed, regionErr)
+	c.Assert(followReqSeed, Equals, uint32(2))
 }
 
 func (s *testRegionCacheSuite) TestMixedMeetEpochNotMatch(c *C) {
