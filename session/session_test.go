@@ -627,6 +627,12 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	result.Check(testkit.Rows("sql_select_limit 18446744073709551615"))
 	result = tk.MustQuery("show session variables where variable_name='sql_select_limit';")
 	result.Check(testkit.Rows("sql_select_limit 100000000000"))
+	tk.MustExec("set @@global.sql_select_limit = 1")
+	result = tk.MustQuery("show global variables where variable_name='sql_select_limit';")
+	result.Check(testkit.Rows("sql_select_limit 1"))
+	tk.MustExec("set @@global.sql_select_limit = default")
+	result = tk.MustQuery("show global variables where variable_name='sql_select_limit';")
+	result.Check(testkit.Rows("sql_select_limit 18446744073709551615"))
 
 	result = tk.MustQuery("select @@global.autocommit;")
 	result.Check(testkit.Rows("1"))
