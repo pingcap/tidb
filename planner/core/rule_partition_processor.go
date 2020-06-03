@@ -747,7 +747,7 @@ func (s *partitionProcessor) resolveOptimizeHint(ds *DataSource, partitionName m
 	}
 
 	// read from storage hint
-	if ds.preferStoreType & preferTiKV > 0 {
+	if ds.preferStoreType&preferTiKV > 0 {
 		if len(ds.preferStoreTypePartitions[preferTiKV]) > 0 {
 			ds.preferStoreType ^= preferTiKV
 			for _, p := range ds.preferStoreTypePartitions[preferTiKV] {
@@ -757,7 +757,7 @@ func (s *partitionProcessor) resolveOptimizeHint(ds *DataSource, partitionName m
 			}
 		}
 	}
-	if ds.preferStoreType & preferTiFlash > 0 {
+	if ds.preferStoreType&preferTiFlash > 0 {
 		if len(ds.preferStoreTypePartitions[preferTiFlash]) > 0 {
 			ds.preferStoreType ^= preferTiFlash
 			for _, p := range ds.preferStoreTypePartitions[preferTiFlash] {

@@ -467,11 +467,11 @@ type DataSource struct {
 	logicalSchemaProducer
 
 	astIndexHints []*ast.IndexHint
-	IndexHints []indexHintInfo
-	table      table.Table
-	tableInfo  *model.TableInfo
-	Columns    []*model.ColumnInfo
-	DBName     model.CIStr
+	IndexHints    []indexHintInfo
+	table         table.Table
+	tableInfo     *model.TableInfo
+	Columns       []*model.ColumnInfo
+	DBName        model.CIStr
 
 	TableAsName *model.CIStr
 	// indexMergeHints are the hint for indexmerge.
@@ -503,7 +503,7 @@ type DataSource struct {
 	// it is converted from statisticTable, and used for IO/network cost estimating.
 	TblColHists *statistics.HistColl
 	//preferStoreType means the DataSource is enforced to which storage.
-	preferStoreType int
+	preferStoreType           int
 	preferStoreTypePartitions map[int][]model.CIStr
 }
 

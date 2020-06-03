@@ -351,7 +351,7 @@ func (ds *DataSource) isInIndexMergeHints(name string) bool {
 		return true
 	}
 	for _, hint := range ds.indexMergeHints {
-		if hint.indexHint == nil || len(hint.indexHint.IndexNames) == 0{
+		if hint.indexHint == nil || len(hint.indexHint.IndexNames) == 0 {
 			return true
 		}
 		for _, hintName := range hint.indexHint.IndexNames {
