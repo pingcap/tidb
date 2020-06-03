@@ -1269,18 +1269,22 @@ func buildTableInfo(
 			if err != nil {
 				return nil, err
 			}
-			if len(constr.Keys) == 1 && !config.GetGlobalConfig().AlterPrimaryKey {
-				switch lastCol.Tp {
-				case mysql.TypeLong, mysql.TypeLonglong,
-					mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24:
+			if !config.GetGlobalConfig().AlterPrimaryKey {
+				singleIntPK := isSingleIntPK(constr, lastCol)
+				clusteredIdx := ctx.GetSessionVars().EnableClusteredIndex
+				if singleIntPK || clusteredIdx {
 					// Primary key cannot be invisible.
 					if constr.Option != nil && constr.Option.Visibility == ast.IndexVisibilityInvisible {
 						return nil, ErrPKIndexCantBeInvisible
 					}
-
+				}
+				if singleIntPK {
 					tbInfo.PKIsHandle = true
 					// Avoid creating index for PK handle column.
 					continue
+				}
+				if clusteredIdx {
+					tbInfo.IsCommonHandle = true
 				}
 			}
 		}
@@ -1327,6 +1331,18 @@ func buildTableInfo(
 		tbInfo.Indices = append(tbInfo.Indices, idxInfo)
 	}
 	return
+}
+
+func isSingleIntPK(constr *ast.Constraint, lastCol *model.ColumnInfo) bool {
+	if len(constr.Keys) != 1 {
+		return false
+	}
+	switch lastCol.Tp {
+	case mysql.TypeLong, mysql.TypeLonglong,
+		mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24:
+		return true
+	}
+	return false
 }
 
 // checkTableInfoValidExtra is like checkTableInfoValid, but also assumes the
@@ -1505,7 +1521,6 @@ func buildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 	if err = handleTableOptions(s.Options, tbInfo); err != nil {
 		return nil, errors.Trace(err)
 	}
-
 	return tbInfo, nil
 }
 
@@ -1691,9 +1706,9 @@ func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo
 		scatterRegion = variable.TiDBOptOn(val)
 	}
 	if pi != nil {
-		preSplit = func() { splitPartitionTableRegion(sp, pi, scatterRegion) }
+		preSplit = func() { splitPartitionTableRegion(ctx, sp, pi, scatterRegion) }
 	} else {
-		preSplit = func() { splitTableRegion(sp, tbInfo, scatterRegion) }
+		preSplit = func() { splitTableRegion(ctx, sp, tbInfo, scatterRegion) }
 	}
 	if scatterRegion {
 		preSplit()
