@@ -1120,7 +1120,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		ast.In, ast.Mod, ast.And, ast.LogicOr, ast.LogicAnd,
 		ast.Like, ast.UnaryNot, ast.Case, ast.Month, ast.Substr,
 		ast.Substring, ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime,
-		ast.JSONLength:
+		ast.JSONLength, ast.If, ast.BitNeg, ast.Xor:
 		return true
 	case ast.Cast:
 		switch function.Function.PbCode() {
