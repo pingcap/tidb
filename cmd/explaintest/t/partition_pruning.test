@@ -766,6 +766,7 @@ explain select * from t2;
 explain select * from t2 where a = 101;
 explain select * from t2 where a = 550;
 explain select * from t2 where a = 833;
+explain select * from t2 where a in (10,20,30);
 explain select * from t2 where (a = 100 OR a = 900);
 explain select * from t2 where (a > 100 AND a < 600);
 explain select * from t2 where b = 4;
