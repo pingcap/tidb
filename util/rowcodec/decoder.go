@@ -273,8 +273,7 @@ func (decoder *ChunkDecoder) tryAppendHandleColumn(colIdx int, col *ColInfo, han
 	for i, id := range decoder.handleColIDs {
 		if col.ID == id {
 			coder := codec.NewDecoder(chk, decoder.loc)
-			tf := colInfo2FieldType(col)
-			_, err := coder.DecodeOne(handle.EncodedCol(i), colIdx, tf)
+			_, err := coder.DecodeOne(handle.EncodedCol(i), colIdx, col.Ft)
 			if err != nil {
 				return false
 			}
@@ -513,11 +512,4 @@ func fieldType2Flag(tp byte, signed bool) (flag byte) {
 		panic(fmt.Sprintf("unknown field type %d", tp))
 	}
 	return
-}
-
-func colInfo2FieldType(col *ColInfo) *types.FieldType {
-	tf := types.NewFieldTypeWithCollation(byte(col.Tp), col.Collate, col.Flen)
-	tf.Decimal = col.Decimal
-	tf.Elems = col.Elems
-	return tf
 }
