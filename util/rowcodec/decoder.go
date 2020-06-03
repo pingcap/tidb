@@ -278,11 +278,14 @@ func (decoder *ChunkDecoder) tryAppendHandleColumn(colIdx int, col *ColInfo, han
 	}
 	for i, id := range decoder.handleColIDs {
 		if col.ID == id {
-			_, val, err := codec.DecodeOne(handle.EncodedCol(i))
+			coder := codec.NewDecoder(chk, decoder.loc)
+			tf := types.NewFieldTypeWithCollation(byte(col.Tp), col.Collate, col.Flen)
+			tf.Decimal = col.Decimal
+			tf.Elems = col.Elems
+			_, err := coder.DecodeOne(handle.EncodedCol(i), colIdx, tf)
 			if err != nil {
 				return false
 			}
-			chk.AppendDatum(colIdx, &val)
 		}
 	}
 	return false
