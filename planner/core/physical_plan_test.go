@@ -15,6 +15,7 @@ package core_test
 
 import (
 	"context"
+	"fmt"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
@@ -612,7 +613,49 @@ func (s *testPlanSuite) TestUnmatchedTableInHint(c *C) {
 		}
 	}
 }
+func (s *testPlanSuite) TestGroupConcatOrderby(c *C) {
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Plan   []string
+			Result []string
+		}
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test;")
+	tk.MustExec("create table test(id int, name int)")
+	tk.MustExec("insert into test values(1, 10);")
+	tk.MustExec("insert into test values(1, 20);")
+	tk.MustExec("insert into test values(1, 30);")
+	tk.MustExec("insert into test values(2, 20);")
+	tk.MustExec("insert into test values(3, 200);")
+	tk.MustExec("insert into test values(3, 500);")
 
+	tk.MustExec("drop table if exists ptest;")
+	tk.MustExec("CREATE TABLE ptest (id int,name int) PARTITION BY RANGE ( id ) " +
+		"(PARTITION `p0` VALUES LESS THAN (2), PARTITION `p1` VALUES LESS THAN (11))")
+	tk.MustExec("insert into ptest select * from test;")
+	tk.MustExec(fmt.Sprintf("set session tidb_opt_agg_push_down = %v", 1))
+
+	for i, ts := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
+			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
+		})
+		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(ts).Check(testkit.Rows(output[i].Result...))
+	}
+}
 func (s *testPlanSuite) TestIndexJoinHint(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
