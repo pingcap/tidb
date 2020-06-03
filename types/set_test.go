@@ -16,16 +16,19 @@ package types
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
-var _ = Suite(&testSetSuite{})
+var _ = SerialSuites(&testSetSuite{})
 
 type testSetSuite struct {
 }
 
 func (s *testSetSuite) TestSet(c *C) {
 	defer testleak.AfterTest(c)()
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
 	elems := []string{"a", "b", "c", "d"}
 	tbl := []struct {
 		Name          string
