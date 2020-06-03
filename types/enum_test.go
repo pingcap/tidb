@@ -44,8 +44,10 @@ func (s *testEnumSuite) TestEnum(c *C) {
 		Expected int
 	}{
 		{[]string{"a", "b"}, "A     ", 1},
-		{[]string{"a"}, "A", 0},
+		{[]string{"a"}, "A", 1},
+		{[]string{"a"}, "b", 0},
 		{[]string{"啊"}, "啊", 1},
+		{[]string{"a"}, "1", 1},
 	}
 
 	for _, t := range tbl {
