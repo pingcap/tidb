@@ -796,7 +796,10 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 			// avoid traversing the whole plan tree to update the references.
 			newDataSource.id = ds.id
 			newDataSource.statisticTable = getStatsTable(ds.SCtx(), ds.table.Meta(), pi.Definitions[i].ID)
-			s.resolveOptimizeHint(&newDataSource, pi.Definitions[i].Name)
+			err := s.resolveOptimizeHint(&newDataSource, pi.Definitions[i].Name)
+			if err != nil {
+				return nil, err
+			}
 			children = append(children, &newDataSource)
 		}
 	}
