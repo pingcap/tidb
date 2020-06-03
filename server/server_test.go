@@ -45,7 +45,7 @@ import (
 
 var (
 	portGenerator       uint32 = 4001
-	statusPortGenerator uint32 = 10090
+	statusPortGenerator uint32 = 7090
 	regression                 = true
 )
 
