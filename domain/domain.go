@@ -648,7 +648,12 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	if ebd, ok := do.store.(tikv.EtcdBackend); ok {
 		if addrs := ebd.EtcdAddrs(); addrs != nil {
 			cfg := config.GetGlobalConfig()
+			// silence etcd warn log, when domain closed, it won't randomly print warn log
+			// see details at the issue https://github.com/pingcap/tidb/issues/15479
+			etcdLogCfg := zap.NewProductionConfig()
+			etcdLogCfg.Level = zap.NewAtomicLevelAt(zap.ErrorLevel)
 			cli, err := clientv3.New(clientv3.Config{
+				LogConfig:        &etcdLogCfg,
 				Endpoints:        addrs,
 				AutoSyncInterval: 30 * time.Second,
 				DialTimeout:      5 * time.Second,
@@ -689,8 +694,11 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 		ddl.WithInfoHandle(do.infoHandle),
 		ddl.WithHook(callback),
 		ddl.WithLease(ddlLease),
-		ddl.WithResourcePool(sysCtxPool),
 	)
+	err := do.ddl.Start(sysCtxPool)
+	if err != nil {
+		return err
+	}
 	failpoint.Inject("MockReplaceDDL", func(val failpoint.Value) {
 		if val.(bool) {
 			if err := do.ddl.Stop(); err != nil {
@@ -700,7 +708,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 		}
 	})
 
-	err := do.ddl.SchemaSyncer().Init(ctx)
+	err = do.ddl.SchemaSyncer().Init(ctx)
 	if err != nil {
 		return err
 	}
@@ -982,15 +990,14 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 
 func (do *Domain) newOwnerManager(prompt, ownerKey string) owner.Manager {
 	id := do.ddl.OwnerManager().ID()
-	cancelCtx, cancelFunc := context.WithCancel(context.Background())
 	var statsOwner owner.Manager
 	if do.etcdClient == nil {
-		statsOwner = owner.NewMockManager(id, cancelFunc)
+		statsOwner = owner.NewMockManager(context.Background(), id)
 	} else {
-		statsOwner = owner.NewOwnerManager(do.etcdClient, prompt, id, ownerKey, cancelFunc)
+		statsOwner = owner.NewOwnerManager(context.Background(), do.etcdClient, prompt, id, ownerKey)
 	}
 	// TODO: Need to do something when err is not nil.
-	err := statsOwner.CampaignOwner(cancelCtx)
+	err := statsOwner.CampaignOwner()
 	if err != nil {
 		logutil.BgLogger().Warn("campaign owner failed", zap.Error(err))
 	}
