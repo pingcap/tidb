@@ -63,3 +63,5 @@ require (
 )
 
 go 1.13
+
+replace github.com/ngaut/unistore => github.com/lysu/unistore v0.0.0-20200603090022-c9679ed9274e
