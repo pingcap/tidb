@@ -167,6 +167,8 @@ In the discussion above, an error has at least 4 parts:
 - the description field: the description of the error, what happened and why happened?
 - the workaround filed: how to workaround this error
 
+The `message` is an example message corresponding to the error code. The `description` is the expanded detail of why this error occurred. And the `workaround` is used to teach the users how to solve the error if occurring in the real environment.
+
 Besides, we can append a optional tags field to it:
 ```toml
 [error.9005]
