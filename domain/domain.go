@@ -15,7 +15,6 @@ package domain
 
 import (
 	"context"
-	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -407,7 +406,7 @@ func (do *Domain) ShowSlowQuery(showSlow *ast.ShowSlow) []*SlowQueryInfo {
 }
 
 func (do *Domain) topNSlowQueryLoop() {
-	defer recoverInDomain("topNSlowQueryLoop", false)
+	defer util.Recover(metrics.LabelDomain, "topNSlowQueryLoop", nil, false)
 	defer do.wg.Done()
 	ticker := time.NewTicker(time.Minute * 10)
 	defer ticker.Stop()
@@ -436,8 +435,11 @@ func (do *Domain) topNSlowQueryLoop() {
 }
 
 func (do *Domain) infoSyncerKeeper() {
-	defer do.wg.Done()
-	defer recoverInDomain("infoSyncerKeeper", false)
+	defer func() {
+		do.wg.Done()
+		logutil.BgLogger().Info("infoSyncerKeeper exited.")
+		util.Recover(metrics.LabelDomain, "infoSyncerKeeper", nil, false)
+	}()
 	ticker := time.NewTicker(infosync.ReportInterval)
 	defer ticker.Stop()
 	for {
@@ -458,7 +460,7 @@ func (do *Domain) infoSyncerKeeper() {
 
 func (do *Domain) topologySyncerKeeper() {
 	defer do.wg.Done()
-	defer recoverInDomain("topologySyncerKeeper", false)
+	defer util.Recover(metrics.LabelDomain, "topologySyncerKeeper", nil, false)
 	ticker := time.NewTicker(infosync.TopologyTimeToRefresh)
 	defer ticker.Stop()
 
@@ -483,11 +485,12 @@ func (do *Domain) topologySyncerKeeper() {
 
 func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 	defer do.wg.Done()
+	defer util.Recover(metrics.LabelDomain, "loadSchemaInLoop", nil, true)
 	// Lease renewal can run at any frequency.
 	// Use lease/2 here as recommend by paper.
 	ticker := time.NewTicker(lease / 2)
 	defer ticker.Stop()
-	defer recoverInDomain("loadSchemaInLoop", true)
+	defer util.Recover(metrics.LabelDomain, "loadSchemaInLoop", nil, true)
 	syncer := do.ddl.SchemaSyncer()
 
 	for {
@@ -827,8 +830,11 @@ func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 
 	do.wg.Add(1)
 	go func() {
-		defer do.wg.Done()
-		defer recoverInDomain("loadPrivilegeInLoop", false)
+		defer func() {
+			do.wg.Done()
+			logutil.BgLogger().Info("loadPrivilegeInLoop exited.")
+			util.Recover(metrics.LabelDomain, "loadPrivilegeInLoop", nil, false)
+		}()
 		var count int
 		for {
 			ok := true
@@ -888,8 +894,11 @@ func (do *Domain) LoadBindInfoLoop(ctxForHandle sessionctx.Context, ctxForEvolve
 func (do *Domain) globalBindHandleWorkerLoop() {
 	do.wg.Add(1)
 	go func() {
-		defer do.wg.Done()
-		defer recoverInDomain("globalBindHandleWorkerLoop", false)
+		defer func() {
+			do.wg.Done()
+			logutil.BgLogger().Info("globalBindHandleWorkerLoop exited.")
+			util.Recover(metrics.LabelDomain, "globalBindHandleWorkerLoop", nil, false)
+		}()
 		bindWorkerTicker := time.NewTicker(bindinfo.Lease)
 		defer bindWorkerTicker.Stop()
 		for {
@@ -914,8 +923,11 @@ func (do *Domain) globalBindHandleWorkerLoop() {
 func (do *Domain) handleEvolvePlanTasksLoop(ctx sessionctx.Context) {
 	do.wg.Add(1)
 	go func() {
-		defer do.wg.Done()
-		defer recoverInDomain("handleEvolvePlanTasksLoop", false)
+		defer func() {
+			do.wg.Done()
+			logutil.BgLogger().Info("handleEvolvePlanTasksLoop exited.")
+			util.Recover(metrics.LabelDomain, "handleEvolvePlanTasksLoop", nil, false)
+		}()
 		owner := do.newOwnerManager(bindinfo.Prompt, bindinfo.OwnerKey)
 		for {
 			select {
@@ -1005,7 +1017,7 @@ func (do *Domain) newOwnerManager(prompt, ownerKey string) owner.Manager {
 }
 
 func (do *Domain) loadStatsWorker() {
-	defer recoverInDomain("loadStatsWorker", false)
+	defer util.Recover(metrics.LabelDomain, "loadStatsWorker", nil, false)
 	defer do.wg.Done()
 	lease := do.statsLease
 	if lease == 0 {
@@ -1039,7 +1051,7 @@ func (do *Domain) loadStatsWorker() {
 }
 
 func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager) {
-	defer recoverInDomain("updateStatsWorker", false)
+	defer util.Recover(metrics.LabelDomain, "updateStatsWorker", nil, false)
 	lease := do.statsLease
 	deltaUpdateTicker := time.NewTicker(20 * lease)
 	defer deltaUpdateTicker.Stop()
@@ -1099,7 +1111,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 }
 
 func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
-	defer recoverInDomain("autoAnalyzeWorker", false)
+	defer util.Recover(metrics.LabelDomain, "autoAnalyzeWorker", nil, false)
 	statsHandle := do.StatsHandle()
 	analyzeTicker := time.NewTicker(do.statsLease)
 	defer func() {
@@ -1144,22 +1156,6 @@ func (do *Domain) NotifyUpdatePrivilege(ctx sessionctx.Context) {
 	_, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(`FLUSH PRIVILEGES`)
 	if err != nil {
 		logutil.BgLogger().Error("unable to update privileges", zap.Error(err))
-	}
-}
-
-func recoverInDomain(funcName string, quit bool) {
-	r := recover()
-	if r == nil {
-		return
-	}
-	buf := util.GetStack()
-	logutil.BgLogger().Error("recover in domain failed", zap.String("funcName", funcName),
-		zap.Any("error", r), zap.String("buffer", string(buf)))
-	metrics.PanicCounter.WithLabelValues(metrics.LabelDomain).Inc()
-	if quit {
-		// Wait for metrics to be pushed.
-		time.Sleep(time.Second * 15)
-		os.Exit(1)
 	}
 }
 
