@@ -272,9 +272,18 @@ func (decoder *ChunkDecoder) tryAppendHandleColumn(colIdx int, col *ColInfo, han
 	if handle == nil {
 		return false
 	}
-	if col.ID == decoder.handleColIDs[0] {
+	if handle.IsInt() && col.ID == decoder.handleColIDs[0] {
 		chk.AppendInt64(colIdx, handle.IntValue())
 		return true
+	}
+	for i, id := range decoder.handleColIDs {
+		if col.ID == id {
+			_, val, err := codec.DecodeOne(handle.EncodedCol(i))
+			if err != nil {
+				return false
+			}
+			chk.AppendDatum(colIdx, &val)
+		}
 	}
 	return false
 }
