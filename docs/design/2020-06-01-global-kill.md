@@ -25,7 +25,11 @@ To support "Global Kill", we need:
 2. Extend connection id to 64 bits, which is composed by `server_id` in high-order 32 bits, and local connection id in low-order 32 bits which is allocated by each TiDB instance itself.
 3. On processing `KILL x` command, first extract `server_id` from `x`. If `server_id` aims to a remote TiDB instance, get address from cluster info, and then redirect the command to it by "MySQL API", along with the original user authentication.
 
-## Compatibility and Mirgration Plan
+## Compatibility
 
-None
+1. Extend connection ids from 32 to 64 bits would break some clients. Main current clients need to be checked for compatibility.
+
+2. Some clients would probably send `KILL` command with 32 bits connection ids. We should deal with this circumstance as [what we do](https://pingcap.com/docs/stable/sql-statements/sql-statement-kill/) in older versions, i.e, reject if `compatible-kill-query = false`. (Ref. https://github.com/pingcap/tidb/issues/8854#issuecomment-637217000, https://github.com/pingcap/tidb/issues/8854#issuecomment-637237183)
+
+3. MySQL had has 64 bits connection ids since 5.6.9 (2012-12-11), as this [article](https://dev.mysql.com/doc/relnotes/mysql/5.6/en/news-5-6-9.html) said. (Ref. https://github.com/pingcap/tidb/issues/8854#issuecomment-636602132)
 
