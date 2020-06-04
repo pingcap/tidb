@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mock"
 )
 
 func (s *testEvaluatorSuite) TestCastXXX(c *C) {
@@ -1413,5 +1414,41 @@ func (s *testEvaluatorSuite) TestCastIntAsIntVec(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(v, Equals, i64s[i])
 		i++
+	}
+}
+
+// for issue https://github.com/pingcap/tidb/issues/16825
+func (s *testEvaluatorSuite) TestCastStringAsDecimalSigWithUnsignedFlagInUnion(c *C) {
+	col := &Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0}
+	b, err := newBaseBuiltinFunc(mock.NewContext(), "", []Expression{col})
+	c.Assert(err, IsNil)
+	// set `inUnion` to `true`
+	decFunc := newBaseBuiltinCastFunc(b, true)
+	decFunc.tp = types.NewFieldType(mysql.TypeNewDecimal)
+	// set the `UnsignedFlag` bit
+	decFunc.tp.Flag |= mysql.UnsignedFlag
+	cast := &builtinCastStringAsDecimalSig{decFunc}
+
+	cases := []struct {
+		row chunk.MutRow
+		res *types.MyDecimal
+	}{
+		// if `inUnion` is `true`, the result of cast a positive decimal string to unsigned decimal should be normal
+		{
+			chunk.MutRowFromDatums([]types.Datum{types.NewStringDatum("1")}),
+			types.NewDecFromInt(1),
+		},
+		// if `inUnion` is `true`, the result of cast a negative decimal string to unsigned decimal should be 0
+		{
+			chunk.MutRowFromDatums([]types.Datum{types.NewStringDatum("-1")}),
+			types.NewDecFromInt(0),
+		},
+	}
+
+	for _, t := range cases {
+		res, isNull, err := cast.evalDecimal(t.row.ToRow())
+		c.Assert(isNull, Equals, false)
+		c.Assert(err, IsNil)
+		c.Assert(res.Compare(t.res), Equals, 0)
 	}
 }
