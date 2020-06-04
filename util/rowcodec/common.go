@@ -19,6 +19,8 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/types"
 )
 
 // CodecVer is the constant number that represent the new row format.
@@ -227,4 +229,18 @@ func IsRowKey(key []byte) bool {
 // IsNewFormat checks whether row data is in new-format.
 func IsNewFormat(rowData []byte) bool {
 	return rowData[0] == CodecVer
+}
+
+// FieldTypeFromModelColumn creates a types.FieldType from model.ColumnInfo.
+// export for test case and CDC.
+func FieldTypeFromModelColumn(col *model.ColumnInfo) *types.FieldType {
+	return &types.FieldType{
+		Tp:      col.Tp,
+		Flag:    col.Flag,
+		Flen:    col.Flen,
+		Decimal: col.Decimal,
+		Elems:   col.Elems,
+		Charset: col.Charset,
+		Collate: col.Collate,
+	}
 }

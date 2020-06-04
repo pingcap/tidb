@@ -718,6 +718,7 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 		if err != nil {
 			return nil, err
 		}
+		a.Ctx.SetValue(sessionctx.QueryString, executorExec.stmt.Text())
 		a.OutputNames = executorExec.outputNames
 		a.isPreparedStmt = true
 		a.Plan = executorExec.plan
@@ -793,9 +794,14 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, succ bool, hasMoreResults boo
 func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
 	a.FinishExecuteStmt(txnStartTS, lastErr == nil, false)
 	a.logAudit()
-	// Detach the disk tracker from GlobalDiskUsageTracker after every execution
-	if stmtCtx := a.Ctx.GetSessionVars().StmtCtx; stmtCtx != nil && stmtCtx.DiskTracker != nil {
-		stmtCtx.DiskTracker.DetachFromGlobalTracker()
+	// Detach the Memory and disk tracker for the previous stmtCtx from GlobalMemoryUsageTracker and GlobalDiskUsageTracker
+	if stmtCtx := a.Ctx.GetSessionVars().StmtCtx; stmtCtx != nil {
+		if stmtCtx.DiskTracker != nil {
+			stmtCtx.DiskTracker.DetachFromGlobalTracker()
+		}
+		if stmtCtx.MemTracker != nil {
+			stmtCtx.MemTracker.DetachFromGlobalTracker()
+		}
 	}
 }
 
@@ -824,6 +830,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	copTaskInfo := sessVars.StmtCtx.CopTasksDetails()
 	statsInfos := plannercore.GetStatsInfo(a.Plan)
 	memMax := sessVars.StmtCtx.MemTracker.MaxConsumed()
+	diskMax := sessVars.StmtCtx.DiskTracker.MaxConsumed()
 	_, digest := sessVars.StmtCtx.SQLDigest()
 	_, planDigest := getPlanDigest(a.Ctx, a.Plan)
 	slowItems := &variable.SlowQueryLogItems{
@@ -838,11 +845,13 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		CopTasks:       copTaskInfo,
 		ExecDetail:     execDetail,
 		MemMax:         memMax,
+		DiskMax:        diskMax,
 		Succ:           succ,
 		Plan:           getPlanTree(a.Plan),
 		PlanDigest:     planDigest,
 		Prepared:       a.isPreparedStmt,
 		HasMoreResults: hasMoreResults,
+		PlanFromCache:  sessVars.FoundInPlanCache,
 	}
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {
 		slowItems.PrevStmt = sessVars.PrevStmt.String()
@@ -913,6 +922,10 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		sessVars.SetPrevStmtDigest("")
 		return
 	}
+	// Ignore `PREPARE` statements, but record `EXECUTE` statements.
+	if _, ok := a.StmtNode.(*ast.PrepareStmt); ok {
+		return
+	}
 	stmtCtx := sessVars.StmtCtx
 	normalizedSQL, digest := stmtCtx.SQLDigest()
 	costTime := time.Since(sessVars.StartTime)
@@ -949,6 +962,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	execDetail := stmtCtx.GetExecDetails()
 	copTaskInfo := stmtCtx.CopTasksDetails()
 	memMax := stmtCtx.MemTracker.MaxConsumed()
+	diskMax := stmtCtx.DiskTracker.MaxConsumed()
 
 	stmtsummary.StmtSummaryByDigestMap.AddStatement(&stmtsummary.StmtExecInfo{
 		SchemaName:     strings.ToLower(sessVars.CurrentDB),
@@ -968,8 +982,10 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		CopTasks:       copTaskInfo,
 		ExecDetail:     &execDetail,
 		MemMax:         memMax,
+		DiskMax:        diskMax,
 		StartTime:      sessVars.StartTime,
 		IsInternal:     sessVars.InRestrictedSQL,
 		Succeed:        succ,
+		PlanInCache:    sessVars.FoundInPlanCache,
 	})
 }

@@ -96,7 +96,7 @@ func (e *SplitIndexRegionExec) splitIndexRegion(ctx context.Context) error {
 	start := time.Now()
 	ctxWithTimeout, cancel := context.WithTimeout(ctx, e.ctx.GetSessionVars().GetSplitRegionTimeout())
 	defer cancel()
-	regionIDs, err := s.SplitRegions(context.Background(), e.splitIdxKeys, true)
+	regionIDs, err := s.SplitRegions(ctxWithTimeout, e.splitIdxKeys, true)
 	if err != nil {
 		logutil.BgLogger().Warn("split table index region failed",
 			zap.String("table", e.tableInfo.Name.L),
@@ -172,19 +172,16 @@ func (e *SplitIndexRegionExec) getSplitIdxPhysicalKeysFromValueList(physicalID i
 }
 
 func (e *SplitIndexRegionExec) getSplitIdxPhysicalStartAndOtherIdxKeys(physicalID int64, keys [][]byte) [][]byte {
-	// Split in the start of the index key.
-	startIdxKey := tablecodec.EncodeTableIndexPrefix(physicalID, e.indexInfo.ID)
-	keys = append(keys, startIdxKey)
-
-	// Split in the end for the other index key.
-	for _, idx := range e.tableInfo.Indices {
-		if idx.ID <= e.indexInfo.ID {
-			continue
-		}
-		endIdxKey := tablecodec.EncodeTableIndexPrefix(physicalID, idx.ID)
-		keys = append(keys, endIdxKey)
-		break
+	// 1. Split in the start key for the index if the index is not the first index.
+	// For the first index, split the start key is useless.
+	if len(e.tableInfo.Indices) > 0 && e.tableInfo.Indices[0].ID != e.indexInfo.ID {
+		startKey := tablecodec.EncodeTableIndexPrefix(physicalID, e.indexInfo.ID)
+		keys = append(keys, startKey)
 	}
+
+	// 2. Split in the end key.
+	endKey := tablecodec.EncodeTableIndexPrefix(physicalID, e.indexInfo.ID+1)
+	keys = append(keys, endKey)
 	return keys
 }
 
@@ -401,7 +398,7 @@ func waitScatterRegionFinish(ctxWithTimeout context.Context, sctx sessionctx.Con
 			remainMillisecond = int((sctx.GetSessionVars().GetSplitRegionTimeout().Seconds() - time.Since(startTime).Seconds()) * 1000)
 		}
 
-		err := store.WaitScatterRegionFinish(regionID, remainMillisecond)
+		err := store.WaitScatterRegionFinish(ctxWithTimeout, regionID, remainMillisecond)
 		if err == nil {
 			finishScatterNum++
 		} else {
