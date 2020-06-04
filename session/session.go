@@ -1055,8 +1055,9 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 		logutil.Eventf(ctx, "execute: %s", sql)
 	}
 
+	charsetInfo, collation := s.sessionVars.GetCharsetInfo()
 	parseStartTime := time.Now()
-	stmtNodes, err := s.Parse(ctx, sql)
+	stmtNodes, warns, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
 	if err != nil {
 		s.rollbackOnError(ctx)
 
@@ -1081,6 +1082,9 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 	rs, err := s.ExecuteStmt(ctx, stmtNodes[0])
 	if err != nil {
 		s.sessionVars.StmtCtx.AppendError(err)
+	}
+	for _, warn := range warns {
+		s.sessionVars.StmtCtx.AppendWarning(util.SyntaxWarn(warn))
 	}
 	if rs == nil {
 		return nil, err
