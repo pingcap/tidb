@@ -144,13 +144,8 @@
       {
         "SQL": "explain select * from t order by a",
         "Result": [
-<<<<<<< HEAD
           "Sort_8 10005.00 root  test.t.a:asc",
-          "└─Union_11 10005.00 root  ",
-=======
-          "Sort_8 10005.00 root  test.t.a",
           "└─PartitionUnion_11 10005.00 root  ",
->>>>>>> 777907b... planner: push agg below partition union all by default (#17262)
           "  ├─TableReader_13 10000.00 root  data:TableFullScan_12",
           "  │ └─TableFullScan_12 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
           "  ├─TableReader_15 1.00 root  data:TableFullScan_14",
@@ -172,15 +167,9 @@
       {
         "SQL": "explain select * from t order by a limit 3",
         "Result": [
-<<<<<<< HEAD
           "TopN_16 3.00 root  test.t.a:asc, offset:0, count:3",
-          "└─Union_20 7.00 root  ",
-          "  ├─TopN_21 3.00 root  test.t.a:asc, offset:0, count:3",
-=======
-          "TopN_16 3.00 root  test.t.a, offset:0, count:3",
           "└─PartitionUnion_20 7.00 root  ",
           "  ├─TopN_21 3.00 root  test.t.a, offset:0, count:3",
->>>>>>> 777907b... planner: push agg below partition union all by default (#17262)
           "  │ └─TableReader_29 3.00 root  data:TopN_28",
           "  │   └─TopN_28 3.00 cop[tikv]  test.t.a:asc, offset:0, count:3",
           "  │     └─TableFullScan_27 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
