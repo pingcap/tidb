@@ -169,7 +169,7 @@
         "Result": [
           "TopN_16 3.00 root  test.t.a:asc, offset:0, count:3",
           "└─PartitionUnion_20 7.00 root  ",
-          "  ├─TopN_21 3.00 root  test.t.a, offset:0, count:3",
+          "  ├─TopN_21 3.00 root  test.t.a:asc, offset:0, count:3",
           "  │ └─TableReader_29 3.00 root  data:TopN_28",
           "  │   └─TopN_28 3.00 cop[tikv]  test.t.a:asc, offset:0, count:3",
           "  │     └─TableFullScan_27 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
