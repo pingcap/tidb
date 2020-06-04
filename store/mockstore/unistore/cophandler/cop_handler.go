@@ -194,7 +194,7 @@ func (e *evalContext) newRowDecoder() (*rowcodec.ChunkDecoder, error) {
 	}
 	if len(pkCols) == 0 {
 		if e.primaryCols != nil {
-			pkCols = append(pkCols, e.primaryCols...)
+			pkCols = e.primaryCols
 		} else {
 			pkCols = append(pkCols, 0)
 		}

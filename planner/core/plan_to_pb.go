@@ -113,7 +113,7 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
 			}
 		}
 		for _, idxCol := range pkIdx.Columns {
-			pkColIds = append(pkColIds, p.Columns[idxCol.Offset].ID)
+			pkColIds = append(pkColIds, p.Table.Columns[idxCol.Offset].ID)
 		}
 	}
 	tsExec := &tipb.TableScan{
