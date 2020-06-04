@@ -784,7 +784,7 @@ func (h tableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	// get table's schema.
-	tbl, err := h.getTable(dbName, tableName)
+	tableVal, err := schema.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
 	if err != nil {
 		writeError(w, err)
 		return
@@ -792,13 +792,24 @@ func (h tableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	switch h.op {
 	case opTableRegions:
-		h.handleRegionRequest(schema, tbl, w, req)
+		h.handleRegionRequest(schema, tableVal, w, req)
 	case opTableDiskUsage:
-		h.handleDiskUsageRequest(schema, tbl, w, req)
+		h.handleDiskUsageRequest(schema, tableVal, w, req)
 	case opTableScatter:
-		h.handleScatterTableRequest(schema, tbl, w, req)
+		// only get one physical table, prevent too many scatter schedulers.
+		ptbl, err := h.getTable(dbName, tableName)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		h.handleScatterTableRequest(schema, ptbl, w, req)
 	case opStopTableScatter:
-		h.handleStopScatterTableRequest(schema, tbl, w, req)
+		ptbl, err := h.getTable(dbName, tableName)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		h.handleStopScatterTableRequest(schema, ptbl, w, req)
 	default:
 		writeError(w, errors.New("method not found"))
 	}
