@@ -51,7 +51,8 @@ func (s *seqTestSuite) TestPrepared(c *C) {
 		tk.MustExec("create table prepare_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1)")
 		tk.MustExec("insert prepare_test (c1) values (1),(2),(NULL)")
 
-		tk.MustExec(`prepare stmt_test_1 from 'select id from prepare_test where id > ?'; set @a = 1; execute stmt_test_1 using @a;`)
+		tk.MustExec(`prepare stmt_test_1 from 'select id from prepare_test where id > ?'; `)
+		tk.MustExec(`set @a = 1; execute stmt_test_1 using @a;`)
 		tk.MustExec(`prepare stmt_test_2 from 'select 1'`)
 		// Prepare multiple statement is not allowed.
 		_, err = tk.Exec(`prepare stmt_test_3 from 'select id from prepare_test where id > ?;select id from prepare_test where id > ?;'`)
@@ -269,7 +270,8 @@ func (s *seqTestSuite) TestPreparedLimitOffset(c *C) {
 		tk.MustExec("drop table if exists prepare_test")
 		tk.MustExec("create table prepare_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1)")
 		tk.MustExec("insert prepare_test (c1) values (1),(2),(NULL)")
-		tk.MustExec(`prepare stmt_test_1 from 'select id from prepare_test limit ? offset ?'; set @a = 1, @b=1;`)
+		tk.MustExec(`prepare stmt_test_1 from 'select id from prepare_test limit ? offset ?'; `)
+		tk.MustExec(`set @a = 1, @b=1;`)
 		r := tk.MustQuery(`execute stmt_test_1 using @a, @b;`)
 		r.Check(testkit.Rows("2"))
 
@@ -508,7 +510,8 @@ func (s *seqTestSuite) TestPreparedUpdate(c *C) {
 		tk.MustExec(`insert into prepare_test values (3, 3)`)
 
 		tk.MustExec(`prepare stmt_update from 'update prepare_test set c1 = c1 + ? where id = ?'`)
-		tk.MustExec(`set @a=1,@b=100; execute stmt_update using @b,@a;`)
+		tk.MustExec(`set @a=1,@b=100; `)
+		tk.MustExec(`execute stmt_update using @b,@a;`)
 		if flag {
 			counter.Write(pb)
 			hit := pb.GetCounter().GetValue()

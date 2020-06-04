@@ -94,7 +94,10 @@ func (s *testSuite5) TestSetVar(c *C) {
 	tk.MustQuery(`select @issue998b, @@global.autocommit;`).Check(testkit.Rows("6 1"))
 
 	// For issue 4302
-	testSQL = "use test;drop table if exists x;create table x(a int);insert into x value(1);"
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists x")
+	tk.MustExec("create table x(a int)")
+	testSQL = "insert into x value(1);"
 	tk.MustExec(testSQL)
 	testSQL = "SET @issue4302=(select a from x limit 1);"
 	tk.MustExec(testSQL)

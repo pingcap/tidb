@@ -312,7 +312,8 @@ func (s *testTableSuite) TestCharacterSetCollations(c *C) {
 
 	// Test charset/collation in information_schema.COLUMNS table.
 	tk.MustExec("DROP DATABASE IF EXISTS charset_collate_test")
-	tk.MustExec("CREATE DATABASE charset_collate_test; USE charset_collate_test")
+	tk.MustExec("CREATE DATABASE charset_collate_test;")
+	tk.MustExec("USE charset_collate_test")
 
 	// TODO: Specifying the charset for national char/varchar should not be supported.
 	tk.MustExec(`CREATE TABLE charset_collate_col_test(
@@ -383,7 +384,8 @@ func (s *testTableSuite) TestCurrentTimestampAsDefault(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("DROP DATABASE IF EXISTS default_time_test")
-	tk.MustExec("CREATE DATABASE default_time_test; USE default_time_test")
+	tk.MustExec("CREATE DATABASE default_time_test;")
+	tk.MustExec("USE default_time_test")
 
 	tk.MustExec(`CREATE TABLE default_time_table(
 					c_datetime datetime,

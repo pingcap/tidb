@@ -295,7 +295,8 @@ func (s *testSessionSuite2) TestErrorRollback(c *C) {
 func (s *testSessionSuite) TestQueryString(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
-	tk.MustExec("create table mutil1 (a int);create table multi2 (a int)")
+	tk.MustExec("create table mutil1 (a int);")
+	tk.MustExec("create table multi2 (a int)")
 	queryStr := tk.Se.Value(sessionctx.QueryString)
 	c.Assert(queryStr, Equals, "create table multi2 (a int)")
 
@@ -406,9 +407,9 @@ func (s *testSessionSuite3) TestLastMessage(c *C) {
 	tk.CheckLastMessage("Rows matched: 0  Changed: 0  Warnings: 0")
 
 	// Replace
-	tk.MustExec(`drop table if exists t, t1;
-        create table t (c1 int PRIMARY KEY, c2 int);
-        create table t1 (a1 int, a2 int);`)
+	tk.MustExec("drop table if exists t, t1;")
+	tk.MustExec("create table t (c1 int PRIMARY KEY, c2 int);")
+	tk.MustExec("create table t1 (a1 int, a2 int);")
 	tk.MustExec(`INSERT INTO t VALUES (1,1)`)
 	tk.MustExec(`REPLACE INTO t VALUES (2,2)`)
 	tk.CheckLastMessage("")
@@ -419,9 +420,9 @@ func (s *testSessionSuite3) TestLastMessage(c *C) {
 
 	// Check insert with CLIENT_FOUND_ROWS is set
 	tk.Se.SetClientCapability(mysql.ClientFoundRows)
-	tk.MustExec(`drop table if exists t, t1;
-        create table t (c1 int PRIMARY KEY, c2 int);
-        create table t1 (a1 int, a2 int);`)
+	tk.MustExec("drop table if exists t, t1;")
+	tk.MustExec("create table t (c1 int PRIMARY KEY, c2 int);")
+	tk.MustExec("create table t1 (a1 int, a2 int);")
 	tk.MustExec(`INSERT INTO t1 VALUES (1, 10), (2, 2), (3, 30);`)
 	tk.MustExec(`INSERT INTO t1 VALUES (1, 10), (2, 20), (3, 30);`)
 	tk.MustExec(`INSERT INTO t SELECT * FROM t1 ON DUPLICATE KEY UPDATE c2=a2;`)
@@ -1605,12 +1606,6 @@ func (s *testSessionSuite2) TestRetry(c *C) {
 	go f2()
 	go f3()
 	wg.Wait()
-}
-
-func (s *testSessionSuite3) TestMultiStmts(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("drop table if exists t1; create table t1(id int ); insert into t1 values (1);")
-	tk.MustQuery("select * from t1;").Check(testkit.Rows("1"))
 }
 
 func (s *testSessionSuite2) TestLastExecuteDDLFlag(c *C) {

@@ -42,7 +42,8 @@ func (s *testBypassSuite) SetUpSuite(c *C) {
 func (s *testSuite) TestInsert(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	testSQL := `drop table if exists insert_test;create table insert_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1);`
+	tk.MustExec("drop table if exists insert_test;")
+	testSQL := `create table insert_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1);`
 	tk.MustExec(testSQL)
 	testSQL = `insert insert_test (c1) values (1),(2),(NULL);`
 	tk.MustExec(testSQL)
@@ -241,7 +242,8 @@ func (s *testSuite) TestInsert(c *C) {
 	// issue 6360
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a bigint unsigned);")
-	tk.MustExec(" set @orig_sql_mode = @@sql_mode; set @@sql_mode = 'strict_all_tables';")
+	tk.MustExec(" set @orig_sql_mode = @@sql_mode;")
+	tk.MustExec("set @@sql_mode = 'strict_all_tables';")
 	_, err = tk.Exec("insert into t value (-1);")
 	c.Assert(types.ErrWarnDataOutOfRange.Equal(err), IsTrue)
 	tk.MustExec("set @@sql_mode = '';")
@@ -324,7 +326,8 @@ func (s *testSuiteP2) TestMultiBatch(c *C) {
 func (s *testSuite4) TestInsertAutoInc(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	createSQL := `drop table if exists insert_autoinc_test; create table insert_autoinc_test (id int primary key auto_increment, c1 int);`
+	tk.MustExec("drop table if exists insert_autoinc_test")
+	createSQL := `create table insert_autoinc_test (id int primary key auto_increment, c1 int);`
 	tk.MustExec(createSQL)
 
 	insertSQL := `insert into insert_autoinc_test(c1) values (1), (2)`
@@ -370,7 +373,8 @@ func (s *testSuite4) TestInsertAutoInc(c *C) {
 	tk.MustExec("commit")
 
 	// issue-962
-	createSQL = `drop table if exists insert_autoinc_test; create table insert_autoinc_test (id int primary key auto_increment, c1 int);`
+	tk.MustExec(`drop table if exists insert_autoinc_test;`)
+	createSQL = `create table insert_autoinc_test (id int primary key auto_increment, c1 int);`
 	tk.MustExec(createSQL)
 	insertSQL = `insert into insert_autoinc_test(id, c1) values (0.3, 1)`
 	tk.MustExec(insertSQL)
@@ -404,7 +408,8 @@ func (s *testSuite4) TestInsertAutoInc(c *C) {
 	r.Check(testkit.Rows(rowStr3, rowStr1, rowStr2, rowStr4, rowStr5, rowStr6))
 
 	// SQL_MODE=NO_AUTO_VALUE_ON_ZERO
-	createSQL = `drop table if exists insert_autoinc_test; create table insert_autoinc_test (id int primary key auto_increment, c1 int);`
+	tk.MustExec(`drop table if exists insert_autoinc_test;`)
+	createSQL = `create table insert_autoinc_test (id int primary key auto_increment, c1 int);`
 	tk.MustExec(createSQL)
 	insertSQL = `insert into insert_autoinc_test(id, c1) values (5, 1)`
 	tk.MustExec(insertSQL)
@@ -458,8 +463,8 @@ func (s *testSuite4) TestInsertIgnore(c *C) {
 	var cfg kv.InjectionConfig
 	tk := testkit.NewTestKit(c, kv.NewInjectedStore(s.store, &cfg))
 	tk.MustExec("use test")
-	testSQL := `drop table if exists t;
-    create table t (id int PRIMARY KEY AUTO_INCREMENT, c1 int unique key);`
+	tk.MustExec("drop table if exists t")
+	testSQL := `create table t (id int PRIMARY KEY AUTO_INCREMENT, c1 int unique key);`
 	tk.MustExec(testSQL)
 	testSQL = `insert into t values (1, 2);`
 	tk.MustExec(testSQL)
@@ -495,8 +500,8 @@ func (s *testSuite4) TestInsertIgnore(c *C) {
 	cfg.SetGetError(nil)
 
 	// for issue 4268
-	testSQL = `drop table if exists t;
-	create table t (a bigint);`
+	tk.MustExec("drop table if exists t;")
+	testSQL = `create table t (a bigint);`
 	tk.MustExec(testSQL)
 	testSQL = "insert ignore into t select '1a';"
 	_, err = tk.Exec(testSQL)
@@ -512,8 +517,8 @@ func (s *testSuite4) TestInsertIgnore(c *C) {
 	r.Check(testkit.Rows("Warning 1292 Truncated incorrect FLOAT value: '1a'"))
 
 	// for duplicates with warning
-	testSQL = `drop table if exists t;
-	create table t(a int primary key, b int);`
+	tk.MustExec("drop table if exists t;")
+	testSQL = `create table t(a int primary key, b int);`
 	tk.MustExec(testSQL)
 	testSQL = "insert ignore into t values (1,1);"
 	tk.MustExec(testSQL)
@@ -524,36 +529,33 @@ func (s *testSuite4) TestInsertIgnore(c *C) {
 	r = tk.MustQuery("SHOW WARNINGS")
 	r.Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 'PRIMARY'"))
 
-	testSQL = `drop table if exists test;
-create table test (i int primary key, j int unique);
-begin;
-insert into test values (1,1);
-insert ignore into test values (2,1);
-commit;`
-	tk.MustExec(testSQL)
+	tk.MustExec("drop table if exists test;")
+	tk.MustExec("create table test (i int primary key, j int unique);")
+	tk.MustExec("begin;")
+	tk.MustExec("insert into test values (1,1);")
+	tk.MustExec("insert ignore into test values (2,1);")
+	tk.MustExec("commit;")
 	testSQL = `select * from test;`
 	r = tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1 1"))
 
-	testSQL = `delete from test;
-insert into test values (1, 1);
-begin;
-delete from test where i = 1;
-insert ignore into test values (2, 1);
-commit;`
-	tk.MustExec(testSQL)
+	tk.MustExec("delete from test;")
+	tk.MustExec("insert into test values (1, 1);")
+	tk.MustExec("begin;")
+	tk.MustExec("delete from test where i = 1;")
+	tk.MustExec("insert ignore into test values (2, 1);")
+	tk.MustExec("commit;")
 	testSQL = `select * from test;`
 	r = tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("2 1"))
 
-	testSQL = `delete from test;
-insert into test values (1, 1);
-begin;
-update test set i = 2, j = 2 where i = 1;
-insert ignore into test values (1, 3);
-insert ignore into test values (2, 4);
-commit;`
-	tk.MustExec(testSQL)
+	tk.MustExec("delete from test;")
+	tk.MustExec("insert into test values (1, 1);")
+	tk.MustExec("begin;")
+	tk.MustExec("update test set i = 2, j = 2 where i = 1;")
+	tk.MustExec("insert ignore into test values (1, 3);")
+	tk.MustExec("insert ignore into test values (2, 4);")
+	tk.MustExec("commit;")
 	testSQL = `select * from test order by i;`
 	r = tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1 3", "2 2"))
@@ -572,8 +574,8 @@ func (s *testSuite8) TestInsertOnDup(c *C) {
 	var cfg kv.InjectionConfig
 	tk := testkit.NewTestKit(c, kv.NewInjectedStore(s.store, &cfg))
 	tk.MustExec("use test")
-	testSQL := `drop table if exists t;
-    create table t (i int unique key);`
+	tk.MustExec("drop table if exists t;")
+	testSQL := `create table t (i int unique key);`
 	tk.MustExec(testSQL)
 	testSQL = `insert into t values (1),(2);`
 	tk.MustExec(testSQL)
@@ -595,8 +597,8 @@ func (s *testSuite8) TestInsertOnDup(c *C) {
 	rowStr3 := fmt.Sprintf("%v", "3")
 	r.Check(testkit.Rows(rowStr1, rowStr3))
 
-	testSQL = `drop table if exists t;
-    create table t (i int primary key, j int unique key);`
+	tk.MustExec("drop table if exists t;")
+	testSQL = `create table t (i int primary key, j int unique key);`
 	tk.MustExec(testSQL)
 	testSQL = `insert into t values (-1, 1);`
 	tk.MustExec(testSQL)
@@ -611,67 +613,60 @@ func (s *testSuite8) TestInsertOnDup(c *C) {
 	r = tk.MustQuery("select * from t;")
 	r.Check(testkit.Rows(rowStr1))
 
-	testSQL = `drop table if exists test;
-create table test (i int primary key, j int unique);
-begin;
-insert into test values (1,1);
-insert into test values (2,1) on duplicate key update i = -i, j = -j;
-commit;`
-	tk.MustExec(testSQL)
+	tk.MustExec("drop table if exists test;")
+	tk.MustExec("create table test (i int primary key, j int unique);")
+	tk.MustExec("begin;")
+	tk.MustExec("insert into test values (1,1);")
+	tk.MustExec("insert into test values (2,1) on duplicate key update i = -i, j = -j;")
+
 	testSQL = `select * from test;`
 	r = tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("-1 -1"))
 
-	testSQL = `delete from test;
-insert into test values (1, 1);
-begin;
-delete from test where i = 1;
-insert into test values (2, 1) on duplicate key update i = -i, j = -j;
-commit;`
-	tk.MustExec(testSQL)
+	tk.MustExec("delete from test;")
+	tk.MustExec("insert into test values (1, 1);")
+	tk.MustExec("begin;")
+	tk.MustExec("delete from test where i = 1;")
+	tk.MustExec("insert into test values (2, 1) on duplicate key update i = -i, j = -j;")
+	tk.MustExec("commit;")
 	testSQL = `select * from test;`
 	r = tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("2 1"))
 
-	testSQL = `delete from test;
-insert into test values (1, 1);
-begin;
-update test set i = 2, j = 2 where i = 1;
-insert into test values (1, 3) on duplicate key update i = -i, j = -j;
-insert into test values (2, 4) on duplicate key update i = -i, j = -j;
-commit;`
-	tk.MustExec(testSQL)
+	tk.MustExec("delete from test;")
+	tk.MustExec("insert into test values (1, 1);")
+	tk.MustExec("begin;")
+	tk.MustExec("update test set i = 2, j = 2 where i = 1;")
+	tk.MustExec("insert into test values (1, 3) on duplicate key update i = -i, j = -j;")
+	tk.MustExec("insert into test values (2, 4) on duplicate key update i = -i, j = -j;")
+	tk.MustExec("commit;")
 	testSQL = `select * from test order by i;`
 	r = tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("-2 -2", "1 3"))
 
-	testSQL = `delete from test;
-begin;
-insert into test values (1, 3), (1, 3) on duplicate key update i = values(i), j = values(j);
-commit;`
-	tk.MustExec(testSQL)
+	tk.MustExec("delete from test;")
+	tk.MustExec("begin;")
+	tk.MustExec("insert into test values (1, 3), (1, 3) on duplicate key update i = values(i), j = values(j);")
+	tk.MustExec("commit;")
 	testSQL = `select * from test order by i;`
 	r = tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1 3"))
 
-	testSQL = `create table tmp (id int auto_increment, code int, primary key(id, code));
-	create table m (id int primary key auto_increment, code int unique);
-	insert tmp (code) values (1);
-	insert tmp (code) values (1);
-	set tidb_init_chunk_size=1;
-	insert m (code) select code from tmp on duplicate key update code = values(code);`
-	tk.MustExec(testSQL)
+	tk.MustExec("create table tmp (id int auto_increment, code int, primary key(id, code));")
+	tk.MustExec("create table m (id int primary key auto_increment, code int unique);")
+	tk.MustExec("insert tmp (code) values (1);")
+	tk.MustExec("insert tmp (code) values (1);")
+	tk.MustExec("set tidb_init_chunk_size=1;")
+	tk.MustExec("insert m (code) select code from tmp on duplicate key update code = values(code);")
 	testSQL = `select * from m;`
 	r = tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1 1"))
 
 	// The following two cases are used for guaranteeing the last_insert_id
 	// to be set as the value of on-duplicate-update assigned.
-	testSQL = `DROP TABLE IF EXISTS t1;
-	CREATE TABLE t1 (f1 INT AUTO_INCREMENT PRIMARY KEY,
-	f2 VARCHAR(5) NOT NULL UNIQUE);
-	INSERT t1 (f2) VALUES ('test') ON DUPLICATE KEY UPDATE f1 = LAST_INSERT_ID(f1);`
-	tk.MustExec(testSQL)
+	tk.MustExec("DROP TABLE IF EXISTS t1;")
+	tk.MustExec("CREATE TABLE t1 (f1 INT AUTO_INCREMENT PRIMARY KEY, f2 VARCHAR(5) NOT NULL UNIQUE);")
+	tk.MustExec("INSERT t1 (f2) VALUES ('test') ON DUPLICATE KEY UPDATE f1 = LAST_INSERT_ID(f1);")
 	tk.CheckLastMessage("")
 	testSQL = `SELECT LAST_INSERT_ID();`
 	r = tk.MustQuery(testSQL)
@@ -683,11 +678,9 @@ commit;`
 	r = tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1"))
 
-	testSQL = `DROP TABLE IF EXISTS t1;
-	CREATE TABLE t1 (f1 INT AUTO_INCREMENT UNIQUE,
-	f2 VARCHAR(5) NOT NULL UNIQUE);
-	INSERT t1 (f2) VALUES ('test') ON DUPLICATE KEY UPDATE f1 = LAST_INSERT_ID(f1);`
-	tk.MustExec(testSQL)
+	tk.MustExec("DROP TABLE IF EXISTS t1;")
+	tk.MustExec("CREATE TABLE t1 (f1 INT AUTO_INCREMENT UNIQUE, f2 VARCHAR(5) NOT NULL UNIQUE);")
+	tk.MustExec("INSERT t1 (f2) VALUES ('test') ON DUPLICATE KEY UPDATE f1 = LAST_INSERT_ID(f1);")
 	tk.CheckLastMessage("")
 	testSQL = `SELECT LAST_INSERT_ID();`
 	r = tk.MustQuery(testSQL)
@@ -705,17 +698,15 @@ commit;`
 	r = tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1"))
 
-	testSQL = `DROP TABLE IF EXISTS t1;
-	CREATE TABLE t1 (f1 INT);
-	INSERT t1 VALUES (1) ON DUPLICATE KEY UPDATE f1 = 1;`
-	tk.MustExec(testSQL)
+	tk.MustExec("DROP TABLE IF EXISTS t1;")
+	tk.MustExec("CREATE TABLE t1 (f1 INT);")
+	tk.MustExec("INSERT t1 VALUES (1) ON DUPLICATE KEY UPDATE f1 = 1;")
 	tk.CheckLastMessage("")
 	tk.MustQuery(`SELECT * FROM t1;`).Check(testkit.Rows("1"))
 
-	testSQL = `DROP TABLE IF EXISTS t1;
-	CREATE TABLE t1 (f1 INT PRIMARY KEY, f2 INT NOT NULL UNIQUE);
-	INSERT t1 VALUES (1, 1);`
-	tk.MustExec(testSQL)
+	tk.MustExec("DROP TABLE IF EXISTS t1;")
+	tk.MustExec("CREATE TABLE t1 (f1 INT PRIMARY KEY, f2 INT NOT NULL UNIQUE);")
+	tk.MustExec("INSERT t1 VALUES (1, 1);")
 	tk.CheckLastMessage("")
 	tk.MustExec(`INSERT t1 VALUES (1, 1), (1, 1) ON DUPLICATE KEY UPDATE f1 = 2, f2 = 2;`)
 	tk.CheckLastMessage("Records: 2  Duplicates: 1  Warnings: 0")
@@ -736,8 +727,8 @@ commit;`
 func (s *testSuite4) TestInsertIgnoreOnDup(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	testSQL := `drop table if exists t;
-    create table t (i int not null primary key, j int unique key);`
+	tk.MustExec("drop table if exists t")
+	testSQL := `create table t (i int not null primary key, j int unique key);`
 	tk.MustExec(testSQL)
 	testSQL = `insert into t values (1, 1), (2, 2);`
 	tk.MustExec(testSQL)
@@ -841,8 +832,8 @@ func (s *testSuite4) TestInsertOnDupUpdateDefault(c *C) {
 func (s *testSuite4) TestReplace(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	testSQL := `drop table if exists replace_test;
-    create table replace_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1);`
+	tk.MustExec("drop table if exists replace_test;")
+	testSQL := `create table replace_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1);`
 	tk.MustExec(testSQL)
 	testSQL = `replace replace_test (c1) values (1),(2),(NULL);`
 	tk.MustExec(testSQL)
@@ -1063,8 +1054,8 @@ func (s *testSuite2) TestGeneratedColumnForInsert(c *C) {
 func (s *testSuite4) TestPartitionedTableReplace(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	testSQL := `drop table if exists replace_test;
-		    create table replace_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1)
+	tk.MustExec("drop table if exists replace_test;")
+	testSQL := `create table replace_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1)
 			partition by range (id) (
 			PARTITION p0 VALUES LESS THAN (3),
 			PARTITION p1 VALUES LESS THAN (5),
@@ -1505,7 +1496,8 @@ func (s *testSuite8) TestUpdate(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a datetime not null, b datetime)")
 	tk.MustExec("insert into t value('1999-12-12', '1999-12-13')")
-	tk.MustExec(" set @orig_sql_mode=@@sql_mode; set @@sql_mode='';")
+	tk.MustExec(" set @orig_sql_mode=@@sql_mode; ")
+	tk.MustExec("set @@sql_mode='';")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1999-12-12 00:00:00 1999-12-13 00:00:00"))
 	tk.MustExec("update t set a = ''")
 	tk.MustQuery("select * from t").Check(testkit.Rows("0000-00-00 00:00:00 1999-12-13 00:00:00"))
@@ -1746,24 +1738,21 @@ func (s *testSuite4) TestMultipleTableUpdate(c *C) {
 	tk.MustExec("commit")
 
 	// fix https://github.com/pingcap/tidb/issues/369
-	testSQL := `
-		DROP TABLE IF EXISTS t1, t2;
-		create table t1 (c int);
-		create table t2 (c varchar(256));
-		insert into t1 values (1), (2);
-		insert into t2 values ("a"), ("b");
-		update t1, t2 set t1.c = 10, t2.c = "abc";`
-	tk.MustExec(testSQL)
+	tk.MustExec("DROP TABLE IF EXISTS t1, t2;")
+	tk.MustExec("create table t1 (c int);")
+	tk.MustExec("create table t2 (c varchar(256));")
+	tk.MustExec("insert into t1 values (1), (2);")
+	tk.MustExec(`insert into t2 values ("a"), ("b");`)
+	tk.MustExec(`update t1, t2 set t1.c = 10, t2.c = "abc";`)
 	tk.CheckLastMessage("Rows matched: 4  Changed: 4  Warnings: 0")
 
 	// fix https://github.com/pingcap/tidb/issues/376
-	testSQL = `DROP TABLE IF EXISTS t1, t2;
-		create table t1 (c1 int);
-		create table t2 (c2 int);
-		insert into t1 values (1), (2);
-		insert into t2 values (1), (2);
-		update t1, t2 set t1.c1 = 10, t2.c2 = 2 where t2.c2 = 1;`
-	tk.MustExec(testSQL)
+	tk.MustExec("DROP TABLE IF EXISTS t1, t2;")
+	tk.MustExec("create table t1 (c1 int);")
+	tk.MustExec("create table t2 (c2 int);")
+	tk.MustExec("insert into t1 values (1), (2);")
+	tk.MustExec("insert into t2 values (1), (2);")
+	tk.MustExec("update t1, t2 set t1.c1 = 10, t2.c2 = 2 where t2.c2 = 1;")
 	tk.CheckLastMessage("Rows matched: 3  Changed: 3  Warnings: 0")
 
 	r = tk.MustQuery("select * from t1")
@@ -1993,8 +1982,8 @@ func (s *testSuite4) TestLoadData(c *C) {
 	trivialMsg := "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	createSQL := `drop table if exists load_data_test;
-		create table load_data_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 varchar(255) default "def", c3 int);`
+	tk.MustExec("drop table if exists load_data_test")
+	createSQL := `create table load_data_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 varchar(255) default "def", c3 int);`
 	_, err := tk.Exec("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
 	c.Assert(err, NotNil)
 	tk.MustExec(createSQL)
@@ -2163,7 +2152,8 @@ func (s *testSuite4) TestLoadData(c *C) {
 func (s *testSuite4) TestLoadDataEscape(c *C) {
 	trivialMsg := "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test; drop table if exists load_data_test;")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists load_data_test")
 	tk.MustExec("CREATE TABLE load_data_test (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL) CHARACTER SET utf8")
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
 	ctx := tk.Se.(sessionctx.Context)
@@ -2193,7 +2183,8 @@ func (s *testSuite4) TestLoadDataEscape(c *C) {
 func (s *testSuite4) TestLoadDataSpecifiedColumns(c *C) {
 	trivialMsg := "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test; drop table if exists load_data_test;")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists load_data_test;")
 	tk.MustExec(`create table load_data_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 varchar(255) default "def", c3 int default 0);`)
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test (c1, c2)")
 	ctx := tk.Se.(sessionctx.Context)
@@ -2219,7 +2210,8 @@ func (s *testSuite4) TestLoadDataSpecifiedColumns(c *C) {
 
 func (s *testSuite4) TestLoadDataIgnoreLines(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test; drop table if exists load_data_test;")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists load_data_test;")
 	tk.MustExec("CREATE TABLE load_data_test (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL) CHARACTER SET utf8")
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test ignore 1 lines")
 	ctx := tk.Se.(sessionctx.Context)
@@ -2239,7 +2231,8 @@ func (s *testSuite4) TestLoadDataIgnoreLines(c *C) {
 // TestLoadDataOverflowBigintUnsigned related to issue 6360
 func (s *testSuite4) TestLoadDataOverflowBigintUnsigned(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test; drop table if exists load_data_test;")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists load_data_test;")
 	tk.MustExec("CREATE TABLE load_data_test (a bigint unsigned);")
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
 	ctx := tk.Se.(sessionctx.Context)
@@ -2284,7 +2277,8 @@ func (s *testSuite4) TestLoadDataIntoPartitionedTable(c *C) {
 
 func (s *testSuite4) TestNullDefault(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test; drop table if exists test_null_default;")
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists test_null_default;")
 	tk.MustExec("set timestamp = 1234")
 	tk.MustExec("set time_zone = '+08:00'")
 	tk.MustExec("create table test_null_default (ts timestamp null default current_timestamp)")
@@ -2296,7 +2290,8 @@ func (s *testSuite4) TestNullDefault(c *C) {
 
 func (s *testSuite4) TestNotNullDefault(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test; drop table if exists t1,t2;")
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1,t2;")
 	defer tk.MustExec("drop table t1,t2")
 	tk.MustExec("create table t1 (a int not null default null default 1);")
 	tk.MustExec("create table t2 (a int);")
@@ -2675,12 +2670,14 @@ func (s *testSuite7) TestDeferConstraintCheckForInsert(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 
-	tk.MustExec(`drop table if exists t;create table t (a int primary key, b int);`)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key, b int)")
 	tk.MustExec(`insert into t values (1,2),(2,2)`)
 	_, err := tk.Exec("update t set a=a+1 where b=2")
 	c.Assert(err, NotNil)
 
-	tk.MustExec(`drop table if exists t;create table t (i int key);`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t (i int key);`)
 	tk.MustExec(`insert t values (1);`)
 	tk.MustExec(`set tidb_constraint_check_in_place = 1;`)
 	tk.MustExec(`begin;`)
@@ -2699,7 +2696,8 @@ func (s *testSuite7) TestDeferConstraintCheckForInsert(c *C) {
 	c.Assert(err, NotNil)
 	tk.MustExec("rollback")
 
-	tk.MustExec(`drop table t; create table t (id int primary key, v int unique);`)
+	tk.MustExec(`drop table t;`)
+	tk.MustExec(`create table t (id int primary key, v int unique);`)
 	tk.MustExec(`insert into t values (1, 1)`)
 	tk.MustExec(`set tidb_constraint_check_in_place = 1;`)
 	tk.MustExec(`set @@autocommit = 0;`)

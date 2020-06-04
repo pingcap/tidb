@@ -1153,7 +1153,10 @@ func (s *testSuiteJoin1) TestIndexLookupJoin(c *C) {
 	tk.MustExec("create table t(a int primary key auto_increment, b time)")
 	tk.MustExec("create table s(a int, b time)")
 	tk.MustExec("alter table s add index idx(a,b)")
-	tk.MustExec("set @@tidb_index_join_batch_size=4;set @@tidb_init_chunk_size=1;set @@tidb_max_chunk_size=32; set @@tidb_index_lookup_join_concurrency=15;")
+	tk.MustExec("set @@tidb_index_join_batch_size=4;")
+	tk.MustExec("set @@tidb_init_chunk_size=1;")
+	tk.MustExec("set @@tidb_max_chunk_size=32; ")
+	tk.MustExec("set @@tidb_index_lookup_join_concurrency=15;")
 	// insert 64 rows into `t`
 	tk.MustExec("insert into t values(0, '01:01:01')")
 	for i := 0; i < 6; i++ {
