@@ -10,7 +10,9 @@ The following table lists the major parameters of Dumpling.
 | Parameter | Description |
 | --------| --- |
 | -B or --database | Dump the specified databases. |
+| -T 或 --tables-list | Dump the specified tables |
 | -f or --filter | Dump only the tables matching the patterns. See [table-filter](https://github.com/pingcap/tidb-tools/blob/master/pkg/table-filter/README.md) for syntax. |
+| --case-sensitive | whether the filter should be case-sensitive, default false(insensitive) |
 | -h or --host | Host to connect to. (default: `127.0.0.1`) |
 | -t or --threads | Number of threads for concurrent backup. |
 | -r or --rows | Split table into multiple files by number of rows. This allows Dumpling to generate multiple files concurrently. (default: unlimited) |
@@ -23,6 +25,7 @@ The following table lists the major parameters of Dumpling.
 | -F or --filesize | The approximate size of the output file. The unit should be explicitly provided (such as `128B`, `64KiB`, `32MiB`, `1.5GiB`) |
 | --filetype| The type of dump file. (sql/csv, default "sql")           |
 | -o or --output | Output directory. The default value is based on time. |
+| -S or --sql | Dump data with given sql. This argument doesn't support concurrent dump |
 | --consistency | Which consistency control to use (default `auto`):<br>`flush`: Use FTWRL (flush tables with read lock)<br>`snapshot`: use a snapshot at a given timestamp<br>`lock`: execute lock tables read for all tables that need to be locked <br>`none`: dump without locking. It cannot guarantee consistency <br>`auto`: `flush` on MySQL, `snapshot` on TiDB |
 | --snapshot | Snapshot position. Valid only when consistency=snapshot. |
 | --where | Specify the dump range by `where` condition. Dump only the selected records. |
