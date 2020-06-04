@@ -44,6 +44,7 @@ require (
 	github.com/onsi/ginkgo v1.7.0 // indirect
 	github.com/onsi/gomega v1.4.1 // indirect
 	github.com/opentracing/basictracer-go v1.0.0
+<<<<<<< HEAD
 	github.com/opentracing/opentracing-go v1.0.2
 	github.com/pingcap/check v0.0.0-20190102082844-67f458068fc8
 	github.com/pingcap/errors v0.11.4
@@ -75,6 +76,40 @@ require (
 	golang.org/x/net v0.0.0-20180906233101-161cd47e91fd
 	golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e // indirect
 	golang.org/x/sys v0.0.0-20191010194322-b09406accb47 // indirect
+=======
+	github.com/opentracing/opentracing-go v1.1.0
+	github.com/pingcap/badger v1.5.1-0.20200604041313-19c397305fcc
+	github.com/pingcap/br v0.0.0-20200521085655-53201addd4ad
+	github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712
+	github.com/pingcap/errors v0.11.5-0.20190809092503-95897b64e011
+	github.com/pingcap/failpoint v0.0.0-20200603062251-b230c36c413c
+	github.com/pingcap/fn v0.0.0-20191016082858-07623b84a47d
+	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
+	github.com/pingcap/kvproto v0.0.0-20200518112156-d4aeb467de29
+	github.com/pingcap/log v0.0.0-20200511115504-543df19646ad
+	github.com/pingcap/parser v0.0.0-20200522094936-3b720a0512a6
+	github.com/pingcap/pd/v4 v4.0.0-rc.2.0.20200520083007-2c251bd8f181
+	github.com/pingcap/sysutil v0.0.0-20200408114249-ed3bd6f7fdb1
+	github.com/pingcap/tidb-tools v4.0.0-rc.1.0.20200514040632-f76b3e428e19+incompatible
+	github.com/pingcap/tipb v0.0.0-20200417094153-7316d94df1ee
+	github.com/prometheus/client_golang v1.5.1
+	github.com/prometheus/client_model v0.2.0
+	github.com/prometheus/common v0.9.1
+	github.com/shirou/gopsutil v2.19.10+incompatible
+	github.com/sirupsen/logrus v1.6.0
+	github.com/soheilhy/cmux v0.1.4
+	github.com/spaolacci/murmur3 v0.0.0-20180118202830-f09979ecbc72
+	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
+	github.com/uber-go/atomic v1.3.2
+	github.com/uber/jaeger-client-go v2.22.1+incompatible
+	go.etcd.io/etcd v0.5.0-alpha.5.0.20191023171146-3cf2f69b5738
+	go.uber.org/atomic v1.6.0
+	go.uber.org/automaxprocs v1.2.0
+	go.uber.org/zap v1.15.0
+	golang.org/x/net v0.0.0-20200324143707-d3edc9973b7e
+	golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e
+	golang.org/x/sys v0.0.0-20200323222414-85ca7c5b95cd
+>>>>>>> 6c420af... update failpoint (#17628)
 	golang.org/x/text v0.3.2
 	golang.org/x/time v0.0.0-20180412165947-fbb02b2291d2 // indirect
 	golang.org/x/tools v0.0.0-20181105230042-78dc5bac0cac
