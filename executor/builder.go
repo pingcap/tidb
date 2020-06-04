@@ -1540,7 +1540,11 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) *NestedLoopAp
 		innerPlan = v.Children()[1]
 		outerPlan = v.Children()[0]
 	}
-	outerSchema := plannercore.ExtractCorColumnsBySchema4PhysicalPlan(innerPlan, outerPlan.Schema())
+	v.OuterSchema = plannercore.ExtractCorColumnsBySchema4PhysicalPlan(innerPlan, outerPlan.Schema())
+	if err := v.ResolveIndices(); err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
 	leftChild := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
@@ -1571,7 +1575,7 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) *NestedLoopAp
 		outer:        v.JoinType != plannercore.InnerJoin,
 		joiner:       tupleJoiner,
 		//outerSchema:  v.OuterSchema,
-		outerSchema: outerSchema,
+		outerSchema: v.OuterSchema,
 	}
 	//var innerPlan plannercore.PhysicalPlan
 	//if v.InnerChildIdx == 0 {
