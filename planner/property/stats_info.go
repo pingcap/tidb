@@ -19,6 +19,18 @@ import (
 	"github.com/pingcap/tidb/statistics"
 )
 
+// GroupNDV stores the cardinality of a group of columns.
+type GroupNDV struct {
+	// Cols are the UniqueIDs of columns.
+	Cols []int64
+	NDV  float64
+}
+
+// ToString prints GroupNDV slice. It is only used for test.
+func ToString(ndvs []GroupNDV) string {
+	return fmt.Sprintf("%v", ndvs)
+}
+
 // StatsInfo stores the basic information of statistics for the plan's output. It is used for cost estimation.
 type StatsInfo struct {
 	RowCount float64
@@ -30,6 +42,9 @@ type StatsInfo struct {
 	// StatsVersion indicates the statistics version of a table.
 	// If the StatsInfo is calculated using the pseudo statistics on a table, StatsVersion will be PseudoVersion.
 	StatsVersion uint64
+
+	// GroupNDVs stores the cardinality of column groups.
+	GroupNDVs []GroupNDV
 }
 
 // String implements fmt.Stringer interface.
@@ -49,9 +64,14 @@ func (s *StatsInfo) Scale(factor float64) *StatsInfo {
 		Cardinality:  make(map[int64]float64, len(s.Cardinality)),
 		HistColl:     s.HistColl,
 		StatsVersion: s.StatsVersion,
+		GroupNDVs:    make([]GroupNDV, len(s.GroupNDVs)),
 	}
 	for id, c := range s.Cardinality {
 		profile.Cardinality[id] = c * factor
+	}
+	for i, g := range s.GroupNDVs {
+		profile.GroupNDVs[i] = g
+		profile.GroupNDVs[i].NDV = g.NDV * factor
 	}
 	return profile
 }

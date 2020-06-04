@@ -234,7 +234,7 @@ func (opt *Optimizer) fillGroupStats(g *memo.Group) (err error) {
 		childSchema[i] = childGroup.Prop.Schema
 	}
 	planNode := expr.ExprNode
-	g.Prop.Stats, err = planNode.DeriveStats(childStats, g.Prop.Schema, childSchema)
+	g.Prop.Stats, err = planNode.DeriveStats(childStats, g.Prop.Schema, childSchema, nil)
 	return err
 }
 

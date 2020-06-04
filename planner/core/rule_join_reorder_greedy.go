@@ -42,7 +42,7 @@ type joinReorderGreedySolver struct {
 // connect them, we make a bushy join tree to do the cartesian joins finally.
 func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan) (LogicalPlan, error) {
 	for _, node := range joinNodePlans {
-		_, err := node.recursiveDeriveStats()
+		_, err := node.recursiveDeriveStats(nil)
 		if err != nil {
 			return nil, err
 		}
@@ -80,7 +80,7 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree() (*jrNode, error) 
 			if newJoin == nil {
 				continue
 			}
-			_, err := newJoin.recursiveDeriveStats()
+			_, err := newJoin.recursiveDeriveStats(nil)
 			if err != nil {
 				return nil, err
 			}

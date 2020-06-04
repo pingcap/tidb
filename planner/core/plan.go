@@ -172,12 +172,19 @@ type LogicalPlan interface {
 	pushDownTopN(topN *LogicalTopN) LogicalPlan
 
 	// recursiveDeriveStats derives statistic info between plans.
-	recursiveDeriveStats() (*property.StatsInfo, error)
+	recursiveDeriveStats(colGroups [][]*expression.Column) (*property.StatsInfo, error)
 
 	// DeriveStats derives statistic info for current plan node given child stats.
 	// We need selfSchema, childSchema here because it makes this method can be used in
 	// cascades planner, where LogicalPlan might not record its children or schema.
-	DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error)
+	DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error)
+
+	// ExtractColGroups extracts column groups from child operator whose DNVs are required by the current operator.
+	// For example, if current operator is LogicalAggregation of `Group By a, b`, we indicate the child operators to maintain
+	// and propagate the NDV info of column group (a, b), to improve the row count estimation of current LogicalAggregation.
+	// The parameter colGroups are column groups required by upper operators, besides from the column groups derived from
+	// current operator, we should pass down parent colGroups to child operator as many as possible.
+	ExtractColGroups(colGroups [][]*expression.Column) [][]*expression.Column
 
 	// PreparePossibleProperties is only used for join and aggregation. Like group by a,b,c, all permutation of (a,b,c) is
 	// valid, but the ordered indices in leaf plan is limited. So we can get all possible order properties by a pre-walking.

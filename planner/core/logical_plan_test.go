@@ -1478,7 +1478,7 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
 		c.Assert(err, IsNil, comment)
 		lp := p.(LogicalPlan)
-		_, err = lp.recursiveDeriveStats()
+		_, err = lp.recursiveDeriveStats(nil)
 		c.Assert(err, IsNil, comment)
 		var ds *DataSource
 		var byItems []*util.ByItems
