@@ -307,9 +307,13 @@ func (t *tikvHandlerTool) getTable(dbName, tableName string) (table.PhysicalTabl
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	return t.getPartition(tableVal, partitionName)
+}
+
+func (t *tikvHandlerTool) getPartition(tableVal table.Table, partitionName string) (table.PhysicalTable, error) {
 	if pt, ok := tableVal.(table.PartitionedTable); ok {
 		if partitionName == "" {
-			return nil, errors.New("work on partitioned table, please specify the table name like this: table(partition)")
+			return tableVal.(table.PhysicalTable), errors.New("work on partitioned table, please specify the table name like this: table(partition)")
 		}
 		tblInfo := pt.Meta()
 		pid, err := tables.FindPartitionByName(tblInfo, partitionName)
@@ -319,7 +323,7 @@ func (t *tikvHandlerTool) getTable(dbName, tableName string) (table.PhysicalTabl
 		return pt.GetPartition(pid), nil
 	}
 	if partitionName != "" {
-		return nil, fmt.Errorf("%s is not a partitionted table", tableName)
+		return nil, fmt.Errorf("%s is not a partitionted table", tableVal.Meta().Name)
 	}
 	return tableVal.(table.PhysicalTable), nil
 }
@@ -783,28 +787,27 @@ func (h tableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// get table's schema.
+	tableName, partitionName := extractTableAndPartitionName(tableName)
 	tableVal, err := schema.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-
 	switch h.op {
 	case opTableRegions:
 		h.handleRegionRequest(schema, tableVal, w, req)
 	case opTableDiskUsage:
 		h.handleDiskUsageRequest(schema, tableVal, w, req)
 	case opTableScatter:
-		// only get one physical table, prevent too many scatter schedulers.
-		ptbl, err := h.getTable(dbName, tableName)
+		// supports partition table, only get one physical table, prevent too many scatter schedulers.
+		ptbl, err := h.getPartition(tableVal, partitionName)
 		if err != nil {
 			writeError(w, err)
 			return
 		}
 		h.handleScatterTableRequest(schema, ptbl, w, req)
 	case opStopTableScatter:
-		ptbl, err := h.getTable(dbName, tableName)
+		ptbl, err := h.getPartition(tableVal, partitionName)
 		if err != nil {
 			writeError(w, err)
 			return
