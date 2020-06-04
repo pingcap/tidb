@@ -602,7 +602,7 @@ func (w *worker) onModifyColumn(t *meta.Meta, job *model.Job) (ver int64, _ erro
 func (w *worker) doModifyColumn(
 	t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldName *model.CIStr,
 	pos *ast.ColumnPosition, modifyColumnTp byte, newAutoRandBits uint64) (ver int64, _ error) {
-	dbInfo, err := t.GetDatabase(job.SchemaID)
+	dbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
