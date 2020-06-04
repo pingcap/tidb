@@ -37,6 +37,11 @@ type CorrelatedColumn struct {
 
 // Clone implements Expression interface.
 func (col *CorrelatedColumn) Clone() Expression {
+	return col
+}
+
+// TrueClone implements the true clone methods for CorrelatedColumn.
+func (col *CorrelatedColumn) TrueClone() Expression {
 	return &CorrelatedColumn{Column: *col.Column.Clone().(*Column), Data: col.Data.Clone()}
 }
 

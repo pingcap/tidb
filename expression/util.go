@@ -120,17 +120,21 @@ func ExtractColumns(expr Expression) []*Column {
 func ExtractCorColumns(expr Expression) (cols []*CorrelatedColumn) {
 	switch v := expr.(type) {
 	case *CorrelatedColumn:
-		newCorCols := expr.(*CorrelatedColumn).Clone()
+		newCorCols := expr.(*CorrelatedColumn).TrueClone()
 		return []*CorrelatedColumn{newCorCols.(*CorrelatedColumn)}
+		// return []*CorrelatedColumn{v}
 	case *ScalarFunction:
 		for i, arg := range v.GetArgs() {
 			argCorCols := ExtractCorColumns(arg)
 			cols = append(cols, argCorCols...)
 			switch arg.(type) {
 			case *CorrelatedColumn:
-				v.GetArgs()[i].(*CorrelatedColumn).Data = argCorCols[0].Data
+				v.GetArgs()[i] = argCorCols[0]
 			}
 		}
+		//for _, arg := range v.GetArgs() {
+		//	cols = append(cols, ExtractCorColumns(arg)...)
+		//}
 	}
 	return
 }
