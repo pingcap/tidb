@@ -1560,13 +1560,13 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) *NestedLoopAp
 		joiner:       tupleJoiner,
 		outerSchema:  v.OuterSchema,
 	}
-	//var innerPlan plannercore.PhysicalPlan
-	//if v.InnerChildIdx == 0 {
-	//	innerPlan = v.Children()[0]
-	//} else {
-	//	innerPlan = v.Children()[1]
-	//}
-	//e.outerSchema = plannercore.ExtractCorColumnsBySchema4PhysicalPlan(innerPlan, outerExec.Schema())
+	var innerPlan plannercore.PhysicalPlan
+	if v.InnerChildIdx == 0 {
+		innerPlan = v.Children()[0]
+	} else {
+		innerPlan = v.Children()[1]
+	}
+	e.outerSchema = plannercore.ExtractCorColumnsBySchema4PhysicalPlan(innerPlan, outerExec.Schema())
 	executorCounterNestedLoopApplyExec.Inc()
 	return e
 }

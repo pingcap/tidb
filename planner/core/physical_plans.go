@@ -97,6 +97,14 @@ func (p *PhysicalTableReader) SetChildren(children ...PhysicalPlan) {
 	p.TablePlans = flattenPushDownPlan(p.tablePlan)
 }
 
+// ExtractCorrelatedCols implements PhysicalPlan interface.
+func (p *PhysicalTableReader) ExtractCorrelatedCols() (corCols []*expression.CorrelatedColumn) {
+	for _, child := range p.TablePlans {
+		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
+	}
+	return corCols
+}
+
 // PhysicalIndexReader is the index reader in tidb.
 type PhysicalIndexReader struct {
 	physicalSchemaProducer
