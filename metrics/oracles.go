@@ -25,6 +25,6 @@ var (
 			Subsystem: "pdclient",
 			Name:      "ts_future_wait_seconds",
 			Help:      "Bucketed histogram of seconds cost for waiting timestamp future.",
-			Buckets:   prometheus.ExponentialBuckets(0.000005, 2, 24), // 5us ~ 40s
+			Buckets:   prometheus.ExponentialBuckets(0.000005, 2, 30), // 5us ~ 2560s
 		})
 )
