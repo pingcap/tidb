@@ -40,6 +40,19 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
+// HandleCopRequest handles coprocessor request.
+func HandleCopRequest(dbReader *dbreader.DBReader, lockStore *lockstore.MemStore, req *coprocessor.Request) *coprocessor.Response {
+	switch req.Tp {
+	case kv.ReqTypeDAG:
+		return handleCopDAGRequest(dbReader, lockStore, req)
+	case kv.ReqTypeAnalyze:
+		return handleCopAnalyzeRequest(dbReader, req)
+	case kv.ReqTypeChecksum:
+		return handleCopChecksumRequest(dbReader, req)
+	}
+	return &coprocessor.Response{OtherError: fmt.Sprintf("unsupported request type %d", req.GetTp())}
+}
+
 type dagContext struct {
 	*evalContext
 	dbReader      *dbreader.DBReader
@@ -50,8 +63,8 @@ type dagContext struct {
 	startTS       uint64
 }
 
-// HandleCopDAGRequest handles coprocessor DAG request.
-func HandleCopDAGRequest(dbReader *dbreader.DBReader, lockStore *lockstore.MemStore, req *coprocessor.Request) *coprocessor.Response {
+// handleCopDAGRequest handles coprocessor DAG request.
+func handleCopDAGRequest(dbReader *dbreader.DBReader, lockStore *lockstore.MemStore, req *coprocessor.Request) *coprocessor.Response {
 	startTime := time.Now()
 	resp := &coprocessor.Response{}
 	dagCtx, dagReq, err := buildDAG(dbReader, lockStore, req)
@@ -371,4 +384,18 @@ func fieldTypeFromPBColumn(col *tipb.ColumnInfo) *types.FieldType {
 		Elems:   col.Elems,
 		Collate: mysql.Collations[uint8(collate.RestoreCollationIDIfNeeded(col.GetCollation()))],
 	}
+}
+
+// handleCopChecksumRequest handles coprocessor check sum request.
+func handleCopChecksumRequest(dbReader *dbreader.DBReader, req *coprocessor.Request) *coprocessor.Response {
+	resp := &tipb.ChecksumResponse{
+		Checksum:   1,
+		TotalKvs:   1,
+		TotalBytes: 1,
+	}
+	data, err := resp.Marshal()
+	if err != nil {
+		return &coprocessor.Response{OtherError: fmt.Sprintf("marshal checksum response error: %v", err)}
+	}
+	return &coprocessor.Response{Data: data}
 }
