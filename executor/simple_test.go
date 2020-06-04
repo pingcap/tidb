@@ -436,6 +436,17 @@ func (s *testSuite3) TestUser(c *C) {
 	dropUserSQL = `DROP USER 'test1'@'localhost', 'test2'@'localhost', 'test3'@'localhost';`
 	_, err = tk.Exec(dropUserSQL)
 	c.Assert(terror.ErrorEqual(err, executor.ErrCannotUser.GenWithStackByArgs("DROP USER", "")), IsTrue, Commentf("err %v", err))
+
+	// Close issue #17639
+	dropUserSQL = `DROP USER if exists test3@'%'`
+	tk.MustExec(dropUserSQL)
+	createUserSQL = `create user test3@'%' IDENTIFIED WITH 'mysql_native_password' AS '*6BB4837EB74329105EE4568DDA7DC67ED2CA2AD9';`
+	tk.MustExec(createUserSQL)
+	querySQL := `select PASSWORD from mysql.user where user="test3" ;`
+	tk.MustQuery(querySQL).Check(testkit.Rows("*6BB4837EB74329105EE4568DDA7DC67ED2CA2AD9"))
+	alterUserSQL = `alter user test3@'%' IDENTIFIED WITH 'mysql_native_password' AS '*6BB4837EB74329105EE4568DDA7DC67ED2CA2AD9';`
+	tk.MustExec(alterUserSQL)
+	tk.MustQuery(querySQL).Check(testkit.Rows("*6BB4837EB74329105EE4568DDA7DC67ED2CA2AD9"))
 }
 
 func (s *testSuite3) TestSetPwd(c *C) {

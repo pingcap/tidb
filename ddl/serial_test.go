@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -793,6 +794,25 @@ func (s *testSerialSuite) TestCancelJobByErrorCountLimit(c *C) {
 	_, err := tk.Exec("create table t (a int)")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+}
+
+func (s *testSerialSuite) TestTruncateTableUpdateSchemaVersionErr(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockTruncateTableUpdateVersionError", `return(true)`), IsNil)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 5")
+	err := ddlutil.LoadDDLVars(tk.Se)
+	c.Assert(err, IsNil)
+
+	tk.MustExec("create table t (a int)")
+	_, err = tk.Exec("truncate table t")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+	// Disable fail point.
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockTruncateTableUpdateVersionError"), IsNil)
+	tk.MustExec("truncate table t")
 }
 
 func (s *testSerialSuite) TestCanceledJobTakeTime(c *C) {
