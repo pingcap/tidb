@@ -20,7 +20,11 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+=======
+	"github.com/pingcap/tidb/util/testleak"
+>>>>>>> 3a4e733... test: fix testleak in TestIntegration (#17667)
 )
 
 type dbTestSuite struct{}
@@ -28,6 +32,8 @@ type dbTestSuite struct{}
 var _ = Suite(&dbTestSuite{})
 
 func (ts *dbTestSuite) TestIntegration(c *C) {
+	testleak.BeforeTest()
+	defer testleak.AfterTest(c)()
 	var err error
 	lease := 50 * time.Millisecond
 	cluster := mocktikv.NewCluster()
@@ -38,9 +44,11 @@ func (ts *dbTestSuite) TestIntegration(c *C) {
 		mockstore.WithMVCCStore(mvccStore),
 	)
 	c.Assert(err, IsNil)
+	defer store.Close()
 	session.SetSchemaLease(lease)
-	_, err = session.BootstrapSession(store)
+	domain, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
+	defer domain.Close()
 
 	// for NotifyUpdatePrivilege
 	createRoleSQL := `CREATE ROLE 'test'@'localhost';`
