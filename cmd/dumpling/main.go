@@ -101,7 +101,7 @@ func main() {
 	pflag.BoolVarP(&noSchemas, "no-schemas", "m", false, "Do not dump table schemas with the data")
 	pflag.BoolVarP(&noData, "no-data", "d", false, "Do not dump table data")
 	pflag.StringVar(&csvNullValue, "csv-null-value", "\\N", "The null value used when export to csv")
-	pflag.StringVarP(&sql, "sql", "S", "", "Dump data with given sql")
+	pflag.StringVarP(&sql, "sql", "S", "", "Dump data with given sql. This argument doesn't support concurrent dump")
 	pflag.StringArrayVarP(&filters, "filter", "f", []string{"*.*"}, "filter to select which tables to dump")
 	pflag.BoolVar(&caseSensitive, "case-sensitive", false, "whether the filter should be case-sensitive")
 
