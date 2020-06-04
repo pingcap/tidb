@@ -164,6 +164,9 @@ func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.SetHashAggFinalConcurrency(1)
 	sessionVars.SetHashAggPartialConcurrency(1)
+	sessionVars.SetHashJoinConcurrency(5)
+	sessionVars.SetDistSQLScanConcurrency(15)
+	sessionVars.ExecutorConcurrency = 4
 	var input []string
 	var output []struct {
 		SQL  string

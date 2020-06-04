@@ -781,6 +781,9 @@ func (s *testAnalyzeSuite) TestLimitCrossEstimation(c *C) {
 		store.Close()
 	}()
 
+	tk.MustExec("set @@session.tidb_executor_concurrency = 4;")
+	tk.MustExec("set @@session.tidb_hash_join_concurrency = 5;")
+	tk.MustExec("set @@session.tidb_distsql_scan_concurrency = 15;")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int not null, c int not null default 0, index idx_bc(b, c))")
