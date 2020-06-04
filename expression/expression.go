@@ -1059,7 +1059,7 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 }
 
 func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType) bool {
-	if storeType == kv.TiFlash && (expr.GetType().Tp == mysql.TypeDuration || collate.NewCollationEnabled()) {
+	if storeType == kv.TiFlash && expr.GetType().Tp == mysql.TypeDuration {
 		return false
 	}
 	switch x := expr.(type) {
