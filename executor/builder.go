@@ -1529,6 +1529,18 @@ func (b *executorBuilder) buildTopN(v *plannercore.PhysicalTopN) Executor {
 }
 
 func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) *NestedLoopApplyExec {
+	var (
+		innerPlan plannercore.PhysicalPlan
+		outerPlan plannercore.PhysicalPlan
+	)
+	if v.InnerChildIdx == 0 {
+		innerPlan = v.Children()[0]
+		outerPlan = v.Children()[1]
+	} else {
+		innerPlan = v.Children()[1]
+		outerPlan = v.Children()[0]
+	}
+	outerSchema := plannercore.ExtractCorColumnsBySchema4PhysicalPlan(innerPlan, outerPlan.Schema())
 	leftChild := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
@@ -1558,15 +1570,16 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) *NestedLoopAp
 		innerFilter:  innerFilter,
 		outer:        v.JoinType != plannercore.InnerJoin,
 		joiner:       tupleJoiner,
-		outerSchema:  v.OuterSchema,
+		//outerSchema:  v.OuterSchema,
+		outerSchema: outerSchema,
 	}
-	var innerPlan plannercore.PhysicalPlan
-	if v.InnerChildIdx == 0 {
-		innerPlan = v.Children()[0]
-	} else {
-		innerPlan = v.Children()[1]
-	}
-	e.outerSchema = plannercore.ExtractCorColumnsBySchema4PhysicalPlan(innerPlan, outerExec.Schema())
+	//var innerPlan plannercore.PhysicalPlan
+	//if v.InnerChildIdx == 0 {
+	//	innerPlan = v.Children()[0]
+	//} else {
+	//	innerPlan = v.Children()[1]
+	//}
+	//e.outerSchema = plannercore.ExtractCorColumnsBySchema4PhysicalPlan(innerPlan, outerExec.Schema())
 	executorCounterNestedLoopApplyExec.Inc()
 	return e
 }
