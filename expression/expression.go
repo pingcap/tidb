@@ -1059,7 +1059,7 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 }
 
 func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType) bool {
-	if storeType == kv.TiFlash && (expr.GetType().Tp == mysql.TypeDuration || expr.GetType().Tp == mysql.TypeJSON || collate.NewCollationEnabled()) {
+	if storeType == kv.TiFlash && (expr.GetType().Tp == mysql.TypeDuration || collate.NewCollationEnabled()) {
 		return false
 	}
 	switch x := expr.(type) {
@@ -1114,12 +1114,12 @@ func scalarExprSupportedByTiDB(function *ScalarFunction) bool {
 
 func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 	switch function.FuncName.L {
-	case ast.Plus, ast.Minus, ast.Div, ast.Mul,
-		ast.NullEQ, ast.GE, ast.LE, ast.EQ, ast.NE,
-		ast.LT, ast.GT, ast.Ifnull, ast.IsNull, ast.Or,
-		ast.In, ast.Mod, ast.And, ast.LogicOr, ast.LogicAnd,
+	case ast.Plus, ast.Minus, ast.Div, ast.Mul, ast.GE, ast.LE,
+		ast.EQ, ast.NE, ast.LT, ast.GT, ast.Ifnull, ast.IsNull,
+		ast.Or, ast.In, ast.Mod, ast.And, ast.LogicOr, ast.LogicAnd,
 		ast.Like, ast.UnaryNot, ast.Case, ast.Month, ast.Substr,
-		ast.Substring, ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime:
+		ast.Substring, ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime,
+		ast.JSONLength, ast.If, ast.BitNeg, ast.Xor:
 		return true
 	case ast.Cast:
 		switch function.Function.PbCode() {
