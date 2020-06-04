@@ -87,8 +87,8 @@ var testGoroutinesInited bool
 //   }
 // }
 // If this loop step into DoSomething() during BeforeTest(), the stack for this goroutine will contain DoSomething().
-// Then if this loop jump out of DoSomething during AfterTest(), the stack for for this goroutine will not contain DoSomething().
-// Resulting in false positive leak report.
+// Then if this loop jumps out of DoSomething during AfterTest(), the stack for this goroutine will not contain DoSomething().
+// Resulting in false-positive leak reports.
 func BeforeTest() {
 	for _, g := range interestingGoroutines() {
 		beforeTestGoroutines[g] = true
