@@ -196,7 +196,7 @@ func (e *evalContext) newRowDecoder() (*rowcodec.ChunkDecoder, error) {
 		if e.primaryCols != nil {
 			pkCols = e.primaryCols
 		} else {
-			pkCols = append(pkCols, 0)
+			pkCols = []int64{0}
 		}
 	}
 	def := func(i int, chk *chunk.Chunk) error {

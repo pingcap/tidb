@@ -500,7 +500,7 @@ func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 				pkDts = append(pkDts, r[tblInfo.Columns[idxCol.Offset].Offset])
 			}
 			var handleBytes []byte
-			handleBytes, err = codec.EncodeKey(new(stmtctx.StatementContext), nil, pkDts...)
+			handleBytes, err = codec.EncodeKey(ctx.GetSessionVars().StmtCtx, nil, pkDts...)
 			if err != nil {
 				return
 			}
