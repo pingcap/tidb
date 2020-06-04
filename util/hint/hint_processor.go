@@ -31,7 +31,6 @@ import (
 var supportedHintNameForInsertStmt = map[string]struct{}{}
 
 func init() {
-	supportedHintNameForInsertStmt["MEMORY_QUOTA"] = struct{}{}
 	supportedHintNameForInsertStmt["memory_quota"] = struct{}{}
 }
 
@@ -89,7 +88,7 @@ func checkInsertStmtHintDuplicated(node ast.Node, sctx sessionctx.Context) {
 		if len(x.TableHints) > 0 {
 			var supportedHint *ast.TableOptimizerHint
 			for _, hint := range x.TableHints {
-				if _, ok := supportedHintNameForInsertStmt[hint.HintName.O]; ok {
+				if _, ok := supportedHintNameForInsertStmt[hint.HintName.L]; ok {
 					supportedHint = hint
 					break
 				}
@@ -97,7 +96,7 @@ func checkInsertStmtHintDuplicated(node ast.Node, sctx sessionctx.Context) {
 			if supportedHint != nil {
 				var duplicatedHint *ast.TableOptimizerHint
 				for _, hint := range ExtractTableHintsFromStmtNode(x.Select, nil) {
-					if hint.HintName.O == supportedHint.HintName.O {
+					if hint.HintName.L == supportedHint.HintName.L {
 						duplicatedHint = hint
 						break
 					}
