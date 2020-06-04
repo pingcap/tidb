@@ -1156,8 +1156,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.InitChunkSize = tidbOptPositiveInt32(val, DefInitChunkSize)
 	case TIDBMemQuotaQuery:
 		s.MemQuotaQuery = tidbOptInt64(val, config.GetGlobalConfig().MemQuotaQuery)
-	case TIDBApplyCacheQuota:
-		s.ApplyCacheQuota = tidbOptInt64(val, config.GetGlobalConfig().ApplyCacheQuota)
+	case TIDBApplyCacheCapacity:
+		s.ApplyCacheCapacity = tidbOptInt64(val, config.GetGlobalConfig().ApplyCacheCapacity)
 	case TIDBMemQuotaHashJoin:
 		s.MemQuotaHashJoin = tidbOptInt64(val, DefTiDBMemQuotaHashJoin)
 		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TIDBMemQuotaQuery))

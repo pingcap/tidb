@@ -159,7 +159,7 @@ type StatementContext struct {
 type StmtHints struct {
 	// Hint Information
 	MemQuotaQuery           int64
-	ApplyCacheQuota         int64
+	ApplyCacheCapacity      int64
 	MaxExecutionTime        uint64
 	ReplicaRead             byte
 	AllowInSubqToJoinAndAgg bool

@@ -26,9 +26,9 @@ import (
 )
 
 type applyCache struct {
-	cache      *lru.Cache
-	memQuota   int64
-	memTracker *memory.Tracker // track memory usage.
+	cache       *lru.Cache
+	memCapacity int64
+	memTracker  *memory.Tracker // track memory usage.
 }
 
 type applyCacheValue struct {
@@ -38,15 +38,15 @@ type applyCacheValue struct {
 var applyCacheLabel fmt.Stringer = stringutil.StringerStr("applyCache")
 
 func newApplyCache(ctx sessionctx.Context) (*applyCache, error) {
-	num := int(ctx.GetSessionVars().ApplyCacheQuota / 100)
+	num := int(ctx.GetSessionVars().ApplyCacheCapacity / 100)
 	cache, err := lru.New(num)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	c := applyCache{
-		cache:      cache,
-		memQuota:   ctx.GetSessionVars().ApplyCacheQuota,
-		memTracker: memory.NewTracker(applyCacheLabel, -1),
+		cache:       cache,
+		memCapacity: ctx.GetSessionVars().ApplyCacheCapacity,
+		memTracker:  memory.NewTracker(applyCacheLabel, -1),
 	}
 	return &c, nil
 }
@@ -70,7 +70,7 @@ func (c *applyCache) Set(key string, value *applyCacheValue) bool {
 		return false
 	}
 	mem := int64(unsafe.Sizeof(key)) + value.Data.GetMemTracker().BytesConsumed()
-	for mem+c.memTracker.BytesConsumed() > c.memQuota {
+	for mem+c.memTracker.BytesConsumed() > c.memCapacity {
 		evictedKey, evictedValue, evicted := c.cache.RemoveOldest()
 		if !evicted {
 			return false
