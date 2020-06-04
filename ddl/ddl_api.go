@@ -1592,14 +1592,9 @@ func (d *ddl) CreateTableWithInfo(
 }
 
 // preSplitAndScatter performs pre-split and scatter of the table's regions.
-<<<<<<< HEAD
-func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo) {
-	sp, ok := d.store.(kv.SplitableStore)
-=======
 // If `pi` is not nil, will only split region for `pi`, this is used when add partition.
 func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *model.PartitionInfo) {
-	sp, ok := d.store.(kv.SplittableStore)
->>>>>>> aab9917... ddl: split partition region when add a new partition (#16537)
+	sp, ok := d.store.(kv.SplitableStore)
 	if !ok || atomic.LoadUint32(&EnableSplitTableRegion) == 0 {
 		return
 	}
@@ -2375,16 +2370,9 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	}
 
 	err = d.doDDLJob(ctx, job)
-<<<<<<< HEAD
-=======
-	if ErrSameNamePartition.Equal(err) && spec.IfNotExists {
-		ctx.GetSessionVars().StmtCtx.AppendNote(err)
-		return nil
-	}
 	if err == nil {
 		d.preSplitAndScatter(ctx, meta, partInfo)
 	}
->>>>>>> aab9917... ddl: split partition region when add a new partition (#16537)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
@@ -3406,8 +3394,6 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		}
 		return errors.Trace(err)
 	}
-<<<<<<< HEAD
-=======
 	oldTblInfo := tb.Meta()
 	if oldTblInfo.PreSplitRegions > 0 {
 		if _, tb, err := d.getSchemaAndTableByIdent(ctx, ti); err == nil {
@@ -3415,7 +3401,6 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		}
 	}
 
->>>>>>> aab9917... ddl: split partition region when add a new partition (#16537)
 	if !config.TableLockEnabled() {
 		return nil
 	}
