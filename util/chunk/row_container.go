@@ -226,7 +226,8 @@ func (a *SpillDiskAction) Action(t *memory.Tracker) {
 	}
 	a.once.Do(func() {
 		atomic.StoreUint32(&a.c.exceeded, 1)
-		logutil.BgLogger().Info("memory exceeds quota, spill to disk now.", zap.String("memory", t.String()))
+		logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
+			zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
 	})
 }
 

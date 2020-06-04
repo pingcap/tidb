@@ -238,7 +238,7 @@ func (*testExpressionSuite) TestDeferredExprNullConstantFold(c *C) {
 	nullConst := &Constant{
 		Value:        types.NewDatum(nil),
 		RetType:      types.NewFieldType(mysql.TypeTiny),
-		DeferredExpr: Null,
+		DeferredExpr: NewNull(),
 	}
 	tests := []struct {
 		condition Expression
@@ -270,12 +270,12 @@ func (*testExpressionSuite) TestDeferredParamNotNull(c *C) {
 		types.NewTimeDatum(types.NewTime(types.FromGoTime(testTime), mysql.TypeTimestamp, 6)),
 		types.NewDurationDatum(types.ZeroDuration),
 		types.NewStringDatum("{}"),
-		types.NewBinaryLiteralDatum(types.BinaryLiteral([]byte{1})),
+		types.NewBinaryLiteralDatum([]byte{1}),
 		types.NewBytesDatum([]byte{'b'}),
 		types.NewFloat32Datum(1.1),
 		types.NewFloat64Datum(2.1),
 		types.NewUintDatum(100),
-		types.NewMysqlBitDatum(types.BinaryLiteral([]byte{1})),
+		types.NewMysqlBitDatum([]byte{1}),
 		types.NewMysqlEnumDatum(types.Enum{Name: "n", Value: 2}),
 	}
 	cstInt := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 0}, RetType: newIntFieldType()}
@@ -455,4 +455,15 @@ func (*testExpressionSuite) TestVectorizedConstant(c *C) {
 			c.Assert(col.GetString(i), Equals, "hello")
 		}
 	}
+}
+
+func (*testExpressionSuite) TestGetTypeThreadSafe(c *C) {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().PreparedParams = []types.Datum{
+		types.NewIntDatum(1),
+	}
+	con := &Constant{ParamMarker: &ParamMarker{ctx: ctx, order: 0}, RetType: newStringFieldType()}
+	ft1 := con.GetType()
+	ft2 := con.GetType()
+	c.Assert(ft1, Not(Equals), ft2)
 }

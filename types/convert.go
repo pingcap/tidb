@@ -616,7 +616,7 @@ func ConvertJSONToDecimal(sc *stmtctx.StatementContext, j json.BinaryJSON) (*MyD
 		err = res.FromFloat64(f64)
 		return res, errors.Trace(err)
 	}
-	err := sc.HandleTruncate(res.FromString([]byte(j.GetString())))
+	err := sc.HandleTruncate(res.FromString(j.GetString()))
 	return res, errors.Trace(err)
 }
 
@@ -630,7 +630,7 @@ func getValidFloatPrefix(sc *stmtctx.StatementContext, s string) (valid string, 
 		sawDot   bool
 		sawDigit bool
 		validLen int
-		eIdx     int
+		eIdx     = -1
 	)
 	for i := 0; i < len(s); i++ {
 		c := s[i]
@@ -650,7 +650,7 @@ func getValidFloatPrefix(sc *stmtctx.StatementContext, s string) (valid string, 
 			if !sawDigit { // "+.e"
 				break
 			}
-			if eIdx != 0 { // "1e5e"
+			if eIdx != -1 { // "1e5e"
 				break
 			}
 			eIdx = i

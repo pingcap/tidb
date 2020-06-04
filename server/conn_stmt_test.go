@@ -216,7 +216,7 @@ func (ts *ConnTestSuite) TestParseStmtFetchCmd(c *C) {
 	}
 
 	for _, t := range tests {
-		stmtID, fetchSize, err := parseStmtFetchCmd([]byte(t.arg))
+		stmtID, fetchSize, err := parseStmtFetchCmd(t.arg)
 		c.Assert(stmtID, Equals, t.stmtID)
 		c.Assert(fetchSize, Equals, t.fetchSize)
 		c.Assert(err, Equals, t.err)

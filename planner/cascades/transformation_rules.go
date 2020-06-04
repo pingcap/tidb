@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/memo"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
@@ -77,6 +78,7 @@ var TiDBLayerOptimizationBatch = TransformationRuleBatch{
 		NewRuleEliminateSingleMaxMin(),
 		NewRuleEliminateOuterJoinBelowAggregation(),
 		NewRuleTransformAggregateCaseToSelection(),
+		NewRuleTransformAggToProj(),
 	},
 	memo.OperandLimit: {
 		NewRuleTransformLimitToTopN(),
@@ -394,9 +396,19 @@ func NewRulePushAggDownGather() Transformation {
 
 // Match implements Transformation interface.
 func (r *PushAggDownGather) Match(expr *memo.ExprIter) bool {
+	if expr.GetExpr().HasAppliedRule(r) {
+		return false
+	}
 	agg := expr.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
 	for _, aggFunc := range agg.AggFuncs {
 		if aggFunc.Mode != aggregation.CompleteMode {
+			return false
+		}
+	}
+	if agg.HasDistinct() {
+		// TODO: remove this logic after the cost estimation of distinct pushdown is implemented.
+		// If AllowDistinctAggPushDown is set to true, we should not consider RootTask.
+		if !agg.SCtx().GetSessionVars().AllowDistinctAggPushDown {
 			return false
 		}
 	}
@@ -417,47 +429,44 @@ func (r *PushAggDownGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.Gr
 	childGroup := old.Children[0].GetExpr().Children[0]
 	// The old Aggregation should stay unchanged for other transformation.
 	// So we build a new LogicalAggregation for the partialAgg.
-	partialAggFuncs := make([]*aggregation.AggFuncDesc, len(agg.AggFuncs))
-	for i, aggFunc := range agg.AggFuncs {
-		newAggFunc := &aggregation.AggFuncDesc{
-			HasDistinct: false,
-			Mode:        aggregation.Partial1Mode,
-		}
-		newAggFunc.Name = aggFunc.Name
-		newAggFunc.RetTp = aggFunc.RetTp
-		// The args will be changed below, so that we have to build a new slice for it.
-		newArgs := make([]expression.Expression, len(aggFunc.Args))
-		copy(newArgs, aggFunc.Args)
-		newAggFunc.Args = newArgs
-		partialAggFuncs[i] = newAggFunc
+	aggFuncs := make([]*aggregation.AggFuncDesc, len(agg.AggFuncs))
+	for i := range agg.AggFuncs {
+		aggFuncs[i] = agg.AggFuncs[i].Clone()
 	}
-	partialGbyItems := make([]expression.Expression, len(agg.GroupByItems))
-	copy(partialGbyItems, agg.GroupByItems)
+	gbyItems := make([]expression.Expression, len(agg.GroupByItems))
+	copy(gbyItems, agg.GroupByItems)
+
+	partialPref, finalPref, funcMap := plannercore.BuildFinalModeAggregation(agg.SCtx(),
+		&plannercore.AggInfo{
+			AggFuncs:     aggFuncs,
+			GroupByItems: gbyItems,
+			Schema:       aggSchema,
+		}, true)
+	// Remove unnecessary FirstRow.
+	partialPref.AggFuncs =
+		plannercore.RemoveUnnecessaryFirstRow(agg.SCtx(), finalPref.AggFuncs, finalPref.GroupByItems, partialPref.AggFuncs, partialPref.GroupByItems, partialPref.Schema, funcMap)
+
 	partialAgg := plannercore.LogicalAggregation{
-		AggFuncs:     partialAggFuncs,
-		GroupByItems: partialGbyItems,
+		AggFuncs:     partialPref.AggFuncs,
+		GroupByItems: partialPref.GroupByItems,
 	}.Init(agg.SCtx(), agg.SelectBlockOffset())
 	partialAgg.CopyAggHints(agg)
 
-	finalAggFuncs, finalGbyItems, partialSchema :=
-		plannercore.BuildFinalModeAggregation(partialAgg.SCtx(), partialAgg.AggFuncs, partialAgg.GroupByItems, aggSchema)
-	// Remove unnecessary FirstRow.
-	partialAgg.AggFuncs =
-		plannercore.RemoveUnnecessaryFirstRow(partialAgg.SCtx(), finalAggFuncs, finalGbyItems, partialAgg.AggFuncs, partialAgg.GroupByItems, partialSchema)
 	finalAgg := plannercore.LogicalAggregation{
-		AggFuncs:     finalAggFuncs,
-		GroupByItems: finalGbyItems,
+		AggFuncs:     finalPref.AggFuncs,
+		GroupByItems: finalPref.GroupByItems,
 	}.Init(agg.SCtx(), agg.SelectBlockOffset())
 	finalAgg.CopyAggHints(agg)
 
 	partialAggExpr := memo.NewGroupExpr(partialAgg)
 	partialAggExpr.SetChildren(childGroup)
-	partialAggGroup := memo.NewGroupWithSchema(partialAggExpr, partialSchema).SetEngineType(childGroup.EngineType)
+	partialAggGroup := memo.NewGroupWithSchema(partialAggExpr, partialPref.Schema).SetEngineType(childGroup.EngineType)
 	gatherExpr := memo.NewGroupExpr(gather)
 	gatherExpr.SetChildren(partialAggGroup)
-	gatherGroup := memo.NewGroupWithSchema(gatherExpr, partialSchema)
+	gatherGroup := memo.NewGroupWithSchema(gatherExpr, partialPref.Schema)
 	finalAggExpr := memo.NewGroupExpr(finalAgg)
 	finalAggExpr.SetChildren(gatherGroup)
+	finalAggExpr.AddAppliedRule(r)
 	// We don't erase the old complete mode Aggregation because
 	// this transformation would not always be better.
 	return []*memo.GroupExpr{finalAggExpr}, false, false, nil
@@ -1141,7 +1150,7 @@ func pushTopNDownOuterJoinToChild(topN *plannercore.LogicalTopN, outerGroup *mem
 
 	newTopN := plannercore.LogicalTopN{
 		Count:   topN.Count + topN.Offset,
-		ByItems: make([]*plannercore.ByItems, len(topN.ByItems)),
+		ByItems: make([]*util.ByItems, len(topN.ByItems)),
 	}.Init(topN.SCtx(), topN.SelectBlockOffset())
 
 	for i := range topN.ByItems {
@@ -1220,9 +1229,9 @@ func (r *PushTopNDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*me
 		Count:  topN.Count,
 	}.Init(topN.SCtx(), topN.SelectBlockOffset())
 
-	newTopN.ByItems = make([]*plannercore.ByItems, 0, len(topN.ByItems))
+	newTopN.ByItems = make([]*util.ByItems, 0, len(topN.ByItems))
 	for _, by := range topN.ByItems {
-		newTopN.ByItems = append(newTopN.ByItems, &plannercore.ByItems{
+		newTopN.ByItems = append(newTopN.ByItems, &util.ByItems{
 			Expr: expression.ColumnSubstitute(by.Expr, old.Children[0].Group.Prop.Schema, proj.Exprs),
 			Desc: by.Desc,
 		})
@@ -1533,8 +1542,8 @@ func (r *EliminateSingleMaxMin) OnTransform(old *memo.ExprIter) (newExprs []*mem
 		// Add top(1) operators.
 		// For max function, the sort order should be desc.
 		desc := f.Name == ast.AggFuncMax
-		var byItems []*plannercore.ByItems
-		byItems = append(byItems, &plannercore.ByItems{
+		var byItems []*util.ByItems
+		byItems = append(byItems, &util.ByItems{
 			Expr: f.Args[0],
 			Desc: desc,
 		})
@@ -2000,9 +2009,9 @@ func (r *TransformAggregateCaseToSelection) transform(agg *plannercore.LogicalAg
 	caseArgsNum := len(caseArgs)
 
 	// `case when a>0 then null else a end` should be converted to `case when !(a>0) then a else null end`.
-	var nullFlip = caseArgsNum == 3 && caseArgs[1].Equal(ctx, expression.Null) && !caseArgs[2].Equal(ctx, expression.Null)
+	var nullFlip = caseArgsNum == 3 && caseArgs[1].Equal(ctx, expression.NewNull()) && !caseArgs[2].Equal(ctx, expression.NewNull())
 	// `case when a>0 then 0 else a end` should be converted to `case when !(a>0) then a else 0 end`.
-	var zeroFlip = !nullFlip && caseArgsNum == 3 && caseArgs[1].Equal(ctx, expression.Zero)
+	var zeroFlip = !nullFlip && caseArgsNum == 3 && caseArgs[1].Equal(ctx, expression.NewZero())
 
 	var outputIdx int
 	if nullFlip || zeroFlip {
@@ -2035,8 +2044,8 @@ func (r *TransformAggregateCaseToSelection) transform(agg *plannercore.LogicalAg
 	//   => newAggFuncDesc: SUM(cnt), newCondition: x = 'foo'
 
 	switch {
-	case r.allowsSelection(aggFuncName) && (caseArgsNum == 2 || caseArgs[3-outputIdx].Equal(ctx, expression.Null)), // Case A1
-		aggFuncName == ast.AggFuncSum && caseArgsNum == 3 && caseArgs[3-outputIdx].Equal(ctx, expression.Zero): // Case A2
+	case r.allowsSelection(aggFuncName) && (caseArgsNum == 2 || caseArgs[3-outputIdx].Equal(ctx, expression.NewNull())), // Case A1
+		aggFuncName == ast.AggFuncSum && caseArgsNum == 3 && caseArgs[3-outputIdx].Equal(ctx, expression.NewZero()): // Case A2
 		newAggFuncDesc := aggFuncDesc.Clone()
 		newAggFuncDesc.Args = []expression.Expression{caseArgs[outputIdx]}
 		return true, newConditions, []*aggregation.AggFuncDesc{newAggFuncDesc}
@@ -2050,7 +2059,7 @@ func (r *TransformAggregateCaseToSelection) allowsSelection(aggFuncName string) 
 }
 
 func (r *TransformAggregateCaseToSelection) isOnlyOneNotNull(ctx sessionctx.Context, args []expression.Expression, argsNum int, outputIdx int) bool {
-	return !args[outputIdx].Equal(ctx, expression.Null) && (argsNum == 2 || args[3-outputIdx].Equal(ctx, expression.Null))
+	return !args[outputIdx].Equal(ctx, expression.NewNull()) && (argsNum == 2 || args[3-outputIdx].Equal(ctx, expression.NewNull()))
 }
 
 // TransformAggregateCaseToSelection only support `case when cond then var end` and `case when cond then var1 else var2 end`.
@@ -2060,6 +2069,63 @@ func (r *TransformAggregateCaseToSelection) isTwoOrThreeArgCase(expr expression.
 		return false
 	}
 	return scalarFunc.FuncName.L == ast.Case && (len(scalarFunc.GetArgs()) == 2 || len(scalarFunc.GetArgs()) == 3)
+}
+
+// TransformAggToProj convert Agg to Proj.
+type TransformAggToProj struct {
+	baseRule
+}
+
+// NewRuleTransformAggToProj creates a new Transformation TransformAggToProj.
+// The pattern of this rule is `Agg`.
+func NewRuleTransformAggToProj() Transformation {
+	rule := &TransformAggToProj{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandAggregation,
+		memo.EngineTiDBOnly,
+	)
+	return rule
+}
+
+// Match implements Transformation interface.
+func (r *TransformAggToProj) Match(expr *memo.ExprIter) bool {
+	agg := expr.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+
+	if !agg.IsCompleteModeAgg() {
+		return false
+	}
+
+	for _, af := range agg.AggFuncs {
+		// TODO(issue #9968): same as rule_aggregation_elimination.go -> tryToEliminateAggregation.
+		// waiting for (issue #14616): `nullable` information.
+		if af.Name == ast.AggFuncGroupConcat {
+			return false
+		}
+	}
+
+	childGroup := expr.GetExpr().Children[0]
+	childGroup.BuildKeyInfo()
+	schemaByGroupby := expression.NewSchema(agg.GetGroupByCols()...)
+	for _, key := range childGroup.Prop.Schema.Keys {
+		if schemaByGroupby.ColumnsIndices(key) != nil {
+			return true
+		}
+	}
+
+	return false
+}
+
+// OnTransform implements Transformation interface.
+// This rule tries to convert agg to proj.
+func (r *TransformAggToProj) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	if ok, proj := plannercore.ConvertAggToProj(agg, old.GetExpr().Schema()); ok {
+		newProjExpr := memo.NewGroupExpr(proj)
+		newProjExpr.SetChildren(old.GetExpr().Children...)
+		return []*memo.GroupExpr{newProjExpr}, true, false, nil
+	}
+
+	return nil, false, false, nil
 }
 
 // InjectProjectionBelowTopN injects two Projections below and upon TopN if TopN's ByItems
@@ -2118,7 +2184,7 @@ func (r *InjectProjectionBelowTopN) OnTransform(old *memo.ExprIter) (newExprs []
 		bottomProjExprs = append(bottomProjExprs, col)
 		bottomProjSchema = append(bottomProjSchema, col)
 	}
-	newByItems := make([]*plannercore.ByItems, 0, len(topN.ByItems))
+	newByItems := make([]*util.ByItems, 0, len(topN.ByItems))
 	for _, item := range topN.ByItems {
 		itemExpr := item.Expr
 		if _, isScalarFunc := itemExpr.(*expression.ScalarFunction); !isScalarFunc {
@@ -2131,7 +2197,7 @@ func (r *InjectProjectionBelowTopN) OnTransform(old *memo.ExprIter) (newExprs []
 			RetType:  itemExpr.GetType(),
 		}
 		bottomProjSchema = append(bottomProjSchema, newCol)
-		newByItems = append(newByItems, &plannercore.ByItems{Expr: newCol, Desc: item.Desc})
+		newByItems = append(newByItems, &util.ByItems{Expr: newCol, Desc: item.Desc})
 	}
 	bottomProj := plannercore.LogicalProjection{
 		Exprs: bottomProjExprs,

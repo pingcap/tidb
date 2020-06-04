@@ -791,6 +791,7 @@ func (s *testEvaluatorSuite) TestJSONSearch(c *C) {
 		{[]interface{}{jsonString, `one`, `abc`}, `"$[0]"`, true},
 		{[]interface{}{jsonString, `all`, `abc`}, `["$[0]", "$[2].x"]`, true},
 		{[]interface{}{jsonString, `all`, `ghi`}, nil, true},
+		{[]interface{}{jsonString, `ALL`, `ghi`}, nil, true},
 		{[]interface{}{jsonString, `all`, `10`}, `"$[1][0].k"`, true},
 		{[]interface{}{jsonString, `all`, `10`, nil, `$`}, `"$[1][0].k"`, true},
 		{[]interface{}{jsonString, `all`, `10`, nil, `$[*]`}, `"$[1][0].k"`, true},
@@ -825,6 +826,7 @@ func (s *testEvaluatorSuite) TestJSONSearch(c *C) {
 		{[]interface{}{jsonString, `all`, `abc`, `??`}, nil, false},       // wrong escape_char
 		{[]interface{}{jsonString, `all`, `abc`, nil, nil}, nil, true},    // NULL path
 		{[]interface{}{jsonString, `all`, `abc`, nil, `$xx`}, nil, false}, // wrong path
+		{[]interface{}{jsonString, nil, `abc`}, nil, true},
 	}
 	for _, t := range tbl {
 		args := types.MakeDatums(t.input...)
@@ -949,5 +951,47 @@ func (s *testEvaluatorSuite) TestJSONValid(c *C) {
 		d, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(d, testutil.DatumEquals, t["Expected"][0])
+	}
+}
+
+func (s *testEvaluatorSuite) TestJSONStorageSize(c *C) {
+	fc := funcs[ast.JSONStorageSize]
+	tbl := []struct {
+		input    []interface{}
+		expected interface{}
+		success  bool
+	}{
+		// Tests scalar arguments
+		{[]interface{}{`null`}, 4, true},
+		{[]interface{}{`true`}, 4, true},
+		{[]interface{}{`1`}, 1, true},
+		{[]interface{}{`"1"`}, 3, true},
+		// Tests nil arguments
+		{[]interface{}{nil}, nil, true},
+		// Tests valid json documents
+		{[]interface{}{`{}`}, 2, true},
+		{[]interface{}{`{"a":1}`}, 8, true},
+		{[]interface{}{`[{"a":{"a":1},"b":2}]`}, 25, true},
+		{[]interface{}{`{"a": 1000, "b": "wxyz", "c": "[1, 3, 5, 7]"}`}, 45, true},
+		// Tests invalid json documents
+		{[]interface{}{`[{"a":1]`}, 0, false},
+		{[]interface{}{`[{a":1]`}, 0, false},
+	}
+	for _, t := range tbl {
+		args := types.MakeDatums(t.input...)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
+		c.Assert(err, IsNil)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		if t.success {
+			c.Assert(err, IsNil)
+
+			if t.expected == nil {
+				c.Assert(d.IsNull(), IsTrue)
+			} else {
+				c.Assert(d.GetInt64(), Equals, int64(t.expected.(int)))
+			}
+		} else {
+			c.Assert(err, NotNil)
+		}
 	}
 }

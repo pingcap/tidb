@@ -30,6 +30,7 @@ func TestT(t *testing.T) {
 
 func TestString(t *testing.T) {
 	detail := &ExecDetails{
+		CopTime:       time.Second + 3*time.Millisecond,
 		ProcessTime:   2*time.Second + 5*time.Millisecond,
 		WaitTime:      time.Second,
 		BackoffTime:   time.Second,
@@ -60,7 +61,7 @@ func TestString(t *testing.T) {
 			TxnRetry:          1,
 		},
 	}
-	expected := "Process_time: 2.005 Wait_time: 1 Backoff_time: 1 Request_count: 1 Total_keys: 100 Process_keys: 10 Prewrite_time: 1 Commit_time: 1 " +
+	expected := "Cop_time: 1.003 Process_time: 2.005 Wait_time: 1 Backoff_time: 1 Request_count: 1 Total_keys: 100 Process_keys: 10 Prewrite_time: 1 Commit_time: 1 " +
 		"Get_commit_ts_time: 1 Commit_backoff_time: 1 Backoff_types: [backoff1 backoff2] Resolve_lock_time: 1 Local_latch_wait_time: 1 Write_keys: 1 Write_size: 1 Prewrite_region: 1 Txn_retry: 1"
 	if str := detail.String(); str != expected {
 		t.Errorf("got:\n%s\nexpected:\n%s", str, expected)
@@ -86,7 +87,7 @@ func TestCopRuntimeStats(t *testing.T) {
 		t.Fatal("exist")
 	}
 	cop := stats.GetCopStats("table_scan")
-	if cop.String() != "proc max:2ns, min:1ns, p80:2ns, p95:2ns, rows:3, iters:3, tasks:2" {
+	if cop.String() != "proc max:2ns, min:1ns, p80:2ns, p95:2ns, iters:3, tasks:2" {
 		t.Fatal("table_scan")
 	}
 	copStats := cop.stats["8.8.8.8"]
@@ -95,11 +96,11 @@ func TestCopRuntimeStats(t *testing.T) {
 	}
 	copStats[0].SetRowNum(10)
 	copStats[0].Record(time.Second, 10)
-	if copStats[0].String() != "time:1.000000001s, loops:2, rows:20" {
+	if copStats[0].String() != "time:1.000000001s, loops:2" {
 		t.Fatalf("cop stats string is not expect, got: %v", copStats[0].String())
 	}
 
-	if stats.GetCopStats("agg").String() != "proc max:4ns, min:3ns, p80:4ns, p95:4ns, rows:7, iters:7, tasks:2" {
+	if stats.GetCopStats("agg").String() != "proc max:4ns, min:3ns, p80:4ns, p95:4ns, iters:7, tasks:2" {
 		t.Fatal("agg")
 	}
 	rootStats := stats.GetRootStats("table_reader")

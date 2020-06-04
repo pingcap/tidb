@@ -128,15 +128,17 @@ func Unquote(s string) (t string, err error) {
 }
 
 const (
-	patMatch = iota + 1
-	patOne
-	patAny
+	// PatMatch is the enumeration value for per-character match.
+	PatMatch = iota + 1
+	// PatOne is the enumeration value for '_' match.
+	PatOne
+	// PatAny is the enumeration value for '%' match.
+	PatAny
 )
 
 // CompilePattern handles escapes and wild cards convert pattern characters and
 // pattern types.
 func CompilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
-	var lastAny bool
 	patChars = make([]byte, len(pattern))
 	patTypes = make([]byte, len(pattern))
 	patLen := 0
@@ -145,8 +147,7 @@ func CompilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
 		var c = pattern[i]
 		switch c {
 		case escape:
-			lastAny = false
-			tp = patMatch
+			tp = PatMatch
 			if i < len(pattern)-1 {
 				i++
 				c = pattern[i]
@@ -164,19 +165,11 @@ func CompilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
 				}
 			}
 		case '_':
-			if lastAny {
-				continue
-			}
-			tp = patOne
+			tp = PatOne
 		case '%':
-			if lastAny {
-				continue
-			}
-			lastAny = true
-			tp = patAny
+			tp = PatAny
 		default:
-			lastAny = false
-			tp = patMatch
+			tp = PatMatch
 		}
 		patChars[patLen] = c
 		patTypes[patLen] = tp
@@ -187,8 +180,7 @@ func CompilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
 	return
 }
 
-// NOTE: Currently tikv's like function is case sensitive, so we keep its behavior here.
-func matchByteCI(a, b byte) bool {
+func matchByte(a, b byte) bool {
 	return a == b
 	// We may reuse below code block when like function go back to case insensitive.
 	/*
@@ -208,19 +200,11 @@ func CompileLike2Regexp(str string) string {
 	var result []byte
 	for i := 0; i < len(patChars); i++ {
 		switch patTypes[i] {
-		case patMatch:
+		case PatMatch:
 			result = append(result, patChars[i])
-		case patOne:
-			// .*. == .*
-			if !bytes.HasSuffix(result, []byte{'.', '*'}) {
-				result = append(result, '.')
-			}
-		case patAny:
-			// ..* == .*
-			if bytes.HasSuffix(result, []byte{'.'}) {
-				result = append(result, '*')
-				continue
-			}
+		case PatOne:
+			result = append(result, '.')
+		case PatAny:
 			// .*.* == .*
 			if !bytes.HasSuffix(result, []byte{'.', '*'}) {
 				result = append(result, '.')
@@ -239,19 +223,19 @@ func DoMatch(str string, patChars, patTypes []byte) bool {
 	for pIdx < len(patChars) || sIdx < len(str) {
 		if pIdx < len(patChars) {
 			switch patTypes[pIdx] {
-			case patMatch:
-				if sIdx < len(str) && matchByteCI(str[sIdx], patChars[pIdx]) {
+			case PatMatch:
+				if sIdx < len(str) && matchByte(str[sIdx], patChars[pIdx]) {
 					pIdx++
 					sIdx++
 					continue
 				}
-			case patOne:
+			case PatOne:
 				if sIdx < len(str) {
 					pIdx++
 					sIdx++
 					continue
 				}
-			case patAny:
+			case PatAny:
 				// Try to match at sIdx.
 				// If that doesn't work out,
 				// restart at sIdx+1 next.
@@ -276,7 +260,7 @@ func DoMatch(str string, patChars, patTypes []byte) bool {
 // IsExactMatch return true if no wildcard character
 func IsExactMatch(patTypes []byte) bool {
 	for _, pt := range patTypes {
-		if pt != patMatch {
+		if pt != PatMatch {
 			return false
 		}
 	}

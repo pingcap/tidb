@@ -44,11 +44,11 @@ type testKVSuite struct {
 
 func (s *testKVSuite) SetUpSuite(c *C) {
 	s.bs = make([]MemBuffer, 1)
-	s.bs[0] = NewMemDbBuffer(DefaultTxnMembufCap)
+	s.bs[0] = NewMemDbBuffer()
 }
 
 func (s *testKVSuite) ResetMembuffers() {
-	s.bs[0] = NewMemDbBuffer(DefaultTxnMembufCap)
+	s.bs[0] = NewMemDbBuffer()
 }
 
 func insertData(c *C, buffer MemBuffer) {
@@ -153,7 +153,7 @@ func (s *testKVSuite) TestNewIterator(c *C) {
 
 func (s *testKVSuite) TestIterNextUntil(c *C) {
 	defer testleak.AfterTest(c)()
-	buffer := NewMemDbBuffer(DefaultTxnMembufCap)
+	buffer := NewMemDbBuffer()
 	insertData(c, buffer)
 
 	iter, err := buffer.Iter(nil, nil)
@@ -212,7 +212,7 @@ func (s *testKVSuite) TestNewIteratorMin(c *C) {
 }
 
 func (s *testKVSuite) TestBufferLimit(c *C) {
-	buffer := NewMemDbBuffer(DefaultTxnMembufCap).(*memDbBuffer)
+	buffer := NewMemDbBuffer().(*memDbBuffer)
 	buffer.bufferSizeLimit = 1000
 	buffer.entrySizeLimit = 500
 
@@ -223,6 +223,41 @@ func (s *testKVSuite) TestBufferLimit(c *C) {
 	c.Assert(err, IsNil)
 	err = buffer.Set([]byte("yz"), make([]byte, 499))
 	c.Assert(err, NotNil) // buffer size limit
+
+	err = buffer.Delete(make([]byte, 499))
+	c.Assert(err, IsNil)
+
+	err = buffer.Delete(make([]byte, 500))
+	c.Assert(err, NotNil)
+}
+
+func (s *testKVSuite) TestBufferBatchGetter(c *C) {
+	snap := &mockSnapshot{store: NewMemDbBuffer()}
+	ka := []byte("a")
+	kb := []byte("b")
+	kc := []byte("c")
+	kd := []byte("d")
+	snap.store.Set(ka, ka)
+	snap.store.Set(kb, kb)
+	snap.store.Set(kc, kc)
+	snap.store.Set(kd, kd)
+
+	// middle value is the same as snap
+	middle := NewMemDbBuffer()
+	middle.Set(ka, []byte("a1"))
+	middle.Set(kc, []byte("c1"))
+
+	buffer := NewMemDbBuffer()
+	buffer.Set(ka, []byte("a2"))
+	buffer.Delete(kb)
+
+	batchGetter := NewBufferBatchGetter(buffer, middle, snap)
+	result, err := batchGetter.BatchGet(context.Background(), []Key{ka, kb, kc, kd})
+	c.Assert(err, IsNil)
+	c.Assert(len(result), Equals, 3)
+	c.Assert(string(result[string(ka)]), Equals, "a2")
+	c.Assert(string(result[string(kc)]), Equals, "c1")
+	c.Assert(string(result[string(kd)]), Equals, "d")
 }
 
 var opCnt = 100000
@@ -232,7 +267,7 @@ func BenchmarkMemDbBufferSequential(b *testing.B) {
 	for i := 0; i < opCnt; i++ {
 		data[i] = encodeInt(i)
 	}
-	buffer := NewMemDbBuffer(DefaultTxnMembufCap)
+	buffer := NewMemDbBuffer()
 	benchmarkSetGet(b, buffer, data)
 	b.ReportAllocs()
 }
@@ -243,20 +278,20 @@ func BenchmarkMemDbBufferRandom(b *testing.B) {
 		data[i] = encodeInt(i)
 	}
 	shuffle(data)
-	buffer := NewMemDbBuffer(DefaultTxnMembufCap)
+	buffer := NewMemDbBuffer()
 	benchmarkSetGet(b, buffer, data)
 	b.ReportAllocs()
 }
 
 func BenchmarkMemDbIter(b *testing.B) {
-	buffer := NewMemDbBuffer(DefaultTxnMembufCap)
+	buffer := NewMemDbBuffer()
 	benchIterator(b, buffer)
 	b.ReportAllocs()
 }
 
 func BenchmarkMemDbCreation(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		NewMemDbBuffer(DefaultTxnMembufCap)
+		NewMemDbBuffer()
 	}
 	b.ReportAllocs()
 }

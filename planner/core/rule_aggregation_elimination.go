@@ -61,50 +61,55 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggr
 	}
 	if coveredByUniqueKey {
 		// GroupByCols has unique key, so this aggregation can be removed.
-		proj := a.convertAggToProj(agg)
-		proj.SetChildren(agg.children[0])
-		return proj
+		if ok, proj := ConvertAggToProj(agg, agg.schema); ok {
+			proj.SetChildren(agg.children[0])
+			return proj
+		}
 	}
 	return nil
 }
 
-func (a *aggregationEliminateChecker) convertAggToProj(agg *LogicalAggregation) *LogicalProjection {
+// ConvertAggToProj convert aggregation to projection.
+func ConvertAggToProj(agg *LogicalAggregation, schema *expression.Schema) (bool, *LogicalProjection) {
 	proj := LogicalProjection{
 		Exprs: make([]expression.Expression, 0, len(agg.AggFuncs)),
 	}.Init(agg.ctx, agg.blockOffset)
 	for _, fun := range agg.AggFuncs {
-		expr := a.rewriteExpr(agg.ctx, fun)
+		ok, expr := rewriteExpr(agg.ctx, fun)
+		if !ok {
+			return false, nil
+		}
 		proj.Exprs = append(proj.Exprs, expr)
 	}
-	proj.SetSchema(agg.schema.Clone())
-	return proj
+	proj.SetSchema(schema.Clone())
+	return true, proj
 }
 
 // rewriteExpr will rewrite the aggregate function to expression doesn't contain aggregate function.
-func (a *aggregationEliminateChecker) rewriteExpr(ctx sessionctx.Context, aggFunc *aggregation.AggFuncDesc) expression.Expression {
+func rewriteExpr(ctx sessionctx.Context, aggFunc *aggregation.AggFuncDesc) (bool, expression.Expression) {
 	switch aggFunc.Name {
 	case ast.AggFuncCount:
 		if aggFunc.Mode == aggregation.FinalMode {
-			return a.wrapCastFunction(ctx, aggFunc.Args[0], aggFunc.RetTp)
+			return true, wrapCastFunction(ctx, aggFunc.Args[0], aggFunc.RetTp)
 		}
-		return a.rewriteCount(ctx, aggFunc.Args, aggFunc.RetTp)
+		return true, rewriteCount(ctx, aggFunc.Args, aggFunc.RetTp)
 	case ast.AggFuncSum, ast.AggFuncAvg, ast.AggFuncFirstRow, ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncGroupConcat:
-		return a.wrapCastFunction(ctx, aggFunc.Args[0], aggFunc.RetTp)
+		return true, wrapCastFunction(ctx, aggFunc.Args[0], aggFunc.RetTp)
 	case ast.AggFuncBitAnd, ast.AggFuncBitOr, ast.AggFuncBitXor:
-		return a.rewriteBitFunc(ctx, aggFunc.Name, aggFunc.Args[0], aggFunc.RetTp)
+		return true, rewriteBitFunc(ctx, aggFunc.Name, aggFunc.Args[0], aggFunc.RetTp)
 	default:
-		panic("Unsupported function")
+		return false, nil
 	}
 }
 
-func (a *aggregationEliminateChecker) rewriteCount(ctx sessionctx.Context, exprs []expression.Expression, targetTp *types.FieldType) expression.Expression {
+func rewriteCount(ctx sessionctx.Context, exprs []expression.Expression, targetTp *types.FieldType) expression.Expression {
 	// If is count(expr), we will change it to if(isnull(expr), 0, 1).
 	// If is count(distinct x, y, z) we will change it to if(isnull(x) or isnull(y) or isnull(z), 0, 1).
 	// If is count(expr not null), we will change it to constant 1.
 	isNullExprs := make([]expression.Expression, 0, len(exprs))
 	for _, expr := range exprs {
 		if mysql.HasNotNullFlag(expr.GetType().Flag) {
-			isNullExprs = append(isNullExprs, expression.Zero)
+			isNullExprs = append(isNullExprs, expression.NewZero())
 		} else {
 			isNullExpr := expression.NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr)
 			isNullExprs = append(isNullExprs, isNullExpr)
@@ -112,17 +117,17 @@ func (a *aggregationEliminateChecker) rewriteCount(ctx sessionctx.Context, exprs
 	}
 
 	innerExpr := expression.ComposeDNFCondition(ctx, isNullExprs...)
-	newExpr := expression.NewFunctionInternal(ctx, ast.If, targetTp, innerExpr, expression.Zero, expression.One)
+	newExpr := expression.NewFunctionInternal(ctx, ast.If, targetTp, innerExpr, expression.NewZero(), expression.NewOne())
 	return newExpr
 }
 
-func (a *aggregationEliminateChecker) rewriteBitFunc(ctx sessionctx.Context, funcType string, arg expression.Expression, targetTp *types.FieldType) expression.Expression {
+func rewriteBitFunc(ctx sessionctx.Context, funcType string, arg expression.Expression, targetTp *types.FieldType) expression.Expression {
 	// For not integer type. We need to cast(cast(arg as signed) as unsigned) to make the bit function work.
 	innerCast := expression.WrapWithCastAsInt(ctx, arg)
-	outerCast := a.wrapCastFunction(ctx, innerCast, targetTp)
+	outerCast := wrapCastFunction(ctx, innerCast, targetTp)
 	var finalExpr expression.Expression
 	if funcType != ast.AggFuncBitAnd {
-		finalExpr = expression.NewFunctionInternal(ctx, ast.Ifnull, targetTp, outerCast, expression.Zero.Clone())
+		finalExpr = expression.NewFunctionInternal(ctx, ast.Ifnull, targetTp, outerCast, expression.NewZero())
 	} else {
 		finalExpr = expression.NewFunctionInternal(ctx, ast.Ifnull, outerCast.GetType(), outerCast, &expression.Constant{Value: types.NewUintDatum(math.MaxUint64), RetType: targetTp})
 	}
@@ -130,7 +135,7 @@ func (a *aggregationEliminateChecker) rewriteBitFunc(ctx sessionctx.Context, fun
 }
 
 // wrapCastFunction will wrap a cast if the targetTp is not equal to the arg's.
-func (a *aggregationEliminateChecker) wrapCastFunction(ctx sessionctx.Context, arg expression.Expression, targetTp *types.FieldType) expression.Expression {
+func wrapCastFunction(ctx sessionctx.Context, arg expression.Expression, targetTp *types.FieldType) expression.Expression {
 	if arg.GetType() == targetTp {
 		return arg
 	}

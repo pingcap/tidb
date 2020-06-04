@@ -16,6 +16,7 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -38,7 +39,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/israce"
@@ -53,15 +54,15 @@ var _ = Suite(&testIntegrationSuite3{&testIntegrationSuite{}})
 var _ = Suite(&testIntegrationSuite4{&testIntegrationSuite{}})
 var _ = Suite(&testIntegrationSuite5{&testIntegrationSuite{}})
 var _ = Suite(&testIntegrationSuite6{&testIntegrationSuite{}})
+var _ = SerialSuites(&testIntegrationSuite7{&testIntegrationSuite{}})
 
 type testIntegrationSuite struct {
-	lease     time.Duration
-	cluster   *mocktikv.Cluster
-	mvccStore mocktikv.MVCCStore
-	store     kv.Storage
-	dom       *domain.Domain
-	ctx       sessionctx.Context
-	tk        *testkit.TestKit
+	lease   time.Duration
+	cluster cluster.Cluster
+	store   kv.Storage
+	dom     *domain.Domain
+	ctx     sessionctx.Context
+	tk      *testkit.TestKit
 }
 
 func setupIntegrationSuite(s *testIntegrationSuite, c *C) {
@@ -69,12 +70,11 @@ func setupIntegrationSuite(s *testIntegrationSuite, c *C) {
 	s.lease = 50 * time.Millisecond
 	ddl.SetWaitTimeWhenErrorOccurred(0)
 
-	s.cluster = mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(s.cluster)
-	s.mvccStore = mocktikv.MustNewMVCCStore()
-	s.store, err = mockstore.NewMockTikvStore(
-		mockstore.WithCluster(s.cluster),
-		mockstore.WithMVCCStore(s.mvccStore),
+	s.store, err = mockstore.NewMockStore(
+		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+			mockstore.BootstrapWithSingleStore(c)
+			s.cluster = c
+		}),
 	)
 	c.Assert(err, IsNil)
 	session.SetSchemaLease(s.lease)
@@ -124,6 +124,7 @@ type testIntegrationSuite3 struct{ *testIntegrationSuite }
 type testIntegrationSuite4 struct{ *testIntegrationSuite }
 type testIntegrationSuite5 struct{ *testIntegrationSuite }
 type testIntegrationSuite6 struct{ *testIntegrationSuite }
+type testIntegrationSuite7 struct{ *testIntegrationSuite }
 
 func (s *testIntegrationSuite5) TestNoZeroDateMode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -355,6 +356,84 @@ func (s *testIntegrationSuite1) TestIssue4432(c *C) {
 	tk.MustExec("drop table tx")
 }
 
+func (s *testIntegrationSuite1) TestIssue5092(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t_issue_5092 (a int)")
+	tk.MustExec("alter table t_issue_5092 add column (b int, c int)")
+	tk.MustExec("alter table t_issue_5092 add column if not exists (b int, c int)")
+	tk.MustExec("alter table t_issue_5092 add column b1 int after b, add column c1 int after c")
+	tk.MustExec("alter table t_issue_5092 add column d int after b, add column e int first, add column f int after c1, add column g int, add column h int first")
+	tk.MustQuery("show create table t_issue_5092").Check(testkit.Rows("t_issue_5092 CREATE TABLE `t_issue_5092` (\n" +
+		"  `h` int(11) DEFAULT NULL,\n" +
+		"  `e` int(11) DEFAULT NULL,\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` int(11) DEFAULT NULL,\n" +
+		"  `d` int(11) DEFAULT NULL,\n" +
+		"  `b1` int(11) DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL,\n" +
+		"  `c1` int(11) DEFAULT NULL,\n" +
+		"  `f` int(11) DEFAULT NULL,\n" +
+		"  `g` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	// The following two statements are consistent with MariaDB.
+	tk.MustGetErrCode("alter table t_issue_5092 add column if not exists d int, add column d int", errno.ErrDupFieldName)
+	tk.MustExec("alter table t_issue_5092 add column dd int, add column if not exists dd int")
+	tk.MustExec("alter table t_issue_5092 add column if not exists (d int, e int), add column ff text")
+	tk.MustExec("alter table t_issue_5092 add column b2 int after b1, add column c2 int first")
+	tk.MustQuery("show create table t_issue_5092").Check(testkit.Rows("t_issue_5092 CREATE TABLE `t_issue_5092` (\n" +
+		"  `c2` int(11) DEFAULT NULL,\n" +
+		"  `h` int(11) DEFAULT NULL,\n" +
+		"  `e` int(11) DEFAULT NULL,\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` int(11) DEFAULT NULL,\n" +
+		"  `d` int(11) DEFAULT NULL,\n" +
+		"  `b1` int(11) DEFAULT NULL,\n" +
+		"  `b2` int(11) DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL,\n" +
+		"  `c1` int(11) DEFAULT NULL,\n" +
+		"  `f` int(11) DEFAULT NULL,\n" +
+		"  `g` int(11) DEFAULT NULL,\n" +
+		"  `dd` int(11) DEFAULT NULL,\n" +
+		"  `ff` text DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("drop table t_issue_5092")
+
+	tk.MustExec("create table t_issue_5092 (a int default 1)")
+	tk.MustExec("alter table t_issue_5092 add column (b int default 2, c int default 3)")
+	tk.MustExec("alter table t_issue_5092 add column b1 int default 22 after b, add column c1 int default 33 after c")
+	tk.MustExec("insert into t_issue_5092 value ()")
+	tk.MustQuery("select * from t_issue_5092").Check(testkit.Rows("1 2 22 3 33"))
+	tk.MustExec("alter table t_issue_5092 add column d int default 4 after c1, add column aa int default 0 first")
+	tk.MustQuery("select * from t_issue_5092").Check(testkit.Rows("0 1 2 22 3 33 4"))
+	tk.MustQuery("show create table t_issue_5092").Check(testkit.Rows("t_issue_5092 CREATE TABLE `t_issue_5092` (\n" +
+		"  `aa` int(11) DEFAULT 0,\n" +
+		"  `a` int(11) DEFAULT 1,\n" +
+		"  `b` int(11) DEFAULT 2,\n" +
+		"  `b1` int(11) DEFAULT 22,\n" +
+		"  `c` int(11) DEFAULT 3,\n" +
+		"  `c1` int(11) DEFAULT 33,\n" +
+		"  `d` int(11) DEFAULT 4\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("drop table t_issue_5092")
+
+	tk.MustExec("create table t_issue_5092 (a int)")
+	tk.MustExec("alter table t_issue_5092 add column (b int, c int)")
+	tk.MustExec("alter table t_issue_5092 drop column b,drop column c")
+	tk.MustGetErrCode("alter table t_issue_5092 drop column c, drop column c", errno.ErrCantDropFieldOrKey)
+	tk.MustExec("alter table t_issue_5092 drop column if exists b,drop column if exists c")
+	tk.MustGetErrCode("alter table t_issue_5092 drop column g, drop column d", errno.ErrCantDropFieldOrKey)
+	tk.MustExec("drop table t_issue_5092")
+
+	tk.MustExec("create table t_issue_5092 (a int)")
+	tk.MustExec("alter table t_issue_5092 add column (b int, c int)")
+	tk.MustGetErrCode("alter table t_issue_5092 drop column if exists a, drop column b, drop column c", errno.ErrCantRemoveAllFields)
+	tk.MustGetErrCode("alter table t_issue_5092 drop column if exists c, drop column c", errno.ErrCantDropFieldOrKey)
+	tk.MustExec("alter table t_issue_5092 drop column c, drop column if exists c")
+	tk.MustExec("drop table t_issue_5092")
+}
+
 func (s *testIntegrationSuite5) TestErrnoErrorCode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
@@ -460,12 +539,34 @@ func (s *testIntegrationSuite5) TestErrnoErrorCode(c *C) {
 	sql = "create table test_on_update_2(c int on update current_timestamp);"
 	tk.MustGetErrCode(sql, errno.ErrInvalidOnUpdate)
 
+	// add columns
+	sql = "alter table test_error_code_succ add column c1 int, add column c1 int"
+	tk.MustGetErrCode(sql, errno.ErrDupFieldName)
+	sql = "alter table test_error_code_succ add column (aa int, aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa int)"
+	tk.MustGetErrCode(sql, errno.ErrTooLongIdent)
+	sql = "alter table test_error_code_succ add column `a ` int, add column `b ` int;"
+	tk.MustGetErrCode(sql, errno.ErrWrongColumnName)
+	tk.MustExec("create table test_add_columns_on_update (c1 int, c2 int);")
+	sql = "alter table test_add_columns_on_update add column cc int, add column c3 int on update current_timestamp;"
+	tk.MustGetErrCode(sql, errno.ErrInvalidOnUpdate)
+
 	// drop column
 	sql = "alter table test_error_code_succ drop c_not_exist"
 	tk.MustGetErrCode(sql, errno.ErrCantDropFieldOrKey)
 	tk.MustExec("create table test_drop_column (c1 int );")
 	sql = "alter table test_drop_column drop column c1;"
 	tk.MustGetErrCode(sql, errno.ErrCantRemoveAllFields)
+	// drop columns
+	sql = "alter table test_error_code_succ drop c_not_exist, drop cc_not_exist"
+	tk.MustGetErrCode(sql, errno.ErrCantDropFieldOrKey)
+	tk.MustExec("create table test_drop_columns (c1 int);")
+	tk.MustExec("alter table test_drop_columns add column c2 int first, add column c3 int after c1")
+	sql = "alter table test_drop_columns drop column c1, drop column c2, drop column c3;"
+	tk.MustGetErrCode(sql, errno.ErrCantRemoveAllFields)
+	sql = "alter table test_drop_columns drop column c1, add column c2 int;"
+	tk.MustGetErrCode(sql, errno.ErrUnsupportedDDLOperation)
+	sql = "alter table test_drop_columns drop column c1, drop column c1;"
+	tk.MustGetErrCode(sql, errno.ErrCantDropFieldOrKey)
 	// add index
 	sql = "alter table test_error_code_succ add index idx (c_not_exist)"
 	tk.MustGetErrCode(sql, errno.ErrKeyColumnDoesNotExits)
@@ -476,7 +577,7 @@ func (s *testIntegrationSuite5) TestErrnoErrorCode(c *C) {
 	sql = "alter table test_error_code_succ drop index idx_not_exist"
 	tk.MustGetErrCode(sql, errno.ErrCantDropFieldOrKey)
 	sql = "alter table test_error_code_succ drop column c3"
-	tk.MustGetErrCode(sql, int(errno.ErrUnsupportedDDLOperation))
+	tk.MustGetErrCode(sql, errno.ErrUnsupportedDDLOperation)
 	// modify column
 	sql = "alter table test_error_code_succ modify testx.test_error_code_succ.c1 bigint"
 	tk.MustGetErrCode(sql, errno.ErrWrongDBName)
@@ -1051,7 +1152,7 @@ func (s *testIntegrationSuite5) TestBackwardCompatibility(c *C) {
 	c.Assert(err, IsNil)
 
 	// Split the table.
-	s.cluster.SplitTable(s.mvccStore, tbl.Meta().ID, 100)
+	s.cluster.SplitTable(tbl.Meta().ID, 100)
 
 	unique := false
 	indexName := model.NewCIStr("idx_b")
@@ -1090,7 +1191,7 @@ func (s *testIntegrationSuite5) TestBackwardCompatibility(c *C) {
 	ticker := time.NewTicker(s.lease)
 	defer ticker.Stop()
 	for range ticker.C {
-		historyJob, err := s.getHistoryDDLJob(job.ID)
+		historyJob, err := getHistoryDDLJob(s.store, job.ID)
 		c.Assert(err, IsNil)
 		if historyJob == nil {
 
@@ -1129,7 +1230,7 @@ func (s *testIntegrationSuite3) TestMultiRegionGetTableEndHandle(c *C) {
 	testCtx := newTestMaxTableRowIDContext(c, d, tbl)
 
 	// Split the table.
-	s.cluster.SplitTable(s.mvccStore, tblID, 100)
+	s.cluster.SplitTable(tblID, 100)
 
 	maxID, emptyTable := getMaxTableRowID(testCtx, s.store)
 	c.Assert(emptyTable, IsFalse)
@@ -1173,10 +1274,10 @@ func checkGetMaxTableRowID(ctx *testMaxTableRowIDContext, store kv.Storage, expe
 	c.Assert(maxID, Equals, expectMaxID)
 }
 
-func (s *testIntegrationSuite) getHistoryDDLJob(id int64) (*model.Job, error) {
+func getHistoryDDLJob(store kv.Storage, id int64) (*model.Job, error) {
 	var job *model.Job
 
-	err := kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err1 error
 		job, err1 = t.GetHistoryDDLJob(id)
@@ -1942,7 +2043,8 @@ func (s *testIntegrationSuite3) TestParserIssue284(c *C) {
 	tk.MustExec("drop table test.t_parser_issue_284_2")
 }
 
-func (s *testIntegrationSuite6) TestAddExpressionIndex(c *C) {
+func (s *testIntegrationSuite7) TestAddExpressionIndex(c *C) {
+	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = true
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
@@ -1986,9 +2088,21 @@ func (s *testIntegrationSuite6) TestAddExpressionIndex(c *C) {
 	c.Assert(len(columns), Equals, 2)
 
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2.1"))
+
+	// Issue #17111
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a varchar(10), b varchar(10));")
+	tk.MustExec("alter table t1 add unique index ei_ab ((concat(a, b)));")
+	tk.MustExec("alter table t1 alter index ei_ab invisible;")
+
+	// Test experiment switch.
+	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = false
+	tk.MustGetErrMsg("create index d on t((a+1))", "[ddl:8200]Unsupported creating expression index without allow-expression-index in config")
 }
 
-func (s *testIntegrationSuite6) TestCreateExpressionIndexError(c *C) {
+func (s *testIntegrationSuite7) TestCreateExpressionIndexError(c *C) {
+	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = true
+
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
@@ -2018,7 +2132,7 @@ func (s *testIntegrationSuite6) TestCreateExpressionIndexError(c *C) {
 	tk.MustGetErrCode("alter table t add column e int as (_V$_expression_index_0 + 1);", errno.ErrBadField)
 }
 
-func (s *testIntegrationSuite6) TestAddExpressionIndexOnPartition(c *C) {
+func (s *testIntegrationSuite7) TestAddExpressionIndexOnPartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
@@ -2042,4 +2156,151 @@ func (s *testIntegrationSuite6) TestAddExpressionIndexOnPartition(c *C) {
 	c.Assert(columns[3].Hidden, IsTrue)
 
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 'test' 2", "12 'test' 3", "15 'test' 10", "20 'test' 20"))
+}
+
+// TestCreateTableWithAutoIdCache test the auto_id_cache table option.
+// `auto_id_cache` take effects on handle too when `PKIshandle` is false,
+// or even there is no auto_increment column at all.
+func (s *testIntegrationSuite3) TestCreateTableWithAutoIdCache(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("USE test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("drop table if exists t1;")
+
+	// Test primary key is handle.
+	tk.MustExec("create table t(a int auto_increment key) auto_id_cache 100")
+	tblInfo, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	c.Assert(tblInfo.Meta().AutoIdCache, Equals, int64(100))
+	tk.MustExec("insert into t values()")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
+	tk.MustExec("delete from t")
+
+	// Invalid the allocator cache, insert will trigger a new cache
+	tk.MustExec("rename table t to t1;")
+	tk.MustExec("insert into t1 values()")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("101"))
+
+	// Test primary key is not handle.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t(a int) auto_id_cache 100")
+	tblInfo, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+
+	tk.MustExec("insert into t values()")
+	tk.MustQuery("select _tidb_rowid from t").Check(testkit.Rows("1"))
+	tk.MustExec("delete from t")
+
+	// Invalid the allocator cache, insert will trigger a new cache
+	tk.MustExec("rename table t to t1;")
+	tk.MustExec("insert into t1 values()")
+	tk.MustQuery("select _tidb_rowid from t1").Check(testkit.Rows("101"))
+
+	// Test both auto_increment and rowid exist.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t(a int null, b int auto_increment unique) auto_id_cache 100")
+	tblInfo, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+
+	tk.MustExec("insert into t(b) values(NULL)")
+	tk.MustQuery("select b, _tidb_rowid from t").Check(testkit.Rows("1 2"))
+	tk.MustExec("delete from t")
+
+	// Invalid the allocator cache, insert will trigger a new cache.
+	tk.MustExec("rename table t to t1;")
+	tk.MustExec("insert into t1(b) values(NULL)")
+	tk.MustQuery("select b, _tidb_rowid from t1").Check(testkit.Rows("101 102"))
+	tk.MustExec("delete from t1")
+
+	// Test alter auto_id_cache.
+	tk.MustExec("alter table t1 auto_id_cache 200")
+	tblInfo, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	c.Assert(tblInfo.Meta().AutoIdCache, Equals, int64(200))
+
+	tk.MustExec("insert into t1(b) values(NULL)")
+	tk.MustQuery("select b, _tidb_rowid from t1").Check(testkit.Rows("201 202"))
+	tk.MustExec("delete from t1")
+
+	// Invalid the allocator cache, insert will trigger a new cache.
+	tk.MustExec("rename table t1 to t;")
+	tk.MustExec("insert into t(b) values(NULL)")
+	tk.MustQuery("select b, _tidb_rowid from t").Check(testkit.Rows("401 402"))
+	tk.MustExec("delete from t")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t(a int auto_increment key) auto_id_cache 3")
+	tblInfo, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	c.Assert(tblInfo.Meta().AutoIdCache, Equals, int64(3))
+
+	// Test insert batch size(4 here) greater than the customized autoid step(3 here).
+	tk.MustExec("insert into t(a) values(NULL),(NULL),(NULL),(NULL)")
+	tk.MustQuery("select a from t").Check(testkit.Rows("1", "2", "3", "4"))
+	tk.MustExec("delete from t")
+
+	// Invalid the allocator cache, insert will trigger a new cache.
+	tk.MustExec("rename table t to t1;")
+	tk.MustExec("insert into t1(a) values(NULL)")
+	next := tk.MustQuery("select a from t1").Rows()[0][0].(string)
+	nextInt, err := strconv.Atoi(next)
+	c.Assert(err, IsNil)
+	c.Assert(nextInt, Greater, 5)
+
+	// Test auto_id_cache overflows int64.
+	tk.MustExec("drop table if exists t;")
+	_, err = tk.Exec("create table t(a int) auto_id_cache = 9223372036854775808")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "table option auto_id_cache overflows int64")
+
+	tk.MustExec("create table t(a int) auto_id_cache = 9223372036854775807")
+	_, err = tk.Exec("alter table t auto_id_cache = 9223372036854775808")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "table option auto_id_cache overflows int64")
+}
+
+func (s *testIntegrationSuite4) TestAlterIndexVisibility(c *C) {
+	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = true
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists alter_index_test")
+	tk.MustExec("USE alter_index_test;")
+	tk.MustExec("drop table if exists t, t1, t2, t3;")
+
+	tk.MustExec("create table t(a int NOT NULL, b int, key(a), unique(b) invisible)")
+	queryIndexOnTable := func(tableName string) string {
+		return fmt.Sprintf("select index_name, is_visible from information_schema.statistics where table_schema = 'alter_index_test' and table_name = '%s' order by index_name", tableName)
+	}
+	query := queryIndexOnTable("t")
+	tk.MustQuery(query).Check(testkit.Rows("a YES", "b NO"))
+
+	tk.MustExec("alter table t alter index a invisible")
+	tk.MustQuery(query).Check(testkit.Rows("a NO", "b NO"))
+
+	tk.MustExec("alter table t alter index b visible")
+	tk.MustQuery(query).Check(testkit.Rows("a NO", "b YES"))
+
+	tk.MustExec("alter table t alter index b invisible")
+	tk.MustQuery(query).Check(testkit.Rows("a NO", "b NO"))
+
+	tk.MustGetErrMsg("alter table t alter index non_exists_idx visible", "[schema:1176]Key 'non_exists_idx' doesn't exist in table 't'")
+
+	// Alter implicit primary key to invisible index should throw error
+	tk.MustExec("create table t1(a int NOT NULL, unique(a))")
+	tk.MustGetErrMsg("alter table t1 alter index a invisible", "[ddl:3522]A primary key index cannot be invisible")
+
+	// Alter explicit primary key to invisible index should throw error
+	tk.MustExec("create table t2(a int, primary key(a))")
+	tk.MustGetErrMsg("alter table t2 alter index PRIMARY invisible", `[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 34 near "PRIMARY invisible" `)
+
+	// Alter expression index
+	tk.MustExec("create table t3(a int NOT NULL, b int)")
+	tk.MustExec("alter table t3 add index idx((a+b));")
+	query = queryIndexOnTable("t3")
+	tk.MustQuery(query).Check(testkit.Rows("idx YES"))
+
+	tk.MustExec("alter table t3 alter index idx invisible")
+	tk.MustQuery(query).Check(testkit.Rows("idx NO"))
 }

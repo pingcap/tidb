@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
@@ -260,20 +261,23 @@ func (ts *PhysicalTableScan) IsPartition() (bool, int64) {
 }
 
 // ExpandVirtualColumn expands the virtual column's dependent columns to ts's schema and column.
-func (ts *PhysicalTableScan) ExpandVirtualColumn() {
-	for _, col := range ts.schema.Columns {
+func ExpandVirtualColumn(columns []*model.ColumnInfo, schema *expression.Schema,
+	colsInfo []*model.ColumnInfo) []*model.ColumnInfo {
+	schemaColumns := schema.Columns
+	for _, col := range schemaColumns {
 		if col.VirtualExpr == nil {
 			continue
 		}
 
 		baseCols := expression.ExtractDependentColumns(col.VirtualExpr)
 		for _, baseCol := range baseCols {
-			if !ts.schema.Contains(baseCol) {
-				ts.schema.Columns = append(ts.schema.Columns, baseCol)
-				ts.Columns = append(ts.Columns, FindColumnInfoByID(ts.Table.Columns, baseCol.ID))
+			if !schema.Contains(baseCol) {
+				schema.Columns = append(schema.Columns, baseCol)
+				columns = append(columns, FindColumnInfoByID(colsInfo, baseCol.ID))
 			}
 		}
 	}
+	return columns
 }
 
 //SetIsChildOfIndexLookUp is to set the bool if is a child of IndexLookUpReader
@@ -294,7 +298,7 @@ type PhysicalProjection struct {
 type PhysicalTopN struct {
 	basePhysicalPlan
 
-	ByItems []*ByItems
+	ByItems []*util.ByItems
 	Offset  uint64
 	Count   uint64
 }
@@ -488,7 +492,7 @@ type PhysicalStreamAgg struct {
 type PhysicalSort struct {
 	basePhysicalPlan
 
-	ByItems []*ByItems
+	ByItems []*util.ByItems
 }
 
 // NominalSort asks sort properties for its child. It is a fake operator that will not
@@ -499,7 +503,7 @@ type NominalSort struct {
 	// These two fields are used to switch ScalarFunctions to Constants. For these
 	// NominalSorts, we need to converted to Projections check if the ScalarFunctions
 	// are out of bounds. (issue #11653)
-	ByItems    []*ByItems
+	ByItems    []*util.ByItems
 	OnlyColumn bool
 }
 

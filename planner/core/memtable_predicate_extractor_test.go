@@ -15,7 +15,6 @@ package core_test
 
 import (
 	"context"
-	"math"
 	"regexp"
 	"sort"
 	"time"
@@ -27,6 +26,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/set"
 )
 
@@ -38,7 +38,7 @@ type extractorSuite struct {
 }
 
 func (s *extractorSuite) SetUpSuite(c *C) {
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	c.Assert(store, NotNil)
 
@@ -62,7 +62,7 @@ func (s *extractorSuite) getLogicalMemTable(c *C, se session.Session, parser *pa
 	c.Assert(err, IsNil)
 
 	ctx := context.Background()
-	builder := plannercore.NewPlanBuilder(se, s.dom.InfoSchema(), &plannercore.BlockHintProcessor{})
+	builder := plannercore.NewPlanBuilder(se, s.dom.InfoSchema(), &hint.BlockHintProcessor{})
 	plan, err := builder.Build(ctx, stmt)
 	c.Assert(err, IsNil)
 
@@ -271,6 +271,12 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 			instances: nil,
 		},
 		{
+			// Test for invalid time.
+			sql:       "select * from information_schema.cluster_log where time='2019-10-10 10::10'",
+			nodeTypes: set.NewStringSet(),
+			instances: set.NewStringSet(),
+		},
+		{
 			sql:       "select * from information_schema.cluster_log where type='tikv'",
 			nodeTypes: set.NewStringSet("tikv"),
 			instances: set.NewStringSet(),
@@ -444,14 +450,12 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
 			startTime: timestamp(c, "2019-10-10 10:10:10"),
-			endTime:   math.MaxInt64,
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where time>='2019-10-10 10:10:10' and  time>='2019-10-11 10:10:10' and  time>='2019-10-12 10:10:10'",
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
 			startTime: timestamp(c, "2019-10-12 10:10:10"),
-			endTime:   math.MaxInt64,
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where time>='2019-10-10 10:10:10' and  time>='2019-10-11 10:10:10' and  time>='2019-10-12 10:10:10' and time='2019-10-13 10:10:10'",
@@ -480,7 +484,6 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
 			startTime: timestamp(c, "2019-10-10 10:10:10"),
-			endTime:   math.MaxInt64,
 			patterns:  []string{".*a.*"},
 		},
 		{
@@ -512,6 +515,18 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 			instances: set.NewStringSet("123.1.1.5:1234", "123.1.1.4:1234"),
 			level:     set.NewStringSet("debug", "info", "error"),
 			patterns:  []string{".*coprocessor.*", ".*txn=123.*"},
+		},
+		{
+			sql:       "select * from information_schema.cluster_log where (message regexp '.*pd.*' or message regexp '.*tidb.*' or message like '%tikv%')",
+			nodeTypes: set.NewStringSet(),
+			instances: set.NewStringSet(),
+			patterns:  []string{".*pd.*|.*tidb.*|.*tikv.*"},
+		},
+		{
+			sql:       "select * from information_schema.cluster_log where (level = 'debug' or level = 'ERROR')",
+			nodeTypes: set.NewStringSet(),
+			instances: set.NewStringSet(),
+			level:     set.NewStringSet("debug", "error"),
 		},
 	}
 	for _, ca := range cases {
@@ -644,7 +659,7 @@ func (s *extractorSuite) TestMetricTableExtractor(c *C) {
 			c.Assert(metricTableExtractor.Quantiles, DeepEquals, ca.quantiles)
 		}
 		if !ca.skipRequest {
-			promQL := plannercore.GetMetricTablePromQL(se, "tidb_query_duration", metricTableExtractor.LabelConditions, metricTableExtractor.Quantiles)
+			promQL := metricTableExtractor.GetMetricTablePromQL(se, "tidb_query_duration")
 			c.Assert(promQL, DeepEquals, ca.promQL, Commentf("SQL: %v", ca.sql))
 			start, end := metricTableExtractor.StartTime, metricTableExtractor.EndTime
 			c.Assert(start.UnixNano() <= end.UnixNano(), IsTrue)

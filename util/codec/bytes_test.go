@@ -23,6 +23,18 @@ var _ = Suite(&testBytesSuite{})
 type testBytesSuite struct {
 }
 
+func (s *testBytesSuite) TestFastSlowFastReverse(c *C) {
+	if !supportsUnaligned {
+		return
+	}
+	b := []byte{1, 2, 3, 4, 5, 6, 7, 8, 255, 0, 0, 0, 0, 0, 0, 0, 0, 247}
+	r1 := b
+	fastReverseBytes(b)
+	r2 := b
+	reverseBytes(r2)
+	c.Assert(r1, BytesEquals, r2)
+}
+
 func (s *testBytesSuite) TestBytesCodec(c *C) {
 	defer testleak.AfterTest(c)()
 	inputs := []struct {
@@ -49,6 +61,9 @@ func (s *testBytesSuite) TestBytesCodec(c *C) {
 	}
 
 	for _, input := range inputs {
+
+		c.Assert(EncodedBytesLength(len(input.enc)), Equals, len(input.dec))
+
 		if input.desc {
 			b := EncodeBytesDesc(nil, input.enc)
 			c.Assert(b, BytesEquals, input.dec)

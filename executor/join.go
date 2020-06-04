@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/disk"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stringutil"
 )
@@ -138,8 +139,10 @@ func (e *HashJoinExec) Close() error {
 
 	if e.runtimeStats != nil {
 		concurrency := cap(e.joiners)
-		e.runtimeStats.SetConcurrencyInfo("Concurrency", concurrency)
-		e.runtimeStats.SetAdditionalInfo(e.rowContainer.stat.String())
+		e.runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", concurrency))
+		if e.rowContainer != nil {
+			e.runtimeStats.SetAdditionalInfo(e.rowContainer.stat.String())
+		}
 	}
 	err := e.baseExecutor.Close()
 	return err
@@ -207,13 +210,13 @@ func (e *HashJoinExec) fetchProbeSideChunks(ctx context.Context) {
 				e.finished.Store(true)
 				return
 			}
-			jobFinished, buildErr := e.wait4BuildSide()
+			emptyBuild, buildErr := e.wait4BuildSide()
 			if buildErr != nil {
 				e.joinResultCh <- &hashjoinWorkerResult{
 					err: buildErr,
 				}
 				return
-			} else if jobFinished {
+			} else if emptyBuild {
 				return
 			}
 			hasWaitedForBuild = true
@@ -227,7 +230,7 @@ func (e *HashJoinExec) fetchProbeSideChunks(ctx context.Context) {
 	}
 }
 
-func (e *HashJoinExec) wait4BuildSide() (finished bool, err error) {
+func (e *HashJoinExec) wait4BuildSide() (emptyBuild bool, err error) {
 	select {
 	case <-e.closeCh:
 		return true, nil

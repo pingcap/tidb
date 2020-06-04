@@ -197,7 +197,7 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	c.Assert(v, Equals, uint64(100))
 	// issue 3470
 	ft = NewFieldType(mysql.TypeLonglong)
-	v, err = Convert(Duration{Duration: time.Duration(12*time.Hour + 59*time.Minute + 59*time.Second + 555*time.Millisecond), Fsp: 3}, ft)
+	v, err = Convert(Duration{Duration: 12*time.Hour + 59*time.Minute + 59*time.Second + 555*time.Millisecond, Fsp: 3}, ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, int64(130000))
 	v, err = Convert(NewTime(FromDate(2017, 1, 1, 12, 59, 59, 555000), mysql.TypeDatetime, MaxFsp), ft)
@@ -317,7 +317,7 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 	testToString(c, "0", "0")
 	testToString(c, true, "1")
 	testToString(c, "false", "false")
-	testToString(c, int(0), "0")
+	testToString(c, 0, "0")
 	testToString(c, int64(0), "0")
 	testToString(c, uint64(0), "0")
 	testToString(c, float32(1.6), "1.6")
@@ -663,7 +663,7 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeFloat, "23.523", "23.523")
 	signedAccept(c, mysql.TypeFloat, int64(123), "123")
 	signedAccept(c, mysql.TypeFloat, uint64(123), "123")
-	signedAccept(c, mysql.TypeFloat, int(123), "123")
+	signedAccept(c, mysql.TypeFloat, 123, "123")
 	signedAccept(c, mysql.TypeFloat, float32(123), "123")
 	signedAccept(c, mysql.TypeFloat, float64(123), "123")
 	signedAccept(c, mysql.TypeDouble, " -23.54", "-23.54")
@@ -849,6 +849,8 @@ func (s *testTypeConvertSuite) TestGetValidFloat(c *C) {
 		{"", "0"},
 		{"123e+", "123"},
 		{"123.e", "123."},
+		{"0-123", "0"},
+		{"9-3", "9"},
 	}
 	sc := new(stmtctx.StatementContext)
 	for _, tt := range tests {

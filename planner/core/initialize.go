@@ -103,6 +103,12 @@ func (p LogicalUnionAll) Init(ctx sessionctx.Context, offset int) *LogicalUnionA
 	return &p
 }
 
+// Init initializes LogicalPartitionUnionAll.
+func (p LogicalPartitionUnionAll) Init(ctx sessionctx.Context, offset int) *LogicalPartitionUnionAll {
+	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypePartitionUnion, &p, offset)
+	return &p
+}
+
 // Init initializes PhysicalUnionAll.
 func (p PhysicalUnionAll) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalUnionAll {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeUnion, &p, offset)
@@ -126,9 +132,10 @@ func (p PhysicalSort) Init(ctx sessionctx.Context, stats *property.StatsInfo, of
 }
 
 // Init initializes NominalSort.
-func (p NominalSort) Init(ctx sessionctx.Context, offset int, props ...*property.PhysicalProperty) *NominalSort {
+func (p NominalSort) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *NominalSort {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeSort, &p, offset)
 	p.childrenReqProps = props
+	p.stats = stats
 	return &p
 }
 
@@ -304,10 +311,7 @@ func (p PhysicalMemTable) Init(ctx sessionctx.Context, stats *property.StatsInfo
 
 // Init initializes PhysicalHashJoin.
 func (p PhysicalHashJoin) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalHashJoin {
-	tp := plancodec.TypeHashRightJoin
-	if p.InnerChildIdx == 1 {
-		tp = plancodec.TypeHashLeftJoin
-	}
+	tp := plancodec.TypeHashJoin
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, tp, &p, offset)
 	p.childrenReqProps = props
 	p.stats = stats
@@ -379,8 +383,8 @@ func (p PhysicalIndexMergeReader) Init(ctx sessionctx.Context, offset int) *Phys
 		for _, partPlan := range p.partialPlans {
 			totalRowCount += partPlan.StatsCount()
 		}
-		p.stats.StatsVersion = p.partialPlans[0].statsInfo().StatsVersion
 		p.stats = p.partialPlans[0].statsInfo().ScaleByExpectCnt(totalRowCount)
+		p.stats.StatsVersion = p.partialPlans[0].statsInfo().StatsVersion
 	}
 	p.PartialPlans = make([][]PhysicalPlan, 0, len(p.partialPlans))
 	for _, partialPlan := range p.partialPlans {
@@ -451,6 +455,7 @@ func (p BatchPointGetPlan) Init(ctx sessionctx.Context, stats *property.StatsInf
 	p.schema = schema
 	p.names = names
 	p.stats = stats
+	p.Columns = ExpandVirtualColumn(p.Columns, p.schema, p.TblInfo.Columns)
 	return &p
 }
 

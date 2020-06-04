@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -66,8 +67,11 @@ type QueryCtx interface {
 	// CurrentDB returns current DB.
 	CurrentDB() string
 
-	// Execute executes a SQL statement.
-	Execute(ctx context.Context, sql string) ([]ResultSet, error)
+	// ExecuteStmt executes a SQL statement.
+	ExecuteStmt(context.Context, ast.StmtNode) (ResultSet, error)
+
+	// Parse parses a SQL to statement node.
+	Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
 
 	// SetClientCapability sets client capability flags
 	SetClientCapability(uint32)

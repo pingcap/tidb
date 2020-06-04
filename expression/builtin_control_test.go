@@ -38,6 +38,8 @@ func (s *testEvaluatorSuite) TestCaseWhen(c *C) {
 		{[]interface{}{nil, 1, false, 2, 3}, 3},
 		{[]interface{}{1, jsonInt.GetMysqlJSON(), nil}, 3},
 		{[]interface{}{0, jsonInt.GetMysqlJSON(), nil}, nil},
+		{[]interface{}{0.1, 1, 2}, 1},
+		{[]interface{}{0.0, 1, 0.1, 2}, 2},
 	}
 	fc := funcs[ast.Case]
 	for _, t := range tbl {
@@ -76,6 +78,12 @@ func (s *testEvaluatorSuite) TestIf(c *C) {
 		{types.Duration{Duration: time.Duration(0)}, 1, 2, 2},
 		{types.NewDecFromStringForTest("1.2"), 1, 2, 1},
 		{jsonInt.GetMysqlJSON(), 1, 2, 1},
+		{0.1, 1, 2, 1},
+		{0.0, 1, 2, 2},
+		{types.NewDecFromStringForTest("0.1"), 1, 2, 1},
+		{types.NewDecFromStringForTest("0.0"), 1, 2, 2},
+		{"0.1", 1, 2, 1},
+		{"0.0", 1, 2, 2},
 	}
 
 	fc := funcs[ast.If]
@@ -131,9 +139,9 @@ func (s *testEvaluatorSuite) TestIfNull(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.Ifnull].getFunction(s.ctx, []Expression{Zero, Zero})
+	_, err := funcs[ast.Ifnull].getFunction(s.ctx, []Expression{NewZero(), NewZero()})
 	c.Assert(err, IsNil)
 
-	_, err = funcs[ast.Ifnull].getFunction(s.ctx, []Expression{Zero})
+	_, err = funcs[ast.Ifnull].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, NotNil)
 }

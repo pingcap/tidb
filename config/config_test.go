@@ -16,6 +16,7 @@ package config
 import (
 	"encoding/json"
 	"os"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -28,7 +29,7 @@ import (
 	tracing "github.com/uber/jaeger-client-go/config"
 )
 
-var _ = Suite(&testConfigSuite{})
+var _ = SerialSuites(&testConfigSuite{})
 
 type testConfigSuite struct{}
 
@@ -148,7 +149,7 @@ disable-error-stack = false
 
 func (s *testConfigSuite) TestConfig(c *C) {
 	conf := new(Config)
-	conf.TempStoragePath = filepath.Join(os.TempDir(), "tidb", "tmp-storage")
+	conf.TempStoragePath = tempStorageDirName
 	conf.Binlog.Enable = true
 	conf.Binlog.IgnoreError = true
 	conf.Binlog.Strategy = "hash"
@@ -171,6 +172,7 @@ unrecognized-option-test = true
 	c.Assert(f.Sync(), IsNil)
 
 	c.Assert(conf.Load(configFile), ErrorMatches, "(?:.|\n)*unknown configuration option(?:.|\n)*")
+	c.Assert(conf.MaxServerConnections, Equals, uint32(0))
 
 	f.Truncate(0)
 	f.Seek(0, 0)
@@ -196,12 +198,14 @@ region-cache-ttl=6000
 store-limit=0
 [stmt-summary]
 enable=false
+enable-internal-query=true
 max-stmt-count=1000
 max-sql-length=1024
 refresh-interval=100
 history-size=100
 [experimental]
 allow-auto-random = true
+allow-expression-index = true
 [isolation-read]
 engines = ["tiflash"]
 `)
@@ -230,6 +234,7 @@ engines = ["tiflash"]
 	c.Assert(conf.DelayCleanTableLock, Equals, uint64(5))
 	c.Assert(conf.SplitRegionMaxNum, Equals, uint64(10000))
 	c.Assert(conf.StmtSummary.Enable, Equals, false)
+	c.Assert(conf.StmtSummary.EnableInternalQuery, Equals, true)
 	c.Assert(conf.StmtSummary.MaxStmtCount, Equals, uint(1000))
 	c.Assert(conf.StmtSummary.MaxSQLLength, Equals, uint(1024))
 	c.Assert(conf.StmtSummary.RefreshInterval, Equals, 100)
@@ -238,6 +243,7 @@ engines = ["tiflash"]
 	c.Assert(conf.RepairMode, Equals, true)
 	c.Assert(conf.MaxServerConnections, Equals, uint32(200))
 	c.Assert(conf.MemQuotaQuery, Equals, int64(10000))
+	c.Assert(conf.Experimental.AllowsExpressionIndex, IsTrue)
 	c.Assert(conf.Experimental.AllowAutoRandom, IsTrue)
 	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})
 	c.Assert(conf.MaxIndexLength, Equals, 3080)
@@ -380,10 +386,6 @@ func (s *testConfigSuite) TestTxnTotalSizeLimitValid(c *C) {
 		conf.Performance.TxnTotalSizeLimit = tt.limit
 		c.Assert(conf.Valid() == nil, Equals, tt.valid)
 	}
-
-	conf.Binlog.Enable = true
-	conf.Performance.TxnTotalSizeLimit = 100<<20 + 1
-	c.Assert(conf.Valid(), NotNil)
 }
 
 func (s *testConfigSuite) TestAllowAutoRandomValid(c *C) {
@@ -397,6 +399,21 @@ func (s *testConfigSuite) TestAllowAutoRandomValid(c *C) {
 	checkValid(true, false, true)
 	checkValid(false, true, true)
 	checkValid(false, false, true)
+}
+
+func (s *testConfigSuite) TestPreparePlanCacheValid(c *C) {
+	conf := NewConfig()
+	tests := map[PreparedPlanCache]bool{
+		{Enabled: true, Capacity: 0}:                        false,
+		{Enabled: true, Capacity: 2}:                        true,
+		{Enabled: true, MemoryGuardRatio: -0.1}:             false,
+		{Enabled: true, MemoryGuardRatio: 2.2}:              false,
+		{Enabled: true, Capacity: 2, MemoryGuardRatio: 0.5}: true,
+	}
+	for testCase, res := range tests {
+		conf.PreparedPlanCache = testCase
+		c.Assert(conf.Valid() == nil, Equals, res)
+	}
 }
 
 func (s *testConfigSuite) TestMaxIndexLength(c *C) {
@@ -422,4 +439,33 @@ func (s *testConfigSuite) TestParsePath(c *C) {
 	_, disableGC, err = ParsePath("tikv://node1:2379?disableGC=true")
 	c.Assert(err, IsNil)
 	c.Assert(disableGC, IsTrue)
+}
+
+func (s *testConfigSuite) TestEncodeDefTempStorageDir(c *C) {
+
+	tests := []struct {
+		host       string
+		statusHost string
+		port       uint
+		statusPort uint
+		expect     string
+	}{
+		{"0.0.0.0", "0.0.0.0", 4000, 10080, "MC4wLjAuMDo0MDAwLzAuMC4wLjA6MTAwODA="},
+		{"127.0.0.1", "127.16.5.1", 4000, 10080, "MTI3LjAuMC4xOjQwMDAvMTI3LjE2LjUuMToxMDA4MA=="},
+		{"127.0.0.1", "127.16.5.1", 4000, 15532, "MTI3LjAuMC4xOjQwMDAvMTI3LjE2LjUuMToxNTUzMg=="},
+	}
+
+	var osUID string
+	currentUser, err := user.Current()
+	if err != nil {
+		osUID = ""
+	} else {
+		osUID = currentUser.Uid
+	}
+
+	dirPrefix := filepath.Join(os.TempDir(), osUID+"_tidb")
+	for _, test := range tests {
+		tempStorageDir := encodeDefTempStorageDir(test.host, test.statusHost, test.port, test.statusPort)
+		c.Assert(tempStorageDir, Equals, filepath.Join(dirPrefix, test.expect, "tmp-storage"))
+	}
 }

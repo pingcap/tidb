@@ -228,7 +228,7 @@ const (
 
 func (p *UserPrivileges) checkSSL(priv *globalPrivRecord, tlsState *tls.ConnectionState) bool {
 	if priv.Broken {
-		logutil.BgLogger().Debug("ssl check failure, due to broken global_priv record",
+		logutil.BgLogger().Info("ssl check failure, due to broken global_priv record",
 			zap.String("user", priv.User), zap.String("host", priv.Host))
 		return false
 	}
@@ -238,13 +238,13 @@ func (p *UserPrivileges) checkSSL(priv *globalPrivRecord, tlsState *tls.Connecti
 	case SslTypeAny:
 		r := tlsState != nil
 		if !r {
-			logutil.BgLogger().Debug("ssl check failure, require ssl but not use ssl",
+			logutil.BgLogger().Info("ssl check failure, require ssl but not use ssl",
 				zap.String("user", priv.User), zap.String("host", priv.Host))
 		}
 		return r
 	case SslTypeX509:
 		if tlsState == nil {
-			logutil.BgLogger().Debug("ssl check failure, require x509 but not use ssl",
+			logutil.BgLogger().Info("ssl check failure, require x509 but not use ssl",
 				zap.String("user", priv.User), zap.String("host", priv.Host))
 			return false
 		}
@@ -256,18 +256,18 @@ func (p *UserPrivileges) checkSSL(priv *globalPrivRecord, tlsState *tls.Connecti
 			}
 		}
 		if !hasCert {
-			logutil.BgLogger().Debug("ssl check failure, require x509 but no verified cert",
+			logutil.BgLogger().Info("ssl check failure, require x509 but no verified cert",
 				zap.String("user", priv.User), zap.String("host", priv.Host))
 		}
 		return hasCert
 	case SslTypeSpecified:
 		if tlsState == nil {
-			logutil.BgLogger().Debug("ssl check failure, require subject/issuer/cipher but not use ssl",
+			logutil.BgLogger().Info("ssl check failure, require subject/issuer/cipher but not use ssl",
 				zap.String("user", priv.User), zap.String("host", priv.Host))
 			return false
 		}
 		if len(priv.Priv.SSLCipher) > 0 && priv.Priv.SSLCipher != util.TLSCipher2String(tlsState.CipherSuite) {
-			logutil.BgLogger().Debug("ssl check failure for cipher", zap.String("user", priv.User), zap.String("host", priv.Host),
+			logutil.BgLogger().Info("ssl check failure for cipher", zap.String("user", priv.User), zap.String("host", priv.Host),
 				zap.String("require", priv.Priv.SSLCipher), zap.String("given", util.TLSCipher2String(tlsState.CipherSuite)))
 			return false
 		}
@@ -287,7 +287,7 @@ func (p *UserPrivileges) checkSSL(priv *globalPrivRecord, tlsState *tls.Connecti
 					matchIssuer = pass
 				} else if matchIssuer == notCheck {
 					matchIssuer = fail
-					logutil.BgLogger().Debug("ssl check failure for issuer", zap.String("user", priv.User), zap.String("host", priv.Host),
+					logutil.BgLogger().Info("ssl check failure for issuer", zap.String("user", priv.User), zap.String("host", priv.Host),
 						zap.String("require", priv.Priv.X509Issuer), zap.String("given", given))
 				}
 			}
@@ -297,7 +297,7 @@ func (p *UserPrivileges) checkSSL(priv *globalPrivRecord, tlsState *tls.Connecti
 					matchSubject = pass
 				} else if matchSubject == notCheck {
 					matchSubject = fail
-					logutil.BgLogger().Debug("ssl check failure for subject", zap.String("user", priv.User), zap.String("host", priv.Host),
+					logutil.BgLogger().Info("ssl check failure for subject", zap.String("user", priv.User), zap.String("host", priv.Host),
 						zap.String("require", priv.Priv.X509Subject), zap.String("given", given))
 				}
 			}
@@ -305,7 +305,7 @@ func (p *UserPrivileges) checkSSL(priv *globalPrivRecord, tlsState *tls.Connecti
 		}
 		checkResult := hasCert && matchIssuer != fail && matchSubject != fail
 		if !checkResult && !hasCert {
-			logutil.BgLogger().Debug("ssl check failure, require issuer/subject but no verified cert",
+			logutil.BgLogger().Info("ssl check failure, require issuer/subject but no verified cert",
 				zap.String("user", priv.User), zap.String("host", priv.Host))
 		}
 		return checkResult

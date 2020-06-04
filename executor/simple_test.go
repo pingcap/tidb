@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -57,6 +56,22 @@ func (s *testSuite3) TestDo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("do 1, @a:=1")
 	tk.MustQuery("select @a").Check(testkit.Rows("1"))
+}
+
+func (s *testSuite3) TestSetRoleAllCorner(c *C) {
+	// For user with no role, `SET ROLE ALL` should active
+	// a empty slice, rather than nil.
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create user set_role_all")
+	se, err := session.CreateSession4Test(s.store)
+	c.Check(err, IsNil)
+	defer se.Close()
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "set_role_all", Hostname: "localhost"}, nil, nil), IsTrue)
+	ctx := context.Background()
+	_, err = se.Execute(ctx, `set role all`)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(ctx, `select current_role`)
+	c.Assert(err, IsNil)
 }
 
 func (s *testSuite3) TestCreateRole(c *C) {
@@ -311,6 +326,19 @@ func (s *testSuite3) TestDefaultRole(c *C) {
 	tk.MustExec(dropRoleSQL)
 }
 
+func (s *testSuite7) TestSetDefaultRoleAll(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create user test_all;")
+	se, err := session.CreateSession4Test(s.store)
+	c.Check(err, IsNil)
+	defer se.Close()
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "test_all", Hostname: "localhost"}, nil, nil), IsTrue)
+
+	ctx := context.Background()
+	_, err = se.Execute(ctx, "set default role all to test_all;")
+	c.Assert(err, IsNil)
+}
+
 func (s *testSuite7) TestUser(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// Make sure user test not in mysql.User.
@@ -425,6 +453,17 @@ func (s *testSuite7) TestUser(c *C) {
 	dropUserSQL = `DROP USER 'test1'@'localhost', 'test2'@'localhost', 'test3'@'localhost';`
 	_, err = tk.Exec(dropUserSQL)
 	c.Assert(terror.ErrorEqual(err, executor.ErrCannotUser.GenWithStackByArgs("DROP USER", "")), IsTrue, Commentf("err %v", err))
+
+	// Close issue #17639
+	dropUserSQL = `DROP USER if exists test3@'%'`
+	tk.MustExec(dropUserSQL)
+	createUserSQL = `create user test3@'%' IDENTIFIED WITH 'mysql_native_password' AS '*6BB4837EB74329105EE4568DDA7DC67ED2CA2AD9';`
+	tk.MustExec(createUserSQL)
+	querySQL := `select authentication_string from mysql.user where user="test3" ;`
+	tk.MustQuery(querySQL).Check(testkit.Rows("*6BB4837EB74329105EE4568DDA7DC67ED2CA2AD9"))
+	alterUserSQL = `alter user test3@'%' IDENTIFIED WITH 'mysql_native_password' AS '*6BB4837EB74329105EE4568DDA7DC67ED2CA2AD9';`
+	tk.MustExec(alterUserSQL)
+	tk.MustQuery(querySQL).Check(testkit.Rows("*6BB4837EB74329105EE4568DDA7DC67ED2CA2AD9"))
 }
 
 func (s *testSuite3) TestSetPwd(c *C) {
@@ -499,13 +538,7 @@ type testFlushSuite struct{}
 
 func (s *testFlushSuite) TestFlushPrivilegesPanic(c *C) {
 	// Run in a separate suite because this test need to set SkipGrantTable config.
-	cluster := mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(cluster)
-	mvccStore := mocktikv.MustNewMVCCStore()
-	store, err := mockstore.NewMockTikvStore(
-		mockstore.WithCluster(cluster),
-		mockstore.WithMVCCStore(mvccStore),
-	)
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 

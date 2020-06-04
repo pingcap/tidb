@@ -130,7 +130,7 @@ func (encoder *Encoder) encodeRowCols(sc *stmtctx.StatementContext, numCols, not
 	for i := 0; i < notNullIdx; i++ {
 		d := encoder.values[i]
 		var err error
-		r.data, err = EncodeValueDatum(sc, d, r.data)
+		r.data, err = encodeValueDatum(sc, d, r.data)
 		if err != nil {
 			return err
 		}
@@ -152,27 +152,12 @@ func (encoder *Encoder) encodeRowCols(sc *stmtctx.StatementContext, numCols, not
 			r.offsets[i] = uint16(len(r.data))
 		}
 	}
-	// handle convert to large
-	if !r.large {
-		if len(r.data) >= math.MaxUint16 {
-			r.large = true
-			r.initColIDs32()
-			for i, val := range r.colIDs {
-				r.colIDs32[i] = uint32(val)
-			}
-		} else {
-			r.initOffsets()
-			for i, val := range r.offsets32 {
-				r.offsets[i] = uint16(val)
-			}
-		}
-	}
 	return nil
 }
 
-// EncodeValueDatum encodes one row datum entry into bytes.
+// encodeValueDatum encodes one row datum entry into bytes.
 // due to encode as value, this method will flatten value type like tablecodec.flatten
-func EncodeValueDatum(sc *stmtctx.StatementContext, d types.Datum, buffer []byte) (nBuffer []byte, err error) {
+func encodeValueDatum(sc *stmtctx.StatementContext, d types.Datum, buffer []byte) (nBuffer []byte, err error) {
 	switch d.Kind() {
 	case types.KindInt64:
 		buffer = encodeInt(buffer, d.GetInt64())
@@ -224,9 +209,6 @@ func EncodeValueDatum(sc *stmtctx.StatementContext, d types.Datum, buffer []byte
 		j := d.GetMysqlJSON()
 		buffer = append(buffer, j.TypeCode)
 		buffer = append(buffer, j.Value...)
-	case types.KindNull:
-	case types.KindMinNotNull:
-	case types.KindMaxValue:
 	default:
 		err = errors.Errorf("unsupport encode type %d", d.Kind())
 	}

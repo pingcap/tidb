@@ -16,19 +16,25 @@ package executor
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"sort"
 	"sync"
 	"sync/atomic"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/stringutil"
+	"go.uber.org/zap"
 )
 
 // IndexLookUpMergeJoin realizes IndexLookUpJoin by merge join
@@ -159,10 +165,10 @@ func (e *IndexLookUpMergeJoin) Open(ctx context.Context) error {
 	// recordSet.Next()
 	// e.dataReaderBuilder.Build() // txn is used again, which is already closed
 	//
-	// The trick here is `getStartTS` will cache start ts in the dataReaderBuilder,
+	// The trick here is `getSnapshotTS` will cache snapshot ts in the dataReaderBuilder,
 	// so even txn is destroyed later, the dataReaderBuilder could still use the
-	// cached start ts to construct DAG.
-	_, err := e.innerMergeCtx.readerBuilder.getStartTS()
+	// cached snapshot ts to construct DAG.
+	_, err := e.innerMergeCtx.readerBuilder.getSnapshotTS()
 	if err != nil {
 		return err
 	}
@@ -295,6 +301,9 @@ func (omw *outerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancel
 		close(omw.innerCh)
 		wg.Done()
 		if r := recover(); r != nil {
+			logutil.Logger(ctx).Error("panic in outerMergeWorker.run",
+				zap.Reflect("r", r),
+				zap.Stack("stack trace"))
 			cancelFunc()
 		}
 	}()
@@ -383,6 +392,14 @@ func (imw *innerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancel
 	defer func() {
 		wg.Done()
 		if r := recover(); r != nil {
+			if task != nil {
+				task.doneErr = errors.Errorf("%v", r)
+				close(task.results)
+			}
+			buf := make([]byte, 4096)
+			stackSize := runtime.Stack(buf, false)
+			buf = buf[:stackSize]
+			logutil.Logger(ctx).Error("innerMergeWorker panicked", zap.String("stack", string(buf)))
 			cancelFunc()
 		}
 	}()
@@ -427,6 +444,11 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 		}
 	}
 	task.memTracker.Consume(int64(cap(task.outerOrderIdx)))
+	failpoint.Inject("IndexMergeJoinMockOOM", func(val failpoint.Value) {
+		if val.(bool) {
+			panic("OOM test index merge join doesn't hang here.")
+		}
+	})
 	// needOuterSort means the outer side property items can't guarantee the order of join keys.
 	// Because the necessary condition of merge join is both outer and inner keep order of join keys.
 	// In this case, we need sort the outer side.
@@ -686,7 +708,7 @@ func (e *IndexLookUpMergeJoin) Close() error {
 	e.memTracker = nil
 	if e.runtimeStats != nil {
 		concurrency := cap(e.resultCh)
-		e.runtimeStats.SetConcurrencyInfo("Concurrency", concurrency)
+		e.runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", concurrency))
 	}
 	return e.baseExecutor.Close()
 }

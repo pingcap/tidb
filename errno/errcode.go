@@ -901,10 +901,12 @@ const (
 	ErrInvalidJSONContainsPathType                                  = 3150
 	ErrJSONUsedAsKey                                                = 3152
 	ErrJSONDocumentNULLKey                                          = 3158
+	ErrSecureTransportRequired                                      = 3159
 	ErrBadUser                                                      = 3162
 	ErrUserAlreadyExists                                            = 3163
 	ErrInvalidJSONPathArrayCell                                     = 3165
 	ErrInvalidEncryptionOption                                      = 3184
+	ErrPKIndexCantBeInvisible                                       = 3522
 	ErrRoleNotGranted                                               = 3530
 	ErrLockAcquireFailAndNoWaitSet                                  = 3572
 	ErrWindowNoSuchWindow                                           = 3579
@@ -1037,6 +1039,10 @@ const (
 	ErrPrivilegeCheckFail                  = 8121
 	ErrInvalidWildCard                     = 8122
 	ErrMixOfGroupFuncAndFieldsIncompatible = 8123
+	ErrBRIEBackupFailed                    = 8124
+	ErrBRIERestoreFailed                   = 8125
+	ErrBRIEImportFailed                    = 8126
+	ErrBRIEExportFailed                    = 8127
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation        = 8200
@@ -1068,14 +1074,18 @@ const (
 	ErrCannotCancelDDLJob             = 8226
 	ErrSequenceUnsupportedTableOption = 8227
 	ErrColumnTypeUnsupportedNextValue = 8228
+	ErrLockExpire                     = 8229
+	ErrAddColumnWithSequenceAsDefault = 8230
 
 	// TiKV/PD errors.
-	ErrPDServerTimeout    = 9001
-	ErrTiKVServerTimeout  = 9002
-	ErrTiKVServerBusy     = 9003
-	ErrResolveLockTimeout = 9004
-	ErrRegionUnavailable  = 9005
-	ErrGCTooEarly         = 9006
-	ErrWriteConflict      = 9007
-	ErrTiKVStoreLimit     = 9008
+	ErrPDServerTimeout        = 9001
+	ErrTiKVServerTimeout      = 9002
+	ErrTiKVServerBusy         = 9003
+	ErrResolveLockTimeout     = 9004
+	ErrRegionUnavailable      = 9005
+	ErrGCTooEarly             = 9006
+	ErrWriteConflict          = 9007
+	ErrTiKVStoreLimit         = 9008
+	ErrPrometheusAddrIsNotSet = 9009
+	ErrTiKVStaleCommand       = 9010
 )

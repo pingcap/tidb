@@ -35,11 +35,18 @@ type FieldType = ast.FieldType
 // NewFieldType returns a FieldType,
 // with a type and other information about field type.
 func NewFieldType(tp byte) *FieldType {
-	return &FieldType{
+	ft := &FieldType{
 		Tp:      tp,
 		Flen:    UnspecifiedLength,
 		Decimal: UnspecifiedLength,
 	}
+	if tp != mysql.TypeVarchar && tp != mysql.TypeVarString && tp != mysql.TypeString {
+		ft.Collate = charset.CollationBin
+	} else {
+		ft.Collate = mysql.DefaultCollationName
+	}
+	// TODO: use DefaultCharsetForType to set charset and collate
+	return ft
 }
 
 // NewFieldTypeWithCollation returns a FieldType,
@@ -65,6 +72,7 @@ func AggFieldType(tps []*FieldType) *FieldType {
 		}
 		mtp := MergeFieldType(currType.Tp, t.Tp)
 		currType.Tp = mtp
+		currType.Flag = mergeTypeFlag(currType.Flag, t.Flag)
 	}
 
 	return &currType
@@ -284,7 +292,7 @@ func DefaultTypeForValue(value interface{}, tp *FieldType, char string, collate 
 func DefaultCharsetForType(tp byte) (string, string) {
 	switch tp {
 	case mysql.TypeVarString, mysql.TypeString, mysql.TypeVarchar:
-		// Default charset for string types is utf8.
+		// Default charset for string types is utf8mb4.
 		return mysql.DefaultCharset, mysql.DefaultCollationName
 	}
 	return charset.CharsetBin, charset.CollationBin
@@ -299,6 +307,13 @@ func MergeFieldType(a byte, b byte) byte {
 	ia := getFieldTypeIndex(a)
 	ib := getFieldTypeIndex(b)
 	return fieldTypeMergeRules[ia][ib]
+}
+
+// mergeTypeFlag merges two MySQL type flag to a new one
+// currently only NotNullFlag is checked
+// todo more flag need to be checked, for example: UnsignedFlag
+func mergeTypeFlag(a, b uint) uint {
+	return a & (b&mysql.NotNullFlag | ^mysql.NotNullFlag)
 }
 
 func getFieldTypeIndex(tp byte) int {

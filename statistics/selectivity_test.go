@@ -122,7 +122,7 @@ func (h *logHook) Check(e zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.Chec
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -592,4 +592,22 @@ func (s *testStatsSuite) TestUniqCompEqualEst(c *C) {
 		})
 		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
 	}
+}
+
+func (s *testStatsSuite) TestSelectivityGreedyAlgo(c *C) {
+	nodes := make([]*statistics.StatsNode, 3)
+	nodes[0] = statistics.MockStatsNode(1, 3, 2)
+	nodes[1] = statistics.MockStatsNode(2, 5, 2)
+	nodes[2] = statistics.MockStatsNode(3, 9, 2)
+
+	// Sets should not overlap on mask, so only nodes[0] is chosen.
+	usedSets := statistics.GetUsableSetsByGreedy(nodes)
+	c.Assert(len(usedSets), Equals, 1)
+	c.Assert(usedSets[0].ID, Equals, int64(1))
+
+	nodes[0], nodes[1] = nodes[1], nodes[0]
+	// Sets chosen should be stable, so the returned node is still the one with ID 1.
+	usedSets = statistics.GetUsableSetsByGreedy(nodes)
+	c.Assert(len(usedSets), Equals, 1)
+	c.Assert(usedSets[0].ID, Equals, int64(1))
 }

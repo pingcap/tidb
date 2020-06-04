@@ -14,7 +14,6 @@
 package profile_test
 
 import (
-	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -33,13 +32,9 @@ type profileSuite struct {
 
 var _ = Suite(&profileSuite{})
 
-func TestT(t *testing.T) {
-	TestingT(t)
-}
-
 func (s *profileSuite) SetUpSuite(c *C) {
 	var err error
-	s.store, err = mockstore.NewMockTikvStore()
+	s.store, err = mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	session.DisableStats4Test()
 	s.dom, err = session.BootstrapSession(s.store)
