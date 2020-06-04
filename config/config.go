@@ -77,22 +77,22 @@ var (
 
 // Config contains configuration options.
 type Config struct {
-	Host             string `toml:"host" json:"host"`
-	AdvertiseAddress string `toml:"advertise-address" json:"advertise-address"`
-	Port             uint   `toml:"port" json:"port"`
-	Cors             string `toml:"cors" json:"cors"`
-	Store            string `toml:"store" json:"store"`
-	Path             string `toml:"path" json:"path"`
-	Socket           string `toml:"socket" json:"socket"`
-	Lease            string `toml:"lease" json:"lease"`
-	RunDDL           bool   `toml:"run-ddl" json:"run-ddl"`
-	SplitTable       bool   `toml:"split-table" json:"split-table"`
-	TokenLimit       uint   `toml:"token-limit" json:"token-limit"`
-	OOMUseTmpStorage bool   `toml:"oom-use-tmp-storage" json:"oom-use-tmp-storage"`
-	TempStoragePath  string `toml:"tmp-storage-path" json:"tmp-storage-path"`
-	OOMAction        string `toml:"oom-action" json:"oom-action"`
-	MemQuotaQuery    int64  `toml:"mem-quota-query" json:"mem-quota-query"`
-	ApplyCacheQuota  int64  `toml:"apply-cache-quota" json:"apply-cache-quota"`
+	Host               string `toml:"host" json:"host"`
+	AdvertiseAddress   string `toml:"advertise-address" json:"advertise-address"`
+	Port               uint   `toml:"port" json:"port"`
+	Cors               string `toml:"cors" json:"cors"`
+	Store              string `toml:"store" json:"store"`
+	Path               string `toml:"path" json:"path"`
+	Socket             string `toml:"socket" json:"socket"`
+	Lease              string `toml:"lease" json:"lease"`
+	RunDDL             bool   `toml:"run-ddl" json:"run-ddl"`
+	SplitTable         bool   `toml:"split-table" json:"split-table"`
+	TokenLimit         uint   `toml:"token-limit" json:"token-limit"`
+	OOMUseTmpStorage   bool   `toml:"oom-use-tmp-storage" json:"oom-use-tmp-storage"`
+	TempStoragePath    string `toml:"tmp-storage-path" json:"tmp-storage-path"`
+	OOMAction          string `toml:"oom-action" json:"oom-action"`
+	MemQuotaQuery      int64  `toml:"mem-quota-query" json:"mem-quota-query"`
+	ApplyCacheCapacity int64  `toml:"apply-cache-capacity" json:"apply-cache-capacity"`
 	// TempStorageQuota describe the temporary storage Quota during query exector when OOMUseTmpStorage is enabled
 	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error
 	TempStorageQuota int64           `toml:"tmp-storage-quota" json:"tmp-storage-quota"` // Bytes
@@ -380,6 +380,7 @@ type Performance struct {
 	CommitterConcurrency int     `toml:"committer-concurrency" json:"committer-concurrency"`
 	MaxTxnTTL            uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
 	MemProfileInterval   string  `toml:"mem-profile-interval" json:"mem-profile-interval"`
+	ApplyCacheCapacity   int64   `toml:"apply-cache-capacity" json:"apply-cache-capacity"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -562,7 +563,7 @@ var defaultConf = Config{
 	TempStoragePath:              tempStorageDirName,
 	OOMAction:                    OOMActionCancel,
 	MemQuotaQuery:                1 << 30,
-	ApplyCacheQuota:              104857600,
+	ApplyCacheCapacity:           20971520,
 	EnableStreaming:              false,
 	EnableBatchDML:               false,
 	CheckMb4ValueInUTF8:          true,
@@ -620,6 +621,7 @@ var defaultConf = Config{
 		CommitterConcurrency: 16,
 		MaxTxnTTL:            10 * 60 * 1000, // 10min
 		MemProfileInterval:   "1m",
+		ApplyCacheCapacity:   20971520, // 20MB
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",

@@ -1565,7 +1565,7 @@ func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 	}
 
 	var canUseCache bool
-	if count < 0.9 {
+	if count < 0.9 && la.ctx.GetSessionVars().ApplyCacheQuota > 0 {
 		canUseCache = true
 	} else {
 		canUseCache = false
