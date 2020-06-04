@@ -1041,16 +1041,8 @@ func (e *vecGroupChecker) splitIntoGroups(chk *chunk.Chunk) (isFirstGroupSameAsP
 		return true, nil
 	}
 
-	if cap(e.sameGroup) < numRows {
-		e.sameGroup = make([]bool, 0, numRows)
-	}
-	e.sameGroup = append(e.sameGroup, false)
-	for i := 1; i < numRows; i++ {
-		e.sameGroup = append(e.sameGroup, true)
-	}
-
 	for _, item := range e.GroupByItems {
-		err = e.evalGroupItemsAndResolveGroups(item, chk, numRows)
+		err = e.getFirstAndLastRowDatum(item, chk, numRows)
 		if err != nil {
 			return false, err
 		}
@@ -1082,6 +1074,27 @@ func (e *vecGroupChecker) splitIntoGroups(chk *chunk.Chunk) (isFirstGroupSameAsP
 	}
 	copy(e.lastGroupKeyOfPrevChk, e.lastGroupKey)
 
+	if bytes.Equal(e.firstGroupKey, e.lastGroupKey) {
+		e.groupOffset = append(e.groupOffset, numRows)
+		e.groupCount = 1
+		return isFirstGroupSameAsPrev, nil
+	}
+
+	if cap(e.sameGroup) < numRows {
+		e.sameGroup = make([]bool, 0, numRows)
+	}
+	e.sameGroup = append(e.sameGroup, false)
+	for i := 1; i < numRows; i++ {
+		e.sameGroup = append(e.sameGroup, true)
+	}
+
+	for _, item := range e.GroupByItems {
+		err = e.evalGroupItemsAndResolveGroups(item, chk, numRows)
+		if err != nil {
+			return false, err
+		}
+	}
+
 	for i := 1; i < numRows; i++ {
 		if !e.sameGroup[i] {
 			e.groupOffset = append(e.groupOffset, i)
@@ -1090,6 +1103,172 @@ func (e *vecGroupChecker) splitIntoGroups(chk *chunk.Chunk) (isFirstGroupSameAsP
 	e.groupOffset = append(e.groupOffset, numRows)
 	e.groupCount = len(e.groupOffset)
 	return isFirstGroupSameAsPrev, nil
+}
+
+func (e *vecGroupChecker) getFirstAndLastRowDatum(item expression.Expression, chk *chunk.Chunk, numRows int) (err error) {
+	var firstRowDatum, lastRowDatum types.Datum
+	tp := item.GetType()
+	eType := tp.EvalType()
+	switch eType {
+	case types.ETInt:
+		firstRowVal, firstRowIsNull, err := item.EvalInt(e.ctx, chk.GetRow(0))
+		if err != nil {
+			return err
+		}
+		lastRowVal, lastRowIsNull, err := item.EvalInt(e.ctx, chk.GetRow(numRows-1))
+		if err != nil {
+			return err
+		}
+		if !firstRowIsNull {
+			firstRowDatum.SetInt64(firstRowVal)
+		} else {
+			firstRowDatum.SetNull()
+		}
+		if !lastRowIsNull {
+			lastRowDatum.SetInt64(lastRowVal)
+		} else {
+			lastRowDatum.SetNull()
+		}
+	case types.ETReal:
+		firstRowVal, firstRowIsNull, err := item.EvalReal(e.ctx, chk.GetRow(0))
+		if err != nil {
+			return err
+		}
+		lastRowVal, lastRowIsNull, err := item.EvalReal(e.ctx, chk.GetRow(numRows-1))
+		if err != nil {
+			return err
+		}
+		if !firstRowIsNull {
+			firstRowDatum.SetFloat64(firstRowVal)
+		} else {
+			firstRowDatum.SetNull()
+		}
+		if !lastRowIsNull {
+			lastRowDatum.SetFloat64(lastRowVal)
+		} else {
+			lastRowDatum.SetNull()
+		}
+	case types.ETDecimal:
+		firstRowVal, firstRowIsNull, err := item.EvalDecimal(e.ctx, chk.GetRow(0))
+		if err != nil {
+			return err
+		}
+		lastRowVal, lastRowIsNull, err := item.EvalDecimal(e.ctx, chk.GetRow(numRows-1))
+		if err != nil {
+			return err
+		}
+		if !firstRowIsNull {
+			// make a copy to avoid DATA RACE
+			firstDatum := types.MyDecimal{}
+			err := firstDatum.FromString(firstRowVal.ToString())
+			if err != nil {
+				return err
+			}
+			firstRowDatum.SetMysqlDecimal(&firstDatum)
+		} else {
+			firstRowDatum.SetNull()
+		}
+		if !lastRowIsNull {
+			// make a copy to avoid DATA RACE
+			lastDatum := types.MyDecimal{}
+			err := lastDatum.FromString(lastRowVal.ToString())
+			if err != nil {
+				return err
+			}
+			lastRowDatum.SetMysqlDecimal(&lastDatum)
+		} else {
+			lastRowDatum.SetNull()
+		}
+	case types.ETDatetime, types.ETTimestamp:
+		firstRowVal, firstRowIsNull, err := item.EvalTime(e.ctx, chk.GetRow(0))
+		if err != nil {
+			return err
+		}
+		lastRowVal, lastRowIsNull, err := item.EvalTime(e.ctx, chk.GetRow(numRows-1))
+		if err != nil {
+			return err
+		}
+		if !firstRowIsNull {
+			firstRowDatum.SetMysqlTime(firstRowVal)
+		} else {
+			firstRowDatum.SetNull()
+		}
+		if !lastRowIsNull {
+			lastRowDatum.SetMysqlTime(lastRowVal)
+		} else {
+			lastRowDatum.SetNull()
+		}
+	case types.ETDuration:
+		firstRowVal, firstRowIsNull, err := item.EvalDuration(e.ctx, chk.GetRow(0))
+		if err != nil {
+			return err
+		}
+		lastRowVal, lastRowIsNull, err := item.EvalDuration(e.ctx, chk.GetRow(numRows-1))
+		if err != nil {
+			return err
+		}
+		if !firstRowIsNull {
+			firstRowDatum.SetMysqlDuration(firstRowVal)
+		} else {
+			firstRowDatum.SetNull()
+		}
+		if !lastRowIsNull {
+			lastRowDatum.SetMysqlDuration(lastRowVal)
+		} else {
+			lastRowDatum.SetNull()
+		}
+	case types.ETJson:
+		firstRowVal, firstRowIsNull, err := item.EvalJSON(e.ctx, chk.GetRow(0))
+		if err != nil {
+			return err
+		}
+		lastRowVal, lastRowIsNull, err := item.EvalJSON(e.ctx, chk.GetRow(numRows-1))
+		if err != nil {
+			return err
+		}
+		if !firstRowIsNull {
+			// make a copy to avoid DATA RACE
+			firstRowDatum.SetMysqlJSON(firstRowVal.Copy())
+		} else {
+			firstRowDatum.SetNull()
+		}
+		if !lastRowIsNull {
+			// make a copy to avoid DATA RACE
+			lastRowDatum.SetMysqlJSON(lastRowVal.Copy())
+		} else {
+			lastRowDatum.SetNull()
+		}
+	case types.ETString:
+		firstRowVal, firstRowIsNull, err := item.EvalString(e.ctx, chk.GetRow(0))
+		if err != nil {
+			return err
+		}
+		lastRowVal, lastRowIsNull, err := item.EvalString(e.ctx, chk.GetRow(numRows-1))
+		if err != nil {
+			return err
+		}
+		if !firstRowIsNull {
+			// make a copy to avoid DATA RACE
+			firstDatum := string([]byte(firstRowVal))
+			firstRowDatum.SetString(firstDatum, tp.Collate)
+		} else {
+			firstRowDatum.SetNull()
+		}
+		if !lastRowIsNull {
+			// make a copy to avoid DATA RACE
+			lastDatum := string([]byte(lastRowVal))
+			lastRowDatum.SetString(lastDatum, tp.Collate)
+		} else {
+			lastRowDatum.SetNull()
+		}
+	default:
+		err = errors.New(fmt.Sprintf("invalid eval type %v", eType))
+		return err
+	}
+
+	e.firstRowDatums = append(e.firstRowDatums, firstRowDatum)
+	e.lastRowDatums = append(e.lastRowDatums, lastRowDatum)
+	return err
 }
 
 // evalGroupItemsAndResolveGroups evaluates the chunk according to the expression item.
@@ -1113,15 +1292,7 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 		return err
 	}
 
-	var firstRowDatum, lastRowDatum types.Datum
-	firstRowIsNull, lastRowIsNull := col.IsNull(0), col.IsNull(numRows-1)
-	if firstRowIsNull {
-		firstRowDatum.SetNull()
-	}
-	if lastRowIsNull {
-		lastRowDatum.SetNull()
-	}
-	previousIsNull := firstRowIsNull
+	previousIsNull := col.IsNull(0)
 	switch eType {
 	case types.ETInt:
 		vals := col.Int64s()
@@ -1137,12 +1308,6 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 			}
 			previousIsNull = isNull
 		}
-		if !firstRowIsNull {
-			firstRowDatum.SetInt64(vals[0])
-		}
-		if !lastRowIsNull {
-			lastRowDatum.SetInt64(vals[numRows-1])
-		}
 	case types.ETReal:
 		vals := col.Float64s()
 		for i := 1; i < numRows; i++ {
@@ -1156,12 +1321,6 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 				e.sameGroup[i] = false
 			}
 			previousIsNull = isNull
-		}
-		if !firstRowIsNull {
-			firstRowDatum.SetFloat64(vals[0])
-		}
-		if !lastRowIsNull {
-			lastRowDatum.SetFloat64(vals[numRows-1])
 		}
 	case types.ETDecimal:
 		vals := col.Decimals()
@@ -1177,16 +1336,6 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 			}
 			previousIsNull = isNull
 		}
-		if !firstRowIsNull {
-			// make a copy to avoid DATA RACE
-			firstDatum := vals[0]
-			firstRowDatum.SetMysqlDecimal(&firstDatum)
-		}
-		if !lastRowIsNull {
-			// make a copy to avoid DATA RACE
-			lastDatum := vals[numRows-1]
-			lastRowDatum.SetMysqlDecimal(&lastDatum)
-		}
 	case types.ETDatetime, types.ETTimestamp:
 		vals := col.Times()
 		for i := 1; i < numRows; i++ {
@@ -1201,12 +1350,6 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 			}
 			previousIsNull = isNull
 		}
-		if !firstRowIsNull {
-			firstRowDatum.SetMysqlTime(vals[0])
-		}
-		if !lastRowIsNull {
-			lastRowDatum.SetMysqlTime(vals[numRows-1])
-		}
 	case types.ETDuration:
 		vals := col.GoDurations()
 		for i := 1; i < numRows; i++ {
@@ -1220,12 +1363,6 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 				e.sameGroup[i] = false
 			}
 			previousIsNull = isNull
-		}
-		if !firstRowIsNull {
-			firstRowDatum.SetMysqlDuration(types.Duration{Duration: vals[0], Fsp: int8(item.GetType().Decimal)})
-		}
-		if !lastRowIsNull {
-			lastRowDatum.SetMysqlDuration(types.Duration{Duration: vals[numRows-1], Fsp: int8(item.GetType().Decimal)})
 		}
 	case types.ETJson:
 		var previousKey, key json.BinaryJSON
@@ -1251,14 +1388,6 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 			}
 			previousIsNull = isNull
 		}
-		if !firstRowIsNull {
-			// make a copy to avoid DATA RACE
-			firstRowDatum.SetMysqlJSON(col.GetJSON(0).Copy())
-		}
-		if !lastRowIsNull {
-			// make a copy to avoid DATA RACE
-			lastRowDatum.SetMysqlJSON(col.GetJSON(numRows - 1).Copy())
-		}
 	case types.ETString:
 		previousKey := codec.ConvertByCollationStr(col.GetString(0), tp)
 		for i := 1; i < numRows; i++ {
@@ -1272,14 +1401,6 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 			previousKey = key
 			previousIsNull = isNull
 		}
-		if !firstRowIsNull {
-			// don't use col.GetString since it will cause DATA RACE
-			firstRowDatum.SetString(string(col.GetBytes(0)), tp.Collate)
-		}
-		if !lastRowIsNull {
-			// don't use col.GetString since it will cause DATA RACE
-			lastRowDatum.SetString(string(col.GetBytes(numRows-1)), tp.Collate)
-		}
 	default:
 		err = errors.New(fmt.Sprintf("invalid eval type %v", eType))
 	}
@@ -1287,8 +1408,6 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 		return err
 	}
 
-	e.firstRowDatums = append(e.firstRowDatums, firstRowDatum)
-	e.lastRowDatums = append(e.lastRowDatums, lastRowDatum)
 	return err
 }
 
