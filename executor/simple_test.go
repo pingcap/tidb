@@ -442,7 +442,7 @@ func (s *testSuite3) TestUser(c *C) {
 	tk.MustExec(dropUserSQL)
 	createUserSQL = `create user test3@'%' IDENTIFIED WITH 'mysql_native_password' AS '*6BB4837EB74329105EE4568DDA7DC67ED2CA2AD9';`
 	tk.MustExec(createUserSQL)
-	querySQL := `select authentication_string from mysql.user where user="test3" ;`
+	querySQL := `select PASSWORD from mysql.user where user="test3" ;`
 	tk.MustQuery(querySQL).Check(testkit.Rows("*6BB4837EB74329105EE4568DDA7DC67ED2CA2AD9"))
 	alterUserSQL = `alter user test3@'%' IDENTIFIED WITH 'mysql_native_password' AS '*6BB4837EB74329105EE4568DDA7DC67ED2CA2AD9';`
 	tk.MustExec(alterUserSQL)
