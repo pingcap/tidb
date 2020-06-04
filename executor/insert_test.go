@@ -1164,7 +1164,7 @@ func (s *testSuite10) TestClusterPrimaryTablePlainInsert(c *C) {
 	tk.MustExec(`set @@tidb_constraint_check_in_place=true`)
 	c.Assert(tk.ExecToErr(`insert into t1pk(id, v) values('abc', 2)`).Error(), Equals, `[kv:1062]Duplicate entry '{abc}' for key 'PRIMARY'`)
 	tk.MustExec(`set @@tidb_constraint_check_in_place=false`)
-	c.Assert(tk.ExecToErr(`insert into t1pk(id, v) values('abc', 3)`).Error(), Equals, `[kv:1062]Duplicate entry 'abc' for key 'PRIMARY'`)
+	c.Assert(tk.ExecToErr(`insert into t1pk(id, v) values('abc', 3)`).Error(), Equals, `[kv:1062]Duplicate entry '{abc}' for key 'PRIMARY'`)
 	tk.MustQuery(`select v, id from t1pk`).Check(testkit.Rows("1 abc"))
 
 	tk.MustExec(`drop table if exists t3pk`)
@@ -1174,6 +1174,6 @@ func (s *testSuite10) TestClusterPrimaryTablePlainInsert(c *C) {
 	tk.MustExec(`set @@tidb_constraint_check_in_place=true`)
 	c.Assert(tk.ExecToErr(`insert into t3pk(id1, id2, id3, v) values('abc', 'xyz', 100, 2)`).Error(), Equals, `[kv:1062]Duplicate entry '{abc, xyz, 100}' for key 'PRIMARY'`)
 	tk.MustExec(`set @@tidb_constraint_check_in_place=false`)
-	c.Assert(tk.ExecToErr(`insert into t3pk(id1, id2, id3, v) values('abc', 'xyz', 100, 3)`).Error(), Equals, `[kv:1062]Duplicate entry 'abc-xyz-100' for key 'PRIMARY'`)
+	c.Assert(tk.ExecToErr(`insert into t3pk(id1, id2, id3, v) values('abc', 'xyz', 100, 3)`).Error(), Equals, `[kv:1062]Duplicate entry '{abc, xyz, 100}' for key 'PRIMARY'`)
 	tk.MustQuery(`select v, id3, id2, id1 from t3pk`).Check(testkit.Rows("1 100 xyz abc"))
 }

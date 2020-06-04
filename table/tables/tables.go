@@ -490,7 +490,13 @@ func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 			recordID = kv.IntHandle(r[tblInfo.GetPkColInfo().Offset].GetInt64())
 			hasRecordID = true
 		} else if tblInfo.IsCommonHandle {
-			pkIdx := tblInfo.FindIndexByName(PrimaryConstraint)
+			var pkIdx *model.IndexInfo
+			for _, idx := range tblInfo.Indices {
+				if idx.Primary {
+					pkIdx = idx
+					break
+				}
+			}
 			pkDts := make([]types.Datum, 0, len(pkIdx.Columns))
 			for _, idxCol := range pkIdx.Columns {
 				pkDts = append(pkDts, r[tblInfo.Columns[idxCol.Offset].Offset])
@@ -669,7 +675,7 @@ func (t *TableCommon) addIndices(sctx sessionctx.Context, recordID kv.Handle, r 
 	writeBufs := sctx.GetSessionVars().GetWriteStmtBufs()
 	indexVals := writeBufs.IndexValsBuf
 	for _, v := range t.WritableIndices() {
-		if v.Meta().Name.O == PrimaryConstraint {
+		if t.meta.IsCommonHandle && v.Meta().Primary {
 			continue
 		}
 		indexVals, err = v.FetchValues(r, indexVals)
