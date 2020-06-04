@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -144,6 +145,8 @@ const (
 	TableStatementsSummary = "STATEMENTS_SUMMARY"
 	// TableStatementsSummaryHistory is the string constant of statements summary history table.
 	TableStatementsSummaryHistory = "STATEMENTS_SUMMARY_HISTORY"
+	// TableStorageStats is a table that contains all tables disk usage
+	TableStorageStats = "TABLE_STORAGE_STATS"
 )
 
 var tableIDMap = map[string]int64{
@@ -209,6 +212,7 @@ var tableIDMap = map[string]int64{
 	TableStatementsSummaryHistory:           autoid.InformationSchemaDBID + 60,
 	ClusterTableStatementsSummary:           autoid.InformationSchemaDBID + 61,
 	ClusterTableStatementsSummaryHistory:    autoid.InformationSchemaDBID + 62,
+	TableStorageStats:                       autoid.InformationSchemaDBID + 63,
 }
 
 type columnInfo struct {
@@ -722,6 +726,7 @@ var slowQueryCols = []columnInfo{
 	{name: execdetails.WriteSizeStr, tp: mysql.TypeLonglong, size: 22},
 	{name: execdetails.PrewriteRegionStr, tp: mysql.TypeLonglong, size: 22},
 	{name: execdetails.TxnRetryStr, tp: mysql.TypeLonglong, size: 22},
+	{name: execdetails.CopTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: execdetails.ProcessTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: execdetails.WaitTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: execdetails.BackoffTimeStr, tp: mysql.TypeDouble, size: 22},
@@ -743,7 +748,9 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogCopWaitMax, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogCopWaitAddr, tp: mysql.TypeVarchar, size: 64},
 	{name: variable.SlowLogMemMax, tp: mysql.TypeLonglong, size: 20},
+	{name: variable.SlowLogDiskMax, tp: mysql.TypeLonglong, size: 20},
 	{name: variable.SlowLogSucc, tp: mysql.TypeTiny, size: 1},
+	{name: variable.SlowLogPlanFromCache, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogPlan, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: variable.SlowLogPlanDigest, tp: mysql.TypeVarchar, size: 128},
 	{name: variable.SlowLogPrevStmt, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
@@ -814,6 +821,8 @@ var TableTiKVRegionStatusCols = []columnInfo{
 	{name: "READ_BYTES", tp: mysql.TypeLonglong, size: 21},
 	{name: "APPROXIMATE_SIZE", tp: mysql.TypeLonglong, size: 21},
 	{name: "APPROXIMATE_KEYS", tp: mysql.TypeLonglong, size: 21},
+	{name: "REPLICATIONSTATUS_STATE", tp: mysql.TypeVarchar, size: 64},
+	{name: "REPLICATIONSTATUS_STATEID", tp: mysql.TypeLonglong, size: 21},
 }
 
 // TableTiKVRegionPeersCols is TiKV region peers mem table columns.
@@ -1090,13 +1099,28 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: "BACKOFF_TYPES", tp: mysql.TypeVarchar, size: 1024, comment: "Types of errors and the number of retries for each type"},
 	{name: "AVG_MEM", tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average memory(byte) used"},
 	{name: "MAX_MEM", tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max memory(byte) used"},
+	{name: "AVG_DISK", tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average disk space(byte) used"},
+	{name: "MAX_DISK", tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max disk space(byte) used"},
 	{name: "AVG_AFFECTED_ROWS", tp: mysql.TypeDouble, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average number of rows affected"},
 	{name: "FIRST_SEEN", tp: mysql.TypeTimestamp, size: 26, flag: mysql.NotNullFlag, comment: "The time these statements are seen for the first time"},
 	{name: "LAST_SEEN", tp: mysql.TypeTimestamp, size: 26, flag: mysql.NotNullFlag, comment: "The time these statements are seen for the last time"},
+	{name: "PLAN_IN_CACHE", tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, comment: "Whether the last statement hit plan cache"},
+	{name: "PLAN_CACHE_HITS", tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag, comment: "The number of times these statements hit plan cache"},
 	{name: "QUERY_SAMPLE_TEXT", tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "Sampled original statement"},
 	{name: "PREV_SAMPLE_TEXT", tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "The previous statement before commit"},
 	{name: "PLAN_DIGEST", tp: mysql.TypeVarchar, size: 64, comment: "Digest of its execution plan"},
 	{name: "PLAN", tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "Sampled execution plan"},
+}
+
+var tableStorageStatsCols = []columnInfo{
+	{name: "TABLE_SCHEMA", tp: mysql.TypeVarchar, size: 64},
+	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "PEER_COUNT", tp: mysql.TypeLonglong, size: 21},
+	{name: "REGION_COUNT", tp: mysql.TypeLonglong, size: 21, comment: "The region count of single replica of the table"},
+	{name: "EMPTY_REGION_COUNT", tp: mysql.TypeLonglong, size: 21, comment: "The region count of single replica of the table"},
+	{name: "TABLE_SIZE", tp: mysql.TypeLonglong, size: 64, comment: "The disk usage(MB) of single replica of the table, if the table size is empty or less than 1MB, it would show 1MB "},
+	{name: "TABLE_KEYS", tp: mysql.TypeLonglong, size: 64, comment: "The count of keys of single replica of the table"},
 }
 
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
@@ -1166,7 +1190,7 @@ func GetClusterServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 
 	type retriever func(ctx sessionctx.Context) ([]ServerInfo, error)
 	var servers []ServerInfo
-	for _, r := range []retriever{GetTiDBServerInfo, GetPDServerInfo, GetTiKVServerInfo} {
+	for _, r := range []retriever{GetTiDBServerInfo, GetPDServerInfo, GetStoreServerInfo} {
 		nodes, err := r(ctx)
 		if err != nil {
 			return nil, err
@@ -1249,10 +1273,10 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 			return nil, errors.Trace(err)
 		}
 		pdVersion, err := ioutil.ReadAll(resp.Body)
+		terror.Log(resp.Body.Close())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		terror.Log(resp.Body.Close())
 		version := strings.Trim(strings.Trim(string(pdVersion), "\n"), "\"")
 
 		// Get PD git_hash
@@ -1270,10 +1294,11 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 			GitHash        string `json:"git_hash"`
 			StartTimestamp int64  `json:"start_timestamp"`
 		}{}
-		if err := json.NewDecoder(resp.Body).Decode(&content); err != nil {
+		err = json.NewDecoder(resp.Body).Decode(&content)
+		terror.Log(resp.Body.Close())
+		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		terror.Log(resp.Body.Close())
 
 		servers = append(servers, ServerInfo{
 			ServerType:     "pd",
@@ -1287,13 +1312,23 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	return servers, nil
 }
 
-// GetTiKVServerInfo returns all TiKV nodes information of cluster
-func GetTiKVServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
+// GetStoreServerInfo returns all store nodes(TiKV or TiFlash) cluster information
+func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
+	isTiFlashStore := func(store *metapb.Store) bool {
+		isTiFlash := false
+		for _, label := range store.Labels {
+			if label.GetKey() == "engine" && label.GetValue() == "tiflash" {
+				isTiFlash = true
+			}
+		}
+		return isTiFlash
+	}
+
 	store := ctx.GetStore()
 	// Get TiKV servers info.
 	tikvStore, ok := store.(tikv.Storage)
 	if !ok {
-		return nil, errors.Errorf("%T is not an TiKV store instance", store)
+		return nil, errors.Errorf("%T is not an TiKV or TiFlash store instance", store)
 	}
 	pdClient := tikvStore.GetRegionCache().PDClient()
 	if pdClient == nil {
@@ -1305,7 +1340,12 @@ func GetTiKVServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	}
 	var servers []ServerInfo
 	for _, store := range stores {
-		tp := tikv.GetStoreTypeByMeta(store).Name()
+		var tp string
+		if isTiFlashStore(store) {
+			tp = "tiflash"
+		} else {
+			tp = tikv.GetStoreTypeByMeta(store).Name()
+		}
 		servers = append(servers, ServerInfo{
 			ServerType:     tp,
 			Address:        store.Address,
@@ -1376,6 +1416,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableSequences:                          tableSequencesCols,
 	TableStatementsSummary:                  tableStatementsSummaryCols,
 	TableStatementsSummaryHistory:           tableStatementsSummaryCols,
+	TableStorageStats:                       tableStorageStatsCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
@@ -1472,12 +1513,12 @@ func (it *infoschemaTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, 
 }
 
 // RowWithCols implements table.Table RowWithCols interface.
-func (it *infoschemaTable) RowWithCols(ctx sessionctx.Context, h int64, cols []*table.Column) ([]types.Datum, error) {
+func (it *infoschemaTable) RowWithCols(ctx sessionctx.Context, h kv.Handle, cols []*table.Column) ([]types.Datum, error) {
 	return nil, table.ErrUnsupportedOp
 }
 
 // Row implements table.Table Row interface.
-func (it *infoschemaTable) Row(ctx sessionctx.Context, h int64) ([]types.Datum, error) {
+func (it *infoschemaTable) Row(ctx sessionctx.Context, h kv.Handle) ([]types.Datum, error) {
 	return nil, table.ErrUnsupportedOp
 }
 
@@ -1537,22 +1578,22 @@ func (it *infoschemaTable) FirstKey() kv.Key {
 }
 
 // RecordKey implements table.Table RecordKey interface.
-func (it *infoschemaTable) RecordKey(h int64) kv.Key {
+func (it *infoschemaTable) RecordKey(h kv.Handle) kv.Key {
 	return nil
 }
 
 // AddRecord implements table.Table AddRecord interface.
-func (it *infoschemaTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID int64, err error) {
-	return 0, table.ErrUnsupportedOp
+func (it *infoschemaTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
+	return nil, table.ErrUnsupportedOp
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
-func (it *infoschemaTable) RemoveRecord(ctx sessionctx.Context, h int64, r []types.Datum) error {
+func (it *infoschemaTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []types.Datum) error {
 	return table.ErrUnsupportedOp
 }
 
 // UpdateRecord implements table.Table UpdateRecord interface.
-func (it *infoschemaTable) UpdateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
+func (it *infoschemaTable) UpdateRecord(ctx sessionctx.Context, h kv.Handle, oldData, newData []types.Datum, touched []bool) error {
 	return table.ErrUnsupportedOp
 }
 
@@ -1562,7 +1603,7 @@ func (it *infoschemaTable) Allocators(_ sessionctx.Context) autoid.Allocators {
 }
 
 // RebaseAutoID implements table.Table RebaseAutoID interface.
-func (it *infoschemaTable) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool) error {
+func (it *infoschemaTable) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool, tp autoid.AllocatorType) error {
 	return table.ErrUnsupportedOp
 }
 
@@ -1577,8 +1618,8 @@ func (it *infoschemaTable) GetPhysicalID() int64 {
 }
 
 // Seek implements table.Table Seek interface.
-func (it *infoschemaTable) Seek(ctx sessionctx.Context, h int64) (int64, bool, error) {
-	return 0, false, table.ErrUnsupportedOp
+func (it *infoschemaTable) Seek(ctx sessionctx.Context, h kv.Handle) (kv.Handle, bool, error) {
+	return nil, false, table.ErrUnsupportedOp
 }
 
 // Type implements table.Table Type interface.
@@ -1599,12 +1640,12 @@ func (vt *VirtualTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, col
 }
 
 // RowWithCols implements table.Table RowWithCols interface.
-func (vt *VirtualTable) RowWithCols(ctx sessionctx.Context, h int64, cols []*table.Column) ([]types.Datum, error) {
+func (vt *VirtualTable) RowWithCols(ctx sessionctx.Context, h kv.Handle, cols []*table.Column) ([]types.Datum, error) {
 	return nil, table.ErrUnsupportedOp
 }
 
 // Row implements table.Table Row interface.
-func (vt *VirtualTable) Row(ctx sessionctx.Context, h int64) ([]types.Datum, error) {
+func (vt *VirtualTable) Row(ctx sessionctx.Context, h kv.Handle) ([]types.Datum, error) {
 	return nil, table.ErrUnsupportedOp
 }
 
@@ -1664,22 +1705,22 @@ func (vt *VirtualTable) FirstKey() kv.Key {
 }
 
 // RecordKey implements table.Table RecordKey interface.
-func (vt *VirtualTable) RecordKey(h int64) kv.Key {
+func (vt *VirtualTable) RecordKey(h kv.Handle) kv.Key {
 	return nil
 }
 
 // AddRecord implements table.Table AddRecord interface.
-func (vt *VirtualTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID int64, err error) {
-	return 0, table.ErrUnsupportedOp
+func (vt *VirtualTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
+	return nil, table.ErrUnsupportedOp
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
-func (vt *VirtualTable) RemoveRecord(ctx sessionctx.Context, h int64, r []types.Datum) error {
+func (vt *VirtualTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []types.Datum) error {
 	return table.ErrUnsupportedOp
 }
 
 // UpdateRecord implements table.Table UpdateRecord interface.
-func (vt *VirtualTable) UpdateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
+func (vt *VirtualTable) UpdateRecord(ctx sessionctx.Context, h kv.Handle, oldData, newData []types.Datum, touched []bool) error {
 	return table.ErrUnsupportedOp
 }
 
@@ -1689,7 +1730,7 @@ func (vt *VirtualTable) Allocators(_ sessionctx.Context) autoid.Allocators {
 }
 
 // RebaseAutoID implements table.Table RebaseAutoID interface.
-func (vt *VirtualTable) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool) error {
+func (vt *VirtualTable) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool, tp autoid.AllocatorType) error {
 	return table.ErrUnsupportedOp
 }
 
@@ -1704,8 +1745,8 @@ func (vt *VirtualTable) GetPhysicalID() int64 {
 }
 
 // Seek implements table.Table Seek interface.
-func (vt *VirtualTable) Seek(ctx sessionctx.Context, h int64) (int64, bool, error) {
-	return 0, false, table.ErrUnsupportedOp
+func (vt *VirtualTable) Seek(ctx sessionctx.Context, h kv.Handle) (kv.Handle, bool, error) {
+	return nil, false, table.ErrUnsupportedOp
 }
 
 // Type implements table.Table Type interface.

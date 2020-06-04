@@ -202,10 +202,8 @@ func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) (*
 		col := columns[i]
 		colInfos[i] = rowcodec.ColInfo{
 			ID:         col.ColumnId,
-			Tp:         col.Tp,
-			Flag:       col.Flag,
+			Ft:         ctx.evalCtx.fieldTps[i],
 			IsPKHandle: col.GetPkHandle(),
-			Collate:    collate.CollationID2Name(col.Collation),
 		}
 	}
 	defVal := func(i int) ([]byte, error) {
@@ -219,7 +217,7 @@ func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) (*
 		}
 		return col.DefaultVal, nil
 	}
-	rd := rowcodec.NewByteDecoder(colInfos, -1, defVal, nil)
+	rd := rowcodec.NewByteDecoder(colInfos, []int64{-1}, defVal, nil)
 	e := &tableScanExec{
 		TableScan:      executor.TblScan,
 		kvRanges:       ranges,
@@ -243,17 +241,16 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) (*
 	columns := executor.IdxScan.Columns
 	ctx.evalCtx.setColumnInfo(columns)
 	length := len(columns)
-	pkStatus := tablecodec.HandleNotExists
+	hdStatus := tablecodec.HandleNotNeeded
 	// The PKHandle column info has been collected in ctx.
 	if columns[length-1].GetPkHandle() {
 		if mysql.HasUnsignedFlag(uint(columns[length-1].GetFlag())) {
-			pkStatus = tablecodec.HandleIsUnsigned
+			hdStatus = tablecodec.HandleIsUnsigned
 		} else {
-			pkStatus = tablecodec.HandleIsSigned
+			hdStatus = tablecodec.HandleDefault
 		}
 		columns = columns[:length-1]
 	} else if columns[length-1].ColumnId == model.ExtraHandleID {
-		pkStatus = tablecodec.HandleIsSigned
 		columns = columns[:length-1]
 	}
 	ranges, err := h.extractKVRanges(ctx.keyRanges, executor.IdxScan.Desc)
@@ -270,10 +267,8 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) (*
 		col := columns[i]
 		colInfos = append(colInfos, rowcodec.ColInfo{
 			ID:         col.ColumnId,
-			Tp:         col.Tp,
-			Flag:       col.Flag,
+			Ft:         ctx.evalCtx.fieldTps[i],
 			IsPKHandle: col.GetPkHandle(),
-			Collate:    collate.CollationID2Name(col.Collation),
 		})
 	}
 	e := &indexScanExec{
@@ -284,7 +279,7 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) (*
 		isolationLevel: h.isolationLevel,
 		resolvedLocks:  h.resolvedLocks,
 		mvccStore:      h.mvccStore,
-		hdStatus:       pkStatus,
+		hdStatus:       hdStatus,
 		execDetail:     new(execDetail),
 		colInfos:       colInfos,
 	}
@@ -787,8 +782,8 @@ func (h *rpcHandler) extractKVRanges(keyRanges []*coprocessor.KeyRange, descScan
 			break
 		}
 		var kvr kv.KeyRange
-		kvr.StartKey = kv.Key(maxStartKey(lowerKey, h.rawStartKey))
-		kvr.EndKey = kv.Key(minEndKey(upperKey, h.rawEndKey))
+		kvr.StartKey = maxStartKey(lowerKey, h.rawStartKey)
+		kvr.EndKey = minEndKey(upperKey, h.rawEndKey)
 		kvRanges = append(kvRanges, kvr)
 	}
 	if descScan {
@@ -816,15 +811,15 @@ func appendRow(chunks []tipb.Chunk, data []byte, rowCnt int) []tipb.Chunk {
 }
 
 func maxStartKey(rangeStartKey kv.Key, regionStartKey []byte) []byte {
-	if bytes.Compare([]byte(rangeStartKey), regionStartKey) > 0 {
-		return []byte(rangeStartKey)
+	if bytes.Compare(rangeStartKey, regionStartKey) > 0 {
+		return rangeStartKey
 	}
 	return regionStartKey
 }
 
 func minEndKey(rangeEndKey kv.Key, regionEndKey []byte) []byte {
-	if len(regionEndKey) == 0 || bytes.Compare([]byte(rangeEndKey), regionEndKey) < 0 {
-		return []byte(rangeEndKey)
+	if len(regionEndKey) == 0 || bytes.Compare(rangeEndKey, regionEndKey) < 0 {
+		return rangeEndKey
 	}
 	return regionEndKey
 }

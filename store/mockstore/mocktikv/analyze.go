@@ -24,10 +24,10 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -78,6 +78,7 @@ func (h *rpcHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq 
 		mvccStore:      h.mvccStore,
 		IndexScan:      &tipb.IndexScan{Desc: false},
 		execDetail:     new(execDetail),
+		hdStatus:       tablecodec.HandleNotNeeded,
 	}
 	statsBuilder := statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob))
 	var cms *statistics.CMSketch
@@ -146,10 +147,8 @@ func (h *rpcHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeRe
 		col := columns[i]
 		colInfos[i] = rowcodec.ColInfo{
 			ID:         col.ColumnId,
-			Tp:         col.Tp,
-			Flag:       col.Flag,
+			Ft:         evalCtx.fieldTps[i],
 			IsPKHandle: col.GetPkHandle(),
-			Collate:    collate.CollationID2Name(col.Collation),
 		}
 	}
 	defVal := func(i int) ([]byte, error) {
@@ -163,7 +162,7 @@ func (h *rpcHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeRe
 		}
 		return col.DefaultVal, nil
 	}
-	rd := rowcodec.NewByteDecoder(colInfos, -1, defVal, nil)
+	rd := rowcodec.NewByteDecoder(colInfos, []int64{-1}, defVal, nil)
 	e := &analyzeColumnsExec{
 		tblExec: &tableScanExec{
 			TableScan:      &tipb.TableScan{Columns: columns},

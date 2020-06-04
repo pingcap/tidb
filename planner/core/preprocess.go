@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/domainutil"
 )
@@ -45,6 +45,36 @@ func InPrepare(p *preprocessor) {
 // InTxnRetry is a PreprocessOpt that indicates preprocess is executing under transaction retry.
 func InTxnRetry(p *preprocessor) {
 	p.flag |= inTxnRetry
+}
+
+// TryAddExtraLimit trys to add an extra limit for SELECT or UNION statement when sql_select_limit is set.
+func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
+	if ctx.GetSessionVars().SelectLimit == math.MaxUint64 || ctx.GetSessionVars().InRestrictedSQL {
+		return node
+	}
+	if explain, ok := node.(*ast.ExplainStmt); ok {
+		explain.Stmt = TryAddExtraLimit(ctx, explain.Stmt)
+		return explain
+	} else if sel, ok := node.(*ast.SelectStmt); ok {
+		if sel.Limit != nil || sel.SelectIntoOpt != nil {
+			return node
+		}
+		newSel := *sel
+		newSel.Limit = &ast.Limit{
+			Count: ast.NewValueExpr(ctx.GetSessionVars().SelectLimit, "", ""),
+		}
+		return &newSel
+	} else if union, ok := node.(*ast.UnionStmt); ok {
+		if union.Limit != nil {
+			return node
+		}
+		newUnion := *union
+		newUnion.Limit = &ast.Limit{
+			Count: ast.NewValueExpr(ctx.GetSessionVars().SelectLimit, "", ""),
+		}
+		return &newUnion
+	}
+	return node
 }
 
 // Preprocess resolves table names of the node, and checks some statements validation.
@@ -154,6 +184,10 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		if node.FnName.L == ast.NextVal || node.FnName.L == ast.LastVal || node.FnName.L == ast.SetVal {
 			p.flag |= inSequenceFunction
 		}
+	case *ast.BRIEStmt:
+		if node.Kind == ast.BRIEKindRestore {
+			p.flag |= inCreateOrDropTable
+		}
 	default:
 		p.flag &= ^parentIsJoin
 	}
@@ -247,6 +281,10 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		p.flag &= ^inRepairTable
 	case *ast.CreateSequenceStmt:
 		p.flag &= ^inCreateOrDropTable
+	case *ast.BRIEStmt:
+		if x.Kind == ast.BRIEKindRestore {
+			p.flag &= ^inCreateOrDropTable
+		}
 	}
 
 	return in, p.err == nil

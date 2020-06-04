@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/ranger"
@@ -61,13 +60,7 @@ func (s *testRangerSuite) TearDownSuite(c *C) {
 }
 
 func newDomainStoreWithBootstrap(c *C) (*domain.Domain, kv.Storage, error) {
-	cluster := mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(cluster)
-	mvccStore := mocktikv.MustNewMVCCStore()
-	store, err := mockstore.NewMockTikvStore(
-		mockstore.WithCluster(cluster),
-		mockstore.WithMVCCStore(mvccStore),
-	)
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	session.SetSchemaLease(0)
 	session.DisableStats4Test()
@@ -619,6 +612,13 @@ create table t(
 			filterConds: "[eq(test.t.f, B)]",
 			resultStr:   "[[\"a\",\"a\"]]",
 		},
+		{
+			indexPos:    4,
+			exprStr:     "f like '@%' collate utf8mb4_bin",
+			accessConds: "[]",
+			filterConds: "[like(test.t.f, @%, 92)]",
+			resultStr:   "[[NULL,+inf]]",
+		},
 	}
 
 	collate.SetNewCollationEnabledForTest(true)
@@ -1163,7 +1163,6 @@ func (s *testRangerSuite) TestCompIndexInExprCorrCol(c *C) {
 }
 
 func (s *testRangerSuite) TestIndexStringIsTrueRange(c *C) {
-	// #15990
 	defer testleak.AfterTest(c)()
 	dom, store, err := newDomainStoreWithBootstrap(c)
 	defer func() {
@@ -1178,9 +1177,18 @@ func (s *testRangerSuite) TestIndexStringIsTrueRange(c *C) {
 	testKit.MustExec("INSERT INTO t0(c0) VALUES (1);")
 	testKit.MustExec("CREATE INDEX i0 ON t0(c0(10));")
 	testKit.MustExec("analyze table t0;")
-	testKit.MustQuery("desc SELECT * FROM t0 WHERE ('a' != t0.c0) AND t0.c0;").Check(testkit.Rows(
-		"IndexReader_6 1.00 root  index:IndexRangeScan_5",
-		"└─IndexRangeScan_5 1.00 cop[tikv] table:t0, index:i0(c0) range:[-inf,\"\"), (\"\",\"a\"), (\"a\",+inf], keep order:false",
-	))
-	testKit.MustExec("drop table t0;")
+
+	var input []string
+	var output []struct {
+		SQL    string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Result = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+		})
+		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+	}
 }

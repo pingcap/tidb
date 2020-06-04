@@ -17,7 +17,9 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"math/rand"
 	"runtime"
+	"strings"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -124,7 +126,7 @@ func (s *testLockSuite) TestScanLockResolveWithSeek(c *C) {
 	for ch := byte('a'); ch <= byte('z'); ch++ {
 		c.Assert(iter.Valid(), IsTrue)
 		c.Assert([]byte(iter.Key()), BytesEquals, []byte{ch})
-		c.Assert([]byte(iter.Value()), BytesEquals, []byte{ch})
+		c.Assert(iter.Value(), BytesEquals, []byte{ch})
 		c.Assert(iter.Next(), IsNil)
 	}
 }
@@ -223,7 +225,7 @@ func (s *testLockSuite) TestCheckTxnStatusTTL(c *C) {
 	lock := s.mustGetLock(c, []byte("key"))
 	status = TxnStatus{}
 	cleanRegions := make(map[RegionVerID]struct{})
-	err = newLockResolver(s.store).resolveLock(bo, lock, status, cleanRegions)
+	err = newLockResolver(s.store).resolveLock(bo, lock, status, false, cleanRegions)
 	c.Assert(err, IsNil)
 
 	// Check its status is rollbacked.
@@ -259,7 +261,7 @@ func (s *testLockSuite) TestTxnHeartBeat(c *C) {
 	lock := s.mustGetLock(c, []byte("key"))
 	status := TxnStatus{ttl: newTTL}
 	cleanRegions := make(map[RegionVerID]struct{})
-	err = newLockResolver(s.store).resolveLock(bo, lock, status, cleanRegions)
+	err = newLockResolver(s.store).resolveLock(bo, lock, status, false, cleanRegions)
 	c.Assert(err, IsNil)
 
 	newTTL, err = sendTxnHeartBeat(bo, s.store, []byte("key"), txn.StartTS(), 6666)
@@ -509,7 +511,7 @@ func (s *testLockSuite) TestZeroMinCommitTS(c *C) {
 
 	expire, pushed, err = newLockResolver(s.store).ResolveLocks(bo, math.MaxUint64, []*Lock{lock})
 	c.Assert(err, IsNil)
-	c.Assert(pushed, HasLen, 0)
+	c.Assert(pushed, HasLen, 1)
 	c.Assert(expire, Greater, int64(0))
 
 	// Clean up this test.
@@ -517,4 +519,29 @@ func (s *testLockSuite) TestZeroMinCommitTS(c *C) {
 	expire, _, err = newLockResolver(s.store).ResolveLocks(bo, 0, []*Lock{lock})
 	c.Assert(err, IsNil)
 	c.Assert(expire, Equals, int64(0))
+}
+
+func (s *testLockSuite) TestDeduplicateKeys(c *C) {
+	inputs := []string{
+		"a b c",
+		"a a b c",
+		"a a a b c",
+		"a a a b b b b c",
+		"a b b b b c c c",
+	}
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	for _, in := range inputs {
+		strs := strings.Split(in, " ")
+		keys := make([][]byte, len(strs))
+		for _, i := range r.Perm(len(strs)) {
+			keys[i] = []byte(strs[i])
+		}
+		keys = deduplicateKeys(keys)
+		strs = strs[:len(keys)]
+		for i := range keys {
+			strs[i] = string(keys[i])
+		}
+		out := strings.Join(strs, " ")
+		c.Assert(out, Equals, "a b c")
+	}
 }

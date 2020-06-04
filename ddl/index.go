@@ -296,13 +296,37 @@ func validateRenameIndex(from, to model.CIStr, tbl *model.TableInfo) (ignore boo
 
 func onRenameIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	tblInfo, from, to, err := checkRenameIndex(t, job)
-	if err != nil {
+	if err != nil || tblInfo == nil {
 		return ver, errors.Trace(err)
 	}
 
 	idx := tblInfo.FindIndexByName(from.L)
 	idx.Name = to
 	if ver, err = updateVersionAndTableInfo(t, job, tblInfo, true); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, nil
+}
+
+func validateAlterIndexVisibility(indexName model.CIStr, invisible bool, tbl *model.TableInfo) (bool, error) {
+	if idx := tbl.FindIndexByName(indexName.L); idx == nil {
+		return false, errors.Trace(infoschema.ErrKeyNotExists.GenWithStackByArgs(indexName.O, tbl.Name))
+	} else if idx.Invisible == invisible {
+		return true, nil
+	}
+	return false, nil
+}
+
+func onAlterIndexVisibility(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	tblInfo, from, invisible, err := checkAlterIndexVisibility(t, job)
+	if err != nil || tblInfo == nil {
+		return ver, errors.Trace(err)
+	}
+	idx := tblInfo.FindIndexByName(from.L)
+	idx.Invisible = invisible
+	if ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, true); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -459,6 +483,14 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		indexInfo.Unique = unique
 		indexInfo.ID = allocateIndexID(tblInfo)
 		tblInfo.Indices = append(tblInfo.Indices, indexInfo)
+
+		// Here we need do this check before set state to `DeleteOnly`,
+		// because if hidden columns has been set to `DeleteOnly`,
+		// the `DeleteOnly` columns are missing when we do this check.
+		if err := checkInvisibleIndexOnPK(tblInfo); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, err
+		}
 		logutil.BgLogger().Info("[ddl] run add index job", zap.String("job", job.String()), zap.Reflect("indexInfo", indexInfo))
 	}
 	originalState := indexInfo.State
@@ -508,15 +540,10 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		}
 
 		err = w.runReorgJob(t, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
-			defer func() {
-				r := recover()
-				if r != nil {
-					buf := util.GetStack()
-					logutil.BgLogger().Error("[ddl] add table index panic", zap.Any("panic", r), zap.String("stack", string(buf)))
-					metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
+			defer util.Recover(metrics.LabelDDL, "onCreateIndex",
+				func() {
 					addIndexErr = errCancelledDDLJob.GenWithStack("add table `%v` index `%v` panic", tblInfo.Name, indexInfo.Name)
-				}
-			}()
+				}, false)
 			return w.addTableIndex(tbl, indexInfo, reorgInfo)
 		})
 		if err != nil {
@@ -610,7 +637,7 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 
 		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-len(dependentHiddenCols)]
 
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != model.StateNone)
+		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, originalState != model.StateNone)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -710,6 +737,34 @@ func checkRenameIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, model.CIS
 		return nil, from, to, errors.Trace(err)
 	}
 	return tblInfo, from, to, errors.Trace(err)
+}
+
+func checkAlterIndexVisibility(t *meta.Meta, job *model.Job) (*model.TableInfo, model.CIStr, bool, error) {
+	var (
+		indexName model.CIStr
+		invisible bool
+	)
+
+	schemaID := job.SchemaID
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
+	if err != nil {
+		return nil, indexName, invisible, errors.Trace(err)
+	}
+
+	if err := job.DecodeArgs(&indexName, &invisible); err != nil {
+		job.State = model.JobStateCancelled
+		return nil, indexName, invisible, errors.Trace(err)
+	}
+
+	skip, err := validateAlterIndexVisibility(indexName, invisible, tblInfo)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return nil, indexName, invisible, errors.Trace(err)
+	}
+	if skip {
+		return nil, indexName, invisible, nil
+	}
+	return tblInfo, indexName, invisible, nil
 }
 
 const (
@@ -820,7 +875,7 @@ func (w *addIndexWorker) getIndexRecord(handle int64, recordKey []byte, rawRecor
 	cols := t.Cols()
 	idxInfo := w.index.Meta()
 	sysZone := timeutil.SystemLocation()
-	_, err := w.rowDecoder.DecodeAndEvalRowWithMap(w.sessCtx, handle, rawRecord, time.UTC, sysZone, w.rowMap)
+	_, err := w.rowDecoder.DecodeAndEvalRowWithMap(w.sessCtx, kv.IntHandle(handle), rawRecord, time.UTC, sysZone, w.rowMap)
 	if err != nil {
 		return nil, errors.Trace(errCantDecodeIndex.GenWithStackByArgs(err))
 	}
@@ -972,7 +1027,7 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 	w.initBatchCheckBufs(len(idxRecords))
 	stmtCtx := w.sessCtx.GetSessionVars().StmtCtx
 	for i, record := range idxRecords {
-		idxKey, distinct, err := w.index.GenIndexKey(stmtCtx, record.vals, record.handle, w.idxKeyBufs[i])
+		idxKey, distinct, err := w.index.GenIndexKey(stmtCtx, record.vals, kv.IntHandle(record.handle), w.idxKeyBufs[i])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -994,7 +1049,7 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 	for i, key := range w.batchCheckKeys {
 		if val, found := batchVals[string(key)]; found {
 			if w.distinctCheckFlags[i] {
-				handle, err1 := tables.DecodeHandle(val)
+				handle, err1 := tables.DecodeHandleInUniqueIndexValue(val)
 				if err1 != nil {
 					return errors.Trace(err1)
 				}
@@ -1008,7 +1063,7 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 			// The keys in w.batchCheckKeys also maybe duplicate,
 			// so we need to backfill the not found key into `batchVals` map.
 			if w.distinctCheckFlags[i] {
-				batchVals[string(key)] = tables.EncodeHandle(idxRecords[i].handle)
+				batchVals[string(key)] = tables.EncodeHandleInUniqueIndexValue(idxRecords[i].handle)
 			}
 		}
 	}
@@ -1062,9 +1117,9 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (taskCtx
 			}
 
 			// Create the index.
-			handle, err := w.index.Create(w.sessCtx, txn, idxRecord.vals, idxRecord.handle)
+			handle, err := w.index.Create(w.sessCtx, txn, idxRecord.vals, kv.IntHandle(idxRecord.handle))
 			if err != nil {
-				if kv.ErrKeyExists.Equal(err) && idxRecord.handle == handle {
+				if kv.ErrKeyExists.Equal(err) && idxRecord.handle == handle.IntValue() {
 					// Index already exists, skip it.
 					continue
 				}
@@ -1132,14 +1187,9 @@ func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *ad
 func (w *addIndexWorker) run(d *ddlCtx) {
 	logutil.BgLogger().Info("[ddl] add index worker start", zap.Int("workerID", w.id))
 	defer func() {
-		r := recover()
-		if r != nil {
-			buf := util.GetStack()
-			logutil.BgLogger().Error("[ddl] add index worker panic", zap.Any("panic", r), zap.String("stack", string(buf)))
-			metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
-		}
 		w.resultCh <- &addIndexResult{err: errReorgPanic}
 	}()
+	defer util.Recover(metrics.LabelDDL, "addIndexWorker.run", nil, false)
 	for {
 		task, more := <-w.taskCh
 		if !more {
@@ -1190,8 +1240,8 @@ func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table, indexInfo *mo
 // to speed up adding index in table with disperse handle.
 // The `t` should be a non-partitioned table or a partition.
 func splitTableRanges(t table.PhysicalTable, store kv.Storage, startHandle, endHandle int64) ([]kv.KeyRange, error) {
-	startRecordKey := t.RecordKey(startHandle)
-	endRecordKey := t.RecordKey(endHandle).Next()
+	startRecordKey := t.RecordKey(kv.IntHandle(startHandle))
+	endRecordKey := t.RecordKey(kv.IntHandle(endHandle)).Next()
 
 	logutil.BgLogger().Info("[ddl] split table range from PD", zap.Int64("physicalTableID", t.GetPhysicalID()), zap.Int64("startHandle", startHandle), zap.Int64("endHandle", endHandle))
 	kvRange := kv.KeyRange{StartKey: startRecordKey, EndKey: endRecordKey}
@@ -1223,7 +1273,7 @@ func decodeHandleRange(keyRange kv.KeyRange) (int64, int64, error) {
 		return 0, 0, errors.Trace(err)
 	}
 
-	return startHandle, endHandle, nil
+	return startHandle.IntValue(), endHandle.IntValue(), nil
 }
 
 func closeAddIndexWorkers(workers []*addIndexWorker) {
@@ -1309,7 +1359,7 @@ func (w *worker) sendRangeTaskToWorkers(t table.Table, workers []*addIndexWorker
 			return nil, errors.Trace(err)
 		}
 
-		endKey := t.RecordKey(endHandle)
+		endKey := t.RecordKey(kv.IntHandle(endHandle))
 		endIncluded := false
 		if endKey.Cmp(keyRange.EndKey) < 0 {
 			endIncluded = true
@@ -1558,19 +1608,19 @@ func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	firstKey := t.RecordKey(startHandle)
+	firstKey := t.RecordKey(kv.IntHandle(startHandle))
 
 	// Calculate the exclusive upper bound
 	var upperBound kv.Key
 	if endIncluded {
 		if endHandle == math.MaxInt64 {
-			upperBound = t.RecordKey(endHandle).PrefixNext()
+			upperBound = t.RecordKey(kv.IntHandle(endHandle)).PrefixNext()
 		} else {
 			// PrefixNext is time costing. Try to avoid it if possible.
-			upperBound = t.RecordKey(endHandle + 1)
+			upperBound = t.RecordKey(kv.IntHandle(endHandle + 1))
 		}
 	} else {
-		upperBound = t.RecordKey(endHandle)
+		upperBound = t.RecordKey(kv.IntHandle(endHandle))
 	}
 
 	it, err := snap.Iter(firstKey, upperBound)
@@ -1584,14 +1634,14 @@ func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version 
 			break
 		}
 
-		var handle int64
+		var handle kv.Handle
 		handle, err = tablecodec.DecodeRowKey(it.Key())
 		if err != nil {
 			return errors.Trace(err)
 		}
 		rk := t.RecordKey(handle)
 
-		more, err := fn(handle, rk, it.Value())
+		more, err := fn(handle.IntValue(), rk, it.Value())
 		if !more || err != nil {
 			return errors.Trace(err)
 		}
