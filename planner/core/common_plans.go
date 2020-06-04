@@ -80,6 +80,7 @@ type CheckTable struct {
 	Table              table.Table
 	IndexInfos         []*model.IndexInfo
 	IndexLookUpReaders []*PhysicalIndexLookUpReader
+	CheckIndex         bool
 }
 
 // RecoverIndex is used for backfilling corrupted index data.
@@ -96,15 +97,6 @@ type CleanupIndex struct {
 
 	Table     *ast.TableName
 	IndexName string
-}
-
-// CheckIndex is used for checking index data, built from the 'admin check index' statement.
-type CheckIndex struct {
-	baseSchemaProducer
-
-	IndexLookUpReader *PhysicalIndexLookUpReader
-	DBName            string
-	IdxName           string
 }
 
 // CheckIndexRange is used for checking index data, output the index values that handle within begin and end.
@@ -253,8 +245,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		return nil, err
 	}
 	_, isTableDual := p.(*PhysicalTableDual)
-	isPartition := e.isPartition(p)
-	if !isTableDual && prepared.UseCache && !isPartition {
+	if !isTableDual && prepared.UseCache {
 		sctx.PreparedPlanCache().Put(cacheKey, NewPSTMTPlanCacheValue(p))
 	}
 	return p, err
@@ -328,36 +319,6 @@ func (e *Execute) rebuildRange(p Plan) error {
 		}
 	}
 	return nil
-}
-
-func checkPartitionInfo(pi *model.PartitionInfo) bool {
-	if pi != nil {
-		return true
-	}
-	return false
-}
-
-// Prepare plan cache is not support query plan on range partition table.
-func (e *Execute) isPartition(p Plan) bool {
-	isRange := false
-	switch x := p.(type) {
-	case *PhysicalTableReader:
-		ts := x.TablePlans[0].(*PhysicalTableScan)
-		return checkPartitionInfo(ts.Table.Partition)
-	case *PhysicalIndexLookUpReader:
-		is := x.IndexPlans[0].(*PhysicalIndexScan)
-		return checkPartitionInfo(is.Table.Partition)
-	case *PhysicalIndexReader:
-		is := x.IndexPlans[0].(*PhysicalIndexScan)
-		return checkPartitionInfo(is.Table.Partition)
-	case PhysicalPlan:
-		for _, child := range x.Children() {
-			if e.isPartition(child) {
-				isRange = true
-			}
-		}
-	}
-	return isRange
 }
 
 func (e *Execute) buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) ([]*ranger.Range, error) {

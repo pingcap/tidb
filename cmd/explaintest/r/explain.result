@@ -26,13 +26,13 @@ drop table if exists t;
 create table t(id int primary key, a int, b int);
 explain select group_concat(a) from t group by id;
 id	count	task	operator info
-StreamAgg_8	8000.00	root	group by:col_1, funcs:group_concat(col_0, ",")
+StreamAgg_8	8000.00	root	group by:col_1, funcs:group_concat(col_0 separator ",")
 └─Projection_18	10000.00	root	cast(test.t.a), test.t.id
   └─TableReader_15	10000.00	root	data:TableScan_14
     └─TableScan_14	10000.00	cop	table:t, range:[-inf,+inf], keep order:true, stats:pseudo
 explain select group_concat(a, b) from t group by id;
 id	count	task	operator info
-StreamAgg_8	8000.00	root	group by:col_2, funcs:group_concat(col_0, col_1, ",")
+StreamAgg_8	8000.00	root	group by:col_2, funcs:group_concat(col_0, col_1 separator ",")
 └─Projection_18	10000.00	root	cast(test.t.a), cast(test.t.b), test.t.id
   └─TableReader_15	10000.00	root	data:TableScan_14
     └─TableScan_14	10000.00	cop	table:t, range:[-inf,+inf], keep order:true, stats:pseudo
