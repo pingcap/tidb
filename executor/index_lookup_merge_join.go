@@ -30,9 +30,11 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/stringutil"
+	"go.uber.org/zap"
 )
 
 // IndexLookUpMergeJoin realizes IndexLookUpJoin by merge join
@@ -387,8 +389,6 @@ func (imw *innerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancel
 	defer func() {
 		wg.Done()
 		if r := recover(); r != nil {
-<<<<<<< HEAD
-=======
 			if task != nil {
 				task.doneErr = errors.Errorf("%v", r)
 				close(task.results)
@@ -397,7 +397,6 @@ func (imw *innerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancel
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
 			logutil.Logger(ctx).Error("innerMergeWorker panicked", zap.String("stack", string(buf)))
->>>>>>> 18a38c6... executor: fix the forever hang in index merge join when oom occurs (#17435)
 			cancelFunc()
 		}
 	}()
