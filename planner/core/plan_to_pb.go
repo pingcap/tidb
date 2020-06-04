@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
@@ -103,10 +104,18 @@ func (p *PhysicalLimit) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
+	var pkColIds []int64
+	if p.Table.IsCommonHandle {
+		pkIdx := p.Table.FindIndexByName(tables.PrimaryConstraint)
+		for _, idxCol := range pkIdx.Columns {
+			pkColIds = append(pkColIds, p.Columns[idxCol.Offset].ID)
+		}
+	}
 	tsExec := &tipb.TableScan{
-		TableId: p.Table.ID,
-		Columns: util.ColumnsToProto(p.Columns, p.Table.PKIsHandle),
-		Desc:    p.Desc,
+		TableId:          p.Table.ID,
+		Columns:          util.ColumnsToProto(p.Columns, p.Table.PKIsHandle),
+		Desc:             p.Desc,
+		PrimaryColumnIds: pkColIds,
 	}
 	if p.isPartition {
 		tsExec.TableId = p.physicalTableID
