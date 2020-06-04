@@ -190,17 +190,6 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
 			Help:      "batch client unavailable",
 		})
-<<<<<<< HEAD
-=======
-	TiKVBatchClientWaitEstablish = prometheus.NewHistogram(
-		prometheus.HistogramOpts{
-			Namespace: "tidb",
-			Subsystem: "tikvclient",
-			Name:      "batch_client_wait_connection_establish",
-			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
-			Help:      "batch client wait new connection establish",
-		})
->>>>>>> 9929068... metrics: enlarge upper limits of some duration metrics (#17451)
 
 	TiKVRangeTaskStats = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
