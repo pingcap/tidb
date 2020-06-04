@@ -2834,7 +2834,12 @@ func checkFieldTypeCompatible(ft *types.FieldType, other *types.FieldType) bool 
 
 func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) error {
 	// check auto_random
-	if source.AutoRandomBits != target.AutoRandomBits {
+	if source.AutoRandomBits != target.AutoRandomBits ||
+		source.Charset != target.Charset ||
+		source.Collate != target.Collate ||
+		source.ShardRowIDBits != target.ShardRowIDBits ||
+		source.MaxShardRowIDBits != target.MaxShardRowIDBits ||
+		source.TiFlashReplica != target.TiFlashReplica {
 		return errors.Trace(ErrTablesDifferentMetadata)
 	}
 	if len(source.Cols()) != len(target.Cols()) {
@@ -2850,6 +2855,15 @@ func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) e
 			sourceCol.Hidden != targetCol.Hidden ||
 			!checkFieldTypeCompatible(&sourceCol.FieldType, &targetCol.FieldType) {
 			return errors.Trace(ErrTablesDifferentMetadata)
+		}
+		if sourceCol.State != model.StatePublic {
+			return errors.Trace(ErrTablesDifferentMetadata)
+		}
+		if targetCol.State != model.StatePublic {
+			return errors.Trace(ErrTablesDifferentMetadata)
+		}
+		if sourceCol.ID != targetCol.ID {
+			return ErrPartitionExchangeDifferentOption.GenWithStackByArgs(fmt.Sprintf("column: %s", sourceCol.Name))
 		}
 	}
 	if len(source.Indices) != len(target.Indices) {
@@ -2882,6 +2896,9 @@ func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) e
 				sourceIdxCol.Name.L != compatIdxCol.Name.L {
 				return errors.Trace(ErrTablesDifferentMetadata)
 			}
+		}
+		if sourceIdx.ID != compatIdx.ID {
+			return ErrPartitionExchangeDifferentOption.GenWithStackByArgs(fmt.Sprintf("index: %s", sourceIdx.Name))
 		}
 	}
 

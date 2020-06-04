@@ -744,6 +744,11 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
+	if pt.State != model.StatePublic {
+		job.State = model.JobStateCancelled
+		return ver, ErrInvalidDDLState.GenWithStack("table %s is not in public, but %s", pt.Name, pt.State)
+	}
+
 	err = checkExchangePartition(pt, nt)
 	if err != nil {
 		job.State = model.JobStateCancelled
