@@ -280,8 +280,8 @@ func (s *testIntegrationSuite3) TestCreateTableWithPartition(c *C) {
 (partition p0 values less than (unix_timestamp('2020-04-15 00:00:00')));`)
 
 	tk.MustExec(`drop table if exists too_long_identifier`)
-	tk.MustGetErrCode(`create table too_long_identifier(a int) 
-partition by range (a) 
+	tk.MustGetErrCode(`create table too_long_identifier(a int)
+partition by range (a)
 (partition p0pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp values less than (10));`, tmysql.ErrTooLongIdent)
 
 	tk.MustExec(`drop table if exists too_long_identifier`)
@@ -1373,10 +1373,11 @@ func testPartitionCancelAddIndex(c *C, store kv.Storage, d ddl.DDL, lease time.D
     	partition p3 values less than (4096),
 		partition p4 values less than (maxvalue)
    	);`)
-	base := defaultBatchSize * 2
-	count := base
+	count := defaultBatchSize * 32
 	// add some rows
-	batchInsert(tk, "t1", 0, count)
+	for i := 0; i < count; i += defaultBatchSize {
+		batchInsert(tk, "t1", i, i+defaultBatchSize)
+	}
 
 	var checkErr error
 	var c3IdxInfo *model.IndexInfo
