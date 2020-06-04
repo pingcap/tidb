@@ -16,6 +16,7 @@ package cophandler
 import (
 	"errors"
 	"fmt"
+	"github.com/stretchr/testify/require"
 	"io/ioutil"
 	"math"
 	"os"
@@ -483,4 +484,81 @@ func createTestDB(dbPath, LogPath string) (*badger.DB, error) {
 func cleanTestStore(store *testStore) {
 	os.RemoveAll(store.dbPath)
 	os.RemoveAll(store.logPath)
+}
+
+func prepareTestTableDataForCommonHandle(t *testing.T, keyNumber int, tableId int64) *data {
+	stmtCtx := new(stmtctx.StatementContext)
+	colIds := []int64{1, 2, 3}
+	colTypes := []*types.FieldType{
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeString),
+		types.NewFieldType(mysql.TypeDouble),
+	}
+	colInfos := make([]*tipb.ColumnInfo, 3)
+	colTypeMap := map[int64]*types.FieldType{}
+	for i := 0; i < 3; i++ {
+		colInfos[i] = &tipb.ColumnInfo{
+			ColumnId: colIds[i],
+			Tp:       int32(colTypes[i].Tp),
+		}
+		colTypeMap[colIds[i]] = colTypes[i]
+	}
+	rows := map[int64][]types.Datum{}
+	encodedTestKVDatas := make([]*encodedTestKVData, keyNumber)
+	for i := 0; i < keyNumber; i++ {
+		datum := types.MakeDatums(i, "abc", 10.0)
+		rows[int64(i)] = datum
+		rowEncodedData, err := tablecodec.EncodeRow(stmtCtx, datum, colIds, nil, nil, &rowcodec.Encoder{Enable: true})
+		require.Nil(t, err)
+		encodedHandle, err := codec.EncodeKey(stmtCtx, nil, datum...)
+		handle, err := kv.NewCommonHandle(encodedHandle)
+		rowKeyEncodedData := tablecodec.EncodeRowKeyWithHandle(tableId, handle)
+		encodedTestKVDatas[i] = &encodedTestKVData{encodedRowKey: rowKeyEncodedData, encodedRowValue: rowEncodedData}
+	}
+	return &data{
+		colInfos:           colInfos,
+		encodedTestKVDatas: encodedTestKVDatas,
+		rows:               rows,
+		colTypes:           colTypeMap,
+	}
+}
+
+func TestTableScanForCommonHandle(t *testing.T) {
+	// here would build mvccStore and server, and prepare
+	// three rows data, just like the test data of table_scan.rs.
+	// then init the store with the generated data.
+	data := prepareTestTableDataForCommonHandle(t, keyNumber, tableID)
+	store, err := newTestStore("cop_handler_test_db", "cop_handler_test_log")
+	defer cleanTestStore(store)
+	require.Nil(t, err)
+	errors := initTestData(store, data.encodedTestKVDatas)
+	require.Nil(t, errors)
+
+	handle, err := tablecodec.DecodeRowKey(data.encodedTestKVDatas[1].encodedRowKey)
+	require.Nil(t, err)
+	dagRequest := newDagBuilder().
+		setStartTs(dagRequestStartTs).
+		addTableScan(data.colInfos, tableID).
+		setOutputOffsets([]uint32{0, 1}).
+		build()
+	key := tablecodec.EncodeRowKeyWithHandle(tableID, handle)
+	dagCtx := newDagContext(store,
+		[]kv.KeyRange{{key, append(key, 0)}},
+		dagRequest,
+		dagRequestStartTs)
+	chunks, rowCount, err := buildExecutorsAndExecute(dagRequest, dagCtx)
+	require.Nil(t, err)
+	require.Equal(t, 1, rowCount)
+	returnedRow, err := codec.Decode(chunks[0].RowsData, 2)
+	require.Nil(t, err)
+	require.Equal(t, len(returnedRow), 2)
+
+	// verify the returned rows value as input
+	expectedRow := data.rows[1]
+	eq, err := returnedRow[0].CompareDatum(nil, &expectedRow[0])
+	require.Nil(t, err)
+	require.Equal(t, eq, 0)
+	eq, err = returnedRow[1].CompareDatum(nil, &expectedRow[1])
+	require.Nil(t, err)
+	require.Equal(t, eq, 0)
 }
