@@ -116,6 +116,8 @@ func (c *RowContainer) SetReadOnly() {
 
 // NumRow returns the number of rows in the container
 func (c *RowContainer) NumRow() int {
+	c.m.RLock()
+	defer c.m.RUnlock()
 	if c.AlreadySpilled() {
 		return c.recordsInDisk.Len()
 	}
@@ -124,6 +126,8 @@ func (c *RowContainer) NumRow() int {
 
 // NumRowsOfChunk returns the number of rows of a chunk in the ListInDisk.
 func (c *RowContainer) NumRowsOfChunk(chkID int) int {
+	c.m.RLock()
+	defer c.m.RUnlock()
 	if c.AlreadySpilled() {
 		return c.recordsInDisk.NumRowsOfChunk(chkID)
 	}
@@ -132,6 +136,8 @@ func (c *RowContainer) NumRowsOfChunk(chkID int) int {
 
 // NumChunks returns the number of chunks in the container.
 func (c *RowContainer) NumChunks() int {
+	c.m.RLock()
+	defer c.m.RUnlock()
 	if c.AlreadySpilled() {
 		return c.recordsInDisk.NumChunks()
 	}
