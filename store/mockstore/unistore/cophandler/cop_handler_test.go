@@ -16,7 +16,6 @@ package cophandler
 import (
 	"errors"
 	"fmt"
-	"github.com/stretchr/testify/require"
 	"io/ioutil"
 	"math"
 	"os"
@@ -486,7 +485,7 @@ func cleanTestStore(store *testStore) {
 	os.RemoveAll(store.logPath)
 }
 
-func prepareTestTableDataForCommonHandle(t *testing.T, keyNumber int, tableId int64) *data {
+func prepareTestTableDataForCommonHandle(c *C, keyNumber int, tableId int64) *data {
 	stmtCtx := new(stmtctx.StatementContext)
 	colIds := []int64{1, 2, 3}
 	colTypes := []*types.FieldType{
@@ -509,7 +508,7 @@ func prepareTestTableDataForCommonHandle(t *testing.T, keyNumber int, tableId in
 		datum := types.MakeDatums(i, "abc", 10.0)
 		rows[int64(i)] = datum
 		rowEncodedData, err := tablecodec.EncodeRow(stmtCtx, datum, colIds, nil, nil, &rowcodec.Encoder{Enable: true})
-		require.Nil(t, err)
+		c.Assert(err, IsNil)
 		encodedHandle, err := codec.EncodeKey(stmtCtx, nil, datum...)
 		handle, err := kv.NewCommonHandle(encodedHandle)
 		rowKeyEncodedData := tablecodec.EncodeRowKeyWithHandle(tableId, handle)
@@ -523,19 +522,19 @@ func prepareTestTableDataForCommonHandle(t *testing.T, keyNumber int, tableId in
 	}
 }
 
-func TestTableScanForCommonHandle(t *testing.T) {
+func (ts testSuite) TestTableScanForCommonHandle(c *C) {
 	// here would build mvccStore and server, and prepare
 	// three rows data, just like the test data of table_scan.rs.
 	// then init the store with the generated data.
-	data := prepareTestTableDataForCommonHandle(t, keyNumber, tableID)
+	data := prepareTestTableDataForCommonHandle(c, keyNumber, tableID)
 	store, err := newTestStore("cop_handler_test_db", "cop_handler_test_log")
 	defer cleanTestStore(store)
-	require.Nil(t, err)
+	c.Assert(err, IsNil)
 	errors := initTestData(store, data.encodedTestKVDatas)
-	require.Nil(t, errors)
+	c.Assert(errors, IsNil)
 
 	handle, err := tablecodec.DecodeRowKey(data.encodedTestKVDatas[1].encodedRowKey)
-	require.Nil(t, err)
+	c.Assert(err, IsNil)
 	dagRequest := newDagBuilder().
 		setStartTs(dagRequestStartTs).
 		addTableScan(data.colInfos, tableID).
@@ -547,18 +546,18 @@ func TestTableScanForCommonHandle(t *testing.T) {
 		dagRequest,
 		dagRequestStartTs)
 	chunks, rowCount, err := buildExecutorsAndExecute(dagRequest, dagCtx)
-	require.Nil(t, err)
-	require.Equal(t, 1, rowCount)
+	c.Assert(err, IsNil)
+	c.Assert(rowCount, Equals, 1)
 	returnedRow, err := codec.Decode(chunks[0].RowsData, 2)
-	require.Nil(t, err)
-	require.Equal(t, len(returnedRow), 2)
+	c.Assert(err, IsNil)
+	c.Assert(len(returnedRow), Equals, 2)
 
 	// verify the returned rows value as input
 	expectedRow := data.rows[1]
 	eq, err := returnedRow[0].CompareDatum(nil, &expectedRow[0])
-	require.Nil(t, err)
-	require.Equal(t, eq, 0)
+	c.Assert(err, IsNil)
+	c.Assert(eq, Equals, 0)
 	eq, err = returnedRow[1].CompareDatum(nil, &expectedRow[1])
-	require.Nil(t, err)
-	require.Equal(t, eq, 0)
+	c.Assert(err, IsNil)
+	c.Assert(eq, Equals, 0)
 }
