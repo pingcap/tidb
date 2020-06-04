@@ -262,6 +262,7 @@ func (e *HashJoinExec) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chu
 			e.buildFinished <- errors.Trace(err)
 			return
 		}
+		failpoint.Inject("errorFetchBuildSideRowsMockOOMPanic", nil)
 		if chk.NumRows() == 0 {
 			return
 		}
