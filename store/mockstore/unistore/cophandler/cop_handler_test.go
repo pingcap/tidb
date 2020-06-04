@@ -485,7 +485,7 @@ func cleanTestStore(store *testStore) {
 	os.RemoveAll(store.logPath)
 }
 
-func prepareTestTableDataForCommonHandle(c *C, keyNumber int, tableId int64) *data {
+func prepareTestTableDataForCommonHandle(c *C, keyNumber int, tableID int64) *data {
 	stmtCtx := new(stmtctx.StatementContext)
 	colIds := []int64{1, 2, 3}
 	colTypes := []*types.FieldType{
@@ -510,8 +510,10 @@ func prepareTestTableDataForCommonHandle(c *C, keyNumber int, tableId int64) *da
 		rowEncodedData, err := tablecodec.EncodeRow(stmtCtx, datum, colIds, nil, nil, &rowcodec.Encoder{Enable: true})
 		c.Assert(err, IsNil)
 		encodedHandle, err := codec.EncodeKey(stmtCtx, nil, datum...)
+		c.Assert(err, IsNil)
 		handle, err := kv.NewCommonHandle(encodedHandle)
-		rowKeyEncodedData := tablecodec.EncodeRowKeyWithHandle(tableId, handle)
+		c.Assert(err, IsNil)
+		rowKeyEncodedData := tablecodec.EncodeRowKeyWithHandle(tableID, handle)
 		encodedTestKVDatas[i] = &encodedTestKVData{encodedRowKey: rowKeyEncodedData, encodedRowValue: rowEncodedData}
 	}
 	return &data{
@@ -542,7 +544,7 @@ func (ts testSuite) TestTableScanForCommonHandle(c *C) {
 		build()
 	key := tablecodec.EncodeRowKeyWithHandle(tableID, handle)
 	dagCtx := newDagContext(store,
-		[]kv.KeyRange{{key, append(key, 0)}},
+		[]kv.KeyRange{{StartKey: key, EndKey: append(key, 0)}},
 		dagRequest,
 		dagRequestStartTs)
 	chunks, rowCount, err := buildExecutorsAndExecute(dagRequest, dagCtx)
