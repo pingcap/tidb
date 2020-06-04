@@ -716,8 +716,8 @@ func NewSessionVars() *SessionVars {
 		WindowConcurrency:          DefTiDBWindowConcurrency,
 	}
 	vars.MemQuota = MemQuota{
-		MemQuotaQuery:   config.GetGlobalConfig().MemQuotaQuery,
-		ApplyCacheQuota: config.GetGlobalConfig().ApplyCacheQuota,
+		MemQuotaQuery:      config.GetGlobalConfig().MemQuotaQuery,
+		ApplyCacheCapacity: config.GetGlobalConfig().ApplyCacheCapacity,
 
 		// The variables below do not take any effect anymore, it's remaining for compatibility.
 		// TODO: remove them in v4.1
@@ -1438,8 +1438,8 @@ type MemQuota struct {
 	// MemQuotaQuery defines the memory quota for a query.
 	MemQuotaQuery int64
 
-	// ApplyCacheQuota defines the number quota for apply cache.
-	ApplyCacheQuota int64
+	// ApplyCacheCapacity defines the memory capacity for apply cache.
+	ApplyCacheCapacity int64
 
 	// The variables below do not take any effect anymore, it's remaining for compatibility.
 	// TODO: remove them in v4.1
