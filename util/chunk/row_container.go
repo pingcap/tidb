@@ -227,11 +227,6 @@ func (c *RowContainer) SetOnExceededCallback(f func(rowContainer *RowContainer))
 	c.onExceededCallback = f
 }
 
-// GetMutex gets the rowContainer mutex for better performance.
-func (c *RowContainer) GetMutex() *sync.RWMutex {
-	return &c.m
-}
-
 // SpillDiskAction implements memory.ActionOnExceed for chunk.List. If
 // the memory quota of a query is exceeded, SpillDiskAction.Action is
 // triggered.
