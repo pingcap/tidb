@@ -425,3 +425,17 @@ func (c *Constant) Coercibility() Coercibility {
 	c.SetCoercibility(deriveCoercibilityForConstant(c))
 	return c.collationInfo.Coercibility()
 }
+
+func ParamConstInExpression(expr Expression) bool {
+	switch x := expr.(type) {
+	case *ScalarFunction:
+		for _, arg := range x.GetArgs() {
+			if ParamConstInExpression(arg) {
+				return true
+			}
+		}
+	case *Constant:
+		return x.ParamMarker != nil
+	}
+	return false
+}

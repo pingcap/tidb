@@ -130,6 +130,18 @@ func (s *testPrepareSerialSuite) TestPrepareCache(c *C) {
 	tk.Se = rootSe
 	tk.MustExec("drop table if exists tp")
 	tk.MustExec(`DROP USER 'u_tp'@'localhost';`)
+
+	// Test issue https://github.com/pingcap/tidb/issues/17491.
+	tk.MustExec("drop table if exists point_get_test")
+	tk.MustExec("create table point_get_test(a varchar(20), b int, unique index idx(a))")
+	tk.MustExec("insert into point_get_test values('aaa', 1), (NULL, 1), (NULL, 1)")
+	tk.MustExec(`prepare pt_stmt from "select * from point_get_test where a = ? and b = ?"`)
+	tk.MustExec(`set @a = "aaa", @b = 1`)
+	tk.MustQuery("execute pt_stmt using @a, @b").Check(testkit.Rows("aaa 1"))
+	tk.MustExec(`set @a = "bbb", @b = 1`)
+	tk.MustQuery("execute pt_stmt using @a, @b").Check(testkit.Rows())
+	tk.MustExec(`set @a = NULL, @b = 1`)
+	tk.MustQuery("execute pt_stmt using @a, @b").Check(testkit.Rows())
 }
 
 func (s *testPrepareSerialSuite) TestPrepareCacheIndexScan(c *C) {
