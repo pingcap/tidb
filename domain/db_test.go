@@ -20,11 +20,8 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
-=======
 	"github.com/pingcap/tidb/util/testleak"
->>>>>>> 3a4e733... test: fix testleak in TestIntegration (#17667)
 )
 
 type dbTestSuite struct{}
