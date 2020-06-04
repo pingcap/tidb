@@ -379,8 +379,6 @@ github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef h1:K0Fn+DoFqNqktdZtdV3
 github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef/go.mod h1:7WjlapSfwQyo6LNmIvEWzsW1hbBQfpUO4JWnuQRmva8=
 github.com/ngaut/unistore v0.0.0-20200603091253-e0b717679796 h1:mhOUY30ysXVcRuftTiFgbw//GERhoM/65u5jvr9LJ7s=
 github.com/ngaut/unistore v0.0.0-20200603091253-e0b717679796/go.mod h1:9mpqZeS1CkNlgZwJ0LZXb+Qd7xVO5o55ngys7T1/oH8=
-github.com/ngaut/unistore v0.0.0-20200603124755-05e6598d081a h1:A5RXCtZ2usTWL0iUMt3OfcVxWZVFWRy0wakMhXbyBs0=
-github.com/ngaut/unistore v0.0.0-20200603124755-05e6598d081a/go.mod h1:QrtokFGOTQMCJLbZ3JmtKTlT63WWdSI4QGvuqOqwdsg=
 github.com/ngaut/unistore v0.0.0-20200604043635-5004cdad650f h1:ws3QybMmoXuS3S8tcR7DiFnUfae6yJRRi7I53vjumLI=
 github.com/ngaut/unistore v0.0.0-20200604043635-5004cdad650f/go.mod h1:5Vec+R2BwOyugVQ8Id8uDmlIYbqodCvykM50IpaAjk4=
 github.com/nicksnyder/go-i18n v1.10.0/go.mod h1:HrK7VCrbOvQoUAQ7Vpy7i87N7JZZZ7R2xBGjv0j365Q=
