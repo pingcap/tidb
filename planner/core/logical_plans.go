@@ -503,7 +503,7 @@ type DataSource struct {
 	// it is converted from statisticTable, and used for IO/network cost estimating.
 	TblColHists *statistics.HistColl
 	// preferStoreType means the DataSource is enforced to which storage.
-	preferStoreType  int
+	preferStoreType int
 	// preferPartitions store the map, the key represents store type, the value represents the partition name list.
 	preferPartitions map[int][]model.CIStr
 }
