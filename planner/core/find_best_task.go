@@ -578,6 +578,8 @@ func (ds *DataSource) canConvertToPointGet(candidate *candidatePath) bool {
 		return false
 	}
 
+	// When cache enabled, we only cache the case only eq condition exists.
+	// The current impl make it hard to deal with all cases when cache enabled.
 	if PreparedPlanCacheEnabled() {
 		hasParamMarkerConst := false
 		for _, cond := range path.AccessConds {
@@ -586,9 +588,12 @@ func (ds *DataSource) canConvertToPointGet(candidate *candidatePath) bool {
 		if !hasParamMarkerConst {
 			return true
 		}
-		if path.IsTablePath && (len(path.AccessConds) != -1 || path.AccessConds[0].(*expression.ScalarFunction).FuncName.L != ast.EQ) {
+		// When this is a table path. We check that there's only a equal condition in access.
+		if path.IsTablePath && (len(path.AccessConds) != 1 || path.AccessConds[0].(*expression.ScalarFunction).FuncName.L != ast.EQ) {
 			return false
 		}
+		// If it's a index path. We check the `EqCondCount`.
+		//When it's the same with the number of index columns, there's just exact one equal condition on each index column.
 		if !path.IsTablePath && path.EqCondCount != len(path.FullIdxCols) {
 			return false
 		}

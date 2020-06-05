@@ -426,6 +426,7 @@ func (c *Constant) Coercibility() Coercibility {
 	return c.collationInfo.Coercibility()
 }
 
+// ParamConstInExpression checks whether there's Param Marker in the given expression.
 func ParamConstInExpression(expr Expression) bool {
 	switch x := expr.(type) {
 	case *ScalarFunction:
