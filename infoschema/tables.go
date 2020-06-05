@@ -946,6 +946,7 @@ var tableInspectionResultCols = []columnInfo{
 	{name: "ITEM", tp: mysql.TypeVarchar, size: 64},
 	{name: "TYPE", tp: mysql.TypeVarchar, size: 64},
 	{name: "INSTANCE", tp: mysql.TypeVarchar, size: 64},
+	{name: "STATUS_ADDRESS", tp: mysql.TypeVarchar, size: 64},
 	{name: "VALUE", tp: mysql.TypeVarchar, size: 64},
 	{name: "REFERENCE", tp: mysql.TypeVarchar, size: 64},
 	{name: "SEVERITY", tp: mysql.TypeVarchar, size: 64},
@@ -961,6 +962,7 @@ var tableInspectionSummaryCols = []columnInfo{
 	{name: "AVG_VALUE", tp: mysql.TypeDouble, size: 22, decimal: 6},
 	{name: "MIN_VALUE", tp: mysql.TypeDouble, size: 22, decimal: 6},
 	{name: "MAX_VALUE", tp: mysql.TypeDouble, size: 22, decimal: 6},
+	{name: "COMMENT", tp: mysql.TypeVarchar, size: 256},
 }
 
 var tableInspectionRulesCols = []columnInfo{
