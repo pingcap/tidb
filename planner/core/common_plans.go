@@ -835,7 +835,7 @@ func (e *Explain) RenderResult() error {
 	}
 	switch strings.ToLower(e.Format) {
 	case ast.ExplainFormatROW:
-		if !e.Analyze && e.Rows == nil {
+		if e.Analyze && e.Rows == nil {
 			e.explainedPlans = map[int]bool{}
 			err := e.explainPlanInRowFormat(e.TargetPlan, "root", "", "", true)
 			if err != nil {
