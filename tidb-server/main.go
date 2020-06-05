@@ -551,7 +551,6 @@ func setGlobalVars() {
 	cfg := config.GetGlobalConfig()
 	ddlLeaseDuration := parseDuration(cfg.Lease)
 	session.SetSchemaLease(ddlLeaseDuration)
-	runtime.GOMAXPROCS(int(cfg.Performance.MaxProcs))
 	statsLeaseDuration := parseDuration(cfg.Performance.StatsLease)
 	session.SetStatsLease(statsLeaseDuration)
 	bindinfo.Lease = parseDuration(cfg.Performance.BindInfoLease)
@@ -624,6 +623,9 @@ func setupLog() {
 	nopLog := func(string, ...interface{}) {}
 	_, err = maxprocs.Set(maxprocs.Logger(nopLog))
 	terror.MustNil(err)
+	// We should respect to user's settings in config file.
+	// The default value of MaxProcs is 0, runtime.GOMAXPROCS(0) is no-op.
+	runtime.GOMAXPROCS(int(cfg.Performance.MaxProcs))
 
 	if len(os.Getenv("GRPC_DEBUG")) > 0 {
 		grpclog.SetLoggerV2(grpclog.NewLoggerV2WithVerbosity(os.Stderr, os.Stderr, os.Stderr, 999))
