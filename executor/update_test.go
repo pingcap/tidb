@@ -264,3 +264,25 @@ func (s *testUpdateSuite) TestUpdateClusterIndex(c *C) {
 	tk.MustExec(`insert into t3pk(id1, id2, id3, v) values ('abc', 'bbb3', 222, 777)`)
 	c.Assert(tk.ExecToErr(`update t3pk set id2 = 'bbb3' where id1 = 'abc' and id2 = 'bbb2' and id3 = 222`).Error(), Equals, `[kv:1062]Duplicate entry '{abc, bbb3, 222}' for key 'PRIMARY'`)
 }
+
+func (s *testUpdateSuite) TestDeleteClusterIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
+	tk.MustExec(`use test`)
+
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(id varchar(200) primary key, v int)`)
+	tk.MustExec(`insert into t(id, v) values ('abc', 233)`)
+	tk.MustExec(`delete from t where id = 'abc'`)
+	tk.MustQuery(`select * from t`).Check(testkit.Rows())
+	tk.MustQuery(`select * from t where id = 'abc'`).Check(testkit.Rows())
+
+	tk.MustExec(`drop table if exists t3pk`)
+	tk.MustExec(`create table t3pk(id1 varchar(200), id2 varchar(200), v int, id3 int, primary key(id1, id2, id3))`)
+	tk.MustExec(`insert into t3pk(id1, id2, v, id3) values ('aaa', 'bbb', 233, 111)`)
+	tk.MustExec(`delete from t3pk where id1 = 'aaa' and id2 = 'bbb' and id3 = 111`)
+	tk.MustQuery(`select * from t3pk`).Check(testkit.Rows())
+	tk.MustQuery(`select * from t3pk where id1 = 'aaa' and id2 = 'bbb' and id3 = 111`).Check(testkit.Rows())
+	tk.MustExec(`insert into t3pk(id1, id2, v, id3) values ('aaa', 'bbb', 433, 111)`)
+	tk.MustQuery(`select * from t3pk where id1 = 'aaa' and id2 = 'bbb' and id3 = 111`).Check(testkit.Rows("aaa bbb 433 111"))
+}
