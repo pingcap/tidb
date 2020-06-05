@@ -669,7 +669,7 @@
           "  └─TableFullScan_16 10000.00 cop[tiflash] table:t, partition:p2 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "Warning 1105 partition `p0` in hint can't hit any source"
+          "Warning 1105 Unknown partitions (p0) in optimizer hint /*+ USE_INDEX(t PARTITION(p0, p1) b, c) */"
         ]
       },
       {
@@ -682,7 +682,7 @@
           "  └─TableFullScan_14 10000.00 cop[tiflash] table:t, partition:p2 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "Warning 1105 partition `p_non_exist` in hint can't hit any source"
+          "Warning 1105 Unknown partitions (p_non_exist) in optimizer hint /*+ USE_INDEX(t PARTITION(p_non_exist)) */"
         ]
       },
       {

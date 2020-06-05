@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -777,24 +778,38 @@ func (s *partitionProcessor) resolveOptimizeHint(ds *DataSource, partitionName m
 	return s.resolveAccessPaths(ds)
 }
 
-func checkTableHintsApplicableForPartition(partitions []model.CIStr, ds *DataSource, partitionSet set.StringSet) {
+func checkTableHintsApplicableForPartition(partitions []model.CIStr, partitionSet set.StringSet) []string {
+	var unknownPartitions []string
 	for _, p := range partitions {
 		if !partitionSet.Exist(p.L) {
-			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(
-				errors.New(fmt.Sprintf("partition `%s` in hint can't hit any source", p.L)))
+			unknownPartitions = append(unknownPartitions, p.L)
 		}
 	}
+	return unknownPartitions
+}
+
+func appendWarnForUnknownPartitions(ctx sessionctx.Context, hintName string, unknownPartitions []string) {
+	if len(unknownPartitions) == 0 {
+		return
+	}
+	ctx.GetSessionVars().StmtCtx.AppendWarning(
+		errors.New(fmt.Sprintf("Unknown partitions (%s) in optimizer hint %s",
+			strings.Join(unknownPartitions, ","), hintName)))
 }
 
 func (s *partitionProcessor) checkHintsApplicable(ds *DataSource, partitionSet set.StringSet) {
 	for _, idxHint := range ds.IndexHints {
-		checkTableHintsApplicableForPartition(idxHint.partitions, ds, partitionSet)
+		unknownPartitions := checkTableHintsApplicableForPartition(idxHint.partitions, partitionSet)
+		appendWarnForUnknownPartitions(ds.ctx, restore2IndexHint(idxHint.hintTypeString(), idxHint), unknownPartitions)
 	}
 	for _, idxMergeHint := range ds.indexMergeHints {
-		checkTableHintsApplicableForPartition(idxMergeHint.partitions, ds, partitionSet)
+		unknownPartitions := checkTableHintsApplicableForPartition(idxMergeHint.partitions, partitionSet)
+		appendWarnForUnknownPartitions(ds.ctx, restore2IndexHint(HintIndexMerge, idxMergeHint), unknownPartitions)
 	}
-	checkTableHintsApplicableForPartition(ds.preferPartitions[preferTiKV], ds, partitionSet)
-	checkTableHintsApplicableForPartition(ds.preferPartitions[preferTiFlash], ds, partitionSet)
+	unknownPartitions := checkTableHintsApplicableForPartition(ds.preferPartitions[preferTiKV], partitionSet)
+	unknownPartitions = append(unknownPartitions,
+		checkTableHintsApplicableForPartition(ds.preferPartitions[preferTiFlash], partitionSet)...)
+	appendWarnForUnknownPartitions(ds.ctx, HintReadFromStorage, unknownPartitions)
 }
 
 func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.PartitionInfo, or partitionRangeOR) (LogicalPlan, error) {

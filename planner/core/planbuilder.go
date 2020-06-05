@@ -248,17 +248,17 @@ func (info *tableHintInfo) matchTableName(tables []*hintTableInfo, hintTables []
 	return hintMatched
 }
 
-func restore2TableHint(hintTables []hintTableInfo) string {
+func restore2TableHint(hintTables ...hintTableInfo) string {
 	buffer := bytes.NewBufferString("")
 	for i, table := range hintTables {
 		buffer.WriteString(table.tblName.L)
 		if len(table.partitions) > 0 {
 			buffer.WriteString(" PARTITION(")
 			for j, partition := range table.partitions {
-				buffer.WriteString(partition.L)
 				if j > 0 {
 					buffer.WriteString(", ")
 				}
+				buffer.WriteString(partition.L)
 			}
 			buffer.WriteString(")")
 		}
@@ -273,7 +273,28 @@ func restore2JoinHint(hintType string, hintTables []hintTableInfo) string {
 	buffer := bytes.NewBufferString("/*+ ")
 	buffer.WriteString(strings.ToUpper(hintType))
 	buffer.WriteString("(")
-	buffer.WriteString(restore2TableHint(hintTables))
+	buffer.WriteString(restore2TableHint(hintTables...))
+	buffer.WriteString(") */")
+	return buffer.String()
+}
+
+func restore2IndexHint(hintType string, hintIndex indexHintInfo) string {
+	buffer := bytes.NewBufferString("/*+ ")
+	buffer.WriteString(strings.ToUpper(hintType))
+	buffer.WriteString("(")
+	buffer.WriteString(restore2TableHint(hintTableInfo{
+		dbName: hintIndex.dbName,
+		tblName: hintIndex.tblName,
+		partitions: hintIndex.partitions,
+	}))
+	if hintIndex.indexHint != nil && len(hintIndex.indexHint.IndexNames) > 0 {
+		for i, indexName := range hintIndex.indexHint.IndexNames {
+			if i > 0 {
+				buffer.WriteString(",")
+			}
+			buffer.WriteString(" " + indexName.L)
+		}
+	}
 	buffer.WriteString(") */")
 	return buffer.String()
 }
@@ -284,7 +305,7 @@ func restore2StorageHint(tiflashTables, tikvTables []hintTableInfo) string {
 	buffer.WriteString("(")
 	if len(tiflashTables) > 0 {
 		buffer.WriteString("tiflash[")
-		buffer.WriteString(restore2TableHint(tiflashTables))
+		buffer.WriteString(restore2TableHint(tiflashTables...))
 		buffer.WriteString("]")
 		if len(tikvTables) > 0 {
 			buffer.WriteString(", ")
@@ -292,7 +313,7 @@ func restore2StorageHint(tiflashTables, tikvTables []hintTableInfo) string {
 	}
 	if len(tikvTables) > 0 {
 		buffer.WriteString("tikv[")
-		buffer.WriteString(restore2TableHint(tikvTables))
+		buffer.WriteString(restore2TableHint(tikvTables...))
 		buffer.WriteString("]")
 	}
 	buffer.WriteString(") */")
