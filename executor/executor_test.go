@@ -5846,7 +5846,7 @@ func (s *testSuiteP2) TestApplyCache(c *C) {
 		}
 	}
 	c.Assert(flag, Equals, true)
-	c.Assert(value[ind:], Equals, "cache:ON, cacheHitNum:8, cacheHitRatio:0.888889")
+	c.Assert(value[ind:], Equals, "cache:ON, cacheHitNum:8, cacheHitRatio:88.889%")
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int);")
