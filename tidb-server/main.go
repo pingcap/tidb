@@ -549,6 +549,15 @@ func overrideConfig(cfg *config.Config) {
 
 func setGlobalVars() {
 	cfg := config.GetGlobalConfig()
+
+	// Disable automaxprocs log
+	nopLog := func(string, ...interface{}) {}
+	_, err := maxprocs.Set(maxprocs.Logger(nopLog))
+	terror.MustNil(err)
+	// We should respect to user's settings in config file.
+	// The default value of MaxProcs is 0, runtime.GOMAXPROCS(0) is no-op.
+	runtime.GOMAXPROCS(int(cfg.Performance.MaxProcs))
+
 	ddlLeaseDuration := parseDuration(cfg.Lease)
 	session.SetSchemaLease(ddlLeaseDuration)
 	statsLeaseDuration := parseDuration(cfg.Performance.StatsLease)
@@ -619,13 +628,6 @@ func setupLog() {
 
 	err = logutil.InitLogger(cfg.Log.ToLogConfig())
 	terror.MustNil(err)
-	// Disable automaxprocs log
-	nopLog := func(string, ...interface{}) {}
-	_, err = maxprocs.Set(maxprocs.Logger(nopLog))
-	terror.MustNil(err)
-	// We should respect to user's settings in config file.
-	// The default value of MaxProcs is 0, runtime.GOMAXPROCS(0) is no-op.
-	runtime.GOMAXPROCS(int(cfg.Performance.MaxProcs))
 
 	if len(os.Getenv("GRPC_DEBUG")) > 0 {
 		grpclog.SetLoggerV2(grpclog.NewLoggerV2WithVerbosity(os.Stderr, os.Stderr, os.Stderr, 999))
