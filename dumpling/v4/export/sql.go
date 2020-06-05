@@ -470,9 +470,11 @@ func detectEstimateRows(db *sql.DB, query string, fieldNames []string) int {
 	addr := make([]interface{}, len(columns))
 	oneRow := make([]sql.NullString, len(columns))
 	var fieldIndex = -1
+	for i := range oneRow {
+		addr[i] = &oneRow[i]
+	}
 found:
-	for i, row := range oneRow {
-		addr[i] = &row
+	for i := range oneRow {
 		for _, fieldName := range fieldNames {
 			if strings.EqualFold(columns[i], fieldName) {
 				fieldIndex = i

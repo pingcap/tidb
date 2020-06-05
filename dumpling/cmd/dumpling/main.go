@@ -137,6 +137,11 @@ func main() {
 		os.Exit(2)
 	}
 
+	if threads <= 0 {
+		fmt.Printf("--threads is set to %d. It should be greater than 0\n", threads)
+		os.Exit(2)
+	}
+
 	conf := export.DefaultConfig()
 	conf.Databases = databases
 	conf.Host = host
@@ -169,6 +174,8 @@ func main() {
 		log.Error("dump failed error stack info", zap.Error(err))
 		fmt.Printf("\ndump failed: %s\n", err.Error())
 		os.Exit(1)
+	} else {
+		log.Info("dump data successfully, dumpling will exit now")
 	}
 }
 
