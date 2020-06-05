@@ -107,6 +107,7 @@ func buildDAG(reader *dbreader.DBReader, lockStore *lockstore.MemStore, req *cop
 	scanExec := dagReq.Executors[0]
 	if scanExec.Tp == tipb.ExecType_TypeTableScan {
 		ctx.setColumnInfo(scanExec.TblScan.Columns)
+		ctx.primaryCols = scanExec.TblScan.PrimaryColumnIds
 	} else {
 		ctx.setColumnInfo(scanExec.IdxScan.Columns)
 	}
@@ -156,6 +157,7 @@ type evalContext struct {
 	colIDs      map[int64]int
 	columnInfos []*tipb.ColumnInfo
 	fieldTps    []*types.FieldType
+	primaryCols []int64
 	sc          *stmtctx.StatementContext
 }
 
@@ -174,8 +176,8 @@ func (e *evalContext) setColumnInfo(cols []*tipb.ColumnInfo) {
 
 func (e *evalContext) newRowDecoder() (*rowcodec.ChunkDecoder, error) {
 	var (
-		handleColID int64
-		cols        = make([]rowcodec.ColInfo, 0, len(e.columnInfos))
+		pkCols []int64
+		cols   = make([]rowcodec.ColInfo, 0, len(e.columnInfos))
 	)
 	for i := range e.columnInfos {
 		info := e.columnInfos[i]
@@ -187,7 +189,14 @@ func (e *evalContext) newRowDecoder() (*rowcodec.ChunkDecoder, error) {
 		}
 		cols = append(cols, col)
 		if info.PkHandle {
-			handleColID = info.ColumnId
+			pkCols = append(pkCols, info.ColumnId)
+		}
+	}
+	if len(pkCols) == 0 {
+		if e.primaryCols != nil {
+			pkCols = e.primaryCols
+		} else {
+			pkCols = []int64{0}
 		}
 	}
 	def := func(i int, chk *chunk.Chunk) error {
@@ -203,7 +212,7 @@ func (e *evalContext) newRowDecoder() (*rowcodec.ChunkDecoder, error) {
 		}
 		return nil
 	}
-	return rowcodec.NewChunkDecoder(cols, []int64{handleColID}, def, e.sc.TimeZone), nil
+	return rowcodec.NewChunkDecoder(cols, pkCols, def, e.sc.TimeZone), nil
 }
 
 // decodeRelatedColumnVals decodes data to Datum slice according to the row information.
