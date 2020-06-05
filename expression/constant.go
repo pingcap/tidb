@@ -170,7 +170,8 @@ func (c *Constant) VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, resul
 }
 
 func (c *Constant) getLazyDatum(row chunk.Row) (dt types.Datum, isLazy bool, err error) {
-	if p := c.ParamMarker; p != nil {
+	if c.ParamMarker != nil {
+		dt = c.ParamMarker.getLazyDatum()
 		isLazy = true
 		return
 	} else if c.DeferredExpr != nil {
