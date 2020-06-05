@@ -751,6 +751,23 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 			}
 			continue
 		}
+		if col.IsCommonHandleColumn(meta) {
+			pkIdx := FindPrimaryIndex(meta)
+			var idxOfIdx int
+			for i, idxCol := range pkIdx.Columns {
+				if meta.Columns[idxCol.Offset].ID == col.ID {
+					idxOfIdx = i
+					break
+				}
+			}
+			dtBytes := h.EncodedCol(idxOfIdx)
+			_, dt, err := codec.DecodeOne(dtBytes)
+			if err != nil {
+				return nil, nil, err
+			}
+			v[i] = dt
+			continue
+		}
 		colTps[col.ID] = &col.FieldType
 	}
 	rowMap, err := tablecodec.DecodeRow(value, colTps, ctx.GetSessionVars().Location())
@@ -762,7 +779,7 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 		if col == nil {
 			continue
 		}
-		if col.IsPKHandleColumn(meta) {
+		if col.IsPKHandleColumn(meta) || col.IsCommonHandleColumn(meta) {
 			continue
 		}
 		ri, ok := rowMap[col.ID]

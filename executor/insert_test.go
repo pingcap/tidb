@@ -1181,3 +1181,36 @@ func (s *testSuite10) TestClusterPrimaryTablePlainInsert(c *C) {
 	tk.MustQuery(`select id3, id2, id1 from t3pk where id3 = 100 and id2 = 'xyz' and id1 = 'abc'`).Check(testkit.Rows("100 xyz abc"))
 	tk.MustQuery(`select id3, id2, id1, v from t3pk where id3 = 100 and id2 = 'xyz' and id1 = 'abc'`).Check(testkit.Rows("100 xyz abc 1"))
 }
+
+func (s *testSuite10) TestClusterPrimaryTableInsertIgnore(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
+
+	tk.MustExec(`drop table if exists it1pk`)
+	tk.MustExec(`create table it1pk(id varchar(200) primary key, v int)`)
+	tk.MustExec(`insert into it1pk(id, v) values('abc', 1)`)
+	tk.MustExec(`insert ignore into it1pk(id, v) values('abc', 2)`)
+	tk.MustQuery(`select * from it1pk where id = 'abc'`).Check(testkit.Rows("abc 1"))
+
+	tk.MustExec(`drop table if exists it2pk`)
+	tk.MustExec(`create table it2pk(id1 varchar(200), id2 varchar(200), v int, primary key(id1, id2))`)
+	tk.MustExec(`insert into it2pk(id1, id2, v) values('abc', 'cba', 1)`)
+	tk.MustQuery(`select * from it2pk where id1 = 'abc' and id2 = 'cba'`).Check(testkit.Rows("abc cba 1"))
+	tk.MustExec(`insert ignore into it2pk(id1, id2, v) values('abc', 'cba', 2)`)
+	tk.MustQuery(`select * from it2pk where id1 = 'abc' and id2 = 'cba'`).Check(testkit.Rows("abc cba 1"))
+}
+
+func (s *testSuite10) TestClusterPrimaryTableInsertDuplicate(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
+
+	tk.MustExec(`drop table if exists dt1pi`)
+	tk.MustExec(`create table dt1pi(id varchar(200) primary key, v int)`)
+	tk.MustExec(`insert into dt1pi(id, v) values('abb', 1),('acc', 2)`)
+	tk.MustExec(`insert into dt1pi(id, v) values('abb', 2) on duplicate key update v = v + 1`)
+	tk.MustQuery(`select * from dt1pi`).Check(testkit.Rows("abb 2", "acc 2"))
+	tk.MustExec(`insert into dt1pi(id, v) values('abb', 2) on duplicate key update v = v + 1, id = 'xxx'`)
+	tk.MustQuery(`select * from dt1pi`).Check(testkit.Rows("acc 2", "xxx 3"))
+}
