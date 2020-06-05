@@ -138,6 +138,14 @@ func (p *PhysicalIndexReader) SetChildren(children ...PhysicalPlan) {
 	p.SetSchema(nil)
 }
 
+// ExtractCorrelatedCols implements PhysicalPlan interface.
+func (p *PhysicalIndexReader) ExtractCorrelatedCols() (corCols []*expression.CorrelatedColumn) {
+	for _, child := range p.IndexPlans {
+		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
+	}
+	return corCols
+}
+
 // PushedDownLimit is the limit operator pushed down into PhysicalIndexLookUpReader.
 type PushedDownLimit struct {
 	Offset uint64
@@ -160,6 +168,17 @@ type PhysicalIndexLookUpReader struct {
 	PushedLimit *PushedDownLimit
 }
 
+// ExtractCorrelatedCols implements PhysicalPlan interface.
+func (p *PhysicalIndexLookUpReader) ExtractCorrelatedCols() (corCols []*expression.CorrelatedColumn) {
+	for _, child := range p.TablePlans {
+		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
+	}
+	for _, child := range p.IndexPlans {
+		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
+	}
+	return corCols
+}
+
 // PhysicalIndexMergeReader is the reader using multiple indexes in tidb.
 type PhysicalIndexMergeReader struct {
 	physicalSchemaProducer
@@ -172,6 +191,22 @@ type PhysicalIndexMergeReader struct {
 	partialPlans []PhysicalPlan
 	// tablePlan is a PhysicalTableScan to get the table tuples. Current, it must be not nil.
 	tablePlan PhysicalPlan
+}
+
+// ExtractCorrelatedCols implements PhysicalPlan interface.
+func (p *PhysicalIndexMergeReader) ExtractCorrelatedCols() (corCols []*expression.CorrelatedColumn) {
+	for _, child := range p.TablePlans {
+		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
+	}
+	for _, child := range p.partialPlans {
+		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
+	}
+	for _, PartialPlan := range p.PartialPlans {
+		for _, child := range PartialPlan {
+			corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
+		}
+	}
+	return corCols
 }
 
 // PhysicalIndexScan represents an index scan plan.
