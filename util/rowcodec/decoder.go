@@ -277,6 +277,7 @@ func (decoder *ChunkDecoder) tryAppendHandleColumn(colIdx int, col *ColInfo, han
 			if err != nil {
 				return false
 			}
+			return true
 		}
 	}
 	return false
@@ -445,6 +446,16 @@ func (decoder *BytesDecoder) tryDecodeHandle(values [][]byte, offset int, col *C
 			handleData = append(handleData, IntFlag)
 			handleData = codec.EncodeInt(handleData, handle.IntValue())
 		}
+		values[offset] = handleData
+		return true
+	}
+	var handleData []byte
+	for i, hid := range decoder.handleColIDs {
+		if col.ID == hid {
+			handleData = append(handleData, handle.EncodedCol(i)...)
+		}
+	}
+	if len(handleData) > 0 {
 		values[offset] = handleData
 		return true
 	}
