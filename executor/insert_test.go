@@ -1145,3 +1145,39 @@ func (s *testSuite9) TestIssue16366(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(strings.Contains(err.Error(), "Duplicate entry '0' for key 'PRIMARY'"), IsTrue, Commentf("%v", err))
 }
+
+var _ = SerialSuites(&testSuite10{&baseTestSuite{}})
+
+type testSuite10 struct {
+	*baseTestSuite
+}
+
+func (s *testSuite10) TestClusterPrimaryTablePlainInsert(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
+
+	tk.MustExec(`drop table if exists t1pk`)
+	tk.MustExec(`create table t1pk(id varchar(200) primary key, v int)`)
+	tk.MustExec(`insert into t1pk(id, v) values('abc', 1)`)
+	tk.MustQuery(`select * from t1pk`).Check(testkit.Rows("abc 1"))
+	tk.MustExec(`set @@tidb_constraint_check_in_place=true`)
+	c.Assert(tk.ExecToErr(`insert into t1pk(id, v) values('abc', 2)`).Error(), Equals, `[kv:1062]Duplicate entry '{abc}' for key 'PRIMARY'`)
+	tk.MustExec(`set @@tidb_constraint_check_in_place=false`)
+	c.Assert(tk.ExecToErr(`insert into t1pk(id, v) values('abc', 3)`).Error(), Equals, `[kv:1062]Duplicate entry '{abc}' for key 'PRIMARY'`)
+	tk.MustQuery(`select v, id from t1pk`).Check(testkit.Rows("1 abc"))
+	tk.MustQuery(`select id from t1pk where id = 'abc'`).Check(testkit.Rows("abc"))
+	tk.MustQuery(`select v, id from t1pk where id = 'abc'`).Check(testkit.Rows("1 abc"))
+
+	tk.MustExec(`drop table if exists t3pk`)
+	tk.MustExec(`create table t3pk(id1 varchar(200), id2 varchar(200), v int, id3 int, primary key(id1, id2, id3))`)
+	tk.MustExec(`insert into t3pk(id1, id2, id3, v) values('abc', 'xyz', 100, 1)`)
+	tk.MustQuery(`select * from t3pk`).Check(testkit.Rows("abc xyz 1 100"))
+	tk.MustExec(`set @@tidb_constraint_check_in_place=true`)
+	c.Assert(tk.ExecToErr(`insert into t3pk(id1, id2, id3, v) values('abc', 'xyz', 100, 2)`).Error(), Equals, `[kv:1062]Duplicate entry '{abc, xyz, 100}' for key 'PRIMARY'`)
+	tk.MustExec(`set @@tidb_constraint_check_in_place=false`)
+	c.Assert(tk.ExecToErr(`insert into t3pk(id1, id2, id3, v) values('abc', 'xyz', 100, 3)`).Error(), Equals, `[kv:1062]Duplicate entry '{abc, xyz, 100}' for key 'PRIMARY'`)
+	tk.MustQuery(`select v, id3, id2, id1 from t3pk`).Check(testkit.Rows("1 100 xyz abc"))
+	tk.MustQuery(`select id3, id2, id1 from t3pk where id3 = 100 and id2 = 'xyz' and id1 = 'abc'`).Check(testkit.Rows("100 xyz abc"))
+	tk.MustQuery(`select id3, id2, id1, v from t3pk where id3 = 100 and id2 = 'xyz' and id1 = 'abc'`).Check(testkit.Rows("100 xyz abc 1"))
+}

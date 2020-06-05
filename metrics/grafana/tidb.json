@@ -176,7 +176,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "TiDB query processing numbers per second",
+          "description": "MySQL commands processing numbers per second. See https://dev.mysql.com/doc/internals/en/text-protocol.html and https://dev.mysql.com/doc/internals/en/prepared-statements.html",
           "editable": true,
           "error": false,
           "fill": 1,
@@ -243,7 +243,7 @@
               "hide": true,
               "instant": false,
               "intervalFactor": 2,
-              "legendFormat": "ideal QPS",
+              "legendFormat": "ideal CPS",
               "refId": "C",
               "step": 60
             }
@@ -252,7 +252,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "QPS",
+          "title": "Command Per Second",
           "tooltip": {
             "msResolution": true,
             "shared": true,
@@ -297,7 +297,7 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "decimals": null,
-          "description": "TiDB statement statistics by statement type",
+          "description": "TiDB statement statistics",
           "editable": true,
           "error": false,
           "fill": 1,
@@ -344,13 +344,20 @@
               "legendFormat": "{{type}}",
               "refId": "A",
               "step": 30
+            },
+            {
+              "expr": "sum(rate(tidb_executor_statement_total[1m]))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "total",
+              "refId": "B"
             }
           ],
           "thresholds": [],
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Statement OPS",
+          "title": "QPS",
           "tooltip": {
             "msResolution": false,
             "shared": true,
@@ -394,7 +401,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "TiDB query total statistics including both successful and failed ones",
+          "description": "TiDB command total statistics including both successful and failed ones",
           "editable": true,
           "error": false,
           "fill": 0,
@@ -454,7 +461,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "QPS By Instance",
+          "title": "CPS By Instance",
           "tooltip": {
             "msResolution": true,
             "shared": true,
@@ -1059,7 +1066,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 38
+            "y": 2
           },
           "id": 23,
           "legend": {
@@ -1153,7 +1160,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 38
+            "y": 2
           },
           "id": 1,
           "legend": {
@@ -1250,7 +1257,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 45
+            "y": 9
           },
           "id": 25,
           "legend": {
@@ -1343,7 +1350,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 45
+            "y": 9
           },
           "id": 81,
           "legend": {
@@ -1436,7 +1443,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 52
+            "y": 16
           },
           "id": 94,
           "legend": {
@@ -1529,7 +1536,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 52
+            "y": 16
           },
           "id": 68,
           "legend": {
@@ -11996,7 +12003,7 @@
     }
   ],
   "refresh": "30s",
-  "schemaVersion": 20,
+  "schemaVersion": 18,
   "style": "dark",
   "tags": [],
   "templating": {
