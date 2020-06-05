@@ -612,6 +612,9 @@ type SessionVars struct {
 
 	// EnableClusteredIndex indicates whether to enable clustered index when creating a new table.
 	EnableClusteredIndex bool
+
+	// EnableSlowLogMasking indicates that whether masking the query data when log slow query.
+	EnableSlowLogMasking bool
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -702,6 +705,7 @@ func NewSessionVars() *SessionVars {
 		SelectLimit:                 math.MaxUint64,
 		AllowAutoRandExplicitInsert: DefTiDBAllowAutoRandExplicitInsert,
 		EnableClusteredIndex:        DefTiDBEnableClusteredIndex,
+		EnableSlowLogMasking:        DefTiDBSlowLogMasking,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1312,6 +1316,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.AllowAutoRandExplicitInsert = TiDBOptOn(val)
 	case TiDBEnableClusteredIndex:
 		s.EnableClusteredIndex = TiDBOptOn(val)
+	case TiDBSlowLogMasking:
+		s.EnableSlowLogMasking = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
