@@ -283,8 +283,8 @@ func restore2IndexHint(hintType string, hintIndex indexHintInfo) string {
 	buffer.WriteString(strings.ToUpper(hintType))
 	buffer.WriteString("(")
 	buffer.WriteString(restore2TableHint(hintTableInfo{
-		dbName: hintIndex.dbName,
-		tblName: hintIndex.tblName,
+		dbName:     hintIndex.dbName,
+		tblName:    hintIndex.tblName,
 		partitions: hintIndex.partitions,
 	}))
 	if hintIndex.indexHint != nil && len(hintIndex.indexHint.IndexNames) > 0 {
