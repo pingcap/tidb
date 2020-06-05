@@ -1011,3 +1011,79 @@ func (s *testIntegrationSuite) TestStreamAggProp(c *C) {
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Res...))
 	}
 }
+
+func (s *testIntegrationSuite) TestSelectLimit(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1),(1),(2)")
+
+	// normal test
+	tk.MustExec("set @@session.sql_select_limit=1")
+	result := tk.MustQuery("select * from t order by a")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select * from t order by a limit 2")
+	result.Check(testkit.Rows("1", "1"))
+	tk.MustExec("set @@session.sql_select_limit=default")
+	result = tk.MustQuery("select * from t order by a")
+	result.Check(testkit.Rows("1", "1", "2"))
+
+	// test for subquery
+	tk.MustExec("set @@session.sql_select_limit=1")
+	result = tk.MustQuery("select * from (select * from t) s order by a")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select * from (select * from t limit 2) s order by a") // limit write in subquery, has no effect.
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select (select * from t limit 1) s") // limit write in subquery, has no effect.
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select * from t where t.a in (select * from t) limit 3") // select_limit will not effect subquery
+	result.Check(testkit.Rows("1", "1", "2"))
+	result = tk.MustQuery("select * from (select * from t) s limit 3") // select_limit will not effect subquery
+	result.Check(testkit.Rows("1", "1", "2"))
+
+	// test for union
+	result = tk.MustQuery("select * from t union all select * from t limit 2") // limit outside subquery
+	result.Check(testkit.Rows("1", "1"))
+	result = tk.MustQuery("select * from t union all (select * from t limit 2)") // limit inside subquery
+	result.Check(testkit.Rows("1"))
+
+	// test for prepare & execute
+	tk.MustExec("prepare s1 from 'select * from t where a = ?'")
+	tk.MustExec("set @a = 1")
+	result = tk.MustQuery("execute s1 using @a")
+	result.Check(testkit.Rows("1"))
+	tk.MustExec("set @@session.sql_select_limit=default")
+	result = tk.MustQuery("execute s1 using @a")
+	result.Check(testkit.Rows("1", "1"))
+	tk.MustExec("set @@session.sql_select_limit=1")
+	tk.MustExec("prepare s2 from 'select * from t where a = ? limit 3'")
+	result = tk.MustQuery("execute s2 using @a") // if prepare stmt has limit, select_limit takes no effect.
+	result.Check(testkit.Rows("1", "1"))
+
+	// test for create view
+	tk.MustExec("set @@session.sql_select_limit=1")
+	tk.MustExec("create definer='root'@'localhost' view s as select * from t") // select limit should not effect create view
+	result = tk.MustQuery("select * from s")
+	result.Check(testkit.Rows("1"))
+	tk.MustExec("set @@session.sql_select_limit=default")
+	result = tk.MustQuery("select * from s")
+	result.Check(testkit.Rows("1", "1", "2"))
+
+	// test for DML
+	tk.MustExec("set @@session.sql_select_limit=1")
+	tk.MustExec("create table b (a int)")
+	tk.MustExec("insert into b select * from t") // all values are inserted
+	result = tk.MustQuery("select * from b limit 3")
+	result.Check(testkit.Rows("1", "1", "2"))
+	tk.MustExec("update b set a = 2 where a = 1") // all values are updated
+	result = tk.MustQuery("select * from b limit 3")
+	result.Check(testkit.Rows("2", "2", "2"))
+	result = tk.MustQuery("select * from b")
+	result.Check(testkit.Rows("2"))
+	tk.MustExec("delete from b where a = 2") // all values are deleted
+	result = tk.MustQuery("select * from b")
+	result.Check(testkit.Rows())
+
+}
