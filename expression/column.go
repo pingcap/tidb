@@ -40,11 +40,6 @@ func (col *CorrelatedColumn) Clone() Expression {
 	return col
 }
 
-// TrueClone implements the true clone methods for CorrelatedColumn.
-func (col *CorrelatedColumn) TrueClone() Expression {
-	return &CorrelatedColumn{Column: *col.Column.Clone().(*Column), Data: col.Data.Clone()}
-}
-
 // VecEvalInt evaluates this expression in a vectorized manner.
 func (col *CorrelatedColumn) VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	return genVecFromConstExpr(ctx, col, types.ETInt, input, result)
