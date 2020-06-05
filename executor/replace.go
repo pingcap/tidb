@@ -132,7 +132,7 @@ func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
 	}
 
 	// No duplicated rows now, insert the row.
-	_, err = e.addRecord(ctx, r.row)
+	err = e.addRecord(ctx, r.row)
 	if err != nil {
 		return err
 	}
