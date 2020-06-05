@@ -234,7 +234,13 @@ func (s *testUpdateSuite) TestUpdateMultiDatabaseTable(c *C) {
 	tk.MustExec("update t, test2.t set test.t.a=1")
 }
 
-func (s *testUpdateSuite) TestUpdateClusterIndex(c *C) {
+var _ = SerialSuites(&testSuite11{&baseTestSuite{}})
+
+type testSuite11 struct {
+	*baseTestSuite
+}
+
+func (s *testSuite11) TestUpdateClusterIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
 	tk.MustExec(`use test`)
@@ -265,7 +271,7 @@ func (s *testUpdateSuite) TestUpdateClusterIndex(c *C) {
 	c.Assert(tk.ExecToErr(`update t3pk set id2 = 'bbb3' where id1 = 'abc' and id2 = 'bbb2' and id3 = 222`).Error(), Equals, `[kv:1062]Duplicate entry '{abc, bbb3, 222}' for key 'PRIMARY'`)
 }
 
-func (s *testUpdateSuite) TestDeleteClusterIndex(c *C) {
+func (s *testSuite11) TestDeleteClusterIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
 	tk.MustExec(`use test`)
