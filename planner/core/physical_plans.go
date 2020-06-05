@@ -308,12 +308,12 @@ type PhysicalTableScan struct {
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
-func (p *PhysicalTableScan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0, len(p.AccessCondition)+len(p.filterCondition))
-	for _, expr := range p.AccessCondition {
+func (ts *PhysicalTableScan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := make([]*expression.CorrelatedColumn, 0, len(ts.AccessCondition)+len(ts.filterCondition))
+	for _, expr := range ts.AccessCondition {
 		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
 	}
-	for _, expr := range p.filterCondition {
+	for _, expr := range ts.filterCondition {
 		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
 	}
 	return corCols
