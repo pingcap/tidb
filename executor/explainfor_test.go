@@ -189,7 +189,7 @@ func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 	explainForQuery := "explain for connection" + rows[0][0].(string)
 
 	ch := make(chan int)
-	repeats := 1000
+	repeats := 10
 
 	go func() {
 		for i := 0; i < repeats; i++ {
