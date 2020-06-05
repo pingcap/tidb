@@ -602,15 +602,9 @@ type SessionVars struct {
 
 	// SelectLimit limits the max counts of select statement's output
 	SelectLimit uint64
-<<<<<<< HEAD
-=======
-
-	// EnableClusteredIndex indicates whether to enable clustered index when creating a new table.
-	EnableClusteredIndex bool
 
 	// EnableSlowLogMasking indicates that whether masking the query data when log slow query.
 	EnableSlowLogMasking bool
->>>>>>> 35e2d3a... *: add global variable tidb_slow_log_masking to control masking slow log query (#17637)
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -699,12 +693,7 @@ func NewSessionVars() *SessionVars {
 		PrevFoundInPlanCache:        DefTiDBFoundInPlanCache,
 		FoundInPlanCache:            DefTiDBFoundInPlanCache,
 		SelectLimit:                 math.MaxUint64,
-<<<<<<< HEAD
-=======
-		AllowAutoRandExplicitInsert: DefTiDBAllowAutoRandExplicitInsert,
-		EnableClusteredIndex:        DefTiDBEnableClusteredIndex,
 		EnableSlowLogMasking:        DefTiDBSlowLogMasking,
->>>>>>> 35e2d3a... *: add global variable tidb_slow_log_masking to control masking slow log query (#17637)
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1291,15 +1280,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 			return errors.Trace(err)
 		}
 		s.SelectLimit = result
-<<<<<<< HEAD
-=======
-	case TiDBAllowAutoRandExplicitInsert:
-		s.AllowAutoRandExplicitInsert = TiDBOptOn(val)
-	case TiDBEnableClusteredIndex:
-		s.EnableClusteredIndex = TiDBOptOn(val)
 	case TiDBSlowLogMasking:
 		s.EnableSlowLogMasking = TiDBOptOn(val)
->>>>>>> 35e2d3a... *: add global variable tidb_slow_log_masking to control masking slow log query (#17637)
 	}
 	s.systems[name] = val
 	return nil

@@ -390,18 +390,9 @@ const (
 
 	// TiDBMetricSchemaRangeDuration indicates the range duration when query metric schema.
 	TiDBMetricSchemaRangeDuration = "tidb_metric_query_range_duration"
-<<<<<<< HEAD
-=======
-
-	// TiDBEnableCollectExecutionInfo indicates that whether execution info is collected.
-	TiDBEnableCollectExecutionInfo = "tidb_enable_collect_execution_info"
-
-	// TiDBEnableClusteredIndex indicates if clustered index feature is enabled.
-	TiDBEnableClusteredIndex = "tidb_enable_clustered_index"
 
 	// TiDBSlowLogMasking indicates that whether masking the query data when log slow query.
 	TiDBSlowLogMasking = "tidb_slow_log_masking"
->>>>>>> 35e2d3a... *: add global variable tidb_slow_log_masking to control masking slow log query (#17637)
 )
 
 // Default TiDB system variable values.
@@ -495,13 +486,7 @@ const (
 	DefTiDBMetricSchemaStep            = 60 // 60s
 	DefTiDBMetricSchemaRangeDuration   = 60 // 60s
 	DefTiDBFoundInPlanCache            = false
-<<<<<<< HEAD
-=======
-	DefTidbEnableCollectExecutionInfo  = false
-	DefTiDBAllowAutoRandExplicitInsert = false
-	DefTiDBEnableClusteredIndex        = false
 	DefTiDBSlowLogMasking              = false
->>>>>>> 35e2d3a... *: add global variable tidb_slow_log_masking to control masking slow log query (#17637)
 )
 
 // Process global variables.
