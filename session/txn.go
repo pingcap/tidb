@@ -497,7 +497,7 @@ func (tf *txnFuture) wait() (kv.Transaction, error) {
 	startTS, err := tf.future.Wait()
 	if err == nil {
 		return tf.store.BeginWithStartTS(startTS)
-	} else if config.GetGlobalConfig().Store == "mocktikv" {
+	} else if config.GetGlobalConfig().Store == "unistore" {
 		return nil, err
 	}
 
