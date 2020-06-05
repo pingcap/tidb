@@ -145,7 +145,7 @@
         "SQL": "explain select * from t order by a",
         "Result": [
           "Sort_8 10005.00 root  test.t.a:asc",
-          "└─Union_11 10005.00 root  ",
+          "└─PartitionUnion_11 10005.00 root  ",
           "  ├─TableReader_13 10000.00 root  data:TableFullScan_12",
           "  │ └─TableFullScan_12 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
           "  ├─TableReader_15 1.00 root  data:TableFullScan_14",
@@ -168,7 +168,7 @@
         "SQL": "explain select * from t order by a limit 3",
         "Result": [
           "TopN_16 3.00 root  test.t.a:asc, offset:0, count:3",
-          "└─Union_20 7.00 root  ",
+          "└─PartitionUnion_20 7.00 root  ",
           "  ├─TopN_21 3.00 root  test.t.a:asc, offset:0, count:3",
           "  │ └─TableReader_29 3.00 root  data:TopN_28",
           "  │   └─TopN_28 3.00 cop[tikv]  test.t.a:asc, offset:0, count:3",
@@ -336,12 +336,11 @@
       {
         "SQL": "desc select /*+ INL_HASH_JOIN(t2) */ distinct t2.a from t t1 join t t2 on t1.a = t2.a",
         "Plan": [
-          "HashAgg_8 8000.00 root  group by:test.t.a, funcs:firstrow(test.t.a)->test.t.a",
-          "└─IndexHashJoin_20 12500.00 root  inner join, inner:TableReader_13, outer key:test.t.a, inner key:test.t.a",
-          "  ├─TableReader_22(Build) 10000.00 root  data:TableFullScan_21",
-          "  │ └─TableFullScan_21 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─TableReader_13(Probe) 1.00 root  data:TableRangeScan_12",
-          "    └─TableRangeScan_12 1.00 cop[tikv] table:t2 range: decided by [test.t.a], keep order:false, stats:pseudo"
+          "IndexHashJoin_17 12500.00 root  inner join, inner:TableReader_10, outer key:test.t.a, inner key:test.t.a",
+          "├─TableReader_19(Build) 10000.00 root  data:TableFullScan_18",
+          "│ └─TableFullScan_18 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader_10(Probe) 1.00 root  data:TableRangeScan_9",
+          "  └─TableRangeScan_9 1.00 cop[tikv] table:t2 range: decided by [test.t.a], keep order:false, stats:pseudo"
         ],
         "Warnings": []
       },
@@ -507,7 +506,7 @@
       {
         "SQL": "explain select * from t where a in (1, 2,'11')",
         "Plan": [
-          "Union_8 60.00 root  ",
+          "PartitionUnion_8 60.00 root  ",
           "├─TableReader_11 30.00 root  data:Selection_10",
           "│ └─Selection_10 30.00 cop[tikv]  in(test.t.a, 1, 2, 11)",
           "│   └─TableFullScan_9 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
@@ -519,7 +518,7 @@
       {
         "SQL": "explain select * from t where a in (17, null)",
         "Plan": [
-          "Union_8 20.00 root  ",
+          "PartitionUnion_8 20.00 root  ",
           "├─TableReader_11 10.00 root  data:Selection_10",
           "│ └─Selection_10 10.00 cop[tikv]  in(test.t.a, 17, NULL)",
           "│   └─TableFullScan_9 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
@@ -531,7 +530,7 @@
       {
         "SQL": "explain select * from t where a in (16, 'abc')",
         "Plan": [
-          "Union_8 40.00 root  ",
+          "PartitionUnion_8 40.00 root  ",
           "├─TableReader_11 20.00 root  data:Selection_10",
           "│ └─Selection_10 20.00 cop[tikv]  in(test.t.a, 16, 0)",
           "│   └─TableFullScan_9 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
@@ -557,7 +556,7 @@
       {
         "SQL": "explain select * from t where a in (14, floor(3.47))",
         "Plan": [
-          "Union_8 40.00 root  ",
+          "PartitionUnion_8 40.00 root  ",
           "├─TableReader_11 20.00 root  data:Selection_10",
           "│ └─Selection_10 20.00 cop[tikv]  in(test.t.a, 14, 3)",
           "│   └─TableFullScan_9 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
@@ -569,7 +568,7 @@
       {
         "SQL": "explain select * from t where b in (3, 4)",
         "Plan": [
-          "Union_9 60.00 root  ",
+          "PartitionUnion_9 60.00 root  ",
           "├─TableReader_12 20.00 root  data:Selection_11",
           "│ └─Selection_11 20.00 cop[tikv]  in(test.t.b, 3, 4)",
           "│   └─TableFullScan_10 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
