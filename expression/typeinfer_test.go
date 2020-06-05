@@ -833,6 +833,7 @@ func (s *testInferTypeSuite) createTestCase4Aggregations() []typeInferTestCase {
 		{"avg(1.2e2)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},
 		{"avg(c_char)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},
 		{"group_concat(c_int_d)", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, mysql.MaxBlobWidth, 0},
+		{"count(c_decimal)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 21, 0},
 	}
 }
 
