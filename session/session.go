@@ -1958,6 +1958,12 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEvolvePlanBaselines,
 	variable.TiDBIsolationReadEngines,
 	variable.TiDBStoreLimit,
+<<<<<<< HEAD
+=======
+	variable.TiDBAllowAutoRandExplicitInsert,
+	variable.TiDBEnableClusteredIndex,
+	variable.TiDBSlowLogMasking,
+>>>>>>> 35e2d3a... *: add global variable tidb_slow_log_masking to control masking slow log query (#17637)
 }
 
 var (
