@@ -2994,13 +2994,7 @@ func newRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 	}
 	if len(pkCols) == 0 {
 		if tbl.IsCommonHandle {
-			var pkIdx *model.IndexInfo
-			for _, idx := range tbl.Indices {
-				if idx.Primary {
-					pkIdx = idx
-					break
-				}
-			}
+			pkIdx := tables.FindPrimaryIndex(tbl)
 			for _, idxCol := range pkIdx.Columns {
 				pkCols = append(pkCols, tbl.Columns[idxCol.Offset].ID)
 			}

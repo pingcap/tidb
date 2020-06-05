@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
@@ -105,13 +106,7 @@ func (p *PhysicalLimit) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 	var pkColIds []int64
 	if p.Table.IsCommonHandle {
-		var pkIdx *model.IndexInfo
-		for _, idx := range p.Table.Indices {
-			if idx.Primary {
-				pkIdx = idx
-				break
-			}
-		}
+		pkIdx := tables.FindPrimaryIndex(p.Table)
 		for _, idxCol := range pkIdx.Columns {
 			pkColIds = append(pkColIds, p.Table.Columns[idxCol.Offset].ID)
 		}

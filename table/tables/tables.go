@@ -467,6 +467,18 @@ func adjustRowValuesBuf(writeBufs *variable.WriteStmtBufs, rowLen int) {
 	writeBufs.AddRowValues = writeBufs.AddRowValues[:adjustLen]
 }
 
+// FindPrimaryIndex uses to find primary index in tableInfo.
+func FindPrimaryIndex(tblInfo *model.TableInfo) *model.IndexInfo {
+	var pkIdx *model.IndexInfo
+	for _, idx := range tblInfo.Indices {
+		if idx.Primary {
+			pkIdx = idx
+			break
+		}
+	}
+	return pkIdx
+}
+
 // AddRecord implements table.Table AddRecord interface.
 func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
 	var opt table.AddRecordOpt
@@ -488,13 +500,7 @@ func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 			recordID = kv.IntHandle(r[tblInfo.GetPkColInfo().Offset].GetInt64())
 			hasRecordID = true
 		} else if tblInfo.IsCommonHandle {
-			var pkIdx *model.IndexInfo
-			for _, idx := range tblInfo.Indices {
-				if idx.Primary {
-					pkIdx = idx
-					break
-				}
-			}
+			pkIdx := FindPrimaryIndex(tblInfo)
 			pkDts := make([]types.Datum, 0, len(pkIdx.Columns))
 			for _, idxCol := range pkIdx.Columns {
 				pkDts = append(pkDts, r[tblInfo.Columns[idxCol.Offset].Offset])
