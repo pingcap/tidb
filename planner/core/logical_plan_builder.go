@@ -3202,7 +3202,8 @@ type TblColPosInfo struct {
 	// Start and End represent the ordinal range [Start, End) of the consecutive columns.
 	Start, End int
 	// HandleOrdinal represents the ordinal of the handle column.
-	HandleOrdinal int
+	HandleOrdinal  []int
+	IsCommonHandle bool // TODO: fix redesign update join table and remove me!
 }
 
 // TblColPosInfoSlice attaches the methods of sort.Interface to []TblColPosInfos sorting in increasing order.
@@ -3234,7 +3235,11 @@ func (c TblColPosInfoSlice) FindHandle(colOrdinal int) (int, bool) {
 	if rangeBehindOrdinal == 0 {
 		return 0, false
 	}
-	return c[rangeBehindOrdinal-1].HandleOrdinal, true
+	if c[rangeBehindOrdinal-1].IsCommonHandle {
+		// TODO: fix redesign update join table to fix me.
+		return 0, false
+	}
+	return c[rangeBehindOrdinal-1].HandleOrdinal[0], true
 }
 
 // buildColumns2Handle builds columns to handle mapping.
@@ -3259,7 +3264,8 @@ func buildColumns2Handle(
 				return nil, err
 			}
 			end := offset + tblLen
-			cols2Handles = append(cols2Handles, TblColPosInfo{tblID, offset, end, handleCol.Index})
+			cols2Handles = append(cols2Handles, TblColPosInfo{tblID, offset, end, []int{handleCol.Index}, tbl.Meta().IsCommonHandle})
+			// TODO: fix me for cluster index
 		}
 	}
 	sort.Sort(cols2Handles)
