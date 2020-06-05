@@ -393,6 +393,14 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 				err = w.finishDDLJob(t, job)
 				return errors.Trace(err)
 			}
+			if runJobErr != nil && !job.IsRollingback() && !job.IsRollbackDone() {
+				// If the running job meets an error
+				// and the job state is rolling back, it means that we have already handled this error.
+				// Some DDL jobs (such as adding indexes) may need to update the table info and the schema version,
+				// then shouldn't discard the KV modification.
+				// Otherwise, we should discard the KV modification when running job.
+				txn.Reset()
+			}
 			err = w.updateDDLJob(t, job, runJobErr != nil)
 			if err = w.handleUpdateJobError(t, job, err); err != nil {
 				return errors.Trace(err)

@@ -226,6 +226,8 @@ func getTableInfo(t *meta.Meta, job *model.Job, schemaID int64) (*model.TableInf
 	return tblInfo, nil
 }
 
+var mockTruncateTableUpdateVersionErrorOnce = true
+
 // onTruncateTable delete old table meta, and creates a new table identical to old table except for table ID.
 // As all the old data is encoded with old table ID, it can not be accessed any more.
 // A background job will be created to delete old data.
@@ -272,6 +274,13 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+
+	failpoint.Inject("mockTruncateTableUpdateVersionError", func(val failpoint.Value) {
+		if val.(bool) && mockTruncateTableUpdateVersionErrorOnce {
+			mockTruncateTableUpdateVersionErrorOnce = false
+			failpoint.Return(ver, errors.New("mock update version error"))
+		}
+	})
 
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
