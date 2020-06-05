@@ -733,7 +733,7 @@
           "    └─TableFullScan_28 10000.00 cop[tiflash] table:t1, partition:p2 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "Warning 1105 Optimizer Hint /*+ HASH_JOIN(t1) */ is inapplicable on specified partitions"
+          "Warning 1105 Optimizer Hint /*+ HASH_JOIN(t1, t2 PARTITION(p0)) */ is inapplicable on specified partitions"
         ]
       },
       {

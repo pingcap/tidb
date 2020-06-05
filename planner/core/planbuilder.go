@@ -164,12 +164,9 @@ func tableNames2HintTableInfo(ctx sessionctx.Context, hintName string, hintTable
 		case TiDBMergeJoin, HintSMJ, TiDBIndexNestedLoopJoin, HintINLJ, HintINLHJ, HintINLMJ, TiDBHashJoin, HintHJ:
 			if len(tableInfo.partitions) > 0 {
 				isInapplicable = true
-			} else {
-				hintTableInfos = append(hintTableInfos, tableInfo)
 			}
-		default:
-			hintTableInfos = append(hintTableInfos, tableInfo)
 		}
+		hintTableInfos = append(hintTableInfos, tableInfo)
 	}
 	if isInapplicable {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(
