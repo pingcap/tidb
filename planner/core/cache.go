@@ -71,7 +71,7 @@ type pstmtPlanCacheKey struct {
 	schemaVersion        int64
 	sqlMode              mysql.SQLMode
 	timezoneOffset       int
-	selectLimit    uint64
+	selectLimit          uint64
 	isolationReadEngines map[kv.StoreType]struct{}
 
 	hash []byte
@@ -138,7 +138,7 @@ func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, sch
 		schemaVersion:        schemaVersion,
 		sqlMode:              sessionVars.SQLMode,
 		timezoneOffset:       timezoneOffset,
-		selectLimit:    sessionVars.SelectLimit,
+		selectLimit:          sessionVars.SelectLimit,
 		isolationReadEngines: make(map[kv.StoreType]struct{}),
 	}
 	for k, v := range sessionVars.IsolationReadEngines {
