@@ -806,18 +806,18 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 	// Use the failpoint to control whether to push down an expression in the integration test.
 	// Push down all expression if the `failpoint expression` is `all`, otherwise, check
 	// whether scalar function's name is contained in the enabled expression list (e.g.`ne,eq,lt`).
-	failpoint.Inject("PushDownTestSwitcher", func(val failpoint.Value) bool {
+	// If neither of the above is true, switch to original logic.
+	failpoint.Inject("PushDownTestSwitcher", func(val failpoint.Value) {
 		enabled := val.(string)
 		if enabled == "all" {
-			return true
+			failpoint.Return(true)
 		}
 		exprs := strings.Split(enabled, ",")
 		for _, expr := range exprs {
 			if strings.ToLower(strings.TrimSpace(expr)) == sf.FuncName.L {
-				return true
+				failpoint.Return(true)
 			}
 		}
-		return false
 	})
 
 	ret := false
@@ -1059,7 +1059,7 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 }
 
 func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType) bool {
-	if storeType == kv.TiFlash && (expr.GetType().Tp == mysql.TypeDuration || expr.GetType().Tp == mysql.TypeJSON || collate.NewCollationEnabled()) {
+	if storeType == kv.TiFlash && (expr.GetType().Tp == mysql.TypeDuration || collate.NewCollationEnabled()) {
 		return false
 	}
 	switch x := expr.(type) {
@@ -1114,12 +1114,12 @@ func scalarExprSupportedByTiDB(function *ScalarFunction) bool {
 
 func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 	switch function.FuncName.L {
-	case ast.Plus, ast.Minus, ast.Div, ast.Mul,
-		ast.NullEQ, ast.GE, ast.LE, ast.EQ, ast.NE,
-		ast.LT, ast.GT, ast.Ifnull, ast.IsNull, ast.Or,
-		ast.In, ast.Mod, ast.And, ast.LogicOr, ast.LogicAnd,
+	case ast.Plus, ast.Minus, ast.Div, ast.Mul, ast.GE, ast.LE,
+		ast.EQ, ast.NE, ast.LT, ast.GT, ast.Ifnull, ast.IsNull,
+		ast.Or, ast.In, ast.Mod, ast.And, ast.LogicOr, ast.LogicAnd,
 		ast.Like, ast.UnaryNot, ast.Case, ast.Month, ast.Substr,
-		ast.Substring, ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime:
+		ast.Substring, ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime,
+		ast.JSONLength, ast.If, ast.BitNeg, ast.Xor:
 		return true
 	case ast.Cast:
 		switch function.Function.PbCode() {

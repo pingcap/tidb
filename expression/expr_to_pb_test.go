@@ -474,16 +474,16 @@ func (s *testEvaluatorSerialSuites) TestPushDownSwitcher(c *C) {
 		sig    tipb.ScalarFuncSig
 		enable bool
 	}{
-		{ast.And, tipb.ScalarFuncSig_BitAndSig, true},
-		{ast.Or, tipb.ScalarFuncSig_BitOrSig, false},
-		{ast.UnaryNot, tipb.ScalarFuncSig_UnaryNotInt, true},
+		// Note that so far ScalarFuncSigs here are not be pushed down when the failpoint PushDownTestSwitcher
+		// is disable, which is the prerequisite to pass this test.
+		// Need to be replaced with other non pushed down ScalarFuncSigs if they are pushed down one day.
+		{ast.Sin, tipb.ScalarFuncSig_Sin, true},
+		{ast.Cos, tipb.ScalarFuncSig_Cos, false},
+		{ast.Tan, tipb.ScalarFuncSig_Tan, true},
 	}
 	var enabled []string
-	for i, funcName := range cases {
+	for _, funcName := range cases {
 		args := []Expression{dg.genColumn(mysql.TypeLong, 1)}
-		if i+1 < len(cases) {
-			args = append(args, dg.genColumn(mysql.TypeLong, 2))
-		}
 		fc, err := NewFunction(
 			mock.NewContext(),
 			funcName.name,
@@ -599,6 +599,41 @@ func (s *testEvaluatorSuite) TestOtherFunc2Pb(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(string(js), Equals, jsons[funcNames[i]])
 	}
+}
+
+func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
+	sc := new(stmtctx.StatementContext)
+	client := new(mock.Client)
+	dg := new(dataGen4Expr2PbTest)
+	exprs := make([]Expression, 0)
+
+	jsonColumn := dg.genColumn(mysql.TypeJSON, 1)
+	intColumn := dg.genColumn(mysql.TypeLonglong, 2)
+	function, err := NewFunction(mock.NewContext(), ast.JSONLength, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.If, types.NewFieldType(mysql.TypeLonglong), intColumn, intColumn, intColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.BitNeg, types.NewFieldType(mysql.TypeLonglong), intColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.Xor, types.NewFieldType(mysql.TypeLonglong), intColumn, intColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	canPush := CanExprsPushDown(sc, exprs, client, kv.TiFlash)
+	c.Assert(canPush, Equals, true)
+
+	function, err = NewFunction(mock.NewContext(), ast.JSONDepth, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+	pushed, remained := PushDownExprs(sc, exprs, client, kv.TiFlash)
+	c.Assert(len(pushed), Equals, len(exprs)-1)
+	c.Assert(len(remained), Equals, 1)
 }
 
 func (s *testEvaluatorSuite) TestExprOnlyPushDownToFlash(c *C) {

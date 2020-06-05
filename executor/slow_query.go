@@ -339,6 +339,7 @@ type slowQueryTuple struct {
 	maxWaitTime            float64
 	maxWaitAddress         string
 	memMax                 int64
+	diskMax                int64
 	prevStmt               string
 	sql                    string
 	isInternal             bool
@@ -357,12 +358,13 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 		if err != nil {
 			break
 		}
-		if t.Location() != tz {
-			t = t.In(tz)
-		}
 		st.time = types.NewTime(types.FromGoTime(t), mysql.TypeDatetime, types.MaxFsp)
 		if checker != nil {
 			valid = checker.isTimeValid(st.time)
+		}
+		if t.Location() != tz {
+			t = t.In(tz)
+			st.time = types.NewTime(types.FromGoTime(t), mysql.TypeDatetime, types.MaxFsp)
 		}
 	case variable.SlowLogTxnStartTSStr:
 		st.txnStartTs, err = strconv.ParseUint(value, 10, 64)
@@ -463,6 +465,8 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 		st.planDigest = value
 	case variable.SlowLogQuerySQLStr:
 		st.sql = value
+	case variable.SlowLogDiskMax:
+		st.diskMax, err = strconv.ParseInt(value, 10, 64)
 	}
 	if err != nil {
 		return valid, errors.Wrap(err, "Parse slow log at line "+strconv.FormatInt(int64(lineNum), 10)+" failed. Field: `"+field+"`, error")
@@ -514,6 +518,7 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	record = append(record, types.NewFloat64Datum(st.maxWaitTime))
 	record = append(record, types.NewStringDatum(st.maxWaitAddress))
 	record = append(record, types.NewIntDatum(st.memMax))
+	record = append(record, types.NewIntDatum(st.diskMax))
 	if st.succ {
 		record = append(record, types.NewIntDatum(1))
 	} else {
@@ -609,7 +614,8 @@ func (e *slowQueryRetriever) getAllFiles(sctx sessionctx.Context, logFilePath st
 		if err != nil {
 			return handleErr(err)
 		}
-		if fileStartTime.After(e.extractor.EndTime) {
+		start := types.NewTime(types.FromGoTime(fileStartTime), mysql.TypeDatetime, types.MaxFsp)
+		if start.Compare(e.checker.endTime) > 0 {
 			return nil
 		}
 
@@ -618,7 +624,8 @@ func (e *slowQueryRetriever) getAllFiles(sctx sessionctx.Context, logFilePath st
 		if err != nil {
 			return handleErr(err)
 		}
-		if fileEndTime.Before(e.extractor.StartTime) {
+		end := types.NewTime(types.FromGoTime(fileEndTime), mysql.TypeDatetime, types.MaxFsp)
+		if end.Compare(e.checker.startTime) < 0 {
 			return nil
 		}
 		_, err = file.Seek(0, io.SeekStart)

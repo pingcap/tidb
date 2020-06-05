@@ -613,7 +613,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	err = checkColumnValueConstraint(col)
+	err = checkColumnValueConstraint(col, col.Collate)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -881,21 +881,22 @@ func checkPriKeyConstraint(col *table.Column, hasDefaultValue, hasNullFlag bool,
 	return nil
 }
 
-func checkColumnValueConstraint(col *table.Column) error {
+func checkColumnValueConstraint(col *table.Column, collation string) error {
 	if col.Tp != mysql.TypeEnum && col.Tp != mysql.TypeSet {
 		return nil
 	}
-	valueMap := make(map[string]string, len(col.Elems))
+	valueMap := make(map[string]bool, len(col.Elems))
+	ctor := collate.GetCollator(collation)
 	for i := range col.Elems {
-		val := strings.ToLower(col.Elems[i])
+		val := string(ctor.Key(col.Elems[i]))
 		if _, ok := valueMap[val]; ok {
 			tpStr := "ENUM"
 			if col.Tp == mysql.TypeSet {
 				tpStr = "SET"
 			}
-			return types.ErrDuplicatedValueInType.GenWithStackByArgs(col.Name, valueMap[val], tpStr)
+			return types.ErrDuplicatedValueInType.GenWithStackByArgs(col.Name, col.Elems[i], tpStr)
 		}
-		valueMap[val] = col.Elems[i]
+		valueMap[val] = true
 	}
 	return nil
 }
@@ -1133,15 +1134,31 @@ func getPrimaryKey(tblInfo *model.TableInfo) *model.IndexInfo {
 			// table has explicit primary key
 			return key
 		}
+		// The case index without any columns should never happen, but still do a check here
+		if len(key.Columns) == 0 {
+			continue
+		}
 		// find the first unique key with NOT NULL columns
 		if implicitPK == nil && key.Unique {
 			// ensure all columns in unique key have NOT NULL flag
 			allColNotNull := true
+			skip := false
 			for _, idxCol := range key.Columns {
 				col := model.FindColumnInfo(tblInfo.Cols(), idxCol.Name.L)
+				// This index has a column in DeleteOnly state,
+				// or it is expression index (it defined on a hidden column),
+				// it can not be implicit PK, go to next index iterator
+				if col == nil || col.Hidden {
+					skip = true
+					break
+				}
 				if !mysql.HasNotNullFlag(col.Flag) {
 					allColNotNull = false
+					break
 				}
+			}
+			if skip {
+				continue
 			}
 			if allColNotNull {
 				implicitPK = key
@@ -1158,6 +1175,10 @@ func setTableAutoRandomBits(ctx sessionctx.Context, tbInfo *model.TableInfo, col
 		if containsColumnOption(col, ast.ColumnOptionAutoRandom) {
 			if !allowAutoRandom {
 				return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomExperimentalDisabledErrMsg)
+			}
+			if col.Tp.Tp != mysql.TypeLonglong {
+				return ErrInvalidAutoRandom.GenWithStackByArgs(
+					fmt.Sprintf(autoid.AutoRandomOnNonBigIntColumn, types.TypeStr(col.Tp.Tp)))
 			}
 			if !tbInfo.PKIsHandle || col.Name.Name.L != pkColName.L {
 				errMsg := fmt.Sprintf(autoid.AutoRandomPKisNotHandleErrMsg, col.Name.Name.O)
@@ -1178,9 +1199,9 @@ func setTableAutoRandomBits(ctx sessionctx.Context, tbInfo *model.TableInfo, col
 			layout := autoid.NewAutoRandomIDLayout(col.Tp, autoRandBits)
 			if autoRandBits == 0 {
 				return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomNonPositive)
-			} else if autoRandBits >= layout.TypeBitsLength {
-				errMsg := fmt.Sprintf(autoid.AutoRandomOverflowErrMsg, col.Name.Name.L,
-					layout.TypeBitsLength, autoRandBits, col.Name.Name.L, layout.TypeBitsLength-1)
+			} else if autoRandBits > autoid.MaxAutoRandomBits {
+				errMsg := fmt.Sprintf(autoid.AutoRandomOverflowErrMsg,
+					autoid.MaxAutoRandomBits, autoRandBits, col.Name.Name.O)
 				return ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
 			}
 			tbInfo.AutoRandomBits = autoRandBits
@@ -1248,18 +1269,22 @@ func buildTableInfo(
 			if err != nil {
 				return nil, err
 			}
-			if len(constr.Keys) == 1 && !config.GetGlobalConfig().AlterPrimaryKey {
-				switch lastCol.Tp {
-				case mysql.TypeLong, mysql.TypeLonglong,
-					mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24:
+			if !config.GetGlobalConfig().AlterPrimaryKey {
+				singleIntPK := isSingleIntPK(constr, lastCol)
+				clusteredIdx := ctx.GetSessionVars().EnableClusteredIndex
+				if singleIntPK || clusteredIdx {
 					// Primary key cannot be invisible.
 					if constr.Option != nil && constr.Option.Visibility == ast.IndexVisibilityInvisible {
 						return nil, ErrPKIndexCantBeInvisible
 					}
-
+				}
+				if singleIntPK {
 					tbInfo.PKIsHandle = true
 					// Avoid creating index for PK handle column.
 					continue
+				}
+				if clusteredIdx {
+					tbInfo.IsCommonHandle = true
 				}
 			}
 		}
@@ -1306,6 +1331,18 @@ func buildTableInfo(
 		tbInfo.Indices = append(tbInfo.Indices, idxInfo)
 	}
 	return
+}
+
+func isSingleIntPK(constr *ast.Constraint, lastCol *model.ColumnInfo) bool {
+	if len(constr.Keys) != 1 {
+		return false
+	}
+	switch lastCol.Tp {
+	case mysql.TypeLong, mysql.TypeLonglong,
+		mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24:
+		return true
+	}
+	return false
 }
 
 // checkTableInfoValidExtra is like checkTableInfoValid, but also assumes the
@@ -1484,7 +1521,6 @@ func buildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 	if err = handleTableOptions(s.Options, tbInfo); err != nil {
 		return nil, errors.Trace(err)
 	}
-
 	return tbInfo, nil
 }
 
@@ -1670,9 +1706,9 @@ func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo
 		scatterRegion = variable.TiDBOptOn(val)
 	}
 	if pi != nil {
-		preSplit = func() { splitPartitionTableRegion(sp, pi, scatterRegion) }
+		preSplit = func() { splitPartitionTableRegion(ctx, sp, pi, scatterRegion) }
 	} else {
-		preSplit = func() { splitTableRegion(sp, tbInfo, scatterRegion) }
+		preSplit = func() { splitTableRegion(ctx, sp, tbInfo, scatterRegion) }
 	}
 	if scatterRegion {
 		preSplit()
@@ -2166,6 +2202,18 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			err = d.AddTablePartitions(ctx, ident, spec)
 		case ast.AlterTableCoalescePartitions:
 			err = d.CoalescePartitions(ctx, ident, spec)
+		case ast.AlterTableReorganizePartition:
+			err = errors.Trace(errUnsupportedReorganizePartition)
+		case ast.AlterTableCheckPartitions:
+			err = errors.Trace(errUnsupportedCheckPartition)
+		case ast.AlterTableRebuildPartition:
+			err = errors.Trace(errUnsupportedRebuildPartition)
+		case ast.AlterTableOptimizePartition:
+			err = errors.Trace(errUnsupportedOptimizePartition)
+		case ast.AlterTableRemovePartitioning:
+			err = errors.Trace(errUnsupportedRemovePartition)
+		case ast.AlterTableExchangePartition:
+			err = errors.Trace(errUnsupportedExchangePartition)
 		case ast.AlterTableDropColumn:
 			err = d.DropColumn(ctx, ident, spec)
 		case ast.AlterTableDropIndex:
@@ -2418,6 +2466,19 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 
 			if err = verifyColumnGenerationSingle(duplicateColNames, cols, spec.Position); err != nil {
 				return nil, errors.Trace(err)
+			}
+		}
+		// Specially, since sequence has been supported, if a newly added column has a
+		// sequence nextval function as it's default value option, it won't fill the
+		// known rows with specific sequence next value under current add column logic.
+		// More explanation can refer: TestSequenceDefaultLogic's comment in sequence_test.go
+		if option.Tp == ast.ColumnOptionDefaultValue {
+			_, isSeqExpr, err := tryToGetSequenceDefaultValue(option)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if isSeqExpr {
+				return nil, errors.Trace(ErrAddColumnWithSequenceAsDefault.GenWithStackByArgs(specNewColumn.Name.Name.O))
 			}
 		}
 	}
@@ -4429,6 +4490,9 @@ func buildPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, d *ddl, s
 	for ith, def := range spec.PartDefinitions {
 		if err := def.Clause.Validate(part.Type, len(part.Columns)); err != nil {
 			return nil, errors.Trace(err)
+		}
+		if err := checkTooLongTable(def.Name); err != nil {
+			return nil, err
 		}
 		// For RANGE partition only VALUES LESS THAN should be possible.
 		clause := def.Clause.(*ast.PartitionDefinitionClauseLessThan)

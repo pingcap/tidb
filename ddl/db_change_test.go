@@ -69,7 +69,7 @@ func (s *testStateChangeSuiteBase) SetUpSuite(c *C) {
 	s.lease = 200 * time.Millisecond
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
 	var err error
-	s.store, err = mockstore.NewMockTikvStore()
+	s.store, err = mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	session.SetSchemaLease(s.lease)
 	s.dom, err = session.BootstrapSession(s.store)
@@ -946,6 +946,19 @@ func (s *testStateChangeSuite) TestParallelCreateAndRename(c *C) {
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
 		c.Assert(err2.Error(), Equals, "[schema:1050]Table 't_exists' already exists")
+	}
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
+}
+
+func (s *testStateChangeSuite) TestParallelAlterAndDropSchema(c *C) {
+	_, err := s.se.Execute(context.Background(), "create database db_drop_db")
+	c.Assert(err, IsNil)
+	sql1 := "DROP SCHEMA db_drop_db"
+	sql2 := "ALTER SCHEMA db_drop_db CHARSET utf8mb4 COLLATE utf8mb4_general_ci"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2, NotNil)
+		c.Assert(err2.Error(), Equals, "[schema:1008]Can't drop database ''; database doesn't exist")
 	}
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }

@@ -267,7 +267,7 @@ func (s *session) cleanRetryInfo() {
 	for i, stmtID := range retryInfo.DroppedPreparedStmtIDs {
 		if planCacheEnabled {
 			if i > 0 && preparedAst != nil {
-				plannercore.SetPstmtIDSchemaVersion(cacheKey, stmtID, preparedAst.SchemaVersion)
+				plannercore.SetPstmtIDSchemaVersion(cacheKey, stmtID, preparedAst.SchemaVersion, s.sessionVars.IsolationReadEngines)
 			}
 			s.PreparedPlanCache().Delete(cacheKey)
 		}
@@ -321,12 +321,7 @@ func (s *session) SetCollation(coID int) error {
 	for _, v := range variable.SetNamesVariables {
 		terror.Log(s.sessionVars.SetSystemVar(v, cs))
 	}
-	err = s.sessionVars.SetSystemVar(variable.CollationConnection, co)
-	if err != nil {
-		// Some clients may use the unsupported collations, such as utf8mb4_0900_ai_ci, We shouldn't return error or use the ERROR level log.
-		logutil.BgLogger().Warn(err.Error())
-	}
-	return nil
+	return s.sessionVars.SetSystemVar(variable.CollationConnection, co)
 }
 
 func (s *session) PreparedPlanCache() *kvcache.SimpleLRUCache {
@@ -1414,6 +1409,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	if !ok {
 		return nil, errors.Errorf("invalid CachedPrepareStmt type")
 	}
+	executor.CountStmtNode(preparedStmt.PreparedAst.Stmt, s.sessionVars.InRestrictedSQL)
 	ok, err = s.IsCachedExecOk(ctx, preparedStmt)
 	if err != nil {
 		return nil, err
@@ -1925,7 +1921,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = version45
+	currentBootstrapVersion = version47
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -2000,6 +1996,7 @@ var builtinGlobalVariable = []string{
 	variable.MaxExecutionTime,
 	variable.InnodbLockWaitTimeout,
 	variable.WindowingUseHighPrecision,
+	variable.SQLSelectLimit,
 
 	/* TiDB specific global variables: */
 	variable.TiDBSkipUTF8Check,
@@ -2058,6 +2055,9 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEvolvePlanBaselines,
 	variable.TiDBIsolationReadEngines,
 	variable.TiDBStoreLimit,
+	variable.TiDBAllowAutoRandExplicitInsert,
+	variable.TiDBEnableClusteredIndex,
+	variable.TiDBSlowLogMasking,
 }
 
 var (

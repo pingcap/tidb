@@ -75,8 +75,8 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 	row[0] = types.NewIntDatum(100)
 	row[1] = types.NewBytesDatum([]byte("abc"))
 	row[2] = types.NewDecimalDatum(types.NewDecFromInt(1))
-	row[3] = types.NewMysqlEnumDatum(types.Enum{Name: "a", Value: 0})
-	row[4] = types.NewDatum(types.Set{Name: "a", Value: 0})
+	row[3] = types.NewMysqlEnumDatum(types.Enum{Name: "a", Value: 1})
+	row[4] = types.NewDatum(types.Set{Name: "a", Value: 1})
 	row[5] = types.NewDatum(types.BinaryLiteral{100})
 	// Encode
 	colIDs := make([]int64, 0, len(row))
@@ -104,7 +104,7 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 		c.Assert(ok, IsTrue)
 		equal, err1 := v.CompareDatum(sc, &row[i])
 		c.Assert(err1, IsNil)
-		c.Assert(equal, Equals, 0)
+		c.Assert(equal, Equals, 0, Commentf("expect: %v, got %v", row[i], v))
 	}
 
 	// colMap may contains more columns than encoded row.

@@ -50,7 +50,7 @@ type testIndexSuite struct {
 
 func (s *testIndexSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	s.s = store
 	s.dom, err = session.BootstrapSession(store)
@@ -389,9 +389,8 @@ func createRowcodecColInfo(table *model.TableInfo, index *model.IndexInfo) []row
 		col := table.Columns[idxCol.Offset]
 		colInfos = append(colInfos, rowcodec.ColInfo{
 			ID:         col.ID,
-			Tp:         int32(col.Tp),
-			Flag:       int32(col.Flag),
 			IsPKHandle: table.PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
+			Ft:         rowcodec.FieldTypeFromModelColumn(col),
 		})
 	}
 	return colInfos
