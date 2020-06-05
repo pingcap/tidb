@@ -418,6 +418,9 @@ func (t *TableCommon) rebuildIndices(ctx sessionctx.Context, rm kv.RetrieverMuta
 		return err
 	}
 	for _, idx := range t.DeletableIndices() {
+		if t.meta.IsCommonHandle && idx.Meta().Primary {
+			continue
+		}
 		for _, ic := range idx.Meta().Columns {
 			if !touched[ic.Offset] {
 				continue
@@ -433,6 +436,9 @@ func (t *TableCommon) rebuildIndices(ctx sessionctx.Context, rm kv.RetrieverMuta
 		}
 	}
 	for _, idx := range t.WritableIndices() {
+		if t.meta.IsCommonHandle && idx.Meta().Primary {
+			continue
+		}
 		untouched := true
 		for _, ic := range idx.Meta().Columns {
 			if !touched[ic.Offset] {

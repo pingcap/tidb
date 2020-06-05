@@ -72,8 +72,9 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	)
 	for _, info := range e.tblColPosInfos {
 		tbl = e.tblID2Table[info.TblID]
-		handleIndex = info.HandleOrdinal
-		isExtrahandle = handleIsExtra(e.children[0].Schema().Columns[info.HandleOrdinal])
+		// TODO: fix me
+		handleIndex = info.HandleOrdinal[0]
+		isExtrahandle = handleIsExtra(e.children[0].Schema().Columns[info.HandleOrdinal[0]])
 	}
 
 	// If tidb_batch_delete is ON and not in a transaction, we could use BatchDelete mode.
@@ -125,7 +126,7 @@ func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []p
 		if tblRowMap[info.TblID] == nil {
 			tblRowMap[info.TblID] = kv.NewHandleMap()
 		}
-		handle := kv.IntHandle(joinedRow[info.HandleOrdinal].GetInt64())
+		handle := kv.IntHandle(joinedRow[info.HandleOrdinal[0]].GetInt64())
 		// tblRowMap[info.TblID][handle] hold the row datas binding to this table and this handle.
 		tblRowMap[info.TblID].Set(handle, joinedRow[info.Start:info.End])
 	}

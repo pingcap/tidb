@@ -233,3 +233,34 @@ func (s *testUpdateSuite) TestUpdateMultiDatabaseTable(c *C) {
 	tk.MustExec("create table test2.t(a int, b int generated always  as (a+1) virtual)")
 	tk.MustExec("update t, test2.t set test.t.a=1")
 }
+
+func (s *testUpdateSuite) TestUpdateClusterIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
+	tk.MustExec(`use test`)
+
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(id varchar(200) primary key, v int)`)
+	tk.MustExec(`insert into t(id, v) values ('abc', 233)`)
+	tk.MustQuery(`select id, v from t where id = 'abc'`).Check(testkit.Rows("abc 233"))
+	tk.MustExec(`update t set id = 'dfg' where id = 'abc'`)
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("dfg 233"))
+	tk.MustExec(`update t set id = 'aaa', v = 333 where id = 'dfg'`)
+	tk.MustQuery(`select * from t where id = 'aaa'`).Check(testkit.Rows("aaa 333"))
+	tk.MustExec(`update t set v = 222 where id = 'aaa'`)
+	tk.MustQuery(`select * from t where id = 'aaa'`).Check(testkit.Rows("aaa 222"))
+	tk.MustExec(`insert into t(id, v) values ('bbb', 111)`)
+	c.Assert(tk.ExecToErr(`update t set id = 'bbb' where id = 'aaa'`).Error(), Equals, `[kv:1062]Duplicate entry '{bbb}' for key 'PRIMARY'`)
+
+	tk.MustExec(`drop table if exists t3pk`)
+	tk.MustExec(`create table t3pk(id1 varchar(200), id2 varchar(200), v int, id3 int, primary key(id1, id2, id3))`)
+	tk.MustExec(`insert into t3pk(id1, id2, v, id3) values ('aaa', 'bbb', 233, 111)`)
+	tk.MustQuery(`select id1, id2, id3, v from t3pk where id1 = 'aaa' and id2 = 'bbb' and id3 = 111`).Check(testkit.Rows("aaa bbb 111 233"))
+	tk.MustExec(`update t3pk set id1 = 'abc', id2 = 'bbb2', id3 = 222, v = 555 where id1 = 'aaa' and id2 = 'bbb' and id3 = 111`)
+	tk.MustQuery(`select id1, id2, id3, v from t3pk where id1 = 'abc' and id2 = 'bbb2' and id3 = 222`).Check(testkit.Rows("abc bbb2 222 555"))
+	tk.MustQuery(`select id1, id2, id3, v from t3pk`).Check(testkit.Rows("abc bbb2 222 555"))
+	tk.MustExec(`update t3pk set v = 666 where id1 = 'abc' and id2 = 'bbb2' and id3 = 222`)
+	tk.MustQuery(`select id1, id2, id3, v from t3pk`).Check(testkit.Rows("abc bbb2 222 666"))
+	tk.MustExec(`insert into t3pk(id1, id2, id3, v) values ('abc', 'bbb3', 222, 777)`)
+	c.Assert(tk.ExecToErr(`update t3pk set id2 = 'bbb3' where id1 = 'abc' and id2 = 'bbb2' and id3 = 222`).Error(), Equals, `[kv:1062]Duplicate entry '{abc, bbb3, 222}' for key 'PRIMARY'`)
+}
