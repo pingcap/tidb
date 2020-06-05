@@ -3357,7 +3357,7 @@ func checkAutoRandom(tableInfo *model.TableInfo, originCol *table.Column, specNe
 			autoid.MaxAutoRandomBits, newRandBits, specNewColumn.Name.Name.O)
 		return 0, ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
 	case oldRandBits < newRandBits:
-		break // pass the check
+		break // Increasing auto_random shard bits is allowed.
 	case oldRandBits > newRandBits:
 		return 0, ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomDecreaseBitErrMsg)
 	}
