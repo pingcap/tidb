@@ -171,15 +171,12 @@ func (c *Constant) VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, resul
 
 func (c *Constant) getLazyDatum(row chunk.Row) (dt types.Datum, isLazy bool, err error) {
 	if c.ParamMarker != nil {
-		dt = c.ParamMarker.getLazyDatum()
-		isLazy = true
-		return
+		return c.ParamMarker.GetUserVar(), true, nil
 	} else if c.DeferredExpr != nil {
 		dt, err = c.DeferredExpr.Eval(row)
-		isLazy = true
-		return
+		return dt, true, err
 	}
-	return
+	return dt, false, nil
 }
 
 // Eval implements Expression interface.
