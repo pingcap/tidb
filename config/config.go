@@ -552,7 +552,7 @@ var defaultConf = Config{
 	AdvertiseAddress:             "",
 	Port:                         DefPort,
 	Cors:                         "",
-	Store:                        "mocktikv",
+	Store:                        "unistore",
 	Path:                         "/tmp/tidb",
 	RunDDL:                       true,
 	SplitTable:                   true,
