@@ -2422,8 +2422,13 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 
 	tableInfo := tbl.Meta()
 	var authErr error
+<<<<<<< HEAD
 	if b.ctx.GetSessionVars().User != nil {
 		authErr = ErrTableaccessDenied.FastGenByArgs("SELECT", b.ctx.GetSessionVars().User.Username, b.ctx.GetSessionVars().User.Hostname, tableInfo.Name.L)
+=======
+	if sessionVars.User != nil {
+		authErr = ErrTableaccessDenied.FastGenByArgs("SELECT", sessionVars.User.AuthUsername, sessionVars.User.AuthHostname, tableInfo.Name.L)
+>>>>>>> 5f59f01... *: fix error message of access denied (#17449)
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "", authErr)
 
