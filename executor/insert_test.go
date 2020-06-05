@@ -334,10 +334,7 @@ func (s *testSuiteP1) TestAllowInvalidDates(c *C) {
 			tk.MustExec(fmt.Sprintf(`set sql_mode='%s'`, oldMode))
 		}()
 
-		tk.MustExec("truncate t1")
-		tk.MustExec("truncate t2")
-		tk.MustExec("truncate t3")
-		tk.MustExec("truncate t4")
+		tk.MustExec(`truncate t1;truncate t2;truncate t3;truncate t4;`)
 		tk.MustExec(fmt.Sprintf(`set sql_mode='%s';`, mode))
 		for _, input := range inputs {
 			tk.MustExec(fmt.Sprintf(`insert into t1 values ('%s')`, input))

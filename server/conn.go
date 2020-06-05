@@ -66,6 +66,7 @@ import (
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
@@ -932,7 +933,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 func (cc *clientConn) useDB(ctx context.Context, db string) (err error) {
 	// if input is "use `SELECT`", mysql client just send "SELECT"
 	// so we add `` around db.
-	stmts, err := cc.ctx.Parse(ctx, "use `"+db+"`")
+	stmts, _, err := cc.ctx.Parse(ctx, "use `"+db+"`")
 	if err != nil {
 		return err
 	}
@@ -1268,7 +1269,7 @@ func (cc *clientConn) handleIndexAdvise(ctx context.Context, indexAdviseInfo *ex
 // There is a special query `load data` that does not return result, which is handled differently.
 // Query `load stats` does not return result either.
 func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
-	stmts, err := cc.ctx.Parse(ctx, sql)
+	stmts, warns, err := cc.ctx.Parse(ctx, sql)
 	if err != nil {
 		metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
 		return err
@@ -1283,11 +1284,15 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 			break
 		}
 	}
-
 	if err != nil {
 		metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
+		return err
 	}
-	return err
+
+	for _, warn := range warns {
+		cc.ctx.GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
+	}
+	return nil
 }
 
 func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, lastStmt bool) error {

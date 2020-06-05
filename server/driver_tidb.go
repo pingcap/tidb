@@ -258,7 +258,7 @@ func (tc *TiDBContext) ExecuteStmt(ctx context.Context, stmt ast.StmtNode) (Resu
 }
 
 // Parse implements QueryCtx interface.
-func (tc *TiDBContext) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error) {
+func (tc *TiDBContext) Parse(ctx context.Context, sql string) ([]ast.StmtNode, []error, error) {
 	return tc.session.Parse(ctx, sql)
 }
 

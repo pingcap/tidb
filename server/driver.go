@@ -71,7 +71,7 @@ type QueryCtx interface {
 	ExecuteStmt(context.Context, ast.StmtNode) (ResultSet, error)
 
 	// Parse parses a SQL to statement node.
-	Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
+	Parse(ctx context.Context, sql string) ([]ast.StmtNode, []error, error)
 
 	// SetClientCapability sets client capability flags
 	SetClientCapability(uint32)

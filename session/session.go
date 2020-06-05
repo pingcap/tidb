@@ -100,7 +100,7 @@ type Session interface {
 	Execute(context.Context, string) ([]sqlexec.RecordSet, error)         // Execute a sql statement.
 	ExecuteInternal(context.Context, string) ([]sqlexec.RecordSet, error) // Execute a internal sql statement.
 	ExecuteStmt(context.Context, ast.StmtNode) (sqlexec.RecordSet, error)
-	Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
+	Parse(ctx context.Context, sql string) ([]ast.StmtNode, []error, error)
 	String() string // String is used to debug.
 	CommitTxn(context.Context) error
 	RollbackTxn(context.Context)
@@ -1093,7 +1093,7 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 }
 
 // Parse parses a query string to raw ast.StmtNode.
-func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error) {
+func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, []error, error) {
 	charsetInfo, collation := s.sessionVars.GetCharsetInfo()
 	parseStartTime := time.Now()
 	stmts, warns, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
@@ -1105,7 +1105,7 @@ func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
 		if !s.sessionVars.InRestrictedSQL {
 			logutil.Logger(ctx).Warn("parse SQL failed", zap.Error(err), zap.String("SQL", sql))
 		}
-		return nil, util.SyntaxError(err)
+		return nil, warns, util.SyntaxError(err)
 	}
 
 	durParse := time.Since(parseStartTime)
@@ -1116,10 +1116,7 @@ func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
 	} else {
 		sessionExecuteParseDurationGeneral.Observe(durParse.Seconds())
 	}
-	for _, warn := range warns {
-		s.sessionVars.StmtCtx.AppendWarning(util.SyntaxWarn(warn))
-	}
-	return stmts, nil
+	return stmts, warns, nil
 }
 
 func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {

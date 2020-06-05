@@ -113,7 +113,8 @@ func (s *testSuite5) TestShowWarnings(c *C) {
 
 	// Test Warning level 'Error'
 	testSQL = `create table show_warnings (a int)`
-	tk.Exec(testSQL)
+	_, err := tk.Exec(testSQL)
+	fmt.Println("==========??, ", err)
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Error|1050|Table 'test.show_warnings' already exists"))
 	tk.MustQuery("select @@error_count").Check(testutil.RowsWithSep("|", "1"))

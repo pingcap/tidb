@@ -1102,8 +1102,8 @@ func (s *testSuiteP1) TestIssue5055(c *C) {
 func (s *testSuiteP2) TestUnion(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists union_test;")
-	testSQL := `create table union_test(id int);`
+
+	testSQL := `drop table if exists union_test; create table union_test(id int);`
 	tk.MustExec(testSQL)
 
 	testSQL = `drop table if exists union_test;`

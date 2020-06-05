@@ -51,21 +51,16 @@ func (s *seqTestSuite) TestPrepared(c *C) {
 		tk.MustExec("create table prepare_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1)")
 		tk.MustExec("insert prepare_test (c1) values (1),(2),(NULL)")
 
-		tk.MustExec(`prepare stmt_test_1 from 'select id from prepare_test where id > ?'; `)
-		tk.MustExec(`set @a = 1;`)
-		tk.MustExec(`execute stmt_test_1 using @a;`)
+		tk.MustExec(`prepare stmt_test_1 from 'select id from prepare_test where id > ?'; set @a = 1; execute stmt_test_1 using @a;`)
 		tk.MustExec(`prepare stmt_test_2 from 'select 1'`)
 		// Prepare multiple statement is not allowed.
 		_, err = tk.Exec(`prepare stmt_test_3 from 'select id from prepare_test where id > ?;select id from prepare_test where id > ?;'`)
 		c.Assert(executor.ErrPrepareMulti.Equal(err), IsTrue)
 		// The variable count does not match.
-		tk.MustExec(`prepare stmt_test_4 from 'select id from prepare_test where id > ? and id < ?';`)
-		tk.MustExec(`set @a = 1; `)
-		_, err = tk.Exec(`execute stmt_test_4 using @a;`)
+		_, err = tk.Exec(`prepare stmt_test_4 from 'select id from prepare_test where id > ? and id < ?'; set @a = 1; execute stmt_test_4 using @a;`)
 		c.Assert(plannercore.ErrWrongParamCount.Equal(err), IsTrue)
 		// Prepare and deallocate prepared statement immediately.
-		tk.MustExec(`prepare stmt_test_5 from 'select id from prepare_test where id > ?'; `)
-		tk.MustExec(`deallocate prepare stmt_test_5;`)
+		tk.MustExec(`prepare stmt_test_5 from 'select id from prepare_test where id > ?'; deallocate prepare stmt_test_5;`)
 
 		// Statement not found.
 		_, err = tk.Exec("deallocate prepare stmt_test_5")
@@ -76,8 +71,7 @@ func (s *seqTestSuite) TestPrepared(c *C) {
 		c.Assert(err.Error(), Equals, `[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use near '/*' and b = 'p'' at line 1`)
 
 		// The `stmt_test5` should not be found.
-		tk.MustExec(`set @a = 1;`)
-		_, err = tk.Exec(`execute stmt_test_5 using @a;`)
+		_, err = tk.Exec(`set @a = 1; execute stmt_test_5 using @a;`)
 		c.Assert(plannercore.ErrStmtNotFound.Equal(err), IsTrue)
 
 		// Use parameter marker with argument will run prepared statement.
@@ -275,8 +269,7 @@ func (s *seqTestSuite) TestPreparedLimitOffset(c *C) {
 		tk.MustExec("drop table if exists prepare_test")
 		tk.MustExec("create table prepare_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1)")
 		tk.MustExec("insert prepare_test (c1) values (1),(2),(NULL)")
-		tk.MustExec(`prepare stmt_test_1 from 'select id from prepare_test limit ? offset ?'; `)
-		tk.MustExec(`set @a = 1, @b=1;`)
+		tk.MustExec(`prepare stmt_test_1 from 'select id from prepare_test limit ? offset ?'; set @a = 1, @b=1;`)
 		r := tk.MustQuery(`execute stmt_test_1 using @a, @b;`)
 		r.Check(testkit.Rows("2"))
 
@@ -433,22 +426,19 @@ func (s *seqTestSuite) TestPreparedInsert(c *C) {
 		tk.MustExec("drop table if exists prepare_test")
 		tk.MustExec("create table prepare_test (id int PRIMARY KEY, c1 int)")
 		tk.MustExec(`prepare stmt_insert from 'insert into prepare_test values (?, ?)'`)
-		tk.MustExec(`set @a=1,@b=1;`)
-		tk.MustExec(`execute stmt_insert using @a, @b;`)
+		tk.MustExec(`set @a=1,@b=1; execute stmt_insert using @a, @b;`)
 		if flag {
 			counter.Write(pb)
 			hit := pb.GetCounter().GetValue()
 			c.Check(hit, Equals, float64(0))
 		}
-		tk.MustExec(`set @a=2,@b=2;`)
-		tk.MustExec(`execute stmt_insert using @a, @b;`)
+		tk.MustExec(`set @a=2,@b=2; execute stmt_insert using @a, @b;`)
 		if flag {
 			counter.Write(pb)
 			hit := pb.GetCounter().GetValue()
 			c.Check(hit, Equals, float64(1))
 		}
-		tk.MustExec(`set @a=3,@b=3;`)
-		tk.MustExec(`execute stmt_insert using @a, @b;`)
+		tk.MustExec(`set @a=3,@b=3; execute stmt_insert using @a, @b;`)
 		if flag {
 			counter.Write(pb)
 			hit := pb.GetCounter().GetValue()
@@ -463,22 +453,19 @@ func (s *seqTestSuite) TestPreparedInsert(c *C) {
 		result.Check(testkit.Rows("3 3"))
 
 		tk.MustExec(`prepare stmt_insert_select from 'insert into prepare_test (id, c1) select id + 100, c1 + 100 from prepare_test where id = ?'`)
-		tk.MustExec(`set @a=1;`)
-		tk.MustExec(`execute stmt_insert_select using @a;`)
+		tk.MustExec(`set @a=1; execute stmt_insert_select using @a;`)
 		if flag {
 			counter.Write(pb)
 			hit := pb.GetCounter().GetValue()
 			c.Check(hit, Equals, float64(2))
 		}
-		tk.MustExec(`set @a=2;`)
-		tk.MustExec(`execute stmt_insert_select using @a;`)
+		tk.MustExec(`set @a=2; execute stmt_insert_select using @a;`)
 		if flag {
 			counter.Write(pb)
 			hit := pb.GetCounter().GetValue()
 			c.Check(hit, Equals, float64(3))
 		}
-		tk.MustExec(`set @a=3;`)
-		tk.MustExec(`execute stmt_insert_select using @a;`)
+		tk.MustExec(`set @a=3; execute stmt_insert_select using @a;`)
 		if flag {
 			counter.Write(pb)
 			hit := pb.GetCounter().GetValue()
@@ -521,22 +508,19 @@ func (s *seqTestSuite) TestPreparedUpdate(c *C) {
 		tk.MustExec(`insert into prepare_test values (3, 3)`)
 
 		tk.MustExec(`prepare stmt_update from 'update prepare_test set c1 = c1 + ? where id = ?'`)
-		tk.MustExec(`set @a=1,@b=100; `)
-		tk.MustExec(`execute stmt_update using @b,@a;`)
+		tk.MustExec(`set @a=1,@b=100; execute stmt_update using @b,@a;`)
 		if flag {
 			counter.Write(pb)
 			hit := pb.GetCounter().GetValue()
 			c.Check(hit, Equals, float64(2))
 		}
-		tk.MustExec(`set @a=2,@b=200;`)
-		tk.MustExec(`execute stmt_update using @b,@a;`)
+		tk.MustExec(`set @a=2,@b=200; execute stmt_update using @b,@a;`)
 		if flag {
 			counter.Write(pb)
 			hit := pb.GetCounter().GetValue()
 			c.Check(hit, Equals, float64(3))
 		}
-		tk.MustExec(`set @a=3,@b=300;`)
-		tk.MustExec(`execute stmt_update using @b,@a;`)
+		tk.MustExec(`set @a=3,@b=300; execute stmt_update using @b,@a;`)
 		if flag {
 			counter.Write(pb)
 			hit := pb.GetCounter().GetValue()
@@ -579,22 +563,19 @@ func (s *seqTestSuite) TestPreparedDelete(c *C) {
 		tk.MustExec(`insert into prepare_test values (3, 3)`)
 
 		tk.MustExec(`prepare stmt_delete from 'delete from prepare_test where id = ?'`)
-		tk.MustExec(`set @a=1;`)
-		tk.MustExec(`execute stmt_delete using @a;`)
+		tk.MustExec(`set @a=1; execute stmt_delete using @a;`)
 		if flag {
 			counter.Write(pb)
 			hit := pb.GetCounter().GetValue()
 			c.Check(hit, Equals, float64(0))
 		}
-		tk.MustExec(`set @a=2;`)
-		tk.MustExec(`execute stmt_delete using @a;`)
+		tk.MustExec(`set @a=2; execute stmt_delete using @a;`)
 		if flag {
 			counter.Write(pb)
 			hit := pb.GetCounter().GetValue()
 			c.Check(hit, Equals, float64(1))
 		}
-		tk.MustExec(`set @a=3;`)
-		tk.MustExec(`execute stmt_delete using @a;`)
+		tk.MustExec(`set @a=3; execute stmt_delete using @a;`)
 		if flag {
 			counter.Write(pb)
 			hit := pb.GetCounter().GetValue()
