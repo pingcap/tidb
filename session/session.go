@@ -1824,7 +1824,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = version46
+	currentBootstrapVersion = version47
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -1899,6 +1899,7 @@ var builtinGlobalVariable = []string{
 	variable.MaxExecutionTime,
 	variable.InnodbLockWaitTimeout,
 	variable.WindowingUseHighPrecision,
+	variable.SQLSelectLimit,
 
 	/* TiDB specific global variables: */
 	variable.TiDBSkipUTF8Check,

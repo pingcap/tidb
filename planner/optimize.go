@@ -75,6 +75,10 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	if bindRecord == nil {
 		return bestPlan, names, nil
 	}
+	if sctx.GetSessionVars().SelectLimit != math.MaxUint64 {
+		sctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("sql_select_limit is set, so plan binding is not activated"))
+		return bestPlan, names, nil
+	}
 	bestPlanHint := plannercore.GenHintsFromPhysicalPlan(bestPlan)
 	if len(bindRecord.Bindings) > 0 {
 		orgBinding := bindRecord.Bindings[0] // the first is the original binding
@@ -266,6 +270,7 @@ func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinf
 		Status:    bindinfo.PendingVerify,
 		Charset:   charset,
 		Collation: collation,
+		Source:    bindinfo.Evolve,
 	}
 	globalHandle := domain.GetDomain(sctx).BindHandle()
 	globalHandle.AddEvolvePlanTask(br.OriginalSQL, br.Db, binding)

@@ -71,6 +71,7 @@ type pstmtPlanCacheKey struct {
 	schemaVersion        int64
 	sqlMode              mysql.SQLMode
 	timezoneOffset       int
+	selectLimit    uint64
 	isolationReadEngines map[kv.StoreType]struct{}
 
 	hash []byte
@@ -93,6 +94,7 @@ func (key *pstmtPlanCacheKey) Hash() []byte {
 		key.hash = codec.EncodeInt(key.hash, key.schemaVersion)
 		key.hash = codec.EncodeInt(key.hash, int64(key.sqlMode))
 		key.hash = codec.EncodeInt(key.hash, int64(key.timezoneOffset))
+		key.hash = codec.EncodeInt(key.hash, int64(key.selectLimit))
 		if _, ok := key.isolationReadEngines[kv.TiDB]; ok {
 			key.hash = append(key.hash, kv.TiDB.Name()...)
 		}
@@ -136,6 +138,7 @@ func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, sch
 		schemaVersion:        schemaVersion,
 		sqlMode:              sessionVars.SQLMode,
 		timezoneOffset:       timezoneOffset,
+		selectLimit:    sessionVars.SelectLimit,
 		isolationReadEngines: make(map[kv.StoreType]struct{}),
 	}
 	for k, v := range sessionVars.IsolationReadEngines {
