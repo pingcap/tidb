@@ -249,6 +249,15 @@ type PhysicalIndexScan struct {
 	DoubleRead bool
 }
 
+// ExtractCorrelatedCols implements PhysicalPlan interface.
+func (p *PhysicalIndexScan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := make([]*expression.CorrelatedColumn, 0, len(p.AccessCondition))
+	for _, expr := range p.AccessCondition {
+		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
+	}
+	return corCols
+}
+
 // PhysicalMemTable reads memory table.
 type PhysicalMemTable struct {
 	physicalSchemaProducer
@@ -296,6 +305,18 @@ type PhysicalTableScan struct {
 	Desc      bool
 
 	isChildOfIndexLookUp bool
+}
+
+// ExtractCorrelatedCols implements PhysicalPlan interface.
+func (p *PhysicalTableScan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := make([]*expression.CorrelatedColumn, 0, len(p.AccessCondition)+len(p.filterCondition))
+	for _, expr := range p.AccessCondition {
+		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
+	}
+	for _, expr := range p.filterCondition {
+		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
+	}
+	return corCols
 }
 
 // IsPartition returns true and partition ID if it's actually a partition.
