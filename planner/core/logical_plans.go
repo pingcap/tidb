@@ -502,9 +502,10 @@ type DataSource struct {
 	// TblColHists contains the Histogram of all original table columns,
 	// it is converted from statisticTable, and used for IO/network cost estimating.
 	TblColHists *statistics.HistColl
-	//preferStoreType means the DataSource is enforced to which storage.
-	preferStoreType           int
-	preferStoreTypePartitions map[int][]model.CIStr
+	// preferStoreType means the DataSource is enforced to which storage.
+	preferStoreType  int
+	// preferPartitions store the map, the key represents store type, the value represents the partition name list.
+	preferPartitions map[int][]model.CIStr
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.

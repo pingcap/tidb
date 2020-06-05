@@ -141,6 +141,8 @@
     "name": "TestOptimizeHintOnPartitionTable",
     "cases": [
       "select /*+ use_index(t) */ * from t",
+      "select /*+ use_index(t partition(p0, p1) b, c) */ * from t partition(p1,p2)",
+      "select /*+ use_index(t partition(p_non_exist)) */ * from t partition(p1,p2)",
       "select /*+ use_index(t partition(p0, p1) b, c) */ * from t",
       "select /*+ ignore_index(t partition(p0, p1) b, c) */ * from t",
       "select /*+ hash_join(t1, t2 partition(p0)) */ * from t t1 join t t2 on t1.a = t2.a",

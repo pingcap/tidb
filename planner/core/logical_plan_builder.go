@@ -518,7 +518,7 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 		for _, path := range ds.possibleAccessPaths {
 			if path.StoreType == kv.TiKV {
 				ds.preferStoreType |= preferTiKV
-				ds.preferStoreTypePartitions[preferTiKV] = hintTbl.partitions
+				ds.preferPartitions[preferTiKV] = hintTbl.partitions
 				break
 			}
 		}
@@ -531,6 +531,9 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 		}
 	}
 	if hintTbl := hintInfo.ifPreferTiFlash(alias); hintTbl != nil {
+		// 1. `ds.tableInfo.Partition == nil`, which means the hint takes effect in the whole table.
+		// 2. `ds.preferStoreType != 0`, which means there's a hint hit the both TiKV value and TiFlash value for table.
+		// If it's satisfied the above two conditions, then we can make sure there are some hints conflicted.
 		if ds.preferStoreType != 0 && ds.tableInfo.Partition == nil {
 			errMsg := fmt.Sprintf("Storage hints are conflict, you can only specify one storage type of table %s.%s",
 				alias.dbName.L, alias.tblName.L)
@@ -542,7 +545,7 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 		for _, path := range ds.possibleAccessPaths {
 			if path.StoreType == kv.TiFlash {
 				ds.preferStoreType |= preferTiFlash
-				ds.preferStoreTypePartitions[preferTiFlash] = hintTbl.partitions
+				ds.preferPartitions[preferTiFlash] = hintTbl.partitions
 				break
 			}
 		}
@@ -2800,17 +2803,17 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	ds := DataSource{
 		DBName:                    dbName,
 		TableAsName:               asName,
-		table:                     tbl,
-		tableInfo:                 tableInfo,
-		statisticTable:            statisticTable,
-		astIndexHints:             tn.IndexHints,
-		IndexHints:                b.TableHints().indexHintList,
-		indexMergeHints:           indexMergeHints,
-		possibleAccessPaths:       possiblePaths,
-		Columns:                   make([]*model.ColumnInfo, 0, len(columns)),
-		partitionNames:            tn.PartitionNames,
-		TblCols:                   make([]*expression.Column, 0, len(columns)),
-		preferStoreTypePartitions: make(map[int][]model.CIStr),
+		table:               tbl,
+		tableInfo:           tableInfo,
+		statisticTable:      statisticTable,
+		astIndexHints:       tn.IndexHints,
+		IndexHints:          b.TableHints().indexHintList,
+		indexMergeHints:     indexMergeHints,
+		possibleAccessPaths: possiblePaths,
+		Columns:             make([]*model.ColumnInfo, 0, len(columns)),
+		partitionNames:      tn.PartitionNames,
+		TblCols:             make([]*expression.Column, 0, len(columns)),
+		preferPartitions:    make(map[int][]model.CIStr),
 	}.Init(b.ctx, b.getSelectOffset())
 
 	var handleCol *expression.Column

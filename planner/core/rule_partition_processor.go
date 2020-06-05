@@ -15,6 +15,7 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 
 	"github.com/pingcap/parser/ast"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/plancodec"
+	"github.com/pingcap/tidb/util/set"
 )
 
 // partitionProcessor rewrites the ast for table partition.
@@ -748,9 +750,9 @@ func (s *partitionProcessor) resolveOptimizeHint(ds *DataSource, partitionName m
 
 	// read from storage hint
 	if ds.preferStoreType&preferTiKV > 0 {
-		if len(ds.preferStoreTypePartitions[preferTiKV]) > 0 {
+		if len(ds.preferPartitions[preferTiKV]) > 0 {
 			ds.preferStoreType ^= preferTiKV
-			for _, p := range ds.preferStoreTypePartitions[preferTiKV] {
+			for _, p := range ds.preferPartitions[preferTiKV] {
 				if p.String() == partitionName.String() {
 					ds.preferStoreType |= preferTiKV
 				}
@@ -758,9 +760,9 @@ func (s *partitionProcessor) resolveOptimizeHint(ds *DataSource, partitionName m
 		}
 	}
 	if ds.preferStoreType&preferTiFlash > 0 {
-		if len(ds.preferStoreTypePartitions[preferTiFlash]) > 0 {
+		if len(ds.preferPartitions[preferTiFlash]) > 0 {
 			ds.preferStoreType ^= preferTiFlash
-			for _, p := range ds.preferStoreTypePartitions[preferTiFlash] {
+			for _, p := range ds.preferPartitions[preferTiFlash] {
 				if p.String() == partitionName.String() {
 					ds.preferStoreType |= preferTiFlash
 				}
@@ -775,8 +777,29 @@ func (s *partitionProcessor) resolveOptimizeHint(ds *DataSource, partitionName m
 	return s.resolveAccessPaths(ds)
 }
 
+func checkTableHintsApplicableForPartition(partitions []model.CIStr, ds *DataSource, partitionSet set.StringSet) {
+	for _, p := range partitions {
+		if !partitionSet.Exist(p.L) {
+			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(
+				errors.New(fmt.Sprintf("partition `%s` in hint can't hit any source", p.L)))
+		}
+	}
+}
+
+func (s *partitionProcessor) checkHintsApplicable(ds *DataSource, partitionSet set.StringSet) {
+	for _, idxHint := range ds.IndexHints {
+		checkTableHintsApplicableForPartition(idxHint.partitions, ds, partitionSet)
+	}
+	for _, idxMergeHint := range ds.indexMergeHints {
+		checkTableHintsApplicableForPartition(idxMergeHint.partitions, ds, partitionSet)
+	}
+	checkTableHintsApplicableForPartition(ds.preferPartitions[preferTiKV], ds, partitionSet)
+	checkTableHintsApplicableForPartition(ds.preferPartitions[preferTiFlash], ds, partitionSet)
+}
+
 func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.PartitionInfo, or partitionRangeOR) (LogicalPlan, error) {
 	children := make([]LogicalPlan, 0, len(pi.Definitions))
+	partitionNameSet := make(set.StringSet)
 	for _, r := range or {
 		for i := r.start; i < r.end; i++ {
 			// This is for `table partition (p0,p1)` syntax, only union the specified partition if has specified partitions.
@@ -797,12 +820,14 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 			newDataSource.id = ds.id
 			newDataSource.statisticTable = getStatsTable(ds.SCtx(), ds.table.Meta(), pi.Definitions[i].ID)
 			err := s.resolveOptimizeHint(&newDataSource, pi.Definitions[i].Name)
+			partitionNameSet.Insert(pi.Definitions[i].Name.L)
 			if err != nil {
 				return nil, err
 			}
 			children = append(children, &newDataSource)
 		}
 	}
+	s.checkHintsApplicable(ds, partitionNameSet)
 
 	if len(children) == 0 {
 		// No result after table pruning.

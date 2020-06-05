@@ -149,6 +149,7 @@ func tableNames2HintTableInfo(ctx sessionctx.Context, hintName string, hintTable
 	}
 	hintTableInfos := make([]hintTableInfo, 0, len(hintTables))
 	defaultDBName := model.NewCIStr(ctx.GetSessionVars().CurrentDB)
+	isInapplicable := false
 	for _, hintTable := range hintTables {
 		tableInfo := hintTableInfo{
 			dbName:       hintTable.DBName,
@@ -162,14 +163,19 @@ func tableNames2HintTableInfo(ctx sessionctx.Context, hintName string, hintTable
 		switch hintName {
 		case TiDBMergeJoin, HintSMJ, TiDBIndexNestedLoopJoin, HintINLJ, HintINLHJ, HintINLMJ, TiDBHashJoin, HintHJ:
 			if len(tableInfo.partitions) > 0 {
-				ctx.GetSessionVars().StmtCtx.AppendWarning(
-					errors.New(fmt.Sprintf("%s hint do not support specify partitions", hintName)))
+				isInapplicable = true
 			} else {
 				hintTableInfos = append(hintTableInfos, tableInfo)
 			}
 		default:
 			hintTableInfos = append(hintTableInfos, tableInfo)
 		}
+	}
+	if isInapplicable {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(
+			errors.New(fmt.Sprintf("Optimizer Hint %s is inapplicable on specified partitions",
+				restore2JoinHint(hintName, hintTableInfos))))
+		return nil
 	}
 	return hintTableInfos
 }
@@ -245,16 +251,32 @@ func (info *tableHintInfo) matchTableName(tables []*hintTableInfo, hintTables []
 	return hintMatched
 }
 
-func restore2JoinHint(hintType string, hintTables []hintTableInfo) string {
-	buffer := bytes.NewBufferString("/*+ ")
-	buffer.WriteString(strings.ToUpper(hintType))
-	buffer.WriteString("(")
+func restore2TableHint(hintTables []hintTableInfo) string {
+	buffer := bytes.NewBufferString("")
 	for i, table := range hintTables {
 		buffer.WriteString(table.tblName.L)
+		if len(table.partitions) > 0 {
+			buffer.WriteString(" PARTITION(")
+			for j, partition := range table.partitions {
+				buffer.WriteString(partition.L)
+				if j > 0 {
+					buffer.WriteString(", ")
+				}
+			}
+			buffer.WriteString(")")
+		}
 		if i < len(hintTables)-1 {
 			buffer.WriteString(", ")
 		}
 	}
+	return buffer.String()
+}
+
+func restore2JoinHint(hintType string, hintTables []hintTableInfo) string {
+	buffer := bytes.NewBufferString("/*+ ")
+	buffer.WriteString(strings.ToUpper(hintType))
+	buffer.WriteString("(")
+	buffer.WriteString(restore2TableHint(hintTables))
 	buffer.WriteString(") */")
 	return buffer.String()
 }
@@ -265,12 +287,7 @@ func restore2StorageHint(tiflashTables, tikvTables []hintTableInfo) string {
 	buffer.WriteString("(")
 	if len(tiflashTables) > 0 {
 		buffer.WriteString("tiflash[")
-		for i, table := range tiflashTables {
-			buffer.WriteString(table.tblName.L)
-			if i < len(tiflashTables)-1 {
-				buffer.WriteString(", ")
-			}
-		}
+		buffer.WriteString(restore2TableHint(tiflashTables))
 		buffer.WriteString("]")
 		if len(tikvTables) > 0 {
 			buffer.WriteString(", ")
@@ -278,12 +295,7 @@ func restore2StorageHint(tiflashTables, tikvTables []hintTableInfo) string {
 	}
 	if len(tikvTables) > 0 {
 		buffer.WriteString("tikv[")
-		for i, table := range tikvTables {
-			buffer.WriteString(table.tblName.L)
-			if i < len(tikvTables)-1 {
-				buffer.WriteString(", ")
-			}
-		}
+		buffer.WriteString(restore2TableHint(tikvTables))
 		buffer.WriteString("]")
 	}
 	buffer.WriteString(") */")
