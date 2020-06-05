@@ -155,35 +155,58 @@ type testPrepareSerialSuite struct {
 }
 
 func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer func() {
 		core.SetPreparedPlanCache(orgEnable)
 	}()
 	core.SetPreparedPlanCache(true)
+
 	var err error
-	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
 	c.Assert(err, IsNil)
 
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int)")
-	rows := tk.MustQuery("select connection_id()").Rows()
+	tk1.MustExec("use test")
+	tk1.MustExec("drop table if exists t")
+	tk1.MustExec("create table t(a int)")
+	tk1.MustExec("prepare stmt from 'select * from t where a = ?'")
+	tk1.MustExec("set @p0='1'")
+	rows := tk1.MustQuery("select connection_id()").Rows()
 	c.Assert(len(rows), Equals, 1)
-	connID := rows[0][0].(string)
-	tk.MustExec("prepare stmt from 'select * from t where a = ?'")
-	tk.MustExec("set @p0='1'")
-	tk.MustExec("execute stmt using @p0")
-	tkProcess := tk.Se.ShowProcess()
+
+	tkProcess := tk1.Se.ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
-	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
-	tk.MustQuery(fmt.Sprintf("explain for connection %s", connID)).Check(testkit.Rows(
-		"TableReader_7 8000.00 root  data:Selection_6",
-		"└─Selection_6 8000.00 cop[tikv]  eq(cast(test.t.a), 1)",
-		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
-	))
+	tk1.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	tk2.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+
+	explainForQuery := "explain for connection" + rows[0][0].(string)
+
+	ch := make(chan int)
+	repeats = 1000
+
+	go func() {
+		for i := 0; i < repeats; i++ {
+			tk1.MustExec("execute stmt using @p0")
+		}
+		ch <- 0
+	}()
+
+	go func() {
+		for i := 0; i < repeats; i++ {
+			tk2.MustExec(explainForQuery)
+		}
+		ch <- 0
+	}()
+
+	<-ch
+	<-ch
 }
 
 func (s *testPrepareSerialSuite) TestExplainDotForExplainPlan(c *C) {
