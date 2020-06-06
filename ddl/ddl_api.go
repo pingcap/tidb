@@ -2851,9 +2851,11 @@ func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) e
 		if isVirtualGeneratedColumn(sourceCol) != isVirtualGeneratedColumn(targetCol) {
 			return ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("Exchanging partitions for non-generated columns")
 		}
+		// It should strictyle compare expressions for generated columns
 		if sourceCol.Name.L != targetCol.Name.L ||
 			sourceCol.Hidden != targetCol.Hidden ||
-			!checkFieldTypeCompatible(&sourceCol.FieldType, &targetCol.FieldType) {
+			!checkFieldTypeCompatible(&sourceCol.FieldType, &targetCol.FieldType) ||
+			sourceCol.GeneratedExprString == targetCol.GeneratedExprString {
 			return errors.Trace(ErrTablesDifferentMetadata)
 		}
 		if sourceCol.State != model.StatePublic {

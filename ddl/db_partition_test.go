@@ -923,6 +923,18 @@ func (s *testIntegrationSuite4) TestAlterTableExchangePartition(c *C) {
 	tk.MustQuery("select * from e10 partition(p0)").Check(testkit.Rows("0", "2", "4", "6"))
 	tk.MustQuery("select * from e10 partition(p1)").Check(testkit.Rows("1", "3", "5"))
 
+	// test for column id
+	tk.MustExec("create table e12 (a int(1), b int, index (a)) partition by hash(a) partitions3")
+	tk.MustExec("create table e13 (a int(8), b int, index (a));")
+	tk.MustExec("alter table e13 drop column b")
+	tk.MustExec("alter table e13 add column b int")
+	tk.MustGetErrCode("alter table e12 exchange partition p0 with table e13", tmysql.ErrPartitionExchangeDifferentOption)
+	// test for index id
+	tk.MustExec("create table e14 (a int, b int, index(a));")
+	tk.MustExec("alter table e12 drop index a")
+	tk.MustExec("alter table e12 add index (a);")
+	tk.MustGetErrCode("alter table e12 exchange partition p0 with table e14", tmysql.ErrPartitionExchangeDifferentOption)
+
 }
 
 func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
@@ -1013,13 +1025,13 @@ func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
 			"create table pt12 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname,' ')) stored) partition by hash(id) partitions 1;",
 			"create table nt12 (id int not null, lname varchar(30), fname varchar(100));",
 			"alter table pt12 exchange partition p0 with table nt12;",
-			nil,
+			ddl.ErrTablesDifferentMetadata,
 		},
 		{
 			"create table pt13 (id int not null, lname varchar(30), fname varchar(100)) partition by hash(id) partitions 1;",
 			"create table nt13 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname, ' ')) stored);",
 			"alter table pt13 exchange partition p0 with table nt13;",
-			nil,
+			ddl.ErrTablesDifferentMetadata,
 		},
 		{
 			"create table pt14 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname, ' ')) virtual) partition by hash(id) partitions 1;",
@@ -1097,7 +1109,7 @@ func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
 			"create table pt26 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname, ' ')) virtual) partition by hash(id) partitions 1;",
 			"create table nt26 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(id, ' ')) virtual);",
 			"alter table pt26 exchange partition p0 with table nt26;",
-			nil,
+			ddl.ErrTablesDifferentMetadata,
 		},
 	}
 
@@ -1137,12 +1149,18 @@ func (s *testIntegrationSuite7) TestExchangePartitionExpressIndex(c *C) {
 	// test different expression index when expression returns same field type
 	tk.MustExec("alter table nt1 drop column `_V$_idx_0`;")
 	tk.MustExec("alter table nt1 add index idx((b-c));")
-	tk.MustExec("alter table pt1 exchange partition p0 with table nt1;")
+	tk.MustGetErrCode("alter table pt1 exchange partition p0 with table nt1;", tmysql.ErrTablesDifferentMetadata)
 
 	// test different expression index when expression returns different field type
 	tk.MustExec("alter table nt1 drop index idx;")
 	tk.MustExec("alter table nt1 add index idx((concat(a, b)));")
 	tk.MustGetErrCode("alter table pt1 exchange partition p0 with table nt1;", tmysql.ErrTablesDifferentMetadata)
+
+	tk.MustExec("drop table if exists nt2;")
+	tk.MustExec("alter table nt2 (a int, b int, c int)")
+	tk.MustExec("alter table add index idx((a+c))")
+	tk.MustExec("alter table pt1 exchange partition p0 with table nt2")
+
 }
 
 func (s *testIntegrationSuite4) TestAddPartitionTooManyPartitions(c *C) {
@@ -2253,7 +2271,7 @@ func (s *testIntegrationSuite3) TestCommitWhenSchemaChange(c *C) {
 	tk.MustExec("admin check table schema_change")
 	tk.MustQuery("select * from schema_change").Check(testkit.Rows())
 
-	// Check iconsistency when exchanging partition
+	// Check inconsistency when exchanging partition
 	tk.MustExec(`drop table if exists pt, nt;`)
 	tk.MustExec(`create table pt (a int) partition by hash(a) partitions 2;`)
 	tk.MustExec(`create table nt (a int);`)

@@ -64,4 +64,4 @@ require (
 
 go 1.13
 
-replace github.com/pingcap/parser => github.com/zhaox1n/parser v0.0.0-20200601191909-048d6ec9eef1
+replace github.com/pingcap/parser => github.com/zhaox1n/parser affectedOption

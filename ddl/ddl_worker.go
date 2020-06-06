@@ -844,11 +844,21 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 		}
 		diff.TableID = job.TableID
 	case model.ActionExchangeTablePartition:
-		err = job.DecodeArgs(&diff.TableID, &diff.PtSchemaID, &diff.PtTableID)
+		var (
+			ptSchemaID int64
+			ntTableID  int64
+		)
+		err = job.DecodeArgs(&diff.TableID, &ptSchemaID, &ntTableID)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
 		diff.OldTableID = job.TableID
+		affects := make([]*model.AffectedOption, 1)
+		affects[0] = &model.AffectedOption{
+			SchemaID: ptSchemaID,
+			TableID:  ntTableID,
+		}
+		diff.AffectedOpts = affects
 	default:
 		diff.TableID = job.TableID
 	}

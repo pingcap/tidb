@@ -107,11 +107,13 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 			return nil, errors.Trace(err)
 		}
 	}
-	if diff.Type == model.ActionExchangeTablePartition {
-		var err error
-		tblIDs, err = b.applyExchangePartition(m, diff, tblIDs)
-		if err != nil {
-			return nil, errors.Trace(err)
+	if diff.AffectedOpts != nil {
+		for _, opt := range diff.AffectedOpts {
+			var err error
+			tblIDs, err = b.applyAffectedOpt(m, diff.Type, opt, tblIDs)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 	}
 	return tblIDs, nil
@@ -163,15 +165,15 @@ func (b *Builder) copySortedTables(oldTableID, newTableID int64) {
 	}
 }
 
-func (b *Builder) applyExchangePartition(m *meta.Meta, diff *model.SchemaDiff, affected []int64) ([]int64, error) {
-	ptDi, err := m.GetDatabase(diff.PtSchemaID)
+func (b *Builder) applyAffectedOpt(m *meta.Meta, tp model.ActionType, diff *model.AffectedOption, affected []int64) ([]int64, error) {
+	ptDi, err := m.GetDatabase(diff.SchemaID)
 	if err != nil {
 		return affected, errors.Trace(err)
 	}
-	if tableIDIsValid(diff.PtTableID) {
-		affected = b.applyDropTable(ptDi, diff.PtTableID, affected)
+	if tableIDIsValid(diff.TableID) {
+		affected = b.applyDropTable(ptDi, diff.TableID, affected)
 		var allocs autoid.Allocators
-		affected, err = b.applyCreateTable(m, ptDi, diff.PtTableID, allocs, diff.Type, affected)
+		affected, err = b.applyCreateTable(m, ptDi, diff.TableID, allocs, tp, affected)
 		if err != nil {
 			return affected, errors.Trace(err)
 		}
