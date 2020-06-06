@@ -599,6 +599,12 @@ type SessionVars struct {
 	FoundInPlanCache bool
 	// PrevFoundInPlanCache indicates whether the last statement was found in plan cache.
 	PrevFoundInPlanCache bool
+
+	// SelectLimit limits the max counts of select statement's output
+	SelectLimit uint64
+
+	// EnableSlowLogMasking indicates that whether masking the query data when log slow query.
+	EnableSlowLogMasking bool
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -686,6 +692,8 @@ func NewSessionVars() *SessionVars {
 		WindowingUseHighPrecision:   true,
 		PrevFoundInPlanCache:        DefTiDBFoundInPlanCache,
 		FoundInPlanCache:            DefTiDBFoundInPlanCache,
+		SelectLimit:                 math.MaxUint64,
+		EnableSlowLogMasking:        DefTiDBSlowLogMasking,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1266,6 +1274,14 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		config.GetGlobalConfig().CheckMb4ValueInUTF8 = TiDBOptOn(val)
 	case TiDBFoundInPlanCache:
 		s.FoundInPlanCache = TiDBOptOn(val)
+	case SQLSelectLimit:
+		result, err := strconv.ParseUint(val, 10, 64)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		s.SelectLimit = result
+	case TiDBSlowLogMasking:
+		s.EnableSlowLogMasking = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
