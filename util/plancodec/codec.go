@@ -325,7 +325,7 @@ func decodeTaskType(str string) (string, error) {
 	if segs[0] == rootTaskType {
 		return "root", nil
 	}
-	if len(segs) == 1 {
+	if len(segs) == 1 { // be compatible to `NormalizePlanNode`, which doesn't encode storeType in task field.
 		return "cop", nil
 	}
 	storeType, err := strconv.Atoi(segs[1])
