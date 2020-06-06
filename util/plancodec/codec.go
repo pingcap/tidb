@@ -332,11 +332,7 @@ func decodeTaskType(str string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	switch (kv.StoreType)(storeType) {
-	case kv.TiKV, kv.TiFlash, kv.TiDB:
-		return "cop[" + ((kv.StoreType)(storeType)).Name() + "]", nil
-	}
-	return "", errors.Errorf("invalid store type: %v", storeType)
+	return "cop[" + ((kv.StoreType)(storeType)).Name() + "]", nil
 }
 
 // Compress is used to compress the input with zlib.

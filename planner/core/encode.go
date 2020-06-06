@@ -65,6 +65,8 @@ func (pn *planEncoder) encodePlan(p PhysicalPlan, isRoot bool, depth int) {
 			storeType = copPlan.StoreType
 		case *PhysicalTableScan:
 			storeType = copPlan.StoreType
+		default:
+			storeType = kv.TiKV
 		}
 	}
 	actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfo(p.SCtx(), p)
