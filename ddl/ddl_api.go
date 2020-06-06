@@ -2858,10 +2858,8 @@ func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) e
 			sourceCol.GeneratedExprString != targetCol.GeneratedExprString {
 			return errors.Trace(ErrTablesDifferentMetadata)
 		}
-		if sourceCol.State != model.StatePublic {
-			return errors.Trace(ErrTablesDifferentMetadata)
-		}
-		if targetCol.State != model.StatePublic {
+		if sourceCol.State != model.StatePublic ||
+			targetCol.State != model.StatePublic {
 			return errors.Trace(ErrTablesDifferentMetadata)
 		}
 		if sourceCol.ID != targetCol.ID {
