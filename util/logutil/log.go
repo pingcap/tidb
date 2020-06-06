@@ -345,14 +345,14 @@ func BgLogger() *zap.Logger {
 }
 
 // WithConnID attaches connId to context.
-func WithConnID(ctx context.Context, connID uint32) context.Context {
+func WithConnID(ctx context.Context, connID uint64) context.Context {
 	var logger *zap.Logger
 	if ctxLogger, ok := ctx.Value(ctxLogKey).(*zap.Logger); ok {
 		logger = ctxLogger
 	} else {
 		logger = zaplog.L()
 	}
-	return context.WithValue(ctx, ctxLogKey, logger.With(zap.Uint32("conn", connID)))
+	return context.WithValue(ctx, ctxLogKey, logger.With(zap.Uint64("conn", connID)))
 }
 
 // WithKeyValue attaches key/value to context.

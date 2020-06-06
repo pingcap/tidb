@@ -113,7 +113,7 @@ type Server struct {
 	socket            net.Listener
 	rwlock            sync.RWMutex
 	concurrentLimiter *TokenLimiter
-	clients           map[uint32]*clientConn
+	clients           map[uint64]*clientConn
 	capability        uint32
 	dom               *domain.Domain
 
@@ -207,7 +207,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		cfg:               cfg,
 		driver:            driver,
 		concurrentLimiter: NewTokenLimiter(cfg.TokenLimit),
-		clients:           make(map[uint32]*clientConn),
+		clients:           make(map[uint64]*clientConn),
 	}
 
 	tlsConfig, err := util.LoadTLSCertificates(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
@@ -493,7 +493,7 @@ func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
 // GetProcessInfo implements the SessionManager interface.
 func (s *Server) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
 	s.rwlock.RLock()
-	conn, ok := s.clients[uint32(id)]
+	conn, ok := s.clients[id]
 	s.rwlock.RUnlock()
 	if !ok || atomic.LoadInt32(&conn.status) == connStatusWaitShutdown {
 		return &util.ProcessInfo{}, false
@@ -508,7 +508,7 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
-	conn, ok := s.clients[uint32(connectionID)]
+	conn, ok := s.clients[connectionID]
 	if !ok {
 		return
 	}

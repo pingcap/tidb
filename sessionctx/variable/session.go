@@ -657,7 +657,7 @@ func (pps PreparedParams) String() string {
 
 // ConnectionInfo present connection used by audit.
 type ConnectionInfo struct {
-	ConnectionID      uint32
+	ConnectionID      uint64
 	ConnectionType    string
 	Host              string
 	ClientIP          string

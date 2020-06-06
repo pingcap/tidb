@@ -140,7 +140,7 @@ var (
 func newClientConn(s *Server) *clientConn {
 	return &clientConn{
 		server:       s,
-		connectionID: atomic.AddUint32(&baseConnID, 1),
+		connectionID: (uint64)(atomic.AddUint32(&baseConnID, 1)) | 0x123_0000_0000,
 		collation:    mysql.DefaultCollationID,
 		alloc:        arena.NewAllocator(32 * 1024),
 		status:       connStatusDispatching,
@@ -155,7 +155,7 @@ type clientConn struct {
 	tlsConn      *tls.Conn         // TLS connection, nil if not TLS.
 	server       *Server           // a reference of server instance.
 	capability   uint32            // client capability affects the way server handles client request.
-	connectionID uint32            // atomically allocated by a global variable, unique in process scope.
+	connectionID uint64            // atomically allocated by a global variable, unique in process scope.
 	user         string            // user of the client.
 	dbname       string            // default database name.
 	salt         []byte            // random bytes used for authentication.
