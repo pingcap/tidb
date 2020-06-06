@@ -67,8 +67,7 @@ func (s testMockSuite) TestInterface(c *C) {
 	c.Assert(transaction.Len(), Equals, 0)
 	c.Assert(transaction.Size(), Equals, 0)
 	c.Assert(transaction.GetMemBuffer(), IsNil)
-	transaction.SetCap(0)
-	transaction.Reset()
+	transaction.Discard()
 	err = transaction.Rollback()
 	c.Check(err, IsNil)
 	c.Assert(transaction.Valid(), Equals, false)
@@ -101,7 +100,7 @@ func (s testMockSuite) TestIsPoint(c *C) {
 
 	kr = KeyRange{
 		StartKey: Key(""),
-		EndKey:   Key([]byte{0}),
+		EndKey:   []byte{0},
 	}
 	c.Check(kr.IsPoint(), IsTrue)
 }

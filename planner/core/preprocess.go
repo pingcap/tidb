@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/domainutil"
 )
@@ -45,6 +45,36 @@ func InPrepare(p *preprocessor) {
 // InTxnRetry is a PreprocessOpt that indicates preprocess is executing under transaction retry.
 func InTxnRetry(p *preprocessor) {
 	p.flag |= inTxnRetry
+}
+
+// TryAddExtraLimit trys to add an extra limit for SELECT or UNION statement when sql_select_limit is set.
+func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
+	if ctx.GetSessionVars().SelectLimit == math.MaxUint64 || ctx.GetSessionVars().InRestrictedSQL {
+		return node
+	}
+	if explain, ok := node.(*ast.ExplainStmt); ok {
+		explain.Stmt = TryAddExtraLimit(ctx, explain.Stmt)
+		return explain
+	} else if sel, ok := node.(*ast.SelectStmt); ok {
+		if sel.Limit != nil || sel.SelectIntoOpt != nil {
+			return node
+		}
+		newSel := *sel
+		newSel.Limit = &ast.Limit{
+			Count: ast.NewValueExpr(ctx.GetSessionVars().SelectLimit, "", ""),
+		}
+		return &newSel
+	} else if union, ok := node.(*ast.UnionStmt); ok {
+		if union.Limit != nil {
+			return node
+		}
+		newUnion := *union
+		newUnion.Limit = &ast.Limit{
+			Count: ast.NewValueExpr(ctx.GetSessionVars().SelectLimit, "", ""),
+		}
+		return &newUnion
+	}
+	return node
 }
 
 // Preprocess resolves table names of the node, and checks some statements validation.
@@ -70,6 +100,9 @@ const (
 	parentIsJoin
 	// inRepairTable is set when visiting a repair table statement.
 	inRepairTable
+	// inSequenceFunction is set when visiting a sequence function.
+	// This flag indicates the tableName in these function should be checked as sequence object.
+	inSequenceFunction
 )
 
 // preprocessor is an ast.Visitor that preprocess
@@ -147,6 +180,14 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.DropSequenceStmt:
 		p.flag |= inCreateOrDropTable
 		p.checkDropSequenceGrammar(node)
+	case *ast.FuncCallExpr:
+		if node.FnName.L == ast.NextVal || node.FnName.L == ast.LastVal || node.FnName.L == ast.SetVal {
+			p.flag |= inSequenceFunction
+		}
+	case *ast.BRIEStmt:
+		if node.Kind == ast.BRIEKindRestore {
+			p.flag |= inCreateOrDropTable
+		}
 	default:
 		p.flag &= ^parentIsJoin
 	}
@@ -232,10 +273,18 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 				x.Args[0] = ast.NewValueExpr(0, "", "")
 			}
 		}
+
+		if x.FnName.L == ast.NextVal || x.FnName.L == ast.LastVal || x.FnName.L == ast.SetVal {
+			p.flag &= ^inSequenceFunction
+		}
 	case *ast.RepairTableStmt:
 		p.flag &= ^inRepairTable
 	case *ast.CreateSequenceStmt:
 		p.flag &= ^inCreateOrDropTable
+	case *ast.BRIEStmt:
+		if x.Kind == ast.BRIEKindRestore {
+			p.flag &= ^inCreateOrDropTable
+		}
 	}
 
 	return in, p.err == nil
@@ -835,8 +884,16 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		p.err = err
 		return
 	}
-	tn.TableInfo = table.Meta()
+	tableInfo := table.Meta()
 	dbInfo, _ := p.is.SchemaByName(tn.Schema)
+	// tableName should be checked as sequence object.
+	if p.flag&inSequenceFunction > 0 {
+		if !tableInfo.IsSequence() {
+			p.err = infoschema.ErrWrongObject.GenWithStackByArgs(dbInfo.Name.O, tableInfo.Name.O, "SEQUENCE")
+			return
+		}
+	}
+	tn.TableInfo = tableInfo
 	tn.DBInfo = dbInfo
 }
 

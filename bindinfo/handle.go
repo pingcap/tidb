@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -112,8 +113,7 @@ func NewBindHandle(ctx sessionctx.Context) *BindHandle {
 	}
 	handle.pendingVerifyBindRecordMap.Value.Store(make(map[string]*bindRecordUpdate))
 	handle.pendingVerifyBindRecordMap.flushFunc = func(record *BindRecord) error {
-		// We do not need the first parameter because it is only use to generate hint,
-		// and we already have the hint.
+		// BindSQL has already been validated when coming here, so we use nil sctx parameter.
 		return handle.AddBindRecord(nil, record)
 	}
 	return handle
@@ -125,7 +125,7 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 	lastUpdateTime := h.bindInfo.lastUpdateTime
 	h.bindInfo.Unlock()
 
-	sql := "select original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation from mysql.bind_info"
+	sql := "select original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source from mysql.bind_info"
 	if !fullLoad {
 		sql += " where update_time > \"" + lastUpdateTime.String() + "\""
 	}
@@ -462,6 +462,7 @@ func (h *BindHandle) newBindRecord(row chunk.Row) (string, *BindRecord, error) {
 		UpdateTime: row.GetTime(5),
 		Charset:    row.GetString(6),
 		Collation:  row.GetString(7),
+		Source:     row.GetString(8),
 	}
 	bindRecord := &BindRecord{
 		OriginalSQL: row.GetString(0),
@@ -567,7 +568,7 @@ func (h *BindHandle) deleteBindInfoSQL(normdOrigSQL, db, bindSQL string) string 
 }
 
 func (h *BindHandle) insertBindInfoSQL(orignalSQL string, db string, info Binding) string {
-	return fmt.Sprintf(`INSERT INTO mysql.bind_info VALUES (%s, %s, %s, %s, %s, %s, %s, %s)`,
+	return fmt.Sprintf(`INSERT INTO mysql.bind_info VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)`,
 		expression.Quote(orignalSQL),
 		expression.Quote(info.BindSQL),
 		expression.Quote(db),
@@ -576,6 +577,7 @@ func (h *BindHandle) insertBindInfoSQL(orignalSQL string, db string, info Bindin
 		expression.Quote(info.UpdateTime.String()),
 		expression.Quote(info.Charset),
 		expression.Quote(info.Collation),
+		expression.Quote(info.Source),
 	)
 }
 
@@ -615,7 +617,7 @@ func (h *BindHandle) CaptureBaselines() {
 		h.sctx.GetSessionVars().IsolationReadEngines = oriIsolationRead
 		h.sctx.Unlock()
 		if err != nil {
-			logutil.BgLogger().Info("generate hints failed", zap.String("SQL", sqls[i]), zap.Error(err))
+			logutil.BgLogger().Debug("generate hints failed", zap.String("SQL", sqls[i]), zap.Error(err))
 			continue
 		}
 		bindSQL := GenerateBindSQL(context.TODO(), stmt, hints)
@@ -623,20 +625,14 @@ func (h *BindHandle) CaptureBaselines() {
 			continue
 		}
 		charset, collation := h.sctx.GetSessionVars().GetCharsetInfo()
-		hintsSet, err := ParseHintsSet(parser4Capture, bindSQL, charset, collation)
-		if err != nil {
-			logutil.BgLogger().Debug("parse BindSQL failed", zap.String("SQL", bindSQL), zap.Error(err))
-			continue
-		}
 		binding := Binding{
 			BindSQL:   bindSQL,
 			Status:    Using,
-			Hint:      hintsSet,
-			ID:        hints,
 			Charset:   charset,
 			Collation: collation,
+			Source:    Capture,
 		}
-		// We don't need to pass the `sctx` because they are used to generate hints and we already filled hints in.
+		// We don't need to pass the `sctx` because the BindSQL has been validated already.
 		err = h.AddBindRecord(nil, &BindRecord{OriginalSQL: normalizedSQL, Db: dbName, Bindings: []Binding{binding}})
 		if err != nil {
 			logutil.BgLogger().Info("capture baseline failed", zap.String("SQL", sqls[i]), zap.Error(err))
@@ -645,10 +641,10 @@ func (h *BindHandle) CaptureBaselines() {
 }
 
 func getHintsForSQL(sctx sessionctx.Context, sql string) (string, error) {
-	oriVals := sctx.GetSessionVars().UsePlanBaselines
+	origVals := sctx.GetSessionVars().UsePlanBaselines
 	sctx.GetSessionVars().UsePlanBaselines = false
 	recordSets, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), fmt.Sprintf("explain format='hint' %s", sql))
-	sctx.GetSessionVars().UsePlanBaselines = oriVals
+	sctx.GetSessionVars().UsePlanBaselines = origVals
 	if len(recordSets) > 0 {
 		defer terror.Log(recordSets[0].Close())
 	}
@@ -678,7 +674,7 @@ func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string
 	}
 	// We need to evolve plan based on the current sql, not the original sql which may have different parameters.
 	// So here we would remove the hint and inject the current best plan hint.
-	BindHint(stmtNode, &HintsSet{})
+	hint.BindHint(stmtNode, &hint.HintsSet{})
 	var sb strings.Builder
 	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
 	err := stmtNode.Restore(restoreCtx)
@@ -848,7 +844,7 @@ func runSQL(ctx context.Context, sctx sessionctx.Context, sql string, resultChan
 
 // HandleEvolvePlanTask tries to evolve one plan task.
 // It only handle one tasks once because we want each task could use the latest parameters.
-func (h *BindHandle) HandleEvolvePlanTask(sctx sessionctx.Context) error {
+func (h *BindHandle) HandleEvolvePlanTask(sctx sessionctx.Context, adminEvolve bool) error {
 	originalSQL, db, binding := h.getOnePendingVerifyJob()
 	if originalSQL == "" {
 		return nil
@@ -857,7 +853,7 @@ func (h *BindHandle) HandleEvolvePlanTask(sctx sessionctx.Context) error {
 	if err != nil {
 		return err
 	}
-	if maxTime == 0 || !timeutil.WithinDayTimePeriod(startTime, endTime, time.Now()) {
+	if maxTime == 0 || (!timeutil.WithinDayTimePeriod(startTime, endTime, time.Now()) && !adminEvolve) {
 		return nil
 	}
 	sctx.GetSessionVars().UsePlanBaselines = true
@@ -883,7 +879,8 @@ func (h *BindHandle) HandleEvolvePlanTask(sctx sessionctx.Context) error {
 	} else {
 		binding.Status = Using
 	}
-	return h.AddBindRecord(sctx, &BindRecord{OriginalSQL: originalSQL, Db: db, Bindings: []Binding{binding}})
+	// We don't need to pass the `sctx` because the BindSQL has been validated already.
+	return h.AddBindRecord(nil, &BindRecord{OriginalSQL: originalSQL, Db: db, Bindings: []Binding{binding}})
 }
 
 // Clear resets the bind handle. It is only used for test.

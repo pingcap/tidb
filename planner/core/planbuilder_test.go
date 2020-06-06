@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/hint"
 )
 
 var _ = Suite(&testPlanBuilderSuite{})
@@ -56,6 +57,8 @@ func (s *testPlanBuilderSuite) TestShow(c *C) {
 		ast.ShowCreateDatabase,
 		ast.ShowEvents,
 		ast.ShowMasterStatus,
+		ast.ShowBackups,
+		ast.ShowRestores,
 	}
 	for _, tp := range tps {
 		node.Tp = tp
@@ -98,7 +101,7 @@ func (s *testPlanBuilderSuite) TestGetPathByIndexName(c *C) {
 }
 
 func (s *testPlanBuilderSuite) TestRewriterPool(c *C) {
-	builder := NewPlanBuilder(MockContext(), nil, &BlockHintProcessor{})
+	builder := NewPlanBuilder(MockContext(), nil, &hint.BlockHintProcessor{})
 
 	// Make sure PlanBuilder.getExpressionRewriter() provides clean rewriter from pool.
 	// First, pick one rewriter from the pool and make it dirty.
@@ -152,7 +155,7 @@ func (s *testPlanBuilderSuite) TestDisableFold(c *C) {
 		stmt := st.(*ast.SelectStmt)
 		expr := stmt.Fields.Fields[0].Expr
 
-		builder := NewPlanBuilder(ctx, nil, &BlockHintProcessor{})
+		builder := NewPlanBuilder(ctx, nil, &hint.BlockHintProcessor{})
 		builder.rewriterCounter++
 		rewriter := builder.getExpressionRewriter(context.TODO(), nil)
 		c.Assert(rewriter, NotNil)

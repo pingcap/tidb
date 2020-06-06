@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -37,12 +39,14 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	binaryJson "github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/stmtsummary"
 )
 
 type memtableRetriever struct {
@@ -108,6 +112,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForClusterProcessList(sctx)
 		case infoschema.TableUserPrivileges:
 			e.setDataFromUserPrivileges(sctx)
+		case infoschema.TableTiKVRegionStatus:
+			err = e.setDataForTiKVRegionStatus(sctx)
 		case infoschema.TableTiKVRegionPeers:
 			err = e.setDataForTikVRegionPeers(sctx)
 		case infoschema.TableTiDBHotRegions:
@@ -120,6 +126,13 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForServersInfo()
 		case infoschema.TableTiFlashReplica:
 			e.dataForTableTiFlashReplica(sctx, dbs)
+		case infoschema.TableTiKVStoreStatus:
+			err = e.dataForTiKVStoreStatus(sctx)
+		case infoschema.TableStatementsSummary,
+			infoschema.TableStatementsSummaryHistory,
+			infoschema.ClusterTableStatementsSummary,
+			infoschema.ClusterTableStatementsSummaryHistory:
+			err = e.setDataForStatementsSummary(sctx, e.table.Name.O)
 		}
 		if err != nil {
 			return nil, err
@@ -840,6 +853,55 @@ func (e *memtableRetriever) setDataFromViews(ctx sessionctx.Context, schemas []*
 	e.rows = rows
 }
 
+func (e *memtableRetriever) dataForTiKVStoreStatus(ctx sessionctx.Context) (err error) {
+	tikvStore, ok := ctx.GetStore().(tikv.Storage)
+	if !ok {
+		return errors.New("Information about TiKV store status can be gotten only when the storage is TiKV")
+	}
+	tikvHelper := &helper.Helper{
+		Store:       tikvStore,
+		RegionCache: tikvStore.GetRegionCache(),
+	}
+	storesStat, err := tikvHelper.GetStoresStat()
+	if err != nil {
+		return err
+	}
+	for _, storeStat := range storesStat.Stores {
+		row := make([]types.Datum, len(infoschema.TableTiKVStoreStatusCols))
+		row[0].SetInt64(storeStat.Store.ID)
+		row[1].SetString(storeStat.Store.Address, mysql.DefaultCollationName)
+		row[2].SetInt64(storeStat.Store.State)
+		row[3].SetString(storeStat.Store.StateName, mysql.DefaultCollationName)
+		data, err := json.Marshal(storeStat.Store.Labels)
+		if err != nil {
+			return err
+		}
+		bj := binaryJson.BinaryJSON{}
+		if err = bj.UnmarshalJSON(data); err != nil {
+			return err
+		}
+		row[4].SetMysqlJSON(bj)
+		row[5].SetString(storeStat.Store.Version, mysql.DefaultCollationName)
+		row[6].SetString(storeStat.Status.Capacity, mysql.DefaultCollationName)
+		row[7].SetString(storeStat.Status.Available, mysql.DefaultCollationName)
+		row[8].SetInt64(storeStat.Status.LeaderCount)
+		row[9].SetFloat64(storeStat.Status.LeaderWeight)
+		row[10].SetFloat64(storeStat.Status.LeaderScore)
+		row[11].SetInt64(storeStat.Status.LeaderSize)
+		row[12].SetInt64(storeStat.Status.RegionCount)
+		row[13].SetFloat64(storeStat.Status.RegionWeight)
+		row[14].SetFloat64(storeStat.Status.RegionScore)
+		row[15].SetInt64(storeStat.Status.RegionSize)
+		startTs := types.NewTime(types.FromGoTime(storeStat.Status.StartTs), mysql.TypeDatetime, types.DefaultFsp)
+		row[16].SetMysqlTime(startTs)
+		lastHeartbeatTs := types.NewTime(types.FromGoTime(storeStat.Status.LastHeartbeatTs), mysql.TypeDatetime, types.DefaultFsp)
+		row[17].SetMysqlTime(lastHeartbeatTs)
+		row[18].SetString(storeStat.Status.Uptime, mysql.DefaultCollationName)
+		e.rows = append(e.rows, row)
+	}
+	return nil
+}
+
 // DDLJobsReaderExec executes DDLJobs information retrieving.
 type DDLJobsReaderExec struct {
 	baseExecutor
@@ -960,15 +1022,21 @@ func (e *memtableRetriever) dataForTiDBClusterInfo(ctx sessionctx.Context) error
 	}
 	rows := make([][]types.Datum, 0, len(servers))
 	for _, server := range servers {
-		startTime := time.Unix(server.StartTimestamp, 0)
+		startTimeStr := ""
+		upTimeStr := ""
+		if server.StartTimestamp > 0 {
+			startTime := time.Unix(server.StartTimestamp, 0)
+			startTimeStr = startTime.Format(time.RFC3339)
+			upTimeStr = time.Since(startTime).String()
+		}
 		row := types.MakeDatums(
 			server.ServerType,
 			server.Address,
 			server.StatusAddr,
 			server.Version,
 			server.GitHash,
-			startTime.Format(time.RFC3339),
-			time.Since(startTime).String(),
+			startTimeStr,
+			upTimeStr,
 		)
 		rows = append(rows, row)
 	}
@@ -1142,6 +1210,63 @@ func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 	return rows
 }
 
+func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx sessionctx.Context) error {
+	tikvStore, ok := ctx.GetStore().(tikv.Storage)
+	if !ok {
+		return errors.New("Information about TiKV region status can be gotten only when the storage is TiKV")
+	}
+	tikvHelper := &helper.Helper{
+		Store:       tikvStore,
+		RegionCache: tikvStore.GetRegionCache(),
+	}
+	regionsInfo, err := tikvHelper.GetRegionsInfo()
+	if err != nil {
+		return err
+	}
+	allSchemas := ctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema).AllSchemas()
+	tableInfos := tikvHelper.GetRegionsTableInfo(regionsInfo, allSchemas)
+	for _, region := range regionsInfo.Regions {
+		tableList := tableInfos[region.ID]
+		if len(tableList) == 0 {
+			e.setNewTiKVRegionStatusCol(&region, nil)
+		}
+		for _, table := range tableList {
+			e.setNewTiKVRegionStatusCol(&region, &table)
+		}
+	}
+	return nil
+}
+
+func (e *memtableRetriever) setNewTiKVRegionStatusCol(region *helper.RegionInfo, table *helper.TableInfo) {
+	row := make([]types.Datum, len(infoschema.TableTiKVRegionStatusCols))
+	row[0].SetInt64(region.ID)
+	row[1].SetString(region.StartKey, mysql.DefaultCollationName)
+	row[2].SetString(region.EndKey, mysql.DefaultCollationName)
+	if table != nil {
+		row[3].SetInt64(table.Table.ID)
+		row[4].SetString(table.DB.Name.O, mysql.DefaultCollationName)
+		row[5].SetString(table.Table.Name.O, mysql.DefaultCollationName)
+		if table.IsIndex {
+			row[6].SetInt64(1)
+			row[7].SetInt64(table.Index.ID)
+			row[8].SetString(table.Index.Name.O, mysql.DefaultCollationName)
+		} else {
+			row[6].SetInt64(0)
+		}
+	}
+	row[9].SetInt64(region.Epoch.ConfVer)
+	row[10].SetInt64(region.Epoch.Version)
+	row[11].SetInt64(region.WrittenBytes)
+	row[12].SetInt64(region.ReadBytes)
+	row[13].SetInt64(region.ApproximateSize)
+	row[14].SetInt64(region.ApproximateKeys)
+	if region.ReplicationStatus != nil {
+		row[15].SetString(region.ReplicationStatus.State, mysql.DefaultCollationName)
+		row[16].SetInt64(region.ReplicationStatus.StateID)
+	}
+	e.rows = append(e.rows, row)
+}
+
 func (e *memtableRetriever) setDataForTikVRegionPeers(ctx sessionctx.Context) error {
 	tikvStore, ok := ctx.GetStore().(tikv.Storage)
 	if !ok {
@@ -1306,6 +1431,137 @@ func (e *memtableRetriever) setDataFromTableConstraints(ctx sessionctx.Context, 
 	e.rows = rows
 }
 
+// tableStorageStatsRetriever is used to read slow log data.
+type tableStorageStatsRetriever struct {
+	dummyCloser
+	table         *model.TableInfo
+	outputCols    []*model.ColumnInfo
+	retrieved     bool
+	initialized   bool
+	extractor     *plannercore.TableStorageStatsExtractor
+	initialTables []*initialTable
+	curTable      int
+	helper        *helper.Helper
+	stats         helper.PDRegionStats
+}
+
+func (e *tableStorageStatsRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+	if e.retrieved {
+		return nil, nil
+	}
+	if !e.initialized {
+		err := e.initialize(sctx)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if len(e.initialTables) == 0 || e.curTable >= len(e.initialTables) {
+		e.retrieved = true
+		return nil, nil
+	}
+
+	rows, err := e.setDataForTableStorageStats(sctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(e.outputCols) == len(e.table.Columns) {
+		return rows, nil
+	}
+	retRows := make([][]types.Datum, len(rows))
+	for i, fullRow := range rows {
+		row := make([]types.Datum, len(e.outputCols))
+		for j, col := range e.outputCols {
+			row[j] = fullRow[col.Offset]
+		}
+		retRows[i] = row
+	}
+	return retRows, nil
+}
+
+type initialTable struct {
+	db string
+	*model.TableInfo
+}
+
+func (e *tableStorageStatsRetriever) initialize(sctx sessionctx.Context) error {
+	is := infoschema.GetInfoSchema(sctx)
+	var databases []string
+	schemas := e.extractor.TableSchema
+	tables := e.extractor.TableName
+
+	// If not specify the table_schema, return an error to avoid traverse all schemas and their tables.
+	if len(schemas) == 0 {
+		return errors.Errorf("Please specify the 'table_schema'")
+	}
+
+	// Filter the sys or memory schema.
+	for schema := range schemas {
+		if !util.IsMemOrSysDB(schema) {
+			databases = append(databases, schema)
+		}
+	}
+
+	// Extract the tables to the initialTable.
+	for _, DB := range databases {
+		// The user didn't specified the table, extract all tables of this db to initialTable.
+		if len(tables) == 0 {
+			tbs := is.SchemaTables(model.NewCIStr(DB))
+			for _, tb := range tbs {
+				e.initialTables = append(e.initialTables, &initialTable{DB, tb.Meta()})
+			}
+		} else {
+			// The user specified the table, extract the specified tables of this db to initialTable.
+			for tb := range tables {
+				if tb, err := is.TableByName(model.NewCIStr(DB), model.NewCIStr(tb)); err == nil {
+					e.initialTables = append(e.initialTables, &initialTable{DB, tb.Meta()})
+				}
+			}
+		}
+	}
+
+	// Cache the helper and return an error if PD unavailable.
+	tikvStore, ok := sctx.GetStore().(tikv.Storage)
+	if !ok {
+		return errors.Errorf("Information about TiKV region status can be gotten only when the storage is TiKV")
+	}
+	e.helper = helper.NewHelper(tikvStore)
+	_, err := e.helper.GetPDAddr()
+	if err != nil {
+		return err
+	}
+	e.initialized = true
+	return nil
+}
+
+func (e *tableStorageStatsRetriever) setDataForTableStorageStats(ctx sessionctx.Context) ([][]types.Datum, error) {
+	rows := make([][]types.Datum, 0, 1024)
+	count := 0
+	for e.curTable < len(e.initialTables) && count < 1024 {
+		table := e.initialTables[e.curTable]
+		tableID := table.ID
+		err := e.helper.GetPDRegionStats(tableID, &e.stats)
+		if err != nil {
+			return nil, err
+		}
+		peerCount := len(e.stats.StorePeerCount)
+
+		record := types.MakeDatums(
+			table.db,            // TABLE_SCHEMA
+			table.Name.O,        // TABLE_NAME
+			tableID,             // TABLE_ID
+			peerCount,           // TABLE_PEER_COUNT
+			e.stats.Count,       // TABLE_REGION_COUNT
+			e.stats.EmptyCount,  // TABLE_EMPTY_REGION_COUNT
+			e.stats.StorageSize, // TABLE_SIZE
+			e.stats.StorageKeys, // TABLE_KEYS
+		)
+		rows = append(rows, record)
+		count++
+		e.curTable++
+	}
+	return rows, nil
+}
+
 func (e *memtableRetriever) setDataFromSessionVar(ctx sessionctx.Context) error {
 	var rows [][]types.Datum
 	var err error
@@ -1426,7 +1682,6 @@ func (e *memtableRetriever) setDataFromSequences(ctx sessionctx.Context, schemas
 				table.Sequence.Increment,  // INCREMENT
 				table.Sequence.MaxValue,   // MAXVALUE
 				table.Sequence.MinValue,   // MINVALUE
-				table.Sequence.Order,      // ORDER
 				table.Sequence.Start,      // START
 				table.Sequence.Comment,    // COMMENT
 			)
@@ -1478,4 +1733,30 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, s
 	}
 	e.rows = rows
 	return
+}
+
+func (e *memtableRetriever) setDataForStatementsSummary(ctx sessionctx.Context, tableName string) error {
+	user := ctx.GetSessionVars().User
+	isSuper := false
+	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
+		isSuper = pm.RequestVerificationWithUser("", "", "", mysql.SuperPriv, user)
+	}
+	switch tableName {
+	case infoschema.TableStatementsSummary,
+		infoschema.ClusterTableStatementsSummary:
+		e.rows = stmtsummary.StmtSummaryByDigestMap.ToCurrentDatum(user, isSuper)
+	case infoschema.TableStatementsSummaryHistory,
+		infoschema.ClusterTableStatementsSummaryHistory:
+		e.rows = stmtsummary.StmtSummaryByDigestMap.ToHistoryDatum(user, isSuper)
+	}
+	switch tableName {
+	case infoschema.ClusterTableStatementsSummary,
+		infoschema.ClusterTableStatementsSummaryHistory:
+		rows, err := infoschema.AppendHostInfoToRows(e.rows)
+		if err != nil {
+			return err
+		}
+		e.rows = rows
+	}
+	return nil
 }

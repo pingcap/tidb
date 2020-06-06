@@ -30,12 +30,18 @@ const (
 	// ClusterTableSlowLog is the string constant of cluster slow query memory table.
 	ClusterTableSlowLog     = "CLUSTER_SLOW_QUERY"
 	ClusterTableProcesslist = "CLUSTER_PROCESSLIST"
+	// ClusterTableStatementsSummary is the string constant of cluster statement summary table.
+	ClusterTableStatementsSummary = "CLUSTER_STATEMENTS_SUMMARY"
+	// ClusterTableStatementsSummaryHistory is the string constant of cluster statement summary history table.
+	ClusterTableStatementsSummaryHistory = "CLUSTER_STATEMENTS_SUMMARY_HISTORY"
 )
 
 // memTableToClusterTables means add memory table to cluster table.
 var memTableToClusterTables = map[string]string{
-	TableSlowQuery:   ClusterTableSlowLog,
-	TableProcesslist: ClusterTableProcesslist,
+	TableSlowQuery:                ClusterTableSlowLog,
+	TableProcesslist:              ClusterTableProcesslist,
+	TableStatementsSummary:        ClusterTableStatementsSummary,
+	TableStatementsSummaryHistory: ClusterTableStatementsSummaryHistory,
 }
 
 func init() {

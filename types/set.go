@@ -18,6 +18,8 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/stringutil"
 )
 
 var zeroSet = Set{Name: "", Value: 0}
@@ -38,22 +40,32 @@ func (e Set) ToNumber() float64 {
 	return float64(e.Value)
 }
 
+// Copy deep copy a Set.
+func (e Set) Copy() Set {
+	return Set{
+		Name:  stringutil.Copy(e.Name),
+		Value: e.Value,
+	}
+}
+
 // ParseSetName creates a Set with name.
-func ParseSetName(elems []string, name string) (Set, error) {
+func ParseSetName(elems []string, name string, collation string) (Set, error) {
 	if len(name) == 0 {
 		return zeroSet, nil
 	}
 
+	ctor := collate.GetCollator(collation)
+
 	seps := strings.Split(name, ",")
 	marked := make(map[string]struct{}, len(seps))
 	for _, s := range seps {
-		marked[strings.ToLower(s)] = struct{}{}
+		marked[string(ctor.Key(s))] = struct{}{}
 	}
 	items := make([]string, 0, len(seps))
 
 	value := uint64(0)
 	for i, n := range elems {
-		key := strings.ToLower(n)
+		key := string(ctor.Key(n))
 		if _, ok := marked[key]; ok {
 			value |= 1 << uint64(i)
 			delete(marked, key)

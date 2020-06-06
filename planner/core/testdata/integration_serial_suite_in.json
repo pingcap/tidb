@@ -20,7 +20,9 @@
       "desc select /*+ read_from_storage(tiflash[tt]) */ * from tt where (tt.a > 1 and tt.a < 20) or (tt.a >= 30 and tt.a < 55)",
       "desc select * from ttt order by ttt.a desc",
       "desc select /*+ read_from_storage(tiflash[ttt]) */ * from ttt order by ttt.a desc",
-      "desc select /*+ read_from_storage(tiflash[ttt]) */ * from ttt order by ttt.a"
+      "desc select /*+ read_from_storage(tiflash[ttt]) */ * from ttt order by ttt.a",
+      "desc select /*+ read_from_storage(tikv[t, ttt]) */ * from ttt",
+      "desc select /*+ read_from_storage(tiflash[t, ttt], tikv[tt]) */ * from ttt"
     ]
   },
   {
@@ -29,6 +31,14 @@
       "desc select /*+ read_from_storage(tikv[t], tiflash[t]) */ avg(a) from t",
       "desc select /*+ read_from_storage(tikv[t]) */ avg(a) from t",
       "desc select /*+ read_from_storage(tiflash[t]) */ avg(a) from t"
+    ]
+  },
+  {
+    "name": "TestIsolationReadDoNotFilterSystemDB",
+    "cases": [
+      "desc select * from metrics_schema.tidb_query_duration where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13'",
+      "desc select * from information_schema.tables",
+      "desc select * from mysql.stats_meta"
     ]
   },
   {

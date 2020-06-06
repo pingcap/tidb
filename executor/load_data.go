@@ -489,16 +489,16 @@ func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datu
 	return row
 }
 
-func (e *LoadDataInfo) addRecordLD(ctx context.Context, row []types.Datum) (int64, error) {
+func (e *LoadDataInfo) addRecordLD(ctx context.Context, row []types.Datum) error {
 	if row == nil {
-		return 0, nil
+		return nil
 	}
-	h, err := e.addRecord(ctx, row)
+	err := e.addRecord(ctx, row)
 	if err != nil {
 		e.handleWarning(err)
-		return 0, err
+		return err
 	}
-	return h, nil
+	return nil
 }
 
 type field struct {
@@ -632,14 +632,12 @@ func (w *fieldWriter) GetField() (bool, field) {
 			}
 		} else if ch == '\\' {
 			// TODO: escape only support '\'
-			w.OutputBuf = append(w.OutputBuf, ch)
+			// When the escaped character is interpreted as if
+			// it was not escaped, backslash is ignored.
 			flag, ch = w.getChar()
 			if flag {
-				if ch == w.enclosedChar {
-					w.OutputBuf = append(w.OutputBuf, ch)
-				} else {
-					w.putback()
-				}
+				w.OutputBuf = append(w.OutputBuf, '\\')
+				w.OutputBuf = append(w.OutputBuf, ch)
 			}
 		} else {
 			w.OutputBuf = append(w.OutputBuf, ch)

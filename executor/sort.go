@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/disk"
@@ -35,7 +36,7 @@ var rowChunksLabel fmt.Stringer = stringutil.StringerStr("rowChunks")
 type SortExec struct {
 	baseExecutor
 
-	ByItems []*plannercore.ByItems
+	ByItems []*util.ByItems
 	Idx     int
 	fetched bool
 	schema  *expression.Schema
@@ -249,6 +250,8 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 			e.generatePartition()
 		}
 		e.rowChunks.SetOnExceededCallback(onExceededCallback)
+		e.rowChunks.GetDiskTracker().AttachTo(e.diskTracker)
+		e.rowChunks.GetDiskTracker().SetLabel(rowChunksLabel)
 	}
 	for {
 		chk := newFirstChunk(e.children[0])
@@ -269,6 +272,8 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 			e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
 			e.rowChunks.SetOnExceededCallback(onExceededCallback)
 			e.spillAction.ResetOnceAndSetRowContainer(e.rowChunks)
+			e.rowChunks.GetDiskTracker().AttachTo(e.diskTracker)
+			e.rowChunks.GetDiskTracker().SetLabel(rowChunksLabel)
 		}
 	}
 	if e.rowChunks.NumRow() > 0 {

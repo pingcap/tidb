@@ -45,6 +45,9 @@ var (
 	errTruncatedWrongValue           = terror.ClassExpression.New(mysql.ErrTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValue])
 	errUnknownLocale                 = terror.ClassExpression.New(mysql.ErrUnknownLocale, mysql.MySQLErrName[mysql.ErrUnknownLocale])
 	errNonUniq                       = terror.ClassExpression.New(mysql.ErrNonUniq, mysql.MySQLErrName[mysql.ErrNonUniq])
+
+	// Sequence usage privilege check.
+	errSequenceAccessDenied = terror.ClassExpression.New(mysql.ErrTableaccessDenied, mysql.MySQLErrName[mysql.ErrTableaccessDenied])
 )
 
 // handleInvalidTimeError reports error or warning depend on the context.

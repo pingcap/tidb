@@ -45,13 +45,13 @@ func (c *collationInfo) SetCoercibility(val Coercibility) {
 	c.coerInit = true
 }
 
-func (c *collationInfo) SetCharsetAndCollation(chs, coll string, flen int) {
-	c.charset, c.collation, c.flen = chs, coll, flen
+func (c *collationInfo) SetCharsetAndCollation(chs, coll string) {
+	c.charset, c.collation = chs, coll
 }
 
-func (c *collationInfo) CharsetAndCollation(ctx sessionctx.Context) (string, string, int) {
+func (c *collationInfo) CharsetAndCollation(ctx sessionctx.Context) (string, string) {
 	if c.charset != "" || c.collation != "" {
-		return c.charset, c.collation, c.flen
+		return c.charset, c.collation
 	}
 
 	if ctx != nil && ctx.GetSessionVars() != nil {
@@ -61,7 +61,7 @@ func (c *collationInfo) CharsetAndCollation(ctx sessionctx.Context) (string, str
 		c.charset, c.collation = charset.GetDefaultCharsetAndCollate()
 	}
 	c.flen = types.UnspecifiedLength
-	return c.charset, c.collation, c.flen
+	return c.charset, c.collation
 }
 
 // CollationInfo contains all interfaces about dealing with collation.
@@ -76,10 +76,10 @@ type CollationInfo interface {
 	SetCoercibility(val Coercibility)
 
 	// CharsetAndCollation ...
-	CharsetAndCollation(ctx sessionctx.Context) (string, string, int)
+	CharsetAndCollation(ctx sessionctx.Context) (string, string)
 
 	// SetCharsetAndCollation ...
-	SetCharsetAndCollation(chs, coll string, flen int)
+	SetCharsetAndCollation(chs, coll string)
 }
 
 // Coercibility values are used to check whether the collation of one item can be coerced to
@@ -110,6 +110,29 @@ var (
 		ast.Database:    {},
 		ast.CurrentRole: {},
 		ast.CurrentUser: {},
+	}
+
+	// collationPriority is the priority when infer the result collation, the priority of collation a > b iff collationPriority[a] > collationPriority[b]
+	collationPriority = map[string]int{
+		charset.CollationASCII:   0,
+		charset.CollationLatin1:  1,
+		"utf8_general_ci":        2,
+		charset.CollationUTF8:    3,
+		"utf8mb4_general_ci":     4,
+		charset.CollationUTF8MB4: 5,
+		charset.CollationBin:     6,
+	}
+
+	// CollationStrictness indicates the strictness of comparison of the collation. The unequal order in a weak collation also holds in a strict collation.
+	// For example, if a < b in a weak collation(e.g. general_ci), then there must be a < b in a strict collation(e.g. _bin).
+	CollationStrictness = map[string]int{
+		"utf8_general_ci":        0,
+		"utf8mb4_general_ci":     0,
+		charset.CollationASCII:   1,
+		charset.CollationLatin1:  1,
+		charset.CollationUTF8:    1,
+		charset.CollationUTF8MB4: 1,
+		charset.CollationBin:     2,
 	}
 )
 
@@ -146,8 +169,9 @@ func deriveCoercibilityForColumn(c *Column) Coercibility {
 }
 
 // DeriveCollationFromExprs derives collation information from these expressions.
-func DeriveCollationFromExprs(ctx sessionctx.Context, exprs ...Expression) (dstCharset, dstCollation string, dstFlen int) {
+func DeriveCollationFromExprs(ctx sessionctx.Context, exprs ...Expression) (dstCharset, dstCollation string) {
 	curCoer := CoercibilityCoercible
+	curCollationPriority := -1
 	dstCharset, dstCollation = charset.GetDefaultCharsetAndCollate()
 	if ctx != nil && ctx.GetSessionVars() != nil {
 		dstCharset, dstCollation = ctx.GetSessionVars().GetCharsetInfo()
@@ -155,7 +179,6 @@ func DeriveCollationFromExprs(ctx sessionctx.Context, exprs ...Expression) (dstC
 			dstCharset, dstCollation = charset.GetDefaultCharsetAndCollate()
 		}
 	}
-	dstFlen = types.UnspecifiedLength
 	hasStrArg := false
 	// see https://dev.mysql.com/doc/refman/8.0/en/charset-collation-coercibility.html
 	for _, e := range exprs {
@@ -166,34 +189,23 @@ func DeriveCollationFromExprs(ctx sessionctx.Context, exprs ...Expression) (dstC
 
 		coer := e.Coercibility()
 		ft := e.GetType()
+		collationPriority, ok := collationPriority[strings.ToLower(ft.Collate)]
+		if !ok {
+			collationPriority = -1
+		}
 		if coer != curCoer {
 			if coer < curCoer {
-				curCoer, dstCharset, dstCollation, dstFlen = coer, ft.Charset, ft.Collate, ft.Flen
+				curCoer, curCollationPriority, dstCharset, dstCollation = coer, collationPriority, ft.Charset, ft.Collate
 			}
 			continue
 		}
-
-		isUnicode1 := isUnicodeCharset(ft.Charset)
-		isUnicode2 := isUnicodeCharset(dstCharset)
-		if isUnicode1 && !isUnicode2 {
+		if !ok || collationPriority <= curCollationPriority {
 			continue
 		}
-		if (!isUnicode1 && isUnicode2) || // use the unicode charset
-			isBinCollation(ft.Collate) { // use the _bin collation
-			curCoer, dstCharset, dstCollation, dstFlen = coer, ft.Charset, ft.Collate, ft.Flen
-		}
+		curCollationPriority, dstCharset, dstCollation = collationPriority, ft.Charset, ft.Collate
 	}
 	if !hasStrArg {
-		dstCharset, dstCollation, dstFlen = charset.CharsetBin, charset.CollationBin, types.UnspecifiedLength
+		dstCharset, dstCollation = charset.CharsetBin, charset.CollationBin
 	}
 	return
-}
-
-func isUnicodeCharset(charset string) bool {
-	charset = strings.ToLower(charset)
-	return charset == "utf8" || charset == "utf8mb4"
-}
-
-func isBinCollation(collation string) bool {
-	return strings.HasSuffix(strings.ToLower(collation), "_bin")
 }

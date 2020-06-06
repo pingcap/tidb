@@ -158,7 +158,7 @@ func copySameOuterRows(outerColOffset, outerColLen int, src *Chunk, numRows int,
 			offsets := dstCol.offsets
 			elemLen := srcCol.offsets[row.idx+1] - srcCol.offsets[row.idx]
 			for j := 0; j < numRows; j++ {
-				offsets = append(offsets, int64(offsets[len(offsets)-1]+elemLen))
+				offsets = append(offsets, offsets[len(offsets)-1]+elemLen)
 			}
 			dstCol.offsets = offsets
 		}

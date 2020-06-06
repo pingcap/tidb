@@ -91,11 +91,6 @@ func (s *RangeTaskRunner) SetRegionsPerTask(regionsPerTask int) {
 	s.regionsPerTask = regionsPerTask
 }
 
-// SetStatLogInterval sets the time interval to log the stats.
-func (s *RangeTaskRunner) SetStatLogInterval(interval time.Duration) {
-	s.statLogInterval = interval
-}
-
 // RunOnRange runs the task on the given range.
 // Empty startKey or endKey means unbounded.
 func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey, endKey kv.Key) error {

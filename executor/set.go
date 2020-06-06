@@ -29,9 +29,11 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stmtsummary"
+	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
 
@@ -53,10 +55,10 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	sessionVars := e.ctx.GetSessionVars()
 	for _, v := range e.vars {
 		// Variable is case insensitive, we use lower case.
-		if v.Name == ast.SetNames {
+		if v.Name == ast.SetNames || v.Name == ast.SetCharset {
 			// This is set charset stmt.
 			if v.IsDefault {
-				err := e.setCharset(mysql.DefaultCharset, "")
+				err := e.setCharset(mysql.DefaultCharset, "", v.Name == ast.SetNames)
 				if err != nil {
 					return err
 				}
@@ -71,7 +73,7 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			if v.ExtendValue != nil {
 				co = v.ExtendValue.Value.GetString()
 			}
-			err = e.setCharset(cs, co)
+			err = e.setCharset(cs, co, v.Name == ast.SetNames)
 			if err != nil {
 				return err
 			}
@@ -92,7 +94,8 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				if err1 != nil {
 					return err1
 				}
-				sessionVars.Users[name] = fmt.Sprintf("%v", svalue)
+
+				sessionVars.SetUserVar(name, stringutil.Copy(svalue), value.Collation())
 			}
 			continue
 		}
@@ -172,6 +175,10 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		if name == variable.TxnIsolationOneShot && sessionVars.InTxn() {
 			return errors.Trace(ErrCantChangeTxCharacteristics)
 		}
+		if name == variable.TiDBFoundInPlanCache {
+			sessionVars.StmtCtx.AppendWarning(fmt.Errorf("Set operation for '%s' will not take effect", variable.TiDBFoundInPlanCache))
+			return nil
+		}
 		err = variable.SetSessionSystemVar(sessionVars, name, value)
 		if err != nil {
 			return err
@@ -219,13 +226,13 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 	case variable.TiDBStmtSummaryMaxSQLLength:
 		return stmtsummary.StmtSummaryByDigestMap.SetMaxSQLLength(valStr, !v.IsGlobal)
 	case variable.TiDBCapturePlanBaseline:
-		variable.CapturePlanBaseline.Set(valStr, !v.IsGlobal)
+		variable.CapturePlanBaseline.Set(strings.ToLower(valStr), !v.IsGlobal)
 	}
 
 	return nil
 }
 
-func (e *SetExecutor) setCharset(cs, co string) error {
+func (e *SetExecutor) setCharset(cs, co string, isSetName bool) error {
 	var err error
 	if len(co) == 0 {
 		if co, err = charset.GetDefaultCollation(cs); err != nil {
@@ -233,7 +240,7 @@ func (e *SetExecutor) setCharset(cs, co string) error {
 		}
 	} else {
 		var coll *charset.Collation
-		if coll, err = charset.GetCollationByName(co); err != nil {
+		if coll, err = collate.GetCollationByName(co); err != nil {
 			return err
 		}
 		if coll.CharsetName != cs {
@@ -241,12 +248,33 @@ func (e *SetExecutor) setCharset(cs, co string) error {
 		}
 	}
 	sessionVars := e.ctx.GetSessionVars()
-	for _, v := range variable.SetNamesVariables {
+	if isSetName {
+		for _, v := range variable.SetNamesVariables {
+			if err = sessionVars.SetSystemVar(v, cs); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		return errors.Trace(sessionVars.SetSystemVar(variable.CollationConnection, co))
+	}
+	// Set charset statement, see also https://dev.mysql.com/doc/refman/8.0/en/set-character-set.html.
+	for _, v := range variable.SetCharsetVariables {
 		if err = sessionVars.SetSystemVar(v, cs); err != nil {
 			return errors.Trace(err)
 		}
 	}
-	return errors.Trace(sessionVars.SetSystemVar(variable.CollationConnection, co))
+	csDb, err := sessionVars.GlobalVarsAccessor.GetGlobalSysVar(variable.CharsetDatabase)
+	if err != nil {
+		return err
+	}
+	coDb, err := sessionVars.GlobalVarsAccessor.GetGlobalSysVar(variable.CollationDatabase)
+	if err != nil {
+		return err
+	}
+	err = sessionVars.SetSystemVar(variable.CharacterSetConnection, csDb)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return errors.Trace(sessionVars.SetSystemVar(variable.CollationConnection, coDb))
 }
 
 func (e *SetExecutor) getVarValue(v *expression.VarAssignment, sysVar *variable.SysVar) (value types.Datum, err error) {

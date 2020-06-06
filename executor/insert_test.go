@@ -978,7 +978,7 @@ func (s *testSuite9) TestAutoRandomID(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists ar`)
-	tk.MustExec(`create table ar (id int key auto_random, name char(10))`)
+	tk.MustExec(`create table ar (id bigint key auto_random, name char(10))`)
 
 	tk.MustExec(`insert into ar(id) values (null)`)
 	rs := tk.MustQuery(`select id from ar`)
@@ -1021,7 +1021,7 @@ func (s *testSuite9) TestMultiAutoRandomID(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists ar`)
-	tk.MustExec(`create table ar (id int key auto_random, name char(10))`)
+	tk.MustExec(`create table ar (id bigint key auto_random, name char(10))`)
 
 	tk.MustExec(`insert into ar(id) values (null),(null),(null)`)
 	rs := tk.MustQuery(`select id from ar order by id`)
@@ -1070,7 +1070,7 @@ func (s *testSuite9) TestAutoRandomIDAllowZero(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists ar`)
-	tk.MustExec(`create table ar (id int key auto_random, name char(10))`)
+	tk.MustExec(`create table ar (id bigint key auto_random, name char(10))`)
 
 	rs := tk.MustQuery(`select @@session.sql_mode`)
 	sqlMode := rs.Rows()[0][0].(string)
@@ -1106,9 +1106,11 @@ func (s *testSuite9) TestAutoRandomIDExplicit(c *C) {
 	}
 
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
+
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists ar`)
-	tk.MustExec(`create table ar (id int key auto_random, name char(10))`)
+	tk.MustExec(`create table ar (id bigint key auto_random, name char(10))`)
 
 	tk.MustExec(`insert into ar(id) values (1)`)
 	tk.MustQuery(`select id from ar`).Check(testkit.Rows("1"))
@@ -1131,4 +1133,51 @@ func (s *testSuite9) TestInsertErrorMsg(c *C) {
 	_, err := tk.Exec(`insert into t values (1, '2019-02-11 30:00:00', '2019-01-31')`)
 	c.Assert(err, NotNil)
 	c.Assert(strings.Contains(err.Error(), "Incorrect datetime value: '2019-02-11 30:00:00' for column 'b' at row 1"), IsTrue, Commentf("%v", err))
+}
+
+func (s *testSuite9) TestIssue16366(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(c numeric primary key);`)
+	tk.MustExec("insert ignore into t values(null);")
+	_, err := tk.Exec(`insert into t values(0);`)
+	c.Assert(err, NotNil)
+	c.Assert(strings.Contains(err.Error(), "Duplicate entry '0' for key 'PRIMARY'"), IsTrue, Commentf("%v", err))
+}
+
+var _ = SerialSuites(&testSuite10{&baseTestSuite{}})
+
+type testSuite10 struct {
+	*baseTestSuite
+}
+
+func (s *testSuite10) TestClusterPrimaryTablePlainInsert(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
+
+	tk.MustExec(`drop table if exists t1pk`)
+	tk.MustExec(`create table t1pk(id varchar(200) primary key, v int)`)
+	tk.MustExec(`insert into t1pk(id, v) values('abc', 1)`)
+	tk.MustQuery(`select * from t1pk`).Check(testkit.Rows("abc 1"))
+	tk.MustExec(`set @@tidb_constraint_check_in_place=true`)
+	c.Assert(tk.ExecToErr(`insert into t1pk(id, v) values('abc', 2)`).Error(), Equals, `[kv:1062]Duplicate entry '{abc}' for key 'PRIMARY'`)
+	tk.MustExec(`set @@tidb_constraint_check_in_place=false`)
+	c.Assert(tk.ExecToErr(`insert into t1pk(id, v) values('abc', 3)`).Error(), Equals, `[kv:1062]Duplicate entry '{abc}' for key 'PRIMARY'`)
+	tk.MustQuery(`select v, id from t1pk`).Check(testkit.Rows("1 abc"))
+	tk.MustQuery(`select id from t1pk where id = 'abc'`).Check(testkit.Rows("abc"))
+	tk.MustQuery(`select v, id from t1pk where id = 'abc'`).Check(testkit.Rows("1 abc"))
+
+	tk.MustExec(`drop table if exists t3pk`)
+	tk.MustExec(`create table t3pk(id1 varchar(200), id2 varchar(200), v int, id3 int, primary key(id1, id2, id3))`)
+	tk.MustExec(`insert into t3pk(id1, id2, id3, v) values('abc', 'xyz', 100, 1)`)
+	tk.MustQuery(`select * from t3pk`).Check(testkit.Rows("abc xyz 1 100"))
+	tk.MustExec(`set @@tidb_constraint_check_in_place=true`)
+	c.Assert(tk.ExecToErr(`insert into t3pk(id1, id2, id3, v) values('abc', 'xyz', 100, 2)`).Error(), Equals, `[kv:1062]Duplicate entry '{abc, xyz, 100}' for key 'PRIMARY'`)
+	tk.MustExec(`set @@tidb_constraint_check_in_place=false`)
+	c.Assert(tk.ExecToErr(`insert into t3pk(id1, id2, id3, v) values('abc', 'xyz', 100, 3)`).Error(), Equals, `[kv:1062]Duplicate entry '{abc, xyz, 100}' for key 'PRIMARY'`)
+	tk.MustQuery(`select v, id3, id2, id1 from t3pk`).Check(testkit.Rows("1 100 xyz abc"))
+	tk.MustQuery(`select id3, id2, id1 from t3pk where id3 = 100 and id2 = 'xyz' and id1 = 'abc'`).Check(testkit.Rows("100 xyz abc"))
+	tk.MustQuery(`select id3, id2, id1, v from t3pk where id3 = 100 and id2 = 'xyz' and id1 = 'abc'`).Check(testkit.Rows("100 xyz abc 1"))
 }

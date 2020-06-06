@@ -21,6 +21,8 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/printer"
 )
 
 // ScopeFlag is for system variable whether can be changed in global/session dynamically or not.
@@ -384,7 +386,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "binlog_format", "STATEMENT"},
 	{ScopeGlobal | ScopeSession, "optimizer_trace", "enabled=off,one_line=off"},
 	{ScopeGlobal | ScopeSession, "read_rnd_buffer_size", "262144"},
-	{ScopeNone, "version_comment", "TiDB Server (Apache License 2.0), MySQL 5.7 compatible"},
+	{ScopeNone, "version_comment", "TiDB Server (Apache License 2.0) " + printer.TiDBEdition + " Edition, MySQL 5.7 compatible"},
 	{ScopeGlobal | ScopeSession, NetWriteTimeout, "60"},
 	{ScopeGlobal, InnodbBufferPoolLoadAbort, "0"},
 	{ScopeGlobal | ScopeSession, TxnIsolation, "REPEATABLE-READ"},
@@ -609,6 +611,7 @@ var defaultSysVars = []*SysVar{
 	/* TiDB specific variables */
 	{ScopeSession, TiDBSnapshot, ""},
 	{ScopeSession, TiDBOptAggPushDown, BoolToIntStr(DefOptAggPushDown)},
+	{ScopeSession, TiDBOptDistinctAggPushDown, BoolToIntStr(config.GetGlobalConfig().Performance.DistinctAggPushDown)},
 	{ScopeSession, TiDBOptWriteRowID, BoolToIntStr(DefOptWriteRowID)},
 	{ScopeGlobal | ScopeSession, TiDBBuildStatsConcurrency, strconv.Itoa(DefBuildStatsConcurrency)},
 	{ScopeGlobal, TiDBAutoAnalyzeRatio, strconv.FormatFloat(DefAutoAnalyzeRatio, 'f', -1, 64)},
@@ -640,6 +643,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBDMLBatchSize, strconv.Itoa(DefDMLBatchSize)},
 	{ScopeSession, TiDBCurrentTS, strconv.Itoa(DefCurretTS)},
 	{ScopeGlobal | ScopeSession, TiDBMaxChunkSize, strconv.Itoa(DefMaxChunkSize)},
+	{ScopeGlobal | ScopeSession, TiDBAllowBatchCop, strconv.Itoa(DefTiDBAllowBatchCop)},
 	{ScopeGlobal | ScopeSession, TiDBInitChunkSize, strconv.Itoa(DefInitChunkSize)},
 	{ScopeGlobal | ScopeSession, TiDBEnableCascadesPlanner, "0"},
 	{ScopeGlobal | ScopeSession, TiDBEnableIndexMerge, "0"},
@@ -654,7 +658,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBEnableStreaming, "0"},
 	{ScopeSession, TiDBEnableChunkRPC, "1"},
 	{ScopeSession, TxnIsolationOneShot, ""},
-	{ScopeGlobal | ScopeSession, TiDBEnableTablePartition, "auto"},
+	{ScopeGlobal | ScopeSession, TiDBEnableTablePartition, "on"},
 	{ScopeGlobal | ScopeSession, TiDBHashJoinConcurrency, strconv.Itoa(DefTiDBHashJoinConcurrency)},
 	{ScopeGlobal | ScopeSession, TiDBProjectionConcurrency, strconv.Itoa(DefTiDBProjectionConcurrency)},
 	{ScopeGlobal | ScopeSession, TiDBHashAggPartialConcurrency, strconv.Itoa(DefTiDBHashAggPartialConcurrency)},
@@ -694,12 +698,12 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, TiDBEnableNoopFuncs, BoolToIntStr(DefTiDBEnableNoopFuncs)},
 	{ScopeSession, TiDBReplicaRead, "leader"},
 	{ScopeSession, TiDBAllowRemoveAutoInc, BoolToIntStr(DefTiDBAllowRemoveAutoInc)},
-	{ScopeGlobal | ScopeSession, TiDBEnableStmtSummary, ""},
-	{ScopeGlobal | ScopeSession, TiDBStmtSummaryInternalQuery, ""},
-	{ScopeGlobal | ScopeSession, TiDBStmtSummaryRefreshInterval, ""},
-	{ScopeGlobal | ScopeSession, TiDBStmtSummaryHistorySize, ""},
-	{ScopeGlobal | ScopeSession, TiDBStmtSummaryMaxStmtCount, ""},
-	{ScopeGlobal | ScopeSession, TiDBStmtSummaryMaxSQLLength, ""},
+	{ScopeGlobal | ScopeSession, TiDBEnableStmtSummary, BoolToIntStr(config.GetGlobalConfig().StmtSummary.Enable)},
+	{ScopeGlobal | ScopeSession, TiDBStmtSummaryInternalQuery, BoolToIntStr(config.GetGlobalConfig().StmtSummary.EnableInternalQuery)},
+	{ScopeGlobal | ScopeSession, TiDBStmtSummaryRefreshInterval, strconv.Itoa(config.GetGlobalConfig().StmtSummary.RefreshInterval)},
+	{ScopeGlobal | ScopeSession, TiDBStmtSummaryHistorySize, strconv.Itoa(config.GetGlobalConfig().StmtSummary.HistorySize)},
+	{ScopeGlobal | ScopeSession, TiDBStmtSummaryMaxStmtCount, strconv.FormatUint(uint64(config.GetGlobalConfig().StmtSummary.MaxStmtCount), 10)},
+	{ScopeGlobal | ScopeSession, TiDBStmtSummaryMaxSQLLength, strconv.FormatUint(uint64(config.GetGlobalConfig().StmtSummary.MaxSQLLength), 10)},
 	{ScopeGlobal | ScopeSession, TiDBCapturePlanBaseline, "off"},
 	{ScopeGlobal | ScopeSession, TiDBUsePlanBaselines, boolToOnOff(DefTiDBUsePlanBaselines)},
 	{ScopeGlobal | ScopeSession, TiDBEvolvePlanBaselines, boolToOnOff(DefTiDBEvolvePlanBaselines)},
@@ -710,6 +714,16 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, TiDBStoreLimit, strconv.FormatInt(atomic.LoadInt64(&config.GetGlobalConfig().TiKVClient.StoreLimit), 10)},
 	{ScopeSession, TiDBMetricSchemaStep, strconv.Itoa(DefTiDBMetricSchemaStep)},
 	{ScopeSession, TiDBMetricSchemaRangeDuration, strconv.Itoa(DefTiDBMetricSchemaRangeDuration)},
+	{ScopeSession, TiDBSlowLogThreshold, strconv.Itoa(logutil.DefaultSlowThreshold)},
+	{ScopeSession, TiDBRecordPlanInSlowLog, strconv.Itoa(logutil.DefaultRecordPlanInSlowLog)},
+	{ScopeSession, TiDBEnableSlowLog, BoolToIntStr(logutil.DefaultTiDBEnableSlowLog)},
+	{ScopeSession, TiDBQueryLogMaxLen, strconv.Itoa(logutil.DefaultQueryLogMaxLen)},
+	{ScopeSession, TiDBCheckMb4ValueInUTF8, BoolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUTF8)},
+	{ScopeSession, TiDBFoundInPlanCache, BoolToIntStr(DefTiDBFoundInPlanCache)},
+	{ScopeSession, TiDBEnableCollectExecutionInfo, BoolToIntStr(logutil.DefaultTiDBEnableSlowLog)},
+	{ScopeSession, TiDBAllowAutoRandExplicitInsert, boolToOnOff(DefTiDBAllowAutoRandExplicitInsert)},
+	{ScopeGlobal | ScopeSession, TiDBEnableClusteredIndex, BoolToIntStr(DefTiDBEnableClusteredIndex)},
+	{ScopeGlobal, TiDBSlowLogMasking, BoolToIntStr(DefTiDBSlowLogMasking)},
 }
 
 // SynonymsSysVariables is synonyms of system variables.
@@ -730,6 +744,12 @@ func initSynonymsSysVariables() {
 var SetNamesVariables = []string{
 	"character_set_client",
 	"character_set_connection",
+	"character_set_results",
+}
+
+// SetCharsetVariables is the system variable names related to set charset statements.
+var SetCharsetVariables = []string{
+	"character_set_client",
 	"character_set_results",
 }
 

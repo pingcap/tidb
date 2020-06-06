@@ -58,7 +58,7 @@ func buildMemIndexReader(us *UnionScanExec, idxReader *IndexReaderExecutor) *mem
 		kvRanges:         kvRanges,
 		desc:             us.desc,
 		conditions:       us.conditions,
-		addedRows:        make([][]types.Datum, 0, len(us.dirty.addedRows)),
+		addedRows:        make([][]types.Datum, 0, us.dirty.addedRows.Len()),
 		retFieldTypes:    retTypes(us),
 		outputOffset:     outputOffset,
 		belowHandleIndex: us.belowHandleIndex,
@@ -110,7 +110,7 @@ func (m *memIndexReader) getMemRows() ([][]types.Datum, error) {
 }
 
 func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.FieldType) ([]types.Datum, error) {
-	hdStatus := tablecodec.HandleIsSigned
+	hdStatus := tablecodec.HandleDefault
 	if mysql.HasUnsignedFlag(tps[len(tps)-1].Flag) {
 		hdStatus = tablecodec.HandleIsUnsigned
 	}
@@ -119,9 +119,8 @@ func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.Fie
 		col := m.table.Columns[idxCol.Offset]
 		colInfos = append(colInfos, rowcodec.ColInfo{
 			ID:         col.ID,
-			Tp:         int32(col.Tp),
-			Flag:       int32(col.Flag),
 			IsPKHandle: m.table.PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
+			Ft:         rowcodec.FieldTypeFromModelColumn(col),
 		})
 	}
 	values, err := tablecodec.DecodeIndexKV(key, value, len(m.index.Columns), hdStatus, colInfos)
@@ -170,15 +169,12 @@ func buildMemTableReader(us *UnionScanExec, tblReader *TableReaderExecutor) *mem
 		col := us.columns[i]
 		colInfo = append(colInfo, rowcodec.ColInfo{
 			ID:         col.ID,
-			Tp:         int32(col.Tp),
-			Flag:       int32(col.Flag),
 			IsPKHandle: us.table.Meta().PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
-			Collate:    col.Collate,
-			Flen:       col.Flen,
+			Ft:         rowcodec.FieldTypeFromModelColumn(col),
 		})
 	}
 
-	rd := rowcodec.NewByteDecoder(colInfo, -1, nil, nil)
+	rd := rowcodec.NewByteDecoder(colInfo, []int64{-1}, nil, nil)
 	return &memTableReader{
 		ctx:           us.ctx,
 		table:         us.table.Meta(),
@@ -186,7 +182,7 @@ func buildMemTableReader(us *UnionScanExec, tblReader *TableReaderExecutor) *mem
 		kvRanges:      tblReader.kvRanges,
 		desc:          us.desc,
 		conditions:    us.conditions,
-		addedRows:     make([][]types.Datum, 0, len(us.dirty.addedRows)),
+		addedRows:     make([][]types.Datum, 0, us.dirty.addedRows.Len()),
 		retFieldTypes: retTypes(us),
 		colIDs:        colIDs,
 		buffer: allocBuf{
@@ -233,7 +229,7 @@ func (m *memTableReader) decodeRecordKeyValue(key, value []byte) ([]types.Datum,
 }
 
 // decodeRowData uses to decode row data value.
-func decodeRowData(ctx sessionctx.Context, tb *model.TableInfo, columns []*model.ColumnInfo, colIDs map[int64]int, handle int64, value []byte, buffer *allocBuf) ([]types.Datum, error) {
+func decodeRowData(ctx sessionctx.Context, tb *model.TableInfo, columns []*model.ColumnInfo, colIDs map[int64]int, handle kv.Handle, value []byte, buffer *allocBuf) ([]types.Datum, error) {
 	values, err := getRowData(ctx.GetSessionVars().StmtCtx, tb, columns, colIDs, handle, value, buffer)
 	if err != nil {
 		return nil, err
@@ -251,7 +247,7 @@ func decodeRowData(ctx sessionctx.Context, tb *model.TableInfo, columns []*model
 }
 
 // getRowData decodes raw byte slice to row data.
-func getRowData(ctx *stmtctx.StatementContext, tb *model.TableInfo, columns []*model.ColumnInfo, colIDs map[int64]int, handle int64, value []byte, buffer *allocBuf) ([][]byte, error) {
+func getRowData(ctx *stmtctx.StatementContext, tb *model.TableInfo, columns []*model.ColumnInfo, colIDs map[int64]int, handle kv.Handle, value []byte, buffer *allocBuf) ([][]byte, error) {
 	pkIsHandle := tb.PKIsHandle
 	if rowcodec.IsNewFormat(value) {
 		return buffer.rd.DecodeToBytes(colIDs, handle, value, buffer.handleBytes)
@@ -271,9 +267,9 @@ func getRowData(ctx *stmtctx.StatementContext, tb *model.TableInfo, columns []*m
 			var handleDatum types.Datum
 			if mysql.HasUnsignedFlag(col.Flag) {
 				// PK column is Unsigned.
-				handleDatum = types.NewUintDatum(uint64(handle))
+				handleDatum = types.NewUintDatum(uint64(handle.IntValue()))
 			} else {
-				handleDatum = types.NewIntDatum(handle)
+				handleDatum = types.NewIntDatum(handle.IntValue())
 			}
 			handleData, err1 := codec.EncodeValue(ctx, buffer.handleBytes, handleDatum)
 			if err1 != nil {
@@ -335,19 +331,10 @@ func reverseDatumSlice(rows [][]types.Datum) {
 	}
 }
 
-func (m *memIndexReader) getMemRowsHandle() ([]int64, error) {
-	pkTp := types.NewFieldType(mysql.TypeLonglong)
-	if m.table.PKIsHandle {
-		for _, col := range m.table.Columns {
-			if mysql.HasPriKeyFlag(col.Flag) {
-				pkTp = &col.FieldType
-				break
-			}
-		}
-	}
-	handles := make([]int64, 0, m.addedRowsLen)
+func (m *memIndexReader) getMemRowsHandle() ([]kv.Handle, error) {
+	handles := make([]kv.Handle, 0, m.addedRowsLen)
 	err := iterTxnMemBuffer(m.ctx, m.kvRanges, func(key, value []byte) error {
-		handle, err := tablecodec.DecodeIndexHandle(key, value, len(m.index.Columns), pkTp)
+		handle, err := tablecodec.DecodeIndexHandle(key, value, len(m.index.Columns))
 		if err != nil {
 			return err
 		}
@@ -387,7 +374,7 @@ func buildMemIndexLookUpReader(us *UnionScanExec, idxLookUpReader *IndexLookUpEx
 		table:            idxLookUpReader.table.Meta(),
 		kvRanges:         kvRanges,
 		desc:             idxLookUpReader.desc,
-		addedRowsLen:     len(us.dirty.addedRows),
+		addedRowsLen:     us.dirty.addedRows.Len(),
 		retFieldTypes:    retTypes(us),
 		outputOffset:     outputOffset,
 		belowHandleIndex: us.belowHandleIndex,
@@ -422,14 +409,11 @@ func (m *memIndexLookUpReader) getMemRows() ([][]types.Datum, error) {
 		col := m.columns[i]
 		colInfos = append(colInfos, rowcodec.ColInfo{
 			ID:         col.ID,
-			Tp:         int32(col.Tp),
-			Flag:       int32(col.Flag),
 			IsPKHandle: m.table.Meta().PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
-			Collate:    col.Collate,
-			Flen:       col.Flen,
+			Ft:         rowcodec.FieldTypeFromModelColumn(col),
 		})
 	}
-	rd := rowcodec.NewByteDecoder(colInfos, -1, nil, nil)
+	rd := rowcodec.NewByteDecoder(colInfos, []int64{-1}, nil, nil)
 	memTblReader := &memTableReader{
 		ctx:           m.ctx,
 		table:         m.table.Meta(),

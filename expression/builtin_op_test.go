@@ -59,7 +59,7 @@ func (s *testEvaluatorSuite) TestUnary(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.UnaryMinus].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.UnaryMinus].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -118,10 +118,10 @@ func (s *testEvaluatorSuite) TestLogicAnd(c *C) {
 	}
 
 	// Test incorrect parameter count.
-	_, err := newFunctionForTest(s.ctx, ast.LogicAnd, Zero)
+	_, err := newFunctionForTest(s.ctx, ast.LogicAnd, NewZero())
 	c.Assert(err, NotNil)
 
-	_, err = funcs[ast.LogicAnd].getFunction(s.ctx, []Expression{Zero, Zero})
+	_, err = funcs[ast.LogicAnd].getFunction(s.ctx, []Expression{NewZero(), NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -187,10 +187,10 @@ func (s *testEvaluatorSuite) TestRightShift(c *C) {
 	}
 
 	// Test incorrect parameter count.
-	_, err := newFunctionForTest(s.ctx, ast.RightShift, Zero)
+	_, err := newFunctionForTest(s.ctx, ast.RightShift, NewZero())
 	c.Assert(err, NotNil)
 
-	_, err = funcs[ast.RightShift].getFunction(s.ctx, []Expression{Zero, Zero})
+	_, err = funcs[ast.RightShift].getFunction(s.ctx, []Expression{NewZero(), NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -225,10 +225,10 @@ func (s *testEvaluatorSuite) TestBitXor(c *C) {
 	}
 
 	// Test incorrect parameter count.
-	_, err := newFunctionForTest(s.ctx, ast.Xor, Zero)
+	_, err := newFunctionForTest(s.ctx, ast.Xor, NewZero())
 	c.Assert(err, NotNil)
 
-	_, err = funcs[ast.Xor].getFunction(s.ctx, []Expression{Zero, Zero})
+	_, err = funcs[ast.Xor].getFunction(s.ctx, []Expression{NewZero(), NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -270,10 +270,10 @@ func (s *testEvaluatorSuite) TestBitOr(c *C) {
 	}
 
 	// Test incorrect parameter count.
-	_, err := newFunctionForTest(s.ctx, ast.Or, Zero)
+	_, err := newFunctionForTest(s.ctx, ast.Or, NewZero())
 	c.Assert(err, NotNil)
 
-	_, err = funcs[ast.Or].getFunction(s.ctx, []Expression{Zero, Zero})
+	_, err = funcs[ast.Or].getFunction(s.ctx, []Expression{NewZero(), NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -336,10 +336,10 @@ func (s *testEvaluatorSuite) TestLogicOr(c *C) {
 	}
 
 	// Test incorrect parameter count.
-	_, err := newFunctionForTest(s.ctx, ast.LogicOr, Zero)
+	_, err := newFunctionForTest(s.ctx, ast.LogicOr, NewZero())
 	c.Assert(err, NotNil)
 
-	_, err = funcs[ast.LogicOr].getFunction(s.ctx, []Expression{Zero, Zero})
+	_, err = funcs[ast.LogicOr].getFunction(s.ctx, []Expression{NewZero(), NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -374,10 +374,10 @@ func (s *testEvaluatorSuite) TestBitAnd(c *C) {
 	}
 
 	// Test incorrect parameter count.
-	_, err := newFunctionForTest(s.ctx, ast.And, Zero)
+	_, err := newFunctionForTest(s.ctx, ast.And, NewZero())
 	c.Assert(err, NotNil)
 
-	_, err = funcs[ast.And].getFunction(s.ctx, []Expression{Zero, Zero})
+	_, err = funcs[ast.And].getFunction(s.ctx, []Expression{NewZero(), NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -419,10 +419,10 @@ func (s *testEvaluatorSuite) TestBitNeg(c *C) {
 	}
 
 	// Test incorrect parameter count.
-	_, err := newFunctionForTest(s.ctx, ast.BitNeg, Zero, Zero)
+	_, err := newFunctionForTest(s.ctx, ast.BitNeg, NewZero(), NewZero())
 	c.Assert(err, NotNil)
 
-	_, err = funcs[ast.BitNeg].getFunction(s.ctx, []Expression{Zero})
+	_, err = funcs[ast.BitNeg].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -470,10 +470,10 @@ func (s *testEvaluatorSuite) TestUnaryNot(c *C) {
 	}
 
 	// Test incorrect parameter count.
-	_, err := newFunctionForTest(s.ctx, ast.UnaryNot, Zero, Zero)
+	_, err := newFunctionForTest(s.ctx, ast.UnaryNot, NewZero(), NewZero())
 	c.Assert(err, NotNil)
 
-	_, err = funcs[ast.UnaryNot].getFunction(s.ctx, []Expression{Zero})
+	_, err = funcs[ast.UnaryNot].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -589,13 +589,13 @@ func (s *testEvaluatorSuite) TestLogicXor(c *C) {
 		{[]interface{}{0, nil}, 0, true, false},
 		{[]interface{}{nil, 0}, 0, true, false},
 		{[]interface{}{nil, 1}, 0, true, false},
-		{[]interface{}{0.5000, 0.4999}, 1, false, false},
+		{[]interface{}{0.5000, 0.4999}, 0, false, false},
 		{[]interface{}{0.5000, 1.0}, 0, false, false},
-		{[]interface{}{0.4999, 1.0}, 1, false, false},
+		{[]interface{}{0.4999, 1.0}, 0, false, false},
 		{[]interface{}{nil, 0.000}, 0, true, false},
 		{[]interface{}{nil, 0.001}, 0, true, false},
 		{[]interface{}{types.NewDecFromStringForTest("0.000001"), 0.00001}, 0, false, false},
-		{[]interface{}{types.NewDecFromStringForTest("0.000001"), 1}, 1, false, false},
+		{[]interface{}{types.NewDecFromStringForTest("0.000001"), 1}, 0, false, false},
 		{[]interface{}{types.NewDecFromStringForTest("0.000000"), nil}, 0, true, false},
 		{[]interface{}{types.NewDecFromStringForTest("0.000001"), nil}, 0, true, false},
 
@@ -619,9 +619,9 @@ func (s *testEvaluatorSuite) TestLogicXor(c *C) {
 	}
 
 	// Test incorrect parameter count.
-	_, err := newFunctionForTest(s.ctx, ast.LogicXor, Zero)
+	_, err := newFunctionForTest(s.ctx, ast.LogicXor, NewZero())
 	c.Assert(err, NotNil)
 
-	_, err = funcs[ast.LogicXor].getFunction(s.ctx, []Expression{Zero, Zero})
+	_, err = funcs[ast.LogicXor].getFunction(s.ctx, []Expression{NewZero(), NewZero()})
 	c.Assert(err, IsNil)
 }

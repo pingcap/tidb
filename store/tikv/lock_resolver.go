@@ -120,7 +120,13 @@ type TxnStatus struct {
 func (s TxnStatus) IsCommitted() bool { return s.ttl == 0 && s.commitTS > 0 }
 
 // CommitTS returns the txn's commitTS. It is valid iff `IsCommitted` is true.
-func (s TxnStatus) CommitTS() uint64 { return uint64(s.commitTS) }
+func (s TxnStatus) CommitTS() uint64 { return s.commitTS }
+
+// TTL returns the TTL of the transaction if the transaction is still alive.
+func (s TxnStatus) TTL() uint64 { return s.ttl }
+
+// Action returns what the CheckTxnStatus request have done to the transaction.
+func (s TxnStatus) Action() kvrpcpb.Action { return s.action }
 
 // By default, locks after 3000ms is considered unusual (the client created the
 // lock might be dead). Other client may cleanup this kind of lock.
@@ -224,7 +230,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 			return false, errors.New("TiDB ask TiKV to rollback locks but it doesn't, the protocol maybe wrong")
 		}
 
-		txnInfos[l.TxnID] = uint64(status.commitTS)
+		txnInfos[l.TxnID] = status.commitTS
 	}
 	logutil.BgLogger().Info("BatchResolveLocks: lookup txn status",
 		zap.Duration("cost time", time.Since(startTime)),
@@ -282,10 +288,14 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 // 3) Send `ResolveLock` cmd to the lock's region to resolve all locks belong to
 //    the same transaction.
 func (lr *LockResolver) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks []*Lock) (int64, []uint64 /*pushed*/, error) {
-	return lr.resolveLocks(bo, callerStartTS, locks, false)
+	return lr.resolveLocks(bo, callerStartTS, locks, false, false)
 }
 
-func (lr *LockResolver) resolveLocks(bo *Backoffer, callerStartTS uint64, locks []*Lock, forWrite bool) (int64, []uint64 /*pushed*/, error) {
+func (lr *LockResolver) resolveLocksLite(bo *Backoffer, callerStartTS uint64, locks []*Lock) (int64, []uint64 /*pushed*/, error) {
+	return lr.resolveLocks(bo, callerStartTS, locks, false, true)
+}
+
+func (lr *LockResolver) resolveLocks(bo *Backoffer, callerStartTS uint64, locks []*Lock, forWrite bool, lite bool) (int64, []uint64 /*pushed*/, error) {
 	var msBeforeTxnExpired txnExpireTime
 	if len(locks) == 0 {
 		return msBeforeTxnExpired.value(), nil, nil
@@ -327,7 +337,7 @@ func (lr *LockResolver) resolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 			if l.LockType == kvrpcpb.Op_PessimisticLock {
 				err = lr.resolvePessimisticLock(bo, l, cleanRegions)
 			} else {
-				err = lr.resolveLock(bo, l, status, cleanRegions)
+				err = lr.resolveLock(bo, l, status, lite, cleanRegions)
 			}
 			if err != nil {
 				msBeforeTxnExpired.update(0)
@@ -363,14 +373,15 @@ func (lr *LockResolver) resolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 		pushed = nil
 	}
 
-	if msBeforeTxnExpired.value() > 0 {
+	if msBeforeTxnExpired.value() > 0 && len(pushed) == 0 {
+		// If len(pushed) > 0, the caller will not block on the locks, it push the minCommitTS instead.
 		tikvLockResolverCountWithWaitExpired.Inc()
 	}
 	return msBeforeTxnExpired.value(), pushed, nil
 }
 
 func (lr *LockResolver) resolveLocksForWrite(bo *Backoffer, callerStartTS uint64, locks []*Lock) (int64, error) {
-	msBeforeTxnExpired, _, err := lr.resolveLocks(bo, callerStartTS, locks, true)
+	msBeforeTxnExpired, _, err := lr.resolveLocks(bo, callerStartTS, locks, true, false)
 	return msBeforeTxnExpired, err
 }
 
@@ -563,9 +574,9 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 	}
 }
 
-func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cleanRegions map[RegionVerID]struct{}) error {
+func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, lite bool, cleanRegions map[RegionVerID]struct{}) error {
 	tikvLockResolverCountWithResolveLocks.Inc()
-	cleanWholeRegion := l.TxnSize >= bigTxnThreshold
+	resolveLite := lite || l.TxnSize < bigTxnThreshold
 	for {
 		loc, err := lr.store.GetRegionCache().LocateKey(bo, l.Key)
 		if err != nil {
@@ -580,7 +591,8 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cl
 		if status.IsCommitted() {
 			lreq.CommitVersion = status.CommitTS()
 		}
-		if l.TxnSize < bigTxnThreshold {
+
+		if resolveLite {
 			// Only resolve specified keys when it is a small transaction,
 			// prevent from scanning the whole region in this case.
 			tikvLockResolverCountWithResolveLockLite.Inc()
@@ -614,7 +626,7 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cl
 			logutil.BgLogger().Error("resolveLock error", zap.Error(err))
 			return err
 		}
-		if cleanWholeRegion {
+		if !resolveLite {
 			cleanRegions[loc.Region] = struct{}{}
 		}
 		return nil

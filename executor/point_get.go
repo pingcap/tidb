@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/table"
@@ -59,7 +60,7 @@ type PointGetExecutor struct {
 	baseExecutor
 
 	tblInfo      *model.TableInfo
-	handle       int64
+	handle       kv.Handle
 	idxInfo      *model.IndexInfo
 	partInfo     *model.PartitionDefinition
 	idxKey       kv.Key
@@ -148,6 +149,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 		e.snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
+	e.snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
 	var tblID int64
 	if e.partInfo != nil {
 		tblID = e.partInfo.ID
@@ -155,50 +157,64 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		tblID = e.tblInfo.ID
 	}
 	if e.idxInfo != nil {
-		e.idxKey, err = encodeIndexKey(e.base(), e.tblInfo, e.idxInfo, e.idxVals, tblID)
-		if err != nil && !kv.ErrNotExist.Equal(err) {
-			return err
-		}
-
-		e.handleVal, err = e.get(ctx, e.idxKey)
-		if err != nil && !kv.ErrNotExist.Equal(err) {
-			return err
-		}
-		if len(e.handleVal) == 0 {
-			return e.lockKeyIfNeeded(ctx, e.idxKey)
-		}
-		e.handle, err = tables.DecodeHandle(e.handleVal)
-		if err != nil {
-			return err
-		}
-
-		// The injection is used to simulate following scenario:
-		// 1. Session A create a point get query but pause before second time `GET` kv from backend
-		// 2. Session B create an UPDATE query to update the record that will be obtained in step 1
-		// 3. Then point get retrieve data from backend after step 2 finished
-		// 4. Check the result
-		failpoint.InjectContext(ctx, "pointGetRepeatableReadTest-step1", func() {
-			if ch, ok := ctx.Value("pointGetRepeatableReadTest").(chan struct{}); ok {
-				// Make `UPDATE` continue
-				close(ch)
+		if e.tblInfo.IsCommonHandle && e.idxInfo.Primary {
+			handleBytes, err := codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, nil, e.idxVals...)
+			if err != nil {
+				return err
 			}
-			// Wait `UPDATE` finished
-			failpoint.InjectContext(ctx, "pointGetRepeatableReadTest-step2", nil)
-		})
+			e.handle, err = kv.NewCommonHandle(handleBytes)
+			if err != nil {
+				return err
+			}
+		} else {
+			e.idxKey, err = encodeIndexKey(e.base(), e.tblInfo, e.idxInfo, e.idxVals, tblID)
+			if err != nil && !kv.ErrNotExist.Equal(err) {
+				return err
+			}
+
+			e.handleVal, err = e.get(ctx, e.idxKey)
+			if err != nil {
+				if !kv.ErrNotExist.Equal(err) {
+					return err
+				}
+			}
+			if len(e.handleVal) == 0 {
+				// handle is not found, try lock the index key if isolation level is not read consistency
+				if e.ctx.GetSessionVars().IsPessimisticReadConsistency() {
+					return nil
+				}
+				return e.lockKeyIfNeeded(ctx, e.idxKey)
+			}
+			var iv int64
+			iv, err = tables.DecodeHandleInUniqueIndexValue(e.handleVal)
+			if err != nil {
+				return err
+			}
+			e.handle = kv.IntHandle(iv)
+
+			// The injection is used to simulate following scenario:
+			// 1. Session A create a point get query but pause before second time `GET` kv from backend
+			// 2. Session B create an UPDATE query to update the record that will be obtained in step 1
+			// 3. Then point get retrieve data from backend after step 2 finished
+			// 4. Check the result
+			failpoint.InjectContext(ctx, "pointGetRepeatableReadTest-step1", func() {
+				if ch, ok := ctx.Value("pointGetRepeatableReadTest").(chan struct{}); ok {
+					// Make `UPDATE` continue
+					close(ch)
+				}
+				// Wait `UPDATE` finished
+				failpoint.InjectContext(ctx, "pointGetRepeatableReadTest-step2", nil)
+			})
+		}
 	}
 
 	key := tablecodec.EncodeRowKeyWithHandle(tblID, e.handle)
-	// Lock the key before get, then get will get the value from the cache.
-	err = e.lockKeyIfNeeded(ctx, key)
+	val, err := e.getAndLock(ctx, key)
 	if err != nil {
 		return err
 	}
-	val, err := e.get(ctx, key)
-	if err != nil && !kv.ErrNotExist.Equal(err) {
-		return err
-	}
 	if len(val) == 0 {
-		if e.idxInfo != nil {
+		if e.idxInfo != nil && !e.idxInfo.Primary {
 			return kv.ErrNotExist.GenWithStack("inconsistent extra index %s, handle %d not found in table",
 				e.idxInfo.Name.O, e.handle)
 		}
@@ -215,6 +231,37 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 	return nil
+}
+
+func (e *PointGetExecutor) getAndLock(ctx context.Context, key kv.Key) (val []byte, err error) {
+	if e.ctx.GetSessionVars().IsPessimisticReadConsistency() {
+		// Only Lock the exist keys in RC isolation.
+		val, err = e.get(ctx, key)
+		if err != nil {
+			if !kv.ErrNotExist.Equal(err) {
+				return nil, err
+			}
+			return nil, nil
+		}
+		err = e.lockKeyIfNeeded(ctx, key)
+		if err != nil {
+			return nil, err
+		}
+		return val, nil
+	}
+	// Lock the key before get in RR isolation, then get will get the value from the cache.
+	err = e.lockKeyIfNeeded(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	val, err = e.get(ctx, key)
+	if err != nil {
+		if !kv.ErrNotExist.Equal(err) {
+			return nil, err
+		}
+		return nil, nil
+	}
+	return val, nil
 }
 
 func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) error {
@@ -241,21 +288,27 @@ func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) erro
 	return nil
 }
 
-func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) (val []byte, err error) {
+// get will first try to get from txn buffer, then check the pessimistic lock cache,
+// then the store. Kv.ErrNotExist will be returned if key is not found
+func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) {
+	if len(key) == 0 {
+		return nil, kv.ErrNotExist
+	}
 	if e.txn.Valid() && !e.txn.IsReadOnly() {
 		// We cannot use txn.Get directly here because the snapshot in txn and the snapshot of e.snapshot may be
 		// different for pessimistic transaction.
-		val, err = e.txn.GetMemBuffer().Get(ctx, key)
+		val, err := e.txn.GetMemBuffer().Get(ctx, key)
 		if err == nil {
 			return val, err
 		}
 		if !kv.IsErrNotFound(err) {
 			return nil, err
 		}
+		// key does not exist in mem buffer, check the lock cache
 		var ok bool
 		val, ok = e.ctx.GetSessionVars().TxnCtx.GetKeyInPessimisticLockCache(key)
 		if ok {
-			return
+			return val, nil
 		}
 		// fallthrough to snapshot get.
 	}
@@ -274,7 +327,10 @@ func encodeIndexKey(e *baseExecutor, tblInfo *model.TableInfo, idxInfo *model.In
 			str, err = idxVals[i].ToString()
 			idxVals[i].SetString(str, colInfo.FieldType.Collate)
 		} else {
-			idxVals[i], err = table.CastValue(e.ctx, idxVals[i], colInfo)
+			idxVals[i], err = table.CastValue(e.ctx, idxVals[i], colInfo, true, false)
+			if types.ErrOverflow.Equal(err) {
+				return nil, kv.ErrNotExist
+			}
 		}
 		if err != nil {
 			return nil, err
@@ -288,14 +344,14 @@ func encodeIndexKey(e *baseExecutor, tblInfo *model.TableInfo, idxInfo *model.In
 	return tablecodec.EncodeIndexSeekKey(tID, idxInfo.ID, encodedIdxVals), nil
 }
 
-func decodeRowValToChunk(e *baseExecutor, tblInfo *model.TableInfo, handle int64, rowVal []byte, chk *chunk.Chunk, rd *rowcodec.ChunkDecoder) error {
+func decodeRowValToChunk(e *baseExecutor, tblInfo *model.TableInfo, handle kv.Handle, rowVal []byte, chk *chunk.Chunk, rd *rowcodec.ChunkDecoder) error {
 	if rowcodec.IsNewFormat(rowVal) {
 		return rd.DecodeToChunk(rowVal, handle, chk)
 	}
 	return decodeOldRowValToChunk(e, tblInfo, handle, rowVal, chk)
 }
 
-func decodeOldRowValToChunk(e *baseExecutor, tblInfo *model.TableInfo, handle int64, rowVal []byte, chk *chunk.Chunk) error {
+func decodeOldRowValToChunk(e *baseExecutor, tblInfo *model.TableInfo, handle kv.Handle, rowVal []byte, chk *chunk.Chunk) error {
 	colID2CutPos := make(map[int64]int, e.schema.Len())
 	for _, col := range e.schema.Columns {
 		if _, ok := colID2CutPos[col.ID]; !ok {
@@ -316,12 +372,7 @@ func decodeOldRowValToChunk(e *baseExecutor, tblInfo *model.TableInfo, handle in
 			chk.AppendNull(i)
 			continue
 		}
-		if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.Flag) {
-			chk.AppendInt64(i, handle)
-			continue
-		}
-		if col.ID == model.ExtraHandleID {
-			chk.AppendInt64(i, handle)
+		if tryDecodeFromHandle(tblInfo, i, col, handle, chk) {
 			continue
 		}
 		cutPos := colID2CutPos[col.ID]
@@ -340,6 +391,18 @@ func decodeOldRowValToChunk(e *baseExecutor, tblInfo *model.TableInfo, handle in
 		}
 	}
 	return nil
+}
+
+func tryDecodeFromHandle(tblInfo *model.TableInfo, i int, col *expression.Column, handle kv.Handle, chk *chunk.Chunk) bool {
+	if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.Flag) {
+		chk.AppendInt64(i, handle.IntValue())
+		return true
+	}
+	if col.ID == model.ExtraHandleID {
+		chk.AppendInt64(i, handle.IntValue())
+		return true
+	}
+	return false
 }
 
 func getColInfoByID(tbl *model.TableInfo, colID int64) *model.ColumnInfo {
