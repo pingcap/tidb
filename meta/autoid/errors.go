@@ -64,4 +64,6 @@ const (
 	AutoRandomExplicitInsertDisabledErrMsg = "Explicit insertion on auto_random column is disabled. Try to set @@allow_auto_random_explicit_insert = true."
 	// AutoRandomOnNonBigIntColumn is reported when define auto random to non bigint column
 	AutoRandomOnNonBigIntColumn = "auto_random option must be defined on `bigint` column, but not on `%s` column"
+	// AutoRandomRebaseNotApplicable is reported when alter auto_random base on a non auto_random table.
+	AutoRandomRebaseNotApplicable = "alter auto_random_base of a non auto_random table"
 )
