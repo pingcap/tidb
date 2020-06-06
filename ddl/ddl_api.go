@@ -2855,7 +2855,7 @@ func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) e
 		if sourceCol.Name.L != targetCol.Name.L ||
 			sourceCol.Hidden != targetCol.Hidden ||
 			!checkFieldTypeCompatible(&sourceCol.FieldType, &targetCol.FieldType) ||
-			sourceCol.GeneratedExprString == targetCol.GeneratedExprString {
+			sourceCol.GeneratedExprString != targetCol.GeneratedExprString {
 			return errors.Trace(ErrTablesDifferentMetadata)
 		}
 		if sourceCol.State != model.StatePublic {
