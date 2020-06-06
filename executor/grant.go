@@ -314,8 +314,6 @@ func (e *GrantExec) grantGlobalPriv(ctx sessionctx.Context, user *ast.UserSpec) 
 	return err
 }
 
-var emptyGP = privileges.GlobalPrivValue{SSLType: privileges.SslTypeNotSpecified}
-
 func tlsOption2GlobalPriv(tlsOptions []*ast.TLSOption) (priv []byte, err error) {
 	if len(tlsOptions) == 0 {
 		priv = []byte("{}")
@@ -332,6 +330,8 @@ func tlsOption2GlobalPriv(tlsOptions []*ast.TLSOption) (priv []byte, err error) 
 				typeName = "ISSUER"
 			case ast.Subject:
 				typeName = "SUBJECT"
+			case ast.SAN:
+				typeName = "SAN"
 			}
 			err = errors.Errorf("Duplicate require %s clause", typeName)
 			return
@@ -370,12 +370,20 @@ func tlsOption2GlobalPriv(tlsOptions []*ast.TLSOption) (priv []byte, err error) 
 			}
 			gp.SSLType = privileges.SslTypeSpecified
 			gp.X509Subject = tlsOpt.Value
+		case ast.SAN:
+			gp.SSLType = privileges.SslTypeSpecified
+			_, err = util.ParseAndCheckSAN(tlsOpt.Value)
+			if err != nil {
+				return
+			}
+			gp.SAN = tlsOpt.Value
 		default:
 			err = errors.Errorf("Unknown ssl type: %#v", tlsOpt.Type)
 			return
 		}
 	}
-	if gp == emptyGP {
+	if gp.SSLType == privileges.SslTypeNotSpecified && len(gp.SSLCipher) == 0 &&
+		len(gp.X509Issuer) == 0 && len(gp.X509Subject) == 0 && len(gp.SAN) == 0 {
 		return
 	}
 	priv, err = json.Marshal(&gp)

@@ -2239,6 +2239,16 @@ func (s *testSuite7) TestSplitRegionTimeout(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/MockScatterRegionTimeout", `return(true)`), IsNil)
 	tk.MustQuery(`split table t between (0) and (10000) regions 10`).Check(testkit.Rows("10 1"))
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/MockScatterRegionTimeout"), IsNil)
+
+	// Test pre-split with timeout.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@global.tidb_scatter_region=1;")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/MockScatterRegionTimeout", `return(true)`), IsNil)
+	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
+	start := time.Now()
+	tk.MustExec("create table t (a int, b int) partition by hash(a) partitions 5;")
+	c.Assert(time.Since(start).Seconds(), Less, 10.0)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/MockScatterRegionTimeout"), IsNil)
 }
 
 func (s *testSuiteP2) TestRow(c *C) {
@@ -4362,6 +4372,24 @@ func (s *testSplitTable) TestShowTableRegion(c *C) {
 	c.Assert(rows[1][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[1].ID))
 	c.Assert(rows[2][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[2].ID))
 
+	// Test split partition region when add new partition.
+	tk.MustExec("drop table if exists partition_t;")
+	tk.MustExec(`create table partition_t (a int, b int,index(a)) PARTITION BY RANGE (a) (
+		PARTITION p0 VALUES LESS THAN (10),
+		PARTITION p1 VALUES LESS THAN (20),
+		PARTITION p2 VALUES LESS THAN (30));`)
+	tk.MustExec(`alter table partition_t add partition ( partition p3 values less than (40), partition p4 values less than (50) );`)
+	re = tk.MustQuery("show table partition_t regions")
+	rows = re.Rows()
+	c.Assert(len(rows), Equals, 5)
+	tbl = testGetTableByName(c, tk.Se, "test", "partition_t")
+	partitionDef = tbl.Meta().GetPartitionInfo().Definitions
+	c.Assert(rows[0][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[0].ID))
+	c.Assert(rows[1][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[1].ID))
+	c.Assert(rows[2][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[2].ID))
+	c.Assert(rows[3][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[3].ID))
+	c.Assert(rows[4][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[4].ID))
+
 	// Test pre-split table region when create table.
 	tk.MustExec("drop table if exists t_pre")
 	tk.MustExec("create table t_pre (a int, b int) shard_row_id_bits = 2 pre_split_regions=2;")
@@ -5632,7 +5660,7 @@ func (s *testSuite1) TestInsertIntoGivenPartitionSet(c *C) {
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec(`create table t1(
-	a int(11) DEFAULT NULL, 
+	a int(11) DEFAULT NULL,
 	b varchar(10) DEFAULT NULL,
 	UNIQUE KEY idx_a (a)) PARTITION BY RANGE (a)
 	(PARTITION p0 VALUES LESS THAN (10) ENGINE = InnoDB,
