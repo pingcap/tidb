@@ -924,7 +924,7 @@ func (s *testIntegrationSuite4) TestAlterTableExchangePartition(c *C) {
 	tk.MustQuery("select * from e10 partition(p1)").Check(testkit.Rows("1", "3", "5"))
 
 	// test for column id
-	tk.MustExec("create table e12 (a int(1), b int, index (a)) partition by hash(a) partitions3")
+	tk.MustExec("create table e12 (a int(1), b int, index (a)) partition by hash(a) partitions 3")
 	tk.MustExec("create table e13 (a int(8), b int, index (a));")
 	tk.MustExec("alter table e13 drop column b")
 	tk.MustExec("alter table e13 add column b int")
@@ -1158,7 +1158,7 @@ func (s *testIntegrationSuite7) TestExchangePartitionExpressIndex(c *C) {
 
 	tk.MustExec("drop table if exists nt2;")
 	tk.MustExec("create table nt2 (a int, b int, c int)")
-	tk.MustExec("alter table add index idx((a+c))")
+	tk.MustExec("alter table nt2 add index idx((a+c))")
 	tk.MustExec("alter table pt1 exchange partition p0 with table nt2")
 
 }
