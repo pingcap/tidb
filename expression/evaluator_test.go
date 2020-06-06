@@ -38,7 +38,7 @@ var _ = Suite(&testVectorizeSuite2{})
 
 func TestT(t *testing.T) {
 	testleak.BeforeTest()
-	defer testleak.AfterTestT(t)
+	defer testleak.AfterTestT(t)()
 
 	CustomVerboseFlag = true
 	*CustomParallelSuiteFlag = true

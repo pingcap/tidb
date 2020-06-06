@@ -338,7 +338,8 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 REBUILD:
-	p, names, err := OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
+	stmt := TryAddExtraLimit(sctx, prepared.Stmt)
+	p, names, err := OptimizeAstNode(ctx, sctx, stmt, is)
 	if err != nil {
 		return err
 	}
