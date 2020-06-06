@@ -1157,7 +1157,7 @@ func (s *testIntegrationSuite7) TestExchangePartitionExpressIndex(c *C) {
 	tk.MustGetErrCode("alter table pt1 exchange partition p0 with table nt1;", tmysql.ErrTablesDifferentMetadata)
 
 	tk.MustExec("drop table if exists nt2;")
-	tk.MustExec("alter table nt2 (a int, b int, c int)")
+	tk.MustExec("create table nt2 (a int, b int, c int)")
 	tk.MustExec("alter table add index idx((a+c))")
 	tk.MustExec("alter table pt1 exchange partition p0 with table nt2")
 
