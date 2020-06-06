@@ -1068,12 +1068,7 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 		}
 		return nil, util.SyntaxError(err)
 	}
-	switch len(stmtNodes) {
-	case 0: // The input may be ";" and it's a valid input.
-		return nil, err
-	case 1:
-		break
-	default:
+	if len(stmtNodes) != 1 {
 		return nil, errors.New("Execute() API doesn't support multiple statements any more")
 	}
 	durParse := time.Since(parseStartTime)
