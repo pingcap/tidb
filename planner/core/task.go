@@ -985,14 +985,19 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 
 // AggInfo stores the information of an Aggregation.
 type AggInfo struct {
-	AggFuncs     []*aggregation.AggFuncDesc
-	GroupByItems []expression.Expression
-	Schema       *expression.Schema
+	AggFuncs                 []*aggregation.AggFuncDesc
+	GroupByItems             []expression.Expression
+	Schema                   *expression.Schema
+	PartialExtraGroupByItems []expression.Expression
 }
 
 // BuildFinalModeAggregation splits either LogicalAggregation or PhysicalAggregation to finalAgg and partial1Agg,
 // returns the information of partial and final agg.
 // partialIsCop means whether partial agg is a cop task.
+//   if partial is a cop task, firstrow function is redundant since group by items are outputted
+//     by group by schema, and final functions use group by schema as their arguments.
+//   if partial agg is not cop, we must append firstrow function & schema, to output the group by items.
+//   maybe we can unify them sometime.
 func BuildFinalModeAggregation(
 	sctx sessionctx.Context, original *AggInfo, partialIsCop bool) (partial, final *AggInfo, funcMap map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc) {
 
@@ -1002,6 +1007,7 @@ func BuildFinalModeAggregation(
 		GroupByItems: original.GroupByItems,
 		Schema:       expression.NewSchema(),
 	}
+	partial.GroupByItems = append(partial.GroupByItems, original.PartialExtraGroupByItems...)
 	partialCursor := 0
 	final = &AggInfo{
 		AggFuncs:     make([]*aggregation.AggFuncDesc, len(original.AggFuncs)),
@@ -1010,6 +1016,7 @@ func BuildFinalModeAggregation(
 	}
 
 	partialGbySchema := expression.NewSchema()
+	partialFirstRowFuncs := make([]*aggregation.AggFuncDesc, 0, len(partial.GroupByItems))
 	// add group by columns
 	for _, gbyExpr := range partial.GroupByItems {
 		var gbyCol *expression.Column
@@ -1021,8 +1028,23 @@ func BuildFinalModeAggregation(
 				RetType:  gbyExpr.GetType(),
 			}
 		}
-		partialGbySchema.Append(gbyCol)
-		final.GroupByItems = append(final.GroupByItems, gbyCol)
+
+		if len(final.GroupByItems) < len(original.GroupByItems) {
+			final.GroupByItems = append(final.GroupByItems, gbyCol)
+		}
+
+		if partialIsCop {
+			partialGbySchema.Append(gbyCol)
+		} else {
+			firstRow, err := aggregation.NewAggFuncDesc(sctx, ast.AggFuncFirstRow, []expression.Expression{gbyCol}, false)
+			if err != nil {
+				panic("NewAggFuncDesc FirstRow meets error: " + err.Error())
+			}
+			partialFirstRowFuncs = append(partialFirstRowFuncs, firstRow)
+			newCol, _ := gbyCol.Clone().(*expression.Column)
+			newCol.RetType = firstRow.RetTp
+			partialGbySchema.Append(newCol)
+		}
 	}
 
 	// TODO: Refactor the way of constructing aggregation functions.
@@ -1065,11 +1087,6 @@ func BuildFinalModeAggregation(
 					}
 					partialGbySchema.Append(gbyCol)
 					if !partialIsCop {
-						// if partial is a cop task, firstrow function is redundant since group by items are outputted
-						// by group by schema, and final functions use group by schema as their arguments.
-						// if partial agg is not cop, we must append firstrow function & schema, to output the group by
-						// items.
-						// maybe we can unify them sometime.
 						firstRow, err := aggregation.NewAggFuncDesc(sctx, ast.AggFuncFirstRow, []expression.Expression{gbyCol}, false)
 						if err != nil {
 							panic("NewAggFuncDesc FirstRow meets error: " + err.Error())
@@ -1143,6 +1160,7 @@ func BuildFinalModeAggregation(
 		final.AggFuncs[i] = finalAggFunc
 	}
 	partial.Schema.Append(partialGbySchema.Columns...)
+	partial.AggFuncs = append(partial.AggFuncs, partialFirstRowFuncs...)
 	return
 }
 

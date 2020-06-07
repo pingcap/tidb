@@ -32,18 +32,17 @@ type aggregationPushDownSolver struct {
 // where S_1 and S_2 are two sets of values. We call S_1 and S_2 partial groups.
 // It's easy to see that max, min, first row is decomposable, no matter whether it's distinct, but sum(distinct) and
 // count(distinct) is not.
-// Currently we don't support avg and concat.
+// Currently we don't support concat.
 func (a *aggregationPushDownSolver) isDecomposableWithJoin(fun *aggregation.AggFuncDesc) bool {
 	if len(fun.OrderByItems) > 0 {
 		return false
 	}
 	switch fun.Name {
-	case ast.AggFuncAvg, ast.AggFuncGroupConcat, ast.AggFuncVarPop, ast.AggFuncJsonObjectAgg:
-		// TODO: Support avg push down.
+	case ast.AggFuncGroupConcat, ast.AggFuncVarPop, ast.AggFuncJsonObjectAgg:
 		return false
 	case ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncFirstRow:
 		return true
-	case ast.AggFuncSum, ast.AggFuncCount:
+	case ast.AggFuncSum, ast.AggFuncCount, ast.AggFuncAvg:
 		return !fun.HasDistinct
 	default:
 		return false
@@ -202,10 +201,10 @@ func (a *aggregationPushDownSolver) decompose(ctx sessionctx.Context, aggFunc *a
 	return result, schema
 }
 
-// tryToPushDownAgg tries to push down an aggregate function into a join path. If all aggFuncs are first row, we won't
+// tryToPushDownAggForJoin tries to push down an aggregate function into a join path. If all aggFuncs are first row, we won't
 // process it temporarily. If not, We will add additional group by columns and first row functions. We make a new aggregation operator.
 // If the pushed aggregation is grouped by unique key, it's no need to push it down.
-func (a *aggregationPushDownSolver) tryToPushDownAgg(aggFuncs []*aggregation.AggFuncDesc, gbyCols []*expression.Column, join *LogicalJoin, childIdx int, aggHints aggHintInfo, blockOffset int) (_ LogicalPlan, err error) {
+func (a *aggregationPushDownSolver) tryToPushDownAggForJoin(aggFuncs []*aggregation.AggFuncDesc, gbyCols []*expression.Column, join *LogicalJoin, childIdx int, originAgg *LogicalAggregation) (_ LogicalPlan, err error) {
 	child := join.children[childIdx]
 	if aggregation.IsAllFirstRow(aggFuncs) {
 		return child, nil
@@ -220,10 +219,11 @@ func (a *aggregationPushDownSolver) tryToPushDownAgg(aggFuncs []*aggregation.Agg
 			return child, nil
 		}
 	}
-	agg, err := a.makeNewAgg(join.ctx, aggFuncs, gbyCols, aggHints, blockOffset)
-	if err != nil {
-		return nil, err
-	}
+	agg := a.splitPartialAgg(originAgg, expression.Column2Exprs(gbyCols)[len(originAgg.GroupByItems):])
+	// agg, err := a.makeNewAgg(join.ctx, aggFuncs, gbyCols, originAgg.aggHints, originAgg.blockOffset)
+	// if err != nil {
+	// 	return nil, err
+	// }
 	agg.SetChildren(child)
 	// If agg has no group-by item, it will return a default value, which may cause some bugs.
 	// So here we add a group-by item forcely.
@@ -254,9 +254,9 @@ func (a *aggregationPushDownSolver) getDefaultValues(agg *LogicalAggregation) ([
 	return defaultValues, true
 }
 
-func (a *aggregationPushDownSolver) checkAnyCountAndSum(aggFuncs []*aggregation.AggFuncDesc) bool {
+func (a *aggregationPushDownSolver) checkAnyCountSumAvg(aggFuncs []*aggregation.AggFuncDesc) bool {
 	for _, fun := range aggFuncs {
-		if fun.Name == ast.AggFuncSum || fun.Name == ast.AggFuncCount {
+		if fun.Name == ast.AggFuncSum || fun.Name == ast.AggFuncCount || fun.Name == ast.AggFuncAvg {
 			return true
 		}
 	}
@@ -297,11 +297,12 @@ func (a *aggregationPushDownSolver) makeNewAgg(ctx sessionctx.Context, aggFuncs 
 	return agg, nil
 }
 
-func (a *aggregationPushDownSolver) splitPartialAgg(agg *LogicalAggregation) (pushedAgg *LogicalAggregation) {
+func (a *aggregationPushDownSolver) splitPartialAgg(agg *LogicalAggregation, partialExtraGbyItems []expression.Expression) (pushedAgg *LogicalAggregation) {
 	partial, final, _ := BuildFinalModeAggregation(agg.ctx, &AggInfo{
-		AggFuncs:     agg.AggFuncs,
-		GroupByItems: agg.GroupByItems,
-		Schema:       agg.schema,
+		AggFuncs:                 agg.AggFuncs,
+		GroupByItems:             agg.GroupByItems,
+		Schema:                   agg.schema,
+		PartialExtraGroupByItems: partialExtraGbyItems,
 	}, false)
 	agg.SetSchema(final.Schema)
 	agg.AggFuncs = final.AggFuncs
@@ -375,7 +376,7 @@ func (a *aggregationPushDownSolver) tryAggPushDownForUnion(union *LogicalUnionAl
 			return nil
 		}
 	}
-	pushedAgg := a.splitPartialAgg(agg)
+	pushedAgg := a.splitPartialAgg(agg, nil)
 	newChildren := make([]LogicalPlan, 0, len(union.Children()))
 	for _, child := range union.Children() {
 		newChild, err := a.pushAggCrossUnion(pushedAgg, union.Schema(), child)
@@ -402,12 +403,12 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan) (_ LogicalPlan, e
 					var lChild, rChild LogicalPlan
 					// If there exist count or sum functions in left join path, we can't push any
 					// aggregate function into right join path.
-					rightInvalid := a.checkAnyCountAndSum(leftAggFuncs)
-					leftInvalid := a.checkAnyCountAndSum(rightAggFuncs)
+					rightInvalid := a.checkAnyCountSumAvg(leftAggFuncs)
+					leftInvalid := a.checkAnyCountSumAvg(rightAggFuncs)
 					if rightInvalid {
 						rChild = join.children[1]
 					} else {
-						rChild, err = a.tryToPushDownAgg(rightAggFuncs, rightGbyCols, join, 1, agg.aggHints, agg.blockOffset)
+						rChild, err = a.tryToPushDownAggForJoin(rightAggFuncs, rightGbyCols, join, 1, agg)
 						if err != nil {
 							return nil, err
 						}
@@ -415,7 +416,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan) (_ LogicalPlan, e
 					if leftInvalid {
 						lChild = join.children[0]
 					} else {
-						lChild, err = a.tryToPushDownAgg(leftAggFuncs, leftGbyCols, join, 0, agg.aggHints, agg.blockOffset)
+						lChild, err = a.tryToPushDownAggForJoin(leftAggFuncs, leftGbyCols, join, 0, agg)
 						if err != nil {
 							return nil, err
 						}
