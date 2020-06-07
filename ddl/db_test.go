@@ -4582,7 +4582,40 @@ func (s *testDBSuite4) TestColumnCheck(c *C) {
 	s.tk.MustExec("create table column_check (pk int primary key, a int check (a > 1))")
 	defer s.tk.MustExec("drop table if exists column_check")
 	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
-	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|3910|Column check is not supported"))
+	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|8231|Column check is not supported"))
+}
+
+func (s *testDBSuite5) TestAlterCheck(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+	s.tk.MustExec("drop table if exists alter_check")
+	s.tk.MustExec("create table alter_check (pk int primary key)")
+	defer s.tk.MustExec("drop table if exists alter_check")
+	s.tk.MustExec("alter table alter_check alter check crcn ENFORCED")
+	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|8232|ALTER CHECK is not supported"))
+}
+
+func (s *testDBSuite6) TestDropCheck(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+	s.tk.MustExec("drop table if exists drop_check")
+	s.tk.MustExec("create table drop_check (pk int primary key)")
+	defer s.tk.MustExec("drop table if exists drop_check")
+	s.tk.MustExec("alter table drop_check drop check crcn")
+	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|8233|DROP CHECK is not supported"))
+}
+
+func (s *testDBSuite7) TestAddConstraintCheck(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+	s.tk.MustExec("drop table if exists add_constraint_check")
+	s.tk.MustExec("create table add_constraint_check (pk int primary key, a int)")
+	defer s.tk.MustExec("drop table if exists add_constraint_check")
+	s.tk.MustExec("alter table add_constraint_check add constraint crn check (a > 1)")
+	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|8234|ADD CONTRAINT CHECK is not supported"))
 }
 
 func (s *testDBSuite6) TestAlterOrderBy(c *C) {
