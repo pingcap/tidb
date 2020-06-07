@@ -2150,9 +2150,6 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 	if err != nil {
 		return errors.Trace(err)
 	}
-<<<<<<< HEAD
-	autoIncID, err := t.Allocator(ctx, tp).NextGlobalAutoID(t.Meta().ID)
-=======
 	var actionType model.ActionType
 	switch tp {
 	case autoid.AutoRandomType:
@@ -2164,8 +2161,7 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 		actionType = model.ActionRebaseAutoID
 	}
 
-	autoID, err := t.Allocators(ctx).Get(tp).NextGlobalAutoID(t.Meta().ID)
->>>>>>> a4eb75a... ddl: reject alter auto_random_base on a non auto_random table (#17714)
+	autoID, err := t.Allocator(ctx, tp).NextGlobalAutoID(t.Meta().ID)
 	if err != nil {
 		return errors.Trace(err)
 	}
