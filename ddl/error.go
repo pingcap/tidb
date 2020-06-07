@@ -181,8 +181,6 @@ var (
 	ErrWrongObject = terror.ClassDDL.New(mysql.ErrWrongObject, mysql.MySQLErrName[mysql.ErrWrongObject])
 	// ErrTableCantHandleFt returns FULLTEXT keys are not supported by table type
 	ErrTableCantHandleFt = terror.ClassDDL.New(mysql.ErrTableCantHandleFt, mysql.MySQLErrName[mysql.ErrTableCantHandleFt])
-	// ErrColumnCheckNotSupported return CHECK for column is not supported
-	ErrColumnCheckNotSupported = terror.ClassDDL.New(mysql.ErrColumnCheckNotSupported, mysql.MySQLErrName[mysql.ErrColumnCheckNotSupported])
 	// ErrFieldNotFoundPart returns an error when 'partition by columns' are not found in table columns.
 	ErrFieldNotFoundPart = terror.ClassDDL.New(mysql.ErrFieldNotFoundPart, mysql.MySQLErrName[mysql.ErrFieldNotFoundPart])
 	// ErrWrongTypeColumnValue returns 'Partition column values of incorrect type'
@@ -193,6 +191,14 @@ var (
 	ErrFunctionalIndexOnField = terror.ClassDDL.New(mysql.ErrFunctionalIndexOnField, mysql.MySQLErrName[mysql.ErrFunctionalIndexOnField])
 	// ErrInvalidAutoRandom returns when auto_random is used incorrectly.
 	ErrInvalidAutoRandom = terror.ClassDDL.New(mysql.ErrInvalidAutoRandom, mysql.MySQLErrName[mysql.ErrInvalidAutoRandom])
+	// ErrColumnCheckNotSupported returns CHECK for column is not supported when create table
+	ErrUnsupportedColumnCheck = terror.ClassDDL.New(mysql.ErrUnsupportedColumnCheck, mysql.MySQLErrName[mysql.ErrUnsupportedColumnCheck])
+	// ErrUnsupportedAlterCheck returns when use ALTER TABLE ALTER CHECK is not supported
+	ErrUnsupportedAlterCheck = terror.ClassDDL.New(mysql.ErrUnsupportedAlterCheck, mysql.MySQLErrName[mysql.ErrUnsupportedAlterCheck])
+	// ErrUnsupportedDropCheck returns when ALTER TABLE DROP CHECK is not supported
+	ErrUnsupportedDropCheck = terror.ClassDDL.New(mysql.ErrUnsupportedDropCheck, mysql.MySQLErrName[mysql.ErrUnsupportedDropCheck])
+	// ErrUnsupportedConstraintCheck returns when use ADD CONSTRAINT CHECK
+	ErrUnsupportedConstraintCheck = terror.ClassDDL.New(mysql.ErrUnsupportedConstraintCheck, mysql.MySQLErrName[mysql.ErrUnsupportedConstraintCheck])
 
 	// ErrSequenceRunOut returns when the sequence has been run out.
 	ErrSequenceRunOut = terror.ClassDDL.New(mysql.ErrSequenceRunOut, mysql.MySQLErrName[mysql.ErrSequenceRunOut])

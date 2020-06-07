@@ -581,7 +581,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 			case ast.ColumnOptionFulltext:
 				ctx.GetSessionVars().StmtCtx.AppendWarning(ErrTableCantHandleFt)
 			case ast.ColumnOptionCheck:
-				ctx.GetSessionVars().StmtCtx.AppendWarning(ErrColumnCheckNotSupported)
+				ctx.GetSessionVars().StmtCtx.AppendWarning(ErrUnsupportedColumnCheck)
 			}
 		}
 	}
@@ -2245,6 +2245,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 				err = d.CreatePrimaryKey(ctx, ident, model.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option)
 			case ast.ConstraintFulltext:
 				ctx.GetSessionVars().StmtCtx.AppendWarning(ErrTableCantHandleFt)
+			case ast.ConstraintCheck:
+				ctx.GetSessionVars().StmtCtx.AppendWarning(ErrUnsupportedConstraintCheck)
 			default:
 				// Nothing to do now.
 			}
@@ -2313,6 +2315,10 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			err = d.OrderByColumns(ctx, ident)
 		case ast.AlterTableIndexInvisible:
 			err = d.AlterIndexVisibility(ctx, ident, spec.IndexName, spec.Visibility)
+		case ast.AlterTableAlterCheck:
+			ctx.GetSessionVars().StmtCtx.AppendWarning(ErrUnsupportedAlterCheck)
+		case ast.AlterTableDropCheck:
+			ctx.GetSessionVars().StmtCtx.AppendWarning(ErrUnsupportedDropCheck)
 		default:
 			// Nothing to do now.
 		}
@@ -3136,6 +3142,8 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 			return errors.Trace(errUnsupportedModifyColumn.GenWithStackByArgs("can't modify with references"))
 		case ast.ColumnOptionFulltext:
 			return errors.Trace(errUnsupportedModifyColumn.GenWithStackByArgs("can't modify with full text"))
+		case ast.ColumnOptionCheck:
+			return errors.Trace(ErrUnsupportedColumnCheck.GenWithStackByArgs("can't modify with check'"))
 		// Ignore ColumnOptionAutoRandom. It will be handled later.
 		case ast.ColumnOptionAutoRandom:
 		default:

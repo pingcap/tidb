@@ -949,7 +949,6 @@ const (
 	ErrJSONValueOutOfRangeForFuncIndex                              = 3904
 	ErrFunctionalIndexDataIsTooLong                                 = 3907
 	ErrFunctionalIndexNotApplicable                                 = 3909
-	ErrColumnCheckNotSupported                                      = 3910
 
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed         = 4030
@@ -1077,6 +1076,10 @@ const (
 	ErrColumnTypeUnsupportedNextValue = 8228
 	ErrLockExpire                     = 8229
 	ErrAddColumnWithSequenceAsDefault = 8230
+	ErrUnsupportedColumnCheck         = 8231
+	ErrUnsupportedAlterCheck          = 8232
+	ErrUnsupportedDropCheck           = 8233
+	ErrUnsupportedConstraintCheck     = 8234
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout        = 9001
