@@ -946,10 +946,7 @@ var MySQLErrName = map[uint16]string{
 	ErrJSONValueOutOfRangeForFuncIndex:                       "Out of range JSON value for CAST for functional index '%s'",
 	ErrFunctionalIndexDataIsTooLong:                          "Data too long for functional index '%s'",
 	ErrFunctionalIndexNotApplicable:                          "Cannot use functional index '%s' due to type or collation conversion",
-	ErrUnsupportedColumnCheck:                                "Column check is not supported",
-	ErrUnsupportedAlterCheck:                                 "ALTER CHECK is not supported",
-	ErrUnsupportedDropCheck:                                  "DROP CHECK is not supported",
-	ErrUnsupportedConstraintCheck:                            "ADD CONTRAINT CHECK is not supported",
+	ErrUnsupportedConstraintCheck:                            "%s is not supported",
 
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed:         "Only one DEFAULT partition allowed",

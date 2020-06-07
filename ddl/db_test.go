@@ -4593,7 +4593,7 @@ func (s *testDBSuite5) TestAlterCheck(c *C) {
 	defer s.tk.MustExec("drop table if exists alter_check")
 	s.tk.MustExec("alter table alter_check alter check crcn ENFORCED")
 	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
-	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|8232|ALTER CHECK is not supported"))
+	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|8231|ALTER CHECK is not supported"))
 }
 
 func (s *testDBSuite6) TestDropCheck(c *C) {
@@ -4604,7 +4604,7 @@ func (s *testDBSuite6) TestDropCheck(c *C) {
 	defer s.tk.MustExec("drop table if exists drop_check")
 	s.tk.MustExec("alter table drop_check drop check crcn")
 	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
-	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|8233|DROP CHECK is not supported"))
+	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|8231|DROP CHECK is not supported"))
 }
 
 func (s *testDBSuite7) TestAddConstraintCheck(c *C) {
@@ -4615,7 +4615,7 @@ func (s *testDBSuite7) TestAddConstraintCheck(c *C) {
 	defer s.tk.MustExec("drop table if exists add_constraint_check")
 	s.tk.MustExec("alter table add_constraint_check add constraint crn check (a > 1)")
 	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
-	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|8234|ADD CONTRAINT CHECK is not supported"))
+	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|8231|ADD CONSTRAINT CHECK is not supported"))
 }
 
 func (s *testDBSuite6) TestAlterOrderBy(c *C) {
