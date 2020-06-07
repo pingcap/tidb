@@ -191,7 +191,7 @@ var (
 	ErrFunctionalIndexOnField = terror.ClassDDL.New(mysql.ErrFunctionalIndexOnField, mysql.MySQLErrName[mysql.ErrFunctionalIndexOnField])
 	// ErrInvalidAutoRandom returns when auto_random is used incorrectly.
 	ErrInvalidAutoRandom = terror.ClassDDL.New(mysql.ErrInvalidAutoRandom, mysql.MySQLErrName[mysql.ErrInvalidAutoRandom])
-	// ErrColumnCheckNotSupported returns CHECK for column is not supported when create table
+	// ErrUnsupportedColumnCheck returns CHECK for column is not supported when create table
 	ErrUnsupportedColumnCheck = terror.ClassDDL.New(mysql.ErrUnsupportedColumnCheck, mysql.MySQLErrName[mysql.ErrUnsupportedColumnCheck])
 	// ErrUnsupportedAlterCheck returns when use ALTER TABLE ALTER CHECK is not supported
 	ErrUnsupportedAlterCheck = terror.ClassDDL.New(mysql.ErrUnsupportedAlterCheck, mysql.MySQLErrName[mysql.ErrUnsupportedAlterCheck])
