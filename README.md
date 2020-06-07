@@ -59,7 +59,7 @@ Read the [Roadmap](https://pingcap.com/docs/ROADMAP).
 
 ## Quick start
 
-Read the [Quick Start Guide](https://pingcap.com/docs/QUICKSTART), which includes deployment methods using Ansible, Docker, and Kubernetes.
+Read the [TiDB Quick Start Guide](https://pingcap.com/docs/stable/quick-start-with-tidb/), which starts you off in a few minutes.
 
 ## Getting Help
 
