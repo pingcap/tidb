@@ -855,8 +855,9 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 		diff.OldTableID = job.TableID
 		affects := make([]*model.AffectedOption, 1)
 		affects[0] = &model.AffectedOption{
-			SchemaID: ptSchemaID,
-			TableID:  ntTableID,
+			SchemaID:   ptSchemaID,
+			TableID:    ntTableID,
+			OldTableID: ntTableID,
 		}
 		diff.AffectedOpts = affects
 	default:

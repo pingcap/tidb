@@ -110,10 +110,19 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	if diff.AffectedOpts != nil {
 		for _, opt := range diff.AffectedOpts {
 			var err error
-			tblIDs, err = b.applyAffectedOpt(m, diff.Type, opt, tblIDs)
+			affectedDiff := &model.SchemaDiff{
+				Version:     diff.Version,
+				Type:        diff.Type,
+				SchemaID:    opt.SchemaID,
+				TableID:     opt.TableID,
+				OldSchemaID: opt.OldSchemaID,
+				OldTableID:  opt.OldTableID,
+			}
+			affectedIDs, err := b.ApplyDiff(m, affectedDiff)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+			tblIDs = append(tblIDs, affectedIDs...)
 		}
 	}
 	return tblIDs, nil
@@ -163,22 +172,6 @@ func (b *Builder) copySortedTables(oldTableID, newTableID int64) {
 	if tableIDIsValid(newTableID) && newTableID != oldTableID {
 		b.copySortedTablesBucket(tableBucketIdx(newTableID))
 	}
-}
-
-func (b *Builder) applyAffectedOpt(m *meta.Meta, tp model.ActionType, diff *model.AffectedOption, affected []int64) ([]int64, error) {
-	ptDi, err := m.GetDatabase(diff.SchemaID)
-	if err != nil {
-		return affected, errors.Trace(err)
-	}
-	if tableIDIsValid(diff.TableID) {
-		affected = b.applyDropTable(ptDi, diff.TableID, affected)
-		var allocs autoid.Allocators
-		affected, err = b.applyCreateTable(m, ptDi, diff.TableID, allocs, tp, affected)
-		if err != nil {
-			return affected, errors.Trace(err)
-		}
-	}
-	return affected, nil
 }
 
 func (b *Builder) applyCreateSchema(m *meta.Meta, diff *model.SchemaDiff) error {
