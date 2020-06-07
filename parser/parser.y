@@ -1841,8 +1841,6 @@ AlterTableSpec:
 			Tp:         ast.AlterTableAlterCheck,
 			Constraint: c,
 		}
-		yylex.AppendError(yylex.Errorf("The ALTER CHECK clause is parsed but not implemented yet."))
-		parser.lastErrorAsWarn()
 	}
 |	"DROP" "CHECK" Identifier
 	{
@@ -1854,8 +1852,6 @@ AlterTableSpec:
 			Tp:         ast.AlterTableDropCheck,
 			Constraint: c,
 		}
-		yylex.AppendError(yylex.Errorf("The DROP CHECK clause is parsed but not implemented yet."))
-		parser.lastErrorAsWarn()
 	}
 |	"ALTER" "INDEX" Identifier IndexInvisible
 	{
@@ -2593,8 +2589,6 @@ ColumnOption:
 			$$ = optionCheck
 		default:
 		}
-		yylex.AppendError(yylex.Errorf("The CHECK clause is parsed but ignored by all storage engines."))
-		parser.lastErrorAsWarn()
 	}
 |	GeneratedAlways "AS" '(' Expression ')' VirtualOrStored
 	{
@@ -2780,8 +2774,6 @@ ConstraintElem:
 			Expr:     $3.(ast.ExprNode),
 			Enforced: $5.(bool),
 		}
-		yylex.AppendError(yylex.Errorf("The CHECK clause is parsed but ignored by all storage engines."))
-		parser.lastErrorAsWarn()
 	}
 
 Match:
