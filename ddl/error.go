@@ -181,6 +181,8 @@ var (
 	ErrWrongObject = terror.ClassDDL.New(mysql.ErrWrongObject, mysql.MySQLErrName[mysql.ErrWrongObject])
 	// ErrTableCantHandleFt returns FULLTEXT keys are not supported by table type
 	ErrTableCantHandleFt = terror.ClassDDL.New(mysql.ErrTableCantHandleFt, mysql.MySQLErrName[mysql.ErrTableCantHandleFt])
+	// ErrColumnCheckNotSupported return CHECK for column is not supported
+	ErrColumnCheckNotSupported = terror.ClassDDL.New(mysql.ErrColumnCheckNotSupported, mysql.MySQLErrName[mysql.ErrColumnCheckNotSupported])
 	// ErrFieldNotFoundPart returns an error when 'partition by columns' are not found in table columns.
 	ErrFieldNotFoundPart = terror.ClassDDL.New(mysql.ErrFieldNotFoundPart, mysql.MySQLErrName[mysql.ErrFieldNotFoundPart])
 	// ErrWrongTypeColumnValue returns 'Partition column values of incorrect type'

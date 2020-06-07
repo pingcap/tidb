@@ -949,6 +949,7 @@ const (
 	ErrJSONValueOutOfRangeForFuncIndex                              = 3904
 	ErrFunctionalIndexDataIsTooLong                                 = 3907
 	ErrFunctionalIndexNotApplicable                                 = 3909
+	ErrColumnCheckNotSupported                                      = 3910
 
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed         = 4030
