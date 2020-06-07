@@ -191,14 +191,8 @@ var (
 	ErrFunctionalIndexOnField = terror.ClassDDL.New(mysql.ErrFunctionalIndexOnField, mysql.MySQLErrName[mysql.ErrFunctionalIndexOnField])
 	// ErrInvalidAutoRandom returns when auto_random is used incorrectly.
 	ErrInvalidAutoRandom = terror.ClassDDL.New(mysql.ErrInvalidAutoRandom, mysql.MySQLErrName[mysql.ErrInvalidAutoRandom])
-	// ErrUnsupportedColumnCheck returns CHECK for column is not supported when create table
-	ErrUnsupportedColumnCheck = terror.ClassDDL.New(mysql.ErrUnsupportedConstraintCheck, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedConstraintCheck], "Column check"))
-	// ErrUnsupportedAlterCheck returns when use ALTER TABLE ALTER CHECK is not supported
-	ErrUnsupportedAlterCheck = terror.ClassDDL.New(mysql.ErrUnsupportedConstraintCheck, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedConstraintCheck], "ALTER CHECK"))
-	// ErrUnsupportedDropCheck returns when ALTER TABLE DROP CHECK is not supported
-	ErrUnsupportedDropCheck = terror.ClassDDL.New(mysql.ErrUnsupportedConstraintCheck, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedConstraintCheck], "DROP CHECK"))
 	// ErrUnsupportedConstraintCheck returns when use ADD CONSTRAINT CHECK
-	ErrUnsupportedConstraintCheck = terror.ClassDDL.New(mysql.ErrUnsupportedConstraintCheck, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedConstraintCheck], "ADD CONSTRAINT CHECK"))
+	ErrUnsupportedConstraintCheck = terror.ClassDDL.New(mysql.ErrUnsupportedConstraintCheck, mysql.MySQLErrName[mysql.ErrUnsupportedConstraintCheck])
 
 	// ErrSequenceRunOut returns when the sequence has been run out.
 	ErrSequenceRunOut = terror.ClassDDL.New(mysql.ErrSequenceRunOut, mysql.MySQLErrName[mysql.ErrSequenceRunOut])
