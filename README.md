@@ -57,7 +57,7 @@ Read the [Quick Start Guide](https://pingcap.com/docs/stable/quick-start-with-ti
 
 ### To start developing TiDB
 
-The [community repository](https://github.com/pingcap/community) hosts all information about building TiDB from sourse, how to contribute code and documentation, how to join special interest group, who to contact about what, etc.
+The [community repository](https://github.com/pingcap/community) hosts all information about the TiDB community, including how to contribute to TiDB, how TiDB community is governed,  how special interest groups are organized, etc.
 
 [<img src="docs/contribution-map.png" alt="contribution-map" width="180">](https://github.com/pingcap/tidb-map/blob/master/maps/contribution-map.md#tidb-is-an-open-source-distributed-htap-database-compatible-with-the-mysql-protocol)
 
