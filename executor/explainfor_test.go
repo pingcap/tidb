@@ -168,7 +168,7 @@ func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
 	c.Assert(err, IsNil)
-	tk2 := testkit.NewTestKit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
 
 	tkRootProcess := tk1.Se.ShowProcess()
 
