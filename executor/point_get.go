@@ -157,44 +157,55 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		tblID = e.tblInfo.ID
 	}
 	if e.idxInfo != nil {
-		e.idxKey, err = encodeIndexKey(e.base(), e.tblInfo, e.idxInfo, e.idxVals, tblID)
-		if err != nil && !kv.ErrNotExist.Equal(err) {
-			return err
-		}
-
-		e.handleVal, err = e.get(ctx, e.idxKey)
-		if err != nil {
-			if !kv.ErrNotExist.Equal(err) {
+		if e.tblInfo.IsCommonHandle && e.idxInfo.Primary {
+			handleBytes, err := codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, nil, e.idxVals...)
+			if err != nil {
 				return err
 			}
-		}
-		if len(e.handleVal) == 0 {
-			// handle is not found, try lock the index key if isolation level is not read consistency
-			if e.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-				return nil
+			e.handle, err = kv.NewCommonHandle(handleBytes)
+			if err != nil {
+				return err
 			}
-			return e.lockKeyIfNeeded(ctx, e.idxKey)
-		}
-		var iv int64
-		iv, err = tables.DecodeHandleInUniqueIndexValue(e.handleVal)
-		if err != nil {
-			return err
-		}
-		e.handle = kv.IntHandle(iv)
+		} else {
+			e.idxKey, err = encodeIndexKey(e.base(), e.tblInfo, e.idxInfo, e.idxVals, tblID)
+			if err != nil && !kv.ErrNotExist.Equal(err) {
+				return err
+			}
 
-		// The injection is used to simulate following scenario:
-		// 1. Session A create a point get query but pause before second time `GET` kv from backend
-		// 2. Session B create an UPDATE query to update the record that will be obtained in step 1
-		// 3. Then point get retrieve data from backend after step 2 finished
-		// 4. Check the result
-		failpoint.InjectContext(ctx, "pointGetRepeatableReadTest-step1", func() {
-			if ch, ok := ctx.Value("pointGetRepeatableReadTest").(chan struct{}); ok {
-				// Make `UPDATE` continue
-				close(ch)
+			e.handleVal, err = e.get(ctx, e.idxKey)
+			if err != nil {
+				if !kv.ErrNotExist.Equal(err) {
+					return err
+				}
 			}
-			// Wait `UPDATE` finished
-			failpoint.InjectContext(ctx, "pointGetRepeatableReadTest-step2", nil)
-		})
+			if len(e.handleVal) == 0 {
+				// handle is not found, try lock the index key if isolation level is not read consistency
+				if e.ctx.GetSessionVars().IsPessimisticReadConsistency() {
+					return nil
+				}
+				return e.lockKeyIfNeeded(ctx, e.idxKey)
+			}
+			var iv int64
+			iv, err = tables.DecodeHandleInUniqueIndexValue(e.handleVal)
+			if err != nil {
+				return err
+			}
+			e.handle = kv.IntHandle(iv)
+
+			// The injection is used to simulate following scenario:
+			// 1. Session A create a point get query but pause before second time `GET` kv from backend
+			// 2. Session B create an UPDATE query to update the record that will be obtained in step 1
+			// 3. Then point get retrieve data from backend after step 2 finished
+			// 4. Check the result
+			failpoint.InjectContext(ctx, "pointGetRepeatableReadTest-step1", func() {
+				if ch, ok := ctx.Value("pointGetRepeatableReadTest").(chan struct{}); ok {
+					// Make `UPDATE` continue
+					close(ch)
+				}
+				// Wait `UPDATE` finished
+				failpoint.InjectContext(ctx, "pointGetRepeatableReadTest-step2", nil)
+			})
+		}
 	}
 
 	key := tablecodec.EncodeRowKeyWithHandle(tblID, e.handle)
@@ -203,7 +214,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 	if len(val) == 0 {
-		if e.idxInfo != nil {
+		if e.idxInfo != nil && !e.idxInfo.Primary {
 			return kv.ErrNotExist.GenWithStack("inconsistent extra index %s, handle %d not found in table",
 				e.idxInfo.Name.O, e.handle)
 		}
