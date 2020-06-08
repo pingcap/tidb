@@ -280,8 +280,8 @@ func (s *testIntegrationSuite3) TestCreateTableWithPartition(c *C) {
 (partition p0 values less than (unix_timestamp('2020-04-15 00:00:00')));`)
 
 	tk.MustExec(`drop table if exists too_long_identifier`)
-	tk.MustGetErrCode(`create table too_long_identifier(a int) 
-partition by range (a) 
+	tk.MustGetErrCode(`create table too_long_identifier(a int)
+partition by range (a)
 (partition p0pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp values less than (10));`, tmysql.ErrTooLongIdent)
 
 	tk.MustExec(`drop table if exists too_long_identifier`)
@@ -289,6 +289,10 @@ partition by range (a)
 	tk.MustGetErrCode("alter table too_long_identifier add partition "+
 		"(partition p0pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp values less than(20))", tmysql.ErrTooLongIdent)
 
+	tk.MustExec(`create table t36 (a date, b datetime) partition by range (EXTRACT(YEAR_MONTH FROM a)) (
+    partition p0 values less than (200),
+    partition p1 values less than (300),
+    partition p2 values less than maxvalue)`)
 }
 
 func (s *testIntegrationSuite2) TestCreateTableWithHashPartition(c *C) {
@@ -341,6 +345,9 @@ func (s *testIntegrationSuite2) TestCreateTableWithHashPartition(c *C) {
                                        PARTITION p1 VALUES LESS THAN (200),
                                        PARTITION p2 VALUES LESS THAN MAXVALUE)`)
 	tk.MustGetErrCode("select * from t_sub partition (p0)", tmysql.ErrPartitionClauseOnNonpartitioned)
+
+	// Fix create partition table using extract() function as partition key.
+	tk.MustExec("create table t2 (a date, b datetime) partition by hash (EXTRACT(YEAR_MONTH FROM a)) partitions 7")
 }
 
 func (s *testIntegrationSuite1) TestCreateTableWithRangeColumnPartition(c *C) {
@@ -1366,10 +1373,11 @@ func testPartitionCancelAddIndex(c *C, store kv.Storage, d ddl.DDL, lease time.D
     	partition p3 values less than (4096),
 		partition p4 values less than (maxvalue)
    	);`)
-	base := defaultBatchSize * 2
-	count := base
+	count := defaultBatchSize * 32
 	// add some rows
-	batchInsert(tk, "t1", 0, count)
+	for i := 0; i < count; i += defaultBatchSize {
+		batchInsert(tk, "t1", i, i+defaultBatchSize)
+	}
 
 	var checkErr error
 	var c3IdxInfo *model.IndexInfo
