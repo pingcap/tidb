@@ -588,7 +588,6 @@ func (c *Chunk) AppendBytes(colIdx int, b []byte) {
 }
 
 // AppendTime appends a Time value to the chunk.
-// TODO: change the time structure so it can be directly written to memory.
 func (c *Chunk) AppendTime(colIdx int, t types.Time) {
 	c.appendSel(colIdx)
 	c.columns[colIdx].AppendTime(t)
