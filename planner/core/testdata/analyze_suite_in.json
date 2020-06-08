@@ -176,5 +176,16 @@
       // TODO: Refine these tests in the future.
       // "select * from t2 where t2.a = 1 and t2.b <= 2",
     ]
+  },
+  {
+    "name": "TestIndexEqualUnknown",
+    "cases": [
+      // 7639902 is out of range for the analyzed histogram, and we know from the data writer that for each value
+      // of `a` in the table, there are 6 rows in average. Before this PR, the row count estimation is 150k, which is
+      // far from the real value.
+      "explain select * from t where a = 7639902",
+      // Should choose `primary` index instead of index `b`.
+      "explain select c, b from t where a = 7639902 order by b asc limit 6"
+    ]
   }
 ]
