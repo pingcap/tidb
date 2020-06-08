@@ -527,9 +527,9 @@ func (s *testPointGetSuite) TestReturnValues(c *C) {
 	txnCtx := tk.Se.GetSessionVars().TxnCtx
 	val, ok := txnCtx.GetKeyInPessimisticLockCache(pk)
 	c.Assert(ok, IsTrue)
-	handle, err := tables.DecodeHandleInUniqueIndexValue(val)
+	handle, err := tables.DecodeHandleInUniqueIndexValue(val, false)
 	c.Assert(err, IsNil)
-	rowKey := tablecodec.EncodeRowKeyWithHandle(tid, kv.IntHandle(handle))
+	rowKey := tablecodec.EncodeRowKeyWithHandle(tid, handle)
 	_, ok = txnCtx.GetKeyInPessimisticLockCache(rowKey)
 	c.Assert(ok, IsTrue)
 	tk.MustExec("rollback")

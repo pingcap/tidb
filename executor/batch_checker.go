@@ -35,8 +35,9 @@ type keyValue struct {
 }
 
 type keyValueWithDupInfo struct {
-	newKV  keyValue
-	dupErr error
+	newKV        keyValue
+	dupErr       error
+	commonHandle bool
 }
 
 type toBeCheckedRow struct {
@@ -172,10 +173,9 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 			return nil, err1
 		}
 		uniqueKeys = append(uniqueKeys, &keyValueWithDupInfo{
-			newKV: keyValue{
-				key: key,
-			},
-			dupErr: kv.ErrKeyExists.FastGenByArgs(colValStr, v.Meta().Name),
+			newKV:        keyValue{key: key},
+			dupErr:       kv.ErrKeyExists.FastGenByArgs(colValStr, v.Meta().Name),
+			commonHandle: t.Meta().IsCommonHandle,
 		})
 	}
 	result = append(result, toBeCheckedRow{
