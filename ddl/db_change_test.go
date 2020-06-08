@@ -882,6 +882,19 @@ func (s *testStateChangeSuite) TestParallelCreateAndRename(c *C) {
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
 
+func (s *testStateChangeSuite) TestParallelAlterAndDropSchema(c *C) {
+	_, err := s.se.Execute(context.Background(), "create database db_drop_db")
+	c.Assert(err, IsNil)
+	sql1 := "DROP SCHEMA db_drop_db"
+	sql2 := "ALTER SCHEMA db_drop_db CHARSET utf8mb4 COLLATE utf8mb4_general_ci"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2, NotNil)
+		c.Assert(err2.Error(), Equals, "[schema:1008]Can't drop database ''; database doesn't exist")
+	}
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
+}
+
 type checkRet func(c *C, err1, err2 error)
 
 func (s *testStateChangeSuiteBase) prepareTestControlParallelExecSQL(c *C) (session.Session, session.Session, chan struct{}, ddl.Callback) {
@@ -1274,7 +1287,12 @@ func (s *serialTestStateChangeSuite) TestParallelFlashbackTable(c *C) {
 		c.Assert(err1, IsNil)
 		c.Assert(err2, NotNil)
 		c.Assert(err2.Error(), Equals, "[schema:1050]Table 't_flashback' already exists")
-
 	}
 	s.testControlParallelExecSQL(c, sql1, sql1, f)
+
+	// Test parallel flashback table with different name
+	tk.MustExec("drop table t_flashback")
+	sql1 = "flashback table t_flashback"
+	sql2 := "flashback table t_flashback to t_flashback2"
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
