@@ -52,7 +52,6 @@ For more details and latest updates, see [official TiDB blog](https://www.pingca
 
 ## Quick start
 
-### To start using TiDB
 
 Read the [Quick Start Guide](https://pingcap.com/docs/stable/quick-start-with-tidb/ ), which includes deployment methods using TiUP, Ansible, Docker, and Kubernetes.
 
