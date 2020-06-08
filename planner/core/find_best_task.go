@@ -216,7 +216,6 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 	var hintWorksWithProp bool
 	// Maybe the plan can satisfy the required property,
 	// so we try to get the task without the enforced sort first.
-	// TODO: from PHX will it introduce some random?
 	plansFitsProp, hintWorksWithProp = p.self.exhaustPhysicalPlans(newProp)
 	if !hintWorksWithProp && !newProp.IsEmpty() {
 		// If there is a hint in the plan and the hint cannot satisfy the property,
