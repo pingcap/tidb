@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -755,6 +756,27 @@ func (s *testSerialSuite) TestCancelJobByErrorCountLimit(c *C) {
 	c.Assert(err.Error(), Equals, "[ddl:-1]DDL job rollback, error msg: mock do job error")
 }
 
+func (s *testSerialSuite) TestTruncateTableUpdateSchemaVersionErr(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockTruncateTableUpdateVersionError", `return(true)`), IsNil)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+
+	limit := variable.GetDDLErrorCountLimit()
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 5")
+	err := ddlutil.LoadDDLVars(tk.Se)
+	c.Assert(err, IsNil)
+	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %d", limit))
+
+	tk.MustExec("create table t (a int)")
+	_, err = tk.Exec("truncate table t")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:-1]DDL job rollback, error msg: mock update version error")
+	// Disable fail point.
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockTruncateTableUpdateVersionError"), IsNil)
+	tk.MustExec("truncate table t")
+}
+
 func (s *testSerialSuite) TestCanceledJobTakeTime(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -962,6 +984,66 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	assertExperimentDisabled("create table auto_random_table (a int primary key auto_random(3))")
 }
 
+func (s *testSerialSuite) TestAutoRandomIncBitsIncrementAndOffset(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists auto_random_db")
+	defer tk.MustExec("drop database if exists auto_random_db")
+	tk.MustExec("use auto_random_db")
+	tk.MustExec("drop table if exists t")
+
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+
+	recreateTable := func() {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (a bigint auto_random(6) primary key)")
+	}
+	truncateTable := func() {
+		_, _ = tk.Exec("delete from t")
+	}
+	insertTable := func() {
+		tk.MustExec("insert into t values ()")
+	}
+	assertIncBitsValues := func(values ...int) {
+		mask := strings.Repeat("1", 64-1-6)
+		sql := fmt.Sprintf(`select a & b'%s' from t order by a & b'%s' asc`, mask, mask)
+		vs := make([]string, len(values))
+		for i, value := range values {
+			vs[i] = strconv.Itoa(value)
+		}
+		tk.MustQuery(sql).Check(testkit.Rows(vs...))
+	}
+
+	const truncate, recreate = true, false
+	expect := func(vs ...int) []int { return vs }
+	testCase := []struct {
+		setupAction bool  // truncate or recreate
+		increment   int   // @@auto_increment_increment
+		offset      int   // @@auto_increment_offset
+		results     []int // the implicit allocated auto_random incremental-bit part of values
+	}{
+		{recreate, 5, 10, expect(10, 15, 20)},
+		{recreate, 2, 10, expect(10, 12, 14)},
+		{truncate, 5, 10, expect(15, 20, 25)},
+		{truncate, 10, 10, expect(30, 40, 50)},
+		{truncate, 5, 10, expect(55, 60, 65)},
+	}
+	for _, tc := range testCase {
+		switch tc.setupAction {
+		case recreate:
+			recreateTable()
+		case truncate:
+			truncateTable()
+		}
+		tk.Se.GetSessionVars().AutoIncrementIncrement = tc.increment
+		tk.Se.GetSessionVars().AutoIncrementOffset = tc.offset
+		for range tc.results {
+			insertTable()
+		}
+		assertIncBitsValues(tc.results...)
+	}
+}
+
 func (s *testSerialSuite) TestModifyingColumn4NewCollations(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
@@ -1111,4 +1193,57 @@ func (s *testSerialSuite) TestInvisibleIndex(c *C) {
 	tk.MustExec("insert into t6 values (1, 2)")
 	tk.MustQuery("select * from t6").Check(testkit.Rows("1 2"))
 	tk.MustGetErrCode("alter table t6 drop primary key", errno.ErrPKIndexCantBeInvisible)
+}
+
+func (s *testSerialSuite) TestCreateClusteredIndex(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.MustExec("CREATE TABLE t1 (a int primary key, b int)")
+	tk.MustExec("CREATE TABLE t2 (a varchar(255) primary key, b int)")
+	tk.MustExec("CREATE TABLE t3 (a int, b int, c int, primary key (a, b))")
+	tk.MustExec("CREATE TABLE t4 (a int, b int, c int)")
+	ctx := tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().PKIsHandle, IsTrue)
+	c.Assert(tbl.Meta().IsCommonHandle, IsFalse)
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().IsCommonHandle, IsTrue)
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t3"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().IsCommonHandle, IsTrue)
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t4"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().IsCommonHandle, IsFalse)
+
+	config.GetGlobalConfig().AlterPrimaryKey = true
+	tk.MustExec("CREATE TABLE t5 (a varchar(255) primary key, b int)")
+	tk.MustExec("CREATE TABLE t6 (a int, b int, c int, primary key (a, b))")
+	is = domain.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t5"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().IsCommonHandle, IsFalse)
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t6"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().IsCommonHandle, IsFalse)
+	config.GetGlobalConfig().AlterPrimaryKey = false
+
+	tk.MustExec("CREATE TABLE t21 like t2")
+	tk.MustExec("CREATE TABLE t31 like t3")
+	is = domain.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t21"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().IsCommonHandle, IsTrue)
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t31"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().IsCommonHandle, IsTrue)
+
+	tk.Se.GetSessionVars().EnableClusteredIndex = false
+	tk.MustExec("CREATE TABLE t7 (a varchar(255) primary key, b int)")
+	is = domain.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t7"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().IsCommonHandle, IsFalse)
 }
