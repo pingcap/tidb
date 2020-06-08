@@ -188,28 +188,28 @@ func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 
 	explainForQuery := "explain for connection " + rows[0][0].(string)
 
-	tk1.MustExec("execute stmt using @p0")
-	tk2.MustExec(explainForQuery)
+	// tk1.MustExec("execute stmt using @p0")
+	// tk2.MustExec(explainForQuery)
 
-	// ch := make(chan int)
-	// repeats := 1
+	ch := make(chan int)
+	repeats := 1
 
-	// go func() {
-	// 	for i := 0; i < repeats; i++ {
-	// 		tk1.MustExec("execute stmt using @p0")
-	// 	}
-	// 	ch <- 0
-	// }()
+	go func() {
+		for i := 0; i < repeats; i++ {
+			tk1.MustExec("execute stmt using @p0")
+		}
+		ch <- 0
+	}()
 
-	// go func() {
-	// 	for i := 0; i < repeats; i++ {
-	// 		tk2.MustExec(explainForQuery)
-	// 	}
-	// 	ch <- 0
-	// }()
+	go func() {
+		for i := 0; i < repeats; i++ {
+			tk2.MustExec(explainForQuery)
+		}
+		ch <- 0
+	}()
 
-	// <-ch
-	// <-ch
+	<-ch
+	<-ch
 }
 
 func (s *testPrepareSerialSuite) TestExplainDotForExplainPlan(c *C) {
