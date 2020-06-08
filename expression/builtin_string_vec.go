@@ -1061,11 +1061,7 @@ func (b *builtinFindInSetSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 			continue
 		}
 		for j, strInSet := range strings.Split(strlistI, ",") {
-<<<<<<< HEAD
 			if b.ctor.Compare(str.GetString(i), strInSet) == 0 {
-=======
-			if b.ctor.Compare(str.GetString(i), strInSet, collate.NewCollatorOption(0)) == 0 {
->>>>>>> 1771fff... expression: make `field` and `findInSet`  support collation (#15100)
 				res[i] = int64(j + 1)
 			}
 		}
