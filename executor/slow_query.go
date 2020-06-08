@@ -306,6 +306,9 @@ type slowQueryTuple struct {
 	queryTime              float64
 	parseTime              float64
 	compileTime            float64
+	rewriteTime            float64
+	preprocSubqueries      uint64
+	preprocSubQueryTime    float64
 	preWriteTime           float64
 	waitPrewriteBinlogTime float64
 	commitTime             float64
@@ -467,6 +470,12 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 		st.sql = value
 	case variable.SlowLogDiskMax:
 		st.diskMax, err = strconv.ParseInt(value, 10, 64)
+	case variable.SlowLogRewriteTimeStr:
+		st.rewriteTime, err = strconv.ParseFloat(value, 64)
+	case variable.SlowLogPreprocSubQueriesStr:
+		st.preprocSubqueries, err = strconv.ParseUint(value, 10, 64)
+	case variable.SlowLogPreProcSubQueryTimeStr:
+		st.preprocSubQueryTime, err = strconv.ParseFloat(value, 64)
 	}
 	if err != nil {
 		return valid, errors.Wrap(err, "Parse slow log at line "+strconv.FormatInt(int64(lineNum), 10)+" failed. Field: `"+field+"`, error")
