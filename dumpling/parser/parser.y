@@ -8231,10 +8231,7 @@ CollationName:
 	}
 
 VariableAssignmentList:
-	{
-		$$ = []*ast.VariableAssignment{}
-	}
-|	VariableAssignment
+	VariableAssignment
 	{
 		$$ = []*ast.VariableAssignment{$1.(*ast.VariableAssignment)}
 	}
