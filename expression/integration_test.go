@@ -6433,6 +6433,22 @@ func (s *testIntegrationSuite) TestIssue16419(c *C) {
 	tk.MustExec("drop table t0, t1;")
 }
 
+func (s *testIntegrationSuite) TestIssue17856(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("CREATE TABLE t0(c0 INT);")
+	tk.MustExec("CREATE TABLE t1(c0 INT);")
+	tk.MustExec("INSERT INTO t0 VALUES (1);")
+	tk.MustExec("INSERT INTO t0 VALUES (0);")
+	tk.MustExec("INSERT INTO t1 VALUES (0);")
+	tk.MustExec("INSERT INTO t1 VALUES (1);")
+	tk.MustQuery("SELECT * FROM t0 NATURAL JOIN t1;").Check(testkit.Rows("1", "0"))
+	tk.MustExec("drop table t0;")
+	tk.MustExec("drop table t1;")
+}
+
 func (s *testIntegrationSuite) TestIssue16029(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
