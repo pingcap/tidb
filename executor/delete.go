@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -71,22 +70,6 @@ func (e *DeleteExec) deleteOneRow(tbl table.Table, handleIndex []int, isExtraHan
 		return err
 	}
 	return nil
-}
-
-func BuildHandleFromIndexes(sctx *stmtctx.StatementContext, handleIndex []int, row []types.Datum) (kv.Handle, error) {
-	pkDts := make([]types.Datum, 0, len(handleIndex))
-	for _, ordinal := range handleIndex {
-		pkDts = append(pkDts, row[ordinal])
-	}
-	handleBytes, err := codec.EncodeKey(sctx, nil, pkDts...)
-	if err != nil {
-		return nil, err
-	}
-	handle, err := kv.NewCommonHandle(handleBytes)
-	if err != nil {
-		return nil, err
-	}
-	return handle, nil
 }
 
 func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
