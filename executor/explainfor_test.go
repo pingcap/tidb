@@ -192,7 +192,7 @@ func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 	// tk2.MustExec(explainForQuery)
 
 	ch := make(chan int)
-	repeats := 1
+	repeats := 1000
 
 	go func() {
 		for i := 0; i < repeats; i++ {
