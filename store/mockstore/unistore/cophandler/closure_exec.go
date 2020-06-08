@@ -189,13 +189,13 @@ func (e *closureExecutor) initIdxScanCtx(idxScan *tipb.IndexScan) {
 	e.idxScanCtx.colInfos = colInfos
 
 	colIDs := make(map[int64]int, len(colInfos))
-	for i, col := range colInfos {
+	for i, col := range colInfos[:e.idxScanCtx.columnLen] {
 		colIDs[col.ID] = i
 	}
 	e.scanCtx.newCollationIds = colIDs
 
 	// We don't need to decode handle here, and colIDs >= 0 always.
-	e.scanCtx.newCollationRd = rowcodec.NewByteDecoder(colInfos, []int64{-1}, nil, nil)
+	e.scanCtx.newCollationRd = rowcodec.NewByteDecoder(colInfos[:e.idxScanCtx.columnLen], []int64{-1}, nil, nil)
 }
 
 func isCountAgg(pbAgg *tipb.Aggregation) bool {

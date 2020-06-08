@@ -160,7 +160,7 @@ func (p *PhysicalIndexScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
 		}
 	}
 	var pkColIds []int64
-	if p.Table.IsCommonHandle {
+	if p.NeedCommonHandle {
 		pkIdx := tables.FindPrimaryIndex(p.Table)
 		for _, idxCol := range pkIdx.Columns {
 			pkColIds = append(pkColIds, p.Table.Columns[idxCol.Offset].ID)

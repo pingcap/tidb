@@ -1253,7 +1253,7 @@ func (s *testSuite10) TestClusterPrimaryTableInsertDuplicate(c *C) {
 	tk.MustQuery(`select id1, id2, v from ts1pk`).Check(testkit.Rows("2018-01-01 11:11:12 2018-01-01 11:11:11 2"))
 }
 
-func (s *testSuite10) TestClusterPrimaryTableForIndexScan(c *C) {
+func (s *testSuite10) TestClusterPrimaryKeyForIndexScan(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
