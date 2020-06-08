@@ -176,22 +176,24 @@ func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 	tk1.MustExec("prepare stmt from 'select * from t where a = ?'")
 	tk1.MustExec("set @p0='1'")
 
-	explainForQuery := "explain for connection " + strconv.FormatUint(tk1.Se.ShowProcess().ID, 10)
-
-	// Now the ProcessInfo held by mockSessionManager will not be updated in real time.
-	// So it needs to be reset every time before tk2 query.
-	// TODO: replace with another mockSessionManager.
-
-	// single test
-	tk1.MustExec("execute stmt using @p0")
-	tk2.Se.SetSessionManager(&mockSessionManager1{
-		PS: []*util.ProcessInfo{tk1.Se.ShowProcess()},
-	})
-	tk2.MustQuery(explainForQuery).Check(testkit.Rows(
+	executeQuery := "execute stmt using @p0"
+	explainQuery := "explain for connection " + strconv.FormatUint(tk1.Se.ShowProcess().ID, 10)
+	explainResult := testkit.Rows(
 		"TableReader_7 8000.00 root  data:Selection_6",
 		"└─Selection_6 8000.00 cop[tikv]  eq(cast(test.t.a), 1)",
 		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
-	))
+	)
+
+	// Now the ProcessInfo held by mockSessionManager1 will not be updated in real time.
+	// So it needs to be reset every time before tk2 query.
+	// TODO: replace mockSessionManager1 with another mockSessionManager.
+
+	// single test
+	tk1.MustExec(executeQuery)
+	tk2.Se.SetSessionManager(&mockSessionManager1{
+		PS: []*util.ProcessInfo{tk1.Se.ShowProcess()},
+	})
+	tk2.MustQuery(explainQuery).Check(explainResult)
 
 	// multiple test
 	ch := make(chan int)
@@ -199,7 +201,7 @@ func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 
 	go func() {
 		for i := 0; i < repeats; i++ {
-			tk1.MustExec("execute stmt using @p0")
+			tk1.MustExec(executeQuery)
 		}
 		ch <- 0
 	}()
@@ -209,11 +211,7 @@ func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 			tk2.Se.SetSessionManager(&mockSessionManager1{
 				PS: []*util.ProcessInfo{tk1.Se.ShowProcess()},
 			})
-			tk2.MustQuery(explainForQuery).Check(testkit.Rows(
-				"TableReader_7 8000.00 root  data:Selection_6",
-				"└─Selection_6 8000.00 cop[tikv]  eq(cast(test.t.a), 1)",
-				"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
-			))
+			tk2.MustQuery(explainQuery).Check(explainResult)
 		}
 		ch <- 0
 	}()
