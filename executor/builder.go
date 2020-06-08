@@ -1541,11 +1541,6 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) *NestedLoopAp
 		outerPlan = v.Children()[0]
 	}
 	v.OuterSchema = plannercore.ExtractCorColumnsBySchema4PhysicalPlan(innerPlan, outerPlan.Schema())
-	// Try to resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
-	if err := v.ResolveIndices(); err != nil {
-		b.err = errors.Trace(err)
-		return nil
-	}
 	leftChild := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
