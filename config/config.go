@@ -683,7 +683,7 @@ var defaultConf = Config{
 		AllowAutoRandom:       false,
 		AllowsExpressionIndex: false,
 	},
-	EnableCollectExecutionInfo: true,
+	EnableCollectExecutionInfo: false,
 }
 
 var (
