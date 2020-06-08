@@ -28,6 +28,11 @@ func NewProjectionImpl(proj *plannercore.PhysicalProjection) *ProjectionImpl {
 	return &ProjectionImpl{baseImpl{plan: proj}}
 }
 
+// CalcCost implements Implementation CalcCost interface.
+func (projection *ProjectionImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+	return projection.GetCost()
+}
+
 // ShowImpl is the Implementation of PhysicalShow.
 type ShowImpl struct {
 	baseImpl
