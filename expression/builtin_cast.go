@@ -1799,15 +1799,12 @@ func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldT
 		Function: f,
 	}
 
-	// We do not fold if the expression is Constant. And the Constant.DeferredExpr is not Constant.
+	// We do not fold if the expression is Constant and the Constant.DeferredExpr is not nil.
 	constantExpr, isConst := expr.(*Constant)
 	if isConst {
 		deferredExpr := constantExpr.DeferredExpr
 		if deferredExpr != nil {
-			_, isConst := deferredExpr.(*Constant)
-			if !isConst {
-				return res
-			}
+			return res
 		}
 	}
 	// We do not fold CAST if the eval type of this scalar function is ETJson
