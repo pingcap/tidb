@@ -1191,8 +1191,8 @@ func (s *testSuite10) TestClusterPrimaryTablePlainInsert(c *C) {
 	tk.MustGetErrCode(`insert into t1pku(id, uk, v) values('aaa', 1, 3)`, errno.ErrDupEntry)
 	tk.MustQuery(`select * from t1pku`).Check(testkit.Rows("abc 1 2"))
 
-	//tk.MustQuery(`select * from t3pk where (id1, id2, id3) in (('abc', 'xyz', 100), ('abc', 'xyz', 101), ('abc', 'zzz', 101))`).
-	//	Check(testkit.Rows("abc xyz 1 100", "abc xyz 1 101", "abc zzz 1 101"))
+	tk.MustQuery(`select * from t3pk where (id1, id2, id3) in (('abc', 'xyz', 100), ('abc', 'xyz', 101), ('abc', 'zzz', 101))`).
+		Check(testkit.Rows("abc xyz 1 100", "abc xyz 1 101", "abc zzz 1 101"))
 }
 
 func (s *testSuite10) TestClusterPrimaryTableInsertIgnore(c *C) {
