@@ -182,12 +182,12 @@ func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 	tk1.MustExec("create table t(a int)")
 	tk1.MustExec("prepare stmt from 'select * from t where a = ?'")
 	tk1.MustExec("set @p0='1'")
-	rows := tk1.MustQuery("select connection_id()").Rows()
 
-	c.Assert(rows[0][0].(string), Equals, "0")
-
+	// Check connection id.
+	tk1.MustQuery("select connection_id()").Check(testkit.Rows("0"))
 	tk2.MustQuery("select connection_id()").Check(testkit.Rows("1"))
 
+	rows := tk1.MustQuery("select connection_id()").Rows()
 	explainForQuery := "explain for connection " + rows[0][0].(string)
 
 	// single test
