@@ -1049,7 +1049,7 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 	for i, key := range w.batchCheckKeys {
 		if val, found := batchVals[string(key)]; found {
 			if w.distinctCheckFlags[i] {
-				handle, err1 := tables.DecodeHandleInUniqueIndexValue(val)
+				handle, err1 := tables.DecodeHandleInUniqueIndexValueDeprecated(val)
 				if err1 != nil {
 					return errors.Trace(err1)
 				}
