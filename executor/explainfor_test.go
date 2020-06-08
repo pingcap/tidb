@@ -172,7 +172,7 @@ func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 
 	tkRootProcess := tk1.Se.ShowProcess()
 
-	ps := []*util.ProcessInfo{tk1.Se.ShowProcess()}
+	ps := []*util.ProcessInfo{tkRootProcess}
 	tk1.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	tk2.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 
