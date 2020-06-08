@@ -173,6 +173,10 @@ func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 	})
 	c.Assert(err, IsNil)
 
+	ps := []*util.ProcessInfo{tk1.Se.ShowProcess(), tk2.Se.ShowProcess()}
+	tk1.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	tk2.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+
 	tk1.MustExec("use test")
 	tk1.MustExec("drop table if exists t")
 	tk1.MustExec("create table t(a int)")
@@ -180,11 +184,6 @@ func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 	tk1.MustExec("set @p0='1'")
 	rows := tk1.MustQuery("select connection_id()").Rows()
 	c.Assert(len(rows), Equals, 1)
-
-	tkProcess := tk1.Se.ShowProcess()
-	ps := []*util.ProcessInfo{tkProcess}
-	tk1.Se.SetSessionManager(&mockSessionManager1{PS: ps})
-	tk2.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 
 	explainForQuery := "explain for connection " + rows[0][0].(string)
 
