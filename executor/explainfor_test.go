@@ -162,23 +162,17 @@ func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 	}()
 	core.SetPreparedPlanCache(true)
 
-	var firstID, secondID uint64 = 1, 2
-
 	var err error
 	tk1 := testkit.NewTestKit(c, s.store)
 	tk1.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
 	c.Assert(err, IsNil)
-	tk1.Se.SetConnectionID(firstID)
 	tk2 := testkit.NewTestKit(c, s.store)
-	tk2.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	c.Assert(err, IsNil)
-	tk2.Se.SetConnectionID(secondID)
 
-	ps := []*util.ProcessInfo{tk1.Se.ShowProcess(), tk2.Se.ShowProcess()}
+	tkRootProcess := tk1.Se.ShowProcess()
+
+	ps := []*util.ProcessInfo{tk1.Se.ShowProcess()}
 	tk1.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	tk2.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 
@@ -188,12 +182,7 @@ func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 	tk1.MustExec("prepare stmt from 'select * from t where a = ?'")
 	tk1.MustExec("set @p0='1'")
 
-	// Check connection id.
-	tk1.MustQuery("select connection_id()").Check(testkit.Rows(strconv.FormatUint(firstID, 10)))
-	tk2.MustQuery("select connection_id()").Check(testkit.Rows(strconv.FormatUint(secondID, 10)))
-
-	rows := tk1.MustQuery("select connection_id()").Rows()
-	explainForQuery := "explain for connection " + rows[0][0].(string)
+	explainForQuery := "explain for connection " + strconv.FormatUint(tkRootProcess.ID, 10)
 
 	// single test
 	tk1.MustExec("execute stmt using @p0")
