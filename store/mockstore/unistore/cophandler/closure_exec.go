@@ -173,16 +173,8 @@ func (e *closureExecutor) initIdxScanCtx(idxScan *tipb.IndexScan) {
 			e.idxScanCtx.columnLen--
 		}
 	} else {
-		pkColNum := 0
-		for i := range e.columnInfos {
-			if e.columnInfos[i].GetPkHandle() {
-				pkColNum++
-			}
-		}
-		if pkColNum >= len(e.idxScanCtx.primaryColumnIds) {
-			e.idxScanCtx.pkStatus = pkColIsCommon
-			e.idxScanCtx.columnLen -= len(e.idxScanCtx.primaryColumnIds)
-		}
+		e.idxScanCtx.pkStatus = pkColIsCommon
+		e.idxScanCtx.columnLen -= len(e.idxScanCtx.primaryColumnIds)
 	}
 
 	colInfos := make([]rowcodec.ColInfo, len(e.columnInfos))
@@ -667,7 +659,7 @@ func (e *closureExecutor) indexScanProcessOldCollation(key, value []byte) error 
 	}
 	if len(b) > 0 {
 		if pkStatus != pkColNotExists {
-			if len(b) <= 9 {
+			if pkStatus != pkColIsCommon {
 				_, err = decoder.DecodeOne(b, colLen, e.fieldTps[colLen])
 				if err != nil {
 					return errors.Trace(err)
@@ -677,34 +669,26 @@ func (e *closureExecutor) indexScanProcessOldCollation(key, value []byte) error 
 				if err != nil {
 					return errors.Trace(err)
 				}
-				for pos := colLen; pos < len(e.idxScanCtx.colInfos); pos++ {
-					for j, colID := range e.idxScanCtx.primaryColumnIds {
-						if e.idxScanCtx.colInfos[pos].ID == colID {
-							_, err = decoder.DecodeOne(handle.EncodedCol(j), pos, e.fieldTps[pos])
-							if err != nil {
-								return errors.Trace(err)
-							}
-						}
+				for i := range e.idxScanCtx.primaryColumnIds {
+					_, err = decoder.DecodeOne(handle.EncodedCol(i), colLen+i, e.fieldTps[colLen+i])
+					if err != nil {
+						return errors.Trace(err)
 					}
 				}
 			}
 		}
 	} else if pkStatus != pkColNotExists {
-		if len(value) <= 8 {
+		if pkStatus != pkColIsCommon {
 			chk.AppendInt64(colLen, int64(binary.BigEndian.Uint64(value)))
 		} else {
 			handle, err := kv.NewCommonHandle(value)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			for pos := colLen; pos < len(e.idxScanCtx.colInfos); pos++ {
-				for j, colID := range e.idxScanCtx.primaryColumnIds {
-					if e.idxScanCtx.colInfos[pos].ID == colID {
-						_, err = decoder.DecodeOne(handle.EncodedCol(j), pos, e.fieldTps[pos])
-						if err != nil {
-							return errors.Trace(err)
-						}
-					}
+			for i := range e.idxScanCtx.primaryColumnIds {
+				_, err = decoder.DecodeOne(handle.EncodedCol(i), colLen+i, e.fieldTps[colLen+i])
+				if err != nil {
+					return errors.Trace(err)
 				}
 			}
 		}
