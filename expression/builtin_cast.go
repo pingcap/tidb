@@ -1145,7 +1145,7 @@ func (b *builtinCastStringAsIntSig) evalInt(row chunk.Row) (res int64, isNull bo
 	var ures uint64
 	sc := b.ctx.GetSessionVars().StmtCtx
 	if !isNegative {
-		ures, err = types.StrToUint(sc, val)
+		ures, err = types.StrToUint(sc, val, true)
 		res = int64(ures)
 
 		if err == nil && !mysql.HasUnsignedFlag(b.tp.Flag) && ures > uint64(math.MaxInt64) {
@@ -1154,7 +1154,7 @@ func (b *builtinCastStringAsIntSig) evalInt(row chunk.Row) (res int64, isNull bo
 	} else if b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag) {
 		res = 0
 	} else {
-		res, err = types.StrToInt(sc, val)
+		res, err = types.StrToInt(sc, val, true)
 		if err == nil && mysql.HasUnsignedFlag(b.tp.Flag) {
 			// If overflow, don't append this warnings
 			sc.AppendWarning(types.ErrCastNegIntAsUnsigned)

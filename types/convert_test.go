@@ -381,7 +381,7 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 func testStrToInt(c *C, str string, expect int64, truncateAsErr bool, expectErr error) {
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = !truncateAsErr
-	val, err := StrToInt(sc, str)
+	val, err := StrToInt(sc, str, false)
 	if expectErr != nil {
 		c.Assert(terror.ErrorEqual(err, expectErr), IsTrue, Commentf("err %v", err))
 	} else {
@@ -393,7 +393,7 @@ func testStrToInt(c *C, str string, expect int64, truncateAsErr bool, expectErr 
 func testStrToUint(c *C, str string, expect uint64, truncateAsErr bool, expectErr error) {
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = !truncateAsErr
-	val, err := StrToUint(sc, str)
+	val, err := StrToUint(sc, str, false)
 	if expectErr != nil {
 		c.Assert(terror.ErrorEqual(err, expectErr), IsTrue, Commentf("err %v", err))
 	} else {
@@ -479,11 +479,11 @@ func testSelectUpdateDeleteEmptyStringError(c *C) {
 		str := ""
 		expect := 0
 
-		val, err := StrToInt(sc, str)
+		val, err := StrToInt(sc, str, false)
 		c.Assert(err, IsNil)
 		c.Assert(val, Equals, int64(expect))
 
-		val1, err := StrToUint(sc, str)
+		val1, err := StrToUint(sc, str, false)
 		c.Assert(err, IsNil)
 		c.Assert(val1, Equals, uint64(expect))
 
@@ -778,7 +778,7 @@ func (s *testTypeConvertSuite) TestGetValidInt(c *C) {
 	sc.InSelectStmt = true
 	warningCount := 0
 	for _, tt := range tests {
-		prefix, err := getValidIntPrefix(sc, tt.origin)
+		prefix, err := getValidIntPrefix(sc, tt.origin, false)
 		c.Assert(err, IsNil)
 		c.Assert(prefix, Equals, tt.valid)
 		if tt.signed {
@@ -820,7 +820,7 @@ func (s *testTypeConvertSuite) TestGetValidInt(c *C) {
 	sc.TruncateAsWarning = false
 	sc.InSelectStmt = false
 	for _, tt := range tests2 {
-		prefix, err := getValidIntPrefix(sc, tt.origin)
+		prefix, err := getValidIntPrefix(sc, tt.origin, false)
 		if tt.warning {
 			c.Assert(terror.ErrorEqual(err, ErrTruncatedWrongVal), IsTrue)
 		} else {

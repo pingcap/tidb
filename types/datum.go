@@ -984,7 +984,7 @@ func (d *Datum) convertToUint(sc *stmtctx.StatementContext, target *FieldType) (
 	case KindFloat32, KindFloat64:
 		val, err = ConvertFloatToUint(sc, d.GetFloat64(), upperBound, tp)
 	case KindString, KindBytes:
-		uval, err1 := StrToUint(sc, d.GetString())
+		uval, err1 := StrToUint(sc, d.GetString(), false)
 		if err1 != nil && ErrOverflow.Equal(err1) && !sc.ShouldIgnoreOverflowError() {
 			return ret, errors.Trace(err1)
 		}
@@ -1286,7 +1286,7 @@ func (d *Datum) convertToMysqlYear(sc *stmtctx.StatementContext, target *FieldTy
 	switch d.k {
 	case KindString, KindBytes:
 		s := d.GetString()
-		y, err = StrToInt(sc, s)
+		y, err = StrToInt(sc, s, false)
 		if err != nil {
 			ret.SetInt64(0)
 			return ret, errors.Trace(err)
@@ -1535,7 +1535,7 @@ func (d *Datum) toSignedInteger(sc *stmtctx.StatementContext, tp byte) (int64, e
 	case KindFloat64:
 		return ConvertFloatToInt(d.GetFloat64(), lowerBound, upperBound, tp)
 	case KindString, KindBytes:
-		iVal, err := StrToInt(sc, d.GetString())
+		iVal, err := StrToInt(sc, d.GetString(), false)
 		iVal, err2 := ConvertIntToInt(iVal, lowerBound, upperBound, tp)
 		if err == nil {
 			err = err2
