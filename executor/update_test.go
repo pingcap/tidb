@@ -292,3 +292,23 @@ func (s *testSuite11) TestDeleteClusterIndex(c *C) {
 	tk.MustExec(`insert into it3pk(id1, id2, v, id3) values ('aaa', 'bbb', 433, 111)`)
 	tk.MustQuery(`select * from it3pk where id1 = 'aaa' and id2 = 'bbb' and id3 = 111`).Check(testkit.Rows("aaa bbb 433 111"))
 }
+
+func (s *testSuite11) TestReplaceClusterIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
+	tk.MustExec(`use test`)
+
+	tk.MustExec(`drop table if exists rt1pk`)
+	tk.MustExec(`create table rt1pk(id varchar(200) primary key, v int)`)
+	tk.MustExec(`replace into rt1pk(id, v) values('abc', 1)`)
+	tk.MustQuery(`select * from rt1pk`).Check(testkit.Rows("abc 1"))
+	tk.MustExec(`replace into rt1pk(id, v) values('bbb', 233), ('abc', 2)`)
+	tk.MustQuery(`select * from rt1pk`).Check(testkit.Rows("abc 2", "bbb 233"))
+
+	tk.MustExec(`drop table if exists rt3pk`)
+	tk.MustExec(`create table rt3pk(id1 timestamp, id2 time, v int, id3 year, primary key(id1, id2, id3))`)
+	tk.MustExec(`replace into rt3pk(id1, id2,id3, v) values('2018-01-01 11:11:11', '22:22:22', '2019', 1)`)
+	tk.MustQuery(`select * from rt3pk`).Check(testkit.Rows("2018-01-01 11:11:11 22:22:22 1 2019"))
+	tk.MustExec(`replace into rt3pk(id1, id2, id3, v) values('2018-01-01 11:11:11', '22:22:22', '2019', 2)`)
+	tk.MustQuery(`select * from rt3pk`).Check(testkit.Rows("2018-01-01 11:11:11 22:22:22 2 2019"))
+}
