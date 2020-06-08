@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -983,7 +984,7 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	assertExperimentDisabled("create table auto_random_table (a int primary key auto_random(3))")
 }
 
-func (s *testSerialSuite) TestExchangePartitionForAutoRandom(c *C) {
+func (s *testSerialSuite) TestAutoRandomExchangePartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists auto_random_db")
 	defer tk.MustExec("drop database if exists auto_random_db")
@@ -1015,6 +1016,66 @@ func (s *testSerialSuite) TestExchangePartitionForAutoRandom(c *C) {
 	tk.MustQuery("select count(*) from e4").Check(testkit.Rows("3"))
 	tk.MustExec("insert into e4 values ()")
 	tk.MustQuery("select count(*) from e4").Check(testkit.Rows("4"))
+}
+
+func (s *testSerialSuite) TestAutoRandomIncBitsIncrementAndOffset(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists auto_random_db")
+	defer tk.MustExec("drop database if exists auto_random_db")
+	tk.MustExec("use auto_random_db")
+	tk.MustExec("drop table if exists t")
+
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+
+	recreateTable := func() {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (a bigint auto_random(6) primary key)")
+	}
+	truncateTable := func() {
+		_, _ = tk.Exec("delete from t")
+	}
+	insertTable := func() {
+		tk.MustExec("insert into t values ()")
+	}
+	assertIncBitsValues := func(values ...int) {
+		mask := strings.Repeat("1", 64-1-6)
+		sql := fmt.Sprintf(`select a & b'%s' from t order by a & b'%s' asc`, mask, mask)
+		vs := make([]string, len(values))
+		for i, value := range values {
+			vs[i] = strconv.Itoa(value)
+		}
+		tk.MustQuery(sql).Check(testkit.Rows(vs...))
+	}
+
+	const truncate, recreate = true, false
+	expect := func(vs ...int) []int { return vs }
+	testCase := []struct {
+		setupAction bool  // truncate or recreate
+		increment   int   // @@auto_increment_increment
+		offset      int   // @@auto_increment_offset
+		results     []int // the implicit allocated auto_random incremental-bit part of values
+	}{
+		{recreate, 5, 10, expect(10, 15, 20)},
+		{recreate, 2, 10, expect(10, 12, 14)},
+		{truncate, 5, 10, expect(15, 20, 25)},
+		{truncate, 10, 10, expect(30, 40, 50)},
+		{truncate, 5, 10, expect(55, 60, 65)},
+	}
+	for _, tc := range testCase {
+		switch tc.setupAction {
+		case recreate:
+			recreateTable()
+		case truncate:
+			truncateTable()
+		}
+		tk.Se.GetSessionVars().AutoIncrementIncrement = tc.increment
+		tk.Se.GetSessionVars().AutoIncrementOffset = tc.offset
+		for range tc.results {
+			insertTable()
+		}
+		assertIncBitsValues(tc.results...)
+	}
 }
 
 func (s *testSerialSuite) TestModifyingColumn4NewCollations(c *C) {
