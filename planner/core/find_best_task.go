@@ -103,49 +103,54 @@ func GetPropByOrderByItemsContainScalarFunc(items []*util.ByItems) (*property.Ph
 	return &property.PhysicalProperty{Items: propItems}, true, onlyColumn
 }
 
-func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty) (task, error) {
+func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty) (task, int64, error) {
 	// If the required property is not empty and the row count > 1,
 	// we cannot ensure this required property.
 	// But if the row count is 0 or 1, we don't need to care about the property.
 	if !prop.IsEmpty() && p.RowCount > 1 {
-		return invalidTask, nil
+		return invalidTask, 0, nil
 	}
 	dual := PhysicalTableDual{
 		RowCount: p.RowCount,
 	}.Init(p.ctx, p.stats, p.blockOffset)
 	dual.SetSchema(p.schema)
-	return &rootTask{p: dual}, nil
+	return &rootTask{p: dual}, 1, nil
 }
 
-func (p *LogicalShow) findBestTask(prop *property.PhysicalProperty) (task, error) {
+func (p *LogicalShow) findBestTask(prop *property.PhysicalProperty) (task, int64, error) {
 	if !prop.IsEmpty() {
-		return invalidTask, nil
+		return invalidTask, 0, nil
 	}
 	pShow := PhysicalShow{ShowContents: p.ShowContents}.Init(p.ctx)
 	pShow.SetSchema(p.schema)
-	return &rootTask{p: pShow}, nil
+	return &rootTask{p: pShow}, 1, nil
 }
 
-func (p *LogicalShowDDLJobs) findBestTask(prop *property.PhysicalProperty) (task, error) {
+func (p *LogicalShowDDLJobs) findBestTask(prop *property.PhysicalProperty) (task, int64, error) {
 	if !prop.IsEmpty() {
-		return invalidTask, nil
+		return invalidTask, 0, nil
 	}
 	pShow := PhysicalShowDDLJobs{JobNumber: p.JobNumber}.Init(p.ctx)
 	pShow.SetSchema(p.schema)
-	return &rootTask{p: pShow}, nil
+	return &rootTask{p: pShow}, 1, nil
 }
 
-func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPlan, prop *property.PhysicalProperty) (task, error) {
+func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPlan, prop *property.PhysicalProperty) (task, int64, error) {
 	var bestTask task = invalidTask
+	var curCntPlan int64 = 1
+	var cntPlan int64 = 0
 	childTasks := make([]task, 0, len(p.children))
 	for _, pp := range physicalPlans {
 		// find best child tasks firstly.
 		childTasks = childTasks[:0]
-		for i, child := range p.children {
-			childTask, err := child.findBestTask(pp.GetChildReqProps(i))
+		// curCntPlan record the number of possible plan for pp
+		curCntPlan = 1
+		for j, child := range p.children {
+			childTask, cnt, err := child.findBestTask(pp.GetChildReqProps(j))
 			if err != nil {
-				return nil, err
+				return nil, 0, err
 			}
+			curCntPlan = curCntPlan * cnt
 			if childTask != nil && childTask.invalid() {
 				break
 			}
@@ -160,45 +165,49 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		// combine best child tasks with parent physical plan.
 		curTask := pp.attach2Task(childTasks...)
 
-		// enforce curTask property
+		// enforce curTask property, set curCntPlan to 1 since the Task is enforced.
 		if prop.Enforced {
 			curTask = enforceProperty(prop, curTask, p.basePlan.ctx)
+			curCntPlan = 1
 		}
 
 		// optimize by shuffle executor to running in parallel manner.
 		if prop.IsEmpty() {
+			// TODO: using SQL hint `use_plan(x)` should avoid random here.
 			curTask = optimizeByShuffle(pp, curTask, p.basePlan.ctx)
 		}
 
 		// get the most efficient one.
+		cntPlan += curCntPlan
 		if curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()) {
 			bestTask = curTask
 		}
 	}
-	return bestTask, nil
+	return bestTask, cntPlan, nil
 }
 
 // findBestTask implements LogicalPlan interface.
-func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTask task, err error) {
+func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTask task, cntPlan int64, err error) {
 	// If p is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
 	// and set inner child prop nil, so here we do nothing.
 	if prop == nil {
-		return nil, nil
+		return nil, 0, nil
 	}
 	// Look up the task with this prop in the task map.
 	// It's used to reduce double counting.
 	bestTask = p.getTask(prop)
 	if bestTask != nil {
-		return bestTask, nil
+		return bestTask, 1, nil
 	}
 
 	if prop.TaskTp != property.RootTaskType {
 		// Currently all plan cannot totally push down.
 		p.storeTask(prop, invalidTask)
-		return invalidTask, nil
+		return invalidTask, 0, nil
 	}
 
 	bestTask = invalidTask
+	cntPlan = 0
 	// prop should be read only because its cached hashcode might be not consistent
 	// when it is changed. So we clone a new one for the temporary changes.
 	newProp := prop.Clone()
@@ -207,6 +216,7 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 	var hintWorksWithProp bool
 	// Maybe the plan can satisfy the required property,
 	// so we try to get the task without the enforced sort first.
+	// TODO: from PHX will it introduce some random?
 	plansFitsProp, hintWorksWithProp = p.self.exhaustPhysicalPlans(newProp)
 	if !hintWorksWithProp && !newProp.IsEmpty() {
 		// If there is a hint in the plan and the hint cannot satisfy the property,
@@ -238,25 +248,29 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 	}
 
 	newProp.Enforced = false
-	if bestTask, err = p.enumeratePhysicalPlans4Task(plansFitsProp, newProp); err != nil {
-		return nil, err
+	var cnt int64 = 0
+	if bestTask, cnt, err = p.enumeratePhysicalPlans4Task(plansFitsProp, newProp); err != nil {
+		return nil, 0, err
 	}
+	cntPlan += cnt
+	cnt = 0
 	newProp.Enforced = true
-	curTask, err := p.enumeratePhysicalPlans4Task(plansNeedEnforce, newProp)
+	curTask, cnt, err := p.enumeratePhysicalPlans4Task(plansNeedEnforce, newProp)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
+	cntPlan += cnt
 	if curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()) {
 		bestTask = curTask
 	}
 
 	p.storeTask(prop, bestTask)
-	return bestTask, nil
+	return bestTask, cntPlan, nil
 }
 
-func (p *LogicalMemTable) findBestTask(prop *property.PhysicalProperty) (t task, err error) {
+func (p *LogicalMemTable) findBestTask(prop *property.PhysicalProperty) (t task, cntPlan int64, err error) {
 	if !prop.IsEmpty() {
-		return invalidTask, nil
+		return invalidTask, 0, nil
 	}
 	memTable := PhysicalMemTable{
 		DBName:         p.DBName,
@@ -266,7 +280,7 @@ func (p *LogicalMemTable) findBestTask(prop *property.PhysicalProperty) (t task,
 		QueryTimeRange: p.QueryTimeRange,
 	}.Init(p.ctx, p.stats, p.blockOffset)
 	memTable.SetSchema(p.schema)
-	return &rootTask{p: memTable}, nil
+	return &rootTask{p: memTable}, 1, nil
 }
 
 // tryToGetDualTask will check if the push down predicate has false constant. If so, it will return table dual.
@@ -441,30 +455,33 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 
 // findBestTask implements the PhysicalPlan interface.
 // It will enumerate all the available indices and choose a plan with least cost.
-func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err error) {
+func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, cntPlan int64, err error) {
 	// If ds is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
 	// and set inner child prop nil, so here we do nothing.
 	if prop == nil {
-		return nil, nil
+		return nil, 0, nil
 	}
 
 	t = ds.getTask(prop)
 	if t != nil {
+		cntPlan = 1
 		return
 	}
+	var cnt int64 = 0
 	// If prop.enforced is true, the prop.cols need to be set nil for ds.findBestTask.
 	// Before function return, reset it for enforcing task prop and storing map<prop,task>.
 	oldPropCols := prop.Items
 	if prop.Enforced {
 		// First, get the bestTask without enforced prop
 		prop.Enforced = false
-		t, err = ds.findBestTask(prop)
+		t, cnt, err = ds.findBestTask(prop)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		prop.Enforced = true
 		if t != invalidTask {
 			ds.storeTask(prop, t)
+			cntPlan = cnt
 			return
 		}
 		// Next, get the bestTask with enforced prop
@@ -483,19 +500,21 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 
 	t, err = ds.tryToGetDualTask()
 	if err != nil || t != nil {
-		return t, err
+		return t, 1, err
 	}
 
 	t = invalidTask
 	candidates := ds.skylinePruning(prop)
 
+	cntPlan = 0
 	for _, candidate := range candidates {
 		path := candidate.path
 		if path.PartialIndexPaths != nil {
 			idxMergeTask, err := ds.convertToIndexMergeScan(prop, candidate)
 			if err != nil {
-				return nil, err
+				return nil, 0, err
 			}
+			cntPlan += 1
 			if idxMergeTask.cost() < t.cost() {
 				t = idxMergeTask
 			}
@@ -505,9 +524,10 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 		if len(path.Ranges) == 0 && !ds.ctx.GetSessionVars().StmtCtx.UseCache {
 			dual := PhysicalTableDual{}.Init(ds.ctx, ds.stats, ds.blockOffset)
 			dual.SetSchema(ds.schema)
+			cntPlan += 1
 			return &rootTask{
 				p: dual,
-			}, nil
+			}, cntPlan, nil
 		}
 		canConvertPointGet := (!ds.isPartition && len(path.Ranges) > 0) || (ds.isPartition && len(path.Ranges) == 1)
 		canConvertPointGet = canConvertPointGet && candidate.path.StoreType != kv.TiFlash
@@ -532,6 +552,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 				} else {
 					pointGetTask = ds.convertToBatchPointGet(prop, candidate)
 				}
+				cntPlan += 1
 				if pointGetTask.cost() < t.cost() {
 					t = pointGetTask
 					continue
@@ -547,8 +568,9 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 			}
 			tblTask, err := ds.convertToTableScan(prop, candidate)
 			if err != nil {
-				return nil, err
+				return nil, 0, err
 			}
+			cntPlan += 1
 			if tblTask.cost() < t.cost() {
 				t = tblTask
 			}
@@ -560,8 +582,9 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 		}
 		idxTask, err := ds.convertToIndexScan(prop, candidate)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
+		cntPlan += 1
 		if idxTask.cost() < t.cost() {
 			t = idxTask
 		}

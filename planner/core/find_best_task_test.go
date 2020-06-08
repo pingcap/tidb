@@ -42,7 +42,7 @@ func (ds mockDataSource) Init(ctx sessionctx.Context) *mockDataSource {
 	return &ds
 }
 
-func (ds *mockDataSource) findBestTask(prop *property.PhysicalProperty) (task, error) {
+func (ds *mockDataSource) findBestTask(prop *property.PhysicalProperty) (task, int64, error) {
 	// It can satisfy any of the property!
 	// Just use a TableDual for convenience.
 	p := PhysicalTableDual{}.Init(ds.ctx, &property.StatsInfo{RowCount: 1}, 0)
@@ -50,7 +50,7 @@ func (ds *mockDataSource) findBestTask(prop *property.PhysicalProperty) (task, e
 		p:   p,
 		cst: 10000,
 	}
-	return task, nil
+	return task, 1, nil
 }
 
 // mockLogicalPlan4Test is a LogicalPlan which is used for unit test.
@@ -151,7 +151,7 @@ func (s *testFindBestTaskSuite) TestCostOverflow(c *C) {
 	mockPlan.SetChildren(mockDS)
 	// An empty property is enough for this test.
 	prop := property.NewPhysicalProperty(property.RootTaskType, nil, false, 0, false)
-	t, err := mockPlan.findBestTask(prop)
+	t, _, err := mockPlan.findBestTask(prop)
 	c.Assert(err, IsNil)
 	// The cost should be overflowed, but the task shouldn't be invalid.
 	c.Assert(t.invalid(), IsFalse)
@@ -178,7 +178,7 @@ func (s *testFindBestTaskSuite) TestEnforcedProperty(c *C) {
 		Enforced: false,
 	}
 	// should return invalid task because no physical plan can match this property.
-	task, err := mockPlan.findBestTask(prop0)
+	task, _, err := mockPlan.findBestTask(prop0)
 	c.Assert(err, IsNil)
 	c.Assert(task.invalid(), IsTrue)
 
@@ -187,7 +187,7 @@ func (s *testFindBestTaskSuite) TestEnforcedProperty(c *C) {
 		Enforced: true,
 	}
 	// should return the valid task when the property is enforced.
-	task, err = mockPlan.findBestTask(prop1)
+	task, _, err = mockPlan.findBestTask(prop1)
 	c.Assert(err, IsNil)
 	c.Assert(task.invalid(), IsFalse)
 }
@@ -210,7 +210,7 @@ func (s *testFindBestTaskSuite) TestHintCannotFitProperty(c *C) {
 		Items:    items,
 		Enforced: true,
 	}
-	task, err := mockPlan0.findBestTask(prop0)
+	task, _, err := mockPlan0.findBestTask(prop0)
 	c.Assert(err, IsNil)
 	c.Assert(task.invalid(), IsFalse)
 	_, enforcedSort := task.plan().(*PhysicalSort)
@@ -226,7 +226,7 @@ func (s *testFindBestTaskSuite) TestHintCannotFitProperty(c *C) {
 		Items:    items,
 		Enforced: false,
 	}
-	task, err = mockPlan0.findBestTask(prop1)
+	task, _, err = mockPlan0.findBestTask(prop1)
 	c.Assert(err, IsNil)
 	c.Assert(task.invalid(), IsFalse)
 	_, enforcedSort = task.plan().(*PhysicalSort)
@@ -247,7 +247,7 @@ func (s *testFindBestTaskSuite) TestHintCannotFitProperty(c *C) {
 		canGeneratePlan2: false,
 	}.Init(ctx)
 	mockPlan1.SetChildren(mockDS)
-	task, err = mockPlan1.findBestTask(prop2)
+	task, _, err = mockPlan1.findBestTask(prop2)
 	c.Assert(err, IsNil)
 	c.Assert(task.invalid(), IsFalse)
 	c.Assert(ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
@@ -263,7 +263,7 @@ func (s *testFindBestTaskSuite) TestHintCannotFitProperty(c *C) {
 		Items:    items,
 		Enforced: true,
 	}
-	task, err = mockPlan1.findBestTask(prop3)
+	task, _, err = mockPlan1.findBestTask(prop3)
 	c.Assert(err, IsNil)
 	c.Assert(task.invalid(), IsFalse)
 	c.Assert(ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
