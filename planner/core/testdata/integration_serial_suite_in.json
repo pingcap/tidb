@@ -43,6 +43,14 @@
     ]
   },
   {
+    "name": "TestIsolationReadDoNotFilterSystemDB",
+    "cases": [
+      "desc select * from metrics_schema.tidb_query_duration where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13'",
+      "desc select * from information_schema.tables",
+      "desc select * from mysql.stats_meta"
+    ]
+  },
+  {
     "name": "TestIsolationReadTiFlashNotChoosePointGet",
     "cases": [
       "explain select * from t where t.a = 1",
