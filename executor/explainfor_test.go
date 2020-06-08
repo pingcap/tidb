@@ -190,10 +190,10 @@ func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 
 	// single test
 	tk1.MustExec("execute stmt using @p0")
-	tk2.MustExec(explainForQuery).Check(testkit.Rows(
+	tk2.MustQuery(explainForQuery).Check(testkit.Rows(
 		"TableReader_7 8000.00 root  data:Selection_6",
 		"└─Selection_6 8000.00 cop[tikv]  eq(cast(test.t.a), 1)",
-		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",	
+		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 
 	// multiple test
@@ -209,10 +209,10 @@ func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 
 	go func() {
 		for i := 0; i < repeats; i++ {
-			tk2.MustExec(explainForQuery).Check(testkit.Rows(
+			tk2.MustQuery(explainForQuery).Check(testkit.Rows(
 				"TableReader_7 8000.00 root  data:Selection_6",
 				"└─Selection_6 8000.00 cop[tikv]  eq(cast(test.t.a), 1)",
-				"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",	
+				"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 			))
 		}
 		ch <- 0
