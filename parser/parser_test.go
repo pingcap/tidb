@@ -986,6 +986,8 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{"SET @_e._$. = 1", true, "SET @`_e._$.`=1"},
 		{"SET @~f = 1", false, ""},
 		{"SET @`g,` = 1", true, "SET @`g,`=1"},
+		{"SET", false, ""},
+		{"SET @a = 1, @b := 2", true, "SET @`a`=1, @`b`=2"},
 		// session system variables
 		{"SET SESSION autocommit = 1", true, "SET @@SESSION.`autocommit`=1"},
 		{"SET @@session.autocommit = 1", true, "SET @@SESSION.`autocommit`=1"},
