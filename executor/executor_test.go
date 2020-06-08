@@ -5673,7 +5673,7 @@ func (s *testSuite1) TestInsertIntoGivenPartitionSet(c *C) {
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec(`create table t1(
-	a int(11) DEFAULT NULL, 
+	a int(11) DEFAULT NULL,
 	b varchar(10) DEFAULT NULL,
 	UNIQUE KEY idx_a (a)) PARTITION BY RANGE (a)
 	(PARTITION p0 VALUES LESS THAN (10) ENGINE = InnoDB,
@@ -5812,4 +5812,17 @@ func (s *testSuite1) TestUpdateGivenPartitionSet(c *C) {
 
 	tk.MustExec("update t2 partition(p0) set a = 3 where a = 2")
 	tk.MustExec("update t2 partition(p0, p3) set a = 33 where a = 1")
+}
+
+// For issue 17256
+func (s *testSuite) TestGenerateColumnReplace(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int, b int as (a + 1) virtual not null, unique index idx(b));")
+	tk.MustExec("REPLACE INTO `t1` (`a`) VALUES (2);")
+	tk.MustExec("REPLACE INTO `t1` (`a`) VALUES (2);")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("2 3"))
+	tk.MustExec("insert into `t1` (`a`) VALUES (2) on duplicate key update a = 3;")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("3 4"))
 }
