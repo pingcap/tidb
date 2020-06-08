@@ -1181,3 +1181,19 @@ func (s *testSuite10) TestClusterPrimaryTablePlainInsert(c *C) {
 	tk.MustQuery(`select id3, id2, id1 from t3pk where id3 = 100 and id2 = 'xyz' and id1 = 'abc'`).Check(testkit.Rows("100 xyz abc"))
 	tk.MustQuery(`select id3, id2, id1, v from t3pk where id3 = 100 and id2 = 'xyz' and id1 = 'abc'`).Check(testkit.Rows("100 xyz abc 1"))
 }
+
+func (s *testSuite10) TestClusterPrimaryTableForIndexScan(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t (a varchar(255), b int, index idx(b), primary key(a,b));")
+	tk.MustExec("insert into t values ('aaa',1);")
+	tk.MustQuery(`select b from t where b = 1;`).Check(testkit.Rows("1"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t (a varchar(255), b int, unique index idx(b), primary key(a,b));")
+	tk.MustExec("insert into t values ('aaa',1);")
+	tk.MustQuery(`select b from t where b = 1;`).Check(testkit.Rows("1"))
+}
