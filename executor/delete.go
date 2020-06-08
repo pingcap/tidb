@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/memory"
 )
 
@@ -142,15 +141,8 @@ func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []p
 		if !info.IsCommonHandle {
 			handle = kv.IntHandle(joinedRow[info.HandleOrdinal[0]].GetInt64())
 		} else {
-			pkDts := make([]types.Datum, 0, len(info.HandleOrdinal))
-			for _, ordinal := range info.HandleOrdinal {
-				pkDts = append(pkDts, joinedRow[ordinal])
-			}
-			handleBytes, err := codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, nil, pkDts...)
-			if err != nil {
-				return err
-			}
-			handle, err = kv.NewCommonHandle(handleBytes)
+			var err error
+			handle, err = kv.BuildHandleFromDatumRow(e.ctx.GetSessionVars().StmtCtx, joinedRow, info.HandleOrdinal)
 			if err != nil {
 				return err
 			}
