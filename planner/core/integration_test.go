@@ -1106,5 +1106,14 @@ func (s *testIntegrationSuite) TestSelectLimit(c *C) {
 	tk.MustExec("delete from b where a = 2") // all values are deleted
 	result = tk.MustQuery("select * from b")
 	result.Check(testkit.Rows())
+}
 
+func (s *testIntegrationSuite) TestHintParserWarnings(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b int, key(a), key(b));")
+	tk.MustExec("select /*+ use_index_merge() */ * from t where a = 1 or b = 1;")
+	rows := tk.MustQuery("show warnings;").Rows()
+	c.Assert(len(rows), Equals, 1)
 }
