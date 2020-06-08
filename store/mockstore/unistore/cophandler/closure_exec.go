@@ -17,8 +17,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"math"
 	"sort"
 
@@ -26,6 +24,8 @@ import (
 	"github.com/ngaut/unistore/tikv/dbreader"
 	"github.com/ngaut/unistore/tikv/mvcc"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
