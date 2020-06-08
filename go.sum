@@ -75,6 +75,7 @@ github.com/cockroachdb/datadriven v0.0.0-20190809214429-80d97fb3cbaa h1:OaNxuTZr
 github.com/cockroachdb/datadriven v0.0.0-20190809214429-80d97fb3cbaa/go.mod h1:zn76sxSg3SzpJ0PPJaLDCu+Bu0Lg3sKTORVIj19EIF8=
 github.com/codahale/hdrhistogram v0.0.0-20161010025455-3a0bb77429bd h1:qMd81Ts1T2OTKmB4acZcyKaMtRnY5Y44NuXGX2GFJ1w=
 github.com/codahale/hdrhistogram v0.0.0-20161010025455-3a0bb77429bd/go.mod h1:sE/e/2PUdi/liOCUjSTXgM1o87ZssimdTWN964YiIeI=
+github.com/coocood/badger v1.5.1-0.20200515070411-e02af0688441/go.mod h1:klY8SfH2lNZ/23/SIxwHoJw+T6wYGB12YPCF9MUoiu0=
 github.com/coocood/badger v1.5.1-0.20200528065104-c02ac3616d04 h1:prWWMbnhC2+Iw/dWM0imCzaU2xjaIMQZS9V+BZ1DoUE=
 github.com/coocood/badger v1.5.1-0.20200528065104-c02ac3616d04/go.mod h1:klY8SfH2lNZ/23/SIxwHoJw+T6wYGB12YPCF9MUoiu0=
 github.com/coocood/bbloom v0.0.0-20190830030839-58deb6228d64 h1:W1SHiII3e0jVwvaQFglwu3kS9NLxOeTpvik7MbKCyuQ=
@@ -377,6 +378,7 @@ github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7 h1:7KAv7KMGTTqSmYZtNdc
 github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7/go.mod h1:iWMfgwqYW+e8n5lC/jjNEhwcjbRDpl5NT7n2h+4UNcI=
 github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef h1:K0Fn+DoFqNqktdZtdV3bPQ/0cuYh2H4rkg0tytX/07k=
 github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef/go.mod h1:7WjlapSfwQyo6LNmIvEWzsW1hbBQfpUO4JWnuQRmva8=
+github.com/ngaut/unistore v0.0.0-20200521040325-2af94f1b0c83/go.mod h1:odn0MiR+DNxnxOiCskG4wWacBIW2GBmJOf/TAnMZfWE=
 github.com/ngaut/unistore v0.0.0-20200603091253-e0b717679796 h1:mhOUY30ysXVcRuftTiFgbw//GERhoM/65u5jvr9LJ7s=
 github.com/ngaut/unistore v0.0.0-20200603091253-e0b717679796/go.mod h1:9mpqZeS1CkNlgZwJ0LZXb+Qd7xVO5o55ngys7T1/oH8=
 github.com/ngaut/unistore v0.0.0-20200604043635-5004cdad650f h1:ws3QybMmoXuS3S8tcR7DiFnUfae6yJRRi7I53vjumLI=
@@ -415,6 +417,8 @@ github.com/pingcap/br v0.0.0-20200426093517-dd11ae28b885 h1:gI14HoGBF9UyECMgqSRZ
 github.com/pingcap/br v0.0.0-20200426093517-dd11ae28b885/go.mod h1:4w3meMnk7HDNpNgjuRAxavruTeKJvUiXxoEWTjzXPnA=
 github.com/pingcap/br v0.0.0-20200521085655-53201addd4ad h1:nptiQT0kWdIUghh49OyaTBYb4DtdxJmsLHOxbU25kW4=
 github.com/pingcap/br v0.0.0-20200521085655-53201addd4ad/go.mod h1:SlSUHWY7QUoooiYxOKuJ8kUh2KjI29ogBh89YXz2dLA=
+github.com/pingcap/br v0.0.0-20200602113450-a6643a811dbe h1:bsm6tc4Io/MIRWqf3mapdK8XpxQ+edjacEtqPinhPRY=
+github.com/pingcap/br v0.0.0-20200602113450-a6643a811dbe/go.mod h1:Gq6o66nDReG0fMxqSdl8JHLZhMnxKhVxtHxqubUWAyg=
 github.com/pingcap/check v0.0.0-20190102082844-67f458068fc8/go.mod h1:B1+S9LNcuMyLH/4HMTViQOJevkGiik3wW2AN9zb2fNQ=
 github.com/pingcap/check v0.0.0-20191107115940-caf2b9e6ccf4/go.mod h1:PYMCGwN0JHjoqGr3HrZoD+b8Tgx8bKnArhSq8YVzUMc=
 github.com/pingcap/check v0.0.0-20191216031241-8a5a85928f12/go.mod h1:PYMCGwN0JHjoqGr3HrZoD+b8Tgx8bKnArhSq8YVzUMc=
@@ -454,6 +458,7 @@ github.com/pingcap/log v0.0.0-20200511115504-543df19646ad/go.mod h1:4rbK1p9ILyIf
 github.com/pingcap/parser v0.0.0-20200424075042-8222d8b724a4/go.mod h1:9v0Edh8IbgjGYW2ArJr19E+bvL8zKahsFp+ixWeId+4=
 github.com/pingcap/parser v0.0.0-20200507022230-f3bf29096657 h1:2ceTso30kmgMeddZ4iZ6zrK8N9eFF8zmCa1hSSE1tXc=
 github.com/pingcap/parser v0.0.0-20200507022230-f3bf29096657/go.mod h1:9v0Edh8IbgjGYW2ArJr19E+bvL8zKahsFp+ixWeId+4=
+github.com/pingcap/parser v0.0.0-20200518090819-ec1e13b948b1/go.mod h1:vQdbJqobJAgFyiRNNtXahpMoGWwPEuWciVEK5A20NS0=
 github.com/pingcap/parser v0.0.0-20200522094936-3b720a0512a6/go.mod h1:vQdbJqobJAgFyiRNNtXahpMoGWwPEuWciVEK5A20NS0=
 github.com/pingcap/parser v0.0.0-20200601053017-87d29a820b2d h1:eXigbUyAJDOhAIX9Hx72SqwbfSmpMiohdVM+WV5M0QQ=
 github.com/pingcap/parser v0.0.0-20200601053017-87d29a820b2d/go.mod h1:vQdbJqobJAgFyiRNNtXahpMoGWwPEuWciVEK5A20NS0=
@@ -467,6 +472,7 @@ github.com/pingcap/sysutil v0.0.0-20200408114249-ed3bd6f7fdb1/go.mod h1:EB/852NM
 github.com/pingcap/tidb v1.1.0-beta.0.20200424154252-5ede18f10eed/go.mod h1:m2VDlJDbUeHPCXAfKPajqLmB1uLvWpkKk3zALNqDYdw=
 github.com/pingcap/tidb v1.1.0-beta.0.20200509133407-a9dc72cf2558/go.mod h1:cXNbVSQAkwwmjFQmEnEPI00Z2/Y/KOhouttUPERiInE=
 github.com/pingcap/tidb v1.1.0-beta.0.20200513065557-5a0787dfa915/go.mod h1:khS9Z9YlbtxsaZsSsSahelgh5L16EtP30QADFmPiI/I=
+github.com/pingcap/tidb v1.1.0-beta.0.20200521154755-134e691d6f5f/go.mod h1:HobvT8ySGq9gkwPoyz/+V6TKWMRGEzFQobJOvLc2Oy8=
 github.com/pingcap/tidb v1.1.0-beta.0.20200603101356-552e7709de0d/go.mod h1:wgu4vP3wq+x/l1X3ckOZFvyGKcVIBkq30NQVh0Y+qYA=
 github.com/pingcap/tidb v1.1.0-beta.0.20200604055950-efc1c154d098/go.mod h1:UMxsNE326wyfgFJCx6aerPRLj1/tGPYDBKS9T9NOHI8=
 github.com/pingcap/tidb-tools v4.0.0-beta.1.0.20200306084441-875bd09aa3d5+incompatible/go.mod h1:XGdcy9+yqlDSEMTpOXnwf3hiTeqrV6MN/u1se9N8yIM=
@@ -611,6 +617,7 @@ github.com/xiang90/probing v0.0.0-20190116061207-43a291ad63a2/go.mod h1:UETIi67q
 github.com/xordataexchange/crypt v0.0.3-0.20170626215501-b2862e3d0a77/go.mod h1:aYKd//L2LvnjZzWKhF00oedf4jCCReLcmhLdhm1A27Q=
 github.com/yookoala/realpath v1.0.0/go.mod h1:gJJMA9wuX7AcqLy1+ffPatSCySA1FQ2S8Ya9AIoYBpE=
 github.com/yuin/goldmark v1.1.25/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
+github.com/yuin/goldmark v1.1.27/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
 github.com/zhangjinpeng1987/raft v0.0.0-20190624145930-deeb32d6553d h1:rGkexfPDxNuTCObUwTbsRUlti+evR/Ksb4dKy6esXW0=
 github.com/zhangjinpeng1987/raft v0.0.0-20190624145930-deeb32d6553d/go.mod h1:1KDQ09J8MRHEtHze4at7BJZDW/doUAgkJ8w9KjEUhSo=
 go.etcd.io/bbolt v1.3.2/go.mod h1:IbVyRI1SCnLcuJnV2u8VeU0CEYM7e686BmAb1XKL+uU=
@@ -808,6 +815,8 @@ golang.org/x/tools v0.0.0-20200225230052-807dcd883420/go.mod h1:TB2adYChydJhpapK
 golang.org/x/tools v0.0.0-20200325010219-a49f79bcc224/go.mod h1:Sl4aGygMT6LrqrWclx+PTx3U+LnKx/seiNR+3G19Ar8=
 golang.org/x/tools v0.0.0-20200325203130-f53864d0dba1 h1:odiryKYJy7CjdrZxhrcE1Z8L9+kGyGZOnfpuauvdCeU=
 golang.org/x/tools v0.0.0-20200325203130-f53864d0dba1/go.mod h1:Sl4aGygMT6LrqrWclx+PTx3U+LnKx/seiNR+3G19Ar8=
+golang.org/x/tools v0.0.0-20200521211927-2b542361a4fc h1:6m2YO+AmBApbUOmhsghW+IfRyZOY4My4UYvQQrEpHfY=
+golang.org/x/tools v0.0.0-20200521211927-2b542361a4fc/go.mod h1:EkVYQZoAsY45+roYkvgYkIh4xh/qjgUK9TdY2XT94GE=
 golang.org/x/xerrors v0.0.0-20190717185122-a985d3407aa7/go.mod h1:I/5z698sn9Ka8TeJc9MKroUUfqBBauWjQqLJ2OPfmY0=
 golang.org/x/xerrors v0.0.0-20191011141410-1b5146add898/go.mod h1:I/5z698sn9Ka8TeJc9MKroUUfqBBauWjQqLJ2OPfmY0=
 golang.org/x/xerrors v0.0.0-20191204190536-9bdfabe68543 h1:E7g+9GITq07hpfrRu66IVDexMakfv52eLZ2CXBWiKr4=
