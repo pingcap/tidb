@@ -874,7 +874,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
-	job.FinishTableJob(model.JobStateDone, model.StateNone, ver, nt)
+	job.FinishTableJob(model.JobStateDone, model.StateNone, ver, pt)
 	return ver, nil
 }
 
