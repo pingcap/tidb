@@ -83,9 +83,9 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 		for i, row := range rows {
 			var err error
 			if i == 0 {
-				_, err = e.addRecordWithAutoIDHint(ctx, row, len(rows))
+				err = e.addRecordWithAutoIDHint(ctx, row, len(rows))
 			} else {
-				_, err = e.addRecord(ctx, row)
+				err = e.addRecord(ctx, row)
 			}
 			if err != nil {
 				return err
@@ -243,7 +243,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 		// and key-values should be filled back to dupOldRowValues for the further row check,
 		// due to there may be duplicate keys inside the insert statement.
 		if newRows[i] != nil {
-			_, err := e.addRecord(ctx, newRows[i])
+			err := e.addRecord(ctx, newRows[i])
 			if err != nil {
 				return err
 			}

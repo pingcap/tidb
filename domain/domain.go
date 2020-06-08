@@ -599,6 +599,9 @@ func (do *Domain) isClose() bool {
 
 // Close closes the Domain and release its resource.
 func (do *Domain) Close() {
+	if do == nil {
+		return
+	}
 	startTime := time.Now()
 	if do.ddl != nil {
 		terror.Log(do.ddl.Stop())
