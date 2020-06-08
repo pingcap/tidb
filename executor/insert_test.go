@@ -1213,4 +1213,14 @@ func (s *testSuite10) TestClusterPrimaryTableInsertDuplicate(c *C) {
 	tk.MustQuery(`select * from dt1pi`).Check(testkit.Rows("abb 2", "acc 2"))
 	tk.MustExec(`insert into dt1pi(id, v) values('abb', 2) on duplicate key update v = v + 1, id = 'xxx'`)
 	tk.MustQuery(`select * from dt1pi`).Check(testkit.Rows("acc 2", "xxx 3"))
+
+	tk.MustExec(`drop table if exists ts1pk`)
+	tk.MustExec(`create table ts1pk(id1 timestamp, id2 timestamp, v int, primary key(id1, id2))`)
+	ts := "2018-01-01 11:11:11"
+	tk.MustExec(`insert into ts1pk (id1, id2, v) values(?, ?, ?)`, ts, ts, 1)
+	tk.MustQuery(`select id1, id2, v from ts1pk`).Check(testkit.Rows("2018-01-01 11:11:11 2018-01-01 11:11:11 1"))
+	tk.MustExec(`insert into ts1pk (id1, id2, v) values(?, ?, ?) on duplicate key update v = values(v)`, ts, ts, 2)
+	tk.MustQuery(`select id1, id2, v from ts1pk`).Check(testkit.Rows("2018-01-01 11:11:11 2018-01-01 11:11:11 2"))
+	tk.MustExec(`insert into ts1pk (id1, id2, v) values(?, ?, ?) on duplicate key update v = values(v), id1 = ?`, ts, ts, 2, "2018-01-01 11:11:12")
+	tk.MustQuery(`select id1, id2, v from ts1pk`).Check(testkit.Rows("2018-01-01 11:11:12 2018-01-01 11:11:11 2"))
 }

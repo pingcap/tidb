@@ -765,6 +765,10 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 			if err != nil {
 				return nil, nil, err
 			}
+			dt, err = tablecodec.Unflatten(dt, &col.FieldType, ctx.GetSessionVars().Location())
+			if err != nil {
+				return nil, nil, err
+			}
 			v[i] = dt
 			continue
 		}
