@@ -186,7 +186,7 @@ func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 	tk1.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	tk2.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 
-	explainForQuery := "explain for connection" + rows[0][0].(string)
+	explainForQuery := "explain for connection " + rows[0][0].(string)
 
 	tk1.MustExec("execute stmt using @p0")
 	tk2.MustExec(explainForQuery)
