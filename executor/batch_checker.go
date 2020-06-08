@@ -89,8 +89,9 @@ func getKeysNeedCheck(ctx context.Context, sctx sessionctx.Context, t table.Tabl
 	}
 	if t.Meta().IsCommonHandle {
 		pkIdx := tables.FindPrimaryIndex(t.Meta())
+		cols := t.Cols()
 		for _, idxCol := range pkIdx.Columns {
-			handleCols = append(handleCols, t.Cols()[idxCol.Offset])
+			handleCols = append(handleCols, cols[idxCol.Offset])
 		}
 	}
 
