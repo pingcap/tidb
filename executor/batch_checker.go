@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/stringutil"
 )
 
 type keyValue struct {
@@ -142,7 +143,7 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 				key:   t.RecordKey(handle),
 				value: newRowValue,
 			},
-			dupErr: kv.ErrKeyExists.FastGenByArgs(handle.String(), "PRIMARY"),
+			dupErr: kv.ErrKeyExists.FastGenByArgs(stringutil.MemoizeStr(handle.String), "PRIMARY"),
 		}
 	}
 
