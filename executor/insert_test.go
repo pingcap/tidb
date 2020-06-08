@@ -22,6 +22,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -1162,9 +1163,9 @@ func (s *testSuite10) TestClusterPrimaryTablePlainInsert(c *C) {
 	tk.MustExec(`insert into t1pk(id, v) values('abc', 1)`)
 	tk.MustQuery(`select * from t1pk`).Check(testkit.Rows("abc 1"))
 	tk.MustExec(`set @@tidb_constraint_check_in_place=true`)
-	c.Assert(tk.ExecToErr(`insert into t1pk(id, v) values('abc', 2)`).Error(), Equals, `[kv:1062]Duplicate entry '{abc}' for key 'PRIMARY'`)
+	tk.MustGetErrCode(`insert into t1pk(id, v) values('abc', 2)`, errno.ErrDupEntry)
 	tk.MustExec(`set @@tidb_constraint_check_in_place=false`)
-	c.Assert(tk.ExecToErr(`insert into t1pk(id, v) values('abc', 3)`).Error(), Equals, `[kv:1062]Duplicate entry '{abc}' for key 'PRIMARY'`)
+	tk.MustGetErrCode(`insert into t1pk(id, v) values('abc', 3)`, errno.ErrDupEntry)
 	tk.MustQuery(`select v, id from t1pk`).Check(testkit.Rows("1 abc"))
 	tk.MustQuery(`select id from t1pk where id = 'abc'`).Check(testkit.Rows("abc"))
 	tk.MustQuery(`select v, id from t1pk where id = 'abc'`).Check(testkit.Rows("1 abc"))
@@ -1174,9 +1175,9 @@ func (s *testSuite10) TestClusterPrimaryTablePlainInsert(c *C) {
 	tk.MustExec(`insert into t3pk(id1, id2, id3, v) values('abc', 'xyz', 100, 1)`)
 	tk.MustQuery(`select * from t3pk`).Check(testkit.Rows("abc xyz 1 100"))
 	tk.MustExec(`set @@tidb_constraint_check_in_place=true`)
-	c.Assert(tk.ExecToErr(`insert into t3pk(id1, id2, id3, v) values('abc', 'xyz', 100, 2)`).Error(), Equals, `[kv:1062]Duplicate entry '{abc, xyz, 100}' for key 'PRIMARY'`)
+	tk.MustGetErrCode(`insert into t3pk(id1, id2, id3, v) values('abc', 'xyz', 100, 2)`, errno.ErrDupEntry)
 	tk.MustExec(`set @@tidb_constraint_check_in_place=false`)
-	c.Assert(tk.ExecToErr(`insert into t3pk(id1, id2, id3, v) values('abc', 'xyz', 100, 3)`).Error(), Equals, `[kv:1062]Duplicate entry '{abc, xyz, 100}' for key 'PRIMARY'`)
+	tk.MustGetErrCode(`insert into t3pk(id1, id2, id3, v) values('abc', 'xyz', 100, 3)`, errno.ErrDupEntry)
 	tk.MustQuery(`select v, id3, id2, id1 from t3pk`).Check(testkit.Rows("1 100 xyz abc"))
 	tk.MustQuery(`select id3, id2, id1 from t3pk where id3 = 100 and id2 = 'xyz' and id1 = 'abc'`).Check(testkit.Rows("100 xyz abc"))
 	tk.MustQuery(`select id3, id2, id1, v from t3pk where id3 = 100 and id2 = 'xyz' and id1 = 'abc'`).Check(testkit.Rows("100 xyz abc 1"))
@@ -1187,7 +1188,7 @@ func (s *testSuite10) TestClusterPrimaryTablePlainInsert(c *C) {
 	tk.MustExec(`create table t1pku(id varchar(200) primary key, uk int, v int, unique key ukk(uk))`)
 	tk.MustExec(`insert into t1pku(id, uk, v) values('abc', 1, 2)`)
 	tk.MustQuery(`select * from t1pku where id = 'abc'`).Check(testkit.Rows("abc 1 2"))
-	c.Assert(tk.ExecToErr(`insert into t1pku(id, uk, v) values('aaa', 1, 3)`).Error(), Equals, "[kv:1062]Duplicate entry '1' for key 'ukk'")
+	tk.MustGetErrCode(`insert into t1pku(id, uk, v) values('aaa', 1, 3)`, errno.ErrDupEntry)
 	tk.MustQuery(`select * from t1pku`).Check(testkit.Rows("abc 1 2"))
 
 	//tk.MustQuery(`select * from t3pk where (id1, id2, id3) in (('abc', 'xyz', 100), ('abc', 'xyz', 101), ('abc', 'zzz', 101))`).

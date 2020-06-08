@@ -20,6 +20,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -256,7 +257,7 @@ func (s *testSuite11) TestUpdateClusterIndex(c *C) {
 	tk.MustExec(`update t set v = 222 where id = 'aaa'`)
 	tk.MustQuery(`select * from t where id = 'aaa'`).Check(testkit.Rows("aaa 222"))
 	tk.MustExec(`insert into t(id, v) values ('bbb', 111)`)
-	c.Assert(tk.ExecToErr(`update t set id = 'bbb' where id = 'aaa'`).Error(), Equals, `[kv:1062]Duplicate entry '{bbb}' for key 'PRIMARY'`)
+	tk.MustGetErrCode(`update t set id = 'bbb' where id = 'aaa'`, errno.ErrDupEntry)
 
 	tk.MustExec(`drop table if exists ut3pk`)
 	tk.MustExec(`create table ut3pk(id1 varchar(200), id2 varchar(200), v int, id3 int, primary key(id1, id2, id3))`)
@@ -268,7 +269,7 @@ func (s *testSuite11) TestUpdateClusterIndex(c *C) {
 	tk.MustExec(`update ut3pk set v = 666 where id1 = 'abc' and id2 = 'bbb2' and id3 = 222`)
 	tk.MustQuery(`select id1, id2, id3, v from ut3pk`).Check(testkit.Rows("abc bbb2 222 666"))
 	tk.MustExec(`insert into ut3pk(id1, id2, id3, v) values ('abc', 'bbb3', 222, 777)`)
-	c.Assert(tk.ExecToErr(`update ut3pk set id2 = 'bbb3' where id1 = 'abc' and id2 = 'bbb2' and id3 = 222`).Error(), Equals, `[kv:1062]Duplicate entry '{abc, bbb3, 222}' for key 'PRIMARY'`)
+	tk.MustGetErrCode(`update ut3pk set id2 = 'bbb3' where id1 = 'abc' and id2 = 'bbb2' and id3 = 222`, errno.ErrDupEntry)
 
 	tk.MustExec(`drop table if exists ut1pku`)
 	tk.MustExec(`create table ut1pku(id varchar(200) primary key, uk int, v int, unique key ukk(uk))`)
@@ -276,7 +277,7 @@ func (s *testSuite11) TestUpdateClusterIndex(c *C) {
 	tk.MustQuery(`select * from ut1pku`).Check(testkit.Rows("a 1 2", "b 2 3"))
 	tk.MustExec(`update ut1pku set uk = 3 where id = 'a'`)
 	tk.MustQuery(`select * from ut1pku`).Check(testkit.Rows("a 3 2", "b 2 3"))
-	c.Assert(tk.ExecToErr(`update ut1pku set uk = 2 where id = 'a'`).Error(), Equals, "[kv:1062]Duplicate entry '2' for key 'ukk'")
+	tk.MustGetErrCode(`update ut1pku set uk = 2 where id = 'a'`, errno.ErrDupEntry)
 	tk.MustQuery(`select * from ut1pku`).Check(testkit.Rows("a 3 2", "b 2 3"))
 }
 

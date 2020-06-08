@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
@@ -122,15 +121,12 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 	// Append record keys and errors.
 	var handle kv.Handle
 	if t.Meta().IsCommonHandle {
-		pkDts := make([]types.Datum, 0, len(handleCols))
+		var err error
+		handleOrdinals := make([]int, 0, len(handleCols))
 		for _, col := range handleCols {
-			pkDts = append(pkDts, row[col.Offset])
+			handleOrdinals = append(handleOrdinals, col.Offset)
 		}
-		handleBytes, err := codec.EncodeKey(ctx.GetSessionVars().StmtCtx, nil, pkDts...)
-		if err != nil {
-			return nil, err
-		}
-		handle, err = kv.NewCommonHandle(handleBytes)
+		handle, err = kv.BuildHandleFromDatumRow(ctx.GetSessionVars().StmtCtx, row, handleOrdinals)
 		if err != nil {
 			return nil, err
 		}
