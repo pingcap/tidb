@@ -184,6 +184,8 @@ func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 	tk1.MustExec("set @p0='1'")
 	rows := tk1.MustQuery("select connection_id()").Rows()
 	c.Assert(len(rows), Equals, 1)
+	
+	c.Assert(rows[0][0].(string), Equals, "1")
 
 	explainForQuery := "explain for connection " + rows[0][0].(string)
 
