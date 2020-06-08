@@ -170,22 +170,23 @@ func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 	c.Assert(err, IsNil)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 
-	tkRootProcess := tk1.Se.ShowProcess()
-
-	ps := []*util.ProcessInfo{tkRootProcess}
-	tk1.Se.SetSessionManager(&mockSessionManager1{PS: ps})
-	tk2.Se.SetSessionManager(&mockSessionManager1{PS: ps})
-
 	tk1.MustExec("use test")
 	tk1.MustExec("drop table if exists t")
 	tk1.MustExec("create table t(a int)")
 	tk1.MustExec("prepare stmt from 'select * from t where a = ?'")
 	tk1.MustExec("set @p0='1'")
 
-	explainForQuery := "explain for connection " + strconv.FormatUint(tkRootProcess.ID, 10)
+	explainForQuery := "explain for connection " + strconv.FormatUint(tk1.Se.ShowProcess().ID, 10)
+
+	// Now the ProcessInfo held by mockSessionManager will not be updated in real time.
+	// So it needs to be reset every time before tk2 query.
+	// TODO: replace with another mockSessionManager.
 
 	// single test
 	tk1.MustExec("execute stmt using @p0")
+	tk2.Se.SetSessionManager(&mockSessionManager1{
+		PS: []*util.ProcessInfo{tk1.Se.ShowProcess()},
+	})
 	tk2.MustQuery(explainForQuery).Check(testkit.Rows(
 		"TableReader_7 8000.00 root  data:Selection_6",
 		"└─Selection_6 8000.00 cop[tikv]  eq(cast(test.t.a), 1)",
@@ -205,6 +206,9 @@ func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 
 	go func() {
 		for i := 0; i < repeats; i++ {
+			tk2.Se.SetSessionManager(&mockSessionManager1{
+				PS: []*util.ProcessInfo{tk1.Se.ShowProcess()},
+			})
 			tk2.MustQuery(explainForQuery).Check(testkit.Rows(
 				"TableReader_7 8000.00 root  data:Selection_6",
 				"└─Selection_6 8000.00 cop[tikv]  eq(cast(test.t.a), 1)",
