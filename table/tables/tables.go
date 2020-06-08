@@ -467,6 +467,18 @@ func adjustRowValuesBuf(writeBufs *variable.WriteStmtBufs, rowLen int) {
 	writeBufs.AddRowValues = writeBufs.AddRowValues[:adjustLen]
 }
 
+// FindPrimaryIndex uses to find primary index in tableInfo.
+func FindPrimaryIndex(tblInfo *model.TableInfo) *model.IndexInfo {
+	var pkIdx *model.IndexInfo
+	for _, idx := range tblInfo.Indices {
+		if idx.Primary {
+			pkIdx = idx
+			break
+		}
+	}
+	return pkIdx
+}
+
 // AddRecord implements table.Table AddRecord interface.
 func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
 	var opt table.AddRecordOpt
@@ -486,6 +498,22 @@ func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 		tblInfo := t.Meta()
 		if tblInfo.PKIsHandle {
 			recordID = kv.IntHandle(r[tblInfo.GetPkColInfo().Offset].GetInt64())
+			hasRecordID = true
+		} else if tblInfo.IsCommonHandle {
+			pkIdx := FindPrimaryIndex(tblInfo)
+			pkDts := make([]types.Datum, 0, len(pkIdx.Columns))
+			for _, idxCol := range pkIdx.Columns {
+				pkDts = append(pkDts, r[tblInfo.Columns[idxCol.Offset].Offset])
+			}
+			var handleBytes []byte
+			handleBytes, err = codec.EncodeKey(ctx.GetSessionVars().StmtCtx, nil, pkDts...)
+			if err != nil {
+				return
+			}
+			recordID, err = kv.NewCommonHandle(handleBytes)
+			if err != nil {
+				return
+			}
 			hasRecordID = true
 		}
 	}
@@ -642,7 +670,7 @@ func (t *TableCommon) addIndices(sctx sessionctx.Context, recordID kv.Handle, r 
 		ctx = context.Background()
 	}
 	skipCheck := sctx.GetSessionVars().StmtCtx.BatchCheck
-	if t.meta.PKIsHandle && !skipCheck && !opt.SkipHandleCheck {
+	if (t.meta.IsCommonHandle || t.meta.PKIsHandle) && !skipCheck && !opt.SkipHandleCheck {
 		if err := CheckHandleExists(ctx, sctx, t, recordID, nil); err != nil {
 			return recordID, err
 		}
@@ -651,6 +679,9 @@ func (t *TableCommon) addIndices(sctx sessionctx.Context, recordID kv.Handle, r 
 	writeBufs := sctx.GetSessionVars().GetWriteStmtBufs()
 	indexVals := writeBufs.IndexValsBuf
 	for _, v := range t.WritableIndices() {
+		if t.meta.IsCommonHandle && v.Meta().Primary {
+			continue
+		}
 		indexVals, err = v.FetchValues(r, indexVals)
 		if err != nil {
 			return nil, err
@@ -1163,6 +1194,9 @@ func (t *TableCommon) canSkip(col *table.Column, value types.Datum) bool {
 // 3. the column is virtual generated.
 func CanSkip(info *model.TableInfo, col *table.Column, value types.Datum) bool {
 	if col.IsPKHandleColumn(info) {
+		return true
+	}
+	if col.IsCommonHandleColumn(info) {
 		return true
 	}
 	if col.GetDefaultValue() == nil && value.IsNull() {
