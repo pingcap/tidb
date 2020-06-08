@@ -137,7 +137,7 @@ func (p *LogicalShowDDLJobs) findBestTask(prop *property.PhysicalProperty) (task
 
 func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPlan, prop *property.PhysicalProperty) (task, int64, error) {
 	var bestTask task = invalidTask
-	var curCntPlan int64 = 1
+	var curCntPlan int64
 	var cntPlan int64 = 0
 	childTasks := make([]task, 0, len(p.children))
 	for _, pp := range physicalPlans {
@@ -247,12 +247,11 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 	}
 
 	newProp.Enforced = false
-	var cnt int64 = 0
+	var cnt int64
 	if bestTask, cnt, err = p.enumeratePhysicalPlans4Task(plansFitsProp, newProp); err != nil {
 		return nil, 0, err
 	}
 	cntPlan += cnt
-	cnt = 0
 	newProp.Enforced = true
 	curTask, cnt, err := p.enumeratePhysicalPlans4Task(plansNeedEnforce, newProp)
 	if err != nil {
@@ -466,7 +465,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, cnt
 		cntPlan = 1
 		return
 	}
-	var cnt int64 = 0
+	var cnt int64
 	// If prop.enforced is true, the prop.cols need to be set nil for ds.findBestTask.
 	// Before function return, reset it for enforcing task prop and storing map<prop,task>.
 	oldPropCols := prop.Items
