@@ -9,8 +9,8 @@ advertise-address = ""
 # TiDB server port.
 port = 4000
 
-# Registered store name, [tikv, mocktikv]
-store = "mocktikv"
+# Registered store name, [tikv, unistore]
+store = "unistore"
 
 # TiDB storage path.
 path = "/tmp/tidb"

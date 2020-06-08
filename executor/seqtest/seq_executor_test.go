@@ -832,6 +832,7 @@ func HelperTestAdminShowNextID(c *C, s *seqTestSuite, str string) {
 
 	oldAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
 	config.GetGlobalConfig().Experimental.AllowAutoRandom = true
+	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 	defer func() {
 		config.GetGlobalConfig().Experimental.AllowAutoRandom = oldAutoRandom
 	}()
