@@ -480,10 +480,15 @@ func GetDropOrTruncateTableInfoFromJobs(jobs []*model.Job, gcSafePoint uint64, d
 		// Get table meta from snapshot infoSchema.
 		table, ok := snapInfo.TableByID(job.TableID)
 		if !ok {
-			return false, infoschema.ErrTableNotExists.GenWithStackByArgs(
-				fmt.Sprintf("(Schema ID %d)", job.SchemaID),
-				fmt.Sprintf("(Table ID %d)", job.TableID),
-			)
+			// The dropped/truncated DDL maybe execute failed that caused by the parallel DDL execution,
+			// then can't find the table from the snapshot info-schema. Such as below:
+			// time	|	session1				|	session2
+			// t1	|	drop table t1			|
+			// t2 	|	t1 state is write only	|	in other TiDB, and table t1 state is public, drop table t1
+			// t3 	|	finish					|
+			// t4 	|							|	finish with error: schema not exists.
+			return false, errors.Errorf("dsfasadfsadf")
+			continue
 		}
 		finish, err := fn(job, table.Meta())
 		if err != nil || finish {
