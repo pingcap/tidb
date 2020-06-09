@@ -418,6 +418,9 @@ func (t *TableCommon) rebuildIndices(ctx sessionctx.Context, rm kv.RetrieverMuta
 		return err
 	}
 	for _, idx := range t.DeletableIndices() {
+		if t.meta.IsCommonHandle && idx.Meta().Primary {
+			continue
+		}
 		for _, ic := range idx.Meta().Columns {
 			if !touched[ic.Offset] {
 				continue
@@ -433,6 +436,9 @@ func (t *TableCommon) rebuildIndices(ctx sessionctx.Context, rm kv.RetrieverMuta
 		}
 	}
 	for _, idx := range t.WritableIndices() {
+		if t.meta.IsCommonHandle && idx.Meta().Primary {
+			continue
+		}
 		untouched := true
 		for _, ic := range idx.Meta().Columns {
 			if !touched[ic.Offset] {
@@ -745,6 +751,27 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 			}
 			continue
 		}
+		if col.IsCommonHandleColumn(meta) {
+			pkIdx := FindPrimaryIndex(meta)
+			var idxOfIdx int
+			for i, idxCol := range pkIdx.Columns {
+				if meta.Columns[idxCol.Offset].ID == col.ID {
+					idxOfIdx = i
+					break
+				}
+			}
+			dtBytes := h.EncodedCol(idxOfIdx)
+			_, dt, err := codec.DecodeOne(dtBytes)
+			if err != nil {
+				return nil, nil, err
+			}
+			dt, err = tablecodec.Unflatten(dt, &col.FieldType, ctx.GetSessionVars().Location())
+			if err != nil {
+				return nil, nil, err
+			}
+			v[i] = dt
+			continue
+		}
 		colTps[col.ID] = &col.FieldType
 	}
 	rowMap, err := tablecodec.DecodeRow(value, colTps, ctx.GetSessionVars().Location())
@@ -756,7 +783,7 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 		if col == nil {
 			continue
 		}
-		if col.IsPKHandleColumn(meta) {
+		if col.IsPKHandleColumn(meta) || col.IsCommonHandleColumn(meta) {
 			continue
 		}
 		ri, ok := rowMap[col.ID]
