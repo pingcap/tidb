@@ -985,10 +985,14 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 
 // AggInfo stores the information of an Aggregation.
 type AggInfo struct {
-	AggFuncs                 []*aggregation.AggFuncDesc
-	GroupByItems             []expression.Expression
-	Schema                   *expression.Schema
-	PartialExtraGroupByItems []expression.Expression
+	AggFuncs     []*aggregation.AggFuncDesc
+	GroupByItems []expression.Expression
+	Schema       *expression.Schema
+	// PartialAggFuncs & PartialGroupByItems is used ONLY when "aggregation funcs" or
+	//   "group by items" are different between `final` and `partial`,
+	//   which will happen in some situation, e.g. `JOIN` push down.
+	PartialAggFuncs     []*aggregation.AggFuncDesc
+	PartialGroupByItems []expression.Expression
 }
 
 // BuildFinalModeAggregation splits either LogicalAggregation or PhysicalAggregation to finalAgg and partial1Agg,
@@ -1007,13 +1011,16 @@ func BuildFinalModeAggregation(
 		GroupByItems: original.GroupByItems,
 		Schema:       expression.NewSchema(),
 	}
-	partial.GroupByItems = append(partial.GroupByItems, original.PartialExtraGroupByItems...)
+	if original.PartialGroupByItems != nil {
+		partial.GroupByItems = original.PartialGroupByItems
+	}
 	partialCursor := 0
 	final = &AggInfo{
 		AggFuncs:     make([]*aggregation.AggFuncDesc, len(original.AggFuncs)),
-		GroupByItems: make([]expression.Expression, 0, len(original.GroupByItems)),
+		GroupByItems: make([]expression.Expression, len(original.GroupByItems)),
 		Schema:       original.Schema,
 	}
+	copy(final.GroupByItems, original.GroupByItems)
 
 	partialGbySchema := expression.NewSchema()
 	partialFirstRowFuncs := make([]*aggregation.AggFuncDesc, 0, len(partial.GroupByItems))
@@ -1029,13 +1036,19 @@ func BuildFinalModeAggregation(
 			}
 		}
 
-		if len(final.GroupByItems) < len(original.GroupByItems) {
-			final.GroupByItems = append(final.GroupByItems, gbyCol)
+		for j, finalExpr := range final.GroupByItems {
+			if finalExpr.Equal(sctx, gbyExpr) {
+				final.GroupByItems[j] = gbyCol
+			}
 		}
+		// if len(final.GroupByItems) < len(original.GroupByItems) {
+		// 	final.GroupByItems = append(final.GroupByItems, gbyCol)
+		// }
 
 		if partialIsCop {
 			partialGbySchema.Append(gbyCol)
 		} else {
+			// TODO: if there is a duplicated first_row function, we can delete it.
 			firstRow, err := aggregation.NewAggFuncDesc(sctx, ast.AggFuncFirstRow, []expression.Expression{gbyCol}, false)
 			if err != nil {
 				panic("NewAggFuncDesc FirstRow meets error: " + err.Error())
@@ -1051,6 +1064,21 @@ func BuildFinalModeAggregation(
 	// This fop loop is ugly, but I do not find a proper way to reconstruct
 	// it right away.
 	for i, aggFunc := range original.AggFuncs {
+		// skip agg funcs not in partial agg.
+		if original.PartialAggFuncs != nil {
+			found := false
+			for _, partialAgg := range original.PartialAggFuncs {
+				if partialAgg.Equal(sctx, aggFunc) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				final.AggFuncs[i] = aggFunc
+				continue
+			}
+		}
+
 		finalAggFunc := &aggregation.AggFuncDesc{HasDistinct: false}
 		finalAggFunc.Name = aggFunc.Name
 		args := make([]expression.Expression, 0, len(aggFunc.Args))

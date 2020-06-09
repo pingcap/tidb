@@ -219,7 +219,7 @@ func (a *aggregationPushDownSolver) tryToPushDownAggForJoin(aggFuncs []*aggregat
 			return child, nil
 		}
 	}
-	agg := a.splitPartialAgg(originAgg, expression.Column2Exprs(gbyCols)[len(originAgg.GroupByItems):])
+	agg := a.splitPartialAgg(originAgg, aggFuncs, expression.Column2Exprs(gbyCols))
 	// agg, err := a.makeNewAgg(join.ctx, aggFuncs, gbyCols, originAgg.aggHints, originAgg.blockOffset)
 	// if err != nil {
 	// 	return nil, err
@@ -297,12 +297,13 @@ func (a *aggregationPushDownSolver) makeNewAgg(ctx sessionctx.Context, aggFuncs 
 	return agg, nil
 }
 
-func (a *aggregationPushDownSolver) splitPartialAgg(agg *LogicalAggregation, partialExtraGbyItems []expression.Expression) (pushedAgg *LogicalAggregation) {
+func (a *aggregationPushDownSolver) splitPartialAgg(agg *LogicalAggregation, partialAggFuncs []*aggregation.AggFuncDesc, partialGbyItems []expression.Expression) (pushedAgg *LogicalAggregation) {
 	partial, final, _ := BuildFinalModeAggregation(agg.ctx, &AggInfo{
-		AggFuncs:                 agg.AggFuncs,
-		GroupByItems:             agg.GroupByItems,
-		Schema:                   agg.schema,
-		PartialExtraGroupByItems: partialExtraGbyItems,
+		AggFuncs:            agg.AggFuncs,
+		GroupByItems:        agg.GroupByItems,
+		Schema:              agg.schema,
+		PartialAggFuncs:     partialAggFuncs,
+		PartialGroupByItems: partialGbyItems,
 	}, false)
 	agg.SetSchema(final.Schema)
 	agg.AggFuncs = final.AggFuncs
@@ -342,11 +343,11 @@ func (a *aggregationPushDownSolver) pushAggCrossUnion(agg *LogicalAggregation, u
 		newExpr := expression.ColumnSubstitute(gbyExpr, unionSchema, expression.Column2Exprs(unionChild.Schema().Columns))
 		newAgg.GroupByItems = append(newAgg.GroupByItems, newExpr)
 		// TODO: if there is a duplicated first_row function, we can delete it.
-		firstRow, err := aggregation.NewAggFuncDesc(agg.ctx, ast.AggFuncFirstRow, []expression.Expression{gbyExpr}, false)
-		if err != nil {
-			return nil, err
-		}
-		newAgg.AggFuncs = append(newAgg.AggFuncs, firstRow)
+		// firstRow, err := aggregation.NewAggFuncDesc(agg.ctx, ast.AggFuncFirstRow, []expression.Expression{gbyExpr}, false)
+		// if err != nil {
+		// 	return nil, err
+		// }
+		// newAgg.AggFuncs = append(newAgg.AggFuncs, firstRow)
 	}
 	newAgg.collectGroupByColumns()
 	tmpSchema := expression.NewSchema(newAgg.groupByCols...)
@@ -376,7 +377,7 @@ func (a *aggregationPushDownSolver) tryAggPushDownForUnion(union *LogicalUnionAl
 			return nil
 		}
 	}
-	pushedAgg := a.splitPartialAgg(agg, nil)
+	pushedAgg := a.splitPartialAgg(agg, nil, nil)
 	newChildren := make([]LogicalPlan, 0, len(union.Children()))
 	for _, child := range union.Children() {
 		newChild, err := a.pushAggCrossUnion(pushedAgg, union.Schema(), child)
