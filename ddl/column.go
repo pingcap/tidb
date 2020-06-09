@@ -645,7 +645,6 @@ func (w *worker) doModifyColumn(
 
 	if newAutoRandBits > 0 {
 		if err := checkAndApplyNewAutoRandomBits(t, job.SchemaID, tblInfo, newCol, oldName, newAutoRandBits); err != nil {
-			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
 	}
