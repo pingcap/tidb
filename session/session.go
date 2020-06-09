@@ -1283,9 +1283,48 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	return prepareExec.ID, prepareExec.ParamCount, prepareExec.Fields, nil
 }
 
+// CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
+func CompileExecutePreparedStmt(ctx context.Context, s Session, ID uint32, args []types.Datum) (sqlexec.Statement, error) {
+	startTime := time.Now()
+	defer func() {
+		s.GetSessionVars().DurationCompile = time.Since(startTime)
+	}()
+	execStmt := &ast.ExecuteStmt{ExecID: ID}
+	if err := executor.ResetContextOfStmt(s, execStmt); err != nil {
+		return nil, err
+	}
+	execStmt.BinaryArgs = args
+	is := infoschema.GetInfoSchema(s)
+	execPlan, names, err := planner.Optimize(ctx, s, execStmt, is)
+	if err != nil {
+		return nil, err
+	}
+	s.(*session).currentPlan = execPlan
+
+	stmt := &executor.ExecStmt{
+		GoCtx:       ctx,
+		InfoSchema:  is,
+		Plan:        execPlan,
+		StmtNode:    execStmt,
+		Ctx:         s,
+		OutputNames: names,
+	}
+	if preparedPointer, ok := s.GetSessionVars().PreparedStmts[ID]; ok {
+		preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
+		if !ok {
+			return nil, errors.Errorf("invalid CachedPrepareStmt type")
+		}
+		stmtCtx := s.GetSessionVars().StmtCtx
+		stmt.Text = preparedObj.PreparedAst.Stmt.Text()
+		stmtCtx.OriginalSQL = stmt.Text
+		stmtCtx.InitSQLDigest(preparedObj.NormalizedSQL, preparedObj.SQLDigest)
+	}
+	return stmt, nil
+}
+
 func (s *session) preparedStmtExec(ctx context.Context,
 	stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, args []types.Datum) (sqlexec.RecordSet, error) {
-	st, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, args)
+	st, err := CompileExecutePreparedStmt(ctx, s, stmtID, args)
 	if err != nil {
 		return nil, err
 	}
@@ -1323,6 +1362,7 @@ func (s *session) cachedPlanExec(ctx context.Context,
 	compileDuration := time.Since(s.sessionVars.StartTime)
 	sessionExecuteCompileDurationGeneral.Observe(compileDuration.Seconds())
 	s.GetSessionVars().DurationCompile = compileDuration
+	s.currentPlan = execPlan
 
 	stmt.Text = prepared.Stmt.Text()
 	stmtCtx.OriginalSQL = stmt.Text

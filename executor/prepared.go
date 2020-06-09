@@ -17,7 +17,6 @@ import (
 	"context"
 	"math"
 	"sort"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -26,7 +25,6 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -289,45 +287,6 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	vars.RemovePreparedStmt(id)
 	return nil
-}
-
-// CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
-func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
-	ID uint32, args []types.Datum) (sqlexec.Statement, error) {
-	startTime := time.Now()
-	defer func() {
-		sctx.GetSessionVars().DurationCompile = time.Since(startTime)
-	}()
-	execStmt := &ast.ExecuteStmt{ExecID: ID}
-	if err := ResetContextOfStmt(sctx, execStmt); err != nil {
-		return nil, err
-	}
-	execStmt.BinaryArgs = args
-	is := infoschema.GetInfoSchema(sctx)
-	execPlan, names, err := planner.Optimize(ctx, sctx, execStmt, is)
-	if err != nil {
-		return nil, err
-	}
-
-	stmt := &ExecStmt{
-		GoCtx:       ctx,
-		InfoSchema:  is,
-		Plan:        execPlan,
-		StmtNode:    execStmt,
-		Ctx:         sctx,
-		OutputNames: names,
-	}
-	if preparedPointer, ok := sctx.GetSessionVars().PreparedStmts[ID]; ok {
-		preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
-		if !ok {
-			return nil, errors.Errorf("invalid CachedPrepareStmt type")
-		}
-		stmtCtx := sctx.GetSessionVars().StmtCtx
-		stmt.Text = preparedObj.PreparedAst.Stmt.Text()
-		stmtCtx.OriginalSQL = stmt.Text
-		stmtCtx.InitSQLDigest(preparedObj.NormalizedSQL, preparedObj.SQLDigest)
-	}
-	return stmt, nil
 }
 
 func getPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (ast.StmtNode, error) {

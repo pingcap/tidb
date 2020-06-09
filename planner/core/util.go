@@ -226,6 +226,8 @@ func GetStatsInfo(i interface{}) map[string]uint64 {
 		physicalPlan = x.SelectPlan
 	case *Delete:
 		physicalPlan = x.SelectPlan
+	case *Execute:
+		return GetStatsInfo(x.Plan)
 	case PhysicalPlan:
 		physicalPlan = x
 	}
