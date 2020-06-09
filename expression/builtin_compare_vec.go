@@ -744,11 +744,7 @@ func (b *builtinLeastTimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 				} else if !findInvalidTime[i] {
 					// Make a deep copy here.
 					// Otherwise invalidValue will internally change with result.
-					rowContent := result.GetString(i)
-					invalidValueTmp := make([]byte, len(rowContent))
-					copy(invalidValueTmp, rowContent)
-
-					invalidValue[i] = string(invalidValueTmp)
+					invalidValue[i] = string(result.GetBytes(i))
 					findInvalidTime[i] = true
 				}
 				continue
