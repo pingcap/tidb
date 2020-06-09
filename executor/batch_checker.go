@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"strconv"
 
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/stringutil"
 )
 
 type keyValue struct {
@@ -34,8 +34,9 @@ type keyValue struct {
 }
 
 type keyValueWithDupInfo struct {
-	newKV  keyValue
-	dupErr error
+	newKV        keyValue
+	dupErr       error
+	commonHandle bool
 }
 
 type toBeCheckedRow struct {
@@ -76,20 +77,27 @@ func getKeysNeedCheck(ctx context.Context, sctx sessionctx.Context, t table.Tabl
 	}
 	toBeCheckRows := make([]toBeCheckedRow, 0, len(rows))
 
-	var handleCol *table.Column
+	var handleCols []*table.Column
 	// Get handle column if PK is handle.
 	if t.Meta().PKIsHandle {
 		for _, col := range t.Cols() {
 			if col.IsPKHandleColumn(t.Meta()) {
-				handleCol = col
+				handleCols = append(handleCols, col)
 				break
 			}
+		}
+	}
+	if t.Meta().IsCommonHandle {
+		pkIdx := tables.FindPrimaryIndex(t.Meta())
+		cols := t.Cols()
+		for _, idxCol := range pkIdx.Columns {
+			handleCols = append(handleCols, cols[idxCol.Offset])
 		}
 	}
 
 	var err error
 	for _, row := range rows {
-		toBeCheckRows, err = getKeysNeedCheckOneRow(sctx, t, row, nUnique, handleCol, toBeCheckRows)
+		toBeCheckRows, err = getKeysNeedCheckOneRow(sctx, t, row, nUnique, handleCols, toBeCheckRows)
 		if err != nil {
 			return nil, err
 		}
@@ -97,7 +105,7 @@ func getKeysNeedCheck(ctx context.Context, sctx sessionctx.Context, t table.Tabl
 	return toBeCheckRows, nil
 }
 
-func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.Datum, nUnique int, handleCol *table.Column, result []toBeCheckedRow) ([]toBeCheckedRow, error) {
+func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.Datum, nUnique int, handleCols []*table.Column, result []toBeCheckedRow) ([]toBeCheckedRow, error) {
 	var err error
 	if p, ok := t.(table.PartitionedTable); ok {
 		t, err = p.GetPartitionByRow(ctx, row)
@@ -106,21 +114,34 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 		}
 	}
 
-	var handleKey *keyValueWithDupInfo
 	uniqueKeys := make([]*keyValueWithDupInfo, 0, nUnique)
 	newRowValue, err := encodeNewRow(ctx, t, row)
 	if err != nil {
 		return nil, err
 	}
 	// Append record keys and errors.
-	if handleCol != nil {
-		handle := row[handleCol.Offset].GetInt64()
+	var handle kv.Handle
+	if t.Meta().IsCommonHandle {
+		var err error
+		handleOrdinals := make([]int, 0, len(handleCols))
+		for _, col := range handleCols {
+			handleOrdinals = append(handleOrdinals, col.Offset)
+		}
+		handle, err = kv.BuildHandleFromDatumRow(ctx.GetSessionVars().StmtCtx, row, handleOrdinals)
+		if err != nil {
+			return nil, err
+		}
+	} else if len(handleCols) > 0 {
+		handle = kv.IntHandle(row[handleCols[0].Offset].GetInt64())
+	}
+	var handleKey *keyValueWithDupInfo
+	if handle != nil {
 		handleKey = &keyValueWithDupInfo{
 			newKV: keyValue{
-				key:   t.RecordKey(kv.IntHandle(handle)),
+				key:   t.RecordKey(handle),
 				value: newRowValue,
 			},
-			dupErr: kv.ErrKeyExists.FastGenByArgs(strconv.FormatInt(handle, 10), "PRIMARY"),
+			dupErr: kv.ErrKeyExists.FastGenByArgs(stringutil.MemoizeStr(handle.String), "PRIMARY"),
 		}
 	}
 
@@ -149,10 +170,9 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 			return nil, err1
 		}
 		uniqueKeys = append(uniqueKeys, &keyValueWithDupInfo{
-			newKV: keyValue{
-				key: key,
-			},
-			dupErr: kv.ErrKeyExists.FastGenByArgs(colValStr, v.Meta().Name),
+			newKV:        keyValue{key: key},
+			dupErr:       kv.ErrKeyExists.FastGenByArgs(colValStr, v.Meta().Name),
+			commonHandle: t.Meta().IsCommonHandle,
 		})
 	}
 	result = append(result, toBeCheckedRow{
