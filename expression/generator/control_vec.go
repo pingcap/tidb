@@ -64,7 +64,8 @@ func (b *builtinCaseWhen{{ .TypeName }}Sig) vecEval{{ .TypeName }}(input *chunk.
 	thensSlice := make([][]{{.TypeNameGo}}, l/2)
 	var eLseSlice []{{.TypeNameGo}}
 	{{- end }}
-
+    allErrs := make([][]error,l/2)
+	
 	for j := 0; j < l-1; j+=2 {
 		bufWhen, err := b.bufAllocator.get(types.ETInt, n)
 		if err != nil {
@@ -82,30 +83,111 @@ func (b *builtinCaseWhen{{ .TypeName }}Sig) vecEval{{ .TypeName }}(input *chunk.
 			return err
 		}
 		defer b.bufAllocator.put(bufThen)
-		if err := args[j+1].VecEval{{ .TypeName }}(b.ctx, input, bufThen); err != nil {
-			return err
-		}
-		thens[j/2] = bufThen
 		{{- if .Fixed }}
+		bufThen.Resize{{ .TypeNameInColumn }}(n, false)
 		thensSlice[j/2] = bufThen.{{ .TypeNameInColumn }}s()
+		{{- else }}
+		bufThen.Reserve{{ .TypeNameInColumn }}(n)
 		{{- end }}
+		
+		errs := make([]error, n)
+		for c := 0; c < n; c++ {
+		 	errs[c] = nil
+			if bufWhen.IsNull(c) || whensSlice[j/2][c] == 0  {
+			{{- if .Fixed }}
+				bufThen.SetNull(c, true)
+			{{- else }}
+				bufThen.AppendNull()
+			{{- end }}	
+				continue
+			 }
+			 val, isNull, err := args[j+1].Eval{{ .TypeName }}(b.ctx, input.GetRow(c))
+			{{- if .Fixed }}
+			 if err != nil {
+				errs[c] = err
+				bufThen.SetNull(c, true)
+			 } else {
+				if isNull {
+				   bufThen.SetNull(c, true)
+				} else {
+					{{ if eq .TypeName "Decimal" }}
+					thensSlice[j/2][c] = *val
+					{{ else if eq .TypeName "Duration" }}
+					thensSlice[j/2][c] = val.Duration
+					{{ else }}
+					thensSlice[j/2][c] = val
+					{{ end }}
+				}
+			 }				
+			{{- else }}
+			 if err != nil {
+				errs[c] = err
+				bufThen.AppendNull()
+			 } else {
+				if isNull {
+				   bufThen.AppendNull()
+				} else {
+				   bufThen.Append{{ .TypeNameInColumn }}(val)
+				}
+			 }
+			{{- end }}	
+		}
+      	thens[j/2] = bufThen
+
+     	allErrs[j/2] = errs
 	}
 	// when clause(condition, result) -> args[i], args[i+1]; (i >= 0 && i+1 < l-1)
 	// else clause -> args[l-1]
 	// If case clause has else clause, l%2 == 1.
+	elseErrs := make([]error, n)
 	if l%2==1 {
 		bufElse, err := b.bufAllocator.get(types.ET{{ .ETName }}, n)
 		if err != nil {
 			return err
 		}
 		defer b.bufAllocator.put(bufElse)
-		if err := args[l-1].VecEval{{ .TypeName }}(b.ctx, input, bufElse); err != nil {
-			return err
+
+		{{- if .Fixed }}
+		bufElse.Resize{{ .TypeNameInColumn }}(n, false)
+		eLseSlice = bufElse.{{ .TypeNameInColumn }}s()
+		{{- else }}
+		bufElse.Reserve{{ .TypeNameInColumn }}(n)
+		{{- end }}
+		for c := 0; c < n; c++ {
+			elseErrs[c] = nil
+			val, isNull, err := args[l-1].Eval{{ .TypeName }}(b.ctx, input.GetRow(c))
+			{{- if .Fixed }}
+			 if err != nil {
+				elseErrs[c] = err
+				bufElse.SetNull(c, true)
+			 } else {
+				if isNull {
+				   bufElse.SetNull(c, true)
+				} else {
+					{{ if eq .TypeName "Decimal" }}
+					eLseSlice[c] = *val
+					{{ else if eq .TypeName "Duration" }}
+					eLseSlice[c] = val.Duration
+					{{ else }}
+					eLseSlice[c] = val
+					{{ end }}
+				}
+			 }				
+			{{- else }}
+			if err != nil {
+				elseErrs[c] = err
+				bufElse.AppendNull()
+			} else {
+				if isNull {
+					bufElse.AppendNull()
+				} else {
+					bufElse.Append{{ .TypeNameInColumn }}(val)
+				}
+			}
+			{{- end }}	
 		}
 		eLse = bufElse
-		{{- if .Fixed }}
-		eLseSlice = bufElse.{{ .TypeNameInColumn }}s()
-		{{- end }}
+
 	}
 	
 	{{- if .Fixed }}
@@ -117,6 +199,9 @@ func (b *builtinCaseWhen{{ .TypeName }}Sig) vecEval{{ .TypeName }}(input *chunk.
 ROW:
 	for i := 0; i < n; i++ {
 		for j := 0; j < l/2; j++ {
+			if allErrs[j][i] != nil {
+            	return allErrs[j][i]
+         	}
 			if whens[j].IsNull(i) || whensSlice[j][i] == 0 {
 				continue
 			}
@@ -133,6 +218,9 @@ ROW:
 			continue ROW
 		}
 		if eLse != nil {
+			 if elseErrs[i] != nil {
+				return  elseErrs[i]
+			 }
 			{{- if .Fixed }}
 			resultSlice[i] = eLseSlice[i]
 			result.SetNull(i, eLse.IsNull(i))

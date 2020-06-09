@@ -31,6 +31,7 @@ func (b *builtinCaseWhenIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 	var eLse *chunk.Column
 	thensSlice := make([][]int64, l/2)
 	var eLseSlice []int64
+	allErrs := make([][]error, l/2)
 
 	for j := 0; j < l-1; j += 2 {
 		bufWhen, err := b.bufAllocator.get(types.ETInt, n)
@@ -49,32 +50,73 @@ func (b *builtinCaseWhenIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 			return err
 		}
 		defer b.bufAllocator.put(bufThen)
-		if err := args[j+1].VecEvalInt(b.ctx, input, bufThen); err != nil {
-			return err
+		bufThen.ResizeInt64(n, false)
+		thensSlice[j/2] = bufThen.Int64s()
+
+		errs := make([]error, n)
+		for c := 0; c < n; c++ {
+			errs[c] = nil
+			if bufWhen.IsNull(c) || whensSlice[j/2][c] == 0 {
+				bufThen.SetNull(c, true)
+				continue
+			}
+			val, isNull, err := args[j+1].EvalInt(b.ctx, input.GetRow(c))
+			if err != nil {
+				errs[c] = err
+				bufThen.SetNull(c, true)
+			} else {
+				if isNull {
+					bufThen.SetNull(c, true)
+				} else {
+
+					thensSlice[j/2][c] = val
+
+				}
+			}
 		}
 		thens[j/2] = bufThen
-		thensSlice[j/2] = bufThen.Int64s()
+
+		allErrs[j/2] = errs
 	}
 	// when clause(condition, result) -> args[i], args[i+1]; (i >= 0 && i+1 < l-1)
 	// else clause -> args[l-1]
 	// If case clause has else clause, l%2 == 1.
+	elseErrs := make([]error, n)
 	if l%2 == 1 {
 		bufElse, err := b.bufAllocator.get(types.ETInt, n)
 		if err != nil {
 			return err
 		}
 		defer b.bufAllocator.put(bufElse)
-		if err := args[l-1].VecEvalInt(b.ctx, input, bufElse); err != nil {
-			return err
+		bufElse.ResizeInt64(n, false)
+		eLseSlice = bufElse.Int64s()
+		for c := 0; c < n; c++ {
+			elseErrs[c] = nil
+			val, isNull, err := args[l-1].EvalInt(b.ctx, input.GetRow(c))
+			if err != nil {
+				elseErrs[c] = err
+				bufElse.SetNull(c, true)
+			} else {
+				if isNull {
+					bufElse.SetNull(c, true)
+				} else {
+
+					eLseSlice[c] = val
+
+				}
+			}
 		}
 		eLse = bufElse
-		eLseSlice = bufElse.Int64s()
+
 	}
 	result.ResizeInt64(n, false)
 	resultSlice := result.Int64s()
 ROW:
 	for i := 0; i < n; i++ {
 		for j := 0; j < l/2; j++ {
+			if allErrs[j][i] != nil {
+				return allErrs[j][i]
+			}
 			if whens[j].IsNull(i) || whensSlice[j][i] == 0 {
 				continue
 			}
@@ -83,6 +125,9 @@ ROW:
 			continue ROW
 		}
 		if eLse != nil {
+			if elseErrs[i] != nil {
+				return elseErrs[i]
+			}
 			resultSlice[i] = eLseSlice[i]
 			result.SetNull(i, eLse.IsNull(i))
 		} else {
@@ -105,6 +150,7 @@ func (b *builtinCaseWhenRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.C
 	var eLse *chunk.Column
 	thensSlice := make([][]float64, l/2)
 	var eLseSlice []float64
+	allErrs := make([][]error, l/2)
 
 	for j := 0; j < l-1; j += 2 {
 		bufWhen, err := b.bufAllocator.get(types.ETInt, n)
@@ -123,32 +169,73 @@ func (b *builtinCaseWhenRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.C
 			return err
 		}
 		defer b.bufAllocator.put(bufThen)
-		if err := args[j+1].VecEvalReal(b.ctx, input, bufThen); err != nil {
-			return err
+		bufThen.ResizeFloat64(n, false)
+		thensSlice[j/2] = bufThen.Float64s()
+
+		errs := make([]error, n)
+		for c := 0; c < n; c++ {
+			errs[c] = nil
+			if bufWhen.IsNull(c) || whensSlice[j/2][c] == 0 {
+				bufThen.SetNull(c, true)
+				continue
+			}
+			val, isNull, err := args[j+1].EvalReal(b.ctx, input.GetRow(c))
+			if err != nil {
+				errs[c] = err
+				bufThen.SetNull(c, true)
+			} else {
+				if isNull {
+					bufThen.SetNull(c, true)
+				} else {
+
+					thensSlice[j/2][c] = val
+
+				}
+			}
 		}
 		thens[j/2] = bufThen
-		thensSlice[j/2] = bufThen.Float64s()
+
+		allErrs[j/2] = errs
 	}
 	// when clause(condition, result) -> args[i], args[i+1]; (i >= 0 && i+1 < l-1)
 	// else clause -> args[l-1]
 	// If case clause has else clause, l%2 == 1.
+	elseErrs := make([]error, n)
 	if l%2 == 1 {
 		bufElse, err := b.bufAllocator.get(types.ETReal, n)
 		if err != nil {
 			return err
 		}
 		defer b.bufAllocator.put(bufElse)
-		if err := args[l-1].VecEvalReal(b.ctx, input, bufElse); err != nil {
-			return err
+		bufElse.ResizeFloat64(n, false)
+		eLseSlice = bufElse.Float64s()
+		for c := 0; c < n; c++ {
+			elseErrs[c] = nil
+			val, isNull, err := args[l-1].EvalReal(b.ctx, input.GetRow(c))
+			if err != nil {
+				elseErrs[c] = err
+				bufElse.SetNull(c, true)
+			} else {
+				if isNull {
+					bufElse.SetNull(c, true)
+				} else {
+
+					eLseSlice[c] = val
+
+				}
+			}
 		}
 		eLse = bufElse
-		eLseSlice = bufElse.Float64s()
+
 	}
 	result.ResizeFloat64(n, false)
 	resultSlice := result.Float64s()
 ROW:
 	for i := 0; i < n; i++ {
 		for j := 0; j < l/2; j++ {
+			if allErrs[j][i] != nil {
+				return allErrs[j][i]
+			}
 			if whens[j].IsNull(i) || whensSlice[j][i] == 0 {
 				continue
 			}
@@ -157,6 +244,9 @@ ROW:
 			continue ROW
 		}
 		if eLse != nil {
+			if elseErrs[i] != nil {
+				return elseErrs[i]
+			}
 			resultSlice[i] = eLseSlice[i]
 			result.SetNull(i, eLse.IsNull(i))
 		} else {
@@ -179,6 +269,7 @@ func (b *builtinCaseWhenDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *c
 	var eLse *chunk.Column
 	thensSlice := make([][]types.MyDecimal, l/2)
 	var eLseSlice []types.MyDecimal
+	allErrs := make([][]error, l/2)
 
 	for j := 0; j < l-1; j += 2 {
 		bufWhen, err := b.bufAllocator.get(types.ETInt, n)
@@ -197,32 +288,73 @@ func (b *builtinCaseWhenDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *c
 			return err
 		}
 		defer b.bufAllocator.put(bufThen)
-		if err := args[j+1].VecEvalDecimal(b.ctx, input, bufThen); err != nil {
-			return err
+		bufThen.ResizeDecimal(n, false)
+		thensSlice[j/2] = bufThen.Decimals()
+
+		errs := make([]error, n)
+		for c := 0; c < n; c++ {
+			errs[c] = nil
+			if bufWhen.IsNull(c) || whensSlice[j/2][c] == 0 {
+				bufThen.SetNull(c, true)
+				continue
+			}
+			val, isNull, err := args[j+1].EvalDecimal(b.ctx, input.GetRow(c))
+			if err != nil {
+				errs[c] = err
+				bufThen.SetNull(c, true)
+			} else {
+				if isNull {
+					bufThen.SetNull(c, true)
+				} else {
+
+					thensSlice[j/2][c] = *val
+
+				}
+			}
 		}
 		thens[j/2] = bufThen
-		thensSlice[j/2] = bufThen.Decimals()
+
+		allErrs[j/2] = errs
 	}
 	// when clause(condition, result) -> args[i], args[i+1]; (i >= 0 && i+1 < l-1)
 	// else clause -> args[l-1]
 	// If case clause has else clause, l%2 == 1.
+	elseErrs := make([]error, n)
 	if l%2 == 1 {
 		bufElse, err := b.bufAllocator.get(types.ETDecimal, n)
 		if err != nil {
 			return err
 		}
 		defer b.bufAllocator.put(bufElse)
-		if err := args[l-1].VecEvalDecimal(b.ctx, input, bufElse); err != nil {
-			return err
+		bufElse.ResizeDecimal(n, false)
+		eLseSlice = bufElse.Decimals()
+		for c := 0; c < n; c++ {
+			elseErrs[c] = nil
+			val, isNull, err := args[l-1].EvalDecimal(b.ctx, input.GetRow(c))
+			if err != nil {
+				elseErrs[c] = err
+				bufElse.SetNull(c, true)
+			} else {
+				if isNull {
+					bufElse.SetNull(c, true)
+				} else {
+
+					eLseSlice[c] = *val
+
+				}
+			}
 		}
 		eLse = bufElse
-		eLseSlice = bufElse.Decimals()
+
 	}
 	result.ResizeDecimal(n, false)
 	resultSlice := result.Decimals()
 ROW:
 	for i := 0; i < n; i++ {
 		for j := 0; j < l/2; j++ {
+			if allErrs[j][i] != nil {
+				return allErrs[j][i]
+			}
 			if whens[j].IsNull(i) || whensSlice[j][i] == 0 {
 				continue
 			}
@@ -231,6 +363,9 @@ ROW:
 			continue ROW
 		}
 		if eLse != nil {
+			if elseErrs[i] != nil {
+				return elseErrs[i]
+			}
 			resultSlice[i] = eLseSlice[i]
 			result.SetNull(i, eLse.IsNull(i))
 		} else {
@@ -251,6 +386,7 @@ func (b *builtinCaseWhenStringSig) vecEvalString(input *chunk.Chunk, result *chu
 	whensSlice := make([][]int64, l/2)
 	thens := make([]*chunk.Column, l/2)
 	var eLse *chunk.Column
+	allErrs := make([][]error, l/2)
 
 	for j := 0; j < l-1; j += 2 {
 		bufWhen, err := b.bufAllocator.get(types.ETInt, n)
@@ -269,29 +405,66 @@ func (b *builtinCaseWhenStringSig) vecEvalString(input *chunk.Chunk, result *chu
 			return err
 		}
 		defer b.bufAllocator.put(bufThen)
-		if err := args[j+1].VecEvalString(b.ctx, input, bufThen); err != nil {
-			return err
+		bufThen.ReserveString(n)
+
+		errs := make([]error, n)
+		for c := 0; c < n; c++ {
+			errs[c] = nil
+			if bufWhen.IsNull(c) || whensSlice[j/2][c] == 0 {
+				bufThen.AppendNull()
+				continue
+			}
+			val, isNull, err := args[j+1].EvalString(b.ctx, input.GetRow(c))
+			if err != nil {
+				errs[c] = err
+				bufThen.AppendNull()
+			} else {
+				if isNull {
+					bufThen.AppendNull()
+				} else {
+					bufThen.AppendString(val)
+				}
+			}
 		}
 		thens[j/2] = bufThen
+
+		allErrs[j/2] = errs
 	}
 	// when clause(condition, result) -> args[i], args[i+1]; (i >= 0 && i+1 < l-1)
 	// else clause -> args[l-1]
 	// If case clause has else clause, l%2 == 1.
+	elseErrs := make([]error, n)
 	if l%2 == 1 {
 		bufElse, err := b.bufAllocator.get(types.ETString, n)
 		if err != nil {
 			return err
 		}
 		defer b.bufAllocator.put(bufElse)
-		if err := args[l-1].VecEvalString(b.ctx, input, bufElse); err != nil {
-			return err
+		bufElse.ReserveString(n)
+		for c := 0; c < n; c++ {
+			elseErrs[c] = nil
+			val, isNull, err := args[l-1].EvalString(b.ctx, input.GetRow(c))
+			if err != nil {
+				elseErrs[c] = err
+				bufElse.AppendNull()
+			} else {
+				if isNull {
+					bufElse.AppendNull()
+				} else {
+					bufElse.AppendString(val)
+				}
+			}
 		}
 		eLse = bufElse
+
 	}
 	result.ReserveString(n)
 ROW:
 	for i := 0; i < n; i++ {
 		for j := 0; j < l/2; j++ {
+			if allErrs[j][i] != nil {
+				return allErrs[j][i]
+			}
 			if whens[j].IsNull(i) || whensSlice[j][i] == 0 {
 				continue
 			}
@@ -303,6 +476,9 @@ ROW:
 			continue ROW
 		}
 		if eLse != nil {
+			if elseErrs[i] != nil {
+				return elseErrs[i]
+			}
 			if eLse.IsNull(i) {
 				result.AppendNull()
 			} else {
@@ -328,6 +504,7 @@ func (b *builtinCaseWhenTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.C
 	var eLse *chunk.Column
 	thensSlice := make([][]types.Time, l/2)
 	var eLseSlice []types.Time
+	allErrs := make([][]error, l/2)
 
 	for j := 0; j < l-1; j += 2 {
 		bufWhen, err := b.bufAllocator.get(types.ETInt, n)
@@ -346,32 +523,73 @@ func (b *builtinCaseWhenTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.C
 			return err
 		}
 		defer b.bufAllocator.put(bufThen)
-		if err := args[j+1].VecEvalTime(b.ctx, input, bufThen); err != nil {
-			return err
+		bufThen.ResizeTime(n, false)
+		thensSlice[j/2] = bufThen.Times()
+
+		errs := make([]error, n)
+		for c := 0; c < n; c++ {
+			errs[c] = nil
+			if bufWhen.IsNull(c) || whensSlice[j/2][c] == 0 {
+				bufThen.SetNull(c, true)
+				continue
+			}
+			val, isNull, err := args[j+1].EvalTime(b.ctx, input.GetRow(c))
+			if err != nil {
+				errs[c] = err
+				bufThen.SetNull(c, true)
+			} else {
+				if isNull {
+					bufThen.SetNull(c, true)
+				} else {
+
+					thensSlice[j/2][c] = val
+
+				}
+			}
 		}
 		thens[j/2] = bufThen
-		thensSlice[j/2] = bufThen.Times()
+
+		allErrs[j/2] = errs
 	}
 	// when clause(condition, result) -> args[i], args[i+1]; (i >= 0 && i+1 < l-1)
 	// else clause -> args[l-1]
 	// If case clause has else clause, l%2 == 1.
+	elseErrs := make([]error, n)
 	if l%2 == 1 {
 		bufElse, err := b.bufAllocator.get(types.ETDatetime, n)
 		if err != nil {
 			return err
 		}
 		defer b.bufAllocator.put(bufElse)
-		if err := args[l-1].VecEvalTime(b.ctx, input, bufElse); err != nil {
-			return err
+		bufElse.ResizeTime(n, false)
+		eLseSlice = bufElse.Times()
+		for c := 0; c < n; c++ {
+			elseErrs[c] = nil
+			val, isNull, err := args[l-1].EvalTime(b.ctx, input.GetRow(c))
+			if err != nil {
+				elseErrs[c] = err
+				bufElse.SetNull(c, true)
+			} else {
+				if isNull {
+					bufElse.SetNull(c, true)
+				} else {
+
+					eLseSlice[c] = val
+
+				}
+			}
 		}
 		eLse = bufElse
-		eLseSlice = bufElse.Times()
+
 	}
 	result.ResizeTime(n, false)
 	resultSlice := result.Times()
 ROW:
 	for i := 0; i < n; i++ {
 		for j := 0; j < l/2; j++ {
+			if allErrs[j][i] != nil {
+				return allErrs[j][i]
+			}
 			if whens[j].IsNull(i) || whensSlice[j][i] == 0 {
 				continue
 			}
@@ -380,6 +598,9 @@ ROW:
 			continue ROW
 		}
 		if eLse != nil {
+			if elseErrs[i] != nil {
+				return elseErrs[i]
+			}
 			resultSlice[i] = eLseSlice[i]
 			result.SetNull(i, eLse.IsNull(i))
 		} else {
@@ -402,6 +623,7 @@ func (b *builtinCaseWhenDurationSig) vecEvalDuration(input *chunk.Chunk, result 
 	var eLse *chunk.Column
 	thensSlice := make([][]time.Duration, l/2)
 	var eLseSlice []time.Duration
+	allErrs := make([][]error, l/2)
 
 	for j := 0; j < l-1; j += 2 {
 		bufWhen, err := b.bufAllocator.get(types.ETInt, n)
@@ -420,32 +642,73 @@ func (b *builtinCaseWhenDurationSig) vecEvalDuration(input *chunk.Chunk, result 
 			return err
 		}
 		defer b.bufAllocator.put(bufThen)
-		if err := args[j+1].VecEvalDuration(b.ctx, input, bufThen); err != nil {
-			return err
+		bufThen.ResizeGoDuration(n, false)
+		thensSlice[j/2] = bufThen.GoDurations()
+
+		errs := make([]error, n)
+		for c := 0; c < n; c++ {
+			errs[c] = nil
+			if bufWhen.IsNull(c) || whensSlice[j/2][c] == 0 {
+				bufThen.SetNull(c, true)
+				continue
+			}
+			val, isNull, err := args[j+1].EvalDuration(b.ctx, input.GetRow(c))
+			if err != nil {
+				errs[c] = err
+				bufThen.SetNull(c, true)
+			} else {
+				if isNull {
+					bufThen.SetNull(c, true)
+				} else {
+
+					thensSlice[j/2][c] = val.Duration
+
+				}
+			}
 		}
 		thens[j/2] = bufThen
-		thensSlice[j/2] = bufThen.GoDurations()
+
+		allErrs[j/2] = errs
 	}
 	// when clause(condition, result) -> args[i], args[i+1]; (i >= 0 && i+1 < l-1)
 	// else clause -> args[l-1]
 	// If case clause has else clause, l%2 == 1.
+	elseErrs := make([]error, n)
 	if l%2 == 1 {
 		bufElse, err := b.bufAllocator.get(types.ETDuration, n)
 		if err != nil {
 			return err
 		}
 		defer b.bufAllocator.put(bufElse)
-		if err := args[l-1].VecEvalDuration(b.ctx, input, bufElse); err != nil {
-			return err
+		bufElse.ResizeGoDuration(n, false)
+		eLseSlice = bufElse.GoDurations()
+		for c := 0; c < n; c++ {
+			elseErrs[c] = nil
+			val, isNull, err := args[l-1].EvalDuration(b.ctx, input.GetRow(c))
+			if err != nil {
+				elseErrs[c] = err
+				bufElse.SetNull(c, true)
+			} else {
+				if isNull {
+					bufElse.SetNull(c, true)
+				} else {
+
+					eLseSlice[c] = val.Duration
+
+				}
+			}
 		}
 		eLse = bufElse
-		eLseSlice = bufElse.GoDurations()
+
 	}
 	result.ResizeGoDuration(n, false)
 	resultSlice := result.GoDurations()
 ROW:
 	for i := 0; i < n; i++ {
 		for j := 0; j < l/2; j++ {
+			if allErrs[j][i] != nil {
+				return allErrs[j][i]
+			}
 			if whens[j].IsNull(i) || whensSlice[j][i] == 0 {
 				continue
 			}
@@ -454,6 +717,9 @@ ROW:
 			continue ROW
 		}
 		if eLse != nil {
+			if elseErrs[i] != nil {
+				return elseErrs[i]
+			}
 			resultSlice[i] = eLseSlice[i]
 			result.SetNull(i, eLse.IsNull(i))
 		} else {
@@ -474,6 +740,7 @@ func (b *builtinCaseWhenJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.C
 	whensSlice := make([][]int64, l/2)
 	thens := make([]*chunk.Column, l/2)
 	var eLse *chunk.Column
+	allErrs := make([][]error, l/2)
 
 	for j := 0; j < l-1; j += 2 {
 		bufWhen, err := b.bufAllocator.get(types.ETInt, n)
@@ -492,29 +759,66 @@ func (b *builtinCaseWhenJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.C
 			return err
 		}
 		defer b.bufAllocator.put(bufThen)
-		if err := args[j+1].VecEvalJSON(b.ctx, input, bufThen); err != nil {
-			return err
+		bufThen.ReserveJSON(n)
+
+		errs := make([]error, n)
+		for c := 0; c < n; c++ {
+			errs[c] = nil
+			if bufWhen.IsNull(c) || whensSlice[j/2][c] == 0 {
+				bufThen.AppendNull()
+				continue
+			}
+			val, isNull, err := args[j+1].EvalJSON(b.ctx, input.GetRow(c))
+			if err != nil {
+				errs[c] = err
+				bufThen.AppendNull()
+			} else {
+				if isNull {
+					bufThen.AppendNull()
+				} else {
+					bufThen.AppendJSON(val)
+				}
+			}
 		}
 		thens[j/2] = bufThen
+
+		allErrs[j/2] = errs
 	}
 	// when clause(condition, result) -> args[i], args[i+1]; (i >= 0 && i+1 < l-1)
 	// else clause -> args[l-1]
 	// If case clause has else clause, l%2 == 1.
+	elseErrs := make([]error, n)
 	if l%2 == 1 {
 		bufElse, err := b.bufAllocator.get(types.ETJson, n)
 		if err != nil {
 			return err
 		}
 		defer b.bufAllocator.put(bufElse)
-		if err := args[l-1].VecEvalJSON(b.ctx, input, bufElse); err != nil {
-			return err
+		bufElse.ReserveJSON(n)
+		for c := 0; c < n; c++ {
+			elseErrs[c] = nil
+			val, isNull, err := args[l-1].EvalJSON(b.ctx, input.GetRow(c))
+			if err != nil {
+				elseErrs[c] = err
+				bufElse.AppendNull()
+			} else {
+				if isNull {
+					bufElse.AppendNull()
+				} else {
+					bufElse.AppendJSON(val)
+				}
+			}
 		}
 		eLse = bufElse
+
 	}
 	result.ReserveJSON(n)
 ROW:
 	for i := 0; i < n; i++ {
 		for j := 0; j < l/2; j++ {
+			if allErrs[j][i] != nil {
+				return allErrs[j][i]
+			}
 			if whens[j].IsNull(i) || whensSlice[j][i] == 0 {
 				continue
 			}
@@ -526,6 +830,9 @@ ROW:
 			continue ROW
 		}
 		if eLse != nil {
+			if elseErrs[i] != nil {
+				return elseErrs[i]
+			}
 			if eLse.IsNull(i) {
 				result.AppendNull()
 			} else {
