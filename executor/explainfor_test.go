@@ -181,7 +181,7 @@ func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %s", connID)).Check(testkit.Rows(
 		"TableReader_7 8000.00 root  data:Selection_6",
-		"└─Selection_6 8000.00 cop[tikv]  eq(cast(test.t.a), 1)",
+		"└─Selection_6 8000.00 cop[tikv]  eq(cast(test.t.a), cast(\"1\"))",
 		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 }
