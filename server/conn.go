@@ -1270,6 +1270,18 @@ func (cc *clientConn) handleIndexAdvise(ctx context.Context, indexAdviseInfo *ex
 // Query `load stats` does not return result either.
 func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	sc := cc.ctx.GetSessionVars().StmtCtx
+	detachSessionTracker := func() {
+		if sc != nil {
+			if sc.DiskTracker != nil {
+				sc.DiskTracker.DetachFromGlobalTracker()
+			}
+			if sc.MemTracker != nil {
+				sc.MemTracker.DetachFromGlobalTracker()
+			}
+		}
+	}
+	// Detach the Memory and disk tracker for the previous stmtCtx from GlobalMemoryUsageTracker and GlobalDiskUsageTracker
+	defer detachSessionTracker()
 	prevWarns := sc.GetWarnings()
 	stmts, err := cc.ctx.Parse(ctx, sql)
 	if err != nil {
