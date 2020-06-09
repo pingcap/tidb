@@ -503,9 +503,9 @@
         "SQL": "select /*+ HASH_AGG() */ avg(b), c, avg(b), count(distinct A, B),  count(distinct A), count(distinct c), sum(b) from t group by c;",
         "Plan": [
           "Projection_10 8000.00 root  Column#5, test.t.c, Column#5, Column#6, Column#7, Column#8, Column#9",
-          "└─HashAgg_15 8000.00 root  group by:test.t.c, funcs:avg(Column#11, Column#12)->Column#5, funcs:count(distinct test.t.a, test.t.b)->Column#6, funcs:count(distinct test.t.a)->Column#7, funcs:count(distinct test.t.c)->Column#8, funcs:sum(Column#13)->Column#9, funcs:firstrow(test.t.c)->test.t.c",
-          "  └─TableReader_16 8000.00 root  data:HashAgg_17",
-          "    └─HashAgg_17 8000.00 cop[tikv]  group by:test.t.a, test.t.b, test.t.c, funcs:count(test.t.b)->Column#11, funcs:sum(test.t.b)->Column#12, funcs:sum(test.t.b)->Column#13",
+          "└─HashAgg_11 8000.00 root  group by:test.t.c, funcs:avg(Column#15)->Column#5, funcs:count(distinct test.t.a, test.t.b)->Column#6, funcs:count(distinct test.t.a)->Column#7, funcs:count(distinct test.t.c)->Column#8, funcs:sum(Column#16)->Column#9, funcs:firstrow(test.t.c)->test.t.c",
+          "  └─Projection_12 10000.00 root  cast(test.t.b, decimal(65,4) BINARY)->Column#15, test.t.a, test.t.b, test.t.a, test.t.c, cast(test.t.b, decimal(65,0) BINARY)->Column#16, test.t.c, test.t.c",
+          "    └─TableReader_13 10000.00 root  data:TableFullScan_14",
           "      └─TableFullScan_14 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Result": [
@@ -1014,9 +1014,9 @@
           "Projection_30 1.00 root  Column#3, test.t1.a, test.t1.b",
           "└─Apply_32 1.00 root  CARTESIAN left outer join",
           "  ├─Apply_34(Build) 1.00 root  CARTESIAN left outer join",
-          "  │ ├─HashAgg_39(Build) 1.00 root  funcs:sum(Column#8)->Column#3, funcs:firstrow(Column#9)->test.t2.a, funcs:firstrow(Column#10)->test.t2.b",
-          "  │ │ └─TableReader_40 1.00 root  data:HashAgg_41",
-          "  │ │   └─HashAgg_41 1.00 cop[tikv]  funcs:sum(test.t2.a)->Column#8, funcs:firstrow(test.t2.a)->Column#9, funcs:firstrow(test.t2.b)->Column#10",
+          "  │ ├─HashAgg_35(Build) 1.00 root  funcs:sum(Column#11)->Column#3, funcs:firstrow(test.t2.a)->test.t2.a, funcs:firstrow(test.t2.b)->test.t2.b",
+          "  │ │ └─Projection_36 10000.00 root  cast(test.t2.a, decimal(65,0) BINARY)->Column#11, test.t2.a, test.t2.b",
+          "  │ │   └─TableReader_37 10000.00 root  data:TableFullScan_38",
           "  │ │     └─TableFullScan_38 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
           "  │ └─MaxOneRow_42(Probe) 1.00 root  ",
           "  │   └─Limit_43 1.00 root  offset:0, count:1",
