@@ -153,6 +153,7 @@ func (s *serialTestStateChangeSuite) TestShowCreateTable(c *C) {
 			if got != expected {
 				checkErr = errors.Errorf("got %s, expected %s", got, expected)
 			}
+			terror.Log(result.Close())
 		}
 	}
 	d := s.dom.DDL()
