@@ -785,7 +785,7 @@ func (ts *tidbTestSuite) TestCreateTableFlen(c *C) {
 }
 
 func Execute(ctx context.Context, qc QueryCtx, sql string) (ResultSet, error) {
-	stmts, _, err := qc.Parse(ctx, sql)
+	stmts, err := qc.Parse(ctx, sql)
 	if err != nil {
 		return nil, err
 	}
