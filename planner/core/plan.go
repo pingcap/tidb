@@ -216,6 +216,9 @@ type PhysicalPlan interface {
 	// StatsCount returns the count of property.StatsInfo for this plan.
 	StatsCount() float64
 
+	// ExtractCorrelatedCols extracts correlated columns inside the PhysicalPlan.
+	ExtractCorrelatedCols() []*expression.CorrelatedColumn
+
 	// Get all the children.
 	Children() []PhysicalPlan
 
@@ -273,6 +276,11 @@ func (p *basePhysicalPlan) ExplainNormalizedInfo() string {
 
 func (p *basePhysicalPlan) GetChildReqProps(idx int) *property.PhysicalProperty {
 	return p.childrenReqProps[idx]
+}
+
+// ExtractCorrelatedCols implements PhysicalPlan interface.
+func (p *basePhysicalPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	return nil
 }
 
 func (p *baseLogicalPlan) getTask(prop *property.PhysicalProperty) task {

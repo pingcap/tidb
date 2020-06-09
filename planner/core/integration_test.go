@@ -536,6 +536,27 @@ func (s *testIntegrationSerialSuite) TestIsolationReadTiFlashUseIndexHint(c *C) 
 	}
 }
 
+func (s *testIntegrationSerialSuite) TestIsolationReadDoNotFilterSystemDB(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_isolation_read_engines = \"tiflash\"")
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
 func (s *testIntegrationSuite) TestPartitionTableStats(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -1091,5 +1112,14 @@ func (s *testIntegrationSuite) TestSelectLimit(c *C) {
 	tk.MustExec("delete from b where a = 2") // all values are deleted
 	result = tk.MustQuery("select * from b")
 	result.Check(testkit.Rows())
+}
 
+func (s *testIntegrationSuite) TestHintParserWarnings(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b int, key(a), key(b));")
+	tk.MustExec("select /*+ use_index_merge() */ * from t where a = 1 or b = 1;")
+	rows := tk.MustQuery("show warnings;").Rows()
+	c.Assert(len(rows), Equals, 1)
 }

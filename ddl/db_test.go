@@ -2453,7 +2453,7 @@ func (s *testDBSuite2) TestCreateTableWithSetCol(c *C) {
 		"  `b` set('e') DEFAULT ''\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	s.tk.MustExec("drop table t_set")
-	s.tk.MustExec("create table t_set (a set('a', 'b', 'c', 'd') default 'a,C,c');")
+	s.tk.MustExec("create table t_set (a set('a', 'b', 'c', 'd') default 'a,c,c');")
 	s.tk.MustQuery("show create table t_set").Check(testkit.Rows("t_set CREATE TABLE `t_set` (\n" +
 		"  `a` set('a','b','c','d') DEFAULT 'a,c'\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))

@@ -411,6 +411,9 @@ const (
 
 	// TiDBEnableClusteredIndex indicates if clustered index feature is enabled.
 	TiDBEnableClusteredIndex = "tidb_enable_clustered_index"
+
+	// TiDBSlowLogMasking indicates that whether masking the query data when log slow query.
+	TiDBSlowLogMasking = "tidb_slow_log_masking"
 )
 
 // Default TiDB system variable values.
@@ -507,6 +510,7 @@ const (
 	DefTidbEnableCollectExecutionInfo  = false
 	DefTiDBAllowAutoRandExplicitInsert = false
 	DefTiDBEnableClusteredIndex        = false
+	DefTiDBSlowLogMasking              = false
 )
 
 // Process global variables.
