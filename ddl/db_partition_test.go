@@ -1111,6 +1111,12 @@ func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
 			"alter table pt26 exchange partition p0 with table nt26;",
 			ddl.ErrTablesDifferentMetadata,
 		},
+		{
+			"create table pt27 (a int key, b int, index(a)) partition by hash(a) partitions 1;",
+			"create table nt27 (a int not null, b int, index(a));",
+			"alter table pt27 exchange partition p0 with table nt27;",
+			ddl.ErrTablesDifferentMetadata,
+		},
 	}
 
 	tk := testkit.NewTestKit(c, s.store)
