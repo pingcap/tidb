@@ -1343,6 +1343,9 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	}
 	var servers []ServerInfo
 	for _, store := range stores {
+		if store.GetState() == metapb.StoreState_Tombstone {
+			continue
+		}
 		var tp string
 		if isTiFlashStore(store) {
 			tp = "tiflash"
