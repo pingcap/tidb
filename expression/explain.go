@@ -62,9 +62,6 @@ func (col *Column) ExplainNormalizedInfo() string {
 
 // ExplainInfo implements the Expression interface.
 func (expr *Constant) ExplainInfo() string {
-	if expr.DeferredExpr != nil {
-		return expr.DeferredExpr.ExplainInfo()
-	}
 	dt, err := expr.Eval(chunk.Row{})
 	if err != nil {
 		return "not recognized const vanue"

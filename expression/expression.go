@@ -1062,12 +1062,7 @@ func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType) bo
 		return false
 	}
 	switch x := expr.(type) {
-	case *CorrelatedColumn:
-		return pc.conOrCorColToPBExpr(expr) != nil
-	case *Constant:
-		if expr.(*Constant).DeferredExpr != nil {
-			return canExprPushDown(expr.(*Constant).DeferredExpr, pc, storeType)
-		}
+	case *Constant, *CorrelatedColumn:
 		return pc.conOrCorColToPBExpr(expr) != nil
 	case *Column:
 		return pc.columnToPBExpr(x) != nil

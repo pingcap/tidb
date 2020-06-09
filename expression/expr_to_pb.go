@@ -59,9 +59,6 @@ func NewPBConverter(client kv.Client, sc *stmtctx.StatementContext) PbConverter 
 func (pc PbConverter) ExprToPB(expr Expression) *tipb.Expr {
 	switch x := expr.(type) {
 	case *Constant:
-		if expr.(*Constant).DeferredExpr != nil {
-			return pc.ExprToPB(expr.(*Constant).DeferredExpr)
-		}
 		pbExpr := pc.conOrCorColToPBExpr(expr)
 		if pbExpr == nil {
 			return nil
