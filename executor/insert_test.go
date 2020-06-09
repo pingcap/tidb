@@ -1258,13 +1258,13 @@ func (s *testSuite10) TestClusterPrimaryKeyForIndexScan(c *C) {
 	tk.MustExec(`use test`)
 	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
 
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("CREATE TABLE t (a varchar(255), b int, index idx(b), primary key(a,b));")
-	tk.MustExec("insert into t values ('aaa',1);")
-	tk.MustQuery(`select b from t where b = 1;`).Check(testkit.Rows("1"))
+	tk.MustExec("drop table if exists pkt1;")
+	tk.MustExec("CREATE TABLE pkt1 (a varchar(255), b int, index idx(b), primary key(a,b));")
+	tk.MustExec("insert into pkt1 values ('aaa',1);")
+	tk.MustQuery(`select b from pkt1 where b = 1;`).Check(testkit.Rows("1"))
 
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("CREATE TABLE t (a varchar(255), b int, unique index idx(b), primary key(a,b));")
-	tk.MustExec("insert into t values ('aaa',1);")
-	tk.MustQuery(`select b from t where b = 1;`).Check(testkit.Rows("1"))
+	tk.MustExec("drop table if exists pkt2;")
+	tk.MustExec("CREATE TABLE pkt2 (a varchar(255), b int, unique index idx(b), primary key(a,b));")
+	tk.MustExec("insert into pkt2 values ('aaa',1);")
+	tk.MustQuery(`select b from pkt2 where b = 1;`).Check(testkit.Rows("1"))
 }
