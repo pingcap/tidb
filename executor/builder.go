@@ -1304,7 +1304,9 @@ func (b *executorBuilder) getSnapshotTS() (uint64, error) {
 	}
 
 	snapshotTS := b.ctx.GetSessionVars().SnapshotTS
+	begin := time.Now()
 	txn, err := b.ctx.Txn(true)
+	b.ctx.GetSessionVars().DurationWaitTS = time.Since(begin)
 	if err != nil {
 		return 0, err
 	}
