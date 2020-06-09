@@ -185,11 +185,11 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			if len(handleVal) == 0 {
 				continue
 			}
-			handle, err1 := tables.DecodeHandleInUniqueIndexValue(handleVal)
+			handle, err1 := tables.DecodeHandleInUniqueIndexValue(handleVal, e.tblInfo.IsCommonHandle)
 			if err1 != nil {
 				return err1
 			}
-			e.handles = append(e.handles, kv.IntHandle(handle))
+			e.handles = append(e.handles, handle)
 			if e.tblInfo.Partition != nil {
 				e.physIDs = append(e.physIDs, tablecodec.DecodeTableID(key))
 			}
