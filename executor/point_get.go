@@ -185,12 +185,12 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				}
 				return e.lockKeyIfNeeded(ctx, e.idxKey)
 			}
-			var iv int64
-			iv, err = tables.DecodeHandleInUniqueIndexValue(e.handleVal)
+			var iv kv.Handle
+			iv, err = tables.DecodeHandleInUniqueIndexValue(e.handleVal, e.tblInfo.IsCommonHandle)
 			if err != nil {
 				return err
 			}
-			e.handle = kv.IntHandle(iv)
+			e.handle = iv
 
 			// The injection is used to simulate following scenario:
 			// 1. Session A create a point get query but pause before second time `GET` kv from backend
