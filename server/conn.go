@@ -65,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/chunk"
@@ -1268,6 +1269,8 @@ func (cc *clientConn) handleIndexAdvise(ctx context.Context, indexAdviseInfo *ex
 // There is a special query `load data` that does not return result, which is handled differently.
 // Query `load stats` does not return result either.
 func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
+	sc := cc.ctx.GetSessionVars().StmtCtx
+	prevWarns := sc.GetWarnings()
 	stmts, err := cc.ctx.Parse(ctx, sql)
 	if err != nil {
 		metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
@@ -1278,25 +1281,30 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		return cc.writeOK()
 	}
 
+	warns := sc.GetWarnings()
+	parserWarns := warns[len(prevWarns):]
 	for i, stmt := range stmts {
-		if err = cc.handleStmt(ctx, stmt, i == len(stmts)-1); err != nil {
+		if err = cc.handleStmt(ctx, stmt, parserWarns, i == len(stmts)-1); err != nil {
 			break
 		}
 	}
-
 	if err != nil {
 		metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
 	}
 	return err
 }
 
-func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, lastStmt bool) error {
+func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns []stmtctx.SQLWarn, lastStmt bool) error {
 	rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
 	if rs != nil {
 		defer terror.Call(rs.Close)
 	}
 	if err != nil {
 		return err
+	}
+
+	if lastStmt {
+		cc.ctx.GetSessionVars().StmtCtx.AppendWarnings(warns)
 	}
 
 	status := cc.ctx.Status()
