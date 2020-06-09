@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"sort"
+	"sync/atomic"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
@@ -34,23 +35,24 @@ import (
 type BatchPointGetExec struct {
 	baseExecutor
 
-	tblInfo    *model.TableInfo
-	idxInfo    *model.IndexInfo
-	handles    []kv.Handle
-	physIDs    []int64
-	partPos    int
-	idxVals    [][]types.Datum
-	startTS    uint64
-	snapshotTS uint64
-	txn        kv.Transaction
-	lock       bool
-	waitTime   int64
-	inited     bool
-	values     [][]byte
-	index      int
-	rowDecoder *rowcodec.ChunkDecoder
-	keepOrder  bool
-	desc       bool
+	tblInfo     *model.TableInfo
+	idxInfo     *model.IndexInfo
+	handles     []kv.Handle
+	physIDs     []int64
+	partPos     int
+	idxVals     [][]types.Datum
+	startTS     uint64
+	snapshotTS  uint64
+	txn         kv.Transaction
+	lock        bool
+	waitTime    int64
+	inited      uint32
+	values      [][]byte
+	index       int
+	rowDecoder  *rowcodec.ChunkDecoder
+	keepOrder   bool
+	desc        bool
+	batchGetter kv.BatchGetter
 
 	columns []*model.ColumnInfo
 	// virtualColumnIndex records all the indices of virtual columns and sort them in definition
@@ -74,43 +76,6 @@ func (e *BatchPointGetExec) buildVirtualColumnInfo() {
 
 // Open implements the Executor interface.
 func (e *BatchPointGetExec) Open(context.Context) error {
-	return nil
-}
-
-// Close implements the Executor interface.
-func (e *BatchPointGetExec) Close() error {
-	return nil
-}
-
-// Next implements the Executor interface.
-func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	req.Reset()
-	if !e.inited {
-		if err := e.initialize(ctx); err != nil {
-			return err
-		}
-		e.inited = true
-	}
-	if e.index >= len(e.values) {
-		return nil
-	}
-	for !req.IsFull() && e.index < len(e.values) {
-		handle, val := e.handles[e.index], e.values[e.index]
-		err := decodeRowValToChunk(e.base(), e.tblInfo, handle, val, req, e.rowDecoder)
-		if err != nil {
-			return err
-		}
-		e.index++
-	}
-
-	err := FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.schema, e.columns, e.ctx, req)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	e.snapshotTS = e.startTS
 	txnCtx := e.ctx.GetSessionVars().TxnCtx
 	if e.lock {
@@ -140,9 +105,48 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	if txn.Valid() {
 		batchGetter = kv.NewBufferBatchGetter(txn.GetMemBuffer(), &PessimisticLockCacheGetter{txnCtx: txnCtx}, snapshot)
 	}
+	e.batchGetter = batchGetter
+	return nil
+}
 
+// Close implements the Executor interface.
+func (e *BatchPointGetExec) Close() error {
+	return nil
+}
+
+// Next implements the Executor interface.
+func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	req.Reset()
+	if atomic.CompareAndSwapUint32(&e.inited, 0, 1) {
+		if err := e.initialize(ctx); err != nil {
+			return err
+		}
+	}
+
+	if e.index >= len(e.values) {
+		return nil
+	}
+	for !req.IsFull() && e.index < len(e.values) {
+		handle, val := e.handles[e.index], e.values[e.index]
+		err := decodeRowValToChunk(e.base(), e.tblInfo, handle, val, req, e.rowDecoder)
+		if err != nil {
+			return err
+		}
+		e.index++
+	}
+
+	err := FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.schema, e.columns, e.ctx, req)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	var handleVals map[string][]byte
 	var indexKeys []kv.Key
+	var err error
+	batchGetter := e.batchGetter
 	if e.idxInfo != nil && !isCommonHandleRead(e.tblInfo, e.idxInfo) {
 		// `SELECT a, b FROM t WHERE (a, b) IN ((1, 2), (1, 2), (2, 1), (1, 2))` should not return duplicated rows
 		dedup := make(map[hack.MutableString]struct{})
