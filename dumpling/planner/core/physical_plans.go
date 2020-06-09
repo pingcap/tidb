@@ -97,6 +97,14 @@ func (p *PhysicalTableReader) SetChildren(children ...PhysicalPlan) {
 	p.TablePlans = flattenPushDownPlan(p.tablePlan)
 }
 
+// ExtractCorrelatedCols implements PhysicalPlan interface.
+func (p *PhysicalTableReader) ExtractCorrelatedCols() (corCols []*expression.CorrelatedColumn) {
+	for _, child := range p.TablePlans {
+		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
+	}
+	return corCols
+}
+
 // PhysicalIndexReader is the index reader in tidb.
 type PhysicalIndexReader struct {
 	physicalSchemaProducer
@@ -130,6 +138,14 @@ func (p *PhysicalIndexReader) SetChildren(children ...PhysicalPlan) {
 	p.SetSchema(nil)
 }
 
+// ExtractCorrelatedCols implements PhysicalPlan interface.
+func (p *PhysicalIndexReader) ExtractCorrelatedCols() (corCols []*expression.CorrelatedColumn) {
+	for _, child := range p.IndexPlans {
+		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
+	}
+	return corCols
+}
+
 // PushedDownLimit is the limit operator pushed down into PhysicalIndexLookUpReader.
 type PushedDownLimit struct {
 	Offset uint64
@@ -152,6 +168,17 @@ type PhysicalIndexLookUpReader struct {
 	PushedLimit *PushedDownLimit
 }
 
+// ExtractCorrelatedCols implements PhysicalPlan interface.
+func (p *PhysicalIndexLookUpReader) ExtractCorrelatedCols() (corCols []*expression.CorrelatedColumn) {
+	for _, child := range p.TablePlans {
+		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
+	}
+	for _, child := range p.IndexPlans {
+		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
+	}
+	return corCols
+}
+
 // PhysicalIndexMergeReader is the reader using multiple indexes in tidb.
 type PhysicalIndexMergeReader struct {
 	physicalSchemaProducer
@@ -164,6 +191,22 @@ type PhysicalIndexMergeReader struct {
 	partialPlans []PhysicalPlan
 	// tablePlan is a PhysicalTableScan to get the table tuples. Current, it must be not nil.
 	tablePlan PhysicalPlan
+}
+
+// ExtractCorrelatedCols implements PhysicalPlan interface.
+func (p *PhysicalIndexMergeReader) ExtractCorrelatedCols() (corCols []*expression.CorrelatedColumn) {
+	for _, child := range p.TablePlans {
+		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
+	}
+	for _, child := range p.partialPlans {
+		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
+	}
+	for _, PartialPlan := range p.PartialPlans {
+		for _, child := range PartialPlan {
+			corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
+		}
+	}
+	return corCols
 }
 
 // PhysicalIndexScan represents an index scan plan.
@@ -204,6 +247,15 @@ type PhysicalIndexScan struct {
 	// DoubleRead means if the index executor will read kv two times.
 	// If the query requires the columns that don't belong to index, DoubleRead will be true.
 	DoubleRead bool
+}
+
+// ExtractCorrelatedCols implements PhysicalPlan interface.
+func (p *PhysicalIndexScan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := make([]*expression.CorrelatedColumn, 0, len(p.AccessCondition))
+	for _, expr := range p.AccessCondition {
+		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
+	}
+	return corCols
 }
 
 // PhysicalMemTable reads memory table.
@@ -255,6 +307,18 @@ type PhysicalTableScan struct {
 	isChildOfIndexLookUp bool
 }
 
+// ExtractCorrelatedCols implements PhysicalPlan interface.
+func (ts *PhysicalTableScan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := make([]*expression.CorrelatedColumn, 0, len(ts.AccessCondition)+len(ts.filterCondition))
+	for _, expr := range ts.AccessCondition {
+		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
+	}
+	for _, expr := range ts.filterCondition {
+		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
+	}
+	return corCols
+}
+
 // IsPartition returns true and partition ID if it's actually a partition.
 func (ts *PhysicalTableScan) IsPartition() (bool, int64) {
 	return ts.isPartition, ts.physicalTableID
@@ -294,6 +358,15 @@ type PhysicalProjection struct {
 	AvoidColumnEvaluator bool
 }
 
+// ExtractCorrelatedCols implements PhysicalPlan interface.
+func (p *PhysicalProjection) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := make([]*expression.CorrelatedColumn, 0, len(p.Exprs))
+	for _, expr := range p.Exprs {
+		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
+	}
+	return corCols
+}
+
 // PhysicalTopN is the physical operator of topN.
 type PhysicalTopN struct {
 	basePhysicalPlan
@@ -303,11 +376,31 @@ type PhysicalTopN struct {
 	Count   uint64
 }
 
+// ExtractCorrelatedCols implements PhysicalPlan interface.
+func (lt *PhysicalTopN) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := make([]*expression.CorrelatedColumn, 0, len(lt.ByItems))
+	for _, item := range lt.ByItems {
+		corCols = append(corCols, expression.ExtractCorColumns(item.Expr)...)
+	}
+	return corCols
+}
+
 // PhysicalApply represents apply plan, only used for subquery.
 type PhysicalApply struct {
 	PhysicalHashJoin
 
 	OuterSchema []*expression.CorrelatedColumn
+}
+
+// ExtractCorrelatedCols implements PhysicalPlan interface.
+func (la *PhysicalApply) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := la.PhysicalHashJoin.ExtractCorrelatedCols()
+	for i := len(corCols) - 1; i >= 0; i-- {
+		if la.children[0].Schema().Contains(&corCols[i].Column) {
+			corCols = append(corCols[:i], corCols[i+1:]...)
+		}
+	}
+	return corCols
 }
 
 type basePhysicalJoin struct {
@@ -327,6 +420,21 @@ type basePhysicalJoin struct {
 	DefaultValues []types.Datum
 }
 
+// ExtractCorrelatedCols implements PhysicalPlan interface.
+func (p *basePhysicalJoin) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := make([]*expression.CorrelatedColumn, 0, len(p.LeftConditions)+len(p.RightConditions)+len(p.OtherConditions))
+	for _, fun := range p.LeftConditions {
+		corCols = append(corCols, expression.ExtractCorColumns(fun)...)
+	}
+	for _, fun := range p.RightConditions {
+		corCols = append(corCols, expression.ExtractCorColumns(fun)...)
+	}
+	for _, fun := range p.OtherConditions {
+		corCols = append(corCols, expression.ExtractCorColumns(fun)...)
+	}
+	return corCols
+}
+
 // PhysicalHashJoin represents hash join implementation of LogicalJoin.
 type PhysicalHashJoin struct {
 	basePhysicalJoin
@@ -336,6 +444,24 @@ type PhysicalHashJoin struct {
 
 	// use the outer table to build a hash table when the outer table is smaller.
 	UseOuterToBuild bool
+}
+
+// ExtractCorrelatedCols implements PhysicalPlan interface.
+func (p *PhysicalHashJoin) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := make([]*expression.CorrelatedColumn, 0, len(p.EqualConditions)+len(p.LeftConditions)+len(p.RightConditions)+len(p.OtherConditions))
+	for _, fun := range p.EqualConditions {
+		corCols = append(corCols, expression.ExtractCorColumns(fun)...)
+	}
+	for _, fun := range p.LeftConditions {
+		corCols = append(corCols, expression.ExtractCorColumns(fun)...)
+	}
+	for _, fun := range p.RightConditions {
+		corCols = append(corCols, expression.ExtractCorColumns(fun)...)
+	}
+	for _, fun := range p.OtherConditions {
+		corCols = append(corCols, expression.ExtractCorColumns(fun)...)
+	}
+	return corCols
 }
 
 // NewPhysicalHashJoin creates a new PhysicalHashJoin from LogicalJoin.
@@ -469,6 +595,20 @@ func (p *basePhysicalAgg) getAggFuncCostFactor() (factor float64) {
 	return
 }
 
+// ExtractCorrelatedCols implements PhysicalPlan interface.
+func (p *basePhysicalAgg) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := make([]*expression.CorrelatedColumn, 0, len(p.GroupByItems)+len(p.AggFuncs))
+	for _, expr := range p.GroupByItems {
+		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
+	}
+	for _, fun := range p.AggFuncs {
+		for _, arg := range fun.Args {
+			corCols = append(corCols, expression.ExtractCorColumns(arg)...)
+		}
+	}
+	return corCols
+}
+
 // PhysicalHashAgg is hash operator of aggregate.
 type PhysicalHashAgg struct {
 	basePhysicalAgg
@@ -493,6 +633,15 @@ type PhysicalSort struct {
 	basePhysicalPlan
 
 	ByItems []*util.ByItems
+}
+
+// ExtractCorrelatedCols implements PhysicalPlan interface.
+func (ls *PhysicalSort) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := make([]*expression.CorrelatedColumn, 0, len(ls.ByItems))
+	for _, item := range ls.ByItems {
+		corCols = append(corCols, expression.ExtractCorColumns(item.Expr)...)
+	}
+	return corCols
 }
 
 // NominalSort asks sort properties for its child. It is a fake operator that will not
@@ -536,6 +685,15 @@ type PhysicalSelection struct {
 	Conditions []expression.Expression
 }
 
+// ExtractCorrelatedCols implements PhysicalPlan interface.
+func (p *PhysicalSelection) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := make([]*expression.CorrelatedColumn, 0, len(p.Conditions))
+	for _, cond := range p.Conditions {
+		corCols = append(corCols, expression.ExtractCorColumns(cond)...)
+	}
+	return corCols
+}
+
 // PhysicalMaxOneRow is the physical operator of maxOneRow.
 type PhysicalMaxOneRow struct {
 	basePhysicalPlan
@@ -570,6 +728,29 @@ type PhysicalWindow struct {
 	PartitionBy     []property.Item
 	OrderBy         []property.Item
 	Frame           *WindowFrame
+}
+
+// ExtractCorrelatedCols implements PhysicalPlan interface.
+func (p *PhysicalWindow) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := make([]*expression.CorrelatedColumn, 0, len(p.WindowFuncDescs))
+	for _, windowFunc := range p.WindowFuncDescs {
+		for _, arg := range windowFunc.Args {
+			corCols = append(corCols, expression.ExtractCorColumns(arg)...)
+		}
+	}
+	if p.Frame != nil {
+		if p.Frame.Start != nil {
+			for _, expr := range p.Frame.Start.CalcFuncs {
+				corCols = append(corCols, expression.ExtractCorColumns(expr)...)
+			}
+		}
+		if p.Frame.End != nil {
+			for _, expr := range p.Frame.End.CalcFuncs {
+				corCols = append(corCols, expression.ExtractCorColumns(expr)...)
+			}
+		}
+	}
+	return corCols
 }
 
 // PhysicalShuffle represents a shuffle plan.
