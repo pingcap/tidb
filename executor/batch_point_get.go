@@ -45,7 +45,6 @@ type BatchPointGetExec struct {
 	txn        kv.Transaction
 	lock       bool
 	waitTime   int64
-	inited     bool
 	values     [][]byte
 	index      int
 	rowDecoder *rowcodec.ChunkDecoder
@@ -73,8 +72,8 @@ func (e *BatchPointGetExec) buildVirtualColumnInfo() {
 }
 
 // Open implements the Executor interface.
-func (e *BatchPointGetExec) Open(context.Context) error {
-	return nil
+func (e *BatchPointGetExec) Open(ctx context.Context) error {
+	return e.initialize(ctx)
 }
 
 // Close implements the Executor interface.
@@ -85,12 +84,6 @@ func (e *BatchPointGetExec) Close() error {
 // Next implements the Executor interface.
 func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
-	if !e.inited {
-		if err := e.initialize(ctx); err != nil {
-			return err
-		}
-		e.inited = true
-	}
 	if e.index >= len(e.values) {
 		return nil
 	}
@@ -185,11 +178,11 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			if len(handleVal) == 0 {
 				continue
 			}
-			handle, err1 := tables.DecodeHandleInUniqueIndexValue(handleVal)
+			handle, err1 := tables.DecodeHandleInUniqueIndexValue(handleVal, e.tblInfo.IsCommonHandle)
 			if err1 != nil {
 				return err1
 			}
-			e.handles = append(e.handles, kv.IntHandle(handle))
+			e.handles = append(e.handles, handle)
 			if e.tblInfo.Partition != nil {
 				e.physIDs = append(e.physIDs, tablecodec.DecodeTableID(key))
 			}

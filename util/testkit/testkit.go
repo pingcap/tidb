@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -148,10 +147,14 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, err
 	}
 	ctx := context.Background()
 	if len(args) == 0 {
-		stmts, warns, err := tk.Se.Parse(ctx, sql)
+		sc := tk.Se.GetSessionVars().StmtCtx
+		prevWarns := sc.GetWarnings()
+		stmts, err := tk.Se.Parse(ctx, sql)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		warns := sc.GetWarnings()
+		parserWarns := warns[len(prevWarns):]
 		var rs0 sqlexec.RecordSet
 		for i, stmt := range stmts {
 			rs, err := tk.Se.ExecuteStmt(ctx, stmt)
@@ -163,10 +166,8 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, err
 				return nil, errors.Trace(err)
 			}
 		}
-		if len(warns) > 0 {
-			for _, warn := range warns {
-				tk.Se.GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
-			}
+		if len(parserWarns) > 0 {
+			tk.Se.GetSessionVars().StmtCtx.AppendWarnings(parserWarns)
 		}
 		return rs0, nil
 	}
