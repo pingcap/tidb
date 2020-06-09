@@ -180,6 +180,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 # Query_time: 1
 # Parse_time: 0.00000001
 # Compile_time: 0.00000001
+# Rewrite_time: 0.000000003 Preproc_subqueries: 2 Preproc_subqueries_time: 0.000000002
 # Process_time: 2 Wait_time: 60 Backoff_time: 0.001 Request_count: 2 Total_keys: 10000 Process_keys: 20001
 # DB: test
 # Index_names: [t1:a,t2:b]
@@ -218,6 +219,11 @@ select * from t;`
 		PlanFromCache:  true,
 		HasMoreResults: true,
 		Succ:           true,
+		RewriteInfo: variable.RewritePhaseInfo{
+			DurationRewrite:            3,
+			DurationPreprocessSubQuery: 2,
+			PreprocessSubQueries:       2,
+		},
 	})
 	c.Assert(logString, Equals, resultString)
 }

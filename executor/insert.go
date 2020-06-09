@@ -133,11 +133,11 @@ func prefetchConflictedOldRows(ctx context.Context, txn kv.Transaction, rows []t
 	for _, r := range rows {
 		for _, uk := range r.uniqueKeys {
 			if val, found := values[string(uk.newKV.key)]; found {
-				handle, err := tables.DecodeHandleInUniqueIndexValue(val)
+				handle, err := tables.DecodeHandleInUniqueIndexValue(val, uk.commonHandle)
 				if err != nil {
 					return err
 				}
-				batchKeys = append(batchKeys, r.t.RecordKey(kv.IntHandle(handle)))
+				batchKeys = append(batchKeys, r.t.RecordKey(handle))
 			}
 		}
 	}
@@ -216,19 +216,19 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 				}
 				return err
 			}
-			handle, err := tables.DecodeHandleInUniqueIndexValue(val)
+			handle, err := tables.DecodeHandleInUniqueIndexValue(val, uk.commonHandle)
 			if err != nil {
 				return err
 			}
 
-			err = e.updateDupRow(ctx, txn, r, kv.IntHandle(handle), e.OnDuplicate)
+			err = e.updateDupRow(ctx, txn, r, handle, e.OnDuplicate)
 			if err != nil {
 				if kv.IsErrNotFound(err) {
 					// Data index inconsistent? A unique key provide the handle information, but the
 					// handle points to nothing.
 					logutil.BgLogger().Error("get old row failed when insert on dup",
 						zap.String("uniqueKey", hex.EncodeToString(uk.newKV.key)),
-						zap.Int64("handle", handle),
+						zap.Stringer("handle", handle),
 						zap.String("toBeInsertedRow", types.DatumsToStrNoErr(r.row)))
 				}
 				return err
