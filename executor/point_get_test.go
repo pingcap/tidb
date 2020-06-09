@@ -538,9 +538,6 @@ func (s *testPointGetSuite) TestReturnValues(c *C) {
 func (s *testPointGetSuite) TestClusterIndexPointGet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
-	defer func() {
-		tk.MustExec(`set @@tidb_enable_clustered_index=false`)
-	}()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists pgt")
 	tk.MustExec("create table pgt (a varchar(64), b varchar(64), uk int, v int, primary key(a, b), unique key uuk(uk))")

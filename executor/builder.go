@@ -3045,7 +3045,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		b.hasLock = true
 	}
 	var capacity int
-	if plan.IndexInfo != nil && !isPureClusterIndexRead(plan.TblInfo, plan.IndexInfo) {
+	if plan.IndexInfo != nil && !isCommonHandleRead(plan.TblInfo, plan.IndexInfo) {
 		e.idxVals = plan.IndexValues
 		capacity = len(e.idxVals)
 	} else {
@@ -3088,7 +3088,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 	return e
 }
 
-func isPureClusterIndexRead(tbl *model.TableInfo, idx *model.IndexInfo) bool {
+func isCommonHandleRead(tbl *model.TableInfo, idx *model.IndexInfo) bool {
 	return tbl.IsCommonHandle && idx.Primary
 }
 
