@@ -1343,6 +1343,12 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	}
 	var servers []ServerInfo
 	for _, store := range stores {
+		failpoint.Inject("mockStoreTombstone", func(val failpoint.Value) {
+			if val.(bool) {
+				store.State = metapb.StoreState_Tombstone
+			}
+		})
+
 		if store.GetState() == metapb.StoreState_Tombstone {
 			continue
 		}
