@@ -1337,6 +1337,8 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 
 		// for cast with charset
 		{"SELECT *, CAST(data AS CHAR CHARACTER SET utf8) FROM t;", true, "SELECT *,CAST(`data` AS CHAR CHARSET UTF8) FROM `t`"},
+		{"SELECT CAST(data AS CHARACTER);", true, "SELECT CAST(`data` AS CHAR)"},
+		{"SELECT CAST(data AS CHARACTER(10) CHARACTER SET utf8);", true, "SELECT CAST(`data` AS CHAR(10) CHARSET UTF8)"},
 
 		// for cast as JSON
 		{"SELECT *, CAST(data AS JSON) FROM t;", true, "SELECT *,CAST(`data` AS JSON) FROM `t`"},
