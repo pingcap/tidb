@@ -60,6 +60,33 @@ var aggFuncFactor = map[string]float64{
 	"default":              1.5,
 }
 
+// CountDown is used in hint nth_plan() to indicate which plan to use.
+type CountDown int8
+
+// Sign is the default value of CountDown, indicating that optimizer needn't to force a plan.
+var Sign CountDown = -1
+
+// Dec minus countdown by x
+func (c *CountDown) Dec(x int8) {
+	if *c <= 0 {
+		return
+	}
+	*c = CountDown(int8(*c) - x)
+	if *c < 0 {
+		*c = 0
+	}
+}
+
+// Empty indicates which the CountDown is clear now.
+func (c *CountDown) Empty() bool {
+	return *c == 0
+}
+
+// IsForce indicates whether to force a plan.
+func (c *CountDown) IsForce() bool {
+	return *c != -1
+}
+
 // wholeTaskTypes records all possible kinds of task that a plan can return. For Agg, TopN and Limit, we will try to get
 // these tasks one by one.
 var wholeTaskTypes = [...]property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType, property.RootTaskType}
@@ -103,11 +130,11 @@ func GetPropByOrderByItemsContainScalarFunc(items []*util.ByItems) (*property.Ph
 	return &property.PhysicalProperty{Items: propItems}, true, onlyColumn
 }
 
-func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty) (task, int64, error) {
+func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty, clock *CountDown) (task, int64, error) {
 	// If the required property is not empty and the row count > 1,
 	// we cannot ensure this required property.
 	// But if the row count is 0 or 1, we don't need to care about the property.
-	if !prop.IsEmpty() && p.RowCount > 1 {
+	if (!prop.IsEmpty() && p.RowCount > 1) || *clock == 0 {
 		return invalidTask, 0, nil
 	}
 	dual := PhysicalTableDual{
@@ -117,8 +144,8 @@ func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty) (task, 
 	return &rootTask{p: dual}, 1, nil
 }
 
-func (p *LogicalShow) findBestTask(prop *property.PhysicalProperty) (task, int64, error) {
-	if !prop.IsEmpty() {
+func (p *LogicalShow) findBestTask(prop *property.PhysicalProperty, clock *CountDown) (task, int64, error) {
+	if !prop.IsEmpty() || clock.Empty() {
 		return invalidTask, 0, nil
 	}
 	pShow := PhysicalShow{ShowContents: p.ShowContents}.Init(p.ctx)
@@ -126,8 +153,8 @@ func (p *LogicalShow) findBestTask(prop *property.PhysicalProperty) (task, int64
 	return &rootTask{p: pShow}, 1, nil
 }
 
-func (p *LogicalShowDDLJobs) findBestTask(prop *property.PhysicalProperty) (task, int64, error) {
-	if !prop.IsEmpty() {
+func (p *LogicalShowDDLJobs) findBestTask(prop *property.PhysicalProperty, clock *CountDown) (task, int64, error) {
+	if !prop.IsEmpty() || clock.Empty() {
 		return invalidTask, 0, nil
 	}
 	pShow := PhysicalShowDDLJobs{JobNumber: p.JobNumber}.Init(p.ctx)
@@ -135,18 +162,42 @@ func (p *LogicalShowDDLJobs) findBestTask(prop *property.PhysicalProperty) (task
 	return &rootTask{p: pShow}, 1, nil
 }
 
-func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPlan, prop *property.PhysicalProperty) (task, int64, error) {
+// rebuildChildTasks rebuild the childTasks to make the clock_th combination.
+func (p *baseLogicalPlan) rebuildChildTasks(childTasks *[]task, pp PhysicalPlan, childCnts []int64, clock int8) error {
+	var multAll int8 = 1
+	var curClock CountDown
+	for _, x := range childCnts {
+		multAll *= int8(x)
+	}
+	for j, child := range p.children {
+		multAll /= int8(childCnts[j])
+		curClock = CountDown((clock-1)/multAll + 1)
+		childTask, _, err := child.findBestTask(pp.GetChildReqProps(j), &curClock)
+		clock = (clock-1)%multAll + 1
+		//		y.Assert(curClock == 0)
+		if err != nil {
+			return err
+		}
+		//		y.Assert(!(childTask != nil && childTask.invalid()))
+		*childTasks = append(*childTasks, childTask)
+	}
+	return nil
+}
+
+func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPlan, prop *property.PhysicalProperty, clock *CountDown) (task, int64, error) {
 	var bestTask task = invalidTask
 	var curCntPlan int64
 	var cntPlan int64 = 0
 	childTasks := make([]task, 0, len(p.children))
+	childCnts := make([]int64, 0, len(p.children))
 	for _, pp := range physicalPlans {
 		// find best child tasks firstly.
 		childTasks = childTasks[:0]
 		// curCntPlan record the number of possible plan for pp
 		curCntPlan = 1
 		for j, child := range p.children {
-			childTask, cnt, err := child.findBestTask(pp.GetChildReqProps(j))
+			childTask, cnt, err := child.findBestTask(pp.GetChildReqProps(j), &Sign)
+			childCnts[j] = cnt
 			if err != nil {
 				return nil, 0, err
 			}
@@ -162,24 +213,37 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 			continue
 		}
 
+		if clock.IsForce() && int64(*clock) <= curCntPlan {
+			curCntPlan = int64(*clock)
+			err := p.rebuildChildTasks(&childTasks, pp, childCnts, int8(*clock))
+			if err != nil {
+				return nil, 0, err
+			}
+		}
+
 		// combine best child tasks with parent physical plan.
 		curTask := pp.attach2Task(childTasks...)
 
-		// enforce curTask property, set curCntPlan to 1 since the Task is enforced.
+		// enforce curTask property
 		if prop.Enforced {
 			curTask = enforceProperty(prop, curTask, p.basePlan.ctx)
-			curCntPlan = 1
 		}
 
 		// optimize by shuffle executor to running in parallel manner.
 		if prop.IsEmpty() {
-			// currently, we regard shuffled plan as a new plan.
+			// currently, we don not regard shuffled plan as a new plan.
 			curTask = optimizeByShuffle(pp, curTask, p.basePlan.ctx)
-			curCntPlan += 1
 		}
 
 		// get the most efficient one.
 		cntPlan += curCntPlan
+		clock.Dec(int8(curCntPlan))
+
+		if clock.Empty() {
+			bestTask = curTask
+			break
+		}
+
 		if curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()) {
 			bestTask = curTask
 		}
@@ -188,7 +252,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 }
 
 // findBestTask implements LogicalPlan interface.
-func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTask task, cntPlan int64, err error) {
+func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, clock *CountDown) (bestTask task, cntPlan int64, err error) {
 	// If p is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
 	// and set inner child prop nil, so here we do nothing.
 	if prop == nil {
@@ -198,6 +262,7 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 	// It's used to reduce double counting.
 	bestTask = p.getTask(prop)
 	if bestTask != nil {
+		clock.Dec(1)
 		return bestTask, 1, nil
 	}
 
@@ -249,26 +314,36 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 
 	newProp.Enforced = false
 	var cnt int64
-	if bestTask, cnt, err = p.enumeratePhysicalPlans4Task(plansFitsProp, newProp); err != nil {
+	var curTask task
+	if bestTask, cnt, err = p.enumeratePhysicalPlans4Task(plansFitsProp, newProp, clock); err != nil {
 		return nil, 0, err
 	}
 	cntPlan += cnt
+	if clock.Empty() {
+		goto END
+	}
+
 	newProp.Enforced = true
-	curTask, cnt, err := p.enumeratePhysicalPlans4Task(plansNeedEnforce, newProp)
+	curTask, cnt, err = p.enumeratePhysicalPlans4Task(plansNeedEnforce, newProp, clock)
 	if err != nil {
 		return nil, 0, err
 	}
 	cntPlan += cnt
+	if clock.Empty() {
+		bestTask = curTask
+		goto END
+	}
 	if curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()) {
 		bestTask = curTask
 	}
 
+END:
 	p.storeTask(prop, bestTask)
 	return bestTask, cntPlan, nil
 }
 
-func (p *LogicalMemTable) findBestTask(prop *property.PhysicalProperty) (t task, cntPlan int64, err error) {
-	if !prop.IsEmpty() {
+func (p *LogicalMemTable) findBestTask(prop *property.PhysicalProperty, clock *CountDown) (t task, cntPlan int64, err error) {
+	if !prop.IsEmpty() || clock.Empty() {
 		return invalidTask, 0, nil
 	}
 	memTable := PhysicalMemTable{
@@ -454,7 +529,7 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 
 // findBestTask implements the PhysicalPlan interface.
 // It will enumerate all the available indices and choose a plan with least cost.
-func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, cntPlan int64, err error) {
+func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, clock *CountDown) (t task, cntPlan int64, err error) {
 	// If ds is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
 	// and set inner child prop nil, so here we do nothing.
 	if prop == nil {
@@ -464,6 +539,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, cnt
 	t = ds.getTask(prop)
 	if t != nil {
 		cntPlan = 1
+		clock.Dec(1)
 		return
 	}
 	var cnt int64
@@ -473,7 +549,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, cnt
 	if prop.Enforced {
 		// First, get the bestTask without enforced prop
 		prop.Enforced = false
-		t, cnt, err = ds.findBestTask(prop)
+		t, cnt, err = ds.findBestTask(prop, clock)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -499,6 +575,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, cnt
 
 	t, err = ds.tryToGetDualTask()
 	if err != nil || t != nil {
+		clock.Dec(1)
 		return t, 1, err
 	}
 
@@ -514,16 +591,22 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, cnt
 				return nil, 0, err
 			}
 			cntPlan += 1
-			if idxMergeTask.cost() < t.cost() {
+			clock.Dec(1)
+			if idxMergeTask.cost() < t.cost() || clock.Empty() {
 				t = idxMergeTask
 			}
-			continue
+			if clock.Empty() {
+				return t, cntPlan, nil
+			} else {
+				continue
+			}
 		}
 		// if we already know the range of the scan is empty, just return a TableDual
 		if len(path.Ranges) == 0 && !ds.ctx.GetSessionVars().StmtCtx.UseCache {
 			dual := PhysicalTableDual{}.Init(ds.ctx, ds.stats, ds.blockOffset)
 			dual.SetSchema(ds.schema)
 			cntPlan += 1
+			clock.Dec(1)
 			return &rootTask{
 				p: dual,
 			}, cntPlan, nil
@@ -552,9 +635,14 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, cnt
 					pointGetTask = ds.convertToBatchPointGet(prop, candidate)
 				}
 				cntPlan += 1
-				if pointGetTask.cost() < t.cost() {
+				clock.Dec(1)
+				if pointGetTask.cost() < t.cost() || clock.Empty() {
 					t = pointGetTask
-					continue
+					if clock.Empty() {
+						return
+					} else {
+						continue
+					}
 				}
 			}
 		}
@@ -570,10 +658,15 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, cnt
 				return nil, 0, err
 			}
 			cntPlan += 1
-			if tblTask.cost() < t.cost() {
+			clock.Dec(1)
+			if tblTask.cost() < t.cost() || clock.Empty() {
 				t = tblTask
 			}
-			continue
+			if clock.Empty() {
+				return t, cntPlan, nil
+			} else {
+				continue
+			}
 		}
 		// TiFlash storage do not support index scan.
 		if ds.preferStoreType&preferTiFlash != 0 {
@@ -584,8 +677,12 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, cnt
 			return nil, 0, err
 		}
 		cntPlan += 1
-		if idxTask.cost() < t.cost() {
+		clock.Dec(1)
+		if idxTask.cost() < t.cost() || clock.Empty() {
 			t = idxTask
+		}
+		if clock.Empty() {
+			return t, cntPlan, nil
 		}
 	}
 

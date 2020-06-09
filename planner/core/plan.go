@@ -153,8 +153,11 @@ type LogicalPlan interface {
 	// findBestTask converts the logical plan to the physical plan. It's a new interface.
 	// It is called recursively from the parent to the children to create the result physical plan.
 	// Some logical plans will convert the children to the physical plans in different ways, and return the one
-	// with the lowest cost.
-	findBestTask(prop *property.PhysicalProperty) (task, int64, error)
+	// with the lowest cost and how many plans are found in this function.
+	// clock is a counter for planner to force a plan.
+	// if clock = 0, the plan generated in this function will not be considered.
+	// if clock = -1, then we will not force plan.
+	findBestTask(prop *property.PhysicalProperty, clock *CountDown) (task, int64, error)
 
 	// BuildKeyInfo will collect the information of unique keys into schema.
 	// Because this method is also used in cascades planner, we cannot use

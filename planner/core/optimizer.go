@@ -181,7 +181,7 @@ func physicalOptimize(logic LogicalPlan) (PhysicalPlan, float64, error) {
 		ExpectedCnt: math.MaxFloat64,
 	}
 
-	t, _, err := logic.findBestTask(prop)
+	t, _, err := logic.findBestTask(prop, &Sign)
 	if err != nil {
 		return nil, 0, err
 	}
