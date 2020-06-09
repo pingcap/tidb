@@ -143,12 +143,12 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 
 	var handleVals map[string][]byte
 	var indexKeys []kv.Key
-	if e.idxInfo != nil {
+	if e.idxInfo != nil && !isCommonHandleRead(e.tblInfo, e.idxInfo) {
 		// `SELECT a, b FROM t WHERE (a, b) IN ((1, 2), (1, 2), (2, 1), (1, 2))` should not return duplicated rows
 		dedup := make(map[hack.MutableString]struct{})
 		keys := make([]kv.Key, 0, len(e.idxVals))
 		for _, idxVals := range e.idxVals {
-			physID := getPhysID(e.tblInfo, idxVals[e.partPos].GetInt64())
+			physID := getPhysID(e.tblInfo, kv.IntHandle(idxVals[e.partPos].GetInt64()))
 			idxKey, err1 := encodeIndexKey(e.base(), e.tblInfo, e.idxInfo, idxVals, physID)
 			if err1 != nil && !kv.ErrNotExist.Equal(err1) {
 				return err1
@@ -223,7 +223,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		if len(e.physIDs) > 0 {
 			tID = e.physIDs[i]
 		} else {
-			tID = getPhysID(e.tblInfo, handle.IntValue())
+			tID = getPhysID(e.tblInfo, handle)
 		}
 		key := tablecodec.EncodeRowKeyWithHandle(tID, handle)
 		keys[i] = key
@@ -260,7 +260,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	for i, key := range keys {
 		val := values[string(key)]
 		if len(val) == 0 {
-			if e.idxInfo != nil {
+			if e.idxInfo != nil && (!e.tblInfo.IsCommonHandle || !e.idxInfo.Primary) {
 				return kv.ErrNotExist.GenWithStack("inconsistent extra index %s, handle %d not found in table",
 					e.idxInfo.Name.O, e.handles[i])
 			}
@@ -322,11 +322,11 @@ func (getter *PessimisticLockCacheGetter) Get(_ context.Context, key kv.Key) ([]
 	return nil, kv.ErrNotExist
 }
 
-func getPhysID(tblInfo *model.TableInfo, val int64) int64 {
+func getPhysID(tblInfo *model.TableInfo, val kv.Handle) int64 {
 	pi := tblInfo.Partition
 	if pi == nil {
 		return tblInfo.ID
 	}
-	partIdx := math.Abs(val) % int64(pi.Num)
+	partIdx := math.Abs(val.IntValue()) % int64(pi.Num) // TODO: fix me for table, partition on cluster index.
 	return pi.Definitions[partIdx].ID
 }
