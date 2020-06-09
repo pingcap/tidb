@@ -534,3 +534,17 @@ func (s *testPointGetSuite) TestReturnValues(c *C) {
 	c.Assert(ok, IsTrue)
 	tk.MustExec("rollback")
 }
+
+func (s *testPointGetSuite) TestClusterIndexPointGet(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists pgt")
+	tk.MustExec("create table pgt (a varchar(64), b varchar(64), uk int, v int, primary key(a, b), unique key uuk(uk))")
+	tk.MustExec("insert pgt values ('a', 'a1', 1, 11), ('b', 'b1', 2, 22), ('c', 'c1', 3, 33)")
+	tk.MustQuery(`select * from pgt where (a, b) in (('a', 'a1'), ('c', 'c1'))`).Check(testkit.Rows("a a1 1 11", "c c1 3 33"))
+	tk.MustQuery(`select * from pgt where a = 'b' and b = 'b1'`).Check(testkit.Rows("b b1 2 22"))
+	tk.MustQuery(`select * from pgt where uk = 1`).Check(testkit.Rows("a a1 1 11"))
+	tk.MustQuery(`select * from pgt where uk in (1, 2, 3)`).Check(testkit.Rows("a a1 1 11", "b b1 2 22", "c c1 3 33"))
+	tk.MustExec(`admin check table pgt`)
+}
