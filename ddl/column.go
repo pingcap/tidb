@@ -644,7 +644,7 @@ func (w *worker) doModifyColumn(
 	})
 
 	if newAutoRandBits > 0 {
-		if err := checkAndApplyNewAutoRandomBits(t, job.SchemaID, tblInfo, newCol, oldName, newAutoRandBits); err != nil {
+		if err := checkAndApplyNewAutoRandomBits(job, t, tblInfo, newCol, oldName, newAutoRandBits); err != nil {
 			return ver, errors.Trace(err)
 		}
 	}
@@ -739,8 +739,9 @@ func (w *worker) doModifyColumn(
 	return ver, nil
 }
 
-func checkAndApplyNewAutoRandomBits(t *meta.Meta, schemaID int64, tblInfo *model.TableInfo,
+func checkAndApplyNewAutoRandomBits(job *model.Job, t *meta.Meta, tblInfo *model.TableInfo,
 	newCol *model.ColumnInfo, oldName *model.CIStr, newAutoRandBits uint64) error {
+	schemaID := job.SchemaID
 	newLayout := autoid.NewAutoRandomIDLayout(&newCol.FieldType, newAutoRandBits)
 
 	// GenAutoRandomID first to prevent concurrent update.
@@ -759,6 +760,7 @@ func checkAndApplyNewAutoRandomBits(t *meta.Meta, schemaID int64, tblInfo *model
 	if isOccupyingIncBits {
 		availableBits := mathutil.Min(autoid.MaxAutoRandomBits, availableBits)
 		errMsg := fmt.Sprintf(autoid.AutoRandomOverflowErrMsg, availableBits, newAutoRandBits, oldName.O)
+		job.State = model.JobStateCancelled
 		return ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
 	}
 	tblInfo.AutoRandomBits = newAutoRandBits
