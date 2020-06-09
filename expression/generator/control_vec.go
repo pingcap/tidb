@@ -54,6 +54,8 @@ import (
 var builtinCaseWhenVec = template.Must(template.New("builtinCaseWhenVec").Parse(`
 {{ range .Sigs }}{{ with .Arg0 }}
 func (b *builtinCaseWhen{{ .TypeName }}Sig) vecEval{{ .TypeName }}(input *chunk.Chunk, result *chunk.Column) error {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	sc.IgnoreDividedByZero = true
 	n := input.NumRows()
 	args, l := b.getArgs(), len(b.getArgs())
 	whens := make([]*chunk.Column, l/2)
@@ -239,6 +241,7 @@ ROW:
 			{{- end }}
 		}
 	}
+	sc.IgnoreDividedByZero = false
 	return nil
 }
 

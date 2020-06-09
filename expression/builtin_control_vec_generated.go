@@ -23,6 +23,8 @@ import (
 )
 
 func (b *builtinCaseWhenIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	sc.IgnoreDividedByZero = true
 	n := input.NumRows()
 	args, l := b.getArgs(), len(b.getArgs())
 	whens := make([]*chunk.Column, l/2)
@@ -134,6 +136,7 @@ ROW:
 			result.SetNull(i, true)
 		}
 	}
+	sc.IgnoreDividedByZero = false
 	return nil
 }
 
@@ -142,6 +145,8 @@ func (b *builtinCaseWhenIntSig) vectorized() bool {
 }
 
 func (b *builtinCaseWhenRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	sc.IgnoreDividedByZero = true
 	n := input.NumRows()
 	args, l := b.getArgs(), len(b.getArgs())
 	whens := make([]*chunk.Column, l/2)
@@ -253,6 +258,7 @@ ROW:
 			result.SetNull(i, true)
 		}
 	}
+	sc.IgnoreDividedByZero = false
 	return nil
 }
 
@@ -261,6 +267,8 @@ func (b *builtinCaseWhenRealSig) vectorized() bool {
 }
 
 func (b *builtinCaseWhenDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	sc.IgnoreDividedByZero = true
 	n := input.NumRows()
 	args, l := b.getArgs(), len(b.getArgs())
 	whens := make([]*chunk.Column, l/2)
@@ -372,6 +380,7 @@ ROW:
 			result.SetNull(i, true)
 		}
 	}
+	sc.IgnoreDividedByZero = false
 	return nil
 }
 
@@ -380,6 +389,8 @@ func (b *builtinCaseWhenDecimalSig) vectorized() bool {
 }
 
 func (b *builtinCaseWhenStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	sc.IgnoreDividedByZero = true
 	n := input.NumRows()
 	args, l := b.getArgs(), len(b.getArgs())
 	whens := make([]*chunk.Column, l/2)
@@ -488,6 +499,7 @@ ROW:
 			result.AppendNull()
 		}
 	}
+	sc.IgnoreDividedByZero = false
 	return nil
 }
 
@@ -496,6 +508,8 @@ func (b *builtinCaseWhenStringSig) vectorized() bool {
 }
 
 func (b *builtinCaseWhenTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	sc.IgnoreDividedByZero = true
 	n := input.NumRows()
 	args, l := b.getArgs(), len(b.getArgs())
 	whens := make([]*chunk.Column, l/2)
@@ -607,6 +621,7 @@ ROW:
 			result.SetNull(i, true)
 		}
 	}
+	sc.IgnoreDividedByZero = false
 	return nil
 }
 
@@ -615,6 +630,8 @@ func (b *builtinCaseWhenTimeSig) vectorized() bool {
 }
 
 func (b *builtinCaseWhenDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	sc.IgnoreDividedByZero = true
 	n := input.NumRows()
 	args, l := b.getArgs(), len(b.getArgs())
 	whens := make([]*chunk.Column, l/2)
@@ -726,6 +743,7 @@ ROW:
 			result.SetNull(i, true)
 		}
 	}
+	sc.IgnoreDividedByZero = false
 	return nil
 }
 
@@ -734,6 +752,8 @@ func (b *builtinCaseWhenDurationSig) vectorized() bool {
 }
 
 func (b *builtinCaseWhenJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	sc.IgnoreDividedByZero = true
 	n := input.NumRows()
 	args, l := b.getArgs(), len(b.getArgs())
 	whens := make([]*chunk.Column, l/2)
@@ -842,6 +862,7 @@ ROW:
 			result.AppendNull()
 		}
 	}
+	sc.IgnoreDividedByZero = false
 	return nil
 }
 

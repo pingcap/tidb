@@ -72,6 +72,7 @@ type StatementContext struct {
 	DupKeyAsWarning        bool
 	BadNullAsWarning       bool
 	DividedByZeroAsWarning bool
+	IgnoreDividedByZero    bool
 	TruncateAsWarning      bool
 	OverflowAsWarning      bool
 	InShowWarning          bool

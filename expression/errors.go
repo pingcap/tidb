@@ -76,6 +76,8 @@ func handleDivisionByZeroError(ctx sessionctx.Context) error {
 			return ErrDivisionByZero
 		}
 	}
-	sc.AppendWarning(ErrDivisionByZero)
+	if !sc.IgnoreDividedByZero {
+		sc.AppendWarning(ErrDivisionByZero)
+	}
 	return nil
 }
