@@ -132,7 +132,7 @@ func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
 	}
 
 	// No duplicated rows now, insert the row.
-	_, err = e.addRecord(ctx, r.row)
+	err = e.addRecord(ctx, r.row)
 	if err != nil {
 		return err
 	}
@@ -154,12 +154,11 @@ func (e *ReplaceExec) removeIndexRow(ctx context.Context, txn kv.Transaction, r 
 			}
 			return false, false, err
 		}
-
-		handle, err := tables.DecodeHandleInUniqueIndexValue(val)
+		handle, err := tables.DecodeHandleInUniqueIndexValue(val, uk.commonHandle)
 		if err != nil {
 			return false, true, err
 		}
-		rowUnchanged, err := e.removeRow(ctx, txn, kv.IntHandle(handle), r)
+		rowUnchanged, err := e.removeRow(ctx, txn, handle, r)
 		if err != nil {
 			return false, true, err
 		}
