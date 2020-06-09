@@ -658,6 +658,7 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 		path.Ranges = ranger.FullIntRange(isUnsigned)
 		return false, nil
 	}
+	path.PkCol = pkCol
 
 	path.Ranges = ranger.FullIntRange(isUnsigned)
 	if len(conds) == 0 {
