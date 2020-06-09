@@ -70,6 +70,11 @@ func (c *applyCache) Set(key string, value *applyCacheValue) bool {
 		return false
 	}
 	mem := int64(unsafe.Sizeof(key)) + value.Data.GetMemTracker().BytesConsumed()
+	// When the <key, value> pair's memory consumption is larger than cache's max capacity,
+	// we do not to store the <key, value> pair.
+	if mem > c.memCapacity {
+		return false
+	}
 	for mem+c.memTracker.BytesConsumed() > c.memCapacity {
 		evictedKey, evictedValue, evicted := c.cache.RemoveOldest()
 		if !evicted {

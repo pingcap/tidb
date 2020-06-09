@@ -380,7 +380,6 @@ type Performance struct {
 	CommitterConcurrency int     `toml:"committer-concurrency" json:"committer-concurrency"`
 	MaxTxnTTL            uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
 	MemProfileInterval   string  `toml:"mem-profile-interval" json:"mem-profile-interval"`
-	ApplyCacheCapacity   int64   `toml:"apply-cache-capacity" json:"apply-cache-capacity"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -621,7 +620,6 @@ var defaultConf = Config{
 		CommitterConcurrency: 16,
 		MaxTxnTTL:            10 * 60 * 1000, // 10min
 		MemProfileInterval:   "1m",
-		ApplyCacheCapacity:   20971520, // 20MB
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
