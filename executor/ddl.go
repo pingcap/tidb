@@ -487,7 +487,6 @@ func GetDropOrTruncateTableInfoFromJobs(jobs []*model.Job, gcSafePoint uint64, d
 			// t2 	|	t1 state is write only	|	in other TiDB, and table t1 state is public, drop table t1
 			// t3 	|	finish					|
 			// t4 	|							|	finish with error: schema not exists.
-			return false, errors.Errorf("dsfasadfsadf")
 			continue
 		}
 		finish, err := fn(job, table.Meta())
