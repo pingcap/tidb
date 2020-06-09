@@ -157,7 +157,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		tblID = e.tblInfo.ID
 	}
 	if e.idxInfo != nil {
-		if e.tblInfo.IsCommonHandle && e.idxInfo.Primary {
+		if isCommonHandleRead(e.tblInfo, e.idxInfo) {
 			handleBytes, err := codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, nil, e.idxVals...)
 			if err != nil {
 				return err
@@ -214,7 +214,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 	if len(val) == 0 {
-		if e.idxInfo != nil && !e.idxInfo.Primary {
+		if e.idxInfo != nil && !isCommonHandleRead(e.tblInfo, e.idxInfo) {
 			return kv.ErrNotExist.GenWithStack("inconsistent extra index %s, handle %d not found in table",
 				e.idxInfo.Name.O, e.handle)
 		}
