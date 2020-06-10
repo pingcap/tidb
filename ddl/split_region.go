@@ -18,34 +18,39 @@ import (
 
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
-func splitPartitionTableRegion(store kv.SplitableStore, pi *model.PartitionInfo, scatter bool) {
+func splitPartitionTableRegion(ctx sessionctx.Context, store kv.SplitableStore, pi *model.PartitionInfo, scatter bool) {
 	// Max partition count is 4096, should we sample and just choose some of the partition to split?
 	regionIDs := make([]uint64, 0, len(pi.Definitions))
+	ctxWithTimeout, cancel := context.WithTimeout(context.Background(), ctx.GetSessionVars().GetSplitRegionTimeout())
+	defer cancel()
 	for _, def := range pi.Definitions {
-		regionIDs = append(regionIDs, splitRecordRegion(store, def.ID, scatter))
+		regionIDs = append(regionIDs, splitRecordRegion(ctxWithTimeout, store, def.ID, scatter))
 	}
 	if scatter {
-		waitScatterRegionFinish(store, regionIDs...)
+		waitScatterRegionFinish(ctxWithTimeout, store, regionIDs...)
 	}
 }
 
-func splitTableRegion(store kv.SplitableStore, tbInfo *model.TableInfo, scatter bool) {
+func splitTableRegion(ctx sessionctx.Context, store kv.SplitableStore, tbInfo *model.TableInfo, scatter bool) {
+	ctxWithTimeout, cancel := context.WithTimeout(context.Background(), ctx.GetSessionVars().GetSplitRegionTimeout())
+	defer cancel()
 	if tbInfo.ShardRowIDBits > 0 && tbInfo.PreSplitRegions > 0 {
-		splitPreSplitedTable(store, tbInfo, scatter)
+		splitPreSplitedTable(ctxWithTimeout, store, tbInfo, scatter)
 	} else {
-		regionID := splitRecordRegion(store, tbInfo.ID, scatter)
+		regionID := splitRecordRegion(ctxWithTimeout, store, tbInfo.ID, scatter)
 		if scatter {
-			waitScatterRegionFinish(store, regionID)
+			waitScatterRegionFinish(ctxWithTimeout, store, regionID)
 		}
 	}
 }
 
-func splitPreSplitedTable(store kv.SplitableStore, tbInfo *model.TableInfo, scatter bool) {
+func splitPreSplitedTable(ctx context.Context, store kv.SplitableStore, tbInfo *model.TableInfo, scatter bool) {
 	// Example:
 	// ShardRowIDBits = 4
 	// PreSplitRegions = 2
@@ -80,20 +85,20 @@ func splitPreSplitedTable(store kv.SplitableStore, tbInfo *model.TableInfo, scat
 		splitTableKeys = append(splitTableKeys, key)
 	}
 	var err error
-	regionIDs, err := store.SplitRegions(context.Background(), splitTableKeys, scatter)
+	regionIDs, err := store.SplitRegions(ctx, splitTableKeys, scatter)
 	if err != nil {
 		logutil.Logger(context.Background()).Warn("[ddl] pre split table region failed",
 			zap.Stringer("table", tbInfo.Name), zap.Int("successful region count", len(regionIDs)), zap.Error(err))
 	}
 	regionIDs = append(regionIDs, splitIndexRegion(store, tbInfo, scatter)...)
 	if scatter {
-		waitScatterRegionFinish(store, regionIDs...)
+		waitScatterRegionFinish(ctx, store, regionIDs...)
 	}
 }
 
-func splitRecordRegion(store kv.SplitableStore, tableID int64, scatter bool) uint64 {
+func splitRecordRegion(ctx context.Context, store kv.SplitableStore, tableID int64, scatter bool) uint64 {
 	tableStartKey := tablecodec.GenTablePrefix(tableID)
-	regionIDs, err := store.SplitRegions(context.Background(), [][]byte{tableStartKey}, scatter)
+	regionIDs, err := store.SplitRegions(ctx, [][]byte{tableStartKey}, scatter)
 	if err != nil {
 		// It will be automatically split by TiKV later.
 		logutil.Logger(context.Background()).Warn("[ddl] split table region failed", zap.Error(err))
@@ -118,11 +123,12 @@ func splitIndexRegion(store kv.SplitableStore, tblInfo *model.TableInfo, scatter
 	return regionIDs
 }
 
-func waitScatterRegionFinish(store kv.SplitableStore, regionIDs ...uint64) {
+func waitScatterRegionFinish(ctx context.Context, store kv.SplitableStore, regionIDs ...uint64) {
 	for _, regionID := range regionIDs {
-		err := store.WaitScatterRegionFinish(regionID, 0)
+		err := store.WaitScatterRegionFinish(ctx, regionID, 0)
 		if err != nil {
 			logutil.Logger(context.Background()).Warn("[ddl] wait scatter region failed", zap.Uint64("regionID", regionID), zap.Error(err))
+			return
 		}
 	}
 }
