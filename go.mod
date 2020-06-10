@@ -12,7 +12,7 @@ require (
 	github.com/dgraph-io/ristretto v0.0.1
 	github.com/dgryski/go-farm v0.0.0-20190423205320-6a90982ecee2
 	github.com/dustin/go-humanize v1.0.0 // indirect
-	github.com/go-sql-driver/mysql v1.4.1
+	github.com/go-sql-driver/mysql v1.5.0
 	github.com/gogo/protobuf v1.3.1
 	github.com/golang/groupcache v0.0.0-20190702054246-869f871628b6 // indirect
 	github.com/golang/protobuf v1.3.4
@@ -74,3 +74,5 @@ require (
 )
 
 go 1.13
+
+replace github.com/pingcap/parser => github.com/xuhuaiyu/parser v0.0.0-20200610031916-115fef0903fd
