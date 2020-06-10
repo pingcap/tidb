@@ -165,7 +165,7 @@ func checkModifyGeneratedColumn(tbl table.Table, oldCol, newCol *table.Column, n
 	oldColIsStored := !oldCol.IsGenerated() || oldCol.GeneratedStored
 	newColIsStored := !newCol.IsGenerated() || newCol.GeneratedStored
 	if oldColIsStored != newColIsStored {
-		return errUnsupportedOnGeneratedColumn.GenWithStackByArgs("Changing the STORED status")
+		return ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("Changing the STORED status")
 	}
 
 	// rule 2.
@@ -285,13 +285,13 @@ func checkIndexOrStored(tbl table.Table, oldCol, newCol *table.Column) error {
 	}
 
 	if newCol.GeneratedStored {
-		return errUnsupportedOnGeneratedColumn.GenWithStackByArgs("modifying a stored column")
+		return ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("modifying a stored column")
 	}
 
 	for _, idx := range tbl.Indices() {
 		for _, col := range idx.Meta().Columns {
 			if col.Name.L == newCol.Name.L {
-				return errUnsupportedOnGeneratedColumn.GenWithStackByArgs("modifying an indexed column")
+				return ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("modifying an indexed column")
 			}
 		}
 	}
