@@ -15,15 +15,22 @@ package core
 
 import (
 	"context"
+	"fmt"
+	"reflect"
+	"strings"
+	_ "unsafe" // required by go:linkname
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hint"
+	"github.com/pingcap/tidb/util/mock"
 )
 
 var _ = Suite(&testPlanBuilderSuite{})
@@ -171,4 +178,126 @@ func (s *testPlanBuilderSuite) TestDisableFold(c *C) {
 			c.Assert(rewritenArg, FitsTypeOf, expectedArg)
 		}
 	}
+}
+
+func (s *testPlanBuilderSuite) TestPhysicalPlanCloning(c *C) {
+	ctx := mock.NewContext()
+	expr := &expression.Column{}
+	cols := []*expression.Column{{}, {}}
+	stats := &property.StatsInfo{RowCount: 1000}
+	prop := property.NewPhysicalProperty(0, cols, false, 0, false)
+	byItems := []*util.ByItems{{Expr: expr}}
+	sort := &PhysicalSort{ByItems: byItems}
+	sort = sort.Init(ctx, stats, 0, prop, prop)
+	clonedSort, err := sort.Clone()
+	c.Assert(err, IsNil)
+	c.Assert(checkClonedPhysicalPlan(sort, clonedSort), IsNil)
+}
+
+//go:linkname valueInterface reflect.valueInterface
+func valueInterface(v reflect.Value, safe bool) interface{}
+
+func typeName(t reflect.Type) string {
+	path := t.String()
+	tmp := strings.Split(path, ".")
+	if len(tmp) == 1 {
+		return tmp[0]
+	}
+	return tmp[len(tmp)-1]
+}
+
+func invalidPointerType(t reflect.Type) bool {
+	whiltList := []string{"property.StatsInfo", "sessionctx.Context"}
+	str := t.String()
+	for _, item := range whiltList {
+		if strings.Contains(str, item) {
+			return false
+		}
+	}
+	return true
+}
+
+func checkClonedPhysicalPlan(x, y interface{}) error {
+	return checkClonedPhysicalPlanDeep(reflect.ValueOf(x), reflect.ValueOf(y), typeName(reflect.TypeOf(x)))
+}
+
+func checkClonedPhysicalPlanDeep(v1, v2 reflect.Value, path string) error {
+	if !v1.IsValid() || !v2.IsValid() {
+		if v1.IsValid() != v2.IsValid() {
+			return errors.Errorf("invalid")
+		}
+		return nil
+	}
+	if v1.Type() != v2.Type() {
+		return errors.Errorf("different type %v, %v, path %v", v1.Type(), v2.Type(), path)
+	}
+	switch v1.Kind() {
+	case reflect.Array:
+		for i := 0; i < v1.Len(); i++ {
+			if err := checkClonedPhysicalPlanDeep(v1.Index(i), v2.Index(i), fmt.Sprintf("%v[%v]", path, i)); err != nil {
+				return err
+			}
+		}
+	case reflect.Slice:
+		if v1.IsNil() && v2.IsNil() {
+			return nil
+		}
+		if v1.IsNil() != v2.IsNil() || v1.Len() != v2.Len() {
+			return errors.Errorf("different slices nil %v, %v, len %v, %v, path %v", v1.IsNil(), v2.IsNil(), v1.Len(), v2.Len(), path)
+		}
+		if v1.Pointer() == v2.Pointer() {
+			return errors.Errorf("invalid slice pointers, path %v", path)
+		}
+		for i := 0; i < v1.Len(); i++ {
+			if err := checkClonedPhysicalPlanDeep(v1.Index(i), v2.Index(i), fmt.Sprintf("%v[%v]", path, i)); err != nil {
+				return err
+			}
+		}
+	case reflect.Interface:
+		if v1.IsNil() && v2.IsNil() {
+			return nil
+		}
+		if v1.IsNil() != v2.IsNil() {
+			return errors.Errorf("invalid interfaces, path %v", path)
+		}
+		return checkClonedPhysicalPlanDeep(v1.Elem(), v2.Elem(), path)
+	case reflect.Ptr:
+		if v1.IsNil() && v2.IsNil() {
+			return nil
+		}
+		if v1.Pointer() == v2.Pointer() && invalidPointerType(v1.Type()) {
+			return errors.Errorf("same pointer, path %v", path)
+		}
+		return checkClonedPhysicalPlanDeep(v1.Elem(), v2.Elem(), path)
+	case reflect.Struct:
+		for i, n := 0, v1.NumField(); i < n; i++ {
+			if err := checkClonedPhysicalPlanDeep(v1.Field(i), v2.Field(i), fmt.Sprintf("%v.%v", path, typeName(v1.Field(i).Type()))); err != nil {
+				return err
+			}
+		}
+	case reflect.Map:
+		if v1.IsNil() && v2.IsNil() {
+			return nil
+		}
+		if v1.IsNil() != v2.IsNil() || v1.Len() != v2.Len() {
+			return errors.Errorf("different maps %v, %v", v1.Interface(), v2.Interface())
+		}
+		if v1.Pointer() == v2.Pointer() {
+			return errors.Errorf("invalid map pointers, path %v", path)
+		}
+		for _, k := range v1.MapKeys() {
+			val1 := v1.MapIndex(k)
+			val2 := v2.MapIndex(k)
+			if !val1.IsValid() || !val2.IsValid() {
+				if err := checkClonedPhysicalPlanDeep(val1, val2, fmt.Sprintf("%v[%v]", path, typeName(k.Type()))); err != nil {
+					return err
+				}
+			}
+		}
+	default:
+		if valueInterface(v1, false) != valueInterface(v2, false) {
+			return errors.Errorf("different values, path %v", path)
+		}
+	}
+	return nil
 }

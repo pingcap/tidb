@@ -15,6 +15,7 @@ package core
 
 import (
 	"fmt"
+	"github.com/pingcap/errors"
 	"math"
 	"strconv"
 
@@ -236,6 +237,9 @@ type PhysicalPlan interface {
 
 	// ExplainNormalizedInfo returns operator normalized information for generating digest.
 	ExplainNormalizedInfo() string
+
+	// Clone clones this physical plan.
+	Clone() (PhysicalPlan, error)
 }
 
 type baseLogicalPlan struct {
@@ -262,6 +266,27 @@ type basePhysicalPlan struct {
 	childrenReqProps []*property.PhysicalProperty
 	self             PhysicalPlan
 	children         []PhysicalPlan
+}
+
+func (p *basePhysicalPlan) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalPlan, error) {
+	base := &basePhysicalPlan{
+		basePlan: p.basePlan,
+		self:     newSelf,
+	}
+	for i := range p.children {
+		newChild, err := p.children[i].Clone()
+		if err != nil {
+			return nil, err
+		}
+		newProp := p.childrenReqProps[i].Clone()
+		base.children = append(base.children, newChild)
+		base.childrenReqProps = append(base.childrenReqProps, newProp)
+	}
+	return base, nil
+}
+
+func (p *basePhysicalPlan) Clone() (PhysicalPlan, error) {
+	return nil, errors.Errorf("%T doesn't support cloning", p.self)
 }
 
 // ExplainInfo implements Plan interface.

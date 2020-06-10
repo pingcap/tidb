@@ -91,6 +91,23 @@ func (sg *TiKVSingleGather) GetPhysicalIndexReader(schema *expression.Schema, st
 	return reader
 }
 
+func (p *PhysicalTableReader) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalTableReader)
+	prod, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.physicalSchemaProducer = *prod
+	cloned.StoreType = p.StoreType
+	if cloned.tablePlan, err = p.tablePlan.Clone(); err != nil {
+		return nil, err
+	}
+	if cloned.TablePlans, err = clonePhysicalPlan(p.TablePlans); err != nil {
+		return nil, err
+	}
+	return cloned, nil
+}
+
 // SetChildren overrides PhysicalPlan SetChildren interface.
 func (p *PhysicalTableReader) SetChildren(children ...PhysicalPlan) {
 	p.tablePlan = children[0]
@@ -115,6 +132,23 @@ type PhysicalIndexReader struct {
 
 	// OutputColumns represents the columns that index reader should return.
 	OutputColumns []*expression.Column
+}
+
+func (p *PhysicalIndexReader) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalIndexReader)
+	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.physicalSchemaProducer = *base
+	if cloned.indexPlan, err = p.indexPlan.Clone(); err != nil {
+		return nil, err
+	}
+	if cloned.IndexPlans, err = clonePhysicalPlan(p.IndexPlans); err != nil {
+		return nil, err
+	}
+	cloned.OutputColumns = cloneCols(p.OutputColumns)
+	return cloned, err
 }
 
 // SetSchema overrides PhysicalPlan SetSchema interface.
@@ -249,6 +283,31 @@ type PhysicalIndexScan struct {
 	DoubleRead bool
 }
 
+func (p *PhysicalIndexScan) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalIndexScan)
+	*cloned = *p
+	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.physicalSchemaProducer = *base
+	cloned.AccessCondition = cloneExprs(p.AccessCondition)
+	cloned.Table = p.Table.Clone()
+	cloned.Index = p.Index.Clone()
+	cloned.IdxCols = cloneCols(p.IdxCols)
+	cloned.IdxColLens = make([]int, len(p.IdxColLens))
+	copy(cloned.IdxColLens, p.IdxColLens)
+	cloned.Ranges = cloneRanges(p.Ranges)
+	cloned.Columns = cloneColInfos(p.Columns)
+	cloned.dataSourceSchema = p.dataSourceSchema.Clone()
+	cloned.Hist = p.Hist.Copy()
+	cloned.GenExprs = make(map[model.TableColumnID]expression.Expression)
+	for id, expr := range p.GenExprs {
+		cloned.GenExprs[id] = expr.Clone()
+	}
+	return cloned, nil
+}
+
 // ExtractCorrelatedCols implements PhysicalPlan interface.
 func (p *PhysicalIndexScan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0, len(p.AccessCondition))
@@ -307,6 +366,26 @@ type PhysicalTableScan struct {
 	isChildOfIndexLookUp bool
 }
 
+func (ts *PhysicalTableScan) Clone() (PhysicalPlan, error) {
+	clonedScan := new(PhysicalTableScan)
+	*clonedScan = *ts
+	prod, err := ts.physicalSchemaProducer.cloneWithSelf(clonedScan)
+	if err != nil {
+		return nil, err
+	}
+	clonedScan.physicalSchemaProducer = *prod
+	clonedScan.AccessCondition = cloneExprs(ts.AccessCondition)
+	clonedScan.filterCondition = cloneExprs(ts.filterCondition)
+	clonedScan.Table = ts.Table.Clone()
+	clonedScan.Columns = cloneColInfos(ts.Columns)
+	clonedScan.Ranges = cloneRanges(ts.Ranges)
+	clonedScan.pkCol = ts.pkCol.Clone().(*expression.Column)
+	clonedScan.TableAsName = ts.TableAsName
+	clonedScan.Hist = ts.Hist.Copy()
+	clonedScan.rangeDecidedBy = cloneCols(ts.rangeDecidedBy)
+	return clonedScan, nil
+}
+
 // ExtractCorrelatedCols implements PhysicalPlan interface.
 func (ts *PhysicalTableScan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0, len(ts.AccessCondition)+len(ts.filterCondition))
@@ -358,6 +437,18 @@ type PhysicalProjection struct {
 	AvoidColumnEvaluator bool
 }
 
+func (p *PhysicalProjection) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalProjection)
+	*cloned = *p
+	base, err := p.basePhysicalPlan.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.basePhysicalPlan = *base
+	cloned.Exprs = cloneExprs(p.Exprs)
+	return cloned, err
+}
+
 // ExtractCorrelatedCols implements PhysicalPlan interface.
 func (p *PhysicalProjection) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0, len(p.Exprs))
@@ -374,6 +465,20 @@ type PhysicalTopN struct {
 	ByItems []*util.ByItems
 	Offset  uint64
 	Count   uint64
+}
+
+func (lt *PhysicalTopN) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalTopN)
+	*cloned = *lt
+	base, err := lt.basePhysicalPlan.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.basePhysicalPlan = *base
+	for _, it := range lt.ByItems {
+		cloned.ByItems = append(cloned.ByItems, it.Clone())
+	}
+	return cloned, nil
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
@@ -635,6 +740,19 @@ type PhysicalSort struct {
 	ByItems []*util.ByItems
 }
 
+func (ls *PhysicalSort) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalSort)
+	base, err := ls.basePhysicalPlan.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.basePhysicalPlan = *base
+	for _, it := range ls.ByItems {
+		cloned.ByItems = append(cloned.ByItems, it.Clone())
+	}
+	return cloned, nil
+}
+
 // ExtractCorrelatedCols implements PhysicalPlan interface.
 func (ls *PhysicalSort) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0, len(ls.ByItems))
@@ -683,6 +801,17 @@ type PhysicalSelection struct {
 	basePhysicalPlan
 
 	Conditions []expression.Expression
+}
+
+func (p *PhysicalSelection) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalSelection)
+	base, err := p.basePhysicalPlan.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.basePhysicalPlan = *base
+	cloned.Conditions = cloneExprs(p.Conditions)
+	return cloned, nil
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.

@@ -16,7 +16,6 @@ package core_test
 import (
 	"context"
 	"fmt"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
@@ -1478,3 +1477,4 @@ func (s *testPlanSuite) TestHintFromDiffDatabase(c *C) {
 		c.Assert(core.ToString(p), Equals, output[i].Plan, comment)
 	}
 }
+
