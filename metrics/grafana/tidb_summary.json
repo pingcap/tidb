@@ -1825,7 +1825,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "histogram_quantile(1, sum(rate(tidb_session_transaction_statement_num_bucket}[30s])) by (le))",
+              "expr": "histogram_quantile(1, sum(rate(tidb_session_transaction_statement_num_bucket[30s])) by (le))",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "99",
