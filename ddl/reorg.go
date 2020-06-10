@@ -55,9 +55,9 @@ func init() {
 }
 
 var (
-	minHandleInt kv.Handle
+	minHandleInt    kv.Handle
 	minHandleCommon kv.Handle
-	maxHandleInt kv.Handle
+	maxHandleInt    kv.Handle
 	maxHandleCommon kv.Handle
 )
 

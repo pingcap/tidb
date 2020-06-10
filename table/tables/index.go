@@ -48,7 +48,7 @@ func EncodeHandleInUniqueIndexValueForBatchCheck(h kv.Handle) []byte {
 		return EncodeHandleInUniqueIndexValue(h.IntValue())
 	}
 	handleLen := h.Len()
-	data := make([]byte, 4, 1 + 1 + 2 + handleLen)
+	data := make([]byte, 4, 1+1+2+handleLen)
 	data[2] = uint8(handleLen >> 8)
 	data[3] = uint8(handleLen - (handleLen >> 8))
 	data = append(data, h.Encoded()...)

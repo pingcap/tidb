@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"github.com/pingcap/tidb/kv"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
@@ -124,7 +124,7 @@ type handleEqualsChecker struct {
 // For example:
 //     c.Assert(value, HandleEquals, kv.IntHandle(42))
 var HandleEquals = &handleEqualsChecker{
-&check.CheckerInfo{Name: "HandleEquals", Params: []string{"obtained", "expected"}},
+	&check.CheckerInfo{Name: "HandleEquals", Params: []string{"obtained", "expected"}},
 }
 
 func (checker *handleEqualsChecker) Check(params []interface{}, names []string) (result bool, error string) {
