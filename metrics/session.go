@@ -135,6 +135,8 @@ const (
 	LblSQLType     = "sql_type"
 	LblGeneral     = "general"
 	LblInternal    = "internal"
+	LblPessimistic = "pessimistic"
+	LblOptimistic  = "optimistic"
 	LblStore       = "store"
 	LblAddress     = "address"
 )
