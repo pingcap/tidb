@@ -2212,8 +2212,6 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			err = errors.Trace(errUnsupportedOptimizePartition)
 		case ast.AlterTableRemovePartitioning:
 			err = errors.Trace(errUnsupportedRemovePartition)
-		case ast.AlterTableExchangePartition:
-			err = errors.Trace(errUnsupportedExchangePartition)
 		case ast.AlterTableDropColumn:
 			err = d.DropColumn(ctx, ident, spec)
 		case ast.AlterTableDropIndex:
@@ -2226,6 +2224,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			err = d.DropTablePartition(ctx, ident, spec)
 		case ast.AlterTableTruncatePartition:
 			err = d.TruncateTablePartition(ctx, ident, spec)
+		case ast.AlterTableExchangePartition:
+			err = d.ExchangeTablePartition(ctx, ident, spec)
 		case ast.AlterTableAddConstraint:
 			constr := spec.Constraint
 			switch spec.Constraint.Tp {
@@ -2454,7 +2454,7 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 			}
 
 			if option.Stored {
-				return nil, errUnsupportedOnGeneratedColumn.GenWithStackByArgs("Adding generated stored column through ALTER TABLE")
+				return nil, ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("Adding generated stored column through ALTER TABLE")
 			}
 
 			_, dependColNames := findDependedColumnNames(specNewColumn)
@@ -2810,6 +2810,174 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			return nil
 		}
+		return errors.Trace(err)
+	}
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func checkFieldTypeCompatible(ft *types.FieldType, other *types.FieldType) bool {
+	// int(1) could match the type with int(8)
+	partialEqual := ft.Tp == other.Tp &&
+		ft.Decimal == other.Decimal &&
+		ft.Charset == other.Charset &&
+		ft.Collate == other.Collate &&
+		(ft.Flen == other.Flen || ft.StorageLength() != types.VarStorageLen) &&
+		mysql.HasUnsignedFlag(ft.Flag) == mysql.HasUnsignedFlag(other.Flag) &&
+		mysql.HasAutoIncrementFlag(ft.Flag) == mysql.HasAutoIncrementFlag(other.Flag) &&
+		mysql.HasNotNullFlag(ft.Flag) == mysql.HasNotNullFlag(other.Flag) &&
+		mysql.HasZerofillFlag(ft.Flag) == mysql.HasZerofillFlag(other.Flag) &&
+		mysql.HasBinaryFlag(ft.Flag) == mysql.HasBinaryFlag(other.Flag) &&
+		mysql.HasPriKeyFlag(ft.Flag) == mysql.HasPriKeyFlag(other.Flag)
+	if !partialEqual || len(ft.Elems) != len(other.Elems) {
+		return false
+	}
+	for i := range ft.Elems {
+		if ft.Elems[i] != other.Elems[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) error {
+	// check auto_random
+	if source.AutoRandomBits != target.AutoRandomBits ||
+		source.Charset != target.Charset ||
+		source.Collate != target.Collate ||
+		source.ShardRowIDBits != target.ShardRowIDBits ||
+		source.MaxShardRowIDBits != target.MaxShardRowIDBits ||
+		source.TiFlashReplica != target.TiFlashReplica {
+		return errors.Trace(ErrTablesDifferentMetadata)
+	}
+	if len(source.Cols()) != len(target.Cols()) {
+		return errors.Trace(ErrTablesDifferentMetadata)
+	}
+	// Col compatible check
+	for i, sourceCol := range source.Cols() {
+		targetCol := target.Cols()[i]
+		if isVirtualGeneratedColumn(sourceCol) != isVirtualGeneratedColumn(targetCol) {
+			return ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("Exchanging partitions for non-generated columns")
+		}
+		// It should strictyle compare expressions for generated columns
+		if sourceCol.Name.L != targetCol.Name.L ||
+			sourceCol.Hidden != targetCol.Hidden ||
+			!checkFieldTypeCompatible(&sourceCol.FieldType, &targetCol.FieldType) ||
+			sourceCol.GeneratedExprString != targetCol.GeneratedExprString {
+			return errors.Trace(ErrTablesDifferentMetadata)
+		}
+		if sourceCol.State != model.StatePublic ||
+			targetCol.State != model.StatePublic {
+			return errors.Trace(ErrTablesDifferentMetadata)
+		}
+		if sourceCol.ID != targetCol.ID {
+			return ErrPartitionExchangeDifferentOption.GenWithStackByArgs(fmt.Sprintf("column: %s", sourceCol.Name))
+		}
+	}
+	if len(source.Indices) != len(target.Indices) {
+		return errors.Trace(ErrTablesDifferentMetadata)
+	}
+	for _, sourceIdx := range source.Indices {
+		var compatIdx *model.IndexInfo
+		for _, targetIdx := range target.Indices {
+			if strings.EqualFold(sourceIdx.Name.L, targetIdx.Name.L) {
+				compatIdx = targetIdx
+			}
+		}
+		// No match index
+		if compatIdx == nil {
+			return errors.Trace(ErrTablesDifferentMetadata)
+		}
+		// Index type is not compatible
+		if sourceIdx.Tp != compatIdx.Tp ||
+			sourceIdx.Unique != compatIdx.Unique ||
+			sourceIdx.Primary != compatIdx.Primary {
+			return errors.Trace(ErrTablesDifferentMetadata)
+		}
+		// The index column
+		if len(sourceIdx.Columns) != len(compatIdx.Columns) {
+			return errors.Trace(ErrTablesDifferentMetadata)
+		}
+		for i, sourceIdxCol := range sourceIdx.Columns {
+			compatIdxCol := compatIdx.Columns[i]
+			if sourceIdxCol.Length != compatIdxCol.Length ||
+				sourceIdxCol.Name.L != compatIdxCol.Name.L {
+				return errors.Trace(ErrTablesDifferentMetadata)
+			}
+		}
+		if sourceIdx.ID != compatIdx.ID {
+			return ErrPartitionExchangeDifferentOption.GenWithStackByArgs(fmt.Sprintf("index: %s", sourceIdx.Name))
+		}
+	}
+
+	return nil
+}
+
+func checkExchangePartition(pt *model.TableInfo, nt *model.TableInfo) error {
+	if nt.IsView() || nt.IsSequence() {
+		return errors.Trace(ErrCheckNoSuchTable)
+	}
+	if pt.GetPartitionInfo() == nil {
+		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
+	}
+	if nt.GetPartitionInfo() != nil {
+		return errors.Trace(ErrPartitionExchangePartTable.GenWithStackByArgs(nt.Name))
+	}
+
+	if nt.ForeignKeys != nil {
+		return errors.Trace(ErrPartitionExchangeForeignKey.GenWithStackByArgs(nt.Name))
+	}
+
+	// NOTE: if nt is temporary table, it should be checked
+	return nil
+}
+
+func (d *ddl) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	ptSchema, pt, err := d.getSchemaAndTableByIdent(ctx, ident)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	ptMeta := pt.Meta()
+
+	ntIdent := ast.Ident{Schema: spec.NewTable.Schema, Name: spec.NewTable.Name}
+	ntSchema, nt, err := d.getSchemaAndTableByIdent(ctx, ntIdent)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	ntMeta := nt.Meta()
+
+	err = checkExchangePartition(ptMeta, ntMeta)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	partName := spec.PartitionNames[0].L
+
+	// NOTE: if pt is subPartitioned, it should be checked
+
+	defID, err := tables.FindPartitionByName(ptMeta, partName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = checkTableDefCompatible(ptMeta, ntMeta)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	job := &model.Job{
+		SchemaID:   ntSchema.ID,
+		TableID:    ntMeta.ID,
+		SchemaName: ntSchema.Name.L,
+		Type:       model.ActionExchangeTablePartition,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{defID, ptSchema.ID, ptMeta.ID, partName, spec.WithValidation},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	if err != nil {
 		return errors.Trace(err)
 	}
 	err = d.callHookOnChanged(err)
