@@ -1256,6 +1256,8 @@ func newTestMaxTableRowIDContext(c *C, d ddl.DDL, tbl table.Table) *testMaxTable
 	}
 }
 
+// getMaxTableRowID assumes the table disabled common handle.
+// This should only use in test.
 func getMaxTableRowID(ctx *testMaxTableRowIDContext, store kv.Storage) (int64, bool) {
 	c := ctx.c
 	d := ctx.d

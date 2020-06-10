@@ -100,7 +100,7 @@ type reorgCtx struct {
 	// 1: job is canceled.
 	notifyCancelReorgJob int32
 	// doneHandle is used to simulate the handle that has been processed.
-	doneHandle atomic.Value // *kv.Handle
+	doneHandle atomic.Value // kv.Handle
 }
 
 // newContext gets a context. It is only used for adding column in reorganization state.
@@ -199,9 +199,6 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		return errWaitReorgTimeout
 	case <-time.After(waitTimeout):
 		rowCount, doneHandle := w.reorgCtx.getRowCountAndHandle()
-		if doneHandle == nil {
-			return errCancelledDDLJob.GenWithStack("empty doneHandle in reorgCtx when adding index to table `%v`", tblInfo.Name)
-		}
 		// Update a job's RowCount.
 		job.SetRowCount(rowCount)
 		updateAddIndexProgress(w, tblInfo, rowCount)
@@ -370,11 +367,10 @@ func (d *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl tab
 	return result, nil
 }
 
-// GetTableMaxHandle gets the last handle of the table partition.
+// GetTableMaxHandle gets the max handle of a PhysicalTable.
 func (d *ddlCtx) GetTableMaxHandle(startTS uint64, tbl table.PhysicalTable) (maxHandle kv.Handle, emptyTable bool, err error) {
 	var columns []*model.ColumnInfo
 	tblInfo := tbl.Meta()
-	isCommonHandle := tblInfo.IsCommonHandle
 	switch {
 	case tblInfo.PKIsHandle:
 		for _, col := range tbl.Meta().Columns {
@@ -383,7 +379,7 @@ func (d *ddlCtx) GetTableMaxHandle(startTS uint64, tbl table.PhysicalTable) (max
 				break
 			}
 		}
-	case isCommonHandle:
+	case tblInfo.IsCommonHandle:
 		pkIdx := tables.FindPrimaryIndex(tblInfo)
 		cols := tblInfo.Cols()
 		for _, idxCol := range pkIdx.Columns {
@@ -397,24 +393,24 @@ func (d *ddlCtx) GetTableMaxHandle(startTS uint64, tbl table.PhysicalTable) (max
 	// build a desc scan of tblInfo, which limit is 1, we can use it to retrieve the last handle of the table.
 	result, err := d.buildDescTableScan(ctx, startTS, tbl, columns, 1)
 	if err != nil {
-		return handleMaximum(isCommonHandle), false, errors.Trace(err)
+		return handleMaximum(tblInfo.IsCommonHandle), false, errors.Trace(err)
 	}
 	defer terror.Call(result.Close)
 
 	chk := chunk.New(getColumnsTypes(columns), 1, 1)
 	err = result.Next(ctx, chk)
 	if err != nil {
-		return handleMaximum(isCommonHandle), false, errors.Trace(err)
+		return handleMaximum(tblInfo.IsCommonHandle), false, errors.Trace(err)
 	}
 
 	if chk.NumRows() == 0 {
 		// empty table
-		return handleMaximum(isCommonHandle), true, nil
+		return handleMaximum(tblInfo.IsCommonHandle), true, nil
 	}
 	sessCtx := newContext(d.store)
 	row := chk.GetRow(0)
-	if isCommonHandle {
-		maxHandle, err = buildHandleFromChunkRow(sessCtx.GetSessionVars().StmtCtx, chk.GetRow(0), columns)
+	if tblInfo.IsCommonHandle {
+		maxHandle, err = buildHandleFromChunkRow(sessCtx.GetSessionVars().StmtCtx, row, columns)
 		return maxHandle, false, err
 	}
 	return kv.IntHandle(row.GetInt64(0)), false, nil
@@ -438,6 +434,7 @@ func buildHandleFromChunkRow(sctx *stmtctx.StatementContext, row chunk.Row, cols
 // getTableRange gets the start and end handle of a table (or partition).
 func getTableRange(d *ddlCtx, tbl table.PhysicalTable, snapshotVer uint64, priority int) (startHandle, endHandle kv.Handle, err error) {
 	startHandle = handleMinimum(tbl.Meta().IsCommonHandle)
+	endHandle = handleMaximum(tbl.Meta().IsCommonHandle)
 	// Get the start handle of this partition.
 	err = iterateSnapshotRows(d.store, priority, tbl, snapshotVer, startHandle, nil, true,
 		func(h kv.Handle, rowKey kv.Key, rawRecord []byte) (bool, error) {
@@ -445,17 +442,16 @@ func getTableRange(d *ddlCtx, tbl table.PhysicalTable, snapshotVer uint64, prior
 			return false, nil
 		})
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return startHandle, endHandle, errors.Trace(err)
 	}
 	var emptyTable bool
-	// Get the end handle of this partition.
 	endHandle, emptyTable, err = d.GetTableMaxHandle(snapshotVer, tbl)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return startHandle, endHandle, errors.Trace(err)
 	}
 	if emptyTable || endHandle.Compare(startHandle) < 0 {
 		logutil.BgLogger().Info("[ddl] get table range, endHandle < startHandle", zap.String("table", fmt.Sprintf("%v", tbl.Meta())),
-			zap.Int64("partitionID", tbl.GetPhysicalID()), zap.Stringer("endHandle", endHandle), zap.Stringer("startHandle", startHandle))
+			zap.Int64("table/partition ID", tbl.GetPhysicalID()), zap.Stringer("endHandle", endHandle), zap.Stringer("startHandle", startHandle))
 		endHandle = startHandle
 	}
 	return
