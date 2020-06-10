@@ -307,6 +307,7 @@ func (ts *testDatumSuite) TestToBytes(c *C) {
 		{NewDecimalDatum(NewDecFromInt(1)), []byte("1")},
 		{NewFloat64Datum(1.23), []byte("1.23")},
 		{NewStringDatum("abc"), []byte("abc")},
+		{Datum{}, []byte{}},
 	}
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
