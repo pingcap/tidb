@@ -1002,7 +1002,7 @@ func (p *LogicalWindow) GetWindowResultColumns() []*expression.Column {
 // ExtractCorColumnsBySchema only extracts the correlated columns that match the specified schema.
 // e.g. If the correlated columns from plan are [t1.a, t2.a, t3.a] and specified schema is [t2.a, t2.b, t2.c],
 // only [t2.a] is returned.
-func ExtractCorColumnsBySchema(corCols []*expression.CorrelatedColumn, schema *expression.Schema) []*expression.CorrelatedColumn {
+func ExtractCorColumnsBySchema(corCols []*expression.CorrelatedColumn, schema *expression.Schema, resolveIndex bool) []*expression.CorrelatedColumn {
 	resultCorCols := make([]*expression.CorrelatedColumn, schema.Len())
 	for _, corCol := range corCols {
 		idx := schema.ColumnIndex(&corCol.Column)
@@ -1024,15 +1024,31 @@ func ExtractCorColumnsBySchema(corCols []*expression.CorrelatedColumn, schema *e
 			length++
 		}
 	}
-	return resultCorCols[:length]
+	resultCorCols = resultCorCols[:length]
+
+	if resolveIndex {
+		for _, corCol := range resultCorCols {
+			corCol.Index = schema.ColumnIndex(&corCol.Column)
+		}
+	}
+
+	return resultCorCols
 }
 
-// extractCorColumnsBySchema only extracts the correlated columns that match the specified schema.
+// extractCorColumnsBySchema4LogicalPlan only extracts the correlated columns that match the specified schema.
 // e.g. If the correlated columns from plan are [t1.a, t2.a, t3.a] and specified schema is [t2.a, t2.b, t2.c],
 // only [t2.a] is returned.
-func extractCorColumnsBySchema(p LogicalPlan, schema *expression.Schema) []*expression.CorrelatedColumn {
-	corCols := ExtractCorrelatedCols(p)
-	return ExtractCorColumnsBySchema(corCols, schema)
+func extractCorColumnsBySchema4LogicalPlan(p LogicalPlan, schema *expression.Schema) []*expression.CorrelatedColumn {
+	corCols := ExtractCorrelatedCols4LogicalPlan(p)
+	return ExtractCorColumnsBySchema(corCols, schema, false)
+}
+
+// ExtractCorColumnsBySchema4PhysicalPlan only extracts the correlated columns that match the specified schema.
+// e.g. If the correlated columns from plan are [t1.a, t2.a, t3.a] and specified schema is [t2.a, t2.b, t2.c],
+// only [t2.a] is returned.
+func ExtractCorColumnsBySchema4PhysicalPlan(p PhysicalPlan, schema *expression.Schema) []*expression.CorrelatedColumn {
+	corCols := ExtractCorrelatedCols4PhysicalPlan(p)
+	return ExtractCorColumnsBySchema(corCols, schema, true)
 }
 
 // ShowContents stores the contents for the `SHOW` statement.

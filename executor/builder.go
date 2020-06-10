@@ -1530,6 +1530,18 @@ func (b *executorBuilder) buildTopN(v *plannercore.PhysicalTopN) Executor {
 }
 
 func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) *NestedLoopApplyExec {
+	var (
+		innerPlan plannercore.PhysicalPlan
+		outerPlan plannercore.PhysicalPlan
+	)
+	if v.InnerChildIdx == 0 {
+		innerPlan = v.Children()[0]
+		outerPlan = v.Children()[1]
+	} else {
+		innerPlan = v.Children()[1]
+		outerPlan = v.Children()[0]
+	}
+	v.OuterSchema = plannercore.ExtractCorColumnsBySchema4PhysicalPlan(innerPlan, outerPlan.Schema())
 	leftChild := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
