@@ -244,6 +244,7 @@ type AnalyzeIndexExec struct {
 	ctx             sessionctx.Context
 	physicalTableID int64
 	idxInfo         *model.IndexInfo
+	isCommonHandle  bool
 	concurrency     int
 	priority        int
 	analyzePB       *tipb.AnalyzeReq
@@ -258,7 +259,13 @@ type AnalyzeIndexExec struct {
 // special null range for single-column index to get the null count.
 func (e *AnalyzeIndexExec) fetchAnalyzeResult(ranges []*ranger.Range, isNullRange bool) error {
 	var builder distsql.RequestBuilder
-	kvReq, err := builder.SetIndexRanges(e.ctx.GetSessionVars().StmtCtx, e.physicalTableID, e.idxInfo.ID, ranges).
+	var kvReqBuilder *distsql.RequestBuilder
+	if e.isCommonHandle && e.idxInfo.Primary {
+		kvReqBuilder = builder.SetCommonHandleRanges(e.ctx.GetSessionVars().StmtCtx, e.physicalTableID, ranges)
+	} else {
+		kvReqBuilder = builder.SetIndexRanges(e.ctx.GetSessionVars().StmtCtx, e.physicalTableID, e.idxInfo.ID, ranges)
+	}
+	kvReq, err := kvReqBuilder.
 		SetAnalyzeRequest(e.analyzePB).
 		SetStartTS(math.MaxUint64).
 		SetKeepOrder(true).
