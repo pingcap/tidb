@@ -15,9 +15,16 @@ func (s *testSqlByteSuite) TestEscape(c *C) {
 	str := []byte(`MWQeWw""'\rNmtGxzGp`)
 	expectStrBackslash := `MWQeWw\"\"\'\\rNmtGxzGp`
 	expectStrWithoutBackslash := `MWQeWw""''\rNmtGxzGp`
-	escape(str, &bf, true)
+	expectStrBackslashDoubleQuote := `MWQeWw""""'\rNmtGxzGp`
+	escape(str, &bf, getEscapeQuotation(true, quotationMark))
 	c.Assert(bf.String(), Equals, expectStrBackslash)
 	bf.Reset()
-	escape(str, &bf, false)
+	escape(str, &bf, getEscapeQuotation(true, doubleQuotationMark))
+	c.Assert(bf.String(), Equals, expectStrBackslash)
+	bf.Reset()
+	escape(str, &bf, getEscapeQuotation(false, quotationMark))
 	c.Assert(bf.String(), Equals, expectStrWithoutBackslash)
+	bf.Reset()
+	escape(str, &bf, getEscapeQuotation(false, doubleQuotationMark))
+	c.Assert(bf.String(), Equals, expectStrBackslashDoubleQuote)
 }
