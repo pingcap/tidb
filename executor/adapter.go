@@ -844,6 +844,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		TimeTotal:      costTime,
 		TimeParse:      sessVars.DurationParse,
 		TimeCompile:    sessVars.DurationCompile,
+		TimeOptimize:   sessVars.DurationOptimization,
+		TimeWaitTS:     sessVars.DurationWaitTS,
 		IndexNames:     indexNames,
 		StatsInfos:     statsInfos,
 		CopTasks:       copTaskInfo,
