@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/pingcap/tidb/kv"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -112,6 +113,31 @@ func (checker *datumEqualsChecker) Check(params []interface{}, names []string) (
 		panic(err)
 	}
 	return res == 0, ""
+}
+
+type handleEqualsChecker struct {
+	*check.CheckerInfo
+}
+
+// HandleEquals checker verifies that the obtained handle is equal to
+// the expected handle.
+// For example:
+//     c.Assert(value, HandleEquals, kv.IntHandle(42))
+var HandleEquals = &handleEqualsChecker{
+&check.CheckerInfo{Name: "HandleEquals", Params: []string{"obtained", "expected"}},
+}
+
+func (checker *handleEqualsChecker) Check(params []interface{}, names []string) (result bool, error string) {
+	param1, ok1 := params[0].(kv.Handle)
+	param2, ok2 := params[1].(kv.Handle)
+	if !ok1 || !ok2 {
+		return false, "Argument to " + checker.Name + " must be kv.Handle"
+	}
+	if param1.IsInt() != param2.IsInt() {
+		return false, "Two handle types arguments to" + checker.Name + " must be same"
+	}
+
+	return param1.Equal(param2), ""
 }
 
 // RowsWithSep is a convenient function to wrap args to a slice of []interface.

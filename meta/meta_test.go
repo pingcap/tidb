@@ -23,9 +23,14 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/testleak"
+	. "github.com/pingcap/tidb/util/testutil"
 )
 
 func TestT(t *testing.T) {
@@ -36,6 +41,7 @@ func TestT(t *testing.T) {
 var _ = Suite(&testSuite{})
 
 type testSuite struct {
+	isCommonHandle bool
 }
 
 func (s *testSuite) TestMeta(c *C) {
@@ -309,6 +315,12 @@ func (s *testSuite) TestDDL(c *C) {
 	defer txn.Rollback()
 
 	t := meta.NewMeta(txn)
+	newHandle := func(num int64) kv.Handle {
+		if s.isCommonHandle {
+			return mustNewCommonHandle(c, num)
+		}
+		return kv.IntHandle(num)
+	}
 
 	job := &model.Job{ID: 1}
 	err = t.EnQueueDDLJob(job)
@@ -327,36 +339,37 @@ func (s *testSuite) TestDDL(c *C) {
 	err = t.UpdateDDLJob(0, job, true)
 	c.Assert(err, IsNil)
 
-	err = t.UpdateDDLReorgStartHandle(job, 1)
+	err = t.UpdateDDLReorgStartHandle(job, kv.IntHandle(1))
 	c.Assert(err, IsNil)
 
-	i, j, k, err := t.GetDDLReorgHandle(job)
+	i, j, k, err := t.GetDDLReorgHandle(job, false)
 	c.Assert(err, IsNil)
-	c.Assert(i, Equals, int64(1))
-	c.Assert(j, Equals, int64(math.MaxInt64))
+	c.Assert(i, HandleEquals, kv.IntHandle(1))
+	c.Assert(j, HandleEquals, kv.IntHandle(math.MaxInt64))
 	c.Assert(k, Equals, int64(0))
 
-	err = t.UpdateDDLReorgHandle(job, 1, 2, 3)
+	err = t.UpdateDDLReorgHandle(job, newHandle(1), newHandle(2), 3)
 	c.Assert(err, IsNil)
 
-	i, j, k, err = t.GetDDLReorgHandle(job)
+	i, j, k, err = t.GetDDLReorgHandle(job, s.isCommonHandle)
 	c.Assert(err, IsNil)
-	c.Assert(i, Equals, int64(1))
-	c.Assert(j, Equals, int64(2))
+	c.Assert(i, HandleEquals, newHandle(1))
+	c.Assert(j, HandleEquals, newHandle(2))
 	c.Assert(k, Equals, int64(3))
 
 	err = t.RemoveDDLReorgHandle(job)
 	c.Assert(err, IsNil)
 
-	i, j, k, err = t.GetDDLReorgHandle(job)
+	// new TiDB binary running on old TiDB DDL reorg data.
+	i, j, k, err = t.GetDDLReorgHandle(job, false)
 	c.Assert(err, IsNil)
-	c.Assert(i, Equals, int64(0))
+	c.Assert(i, HandleEquals, kv.IntHandle(0))
 	// The default value for endHandle is MaxInt64, not 0.
-	c.Assert(j, Equals, int64(math.MaxInt64))
+	c.Assert(j, HandleEquals, kv.IntHandle(math.MaxInt64))
 	c.Assert(k, Equals, int64(0))
 
 	// Test GetDDLReorgHandle failed.
-	_, _, _, err = t.GetDDLReorgHandle(job)
+	_, _, _, err = t.GetDDLReorgHandle(job, s.isCommonHandle)
 	c.Assert(err, IsNil)
 
 	v, err = t.DeQueueDDLJob()
@@ -439,6 +452,11 @@ func (s *testSuite) TestDDL(c *C) {
 
 	err = txn1.Commit(context.Background())
 	c.Assert(err, IsNil)
+
+	if !s.isCommonHandle {
+		s.isCommonHandle = true
+		s.TestDDL(c)
+	}
 }
 
 func (s *testSuite) BenchmarkGenGlobalIDs(c *C) {
@@ -500,4 +518,12 @@ OUTER:
 		break
 	}
 	c.Assert(match, IsTrue)
+}
+
+func mustNewCommonHandle(c *C, values ...interface{}) *kv.CommonHandle {
+	encoded, err := codec.EncodeKey(new(stmtctx.StatementContext), nil, types.MakeDatums(values...)...)
+	c.Assert(err, IsNil)
+	ch, err := kv.NewCommonHandle(encoded)
+	c.Assert(err, IsNil)
+	return ch
 }

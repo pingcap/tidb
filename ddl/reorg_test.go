@@ -15,6 +15,7 @@ package ddl
 
 import (
 	"context"
+	"github.com/pingcap/tidb/table/tables"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -71,7 +72,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	c.Assert(err, IsNil)
 
 	rowCount := int64(10)
-	handle := int64(100)
+	handle := kv.IntHandle(100)
 	f := func() error {
 		d.generalWorker().reorgCtx.setRowCount(rowCount)
 		d.generalWorker().reorgCtx.setNextHandle(handle)
@@ -88,15 +89,18 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	c.Assert(err, IsNil)
 	m := meta.NewMeta(txn)
 	rInfo := &reorgInfo{
-		Job: job,
+		Job:         job,
+		StartHandle: handleEmpty(false),
+		EndHandle:   handleEmpty(false),
 	}
-	err = d.generalWorker().runReorgJob(m, rInfo, nil, d.lease, f)
+	mockTbl := tables.MockTableFromMeta(&model.TableInfo{IsCommonHandle: false})
+	err = d.generalWorker().runReorgJob(m, rInfo, mockTbl.Meta(), d.lease, f)
 	c.Assert(err, NotNil)
 
 	// The longest to wait for 5 seconds to make sure the function of f is returned.
 	for i := 0; i < 1000; i++ {
 		time.Sleep(5 * time.Millisecond)
-		err = d.generalWorker().runReorgJob(m, rInfo, nil, d.lease, f)
+		err = d.generalWorker().runReorgJob(m, rInfo, mockTbl.Meta(), d.lease, f)
 		if err == nil {
 			c.Assert(job.RowCount, Equals, rowCount)
 			c.Assert(d.generalWorker().reorgCtx.rowCount, Equals, int64(0))
@@ -108,10 +112,11 @@ func (s *testDDLSuite) TestReorg(c *C) {
 			c.Assert(err, IsNil)
 
 			m = meta.NewMeta(txn)
-			info, err1 := getReorgInfo(d.ddlCtx, m, job, nil)
+			info, err1 := getReorgInfo(d.ddlCtx, m, job, mockTbl)
 			c.Assert(err1, IsNil)
 			c.Assert(info.StartHandle, Equals, handle)
-			c.Assert(d.generalWorker().reorgCtx.doneHandle, Equals, int64(0))
+			_, doneHandle := d.generalWorker().reorgCtx.getRowCountAndHandle()
+			c.Assert(doneHandle, Equals, handleEmpty(false))
 			break
 		}
 	}
@@ -129,9 +134,9 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err1 error
-		info, err1 = getReorgInfo(d.ddlCtx, t, job, nil)
+		info, err1 = getReorgInfo(d.ddlCtx, t, job, mockTbl)
 		c.Assert(err1, IsNil)
-		err1 = info.UpdateReorgMeta(txn, 1, 0, 0)
+		err1 = info.UpdateReorgMeta(txn, kv.IntHandle(1), kv.IntHandle(0), 0)
 		c.Assert(err1, IsNil)
 		return nil
 	})
@@ -140,15 +145,15 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err1 error
-		info, err1 = getReorgInfo(d.ddlCtx, t, job, nil)
+		info, err1 = getReorgInfo(d.ddlCtx, t, job, mockTbl)
 		c.Assert(err1, IsNil)
-		c.Assert(info.StartHandle, Greater, int64(0))
+		c.Assert(info.StartHandle.IntValue(), Greater, int64(0))
 		return nil
 	})
 	c.Assert(err, IsNil)
 
 	d.Stop()
-	err = d.generalWorker().runReorgJob(m, rInfo, nil, d.lease, func() error {
+	err = d.generalWorker().runReorgJob(m, rInfo, mockTbl.Meta(), d.lease, func() error {
 		time.Sleep(4 * testLease)
 		return nil
 	})

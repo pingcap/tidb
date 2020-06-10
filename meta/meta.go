@@ -865,18 +865,32 @@ func (m *Meta) FinishBootstrap(version int64) error {
 }
 
 // UpdateDDLReorgStartHandle saves the job reorganization latest processed start handle for later resuming.
-func (m *Meta) UpdateDDLReorgStartHandle(job *model.Job, startHandle int64) error {
-	err := m.txn.HSet(mDDLJobReorgKey, m.reorgJobStartHandle(job.ID), []byte(strconv.FormatInt(startHandle, 10)))
+func (m *Meta) UpdateDDLReorgStartHandle(job *model.Job, startHandle kv.Handle) error {
+	var err error
+	if startHandle.IsInt() {
+		err = m.txn.HSet(mDDLJobReorgKey, m.reorgJobStartHandle(job.ID), []byte(strconv.FormatInt(startHandle.IntValue(), 10)))
+	} else {
+		err = m.txn.HSet(mDDLJobReorgKey, m.reorgJobStartHandle(job.ID), startHandle.Encoded())
+	}
 	return errors.Trace(err)
 }
 
 // UpdateDDLReorgHandle saves the job reorganization latest processed information for later resuming.
-func (m *Meta) UpdateDDLReorgHandle(job *model.Job, startHandle, endHandle, physicalTableID int64) error {
-	err := m.txn.HSet(mDDLJobReorgKey, m.reorgJobStartHandle(job.ID), []byte(strconv.FormatInt(startHandle, 10)))
+func (m *Meta) UpdateDDLReorgHandle(job *model.Job, startHandle, endHandle kv.Handle, physicalTableID int64) error {
+	var startHandleBytes, endHandleBytes []byte
+	if startHandle.IsInt() {
+		startHandleBytes = []byte(strconv.FormatInt(startHandle.IntValue(), 10))
+		endHandleBytes = []byte(strconv.FormatInt(endHandle.IntValue(), 10))
+	} else {
+		startHandleBytes = startHandle.Encoded()
+		endHandleBytes = endHandle.Encoded()
+	}
+
+	err := m.txn.HSet(mDDLJobReorgKey, m.reorgJobStartHandle(job.ID), startHandleBytes)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = m.txn.HSet(mDDLJobReorgKey, m.reorgJobEndHandle(job.ID), []byte(strconv.FormatInt(endHandle, 10)))
+	err = m.txn.HSet(mDDLJobReorgKey, m.reorgJobEndHandle(job.ID), endHandleBytes)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -900,17 +914,36 @@ func (m *Meta) RemoveDDLReorgHandle(job *model.Job) error {
 }
 
 // GetDDLReorgHandle gets the latest processed DDL reorganize position.
-func (m *Meta) GetDDLReorgHandle(job *model.Job) (startHandle, endHandle, physicalTableID int64, err error) {
-	startHandle, err = m.txn.HGetInt64(mDDLJobReorgKey, m.reorgJobStartHandle(job.ID))
-	if err != nil {
-		err = errors.Trace(err)
-		return
+func (m *Meta) GetDDLReorgHandle(job *model.Job, isCommonHandle bool) (startHandle, endHandle kv.Handle, physicalTableID int64, err error) {
+	if !isCommonHandle {
+		s, err := m.txn.HGetInt64(mDDLJobReorgKey, m.reorgJobStartHandle(job.ID))
+		if err != nil {
+			return nil, nil, 0, errors.Trace(err)
+		}
+		e, err := m.txn.HGetInt64(mDDLJobReorgKey, m.reorgJobEndHandle(job.ID))
+		if err != nil {
+			return nil, nil, 0, errors.Trace(err)
+		}
+		startHandle, endHandle = kv.IntHandle(s), kv.IntHandle(e)
+	} else {
+		s, err := m.txn.HGet(mDDLJobReorgKey, m.reorgJobStartHandle(job.ID))
+		if err != nil {
+			return nil, nil, 0, errors.Trace(err)
+		}
+		e, err := m.txn.HGet(mDDLJobReorgKey, m.reorgJobEndHandle(job.ID))
+		if err != nil {
+			return nil, nil, 0, errors.Trace(err)
+		}
+		startHandle, err = kv.NewCommonHandle(s)
+		if err != nil {
+			return nil, nil, 0, errors.Trace(err)
+		}
+		endHandle, err = kv.NewCommonHandle(e)
+		if err != nil {
+			return nil, nil, 0, errors.Trace(err)
+		}
 	}
-	endHandle, err = m.txn.HGetInt64(mDDLJobReorgKey, m.reorgJobEndHandle(job.ID))
-	if err != nil {
-		err = errors.Trace(err)
-		return
-	}
+
 	physicalTableID, err = m.txn.HGetInt64(mDDLJobReorgKey, m.reorgJobPhysicalTableID(job.ID))
 	if err != nil {
 		err = errors.Trace(err)
@@ -920,15 +953,15 @@ func (m *Meta) GetDDLReorgHandle(job *model.Job) (startHandle, endHandle, physic
 	// update them to table's in this case.
 	if physicalTableID == 0 {
 		if job.ReorgMeta != nil {
-			endHandle = job.ReorgMeta.EndHandle
+			endHandle = kv.IntHandle(job.ReorgMeta.EndHandle)
 		} else {
-			endHandle = math.MaxInt64
+			endHandle = kv.IntHandle(math.MaxInt64)
 		}
 		physicalTableID = job.TableID
 		logutil.BgLogger().Warn("new TiDB binary running on old TiDB DDL reorg data",
 			zap.Int64("partition ID", physicalTableID),
-			zap.Int64("startHandle", startHandle),
-			zap.Int64("endHandle", endHandle))
+			zap.Stringer("startHandle", startHandle),
+			zap.Stringer("endHandle", endHandle))
 	}
 	return
 }

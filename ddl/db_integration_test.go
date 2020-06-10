@@ -1262,9 +1262,9 @@ func getMaxTableRowID(ctx *testMaxTableRowIDContext, store kv.Storage) (int64, b
 	tbl := ctx.tbl
 	curVer, err := store.CurrentVersion()
 	c.Assert(err, IsNil)
-	maxID, emptyTable, err := d.GetTableMaxRowID(curVer.Ver, tbl.(table.PhysicalTable))
+	maxHandle, emptyTable, err := d.GetTableMaxHandle(curVer.Ver, tbl.(table.PhysicalTable))
 	c.Assert(err, IsNil)
-	return maxID, emptyTable
+	return maxHandle.IntValue(), emptyTable
 }
 
 func checkGetMaxTableRowID(ctx *testMaxTableRowIDContext, store kv.Storage, expectEmpty bool, expectMaxID int64) {
