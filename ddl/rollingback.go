@@ -350,7 +350,8 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		model.ActionDropForeignKey, model.ActionRenameTable,
 		model.ActionModifyTableCharsetAndCollate, model.ActionTruncateTablePartition,
 		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable,
-		model.ActionModifyTableAutoIdCache, model.ActionAlterIndexVisibility:
+		model.ActionModifyTableAutoIdCache, model.ActionAlterIndexVisibility,
+		model.ActionExchangeTablePartition:
 		ver, err = cancelOnlyNotHandledJob(job)
 	default:
 		job.State = model.JobStateCancelled

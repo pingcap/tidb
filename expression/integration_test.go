@@ -5763,6 +5763,8 @@ func (s *testIntegrationSuite) TestCoercibility(c *C) {
 		{"i+r", 5}, {"i*r", 5}, {"cos(r)+sin(i)", 5}, {"d+2", 5},
 		{"t*10", 5}, {"concat(c, vc)", 2}, {"replace(c, 'x', 'y')", 2},
 	}, "from t")
+
+	tk.MustQuery("SELECT COERCIBILITY(@straaa);").Check(testkit.Rows("2"))
 }
 
 func (s *testIntegrationSerialSuite) TestCacheConstEval(c *C) {
