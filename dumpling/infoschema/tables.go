@@ -717,6 +717,8 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogRewriteTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogPreprocSubQueriesStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
 	{name: variable.SlowLogPreProcSubQueryTimeStr, tp: mysql.TypeDouble, size: 22},
+	{name: variable.SlowLogOptimizeTimeStr, tp: mysql.TypeDouble, size: 22},
+	{name: variable.SlowLogWaitTSTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: execdetails.PreWriteTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: execdetails.WaitPrewriteBinlogTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: execdetails.CommitTimeStr, tp: mysql.TypeDouble, size: 22},
