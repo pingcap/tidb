@@ -481,12 +481,8 @@ func GetDropOrTruncateTableInfoFromJobs(jobs []*model.Job, gcSafePoint uint64, d
 		table, ok := snapInfo.TableByID(job.TableID)
 		if !ok {
 			// The dropped/truncated DDL maybe execute failed that caused by the parallel DDL execution,
-			// then can't find the table from the snapshot info-schema. Such as below:
-			// time	|	session1				|	session2
-			// t1	|	drop table t1			|
-			// t2 	|	t1 state is write only	|	in other TiDB, and table t1 state is public, drop table t1
-			// t3 	|	finish					|
-			// t4 	|							|	finish with error: table doesn't exists.
+			// then can't find the table from the snapshot info-schema. Should just ignore error here,
+			// see more in TestParallelDropSchemaAndDropTable.
 			continue
 		}
 		finish, err := fn(job, table.Meta())
