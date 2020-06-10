@@ -407,25 +407,7 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 
 	metrics.TiKVTxnRegionsNumHistogram.WithLabelValues(metricsTag(action)).Observe(float64(len(groups)))
 
-<<<<<<< HEAD
 	var batches []batchKeys
-=======
-	for _, regionID := range regionIDs {
-		err := store.WaitScatterRegionFinish(ctx, regionID, 0)
-		if err != nil {
-			logutil.BgLogger().Warn("2PC wait scatter region failed", zap.Uint64("regionID", regionID), zap.Error(err))
-		}
-	}
-	// Invalidate the old region cache information.
-	store.regionCache.InvalidateCachedRegion(group.region)
-	return true
-}
-
-func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPhaseCommitAction, groups []groupedMutations) error {
-	action.tiKVTxnRegionsNumHistogram().Observe(float64(len(groups)))
-
-	var batches []batchMutations
->>>>>>> 6bb9b30... ddl: fix pre-split region timeout constraint not work when create table (#17459)
 	var sizeFunc = c.keySize
 	if _, ok := action.(actionPrewrite); ok {
 		// Do not update regionTxnSize on retries. They are not used when building a PrewriteRequest.
