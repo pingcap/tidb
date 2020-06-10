@@ -209,5 +209,14 @@
       "select t1.a, (select count(t2.b) from t t2 where t2.a > t1.a) from t t1",
       "select t1.a from t t1 where (1, 1) > (select count(t2.b), sum(t2.a) from t t2 where t2.a > t1.a)"
     ]
+  },
+  {
+    "name": "TestInjectProj",
+    "cases": [
+      "select * from t order by (a+b) limit 10",
+      "select max(a), min(b), avg(c) from t group by a+b",
+      "select max(a), min(b), avg(a / b) from t group by a",
+      "select max(a), min(b), avg(a / b) from t group by (a+b)"
+    ]
   }
 ]

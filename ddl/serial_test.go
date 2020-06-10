@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -831,6 +832,7 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	defer tk.MustExec("drop database if exists auto_random_db")
 	tk.MustExec("use auto_random_db")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 
 	assertInvalidAutoRandomErr := func(sql string, errMsg string, args ...interface{}) {
 		_, err := tk.Exec(sql)
@@ -847,10 +849,16 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	assertAlterValue := func(sql string) {
 		assertInvalidAutoRandomErr(sql, autoid.AutoRandomAlterErrMsg)
 	}
+	assertDecreaseBitErr := func(sql string) {
+		assertInvalidAutoRandomErr(sql, autoid.AutoRandomDecreaseBitErrMsg)
+	}
 	assertWithAutoInc := func(sql string) {
 		assertInvalidAutoRandomErr(sql, autoid.AutoRandomIncompatibleWithAutoIncErrMsg)
 	}
-	assertOverflow := func(sql, colName string, autoRandBits uint64) {
+	assertOverflow := func(sql, colName string, maxAutoRandBits, actualAutoRandBits uint64) {
+		assertInvalidAutoRandomErr(sql, autoid.AutoRandomOverflowErrMsg, maxAutoRandBits, actualAutoRandBits, colName)
+	}
+	assertMaxOverflow := func(sql, colName string, autoRandBits uint64) {
 		assertInvalidAutoRandomErr(sql, autoid.AutoRandomOverflowErrMsg, autoid.MaxAutoRandomBits, autoRandBits, colName)
 	}
 	assertModifyColType := func(sql string) {
@@ -906,8 +914,12 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	})
 
 	// Overflow data type max length.
-	assertOverflow("create table t (a bigint auto_random(64) primary key)", "a", 64)
-	assertOverflow("create table t (a bigint auto_random(16) primary key)", "a", 16)
+	assertMaxOverflow("create table t (a bigint auto_random(64) primary key)", "a", 64)
+	assertMaxOverflow("create table t (a bigint auto_random(16) primary key)", "a", 16)
+	mustExecAndDrop("create table t (a bigint auto_random(5) primary key)", func() {
+		assertMaxOverflow("alter table t modify a bigint auto_random(64)", "a", 64)
+		assertMaxOverflow("alter table t modify a bigint auto_random(16)", "a", 16)
+	})
 
 	assertNonPositive("create table t (a bigint auto_random(0) primary key)")
 	tk.MustGetErrMsg("create table t (a bigint auto_random(-1) primary key)",
@@ -919,6 +931,13 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	mustExecAndDrop("create table t (a bigint auto_random(15) primary key)")
 	mustExecAndDrop("create table t (a bigint primary key auto_random(4))")
 	mustExecAndDrop("create table t (a bigint auto_random(4), primary key (a))")
+
+	// Increase auto_random bits.
+	mustExecAndDrop("create table t (a bigint auto_random(5) primary key)", func() {
+		tk.MustExec("alter table t modify a bigint auto_random(8)")
+		tk.MustExec("alter table t modify a bigint auto_random(10)")
+		tk.MustExec("alter table t modify a bigint auto_random(12)")
+	})
 
 	// Auto_random can occur multiple times like other column attributes.
 	mustExecAndDrop("create table t (a bigint auto_random(3) auto_random(2) primary key)")
@@ -936,8 +955,29 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	})
 	mustExecAndDrop("create table t (a bigint primary key)", func() {
 		assertAlterValue("alter table t modify column a bigint auto_random(3)")
-		assertAlterValue("alter table t change column a b bigint auto_random(3)")
 	})
+
+	// Decrease auto_random bits is not allowed.
+	mustExecAndDrop("create table t (a bigint auto_random(10) primary key)", func() {
+		assertDecreaseBitErr("alter table t modify column a bigint auto_random(6)")
+	})
+	mustExecAndDrop("create table t (a bigint auto_random(10) primary key)", func() {
+		assertDecreaseBitErr("alter table t modify column a bigint auto_random(1)")
+	})
+
+	originStep := autoid.GetStep()
+	autoid.SetStep(1)
+	// Increase auto_random bits but it will overlap with incremental bits.
+	mustExecAndDrop("create table t (a bigint unsigned auto_random(5) primary key)", func() {
+		const alterTryCnt, rebaseOffset = 3, 1
+		insertSQL := fmt.Sprintf("insert into t values (%d)", ((1<<(64-10))-1)-rebaseOffset-alterTryCnt)
+		tk.MustExec(insertSQL)
+		// Try to rebase to 0..0011..1111 (54 `1`s).
+		tk.MustExec("alter table t modify a bigint unsigned auto_random(6)")
+		tk.MustExec("alter table t modify a bigint unsigned auto_random(10)")
+		assertOverflow("alter table t modify a bigint unsigned auto_random(11)", "a", 10, 11)
+	})
+	autoid.SetStep(originStep)
 
 	// Modifying the field type of a auto_random column is not allowed.
 	// Here the throw error is `ERROR 8200 (HY000): Unsupported modify column: length 11 is less than origin 20`,
@@ -981,6 +1021,66 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	// Disallow using it when allow-auto-random is not enabled.
 	config.GetGlobalConfig().Experimental.AllowAutoRandom = false
 	assertExperimentDisabled("create table auto_random_table (a int primary key auto_random(3))")
+}
+
+func (s *testSerialSuite) TestAutoRandomIncBitsIncrementAndOffset(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists auto_random_db")
+	defer tk.MustExec("drop database if exists auto_random_db")
+	tk.MustExec("use auto_random_db")
+	tk.MustExec("drop table if exists t")
+
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+
+	recreateTable := func() {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (a bigint auto_random(6) primary key)")
+	}
+	truncateTable := func() {
+		_, _ = tk.Exec("delete from t")
+	}
+	insertTable := func() {
+		tk.MustExec("insert into t values ()")
+	}
+	assertIncBitsValues := func(values ...int) {
+		mask := strings.Repeat("1", 64-1-6)
+		sql := fmt.Sprintf(`select a & b'%s' from t order by a & b'%s' asc`, mask, mask)
+		vs := make([]string, len(values))
+		for i, value := range values {
+			vs[i] = strconv.Itoa(value)
+		}
+		tk.MustQuery(sql).Check(testkit.Rows(vs...))
+	}
+
+	const truncate, recreate = true, false
+	expect := func(vs ...int) []int { return vs }
+	testCase := []struct {
+		setupAction bool  // truncate or recreate
+		increment   int   // @@auto_increment_increment
+		offset      int   // @@auto_increment_offset
+		results     []int // the implicit allocated auto_random incremental-bit part of values
+	}{
+		{recreate, 5, 10, expect(10, 15, 20)},
+		{recreate, 2, 10, expect(10, 12, 14)},
+		{truncate, 5, 10, expect(15, 20, 25)},
+		{truncate, 10, 10, expect(30, 40, 50)},
+		{truncate, 5, 10, expect(55, 60, 65)},
+	}
+	for _, tc := range testCase {
+		switch tc.setupAction {
+		case recreate:
+			recreateTable()
+		case truncate:
+			truncateTable()
+		}
+		tk.Se.GetSessionVars().AutoIncrementIncrement = tc.increment
+		tk.Se.GetSessionVars().AutoIncrementOffset = tc.offset
+		for range tc.results {
+			insertTable()
+		}
+		assertIncBitsValues(tc.results...)
+	}
 }
 
 func (s *testSerialSuite) TestModifyingColumn4NewCollations(c *C) {
