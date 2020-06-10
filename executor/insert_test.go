@@ -1252,3 +1252,19 @@ func (s *testSuite10) TestClusterPrimaryTableInsertDuplicate(c *C) {
 	tk.MustExec(`insert into ts1pk (id1, id2, v) values(?, ?, ?) on duplicate key update v = values(v), id1 = ?`, ts, ts, 2, "2018-01-01 11:11:12")
 	tk.MustQuery(`select id1, id2, v from ts1pk`).Check(testkit.Rows("2018-01-01 11:11:12 2018-01-01 11:11:11 2"))
 }
+
+func (s *testSuite10) TestClusterPrimaryKeyForIndexScan(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
+
+	tk.MustExec("drop table if exists pkt1;")
+	tk.MustExec("CREATE TABLE pkt1 (a varchar(255), b int, index idx(b), primary key(a,b));")
+	tk.MustExec("insert into pkt1 values ('aaa',1);")
+	tk.MustQuery(`select b from pkt1 where b = 1;`).Check(testkit.Rows("1"))
+
+	tk.MustExec("drop table if exists pkt2;")
+	tk.MustExec("CREATE TABLE pkt2 (a varchar(255), b int, unique index idx(b), primary key(a,b));")
+	tk.MustExec("insert into pkt2 values ('aaa',1);")
+	tk.MustQuery(`select b from pkt2 where b = 1;`).Check(testkit.Rows("1"))
+}
