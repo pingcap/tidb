@@ -564,6 +564,12 @@ type SessionVars struct {
 	// RewritePhaseInfo records all information about the rewriting phase.
 	RewritePhaseInfo
 
+	// DurationOptimization is the duration of optimizing a query.
+	DurationOptimization time.Duration
+
+	// DurationWaitTS is the duration of waiting for a snapshot TS
+	DurationWaitTS time.Duration
+
 	// PrevStmt is used to store the previous executed statement in the current session.
 	PrevStmt fmt.Stringer
 
@@ -1527,6 +1533,10 @@ const (
 	SlowLogCompileTimeStr = "Compile_time"
 	// SlowLogRewriteTimeStr is the rewrite time.
 	SlowLogRewriteTimeStr = "Rewrite_time"
+	// SlowLogOptimizeTimeStr is the optimization time.
+	SlowLogOptimizeTimeStr = "Optimize_time"
+	// SlowLogWaitTSTimeStr is the time of waiting TS.
+	SlowLogWaitTSTimeStr = "Wait_TS"
 	// SlowLogPreprocSubQueriesStr is the number of pre-processed sub-queries.
 	SlowLogPreprocSubQueriesStr = "Preproc_subqueries"
 	// SlowLogPreProcSubQueryTimeStr is the total time of pre-processing sub-queries.
@@ -1598,6 +1608,8 @@ type SlowQueryLogItems struct {
 	TimeTotal      time.Duration
 	TimeParse      time.Duration
 	TimeCompile    time.Duration
+	TimeOptimize   time.Duration
+	TimeWaitTS     time.Duration
 	IndexNames     string
 	StatsInfos     map[string]uint64
 	CopTasks       *stmtctx.CopTasksDetails
@@ -1656,6 +1668,9 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 			SlowLogPreProcSubQueryTimeStr, SlowLogSpaceMarkStr, strconv.FormatFloat(logItems.RewriteInfo.DurationPreprocessSubQuery.Seconds(), 'f', -1, 64)))
 	}
 	buf.WriteString("\n")
+
+	writeSlowLogItem(&buf, SlowLogOptimizeTimeStr, strconv.FormatFloat(logItems.TimeOptimize.Seconds(), 'f', -1, 64))
+	writeSlowLogItem(&buf, SlowLogWaitTSTimeStr, strconv.FormatFloat(logItems.TimeWaitTS.Seconds(), 'f', -1, 64))
 
 	if execDetailStr := logItems.ExecDetail.String(); len(execDetailStr) > 0 {
 		buf.WriteString(SlowLogRowPrefixStr + execDetailStr + "\n")
