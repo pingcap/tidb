@@ -24,11 +24,7 @@ import (
 	"go.uber.org/zap"
 )
 
-<<<<<<< HEAD
-func splitPartitionTableRegion(store kv.SplitableStore, pi *model.PartitionInfo, scatter bool) {
-=======
-func splitPartitionTableRegion(ctx sessionctx.Context, store kv.SplittableStore, pi *model.PartitionInfo, scatter bool) {
->>>>>>> 6bb9b30... ddl: fix pre-split region timeout constraint not work when create table (#17459)
+func splitPartitionTableRegion(ctx sessionctx.Context, store kv.SplitableStore, pi *model.PartitionInfo, scatter bool) {
 	// Max partition count is 4096, should we sample and just choose some of the partition to split?
 	regionIDs := make([]uint64, 0, len(pi.Definitions))
 	ctxWithTimeout, cancel := context.WithTimeout(context.Background(), ctx.GetSessionVars().GetSplitRegionTimeout())
@@ -41,13 +37,9 @@ func splitPartitionTableRegion(ctx sessionctx.Context, store kv.SplittableStore,
 	}
 }
 
-<<<<<<< HEAD
-func splitTableRegion(store kv.SplitableStore, tbInfo *model.TableInfo, scatter bool) {
-=======
-func splitTableRegion(ctx sessionctx.Context, store kv.SplittableStore, tbInfo *model.TableInfo, scatter bool) {
+func splitTableRegion(ctx sessionctx.Context, store kv.SplitableStore, tbInfo *model.TableInfo, scatter bool) {
 	ctxWithTimeout, cancel := context.WithTimeout(context.Background(), ctx.GetSessionVars().GetSplitRegionTimeout())
 	defer cancel()
->>>>>>> 6bb9b30... ddl: fix pre-split region timeout constraint not work when create table (#17459)
 	if tbInfo.ShardRowIDBits > 0 && tbInfo.PreSplitRegions > 0 {
 		splitPreSplitedTable(ctxWithTimeout, store, tbInfo, scatter)
 	} else {
@@ -58,11 +50,7 @@ func splitTableRegion(ctx sessionctx.Context, store kv.SplittableStore, tbInfo *
 	}
 }
 
-<<<<<<< HEAD
-func splitPreSplitedTable(store kv.SplitableStore, tbInfo *model.TableInfo, scatter bool) {
-=======
-func splitPreSplitedTable(ctx context.Context, store kv.SplittableStore, tbInfo *model.TableInfo, scatter bool) {
->>>>>>> 6bb9b30... ddl: fix pre-split region timeout constraint not work when create table (#17459)
+func splitPreSplitedTable(ctx context.Context, store kv.SplitableStore, tbInfo *model.TableInfo, scatter bool) {
 	// Example:
 	// ShardRowIDBits = 4
 	// PreSplitRegions = 2
@@ -108,11 +96,7 @@ func splitPreSplitedTable(ctx context.Context, store kv.SplittableStore, tbInfo 
 	}
 }
 
-<<<<<<< HEAD
-func splitRecordRegion(store kv.SplitableStore, tableID int64, scatter bool) uint64 {
-=======
-func splitRecordRegion(ctx context.Context, store kv.SplittableStore, tableID int64, scatter bool) uint64 {
->>>>>>> 6bb9b30... ddl: fix pre-split region timeout constraint not work when create table (#17459)
+func splitRecordRegion(ctx context.Context, store kv.SplitableStore, tableID int64, scatter bool) uint64 {
 	tableStartKey := tablecodec.GenTablePrefix(tableID)
 	regionIDs, err := store.SplitRegions(ctx, [][]byte{tableStartKey}, scatter)
 	if err != nil {
@@ -139,20 +123,12 @@ func splitIndexRegion(store kv.SplitableStore, tblInfo *model.TableInfo, scatter
 	return regionIDs
 }
 
-<<<<<<< HEAD
-func waitScatterRegionFinish(store kv.SplitableStore, regionIDs ...uint64) {
-=======
-func waitScatterRegionFinish(ctx context.Context, store kv.SplittableStore, regionIDs ...uint64) {
->>>>>>> 6bb9b30... ddl: fix pre-split region timeout constraint not work when create table (#17459)
+func waitScatterRegionFinish(ctx context.Context, store kv.SplitableStore, regionIDs ...uint64) {
 	for _, regionID := range regionIDs {
 		err := store.WaitScatterRegionFinish(ctx, regionID, 0)
 		if err != nil {
-<<<<<<< HEAD
 			logutil.Logger(context.Background()).Warn("[ddl] wait scatter region failed", zap.Uint64("regionID", regionID), zap.Error(err))
-=======
-			logutil.BgLogger().Warn("[ddl] wait scatter region failed", zap.Uint64("regionID", regionID), zap.Error(err))
 			return
->>>>>>> 6bb9b30... ddl: fix pre-split region timeout constraint not work when create table (#17459)
 		}
 	}
 }
