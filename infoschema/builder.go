@@ -60,7 +60,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		newTableID = diff.TableID
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
 		oldTableID = diff.TableID
-	case model.ActionTruncateTable, model.ActionCreateView:
+	case model.ActionTruncateTable, model.ActionCreateView, model.ActionExchangeTablePartition:
 		oldTableID = diff.OldTableID
 		newTableID = diff.TableID
 	default:
@@ -74,7 +74,8 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	// We try to reuse the old allocator, so the cached auto ID can be reused.
 	var allocs autoid.Allocators
 	if tableIDIsValid(oldTableID) {
-		if oldTableID == newTableID && diff.Type != model.ActionRenameTable {
+		if oldTableID == newTableID && diff.Type != model.ActionRenameTable &&
+			diff.Type != model.ActionExchangeTablePartition {
 			oldAllocs, _ := b.is.AllocByID(oldTableID)
 			allocs = filterAllocators(diff, oldAllocs)
 		}
@@ -104,6 +105,24 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		tblIDs, err = b.applyCreateTable(m, dbInfo, newTableID, allocs, diff.Type, tblIDs)
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+	}
+	if diff.AffectedOpts != nil {
+		for _, opt := range diff.AffectedOpts {
+			var err error
+			affectedDiff := &model.SchemaDiff{
+				Version:     diff.Version,
+				Type:        diff.Type,
+				SchemaID:    opt.SchemaID,
+				TableID:     opt.TableID,
+				OldSchemaID: opt.OldSchemaID,
+				OldTableID:  opt.OldTableID,
+			}
+			affectedIDs, err := b.ApplyDiff(m, affectedDiff)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			tblIDs = append(tblIDs, affectedIDs...)
 		}
 	}
 	return tblIDs, nil
