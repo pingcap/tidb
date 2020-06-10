@@ -246,23 +246,23 @@ func (s *testPlanNormalize) TestNthPlanHint(c *C) {
 		"  └─TableFullScan_16 10000.00 cop[tikv] table:tt keep order:false, stats:pseudo"))
 
 	tk.MustQuery("explain select /*+nth_plan(2)*/ * from tt where a=1 and b=1;").Check(testkit.Rows(
-		"IndexLookUp_22 0.00 root  ",
-		"├─IndexRangeScan_19(Build) 0.00 cop[tikv] table:tt, index:a(a) range:[1,1], keep order:false, stats:pseudo",
-		"└─Selection_21(Probe) 0.00 cop[tikv]  eq(test.tt.b, 1)",
-		"  └─TableRowIDScan_20 0.00 cop[tikv] table:tt keep order:false, stats:pseudo"))
+		"IndexLookUp_22 0.01 root  ",
+		"├─IndexRangeScan_19(Build) 10.00 cop[tikv] table:tt, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+		"└─Selection_21(Probe) 0.01 cop[tikv]  eq(test.tt.b, 1)",
+		"  └─TableRowIDScan_20 10.00 cop[tikv] table:tt keep order:false, stats:pseudo"))
 
 	tk.MustQuery("explain select /*+nth_plan(3)*/ * from tt where a=1 and b=1;").Check(testkit.Rows(
-		"IndexLookUp_26 0.00 root  ",
-		"├─IndexRangeScan_23(Build) 0.00 cop[tikv] table:tt, index:b(b) range:[1,1], keep order:false, stats:pseudo",
-		"└─Selection_25(Probe) 0.00 cop[tikv]  eq(test.tt.a, 1)",
-		"  └─TableRowIDScan_24 0.00 cop[tikv] table:tt keep order:false, stats:pseudo"))
+		"IndexLookUp_26 0.01 root  ",
+		"├─IndexRangeScan_23(Build) 10.00 cop[tikv] table:tt, index:b(b) range:[1,1], keep order:false, stats:pseudo",
+		"└─Selection_25(Probe) 0.01 cop[tikv]  eq(test.tt.a, 1)",
+		"  └─TableRowIDScan_24 10.00 cop[tikv] table:tt keep order:false, stats:pseudo"))
 
 	// with the same param in nth_plan, we should get the same plan.
 	tk.MustQuery("explain select /*+nth_plan(2)*/ * from tt where a=1 and b=1;").Check(testkit.Rows(
-		"IndexLookUp_22 0.00 root  ",
-		"├─IndexRangeScan_19(Build) 0.00 cop[tikv] table:tt, index:a(a) range:[1,1], keep order:false, stats:pseudo",
-		"└─Selection_21(Probe) 0.00 cop[tikv]  eq(test.tt.b, 1)",
-		"  └─TableRowIDScan_20 0.00 cop[tikv] table:tt keep order:false, stats:pseudo"))
+		"IndexLookUp_22 0.01 root  ",
+		"├─IndexRangeScan_19(Build) 10.00 cop[tikv] table:tt, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+		"└─Selection_21(Probe) 0.01 cop[tikv]  eq(test.tt.b, 1)",
+		"  └─TableRowIDScan_20 10.00 cop[tikv] table:tt keep order:false, stats:pseudo"))
 
 	_, err := tk.Exec("explain select /*+nth_plan(4)*/ * from tt where a=1 and b=1;")
 	c.Assert(err, NotNil)
