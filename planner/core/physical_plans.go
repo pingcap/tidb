@@ -247,6 +247,8 @@ type PhysicalIndexScan struct {
 	// DoubleRead means if the index executor will read kv two times.
 	// If the query requires the columns that don't belong to index, DoubleRead will be true.
 	DoubleRead bool
+
+	NeedCommonHandle bool
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.

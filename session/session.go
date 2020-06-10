@@ -1426,6 +1426,9 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		return &s.txn, errors.AddStack(kv.ErrInvalidTxn)
 	}
 	if s.txn.pending() {
+		defer func(begin time.Time) {
+			s.sessionVars.DurationWaitTS = time.Since(begin)
+		}(time.Now())
 		// Transaction is lazy initialized.
 		// PrepareTxnCtx is called to get a tso future, makes s.txn a pending txn,
 		// If Txn() is called later, wait for the future to get a valid txn.
