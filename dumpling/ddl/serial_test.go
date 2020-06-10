@@ -843,9 +843,6 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	assertPKIsNotHandle := func(sql, errCol string) {
 		assertInvalidAutoRandomErr(sql, autoid.AutoRandomPKisNotHandleErrMsg, errCol)
 	}
-	assertExperimentDisabled := func(sql string) {
-		assertInvalidAutoRandomErr(sql, autoid.AutoRandomExperimentalDisabledErrMsg)
-	}
 	assertAlterValue := func(sql string) {
 		assertInvalidAutoRandomErr(sql, autoid.AutoRandomAlterErrMsg)
 	}
@@ -899,6 +896,13 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	// PKIsNotHandle: primary key is not a single column.
 	assertPKIsNotHandle("create table t (a bigint auto_random(3), b bigint, primary key (a, b))", "a")
 	assertPKIsNotHandle("create table t (a bigint auto_random(3), b int, c char, primary key (a, c))", "a")
+
+	// PKIsNotHandle: table is created when alter-primary-key = true.
+	config.GetGlobalConfig().AlterPrimaryKey = true
+	assertPKIsNotHandle("create table t (a bigint auto_random(3) primary key, b int)", "a")
+	assertPKIsNotHandle("create table t (a bigint auto_random(3) primary key, b int)", "a")
+	assertPKIsNotHandle("create table t (a int, b bigint auto_random(3) primary key)", "b")
+	config.GetGlobalConfig().AlterPrimaryKey = false
 
 	// Can not set auto_random along with auto_increment.
 	assertWithAutoInc("create table t (a bigint auto_random(3) primary key auto_increment)")
@@ -1017,10 +1021,6 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 		tk.MustExec("insert into t values(3)")
 		tk.MustExec("insert into t values()")
 	})
-
-	// Disallow using it when allow-auto-random is not enabled.
-	config.GetGlobalConfig().Experimental.AllowAutoRandom = false
-	assertExperimentDisabled("create table auto_random_table (a int primary key auto_random(3))")
 }
 
 func (s *testSerialSuite) TestAutoRandomExchangePartition(c *C) {
