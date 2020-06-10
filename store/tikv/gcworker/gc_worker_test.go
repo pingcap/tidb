@@ -231,15 +231,16 @@ func (s *testGCWorkerSuite) TestGetOracleTime(c *C) {
 }
 
 func (s *testGCWorkerSuite) TestMinStartTS(c *C) {
+	ctx := context.Background()
 	spkv := s.store.GetSafePointKV()
 	err := spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), strconv.FormatUint(math.MaxUint64, 10))
 	c.Assert(err, IsNil)
 	now := time.Now()
-	sp := s.gcWorker.calSafePointByMinStartTS(now)
+	sp := s.gcWorker.calSafePointByMinStartTS(ctx, now)
 	c.Assert(sp.Second(), Equals, now.Second())
 	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), "0")
 	c.Assert(err, IsNil)
-	sp = s.gcWorker.calSafePointByMinStartTS(now)
+	sp = s.gcWorker.calSafePointByMinStartTS(ctx, now)
 	zeroTime := time.Unix(0, oracle.ExtractPhysical(0)*1e6)
 	c.Assert(sp, Equals, zeroTime)
 
@@ -247,7 +248,7 @@ func (s *testGCWorkerSuite) TestMinStartTS(c *C) {
 	c.Assert(err, IsNil)
 	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "b"), "1")
 	c.Assert(err, IsNil)
-	sp = s.gcWorker.calSafePointByMinStartTS(now)
+	sp = s.gcWorker.calSafePointByMinStartTS(ctx, now)
 	c.Assert(sp, Equals, zeroTime)
 
 	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"),
@@ -256,7 +257,7 @@ func (s *testGCWorkerSuite) TestMinStartTS(c *C) {
 	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "b"),
 		strconv.FormatUint(variable.GoTimeToTS(now.Add(-20*time.Second)), 10))
 	c.Assert(err, IsNil)
-	sp = s.gcWorker.calSafePointByMinStartTS(now.Add(-10 * time.Second))
+	sp = s.gcWorker.calSafePointByMinStartTS(ctx, now.Add(-10*time.Second))
 	c.Assert(sp.Second(), Equals, now.Add(-20*time.Second).Second())
 }
 
