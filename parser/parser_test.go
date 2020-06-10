@@ -303,7 +303,6 @@ type testCase struct {
 
 type testErrMsgCase struct {
 	src string
-	ok  bool
 	err error
 }
 
@@ -3691,14 +3690,19 @@ func (s *testParserSuite) TestComment(c *C) {
 	s.RunTest(c, table)
 }
 
-func (s *testParserSuite) TestCommentErrMsg(c *C) {
-	table := []testErrMsgCase{
-		{"delete from t where a = 7 or 1=1/*' and b = 'p'", false, errors.New("near '/*' and b = 'p'' at line 1")},
-		{"delete from t where a = 7 or\n 1=1/*' and b = 'p'", false, errors.New("near '/*' and b = 'p'' at line 2")},
-		{"select 1/*", false, errors.New("near '/*' at line 1")},
-		{"select 1/* comment */", false, nil},
+func (s *testParserSuite) TestParserErrMsg(c *C) {
+	commentMsgCases := []testErrMsgCase{
+		{"delete from t where a = 7 or 1=1/*' and b = 'p'", errors.New("near '/*' and b = 'p'' at line 1")},
+		{"delete from t where a = 7 or\n 1=1/*' and b = 'p'", errors.New("near '/*' and b = 'p'' at line 2")},
+		{"select 1/*", errors.New("near '/*' at line 1")},
+		{"select 1/* comment */", nil},
 	}
-	s.RunErrMsgTest(c, table)
+	funcCallMsgCases := []testErrMsgCase{
+		{"select a.b()", nil},
+		{"SELECT foo.bar('baz');", nil},
+	}
+	s.RunErrMsgTest(c, commentMsgCases)
+	s.RunErrMsgTest(c, funcCallMsgCases)
 }
 
 type subqueryChecker struct {
