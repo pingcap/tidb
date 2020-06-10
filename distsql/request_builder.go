@@ -66,7 +66,7 @@ func (builder *RequestBuilder) SetIndexRanges(sc *stmtctx.StatementContext, tid,
 	return builder
 }
 
-// SetIndexRanges sets "KeyRanges" for "kv.Request" by converting common handle range
+// SetCommonHandleRanges sets "KeyRanges" for "kv.Request" by converting common handle range
 // "ranges" to "KeyRanges" firstly.
 func (builder *RequestBuilder) SetCommonHandleRanges(sc *stmtctx.StatementContext, tid int64, ranges []*ranger.Range) *RequestBuilder {
 	if builder.err == nil {
