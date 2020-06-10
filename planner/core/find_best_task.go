@@ -597,9 +597,8 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, clock *Count
 			}
 			if clock.Empty() {
 				return t, cntPlan, nil
-			} else {
-				continue
 			}
+			continue
 		}
 		// if we already know the range of the scan is empty, just return a TableDual
 		if len(path.Ranges) == 0 && !ds.ctx.GetSessionVars().StmtCtx.UseCache {
@@ -640,9 +639,8 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, clock *Count
 					t = pointGetTask
 					if clock.Empty() {
 						return
-					} else {
-						continue
 					}
+					continue
 				}
 			}
 		}
@@ -664,9 +662,8 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, clock *Count
 			}
 			if clock.Empty() {
 				return t, cntPlan, nil
-			} else {
-				continue
 			}
+			continue
 		}
 		// TiFlash storage do not support index scan.
 		if ds.preferStoreType&preferTiFlash != 0 {
