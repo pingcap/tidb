@@ -44,22 +44,23 @@ func NewSchemaChecker(do *Domain, schemaVer int64, relatedTableIDs []int64) *Sch
 }
 
 // Check checks the validity of the schema version.
-func (s *SchemaChecker) Check(txnTS uint64) error {
+func (s *SchemaChecker) Check(txnTS uint64, getAllChangedInfo bool) ([]int64, []uint64, bool, error) {
 	schemaOutOfDateRetryInterval := atomic.LoadInt64(&SchemaOutOfDateRetryInterval)
 	schemaOutOfDateRetryTimes := int(atomic.LoadInt32(&SchemaOutOfDateRetryTimes))
 	for i := 0; i < schemaOutOfDateRetryTimes; i++ {
-		result := s.SchemaValidator.Check(txnTS, s.schemaVer, s.relatedTableIDs)
-		switch result {
+		tblIDs, typeActions, CheckResult := s.SchemaValidator.Check(txnTS, s.schemaVer, s.relatedTableIDs, getAllChangedInfo)
+		switch CheckResult {
 		case ResultSucc:
-			return nil
+			return nil, nil, false, nil
 		case ResultFail:
 			metrics.SchemaLeaseErrorCounter.WithLabelValues("changed").Inc()
-			return ErrInfoSchemaChanged
+			amendable := getAllChangedInfo && (len(tblIDs) > 0)
+			return tblIDs, typeActions, amendable, ErrInfoSchemaChanged
 		case ResultUnknown:
 			time.Sleep(time.Duration(schemaOutOfDateRetryInterval))
 		}
 
 	}
 	metrics.SchemaLeaseErrorCounter.WithLabelValues("outdated").Inc()
-	return ErrInfoSchemaExpired
+	return nil, nil, false, ErrInfoSchemaExpired
 }

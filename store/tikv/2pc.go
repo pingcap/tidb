@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
@@ -1374,15 +1375,50 @@ func (c *twoPhaseCommitter) stripNoNeedCommitKeys() {
 	c.mutations = m.subRange(0, newIdx)
 }
 
+const amendableType = uint64((1 << model.ActionAddColumn) | (1 << model.ActionDropColumn))
+
+func (c *twoPhaseCommitter) checkTblAmendable(tblIDs []int64, actionTypes []uint64) bool {
+	for i := range tblIDs {
+		if actionTypes[i]&(^amendableType) != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func (c *twoPhaseCommitter) amendForSchemaChange(tblIds []int64, actionTypes []uint64) (bool, error) {
+	amenable := c.checkTblAmendable(tblIds, actionTypes)
+	if !amenable {
+		return false, nil
+	}
+	// TODO Try to amend "add index" and "drop index" schema change for pessimistic transaction commit
+	return true, nil
+}
+
 type schemaLeaseChecker interface {
-	Check(txnTS uint64) error
+	Check(txnTS uint64, getAllChangedInfo bool) ([]int64, []uint64, bool, error)
 }
 
 func (c *twoPhaseCommitter) checkSchemaValid() error {
 	checker, ok := c.txn.us.GetOption(kv.SchemaChecker).(schemaLeaseChecker)
 	if ok {
-		err := checker.Check(c.commitTS)
+		tblIDs, actionTypes, amendable, err := checker.Check(c.commitTS, c.isPessimistic)
 		if err != nil {
+			if amendable && c.isPessimistic {
+				// Try to amend for pessimistic transactions
+				ok, amendErr := c.amendForSchemaChange(tblIDs, actionTypes)
+				if amendErr != nil {
+					logutil.BgLogger().Warn("Amend data has failed",
+						zap.Uint64("connID", c.connID), zap.Error(amendErr))
+				} else if ok {
+					logutil.BgLogger().Info("Amend data successfully for pessimistic txn commit",
+						zap.Uint64("connID", c.connID), zap.Uint64("startTS", c.startTS),
+						zap.Uint64("commitTS", c.commitTS),
+						zap.Int64s("table ids", tblIDs),
+						zap.Uint64s("action types", actionTypes))
+					return nil
+				}
+			}
 			return errors.Trace(err)
 		}
 	}
