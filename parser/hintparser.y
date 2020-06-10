@@ -99,6 +99,7 @@ import (
 	hintUseToja               "USE_TOJA"
 	hintTimeRange             "TIME_RANGE"
 	hintUseCascades           "USE_CASCADES"
+	hintNthPlan               "NTH_PLAN"
 
 	/* Other keywords */
 	hintOLAP            "OLAP"
@@ -238,6 +239,14 @@ TableOptimizerHintOpt:
 			HintName: model.NewCIStr($1),
 			QBName:   model.NewCIStr($3),
 			HintData: $4,
+		}
+	}
+|	"NTH_PLAN" '(' QueryBlockOpt hintIntLit ')'
+	{
+		$$ = &ast.TableOptimizerHint{
+			HintName: model.NewCIStr($1),
+			QBName:   model.NewCIStr($3),
+			HintData: int64($4),
 		}
 	}
 |	"SET_VAR" '(' Identifier '=' Value ')'
@@ -617,6 +626,7 @@ Identifier:
 |	"USE_TOJA"
 |	"TIME_RANGE"
 |	"USE_CASCADES"
+|	"NTH_PLAN"
 /* other keywords */
 |	"OLAP"
 |	"OLTP"

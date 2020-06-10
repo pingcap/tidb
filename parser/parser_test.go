@@ -3311,6 +3311,23 @@ func (s *testParserSuite) TestOptimizerHints(c *C) {
 		c.Assert(hints[0].HintData.(uint64), Equals, uint64(1000))
 	}
 
+	// Test NTH_PLAN
+	queries = []string{
+		"SELECT /*+ NTH_PLAN(10) */ * FROM t1 INNER JOIN t2 where t1.c1 = t2.c1",
+		"SELECT /*+ NTH_PLAN(10) */ 1",
+		"SELECT /*+ NTH_PLAN(10) */ SLEEP(20)",
+		"SELECT /*+ NTH_PLAN(10) */ 1 FROM DUAL",
+	}
+	for i, query := range queries {
+		stmt, _, err = parser.Parse(query, "", "")
+		c.Assert(err, IsNil)
+		selectStmt = stmt[0].(*ast.SelectStmt)
+		hints = selectStmt.TableHints
+		c.Assert(len(hints), Equals, 1)
+		c.Assert(hints[0].HintName.L, Equals, "nth_plan", Commentf("case", i))
+		c.Assert(hints[0].HintData.(int64), Equals, int64(10))
+	}
+
 	// Test USE_INDEX_MERGE
 	stmt, _, err = parser.Parse("select /*+ USE_INDEX_MERGE(t1, c1), use_index_merge(t2, c1), use_index_merge(t3, c1, primary, c2) */ c1, c2 from t1, t2, t3 where t1.c1 = t2.c1 and t3.c2 = t1.c2", "", "")
 	c.Assert(err, IsNil)
