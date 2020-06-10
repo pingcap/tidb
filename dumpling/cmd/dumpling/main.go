@@ -90,12 +90,12 @@ func main() {
 	pflag.StringVarP(&logFile, "logfile", "L", "", "Log file `path`, leave empty to write to console")
 	pflag.StringVar(&logFormat, "logfmt", "text", "Log `format`: {text|json}")
 	pflag.StringVar(&consistency, "consistency", "auto", "Consistency level during dumping: {auto|none|flush|lock|snapshot}")
-	pflag.StringVar(&snapshot, "snapshot", "", "Snapshot position. Valid only when consistency=snapshot")
+	pflag.StringVar(&snapshot, "snapshot", "", "Snapshot position (uint64 from pd timestamp for TiDB). Valid only when consistency=snapshot")
 	pflag.BoolVarP(&noViews, "no-views", "W", true, "Do not dump views")
 	pflag.StringVar(&statusAddr, "status-addr", ":8281", "dumpling API server and pprof addr")
 	pflag.Uint64VarP(&rows, "rows", "r", export.UnspecifiedSize, "Split table into chunks of this many rows, default unlimited")
 	pflag.StringVar(&where, "where", "", "Dump only selected records")
-	pflag.BoolVar(&escapeBackslash, "escape-backslash", true, "use backslash to escape quotation marks")
+	pflag.BoolVar(&escapeBackslash, "escape-backslash", true, "use backslash to escape special characters")
 	pflag.StringVar(&fileType, "filetype", "sql", "The type of export file (sql/csv)")
 	pflag.BoolVar(&noHeader, "no-header", false, "whether not to dump CSV table header")
 	pflag.BoolVarP(&noSchemas, "no-schemas", "m", false, "Do not dump table schemas with the data")
@@ -165,6 +165,7 @@ func main() {
 	conf.NoHeader = noHeader
 	conf.NoSchemas = noSchemas
 	conf.NoData = noData
+	conf.Snapshot = snapshot
 	conf.CsvNullValue = csvNullValue
 	conf.Sql = sql
 	conf.TableFilter = tableFilter

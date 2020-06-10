@@ -220,7 +220,7 @@ func WriteInsertInCsv(tblIR TableDataIR, w io.Writer, noHeader bool, csvNullValu
 	if !noHeader && len(tblIR.ColumnNames()) != 0 {
 		for i, col := range tblIR.ColumnNames() {
 			bf.WriteByte(doubleQuotationMark)
-			escape([]byte(col), bf, escapeBackSlash)
+			escape([]byte(col), bf, getEscapeQuotation(escapeBackSlash, doubleQuotationMark))
 			bf.WriteByte(doubleQuotationMark)
 			if i != len(tblIR.ColumnTypes())-1 {
 				bf.WriteByte(',')
