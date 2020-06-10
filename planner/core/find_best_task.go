@@ -189,7 +189,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 	var curCntPlan int64
 	var cntPlan int64 = 0
 	childTasks := make([]task, 0, len(p.children))
-	childCnts := make([]int64, 0, len(p.children))
+	childCnts := make([]int64, len(p.children))
 	for _, pp := range physicalPlans {
 		// find best child tasks firstly.
 		childTasks = childTasks[:0]
