@@ -248,6 +248,8 @@ func (ts *testMiscSuite) TestTableOptimizerHintRestore(c *C) {
 		{"QUERY_TYPE(OLAP)", "QUERY_TYPE(OLAP)"},
 		{"QUERY_TYPE(OLTP)", "QUERY_TYPE(OLTP)"},
 		{"QUERY_TYPE(@sel1 OLTP)", "QUERY_TYPE(@`sel1` OLTP)"},
+		{"NTH_PLAN(10)", "NTH_PLAN(10)"},
+		{"NTH_PLAN(@sel1 30)", "NTH_PLAN(@`sel1` 30)"},
 		{"MEMORY_QUOTA(1 GB)", "MEMORY_QUOTA(1024 MB)"},
 		{"MEMORY_QUOTA(@sel1 1 GB)", "MEMORY_QUOTA(@`sel1` 1024 MB)"},
 		{"HASH_AGG()", "HASH_AGG()"},
