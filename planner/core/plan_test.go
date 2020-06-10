@@ -241,9 +241,9 @@ func (s *testPlanNormalize) TestNthPlanHint(c *C) {
 	tk.MustExec("insert into tt values (1, 1), (2, 2), (3, 4)")
 
 	tk.MustQuery("explain select /*+nth_plan(1)*/ * from tt where a=1 and b=1;").Check(testkit.Rows(
-		"TableReader_18 0.00 root  data:Selection_17",
-		"└─Selection_17 0.00 cop[tikv]  eq(test.tt.a, 1), eq(test.tt.b, 1)",
-		"  └─TableFullScan_16 3.00 cop[tikv] table:tt keep order:false, stats:pseudo"))
+		"TableReader_18 0.01 root  data:Selection_17",
+		"└─Selection_17 0.01 cop[tikv]  eq(test.tt.a, 1), eq(test.tt.b, 1)",
+		"  └─TableFullScan_16 10000.00 cop[tikv] table:tt keep order:false, stats:pseudo"))
 
 	tk.MustQuery("explain select /*+nth_plan(2)*/ * from tt where a=1 and b=1;").Check(testkit.Rows(
 		"IndexLookUp_22 0.00 root  ",
@@ -257,6 +257,6 @@ func (s *testPlanNormalize) TestNthPlanHint(c *C) {
 		"└─Selection_25(Probe) 0.00 cop[tikv]  eq(test.tt.a, 1)",
 		"  └─TableRowIDScan_24 0.00 cop[tikv] table:tt keep order:false, stats:pseudo"))
 
-	tk.MustQuery("explain select /*+nth_plan(4)*/ * from tt where a=1 and b=1;").Check(testkit.Rows(
-		"ERROR 1815 (HY000): Internal : The parameter of nth_plan() is out of range."))
+	_, err := tk.Exec("explain select /*+nth_plan(4)*/ * from tt where a=1 and b=1;")
+	c.Assert(err, NotNil)
 }
