@@ -232,3 +232,31 @@ func compareStringSlice(c *C, ss1, ss2 []string) {
 		c.Assert(s, Equals, ss2[i])
 	}
 }
+
+func (s *testPlanNormalize) TestNthPlanHint(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tt")
+	tk.MustExec("create table tt (a int,b int, index(a), index(b));")
+	tk.MustExec("insert into tt values (1, 1), (2, 2), (3, 4)")
+
+	tk.MustQuery("explain select /*+nth_plan(1)*/ * from tt where a=1 and b=1;").Check(testkit.Rows(
+		"TableReader_18 0.00 root  data:Selection_17",
+		"└─Selection_17 0.00 cop[tikv]  eq(test.tt.a, 1), eq(test.tt.b, 1)",
+		"  └─TableFullScan_16 3.00 cop[tikv] table:tt keep order:false, stats:pseudo"))
+
+	tk.MustQuery("explain select /*+nth_plan(2)*/ * from tt where a=1 and b=1;").Check(testkit.Rows(
+		"IndexLookUp_22 0.00 root  ",
+		"├─IndexRangeScan_19(Build) 0.00 cop[tikv] table:tt, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+		"└─Selection_21(Probe) 0.00 cop[tikv]  eq(test.tt.b, 1)",
+		"  └─TableRowIDScan_20 0.00 cop[tikv] table:tt keep order:false, stats:pseudo"))
+
+	tk.MustQuery("explain select /*+nth_plan(3)*/ * from tt where a=1 and b=1;").Check(testkit.Rows(
+		"IndexLookUp_26 0.00 root  ",
+		"├─IndexRangeScan_23(Build) 0.00 cop[tikv] table:tt, index:b(b) range:[1,1], keep order:false, stats:pseudo",
+		"└─Selection_25(Probe) 0.00 cop[tikv]  eq(test.tt.a, 1)",
+		"  └─TableRowIDScan_24 0.00 cop[tikv] table:tt keep order:false, stats:pseudo"))
+
+	tk.MustQuery("explain select /*+nth_plan(4)*/ * from tt where a=1 and b=1;").Check(testkit.Rows(
+		"ERROR 1815 (HY000): Internal : The parameter of nth_plan() is out of range."))
+}

@@ -16,6 +16,7 @@ package core
 import (
 	"math"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -141,6 +142,7 @@ func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty, clock *
 		RowCount: p.RowCount,
 	}.Init(p.ctx, p.stats, p.blockOffset)
 	dual.SetSchema(p.schema)
+	clock.Dec(1)
 	return &rootTask{p: dual}, 1, nil
 }
 
@@ -150,6 +152,7 @@ func (p *LogicalShow) findBestTask(prop *property.PhysicalProperty, clock *Count
 	}
 	pShow := PhysicalShow{ShowContents: p.ShowContents}.Init(p.ctx)
 	pShow.SetSchema(p.schema)
+	clock.Dec(1)
 	return &rootTask{p: pShow}, 1, nil
 }
 
@@ -159,6 +162,7 @@ func (p *LogicalShowDDLJobs) findBestTask(prop *property.PhysicalProperty, clock
 	}
 	pShow := PhysicalShowDDLJobs{JobNumber: p.JobNumber}.Init(p.ctx)
 	pShow.SetSchema(p.schema)
+	clock.Dec(1)
 	return &rootTask{p: pShow}, 1, nil
 }
 
@@ -169,16 +173,18 @@ func (p *baseLogicalPlan) rebuildChildTasks(childTasks *[]task, pp PhysicalPlan,
 	for _, x := range childCnts {
 		multAll *= int8(x)
 	}
+	*childTasks = (*childTasks)[:0]
 	for j, child := range p.children {
 		multAll /= int8(childCnts[j])
 		curClock = CountDown((clock-1)/multAll + 1)
 		childTask, _, err := child.findBestTask(pp.GetChildReqProps(j), &curClock)
 		clock = (clock-1)%multAll + 1
-		//		y.Assert(curClock == 0)
 		if err != nil {
 			return err
 		}
-		//		y.Assert(!(childTask != nil && childTask.invalid()))
+		if curClock != 0 || (childTask != nil && childTask.invalid()) {
+			return errors.Errorf("CountDown clock is not handled")
+		}
 		*childTasks = append(*childTasks, childTask)
 	}
 	return nil
@@ -189,6 +195,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 	var curCntPlan int64
 	var cntPlan int64 = 0
 	childTasks := make([]task, 0, len(p.children))
+	// childCnts : record the number of tasks founded during generating childTasks
 	childCnts := make([]int64, len(p.children))
 	for _, pp := range physicalPlans {
 		// find best child tasks firstly.
@@ -214,6 +221,14 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		}
 
 		if clock.IsForce() && int64(*clock) <= curCntPlan {
+			// the taskMap of children nodes should be rolled back.
+			for _, child := range p.children {
+				if pp, ok := child.(*baseLogicalPlan); ok {
+					pp.rollBackTaskMap()
+				} else if pp, ok := child.(*DataSource); ok {
+					pp.rollBackTaskMap()
+				}
+			}
 			curCntPlan = int64(*clock)
 			err := p.rebuildChildTasks(&childTasks, pp, childCnts, int8(*clock))
 			if err != nil {
@@ -255,6 +270,9 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, clock *CountDown) (bestTask task, cntPlan int64, err error) {
 	// If p is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
 	// and set inner child prop nil, so here we do nothing.
+	if clock.IsForce() {
+		p.enableBak()
+	}
 	if prop == nil {
 		return nil, 0, nil
 	}
@@ -263,6 +281,9 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, clock *C
 	bestTask = p.getTask(prop)
 	if bestTask != nil {
 		clock.Dec(1)
+		if p.needBak {
+			p.storeTask(prop, bestTask)
+		}
 		return bestTask, 1, nil
 	}
 
@@ -354,6 +375,7 @@ func (p *LogicalMemTable) findBestTask(prop *property.PhysicalProperty, clock *C
 		QueryTimeRange: p.QueryTimeRange,
 	}.Init(p.ctx, p.stats, p.blockOffset)
 	memTable.SetSchema(p.schema)
+	clock.Dec(1)
 	return &rootTask{p: memTable}, 1, nil
 }
 

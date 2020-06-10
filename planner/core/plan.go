@@ -244,7 +244,11 @@ type PhysicalPlan interface {
 type baseLogicalPlan struct {
 	basePlan
 
-	taskMap   map[string]task
+	taskMap map[string]task
+	// taskMapBak is a backlog stack of taskMap, used to roll back the task.
+	taskMapBak []string
+	// needBask indicates whether taskMap needs to be backed. Avoid affecting the speed of optimizer.
+	needBak   bool
 	self      LogicalPlan
 	maxOneRow bool
 	children  []LogicalPlan
@@ -286,6 +290,32 @@ func (p *basePhysicalPlan) ExtractCorrelatedCols() []*expression.CorrelatedColum
 	return nil
 }
 
+// enableBak sets the needBak of logical plan tree to true.
+func (p *baseLogicalPlan) enableBak() {
+	p.needBak = true
+	for _, child := range p.children {
+		if pp, ok := child.(*baseLogicalPlan); ok && !pp.needBak {
+			pp.enableBak()
+		} else if pp, ok := child.(*DataSource); ok && !pp.needBak {
+			pp.enableBak()
+		}
+	}
+}
+
+func (p *baseLogicalPlan) rollBackTaskMap() {
+	if len(p.taskMapBak) > 0 {
+		p.taskMap[p.taskMapBak[len(p.taskMapBak)-1]] = nil
+		p.taskMapBak = p.taskMapBak[:len(p.taskMapBak)-1]
+	}
+	for _, child := range p.children {
+		if pp, ok := child.(*baseLogicalPlan); ok {
+			pp.rollBackTaskMap()
+		} else if pp, ok := child.(*DataSource); ok {
+			pp.rollBackTaskMap()
+		}
+	}
+}
+
 func (p *baseLogicalPlan) getTask(prop *property.PhysicalProperty) task {
 	key := prop.HashCode()
 	return p.taskMap[string(key)]
@@ -293,6 +323,9 @@ func (p *baseLogicalPlan) getTask(prop *property.PhysicalProperty) task {
 
 func (p *baseLogicalPlan) storeTask(prop *property.PhysicalProperty, task task) {
 	key := prop.HashCode()
+	if p.needBak {
+		p.taskMapBak = append(p.taskMapBak, string(key))
+	}
 	p.taskMap[string(key)] = task
 }
 
@@ -349,9 +382,11 @@ func newBasePlan(ctx sessionctx.Context, tp string, offset int) basePlan {
 
 func newBaseLogicalPlan(ctx sessionctx.Context, tp string, self LogicalPlan, offset int) baseLogicalPlan {
 	return baseLogicalPlan{
-		taskMap:  make(map[string]task),
-		basePlan: newBasePlan(ctx, tp, offset),
-		self:     self,
+		taskMap:    make(map[string]task),
+		taskMapBak: make([]string, 0, 100),
+		needBak:    false,
+		basePlan:   newBasePlan(ctx, tp, offset),
+		self:       self,
 	}
 }
 

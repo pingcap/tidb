@@ -50,6 +50,7 @@ func (ds *mockDataSource) findBestTask(prop *property.PhysicalProperty, clock *C
 		p:   p,
 		cst: 10000,
 	}
+	clock.Dec(1)
 	return task, 1, nil
 }
 

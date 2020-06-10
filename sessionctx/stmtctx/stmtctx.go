@@ -165,6 +165,9 @@ type StmtHints struct {
 	NoIndexMergeHint        bool
 	// EnableCascadesPlanner is use cascades planner for a single query only.
 	EnableCascadesPlanner bool
+	// ForceNthPlan indicates the countDown number for finding physical plan.
+	// -1 for disable
+	ForceNthPlan int64
 
 	// Hint flags
 	HasAllowInSubqToJoinAndAggHint bool
