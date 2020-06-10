@@ -348,7 +348,7 @@ func DecodeColumnValue(data []byte, ft *types.FieldType, loc *time.Location) (ty
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	colDatum, err := unflatten(d, ft, loc)
+	colDatum, err := Unflatten(d, ft, loc)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
@@ -422,7 +422,7 @@ func DecodeRowWithMap(b []byte, cols map[int64]*types.FieldType, loc *time.Locat
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			v, err = unflatten(v, ft, loc)
+			v, err = Unflatten(v, ft, loc)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -489,7 +489,7 @@ func CutRowNew(data []byte, colIDs map[int64]int) ([][]byte, error) {
 func UnflattenDatums(datums []types.Datum, fts []*types.FieldType, loc *time.Location) ([]types.Datum, error) {
 	for i, datum := range datums {
 		ft := fts[i]
-		uDatum, err := unflatten(datum, ft, loc)
+		uDatum, err := Unflatten(datum, ft, loc)
 		if err != nil {
 			return datums, errors.Trace(err)
 		}
@@ -498,8 +498,8 @@ func UnflattenDatums(datums []types.Datum, fts []*types.FieldType, loc *time.Loc
 	return datums, nil
 }
 
-// unflatten converts a raw datum to a column datum.
-func unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (types.Datum, error) {
+// Unflatten converts a raw datum to a column datum.
+func Unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (types.Datum, error) {
 	if datum.IsNull() {
 		return datum, nil
 	}
