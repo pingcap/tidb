@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -835,14 +836,29 @@ func (is *PhysicalIndexScan) initSchema(idx *model.IndexInfo, idxExprCols []*exp
 			}
 		}
 	}
+
+	if is.Table.IsCommonHandle {
+		pkIdx := tables.FindPrimaryIndex(is.Table)
+		for _, col := range pkIdx.Columns {
+			indexCols = append(indexCols, &expression.Column{
+				ID:       is.Table.Columns[col.Offset].ID,
+				RetType:  &is.Table.Columns[col.Offset].FieldType,
+				UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID(),
+			})
+		}
+		is.NeedCommonHandle = true
+	}
+
 	// If it's double read case, the first index must return handle. So we should add extra handle column
 	// if there isn't a handle column.
 	if isDoubleRead && !setHandle {
-		indexCols = append(indexCols, &expression.Column{
-			RetType:  types.NewFieldType(mysql.TypeLonglong),
-			ID:       model.ExtraHandleID,
-			UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID(),
-		})
+		if !is.Table.IsCommonHandle {
+			indexCols = append(indexCols, &expression.Column{
+				RetType:  types.NewFieldType(mysql.TypeLonglong),
+				ID:       model.ExtraHandleID,
+				UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID(),
+			})
+		}
 	}
 	is.SetSchema(expression.NewSchema(indexCols...))
 }
