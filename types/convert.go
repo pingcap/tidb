@@ -364,8 +364,8 @@ func NumberToDuration(number int64, fsp int8) (Duration, error) {
 
 // getValidIntPrefix gets prefix of the string which can be successfully parsed as int.
 func getValidIntPrefix(sc *stmtctx.StatementContext, str string, isFuncCast bool) (string, error) {
-	if isFuncCast {
-		floatPrefix, err := getValidFloatPrefix(sc, str)
+	if !isFuncCast {
+		floatPrefix, err := getValidFloatPrefix(sc, str, isFuncCast)
 		if err != nil {
 			return floatPrefix, errors.Trace(err)
 		}
@@ -522,9 +522,9 @@ func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr st
 }
 
 // StrToFloat converts a string to a float64 at the best-effort.
-func StrToFloat(sc *stmtctx.StatementContext, str string) (float64, error) {
+func StrToFloat(sc *stmtctx.StatementContext, str string, isFuncCast bool) (float64, error) {
 	str = strings.TrimSpace(str)
-	validStr, err := getValidFloatPrefix(sc, str)
+	validStr, err := getValidFloatPrefix(sc, str, isFuncCast)
 	f, err1 := strconv.ParseFloat(validStr, 64)
 	if err1 != nil {
 		if err2, ok := err1.(*strconv.NumError); ok {
@@ -600,7 +600,7 @@ func ConvertJSONToFloat(sc *stmtctx.StatementContext, j json.BinaryJSON) (float6
 		return j.GetFloat64(), nil
 	case json.TypeCodeString:
 		str := string(hack.String(j.GetString()))
-		return StrToFloat(sc, str)
+		return StrToFloat(sc, str, false)
 	}
 	return 0, errors.New("Unknown type code in JSON")
 }
@@ -621,8 +621,8 @@ func ConvertJSONToDecimal(sc *stmtctx.StatementContext, j json.BinaryJSON) (*MyD
 }
 
 // getValidFloatPrefix gets prefix of string which can be successfully parsed as float.
-func getValidFloatPrefix(sc *stmtctx.StatementContext, s string) (valid string, err error) {
-	if (sc.InDeleteStmt || sc.InSelectStmt) && s == "" {
+func getValidFloatPrefix(sc *stmtctx.StatementContext, s string, isFuncCast bool) (valid string, err error) {
+	if isFuncCast && s == "" {
 		return "0", nil
 	}
 

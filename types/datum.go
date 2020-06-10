@@ -623,7 +623,7 @@ func (d *Datum) compareFloat64(sc *stmtctx.StatementContext, f float64) (int, er
 	case KindFloat32, KindFloat64:
 		return CompareFloat64(d.GetFloat64(), f), nil
 	case KindString, KindBytes:
-		fVal, err := StrToFloat(sc, d.GetString())
+		fVal, err := StrToFloat(sc, d.GetString(), false)
 		return CompareFloat64(fVal, f), errors.Trace(err)
 	case KindMysqlDecimal:
 		fVal, err := d.GetMysqlDecimal().ToFloat64()
@@ -674,7 +674,7 @@ func (d *Datum) compareString(sc *stmtctx.StatementContext, s string, retCollati
 	case KindBinaryLiteral, KindMysqlBit:
 		return CompareString(d.GetBinaryLiteral().ToString(), s, d.collation), nil
 	default:
-		fVal, err := StrToFloat(sc, s)
+		fVal, err := StrToFloat(sc, s, false)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -837,7 +837,7 @@ func (d *Datum) convertToFloat(sc *stmtctx.StatementContext, target *FieldType) 
 	case KindFloat32, KindFloat64:
 		f = d.GetFloat64()
 	case KindString, KindBytes:
-		f, err = StrToFloat(sc, d.GetString())
+		f, err = StrToFloat(sc, d.GetString(), false)
 	case KindMysqlTime:
 		f, err = d.GetMysqlTime().ToNumber().ToFloat64()
 	case KindMysqlDuration:
@@ -1063,6 +1063,15 @@ func (d *Datum) convertToMysqlTimestamp(sc *stmtctx.StatementContext, target *Fi
 		t, err = ParseTimeFromNum(sc, d.GetInt64(), mysql.TypeTimestamp, fsp)
 	case KindMysqlDecimal:
 		t, err = ParseTimeFromFloatString(sc, d.GetMysqlDecimal().String(), mysql.TypeTimestamp, fsp)
+	case KindMysqlJSON:
+		j := d.GetMysqlJSON()
+		var s string
+		s, err = j.Unquote()
+		if err != nil {
+			ret.SetMysqlTime(t)
+			return ret, err
+		}
+		t, err = ParseTime(sc, s, mysql.TypeTimestamp, fsp)
 	default:
 		return invalidConv(d, mysql.TypeTimestamp)
 	}
@@ -1106,6 +1115,15 @@ func (d *Datum) convertToMysqlTime(sc *stmtctx.StatementContext, target *FieldTy
 		t, err = ParseTime(sc, d.GetString(), tp, fsp)
 	case KindInt64:
 		t, err = ParseTimeFromNum(sc, d.GetInt64(), tp, fsp)
+	case KindMysqlJSON:
+		j := d.GetMysqlJSON()
+		var s string
+		s, err = j.Unquote()
+		if err != nil {
+			ret.SetMysqlTime(t)
+			return ret, err
+		}
+		t, err = ParseTime(sc, s, tp, fsp)
 	default:
 		return invalidConv(d, tp)
 	}
@@ -1171,6 +1189,17 @@ func (d *Datum) convertToMysqlDuration(sc *stmtctx.StatementContext, target *Fie
 		}
 	case KindString, KindBytes:
 		t, err := ParseDuration(sc, d.GetString(), fsp)
+		ret.SetMysqlDuration(t)
+		if err != nil {
+			return ret, errors.Trace(err)
+		}
+	case KindMysqlJSON:
+		j := d.GetMysqlJSON()
+		s, err := j.Unquote()
+		if err != nil {
+			return ret, errors.Trace(err)
+		}
+		t, err := ParseDuration(sc, s, fsp)
 		ret.SetMysqlDuration(t)
 		if err != nil {
 			return ret, errors.Trace(err)
@@ -1438,7 +1467,7 @@ func (d *Datum) ToBool(sc *stmtctx.StatementContext) (int64, error) {
 	case KindFloat64:
 		isZero = d.GetFloat64() == 0
 	case KindString, KindBytes:
-		iVal, err1 := StrToFloat(sc, d.GetString())
+		iVal, err1 := StrToFloat(sc, d.GetString(), false)
 		isZero, err = iVal == 0, err1
 	case KindMysqlTime:
 		isZero = d.GetMysqlTime().IsZero()
@@ -1611,9 +1640,9 @@ func (d *Datum) ToFloat64(sc *stmtctx.StatementContext) (float64, error) {
 	case KindFloat64:
 		return d.GetFloat64(), nil
 	case KindString:
-		return StrToFloat(sc, d.GetString())
+		return StrToFloat(sc, d.GetString(), false)
 	case KindBytes:
-		return StrToFloat(sc, string(d.GetBytes()))
+		return StrToFloat(sc, string(d.GetBytes()), false)
 	case KindMysqlTime:
 		f, err := d.GetMysqlTime().ToNumber().ToFloat64()
 		return f, errors.Trace(err)

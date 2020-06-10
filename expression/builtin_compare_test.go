@@ -66,9 +66,7 @@ func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
 		{"-123456789123456789123456789.12345 > a", "0"},
 		{"123456789123456789123456789.12345 < a", "0"},
 		{"-123456789123456789123456789.12345 < a", "1"},
-		// This cast can not be eliminated,
-		// since converting "aaaa" to an int will cause DataTruncate error.
-		{"'aaaa'=a", "eq(cast(aaaa, double BINARY), cast(a, double BINARY))"},
+		{"'aaaa'=a", "eq(0, a)"},
 	}
 	cols, names := ColumnInfos2ColumnsAndNames(s.ctx, model.NewCIStr(""), tblInfo.Name, tblInfo.Columns)
 	schema := NewSchema(cols...)

@@ -1110,7 +1110,7 @@ func (b *builtinCastStringAsIntSig) handleOverflow(origRes int64, origStr string
 	}
 
 	sc := b.ctx.GetSessionVars().StmtCtx
-	if sc.InSelectStmt && types.ErrOverflow.Equal(origErr) {
+	if types.ErrOverflow.Equal(origErr) {
 		if isNegative {
 			res = math.MinInt64
 		} else {
@@ -1136,10 +1136,6 @@ func (b *builtinCastStringAsIntSig) evalInt(row chunk.Row) (res int64, isNull bo
 	isNegative := false
 	if len(val) > 1 && val[0] == '-' { // negative number
 		isNegative = true
-	}
-	sctx := b.ctx.GetSessionVars().StmtCtx
-	if val == "" && (sctx.InInsertStmt || sctx.InUpdateStmt) {
-		return 0, false, nil
 	}
 
 	var ures uint64
@@ -1188,7 +1184,7 @@ func (b *builtinCastStringAsRealSig) evalReal(row chunk.Row) (res float64, isNul
 		return 0, false, nil
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	res, err = types.StrToFloat(sc, val)
+	res, err = types.StrToFloat(sc, val, true)
 	if err != nil {
 		return 0, false, err
 	}

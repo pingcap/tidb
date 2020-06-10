@@ -1554,7 +1554,7 @@ func (b *builtinCastStringAsRealSig) vecEvalReal(input *chunk.Chunk, result *chu
 		if result.IsNull(i) {
 			continue
 		}
-		res, err := types.StrToFloat(sc, buf.GetString(i))
+		res, err := types.StrToFloat(sc, buf.GetString(i), true)
 		if err != nil {
 			return err
 		}
