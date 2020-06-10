@@ -1085,7 +1085,13 @@ func (c *RegionCache) OnRegionEpochNotMatch(bo *Backoffer, ctx *RPCContext, curr
 		}
 		region := &Region{meta: meta}
 		region.init(c)
-		c.switchToPeer(region, ctx.Store.storeID)
+		var initLeader uint64
+		if ctx.Store.storeType == kv.TiFlash {
+			initLeader = region.findElectableStoreIndex()
+		} else {
+			initLeader = ctx.Store.storeID
+		}
+		c.switchToPeer(region, initLeader)
 		c.insertRegionToCache(region)
 		if ctx.Region == region.VerID() {
 			needInvalidateOld = false
@@ -1246,6 +1252,18 @@ func (r *RegionStore) switchNextPeer(rr *Region, currentPeerIdx int) {
 	newRegionStore := r.clone()
 	newRegionStore.workTiKVIdx = int32(nextIdx)
 	rr.compareAndSwapStore(r, newRegionStore)
+}
+
+func (r *Region) findElectableStoreIndex() uint64 {
+	if len(r.meta.Peers) == 0 {
+		return 0
+	}
+	for i, p := range r.meta.Peers {
+		if !p.IsLearner {
+			return uint64(i)
+		}
+	}
+	return 0
 }
 
 func (c *RegionCache) getPeerStoreIndex(r *Region, id uint64) (idx int, found bool) {
