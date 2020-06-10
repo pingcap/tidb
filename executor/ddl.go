@@ -393,7 +393,7 @@ func (e *DDLExec) getRecoverTableByTableName(s *ast.RecoverTableStmt, t *meta.Me
 	}
 	schemaName := s.Table.Schema.L
 	if schemaName == "" {
-		schemaName = e.ctx.GetSessionVars().CurrentDB
+		schemaName = strings.ToLower(e.ctx.GetSessionVars().CurrentDB)
 	}
 	if schemaName == "" {
 		return nil, nil, errors.Trace(core.ErrNoDB)
@@ -425,9 +425,7 @@ func (e *DDLExec) getRecoverTableByTableName(s *ast.RecoverTableStmt, t *meta.Me
 		if table.Meta().Name.L == s.Table.Name.L {
 			schema, ok := dom.InfoSchema().SchemaByID(job.SchemaID)
 			if !ok {
-				return nil, nil, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(
-					fmt.Sprintf("(Schema ID %d)", job.SchemaID),
-				)
+				continue
 			}
 			if schema.Name.L == schemaName {
 				tblInfo = table.Meta()
