@@ -1027,32 +1027,6 @@ func (b *PlanBuilder) buildAdminCheckTable(ctx context.Context, as *ast.AdminStm
 	return p, nil
 }
 
-func (b *PlanBuilder) buildCheckIndex(ctx context.Context, dbName model.CIStr, as *ast.AdminStmt) (Plan, error) {
-	tblName := as.Tables[0]
-	tbl, err := b.is.TableByName(dbName, tblName.Name)
-	if err != nil {
-		return nil, err
-	}
-	tblInfo := tbl.Meta()
-
-	// get index information
-	var idx *model.IndexInfo
-	for _, index := range tblInfo.Indices {
-		if index.Name.L == strings.ToLower(as.Index) {
-			idx = index
-			break
-		}
-	}
-	if idx == nil {
-		return nil, errors.Errorf("index %s do not exist", as.Index)
-	}
-	if idx.State != model.StatePublic {
-		return nil, errors.Errorf("index %s state %s isn't public", as.Index, idx.State)
-	}
-
-	return b.buildPhysicalIndexLookUpReader(ctx, dbName, tbl, idx)
-}
-
 func (b *PlanBuilder) buildCheckIndexSchema(tn *ast.TableName, indexName string) (*expression.Schema, error) {
 	schema := expression.NewSchema()
 	indexName = strings.ToLower(indexName)
