@@ -81,6 +81,17 @@ func (a *AggFuncDesc) Equal(ctx sessionctx.Context, other *AggFuncDesc) bool {
 	return a.baseFuncDesc.equal(ctx, &other.baseFuncDesc)
 }
 
+// Find this agg func desc in another slice or not.
+//   Return index in slice if found, or -1 if not.
+func (a *AggFuncDesc) Find(ctx sessionctx.Context, slice []*AggFuncDesc) int {
+	for i, other := range slice {
+		if a.Equal(ctx, other) {
+			return i
+		}
+	}
+	return -1
+}
+
 // Clone copies an aggregation function signature totally.
 func (a *AggFuncDesc) Clone() *AggFuncDesc {
 	clone := *a

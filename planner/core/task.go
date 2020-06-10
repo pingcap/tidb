@@ -1053,10 +1053,12 @@ func BuildFinalModeAggregation(
 			if err != nil {
 				panic("NewAggFuncDesc FirstRow meets error: " + err.Error())
 			}
-			partialFirstRowFuncs = append(partialFirstRowFuncs, firstRow)
-			newCol, _ := gbyCol.Clone().(*expression.Column)
-			newCol.RetType = firstRow.RetTp
-			partialGbySchema.Append(newCol)
+			if firstRow.Find(sctx, partial.AggFuncs) < 0 && firstRow.Find(sctx, partialFirstRowFuncs) < 0 {
+				partialFirstRowFuncs = append(partialFirstRowFuncs, firstRow)
+				newCol, _ := gbyCol.Clone().(*expression.Column)
+				newCol.RetType = firstRow.RetTp
+				partialGbySchema.Append(newCol)
+			}
 		}
 	}
 
