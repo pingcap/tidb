@@ -247,6 +247,10 @@ func (b *baseBuiltinFunc) getArgs() []Expression {
 	return b.args
 }
 
+func (b *baseBuiltinFunc) setArgs(args []Expression) {
+	b.args = args
+}
+
 func (b *baseBuiltinFunc) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	return errors.Errorf("baseBuiltinFunc.vecEvalInt() should never be called, please contact the TiDB team for help")
 }
@@ -482,6 +486,8 @@ type builtinFunc interface {
 	evalJSON(row chunk.Row) (val json.BinaryJSON, isNull bool, err error)
 	// getArgs returns the arguments expressions.
 	getArgs() []Expression
+	// setArgs sets the expression's arguments.
+	setArgs(args []Expression)
 	// equal check if this function equals to another function.
 	equal(builtinFunc) bool
 	// getCtx returns this function's context.

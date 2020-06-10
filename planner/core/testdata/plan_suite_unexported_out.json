@@ -936,6 +936,10 @@
       {
         "Best": "Join{DataScan(t1)->DataScan(t2)}->Sel([nulleq(test.t.b, test.t.b)])->Projection",
         "JoinType": "left outer join"
+      },
+      {
+        "Best": "Join{DataScan(t1)->DataScan(t2)}->Sel([isnull(or(istrue(cast(test.t.c_str, double BINARY)), istrue(cast(, double BINARY))))])->Projection",
+        "JoinType": "left outer join"
       }
     ]
   },
