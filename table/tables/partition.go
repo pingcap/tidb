@@ -358,7 +358,7 @@ func (t *partitionedTable) locateHashPartition(ctx sessionctx.Context, pi *model
 	}
 	ret = ret % int64(t.meta.Partition.Num)
 	if ret < 0 {
-		ret = - ret
+		ret = -ret
 	}
 	return int(ret), nil
 }
