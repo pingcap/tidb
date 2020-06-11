@@ -721,6 +721,10 @@ func (s *testInfoschemaClusterTableSuite) TestTiDBClusterInfo(c *C) {
 		row("tikv", "store1", ""),
 	))
 
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockStoreTombstone", `return(true)`), IsNil)
+	tk.MustQuery("select type, instance, start_time from information_schema.cluster_info where type = 'tikv'").Check(testkit.Rows())
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/infoschema/mockStoreTombstone"), IsNil)
+
 	// information_schema.cluster_config
 	instances := []string{
 		"pd,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash",
