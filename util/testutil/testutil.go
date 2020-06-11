@@ -128,6 +128,9 @@ var HandleEquals = &handleEqualsChecker{
 }
 
 func (checker *handleEqualsChecker) Check(params []interface{}, names []string) (result bool, error string) {
+	if params[0] == nil && params[1] == nil {
+		return true, ""
+	}
 	param1, ok1 := params[0].(kv.Handle)
 	param2, ok2 := params[1].(kv.Handle)
 	if !ok1 || !ok2 {

@@ -89,9 +89,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	c.Assert(err, IsNil)
 	m := meta.NewMeta(txn)
 	rInfo := &reorgInfo{
-		Job:         job,
-		StartHandle: handleEmpty(false),
-		EndHandle:   handleEmpty(false),
+		Job: job,
 	}
 	mockTbl := tables.MockTableFromMeta(&model.TableInfo{IsCommonHandle: false})
 	err = d.generalWorker().runReorgJob(m, rInfo, mockTbl.Meta(), d.lease, f)
@@ -116,7 +114,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 			c.Assert(err1, IsNil)
 			c.Assert(info.StartHandle, Equals, handle)
 			_, doneHandle := d.generalWorker().reorgCtx.getRowCountAndHandle()
-			c.Assert(doneHandle, Equals, handleEmpty(false))
+			c.Assert(doneHandle, IsNil)
 			break
 		}
 	}

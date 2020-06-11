@@ -16,7 +16,6 @@ package ddl
 import (
 	"context"
 	"fmt"
-	"math"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -47,45 +46,6 @@ import (
 	"go.uber.org/zap"
 )
 
-func init() {
-	minHandleInt = kv.IntHandle(math.MinInt64)
-	minHandleCommon, _ = kv.NewCommonHandle([]byte{0})
-	maxHandleInt = kv.IntHandle(math.MaxInt64)
-	maxHandleCommon, _ = kv.NewCommonHandle([]byte{255})
-}
-
-var (
-	minHandleInt    kv.Handle
-	minHandleCommon kv.Handle
-	maxHandleInt    kv.Handle
-	maxHandleCommon kv.Handle
-)
-
-func handleMaximum(isCommonHandle bool) kv.Handle {
-	if isCommonHandle {
-		return maxHandleCommon
-	}
-	return maxHandleInt
-}
-
-func handleMinimum(isCommonHandle bool) kv.Handle {
-	if isCommonHandle {
-		return minHandleCommon
-	}
-	return minHandleInt
-}
-
-func handleEmpty(isCommonHandle bool) kv.Handle {
-	return handleMinimum(isCommonHandle)
-}
-
-func toHandleEmpty(handle kv.Handle) kv.Handle {
-	if handle.IsInt() {
-		return minHandleInt
-	}
-	return minHandleCommon
-}
-
 // reorgCtx is for reorganization.
 type reorgCtx struct {
 	// doneCh is used to notify.
@@ -100,7 +60,21 @@ type reorgCtx struct {
 	// 1: job is canceled.
 	notifyCancelReorgJob int32
 	// doneHandle is used to simulate the handle that has been processed.
-	doneHandle atomic.Value // kv.Handle
+	doneHandle atomic.Value // nullableHandle
+}
+
+// nullableHandle can store <nil> handle.
+// Storing a nil object to atomic.Value can lead to panic. This is a workaround.
+type nullableHandle struct {
+	handle kv.Handle
+}
+
+// toString is used in log to avoid nil dereference panic.
+func toString(handle kv.Handle) string {
+	if handle == nil {
+		return "<nil>"
+	}
+	return handle.String()
 }
 
 // newContext gets a context. It is only used for adding column in reorganization state.
@@ -134,7 +108,7 @@ func (rc *reorgCtx) setRowCount(count int64) {
 }
 
 func (rc *reorgCtx) setNextHandle(doneHandle kv.Handle) {
-	rc.doneHandle.Store(doneHandle)
+	rc.doneHandle.Store(nullableHandle{handle: doneHandle})
 }
 
 func (rc *reorgCtx) increaseRowCount(count int64) {
@@ -143,14 +117,13 @@ func (rc *reorgCtx) increaseRowCount(count int64) {
 
 func (rc *reorgCtx) getRowCountAndHandle() (int64, kv.Handle) {
 	row := atomic.LoadInt64(&rc.rowCount)
-	handle, _ := (rc.doneHandle.Load()).(kv.Handle)
-	return row, handle
+	h, _ := (rc.doneHandle.Load()).(nullableHandle)
+	return row, h.handle
 }
 
 func (rc *reorgCtx) clean() {
 	rc.setRowCount(0)
-	handle, _ := (rc.doneHandle.Load()).(kv.Handle)
-	rc.setNextHandle(toHandleEmpty(handle))
+	rc.setNextHandle(nil)
 	rc.doneCh = nil
 }
 
@@ -193,7 +166,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		return errors.Trace(err)
 	case <-w.quitCh:
 		logutil.BgLogger().Info("[ddl] run reorg job quit")
-		w.reorgCtx.setNextHandle(handleEmpty(tblInfo.IsCommonHandle))
+		w.reorgCtx.setNextHandle(nil)
 		w.reorgCtx.setRowCount(0)
 		// We return errWaitReorgTimeout here too, so that outer loop will break.
 		return errWaitReorgTimeout
@@ -205,7 +178,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		// Update a reorgInfo's handle.
 		err := t.UpdateDDLReorgStartHandle(job, doneHandle)
 		logutil.BgLogger().Info("[ddl] run reorg job wait timeout", zap.Duration("waitTime", waitTimeout),
-			zap.Int64("totalAddedRowCount", rowCount), zap.Stringer("doneHandle", doneHandle), zap.Error(err))
+			zap.Int64("totalAddedRowCount", rowCount), zap.String("doneHandle", toString(doneHandle)), zap.Error(err))
 		// If timeout, we will return, check the owner and retry to wait job done again.
 		return errWaitReorgTimeout
 	}
@@ -288,8 +261,8 @@ type reorgInfo struct {
 }
 
 func (r *reorgInfo) String() string {
-	return "StartHandle:" + r.StartHandle.String() + "," +
-		"EndHandle:" + r.EndHandle.String() + "," +
+	return "StartHandle:" + toString(r.StartHandle) + "," +
+		"EndHandle:" + toString(r.EndHandle) + "," +
 		"first:" + strconv.FormatBool(r.first) + "," +
 		"PhysicalTableID:" + strconv.FormatInt(r.PhysicalTableID, 10)
 }
@@ -393,19 +366,19 @@ func (d *ddlCtx) GetTableMaxHandle(startTS uint64, tbl table.PhysicalTable) (max
 	// build a desc scan of tblInfo, which limit is 1, we can use it to retrieve the last handle of the table.
 	result, err := d.buildDescTableScan(ctx, startTS, tbl, columns, 1)
 	if err != nil {
-		return handleMaximum(tblInfo.IsCommonHandle), false, errors.Trace(err)
+		return nil, false, errors.Trace(err)
 	}
 	defer terror.Call(result.Close)
 
 	chk := chunk.New(getColumnsTypes(columns), 1, 1)
 	err = result.Next(ctx, chk)
 	if err != nil {
-		return handleMaximum(tblInfo.IsCommonHandle), false, errors.Trace(err)
+		return nil, false, errors.Trace(err)
 	}
 
 	if chk.NumRows() == 0 {
 		// empty table
-		return handleMaximum(tblInfo.IsCommonHandle), true, nil
+		return nil, true, nil
 	}
 	sessCtx := newContext(d.store)
 	row := chk.GetRow(0)
@@ -433,10 +406,8 @@ func buildHandleFromChunkRow(sctx *stmtctx.StatementContext, row chunk.Row, cols
 
 // getTableRange gets the start and end handle of a table (or partition).
 func getTableRange(d *ddlCtx, tbl table.PhysicalTable, snapshotVer uint64, priority int) (startHandle, endHandle kv.Handle, err error) {
-	startHandle = handleMinimum(tbl.Meta().IsCommonHandle)
-	endHandle = handleMaximum(tbl.Meta().IsCommonHandle)
 	// Get the start handle of this partition.
-	err = iterateSnapshotRows(d.store, priority, tbl, snapshotVer, startHandle, nil, true,
+	err = iterateSnapshotRows(d.store, priority, tbl, snapshotVer, nil, nil, true,
 		func(h kv.Handle, rowKey kv.Key, rawRecord []byte) (bool, error) {
 			startHandle = h
 			return false, nil
@@ -451,7 +422,7 @@ func getTableRange(d *ddlCtx, tbl table.PhysicalTable, snapshotVer uint64, prior
 	}
 	if emptyTable || endHandle.Compare(startHandle) < 0 {
 		logutil.BgLogger().Info("[ddl] get table range, endHandle < startHandle", zap.String("table", fmt.Sprintf("%v", tbl.Meta())),
-			zap.Int64("table/partition ID", tbl.GetPhysicalID()), zap.Stringer("endHandle", endHandle), zap.Stringer("startHandle", startHandle))
+			zap.Int64("table/partition ID", tbl.GetPhysicalID()), zap.String("endHandle", toString(endHandle)), zap.String("startHandle", toString(startHandle)))
 		endHandle = startHandle
 	}
 	return
@@ -495,7 +466,9 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		logutil.BgLogger().Info("[ddl] job get table range", zap.Int64("jobID", job.ID), zap.Int64("physicalTableID", pid), zap.Stringer("startHandle", start), zap.Stringer("endHandle", end))
+		logutil.BgLogger().Info("[ddl] job get table range",
+			zap.Int64("jobID", job.ID), zap.Int64("physicalTableID", pid),
+			zap.String("startHandle", toString(start)), zap.String("endHandle", toString(end)))
 
 		failpoint.Inject("errorUpdateReorgHandle", func() (*reorgInfo, error) {
 			return &info, errors.New("occur an error when update reorg handle")
@@ -523,6 +496,9 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 }
 
 func (r *reorgInfo) UpdateReorgMeta(txn kv.Transaction, startHandle, endHandle kv.Handle, physicalTableID int64) error {
+	if startHandle == nil && endHandle == nil {
+		return nil
+	}
 	t := meta.NewMeta(txn)
 	return errors.Trace(t.UpdateDDLReorgHandle(r.Job, startHandle, endHandle, physicalTableID))
 }

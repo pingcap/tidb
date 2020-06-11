@@ -1232,14 +1232,14 @@ func (s *testIntegrationSuite3) TestMultiRegionGetTableEndHandle(c *C) {
 	// Split the table.
 	s.cluster.SplitTable(tblID, 100)
 
-	maxID, emptyTable := getMaxTableRowID(testCtx, s.store)
+	maxHandle, emptyTable := getMaxTableHandle(testCtx, s.store)
 	c.Assert(emptyTable, IsFalse)
-	c.Assert(maxID, Equals, int64(1000))
+	c.Assert(maxHandle, Equals, kv.IntHandle(1000))
 
 	tk.MustExec("insert into t values(10000, 1000)")
-	maxID, emptyTable = getMaxTableRowID(testCtx, s.store)
+	maxHandle, emptyTable = getMaxTableHandle(testCtx, s.store)
 	c.Assert(emptyTable, IsFalse)
-	c.Assert(maxID, Equals, int64(1001))
+	c.Assert(maxHandle, Equals, kv.IntHandle(1001))
 }
 
 type testMaxTableRowIDContext struct {
@@ -1256,9 +1256,7 @@ func newTestMaxTableRowIDContext(c *C, d ddl.DDL, tbl table.Table) *testMaxTable
 	}
 }
 
-// getMaxTableRowID assumes the table disabled common handle.
-// This should only use in test.
-func getMaxTableRowID(ctx *testMaxTableRowIDContext, store kv.Storage) (int64, bool) {
+func getMaxTableHandle(ctx *testMaxTableRowIDContext, store kv.Storage) (kv.Handle, bool) {
 	c := ctx.c
 	d := ctx.d
 	tbl := ctx.tbl
@@ -1266,14 +1264,14 @@ func getMaxTableRowID(ctx *testMaxTableRowIDContext, store kv.Storage) (int64, b
 	c.Assert(err, IsNil)
 	maxHandle, emptyTable, err := d.GetTableMaxHandle(curVer.Ver, tbl.(table.PhysicalTable))
 	c.Assert(err, IsNil)
-	return maxHandle.IntValue(), emptyTable
+	return maxHandle, emptyTable
 }
 
-func checkGetMaxTableRowID(ctx *testMaxTableRowIDContext, store kv.Storage, expectEmpty bool, expectMaxID int64) {
+func checkGetMaxTableRowID(ctx *testMaxTableRowIDContext, store kv.Storage, expectEmpty bool, expectMaxHandle kv.Handle) {
 	c := ctx.c
-	maxID, emptyTable := getMaxTableRowID(ctx, store)
+	maxHandle, emptyTable := getMaxTableHandle(ctx, store)
 	c.Assert(emptyTable, Equals, expectEmpty)
-	c.Assert(maxID, Equals, expectMaxID)
+	c.Assert(maxHandle, testutil.HandleEquals, expectMaxHandle)
 }
 
 func getHistoryDDLJob(store kv.Storage, id int64) (*model.Job, error) {

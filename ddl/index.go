@@ -1063,13 +1063,25 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 			// The keys in w.batchCheckKeys also maybe duplicate,
 			// so we need to backfill the not found key into `batchVals` map.
 			if w.distinctCheckFlags[i] {
-				batchVals[string(key)] = tables.EncodeHandleInUniqueIndexValueForBatchCheck(idxRecords[i].handle)
+				batchVals[string(key)] = encodeHandleInUniqueIndexValueForBatchCheck(idxRecords[i].handle)
 			}
 		}
 	}
 	// Constrains is already checked.
 	stmtCtx.BatchCheck = true
 	return nil
+}
+
+func encodeHandleInUniqueIndexValueForBatchCheck(h kv.Handle) []byte {
+	if h.IsInt() {
+		return tables.EncodeHandleInUniqueIndexValue(h.IntValue())
+	}
+	handleLen := h.Len()
+	data := make([]byte, 4, 1+1+2+handleLen)
+	data[2] = uint8(handleLen >> 8)
+	data[3] = uint8(handleLen - (handleLen >> 8))
+	data = append(data, h.Encoded()...)
+	return data
 }
 
 // backfillIndexInTxn will backfill table index in a transaction, lock corresponding rowKey, if the value of rowKey is changed,
@@ -1170,7 +1182,7 @@ func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *ad
 		if num := result.scanCount - lastLogCount; num >= 30000 {
 			lastLogCount = result.scanCount
 			logutil.BgLogger().Info("[ddl] add index worker back fill index", zap.Int("workerID", w.id), zap.Int("addedCount", result.addedCount),
-				zap.Int("scanCount", result.scanCount), zap.Stringer("nextHandle", taskCtx.nextHandle), zap.Float64("speed(rows/s)", float64(num)/time.Since(lastLogTime).Seconds()))
+				zap.Int("scanCount", result.scanCount), zap.String("nextHandle", toString(taskCtx.nextHandle)), zap.Float64("speed(rows/s)", float64(num)/time.Since(lastLogTime).Seconds()))
 			lastLogTime = time.Now()
 		}
 
@@ -1180,7 +1192,9 @@ func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *ad
 		}
 	}
 	logutil.BgLogger().Info("[ddl] add index worker finish task", zap.Int("workerID", w.id),
-		zap.String("task", task.String()), zap.Int("addedCount", result.addedCount), zap.Int("scanCount", result.scanCount), zap.Stringer("nextHandle", result.nextHandle), zap.String("takeTime", time.Since(startTime).String()))
+		zap.String("task", task.String()), zap.Int("addedCount", result.addedCount),
+		zap.Int("scanCount", result.scanCount), zap.String("nextHandle", toString(result.nextHandle)),
+		zap.String("takeTime", time.Since(startTime).String()))
 	return result
 }
 
@@ -1241,9 +1255,10 @@ func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table, indexInfo *mo
 // The `t` should be a non-partitioned table or a partition.
 func splitTableRanges(t table.PhysicalTable, store kv.Storage, startHandle, endHandle kv.Handle) ([]kv.KeyRange, error) {
 	startRecordKey := t.RecordKey(startHandle)
-	endRecordKey := t.RecordKey(endHandle).Next()
+	endRecordKey := t.RecordKey(endHandle)
 
-	logutil.BgLogger().Info("[ddl] split table range from PD", zap.Int64("physicalTableID", t.GetPhysicalID()), zap.Stringer("startHandle", startHandle), zap.Stringer("endHandle", endHandle))
+	logutil.BgLogger().Info("[ddl] split table range from PD", zap.Int64("physicalTableID", t.GetPhysicalID()),
+		zap.String("startHandle", toString(startHandle)), zap.String("endHandle", toString(endHandle)))
 	kvRange := kv.KeyRange{StartKey: startRecordKey, EndKey: endRecordKey}
 	s, ok := store.(tikv.Storage)
 	if !ok {
@@ -1264,11 +1279,11 @@ func splitTableRanges(t table.PhysicalTable, store kv.Storage, startHandle, endH
 }
 
 func decodeHandleRange(keyRange kv.KeyRange) (kv.Handle, kv.Handle, error) {
-	_, startHandle, err := tablecodec.DecodeRecordKey(keyRange.StartKey)
+	startHandle, err := tablecodec.DecodeRowKey(keyRange.StartKey)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	_, endHandle, err := tablecodec.DecodeRecordKey(keyRange.EndKey)
+	endHandle, err := tablecodec.DecodeRowKey(keyRange.EndKey)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -1334,21 +1349,25 @@ func (w *worker) handleReorgTasks(reorgInfo *reorgInfo, totalAddedCount *int64, 
 			return errors.Trace(reorgInfo.UpdateReorgMeta(txn, nextHandle, reorgInfo.EndHandle, reorgInfo.PhysicalTableID))
 		})
 		metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblError).Observe(elapsedTime.Seconds())
-		logutil.BgLogger().Warn("[ddl] add index worker handle batch tasks failed", zap.Int64("totalAddedCount", *totalAddedCount), zap.Stringer("startHandle", startHandle), zap.Stringer("nextHandle", nextHandle),
-			zap.Int64("batchAddedCount", taskAddedCount), zap.String("taskFailedError", err.Error()), zap.String("takeTime", elapsedTime.String()), zap.NamedError("updateHandleError", err1))
+		logutil.BgLogger().Warn("[ddl] add index worker handle batch tasks failed",
+			zap.Int64("totalAddedCount", *totalAddedCount), zap.String("startHandle", toString(startHandle)),
+			zap.String("nextHandle", toString(nextHandle)), zap.Int64("batchAddedCount", taskAddedCount),
+			zap.String("taskFailedError", err.Error()), zap.String("takeTime", elapsedTime.String()),
+			zap.NamedError("updateHandleError", err1))
 		return errors.Trace(err)
 	}
 
 	// nextHandle will be updated periodically in runReorgJob, so no need to update it here.
 	w.reorgCtx.setNextHandle(nextHandle)
 	metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblOK).Observe(elapsedTime.Seconds())
-	logutil.BgLogger().Info("[ddl] add index worker handle batch tasks successful", zap.Int64("totalAddedCount", *totalAddedCount), zap.Stringer("startHandle", startHandle),
-		zap.Stringer("nextHandle", nextHandle), zap.Int64("batchAddedCount", taskAddedCount), zap.String("takeTime", elapsedTime.String()))
+	logutil.BgLogger().Info("[ddl] add index worker handle batch tasks successful", zap.Int64("totalAddedCount", *totalAddedCount), zap.String("startHandle", toString(startHandle)),
+		zap.String("nextHandle", toString(nextHandle)), zap.Int64("batchAddedCount", taskAddedCount), zap.String("takeTime", elapsedTime.String()))
 	return nil
 }
 
 // sendRangeTaskToWorkers sends tasks to workers, and returns remaining kvRanges that is not handled.
-func (w *worker) sendRangeTaskToWorkers(t table.Table, workers []*addIndexWorker, reorgInfo *reorgInfo, totalAddedCount *int64, kvRanges []kv.KeyRange) ([]kv.KeyRange, error) {
+func (w *worker) sendRangeTaskToWorkers(t table.Table, workers []*addIndexWorker, reorgInfo *reorgInfo,
+	totalAddedCount *int64, kvRanges []kv.KeyRange, globalEndHandle kv.Handle) ([]kv.KeyRange, error) {
 	batchTasks := make([]*reorgIndexTask, 0, len(workers))
 	physicalTableID := reorgInfo.PhysicalTableID
 
@@ -1359,9 +1378,8 @@ func (w *worker) sendRangeTaskToWorkers(t table.Table, workers []*addIndexWorker
 			return nil, errors.Trace(err)
 		}
 
-		endKey := t.RecordKey(endHandle)
 		endIncluded := false
-		if endKey.Cmp(keyRange.EndKey) < 0 {
+		if endHandle.Equal(globalEndHandle) {
 			endIncluded = true
 		}
 		task := &reorgIndexTask{physicalTableID, startHandle, endHandle, endIncluded}
@@ -1435,6 +1453,13 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.I
 		return errors.Trace(err)
 	}
 
+	if err := w.isReorgRunnable(reorgInfo.d); err != nil {
+		return errors.Trace(err)
+	}
+	if startHandle == nil && endHandle == nil {
+		return nil
+	}
+
 	// variable.ddlReorgWorkerCounter can be modified by system variable "tidb_ddl_reorg_worker_cnt".
 	workerCnt := variable.GetDDLReorgWorkerCounter()
 	idxWorkers := make([]*addIndexWorker, 0, workerCnt)
@@ -1489,8 +1514,8 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.I
 		})
 
 		logutil.BgLogger().Info("[ddl] start add index workers to reorg index", zap.Int("workerCnt", len(idxWorkers)),
-			zap.Int("regionCnt", len(kvRanges)), zap.Stringer("startHandle", startHandle), zap.Stringer("endHandle", endHandle))
-		remains, err := w.sendRangeTaskToWorkers(t, idxWorkers, reorgInfo, &totalAddedCount, kvRanges)
+			zap.Int("regionCnt", len(kvRanges)), zap.String("startHandle", toString(startHandle)), zap.String("endHandle", toString(endHandle)))
+		remains, err := w.sendRangeTaskToWorkers(t, idxWorkers, reorgInfo, &totalAddedCount, kvRanges, endHandle)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1574,7 +1599,9 @@ func (w *worker) updateReorgInfo(t table.PartitionedTable, reorg *reorgInfo) (bo
 	err = kv.RunInNewTxn(reorg.d.store, true, func(txn kv.Transaction) error {
 		return errors.Trace(reorg.UpdateReorgMeta(txn, reorg.StartHandle, reorg.EndHandle, reorg.PhysicalTableID))
 	})
-	logutil.BgLogger().Info("[ddl] job update reorgInfo", zap.Int64("jobID", reorg.Job.ID), zap.Int64("partitionTableID", pid), zap.Stringer("startHandle", start), zap.Stringer("endHandle", end), zap.Error(err))
+	logutil.BgLogger().Info("[ddl] job update reorgInfo", zap.Int64("jobID", reorg.Job.ID),
+		zap.Int64("partitionTableID", pid), zap.String("startHandle", toString(start)),
+		zap.String("endHandle", toString(end)), zap.Error(err))
 	return false, errors.Trace(err)
 }
 
@@ -1601,7 +1628,13 @@ func allocateIndexID(tblInfo *model.TableInfo) int64 {
 type recordIterFunc func(h kv.Handle, rowKey kv.Key, rawRecord []byte) (more bool, err error)
 
 func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version uint64, startHandle kv.Handle, endHandle kv.Handle, endIncluded bool, fn recordIterFunc) error {
-	firstKey := t.RecordKey(startHandle)
+	var firstKey kv.Key
+	if startHandle == nil {
+		firstKey = t.RecordPrefix()
+	} else {
+		firstKey = t.RecordKey(startHandle)
+	}
+
 	var upperBound kv.Key
 	if endHandle == nil {
 		upperBound = t.RecordPrefix().PrefixNext()

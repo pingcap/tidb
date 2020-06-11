@@ -43,18 +43,6 @@ func EncodeHandleInUniqueIndexValue(h int64) []byte {
 	return data[:]
 }
 
-func EncodeHandleInUniqueIndexValueForBatchCheck(h kv.Handle) []byte {
-	if h.IsInt() {
-		return EncodeHandleInUniqueIndexValue(h.IntValue())
-	}
-	handleLen := h.Len()
-	data := make([]byte, 4, 1+1+2+handleLen)
-	data[2] = uint8(handleLen >> 8)
-	data[3] = uint8(handleLen - (handleLen >> 8))
-	data = append(data, h.Encoded()...)
-	return data
-}
-
 // DecodeHandleInUniqueIndexValue decodes handle in data.
 func DecodeHandleInUniqueIndexValue(data []byte, isCommonHandle bool) (kv.Handle, error) {
 	if !isCommonHandle {

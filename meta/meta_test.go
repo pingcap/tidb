@@ -339,9 +339,14 @@ func (s *testSuite) TestDDL(c *C) {
 	err = t.UpdateDDLJob(0, job, true)
 	c.Assert(err, IsNil)
 
+	// There are 3 meta key relate to index reorganization:
+	// start_handle, end_handle and physical_table_id.
+	// Only start_handle is initialized.
 	err = t.UpdateDDLReorgStartHandle(job, kv.IntHandle(1))
 	c.Assert(err, IsNil)
 
+	// Since physical_table_id is uninitialized, we simulate older TiDB version that doesn't store them.
+	// In this case GetDDLReorgHandle always return maxInt64 as end_handle.
 	i, j, k, err := t.GetDDLReorgHandle(job, false)
 	c.Assert(err, IsNil)
 	c.Assert(i, HandleEquals, kv.IntHandle(1))
@@ -361,9 +366,9 @@ func (s *testSuite) TestDDL(c *C) {
 	c.Assert(err, IsNil)
 
 	// new TiDB binary running on old TiDB DDL reorg data.
-	i, j, k, err = t.GetDDLReorgHandle(job, false)
+	i, j, k, err = t.GetDDLReorgHandle(job, s.isCommonHandle)
 	c.Assert(err, IsNil)
-	c.Assert(i, HandleEquals, kv.IntHandle(0))
+	c.Assert(i, IsNil)
 	// The default value for endHandle is MaxInt64, not 0.
 	c.Assert(j, HandleEquals, kv.IntHandle(math.MaxInt64))
 	c.Assert(k, Equals, int64(0))

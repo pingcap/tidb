@@ -203,19 +203,19 @@ func (s *testSerialSuite) TestMultiRegionGetTableEndHandle(c *C) {
 	// Split the table.
 	s.cluster.SplitTable(tblID, 100)
 
-	maxID, emptyTable := getMaxTableRowID(testCtx, s.store)
+	maxHandle, emptyTable := getMaxTableHandle(testCtx, s.store)
 	c.Assert(emptyTable, IsFalse)
-	c.Assert(maxID, Equals, int64(999))
+	c.Assert(maxHandle, Equals, kv.IntHandle(999))
 
 	tk.MustExec("insert into t values(10000, 1000)")
-	maxID, emptyTable = getMaxTableRowID(testCtx, s.store)
+	maxHandle, emptyTable = getMaxTableHandle(testCtx, s.store)
 	c.Assert(emptyTable, IsFalse)
-	c.Assert(maxID, Equals, int64(10000))
+	c.Assert(maxHandle, Equals, kv.IntHandle(10000))
 
 	tk.MustExec("insert into t values(-1, 1000)")
-	maxID, emptyTable = getMaxTableRowID(testCtx, s.store)
+	maxHandle, emptyTable = getMaxTableHandle(testCtx, s.store)
 	c.Assert(emptyTable, IsFalse)
-	c.Assert(maxID, Equals, int64(10000))
+	c.Assert(maxHandle, Equals, kv.IntHandle(10000))
 }
 
 func (s *testSerialSuite) TestGetTableEndHandle(c *C) {
@@ -234,20 +234,20 @@ func (s *testSerialSuite) TestGetTableEndHandle(c *C) {
 
 	testCtx := newTestMaxTableRowIDContext(c, d, tbl)
 	// test empty table
-	checkGetMaxTableRowID(testCtx, s.store, true, int64(math.MaxInt64))
+	checkGetMaxTableRowID(testCtx, s.store, true, nil)
 
 	tk.MustExec("insert into t values(-1, 1)")
-	checkGetMaxTableRowID(testCtx, s.store, false, int64(-1))
+	checkGetMaxTableRowID(testCtx, s.store, false, kv.IntHandle(-1))
 
 	tk.MustExec("insert into t values(9223372036854775806, 1)")
-	checkGetMaxTableRowID(testCtx, s.store, false, int64(9223372036854775806))
+	checkGetMaxTableRowID(testCtx, s.store, false, kv.IntHandle(9223372036854775806))
 
 	tk.MustExec("insert into t values(9223372036854775807, 1)")
-	checkGetMaxTableRowID(testCtx, s.store, false, int64(9223372036854775807))
+	checkGetMaxTableRowID(testCtx, s.store, false, kv.IntHandle(9223372036854775807))
 
 	tk.MustExec("insert into t values(10, 1)")
 	tk.MustExec("insert into t values(102149142, 1)")
-	checkGetMaxTableRowID(testCtx, s.store, false, int64(9223372036854775807))
+	checkGetMaxTableRowID(testCtx, s.store, false, kv.IntHandle(9223372036854775807))
 
 	tk.MustExec("create table t1(a bigint PRIMARY KEY, b int)")
 
@@ -262,7 +262,7 @@ func (s *testSerialSuite) TestGetTableEndHandle(c *C) {
 	is = s.dom.InfoSchema()
 	testCtx.tbl, err = is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
-	checkGetMaxTableRowID(testCtx, s.store, false, int64(999))
+	checkGetMaxTableRowID(testCtx, s.store, false, kv.IntHandle(999))
 
 	// Test PK is not handle
 	tk.MustExec("create table t2(a varchar(255))")
@@ -270,7 +270,7 @@ func (s *testSerialSuite) TestGetTableEndHandle(c *C) {
 	is = s.dom.InfoSchema()
 	testCtx.tbl, err = is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t2"))
 	c.Assert(err, IsNil)
-	checkGetMaxTableRowID(testCtx, s.store, true, int64(math.MaxInt64))
+	checkGetMaxTableRowID(testCtx, s.store, true, nil)
 
 	builder.Reset()
 	fmt.Fprintf(&builder, "insert into t2 values ")
@@ -281,32 +281,32 @@ func (s *testSerialSuite) TestGetTableEndHandle(c *C) {
 	tk.MustExec(sql[:len(sql)-1])
 
 	result := tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxID, emptyTable := getMaxTableRowID(testCtx, s.store)
-	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
+	maxHandle, emptyTable := getMaxTableHandle(testCtx, s.store)
+	result.Check(testkit.Rows(fmt.Sprintf("%v", maxHandle.IntValue())))
 	c.Assert(emptyTable, IsFalse)
 
 	tk.MustExec("insert into t2 values(100000)")
 	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxID, emptyTable = getMaxTableRowID(testCtx, s.store)
-	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
+	maxHandle, emptyTable = getMaxTableHandle(testCtx, s.store)
+	result.Check(testkit.Rows(fmt.Sprintf("%v", maxHandle.IntValue())))
 	c.Assert(emptyTable, IsFalse)
 
 	tk.MustExec(fmt.Sprintf("insert into t2 values(%v)", math.MaxInt64-1))
 	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxID, emptyTable = getMaxTableRowID(testCtx, s.store)
-	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
+	maxHandle, emptyTable = getMaxTableHandle(testCtx, s.store)
+	result.Check(testkit.Rows(fmt.Sprintf("%v", maxHandle.IntValue())))
 	c.Assert(emptyTable, IsFalse)
 
 	tk.MustExec(fmt.Sprintf("insert into t2 values(%v)", math.MaxInt64))
 	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxID, emptyTable = getMaxTableRowID(testCtx, s.store)
-	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
+	maxHandle, emptyTable = getMaxTableHandle(testCtx, s.store)
+	result.Check(testkit.Rows(fmt.Sprintf("%v", maxHandle.IntValue())))
 	c.Assert(emptyTable, IsFalse)
 
 	tk.MustExec("insert into t2 values(100)")
 	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxID, emptyTable = getMaxTableRowID(testCtx, s.store)
-	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
+	maxHandle, emptyTable = getMaxTableHandle(testCtx, s.store)
+	result.Check(testkit.Rows(fmt.Sprintf("%v", maxHandle.IntValue())))
 	c.Assert(emptyTable, IsFalse)
 }
 
