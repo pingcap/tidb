@@ -565,7 +565,9 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, clock *Count
 		cntPlan = 1
 		clock.Dec(1)
 		// Ensure that a key will be pushed into taskMapBak every time we call the function.
-		ds.storeTask(prop, t)
+		if ds.needBak {
+			ds.storeTask(prop, t)
+		}
 		return
 	}
 	var cnt int64
