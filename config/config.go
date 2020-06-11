@@ -539,8 +539,6 @@ type IsolationRead struct {
 // Experimental controls the features that are still experimental: their semantics, interfaces are subject to change.
 // Using these features in the production environment is not recommended.
 type Experimental struct {
-	// Whether enable the syntax like `auto_random(3)` on the primary key column.
-	AllowAutoRandom bool `toml:"allow-auto-random" json:"allow-auto-random"`
 	// Whether enable creating expression index.
 	AllowsExpressionIndex bool `toml:"allow-expression-index" json:"allow-expression-index"`
 }
@@ -680,7 +678,6 @@ var defaultConf = Config{
 		Engines: []string{"tikv", "tiflash", "tidb"},
 	},
 	Experimental: Experimental{
-		AllowAutoRandom:       false,
 		AllowsExpressionIndex: false,
 	},
 	EnableCollectExecutionInfo: false,
@@ -863,9 +860,6 @@ func (c *Config) Valid() error {
 		return fmt.Errorf("refresh-interval in [stmt-summary] should be greater than 0")
 	}
 
-	if c.AlterPrimaryKey && c.Experimental.AllowAutoRandom {
-		return fmt.Errorf("allow-auto-random is unavailable when alter-primary-key is enabled")
-	}
 	if c.PreparedPlanCache.Capacity < 1 {
 		return fmt.Errorf("capacity in [prepared-plan-cache] should be at least 1")
 	}

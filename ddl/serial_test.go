@@ -843,9 +843,6 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	assertPKIsNotHandle := func(sql, errCol string) {
 		assertInvalidAutoRandomErr(sql, autoid.AutoRandomPKisNotHandleErrMsg, errCol)
 	}
-	assertExperimentDisabled := func(sql string) {
-		assertInvalidAutoRandomErr(sql, autoid.AutoRandomExperimentalDisabledErrMsg)
-	}
 	assertAlterValue := func(sql string) {
 		assertInvalidAutoRandomErr(sql, autoid.AutoRandomAlterErrMsg)
 	}
@@ -899,6 +896,13 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	// PKIsNotHandle: primary key is not a single column.
 	assertPKIsNotHandle("create table t (a bigint auto_random(3), b bigint, primary key (a, b))", "a")
 	assertPKIsNotHandle("create table t (a bigint auto_random(3), b int, c char, primary key (a, c))", "a")
+
+	// PKIsNotHandle: table is created when alter-primary-key = true.
+	config.GetGlobalConfig().AlterPrimaryKey = true
+	assertPKIsNotHandle("create table t (a bigint auto_random(3) primary key, b int)", "a")
+	assertPKIsNotHandle("create table t (a bigint auto_random(3) primary key, b int)", "a")
+	assertPKIsNotHandle("create table t (a int, b bigint auto_random(3) primary key)", "b")
+	config.GetGlobalConfig().AlterPrimaryKey = false
 
 	// Can not set auto_random along with auto_increment.
 	assertWithAutoInc("create table t (a bigint auto_random(3) primary key auto_increment)")
@@ -1017,10 +1021,40 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 		tk.MustExec("insert into t values(3)")
 		tk.MustExec("insert into t values()")
 	})
+}
 
-	// Disallow using it when allow-auto-random is not enabled.
-	config.GetGlobalConfig().Experimental.AllowAutoRandom = false
-	assertExperimentDisabled("create table auto_random_table (a int primary key auto_random(3))")
+func (s *testSerialSuite) TestAutoRandomExchangePartition(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists auto_random_db")
+	defer tk.MustExec("drop database if exists auto_random_db")
+
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+
+	tk.MustExec("use auto_random_db")
+
+	tk.MustExec("drop table if exists e1, e2, e3, e4;")
+
+	tk.MustExec("create table e1 (a bigint primary key auto_random(3)) partition by hash(a) partitions 1;")
+
+	tk.MustExec("create table e2 (a bigint primary key);")
+	tk.MustGetErrCode("alter table e1 exchange partition p0 with table e2;", errno.ErrTablesDifferentMetadata)
+
+	tk.MustExec("create table e3 (a bigint primary key auto_random(2));")
+	tk.MustGetErrCode("alter table e1 exchange partition p0 with table e3;", errno.ErrTablesDifferentMetadata)
+	tk.MustExec("insert into e1 values (), (), ()")
+
+	tk.MustExec("create table e4 (a bigint primary key auto_random(3));")
+	tk.MustExec("insert into e4 values ()")
+	tk.MustExec("alter table e1 exchange partition p0 with table e4;")
+
+	tk.MustQuery("select count(*) from e1").Check(testkit.Rows("1"))
+	tk.MustExec("insert into e1 values ()")
+	tk.MustQuery("select count(*) from e1").Check(testkit.Rows("2"))
+
+	tk.MustQuery("select count(*) from e4").Check(testkit.Rows("3"))
+	tk.MustExec("insert into e4 values ()")
+	tk.MustQuery("select count(*) from e4").Check(testkit.Rows("4"))
 }
 
 func (s *testSerialSuite) TestAutoRandomIncBitsIncrementAndOffset(c *C) {
