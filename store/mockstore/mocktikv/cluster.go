@@ -216,8 +216,7 @@ func (c *Cluster) RemoveStore(storeID uint64) {
 func (c *Cluster) UpdateStoreAddr(storeID uint64, addr string, labels ...*metapb.StoreLabel) {
 	c.Lock()
 	defer c.Unlock()
-	c.stores[storeID] = newStore(storeID, addr)
-	c.stores[storeID].meta.Labels = labels
+	c.stores[storeID] = newStore(storeID, addr, labels...)
 }
 
 // GetRegion returns a Region's meta and leader ID.
@@ -649,11 +648,12 @@ type Store struct {
 	tokenCount atomic.Int64
 }
 
-func newStore(storeID uint64, addr string) *Store {
+func newStore(storeID uint64, addr string, labels ...*metapb.StoreLabel) *Store {
 	return &Store{
 		meta: &metapb.Store{
 			Id:      storeID,
 			Address: addr,
+			Labels:  labels,
 		},
 	}
 }
