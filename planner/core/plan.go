@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"time"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/expression"
@@ -205,7 +206,7 @@ type LogicalPlan interface {
 	enableBak()
 
 	// rollBackTaskMap roll back all taskMap's logs after TimeStamp TS
-	rollBackTaskMap(TS int64)
+	rollBackTaskMap(TS time.Time)
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -254,7 +255,7 @@ type baseLogicalPlan struct {
 	// taskMapBak and taskMapBakID form a backlog stack of taskMap, used to roll back the task.
 	// taskMapBakTS stores the TimeStamps of logs.
 	taskMapBak   []string
-	taskMapBakTS []int64
+	taskMapBakTS []time.Time
 	// needBask indicates whether taskMap needs to be backed. Avoid affecting the speed of the optimizer.
 	needBak   bool
 	self      LogicalPlan
@@ -298,15 +299,8 @@ func (p *basePhysicalPlan) ExtractCorrelatedCols() []*expression.CorrelatedColum
 	return nil
 }
 
-var bakTimeStamp int64 = 0
-
-func clearBakTimeStamp() {
-	bakTimeStamp = 0
-}
-
-func (p *baseLogicalPlan) GetBakTimeStamp() int64 {
-	bakTimeStamp++
-	return bakTimeStamp
+func (p *baseLogicalPlan) GetBakTimeStamp() time.Time {
+	return time.Now()
 }
 
 func (p *baseLogicalPlan) enableBak() {
@@ -319,7 +313,7 @@ func (p *baseLogicalPlan) enableBak() {
 	}
 }
 
-func (p *baseLogicalPlan) rollBackTaskMap(TS int64) {
+func (p *baseLogicalPlan) rollBackTaskMap(TS time.Time) {
 	if !p.needBak {
 		return
 	}
@@ -328,7 +322,7 @@ func (p *baseLogicalPlan) rollBackTaskMap(TS int64) {
 		N := len(p.taskMapBak)
 		for i := 0; i < N; i++ {
 			cur := p.taskMapBak[i]
-			if p.taskMapBakTS[i] < TS {
+			if p.taskMapBakTS[i].String() < TS.String() {
 				continue
 			}
 

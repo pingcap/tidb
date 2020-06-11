@@ -15,6 +15,7 @@ package core
 
 import (
 	"math"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -168,7 +169,7 @@ func (p *LogicalShowDDLJobs) findBestTask(prop *property.PhysicalProperty, clock
 }
 
 // rebuildChildTasks rebuild the childTasks to make the clock_th combination.
-func (p *baseLogicalPlan) rebuildChildTasks(childTasks *[]task, pp PhysicalPlan, childCnts []int64, clock int8, TS int64) error {
+func (p *baseLogicalPlan) rebuildChildTasks(childTasks *[]task, pp PhysicalPlan, childCnts []int64, clock int8, TS time.Time) error {
 	// the taskMap of children nodes should be rolled back.
 	for _, child := range p.children {
 		child.rollBackTaskMap(TS)
