@@ -10,7 +10,7 @@ The following table lists the major parameters of Dumpling.
 | Parameter | Description |
 | --------| --- |
 | -B or --database | Dump the specified databases. |
-| -T 或 --tables-list | Dump the specified tables |
+| -T or --tables-list | Dump the specified tables |
 | -f or --filter | Dump only the tables matching the patterns. See [table-filter](https://github.com/pingcap/tidb-tools/blob/master/pkg/table-filter/README.md) for syntax. |
 | --case-sensitive | whether the filter should be case-sensitive, default false(insensitive) |
 | -h or --host | Host to connect to. (default: `127.0.0.1`) |
