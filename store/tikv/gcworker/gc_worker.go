@@ -330,26 +330,33 @@ func (w *GCWorker) checkPrepare(ctx context.Context) (bool, uint64, error) {
 }
 
 // calculateNewSafePoint uses the current global transaction min start timestamp to calculate the new safe point.
-func (w *GCWorker) calSafePointByMinStartTS(safePoint time.Time) time.Time {
+func (w *GCWorker) calSafePointByMinStartTS(ctx context.Context, safePoint time.Time) time.Time {
 	kvs, err := w.store.GetSafePointKV().GetWithPrefix(infosync.ServerMinStartTSPath)
 	if err != nil {
-		logutil.BgLogger().Warn("get all minStartTS failed", zap.Error(err))
+		logutil.Logger(ctx).Warn("get all minStartTS failed", zap.Error(err))
 		return safePoint
 	}
 
-	safePointTS := variable.GoTimeToTS(safePoint)
+	var globalMinStartTS uint64 = math.MaxUint64
 	for _, v := range kvs {
 		minStartTS, err := strconv.ParseUint(string(v.Value), 10, 64)
 		if err != nil {
-			logutil.BgLogger().Warn("parse minStartTS failed", zap.Error(err))
+			logutil.Logger(ctx).Warn("parse minStartTS failed", zap.Error(err))
 			continue
 		}
-		if minStartTS < safePointTS {
-			safePointTS = minStartTS
+		if minStartTS < globalMinStartTS {
+			globalMinStartTS = minStartTS
 		}
 	}
-	safePoint = time.Unix(0, oracle.ExtractPhysical(safePointTS)*1e6)
-	logutil.BgLogger().Debug("calSafePointByMinStartTS", zap.Time("safePoint", safePoint))
+
+	safePointTS := variable.GoTimeToTS(safePoint)
+	if globalMinStartTS < safePointTS {
+		safePoint = time.Unix(0, oracle.ExtractPhysical(globalMinStartTS)*1e6)
+		logutil.Logger(ctx).Info("[gc worker] gc safepoint blocked by a running session",
+			zap.String("uuid", w.uuid),
+			zap.Uint64("globalMinStartTS", globalMinStartTS),
+			zap.Time("safePoint", safePoint))
+	}
 	return safePoint
 }
 
@@ -478,7 +485,7 @@ func (w *GCWorker) calculateNewSafePoint(ctx context.Context, now time.Time) (*t
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
-	safePoint := w.calSafePointByMinStartTS(now.Add(-*lifeTime))
+	safePoint := w.calSafePointByMinStartTS(ctx, now.Add(-*lifeTime))
 
 	safePointValue := oracle.ComposeTS(oracle.GetPhysical(safePoint), 0)
 	safePointValue, err = w.setGCWorkerServiceSafePoint(ctx, safePointValue)
