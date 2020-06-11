@@ -203,7 +203,7 @@ func checkAndOverridePartitionID(newTableInfo, oldTableInfo *model.TableInfo) er
 	for i, newOne := range newTableInfo.Partition.Definitions {
 		found := false
 		for _, oldOne := range oldTableInfo.Partition.Definitions {
-			if newOne.Name.L == oldOne.Name.L && stringSliceEqual(newOne.LessThan, oldOne.LessThan) {
+			if newOne.Name.L == oldOne.Name.L {
 				newTableInfo.Partition.Definitions[i].ID = oldOne.ID
 				found = true
 				break
