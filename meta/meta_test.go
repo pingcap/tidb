@@ -41,7 +41,7 @@ func TestT(t *testing.T) {
 var _ = Suite(&testSuite{})
 
 type testSuite struct {
-	isCommonHandle bool
+	CommonHandleSuite
 }
 
 func (s *testSuite) TestMeta(c *C) {
@@ -304,6 +304,7 @@ func (s *testSuite) TestSnapshot(c *C) {
 }
 
 func (s *testSuite) TestDDL(c *C) {
+	s.SetCForCommonHandleTestSuite(c)
 	defer testleak.AfterTest(c)()
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
@@ -315,12 +316,6 @@ func (s *testSuite) TestDDL(c *C) {
 	defer txn.Rollback()
 
 	t := meta.NewMeta(txn)
-	newHandle := func(num int64) kv.Handle {
-		if s.isCommonHandle {
-			return mustNewCommonHandle(c, num)
-		}
-		return kv.IntHandle(num)
-	}
 
 	job := &model.Job{ID: 1}
 	err = t.EnQueueDDLJob(job)
@@ -353,20 +348,20 @@ func (s *testSuite) TestDDL(c *C) {
 	c.Assert(j, HandleEquals, kv.IntHandle(math.MaxInt64))
 	c.Assert(k, Equals, int64(0))
 
-	err = t.UpdateDDLReorgHandle(job, newHandle(1), newHandle(2), 3)
+	err = t.UpdateDDLReorgHandle(job, s.NewHandle(1), s.NewHandle(2), 3)
 	c.Assert(err, IsNil)
 
-	i, j, k, err = t.GetDDLReorgHandle(job, s.isCommonHandle)
+	i, j, k, err = t.GetDDLReorgHandle(job, s.IsCommonHandle)
 	c.Assert(err, IsNil)
-	c.Assert(i, HandleEquals, newHandle(1))
-	c.Assert(j, HandleEquals, newHandle(2))
+	c.Assert(i, HandleEquals, s.NewHandle(1))
+	c.Assert(j, HandleEquals, s.NewHandle(2))
 	c.Assert(k, Equals, int64(3))
 
 	err = t.RemoveDDLReorgHandle(job)
 	c.Assert(err, IsNil)
 
 	// new TiDB binary running on old TiDB DDL reorg data.
-	i, j, k, err = t.GetDDLReorgHandle(job, s.isCommonHandle)
+	i, j, k, err = t.GetDDLReorgHandle(job, s.IsCommonHandle)
 	c.Assert(err, IsNil)
 	c.Assert(i, IsNil)
 	// The default value for endHandle is MaxInt64, not 0.
@@ -374,7 +369,7 @@ func (s *testSuite) TestDDL(c *C) {
 	c.Assert(k, Equals, int64(0))
 
 	// Test GetDDLReorgHandle failed.
-	_, _, _, err = t.GetDDLReorgHandle(job, s.isCommonHandle)
+	_, _, _, err = t.GetDDLReorgHandle(job, s.IsCommonHandle)
 	c.Assert(err, IsNil)
 
 	v, err = t.DeQueueDDLJob()
@@ -458,10 +453,7 @@ func (s *testSuite) TestDDL(c *C) {
 	err = txn1.Commit(context.Background())
 	c.Assert(err, IsNil)
 
-	if !s.isCommonHandle {
-		s.isCommonHandle = true
-		s.TestDDL(c)
-	}
+	s.RerunWithCommonHandleEnabled(s.TestDDL)
 }
 
 func (s *testSuite) BenchmarkGenGlobalIDs(c *C) {

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	. "github.com/pingcap/tidb/util/testutil"
 )
 
 type testCtxKeyType int
@@ -34,6 +35,7 @@ func (k testCtxKeyType) String() string {
 const testCtxKey testCtxKeyType = 0
 
 func (s *testDDLSuite) TestReorg(c *C) {
+	s.SetCForCommonHandleTestSuite(c)
 	store := testCreateStore(c, "test_reorg")
 	defer store.Close()
 
@@ -72,7 +74,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	c.Assert(err, IsNil)
 
 	rowCount := int64(10)
-	handle := kv.IntHandle(100)
+	handle := s.NewHandle(100)
 	f := func() error {
 		d.generalWorker().reorgCtx.setRowCount(rowCount)
 		d.generalWorker().reorgCtx.setNextHandle(handle)
@@ -91,7 +93,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	rInfo := &reorgInfo{
 		Job: job,
 	}
-	mockTbl := tables.MockTableFromMeta(&model.TableInfo{IsCommonHandle: false})
+	mockTbl := tables.MockTableFromMeta(&model.TableInfo{IsCommonHandle: s.IsCommonHandle})
 	err = d.generalWorker().runReorgJob(m, rInfo, mockTbl.Meta(), d.lease, f)
 	c.Assert(err, NotNil)
 
@@ -112,7 +114,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 			m = meta.NewMeta(txn)
 			info, err1 := getReorgInfo(d.ddlCtx, m, job, mockTbl)
 			c.Assert(err1, IsNil)
-			c.Assert(info.StartHandle, Equals, handle)
+			c.Assert(info.StartHandle, HandleEquals, handle)
 			_, doneHandle := d.generalWorker().reorgCtx.getRowCountAndHandle()
 			c.Assert(doneHandle, IsNil)
 			break
@@ -134,7 +136,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 		var err1 error
 		info, err1 = getReorgInfo(d.ddlCtx, t, job, mockTbl)
 		c.Assert(err1, IsNil)
-		err1 = info.UpdateReorgMeta(txn, kv.IntHandle(1), kv.IntHandle(0), 0)
+		err1 = info.UpdateReorgMeta(txn, s.NewHandle(1), s.NewHandle(0), 1)
 		c.Assert(err1, IsNil)
 		return nil
 	})
@@ -145,7 +147,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 		var err1 error
 		info, err1 = getReorgInfo(d.ddlCtx, t, job, mockTbl)
 		c.Assert(err1, IsNil)
-		c.Assert(info.StartHandle.IntValue(), Greater, int64(0))
+		c.Assert(info.StartHandle, HandleEquals, s.NewHandle(1))
 		return nil
 	})
 	c.Assert(err, IsNil)
@@ -160,6 +162,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
+	s.RerunWithCommonHandleEnabled(s.TestReorg)
 }
 
 func (s *testDDLSuite) TestReorgOwner(c *C) {

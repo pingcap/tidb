@@ -267,13 +267,18 @@ func (r *reorgInfo) String() string {
 		"PhysicalTableID:" + strconv.FormatInt(r.PhysicalTableID, 10)
 }
 
-func constructDescTableScanPB(physicalTableID int64, pbColumnInfos []*tipb.ColumnInfo) *tipb.Executor {
-	tblScan := &tipb.TableScan{
-		TableId: physicalTableID,
-		Columns: pbColumnInfos,
-		Desc:    true,
+func constructDescTableScanPB(physicalTableID int64, tblInfo *model.TableInfo, handleCols []*model.ColumnInfo) *tipb.Executor {
+	handleColPBs := util.ColumnsToProto(handleCols, tblInfo.PKIsHandle)
+	pkColIDs := make([]int64, 0, len(handleCols))
+	for _, c := range handleCols {
+		pkColIDs = append(pkColIDs, c.ID)
 	}
-
+	tblScan := &tipb.TableScan{
+		TableId:          physicalTableID,
+		Columns:          handleColPBs,
+		Desc:             true,
+		PrimaryColumnIds: pkColIDs,
+	}
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tblScan}
 }
 
@@ -284,17 +289,16 @@ func constructLimitPB(count uint64) *tipb.Executor {
 	return &tipb.Executor{Tp: tipb.ExecType_TypeLimit, Limit: limitExec}
 }
 
-func buildDescTableScanDAG(ctx sessionctx.Context, tbl table.PhysicalTable, columns []*model.ColumnInfo, limit uint64) (*tipb.DAGRequest, error) {
+func buildDescTableScanDAG(ctx sessionctx.Context, tbl table.PhysicalTable, handleCols []*model.ColumnInfo, limit uint64) (*tipb.DAGRequest, error) {
 	dagReq := &tipb.DAGRequest{}
 	_, timeZoneOffset := time.Now().In(time.UTC).Zone()
 	dagReq.TimeZoneOffset = int64(timeZoneOffset)
-	for i := range columns {
+	for i := range handleCols {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
 	dagReq.Flags |= model.FlagInSelectStmt
 
-	pbColumnInfos := util.ColumnsToProto(columns, tbl.Meta().PKIsHandle)
-	tblScanExec := constructDescTableScanPB(tbl.GetPhysicalID(), pbColumnInfos)
+	tblScanExec := constructDescTableScanPB(tbl.GetPhysicalID(), tbl.Meta(), handleCols)
 	dagReq.Executors = append(dagReq.Executors, tblScanExec)
 	dagReq.Executors = append(dagReq.Executors, constructLimitPB(limit))
 	distsql.SetEncodeType(ctx, dagReq)
@@ -310,9 +314,10 @@ func getColumnsTypes(columns []*model.ColumnInfo) []*types.FieldType {
 }
 
 // buildDescTableScan builds a desc table scan upon tblInfo.
-func (d *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl table.PhysicalTable, columns []*model.ColumnInfo, limit uint64) (distsql.SelectResult, error) {
+func (d *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl table.PhysicalTable,
+	handleCols []*model.ColumnInfo, limit uint64) (distsql.SelectResult, error) {
 	sctx := newContext(d.store)
-	dagPB, err := buildDescTableScanDAG(sctx, tbl, columns, limit)
+	dagPB, err := buildDescTableScanDAG(sctx, tbl, handleCols, limit)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -332,7 +337,7 @@ func (d *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl tab
 		return nil, errors.Trace(err)
 	}
 
-	result, err := distsql.Select(ctx, sctx, kvReq, getColumnsTypes(columns), statistics.NewQueryFeedback(0, nil, 0, false))
+	result, err := distsql.Select(ctx, sctx, kvReq, getColumnsTypes(handleCols), statistics.NewQueryFeedback(0, nil, 0, false))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -342,13 +347,13 @@ func (d *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl tab
 
 // GetTableMaxHandle gets the max handle of a PhysicalTable.
 func (d *ddlCtx) GetTableMaxHandle(startTS uint64, tbl table.PhysicalTable) (maxHandle kv.Handle, emptyTable bool, err error) {
-	var columns []*model.ColumnInfo
+	var handleCols []*model.ColumnInfo
 	tblInfo := tbl.Meta()
 	switch {
 	case tblInfo.PKIsHandle:
 		for _, col := range tbl.Meta().Columns {
 			if mysql.HasPriKeyFlag(col.Flag) {
-				columns = []*model.ColumnInfo{col}
+				handleCols = []*model.ColumnInfo{col}
 				break
 			}
 		}
@@ -356,21 +361,21 @@ func (d *ddlCtx) GetTableMaxHandle(startTS uint64, tbl table.PhysicalTable) (max
 		pkIdx := tables.FindPrimaryIndex(tblInfo)
 		cols := tblInfo.Cols()
 		for _, idxCol := range pkIdx.Columns {
-			columns = append(columns, cols[idxCol.Offset])
+			handleCols = append(handleCols, cols[idxCol.Offset])
 		}
 	default:
-		columns = []*model.ColumnInfo{model.NewExtraHandleColInfo()}
+		handleCols = []*model.ColumnInfo{model.NewExtraHandleColInfo()}
 	}
 
 	ctx := context.Background()
 	// build a desc scan of tblInfo, which limit is 1, we can use it to retrieve the last handle of the table.
-	result, err := d.buildDescTableScan(ctx, startTS, tbl, columns, 1)
+	result, err := d.buildDescTableScan(ctx, startTS, tbl, handleCols, 1)
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
 	defer terror.Call(result.Close)
 
-	chk := chunk.New(getColumnsTypes(columns), 1, 1)
+	chk := chunk.New(getColumnsTypes(handleCols), 1, 1)
 	err = result.Next(ctx, chk)
 	if err != nil {
 		return nil, false, errors.Trace(err)
@@ -383,7 +388,7 @@ func (d *ddlCtx) GetTableMaxHandle(startTS uint64, tbl table.PhysicalTable) (max
 	sessCtx := newContext(d.store)
 	row := chk.GetRow(0)
 	if tblInfo.IsCommonHandle {
-		maxHandle, err = buildHandleFromChunkRow(sessCtx.GetSessionVars().StmtCtx, row, columns)
+		maxHandle, err = buildHandleFromChunkRow(sessCtx.GetSessionVars().StmtCtx, row, handleCols)
 		return maxHandle, false, err
 	}
 	return kv.IntHandle(row.GetInt64(0)), false, nil

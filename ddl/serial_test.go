@@ -219,7 +219,7 @@ func (s *testSerialSuite) TestMultiRegionGetTableEndHandle(c *C) {
 }
 
 func (s *testSerialSuite) TestGetTableEndHandle(c *C) {
-	// TestGetTableEndHandle test ddl.GetTableMaxRowID method, which will return the max row id of the table.
+	// TestGetTableEndHandle test ddl.GetTableMaxHandle method, which will return the max row id of the table.
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("drop database if exists test_get_endhandle")
 	tk.MustExec("create database test_get_endhandle")
@@ -308,6 +308,36 @@ func (s *testSerialSuite) TestGetTableEndHandle(c *C) {
 	maxHandle, emptyTable = getMaxTableHandle(testCtx, s.store)
 	result.Check(testkit.Rows(fmt.Sprintf("%v", maxHandle.IntValue())))
 	c.Assert(emptyTable, IsFalse)
+}
+
+func (s *testSerialSuite) TestGetTableEndCommonHandle(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop database if exists test_get_endhandle")
+	tk.MustExec("create database test_get_endhandle")
+	tk.MustExec("use test_get_endhandle")
+	tk.MustExec("set @@tidb_enable_clustered_index = true")
+
+	tk.MustExec("create table t(a varchar(15), b bigint, c int, primary key (a, b))")
+	is := s.dom.InfoSchema()
+	d := s.dom.DDL()
+	tbl, err := is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	testCtx := newTestMaxTableRowIDContext(c, d, tbl)
+
+	// test empty table
+	checkGetMaxTableRowID(testCtx, s.store, true, nil)
+
+	tk.MustExec("insert into t values('abc', 1, 10)")
+	expectedHandle := testutil.MustNewCommonHandle(c, "abc", 1)
+	checkGetMaxTableRowID(testCtx, s.store, false, expectedHandle)
+
+	tk.MustExec("insert into t values('abchzzzzzzzz', 1, 10)")
+	expectedHandle = testutil.MustNewCommonHandle(c, "abchzzzzzzzz", 1)
+	checkGetMaxTableRowID(testCtx, s.store, false, expectedHandle)
+
+	tk.MustExec("insert into t values('a', 1, 10)")
+	tk.MustExec("insert into t values('ab', 1, 10)")
+	checkGetMaxTableRowID(testCtx, s.store, false, expectedHandle)
 }
 
 func (s *testSerialSuite) TestCreateTableWithLike(c *C) {

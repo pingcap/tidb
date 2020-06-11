@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -113,6 +114,67 @@ func (checker *datumEqualsChecker) Check(params []interface{}, names []string) (
 		panic(err)
 	}
 	return res == 0, ""
+}
+
+// MustNewCommonHandle create a common handle with given values.
+func MustNewCommonHandle(c *check.C, values ...interface{}) kv.Handle {
+	encoded, err := codec.EncodeKey(new(stmtctx.StatementContext), nil, types.MakeDatums(values...)...)
+	c.Assert(err, check.IsNil)
+	ch, err := kv.NewCommonHandle(encoded)
+	c.Assert(err, check.IsNil)
+	return ch
+}
+
+// CommonHandleSuite is used to adapt kv.CommonHandle to existing kv.IntHandle tests.
+// Usage:
+// 1. Embed CommonHandleSuite to the target test suite(if you override SetUpTest(),
+//    remember to call CommonHandleSuite.SetUpTest explicitly).
+// 2. Call CommonHandleSuite.SetCForCommonHandleTestSuite() at the beginning of the test.
+// 3. At the end of the test, invoke RerunWithCommonHandleEnabled() and pass the test function into it.
+type CommonHandleSuite struct {
+	IsCommonHandle bool
+	c              *check.C
+}
+
+// SetUpTest clears CommonHandleSuite's status before running each test.
+func (chs *CommonHandleSuite) SetUpTest(_ *check.C) {
+	chs.IsCommonHandle = false
+	chs.c = nil
+}
+
+// SetCForCommonHandleTestSuite should be invoked at the beginning of a test.
+func (chs *CommonHandleSuite) SetCForCommonHandleTestSuite(c *check.C) {
+	chs.c = c
+}
+
+// RerunWithCommonHandleEnabled runs a test function with IsCommonHandle enabled.
+func (chs *CommonHandleSuite) RerunWithCommonHandleEnabled(f func(c *check.C)) {
+	if chs.c == nil {
+		panic("please invoke SetCForCommonHandleTestSuite() at the beginning of the test")
+	}
+	if !chs.IsCommonHandle {
+		chs.IsCommonHandle = true
+		f(chs.c)
+	}
+}
+
+// NewHandle create a handle according to CommonHandleSuite.IsCommonHandle.
+func (chs *CommonHandleSuite) NewHandle(vs ...interface{}) kv.Handle {
+	if chs.c == nil {
+		panic("please invoke SetCForCommonHandleTestSuite() at the beginning of the test")
+	}
+	if chs.IsCommonHandle {
+		return MustNewCommonHandle(chs.c, vs...)
+	}
+	if len(vs) != 1 {
+		chs.c.Fatalf("kv.IntHandle only accept one argument, but got %d", len(vs))
+	}
+
+	if v, isInt := vs[0].(int); isInt {
+		return kv.IntHandle(v)
+	}
+	chs.c.Fatalf("kv.IntHandle's argument must be int, but got %T", vs[0])
+	return nil
 }
 
 type handleEqualsChecker struct {
