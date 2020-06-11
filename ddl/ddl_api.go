@@ -760,15 +760,16 @@ func setSetDefaultValue(v types.Datum, col *table.Column) (string, error) {
 		return str, nil
 	}
 
+	ctor := collate.GetCollator(col.Collate)
 	valMap := make(map[string]struct{}, len(col.Elems))
-	dVals := strings.Split(strings.ToLower(str), ",")
+	dVals := strings.Split(str, ",")
 	for _, dv := range dVals {
-		valMap[dv] = struct{}{}
+		valMap[string(ctor.Key(dv))] = struct{}{}
 	}
 	var existCnt int
 	for dv := range valMap {
 		for i := range col.Elems {
-			e := strings.ToLower(col.Elems[i])
+			e := string(ctor.Key(col.Elems[i]))
 			if e == dv {
 				existCnt++
 				break
@@ -1169,13 +1170,9 @@ func getPrimaryKey(tblInfo *model.TableInfo) *model.IndexInfo {
 }
 
 func setTableAutoRandomBits(ctx sessionctx.Context, tbInfo *model.TableInfo, colDefs []*ast.ColumnDef) error {
-	allowAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
 	pkColName := tbInfo.GetPkName()
 	for _, col := range colDefs {
 		if containsColumnOption(col, ast.ColumnOptionAutoRandom) {
-			if !allowAutoRandom {
-				return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomExperimentalDisabledErrMsg)
-			}
 			if col.Tp.Tp != mysql.TypeLonglong {
 				return ErrInvalidAutoRandom.GenWithStackByArgs(
 					fmt.Sprintf(autoid.AutoRandomOnNonBigIntColumn, types.TypeStr(col.Tp.Tp)))
@@ -2840,6 +2837,29 @@ func checkFieldTypeCompatible(ft *types.FieldType, other *types.FieldType) bool 
 	return true
 }
 
+func checkTiFlashReplicaCompatible(source *model.TiFlashReplicaInfo, target *model.TiFlashReplicaInfo) bool {
+	if source == target {
+		return true
+	}
+	if source != nil && target != nil {
+		if source.Count != target.Count ||
+			source.Available != target.Available {
+			return false
+		}
+		if len(source.LocationLabels) == len(target.LocationLabels) {
+			for i, lable := range source.LocationLabels {
+				if target.LocationLabels[i] != lable {
+					return false
+				}
+			}
+		} else {
+			return false
+		}
+		return true
+	}
+	return false
+}
+
 func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) error {
 	// check auto_random
 	if source.AutoRandomBits != target.AutoRandomBits ||
@@ -2847,7 +2867,7 @@ func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) e
 		source.Collate != target.Collate ||
 		source.ShardRowIDBits != target.ShardRowIDBits ||
 		source.MaxShardRowIDBits != target.MaxShardRowIDBits ||
-		source.TiFlashReplica != target.TiFlashReplica {
+		!checkTiFlashReplicaCompatible(source.TiFlashReplica, target.TiFlashReplica) {
 		return errors.Trace(ErrTablesDifferentMetadata)
 	}
 	if len(source.Cols()) != len(target.Cols()) {
@@ -3513,9 +3533,6 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 }
 
 func checkAutoRandom(tableInfo *model.TableInfo, originCol *table.Column, specNewColumn *ast.ColumnDef) (uint64, error) {
-	if !config.GetGlobalConfig().Experimental.AllowAutoRandom && containsColumnOption(specNewColumn, ast.ColumnOptionAutoRandom) {
-		return 0, ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomExperimentalDisabledErrMsg)
-	}
 	// Disallow add/drop actions on auto_random.
 	oldRandBits := tableInfo.AutoRandomBits
 	newRandBits, err := extractAutoRandomBitsFromColDef(specNewColumn)

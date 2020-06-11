@@ -935,6 +935,21 @@ func (s *testIntegrationSuite4) TestAlterTableExchangePartition(c *C) {
 	tk.MustExec("alter table e12 add index (a);")
 	tk.MustGetErrCode("alter table e12 exchange partition p0 with table e14", tmysql.ErrPartitionExchangeDifferentOption)
 
+	// test for tiflash replica
+	tk.MustExec("create table e15 (a int) partition by hash(a) partitions 1;")
+	tk.MustExec("create table e16 (a int)")
+	tk.MustExec("alter table e15 set tiflash replica 1;")
+	tk.MustExec("alter table e16 set tiflash replica 2;")
+	tk.MustGetErrCode("alter table e15 exchange partition p0 with table e16", tmysql.ErrTablesDifferentMetadata)
+
+	tk.MustExec("alter table e16 set tiflash replica 1;")
+	tk.MustExec("alter table e15 exchange partition p0 with table e16")
+
+	tk.MustExec("alter table e15 set tiflash replica 1 location labels 'a', 'b';")
+	tk.MustGetErrCode("alter table e15 exchange partition p0 with table e16", tmysql.ErrTablesDifferentMetadata)
+
+	tk.MustExec("alter table e16 set tiflash replica 1 location labels 'a', 'b';")
+	tk.MustExec("alter table e15 exchange partition p0 with table e16")
 }
 
 func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
