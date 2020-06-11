@@ -1041,9 +1041,6 @@ func BuildFinalModeAggregation(
 				final.GroupByItems[j] = gbyCol
 			}
 		}
-		// if len(final.GroupByItems) < len(original.GroupByItems) {
-		// 	final.GroupByItems = append(final.GroupByItems, gbyCol)
-		// }
 
 		if partialIsCop {
 			partialGbySchema.Append(gbyCol)
@@ -1053,12 +1050,10 @@ func BuildFinalModeAggregation(
 			if err != nil {
 				panic("NewAggFuncDesc FirstRow meets error: " + err.Error())
 			}
-			if firstRow.Find(sctx, partial.AggFuncs) < 0 && firstRow.Find(sctx, partialFirstRowFuncs) < 0 {
-				partialFirstRowFuncs = append(partialFirstRowFuncs, firstRow)
-				newCol, _ := gbyCol.Clone().(*expression.Column)
-				newCol.RetType = firstRow.RetTp
-				partialGbySchema.Append(newCol)
-			}
+			partialFirstRowFuncs = append(partialFirstRowFuncs, firstRow)
+			newCol, _ := gbyCol.Clone().(*expression.Column)
+			newCol.RetType = firstRow.RetTp
+			partialGbySchema.Append(newCol)
 		}
 	}
 
@@ -1115,17 +1110,18 @@ func BuildFinalModeAggregation(
 							RetType:  distinctArg.GetType(),
 						}
 					}
-					partialGbySchema.Append(gbyCol)
-					if !partialIsCop {
+
+					if partialIsCop {
+						partialGbySchema.Append(gbyCol)
+					} else {
 						firstRow, err := aggregation.NewAggFuncDesc(sctx, ast.AggFuncFirstRow, []expression.Expression{gbyCol}, false)
 						if err != nil {
 							panic("NewAggFuncDesc FirstRow meets error: " + err.Error())
 						}
-						partial.AggFuncs = append(partial.AggFuncs, firstRow)
+						partialFirstRowFuncs = append(partialFirstRowFuncs, firstRow)
 						newCol, _ := gbyCol.Clone().(*expression.Column)
 						newCol.RetType = firstRow.RetTp
-						partial.Schema.Append(newCol)
-						partialCursor++
+						partialGbySchema.Append(newCol)
 					}
 					args = append(args, gbyCol)
 				}

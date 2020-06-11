@@ -43,7 +43,7 @@ func (a *aggregationPushDownSolver) isDecomposableWithJoin(fun *aggregation.AggF
 	case ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncFirstRow:
 		return true
 	case ast.AggFuncSum, ast.AggFuncCount, ast.AggFuncAvg:
-		return !fun.HasDistinct
+		return true
 	default:
 		return false
 	}

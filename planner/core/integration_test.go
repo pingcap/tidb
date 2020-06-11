@@ -1198,6 +1198,27 @@ func (s *testIntegrationSuite) TestIssue16935(c *C) {
 	tk.MustQuery("SELECT * FROM t0 LEFT JOIN v0 ON TRUE WHERE v0.c0 IS NULL;")
 }
 
+func (s *testIntegrationSuite) TestAggPushDownJoin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("create table t2(a int, b int, c int);")
+	tk.MustExec("insert into t2 values(1, 1, 1), (2, 2, 2), (3, 3, 2);")
+	tk.MustExec("drop table if exists t3;")
+	tk.MustExec("create table t3(a int, b int, c int);")
+	tk.MustExec("insert into t3 values(11, 1, 2), (12, 2, 2), (13, 3, 1);")
+
+	for i := 0; i <= 1; i++ {
+		tk.MustExec(fmt.Sprintf("set session tidb_opt_agg_push_down = %v", i))
+		tk.MustExec(fmt.Sprintf("set session tidb_opt_distinct_agg_push_down = %v", i))
+
+		tk.MustQuery("select t2.c, count(t2.a), sum(t2.a) from t2 join t3 on t2.b = t3.b group by t2.c").Sort().Check(testkit.Rows("1 1 1", "2 2 5"))
+		tk.MustQuery("select t2.c, count(t3.a), sum(t3.a) from t2 join t3 on t2.b = t3.b group by t2.c").Sort().Check(testkit.Rows("1 1 11", "2 2 25"))
+		tk.MustQuery("select count(distinct t2.c) from t2 join t3 on t2.b = t3.b").Sort().Check(testkit.Rows("2"))
+		tk.MustQuery("select t2.a, count(distinct t2.c) from t2 join t3 on t2.b = t3.b group by t2.a").Sort().Check(testkit.Rows("1 1", "2 1", "3 1"))
+	}
+}
+
 func (s *testIntegrationSuite) TestAccessPathOnClusterIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
