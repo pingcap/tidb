@@ -283,6 +283,7 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, clock *C
 	if bestTask != nil {
 		clock.Dec(1)
 		if p.needBak {
+			// Ensure that a key will be pushed into taskMapBak every time we call the function.
 			p.storeTask(prop, bestTask)
 		}
 		return bestTask, 1, nil
@@ -563,6 +564,8 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, clock *Count
 	if t != nil {
 		cntPlan = 1
 		clock.Dec(1)
+		// Ensure that a key will be pushed into taskMapBak every time we call the function.
+		ds.storeTask(prop, t)
 		return
 	}
 	var cnt int64

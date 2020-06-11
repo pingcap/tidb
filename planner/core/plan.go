@@ -247,7 +247,7 @@ type baseLogicalPlan struct {
 	taskMap map[string]task
 	// taskMapBak is a backlog stack of taskMap, used to roll back the task.
 	taskMapBak []string
-	// needBask indicates whether taskMap needs to be backed. Avoid affecting the speed of optimizer.
+	// needBask indicates whether taskMap needs to be backed. Avoid affecting the speed of the optimizer.
 	needBak   bool
 	self      LogicalPlan
 	maxOneRow bool
@@ -302,12 +302,14 @@ func (p *baseLogicalPlan) enableBak() {
 	}
 }
 
+// rollBackTaskMap roll back the taskMap with the record in taskMapBak
 func (p *baseLogicalPlan) rollBackTaskMap() {
 	if len(p.taskMapBak) > 0 {
 		p.taskMap[p.taskMapBak[len(p.taskMapBak)-1]] = nil
 		p.taskMapBak = p.taskMapBak[:len(p.taskMapBak)-1]
 	}
 	for _, child := range p.children {
+		// only baseLogicalPlan and DataSource will be affected.
 		if pp, ok := child.(*baseLogicalPlan); ok {
 			pp.rollBackTaskMap()
 		} else if pp, ok := child.(*DataSource); ok {
@@ -324,6 +326,8 @@ func (p *baseLogicalPlan) getTask(prop *property.PhysicalProperty) task {
 func (p *baseLogicalPlan) storeTask(prop *property.PhysicalProperty, task task) {
 	key := prop.HashCode()
 	if p.needBak {
+		// when we storeTask, we have taskMap[key] is nil.
+		// so to roll back, we need only store the key and set taskMap[key] to nil.
 		p.taskMapBak = append(p.taskMapBak, string(key))
 	}
 	p.taskMap[string(key)] = task
