@@ -272,7 +272,7 @@ func (s *testPlanNormalize) TestNthPlanHint(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, c int, index(a), index(b), index(a,b))")
 	tk.MustQuery("explain format='hint' select * from t where a=1 and b=1").Check(testkit.Rows(
-		"use_index(@`sel_1` `test`.`t`  `a_2`)"))
+		"use_index(@`sel_1` `test`.`t` `a_2`)"))
 	tk.MustQuery("explain format='hint' select * /*+ nth_plan(1) */ from t where a=1 and b=1").Check(testkit.Rows(
 		"use_index(@`sel_1` `test`.`t` ), nth_plan(1)"))
 	tk.MustQuery("explain format='hint' select * /*+ nth_plan(2) */ from t where a=1 and b=1").Check(testkit.Rows(
