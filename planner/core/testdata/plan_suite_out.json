@@ -1285,12 +1285,12 @@
       },
       {
         "SQL": "select /*+ HASH_AGG(@sel_1), STREAM_AGG(@sel_2) */ count(*) from t t1 where t1.a < (select count(*) from t t2 where t1.a > t2.a)",
-        "Plan": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]]->Sel([gt(test.t.a, test.t.a)])->StreamAgg)->StreamAgg->Sel([not(isnull(Column#25))])}->HashAgg",
+        "Plan": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]]->Sel([gt(test.t.a, test.t.a)])->StreamAgg)->StreamAgg}->HashAgg",
         "Hints": "use_index(@`sel_1` `test`.`t1` `f`), use_index(@`sel_2` `test`.`t2` `f`), stream_agg(@`sel_2`), hash_agg(@`sel_1`)"
       },
       {
         "SQL": "select /*+ STREAM_AGG(@sel_1), HASH_AGG(@qb) */ count(*) from t t1 where t1.a < (select /*+ QB_NAME(qb) */ count(*) from t t2 where t1.a > t2.a)",
-        "Plan": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]]->Sel([gt(test.t.a, test.t.a)])->HashAgg)->HashAgg->Sel([not(isnull(Column#25))])}->StreamAgg",
+        "Plan": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]]->Sel([gt(test.t.a, test.t.a)])->HashAgg)->HashAgg}->StreamAgg",
         "Hints": "use_index(@`sel_1` `test`.`t1` `f`), use_index(@`sel_2` `test`.`t2` `f`), hash_agg(@`sel_2`), stream_agg(@`sel_1`)"
       },
       {
