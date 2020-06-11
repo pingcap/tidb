@@ -31,7 +31,7 @@ func (s testSuite) SetUpSuite(c *C) {}
 var _ = Suite(testSuite{})
 
 func (s testSuite) TestConfig(c *C) {
-	config.GetGlobalConfig().TxnLocalLatches = config.TxnLocalLatches{
+	config.GetGlobalConfig(context.Background()).TxnLocalLatches = config.TxnLocalLatches{
 		Enabled:  true,
 		Capacity: 10240,
 	}
@@ -46,7 +46,7 @@ func (s testSuite) TestConfig(c *C) {
 	c.Assert(store.(LatchEnableChecker).IsLatchEnabled(), IsTrue)
 	store.Close()
 
-	config.GetGlobalConfig().TxnLocalLatches = config.TxnLocalLatches{
+	config.GetGlobalConfig(context.Background()).TxnLocalLatches = config.TxnLocalLatches{
 		Enabled:  false,
 		Capacity: 10240,
 	}

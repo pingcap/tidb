@@ -18,6 +18,7 @@
 package table
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -208,7 +209,7 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 	}
 	str := casted.GetString()
 	utf8Charset := col.Charset == mysql.UTF8Charset
-	doMB4CharCheck := utf8Charset && config.GetGlobalConfig().CheckMb4ValueInUTF8
+	doMB4CharCheck := utf8Charset && config.GetGlobalConfig(context.Background()).CheckMb4ValueInUTF8
 	for i, w := 0, 0; i < len(str); i += w {
 		runeValue, width := utf8.DecodeRuneInString(str[i:])
 		if runeValue == utf8.RuneError {

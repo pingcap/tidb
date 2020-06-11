@@ -82,7 +82,7 @@ func (s *testInfoschemaTableSuiteBase) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	s.store = store
 	s.dom = dom
-	originCfg := config.GetGlobalConfig()
+	originCfg := config.GetGlobalConfig(context.Background())
 	newConf := *originCfg
 	newConf.OOMAction = config.OOMActionLog
 	config.StoreGlobalConfig(&newConf)
@@ -577,14 +577,14 @@ func (s *testInfoschemaClusterTableSuite) setUpRPCService(c *C, addr string) (*g
 		Host:    "127.0.0.1",
 		Command: mysql.ComQuery,
 	}
-	srv := server.NewRPCServer(config.GetGlobalConfig(), s.dom, sm)
+	srv := server.NewRPCServer(config.GetGlobalConfig(context.Background()), s.dom, sm)
 	port := lis.Addr().(*net.TCPAddr).Port
 	addr = fmt.Sprintf("127.0.0.1:%d", port)
 	go func() {
 		err = srv.Serve(lis)
 		c.Assert(err, IsNil)
 	}()
-	cfg := config.GetGlobalConfig()
+	cfg := config.GetGlobalConfig(context.Background())
 	cfg.Status.StatusPort = uint(port)
 	config.StoreGlobalConfig(cfg)
 	return srv, addr
@@ -708,7 +708,7 @@ func (s *testInfoschemaClusterTableSuite) TestTiDBClusterInfo(c *C) {
 
 	// information_schema.cluster_info
 	tk := testkit.NewTestKit(c, store)
-	tidbStatusAddr := fmt.Sprintf(":%d", config.GetGlobalConfig().Status.StatusPort)
+	tidbStatusAddr := fmt.Sprintf(":%d", config.GetGlobalConfig(context.Background()).Status.StatusPort)
 	row := func(cols ...string) string { return strings.Join(cols, " ") }
 	tk.MustQuery("select type, instance, status_address, version, git_hash from information_schema.cluster_info").Check(testkit.Rows(
 		row("tidb", ":4000", tidbStatusAddr, "None", "None"),

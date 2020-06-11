@@ -14,6 +14,7 @@
 package variable_test
 
 import (
+	"context"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -233,11 +234,11 @@ select * from t;`
 }
 
 func (*testSessionSuite) TestIsolationRead(c *C) {
-	originIsolationEngines := config.GetGlobalConfig().IsolationRead.Engines
+	originIsolationEngines := config.GetGlobalConfig(context.Background()).IsolationRead.Engines
 	defer func() {
-		config.GetGlobalConfig().IsolationRead.Engines = originIsolationEngines
+		config.GetGlobalConfig(context.Background()).IsolationRead.Engines = originIsolationEngines
 	}()
-	config.GetGlobalConfig().IsolationRead.Engines = []string{"tiflash", "tidb"}
+	config.GetGlobalConfig(context.Background()).IsolationRead.Engines = []string{"tiflash", "tidb"}
 	sessVars := variable.NewSessionVars()
 	_, ok := sessVars.IsolationReadEngines[kv.TiDB]
 	c.Assert(ok, Equals, true)

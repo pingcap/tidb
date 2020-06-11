@@ -1021,7 +1021,7 @@ func upgradeToVer42(s Session, ver int64) {
 // Convert statement summary global variables to non-empty values.
 func writeStmtSummaryVars(s Session) {
 	sql := fmt.Sprintf("UPDATE %s.%s SET variable_value='%%s' WHERE variable_name='%%s' AND variable_value=''", mysql.SystemDB, mysql.GlobalVariablesTable)
-	stmtSummaryConfig := config.GetGlobalConfig().StmtSummary
+	stmtSummaryConfig := config.GetGlobalConfig(context.Background()).StmtSummary
 	mustExecute(s, fmt.Sprintf(sql, variable.BoolToIntStr(stmtSummaryConfig.Enable), variable.TiDBEnableStmtSummary))
 	mustExecute(s, fmt.Sprintf(sql, variable.BoolToIntStr(stmtSummaryConfig.EnableInternalQuery), variable.TiDBStmtSummaryInternalQuery))
 	mustExecute(s, fmt.Sprintf(sql, strconv.Itoa(stmtSummaryConfig.RefreshInterval), variable.TiDBStmtSummaryRefreshInterval))
@@ -1151,7 +1151,7 @@ func doDMLWorks(s Session) {
 		// Session only variable should not be inserted.
 		if v.Scope != variable.ScopeSession {
 			vVal := v.Value
-			if v.Name == variable.TiDBTxnMode && config.GetGlobalConfig().Store == "tikv" {
+			if v.Name == variable.TiDBTxnMode && config.GetGlobalConfig(context.Background()).Store == "tikv" {
 				vVal = "pessimistic"
 			}
 			if v.Name == variable.TiDBRowFormatVersion {
@@ -1176,7 +1176,7 @@ func doDMLWorks(s Session) {
 
 	writeSystemTZ(s)
 
-	writeNewCollationParameter(s, config.GetGlobalConfig().NewCollationsEnabledOnFirstBootstrap)
+	writeNewCollationParameter(s, config.GetGlobalConfig(context.Background()).NewCollationsEnabledOnFirstBootstrap)
 
 	writeDefaultExprPushDownBlacklist(s)
 

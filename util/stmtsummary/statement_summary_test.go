@@ -666,13 +666,13 @@ func (s *testStmtSummarySuite) TestMaxStmtCount(c *C) {
 
 	// Test the original value and modify it.
 	maxStmtCount := s.ssMap.maxStmtCount()
-	c.Assert(maxStmtCount, Equals, int(config.GetGlobalConfig().StmtSummary.MaxStmtCount))
+	c.Assert(maxStmtCount, Equals, int(config.GetGlobalConfig(context.Background()).StmtSummary.MaxStmtCount))
 	c.Assert(s.ssMap.SetMaxStmtCount("10", false), IsNil)
 	c.Assert(s.ssMap.maxStmtCount(), Equals, 10)
 	defer func() {
 		c.Assert(s.ssMap.SetMaxStmtCount("", false), IsNil)
 		c.Assert(s.ssMap.SetMaxStmtCount("", true), IsNil)
-		c.Assert(maxStmtCount, Equals, int(config.GetGlobalConfig().StmtSummary.MaxStmtCount))
+		c.Assert(maxStmtCount, Equals, int(config.GetGlobalConfig(context.Background()).StmtSummary.MaxStmtCount))
 	}()
 
 	// 100 digests
@@ -724,7 +724,7 @@ func (s *testStmtSummarySuite) TestMaxSQLLength(c *C) {
 
 	// Test the original value and modify it.
 	maxSQLLength := s.ssMap.maxSQLLength()
-	c.Assert(maxSQLLength, Equals, int(config.GetGlobalConfig().StmtSummary.MaxSQLLength))
+	c.Assert(maxSQLLength, Equals, int(config.GetGlobalConfig(context.Background()).StmtSummary.MaxSQLLength))
 
 	// Create a long SQL
 	length := maxSQLLength * 10

@@ -15,6 +15,7 @@ package chunk
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -71,7 +72,7 @@ func NewListInDisk(fieldTypes []*types.FieldType) *ListInDisk {
 }
 
 func (l *ListInDisk) initDiskFile() (err error) {
-	l.disk, err = ioutil.TempFile(config.GetGlobalConfig().TempStoragePath, l.diskTracker.Label().String())
+	l.disk, err = ioutil.TempFile(config.GetGlobalConfig(context.Background()).TempStoragePath, l.diskTracker.Label().String())
 	if err != nil {
 		return
 	}

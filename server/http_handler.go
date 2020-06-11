@@ -638,7 +638,7 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			}
 			log.SetLevel(l)
 
-			config.GetGlobalConfig().Log.Level = levelStr
+			config.GetGlobalConfig(context.Background()).Log.Level = levelStr
 		}
 		if generalLog := req.Form.Get("tidb_general_log"); generalLog != "" {
 			switch generalLog {
@@ -664,16 +664,16 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if checkMb4ValueInUtf8 := req.Form.Get("check_mb4_value_in_utf8"); checkMb4ValueInUtf8 != "" {
 			switch checkMb4ValueInUtf8 {
 			case "0":
-				config.GetGlobalConfig().CheckMb4ValueInUTF8 = false
+				config.GetGlobalConfig(context.Background()).CheckMb4ValueInUTF8 = false
 			case "1":
-				config.GetGlobalConfig().CheckMb4ValueInUTF8 = true
+				config.GetGlobalConfig(context.Background()).CheckMb4ValueInUTF8 = true
 			default:
 				writeError(w, errors.New("illegal argument"))
 				return
 			}
 		}
 	} else {
-		writeData(w, config.GetGlobalConfig())
+		writeData(w, config.GetGlobalConfig(context.Background()))
 	}
 }
 

@@ -15,6 +15,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -817,7 +818,7 @@ func (ts *HTTPHandlerTestSuite) TestGetSettings(c *C) {
 	var settings *config.Config
 	err = decoder.Decode(&settings)
 	c.Assert(err, IsNil)
-	c.Assert(settings, DeepEquals, config.GetGlobalConfig())
+	c.Assert(settings, DeepEquals, config.GetGlobalConfig(context.Background()))
 }
 
 func (ts *HTTPHandlerTestSuite) TestGetSchema(c *C) {
@@ -958,7 +959,7 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	c.Assert(log.GetLevel(), Equals, log.ErrorLevel)
 	c.Assert(zaplog.GetLevel(), Equals, zap.ErrorLevel)
-	c.Assert(config.GetGlobalConfig().Log.Level, Equals, "error")
+	c.Assert(config.GetGlobalConfig(context.Background()).Log.Level, Equals, "error")
 	c.Assert(atomic.LoadUint32(&variable.ProcessGeneralLog), Equals, uint32(1))
 	form = make(url.Values)
 	form.Set("log_level", "fatal")
@@ -969,7 +970,7 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	c.Assert(atomic.LoadUint32(&variable.ProcessGeneralLog), Equals, uint32(0))
 	c.Assert(log.GetLevel(), Equals, log.FatalLevel)
 	c.Assert(zaplog.GetLevel(), Equals, zap.FatalLevel)
-	c.Assert(config.GetGlobalConfig().Log.Level, Equals, "fatal")
+	c.Assert(config.GetGlobalConfig(context.Background()).Log.Level, Equals, "fatal")
 	form.Set("log_level", os.Getenv("log_level"))
 
 	// test ddl_slow_threshold
@@ -994,7 +995,7 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	resp, err = ts.formStatus("/settings", form)
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
-	c.Assert(config.GetGlobalConfig().CheckMb4ValueInUTF8, Equals, true)
+	c.Assert(config.GetGlobalConfig(context.Background()).CheckMb4ValueInUTF8, Equals, true)
 	txn1, err := dbt.db.Begin()
 	c.Assert(err, IsNil)
 	_, err = txn1.Exec("insert t2 values (unhex('F0A48BAE'));")
@@ -1007,7 +1008,7 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	resp, err = ts.formStatus("/settings", form)
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
-	c.Assert(config.GetGlobalConfig().CheckMb4ValueInUTF8, Equals, false)
+	c.Assert(config.GetGlobalConfig(context.Background()).CheckMb4ValueInUTF8, Equals, false)
 	dbt.mustExec("insert t2 values (unhex('f09f8c80'));")
 }
 
@@ -1040,7 +1041,7 @@ func (ts *HTTPHandlerTestSuite) TestServerInfo(c *C) {
 	err = decoder.Decode(&info)
 	c.Assert(err, IsNil)
 
-	cfg := config.GetGlobalConfig()
+	cfg := config.GetGlobalConfig(context.Background())
 	c.Assert(info.IsOwner, IsTrue)
 	c.Assert(info.IP, Equals, cfg.AdvertiseAddress)
 	c.Assert(info.StatusPort, Equals, cfg.Status.StatusPort)
@@ -1079,7 +1080,7 @@ func (ts *HTTPHandlerTestSuite) TestAllServerInfo(c *C) {
 	serverInfo, ok := clusterInfo.AllServersInfo[ddl.GetID()]
 	c.Assert(ok, Equals, true)
 
-	cfg := config.GetGlobalConfig()
+	cfg := config.GetGlobalConfig(context.Background())
 	c.Assert(serverInfo.IP, Equals, cfg.AdvertiseAddress)
 	c.Assert(serverInfo.StatusPort, Equals, cfg.Status.StatusPort)
 	c.Assert(serverInfo.Lease, Equals, cfg.Lease)

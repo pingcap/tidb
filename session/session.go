@@ -1549,8 +1549,8 @@ type inCloseSession struct{}
 func (s *session) Close() {
 	// TODO: do clean table locks when session exited without execute Close.
 	// TODO: do clean table locks when tidb-server was `kill -9`.
-	if s.HasLockedTables() && config.TableLockEnabled() {
-		if ds := config.TableLockDelayClean(); ds > 0 {
+	if s.HasLockedTables() && config.TableLockEnabled(context.Background()) {
+		if ds := config.TableLockDelayClean(context.Background()); ds > 0 {
 			time.Sleep(time.Duration(ds) * time.Millisecond)
 		}
 		lockedTables := s.GetAllTableLocks()
@@ -1720,7 +1720,7 @@ func loadParameter(se *session, name string) (string, error) {
 
 // BootstrapSession runs the first time when the TiDB server start.
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
-	cfg := config.GetGlobalConfig()
+	cfg := config.GetGlobalConfig(context.Background())
 	if len(cfg.Plugin.Load) > 0 {
 		err := plugin.Load(context.Background(), plugin.Config{
 			Plugins:        strings.Split(cfg.Plugin.Load, ","),
@@ -1782,7 +1782,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 
-	if !config.GetGlobalConfig().Security.SkipGrantTable {
+	if !config.GetGlobalConfig(context.Background()).Security.SkipGrantTable {
 		err = dom.LoadPrivilegeLoop(se)
 		if err != nil {
 			return nil, err
@@ -2132,7 +2132,7 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 		CreateTime:    time.Now(),
 	}
 	if !s.sessionVars.IsAutocommit() {
-		pessTxnConf := config.GetGlobalConfig().PessimisticTxn
+		pessTxnConf := config.GetGlobalConfig(ctx).PessimisticTxn
 		if pessTxnConf.Enable {
 			if s.sessionVars.TxnMode == ast.Pessimistic {
 				s.sessionVars.TxnCtx.IsPessimistic = true

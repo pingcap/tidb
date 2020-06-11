@@ -17,6 +17,7 @@ package testutil
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -327,7 +328,7 @@ type autoRandom struct {
 // SetupAutoRandomTestConfig set alter-primary-key to false and save its origin values.
 // This method should only be used for the tests in SerialSuite.
 func (a *autoRandom) SetupAutoRandomTestConfig() {
-	globalCfg := config.GetGlobalConfig()
+	globalCfg := config.GetGlobalConfig(context.Background())
 	a.originAlterPrimaryKey = globalCfg.AlterPrimaryKey
 	globalCfg.AlterPrimaryKey = false
 }
@@ -335,7 +336,7 @@ func (a *autoRandom) SetupAutoRandomTestConfig() {
 // RestoreAutoRandomTestConfig restore the values had been saved in SetupTestConfig.
 // This method should only be used for the tests in SerialSuite.
 func (a *autoRandom) RestoreAutoRandomTestConfig() {
-	globalCfg := config.GetGlobalConfig()
+	globalCfg := config.GetGlobalConfig(context.Background())
 	globalCfg.AlterPrimaryKey = a.originAlterPrimaryKey
 }
 

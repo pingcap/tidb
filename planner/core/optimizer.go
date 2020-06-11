@@ -106,7 +106,7 @@ func CheckPrivilege(activeRoles []*auth.RoleIdentity, pm privilege.Manager, vs [
 
 // CheckTableLock checks the table lock.
 func CheckTableLock(ctx sessionctx.Context, is infoschema.InfoSchema, vs []visitInfo) error {
-	if !config.TableLockEnabled() {
+	if !config.TableLockEnabled(context.Background()) {
 		return nil
 	}
 	checker := lock.NewChecker(ctx, is)

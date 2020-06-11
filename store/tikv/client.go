@@ -111,7 +111,7 @@ func (a *connArray) Init(addr string, security config.Security, idleNotify *uint
 		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
 	}
 
-	cfg := config.GetGlobalConfig()
+	cfg := config.GetGlobalConfig(context.Background())
 	var (
 		unaryInterceptor  grpc.UnaryClientInterceptor
 		streamInterceptor grpc.StreamClientInterceptor
@@ -256,7 +256,7 @@ func (c *rpcClient) createConnArray(addr string, enableBatch bool) (*connArray, 
 	array, ok := c.conns[addr]
 	if !ok {
 		var err error
-		connCount := config.GetGlobalConfig().TiKVClient.GrpcConnectionCount
+		connCount := config.GetGlobalConfig(context.Background()).TiKVClient.GrpcConnectionCount
 		array, err = newConnArray(connCount, addr, c.security, &c.idleNotify, enableBatch)
 		if err != nil {
 			return nil, err
@@ -326,7 +326,7 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 
 	// TiDB RPC server supports batch RPC, but batch connection will send heart beat, It's not necessary since
 	// request to TiDB is not high frequency.
-	if config.GetGlobalConfig().TiKVClient.MaxBatchSize > 0 && enableBatch {
+	if config.GetGlobalConfig(ctx).TiKVClient.MaxBatchSize > 0 && enableBatch {
 		if batchReq := req.ToBatchCommandsRequest(); batchReq != nil {
 			return sendBatchRequest(ctx, addr, connArray.batchConn, batchReq, timeout)
 		}

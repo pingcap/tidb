@@ -14,6 +14,7 @@
 package config
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"os/user"
@@ -261,7 +262,7 @@ log-rotate = true`)
 	c.Assert(conf.Load(configFile), IsNil)
 
 	// Make sure the example config is the same as default config.
-	c.Assert(conf, DeepEquals, GetGlobalConfig())
+	c.Assert(conf, DeepEquals, GetGlobalConfig(context.Background()))
 
 	// Test for log config.
 	c.Assert(conf.Log.ToLogConfig(), DeepEquals, logutil.NewLogConfig("info", "text", "tidb-slow.log", conf.Log.File, false, func(config *zaplog.Config) { config.DisableErrorVerbose = conf.Log.getDisableErrorStack() }))
@@ -453,4 +454,16 @@ func (s *testConfigSuite) TestEncodeDefTempStorageDir(c *C) {
 		tempStorageDir := encodeDefTempStorageDir(test.host, test.statusHost, test.port, test.statusPort)
 		c.Assert(tempStorageDir, Equals, filepath.Join(dirPrefix, test.expect, "tmp-storage"))
 	}
+}
+
+func (s *testConfigSuite) TestWithGlobalConfig(c *C) {
+	cfg := NewConfig()
+	cfg.Binlog.Enable = true
+	cfg.EnableTableLock = true
+	ctx := WithGlobalConfig(context.Background(), cfg)
+
+	cfg1 := GetGlobalConfig(ctx)
+	c.Assert(cfg1, Equals, cfg)
+	c.Assert(cfg.Binlog.Enable, IsTrue)
+	c.Assert(cfg.EnableTableLock, IsTrue)
 }

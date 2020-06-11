@@ -14,6 +14,7 @@
 package variable
 
 import (
+	"context"
 	"encoding/json"
 	"reflect"
 	"time"
@@ -72,7 +73,7 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.DistSQLScanConcurrency, Equals, DefDistSQLScanConcurrency)
 	c.Assert(vars.MaxChunkSize, Equals, DefMaxChunkSize)
 	c.Assert(vars.DMLBatchSize, Equals, DefDMLBatchSize)
-	c.Assert(vars.MemQuotaQuery, Equals, config.GetGlobalConfig().MemQuotaQuery)
+	c.Assert(vars.MemQuotaQuery, Equals, config.GetGlobalConfig(context.Background()).MemQuotaQuery)
 	c.Assert(vars.MemQuotaHashJoin, Equals, int64(DefTiDBMemQuotaHashJoin))
 	c.Assert(vars.MemQuotaMergeJoin, Equals, int64(DefTiDBMemQuotaMergeJoin))
 	c.Assert(vars.MemQuotaSort, Equals, int64(DefTiDBMemQuotaSort))
@@ -220,7 +221,7 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(terror.ErrorEqual(err, ErrReadOnly), IsTrue)
 	val, err = GetSessionSystemVar(v, TiDBConfig)
 	c.Assert(err, IsNil)
-	bVal, err := json.MarshalIndent(config.GetGlobalConfig(), "", "\t")
+	bVal, err := json.MarshalIndent(config.GetGlobalConfig(context.Background()), "", "\t")
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, string(bVal))
 
@@ -273,13 +274,13 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	val, err = GetSessionSystemVar(v, TiDBCheckMb4ValueInUTF8)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "1")
-	c.Assert(config.GetGlobalConfig().CheckMb4ValueInUTF8, Equals, true)
+	c.Assert(config.GetGlobalConfig(context.Background()).CheckMb4ValueInUTF8, Equals, true)
 	err = SetSessionSystemVar(v, TiDBCheckMb4ValueInUTF8, types.NewStringDatum("0"))
 	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, TiDBCheckMb4ValueInUTF8)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "0")
-	c.Assert(config.GetGlobalConfig().CheckMb4ValueInUTF8, Equals, false)
+	c.Assert(config.GetGlobalConfig(context.Background()).CheckMb4ValueInUTF8, Equals, false)
 
 	SetSessionSystemVar(v, TiDBLowResolutionTSO, types.NewStringDatum("1"))
 	val, err = GetSessionSystemVar(v, TiDBLowResolutionTSO)

@@ -53,7 +53,7 @@ func setMaxBatchSize(size uint) {
 }
 
 func (s *testClientSerialSuite) TestConn(c *C) {
-	maxBatchSize := config.GetGlobalConfig().TiKVClient.MaxBatchSize
+	maxBatchSize := config.GetGlobalConfig(context.Background()).TiKVClient.MaxBatchSize
 	setMaxBatchSize(0)
 
 	client := newRPCClient(config.Security{})

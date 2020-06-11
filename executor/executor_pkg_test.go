@@ -255,7 +255,7 @@ func assertEqualStrings(c *C, got []field, expect []string) {
 }
 
 func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
-	originCfg := config.GetGlobalConfig()
+	originCfg := config.GetGlobalConfig(context.Background())
 	newConf := *originCfg
 	newConf.OOMUseTmpStorage = true
 	newConf.MemQuotaQuery = 1

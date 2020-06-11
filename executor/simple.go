@@ -107,9 +107,9 @@ func (e *SimpleExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	case *ast.UseStmt:
 		err = e.executeUse(x)
 	case *ast.FlushStmt:
-		err = e.executeFlush(x)
+		err = e.executeFlush(ctx, x)
 	case *ast.AlterInstanceStmt:
-		err = e.executeAlterInstance(x)
+		err = e.executeAlterInstance(ctx, x)
 	case *ast.BeginStmt:
 		err = e.executeBegin(ctx, x)
 	case *ast.CommitStmt:
@@ -121,11 +121,11 @@ func (e *SimpleExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	case *ast.AlterUserStmt:
 		err = e.executeAlterUser(x)
 	case *ast.DropUserStmt:
-		err = e.executeDropUser(x)
+		err = e.executeDropUser(ctx, x)
 	case *ast.SetPwdStmt:
 		err = e.executeSetPwd(x)
 	case *ast.KillStmt:
-		err = e.executeKillStmt(x)
+		err = e.executeKillStmt(ctx, x)
 	case *ast.BinlogStmt:
 		// We just ignore it.
 		return nil
@@ -555,7 +555,7 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	// reverts to its previous state.
 	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, true)
 	// Call ctx.Txn(true) to active pending txn.
-	pTxnConf := config.GetGlobalConfig().PessimisticTxn
+	pTxnConf := config.GetGlobalConfig(ctx).PessimisticTxn
 	if pTxnConf.Enable {
 		txnMode := s.Mode
 		if txnMode == "" {
@@ -662,7 +662,7 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 
 func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStmt) error {
 	// Check `CREATE USER` privilege.
-	if !config.GetGlobalConfig().Security.SkipGrantTable {
+	if !config.GetGlobalConfig(ctx).Security.SkipGrantTable {
 		checker := privilege.GetPrivilegeManager(e.ctx)
 		if checker == nil {
 			return errors.New("miss privilege checker")
@@ -893,10 +893,10 @@ func (e *SimpleExec) executeGrantRole(s *ast.GrantRoleStmt) error {
 	return nil
 }
 
-func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
+func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) error {
 	// Check privileges.
 	// Check `CREATE USER` privilege.
-	if !config.GetGlobalConfig().Security.SkipGrantTable {
+	if !config.GetGlobalConfig(ctx).Security.SkipGrantTable {
 		checker := privilege.GetPrivilegeManager(e.ctx)
 		if checker == nil {
 			return errors.New("miss privilege checker")
@@ -1058,8 +1058,8 @@ func (e *SimpleExec) executeSetPwd(s *ast.SetPwdStmt) error {
 	return err
 }
 
-func (e *SimpleExec) executeKillStmt(s *ast.KillStmt) error {
-	conf := config.GetGlobalConfig()
+func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error {
+	conf := config.GetGlobalConfig(ctx)
 	if s.TiDBExtension || conf.CompatibleKillQuery {
 		sm := e.ctx.GetSessionManager()
 		if sm == nil {
@@ -1073,7 +1073,7 @@ func (e *SimpleExec) executeKillStmt(s *ast.KillStmt) error {
 	return nil
 }
 
-func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
+func (e *SimpleExec) executeFlush(ctx context.Context, s *ast.FlushStmt) error {
 	switch s.Tp {
 	case ast.FlushTables:
 		if s.ReadLock {
@@ -1083,7 +1083,7 @@ func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 		// If skip-grant-table is configured, do not flush privileges.
 		// Because LoadPrivilegeLoop does not run and the privilege Handle is nil,
 		// Call dom.PrivilegeHandle().Update would panic.
-		if config.GetGlobalConfig().Security.SkipGrantTable {
+		if config.GetGlobalConfig(ctx).Security.SkipGrantTable {
 			return nil
 		}
 
@@ -1108,7 +1108,7 @@ func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 	return nil
 }
 
-func (e *SimpleExec) executeAlterInstance(s *ast.AlterInstanceStmt) error {
+func (e *SimpleExec) executeAlterInstance(ctx context.Context, s *ast.AlterInstanceStmt) error {
 	if s.ReloadTLS {
 		logutil.BgLogger().Info("execute reload tls", zap.Bool("NoRollbackOnError", s.NoRollbackOnError))
 		sm := e.ctx.GetSessionManager()
@@ -1118,7 +1118,7 @@ func (e *SimpleExec) executeAlterInstance(s *ast.AlterInstanceStmt) error {
 			variable.SysVars["ssl_cert"].Value,
 		)
 		if err != nil {
-			if !s.NoRollbackOnError || config.GetGlobalConfig().Security.RequireSecureTransport {
+			if !s.NoRollbackOnError || config.GetGlobalConfig(ctx).Security.RequireSecureTransport {
 				return err
 			}
 			logutil.BgLogger().Warn("reload TLS fail but keep working without TLS due to 'no rollback on error'")

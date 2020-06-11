@@ -14,6 +14,7 @@
 package variable
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -127,7 +128,7 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 	case TiDBExpensiveQueryTimeThreshold:
 		return fmt.Sprintf("%d", atomic.LoadUint64(&ExpensiveQueryTimeThreshold)), true, nil
 	case TiDBConfig:
-		conf := config.GetGlobalConfig()
+		conf := config.GetGlobalConfig(context.Background())
 		j, err := json.MarshalIndent(conf, "", "\t")
 		if err != nil {
 			return "", false, err
@@ -138,25 +139,25 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 	case TiDBDDLSlowOprThreshold:
 		return strconv.FormatUint(uint64(atomic.LoadUint32(&DDLSlowOprThreshold)), 10), true, nil
 	case PluginDir:
-		return config.GetGlobalConfig().Plugin.Dir, true, nil
+		return config.GetGlobalConfig(context.Background()).Plugin.Dir, true, nil
 	case PluginLoad:
-		return config.GetGlobalConfig().Plugin.Load, true, nil
+		return config.GetGlobalConfig(context.Background()).Plugin.Load, true, nil
 	case TiDBSlowLogThreshold:
-		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.SlowThreshold), 10), true, nil
+		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig(context.Background()).Log.SlowThreshold), 10), true, nil
 	case TiDBRecordPlanInSlowLog:
-		return strconv.FormatUint(uint64(atomic.LoadUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog)), 10), true, nil
+		return strconv.FormatUint(uint64(atomic.LoadUint32(&config.GetGlobalConfig(context.Background()).Log.RecordPlanInSlowLog)), 10), true, nil
 	case TiDBEnableSlowLog:
-		return BoolToIntStr(config.GetGlobalConfig().Log.EnableSlowLog), true, nil
+		return BoolToIntStr(config.GetGlobalConfig(context.Background()).Log.EnableSlowLog), true, nil
 	case TiDBQueryLogMaxLen:
-		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen), 10), true, nil
+		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig(context.Background()).Log.QueryLogMaxLen), 10), true, nil
 	case TiDBCheckMb4ValueInUTF8:
-		return BoolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUTF8), true, nil
+		return BoolToIntStr(config.GetGlobalConfig(context.Background()).CheckMb4ValueInUTF8), true, nil
 	case TiDBCapturePlanBaseline:
 		return CapturePlanBaseline.GetVal(), true, nil
 	case TiDBFoundInPlanCache:
 		return BoolToIntStr(s.PrevFoundInPlanCache), true, nil
 	case TiDBEnableCollectExecutionInfo:
-		return BoolToIntStr(config.GetGlobalConfig().EnableCollectExecutionInfo), true, nil
+		return BoolToIntStr(config.GetGlobalConfig(context.Background()).EnableCollectExecutionInfo), true, nil
 	}
 	sVal, ok := s.GetSystemVar(key)
 	if ok {

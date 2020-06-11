@@ -14,6 +14,7 @@
 package executor_test
 
 import (
+	"context"
 	"fmt"
 	"unicode/utf8"
 
@@ -102,7 +103,7 @@ func (s *testSuite1) TestStatementContext(c *C) {
 	_, err = tk.Exec("insert t1 values (unhex('F0A48BAE'))")
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, table.ErrTruncatedWrongValueForField), IsTrue, Commentf("err %v", err))
-	old := config.GetGlobalConfig()
+	old := config.GetGlobalConfig(context.Background())
 	conf := *old
 	conf.CheckMb4ValueInUTF8 = false
 	config.StoreGlobalConfig(&conf)

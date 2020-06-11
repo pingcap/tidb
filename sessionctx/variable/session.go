@@ -15,6 +15,7 @@ package variable
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"fmt"
 	"math"
@@ -713,7 +714,7 @@ func NewSessionVars() *SessionVars {
 		L2CacheSize:                 cpuid.CPU.Cache.L2,
 		CommandValue:                uint32(mysql.ComSleep),
 		TiDBOptJoinReorderThreshold: DefTiDBOptJoinReorderThreshold,
-		SlowQueryFile:               config.GetGlobalConfig().Log.SlowQueryFile,
+		SlowQueryFile:               config.GetGlobalConfig(context.Background()).Log.SlowQueryFile,
 		WaitSplitRegionFinish:       DefTiDBWaitSplitRegionFinish,
 		WaitSplitRegionTimeout:      DefWaitSplitRegionTimeout,
 		enableIndexMerge:            false,
@@ -748,7 +749,7 @@ func NewSessionVars() *SessionVars {
 		WindowConcurrency:          DefTiDBWindowConcurrency,
 	}
 	vars.MemQuota = MemQuota{
-		MemQuotaQuery: config.GetGlobalConfig().MemQuotaQuery,
+		MemQuotaQuery: config.GetGlobalConfig(context.Background()).MemQuotaQuery,
 
 		// The variables below do not take any effect anymore, it's remaining for compatibility.
 		// TODO: remove them in v4.1
@@ -769,7 +770,7 @@ func NewSessionVars() *SessionVars {
 		DMLBatchSize:       DefDMLBatchSize,
 	}
 	var enableStreaming string
-	if config.GetGlobalConfig().EnableStreaming {
+	if config.GetGlobalConfig(context.Background()).EnableStreaming {
 		enableStreaming = "1"
 	} else {
 		enableStreaming = "0"
@@ -779,13 +780,13 @@ func NewSessionVars() *SessionVars {
 	vars.AllowBatchCop = DefTiDBAllowBatchCop
 
 	var enableChunkRPC string
-	if config.GetGlobalConfig().TiKVClient.EnableChunkRPC {
+	if config.GetGlobalConfig(context.Background()).TiKVClient.EnableChunkRPC {
 		enableChunkRPC = "1"
 	} else {
 		enableChunkRPC = "0"
 	}
 	terror.Log(vars.SetSystemVar(TiDBEnableChunkRPC, enableChunkRPC))
-	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
+	for _, engine := range config.GetGlobalConfig(context.Background()).IsolationRead.Engines {
 		switch engine {
 		case kv.TiFlash.Name():
 			vars.IsolationReadEngines[kv.TiFlash] = struct{}{}
@@ -1184,7 +1185,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBInitChunkSize:
 		s.InitChunkSize = tidbOptPositiveInt32(val, DefInitChunkSize)
 	case TIDBMemQuotaQuery:
-		s.MemQuotaQuery = tidbOptInt64(val, config.GetGlobalConfig().MemQuotaQuery)
+		s.MemQuotaQuery = tidbOptInt64(val, config.GetGlobalConfig(context.Background()).MemQuotaQuery)
 	case TIDBMemQuotaHashJoin:
 		s.MemQuotaHashJoin = tidbOptInt64(val, DefTiDBMemQuotaHashJoin)
 		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TIDBMemQuotaQuery))
@@ -1319,19 +1320,19 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 			logutil.BgLogger().Warn(err.Error())
 		}
 	case TiDBSlowLogThreshold:
-		atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
+		atomic.StoreUint64(&config.GetGlobalConfig(context.Background()).Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
 	case TiDBRecordPlanInSlowLog:
-		atomic.StoreUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog, uint32(tidbOptInt64(val, logutil.DefaultRecordPlanInSlowLog)))
+		atomic.StoreUint32(&config.GetGlobalConfig(context.Background()).Log.RecordPlanInSlowLog, uint32(tidbOptInt64(val, logutil.DefaultRecordPlanInSlowLog)))
 	case TiDBEnableSlowLog:
-		config.GetGlobalConfig().Log.EnableSlowLog = TiDBOptOn(val)
+		config.GetGlobalConfig(context.Background()).Log.EnableSlowLog = TiDBOptOn(val)
 	case TiDBQueryLogMaxLen:
-		atomic.StoreUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen, uint64(tidbOptInt64(val, logutil.DefaultQueryLogMaxLen)))
+		atomic.StoreUint64(&config.GetGlobalConfig(context.Background()).Log.QueryLogMaxLen, uint64(tidbOptInt64(val, logutil.DefaultQueryLogMaxLen)))
 	case TiDBCheckMb4ValueInUTF8:
-		config.GetGlobalConfig().CheckMb4ValueInUTF8 = TiDBOptOn(val)
+		config.GetGlobalConfig(context.Background()).CheckMb4ValueInUTF8 = TiDBOptOn(val)
 	case TiDBFoundInPlanCache:
 		s.FoundInPlanCache = TiDBOptOn(val)
 	case TiDBEnableCollectExecutionInfo:
-		config.GetGlobalConfig().EnableCollectExecutionInfo = TiDBOptOn(val)
+		config.GetGlobalConfig(context.Background()).EnableCollectExecutionInfo = TiDBOptOn(val)
 	case SQLSelectLimit:
 		result, err := strconv.ParseUint(val, 10, 64)
 		if err != nil {

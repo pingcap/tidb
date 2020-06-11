@@ -14,6 +14,7 @@
 package executor_test
 
 import (
+	"context"
 	"fmt"
 
 	. "github.com/pingcap/check"
@@ -23,7 +24,7 @@ import (
 )
 
 func (s *testSuite) TestSortInDisk(c *C) {
-	originCfg := config.GetGlobalConfig()
+	originCfg := config.GetGlobalConfig(context.Background())
 	newConf := *originCfg
 	newConf.OOMUseTmpStorage = true
 	config.StoreGlobalConfig(&newConf)

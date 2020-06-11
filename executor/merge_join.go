@@ -97,7 +97,7 @@ func (t *mergeJoinTable) init(exec *MergeJoinExec) {
 		t.rowContainer.GetMemTracker().SetLabel(innerTableLabel)
 		t.rowContainer.GetDiskTracker().AttachTo(exec.diskTracker)
 		t.rowContainer.GetDiskTracker().SetLabel(innerTableLabel)
-		if config.GetGlobalConfig().OOMUseTmpStorage {
+		if config.GetGlobalConfig(context.Background()).OOMUseTmpStorage {
 			actionSpill := t.rowContainer.ActionSpill()
 			exec.ctx.GetSessionVars().StmtCtx.MemTracker.SetActionOnExceed(actionSpill)
 		}

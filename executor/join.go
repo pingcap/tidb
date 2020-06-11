@@ -720,7 +720,7 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 	e.rowContainer.GetMemTracker().SetLabel(buildSideResultLabel)
 	e.rowContainer.GetDiskTracker().AttachTo(e.diskTracker)
 	e.rowContainer.GetDiskTracker().SetLabel(buildSideResultLabel)
-	if config.GetGlobalConfig().OOMUseTmpStorage {
+	if config.GetGlobalConfig(context.Background()).OOMUseTmpStorage {
 		actionSpill := e.rowContainer.ActionSpill()
 		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionSpill)
 	}

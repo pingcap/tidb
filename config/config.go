@@ -14,6 +14,7 @@
 package config
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
@@ -693,10 +694,30 @@ func NewConfig() *Config {
 	return &conf
 }
 
+type ctxGlobalConfigKey struct{}
+
+var overrideConfigForTest ctxGlobalConfigKey
+
+// WithGlobalConfig provides a way for unit test to modify global config without DATA RACE.
+// The typical usage looks like this:
+//
+// ctx := context.Background()
+// cfg := *GetGlobalConfig(ctx)
+// cfg.XXX = XXX
+// ctx := config.WithGlobalConfig(ctx, &cfg)
+// tk.MustExecWithCtx(ctx, ...)
+//
+func WithGlobalConfig(ctx context.Context, cfg *Config) context.Context {
+	return context.WithValue(ctx, overrideConfigForTest, cfg)
+}
+
 // GetGlobalConfig returns the global configuration for this server.
 // It should store configuration from command line and configuration file.
 // Other parts of the system can read the global configuration use this function.
-func GetGlobalConfig() *Config {
+func GetGlobalConfig(ctx context.Context) *Config {
+	if raw := ctx.Value(overrideConfigForTest); raw != nil {
+		return raw.(*Config)
+	}
 	return globalConf.Load().(*Config)
 }
 
@@ -727,7 +748,7 @@ func isAllDeprecatedConfigItems(items []string) bool {
 // For example, if you start TiDB by the command "./tidb-server --port=3000", the port number should be
 // overwritten to 3000 and ignore the port number in the config file.
 func InitializeConfig(confPath string, configCheck, configStrict bool, reloadFunc ConfReloadFunc, enforceCmdArgs func(*Config)) {
-	cfg := GetGlobalConfig()
+	cfg := GetGlobalConfig(context.Background())
 	var err error
 	if confPath != "" {
 		if err = cfg.Load(confPath); err != nil {
@@ -885,13 +906,13 @@ func hasRootPrivilege() bool {
 }
 
 // TableLockEnabled uses to check whether enabled the table lock feature.
-func TableLockEnabled() bool {
-	return GetGlobalConfig().EnableTableLock
+func TableLockEnabled(ctx context.Context) bool {
+	return GetGlobalConfig(ctx).EnableTableLock
 }
 
 // TableLockDelayClean uses to get the time of delay clean table lock.
-var TableLockDelayClean = func() uint64 {
-	return GetGlobalConfig().DelayCleanTableLock
+var TableLockDelayClean = func(ctx context.Context) uint64 {
+	return GetGlobalConfig(ctx).DelayCleanTableLock
 }
 
 // ToLogConfig converts *Log to *logutil.LogConfig.

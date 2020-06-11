@@ -14,6 +14,7 @@
 package util
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -435,7 +436,7 @@ func LoadTLSCertificates(ca, key, cert string) (tlsConfig *tls.Config, err error
 		return
 	}
 
-	requireTLS := config.GetGlobalConfig().Security.RequireSecureTransport
+	requireTLS := config.GetGlobalConfig(context.Background()).Security.RequireSecureTransport
 
 	// Try loading CA cert.
 	clientAuthPolicy := tls.NoClientCert
@@ -496,7 +497,7 @@ func InternalHTTPSchema() string {
 }
 
 func initInternalClient() {
-	tlsCfg, err := config.GetGlobalConfig().Security.ToTLSConfig()
+	tlsCfg, err := config.GetGlobalConfig(context.Background()).Security.ToTLSConfig()
 	if err != nil {
 		logutil.BgLogger().Fatal("could not load cluster ssl", zap.Error(err))
 	}

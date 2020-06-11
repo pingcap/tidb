@@ -94,7 +94,7 @@ func TestT(t *testing.T) {
 	ReorgWaitTimeout = 30 * time.Millisecond
 	batchInsertDeleteRangeSize = 2
 
-	cfg := config.GetGlobalConfig()
+	cfg := config.GetGlobalConfig(context.Background())
 	newCfg := *cfg
 	// Test for table lock.
 	newCfg.EnableTableLock = true

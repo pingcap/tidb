@@ -43,8 +43,8 @@ func (t *testMainSuite) TestSetGlobalVars(c *C) {
 	c.Assert(variable.SysVars[variable.TiDBIsolationReadEngines].Value, Equals, "tikv, tiflash, tidb")
 	c.Assert(variable.SysVars[variable.TIDBMemQuotaQuery].Value, Equals, "1073741824")
 
-	config.GetGlobalConfig().IsolationRead.Engines = []string{"tikv", "tidb"}
-	config.GetGlobalConfig().MemQuotaQuery = 9999999
+	config.GetGlobalConfig(context.Background()).IsolationRead.Engines = []string{"tikv", "tidb"}
+	config.GetGlobalConfig(context.Background()).MemQuotaQuery = 9999999
 	setGlobalVars()
 
 	c.Assert(variable.SysVars[variable.TiDBIsolationReadEngines].Value, Equals, "tikv, tidb")

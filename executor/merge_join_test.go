@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"math/rand"
 	"strings"
@@ -241,7 +242,7 @@ func checkPlanAndRun(tk *testkit.TestKit, c *C, plan string, sql string) *testki
 }
 
 func (s *testSuite2) TestMergeJoinInDisk(c *C) {
-	originCfg := config.GetGlobalConfig()
+	originCfg := config.GetGlobalConfig(context.Background())
 	newConf := *originCfg
 	newConf.OOMUseTmpStorage = true
 	config.StoreGlobalConfig(&newConf)

@@ -36,7 +36,7 @@ import (
 )
 
 func TestT(t *testing.T) {
-	cfg := config.GetGlobalConfig()
+	cfg := config.GetGlobalConfig(context.Background())
 	conf := *cfg
 	conf.TempStoragePath, _ = ioutil.TempDir("", "oom-use-tmp-storage")
 	config.StoreGlobalConfig(&conf)

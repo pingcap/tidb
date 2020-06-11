@@ -30,7 +30,7 @@ func (s *testSuite) TestBatchInsertWithOnDuplicate(c *C) {
 	tk.MustExec(ctx, "create table duplicate_test(id int auto_increment, k1 int, primary key(id), unique key uk(k1))")
 	tk.MustExec(ctx, "insert into duplicate_test(k1) values(?),(?),(?),(?),(?)", tk.PermInt(5)...)
 
-	cfg := config.GetGlobalConfig()
+	cfg := config.GetGlobalConfig(context.Background())
 	newCfg := *cfg
 	newCfg.EnableBatchDML = true
 	config.StoreGlobalConfig(&newCfg)

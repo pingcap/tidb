@@ -95,7 +95,7 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	case *ast.DropIndexStmt:
 		err = e.executeDropIndex(x)
 	case *ast.DropDatabaseStmt:
-		err = e.executeDropDatabase(x)
+		err = e.executeDropDatabase(ctx, x)
 	case *ast.DropTableStmt:
 		if x.IsView {
 			err = e.executeDropView(x)
@@ -208,7 +208,7 @@ func (e *DDLExec) executeCreateIndex(s *ast.CreateIndexStmt) error {
 	return err
 }
 
-func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
+func (e *DDLExec) executeDropDatabase(ctx context.Context, s *ast.DropDatabaseStmt) error {
 	dbName := model.NewCIStr(s.Name)
 
 	// Protect important system table from been dropped by a mistake.
@@ -576,14 +576,14 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 }
 
 func (e *DDLExec) executeLockTables(s *ast.LockTablesStmt) error {
-	if !config.TableLockEnabled() {
+	if !config.TableLockEnabled(context.Background()) {
 		return nil
 	}
 	return domain.GetDomain(e.ctx).DDL().LockTables(e.ctx, s)
 }
 
 func (e *DDLExec) executeUnlockTables(s *ast.UnlockTablesStmt) error {
-	if !config.TableLockEnabled() {
+	if !config.TableLockEnabled(context.Background()) {
 		return nil
 	}
 	lockedTables := e.ctx.GetAllTableLocks()

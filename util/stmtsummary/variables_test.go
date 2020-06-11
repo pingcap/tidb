@@ -26,7 +26,7 @@ type testVariablesSuite struct {
 func (s *testVariablesSuite) TestSetInVariable(c *C) {
 	sv := newSysVars()
 	st := sv.getVariable(typeMaxStmtCount)
-	c.Assert(st, Equals, int64(config.GetGlobalConfig().StmtSummary.MaxStmtCount))
+	c.Assert(st, Equals, int64(config.GetGlobalConfig(context.Background()).StmtSummary.MaxStmtCount))
 
 	sv.setVariable(typeMaxStmtCount, "10", false)
 	st = sv.getVariable(typeMaxStmtCount)
@@ -48,13 +48,13 @@ func (s *testVariablesSuite) TestSetInVariable(c *C) {
 	c.Assert(st, Equals, int64(10))
 	sv.setVariable(typeMaxStmtCount, "", false)
 	st = sv.getVariable(typeMaxStmtCount)
-	c.Assert(st, Equals, int64(config.GetGlobalConfig().StmtSummary.MaxStmtCount))
+	c.Assert(st, Equals, int64(config.GetGlobalConfig(context.Background()).StmtSummary.MaxStmtCount))
 }
 
 func (s *testVariablesSuite) TestSetBoolVariable(c *C) {
 	sv := newSysVars()
 	en := sv.getVariable(typeEnable)
-	c.Assert(en > 0, Equals, config.GetGlobalConfig().StmtSummary.Enable)
+	c.Assert(en > 0, Equals, config.GetGlobalConfig(context.Background()).StmtSummary.Enable)
 
 	sv.setVariable(typeEnable, "OFF", false)
 	en = sv.getVariable(typeEnable)
@@ -79,7 +79,7 @@ func (s *testVariablesSuite) TestSetBoolVariable(c *C) {
 	c.Assert(en > 0, Equals, true)
 	sv.setVariable(typeEnable, "", false)
 	en = sv.getVariable(typeEnable)
-	c.Assert(en > 0, Equals, config.GetGlobalConfig().StmtSummary.Enable)
+	c.Assert(en > 0, Equals, config.GetGlobalConfig(context.Background()).StmtSummary.Enable)
 }
 
 func (s *testVariablesSuite) TestMinValue(c *C) {

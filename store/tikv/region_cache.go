@@ -1473,10 +1473,10 @@ const (
 )
 
 func init() {
-	t, err := time.ParseDuration(config.GetGlobalConfig().TiKVClient.StoreLivenessTimeout)
+	t, err := time.ParseDuration(config.GetGlobalConfig(context.Background()).TiKVClient.StoreLivenessTimeout)
 	if err != nil {
 		logutil.BgLogger().Fatal("invalid duration value for store-liveness-timeout",
-			zap.String("currentValue", config.GetGlobalConfig().TiKVClient.StoreLivenessTimeout))
+			zap.String("currentValue", config.GetGlobalConfig(context.Background()).TiKVClient.StoreLivenessTimeout))
 	}
 	storeLivenessTimeout = t
 }

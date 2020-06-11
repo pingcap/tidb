@@ -15,6 +15,7 @@ package printer
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	_ "runtime" // import link package
@@ -49,7 +50,7 @@ func PrintTiDBInfo() {
 		zap.Bool("Race Enabled", israce.RaceEnabled),
 		zap.Bool("Check Table Before Drop", config.CheckTableBeforeDrop),
 		zap.String("TiKV Min Version", TiKVMinVersion))
-	configJSON, err := json.Marshal(config.GetGlobalConfig())
+	configJSON, err := json.Marshal(config.GetGlobalConfig(context.Background()))
 	if err != nil {
 		panic(err)
 	}

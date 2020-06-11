@@ -51,7 +51,7 @@ func (s *testClientFailSuite) TestPanicInRecvLoop(c *C) {
 	server, port := startMockTikvService()
 	c.Assert(port > 0, IsTrue)
 
-	grpcConnectionCount := config.GetGlobalConfig().TiKVClient.GrpcConnectionCount
+	grpcConnectionCount := config.GetGlobalConfig(context.Background()).TiKVClient.GrpcConnectionCount
 	setGrpcConnectionCount(1)
 	addr := fmt.Sprintf("%s:%d", "127.0.0.1", port)
 	rpcClient := newRPCClient(config.Security{})

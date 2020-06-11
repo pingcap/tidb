@@ -173,7 +173,7 @@ func (s stats) Stats(vars *variable.SessionVars) (map[string]interface{}, error)
 }
 
 func (s *seqTestSuite) TestShow(c *C) {
-	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = true
+	config.GetGlobalConfig(context.Background()).Experimental.AllowsExpressionIndex = true
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -1009,7 +1009,7 @@ func (s *seqTestSuite) TestBatchInsertDelete(c *C) {
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("320"))
 
-	cfg := config.GetGlobalConfig()
+	cfg := config.GetGlobalConfig(context.Background())
 	newCfg := *cfg
 	newCfg.EnableBatchDML = true
 	config.StoreGlobalConfig(&newCfg)
@@ -1173,9 +1173,9 @@ func (s *seqTestSuite1) TestCoprocessorPriority(c *C) {
 	// Insert some data to make sure plan build IndexLookup for t.
 	tk.MustExec("insert into t values (1), (2)")
 
-	oldThreshold := config.GetGlobalConfig().Log.ExpensiveThreshold
-	config.GetGlobalConfig().Log.ExpensiveThreshold = 0
-	defer func() { config.GetGlobalConfig().Log.ExpensiveThreshold = oldThreshold }()
+	oldThreshold := config.GetGlobalConfig(context.Background()).Log.ExpensiveThreshold
+	config.GetGlobalConfig(context.Background()).Log.ExpensiveThreshold = 0
+	defer func() { config.GetGlobalConfig(context.Background()).Log.ExpensiveThreshold = oldThreshold }()
 
 	cli.setCheckPriority(pb.CommandPri_High)
 	tk.MustQuery("select id from t where id = 1")

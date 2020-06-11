@@ -542,7 +542,7 @@ func (s *testFlushSuite) TestFlushPrivilegesPanic(c *C) {
 	c.Assert(err, IsNil)
 	defer store.Close()
 
-	saveConf := config.GetGlobalConfig()
+	saveConf := config.GetGlobalConfig(context.Background())
 	conf := *saveConf
 	conf.Security.SkipGrantTable = true
 	config.StoreGlobalConfig(&conf)

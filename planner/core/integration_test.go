@@ -14,6 +14,7 @@
 package core_test
 
 import (
+	"context"
 	"fmt"
 
 	. "github.com/pingcap/check"
@@ -301,10 +302,11 @@ func (s *testIntegrationSerialSuite) TestNoneAccessPathsFoundByIsolationRead(c *
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash, tikv'")
 	tk.MustExec("select * from t")
-	config.GetGlobalConfig().IsolationRead.Engines = []string{"tiflash"}
-	defer func() { config.GetGlobalConfig().IsolationRead.Engines = []string{"tikv", "tiflash"} }()
+
+	cfg := config.NewConfig()
+	cfg.IsolationRead.Engines = []string{"tiflash"}
 	// Change instance config doesn't affect isolation read.
-	tk.MustExec("select * from t")
+	tk.MustExecWithCtx(config.WithGlobalConfig(context.Background(), cfg), "select * from t")
 }
 
 func (s *testIntegrationSerialSuite) TestSelPushDownTiFlash(c *C) {

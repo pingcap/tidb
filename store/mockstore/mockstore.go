@@ -14,6 +14,7 @@
 package mockstore
 
 import (
+	"context"
 	"net/url"
 	"strings"
 
@@ -41,7 +42,7 @@ func (d MockTiKVDriver) Open(path string) (kv.Storage, error) {
 	}
 
 	opts := []MockTiKVStoreOption{WithPath(u.Path), WithStoreType(MockTiKV)}
-	txnLocalLatches := config.GetGlobalConfig().TxnLocalLatches
+	txnLocalLatches := config.GetGlobalConfig(context.Background()).TxnLocalLatches
 	if txnLocalLatches.Enabled {
 		opts = append(opts, WithTxnLocalLatches(txnLocalLatches.Capacity))
 	}
@@ -63,7 +64,7 @@ func (d EmbedUnistoreDriver) Open(path string) (kv.Storage, error) {
 	}
 
 	opts := []MockTiKVStoreOption{WithPath(u.Path), WithStoreType(EmbedUnistore)}
-	txnLocalLatches := config.GetGlobalConfig().TxnLocalLatches
+	txnLocalLatches := config.GetGlobalConfig(context.Background()).TxnLocalLatches
 	if txnLocalLatches.Enabled {
 		opts = append(opts, WithTxnLocalLatches(txnLocalLatches.Capacity))
 	}

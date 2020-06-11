@@ -121,7 +121,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableConstraints:
 			e.setDataFromTableConstraints(sctx, dbs)
 		case infoschema.TableSessionVar:
-			err = e.setDataFromSessionVar(sctx)
+			err = e.setDataFromSessionVar(ctx, sctx)
 		case infoschema.TableTiDBServersInfo:
 			err = e.setDataForServersInfo()
 		case infoschema.TableTiFlashReplica:
@@ -1562,10 +1562,10 @@ func (e *tableStorageStatsRetriever) setDataForTableStorageStats(ctx sessionctx.
 	return rows, nil
 }
 
-func (e *memtableRetriever) setDataFromSessionVar(ctx sessionctx.Context) error {
+func (e *memtableRetriever) setDataFromSessionVar(ctx context.Context, sctx sessionctx.Context) error {
 	var rows [][]types.Datum
 	var err error
-	sessionVars := ctx.GetSessionVars()
+	sessionVars := sctx.GetSessionVars()
 	for _, v := range variable.SysVars {
 		var value string
 		value, err = variable.GetSessionSystemVar(sessionVars, v.Name)

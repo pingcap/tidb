@@ -548,7 +548,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 				return err
 			}
 		}
-	} else if config.GetGlobalConfig().Security.RequireSecureTransport {
+	} else if config.GetGlobalConfig(ctx).Security.RequireSecureTransport {
 		err := errSecureTransportRequired.FastGenByArgs()
 		terror.Log(err)
 		return err

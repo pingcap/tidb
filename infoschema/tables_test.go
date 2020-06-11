@@ -14,6 +14,7 @@
 package infoschema_test
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"math"
@@ -126,14 +127,14 @@ func (s *testClusterTableSuite) setUpRPCService(c *C, addr string) (*grpc.Server
 		Host:    "127.0.0.1",
 		Command: mysql.ComQuery,
 	}
-	srv := server.NewRPCServer(config.GetGlobalConfig(), s.dom, sm)
+	srv := server.NewRPCServer(config.GetGlobalConfig(context.Background()), s.dom, sm)
 	port := lis.Addr().(*net.TCPAddr).Port
 	addr = fmt.Sprintf("127.0.0.1:%d", port)
 	go func() {
 		err = srv.Serve(lis)
 		c.Assert(err, IsNil)
 	}()
-	cfg := config.GetGlobalConfig()
+	cfg := config.GetGlobalConfig(context.Background())
 	cfg.Status.StatusPort = uint(port)
 	config.StoreGlobalConfig(cfg)
 	return srv, addr

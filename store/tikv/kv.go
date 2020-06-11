@@ -53,7 +53,7 @@ type Driver struct {
 }
 
 func createEtcdKV(addrs []string, tlsConfig *tls.Config) (*clientv3.Client, error) {
-	cfg := config.GetGlobalConfig()
+	cfg := config.GetGlobalConfig(context.Background())
 	cli, err := clientv3.New(clientv3.Config{
 		Endpoints:            addrs,
 		AutoSyncInterval:     30 * time.Second,
@@ -75,9 +75,9 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 	mc.Lock()
 	defer mc.Unlock()
 
-	security := config.GetGlobalConfig().Security
-	tikvConfig := config.GetGlobalConfig().TiKVClient
-	txnLocalLatches := config.GetGlobalConfig().TxnLocalLatches
+	security := config.GetGlobalConfig(context.Background()).Security
+	tikvConfig := config.GetGlobalConfig(context.Background()).TiKVClient
+	txnLocalLatches := config.GetGlobalConfig(context.Background()).TxnLocalLatches
 	etcdAddrs, disableGC, err := config.ParsePath(path)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -115,7 +115,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 		return nil, errors.Trace(err)
 	}
 
-	coprCacheConfig := &config.GetGlobalConfig().TiKVClient.CoprCache
+	coprCacheConfig := &config.GetGlobalConfig(context.Background()).TiKVClient.CoprCache
 	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, spkv, newRPCClient(security), !disableGC, coprCacheConfig)
 	if err != nil {
 		return nil, errors.Trace(err)

@@ -84,12 +84,12 @@ func TestT(t *testing.T) {
 	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	autoid.SetStep(5000)
 
-	old := config.GetGlobalConfig()
+	old := config.GetGlobalConfig(context.Background())
 	new := *old
 	new.Log.SlowThreshold = 30000 // 30s
 	new.Experimental.AllowsExpressionIndex = true
 	config.StoreGlobalConfig(&new)
-	tmpDir := config.GetGlobalConfig().TempStoragePath
+	tmpDir := config.GetGlobalConfig(context.Background()).TempStoragePath
 	_ = os.RemoveAll(tmpDir) // clean the uncleared temp file during the last run.
 	_ = os.MkdirAll(tmpDir, 0755)
 	testleak.BeforeTest()
@@ -161,7 +161,7 @@ func (s *baseTestSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	d.SetStatsUpdating(true)
 	s.domain = d
-	originCfg := config.GetGlobalConfig()
+	originCfg := config.GetGlobalConfig(context.Background())
 	newConf := *originCfg
 	newConf.OOMAction = config.OOMActionLog
 	config.StoreGlobalConfig(&newConf)
@@ -4650,7 +4650,7 @@ func (s *testSuite) TestOOMPanicAction(c *C) {
 	}
 	tk.Se.SetSessionManager(sm)
 	s.domain.ExpensiveQueryHandle().SetSessionManager(sm)
-	orgAction := config.GetGlobalConfig().OOMAction
+	orgAction := config.GetGlobalConfig(context.Background()).OOMAction
 	setOOMAction(config.OOMActionCancel)
 	defer func() {
 		setOOMAction(orgAction)
@@ -4703,7 +4703,7 @@ func (s *testSuite) TestOOMPanicAction(c *C) {
 }
 
 func setOOMAction(action string) {
-	old := config.GetGlobalConfig()
+	old := config.GetGlobalConfig(context.Background())
 	newConf := *old
 	newConf.OOMAction = action
 	config.StoreGlobalConfig(&newConf)
@@ -5438,14 +5438,14 @@ func (s *testClusterTableSuite) setUpRPCService(c *C, addr string) (*grpc.Server
 	})
 	lis, err := net.Listen("tcp", addr)
 	c.Assert(err, IsNil)
-	srv := server.NewRPCServer(config.GetGlobalConfig(), s.dom, sm)
+	srv := server.NewRPCServer(config.GetGlobalConfig(context.Background()), s.dom, sm)
 	port := lis.Addr().(*net.TCPAddr).Port
 	addr = fmt.Sprintf("127.0.0.1:%d", port)
 	go func() {
 		err = srv.Serve(lis)
 		c.Assert(err, IsNil)
 	}()
-	cfg := config.GetGlobalConfig()
+	cfg := config.GetGlobalConfig(context.Background())
 	cfg.Status.StatusPort = uint(port)
 	config.StoreGlobalConfig(cfg)
 	return srv, addr

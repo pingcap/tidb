@@ -599,7 +599,7 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 
 // getServerInfo gets self tidb server information.
 func getServerInfo(id string) *ServerInfo {
-	cfg := config.GetGlobalConfig()
+	cfg := config.GetGlobalConfig(context.Background())
 	info := &ServerInfo{
 		ID:             id,
 		IP:             cfg.AdvertiseAddress,

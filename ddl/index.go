@@ -78,8 +78,9 @@ func buildIndexColumns(columns []*model.ColumnInfo, indexPartSpecifications []*a
 		sumLength += indexColumnLength
 
 		// The sum of all lengths must be shorter than the max length for prefix.
-		if sumLength > config.GetGlobalConfig().MaxIndexLength {
-			return nil, errTooLongKey.GenWithStackByArgs(config.GetGlobalConfig().MaxIndexLength)
+		maxIndexLengthConfig := config.GetGlobalConfig(context.Background()).MaxIndexLength
+		if sumLength > maxIndexLengthConfig {
+			return nil, errTooLongKey.GenWithStackByArgs(maxIndexLengthConfig)
 		}
 
 		idxParts = append(idxParts, &model.IndexColumn{
@@ -123,8 +124,9 @@ func checkIndexPrefixLength(columns []*model.ColumnInfo, idxColumns []*model.Ind
 		}
 		sumLength += indexColumnLength
 		// The sum of all lengths must be shorter than the max length for prefix.
-		if sumLength > config.GetGlobalConfig().MaxIndexLength {
-			return errTooLongKey.GenWithStackByArgs(config.GetGlobalConfig().MaxIndexLength)
+		maxIndexLengthConfig := config.GetGlobalConfig(context.Background()).MaxIndexLength
+		if sumLength > maxIndexLengthConfig {
+			return errTooLongKey.GenWithStackByArgs(maxIndexLengthConfig)
 		}
 	}
 	return nil
@@ -168,8 +170,9 @@ func checkIndexColumn(col *model.ColumnInfo, ic *ast.IndexPartSpecification) err
 	}
 
 	// Specified length must be shorter than the max length for prefix.
-	if ic.Length > config.GetGlobalConfig().MaxIndexLength {
-		return errTooLongKey.GenWithStackByArgs(config.GetGlobalConfig().MaxIndexLength)
+	maxIndexLength := config.GetGlobalConfig(context.Background()).MaxIndexLength
+	if ic.Length > maxIndexLength {
+		return errTooLongKey.GenWithStackByArgs(maxIndexLength)
 	}
 	return nil
 }

@@ -168,8 +168,8 @@ func main() {
 	registerStores()
 	registerMetrics()
 	config.InitializeConfig(*configPath, *configCheck, *configStrict, reloadConfig, overrideConfig)
-	if config.GetGlobalConfig().OOMUseTmpStorage {
-		config.GetGlobalConfig().UpdateTempStoragePath()
+	if config.GetGlobalConfig(context.Background()).OOMUseTmpStorage {
+		config.GetGlobalConfig(context.Background()).UpdateTempStoragePath()
 		initializeTempDir()
 		checkTempStorageQuota()
 	}
@@ -202,7 +202,7 @@ func syncLog() {
 }
 
 func initializeTempDir() {
-	tempDir := config.GetGlobalConfig().TempStoragePath
+	tempDir := config.GetGlobalConfig(context.Background()).TempStoragePath
 	lockFile := "_dir.lock"
 	_, err := os.Stat(tempDir)
 	if err != nil && !os.IsExist(err) {
@@ -239,7 +239,7 @@ func initializeTempDir() {
 
 func checkTempStorageQuota() {
 	// check capacity and the quota when OOMUseTmpStorage is enabled
-	c := config.GetGlobalConfig()
+	c := config.GetGlobalConfig(context.Background())
 	if c.TempStorageQuota < 0 {
 		// means unlimited, do nothing
 	} else {
@@ -277,7 +277,7 @@ func setCPUAffinity() {
 }
 
 func setHeapProfileTracker() {
-	c := config.GetGlobalConfig()
+	c := config.GetGlobalConfig(context.Background())
 	d := parseDuration(c.Performance.MemProfileInterval)
 	go profile.HeapProfileForGlobalMemTracker(d)
 }
@@ -297,7 +297,7 @@ func registerMetrics() {
 }
 
 func createStoreAndDomain() {
-	cfg := config.GetGlobalConfig()
+	cfg := config.GetGlobalConfig(context.Background())
 	fullPath := fmt.Sprintf("%s://%s", cfg.Store, cfg.Path)
 	var err error
 	storage, err = kvstore.New(fullPath)
@@ -308,7 +308,7 @@ func createStoreAndDomain() {
 }
 
 func setupBinlogClient() {
-	cfg := config.GetGlobalConfig()
+	cfg := config.GetGlobalConfig(context.Background())
 	if !cfg.Binlog.Enable {
 		return
 	}
@@ -373,7 +373,7 @@ func prometheusPushClient(addr string, interval time.Duration) {
 }
 
 func instanceName() string {
-	cfg := config.GetGlobalConfig()
+	cfg := config.GetGlobalConfig(context.Background())
 	hostname, err := os.Hostname()
 	if err != nil {
 		return "unknown"
@@ -405,7 +405,7 @@ func flagBoolean(name string, defaultVal bool, usage string) *bool {
 func reloadConfig(nc, c *config.Config) {
 	// Just a part of config items need to be reload explicitly.
 	// Some of them like OOMAction are always used by getting from global config directly
-	// like config.GetGlobalConfig().OOMAction.
+	// like config.GetGlobalConfig(context.Background()).OOMAction.
 	// These config items will become available naturally after the global config pointer
 	// is updated in function ReloadGlobalConfig.
 	if nc.Performance.MaxMemory != c.Performance.MaxMemory {
@@ -548,7 +548,7 @@ func overrideConfig(cfg *config.Config) {
 }
 
 func setGlobalVars() {
-	cfg := config.GetGlobalConfig()
+	cfg := config.GetGlobalConfig(context.Background())
 
 	// Disable automaxprocs log
 	nopLog := func(string, ...interface{}) {}
@@ -582,7 +582,7 @@ func setGlobalVars() {
 
 	variable.SysVars[variable.TIDBMemQuotaQuery].Value = strconv.FormatInt(cfg.MemQuotaQuery, 10)
 	variable.SysVars["lower_case_table_names"].Value = strconv.Itoa(cfg.LowerCaseTableNames)
-	variable.SysVars[variable.LogBin].Value = variable.BoolToIntStr(config.GetGlobalConfig().Binlog.Enable)
+	variable.SysVars[variable.LogBin].Value = variable.BoolToIntStr(config.GetGlobalConfig(context.Background()).Binlog.Enable)
 
 	variable.SysVars[variable.Port].Value = fmt.Sprintf("%d", cfg.Port)
 	variable.SysVars[variable.Socket].Value = cfg.Socket
@@ -610,7 +610,7 @@ func setGlobalVars() {
 	tikv.RegionCacheTTLSec = int64(cfg.TiKVClient.RegionCacheTTL)
 	domainutil.RepairInfo.SetRepairMode(cfg.RepairMode)
 	domainutil.RepairInfo.SetRepairTableList(cfg.RepairTableList)
-	c := config.GetGlobalConfig()
+	c := config.GetGlobalConfig(context.Background())
 	executor.GlobalDiskUsageTracker.SetBytesLimit(c.TempStorageQuota)
 	if c.Performance.MaxMemory < 1 {
 		// If MaxMemory equals 0, it means unlimited
@@ -622,7 +622,7 @@ func setGlobalVars() {
 }
 
 func setupLog() {
-	cfg := config.GetGlobalConfig()
+	cfg := config.GetGlobalConfig(context.Background())
 	err := logutil.InitZapLogger(cfg.Log.ToLogConfig())
 	terror.MustNil(err)
 
@@ -647,7 +647,7 @@ func printInfo() {
 }
 
 func createServer() {
-	cfg := config.GetGlobalConfig()
+	cfg := config.GetGlobalConfig(context.Background())
 	driver := server.NewTiDBDriver(storage)
 	var err error
 	svr, err = server.NewServer(cfg, driver)
@@ -666,7 +666,7 @@ func serverShutdown(isgraceful bool) {
 }
 
 func setupMetrics() {
-	cfg := config.GetGlobalConfig()
+	cfg := config.GetGlobalConfig(context.Background())
 	// Enable the mutex profile, 1/10 of mutex blocking event sampling.
 	runtime.SetMutexProfileFraction(10)
 	systimeErrHandler := func() {
@@ -687,7 +687,7 @@ func setupMetrics() {
 }
 
 func setupTracing() {
-	cfg := config.GetGlobalConfig()
+	cfg := config.GetGlobalConfig(context.Background())
 	tracingCfg := cfg.OpenTracing.ToTracingConfig()
 	tracingCfg.ServiceName = "TiDB"
 	tracer, _, err := tracingCfg.NewTracer()

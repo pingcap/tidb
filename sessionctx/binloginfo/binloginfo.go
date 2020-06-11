@@ -14,6 +14,7 @@
 package binloginfo
 
 import (
+	"context"
 	"math"
 	"regexp"
 	"strings"
@@ -203,7 +204,7 @@ func SetIgnoreError(on bool) {
 
 // GetStatus gets the status of binlog
 func GetStatus() BinlogStatus {
-	conf := config.GetGlobalConfig()
+	conf := config.GetGlobalConfig(context.Background())
 	if !conf.Binlog.Enable {
 		return BinlogStatusOff
 	}

@@ -14,6 +14,7 @@
 package core
 
 import (
+	"context"
 	"math"
 
 	"github.com/pingcap/parser/ast"
@@ -446,7 +447,7 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64) float64 {
 		build = p.children[1]
 	}
 	sessVars := p.ctx.GetSessionVars()
-	oomUseTmpStorage := config.GetGlobalConfig().OOMUseTmpStorage
+	oomUseTmpStorage := config.GetGlobalConfig(context.Background()).OOMUseTmpStorage
 	memQuota := sessVars.StmtCtx.MemTracker.GetBytesLimit() // sessVars.MemQuotaQuery && hint
 	rowSize := getAvgRowSize(build.statsInfo(), build.Schema())
 	spill := oomUseTmpStorage && memQuota > 0 && rowSize*buildCnt > float64(memQuota)
@@ -836,7 +837,7 @@ func (p *PhysicalSort) GetCost(count float64, schema *expression.Schema) float64
 	cpuCost := count * math.Log2(count) * sessVars.CPUFactor
 	memoryCost := count * sessVars.MemoryFactor
 
-	oomUseTmpStorage := config.GetGlobalConfig().OOMUseTmpStorage
+	oomUseTmpStorage := config.GetGlobalConfig(context.Background()).OOMUseTmpStorage
 	memQuota := sessVars.StmtCtx.MemTracker.GetBytesLimit() // sessVars.MemQuotaQuery && hint
 	rowSize := getAvgRowSize(p.statsInfo(), schema)
 	spill := oomUseTmpStorage && memQuota > 0 && rowSize*count > float64(memQuota)

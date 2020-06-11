@@ -1214,7 +1214,7 @@ func GetTiDBServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	}
 	var servers []ServerInfo
 	var isDefaultVersion bool
-	if len(config.GetGlobalConfig().ServerVersion) == 0 {
+	if len(config.GetGlobalConfig(context.Background()).ServerVersion) == 0 {
 		isDefaultVersion = true
 	}
 	for _, node := range tidbNodes {

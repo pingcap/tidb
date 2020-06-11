@@ -56,7 +56,7 @@ func (s *testSuiteJoin1) TestJoinPanic(c *C) {
 }
 
 func (s *testSuite) TestJoinInDisk(c *C) {
-	originCfg := config.GetGlobalConfig()
+	originCfg := config.GetGlobalConfig(context.Background())
 	newConf := *originCfg
 	newConf.OOMUseTmpStorage = true
 	config.StoreGlobalConfig(&newConf)

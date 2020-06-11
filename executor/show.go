@@ -144,7 +144,7 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowDatabases:
 		return e.fetchShowDatabases()
 	case ast.ShowDrainerStatus:
-		return e.fetchShowPumpOrDrainerStatus(node.DrainerNode)
+		return e.fetchShowPumpOrDrainerStatus(ctx, node.DrainerNode)
 	case ast.ShowEngines:
 		return e.fetchShowEngines()
 	case ast.ShowGrants:
@@ -154,7 +154,7 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowProcedureStatus:
 		return e.fetchShowProcedureStatus()
 	case ast.ShowPumpStatus:
-		return e.fetchShowPumpOrDrainerStatus(node.PumpNode)
+		return e.fetchShowPumpOrDrainerStatus(ctx, node.PumpNode)
 	case ast.ShowStatus:
 		return e.fetchShowStatus()
 	case ast.ShowTables:
@@ -166,7 +166,7 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowTriggers:
 		return e.fetchShowTriggers()
 	case ast.ShowVariables:
-		return e.fetchShowVariables()
+		return e.fetchShowVariables(ctx)
 	case ast.ShowWarnings:
 		return e.fetchShowWarnings(false)
 	case ast.ShowErrors:
@@ -641,7 +641,7 @@ func (e *ShowExec) fetchShowMasterStatus() error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowVariables() (err error) {
+func (e *ShowExec) fetchShowVariables(ctx context.Context) (err error) {
 	var (
 		value         string
 		ok            bool
@@ -1340,8 +1340,8 @@ func (e *ShowExec) fetchShowWarnings(errOnly bool) error {
 }
 
 // fetchShowPumpOrDrainerStatus gets status of all pumps or drainers and fill them into e.rows.
-func (e *ShowExec) fetchShowPumpOrDrainerStatus(kind string) error {
-	registry, err := createRegistry(config.GetGlobalConfig().Path)
+func (e *ShowExec) fetchShowPumpOrDrainerStatus(ctx context.Context, kind string) error {
+	registry, err := createRegistry(config.GetGlobalConfig(ctx).Path)
 	if err != nil {
 		return errors.Trace(err)
 	}

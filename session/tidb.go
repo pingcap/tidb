@@ -244,7 +244,7 @@ func checkStmtLimit(ctx context.Context, se *session) error {
 	var err error
 	sessVars := se.GetSessionVars()
 	history := GetHistory(se)
-	if history.Count() > int(config.GetGlobalConfig().Performance.StmtCountLimit) {
+	if history.Count() > int(config.GetGlobalConfig(ctx).Performance.StmtCountLimit) {
 		if !sessVars.BatchCommit {
 			se.RollbackTxn(ctx)
 			return errors.Errorf("statement count %d exceeds the transaction limitation, autocommit = %t",

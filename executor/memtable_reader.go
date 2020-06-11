@@ -354,7 +354,7 @@ func serverInfoItemToRows(items []*diagnosticspb.ServerInfoItem, tp, addr string
 
 func getServerInfoByGRPC(ctx context.Context, address string, tp diagnosticspb.ServerInfoType) ([]*diagnosticspb.ServerInfoItem, error) {
 	opt := grpc.WithInsecure()
-	security := config.GetGlobalConfig().Security
+	security := config.GetGlobalConfig(ctx).Security
 	if len(security.ClusterSSLCA) != 0 {
 		tlsConfig, err := security.ToTLSConfig()
 		if err != nil {
@@ -518,7 +518,7 @@ func (e *clusterLogRetriever) startRetrieving(
 	req *diagnosticspb.SearchLogRequest) ([]chan logStreamResult, error) {
 	// gRPC options
 	opt := grpc.WithInsecure()
-	security := config.GetGlobalConfig().Security
+	security := config.GetGlobalConfig(ctx).Security
 	if len(security.ClusterSSLCA) != 0 {
 		tlsConfig, err := security.ToTLSConfig()
 		if err != nil {

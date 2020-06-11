@@ -163,7 +163,7 @@ func (s *testSessionSuiteBase) SetUpSuite(c *C) {
 		initPdAddrs()
 		s.pdAddr = <-pdAddrChan
 		var d tikv.Driver
-		config.GetGlobalConfig().TxnLocalLatches.Enabled = false
+		config.GetGlobalConfig(context.Background()).TxnLocalLatches.Enabled = false
 		store, err := d.Open(fmt.Sprintf("tikv://%s", s.pdAddr))
 		c.Assert(err, IsNil)
 		err = clearStorage(store)
@@ -2452,10 +2452,10 @@ func (s *testSessionSuite2) TestStatementErrorInTransaction(c *C) {
 func (s *testSessionSerialSuite) TestStatementCountLimit(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table stmt_count_limit (id int)")
-	saved := config.GetGlobalConfig().Performance.StmtCountLimit
-	config.GetGlobalConfig().Performance.StmtCountLimit = 3
+	saved := config.GetGlobalConfig(context.Background()).Performance.StmtCountLimit
+	config.GetGlobalConfig(context.Background()).Performance.StmtCountLimit = 3
 	defer func() {
-		config.GetGlobalConfig().Performance.StmtCountLimit = saved
+		config.GetGlobalConfig(context.Background()).Performance.StmtCountLimit = saved
 	}()
 	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
 	tk.MustExec("begin")
@@ -2478,10 +2478,10 @@ func (s *testSessionSerialSuite) TestBatchCommit(c *C) {
 	tk.MustExec("set tidb_batch_commit = 1")
 	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
 	tk.MustExec("create table t (id int)")
-	saved := config.GetGlobalConfig().Performance
-	config.GetGlobalConfig().Performance.StmtCountLimit = 3
+	saved := config.GetGlobalConfig(context.Background()).Performance
+	config.GetGlobalConfig(context.Background()).Performance.StmtCountLimit = 3
 	defer func() {
-		config.GetGlobalConfig().Performance = saved
+		config.GetGlobalConfig(context.Background()).Performance = saved
 	}()
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("SET SESSION autocommit = 1")
@@ -2765,7 +2765,7 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 
 	// test for disable transaction local latch
 	tk1.Se.GetSessionVars().InRestrictedSQL = false
-	orgCfg := config.GetGlobalConfig()
+	orgCfg := config.GetGlobalConfig(context.Background())
 	disableLatchCfg := *orgCfg
 	disableLatchCfg.TxnLocalLatches.Enabled = false
 	config.StoreGlobalConfig(&disableLatchCfg)

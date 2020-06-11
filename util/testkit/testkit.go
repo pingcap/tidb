@@ -139,13 +139,17 @@ func (tk *TestKit) GetConnectionID() {
 
 // Exec executes a sql statement.
 func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, error) {
+	return tk.ExecWithCtx(context.Background(), sql, args)
+}
+
+// ExecWithCtx executes a sql statement.
+func (tk *TestKit) ExecWithCtx(ctx context.Context, sql string, args ...interface{}) (sqlexec.RecordSet, error) {
 	var err error
 	if tk.Se == nil {
 		tk.Se, err = session.CreateSession4Test(tk.store)
 		tk.c.Assert(err, check.IsNil)
 		tk.GetConnectionID()
 	}
-	ctx := context.Background()
 	if len(args) == 0 {
 		sc := tk.Se.GetSessionVars().StmtCtx
 		prevWarns := sc.GetWarnings()
@@ -203,7 +207,12 @@ func (tk *TestKit) CheckLastMessage(msg string) {
 
 // MustExec executes a sql statement and asserts nil error.
 func (tk *TestKit) MustExec(sql string, args ...interface{}) {
-	res, err := tk.Exec(sql, args...)
+	tk.MustExecWithCtx(context.Background(), sql, args)
+}
+
+// MustExecWithCtx executes a sql statement and asserts nil error.
+func (tk *TestKit) MustExecWithCtx(ctx context.Context, sql string, args ...interface{}) {
+	res, err := tk.ExecWithCtx(ctx, sql, args...)
 	tk.c.Assert(err, check.IsNil, check.Commentf("sql:%s, %v, error stack %v", sql, args, errors.ErrorStack(err)))
 	if res != nil {
 		tk.c.Assert(res.Close(), check.IsNil)

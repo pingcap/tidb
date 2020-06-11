@@ -195,7 +195,7 @@ func (do *Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, 
 			return
 		}
 		// If TreatOldVersionUTF8AsUTF8MB4 was enable, need to convert the old version schema UTF8 charset to UTF8MB4.
-		if config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 {
+		if config.GetGlobalConfig(context.Background()).TreatOldVersionUTF8AsUTF8MB4 {
 			for _, tbInfo := range tables {
 				infoschema.ConvertOldVersionUTF8ToUTF8MB4IfNeed(tbInfo)
 			}
@@ -661,7 +661,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	perfschema.Init()
 	if ebd, ok := do.store.(tikv.EtcdBackend); ok {
 		if addrs := ebd.EtcdAddrs(); addrs != nil {
-			cfg := config.GetGlobalConfig()
+			cfg := config.GetGlobalConfig(context.Background())
 			// silence etcd warn log, when domain closed, it won't randomly print warn log
 			// see details at the issue https://github.com/pingcap/tidb/issues/15479
 			etcdLogCfg := zap.NewProductionConfig()

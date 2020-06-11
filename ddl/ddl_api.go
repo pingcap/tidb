@@ -193,7 +193,7 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, schema model.CIStr) (err error)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if !config.TableLockEnabled() {
+	if !config.TableLockEnabled(context.Background()) {
 		return nil
 	}
 	// Clear table locks hold by the session.
@@ -1265,7 +1265,7 @@ func buildTableInfo(
 			if err != nil {
 				return nil, err
 			}
-			if !config.GetGlobalConfig().AlterPrimaryKey {
+			if !config.GetGlobalConfig(context.Background()).AlterPrimaryKey {
 				singleIntPK := isSingleIntPK(constr, lastCol)
 				clusteredIdx := ctx.GetSessionVars().EnableClusteredIndex
 				if singleIntPK || clusteredIdx {
@@ -4017,7 +4017,7 @@ func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if !config.TableLockEnabled() {
+	if !config.TableLockEnabled(context.Background()) {
 		return nil
 	}
 	if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok {
@@ -4071,7 +4071,7 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{newTableID},
 	}
-	if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok && config.TableLockEnabled() {
+	if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok && config.TableLockEnabled(context.Background()) {
 		// AddTableLock here to avoid this ddl job was executed successfully but the session was been kill before return.
 		// The session will release all table locks it holds, if we don't add the new locking table id here,
 		// the session may forget to release the new locked table id when this ddl job was executed successfully
@@ -4081,7 +4081,7 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	if err != nil {
-		if config.TableLockEnabled() {
+		if config.TableLockEnabled(context.Background()) {
 			ctx.ReleaseTableLockByTableIDs([]int64{newTableID})
 		}
 		return errors.Trace(err)
@@ -4093,7 +4093,7 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		}
 	}
 
-	if !config.TableLockEnabled() {
+	if !config.TableLockEnabled(context.Background()) {
 		return nil
 	}
 	if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok {
@@ -4177,7 +4177,7 @@ func getAnonymousIndex(t table.Table, colName model.CIStr) model.CIStr {
 
 func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName model.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption) error {
-	if !config.GetGlobalConfig().AlterPrimaryKey {
+	if !config.GetGlobalConfig(context.Background()).AlterPrimaryKey {
 		return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported add primary key, alter-primary-key is false")
 	}
 
@@ -4355,7 +4355,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	if err != nil {
 		return err
 	}
-	if len(hiddenCols) > 0 && !config.GetGlobalConfig().Experimental.AllowsExpressionIndex {
+	if len(hiddenCols) > 0 && !config.GetGlobalConfig(context.Background()).Experimental.AllowsExpressionIndex {
 		return ErrUnsupportedExpressionIndex
 	}
 	if err = checkAddColumnTooManyColumns(len(t.Cols()) + len(hiddenCols)); err != nil {
@@ -4551,7 +4551,7 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 		isPK = true
 	}
 	if isPK {
-		if !config.GetGlobalConfig().AlterPrimaryKey {
+		if !config.GetGlobalConfig(context.Background()).AlterPrimaryKey {
 			return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported drop primary key when alter-primary-key is false")
 
 		}

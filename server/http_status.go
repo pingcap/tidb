@@ -123,7 +123,7 @@ func (s *Server) startHTTPServer() {
 
 	// HTTP path for get the TiDB config
 	router.Handle("/config", fn.Wrap(func() (*config.Config, error) {
-		return config.GetGlobalConfig(), nil
+		return config.GetGlobalConfig(context.Background()), nil
 	}))
 
 	// HTTP path for get server info.
@@ -234,7 +234,7 @@ func (s *Server) startHTTPServer() {
 			serveError(w, http.StatusInternalServerError, fmt.Sprintf("Create zipped %s fail: %v", "config", err))
 			return
 		}
-		js, err := json.MarshalIndent(config.GetGlobalConfig(), "", " ")
+		js, err := json.MarshalIndent(config.GetGlobalConfig(context.Background()), "", " ")
 		if err != nil {
 			serveError(w, http.StatusInternalServerError, fmt.Sprintf("get config info fail%v", err))
 			return

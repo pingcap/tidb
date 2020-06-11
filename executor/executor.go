@@ -1570,10 +1570,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		TaskID:      stmtctx.AllocateTaskID(),
 	}
 	sc.MemTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
-	if config.GetGlobalConfig().OOMUseTmpStorage && GlobalDiskUsageTracker != nil {
+	if config.GetGlobalConfig(context.Background()).OOMUseTmpStorage && GlobalDiskUsageTracker != nil {
 		sc.DiskTracker.AttachToGlobalTracker(GlobalDiskUsageTracker)
 	}
-	switch config.GetGlobalConfig().OOMAction {
+	switch config.GetGlobalConfig(context.Background()).OOMAction {
 	case config.OOMActionCancel:
 		action := &memory.PanicOnExceed{ConnID: ctx.GetSessionVars().ConnectionID}
 		action.SetLogHook(domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)

@@ -206,7 +206,7 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 		return err
 	}
 	sessVars := e.ctx.GetSessionVars()
-	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && config.GetGlobalConfig().EnableBatchDML
+	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && config.GetGlobalConfig(ctx).EnableBatchDML
 	batchSize := sessVars.DMLBatchSize
 
 	e.lazyFillAutoID = true
@@ -404,7 +404,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 		// If StrictSQLMode is disabled and it is a insert-select statement, it also handle BadNullAsWarning.
 		sessVars.StmtCtx.BadNullAsWarning = true
 	}
-	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && config.GetGlobalConfig().EnableBatchDML
+	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && config.GetGlobalConfig(ctx).EnableBatchDML
 	batchSize := sessVars.DMLBatchSize
 	memUsageOfRows := int64(0)
 	memTracker := e.memTracker

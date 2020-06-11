@@ -431,7 +431,7 @@ func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
 		store.Close()
 	}()
 
-	cfg := config.GetGlobalConfig()
+	cfg := config.GetGlobalConfig(context.Background())
 	orgEnable := cfg.PreparedPlanCache.Enabled
 	orgCapacity := cfg.PreparedPlanCache.Capacity
 	flags := []bool{false, true}

@@ -179,7 +179,7 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		},
 	}
 
-	tidbCfg := config.GetGlobalConfig()
+	tidbCfg := config.GetGlobalConfig(context.Background())
 	if tidbCfg.Store != "tikv" {
 		b.err = errors.Errorf("%s requires tikv store, not %s", s.Kind, tidbCfg.Store)
 		return nil

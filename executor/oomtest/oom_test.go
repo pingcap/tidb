@@ -16,6 +16,7 @@
 package oomtest
 
 import (
+	"context"
 	"os"
 	"strings"
 	"sync"
@@ -50,7 +51,7 @@ func (s *testOOMSuite) SetUpSuite(c *C) {
 	domain.RunAutoAnalyze = false
 	s.do, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
-	originCfg := config.GetGlobalConfig()
+	originCfg := config.GetGlobalConfig(context.Background())
 	newConf := *originCfg
 	newConf.OOMAction = config.OOMActionLog
 	config.StoreGlobalConfig(&newConf)

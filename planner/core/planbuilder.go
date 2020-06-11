@@ -2487,7 +2487,7 @@ func (b *PlanBuilder) buildSplitIndexRegion(node *ast.SplitRegionStmt) (Plan, er
 	p.Lower = lowerValues
 	p.Upper = upperValues
 
-	maxSplitRegionNum := int64(config.GetGlobalConfig().SplitRegionMaxNum)
+	maxSplitRegionNum := int64(config.GetGlobalConfig(context.Background()).SplitRegionMaxNum)
 	if node.SplitOpt.Num > maxSplitRegionNum {
 		return nil, errors.Errorf("Split index region num exceeded the limit %v", maxSplitRegionNum)
 	} else if node.SplitOpt.Num < 1 {
@@ -2600,7 +2600,7 @@ func (b *PlanBuilder) buildSplitTableRegion(node *ast.SplitRegionStmt) (Plan, er
 	p.Lower = []types.Datum{lowerValues}
 	p.Upper = []types.Datum{upperValue}
 
-	maxSplitRegionNum := int64(config.GetGlobalConfig().SplitRegionMaxNum)
+	maxSplitRegionNum := int64(config.GetGlobalConfig(context.Background()).SplitRegionMaxNum)
 	if node.SplitOpt.Num > maxSplitRegionNum {
 		return nil, errors.Errorf("Split table region num exceeded the limit %v", maxSplitRegionNum)
 	} else if node.SplitOpt.Num < 1 {

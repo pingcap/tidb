@@ -14,6 +14,7 @@
 package stmtsummary
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -138,7 +139,7 @@ func getIntFinalVariable(varType int, sessionValue, globalValue string, minValue
 
 func getConfigValue(varType int) int64 {
 	var valueInt int64
-	stmtSummaryConfig := config.GetGlobalConfig().StmtSummary
+	stmtSummaryConfig := config.GetGlobalConfig(context.Background()).StmtSummary
 	switch varType {
 	case typeEnable:
 		if stmtSummaryConfig.Enable {

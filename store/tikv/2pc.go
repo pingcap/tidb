@@ -624,8 +624,9 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 	// If the rate limit is too high, tikv will report service is busy.
 	// If the rate limit is too low, we can't full utilize the tikv's throughput.
 	// TODO: Find a self-adaptive way to control the rate limit here.
-	if rateLim > config.GetGlobalConfig().Performance.CommitterConcurrency {
-		rateLim = config.GetGlobalConfig().Performance.CommitterConcurrency
+	rateLimitConfig := config.GetGlobalConfig(bo.ctx).Performance.CommitterConcurrency
+	if rateLim > rateLimitConfig {
+		rateLim = rateLimitConfig
 	}
 	batchExecutor := newBatchExecutor(rateLim, c, action, bo)
 	err := batchExecutor.process(batches)
@@ -811,13 +812,13 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 			}
 
 			uptime := uint64(oracle.ExtractPhysical(now) - oracle.ExtractPhysical(c.startTS))
-			if uptime > config.GetGlobalConfig().Performance.MaxTxnTTL {
+			if uptime > config.GetGlobalConfig(context.Background()).Performance.MaxTxnTTL {
 				// Checks maximum lifetime for the ttlManager, so when something goes wrong
 				// the key will not be locked forever.
 				logutil.Logger(bo.ctx).Info("ttlManager live up to its lifetime",
 					zap.Uint64("txnStartTS", c.startTS),
 					zap.Uint64("uptime", uptime),
-					zap.Uint64("maxTxnTTL", config.GetGlobalConfig().Performance.MaxTxnTTL))
+					zap.Uint64("maxTxnTTL", config.GetGlobalConfig(context.Background()).Performance.MaxTxnTTL))
 				metrics.TiKVTTLLifeTimeReachCounter.Inc()
 				// the pessimistic locks may expire if the ttl manager has timed out, set `LockExpired` flag
 				// so that this transaction could only commit or rollback with no more statement executions

@@ -623,7 +623,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 		}
 		return nil, err
 	}
-	if a.retryCount >= config.GetGlobalConfig().PessimisticTxn.MaxRetryCount {
+	if a.retryCount >= config.GetGlobalConfig(ctx).PessimisticTxn.MaxRetryCount {
 		return nil, errors.New("pessimistic lock retry limit reached")
 	}
 	a.retryCount++
@@ -755,7 +755,7 @@ func (a *ExecStmt) logAudit() {
 // FormatSQL is used to format the original SQL, e.g. truncating long SQL, appending prepared arguments.
 func FormatSQL(sql string, pps variable.PreparedParams) stringutil.StringerFunc {
 	return func() string {
-		cfg := config.GetGlobalConfig()
+		cfg := config.GetGlobalConfig(context.Background())
 		length := len(sql)
 		if maxQueryLen := atomic.LoadUint64(&cfg.Log.QueryLogMaxLen); uint64(length) > maxQueryLen {
 			sql = fmt.Sprintf("%.*q(len:%d)", maxQueryLen, sql, length)
@@ -808,7 +808,7 @@ func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
 func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	sessVars := a.Ctx.GetSessionVars()
 	level := log.GetLevel()
-	cfg := config.GetGlobalConfig()
+	cfg := config.GetGlobalConfig(context.Background())
 	costTime := time.Since(sessVars.StartTime) + sessVars.DurationParse
 	threshold := time.Duration(cfg.Log.SlowThreshold) * time.Millisecond
 	enable := cfg.Log.EnableSlowLog
@@ -894,7 +894,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 
 // getPlanTree will try to get the select plan tree if the plan is select or the select plan of delete/update/insert statement.
 func getPlanTree(p plannercore.Plan) string {
-	cfg := config.GetGlobalConfig()
+	cfg := config.GetGlobalConfig(context.Background())
 	if atomic.LoadUint32(&cfg.Log.RecordPlanInSlowLog) == 0 {
 		return ""
 	}

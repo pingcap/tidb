@@ -33,7 +33,7 @@ type ChangeExec struct {
 // Next implements the Executor Next interface.
 func (e *ChangeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	kind := strings.ToLower(e.NodeType)
-	urls := config.GetGlobalConfig().Path
+	urls := config.GetGlobalConfig(ctx).Path
 	registry, err := createRegistry(urls)
 	if err != nil {
 		return err

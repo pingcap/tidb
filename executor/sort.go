@@ -243,7 +243,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 	e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
 	var onExceededCallback func(rowContainer *chunk.RowContainer)
-	if config.GetGlobalConfig().OOMUseTmpStorage {
+	if config.GetGlobalConfig(ctx).OOMUseTmpStorage {
 		e.spillAction = e.rowChunks.ActionSpill()
 		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(e.spillAction)
 		onExceededCallback = func(rowContainer *chunk.RowContainer) {

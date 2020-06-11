@@ -108,7 +108,7 @@ func needLowerPriority(p plannercore.Plan) bool {
 }
 
 func isPhysicalPlanNeedLowerPriority(p plannercore.PhysicalPlan) bool {
-	expensiveThreshold := int64(config.GetGlobalConfig().Log.ExpensiveThreshold)
+	expensiveThreshold := int64(config.GetGlobalConfig(context.Background()).Log.ExpensiveThreshold)
 	if int64(p.StatsCount()) > expensiveThreshold {
 		return true
 	}
@@ -154,7 +154,7 @@ func CountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool) {
 		metrics.StmtNodeCounter.WithLabelValues(typeLabel).Inc()
 	}
 
-	if !config.GetGlobalConfig().Status.RecordQPSbyDB {
+	if !config.GetGlobalConfig(context.Background()).Status.RecordQPSbyDB {
 		return
 	}
 
