@@ -207,12 +207,6 @@ func (p *PhysicalApply) GetCost(lCount, rCount, lCost, rCost float64) float64 {
 	return cpuCost + lCost + lCount*rCost
 }
 
-func (p *PhysicalWindow) attach2Task(tasks ...task) task {
-	t := finishCopTask(p.ctx, tasks[0].copy())
-	t = attachPlan2Task(p, t)
-	return t
-}
-
 func (p *PhysicalIndexMergeJoin) attach2Task(tasks ...task) task {
 	innerTask := p.innerTask
 	outerTask := finishCopTask(p.ctx, tasks[1-p.InnerChildIdx].copy())
