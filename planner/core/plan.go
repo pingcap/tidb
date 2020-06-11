@@ -298,15 +298,15 @@ func (p *basePhysicalPlan) ExtractCorrelatedCols() []*expression.CorrelatedColum
 	return nil
 }
 
-var BakTimeStamp int64 = 0
+var bakTimeStamp int64 = 0
 
-func ClearBakTimeStamp() {
-	BakTimeStamp = 0
+func clearBakTimeStamp() {
+	bakTimeStamp = 0
 }
 
 func (p *baseLogicalPlan) GetBakTimeStamp() int64 {
-	BakTimeStamp++
-	return BakTimeStamp
+	bakTimeStamp++
+	return bakTimeStamp
 }
 
 func (p *baseLogicalPlan) enableBak() {
