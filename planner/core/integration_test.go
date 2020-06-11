@@ -408,3 +408,142 @@ func (s *testIntegrationSuite) TestTableDualWithRequiredProperty(c *C) {
 	tk.MustExec("create table t2 (a int, b int)")
 	tk.MustExec("select /*+ MERGE_JOIN(t1, t2) */ * from t1 partition (p0), t2  where t1.a > 100 and t1.a = t2.a")
 }
+<<<<<<< HEAD
+=======
+
+func (s *testIntegrationSerialSuite) TestIssue16837(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int,b int,c int,d int,e int,unique key idx_ab(a,b),unique key(c),unique key(d))")
+	tk.MustQuery("explain select /*+ use_index_merge(t,c,idx_ab) */ * from t where a = 1 or (e = 1 and c = 1)").Check(testkit.Rows(
+		"TableReader_7 8000.00 root  data:Selection_6",
+		"└─Selection_6 8000.00 cop[tikv]  or(eq(test.t.a, 1), and(eq(test.t.e, 1), eq(test.t.c, 1)))",
+		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 IndexMerge is inapplicable or disabled"))
+	tk.MustExec("insert into t values (2, 1, 1, 1, 2)")
+	tk.MustQuery("select /*+ use_index_merge(t,c,idx_ab) */ * from t where a = 1 or (e = 1 and c = 1)").Check(testkit.Rows())
+}
+
+func (s *testIntegrationSuite) TestStreamAggProp(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1),(1),(2)")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Res  []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
+			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Res...))
+	}
+}
+
+func (s *testIntegrationSuite) TestSelectLimit(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1),(1),(2)")
+
+	// normal test
+	tk.MustExec("set @@session.sql_select_limit=1")
+	result := tk.MustQuery("select * from t order by a")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select * from t order by a limit 2")
+	result.Check(testkit.Rows("1", "1"))
+	tk.MustExec("set @@session.sql_select_limit=default")
+	result = tk.MustQuery("select * from t order by a")
+	result.Check(testkit.Rows("1", "1", "2"))
+
+	// test for subquery
+	tk.MustExec("set @@session.sql_select_limit=1")
+	result = tk.MustQuery("select * from (select * from t) s order by a")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select * from (select * from t limit 2) s order by a") // limit write in subquery, has no effect.
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select (select * from t limit 1) s") // limit write in subquery, has no effect.
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select * from t where t.a in (select * from t) limit 3") // select_limit will not effect subquery
+	result.Check(testkit.Rows("1", "1", "2"))
+	result = tk.MustQuery("select * from (select * from t) s limit 3") // select_limit will not effect subquery
+	result.Check(testkit.Rows("1", "1", "2"))
+
+	// test for union
+	result = tk.MustQuery("select * from t union all select * from t limit 2") // limit outside subquery
+	result.Check(testkit.Rows("1", "1"))
+	result = tk.MustQuery("select * from t union all (select * from t limit 2)") // limit inside subquery
+	result.Check(testkit.Rows("1"))
+
+	// test for prepare & execute
+	tk.MustExec("prepare s1 from 'select * from t where a = ?'")
+	tk.MustExec("set @a = 1")
+	result = tk.MustQuery("execute s1 using @a")
+	result.Check(testkit.Rows("1"))
+	tk.MustExec("set @@session.sql_select_limit=default")
+	result = tk.MustQuery("execute s1 using @a")
+	result.Check(testkit.Rows("1", "1"))
+	tk.MustExec("set @@session.sql_select_limit=1")
+	tk.MustExec("prepare s2 from 'select * from t where a = ? limit 3'")
+	result = tk.MustQuery("execute s2 using @a") // if prepare stmt has limit, select_limit takes no effect.
+	result.Check(testkit.Rows("1", "1"))
+
+	// test for create view
+	tk.MustExec("set @@session.sql_select_limit=1")
+	tk.MustExec("create definer='root'@'localhost' view s as select * from t") // select limit should not effect create view
+	result = tk.MustQuery("select * from s")
+	result.Check(testkit.Rows("1"))
+	tk.MustExec("set @@session.sql_select_limit=default")
+	result = tk.MustQuery("select * from s")
+	result.Check(testkit.Rows("1", "1", "2"))
+
+	// test for DML
+	tk.MustExec("set @@session.sql_select_limit=1")
+	tk.MustExec("create table b (a int)")
+	tk.MustExec("insert into b select * from t") // all values are inserted
+	result = tk.MustQuery("select * from b limit 3")
+	result.Check(testkit.Rows("1", "1", "2"))
+	tk.MustExec("update b set a = 2 where a = 1") // all values are updated
+	result = tk.MustQuery("select * from b limit 3")
+	result.Check(testkit.Rows("2", "2", "2"))
+	result = tk.MustQuery("select * from b")
+	result.Check(testkit.Rows("2"))
+	tk.MustExec("delete from b where a = 2") // all values are deleted
+	result = tk.MustQuery("select * from b")
+	result.Check(testkit.Rows())
+}
+
+func (s *testIntegrationSuite) TestHintParserWarnings(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b int, key(a), key(b));")
+	tk.MustExec("select /*+ use_index_merge() */ * from t where a = 1 or b = 1;")
+	rows := tk.MustQuery("show warnings;").Rows()
+	c.Assert(len(rows), Equals, 1)
+}
+
+func (s *testIntegrationSuite) TestIssue16935(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0;")
+	tk.MustExec("CREATE TABLE t0(c0 INT);")
+	tk.MustExec("INSERT INTO t0(c0) VALUES (1), (1), (1), (1), (1), (1);")
+	tk.MustExec("CREATE definer='root'@'localhost' VIEW v0(c0) AS SELECT NULL FROM t0;")
+
+	tk.MustQuery("SELECT * FROM t0 LEFT JOIN v0 ON TRUE WHERE v0.c0 IS NULL;")
+}
+>>>>>>> a689df0... planner, util: new unfixed mutrow for TypeNull (#17893)
