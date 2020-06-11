@@ -1087,7 +1087,7 @@ func (c *RegionCache) OnRegionEpochNotMatch(bo *Backoffer, ctx *RPCContext, curr
 		region.init(c)
 		var initLeader uint64
 		if ctx.Store.storeType == kv.TiFlash {
-			initLeader = region.findElectableStoreIndex()
+			initLeader = region.findElectableStoreID()
 		} else {
 			initLeader = ctx.Store.storeID
 		}
@@ -1254,13 +1254,13 @@ func (r *RegionStore) switchNextPeer(rr *Region, currentPeerIdx int) {
 	rr.compareAndSwapStore(r, newRegionStore)
 }
 
-func (r *Region) findElectableStoreIndex() uint64 {
+func (r *Region) findElectableStoreID() uint64 {
 	if len(r.meta.Peers) == 0 {
 		return 0
 	}
-	for i, p := range r.meta.Peers {
+	for _, p := range r.meta.Peers {
 		if !p.IsLearner {
-			return uint64(i)
+			return p.StoreId
 		}
 	}
 	return 0
