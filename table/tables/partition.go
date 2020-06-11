@@ -202,11 +202,14 @@ func fixOldVersionPartitionInfo(sctx sessionctx.Context, str string) (int64, boo
 	// less than value should be calculate to integer before persistent.
 	// Old version TiDB may not do it and store the raw expression.
 	tmp, err := parseSimpleExprWithNames(parser.New(), sctx, str, nil, nil)
-	ret, isNull, err := tmp.EvalInt(sctx, chunk.Row{})
-	if err == nil && !isNull {
-		return ret, true
+	if err != nil {
+		return 0, false
 	}
-	return ret, false
+	ret, isNull, err := tmp.EvalInt(sctx, chunk.Row{})
+	if err != nil || isNull {
+		return 0, false
+	}
+	return ret, true
 }
 
 // rangePartitionString returns the partition string for a range typed partition.
