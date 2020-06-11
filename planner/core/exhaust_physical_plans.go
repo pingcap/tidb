@@ -580,7 +580,7 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 	outerIdx int, us *LogicalUnionScan, avgInnerRowCnt float64) (joins []PhysicalPlan) {
 	var tblPath *util.AccessPath
 	for _, path := range ds.possibleAccessPaths {
-		if path.IsTablePath && path.StoreType == kv.TiKV {
+		if path.IsTablePath() && path.StoreType == kv.TiKV {
 			tblPath = path
 			break
 		}
@@ -636,7 +636,7 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 	outerIdx int, us *LogicalUnionScan, avgInnerRowCnt float64) (joins []PhysicalPlan) {
 	helper := &indexJoinBuildHelper{join: p}
 	for _, path := range ds.possibleAccessPaths {
-		if path.IsTablePath {
+		if path.IsTablePath() {
 			continue
 		}
 		emptyRange, err := helper.analyzeLookUpFilters(path, ds, innerJoinKeys)

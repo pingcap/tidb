@@ -1394,7 +1394,7 @@ func byItemsToProperty(byItems []*util.ByItems) *property.PhysicalProperty {
 func pathsName(paths []*candidatePath) string {
 	var names []string
 	for _, path := range paths {
-		if path.path.IsTablePath {
+		if path.path.IsTablePath() {
 			names = append(names, "PRIMARY_KEY")
 		} else {
 			names = append(names, path.path.Index.Name.O)
