@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"math"
 	"sort"
 	"strings"
 	"sync"
@@ -1490,11 +1489,9 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 	}
 	tb, _ := b.is.TableByID(v.Table.ID)
 	return &TableScanExec{
-		baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
-		t:              tb,
-		columns:        v.Columns,
-		seekHandle:     kv.IntHandle(math.MinInt64),
-		isVirtualTable: !tb.Type().IsNormalTable(),
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		t:            tb,
+		columns:      v.Columns,
 	}
 }
 
@@ -1530,6 +1527,18 @@ func (b *executorBuilder) buildTopN(v *plannercore.PhysicalTopN) Executor {
 }
 
 func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) *NestedLoopApplyExec {
+	var (
+		innerPlan plannercore.PhysicalPlan
+		outerPlan plannercore.PhysicalPlan
+	)
+	if v.InnerChildIdx == 0 {
+		innerPlan = v.Children()[0]
+		outerPlan = v.Children()[1]
+	} else {
+		innerPlan = v.Children()[1]
+		outerPlan = v.Children()[0]
+	}
+	v.OuterSchema = plannercore.ExtractCorColumnsBySchema4PhysicalPlan(innerPlan, outerPlan.Schema())
 	leftChild := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
