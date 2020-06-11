@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/pd/v4/client"
+	pd "github.com/pingcap/pd/v4/client"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
@@ -175,8 +175,8 @@ func main() {
 	}
 	setGlobalVars()
 	setCPUAffinity()
-	setHeapProfileTracker()
 	setupLog()
+	setHeapProfileTracker()
 	setupTracing() // Should before createServer and after setup config.
 	printInfo()
 	setupBinlogClient()
@@ -286,7 +286,9 @@ func registerStores() {
 	err := kvstore.Register("tikv", tikv.Driver{})
 	terror.MustNil(err)
 	tikv.NewGCHandlerFunc = gcworker.NewGCWorker
-	err = kvstore.Register("mocktikv", mockstore.MockDriver{})
+	err = kvstore.Register("mocktikv", mockstore.MockTiKVDriver{})
+	terror.MustNil(err)
+	err = kvstore.Register("unistore", mockstore.EmbedUnistoreDriver{})
 	terror.MustNil(err)
 }
 
@@ -547,9 +549,17 @@ func overrideConfig(cfg *config.Config) {
 
 func setGlobalVars() {
 	cfg := config.GetGlobalConfig()
+
+	// Disable automaxprocs log
+	nopLog := func(string, ...interface{}) {}
+	_, err := maxprocs.Set(maxprocs.Logger(nopLog))
+	terror.MustNil(err)
+	// We should respect to user's settings in config file.
+	// The default value of MaxProcs is 0, runtime.GOMAXPROCS(0) is no-op.
+	runtime.GOMAXPROCS(int(cfg.Performance.MaxProcs))
+
 	ddlLeaseDuration := parseDuration(cfg.Lease)
 	session.SetSchemaLease(ddlLeaseDuration)
-	runtime.GOMAXPROCS(int(cfg.Performance.MaxProcs))
 	statsLeaseDuration := parseDuration(cfg.Performance.StatsLease)
 	session.SetStatsLease(statsLeaseDuration)
 	bindinfo.Lease = parseDuration(cfg.Performance.BindInfoLease)
@@ -617,10 +627,6 @@ func setupLog() {
 	terror.MustNil(err)
 
 	err = logutil.InitLogger(cfg.Log.ToLogConfig())
-	terror.MustNil(err)
-	// Disable automaxprocs log
-	nopLog := func(string, ...interface{}) {}
-	_, err = maxprocs.Set(maxprocs.Logger(nopLog))
 	terror.MustNil(err)
 
 	if len(os.Getenv("GRPC_DEBUG")) > 0 {

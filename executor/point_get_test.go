@@ -47,8 +47,8 @@ func (s *testPointGetSuite) SetUpSuite(c *C) {
 	s.cli = cli
 
 	var err error
-	s.store, err = mockstore.NewMockTikvStore(
-		mockstore.WithHijackClient(hijackClient),
+	s.store, err = mockstore.NewMockStore(
+		mockstore.WithClientHijacker(hijackClient),
 	)
 	c.Assert(err, IsNil)
 	s.dom, err = session.BootstrapSession(s.store)
@@ -110,6 +110,19 @@ func (s *testPointGetSuite) TestPointGet(c *C) {
 	))
 	tk.MustQuery(`select b, b from t where a = 1`).Check(testkit.Rows(
 		"<nil> <nil>"))
+}
+
+func (s *testPointGetSuite) TestPointGetOverflow(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("CREATE TABLE t0(c1 BOOL UNIQUE)")
+	tk.MustExec("INSERT INTO t0(c1) VALUES (-128)")
+	tk.MustExec("INSERT INTO t0(c1) VALUES (127)")
+	tk.MustQuery("SELECT t0.c1 FROM t0 WHERE t0.c1=-129").Check(testkit.Rows()) // no result
+	tk.MustQuery("SELECT t0.c1 FROM t0 WHERE t0.c1=-128").Check(testkit.Rows("-128"))
+	tk.MustQuery("SELECT t0.c1 FROM t0 WHERE t0.c1=128").Check(testkit.Rows())
+	tk.MustQuery("SELECT t0.c1 FROM t0 WHERE t0.c1=127").Check(testkit.Rows("127"))
 }
 
 func (s *testPointGetSuite) TestPointGetCharPK(c *C) {
@@ -514,10 +527,24 @@ func (s *testPointGetSuite) TestReturnValues(c *C) {
 	txnCtx := tk.Se.GetSessionVars().TxnCtx
 	val, ok := txnCtx.GetKeyInPessimisticLockCache(pk)
 	c.Assert(ok, IsTrue)
-	handle, err := tables.DecodeHandleInUniqueIndexValue(val)
+	handle, err := tables.DecodeHandleInUniqueIndexValue(val, false)
 	c.Assert(err, IsNil)
-	rowKey := tablecodec.EncodeRowKeyWithHandle(tid, kv.IntHandle(handle))
+	rowKey := tablecodec.EncodeRowKeyWithHandle(tid, handle)
 	_, ok = txnCtx.GetKeyInPessimisticLockCache(rowKey)
 	c.Assert(ok, IsTrue)
 	tk.MustExec("rollback")
+}
+
+func (s *testPointGetSuite) TestClusterIndexPointGet(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists pgt")
+	tk.MustExec("create table pgt (a varchar(64), b varchar(64), uk int, v int, primary key(a, b), unique key uuk(uk))")
+	tk.MustExec("insert pgt values ('a', 'a1', 1, 11), ('b', 'b1', 2, 22), ('c', 'c1', 3, 33)")
+	tk.MustQuery(`select * from pgt where (a, b) in (('a', 'a1'), ('c', 'c1'))`).Check(testkit.Rows("a a1 1 11", "c c1 3 33"))
+	tk.MustQuery(`select * from pgt where a = 'b' and b = 'b1'`).Check(testkit.Rows("b b1 2 22"))
+	tk.MustQuery(`select * from pgt where uk = 1`).Check(testkit.Rows("a a1 1 11"))
+	tk.MustQuery(`select * from pgt where uk in (1, 2, 3)`).Check(testkit.Rows("a a1 1 11", "b b1 2 22", "c c1 3 33"))
+	tk.MustExec(`admin check table pgt`)
 }

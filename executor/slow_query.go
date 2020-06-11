@@ -306,6 +306,11 @@ type slowQueryTuple struct {
 	queryTime              float64
 	parseTime              float64
 	compileTime            float64
+	rewriteTime            float64
+	preprocSubqueries      uint64
+	preprocSubQueryTime    float64
+	optimizeTime           float64
+	waitTSTime             float64
 	preWriteTime           float64
 	waitPrewriteBinlogTime float64
 	commitTime             float64
@@ -339,6 +344,7 @@ type slowQueryTuple struct {
 	maxWaitTime            float64
 	maxWaitAddress         string
 	memMax                 int64
+	diskMax                int64
 	prevStmt               string
 	sql                    string
 	isInternal             bool
@@ -386,6 +392,10 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 		st.parseTime, err = strconv.ParseFloat(value, 64)
 	case variable.SlowLogCompileTimeStr:
 		st.compileTime, err = strconv.ParseFloat(value, 64)
+	case variable.SlowLogOptimizeTimeStr:
+		st.optimizeTime, err = strconv.ParseFloat(value, 64)
+	case variable.SlowLogWaitTSTimeStr:
+		st.waitTSTime, err = strconv.ParseFloat(value, 64)
 	case execdetails.PreWriteTimeStr:
 		st.preWriteTime, err = strconv.ParseFloat(value, 64)
 	case execdetails.WaitPrewriteBinlogTimeStr:
@@ -464,6 +474,14 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 		st.planDigest = value
 	case variable.SlowLogQuerySQLStr:
 		st.sql = value
+	case variable.SlowLogDiskMax:
+		st.diskMax, err = strconv.ParseInt(value, 10, 64)
+	case variable.SlowLogRewriteTimeStr:
+		st.rewriteTime, err = strconv.ParseFloat(value, 64)
+	case variable.SlowLogPreprocSubQueriesStr:
+		st.preprocSubqueries, err = strconv.ParseUint(value, 10, 64)
+	case variable.SlowLogPreProcSubQueryTimeStr:
+		st.preprocSubQueryTime, err = strconv.ParseFloat(value, 64)
 	}
 	if err != nil {
 		return valid, errors.Wrap(err, "Parse slow log at line "+strconv.FormatInt(int64(lineNum), 10)+" failed. Field: `"+field+"`, error")
@@ -481,6 +499,11 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	record = append(record, types.NewFloat64Datum(st.queryTime))
 	record = append(record, types.NewFloat64Datum(st.parseTime))
 	record = append(record, types.NewFloat64Datum(st.compileTime))
+	record = append(record, types.NewFloat64Datum(st.rewriteTime))
+	record = append(record, types.NewUintDatum(st.preprocSubqueries))
+	record = append(record, types.NewFloat64Datum(st.preprocSubQueryTime))
+	record = append(record, types.NewFloat64Datum(st.optimizeTime))
+	record = append(record, types.NewFloat64Datum(st.waitTSTime))
 	record = append(record, types.NewFloat64Datum(st.preWriteTime))
 	record = append(record, types.NewFloat64Datum(st.waitPrewriteBinlogTime))
 	record = append(record, types.NewFloat64Datum(st.commitTime))
@@ -515,6 +538,7 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	record = append(record, types.NewFloat64Datum(st.maxWaitTime))
 	record = append(record, types.NewStringDatum(st.maxWaitAddress))
 	record = append(record, types.NewIntDatum(st.memMax))
+	record = append(record, types.NewIntDatum(st.diskMax))
 	if st.succ {
 		record = append(record, types.NewIntDatum(1))
 	} else {

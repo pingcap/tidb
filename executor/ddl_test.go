@@ -844,6 +844,7 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 
 	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
 	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 
 	tk.MustExec("create table t (a bigint primary key auto_random(15), b int)")
 	for i := 0; i < 100; i++ {
@@ -998,6 +999,12 @@ func (s *testAutoRandomSuite) TestAutoRandomTableOption(c *C) {
 		c.Assert(orderedHandles[i], Equals, i+3000000)
 	}
 	tk.MustExec("drop table alter_table_auto_random_option")
+
+	// Alter auto_random_base on non auto_random table.
+	tk.MustExec("create table alter_auto_random_normal (a int)")
+	_, err = tk.Exec("alter table alter_auto_random_normal auto_random_base = 100")
+	c.Assert(err, NotNil)
+	c.Assert(strings.Contains(err.Error(), autoid.AutoRandomRebaseNotApplicable), IsTrue, Commentf(err.Error()))
 }
 
 // Test filter different kind of allocators.

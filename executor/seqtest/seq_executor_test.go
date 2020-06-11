@@ -52,7 +52,6 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/collate"
@@ -88,18 +87,14 @@ func (s *seqTestSuite) SetUpSuite(c *C) {
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
 	if useMockTikv {
-		cluster := mocktikv.NewCluster()
-		mocktikv.BootstrapWithSingleStore(cluster)
-		s.cluster = cluster
-
-		mvccStore := mocktikv.MustNewMVCCStore()
-		cluster.SetMvccStore(mvccStore)
-		store, err := mockstore.NewMockTikvStore(
-			mockstore.WithCluster(cluster),
-			mockstore.WithMVCCStore(mvccStore),
+		var err error
+		s.store, err = mockstore.NewMockStore(
+			mockstore.WithClusterInspector(func(c cluster.Cluster) {
+				mockstore.BootstrapWithSingleStore(c)
+				s.cluster = c
+			}),
 		)
 		c.Assert(err, IsNil)
-		s.store = store
 		session.SetSchemaLease(0)
 		session.DisableStats4Test()
 	}
@@ -835,11 +830,9 @@ func HelperTestAdminShowNextID(c *C, s *seqTestSuite, str string) {
 	r.Check(testkit.Rows("test1 tt id 41 AUTO_INCREMENT"))
 	tk.MustExec("drop table tt")
 
-	oldAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
-	config.GetGlobalConfig().Experimental.AllowAutoRandom = true
-	defer func() {
-		config.GetGlobalConfig().Experimental.AllowAutoRandom = oldAutoRandom
-	}()
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 
 	// Test for a table with auto_random primary key.
 	tk.MustExec("create table t3(id bigint primary key auto_random(5), c int)")
@@ -1134,8 +1127,8 @@ func (s *seqTestSuite1) SetUpSuite(c *C) {
 	s.cli = cli
 
 	var err error
-	s.store, err = mockstore.NewMockTikvStore(
-		mockstore.WithHijackClient(hijackClient),
+	s.store, err = mockstore.NewMockStore(
+		mockstore.WithClientHijacker(hijackClient),
 	)
 	c.Assert(err, IsNil)
 	s.dom, err = session.BootstrapSession(s.store)
