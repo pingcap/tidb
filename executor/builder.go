@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"math"
 	"sort"
 	"strings"
 	"sync"
@@ -1490,11 +1489,9 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 	}
 	tb, _ := b.is.TableByID(v.Table.ID)
 	return &TableScanExec{
-		baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
-		t:              tb,
-		columns:        v.Columns,
-		seekHandle:     kv.IntHandle(math.MinInt64),
-		isVirtualTable: !tb.Type().IsNormalTable(),
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		t:            tb,
+		columns:      v.Columns,
 	}
 }
 
