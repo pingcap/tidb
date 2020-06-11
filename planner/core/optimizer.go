@@ -185,6 +185,8 @@ func physicalOptimize(logic LogicalPlan, clock *CountDown) (PhysicalPlan, float6
 		ExpectedCnt: math.MaxFloat64,
 	}
 
+	// clear the timestamp for taskMap rollback
+	ClearBakTimeStamp()
 	t, _, err := logic.findBestTask(prop, clock)
 	if err != nil {
 		return nil, 0, err

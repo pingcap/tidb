@@ -200,6 +200,12 @@ type LogicalPlan interface {
 
 	// SetChild sets the ith child for the plan.
 	SetChild(i int, child LogicalPlan)
+
+	// enableBak sets the needBak of logical plan tree to true.
+	enableBak()
+
+	// rollBackTaskMap roll back all taskMap's logs after TimeStamp TS
+	rollBackTaskMap(TS int64)
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -245,8 +251,10 @@ type baseLogicalPlan struct {
 	basePlan
 
 	taskMap map[string]task
-	// taskMapBak is a backlog stack of taskMap, used to roll back the task.
-	taskMapBak []string
+	// taskMapBak and taskMapBakID form a backlog stack of taskMap, used to roll back the task.
+	// taskMapBakTS stores the TimeStamps of logs.
+	taskMapBak   []string
+	taskMapBakTS []int64
 	// needBask indicates whether taskMap needs to be backed. Avoid affecting the speed of the optimizer.
 	needBak   bool
 	self      LogicalPlan
@@ -290,31 +298,55 @@ func (p *basePhysicalPlan) ExtractCorrelatedCols() []*expression.CorrelatedColum
 	return nil
 }
 
-// enableBak sets the needBak of logical plan tree to true.
+var BakTimeStamp int64 = 0
+
+func ClearBakTimeStamp() {
+	BakTimeStamp = 0
+}
+
+func (p *baseLogicalPlan) GetBakTimeStamp() int64 {
+	BakTimeStamp++
+	return BakTimeStamp
+}
+
 func (p *baseLogicalPlan) enableBak() {
+	if p.needBak {
+		return
+	}
 	p.needBak = true
 	for _, child := range p.children {
-		if pp, ok := child.(*baseLogicalPlan); ok && !pp.needBak {
-			pp.enableBak()
-		} else if pp, ok := child.(*DataSource); ok && !pp.needBak {
-			pp.enableBak()
-		}
+		child.enableBak()
 	}
 }
 
-// rollBackTaskMap roll back the taskMap with the record in taskMapBak
-func (p *baseLogicalPlan) rollBackTaskMap() {
+func (p *baseLogicalPlan) rollBackTaskMap(TS int64) {
+	if !p.needBak {
+		return
+	}
 	if len(p.taskMapBak) > 0 {
-		p.taskMap[p.taskMapBak[len(p.taskMapBak)-1]] = nil
-		p.taskMapBak = p.taskMapBak[:len(p.taskMapBak)-1]
+		// rollback all the logs with TimeStamp TS
+		N := len(p.taskMapBak)
+		for i := 0; i < N; i++ {
+			cur := p.taskMapBak[i]
+			if p.taskMapBakTS[i] < TS {
+				continue
+			}
+
+			// remove the i_th log
+			p.taskMapBak = append(p.taskMapBak[:i], p.taskMapBak[i+1:]...)
+			p.taskMapBakTS = append(p.taskMapBakTS[:i], p.taskMapBakTS[i+1:]...)
+			i--
+			N--
+
+			// if cur is not an invalid log, then roll back.
+			if cur != "" {
+				p.taskMap[cur] = nil
+			}
+		}
 	}
 	for _, child := range p.children {
 		// only baseLogicalPlan and DataSource will be affected.
-		if pp, ok := child.(*baseLogicalPlan); ok {
-			pp.rollBackTaskMap()
-		} else if pp, ok := child.(*DataSource); ok {
-			pp.rollBackTaskMap()
-		}
+		child.rollBackTaskMap(TS)
 	}
 }
 
@@ -328,7 +360,15 @@ func (p *baseLogicalPlan) storeTask(prop *property.PhysicalProperty, task task) 
 	if p.needBak {
 		// when we storeTask, we have taskMap[key] is nil.
 		// so to roll back, we need only store the key and set taskMap[key] to nil.
-		p.taskMapBak = append(p.taskMapBak, string(key))
+		// empty string for useless change.
+		TS := p.GetBakTimeStamp()
+		if p.taskMap[string(key)] != nil {
+			p.taskMapBakTS = append(p.taskMapBakTS, TS)
+			p.taskMapBak = append(p.taskMapBak, "")
+		} else {
+			p.taskMapBakTS = append(p.taskMapBakTS, TS)
+			p.taskMapBak = append(p.taskMapBak, string(key))
+		}
 	}
 	p.taskMap[string(key)] = task
 }
