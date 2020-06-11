@@ -1063,25 +1063,13 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 			// The keys in w.batchCheckKeys also maybe duplicate,
 			// so we need to backfill the not found key into `batchVals` map.
 			if w.distinctCheckFlags[i] {
-				batchVals[string(key)] = encodeHandleInUniqueIndexValueForBatchCheck(idxRecords[i].handle)
+				batchVals[string(key)] = tables.EncodeHandleInUniqueIndexValue(idxRecords[i].handle)
 			}
 		}
 	}
 	// Constrains is already checked.
 	stmtCtx.BatchCheck = true
 	return nil
-}
-
-func encodeHandleInUniqueIndexValueForBatchCheck(h kv.Handle) []byte {
-	if h.IsInt() {
-		return tables.EncodeHandleInUniqueIndexValue(h.IntValue())
-	}
-	handleLen := h.Len()
-	data := make([]byte, 4, 1+1+2+handleLen)
-	data[2] = uint8(handleLen >> 8)
-	data[3] = uint8(handleLen - (handleLen >> 8))
-	data = append(data, h.Encoded()...)
-	return data
 }
 
 // backfillIndexInTxn will backfill table index in a transaction, lock corresponding rowKey, if the value of rowKey is changed,

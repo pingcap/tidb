@@ -37,10 +37,13 @@ import (
 )
 
 // EncodeHandleInUniqueIndexValue encodes handle in data.
-func EncodeHandleInUniqueIndexValue(h int64) []byte {
-	var data [8]byte
-	binary.BigEndian.PutUint64(data[:], uint64(h))
-	return data[:]
+func EncodeHandleInUniqueIndexValue(h kv.Handle) []byte {
+	if h.IsInt() {
+		var data [8]byte
+		binary.BigEndian.PutUint64(data[:], uint64(h.IntValue()))
+		return data[:]
+	}
+	return encodeCommonHandle(nil, h)
 }
 
 // DecodeHandleInUniqueIndexValue decodes handle in data.
@@ -375,7 +378,7 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 		if h.IsInt() && distinct {
 			// The len of the idxVal is always >= 10 since len (restoredValue) > 0.
 			tailLen += 8
-			idxVal = append(idxVal, EncodeHandleInUniqueIndexValue(h.IntValue())...)
+			idxVal = append(idxVal, EncodeHandleInUniqueIndexValue(h)...)
 		} else if len(idxVal) < 10 {
 			// Padding the len to 10
 			paddingLen := 10 - len(idxVal)
@@ -394,7 +397,7 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 		idxVal = make([]byte, 0)
 		if distinct {
 			if h.IsInt() {
-				idxVal = EncodeHandleInUniqueIndexValue(h.IntValue())
+				idxVal = EncodeHandleInUniqueIndexValue(h)
 			} else {
 				if opt.Untouched {
 					idxVal = append(idxVal, 1)
