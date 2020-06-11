@@ -411,7 +411,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 	// Handle NTH_PLAN
 	if forceNthPlanCnt != 0 {
 		if forceNthPlanCnt > 1 {
-			warn := errors.Errorf("NTH_PLAN() is defined more than once, only the last definition takes effect: NTH_PLAN(%v)", forceNthPlan.HintData.(uint64))
+			warn := errors.Errorf("NTH_PLAN() is defined more than once, only the last definition takes effect: NTH_PLAN(%v)", forceNthPlan.HintData.(int64))
 			warns = append(warns, warn)
 		}
 		stmtHints.ForceNthPlan = forceNthPlan.HintData.(int64)
