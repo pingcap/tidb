@@ -53,19 +53,9 @@ type Driver struct {
 
 func createEtcdKV(addrs []string, tlsConfig *tls.Config) (*clientv3.Client, error) {
 	cli, err := clientv3.New(clientv3.Config{
-<<<<<<< HEAD
 		Endpoints:        addrs,
 		AutoSyncInterval: 30 * time.Second,
 		DialTimeout:      5 * time.Second,
-		TLS:              tlsConfig,
-=======
-		Endpoints:            addrs,
-		AutoSyncInterval:     30 * time.Second,
-		DialTimeout:          5 * time.Second,
-		TLS:                  tlsConfig,
-		DialKeepAliveTime:    time.Second * time.Duration(cfg.TiKVClient.GrpcKeepAliveTime),
-		DialKeepAliveTimeout: time.Second * time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout),
->>>>>>> bbeb4d0... tikv: fix "Got too many pings" GRPC error in PD-server follower (#17885)
 	})
 	if err != nil {
 		return nil, errors.Trace(err)
