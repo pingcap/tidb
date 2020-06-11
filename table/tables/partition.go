@@ -72,6 +72,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Tabl
 	ret := &partitionedTable{TableCommon: *tbl}
 	partitionExpr, err := newPartitionExpr(tblInfo)
 	if err != nil {
+		logutil.BgLogger().Error("new partion expr error", zap.Error(err), zap.String("table", fmt.Sprintf("%+v", tblInfo)))
 		return nil, errors.Trace(err)
 	}
 	ret.partitionExpr = partitionExpr
@@ -85,6 +86,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Tabl
 		var t partition
 		err := initTableCommonWithIndices(&t.TableCommon, tblInfo, p.ID, tbl.Columns, tbl.allocs)
 		if err != nil {
+			logutil.BgLogger().Error("initTableCommonWithIndices failed", zap.Error(err), zap.String("part", fmt.Sprintf("%+v", p)))
 			return nil, errors.Trace(err)
 		}
 		partitions[p.ID] = &t
@@ -242,12 +244,14 @@ func generateRangePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 	case 0:
 		tmp, err := dataForRangePruning(pi)
 		if err != nil {
+			logutil.BgLogger().Error("dataForRangePruning error", zap.Error(err), zap.String("pi", fmt.Sprintf("%+v", pi)))
 			return nil, errors.Trace(err)
 		}
 		ret.ForRangePruning = tmp
 	case 1:
 		tmp, err := dataForRangeColumnsPruning(ctx, pi, schema, names, p)
 		if err != nil {
+			logutil.BgLogger().Error("dataForRangeColumnsPruning error", zap.Error(err), zap.String("pi", fmt.Sprintf("%+v", pi)))
 			return nil, errors.Trace(err)
 		}
 		ret.ForRangeColumnsPruning = tmp

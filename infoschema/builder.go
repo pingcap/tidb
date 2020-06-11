@@ -28,6 +28,8 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/domainutil"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // Builder builds a new InfoSchema.
@@ -409,6 +411,7 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 		var tbl table.Table
 		tbl, err := tableFromMeta(allocs, t)
 		if err != nil {
+			logutil.BgLogger().Error("create schema table failed", zap.Stringer("db name", di.Name), zap.Stringer("table name", t.Name), zap.String("table", fmt.Sprintf("%+v", t)), zap.Error(err))
 			return errors.Trace(err)
 		}
 		schTbls.tables[t.Name.L] = tbl

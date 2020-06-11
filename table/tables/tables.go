@@ -137,12 +137,14 @@ func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Ta
 	initTableCommon(&t, tblInfo, tblInfo.ID, columns, allocs)
 	if tblInfo.GetPartitionInfo() == nil {
 		if err := initTableIndices(&t); err != nil {
-			return nil, err
+			logutil.BgLogger().Error("initTableIndices failed", zap.Error(err))
+			return nil, errors.Trace(err)
 		}
 		return &t, nil
 	}
 
-	return newPartitionedTable(&t, tblInfo)
+	pt, err := newPartitionedTable(&t, tblInfo)
+	return pt, errors.Trace(err)
 }
 
 // initTableCommon initializes a TableCommon struct.

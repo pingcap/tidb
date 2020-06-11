@@ -85,12 +85,12 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 	var fullLoad bool
 	snapshot, err := do.store.GetSnapshot(kv.NewVersion(startTS))
 	if err != nil {
-		return 0, nil, fullLoad, err
+		return 0, nil, fullLoad, errors.Trace(err)
 	}
 	m := meta.NewSnapshotMeta(snapshot)
 	neededSchemaVersion, err := m.GetSchemaVersion()
 	if err != nil {
-		return 0, nil, fullLoad, err
+		return 0, nil, fullLoad, errors.Trace(err)
 	}
 	if usedSchemaVersion != 0 && usedSchemaVersion == neededSchemaVersion {
 		return neededSchemaVersion, nil, fullLoad, nil
@@ -134,12 +134,16 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 	fullLoad = true
 	schemas, err := do.fetchAllSchemasWithTables(m)
 	if err != nil {
-		return 0, nil, fullLoad, err
+		logutil.BgLogger().Error("fetchAllSchemasWithTables failed", zap.Error(err))
+		return 0, nil, fullLoad, errors.Trace(err)
 	}
+
+	logutil.BgLogger().Info("build info schema")
 
 	newISBuilder, err := infoschema.NewBuilder(handle).InitWithDBInfos(schemas, neededSchemaVersion)
 	if err != nil {
-		return 0, nil, fullLoad, err
+		logutil.BgLogger().Error("InitWithDBInfos failed", zap.Error(err))
+		return 0, nil, fullLoad, errors.Trace(err)
 	}
 	logutil.BgLogger().Info("full load InfoSchema success",
 		zap.Int64("usedSchemaVersion", usedSchemaVersion),
@@ -152,7 +156,8 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 func (do *Domain) fetchAllSchemasWithTables(m *meta.Meta) ([]*model.DBInfo, error) {
 	allSchemas, err := m.ListDatabases()
 	if err != nil {
-		return nil, err
+		logutil.BgLogger().Error("list databases error", zap.Error(err))
+		return nil, errors.Trace(err)
 	}
 	splittedSchemas := do.splitForConcurrentFetch(allSchemas)
 	doneCh := make(chan error, len(splittedSchemas))
@@ -192,7 +197,8 @@ func (do *Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, 
 		}
 		tables, err := m.ListTables(di.ID)
 		if err != nil {
-			done <- err
+			logutil.BgLogger().Error("list tables error", zap.Stringer("db name", di.Name), zap.Error(err))
+			done <- errors.Trace(err)
 			return
 		}
 		// If TreatOldVersionUTF8AsUTF8MB4 was enable, need to convert the old version schema UTF8 charset to UTF8MB4.
@@ -360,7 +366,7 @@ func (do *Domain) Reload() error {
 	metrics.LoadSchemaDuration.Observe(time.Since(startTime).Seconds())
 	if err != nil {
 		metrics.LoadSchemaCounter.WithLabelValues("failed").Inc()
-		return err
+		return errors.Trace(err)
 	}
 	metrics.LoadSchemaCounter.WithLabelValues("succ").Inc()
 
