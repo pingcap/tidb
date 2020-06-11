@@ -61,7 +61,6 @@ func createEtcdKV(addrs []string, tlsConfig *tls.Config) (*clientv3.Client, erro
 		TLS:                  tlsConfig,
 		DialKeepAliveTime:    time.Second * time.Duration(cfg.TiKVClient.GrpcKeepAliveTime),
 		DialKeepAliveTimeout: time.Second * time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout),
-		PermitWithoutStream:  true,
 	})
 	if err != nil {
 		return nil, errors.Trace(err)
