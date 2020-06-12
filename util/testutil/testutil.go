@@ -152,14 +152,6 @@ func (chs *CommonHandleSuite) NewHandle() *commonHandleSuiteNewHandleBuilder {
 	return &commonHandleSuiteNewHandleBuilder{isCommon: chs.IsCommonHandle}
 }
 
-func (chs *CommonHandleSuite) Branch(intHandleFn func(), commonHandleFn func()) {
-	if chs.IsCommonHandle {
-		commonHandleFn()
-	} else {
-		intHandleFn()
-	}
-}
-
 type commonHandleSuiteNewHandleBuilder struct {
 	isCommon   bool
 	intVal     int64
