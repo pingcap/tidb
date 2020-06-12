@@ -431,13 +431,13 @@ func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
 		store.Close()
 	}()
 
-	cfg := config.GetGlobalConfig()
-	orgEnable := cfg.PreparedPlanCache.Enabled
-	orgCapacity := cfg.PreparedPlanCache.Capacity
+	defer config.RestoreFunc()()
 	flags := []bool{false, true}
 	for _, flag := range flags {
-		cfg.PreparedPlanCache.Enabled = flag
-		cfg.PreparedPlanCache.Capacity = 100
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.PreparedPlanCache.Enabled = flag
+			conf.PreparedPlanCache.Capacity = 100
+		})
 		testKit := testkit.NewTestKit(c, store)
 		testKit.MustExec("use test")
 		testKit.MustExec("drop table if exists t")
@@ -460,8 +460,6 @@ func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
 
 		c.Assert(core.ToString(p), Equals, best, Commentf("for %s", sql))
 	}
-	cfg.PreparedPlanCache.Enabled = orgEnable
-	cfg.PreparedPlanCache.Capacity = orgCapacity
 }
 
 func (s *testAnalyzeSuite) TestNullCount(c *C) {
