@@ -469,7 +469,7 @@ type PhysicalTopN struct {
 
 func (lt *PhysicalTopN) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalTopN)
-	*cloned = *lt
+	cloned.Offset, cloned.Count = lt.Offset, lt.Count
 	base, err := lt.basePhysicalPlan.cloneWithSelf(cloned)
 	if err != nil {
 		return nil, err
