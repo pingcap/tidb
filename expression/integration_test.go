@@ -5763,6 +5763,8 @@ func (s *testIntegrationSuite) TestCoercibility(c *C) {
 		{"i+r", 5}, {"i*r", 5}, {"cos(r)+sin(i)", 5}, {"d+2", 5},
 		{"t*10", 5}, {"concat(c, vc)", 2}, {"replace(c, 'x', 'y')", 2},
 	}, "from t")
+
+	tk.MustQuery("SELECT COERCIBILITY(@straaa);").Check(testkit.Rows("2"))
 }
 
 func (s *testIntegrationSerialSuite) TestCacheConstEval(c *C) {
@@ -5829,6 +5831,16 @@ func (s *testIntegrationSerialSuite) TestCollationBasic(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows(" 2", " 4"))
 	tk.MustExec("set autocommit=1")
 	tk.MustQuery("select * from t").Check(testkit.Rows(" 2", " 4"))
+
+	tk.MustExec("drop table t_ci")
+	tk.MustExec("create table t_ci(id bigint primary key, a varchar(10) collate utf8mb4_general_ci, unique key(a, id))")
+	tk.MustExec("insert into t_ci values (1, 'a')")
+	tk.MustQuery("select a from t_ci").Check(testkit.Rows("a"))
+	tk.MustQuery("select a from t_ci").Check(testkit.Rows("a"))
+	tk.MustQuery("select a from t_ci where a='a'").Check(testkit.Rows("a"))
+	tk.MustQuery("select a from t_ci where a='A'").Check(testkit.Rows("a"))
+	tk.MustQuery("select a from t_ci where a='a   '").Check(testkit.Rows("a"))
+	tk.MustQuery("select a from t_ci where a='a                    '").Check(testkit.Rows("a"))
 }
 
 func (s *testIntegrationSerialSuite) TestWeightString(c *C) {
@@ -6606,4 +6618,16 @@ func (s *testIntegrationSuite) TestIssue17287(c *C) {
 	tk.MustExec("set @val2 = 1589873946;")
 	tk.MustQuery("execute stmt7 using @val1;").Check(testkit.Rows("1589873945"))
 	tk.MustQuery("execute stmt7 using @val2;").Check(testkit.Rows("1589873946"))
+}
+
+func (s *testIntegrationSerialSuite) TestIssue17891(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int, value set ('a','b','c') charset utf8mb4 collate utf8mb4_bin default 'a,b ');")
+	tk.MustExec("drop table t")
+	tk.MustExec("create table test(id int, value set ('a','b','c') charset utf8mb4 collate utf8mb4_general_ci default 'a,B ,C');")
 }

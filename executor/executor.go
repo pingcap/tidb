@@ -1265,10 +1265,7 @@ type TableScanExec struct {
 	baseExecutor
 
 	t                     table.Table
-	seekHandle            kv.Handle
-	iter                  kv.Iterator
 	columns               []*model.ColumnInfo
-	isVirtualTable        bool
 	virtualTableChunkList *chunk.List
 	virtualTableChunkIdx  int
 }
@@ -1276,25 +1273,7 @@ type TableScanExec struct {
 // Next implements the Executor Next interface.
 func (e *TableScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.maxChunkSize)
-	if e.isVirtualTable {
-		return e.nextChunk4InfoSchema(ctx, req)
-	}
-	handle, found, err := e.nextHandle()
-	if err != nil || !found {
-		return err
-	}
-
-	mutableRow := chunk.MutRowFromTypes(retTypes(e))
-	for req.NumRows() < req.Capacity() {
-		row, err := e.getRow(handle)
-		if err != nil {
-			return err
-		}
-		e.seekHandle = handle.Next()
-		mutableRow.SetDatums(row...)
-		req.AppendRow(mutableRow.ToRow())
-	}
-	return nil
+	return e.nextChunk4InfoSchema(ctx, req)
 }
 
 func (e *TableScanExec) nextChunk4InfoSchema(ctx context.Context, chk *chunk.Chunk) error {
@@ -1325,31 +1304,8 @@ func (e *TableScanExec) nextChunk4InfoSchema(ctx context.Context, chk *chunk.Chu
 	return nil
 }
 
-// nextHandle gets the unique handle for next row.
-func (e *TableScanExec) nextHandle() (handle kv.Handle, found bool, err error) {
-	handle, found, err = e.t.Seek(e.ctx, e.seekHandle)
-	if err != nil || !found {
-		return nil, false, err
-	}
-	return handle, true, nil
-}
-
-func (e *TableScanExec) getRow(handle kv.Handle) ([]types.Datum, error) {
-	columns := make([]*table.Column, e.schema.Len())
-	for i, v := range e.columns {
-		columns[i] = table.ToColumn(v)
-	}
-	row, err := e.t.RowWithCols(e.ctx, handle, columns)
-	if err != nil {
-		return nil, err
-	}
-
-	return row, nil
-}
-
 // Open implements the Executor Open interface.
 func (e *TableScanExec) Open(ctx context.Context) error {
-	e.iter = nil
 	e.virtualTableChunkList = nil
 	return nil
 }

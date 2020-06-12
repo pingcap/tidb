@@ -159,11 +159,19 @@ func (p *PhysicalIndexScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
 			columns = append(columns, findColumnInfoByID(tableColumns, col.ID))
 		}
 	}
+	var pkColIds []int64
+	if p.NeedCommonHandle {
+		pkIdx := tables.FindPrimaryIndex(p.Table)
+		for _, idxCol := range pkIdx.Columns {
+			pkColIds = append(pkColIds, p.Table.Columns[idxCol.Offset].ID)
+		}
+	}
 	idxExec := &tipb.IndexScan{
-		TableId: p.Table.ID,
-		IndexId: p.Index.ID,
-		Columns: util.ColumnsToProto(columns, p.Table.PKIsHandle),
-		Desc:    p.Desc,
+		TableId:          p.Table.ID,
+		IndexId:          p.Index.ID,
+		Columns:          util.ColumnsToProto(columns, p.Table.PKIsHandle),
+		Desc:             p.Desc,
+		PrimaryColumnIds: pkColIds,
 	}
 	if p.isPartition {
 		idxExec.TableId = p.physicalTableID

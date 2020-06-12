@@ -291,6 +291,18 @@ func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
 			curTimeInt, int64(123), false, false,
 		},
 		{
+			[]interface{}{tm, "invalid_time_1", "invalid_time_2", tmWithFsp},
+			curTimeWithFspString, "invalid_time_1", false, false,
+		},
+		{
+			[]interface{}{tm, "invalid_time_2", "invalid_time_1", tmWithFsp},
+			curTimeWithFspString, "invalid_time_2", false, false,
+		},
+		{
+			[]interface{}{tm, "invalid_time", nil, tmWithFsp},
+			nil, nil, true, false,
+		},
+		{
 			[]interface{}{duration, "123"},
 			"12:59:59", "123", false, false,
 		},

@@ -304,8 +304,10 @@ func (s *testIntegrationSerialSuite) TestNoneAccessPathsFoundByIsolationRead(c *
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash, tikv'")
 	tk.MustExec("select * from t")
-	config.GetGlobalConfig().IsolationRead.Engines = []string{"tiflash"}
-	defer func() { config.GetGlobalConfig().IsolationRead.Engines = []string{"tikv", "tiflash"} }()
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.IsolationRead.Engines = []string{"tiflash"}
+	})
 	// Change instance config doesn't affect isolation read.
 	tk.MustExec("select * from t")
 }
@@ -828,6 +830,17 @@ func (s *testIntegrationSuite) TestIssue15546(c *C) {
 	tk.MustQuery("select * from pt, vt where pt.a = vt.a").Check(testkit.Rows("1 1 1 1"))
 }
 
+func (s *testIntegrationSuite) TestIssue17813(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists hash_partition_overflow")
+	tk.MustExec("create table hash_partition_overflow (c0 bigint unsigned) partition by hash(c0) partitions 3")
+	tk.MustExec("insert into hash_partition_overflow values (9223372036854775808)")
+	tk.MustQuery("select * from hash_partition_overflow where c0 = 9223372036854775808").Check(testkit.Rows("9223372036854775808"))
+	tk.MustQuery("select * from hash_partition_overflow where c0 in (1, 9223372036854775808)").Check(testkit.Rows("9223372036854775808"))
+}
+
 func (s *testIntegrationSuite) TestHintWithRequiredProperty(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@session.tidb_executor_concurrency = 4;")
@@ -1122,4 +1135,15 @@ func (s *testIntegrationSuite) TestHintParserWarnings(c *C) {
 	tk.MustExec("select /*+ use_index_merge() */ * from t where a = 1 or b = 1;")
 	rows := tk.MustQuery("show warnings;").Rows()
 	c.Assert(len(rows), Equals, 1)
+}
+
+func (s *testIntegrationSuite) TestIssue16935(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0;")
+	tk.MustExec("CREATE TABLE t0(c0 INT);")
+	tk.MustExec("INSERT INTO t0(c0) VALUES (1), (1), (1), (1), (1), (1);")
+	tk.MustExec("CREATE definer='root'@'localhost' VIEW v0(c0) AS SELECT NULL FROM t0;")
+
+	tk.MustQuery("SELECT * FROM t0 LEFT JOIN v0 ON TRUE WHERE v0.c0 IS NULL;")
 }
