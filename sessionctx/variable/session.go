@@ -1136,8 +1136,10 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.ConcurrencyFactor = tidbOptFloat64(val, DefOptConcurrencyFactor)
 	case TiDBIndexLookupConcurrency:
 		s.indexLookupConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
+		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
 	case TiDBIndexLookupJoinConcurrency:
 		s.indexLookupJoinConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
+		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
 	case TiDBIndexJoinBatchSize:
 		s.IndexJoinBatchSize = tidbOptPositiveInt32(val, DefIndexJoinBatchSize)
 	case TiDBAllowBatchCop:
@@ -1146,16 +1148,22 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.IndexLookupSize = tidbOptPositiveInt32(val, DefIndexLookupSize)
 	case TiDBHashJoinConcurrency:
 		s.hashJoinConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
+		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
 	case TiDBProjectionConcurrency:
 		s.projectionConcurrency = tidbOptInt64(val, ConcurrencyUnset)
+		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
 	case TiDBHashAggPartialConcurrency:
 		s.hashAggPartialConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
+		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
 	case TiDBHashAggFinalConcurrency:
 		s.hashAggFinalConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
+		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
 	case TiDBWindowConcurrency:
 		s.windowConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
+		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
 	case TiDBDistSQLScanConcurrency:
 		s.distSQLScanConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
+		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
 	case TiDBIndexSerialScanConcurrency:
 		s.indexSerialScanConcurrency = tidbOptPositiveInt32(val, DefIndexSerialScanConcurrency)
 	case TiDBExecutorConcurrency:
@@ -1435,27 +1443,35 @@ const ConcurrencyUnset = -1
 // Concurrency defines concurrency values.
 type Concurrency struct {
 	// indexLookupConcurrency is the number of concurrent index lookup worker.
+	// indexLookupConcurrency is deprecated, use ExecutorConcurrency instead.
 	indexLookupConcurrency int
 
 	// indexLookupJoinConcurrency is the number of concurrent index lookup join inner worker.
+	// indexLookupJoinConcurrency is deprecated, use ExecutorConcurrency instead.
 	indexLookupJoinConcurrency int
 
 	// distSQLScanConcurrency is the number of concurrent dist SQL scan worker.
+	// distSQLScanConcurrency is deprecated, use ExecutorConcurrency instead.
 	distSQLScanConcurrency int
 
 	// hashJoinConcurrency is the number of concurrent hash join outer worker.
+	// hashJoinConcurrency is deprecated, use ExecutorConcurrency instead.
 	hashJoinConcurrency int
 
 	// projectionConcurrency is the number of concurrent projection worker.
+	// projectionConcurrency is deprecated, use ExecutorConcurrency instead.
 	projectionConcurrency int64
 
 	// hashAggPartialConcurrency is the number of concurrent hash aggregation partial worker.
+	// hashAggPartialConcurrency is deprecated, use ExecutorConcurrency instead.
 	hashAggPartialConcurrency int
 
 	// hashAggFinalConcurrency is the number of concurrent hash aggregation final worker.
+	// hashAggFinalConcurrency is deprecated, use ExecutorConcurrency instead.
 	hashAggFinalConcurrency int
 
 	// windowConcurrency is the number of concurrent window worker.
+	// windowConcurrency is deprecated, use ExecutorConcurrency instead.
 	windowConcurrency int
 
 	// indexSerialScanConcurrency is the number of concurrent index serial scan worker.
