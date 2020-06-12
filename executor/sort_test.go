@@ -23,11 +23,10 @@ import (
 )
 
 func (s *testSuite) TestSortInDisk(c *C) {
-	originCfg := config.GetGlobalConfig()
-	newConf := *originCfg
-	newConf.OOMUseTmpStorage = true
-	config.StoreGlobalConfig(&newConf)
-	defer config.StoreGlobalConfig(originCfg)
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMUseTmpStorage = true
+	})
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
