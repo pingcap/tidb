@@ -195,9 +195,9 @@ func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 	})
 	tk2.MustQuery(explainQuery).Check(explainResult)
 
-	// multiple test
-	ch := make(chan int)
+	// multiple test, '1000' is both effective and efficient.
 	repeats := 1000
+	ch := make(chan int)
 
 	go func() {
 		for i := 0; i < repeats; i++ {

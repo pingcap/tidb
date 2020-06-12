@@ -176,7 +176,7 @@ func (c *Constant) getLazyDatum(row chunk.Row) (dt types.Datum, isLazy bool, err
 		dt, err = c.DeferredExpr.Eval(row)
 		return dt, true, err
 	}
-	return dt, false, nil
+	return types.Datum{}, false, nil
 }
 
 // Eval implements Expression interface.
