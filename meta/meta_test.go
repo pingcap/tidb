@@ -304,7 +304,6 @@ func (s *testSuite) TestSnapshot(c *C) {
 }
 
 func (s *testSuite) TestDDL(c *C) {
-	s.SetCForCommonHandleTestSuite(c)
 	defer testleak.AfterTest(c)()
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
@@ -348,13 +347,13 @@ func (s *testSuite) TestDDL(c *C) {
 	c.Assert(j, HandleEquals, kv.IntHandle(math.MaxInt64))
 	c.Assert(k, Equals, int64(0))
 
-	err = t.UpdateDDLReorgHandle(job, s.NewHandle(1), s.NewHandle(2), 3)
+	err = t.UpdateDDLReorgHandle(job, s.MustNewHandle(1), s.MustNewHandle(2), 3)
 	c.Assert(err, IsNil)
 
 	i, j, k, err = t.GetDDLReorgHandle(job, s.IsCommonHandle)
 	c.Assert(err, IsNil)
-	c.Assert(i, HandleEquals, s.NewHandle(1))
-	c.Assert(j, HandleEquals, s.NewHandle(2))
+	c.Assert(i, HandleEquals, s.MustNewHandle(1))
+	c.Assert(j, HandleEquals, s.MustNewHandle(2))
 	c.Assert(k, Equals, int64(3))
 
 	err = t.RemoveDDLReorgHandle(job)
@@ -453,7 +452,7 @@ func (s *testSuite) TestDDL(c *C) {
 	err = txn1.Commit(context.Background())
 	c.Assert(err, IsNil)
 
-	s.RerunWithCommonHandleEnabled(s.TestDDL)
+	s.RerunWithCommonHandleEnabled(c, s.TestDDL)
 }
 
 func (s *testSuite) BenchmarkGenGlobalIDs(c *C) {

@@ -131,55 +131,43 @@ func MustNewCommonHandle(c *check.C, values ...interface{}) kv.Handle {
 //       CommonHandleSuite
 //   }
 //   func (s *MyTestSuite) TestSomething(c *C) {
-//       s.SetCForCommonHandleTestSuite(c)
 //       // ...
-//       s.RerunWithCommonHandleEnabled(s.TestSomething)
+//       s.RerunWithCommonHandleEnabled(c, s.TestSomething)
 //   }
-// Note: if you override TearDownTest(), remember to invoke CommonHandleSuite.TearDownTest() explicitly.
 type CommonHandleSuite struct {
 	IsCommonHandle bool
-	c              *check.C
-}
-
-// TearDownTest clears CommonHandleSuite's status after running each test.
-func (chs *CommonHandleSuite) TearDownTest(_ *check.C) {
-	chs.IsCommonHandle = false
-	chs.c = nil
-}
-
-// SetCForCommonHandleTestSuite should be invoked at the beginning of a test.
-func (chs *CommonHandleSuite) SetCForCommonHandleTestSuite(c *check.C) {
-	chs.c = c
 }
 
 // RerunWithCommonHandleEnabled runs a test function with IsCommonHandle enabled.
-func (chs *CommonHandleSuite) RerunWithCommonHandleEnabled(f func(c *check.C)) {
-	if chs.c == nil {
-		panic("please invoke SetCForCommonHandleTestSuite() at the beginning of the test")
-	}
+func (chs *CommonHandleSuite) RerunWithCommonHandleEnabled(c *check.C, f func(*check.C)) {
 	if !chs.IsCommonHandle {
 		chs.IsCommonHandle = true
-		f(chs.c)
+		f(c)
+		chs.IsCommonHandle = false
 	}
 }
 
-// NewHandle create a handle according to CommonHandleSuite.IsCommonHandle.
-func (chs *CommonHandleSuite) NewHandle(vs ...interface{}) kv.Handle {
-	if chs.c == nil {
-		panic("please invoke SetCForCommonHandleTestSuite() at the beginning of the test")
-	}
+// MustNewHandle create a handle according to CommonHandleSuite.IsCommonHandle.
+func (chs *CommonHandleSuite) MustNewHandle(vs ...interface{}) kv.Handle {
 	if chs.IsCommonHandle {
-		return MustNewCommonHandle(chs.c, vs...)
+		encoded, err := codec.EncodeKey(new(stmtctx.StatementContext), nil, types.MakeDatums(vs...)...)
+		if err != nil {
+			panic(err)
+		}
+		ch, err := kv.NewCommonHandle(encoded)
+		if err != nil {
+			panic(err)
+		}
+		return ch
 	}
 	if len(vs) != 1 {
-		chs.c.Fatalf("kv.IntHandle only accept one argument, but got %d", len(vs))
+		panic(errors.Errorf("kv.IntHandle only accept one argument, but got %d", len(vs)))
 	}
 
 	if v, isInt := vs[0].(int); isInt {
 		return kv.IntHandle(v)
 	}
-	chs.c.Fatalf("kv.IntHandle's argument must be int, but got %T", vs[0])
-	return nil
+	panic(errors.Errorf("kv.IntHandle's argument must be int, but got %T", vs[0]))
 }
 
 type handleEqualsChecker struct {

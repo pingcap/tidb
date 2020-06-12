@@ -56,19 +56,17 @@ type testCommonHandleSuite struct {
 }
 
 func (s *testCommonHandleSuite) TestCommonHandleSuiteRerun(c *C) {
-	s.SetCForCommonHandleTestSuite(c)
 	c.Assert(s.IsCommonHandle, Equals, s.expectedIsCommonHandle)
-	hd := s.NewHandle(1)
+	hd := s.MustNewHandle(1)
 	if s.expectedIsCommonHandle {
 		c.Assert(hd.IsInt(), IsFalse)
 	} else {
 		c.Assert(hd.IsInt(), IsTrue)
 	}
 	s.expectedIsCommonHandle = true
-	s.RerunWithCommonHandleEnabled(s.TestCommonHandleSuiteRerun)
+	s.RerunWithCommonHandleEnabled(c, s.TestCommonHandleSuiteRerun)
 }
 
-func (s *testCommonHandleSuite) TestCommonHandleSuiteTearDown(c *C) {
+func (s *testCommonHandleSuite) TestCommonHandleSuiteInitState(c *C) {
 	c.Assert(s.IsCommonHandle, IsFalse)
-	c.Assert(s.c, IsNil)
 }
