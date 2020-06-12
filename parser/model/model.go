@@ -793,6 +793,17 @@ func (ci *ConstraintInfo) Clone() *ConstraintInfo {
 	return &nci
 }
 
+// FindConstraintInfoByName finds constraintInfo by name.
+func (t *TableInfo) FindConstraintInfoByName(constrName string) *ConstraintInfo {
+	lowConstrName := strings.ToLower(constrName)
+	for _, chk := range t.Constraints {
+		if chk.Name.L == lowConstrName {
+			return chk
+		}
+	}
+	return nil
+}
+
 // FKInfo provides meta data describing a foreign key constraint.
 type FKInfo struct {
 	ID       int64       `json:"id"`

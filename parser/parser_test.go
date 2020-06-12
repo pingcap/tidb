@@ -2514,6 +2514,11 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t_n LOCK = DEFAULT , DROP CHECK ident;", true, "ALTER TABLE `t_n` LOCK = DEFAULT, DROP CHECK `ident`"},
 		{"ALTER TABLE t_n ALTER CHECK ident ENFORCED;", true, "ALTER TABLE `t_n` ALTER CHECK `ident` ENFORCED"},
 		{"ALTER TABLE t_n ALTER CHECK ident NOT ENFORCED;", true, "ALTER TABLE `t_n` ALTER CHECK `ident` NOT ENFORCED"},
+		{"ALTER TABLE t_n DROP CONSTRAINT ident", true, "ALTER TABLE `t_n` DROP CHECK `ident`"},
+		{"ALTER TABLE t_n DROP CHECK ident", true, "ALTER TABLE `t_n` DROP CHECK `ident`"},
+		{"ALTER TABLE t_n ALTER CONSTRAINT ident", false, ""},
+		{"ALTER TABLE t_n ALTER CONSTRAINT ident enforced", true, "ALTER TABLE `t_n` ALTER CHECK `ident` ENFORCED"},
+		{"ALTER TABLE t_n ALTER CHECK ident not enforced", true, "ALTER TABLE `t_n` ALTER CHECK `ident` NOT ENFORCED"},
 
 		{"alter table t analyze partition a", true, "ANALYZE TABLE `t` PARTITION `a`"},
 		{"alter table t analyze partition a with 4 buckets", true, "ANALYZE TABLE `t` PARTITION `a` WITH 4 BUCKETS"},
