@@ -216,7 +216,7 @@ func (checker *handleEqualsChecker) Check(params []interface{}, names []string) 
 		return false, "Two handle types arguments to" + checker.Name + " must be same"
 	}
 
-	return param1.Equal(param2), ""
+	return param1.String() == param2.String(), ""
 }
 
 // RowsWithSep is a convenient function to wrap args to a slice of []interface.

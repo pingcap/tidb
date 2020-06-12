@@ -47,14 +47,14 @@ import (
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testutil"
+	. "github.com/pingcap/tidb/util/testutil"
 )
 
 // Make it serial because config is modified in test cases.
 var _ = SerialSuites(&testSerialSuite{})
 
 type testSerialSuite struct {
-	testutil.CommonHandleSuite
+	CommonHandleSuite
 	store   kv.Storage
 	cluster cluster.Cluster
 	dom     *domain.Domain
@@ -311,6 +311,50 @@ func (s *testSerialSuite) TestGetTableEndHandle(c *C) {
 	c.Assert(emptyTable, IsFalse)
 }
 
+func (s *testSerialSuite) TestMultiRegionGetTableEndCommonHandle(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop database if exists test_get_endhandle")
+	tk.MustExec("create database test_get_endhandle")
+	tk.MustExec("use test_get_endhandle")
+	tk.MustExec("set @@tidb_enable_clustered_index = true")
+
+	tk.MustExec("create table t(a varchar(20), b int, c float, d bigint, primary key (a, b, c))")
+	var builder strings.Builder
+	fmt.Fprintf(&builder, "insert into t values ")
+	for i := 0; i < 1000; i++ {
+		fmt.Fprintf(&builder, "('%v', %v, %v, %v),", i, i, i, i)
+	}
+	sql := builder.String()
+	tk.MustExec(sql[:len(sql)-1])
+
+	// Get table ID for split.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblID := tbl.Meta().ID
+
+	d := s.dom.DDL()
+	testCtx := newTestMaxTableRowIDContext(c, d, tbl)
+
+	// Split the table.
+	s.cluster.SplitTable(tblID, 100)
+
+	maxHandle, emptyTable := getMaxTableHandle(testCtx, s.store)
+	c.Assert(emptyTable, IsFalse)
+	c.Assert(maxHandle, HandleEquals, MustNewCommonHandle(c, "999", 999, 999))
+
+	tk.MustExec("insert into t values('a', 1, 1, 1)")
+	maxHandle, emptyTable = getMaxTableHandle(testCtx, s.store)
+	c.Assert(emptyTable, IsFalse)
+	c.Assert(maxHandle, HandleEquals, MustNewCommonHandle(c, "a", 1, 1))
+
+	tk.MustExec("insert into t values('0000', 1, 1, 1)")
+	maxHandle, emptyTable = getMaxTableHandle(testCtx, s.store)
+	c.Assert(emptyTable, IsFalse)
+	c.Assert(maxHandle, HandleEquals, MustNewCommonHandle(c, "a", 1, 1))
+}
+
 func (s *testSerialSuite) TestGetTableEndCommonHandle(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("drop database if exists test_get_endhandle")
@@ -329,11 +373,11 @@ func (s *testSerialSuite) TestGetTableEndCommonHandle(c *C) {
 	checkGetMaxTableRowID(testCtx, s.store, true, nil)
 
 	tk.MustExec("insert into t values('abc', 1, 10)")
-	expectedHandle := testutil.MustNewCommonHandle(c, "abc", 1)
+	expectedHandle := MustNewCommonHandle(c, "abc", 1)
 	checkGetMaxTableRowID(testCtx, s.store, false, expectedHandle)
 
 	tk.MustExec("insert into t values('abchzzzzzzzz', 1, 10)")
-	expectedHandle = testutil.MustNewCommonHandle(c, "abchzzzzzzzz", 1)
+	expectedHandle = MustNewCommonHandle(c, "abchzzzzzzzz", 1)
 	checkGetMaxTableRowID(testCtx, s.store, false, expectedHandle)
 
 	tk.MustExec("insert into t values('a', 1, 10)")
@@ -909,8 +953,8 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 		tk.MustExec("drop table t")
 	}
 
-	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+	ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer ConfigTestUtils.RestoreAutoRandomTestConfig()
 
 	// Only bigint column can set auto_random
 	assertBigIntOnly("create table t (a char primary key auto_random(3), b int)", "char")
@@ -1029,7 +1073,7 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 		mustExecAndDrop(sql, func() {
 			note := fmt.Sprintf(autoid.AutoRandomAvailableAllocTimesNote, times)
 			result := fmt.Sprintf("Note|1105|%s", note)
-			tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", result))
+			tk.MustQuery("show warnings").Check(RowsWithSep("|", result))
 			c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
 		})
 	}
@@ -1059,8 +1103,8 @@ func (s *testSerialSuite) TestAutoRandomExchangePartition(c *C) {
 	tk.MustExec("create database if not exists auto_random_db")
 	defer tk.MustExec("drop database if exists auto_random_db")
 
-	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+	ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer ConfigTestUtils.RestoreAutoRandomTestConfig()
 
 	tk.MustExec("use auto_random_db")
 
@@ -1095,8 +1139,8 @@ func (s *testSerialSuite) TestAutoRandomIncBitsIncrementAndOffset(c *C) {
 	tk.MustExec("use auto_random_db")
 	tk.MustExec("drop table if exists t")
 
-	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+	ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer ConfigTestUtils.RestoreAutoRandomTestConfig()
 
 	recreateTable := func() {
 		tk.MustExec("drop table if exists t")
