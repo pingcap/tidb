@@ -290,17 +290,22 @@ func (c *RegionCache) checkAndResolve(needCheckStores []*Store) {
 
 // RPCContext contains data that is needed to send RPC to a region.
 type RPCContext struct {
-	Region  RegionVerID
-	Meta    *metapb.Region
-	Peer    *metapb.Peer
-	PeerIdx int
-	Store   *Store
-	Addr    string
+	Region       RegionVerID
+	Meta         *metapb.Region
+	Peer         *metapb.Peer
+	PeerIdx      int
+	Store        *Store
+	Addr         string
+	ReqStoreType kv.StoreType
 }
 
 func (c *RPCContext) String() string {
-	return fmt.Sprintf("region ID: %d, meta: %s, peer: %s, addr: %s, idx: %d",
-		c.Region.GetID(), c.Meta, c.Peer, c.Addr, c.PeerIdx)
+	var runStoreType string
+	if c.Store != nil {
+		runStoreType = c.Store.storeType.Name()
+	}
+	return fmt.Sprintf("region ID: %d, meta: %s, peer: %s, addr: %s, idx: %d, reqStoreType: %s, runStoreType: %s",
+		c.Region.GetID(), c.Meta, c.Peer, c.Addr, c.PeerIdx, c.ReqStoreType.Name(), runStoreType)
 }
 
 // GetTiKVRPCContext returns RPCContext for a region. If it returns nil, the region
@@ -522,7 +527,7 @@ func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload 
 		}
 
 		// try next peer to found new leader.
-		if ctx.Store.storeType == kv.TiKV {
+		if ctx.ReqStoreType == kv.TiKV {
 			rs.switchNextPeer(r, ctx.PeerIdx)
 		} else {
 			rs.switchNextFlashPeer(r, ctx.PeerIdx)
