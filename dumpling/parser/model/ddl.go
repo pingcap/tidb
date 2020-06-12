@@ -72,6 +72,9 @@ const (
 	ActionRebaseAutoRandomBase          ActionType = 40
 	ActionAlterIndexVisibility          ActionType = 41
 	ActionExchangeTablePartition        ActionType = 42
+	ActionAddCheckConstraint            ActionType = 43
+	ActionDropCheckConstraint           ActionType = 44
+	ActionAlterCheckConstraint          ActionType = 45
 )
 
 const (
@@ -123,6 +126,9 @@ var actionMap = map[ActionType]string{
 	ActionRebaseAutoRandomBase:          "rebase auto_random ID",
 	ActionAlterIndexVisibility:          "alter index visibility",
 	ActionExchangeTablePartition:        "exchange partition",
+	ActionAddCheckConstraint:            "add check constraint",
+	ActionDropCheckConstraint:           "drop check constraint",
+	ActionAlterCheckConstraint:          "alter check constraint",
 }
 
 // String return current ddl action in string
