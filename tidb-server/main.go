@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/pd/v4/client"
+	pd "github.com/pingcap/pd/v4/client"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
@@ -555,6 +555,10 @@ func setGlobalVars() {
 	plannercore.AllowCartesianProduct.Store(cfg.Performance.CrossJoin)
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
 	kv.TxnTotalSizeLimit = cfg.Performance.TxnTotalSizeLimit
+	if cfg.Performance.TxnEntrySizeLimit > 120*1024*1024 {
+		log.Fatal("cannot set txn entry size limit larger than 120M")
+	}
+	kv.TxnEntrySizeLimit = cfg.Performance.TxnEntrySizeLimit
 
 	priority := mysql.Str2Priority(cfg.Performance.ForcePriority)
 	variable.ForcePriority = int32(priority)
