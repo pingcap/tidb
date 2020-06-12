@@ -156,6 +156,9 @@ func (s *testIntegrationSuite) TestAggregation(c *C) {
 	tk.MustExec("create table t(a int primary key, b int)")
 	tk.MustExec("insert into t values (1, 11), (4, 44), (2, 22), (3, 33)")
 	tk.MustExec("set session tidb_enable_cascades_planner = 1")
+	tk.MustExec("set session tidb_executor_concurrency = 4")
+	tk.MustExec("set @@session.tidb_hash_join_concurrency = 5")
+	tk.MustExec("set @@session.tidb_distsql_scan_concurrency = 15;")
 	var input []string
 	var output []struct {
 		SQL    string
