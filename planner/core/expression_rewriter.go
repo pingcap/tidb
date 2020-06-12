@@ -1526,7 +1526,7 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 	var function expression.Expression
 	er.ctxStackPop(len(v.Args))
 	if _, ok := expression.DeferredFunctions[v.FnName.L]; er.useCache() && ok {
-		// When the expression is unix_timestamp and the length of argument is not zero,
+		// When the expression is unix_timestamp and the number of argument is not zero,
 		// we deal with it as normal expression.
 		if v.FnName.L == ast.UnixTimestamp && len(v.Args) != 0 {
 			function, er.err = er.newFunction(v.FnName.L, &v.Type, args...)
