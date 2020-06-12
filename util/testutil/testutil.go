@@ -147,10 +147,38 @@ func (chs *CommonHandleSuite) RerunWithCommonHandleEnabled(c *check.C, f func(*c
 	}
 }
 
-// MustNewHandle create a handle according to CommonHandleSuite.IsCommonHandle.
-func (chs *CommonHandleSuite) MustNewHandle(vs ...interface{}) kv.Handle {
+// NewHandle create a handle according to CommonHandleSuite.IsCommonHandle.
+func (chs *CommonHandleSuite) NewHandle() *commonHandleSuiteNewHandleBuilder {
+	return &commonHandleSuiteNewHandleBuilder{isCommon: chs.IsCommonHandle}
+}
+
+func (chs *CommonHandleSuite) Branch(intHandleFn func(), commonHandleFn func()) {
 	if chs.IsCommonHandle {
-		encoded, err := codec.EncodeKey(new(stmtctx.StatementContext), nil, types.MakeDatums(vs...)...)
+		commonHandleFn()
+	} else {
+		intHandleFn()
+	}
+}
+
+type commonHandleSuiteNewHandleBuilder struct {
+	isCommon   bool
+	intVal     int64
+	commonVals []interface{}
+}
+
+func (c *commonHandleSuiteNewHandleBuilder) Int(v int64) *commonHandleSuiteNewHandleBuilder {
+	c.intVal = v
+	return c
+}
+
+func (c *commonHandleSuiteNewHandleBuilder) Common(vs ...interface{}) kv.Handle {
+	c.commonVals = vs
+	return c.Build()
+}
+
+func (c *commonHandleSuiteNewHandleBuilder) Build() kv.Handle {
+	if c.isCommon {
+		encoded, err := codec.EncodeKey(new(stmtctx.StatementContext), nil, types.MakeDatums(c.commonVals...)...)
 		if err != nil {
 			panic(err)
 		}
@@ -160,14 +188,7 @@ func (chs *CommonHandleSuite) MustNewHandle(vs ...interface{}) kv.Handle {
 		}
 		return ch
 	}
-	if len(vs) != 1 {
-		panic(errors.Errorf("kv.IntHandle only accept one argument, but got %d", len(vs)))
-	}
-
-	if v, isInt := vs[0].(int); isInt {
-		return kv.IntHandle(v)
-	}
-	panic(errors.Errorf("kv.IntHandle's argument must be int, but got %T", vs[0]))
+	return kv.IntHandle(c.intVal)
 }
 
 type handleEqualsChecker struct {

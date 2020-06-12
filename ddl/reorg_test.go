@@ -73,7 +73,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	c.Assert(err, IsNil)
 
 	rowCount := int64(10)
-	handle := s.MustNewHandle(100)
+	handle := s.NewHandle().Int(100).Common("a", 100, "string")
 	f := func() error {
 		d.generalWorker().reorgCtx.setRowCount(rowCount)
 		d.generalWorker().reorgCtx.setNextHandle(handle)
@@ -130,12 +130,14 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	}
 
 	var info *reorgInfo
+	startHandle := s.NewHandle().Int(1).Common(100, "string")
+	endHandle := s.NewHandle().Int(0).Common(101, "string")
 	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err1 error
 		info, err1 = getReorgInfo(d.ddlCtx, t, job, mockTbl)
 		c.Assert(err1, IsNil)
-		err1 = info.UpdateReorgMeta(txn, s.MustNewHandle(1), s.MustNewHandle(0), 1)
+		err1 = info.UpdateReorgMeta(txn, startHandle, endHandle, 1)
 		c.Assert(err1, IsNil)
 		return nil
 	})
@@ -146,7 +148,8 @@ func (s *testDDLSuite) TestReorg(c *C) {
 		var err1 error
 		info, err1 = getReorgInfo(d.ddlCtx, t, job, mockTbl)
 		c.Assert(err1, IsNil)
-		c.Assert(info.StartHandle, HandleEquals, s.MustNewHandle(1))
+		c.Assert(info.StartHandle, HandleEquals, startHandle)
+		c.Assert(info.EndHandle, HandleEquals, endHandle)
 		return nil
 	})
 	c.Assert(err, IsNil)

@@ -54,6 +54,7 @@ import (
 var _ = SerialSuites(&testSerialSuite{})
 
 type testSerialSuite struct {
+	testutil.CommonHandleSuite
 	store   kv.Storage
 	cluster cluster.Cluster
 	dom     *domain.Domain

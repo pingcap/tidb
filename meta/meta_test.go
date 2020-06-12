@@ -347,13 +347,15 @@ func (s *testSuite) TestDDL(c *C) {
 	c.Assert(j, HandleEquals, kv.IntHandle(math.MaxInt64))
 	c.Assert(k, Equals, int64(0))
 
-	err = t.UpdateDDLReorgHandle(job, s.MustNewHandle(1), s.MustNewHandle(2), 3)
+	startHandle := s.NewHandle().Int(1).Common("abc", 1222, "string")
+	endHandle := s.NewHandle().Int(2).Common("dddd", 1222, "string")
+	err = t.UpdateDDLReorgHandle(job, startHandle, endHandle, 3)
 	c.Assert(err, IsNil)
 
 	i, j, k, err = t.GetDDLReorgHandle(job, s.IsCommonHandle)
 	c.Assert(err, IsNil)
-	c.Assert(i, HandleEquals, s.MustNewHandle(1))
-	c.Assert(j, HandleEquals, s.MustNewHandle(2))
+	c.Assert(i, HandleEquals, startHandle)
+	c.Assert(j, HandleEquals, endHandle)
 	c.Assert(k, Equals, int64(3))
 
 	err = t.RemoveDDLReorgHandle(job)

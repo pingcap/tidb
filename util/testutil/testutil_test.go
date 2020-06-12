@@ -57,7 +57,7 @@ type testCommonHandleSuite struct {
 
 func (s *testCommonHandleSuite) TestCommonHandleSuiteRerun(c *C) {
 	c.Assert(s.IsCommonHandle, Equals, s.expectedIsCommonHandle)
-	hd := s.MustNewHandle(1)
+	hd := s.NewHandle().Int(1).Build()
 	if s.expectedIsCommonHandle {
 		c.Assert(hd.IsInt(), IsFalse)
 	} else {
