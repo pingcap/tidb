@@ -331,6 +331,6 @@ func getPhysID(tblInfo *model.TableInfo, val kv.Handle) int64 {
 	if pi == nil {
 		return tblInfo.ID
 	}
-	partIdx := math.Abs(val.IntValue()) % int64(pi.Num) // TODO: fix me for table, partition on cluster index.
+	partIdx := math.Abs(val.IntValue() % int64(pi.Num)) // TODO: fix me for table, partition on cluster index.
 	return pi.Definitions[partIdx].ID
 }
