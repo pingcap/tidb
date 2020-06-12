@@ -126,18 +126,23 @@ func MustNewCommonHandle(c *check.C, values ...interface{}) kv.Handle {
 }
 
 // CommonHandleSuite is used to adapt kv.CommonHandle to existing kv.IntHandle tests.
-// Usage:
-// 1. Embed CommonHandleSuite to the target test suite(if you override SetUpTest(),
-//    remember to call CommonHandleSuite.SetUpTest explicitly).
-// 2. Call CommonHandleSuite.SetCForCommonHandleTestSuite() at the beginning of the test.
-// 3. At the end of the test, invoke RerunWithCommonHandleEnabled() and pass the test function into it.
+//  Usage:
+//   type MyTestSuite struct {
+//       CommonHandleSuite
+//   }
+//   func (s *MyTestSuite) TestSomething(c *C) {
+//       s.SetCForCommonHandleTestSuite(c)
+//       // ...
+//       s.RerunWithCommonHandleEnabled(s.TestSomething)
+//   }
+// Note: if you override TearDownTest(), remember to invoke CommonHandleSuite.TearDownTest() explicitly.
 type CommonHandleSuite struct {
 	IsCommonHandle bool
 	c              *check.C
 }
 
-// SetUpTest clears CommonHandleSuite's status before running each test.
-func (chs *CommonHandleSuite) SetUpTest(_ *check.C) {
+// TearDownTest clears CommonHandleSuite's status after running each test.
+func (chs *CommonHandleSuite) TearDownTest(_ *check.C) {
 	chs.IsCommonHandle = false
 	chs.c = nil
 }
