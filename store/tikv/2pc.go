@@ -576,17 +576,17 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 		// The backoffer instance is created outside of the goroutine to avoid
 		// potential data race in unit test since `CommitMaxBackoff` will be updated
 		// by test suites.
-		secondaryBo := NewBackoffer(context.Background(), CommitMaxBackoff).WithVars(c.txn.vars)
-		go func() {
-			e := c.doActionOnBatches(secondaryBo, action, batches)
-			if e != nil {
-				logutil.BgLogger().Debug("2PC async doActionOnBatches",
-					zap.Uint64("conn", c.connID),
-					zap.Stringer("action type", action),
-					zap.Error(e))
-				tikvSecondaryLockCleanupFailureCounterCommit.Inc()
-			}
-		}()
+		// secondaryBo := NewBackoffer(context.Background(), CommitMaxBackoff).WithVars(c.txn.vars)
+		// go func() {
+		// e := c.doActionOnBatches(secondaryBo, action, batches)
+		// if e != nil {
+		// logutil.BgLogger().Debug("2PC async doActionOnBatches",
+		// zap.Uint64("conn", c.connID),
+		// zap.Stringer("action type", action),
+		// zap.Error(e))
+		// tikvSecondaryLockCleanupFailureCounterCommit.Inc()
+		// }
+		// }()
 	} else {
 		err = c.doActionOnBatches(bo, action, batches)
 	}
