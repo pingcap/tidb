@@ -2286,6 +2286,44 @@ func (s *testDBSuite1) TestCreateTable(c *C) {
 	//c.Assert(err.Error(), Equals, "[types:1291]Column 'a' has duplicated value 'B' in ENUM")
 }
 
+func (s *testDBSuite1) TestTableOptionUnionUnsupported(c *C) {
+	s.tk.MustExec("use test")
+	s.tk.MustExec("CREATE TABLE x (a INT) ENGINE = MyISAM;")
+	s.tk.MustExec("CREATE TABLE y (a INT) ENGINE = MyISAM;")
+	s.tk.MustExec("INSERT INTO x VALUES (1);")
+	s.tk.MustExec("INSERT INTO y VALUES (2);")
+
+	failSQL := "CREATE TABLE z (a INT) ENGINE = MERGE UNION = (x, y);"
+	failMsg := "[ddl:8231]CREATE/ALTER table with union option is not supported"
+	_, err := s.tk.Exec(failSQL)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, failMsg)
+
+	failSQL = "ALTER TABLE x ENGINE = MERGE UNION = (y);"
+	_, err = s.tk.Exec(failSQL)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, failMsg)
+}
+
+func (s *testDBSuite1) TestTableOptionInsertMethodUnsupported(c *C) {
+	s.tk.MustExec("use test")
+	s.tk.MustExec("CREATE TABLE x (a INT) ENGINE = MyISAM;")
+	s.tk.MustExec("CREATE TABLE y (a INT) ENGINE = MyISAM;")
+	s.tk.MustExec("INSERT INTO x VALUES (1);")
+	s.tk.MustExec("INSERT INTO y VALUES (2);")
+
+	failSQL := "CREATE TABLE z (a INT) ENGINE = MERGE INSERT_METHOD=LAST;"
+	failMsg := "[ddl:8232]CREATE/ALTER table with insert method option is not supported"
+	_, err := s.tk.Exec(failSQL)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, failMsg)
+
+	failSQL = "ALTER TABLE x ENGINE = MERGE INSERT_METHOD=LAST;"
+	_, err = s.tk.Exec(failSQL)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, failMsg)
+}
+
 func (s *testDBSuite5) TestRepairTable(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/repairFetchCreateTable", `return(true)`), IsNil)
 	defer func() {
