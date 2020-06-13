@@ -44,7 +44,28 @@ func EncodeHandleInUniqueIndexValue(h int64) []byte {
 }
 
 // DecodeHandleInUniqueIndexValue decodes handle in data.
-func DecodeHandleInUniqueIndexValue(data []byte) (int64, error) {
+func DecodeHandleInUniqueIndexValue(data []byte, isCommonHandle bool) (kv.Handle, error) {
+	if !isCommonHandle {
+		dLen := len(data)
+		if dLen <= tablecodec.MaxOldEncodeValueLen {
+			return kv.IntHandle(int64(binary.BigEndian.Uint64(data))), nil
+		}
+		return kv.IntHandle(int64(binary.BigEndian.Uint64(data[dLen-int(data[0]):]))), nil
+	}
+	tailLen := int(data[0])
+	data = data[:len(data)-tailLen]
+	handleLen := uint16(data[2])<<8 + uint16(data[3])
+	handleEndOff := 4 + handleLen
+	h, err := kv.NewCommonHandle(data[4:handleEndOff])
+	if err != nil {
+		return nil, err
+	}
+	return h, nil
+}
+
+// DecodeHandleInUniqueIndexValueDeprecated decodes old handle in data.
+// TODO: remove me after ddl full support cluster index
+func DecodeHandleInUniqueIndexValueDeprecated(data []byte) (int64, error) {
 	dLen := len(data)
 	if dLen <= tablecodec.MaxOldEncodeValueLen {
 		return int64(binary.BigEndian.Uint64(data)), nil
@@ -86,12 +107,10 @@ func (c *indexIter) Next() (val []types.Datum, h kv.Handle, err error) {
 		val = vv[0 : len(vv)-1]
 	} else {
 		// If the index is unique and the value isn't nil, the handle is in value.
-		var iv int64
-		iv, err = DecodeHandleInUniqueIndexValue(c.it.Value())
+		h, err = DecodeHandleInUniqueIndexValue(c.it.Value(), c.idx.tblInfo.IsCommonHandle)
 		if err != nil {
 			return nil, nil, err
 		}
-		h = kv.IntHandle(iv)
 		val = vv
 	}
 	// update new iter to next
@@ -420,11 +439,11 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 		return nil, err
 	}
 
-	handle, err := DecodeHandleInUniqueIndexValue(value)
+	handle, err := DecodeHandleInUniqueIndexValue(value, c.tblInfo.IsCommonHandle)
 	if err != nil {
 		return nil, err
 	}
-	return kv.IntHandle(handle), kv.ErrKeyExists
+	return handle, kv.ErrKeyExists
 }
 
 func encodeCommonHandle(idxVal []byte, h kv.Handle) []byte {
@@ -516,16 +535,14 @@ func (c *index) Exist(sc *stmtctx.StatementContext, rm kv.RetrieverMutator, inde
 
 	// For distinct index, the value of key is handle.
 	if distinct {
-		var iv int64
-		iv, err := DecodeHandleInUniqueIndexValue(value)
+		var handle kv.Handle
+		handle, err := DecodeHandleInUniqueIndexValue(value, c.tblInfo.IsCommonHandle)
 		if err != nil {
 			return false, nil, err
 		}
-		handle := kv.IntHandle(iv)
 		if !handle.Equal(h) {
 			return true, handle, kv.ErrKeyExists
 		}
-
 		return true, handle, nil
 	}
 

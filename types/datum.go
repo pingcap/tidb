@@ -1667,6 +1667,8 @@ func (d *Datum) ToString() (string, error) {
 		return d.GetMysqlJSON().String(), nil
 	case KindBinaryLiteral, KindMysqlBit:
 		return d.GetBinaryLiteral().ToString(), nil
+	case KindNull:
+		return "", nil
 	default:
 		return "", errors.Errorf("cannot convert %v(type %T) to string", d.GetValue(), d.GetValue())
 	}
