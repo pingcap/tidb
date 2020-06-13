@@ -227,4 +227,6 @@ var (
 	ErrPartitionExchangeDifferentOption = terror.ClassDDL.New(mysql.ErrPartitionExchangeDifferentOption, mysql.MySQLErrName[mysql.ErrPartitionExchangeDifferentOption])
 	// ErrTableOptionUnionUnsupported is returned when create/alter table with union option.
 	ErrTableOptionUnionUnsupported = terror.ClassDDL.New(mysql.ErrTableOptionUnionUnsupported, mysql.MySQLErrName[mysql.ErrTableOptionUnionUnsupported])
+	// ErrTableOptionInsertMethodUnsupported is returned when create/alter table with insert method option.
+	ErrTableOptionInsertMethodUnsupported = terror.ClassDDL.New(mysql.ErrTableOptionInsertMethodUnsupported, mysql.MySQLErrName[mysql.ErrTableOptionInsertMethodUnsupported])
 )
