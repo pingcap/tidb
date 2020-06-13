@@ -1017,10 +1017,9 @@ func BuildFinalModeAggregation(
 	partialCursor := 0
 	final = &AggInfo{
 		AggFuncs:     make([]*aggregation.AggFuncDesc, len(original.AggFuncs)),
-		GroupByItems: make([]expression.Expression, len(original.GroupByItems)),
+		GroupByItems: append(make([]expression.Expression, 0, len(original.GroupByItems)), original.GroupByItems...),
 		Schema:       original.Schema,
 	}
-	copy(final.GroupByItems, original.GroupByItems)
 
 	partialGbySchema := expression.NewSchema()
 	partialFirstRowFuncs := make([]*aggregation.AggFuncDesc, 0, len(partial.GroupByItems))
@@ -1160,7 +1159,7 @@ func BuildFinalModeAggregation(
 				sumAgg := *aggFunc
 				sumAgg.Name = ast.AggFuncSum
 				sumAgg.RetTp = partial.Schema.Columns[partialCursor-1].GetType()
-				// Shallow copy, as following process (e.g `WrapCastForAggArgs`) modify `sumAgg.Args` would affect `cntAgg`.
+				// Shallow copy, as following procedures (e.g `WrapCastForAggArgs`) modifying `sumAgg.Args` would affect `cntAgg`.
 				sumAgg.Args = append(make([]expression.Expression, 0, len(aggFunc.Args)), aggFunc.Args...)
 				partial.AggFuncs = append(partial.AggFuncs, &cntAgg, &sumAgg)
 			} else if aggFunc.Name == ast.AggFuncApproxCountDistinct {
