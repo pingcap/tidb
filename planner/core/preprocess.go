@@ -485,6 +485,13 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 			}
 		}
 	}
+	for _, option := range stmt.Options {
+		switch option.Tp {
+		case ast.TableOptionUnion:
+			p.err = ddl.ErrTableOptionUnionUnsupported
+			return
+		}
+	}
 	if stmt.Select != nil {
 		// FIXME: a temp error noticing 'not implemented' (issue 4754)
 		p.err = errors.New("'CREATE TABLE ... SELECT' is not implemented yet")
@@ -670,6 +677,13 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 		}
 		for _, colDef := range spec.NewColumns {
 			if p.err = checkColumn(colDef); p.err != nil {
+				return
+			}
+		}
+		for _, option := range spec.Options {
+			switch option.Tp {
+			case ast.TableOptionUnion:
+				p.err = ddl.ErrTableOptionUnionUnsupported
 				return
 			}
 		}
