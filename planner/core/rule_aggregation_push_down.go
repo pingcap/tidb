@@ -220,10 +220,6 @@ func (a *aggregationPushDownSolver) tryToPushDownAggForJoin(aggFuncs []*aggregat
 		}
 	}
 	agg := a.splitPartialAgg(originAgg, aggFuncs, expression.Column2Exprs(gbyCols))
-	// agg, err := a.makeNewAgg(join.ctx, aggFuncs, gbyCols, originAgg.aggHints, originAgg.blockOffset)
-	// if err != nil {
-	// 	return nil, err
-	// }
 	agg.SetChildren(child)
 	// If agg has no group-by item, it will return a default value, which may cause some bugs.
 	// So here we add a group-by item forcely.
@@ -261,40 +257,6 @@ func (a *aggregationPushDownSolver) checkAnyCountSumAvg(aggFuncs []*aggregation.
 		}
 	}
 	return false
-}
-
-// TODO:
-//   1. https://github.com/pingcap/tidb/issues/16355, push avg & distinct functions across join
-//   2. remove this method and use splitPartialAgg instead for clean code.
-func (a *aggregationPushDownSolver) makeNewAgg(ctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc, gbyCols []*expression.Column, aggHints aggHintInfo, blockOffset int) (*LogicalAggregation, error) {
-	agg := LogicalAggregation{
-		GroupByItems: expression.Column2Exprs(gbyCols),
-		groupByCols:  gbyCols,
-		aggHints:     aggHints,
-	}.Init(ctx, blockOffset)
-	aggLen := len(aggFuncs) + len(gbyCols)
-	newAggFuncDescs := make([]*aggregation.AggFuncDesc, 0, aggLen)
-	schema := expression.NewSchema(make([]*expression.Column, 0, aggLen)...)
-	for _, aggFunc := range aggFuncs {
-		var newFuncs []*aggregation.AggFuncDesc
-		newFuncs, schema = a.decompose(ctx, aggFunc, schema)
-		newAggFuncDescs = append(newAggFuncDescs, newFuncs...)
-	}
-	for _, gbyCol := range gbyCols {
-		firstRow, err := aggregation.NewAggFuncDesc(agg.ctx, ast.AggFuncFirstRow, []expression.Expression{gbyCol}, false)
-		if err != nil {
-			return nil, err
-		}
-		newCol, _ := gbyCol.Clone().(*expression.Column)
-		newCol.RetType = firstRow.RetTp
-		newAggFuncDescs = append(newAggFuncDescs, firstRow)
-		schema.Append(newCol)
-	}
-	agg.AggFuncs = newAggFuncDescs
-	agg.SetSchema(schema)
-	// TODO: Add a Projection if any argument of aggregate funcs or group by items are scalar functions.
-	// agg.buildProjectionIfNecessary()
-	return agg, nil
 }
 
 func (a *aggregationPushDownSolver) splitPartialAgg(agg *LogicalAggregation, partialAggFuncs []*aggregation.AggFuncDesc, partialGbyItems []expression.Expression) (pushedAgg *LogicalAggregation) {
@@ -342,12 +304,6 @@ func (a *aggregationPushDownSolver) pushAggCrossUnion(agg *LogicalAggregation, u
 	for _, gbyExpr := range agg.GroupByItems {
 		newExpr := expression.ColumnSubstitute(gbyExpr, unionSchema, expression.Column2Exprs(unionChild.Schema().Columns))
 		newAgg.GroupByItems = append(newAgg.GroupByItems, newExpr)
-		// TODO: if there is a duplicated first_row function, we can delete it.
-		// firstRow, err := aggregation.NewAggFuncDesc(agg.ctx, ast.AggFuncFirstRow, []expression.Expression{gbyExpr}, false)
-		// if err != nil {
-		// 	return nil, err
-		// }
-		// newAgg.AggFuncs = append(newAgg.AggFuncs, firstRow)
 	}
 	newAgg.collectGroupByColumns()
 	tmpSchema := expression.NewSchema(newAgg.groupByCols...)

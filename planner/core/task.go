@@ -1063,14 +1063,7 @@ func BuildFinalModeAggregation(
 	for i, aggFunc := range original.AggFuncs {
 		// skip agg funcs not in partial agg.
 		if original.PartialAggFuncs != nil {
-			found := false
-			for _, partialAgg := range original.PartialAggFuncs {
-				if partialAgg.Equal(sctx, aggFunc) {
-					found = true
-					break
-				}
-			}
-			if !found {
+			if aggFunc.Find(sctx, original.PartialAggFuncs) < 0 {
 				final.AggFuncs[i] = aggFunc
 				continue
 			}
@@ -1167,6 +1160,8 @@ func BuildFinalModeAggregation(
 				sumAgg := *aggFunc
 				sumAgg.Name = ast.AggFuncSum
 				sumAgg.RetTp = partial.Schema.Columns[partialCursor-1].GetType()
+				// Shallow copy, as following process (e.g `WrapCastForAggArgs`) modify `sumAgg.Args` would affect `cntAgg`.
+				sumAgg.Args = append(make([]expression.Expression, 0, len(aggFunc.Args)), aggFunc.Args...)
 				partial.AggFuncs = append(partial.AggFuncs, &cntAgg, &sumAgg)
 			} else if aggFunc.Name == ast.AggFuncApproxCountDistinct {
 				approxCountDistinctAgg := *aggFunc
