@@ -490,6 +490,9 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		case ast.TableOptionUnion:
 			p.err = ddl.ErrTableOptionUnionUnsupported
 			return
+		case ast.TableOptionInsertMethod:
+			p.err = ddl.ErrTableOptionInsertMethodUnsupported
+			return
 		}
 	}
 	if stmt.Select != nil {
@@ -684,6 +687,9 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 			switch option.Tp {
 			case ast.TableOptionUnion:
 				p.err = ddl.ErrTableOptionUnionUnsupported
+				return
+			case ast.TableOptionInsertMethod:
+				p.err = ddl.ErrTableOptionInsertMethodUnsupported
 				return
 			}
 		}
