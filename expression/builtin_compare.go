@@ -382,8 +382,48 @@ func temporalWithDateAsNumEvalType(argTp *types.FieldType) (argEvalType types.Ev
 	return
 }
 
-// GetCmpTp4MinMax gets compare type for GREATEST and LEAST and BETWEEN (mainly for datetime).
+// GetCmpTp4MinMax gets compare type for GREATEST and LEAST (mainly for datetime and string).
+// See https://dev.mysql.com/doc/refman/8.0/en/comparison-operators.html#function_least
 func GetCmpTp4MinMax(args []Expression) (argTp types.EvalType) {
+	datetimeFound, strFound, isAllStr := false, false, true
+	cmpEvalType, isStr, isTemporalWithDate := temporalWithDateAsNumEvalType(args[0].GetType())
+	if isStr {
+		strFound = true
+	} else {
+		isAllStr = false
+	}
+	if isTemporalWithDate {
+		datetimeFound = true
+	}
+	lft := args[0].GetType()
+	for i := range args {
+		rft := args[i].GetType()
+		var tp types.EvalType
+		tp, isStr, isTemporalWithDate = temporalWithDateAsNumEvalType(rft)
+		if isTemporalWithDate {
+			datetimeFound = true
+		}
+		if isStr {
+			strFound = true
+		} else {
+			isAllStr = false
+		}
+		cmpEvalType = getBaseCmpType(cmpEvalType, tp, lft, rft)
+		lft = rft
+	}
+	argTp = cmpEvalType
+	if isAllStr || cmpEvalType.IsStringKind() || (strFound && argTp == types.ETReal) {
+		argTp = types.ETString
+	}
+	if datetimeFound {
+		argTp = types.ETDatetime
+	}
+	return argTp
+}
+
+// GetCmpTp4Between gets compare type for BETWEEN.
+// https://dev.mysql.com/doc/refman/8.0/en/comparison-operators.html#operator_between
+func GetCmpTp4Between(args []Expression) (argTp types.EvalType) {
 	datetimeFound, isAllStr := false, true
 	cmpEvalType, isStr, isTemporalWithDate := temporalWithDateAsNumEvalType(args[0].GetType())
 	if !isStr {
@@ -796,9 +836,14 @@ func (b *builtinLeastTimeSig) Clone() builtinFunc {
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#functionleast
 func (b *builtinLeastTimeSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
 	var (
-		v string
-		t types.Time
+		v, strMin string
+		t         types.Time
 	)
+	// If any invalid time is found, leastTime will use the string comprasion res
+	strMin, isNull, err = b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return strMin, isNull, err
+	}
 	min := types.NewTime(types.MaxDatetime, mysql.TypeDatetime, types.MaxFsp)
 	findInvalidTime := false
 	sc := b.ctx.GetSessionVars().StmtCtx
@@ -807,12 +852,14 @@ func (b *builtinLeastTimeSig) evalString(row chunk.Row) (res string, isNull bool
 		if isNull || err != nil {
 			return "", true, err
 		}
+		if types.CompareString(v, strMin, b.collation) < 0 {
+			strMin = v
+		}
 		t, err = types.ParseDatetime(sc, v)
 		if err != nil {
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return v, true, err
 			} else if !findInvalidTime {
-				res = v
 				findInvalidTime = true
 			}
 		}
@@ -822,6 +869,8 @@ func (b *builtinLeastTimeSig) evalString(row chunk.Row) (res string, isNull bool
 	}
 	if !findInvalidTime {
 		res = min.String()
+	} else {
+		res = strMin
 	}
 	return res, false, nil
 }

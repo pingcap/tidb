@@ -726,7 +726,7 @@ func (b *builtinLeastTimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 	var argTime types.Time
 
 	findInvalidTime := make([]bool, n)
-	invalidValue := make([]string, n)
+	minStr := make([]string, n)
 
 	for j := 0; j < len(b.args); j++ {
 		if err := b.args[j].VecEvalString(b.ctx, input, result); err != nil {
@@ -737,14 +737,19 @@ func (b *builtinLeastTimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 			if dst.IsNull(i) {
 				continue
 			}
+			// If any invalid time is found, leastTime will use the string comprasion res
+			if j == 0 {
+				// Make a deep copy here.
+				// Otherwise minStr will internally change with result.
+				minStr[i] = string(result.GetBytes(i))
+			} else if types.CompareString(result.GetString(i), minStr[i], b.collation) < 0 {
+				minStr[i] = string(result.GetBytes(i))
+			}
 			argTime, err = types.ParseDatetime(sc, result.GetString(i))
 			if err != nil {
 				if err = handleInvalidTimeError(b.ctx, err); err != nil {
 					return err
 				} else if !findInvalidTime[i] {
-					// Make a deep copy here.
-					// Otherwise invalidValue will internally change with result.
-					invalidValue[i] = string(result.GetBytes(i))
 					findInvalidTime[i] = true
 				}
 				continue
@@ -758,10 +763,8 @@ func (b *builtinLeastTimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 	for i := 0; i < n; i++ {
 		if dst.IsNull(i) {
 			result.AppendNull()
-			continue
-		}
-		if findInvalidTime[i] {
-			result.AppendString(invalidValue[i])
+		} else if findInvalidTime[i] {
+			result.AppendString(minStr[i])
 		} else {
 			result.AppendString(dstTimes[i].String())
 		}
