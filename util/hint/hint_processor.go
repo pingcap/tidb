@@ -23,6 +23,8 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -102,8 +104,9 @@ func checkInsertStmtHintDuplicated(node ast.Node, sctx sessionctx.Context) {
 					}
 				}
 				if duplicatedHint != nil {
-					warning := fmt.Sprintf("Hint %s(`%v`) is ignored as conflicting/duplicated", duplicatedHint.HintName.O, duplicatedHint.HintData)
-					sctx.GetSessionVars().StmtCtx.AppendWarning(errors.New(warning))
+					hint := fmt.Sprintf("%s(`%v`)", duplicatedHint.HintName.O, duplicatedHint.HintData)
+					err := terror.ClassUtil.New(errno.ErrWarnConflictingHint, fmt.Sprintf(errno.MySQLErrName[errno.ErrWarnConflictingHint], hint))
+					sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 				}
 			}
 		}
