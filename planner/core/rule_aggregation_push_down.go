@@ -185,22 +185,6 @@ func (a *aggregationPushDownSolver) checkValidJoin(join *LogicalJoin) bool {
 	return join.JoinType == InnerJoin || join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin
 }
 
-// decompose splits an aggregate function to two parts: a final mode function and a partial mode function. Currently
-// there are no differences between partial mode and complete mode, so we can confuse them.
-func (a *aggregationPushDownSolver) decompose(ctx sessionctx.Context, aggFunc *aggregation.AggFuncDesc, schema *expression.Schema) ([]*aggregation.AggFuncDesc, *expression.Schema) {
-	// Result is a slice because avg should be decomposed to sum and count. Currently we don't process this case.
-	result := []*aggregation.AggFuncDesc{aggFunc.Clone()}
-	for _, aggFunc := range result {
-		schema.Append(&expression.Column{
-			UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
-			RetType:  aggFunc.RetTp,
-		})
-	}
-	aggFunc.Args = expression.Column2Exprs(schema.Columns[schema.Len()-len(result):])
-	aggFunc.Mode = aggregation.FinalMode
-	return result, schema
-}
-
 // tryToPushDownAggForJoin tries to push down an aggregate function into a join path. If all aggFuncs are first row, we won't
 // process it temporarily. If not, We will add additional group by columns and first row functions. We make a new aggregation operator.
 // If the pushed aggregation is grouped by unique key, it's no need to push it down.

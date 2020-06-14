@@ -23,13 +23,18 @@
       "select max(a.c) from t a join t b on a.a=b.a and a.b=b.b group by a.b",
       "select t1.a, count(t2.b) from t t1, t t2 where t1.a = t2.a group by t1.a",
       "select t1.c, avg(t2.a) from t t1, t t2 where t1.b = t2.b group by t1.c",
+      "select t2.c, avg(t2.a) from t t1, t t2 where t1.b = t2.b group by t2.c", // right "group by"
       "select count(distinct t2.c) from t t1, t t2 where t1.b = t2.b",
       "select count(distinct t2.a) from t t1, t t2 where t1.b = t2.b",
       "select avg(a) from (select * from t t1 union all select * from t t2) t",
       "select count(distinct a) from (select * from t t1 union all select * from t t2) t",
       "select count(distinct b) from (select * from t t1 union all select * from t t2) t",
       "select approx_count_distinct(a) from (select * from t t1 union all select * from t t2) t",
-      "select approx_count_distinct(b) from (select * from t t1 union all select * from t t2) t"
+      "select approx_count_distinct(b) from (select * from t t1 union all select * from t t2) t",
+
+      "select t1.c, count(t1.a + t2.a) from t t1, t t2 where t1.b = t2.b group by t1.c", // no push down, aggFunc on both sides
+      "select group_concat(t1.c) from t t1, t t2 where t1.b = t2.b group by t1.c", // `group_concat` cannot push down
+      "select t1.c, avg(t2.a) from t t1, t t2 where t1.b = t2.b and t1.c > t2.d group by t1.c" // other condition
     ]
   },
   {
