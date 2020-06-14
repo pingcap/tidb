@@ -188,19 +188,19 @@ func (a *aggregationPushDownSolver) checkValidJoin(join *LogicalJoin) bool {
 // tryToPushDownAggForJoin tries to push down an aggregate function into a join path. If all aggFuncs are first row, we won't
 // process it temporarily. If not, We will add additional group by columns and first row functions. We make a new aggregation operator.
 // If the pushed aggregation is grouped by unique key, it's no need to push it down.
-func (a *aggregationPushDownSolver) tryToPushDownAggForJoin(aggFuncs []*aggregation.AggFuncDesc, gbyCols []*expression.Column, join *LogicalJoin, childIdx int, originAgg *LogicalAggregation) (_ LogicalPlan, err error) {
+func (a *aggregationPushDownSolver) tryToPushDownAggForJoin(aggFuncs []*aggregation.AggFuncDesc, gbyCols []*expression.Column, join *LogicalJoin, childIdx int, originAgg *LogicalAggregation) LogicalPlan {
 	child := join.children[childIdx]
 	if aggregation.IsAllFirstRow(aggFuncs) {
-		return child, nil
+		return child
 	}
 	// If the join is multiway-join, we forbid pushing down.
 	if _, ok := join.children[childIdx].(*LogicalJoin); ok {
-		return child, nil
+		return child
 	}
 	tmpSchema := expression.NewSchema(gbyCols...)
 	for _, key := range child.Schema().Keys {
 		if tmpSchema.ColumnsIndices(key) != nil {
-			return child, nil
+			return child
 		}
 	}
 	agg := a.splitPartialAgg(originAgg, aggFuncs, expression.Column2Exprs(gbyCols))
@@ -216,10 +216,10 @@ func (a *aggregationPushDownSolver) tryToPushDownAggForJoin(aggFuncs []*aggregat
 		var existsDefaultValues bool
 		join.DefaultValues, existsDefaultValues = a.getDefaultValues(agg)
 		if !existsDefaultValues {
-			return child, nil
+			return child
 		}
 	}
-	return agg, nil
+	return agg
 }
 
 func (a *aggregationPushDownSolver) getDefaultValues(agg *LogicalAggregation) ([]types.Datum, bool) {
@@ -349,18 +349,12 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan) (_ LogicalPlan, e
 					if rightInvalid {
 						rChild = join.children[1]
 					} else {
-						rChild, err = a.tryToPushDownAggForJoin(rightAggFuncs, rightGbyCols, join, 1, agg)
-						if err != nil {
-							return nil, err
-						}
+						rChild = a.tryToPushDownAggForJoin(rightAggFuncs, rightGbyCols, join, 1, agg)
 					}
 					if leftInvalid {
 						lChild = join.children[0]
 					} else {
-						lChild, err = a.tryToPushDownAggForJoin(leftAggFuncs, leftGbyCols, join, 0, agg)
-						if err != nil {
-							return nil, err
-						}
+						lChild = a.tryToPushDownAggForJoin(leftAggFuncs, leftGbyCols, join, 0, agg)
 					}
 					join.SetChildren(lChild, rChild)
 					join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))

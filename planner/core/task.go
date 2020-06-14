@@ -1106,7 +1106,7 @@ func BuildFinalModeAggregation(
 					if partialIsCop {
 						partialGbySchema.Append(gbyCol)
 					} else {
-						firstRow, err := aggregation.NewAggFuncDesc(sctx, ast.AggFuncFirstRow, []expression.Expression{gbyCol}, false)
+						firstRow, err := aggregation.NewAggFuncDesc(sctx, ast.AggFuncFirstRow, []expression.Expression{distinctArg}, false)
 						if err != nil {
 							panic("NewAggFuncDesc FirstRow meets error: " + err.Error())
 						}

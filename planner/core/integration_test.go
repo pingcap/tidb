@@ -1212,10 +1212,25 @@ func (s *testIntegrationSuite) TestAggPushDownJoin(c *C) {
 		tk.MustExec(fmt.Sprintf("set session tidb_opt_agg_push_down = %v", i))
 		tk.MustExec(fmt.Sprintf("set session tidb_opt_distinct_agg_push_down = %v", i))
 
-		tk.MustQuery("select t2.c, count(t2.a), sum(t2.a), avg(t2.a) from t2 join t3 on t2.b = t3.b group by t2.c").Sort().Check(testkit.Rows("1 1 1 1.0000", "2 2 5 2.5000"))
-		tk.MustQuery("select t2.c, count(t3.a), sum(t3.a), avg(t3.a) from t2 join t3 on t2.b = t3.b group by t2.c").Sort().Check(testkit.Rows("1 1 11 11.0000", "2 2 25 12.5000"))
+		tk.MustQuery("select t2.c, count(t2.a), sum(t2.a), avg(t2.a) from t2 join t3 on t2.b = t3.b group by t2.c").Sort().Check(testkit.Rows(
+			"1 1 1 1.0000", "2 2 5 2.5000",
+		))
+		tk.MustQuery("select t2.c, count(t3.a), sum(t3.a), avg(t3.a) from t2 join t3 on t2.b = t3.b group by t2.c").Sort().Check(testkit.Rows(
+			"1 1 11 11.0000", "2 2 25 12.5000",
+		))
+		tk.MustQuery("select t3.c, count(t3.a), sum(t3.a), avg(t3.a) from t2 join t3 on t2.b = t3.b group by t3.c").Sort().Check(testkit.Rows(
+			"1 1 13 13.0000", "2 2 23 11.5000",
+		)) // right "group by", just for code coverage
+		tk.MustQuery("select t3.c, count(t3.a), sum(t3.a), avg(t3.a) from t2 join t3 on t2.b > t3.b group by t3.c").Sort().Check(testkit.Rows(
+			"2 3 34 11.3333",
+		)) // other conditions
+		tk.MustQuery("select t2.c+t3.c, count(t2.a), sum(t2.a), avg(t2.a) from t2 join t3 on t2.b = t3.b group by t2.c+t3.c").Sort().Check(testkit.Rows(
+			"3 2 4 2.0000", "4 1 2 2.0000",
+		))
+
 		tk.MustQuery("select count(distinct t2.c) from t2 join t3 on t2.b = t3.b").Sort().Check(testkit.Rows("2"))
 		tk.MustQuery("select t2.a, count(distinct t2.c) from t2 join t3 on t2.b = t3.b group by t2.a").Sort().Check(testkit.Rows("1 1", "2 1", "3 1"))
+		tk.MustQuery("select t2.a, count(distinct t2.c+1) from t2 join t3 on t2.b = t3.b group by t2.a").Sort().Check(testkit.Rows("1 1", "2 1", "3 1"))
 	}
 }
 
