@@ -121,6 +121,8 @@ func (a *baseFuncDesc) typeInfer4Count(ctx sessionctx.Context) {
 	a.RetTp = types.NewFieldType(mysql.TypeLonglong)
 	a.RetTp.Flen = 21
 	a.RetTp.Decimal = 0
+	// count never returns null
+	a.RetTp.Flag |= mysql.NotNullFlag
 	types.SetBinChsClnFlag(a.RetTp)
 }
 
