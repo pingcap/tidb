@@ -1541,6 +1541,13 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) *NestedLoopAp
 		innerPlan = v.Children()[1]
 		outerPlan = v.Children()[0]
 	}
+
+	concurrency := 1
+	if _, err := innerPlan.Clone(); err == nil {
+		// TODO: if the inner child contains an another Apply, run it in parallel mode
+		concurrency = 4 // run it in parallel mode
+	}
+
 	v.OuterSchema = plannercore.ExtractCorColumnsBySchema4PhysicalPlan(innerPlan, outerPlan.Schema())
 	leftChild := b.build(v.Children()[0])
 	if b.err != nil {
@@ -1563,15 +1570,36 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) *NestedLoopAp
 	}
 	tupleJoiner := newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0,
 		defaultValues, otherConditions, retTypes(leftChild), retTypes(rightChild), nil)
+
+	innerExecs := []Executor{innerExec}
+	innerFilters := []expression.CNFExprs{innerFilter}
+	corCols := [][]*expression.CorrelatedColumn{v.OuterSchema}
+	for i := 0; i < concurrency-1; i++ {
+		clonedInnerPlan, err := innerPlan.Clone()
+		if err != nil {
+			b.err = err
+			return nil
+		}
+		corCol := plannercore.ExtractCorColumnsBySchema4PhysicalPlan(clonedInnerPlan, outerPlan.Schema())
+		clonedInnerExec := b.build(clonedInnerPlan)
+		if b.err != nil {
+			return nil
+		}
+		innerExecs = append(innerExecs, clonedInnerExec)
+		corCols = append(corCols, corCol)
+		innerFilters = append(innerFilters, innerFilter.Clone())
+	}
+
 	e := &NestedLoopApplyExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), outerExec, innerExec),
-		innerExec:    innerExec,
+		innerExec:    innerExecs,
 		outerExec:    outerExec,
 		outerFilter:  outerFilter,
-		innerFilter:  innerFilter,
+		innerFilter:  innerFilters,
 		outer:        v.JoinType != plannercore.InnerJoin,
 		joiner:       tupleJoiner,
-		outerSchema:  v.OuterSchema,
+		corCols:      corCols,
+		concurrency:  concurrency,
 	}
 	executorCounterNestedLoopApplyExec.Inc()
 	return e

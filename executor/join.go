@@ -16,6 +16,8 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"sync"
 	"sync/atomic"
 
@@ -751,43 +753,60 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 	return nil
 }
 
+type result struct {
+	chk *chunk.Chunk
+	err error
+}
+
 // NestedLoopApplyExec is the executor for apply.
 type NestedLoopApplyExec struct {
 	baseExecutor
 
-	innerRows   []chunk.Row
-	cursor      int
-	innerExec   Executor
-	outerExec   Executor
-	innerFilter expression.CNFExprs
-	outerFilter expression.CNFExprs
-
-	joiner joiner
-
-	outerSchema []*expression.CorrelatedColumn
-
+	// outer-side fields
+	cursor           int
+	outerExec        Executor
+	outerFilter      expression.CNFExprs
 	outerChunk       *chunk.Chunk
 	outerChunkCursor int
 	outerSelected    []bool
-	innerList        *chunk.List
-	innerChunk       *chunk.Chunk
-	innerSelected    []bool
-	innerIter        chunk.Iterator
-	outerRow         *chunk.Row
-	hasMatch         bool
-	hasNull          bool
+	outerRowMutex    sync.Mutex
+	outer            bool
 
-	outer bool
+	// inner-side fields
+	// use slices since the inner side is paralleled
+	corCols       [][]*expression.CorrelatedColumn
+	innerFilter   []expression.CNFExprs
+	innerExec     []Executor
+	innerList     []*chunk.List
+	innerChunk    []*chunk.Chunk
+	innerSelected [][]bool
+	innerIter     []chunk.Iterator
+	outerRow      []*chunk.Row
+	hasMatch      []bool
+	hasNull       []bool
 
+	// fields are used to do concurrency control
+	concurrency int
+	started     bool
+	freeChkCh   chan *chunk.Chunk
+	resultChkCh chan *result
+	exit        chan struct{}
+	wg          sync.WaitGroup
+
+	joiner     joiner
 	memTracker *memory.Tracker // track memory usage.
 }
 
 // Close implements the Executor interface.
 func (e *NestedLoopApplyExec) Close() error {
-	e.innerRows = nil
-
 	e.memTracker = nil
-	return e.outerExec.Close()
+	err := e.outerExec.Close()
+	if e.started {
+		close(e.exit)
+		e.started = false
+		e.wg.Wait()
+	}
+	return err
 }
 
 var innerListLabel fmt.Stringer = stringutil.StringerStr("innerList")
@@ -799,21 +818,37 @@ func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 		return err
 	}
 	e.cursor = 0
-	e.innerRows = e.innerRows[:0]
 	e.outerChunk = newFirstChunk(e.outerExec)
-	e.innerChunk = newFirstChunk(e.innerExec)
-	e.innerList = chunk.NewList(retTypes(e.innerExec), e.initCap, e.maxChunkSize)
 
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
-	e.innerList.GetMemTracker().SetLabel(innerListLabel)
-	e.innerList.GetMemTracker().AttachTo(e.memTracker)
+	e.innerList = make([]*chunk.List, e.concurrency)
+	e.innerChunk = make([]*chunk.Chunk, e.concurrency)
+	e.innerSelected = make([][]bool, e.concurrency)
+	e.innerIter = make([]chunk.Iterator, e.concurrency)
+	e.outerRow = make([]*chunk.Row, e.concurrency)
+	e.hasMatch = make([]bool, e.concurrency)
+	e.hasNull = make([]bool, e.concurrency)
+	for i := 0; i < e.concurrency; i++ {
+		e.innerChunk[i] = newFirstChunk(e.innerExec[i])
+		e.innerList[i] = chunk.NewList(retTypes(e.innerExec[i]), e.initCap, e.maxChunkSize)
+		e.innerList[i].GetMemTracker().SetLabel(innerListLabel)
+		e.innerList[i].GetMemTracker().AttachTo(e.memTracker)
+	}
 
+	e.freeChkCh = make(chan *chunk.Chunk, e.concurrency)
+	e.resultChkCh = make(chan *result, e.concurrency)
+	e.exit = make(chan struct{})
+	for i := 0; i < e.concurrency; i++ {
+		e.freeChkCh <- newFirstChunk(e)
+	}
 	return nil
 }
 
 func (e *NestedLoopApplyExec) fetchSelectedOuterRow(ctx context.Context, chk *chunk.Chunk) (*chunk.Row, error) {
+	e.outerRowMutex.Lock()
+	defer e.outerRowMutex.Unlock()
 	outerIter := chunk.NewIterator4Chunk(e.outerChunk)
 	for {
 		if e.outerChunkCursor >= e.outerChunk.NumRows() {
@@ -845,30 +880,30 @@ func (e *NestedLoopApplyExec) fetchSelectedOuterRow(ctx context.Context, chk *ch
 }
 
 // fetchAllInners reads all data from the inner table and stores them in a List.
-func (e *NestedLoopApplyExec) fetchAllInners(ctx context.Context) error {
-	err := e.innerExec.Open(ctx)
-	defer terror.Call(e.innerExec.Close)
+func (e *NestedLoopApplyExec) fetchAllInners(ctx context.Context, id int) error {
+	err := e.innerExec[id].Open(ctx)
+	defer terror.Call(e.innerExec[id].Close)
 	if err != nil {
 		return err
 	}
-	e.innerList.Reset()
-	innerIter := chunk.NewIterator4Chunk(e.innerChunk)
+	e.innerList[id].Reset()
+	innerIter := chunk.NewIterator4Chunk(e.innerChunk[id])
 	for {
-		err := Next(ctx, e.innerExec, e.innerChunk)
+		err := Next(ctx, e.innerExec[id], e.innerChunk[id])
 		if err != nil {
 			return err
 		}
-		if e.innerChunk.NumRows() == 0 {
+		if e.innerChunk[id].NumRows() == 0 {
 			return nil
 		}
 
-		e.innerSelected, err = expression.VectorizedFilter(e.ctx, e.innerFilter, innerIter, e.innerSelected)
+		e.innerSelected[id], err = expression.VectorizedFilter(e.ctx, e.innerFilter[id], innerIter, e.innerSelected[id])
 		if err != nil {
 			return err
 		}
 		for row := innerIter.Begin(); row != innerIter.End(); row = innerIter.Next() {
-			if e.innerSelected[row.Idx()] {
-				e.innerList.AppendRow(row)
+			if e.innerSelected[id][row.Idx()] {
+				e.innerList[id].AppendRow(row)
 			}
 		}
 	}
@@ -876,33 +911,71 @@ func (e *NestedLoopApplyExec) fetchAllInners(ctx context.Context) error {
 
 // Next implements the Executor interface.
 func (e *NestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
+	if !e.started {
+		for i := 0; i < e.concurrency; i++ {
+			e.wg.Add(1)
+			go e.innerWorker(ctx, i)
+		}
+		e.started = true
+	}
+	result := <-e.resultChkCh
+	if result.err != nil {
+		return result.err
+	}
+	req.SwapColumns(result.chk)
+	e.freeChkCh <- result.chk
+	return nil
+}
+
+func (e *NestedLoopApplyExec) innerWorker(ctx context.Context, id int) {
+	defer func() {
+		if r := recover(); r != nil {
+			err := errors.Errorf("%v", r)
+			logutil.Logger(ctx).Error("parallel nested loop join worker panicked", zap.Error(err), zap.Stack("stack"))
+			e.resultChkCh <- &result{nil, err}
+		}
+		e.wg.Done()
+	}()
+	for {
+		var chk *chunk.Chunk
+		select {
+		case chk = <-e.freeChkCh:
+		case <-e.exit:
+			return
+		}
+		err := e.fillInnerChunk(ctx, id, chk)
+		e.resultChkCh <- &result{chk, err}
+	}
+}
+
+func (e *NestedLoopApplyExec) fillInnerChunk(ctx context.Context, id int, req *chunk.Chunk) (err error) {
 	req.Reset()
 	for {
-		if e.innerIter == nil || e.innerIter.Current() == e.innerIter.End() {
-			if e.outerRow != nil && !e.hasMatch {
-				e.joiner.onMissMatch(e.hasNull, *e.outerRow, req)
+		if e.innerIter[id] == nil || e.innerIter[id].Current() == e.innerIter[id].End() {
+			if e.outerRow[id] != nil && !e.hasMatch[id] {
+				e.joiner.onMissMatch(e.hasNull[id], *e.outerRow[id], req)
 			}
-			e.outerRow, err = e.fetchSelectedOuterRow(ctx, req)
-			if e.outerRow == nil || err != nil {
+			e.outerRow[id], err = e.fetchSelectedOuterRow(ctx, req)
+			if e.outerRow[id] == nil || err != nil {
 				return err
 			}
-			e.hasMatch = false
-			e.hasNull = false
+			e.hasMatch[id] = false
+			e.hasNull[id] = false
 
-			for _, col := range e.outerSchema {
-				*col.Data = e.outerRow.GetDatum(col.Index, col.RetType)
+			for _, col := range e.corCols[id] {
+				*col.Data = e.outerRow[id].GetDatum(col.Index, col.RetType)
 			}
-			err = e.fetchAllInners(ctx)
+			err = e.fetchAllInners(ctx, id)
 			if err != nil {
 				return err
 			}
-			e.innerIter = chunk.NewIterator4List(e.innerList)
-			e.innerIter.Begin()
+			e.innerIter[id] = chunk.NewIterator4List(e.innerList[id])
+			e.innerIter[id].Begin()
 		}
 
-		matched, isNull, err := e.joiner.tryToMatchInners(*e.outerRow, e.innerIter, req)
-		e.hasMatch = e.hasMatch || matched
-		e.hasNull = e.hasNull || isNull
+		matched, isNull, err := e.joiner.tryToMatchInners(*e.outerRow[id], e.innerIter[id], req)
+		e.hasMatch[id] = e.hasMatch[id] || matched
+		e.hasNull[id] = e.hasNull[id] || isNull
 
 		if err != nil || req.IsFull() {
 			return err
