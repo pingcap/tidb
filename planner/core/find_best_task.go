@@ -404,7 +404,7 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 			return []*candidatePath{{path: path}}
 		}
 		var currentCandidate *candidatePath
-		if path.IsTablePath {
+		if path.IsTablePath() {
 			currentCandidate = ds.getTableCandidate(path, prop)
 		} else {
 			coveredByIdx := isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo.PKIsHandle)
@@ -512,7 +512,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 		}
 		canConvertPointGet := (!ds.isPartition && len(path.Ranges) > 0) || (ds.isPartition && len(path.Ranges) == 1)
 		canConvertPointGet = canConvertPointGet && candidate.path.StoreType != kv.TiFlash
-		if !candidate.path.IsTablePath {
+		if !candidate.path.IsTablePath() {
 			canConvertPointGet = canConvertPointGet &&
 				candidate.path.Index.Unique &&
 				!candidate.path.Index.HasPrefixIndex() &&
@@ -539,7 +539,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 				}
 			}
 		}
-		if path.IsTablePath {
+		if path.IsTablePath() {
 			if ds.preferStoreType&preferTiFlash != 0 && path.StoreType == kv.TiKV {
 				continue
 			}
@@ -585,7 +585,7 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 	for _, partPath := range path.PartialIndexPaths {
 		var scan PhysicalPlan
 		var partialCost, rowCount float64
-		if partPath.IsTablePath {
+		if partPath.IsTablePath() {
 			scan, partialCost, rowCount = ds.convertToPartialTableScan(prop, partPath)
 		} else {
 			scan, partialCost, rowCount = ds.convertToPartialIndexScan(prop, partPath)
@@ -1195,7 +1195,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 	}
 	rTsk := &rootTask{p: pointGetPlan}
 	var cost float64
-	if candidate.path.IsTablePath {
+	if candidate.path.IsTablePath() {
 		pointGetPlan.Handle = kv.IntHandle(candidate.path.Ranges[0].LowVal[0].GetInt64())
 		pointGetPlan.UnsignedHandle = mysql.HasUnsignedFlag(ds.getHandleCol().RetType.Flag)
 		pointGetPlan.PartitionInfo = partitionInfo
@@ -1255,7 +1255,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 	}
 	rTsk := &rootTask{p: batchPointGetPlan}
 	var cost float64
-	if candidate.path.IsTablePath {
+	if candidate.path.IsTablePath() {
 		for _, ran := range candidate.path.Ranges {
 			batchPointGetPlan.Handles = append(batchPointGetPlan.Handles, kv.IntHandle(ran.LowVal[0].GetInt64()))
 		}
