@@ -6640,6 +6640,20 @@ func (s *testIntegrationSuite) TestIssue17727(c *C) {
 	tk.MustExec("PREPARE mystmt FROM 'SELECT * FROM t1 WHERE UNIX_TIMESTAMP(a) >= ?';")
 	tk.MustExec("SET @a=1590868800;")
 	tk.MustQuery("EXECUTE mystmt USING @a;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+
+	tk.MustExec("SET @a=1590868801;")
+	tk.MustQuery("EXECUTE mystmt USING @a;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	tk.MustExec("prepare stmt from 'select unix_timestamp(?)';")
+	tk.MustExec("set @a = '2020-05-30 20:30:00';")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1590841800"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @a = '2020-06-12 13:47:58';")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1591940878"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 }
 
 func (s *testIntegrationSerialSuite) TestIssue17891(c *C) {
