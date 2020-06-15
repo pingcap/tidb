@@ -95,7 +95,7 @@ func (p *PointGetPlan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 	return nil, nil
 }
 
-// Clone clones this plan.
+// Clone implements PhysicalPlan interface.
 func (p *PointGetPlan) Clone() (PhysicalPlan, error) {
 	return nil, errors.Errorf("%T doesn't support cloning.", p)
 }
@@ -249,6 +249,7 @@ type BatchPointGetPlan struct {
 	Columns          []*model.ColumnInfo
 }
 
+// Clone implements PhysicalPlan interface.
 func (p *BatchPointGetPlan) Clone() (PhysicalPlan, error) {
 	return nil, errors.Errorf("%T doesn't support cloning", p)
 }

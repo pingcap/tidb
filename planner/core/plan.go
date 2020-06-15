@@ -15,11 +15,11 @@ package core
 
 import (
 	"fmt"
-	"github.com/pingcap/errors"
 	"math"
 	"strconv"
 
 	"github.com/cznic/mathutil"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
@@ -285,6 +285,7 @@ func (p *basePhysicalPlan) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalPla
 	return base, nil
 }
 
+// Clone implements PhysicalPlan interface.
 func (p *basePhysicalPlan) Clone() (PhysicalPlan, error) {
 	return nil, errors.Errorf("%T doesn't support cloning", p.self)
 }

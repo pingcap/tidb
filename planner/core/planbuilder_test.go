@@ -186,7 +186,7 @@ func (s *testPlanBuilderSuite) TestDisableFold(c *C) {
 	}
 }
 
-func (s *testPlanBuilderSuite) TestCheckDeepClonedPhysicalPlan(c *C) {
+func (s *testPlanBuilderSuite) TestDeepClone(c *C) {
 	tp := types.NewFieldType(mysql.TypeLonglong)
 	expr := &expression.Column{RetType: tp}
 	byItems := []*util.ByItems{{Expr: expr}}
@@ -194,7 +194,7 @@ func (s *testPlanBuilderSuite) TestCheckDeepClonedPhysicalPlan(c *C) {
 	sort2 := &PhysicalSort{ByItems: byItems}
 	checkDeepClone := func(p1, p2 PhysicalPlan) error {
 		whiteList := []string{"*property.StatsInfo", "*sessionctx.Context", "*mock.Context"}
-		return checkDeepClonedValue(reflect.ValueOf(p1), reflect.ValueOf(p2), typeName(reflect.TypeOf(p1)), whiteList, nil)
+		return checkDeepCloned(reflect.ValueOf(p1), reflect.ValueOf(p2), typeName(reflect.TypeOf(p1)), whiteList, nil)
 	}
 	c.Assert(checkDeepClone(sort1, sort2), ErrorMatches, "invalid slice pointers, path PhysicalSort.ByItems")
 
@@ -213,7 +213,7 @@ func (s *testPlanBuilderSuite) TestCheckDeepClonedPhysicalPlan(c *C) {
 	c.Assert(checkDeepClone(sort1, sort2), IsNil)
 }
 
-func (s *testPlanBuilderSuite) TestPhysicalPlanCloning(c *C) {
+func (s *testPlanBuilderSuite) TestPhysicalPlanClone(c *C) {
 	ctx := mock.NewContext()
 	col, cst := &expression.Column{RetType: types.NewFieldType(mysql.TypeString)}, &expression.Constant{RetType: types.NewFieldType(mysql.TypeLonglong)}
 	stats := &property.StatsInfo{RowCount: 1000}
@@ -236,7 +236,7 @@ func (s *testPlanBuilderSuite) TestPhysicalPlanCloning(c *C) {
 	}
 	tableScan = tableScan.Init(ctx, 0)
 	tableScan.SetSchema(schema)
-	c.Assert(checkDeepClonedPhysicalPlan(tableScan), IsNil)
+	c.Assert(checkPhysicalPlanClone(tableScan), IsNil)
 
 	// table reader
 	tableReader := &PhysicalTableReader{
@@ -245,7 +245,7 @@ func (s *testPlanBuilderSuite) TestPhysicalPlanCloning(c *C) {
 		StoreType:  kv.TiFlash,
 	}
 	tableReader = tableReader.Init(ctx, 0)
-	c.Assert(checkDeepClonedPhysicalPlan(tableReader), IsNil)
+	c.Assert(checkPhysicalPlanClone(tableReader), IsNil)
 
 	// index scan
 	indexScan := &PhysicalIndexScan{
@@ -257,7 +257,7 @@ func (s *testPlanBuilderSuite) TestPhysicalPlanCloning(c *C) {
 	}
 	indexScan = indexScan.Init(ctx, 0)
 	indexScan.SetSchema(schema)
-	c.Assert(checkDeepClonedPhysicalPlan(indexScan), IsNil)
+	c.Assert(checkPhysicalPlanClone(indexScan), IsNil)
 
 	// index reader
 	indexReader := &PhysicalIndexReader{
@@ -266,7 +266,7 @@ func (s *testPlanBuilderSuite) TestPhysicalPlanCloning(c *C) {
 		OutputColumns: []*expression.Column{col, col},
 	}
 	indexReader = indexReader.Init(ctx, 0)
-	c.Assert(checkDeepClonedPhysicalPlan(indexReader), IsNil)
+	c.Assert(checkPhysicalPlanClone(indexReader), IsNil)
 
 	// index lookup
 	indexLookup := &PhysicalIndexLookUpReader{
@@ -278,28 +278,28 @@ func (s *testPlanBuilderSuite) TestPhysicalPlanCloning(c *C) {
 		PushedLimit:    &PushedDownLimit{1, 2},
 	}
 	indexLookup = indexLookup.Init(ctx, 0)
-	c.Assert(checkDeepClonedPhysicalPlan(indexLookup), IsNil)
+	c.Assert(checkPhysicalPlanClone(indexLookup), IsNil)
 
 	// selection
 	sel := &PhysicalSelection{Conditions: []expression.Expression{col, cst}}
 	sel = sel.Init(ctx, stats, 0)
-	c.Assert(checkDeepClonedPhysicalPlan(sel), IsNil)
+	c.Assert(checkPhysicalPlanClone(sel), IsNil)
 
 	// projection
 	proj := &PhysicalProjection{Exprs: []expression.Expression{col, cst}}
 	proj = proj.Init(ctx, stats, 0)
-	c.Assert(checkDeepClonedPhysicalPlan(proj), IsNil)
+	c.Assert(checkPhysicalPlanClone(proj), IsNil)
 
 	// sort
 	byItems := []*util.ByItems{{Expr: col}, {Expr: cst}}
 	sort := &PhysicalSort{ByItems: byItems}
 	sort = sort.Init(ctx, stats, 0)
-	c.Assert(checkDeepClonedPhysicalPlan(sort), IsNil)
+	c.Assert(checkPhysicalPlanClone(sort), IsNil)
 
 	// topN
 	topN := &PhysicalTopN{ByItems: byItems, Offset: 2333, Count: 2333}
 	topN = topN.Init(ctx, stats, 0)
-	c.Assert(checkDeepClonedPhysicalPlan(topN), IsNil)
+	c.Assert(checkPhysicalPlanClone(topN), IsNil)
 
 	// stream agg
 	streamAgg := &PhysicalStreamAgg{basePhysicalAgg{
@@ -308,7 +308,7 @@ func (s *testPlanBuilderSuite) TestPhysicalPlanCloning(c *C) {
 	}}
 	streamAgg = streamAgg.initForStream(ctx, stats, 0)
 	streamAgg.SetSchema(schema)
-	c.Assert(checkDeepClonedPhysicalPlan(streamAgg), IsNil)
+	c.Assert(checkPhysicalPlanClone(streamAgg), IsNil)
 
 	// hash agg
 	hashAgg := &PhysicalHashAgg{basePhysicalAgg{
@@ -317,7 +317,7 @@ func (s *testPlanBuilderSuite) TestPhysicalPlanCloning(c *C) {
 	}}
 	hashAgg = hashAgg.initForHash(ctx, stats, 0)
 	hashAgg.SetSchema(schema)
-	c.Assert(checkDeepClonedPhysicalPlan(hashAgg), IsNil)
+	c.Assert(checkPhysicalPlanClone(hashAgg), IsNil)
 
 	// hash join
 	hashJoin := &PhysicalHashJoin{
@@ -326,7 +326,7 @@ func (s *testPlanBuilderSuite) TestPhysicalPlanCloning(c *C) {
 	}
 	hashJoin = hashJoin.Init(ctx, stats, 0)
 	hashJoin.SetSchema(schema)
-	c.Assert(checkDeepClonedPhysicalPlan(hashJoin), IsNil)
+	c.Assert(checkPhysicalPlanClone(hashJoin), IsNil)
 
 	// merge join
 	mergeJoin := &PhysicalMergeJoin{
@@ -335,7 +335,7 @@ func (s *testPlanBuilderSuite) TestPhysicalPlanCloning(c *C) {
 	}
 	mergeJoin = mergeJoin.Init(ctx, stats, 0)
 	mergeJoin.SetSchema(schema)
-	c.Assert(checkDeepClonedPhysicalPlan(mergeJoin), IsNil)
+	c.Assert(checkPhysicalPlanClone(mergeJoin), IsNil)
 }
 
 //go:linkname valueInterface reflect.valueInterface
@@ -350,18 +350,18 @@ func typeName(t reflect.Type) string {
 	return tmp[len(tmp)-1]
 }
 
-func checkDeepClonedPhysicalPlan(p PhysicalPlan) error {
+func checkPhysicalPlanClone(p PhysicalPlan) error {
 	cloned, err := p.Clone()
 	if err != nil {
 		return err
 	}
 	whiteList := []string{"*property.StatsInfo", "*sessionctx.Context", "*mock.Context", "*types.FieldType"}
-	return checkDeepClonedValue(reflect.ValueOf(p), reflect.ValueOf(cloned), typeName(reflect.TypeOf(p)), whiteList, nil)
+	return checkDeepCloned(reflect.ValueOf(p), reflect.ValueOf(cloned), typeName(reflect.TypeOf(p)), whiteList, nil)
 }
 
-// checkDeepClonedValue is used to check if v2 is deep cloned from v1.
+// checkDeepCloned is used to check if v2 is deep cloned from v1.
 // It's modified from reflect.deepValueEqual.
-func checkDeepClonedValue(v1, v2 reflect.Value, path string, whiteList []string, visited map[visit]bool) error {
+func checkDeepCloned(v1, v2 reflect.Value, path string, whiteList []string, visited map[visit]bool) error {
 	if !v1.IsValid() || !v2.IsValid() {
 		if v1.IsValid() != v2.IsValid() {
 			return errors.Errorf("invalid")
@@ -399,7 +399,7 @@ func checkDeepClonedValue(v1, v2 reflect.Value, path string, whiteList []string,
 	switch v1.Kind() {
 	case reflect.Array:
 		for i := 0; i < v1.Len(); i++ {
-			if err := checkDeepClonedValue(v1.Index(i), v2.Index(i), fmt.Sprintf("%v[%v]", path, i), whiteList, visited); err != nil {
+			if err := checkDeepCloned(v1.Index(i), v2.Index(i), fmt.Sprintf("%v[%v]", path, i), whiteList, visited); err != nil {
 				return err
 			}
 		}
@@ -420,7 +420,7 @@ func checkDeepClonedValue(v1, v2 reflect.Value, path string, whiteList []string,
 			return errors.Errorf("invalid slice pointers, path %v", path)
 		}
 		for i := 0; i < v1.Len(); i++ {
-			if err := checkDeepClonedValue(v1.Index(i), v2.Index(i), fmt.Sprintf("%v[%v]", path, i), whiteList, visited); err != nil {
+			if err := checkDeepCloned(v1.Index(i), v2.Index(i), fmt.Sprintf("%v[%v]", path, i), whiteList, visited); err != nil {
 				return err
 			}
 		}
@@ -431,7 +431,7 @@ func checkDeepClonedValue(v1, v2 reflect.Value, path string, whiteList []string,
 		if v1.IsNil() != v2.IsNil() {
 			return errors.Errorf("invalid interfaces, path %v", path)
 		}
-		return checkDeepClonedValue(v1.Elem(), v2.Elem(), path, whiteList, visited)
+		return checkDeepCloned(v1.Elem(), v2.Elem(), path, whiteList, visited)
 	case reflect.Ptr:
 		if v1.IsNil() && v2.IsNil() {
 			return nil
@@ -450,10 +450,10 @@ func checkDeepClonedValue(v1, v2 reflect.Value, path string, whiteList []string,
 			}
 			return errors.Errorf("same pointer, path %v", path)
 		}
-		return checkDeepClonedValue(v1.Elem(), v2.Elem(), path, whiteList, visited)
+		return checkDeepCloned(v1.Elem(), v2.Elem(), path, whiteList, visited)
 	case reflect.Struct:
 		for i, n := 0, v1.NumField(); i < n; i++ {
-			if err := checkDeepClonedValue(v1.Field(i), v2.Field(i), fmt.Sprintf("%v.%v", path, typeName(v1.Field(i).Type())), whiteList, visited); err != nil {
+			if err := checkDeepCloned(v1.Field(i), v2.Field(i), fmt.Sprintf("%v.%v", path, typeName(v1.Field(i).Type())), whiteList, visited); err != nil {
 				return err
 			}
 		}
@@ -471,7 +471,7 @@ func checkDeepClonedValue(v1, v2 reflect.Value, path string, whiteList []string,
 			val1 := v1.MapIndex(k)
 			val2 := v2.MapIndex(k)
 			if !val1.IsValid() || !val2.IsValid() {
-				if err := checkDeepClonedValue(val1, val2, fmt.Sprintf("%v[%v]", path, typeName(k.Type())), whiteList, visited); err != nil {
+				if err := checkDeepCloned(val1, val2, fmt.Sprintf("%v[%v]", path, typeName(k.Type())), whiteList, visited); err != nil {
 					return err
 				}
 			}

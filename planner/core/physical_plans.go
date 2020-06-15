@@ -91,6 +91,7 @@ func (sg *TiKVSingleGather) GetPhysicalIndexReader(schema *expression.Schema, st
 	return reader
 }
 
+// Clone implements PhysicalPlan interface.
 func (p *PhysicalTableReader) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalTableReader)
 	prod, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
@@ -134,6 +135,7 @@ type PhysicalIndexReader struct {
 	OutputColumns []*expression.Column
 }
 
+// Clone implements PhysicalPlan interface.
 func (p *PhysicalIndexReader) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalIndexReader)
 	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
@@ -209,7 +211,7 @@ type PhysicalIndexLookUpReader struct {
 	PushedLimit *PushedDownLimit
 }
 
-// Clone clones this PhysicalPlan.
+// Clone implements PhysicalPlan interface.
 func (p *PhysicalIndexLookUpReader) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalIndexLookUpReader)
 	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
@@ -316,6 +318,7 @@ type PhysicalIndexScan struct {
 	DoubleRead bool
 }
 
+// Clone implements PhysicalPlan interface.
 func (p *PhysicalIndexScan) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalIndexScan)
 	*cloned = *p
@@ -399,6 +402,7 @@ type PhysicalTableScan struct {
 	isChildOfIndexLookUp bool
 }
 
+// Clone implements PhysicalPlan interface.
 func (ts *PhysicalTableScan) Clone() (PhysicalPlan, error) {
 	clonedScan := new(PhysicalTableScan)
 	*clonedScan = *ts
@@ -470,6 +474,7 @@ type PhysicalProjection struct {
 	AvoidColumnEvaluator bool
 }
 
+// Clone implements PhysicalPlan interface.
 func (p *PhysicalProjection) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalProjection)
 	*cloned = *p
@@ -500,6 +505,7 @@ type PhysicalTopN struct {
 	Count   uint64
 }
 
+// Clone implements PhysicalPlan interface.
 func (lt *PhysicalTopN) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalTopN)
 	cloned.Offset, cloned.Count = lt.Offset, lt.Count
@@ -606,7 +612,7 @@ type PhysicalHashJoin struct {
 	UseOuterToBuild bool
 }
 
-// Clone clones this PhysicalPlan.
+// Clone implements PhysicalPlan interface.
 func (p *PhysicalHashJoin) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalHashJoin)
 	base, err := p.basePhysicalJoin.cloneWithSelf(cloned)
@@ -717,7 +723,7 @@ type PhysicalMergeJoin struct {
 	Desc bool
 }
 
-// Clone clones this PhysicalPlan.
+// Clone implements PhysicalPlan interface.
 func (p *PhysicalMergeJoin) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalMergeJoin)
 	base, err := p.basePhysicalJoin.cloneWithSelf(cloned)
@@ -819,7 +825,7 @@ type PhysicalHashAgg struct {
 	basePhysicalAgg
 }
 
-// Clone clones this physical plan.
+// Clone implements PhysicalPlan interface.
 func (p *PhysicalHashAgg) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalHashAgg)
 	base, err := p.basePhysicalAgg.cloneWithSelf(cloned)
@@ -844,7 +850,7 @@ type PhysicalStreamAgg struct {
 	basePhysicalAgg
 }
 
-// Clone clones this physical plan.
+// Clone implements PhysicalPlan interface.
 func (p *PhysicalStreamAgg) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalStreamAgg)
 	base, err := p.basePhysicalAgg.cloneWithSelf(cloned)
@@ -862,6 +868,7 @@ type PhysicalSort struct {
 	ByItems []*util.ByItems
 }
 
+// Clone implements PhysicalPlan interface.
 func (ls *PhysicalSort) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalSort)
 	base, err := ls.basePhysicalPlan.cloneWithSelf(cloned)
@@ -925,6 +932,7 @@ type PhysicalSelection struct {
 	Conditions []expression.Expression
 }
 
+// Clone implements PhysicalPlan interface.
 func (p *PhysicalSelection) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalSelection)
 	base, err := p.basePhysicalPlan.cloneWithSelf(cloned)
