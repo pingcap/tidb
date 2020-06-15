@@ -21,12 +21,12 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 func (s *testSuite8) TestInsertOnDuplicateKey(c *C) {
@@ -968,13 +968,8 @@ type testSuite9 struct {
 }
 
 func (s *testSuite9) TestAutoRandomID(c *C) {
-	allowAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
-	if !allowAutoRandom {
-		config.GetGlobalConfig().Experimental.AllowAutoRandom = true
-		defer func() {
-			config.GetGlobalConfig().Experimental.AllowAutoRandom = false
-		}()
-	}
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
@@ -1011,13 +1006,8 @@ func (s *testSuite9) TestAutoRandomID(c *C) {
 }
 
 func (s *testSuite9) TestMultiAutoRandomID(c *C) {
-	allowAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
-	if !allowAutoRandom {
-		config.GetGlobalConfig().Experimental.AllowAutoRandom = true
-		defer func() {
-			config.GetGlobalConfig().Experimental.AllowAutoRandom = false
-		}()
-	}
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
@@ -1060,13 +1050,8 @@ func (s *testSuite9) TestMultiAutoRandomID(c *C) {
 }
 
 func (s *testSuite9) TestAutoRandomIDAllowZero(c *C) {
-	allowAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
-	if !allowAutoRandom {
-		config.GetGlobalConfig().Experimental.AllowAutoRandom = true
-		defer func() {
-			config.GetGlobalConfig().Experimental.AllowAutoRandom = false
-		}()
-	}
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
@@ -1098,13 +1083,8 @@ func (s *testSuite9) TestAutoRandomIDAllowZero(c *C) {
 }
 
 func (s *testSuite9) TestAutoRandomIDExplicit(c *C) {
-	allowAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
-	if !allowAutoRandom {
-		config.GetGlobalConfig().Experimental.AllowAutoRandom = true
-		defer func() {
-			config.GetGlobalConfig().Experimental.AllowAutoRandom = false
-		}()
-	}
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
@@ -1251,4 +1231,20 @@ func (s *testSuite10) TestClusterPrimaryTableInsertDuplicate(c *C) {
 	tk.MustQuery(`select id1, id2, v from ts1pk`).Check(testkit.Rows("2018-01-01 11:11:11 2018-01-01 11:11:11 2"))
 	tk.MustExec(`insert into ts1pk (id1, id2, v) values(?, ?, ?) on duplicate key update v = values(v), id1 = ?`, ts, ts, 2, "2018-01-01 11:11:12")
 	tk.MustQuery(`select id1, id2, v from ts1pk`).Check(testkit.Rows("2018-01-01 11:11:12 2018-01-01 11:11:11 2"))
+}
+
+func (s *testSuite10) TestClusterPrimaryKeyForIndexScan(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
+
+	tk.MustExec("drop table if exists pkt1;")
+	tk.MustExec("CREATE TABLE pkt1 (a varchar(255), b int, index idx(b), primary key(a,b));")
+	tk.MustExec("insert into pkt1 values ('aaa',1);")
+	tk.MustQuery(`select b from pkt1 where b = 1;`).Check(testkit.Rows("1"))
+
+	tk.MustExec("drop table if exists pkt2;")
+	tk.MustExec("CREATE TABLE pkt2 (a varchar(255), b int, unique index idx(b), primary key(a,b));")
+	tk.MustExec("insert into pkt2 values ('aaa',1);")
+	tk.MustQuery(`select b from pkt2 where b = 1;`).Check(testkit.Rows("1"))
 }

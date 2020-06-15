@@ -173,7 +173,9 @@ func (s stats) Stats(vars *variable.SessionVars) (map[string]interface{}, error)
 }
 
 func (s *seqTestSuite) TestShow(c *C) {
-	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = true
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -830,12 +832,9 @@ func HelperTestAdminShowNextID(c *C, s *seqTestSuite, str string) {
 	r.Check(testkit.Rows("test1 tt id 41 AUTO_INCREMENT"))
 	tk.MustExec("drop table tt")
 
-	oldAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
-	config.GetGlobalConfig().Experimental.AllowAutoRandom = true
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
-	defer func() {
-		config.GetGlobalConfig().Experimental.AllowAutoRandom = oldAutoRandom
-	}()
 
 	// Test for a table with auto_random primary key.
 	tk.MustExec("create table t3(id bigint primary key auto_random(5), c int)")
@@ -1012,13 +1011,10 @@ func (s *seqTestSuite) TestBatchInsertDelete(c *C) {
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("320"))
 
-	cfg := config.GetGlobalConfig()
-	newCfg := *cfg
-	newCfg.EnableBatchDML = true
-	config.StoreGlobalConfig(&newCfg)
-	defer func() {
-		config.StoreGlobalConfig(cfg)
-	}()
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableBatchDML = true
+	})
 
 	// Change to batch inset mode and batch size to 50.
 	tk.MustExec("set @@session.tidb_batch_insert=1;")
@@ -1176,9 +1172,10 @@ func (s *seqTestSuite1) TestCoprocessorPriority(c *C) {
 	// Insert some data to make sure plan build IndexLookup for t.
 	tk.MustExec("insert into t values (1), (2)")
 
-	oldThreshold := config.GetGlobalConfig().Log.ExpensiveThreshold
-	config.GetGlobalConfig().Log.ExpensiveThreshold = 0
-	defer func() { config.GetGlobalConfig().Log.ExpensiveThreshold = oldThreshold }()
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.ExpensiveThreshold = 0
+	})
 
 	cli.setCheckPriority(pb.CommandPri_High)
 	tk.MustQuery("select id from t where id = 1")

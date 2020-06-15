@@ -582,7 +582,7 @@ HashJoin_9	4166.67	root		inner join, equal:[eq(test.t.nb, test.t.nb)]
 explain select ifnull(t.nc, 1) in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t;
 id	estRows	task	access object	operator info
 Projection_12	10000.00	root		Column#14
-└─Apply_14	10000.00	root		CARTESIAN left outer semi join, other cond:eq(test.t.nc, Column#13)
+└─Apply_14	10000.00	root		left outer semi join, equal:[eq(test.t.nc, Column#13)]
   ├─TableReader_16(Build)	10000.00	root		data:TableFullScan_15
   │ └─TableFullScan_15	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
   └─HashAgg_19(Probe)	1.00	root		funcs:count(Column#15)->Column#13

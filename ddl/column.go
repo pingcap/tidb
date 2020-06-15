@@ -931,3 +931,11 @@ func getColumnInfoByName(tbInfo *model.TableInfo, column string) *model.ColumnIn
 	}
 	return nil
 }
+
+// isVirtualGeneratedColumn checks the column if it is virtual.
+func isVirtualGeneratedColumn(col *model.ColumnInfo) bool {
+	if col.IsGenerated() && !col.GeneratedStored {
+		return true
+	}
+	return false
+}
