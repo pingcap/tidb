@@ -273,14 +273,15 @@ func (p *basePhysicalPlan) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalPla
 		basePlan: p.basePlan,
 		self:     newSelf,
 	}
-	for i := range p.children {
-		newChild, err := p.children[i].Clone()
+	for _, child := range p.children {
+		cloned, err := child.Clone()
 		if err != nil {
 			return nil, err
 		}
-		newProp := p.childrenReqProps[i].Clone()
-		base.children = append(base.children, newChild)
-		base.childrenReqProps = append(base.childrenReqProps, newProp)
+		base.children = append(base.children, cloned)
+	}
+	for _, prop := range p.childrenReqProps {
+		base.childrenReqProps = append(base.childrenReqProps, prop.Clone())
 	}
 	return base, nil
 }
