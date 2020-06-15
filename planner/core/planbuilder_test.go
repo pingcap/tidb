@@ -16,10 +16,6 @@ package core
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/util/chunk"
 	"reflect"
 	"strings"
 	"unsafe"
@@ -30,10 +26,15 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/mock"
 )
@@ -214,23 +215,17 @@ func (s *testPlanBuilderSuite) TestCheckDeepClonedPhysicalPlan(c *C) {
 
 func (s *testPlanBuilderSuite) TestPhysicalPlanCloning(c *C) {
 	ctx := mock.NewContext()
-	col, cst := &expression.Column{}, &expression.Constant{}
+	col, cst := &expression.Column{RetType: types.NewFieldType(mysql.TypeString)}, &expression.Constant{RetType: types.NewFieldType(mysql.TypeLonglong)}
 	stats := &property.StatsInfo{RowCount: 1000}
 	schema := expression.NewSchema(col)
 	tblInfo := &model.TableInfo{}
 	idxInfo := &model.IndexInfo{}
 	hist := &statistics.Histogram{Bounds: chunk.New(nil, 0, 0)}
-
-	// sort
-	byItems := []*util.ByItems{{Expr: col}, {Expr: cst}}
-	sort := &PhysicalSort{ByItems: byItems}
-	sort = sort.Init(ctx, stats, 0)
-	c.Assert(checkDeepClonedPhysicalPlan(sort), IsNil)
-
-	// topN
-	topN := &PhysicalTopN{ByItems: byItems, Offset: 2333, Count: 2333}
-	topN = topN.Init(ctx, stats, 0)
-	c.Assert(checkDeepClonedPhysicalPlan(topN), IsNil)
+	aggDesc1, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncAvg, []expression.Expression{col}, false)
+	c.Assert(err, IsNil)
+	aggDesc2, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncCount, []expression.Expression{cst}, true)
+	c.Assert(err, IsNil)
+	aggDescs := []*aggregation.AggFuncDesc{aggDesc1, aggDesc2}
 
 	// table scan
 	tableScan := &PhysicalTableScan{
@@ -244,7 +239,11 @@ func (s *testPlanBuilderSuite) TestPhysicalPlanCloning(c *C) {
 	c.Assert(checkDeepClonedPhysicalPlan(tableScan), IsNil)
 
 	// table reader
-	tableReader := &PhysicalTableReader{tablePlan: tableScan, TablePlans: []PhysicalPlan{tableScan}, StoreType: kv.TiFlash}
+	tableReader := &PhysicalTableReader{
+		tablePlan:  tableScan,
+		TablePlans: []PhysicalPlan{tableScan},
+		StoreType:  kv.TiFlash,
+	}
 	tableReader = tableReader.Init(ctx, 0)
 	c.Assert(checkDeepClonedPhysicalPlan(tableReader), IsNil)
 
@@ -259,6 +258,84 @@ func (s *testPlanBuilderSuite) TestPhysicalPlanCloning(c *C) {
 	indexScan = indexScan.Init(ctx, 0)
 	indexScan.SetSchema(schema)
 	c.Assert(checkDeepClonedPhysicalPlan(indexScan), IsNil)
+
+	// index reader
+	indexReader := &PhysicalIndexReader{
+		indexPlan:     indexScan,
+		IndexPlans:    []PhysicalPlan{indexScan},
+		OutputColumns: []*expression.Column{col, col},
+	}
+	indexReader = indexReader.Init(ctx, 0)
+	c.Assert(checkDeepClonedPhysicalPlan(indexReader), IsNil)
+
+	// index lookup
+	indexLookup := &PhysicalIndexLookUpReader{
+		IndexPlans:     []PhysicalPlan{indexReader},
+		indexPlan:      indexScan,
+		TablePlans:     []PhysicalPlan{tableReader},
+		tablePlan:      tableScan,
+		ExtraHandleCol: col,
+		PushedLimit:    &PushedDownLimit{1, 2},
+	}
+	indexLookup = indexLookup.Init(ctx, 0)
+	c.Assert(checkDeepClonedPhysicalPlan(indexLookup), IsNil)
+
+	// selection
+	sel := &PhysicalSelection{Conditions: []expression.Expression{col, cst}}
+	sel = sel.Init(ctx, stats, 0)
+	c.Assert(checkDeepClonedPhysicalPlan(sel), IsNil)
+
+	// projection
+	proj := &PhysicalProjection{Exprs: []expression.Expression{col, cst}}
+	proj = proj.Init(ctx, stats, 0)
+	c.Assert(checkDeepClonedPhysicalPlan(proj), IsNil)
+
+	// sort
+	byItems := []*util.ByItems{{Expr: col}, {Expr: cst}}
+	sort := &PhysicalSort{ByItems: byItems}
+	sort = sort.Init(ctx, stats, 0)
+	c.Assert(checkDeepClonedPhysicalPlan(sort), IsNil)
+
+	// topN
+	topN := &PhysicalTopN{ByItems: byItems, Offset: 2333, Count: 2333}
+	topN = topN.Init(ctx, stats, 0)
+	c.Assert(checkDeepClonedPhysicalPlan(topN), IsNil)
+
+	// stream agg
+	streamAgg := &PhysicalStreamAgg{basePhysicalAgg{
+		AggFuncs:     aggDescs,
+		GroupByItems: []expression.Expression{col, cst},
+	}}
+	streamAgg = streamAgg.initForStream(ctx, stats, 0)
+	streamAgg.SetSchema(schema)
+	c.Assert(checkDeepClonedPhysicalPlan(streamAgg), IsNil)
+
+	// hash agg
+	hashAgg := &PhysicalHashAgg{basePhysicalAgg{
+		AggFuncs:     aggDescs,
+		GroupByItems: []expression.Expression{col, cst},
+	}}
+	hashAgg = hashAgg.initForHash(ctx, stats, 0)
+	hashAgg.SetSchema(schema)
+	c.Assert(checkDeepClonedPhysicalPlan(hashAgg), IsNil)
+
+	// hash join
+	hashJoin := &PhysicalHashJoin{
+		Concurrency:     4,
+		UseOuterToBuild: true,
+	}
+	hashJoin = hashJoin.Init(ctx, stats, 0)
+	hashJoin.SetSchema(schema)
+	c.Assert(checkDeepClonedPhysicalPlan(hashJoin), IsNil)
+
+	// merge join
+	mergeJoin := &PhysicalMergeJoin{
+		CompareFuncs: []expression.CompareFunc{expression.CompareInt},
+		Desc:         true,
+	}
+	mergeJoin = mergeJoin.Init(ctx, stats, 0)
+	mergeJoin.SetSchema(schema)
+	c.Assert(checkDeepClonedPhysicalPlan(mergeJoin), IsNil)
 }
 
 //go:linkname valueInterface reflect.valueInterface
@@ -278,7 +355,7 @@ func checkDeepClonedPhysicalPlan(p PhysicalPlan) error {
 	if err != nil {
 		return err
 	}
-	whiteList := []string{"*property.StatsInfo", "*sessionctx.Context", "*mock.Context"}
+	whiteList := []string{"*property.StatsInfo", "*sessionctx.Context", "*mock.Context", "*types.FieldType"}
 	return checkDeepClonedValue(reflect.ValueOf(p), reflect.ValueOf(cloned), typeName(reflect.TypeOf(p)), whiteList, nil)
 }
 
@@ -399,6 +476,11 @@ func checkDeepClonedValue(v1, v2 reflect.Value, path string, whiteList []string,
 				}
 			}
 		}
+	case reflect.Func:
+		if v1.IsNil() != v2.IsNil() {
+			return errors.Errorf("invalid functions, path %v", path)
+		}
+		return nil // assume that these functions are stateless
 	default:
 		if valueInterface(v1, false) != valueInterface(v2, false) {
 			return errors.Errorf("different values, path %v", path)

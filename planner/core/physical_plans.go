@@ -186,6 +186,13 @@ type PushedDownLimit struct {
 	Count  uint64
 }
 
+// Clone clones this pushed-down list.
+func (p *PushedDownLimit) Clone() *PushedDownLimit {
+	cloned := new(PushedDownLimit)
+	*cloned = *p
+	return cloned
+}
+
 // PhysicalIndexLookUpReader is the index look up reader in tidb. It's used in case of double reading.
 type PhysicalIndexLookUpReader struct {
 	physicalSchemaProducer
@@ -200,6 +207,32 @@ type PhysicalIndexLookUpReader struct {
 	ExtraHandleCol *expression.Column
 	// PushedLimit is used to avoid unnecessary table scan tasks of IndexLookUpReader.
 	PushedLimit *PushedDownLimit
+}
+
+// Clone clones this PhysicalPlan.
+func (p *PhysicalIndexLookUpReader) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalIndexLookUpReader)
+	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.physicalSchemaProducer = *base
+	if cloned.IndexPlans, err = clonePhysicalPlan(p.IndexPlans); err != nil {
+		return nil, err
+	}
+	if cloned.TablePlans, err = clonePhysicalPlan(p.TablePlans); err != nil {
+		return nil, err
+	}
+	if cloned.indexPlan, err = p.indexPlan.Clone(); err != nil {
+		return nil, err
+	}
+	if cloned.tablePlan, err = p.tablePlan.Clone(); err != nil {
+		return nil, err
+	}
+	cloned.ExtraHandleCol = p.ExtraHandleCol.Clone().(*expression.Column)
+	cloned.PushedLimit = new(PushedDownLimit)
+	cloned.PushedLimit = p.PushedLimit.Clone()
+	return cloned, nil
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
@@ -525,6 +558,28 @@ type basePhysicalJoin struct {
 	DefaultValues []types.Datum
 }
 
+func (p *basePhysicalJoin) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalJoin, error) {
+	cloned := new(basePhysicalJoin)
+	base, err := p.physicalSchemaProducer.cloneWithSelf(newSelf)
+	if err != nil {
+		return nil, err
+	}
+	cloned.physicalSchemaProducer = *base
+	cloned.JoinType = p.JoinType
+	cloned.LeftConditions = cloneExprs(p.LeftConditions)
+	cloned.RightConditions = cloneExprs(p.RightConditions)
+	cloned.OtherConditions = cloneExprs(p.OtherConditions)
+	cloned.InnerChildIdx = p.InnerChildIdx
+	cloned.OuterJoinKeys = cloneCols(p.OuterJoinKeys)
+	cloned.InnerJoinKeys = cloneCols(p.InnerJoinKeys)
+	cloned.LeftJoinKeys = cloneCols(p.LeftJoinKeys)
+	cloned.RightJoinKeys = cloneCols(p.RightJoinKeys)
+	for _, d := range p.DefaultValues {
+		cloned.DefaultValues = append(cloned.DefaultValues, *d.Clone())
+	}
+	return cloned, nil
+}
+
 // ExtractCorrelatedCols implements PhysicalPlan interface.
 func (p *basePhysicalJoin) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0, len(p.LeftConditions)+len(p.RightConditions)+len(p.OtherConditions))
@@ -549,6 +604,22 @@ type PhysicalHashJoin struct {
 
 	// use the outer table to build a hash table when the outer table is smaller.
 	UseOuterToBuild bool
+}
+
+// Clone clones this PhysicalPlan.
+func (p *PhysicalHashJoin) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalHashJoin)
+	base, err := p.basePhysicalJoin.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.basePhysicalJoin = *base
+	cloned.Concurrency = p.Concurrency
+	cloned.UseOuterToBuild = p.UseOuterToBuild
+	for _, c := range p.EqualConditions {
+		cloned.EqualConditions = append(cloned.EqualConditions, c.Clone().(*expression.ScalarFunction))
+	}
+	return cloned, nil
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
@@ -646,6 +717,21 @@ type PhysicalMergeJoin struct {
 	Desc bool
 }
 
+// Clone clones this PhysicalPlan.
+func (p *PhysicalMergeJoin) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalMergeJoin)
+	base, err := p.basePhysicalJoin.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.basePhysicalJoin = *base
+	for _, cf := range p.CompareFuncs {
+		cloned.CompareFuncs = append(cloned.CompareFuncs, cf)
+	}
+	cloned.Desc = p.Desc
+	return cloned, nil
+}
+
 // PhysicalLock is the physical operator of lock, which is used for `select ... for update` clause.
 type PhysicalLock struct {
 	basePhysicalPlan
@@ -674,6 +760,20 @@ type basePhysicalAgg struct {
 
 	AggFuncs     []*aggregation.AggFuncDesc
 	GroupByItems []expression.Expression
+}
+
+func (p *basePhysicalAgg) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalAgg, error) {
+	cloned := new(basePhysicalAgg)
+	base, err := p.physicalSchemaProducer.cloneWithSelf(newSelf)
+	if err != nil {
+		return nil, err
+	}
+	cloned.physicalSchemaProducer = *base
+	for _, aggDesc := range p.AggFuncs {
+		cloned.AggFuncs = append(cloned.AggFuncs, aggDesc.Clone())
+	}
+	cloned.GroupByItems = cloneExprs(p.GroupByItems)
+	return cloned, nil
 }
 
 func (p *basePhysicalAgg) numDistinctFunc() (num int) {
@@ -719,6 +819,17 @@ type PhysicalHashAgg struct {
 	basePhysicalAgg
 }
 
+// Clone clones this physical plan.
+func (p *PhysicalHashAgg) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalHashAgg)
+	base, err := p.basePhysicalAgg.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.basePhysicalAgg = *base
+	return cloned, nil
+}
+
 // NewPhysicalHashAgg creates a new PhysicalHashAgg from a LogicalAggregation.
 func NewPhysicalHashAgg(la *LogicalAggregation, newStats *property.StatsInfo, prop *property.PhysicalProperty) *PhysicalHashAgg {
 	agg := basePhysicalAgg{
@@ -731,6 +842,17 @@ func NewPhysicalHashAgg(la *LogicalAggregation, newStats *property.StatsInfo, pr
 // PhysicalStreamAgg is stream operator of aggregate.
 type PhysicalStreamAgg struct {
 	basePhysicalAgg
+}
+
+// Clone clones this physical plan.
+func (p *PhysicalStreamAgg) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalStreamAgg)
+	base, err := p.basePhysicalAgg.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.basePhysicalAgg = *base
+	return cloned, nil
 }
 
 // PhysicalSort is the physical operator of sort, which implements a memory sort.
