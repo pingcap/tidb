@@ -634,6 +634,8 @@ type SessionVars struct {
 
 	// FoundInSPM indicates whether the execution plan is matched with the hints in the binding.
 	FoundInSPM bool
+	// PrevFoundInSPM indicates whether the last execution plan is matched with the hints in the binding.
+	PrevFoundInSPM bool
 
 	// OptimizerUseInvisibleIndexes indicates whether optimizer can use invisible index
 	OptimizerUseInvisibleIndexes bool
@@ -733,6 +735,7 @@ func NewSessionVars() *SessionVars {
 		WindowingUseHighPrecision:   true,
 		PrevFoundInPlanCache:        DefTiDBFoundInPlanCache,
 		FoundInPlanCache:            DefTiDBFoundInPlanCache,
+		PrevFoundInSPM:              DefTiDBFoundInSPM,
 		FoundInSPM:                  DefTiDBFoundInSPM,
 		SelectLimit:                 math.MaxUint64,
 		AllowAutoRandExplicitInsert: DefTiDBAllowAutoRandExplicitInsert,
@@ -1335,6 +1338,9 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBFoundInPlanCache:
 		s.FoundInPlanCache = TiDBOptOn(val)
 	case TiDBFoundInSPM:
+		if val == "0" {
+			panic("1111")
+		}
 		s.FoundInSPM = TiDBOptOn(val)
 	case TiDBEnableCollectExecutionInfo:
 		config.GetGlobalConfig().EnableCollectExecutionInfo = TiDBOptOn(val)

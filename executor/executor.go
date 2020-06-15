@@ -1660,6 +1660,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.StmtCtx = sc
 	vars.PrevFoundInPlanCache = vars.FoundInPlanCache
 	vars.FoundInPlanCache = false
+	vars.PrevFoundInSPM = vars.FoundInSPM
 	vars.FoundInSPM = false
 	return
 }
