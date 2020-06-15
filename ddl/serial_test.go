@@ -62,12 +62,10 @@ type testSerialSuite struct {
 func (s *testSerialSuite) SetUpSuite(c *C) {
 	session.SetSchemaLease(200 * time.Millisecond)
 	session.DisableStats4Test()
-
-	cfg := config.GetGlobalConfig()
-	newCfg := *cfg
-	// Test for add/drop primary key.
-	newCfg.AlterPrimaryKey = false
-	config.StoreGlobalConfig(&newCfg)
+	config.UpdateGlobal(func(conf *config.Config) {
+		// Test for add/drop primary key.
+		conf.AlterPrimaryKey = false
+	})
 
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
 
@@ -95,15 +93,11 @@ func (s *testSerialSuite) TearDownSuite(c *C) {
 
 func (s *testSerialSuite) TestChangeMaxIndexLength(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	cfg := config.GetGlobalConfig()
-	newCfg := *cfg
-	originalMaxIndexLen := cfg.MaxIndexLength
-	newCfg.MaxIndexLength = config.DefMaxOfMaxIndexLength
-	config.StoreGlobalConfig(&newCfg)
-	defer func() {
-		newCfg.MaxIndexLength = originalMaxIndexLen
-		config.StoreGlobalConfig(&newCfg)
-	}()
+
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.MaxIndexLength = config.DefMaxOfMaxIndexLength
+	})
 
 	tk.MustExec("create table t (c1 varchar(3073), index(c1)) charset = ascii;")
 	tk.MustExec(fmt.Sprintf("create table t1 (c1 varchar(%d), index(c1)) charset = ascii;", config.DefMaxOfMaxIndexLength))
@@ -132,15 +126,10 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 	tk.MustExec("create table primary_key_test1 (a int, b varchar(10), primary key(a))")
 	tk.MustExec("create table primary_key_test2 (a int, b varchar(10), primary key(b))")
 	tk.MustExec("create table primary_key_test3 (a int, b varchar(10))")
-	cfg := config.GetGlobalConfig()
-	newCfg := *cfg
-	orignalAlterPrimaryKey := newCfg.AlterPrimaryKey
-	newCfg.AlterPrimaryKey = true
-	config.StoreGlobalConfig(&newCfg)
-	defer func() {
-		newCfg.AlterPrimaryKey = orignalAlterPrimaryKey
-		config.StoreGlobalConfig(&newCfg)
-	}()
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = true
+	})
 
 	_, err = tk.Exec("alter table primary_key_test1 drop primary key")
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when the table's pkIsHandle is true")
@@ -150,8 +139,9 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 
 	// for "drop index `primary` on ..." syntax
 	tk.MustExec("create table primary_key_test4 (a int, b varchar(10), primary key(a))")
-	newCfg.AlterPrimaryKey = false
-	config.StoreGlobalConfig(&newCfg)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = false
+	})
 	_, err = tk.Exec("drop index `primary` on primary_key_test4")
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when alter-primary-key is false")
 	// for the index name is `primary`
@@ -814,13 +804,10 @@ func (s *testSerialSuite) TestTableLocksEnable(c *C) {
 	tk.MustExec("create table t1 (a int)")
 
 	// Test for enable table lock config.
-	cfg := config.GetGlobalConfig()
-	newCfg := *cfg
-	newCfg.EnableTableLock = false
-	config.StoreGlobalConfig(&newCfg)
-	defer func() {
-		config.StoreGlobalConfig(cfg)
-	}()
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableTableLock = false
+	})
 
 	tk.MustExec("lock tables t1 write")
 	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
@@ -898,11 +885,15 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	assertPKIsNotHandle("create table t (a bigint auto_random(3), b int, c char, primary key (a, c))", "a")
 
 	// PKIsNotHandle: table is created when alter-primary-key = true.
-	config.GetGlobalConfig().AlterPrimaryKey = true
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = true
+	})
 	assertPKIsNotHandle("create table t (a bigint auto_random(3) primary key, b int)", "a")
 	assertPKIsNotHandle("create table t (a bigint auto_random(3) primary key, b int)", "a")
 	assertPKIsNotHandle("create table t (a int, b bigint auto_random(3) primary key)", "b")
-	config.GetGlobalConfig().AlterPrimaryKey = false
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = false
+	})
 
 	// Can not set auto_random along with auto_increment.
 	assertWithAutoInc("create table t (a bigint auto_random(3) primary key auto_increment)")
@@ -1223,15 +1214,10 @@ func (s *testSerialSuite) TestInvisibleIndex(c *C) {
 	tk.MustExec("insert into t values (11, 12)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 2", "3 4", "5 6", "7 8", "9 10", "11 12"))
 
-	cfg := config.GetGlobalConfig()
-	newCfg := *cfg
-	orignalAlterPrimaryKey := newCfg.AlterPrimaryKey
-	newCfg.AlterPrimaryKey = true
-	config.StoreGlobalConfig(&newCfg)
-	defer func() {
-		newCfg.AlterPrimaryKey = orignalAlterPrimaryKey
-		config.StoreGlobalConfig(&newCfg)
-	}()
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = true
+	})
 
 	// Limitation: Primary key cannot be invisible index
 	tk.MustGetErrCode("create table t1 (a int, primary key (a) invisible)", errno.ErrPKIndexCantBeInvisible)
@@ -1291,7 +1277,9 @@ func (s *testSerialSuite) TestCreateClusteredIndex(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(tbl.Meta().IsCommonHandle, IsFalse)
 
-	config.GetGlobalConfig().AlterPrimaryKey = true
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = true
+	})
 	tk.MustExec("CREATE TABLE t5 (a varchar(255) primary key, b int)")
 	tk.MustExec("CREATE TABLE t6 (a int, b int, c int, primary key (a, b))")
 	is = domain.GetDomain(ctx).InfoSchema()
@@ -1301,7 +1289,9 @@ func (s *testSerialSuite) TestCreateClusteredIndex(c *C) {
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t6"))
 	c.Assert(err, IsNil)
 	c.Assert(tbl.Meta().IsCommonHandle, IsFalse)
-	config.GetGlobalConfig().AlterPrimaryKey = false
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = false
+	})
 
 	tk.MustExec("CREATE TABLE t21 like t2")
 	tk.MustExec("CREATE TABLE t31 like t3")
