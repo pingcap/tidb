@@ -195,7 +195,7 @@ func (e *TableReaderExecutor) Close() error {
 func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Range) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder
 	var reqBuilder *distsql.RequestBuilder
-	if e.table.Meta().IsCommonHandle {
+	if e.table.Meta() != nil && e.table.Meta().IsCommonHandle {
 		reqBuilder = builder.SetCommonHandleRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), ranges)
 	} else {
 		reqBuilder = builder.SetTableRanges(getPhysicalTableID(e.table), ranges, e.feedback)
