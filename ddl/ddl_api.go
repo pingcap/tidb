@@ -2511,11 +2511,13 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 		return nil, errors.Trace(err)
 	}
 
-	col.OriginDefaultValue, err = generateOriginDefaultValue(col.ToInfo())
+	originDefVal, err := generateOriginDefaultValue(col.ToInfo())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return col, nil
+
+	err = col.SetOriginDefaultValue(originDefVal)
+	return col, err
 }
 
 // AddColumn will add a new column to the table.
@@ -3379,6 +3381,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		Offset:             col.Offset,
 		State:              col.State,
 		OriginDefaultValue: col.OriginDefaultValue,
+		OriginDefaultValueBit: col.OriginDefaultValueBit,
 		FieldType:          *specNewColumn.Tp,
 		Name:               newColName,
 		Version:            col.Version,
