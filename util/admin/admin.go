@@ -15,6 +15,7 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"sort"
@@ -160,7 +161,7 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 
 			job.State = model.JobStateCancelling
 			// Make sure RawArgs isn't overwritten.
-			err := job.DecodeArgs(job.RawArgs)
+			err := json.Unmarshal(job.RawArgs, &job.Args)
 			if err != nil {
 				errs[i] = errors.Trace(err)
 				continue

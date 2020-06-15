@@ -695,7 +695,7 @@ func (b *PlanBuilder) detectSelectWindow(sel *ast.SelectStmt) bool {
 func getPathByIndexName(paths []*util.AccessPath, idxName model.CIStr, tblInfo *model.TableInfo) *util.AccessPath {
 	var tablePath *util.AccessPath
 	for _, path := range paths {
-		if path.IsTablePath {
+		if path.IsTablePath() {
 			tablePath = path
 			continue
 		}
@@ -720,9 +720,21 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl ta
 	if tbl.Type().IsClusterTable() {
 		tp = kv.TiDB
 	}
-	publicPaths = append(publicPaths, &util.AccessPath{IsTablePath: true, StoreType: tp})
+	tablePath := &util.AccessPath{StoreType: tp}
+	if tblInfo.IsCommonHandle {
+		tablePath.IsCommonHandlePath = true
+	} else {
+		tablePath.IsIntHandlePath = true
+	}
+	publicPaths = append(publicPaths, tablePath)
 	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
-		publicPaths = append(publicPaths, &util.AccessPath{IsTablePath: true, StoreType: kv.TiFlash})
+		tiFlathPath := &util.AccessPath{StoreType: kv.TiFlash}
+		if tblInfo.IsCommonHandle {
+			tiFlathPath.IsCommonHandlePath = true
+		} else {
+			tiFlathPath.IsIntHandlePath = true
+		}
+		publicPaths = append(publicPaths, tiFlathPath)
 	}
 	optimizerUseInvisibleIndexes := b.ctx.GetSessionVars().OptimizerUseInvisibleIndexes
 	for _, index := range tblInfo.Indices {
@@ -812,7 +824,7 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl ta
 	// If we have got "FORCE" or "USE" index hint but got no available index,
 	// we have to use table scan.
 	if len(available) == 0 {
-		available = append(available, &util.AccessPath{IsTablePath: true})
+		available = append(available, tablePath)
 	}
 	return available, nil
 }
@@ -852,7 +864,7 @@ func removeIgnoredPaths(paths, ignoredPaths []*util.AccessPath, tblInfo *model.T
 	}
 	remainedPaths := make([]*util.AccessPath, 0, len(paths))
 	for _, path := range paths {
-		if path.IsTablePath || getPathByIndexName(ignoredPaths, path.Index.Name, tblInfo) == nil {
+		if path.IsTablePath() || getPathByIndexName(ignoredPaths, path.Index.Name, tblInfo) == nil {
 			remainedPaths = append(remainedPaths, path)
 		}
 	}
@@ -1288,7 +1300,7 @@ func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []
 		if col.IsGenerated() && !col.GeneratedStored {
 			continue
 		}
-		if tbl.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
+		if tbl.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) && !tbl.IsCommonHandle {
 			pkCol = col
 		} else {
 			colsInfo = append(colsInfo, col)
@@ -1385,7 +1397,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 		return nil, err
 	}
 	for _, idxName := range as.IndexNames {
-		if isPrimaryIndex(idxName) && tblInfo.PKIsHandle {
+		if isPrimaryIndex(idxName) && tblInfo.PKIsHandle && !tblInfo.IsCommonHandle {
 			pkCol := tblInfo.GetPkColInfo()
 			for i, id := range physicalIDs {
 				info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], PhysicalTableID: id, Incremental: as.Incremental}
@@ -1420,7 +1432,7 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 			}
 		}
 	}
-	if tblInfo.PKIsHandle {
+	if tblInfo.PKIsHandle && !tblInfo.IsCommonHandle {
 		pkCol := tblInfo.GetPkColInfo()
 		for i, id := range physicalIDs {
 			info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], PhysicalTableID: id, Incremental: as.Incremental}
@@ -2633,7 +2645,7 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, v.Table.Schema.L,
 			v.Table.Name.L, "", authErr)
 		for _, spec := range v.Specs {
-			if spec.Tp == ast.AlterTableRenameTable {
+			if spec.Tp == ast.AlterTableRenameTable || spec.Tp == ast.AlterTableExchangePartition {
 				if b.ctx.GetSessionVars().User != nil {
 					authErr = ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.AuthUsername,
 						b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
