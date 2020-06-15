@@ -389,12 +389,12 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 	return nil
 }
 
-func makeRowDecoder(t table.Table, decodeCol []*table.Column, genExpr map[model.TableColumnID]expression.Expression) *decoder.RowDecoder {
+func makeRowDecoder(t table.Table, decodeCol []*table.Column, genExpr map[model.TableColumnID]expression.Expression, sctx sessionctx.Context) *decoder.RowDecoder {
 	var containsVirtualCol bool
-	decodeColsMap, ignored := decoder.BuildFullDecodeColMap(decodeCol, t, func(genCol *table.Column) (expression.Expression, error) {
-		containsVirtualCol = true
-		return genExpr[model.TableColumnID{TableID: t.Meta().ID, ColumnID: genCol.ID}], nil
-	})
+	dbName := model.NewCIStr(sctx.GetSessionVars().CurrentDB)
+	exprCols, names := expression.ColumnInfos2ColumnsAndNames(sctx, dbName, t.Meta().Name, t.Meta().Columns)
+	mockSchema := expression.NewSchema(exprCols...)
+	decodeColsMap, ignored := decoder.BuildFullDecodeColMap(decodeCol, t, mockSchema, sctx, names)
 	_ = ignored
 
 	if containsVirtualCol {
@@ -424,7 +424,7 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 		zap.Stringer("startKey", startKey),
 		zap.Stringer("key", it.Key()),
 		zap.Binary("value", it.Value()))
-	rowDecoder := makeRowDecoder(t, cols, genExprs)
+	rowDecoder := makeRowDecoder(t, cols, genExprs, sessCtx)
 	for it.Valid() && it.Key().HasPrefix(prefix) {
 		// first kv pair is row lock information.
 		// TODO: check valid lock

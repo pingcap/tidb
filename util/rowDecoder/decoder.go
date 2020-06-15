@@ -109,7 +109,13 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.
 		}
 		rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
 	}
-	for id, col := range rd.columns {
+	var keys []int
+	for k := range rd.columns {
+		keys = append(keys, int(k))
+	}
+	sort.Ints(keys)
+	for _, id := range keys {
+		col := rd.columns[int64(id)]
 		if col.GenExpr == nil {
 			continue
 		}
@@ -133,7 +139,9 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.
 				val.SetMysqlTime(t)
 			}
 		}
-		row[id] = val
+		rd.mutRow.SetValue(col.Col.Offset, val.GetValue())
+
+		row[int64(id)] = val
 	}
 	return row, nil
 }
@@ -156,7 +164,7 @@ func (rd *RowDecoder) tryDecodeFromHandle(dCol Column, handle kv.Handle) bool {
 
 // BuildFullDecodeColMap build a map that contains [columnID -> struct{*table.Column, expression.Expression}] from
 // indexed columns and all of its depending columns. `genExprProducer` is used to produce a generated expression based on a table.Column.
-func BuildFullDecodeColMap(indexedCols []*table.Column, t table.Table, genExprProducer func(*table.Column) (expression.Expression, error)) (map[int64]Column, error) {
+func BuildFullDecodeColMap(indexedCols []*table.Column, t table.Table, schema *expression.Schema, ctx sessionctx.Context, names []*types.FieldName) (map[int64]Column, error) {
 	pendingCols := make([]*table.Column, len(indexedCols))
 	copy(pendingCols, indexedCols)
 	decodeColMap := make(map[int64]Column, len(pendingCols))
@@ -176,7 +184,7 @@ func BuildFullDecodeColMap(indexedCols []*table.Column, t table.Table, genExprPr
 				}
 			}
 
-			e, err := genExprProducer(col)
+			e, err := expression.RewriteSimpleExprWithNames(ctx, col.GeneratedExpr, schema, names)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
