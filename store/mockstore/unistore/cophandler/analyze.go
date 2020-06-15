@@ -198,6 +198,9 @@ func handleAnalyzeColumnsReq(dbReader *dbreader.DBReader, ran kv.KeyRange, analy
 	evalCtx := &evalContext{sc: sc}
 	columns := analyzeReq.ColReq.ColumnsInfo
 	evalCtx.setColumnInfo(columns)
+	if len(analyzeReq.ColReq.PrimaryColumnIds) > 0 {
+		evalCtx.primaryCols = analyzeReq.ColReq.PrimaryColumnIds
+	}
 	decoder, err := evalCtx.newRowDecoder()
 	if err != nil {
 		return nil, err
