@@ -760,15 +760,16 @@ func setSetDefaultValue(v types.Datum, col *table.Column) (string, error) {
 		return str, nil
 	}
 
+	ctor := collate.GetCollator(col.Collate)
 	valMap := make(map[string]struct{}, len(col.Elems))
-	dVals := strings.Split(strings.ToLower(str), ",")
+	dVals := strings.Split(str, ",")
 	for _, dv := range dVals {
-		valMap[dv] = struct{}{}
+		valMap[string(ctor.Key(dv))] = struct{}{}
 	}
 	var existCnt int
 	for dv := range valMap {
 		for i := range col.Elems {
-			e := strings.ToLower(col.Elems[i])
+			e := string(ctor.Key(col.Elems[i]))
 			if e == dv {
 				existCnt++
 				break
@@ -1465,10 +1466,13 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbC
 	if err != nil {
 		return nil, err
 	}
-	if err = checkTableInfoValidExtra(tbInfo); err != nil {
+	// Fix issue 17952 which will cause partition range expr can't be parsed as Int.
+	// checkTableInfoValidWithStmt will do the constant fold the partition expression first,
+	// then checkTableInfoValidExtra will pass the tableInfo check successfully.
+	if err = checkTableInfoValidWithStmt(ctx, tbInfo, s); err != nil {
 		return nil, err
 	}
-	if err = checkTableInfoValidWithStmt(ctx, tbInfo, s); err != nil {
+	if err = checkTableInfoValidExtra(tbInfo); err != nil {
 		return nil, err
 	}
 	return tbInfo, nil

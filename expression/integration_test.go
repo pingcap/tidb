@@ -6628,5 +6628,16 @@ func (s *testIntegrationSuite) TestIssue17898(c *C) {
 	tk.MustExec("create table t0(a char(10), b int as ((a)));")
 	tk.MustExec("insert into t0(a) values(\"0.5\");")
 	tk.MustQuery("select * from t0;").Check(testkit.Rows("0.5 1"))
+}
 
+func (s *testIntegrationSerialSuite) TestIssue17891(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int, value set ('a','b','c') charset utf8mb4 collate utf8mb4_bin default 'a,b ');")
+	tk.MustExec("drop table t")
+	tk.MustExec("create table test(id int, value set ('a','b','c') charset utf8mb4 collate utf8mb4_general_ci default 'a,B ,C');")
 }
