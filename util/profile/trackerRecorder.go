@@ -16,8 +16,9 @@ package profile
 import (
 	"time"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/util/kvcache"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 var col = &Collector{}
@@ -32,7 +33,7 @@ func HeapProfileForGlobalMemTracker(d time.Duration) {
 		case <-t.C:
 			err := heapProfileForGlobalMemTracker()
 			if err != nil {
-				log.Warnf("profile memory into tracker failed, err: %v", err)
+				log.Warn("profile memory into tracker failed", zap.Error(err))
 			}
 		}
 	}
@@ -45,7 +46,7 @@ func heapProfileForGlobalMemTracker() error {
 	}
 	defer func() {
 		if p := recover(); p != nil {
-			log.Warnf("GlobalLRUMemUsageTracker meet panic: %s", p)
+			log.Error("GlobalLRUMemUsageTracker meet panic", zap.Any("panic", p), zap.Stack("stack"))
 		}
 	}()
 	kvcache.GlobalLRUMemUsageTracker.ReplaceBytesUsed(bytes)

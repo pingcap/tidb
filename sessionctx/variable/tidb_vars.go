@@ -172,6 +172,9 @@ const (
 
 	// TiDBFoundInPlanCache indicates whether the last statement was found in plan cache
 	TiDBFoundInPlanCache = "last_plan_from_cache"
+
+	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
+	TiDBAllowAutoRandExplicitInsert = "allow_auto_random_explicit_insert"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -396,6 +399,12 @@ const (
 
 	// TiDBEnableCollectExecutionInfo indicates that whether execution info is collected.
 	TiDBEnableCollectExecutionInfo = "tidb_enable_collect_execution_info"
+
+	// TiDBEnableClusteredIndex indicates if clustered index feature is enabled.
+	TiDBEnableClusteredIndex = "tidb_enable_clustered_index"
+
+	// TiDBSlowLogMasking indicates that whether masking the query data when log slow query.
+	TiDBSlowLogMasking = "tidb_slow_log_masking"
 )
 
 // Default TiDB system variable values.
@@ -492,6 +501,9 @@ const (
 	DefTiDBMetricSchemaRangeDuration   = 60 // 60s
 	DefTiDBFoundInPlanCache            = false
 	DefTidbEnableCollectExecutionInfo  = false
+	DefTiDBAllowAutoRandExplicitInsert = false
+	DefTiDBEnableClusteredIndex        = false
+	DefTiDBSlowLogMasking              = false
 )
 
 // Process global variables.

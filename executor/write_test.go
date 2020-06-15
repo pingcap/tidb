@@ -2304,7 +2304,7 @@ func (s *testSuite4) TestNotNullDefault(c *C) {
 }
 
 func (s *testBypassSuite) TestLatch(c *C) {
-	store, err := mockstore.NewMockTikvStore(
+	store, err := mockstore.NewMockStore(
 		// Small latch slot size to make conflicts.
 		mockstore.WithTxnLocalLatches(64),
 	)

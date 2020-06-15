@@ -60,14 +60,23 @@ func (s *testRangeTaskSuite) SetUpTest(c *C) {
 	}
 	allRegionRanges = append(allRegionRanges, makeRange("z", ""))
 
-	cluster := mocktikv.NewCluster()
+	client, cluster, pdClient, err := mocktikv.NewTiKVAndPDClient("")
+	c.Assert(err, IsNil)
 	mocktikv.BootstrapWithMultiRegions(cluster, splitKeys...)
 	s.cluster = cluster
-	client, pdClient, err := mocktikv.NewTiKVAndPDClient(cluster, nil, "")
-	c.Assert(err, IsNil)
 
 	store, err := NewTestTiKVStore(client, pdClient, nil, nil, 0)
 	c.Assert(err, IsNil)
+
+	// TODO: make this possible
+	// store, err := mockstore.NewMockStore(
+	// 	mockstore.WithStoreType(mockstore.MockTiKV),
+	// 	mockstore.WithClusterInspector(func(c cluster.Cluster) {
+	// 		mockstore.BootstrapWithMultiRegions(c, splitKeys...)
+	// 		s.cluster = c
+	// 	}),
+	// )
+	// c.Assert(err, IsNil)
 	s.store = store.(*tikvStore)
 
 	s.testRanges = []kv.KeyRange{

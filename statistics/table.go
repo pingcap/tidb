@@ -20,6 +20,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -391,11 +392,11 @@ func isSingleColIdxNullRange(idx *Index, ran *ranger.Range) bool {
 	return false
 }
 
-// getEqualCondSelectivity gets the selectivity of the equal conditions. `coverAll` means if the conditions
-// have covered all the index columns.
-func (coll *HistColl) getEqualCondSelectivity(idx *Index, bytes []byte, coverAll bool, unique bool) float64 {
+// getEqualCondSelectivity gets the selectivity of the equal conditions.
+func (coll *HistColl) getEqualCondSelectivity(idx *Index, bytes []byte, usedColsLen int) float64 {
+	coverAll := len(idx.Info.Columns) == usedColsLen
 	// In this case, the row count is at most 1.
-	if unique && coverAll {
+	if idx.Info.Unique && coverAll {
 		return 1.0 / float64(idx.TotalRowCount())
 	}
 	val := types.NewBytesDatum(bytes)
@@ -406,7 +407,18 @@ func (coll *HistColl) getEqualCondSelectivity(idx *Index, bytes []byte, coverAll
 			// for equality queries
 			return float64(coll.ModifyCount) / float64(idx.NDV) / idx.TotalRowCount()
 		}
-		// for range queries
+		// The equal condition only uses prefix columns of the index.
+		colIDs := coll.Idx2ColumnIDs[idx.ID]
+		var ndv int64
+		for i, colID := range colIDs {
+			if i >= usedColsLen {
+				break
+			}
+			ndv = mathutil.MaxInt64(ndv, coll.Columns[colID].NDV)
+		}
+		if ndv > 0 {
+			return float64(coll.ModifyCount) / float64(ndv) / idx.TotalRowCount()
+		}
 		return float64(coll.ModifyCount) / outOfRangeBetweenRate / idx.TotalRowCount()
 	}
 	return float64(idx.CMSketch.QueryBytes(bytes)) / float64(idx.TotalRowCount())
@@ -437,14 +449,13 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 			continue
 		}
 		var selectivity float64
-		coverAll := len(ran.LowVal) == len(idx.Info.Columns) && rangePosition == len(ran.LowVal)
 		// use CM Sketch to estimate the equal conditions
 		if rangeVals == nil {
 			bytes, err := codec.EncodeKey(sc, nil, ran.LowVal[:rangePosition]...)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
-			selectivity = coll.getEqualCondSelectivity(idx, bytes, coverAll, idx.Info.Unique)
+			selectivity = coll.getEqualCondSelectivity(idx, bytes, rangePosition)
 		} else {
 			bytes, err := codec.EncodeKey(sc, nil, ran.LowVal[:rangePosition-1]...)
 			if err != nil {
@@ -457,7 +468,7 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 				if err != nil {
 					return 0, err
 				}
-				selectivity += coll.getEqualCondSelectivity(idx, bytes, coverAll, idx.Info.Unique)
+				selectivity += coll.getEqualCondSelectivity(idx, bytes, rangePosition)
 			}
 		}
 		// use histogram to estimate the range condition

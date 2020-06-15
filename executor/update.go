@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/memory"
 )
 
@@ -62,11 +63,29 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 		if e.updatedRowKeys[content.TblID] == nil {
 			e.updatedRowKeys[content.TblID] = kv.NewHandleMap()
 		}
-		handleDatum := row[content.HandleOrdinal]
-		if e.canNotUpdate(handleDatum) {
-			continue
+		var handle kv.Handle
+		if !content.IsCommonHandle {
+			handleDatum := row[content.HandleOrdinal[0]]
+			if e.canNotUpdate(handleDatum) {
+				continue
+			}
+			handle = kv.IntHandle(row[content.HandleOrdinal[0]].GetInt64())
+		} else {
+			// TODO: Redesign update join for cluster index table.
+			pkDts := make([]types.Datum, 0, len(content.HandleOrdinal))
+			for _, ordinal := range content.HandleOrdinal {
+				pkDts = append(pkDts, row[ordinal])
+			}
+			handleBytes, err := codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, nil, pkDts...)
+			if err != nil {
+				return err
+			}
+			handle, err = kv.NewCommonHandle(handleBytes)
+			if err != nil {
+				return err
+			}
 		}
-		handle := kv.IntHandle(row[content.HandleOrdinal].GetInt64())
+
 		oldData := row[content.Start:content.End]
 		newTableData := newData[content.Start:content.End]
 		updatable := false
@@ -217,7 +236,7 @@ func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []
 		// info of `_tidb_rowid` column is nil.
 		// No need to cast `_tidb_rowid` column value.
 		if cols[assign.Col.Index] != nil {
-			val, err = table.CastValue(e.ctx, val, cols[assign.Col.Index].ColumnInfo, false)
+			val, err = table.CastValue(e.ctx, val, cols[assign.Col.Index].ColumnInfo, false, false)
 			if err = e.handleErr(assign.ColName, rowIdx, err); err != nil {
 				return nil, err
 			}
@@ -244,7 +263,7 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 		// info of `_tidb_rowid` column is nil.
 		// No need to cast `_tidb_rowid` column value.
 		if cols[assign.Col.Index] != nil {
-			val, err = table.CastValue(e.ctx, val, cols[assign.Col.Index].ColumnInfo, false)
+			val, err = table.CastValue(e.ctx, val, cols[assign.Col.Index].ColumnInfo, false, false)
 			if err = e.handleErr(assign.ColName, rowIdx, err); err != nil {
 				return nil, err
 			}

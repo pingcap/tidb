@@ -2704,7 +2704,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	tableInfo := tbl.Meta()
 	var authErr error
 	if sessionVars.User != nil {
-		authErr = ErrTableaccessDenied.FastGenByArgs("SELECT", sessionVars.User.Username, sessionVars.User.Hostname, tableInfo.Name.L)
+		authErr = ErrTableaccessDenied.FastGenByArgs("SELECT", sessionVars.User.AuthUsername, sessionVars.User.AuthHostname, tableInfo.Name.L)
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "", authErr)
 
@@ -2721,14 +2721,20 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 
 	if tableInfo.GetPartitionInfo() != nil {
 		b.optFlag = b.optFlag | flagPartitionProcessor
-		b.partitionedTable = append(b.partitionedTable, tbl.(table.PartitionedTable))
+		pt := tbl.(table.PartitionedTable)
 		// check partition by name.
-		for _, name := range tn.PartitionNames {
-			_, err = tables.FindPartitionByName(tableInfo, name.L)
-			if err != nil {
-				return nil, err
+		if len(tn.PartitionNames) > 0 {
+			pids := make(map[int64]struct{}, len(tn.PartitionNames))
+			for _, name := range tn.PartitionNames {
+				pid, err := tables.FindPartitionByName(tableInfo, name.L)
+				if err != nil {
+					return nil, err
+				}
+				pids[pid] = struct{}{}
 			}
+			pt = tables.NewPartitionTableithGivenSets(pt, pids)
 		}
+		b.partitionedTable = append(b.partitionedTable, pt)
 	} else if len(tn.PartitionNames) != 0 {
 		return nil, ErrPartitionClauseOnNonpartitioned
 	}
@@ -2791,7 +2797,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				for _, idxName := range hint.indexHint.IndexNames {
 					hasIdxName := false
 					for _, path := range possiblePaths {
-						if path.IsTablePath {
+						if path.IsTablePath() {
 							if idxName.L == "primary" {
 								hasIdxName = true
 								break
@@ -2888,7 +2894,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 
 	// Init FullIdxCols, FullIdxColLens for accessPaths.
 	for _, path := range ds.possibleAccessPaths {
-		if !path.IsTablePath {
+		if !path.IsTablePath() {
 			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.Index)
 		}
 	}
@@ -3020,6 +3026,8 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 			p.QueryTimeRange = b.timeRangeForSummaryTable()
 		case infoschema.TableSlowQuery:
 			p.Extractor = &SlowQueryExtractor{}
+		case infoschema.TableStorageStats:
+			p.Extractor = &TableStorageStatsExtractor{}
 		}
 	}
 	return p, nil
@@ -3227,7 +3235,8 @@ type TblColPosInfo struct {
 	// Start and End represent the ordinal range [Start, End) of the consecutive columns.
 	Start, End int
 	// HandleOrdinal represents the ordinal of the handle column.
-	HandleOrdinal int
+	HandleOrdinal  []int
+	IsCommonHandle bool // TODO: fix redesign update join table and remove me!
 }
 
 // TblColPosInfoSlice attaches the methods of sort.Interface to []TblColPosInfos sorting in increasing order.
@@ -3259,7 +3268,11 @@ func (c TblColPosInfoSlice) FindHandle(colOrdinal int) (int, bool) {
 	if rangeBehindOrdinal == 0 {
 		return 0, false
 	}
-	return c[rangeBehindOrdinal-1].HandleOrdinal, true
+	if c[rangeBehindOrdinal-1].IsCommonHandle {
+		// TODO: fix redesign update join table to fix me.
+		return 0, false
+	}
+	return c[rangeBehindOrdinal-1].HandleOrdinal[0], true
 }
 
 // buildColumns2Handle builds columns to handle mapping.
@@ -3284,7 +3297,8 @@ func buildColumns2Handle(
 				return nil, err
 			}
 			end := offset + tblLen
-			cols2Handles = append(cols2Handles, TblColPosInfo{tblID, offset, end, handleCol.Index})
+			cols2Handles = append(cols2Handles, TblColPosInfo{tblID, offset, end, []int{handleCol.Index}, tbl.Meta().IsCommonHandle})
+			// TODO: fix me for cluster index
 		}
 	}
 	sort.Sort(cols2Handles)
@@ -3407,6 +3421,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	if err == nil {
 		err = checkUpdateList(b.ctx, tblID2table, updt)
 	}
+	updt.PartitionedTable = b.partitionedTable
 	return updt, err
 }
 

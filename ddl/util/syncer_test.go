@@ -51,7 +51,7 @@ func TestSyncerSimple(t *testing.T) {
 		CheckVersFirstWaitTime = origin
 	}()
 
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -61,7 +61,7 @@ var _ = Suite(&testRegionRequestSuite{})
 var _ = Suite(&testStoreLimitSuite{})
 
 func (s *testRegionRequestSuite) SetUpTest(c *C) {
-	s.cluster = mocktikv.NewCluster()
+	s.cluster = mocktikv.NewCluster(mocktikv.MustNewMVCCStore())
 	s.store, s.peer, s.region = mocktikv.BootstrapWithSingleStore(s.cluster)
 	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
 	s.cache = NewRegionCache(pdCli)
@@ -72,7 +72,7 @@ func (s *testRegionRequestSuite) SetUpTest(c *C) {
 }
 
 func (s *testStoreLimitSuite) SetUpTest(c *C) {
-	s.cluster = mocktikv.NewCluster()
+	s.cluster = mocktikv.NewCluster(mocktikv.MustNewMVCCStore())
 	s.storeIDs, s.peerIDs, s.regionID, s.leaderPeer = mocktikv.BootstrapWithMultiStores(s.cluster, 3)
 	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
 	s.cache = NewRegionCache(pdCli)

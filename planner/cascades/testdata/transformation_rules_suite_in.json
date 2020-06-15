@@ -205,5 +205,14 @@
     "cases": [
       "select a from t t1 where exists (select 1 from t t2 where t1.a = t2.b)"
     ]
+  },
+  {
+    "name": "TestInjectProj",
+    "cases": [
+      "select * from t order by (a+b) limit 10",
+      "select max(a), min(b), avg(c) from t group by a+b",
+      "select max(a), min(b), avg(a / b) from t group by a",
+      "select max(a), min(b), avg(a / b) from t group by (a+b)"
+    ]
   }
 ]

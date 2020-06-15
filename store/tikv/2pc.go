@@ -495,7 +495,7 @@ func preSplitAndScatterIn2PC(ctx context.Context, store *tikvStore, group groupe
 	}
 
 	for _, regionID := range regionIDs {
-		err := store.WaitScatterRegionFinish(regionID, 0)
+		err := store.WaitScatterRegionFinish(ctx, regionID, 0)
 		if err != nil {
 			logutil.BgLogger().Warn("2PC wait scatter region failed", zap.Uint64("regionID", regionID), zap.Error(err))
 		}
@@ -1588,6 +1588,6 @@ func (batchExe *batchExecutor) process(batches []batchMutations) error {
 		}
 	}
 	close(exitCh)
-	metrics.TiKVTokenWaitDuration.Observe(float64(batchExe.tokenWaitDuration))
+	metrics.TiKVTokenWaitDuration.Observe(batchExe.tokenWaitDuration.Seconds())
 	return err
 }

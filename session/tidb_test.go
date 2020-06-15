@@ -104,13 +104,13 @@ func (s *testMainSuite) TestParseErrorWarn(c *C) {
 }
 
 func newStore(c *C, dbPath string) kv.Storage {
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	return store
 }
 
 func newStoreWithBootstrap(c *C, dbPath string) (kv.Storage, *domain.Domain) {
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	dom, err := BootstrapSession(store)
 	c.Assert(err, IsNil)

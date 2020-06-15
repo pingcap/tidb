@@ -324,21 +324,18 @@ type autoRandom struct {
 	originAlterPrimaryKey bool
 }
 
-// SetupAutoRandomTestConfig set alter-primary-key to false, and set allow-auto-random to true and save their origin values.
+// SetupAutoRandomTestConfig set alter-primary-key to false and save its origin values.
 // This method should only be used for the tests in SerialSuite.
 func (a *autoRandom) SetupAutoRandomTestConfig() {
 	globalCfg := config.GetGlobalConfig()
-	a.originAllowAutoRandom = globalCfg.Experimental.AllowAutoRandom
 	a.originAlterPrimaryKey = globalCfg.AlterPrimaryKey
 	globalCfg.AlterPrimaryKey = false
-	globalCfg.Experimental.AllowAutoRandom = true
 }
 
 // RestoreAutoRandomTestConfig restore the values had been saved in SetupTestConfig.
 // This method should only be used for the tests in SerialSuite.
 func (a *autoRandom) RestoreAutoRandomTestConfig() {
 	globalCfg := config.GetGlobalConfig()
-	globalCfg.Experimental.AllowAutoRandom = a.originAllowAutoRandom
 	globalCfg.AlterPrimaryKey = a.originAlterPrimaryKey
 }
 

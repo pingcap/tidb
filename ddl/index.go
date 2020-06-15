@@ -101,7 +101,7 @@ func checkPKOnGeneratedColumn(tblInfo *model.TableInfo, indexPartSpecifications 
 		}
 		// Virtual columns cannot be used in primary key.
 		if lastCol.IsGenerated() && !lastCol.GeneratedStored {
-			return nil, errUnsupportedOnGeneratedColumn.GenWithStackByArgs("Defining a virtual generated column as primary key")
+			return nil, ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("Defining a virtual generated column as primary key")
 		}
 	}
 
@@ -351,7 +351,7 @@ func checkPrimaryKeyNotNull(w *worker, sqlMode mysql.SQLMode, t *meta.Meta, job 
 		return nil, nil
 	}
 
-	dbInfo, err := t.GetDatabase(job.SchemaID)
+	dbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
 	if err != nil {
 		return nil, err
 	}
@@ -540,15 +540,10 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		}
 
 		err = w.runReorgJob(t, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
-			defer func() {
-				r := recover()
-				if r != nil {
-					buf := util.GetStack()
-					logutil.BgLogger().Error("[ddl] add table index panic", zap.Any("panic", r), zap.String("stack", string(buf)))
-					metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
+			defer util.Recover(metrics.LabelDDL, "onCreateIndex",
+				func() {
 					addIndexErr = errCancelledDDLJob.GenWithStack("add table `%v` index `%v` panic", tblInfo.Name, indexInfo.Name)
-				}
-			}()
+				}, false)
 			return w.addTableIndex(tbl, indexInfo, reorgInfo)
 		})
 		if err != nil {
@@ -1054,7 +1049,7 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 	for i, key := range w.batchCheckKeys {
 		if val, found := batchVals[string(key)]; found {
 			if w.distinctCheckFlags[i] {
-				handle, err1 := tables.DecodeHandleInUniqueIndexValue(val)
+				handle, err1 := tables.DecodeHandleInUniqueIndexValueDeprecated(val)
 				if err1 != nil {
 					return errors.Trace(err1)
 				}
@@ -1192,14 +1187,9 @@ func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *ad
 func (w *addIndexWorker) run(d *ddlCtx) {
 	logutil.BgLogger().Info("[ddl] add index worker start", zap.Int("workerID", w.id))
 	defer func() {
-		r := recover()
-		if r != nil {
-			buf := util.GetStack()
-			logutil.BgLogger().Error("[ddl] add index worker panic", zap.Any("panic", r), zap.String("stack", string(buf)))
-			metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
-		}
 		w.resultCh <- &addIndexResult{err: errReorgPanic}
 	}()
+	defer util.Recover(metrics.LabelDDL, "addIndexWorker.run", nil, false)
 	for {
 		task, more := <-w.taskCh
 		if !more {

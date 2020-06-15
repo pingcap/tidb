@@ -76,7 +76,7 @@ func (ts *tidbTestSuite) SetUpSuite(c *C) {
 
 func (ts *tidbTestSuiteBase) SetUpSuite(c *C) {
 	var err error
-	ts.store, err = mockstore.NewMockTikvStore()
+	ts.store, err = mockstore.NewMockStore()
 	session.DisableStats4Test()
 	c.Assert(err, IsNil)
 	ts.domain, err = session.BootstrapSession(ts.store)
@@ -183,7 +183,7 @@ func (ts *tidbTestSuite) TestStatusAPI(c *C) {
 
 func (ts *tidbTestSuite) TestStatusPort(c *C) {
 	var err error
-	ts.store, err = mockstore.NewMockTikvStore()
+	ts.store, err = mockstore.NewMockStore()
 	session.DisableStats4Test()
 	c.Assert(err, IsNil)
 	ts.domain, err = session.BootstrapSession(ts.store)

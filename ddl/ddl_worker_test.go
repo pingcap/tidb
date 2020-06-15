@@ -488,6 +488,9 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 
 		{act: model.ActionAlterIndexVisibility, jobIDs: []int64{firstID + 46}, cancelRetErrs: noErrs, cancelState: model.StateNone},
 		{act: model.ActionAlterIndexVisibility, jobIDs: []int64{firstID + 47}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 47)}, cancelState: model.StatePublic},
+
+		{act: model.ActionExchangeTablePartition, jobIDs: []int64{firstID + 53}, cancelRetErrs: noErrs, cancelState: model.StateNone},
+		{act: model.ActionExchangeTablePartition, jobIDs: []int64{firstID + 54}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 54)}, cancelState: model.StatePublic},
 	}
 
 	return tests
@@ -986,6 +989,31 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	c.Check(checkErr, IsNil)
 	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
 	c.Assert(checkIdxVisibility(changedTable, indexName, true), IsTrue)
+
+	// test exchange partition failed caused by canceled
+	pt := testTableInfoWithPartition(c, d, "pt", 5)
+	nt := testTableInfo(c, d, "nt", 5)
+	testCreateTable(c, ctx, d, dbInfo, pt)
+	testCreateTable(c, ctx, d, dbInfo, nt)
+
+	updateTest(&tests[43])
+	defID := pt.Partition.Definitions[0].ID
+	exchangeTablePartition := []interface{}{defID, dbInfo.ID, pt.ID, "p0", true}
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, nt.ID, test.act, exchangeTablePartition, &test.cancelState)
+	c.Check(checkErr, IsNil)
+	changedNtTable := testGetTable(c, d, dbInfo.ID, nt.ID)
+	changedPtTable := testGetTable(c, d, dbInfo.ID, pt.ID)
+	c.Assert(changedNtTable.Meta().ID == nt.ID, IsTrue)
+	c.Assert(changedPtTable.Meta().Partition.Definitions[0].ID == pt.Partition.Definitions[0].ID, IsTrue)
+
+	// cancel exchange partition successfully
+	updateTest(&tests[44])
+	doDDLJobSuccess(ctx, d, c, dbInfo.ID, nt.ID, test.act, exchangeTablePartition)
+	c.Check(checkErr, IsNil)
+	changedNtTable = testGetTable(c, d, dbInfo.ID, pt.Partition.Definitions[0].ID)
+	changedPtTable = testGetTable(c, d, dbInfo.ID, pt.ID)
+	c.Assert(changedNtTable.Meta().ID == nt.ID, IsFalse)
+	c.Assert(changedPtTable.Meta().Partition.Definitions[0].ID == nt.ID, IsTrue)
 }
 
 func (s *testDDLSuite) TestIgnorableSpec(c *C) {

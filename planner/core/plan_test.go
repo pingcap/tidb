@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -82,6 +83,29 @@ func (s *testPlanNormalize) TestNormalizedPlan(c *C) {
 		})
 		compareStringSlice(c, normalizedPlanRows, output[i].Plan)
 	}
+}
+
+func (s *testPlanNormalize) TestEncodeDecodePlan(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("skip race test")
+	}
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("create table t1 (a int key,b int,c int, index (b));")
+	tk.MustExec("set tidb_enable_collect_execution_info=1;")
+
+	tk.Se.GetSessionVars().PlanID = 0
+	tk.MustExec("select max(a) from t1 where a>0;")
+	info := tk.Se.ShowProcess()
+	c.Assert(info, NotNil)
+	p, ok := info.Plan.(core.Plan)
+	c.Assert(ok, IsTrue)
+	encodeStr := core.EncodePlan(p)
+	planTree, err := plancodec.DecodePlan(encodeStr)
+	c.Assert(err, IsNil)
+	c.Assert(strings.Contains(planTree, "time"), IsTrue)
+	c.Assert(strings.Contains(planTree, "loops"), IsTrue)
 }
 
 func (s *testPlanNormalize) TestNormalizedDigest(c *C) {

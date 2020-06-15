@@ -35,6 +35,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -50,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -340,9 +340,8 @@ func (ts *HTTPHandlerTestSuite) TestRegionsFromMeta(c *C) {
 }
 
 func (ts *HTTPHandlerTestSuite) startServer(c *C) {
-	mvccStore := mocktikv.MustNewMVCCStore()
 	var err error
-	ts.store, err = mockstore.NewMockTikvStore(mockstore.WithMVCCStore(mvccStore))
+	ts.store, err = mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	ts.domain, err = session.BootstrapSession(ts.store)
 	c.Assert(err, IsNil)
@@ -443,7 +442,17 @@ func (ts *HTTPHandlerTestSuite) TestGetTableMVCC(c *C) {
 	info := data.Value.Info
 	c.Assert(info, NotNil)
 	c.Assert(len(info.Writes), Greater, 0)
-	startTs := info.Writes[2].StartTs
+
+	// TODO: Unistore will not return Op_Lock.
+	// Use this workaround to support two backend, we can remove this hack after deprecated mocktikv.
+	var startTs uint64
+	for _, w := range info.Writes {
+		if w.Type == kvrpcpb.Op_Lock {
+			continue
+		}
+		startTs = w.StartTs
+		break
+	}
 
 	resp, err = ts.fetchStatus(fmt.Sprintf("/mvcc/txn/%d/tidb/test", startTs))
 	c.Assert(err, IsNil)

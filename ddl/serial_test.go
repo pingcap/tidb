@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -41,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/gcutil"
@@ -62,25 +62,19 @@ type testSerialSuite struct {
 func (s *testSerialSuite) SetUpSuite(c *C) {
 	session.SetSchemaLease(200 * time.Millisecond)
 	session.DisableStats4Test()
-
-	cfg := config.GetGlobalConfig()
-	newCfg := *cfg
-	// Test for add/drop primary key.
-	newCfg.AlterPrimaryKey = false
-	config.StoreGlobalConfig(&newCfg)
+	config.UpdateGlobal(func(conf *config.Config) {
+		// Test for add/drop primary key.
+		conf.AlterPrimaryKey = false
+	})
 
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
 
-	cluster := mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(cluster)
-	s.cluster = cluster
-
 	var err error
-	mvccStore := mocktikv.MustNewMVCCStore()
-	cluster.SetMvccStore(mvccStore)
-	s.store, err = mockstore.NewMockTikvStore(
-		mockstore.WithCluster(cluster),
-		mockstore.WithMVCCStore(mvccStore),
+	s.store, err = mockstore.NewMockStore(
+		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+			mockstore.BootstrapWithSingleStore(c)
+			s.cluster = c
+		}),
 	)
 	c.Assert(err, IsNil)
 
@@ -99,15 +93,11 @@ func (s *testSerialSuite) TearDownSuite(c *C) {
 
 func (s *testSerialSuite) TestChangeMaxIndexLength(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	cfg := config.GetGlobalConfig()
-	newCfg := *cfg
-	originalMaxIndexLen := cfg.MaxIndexLength
-	newCfg.MaxIndexLength = config.DefMaxOfMaxIndexLength
-	config.StoreGlobalConfig(&newCfg)
-	defer func() {
-		newCfg.MaxIndexLength = originalMaxIndexLen
-		config.StoreGlobalConfig(&newCfg)
-	}()
+
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.MaxIndexLength = config.DefMaxOfMaxIndexLength
+	})
 
 	tk.MustExec("create table t (c1 varchar(3073), index(c1)) charset = ascii;")
 	tk.MustExec(fmt.Sprintf("create table t1 (c1 varchar(%d), index(c1)) charset = ascii;", config.DefMaxOfMaxIndexLength))
@@ -136,15 +126,10 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 	tk.MustExec("create table primary_key_test1 (a int, b varchar(10), primary key(a))")
 	tk.MustExec("create table primary_key_test2 (a int, b varchar(10), primary key(b))")
 	tk.MustExec("create table primary_key_test3 (a int, b varchar(10))")
-	cfg := config.GetGlobalConfig()
-	newCfg := *cfg
-	orignalAlterPrimaryKey := newCfg.AlterPrimaryKey
-	newCfg.AlterPrimaryKey = true
-	config.StoreGlobalConfig(&newCfg)
-	defer func() {
-		newCfg.AlterPrimaryKey = orignalAlterPrimaryKey
-		config.StoreGlobalConfig(&newCfg)
-	}()
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = true
+	})
 
 	_, err = tk.Exec("alter table primary_key_test1 drop primary key")
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when the table's pkIsHandle is true")
@@ -154,8 +139,9 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 
 	// for "drop index `primary` on ..." syntax
 	tk.MustExec("create table primary_key_test4 (a int, b varchar(10), primary key(a))")
-	newCfg.AlterPrimaryKey = false
-	config.StoreGlobalConfig(&newCfg)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = false
+	})
 	_, err = tk.Exec("drop index `primary` on primary_key_test4")
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when alter-primary-key is false")
 	// for the index name is `primary`
@@ -760,6 +746,27 @@ func (s *testSerialSuite) TestCancelJobByErrorCountLimit(c *C) {
 	c.Assert(err.Error(), Equals, "[ddl:-1]DDL job rollback, error msg: mock do job error")
 }
 
+func (s *testSerialSuite) TestTruncateTableUpdateSchemaVersionErr(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockTruncateTableUpdateVersionError", `return(true)`), IsNil)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+
+	limit := variable.GetDDLErrorCountLimit()
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 5")
+	err := ddlutil.LoadDDLVars(tk.Se)
+	c.Assert(err, IsNil)
+	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %d", limit))
+
+	tk.MustExec("create table t (a int)")
+	_, err = tk.Exec("truncate table t")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:-1]DDL job rollback, error msg: mock update version error")
+	// Disable fail point.
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockTruncateTableUpdateVersionError"), IsNil)
+	tk.MustExec("truncate table t")
+}
+
 func (s *testSerialSuite) TestCanceledJobTakeTime(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -797,13 +804,10 @@ func (s *testSerialSuite) TestTableLocksEnable(c *C) {
 	tk.MustExec("create table t1 (a int)")
 
 	// Test for enable table lock config.
-	cfg := config.GetGlobalConfig()
-	newCfg := *cfg
-	newCfg.EnableTableLock = false
-	config.StoreGlobalConfig(&newCfg)
-	defer func() {
-		config.StoreGlobalConfig(cfg)
-	}()
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableTableLock = false
+	})
 
 	tk.MustExec("lock tables t1 write")
 	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
@@ -815,6 +819,7 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	defer tk.MustExec("drop database if exists auto_random_db")
 	tk.MustExec("use auto_random_db")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 
 	assertInvalidAutoRandomErr := func(sql string, errMsg string, args ...interface{}) {
 		_, err := tk.Exec(sql)
@@ -825,16 +830,19 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	assertPKIsNotHandle := func(sql, errCol string) {
 		assertInvalidAutoRandomErr(sql, autoid.AutoRandomPKisNotHandleErrMsg, errCol)
 	}
-	assertExperimentDisabled := func(sql string) {
-		assertInvalidAutoRandomErr(sql, autoid.AutoRandomExperimentalDisabledErrMsg)
-	}
 	assertAlterValue := func(sql string) {
 		assertInvalidAutoRandomErr(sql, autoid.AutoRandomAlterErrMsg)
+	}
+	assertDecreaseBitErr := func(sql string) {
+		assertInvalidAutoRandomErr(sql, autoid.AutoRandomDecreaseBitErrMsg)
 	}
 	assertWithAutoInc := func(sql string) {
 		assertInvalidAutoRandomErr(sql, autoid.AutoRandomIncompatibleWithAutoIncErrMsg)
 	}
-	assertOverflow := func(sql, colName string, autoRandBits uint64) {
+	assertOverflow := func(sql, colName string, maxAutoRandBits, actualAutoRandBits uint64) {
+		assertInvalidAutoRandomErr(sql, autoid.AutoRandomOverflowErrMsg, maxAutoRandBits, actualAutoRandBits, colName)
+	}
+	assertMaxOverflow := func(sql, colName string, autoRandBits uint64) {
 		assertInvalidAutoRandomErr(sql, autoid.AutoRandomOverflowErrMsg, autoid.MaxAutoRandomBits, autoRandBits, colName)
 	}
 	assertModifyColType := func(sql string) {
@@ -876,6 +884,17 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	assertPKIsNotHandle("create table t (a bigint auto_random(3), b bigint, primary key (a, b))", "a")
 	assertPKIsNotHandle("create table t (a bigint auto_random(3), b int, c char, primary key (a, c))", "a")
 
+	// PKIsNotHandle: table is created when alter-primary-key = true.
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = true
+	})
+	assertPKIsNotHandle("create table t (a bigint auto_random(3) primary key, b int)", "a")
+	assertPKIsNotHandle("create table t (a bigint auto_random(3) primary key, b int)", "a")
+	assertPKIsNotHandle("create table t (a int, b bigint auto_random(3) primary key)", "b")
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = false
+	})
+
 	// Can not set auto_random along with auto_increment.
 	assertWithAutoInc("create table t (a bigint auto_random(3) primary key auto_increment)")
 	assertWithAutoInc("create table t (a bigint primary key auto_increment auto_random(3))")
@@ -890,8 +909,12 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	})
 
 	// Overflow data type max length.
-	assertOverflow("create table t (a bigint auto_random(64) primary key)", "a", 64)
-	assertOverflow("create table t (a bigint auto_random(16) primary key)", "a", 16)
+	assertMaxOverflow("create table t (a bigint auto_random(64) primary key)", "a", 64)
+	assertMaxOverflow("create table t (a bigint auto_random(16) primary key)", "a", 16)
+	mustExecAndDrop("create table t (a bigint auto_random(5) primary key)", func() {
+		assertMaxOverflow("alter table t modify a bigint auto_random(64)", "a", 64)
+		assertMaxOverflow("alter table t modify a bigint auto_random(16)", "a", 16)
+	})
 
 	assertNonPositive("create table t (a bigint auto_random(0) primary key)")
 	tk.MustGetErrMsg("create table t (a bigint auto_random(-1) primary key)",
@@ -903,6 +926,13 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	mustExecAndDrop("create table t (a bigint auto_random(15) primary key)")
 	mustExecAndDrop("create table t (a bigint primary key auto_random(4))")
 	mustExecAndDrop("create table t (a bigint auto_random(4), primary key (a))")
+
+	// Increase auto_random bits.
+	mustExecAndDrop("create table t (a bigint auto_random(5) primary key)", func() {
+		tk.MustExec("alter table t modify a bigint auto_random(8)")
+		tk.MustExec("alter table t modify a bigint auto_random(10)")
+		tk.MustExec("alter table t modify a bigint auto_random(12)")
+	})
 
 	// Auto_random can occur multiple times like other column attributes.
 	mustExecAndDrop("create table t (a bigint auto_random(3) auto_random(2) primary key)")
@@ -920,8 +950,29 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	})
 	mustExecAndDrop("create table t (a bigint primary key)", func() {
 		assertAlterValue("alter table t modify column a bigint auto_random(3)")
-		assertAlterValue("alter table t change column a b bigint auto_random(3)")
 	})
+
+	// Decrease auto_random bits is not allowed.
+	mustExecAndDrop("create table t (a bigint auto_random(10) primary key)", func() {
+		assertDecreaseBitErr("alter table t modify column a bigint auto_random(6)")
+	})
+	mustExecAndDrop("create table t (a bigint auto_random(10) primary key)", func() {
+		assertDecreaseBitErr("alter table t modify column a bigint auto_random(1)")
+	})
+
+	originStep := autoid.GetStep()
+	autoid.SetStep(1)
+	// Increase auto_random bits but it will overlap with incremental bits.
+	mustExecAndDrop("create table t (a bigint unsigned auto_random(5) primary key)", func() {
+		const alterTryCnt, rebaseOffset = 3, 1
+		insertSQL := fmt.Sprintf("insert into t values (%d)", ((1<<(64-10))-1)-rebaseOffset-alterTryCnt)
+		tk.MustExec(insertSQL)
+		// Try to rebase to 0..0011..1111 (54 `1`s).
+		tk.MustExec("alter table t modify a bigint unsigned auto_random(6)")
+		tk.MustExec("alter table t modify a bigint unsigned auto_random(10)")
+		assertOverflow("alter table t modify a bigint unsigned auto_random(11)", "a", 10, 11)
+	})
+	autoid.SetStep(originStep)
 
 	// Modifying the field type of a auto_random column is not allowed.
 	// Here the throw error is `ERROR 8200 (HY000): Unsupported modify column: length 11 is less than origin 20`,
@@ -945,9 +996,116 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	assertShowWarningCorrect("create table t (a bigint auto_random(15) primary key)", 281474976710655)
 	assertShowWarningCorrect("create table t (a bigint unsigned auto_random(15) primary key)", 562949953421311)
 
-	// Disallow using it when allow-auto-random is not enabled.
-	config.GetGlobalConfig().Experimental.AllowAutoRandom = false
-	assertExperimentDisabled("create table auto_random_table (a int primary key auto_random(3))")
+	// Test insert into auto_random column explicitly is not allowed by default.
+	assertExplicitInsertDisallowed := func(sql string) {
+		assertInvalidAutoRandomErr(sql, autoid.AutoRandomExplicitInsertDisabledErrMsg)
+	}
+	tk.MustExec("set @@allow_auto_random_explicit_insert = false")
+	mustExecAndDrop("create table t (a bigint auto_random primary key)", func() {
+		assertExplicitInsertDisallowed("insert into t values (1)")
+		assertExplicitInsertDisallowed("insert into t values (3)")
+		tk.MustExec("insert into t values()")
+	})
+	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
+	mustExecAndDrop("create table t (a bigint auto_random primary key)", func() {
+		tk.MustExec("insert into t values(1)")
+		tk.MustExec("insert into t values(3)")
+		tk.MustExec("insert into t values()")
+	})
+}
+
+func (s *testSerialSuite) TestAutoRandomExchangePartition(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists auto_random_db")
+	defer tk.MustExec("drop database if exists auto_random_db")
+
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+
+	tk.MustExec("use auto_random_db")
+
+	tk.MustExec("drop table if exists e1, e2, e3, e4;")
+
+	tk.MustExec("create table e1 (a bigint primary key auto_random(3)) partition by hash(a) partitions 1;")
+
+	tk.MustExec("create table e2 (a bigint primary key);")
+	tk.MustGetErrCode("alter table e1 exchange partition p0 with table e2;", errno.ErrTablesDifferentMetadata)
+
+	tk.MustExec("create table e3 (a bigint primary key auto_random(2));")
+	tk.MustGetErrCode("alter table e1 exchange partition p0 with table e3;", errno.ErrTablesDifferentMetadata)
+	tk.MustExec("insert into e1 values (), (), ()")
+
+	tk.MustExec("create table e4 (a bigint primary key auto_random(3));")
+	tk.MustExec("insert into e4 values ()")
+	tk.MustExec("alter table e1 exchange partition p0 with table e4;")
+
+	tk.MustQuery("select count(*) from e1").Check(testkit.Rows("1"))
+	tk.MustExec("insert into e1 values ()")
+	tk.MustQuery("select count(*) from e1").Check(testkit.Rows("2"))
+
+	tk.MustQuery("select count(*) from e4").Check(testkit.Rows("3"))
+	tk.MustExec("insert into e4 values ()")
+	tk.MustQuery("select count(*) from e4").Check(testkit.Rows("4"))
+}
+
+func (s *testSerialSuite) TestAutoRandomIncBitsIncrementAndOffset(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists auto_random_db")
+	defer tk.MustExec("drop database if exists auto_random_db")
+	tk.MustExec("use auto_random_db")
+	tk.MustExec("drop table if exists t")
+
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+
+	recreateTable := func() {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (a bigint auto_random(6) primary key)")
+	}
+	truncateTable := func() {
+		_, _ = tk.Exec("delete from t")
+	}
+	insertTable := func() {
+		tk.MustExec("insert into t values ()")
+	}
+	assertIncBitsValues := func(values ...int) {
+		mask := strings.Repeat("1", 64-1-6)
+		sql := fmt.Sprintf(`select a & b'%s' from t order by a & b'%s' asc`, mask, mask)
+		vs := make([]string, len(values))
+		for i, value := range values {
+			vs[i] = strconv.Itoa(value)
+		}
+		tk.MustQuery(sql).Check(testkit.Rows(vs...))
+	}
+
+	const truncate, recreate = true, false
+	expect := func(vs ...int) []int { return vs }
+	testCase := []struct {
+		setupAction bool  // truncate or recreate
+		increment   int   // @@auto_increment_increment
+		offset      int   // @@auto_increment_offset
+		results     []int // the implicit allocated auto_random incremental-bit part of values
+	}{
+		{recreate, 5, 10, expect(10, 15, 20)},
+		{recreate, 2, 10, expect(10, 12, 14)},
+		{truncate, 5, 10, expect(15, 20, 25)},
+		{truncate, 10, 10, expect(30, 40, 50)},
+		{truncate, 5, 10, expect(55, 60, 65)},
+	}
+	for _, tc := range testCase {
+		switch tc.setupAction {
+		case recreate:
+			recreateTable()
+		case truncate:
+			truncateTable()
+		}
+		tk.Se.GetSessionVars().AutoIncrementIncrement = tc.increment
+		tk.Se.GetSessionVars().AutoIncrementOffset = tc.offset
+		for range tc.results {
+			insertTable()
+		}
+		assertIncBitsValues(tc.results...)
+	}
 }
 
 func (s *testSerialSuite) TestModifyingColumn4NewCollations(c *C) {
@@ -1056,15 +1214,10 @@ func (s *testSerialSuite) TestInvisibleIndex(c *C) {
 	tk.MustExec("insert into t values (11, 12)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 2", "3 4", "5 6", "7 8", "9 10", "11 12"))
 
-	cfg := config.GetGlobalConfig()
-	newCfg := *cfg
-	orignalAlterPrimaryKey := newCfg.AlterPrimaryKey
-	newCfg.AlterPrimaryKey = true
-	config.StoreGlobalConfig(&newCfg)
-	defer func() {
-		newCfg.AlterPrimaryKey = orignalAlterPrimaryKey
-		config.StoreGlobalConfig(&newCfg)
-	}()
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = true
+	})
 
 	// Limitation: Primary key cannot be invisible index
 	tk.MustGetErrCode("create table t1 (a int, primary key (a) invisible)", errno.ErrPKIndexCantBeInvisible)
@@ -1099,4 +1252,61 @@ func (s *testSerialSuite) TestInvisibleIndex(c *C) {
 	tk.MustExec("insert into t6 values (1, 2)")
 	tk.MustQuery("select * from t6").Check(testkit.Rows("1 2"))
 	tk.MustGetErrCode("alter table t6 drop primary key", errno.ErrPKIndexCantBeInvisible)
+}
+
+func (s *testSerialSuite) TestCreateClusteredIndex(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.MustExec("CREATE TABLE t1 (a int primary key, b int)")
+	tk.MustExec("CREATE TABLE t2 (a varchar(255) primary key, b int)")
+	tk.MustExec("CREATE TABLE t3 (a int, b int, c int, primary key (a, b))")
+	tk.MustExec("CREATE TABLE t4 (a int, b int, c int)")
+	ctx := tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().PKIsHandle, IsTrue)
+	c.Assert(tbl.Meta().IsCommonHandle, IsFalse)
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().IsCommonHandle, IsTrue)
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t3"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().IsCommonHandle, IsTrue)
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t4"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().IsCommonHandle, IsFalse)
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = true
+	})
+	tk.MustExec("CREATE TABLE t5 (a varchar(255) primary key, b int)")
+	tk.MustExec("CREATE TABLE t6 (a int, b int, c int, primary key (a, b))")
+	is = domain.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t5"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().IsCommonHandle, IsFalse)
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t6"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().IsCommonHandle, IsFalse)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = false
+	})
+
+	tk.MustExec("CREATE TABLE t21 like t2")
+	tk.MustExec("CREATE TABLE t31 like t3")
+	is = domain.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t21"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().IsCommonHandle, IsTrue)
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t31"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().IsCommonHandle, IsTrue)
+
+	tk.Se.GetSessionVars().EnableClusteredIndex = false
+	tk.MustExec("CREATE TABLE t7 (a varchar(255) primary key, b int)")
+	is = domain.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t7"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().IsCommonHandle, IsFalse)
 }

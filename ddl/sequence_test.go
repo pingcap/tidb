@@ -90,7 +90,7 @@ func (s *testSequenceSuite) TestCreateSequence(c *C) {
 	tk1.MustExec("use test")
 	_, err = tk1.Exec("create sequence my_seq")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1142]CREATE command denied to user 'localhost'@'myuser' for table 'my_seq'")
+	c.Assert(err.Error(), Equals, "[planner:1142]CREATE command denied to user 'myuser'@'localhost' for table 'my_seq'")
 }
 
 func (s *testSequenceSuite) TestDropSequence(c *C) {
@@ -157,7 +157,7 @@ func (s *testSequenceSuite) TestDropSequence(c *C) {
 	tk1.MustExec("use test")
 	_, err = tk1.Exec("drop sequence my_seq")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1142]DROP command denied to user 'localhost'@'myuser' for table 'my_seq'")
+	c.Assert(err.Error(), Equals, "[planner:1142]DROP command denied to user 'myuser'@'localhost' for table 'my_seq'")
 
 	// Test for `drop sequence if exists`.
 	s.tk.MustExec("drop sequence if exists seq_if_exists")

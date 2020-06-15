@@ -19,6 +19,8 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -26,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 )
 
-var _ = Suite(&testSessionSuite{})
+var _ = SerialSuites(&testSessionSuite{})
 
 type testSessionSuite struct {
 }
@@ -171,12 +173,16 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 	}
 
 	var memMax int64 = 2333
+	var diskMax int64 = 6666
 	resultString := `# Txn_start_ts: 406649736972468225
 # User: root@192.168.0.1
 # Conn_ID: 1
 # Query_time: 1
 # Parse_time: 0.00000001
 # Compile_time: 0.00000001
+# Rewrite_time: 0.000000003 Preproc_subqueries: 2 Preproc_subqueries_time: 0.000000002
+# Optimize_time: 0.00000001
+# Wait_TS: 0.000000003
 # Process_time: 2 Wait_time: 60 Backoff_time: 0.001 Request_count: 2 Total_keys: 10000 Process_keys: 20001
 # DB: test
 # Index_names: [t1:a,t2:b]
@@ -190,6 +196,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 # Cop_backoff_rpcPD_total_times: 200 Cop_backoff_rpcPD_total_time: 0.2 Cop_backoff_rpcPD_max_time: 0.2 Cop_backoff_rpcPD_max_addr: 127.0.0.1 Cop_backoff_rpcPD_avg_time: 0.2 Cop_backoff_rpcPD_p90_time: 0.2
 # Cop_backoff_rpcTiKV_total_times: 200 Cop_backoff_rpcTiKV_total_time: 0.2 Cop_backoff_rpcTiKV_max_time: 0.2 Cop_backoff_rpcTiKV_max_addr: 127.0.0.1 Cop_backoff_rpcTiKV_avg_time: 0.2 Cop_backoff_rpcTiKV_p90_time: 0.2
 # Mem_max: 2333
+# Disk_max: 6666
 # Prepared: true
 # Plan_from_cache: true
 # Has_more_results: true
@@ -204,15 +211,37 @@ select * from t;`
 		TimeTotal:      costTime,
 		TimeParse:      time.Duration(10),
 		TimeCompile:    time.Duration(10),
+		TimeOptimize:   time.Duration(10),
+		TimeWaitTS:     time.Duration(3),
 		IndexNames:     "[t1:a,t2:b]",
 		StatsInfos:     statsInfos,
 		CopTasks:       copTasks,
 		ExecDetail:     execDetail,
 		MemMax:         memMax,
+		DiskMax:        diskMax,
 		Prepared:       true,
 		PlanFromCache:  true,
 		HasMoreResults: true,
 		Succ:           true,
+		RewriteInfo: variable.RewritePhaseInfo{
+			DurationRewrite:            3,
+			DurationPreprocessSubQuery: 2,
+			PreprocessSubQueries:       2,
+		},
 	})
 	c.Assert(logString, Equals, resultString)
+}
+
+func (*testSessionSuite) TestIsolationRead(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.IsolationRead.Engines = []string{"tiflash", "tidb"}
+	})
+	sessVars := variable.NewSessionVars()
+	_, ok := sessVars.IsolationReadEngines[kv.TiDB]
+	c.Assert(ok, Equals, true)
+	_, ok = sessVars.IsolationReadEngines[kv.TiKV]
+	c.Assert(ok, Equals, false)
+	_, ok = sessVars.IsolationReadEngines[kv.TiFlash]
+	c.Assert(ok, Equals, true)
 }

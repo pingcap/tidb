@@ -54,7 +54,7 @@ type testSuite struct {
 
 func (ts *testSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Check(err, IsNil)
 	ts.store = store
 	ts.dom, err = session.BootstrapSession(store)

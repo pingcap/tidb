@@ -32,7 +32,7 @@ type Cluster interface {
 	GetAllStores() []*metapb.Store
 	// ScheduleDelay schedules a delay event for a transaction on a region.
 	ScheduleDelay(startTS, regionID uint64, dur time.Duration)
-	// SetMvccStore sets the the mvccStore used by SplitTable, SplitIndex and SplitKeys.
+	// Split splits a Region at the key (encoded) and creates new Region.
 	Split(regionID, newRegionID uint64, key []byte, peerIDs []uint64, leaderPeerID uint64)
 	// SplitRaw splits a Region at the key (not encoded) and creates new Region.
 	SplitRaw(regionID, newRegionID uint64, rawKey []byte, peerIDs []uint64, leaderPeerID uint64) *metapb.Region

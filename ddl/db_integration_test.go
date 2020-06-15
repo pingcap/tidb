@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/israce"
@@ -71,15 +70,11 @@ func setupIntegrationSuite(s *testIntegrationSuite, c *C) {
 	s.lease = 50 * time.Millisecond
 	ddl.SetWaitTimeWhenErrorOccurred(0)
 
-	cluster := mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(cluster)
-	s.cluster = cluster
-
-	mvccStore := mocktikv.MustNewMVCCStore()
-	cluster.SetMvccStore(mvccStore)
-	s.store, err = mockstore.NewMockTikvStore(
-		mockstore.WithCluster(cluster),
-		mockstore.WithMVCCStore(mvccStore),
+	s.store, err = mockstore.NewMockStore(
+		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+			mockstore.BootstrapWithSingleStore(c)
+			s.cluster = c
+		}),
 	)
 	c.Assert(err, IsNil)
 	session.SetSchemaLease(s.lease)
@@ -1717,8 +1712,9 @@ func (s *testIntegrationSuite1) TestTreatOldVersionUTF8AsUTF8MB4(c *C) {
 		"  `b` varchar(10) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,\n" +
 		"  `c` varchar(10) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-
-	config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 = false
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TreatOldVersionUTF8AsUTF8MB4 = false
+	})
 	s.tk.MustExec("alter table t drop column c;") //  reload schema.
 	s.tk.MustGetErrCode("insert into t set a= x'f09f8c80'", errno.ErrTruncatedWrongValueForField)
 	s.tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
@@ -1735,7 +1731,9 @@ func (s *testIntegrationSuite1) TestTreatOldVersionUTF8AsUTF8MB4(c *C) {
 	tblInfo.Columns[0].Version = model.ColumnInfoVersion0
 	updateTableInfo(tblInfo)
 
-	config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 = true
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TreatOldVersionUTF8AsUTF8MB4 = true
+	})
 	s.tk.MustExec("alter table t add column c varchar(10);") //  load latest schema.
 	s.tk.MustExec("insert into t set a= x'f09f8c80'")
 	s.tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
@@ -1744,7 +1742,9 @@ func (s *testIntegrationSuite1) TestTreatOldVersionUTF8AsUTF8MB4(c *C) {
 		"  `c` varchar(10) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
-	config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 = false
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TreatOldVersionUTF8AsUTF8MB4 = false
+	})
 	s.tk.MustExec("alter table t drop column c;") //  reload schema.
 	s.tk.MustGetErrCode("insert into t set a= x'f09f8c80'", errno.ErrTruncatedWrongValueForField)
 	s.tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
@@ -1753,7 +1753,9 @@ func (s *testIntegrationSuite1) TestTreatOldVersionUTF8AsUTF8MB4(c *C) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"))
 
 	// Test modify column charset.
-	config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 = true
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TreatOldVersionUTF8AsUTF8MB4 = true
+	})
 	s.tk.MustExec("alter table t modify column a varchar(10) character set utf8mb4") //  change column charset.
 	tbl = testGetTableByName(c, s.ctx, "test", "t")
 	c.Assert(tbl.Meta().Columns[0].Charset, Equals, charset.CharsetUTF8MB4)
@@ -1789,7 +1791,9 @@ func (s *testIntegrationSuite1) TestTreatOldVersionUTF8AsUTF8MB4(c *C) {
 		"  `b` varchar(20) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
-	config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 = false
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TreatOldVersionUTF8AsUTF8MB4 = false
+	})
 	s.tk.MustExec("alter table t change column b b varchar(30) character set ascii") // reload schema.
 	s.tk.MustGetErrCode("insert into t set a= x'f09f8c80'", errno.ErrTruncatedWrongValueForField)
 	s.tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
@@ -1798,11 +1802,15 @@ func (s *testIntegrationSuite1) TestTreatOldVersionUTF8AsUTF8MB4(c *C) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"))
 
 	// Test for alter table convert charset
-	config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 = true
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TreatOldVersionUTF8AsUTF8MB4 = true
+	})
 	s.tk.MustExec("alter table t drop column b") // reload schema.
 	s.tk.MustExec("alter table t convert to charset utf8mb4;")
 
-	config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 = false
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TreatOldVersionUTF8AsUTF8MB4 = false
+	})
 	s.tk.MustExec("alter table t add column b varchar(50);") // reload schema.
 	s.tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` varchar(20) DEFAULT NULL,\n" +
@@ -2049,7 +2057,9 @@ func (s *testIntegrationSuite3) TestParserIssue284(c *C) {
 }
 
 func (s *testIntegrationSuite7) TestAddExpressionIndex(c *C) {
-	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = true
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
@@ -2101,12 +2111,16 @@ func (s *testIntegrationSuite7) TestAddExpressionIndex(c *C) {
 	tk.MustExec("alter table t1 alter index ei_ab invisible;")
 
 	// Test experiment switch.
-	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = false
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = false
+	})
 	tk.MustGetErrMsg("create index d on t((a+1))", "[ddl:8200]Unsupported creating expression index without allow-expression-index in config")
 }
 
 func (s *testIntegrationSuite7) TestCreateExpressionIndexError(c *C) {
-	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = true
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -2268,7 +2282,9 @@ func (s *testIntegrationSuite3) TestCreateTableWithAutoIdCache(c *C) {
 }
 
 func (s *testIntegrationSuite4) TestAlterIndexVisibility(c *C) {
-	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = true
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists alter_index_test")
 	tk.MustExec("USE alter_index_test;")

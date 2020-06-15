@@ -25,7 +25,7 @@ var (
 			Subsystem: "distsql",
 			Name:      "handle_query_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of handled queries.",
-			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 18), // 0.5ms ~ 64s
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
 		}, []string{LblType, LblSQLType})
 
 	DistSQLScanKeysPartialHistogram = prometheus.NewHistogram(

@@ -175,7 +175,7 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			}
 			// Because the expression might return different type from
 			// the generated column, we should wrap a CAST on the result.
-			castDatum, err := table.CastValue(us.ctx, datum, us.columns[idx], true)
+			castDatum, err := table.CastValue(us.ctx, datum, us.columns[idx], false, true)
 			if err != nil {
 				return err
 			}

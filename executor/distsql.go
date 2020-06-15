@@ -868,7 +868,7 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 					if err != nil {
 						return errors.Trace(err)
 					}
-					val, err = table.CastValue(tblReaderExec.ctx, val, col.ColumnInfo, false)
+					val, err = table.CastValue(tblReaderExec.ctx, val, col.ColumnInfo, false, false)
 					if err != nil {
 						return errors.Trace(err)
 					}
