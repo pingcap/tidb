@@ -1445,33 +1445,8 @@ func (s *testStatsUpdateSuite) TestUnsignedFeedbackRanges(c *C) {
 		c.Assert(tbl.Columns[1].ToString(0), Equals, tests[i].hist)
 	}
 }
-<<<<<<< HEAD:statistics/update_test.go
-=======
 
-func (s *testStatsSuite) TestLoadHistCorrelation(c *C) {
-	defer cleanEnv(c, s.store, s.do)
-	testKit := testkit.NewTestKit(c, s.store)
-	h := s.do.StatsHandle()
-	origLease := h.Lease()
-	h.SetLease(time.Second)
-	defer func() { h.SetLease(origLease) }()
-	testKit.MustExec("use test")
-	testKit.MustExec("create table t(c int)")
-	testKit.MustExec("insert into t values(1),(2),(3),(4),(5)")
-	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	testKit.MustExec("analyze table t")
-	h.Clear()
-	c.Assert(h.Update(s.do.InfoSchema()), IsNil)
-	result := testKit.MustQuery("show stats_histograms where Table_name = 't'")
-	c.Assert(len(result.Rows()), Equals, 0)
-	testKit.MustExec("explain select * from t where c = 1")
-	c.Assert(h.LoadNeededHistograms(), IsNil)
-	result = testKit.MustQuery("show stats_histograms where Table_name = 't'")
-	c.Assert(len(result.Rows()), Equals, 1)
-	c.Assert(result.Rows()[0][9], Equals, "1")
-}
-
-func (s *testStatsSuite) TestDeleteUpdateFeedback(c *C) {
+func (s *testStatsUpdateSuite) TestDeleteUpdateFeedback(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 
@@ -1479,7 +1454,7 @@ func (s *testStatsSuite) TestDeleteUpdateFeedback(c *C) {
 	defer func() {
 		statistics.FeedbackProbability = oriProbability
 	}()
-	statistics.FeedbackProbability.Store(1)
+	statistics.FeedbackProbability = 1
 
 	h := s.do.StatsHandle()
 	testKit.MustExec("use test")
@@ -1487,17 +1462,16 @@ func (s *testStatsSuite) TestDeleteUpdateFeedback(c *C) {
 	for i := 0; i < 20; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i/5, i))
 	}
-	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
 	testKit.MustExec("analyze table t with 3 buckets")
 
 	testKit.MustExec("delete from t where a = 1")
-	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
 	c.Assert(len(h.GetQueryFeedback()), Equals, 0)
 	testKit.MustExec("update t set a = 6 where a = 2")
-	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
 	c.Assert(len(h.GetQueryFeedback()), Equals, 0)
 	testKit.MustExec("explain analyze delete from t where a = 3")
-	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
 	c.Assert(len(h.GetQueryFeedback()), Equals, 0)
 }
->>>>>>> b053275... session/statistics: discard feedbacks from `delete` / `update` (#17452):statistics/handle/update_test.go

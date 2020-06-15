@@ -1795,17 +1795,12 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, ts.Desc)
 	} else {
-<<<<<<< HEAD
 		e.feedback = statistics.NewQueryFeedback(e.physicalTableID, ts.Hist, int64(ts.StatsCount()), ts.Desc)
-=======
-		e.feedback = statistics.NewQueryFeedback(getPhysicalTableID(tbl), ts.Hist, int64(ts.StatsCount()), ts.Desc)
 	}
 	collect := statistics.CollectFeedback(b.ctx.GetSessionVars().StmtCtx, e.feedback, len(ts.Ranges))
 	if !collect {
 		e.feedback.Invalidate()
->>>>>>> b053275... session/statistics: discard feedbacks from `delete` / `update` (#17452)
 	}
-	collect := e.feedback.CollectFeedback(len(ts.Ranges))
 	e.dagPB.CollectRangeCounts = &collect
 
 	for i := range v.Schema().Columns {
@@ -1862,14 +1857,10 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 	} else {
 		e.feedback = statistics.NewQueryFeedback(e.physicalTableID, is.Hist, int64(is.StatsCount()), is.Desc)
 	}
-<<<<<<< HEAD
-	collect := e.feedback.CollectFeedback(len(is.Ranges))
-=======
 	collect := statistics.CollectFeedback(b.ctx.GetSessionVars().StmtCtx, e.feedback, len(is.Ranges))
 	if !collect {
 		e.feedback.Invalidate()
 	}
->>>>>>> b053275... session/statistics: discard feedbacks from `delete` / `update` (#17452)
 	e.dagPB.CollectRangeCounts = &collect
 
 	for _, col := range v.OutputColumns {
@@ -1946,14 +1937,10 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	// Do not collect the feedback for table request.
 	collectTable := false
 	e.tableRequest.CollectRangeCounts = &collectTable
-<<<<<<< HEAD
-	collectIndex := e.feedback.CollectFeedback(len(is.Ranges))
-=======
 	collectIndex := statistics.CollectFeedback(b.ctx.GetSessionVars().StmtCtx, e.feedback, len(is.Ranges))
 	if !collectIndex {
 		e.feedback.Invalidate()
 	}
->>>>>>> b053275... session/statistics: discard feedbacks from `delete` / `update` (#17452)
 	e.dagPB.CollectRangeCounts = &collectIndex
 	if cols, ok := v.Schema().TblID2Handle[is.Table.ID]; ok {
 		e.handleIdx = cols[0].Index
