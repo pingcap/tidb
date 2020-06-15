@@ -199,6 +199,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 # Disk_max: 6666
 # Prepared: true
 # Plan_from_cache: true
+# Plan_from_SPM: true
 # Has_more_results: true
 # Succ: true
 select * from t;`
@@ -221,6 +222,7 @@ select * from t;`
 		DiskMax:        diskMax,
 		Prepared:       true,
 		PlanFromCache:  true,
+		PlanFromSPM:    true,
 		HasMoreResults: true,
 		Succ:           true,
 		RewriteInfo: variable.RewritePhaseInfo{

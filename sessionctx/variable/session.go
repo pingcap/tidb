@@ -1587,6 +1587,8 @@ const (
 	SlowLogPrepared = "Prepared"
 	// SlowLogPlanFromCache is used to indicate whether this plan is from plan cache.
 	SlowLogPlanFromCache = "Plan_from_cache"
+	// SlowLogPlanFromSPM is used to indicate whether this plan is matched with the hints in the binding.
+	SlowLogPlanFromSPM = "Plan_from_SPM"
 	// SlowLogHasMoreResults is used to indicate whether this sql has more following results.
 	SlowLogHasMoreResults = "Has_more_results"
 	// SlowLogSucc is used to indicate whether this sql execute successfully.
@@ -1625,6 +1627,7 @@ type SlowQueryLogItems struct {
 	Succ           bool
 	Prepared       bool
 	PlanFromCache  bool
+	PlanFromSPM    bool
 	HasMoreResults bool
 	PrevStmt       string
 	Plan           string
@@ -1771,6 +1774,7 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 
 	writeSlowLogItem(&buf, SlowLogPrepared, strconv.FormatBool(logItems.Prepared))
 	writeSlowLogItem(&buf, SlowLogPlanFromCache, strconv.FormatBool(logItems.PlanFromCache))
+	writeSlowLogItem(&buf, SlowLogPlanFromSPM, strconv.FormatBool(logItems.PlanFromSPM))
 	writeSlowLogItem(&buf, SlowLogHasMoreResults, strconv.FormatBool(logItems.HasMoreResults))
 	writeSlowLogItem(&buf, SlowLogSucc, strconv.FormatBool(logItems.Succ))
 	if len(logItems.Plan) != 0 {

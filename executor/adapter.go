@@ -858,6 +858,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		Prepared:       a.isPreparedStmt,
 		HasMoreResults: hasMoreResults,
 		PlanFromCache:  sessVars.FoundInPlanCache,
+		PlanFromSPM:    sessVars.FoundInSPM,
 		RewriteInfo:    sessVars.RewritePhaseInfo,
 	}
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {
