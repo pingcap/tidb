@@ -1466,10 +1466,13 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbC
 	if err != nil {
 		return nil, err
 	}
-	if err = checkTableInfoValidExtra(tbInfo); err != nil {
+	// Fix issue 17952 which will cause partition range expr can't be parsed as Int.
+	// checkTableInfoValidWithStmt will do the constant fold the partition expression first,
+	// then checkTableInfoValidExtra will pass the tableInfo check successfully.
+	if err = checkTableInfoValidWithStmt(ctx, tbInfo, s); err != nil {
 		return nil, err
 	}
-	if err = checkTableInfoValidWithStmt(ctx, tbInfo, s); err != nil {
+	if err = checkTableInfoValidExtra(tbInfo); err != nil {
 		return nil, err
 	}
 	return tbInfo, nil
