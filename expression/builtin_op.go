@@ -173,6 +173,14 @@ func (c *logicXorFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err != nil {
 		return nil, err
 	}
+	args[0], err = wrapWithIsTrue(ctx, true, args[0])
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	args[1], err = wrapWithIsTrue(ctx, true, args[1])
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETInt, types.ETInt)
 	sig := &builtinLogicXorSig{bf}
