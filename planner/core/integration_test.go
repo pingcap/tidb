@@ -1155,13 +1155,16 @@ func (s *testIntegrationSuite) TestAccessPathOnClusterIndex(c *C) {
 	var output []struct {
 		SQL  string
 		Plan []string
+		Res  []string
 	}
 	s.testData.GetTestCases(c, &input, &output)
 	for i, tt := range input {
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
+			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
 		})
 		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Res...))
 	}
 }
