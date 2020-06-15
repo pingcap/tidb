@@ -575,7 +575,7 @@ func (p *LogicalIndexScan) MatchIndexProp(prop *property.PhysicalProperty) (matc
 // getTablePath finds the TablePath from a group of accessPaths.
 func getTablePath(paths []*util.AccessPath) *util.AccessPath {
 	for _, path := range paths {
-		if path.IsTablePath {
+		if path.IsTablePath() {
 			return path
 		}
 	}
@@ -622,7 +622,7 @@ func (ds *DataSource) Convert2Gathers() (gathers []LogicalPlan) {
 	tg := ds.buildTableGather()
 	gathers = append(gathers, tg)
 	for _, path := range ds.possibleAccessPaths {
-		if !path.IsTablePath {
+		if !path.IsTablePath() {
 			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.Index)
 			path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.Index)
 			// If index columns can cover all of the needed columns, we can use a IndexGather + IndexScan.
