@@ -163,7 +163,7 @@ type ForRangePruning struct {
 }
 
 // dataForRangePruning extracts the less than parts from 'partition p0 less than xx ... partitoin p1 less than ...'
-func dataForRangePruning(pi *model.PartitionInfo) (*ForRangePruning, error) {
+func dataForRangePruning(sctx sessionctx.Context, pi *model.PartitionInfo) (*ForRangePruning, error) {
 	var maxValue bool
 	var unsigned bool
 	lessThan := make([]int64, len(pi.Definitions))
@@ -182,7 +182,12 @@ func dataForRangePruning(pi *model.PartitionInfo) (*ForRangePruning, error) {
 				unsigned = true
 			}
 			if err != nil {
-				return nil, errors.WithStack(err)
+				val, ok := fixOldVersionPartitionInfo(sctx, pi.Definitions[i].LessThan[0])
+				if !ok {
+					logutil.BgLogger().Error("wrong partition definition", zap.String("less than", pi.Definitions[i].LessThan[0]))
+					return nil, errors.WithStack(err)
+				}
+				lessThan[i] = val
 			}
 		}
 	}
@@ -191,6 +196,20 @@ func dataForRangePruning(pi *model.PartitionInfo) (*ForRangePruning, error) {
 		MaxValue: maxValue,
 		Unsigned: unsigned,
 	}, nil
+}
+
+func fixOldVersionPartitionInfo(sctx sessionctx.Context, str string) (int64, bool) {
+	// less than value should be calculate to integer before persistent.
+	// Old version TiDB may not do it and store the raw expression.
+	tmp, err := parseSimpleExprWithNames(parser.New(), sctx, str, nil, nil)
+	if err != nil {
+		return 0, false
+	}
+	ret, isNull, err := tmp.EvalInt(sctx, chunk.Row{})
+	if err != nil || isNull {
+		return 0, false
+	}
+	return ret, true
 }
 
 // rangePartitionString returns the partition string for a range typed partition.
@@ -240,7 +259,7 @@ func generateRangePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 
 	switch len(pi.Columns) {
 	case 0:
-		tmp, err := dataForRangePruning(pi)
+		tmp, err := dataForRangePruning(ctx, pi)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
