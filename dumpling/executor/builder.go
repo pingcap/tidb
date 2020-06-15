@@ -1843,6 +1843,14 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 		CmsketchDepth: &depth,
 		CmsketchWidth: &width,
 	}
+	if task.TblInfo != nil && task.TblInfo.IsCommonHandle {
+		pkIdx := tables.FindPrimaryIndex(task.TblInfo)
+		var pkColIds []int64
+		for _, idxCol := range pkIdx.Columns {
+			pkColIds = append(pkColIds, task.TblInfo.Columns[idxCol.Offset].ID)
+		}
+		e.analyzePB.ColReq.PrimaryColumnIds = pkColIds
+	}
 	b.err = plannercore.SetPBColumnsDefaultValue(b.ctx, e.analyzePB.ColReq.ColumnsInfo, cols)
 	job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze columns"}
 	return &analyzeTask{taskType: colTask, colExec: e, job: job}
