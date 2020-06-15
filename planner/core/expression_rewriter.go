@@ -1073,6 +1073,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 			er.err = err
 			return
 		}
+		f.SetCoercibility(expression.CoercibilityImplicit)
 		er.ctxStackAppend(f, types.EmptyName)
 		return
 	}
