@@ -756,6 +756,17 @@ type PhysicalLimit struct {
 	Count  uint64
 }
 
+func (p *PhysicalLimit) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalLimit)
+	*cloned = *p
+	base, err := p.basePhysicalPlan.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.basePhysicalPlan = *base
+	return cloned, nil
+}
+
 // PhysicalUnionAll is the physical operator of UnionAll.
 type PhysicalUnionAll struct {
 	physicalSchemaProducer

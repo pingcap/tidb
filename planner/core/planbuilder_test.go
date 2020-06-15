@@ -290,6 +290,11 @@ func (s *testPlanBuilderSuite) TestPhysicalPlanClone(c *C) {
 	proj = proj.Init(ctx, stats, 0)
 	c.Assert(checkPhysicalPlanClone(proj), IsNil)
 
+	// limit
+	lim := &PhysicalLimit{Count: 1, Offset: 2}
+	lim = lim.Init(ctx, stats, 0)
+	c.Assert(checkPhysicalPlanClone(lim), IsNil)
+
 	// sort
 	byItems := []*util.ByItems{{Expr: col}, {Expr: cst}}
 	sort := &PhysicalSort{ByItems: byItems}
