@@ -1526,7 +1526,16 @@ func (b *executorBuilder) buildTopN(v *plannercore.PhysicalTopN) Executor {
 	}
 }
 
-func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) *NestedLoopApplyExec {
+func (b *executorBuilder) safeClone(v plannercore.PhysicalPlan) (_ plannercore.PhysicalPlan, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = errors.Errorf("%v", r)
+		}
+	}()
+	return v.Clone()
+}
+
+func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) Executor {
 	var (
 		innerPlan plannercore.PhysicalPlan
 		outerPlan plannercore.PhysicalPlan
@@ -1560,7 +1569,7 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) *NestedLoopAp
 	}
 	tupleJoiner := newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0,
 		defaultValues, otherConditions, retTypes(leftChild), retTypes(rightChild), nil)
-	e := &NestedLoopApplyExec{
+	serialExec := &NestedLoopApplyExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), outerExec, innerExec),
 		innerExec:    innerExec,
 		outerExec:    outerExec,
@@ -1571,7 +1580,47 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) *NestedLoopAp
 		outerSchema:  v.OuterSchema,
 	}
 	executorCounterNestedLoopApplyExec.Inc()
-	return e
+
+	// try parallel mode
+	concurrency := 4
+	if _, err := b.safeClone(v); err != nil {
+		concurrency = 1
+	}
+	if concurrency > 1 {
+		innerExecs := make([]Executor, 0, concurrency)
+		innerFilters := make([]expression.CNFExprs, 0, concurrency)
+		corCols := make([][]*expression.CorrelatedColumn, 0, concurrency)
+		for i := 0; i < concurrency; i++ {
+			clonedInnerPlan, err := innerPlan.Clone()
+			if err != nil {
+				b.err = nil
+				return serialExec
+			}
+			corCol := plannercore.ExtractCorColumnsBySchema4PhysicalPlan(clonedInnerPlan, outerPlan.Schema())
+			clonedInnerExec := b.build(clonedInnerPlan)
+			if b.err != nil {
+				b.err = nil
+				return serialExec
+			}
+			innerExecs = append(innerExecs, clonedInnerExec)
+			corCols = append(corCols, corCol)
+			innerFilters = append(innerFilters, innerFilter.Clone())
+		}
+
+		allExecs := append([]Executor{outerExec}, innerExecs...)
+		return &ParallelNestedLoopApplyExec{
+			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), allExecs...),
+			innerExecs:   innerExecs,
+			outerExec:    outerExec,
+			outerFilter:  outerFilter,
+			innerFilter:  innerFilters,
+			outer:        v.JoinType != plannercore.InnerJoin,
+			joiner:       tupleJoiner,
+			corCols:      corCols,
+			concurrency:  concurrency,
+		}
+	}
+	return serialExec
 }
 
 func (b *executorBuilder) buildMaxOneRow(v *plannercore.PhysicalMaxOneRow) Executor {
