@@ -173,6 +173,7 @@ type stmtSummaryByDigestElement struct {
 	// plan cache
 	planInCache   bool
 	planCacheHits int64
+	planInSPM     bool
 }
 
 // StmtExecInfo records execution information of each statement.
@@ -199,6 +200,7 @@ type StmtExecInfo struct {
 	IsInternal     bool
 	Succeed        bool
 	PlanInCache    bool
+	PlanInSPM      bool
 }
 
 // newStmtSummaryByDigestMap creates an empty stmtSummaryByDigestMap.
@@ -584,6 +586,7 @@ func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalS
 		authUsers:     make(map[string]struct{}),
 		planInCache:   false,
 		planCacheHits: 0,
+		planInSPM:     false,
 	}
 	ssElement.add(sei, intervalSeconds)
 	return ssElement
@@ -736,6 +739,11 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 		ssElement.planCacheHits += 1
 	}
 
+	// SPM
+	if sei.PlanInSPM {
+		ssElement.planInSPM = true
+	}
+
 	// other
 	ssElement.sumAffectedRows += sei.StmtCtx.AffectedRows()
 	ssElement.sumMem += sei.MemMax
@@ -838,6 +846,7 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		types.NewTime(types.FromGoTime(ssElement.lastSeen), mysql.TypeTimestamp, 0),
 		ssElement.planInCache,
 		ssElement.planCacheHits,
+		ssElement.planInSPM,
 		ssElement.sampleSQL,
 		ssElement.prevSQL,
 		ssbd.planDigest,

@@ -995,5 +995,6 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		IsInternal:     sessVars.InRestrictedSQL,
 		Succeed:        succ,
 		PlanInCache:    sessVars.FoundInPlanCache,
+		PlanInSPM:      sessVars.FoundInSPM,
 	})
 }
