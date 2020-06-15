@@ -1529,6 +1529,15 @@ func (b *executorBuilder) buildTopN(v *plannercore.PhysicalTopN) Executor {
 	}
 }
 
+func (b *executorBuilder) safeClone(v plannercore.PhysicalPlan) (_ plannercore.PhysicalPlan, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = errors.Errorf("%v", r)
+		}
+	}()
+	return v.Clone()
+}
+
 func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) *NestedLoopApplyExec {
 	var (
 		innerPlan plannercore.PhysicalPlan
@@ -1543,7 +1552,7 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) *NestedLoopAp
 	}
 
 	concurrency := 1
-	if _, err := innerPlan.Clone(); err == nil {
+	if _, err := b.safeClone(innerPlan); err == nil {
 		// TODO: if the inner child contains an another Apply, run it in parallel mode
 		concurrency = 4 // run it in parallel mode
 	}
