@@ -770,6 +770,7 @@ type PhysicalLimit struct {
 	Count  uint64
 }
 
+// Clone implements PhysicalPlan interface.
 func (p *PhysicalLimit) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalLimit)
 	*cloned = *p
