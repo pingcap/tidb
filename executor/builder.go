@@ -1843,7 +1843,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 		CmsketchDepth: &depth,
 		CmsketchWidth: &width,
 	}
-	if task.TblInfo.IsCommonHandle {
+	if task.TblInfo != nil && task.TblInfo.IsCommonHandle {
 		pkIdx := tables.FindPrimaryIndex(task.TblInfo)
 		var pkColIds []int64
 		for _, idxCol := range pkIdx.Columns {
