@@ -489,16 +489,16 @@ func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datu
 	return row
 }
 
-func (e *LoadDataInfo) addRecordLD(ctx context.Context, row []types.Datum) (int64, error) {
+func (e *LoadDataInfo) addRecordLD(ctx context.Context, row []types.Datum) error {
 	if row == nil {
-		return 0, nil
+		return nil
 	}
-	h, err := e.addRecord(ctx, row)
+	err := e.addRecord(ctx, row)
 	if err != nil {
 		e.handleWarning(err)
-		return 0, err
+		return err
 	}
-	return h, nil
+	return nil
 }
 
 type field struct {

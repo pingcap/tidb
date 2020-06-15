@@ -266,6 +266,42 @@ func MockPkixAttribute(name, value string) pkix.AttributeTypeAndValue {
 	}
 }
 
+// SANType is enum value for GlobalPrivValue.SANs keys.
+type SANType string
+
+const (
+	// URI indicates uri info in SAN.
+	URI = SANType("URI")
+	// DNS indicates dns info in SAN.
+	DNS = SANType("DNS")
+	// IP indicates ip info in SAN.
+	IP = SANType("IP")
+)
+
+var supportSAN = map[SANType]struct{}{
+	URI: {},
+	DNS: {},
+	IP:  {},
+}
+
+// ParseAndCheckSAN parses and check SAN str.
+func ParseAndCheckSAN(san string) (map[SANType][]string, error) {
+	sanMap := make(map[SANType][]string)
+	sans := strings.Split(san, ",")
+	for _, san := range sans {
+		kv := strings.SplitN(san, ":", 2)
+		if len(kv) != 2 {
+			return nil, errors.Errorf("invalid SAN value %s", san)
+		}
+		k, v := SANType(strings.ToUpper(strings.TrimSpace(kv[0]))), strings.TrimSpace(kv[1])
+		if _, s := supportSAN[k]; !s {
+			return nil, errors.Errorf("unsupported SAN key %s, current only support %v", k, supportSAN)
+		}
+		sanMap[k] = append(sanMap[k], v)
+	}
+	return sanMap, nil
+}
+
 // CheckSupportX509NameOneline parses and validate input str is X509_NAME_oneline format
 // and precheck check-item is supported by TiDB
 // https://www.openssl.org/docs/manmaster/man3/X509_NAME_oneline.html

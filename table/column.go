@@ -365,6 +365,11 @@ func (c *Column) IsPKHandleColumn(tbInfo *model.TableInfo) bool {
 	return mysql.HasPriKeyFlag(c.Flag) && tbInfo.PKIsHandle
 }
 
+// IsCommonHandleColumn checks if the column is common handle column.
+func (c *Column) IsCommonHandleColumn(tbInfo *model.TableInfo) bool {
+	return mysql.HasPriKeyFlag(c.Flag) && tbInfo.IsCommonHandle
+}
+
 // CheckNotNull checks if row has nil value set to a column with NotNull flag set.
 func CheckNotNull(cols []*Column, row []types.Datum) error {
 	for _, c := range cols {
