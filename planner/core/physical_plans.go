@@ -328,15 +328,23 @@ func (p *PhysicalIndexScan) Clone() (PhysicalPlan, error) {
 	}
 	cloned.physicalSchemaProducer = *base
 	cloned.AccessCondition = cloneExprs(p.AccessCondition)
-	cloned.Table = p.Table.Clone()
-	cloned.Index = p.Index.Clone()
+	if p.Table != nil {
+		cloned.Table = p.Table.Clone()
+	}
+	if p.Index != nil {
+		cloned.Index = p.Index.Clone()
+	}
 	cloned.IdxCols = cloneCols(p.IdxCols)
 	cloned.IdxColLens = make([]int, len(p.IdxColLens))
 	copy(cloned.IdxColLens, p.IdxColLens)
 	cloned.Ranges = cloneRanges(p.Ranges)
 	cloned.Columns = cloneColInfos(p.Columns)
-	cloned.dataSourceSchema = p.dataSourceSchema.Clone()
-	cloned.Hist = p.Hist.Copy()
+	if p.dataSourceSchema != nil {
+		cloned.dataSourceSchema = p.dataSourceSchema.Clone()
+	}
+	if p.Hist != nil {
+		cloned.Hist = p.Hist.Copy()
+	}
 	cloned.GenExprs = make(map[model.TableColumnID]expression.Expression)
 	for id, expr := range p.GenExprs {
 		cloned.GenExprs[id] = expr.Clone()
@@ -413,12 +421,18 @@ func (ts *PhysicalTableScan) Clone() (PhysicalPlan, error) {
 	clonedScan.physicalSchemaProducer = *prod
 	clonedScan.AccessCondition = cloneExprs(ts.AccessCondition)
 	clonedScan.filterCondition = cloneExprs(ts.filterCondition)
-	clonedScan.Table = ts.Table.Clone()
+	if ts.Table != nil {
+		clonedScan.Table = ts.Table.Clone()
+	}
 	clonedScan.Columns = cloneColInfos(ts.Columns)
 	clonedScan.Ranges = cloneRanges(ts.Ranges)
-	clonedScan.pkCol = ts.pkCol.Clone().(*expression.Column)
+	if ts.pkCol != nil {
+		clonedScan.pkCol = ts.pkCol.Clone().(*expression.Column)
+	}
 	clonedScan.TableAsName = ts.TableAsName
-	clonedScan.Hist = ts.Hist.Copy()
+	if ts.Hist != nil {
+		clonedScan.Hist = ts.Hist.Copy()
+	}
 	clonedScan.rangeDecidedBy = cloneCols(ts.rangeDecidedBy)
 	return clonedScan, nil
 }
