@@ -365,8 +365,6 @@ func isSingleColIdxNullRange(idx *Index, ran *ranger.Range) bool {
 	return false
 }
 
-<<<<<<< HEAD
-=======
 // getEqualCondSelectivity gets the selectivity of the equal conditions.
 func (coll *HistColl) getEqualCondSelectivity(idx *Index, bytes []byte, usedColsLen int) float64 {
 	coverAll := len(idx.Info.Columns) == usedColsLen
@@ -399,7 +397,6 @@ func (coll *HistColl) getEqualCondSelectivity(idx *Index, bytes []byte, usedCols
 	return float64(idx.CMSketch.QueryBytes(bytes)) / float64(idx.TotalRowCount())
 }
 
->>>>>>> 94a722e... statistics: improve estimation for index equal condition (#17366)
 func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.Range) (float64, error) {
 	idx := coll.Indices[idxID]
 	totalCount := float64(0)
@@ -428,38 +425,7 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		val := types.NewBytesDatum(bytes)
-		if idx.outOfRange(val) {
-			// When the value is out of range, we could not found this value in the CM Sketch,
-			// so we use heuristic methods to estimate the selectivity.
-			if idx.NDV > 0 && len(ran.LowVal) == len(idx.Info.Columns) && rangePosition == len(ran.LowVal) {
-				// for equality queries
-				selectivity = float64(coll.ModifyCount) / float64(idx.NDV) / idx.TotalRowCount()
-			} else {
-				// for range queries
-				selectivity = float64(coll.ModifyCount) / outOfRangeBetweenRate / idx.TotalRowCount()
-			}
-<<<<<<< HEAD
-		} else {
-			selectivity = float64(idx.CMSketch.QueryBytes(bytes)) / float64(idx.TotalRowCount())
-=======
-			selectivity = coll.getEqualCondSelectivity(idx, bytes, rangePosition)
-		} else {
-			bytes, err := codec.EncodeKey(sc, nil, ran.LowVal[:rangePosition-1]...)
-			if err != nil {
-				return 0, errors.Trace(err)
-			}
-			prefixLen := len(bytes)
-			for _, val := range rangeVals {
-				bytes = bytes[:prefixLen]
-				bytes, err = codec.EncodeKey(sc, bytes, val)
-				if err != nil {
-					return 0, err
-				}
-				selectivity += coll.getEqualCondSelectivity(idx, bytes, rangePosition)
-			}
->>>>>>> 94a722e... statistics: improve estimation for index equal condition (#17366)
-		}
+		selectivity = coll.getEqualCondSelectivity(idx, bytes, rangePosition)
 		// use histogram to estimate the range condition
 		if rangePosition != len(ran.LowVal) {
 			rang := ranger.Range{
