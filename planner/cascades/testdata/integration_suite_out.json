@@ -160,9 +160,9 @@
         "Plan": [
           "Projection_12 8000.00 root  test.t.b, Column#3",
           "└─Sort_21 8000.00 root  test.t.b",
-          "  └─HashAgg_14 8000.00 root  group by:test.t.b, funcs:avg(Column#7)->Column#3, funcs:firstrow(test.t.b)->test.t.b",
-          "    └─Projection_15 10000.00 root  cast(test.t.a, decimal(65,4) BINARY)->Column#7, test.t.b, test.t.b",
-          "      └─TableReader_16 10000.00 root  data:TableFullScan_17",
+          "  └─HashAgg_18 8000.00 root  group by:test.t.b, funcs:avg(Column#4, Column#5)->Column#3, funcs:firstrow(test.t.b)->test.t.b",
+          "    └─TableReader_19 8000.00 root  data:HashAgg_20",
+          "      └─HashAgg_20 8000.00 cop[tikv]  group by:test.t.b, funcs:count(test.t.a)->Column#4, funcs:sum(test.t.a)->Column#5",
           "        └─TableFullScan_17 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Result": [
