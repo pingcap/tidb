@@ -85,6 +85,7 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.TiDBOptJoinReorderThreshold, Equals, DefTiDBOptJoinReorderThreshold)
 	c.Assert(vars.EnableFastAnalyze, Equals, DefTiDBUseFastAnalyze)
 	c.Assert(vars.FoundInPlanCache, Equals, DefTiDBFoundInPlanCache)
+	c.Assert(vars.FoundInSPM, Equals, DefTiDBFoundInSPM)
 	c.Assert(vars.AllowAutoRandExplicitInsert, Equals, DefTiDBAllowAutoRandExplicitInsert)
 
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.Concurrency))
@@ -428,6 +429,13 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "0")
 	c.Assert(v.systems[TiDBFoundInPlanCache], Equals, "1")
+
+	err = SetSessionSystemVar(v, TiDBFoundInSPM, types.NewStringDatum("1"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBFoundInSPM)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "0")
+	c.Assert(v.systems[TiDBFoundInSPM], Equals, "1")
 }
 
 func (s *testVarsutilSuite) TestSetOverflowBehave(c *C) {

@@ -172,6 +172,8 @@ const (
 	// TiDBFoundInPlanCache indicates whether the last statement was found in plan cache
 	TiDBFoundInPlanCache = "last_plan_from_cache"
 
+	TiDBFoundInSPM = "last_statement_found_in_spm"
+
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	TiDBAllowAutoRandExplicitInsert = "allow_auto_random_explicit_insert"
 )
@@ -495,6 +497,7 @@ const (
 	DefTiDBMetricSchemaStep            = 60 // 60s
 	DefTiDBMetricSchemaRangeDuration   = 60 // 60s
 	DefTiDBFoundInPlanCache            = false
+	DefTiDBFoundInSPM                  = false
 	DefTidbEnableCollectExecutionInfo  = false
 	DefTiDBAllowAutoRandExplicitInsert = false
 	DefTiDBEnableClusteredIndex        = false
