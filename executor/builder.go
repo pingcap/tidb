@@ -2219,9 +2219,9 @@ func (b *executorBuilder) buildIndexNestedLoopHashJoin(v *plannercore.PhysicalIn
 		IndexLookUpJoin: *e,
 		keepOuterOrder:  v.KeepOuterOrder,
 	}
-	currency := e.ctx.GetSessionVars().IndexLookupJoinConcurrency()
-	idxHash.joiners = make([]joiner, currency)
-	for i := 0; i < currency; i++ {
+	concurrency := e.ctx.GetSessionVars().IndexLookupJoinConcurrency()
+	idxHash.joiners = make([]joiner, concurrency)
+	for i := 0; i < concurrency; i++ {
 		idxHash.joiners[i] = e.joiner.Clone()
 	}
 	return idxHash
