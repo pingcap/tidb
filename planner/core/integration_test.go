@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -682,6 +683,17 @@ func (s *testIntegrationSuite) TestIssue16440(c *C) {
 	tk.MustExec("INSERT INTO t1(c0) VALUES (NULL);")
 	tk.MustQuery("SELECT t1.c0 FROM t1 WHERE NOT t1.c0;").Check(testkit.Rows())
 	tk.MustExec("drop table t1")
+}
+
+func (s *testIntegrationSuite) TestFullGroupByOrderBy(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustQuery("select count(a) as b from t group by a order by b").Check(testkit.Rows())
+	err := tk.ExecToErr("select count(a) as cnt from t group by a order by b")
+	c.Assert(terror.ErrorEqual(err, core.ErrFieldNotInGroupBy), IsTrue)
 }
 
 func (s *testIntegrationSuite) TestIssue15846(c *C) {
