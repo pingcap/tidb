@@ -1049,8 +1049,6 @@ func (s *testIntegrationSuite) TestIssue16290And16292(c *C) {
 		tk.MustQuery("select avg(b) from (select * from t ta union all select * from t tb) t;").Check(testkit.Rows("1.0000"))
 		tk.MustQuery("select count(distinct a) from (select * from t ta union all select * from t tb) t;").Check(testkit.Rows("1"))
 		tk.MustQuery("select count(distinct b) from (select * from t ta union all select * from t tb) t;").Check(testkit.Rows("1"))
-		tk.MustQuery("select approx_count_distinct(a) from (select * from t ta union all select * from t tb) t;").Check(testkit.Rows("1"))
-		tk.MustQuery("select approx_count_distinct(b) from (select * from t ta union all select * from t tb) t;").Check(testkit.Rows("1"))
 	}
 }
 
