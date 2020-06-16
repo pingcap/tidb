@@ -80,7 +80,7 @@ func (c *CountDown) Dec(x int8) {
 	}
 }
 
-// Empty indicates which the CountDown is clear now.
+// Empty indicates whether the CountDown is clear now.
 func (c *CountDown) Empty() bool {
 	return *c == 0
 }
