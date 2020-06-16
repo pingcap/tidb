@@ -2861,12 +2861,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 
 	// Init commonHandleCols and commonHandleLens for data source.
 	if tableInfo.IsCommonHandle {
-		for _, idx := range tableInfo.Indices {
-			if idx.Primary {
-				ds.commonHandleCols, ds.commonHandleLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, idx)
-				break
-			}
-		}
+		ds.commonHandleCols, ds.commonHandleLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, tables.FindPrimaryIndex(tableInfo))
 	}
 	// Init FullIdxCols, FullIdxColLens for accessPaths.
 	for _, path := range ds.possibleAccessPaths {
