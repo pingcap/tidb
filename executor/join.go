@@ -922,8 +922,9 @@ func (e *NestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk) (err e
 						return err
 					}
 				}
+				var key applyCacheKey
+				key.Data = keyByte
 				e.totalNumber++
-				key := string(keyByte)
 				value, err := e.cache.Get(key)
 				if err != nil {
 					return err
@@ -936,7 +937,7 @@ func (e *NestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk) (err e
 					if err != nil {
 						return err
 					}
-					setSuccess, err := e.cache.Set(key, &applyCacheValue{e.innerList})
+					setSuccess, err := e.cache.Set(&key, &applyCacheValue{e.innerList})
 					if err != nil {
 						return err
 					}

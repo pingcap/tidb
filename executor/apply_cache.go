@@ -17,10 +17,10 @@ import (
 	"fmt"
 	"unsafe"
 
-	"github.com/hashicorp/golang-lru"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stringutil"
 )
@@ -28,9 +28,17 @@ import (
 // applyCache is used in the apply executor. When we get the same value of the outer row.
 // We fetch the inner rows in the cache not to fetch them in the inner executor.
 type applyCache struct {
-	cache       *lru.Cache
+	cache       *kvcache.SimpleLRUCache
 	memCapacity int64
 	memTracker  *memory.Tracker // track memory usage.
+}
+
+type applyCacheKey struct {
+	Data []byte
+}
+
+func (key *applyCacheKey) Hash() []byte {
+	return key.Data
 }
 
 // applyCacheValue is used to store the value of <key, value> pair in applyCache
@@ -42,11 +50,8 @@ var applyCacheLabel fmt.Stringer = stringutil.StringerStr("applyCache")
 
 func newApplyCache(ctx sessionctx.Context) (*applyCache, error) {
 	// num means the count of the cached element
-	num := int(ctx.GetSessionVars().ApplyCacheCapacity / 100)
-	cache, err := lru.New(num)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	num := uint(ctx.GetSessionVars().ApplyCacheCapacity / 100)
+	cache := kvcache.NewSimpleLRUCache(num, 0.1, uint64(ctx.GetSessionVars().ApplyCacheCapacity))
 	c := applyCache{
 		cache:       cache,
 		memCapacity: ctx.GetSessionVars().ApplyCacheCapacity,
@@ -56,11 +61,11 @@ func newApplyCache(ctx sessionctx.Context) (*applyCache, error) {
 }
 
 // Get gets a cache item according to cache key.
-func (c *applyCache) Get(key string) (*applyCacheValue, error) {
+func (c *applyCache) Get(key applyCacheKey) (*applyCacheValue, error) {
 	if c == nil {
 		return nil, errors.Errorf("The applyCache pointer is nil")
 	}
-	value, hit := c.cache.Get(key)
+	value, hit := c.cache.Get(&key)
 	if !hit {
 		return nil, nil
 	}
@@ -69,11 +74,11 @@ func (c *applyCache) Get(key string) (*applyCacheValue, error) {
 }
 
 // Set inserts an item to the cache.
-func (c *applyCache) Set(key string, value *applyCacheValue) (bool, error) {
+func (c *applyCache) Set(key *applyCacheKey, value *applyCacheValue) (bool, error) {
 	if c == nil {
 		return false, errors.Errorf("The applyCache pointer is nil")
 	}
-	mem := int64(unsafe.Sizeof(key)) + value.Data.GetMemTracker().BytesConsumed()
+	mem := int64(unsafe.Sizeof(key.Data)) + value.Data.GetMemTracker().BytesConsumed()
 	// When the <key, value> pair's memory consumption is larger than cache's max capacity,
 	// we do not to store the <key, value> pair.
 	if mem > c.memCapacity {
@@ -87,7 +92,8 @@ func (c *applyCache) Set(key string, value *applyCacheValue) (bool, error) {
 		c.memTracker.Consume(-(int64(unsafe.Sizeof(evictedKey)) + evictedValue.(*applyCacheValue).Data.GetMemTracker().BytesConsumed()))
 	}
 	c.memTracker.Consume(mem)
-	return c.cache.Add(key, value), nil
+	c.cache.Put(key, value)
+	return true, nil
 }
 
 // GetMemTracker returns the memory tracker of this apply cache.
