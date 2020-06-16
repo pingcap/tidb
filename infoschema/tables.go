@@ -147,6 +147,8 @@ const (
 	TableStatementsSummaryHistory = "STATEMENTS_SUMMARY_HISTORY"
 	// TableStorageStats is a table that contains all tables disk usage
 	TableStorageStats = "TABLE_STORAGE_STATS"
+	// TableTiFlashTable is the string constant of tiflash tables table.
+	TableTiFlashTables = "TIFLASH_TABLES"
 )
 
 var tableIDMap = map[string]int64{
@@ -213,6 +215,7 @@ var tableIDMap = map[string]int64{
 	ClusterTableStatementsSummary:           autoid.InformationSchemaDBID + 61,
 	ClusterTableStatementsSummaryHistory:    autoid.InformationSchemaDBID + 62,
 	TableStorageStats:                       autoid.InformationSchemaDBID + 63,
+	TableTiFlashTables:                      autoid.InformationSchemaDBID + 64,
 }
 
 type columnInfo struct {
@@ -1128,6 +1131,60 @@ var tableStorageStatsCols = []columnInfo{
 	{name: "TABLE_KEYS", tp: mysql.TypeLonglong, size: 64, comment: "The count of keys of single replica of the table"},
 }
 
+var tableTableTiFlashTablesCols = []columnInfo{
+	{name: "DATABASE", tp: mysql.TypeVarchar, size: 64},
+	{name: "TABLE", tp: mysql.TypeVarchar, size: 64},
+	{name: "TIDB_DATABASE", tp: mysql.TypeVarchar, size: 64},
+	{name: "TIDB_TABLE", tp: mysql.TypeVarchar, size: 64},
+	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 64},
+	{name: "IS_TOMBSTONE", tp: mysql.TypeLonglong, size: 64},
+	{name: "SEGMENT_COUNT", tp: mysql.TypeLonglong, size: 64},
+	{name: "TOTAL_ROWS", tp: mysql.TypeLonglong, size: 64},
+	{name: "TOTAL_SIZE", tp: mysql.TypeLonglong, size: 64},
+	{name: "TOTAL_DELETE_RANGES", tp: mysql.TypeLonglong, size: 64},
+	{name: "DELTA_RATE_ROWS", tp: mysql.TypeDouble, size: 64},
+	{name: "DELTA_RATE_SEGMENTS", tp: mysql.TypeDouble, size: 64},
+	{name: "DELTA_PLACED_RATE", tp: mysql.TypeDouble, size: 64},
+	{name: "DELTA_CACHE_SIZE", tp: mysql.TypeLonglong, size: 64},
+	{name: "DELTA_CACHE_RATE", tp: mysql.TypeDouble, size: 64},
+	{name: "DELTA_CACHE_WASTED_RATE", tp: mysql.TypeDouble, size: 64},
+	{name: "AVG_SEGMENT_ROWS", tp: mysql.TypeDouble, size: 64},
+	{name: "AVG_SEGMENT_SIZE", tp: mysql.TypeDouble, size: 64},
+	{name: "DELTA_COUNT", tp: mysql.TypeLonglong, size: 64},
+	{name: "TOTAL_DELTA_ROWS", tp: mysql.TypeLonglong, size: 64},
+	{name: "TOTAL_DELTA_SIZE", tp: mysql.TypeLonglong, size: 64},
+	{name: "AVG_DELTA_ROWS", tp: mysql.TypeDouble, size: 64},
+	{name: "AVG_DELTA_SIZE", tp: mysql.TypeDouble, size: 64},
+	{name: "AVG_DELTA_DELETE_RANGES", tp: mysql.TypeDouble, size: 64},
+	{name: "STABLE_COUNT", tp: mysql.TypeLonglong, size: 64},
+	{name: "TOTAL_STABLE_ROWS", tp: mysql.TypeLonglong, size: 64},
+	{name: "TOTAL_STABLE_SIZE", tp: mysql.TypeLonglong, size: 64},
+	{name: "AVG_STABLE_ROWS", tp: mysql.TypeDouble, size: 64},
+	{name: "AVG_STABLE_SIZE", tp: mysql.TypeDouble, size: 64},
+	{name: "TOTAL_PACK_COUNT_IN_DELTA", tp: mysql.TypeLonglong, size: 64},
+	{name: "AVG_PACK_COUNT_IN_DELTA", tp: mysql.TypeDouble, size: 64},
+	{name: "AVG_PACK_ROWS_IN_DELTA", tp: mysql.TypeDouble, size: 64},
+	{name: "AVG_PACK_SIZE_IN_DELTA", tp: mysql.TypeDouble, size: 64},
+	{name: "TOTAL_PACK_COUNT_IN_STABLE", tp: mysql.TypeLonglong, size: 64},
+	{name: "AVG_PACK_COUNT_IN_STABLE", tp: mysql.TypeDouble, size: 64},
+	{name: "AVG_PACK_ROWS_IN_STABLE", tp: mysql.TypeDouble, size: 64},
+	{name: "AVG_PACK_SIZE_IN_STABLE", tp: mysql.TypeDouble, size: 64},
+	{name: "STORAGE_STABLE_NUM_SNAPSHOTS", tp: mysql.TypeLonglong, size: 64},
+	{name: "STORAGE_STABLE_NUM_PAGES", tp: mysql.TypeLonglong, size: 64},
+	{name: "STORAGE_STABLE_NUM_NORMAL_PAGES", tp: mysql.TypeLonglong, size: 64},
+	{name: "STORAGE_STABLE_MAX_PAGE_ID", tp: mysql.TypeLonglong, size: 64},
+	{name: "STORAGE_DELTA_NUM_SNAPSHOTS", tp: mysql.TypeLonglong, size: 64},
+	{name: "STORAGE_DELTA_NUM_PAGES", tp: mysql.TypeLonglong, size: 64},
+	{name: "STORAGE_DELTA_NUM_NORMAL_PAGES", tp: mysql.TypeLonglong, size: 64},
+	{name: "STORAGE_DELTA_MAX_PAGE_ID", tp: mysql.TypeLonglong, size: 64},
+	{name: "STORAGE_META_NUM_SNAPSHOTS", tp: mysql.TypeLonglong, size: 64},
+	{name: "STORAGE_META_NUM_PAGES", tp: mysql.TypeLonglong, size: 64},
+	{name: "STORAGE_META_NUM_NORMAL_PAGES", tp: mysql.TypeLonglong, size: 64},
+	{name: "STORAGE_META_MAX_PAGE_ID", tp: mysql.TypeLonglong, size: 64},
+	{name: "BACKGROUND_TASKS_LENGTH", tp: mysql.TypeLonglong, size: 64},
+	{name: "TIFLASH_NODE", tp: mysql.TypeVarchar, size: 64},
+}
+
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //  - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -1431,6 +1488,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableStatementsSummary:                  tableStatementsSummaryCols,
 	TableStatementsSummaryHistory:           tableStatementsSummaryCols,
 	TableStorageStats:                       tableStorageStatsCols,
+	TableTiFlashTables:			             tableTableTiFlashTablesCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {

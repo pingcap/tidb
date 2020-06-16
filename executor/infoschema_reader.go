@@ -17,7 +17,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
+	"go.etcd.io/etcd/clientv3"
+	"io/ioutil"
+	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -133,6 +139,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			infoschema.ClusterTableStatementsSummary,
 			infoschema.ClusterTableStatementsSummaryHistory:
 			err = e.setDataForStatementsSummary(sctx, e.table.Name.O)
+		case infoschema.TableTiFlashTables:
+			err = e.setDataForTiFlashTables(sctx, e.table.Columns)
 		}
 		if err != nil {
 			return nil, err
@@ -1759,4 +1767,111 @@ func (e *memtableRetriever) setDataForStatementsSummary(ctx sessionctx.Context, 
 		e.rows = rows
 	}
 	return nil
+}
+
+func (e *memtableRetriever) setDataForTiFlashTables(ctx sessionctx.Context, columns []*model.ColumnInfo) error {
+	store := ctx.GetStore()
+	if etcd, ok := store.(tikv.EtcdBackend); ok {
+		if addrs := etcd.EtcdAddrs(); addrs != nil {
+			cfg := config.GetGlobalConfig()
+			cli, err := clientv3.New(clientv3.Config{
+				Endpoints:            addrs,
+				AutoSyncInterval:     30 * time.Second,
+				DialTimeout:          5 * time.Second,
+				TLS:                  etcd.TLSConfig(),
+				DialKeepAliveTime:    time.Second * time.Duration(cfg.TiKVClient.GrpcKeepAliveTime),
+				DialKeepAliveTimeout: time.Second * time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout),
+				PermitWithoutStream:  true,
+			})
+			if err != nil {
+				return errors.Trace(err)
+			}
+			defer cli.Close()
+			prefix := "/tiflash/cluster/http_port/"
+			kv := clientv3.NewKV(cli)
+			ctx, cancel := context.WithTimeout(context.Background(), 10 * time.Second)
+			resp, err := kv.Get(ctx, prefix, clientv3.WithPrefix())
+			cancel()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			var columnNames []string
+			for _, c := range columns {
+				if c.Name.O == "TIFLASH_NODE" {
+					continue
+				}
+				columnNames = append(columnNames, c.Name.L)
+			}
+			sql := fmt.Sprintf("SELECT %s FROM system.dt_tables", strings.Join(columnNames, ","))
+			notNumber := "nan"
+			var rows [][]types.Datum
+			httpClient := http.DefaultClient
+			for _, ev := range resp.Kvs {
+				tiflashNode := string(ev.Key)[len(prefix):]
+				// TODO: Support https in tiflash
+				url := fmt.Sprintf("http://%s", ev.Value)
+				req, err := http.NewRequest(http.MethodGet, url, nil)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				q := req.URL.Query()
+				q.Add("query", sql)
+				req.URL.RawQuery = q.Encode()
+				resp, err := httpClient.Do(req)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				body, err := ioutil.ReadAll(resp.Body)
+				terror.Log(resp.Body.Close())
+				if err != nil {
+					return errors.Trace(err)
+				}
+				records := strings.Split(string(body), "\n")
+				for _, record := range records {
+					if len(record) == 0 {
+						continue
+					}
+					fields := strings.Split(record, "\t")
+					if len(fields) < len(columns) - 1 {
+						return errors.Errorf("Record doesn't match schema", fields)
+					}
+					row := make([]types.Datum, len(columns))
+					for index, column := range columns {
+						if column.Name.O == "TIFLASH_NODE" {
+							continue
+						}
+						if column.Tp == mysql.TypeVarchar {
+							row[index].SetString(fields[index], mysql.DefaultCollationName)
+						} else if column.Tp == mysql.TypeLonglong {
+							if fields[index] == notNumber {
+								continue
+							}
+							value, err := strconv.ParseInt(fields[index], 10, 64)
+							if err != nil {
+								return errors.Trace(err)
+							}
+							row[index].SetInt64(value)
+						} else if column.Tp == mysql.TypeDouble {
+							if fields[index] == notNumber {
+								continue
+							}
+							value, err := strconv.ParseFloat(fields[index], 64)
+							if err != nil {
+								return errors.Trace(err)
+							}
+							row[index].SetFloat64(value)
+						} else {
+							return errors.Errorf("Meet column of unknown type", column)
+						}
+					}
+					row[len(columns) - 1].SetString(tiflashNode, mysql.DefaultCollationName)
+					rows = append(rows, row)
+				}
+			}
+			e.rows = rows
+			return nil
+		}
+		return errors.Errorf("Etcd addrs not found")
+	}
+	return errors.Errorf("%T not an etcd backend", store)
 }
