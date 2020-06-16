@@ -1156,7 +1156,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.hashJoinConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
 		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
 	case TiDBProjectionConcurrency:
-		s.projectionConcurrency = tidbOptInt64(val, ConcurrencyUnset)
+		s.projectionConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
 		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
 	case TiDBHashAggPartialConcurrency:
 		s.hashAggPartialConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
@@ -1466,7 +1466,7 @@ type Concurrency struct {
 
 	// projectionConcurrency is the number of concurrent projection worker.
 	// projectionConcurrency is deprecated, use ExecutorConcurrency instead.
-	projectionConcurrency int64
+	projectionConcurrency int
 
 	// hashAggPartialConcurrency is the number of concurrent hash aggregation partial worker.
 	// hashAggPartialConcurrency is deprecated, use ExecutorConcurrency instead.
@@ -1508,7 +1508,7 @@ func (c *Concurrency) SetHashJoinConcurrency(n int) {
 }
 
 // SetProjectionConcurrency set the number of concurrent projection worker.
-func (c *Concurrency) SetProjectionConcurrency(n int64) {
+func (c *Concurrency) SetProjectionConcurrency(n int) {
 	c.projectionConcurrency = n
 }
 
@@ -1565,11 +1565,11 @@ func (c *Concurrency) HashJoinConcurrency() int {
 }
 
 // ProjectionConcurrency return the number of concurrent projection worker.
-func (c *Concurrency) ProjectionConcurrency() int64 {
+func (c *Concurrency) ProjectionConcurrency() int {
 	if c.projectionConcurrency != ConcurrencyUnset {
 		return c.projectionConcurrency
 	}
-	return int64(c.ExecutorConcurrency)
+	return c.ExecutorConcurrency
 }
 
 // HashAggPartialConcurrency return the number of concurrent hash aggregation partial worker.

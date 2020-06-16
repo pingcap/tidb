@@ -962,7 +962,7 @@ func (s *testSuite5) TestSetConcurrency(c *C) {
 	c.Assert(vars.HashAggPartialConcurrency(), Equals, variable.DefExecutorConcurrency)
 	c.Assert(vars.HashAggFinalConcurrency(), Equals, variable.DefExecutorConcurrency)
 	c.Assert(vars.WindowConcurrency(), Equals, variable.DefExecutorConcurrency)
-	c.Assert(vars.ProjectionConcurrency(), Equals, int64(variable.DefExecutorConcurrency))
+	c.Assert(vars.ProjectionConcurrency(), Equals, variable.DefExecutorConcurrency)
 	c.Assert(vars.DistSQLScanConcurrency(), Equals, variable.DefExecutorConcurrency)
 
 	c.Assert(vars.IndexSerialScanConcurrency(), Equals, variable.DefIndexSerialScanConcurrency)
@@ -992,7 +992,7 @@ func (s *testSuite5) TestSetConcurrency(c *C) {
 	c.Assert(vars.HashAggFinalConcurrency(), Equals, 1)
 
 	checkSet(variable.TiDBProjectionConcurrency)
-	c.Assert(vars.ProjectionConcurrency(), Equals, int64(1))
+	c.Assert(vars.ProjectionConcurrency(), Equals, 1)
 
 	checkSet(variable.TiDBWindowConcurrency)
 	c.Assert(vars.WindowConcurrency(), Equals, 1)
@@ -1021,7 +1021,7 @@ func (s *testSuite5) TestSetConcurrency(c *C) {
 	c.Assert(vars.HashAggPartialConcurrency(), Equals, variable.DefExecutorConcurrency)
 	c.Assert(vars.HashAggFinalConcurrency(), Equals, variable.DefExecutorConcurrency)
 	c.Assert(vars.WindowConcurrency(), Equals, variable.DefExecutorConcurrency)
-	c.Assert(vars.ProjectionConcurrency(), Equals, int64(variable.DefExecutorConcurrency))
+	c.Assert(vars.ProjectionConcurrency(), Equals, variable.DefExecutorConcurrency)
 	c.Assert(vars.DistSQLScanConcurrency(), Equals, variable.DefExecutorConcurrency)
 
 	_, err := tk.Exec("set @@tidb_executor_concurrency=-1;")
