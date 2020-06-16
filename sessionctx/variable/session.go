@@ -1338,9 +1338,6 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBFoundInPlanCache:
 		s.FoundInPlanCache = TiDBOptOn(val)
 	case TiDBFoundInSPM:
-		if val == "0" {
-			panic("1111")
-		}
 		s.FoundInSPM = TiDBOptOn(val)
 	case TiDBEnableCollectExecutionInfo:
 		config.GetGlobalConfig().EnableCollectExecutionInfo = TiDBOptOn(val)
