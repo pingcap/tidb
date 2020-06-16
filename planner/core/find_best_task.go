@@ -701,8 +701,8 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 }
 
 func (ds *DataSource) isCoveringIndex(columns, indexColumns []*expression.Column, idxColLens []int, tblInfo *model.TableInfo) bool {
-	indexColumns = append(indexColumns, ds.commonHandleCols...)
-	idxColLens = append(idxColLens, ds.commonHandleLens...)
+	indexCols := append(indexColumns, ds.commonHandleCols...)
+	indexColLens := append(idxColLens, ds.commonHandleLens...)
 	for _, col := range columns {
 		if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.Flag) {
 			continue
@@ -711,8 +711,8 @@ func (ds *DataSource) isCoveringIndex(columns, indexColumns []*expression.Column
 			continue
 		}
 		isIndexColumn := false
-		for i, indexCol := range indexColumns {
-			isFullLen := idxColLens[i] == types.UnspecifiedLength || idxColLens[i] == col.RetType.Flen
+		for i, indexCol := range indexCols {
+			isFullLen := indexColLens[i] == types.UnspecifiedLength || indexColLens[i] == col.RetType.Flen
 			// We use col.OrigColName instead of col.ColName.
 			// Related issue: https://github.com/pingcap/tidb/issues/9636.
 			if indexCol != nil && col.Equal(nil, indexCol) && isFullLen {
