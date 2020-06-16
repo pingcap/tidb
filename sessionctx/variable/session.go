@@ -737,15 +737,15 @@ func NewSessionVars() *SessionVars {
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
-		indexLookupConcurrency:     ConcurrencyUnset,
+		indexLookupConcurrency:     DefIndexLookupConcurrency,
 		indexSerialScanConcurrency: DefIndexSerialScanConcurrency,
-		indexLookupJoinConcurrency: ConcurrencyUnset,
-		hashJoinConcurrency:        ConcurrencyUnset,
-		projectionConcurrency:      ConcurrencyUnset,
-		distSQLScanConcurrency:     ConcurrencyUnset,
-		hashAggPartialConcurrency:  ConcurrencyUnset,
-		hashAggFinalConcurrency:    ConcurrencyUnset,
-		windowConcurrency:          ConcurrencyUnset,
+		indexLookupJoinConcurrency: DefIndexLookupJoinConcurrency,
+		hashJoinConcurrency:        DefTiDBHashJoinConcurrency,
+		projectionConcurrency:      DefTiDBProjectionConcurrency,
+		distSQLScanConcurrency:     DefDistSQLScanConcurrency,
+		hashAggPartialConcurrency:  DefTiDBHashAggPartialConcurrency,
+		hashAggFinalConcurrency:    DefTiDBHashAggFinalConcurrency,
+		windowConcurrency:          DefTiDBWindowConcurrency,
 		ExecutorConcurrency:        DefExecutorConcurrency,
 	}
 	vars.MemQuota = MemQuota{

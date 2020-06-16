@@ -419,12 +419,12 @@ const (
 // Default TiDB system variable values.
 const (
 	DefHostname                        = "localhost"
-	DefIndexLookupConcurrency          = 4
-	DefIndexLookupJoinConcurrency      = 4
+	DefIndexLookupConcurrency          = ConcurrencyUnset
+	DefIndexLookupJoinConcurrency      = ConcurrencyUnset
 	DefIndexSerialScanConcurrency      = 1
 	DefIndexJoinBatchSize              = 25000
 	DefIndexLookupSize                 = 20000
-	DefDistSQLScanConcurrency          = 15
+	DefDistSQLScanConcurrency          = ConcurrencyUnset
 	DefBuildStatsConcurrency           = 4
 	DefAutoAnalyzeRatio                = 0.5
 	DefAutoAnalyzeStartTime            = "00:00 +0000"
@@ -469,8 +469,8 @@ const (
 	DefTiDBRetryLimit                  = 10
 	DefTiDBDisableTxnAutoRetry         = true
 	DefTiDBConstraintCheckInPlace      = false
-	DefTiDBHashJoinConcurrency         = 5
-	DefTiDBProjectionConcurrency       = 4
+	DefTiDBHashJoinConcurrency         = ConcurrencyUnset
+	DefTiDBProjectionConcurrency       = ConcurrencyUnset
 	DefTiDBOptimizerSelectivityLevel   = 0
 	DefTiDBAllowBatchCop               = 0
 	DefTiDBTxnMode                     = ""
@@ -480,9 +480,9 @@ const (
 	DefTiDBDDLReorgBatchSize           = 256
 	DefTiDBDDLErrorCountLimit          = 512
 	DefTiDBMaxDeltaSchemaCount         = 1024
-	DefTiDBHashAggPartialConcurrency   = 4
-	DefTiDBHashAggFinalConcurrency     = 4
-	DefTiDBWindowConcurrency           = 4
+	DefTiDBHashAggPartialConcurrency   = ConcurrencyUnset
+	DefTiDBHashAggFinalConcurrency     = ConcurrencyUnset
+	DefTiDBWindowConcurrency           = ConcurrencyUnset
 	DefTiDBForcePriority               = mysql.NoPriority
 	DefTiDBUseRadixJoin                = false
 	DefEnableWindowFunction            = true
