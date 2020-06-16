@@ -122,7 +122,7 @@ func FindOnUpdateCols(cols []*Column) []*Column {
 	return rcols
 }
 
-// truncateTrailingSpaces trancates trailing spaces for CHAR[(M)] column.
+// truncateTrailingSpaces truncates trailing spaces for CHAR[(M)] column.
 // fix: https://github.com/pingcap/tidb/issues/3660
 func truncateTrailingSpaces(v *types.Datum) {
 	if v.Kind() == types.KindNull {
