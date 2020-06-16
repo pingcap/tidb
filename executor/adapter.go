@@ -637,6 +637,8 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 		if err != nil {
 			return nil, err
 		}
+
+		a.Ctx.SetValue(sessionctx.QueryString, executorExec.stmt.Text())
 		a.isPreparedStmt = true
 		a.Plan = executorExec.plan
 		if executorExec.lowerPriority {
