@@ -189,8 +189,11 @@ func (p *baseLogicalPlan) rebuildChildTasks(childTasks *[]task, pp PhysicalPlan,
 		if err != nil {
 			return err
 		}
-		if curClock != 0 || (childTask != nil && childTask.invalid()) {
+		if curClock != 0 {
 			return errors.Errorf("CountDown clock is not handled")
+		}
+		if childTask != nil && childTask.invalid() {
+			return errors.Errorf("The current plan is invalid, please skip this plan.")
 		}
 		*childTasks = append(*childTasks, childTask)
 	}
@@ -617,8 +620,10 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, clock *Count
 			if err != nil {
 				return nil, 0, err
 			}
-			cntPlan += 1
-			clock.Dec(1)
+			if !idxMergeTask.invalid() {
+				cntPlan += 1
+				clock.Dec(1)
+			}
 			if idxMergeTask.cost() < t.cost() || clock.Empty() {
 				t = idxMergeTask
 			}
@@ -660,8 +665,10 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, clock *Count
 				} else {
 					pointGetTask = ds.convertToBatchPointGet(prop, candidate)
 				}
-				cntPlan += 1
-				clock.Dec(1)
+				if !pointGetTask.invalid() {
+					cntPlan += 1
+					clock.Dec(1)
+				}
 				if pointGetTask.cost() < t.cost() || clock.Empty() {
 					t = pointGetTask
 					if clock.Empty() {
@@ -682,8 +689,10 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, clock *Count
 			if err != nil {
 				return nil, 0, err
 			}
-			cntPlan += 1
-			clock.Dec(1)
+			if !tblTask.invalid() {
+				cntPlan += 1
+				clock.Dec(1)
+			}
 			if tblTask.cost() < t.cost() || clock.Empty() {
 				t = tblTask
 			}
@@ -700,8 +709,10 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, clock *Count
 		if err != nil {
 			return nil, 0, err
 		}
-		cntPlan += 1
-		clock.Dec(1)
+		if !idxTask.invalid() {
+			cntPlan += 1
+			clock.Dec(1)
+		}
 		if idxTask.cost() < t.cost() || clock.Empty() {
 			t = idxTask
 		}
