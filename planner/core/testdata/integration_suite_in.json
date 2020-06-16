@@ -136,5 +136,14 @@
       "select /*+ stream_agg() */ count(*) c from t group by a order by a limit 1",
       "select /*+ stream_agg() */ count(*) c from t group by a order by a"
     ]
+  },
+  {
+    "name": "TestAccessPathOnClusterIndex",
+    "cases": [
+      "select * from t1",
+      "select * from t1 where t1.a >= 1 and t1.a < 4",
+      "select * from t1 where t1.a = 1 and t1.b < \"333\"",
+      "select * from t1 where t1.c = 3.3"
+    ]
   }
 ]

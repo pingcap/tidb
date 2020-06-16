@@ -3375,7 +3375,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "TiDB transaction processing counts by type and source. Internal means TiDB inner transcation calls",
+          "description": "TiDB transaction processing counts by type and source.",
           "editable": true,
           "error": false,
           "fill": 1,
@@ -3416,10 +3416,10 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "sum(rate(tidb_session_transaction_duration_seconds_count[1m])) by (type, sql_type)",
+              "expr": "sum(rate(tidb_session_transaction_duration_seconds_count[1m])) by (type, txn_mode)",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "{{type}}-{{sql_type}}",
+              "legendFormat": "{{type}}-{{txn_mode}}",
               "refId": "A",
               "step": 10
             }
@@ -3510,24 +3510,24 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "histogram_quantile(0.99, sum(rate(tidb_session_transaction_duration_seconds_bucket[1m])) by (le, sql_type))",
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_session_transaction_duration_seconds_bucket[1m])) by (le, txn_mode))",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "99-{{sql_type}}",
+              "legendFormat": "99-{{txn_mode}}",
               "refId": "A"
             },
             {
-              "expr": "histogram_quantile(0.95, sum(rate(tidb_session_transaction_duration_seconds_bucket[1m])) by (le, sql_type))",
+              "expr": "histogram_quantile(0.95, sum(rate(tidb_session_transaction_duration_seconds_bucket[1m])) by (le, txn_mode))",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "95-{{sql_type}}",
+              "legendFormat": "95-{{txn_mode}}",
               "refId": "B"
             },
             {
-              "expr": "histogram_quantile(0.80, sum(rate(tidb_session_transaction_duration_seconds_bucket[1m])) by (le, sql_type))",
+              "expr": "histogram_quantile(0.80, sum(rate(tidb_session_transaction_duration_seconds_bucket[1m])) by (le, txn_mode))",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "80-{{sql_type}}",
+              "legendFormat": "80-{{txn_mode}}",
               "refId": "C"
             }
           ],
@@ -3578,7 +3578,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "TiDB statements numbers within one transaction. Internal means TiDB inner transaction",
+          "description": "TiDB statements numbers within one transaction.",
           "fill": 1,
           "fillGradient": 0,
           "gridPos": {
@@ -3616,17 +3616,17 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "histogram_quantile(0.99, sum(rate(tidb_session_transaction_statement_num_bucket[30s])) by (le, sql_type))",
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_session_transaction_statement_num_bucket[30s])) by (le, txn_mode))",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "99-{{sql_type}}",
+              "legendFormat": "99-{{txn_mode}}",
               "refId": "A"
             },
             {
-              "expr": "histogram_quantile(0.80, sum(rate(tidb_session_transaction_statement_num_bucket[30s])) by (le, sql_type))",
+              "expr": "histogram_quantile(0.80, sum(rate(tidb_session_transaction_statement_num_bucket[30s])) by (le, txn_mode))",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "80-{{sql_type}}",
+              "legendFormat": "80-{{txn_mode}}",
               "refId": "B"
             }
           ],

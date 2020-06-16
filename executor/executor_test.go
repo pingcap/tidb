@@ -84,11 +84,10 @@ func TestT(t *testing.T) {
 	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	autoid.SetStep(5000)
 
-	old := config.GetGlobalConfig()
-	new := *old
-	new.Log.SlowThreshold = 30000 // 30s
-	new.Experimental.AllowsExpressionIndex = true
-	config.StoreGlobalConfig(&new)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.SlowThreshold = 30000 // 30s
+		conf.Experimental.AllowsExpressionIndex = true
+	})
 	tmpDir := config.GetGlobalConfig().TempStoragePath
 	_ = os.RemoveAll(tmpDir) // clean the uncleared temp file during the last run.
 	_ = os.MkdirAll(tmpDir, 0755)
@@ -161,10 +160,9 @@ func (s *baseTestSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	d.SetStatsUpdating(true)
 	s.domain = d
-	originCfg := config.GetGlobalConfig()
-	newConf := *originCfg
-	newConf.OOMAction = config.OOMActionLog
-	config.StoreGlobalConfig(&newConf)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMAction = config.OOMActionLog
+	})
 }
 
 func (s *baseTestSuite) TearDownSuite(c *C) {
@@ -4650,11 +4648,10 @@ func (s *testSuite) TestOOMPanicAction(c *C) {
 	}
 	tk.Se.SetSessionManager(sm)
 	s.domain.ExpensiveQueryHandle().SetSessionManager(sm)
-	orgAction := config.GetGlobalConfig().OOMAction
-	setOOMAction(config.OOMActionCancel)
-	defer func() {
-		setOOMAction(orgAction)
-	}()
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMAction = config.OOMActionCancel
+	})
 	tk.MustExec("set @@tidb_mem_quota_query=1;")
 	err := tk.QueryToErr("select sum(b) from t group by a;")
 	c.Assert(err, NotNil)
@@ -4700,13 +4697,6 @@ func (s *testSuite) TestOOMPanicAction(c *C) {
 	tk.MustExec("set @@tidb_mem_quota_query=244;")
 	_, err = tk.Exec("update t set a = 4")
 	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
-}
-
-func setOOMAction(action string) {
-	old := config.GetGlobalConfig()
-	newConf := *old
-	newConf.OOMAction = action
-	config.StoreGlobalConfig(&newConf)
 }
 
 type testRecoverTable struct {
@@ -5445,9 +5435,9 @@ func (s *testClusterTableSuite) setUpRPCService(c *C, addr string) (*grpc.Server
 		err = srv.Serve(lis)
 		c.Assert(err, IsNil)
 	}()
-	cfg := config.GetGlobalConfig()
-	cfg.Status.StatusPort = uint(port)
-	config.StoreGlobalConfig(cfg)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Status.StatusPort = uint(port)
+	})
 	return srv, addr
 }
 func (s *testClusterTableSuite) TearDownSuite(c *C) {
@@ -5864,4 +5854,17 @@ func (s *testSuiteP2) TestApplyCache(c *C) {
 	}
 	c.Assert(flag, Equals, true)
 	c.Assert(value[ind:], Equals, "cache:OFF")
+}
+
+// For issue 17256
+func (s *testSuite) TestGenerateColumnReplace(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int, b int as (a + 1) virtual not null, unique index idx(b));")
+	tk.MustExec("REPLACE INTO `t1` (`a`) VALUES (2);")
+	tk.MustExec("REPLACE INTO `t1` (`a`) VALUES (2);")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("2 3"))
+	tk.MustExec("insert into `t1` (`a`) VALUES (2) on duplicate key update a = 3;")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("3 4"))
 }
