@@ -231,6 +231,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 			continue
 		}
 
+		// If the aim plan can be found in this physicalPlan(pp), rebuild childTasks to make the corresponding combination.
 		if clock.IsForce() && int64(*clock) <= curCntPlan {
 			curCntPlan = int64(*clock)
 			err := p.rebuildChildTasks(&childTasks, pp, childCnts, int64(*clock), TimeStampNow)
@@ -273,9 +274,6 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, clock *CountDown) (bestTask task, cntPlan int64, err error) {
 	// If p is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
 	// and set inner child prop nil, so here we do nothing.
-	if clock.IsForce() {
-		p.enableBak()
-	}
 	if prop == nil {
 		return nil, 0, nil
 	}
@@ -284,7 +282,7 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, clock *C
 	bestTask = p.getTask(prop)
 	if bestTask != nil {
 		clock.Dec(1)
-		if p.needBak {
+		if p.ctx.GetSessionVars().TaskMapNeedBackUp {
 			// Ensure that a key will be pushed into taskMapBak every time we call the function.
 			p.storeTask(prop, bestTask)
 		}
@@ -567,7 +565,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, clock *Count
 		cntPlan = 1
 		clock.Dec(1)
 		// Ensure that a key will be pushed into taskMapBak every time we call the function.
-		if ds.needBak {
+		if ds.ctx.GetSessionVars().TaskMapNeedBackUp {
 			ds.storeTask(prop, t)
 		}
 		return

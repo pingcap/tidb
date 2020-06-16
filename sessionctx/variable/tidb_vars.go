@@ -499,6 +499,7 @@ const (
 	DefTiDBAllowAutoRandExplicitInsert = false
 	DefTiDBEnableClusteredIndex        = false
 	DefTiDBSlowLogMasking              = false
+	DefTaskMapNeedBackUp               = false
 )
 
 // Process global variables.

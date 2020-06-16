@@ -202,9 +202,6 @@ type LogicalPlan interface {
 	// SetChild sets the ith child for the plan.
 	SetChild(i int, child LogicalPlan)
 
-	// enableBak sets the needBak of logical plan tree to true.
-	enableBak()
-
 	// rollBackTaskMap roll back all taskMap's logs after TimeStamp TS
 	rollBackTaskMap(TS time.Time)
 }
@@ -256,11 +253,9 @@ type baseLogicalPlan struct {
 	// taskMapBakTS stores the TimeStamps of logs.
 	taskMapBak   []string
 	taskMapBakTS []time.Time
-	// needBask indicates whether taskMap needs to be backed. Avoid affecting the speed of the optimizer.
-	needBak   bool
-	self      LogicalPlan
-	maxOneRow bool
-	children  []LogicalPlan
+	self         LogicalPlan
+	maxOneRow    bool
+	children     []LogicalPlan
 }
 
 func (p *baseLogicalPlan) MaxOneRow() bool {
@@ -303,18 +298,8 @@ func (p *baseLogicalPlan) GetBakTimeStamp() time.Time {
 	return time.Now()
 }
 
-func (p *baseLogicalPlan) enableBak() {
-	if p.needBak {
-		return
-	}
-	p.needBak = true
-	for _, child := range p.children {
-		child.enableBak()
-	}
-}
-
 func (p *baseLogicalPlan) rollBackTaskMap(TS time.Time) {
-	if !p.needBak {
+	if !p.ctx.GetSessionVars().TaskMapNeedBackUp {
 		return
 	}
 	if len(p.taskMapBak) > 0 {
@@ -351,7 +336,7 @@ func (p *baseLogicalPlan) getTask(prop *property.PhysicalProperty) task {
 
 func (p *baseLogicalPlan) storeTask(prop *property.PhysicalProperty, task task) {
 	key := prop.HashCode()
-	if p.needBak {
+	if p.ctx.GetSessionVars().TaskMapNeedBackUp {
 		// when we storeTask, we have taskMap[key] is nil.
 		// so to roll back, we need only store the key and set taskMap[key] to nil.
 		// empty string for useless change.
@@ -422,7 +407,6 @@ func newBaseLogicalPlan(ctx sessionctx.Context, tp string, self LogicalPlan, off
 	return baseLogicalPlan{
 		taskMap:    make(map[string]task),
 		taskMapBak: make([]string, 0, 100),
-		needBak:    false,
 		basePlan:   newBasePlan(ctx, tp, offset),
 		self:       self,
 	}

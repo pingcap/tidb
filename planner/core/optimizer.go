@@ -185,6 +185,7 @@ func physicalOptimize(logic LogicalPlan, clock *CountDown) (PhysicalPlan, float6
 		ExpectedCnt: math.MaxFloat64,
 	}
 
+	logic.SCtx().GetSessionVars().TaskMapNeedBackUp = clock.IsForce()
 	t, _, err := logic.findBestTask(prop, clock)
 	if err != nil {
 		return nil, 0, err

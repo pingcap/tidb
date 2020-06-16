@@ -837,6 +837,7 @@ func (e *Explain) RenderResult() error {
 		e.Rows = append(e.Rows, []string{hint.RestoreOptimizerHints(hints)})
 	case ast.ExplainFormatVerbose:
 		//TODO: from PHX add expain format = verbose. here
+		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
