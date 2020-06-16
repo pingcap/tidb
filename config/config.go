@@ -541,8 +541,6 @@ type IsolationRead struct {
 // Experimental controls the features that are still experimental: their semantics, interfaces are subject to change.
 // Using these features in the production environment is not recommended.
 type Experimental struct {
-	// Whether enable the syntax like `auto_random(3)` on the primary key column.
-	AllowAutoRandom bool `toml:"allow-auto-random" json:"allow-auto-random"`
 	// Whether enable creating expression index.
 	AllowsExpressionIndex bool `toml:"allow-expression-index" json:"allow-expression-index"`
 }
@@ -683,7 +681,6 @@ var defaultConf = Config{
 		Engines: []string{"tikv", "tiflash", "tidb"},
 	},
 	Experimental: Experimental{
-		AllowAutoRandom:       false,
 		AllowsExpressionIndex: false,
 	},
 	EnableCollectExecutionInfo: false,
@@ -714,10 +711,12 @@ func StoreGlobalConfig(config *Config) {
 var deprecatedConfig = map[string]struct{}{
 	"pessimistic-txn.ttl":        {},
 	"log.file.log-rotate":        {},
+	"log.log-slow-query":         {},
 	"txn-local-latches":          {},
 	"txn-local-latches.enabled":  {},
 	"txn-local-latches.capacity": {},
 	"performance.max-memory":     {},
+	"max-txn-time-use":           {},
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
@@ -867,9 +866,6 @@ func (c *Config) Valid() error {
 		return fmt.Errorf("refresh-interval in [stmt-summary] should be greater than 0")
 	}
 
-	if c.AlterPrimaryKey && c.Experimental.AllowAutoRandom {
-		return fmt.Errorf("allow-auto-random is unavailable when alter-primary-key is enabled")
-	}
 	if c.PreparedPlanCache.Capacity < 1 {
 		return fmt.Errorf("capacity in [prepared-plan-cache] should be at least 1")
 	}
@@ -888,6 +884,22 @@ func (c *Config) Valid() error {
 	// test log level
 	l := zap.NewAtomicLevel()
 	return l.UnmarshalText([]byte(c.Log.Level))
+}
+
+// UpdateGlobal updates the global config, and provide a restore function that can be used to restore to the original.
+func UpdateGlobal(f func(conf *Config)) {
+	g := GetGlobalConfig()
+	newConf := *g
+	f(&newConf)
+	StoreGlobalConfig(&newConf)
+}
+
+// RestoreFunc gets a function that restore the config to the current value.
+func RestoreFunc() (restore func()) {
+	g := GetGlobalConfig()
+	return func() {
+		StoreGlobalConfig(g)
+	}
 }
 
 func hasRootPrivilege() bool {

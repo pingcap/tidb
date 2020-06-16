@@ -196,7 +196,10 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		finalPlan, cost, err := cascades.DefaultOptimizer.FindBestPlan(sctx, logic)
 		return finalPlan, names, cost, err
 	}
+
+	beginOpt := time.Now()
 	finalPlan, cost, err := plannercore.DoOptimize(ctx, sctx, builder.GetOptFlag(), logic)
+	sctx.GetSessionVars().DurationOptimization = time.Since(beginOpt)
 	return finalPlan, names, cost, err
 }
 
