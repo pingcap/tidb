@@ -104,11 +104,11 @@ func (a AccessMode) String() string {
 // RegionStore represents region stores info
 // it will be store as unsafe.Pointer and be load at once
 type RegionStore struct {
-	workTiKVIdx    int32    // point to current work peer in meta.Peers and work store in stores(same idx) for tikv peer
-	workTiFlashIdx int32    // point to current work peer in meta.Peers and work store in stores(same idx) for tiflash peer
-	stores         []*Store // stores in this region
-	storeEpochs    []uint32 // snapshots of store's epoch, need reload when `storeEpochs[curr] != stores[cur].fail`
-	accessIndex    [][]int  // [AccessMode] => idx in stores
+	workTiKVIdx    int32                // point to current work peer in meta.Peers and work store in stores(same idx) for tikv peer
+	workTiFlashIdx int32                // point to current work peer in meta.Peers and work store in stores(same idx) for tiflash peer
+	stores         []*Store             // stores in this region
+	storeEpochs    []uint32             // snapshots of store's epoch, need reload when `storeEpochs[curr] != stores[cur].fail`
+	accessIndex    [NumAccessMode][]int // AccessMode => idx in stores
 }
 
 func (r *RegionStore) accessStore(mode AccessMode, idx int) (int, *Store) {
@@ -122,19 +122,19 @@ func (r *RegionStore) accessStoreNum(mode AccessMode) int {
 
 // clone clones region store struct.
 func (r *RegionStore) clone() *RegionStore {
-	storeEpochs, accessIndex := make([]uint32, len(r.stores)), make([][]int, NumAccessMode)
-	copy(storeEpochs, r.storeEpochs)
-	for i := 0; i < int(NumAccessMode); i++ {
-		accessIndex[i] = make([]int, len(r.accessIndex[i]))
-		copy(accessIndex[i], r.accessIndex[i])
-	}
-	return &RegionStore{
+	storeEpochs := make([]uint32, len(r.stores))
+	rs := &RegionStore{
 		workTiFlashIdx: r.workTiFlashIdx,
 		workTiKVIdx:    r.workTiKVIdx,
 		stores:         r.stores,
 		storeEpochs:    storeEpochs,
-		accessIndex:    accessIndex,
 	}
+	copy(storeEpochs, r.storeEpochs)
+	for i := 0; i < int(NumAccessMode); i++ {
+		rs.accessIndex[i] = make([]int, len(r.accessIndex[i]))
+		copy(rs.accessIndex[i], r.accessIndex[i])
+	}
+	return rs
 }
 
 // return next follower store's index
@@ -184,7 +184,6 @@ func (r *Region) init(c *RegionCache) error {
 		workTiFlashIdx: 0,
 		stores:         make([]*Store, 0, len(r.meta.Peers)),
 		storeEpochs:    make([]uint32, 0, len(r.meta.Peers)),
-		accessIndex:    make([][]int, NumAccessMode),
 	}
 	for _, p := range r.meta.Peers {
 		c.storeMu.RLock()
