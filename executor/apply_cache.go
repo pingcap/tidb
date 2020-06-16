@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"unsafe"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -62,9 +61,6 @@ func newApplyCache(ctx sessionctx.Context) (*applyCache, error) {
 
 // Get gets a cache item according to cache key.
 func (c *applyCache) Get(key applyCacheKey) (*applyCacheValue, error) {
-	if c == nil {
-		return nil, errors.Errorf("The applyCache pointer is nil")
-	}
 	value, hit := c.cache.Get(&key)
 	if !hit {
 		return nil, nil
@@ -75,9 +71,6 @@ func (c *applyCache) Get(key applyCacheKey) (*applyCacheValue, error) {
 
 // Set inserts an item to the cache.
 func (c *applyCache) Set(key *applyCacheKey, value *applyCacheValue) (bool, error) {
-	if c == nil {
-		return false, errors.Errorf("The applyCache pointer is nil")
-	}
 	mem := int64(unsafe.Sizeof(key.Data)) + value.Data.GetMemTracker().BytesConsumed()
 	// When the <key, value> pair's memory consumption is larger than cache's max capacity,
 	// we do not to store the <key, value> pair.
