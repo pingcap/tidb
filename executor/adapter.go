@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/plancodec"
@@ -159,6 +160,8 @@ func (a *recordSet) OnFetchReturned() {
 
 // ExecStmt implements the sqlexec.Statement interface, it builds a planner.Plan to an sqlexec.Statement.
 type ExecStmt struct {
+	// GoCtx stores parent go context.Context for a stmt.
+	GoCtx context.Context
 	// InfoSchema stores a reference to the schema information.
 	InfoSchema infoschema.InfoSchema
 	// Plan stores a reference to the final physical plan.
@@ -831,6 +834,11 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	if len(sessVars.StmtCtx.IndexNames) > 0 {
 		indexNames = strings.Replace(fmt.Sprintf("%v", sessVars.StmtCtx.IndexNames), " ", ",", -1)
 	}
+	var stmtDetail execdetails.StmtExecDetails
+	stmtDetailRaw := a.GoCtx.Value(execdetails.StmtExecDetailKey)
+	if stmtDetailRaw != nil {
+		stmtDetail = *(stmtDetailRaw.(*execdetails.StmtExecDetails))
+	}
 	execDetail := sessVars.StmtCtx.GetExecDetails()
 	copTaskInfo := sessVars.StmtCtx.CopTasksDetails()
 	statsInfos := plannercore.GetStatsInfo(a.Plan)
@@ -859,6 +867,9 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		HasMoreResults: hasMoreResults,
 		PlanFromCache:  sessVars.FoundInPlanCache,
 		RewriteInfo:    sessVars.RewritePhaseInfo,
+		KVTotal:        time.Duration(atomic.LoadInt64(&stmtDetail.WaitKVRespDuration)),
+		PDTotal:        time.Duration(atomic.LoadInt64(&stmtDetail.WaitPDRespDuration)),
+		BackoffTotal:   time.Duration(atomic.LoadInt64(&stmtDetail.BackoffDuration)),
 	}
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {
 		slowItems.PrevStmt = sessVars.PrevStmt.String()

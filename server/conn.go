@@ -69,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -1295,6 +1296,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 }
 
 func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns []stmtctx.SQLWarn, lastStmt bool) error {
+	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
 	if rs != nil {
 		defer terror.Call(rs.Close)

@@ -1310,6 +1310,7 @@ func (s *session) cachedPlanExec(ctx context.Context,
 
 	stmtCtx := s.GetSessionVars().StmtCtx
 	stmt := &executor.ExecStmt{
+		GoCtx:       ctx,
 		InfoSchema:  is,
 		Plan:        execPlan,
 		StmtNode:    execAst,

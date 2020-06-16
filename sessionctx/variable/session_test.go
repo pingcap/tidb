@@ -200,6 +200,9 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 # Prepared: true
 # Plan_from_cache: true
 # Has_more_results: true
+# KV_total: 10
+# PD_total: 11
+# Backoff_total: 12
 # Succ: true
 select * from t;`
 	sql := "select * from t"
@@ -222,6 +225,9 @@ select * from t;`
 		Prepared:       true,
 		PlanFromCache:  true,
 		HasMoreResults: true,
+		KVTotal:        10 * time.Second,
+		PDTotal:        11 * time.Second,
+		BackoffTotal:   12 * time.Second,
 		Succ:           true,
 		RewriteInfo: variable.RewritePhaseInfo{
 			DurationRewrite:            3,

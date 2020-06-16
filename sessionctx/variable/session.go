@@ -1603,6 +1603,12 @@ const (
 	SlowLogPlanSuffix = "')"
 	// SlowLogPrevStmtPrefix is the prefix of Prev_stmt in slow log file.
 	SlowLogPrevStmtPrefix = SlowLogPrevStmt + SlowLogSpaceMarkStr
+	// SlowLogKVTotal is the total time waiting for kv.
+	SlowLogKVTotal = "KV_total"
+	// SlowLogPDTotal is the total time waiting for pd.
+	SlowLogPDTotal = "PD_total"
+	// SlowLogBackoffTotal is the total time doing backoff.
+	SlowLogBackoffTotal = "Backoff_total"
 )
 
 // SlowQueryLogItems is a collection of items that should be included in the
@@ -1630,6 +1636,9 @@ type SlowQueryLogItems struct {
 	Plan           string
 	PlanDigest     string
 	RewriteInfo    RewritePhaseInfo
+	KVTotal        time.Duration
+	PDTotal        time.Duration
+	BackoffTotal   time.Duration
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -1772,6 +1781,9 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	writeSlowLogItem(&buf, SlowLogPrepared, strconv.FormatBool(logItems.Prepared))
 	writeSlowLogItem(&buf, SlowLogPlanFromCache, strconv.FormatBool(logItems.PlanFromCache))
 	writeSlowLogItem(&buf, SlowLogHasMoreResults, strconv.FormatBool(logItems.HasMoreResults))
+	writeSlowLogItem(&buf, SlowLogKVTotal, strconv.FormatFloat(logItems.KVTotal.Seconds(), 'f', -1, 64))
+	writeSlowLogItem(&buf, SlowLogPDTotal, strconv.FormatFloat(logItems.PDTotal.Seconds(), 'f', -1, 64))
+	writeSlowLogItem(&buf, SlowLogBackoffTotal, strconv.FormatFloat(logItems.BackoffTotal.Seconds(), 'f', -1, 64))
 	writeSlowLogItem(&buf, SlowLogSucc, strconv.FormatBool(logItems.Succ))
 	if len(logItems.Plan) != 0 {
 		writeSlowLogItem(&buf, SlowLogPlan, logItems.Plan)
