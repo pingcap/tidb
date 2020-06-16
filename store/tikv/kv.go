@@ -61,7 +61,6 @@ func createEtcdKV(addrs []string, tlsConfig *tls.Config) (*clientv3.Client, erro
 		TLS:                  tlsConfig,
 		DialKeepAliveTime:    time.Second * time.Duration(cfg.TiKVClient.GrpcKeepAliveTime),
 		DialKeepAliveTimeout: time.Second * time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout),
-		PermitWithoutStream:  true,
 	})
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -89,9 +88,8 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 		KeyPath:  security.ClusterSSLKey,
 	}, pd.WithGRPCDialOptions(
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:                time.Duration(tikvConfig.GrpcKeepAliveTime) * time.Second,
-			Timeout:             time.Duration(tikvConfig.GrpcKeepAliveTimeout) * time.Second,
-			PermitWithoutStream: true,
+			Time:    time.Duration(tikvConfig.GrpcKeepAliveTime) * time.Second,
+			Timeout: time.Duration(tikvConfig.GrpcKeepAliveTimeout) * time.Second,
 		}),
 	))
 
