@@ -339,16 +339,6 @@ func (s *testSuite) TestDDL(c *C) {
 	for _, job := range all {
 		c.Assert(job.ID, Greater, lastID)
 		lastID = job.ID
-<<<<<<< HEAD
-=======
-		arg1 := ""
-		job.DecodeArgs(&arg1)
-		if job.ID == historyJob1.ID {
-			c.Assert(*(job.Args[0].(*string)), Equals, historyJob1.Args[0])
-		} else {
-			c.Assert(job.Args, HasLen, 0)
-		}
->>>>>>> f82bd00... ddl: correct the usage of json.Unmarshal in job.DecodeArgs (#17857)
 	}
 
 	// Test for get last N history ddl jobs.
