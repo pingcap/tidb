@@ -153,12 +153,12 @@ func (s *pkgTestSuite) testHashRowContainer(c *C, hashFunc func() hash.Hash64, s
 	rowContainer := newHashRowContainer(sctx, 0, hCtx)
 	tracker := rowContainer.GetMemTracker()
 	tracker.SetLabel(buildSideResultLabel)
+	err = rowContainer.PutChunk(chk0)
+	c.Assert(err, IsNil)
 	if spill {
 		rowContainer.ActionSpill().Action(tracker, tracker)
 		tracker.SetBytesLimit(1)
 	}
-	err = rowContainer.PutChunk(chk0)
-	c.Assert(err, IsNil)
 	err = rowContainer.PutChunk(chk1)
 	c.Assert(err, IsNil)
 

@@ -85,6 +85,11 @@ func (c *RowContainer) Reset() error {
 
 // AlreadySpilled indicates that records have spilled out into disk.
 func (c *RowContainer) AlreadySpilled() bool {
+	return c.recordsInDisk != nil
+}
+
+// AlreadySpilled indicates that records have spilled out into disk.
+func (c *RowContainer) AlreadySpilledSafe() bool {
 	c.m.RLock()
 	defer c.m.RUnlock()
 	return c.recordsInDisk != nil
@@ -205,7 +210,7 @@ type SpillDiskAction struct {
 func (a *SpillDiskAction) Action(t *memory.Tracker, trigger *memory.Tracker) {
 	a.m.Lock()
 	defer a.m.Unlock()
-	if a.c.AlreadySpilled() {
+	if a.c.AlreadySpilledSafe() || a.c.GetMemTracker().BytesConsumed() == 0 {
 		if a.fallbackAction != nil {
 			a.fallbackAction.Action(t, trigger)
 		}

@@ -117,10 +117,10 @@ func (l *List) Add(chk *Chunk) {
 		l.memTracker.Consume(l.chunks[chkIdx].MemoryUsage())
 		l.consumedIdx = chkIdx
 	}
-	l.memTracker.Consume(chk.MemoryUsage())
 	l.consumedIdx++
 	l.chunks = append(l.chunks, chk)
 	l.length += chk.NumRows()
+	l.memTracker.Consume(chk.MemoryUsage())
 }
 
 func (l *List) allocChunk() (chk *Chunk) {

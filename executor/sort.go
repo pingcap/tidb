@@ -137,7 +137,7 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			return err
 		}
 	} else {
-		for !req.IsFull() && e.Idx < len(e.rowChunks.rowPtrs) {
+		for !req.IsFull() && e.Idx < e.partitionList[0].GetLen() {
 			row, err := e.partitionList[0].GetRowById(e.Idx)
 			if err != nil {
 				return err
@@ -218,7 +218,6 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	fields := retTypes(e)
 	e.rowChunks = NewSortedRowContainer(fields, e.maxChunkSize, e.ByItems, e.keyColumns, e.keyCmpFuncs)
-	e.partitionList = append(e.partitionList, e.rowChunks)
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 	e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
 	if config.GetGlobalConfig().OOMUseTmpStorage {
@@ -239,6 +238,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		}
 		if err := e.rowChunks.Add(chk); err != nil {
 			if err.Error() == "The partition is spilled." {
+				e.partitionList = append(e.partitionList, e.rowChunks)
 				e.rowChunks = NewSortedRowContainer(fields, e.maxChunkSize, e.ByItems, e.keyColumns, e.keyCmpFuncs)
 				e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 				e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
@@ -254,6 +254,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	}
 	if e.rowChunks.NumRow() > 0 {
 		e.rowChunks.sort()
+		e.partitionList = append(e.partitionList, e.rowChunks)
 	}
 	return nil
 }
@@ -556,6 +557,9 @@ func (c *SortedRowContainer) keyColumnsLess(i, j int) bool {
 func (c *SortedRowContainer) sort() {
 	c.m.RLock()
 	defer c.m.RUnlock()
+	if c.AlreadySpilled() {
+		return
+	}
 	c.initPointers()
 	sort.Slice(c.rowPtrs, c.keyColumnsLess)
 }
@@ -571,8 +575,8 @@ func (c *SortedRowContainer) sortAndSpillToDisk(needLock bool) (err error) {
 }
 
 func (c *SortedRowContainer) Add(chk *chunk.Chunk) (err error) {
-	c.m.RLock()
-	defer c.m.RUnlock()
+	c.m.Lock()
+	defer c.m.Unlock()
 	if c.RowContainer.AlreadySpilled() {
 		return errors.New("The partition is spilled.")
 	}
@@ -592,6 +596,12 @@ func (c *SortedRowContainer) GetRowById(id int) (chunk.Row, error) {
 	return c.GetRow(ptr)
 }
 
+func (c *SortedRowContainer) GetLen() int {
+	c.m.RLock()
+	defer c.m.RUnlock()
+	return len(c.rowPtrs)
+}
+
 func (c *SortedRowContainer) ActionSpill() *SortAndSpillDiskAction {
 	c.actionSpill = &SortAndSpillDiskAction{c: c}
 	return c.actionSpill
@@ -608,7 +618,7 @@ type SortAndSpillDiskAction struct {
 func (a *SortAndSpillDiskAction) Action(t *memory.Tracker, trigger *memory.Tracker) {
 	a.m.Lock()
 	defer a.m.Unlock()
-	if a.c.AlreadySpilled() {
+	if a.c.AlreadySpilledSafe() || a.c.GetMemTracker().BytesConsumed() == 0 {
 		if a.fallbackAction != nil {
 			a.fallbackAction.Action(t, trigger)
 		}
