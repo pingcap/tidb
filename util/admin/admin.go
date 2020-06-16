@@ -77,7 +77,7 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 		return info, nil
 	}
 
-	tbl, err := t.GetTable(job.SchemaID, job.TableID)
+	tbl, err := t.GetTable(addIdxJob.SchemaID, addIdxJob.TableID)
 	if err != nil {
 		return info, nil
 	}
