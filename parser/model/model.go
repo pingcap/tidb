@@ -80,12 +80,13 @@ const (
 
 // ColumnInfo provides meta data describing of a table column.
 type ColumnInfo struct {
-	ID                 int64       `json:"id"`
-	Name               CIStr       `json:"name"`
-	Offset             int         `json:"offset"`
-	OriginDefaultValue interface{} `json:"origin_default"`
-	DefaultValue       interface{} `json:"default"`
-	DefaultValueBit    []byte      `json:"default_bit"`
+	ID                    int64       `json:"id"`
+	Name                  CIStr       `json:"name"`
+	Offset                int         `json:"offset"`
+	OriginDefaultValue    interface{} `json:"origin_default"`
+	OriginDefaultValueBit []byte      `json:"origin_default_bit"`
+	DefaultValue          interface{} `json:"default"`
+	DefaultValueBit       []byte      `json:"default_bit"`
 	// DefaultIsExpr is indicates the default value string is expr.
 	DefaultIsExpr       bool                `json:"default_is_expr"`
 	GeneratedExprString string              `json:"generated_expr_string"`
@@ -113,6 +114,35 @@ func (c *ColumnInfo) Clone() *ColumnInfo {
 // IsGenerated returns true if the column is generated column.
 func (c *ColumnInfo) IsGenerated() bool {
 	return len(c.GeneratedExprString) != 0
+}
+
+// SetOriginalDefaultValue sets the origin default value.
+// For mysql.TypeBit type, the default value storage format must be a string.
+// Other value such as int must convert to string format first.
+// The mysql.TypeBit type supports the null default value.
+func (c *ColumnInfo) SetOriginDefaultValue(value interface{}) error {
+	c.OriginDefaultValue = value
+	if c.Tp == mysql.TypeBit {
+		if value == nil {
+			return nil
+		}
+		if v, ok := value.(string); ok {
+			c.OriginDefaultValueBit = []byte(v)
+			return nil
+		}
+		return types.ErrInvalidDefault.GenWithStackByArgs(c.Name)
+	}
+	return nil
+}
+
+// GetOriginalDefaultValue gets the origin default value.
+func (c *ColumnInfo) GetOriginDefaultValue() interface{} {
+	if c.Tp == mysql.TypeBit {
+		// If the column type is BIT, both `OriginDefaultValue` and `DefaultValue` of ColumnInfo are corrupted,
+		// because the content before json.Marshal is INCONSISTENT with the content after json.Unmarshal.
+		return string(c.OriginDefaultValueBit)
+	}
+	return c.OriginDefaultValue
 }
 
 // SetDefaultValue sets the default value.
