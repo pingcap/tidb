@@ -19,8 +19,10 @@ import (
 
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/disk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stringutil"
+	"go.uber.org/zap"
 )
 
 // RowContainer provides a place for many rows, so many that we might want to spill them into disk.
@@ -217,6 +219,8 @@ func (a *SpillDiskAction) Action(t *memory.Tracker, trigger *memory.Tracker) {
 		}
 	} else {
 		// TODO: Refine processing for various errors. Return or Panic.
+		logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
+			zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
 		err := a.c.SpillToDisk(a.c.GetMemTracker() != trigger)
 		if err != nil {
 			panic(err)

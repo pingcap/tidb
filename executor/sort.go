@@ -28,8 +28,10 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/disk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stringutil"
+	"go.uber.org/zap"
 )
 
 var rowChunksLabel fmt.Stringer = stringutil.StringerStr("rowChunks")
@@ -634,6 +636,8 @@ func (a *SortAndSpillDiskAction) Action(t *memory.Tracker, trigger *memory.Track
 		}
 	} else {
 		// TODO: Refine processing various errors. Return or Panic.
+		logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
+			zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
 		err := a.c.sortAndSpillToDisk(a.c.GetMemTracker() != trigger)
 		if err != nil {
 			panic(err)
