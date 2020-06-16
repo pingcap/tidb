@@ -251,7 +251,7 @@ func (it *iterator4List) Error() error {
 	return nil
 }
 
-// NewIterator4RowPtr returns a Iterator for RowPtrs.
+// NewIterator4RowPtr returns a Iterator for rowPtrs.
 func NewIterator4RowPtr(li *List, ptrs []RowPtr) Iterator {
 	return &iterator4RowPtr{li: li, ptrs: ptrs}
 }

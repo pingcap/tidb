@@ -159,10 +159,9 @@ func (c *hashRowContainer) matchJoinKey(buildRow, probeRow chunk.Row, probeHCtx 
 }
 
 // alreadySpilled indicates that records have spilled out into disk.
-func (c *hashRowContainer) alreadySpilled() bool { return c.rowContainer.AlreadySpilled() }
-
-// alreadySpilledSafe indicates that records have spilled out into disk. It's thread-safe.
-func (c *hashRowContainer) alreadySpilledSafe() bool { return c.rowContainer.AlreadySpilledSafe() }
+func (c *hashRowContainer) alreadySpilled() bool {
+	return c.rowContainer.AlreadySpilled()
+}
 
 // PutChunk puts a chunk into hashRowContainer and build hash map. It's not thread-safe.
 // key of hash table: hash value of key columns
@@ -254,11 +253,6 @@ func (c *hashRowContainer) GetDiskTracker() *disk.Tracker { return c.rowContaine
 // ActionSpill returns a memory.ActionOnExceed for spilling over to disk.
 func (c *hashRowContainer) ActionSpill() memory.ActionOnExceed {
 	return c.rowContainer.ActionSpill()
-}
-
-// SetReadOnly sets the hashRowContainer's status to read-only.
-func (c *hashRowContainer) SetReadOnly() {
-	c.rowContainer.SetReadOnly()
 }
 
 const (

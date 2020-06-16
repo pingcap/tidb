@@ -14,8 +14,6 @@
 package chunk
 
 import (
-	"sync/atomic"
-
 	"github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
@@ -72,7 +70,7 @@ func (r *rowContainerTestSuite) TestSel(c *check.C) {
 		c.Assert(i, check.Equals, n-1)
 	}
 	checkByIter(NewMultiIterator(NewIterator4RowContainer(rc), NewIterator4Chunk(chk)))
-	err := rc.spillToDisk()
+	err := rc.SpillToDisk(false)
 	c.Assert(err, check.IsNil)
 	c.Assert(rc.AlreadySpilled(), check.Equals, true)
 	checkByIter(NewMultiIterator(NewIterator4RowContainer(rc), NewIterator4Chunk(chk)))
@@ -96,19 +94,16 @@ func (r *rowContainerTestSuite) TestSpillAction(c *check.C) {
 	tracker.SetBytesLimit(chk.MemoryUsage() + 1)
 	tracker.FallbackOldAndSetNewAction(rc.ActionSpill())
 
-	c.Assert(atomic.LoadUint32(&rc.spilled), check.Equals, uint32(0))
-	c.Assert(atomic.LoadUint32(&rc.exceeded), check.Equals, uint32(0))
+	c.Assert(rc.AlreadySpilled(), check.Equals, false)
 	err = rc.Add(chk)
 	c.Assert(err, check.IsNil)
-	c.Assert(atomic.LoadUint32(&rc.spilled), check.Equals, uint32(0))
-	c.Assert(atomic.LoadUint32(&rc.exceeded), check.Equals, uint32(0))
+	c.Assert(rc.AlreadySpilled(), check.Equals, false)
 	c.Assert(rc.GetMemTracker().BytesConsumed(), check.Equals, chk.MemoryUsage())
 	// The following line is erroneous, since chk is already handled by rc, Add it again causes duplicated memory usage account.
 	// It is only for test of spill, do not double-add a chunk elsewhere.
 	err = rc.Add(chk)
 	c.Assert(err, check.IsNil)
-	c.Assert(atomic.LoadUint32(&rc.exceeded), check.Equals, uint32(1))
-	c.Assert(atomic.LoadUint32(&rc.spilled), check.Equals, uint32(1))
+	c.Assert(rc.AlreadySpilled(), check.Equals, true)
 	err = rc.Reset()
 	c.Assert(err, check.IsNil)
 }

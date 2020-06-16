@@ -220,16 +220,15 @@ func (t *Tracker) Consume(bytes int64) {
 			break
 		}
 	}
-	if rootExceed != nil {
-		if atomic.LoadUint32(&rootExceed.actionMu.actionDoing) == 1 {
+	if bytes > 0 && rootExceed != nil {
+		if !atomic.CompareAndSwapUint32(&rootExceed.actionMu.actionDoing, 0, 1) {
 			return
 		}
 		rootExceed.actionMu.Lock()
 		defer rootExceed.actionMu.Unlock()
-		atomic.StoreUint32(&rootExceed.actionMu.actionDoing, 1)
 		defer atomic.StoreUint32(&rootExceed.actionMu.actionDoing, 0)
 		if rootExceed.actionMu.actionOnExceed != nil {
-			rootExceed.actionMu.actionOnExceed.Action(rootExceed)
+			rootExceed.actionMu.actionOnExceed.Action(rootExceed, t)
 		}
 	}
 }

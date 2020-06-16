@@ -16,14 +16,11 @@ package chunk
 import (
 	"errors"
 	"sync"
-	"sync/atomic"
 
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/disk"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stringutil"
-	"go.uber.org/zap"
 )
 
 // RowContainer provides a place for many rows, so many that we might want to spill them into disk.
@@ -32,28 +29,16 @@ type RowContainer struct {
 	records *List
 	// recordsInDisk stores the chunks in disk.
 	recordsInDisk *ListInDisk
+	// m guarantees spill and get operator for rowContainer is mutually.
+	m sync.RWMutex
 
 	fieldType []*types.FieldType
 	chunkSize int
 	numRow    int
 
-	// exceeded indicates that records have exceeded memQuota during
-	// this PutChunk and we should spill now.
-	// It's for concurrency usage, so access it with atomic.
-	exceeded uint32
-	// spilled indicates that records have spilled out into disk.
-	// It's for concurrency usage, so access it with atomic.
-	spilled uint32
-	// readOnly indicates that the rowContainer is read-only and
-	// can spill to disk asynchronously.
-	readOnly uint32
-	// m guarantees spill and get operator for rowContainer is mutually.
-	m sync.RWMutex
-
-	memTracker         *memory.Tracker
-	diskTracker        *disk.Tracker
-	actionSpill        *SpillDiskAction
-	onExceededCallback func(rowContainer *RowContainer)
+	memTracker  *memory.Tracker
+	diskTracker *disk.Tracker
+	actionSpill *SpillDiskAction
 }
 
 // NewRowContainer creates a new RowContainer in memory.
@@ -65,11 +50,10 @@ func NewRowContainer(fieldType []*types.FieldType, chunkSize int) *RowContainer 
 	return rc
 }
 
-func (c *RowContainer) spillToDisk() (err error) {
-	c.m.Lock()
-	defer c.m.Unlock()
-	if atomic.LoadUint32(&c.spilled) == 1 {
-		return nil
+func (c *RowContainer) SpillToDisk(needLock bool) (err error) {
+	if needLock {
+		c.m.Lock()
+		defer c.m.Unlock()
 	}
 	N := c.records.NumChunks()
 	c.recordsInDisk = NewListInDisk(c.records.FieldTypes())
@@ -82,7 +66,6 @@ func (c *RowContainer) spillToDisk() (err error) {
 		}
 	}
 	c.records.Clear()
-	atomic.StoreUint32(&c.spilled, 1)
 	return
 }
 
@@ -94,9 +77,6 @@ func (c *RowContainer) Reset() error {
 		if err != nil {
 			return err
 		}
-		atomic.StoreUint32(&c.exceeded, 0)
-		atomic.StoreUint32(&c.spilled, 0)
-		c.actionSpill.ResetOnce()
 	} else {
 		c.records.Reset()
 	}
@@ -104,14 +84,10 @@ func (c *RowContainer) Reset() error {
 }
 
 // AlreadySpilled indicates that records have spilled out into disk.
-func (c *RowContainer) AlreadySpilled() bool { return c.recordsInDisk != nil }
-
-// AlreadySpilledSafe indicates that records have spilled out into disk. It's thread-safe.
-func (c *RowContainer) AlreadySpilledSafe() bool { return atomic.LoadUint32(&c.spilled) == 1 }
-
-// SetReadOnly sets the rowContainer's status to read-only.
-func (c *RowContainer) SetReadOnly() {
-	atomic.StoreUint32(&c.readOnly, 1)
+func (c *RowContainer) AlreadySpilled() bool {
+	c.m.RLock()
+	defer c.m.RUnlock()
+	return c.recordsInDisk != nil
 }
 
 // NumRow returns the number of rows in the container
@@ -146,19 +122,12 @@ func (c *RowContainer) NumChunks() int {
 
 // Add appends a chunk into the RowContainer.
 func (c *RowContainer) Add(chk *Chunk) (err error) {
+	c.m.RLock()
+	defer c.m.RUnlock()
 	if c.AlreadySpilled() {
 		err = c.recordsInDisk.Add(chk)
 	} else {
 		c.records.Add(chk)
-		if atomic.LoadUint32(&c.exceeded) != 0 {
-			if c.onExceededCallback != nil {
-				c.onExceededCallback(c)
-			}
-			err = c.spillToDisk()
-			if err != nil {
-				return err
-			}
-		}
 	}
 	return
 }
@@ -222,16 +191,10 @@ func (c *RowContainer) ActionSpill() *SpillDiskAction {
 	return c.actionSpill
 }
 
-// SetOnExceededCallback set a callback function for exceeded memory limit.
-func (c *RowContainer) SetOnExceededCallback(f func(rowContainer *RowContainer)) {
-	c.onExceededCallback = f
-}
-
 // SpillDiskAction implements memory.ActionOnExceed for chunk.List. If
 // the memory quota of a query is exceeded, SpillDiskAction.Action is
 // triggered.
 type SpillDiskAction struct {
-	once           sync.Once
 	c              *RowContainer
 	fallbackAction memory.ActionOnExceed
 	m              sync.Mutex
@@ -239,26 +202,18 @@ type SpillDiskAction struct {
 
 // Action sends a signal to trigger spillToDisk method of RowContainer
 // and if it is already triggered before, call its fallbackAction.
-func (a *SpillDiskAction) Action(t *memory.Tracker) {
+func (a *SpillDiskAction) Action(t *memory.Tracker, trigger *memory.Tracker) {
 	a.m.Lock()
 	defer a.m.Unlock()
-	if a.c.AlreadySpilledSafe() {
+	if a.c.AlreadySpilled() {
 		if a.fallbackAction != nil {
-			a.fallbackAction.Action(t)
+			a.fallbackAction.Action(t, trigger)
 		}
-	}
-	a.once.Do(func() {
-		atomic.StoreUint32(&a.c.exceeded, 1)
-		logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
-			zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
-	})
-	if atomic.LoadUint32(&a.c.readOnly) == 1 {
-		err := a.c.spillToDisk()
+	} else {
+		// TODO: Refine processing for various errors. Return or Panic.
+		err := a.c.SpillToDisk(a.c.GetMemTracker() != trigger)
 		if err != nil {
-			// Spill to disk failed, try the next oom-action.
-			if a.fallbackAction != nil {
-				a.fallbackAction.Action(t)
-			}
+			panic(err)
 		}
 	}
 }
@@ -271,17 +226,9 @@ func (a *SpillDiskAction) SetFallback(fallback memory.ActionOnExceed) {
 // SetLogHook sets the hook, it does nothing just to form the memory.ActionOnExceed interface.
 func (a *SpillDiskAction) SetLogHook(hook func(uint64)) {}
 
-// ResetOnce resets the spill action so that it can be triggered next time.
-func (a *SpillDiskAction) ResetOnce() {
-	a.m.Lock()
-	defer a.m.Unlock()
-	a.once = sync.Once{}
-}
-
 // ResetOnceAndSetRowContainer resets the spill action and sets the RowContainer for the SpillDiskAction.
-func (a *SpillDiskAction) ResetOnceAndSetRowContainer(c *RowContainer) {
+func (a *SpillDiskAction) ResetRowContainer(c *RowContainer) {
 	a.m.Lock()
 	defer a.m.Unlock()
-	a.once = sync.Once{}
 	a.c = c
 }

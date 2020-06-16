@@ -28,7 +28,7 @@ import (
 type ActionOnExceed interface {
 	// Action will be called when memory usage exceeds memory quota by the
 	// corresponding Tracker.
-	Action(t *Tracker)
+	Action(t *Tracker, trigger *Tracker)
 	// SetLogHook binds a log hook which will be triggered and log an detailed
 	// message for the out-of-memory sql.
 	SetLogHook(hook func(uint64))
@@ -51,7 +51,7 @@ func (a *LogOnExceed) SetLogHook(hook func(uint64)) {
 }
 
 // Action logs a warning only once when memory usage exceeds memory quota.
-func (a *LogOnExceed) Action(t *Tracker) {
+func (a *LogOnExceed) Action(t *Tracker, trigger *Tracker) {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
 	if !a.acted {
@@ -82,7 +82,7 @@ func (a *PanicOnExceed) SetLogHook(hook func(uint64)) {
 }
 
 // Action panics when memory usage exceeds memory quota.
-func (a *PanicOnExceed) Action(t *Tracker) {
+func (a *PanicOnExceed) Action(t *Tracker, trigger *Tracker) {
 	a.mutex.Lock()
 	if a.acted {
 		a.mutex.Unlock()

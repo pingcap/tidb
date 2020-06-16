@@ -154,7 +154,7 @@ func (s *pkgTestSuite) testHashRowContainer(c *C, hashFunc func() hash.Hash64, s
 	tracker := rowContainer.GetMemTracker()
 	tracker.SetLabel(buildSideResultLabel)
 	if spill {
-		rowContainer.ActionSpill().Action(tracker)
+		rowContainer.ActionSpill().Action(tracker, tracker)
 		tracker.SetBytesLimit(1)
 	}
 	err = rowContainer.PutChunk(chk0)
@@ -163,7 +163,6 @@ func (s *pkgTestSuite) testHashRowContainer(c *C, hashFunc func() hash.Hash64, s
 	c.Assert(err, IsNil)
 
 	c.Assert(rowContainer.alreadySpilled(), Equals, spill)
-	c.Assert(rowContainer.alreadySpilledSafe(), Equals, spill)
 	c.Assert(rowContainer.GetMemTracker().BytesConsumed() == 0, Equals, spill)
 	c.Assert(rowContainer.GetMemTracker().BytesConsumed() > 0, Equals, !spill)
 	if rowContainer.alreadySpilled() {
