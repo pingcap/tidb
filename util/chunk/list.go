@@ -184,7 +184,7 @@ func (l *List) preAlloc4Row(row Row) (ptr RowPtr) {
 	chk := l.chunks[chkIdx]
 	rowIdx := chk.preAlloc(row)
 	l.length++
-	return RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)}
+	return RowPtr{ChkIdx: uint32(chkIdx), RowIdx: rowIdx}
 }
 
 // Insert inserts `row` on the position specified by `ptr`.

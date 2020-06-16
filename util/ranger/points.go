@@ -405,7 +405,7 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]point, bool) {
 }
 
 func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []point {
-	_, collation, _ := expr.CharsetAndCollation(expr.GetCtx())
+	_, collation := expr.CharsetAndCollation(expr.GetCtx())
 	if !collate.CompatibleCollate(expr.GetArgs()[0].GetType().Collate, collation) {
 		return fullRange
 	}

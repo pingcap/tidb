@@ -52,7 +52,7 @@ func (s *testMockTiKVSuite) SetUpTest(c *C) {
 }
 
 // PutMutations is exported for testing.
-var PutMutations func(kvpairs ...string) []*kvrpcpb.Mutation = putMutations
+var PutMutations = putMutations
 
 func putMutations(kvpairs ...string) []*kvrpcpb.Mutation {
 	var mutations []*kvrpcpb.Mutation
@@ -695,12 +695,18 @@ func (s *testMVCCLevelDB) TestCheckTxnStatus(c *C) {
 	c.Assert(commitTS, Equals, uint64(0))
 	c.Assert(action, Equals, kvrpcpb.Action_MinCommitTSPushed)
 
+	// MaxUint64 as callerStartTS shouldn't update minCommitTS but return Action_MinCommitTSPushed.
+	ttl, commitTS, action, err = s.store.CheckTxnStatus([]byte("pk"), startTS, math.MaxUint64, 666, false)
+	c.Assert(err, IsNil)
+	c.Assert(ttl, Equals, uint64(666))
+	c.Assert(commitTS, Equals, uint64(0))
+	c.Assert(action, Equals, kvrpcpb.Action_MinCommitTSPushed)
 	s.mustCommitOK(c, [][]byte{[]byte("pk")}, startTS, startTS+101)
 
 	ttl, commitTS, _, err = s.store.CheckTxnStatus([]byte("pk"), startTS, 0, 666, false)
 	c.Assert(err, IsNil)
 	c.Assert(ttl, Equals, uint64(0))
-	c.Assert(commitTS, Equals, uint64(startTS+101))
+	c.Assert(commitTS, Equals, startTS+101)
 
 	s.mustPrewriteWithTTLOK(c, putMutations("pk1", "val"), "pk1", startTS, 666)
 	s.mustRollbackOK(c, [][]byte{[]byte("pk1")}, startTS)

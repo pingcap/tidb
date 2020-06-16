@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
@@ -46,8 +45,8 @@ import (
 )
 
 var (
-	transactionDurationInternalRollback = metrics.TransactionDuration.WithLabelValues(metrics.LblInternal, metrics.LblRollback)
-	transactionDurationGeneralRollback  = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, metrics.LblRollback)
+	transactionDurationPessimisticRollback = metrics.TransactionDuration.WithLabelValues(metrics.LblPessimistic, metrics.LblRollback)
+	transactionDurationOptimisticRollback  = metrics.TransactionDuration.WithLabelValues(metrics.LblOptimistic, metrics.LblRollback)
 )
 
 // SimpleExec represents simple statement executor.
@@ -529,9 +528,16 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 	// The server sets this variable whenever the default database changes.
 	// See http://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_character_set_database
 	sessionVars := e.ctx.GetSessionVars()
-	terror.Log(sessionVars.SetSystemVar(variable.CharsetDatabase, dbinfo.Charset))
-	terror.Log(sessionVars.SetSystemVar(variable.CollationDatabase, dbinfo.Collate))
-	return nil
+	err := sessionVars.SetSystemVar(variable.CharsetDatabase, dbinfo.Charset)
+	if err != nil {
+		return err
+	}
+	dbCollate := dbinfo.Collate
+	if dbCollate == "" {
+		// Since we have checked the charset, the dbCollate here shouldn't be "".
+		dbCollate = getDefaultCollate(dbinfo.Charset)
+	}
+	return sessionVars.SetSystemVar(variable.CollationDatabase, dbCollate)
 }
 
 func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
@@ -643,10 +649,10 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	}
 	if txn.Valid() {
 		duration := time.Since(sessVars.TxnCtx.CreateTime).Seconds()
-		if sessVars.InRestrictedSQL {
-			transactionDurationInternalRollback.Observe(duration)
+		if sessVars.TxnCtx.IsPessimistic {
+			transactionDurationPessimisticRollback.Observe(duration)
 		} else {
-			transactionDurationGeneralRollback.Observe(duration)
+			transactionDurationOptimisticRollback.Observe(duration)
 		}
 		sessVars.TxnCtx.ClearDelta()
 		return txn.Rollback()
@@ -786,13 +792,9 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 			failedUsers = append(failedUsers, user)
 			continue
 		}
-		pwd := ""
-		if spec.AuthOpt != nil {
-			if spec.AuthOpt.ByAuthString {
-				pwd = auth.EncodePassword(spec.AuthOpt.AuthString)
-			} else {
-				pwd = auth.EncodePassword(spec.AuthOpt.HashString)
-			}
+		pwd, ok := spec.EncodedPassword()
+		if !ok {
+			return errors.Trace(ErrPasswordFormat)
 		}
 		sql := fmt.Sprintf(`UPDATE %s.%s SET authentication_string = '%s' WHERE Host = '%s' and User = '%s';`,
 			mysql.SystemDB, mysql.UserTable, pwd, spec.User.Hostname, spec.User.Username)

@@ -18,6 +18,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/stringutil"
 )
 
 // Key is the interface that every key in LRU Cache should implement.
@@ -33,6 +34,20 @@ type Value interface {
 type cacheEntry struct {
 	key   Key
 	value Value
+}
+
+var (
+	// GlobalLRUMemUsageTracker tracks all the memory usage of SimpleLRUCache
+	GlobalLRUMemUsageTracker *memory.Tracker
+)
+
+const (
+	// ProfileName is the function name in heap profile
+	ProfileName = "github.com/pingcap/tidb/util/kvcache.(*SimpleLRUCache).Put"
+)
+
+func init() {
+	GlobalLRUMemUsageTracker = memory.NewTracker(stringutil.StringerStr("GlobalSimpleLRUCache"), -1)
 }
 
 // SimpleLRUCache is a simple least recently used cache, not thread-safe, use it carefully.
@@ -89,7 +104,6 @@ func (l *SimpleLRUCache) Put(key Key, value Value) {
 	element = l.cache.PushFront(newCacheEntry)
 	l.elements[hash] = element
 	l.size++
-
 	// Getting used memory is expensive and can be avoided by setting quota to 0.
 	if l.quota == 0 {
 		if l.size > l.capacity {

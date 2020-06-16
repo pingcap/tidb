@@ -46,6 +46,7 @@ import (
 	"github.com/soheilhy/cmux"
 	"github.com/tiancaiamao/appdash/traceapp"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/channelz/service"
 	static "sourcegraph.com/sourcegraph/appdash-data"
 )
 
@@ -305,6 +306,7 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 
 	s.statusServer = &http.Server{Addr: s.statusAddr, Handler: CorsHandler{handler: serverMux, cfg: s.cfg}}
 	s.grpcServer = NewRPCServer(s.cfg, s.dom, s)
+	service.RegisterChannelzServiceToServer(s.grpcServer)
 
 	go util.WithRecovery(func() {
 		err := s.grpcServer.Serve(grpcL)

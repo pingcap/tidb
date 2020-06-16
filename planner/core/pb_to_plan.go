@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tipb/go-tipb"
@@ -137,13 +138,13 @@ func (b *PBPlanBuilder) pbToSelection(e *tipb.Executor) (PhysicalPlan, error) {
 func (b *PBPlanBuilder) pbToTopN(e *tipb.Executor) (PhysicalPlan, error) {
 	topN := e.TopN
 	sc := b.sctx.GetSessionVars().StmtCtx
-	byItems := make([]*ByItems, 0, len(topN.OrderBy))
+	byItems := make([]*util.ByItems, 0, len(topN.OrderBy))
 	for _, item := range topN.OrderBy {
 		expr, err := expression.PBToExpr(item.Expr, b.tps, sc)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		byItems = append(byItems, &ByItems{Expr: expr, Desc: item.Desc})
+		byItems = append(byItems, &util.ByItems{Expr: expr, Desc: item.Desc})
 	}
 	p := PhysicalTopN{
 		ByItems: byItems,

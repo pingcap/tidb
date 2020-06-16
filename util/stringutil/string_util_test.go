@@ -144,8 +144,8 @@ func (s *testStringUtilSuite) TestCompileLike2Regexp(c *C) {
 		{`\_a`, `_a`},
 		{`\\_a`, `\.a`},
 		{`\a\b`, `\a\b`},
-		{`%%_`, `.*`},
-		{`%_%_aA`, ".*aA"},
+		{`%%_`, `.*.`},
+		{`%_%_aA`, ".*..*.aA"},
 	}
 	for _, v := range tbl {
 		result := CompileLike2Regexp(v.pattern)

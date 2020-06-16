@@ -83,7 +83,7 @@ func getValidPrefix(lower, upper string) string {
 			randCh := uint8(rand.Intn(int(upper[i]-lower[i]))) + lower[i]
 			newBytes := make([]byte, i, i+1)
 			copy(newBytes, lower[:i])
-			newBytes = append(newBytes, byte(randCh))
+			newBytes = append(newBytes, randCh)
 			return string(newBytes)
 		}
 	}

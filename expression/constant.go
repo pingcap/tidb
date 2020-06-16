@@ -24,29 +24,31 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 )
 
-var (
-	// One stands for a number 1.
-	One = &Constant{
+// NewOne stands for a number 1.
+func NewOne() *Constant {
+	return &Constant{
 		Value:   types.NewDatum(1),
 		RetType: types.NewFieldType(mysql.TypeTiny),
 	}
+}
 
-	// Zero stands for a number 0.
-	Zero = &Constant{
+// NewZero stands for a number 0.
+func NewZero() *Constant {
+	return &Constant{
 		Value:   types.NewDatum(0),
 		RetType: types.NewFieldType(mysql.TypeTiny),
 	}
+}
 
-	// Null stands for null constant.
-	Null = &Constant{
+// NewNull stands for null constant.
+func NewNull() *Constant {
+	return &Constant{
 		Value:   types.NewDatum(nil),
 		RetType: types.NewFieldType(mysql.TypeTiny),
 	}
-)
+}
 
 // Constant stands for a constant value.
 type Constant struct {
@@ -82,12 +84,7 @@ func (c *Constant) String() string {
 		dt := c.ParamMarker.GetUserVar()
 		c.Value.SetValue(dt.GetValue(), c.RetType)
 	} else if c.DeferredExpr != nil {
-		dt, err := c.Eval(chunk.Row{})
-		if err != nil {
-			logutil.BgLogger().Error("eval constant failed", zap.Error(err))
-			return ""
-		}
-		c.Value.SetValue(dt.GetValue(), c.RetType)
+		return c.DeferredExpr.String()
 	}
 	return fmt.Sprintf("%v", c.Value.GetValue())
 }
@@ -99,20 +96,17 @@ func (c *Constant) MarshalJSON() ([]byte, error) {
 
 // Clone implements Expression interface.
 func (c *Constant) Clone() Expression {
-	if c.DeferredExpr != nil || c.ParamMarker != nil {
-		con := *c
-		return &con
-	}
-	return c
+	con := *c
+	return &con
 }
 
 // GetType implements Expression interface.
 func (c *Constant) GetType() *types.FieldType {
-	if c.ParamMarker != nil {
+	if p := c.ParamMarker; p != nil && !p.ctx.GetSessionVars().StmtCtx.InExplainStmt {
 		// GetType() may be called in multi-threaded context, e.g, in building inner executors of IndexJoin,
 		// so it should avoid data race. We achieve this by returning different FieldType pointer for each call.
 		tp := types.NewFieldType(mysql.TypeUnspecified)
-		dt := c.ParamMarker.GetUserVar()
+		dt := p.GetUserVar()
 		types.DefaultParamTypeForValue(dt.GetValue(), tp)
 		return tp
 	}
@@ -175,13 +169,18 @@ func (c *Constant) VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, resul
 	return c.DeferredExpr.VecEvalJSON(ctx, input, result)
 }
 
-func (c *Constant) getLazyDatum() (dt types.Datum, isLazy bool, err error) {
-	if c.ParamMarker != nil {
-		dt = c.ParamMarker.GetUserVar()
+func (c *Constant) getLazyDatum(row chunk.Row) (dt types.Datum, isLazy bool, err error) {
+	if p := c.ParamMarker; p != nil {
+		if p.ctx.GetSessionVars().StmtCtx.InExplainStmt {
+			// Since `ParamMarker` is not nil only in prepare/execute context, the query must be `explain for connection` when coming here.
+			// The PreparedParams may have been reset already, to avoid panic, we just use the pre-evaluated datum for this constant.
+			return dt, false, nil
+		}
+		dt = p.GetUserVar()
 		isLazy = true
 		return
 	} else if c.DeferredExpr != nil {
-		dt, err = c.DeferredExpr.Eval(chunk.Row{})
+		dt, err = c.DeferredExpr.Eval(row)
 		isLazy = true
 		return
 	}
@@ -189,8 +188,8 @@ func (c *Constant) getLazyDatum() (dt types.Datum, isLazy bool, err error) {
 }
 
 // Eval implements Expression interface.
-func (c *Constant) Eval(_ chunk.Row) (types.Datum, error) {
-	if dt, lazy, err := c.getLazyDatum(); lazy {
+func (c *Constant) Eval(row chunk.Row) (types.Datum, error) {
+	if dt, lazy, err := c.getLazyDatum(row); lazy {
 		if err != nil {
 			return c.Value, err
 		}
@@ -214,8 +213,8 @@ func (c *Constant) Eval(_ chunk.Row) (types.Datum, error) {
 }
 
 // EvalInt returns int representation of Constant.
-func (c *Constant) EvalInt(ctx sessionctx.Context, _ chunk.Row) (int64, bool, error) {
-	dt, lazy, err := c.getLazyDatum()
+func (c *Constant) EvalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+	dt, lazy, err := c.getLazyDatum(row)
 	if err != nil {
 		return 0, false, err
 	}
@@ -235,8 +234,8 @@ func (c *Constant) EvalInt(ctx sessionctx.Context, _ chunk.Row) (int64, bool, er
 }
 
 // EvalReal returns real representation of Constant.
-func (c *Constant) EvalReal(ctx sessionctx.Context, _ chunk.Row) (float64, bool, error) {
-	dt, lazy, err := c.getLazyDatum()
+func (c *Constant) EvalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
+	dt, lazy, err := c.getLazyDatum(row)
 	if err != nil {
 		return 0, false, err
 	}
@@ -254,8 +253,8 @@ func (c *Constant) EvalReal(ctx sessionctx.Context, _ chunk.Row) (float64, bool,
 }
 
 // EvalString returns string representation of Constant.
-func (c *Constant) EvalString(ctx sessionctx.Context, _ chunk.Row) (string, bool, error) {
-	dt, lazy, err := c.getLazyDatum()
+func (c *Constant) EvalString(ctx sessionctx.Context, row chunk.Row) (string, bool, error) {
+	dt, lazy, err := c.getLazyDatum(row)
 	if err != nil {
 		return "", false, err
 	}
@@ -270,8 +269,8 @@ func (c *Constant) EvalString(ctx sessionctx.Context, _ chunk.Row) (string, bool
 }
 
 // EvalDecimal returns decimal representation of Constant.
-func (c *Constant) EvalDecimal(ctx sessionctx.Context, _ chunk.Row) (*types.MyDecimal, bool, error) {
-	dt, lazy, err := c.getLazyDatum()
+func (c *Constant) EvalDecimal(ctx sessionctx.Context, row chunk.Row) (*types.MyDecimal, bool, error) {
+	dt, lazy, err := c.getLazyDatum(row)
 	if err != nil {
 		return nil, false, err
 	}
@@ -286,8 +285,8 @@ func (c *Constant) EvalDecimal(ctx sessionctx.Context, _ chunk.Row) (*types.MyDe
 }
 
 // EvalTime returns DATE/DATETIME/TIMESTAMP representation of Constant.
-func (c *Constant) EvalTime(ctx sessionctx.Context, _ chunk.Row) (val types.Time, isNull bool, err error) {
-	dt, lazy, err := c.getLazyDatum()
+func (c *Constant) EvalTime(ctx sessionctx.Context, row chunk.Row) (val types.Time, isNull bool, err error) {
+	dt, lazy, err := c.getLazyDatum(row)
 	if err != nil {
 		return types.ZeroTime, false, err
 	}
@@ -301,8 +300,8 @@ func (c *Constant) EvalTime(ctx sessionctx.Context, _ chunk.Row) (val types.Time
 }
 
 // EvalDuration returns Duration representation of Constant.
-func (c *Constant) EvalDuration(ctx sessionctx.Context, _ chunk.Row) (val types.Duration, isNull bool, err error) {
-	dt, lazy, err := c.getLazyDatum()
+func (c *Constant) EvalDuration(ctx sessionctx.Context, row chunk.Row) (val types.Duration, isNull bool, err error) {
+	dt, lazy, err := c.getLazyDatum(row)
 	if err != nil {
 		return types.Duration{}, false, err
 	}
@@ -316,8 +315,8 @@ func (c *Constant) EvalDuration(ctx sessionctx.Context, _ chunk.Row) (val types.
 }
 
 // EvalJSON returns JSON representation of Constant.
-func (c *Constant) EvalJSON(ctx sessionctx.Context, _ chunk.Row) (json.BinaryJSON, bool, error) {
-	dt, lazy, err := c.getLazyDatum()
+func (c *Constant) EvalJSON(ctx sessionctx.Context, row chunk.Row) (json.BinaryJSON, bool, error) {
+	dt, lazy, err := c.getLazyDatum(row)
 	if err != nil {
 		return json.BinaryJSON{}, false, err
 	}

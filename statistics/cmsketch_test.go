@@ -100,7 +100,7 @@ func averageAbsoluteError(cms *CMSketch, mp map[int64]uint32) (uint64, error) {
 		} else {
 			diff = estimate - uint64(count)
 		}
-		total += uint64(diff)
+		total += diff
 	}
 	return total / uint64(len(mp)), nil
 }

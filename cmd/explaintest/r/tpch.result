@@ -119,7 +119,7 @@ order by
 l_returnflag,
 l_linestatus;
 id	estRows	task	access object	operator info
-Sort_6	2.94	root		tpch.lineitem.l_returnflag:asc, tpch.lineitem.l_linestatus:asc
+Sort_6	2.94	root		tpch.lineitem.l_returnflag, tpch.lineitem.l_linestatus
 └─Projection_8	2.94	root		tpch.lineitem.l_returnflag, tpch.lineitem.l_linestatus, Column#18, Column#19, Column#20, Column#21, Column#22, Column#23, Column#24, Column#25
   └─HashAgg_14	2.94	root		group by:tpch.lineitem.l_linestatus, tpch.lineitem.l_returnflag, funcs:sum(Column#26)->Column#18, funcs:sum(Column#27)->Column#19, funcs:sum(Column#28)->Column#20, funcs:sum(Column#29)->Column#21, funcs:avg(Column#30, Column#31)->Column#22, funcs:avg(Column#32, Column#33)->Column#23, funcs:avg(Column#34, Column#35)->Column#24, funcs:count(Column#36)->Column#25, funcs:firstrow(tpch.lineitem.l_returnflag)->tpch.lineitem.l_returnflag, funcs:firstrow(tpch.lineitem.l_linestatus)->tpch.lineitem.l_linestatus
     └─TableReader_15	2.94	root		data:HashAgg_9
@@ -183,7 +183,7 @@ p_partkey
 limit 100;
 id	estRows	task	access object	operator info
 Projection_37	100.00	root		tpch.supplier.s_acctbal, tpch.supplier.s_name, tpch.nation.n_name, tpch.part.p_partkey, tpch.part.p_mfgr, tpch.supplier.s_address, tpch.supplier.s_phone, tpch.supplier.s_comment
-└─TopN_40	100.00	root		tpch.supplier.s_acctbal:desc, tpch.nation.n_name:asc, tpch.supplier.s_name:asc, tpch.part.p_partkey:asc, offset:0, count:100
+└─TopN_40	100.00	root		tpch.supplier.s_acctbal:desc, tpch.nation.n_name, tpch.supplier.s_name, tpch.part.p_partkey, offset:0, count:100
   └─HashJoin_46	155496.00	root		inner join, equal:[eq(tpch.part.p_partkey, tpch.partsupp.ps_partkey) eq(tpch.partsupp.ps_supplycost, Column#50)]
     ├─HashJoin_60(Build)	155496.00	root		inner join, equal:[eq(tpch.partsupp.ps_partkey, tpch.part.p_partkey)]
     │ ├─TableReader_90(Build)	155496.00	root		data:Selection_89
@@ -250,7 +250,7 @@ o_orderdate
 limit 10;
 id	estRows	task	access object	operator info
 Projection_14	10.00	root		tpch.lineitem.l_orderkey, Column#35, tpch.orders.o_orderdate, tpch.orders.o_shippriority
-└─TopN_17	10.00	root		Column#35:desc, tpch.orders.o_orderdate:asc, offset:0, count:10
+└─TopN_17	10.00	root		Column#35:desc, tpch.orders.o_orderdate, offset:0, count:10
   └─HashAgg_23	40252367.98	root		group by:Column#48, Column#49, Column#50, funcs:sum(Column#44)->Column#35, funcs:firstrow(Column#45)->tpch.orders.o_orderdate, funcs:firstrow(Column#46)->tpch.orders.o_shippriority, funcs:firstrow(Column#47)->tpch.lineitem.l_orderkey
     └─Projection_81	91515927.49	root		mul(tpch.lineitem.l_extendedprice, minus(1, tpch.lineitem.l_discount))->Column#44, tpch.orders.o_orderdate, tpch.orders.o_shippriority, tpch.lineitem.l_orderkey, tpch.lineitem.l_orderkey, tpch.orders.o_orderdate, tpch.orders.o_shippriority
       └─HashJoin_40	91515927.49	root		inner join, equal:[eq(tpch.orders.o_orderkey, tpch.lineitem.l_orderkey)]
@@ -294,7 +294,7 @@ o_orderpriority
 order by
 o_orderpriority;
 id	estRows	task	access object	operator info
-Sort_10	1.00	root		tpch.orders.o_orderpriority:asc
+Sort_10	1.00	root		tpch.orders.o_orderpriority
 └─Projection_12	1.00	root		tpch.orders.o_orderpriority, Column#27
   └─HashAgg_15	1.00	root		group by:tpch.orders.o_orderpriority, funcs:count(1)->Column#27, funcs:firstrow(tpch.orders.o_orderpriority)->tpch.orders.o_orderpriority
     └─IndexHashJoin_30	2340750.00	root		semi join, inner:IndexLookUp_20, outer key:tpch.orders.o_orderkey, inner key:tpch.lineitem.l_orderkey
@@ -443,7 +443,7 @@ supp_nation,
 cust_nation,
 l_year;
 id	estRows	task	access object	operator info
-Sort_22	769.96	root		tpch.nation.n_name:asc, tpch.nation.n_name:asc, Column#50:asc
+Sort_22	769.96	root		tpch.nation.n_name, tpch.nation.n_name, Column#50
 └─Projection_24	769.96	root		tpch.nation.n_name, tpch.nation.n_name, Column#50, Column#52
   └─HashAgg_27	769.96	root		group by:Column#50, tpch.nation.n_name, tpch.nation.n_name, funcs:sum(Column#51)->Column#52, funcs:firstrow(tpch.nation.n_name)->tpch.nation.n_name, funcs:firstrow(tpch.nation.n_name)->tpch.nation.n_name, funcs:firstrow(Column#50)->Column#50
     └─Projection_28	1957240.42	root		tpch.nation.n_name, tpch.nation.n_name, extract(YEAR, tpch.lineitem.l_shipdate)->Column#50, mul(tpch.lineitem.l_extendedprice, minus(1, tpch.lineitem.l_discount))->Column#51
@@ -515,7 +515,7 @@ o_year
 order by
 o_year;
 id	estRows	task	access object	operator info
-Sort_29	719.02	root		Column#62:asc
+Sort_29	719.02	root		Column#62
 └─Projection_31	719.02	root		Column#62, div(Column#64, Column#65)->Column#66
   └─HashAgg_34	719.02	root		group by:Column#78, funcs:sum(Column#75)->Column#64, funcs:sum(Column#76)->Column#65, funcs:firstrow(Column#77)->Column#62
     └─Projection_123	563136.02	root		case(eq(tpch.nation.n_name, INDIA), Column#63, 0)->Column#75, Column#63, Column#62, Column#62
@@ -591,7 +591,7 @@ order by
 nation,
 o_year desc;
 id	estRows	task	access object	operator info
-Sort_25	2406.00	root		tpch.nation.n_name:asc, Column#53:desc
+Sort_25	2406.00	root		tpch.nation.n_name, Column#53:desc
 └─Projection_27	2406.00	root		tpch.nation.n_name, Column#53, Column#55
   └─HashAgg_30	2406.00	root		group by:Column#53, tpch.nation.n_name, funcs:sum(Column#54)->Column#55, funcs:firstrow(tpch.nation.n_name)->tpch.nation.n_name, funcs:firstrow(Column#53)->Column#53
     └─Projection_31	971049283.51	root		tpch.nation.n_name, extract(YEAR, tpch.orders.o_orderdate)->Column#53, minus(mul(tpch.lineitem.l_extendedprice, minus(1, tpch.lineitem.l_discount)), mul(tpch.partsupp.ps_supplycost, tpch.lineitem.l_quantity))->Column#54
@@ -765,7 +765,7 @@ l_shipmode
 order by
 l_shipmode;
 id	estRows	task	access object	operator info
-Sort_9	1.00	root		tpch.lineitem.l_shipmode:asc
+Sort_9	1.00	root		tpch.lineitem.l_shipmode
 └─Projection_11	1.00	root		tpch.lineitem.l_shipmode, Column#27, Column#28
   └─HashAgg_14	1.00	root		group by:Column#40, funcs:sum(Column#37)->Column#27, funcs:sum(Column#38)->Column#28, funcs:firstrow(Column#39)->tpch.lineitem.l_shipmode
     └─Projection_54	10023369.01	root		cast(case(or(eq(tpch.orders.o_orderpriority, 1-URGENT), eq(tpch.orders.o_orderpriority, 2-HIGH)), 1, 0), decimal(65,0) BINARY)->Column#37, cast(case(and(ne(tpch.orders.o_orderpriority, 1-URGENT), ne(tpch.orders.o_orderpriority, 2-HIGH)), 1, 0), decimal(65,0) BINARY)->Column#38, tpch.lineitem.l_shipmode, tpch.lineitem.l_shipmode
@@ -926,7 +926,7 @@ p_brand,
 p_type,
 p_size;
 id	estRows	task	access object	operator info
-Sort_13	14.41	root		Column#23:desc, tpch.part.p_brand:asc, tpch.part.p_type:asc, tpch.part.p_size:asc
+Sort_13	14.41	root		Column#23:desc, tpch.part.p_brand, tpch.part.p_type, tpch.part.p_size
 └─Projection_15	14.41	root		tpch.part.p_brand, tpch.part.p_type, tpch.part.p_size, Column#23
   └─HashAgg_16	14.41	root		group by:tpch.part.p_brand, tpch.part.p_size, tpch.part.p_type, funcs:count(distinct tpch.partsupp.ps_suppkey)->Column#23, funcs:firstrow(tpch.part.p_brand)->tpch.part.p_brand, funcs:firstrow(tpch.part.p_type)->tpch.part.p_type, funcs:firstrow(tpch.part.p_size)->tpch.part.p_size
     └─HashJoin_28	3863988.24	root		anti semi join, equal:[eq(tpch.partsupp.ps_suppkey, tpch.supplier.s_suppkey)]
@@ -1025,7 +1025,7 @@ o_orderdate
 limit 100;
 id	estRows	task	access object	operator info
 Projection_24	100.00	root		tpch.customer.c_name, tpch.customer.c_custkey, tpch.orders.o_orderkey, tpch.orders.o_orderdate, tpch.orders.o_totalprice, Column#54
-└─TopN_27	100.00	root		tpch.orders.o_totalprice:desc, tpch.orders.o_orderdate:asc, offset:0, count:100
+└─TopN_27	100.00	root		tpch.orders.o_totalprice:desc, tpch.orders.o_orderdate, offset:0, count:100
   └─HashAgg_33	59251097.60	root		group by:tpch.customer.c_custkey, tpch.customer.c_name, tpch.orders.o_orderdate, tpch.orders.o_orderkey, tpch.orders.o_totalprice, funcs:sum(tpch.lineitem.l_quantity)->Column#54, funcs:firstrow(tpch.customer.c_custkey)->tpch.customer.c_custkey, funcs:firstrow(tpch.customer.c_name)->tpch.customer.c_name, funcs:firstrow(tpch.orders.o_orderkey)->tpch.orders.o_orderkey, funcs:firstrow(tpch.orders.o_totalprice)->tpch.orders.o_totalprice, funcs:firstrow(tpch.orders.o_orderdate)->tpch.orders.o_orderdate
     └─HashJoin_48	240004648.80	root		inner join, equal:[eq(tpch.orders.o_orderkey, tpch.lineitem.l_orderkey)]
       ├─HashJoin_72(Build)	59251097.60	root		inner join, equal:[eq(tpch.orders.o_orderkey, tpch.lineitem.l_orderkey)]
@@ -1143,7 +1143,7 @@ and n_name = 'ALGERIA'
 order by
 s_name;
 id	estRows	task	access object	operator info
-Sort_28	20000.00	root		tpch.supplier.s_name:asc
+Sort_28	20000.00	root		tpch.supplier.s_name
 └─HashJoin_32	20000.00	root		inner join, equal:[eq(tpch.supplier.s_suppkey, tpch.partsupp.ps_suppkey)]
   ├─HashJoin_45(Build)	20000.00	root		inner join, equal:[eq(tpch.nation.n_nationkey, tpch.supplier.s_nationkey)]
   │ ├─TableReader_50(Build)	1.00	root		data:Selection_49
@@ -1216,7 +1216,7 @@ s_name
 limit 100;
 id	estRows	task	access object	operator info
 Projection_25	100.00	root		tpch.supplier.s_name, Column#72
-└─TopN_28	100.00	root		Column#72:desc, tpch.supplier.s_name:asc, offset:0, count:100
+└─TopN_28	100.00	root		Column#72:desc, tpch.supplier.s_name, offset:0, count:100
   └─HashAgg_34	12800.00	root		group by:tpch.supplier.s_name, funcs:count(1)->Column#72, funcs:firstrow(tpch.supplier.s_name)->tpch.supplier.s_name
     └─IndexHashJoin_49	7828961.66	root		anti semi join, inner:IndexLookUp_39, outer key:tpch.lineitem.l_orderkey, inner key:tpch.lineitem.l_orderkey, other cond:ne(tpch.lineitem.l_suppkey, tpch.lineitem.l_suppkey)
       ├─IndexHashJoin_88(Build)	9786202.08	root		semi join, inner:IndexLookUp_79, outer key:tpch.lineitem.l_orderkey, inner key:tpch.lineitem.l_orderkey, other cond:ne(tpch.lineitem.l_suppkey, tpch.lineitem.l_suppkey), ne(tpch.lineitem.l_suppkey, tpch.supplier.s_suppkey)
@@ -1288,7 +1288,7 @@ cntrycode
 order by
 cntrycode;
 id	estRows	task	access object	operator info
-Sort_39	1.00	root		Column#27:asc
+Sort_39	1.00	root		Column#27
 └─Projection_41	1.00	root		Column#27, Column#28, Column#29
   └─HashAgg_44	1.00	root		group by:Column#27, funcs:count(1)->Column#28, funcs:sum(tpch.customer.c_acctbal)->Column#29, funcs:firstrow(Column#27)->Column#27
     └─Projection_45	0.00	root		substring(tpch.customer.c_phone, 1, 2)->Column#27, tpch.customer.c_acctbal

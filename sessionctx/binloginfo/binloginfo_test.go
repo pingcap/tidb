@@ -93,7 +93,7 @@ type testBinlogSuite struct {
 const maxRecvMsgSize = 64 * 1024
 
 func (s *testBinlogSuite) SetUpSuite(c *C) {
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	s.store = store
 	session.SetSchemaLease(0)
@@ -552,12 +552,44 @@ func (s *testBinlogSuite) TestAddSpecialComment(c *C) {
 			"create table t1 (id int primary key /*T![auto_rand] auto_random(2) */ );",
 		},
 		{
+			"create table t1 (id int primary key auto_random);",
+			"create table t1 (id int primary key /*T![auto_rand] auto_random */ );",
+		},
+		{
 			"create table t1 (id int auto_random ( 4 ) primary key);",
 			"create table t1 (id int /*T![auto_rand] auto_random ( 4 ) */ primary key);",
 		},
 		{
 			"create table t1 (id int  auto_random  (   4    ) primary key);",
 			"create table t1 (id int  /*T![auto_rand] auto_random  (   4    ) */ primary key);",
+		},
+		{
+			"create table t1 (id int auto_random ( 3 ) primary key) auto_random_base = 100;",
+			"create table t1 (id int /*T![auto_rand] auto_random ( 3 ) */ primary key) /*T![auto_rand_base] auto_random_base = 100 */ ;",
+		},
+		{
+			"create table t1 (id int auto_random primary key) auto_random_base = 50;",
+			"create table t1 (id int /*T![auto_rand] auto_random */ primary key) /*T![auto_rand_base] auto_random_base = 50 */ ;",
+		},
+		{
+			"create table t1 (id int auto_increment key) auto_id_cache 100;",
+			"create table t1 (id int auto_increment key) /*T![auto_id_cache] auto_id_cache 100 */ ;",
+		},
+		{
+			"create table t1 (id int auto_increment unique) auto_id_cache 10;",
+			"create table t1 (id int auto_increment unique) /*T![auto_id_cache] auto_id_cache 10 */ ;",
+		},
+		{
+			"create table t1 (id int) auto_id_cache = 5;",
+			"create table t1 (id int) /*T![auto_id_cache] auto_id_cache = 5 */ ;",
+		},
+		{
+			"create table t1 (id int) auto_id_cache=5;",
+			"create table t1 (id int) /*T![auto_id_cache] auto_id_cache=5 */ ;",
+		},
+		{
+			"create table t1 (id int) /*T![auto_id_cache] auto_id_cache=5 */ ;",
+			"create table t1 (id int) /*T![auto_id_cache] auto_id_cache=5 */ ;",
 		},
 	}
 	for _, ca := range testCase {

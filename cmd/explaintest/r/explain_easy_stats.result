@@ -33,7 +33,7 @@ IndexLookUp_12	1999.00	root
 └─TableRowIDScan_11(Probe)	1999.00	cop[tikv]	table:t1	keep order:false
 explain select * from t2 order by c2;
 id	estRows	task	access object	operator info
-Sort_4	1985.00	root		test.t2.c2:asc
+Sort_4	1985.00	root		test.t2.c2
 └─TableReader_8	1985.00	root		data:TableFullScan_7
   └─TableFullScan_7	1985.00	cop[tikv]	table:t2	keep order:false
 explain select * from t1 where t1.c1 > 0;
@@ -74,9 +74,9 @@ Projection_11	1985.00	root		cast(Column#8, bigint(21) BINARY)->Column#7
     └─TableFullScan_33	1999.00	cop[tikv]	table:a	keep order:false
 explain select * from t2 order by t2.c2 limit 0, 1;
 id	estRows	task	access object	operator info
-TopN_7	1.00	root		test.t2.c2:asc, offset:0, count:1
+TopN_7	1.00	root		test.t2.c2, offset:0, count:1
 └─TableReader_15	1.00	root		data:TopN_14
-  └─TopN_14	1.00	cop[tikv]		test.t2.c2:asc, offset:0, count:1
+  └─TopN_14	1.00	cop[tikv]		test.t2.c2, offset:0, count:1
     └─TableFullScan_13	1985.00	cop[tikv]	table:t2	keep order:false
 explain select * from t1 where c1 > 1 and c2 = 1 and c3 < 1;
 id	estRows	task	access object	operator info

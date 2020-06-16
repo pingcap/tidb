@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math/rand"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -35,7 +36,7 @@ var smallCount = 100
 var bigCount = 10000
 
 func prepareBenchSession() (Session, *domain.Domain, kv.Storage) {
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	if err != nil {
 		logutil.BgLogger().Fatal(err.Error())
 	}
@@ -1472,6 +1473,38 @@ partition p1023 values less than (738538)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		rs, err := se.Execute(ctx, "select * from t where dt > to_days('2019-04-01 21:00:00') and dt < to_days('2019-04-07 23:59:59')")
+		if err != nil {
+			b.Fatal(err)
+		}
+		_, err = drainRecordSet(ctx, se.(*session), rs[0])
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.StopTimer()
+}
+
+func BenchmarkRangeColumnPartitionPruning(b *testing.B) {
+	ctx := context.Background()
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
+
+	var build strings.Builder
+	build.WriteString(`create table t (id int, dt date) partition by range columns (dt) (`)
+	start := time.Date(2020, 5, 15, 0, 0, 0, 0, time.UTC)
+	for i := 0; i < 1023; i++ {
+		start = start.Add(24 * time.Hour)
+		fmt.Fprintf(&build, "partition p%d values less than ('%s'),\n", i, start.Format("2006-01-02"))
+	}
+	build.WriteString("partition p1023 values less than maxvalue)")
+	mustExecute(se, build.String())
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rs, err := se.Execute(ctx, "select * from t where dt > '2020-05-01' and dt < '2020-06-07'")
 		if err != nil {
 			b.Fatal(err)
 		}

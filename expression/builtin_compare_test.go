@@ -82,7 +82,7 @@ func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
 func (s *testEvaluatorSuite) TestCompare(c *C) {
 	intVal, uintVal, realVal, stringVal, decimalVal := 1, uint64(1), 1.1, "123", types.NewDecFromFloatForTest(123.123)
 	timeVal := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 6)
-	durationVal := types.Duration{Duration: time.Duration(12*time.Hour + 1*time.Minute + 1*time.Second)}
+	durationVal := types.Duration{Duration: 12*time.Hour + 1*time.Minute + 1*time.Second}
 	jsonVal := json.CreateBinary("123")
 	// test cases for generating function signatures.
 	tests := []struct {
@@ -201,7 +201,7 @@ func (s *testEvaluatorSuite) TestCoalesce(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.Length].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.Length].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -291,6 +291,18 @@ func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
 			curTimeInt, int64(123), false, false,
 		},
 		{
+			[]interface{}{tm, "invalid_time_1", "invalid_time_2", tmWithFsp},
+			curTimeWithFspString, "invalid_time_1", false, false,
+		},
+		{
+			[]interface{}{tm, "invalid_time_2", "invalid_time_1", tmWithFsp},
+			curTimeWithFspString, "invalid_time_2", false, false,
+		},
+		{
+			[]interface{}{tm, "invalid_time", nil, tmWithFsp},
+			nil, nil, true, false,
+		},
+		{
 			[]interface{}{duration, "123"},
 			"12:59:59", "123", false, false,
 		},
@@ -331,8 +343,8 @@ func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
 			}
 		}
 	}
-	_, err := funcs[ast.Greatest].getFunction(s.ctx, []Expression{Zero, One})
+	_, err := funcs[ast.Greatest].getFunction(s.ctx, []Expression{NewZero(), NewOne()})
 	c.Assert(err, IsNil)
-	_, err = funcs[ast.Least].getFunction(s.ctx, []Expression{Zero, One})
+	_, err = funcs[ast.Least].getFunction(s.ctx, []Expression{NewZero(), NewOne()})
 	c.Assert(err, IsNil)
 }

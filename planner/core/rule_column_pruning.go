@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -97,10 +98,14 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 	var selfUsedCols []*expression.Column
 	for _, aggrFunc := range la.AggFuncs {
 		selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, aggrFunc.Args, nil)
+
+		var cols []*expression.Column
+		aggrFunc.OrderByItems, cols = pruneByItems(aggrFunc.OrderByItems)
+		selfUsedCols = append(selfUsedCols, cols...)
 	}
 	if len(la.AggFuncs) == 0 {
 		// If all the aggregate functions are pruned, we should add an aggregate function to keep the correctness.
-		one, err := aggregation.NewAggFuncDesc(la.ctx, ast.AggFuncFirstRow, []expression.Expression{expression.One}, false)
+		one, err := aggregation.NewAggFuncDesc(la.ctx, ast.AggFuncFirstRow, []expression.Expression{expression.NewOne()}, false)
 		if err != nil {
 			return err
 		}
@@ -124,10 +129,28 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 		// If all the group by items are pruned, we should add a constant 1 to keep the correctness.
 		// Because `select count(*) from t` is different from `select count(*) from t group by 1`.
 		if len(la.GroupByItems) == 0 {
-			la.GroupByItems = []expression.Expression{expression.One}
+			la.GroupByItems = []expression.Expression{expression.NewOne()}
 		}
 	}
 	return child.PruneColumns(selfUsedCols)
+}
+
+func pruneByItems(old []*util.ByItems) (new []*util.ByItems, parentUsedCols []*expression.Column) {
+	new = make([]*util.ByItems, 0, len(old))
+	for _, byItem := range old {
+		cols := expression.ExtractColumns(byItem.Expr)
+		if len(cols) == 0 {
+			if !expression.IsRuntimeConstExpr(byItem.Expr) {
+				new = append(new, byItem)
+			}
+		} else if byItem.Expr.GetType().Tp == mysql.TypeNull {
+			// do nothing, should be filtered
+		} else {
+			parentUsedCols = append(parentUsedCols, cols...)
+			new = append(new, byItem)
+		}
+	}
+	return
 }
 
 // PruneColumns implements LogicalPlan interface.
@@ -135,19 +158,9 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 // we do prune them. Note that we can't prune the expressions contain non-deterministic functions, such as rand().
 func (ls *LogicalSort) PruneColumns(parentUsedCols []*expression.Column) error {
 	child := ls.children[0]
-	for i := len(ls.ByItems) - 1; i >= 0; i-- {
-		cols := expression.ExtractColumns(ls.ByItems[i].Expr)
-		if len(cols) == 0 {
-			if expression.IsMutableEffectsExpr(ls.ByItems[i].Expr) {
-				continue
-			}
-			ls.ByItems = append(ls.ByItems[:i], ls.ByItems[i+1:]...)
-		} else if ls.ByItems[i].Expr.GetType().Tp == mysql.TypeNull {
-			ls.ByItems = append(ls.ByItems[:i], ls.ByItems[i+1:]...)
-		} else {
-			parentUsedCols = append(parentUsedCols, cols...)
-		}
-	}
+	var cols []*expression.Column
+	ls.ByItems, cols = pruneByItems(ls.ByItems)
+	parentUsedCols = append(parentUsedCols, cols...)
 	return child.PruneColumns(parentUsedCols)
 }
 
@@ -156,19 +169,9 @@ func (ls *LogicalSort) PruneColumns(parentUsedCols []*expression.Column) error {
 // we do prune them. Note that we can't prune the expressions contain non-deterministic functions, such as rand().
 func (lt *LogicalTopN) PruneColumns(parentUsedCols []*expression.Column) error {
 	child := lt.children[0]
-	for i := len(lt.ByItems) - 1; i >= 0; i-- {
-		cols := expression.ExtractColumns(lt.ByItems[i].Expr)
-		if len(cols) == 0 {
-			if expression.IsMutableEffectsExpr(lt.ByItems[i].Expr) {
-				continue
-			}
-			lt.ByItems = append(lt.ByItems[:i], lt.ByItems[i+1:]...)
-		} else if lt.ByItems[i].Expr.GetType().Tp == mysql.TypeNull {
-			lt.ByItems = append(lt.ByItems[:i], lt.ByItems[i+1:]...)
-		} else {
-			parentUsedCols = append(parentUsedCols, cols...)
-		}
-	}
+	var cols []*expression.Column
+	lt.ByItems, cols = pruneByItems(lt.ByItems)
+	parentUsedCols = append(parentUsedCols, cols...)
 	return child.PruneColumns(parentUsedCols)
 }
 
@@ -337,7 +340,7 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column) error 
 		return err
 	}
 
-	la.CorCols = extractCorColumnsBySchema(la.children[1], la.children[0].Schema())
+	la.CorCols = extractCorColumnsBySchema4LogicalPlan(la.children[1], la.children[0].Schema())
 	for _, col := range la.CorCols {
 		leftCols = append(leftCols, &col.Column)
 	}

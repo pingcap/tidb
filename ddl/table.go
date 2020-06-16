@@ -231,6 +231,14 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		return ver, errors.Trace(err)
 	}
 
+	err = checkTableIDNotExists(t, schemaID, tblInfo.ID)
+	if err != nil {
+		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableExists.Equal(err) {
+			job.State = model.JobStateCancelled
+		}
+		return ver, errors.Trace(err)
+	}
+
 	// Recover table divide into 2 steps:
 	// 1. Check GC enable status, to decided whether enable GC after recover table.
 	//     a. Why not disable GC before put the job to DDL job queue?
@@ -430,6 +438,10 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+	if tblInfo.IsView() || tblInfo.IsSequence() {
+		job.State = model.JobStateCancelled
+		return ver, infoschema.ErrTableNotExists.GenWithStackByArgs(job.SchemaName, tblInfo.Name.O)
+	}
 
 	err = t.DropTableOrView(schemaID, tblInfo.ID, true)
 	if err != nil {
@@ -466,6 +478,12 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		return ver, errors.Trace(err)
 	}
 
+	failpoint.Inject("mockTruncateTableUpdateVersionError", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(ver, errors.New("mock update version error"))
+		}
+	})
+
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -477,7 +495,15 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 	return ver, nil
 }
 
-func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onRebaseRowIDType(store kv.Storage, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	return onRebaseAutoID(store, t, job, autoid.RowIDAllocType)
+}
+
+func onRebaseAutoRandomType(store kv.Storage, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	return onRebaseAutoID(store, t, job, autoid.AutoRandomType)
+}
+
+func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job, tp autoid.AllocatorType) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	var newBase int64
 	err := job.DecodeArgs(&newBase)
@@ -491,7 +517,12 @@ func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job) (ver int64, 
 		return ver, errors.Trace(err)
 	}
 	// No need to check `newBase` again, because `RebaseAutoID` will do this check.
-	tblInfo.AutoIncID = newBase
+	if tp == autoid.RowIDAllocType {
+		tblInfo.AutoIncID = newBase
+	} else {
+		tblInfo.AutoRandID = newBase
+	}
+
 	tbl, err := getTable(store, schemaID, tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -500,11 +531,32 @@ func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job) (ver int64, 
 	// The operation of the minus 1 to make sure that the current value doesn't be used,
 	// the next Alloc operation will get this value.
 	// Its behavior is consistent with MySQL.
-	err = tbl.RebaseAutoID(nil, tblInfo.AutoIncID-1, false)
+	err = tbl.RebaseAutoID(nil, newBase-1, false, tp)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, nil
+}
+
+func onModifyTableAutoIDCache(t *meta.Meta, job *model.Job) (int64, error) {
+	var cache int64
+	if err := job.DecodeArgs(&cache); err != nil {
+		job.State = model.JobStateCancelled
+		return 0, errors.Trace(err)
+	}
+
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	tblInfo.AutoIdCache = cache
+	ver, err := updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -561,7 +613,7 @@ func verifyNoOverflowShardBits(s *sessionPool, tbl table.Table, shardRowIDBits u
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if tables.OverflowShardBits(autoIncID, shardRowIDBits, autoid.RowIDBitLength) {
+	if tables.OverflowShardBits(autoIncID, shardRowIDBits, autoid.RowIDBitLength, true) {
 		return autoid.ErrAutoincReadFailed.GenWithStack("shard_row_id_bits %d will cause next global auto ID %v overflow", shardRowIDBits, autoIncID)
 	}
 	return nil
@@ -812,6 +864,20 @@ func checkTableNotExists(d *ddlCtx, t *meta.Meta, schemaID int64, tableName stri
 	return checkTableNotExistsFromStore(t, schemaID, tableName)
 }
 
+func checkTableIDNotExists(t *meta.Meta, schemaID, tableID int64) error {
+	tbl, err := t.GetTable(schemaID, tableID)
+	if err != nil {
+		if meta.ErrDBNotExists.Equal(err) {
+			return infoschema.ErrDatabaseNotExists.GenWithStackByArgs("")
+		}
+		return errors.Trace(err)
+	}
+	if tbl != nil {
+		return infoschema.ErrTableExists.GenWithStackByArgs(tbl.Name)
+	}
+	return nil
+}
+
 func checkTableNotExistsFromInfoSchema(is infoschema.InfoSchema, schemaID int64, tableName string) error {
 	// Check this table's database.
 	schema, ok := is.SchemaByID(schemaID)
@@ -853,7 +919,6 @@ func updateVersionAndTableInfoWithCheck(t *meta.Meta, job *model.Job, tblInfo *m
 		return ver, errors.Trace(err)
 	}
 	return updateVersionAndTableInfo(t, job, tblInfo, shouldUpdateVer)
-
 }
 
 // updateVersionAndTableInfo updates the schema version and the table information.

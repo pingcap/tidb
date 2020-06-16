@@ -14,12 +14,14 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 	"reflect"
 
+	"github.com/BurntSushi/toml"
 	. "github.com/pingcap/check"
 )
 
@@ -118,4 +120,51 @@ func (s *testConfigSuite) TestAtomicWriteConfig(c *C) {
 	c.Assert(dconf.Performance.MaxMemory, Equals, uint64(321))
 	c.Assert(dconf.Performance.MaxProcs, Equals, uint(432))
 	c.Assert(dconf.Performance.PseudoEstimateRatio, Equals, 54.3)
+}
+
+func (s *testConfigSuite) TestFlattenConfig(c *C) {
+	toJSONStr := func(v interface{}) string {
+		str, err := json.Marshal(v)
+		c.Assert(err, IsNil)
+		return string(str)
+	}
+
+	jsonConf := `{
+	"k0": 233333,
+	"k1": "v1",
+	"k2": ["v2-1", "v2-2", "v2-3"],
+	"k3": [{"k3-1":"v3-1"}, {"k3-2":"v3-2"}, {"k3-3":"v3-3"}],
+	"k4": {
+		"k4-1": [1, 2, 3, 4],
+		"k4-2": [5, 6, 7, 8],
+		"k4-3": [666]
+	}}`
+	nested := make(map[string]interface{})
+	c.Assert(json.Unmarshal([]byte(jsonConf), &nested), IsNil)
+	flatMap := FlattenConfigItems(nested)
+	c.Assert(len(flatMap), Equals, 7)
+	c.Assert(toJSONStr(flatMap["k0"]), Equals, "233333")
+	c.Assert(flatMap["k1"], Equals, "v1")
+	c.Assert(toJSONStr(flatMap["k2"]), Equals, `["v2-1","v2-2","v2-3"]`)
+	c.Assert(toJSONStr(flatMap["k3"]), Equals, `[{"k3-1":"v3-1"},{"k3-2":"v3-2"},{"k3-3":"v3-3"}]`)
+	c.Assert(toJSONStr(flatMap["k4.k4-1"]), Equals, `[1,2,3,4]`)
+	c.Assert(toJSONStr(flatMap["k4.k4-2"]), Equals, `[5,6,7,8]`)
+	c.Assert(toJSONStr(flatMap["k4.k4-3"]), Equals, `[666]`)
+
+	tomlConf := `
+port=4000
+[log]
+level='info'
+format='text'
+[isolation-read]
+engines = ["tikv", "tiflash", "tidb"]
+`
+	nested = make(map[string]interface{})
+	c.Assert(toml.Unmarshal([]byte(tomlConf), &nested), IsNil)
+	flatMap = FlattenConfigItems(nested)
+	c.Assert(len(flatMap), Equals, 4)
+	c.Assert(toJSONStr(flatMap["port"]), Equals, "4000")
+	c.Assert(toJSONStr(flatMap["log.level"]), Equals, `"info"`)
+	c.Assert(toJSONStr(flatMap["log.format"]), Equals, `"text"`)
+	c.Assert(toJSONStr(flatMap["isolation-read.engines"]), Equals, `["tikv","tiflash","tidb"]`)
 }

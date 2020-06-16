@@ -14,8 +14,10 @@
 package tikv
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -357,6 +359,7 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 	if len(keys) == 0 {
 		return nil
 	}
+	keys = deduplicateKeys(keys)
 	if txn.IsPessimistic() && lockCtx.ForUpdateTS > 0 {
 		if txn.committer == nil {
 			// connID is used for log.
@@ -426,6 +429,20 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 	txn.dirty = true
 	txn.mu.Unlock()
 	return nil
+}
+
+// deduplicateKeys deduplicate the keys, it use sort instead of map to avoid memory allocation.
+func deduplicateKeys(keys [][]byte) [][]byte {
+	sort.Slice(keys, func(i, j int) bool {
+		return bytes.Compare(keys[i], keys[j]) < 0
+	})
+	deduped := keys[:1]
+	for i := 1; i < len(keys); i++ {
+		if !bytes.Equal(deduped[len(deduped)-1], keys[i]) {
+			deduped = append(deduped, keys[i])
+		}
+	}
+	return deduped
 }
 
 func (txn *tikvTxn) asyncPessimisticRollback(ctx context.Context, keys [][]byte) *sync.WaitGroup {

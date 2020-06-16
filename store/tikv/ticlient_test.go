@@ -48,11 +48,17 @@ func NewTestStore(c *C) kv.Storage {
 		return store
 	}
 
-	client, pdClient, err := mocktikv.NewTiKVAndPDClient(nil, nil, "")
+	client, cluster, pdClient, err := mocktikv.NewTiKVAndPDClient("")
 	c.Assert(err, IsNil)
+	mocktikv.BootstrapWithSingleStore(cluster)
 
 	store, err := NewTestTiKVStore(client, pdClient, nil, nil, 0)
 	c.Assert(err, IsNil)
+
+	// TODO: make this possible
+	// store, err := mockstore.NewMockStore()
+	// c.Assert(err, IsNil)
+
 	return store
 }
 

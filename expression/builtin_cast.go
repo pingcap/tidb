@@ -118,7 +118,11 @@ func (c *castAsIntFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinCastFunc(newBaseBuiltinFunc(ctx, args), ctx.Value(inUnionCastContext) != nil)
+	b, err := newBaseBuiltinFunc(ctx, c.funcName, args)
+	if err != nil {
+		return nil, err
+	}
+	bf := newBaseBuiltinCastFunc(b, ctx.Value(inUnionCastContext) != nil)
 	bf.tp = c.tp
 	if args[0].GetType().Hybrid() || IsBinaryLiteral(args[0]) {
 		sig = &builtinCastIntAsIntSig{bf}
@@ -164,7 +168,11 @@ func (c *castAsRealFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinCastFunc(newBaseBuiltinFunc(ctx, args), ctx.Value(inUnionCastContext) != nil)
+	b, err := newBaseBuiltinFunc(ctx, c.funcName, args)
+	if err != nil {
+		return nil, err
+	}
+	bf := newBaseBuiltinCastFunc(b, ctx.Value(inUnionCastContext) != nil)
 	bf.tp = c.tp
 	if IsBinaryLiteral(args[0]) {
 		sig = &builtinCastRealAsRealSig{bf}
@@ -215,7 +223,11 @@ func (c *castAsDecimalFunctionClass) getFunction(ctx sessionctx.Context, args []
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinCastFunc(newBaseBuiltinFunc(ctx, args), ctx.Value(inUnionCastContext) != nil)
+	b, err := newBaseBuiltinFunc(ctx, c.funcName, args)
+	if err != nil {
+		return nil, err
+	}
+	bf := newBaseBuiltinCastFunc(b, ctx.Value(inUnionCastContext) != nil)
 	bf.tp = c.tp
 	if IsBinaryLiteral(args[0]) {
 		sig = &builtinCastDecimalAsDecimalSig{bf}
@@ -266,7 +278,10 @@ func (c *castAsStringFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFunc(ctx, args)
+	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args)
+	if err != nil {
+		return nil, err
+	}
 	bf.tp = c.tp
 	if args[0].GetType().Hybrid() || IsBinaryLiteral(args[0]) {
 		sig = &builtinCastStringAsStringSig{bf}
@@ -312,7 +327,10 @@ func (c *castAsTimeFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFunc(ctx, args)
+	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args)
+	if err != nil {
+		return nil, err
+	}
 	bf.tp = c.tp
 	argTp := args[0].GetType().EvalType()
 	switch argTp {
@@ -353,7 +371,10 @@ func (c *castAsDurationFunctionClass) getFunction(ctx sessionctx.Context, args [
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFunc(ctx, args)
+	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args)
+	if err != nil {
+		return nil, err
+	}
 	bf.tp = c.tp
 	argTp := args[0].GetType().EvalType()
 	switch argTp {
@@ -394,7 +415,10 @@ func (c *castAsJSONFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFunc(ctx, args)
+	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args)
+	if err != nil {
+		return nil, err
+	}
 	bf.tp = c.tp
 	argTp := args[0].GetType().EvalType()
 	switch argTp {

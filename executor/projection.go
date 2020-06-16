@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
@@ -308,9 +309,9 @@ func (e *ProjectionExec) Close() error {
 	}
 	if e.runtimeStats != nil {
 		if e.isUnparallelExec() {
-			e.runtimeStats.SetConcurrencyInfo("Concurrency", 0)
+			e.runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", 0))
 		} else {
-			e.runtimeStats.SetConcurrencyInfo("Concurrency", int(e.numWorkers))
+			e.runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", int(e.numWorkers)))
 		}
 	}
 	return e.baseExecutor.Close()
@@ -421,10 +422,9 @@ func (w *projectionWorker) run(ctx context.Context) {
 			return
 		}
 
-		mSize := output.chk.MemoryUsage()
-		// TODO: trace memory used by the evaluatorSuit including all temporal buffers it uses
+		mSize := output.chk.MemoryUsage() + input.chk.MemoryUsage()
 		err := w.evaluatorSuit.Run(w.sctx, input.chk, output.chk)
-		w.proj.memTracker.Consume(output.chk.MemoryUsage() - mSize)
+		w.proj.memTracker.Consume(output.chk.MemoryUsage() + input.chk.MemoryUsage() - mSize)
 		output.done <- err
 
 		if err != nil {

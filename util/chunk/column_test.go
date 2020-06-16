@@ -775,7 +775,7 @@ func (s *testChunkSuite) TestGetRaw(c *check.C) {
 	i = 0
 	for row := it.Begin(); row != it.End(); row = it.Next() {
 		c.Assert(row.GetRaw(0), check.DeepEquals, []byte(fmt.Sprint(i)))
-		c.Assert(col.GetRaw(int(i)), check.DeepEquals, []byte(fmt.Sprint(i)))
+		c.Assert(col.GetRaw(i), check.DeepEquals, []byte(fmt.Sprint(i)))
 		i++
 	}
 }

@@ -16,6 +16,7 @@ package tikv
 import (
 	"bytes"
 	"context"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
@@ -71,7 +72,7 @@ func (t *DeleteRangeTask) Execute(ctx context.Context) error {
 
 	runner := NewRangeTaskRunner(runnerName, t.store, t.concurrency, t.sendReqOnRange)
 	err := runner.RunOnRange(ctx, t.startKey, t.endKey)
-	t.completedRegions = int(runner.CompletedRegions())
+	t.completedRegions = runner.CompletedRegions()
 
 	return err
 }

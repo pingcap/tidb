@@ -25,6 +25,7 @@ var UnCacheableFunctions = map[string]struct{}{
 	ast.User:         {},
 	ast.ConnectionID: {},
 	ast.LastInsertId: {},
+	ast.RowCount:     {},
 	ast.Version:      {},
 	ast.Like:         {},
 }
@@ -102,21 +103,20 @@ var IllegalFunctions4GeneratedColumns = map[string]struct{}{
 	ast.ReleaseAllLocks:  {},
 }
 
-// DeferredFunctions stores non-deterministic functions, which can be deferred only when the plan cache is enabled.
+// DeferredFunctions stores functions which are foldable but should be deferred as well when plan cache is enabled.
+// Note that, these functions must be foldable at first place, i.e, they are not in `unFoldableFunctions`.
 var DeferredFunctions = map[string]struct{}{
 	ast.Now:              {},
+	ast.RandomBytes:      {},
 	ast.CurrentTimestamp: {},
 	ast.UTCTime:          {},
 	ast.Curtime:          {},
 	ast.CurrentTime:      {},
 	ast.UTCTimestamp:     {},
 	ast.UnixTimestamp:    {},
-	ast.Sysdate:          {},
 	ast.Curdate:          {},
 	ast.CurrentDate:      {},
 	ast.UTCDate:          {},
-	ast.Rand:             {},
-	ast.UUID:             {},
 }
 
 // inequalFunctions stores functions which cannot be propagated from column equal condition.

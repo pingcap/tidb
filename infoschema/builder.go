@@ -60,7 +60,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		newTableID = diff.TableID
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
 		oldTableID = diff.TableID
-	case model.ActionTruncateTable, model.ActionCreateView:
+	case model.ActionTruncateTable, model.ActionCreateView, model.ActionExchangeTablePartition:
 		oldTableID = diff.OldTableID
 		newTableID = diff.TableID
 	default:
@@ -74,8 +74,10 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	// We try to reuse the old allocator, so the cached auto ID can be reused.
 	var allocs autoid.Allocators
 	if tableIDIsValid(oldTableID) {
-		if oldTableID == newTableID && diff.Type != model.ActionRenameTable && diff.Type != model.ActionRebaseAutoID {
-			allocs, _ = b.is.AllocByID(oldTableID)
+		if oldTableID == newTableID && diff.Type != model.ActionRenameTable &&
+			diff.Type != model.ActionExchangeTablePartition {
+			oldAllocs, _ := b.is.AllocByID(oldTableID)
+			allocs = filterAllocators(diff, oldAllocs)
 		}
 
 		tmpIDs := tblIDs
@@ -105,7 +107,51 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 			return nil, errors.Trace(err)
 		}
 	}
+	if diff.AffectedOpts != nil {
+		for _, opt := range diff.AffectedOpts {
+			var err error
+			affectedDiff := &model.SchemaDiff{
+				Version:     diff.Version,
+				Type:        diff.Type,
+				SchemaID:    opt.SchemaID,
+				TableID:     opt.TableID,
+				OldSchemaID: opt.OldSchemaID,
+				OldTableID:  opt.OldTableID,
+			}
+			affectedIDs, err := b.ApplyDiff(m, affectedDiff)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			tblIDs = append(tblIDs, affectedIDs...)
+		}
+	}
 	return tblIDs, nil
+}
+
+func filterAllocators(diff *model.SchemaDiff, oldAllocs autoid.Allocators) autoid.Allocators {
+	var newAllocs autoid.Allocators
+	switch diff.Type {
+	case model.ActionRebaseAutoID, model.ActionModifyTableAutoIdCache:
+		// Only drop auto-increment allocator.
+		for _, alloc := range oldAllocs {
+			if alloc.GetType() == autoid.RowIDAllocType || alloc.GetType() == autoid.AutoIncrementType {
+				continue
+			}
+			newAllocs = append(newAllocs, alloc)
+		}
+	case model.ActionRebaseAutoRandomBase:
+		// Only drop auto-random allocator.
+		for _, alloc := range oldAllocs {
+			if alloc.GetType() == autoid.AutoRandomType {
+				continue
+			}
+			newAllocs = append(newAllocs, alloc)
+		}
+	default:
+		// Keep all allocators.
+		newAllocs = oldAllocs
+	}
+	return newAllocs
 }
 
 func appendAffectedIDs(affected []int64, tblInfo *model.TableInfo) []int64 {
@@ -224,6 +270,15 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 
 	if len(allocs) == 0 {
 		allocs = autoid.NewAllocatorsFromTblInfo(b.handle.store, dbInfo.ID, tblInfo)
+	} else {
+		switch tp {
+		case model.ActionRebaseAutoID, model.ActionModifyTableAutoIdCache:
+			newAlloc := autoid.NewAllocator(b.handle.store, dbInfo.ID, tblInfo.IsAutoIncColUnsigned(), autoid.RowIDAllocType)
+			allocs = append(allocs, newAlloc)
+		case model.ActionRebaseAutoRandomBase:
+			newAlloc := autoid.NewAllocator(b.handle.store, dbInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), autoid.AutoRandomType)
+			allocs = append(allocs, newAlloc)
+		}
 	}
 	tbl, err := tables.TableFromMeta(allocs, tblInfo)
 	if err != nil {
@@ -373,7 +428,7 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 		var tbl table.Table
 		tbl, err := tableFromMeta(allocs, t)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.Wrap(err, fmt.Sprintf("Build table `%s`.`%s` schema failed", di.Name.O, t.Name.O))
 		}
 		schTbls.tables[t.Name.L] = tbl
 		sortedTbls := b.is.sortedTablesBuckets[tableBucketIdx(t.ID)]

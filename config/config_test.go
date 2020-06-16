@@ -16,6 +16,7 @@ package config
 import (
 	"encoding/json"
 	"os"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -203,7 +204,6 @@ max-sql-length=1024
 refresh-interval=100
 history-size=100
 [experimental]
-allow-auto-random = true
 allow-expression-index = true
 [isolation-read]
 engines = ["tiflash"]
@@ -243,7 +243,6 @@ engines = ["tiflash"]
 	c.Assert(conf.MaxServerConnections, Equals, uint32(200))
 	c.Assert(conf.MemQuotaQuery, Equals, int64(10000))
 	c.Assert(conf.Experimental.AllowsExpressionIndex, IsTrue)
-	c.Assert(conf.Experimental.AllowAutoRandom, IsTrue)
 	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})
 	c.Assert(conf.MaxIndexLength, Equals, 3080)
 
@@ -385,23 +384,21 @@ func (s *testConfigSuite) TestTxnTotalSizeLimitValid(c *C) {
 		conf.Performance.TxnTotalSizeLimit = tt.limit
 		c.Assert(conf.Valid() == nil, Equals, tt.valid)
 	}
-
-	conf.Binlog.Enable = true
-	conf.Performance.TxnTotalSizeLimit = 100<<20 + 1
-	c.Assert(conf.Valid(), NotNil)
 }
 
-func (s *testConfigSuite) TestAllowAutoRandomValid(c *C) {
+func (s *testConfigSuite) TestPreparePlanCacheValid(c *C) {
 	conf := NewConfig()
-	checkValid := func(allowAlterPK, allowAutoRand, shouldBeValid bool) {
-		conf.AlterPrimaryKey = allowAlterPK
-		conf.Experimental.AllowAutoRandom = allowAutoRand
-		c.Assert(conf.Valid() == nil, Equals, shouldBeValid)
+	tests := map[PreparedPlanCache]bool{
+		{Enabled: true, Capacity: 0}:                        false,
+		{Enabled: true, Capacity: 2}:                        true,
+		{Enabled: true, MemoryGuardRatio: -0.1}:             false,
+		{Enabled: true, MemoryGuardRatio: 2.2}:              false,
+		{Enabled: true, Capacity: 2, MemoryGuardRatio: 0.5}: true,
 	}
-	checkValid(true, true, false)
-	checkValid(true, false, true)
-	checkValid(false, true, true)
-	checkValid(false, false, true)
+	for testCase, res := range tests {
+		conf.PreparedPlanCache = testCase
+		c.Assert(conf.Valid() == nil, Equals, res)
+	}
 }
 
 func (s *testConfigSuite) TestMaxIndexLength(c *C) {
@@ -427,4 +424,33 @@ func (s *testConfigSuite) TestParsePath(c *C) {
 	_, disableGC, err = ParsePath("tikv://node1:2379?disableGC=true")
 	c.Assert(err, IsNil)
 	c.Assert(disableGC, IsTrue)
+}
+
+func (s *testConfigSuite) TestEncodeDefTempStorageDir(c *C) {
+
+	tests := []struct {
+		host       string
+		statusHost string
+		port       uint
+		statusPort uint
+		expect     string
+	}{
+		{"0.0.0.0", "0.0.0.0", 4000, 10080, "MC4wLjAuMDo0MDAwLzAuMC4wLjA6MTAwODA="},
+		{"127.0.0.1", "127.16.5.1", 4000, 10080, "MTI3LjAuMC4xOjQwMDAvMTI3LjE2LjUuMToxMDA4MA=="},
+		{"127.0.0.1", "127.16.5.1", 4000, 15532, "MTI3LjAuMC4xOjQwMDAvMTI3LjE2LjUuMToxNTUzMg=="},
+	}
+
+	var osUID string
+	currentUser, err := user.Current()
+	if err != nil {
+		osUID = ""
+	} else {
+		osUID = currentUser.Uid
+	}
+
+	dirPrefix := filepath.Join(os.TempDir(), osUID+"_tidb")
+	for _, test := range tests {
+		tempStorageDir := encodeDefTempStorageDir(test.host, test.statusHost, test.port, test.statusPort)
+		c.Assert(tempStorageDir, Equals, filepath.Join(dirPrefix, test.expect, "tmp-storage"))
+	}
 }

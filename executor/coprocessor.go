@@ -151,6 +151,7 @@ func (h *CoprocessorDAGHandler) buildDAGExecutor(req *coprocessor.Request) (Exec
 	stmtCtx := h.sctx.GetSessionVars().StmtCtx
 	stmtCtx.SetFlagsFromPBFlag(dagReq.Flags)
 	stmtCtx.TimeZone, err = timeutil.ConstructTimeZone(dagReq.TimeZoneName, int(dagReq.TimeZoneOffset))
+	h.sctx.GetSessionVars().TimeZone = stmtCtx.TimeZone
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

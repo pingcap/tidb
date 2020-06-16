@@ -616,7 +616,7 @@ func ConvertJSONToDecimal(sc *stmtctx.StatementContext, j json.BinaryJSON) (*MyD
 		err = res.FromFloat64(f64)
 		return res, errors.Trace(err)
 	}
-	err := sc.HandleTruncate(res.FromString([]byte(j.GetString())))
+	err := sc.HandleTruncate(res.FromString(j.GetString()))
 	return res, errors.Trace(err)
 }
 

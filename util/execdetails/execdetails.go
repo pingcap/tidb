@@ -34,6 +34,7 @@ var CommitDetailCtxKey = commitDetailCtxKeyType{}
 // ExecDetails contains execution detail information.
 type ExecDetails struct {
 	CalleeAddress    string
+	CopTime          time.Duration
 	ProcessTime      time.Duration
 	WaitTime         time.Duration
 	BackoffTime      time.Duration
@@ -66,6 +67,8 @@ type CommitDetails struct {
 }
 
 const (
+	// CopTimeStr represents the sum of cop-task time spend in TiDB distSQL.
+	CopTimeStr = "Cop_time"
 	// ProcessTimeStr represents the sum of process time of all the coprocessor tasks.
 	ProcessTimeStr = "Process_time"
 	// WaitTimeStr means the time of all coprocessor wait.
@@ -108,7 +111,10 @@ const (
 
 // String implements the fmt.Stringer interface.
 func (d ExecDetails) String() string {
-	parts := make([]string, 0, 6)
+	parts := make([]string, 0, 8)
+	if d.CopTime > 0 {
+		parts = append(parts, CopTimeStr+": "+strconv.FormatFloat(d.CopTime.Seconds(), 'f', -1, 64))
+	}
 	if d.ProcessTime > 0 {
 		parts = append(parts, ProcessTimeStr+": "+strconv.FormatFloat(d.ProcessTime.Seconds(), 'f', -1, 64))
 	}
@@ -180,11 +186,14 @@ func (d ExecDetails) String() string {
 // ToZapFields wraps the ExecDetails as zap.Fields.
 func (d ExecDetails) ToZapFields() (fields []zap.Field) {
 	fields = make([]zap.Field, 0, 16)
+	if d.CopTime > 0 {
+		fields = append(fields, zap.String(strings.ToLower(CopTimeStr), strconv.FormatFloat(d.CopTime.Seconds(), 'f', -1, 64)+"s"))
+	}
 	if d.ProcessTime > 0 {
 		fields = append(fields, zap.String(strings.ToLower(ProcessTimeStr), strconv.FormatFloat(d.ProcessTime.Seconds(), 'f', -1, 64)+"s"))
 	}
 	if d.WaitTime > 0 {
-		fields = append(fields, zap.String(strings.ToLower(WaitTimeStr), strconv.FormatFloat(d.ProcessTime.Seconds(), 'f', -1, 64)+"s"))
+		fields = append(fields, zap.String(strings.ToLower(WaitTimeStr), strconv.FormatFloat(d.WaitTime.Seconds(), 'f', -1, 64)+"s"))
 	}
 	if d.BackoffTime > 0 {
 		fields = append(fields, zap.String(strings.ToLower(BackoffTimeStr), strconv.FormatFloat(d.BackoffTime.Seconds(), 'f', -1, 64)+"s"))
@@ -351,10 +360,15 @@ type RuntimeStatsColl struct {
 	readerStats map[string]*ReaderRuntimeStats
 }
 
-// concurrencyInfo is used to save the concurrency information of the executor operator
-type concurrencyInfo struct {
+// ConcurrencyInfo is used to save the concurrency information of the executor operator
+type ConcurrencyInfo struct {
 	concurrencyName string
 	concurrencyNum  int
+}
+
+// NewConcurrencyInfo creates new executor's concurrencyInfo.
+func NewConcurrencyInfo(name string, num int) *ConcurrencyInfo {
+	return &ConcurrencyInfo{name, num}
 }
 
 // RuntimeStats collects one executor's execution info.
@@ -369,7 +383,7 @@ type RuntimeStats struct {
 	// protect concurrency
 	mu sync.Mutex
 	// executor concurrency information
-	concurrency []concurrencyInfo
+	concurrency []*ConcurrencyInfo
 
 	// additional information for executors
 	additionalInfo string
@@ -457,12 +471,16 @@ func (e *RuntimeStats) SetRowNum(rowNum int64) {
 	atomic.StoreInt64(&e.rows, rowNum)
 }
 
-// SetConcurrencyInfo sets the concurrency information.
+// SetConcurrencyInfo sets the concurrency informations.
+// We must clear the concurrencyInfo first when we call the SetConcurrencyInfo.
 // When the num <= 0, it means the exector operator is not executed parallel.
-func (e *RuntimeStats) SetConcurrencyInfo(name string, num int) {
+func (e *RuntimeStats) SetConcurrencyInfo(infos ...*ConcurrencyInfo) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.concurrency = append(e.concurrency, concurrencyInfo{concurrencyName: name, concurrencyNum: num})
+	e.concurrency = e.concurrency[:0]
+	for _, info := range infos {
+		e.concurrency = append(e.concurrency, info)
+	}
 }
 
 // SetAdditionalInfo sets the additional information.

@@ -15,6 +15,7 @@ package core
 
 import (
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/planner/util"
 )
 
 // preparePossibleProperties traverses the plan tree by a post-order method,
@@ -32,7 +33,7 @@ func (ds *DataSource) PreparePossibleProperties(schema *expression.Schema, child
 	result := make([][]*expression.Column, 0, len(ds.possibleAccessPaths))
 
 	for _, path := range ds.possibleAccessPaths {
-		if path.IsTablePath {
+		if path.IsTablePath() {
 			col := ds.getPKIsHandleCol()
 			if col != nil {
 				result = append(result, []*expression.Column{col})
@@ -114,7 +115,7 @@ func (p *LogicalTopN) PreparePossibleProperties(schema *expression.Schema, child
 	return [][]*expression.Column{propCols}
 }
 
-func getPossiblePropertyFromByItems(items []*ByItems) []*expression.Column {
+func getPossiblePropertyFromByItems(items []*util.ByItems) []*expression.Column {
 	cols := make([]*expression.Column, 0, len(items))
 	for _, item := range items {
 		if col, ok := item.Expr.(*expression.Column); ok {

@@ -72,7 +72,6 @@ func (s *testSequenceSuite) TestCreateSequence(c *C) {
 	c.Assert(sequenceTable.Meta().Sequence.Cache, Equals, true)
 	c.Assert(sequenceTable.Meta().Sequence.CacheValue, Equals, model.DefaultSequenceCacheValue)
 	c.Assert(sequenceTable.Meta().Sequence.Cycle, Equals, false)
-	c.Assert(sequenceTable.Meta().Sequence.Order, Equals, false)
 
 	// Test create privilege.
 	s.tk.MustExec("create user myuser@localhost")
@@ -91,7 +90,7 @@ func (s *testSequenceSuite) TestCreateSequence(c *C) {
 	tk1.MustExec("use test")
 	_, err = tk1.Exec("create sequence my_seq")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1142]CREATE command denied to user 'localhost'@'myuser' for table 'my_seq'")
+	c.Assert(err.Error(), Equals, "[planner:1142]CREATE command denied to user 'myuser'@'localhost' for table 'my_seq'")
 }
 
 func (s *testSequenceSuite) TestDropSequence(c *C) {
@@ -158,7 +157,7 @@ func (s *testSequenceSuite) TestDropSequence(c *C) {
 	tk1.MustExec("use test")
 	_, err = tk1.Exec("drop sequence my_seq")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1142]DROP command denied to user 'localhost'@'myuser' for table 'my_seq'")
+	c.Assert(err.Error(), Equals, "[planner:1142]DROP command denied to user 'myuser'@'localhost' for table 'my_seq'")
 
 	// Test for `drop sequence if exists`.
 	s.tk.MustExec("drop sequence if exists seq_if_exists")
@@ -256,6 +255,11 @@ func (s *testSequenceSuite) TestSequenceAsDefaultValue(c *C) {
 	s.tk.MustExec("create sequence seq")
 
 	// test the use sequence's nextval as default.
+	s.tk.MustExec("drop table if exists t")
+	s.tk.MustExec("create table t(a int not null default next value for seq key)")
+	s.tk.MustExec("drop table if exists t")
+	s.tk.MustExec("create table t(a int not null default nextval(seq), b int, primary key(a))")
+
 	s.tk.MustExec("create table t1 (a int default next value for seq)")
 	s.tk.MustGetErrMsg("create table t2 (a char(1) default next value for seq)", "[ddl:8228]Unsupported sequence default value for column type 'a'")
 
@@ -270,10 +274,17 @@ func (s *testSequenceSuite) TestSequenceAsDefaultValue(c *C) {
 
 	s.tk.MustGetErrMsg("alter table t5 alter column a set default (nextval(seq))", "[ddl:8228]Unsupported sequence default value for column type 'a'")
 
-	s.tk.MustGetErrMsg("alter table t5 add column b char(1) default next value for seq", "[ddl:8228]Unsupported sequence default value for column type 'b'")
+	// Specially, the new added column with sequence as it's default value is forbade.
+	// But alter table column with sequence as it's default value is allowed.
+	s.tk.MustGetErrMsg("alter table t5 add column c int default next value for seq", "[ddl:8230]Unsupported using sequence as default value in add column 'c'")
 
-	s.tk.MustExec("alter table t5 add column b int default nextval(seq)")
-
+	s.tk.MustExec("alter table t5 add column c int default -1")
+	// Alter with modify.
+	s.tk.MustExec("alter table t5 modify column c int default next value for seq")
+	// Alter with alter.
+	s.tk.MustExec("alter table t5 alter column c set default (next value for seq)")
+	// Alter with change.
+	s.tk.MustExec("alter table t5 change column c c int default next value for seq")
 }
 
 func (s *testSequenceSuite) TestSequenceFunction(c *C) {
@@ -624,24 +635,24 @@ func (s *testSequenceSuite) TestSequenceFunction(c *C) {
 	s.tk.MustExec("drop table if exists seq1")
 	s.tk.MustExec("drop view if exists seq1")
 	s.tk.MustExec("create table seq(a int)")
-	err = s.tk.QueryToErr("select nextval(seq)")
+	_, err = s.tk.Exec("select nextval(seq)")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[schema:1347]'test.seq' is not SEQUENCE")
-	err = s.tk.QueryToErr("select lastval(seq)")
+	_, err = s.tk.Exec("select lastval(seq)")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[schema:1347]'test.seq' is not SEQUENCE")
-	err = s.tk.QueryToErr("select setval(seq, 10)")
+	_, err = s.tk.Exec("select setval(seq, 10)")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[schema:1347]'test.seq' is not SEQUENCE")
 
 	s.tk.MustExec("create view seq1 as select * from seq")
-	err = s.tk.QueryToErr("select nextval(seq1)")
+	_, err = s.tk.Exec("select nextval(seq1)")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[schema:1347]'test.seq1' is not SEQUENCE")
-	err = s.tk.QueryToErr("select lastval(seq1)")
+	_, err = s.tk.Exec("select lastval(seq1)")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[schema:1347]'test.seq1' is not SEQUENCE")
-	err = s.tk.QueryToErr("select setval(seq1, 10)")
+	_, err = s.tk.Exec("select setval(seq1, 10)")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[schema:1347]'test.seq1' is not SEQUENCE")
 	s.tk.MustExec("drop sequence if exists seq")
@@ -684,6 +695,22 @@ func (s *testSequenceSuite) TestSequenceFunction(c *C) {
 	tk1.MustQuery("select setval(seq, -101)").Check(testkit.Rows("<nil>"))
 	tk1.MustQuery("select setval(seq, -102)").Check(testkit.Rows("-102"))
 	s.tk.MustExec("drop sequence seq")
+
+	// test the sequence name preprocess.
+	s.tk.MustExec("drop table if exists t")
+	s.tk.MustExec("create sequence seq")
+	s.tk.MustExec("create table t(a int)")
+	s.tk.MustExec("insert into t values(1),(2)")
+	s.tk.MustQuery("select nextval(seq), t.a from t").Check(testkit.Rows("1 1", "2 2"))
+	_, err = s.tk.Exec("select nextval(t), t.a from t")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[schema:1347]'test.t' is not SEQUENCE")
+	_, err = s.tk.Exec("select nextval(seq), nextval(t), t.a from t")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[schema:1347]'test.t' is not SEQUENCE")
+	s.tk.MustQuery("select nextval(seq)").Check(testkit.Rows("3"))
+	s.tk.MustExec("drop sequence seq")
+	s.tk.MustExec("drop table t")
 }
 
 func (s *testSequenceSuite) TestInsertSequence(c *C) {
@@ -897,4 +924,51 @@ func (s *testSequenceSuite) TestSequenceFunctionPrivilege(c *C) {
 	s.tk.MustExec("drop table t")
 	s.tk.MustExec("drop sequence seq")
 	s.tk.MustExec("drop user myuser@localhost")
+}
+
+// Background: the newly added column in TiDB won't fill the known rows with specific
+// sequence next value immediately. Every time TiDB select the data from storage, kvDB
+// will fill the originDefaultValue to these incomplete rows (but not store).
+//
+// In sequence case, every time filling these rows, kvDB should eval the sequence
+// expr for len(incomplete rows) times, and combine these row data together. That
+// means the select result is not always the same.
+//
+// However, the altered column with sequence as it's default value can work well.
+// Because this column has already been added before the alter action, which also
+// means originDefaultValue should be something but nil, so the back filling in kvDB
+// can work well.
+//
+// The new altered sequence default value for this column only take effect on the
+// subsequent inserted rows.
+//
+// So under current situation, TiDB will
+// [1]: forbid the new added column has sequence as it's default value.
+// [2]: allow the altered column with sequence as default value.
+func (s *testSequenceSuite) TestSequenceDefaultLogic(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+
+	s.tk.MustExec("drop sequence if exists seq")
+	s.tk.MustExec("drop table if exists t")
+	s.tk.MustExec("create sequence seq")
+	s.tk.MustExec("create table t(a int)")
+
+	// Alter table to use sequence as default value is ok.
+	s.tk.MustExec("insert into t values(-1),(-1),(-1)")
+	s.tk.MustExec("alter table t add column b int default -1")
+	s.tk.MustQuery("select * from t").Check(testkit.Rows("-1 -1", "-1 -1", "-1 -1"))
+	s.tk.MustExec("alter table t modify column b int default next value for seq")
+	s.tk.MustQuery("select * from t").Check(testkit.Rows("-1 -1", "-1 -1", "-1 -1"))
+	s.tk.MustExec("insert into t(a) values(-1),(-1)")
+	s.tk.MustQuery("select * from t").Check(testkit.Rows("-1 -1", "-1 -1", "-1 -1", "-1 1", "-1 2"))
+
+	// Add column to set sequence as default value is forbade.
+	s.tk.MustExec("drop sequence seq")
+	s.tk.MustExec("drop table t")
+	s.tk.MustExec("create sequence seq")
+	s.tk.MustExec("create table t(a int)")
+	s.tk.MustExec("insert into t values(-1),(-1),(-1)")
+	s.tk.MustGetErrMsg("alter table t add column b int default next value for seq", "[ddl:8230]Unsupported using sequence as default value in add column 'b'")
+	s.tk.MustQuery("select * from t").Check(testkit.Rows("-1", "-1", "-1"))
 }

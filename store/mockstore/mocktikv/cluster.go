@@ -45,6 +45,8 @@ type Cluster struct {
 	stores  map[uint64]*Store
 	regions map[uint64]*Region
 
+	mvccStore MVCCStore
+
 	// delayEvents is used to control the execution sequence of rpc requests for test.
 	delayEvents map[delayKey]time.Duration
 	delayMu     sync.Mutex
@@ -57,11 +59,12 @@ type delayKey struct {
 
 // NewCluster creates an empty cluster. It needs to be bootstrapped before
 // providing service.
-func NewCluster() *Cluster {
+func NewCluster(mvccStore MVCCStore) *Cluster {
 	return &Cluster{
 		stores:      make(map[uint64]*Store),
 		regions:     make(map[uint64]*Region),
 		delayEvents: make(map[delayKey]time.Duration),
+		mvccStore:   mvccStore,
 	}
 }
 
@@ -393,24 +396,24 @@ func (c *Cluster) Merge(regionID1, regionID2 uint64) {
 
 // SplitTable evenly splits the data in table into count regions.
 // Only works for single store.
-func (c *Cluster) SplitTable(mvccStore MVCCStore, tableID int64, count int) {
+func (c *Cluster) SplitTable(tableID int64, count int) {
 	tableStart := tablecodec.GenTableRecordPrefix(tableID)
 	tableEnd := tableStart.PrefixNext()
-	c.splitRange(mvccStore, NewMvccKey(tableStart), NewMvccKey(tableEnd), count)
+	c.splitRange(c.mvccStore, NewMvccKey(tableStart), NewMvccKey(tableEnd), count)
 }
 
 // SplitIndex evenly splits the data in index into count regions.
 // Only works for single store.
-func (c *Cluster) SplitIndex(mvccStore MVCCStore, tableID, indexID int64, count int) {
+func (c *Cluster) SplitIndex(tableID, indexID int64, count int) {
 	indexStart := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
 	indexEnd := indexStart.PrefixNext()
-	c.splitRange(mvccStore, NewMvccKey(indexStart), NewMvccKey(indexEnd), count)
+	c.splitRange(c.mvccStore, NewMvccKey(indexStart), NewMvccKey(indexEnd), count)
 }
 
 // SplitKeys evenly splits the start, end key into "count" regions.
 // Only works for single store.
-func (c *Cluster) SplitKeys(mvccStore MVCCStore, start, end kv.Key, count int) {
-	c.splitRange(mvccStore, NewMvccKey(start), NewMvccKey(end), count)
+func (c *Cluster) SplitKeys(start, end kv.Key, count int) {
+	c.splitRange(c.mvccStore, NewMvccKey(start), NewMvccKey(end), count)
 }
 
 // ScheduleDelay schedules a delay event for a transaction on a region.
@@ -444,7 +447,7 @@ func (c *Cluster) splitRange(mvccStore MVCCStore, start, end MvccKey, count int)
 // getEntriesGroupByRegions groups the key value pairs into splitted regions.
 func (c *Cluster) getEntriesGroupByRegions(mvccStore MVCCStore, start, end MvccKey, count int) [][]Pair {
 	startTS := uint64(math.MaxUint64)
-	limit := int(math.MaxInt32)
+	limit := math.MaxInt32
 	pairs := mvccStore.Scan(start.Raw(), end.Raw(), limit, startTS, kvrpcpb.IsolationLevel_SI, nil)
 	regionEntriesSlice := make([][]Pair, 0, count)
 	quotient := len(pairs) / count

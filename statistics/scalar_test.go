@@ -35,12 +35,12 @@ func getDuration(value string) types.Duration {
 }
 
 func getTime(year, month, day int, timeType byte) types.Time {
-	ret := types.NewTime(types.FromDate(year, int(month), day, 0, 0, 0, 0), timeType, types.DefaultFsp)
+	ret := types.NewTime(types.FromDate(year, month, day, 0, 0, 0, 0), timeType, types.DefaultFsp)
 	return ret
 }
 
 func getTimeStamp(hour, min, sec int, timeType byte) types.Time {
-	ret := types.NewTime(types.FromDate(2017, int(1), 1, hour, min, sec, 0), timeType, 0)
+	ret := types.NewTime(types.FromDate(2017, 1, 1, hour, min, sec, 0), timeType, 0)
 	return ret
 }
 

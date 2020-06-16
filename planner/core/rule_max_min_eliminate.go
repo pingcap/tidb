@@ -61,7 +61,7 @@ func (a *maxMinEliminator) checkColCanUseIndex(plan LogicalPlan, col *expression
 	case *DataSource:
 		// Check whether there is an AccessPath can use index for col.
 		for _, path := range p.possibleAccessPaths {
-			if path.IsTablePath {
+			if path.IsTablePath() {
 				// Since table path can contain accessConds of at most one column,
 				// we only need to check if all of the conditions can be pushed down as accessConds
 				// and `col` is the handle column.
@@ -175,7 +175,7 @@ func (a *maxMinEliminator) eliminateSingleMaxMin(agg *LogicalAggregation) *Logic
 		desc := f.Name == ast.AggFuncMax
 		// Compose Sort operator.
 		sort := LogicalSort{}.Init(ctx, agg.blockOffset)
-		sort.ByItems = append(sort.ByItems, &ByItems{f.Args[0], desc})
+		sort.ByItems = append(sort.ByItems, &util.ByItems{Expr: f.Args[0], Desc: desc})
 		sort.SetChildren(child)
 		child = sort
 	}

@@ -32,12 +32,13 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/pd/v4/client"
+	pd "github.com/pingcap/pd/v4/client"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -55,12 +56,15 @@ import (
 	"github.com/pingcap/tidb/store/tikv/gcworker"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/domainutil"
+	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/printer"
+	"github.com/pingcap/tidb/util/profile"
 	"github.com/pingcap/tidb/util/signal"
 	"github.com/pingcap/tidb/util/storeutil"
 	"github.com/pingcap/tidb/util/sys/linux"
+	storageSys "github.com/pingcap/tidb/util/sys/storage"
 	"github.com/pingcap/tidb/util/systimemon"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
@@ -167,10 +171,12 @@ func main() {
 	if config.GetGlobalConfig().OOMUseTmpStorage {
 		config.GetGlobalConfig().UpdateTempStoragePath()
 		initializeTempDir()
+		checkTempStorageQuota()
 	}
 	setGlobalVars()
 	setCPUAffinity()
 	setupLog()
+	setHeapProfileTracker()
 	setupTracing() // Should before createServer and after setup config.
 	printInfo()
 	setupBinlogClient()
@@ -207,10 +213,10 @@ func initializeTempDir() {
 	if err != nil {
 		switch err {
 		case fslock.ErrLockHeld:
-			fmt.Fprintf(os.Stderr, "The current temporary storage dir(%s) has been occupied by another instance, "+
-				"check tmp-storage-path config and make sure they are different.", tempDir)
+			log.Error("The current temporary storage dir has been occupied by another instance, "+
+				"check tmp-storage-path config and make sure they are different.", zap.String("TempStoragePath", tempDir), zap.Error(err))
 		default:
-			fmt.Fprintf(os.Stderr, "Failed to acquire exclusive lock on the temporary storage dir(%s). Error detail: {%s}", tempDir, err)
+			log.Error("Failed to acquire exclusive lock on the temporary storage dir.", zap.String("TempStoragePath", tempDir), zap.Error(err))
 		}
 		os.Exit(1)
 	}
@@ -227,6 +233,21 @@ func initializeTempDir() {
 		if err != nil {
 			log.Warn("Remove temporary file error",
 				zap.String("tempStorageSubDir", filepath.Join(tempDir, subDir.Name())), zap.Error(err))
+		}
+	}
+}
+
+func checkTempStorageQuota() {
+	// check capacity and the quota when OOMUseTmpStorage is enabled
+	c := config.GetGlobalConfig()
+	if c.TempStorageQuota < 0 {
+		// means unlimited, do nothing
+	} else {
+		capacityByte, err := storageSys.GetTargetDirectoryCapacity(c.TempStoragePath)
+		if err != nil {
+			log.Fatal(err.Error())
+		} else if capacityByte < uint64(c.TempStorageQuota) {
+			log.Fatal(fmt.Sprintf("value of [tmp-storage-quota](%d byte) exceeds the capacity(%d byte) of the [%s] directory", c.TempStorageQuota, capacityByte, c.TempStoragePath))
 		}
 	}
 }
@@ -255,11 +276,19 @@ func setCPUAffinity() {
 	runtime.GOMAXPROCS(len(cpu))
 }
 
+func setHeapProfileTracker() {
+	c := config.GetGlobalConfig()
+	d := parseDuration(c.Performance.MemProfileInterval)
+	go profile.HeapProfileForGlobalMemTracker(d)
+}
+
 func registerStores() {
 	err := kvstore.Register("tikv", tikv.Driver{})
 	terror.MustNil(err)
 	tikv.NewGCHandlerFunc = gcworker.NewGCWorker
-	err = kvstore.Register("mocktikv", mockstore.MockDriver{})
+	err = kvstore.Register("mocktikv", mockstore.MockTiKVDriver{})
+	terror.MustNil(err)
+	err = kvstore.Register("unistore", mockstore.EmbedUnistoreDriver{})
 	terror.MustNil(err)
 }
 
@@ -520,9 +549,17 @@ func overrideConfig(cfg *config.Config) {
 
 func setGlobalVars() {
 	cfg := config.GetGlobalConfig()
+
+	// Disable automaxprocs log
+	nopLog := func(string, ...interface{}) {}
+	_, err := maxprocs.Set(maxprocs.Logger(nopLog))
+	terror.MustNil(err)
+	// We should respect to user's settings in config file.
+	// The default value of MaxProcs is 0, runtime.GOMAXPROCS(0) is no-op.
+	runtime.GOMAXPROCS(int(cfg.Performance.MaxProcs))
+
 	ddlLeaseDuration := parseDuration(cfg.Lease)
 	session.SetSchemaLease(ddlLeaseDuration)
-	runtime.GOMAXPROCS(int(cfg.Performance.MaxProcs))
 	statsLeaseDuration := parseDuration(cfg.Performance.StatsLease)
 	session.SetStatsLease(statsLeaseDuration)
 	bindinfo.Lease = parseDuration(cfg.Performance.BindInfoLease)
@@ -541,6 +578,7 @@ func setGlobalVars() {
 	priority := mysql.Str2Priority(cfg.Performance.ForcePriority)
 	variable.ForcePriority = int32(priority)
 	variable.SysVars[variable.TiDBForcePriority].Value = mysql.Priority2Str[priority]
+	variable.SysVars[variable.TiDBOptDistinctAggPushDown].Value = variable.BoolToIntStr(cfg.Performance.DistinctAggPushDown)
 
 	variable.SysVars[variable.TIDBMemQuotaQuery].Value = strconv.FormatInt(cfg.MemQuotaQuery, 10)
 	variable.SysVars["lower_case_table_names"].Value = strconv.Itoa(cfg.LowerCaseTableNames)
@@ -550,6 +588,7 @@ func setGlobalVars() {
 	variable.SysVars[variable.Socket].Value = cfg.Socket
 	variable.SysVars[variable.DataDir].Value = cfg.Path
 	variable.SysVars[variable.TiDBSlowQueryFile].Value = cfg.Log.SlowQueryFile
+	variable.SysVars[variable.TiDBIsolationReadEngines].Value = strings.Join(cfg.IsolationRead.Engines, ", ")
 
 	// For CI environment we default enable prepare-plan-cache.
 	plannercore.SetPreparedPlanCache(config.CheckTableBeforeDrop || cfg.PreparedPlanCache.Enabled)
@@ -571,6 +610,15 @@ func setGlobalVars() {
 	tikv.RegionCacheTTLSec = int64(cfg.TiKVClient.RegionCacheTTL)
 	domainutil.RepairInfo.SetRepairMode(cfg.RepairMode)
 	domainutil.RepairInfo.SetRepairTableList(cfg.RepairTableList)
+	c := config.GetGlobalConfig()
+	executor.GlobalDiskUsageTracker.SetBytesLimit(c.TempStorageQuota)
+	if c.Performance.MaxMemory < 1 {
+		// If MaxMemory equals 0, it means unlimited
+		executor.GlobalMemoryUsageTracker.SetBytesLimit(-1)
+	} else {
+		executor.GlobalMemoryUsageTracker.SetBytesLimit(int64(c.Performance.MaxMemory))
+	}
+	kvcache.GlobalLRUMemUsageTracker.AttachToGlobalTracker(executor.GlobalMemoryUsageTracker)
 }
 
 func setupLog() {
@@ -579,10 +627,6 @@ func setupLog() {
 	terror.MustNil(err)
 
 	err = logutil.InitLogger(cfg.Log.ToLogConfig())
-	terror.MustNil(err)
-	// Disable automaxprocs log
-	nopLog := func(string, ...interface{}) {}
-	_, err = maxprocs.Set(maxprocs.Logger(nopLog))
 	terror.MustNil(err)
 
 	if len(os.Getenv("GRPC_DEBUG")) > 0 {

@@ -91,11 +91,11 @@ func inferTZNameFromFileName(path string) (string, error) {
 	substrMojave := "zoneinfo.default"
 
 	if idx := strings.Index(path, substrMojave); idx != -1 {
-		return string(path[idx+len(substrMojave)+1:]), nil
+		return path[idx+len(substrMojave)+1:], nil
 	}
 
 	if idx := strings.Index(path, substr); idx != -1 {
-		return string(path[idx+len(substr)+1:]), nil
+		return path[idx+len(substr)+1:], nil
 	}
 	return "", fmt.Errorf("path %s is not supported", path)
 }

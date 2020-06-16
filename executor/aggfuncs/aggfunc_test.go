@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -68,6 +69,27 @@ type aggTest struct {
 	dataGen  func(i int) types.Datum
 	funcName string
 	results  []types.Datum
+	orderBy  bool
+}
+
+func (p *aggTest) genSrcChk() *chunk.Chunk {
+	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{p.dataType}, p.numRows)
+	for i := 0; i < p.numRows; i++ {
+		dt := p.dataGen(i)
+		srcChk.AppendDatum(0, &dt)
+	}
+	srcChk.AppendDatum(0, &types.Datum{})
+	return srcChk
+}
+
+// messUpChunk messes up the chunk for testing memory reference.
+func (p *aggTest) messUpChunk(c *chunk.Chunk) {
+	for i := 0; i < p.numRows; i++ {
+		raw := c.Column(0).GetRaw(i)
+		for i := range raw {
+			raw[i] = 255
+		}
+	}
 }
 
 type multiArgsAggTest struct {
@@ -77,14 +99,35 @@ type multiArgsAggTest struct {
 	dataGens  []func(i int) types.Datum
 	funcName  string
 	results   []types.Datum
+	orderBy   bool
+}
+
+func (p *multiArgsAggTest) genSrcChk() *chunk.Chunk {
+	srcChk := chunk.NewChunkWithCapacity(p.dataTypes, p.numRows)
+	for i := 0; i < p.numRows; i++ {
+		for j := 0; j < len(p.dataGens); j++ {
+			fdt := p.dataGens[j](i)
+			srcChk.AppendDatum(j, &fdt)
+		}
+	}
+	srcChk.AppendDatum(0, &types.Datum{})
+	return srcChk
+}
+
+// messUpChunk messes up the chunk for testing memory reference.
+func (p *multiArgsAggTest) messUpChunk(c *chunk.Chunk) {
+	for i := 0; i < p.numRows; i++ {
+		for j := 0; j < len(p.dataGens); j++ {
+			raw := c.Column(j).GetRaw(i)
+			for i := range raw {
+				raw[i] = 255
+			}
+		}
+	}
 }
 
 func (s *testSuite) testMergePartialResult(c *C, p aggTest) {
-	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{p.dataType}, p.numRows)
-	for i := 0; i < p.numRows; i++ {
-		dt := p.dataGen(i)
-		srcChk.AppendDatum(0, &dt)
-	}
+	srcChk := p.genSrcChk()
 	iter := chunk.NewIterator4Chunk(srcChk)
 
 	args := []expression.Expression{&expression.Column{RetType: p.dataType, Index: 0}}
@@ -93,6 +136,11 @@ func (s *testSuite) testMergePartialResult(c *C, p aggTest) {
 	}
 	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, false)
 	c.Assert(err, IsNil)
+	if p.orderBy {
+		desc.OrderByItems = []*util.ByItems{
+			{Expr: args[0], Desc: true},
+		}
+	}
 	partialDesc, finalDesc := desc.Split([]int{0, 1})
 
 	// build partial func for partial phase.
@@ -108,27 +156,31 @@ func (s *testSuite) testMergePartialResult(c *C, p aggTest) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		partialFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialResult)
 	}
+	p.messUpChunk(srcChk)
 	partialFunc.AppendFinalResult2Chunk(s.ctx, partialResult, resultChk)
 	dt := resultChk.GetRow(0).GetDatum(0, p.dataType)
 	result, err := dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[0])
 	c.Assert(err, IsNil)
-	c.Assert(result, Equals, 0)
+	c.Assert(result, Equals, 0, Commentf("%v != %v", dt.String(), p.results[0]))
 
 	err = finalFunc.MergePartialResult(s.ctx, partialResult, finalPr)
 	c.Assert(err, IsNil)
 	partialFunc.ResetPartialResult(partialResult)
 
+	srcChk = p.genSrcChk()
+	iter = chunk.NewIterator4Chunk(srcChk)
 	iter.Begin()
 	iter.Next()
 	for row := iter.Next(); row != iter.End(); row = iter.Next() {
 		partialFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialResult)
 	}
+	p.messUpChunk(srcChk)
 	resultChk.Reset()
 	partialFunc.AppendFinalResult2Chunk(s.ctx, partialResult, resultChk)
 	dt = resultChk.GetRow(0).GetDatum(0, p.dataType)
 	result, err = dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[1])
 	c.Assert(err, IsNil)
-	c.Assert(result, Equals, 0)
+	c.Assert(result, Equals, 0, Commentf("%v != %v", dt.String(), p.results[1]))
 	err = finalFunc.MergePartialResult(s.ctx, partialResult, finalPr)
 	c.Assert(err, IsNil)
 
@@ -139,7 +191,7 @@ func (s *testSuite) testMergePartialResult(c *C, p aggTest) {
 	dt = resultChk.GetRow(0).GetDatum(0, p.dataType)
 	result, err = dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[2])
 	c.Assert(err, IsNil)
-	c.Assert(result, Equals, 0)
+	c.Assert(result, Equals, 0, Commentf("%v != %v", dt.String(), p.results[2]))
 }
 
 func buildAggTester(funcName string, tp byte, numRows int, results ...interface{}) aggTest {
@@ -160,13 +212,7 @@ func buildAggTesterWithFieldType(funcName string, ft *types.FieldType, numRows i
 }
 
 func (s *testSuite) testMultiArgsMergePartialResult(c *C, p multiArgsAggTest) {
-	srcChk := chunk.NewChunkWithCapacity(p.dataTypes, p.numRows)
-	for i := 0; i < p.numRows; i++ {
-		for j := 0; j < len(p.dataGens); j++ {
-			fdt := p.dataGens[j](i)
-			srcChk.AppendDatum(j, &fdt)
-		}
-	}
+	srcChk := p.genSrcChk()
 	iter := chunk.NewIterator4Chunk(srcChk)
 
 	args := make([]expression.Expression, len(p.dataTypes))
@@ -176,6 +222,11 @@ func (s *testSuite) testMultiArgsMergePartialResult(c *C, p multiArgsAggTest) {
 
 	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, false)
 	c.Assert(err, IsNil)
+	if p.orderBy {
+		desc.OrderByItems = []*util.ByItems{
+			{Expr: args[0], Desc: true},
+		}
+	}
 	partialDesc, finalDesc := desc.Split([]int{0, 1})
 
 	// build partial func for partial phase.
@@ -191,6 +242,7 @@ func (s *testSuite) testMultiArgsMergePartialResult(c *C, p multiArgsAggTest) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		partialFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialResult)
 	}
+	p.messUpChunk(srcChk)
 	partialFunc.AppendFinalResult2Chunk(s.ctx, partialResult, resultChk)
 	dt := resultChk.GetRow(0).GetDatum(0, p.retType)
 	result, err := dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[0])
@@ -201,11 +253,14 @@ func (s *testSuite) testMultiArgsMergePartialResult(c *C, p multiArgsAggTest) {
 	c.Assert(err, IsNil)
 	partialFunc.ResetPartialResult(partialResult)
 
+	srcChk = p.genSrcChk()
+	iter = chunk.NewIterator4Chunk(srcChk)
 	iter.Begin()
 	iter.Next()
 	for row := iter.Next(); row != iter.End(); row = iter.Next() {
 		partialFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialResult)
 	}
+	p.messUpChunk(srcChk)
 	resultChk.Reset()
 	partialFunc.AppendFinalResult2Chunk(s.ctx, partialResult, resultChk)
 	dt = resultChk.GetRow(0).GetDatum(0, p.retType)
@@ -287,12 +342,7 @@ func getDataGenFunc(ft *types.FieldType) func(i int) types.Datum {
 }
 
 func (s *testSuite) testAggFunc(c *C, p aggTest) {
-	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{p.dataType}, p.numRows)
-	for i := 0; i < p.numRows; i++ {
-		dt := p.dataGen(i)
-		srcChk.AppendDatum(0, &dt)
-	}
-	srcChk.AppendDatum(0, &types.Datum{})
+	srcChk := p.genSrcChk()
 
 	args := []expression.Expression{&expression.Column{RetType: p.dataType, Index: 0}}
 	if p.funcName == ast.AggFuncGroupConcat {
@@ -300,6 +350,11 @@ func (s *testSuite) testAggFunc(c *C, p aggTest) {
 	}
 	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, false)
 	c.Assert(err, IsNil)
+	if p.orderBy {
+		desc.OrderByItems = []*util.ByItems{
+			{Expr: args[0], Desc: true},
+		}
+	}
 	finalFunc := aggfuncs.Build(s.ctx, desc, 0)
 	finalPr := finalFunc.AllocPartialResult()
 	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{desc.RetTp}, 1)
@@ -308,11 +363,12 @@ func (s *testSuite) testAggFunc(c *C, p aggTest) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
 	}
+	p.messUpChunk(srcChk)
 	finalFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
 	dt := resultChk.GetRow(0).GetDatum(0, desc.RetTp)
 	result, err := dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[1])
 	c.Assert(err, IsNil)
-	c.Assert(result, Equals, 0)
+	c.Assert(result, Equals, 0, Commentf("%v != %v", dt.String(), p.results[1]))
 
 	// test the empty input
 	resultChk.Reset()
@@ -321,27 +377,37 @@ func (s *testSuite) testAggFunc(c *C, p aggTest) {
 	dt = resultChk.GetRow(0).GetDatum(0, desc.RetTp)
 	result, err = dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[0])
 	c.Assert(err, IsNil)
-	c.Assert(result, Equals, 0)
+	c.Assert(result, Equals, 0, Commentf("%v != %v", dt.String(), p.results[0]))
 
 	// test the agg func with distinct
 	desc, err = aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, true)
 	c.Assert(err, IsNil)
+	if p.orderBy {
+		desc.OrderByItems = []*util.ByItems{
+			{Expr: args[0], Desc: true},
+		}
+	}
 	finalFunc = aggfuncs.Build(s.ctx, desc, 0)
 	finalPr = finalFunc.AllocPartialResult()
 
 	resultChk.Reset()
+	srcChk = p.genSrcChk()
 	iter = chunk.NewIterator4Chunk(srcChk)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
 	}
+	p.messUpChunk(srcChk)
+	srcChk = p.genSrcChk()
+	iter = chunk.NewIterator4Chunk(srcChk)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
 	}
+	p.messUpChunk(srcChk)
 	finalFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
 	dt = resultChk.GetRow(0).GetDatum(0, desc.RetTp)
 	result, err = dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[1])
 	c.Assert(err, IsNil)
-	c.Assert(result, Equals, 0)
+	c.Assert(result, Equals, 0, Commentf("%v != %v", dt.String(), p.results[1]))
 
 	// test the empty input
 	resultChk.Reset()
@@ -350,26 +416,27 @@ func (s *testSuite) testAggFunc(c *C, p aggTest) {
 	dt = resultChk.GetRow(0).GetDatum(0, desc.RetTp)
 	result, err = dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[0])
 	c.Assert(err, IsNil)
-	c.Assert(result, Equals, 0)
+	c.Assert(result, Equals, 0, Commentf("%v != %v", dt.String(), p.results[0]))
 }
 
 func (s *testSuite) testMultiArgsAggFunc(c *C, p multiArgsAggTest) {
-	srcChk := chunk.NewChunkWithCapacity(p.dataTypes, p.numRows)
-	for i := 0; i < p.numRows; i++ {
-		for j := 0; j < len(p.dataGens); j++ {
-			fdt := p.dataGens[j](i)
-			srcChk.AppendDatum(j, &fdt)
-		}
-	}
-	srcChk.AppendDatum(0, &types.Datum{})
+	srcChk := p.genSrcChk()
 
 	args := make([]expression.Expression, len(p.dataTypes))
 	for k := 0; k < len(p.dataTypes); k++ {
 		args[k] = &expression.Column{RetType: p.dataTypes[k], Index: k}
 	}
+	if p.funcName == ast.AggFuncGroupConcat {
+		args = append(args, &expression.Constant{Value: types.NewStringDatum(" "), RetType: types.NewFieldType(mysql.TypeString)})
+	}
 
 	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, false)
 	c.Assert(err, IsNil)
+	if p.orderBy {
+		desc.OrderByItems = []*util.ByItems{
+			{Expr: args[0], Desc: true},
+		}
+	}
 	finalFunc := aggfuncs.Build(s.ctx, desc, 0)
 	finalPr := finalFunc.AllocPartialResult()
 	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{desc.RetTp}, 1)
@@ -378,11 +445,12 @@ func (s *testSuite) testMultiArgsAggFunc(c *C, p multiArgsAggTest) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
 	}
+	p.messUpChunk(srcChk)
 	finalFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
 	dt := resultChk.GetRow(0).GetDatum(0, desc.RetTp)
 	result, err := dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[1])
 	c.Assert(err, IsNil)
-	c.Assert(result, Equals, 0)
+	c.Assert(result, Equals, 0, Commentf("%v != %v", dt.String(), p.results[1]))
 
 	// test the empty input
 	resultChk.Reset()
@@ -391,27 +459,37 @@ func (s *testSuite) testMultiArgsAggFunc(c *C, p multiArgsAggTest) {
 	dt = resultChk.GetRow(0).GetDatum(0, desc.RetTp)
 	result, err = dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[0])
 	c.Assert(err, IsNil)
-	c.Assert(result, Equals, 0)
+	c.Assert(result, Equals, 0, Commentf("%v != %v", dt.String(), p.results[0]))
 
 	// test the agg func with distinct
 	desc, err = aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, true)
 	c.Assert(err, IsNil)
+	if p.orderBy {
+		desc.OrderByItems = []*util.ByItems{
+			{Expr: args[0], Desc: true},
+		}
+	}
 	finalFunc = aggfuncs.Build(s.ctx, desc, 0)
 	finalPr = finalFunc.AllocPartialResult()
 
 	resultChk.Reset()
+	srcChk = p.genSrcChk()
 	iter = chunk.NewIterator4Chunk(srcChk)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
 	}
+	p.messUpChunk(srcChk)
+	srcChk = p.genSrcChk()
+	iter = chunk.NewIterator4Chunk(srcChk)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
 	}
+	p.messUpChunk(srcChk)
 	finalFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
 	dt = resultChk.GetRow(0).GetDatum(0, desc.RetTp)
 	result, err = dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[1])
 	c.Assert(err, IsNil)
-	c.Assert(result, Equals, 0)
+	c.Assert(result, Equals, 0, Commentf("%v != %v", dt.String(), p.results[1]))
 
 	// test the empty input
 	resultChk.Reset()
@@ -439,6 +517,11 @@ func (s *testSuite) benchmarkAggFunc(b *testing.B, p aggTest) {
 	if err != nil {
 		b.Fatal(err)
 	}
+	if p.orderBy {
+		desc.OrderByItems = []*util.ByItems{
+			{Expr: args[0], Desc: true},
+		}
+	}
 	finalFunc := aggfuncs.Build(s.ctx, desc, 0)
 	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{desc.RetTp}, 1)
 	iter := chunk.NewIterator4Chunk(srcChk)
@@ -453,6 +536,11 @@ func (s *testSuite) benchmarkAggFunc(b *testing.B, p aggTest) {
 	desc, err = aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, true)
 	if err != nil {
 		b.Fatal(err)
+	}
+	if p.orderBy {
+		desc.OrderByItems = []*util.ByItems{
+			{Expr: args[0], Desc: true},
+		}
 	}
 	finalFunc = aggfuncs.Build(s.ctx, desc, 0)
 	resultChk.Reset()
@@ -475,10 +563,18 @@ func (s *testSuite) benchmarkMultiArgsAggFunc(b *testing.B, p multiArgsAggTest) 
 	for k := 0; k < len(p.dataTypes); k++ {
 		args[k] = &expression.Column{RetType: p.dataTypes[k], Index: k}
 	}
+	if p.funcName == ast.AggFuncGroupConcat {
+		args = append(args, &expression.Constant{Value: types.NewStringDatum(" "), RetType: types.NewFieldType(mysql.TypeString)})
+	}
 
 	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, false)
 	if err != nil {
 		b.Fatal(err)
+	}
+	if p.orderBy {
+		desc.OrderByItems = []*util.ByItems{
+			{Expr: args[0], Desc: true},
+		}
 	}
 	finalFunc := aggfuncs.Build(s.ctx, desc, 0)
 	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{desc.RetTp}, 1)
@@ -494,6 +590,11 @@ func (s *testSuite) benchmarkMultiArgsAggFunc(b *testing.B, p multiArgsAggTest) 
 	desc, err = aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, true)
 	if err != nil {
 		b.Fatal(err)
+	}
+	if p.orderBy {
+		desc.OrderByItems = []*util.ByItems{
+			{Expr: args[0], Desc: true},
+		}
 	}
 	finalFunc = aggfuncs.Build(s.ctx, desc, 0)
 	resultChk.Reset()

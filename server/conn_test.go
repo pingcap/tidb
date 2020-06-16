@@ -23,17 +23,15 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/arena"
-	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -47,7 +45,7 @@ var _ = Suite(&ConnTestSuite{})
 func (ts *ConnTestSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	var err error
-	ts.store, err = mockstore.NewMockTikvStore()
+	ts.store, err = mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	ts.dom, err = session.BootstrapSession(ts.store)
 	c.Assert(err, IsNil)
@@ -426,6 +424,17 @@ func (ts *ConnTestSuite) TestConnExecutionTimeout(c *C) {
 	err = cc.handleQuery(context.Background(), "select * FROM testTable2 WHERE SLEEP(1);")
 	c.Assert(err, IsNil)
 
+	_, err = se.Execute(context.Background(), "set @@max_execution_time = 1500;")
+	c.Assert(err, IsNil)
+
+	_, err = se.Execute(context.Background(), "set @@tidb_expensive_query_time_threshold = 1;")
+	c.Assert(err, IsNil)
+
+	records, err := se.Execute(context.Background(), "select SLEEP(2);")
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, ts.store)
+	tk.ResultSetToResult(records[0], Commentf("%v", records[0])).Check(testkit.Rows("1"))
+
 	_, err = se.Execute(context.Background(), "set @@max_execution_time = 0;")
 	c.Assert(err, IsNil)
 
@@ -440,41 +449,23 @@ func (ts *ConnTestSuite) TestConnExecutionTimeout(c *C) {
 
 type mockTiDBCtx struct {
 	TiDBContext
-	rs  []ResultSet
 	err error
 }
 
-func (c *mockTiDBCtx) Execute(ctx context.Context, sql string) ([]ResultSet, error) {
-	return c.rs, c.err
-}
-
-func (c *mockTiDBCtx) ExecuteInternal(ctx context.Context, sql string) ([]ResultSet, error) {
-	return c.rs, c.err
-}
-
-func (c *mockTiDBCtx) GetSessionVars() *variable.SessionVars {
-	return &variable.SessionVars{}
-}
-
-type mockRecordSet struct{}
-
-func (m mockRecordSet) Fields() []*ast.ResultField                       { return nil }
-func (m mockRecordSet) Next(ctx context.Context, req *chunk.Chunk) error { return nil }
-func (m mockRecordSet) NewChunk() *chunk.Chunk                           { return nil }
-func (m mockRecordSet) Close() error                                     { return nil }
-
 func (ts *ConnTestSuite) TestShutDown(c *C) {
 	cc := &clientConn{}
-
-	rs := &tidbResultSet{recordSet: mockRecordSet{}}
+	se, err := session.CreateSession4Test(ts.store)
+	c.Assert(err, IsNil)
 	// mock delay response
-	cc.ctx = &mockTiDBCtx{rs: []ResultSet{rs}, err: nil}
+	cc.ctx = &mockTiDBCtx{
+		TiDBContext: TiDBContext{session: se},
+		err:         nil,
+	}
 	// set killed flag
 	cc.status = connStatusShutdown
 	// assert ErrQueryInterrupted
-	err := cc.handleQuery(context.Background(), "dummy")
+	err = cc.handleQuery(context.Background(), "select 1")
 	c.Assert(err, Equals, executor.ErrQueryInterrupted)
-	c.Assert(rs.closed, Equals, int32(1))
 }
 
 func (ts *ConnTestSuite) TestShutdownOrNotify(c *C) {

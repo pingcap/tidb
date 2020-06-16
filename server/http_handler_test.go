@@ -35,10 +35,12 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -49,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -95,7 +96,7 @@ func (ts *HTTPHandlerTestSuite) TestRegionIndexRange(c *C) {
 
 	startKey := tablecodec.EncodeIndexSeekKey(sTableID, sIndex, encodedValue)
 	recordPrefix := tablecodec.GenTableRecordPrefix(eTableID)
-	endKey := tablecodec.EncodeRecordKey(recordPrefix, recordID)
+	endKey := tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(recordID))
 
 	region := &tikv.KeyLocation{
 		Region:   tikv.RegionVerID{},
@@ -339,9 +340,8 @@ func (ts *HTTPHandlerTestSuite) TestRegionsFromMeta(c *C) {
 }
 
 func (ts *HTTPHandlerTestSuite) startServer(c *C) {
-	mvccStore := mocktikv.MustNewMVCCStore()
 	var err error
-	ts.store, err = mockstore.NewMockTikvStore(mockstore.WithMVCCStore(mvccStore))
+	ts.store, err = mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	ts.domain, err = session.BootstrapSession(ts.store)
 	c.Assert(err, IsNil)
@@ -442,7 +442,17 @@ func (ts *HTTPHandlerTestSuite) TestGetTableMVCC(c *C) {
 	info := data.Value.Info
 	c.Assert(info, NotNil)
 	c.Assert(len(info.Writes), Greater, 0)
-	startTs := info.Writes[2].StartTs
+
+	// TODO: Unistore will not return Op_Lock.
+	// Use this workaround to support two backend, we can remove this hack after deprecated mocktikv.
+	var startTs uint64
+	for _, w := range info.Writes {
+		if w.Type == kvrpcpb.Op_Lock {
+			continue
+		}
+		startTs = w.StartTs
+		break
+	}
 
 	resp, err = ts.fetchStatus(fmt.Sprintf("/mvcc/txn/%d/tidb/test", startTs))
 	c.Assert(err, IsNil)
@@ -508,6 +518,31 @@ func (ts *HTTPHandlerTestSuite) TestTiFlashReplica(c *C) {
 	ts.startServer(c)
 	ts.prepareData(c)
 	defer ts.stopServer(c)
+
+	db, err := sql.Open("mysql", ts.getDSN())
+	c.Assert(err, IsNil, Commentf("Error connecting"))
+	defer db.Close()
+	dbt := &DBTest{c, db}
+
+	defer func(originGC bool) {
+		if originGC {
+			ddl.EmulatorGCEnable()
+		} else {
+			ddl.EmulatorGCDisable()
+		}
+	}(ddl.IsEmulatorGCEnable())
+
+	// Disable emulator GC.
+	// Otherwise emulator GC will delete table record as soon as possible after execute drop table DDL.
+	ddl.EmulatorGCDisable()
+	gcTimeFormat := "20060102-15:04:05 -0700 MST"
+	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
+	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', ''),('tikv_gc_enable','true','')
+			       ON DUPLICATE KEY
+			       UPDATE variable_value = '%[1]s'`
+	// Set GC safe point and enable GC.
+	dbt.mustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+
 	resp, err := ts.fetchStatus("/tiflash/replica")
 	c.Assert(err, IsNil)
 	decoder := json.NewDecoder(resp.Body)
@@ -515,11 +550,6 @@ func (ts *HTTPHandlerTestSuite) TestTiFlashReplica(c *C) {
 	err = decoder.Decode(&data)
 	c.Assert(err, IsNil)
 	c.Assert(len(data), Equals, 0)
-
-	db, err := sql.Open("mysql", ts.getDSN())
-	c.Assert(err, IsNil, Commentf("Error connecting"))
-	defer db.Close()
-	dbt := &DBTest{c, db}
 
 	dbt.mustExec("use tidb")
 	dbt.mustExec("alter table test set tiflash replica 2 location labels 'a','b';")
@@ -564,16 +594,30 @@ func (ts *HTTPHandlerTestSuite) TestTiFlashReplica(c *C) {
 
 	// Should not take effect.
 	dbt.mustExec("alter table test set tiflash replica 2 location labels 'a','b';")
-	resp, err = ts.fetchStatus("/tiflash/replica")
-	c.Assert(err, IsNil)
-	decoder = json.NewDecoder(resp.Body)
-	err = decoder.Decode(&data)
-	c.Assert(err, IsNil)
-	resp.Body.Close()
-	c.Assert(len(data), Equals, 1)
-	c.Assert(data[0].ReplicaCount, Equals, uint64(2))
-	c.Assert(strings.Join(data[0].LocationLabels, ","), Equals, "a,b")
-	c.Assert(data[0].Available, Equals, true) // The status should be true now.
+	checkFunc := func() {
+		resp, err = ts.fetchStatus("/tiflash/replica")
+		c.Assert(err, IsNil)
+		decoder = json.NewDecoder(resp.Body)
+		err = decoder.Decode(&data)
+		c.Assert(err, IsNil)
+		resp.Body.Close()
+		c.Assert(len(data), Equals, 1)
+		c.Assert(data[0].ReplicaCount, Equals, uint64(2))
+		c.Assert(strings.Join(data[0].LocationLabels, ","), Equals, "a,b")
+		c.Assert(data[0].Available, Equals, true) // The status should be true now.
+	}
+
+	// Test for get dropped table tiflash replica info.
+	dbt.mustExec("drop table test")
+	checkFunc()
+
+	// Test unique table id replica info.
+	dbt.mustExec("flashback table test")
+	checkFunc()
+	dbt.mustExec("drop table test")
+	checkFunc()
+	dbt.mustExec("flashback table test")
+	checkFunc()
 
 	// Test for partition table.
 	dbt.mustExec("alter table pt set tiflash replica 2 location labels 'a','b';")
@@ -618,16 +662,23 @@ func (ts *HTTPHandlerTestSuite) TestTiFlashReplica(c *C) {
 	resp, err = ts.postStatus("/tiflash/replica", "application/json", bytes.NewBuffer([]byte(req)))
 	c.Assert(err, IsNil)
 	resp.Body.Close()
-	resp, err = ts.fetchStatus("/tiflash/replica")
-	c.Assert(err, IsNil)
-	decoder = json.NewDecoder(resp.Body)
-	err = decoder.Decode(&data)
-	c.Assert(err, IsNil)
-	resp.Body.Close()
-	c.Assert(len(data), Equals, 3)
-	c.Assert(data[0].Available, Equals, true)
-	c.Assert(data[1].Available, Equals, true)
-	c.Assert(data[2].Available, Equals, true)
+	checkFunc = func() {
+		resp, err = ts.fetchStatus("/tiflash/replica")
+		c.Assert(err, IsNil)
+		decoder = json.NewDecoder(resp.Body)
+		err = decoder.Decode(&data)
+		c.Assert(err, IsNil)
+		resp.Body.Close()
+		c.Assert(len(data), Equals, 3)
+		c.Assert(data[0].Available, Equals, true)
+		c.Assert(data[1].Available, Equals, true)
+		c.Assert(data[2].Available, Equals, true)
+	}
+
+	// Test for get truncated table tiflash replica info.
+	dbt.mustExec("truncate table pt")
+	dbt.mustExec("alter table pt set tiflash replica 0;")
+	checkFunc()
 }
 
 func (ts *HTTPHandlerTestSuite) TestDecodeColumnValue(c *C) {

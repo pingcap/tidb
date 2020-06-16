@@ -169,7 +169,7 @@ func foldConstant(expr Expression) (Expression, bool) {
 				if argIsConst[i] {
 					constArgs[i] = arg
 				} else {
-					constArgs[i] = One
+					constArgs[i] = NewOne()
 				}
 			}
 			dummyScalarFunc, err := NewFunctionBase(x.GetCtx(), x.FuncName.L, x.GetType(), constArgs...)

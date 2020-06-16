@@ -19,7 +19,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/format"
@@ -34,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 const (
@@ -46,25 +49,15 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.CreateTableStmt) (*m
 		return nil, nil
 	}
 
-	// force-discard the unsupported types, even when @@tidb_enable_table_partition = 'on'
-	switch s.Partition.Tp {
-	case model.PartitionTypeKey:
-		// can't create a warning for KEY partition, it will fail an integration test :/
-		return nil, nil
-	case model.PartitionTypeList, model.PartitionTypeSystemTime:
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errUnsupportedCreatePartition)
+	if ctx.GetSessionVars().EnableTablePartition == "off" {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errTablePartitionDisabled)
 		return nil, nil
 	}
 
 	var enable bool
-	switch ctx.GetSessionVars().EnableTablePartition {
-	case "on":
-		enable = true
-	case "off":
-		enable = false
-	default:
-		// When tidb_enable_table_partition = 'auto',
-		if s.Partition.Tp == model.PartitionTypeRange {
+	// When tidb_enable_table_partition is 'on' or 'auto'.
+	if s.Partition.Tp == model.PartitionTypeRange {
+		if s.Partition.Sub == nil {
 			// Partition by range expression is enabled by default.
 			if s.Partition.ColumnNames == nil {
 				enable = true
@@ -74,14 +67,18 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.CreateTableStmt) (*m
 				enable = true
 			}
 		}
-		// Partition by hash is enabled by default.
-		// Note that linear hash is not enabled.
-		if s.Partition.Tp == model.PartitionTypeHash {
+	}
+	// Partition by hash is enabled by default.
+	// Note that linear hash is not enabled.
+	if s.Partition.Tp == model.PartitionTypeHash {
+		if !s.Partition.Linear && s.Partition.Sub == nil {
 			enable = true
 		}
 	}
+
 	if !enable {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errTablePartitionDisabled)
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errUnsupportedCreatePartition)
+		return nil, nil
 	}
 
 	pi := &model.PartitionInfo{
@@ -121,6 +118,10 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.CreateTableStmt) (*m
 }
 
 func buildHashPartitionDefinitions(ctx sessionctx.Context, s *ast.CreateTableStmt, pi *model.PartitionInfo) error {
+	if err := checkAddPartitionTooManyPartitions(pi.Num); err != nil {
+		return err
+	}
+
 	defs := make([]model.PartitionDefinition, pi.Num)
 	for i := 0; i < len(defs); i++ {
 		if len(s.Partition.Definitions) == 0 {
@@ -135,9 +136,13 @@ func buildHashPartitionDefinitions(ctx sessionctx.Context, s *ast.CreateTableStm
 	return nil
 }
 
-func buildRangePartitionDefinitions(ctx sessionctx.Context, s *ast.CreateTableStmt, pi *model.PartitionInfo) error {
+func buildRangePartitionDefinitions(ctx sessionctx.Context, s *ast.CreateTableStmt, pi *model.PartitionInfo) (err error) {
 	for _, def := range s.Partition.Definitions {
 		comment, _ := def.Comment()
+		err = checkTooLongTable(def.Name)
+		if err != nil {
+			return err
+		}
 		piDef := model.PartitionDefinition{
 			Name:    def.Name,
 			Comment: comment,
@@ -205,7 +210,9 @@ func checkAndOverridePartitionID(newTableInfo, oldTableInfo *model.TableInfo) er
 	for i, newOne := range newTableInfo.Partition.Definitions {
 		found := false
 		for _, oldOne := range oldTableInfo.Partition.Definitions {
-			if newOne.Name.L == oldOne.Name.L && stringSliceEqual(newOne.LessThan, oldOne.LessThan) {
+			// Fix issue 17952 which wanna substitute partition range expr.
+			// So eliminate stringSliceEqual(newOne.LessThan, oldOne.LessThan) here.
+			if newOne.Name.L == oldOne.Name.L {
 				newTableInfo.Partition.Definitions[i].ID = oldOne.ID
 				found = true
 				break
@@ -299,32 +306,72 @@ func defaultTimezoneDependent(ctx sessionctx.Context, tblInfo *model.TableInfo, 
 	return !v, nil
 }
 
+func checkPartitionFuncCallValid(ctx sessionctx.Context, tblInfo *model.TableInfo, expr *ast.FuncCallExpr) error {
+	// We assume the result of any function that has a TIMESTAMP argument to be
+	// timezone-dependent, since a TIMESTAMP value in both numeric and string
+	// contexts is interpreted according to the current timezone.
+	// The only exception is UNIX_TIMESTAMP() which returns the internal
+	// representation of a TIMESTAMP argument verbatim, and thus does not depend on
+	// the timezone.
+	// See https://github.com/mysql/mysql-server/blob/5.7/sql/item_func.h#L445
+	if expr.FnName.L != ast.UnixTimestamp {
+		for _, arg := range expr.Args {
+			if colName, ok := arg.(*ast.ColumnNameExpr); ok {
+				col := findColumnByName(colName.Name.Name.L, tblInfo)
+				if col == nil {
+					return ErrBadField.GenWithStackByArgs(colName.Name.Name.O, "expression")
+				}
+
+				if ok && col.FieldType.Tp == mysql.TypeTimestamp {
+					return errors.Trace(errWrongExprInPartitionFunc)
+				}
+			}
+		}
+	}
+
+	// check function which allowed in partitioning expressions
+	// see https://dev.mysql.com/doc/mysql-partitioning-excerpt/5.7/en/partitioning-limitations-functions.html
+	switch expr.FnName.L {
+	// Mysql don't allow creating partitions with expressions with non matching
+	// arguments as a (sub)partitioning function,
+	// but we want to allow such expressions when opening existing tables for
+	// easier maintenance. This exception should be deprecated at some point in future so that we always throw an error.
+	// See https://github.com/mysql/mysql-server/blob/5.7/sql/sql_partition.cc#L1072
+	case ast.Day, ast.DayOfMonth, ast.DayOfWeek, ast.DayOfYear, ast.Month, ast.Quarter, ast.ToDays, ast.ToSeconds,
+		ast.Weekday, ast.Year, ast.YearWeek:
+		return checkResultOK(hasDateField(ctx, tblInfo, expr))
+	case ast.Hour, ast.MicroSecond, ast.Minute, ast.Second, ast.TimeToSec:
+		return checkResultOK(hasTimeField(ctx, tblInfo, expr))
+	case ast.UnixTimestamp:
+		if len(expr.Args) != 1 {
+			return errors.Trace(errWrongExprInPartitionFunc)
+		}
+		col, err := expression.RewriteSimpleExprWithTableInfo(ctx, tblInfo, expr.Args[0])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if col.GetType().Tp != mysql.TypeTimestamp {
+			return errors.Trace(errWrongExprInPartitionFunc)
+		}
+		return nil
+	case ast.Abs, ast.Ceiling, ast.DateDiff, ast.Extract, ast.Floor, ast.Mod:
+		for _, arg := range expr.Args {
+			if err := checkPartitionExprValid(ctx, tblInfo, arg); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return errors.Trace(ErrPartitionFunctionIsNotAllowed)
+}
+
 // checkPartitionExprValid checks partition expression validly.
 func checkPartitionExprValid(ctx sessionctx.Context, tblInfo *model.TableInfo, expr ast.ExprNode) error {
 	switch v := expr.(type) {
 	case *ast.FuncCastExpr, *ast.CaseExpr, *ast.SubqueryExpr, *ast.WindowFuncExpr, *ast.RowExpr, *ast.DefaultExpr, *ast.ValuesExpr:
 		return errors.Trace(ErrPartitionFunctionIsNotAllowed)
 	case *ast.FuncCallExpr:
-		// check function which allowed in partitioning expressions
-		// see https://dev.mysql.com/doc/mysql-partitioning-excerpt/5.7/en/partitioning-limitations-functions.html
-		switch v.FnName.L {
-		// Mysql don't allow creating partitions with expressions with non matching
-		// arguments as a (sub)partitioning function,
-		// but we want to allow such expressions when opening existing tables for
-		// easier maintenance. This exception should be deprecated at some point in future so that we always throw an error.
-		// See https://github.com/mysql/mysql-server/blob/5.7/sql/sql_partition.cc#L1072
-		case ast.Day, ast.DayOfMonth, ast.DayOfWeek, ast.DayOfYear, ast.Month, ast.Quarter, ast.ToDays, ast.ToSeconds,
-			ast.Weekday, ast.Year, ast.YearWeek:
-			return checkPartitionFunc(hasDateField(ctx, tblInfo, expr))
-		case ast.Hour, ast.MicroSecond, ast.Minute, ast.Second, ast.TimeToSec:
-			return checkPartitionFunc(hasTimeField(ctx, tblInfo, expr))
-		case ast.UnixTimestamp:
-			return checkPartitionFunc(hasTimestampField(ctx, tblInfo, expr))
-		case ast.Abs, ast.Ceiling, ast.DateDiff, ast.Extract, ast.Floor, ast.Mod:
-			return checkPartitionFunc(defaultTimezoneDependent(ctx, tblInfo, expr))
-		default:
-			return errors.Trace(ErrPartitionFunctionIsNotAllowed)
-		}
+		return checkPartitionFuncCallValid(ctx, tblInfo, v)
 	case *ast.BinaryOperationExpr:
 		// The DIV operator (opcode.IntDiv) is also supported; the / operator ( opcode.Div ) is not permitted.
 		// see https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations.html
@@ -366,12 +413,12 @@ func checkPartitionFuncValid(ctx sessionctx.Context, tblInfo *model.TableInfo, e
 // For partition tables, mysql do not support Constant, random or timezone-dependent expressions
 // Based on mysql code to check whether field is valid, every time related type has check_valid_arguments_processor function.
 // See https://github.com/mysql/mysql-server/blob/5.7/sql/item_timefunc.
-func checkPartitionFunc(isTimezoneDependent bool, err error) error {
+func checkResultOK(ok bool, err error) error {
 	if err != nil {
 		return err
 	}
 
-	if !isTimezoneDependent {
+	if !ok {
 		return errors.Trace(errWrongExprInPartitionFunc)
 	}
 
@@ -379,8 +426,12 @@ func checkPartitionFunc(isTimezoneDependent bool, err error) error {
 }
 
 func checkPartitionColumns(tblInfo *model.TableInfo, expr ast.ExprNode) ([]*model.ColumnInfo, error) {
-	buf := new(bytes.Buffer)
-	expr.Format(buf)
+	var buf strings.Builder
+	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &buf)
+	err := expr.Restore(restoreCtx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	partCols, err := extractPartitionColumns(buf.String(), tblInfo)
 	if err != nil {
 		return nil, err
@@ -398,8 +449,11 @@ func checkPartitionFuncType(ctx sessionctx.Context, s *ast.CreateTableStmt, tblI
 	if s.Partition.Expr == nil {
 		return nil
 	}
-	buf := new(bytes.Buffer)
-	s.Partition.Expr.Format(buf)
+	var buf strings.Builder
+	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &buf)
+	if err := s.Partition.Expr.Restore(restoreCtx); err != nil {
+		return errors.Trace(err)
+	}
 	exprStr := buf.String()
 	if s.Partition.Tp == model.PartitionTypeRange || s.Partition.Tp == model.PartitionTypeHash {
 		// if partition by columnExpr, check the column type
@@ -435,7 +489,7 @@ func checkPartitionFuncType(ctx sessionctx.Context, s *ast.CreateTableStmt, tblI
 func checkCreatePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) error {
 	pi := tblInfo.Partition
 	defs := pi.Definitions
-	if len(defs) <= 1 {
+	if len(defs) == 0 {
 		return nil
 	}
 
@@ -556,6 +610,16 @@ func removePartitionInfo(tblInfo *model.TableInfo, partName string) int64 {
 	return pid
 }
 
+func getPartitionDef(tblInfo *model.TableInfo, partName string) (index int, def *model.PartitionDefinition, _ error) {
+	defs := tblInfo.Partition.Definitions
+	for i := 0; i < len(defs); i++ {
+		if strings.EqualFold(defs[i].Name.L, strings.ToLower(partName)) {
+			return i, &(defs[i]), nil
+		}
+	}
+	return index, nil, table.ErrUnknownPartition.GenWithStackByArgs(partName, tblInfo.Name.O)
+}
+
 // onDropTablePartition deletes old partition meta.
 func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var partName string
@@ -647,6 +711,240 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 	return ver, nil
 }
 
+// onExchangeTablePartition exchange partition data
+func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	var (
+		//defID only for updateSchemaVersion
+		defID          int64
+		ptSchemaID     int64
+		ptID           int64
+		partName       string
+		withValidation bool
+	)
+
+	if err := job.DecodeArgs(&defID, &ptSchemaID, &ptID, &partName, &withValidation); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	ntDbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	nt, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	pt, err := getTableInfo(t, ptID, ptSchemaID)
+	if err != nil {
+		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
+			job.State = model.JobStateCancelled
+		}
+		return ver, errors.Trace(err)
+	}
+
+	if pt.State != model.StatePublic {
+		job.State = model.JobStateCancelled
+		return ver, ErrInvalidDDLState.GenWithStack("table %s is not in public, but %s", pt.Name, pt.State)
+	}
+
+	err = checkExchangePartition(pt, nt)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	err = checkTableDefCompatible(pt, nt)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	index, _, err := getPartitionDef(pt, partName)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	if withValidation {
+		err = checkExchangePartitionRecordValidation(w, pt, index, ntDbInfo.Name, nt.Name)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+	}
+
+	// partition table base auto id
+	ptBaseID, err := t.GetAutoTableID(ptSchemaID, pt.ID)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	ptRandID, err := t.GetAutoRandomID(ptSchemaID, pt.ID)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	// non-partition table base auto id
+	ntBaseID, err := t.GetAutoTableID(job.SchemaID, nt.ID)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	ntRandID, err := t.GetAutoRandomID(job.SchemaID, nt.ID)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	_, partDef, err := getPartitionDef(pt, partName)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	tempID := partDef.ID
+	// exchange table meta id
+	partDef.ID = nt.ID
+
+	err = t.UpdateTable(ptSchemaID, pt)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	failpoint.Inject("exchangePartitionErr", func(val failpoint.Value) {
+		if val.(bool) {
+			job.State = model.JobStateCancelled
+			failpoint.Return(ver, errors.New("occur an error after updating partition id"))
+		}
+	})
+
+	// recreate non-partition table meta info
+	err = t.DropTableOrView(job.SchemaID, nt.ID, true)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	nt.ID = tempID
+
+	err = t.CreateTableOrView(job.SchemaID, nt)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	// both pt and nt set the maximum auto_id between ntBaseID and ptBaseID
+	if ntBaseID > ptBaseID {
+		_, err = t.GenAutoTableID(ptSchemaID, pt.ID, ntBaseID-ptBaseID)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+	}
+
+	_, err = t.GenAutoTableID(job.SchemaID, nt.ID, mathutil.MaxInt64(ptBaseID, ntBaseID))
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	if ntRandID != 0 || ptRandID != 0 {
+		if ntRandID > ptRandID {
+			_, err = t.GenAutoRandomID(ptSchemaID, pt.ID, ntRandID-ptRandID)
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+		}
+
+		_, err = t.GenAutoRandomID(job.SchemaID, nt.ID, mathutil.MaxInt64(ptRandID, ntRandID))
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+	}
+
+	ver, err = updateSchemaVersion(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	job.FinishTableJob(model.JobStateDone, model.StateNone, ver, pt)
+	return ver, nil
+}
+
+func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, index int, schemaName, tableName model.CIStr) error {
+	var sql string
+
+	pi := pt.Partition
+
+	switch pi.Type {
+	case model.PartitionTypeHash:
+		if pi.Num == 1 {
+			return nil
+		}
+		sql = fmt.Sprintf("select 1 from `%s`.`%s` where mod(%s, %d) != %d limit 1", schemaName.L, tableName.L, pi.Expr, pi.Num, index)
+	case model.PartitionTypeRange:
+		// Table has only one partition and has the maximum value
+		if len(pi.Definitions) == 1 && strings.EqualFold(pi.Definitions[index].LessThan[0], partitionMaxValue) {
+			return nil
+		}
+		// For range expression and range columns
+		if len(pi.Columns) == 0 {
+			sql = buildCheckSQLForRangeExprPartition(pi, index, schemaName, tableName)
+		} else if len(pi.Columns) == 1 {
+			sql = buildCheckSQLForRangeColumnsPartition(pi, index, schemaName, tableName)
+		}
+	default:
+		return errUnsupportedPartitionType.GenWithStackByArgs(pt.Name.O)
+	}
+
+	var ctx sessionctx.Context
+	ctx, err := w.sessPool.get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer w.sessPool.put(ctx)
+
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	rowCount := len(rows)
+	if rowCount != 0 {
+		return errors.Trace(ErrRowDoesNotMatchPartition)
+	}
+	return nil
+}
+
+func buildCheckSQLForRangeExprPartition(pi *model.PartitionInfo, index int, schemaName, tableName model.CIStr) string {
+	if index == 0 {
+		return fmt.Sprintf("select 1 from `%s`.`%s` where %s >= %s limit 1", schemaName.L, tableName.L, pi.Expr, pi.Definitions[index].LessThan[0])
+	} else if index == len(pi.Definitions)-1 && strings.EqualFold(pi.Definitions[index].LessThan[0], partitionMaxValue) {
+		return fmt.Sprintf("select 1 from `%s`.`%s` where %s < %s limit 1", schemaName.L, tableName.L, pi.Expr, pi.Definitions[index-1].LessThan[0])
+	} else {
+		return fmt.Sprintf("select 1 from `%s`.`%s` where %s < %s or %s >= %s limit 1", schemaName.L, tableName.L, pi.Expr, pi.Definitions[index-1].LessThan[0], pi.Expr, pi.Definitions[index].LessThan[0])
+	}
+}
+
+func buildCheckSQLForRangeColumnsPartition(pi *model.PartitionInfo, index int, schemaName, tableName model.CIStr) string {
+	colName := pi.Columns[0].L
+	if index == 0 {
+		return fmt.Sprintf("select 1 from `%s`.`%s` where `%s` >= %s limit 1", schemaName.L, tableName.L, colName, pi.Definitions[index].LessThan[0])
+	} else if index == len(pi.Definitions)-1 && strings.EqualFold(pi.Definitions[index].LessThan[0], partitionMaxValue) {
+		return fmt.Sprintf("select 1 from `%s`.`%s` where `%s` < %s limit 1", schemaName.L, tableName.L, colName, pi.Definitions[index-1].LessThan[0])
+	} else {
+		return fmt.Sprintf("select 1 from `%s`.`%s` where `%s` < %s or `%s` >= %s limit 1", schemaName.L, tableName.L, colName, pi.Definitions[index-1].LessThan[0], colName, pi.Definitions[index].LessThan[0])
+	}
+}
+
 func checkAddPartitionTooManyPartitions(piDefs uint64) error {
 	if piDefs > uint64(PartitionCountLimit) {
 		return errors.Trace(ErrTooManyPartitions)
@@ -679,8 +977,8 @@ func getPartitionIDs(table *model.TableInfo) []int64 {
 	return physicalTableIDs
 }
 
-// checkRangePartitioningKeysConstraints checks that the range partitioning key is included in the table constraint.
-func checkRangePartitioningKeysConstraints(sctx sessionctx.Context, s *ast.CreateTableStmt, tblInfo *model.TableInfo) error {
+// checkPartitioningKeysConstraints checks that the range partitioning key is included in the table constraint.
+func checkPartitioningKeysConstraints(sctx sessionctx.Context, s *ast.CreateTableStmt, tblInfo *model.TableInfo) error {
 	// Returns directly if there are no unique keys in the table.
 	if len(tblInfo.Indices) == 0 && !tblInfo.PKIsHandle {
 		return nil
@@ -698,6 +996,9 @@ func checkRangePartitioningKeysConstraints(sctx sessionctx.Context, s *ast.Creat
 		partCols = columnInfoSlice(partColumns)
 	} else if len(s.Partition.ColumnNames) > 0 {
 		partCols = columnNameSlice(s.Partition.ColumnNames)
+	} else {
+		// TODO: Check keys constraints for list, key partition type and so on.
+		return nil
 	}
 
 	// Checks that the partitioning key is included in the constraint.
@@ -772,11 +1073,10 @@ func (cne *columnNameExtractor) Enter(node ast.Node) (ast.Node, bool) {
 
 func (cne *columnNameExtractor) Leave(node ast.Node) (ast.Node, bool) {
 	if c, ok := node.(*ast.ColumnNameExpr); ok {
-		for _, info := range cne.tblInfo.Columns {
-			if info.Name.L == c.Name.Name.L {
-				cne.extractedColumns = append(cne.extractedColumns, info)
-				return node, true
-			}
+		info := findColumnByName(c.Name.Name.L, cne.tblInfo)
+		if info != nil {
+			cne.extractedColumns = append(cne.extractedColumns, info)
+			return node, true
 		}
 		cne.err = ErrBadField.GenWithStackByArgs(c.Name.Name.O, "expression")
 		return nil, false
@@ -784,11 +1084,20 @@ func (cne *columnNameExtractor) Leave(node ast.Node) (ast.Node, bool) {
 	return node, true
 }
 
+func findColumnByName(colName string, tblInfo *model.TableInfo) *model.ColumnInfo {
+	for _, info := range tblInfo.Columns {
+		if info.Name.L == colName {
+			return info
+		}
+	}
+	return nil
+}
+
 func extractPartitionColumns(partExpr string, tblInfo *model.TableInfo) ([]*model.ColumnInfo, error) {
 	partExpr = "select " + partExpr
 	stmts, _, err := parser.New().Parse(partExpr, "", "")
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	extractor := &columnNameExtractor{
 		tblInfo:          tblInfo,
@@ -796,7 +1105,7 @@ func extractPartitionColumns(partExpr string, tblInfo *model.TableInfo) ([]*mode
 	}
 	stmts[0].Accept(extractor)
 	if extractor.err != nil {
-		return nil, extractor.err
+		return nil, errors.Trace(extractor.err)
 	}
 	return extractor.extractedColumns, nil
 }
@@ -812,7 +1121,13 @@ type stringSlice interface {
 func checkUniqueKeyIncludePartKey(partCols stringSlice, idxCols []*model.IndexColumn) bool {
 	for i := 0; i < partCols.Len(); i++ {
 		partCol := partCols.At(i)
-		if !findColumnInIndexCols(partCol, idxCols) {
+		idxCol := findColumnInIndexCols(partCol, idxCols)
+		if idxCol == nil {
+			// Partition column is not found in the index columns.
+			return false
+		}
+		if idxCol.Length > 0 {
+			// The partition column is found in the index columns, but the index column is a prefix index
 			return false
 		}
 	}

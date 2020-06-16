@@ -314,6 +314,7 @@ func AddSpecialComment(ddlQuery string) string {
 }
 
 // addSpecialCommentByRegexps uses to add special comment for the worlds in the ddlQuery with match the regexps.
+// addSpecialCommentByRegexps will merge multi pattern regs to one special comment.
 func addSpecialCommentByRegexps(ddlQuery string, prefix string, regs ...*regexp.Regexp) string {
 	upperQuery := strings.ToUpper(ddlQuery)
 	var specialComments []string
