@@ -2859,6 +2859,15 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	ds.names = names
 	ds.setPreferredStoreType(b.TableHints())
 
+	// Init commonHandleCols and commonHandleLens for data source.
+	if tableInfo.IsCommonHandle {
+		for _, idx := range tableInfo.Indices {
+			if idx.Primary {
+				ds.commonHandleCols, ds.commonHandleLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, idx)
+				break
+			}
+		}
+	}
 	// Init FullIdxCols, FullIdxColLens for accessPaths.
 	for _, path := range ds.possibleAccessPaths {
 		if !path.IsTablePath() {
