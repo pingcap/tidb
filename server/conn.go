@@ -1445,6 +1445,11 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 	data := cc.alloc.AllocWithLen(4, 1024)
 	req := rs.NewChunk()
 	gotColumnInfo := false
+	var stmtDetail *execdetails.StmtExecDetails
+	stmtDetailRaw := ctx.Value(execdetails.StmtExecDetailKey)
+	if stmtDetailRaw != nil {
+		stmtDetail = stmtDetailRaw.(*execdetails.StmtExecDetails)
+	}
 	for {
 		// Here server.tidbResultSet implements Next method.
 		err := rs.Next(ctx, req)
@@ -1465,6 +1470,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 		if rowCount == 0 {
 			break
 		}
+		start := time.Now()
 		for i := 0; i < rowCount; i++ {
 			data = data[0:4]
 			if binary {
@@ -1478,6 +1484,9 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 			if err = cc.writePacket(data); err != nil {
 				return err
 			}
+		}
+		if stmtDetail != nil {
+			stmtDetail.RespClientDuration += time.Since(start)
 		}
 	}
 	return cc.writeEOF(serverStatus)
@@ -1529,6 +1538,12 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 	rs.StoreFetchedRows(fetchedRows)
 
 	data := cc.alloc.AllocWithLen(4, 1024)
+	var stmtDetail *execdetails.StmtExecDetails
+	stmtDetailRaw := ctx.Value(execdetails.StmtExecDetailKey)
+	if stmtDetailRaw != nil {
+		stmtDetail = stmtDetailRaw.(*execdetails.StmtExecDetails)
+	}
+	start := time.Now()
 	var err error
 	for _, row := range curRows {
 		data = data[0:4]
@@ -1539,6 +1554,9 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 		if err = cc.writePacket(data); err != nil {
 			return err
 		}
+	}
+	if stmtDetail != nil {
+		stmtDetail.RespClientDuration += time.Since(start)
 	}
 	if cl, ok := rs.(fetchNotifier); ok {
 		cl.OnFetchReturned()

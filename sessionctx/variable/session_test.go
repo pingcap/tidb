@@ -203,6 +203,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 # KV_total: 10
 # PD_total: 11
 # Backoff_total: 12
+# Resp_client_time: 1
 # Succ: true
 select * from t;`
 	sql := "select * from t"
@@ -228,6 +229,7 @@ select * from t;`
 		KVTotal:        10 * time.Second,
 		PDTotal:        11 * time.Second,
 		BackoffTotal:   12 * time.Second,
+		RespClient:     1 * time.Second,
 		Succ:           true,
 		RewriteInfo: variable.RewritePhaseInfo{
 			DurationRewrite:            3,

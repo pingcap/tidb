@@ -870,6 +870,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		KVTotal:        time.Duration(atomic.LoadInt64(&stmtDetail.WaitKVRespDuration)),
 		PDTotal:        time.Duration(atomic.LoadInt64(&stmtDetail.WaitPDRespDuration)),
 		BackoffTotal:   time.Duration(atomic.LoadInt64(&stmtDetail.BackoffDuration)),
+		RespClient:     stmtDetail.RespClientDuration,
 	}
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {
 		slowItems.PrevStmt = sessVars.PrevStmt.String()

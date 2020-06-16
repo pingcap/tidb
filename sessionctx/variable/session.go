@@ -1609,6 +1609,8 @@ const (
 	SlowLogPDTotal = "PD_total"
 	// SlowLogBackoffTotal is the total time doing backoff.
 	SlowLogBackoffTotal = "Backoff_total"
+	// SlowLogRespClientTime is the total time used to write response to client.
+	SlowLogRespClientTime = "Resp_client_time"
 )
 
 // SlowQueryLogItems is a collection of items that should be included in the
@@ -1639,6 +1641,7 @@ type SlowQueryLogItems struct {
 	KVTotal        time.Duration
 	PDTotal        time.Duration
 	BackoffTotal   time.Duration
+	RespClient     time.Duration
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -1784,6 +1787,7 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	writeSlowLogItem(&buf, SlowLogKVTotal, strconv.FormatFloat(logItems.KVTotal.Seconds(), 'f', -1, 64))
 	writeSlowLogItem(&buf, SlowLogPDTotal, strconv.FormatFloat(logItems.PDTotal.Seconds(), 'f', -1, 64))
 	writeSlowLogItem(&buf, SlowLogBackoffTotal, strconv.FormatFloat(logItems.BackoffTotal.Seconds(), 'f', -1, 64))
+	writeSlowLogItem(&buf, SlowLogRespClientTime, strconv.FormatFloat(logItems.RespClient.Seconds(), 'f', -1, 64))
 	writeSlowLogItem(&buf, SlowLogSucc, strconv.FormatBool(logItems.Succ))
 	if len(logItems.Plan) != 0 {
 		writeSlowLogItem(&buf, SlowLogPlan, logItems.Plan)
