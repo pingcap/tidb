@@ -37,10 +37,17 @@ import (
 )
 
 // EncodeHandleInUniqueIndexValue encodes handle in data.
-func EncodeHandleInUniqueIndexValue(h int64) []byte {
-	var data [8]byte
-	binary.BigEndian.PutUint64(data[:], uint64(h))
-	return data[:]
+func EncodeHandleInUniqueIndexValue(h kv.Handle, isUntouched bool) []byte {
+	if h.IsInt() {
+		var data [8]byte
+		binary.BigEndian.PutUint64(data[:], uint64(h.IntValue()))
+		return data[:]
+	}
+	var untouchedFlag byte
+	if isUntouched {
+		untouchedFlag = 1
+	}
+	return encodeCommonHandle([]byte{untouchedFlag}, h)
 }
 
 // DecodeHandleInUniqueIndexValue decodes handle in data.
@@ -375,7 +382,7 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 		if h.IsInt() && distinct {
 			// The len of the idxVal is always >= 10 since len (restoredValue) > 0.
 			tailLen += 8
-			idxVal = append(idxVal, EncodeHandleInUniqueIndexValue(h.IntValue())...)
+			idxVal = append(idxVal, EncodeHandleInUniqueIndexValue(h, false)...)
 		} else if len(idxVal) < 10 {
 			// Padding the len to 10
 			paddingLen := 10 - len(idxVal)
@@ -393,16 +400,7 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 	} else {
 		idxVal = make([]byte, 0)
 		if distinct {
-			if h.IsInt() {
-				idxVal = EncodeHandleInUniqueIndexValue(h.IntValue())
-			} else {
-				if opt.Untouched {
-					idxVal = append(idxVal, 1)
-				} else {
-					idxVal = append(idxVal, 0)
-				}
-				idxVal = encodeCommonHandle(idxVal, h)
-			}
+			idxVal = EncodeHandleInUniqueIndexValue(h, opt.Untouched)
 		}
 		if opt.Untouched {
 			// If index is untouched and fetch here means the key is exists in TiKV, but not in txn mem-buffer,

@@ -6620,6 +6620,42 @@ func (s *testIntegrationSuite) TestIssue17287(c *C) {
 	tk.MustQuery("execute stmt7 using @val2;").Check(testkit.Rows("1589873946"))
 }
 
+func (s *testIntegrationSuite) TestIssue17727(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	var err error
+	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test;")
+	tk.MustExec("DROP TABLE IF EXISTS t1;")
+	tk.MustExec("CREATE TABLE t1 (id INT NOT NULL PRIMARY KEY auto_increment, a timestamp NOT NULL);")
+	tk.MustExec("INSERT INTO t1 VALUES (null, '2020-05-30 20:30:00');")
+	tk.MustExec("PREPARE mystmt FROM 'SELECT * FROM t1 WHERE UNIX_TIMESTAMP(a) >= ?';")
+	tk.MustExec("SET @a=1590868800;")
+	tk.MustQuery("EXECUTE mystmt USING @a;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+
+	tk.MustExec("SET @a=1590868801;")
+	tk.MustQuery("EXECUTE mystmt USING @a;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	tk.MustExec("prepare stmt from 'select unix_timestamp(?)';")
+	tk.MustExec("set @a = '2020-05-30 20:30:00';")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1590841800"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @a = '2020-06-12 13:47:58';")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1591940878"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+}
+
 func (s *testIntegrationSerialSuite) TestIssue17891(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)

@@ -66,6 +66,15 @@ func (builder *RequestBuilder) SetIndexRanges(sc *stmtctx.StatementContext, tid,
 	return builder
 }
 
+// SetCommonHandleRanges sets "KeyRanges" for "kv.Request" by converting common handle range
+// "ranges" to "KeyRanges" firstly.
+func (builder *RequestBuilder) SetCommonHandleRanges(sc *stmtctx.StatementContext, tid int64, ranges []*ranger.Range) *RequestBuilder {
+	if builder.err == nil {
+		builder.Request.KeyRanges, builder.err = CommonHandleRangesToKVRanges(sc, tid, ranges)
+	}
+	return builder
+}
+
 // SetTableHandles sets "KeyRanges" for "kv.Request" by converting table handles
 // "handles" to "KeyRanges" firstly.
 func (builder *RequestBuilder) SetTableHandles(tid int64, handles []kv.Handle) *RequestBuilder {
@@ -307,6 +316,31 @@ func IndexRangesToKVRanges(sc *stmtctx.StatementContext, tid, idxID int64, range
 		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
 	}
 	fb.StoreRanges(feedbackRanges)
+	return krs, nil
+}
+
+// CommonHandleRangesToKVRanges converts common handle ranges to "KeyRange".
+func CommonHandleRangesToKVRanges(sc *stmtctx.StatementContext, tid int64, ranges []*ranger.Range) ([]kv.KeyRange, error) {
+	rans := make([]*ranger.Range, 0, len(ranges))
+	for _, ran := range ranges {
+		low, high, err := encodeIndexKey(sc, ran)
+		if err != nil {
+			return nil, err
+		}
+		rans = append(rans, &ranger.Range{LowVal: []types.Datum{types.NewBytesDatum(low)},
+			HighVal: []types.Datum{types.NewBytesDatum(high)}, LowExclude: false, HighExclude: true})
+	}
+	krs := make([]kv.KeyRange, 0, len(rans))
+	for _, ran := range rans {
+		low, high := ran.LowVal[0].GetBytes(), ran.HighVal[0].GetBytes()
+		if ran.LowExclude {
+			low = kv.Key(low).PrefixNext()
+		}
+		ran.LowVal[0].SetBytes(low)
+		startKey := tablecodec.EncodeCommonHandleSeekKey(tid, low)
+		endKey := tablecodec.EncodeCommonHandleSeekKey(tid, high)
+		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
+	}
 	return krs, nil
 }
 

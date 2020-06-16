@@ -2764,7 +2764,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				for _, idxName := range hint.indexHint.IndexNames {
 					hasIdxName := false
 					for _, path := range possiblePaths {
-						if path.IsTablePath {
+						if path.IsTablePath() {
 							if idxName.L == "primary" {
 								hasIdxName = true
 								break
@@ -2827,7 +2827,8 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			IsHidden: col.Hidden,
 		}
 
-		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
+		// TODO: The common handle may be multi columns, need to change ds.handleCol to a slice.
+		if col.IsPKHandleColumn(tableInfo) || col.IsCommonHandleColumn(tableInfo) {
 			handleCol = newCol
 		}
 		schema.Append(newCol)
@@ -2861,7 +2862,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 
 	// Init FullIdxCols, FullIdxColLens for accessPaths.
 	for _, path := range ds.possibleAccessPaths {
-		if !path.IsTablePath {
+		if !path.IsTablePath() {
 			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.Index)
 		}
 	}
