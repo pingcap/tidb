@@ -2827,7 +2827,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			IsHidden: col.Hidden,
 		}
 
-		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
+		if col.IsPKHandleColumn(tableInfo) || col.IsCommonHandleColumn(tableInfo) {
 			handleCol = newCol
 		}
 		schema.Append(newCol)
