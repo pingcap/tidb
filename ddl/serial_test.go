@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -630,6 +631,27 @@ func (s *testSerialSuite) TestRecoverTableByTableName(c *C) {
 	tk.MustExec("insert into t_recover values (10)")
 	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "7", "8", "9", "10"))
 
+	tk.MustExec("drop database if exists Test2")
+	tk.MustExec("create database Test2")
+	tk.MustExec("use Test2")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values (1),(2)")
+	tk.MustExec("drop table t")
+	tk.MustExec("recover table t")
+	tk.MustQuery("select a from t order by a").Check(testkit.Rows("1", "2"))
+
+	tk.MustExec("drop table t")
+	tk.MustExec("drop database if exists Test3")
+	tk.MustExec("create database Test3")
+	tk.MustExec("use Test3")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("drop table t")
+	tk.MustExec("drop database Test3")
+	tk.MustExec("use Test2")
+	tk.MustExec("recover table t")
+	tk.MustExec("insert into t values (3)")
+	tk.MustQuery("select a from t order by a").Check(testkit.Rows("1", "2", "3"))
+
 	gcEnable, err := gcutil.CheckGCEnable(tk.Se)
 	c.Assert(err, IsNil)
 	c.Assert(gcEnable, Equals, false)
@@ -775,6 +797,25 @@ func (s *testSerialSuite) TestCancelJobByErrorCountLimit(c *C) {
 	_, err := tk.Exec("create table t (a int)")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+}
+
+func (s *testSerialSuite) TestTruncateTableUpdateSchemaVersionErr(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockTruncateTableUpdateVersionError", `return(true)`), IsNil)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 5")
+	err := ddlutil.LoadDDLVars(tk.Se)
+	c.Assert(err, IsNil)
+
+	tk.MustExec("create table t (a int)")
+	_, err = tk.Exec("truncate table t")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+	// Disable fail point.
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockTruncateTableUpdateVersionError"), IsNil)
+	tk.MustExec("truncate table t")
 }
 
 func (s *testSerialSuite) TestCanceledJobTakeTime(c *C) {
@@ -949,6 +990,35 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 		assertModifyColType("alter table t modify column a int auto_random(3)")
 		assertModifyColType("alter table t modify column a mediumint auto_random(3)")
 		assertModifyColType("alter table t modify column a smallint auto_random(3)")
+	})
+
+	// Test show warnings when create auto_random table.
+	assertShowWarningCorrect := func(sql string, times int) {
+		mustExecAndDrop(sql, func() {
+			note := fmt.Sprintf(autoid.AutoRandomAvailableAllocTimesNote, times)
+			result := fmt.Sprintf("Note|1105|%s", note)
+			tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", result))
+			c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
+		})
+	}
+	assertShowWarningCorrect("create table t (a bigint auto_random(15) primary key)", 281474976710655)
+	assertShowWarningCorrect("create table t (a bigint unsigned auto_random(15) primary key)", 562949953421311)
+
+	// Test insert into auto_random column explicitly is not allowed by default.
+	assertExplicitInsertDisallowed := func(sql string) {
+		assertInvalidAutoRandomErr(sql, autoid.AutoRandomExplicitInsertDisabledErrMsg)
+	}
+	tk.MustExec("set @@allow_auto_random_explicit_insert = false")
+	mustExecAndDrop("create table t (a bigint auto_random primary key)", func() {
+		assertExplicitInsertDisallowed("insert into t values (1)")
+		assertExplicitInsertDisallowed("insert into t values (3)")
+		tk.MustExec("insert into t values()")
+	})
+	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
+	mustExecAndDrop("create table t (a bigint auto_random primary key)", func() {
+		tk.MustExec("insert into t values(1)")
+		tk.MustExec("insert into t values(3)")
+		tk.MustExec("insert into t values()")
 	})
 
 	// Disallow using it when allow-auto-random is not enabled.
