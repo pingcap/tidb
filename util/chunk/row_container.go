@@ -130,8 +130,8 @@ func (c *RowContainer) NumChunks() int {
 
 // Add appends a chunk into the RowContainer.
 func (c *RowContainer) Add(chk *Chunk) (err error) {
-	c.m.Lock()
-	defer c.m.Unlock()
+	c.m.RLock()
+	defer c.m.RUnlock()
 	if c.AlreadySpilled() {
 		err = c.recordsInDisk.Add(chk)
 	} else {

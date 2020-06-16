@@ -587,8 +587,8 @@ func (c *SortedRowContainer) sortAndSpillToDisk(needLock bool) (err error) {
 
 // Add appends a chunk into the SortedRowContainer.
 func (c *SortedRowContainer) Add(chk *chunk.Chunk) (err error) {
-	c.m.Lock()
-	defer c.m.Unlock()
+	c.m.RLock()
+	defer c.m.RUnlock()
 	if c.RowContainer.AlreadySpilled() {
 		return errors.New("The partition is spilled")
 	}
