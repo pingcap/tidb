@@ -438,7 +438,7 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID) (*RPCC
 	for i := 0; i < regionStore.accessStoreNum(TiFlashOnly); i++ {
 		accessIdx := (sIdx + i) % regionStore.accessStoreNum(TiFlashOnly)
 		storeIdx, store := regionStore.accessStore(TiFlashOnly, accessIdx)
-		addr, err := c.getStoreAddr(bo, cachedRegion, store, accessIdx)
+		addr, err := c.getStoreAddr(bo, cachedRegion, store, storeIdx)
 		if err != nil {
 			return nil, err
 		}
