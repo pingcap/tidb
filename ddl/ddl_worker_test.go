@@ -33,12 +33,15 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 var _ = Suite(&testDDLSuite{})
 var _ = Suite(&testDDLSerialSuite{})
 
-type testDDLSuite struct{}
+type testDDLSuite struct {
+	testutil.CommonHandleSuite
+}
 type testDDLSerialSuite struct{}
 
 const testLease = 5 * time.Millisecond
@@ -48,9 +51,6 @@ func (s *testDDLSerialSuite) SetUpSuite(c *C) {
 
 	// We hope that this test is serially executed. So put it here.
 	s.testRunWorker(c)
-}
-
-func (s *testDDLSuite) TearDownSuite(c *C) {
 }
 
 func (s *testDDLSuite) TestCheckOwner(c *C) {

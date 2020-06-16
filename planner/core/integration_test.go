@@ -301,8 +301,10 @@ func (s *testIntegrationSerialSuite) TestNoneAccessPathsFoundByIsolationRead(c *
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash, tikv'")
 	tk.MustExec("select * from t")
-	config.GetGlobalConfig().IsolationRead.Engines = []string{"tiflash"}
-	defer func() { config.GetGlobalConfig().IsolationRead.Engines = []string{"tikv", "tiflash"} }()
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.IsolationRead.Engines = []string{"tiflash"}
+	})
 	// Change instance config doesn't affect isolation read.
 	tk.MustExec("select * from t")
 }
@@ -825,6 +827,17 @@ func (s *testIntegrationSuite) TestIssue15546(c *C) {
 	tk.MustQuery("select * from pt, vt where pt.a = vt.a").Check(testkit.Rows("1 1 1 1"))
 }
 
+func (s *testIntegrationSuite) TestIssue17813(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists hash_partition_overflow")
+	tk.MustExec("create table hash_partition_overflow (c0 bigint unsigned) partition by hash(c0) partitions 3")
+	tk.MustExec("insert into hash_partition_overflow values (9223372036854775808)")
+	tk.MustQuery("select * from hash_partition_overflow where c0 = 9223372036854775808").Check(testkit.Rows("9223372036854775808"))
+	tk.MustQuery("select * from hash_partition_overflow where c0 in (1, 9223372036854775808)").Check(testkit.Rows("9223372036854775808"))
+}
+
 func (s *testIntegrationSuite) TestHintWithRequiredProperty(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1127,4 +1140,31 @@ func (s *testIntegrationSuite) TestIssue16935(c *C) {
 	tk.MustExec("CREATE definer='root'@'localhost' VIEW v0(c0) AS SELECT NULL FROM t0;")
 
 	tk.MustQuery("SELECT * FROM t0 LEFT JOIN v0 ON TRUE WHERE v0.c0 IS NULL;")
+}
+
+func (s *testIntegrationSuite) TestAccessPathOnClusterIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_clustered_index = 1")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int, b varchar(20), c decimal(40,10), primary key(a,b), key(c))")
+	tk.MustExec(`insert into t1 values (1,"111",1.1), (2,"222",2.2), (3,"333",3.3)`)
+	tk.MustExec("analyze table t1")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Res  []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
+			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Res...))
+	}
 }

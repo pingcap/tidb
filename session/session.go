@@ -74,14 +74,14 @@ import (
 )
 
 var (
-	statementPerTransactionInternalOK    = metrics.StatementPerTransaction.WithLabelValues(metrics.LblInternal, "ok")
-	statementPerTransactionInternalError = metrics.StatementPerTransaction.WithLabelValues(metrics.LblInternal, "error")
-	statementPerTransactionGeneralOK     = metrics.StatementPerTransaction.WithLabelValues(metrics.LblGeneral, "ok")
-	statementPerTransactionGeneralError  = metrics.StatementPerTransaction.WithLabelValues(metrics.LblGeneral, "error")
-	transactionDurationInternalCommit    = metrics.TransactionDuration.WithLabelValues(metrics.LblInternal, metrics.LblCommit)
-	transactionDurationInternalAbort     = metrics.TransactionDuration.WithLabelValues(metrics.LblInternal, metrics.LblAbort)
-	transactionDurationGeneralCommit     = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, metrics.LblCommit)
-	transactionDurationGeneralAbort      = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, metrics.LblAbort)
+	statementPerTransactionPessimisticOK    = metrics.StatementPerTransaction.WithLabelValues(metrics.LblPessimistic, metrics.LblOK)
+	statementPerTransactionPessimisticError = metrics.StatementPerTransaction.WithLabelValues(metrics.LblPessimistic, metrics.LblError)
+	statementPerTransactionOptimisticOK     = metrics.StatementPerTransaction.WithLabelValues(metrics.LblOptimistic, metrics.LblOK)
+	statementPerTransactionOptimisticError  = metrics.StatementPerTransaction.WithLabelValues(metrics.LblOptimistic, metrics.LblError)
+	transactionDurationPessimisticCommit    = metrics.TransactionDuration.WithLabelValues(metrics.LblPessimistic, metrics.LblCommit)
+	transactionDurationPessimisticAbort     = metrics.TransactionDuration.WithLabelValues(metrics.LblPessimistic, metrics.LblAbort)
+	transactionDurationOptimisticCommit     = metrics.TransactionDuration.WithLabelValues(metrics.LblOptimistic, metrics.LblCommit)
+	transactionDurationOptimisticAbort      = metrics.TransactionDuration.WithLabelValues(metrics.LblOptimistic, metrics.LblAbort)
 
 	sessionExecuteCompileDurationInternal = metrics.SessionExecuteCompileDuration.WithLabelValues(metrics.LblInternal)
 	sessionExecuteCompileDurationGeneral  = metrics.SessionExecuteCompileDuration.WithLabelValues(metrics.LblGeneral)
@@ -1161,7 +1161,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 
 	// Execute the physical plan.
 	logStmt(stmtNode, s.sessionVars)
-	recordSet, err := runStmtWrap(ctx, s, stmt)
+	recordSet, err := runStmt(ctx, s, stmt)
 	if err != nil {
 		if !kv.ErrKeyExists.Equal(err) {
 			logutil.Logger(ctx).Warn("run statement failed",
@@ -1174,8 +1174,8 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	return recordSet, nil
 }
 
-// runStmtWrap executes the sqlexec.Statement and commit or rollback the current transaction.
-func runStmtWrap(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.RecordSet, err error) {
+// runStmt executes the sqlexec.Statement and commit or rollback the current transaction.
+func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.RecordSet, err error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("session.runStmt", opentracing.ChildOf(span.Context()))
 		span1.LogKV("sql", s.OriginText())
@@ -1281,7 +1281,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	return prepareExec.ID, prepareExec.ParamCount, prepareExec.Fields, nil
 }
 
-func (s *session) CommonExec(ctx context.Context,
+func (s *session) preparedStmtExec(ctx context.Context,
 	stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, args []types.Datum) (sqlexec.RecordSet, error) {
 	st, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, args)
 	if err != nil {
@@ -1292,8 +1292,8 @@ func (s *session) CommonExec(ctx context.Context,
 	return runStmt(ctx, s, st)
 }
 
-// CachedPlanExec short path currently ONLY for cached "point select plan" execution
-func (s *session) CachedPlanExec(ctx context.Context,
+// cachedPlanExec short path currently ONLY for cached "point select plan" execution
+func (s *session) cachedPlanExec(ctx context.Context,
 	stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, args []types.Datum) (sqlexec.RecordSet, error) {
 	prepared := prepareStmt.PreparedAst
 	// compile ExecStmt
@@ -1404,9 +1404,9 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		return nil, err
 	}
 	if ok {
-		return s.CachedPlanExec(ctx, stmtID, preparedStmt, args)
+		return s.cachedPlanExec(ctx, stmtID, preparedStmt, args)
 	}
-	return s.CommonExec(ctx, stmtID, preparedStmt, args)
+	return s.preparedStmtExec(ctx, stmtID, preparedStmt, args)
 }
 
 func (s *session) DropPreparedStmt(stmtID uint32) error {
@@ -2240,21 +2240,21 @@ func logQuery(query string, vars *variable.SessionVars) {
 }
 
 func (s *session) recordOnTransactionExecution(err error, counter int, duration float64) {
-	if s.isInternal() {
+	if s.sessionVars.TxnCtx.IsPessimistic {
 		if err != nil {
-			statementPerTransactionInternalError.Observe(float64(counter))
-			transactionDurationInternalAbort.Observe(duration)
+			statementPerTransactionPessimisticError.Observe(float64(counter))
+			transactionDurationPessimisticAbort.Observe(duration)
 		} else {
-			statementPerTransactionInternalOK.Observe(float64(counter))
-			transactionDurationInternalCommit.Observe(duration)
+			statementPerTransactionPessimisticOK.Observe(float64(counter))
+			transactionDurationPessimisticCommit.Observe(duration)
 		}
 	} else {
 		if err != nil {
-			statementPerTransactionGeneralError.Observe(float64(counter))
-			transactionDurationGeneralAbort.Observe(duration)
+			statementPerTransactionOptimisticError.Observe(float64(counter))
+			transactionDurationOptimisticAbort.Observe(duration)
 		} else {
-			statementPerTransactionGeneralOK.Observe(float64(counter))
-			transactionDurationGeneralCommit.Observe(duration)
+			statementPerTransactionOptimisticOK.Observe(float64(counter))
+			transactionDurationOptimisticCommit.Observe(duration)
 		}
 	}
 }
