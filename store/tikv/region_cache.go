@@ -192,10 +192,10 @@ func (r *Region) init(c *RegionCache) error {
 		c.storeMu.RUnlock()
 		if !exists {
 			store = c.getStoreByStoreID(p.StoreId)
-			_, err := store.initResolve(NewNoopBackoff(context.Background()), c)
-			if err != nil {
-				return err
-			}
+		}
+		_, err := store.initResolve(NewNoopBackoff(context.Background()), c)
+		if err != nil {
+			return err
 		}
 		switch store.storeType {
 		case kv.TiKV:
