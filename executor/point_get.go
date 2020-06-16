@@ -374,7 +374,7 @@ func decodeOldRowValToChunk(e *baseExecutor, tblInfo *model.TableInfo, handle kv
 			chk.AppendNull(i)
 			continue
 		}
-		if tryDecodeFromHandle(tblInfo, i, col, handle, chk) {
+		if tryDecodeFromHandle(tblInfo, i, col, handle, chk, decoder) {
 			continue
 		}
 		cutPos := colID2CutPos[col.ID]
@@ -395,13 +395,20 @@ func decodeOldRowValToChunk(e *baseExecutor, tblInfo *model.TableInfo, handle kv
 	return nil
 }
 
-func tryDecodeFromHandle(tblInfo *model.TableInfo, i int, col *expression.Column, handle kv.Handle, chk *chunk.Chunk) bool {
+func tryDecodeFromHandle(tblInfo *model.TableInfo, i int, col *expression.Column, handle kv.Handle, chk *chunk.Chunk, decoder *codec.Decoder) bool {
 	if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.Flag) {
 		chk.AppendInt64(i, handle.IntValue())
 		return true
 	}
 	if col.ID == model.ExtraHandleID {
 		chk.AppendInt64(i, handle.IntValue())
+		return true
+	}
+	if tblInfo.IsCommonHandle && mysql.HasPriKeyFlag(col.RetType.Flag) {
+		_, err := decoder.DecodeOne(handle.EncodedCol(i), i, col.RetType)
+		if err != nil {
+			return false
+		}
 		return true
 	}
 	return false
