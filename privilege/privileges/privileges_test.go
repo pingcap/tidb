@@ -863,7 +863,7 @@ func (s *testPrivilegeSuite) TestAnalyzeTable(c *C) {
 	c.Assert(err.Error(), Equals, "[planner:1142]INSERT command denied to user 'anobody'@'%' for table 't1'")
 
 	_, err = se.Execute(context.Background(), "select * from t1")
-	c.Assert(err.Error(), Equals, "[planner:1142]SELECT command denied to user 'anobody'@'localhost' for table 't1'")
+	c.Assert(err.Error(), Equals, "[planner:1142]SELECT command denied to user 'anobody'@'%' for table 't1'")
 
 	// try again after SELECT privilege granted
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "asuper", Hostname: "localhost", AuthUsername: "asuper", AuthHostname: "%"}, nil, nil), IsTrue)
