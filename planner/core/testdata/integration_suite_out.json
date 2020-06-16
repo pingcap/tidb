@@ -641,5 +641,55 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestAccessPathOnClusterIndex",
+    "Cases": [
+      {
+        "SQL": "select * from t1",
+        "Plan": [
+          "TableReader_5 3.00 root  data:TableFullScan_4",
+          "└─TableFullScan_4 3.00 cop[tikv] table:t1 keep order:false"
+        ],
+        "Res": [
+          "1 111 1.1000000000",
+          "2 222 2.2000000000",
+          "3 333 3.3000000000"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where t1.a >= 1 and t1.a < 4",
+        "Plan": [
+          "TableReader_6 3.00 root  data:TableRangeScan_5",
+          "└─TableRangeScan_5 3.00 cop[tikv] table:t1 range:[1,4), keep order:false"
+        ],
+        "Res": [
+          "1 111 1.1000000000",
+          "2 222 2.2000000000",
+          "3 333 3.3000000000"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where t1.a = 1 and t1.b < \"333\"",
+        "Plan": [
+          "TableReader_6 0.67 root  data:TableRangeScan_5",
+          "└─TableRangeScan_5 0.67 cop[tikv] table:t1 range:[1 -inf,1 \"333\"), keep order:false"
+        ],
+        "Res": [
+          "1 111 1.1000000000"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where t1.c = 3.3",
+        "Plan": [
+          "TableReader_7 1.00 root  data:Selection_6",
+          "└─Selection_6 1.00 cop[tikv]  eq(test.t1.c, 3.3)",
+          "  └─TableFullScan_5 3.00 cop[tikv] table:t1 keep order:false"
+        ],
+        "Res": [
+          "3 333 3.3000000000"
+        ]
+      }
+    ]
   }
 ]
