@@ -256,7 +256,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		}
 	}
 	if e.rowChunks.NumRow() > 0 {
-		e.rowChunks.sort()
+		e.rowChunks.initPointerAndSort(true)
 		e.partitionList = append(e.partitionList, e.rowChunks)
 	}
 	return nil
@@ -565,14 +565,23 @@ func (c *SortedRowContainer) keyColumnsLess(i, j int) bool {
 	return c.lessRow(rowI, rowJ)
 }
 
-func (c *SortedRowContainer) sort() {
-	c.m.RLock()
-	defer c.m.RUnlock()
-	if c.AlreadySpilled() {
+func (c *SortedRowContainer) initPointerAndSort(needLock bool) {
+	if needLock {
+		c.m.RLock()
+		defer c.m.RUnlock()
+	}
+	if c.rowPtrs != nil {
 		return
 	}
-	c.initPointers()
+	c.rowPtrs = make([]chunk.RowPtr, 0, c.NumRow())
+	for chkIdx := 0; chkIdx < c.NumChunks(); chkIdx++ {
+		rowChk := c.GetChunk(chkIdx)
+		for rowIdx := 0; rowIdx < rowChk.NumRows(); rowIdx++ {
+			c.rowPtrs = append(c.rowPtrs, chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
+		}
+	}
 	sort.Slice(c.rowPtrs, c.keyColumnsLess)
+	c.GetMemTracker().Consume(int64(8 * cap(c.rowPtrs)))
 }
 
 func (c *SortedRowContainer) sortAndSpillToDisk(needLock bool) (err error) {
@@ -580,8 +589,7 @@ func (c *SortedRowContainer) sortAndSpillToDisk(needLock bool) (err error) {
 		c.m.Lock()
 		defer c.m.Unlock()
 	}
-	c.initPointers()
-	sort.Slice(c.rowPtrs, c.keyColumnsLess)
+	c.initPointerAndSort(!needLock)
 	return c.RowContainer.SpillToDisk(needLock)
 }
 
