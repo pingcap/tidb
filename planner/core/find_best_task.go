@@ -699,9 +699,19 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 	return ts, partialCost
 }
 
+func indexCoveringCol(col *expression.Column, indexCols []*expression.Column, idxColLens []int) bool {
+	for i, indexCol := range indexCols {
+		isFullLen := idxColLens[i] == types.UnspecifiedLength || idxColLens[i] == col.RetType.Flen
+		// We use col.OrigColName instead of col.ColName.
+		// Related issue: https://github.com/pingcap/tidb/issues/9636.
+		if indexCol != nil && col.Equal(nil, indexCol) && isFullLen {
+			return true
+		}
+	}
+	return false
+}
+
 func (ds *DataSource) isCoveringIndex(columns, indexColumns []*expression.Column, idxColLens []int, tblInfo *model.TableInfo) bool {
-	indexCols := append(indexColumns, ds.commonHandleCols...)
-	indexColLens := append(idxColLens, ds.commonHandleLens...)
 	for _, col := range columns {
 		if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.Flag) {
 			continue
@@ -709,17 +719,7 @@ func (ds *DataSource) isCoveringIndex(columns, indexColumns []*expression.Column
 		if col.ID == model.ExtraHandleID {
 			continue
 		}
-		isIndexColumn := false
-		for i, indexCol := range indexCols {
-			isFullLen := indexColLens[i] == types.UnspecifiedLength || indexColLens[i] == col.RetType.Flen
-			// We use col.OrigColName instead of col.ColName.
-			// Related issue: https://github.com/pingcap/tidb/issues/9636.
-			if indexCol != nil && col.Equal(nil, indexCol) && isFullLen {
-				isIndexColumn = true
-				break
-			}
-		}
-		if !isIndexColumn {
+		if !indexCoveringCol(col, indexColumns, idxColLens) && !indexCoveringCol(col, ds.commonHandleCols, ds.commonHandleLens) {
 			return false
 		}
 	}
