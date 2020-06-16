@@ -194,13 +194,10 @@ func CheckAggPushDown(aggFunc *AggFuncDesc, storeType kv.StoreType) bool {
 	if len(aggFunc.OrderByItems) > 0 {
 		return false
 	}
-	var ret bool
+	ret := true
 	switch storeType {
 	case kv.TiFlash:
 		ret = CheckAggPushFlash(aggFunc)
-	default:
-		// Can not push down approx_count_distinct to other store except tiflash by now.
-		ret = aggFunc.Name != ast.AggFuncApproxCountDistinct
 	}
 	if ret {
 		ret = expression.IsPushDownEnabled(strings.ToLower(aggFunc.Name), storeType)
