@@ -154,12 +154,11 @@ func (e *ReplaceExec) removeIndexRow(ctx context.Context, txn kv.Transaction, r 
 			}
 			return false, false, err
 		}
-
-		handle, err := tables.DecodeHandleInUniqueIndexValue(val)
+		handle, err := tables.DecodeHandleInUniqueIndexValue(val, uk.commonHandle)
 		if err != nil {
 			return false, true, err
 		}
-		rowUnchanged, err := e.removeRow(ctx, txn, kv.IntHandle(handle), r)
+		rowUnchanged, err := e.removeRow(ctx, txn, handle, r)
 		if err != nil {
 			return false, true, err
 		}

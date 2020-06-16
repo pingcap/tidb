@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/memory"
 )
 
@@ -113,6 +114,22 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 				newHandle = kv.IntHandle(newData[i].GetInt64())
 				// Rebase auto random id if the field is changed.
 				if err := rebaseAutoRandomValue(sctx, t, &newData[i], col); err != nil {
+					return false, err
+				}
+			}
+			if col.IsCommonHandleColumn(t.Meta()) {
+				pkIdx := tables.FindPrimaryIndex(t.Meta())
+				handleChanged = true
+				pkDts := make([]types.Datum, 0, len(pkIdx.Columns))
+				for _, idxCol := range pkIdx.Columns {
+					pkDts = append(pkDts, newData[idxCol.Offset])
+				}
+				handleBytes, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx, nil, pkDts...)
+				if err != nil {
+					return false, err
+				}
+				newHandle, err = kv.NewCommonHandle(handleBytes)
+				if err != nil {
 					return false, err
 				}
 			}

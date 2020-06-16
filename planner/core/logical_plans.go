@@ -575,7 +575,7 @@ func (p *LogicalIndexScan) MatchIndexProp(prop *property.PhysicalProperty) (matc
 // getTablePath finds the TablePath from a group of accessPaths.
 func getTablePath(paths []*util.AccessPath) *util.AccessPath {
 	for _, path := range paths {
-		if path.IsTablePath {
+		if path.IsTablePath() {
 			return path
 		}
 	}
@@ -622,7 +622,7 @@ func (ds *DataSource) Convert2Gathers() (gathers []LogicalPlan) {
 	tg := ds.buildTableGather()
 	gathers = append(gathers, tg)
 	for _, path := range ds.possibleAccessPaths {
-		if !path.IsTablePath {
+		if !path.IsTablePath() {
 			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.Index)
 			path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.Index)
 			// If index columns can cover all of the needed columns, we can use a IndexGather + IndexScan.
@@ -635,10 +635,87 @@ func (ds *DataSource) Convert2Gathers() (gathers []LogicalPlan) {
 	return gathers
 }
 
+func (ds *DataSource) deriveCommonHandleTablePathStats(path *util.AccessPath, conds []expression.Expression, isIm bool) (bool, error) {
+	path.CountAfterAccess = float64(ds.statisticTable.Count)
+	path.Ranges = ranger.FullNotNullRange()
+	if len(conds) == 0 {
+		return false, nil
+	}
+	sc := ds.ctx.GetSessionVars().StmtCtx
+	path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.Index)
+	path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.Index)
+	if len(path.IdxCols) != 0 {
+		res, err := ranger.DetachCondAndBuildRangeForIndex(ds.ctx, conds, path.IdxCols, path.IdxColLens)
+		if err != nil {
+			return false, err
+		}
+		path.Ranges = res.Ranges
+		path.AccessConds = res.AccessConds
+		path.TableFilters = res.RemainedConds
+		path.EqCondCount = res.EqCondCount
+		path.EqOrInCondCount = res.EqOrInCount
+		path.IsDNFCond = res.IsDNFCond
+		path.CountAfterAccess, err = ds.tableStats.HistColl.GetRowCountByIndexRanges(sc, path.Index.ID, path.Ranges)
+		if err != nil {
+			return false, err
+		}
+	} else {
+		path.TableFilters = conds
+	}
+	if path.EqOrInCondCount == len(path.AccessConds) {
+		accesses, remained := path.SplitCorColAccessCondFromFilters(ds.ctx, path.EqOrInCondCount)
+		path.AccessConds = append(path.AccessConds, accesses...)
+		path.TableFilters = remained
+		if len(accesses) > 0 && ds.statisticTable.Pseudo {
+			path.CountAfterAccess = ds.statisticTable.PseudoAvgCountPerValue()
+		} else {
+			selectivity := path.CountAfterAccess / float64(ds.statisticTable.Count)
+			for i := range accesses {
+				col := path.IdxCols[path.EqOrInCondCount+i]
+				ndv := ds.getColumnNDV(col.ID)
+				ndv *= selectivity
+				if ndv < 1 {
+					ndv = 1.0
+				}
+				path.CountAfterAccess = path.CountAfterAccess / ndv
+			}
+		}
+	}
+	// If the `CountAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
+	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
+	if path.CountAfterAccess < ds.stats.RowCount && !isIm {
+		path.CountAfterAccess = math.Min(ds.stats.RowCount/SelectionFactor, float64(ds.statisticTable.Count))
+	}
+	// Check whether there's only point query.
+	noIntervalRanges := true
+	haveNullVal := false
+	for _, ran := range path.Ranges {
+		// Not point or the not full matched.
+		if !ran.IsPoint(sc) || len(ran.HighVal) != len(path.Index.Columns) {
+			noIntervalRanges = false
+			break
+		}
+		// Check whether there's null value.
+		for i := 0; i < len(path.Index.Columns); i++ {
+			if ran.HighVal[i].IsNull() {
+				haveNullVal = true
+				break
+			}
+		}
+		if haveNullVal {
+			break
+		}
+	}
+	return noIntervalRanges && !haveNullVal, nil
+}
+
 // deriveTablePathStats will fulfill the information that the AccessPath need.
 // And it will check whether the primary key is covered only by point query.
 // isIm indicates whether this function is called to generate the partial path for IndexMerge.
 func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expression.Expression, isIm bool) (bool, error) {
+	if path.IsCommonHandlePath {
+		return ds.deriveCommonHandleTablePathStats(path, conds, isIm)
+	}
 	var err error
 	sc := ds.ctx.GetSessionVars().StmtCtx
 	path.CountAfterAccess = float64(ds.statisticTable.Count)
@@ -1002,7 +1079,7 @@ func (p *LogicalWindow) GetWindowResultColumns() []*expression.Column {
 // ExtractCorColumnsBySchema only extracts the correlated columns that match the specified schema.
 // e.g. If the correlated columns from plan are [t1.a, t2.a, t3.a] and specified schema is [t2.a, t2.b, t2.c],
 // only [t2.a] is returned.
-func ExtractCorColumnsBySchema(corCols []*expression.CorrelatedColumn, schema *expression.Schema) []*expression.CorrelatedColumn {
+func ExtractCorColumnsBySchema(corCols []*expression.CorrelatedColumn, schema *expression.Schema, resolveIndex bool) []*expression.CorrelatedColumn {
 	resultCorCols := make([]*expression.CorrelatedColumn, schema.Len())
 	for _, corCol := range corCols {
 		idx := schema.ColumnIndex(&corCol.Column)
@@ -1024,15 +1101,31 @@ func ExtractCorColumnsBySchema(corCols []*expression.CorrelatedColumn, schema *e
 			length++
 		}
 	}
-	return resultCorCols[:length]
+	resultCorCols = resultCorCols[:length]
+
+	if resolveIndex {
+		for _, corCol := range resultCorCols {
+			corCol.Index = schema.ColumnIndex(&corCol.Column)
+		}
+	}
+
+	return resultCorCols
 }
 
-// extractCorColumnsBySchema only extracts the correlated columns that match the specified schema.
+// extractCorColumnsBySchema4LogicalPlan only extracts the correlated columns that match the specified schema.
 // e.g. If the correlated columns from plan are [t1.a, t2.a, t3.a] and specified schema is [t2.a, t2.b, t2.c],
 // only [t2.a] is returned.
-func extractCorColumnsBySchema(p LogicalPlan, schema *expression.Schema) []*expression.CorrelatedColumn {
-	corCols := ExtractCorrelatedCols(p)
-	return ExtractCorColumnsBySchema(corCols, schema)
+func extractCorColumnsBySchema4LogicalPlan(p LogicalPlan, schema *expression.Schema) []*expression.CorrelatedColumn {
+	corCols := ExtractCorrelatedCols4LogicalPlan(p)
+	return ExtractCorColumnsBySchema(corCols, schema, false)
+}
+
+// ExtractCorColumnsBySchema4PhysicalPlan only extracts the correlated columns that match the specified schema.
+// e.g. If the correlated columns from plan are [t1.a, t2.a, t3.a] and specified schema is [t2.a, t2.b, t2.c],
+// only [t2.a] is returned.
+func ExtractCorColumnsBySchema4PhysicalPlan(p PhysicalPlan, schema *expression.Schema) []*expression.CorrelatedColumn {
+	corCols := ExtractCorrelatedCols4PhysicalPlan(p)
+	return ExtractCorColumnsBySchema(corCols, schema, true)
 }
 
 // ShowContents stores the contents for the `SHOW` statement.
