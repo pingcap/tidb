@@ -169,20 +169,20 @@ func (p *LogicalShowDDLJobs) findBestTask(prop *property.PhysicalProperty, clock
 }
 
 // rebuildChildTasks rebuild the childTasks to make the clock_th combination.
-func (p *baseLogicalPlan) rebuildChildTasks(childTasks *[]task, pp PhysicalPlan, childCnts []int64, clock int8, TS time.Time) error {
+func (p *baseLogicalPlan) rebuildChildTasks(childTasks *[]task, pp PhysicalPlan, childCnts []int64, clock int64, TS time.Time) error {
 	// the taskMap of children nodes should be rolled back.
 	for _, child := range p.children {
 		child.rollBackTaskMap(TS)
 	}
 
-	var multAll int8 = 1
+	var multAll int64 = 1
 	var curClock CountDown
 	for _, x := range childCnts {
-		multAll *= int8(x)
+		multAll *= x
 	}
 	*childTasks = (*childTasks)[:0]
 	for j, child := range p.children {
-		multAll /= int8(childCnts[j])
+		multAll /= childCnts[j]
 		curClock = CountDown((clock-1)/multAll + 1)
 		childTask, _, err := child.findBestTask(pp.GetChildReqProps(j), &curClock)
 		clock = (clock-1)%multAll + 1
@@ -233,7 +233,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 
 		if clock.IsForce() && int64(*clock) <= curCntPlan {
 			curCntPlan = int64(*clock)
-			err := p.rebuildChildTasks(&childTasks, pp, childCnts, int8(*clock), TimeStampNow)
+			err := p.rebuildChildTasks(&childTasks, pp, childCnts, int64(*clock), TimeStampNow)
 			if err != nil {
 				return nil, 0, err
 			}
