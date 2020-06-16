@@ -50,6 +50,7 @@ func NewRowContainer(fieldType []*types.FieldType, chunkSize int) *RowContainer 
 	return rc
 }
 
+// SpillToDisk spills data to disk.
 func (c *RowContainer) SpillToDisk(needLock bool) (err error) {
 	if needLock {
 		c.m.Lock()
@@ -88,7 +89,7 @@ func (c *RowContainer) AlreadySpilled() bool {
 	return c.recordsInDisk != nil
 }
 
-// AlreadySpilled indicates that records have spilled out into disk.
+// AlreadySpilledSafe indicates that records have spilled out into disk. It's thread-safe.
 func (c *RowContainer) AlreadySpilledSafe() bool {
 	c.m.RLock()
 	defer c.m.RUnlock()
@@ -231,7 +232,7 @@ func (a *SpillDiskAction) SetFallback(fallback memory.ActionOnExceed) {
 // SetLogHook sets the hook, it does nothing just to form the memory.ActionOnExceed interface.
 func (a *SpillDiskAction) SetLogHook(hook func(uint64)) {}
 
-// ResetOnceAndSetRowContainer resets the spill action and sets the RowContainer for the SpillDiskAction.
+// ResetRowContainer resets the spill action and sets the RowContainer for the SpillDiskAction.
 func (a *SpillDiskAction) ResetRowContainer(c *RowContainer) {
 	a.m.Lock()
 	defer a.m.Unlock()

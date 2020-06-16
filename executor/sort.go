@@ -17,6 +17,9 @@ import (
 	"container/heap"
 	"context"
 	"fmt"
+	"sort"
+	"sync"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
@@ -27,8 +30,6 @@ import (
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stringutil"
-	"sort"
-	"sync"
 )
 
 var rowChunksLabel fmt.Stringer = stringutil.StringerStr("rowChunks")
@@ -137,8 +138,8 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			return err
 		}
 	} else {
-		for !req.IsFull() && e.Idx < e.partitionList[0].GetLen() {
-			row, err := e.partitionList[0].GetRowById(e.Idx)
+		for !req.IsFull() && e.Idx < e.partitionList[0].NumRow() {
+			row, err := e.partitionList[0].GetRowByIdx(e.Idx)
 			if err != nil {
 				return err
 			}
@@ -187,7 +188,7 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 	if e.multiWayMerge == nil {
 		e.multiWayMerge = &multiWayMerge{e.lessRow, make([]partitionPointer, 0, len(e.partitionList))}
 		for i := 0; i < len(e.partitionList); i++ {
-			row, err := e.partitionList[i].GetRow(e.partitionList[i].rowPtrs[0])
+			row, err := e.partitionList[i].GetRowByIdx(0)
 			if err != nil {
 				return err
 			}
@@ -200,12 +201,12 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 		partitionPtr := e.multiWayMerge.elements[0]
 		req.AppendRow(partitionPtr.row)
 		partitionPtr.consumed++
-		if partitionPtr.consumed >= len(e.partitionList[partitionPtr.partitionID].rowPtrs) {
+		if partitionPtr.consumed >= e.partitionList[partitionPtr.partitionID].NumRow() {
 			heap.Remove(e.multiWayMerge, 0)
 			continue
 		}
 		partitionPtr.row, err = e.partitionList[partitionPtr.partitionID].
-			GetRow(e.partitionList[partitionPtr.partitionID].rowPtrs[partitionPtr.consumed])
+			GetRowByIdx(partitionPtr.consumed)
 		if err != nil {
 			return err
 		}
@@ -237,7 +238,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 			break
 		}
 		if err := e.rowChunks.Add(chk); err != nil {
-			if err.Error() == "The partition is spilled." {
+			if err.Error() == "The partition is spilled" {
 				e.partitionList = append(e.partitionList, e.rowChunks)
 				e.rowChunks = NewSortedRowContainer(fields, e.maxChunkSize, e.ByItems, e.keyColumns, e.keyCmpFuncs)
 				e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
@@ -499,6 +500,7 @@ func (e *TopNExec) doCompaction() error {
 	return nil
 }
 
+// SortedRowContainer provides a place for many rows, so many that we might want to sort and spill them into disk.
 type SortedRowContainer struct {
 	*chunk.RowContainer
 	// rowPointer store the chunk index and row index for each row.
@@ -514,10 +516,17 @@ type SortedRowContainer struct {
 	actionSpill *SortAndSpillDiskAction
 }
 
+// NewSortedRowContainer creates a new SortedRowContainer in memory.
 func NewSortedRowContainer(fieldType []*types.FieldType, chunkSize int, ByItems []*util.ByItems,
 	keyColumns []int, keyCmpFuncs []chunk.CompareFunc) *SortedRowContainer {
 	return &SortedRowContainer{RowContainer: chunk.NewRowContainer(fieldType, chunkSize),
 		ByItems: ByItems, keyColumns: keyColumns, keyCmpFuncs: keyCmpFuncs}
+}
+
+// Close close the SortedRowContainer
+func (c *SortedRowContainer) Close() error {
+	c.GetMemTracker().Consume(int64(-8 * cap(c.rowPtrs)))
+	return c.RowContainer.Close()
 }
 
 func (c *SortedRowContainer) initPointers() {
@@ -574,39 +583,40 @@ func (c *SortedRowContainer) sortAndSpillToDisk(needLock bool) (err error) {
 	return c.RowContainer.SpillToDisk(needLock)
 }
 
+// Add appends a chunk into the SortedRowContainer.
 func (c *SortedRowContainer) Add(chk *chunk.Chunk) (err error) {
 	c.m.Lock()
 	defer c.m.Unlock()
 	if c.RowContainer.AlreadySpilled() {
-		return errors.New("The partition is spilled.")
+		return errors.New("The partition is spilled")
 	}
 	return c.RowContainer.Add(chk)
 }
 
+// GetRow returns the row the ptr pointed to.
 func (c *SortedRowContainer) GetRow(ptr chunk.RowPtr) (chunk.Row, error) {
 	c.m.RLock()
 	defer c.m.RUnlock()
 	return c.RowContainer.GetRow(ptr)
 }
 
-func (c *SortedRowContainer) GetRowById(id int) (chunk.Row, error) {
+// GetRowByIdx returns the row the idx pointed to.
+func (c *SortedRowContainer) GetRowByIdx(idx int) (chunk.Row, error) {
 	c.m.RLock()
 	defer c.m.RUnlock()
-	ptr := c.rowPtrs[id]
+	ptr := c.rowPtrs[idx]
 	return c.GetRow(ptr)
 }
 
-func (c *SortedRowContainer) GetLen() int {
-	c.m.RLock()
-	defer c.m.RUnlock()
-	return len(c.rowPtrs)
-}
-
+// ActionSpill returns a SortAndSpillDiskAction for sorting and spilling over to disk.
 func (c *SortedRowContainer) ActionSpill() *SortAndSpillDiskAction {
 	c.actionSpill = &SortAndSpillDiskAction{c: c}
 	return c.actionSpill
 }
 
+// SortAndSpillDiskAction implements memory.ActionOnExceed for chunk.List. If
+// the memory quota of a query is exceeded, SortAndSpillDiskAction.Action is
+// triggered.
 type SortAndSpillDiskAction struct {
 	c              *SortedRowContainer
 	fallbackAction memory.ActionOnExceed
@@ -639,7 +649,7 @@ func (a *SortAndSpillDiskAction) SetFallback(fallback memory.ActionOnExceed) {
 // SetLogHook sets the hook, it does nothing just to form the memory.ActionOnExceed interface.
 func (a *SortAndSpillDiskAction) SetLogHook(hook func(uint64)) {}
 
-// ResetOnceAndSetRowContainer resets the spill action and sets the RowContainer for the SpillDiskAction.
+// ResetRowContainer resets the spill action and sets the SortedRowContainer for the SortAndSpillDiskAction.
 func (a *SortAndSpillDiskAction) ResetRowContainer(c *SortedRowContainer) {
 	a.m.Lock()
 	defer a.m.Unlock()
