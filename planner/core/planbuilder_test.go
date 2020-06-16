@@ -349,9 +349,6 @@ func valueInterface(v reflect.Value, safe bool) interface{}
 func typeName(t reflect.Type) string {
 	path := t.String()
 	tmp := strings.Split(path, ".")
-	if len(tmp) == 1 {
-		return tmp[0]
-	}
 	return tmp[len(tmp)-1]
 }
 
@@ -409,7 +406,7 @@ func checkDeepCloned(v1, v2 reflect.Value, path string, whiteList []string, visi
 			}
 		}
 	case reflect.Slice:
-		if v1.IsNil() && v2.IsNil() || (v1.Len() == 0 && v2.Len() == 0) {
+		if (v1.IsNil() && v2.IsNil()) || (v1.Len() == 0 && v2.Len() == 0) {
 			return nil
 		}
 		if v1.Len() != v2.Len() {
@@ -463,7 +460,7 @@ func checkDeepCloned(v1, v2 reflect.Value, path string, whiteList []string, visi
 			}
 		}
 	case reflect.Map:
-		if v1.IsNil() && v2.IsNil() || (v1.Len() == 0 && v2.Len() == 0) {
+		if (v1.IsNil() && v2.IsNil()) || (v1.Len() == 0 && v2.Len() == 0) {
 			return nil
 		}
 		if v1.IsNil() != v2.IsNil() || v1.Len() != v2.Len() {
@@ -471,6 +468,9 @@ func checkDeepCloned(v1, v2 reflect.Value, path string, whiteList []string, visi
 		}
 		if v1.Pointer() == v2.Pointer() {
 			return errors.Errorf("invalid map pointers, path %v", path)
+		}
+		if len(v1.MapKeys()) != len(v2.MapKeys()) {
+			return errors.Errorf("invalid map")
 		}
 		for _, k := range v1.MapKeys() {
 			val1 := v1.MapIndex(k)
