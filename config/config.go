@@ -708,9 +708,11 @@ func StoreGlobalConfig(config *Config) {
 var deprecatedConfig = map[string]struct{}{
 	"pessimistic-txn.ttl":        {},
 	"log.file.log-rotate":        {},
+	"log.log-slow-query":         {},
 	"txn-local-latches":          {},
 	"txn-local-latches.enabled":  {},
 	"txn-local-latches.capacity": {},
+	"max-txn-time-use":           {},
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
