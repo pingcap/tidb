@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -776,7 +775,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 	cop.cst = cost
 	task = cop
 	if candidate.isMatchProp {
-		if cop.tablePlan != nil {
+		if cop.tablePlan != nil && !ds.tableInfo.IsCommonHandle {
 			col, isNew := cop.tablePlan.(*PhysicalTableScan).appendExtraHandleCol(ds)
 			cop.extraHandleCol = col
 			cop.doubleReadNeedProj = isNew
@@ -816,52 +815,50 @@ func (is *PhysicalIndexScan) indexScanRowSize(idx *model.IndexInfo, ds *DataSour
 func (is *PhysicalIndexScan) initSchema(idx *model.IndexInfo, idxExprCols []*expression.Column, isDoubleRead bool) {
 	indexCols := make([]*expression.Column, len(is.IdxCols), len(idx.Columns)+1)
 	copy(indexCols, is.IdxCols)
-	for i := len(is.IdxCols); i < len(idx.Columns); i++ {
-		if idxExprCols[i] != nil {
-			indexCols = append(indexCols, idxExprCols[i])
-		} else {
-			// TODO: try to reuse the col generated when building the DataSource.
-			indexCols = append(indexCols, &expression.Column{
-				ID:       is.Table.Columns[idx.Columns[i].Offset].ID,
-				RetType:  &is.Table.Columns[idx.Columns[i].Offset].FieldType,
-				UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID(),
-			})
+	is.NeedCommonHandle = is.Table.IsCommonHandle
+
+	if !is.NeedCommonHandle {
+		for i := len(is.IdxCols); i < len(idx.Columns); i++ {
+			if idxExprCols[i] != nil {
+				indexCols = append(indexCols, idxExprCols[i])
+			} else {
+				// TODO: try to reuse the col generated when building the DataSource.
+				indexCols = append(indexCols, &expression.Column{
+					ID:       is.Table.Columns[idx.Columns[i].Offset].ID,
+					RetType:  &is.Table.Columns[idx.Columns[i].Offset].FieldType,
+					UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID(),
+				})
+			}
 		}
-	}
-	setHandle := len(indexCols) > len(idx.Columns)
-	if !setHandle {
-		for i, col := range is.Columns {
-			if (mysql.HasPriKeyFlag(col.Flag) && is.Table.PKIsHandle) || col.ID == model.ExtraHandleID {
-				indexCols = append(indexCols, is.dataSourceSchema.Columns[i])
-				setHandle = true
-				break
+		setHandle := len(indexCols) > len(idx.Columns)
+		if !setHandle {
+			for i, col := range is.Columns {
+				if (mysql.HasPriKeyFlag(col.Flag) && is.Table.PKIsHandle) || col.ID == model.ExtraHandleID {
+					indexCols = append(indexCols, is.dataSourceSchema.Columns[i])
+					setHandle = true
+					break
+				}
+			}
+		}
+		// If it's double read case, the first index must return handle. So we should add extra handle column
+		// if there isn't a handle column.
+		if isDoubleRead && !setHandle {
+			if !is.Table.IsCommonHandle {
+				indexCols = append(indexCols, &expression.Column{
+					RetType:  types.NewFieldType(mysql.TypeLonglong),
+					ID:       model.ExtraHandleID,
+					UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID(),
+				})
+			}
+		}
+	} else {
+		if len(is.IdxCols) < len(is.Columns) {
+			for i := len(is.IdxCols); i < len(idxExprCols); i++ {
+				indexCols = append(indexCols, idxExprCols[i])
 			}
 		}
 	}
 
-	if is.Table.IsCommonHandle {
-		pkIdx := tables.FindPrimaryIndex(is.Table)
-		for _, col := range pkIdx.Columns {
-			indexCols = append(indexCols, &expression.Column{
-				ID:       is.Table.Columns[col.Offset].ID,
-				RetType:  &is.Table.Columns[col.Offset].FieldType,
-				UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID(),
-			})
-		}
-		is.NeedCommonHandle = true
-	}
-
-	// If it's double read case, the first index must return handle. So we should add extra handle column
-	// if there isn't a handle column.
-	if isDoubleRead && !setHandle {
-		if !is.Table.IsCommonHandle {
-			indexCols = append(indexCols, &expression.Column{
-				RetType:  types.NewFieldType(mysql.TypeLonglong),
-				ID:       model.ExtraHandleID,
-				UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID(),
-			})
-		}
-	}
 	is.SetSchema(expression.NewSchema(indexCols...))
 }
 
@@ -1410,7 +1407,7 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 		is.Hist = &statsTbl.Indices[idx.ID].Histogram
 	}
 	rowCount := path.CountAfterAccess
-	is.initSchema(idx, path.FullIdxCols, !isSingleScan)
+	is.initSchema(idx, append(path.FullIdxCols, ds.commonHandleCols...), !isSingleScan)
 	// Only use expectedCnt when it's smaller than the count we calculated.
 	// e.g. IndexScan(count1)->After Filter(count2). The `ds.stats.RowCount` is count2. count1 is the one we need to calculate
 	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.
