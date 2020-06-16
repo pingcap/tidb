@@ -323,3 +323,69 @@ func (testModelSuite) TestUnmarshalCIStr(c *C) {
 	c.Assert(ci.O, Equals, str)
 	c.Assert(ci.L, Equals, "aabb")
 }
+
+func (testModelSuite) TestDefaultValue(c *C) {
+	srcCol := &ColumnInfo{
+		ID: 1,
+	}
+	randPlainStr := "random_plain_string"
+
+	oldPlainCol := srcCol.Clone()
+	oldPlainCol.Name = NewCIStr("oldPlainCol")
+	oldPlainCol.FieldType = *types.NewFieldType(mysql.TypeLong)
+	oldPlainCol.DefaultValue = randPlainStr
+	oldPlainCol.OriginDefaultValue = randPlainStr
+
+	newPlainCol := srcCol.Clone()
+	newPlainCol.Name = NewCIStr("newPlainCol")
+	newPlainCol.FieldType = *types.NewFieldType(mysql.TypeLong)
+	err := newPlainCol.SetDefaultValue(1)
+	c.Assert(err, IsNil)
+	c.Assert(newPlainCol.GetDefaultValue(), Equals, 1)
+	err = newPlainCol.SetDefaultValue(randPlainStr)
+	c.Assert(newPlainCol.GetDefaultValue(), Equals, randPlainStr)
+
+	randBitStr := string([]byte{25, 185})
+
+	oldBitCol := srcCol.Clone()
+	oldBitCol.Name = NewCIStr("oldBitCol")
+	oldBitCol.FieldType = *types.NewFieldType(mysql.TypeBit)
+	oldBitCol.DefaultValue = randBitStr
+	oldBitCol.OriginDefaultValue = randBitStr
+
+	newBitCol := srcCol.Clone()
+	newBitCol.Name = NewCIStr("newBitCol")
+	newBitCol.FieldType = *types.NewFieldType(mysql.TypeBit)
+	err = newBitCol.SetDefaultValue(1)
+	// Only string type is allowed in BIT column.
+	c.Assert(err, ErrorMatches, ".*Invalid default value.*")
+	c.Assert(newBitCol.GetDefaultValue(), Equals, 1)
+	err = newBitCol.SetDefaultValue(randBitStr)
+	c.Assert(newBitCol.GetDefaultValue(), Equals, randBitStr)
+
+	testCases := []struct {
+		col          *ColumnInfo
+		isConsistent bool
+	}{
+		{oldPlainCol, true},
+		{oldBitCol, false},
+		{newPlainCol, true},
+		{newBitCol, true},
+	}
+	for _, tc := range testCases {
+		col, isConsistent := tc.col, tc.isConsistent
+		cmt := Commentf("%s assertion failed", col.Name.O)
+		bytes, err := json.Marshal(col)
+		c.Assert(err, IsNil, cmt)
+		var newCol ColumnInfo
+		err = json.Unmarshal(bytes, &newCol)
+		c.Assert(err, IsNil, cmt)
+		if isConsistent {
+			c.Assert(col.GetDefaultValue(), Equals, newCol.GetDefaultValue())
+			c.Assert(col.GetOriginDefaultValue(), Equals, newCol.GetOriginDefaultValue())
+		} else {
+			c.Assert(col.DefaultValue == newCol.DefaultValue, IsFalse, cmt)
+			c.Assert(col.OriginDefaultValue == newCol.OriginDefaultValue, IsFalse, cmt)
+		}
+	}
+}
