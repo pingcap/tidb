@@ -708,9 +708,11 @@ func StoreGlobalConfig(config *Config) {
 var deprecatedConfig = map[string]struct{}{
 	"pessimistic-txn.ttl":        {},
 	"log.file.log-rotate":        {},
+	"log.log-slow-query":         {},
 	"txn-local-latches":          {},
 	"txn-local-latches.enabled":  {},
 	"txn-local-latches.capacity": {},
+	"max-txn-time-use":           {},
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
@@ -878,6 +880,22 @@ func (c *Config) Valid() error {
 	// test log level
 	l := zap.NewAtomicLevel()
 	return l.UnmarshalText([]byte(c.Log.Level))
+}
+
+// UpdateGlobal updates the global config, and provide a restore function that can be used to restore to the original.
+func UpdateGlobal(f func(conf *Config)) {
+	g := GetGlobalConfig()
+	newConf := *g
+	f(&newConf)
+	StoreGlobalConfig(&newConf)
+}
+
+// RestoreFunc gets a function that restore the config to the current value.
+func RestoreFunc() (restore func()) {
+	g := GetGlobalConfig()
+	return func() {
+		StoreGlobalConfig(g)
+	}
 }
 
 func hasRootPrivilege() bool {
