@@ -28,6 +28,13 @@ func NewProjectionImpl(proj *plannercore.PhysicalProjection) *ProjectionImpl {
 	return &ProjectionImpl{baseImpl{plan: proj}}
 }
 
+// CalcCost implements Implementation CalcCost interface.
+func (impl *ProjectionImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+	proj := impl.plan.(*plannercore.PhysicalProjection)
+	impl.cost = proj.GetCost(children[0].GetPlan().Stats().RowCount) + children[0].GetCost()
+	return impl.cost
+}
+
 // ShowImpl is the Implementation of PhysicalShow.
 type ShowImpl struct {
 	baseImpl
@@ -87,8 +94,6 @@ func (agg *TiDBHashAggImpl) CalcCost(outCount float64, children ...memo.Implemen
 func (agg *TiDBHashAggImpl) AttachChildren(children ...memo.Implementation) memo.Implementation {
 	hashAgg := agg.plan.(*plannercore.PhysicalHashAgg)
 	hashAgg.SetChildren(children[0].GetPlan())
-	// Inject extraProjection if the AggFuncs or GroupByItems contain ScalarFunction.
-	plannercore.InjectProjBelowAgg(hashAgg, hashAgg.AggFuncs, hashAgg.GroupByItems)
 	return agg
 }
 

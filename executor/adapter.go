@@ -217,7 +217,6 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 		}
 		a.PsStmt.Executor = newExecutor
 	}
-	stmtNodeCounterSelect.Inc()
 	pointExecutor := a.PsStmt.Executor.(*PointGetExecutor)
 	if err = pointExecutor.Open(ctx); err != nil {
 		terror.Call(pointExecutor.Close)
@@ -817,7 +816,13 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	if (!enable || costTime < threshold) && level > zapcore.DebugLevel {
 		return
 	}
-	sql := FormatSQL(a.Text, sessVars.PreparedParams)
+	var sql stringutil.StringerFunc
+	normalizedSQL, digest := sessVars.StmtCtx.SQLDigest()
+	if sessVars.EnableSlowLogMasking {
+		sql = FormatSQL(normalizedSQL, nil)
+	} else {
+		sql = FormatSQL(a.Text, sessVars.PreparedParams)
+	}
 
 	var tableIDs, indexNames string
 	if len(sessVars.StmtCtx.TableIDs) > 0 {
@@ -831,7 +836,6 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	statsInfos := plannercore.GetStatsInfo(a.Plan)
 	memMax := sessVars.StmtCtx.MemTracker.MaxConsumed()
 	diskMax := sessVars.StmtCtx.DiskTracker.MaxConsumed()
-	_, digest := sessVars.StmtCtx.SQLDigest()
 	_, planDigest := getPlanDigest(a.Ctx, a.Plan)
 	slowItems := &variable.SlowQueryLogItems{
 		TxnTS:          txnTS,
@@ -840,6 +844,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		TimeTotal:      costTime,
 		TimeParse:      sessVars.DurationParse,
 		TimeCompile:    sessVars.DurationCompile,
+		TimeOptimize:   sessVars.DurationOptimization,
+		TimeWaitTS:     sessVars.DurationWaitTS,
 		IndexNames:     indexNames,
 		StatsInfos:     statsInfos,
 		CopTasks:       copTaskInfo,
@@ -852,6 +858,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		Prepared:       a.isPreparedStmt,
 		HasMoreResults: hasMoreResults,
 		PlanFromCache:  sessVars.FoundInPlanCache,
+		RewriteInfo:    sessVars.RewritePhaseInfo,
 	}
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {
 		slowItems.PrevStmt = sessVars.PrevStmt.String()

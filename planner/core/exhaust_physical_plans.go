@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
 	"go.uber.org/zap"
@@ -579,7 +580,7 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 	outerIdx int, us *LogicalUnionScan, avgInnerRowCnt float64) (joins []PhysicalPlan) {
 	var tblPath *util.AccessPath
 	for _, path := range ds.possibleAccessPaths {
-		if path.IsTablePath && path.StoreType == kv.TiKV {
+		if path.IsTablePath() && path.StoreType == kv.TiKV {
 			tblPath = path
 			break
 		}
@@ -635,7 +636,7 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 	outerIdx int, us *LogicalUnionScan, avgInnerRowCnt float64) (joins []PhysicalPlan) {
 	helper := &indexJoinBuildHelper{join: p}
 	for _, path := range ds.possibleAccessPaths {
-		if path.IsTablePath {
+		if path.IsTablePath() {
 			continue
 		}
 		emptyRange, err := helper.analyzeLookUpFilters(path, ds, innerJoinKeys)
@@ -1828,6 +1829,14 @@ func (p *LogicalUnionAll) exhaustPhysicalPlans(prop *property.PhysicalProperty) 
 	ua := PhysicalUnionAll{}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, chReqProps...)
 	ua.SetSchema(p.Schema())
 	return []PhysicalPlan{ua}, true
+}
+
+func (p *LogicalPartitionUnionAll) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
+	uas, flagHint := p.LogicalUnionAll.exhaustPhysicalPlans(prop)
+	for _, ua := range uas {
+		ua.(*PhysicalUnionAll).tp = plancodec.TypePartitionUnion
+	}
+	return uas, flagHint
 }
 
 func (ls *LogicalSort) getPhysicalSort(prop *property.PhysicalProperty) *PhysicalSort {

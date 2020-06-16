@@ -35,6 +35,7 @@ import (
 	testddlutil "github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -194,6 +195,16 @@ func testGetTableByName(c *C, ctx sessionctx.Context, db, table string) table.Ta
 	return tbl
 }
 
+func testGetSchemaByName(c *C, ctx sessionctx.Context, db string) *model.DBInfo {
+	dom := domain.GetDomain(ctx)
+	// Make sure the table schema is the new schema.
+	err := dom.Reload()
+	c.Assert(err, IsNil)
+	dbInfo, ok := dom.InfoSchema().SchemaByName(model.NewCIStr(db))
+	c.Assert(ok, IsTrue)
+	return dbInfo
+}
+
 func (s *testDBSuite) testGetTable(c *C, name string) table.Table {
 	ctx := s.s.(sessionctx.Context)
 	return testGetTableByName(c, ctx, s.schemaName, name)
@@ -253,7 +264,9 @@ func (s *testDBSuite2) TestAddUniqueIndexRollback(c *C) {
 }
 
 func (s *testSerialDBSuite) TestAddExpressionIndexRollback(c *C) {
-	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = true
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
 	tk.MustExec("drop table if exists t1")
@@ -389,7 +402,7 @@ func testCancelAddIndex(c *C, store kv.Storage, d ddl.DDL, lease time.Duration, 
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (c1 int, c2 int unsigned, c3 int, unique key(c1))")
 	// defaultBatchSize is equal to ddl.defaultBatchSize
-	count := defaultBatchSize * 2
+	count := defaultBatchSize * 32
 	start := 0
 	// add some rows
 	if len(sqlModeSQL) != 0 {
@@ -400,8 +413,8 @@ func testCancelAddIndex(c *C, store kv.Storage, d ddl.DDL, lease time.Duration, 
 		tk.MustExec("insert into t1 set c3 = ?", 2)
 		start = 3
 	}
-	for i := start; i < count; i++ {
-		tk.MustExec("insert into t1 values (?, ?, ?)", i, i, i)
+	for i := start; i < count; i += defaultBatchSize {
+		batchInsert(tk, "t1", i, i+defaultBatchSize)
 	}
 
 	var c3IdxInfo *model.IndexInfo
@@ -670,6 +683,53 @@ func (s *testDBSuite5) TestCancelTruncateTable(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
 	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+}
+
+func (s *testDBSuite5) TestParallelDropSchemaAndDropTable(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.mustExec(c, "create database if not exists test_drop_schema_table")
+	s.mustExec(c, "use test_drop_schema_table")
+	s.mustExec(c, "create table t(c1 int, c2 int)")
+	var checkErr error
+	hook := &ddl.TestDDLCallback{}
+	dbInfo := testGetSchemaByName(c, s.tk.Se, "test_drop_schema_table")
+	done := false
+	var wg sync.WaitGroup
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test_drop_schema_table")
+	hook.OnJobUpdatedExported = func(job *model.Job) {
+		if job.Type == model.ActionDropSchema && job.State == model.JobStateRunning &&
+			job.SchemaState == model.StateWriteOnly && job.SchemaID == dbInfo.ID && done == false {
+			wg.Add(1)
+			done = true
+			go func() {
+				_, checkErr = tk2.Exec("drop table t")
+				wg.Done()
+			}()
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	originalHook := s.dom.DDL().GetHook()
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	s.mustExec(c, "drop database test_drop_schema_table")
+	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	wg.Wait()
+	c.Assert(done, IsTrue)
+	c.Assert(checkErr, NotNil)
+	c.Assert(checkErr.Error(), Equals, "[schema:1051]Unknown table 'test_drop_schema_table.t'")
+
+	// Below behaviour is use to mock query `curl "http://$IP:10080/tiflash/replica"`
+	fn := func(jobs []*model.Job) (bool, error) {
+		return executor.GetDropOrTruncateTableInfoFromJobs(jobs, 0, s.dom, func(job *model.Job, info *model.TableInfo) (bool, error) {
+			return false, nil
+		})
+	}
+	err := s.tk.Se.NewTxn(context.Background())
+	c.Assert(err, IsNil)
+	txn, err := s.tk.Se.Txn(true)
+	c.Assert(err, IsNil)
+	err = admin.IterHistoryDDLJobs(txn, fn)
+	c.Assert(err, IsNil)
 }
 
 // TestCancelRenameIndex tests cancel ddl job which type is rename index.
@@ -2453,7 +2513,7 @@ func (s *testDBSuite2) TestCreateTableWithSetCol(c *C) {
 		"  `b` set('e') DEFAULT ''\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	s.tk.MustExec("drop table t_set")
-	s.tk.MustExec("create table t_set (a set('a', 'b', 'c', 'd') default 'a,C,c');")
+	s.tk.MustExec("create table t_set (a set('a', 'b', 'c', 'd') default 'a,c,c');")
 	s.tk.MustQuery("show create table t_set").Check(testkit.Rows("t_set CREATE TABLE `t_set` (\n" +
 		"  `a` set('a','b','c','d') DEFAULT 'a,c'\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
@@ -4396,7 +4456,9 @@ func (s *testDBSuite2) TestTablesLockDelayClean(c *C) {
 
 	tk.MustExec("lock tables t1 write")
 	checkTableLock(c, tk.Se, "test", "t1", model.TableLockWrite)
-	config.GetGlobalConfig().DelayCleanTableLock = 100
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.DelayCleanTableLock = 100
+	})
 	var wg sync.WaitGroup
 	wg.Add(1)
 	var startTime time.Time
@@ -4410,7 +4472,9 @@ func (s *testDBSuite2) TestTablesLockDelayClean(c *C) {
 	wg.Wait()
 	c.Assert(time.Since(startTime).Seconds() > 0.1, IsTrue)
 	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
-	config.GetGlobalConfig().DelayCleanTableLock = 0
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.DelayCleanTableLock = 0
+	})
 }
 
 // TestConcurrentLockTables test concurrent lock/unlock tables.
