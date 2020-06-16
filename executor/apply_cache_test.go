@@ -50,25 +50,33 @@ func (s *testApplyCacheSuite) TestApplyCache(c *C) {
 		value[i].Data = l[i]
 	}
 
-	evicted := applyCache.Set(key[0], &value[0])
+	evicted, err := applyCache.Set(key[0], &value[0])
+	c.Assert(err, nil)
 	c.Assert(evicted, Equals, false)
-	result := applyCache.Get(key[0])
+	result, err := applyCache.Get(key[0])
+	c.Assert(err, nil)
 	c.Assert(result, NotNil)
 
-	evicted = applyCache.Set(key[1], &value[1])
+	evicted, err = applyCache.Set(key[1], &value[1])
+	c.Assert(err, nil)
 	c.Assert(evicted, Equals, true)
-	result = applyCache.Get(key[1])
+	result, err = applyCache.Get(key[1])
+	c.Assert(err, nil)
 	c.Assert(result, NotNil)
 
-	evicted = applyCache.Set(key[2], &value[2])
+	evicted, err = applyCache.Set(key[2], &value[2])
+	c.Assert(err, nil)
 	c.Assert(evicted, Equals, true)
-	result = applyCache.Get(key[2])
+	result, err = applyCache.Get(key[2])
+	c.Assert(err, nil)
 	c.Assert(result, NotNil)
 
 	// Both key[0] and key[1] are not in the cache
-	result = applyCache.Get(key[0])
+	result, err = applyCache.Get(key[0])
+	c.Assert(err, nil)
 	c.Assert(result, IsNil)
 
-	result = applyCache.Get(key[1])
+	result, err = applyCache.Get(key[1])
+	c.Assert(err, nil)
 	c.Assert(result, IsNil)
 }

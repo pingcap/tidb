@@ -924,7 +924,10 @@ func (e *NestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk) (err e
 				}
 				e.totalNumber++
 				key := string(keyByte)
-				value := e.cache.Get(key)
+				value, err := e.cache.Get(key)
+				if err != nil {
+					return err
+				}
 				if value != nil {
 					e.innerList = value.Data
 					e.cacheHitNumber++
@@ -933,9 +936,14 @@ func (e *NestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk) (err e
 					if err != nil {
 						return err
 					}
-					innerList := e.innerList.Copy()
-					innerList.GetMemTracker().AttachTo(e.memTracker)
-					e.cache.Set(key, &applyCacheValue{innerList})
+					setSuccess, err := e.cache.Set(key, &applyCacheValue{e.innerList})
+					if err != nil {
+						return err
+					}
+					if setSuccess {
+						e.innerList = e.innerList.Copy()
+						e.innerList.GetMemTracker().AttachTo(e.memTracker)
+					}
 				}
 			} else {
 				for _, col := range e.outerSchema {
