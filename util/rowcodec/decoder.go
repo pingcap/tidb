@@ -113,6 +113,7 @@ func (decoder *DatumMapDecoder) tryDecodeHandleColumn(col *ColInfo, handle kv.Ha
 		}
 		return true
 	}
+	// TODO: support common handle.
 	return false
 }
 
