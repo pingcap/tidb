@@ -80,14 +80,14 @@ type Domain struct {
 // loadInfoSchema loads infoschema at startTS into handle, usedSchemaVersion is the currently used
 // infoschema version, if it is the same as the schema version at startTS, we don't need to reload again.
 // It returns the latest schema version, the changed table IDs, whether it's a full load and an error.
-func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion int64, startTS uint64) (int64, []int64, []uint64, bool, error) {
-	var fullLoad bool
+func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion int64,
+	startTS uint64) (neededSchemaVersion int64, tblIDs []int64, actionTypes []uint64, fullLoad bool, err error) {
 	snapshot, err := do.store.GetSnapshot(kv.NewVersion(startTS))
 	if err != nil {
 		return 0, nil, nil, fullLoad, err
 	}
 	m := meta.NewSnapshotMeta(snapshot)
-	neededSchemaVersion, err := m.GetSchemaVersion()
+	neededSchemaVersion, err = m.GetSchemaVersion()
 	if err != nil {
 		return 0, nil, nil, fullLoad, err
 	}
