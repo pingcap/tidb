@@ -50,10 +50,9 @@ func (s *testOOMSuite) SetUpSuite(c *C) {
 	domain.RunAutoAnalyze = false
 	s.do, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
-	originCfg := config.GetGlobalConfig()
-	newConf := *originCfg
-	newConf.OOMAction = config.OOMActionLog
-	config.StoreGlobalConfig(&newConf)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMAction = config.OOMActionLog
+	})
 }
 
 func (s *testOOMSuite) TearDownSuite(c *C) {
