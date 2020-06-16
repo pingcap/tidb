@@ -2827,6 +2827,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			IsHidden: col.Hidden,
 		}
 
+		// TODO: The common handle may be multi columns, need to change ds.handleCol to a slice.
 		if col.IsPKHandleColumn(tableInfo) || col.IsCommonHandleColumn(tableInfo) {
 			handleCol = newCol
 		}

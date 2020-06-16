@@ -284,7 +284,7 @@ func (s *testSuite11) TestUpdateClusterIndex(c *C) {
 	tk.MustExec("create table t(a char(10) primary key, b char(10));")
 	tk.MustExec("insert into t values('a', 'b');")
 	tk.MustExec("update t set a='c' where t.a='a' and b='b';")
-	tk.MustQuery("select * from t").Check(testkit.Rows("'c' ''"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("'c' 'b'"))
 }
 
 func (s *testSuite11) TestDeleteClusterIndex(c *C) {
