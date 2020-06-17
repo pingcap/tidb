@@ -1451,8 +1451,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableStatementsSummary),
 			strings.ToLower(infoschema.TableStatementsSummaryHistory),
 			strings.ToLower(infoschema.ClusterTableStatementsSummary),
-			strings.ToLower(infoschema.ClusterTableStatementsSummaryHistory),
-			strings.ToLower(infoschema.TableTiFlashTables):
+			strings.ToLower(infoschema.ClusterTableStatementsSummaryHistory):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 				table:        v.Table,
@@ -1485,6 +1484,17 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			return &DDLJobsReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 				is:           b.is,
+			}
+		case strings.ToLower(infoschema.TableTiFlashTables),
+			strings.ToLower(infoschema.TableTiFlashSegments):
+			return &MemTableReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+				table:        v.Table,
+				retriever: &TiFlashSystemTableRetriever{
+					table:      v.Table,
+					outputCols: v.Columns,
+					extractor:  v.Extractor.(*plannercore.TiFlashSystemTableExtractor),
+				},
 			}
 		}
 	}

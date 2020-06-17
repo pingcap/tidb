@@ -149,6 +149,8 @@ const (
 	TableStorageStats = "TABLE_STORAGE_STATS"
 	// TableTiFlashTable is the string constant of tiflash tables table.
 	TableTiFlashTables = "TIFLASH_TABLES"
+	// TableTiFlashSegments is the string constant of tiflash segments table.
+	TableTiFlashSegments = "TIFLASH_SEGMENTS"
 )
 
 var tableIDMap = map[string]int64{
@@ -216,6 +218,7 @@ var tableIDMap = map[string]int64{
 	ClusterTableStatementsSummaryHistory:    autoid.InformationSchemaDBID + 62,
 	TableStorageStats:                       autoid.InformationSchemaDBID + 63,
 	TableTiFlashTables:                      autoid.InformationSchemaDBID + 64,
+	TableTiFlashSegments:                    autoid.InformationSchemaDBID + 65,
 }
 
 type columnInfo struct {
@@ -1185,6 +1188,27 @@ var tableTableTiFlashTablesCols = []columnInfo{
 	{name: "TIFLASH_NODE", tp: mysql.TypeVarchar, size: 64},
 }
 
+var tableTableTiFlashSegmentsCols = []columnInfo{
+	{name: "DATABASE", tp: mysql.TypeVarchar, size: 64},
+	{name: "TABLE", tp: mysql.TypeVarchar, size: 64},
+	{name: "TIDB_DATABASE", tp: mysql.TypeVarchar, size: 64},
+	{name: "TIDB_TABLE", tp: mysql.TypeVarchar, size: 64},
+	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 64},
+	{name: "IS_TOMBSTONE", tp: mysql.TypeLonglong, size: 64},
+	{name: "SEGMENT_ID", tp: mysql.TypeLonglong, size: 64},
+	{name: "RANGE", tp: mysql.TypeVarchar, size: 64},
+	{name: "ROWS", tp: mysql.TypeLonglong, size: 64},
+	{name: "SIZE", tp: mysql.TypeLonglong, size: 64},
+	{name: "DELETE_RANGES", tp: mysql.TypeLonglong, size: 64},
+	{name: "DELTA_PACK_COUNT", tp: mysql.TypeLonglong, size: 64},
+	{name: "STABLE_PACK_COUNT", tp: mysql.TypeLonglong, size: 64},
+	{name: "AVG_DELTA_PACK_ROWS", tp: mysql.TypeDouble, size: 64},
+	{name: "AVG_STABLE_PACK_ROWS", tp: mysql.TypeDouble, size: 64},
+	{name: "DELTA_RATE", tp: mysql.TypeDouble, size: 64},
+	{name: "DELTA_CACHE_SIZE", tp: mysql.TypeLonglong, size: 64},
+	{name: "TIFLASH_NODE", tp: mysql.TypeVarchar, size: 64},
+}
+
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //  - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -1489,6 +1513,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableStatementsSummaryHistory:           tableStatementsSummaryCols,
 	TableStorageStats:                       tableStorageStatsCols,
 	TableTiFlashTables:			             tableTableTiFlashTablesCols,
+	TableTiFlashSegments:			         tableTableTiFlashSegmentsCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {

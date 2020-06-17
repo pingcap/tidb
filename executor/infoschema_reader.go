@@ -139,8 +139,6 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			infoschema.ClusterTableStatementsSummary,
 			infoschema.ClusterTableStatementsSummaryHistory:
 			err = e.setDataForStatementsSummary(sctx, e.table.Name.O)
-		case infoschema.TableTiFlashTables:
-			err = e.setDataForTiFlashTables(sctx, e.table.Columns)
 		}
 		if err != nil {
 			return nil, err
@@ -1769,8 +1767,45 @@ func (e *memtableRetriever) setDataForStatementsSummary(ctx sessionctx.Context, 
 	return nil
 }
 
-func (e *memtableRetriever) setDataForTiFlashTables(ctx sessionctx.Context, columns []*model.ColumnInfo) error {
-	store := ctx.GetStore()
+// TiFlashSystemTableRetriever is used to read system table from tiflash.
+type TiFlashSystemTableRetriever struct {
+	dummyCloser
+	table         *model.TableInfo
+	outputCols    []*model.ColumnInfo
+	nodeCount     int
+	nodeIdx       int
+	nodeInfos     []tiflashNodeInfo
+	rowIdx        int
+	retrieved     bool
+	initialized   bool
+	extractor     *plannercore.TiFlashSystemTableExtractor
+}
+
+func (e *TiFlashSystemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+	if e.extractor.SkipRequest || e.retrieved {
+		return nil, nil
+	}
+	if !e.initialized {
+		err := e.initialize(sctx, e.extractor.TiFlashNodes)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if e.nodeCount == 0 || e.nodeIdx >= e.nodeCount {
+		e.retrieved = true
+		return nil, nil
+	}
+
+	return e.dataForTiFlashSystemTables(sctx)
+}
+
+type tiflashNodeInfo struct {
+	id  string
+	url string
+}
+
+func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflashNodes set.StringSet) error {
+	store := sctx.GetStore()
 	if etcd, ok := store.(tikv.EtcdBackend); ok {
 		if addrs := etcd.EtcdAddrs(); addrs != nil {
 			cfg := config.GetGlobalConfig()
@@ -1795,83 +1830,104 @@ func (e *memtableRetriever) setDataForTiFlashTables(ctx sessionctx.Context, colu
 			if err != nil {
 				return errors.Trace(err)
 			}
-			var columnNames []string
-			for _, c := range columns {
-				if c.Name.O == "TIFLASH_NODE" {
+
+			for _, ev := range resp.Kvs {
+				id := string(ev.Key)[len(prefix):]
+				if len(tiflashNodes) > 0 && !tiflashNodes.Exist(id) {
 					continue
 				}
-				columnNames = append(columnNames, c.Name.L)
-			}
-			sql := fmt.Sprintf("SELECT %s FROM system.dt_tables", strings.Join(columnNames, ","))
-			notNumber := "nan"
-			var rows [][]types.Datum
-			httpClient := http.DefaultClient
-			for _, ev := range resp.Kvs {
-				tiflashNode := string(ev.Key)[len(prefix):]
 				// TODO: Support https in tiflash
 				url := fmt.Sprintf("http://%s", ev.Value)
-				req, err := http.NewRequest(http.MethodGet, url, nil)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				q := req.URL.Query()
-				q.Add("query", sql)
-				req.URL.RawQuery = q.Encode()
-				resp, err := httpClient.Do(req)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				body, err := ioutil.ReadAll(resp.Body)
-				terror.Log(resp.Body.Close())
-				if err != nil {
-					return errors.Trace(err)
-				}
-				records := strings.Split(string(body), "\n")
-				for _, record := range records {
-					if len(record) == 0 {
-						continue
-					}
-					fields := strings.Split(record, "\t")
-					if len(fields) < len(columns) - 1 {
-						return errors.Errorf("Record doesn't match schema", fields)
-					}
-					row := make([]types.Datum, len(columns))
-					for index, column := range columns {
-						if column.Name.O == "TIFLASH_NODE" {
-							continue
-						}
-						if column.Tp == mysql.TypeVarchar {
-							row[index].SetString(fields[index], mysql.DefaultCollationName)
-						} else if column.Tp == mysql.TypeLonglong {
-							if fields[index] == notNumber {
-								continue
-							}
-							value, err := strconv.ParseInt(fields[index], 10, 64)
-							if err != nil {
-								return errors.Trace(err)
-							}
-							row[index].SetInt64(value)
-						} else if column.Tp == mysql.TypeDouble {
-							if fields[index] == notNumber {
-								continue
-							}
-							value, err := strconv.ParseFloat(fields[index], 64)
-							if err != nil {
-								return errors.Trace(err)
-							}
-							row[index].SetFloat64(value)
-						} else {
-							return errors.Errorf("Meet column of unknown type", column)
-						}
-					}
-					row[len(columns) - 1].SetString(tiflashNode, mysql.DefaultCollationName)
-					rows = append(rows, row)
-				}
+				e.nodeInfos = append(e.nodeInfos, tiflashNodeInfo{
+					id: id,
+					url: url,
+				})
+				e.nodeCount += 1
 			}
-			e.rows = rows
+			e.initialized = true
 			return nil
 		}
 		return errors.Errorf("Etcd addrs not found")
 	}
 	return errors.Errorf("%T not an etcd backend", store)
+}
+
+func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.Context) ([][]types.Datum, error) {
+	var columnNames []string
+	for _, c := range e.outputCols {
+		if c.Name.O == "TIFLASH_NODE" {
+			continue
+		}
+		columnNames = append(columnNames, c.Name.L)
+	}
+	maxCount := 1024
+	targetTable := strings.ToLower(strings.Replace(e.table.Name.O, "TIFLASH", "DT", 1))
+	sql := fmt.Sprintf("SELECT %s FROM system.%s LIMIT %d, %d", strings.Join(columnNames, ","), targetTable, e.rowIdx, maxCount)
+	notNumber := "nan"
+	httpClient := http.DefaultClient
+	nodeInfo := e.nodeInfos[e.nodeIdx]
+	url := nodeInfo.url
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	q := req.URL.Query()
+	q.Add("query", sql)
+	req.URL.RawQuery = q.Encode()
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	body, err := ioutil.ReadAll(resp.Body)
+	terror.Log(resp.Body.Close())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	records := strings.Split(string(body), "\n")
+	var rows [][]types.Datum
+	for _, record := range records {
+		if len(record) == 0 {
+			continue
+		}
+		fields := strings.Split(record, "\t")
+		if len(fields) < len(e.outputCols) - 1 {
+			return nil, errors.Errorf("Record from tiflash doesn't match schema", fields)
+		}
+		row := make([]types.Datum, len(e.outputCols))
+		for index, column := range e.outputCols {
+			if column.Name.O == "TIFLASH_NODE" {
+				continue
+			}
+			if column.Tp == mysql.TypeVarchar {
+				row[index].SetString(fields[index], mysql.DefaultCollationName)
+			} else if column.Tp == mysql.TypeLonglong {
+				if fields[index] == notNumber {
+					continue
+				}
+				value, err := strconv.ParseInt(fields[index], 10, 64)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				row[index].SetInt64(value)
+			} else if column.Tp == mysql.TypeDouble {
+				if fields[index] == notNumber {
+					continue
+				}
+				value, err := strconv.ParseFloat(fields[index], 64)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				row[index].SetFloat64(value)
+			} else {
+				return nil, errors.Errorf("Meet column of unknown type", column)
+			}
+		}
+		row[len(e.outputCols) - 1].SetString(nodeInfo.id, mysql.DefaultCollationName)
+		rows = append(rows, row)
+	}
+	if len(rows) < maxCount {
+		e.nodeIdx += 1
+		e.rowIdx = 0
+	}
+	return rows, nil
 }

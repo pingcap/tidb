@@ -1040,3 +1040,46 @@ func (e *SlowQueryExtractor) explainInfo(p *PhysicalMemTable) string {
 		types.NewTime(types.FromGoTime(startTime), mysql.TypeDatetime, types.MaxFsp).String(),
 		types.NewTime(types.FromGoTime(endTime), mysql.TypeDatetime, types.MaxFsp).String())
 }
+
+// TiFlashSystemTableExtractor is used to extract some predicates of tiflash system table.
+type TiFlashSystemTableExtractor struct {
+	extractHelper
+
+	// SkipRequest means the where clause always false, we don't need to request any component
+	SkipRequest bool
+
+	// TiFlashNodes represents all tiflash nodes we should send request to.
+	// e.g:
+	// 1. SELECT * FROM <table_name> WHERE tiflash_node='192.168.1.7:3930'
+	// 2. SELECT * FROM <table_name> WHERE tiflash_node in ('192.168.1.7:3930', '192.168.1.9:3930')
+	TiFlashNodes set.StringSet
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *TiFlashSystemTableExtractor) Extract(_ sessionctx.Context,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) []expression.Expression {
+	remained, skipRequest, tiflashNodes := e.extractCol(schema, names, predicates, "tiflash_node", false)
+	e.SkipRequest  = skipRequest
+	e.TiFlashNodes = tiflashNodes
+	return remained
+}
+
+func (e *TiFlashSystemTableExtractor) explainInfo(p *PhysicalMemTable) string {
+	if e.SkipRequest {
+		return "skip_request:true"
+	}
+	r := new(bytes.Buffer)
+	if len(e.TiFlashNodes) > 0 {
+		r.WriteString(fmt.Sprintf("tiflash_nodes:[%s], ", extractStringFromStringSet(e.TiFlashNodes)))
+	}
+
+	// remove the last ", " in the message info
+	s := r.String()
+	if len(s) > 2 {
+		return s[:len(s)-2]
+	}
+	return s
+}
