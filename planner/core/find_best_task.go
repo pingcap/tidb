@@ -817,45 +817,46 @@ func (is *PhysicalIndexScan) initSchema(idx *model.IndexInfo, idxExprCols []*exp
 	copy(indexCols, is.IdxCols)
 	is.NeedCommonHandle = is.Table.IsCommonHandle
 
-	if !is.NeedCommonHandle {
-		for i := len(is.IdxCols); i < len(idx.Columns); i++ {
-			if idxExprCols[i] != nil {
-				indexCols = append(indexCols, idxExprCols[i])
-			} else {
-				// TODO: try to reuse the col generated when building the DataSource.
-				indexCols = append(indexCols, &expression.Column{
-					ID:       is.Table.Columns[idx.Columns[i].Offset].ID,
-					RetType:  &is.Table.Columns[idx.Columns[i].Offset].FieldType,
-					UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID(),
-				})
-			}
-		}
-		setHandle := len(indexCols) > len(idx.Columns)
-		if !setHandle {
-			for i, col := range is.Columns {
-				if (mysql.HasPriKeyFlag(col.Flag) && is.Table.PKIsHandle) || col.ID == model.ExtraHandleID {
-					indexCols = append(indexCols, is.dataSourceSchema.Columns[i])
-					setHandle = true
-					break
-				}
-			}
-		}
-		// If it's double read case, the first index must return handle. So we should add extra handle column
-		// if there isn't a handle column.
-		if isDoubleRead && !setHandle {
-			if !is.Table.IsCommonHandle {
-				indexCols = append(indexCols, &expression.Column{
-					RetType:  types.NewFieldType(mysql.TypeLonglong),
-					ID:       model.ExtraHandleID,
-					UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID(),
-				})
-			}
-		}
-	} else {
+	if is.NeedCommonHandle {
 		if len(is.IdxCols) < len(is.Columns) {
 			for i := len(is.IdxCols); i < len(idxExprCols); i++ {
 				indexCols = append(indexCols, idxExprCols[i])
 			}
+		}
+		is.SetSchema(expression.NewSchema(indexCols...))
+		return
+	}
+	for i := len(is.IdxCols); i < len(idx.Columns); i++ {
+		if idxExprCols[i] != nil {
+			indexCols = append(indexCols, idxExprCols[i])
+		} else {
+			// TODO: try to reuse the col generated when building the DataSource.
+			indexCols = append(indexCols, &expression.Column{
+				ID:       is.Table.Columns[idx.Columns[i].Offset].ID,
+				RetType:  &is.Table.Columns[idx.Columns[i].Offset].FieldType,
+				UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID(),
+			})
+		}
+	}
+	setHandle := len(indexCols) > len(idx.Columns)
+	if !setHandle {
+		for i, col := range is.Columns {
+			if (mysql.HasPriKeyFlag(col.Flag) && is.Table.PKIsHandle) || col.ID == model.ExtraHandleID {
+				indexCols = append(indexCols, is.dataSourceSchema.Columns[i])
+				setHandle = true
+				break
+			}
+		}
+	}
+	// If it's double read case, the first index must return handle. So we should add extra handle column
+	// if there isn't a handle column.
+	if isDoubleRead && !setHandle {
+		if !is.Table.IsCommonHandle {
+			indexCols = append(indexCols, &expression.Column{
+				RetType:  types.NewFieldType(mysql.TypeLonglong),
+				ID:       model.ExtraHandleID,
+				UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID(),
+			})
 		}
 	}
 
