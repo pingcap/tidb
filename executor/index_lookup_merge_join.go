@@ -715,6 +715,9 @@ func (e *IndexLookUpMergeJoin) Close() error {
 		close(e.joinChkResourceCh[i])
 	}
 	e.joinChkResourceCh = nil
+	// joinChkResourceCh is to recycle result chunks, used by inner worker.
+	// resultCh is the main thread get the results, used by main thread and inner worker.
+	// cancelFunc control the outer worker and outer worker close the task channel.
 	e.workerWg.Wait()
 	e.memTracker = nil
 	if e.runtimeStats != nil {
