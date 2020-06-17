@@ -511,7 +511,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 		}
 		canConvertPointGet := (!ds.isPartition && len(path.Ranges) > 0) || (ds.isPartition && len(path.Ranges) == 1)
 		canConvertPointGet = canConvertPointGet && candidate.path.StoreType != kv.TiFlash
-		if !candidate.path.IsTablePath() {
+		if !candidate.path.IsIntHandlePath {
 			canConvertPointGet = canConvertPointGet &&
 				candidate.path.Index.Unique &&
 				!candidate.path.Index.HasPrefixIndex() &&
