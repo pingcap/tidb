@@ -1062,7 +1062,7 @@ func (e *TiFlashSystemTableExtractor) Extract(_ sessionctx.Context,
 	predicates []expression.Expression,
 ) []expression.Expression {
 	remained, skipRequest, tiflashNodes := e.extractCol(schema, names, predicates, "tiflash_node", false)
-	e.SkipRequest  = skipRequest
+	e.SkipRequest = skipRequest
 	e.TiFlashNodes = tiflashNodes
 	return remained
 }

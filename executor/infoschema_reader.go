@@ -17,9 +17,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/config"
-	"go.etcd.io/etcd/clientv3"
 	"io/ioutil"
 	"net/http"
 	"sort"
@@ -28,11 +25,15 @@ import (
 	"sync"
 	"time"
 
+	"go.etcd.io/etcd/clientv3"
+
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -1770,15 +1771,15 @@ func (e *memtableRetriever) setDataForStatementsSummary(ctx sessionctx.Context, 
 // TiFlashSystemTableRetriever is used to read system table from tiflash.
 type TiFlashSystemTableRetriever struct {
 	dummyCloser
-	table         *model.TableInfo
-	outputCols    []*model.ColumnInfo
-	nodeCount     int
-	nodeIdx       int
-	nodeInfos     []tiflashNodeInfo
-	rowIdx        int
-	retrieved     bool
-	initialized   bool
-	extractor     *plannercore.TiFlashSystemTableExtractor
+	table       *model.TableInfo
+	outputCols  []*model.ColumnInfo
+	nodeCount   int
+	nodeIdx     int
+	nodeInfos   []tiflashNodeInfo
+	rowIdx      int
+	retrieved   bool
+	initialized bool
+	extractor   *plannercore.TiFlashSystemTableExtractor
 }
 
 func (e *TiFlashSystemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
@@ -1824,7 +1825,7 @@ func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflas
 			defer cli.Close()
 			prefix := "/tiflash/cluster/http_port/"
 			kv := clientv3.NewKV(cli)
-			ctx, cancel := context.WithTimeout(context.Background(), 10 * time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			resp, err := kv.Get(ctx, prefix, clientv3.WithPrefix())
 			cancel()
 			if err != nil {
@@ -1839,7 +1840,7 @@ func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflas
 				// TODO: Support https in tiflash
 				url := fmt.Sprintf("http://%s", ev.Value)
 				e.nodeInfos = append(e.nodeInfos, tiflashNodeInfo{
-					id: id,
+					id:  id,
 					url: url,
 				})
 				e.nodeCount += 1
@@ -1890,7 +1891,7 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.
 			continue
 		}
 		fields := strings.Split(record, "\t")
-		if len(fields) < len(e.outputCols) - 1 {
+		if len(fields) < len(e.outputCols)-1 {
 			return nil, errors.Errorf("Record from tiflash doesn't match schema", fields)
 		}
 		row := make([]types.Datum, len(e.outputCols))
@@ -1922,7 +1923,7 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.
 				return nil, errors.Errorf("Meet column of unknown type", column)
 			}
 		}
-		row[len(e.outputCols) - 1].SetString(nodeInfo.id, mysql.DefaultCollationName)
+		row[len(e.outputCols)-1].SetString(nodeInfo.id, mysql.DefaultCollationName)
 		rows = append(rows, row)
 	}
 	if len(rows) < maxCount {

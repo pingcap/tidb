@@ -1512,8 +1512,8 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableStatementsSummary:                  tableStatementsSummaryCols,
 	TableStatementsSummaryHistory:           tableStatementsSummaryCols,
 	TableStorageStats:                       tableStorageStatsCols,
-	TableTiFlashTables:			             tableTableTiFlashTablesCols,
-	TableTiFlashSegments:			         tableTableTiFlashSegmentsCols,
+	TableTiFlashTables:                      tableTableTiFlashTablesCols,
+	TableTiFlashSegments:                    tableTableTiFlashSegmentsCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
