@@ -111,8 +111,6 @@ func setUpSuite(s *testDBSuite, c *C) {
 	_, err = s.s.Execute(context.Background(), "create database test_db")
 	c.Assert(err, IsNil)
 	s.s.Execute(context.Background(), "set @@global.tidb_max_delta_schema_count= 4096")
-
-	s.tk = testkit.NewTestKit(c, s.store)
 }
 
 func tearDownSuite(s *testDBSuite, c *C) {
@@ -2214,6 +2212,7 @@ func (s *testDBSuite4) TestCreateTableWithLike2(c *C) {
 }
 
 func (s *testDBSuite1) TestCreateTable(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
 	s.tk.MustExec("CREATE TABLE `t` (`a` double DEFAULT 1.0 DEFAULT now() DEFAULT 2.0 );")
 	s.tk.MustExec("CREATE TABLE IF NOT EXISTS `t` (`a` double DEFAULT 1.0 DEFAULT now() DEFAULT 2.0 );")
