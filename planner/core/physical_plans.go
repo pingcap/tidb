@@ -307,6 +307,7 @@ type PhysicalTopN struct {
 type PhysicalApply struct {
 	PhysicalHashJoin
 
+	CanUseCache bool
 	OuterSchema []*expression.CorrelatedColumn
 }
 
