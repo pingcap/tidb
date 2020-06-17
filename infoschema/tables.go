@@ -147,7 +147,7 @@ const (
 	TableStatementsSummaryHistory = "STATEMENTS_SUMMARY_HISTORY"
 	// TableStorageStats is a table that contains all tables disk usage
 	TableStorageStats = "TABLE_STORAGE_STATS"
-	// TableTiFlashTable is the string constant of tiflash tables table.
+	// TableTiFlashTables is the string constant of tiflash tables table.
 	TableTiFlashTables = "TIFLASH_TABLES"
 	// TableTiFlashSegments is the string constant of tiflash segments table.
 	TableTiFlashSegments = "TIFLASH_SEGMENTS"

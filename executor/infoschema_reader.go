@@ -1822,7 +1822,12 @@ func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflas
 			if err != nil {
 				return errors.Trace(err)
 			}
-			defer cli.Close()
+			defer func() {
+				err := cli.Close()
+				if err != nil {
+					// ignore
+				}
+			}()
 			prefix := "/tiflash/cluster/http_port/"
 			kv := clientv3.NewKV(cli)
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
