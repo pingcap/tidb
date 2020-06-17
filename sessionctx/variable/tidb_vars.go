@@ -393,6 +393,7 @@ const (
 
 	// TiDBSlowLogMasking indicates that whether masking the query data when log slow query.
 	TiDBSlowLogMasking = "tidb_slow_log_masking"
+
 	// TiDBEnableCollectExecutionInfo indicates that whether execution info is collected.
 	TiDBEnableCollectExecutionInfo = "tidb_enable_collect_execution_info"
 )
@@ -489,7 +490,7 @@ const (
 	DefTiDBMetricSchemaRangeDuration   = 60 // 60s
 	DefTiDBFoundInPlanCache            = false
 	DefTiDBSlowLogMasking              = false
-	DefTidbEnableCollectExecutionInfo  = false
+	DefTiDBEnableCollectExecutionInfo  = false
 )
 
 // Process global variables.
