@@ -136,14 +136,8 @@ type Config struct {
 	NewCollationsEnabledOnFirstBootstrap bool `toml:"new_collations_enabled_on_first_bootstrap" json:"new_collations_enabled_on_first_bootstrap"`
 	// Experimental contains parameters for experimental features.
 	Experimental Experimental `toml:"experimental" json:"experimental"`
-<<<<<<< HEAD
-=======
-	// EnableDynamicConfig enables the TiDB to fetch configs from PD and update itself during runtime.
-	// see https://github.com/pingcap/tidb/pull/13660 for more details.
-	EnableDynamicConfig bool `toml:"enable-dynamic-config" json:"enable-dynamic-config"`
 	// EnableCollectExecutionInfo enables the TiDB to collect execution info.
 	EnableCollectExecutionInfo bool `toml:"enable-collect-execution-info" json:"enable-collect-execution-info"`
->>>>>>> e90aac2... executor: add config EnableCollectExecutionInfo (#15493)
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -685,11 +679,7 @@ var defaultConf = Config{
 		AllowAutoRandom:       false,
 		AllowsExpressionIndex: false,
 	},
-<<<<<<< HEAD
-=======
-	EnableDynamicConfig:        false,
 	EnableCollectExecutionInfo: false,
->>>>>>> e90aac2... executor: add config EnableCollectExecutionInfo (#15493)
 }
 
 var (
