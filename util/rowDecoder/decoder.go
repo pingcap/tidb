@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/rowcodec"
 )
 
@@ -77,6 +78,30 @@ func NewRowDecoder(tbl table.Table, decodeColMap map[int64]Column) *RowDecoder {
 	}
 }
 
+func (rd *RowDecoder) tryDecodeFromHandle(dCol Column, handle kv.Handle) (bool, error) {
+	if handle == nil {
+		return false, nil
+	}
+	colInfo := dCol.Col.ColumnInfo
+	if dCol.Col.IsPKHandleColumn(rd.tbl.Meta()) {
+		if mysql.HasUnsignedFlag(colInfo.Flag) {
+			rd.mutRow.SetValue(colInfo.Offset, uint64(handle.IntValue()))
+		} else {
+			rd.mutRow.SetValue(colInfo.Offset, handle.IntValue())
+		}
+		return true, nil
+	}
+	if !handle.IsInt() && mysql.HasPriKeyFlag(dCol.Col.Flag) {
+		_, d, err := codec.DecodeOne(handle.EncodedCol(colInfo.Offset))
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		rd.mutRow.SetValue(colInfo.Offset, d)
+		return true, nil
+	}
+	return false, nil
+}
+
 // DecodeAndEvalRowWithMap decodes a byte slice into datums and evaluates the generated column value.
 func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.Handle, b []byte, decodeLoc, sysLoc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
 	var err error
@@ -97,6 +122,13 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.
 		val, ok := row[colInfo.ID]
 		if ok || dCol.GenExpr != nil {
 			rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
+			continue
+		}
+		ok, err := rd.tryDecodeFromHandle(dCol, handle)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
 			continue
 		}
 		// Get the default value of the column in the generated column expression.
