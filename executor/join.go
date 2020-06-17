@@ -933,12 +933,8 @@ func (e *NestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk) (err e
 					if err != nil {
 						return err
 					}
-					setSuccess, err := e.cache.Set(key, e.innerList)
-					if err != nil {
+					if _, err := e.cache.Set(key, e.innerList); err != nil {
 						return err
-					}
-					if setSuccess {
-						e.innerList = e.innerList.Copy()
 					}
 				}
 			} else {
