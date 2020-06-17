@@ -75,6 +75,7 @@ type Domain struct {
 	expensiveQueryHandle *expensivequery.Handle
 	wg                   sync.WaitGroup
 	statsUpdating        sync2.AtomicInt32
+	cancel               context.CancelFunc
 }
 
 // loadInfoSchema loads infoschema at startTS into handle, usedSchemaVersion is the currently used
@@ -617,6 +618,7 @@ func (do *Domain) Close() {
 
 	do.sysSessionPool.Close()
 	do.slowQuery.Close()
+	do.cancel()
 	do.wg.Wait()
 	logutil.BgLogger().Info("domain closed", zap.Duration("take time", time.Since(startTime)))
 }
@@ -697,7 +699,8 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 		return sysFactory(do)
 	}
 	sysCtxPool := pools.NewResourcePool(sysFac, 2, 2, resourceIdleTimeout)
-	ctx := context.Background()
+	ctx, cancelFunc := context.WithCancel(context.Background())
+	do.cancel = cancelFunc
 	callback := &ddlCallback{do: do}
 	d := do.ddl
 	do.ddl = ddl.NewDDL(
