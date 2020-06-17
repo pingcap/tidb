@@ -368,8 +368,6 @@ github.com/pingcap-incubator/tidb-dashboard v0.0.0-20200514075710-eecc9a4525b5/g
 github.com/pingcap/br v0.0.0-20200426093517-dd11ae28b885/go.mod h1:4w3meMnk7HDNpNgjuRAxavruTeKJvUiXxoEWTjzXPnA=
 github.com/pingcap/br v0.0.0-20200521085655-53201addd4ad h1:nptiQT0kWdIUghh49OyaTBYb4DtdxJmsLHOxbU25kW4=
 github.com/pingcap/br v0.0.0-20200521085655-53201addd4ad/go.mod h1:SlSUHWY7QUoooiYxOKuJ8kUh2KjI29ogBh89YXz2dLA=
-github.com/pingcap/br v0.0.0-20200608053917-6f9cfba779d6 h1:MDnyw3iDsKEmWRYRJprpm4HdSzS871u4RsTzpIpG7iA=
-github.com/pingcap/br v0.0.0-20200608053917-6f9cfba779d6/go.mod h1:NGee2H9vXLunFIBXGb3uFsWRpw3BBo822sY4dyXepqo=
 github.com/pingcap/br v0.0.0-20200617043629-b65533fa53bb h1:y24KdZzLqkZ8tq7cRV/uG6Omm7KlKZ2BmuYXkv0wQDE=
 github.com/pingcap/br v0.0.0-20200617043629-b65533fa53bb/go.mod h1:NGee2H9vXLunFIBXGb3uFsWRpw3BBo822sY4dyXepqo=
 github.com/pingcap/check v0.0.0-20190102082844-67f458068fc8/go.mod h1:B1+S9LNcuMyLH/4HMTViQOJevkGiik3wW2AN9zb2fNQ=
