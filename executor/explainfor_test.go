@@ -266,3 +266,11 @@ func (s *testSuite) TestInspectionSummaryTable(c *C) {
 		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY skip_inspection: true`,
 	))
 }
+
+func (s *testSuite) TestExplainTiFlashSystemTables(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.TIFLASH_TABLES where TIFLASH_NODE = '192.168.1.7:3930'")).Check(testkit.Rows(
+		fmt.Sprintf("MemTableScan_5 10000.00 root table:TIFLASH_TABLES tiflash_nodes:[\"192.168.1.7:3930\"]")))
+	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.TIFLASH_SEGMENTS where TIFLASH_NODE = '192.168.1.7:3930'")).Check(testkit.Rows(
+		fmt.Sprintf("MemTableScan_5 10000.00 root table:TIFLASH_SEGMENTS tiflash_nodes:[\"192.168.1.7:3930\"]")))
+}
