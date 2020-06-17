@@ -1559,15 +1559,16 @@ func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 	for _, colColumn := range la.CorCols {
 		columns = append(columns, &colColumn.Column)
 	}
-	count := 1.0
+	cacheHitRatio := 0.0
 	if la.stats.RowCount != 0 {
 		ndv := getCardinality(columns, la.schema, la.stats)
-		// count means the average number of occurrences of each value
-		count = ndv / la.stats.RowCount
+		// for example, if there are 100 rows and the number of distinct values of these correlated columns
+		// are 70, then we can assume 30 rows can hit the cache so the cache hit ratio is 1 - (70/100) = 0.3
+		cacheHitRatio = 1 - (ndv / la.stats.RowCount)
 	}
 
 	var canUseCache bool
-	if count < 0.9 && la.ctx.GetSessionVars().ApplyCacheCapacity > 0 {
+	if cacheHitRatio > 0.1 && la.ctx.GetSessionVars().ApplyCacheCapacity > 0 {
 		canUseCache = true
 	} else {
 		canUseCache = false

@@ -15,7 +15,6 @@ package executor
 
 import (
 	"fmt"
-	"unsafe"
 
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
@@ -32,24 +31,17 @@ type applyCache struct {
 	memTracker  *memory.Tracker // track memory usage.
 }
 
-type applyCacheKey struct {
-	Data []byte
-}
+type applyCacheKey []byte
 
-func (key *applyCacheKey) Hash() []byte {
-	return key.Data
-}
-
-// applyCacheValue is used to store the value of <key, value> pair in applyCache
-type applyCacheValue struct {
-	Data *chunk.List
+func (key applyCacheKey) Hash() []byte {
+	return key
 }
 
 var applyCacheLabel fmt.Stringer = stringutil.StringerStr("applyCache")
 
 func newApplyCache(ctx sessionctx.Context) (*applyCache, error) {
-	// num means the count of the cached element
-	num := uint(ctx.GetSessionVars().ApplyCacheCapacity / 100)
+	// assume the average size of elements is 64
+	num := uint(ctx.GetSessionVars().ApplyCacheCapacity / 64)
 	cache := kvcache.NewSimpleLRUCache(num, 0.1, uint64(ctx.GetSessionVars().ApplyCacheCapacity))
 	c := applyCache{
 		cache:       cache,
@@ -60,21 +52,19 @@ func newApplyCache(ctx sessionctx.Context) (*applyCache, error) {
 }
 
 // Get gets a cache item according to cache key.
-func (c *applyCache) Get(key applyCacheKey) (*applyCacheValue, error) {
+func (c *applyCache) Get(key applyCacheKey) (*chunk.List, error) {
 	value, hit := c.cache.Get(&key)
 	if !hit {
 		return nil, nil
 	}
-	typedValue := value.(*applyCacheValue)
+	typedValue := value.(*chunk.List)
 	return typedValue, nil
 }
 
 // Set inserts an item to the cache.
-func (c *applyCache) Set(key *applyCacheKey, value *applyCacheValue) (bool, error) {
-	mem := int64(unsafe.Sizeof(key.Data)) + value.Data.GetMemTracker().BytesConsumed()
-	// When the <key, value> pair's memory consumption is larger than cache's max capacity,
-	// we do not to store the <key, value> pair.
-	if mem > c.memCapacity {
+func (c *applyCache) Set(key applyCacheKey, value *chunk.List) (bool, error) {
+	mem := int64(len(key)) + value.GetMemTracker().BytesConsumed()
+	if mem > c.memCapacity { // ignore this kv pair if its size is too large
 		return false, nil
 	}
 	for mem+c.memTracker.BytesConsumed() > c.memCapacity {
@@ -82,7 +72,7 @@ func (c *applyCache) Set(key *applyCacheKey, value *applyCacheValue) (bool, erro
 		if !evicted {
 			return false, nil
 		}
-		c.memTracker.Consume(-(int64(unsafe.Sizeof(evictedKey)) + evictedValue.(*applyCacheValue).Data.GetMemTracker().BytesConsumed()))
+		c.memTracker.Consume(-(int64(len(evictedKey.(applyCacheKey))) + evictedValue.(*chunk.List).GetMemTracker().BytesConsumed()))
 	}
 	c.memTracker.Consume(mem)
 	c.cache.Put(key, value)

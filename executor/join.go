@@ -766,10 +766,10 @@ type NestedLoopApplyExec struct {
 
 	joiner joiner
 
-	cache          *applyCache
-	canUseCache    bool
-	cacheHitNumber int
-	totalNumber    int
+	cache              *applyCache
+	canUseCache        bool
+	cacheHitCounter    int
+	cacheAccessCounter int
 
 	outerSchema []*expression.CorrelatedColumn
 
@@ -795,16 +795,15 @@ func (e *NestedLoopApplyExec) Close() error {
 	e.memTracker = nil
 	if e.runtimeStats != nil {
 		if e.canUseCache {
-			e.runtimeStats.SetCacheInfo(true, e.totalNumber, e.cacheHitNumber)
+			e.runtimeStats.SetCacheInfo(true, e.cacheAccessCounter, e.cacheHitCounter)
 		} else {
-			e.runtimeStats.SetCacheInfo(false, e.totalNumber, e.cacheHitNumber)
+			e.runtimeStats.SetCacheInfo(false, e.cacheAccessCounter, e.cacheHitCounter)
 		}
 	}
 	return e.outerExec.Close()
 }
 
 var innerListLabel fmt.Stringer = stringutil.StringerStr("innerList")
-var cacheLabel fmt.Stringer = stringutil.StringerStr("cache")
 
 // Open implements the Executor interface.
 func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
@@ -829,8 +828,8 @@ func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		e.cacheHitNumber = 0
-		e.totalNumber = 0
+		e.cacheHitCounter = 0
+		e.cacheAccessCounter = 0
 		e.cache.GetMemTracker().SetLabel(applyCacheLabel)
 		e.cache.GetMemTracker().AttachTo(e.memTracker)
 	}
@@ -914,36 +913,33 @@ func (e *NestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk) (err e
 			e.hasNull = false
 
 			if e.canUseCache {
-				var keyByte []byte
+				var key []byte
 				for _, col := range e.outerSchema {
 					*col.Data = e.outerRow.GetDatum(col.Index, col.RetType)
-					keyByte, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, keyByte, *col.Data)
+					key, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, key, *col.Data)
 					if err != nil {
 						return err
 					}
 				}
-				var key applyCacheKey
-				key.Data = keyByte
-				e.totalNumber++
+				e.cacheAccessCounter++
 				value, err := e.cache.Get(key)
 				if err != nil {
 					return err
 				}
 				if value != nil {
-					e.innerList = value.Data
-					e.cacheHitNumber++
+					e.innerList = value
+					e.cacheHitCounter++
 				} else {
 					err = e.fetchAllInners(ctx)
 					if err != nil {
 						return err
 					}
-					setSuccess, err := e.cache.Set(&key, &applyCacheValue{e.innerList})
+					setSuccess, err := e.cache.Set(key, e.innerList)
 					if err != nil {
 						return err
 					}
 					if setSuccess {
 						e.innerList = e.innerList.Copy()
-						e.innerList.GetMemTracker().AttachTo(e.memTracker)
 					}
 				}
 			} else {
