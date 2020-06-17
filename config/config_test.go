@@ -188,7 +188,7 @@ server-version = "test_version"
 repair-mode = true
 max-server-connections = 200
 mem-quota-query = 10000
-apply-cache-capacity = 100
+nested-loop-join-cache-capacity = 100
 max-index-length = 3080
 [performance]
 txn-total-size-limit=2000
