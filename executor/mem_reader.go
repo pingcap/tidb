@@ -119,9 +119,8 @@ func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.Fie
 		col := m.table.Columns[idxCol.Offset]
 		colInfos = append(colInfos, rowcodec.ColInfo{
 			ID:         col.ID,
-			Tp:         int32(col.Tp),
-			Flag:       int32(col.Flag),
 			IsPKHandle: m.table.PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
+			Ft:         rowcodec.FieldTypeFromModelColumn(col),
 		})
 	}
 	values, err := tablecodec.DecodeIndexKV(key, value, len(m.index.Columns), hdStatus, colInfos)
@@ -170,11 +169,8 @@ func buildMemTableReader(us *UnionScanExec, tblReader *TableReaderExecutor) *mem
 		col := us.columns[i]
 		colInfo = append(colInfo, rowcodec.ColInfo{
 			ID:         col.ID,
-			Tp:         int32(col.Tp),
-			Flag:       int32(col.Flag),
 			IsPKHandle: us.table.Meta().PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
-			Collate:    col.Collate,
-			Flen:       col.Flen,
+			Ft:         rowcodec.FieldTypeFromModelColumn(col),
 		})
 	}
 
@@ -413,11 +409,8 @@ func (m *memIndexLookUpReader) getMemRows() ([][]types.Datum, error) {
 		col := m.columns[i]
 		colInfos = append(colInfos, rowcodec.ColInfo{
 			ID:         col.ID,
-			Tp:         int32(col.Tp),
-			Flag:       int32(col.Flag),
 			IsPKHandle: m.table.Meta().PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
-			Collate:    col.Collate,
-			Flen:       col.Flen,
+			Ft:         rowcodec.FieldTypeFromModelColumn(col),
 		})
 	}
 	rd := rowcodec.NewByteDecoder(colInfos, []int64{-1}, nil, nil)

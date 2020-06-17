@@ -403,10 +403,10 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 			return []*candidatePath{{path: path}}
 		}
 		var currentCandidate *candidatePath
-		if path.IsTablePath {
+		if path.IsTablePath() {
 			currentCandidate = ds.getTableCandidate(path, prop)
 		} else {
-			coveredByIdx := isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo.PKIsHandle)
+			coveredByIdx := ds.isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo)
 			if len(path.AccessConds) > 0 || !prop.IsEmpty() || path.Forced || coveredByIdx {
 				// We will use index to generate physical plan if any of the following conditions is satisfied:
 				// 1. This path's access cond is not nil.
@@ -511,7 +511,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 		}
 		canConvertPointGet := (!ds.isPartition && len(path.Ranges) > 0) || (ds.isPartition && len(path.Ranges) == 1)
 		canConvertPointGet = canConvertPointGet && candidate.path.StoreType != kv.TiFlash
-		if !candidate.path.IsTablePath {
+		if !candidate.path.IsTablePath() {
 			canConvertPointGet = canConvertPointGet &&
 				candidate.path.Index.Unique &&
 				!candidate.path.Index.HasPrefixIndex() &&
@@ -538,7 +538,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 				}
 			}
 		}
-		if path.IsTablePath {
+		if path.IsTablePath() {
 			if ds.preferStoreType&preferTiFlash != 0 && path.StoreType == kv.TiKV {
 				continue
 			}
@@ -584,7 +584,7 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 	for _, partPath := range path.PartialIndexPaths {
 		var scan PhysicalPlan
 		var partialCost, rowCount float64
-		if partPath.IsTablePath {
+		if partPath.IsTablePath() {
 			scan, partialCost, rowCount = ds.convertToPartialTableScan(prop, partPath)
 		} else {
 			scan, partialCost, rowCount = ds.convertToPartialIndexScan(prop, partPath)
@@ -699,25 +699,27 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 	return ts, partialCost
 }
 
-func isCoveringIndex(columns, indexColumns []*expression.Column, idxColLens []int, pkIsHandle bool) bool {
+func indexCoveringCol(col *expression.Column, indexCols []*expression.Column, idxColLens []int) bool {
+	for i, indexCol := range indexCols {
+		isFullLen := idxColLens[i] == types.UnspecifiedLength || idxColLens[i] == col.RetType.Flen
+		// We use col.OrigColName instead of col.ColName.
+		// Related issue: https://github.com/pingcap/tidb/issues/9636.
+		if indexCol != nil && col.Equal(nil, indexCol) && isFullLen {
+			return true
+		}
+	}
+	return false
+}
+
+func (ds *DataSource) isCoveringIndex(columns, indexColumns []*expression.Column, idxColLens []int, tblInfo *model.TableInfo) bool {
 	for _, col := range columns {
-		if pkIsHandle && mysql.HasPriKeyFlag(col.RetType.Flag) {
+		if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.Flag) {
 			continue
 		}
 		if col.ID == model.ExtraHandleID {
 			continue
 		}
-		isIndexColumn := false
-		for i, indexCol := range indexColumns {
-			isFullLen := idxColLens[i] == types.UnspecifiedLength || idxColLens[i] == col.RetType.Flen
-			// We use col.OrigColName instead of col.ColName.
-			// Related issue: https://github.com/pingcap/tidb/issues/9636.
-			if indexCol != nil && col.Equal(nil, indexCol) && isFullLen {
-				isIndexColumn = true
-				break
-			}
-		}
-		if !isIndexColumn {
+		if !indexCoveringCol(col, indexColumns, idxColLens) && !indexCoveringCol(col, ds.commonHandleCols, ds.commonHandleLens) {
 			return false
 		}
 	}
@@ -773,7 +775,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 	cop.cst = cost
 	task = cop
 	if candidate.isMatchProp {
-		if cop.tablePlan != nil {
+		if cop.tablePlan != nil && !ds.tableInfo.IsCommonHandle {
 			col, isNew := cop.tablePlan.(*PhysicalTableScan).appendExtraHandleCol(ds)
 			cop.extraHandleCol = col
 			cop.doubleReadNeedProj = isNew
@@ -813,6 +815,17 @@ func (is *PhysicalIndexScan) indexScanRowSize(idx *model.IndexInfo, ds *DataSour
 func (is *PhysicalIndexScan) initSchema(idx *model.IndexInfo, idxExprCols []*expression.Column, isDoubleRead bool) {
 	indexCols := make([]*expression.Column, len(is.IdxCols), len(idx.Columns)+1)
 	copy(indexCols, is.IdxCols)
+	is.NeedCommonHandle = is.Table.IsCommonHandle
+
+	if is.NeedCommonHandle {
+		if len(is.IdxCols) < len(is.Columns) {
+			for i := len(is.IdxCols); i < len(idxExprCols); i++ {
+				indexCols = append(indexCols, idxExprCols[i])
+			}
+		}
+		is.SetSchema(expression.NewSchema(indexCols...))
+		return
+	}
 	for i := len(is.IdxCols); i < len(idx.Columns); i++ {
 		if idxExprCols[i] != nil {
 			indexCols = append(indexCols, idxExprCols[i])
@@ -838,12 +851,15 @@ func (is *PhysicalIndexScan) initSchema(idx *model.IndexInfo, idxExprCols []*exp
 	// If it's double read case, the first index must return handle. So we should add extra handle column
 	// if there isn't a handle column.
 	if isDoubleRead && !setHandle {
-		indexCols = append(indexCols, &expression.Column{
-			RetType:  types.NewFieldType(mysql.TypeLonglong),
-			ID:       model.ExtraHandleID,
-			UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID(),
-		})
+		if !is.Table.IsCommonHandle {
+			indexCols = append(indexCols, &expression.Column{
+				RetType:  types.NewFieldType(mysql.TypeLonglong),
+				ID:       model.ExtraHandleID,
+				UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID(),
+			})
+		}
 	}
+
 	is.SetSchema(expression.NewSchema(indexCols...))
 }
 
@@ -906,11 +922,11 @@ func matchIndicesProp(idxCols []*expression.Column, colLens []int, propItems []p
 	return true
 }
 
-func splitIndexFilterConditions(conditions []expression.Expression, indexColumns []*expression.Column, idxColLens []int,
+func (ds *DataSource) splitIndexFilterConditions(conditions []expression.Expression, indexColumns []*expression.Column, idxColLens []int,
 	table *model.TableInfo) (indexConds, tableConds []expression.Expression) {
 	var indexConditions, tableConditions []expression.Expression
 	for _, cond := range conditions {
-		if isCoveringIndex(expression.ExtractColumns(cond), indexColumns, idxColLens, table.PKIsHandle) {
+		if ds.isCoveringIndex(expression.ExtractColumns(cond), indexColumns, idxColLens, table) {
 			indexConditions = append(indexConditions, cond)
 		} else {
 			tableConditions = append(tableConditions, cond)
@@ -1179,7 +1195,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 	}
 	rTsk := &rootTask{p: pointGetPlan}
 	var cost float64
-	if candidate.path.IsTablePath {
+	if candidate.path.IsIntHandlePath {
 		pointGetPlan.Handle = kv.IntHandle(candidate.path.Ranges[0].LowVal[0].GetInt64())
 		pointGetPlan.UnsignedHandle = mysql.HasUnsignedFlag(ds.getHandleCol().RetType.Flag)
 		pointGetPlan.PartitionInfo = partitionInfo
@@ -1239,7 +1255,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 	}
 	rTsk := &rootTask{p: batchPointGetPlan}
 	var cost float64
-	if candidate.path.IsTablePath {
+	if candidate.path.IsTablePath() {
 		for _, ran := range candidate.path.Ranges {
 			batchPointGetPlan.Handles = append(batchPointGetPlan.Handles, kv.IntHandle(ran.LowVal[0].GetInt64()))
 		}
@@ -1392,7 +1408,7 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 		is.Hist = &statsTbl.Indices[idx.ID].Histogram
 	}
 	rowCount := path.CountAfterAccess
-	is.initSchema(idx, path.FullIdxCols, !isSingleScan)
+	is.initSchema(idx, append(path.FullIdxCols, ds.commonHandleCols...), !isSingleScan)
 	// Only use expectedCnt when it's smaller than the count we calculated.
 	// e.g. IndexScan(count1)->After Filter(count2). The `ds.stats.RowCount` is count2. count1 is the one we need to calculate
 	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.

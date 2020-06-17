@@ -735,36 +735,58 @@ func TimestampDiff(unit string, t1 Time, t2 Time) int64 {
 func ParseDateFormat(format string) []string {
 	format = strings.TrimSpace(format)
 
+	if len(format) == 0 {
+		return nil
+	}
+
+	// Date format must start and end with number.
+	if !isDigit(format[0]) || !isDigit(format[len(format)-1]) {
+		return nil
+	}
+
 	start := 0
 	// Initialize `seps` with capacity of 6. The input `format` is typically
 	// a date time of the form "2006-01-02 15:04:05", which has 6 numeric parts
 	// (the fractional second part is usually removed by `splitDateTime`).
 	// Setting `seps`'s capacity to 6 avoids reallocation in this common case.
 	seps := make([]string, 0, 6)
-	for i := 0; i < len(format); i++ {
-		// Date format must start and end with number.
-		if i == 0 || i == len(format)-1 {
-			if !unicode.IsNumber(rune(format[i])) {
-				return nil
+
+	for i := 1; i < len(format)-1; i++ {
+		if isValidSeparator(format[i], len(seps)) {
+			prevParts := len(seps)
+			seps = append(seps, format[start:i])
+			start = i + 1
+
+			// consume further consecutive separators
+			for j := i + 1; j < len(format); j++ {
+				if !isValidSeparator(format[j], prevParts) {
+					break
+				}
+
+				start++
+				i++
 			}
 
 			continue
 		}
 
-		// Separator is a single none-number char.
-		if !unicode.IsNumber(rune(format[i])) {
-			if !unicode.IsNumber(rune(format[i-1])) {
-				return nil
-			}
-
-			seps = append(seps, format[start:i])
-			start = i + 1
+		if !isDigit(format[i]) {
+			return nil
 		}
-
 	}
 
 	seps = append(seps, format[start:])
 	return seps
+}
+
+// helper for date part splitting, punctuation characters are valid separators anywhere,
+// while space and 'T' are valid separators only between date and time.
+func isValidSeparator(c byte, prevParts int) bool {
+	if isPunctuation(c) {
+		return true
+	}
+
+	return prevParts == 2 && (c == ' ' || c == 'T')
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
@@ -782,9 +804,6 @@ func splitDateTime(format string) (seps []string, fracStr string) {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
 func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat bool) (Time, error) {
-	// Try to split str with delimiter.
-	// TODO: only punctuation can be the delimiter for date parts or time parts.
-	// But only space and T can be the delimiter between the date and time part.
 	var (
 		year, month, day, hour, minute, second int
 		fracStr                                string

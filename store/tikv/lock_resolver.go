@@ -122,6 +122,12 @@ func (s TxnStatus) IsCommitted() bool { return s.ttl == 0 && s.commitTS > 0 }
 // CommitTS returns the txn's commitTS. It is valid iff `IsCommitted` is true.
 func (s TxnStatus) CommitTS() uint64 { return s.commitTS }
 
+// TTL returns the TTL of the transaction if the transaction is still alive.
+func (s TxnStatus) TTL() uint64 { return s.ttl }
+
+// Action returns what the CheckTxnStatus request have done to the transaction.
+func (s TxnStatus) Action() kvrpcpb.Action { return s.action }
+
 // By default, locks after 3000ms is considered unusual (the client created the
 // lock might be dead). Other client may cleanup this kind of lock.
 // For locks created recently, we will do backoff and retry.
