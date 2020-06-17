@@ -28,6 +28,8 @@ import (
 type ActionOnExceed interface {
 	// Action will be called when memory usage exceeds memory quota by the
 	// corresponding Tracker.
+	// t indicates the root tracker that memory limit is exceeded. trigger indicates
+	// the tracker that makes root tacker's memory exceeded.
 	Action(t *Tracker, trigger *Tracker)
 	// SetLogHook binds a log hook which will be triggered and log an detailed
 	// message for the out-of-memory sql.

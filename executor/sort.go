@@ -20,7 +20,6 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -240,7 +239,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 			break
 		}
 		if err := e.rowChunks.Add(chk); err != nil {
-			if err.Error() == "The partition is spilled" {
+			if ErrInsertToPartitionFailed.Equal(err) {
 				e.partitionList = append(e.partitionList, e.rowChunks)
 				e.rowChunks = NewSortedRowContainer(fields, e.maxChunkSize, e.ByItems, e.keyColumns, e.keyCmpFuncs)
 				e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
@@ -589,6 +588,7 @@ func (c *SortedRowContainer) sortAndSpillToDisk(needLock bool) (err error) {
 		c.m.Lock()
 		defer c.m.Unlock()
 	}
+	// If needLock is true, get the WLock above and don't need to get lock again.
 	c.initPointerAndSort(!needLock)
 	return c.RowContainer.SpillToDisk(needLock)
 }
@@ -598,7 +598,7 @@ func (c *SortedRowContainer) Add(chk *chunk.Chunk) (err error) {
 	c.m.RLock()
 	defer c.m.RUnlock()
 	if c.RowContainer.AlreadySpilled() {
-		return errors.New("The partition is spilled")
+		return ErrInsertToPartitionFailed
 	}
 	return c.RowContainer.Add(chk)
 }

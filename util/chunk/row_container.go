@@ -31,7 +31,7 @@ type RowContainer struct {
 	records *List
 	// recordsInDisk stores the chunks in disk.
 	recordsInDisk *ListInDisk
-	// m guarantees spill and get operator for rowContainer is mutually.
+	// m guarantees spill and get operator for rowContainer is mutually exclusive.
 	m sync.RWMutex
 
 	fieldType []*types.FieldType
@@ -54,6 +54,8 @@ func NewRowContainer(fieldType []*types.FieldType, chunkSize int) *RowContainer 
 
 // SpillToDisk spills data to disk.
 func (c *RowContainer) SpillToDisk(needLock bool) (err error) {
+	// Maybe the function call stack includes RowContainer.Add() and gets lock in that function,
+	// so we don't need to get the lock again.
 	if needLock {
 		c.m.Lock()
 		defer c.m.Unlock()
@@ -213,7 +215,7 @@ type SpillDiskAction struct {
 func (a *SpillDiskAction) Action(t *memory.Tracker, trigger *memory.Tracker) {
 	a.m.Lock()
 	defer a.m.Unlock()
-	if a.c.AlreadySpilledSafe() || a.c.GetMemTracker().BytesConsumed() == 0 {
+	if a.c.AlreadySpilledSafe() {
 		if a.fallbackAction != nil {
 			a.fallbackAction.Action(t, trigger)
 		}
