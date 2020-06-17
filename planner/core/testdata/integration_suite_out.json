@@ -682,11 +682,32 @@
       {
         "SQL": "select * from t1 where t1.c = 3.3",
         "Plan": [
-          "TableReader_7 1.00 root  data:Selection_6",
-          "└─Selection_6 1.00 cop[tikv]  eq(test.t1.c, 3.3)",
-          "  └─TableFullScan_5 3.00 cop[tikv] table:t1 keep order:false"
+          "IndexReader_6 1.00 root  index:IndexRangeScan_5",
+          "└─IndexRangeScan_5 1.00 cop[tikv] table:t1, index:c(c) range:[3.3000000000,3.3000000000], keep order:false"
         ],
         "Res": [
+          "3 333 3.3000000000"
+        ]
+      },
+      {
+        "SQL": "select t1.b, t1.c from t1 where t1.c = 2.2",
+        "Plan": [
+          "IndexReader_6 1.00 root  index:IndexRangeScan_5",
+          "└─IndexRangeScan_5 1.00 cop[tikv] table:t1, index:c(c) range:[2.2000000000,2.2000000000], keep order:false"
+        ],
+        "Res": [
+          "222 2.2000000000"
+        ]
+      },
+      {
+        "SQL": "select /*+ use_index(t1, c) */ * from t1",
+        "Plan": [
+          "IndexReader_5 3.00 root  index:IndexFullScan_4",
+          "└─IndexFullScan_4 3.00 cop[tikv] table:t1, index:c(c) keep order:false"
+        ],
+        "Res": [
+          "1 111 1.1000000000",
+          "2 222 2.2000000000",
           "3 333 3.3000000000"
         ]
       }
