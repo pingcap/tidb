@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -175,7 +174,6 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 		for _, keyRange := range ranges {
 			tsExec.Ranges = append(tsExec.Ranges, tipb.KeyRange{Low: keyRange.StartKey, High: keyRange.EndKey})
 		}
-		logutil.BgLogger().Info("make range for table.")
 	}
 	if storeType == kv.TiFlash {
 		executorID = p.ExplainID().String()
@@ -262,13 +260,13 @@ func (p *PhysicalBroadCastJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreT
 		return nil, errors.Trace(err)
 	}
 
-	left, leftErr := expression.ExpressionsToPBList(sc, leftJoinKeys, client)
-	if leftErr != nil {
-		return nil, leftErr
+	left, err := expression.ExpressionsToPBList(sc, leftJoinKeys, client)
+	if err != nil {
+		return nil, err
 	}
-	right, rightErr := expression.ExpressionsToPBList(sc, rightJoinKeys, client)
-	if rightErr != nil {
-		return nil, rightErr
+	right, err := expression.ExpressionsToPBList(sc, rightJoinKeys, client)
+	if err != nil {
+		return nil, err
 	}
 	join := &tipb.Join{
 		JoinType:      tipb.JoinType_TypeInnerJoin,
