@@ -262,6 +262,8 @@ github.com/grpc-ecosystem/grpc-gateway v1.14.3/go.mod h1:6CwZWGDSPRJidgKAtJVvND6
 github.com/gtank/cryptopasta v0.0.0-20170601214702-1f550f6f2f69/go.mod h1:YLEMZOtU+AZ7dhN9T/IpGhXVGly2bvkJQ+zxj3WeVQo=
 github.com/hanfei1991/parser v0.0.0-20200615062953-980888fe15f7 h1:RdGUdtR0kzQjnozAalqbZ8DBqKybHzgIvPoOBw1oxlM=
 github.com/hanfei1991/parser v0.0.0-20200615062953-980888fe15f7/go.mod h1:vQdbJqobJAgFyiRNNtXahpMoGWwPEuWciVEK5A20NS0=
+github.com/hanfei1991/parser v0.0.0-20200617082422-444a49f9c68e h1:C5xRGrh4bFK5FRMg/NO06i7+BH31Gcso/tjEcQ5Tg2c=
+github.com/hanfei1991/parser v0.0.0-20200617082422-444a49f9c68e/go.mod h1:vQdbJqobJAgFyiRNNtXahpMoGWwPEuWciVEK5A20NS0=
 github.com/hanfei1991/tipb v0.0.0-20200615064645-bb7c184dfad7 h1:v3AV42scaKrnFDpS8Tl2BKlb2KPe7+qnBiYA3CMIbIo=
 github.com/hanfei1991/tipb v0.0.0-20200615064645-bb7c184dfad7/go.mod h1:nPMpOLbGpW71jAalpqgYYjMAZfCGk+DdSPhoIVVizkU=
 github.com/hashicorp/golang-lru v0.5.0/go.mod h1:/m3WP610KZHVQ1SGc6re/UDhFvYD7pJ4Ao+sR/qLZy8=
