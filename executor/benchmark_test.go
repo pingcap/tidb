@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -469,9 +470,9 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 
 	var tail core.PhysicalPlan = win
 	if !dataSourceSorted {
-		byItems := make([]*core.ByItems, 0, len(partitionBy))
+		byItems := make([]*util.ByItems, 0, len(partitionBy))
 		for _, col := range partitionBy {
-			byItems = append(byItems, &core.ByItems{Expr: col, Desc: false})
+			byItems = append(byItems, &util.ByItems{Expr: col, Desc: false})
 		}
 		sort := &core.PhysicalSort{ByItems: byItems}
 		sort.SetChildren(src)
@@ -1601,11 +1602,11 @@ func benchmarkSortExec(b *testing.B, cas *sortCase) {
 	dataSource := buildMockDataSource(opt)
 	exec := &SortExec{
 		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, stringutil.StringerStr("sort"), dataSource),
-		ByItems:      make([]*core.ByItems, 0, len(cas.orderByIdx)),
+		ByItems:      make([]*util.ByItems, 0, len(cas.orderByIdx)),
 		schema:       dataSource.schema,
 	}
 	for _, idx := range cas.orderByIdx {
-		exec.ByItems = append(exec.ByItems, &core.ByItems{Expr: cas.columns()[idx]})
+		exec.ByItems = append(exec.ByItems, &util.ByItems{Expr: cas.columns()[idx]})
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

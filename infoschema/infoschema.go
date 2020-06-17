@@ -50,6 +50,8 @@ type InfoSchema interface {
 	SchemaMetaVersion() int64
 	// TableIsView indicates whether the schema.table is a view.
 	TableIsView(schema, table model.CIStr) bool
+	// TableIsSequence indicates whether the schema.table is a sequence.
+	TableIsSequence(schema, table model.CIStr) bool
 	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo)
 }
 
@@ -173,6 +175,15 @@ func (is *infoSchema) TableIsView(schema, table model.CIStr) bool {
 	if tbNames, ok := is.schemaMap[schema.L]; ok {
 		if t, ok := tbNames.tables[table.L]; ok {
 			return t.Meta().IsView()
+		}
+	}
+	return false
+}
+
+func (is *infoSchema) TableIsSequence(schema, table model.CIStr) bool {
+	if tbNames, ok := is.schemaMap[schema.L]; ok {
+		if t, ok := tbNames.tables[table.L]; ok {
+			return t.Meta().IsSequence()
 		}
 	}
 	return false

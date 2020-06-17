@@ -105,7 +105,7 @@ type contextHook struct{}
 // https://github.com/sirupsen/logrus/issues/63
 func (hook *contextHook) Fire(entry *log.Entry) error {
 	pc := make([]uintptr, 4)
-	cnt := runtime.Callers(6, pc)
+	cnt := runtime.Callers(8, pc)
 
 	for i := 0; i < cnt; i++ {
 		fu := runtime.FuncForPC(pc[i] - 1)
@@ -235,9 +235,9 @@ func initFileLog(cfg *zaplog.FileLogConfig, logger *log.Logger) error {
 	// use lumberjack to logrotate
 	output := &lumberjack.Logger{
 		Filename:   cfg.Filename,
-		MaxSize:    int(cfg.MaxSize),
-		MaxBackups: int(cfg.MaxBackups),
-		MaxAge:     int(cfg.MaxDays),
+		MaxSize:    cfg.MaxSize,
+		MaxBackups: cfg.MaxBackups,
+		MaxAge:     cfg.MaxDays,
 		LocalTime:  true,
 	}
 

@@ -65,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/chunk"
@@ -177,9 +178,9 @@ func (cc *clientConn) String() string {
 func (cc *clientConn) handshake(ctx context.Context) error {
 	if err := cc.writeInitialHandshake(); err != nil {
 		if errors.Cause(err) == io.EOF {
-			logutil.Logger(ctx).Info("Could not send handshake due to connection has be closed by client-side")
+			logutil.Logger(ctx).Debug("Could not send handshake due to connection has be closed by client-side")
 		} else {
-			terror.Log(err)
+			logutil.Logger(ctx).Debug("Write init handshake to client fail", zap.Error(errors.SuspendStack(err)))
 		}
 		return err
 	}
@@ -494,9 +495,9 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	if err != nil {
 		err = errors.SuspendStack(err)
 		if errors.Cause(err) == io.EOF {
-			logutil.Logger(ctx).Info("wait handshake response fail due to connection has be closed by client-side")
+			logutil.Logger(ctx).Debug("wait handshake response fail due to connection has be closed by client-side")
 		} else {
-			logutil.Logger(ctx).Error("wait handshake response fail", zap.Error(err))
+			logutil.Logger(ctx).Debug("wait handshake response fail", zap.Error(err))
 		}
 		return err
 	}
@@ -1268,31 +1269,42 @@ func (cc *clientConn) handleIndexAdvise(ctx context.Context, indexAdviseInfo *ex
 // There is a special query `load data` that does not return result, which is handled differently.
 // Query `load stats` does not return result either.
 func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
+	sc := cc.ctx.GetSessionVars().StmtCtx
+	prevWarns := sc.GetWarnings()
 	stmts, err := cc.ctx.Parse(ctx, sql)
 	if err != nil {
 		metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
 		return err
 	}
 
+	if len(stmts) == 0 {
+		return cc.writeOK()
+	}
+
+	warns := sc.GetWarnings()
+	parserWarns := warns[len(prevWarns):]
 	for i, stmt := range stmts {
-		if err = cc.handleStmt(ctx, stmt, i == len(stmts)-1); err != nil {
+		if err = cc.handleStmt(ctx, stmt, parserWarns, i == len(stmts)-1); err != nil {
 			break
 		}
 	}
-
 	if err != nil {
 		metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
 	}
 	return err
 }
 
-func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, lastStmt bool) error {
+func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns []stmtctx.SQLWarn, lastStmt bool) error {
 	rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
 	if rs != nil {
 		defer terror.Call(rs.Close)
 	}
 	if err != nil {
 		return err
+	}
+
+	if lastStmt {
+		cc.ctx.GetSessionVars().StmtCtx.AppendWarnings(warns)
 	}
 
 	status := cc.ctx.Status()

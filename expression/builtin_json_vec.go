@@ -429,7 +429,7 @@ func (b *builtinJSONSearchSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 			if len(escapeStr) == 0 {
 				escape = byte('\\')
 			} else if len(escapeStr) == 1 {
-				escape = byte(escapeStr[0])
+				escape = escapeStr[0]
 			} else {
 				return errIncorrectArgs.GenWithStackByArgs("ESCAPE")
 			}

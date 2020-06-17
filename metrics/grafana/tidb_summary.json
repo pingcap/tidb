@@ -417,17 +417,47 @@
             {
               "expr": "process_resident_memory_bytes{job=\"tidb\"}",
               "format": "time_series",
-              "hide": false,
               "intervalFactor": 1,
               "legendFormat": "process-{{instance}}",
               "refId": "A"
             },
             {
-              "expr": "go_memstats_heap_alloc_bytes{job=\"tidb\"}",
+              "expr": "go_memstats_heap_sys_bytes{job=\"tidb\"}",
+              "format": "time_series",
+              "hide": true,
+              "intervalFactor": 1,
+              "legendFormat": "HeapSys-{{instance}}",
+              "refId": "B"
+            },
+            {
+              "expr": "go_memstats_heap_inuse_bytes{job=\"tidb\"}",
               "format": "time_series",
               "intervalFactor": 1,
-              "legendFormat": "heap-{{instance}}",
-              "refId": "B"
+              "legendFormat": "HeapInuse-{{instance}}",
+              "refId": "C"
+            },
+            {
+              "expr": "go_memstats_heap_alloc_bytes{job=\"tidb\"}",
+              "format": "time_series",
+              "hide": true,
+              "intervalFactor": 1,
+              "legendFormat": "HeapAlloc-{{instance}}",
+              "refId": "D"
+            },
+            {
+              "expr": "go_memstats_heap_idle_bytes{job=\"tidb\"}",
+              "format": "time_series",
+              "hide": true,
+              "intervalFactor": 1,
+              "legendFormat": "HeapIdle-{{instance}}",
+              "refId": "E"
+            },
+            {
+              "expr": "go_memstats_heap_released_bytes{job=\"tidb\"}",
+              "hide": true,
+              "interval": "",
+              "legendFormat": "HeapReleased-{{instance}}",
+              "refId": "F"
             }
           ],
           "thresholds": [],
@@ -689,7 +719,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "TiDB query processing numbers per second.",
+          "description": "MySQL command processing numbers per second. See https://dev.mysql.com/doc/internals/en/text-protocol.html and https://dev.mysql.com/doc/internals/en/prepared-statements.html",
           "editable": true,
           "error": false,
           "fill": 1,
@@ -756,7 +786,7 @@
               "hide": true,
               "instant": false,
               "intervalFactor": 2,
-              "legendFormat": "ideal QPS",
+              "legendFormat": "ideal CPS",
               "refId": "C",
               "step": 60
             }
@@ -765,7 +795,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "QPS",
+          "title": "Command Per Second",
           "tooltip": {
             "msResolution": true,
             "shared": true,
@@ -858,7 +888,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "rate(tidb_server_query_total[1m])",
+              "expr": "sum(rate(tidb_server_query_total[1m])) by (instance)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{instance}} ",
@@ -870,7 +900,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "QPS By Instance",
+          "title": "CPS By Instance",
           "tooltip": {
             "msResolution": true,
             "shared": true,
@@ -916,7 +946,7 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "decimals": null,
-          "description": "TiDB statement statistics by statement type.",
+          "description": "TiDB statement statistics.",
           "editable": true,
           "error": false,
           "fill": 1,
@@ -963,13 +993,20 @@
               "legendFormat": "{{type}}",
               "refId": "A",
               "step": 30
+            },
+            {
+              "expr": "sum(rate(tidb_executor_statement_total[1m]))",
+              "format": "time_series",
+              "intervalFactor": 1,
+              "legendFormat": "total",
+              "refId": "B"
             }
           ],
           "thresholds": [],
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "QPS by Statement",
+          "title": "QPS",
           "tooltip": {
             "msResolution": false,
             "shared": true,
@@ -1015,7 +1052,7 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "decimals": null,
-          "description": "MySQL command statistics by command type",
+          "description": "MySQL command statistics by command type. See https://dev.mysql.com/doc/internals/en/text-protocol.html and https://dev.mysql.com/doc/internals/en/prepared-statements.html",
           "fill": 0,
           "gridPos": {
             "h": 7,
@@ -1052,7 +1089,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "rate(tidb_server_query_total[1m])",
+              "expr": "sum(rate(tidb_server_query_total[1m])) by (type)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": " {{type}}",
@@ -1063,7 +1100,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "QPS by CMD",
+          "title": "CPS by CMD",
           "tooltip": {
             "shared": true,
             "sort": 2,
@@ -1595,10 +1632,10 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "sum(rate(tidb_session_transaction_duration_seconds_count{sql_type=\"general\"}[1m])) by (type)",
+              "expr": "sum(rate(tidb_session_transaction_duration_seconds_count[1m])) by (type, txn_mode)",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "{{type}}",
+              "legendFormat": "{{type}}-{{txn_mode}}",
               "refId": "A",
               "step": 10
             }
@@ -1686,24 +1723,24 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "histogram_quantile(0.99, sum(rate(tidb_session_transaction_duration_seconds_bucket{sql_type=\"general\"}[1m])) by (le))",
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_session_transaction_duration_seconds_bucket{sql_type=\"general\"}[1m])) by (le, txn_mode))",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "99",
+              "legendFormat": "99-{{txn_mode}}",
               "refId": "A"
             },
             {
-              "expr": "histogram_quantile(0.95, sum(rate(tidb_session_transaction_duration_seconds_bucket{sql_type=\"general\"}[1m])) by (le))",
+              "expr": "histogram_quantile(0.95, sum(rate(tidb_session_transaction_duration_seconds_bucket{sql_type=\"general\"}[1m])) by (le, txn_mode))",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "95",
+              "legendFormat": "95-{{txn_mode}}",
               "refId": "B"
             },
             {
-              "expr": "histogram_quantile(0.80, sum(rate(tidb_session_transaction_duration_seconds_bucket{sql_type=\"general\"}[1m])) by (le))",
+              "expr": "histogram_quantile(0.80, sum(rate(tidb_session_transaction_duration_seconds_bucket{sql_type=\"general\"}[1m])) by (le, txn_mode))",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "80",
+              "legendFormat": "80-{{txn_mode}}",
               "refId": "C"
             }
           ],
@@ -1788,10 +1825,10 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "histogram_quantile(1, sum(rate(tidb_session_transaction_statement_num_bucket{sql_type=\"general\"}[30s])) by (le))",
+              "expr": "histogram_quantile(1, sum(rate(tidb_session_transaction_statement_num_bucket[30s])) by (le))",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "99",
+              "legendFormat": "max",
               "refId": "A"
             }
           ],

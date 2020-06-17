@@ -300,6 +300,32 @@ func (s *testFieldTypeSuite) TestAggFieldType(c *C) {
 		}
 	}
 }
+func (s *testFieldTypeSuite) TestAggFieldTypeForTypeFlag(c *C) {
+	types := []*FieldType{
+		NewFieldType(mysql.TypeLonglong),
+		NewFieldType(mysql.TypeLonglong),
+	}
+
+	aggTp := AggFieldType(types)
+	c.Assert(aggTp.Tp, Equals, mysql.TypeLonglong)
+	c.Assert(aggTp.Flag, Equals, uint(0))
+
+	types[0].Flag = mysql.NotNullFlag
+	aggTp = AggFieldType(types)
+	c.Assert(aggTp.Tp, Equals, mysql.TypeLonglong)
+	c.Assert(aggTp.Flag, Equals, uint(0))
+
+	types[0].Flag = 0
+	types[1].Flag = mysql.NotNullFlag
+	aggTp = AggFieldType(types)
+	c.Assert(aggTp.Tp, Equals, mysql.TypeLonglong)
+	c.Assert(aggTp.Flag, Equals, uint(0))
+
+	types[0].Flag = mysql.NotNullFlag
+	aggTp = AggFieldType(types)
+	c.Assert(aggTp.Tp, Equals, mysql.TypeLonglong)
+	c.Assert(aggTp.Flag, Equals, mysql.NotNullFlag)
+}
 
 func (s *testFieldTypeSuite) TestAggregateEvalType(c *C) {
 	defer testleak.AfterTest(c)()
@@ -348,13 +374,13 @@ func (s *testFieldTypeSuite) TestAggregateEvalType(c *C) {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeBit,
 			mysql.TypeInt24, mysql.TypeYear:
 			c.Assert(aggregatedEvalType, Equals, ETInt)
-			c.Assert(flag, Equals, uint(mysql.BinaryFlag))
+			c.Assert(flag, Equals, mysql.BinaryFlag)
 		case mysql.TypeFloat, mysql.TypeDouble:
 			c.Assert(aggregatedEvalType, Equals, ETReal)
-			c.Assert(flag, Equals, uint(mysql.BinaryFlag))
+			c.Assert(flag, Equals, mysql.BinaryFlag)
 		case mysql.TypeNewDecimal:
 			c.Assert(aggregatedEvalType, Equals, ETDecimal)
-			c.Assert(flag, Equals, uint(mysql.BinaryFlag))
+			c.Assert(flag, Equals, mysql.BinaryFlag)
 		}
 
 		flag = 0
@@ -370,13 +396,13 @@ func (s *testFieldTypeSuite) TestAggregateEvalType(c *C) {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeBit,
 			mysql.TypeInt24, mysql.TypeYear:
 			c.Assert(aggregatedEvalType, Equals, ETInt)
-			c.Assert(flag, Equals, uint(mysql.BinaryFlag))
+			c.Assert(flag, Equals, mysql.BinaryFlag)
 		case mysql.TypeFloat, mysql.TypeDouble:
 			c.Assert(aggregatedEvalType, Equals, ETReal)
-			c.Assert(flag, Equals, uint(mysql.BinaryFlag))
+			c.Assert(flag, Equals, mysql.BinaryFlag)
 		case mysql.TypeNewDecimal:
 			c.Assert(aggregatedEvalType, Equals, ETDecimal)
-			c.Assert(flag, Equals, uint(mysql.BinaryFlag))
+			c.Assert(flag, Equals, mysql.BinaryFlag)
 		}
 		flag = 0
 		aggregatedEvalType = AggregateEvalType([]*FieldType{fts[i], NewFieldType(mysql.TypeLong)}, &flag)
@@ -391,13 +417,13 @@ func (s *testFieldTypeSuite) TestAggregateEvalType(c *C) {
 		case mysql.TypeDecimal, mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong, mysql.TypeNull, mysql.TypeBit,
 			mysql.TypeLonglong, mysql.TypeYear, mysql.TypeInt24:
 			c.Assert(aggregatedEvalType, Equals, ETInt)
-			c.Assert(flag, Equals, uint(mysql.BinaryFlag))
+			c.Assert(flag, Equals, mysql.BinaryFlag)
 		case mysql.TypeFloat, mysql.TypeDouble:
 			c.Assert(aggregatedEvalType, Equals, ETReal)
-			c.Assert(flag, Equals, uint(mysql.BinaryFlag))
+			c.Assert(flag, Equals, mysql.BinaryFlag)
 		case mysql.TypeNewDecimal:
 			c.Assert(aggregatedEvalType, Equals, ETDecimal)
-			c.Assert(flag, Equals, uint(mysql.BinaryFlag))
+			c.Assert(flag, Equals, mysql.BinaryFlag)
 		}
 	}
 }

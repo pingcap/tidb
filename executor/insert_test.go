@@ -21,11 +21,12 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 func (s *testSuite8) TestInsertOnDuplicateKey(c *C) {
@@ -967,18 +968,13 @@ type testSuite9 struct {
 }
 
 func (s *testSuite9) TestAutoRandomID(c *C) {
-	allowAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
-	if !allowAutoRandom {
-		config.GetGlobalConfig().Experimental.AllowAutoRandom = true
-		defer func() {
-			config.GetGlobalConfig().Experimental.AllowAutoRandom = false
-		}()
-	}
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists ar`)
-	tk.MustExec(`create table ar (id int key auto_random, name char(10))`)
+	tk.MustExec(`create table ar (id bigint key auto_random, name char(10))`)
 
 	tk.MustExec(`insert into ar(id) values (null)`)
 	rs := tk.MustQuery(`select id from ar`)
@@ -1010,18 +1006,13 @@ func (s *testSuite9) TestAutoRandomID(c *C) {
 }
 
 func (s *testSuite9) TestMultiAutoRandomID(c *C) {
-	allowAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
-	if !allowAutoRandom {
-		config.GetGlobalConfig().Experimental.AllowAutoRandom = true
-		defer func() {
-			config.GetGlobalConfig().Experimental.AllowAutoRandom = false
-		}()
-	}
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists ar`)
-	tk.MustExec(`create table ar (id int key auto_random, name char(10))`)
+	tk.MustExec(`create table ar (id bigint key auto_random, name char(10))`)
 
 	tk.MustExec(`insert into ar(id) values (null),(null),(null)`)
 	rs := tk.MustQuery(`select id from ar order by id`)
@@ -1059,18 +1050,13 @@ func (s *testSuite9) TestMultiAutoRandomID(c *C) {
 }
 
 func (s *testSuite9) TestAutoRandomIDAllowZero(c *C) {
-	allowAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
-	if !allowAutoRandom {
-		config.GetGlobalConfig().Experimental.AllowAutoRandom = true
-		defer func() {
-			config.GetGlobalConfig().Experimental.AllowAutoRandom = false
-		}()
-	}
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists ar`)
-	tk.MustExec(`create table ar (id int key auto_random, name char(10))`)
+	tk.MustExec(`create table ar (id bigint key auto_random, name char(10))`)
 
 	rs := tk.MustQuery(`select @@session.sql_mode`)
 	sqlMode := rs.Rows()[0][0].(string)
@@ -1097,18 +1083,15 @@ func (s *testSuite9) TestAutoRandomIDAllowZero(c *C) {
 }
 
 func (s *testSuite9) TestAutoRandomIDExplicit(c *C) {
-	allowAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
-	if !allowAutoRandom {
-		config.GetGlobalConfig().Experimental.AllowAutoRandom = true
-		defer func() {
-			config.GetGlobalConfig().Experimental.AllowAutoRandom = false
-		}()
-	}
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
 
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
+
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists ar`)
-	tk.MustExec(`create table ar (id int key auto_random, name char(10))`)
+	tk.MustExec(`create table ar (id bigint key auto_random, name char(10))`)
 
 	tk.MustExec(`insert into ar(id) values (1)`)
 	tk.MustQuery(`select id from ar`).Check(testkit.Rows("1"))
@@ -1131,4 +1114,137 @@ func (s *testSuite9) TestInsertErrorMsg(c *C) {
 	_, err := tk.Exec(`insert into t values (1, '2019-02-11 30:00:00', '2019-01-31')`)
 	c.Assert(err, NotNil)
 	c.Assert(strings.Contains(err.Error(), "Incorrect datetime value: '2019-02-11 30:00:00' for column 'b' at row 1"), IsTrue, Commentf("%v", err))
+}
+
+func (s *testSuite9) TestIssue16366(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(c numeric primary key);`)
+	tk.MustExec("insert ignore into t values(null);")
+	_, err := tk.Exec(`insert into t values(0);`)
+	c.Assert(err, NotNil)
+	c.Assert(strings.Contains(err.Error(), "Duplicate entry '0' for key 'PRIMARY'"), IsTrue, Commentf("%v", err))
+}
+
+var _ = SerialSuites(&testSuite10{&baseTestSuite{}})
+
+type testSuite10 struct {
+	*baseTestSuite
+}
+
+func (s *testSuite10) TestClusterPrimaryTablePlainInsert(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
+
+	tk.MustExec(`drop table if exists t1pk`)
+	tk.MustExec(`create table t1pk(id varchar(200) primary key, v int)`)
+	tk.MustExec(`insert into t1pk(id, v) values('abc', 1)`)
+	tk.MustQuery(`select * from t1pk`).Check(testkit.Rows("abc 1"))
+	tk.MustExec(`set @@tidb_constraint_check_in_place=true`)
+	tk.MustGetErrCode(`insert into t1pk(id, v) values('abc', 2)`, errno.ErrDupEntry)
+	tk.MustExec(`set @@tidb_constraint_check_in_place=false`)
+	tk.MustGetErrCode(`insert into t1pk(id, v) values('abc', 3)`, errno.ErrDupEntry)
+	tk.MustQuery(`select v, id from t1pk`).Check(testkit.Rows("1 abc"))
+	tk.MustQuery(`select id from t1pk where id = 'abc'`).Check(testkit.Rows("abc"))
+	tk.MustQuery(`select v, id from t1pk where id = 'abc'`).Check(testkit.Rows("1 abc"))
+
+	tk.MustExec(`drop table if exists t3pk`)
+	tk.MustExec(`create table t3pk(id1 varchar(200), id2 varchar(200), v int, id3 int, primary key(id1, id2, id3))`)
+	tk.MustExec(`insert into t3pk(id1, id2, id3, v) values('abc', 'xyz', 100, 1)`)
+	tk.MustQuery(`select * from t3pk`).Check(testkit.Rows("abc xyz 1 100"))
+	tk.MustExec(`set @@tidb_constraint_check_in_place=true`)
+	tk.MustGetErrCode(`insert into t3pk(id1, id2, id3, v) values('abc', 'xyz', 100, 2)`, errno.ErrDupEntry)
+	tk.MustExec(`set @@tidb_constraint_check_in_place=false`)
+	tk.MustGetErrCode(`insert into t3pk(id1, id2, id3, v) values('abc', 'xyz', 100, 3)`, errno.ErrDupEntry)
+	tk.MustQuery(`select v, id3, id2, id1 from t3pk`).Check(testkit.Rows("1 100 xyz abc"))
+	tk.MustQuery(`select id3, id2, id1 from t3pk where id3 = 100 and id2 = 'xyz' and id1 = 'abc'`).Check(testkit.Rows("100 xyz abc"))
+	tk.MustQuery(`select id3, id2, id1, v from t3pk where id3 = 100 and id2 = 'xyz' and id1 = 'abc'`).Check(testkit.Rows("100 xyz abc 1"))
+	tk.MustExec(`insert into t3pk(id1, id2, id3, v) values('abc', 'xyz', 101, 1)`)
+	tk.MustExec(`insert into t3pk(id1, id2, id3, v) values('abc', 'zzz', 101, 1)`)
+
+	tk.MustExec(`drop table if exists t1pku`)
+	tk.MustExec(`create table t1pku(id varchar(200) primary key, uk int, v int, unique key ukk(uk))`)
+	tk.MustExec(`insert into t1pku(id, uk, v) values('abc', 1, 2)`)
+	tk.MustQuery(`select * from t1pku where id = 'abc'`).Check(testkit.Rows("abc 1 2"))
+	tk.MustGetErrCode(`insert into t1pku(id, uk, v) values('aaa', 1, 3)`, errno.ErrDupEntry)
+	tk.MustQuery(`select * from t1pku`).Check(testkit.Rows("abc 1 2"))
+
+	tk.MustQuery(`select * from t3pk where (id1, id2, id3) in (('abc', 'xyz', 100), ('abc', 'xyz', 101), ('abc', 'zzz', 101))`).
+		Check(testkit.Rows("abc xyz 1 100", "abc xyz 1 101", "abc zzz 1 101"))
+}
+
+func (s *testSuite10) TestClusterPrimaryTableInsertIgnore(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
+
+	tk.MustExec(`drop table if exists it1pk`)
+	tk.MustExec(`create table it1pk(id varchar(200) primary key, v int)`)
+	tk.MustExec(`insert into it1pk(id, v) values('abc', 1)`)
+	tk.MustExec(`insert ignore into it1pk(id, v) values('abc', 2)`)
+	tk.MustQuery(`select * from it1pk where id = 'abc'`).Check(testkit.Rows("abc 1"))
+
+	tk.MustExec(`drop table if exists it2pk`)
+	tk.MustExec(`create table it2pk(id1 varchar(200), id2 varchar(200), v int, primary key(id1, id2))`)
+	tk.MustExec(`insert into it2pk(id1, id2, v) values('abc', 'cba', 1)`)
+	tk.MustQuery(`select * from it2pk where id1 = 'abc' and id2 = 'cba'`).Check(testkit.Rows("abc cba 1"))
+	tk.MustExec(`insert ignore into it2pk(id1, id2, v) values('abc', 'cba', 2)`)
+	tk.MustQuery(`select * from it2pk where id1 = 'abc' and id2 = 'cba'`).Check(testkit.Rows("abc cba 1"))
+
+	tk.MustExec(`drop table if exists it1pku`)
+	tk.MustExec(`create table it1pku(id varchar(200) primary key, uk int, v int, unique key ukk(uk))`)
+	tk.MustExec(`insert into it1pku(id, uk, v) values('abc', 1, 2)`)
+	tk.MustQuery(`select * from it1pku where id = 'abc'`).Check(testkit.Rows("abc 1 2"))
+	tk.MustExec(`insert ignore into it1pku(id, uk, v) values('aaa', 1, 3), ('bbb', 2, 1)`)
+	tk.MustQuery(`select * from it1pku`).Check(testkit.Rows("abc 1 2", "bbb 2 1"))
+}
+
+func (s *testSuite10) TestClusterPrimaryTableInsertDuplicate(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
+
+	tk.MustExec(`drop table if exists dt1pi`)
+	tk.MustExec(`create table dt1pi(id varchar(200) primary key, v int)`)
+	tk.MustExec(`insert into dt1pi(id, v) values('abb', 1),('acc', 2)`)
+	tk.MustExec(`insert into dt1pi(id, v) values('abb', 2) on duplicate key update v = v + 1`)
+	tk.MustQuery(`select * from dt1pi`).Check(testkit.Rows("abb 2", "acc 2"))
+	tk.MustExec(`insert into dt1pi(id, v) values('abb', 2) on duplicate key update v = v + 1, id = 'xxx'`)
+	tk.MustQuery(`select * from dt1pi`).Check(testkit.Rows("acc 2", "xxx 3"))
+
+	tk.MustExec(`drop table if exists dt1piu`)
+	tk.MustExec(`create table dt1piu(id varchar(200) primary key, uk int, v int, unique key uuk(uk))`)
+	tk.MustExec(`insert into dt1piu(id, uk, v) values('abb', 1, 10),('acc', 2, 20)`)
+	tk.MustExec(`insert into dt1piu(id, uk, v) values('xyz', 1, 100) on duplicate key update v = v + 1`)
+	tk.MustQuery(`select * from dt1piu`).Check(testkit.Rows("abb 1 11", "acc 2 20"))
+	tk.MustExec(`insert into dt1piu(id, uk, v) values('abb', 1, 2) on duplicate key update v = v + 1, id = 'xxx'`)
+	tk.MustQuery(`select * from dt1piu`).Check(testkit.Rows("acc 2 20", "xxx 1 12"))
+
+	tk.MustExec(`drop table if exists ts1pk`)
+	tk.MustExec(`create table ts1pk(id1 timestamp, id2 timestamp, v int, primary key(id1, id2))`)
+	ts := "2018-01-01 11:11:11"
+	tk.MustExec(`insert into ts1pk (id1, id2, v) values(?, ?, ?)`, ts, ts, 1)
+	tk.MustQuery(`select id1, id2, v from ts1pk`).Check(testkit.Rows("2018-01-01 11:11:11 2018-01-01 11:11:11 1"))
+	tk.MustExec(`insert into ts1pk (id1, id2, v) values(?, ?, ?) on duplicate key update v = values(v)`, ts, ts, 2)
+	tk.MustQuery(`select id1, id2, v from ts1pk`).Check(testkit.Rows("2018-01-01 11:11:11 2018-01-01 11:11:11 2"))
+	tk.MustExec(`insert into ts1pk (id1, id2, v) values(?, ?, ?) on duplicate key update v = values(v), id1 = ?`, ts, ts, 2, "2018-01-01 11:11:12")
+	tk.MustQuery(`select id1, id2, v from ts1pk`).Check(testkit.Rows("2018-01-01 11:11:12 2018-01-01 11:11:11 2"))
+}
+
+func (s *testSuite10) TestClusterPrimaryKeyForIndexScan(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
+
+	tk.MustExec("drop table if exists pkt1;")
+	tk.MustExec("CREATE TABLE pkt1 (a varchar(255), b int, index idx(b), primary key(a,b));")
+	tk.MustExec("insert into pkt1 values ('aaa',1);")
+	tk.MustQuery(`select b from pkt1 where b = 1;`).Check(testkit.Rows("1"))
+
+	tk.MustExec("drop table if exists pkt2;")
+	tk.MustExec("CREATE TABLE pkt2 (a varchar(255), b int, unique index idx(b), primary key(a,b));")
+	tk.MustExec("insert into pkt2 values ('aaa',1);")
+	tk.MustQuery(`select b from pkt2 where b = 1;`).Check(testkit.Rows("1"))
 }

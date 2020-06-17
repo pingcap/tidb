@@ -183,7 +183,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		ds.pushedDownConds[i] = expression.PushDownNot(ds.ctx, expr)
 	}
 	for _, path := range ds.possibleAccessPaths {
-		if path.IsTablePath {
+		if path.IsTablePath() {
 			continue
 		}
 		err := ds.fillIndexPath(path, ds.pushedDownConds)
@@ -193,7 +193,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	}
 	ds.stats = ds.deriveStatsByFilter(ds.pushedDownConds, ds.possibleAccessPaths)
 	for _, path := range ds.possibleAccessPaths {
-		if path.IsTablePath {
+		if path.IsTablePath() {
 			noIntervalRanges, err := ds.deriveTablePathStats(path, ds.pushedDownConds, false)
 			if err != nil {
 				return nil, err
@@ -368,14 +368,26 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 	var results = make([]*util.AccessPath, 0, usedIndexCount)
 	for i := 0; i < usedIndexCount; i++ {
 		path := &util.AccessPath{}
-		if ds.possibleAccessPaths[i].IsTablePath {
+		if ds.possibleAccessPaths[i].IsTablePath() {
 			if !ds.isInIndexMergeHints("primary") {
 				continue
 			}
-			path.IsTablePath = true
+			if ds.tableInfo.IsCommonHandle {
+				path.IsCommonHandlePath = true
+			} else {
+				path.IsIntHandlePath = true
+			}
 			noIntervalRanges, err := ds.deriveTablePathStats(path, conditions, true)
 			if err != nil {
 				logutil.BgLogger().Debug("can not derive statistics of a path", zap.Error(err))
+				continue
+			}
+			if len(path.TableFilters) > 0 || len(path.AccessConds) == 0 {
+				// If AccessConds is empty or tableFilter is not empty, we ignore the access path.
+				// Now these conditions are too strict.
+				// For example, a sql `select * from t where a > 1 or (b < 2 and c > 3)` and table `t` with indexes
+				// on a and b separately. we can generate a `IndexMergePath` with table filter `a > 1 or (b < 2 and c > 3)`.
+				// TODO: solve the above case
 				continue
 			}
 			// If we have point or empty range, just remove other possible paths.
@@ -399,6 +411,14 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 				continue
 			}
 			noIntervalRanges := ds.deriveIndexPathStats(path, conditions, true)
+			if len(path.TableFilters) > 0 || len(path.AccessConds) == 0 {
+				// If AccessConds is empty or tableFilter is not empty, we ignore the access path.
+				// Now these conditions are too strict.
+				// For example, a sql `select * from t where a > 1 or (b < 2 and c > 3)` and table `t` with indexes
+				// on a and b separately. we can generate a `IndexMergePath` with table filter `a > 1 or (b < 2 and c > 3)`.
+				// TODO: solve the above case
+				continue
+			}
 			// If we have empty range, or point range on unique index, just remove other possible paths.
 			if (noIntervalRanges && path.Index.Unique) || len(path.Ranges) == 0 {
 				if len(results) == 0 {
@@ -409,14 +429,6 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 				}
 				break
 			}
-		}
-		// If AccessConds is empty or tableFilter is not empty, we ignore the access path.
-		// Now these conditions are too strict.
-		// For example, a sql `select * from t where a > 1 or (b < 2 and c > 3)` and table `t` with indexes
-		// on a and b separately. we can generate a `IndexMergePath` with table filter `a > 1 or (b < 2 and c > 3)`.
-		// TODO: solve the above case
-		if len(path.TableFilters) > 0 || len(path.AccessConds) == 0 {
-			continue
 		}
 		results = append(results, path)
 	}

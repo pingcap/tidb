@@ -93,6 +93,26 @@ func (ss *RegionBatchRequestSender) sendReqToAddr(bo *Backoffer, ctxs []copTaskA
 	return
 }
 
+func (ss *RegionBatchRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err error) error {
+	// If it failed because the context is cancelled by ourself, don't retry.
+	if errors.Cause(err) == context.Canceled || status.Code(errors.Cause(err)) == codes.Canceled {
+		return errors.Trace(err)
+	} else if atomic.LoadUint32(&ShuttingDown) > 0 {
+		return errTiDBShuttingDown
+	}
+
+	if ctx.Meta != nil {
+		ss.regionCache.OnSendFail(bo, ctx, ss.needReloadRegion(ctx), err)
+	}
+
+	// Retry on send request failure when it's not canceled.
+	// When a store is not available, the leader of related region should be elected quickly.
+	// TODO: the number of retry time should be limited:since region may be unavailable
+	// when some unrecoverable disaster happened.
+	err = bo.Backoff(boTiKVRPC, errors.Errorf("send tikv request error: %v, ctx: %v, try next peer later", err, ctx))
+	return errors.Trace(err)
+}
+
 // NewRegionRequestSender creates a new sender.
 func NewRegionRequestSender(regionCache *RegionCache, client Client) *RegionRequestSender {
 	return &RegionRequestSender{
@@ -152,10 +172,13 @@ func (s *RegionRequestSender) SendReqCtx(
 	} else {
 		replicaRead = kv.ReplicaReadLeader
 	}
-	seed := req.ReplicaReadSeed
 	for {
 		switch sType {
 		case kv.TiKV:
+			var seed uint32
+			if req.ReplicaReadSeed != nil {
+				seed = *req.ReplicaReadSeed
+			}
 			rpcCtx, err = s.regionCache.GetTiKVRPCContext(bo, regionID, replicaRead, seed)
 		case kv.TiFlash:
 			rpcCtx, err = s.regionCache.GetTiFlashRPCContext(bo, regionID)
@@ -204,7 +227,7 @@ func (s *RegionRequestSender) SendReqCtx(
 			return nil, nil, errors.Trace(err)
 		}
 		if regionErr != nil {
-			retry, err = s.onRegionError(bo, rpcCtx, &seed, regionErr)
+			retry, err = s.onRegionError(bo, rpcCtx, req.ReplicaReadSeed, regionErr)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
@@ -331,17 +354,14 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 		logutil.BgLogger().Debug("tikv reports `NotLeader` retry later",
 			zap.String("notLeader", notLeader.String()),
 			zap.String("ctx", ctx.String()))
-		s.regionCache.UpdateLeader(ctx.Region, notLeader.GetLeader().GetStoreId(), ctx.PeerIdx)
 
-		var boType backoffType
-		if notLeader.GetLeader() != nil {
-			boType = BoUpdateLeader
+		if notLeader.GetLeader() == nil {
+			if err = bo.Backoff(BoRegionMiss, errors.Errorf("not leader: %v, ctx: %v", notLeader, ctx)); err != nil {
+				return false, errors.Trace(err)
+			}
 		} else {
-			boType = BoRegionMiss
-		}
-
-		if err = bo.Backoff(boType, errors.Errorf("not leader: %v, ctx: %v", notLeader, ctx)); err != nil {
-			return false, errors.Trace(err)
+			// don't backoff if a new leader is returned.
+			s.regionCache.UpdateLeader(ctx.Region, notLeader.GetLeader().GetStoreId(), ctx.PeerIdx)
 		}
 
 		return true, nil
@@ -378,11 +398,20 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 	}
 	if regionErr.GetStaleCommand() != nil {
 		logutil.BgLogger().Debug("tikv reports `StaleCommand`", zap.Stringer("ctx", ctx))
+		err = bo.Backoff(boStaleCmd, errors.Errorf("stale command, ctx: %v", ctx))
+		if err != nil {
+			return false, errors.Trace(err)
+		}
 		return true, nil
 	}
 	if regionErr.GetRaftEntryTooLarge() != nil {
 		logutil.BgLogger().Warn("tikv reports `RaftEntryTooLarge`", zap.Stringer("ctx", ctx))
 		return false, errors.New(regionErr.String())
+	}
+	if regionErr.GetRegionNotFound() != nil && seed != nil {
+		logutil.BgLogger().Debug("tikv reports `RegionNotFound` in follow-reader",
+			zap.Stringer("ctx", ctx), zap.Uint32("seed", *seed))
+		*seed = *seed + 1
 	}
 	// For other errors, we only drop cache here.
 	// Because caller may need to re-split the request.

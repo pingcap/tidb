@@ -15,6 +15,7 @@ package privilege
 
 import (
 	"crypto/tls"
+
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"

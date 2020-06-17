@@ -54,7 +54,7 @@ type testSuite struct {
 
 func (ts *testSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Check(err, IsNil)
 	ts.store = store
 	ts.dom, err = session.BootstrapSession(store)
@@ -103,12 +103,12 @@ func (ts *testSuite) TestBasic(c *C) {
 
 	handle, err := tables.AllocHandle(nil, tb)
 	c.Assert(err, IsNil)
-	c.Assert(handle, Greater, int64(0))
+	c.Assert(handle.IntValue(), Greater, int64(0))
 
 	ctx := ts.se
 	rid, err := tb.AddRecord(ctx, types.MakeDatums(1, "abc"))
 	c.Assert(err, IsNil)
-	c.Assert(rid, Greater, int64(0))
+	c.Assert(rid.IntValue(), Greater, int64(0))
 	row, err := tb.Row(ctx, rid)
 	c.Assert(err, IsNil)
 	c.Assert(len(row), Equals, 2)
@@ -132,12 +132,12 @@ func (ts *testSuite) TestBasic(c *C) {
 	}
 
 	// RowWithCols test
-	vals, err := tb.RowWithCols(ctx, 1, tb.Cols())
+	vals, err := tb.RowWithCols(ctx, kv.IntHandle(1), tb.Cols())
 	c.Assert(err, IsNil)
 	c.Assert(vals, HasLen, 2)
 	c.Assert(vals[0].GetInt64(), Equals, int64(1))
 	cols := []*table.Column{tb.Cols()[1]}
-	vals, err = tb.RowWithCols(ctx, 1, cols)
+	vals, err = tb.RowWithCols(ctx, kv.IntHandle(1), cols)
 	c.Assert(err, IsNil)
 	c.Assert(vals, HasLen, 1)
 	c.Assert(vals[0].GetBytes(), DeepEquals, []byte("cba"))
@@ -150,8 +150,8 @@ func (ts *testSuite) TestBasic(c *C) {
 	_, err = tb.AddRecord(ctx, types.MakeDatums(1, "abc"))
 	c.Assert(err, IsNil)
 	c.Assert(indexCnt(), Greater, 0)
-	handle, found, err := tb.Seek(ctx, 0)
-	c.Assert(handle, Equals, int64(1))
+	handle, found, err := tb.Seek(ctx, kv.IntHandle(0))
+	c.Assert(handle.IntValue(), Equals, int64(1))
 	c.Assert(found, Equals, true)
 	c.Assert(err, IsNil)
 	_, err = ts.se.Execute(context.Background(), "drop table test.t")
@@ -161,7 +161,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	alc := tb.Allocators(nil).Get(autoid.RowIDAllocType)
 	c.Assert(alc, NotNil)
 
-	err = tb.RebaseAutoID(nil, 0, false)
+	err = tb.RebaseAutoID(nil, 0, false, autoid.RowIDAllocType)
 	c.Assert(err, IsNil)
 }
 
@@ -247,7 +247,7 @@ func (ts *testSuite) TestUniqueIndexMultipleNullEntries(c *C) {
 
 	handle, err := tables.AllocHandle(nil, tb)
 	c.Assert(err, IsNil)
-	c.Assert(handle, Greater, int64(0))
+	c.Assert(handle.IntValue(), Greater, int64(0))
 
 	autoid, err := table.AllocAutoIncrementValue(context.Background(), tb, ts.se)
 	c.Assert(err, IsNil)
@@ -279,15 +279,15 @@ func (ts *testSuite) TestRowKeyCodec(c *C) {
 	}
 
 	for _, t := range tableVal {
-		b := tablecodec.EncodeRowKeyWithHandle(t.tableID, t.h)
+		b := tablecodec.EncodeRowKeyWithHandle(t.tableID, kv.IntHandle(t.h))
 		tableID, handle, err := tablecodec.DecodeRecordKey(b)
 		c.Assert(err, IsNil)
 		c.Assert(tableID, Equals, t.tableID)
-		c.Assert(handle, Equals, t.h)
+		c.Assert(handle.IntValue(), Equals, t.h)
 
 		handle, err = tablecodec.DecodeRowKey(b)
 		c.Assert(err, IsNil)
-		c.Assert(handle, Equals, t.h)
+		c.Assert(handle.IntValue(), Equals, t.h)
 	}
 
 	// test error
@@ -388,7 +388,7 @@ func (ts *testSuite) TestTableFromMeta(c *C) {
 	c.Assert(err, IsNil)
 
 	maxID := 1<<(64-15-1) - 1
-	err = tb.RebaseAutoID(tk.Se, int64(maxID), false)
+	err = tb.RebaseAutoID(tk.Se, int64(maxID), false, autoid.RowIDAllocType)
 	c.Assert(err, IsNil)
 
 	_, err = tables.AllocHandle(tk.Se, tb)

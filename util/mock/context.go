@@ -222,7 +222,7 @@ func (c *Context) StmtGetMutation(tableID int64) *binlog.TableMutation {
 }
 
 // StmtAddDirtyTableOP implements the sessionctx.Context interface.
-func (c *Context) StmtAddDirtyTableOP(op int, tid int64, handle int64) {
+func (c *Context) StmtAddDirtyTableOP(op int, tid int64, handle kv.Handle) {
 }
 
 // AddTableLock implements the sessionctx.Context interface.

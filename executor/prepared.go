@@ -178,7 +178,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		SchemaVersion: e.is.SchemaMetaVersion(),
 	}
 
-	prepared.UseCache = plannercore.PreparedPlanCacheEnabled() && plannercore.Cacheable(stmt)
+	prepared.UseCache = plannercore.PreparedPlanCacheEnabled() && plannercore.Cacheable(stmt, e.is)
 
 	// We try to build the real statement of preparedStmt.
 	for i := range prepared.Params {
@@ -255,7 +255,6 @@ func (e *ExecuteExec) Build(b *executorBuilder) error {
 		return errors.Trace(b.err)
 	}
 	e.stmtExec = stmtExec
-	CountStmtNode(e.stmt, e.ctx.GetSessionVars().InRestrictedSQL)
 	if e.ctx.GetSessionVars().StmtCtx.Priority == mysql.NoPriority {
 		e.lowerPriority = needLowerPriority(e.plan)
 	}

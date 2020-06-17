@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/planner/core"
+	plannerutil "github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -255,12 +255,11 @@ func assertEqualStrings(c *C, got []field, expect []string) {
 }
 
 func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
-	originCfg := config.GetGlobalConfig()
-	newConf := *originCfg
-	newConf.OOMUseTmpStorage = true
-	newConf.MemQuotaQuery = 1
-	config.StoreGlobalConfig(&newConf)
-	defer config.StoreGlobalConfig(originCfg)
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMUseTmpStorage = true
+		conf.MemQuotaQuery = 1
+	})
 
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefMaxChunkSize
@@ -276,11 +275,11 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 	dataSource := buildMockDataSource(opt)
 	exec := &SortExec{
 		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, stringutil.StringerStr("sort"), dataSource),
-		ByItems:      make([]*core.ByItems, 0, len(cas.orderByIdx)),
+		ByItems:      make([]*plannerutil.ByItems, 0, len(cas.orderByIdx)),
 		schema:       dataSource.schema,
 	}
 	for _, idx := range cas.orderByIdx {
-		exec.ByItems = append(exec.ByItems, &core.ByItems{Expr: cas.columns()[idx]})
+		exec.ByItems = append(exec.ByItems, &plannerutil.ByItems{Expr: cas.columns()[idx]})
 	}
 	tmpCtx := context.Background()
 	chk := newFirstChunk(exec)

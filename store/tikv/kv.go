@@ -61,7 +61,6 @@ func createEtcdKV(addrs []string, tlsConfig *tls.Config) (*clientv3.Client, erro
 		TLS:                  tlsConfig,
 		DialKeepAliveTime:    time.Second * time.Duration(cfg.TiKVClient.GrpcKeepAliveTime),
 		DialKeepAliveTimeout: time.Second * time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout),
-		PermitWithoutStream:  true,
 	})
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -89,9 +88,8 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 		KeyPath:  security.ClusterSSLKey,
 	}, pd.WithGRPCDialOptions(
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:                time.Duration(tikvConfig.GrpcKeepAliveTime) * time.Second,
-			Timeout:             time.Duration(tikvConfig.GrpcKeepAliveTimeout) * time.Second,
-			PermitWithoutStream: true,
+			Time:    time.Duration(tikvConfig.GrpcKeepAliveTime) * time.Second,
+			Timeout: time.Duration(tikvConfig.GrpcKeepAliveTimeout) * time.Second,
 		}),
 	))
 
@@ -201,7 +199,7 @@ func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Clie
 		clusterID:       pdClient.GetClusterID(context.TODO()),
 		uuid:            uuid,
 		oracle:          o,
-		client:          client,
+		client:          reqCollapse{client},
 		pdClient:        pdClient,
 		regionCache:     NewRegionCache(pdClient),
 		coprCache:       nil,
@@ -213,9 +211,6 @@ func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Clie
 	}
 	store.lockResolver = newLockResolver(store)
 	store.enableGC = enableGC
-	if rpcClient, ok := store.client.(*rpcClient); ok {
-		rpcClient.dieEventListener = store.regionCache.NotifyNodeDie
-	}
 
 	coprCache, err := newCoprCache(coprCacheConfig)
 	if err != nil {

@@ -47,13 +47,15 @@ func (s *testExecSuite) TestParseSlowLogFile(c *C) {
 		`# Time: 2019-04-28T15:24:04.309074+08:00
 # Txn_start_ts: 405888132465033227
 # Query_time: 0.216905
-# Process_time: 0.021 Request_count: 1 Total_keys: 637 Processed_keys: 436
+# Cop_time: 0.38 Process_time: 0.021 Request_count: 1 Total_keys: 637 Processed_keys: 436
 # Is_internal: true
 # Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
 # Stats: t1:1,t2:2
 # Cop_proc_avg: 0.1 Cop_proc_p90: 0.2 Cop_proc_max: 0.03 Cop_proc_addr: 127.0.0.1:20160
 # Cop_wait_avg: 0.05 Cop_wait_p90: 0.6 Cop_wait_max: 0.8 Cop_wait_addr: 0.0.0.0:20160
 # Mem_max: 70724
+# Disk_max: 65536
+# Plan_from_cache: true
 # Succ: false
 # Plan_digest: 60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4
 # Prev_stmt: update t set i = 1;
@@ -75,7 +77,7 @@ select * from t;`
 		}
 		recordString += str
 	}
-	expectRecordString := "2019-04-28 15:24:04.309074,405888132465033227,,,0,0.216905,0,0,0,0,0,0,0,,0,0,0,0,0,0,0.021,0,0,0,1,637,0,,,1,42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772,t1:1,t2:2,0.1,0.2,0.03,127.0.0.1:20160,0.05,0.6,0.8,0.0.0.0:20160,70724,0,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,update t set i = 1;,select * from t;"
+	expectRecordString := "2019-04-28 15:24:04.309074,405888132465033227,,,0,0.216905,0,0,0,0,0,0,0,0,0,0,0,0,,0,0,0,0,0,0,0.38,0.021,0,0,0,1,637,0,,,1,42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772,t1:1,t2:2,0.1,0.2,0.03,127.0.0.1:20160,0.05,0.6,0.8,0.0.0.0:20160,70724,65536,0,1,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,update t set i = 1;,select * from t;"
 	c.Assert(expectRecordString, Equals, recordString)
 
 	// fix sql contain '# ' bug
@@ -244,7 +246,9 @@ select 4;`
 # Time: 2020-02-16T19:00:00.000000+08:00
 select 5;
 # Time: 2020-02-17T18:00:05.000000+08:00
-select 6;`
+select 6;
+# Time: 2020-04-15T18:00:05.299063744+08:00
+select 7;`
 
 	fileName0 := "tidb-slow-2020-02-14T19-04-05.01.log"
 	fileName1 := "tidb-slow-2020-02-15T19-04-05.01.log"
@@ -333,6 +337,15 @@ select 6;`
 			querys: []string{
 				"select 5;",
 				"select 6;",
+				"select 7;",
+			},
+		},
+		{
+			startTime: "2020-04-15T18:00:05.299063744+08:00",
+			endTime:   "2020-04-15T18:00:05.299063744+08:00",
+			files:     []string{fileName3},
+			querys: []string{
+				"select 7;",
 			},
 		},
 	}

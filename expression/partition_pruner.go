@@ -79,7 +79,18 @@ func (p *hashPartitionPruner) reduceColumnEQ() bool {
 
 func (p *hashPartitionPruner) reduceConstantEQ() bool {
 	for _, con := range p.conditions {
-		col, cond := validEqualCond(p.ctx, con)
+		var col *Column
+		var cond *Constant
+		if fn, ok := con.(*ScalarFunction); ok {
+			if fn.FuncName.L == ast.IsNull {
+				col, ok = fn.GetArgs()[0].(*Column)
+				if ok {
+					cond = NewNull()
+				}
+			} else {
+				col, cond = validEqualCond(p.ctx, con)
+			}
+		}
 		if col != nil {
 			id := p.getColID(col)
 			if p.constantMap[id] != nil {
@@ -94,18 +105,18 @@ func (p *hashPartitionPruner) reduceConstantEQ() bool {
 	return false
 }
 
-func (p *hashPartitionPruner) tryEvalPartitionExpr(piExpr Expression) (val int64, success bool, isNil bool) {
+func (p *hashPartitionPruner) tryEvalPartitionExpr(piExpr Expression) (val int64, success bool, isNull bool) {
 	switch pi := piExpr.(type) {
 	case *ScalarFunction:
 		if pi.FuncName.L == ast.Plus || pi.FuncName.L == ast.Minus || pi.FuncName.L == ast.Mul || pi.FuncName.L == ast.Div {
 			left, right := pi.GetArgs()[0], pi.GetArgs()[1]
-			leftVal, ok, isNil := p.tryEvalPartitionExpr(left)
-			if !ok {
-				return 0, ok, isNil
+			leftVal, ok, isNull := p.tryEvalPartitionExpr(left)
+			if !ok || isNull {
+				return 0, ok, isNull
 			}
-			rightVal, ok, isNil := p.tryEvalPartitionExpr(right)
-			if !ok {
-				return 0, ok, isNil
+			rightVal, ok, isNull := p.tryEvalPartitionExpr(right)
+			if !ok || isNull {
+				return 0, ok, isNull
 			}
 			switch pi.FuncName.L {
 			case ast.Plus:
@@ -123,11 +134,11 @@ func (p *hashPartitionPruner) tryEvalPartitionExpr(piExpr Expression) (val int64
 			val := p.constantMap[idx]
 			if val != nil {
 				pi.GetArgs()[0] = val
-				ret, _, err := pi.EvalInt(p.ctx, chunk.Row{})
+				ret, isNull, err := pi.EvalInt(p.ctx, chunk.Row{})
 				if err != nil {
 					return 0, false, false
 				}
-				return ret, true, false
+				return ret, true, isNull
 			}
 			return 0, false, false
 		}
@@ -137,7 +148,7 @@ func (p *hashPartitionPruner) tryEvalPartitionExpr(piExpr Expression) (val int64
 			return 0, false, false
 		}
 		if val.IsNull() {
-			return 0, false, true
+			return 0, true, true
 		}
 		if val.Kind() == types.KindInt64 {
 			return val.GetInt64(), true, false
@@ -164,8 +175,8 @@ func newHashPartitionPruner() *hashPartitionPruner {
 }
 
 // solve eval the hash partition expression, the first return value represent the result of partition expression. The second
-// return value is whether eval success. The third return value represent whether the eval result of partition value is null.
-func (p *hashPartitionPruner) solve(ctx sessionctx.Context, conds []Expression, piExpr Expression) (val int64, ok bool, isNil bool) {
+// return value is whether eval success. The third return value represent whether the query conditions is always false.
+func (p *hashPartitionPruner) solve(ctx sessionctx.Context, conds []Expression, piExpr Expression) (val int64, ok bool, isAlwaysFalse bool) {
 	p.ctx = ctx
 	for _, cond := range conds {
 		p.conditions = append(p.conditions, SplitCNFItems(cond)...)
@@ -177,16 +188,19 @@ func (p *hashPartitionPruner) solve(ctx sessionctx.Context, conds []Expression, 
 		p.insertCol(col)
 	}
 	p.constantMap = make([]*Constant, p.numColumn)
-	conflict := p.reduceConstantEQ()
-	if conflict {
-		return 0, false, conflict
+	isAlwaysFalse = p.reduceConstantEQ()
+	if isAlwaysFalse {
+		return 0, false, isAlwaysFalse
 	}
-	conflict = p.reduceColumnEQ()
-	if conflict {
-		return 0, false, conflict
+	isAlwaysFalse = p.reduceColumnEQ()
+	if isAlwaysFalse {
+		return 0, false, isAlwaysFalse
 	}
-	res, ok, isNil := p.tryEvalPartitionExpr(piExpr)
-	return res, ok, isNil
+	res, ok, isNull := p.tryEvalPartitionExpr(piExpr)
+	if isNull && ok {
+		return 0, ok, false
+	}
+	return res, ok, false
 }
 
 // FastLocateHashPartition is used to get hash partition quickly.

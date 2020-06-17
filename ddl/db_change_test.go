@@ -69,7 +69,7 @@ func (s *testStateChangeSuiteBase) SetUpSuite(c *C) {
 	s.lease = 200 * time.Millisecond
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
 	var err error
-	s.store, err = mockstore.NewMockTikvStore()
+	s.store, err = mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	session.SetSchemaLease(s.lease)
 	s.dom, err = session.BootstrapSession(s.store)
@@ -92,7 +92,9 @@ func (s *testStateChangeSuiteBase) TearDownSuite(c *C) {
 
 // TestShowCreateTable tests the result of "show create table" when we are running "add index" or "add column".
 func (s *serialTestStateChangeSuite) TestShowCreateTable(c *C) {
-	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = true
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int)")
@@ -153,6 +155,7 @@ func (s *serialTestStateChangeSuite) TestShowCreateTable(c *C) {
 			if got != expected {
 				checkErr = errors.Errorf("got %s, expected %s", got, expected)
 			}
+			terror.Log(result.Close())
 		}
 	}
 	d := s.dom.DDL()
@@ -857,7 +860,9 @@ func (s *testStateChangeSuite) TestParallelAlterAddIndex(c *C) {
 }
 
 func (s *serialTestStateChangeSuite) TestParallelAlterAddExpressionIndex(c *C) {
-	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = true
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
 	sql1 := "ALTER TABLE t add index expr_index_b((b+1));"
 	sql2 := "CREATE INDEX expr_index_b ON t ((c+1));"
 	f := func(c *C, err1, err2 error) {
@@ -946,6 +951,19 @@ func (s *testStateChangeSuite) TestParallelCreateAndRename(c *C) {
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
 		c.Assert(err2.Error(), Equals, "[schema:1050]Table 't_exists' already exists")
+	}
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
+}
+
+func (s *testStateChangeSuite) TestParallelAlterAndDropSchema(c *C) {
+	_, err := s.se.Execute(context.Background(), "create database db_drop_db")
+	c.Assert(err, IsNil)
+	sql1 := "DROP SCHEMA db_drop_db"
+	sql2 := "ALTER SCHEMA db_drop_db CHARSET utf8mb4 COLLATE utf8mb4_general_ci"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2, NotNil)
+		c.Assert(err2.Error(), Equals, "[schema:1008]Can't drop database ''; database doesn't exist")
 	}
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
@@ -1360,7 +1378,12 @@ func (s *serialTestStateChangeSuite) TestParallelFlashbackTable(c *C) {
 		c.Assert(err1, IsNil)
 		c.Assert(err2, NotNil)
 		c.Assert(err2.Error(), Equals, "[schema:1050]Table 't_flashback' already exists")
-
 	}
 	s.testControlParallelExecSQL(c, sql1, sql1, f)
+
+	// Test parallel flashback table with different name
+	tk.MustExec("drop table t_flashback")
+	sql1 = "flashback table t_flashback"
+	sql2 := "flashback table t_flashback to t_flashback2"
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }

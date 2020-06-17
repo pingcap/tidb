@@ -78,7 +78,7 @@ func (s *testScanMockSuite) TestReverseScan(c *C) {
 	scanner, err := newScanner(snapshot, nil, []byte("z"), 10, true)
 	c.Assert(err, IsNil)
 	for ch := byte('y'); ch >= byte('a'); ch-- {
-		c.Assert(string([]byte{ch}), Equals, string([]byte(scanner.Key())))
+		c.Assert(string([]byte{ch}), Equals, string(scanner.Key()))
 		c.Assert(scanner.Next(), IsNil)
 	}
 	c.Assert(scanner.Valid(), IsFalse)
@@ -86,7 +86,7 @@ func (s *testScanMockSuite) TestReverseScan(c *C) {
 	scanner, err = newScanner(snapshot, []byte("a"), []byte("i"), 10, true)
 	c.Assert(err, IsNil)
 	for ch := byte('h'); ch >= byte('a'); ch-- {
-		c.Assert(string([]byte{ch}), Equals, string([]byte(scanner.Key())))
+		c.Assert(string([]byte{ch}), Equals, string(scanner.Key()))
 		c.Assert(scanner.Next(), IsNil)
 	}
 	c.Assert(scanner.Valid(), IsFalse)

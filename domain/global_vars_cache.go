@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"go.uber.org/zap"
+	"golang.org/x/sync/singleflight"
 )
 
 // GlobalVariableCache caches global variables.
@@ -34,7 +35,8 @@ type GlobalVariableCache struct {
 	fields     []*ast.ResultField
 
 	// Unit test may like to disable it.
-	disable bool
+	disable     bool
+	SingleFight singleflight.Group
 }
 
 const globalVariableCacheExpiry = 2 * time.Second
@@ -60,6 +62,33 @@ func (gvc *GlobalVariableCache) Get() (succ bool, rows []chunk.Row, fields []*as
 	}
 	succ = false
 	return
+}
+
+type loadResult struct {
+	rows   []chunk.Row
+	fields []*ast.ResultField
+}
+
+// LoadGlobalVariables will load from global cache first, loadFn will be executed if cache is not valid
+func (gvc *GlobalVariableCache) LoadGlobalVariables(loadFn func() ([]chunk.Row, []*ast.ResultField, error)) ([]chunk.Row, []*ast.ResultField, error) {
+	succ, rows, fields := gvc.Get()
+	if succ {
+		return rows, fields, nil
+	}
+	fn := func() (interface{}, error) {
+		resRows, resFields, loadErr := loadFn()
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		gvc.Update(resRows, resFields)
+		return &loadResult{resRows, resFields}, nil
+	}
+	res, err, _ := gvc.SingleFight.Do("loadGlobalVariable", fn)
+	if err != nil {
+		return nil, nil, err
+	}
+	loadRes := res.(*loadResult)
+	return loadRes.rows, loadRes.fields, nil
 }
 
 // Disable disables the global variable cache, used in test only.

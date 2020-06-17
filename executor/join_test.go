@@ -56,11 +56,10 @@ func (s *testSuiteJoin1) TestJoinPanic(c *C) {
 }
 
 func (s *testSuite) TestJoinInDisk(c *C) {
-	originCfg := config.GetGlobalConfig()
-	newConf := *originCfg
-	newConf.OOMUseTmpStorage = true
-	config.StoreGlobalConfig(&newConf)
-	defer config.StoreGlobalConfig(originCfg)
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMUseTmpStorage = true
+	})
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1250,6 +1249,9 @@ func (s *testSuiteJoinSerial) TestIndexNestedLoopHashJoin(c *C) {
 
 	// index hash join with semi join
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/planner/core/MockOnlyEnableIndexHashJoin", "return(true)"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/planner/core/MockOnlyEnableIndexHashJoin"), IsNil)
+	}()
 	tk.MustExec("drop table t")
 	tk.MustExec("CREATE TABLE `t` (	`l_orderkey` int(11) NOT NULL,`l_linenumber` int(11) NOT NULL,`l_partkey` int(11) DEFAULT NULL,`l_suppkey` int(11) DEFAULT NULL,PRIMARY KEY (`l_orderkey`,`l_linenumber`))")
 	tk.MustExec(`insert into t values(0,0,0,0);`)
@@ -1269,7 +1271,7 @@ func (s *testSuiteJoinSerial) TestIndexNestedLoopHashJoin(c *C) {
 	tk.Se.GetSessionVars().MaxChunkSize = 2
 	tk.MustExec("set @@tidb_index_join_batch_size=2")
 	tk.MustQuery("desc select * from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey ) order by `l_orderkey`,`l_linenumber`;").Check(testkit.Rows(
-		"Sort_9 7.20 root  test.t.l_orderkey:asc, test.t.l_linenumber:asc",
+		"Sort_9 7.20 root  test.t.l_orderkey, test.t.l_linenumber",
 		"└─IndexHashJoin_17 7.20 root  semi join, inner:IndexLookUp_15, outer key:test.t.l_orderkey, inner key:test.t.l_orderkey, other cond:ne(test.t.l_suppkey, test.t.l_suppkey)",
 		"  ├─TableReader_20(Build) 9.00 root  data:Selection_19",
 		"  │ └─Selection_19 9.00 cop[tikv]  not(isnull(test.t.l_suppkey))",
@@ -1290,8 +1292,63 @@ func (s *testSuiteJoinSerial) TestIndexNestedLoopHashJoin(c *C) {
 		"    └─Selection_26(Probe) 3.00 cop[tikv]  not(isnull(test.t.l_suppkey))",
 		"      └─TableRowIDScan_25 3.00 cop[tikv] table:l2 keep order:false"))
 	tk.MustQuery("select count(*) from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey );").Check(testkit.Rows("9"))
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/planner/core/MockOnlyEnableIndexHashJoin"), IsNil)
 	tk.MustExec("DROP TABLE IF EXISTS t, s")
+
+	// issue16586
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists lineitem;")
+	tk.MustExec("drop table if exists orders;")
+	tk.MustExec("drop table if exists supplier;")
+	tk.MustExec("drop table if exists nation;")
+	tk.MustExec("CREATE TABLE `lineitem` (`l_orderkey` int(11) NOT NULL,`l_linenumber` int(11) NOT NULL,`l_partkey` int(11) DEFAULT NULL,`l_suppkey` int(11) DEFAULT NULL,PRIMARY KEY (`l_orderkey`,`l_linenumber`)	);")
+	tk.MustExec("CREATE TABLE `supplier` (	`S_SUPPKEY` bigint(20) NOT NULL,`S_NATIONKEY` bigint(20) NOT NULL,PRIMARY KEY (`S_SUPPKEY`));")
+	tk.MustExec("CREATE TABLE `orders` (`O_ORDERKEY` bigint(20) NOT NULL,`O_ORDERSTATUS` char(1) NOT NULL,PRIMARY KEY (`O_ORDERKEY`));")
+	tk.MustExec("CREATE TABLE `nation` (`N_NATIONKEY` bigint(20) NOT NULL,`N_NAME` char(25) NOT NULL,PRIMARY KEY (`N_NATIONKEY`))")
+	tk.MustExec("insert into lineitem values(0,0,0,1)")
+	tk.MustExec("insert into lineitem values(0,1,1,1)")
+	tk.MustExec("insert into lineitem values(0,2,2,0)")
+	tk.MustExec("insert into lineitem values(0,3,3,3)")
+	tk.MustExec("insert into lineitem values(0,4,1,4)")
+	tk.MustExec("insert into supplier values(0, 4)")
+	tk.MustExec("insert into orders values(0, 'F')")
+	tk.MustExec("insert into nation values(0, 'EGYPT')")
+	tk.MustExec("insert into lineitem values(1,0,2,4)")
+	tk.MustExec("insert into lineitem values(1,1,1,0)")
+	tk.MustExec("insert into lineitem values(1,2,3,3)")
+	tk.MustExec("insert into lineitem values(1,3,1,0)")
+	tk.MustExec("insert into lineitem values(1,4,1,3)")
+	tk.MustExec("insert into supplier values(1, 1)")
+	tk.MustExec("insert into orders values(1, 'F')")
+	tk.MustExec("insert into nation values(1, 'EGYPT')")
+	tk.MustExec("insert into lineitem values(2,0,1,2)")
+	tk.MustExec("insert into lineitem values(2,1,3,4)")
+	tk.MustExec("insert into lineitem values(2,2,2,0)")
+	tk.MustExec("insert into lineitem values(2,3,3,1)")
+	tk.MustExec("insert into lineitem values(2,4,4,3)")
+	tk.MustExec("insert into supplier values(2, 3)")
+	tk.MustExec("insert into orders values(2, 'F')")
+	tk.MustExec("insert into nation values(2, 'EGYPT')")
+	tk.MustExec("insert into lineitem values(3,0,4,3)")
+	tk.MustExec("insert into lineitem values(3,1,4,3)")
+	tk.MustExec("insert into lineitem values(3,2,2,2)")
+	tk.MustExec("insert into lineitem values(3,3,0,0)")
+	tk.MustExec("insert into lineitem values(3,4,1,0)")
+	tk.MustExec("insert into supplier values(3, 1)")
+	tk.MustExec("insert into orders values(3, 'F')")
+	tk.MustExec("insert into nation values(3, 'EGYPT')")
+	tk.MustExec("insert into lineitem values(4,0,2,2)")
+	tk.MustExec("insert into lineitem values(4,1,4,2)")
+	tk.MustExec("insert into lineitem values(4,2,0,2)")
+	tk.MustExec("insert into lineitem values(4,3,0,1)")
+	tk.MustExec("insert into lineitem values(4,4,2,2)")
+	tk.MustExec("insert into supplier values(4, 4)")
+	tk.MustExec("insert into orders values(4, 'F')")
+	tk.MustExec("insert into nation values(4, 'EGYPT')")
+	tk.MustQuery("select count(*) from supplier, lineitem l1, orders, nation where s_suppkey = l1.l_suppkey and o_orderkey = l1.l_orderkey and o_orderstatus = 'F' and  exists ( select * from lineitem l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey < l1.l_suppkey ) and s_nationkey = n_nationkey and n_name = 'EGYPT' order by l1.l_orderkey, l1.l_linenumber;").Check(testkit.Rows("18"))
+	tk.MustExec("drop table lineitem")
+	tk.MustExec("drop table nation")
+	tk.MustExec("drop table supplier")
+	tk.MustExec("drop table orders")
 }
 
 func (s *testSuiteJoin3) TestIssue15686(c *C) {
@@ -1996,7 +2053,7 @@ func (s *testSuiteJoinSerial) TestInlineProjection4HashJoinIssue15316(c *C) {
 	))
 	// NOTE: the HashLeftJoin should be kept
 	tk.MustQuery("explain select T.a,T.a,T.c from S join T on T.a = S.a where S.b<T.b order by T.a,T.c;").Check(testkit.Rows(
-		"Sort_8 12487.50 root  test.t.a:asc, test.t.c:asc",
+		"Sort_8 12487.50 root  test.t.a, test.t.c",
 		"└─Projection_10 12487.50 root  test.t.a, test.t.a, test.t.c",
 		"  └─HashJoin_11 12487.50 root  inner join, equal:[eq(test.s.a, test.t.a)], other cond:lt(test.s.b, test.t.b)",
 		"    ├─TableReader_17(Build) 9990.00 root  data:Selection_16",

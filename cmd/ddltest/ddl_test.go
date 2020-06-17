@@ -63,7 +63,7 @@ var (
 	startPort         = flag.Int("start_port", 5000, "First tidb-server listening port")
 	statusPort        = flag.Int("status_port", 8000, "First tidb-server status port")
 	logLevel          = flag.String("L", "error", "log level")
-	ddlServerLogLevel = flag.String("ddl_log_level", "debug", "DDL server log level")
+	ddlServerLogLevel = flag.String("ddl_log_level", "fatal", "DDL server log level")
 	dataNum           = flag.Int("n", 100, "minimal test dataset for a table")
 	enableRestart     = flag.Bool("enable_restart", true, "whether random restart servers for tests")
 )

@@ -139,32 +139,32 @@ func (c *mockPDClient) GetTSAsync(ctx context.Context) pd.TSFuture {
 	return nil
 }
 
-func (c *mockPDClient) GetRegion(ctx context.Context, key []byte) (*metapb.Region, *metapb.Peer, error) {
+func (c *mockPDClient) GetRegion(ctx context.Context, key []byte) (*pd.Region, error) {
 	c.RLock()
 	defer c.RUnlock()
 
 	if c.stop {
-		return nil, nil, errors.Trace(errStopped)
+		return nil, errors.Trace(errStopped)
 	}
 	return c.client.GetRegion(ctx, key)
 }
 
-func (c *mockPDClient) GetPrevRegion(ctx context.Context, key []byte) (*metapb.Region, *metapb.Peer, error) {
+func (c *mockPDClient) GetPrevRegion(ctx context.Context, key []byte) (*pd.Region, error) {
 	c.RLock()
 	defer c.RUnlock()
 
 	if c.stop {
-		return nil, nil, errors.Trace(errStopped)
+		return nil, errors.Trace(errStopped)
 	}
 	return c.client.GetPrevRegion(ctx, key)
 }
 
-func (c *mockPDClient) GetRegionByID(ctx context.Context, regionID uint64) (*metapb.Region, *metapb.Peer, error) {
+func (c *mockPDClient) GetRegionByID(ctx context.Context, regionID uint64) (*pd.Region, error) {
 	c.RLock()
 	defer c.RUnlock()
 
 	if c.stop {
-		return nil, nil, errors.Trace(errStopped)
+		return nil, errors.Trace(errStopped)
 	}
 	return c.client.GetRegionByID(ctx, regionID)
 }
@@ -203,6 +203,10 @@ func (c *mockPDClient) UpdateGCSafePoint(ctx context.Context, safePoint uint64) 
 	panic("unimplemented")
 }
 
+func (c *mockPDClient) UpdateServiceGCSafePoint(ctx context.Context, serviceID string, ttl int64, safePoint uint64) (uint64, error) {
+	panic("unimplemented")
+}
+
 func (c *mockPDClient) Close() {}
 
 func (c *mockPDClient) ScatterRegion(ctx context.Context, regionID uint64) error {
@@ -224,8 +228,10 @@ func (c *checkRequestClient) SendRequest(ctx context.Context, addr string, req *
 	resp, err := c.Client.SendRequest(ctx, addr, req, timeout)
 	if c.priority != req.Priority {
 		if resp.Resp != nil {
-			(resp.Resp.(*pb.GetResponse)).Error = &pb.KeyError{
-				Abort: "request check error",
+			if getResp, ok := resp.Resp.(*pb.GetResponse); ok {
+				getResp.Error = &pb.KeyError{
+					Abort: "request check error",
+				}
 			}
 		}
 	}

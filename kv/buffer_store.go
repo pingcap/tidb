@@ -37,6 +37,14 @@ func NewBufferStore(r Retriever) *BufferStore {
 	}
 }
 
+// NewBufferStoreFrom creates a BufferStore from retriever and mem-buffer.
+func NewBufferStoreFrom(r Retriever, buf MemBuffer) *BufferStore {
+	return &BufferStore{
+		r:         r,
+		MemBuffer: buf,
+	}
+}
+
 // NewStagingBufferStore returns a BufferStore with buffer derived from the buffer.
 func NewStagingBufferStore(buf MemBuffer) *BufferStore {
 	return &BufferStore{

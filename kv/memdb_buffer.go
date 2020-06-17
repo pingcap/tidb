@@ -99,7 +99,7 @@ func (m *memDbBuffer) Set(k Key, v []byte) error {
 
 	m.sandbox.Put(k, v)
 	if m.Size() > int(m.bufferSizeLimit) {
-		return ErrTxnTooLarge.GenWithStackByArgs(m.Size())
+		return ErrTxnTooLarge.GenWithStackByArgs(atomic.LoadUint64(&TxnTotalSizeLimit))
 	}
 	return nil
 }
@@ -108,7 +108,7 @@ func (m *memDbBuffer) Set(k Key, v []byte) error {
 func (m *memDbBuffer) Delete(k Key) error {
 	m.sandbox.Put(k, nil)
 	if m.Size() > int(m.bufferSizeLimit) {
-		return ErrTxnTooLarge.GenWithStackByArgs(m.Size())
+		return ErrTxnTooLarge.GenWithStackByArgs(atomic.LoadUint64(&TxnTotalSizeLimit))
 	}
 	return nil
 }

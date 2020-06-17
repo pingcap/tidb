@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
@@ -152,6 +153,8 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return BoolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUTF8), true, nil
 	case TiDBCapturePlanBaseline:
 		return CapturePlanBaseline.GetVal(), true, nil
+	case TiDBFoundInPlanCache:
+		return BoolToIntStr(s.PrevFoundInPlanCache), true, nil
 	case TiDBEnableCollectExecutionInfo:
 		return BoolToIntStr(config.GetGlobalConfig().EnableCollectExecutionInfo), true, nil
 	}
@@ -211,7 +214,7 @@ func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) erro
 	if err != nil {
 		return err
 	}
-	sVal, err = ValidateSetSystemVar(vars, name, sVal)
+	sVal, err = ValidateSetSystemVar(vars, name, sVal, ScopeSession)
 	if err != nil {
 		return err
 	}
@@ -280,6 +283,17 @@ func checkInt64SystemVar(name, value string, min, max int64, vars *SessionVars) 
 	return value, nil
 }
 
+func checkInt64SystemVarWithError(name, value string, min, max int64) (string, error) {
+	val, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
+	}
+	if val < min || val > max {
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	}
+	return value, nil
+}
+
 const (
 	// initChunkSizeUpperBound indicates upper bound value of tidb_init_chunk_size.
 	initChunkSizeUpperBound = 32
@@ -288,7 +302,7 @@ const (
 )
 
 // ValidateSetSystemVar checks if system variable satisfies specific restriction.
-func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string, error) {
+func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope ScopeFlag) (string, error) {
 	if strings.EqualFold(value, "DEFAULT") {
 		if val := GetSysVar(name); val != nil {
 			return val.Value, nil
@@ -322,9 +336,15 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case GroupConcatMaxLen:
-		// The reasonable range of 'group_concat_max_len' is 4~18446744073709551615(64-bit platforms)
-		// See https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_group_concat_max_len for details
-		return checkUInt64SystemVar(name, value, 4, math.MaxUint64, vars)
+		// https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_group_concat_max_len
+		// Minimum Value 4
+		// Maximum Value (64-bit platforms) 18446744073709551615
+		// Maximum Value (32-bit platforms) 4294967295
+		maxLen := uint64(math.MaxUint64)
+		if mathutil.IntBits == 32 {
+			maxLen = uint64(math.MaxUint32)
+		}
+		return checkUInt64SystemVar(name, value, 4, maxLen, vars)
 	case InteractiveTimeout:
 		return checkUInt64SystemVar(name, value, 1, secondsPerYear, vars)
 	case InnodbCommitConcurrency:
@@ -373,6 +393,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return checkUInt64SystemVar(name, value, 0, 31536000, vars)
 	case MaxPreparedStmtCount:
 		return checkInt64SystemVar(name, value, -1, 1048576, vars)
+	case AutoIncrementIncrement, AutoIncrementOffset:
+		return checkUInt64SystemVar(name, value, 1, math.MaxUint16, vars)
 	case TimeZone:
 		if strings.EqualFold(value, "SYSTEM") {
 			return "SYSTEM", nil
@@ -419,8 +441,9 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		TiDBBatchDelete, TiDBBatchCommit, TiDBEnableCascadesPlanner, TiDBEnableWindowFunction, TiDBPProfSQLCPU,
 		TiDBLowResolutionTSO, TiDBEnableIndexMerge, TiDBEnableNoopFuncs,
 		TiDBCheckMb4ValueInUTF8, TiDBEnableSlowLog, TiDBRecordPlanInSlowLog,
-		TiDBScatterRegion, TiDBGeneralLog, TiDBConstraintCheckInPlace, TiDBEnableVectorizedExpression,
-		TiDBEnableCollectExecutionInfo:
+		TiDBScatterRegion, TiDBGeneralLog, TiDBConstraintCheckInPlace,
+		TiDBEnableVectorizedExpression, TiDBFoundInPlanCache, TiDBEnableCollectExecutionInfo,
+		TiDBAllowAutoRandExplicitInsert, TiDBEnableClusteredIndex:
 		fallthrough
 	case GeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, LogBin,
 		CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode, PseudoSlaveMode, LowPriorityUpdates,
@@ -685,29 +708,31 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		case strings.EqualFold(value, "OFF") || value == "0":
 			return "0", nil
 		case value == "":
-			return "", nil
+			if scope == ScopeSession {
+				return "", nil
+			}
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case TiDBStmtSummaryRefreshInterval:
-		if value == "" {
+		if value == "" && scope == ScopeSession {
 			return "", nil
 		}
-		return checkUInt64SystemVar(name, value, 1, math.MaxInt32, vars)
+		return checkInt64SystemVarWithError(name, value, 1, math.MaxInt32)
 	case TiDBStmtSummaryHistorySize:
-		if value == "" {
+		if value == "" && scope == ScopeSession {
 			return "", nil
 		}
-		return checkUInt64SystemVar(name, value, 0, math.MaxUint8, vars)
+		return checkInt64SystemVarWithError(name, value, 0, math.MaxUint8)
 	case TiDBStmtSummaryMaxStmtCount:
-		if value == "" {
+		if value == "" && scope == ScopeSession {
 			return "", nil
 		}
-		return checkInt64SystemVar(name, value, 1, math.MaxInt16, vars)
+		return checkInt64SystemVarWithError(name, value, 1, math.MaxInt16)
 	case TiDBStmtSummaryMaxSQLLength:
-		if value == "" {
+		if value == "" && scope == ScopeSession {
 			return "", nil
 		}
-		return checkInt64SystemVar(name, value, 0, math.MaxInt32, vars)
+		return checkInt64SystemVarWithError(name, value, 0, math.MaxInt32)
 	case TiDBIsolationReadEngines:
 		engines := strings.Split(value, ",")
 		var formatVal string

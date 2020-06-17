@@ -21,6 +21,7 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -69,9 +70,9 @@ func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Cont
 	}
 	tsk = finishCopTask(ctx, tsk)
 	sortReqProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, Items: p.Items, ExpectedCnt: math.MaxFloat64}
-	sort := PhysicalSort{ByItems: make([]*ByItems, 0, len(p.Items))}.Init(ctx, tsk.plan().statsInfo(), tsk.plan().SelectBlockOffset(), sortReqProp)
+	sort := PhysicalSort{ByItems: make([]*util.ByItems, 0, len(p.Items))}.Init(ctx, tsk.plan().statsInfo(), tsk.plan().SelectBlockOffset(), sortReqProp)
 	for _, col := range p.Items {
-		sort.ByItems = append(sort.ByItems, &ByItems{col.Col, col.Desc})
+		sort.ByItems = append(sort.ByItems, &util.ByItems{Expr: col.Col, Desc: col.Desc})
 	}
 	return sort.attach2Task(tsk)
 }
@@ -177,7 +178,10 @@ type LogicalPlan interface {
 	PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column
 
 	// exhaustPhysicalPlans generates all possible plans that can match the required property.
-	exhaustPhysicalPlans(*property.PhysicalProperty) []PhysicalPlan
+	// It will return:
+	// 1. All possible plans that can match the required property.
+	// 2. Whether the SQL hint can work. Return true if there is no hint.
+	exhaustPhysicalPlans(*property.PhysicalProperty) (physicalPlans []PhysicalPlan, hintCanWork bool)
 
 	// ExtractCorrelatedCols extracts correlated columns inside the LogicalPlan.
 	ExtractCorrelatedCols() []*expression.CorrelatedColumn
@@ -211,6 +215,9 @@ type PhysicalPlan interface {
 
 	// StatsCount returns the count of property.StatsInfo for this plan.
 	StatsCount() float64
+
+	// ExtractCorrelatedCols extracts correlated columns inside the PhysicalPlan.
+	ExtractCorrelatedCols() []*expression.CorrelatedColumn
 
 	// Get all the children.
 	Children() []PhysicalPlan
@@ -269,6 +276,11 @@ func (p *basePhysicalPlan) ExplainNormalizedInfo() string {
 
 func (p *basePhysicalPlan) GetChildReqProps(idx int) *property.PhysicalProperty {
 	return p.childrenReqProps[idx]
+}
+
+// ExtractCorrelatedCols implements PhysicalPlan interface.
+func (p *basePhysicalPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	return nil
 }
 
 func (p *baseLogicalPlan) getTask(prop *property.PhysicalProperty) task {

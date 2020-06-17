@@ -39,7 +39,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/israce"
@@ -57,13 +57,12 @@ var _ = Suite(&testIntegrationSuite6{&testIntegrationSuite{}})
 var _ = SerialSuites(&testIntegrationSuite7{&testIntegrationSuite{}})
 
 type testIntegrationSuite struct {
-	lease     time.Duration
-	cluster   *mocktikv.Cluster
-	mvccStore mocktikv.MVCCStore
-	store     kv.Storage
-	dom       *domain.Domain
-	ctx       sessionctx.Context
-	tk        *testkit.TestKit
+	lease   time.Duration
+	cluster cluster.Cluster
+	store   kv.Storage
+	dom     *domain.Domain
+	ctx     sessionctx.Context
+	tk      *testkit.TestKit
 }
 
 func setupIntegrationSuite(s *testIntegrationSuite, c *C) {
@@ -71,12 +70,11 @@ func setupIntegrationSuite(s *testIntegrationSuite, c *C) {
 	s.lease = 50 * time.Millisecond
 	ddl.SetWaitTimeWhenErrorOccurred(0)
 
-	s.cluster = mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(s.cluster)
-	s.mvccStore = mocktikv.MustNewMVCCStore()
-	s.store, err = mockstore.NewMockTikvStore(
-		mockstore.WithCluster(s.cluster),
-		mockstore.WithMVCCStore(s.mvccStore),
+	s.store, err = mockstore.NewMockStore(
+		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+			mockstore.BootstrapWithSingleStore(c)
+			s.cluster = c
+		}),
 	)
 	c.Assert(err, IsNil)
 	session.SetSchemaLease(s.lease)
@@ -410,13 +408,13 @@ func (s *testIntegrationSuite1) TestIssue5092(c *C) {
 	tk.MustExec("alter table t_issue_5092 add column d int default 4 after c1, add column aa int default 0 first")
 	tk.MustQuery("select * from t_issue_5092").Check(testkit.Rows("0 1 2 22 3 33 4"))
 	tk.MustQuery("show create table t_issue_5092").Check(testkit.Rows("t_issue_5092 CREATE TABLE `t_issue_5092` (\n" +
-		"  `aa` int(11) DEFAULT '0',\n" +
-		"  `a` int(11) DEFAULT '1',\n" +
-		"  `b` int(11) DEFAULT '2',\n" +
-		"  `b1` int(11) DEFAULT '22',\n" +
-		"  `c` int(11) DEFAULT '3',\n" +
-		"  `c1` int(11) DEFAULT '33',\n" +
-		"  `d` int(11) DEFAULT '4'\n" +
+		"  `aa` int(11) DEFAULT 0,\n" +
+		"  `a` int(11) DEFAULT 1,\n" +
+		"  `b` int(11) DEFAULT 2,\n" +
+		"  `b1` int(11) DEFAULT 22,\n" +
+		"  `c` int(11) DEFAULT 3,\n" +
+		"  `c1` int(11) DEFAULT 33,\n" +
+		"  `d` int(11) DEFAULT 4\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("drop table t_issue_5092")
 
@@ -579,7 +577,7 @@ func (s *testIntegrationSuite5) TestErrnoErrorCode(c *C) {
 	sql = "alter table test_error_code_succ drop index idx_not_exist"
 	tk.MustGetErrCode(sql, errno.ErrCantDropFieldOrKey)
 	sql = "alter table test_error_code_succ drop column c3"
-	tk.MustGetErrCode(sql, int(errno.ErrUnsupportedDDLOperation))
+	tk.MustGetErrCode(sql, errno.ErrUnsupportedDDLOperation)
 	// modify column
 	sql = "alter table test_error_code_succ modify testx.test_error_code_succ.c1 bigint"
 	tk.MustGetErrCode(sql, errno.ErrWrongDBName)
@@ -1154,7 +1152,7 @@ func (s *testIntegrationSuite5) TestBackwardCompatibility(c *C) {
 	c.Assert(err, IsNil)
 
 	// Split the table.
-	s.cluster.SplitTable(s.mvccStore, tbl.Meta().ID, 100)
+	s.cluster.SplitTable(tbl.Meta().ID, 100)
 
 	unique := false
 	indexName := model.NewCIStr("idx_b")
@@ -1232,16 +1230,16 @@ func (s *testIntegrationSuite3) TestMultiRegionGetTableEndHandle(c *C) {
 	testCtx := newTestMaxTableRowIDContext(c, d, tbl)
 
 	// Split the table.
-	s.cluster.SplitTable(s.mvccStore, tblID, 100)
+	s.cluster.SplitTable(tblID, 100)
 
-	maxID, emptyTable := getMaxTableRowID(testCtx, s.store)
+	maxHandle, emptyTable := getMaxTableHandle(testCtx, s.store)
 	c.Assert(emptyTable, IsFalse)
-	c.Assert(maxID, Equals, int64(1000))
+	c.Assert(maxHandle, Equals, kv.IntHandle(1000))
 
 	tk.MustExec("insert into t values(10000, 1000)")
-	maxID, emptyTable = getMaxTableRowID(testCtx, s.store)
+	maxHandle, emptyTable = getMaxTableHandle(testCtx, s.store)
 	c.Assert(emptyTable, IsFalse)
-	c.Assert(maxID, Equals, int64(1001))
+	c.Assert(maxHandle, Equals, kv.IntHandle(1001))
 }
 
 type testMaxTableRowIDContext struct {
@@ -1258,22 +1256,22 @@ func newTestMaxTableRowIDContext(c *C, d ddl.DDL, tbl table.Table) *testMaxTable
 	}
 }
 
-func getMaxTableRowID(ctx *testMaxTableRowIDContext, store kv.Storage) (int64, bool) {
+func getMaxTableHandle(ctx *testMaxTableRowIDContext, store kv.Storage) (kv.Handle, bool) {
 	c := ctx.c
 	d := ctx.d
 	tbl := ctx.tbl
 	curVer, err := store.CurrentVersion()
 	c.Assert(err, IsNil)
-	maxID, emptyTable, err := d.GetTableMaxRowID(curVer.Ver, tbl.(table.PhysicalTable))
+	maxHandle, emptyTable, err := d.GetTableMaxHandle(curVer.Ver, tbl.(table.PhysicalTable))
 	c.Assert(err, IsNil)
-	return maxID, emptyTable
+	return maxHandle, emptyTable
 }
 
-func checkGetMaxTableRowID(ctx *testMaxTableRowIDContext, store kv.Storage, expectEmpty bool, expectMaxID int64) {
+func checkGetMaxTableRowID(ctx *testMaxTableRowIDContext, store kv.Storage, expectEmpty bool, expectMaxHandle kv.Handle) {
 	c := ctx.c
-	maxID, emptyTable := getMaxTableRowID(ctx, store)
+	maxHandle, emptyTable := getMaxTableHandle(ctx, store)
 	c.Assert(emptyTable, Equals, expectEmpty)
-	c.Assert(maxID, Equals, expectMaxID)
+	c.Assert(maxHandle, testutil.HandleEquals, expectMaxHandle)
 }
 
 func getHistoryDDLJob(store kv.Storage, id int64) (*model.Job, error) {
@@ -1714,8 +1712,9 @@ func (s *testIntegrationSuite1) TestTreatOldVersionUTF8AsUTF8MB4(c *C) {
 		"  `b` varchar(10) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,\n" +
 		"  `c` varchar(10) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-
-	config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 = false
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TreatOldVersionUTF8AsUTF8MB4 = false
+	})
 	s.tk.MustExec("alter table t drop column c;") //  reload schema.
 	s.tk.MustGetErrCode("insert into t set a= x'f09f8c80'", errno.ErrTruncatedWrongValueForField)
 	s.tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
@@ -1732,7 +1731,9 @@ func (s *testIntegrationSuite1) TestTreatOldVersionUTF8AsUTF8MB4(c *C) {
 	tblInfo.Columns[0].Version = model.ColumnInfoVersion0
 	updateTableInfo(tblInfo)
 
-	config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 = true
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TreatOldVersionUTF8AsUTF8MB4 = true
+	})
 	s.tk.MustExec("alter table t add column c varchar(10);") //  load latest schema.
 	s.tk.MustExec("insert into t set a= x'f09f8c80'")
 	s.tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
@@ -1741,7 +1742,9 @@ func (s *testIntegrationSuite1) TestTreatOldVersionUTF8AsUTF8MB4(c *C) {
 		"  `c` varchar(10) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
-	config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 = false
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TreatOldVersionUTF8AsUTF8MB4 = false
+	})
 	s.tk.MustExec("alter table t drop column c;") //  reload schema.
 	s.tk.MustGetErrCode("insert into t set a= x'f09f8c80'", errno.ErrTruncatedWrongValueForField)
 	s.tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
@@ -1750,7 +1753,9 @@ func (s *testIntegrationSuite1) TestTreatOldVersionUTF8AsUTF8MB4(c *C) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"))
 
 	// Test modify column charset.
-	config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 = true
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TreatOldVersionUTF8AsUTF8MB4 = true
+	})
 	s.tk.MustExec("alter table t modify column a varchar(10) character set utf8mb4") //  change column charset.
 	tbl = testGetTableByName(c, s.ctx, "test", "t")
 	c.Assert(tbl.Meta().Columns[0].Charset, Equals, charset.CharsetUTF8MB4)
@@ -1786,7 +1791,9 @@ func (s *testIntegrationSuite1) TestTreatOldVersionUTF8AsUTF8MB4(c *C) {
 		"  `b` varchar(20) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
-	config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 = false
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TreatOldVersionUTF8AsUTF8MB4 = false
+	})
 	s.tk.MustExec("alter table t change column b b varchar(30) character set ascii") // reload schema.
 	s.tk.MustGetErrCode("insert into t set a= x'f09f8c80'", errno.ErrTruncatedWrongValueForField)
 	s.tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
@@ -1795,11 +1802,15 @@ func (s *testIntegrationSuite1) TestTreatOldVersionUTF8AsUTF8MB4(c *C) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"))
 
 	// Test for alter table convert charset
-	config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 = true
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TreatOldVersionUTF8AsUTF8MB4 = true
+	})
 	s.tk.MustExec("alter table t drop column b") // reload schema.
 	s.tk.MustExec("alter table t convert to charset utf8mb4;")
 
-	config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 = false
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TreatOldVersionUTF8AsUTF8MB4 = false
+	})
 	s.tk.MustExec("alter table t add column b varchar(50);") // reload schema.
 	s.tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` varchar(20) DEFAULT NULL,\n" +
@@ -2046,7 +2057,9 @@ func (s *testIntegrationSuite3) TestParserIssue284(c *C) {
 }
 
 func (s *testIntegrationSuite7) TestAddExpressionIndex(c *C) {
-	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = true
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
@@ -2091,13 +2104,23 @@ func (s *testIntegrationSuite7) TestAddExpressionIndex(c *C) {
 
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2.1"))
 
+	// Issue #17111
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a varchar(10), b varchar(10));")
+	tk.MustExec("alter table t1 add unique index ei_ab ((concat(a, b)));")
+	tk.MustExec("alter table t1 alter index ei_ab invisible;")
+
 	// Test experiment switch.
-	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = false
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = false
+	})
 	tk.MustGetErrMsg("create index d on t((a+1))", "[ddl:8200]Unsupported creating expression index without allow-expression-index in config")
 }
 
 func (s *testIntegrationSuite7) TestCreateExpressionIndexError(c *C) {
-	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = true
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -2256,4 +2279,49 @@ func (s *testIntegrationSuite3) TestCreateTableWithAutoIdCache(c *C) {
 	_, err = tk.Exec("alter table t auto_id_cache = 9223372036854775808")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "table option auto_id_cache overflows int64")
+}
+
+func (s *testIntegrationSuite4) TestAlterIndexVisibility(c *C) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists alter_index_test")
+	tk.MustExec("USE alter_index_test;")
+	tk.MustExec("drop table if exists t, t1, t2, t3;")
+
+	tk.MustExec("create table t(a int NOT NULL, b int, key(a), unique(b) invisible)")
+	queryIndexOnTable := func(tableName string) string {
+		return fmt.Sprintf("select index_name, is_visible from information_schema.statistics where table_schema = 'alter_index_test' and table_name = '%s' order by index_name", tableName)
+	}
+	query := queryIndexOnTable("t")
+	tk.MustQuery(query).Check(testkit.Rows("a YES", "b NO"))
+
+	tk.MustExec("alter table t alter index a invisible")
+	tk.MustQuery(query).Check(testkit.Rows("a NO", "b NO"))
+
+	tk.MustExec("alter table t alter index b visible")
+	tk.MustQuery(query).Check(testkit.Rows("a NO", "b YES"))
+
+	tk.MustExec("alter table t alter index b invisible")
+	tk.MustQuery(query).Check(testkit.Rows("a NO", "b NO"))
+
+	tk.MustGetErrMsg("alter table t alter index non_exists_idx visible", "[schema:1176]Key 'non_exists_idx' doesn't exist in table 't'")
+
+	// Alter implicit primary key to invisible index should throw error
+	tk.MustExec("create table t1(a int NOT NULL, unique(a))")
+	tk.MustGetErrMsg("alter table t1 alter index a invisible", "[ddl:3522]A primary key index cannot be invisible")
+
+	// Alter explicit primary key to invisible index should throw error
+	tk.MustExec("create table t2(a int, primary key(a))")
+	tk.MustGetErrMsg("alter table t2 alter index PRIMARY invisible", `[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 34 near "PRIMARY invisible" `)
+
+	// Alter expression index
+	tk.MustExec("create table t3(a int NOT NULL, b int)")
+	tk.MustExec("alter table t3 add index idx((a+b));")
+	query = queryIndexOnTable("t3")
+	tk.MustQuery(query).Check(testkit.Rows("idx YES"))
+
+	tk.MustExec("alter table t3 alter index idx invisible")
+	tk.MustQuery(query).Check(testkit.Rows("idx NO"))
 }

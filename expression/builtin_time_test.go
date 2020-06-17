@@ -47,9 +47,60 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 		Input  interface{}
 		Expect interface{}
 	}{
-		{"2011-11-11", "2011-11-11"},
 		{nil, nil},
-		{"2011-11-11 10:10:10", "2011-11-11"},
+		// standard format
+		{"2011-12-13", "2011-12-13"},
+		{"2011-12-13 10:10:10", "2011-12-13"},
+		// alternative delimiters, any ASCII punctuation character is a valid delimiter,
+		// punctuation character is defined by C++ std::ispunct: any graphical character
+		// that is not alphanumeric.
+		{"2011\"12\"13", "2011-12-13"},
+		{"2011#12#13", "2011-12-13"},
+		{"2011$12$13", "2011-12-13"},
+		{"2011%12%13", "2011-12-13"},
+		{"2011&12&13", "2011-12-13"},
+		{"2011'12'13", "2011-12-13"},
+		{"2011(12(13", "2011-12-13"},
+		{"2011)12)13", "2011-12-13"},
+		{"2011*12*13", "2011-12-13"},
+		{"2011+12+13", "2011-12-13"},
+		{"2011,12,13", "2011-12-13"},
+		{"2011.12.13", "2011-12-13"},
+		{"2011/12/13", "2011-12-13"},
+		{"2011:12:13", "2011-12-13"},
+		{"2011;12;13", "2011-12-13"},
+		{"2011<12<13", "2011-12-13"},
+		{"2011=12=13", "2011-12-13"},
+		{"2011>12>13", "2011-12-13"},
+		{"2011?12?13", "2011-12-13"},
+		{"2011@12@13", "2011-12-13"},
+		{"2011[12[13", "2011-12-13"},
+		{"2011\\12\\13", "2011-12-13"},
+		{"2011]12]13", "2011-12-13"},
+		{"2011^12^13", "2011-12-13"},
+		{"2011_12_13", "2011-12-13"},
+		{"2011`12`13", "2011-12-13"},
+		{"2011{12{13", "2011-12-13"},
+		{"2011|12|13", "2011-12-13"},
+		{"2011}12}13", "2011-12-13"},
+		{"2011~12~13", "2011-12-13"},
+		// internal format (YYYYMMDD, YYYYYMMDDHHMMSS)
+		{"20111213", "2011-12-13"},
+		{"111213", "2011-12-13"},
+		// leading and trailing space
+		{" 2011-12-13", "2011-12-13"},
+		{"2011-12-13 ", "2011-12-13"},
+		{"   2011-12-13    ", "2011-12-13"},
+		// extra dashes
+		{"2011-12--13", "2011-12-13"},
+		{"2011--12-13", "2011-12-13"},
+		{"2011----12----13", "2011-12-13"},
+		// combinations
+		{"   2011----12----13    ", "2011-12-13"},
+		// errors
+		{"2011 12 13", nil},
+		{"2011A12A13", nil},
+		{"2011T12T13", nil},
 	}
 	dtblDate := tblToDtbl(tblDate)
 	for _, t := range dtblDate {
@@ -397,7 +448,7 @@ func (s *testEvaluatorSuite) TestMonthName(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.MonthName].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.MonthName].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -434,7 +485,7 @@ func (s *testEvaluatorSuite) TestDayName(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.DayName].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.DayName].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -469,7 +520,7 @@ func (s *testEvaluatorSuite) TestDayOfWeek(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.DayOfWeek].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.DayOfWeek].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -504,7 +555,7 @@ func (s *testEvaluatorSuite) TestDayOfMonth(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.DayOfMonth].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.DayOfMonth].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -539,7 +590,7 @@ func (s *testEvaluatorSuite) TestDayOfYear(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.DayOfYear].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.DayOfYear].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -738,7 +789,7 @@ func (s *testEvaluatorSuite) TestTime(c *C) {
 		c.Assert(tp.Tp, Equals, mysql.TypeDuration)
 		c.Assert(tp.Charset, Equals, charset.CharsetBin)
 		c.Assert(tp.Collate, Equals, charset.CollationBin)
-		c.Assert(tp.Flag&uint(mysql.BinaryFlag), Equals, uint(mysql.BinaryFlag))
+		c.Assert(tp.Flag&mysql.BinaryFlag, Equals, mysql.BinaryFlag)
 		c.Assert(tp.Flen, Equals, mysql.MaxDurationWidthWithFsp)
 		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
@@ -753,7 +804,7 @@ func (s *testEvaluatorSuite) TestTime(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.Time].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.Time].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -1163,18 +1214,18 @@ func (s *testEvaluatorSuite) TestFromUnixTime(c *C) {
 		format         string
 		expect         string
 	}{
-		{false, 1451606400, 0, 0, "", "2016-01-01 08:00:00"},
-		{true, 1451606400, 123456000, 1451606400.123456, "", "2016-01-01 08:00:00.123456"},
-		{true, 1451606400, 999999000, 1451606400.999999, "", "2016-01-01 08:00:00.999999"},
-		{true, 1451606400, 999999900, 1451606400.9999999, "", "2016-01-01 08:00:01.000000"},
-		{false, 1451606400, 0, 0, `%Y %D %M %h:%i:%s %x`, "2016-01-01 08:00:00"},
-		{true, 1451606400, 123456000, 1451606400.123456, `%Y %D %M %h:%i:%s %x`, "2016-01-01 08:00:00.123456"},
-		{true, 1451606400, 999999000, 1451606400.999999, `%Y %D %M %h:%i:%s %x`, "2016-01-01 08:00:00.999999"},
-		{true, 1451606400, 999999900, 1451606400.9999999, `%Y %D %M %h:%i:%s %x`, "2016-01-01 08:00:01.000000"},
+		{false, 1451606400, 0, 0, "", "2016-01-01 00:00:00"},
+		{true, 1451606400, 123456000, 1451606400.123456, "", "2016-01-01 00:00:00.123456"},
+		{true, 1451606400, 999999000, 1451606400.999999, "", "2016-01-01 00:00:00.999999"},
+		{true, 1451606400, 999999900, 1451606400.9999999, "", "2016-01-01 00:00:01.000000"},
+		{false, 1451606400, 0, 0, `%Y %D %M %h:%i:%s %x`, "2016-01-01 00:00:00"},
+		{true, 1451606400, 123456000, 1451606400.123456, `%Y %D %M %h:%i:%s %x`, "2016-01-01 00:00:00.123456"},
+		{true, 1451606400, 999999000, 1451606400.999999, `%Y %D %M %h:%i:%s %x`, "2016-01-01 00:00:00.999999"},
+		{true, 1451606400, 999999900, 1451606400.9999999, `%Y %D %M %h:%i:%s %x`, "2016-01-01 00:00:01.000000"},
 	}
 	sc := s.ctx.GetSessionVars().StmtCtx
 	originTZ := sc.TimeZone
-	sc.TimeZone = time.Local
+	sc.TimeZone = time.UTC
 	defer func() {
 		sc.TimeZone = originTZ
 	}()
@@ -1508,7 +1559,7 @@ func (s *testEvaluatorSuite) TestTimeDiff(c *C) {
 		c.Assert(tp.Tp, Equals, mysql.TypeDuration)
 		c.Assert(tp.Charset, Equals, charset.CharsetBin)
 		c.Assert(tp.Collate, Equals, charset.CollationBin)
-		c.Assert(tp.Flag, Equals, uint(mysql.BinaryFlag))
+		c.Assert(tp.Flag, Equals, mysql.BinaryFlag)
 		c.Assert(tp.Flen, Equals, mysql.MaxDurationWidthWithFsp)
 		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
@@ -1523,7 +1574,7 @@ func (s *testEvaluatorSuite) TestTimeDiff(c *C) {
 			}
 		}
 	}
-	_, err := funcs[ast.TimeDiff].getFunction(s.ctx, []Expression{Zero, Zero})
+	_, err := funcs[ast.TimeDiff].getFunction(s.ctx, []Expression{NewZero(), NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -2062,7 +2113,7 @@ func (s *testEvaluatorSuite) TestMakeDate(c *C) {
 		c.Assert(tp.Tp, Equals, mysql.TypeDate)
 		c.Assert(tp.Charset, Equals, charset.CharsetBin)
 		c.Assert(tp.Collate, Equals, charset.CollationBin)
-		c.Assert(tp.Flag, Equals, uint(mysql.BinaryFlag))
+		c.Assert(tp.Flag, Equals, mysql.BinaryFlag)
 		c.Assert(tp.Flen, Equals, mysql.MaxDateWidth)
 		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
@@ -2077,7 +2128,7 @@ func (s *testEvaluatorSuite) TestMakeDate(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.MakeDate].getFunction(s.ctx, []Expression{Zero, Zero})
+	_, err := funcs[ast.MakeDate].getFunction(s.ctx, []Expression{NewZero(), NewZero()})
 	c.Assert(err, IsNil)
 }
 

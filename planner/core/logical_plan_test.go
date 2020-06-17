@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/hint"
@@ -1382,7 +1383,7 @@ func (s *testPlanSuite) optimize(ctx context.Context, sql string) (PhysicalPlan,
 	return p.(PhysicalPlan), stmt, err
 }
 
-func byItemsToProperty(byItems []*ByItems) *property.PhysicalProperty {
+func byItemsToProperty(byItems []*util.ByItems) *property.PhysicalProperty {
 	pp := &property.PhysicalProperty{}
 	for _, item := range byItems {
 		pp.Items = append(pp.Items, property.Item{Col: item.Expr.(*expression.Column), Desc: item.Desc})
@@ -1393,7 +1394,7 @@ func byItemsToProperty(byItems []*ByItems) *property.PhysicalProperty {
 func pathsName(paths []*candidatePath) string {
 	var names []string
 	for _, path := range paths {
-		if path.path.IsTablePath {
+		if path.path.IsTablePath() {
 			names = append(names, "PRIMARY_KEY")
 		} else {
 			names = append(names, path.path.Index.Name.O)
@@ -1464,7 +1465,7 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 		_, err = lp.recursiveDeriveStats()
 		c.Assert(err, IsNil, comment)
 		var ds *DataSource
-		var byItems []*ByItems
+		var byItems []*util.ByItems
 		for ds == nil {
 			switch v := lp.(type) {
 			case *DataSource:
@@ -1473,12 +1474,12 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 				byItems = v.ByItems
 				lp = lp.Children()[0]
 			case *LogicalProjection:
-				newItems := make([]*ByItems, 0, len(byItems))
+				newItems := make([]*util.ByItems, 0, len(byItems))
 				for _, col := range byItems {
 					idx := v.schema.ColumnIndex(col.Expr.(*expression.Column))
 					switch expr := v.Exprs[idx].(type) {
 					case *expression.Column:
-						newItems = append(newItems, &ByItems{Expr: expr, Desc: col.Desc})
+						newItems = append(newItems, &util.ByItems{Expr: expr, Desc: col.Desc})
 					}
 				}
 				byItems = newItems
@@ -1578,4 +1579,24 @@ func (s *testPlanSuite) TestConflictedJoinTypeHints(c *C) {
 	c.Assert(ok, IsTrue)
 	c.Assert(join.hintInfo, IsNil)
 	c.Assert(join.preferJoinType, Equals, uint(0))
+}
+
+func (s *testPlanSuite) TestSimplyOuterJoinWithOnlyOuterExpr(c *C) {
+	defer testleak.AfterTest(c)()
+	sql := "select * from t t1 right join t t0 ON TRUE where CONCAT_WS(t0.e=t0.e, 0, NULL) IS NULL"
+	ctx := context.TODO()
+	stmt, err := s.ParseOneStmt(sql, "", "")
+	c.Assert(err, IsNil)
+	Preprocess(s.ctx, stmt, s.is)
+	builder := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
+	p, err := builder.Build(ctx, stmt)
+	c.Assert(err, IsNil)
+	p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
+	c.Assert(err, IsNil)
+	proj, ok := p.(*LogicalProjection)
+	c.Assert(ok, IsTrue)
+	join, ok := proj.Children()[0].(*LogicalJoin)
+	c.Assert(ok, IsTrue)
+	// previous wrong JoinType is InnerJoin
+	c.Assert(join.JoinType, Equals, RightOuterJoin)
 }

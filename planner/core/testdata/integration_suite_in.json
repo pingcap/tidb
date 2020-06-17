@@ -74,6 +74,18 @@
     ]
   },
   {
+    "name": "TestHintWithRequiredProperty",
+    "cases": [
+      "desc select /*+ INL_JOIN(t2) */ * from t t1, t t2 where t1.a = t2.b order by t2.a",
+      "desc select /*+ INL_HASH_JOIN(t2) */ * from t t1, t t2 where t1.a = t2.b order by t2.a",
+      "desc select /*+ INL_MERGE_JOIN(t2)*/ t1.a, t2.a from t t1, t t2 ,t t3 where t1.a = t2.a and t3.a=t2.a",
+      "desc select * from t t1, (select /*+ HASH_AGG() */ b, max(a) from t t2 group by b) t2 where t1.b = t2.b order by t1.b",
+      "desc select /*+ INL_HASH_JOIN(t2) */ distinct t2.a from t t1 join t t2 on t1.a = t2.a",
+      // This hint cannot work, so choose another plan.
+      "desc select /*+ INL_JOIN(t2) */ * from t t1, t t2 where t1.a = t2.c order by t1.a"
+    ]
+  },
+  {
     "name": "TestIndexHintWarning",
     "cases": [
       "select /*+ USE_INDEX(t1, j) */ * from t1",
@@ -102,6 +114,36 @@
       "select /*+ USE_INDEX() */ * from t1, t2 where t1.a=t2.a",
       "select /*+ IGNORE_INDEX() */ * from t1, t2 where t1.a=t2.a",
       "select /*+ USE_INDEX_MERGE() */ * from t1, t2 where t1.a=t2.a"
+    ]
+  },
+  {
+    "name": "TestPartitionPruningForInExpr",
+    "cases": [
+      "explain select * from t where a in (1, 2,'11')",
+      "explain select * from t where a in (17, null)",
+      "explain select * from t where a in (16, 'abc')",
+      "explain select * from t where a in (15, 0.12, 3.47)",
+      "explain select * from t where a in (0.12, 3.47)",
+      "explain select * from t where a in (14, floor(3.47))",
+      "explain select * from t where b in (3, 4)"
+    ]
+  },
+  {
+    "name": "TestStreamAggProp",
+    "cases": [
+      "select /*+ stream_agg() */ count(*) c from t group by a order by c limit 1",
+      "select /*+ stream_agg() */ count(*) c from t group by a order by c",
+      "select /*+ stream_agg() */ count(*) c from t group by a order by a limit 1",
+      "select /*+ stream_agg() */ count(*) c from t group by a order by a"
+    ]
+  },
+  {
+    "name": "TestAccessPathOnClusterIndex",
+    "cases": [
+      "select * from t1",
+      "select * from t1 where t1.a >= 1 and t1.a < 4",
+      "select * from t1 where t1.a = 1 and t1.b < \"333\"",
+      "select * from t1 where t1.c = 3.3"
     ]
   }
 ]

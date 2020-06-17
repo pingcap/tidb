@@ -18,6 +18,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path"
 	"reflect"
 	"testing"
 	"time"
@@ -125,6 +127,17 @@ func TestTopology(t *testing.T) {
 	topo, err = info.getTopologyFromEtcd(ctx)
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	s, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir := path.Dir(s)
+
+	if topo.DeployPath != dir {
+		t.Fatal("DeployPath not match expected path")
 	}
 
 	if topo.StartTimestamp != 1282967700000 {

@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
@@ -36,8 +37,12 @@ func (p *basePhysicalPlan) ToPB(_ sessionctx.Context) (*tipb.Executor, error) {
 func (p *PhysicalHashAgg) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	client := ctx.GetClient()
+	groupByExprs, err := expression.ExpressionsToPBList(sc, p.GroupByItems, client)
+	if err != nil {
+		return nil, err
+	}
 	aggExec := &tipb.Aggregation{
-		GroupBy: expression.ExpressionsToPBList(sc, p.GroupByItems, client),
+		GroupBy: groupByExprs,
 	}
 	for _, aggFunc := range p.AggFuncs {
 		aggExec.AggFunc = append(aggExec.AggFunc, aggregation.AggFuncToPBExpr(sc, client, aggFunc))
@@ -49,8 +54,12 @@ func (p *PhysicalHashAgg) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 func (p *PhysicalStreamAgg) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	client := ctx.GetClient()
+	groupByExprs, err := expression.ExpressionsToPBList(sc, p.GroupByItems, client)
+	if err != nil {
+		return nil, err
+	}
 	aggExec := &tipb.Aggregation{
-		GroupBy: expression.ExpressionsToPBList(sc, p.GroupByItems, client),
+		GroupBy: groupByExprs,
 	}
 	for _, aggFunc := range p.AggFuncs {
 		aggExec.AggFunc = append(aggExec.AggFunc, aggregation.AggFuncToPBExpr(sc, client, aggFunc))
@@ -62,8 +71,12 @@ func (p *PhysicalStreamAgg) ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
 func (p *PhysicalSelection) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	client := ctx.GetClient()
+	conditions, err := expression.ExpressionsToPBList(sc, p.Conditions, client)
+	if err != nil {
+		return nil, err
+	}
 	selExec := &tipb.Selection{
-		Conditions: expression.ExpressionsToPBList(sc, p.Conditions, client),
+		Conditions: conditions,
 	}
 	return &tipb.Executor{Tp: tipb.ExecType_TypeSelection, Selection: selExec}, nil
 }
@@ -91,10 +104,18 @@ func (p *PhysicalLimit) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
+	var pkColIds []int64
+	if p.Table.IsCommonHandle {
+		pkIdx := tables.FindPrimaryIndex(p.Table)
+		for _, idxCol := range pkIdx.Columns {
+			pkColIds = append(pkColIds, p.Table.Columns[idxCol.Offset].ID)
+		}
+	}
 	tsExec := &tipb.TableScan{
-		TableId: p.Table.ID,
-		Columns: util.ColumnsToProto(p.Columns, p.Table.PKIsHandle),
-		Desc:    p.Desc,
+		TableId:          p.Table.ID,
+		Columns:          util.ColumnsToProto(p.Columns, p.Table.PKIsHandle),
+		Desc:             p.Desc,
+		PrimaryColumnIds: pkColIds,
 	}
 	if p.isPartition {
 		tsExec.TableId = p.physicalTableID
@@ -138,11 +159,19 @@ func (p *PhysicalIndexScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
 			columns = append(columns, findColumnInfoByID(tableColumns, col.ID))
 		}
 	}
+	var pkColIds []int64
+	if p.NeedCommonHandle {
+		pkIdx := tables.FindPrimaryIndex(p.Table)
+		for _, idxCol := range pkIdx.Columns {
+			pkColIds = append(pkColIds, p.Table.Columns[idxCol.Offset].ID)
+		}
+	}
 	idxExec := &tipb.IndexScan{
-		TableId: p.Table.ID,
-		IndexId: p.Index.ID,
-		Columns: util.ColumnsToProto(columns, p.Table.PKIsHandle),
-		Desc:    p.Desc,
+		TableId:          p.Table.ID,
+		IndexId:          p.Index.ID,
+		Columns:          util.ColumnsToProto(columns, p.Table.PKIsHandle),
+		Desc:             p.Desc,
+		PrimaryColumnIds: pkColIds,
 	}
 	if p.isPartition {
 		idxExec.TableId = p.physicalTableID

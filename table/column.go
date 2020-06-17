@@ -122,7 +122,7 @@ func FindOnUpdateCols(cols []*Column) []*Column {
 	return rcols
 }
 
-// truncateTrailingSpaces trancates trailing spaces for CHAR[(M)] column.
+// truncateTrailingSpaces truncates trailing spaces for CHAR[(M)] column.
 // fix: https://github.com/pingcap/tidb/issues/3660
 func truncateTrailingSpaces(v *types.Datum) {
 	if v.Kind() == types.KindNull {
@@ -143,7 +143,7 @@ func CastValues(ctx sessionctx.Context, rec []types.Datum, cols []*Column) (err 
 	sc := ctx.GetSessionVars().StmtCtx
 	for _, c := range cols {
 		var converted types.Datum
-		converted, err = CastValue(ctx, rec[c.Offset], c.ToInfo())
+		converted, err = CastValue(ctx, rec[c.Offset], c.ToInfo(), false, false)
 		if err != nil {
 			if sc.DupKeyAsWarning {
 				sc.AppendWarning(err)
@@ -168,11 +168,19 @@ func handleWrongUtf8Value(ctx sessionctx.Context, col *model.ColumnInfo, casted 
 }
 
 // CastValue casts a value based on column type.
+// If forceIgnoreTruncate is true, truncated errors will be ignored.
+// If returnOverflow is true, don't handle overflow errors in this function.
+// It's safe now and it's the same as the behavior of select statement.
+// Set it to true only in FillVirtualColumnValue and UnionScanExec.Next()
+// If the handle of err is changed latter, the behavior of forceIgnoreTruncate also need to change.
 // TODO: change the third arg to TypeField. Not pass ColumnInfo.
-func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo) (casted types.Datum, err error) {
+func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, returnOverflow, forceIgnoreTruncate bool) (casted types.Datum, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	casted, err = val.ConvertTo(sc, &col.FieldType)
 	// TODO: make sure all truncate errors are handled by ConvertTo.
+	if types.ErrOverflow.Equal(err) && returnOverflow {
+		return casted, err
+	}
 	if types.ErrTruncated.Equal(err) {
 		str, err1 := val.ToString()
 		if err1 != nil {
@@ -182,7 +190,9 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo) (
 	} else {
 		err = sc.HandleTruncate(err)
 	}
-	if err != nil {
+	if forceIgnoreTruncate {
+		err = nil
+	} else if err != nil {
 		return casted, err
 	}
 
@@ -216,6 +226,9 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo) (
 		w = width
 	}
 
+	if forceIgnoreTruncate {
+		err = nil
+	}
 	return casted, err
 }
 
@@ -352,6 +365,11 @@ func (c *Column) IsPKHandleColumn(tbInfo *model.TableInfo) bool {
 	return mysql.HasPriKeyFlag(c.Flag) && tbInfo.PKIsHandle
 }
 
+// IsCommonHandleColumn checks if the column is common handle column.
+func (c *Column) IsCommonHandleColumn(tbInfo *model.TableInfo) bool {
+	return mysql.HasPriKeyFlag(c.Flag) && tbInfo.IsCommonHandle
+}
+
 // CheckNotNull checks if row has nil value set to a column with NotNull flag set.
 func CheckNotNull(cols []*Column, row []types.Datum) error {
 	for _, c := range cols {
@@ -389,7 +407,7 @@ func EvalColDefaultExpr(ctx sessionctx.Context, col *model.ColumnInfo, defaultEx
 		return types.Datum{}, err
 	}
 	// Check the evaluated data type by cast.
-	value, err := CastValue(ctx, d, col)
+	value, err := CastValue(ctx, d, col, false, false)
 	if err != nil {
 		return types.Datum{}, err
 	}
@@ -408,7 +426,7 @@ func getColDefaultExprValue(ctx sessionctx.Context, col *model.ColumnInfo, defau
 		return types.Datum{}, err
 	}
 	// Check the evaluated data type by cast.
-	value, err := CastValue(ctx, d, col)
+	value, err := CastValue(ctx, d, col, false, false)
 	if err != nil {
 		return types.Datum{}, err
 	}
@@ -421,7 +439,7 @@ func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVa
 	}
 
 	if col.Tp != mysql.TypeTimestamp && col.Tp != mysql.TypeDatetime {
-		value, err := CastValue(ctx, types.NewDatum(defaultVal), col)
+		value, err := CastValue(ctx, types.NewDatum(defaultVal), col, false, false)
 		if err != nil {
 			return types.Datum{}, err
 		}
@@ -505,6 +523,8 @@ func GetZeroValue(col *model.ColumnInfo) types.Datum {
 	case mysql.TypeDouble:
 		d.SetFloat64(0)
 	case mysql.TypeNewDecimal:
+		d.SetLength(col.Flen)
+		d.SetFrac(col.Decimal)
 		d.SetMysqlDecimal(new(types.MyDecimal))
 	case mysql.TypeString:
 		if col.Flen > 0 && col.Charset == charset.CharsetBin {

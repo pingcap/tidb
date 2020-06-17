@@ -54,6 +54,8 @@ const (
 	SnapshotTS
 	// Set replica read
 	ReplicaRead
+	// Set task ID
+	TaskID
 )
 
 // Priority value for transaction priority.
@@ -319,6 +321,8 @@ type Request struct {
 	SchemaVar int64
 	// BatchCop indicates whether send batch coprocessor request to tiflash.
 	BatchCop bool
+	// TaskID is an unique ID for an execution of a statement
+	TaskID uint64
 }
 
 // ResultSubset represents a result subset from a single storage unit.
@@ -415,7 +419,7 @@ type Iterator interface {
 // SplittableStore is the kv store which supports split regions.
 type SplittableStore interface {
 	SplitRegions(ctx context.Context, splitKey [][]byte, scatter bool) (regionID []uint64, err error)
-	WaitScatterRegionFinish(regionID uint64, backOff int) error
+	WaitScatterRegionFinish(ctx context.Context, regionID uint64, backOff int) error
 	CheckRegionInScattering(regionID uint64) (bool, error)
 }
 

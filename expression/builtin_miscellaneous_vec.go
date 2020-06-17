@@ -580,7 +580,7 @@ func (b *builtinInet6NtoaSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 			continue
 		}
 		valI := val.GetString(i)
-		ip := net.IP([]byte(valI)).String()
+		ip := net.IP(valI).String()
 		if len(valI) == net.IPv6len && !strings.Contains(ip, ":") {
 			ip = fmt.Sprintf("::ffff:%s", ip)
 		}

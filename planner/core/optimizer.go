@@ -121,6 +121,10 @@ func CheckTableLock(ctx sessionctx.Context, is infoschema.InfoSchema, vs []visit
 
 // DoOptimize optimizes a logical plan to a physical plan.
 func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic LogicalPlan) (PhysicalPlan, float64, error) {
+	// if there is something after flagPrunColumns, do flagPrunColumnsAgain
+	if flag&flagPrunColumns > 0 && flag-flagPrunColumns > flagPrunColumns {
+		flag |= flagPrunColumnsAgain
+	}
 	logic, err := logicalOptimize(ctx, flag, logic)
 	if err != nil {
 		return nil, 0, err

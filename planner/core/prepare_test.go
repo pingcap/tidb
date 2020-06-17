@@ -392,7 +392,7 @@ func (s *testPrepareSuite) TestPrepareForGroupByItems(c *C) {
 	tk.MustQuery("execute s1 using @a;").Check(testkit.Rows("3"))
 }
 
-func (s *testPrepareSuite) TestPrepareCacheForPartition(c *C) {
+func (s *testPrepareSerialSuite) TestPrepareCacheForPartition(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
@@ -676,6 +676,81 @@ func (s *testPlanSerialSuite) TestPlanCacheUnionScan(c *C) {
 	c.Check(cnt, Equals, float64(6))
 }
 
+func (s *testPlanSerialSuite) TestPlanCacheHitInfo(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		dom.Close()
+		store.Close()
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int)")
+	tk.MustExec("insert into t values (1),(2),(3),(4)")
+	tk.MustExec("prepare stmt from 'select * from t where id=?'")
+	tk.MustExec("prepare stmt2 from 'select /*+ ignore_plan_cache() */ * from t where id=?'")
+	tk.MustExec("set @doma = 1")
+	// Test if last_plan_from_cache is appropriately initialized.
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @doma").Check(testkit.Rows("1"))
+	// Test if last_plan_from_cache is updated after a plan cache hit.
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @doma").Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt2 using @doma").Check(testkit.Rows("1"))
+	// Test if last_plan_from_cache is updated after a plan cache miss caused by a prepared statement.
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	// Test if last_plan_from_cache is updated after a plan cache miss caused by a usual statement.
+	tk.MustQuery("execute stmt using @doma").Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t where id=1").Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+}
+
+func (s *testPlanSerialSuite) TestPlanCacheUnsignedHandleOverflow(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		dom.Close()
+		store.Close()
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bigint unsigned primary key)")
+	tk.MustExec("insert into t values(18446744073709551615)")
+	tk.MustExec("prepare stmt from 'select a from t where a=?'")
+	tk.MustExec("set @p = 1")
+	tk.MustQuery("execute stmt using @p").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @p").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("set @p = 18446744073709551615")
+	tk.MustQuery("execute stmt using @p").Check(testkit.Rows("18446744073709551615"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
 func (s *testPrepareSuite) TestPrepareForGroupByMultiItems(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
@@ -705,4 +780,37 @@ func (s *testPrepareSuite) TestPrepareForGroupByMultiItems(c *C) {
 	tk.MustExec("set @v2=3.0")
 	tk.MustExec(`prepare stmt2 from "select sum(b) from t group by ?, ?"`)
 	tk.MustQuery(`execute stmt2 using @v1, @v2`).Check(testkit.Rows("10"))
+}
+
+func (s *testPrepareSuite) TestInvisibleIndex(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, unique idx_a(a))")
+	tk.MustExec("insert into t values(1)")
+	tk.MustExec(`prepare stmt1 from "select a from t order by a"`)
+
+	tk.MustQuery("execute stmt1").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt1").Check(testkit.Rows("1"))
+	c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 1)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_a")
+
+	tk.MustExec("alter table t alter index idx_a invisible")
+	tk.MustQuery("execute stmt1").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt1").Check(testkit.Rows("1"))
+	c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 0)
+
+	tk.MustExec("alter table t alter index idx_a visible")
+	tk.MustQuery("execute stmt1").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt1").Check(testkit.Rows("1"))
+	c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 1)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_a")
 }

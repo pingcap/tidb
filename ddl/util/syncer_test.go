@@ -51,7 +51,7 @@ func TestSyncerSimple(t *testing.T) {
 		CheckVersFirstWaitTime = origin
 	}()
 
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,6 +67,10 @@ func TestSyncerSimple(t *testing.T) {
 		WithStore(store),
 		WithLease(testLease),
 	)
+	err = d.Start(nil)
+	if err != nil {
+		t.Fatalf("DDL start failed %v", err)
+	}
 	defer d.Stop()
 
 	// for init function
@@ -99,6 +103,10 @@ func TestSyncerSimple(t *testing.T) {
 		WithStore(store),
 		WithLease(testLease),
 	)
+	err = d1.Start(nil)
+	if err != nil {
+		t.Fatalf("DDL start failed %v", err)
+	}
 	defer d1.Stop()
 	if err = d1.SchemaSyncer().Init(ctx); err != nil {
 		t.Fatalf("schema version syncer init failed %v", err)
@@ -116,7 +124,7 @@ func TestSyncerSimple(t *testing.T) {
 				t.Fatalf("get chan events count less than 1")
 			}
 			checkRespKV(t, 1, DDLGlobalSchemaVersion, fmt.Sprintf("%v", currentVer), resp.Events[0].Kv)
-		case <-time.After(100 * time.Millisecond):
+		case <-time.After(3 * time.Second):
 			t.Fatalf("get udpate version failed")
 		}
 	}()

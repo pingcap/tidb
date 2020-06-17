@@ -98,8 +98,8 @@ func (e *slowQueryRetriever) initialize(sctx sessionctx.Context) error {
 	}
 	if e.extractor != nil {
 		e.checker.enableTimeCheck = e.extractor.Enable
-		e.checker.startTime = e.extractor.StartTime
-		e.checker.endTime = e.extractor.EndTime
+		e.checker.startTime = types.NewTime(types.FromGoTime(e.extractor.StartTime), mysql.TypeDatetime, types.MaxFsp)
+		e.checker.endTime = types.NewTime(types.FromGoTime(e.extractor.EndTime), mysql.TypeDatetime, types.MaxFsp)
 	}
 	e.initialized = true
 	e.files, err = e.getAllFiles(sctx, sctx.GetSessionVars().SlowQueryFile)
@@ -171,16 +171,16 @@ type slowLogChecker struct {
 	user           *auth.UserIdentity
 	// Below fields is used to check slow log time valid.
 	enableTimeCheck bool
-	startTime       time.Time
-	endTime         time.Time
+	startTime       types.Time
+	endTime         types.Time
 }
 
 func (sc *slowLogChecker) hasPrivilege(userName string) bool {
 	return sc.hasProcessPriv || sc.user == nil || userName == sc.user.Username
 }
 
-func (sc *slowLogChecker) isTimeValid(t time.Time) bool {
-	if sc.enableTimeCheck && (t.Before(sc.startTime) || t.After(sc.endTime)) {
+func (sc *slowLogChecker) isTimeValid(t types.Time) bool {
+	if sc.enableTimeCheck && (t.Compare(sc.startTime) < 0 || t.Compare(sc.endTime) > 0) {
 		return false
 	}
 	return true
@@ -298,7 +298,7 @@ func getOneLine(reader *bufio.Reader) ([]byte, error) {
 }
 
 type slowQueryTuple struct {
-	time                   time.Time
+	time                   types.Time
 	txnStartTs             uint64
 	user                   string
 	host                   string
@@ -306,6 +306,11 @@ type slowQueryTuple struct {
 	queryTime              float64
 	parseTime              float64
 	compileTime            float64
+	rewriteTime            float64
+	preprocSubqueries      uint64
+	preprocSubQueryTime    float64
+	optimizeTime           float64
+	waitTSTime             float64
 	preWriteTime           float64
 	waitPrewriteBinlogTime float64
 	commitTime             float64
@@ -318,6 +323,7 @@ type slowQueryTuple struct {
 	writeSize              uint64
 	prewriteRegion         uint64
 	txnRetry               uint64
+	copTime                float64
 	processTime            float64
 	waitTime               float64
 	backOffTime            float64
@@ -338,10 +344,12 @@ type slowQueryTuple struct {
 	maxWaitTime            float64
 	maxWaitAddress         string
 	memMax                 int64
+	diskMax                int64
 	prevStmt               string
 	sql                    string
 	isInternal             bool
 	succ                   bool
+	planFromCache          bool
 	plan                   string
 	planDigest             string
 }
@@ -350,15 +358,18 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 	valid = true
 	switch field {
 	case variable.SlowLogTimeStr:
-		st.time, err = ParseTime(value)
+		var t time.Time
+		t, err = ParseTime(value)
 		if err != nil {
 			break
 		}
-		if st.time.Location() != tz {
-			st.time = st.time.In(tz)
-		}
+		st.time = types.NewTime(types.FromGoTime(t), mysql.TypeDatetime, types.MaxFsp)
 		if checker != nil {
 			valid = checker.isTimeValid(st.time)
+		}
+		if t.Location() != tz {
+			t = t.In(tz)
+			st.time = types.NewTime(types.FromGoTime(t), mysql.TypeDatetime, types.MaxFsp)
 		}
 	case variable.SlowLogTxnStartTSStr:
 		st.txnStartTs, err = strconv.ParseUint(value, 10, 64)
@@ -381,6 +392,10 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 		st.parseTime, err = strconv.ParseFloat(value, 64)
 	case variable.SlowLogCompileTimeStr:
 		st.compileTime, err = strconv.ParseFloat(value, 64)
+	case variable.SlowLogOptimizeTimeStr:
+		st.optimizeTime, err = strconv.ParseFloat(value, 64)
+	case variable.SlowLogWaitTSTimeStr:
+		st.waitTSTime, err = strconv.ParseFloat(value, 64)
 	case execdetails.PreWriteTimeStr:
 		st.preWriteTime, err = strconv.ParseFloat(value, 64)
 	case execdetails.WaitPrewriteBinlogTimeStr:
@@ -405,6 +420,8 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 		st.prewriteRegion, err = strconv.ParseUint(value, 10, 64)
 	case execdetails.TxnRetryStr:
 		st.txnRetry, err = strconv.ParseUint(value, 10, 64)
+	case execdetails.CopTimeStr:
+		st.copTime, err = strconv.ParseFloat(value, 64)
 	case execdetails.ProcessTimeStr:
 		st.processTime, err = strconv.ParseFloat(value, 64)
 	case execdetails.WaitTimeStr:
@@ -449,12 +466,22 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 		st.memMax, err = strconv.ParseInt(value, 10, 64)
 	case variable.SlowLogSucc:
 		st.succ, err = strconv.ParseBool(value)
+	case variable.SlowLogPlanFromCache:
+		st.planFromCache, err = strconv.ParseBool(value)
 	case variable.SlowLogPlan:
 		st.plan = value
 	case variable.SlowLogPlanDigest:
 		st.planDigest = value
 	case variable.SlowLogQuerySQLStr:
 		st.sql = value
+	case variable.SlowLogDiskMax:
+		st.diskMax, err = strconv.ParseInt(value, 10, 64)
+	case variable.SlowLogRewriteTimeStr:
+		st.rewriteTime, err = strconv.ParseFloat(value, 64)
+	case variable.SlowLogPreprocSubQueriesStr:
+		st.preprocSubqueries, err = strconv.ParseUint(value, 10, 64)
+	case variable.SlowLogPreProcSubQueryTimeStr:
+		st.preprocSubQueryTime, err = strconv.ParseFloat(value, 64)
 	}
 	if err != nil {
 		return valid, errors.Wrap(err, "Parse slow log at line "+strconv.FormatInt(int64(lineNum), 10)+" failed. Field: `"+field+"`, error")
@@ -464,7 +491,7 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 
 func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	record := make([]types.Datum, 0, 64)
-	record = append(record, types.NewTimeDatum(types.NewTime(types.FromGoTime(st.time), mysql.TypeDatetime, types.MaxFsp)))
+	record = append(record, types.NewTimeDatum(st.time))
 	record = append(record, types.NewUintDatum(st.txnStartTs))
 	record = append(record, types.NewStringDatum(st.user))
 	record = append(record, types.NewStringDatum(st.host))
@@ -472,6 +499,11 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	record = append(record, types.NewFloat64Datum(st.queryTime))
 	record = append(record, types.NewFloat64Datum(st.parseTime))
 	record = append(record, types.NewFloat64Datum(st.compileTime))
+	record = append(record, types.NewFloat64Datum(st.rewriteTime))
+	record = append(record, types.NewUintDatum(st.preprocSubqueries))
+	record = append(record, types.NewFloat64Datum(st.preprocSubQueryTime))
+	record = append(record, types.NewFloat64Datum(st.optimizeTime))
+	record = append(record, types.NewFloat64Datum(st.waitTSTime))
 	record = append(record, types.NewFloat64Datum(st.preWriteTime))
 	record = append(record, types.NewFloat64Datum(st.waitPrewriteBinlogTime))
 	record = append(record, types.NewFloat64Datum(st.commitTime))
@@ -484,6 +516,7 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	record = append(record, types.NewUintDatum(st.writeSize))
 	record = append(record, types.NewUintDatum(st.prewriteRegion))
 	record = append(record, types.NewUintDatum(st.txnRetry))
+	record = append(record, types.NewFloat64Datum(st.copTime))
 	record = append(record, types.NewFloat64Datum(st.processTime))
 	record = append(record, types.NewFloat64Datum(st.waitTime))
 	record = append(record, types.NewFloat64Datum(st.backOffTime))
@@ -505,7 +538,13 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	record = append(record, types.NewFloat64Datum(st.maxWaitTime))
 	record = append(record, types.NewStringDatum(st.maxWaitAddress))
 	record = append(record, types.NewIntDatum(st.memMax))
+	record = append(record, types.NewIntDatum(st.diskMax))
 	if st.succ {
+		record = append(record, types.NewIntDatum(1))
+	} else {
+		record = append(record, types.NewIntDatum(0))
+	}
+	if st.planFromCache {
 		record = append(record, types.NewIntDatum(1))
 	} else {
 		record = append(record, types.NewIntDatum(0))
@@ -595,7 +634,8 @@ func (e *slowQueryRetriever) getAllFiles(sctx sessionctx.Context, logFilePath st
 		if err != nil {
 			return handleErr(err)
 		}
-		if fileStartTime.After(e.extractor.EndTime) {
+		start := types.NewTime(types.FromGoTime(fileStartTime), mysql.TypeDatetime, types.MaxFsp)
+		if start.Compare(e.checker.endTime) > 0 {
 			return nil
 		}
 
@@ -604,7 +644,8 @@ func (e *slowQueryRetriever) getAllFiles(sctx sessionctx.Context, logFilePath st
 		if err != nil {
 			return handleErr(err)
 		}
-		if fileEndTime.Before(e.extractor.StartTime) {
+		end := types.NewTime(types.FromGoTime(fileEndTime), mysql.TypeDatetime, types.MaxFsp)
+		if end.Compare(e.checker.startTime) < 0 {
 			return nil
 		}
 		_, err = file.Seek(0, io.SeekStart)
@@ -660,6 +701,17 @@ func (e *slowQueryRetriever) getFileEndTime(file *os.File) (time.Time, error) {
 	cursor := int64(0)
 	line := make([]byte, 0, 64)
 	maxLineNum := 128
+	tryGetTime := func(line []byte) string {
+		for i, j := 0, len(line)-1; i < j; i, j = i+1, j-1 {
+			line[i], line[j] = line[j], line[i]
+		}
+		lineStr := string(line)
+		lineStr = strings.TrimSpace(lineStr)
+		if strings.HasPrefix(lineStr, variable.SlowLogStartPrefixStr) {
+			return lineStr[len(variable.SlowLogStartPrefixStr):]
+		}
+		return ""
+	}
 	for {
 		cursor -= 1
 		_, err := file.Seek(cursor, io.SeekEnd)
@@ -674,19 +726,17 @@ func (e *slowQueryRetriever) getFileEndTime(file *os.File) (time.Time, error) {
 		}
 		// If find a line.
 		if cursor != -1 && (char[0] == '\n' || char[0] == '\r') {
-			for i, j := 0, len(line)-1; i < j; i, j = i+1, j-1 {
-				line[i], line[j] = line[j], line[i]
-			}
-			lineStr := string(line)
-			lineStr = strings.TrimSpace(lineStr)
-			if strings.HasPrefix(lineStr, variable.SlowLogStartPrefixStr) {
-				return ParseTime(lineStr[len(variable.SlowLogStartPrefixStr):])
+			if timeStr := tryGetTime(line); len(timeStr) > 0 {
+				return ParseTime(timeStr)
 			}
 			line = line[:0]
 			maxLineNum -= 1
 		}
 		line = append(line, char[0])
 		if cursor == -fileSize || maxLineNum <= 0 {
+			if timeStr := tryGetTime(line); len(timeStr) > 0 {
+				return ParseTime(timeStr)
+			}
 			return t, errors.Errorf("malform slow query file %v", file.Name())
 		}
 	}

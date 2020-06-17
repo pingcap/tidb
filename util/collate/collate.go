@@ -214,6 +214,11 @@ func truncateTailingSpace(str string) string {
 	return str
 }
 
+// IsCICollation returns if the collation is case-sensitive
+func IsCICollation(collate string) bool {
+	return collate == "utf8_general_ci" || collate == "utf8mb4_general_ci"
+}
+
 func init() {
 	newCollatorMap = make(map[string]Collator)
 	newCollatorIDMap = make(map[int]Collator)

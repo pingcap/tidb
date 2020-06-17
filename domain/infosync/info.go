@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -301,7 +302,7 @@ func (is *InfoSyncer) RemoveServerInfo() {
 type topologyInfo struct {
 	ServerVersionInfo
 	StatusPort     uint   `json:"status_port"`
-	BinaryPath     string `json:"binary_path"`
+	DeployPath     string `json:"deploy_path"`
 	StartTimestamp int64  `json:"start_timestamp"`
 }
 
@@ -310,13 +311,14 @@ func (is *InfoSyncer) getTopologyInfo() topologyInfo {
 	if err != nil {
 		s = ""
 	}
+	dir := path.Dir(s)
 	return topologyInfo{
 		ServerVersionInfo: ServerVersionInfo{
 			Version: mysql.TiDBReleaseVersion,
 			GitHash: is.info.ServerVersionInfo.GitHash,
 		},
 		StatusPort:     is.info.StatusPort,
-		BinaryPath:     s,
+		DeployPath:     dir,
 		StartTimestamp: is.info.StartTimestamp,
 	}
 }

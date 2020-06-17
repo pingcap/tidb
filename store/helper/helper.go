@@ -22,6 +22,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
+	log "github.com/sirupsen/logrus"
 	"go.uber.org/zap"
 )
 
@@ -309,7 +311,11 @@ func NewFrameItemFromRegionKey(key []byte) (frame *FrameItem, err error) {
 	frame.TableID, frame.IndexID, frame.IsRecord, err = tablecodec.DecodeKeyHead(key)
 	if err == nil {
 		if frame.IsRecord {
-			_, frame.RecordID, err = tablecodec.DecodeRecordKey(key)
+			var handle kv.Handle
+			_, handle, err = tablecodec.DecodeRecordKey(key)
+			if err == nil {
+				frame.RecordID = handle.IntValue()
+			}
 		} else {
 			_, _, frame.IndexValues, err = tablecodec.DecodeIndexKey(key)
 		}
@@ -429,12 +435,20 @@ type RegionInfo struct {
 	ReadBytes       int64            `json:"read_bytes"`
 	ApproximateSize int64            `json:"approximate_size"`
 	ApproximateKeys int64            `json:"approximate_keys"`
+
+	ReplicationStatus *ReplicationStatus `json:"replication_status,omitempty"`
 }
 
 // RegionsInfo stores the information of regions.
 type RegionsInfo struct {
 	Count   int64        `json:"count"`
 	Regions []RegionInfo `json:"regions"`
+}
+
+// ReplicationStatus represents the replication mode status of the region.
+type ReplicationStatus struct {
+	State   string `json:"state"`
+	StateID int64  `json:"state_id"`
 }
 
 // TableInfo stores the information of a table or an index
@@ -717,4 +731,62 @@ func (h *Helper) GetStoresStat() (*StoresStat, error) {
 		return nil, errors.Trace(err)
 	}
 	return &storesStat, nil
+}
+
+// GetPDAddr return the PD Address.
+func (h *Helper) GetPDAddr() ([]string, error) {
+	var pdAddrs []string
+	etcd, ok := h.Store.(tikv.EtcdBackend)
+	if !ok {
+		return nil, errors.New("not implemented")
+	}
+	pdAddrs = etcd.EtcdAddrs()
+	if len(pdAddrs) == 0 {
+		return nil, errors.New("pd unavailable")
+	}
+	return pdAddrs, nil
+}
+
+// PDRegionStats is the json response from PD.
+type PDRegionStats struct {
+	Count            int            `json:"count"`
+	EmptyCount       int            `json:"empty_count"`
+	StorageSize      int64          `json:"storage_size"`
+	StorageKeys      int64          `json:"storage_keys"`
+	StoreLeaderCount map[uint64]int `json:"store_leader_count"`
+	StorePeerCount   map[uint64]int `json:"store_peer_count"`
+}
+
+// GetPDRegionStats get the RegionStats by tableID.
+func (h *Helper) GetPDRegionStats(tableID int64, stats *PDRegionStats) error {
+	pdAddrs, err := h.GetPDAddr()
+	if err != nil {
+		return err
+	}
+
+	startKey := tablecodec.EncodeTablePrefix(tableID)
+	endKey := tablecodec.EncodeTablePrefix(tableID + 1)
+	startKey = codec.EncodeBytes([]byte{}, startKey)
+	endKey = codec.EncodeBytes([]byte{}, endKey)
+
+	statURL := fmt.Sprintf("%s://%s/pd/api/v1/stats/region?start_key=%s&end_key=%s",
+		util.InternalHTTPSchema(),
+		pdAddrs[0],
+		url.QueryEscape(string(startKey)),
+		url.QueryEscape(string(endKey)))
+
+	resp, err := util.InternalHTTPClient().Get(statURL)
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		if err = resp.Body.Close(); err != nil {
+			log.Error(err)
+		}
+	}()
+
+	dec := json.NewDecoder(resp.Body)
+
+	return dec.Decode(stats)
 }

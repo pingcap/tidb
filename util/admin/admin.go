@@ -15,6 +15,7 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"sort"
@@ -42,7 +43,7 @@ import (
 // DDLInfo is for DDL information.
 type DDLInfo struct {
 	SchemaVer   int64
-	ReorgHandle int64        // It's only used for DDL information.
+	ReorgHandle kv.Handle    // It's only used for DDL information.
 	Jobs        []*model.Job // It's the currently running jobs.
 }
 
@@ -76,7 +77,11 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 		return info, nil
 	}
 
-	info.ReorgHandle, _, _, err = t.GetDDLReorgHandle(addIdxJob)
+	tbl, err := t.GetTable(addIdxJob.SchemaID, addIdxJob.TableID)
+	if err != nil {
+		return info, nil
+	}
+	info.ReorgHandle, _, _, err = t.GetDDLReorgHandle(addIdxJob, tbl.IsCommonHandle)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -160,7 +165,7 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 
 			job.State = model.JobStateCancelling
 			// Make sure RawArgs isn't overwritten.
-			err := job.DecodeArgs(job.RawArgs)
+			err := json.Unmarshal(job.RawArgs, &job.Args)
 			if err != nil {
 				errs[i] = errors.Trace(err)
 				continue
@@ -244,6 +249,41 @@ func GetHistoryDDLJobs(txn kv.Transaction, maxNumJobs int) ([]*model.Job, error)
 	return jobs, nil
 }
 
+// IterHistoryDDLJobs iterates history DDL jobs until the `finishFn` return true or error.
+func IterHistoryDDLJobs(txn kv.Transaction, finishFn func([]*model.Job) (bool, error)) error {
+	txnMeta := meta.NewMeta(txn)
+	iter, err := txnMeta.GetLastHistoryDDLJobsIterator()
+	if err != nil {
+		return err
+	}
+	cacheJobs := make([]*model.Job, 0, DefNumHistoryJobs)
+	for {
+		cacheJobs, err = iter.GetLastJobs(DefNumHistoryJobs, cacheJobs)
+		if err != nil || len(cacheJobs) == 0 {
+			return err
+		}
+		finish, err := finishFn(cacheJobs)
+		if err != nil || finish {
+			return err
+		}
+	}
+}
+
+// IterAllDDLJobs will iterates running DDL jobs first, return directly if `finishFn` return true or error,
+// then iterates history DDL jobs until the `finishFn` return true or error.
+func IterAllDDLJobs(txn kv.Transaction, finishFn func([]*model.Job) (bool, error)) error {
+	jobs, err := GetDDLJobs(txn)
+	if err != nil {
+		return err
+	}
+
+	finish, err := finishFn(jobs)
+	if err != nil || finish {
+		return err
+	}
+	return IterHistoryDDLJobs(txn, finishFn)
+}
+
 // RecordData is the record data composed of a handle and values.
 type RecordData struct {
 	Handle int64
@@ -274,6 +314,8 @@ const (
 // It returns nil if the count from the index is equal to the count from the table columns,
 // otherwise it returns an error and the corresponding index's offset.
 func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices []string) (byte, int, error) {
+	// Here we need check all indexes, includes invisible index
+	ctx.GetSessionVars().OptimizerUseInvisibleIndexes = true
 	// Add `` for some names like `table name`.
 	sql := fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s` USE INDEX()", dbName, tableName)
 	tblCnt, err := getCount(ctx, sql)
@@ -311,7 +353,7 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 		cols[i] = t.Cols()[col.Offset]
 	}
 
-	startKey := t.RecordKey(math.MinInt64)
+	startKey := t.RecordKey(kv.IntHandle(math.MinInt64))
 	filterFunc := func(h1 int64, vals1 []types.Datum, cols []*table.Column) (bool, error) {
 		for i, val := range vals1 {
 			col := cols[i]
@@ -327,10 +369,10 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 				vals1[i] = colDefVal
 			}
 		}
-		isExist, h2, err := idx.Exist(sc, txn, vals1, h1)
+		isExist, h2, err := idx.Exist(sc, txn, vals1, kv.IntHandle(h1))
 		if kv.ErrKeyExists.Equal(err) {
 			record1 := &RecordData{Handle: h1, Values: vals1}
-			record2 := &RecordData{Handle: h2, Values: vals1}
+			record2 := &RecordData{Handle: h2.IntValue(), Values: vals1}
 			return false, ErrDataInConsistent.GenWithStack("index:%#v != record:%#v", record2, record1)
 		}
 		if err != nil {
@@ -404,15 +446,15 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 		for _, col := range cols {
 			if col.IsPKHandleColumn(t.Meta()) {
 				if mysql.HasUnsignedFlag(col.Flag) {
-					data = append(data, types.NewUintDatum(uint64(handle)))
+					data = append(data, types.NewUintDatum(uint64(handle.IntValue())))
 				} else {
-					data = append(data, types.NewIntDatum(handle))
+					data = append(data, types.NewIntDatum(handle.IntValue()))
 				}
 			} else {
 				data = append(data, rowMap[col.ID])
 			}
 		}
-		more, err := fn(handle, data, cols)
+		more, err := fn(handle.IntValue(), data, cols)
 		if !more || err != nil {
 			return errors.Trace(err)
 		}

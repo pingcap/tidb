@@ -57,6 +57,8 @@ func (s *testPlanBuilderSuite) TestShow(c *C) {
 		ast.ShowCreateDatabase,
 		ast.ShowEvents,
 		ast.ShowMasterStatus,
+		ast.ShowBackups,
+		ast.ShowRestores,
 	}
 	for _, tp := range tps {
 		node.Tp = tp
@@ -74,7 +76,7 @@ func (s *testPlanBuilderSuite) TestGetPathByIndexName(c *C) {
 	}
 
 	accessPath := []*util.AccessPath{
-		{IsTablePath: true},
+		{IsIntHandlePath: true},
 		{Index: &model.IndexInfo{Name: model.NewCIStr("idx")}},
 	}
 

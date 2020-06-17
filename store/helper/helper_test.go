@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/pdapi"
 	"go.uber.org/zap"
@@ -64,8 +63,7 @@ func (s *mockStore) TLSConfig() *tls.Config {
 func (s *HelperTestSuite) SetUpSuite(c *C) {
 	url := s.mockPDHTTPServer(c)
 	time.Sleep(100 * time.Millisecond)
-	mvccStore := mocktikv.MustNewMVCCStore()
-	mockTikvStore, err := mockstore.NewMockTikvStore(mockstore.WithMVCCStore(mvccStore))
+	mockTikvStore, err := mockstore.NewMockStore()
 	s.store = &mockStore{
 		mockTikvStore.(tikv.Storage),
 		[]string{url[len("http://"):]},
