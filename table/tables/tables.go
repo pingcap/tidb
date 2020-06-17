@@ -494,6 +494,7 @@ type CommonAddRecordCtx struct {
 	buffer *kv.BufferStore
 }
 
+// NewCommonAddRecordCtx create a context used for `AddRecordWithCtx`
 func NewCommonAddRecordCtx(size int, buffer *kv.BufferStore) *CommonAddRecordCtx {
 	return &CommonAddRecordCtx{
 		colIDs: make([]int64, 0, size),
@@ -507,6 +508,7 @@ func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 	return t.AddRecordWithCtx(ctx, r, nil, opts...)
 }
 
+// AddRecordWithCtx implements table.Table AddRecordWithCtx interface.
 func (t *TableCommon) AddRecordWithCtx(ctx sessionctx.Context, r []types.Datum, addCtx interface{}, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
 	var opt table.AddRecordOpt
 	for _, fn := range opts {
