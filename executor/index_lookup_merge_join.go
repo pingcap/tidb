@@ -55,6 +55,7 @@ type IndexLookUpMergeJoin struct {
 	outerMergeCtx outerMergeCtx
 	innerMergeCtx innerMergeCtx
 
+	closeCh           chan struct{}
 	joiners           []joiner
 	joinChkResourceCh []chan *chunk.Chunk
 	isOuterJoin       bool
@@ -179,6 +180,7 @@ func (e *IndexLookUpMergeJoin) Open(ctx context.Context) error {
 	}
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	e.closeCh = make(chan struct{})
 	e.startWorkers(ctx)
 	return nil
 }
@@ -331,6 +333,8 @@ func (omw *outerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancel
 
 func (omw *outerMergeWorker) pushToChan(ctx context.Context, task *lookUpMergeJoinTask, dst chan<- *lookUpMergeJoinTask) (finished bool) {
 	select {
+	case <-omw.lookup.closeCh:
+		return true
 	case <-ctx.Done():
 		return true
 	case dst <- task:
@@ -696,9 +700,15 @@ func (imw *innerMergeWorker) fetchNextInnerResult(ctx context.Context, task *loo
 
 // Close implements the Executor interface.
 func (e *IndexLookUpMergeJoin) Close() error {
+	close(e.closeCh)
 	if e.cancelFunc != nil {
 		e.cancelFunc()
 		e.cancelFunc = nil
+	}
+	if e.resultCh != nil {
+		for range e.resultCh {
+		}
+		e.resultCh = nil
 	}
 	e.workerWg.Wait()
 	for i := range e.joinChkResourceCh {
