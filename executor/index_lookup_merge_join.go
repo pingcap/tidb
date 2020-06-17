@@ -222,6 +222,9 @@ func (e *IndexLookUpMergeJoin) newOuterWorker(resultCh, innerCh chan *lookUpMerg
 		parentMemTracker:      e.memTracker,
 		nextColCompareFilters: e.lastColHelper,
 	}
+	failpoint.Inject("testIssue18068", func() {
+		omw.batchSize = 1
+	})
 	return omw
 }
 
