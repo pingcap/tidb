@@ -635,10 +635,87 @@ func (ds *DataSource) Convert2Gathers() (gathers []LogicalPlan) {
 	return gathers
 }
 
+func (ds *DataSource) deriveCommonHandleTablePathStats(path *util.AccessPath, conds []expression.Expression, isIm bool) (bool, error) {
+	path.CountAfterAccess = float64(ds.statisticTable.Count)
+	path.Ranges = ranger.FullNotNullRange()
+	if len(conds) == 0 {
+		return false, nil
+	}
+	sc := ds.ctx.GetSessionVars().StmtCtx
+	path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.Index)
+	path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.Index)
+	if len(path.IdxCols) != 0 {
+		res, err := ranger.DetachCondAndBuildRangeForIndex(ds.ctx, conds, path.IdxCols, path.IdxColLens)
+		if err != nil {
+			return false, err
+		}
+		path.Ranges = res.Ranges
+		path.AccessConds = res.AccessConds
+		path.TableFilters = res.RemainedConds
+		path.EqCondCount = res.EqCondCount
+		path.EqOrInCondCount = res.EqOrInCount
+		path.IsDNFCond = res.IsDNFCond
+		path.CountAfterAccess, err = ds.tableStats.HistColl.GetRowCountByIndexRanges(sc, path.Index.ID, path.Ranges)
+		if err != nil {
+			return false, err
+		}
+	} else {
+		path.TableFilters = conds
+	}
+	if path.EqOrInCondCount == len(path.AccessConds) {
+		accesses, remained := path.SplitCorColAccessCondFromFilters(ds.ctx, path.EqOrInCondCount)
+		path.AccessConds = append(path.AccessConds, accesses...)
+		path.TableFilters = remained
+		if len(accesses) > 0 && ds.statisticTable.Pseudo {
+			path.CountAfterAccess = ds.statisticTable.PseudoAvgCountPerValue()
+		} else {
+			selectivity := path.CountAfterAccess / float64(ds.statisticTable.Count)
+			for i := range accesses {
+				col := path.IdxCols[path.EqOrInCondCount+i]
+				ndv := ds.getColumnNDV(col.ID)
+				ndv *= selectivity
+				if ndv < 1 {
+					ndv = 1.0
+				}
+				path.CountAfterAccess = path.CountAfterAccess / ndv
+			}
+		}
+	}
+	// If the `CountAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
+	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
+	if path.CountAfterAccess < ds.stats.RowCount && !isIm {
+		path.CountAfterAccess = math.Min(ds.stats.RowCount/SelectionFactor, float64(ds.statisticTable.Count))
+	}
+	// Check whether there's only point query.
+	noIntervalRanges := true
+	haveNullVal := false
+	for _, ran := range path.Ranges {
+		// Not point or the not full matched.
+		if !ran.IsPoint(sc) || len(ran.HighVal) != len(path.Index.Columns) {
+			noIntervalRanges = false
+			break
+		}
+		// Check whether there's null value.
+		for i := 0; i < len(path.Index.Columns); i++ {
+			if ran.HighVal[i].IsNull() {
+				haveNullVal = true
+				break
+			}
+		}
+		if haveNullVal {
+			break
+		}
+	}
+	return noIntervalRanges && !haveNullVal, nil
+}
+
 // deriveTablePathStats will fulfill the information that the AccessPath need.
 // And it will check whether the primary key is covered only by point query.
 // isIm indicates whether this function is called to generate the partial path for IndexMerge.
 func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expression.Expression, isIm bool) (bool, error) {
+	if path.IsCommonHandlePath {
+		return ds.deriveCommonHandleTablePathStats(path, conds, isIm)
+	}
 	var err error
 	sc := ds.ctx.GetSessionVars().StmtCtx
 	path.CountAfterAccess = float64(ds.statisticTable.Count)
