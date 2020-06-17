@@ -46,7 +46,7 @@ func newApplyCache(ctx sessionctx.Context) (*applyCache, error) {
 	cache := kvcache.NewSimpleLRUCache(mathutil.MaxUint, 0.1, 0)
 	c := applyCache{
 		cache:       cache,
-		memCapacity: ctx.GetSessionVars().ApplyCacheCapacity,
+		memCapacity: ctx.GetSessionVars().NestedLoopJoinCacheCapacity,
 		memTracker:  memory.NewTracker(stringutil.StringerStr("applyCache"), -1),
 	}
 	return &c, nil

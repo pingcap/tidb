@@ -1,7 +1,7 @@
 port = 4001
 lease = "0"
 mem-quota-query = 34359738368
-apply-cache-capacity = 20971520
+nested-loop-join-cache-capacity = 20971520
 
 [status]
 status-port = 10081

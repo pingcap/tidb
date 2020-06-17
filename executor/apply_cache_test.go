@@ -31,7 +31,7 @@ type testApplyCacheSuite struct {
 
 func (s *testApplyCacheSuite) TestApplyCache(c *C) {
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().ApplyCacheCapacity = 100
+	ctx.GetSessionVars().NestedLoopJoinCacheCapacity = 100
 	applyCache, err := newApplyCache(ctx)
 	c.Assert(err, IsNil)
 

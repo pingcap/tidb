@@ -243,7 +243,7 @@ engines = ["tiflash"]
 	c.Assert(conf.RepairMode, Equals, true)
 	c.Assert(conf.MaxServerConnections, Equals, uint32(200))
 	c.Assert(conf.MemQuotaQuery, Equals, int64(10000))
-	c.Assert(conf.ApplyCacheCapacity, Equals, int64(100))
+	c.Assert(conf.NestedLoopJoinCacheCapacity, Equals, int64(100))
 	c.Assert(conf.Experimental.AllowsExpressionIndex, IsTrue)
 	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})
 	c.Assert(conf.MaxIndexLength, Equals, 3080)
