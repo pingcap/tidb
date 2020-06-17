@@ -1897,7 +1897,7 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.
 		}
 		fields := strings.Split(record, "\t")
 		if len(fields) < len(e.outputCols)-1 {
-			return nil, errors.Errorf("Record from tiflash doesn't match schema", fields)
+			return nil, errors.Errorf("Record from tiflash doesn't match schema %v", fields)
 		}
 		row := make([]types.Datum, len(e.outputCols))
 		for index, column := range e.outputCols {
@@ -1925,7 +1925,7 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.
 				}
 				row[index].SetFloat64(value)
 			} else {
-				return nil, errors.Errorf("Meet column of unknown type", column)
+				return nil, errors.Errorf("Meet column of unknown type %v", column)
 			}
 		}
 		row[len(e.outputCols)-1].SetString(nodeInfo.id, mysql.DefaultCollationName)
