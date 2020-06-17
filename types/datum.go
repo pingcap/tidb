@@ -62,10 +62,10 @@ const (
 // It has better performance and is easier to use than `interface{}`.
 type Datum struct {
 	k         byte        // datum kind.
-	collation string      // collation hold the collation information for string value.
 	decimal   uint16      // decimal can hold uint16 values.
 	length    uint32      // length can hold uint32 values.
 	i         int64       // i can hold int64 uint64 float64 values.
+	collation string      // collation hold the collation information for string value.
 	b         []byte      // b can hold string or []byte values.
 	x         interface{} // x hold all other types.
 }

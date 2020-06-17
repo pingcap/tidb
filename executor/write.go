@@ -85,7 +85,7 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 	// 2. Handle the bad null error.
 	for i, col := range t.Cols() {
 		var err error
-		if newData[i], err = col.HandleBadNull(newData[i], sc); err != nil {
+		if err = col.HandleBadNull(&newData[i], sc); err != nil {
 			return false, err
 		}
 	}

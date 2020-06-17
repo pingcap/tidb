@@ -404,10 +404,15 @@ func (t *partitionedTable) GetPartitionByRow(ctx sessionctx.Context, r []types.D
 
 // AddRecord implements the AddRecord method for the table.Table interface.
 func (t *partitionedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
-	return partitionedTableAddRecord(ctx, t, r, nil, opts)
+	return partitionedTableAddRecord(ctx, t, r, nil, nil, opts)
 }
 
-func partitionedTableAddRecord(ctx sessionctx.Context, t *partitionedTable, r []types.Datum, partitionSelection map[int64]struct{}, opts []table.AddRecordOption) (recordID kv.Handle, err error) {
+// AddRecordWithCtx inserts a row which should contain only public columns
+func (t *partitionedTable) AddRecordWithCtx(ctx sessionctx.Context, r []types.Datum, recordCtx interface{}, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
+	return partitionedTableAddRecord(ctx, t, r, recordCtx, nil, opts)
+}
+
+func partitionedTableAddRecord(ctx sessionctx.Context, t *partitionedTable, r []types.Datum, recordCtx interface{}, partitionSelection map[int64]struct{}, opts []table.AddRecordOption) (recordID kv.Handle, err error) {
 	partitionInfo := t.meta.GetPartitionInfo()
 	pid, err := t.locatePartition(ctx, partitionInfo, r)
 	if err != nil {
@@ -420,7 +425,7 @@ func partitionedTableAddRecord(ctx sessionctx.Context, t *partitionedTable, r []
 		}
 	}
 	tbl := t.GetPartition(pid)
-	return tbl.AddRecord(ctx, r, opts...)
+	return tbl.AddRecordWithCtx(ctx, r, recordCtx, opts...)
 }
 
 // partitionTableWithGivenSets is used for this kind of grammar: partition (p0,p1)
@@ -444,7 +449,11 @@ func NewPartitionTableithGivenSets(tbl table.PartitionedTable, partitions map[in
 
 // AddRecord implements the AddRecord method for the table.Table interface.
 func (t *partitionTableWithGivenSets) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
-	return partitionedTableAddRecord(ctx, t.partitionedTable, r, t.partitions, opts)
+	return partitionedTableAddRecord(ctx, t.partitionedTable, r, nil, t.partitions, opts)
+}
+
+func (t *partitionTableWithGivenSets) AddRecordWithCtx(ctx sessionctx.Context, r []types.Datum, addCtx interface{}, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
+	return partitionedTableAddRecord(ctx, t.partitionedTable, r, addCtx, t.partitions, opts)
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.

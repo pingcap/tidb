@@ -53,7 +53,7 @@ func encodeNewRow(ctx sessionctx.Context, t table.Table, row []types.Datum) ([]b
 	colIDs := make([]int64, 0, len(row))
 	skimmedRow := make([]types.Datum, 0, len(row))
 	for _, col := range t.Cols() {
-		if !tables.CanSkip(t.Meta(), col, row[col.Offset]) {
+		if !tables.CanSkip(t.Meta(), col, &row[col.Offset]) {
 			colIDs = append(colIDs, col.ID)
 			skimmedRow = append(skimmedRow, row[col.Offset])
 		}
