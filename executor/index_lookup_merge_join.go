@@ -523,6 +523,9 @@ func (imw *innerMergeWorker) fetchNewChunkWhenFull(ctx context.Context, task *lo
 func (imw *innerMergeWorker) doMergeJoin(ctx context.Context, task *lookUpMergeJoinTask) (err error) {
 	chk := <-imw.joinChkResourceCh
 	defer func() {
+		if chk == nil {
+			return
+		}
 		if chk.NumRows() > 0 {
 			select {
 			case task.results <- &indexMergeJoinResult{chk, imw.joinChkResourceCh}:
@@ -710,11 +713,11 @@ func (e *IndexLookUpMergeJoin) Close() error {
 		}
 		e.resultCh = nil
 	}
-	e.workerWg.Wait()
 	for i := range e.joinChkResourceCh {
 		close(e.joinChkResourceCh[i])
 	}
 	e.joinChkResourceCh = nil
+	e.workerWg.Wait()
 	e.memTracker = nil
 	if e.runtimeStats != nil {
 		concurrency := cap(e.resultCh)
