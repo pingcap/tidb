@@ -795,9 +795,13 @@ func (e *NestedLoopApplyExec) Close() error {
 	e.memTracker = nil
 	if e.runtimeStats != nil {
 		if e.canUseCache {
-			e.runtimeStats.SetCacheInfo(true, e.cacheAccessCounter, e.cacheHitCounter)
+			var hitRatio float64
+			if e.cacheAccessCounter > 0 {
+				hitRatio = float64(e.cacheHitCounter) / float64(e.cacheAccessCounter)
+			}
+			e.runtimeStats.SetCacheInfo(true, hitRatio)
 		} else {
-			e.runtimeStats.SetCacheInfo(false, e.cacheAccessCounter, e.cacheHitCounter)
+			e.runtimeStats.SetCacheInfo(false, 0)
 		}
 	}
 	return e.outerExec.Close()

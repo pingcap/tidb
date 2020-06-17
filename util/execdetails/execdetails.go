@@ -373,25 +373,17 @@ func NewConcurrencyInfo(name string, num int) *ConcurrencyInfo {
 
 // cacheInfo is used to save the concurrency information of the executor operator
 type cacheInfo struct {
-	hitNum   int
 	hitRatio float64
 	useCache bool
 }
 
 // SetCacheInfo sets the cache information. Only used for apply executor.
-func (e *RuntimeStats) SetCacheInfo(useCache bool, totalNum int, hitNum int) {
+func (e *RuntimeStats) SetCacheInfo(useCache bool, hitRatio float64) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.applyCache = true
 	e.cache.useCache = useCache
-	if useCache {
-		e.cache.hitNum = hitNum
-		if totalNum != 0 {
-			e.cache.hitRatio = float64(hitNum) / float64(totalNum)
-		} else {
-			e.cache.hitRatio = 0
-		}
-	}
+	e.cache.hitRatio = hitRatio
 }
 
 // RuntimeStats collects one executor's execution info.
@@ -533,7 +525,7 @@ func (e *RuntimeStats) String() string {
 	}
 	if e.applyCache {
 		if e.cache.useCache {
-			result += fmt.Sprintf(", cache:ON, cacheHitNum:%d, cacheHitRatio:%.3f%%", e.cache.hitNum, e.cache.hitRatio*100)
+			result += fmt.Sprintf(", cache:ON, cacheHitRatio:%.3f%%", e.cache.hitRatio*100)
 		} else {
 			result += fmt.Sprintf(", cache:OFF")
 		}
