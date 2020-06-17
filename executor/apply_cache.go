@@ -14,8 +14,7 @@
 package executor
 
 import (
-	"fmt"
-
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -37,16 +36,18 @@ func (key applyCacheKey) Hash() []byte {
 	return key
 }
 
-var applyCacheLabel fmt.Stringer = stringutil.StringerStr("applyCache")
+func applyCacheKVMem(key applyCacheKey, value *chunk.List) int64 {
+	return int64(len(key)) + value.GetMemTracker().BytesConsumed()
+}
 
 func newApplyCache(ctx sessionctx.Context) (*applyCache, error) {
-	// assume the average size of elements is 64
-	num := uint(ctx.GetSessionVars().ApplyCacheCapacity / 64)
-	cache := kvcache.NewSimpleLRUCache(num, 0.1, uint64(ctx.GetSessionVars().ApplyCacheCapacity))
+	// since applyCache controls the memory usage by itself, set the capacity of
+	// the underlying LRUCache to max to close its memory control
+	cache := kvcache.NewSimpleLRUCache(mathutil.MaxUint, 0.1, 0)
 	c := applyCache{
 		cache:       cache,
 		memCapacity: ctx.GetSessionVars().ApplyCacheCapacity,
-		memTracker:  memory.NewTracker(applyCacheLabel, -1),
+		memTracker:  memory.NewTracker(stringutil.StringerStr("applyCache"), -1),
 	}
 	return &c, nil
 }
@@ -63,7 +64,7 @@ func (c *applyCache) Get(key applyCacheKey) (*chunk.List, error) {
 
 // Set inserts an item to the cache.
 func (c *applyCache) Set(key applyCacheKey, value *chunk.List) (bool, error) {
-	mem := int64(len(key)) + value.GetMemTracker().BytesConsumed()
+	mem := applyCacheKVMem(key, value)
 	if mem > c.memCapacity { // ignore this kv pair if its size is too large
 		return false, nil
 	}
@@ -72,7 +73,7 @@ func (c *applyCache) Set(key applyCacheKey, value *chunk.List) (bool, error) {
 		if !evicted {
 			return false, nil
 		}
-		c.memTracker.Consume(-(int64(len(evictedKey.(applyCacheKey))) + evictedValue.(*chunk.List).GetMemTracker().BytesConsumed()))
+		c.memTracker.Consume(-applyCacheKVMem(evictedKey.(applyCacheKey), evictedValue.(*chunk.List)))
 	}
 	c.memTracker.Consume(mem)
 	c.cache.Put(key, value)

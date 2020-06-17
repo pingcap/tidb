@@ -830,7 +830,6 @@ func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 		}
 		e.cacheHitCounter = 0
 		e.cacheAccessCounter = 0
-		e.cache.GetMemTracker().SetLabel(applyCacheLabel)
 		e.cache.GetMemTracker().AttachTo(e.memTracker)
 	}
 	return nil

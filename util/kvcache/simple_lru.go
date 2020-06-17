@@ -200,7 +200,7 @@ func (l *SimpleLRUCache) SetCapacity(capacity uint) error {
 	return nil
 }
 
-// RemoveOldest removes the oldest item from the cache.
+// RemoveOldest removes the oldest element from the cache.
 func (l *SimpleLRUCache) RemoveOldest() (key Key, value Value, ok bool) {
 	if l.size > 0 {
 		ele := l.cache.Back()

@@ -15,6 +15,7 @@ package executor
 
 import (
 	"strconv"
+	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
@@ -34,49 +35,48 @@ func (s *testApplyCacheSuite) TestApplyCache(c *C) {
 	applyCache, err := newApplyCache(ctx)
 	c.Assert(err, IsNil)
 
-	fields := []*types.FieldType{
-		types.NewFieldType(mysql.TypeLonglong),
-	}
-	l := make([]*chunk.List, 3)
-	value := make([]applyCacheValue, 3)
-	key := make([]string, 3)
+	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
+	value := make([]*chunk.List, 3)
+	key := make([][]byte, 3)
 	for i := 0; i < 3; i++ {
-		l[i] = chunk.NewList(fields, 1, 1)
+		value[i] = chunk.NewList(fields, 1, 1)
 		srcChunk := chunk.NewChunkWithCapacity(fields, 1)
 		srcChunk.AppendInt64(0, int64(i))
 		srcRow := srcChunk.GetRow(0)
-		l[i].AppendRow(srcRow)
-		key[i] = strconv.Itoa(i)
-		value[i].Data = l[i]
+		value[i].AppendRow(srcRow)
+		key[i] = []byte(strings.Repeat(strconv.Itoa(i), 100))
+
+		// TODO: *chunk.List.GetMemTracker().BytesConsumed() is not accurate, fix it later.
+		c.Assert(applyCacheKVMem(key[i], value[i]), Equals, int64(100))
 	}
 
-	evicted, err := applyCache.Set(key[0], &value[0])
-	c.Assert(err, nil)
-	c.Assert(evicted, Equals, false)
+	ok, err := applyCache.Set(key[0], value[0])
+	c.Assert(err, IsNil)
+	c.Assert(ok, Equals, true)
 	result, err := applyCache.Get(key[0])
-	c.Assert(err, nil)
+	c.Assert(err, IsNil)
 	c.Assert(result, NotNil)
 
-	evicted, err = applyCache.Set(key[1], &value[1])
-	c.Assert(err, nil)
-	c.Assert(evicted, Equals, true)
+	ok, err = applyCache.Set(key[1], value[1])
+	c.Assert(err, IsNil)
+	c.Assert(ok, Equals, true)
 	result, err = applyCache.Get(key[1])
-	c.Assert(err, nil)
+	c.Assert(err, IsNil)
 	c.Assert(result, NotNil)
 
-	evicted, err = applyCache.Set(key[2], &value[2])
-	c.Assert(err, nil)
-	c.Assert(evicted, Equals, true)
+	ok, err = applyCache.Set(key[2], value[2])
+	c.Assert(err, IsNil)
+	c.Assert(ok, Equals, true)
 	result, err = applyCache.Get(key[2])
-	c.Assert(err, nil)
+	c.Assert(err, IsNil)
 	c.Assert(result, NotNil)
 
 	// Both key[0] and key[1] are not in the cache
 	result, err = applyCache.Get(key[0])
-	c.Assert(err, nil)
+	c.Assert(err, IsNil)
 	c.Assert(result, IsNil)
 
 	result, err = applyCache.Get(key[1])
-	c.Assert(err, nil)
+	c.Assert(err, IsNil)
 	c.Assert(result, IsNil)
 }
