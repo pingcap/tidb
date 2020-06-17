@@ -877,7 +877,13 @@ func (e *NestedLoopApplyExec) fetchAllInners(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	e.innerList.Reset()
+
+	if e.canUseCache {
+		// create a new one since it may be in the cache
+		e.innerList = chunk.NewList(retTypes(e.innerExec), e.initCap, e.maxChunkSize)
+	} else {
+		e.innerList.Reset()
+	}
 	innerIter := chunk.NewIterator4Chunk(e.innerChunk)
 	for {
 		err := Next(ctx, e.innerExec, e.innerChunk)
