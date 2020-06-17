@@ -103,6 +103,7 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		}
 		if resultSubset == nil {
 			r.selectResp = nil
+			atomic.StoreInt64(&r.selectRespSize, 0)
 			if !r.durationReported {
 				// final round of fetch
 				// TODO: Add a label to distinguish between success or failure.
