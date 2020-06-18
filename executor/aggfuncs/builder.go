@@ -114,9 +114,9 @@ func buildApproxCountDistinct(aggFuncDesc *aggregation.AggFuncDesc, ordinal int)
 		}
 	case mysql.TypeString:
 		switch aggFuncDesc.Mode {
-		case aggregation.Partial1Mode:
+		case aggregation.CompleteMode, aggregation.Partial1Mode:
 			return &approxCountDistinctPartial1{approxCountDistinctOriginal{base}}
-		case aggregation.Partial2Mode:
+		case aggregation.Partial2Mode, aggregation.FinalMode:
 			return &approxCountDistinctPartial2{approxCountDistinctPartial1{approxCountDistinctOriginal{base}}}
 		}
 	}
