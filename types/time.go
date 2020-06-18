@@ -707,14 +707,7 @@ func splitDateTime(format string) (seps []string, fracStr string) {
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
-<<<<<<< HEAD
 func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bool) (Time, error) {
-	// Try to split str with delimiter.
-	// TODO: only punctuation can be the delimiter for date parts or time parts.
-	// But only space and T can be the delimiter between the date and time part.
-=======
-func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat bool) (Time, error) {
->>>>>>> f1b21b5... types: match MySQL behavior with datetime delimiters (#17376)
 	var (
 		year, month, day, hour, minute, second int
 		fracStr                                string
