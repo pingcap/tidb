@@ -813,20 +813,10 @@ func (s *testInfoschemaTableSuite) TestSequences(c *C) {
 	tk.MustQuery("SELECT * FROM information_schema.sequences WHERE sequence_schema='test' AND sequence_name='seq2'").Check(testkit.Rows("def test seq2 1 15 0 -1 10 -10 -9 "))
 }
 
-func (s *testInfoschemaClusterTableSuite) TestTiFlashSystemTables(c *C) {
+func (s *testInfoschemaTableSuite) TestTiFlashSystemTables(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	err := tk.QueryToErr("select * from information_schema.TIFLASH_TABLES;")
 	c.Assert(err.Error(), Equals, "Etcd addrs not found")
 	err = tk.QueryToErr("select * from information_schema.TIFLASH_SEGMENTS;")
 	c.Assert(err.Error(), Equals, "Etcd addrs not found")
-	mockAddr := s.mockAddr
-	store := &mockStore{
-		s.store.(tikv.Storage),
-		mockAddr,
-	}
-
-	tk = testkit.NewTestKit(c, store)
-	// Test it would get null when there is no tiflash instance
-	tk.MustQuery("select * from information_schema.TIFLASH_TABLES;").Check([][]interface{}{})
-	tk.MustQuery("select * from information_schema.TIFLASH_SEGMENTS;").Check([][]interface{}{})
 }
