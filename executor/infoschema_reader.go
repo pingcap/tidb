@@ -1797,17 +1797,15 @@ func (e *TiFlashSystemTableRetriever) retrieve(ctx context.Context, sctx session
 		return nil, nil
 	}
 
-	var rows [][]types.Datum
 	for  {
 		rows, err := e.dataForTiFlashSystemTables(sctx)
 		if err != nil {
 			return nil, err
 		}
 		if len(rows) > 0 || e.instanceIdx >= e.instanceCount {
-			break
+			return rows, nil
 		}
 	}
-	return rows, nil
 }
 
 type tiflashInstanceInfo struct {
