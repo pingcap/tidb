@@ -74,14 +74,14 @@ import (
 )
 
 var (
-	statementPerTransactionInternalOK    = metrics.StatementPerTransaction.WithLabelValues(metrics.LblInternal, "ok")
-	statementPerTransactionInternalError = metrics.StatementPerTransaction.WithLabelValues(metrics.LblInternal, "error")
-	statementPerTransactionGeneralOK     = metrics.StatementPerTransaction.WithLabelValues(metrics.LblGeneral, "ok")
-	statementPerTransactionGeneralError  = metrics.StatementPerTransaction.WithLabelValues(metrics.LblGeneral, "error")
-	transactionDurationInternalCommit    = metrics.TransactionDuration.WithLabelValues(metrics.LblInternal, metrics.LblCommit)
-	transactionDurationInternalAbort     = metrics.TransactionDuration.WithLabelValues(metrics.LblInternal, metrics.LblAbort)
-	transactionDurationGeneralCommit     = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, metrics.LblCommit)
-	transactionDurationGeneralAbort      = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, metrics.LblAbort)
+	statementPerTransactionPessimisticOK    = metrics.StatementPerTransaction.WithLabelValues(metrics.LblPessimistic, metrics.LblOK)
+	statementPerTransactionPessimisticError = metrics.StatementPerTransaction.WithLabelValues(metrics.LblPessimistic, metrics.LblError)
+	statementPerTransactionOptimisticOK     = metrics.StatementPerTransaction.WithLabelValues(metrics.LblOptimistic, metrics.LblOK)
+	statementPerTransactionOptimisticError  = metrics.StatementPerTransaction.WithLabelValues(metrics.LblOptimistic, metrics.LblError)
+	transactionDurationPessimisticCommit    = metrics.TransactionDuration.WithLabelValues(metrics.LblPessimistic, metrics.LblCommit)
+	transactionDurationPessimisticAbort     = metrics.TransactionDuration.WithLabelValues(metrics.LblPessimistic, metrics.LblAbort)
+	transactionDurationOptimisticCommit     = metrics.TransactionDuration.WithLabelValues(metrics.LblOptimistic, metrics.LblCommit)
+	transactionDurationOptimisticAbort      = metrics.TransactionDuration.WithLabelValues(metrics.LblOptimistic, metrics.LblAbort)
 
 	sessionExecuteCompileDurationInternal = metrics.SessionExecuteCompileDuration.WithLabelValues(metrics.LblInternal)
 	sessionExecuteCompileDurationGeneral  = metrics.SessionExecuteCompileDuration.WithLabelValues(metrics.LblGeneral)
@@ -1038,35 +1038,6 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	s.processInfo.Store(&pi)
 }
 
-func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode ast.StmtNode, stmt sqlexec.Statement, recordSets []sqlexec.RecordSet, inMulitQuery bool) ([]sqlexec.RecordSet, error) {
-	logStmt(stmtNode, s.sessionVars)
-	recordSet, err := runStmt(ctx, s, stmt)
-	if err != nil {
-		if !kv.ErrKeyExists.Equal(err) {
-			logutil.Logger(ctx).Warn("run statement failed",
-				zap.Int64("schemaVersion", s.sessionVars.TxnCtx.SchemaVersion),
-				zap.Error(err),
-				zap.String("session", s.String()))
-		}
-		return nil, err
-	}
-
-	if inMulitQuery && recordSet == nil {
-		recordSet = &multiQueryNoDelayRecordSet{
-			affectedRows: s.AffectedRows(),
-			lastMessage:  s.LastMessage(),
-			warnCount:    s.sessionVars.StmtCtx.WarningCount(),
-			lastInsertID: s.sessionVars.StmtCtx.LastInsertID,
-			status:       s.sessionVars.Status,
-		}
-	}
-
-	if recordSet != nil {
-		recordSets = append(recordSets, recordSet)
-	}
-	return recordSets, nil
-}
-
 func (s *session) ExecuteInternal(ctx context.Context, sql string) (recordSets []sqlexec.RecordSet, err error) {
 	origin := s.sessionVars.InRestrictedSQL
 	s.sessionVars.InRestrictedSQL = true
@@ -1083,10 +1054,37 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 		logutil.Eventf(ctx, "execute: %s", sql)
 	}
-	if recordSets, err = s.execute(ctx, sql); err != nil {
+
+	charsetInfo, collation := s.sessionVars.GetCharsetInfo()
+	parseStartTime := time.Now()
+	stmtNodes, warns, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
+	if err != nil {
+		s.rollbackOnError(ctx)
+
+		// Only print log message when this SQL is from the user.
+		// Mute the warning for internal SQLs.
+		if !s.sessionVars.InRestrictedSQL {
+			logutil.Logger(ctx).Warn("parse SQL failed", zap.Error(err), zap.String("SQL", sql))
+		}
+		return nil, util.SyntaxError(err)
+	}
+	if len(stmtNodes) != 1 {
+		return nil, errors.New("Execute() API doesn't support multiple statements any more")
+	}
+	durParse := time.Since(parseStartTime)
+	s.GetSessionVars().DurationParse = durParse
+
+	rs, err := s.ExecuteStmt(ctx, stmtNodes[0])
+	if err != nil {
 		s.sessionVars.StmtCtx.AppendError(err)
 	}
-	return
+	for _, warn := range warns {
+		s.sessionVars.StmtCtx.AppendWarning(util.SyntaxWarn(warn))
+	}
+	if rs == nil {
+		return nil, err
+	}
+	return []sqlexec.RecordSet{rs}, err
 }
 
 // Parse parses a query string to raw ast.StmtNode.
@@ -1163,7 +1161,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 
 	// Execute the physical plan.
 	logStmt(stmtNode, s.sessionVars)
-	recordSet, err := runStmtWrap(ctx, s, stmt)
+	recordSet, err := runStmt(ctx, s, stmt)
 	if err != nil {
 		if !kv.ErrKeyExists.Equal(err) {
 			logutil.Logger(ctx).Warn("run statement failed",
@@ -1176,8 +1174,8 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	return recordSet, nil
 }
 
-// runStmtWrap executes the sqlexec.Statement and commit or rollback the current transaction.
-func runStmtWrap(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.RecordSet, err error) {
+// runStmt executes the sqlexec.Statement and commit or rollback the current transaction.
+func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.RecordSet, err error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("session.runStmt", opentracing.ChildOf(span.Context()))
 		span1.LogKV("sql", s.OriginText())
@@ -1247,86 +1245,6 @@ func (rs *execStmtResult) Close() error {
 	return finishStmt(context.Background(), se, err, rs.sql)
 }
 
-func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec.RecordSet, err error) {
-	s.PrepareTxnCtx(ctx)
-	connID := s.sessionVars.ConnectionID
-	err = s.loadCommonGlobalVariablesIfNeeded()
-	if err != nil {
-		return nil, err
-	}
-
-	charsetInfo, collation := s.sessionVars.GetCharsetInfo()
-
-	// Step1: Compile query string to abstract syntax trees(ASTs).
-	parseStartTime := time.Now()
-	stmtNodes, warns, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
-	if err != nil {
-		s.rollbackOnError(ctx)
-
-		// Only print log message when this SQL is from the user.
-		// Mute the warning for internal SQLs.
-		if !s.sessionVars.InRestrictedSQL {
-			logutil.Logger(ctx).Warn("parse SQL failed", zap.Error(err), zap.String("SQL", sql))
-		}
-		return nil, util.SyntaxError(err)
-	}
-	durParse := time.Since(parseStartTime)
-	s.GetSessionVars().DurationParse = durParse
-	isInternal := s.isInternal()
-	if isInternal {
-		sessionExecuteParseDurationInternal.Observe(durParse.Seconds())
-	} else {
-		sessionExecuteParseDurationGeneral.Observe(durParse.Seconds())
-	}
-
-	compiler := executor.Compiler{Ctx: s}
-	multiQuery := len(stmtNodes) > 1
-	for _, stmtNode := range stmtNodes {
-		s.sessionVars.StartTime = time.Now()
-		s.PrepareTxnCtx(ctx)
-
-		// Step2: Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
-		// Some executions are done in compile stage, so we reset them before compile.
-		if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
-			return nil, err
-		}
-		stmt, err := compiler.Compile(ctx, stmtNode)
-		if err != nil {
-			s.rollbackOnError(ctx)
-
-			// Only print log message when this SQL is from the user.
-			// Mute the warning for internal SQLs.
-			if !s.sessionVars.InRestrictedSQL {
-				logutil.Logger(ctx).Warn("compile SQL failed", zap.Error(err), zap.String("SQL", sql))
-			}
-			return nil, err
-		}
-		durCompile := time.Since(s.sessionVars.StartTime)
-		s.GetSessionVars().DurationCompile = durCompile
-		if isInternal {
-			sessionExecuteCompileDurationInternal.Observe(durCompile.Seconds())
-		} else {
-			sessionExecuteCompileDurationGeneral.Observe(durCompile.Seconds())
-		}
-		s.currentPlan = stmt.Plan
-
-		// Step3: Execute the physical plan.
-		if recordSets, err = s.executeStatement(ctx, connID, stmtNode, stmt, recordSets, multiQuery); err != nil {
-			return nil, err
-		}
-	}
-
-	if s.sessionVars.ClientCapability&mysql.ClientMultiResults == 0 && len(recordSets) > 1 {
-		// return the first recordset if client doesn't support ClientMultiResults.
-		recordSets = recordSets[:1]
-	}
-
-	for _, warn := range warns {
-		s.sessionVars.StmtCtx.AppendWarning(util.SyntaxWarn(warn))
-	}
-	return recordSets, nil
-}
-
 // rollbackOnError makes sure the next statement starts a new transaction with the latest InfoSchema.
 func (s *session) rollbackOnError(ctx context.Context) {
 	if !s.sessionVars.InTxn() {
@@ -1363,7 +1281,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	return prepareExec.ID, prepareExec.ParamCount, prepareExec.Fields, nil
 }
 
-func (s *session) CommonExec(ctx context.Context,
+func (s *session) preparedStmtExec(ctx context.Context,
 	stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, args []types.Datum) (sqlexec.RecordSet, error) {
 	st, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, args)
 	if err != nil {
@@ -1374,8 +1292,8 @@ func (s *session) CommonExec(ctx context.Context,
 	return runStmt(ctx, s, st)
 }
 
-// CachedPlanExec short path currently ONLY for cached "point select plan" execution
-func (s *session) CachedPlanExec(ctx context.Context,
+// cachedPlanExec short path currently ONLY for cached "point select plan" execution
+func (s *session) cachedPlanExec(ctx context.Context,
 	stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, args []types.Datum) (sqlexec.RecordSet, error) {
 	prepared := prepareStmt.PreparedAst
 	// compile ExecStmt
@@ -1486,9 +1404,9 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		return nil, err
 	}
 	if ok {
-		return s.CachedPlanExec(ctx, stmtID, preparedStmt, args)
+		return s.cachedPlanExec(ctx, stmtID, preparedStmt, args)
 	}
-	return s.CommonExec(ctx, stmtID, preparedStmt, args)
+	return s.preparedStmtExec(ctx, stmtID, preparedStmt, args)
 }
 
 func (s *session) DropPreparedStmt(stmtID uint32) error {
@@ -1508,6 +1426,9 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		return &s.txn, errors.AddStack(kv.ErrInvalidTxn)
 	}
 	if s.txn.pending() {
+		defer func(begin time.Time) {
+			s.sessionVars.DurationWaitTS = time.Since(begin)
+		}(time.Now())
 		// Transaction is lazy initialized.
 		// PrepareTxnCtx is called to get a tso future, makes s.txn a pending txn,
 		// If Txn() is called later, wait for the future to get a valid txn.
@@ -2319,55 +2240,21 @@ func logQuery(query string, vars *variable.SessionVars) {
 }
 
 func (s *session) recordOnTransactionExecution(err error, counter int, duration float64) {
-	if s.isInternal() {
+	if s.sessionVars.TxnCtx.IsPessimistic {
 		if err != nil {
-			statementPerTransactionInternalError.Observe(float64(counter))
-			transactionDurationInternalAbort.Observe(duration)
+			statementPerTransactionPessimisticError.Observe(float64(counter))
+			transactionDurationPessimisticAbort.Observe(duration)
 		} else {
-			statementPerTransactionInternalOK.Observe(float64(counter))
-			transactionDurationInternalCommit.Observe(duration)
+			statementPerTransactionPessimisticOK.Observe(float64(counter))
+			transactionDurationPessimisticCommit.Observe(duration)
 		}
 	} else {
 		if err != nil {
-			statementPerTransactionGeneralError.Observe(float64(counter))
-			transactionDurationGeneralAbort.Observe(duration)
+			statementPerTransactionOptimisticError.Observe(float64(counter))
+			transactionDurationOptimisticAbort.Observe(duration)
 		} else {
-			statementPerTransactionGeneralOK.Observe(float64(counter))
-			transactionDurationGeneralCommit.Observe(duration)
+			statementPerTransactionOptimisticOK.Observe(float64(counter))
+			transactionDurationOptimisticCommit.Observe(duration)
 		}
 	}
-}
-
-type multiQueryNoDelayRecordSet struct {
-	sqlexec.RecordSet
-
-	affectedRows uint64
-	lastMessage  string
-	status       uint16
-	warnCount    uint16
-	lastInsertID uint64
-}
-
-func (c *multiQueryNoDelayRecordSet) Close() error {
-	return nil
-}
-
-func (c *multiQueryNoDelayRecordSet) AffectedRows() uint64 {
-	return c.affectedRows
-}
-
-func (c *multiQueryNoDelayRecordSet) LastMessage() string {
-	return c.lastMessage
-}
-
-func (c *multiQueryNoDelayRecordSet) WarnCount() uint16 {
-	return c.warnCount
-}
-
-func (c *multiQueryNoDelayRecordSet) Status() uint16 {
-	return c.status
-}
-
-func (c *multiQueryNoDelayRecordSet) LastInsertID() uint64 {
-	return c.lastInsertID
 }

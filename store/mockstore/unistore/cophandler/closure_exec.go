@@ -47,6 +47,7 @@ const (
 	pkColNotExists = iota
 	pkColIsSigned
 	pkColIsUnsigned
+	pkColIsCommon
 )
 
 // buildClosureExecutor build a closureExecutor for the DAGRequest.
@@ -128,7 +129,7 @@ func newClosureExecutor(dagCtx *dagContext, dagReq *tipb.DAGRequest) (*closureEx
 		idxScan := executors[0].IdxScan
 		e.unique = idxScan.GetUnique()
 		e.scanCtx.desc = idxScan.Desc
-		e.initIdxScanCtx()
+		e.initIdxScanCtx(idxScan)
 	default:
 		panic(fmt.Sprintf("unknown first executor type %s", executors[0].Tp))
 	}
@@ -150,25 +151,33 @@ func newClosureExecutor(dagCtx *dagContext, dagReq *tipb.DAGRequest) (*closureEx
 	return e, nil
 }
 
-func (e *closureExecutor) initIdxScanCtx() {
+func (e *closureExecutor) initIdxScanCtx(idxScan *tipb.IndexScan) {
 	e.idxScanCtx = new(idxScanCtx)
 	e.idxScanCtx.columnLen = len(e.columnInfos)
 	e.idxScanCtx.pkStatus = pkColNotExists
+
+	e.idxScanCtx.primaryColumnIds = idxScan.PrimaryColumnIds
+
 	lastColumn := e.columnInfos[len(e.columnInfos)-1]
-	// The PKHandle column info has been collected in ctx.
-	if lastColumn.GetPkHandle() {
-		if mysql.HasUnsignedFlag(uint(lastColumn.GetFlag())) {
-			e.idxScanCtx.pkStatus = pkColIsUnsigned
-		} else {
+
+	if len(e.idxScanCtx.primaryColumnIds) == 0 {
+		if lastColumn.GetPkHandle() {
+			if mysql.HasUnsignedFlag(uint(lastColumn.GetFlag())) {
+				e.idxScanCtx.pkStatus = pkColIsUnsigned
+			} else {
+				e.idxScanCtx.pkStatus = pkColIsSigned
+			}
+			e.idxScanCtx.columnLen--
+		} else if lastColumn.ColumnId == model.ExtraHandleID {
 			e.idxScanCtx.pkStatus = pkColIsSigned
+			e.idxScanCtx.columnLen--
 		}
-		e.idxScanCtx.columnLen--
-	} else if lastColumn.ColumnId == model.ExtraHandleID {
-		e.idxScanCtx.pkStatus = pkColIsSigned
-		e.idxScanCtx.columnLen--
+	} else {
+		e.idxScanCtx.pkStatus = pkColIsCommon
+		e.idxScanCtx.columnLen -= len(e.idxScanCtx.primaryColumnIds)
 	}
 
-	colInfos := make([]rowcodec.ColInfo, e.idxScanCtx.columnLen)
+	colInfos := make([]rowcodec.ColInfo, len(e.columnInfos))
 	for i := range colInfos {
 		col := e.columnInfos[i]
 		colInfos[i] = rowcodec.ColInfo{
@@ -180,13 +189,13 @@ func (e *closureExecutor) initIdxScanCtx() {
 	e.idxScanCtx.colInfos = colInfos
 
 	colIDs := make(map[int64]int, len(colInfos))
-	for i, col := range colInfos {
+	for i, col := range colInfos[:e.idxScanCtx.columnLen] {
 		colIDs[col.ID] = i
 	}
 	e.scanCtx.newCollationIds = colIDs
 
 	// We don't need to decode handle here, and colIDs >= 0 always.
-	e.scanCtx.newCollationRd = rowcodec.NewByteDecoder(colInfos, []int64{-1}, nil, nil)
+	e.scanCtx.newCollationRd = rowcodec.NewByteDecoder(colInfos[:e.idxScanCtx.columnLen], []int64{-1}, nil, nil)
 }
 
 func isCountAgg(pbAgg *tipb.Aggregation) bool {
@@ -303,20 +312,22 @@ type closureProcessor interface {
 }
 
 type scanCtx struct {
-	count   int
-	limit   int
-	chk     *chunk.Chunk
-	desc    bool
-	decoder *rowcodec.ChunkDecoder
+	count            int
+	limit            int
+	chk              *chunk.Chunk
+	desc             bool
+	decoder          *rowcodec.ChunkDecoder
+	primaryColumnIds []int64
 
 	newCollationRd  *rowcodec.BytesDecoder
 	newCollationIds map[int64]int
 }
 
 type idxScanCtx struct {
-	pkStatus  int
-	columnLen int
-	colInfos  []rowcodec.ColInfo
+	pkStatus         int
+	columnLen        int
+	colInfos         []rowcodec.ColInfo
+	primaryColumnIds []int64
 }
 
 type aggCtx struct {
@@ -648,13 +659,39 @@ func (e *closureExecutor) indexScanProcessOldCollation(key, value []byte) error 
 	}
 	if len(b) > 0 {
 		if pkStatus != pkColNotExists {
-			_, err = decoder.DecodeOne(b, colLen, e.fieldTps[colLen])
-			if err != nil {
-				return errors.Trace(err)
+			if pkStatus != pkColIsCommon {
+				_, err = decoder.DecodeOne(b, colLen, e.fieldTps[colLen])
+				if err != nil {
+					return errors.Trace(err)
+				}
+			} else {
+				handle, err := kv.NewCommonHandle(b)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				for i := range e.idxScanCtx.primaryColumnIds {
+					_, err = decoder.DecodeOne(handle.EncodedCol(i), colLen+i, e.fieldTps[colLen+i])
+					if err != nil {
+						return errors.Trace(err)
+					}
+				}
 			}
 		}
 	} else if pkStatus != pkColNotExists {
-		chk.AppendInt64(colLen, int64(binary.BigEndian.Uint64(value)))
+		if pkStatus != pkColIsCommon {
+			chk.AppendInt64(colLen, int64(binary.BigEndian.Uint64(value)))
+		} else {
+			handle, err := kv.NewCommonHandle(value)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			for i := range e.idxScanCtx.primaryColumnIds {
+				_, err = decoder.DecodeOne(handle.EncodedCol(i), colLen+i, e.fieldTps[colLen+i])
+				if err != nil {
+					return errors.Trace(err)
+				}
+			}
+		}
 	}
 	return nil
 }
