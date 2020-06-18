@@ -1,9 +1,5 @@
 module github.com/pingcap/tidb
 
-replace github.com/pingcap/tipb => github.com/hanfei1991/tipb v0.0.0-20200615064645-bb7c184dfad7
-
-replace github.com/pingcap/parser => github.com/hanfei1991/parser v0.0.0-20200617082422-444a49f9c68e
-
 require (
 	github.com/BurntSushi/toml v0.3.1
 	github.com/blacktear23/go-proxyprotocol v0.0.0-20180807104634-af7a81e8dd0d
@@ -37,11 +33,11 @@ require (
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
 	github.com/pingcap/kvproto v0.0.0-20200518112156-d4aeb467de29
 	github.com/pingcap/log v0.0.0-20200511115504-543df19646ad
-	github.com/pingcap/parser v0.0.0-20200609110328-c65941b9fbb3
+	github.com/pingcap/parser v0.0.0-20200617145328-e63134b60279
 	github.com/pingcap/pd/v4 v4.0.0-rc.2.0.20200520083007-2c251bd8f181
 	github.com/pingcap/sysutil v0.0.0-20200408114249-ed3bd6f7fdb1
 	github.com/pingcap/tidb-tools v4.0.0-rc.1.0.20200514040632-f76b3e428e19+incompatible
-	github.com/pingcap/tipb v0.0.0-20200610045017-b69a98cfcf6b
+	github.com/pingcap/tipb v0.0.0-20200618092958-4fad48b4c8c3
 	github.com/prometheus/client_golang v1.5.1
 	github.com/prometheus/client_model v0.2.0
 	github.com/prometheus/common v0.9.1
