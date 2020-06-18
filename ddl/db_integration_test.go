@@ -2156,7 +2156,7 @@ func (s *testIntegrationSuite7) TestAddExpressionIndexOnPartition(c *C) {
 	tk.MustExec(`create table t(
 	a int,
 	b varchar(100),
-	c int,
+	c int)
 	PARTITION BY RANGE ( a ) (
 	PARTITION p0 VALUES LESS THAN (6),
 		PARTITION p1 VALUES LESS THAN (11),
