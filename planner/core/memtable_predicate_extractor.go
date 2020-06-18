@@ -1048,7 +1048,7 @@ type TiFlashSystemTableExtractor struct {
 	// SkipRequest means the where clause always false, we don't need to request any component
 	SkipRequest bool
 
-	// TiFlashNodes represents all tiflash nodes we should send request to.
+	// TiFlashInstances represents all tiflash instances we should send request to.
 	// e.g:
 	// 1. SELECT * FROM <table_name> WHERE tiflash_instance='192.168.1.7:3930'
 	// 2. SELECT * FROM <table_name> WHERE tiflash_instance in ('192.168.1.7:3930', '192.168.1.9:3930')
