@@ -376,11 +376,12 @@ func decodeOldRowValToChunk(e *baseExecutor, tblInfo *model.TableInfo, handle kv
 			chk.AppendNull(i)
 			continue
 		}
-		if ok, err := tryDecodeFromHandle(tblInfo, i, col, handle, chk, decoder, pkCols); err != nil {
+		ok, err := tryDecodeFromHandle(tblInfo, i, col, handle, chk, decoder, pkCols)
+		if err != nil {
 			return err
-			if ok {
-				continue
-			}
+		}
+		if ok {
+			continue
 		}
 		cutPos := colID2CutPos[col.ID]
 		if len(cutVals[cutPos]) == 0 {

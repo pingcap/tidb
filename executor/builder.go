@@ -3010,7 +3010,7 @@ func newRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 		}
 	}
 	if len(pkCols) == 0 {
-		pkCols := tables.TryGetCommonPkColumnIds(tbl)
+		pkCols = tables.TryGetCommonPkColumnIds(tbl)
 		if len(pkCols) == 0 {
 			pkCols = []int64{0}
 		}
