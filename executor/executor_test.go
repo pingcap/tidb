@@ -5880,7 +5880,6 @@ func (s *testSuite) TestSlowQuerySensitiveQuery(c *C) {
 	defer func() {
 		tk.MustExec("set tidb_slow_log_threshold=300;")
 		config.StoreGlobalConfig(originCfg)
-		logutil.SlowQueryLogger = log.StandardLogger()
 		os.Remove(newCfg.Log.SlowQueryFile)
 	}()
 	err := logutil.InitLogger(newCfg.Log.ToLogConfig())
