@@ -27,12 +27,14 @@ import (
 
 // RowContainer provides a place for many rows, so many that we might want to spill them into disk.
 type RowContainer struct {
-	// records stores the chunks in memory.
-	records *List
-	// recordsInDisk stores the chunks in disk.
-	recordsInDisk *ListInDisk
-	// m guarantees spill and get operator for rowContainer is mutually exclusive.
-	m sync.RWMutex
+	m struct {
+		// RWMutex guarantees spill and get operator for rowContainer is mutually exclusive.
+		sync.RWMutex
+		// records stores the chunks in memory.
+		records *List
+		// recordsInDisk stores the chunks in disk.
+		recordsInDisk *ListInDisk
+	}
 
 	fieldType []*types.FieldType
 	chunkSize int
@@ -46,58 +48,61 @@ type RowContainer struct {
 // NewRowContainer creates a new RowContainer in memory.
 func NewRowContainer(fieldType []*types.FieldType, chunkSize int) *RowContainer {
 	li := NewList(fieldType, chunkSize, chunkSize)
-	rc := &RowContainer{records: li, fieldType: fieldType, chunkSize: chunkSize}
+	rc := &RowContainer{fieldType: fieldType, chunkSize: chunkSize}
+	rc.m.records = li
 	rc.memTracker = li.memTracker
 	rc.diskTracker = disk.NewTracker(stringutil.StringerStr("RowContainer"), -1)
 	return rc
 }
 
 // SpillToDisk spills data to disk.
-func (c *RowContainer) SpillToDisk(needLock bool) (err error) {
+func (c *RowContainer) SpillToDisk(inReadLock bool) (err error) {
 	// Maybe the function call stack includes RowContainer.Add() and gets lock in that function,
 	// so we don't need to get the lock again.
-	if needLock {
-		c.m.Lock()
-		defer c.m.Unlock()
+	if inReadLock {
+		c.m.RUnlock()
+		defer c.m.RLock()
 	}
-	N := c.records.NumChunks()
-	c.recordsInDisk = NewListInDisk(c.records.FieldTypes())
-	c.recordsInDisk.diskTracker.AttachTo(c.diskTracker)
+	c.m.Lock()
+	defer c.m.Unlock()
+	N := c.m.records.NumChunks()
+	c.m.recordsInDisk = NewListInDisk(c.m.records.FieldTypes())
+	c.m.recordsInDisk.diskTracker.AttachTo(c.diskTracker)
 	for i := 0; i < N; i++ {
-		chk := c.records.GetChunk(i)
-		err = c.recordsInDisk.Add(chk)
+		chk := c.m.records.GetChunk(i)
+		err = c.m.recordsInDisk.Add(chk)
 		if err != nil {
 			return
 		}
 	}
-	c.records.Clear()
+	c.m.records.Clear()
 	return
 }
 
 // Reset resets RowContainer.
 func (c *RowContainer) Reset() error {
 	if c.AlreadySpilled() {
-		err := c.recordsInDisk.Close()
-		c.recordsInDisk = nil
+		err := c.m.recordsInDisk.Close()
+		c.m.recordsInDisk = nil
 		if err != nil {
 			return err
 		}
 	} else {
-		c.records.Reset()
+		c.m.records.Reset()
 	}
 	return nil
 }
 
 // AlreadySpilled indicates that records have spilled out into disk.
 func (c *RowContainer) AlreadySpilled() bool {
-	return c.recordsInDisk != nil
+	return c.m.recordsInDisk != nil
 }
 
 // AlreadySpilledSafe indicates that records have spilled out into disk. It's thread-safe.
 func (c *RowContainer) AlreadySpilledSafe() bool {
 	c.m.RLock()
 	defer c.m.RUnlock()
-	return c.recordsInDisk != nil
+	return c.m.recordsInDisk != nil
 }
 
 // NumRow returns the number of rows in the container
@@ -105,9 +110,9 @@ func (c *RowContainer) NumRow() int {
 	c.m.RLock()
 	defer c.m.RUnlock()
 	if c.AlreadySpilled() {
-		return c.recordsInDisk.Len()
+		return c.m.recordsInDisk.Len()
 	}
-	return c.records.Len()
+	return c.m.records.Len()
 }
 
 // NumRowsOfChunk returns the number of rows of a chunk in the ListInDisk.
@@ -115,9 +120,9 @@ func (c *RowContainer) NumRowsOfChunk(chkID int) int {
 	c.m.RLock()
 	defer c.m.RUnlock()
 	if c.AlreadySpilled() {
-		return c.recordsInDisk.NumRowsOfChunk(chkID)
+		return c.m.recordsInDisk.NumRowsOfChunk(chkID)
 	}
-	return c.records.NumRowsOfChunk(chkID)
+	return c.m.records.NumRowsOfChunk(chkID)
 }
 
 // NumChunks returns the number of chunks in the container.
@@ -125,9 +130,9 @@ func (c *RowContainer) NumChunks() int {
 	c.m.RLock()
 	defer c.m.RUnlock()
 	if c.AlreadySpilled() {
-		return c.recordsInDisk.NumChunks()
+		return c.m.recordsInDisk.NumChunks()
 	}
-	return c.records.NumChunks()
+	return c.m.records.NumChunks()
 }
 
 // Add appends a chunk into the RowContainer.
@@ -135,9 +140,9 @@ func (c *RowContainer) Add(chk *Chunk) (err error) {
 	c.m.RLock()
 	defer c.m.RUnlock()
 	if c.AlreadySpilled() {
-		err = c.recordsInDisk.Add(chk)
+		err = c.m.recordsInDisk.Add(chk)
 	} else {
-		c.records.Add(chk)
+		c.m.records.Add(chk)
 	}
 	return
 }
@@ -147,22 +152,22 @@ func (c *RowContainer) AppendRow(row Row) (RowPtr, error) {
 	if c.AlreadySpilled() {
 		return RowPtr{}, errors.New("ListInDisk don't support AppendRow")
 	}
-	return c.records.AppendRow(row), nil
+	return c.m.records.AppendRow(row), nil
 }
 
 // AllocChunk allocates a new chunk from RowContainer.
 func (c *RowContainer) AllocChunk() (chk *Chunk) {
-	return c.records.allocChunk()
+	return c.m.records.allocChunk()
 }
 
 // GetChunk returns chkIdx th chunk of in memory records.
 func (c *RowContainer) GetChunk(chkIdx int) *Chunk {
-	return c.records.GetChunk(chkIdx)
+	return c.m.records.GetChunk(chkIdx)
 }
 
 // GetList returns the list of in memory records.
 func (c *RowContainer) GetList() *List {
-	return c.records
+	return c.m.records
 }
 
 // GetRow returns the row the ptr pointed to.
@@ -170,9 +175,9 @@ func (c *RowContainer) GetRow(ptr RowPtr) (Row, error) {
 	c.m.RLock()
 	defer c.m.RUnlock()
 	if c.AlreadySpilled() {
-		return c.recordsInDisk.GetRow(ptr)
+		return c.m.recordsInDisk.GetRow(ptr)
 	}
-	return c.records.GetRow(ptr), nil
+	return c.m.records.GetRow(ptr), nil
 }
 
 // GetMemTracker returns the memory tracker in records, panics if the RowContainer has already spilled.
@@ -188,10 +193,10 @@ func (c *RowContainer) GetDiskTracker() *disk.Tracker {
 // Close close the RowContainer
 func (c *RowContainer) Close() (err error) {
 	if c.AlreadySpilled() {
-		err = c.recordsInDisk.Close()
-		c.recordsInDisk = nil
+		err = c.m.recordsInDisk.Close()
+		c.m.recordsInDisk = nil
 	}
-	c.records.Clear()
+	c.m.records.Clear()
 	return
 }
 
@@ -223,7 +228,7 @@ func (a *SpillDiskAction) Action(t *memory.Tracker, trigger *memory.Tracker) {
 		// TODO: Refine processing for various errors. Return or Panic.
 		logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
 			zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
-		err := a.c.SpillToDisk(a.c.GetMemTracker() != trigger)
+		err := a.c.SpillToDisk(a.c.GetMemTracker() == trigger)
 		if err != nil {
 			panic(err)
 		}
