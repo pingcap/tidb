@@ -578,6 +578,7 @@ func (p *partialResult4ApproxCountDistinct) readAndMerge(rb []byte) error {
 	return err
 }
 
+// Correct system errors due to collisions during hashing in uint32.
 func (p *partialResult4ApproxCountDistinct) fixedSize() uint64 {
 	if 0 == p.skipDegree {
 		return uint64(p.size)
@@ -588,7 +589,7 @@ func (p *partialResult4ApproxCountDistinct) fixedSize() uint64 {
 	// Pseudo-random remainder.
 	res += intHash64(uint64(p.size)) & ((uint64(1) << p.skipDegree) - 1)
 
-	// Correct system errors due to collisions during hashing in uint32.
+	// When different elements randomly scattered across 2^32 buckets, filled buckets with average of `res` obtained.
 	p32 := uint64(1) << 32
 	fixedRes := math.Round(float64(p32) * (math.Log(float64(p32)) - math.Log(float64(p32-res))))
 	return uint64(fixedRes)
