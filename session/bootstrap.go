@@ -1081,12 +1081,10 @@ func upgradeToVer48(s Session, ver int64) {
 	defValues := map[string]string{
 		variable.TiDBIndexLookupConcurrency:     "4",
 		variable.TiDBIndexLookupJoinConcurrency: "4",
-		variable.TiDBHashJoinConcurrency:        "5",
 		variable.TiDBHashAggFinalConcurrency:    "4",
 		variable.TiDBHashAggPartialConcurrency:  "4",
 		variable.TiDBWindowConcurrency:          "4",
 		variable.TiDBProjectionConcurrency:      "4",
-		variable.TiDBDistSQLScanConcurrency:     "15",
 	}
 	names := make([]string, 0, len(defValues))
 	for n := range defValues {

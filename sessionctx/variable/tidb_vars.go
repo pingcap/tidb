@@ -15,7 +15,6 @@ package variable
 
 import (
 	"os"
-	"runtime"
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/uber-go/atomic"
@@ -425,7 +424,7 @@ const (
 	DefIndexSerialScanConcurrency      = 1
 	DefIndexJoinBatchSize              = 25000
 	DefIndexLookupSize                 = 20000
-	DefDistSQLScanConcurrency          = ConcurrencyUnset
+	DefDistSQLScanConcurrency          = 15
 	DefBuildStatsConcurrency           = 4
 	DefAutoAnalyzeRatio                = 0.5
 	DefAutoAnalyzeStartTime            = "00:00 +0000"
@@ -470,7 +469,7 @@ const (
 	DefTiDBRetryLimit                  = 10
 	DefTiDBDisableTxnAutoRetry         = true
 	DefTiDBConstraintCheckInPlace      = false
-	DefTiDBHashJoinConcurrency         = ConcurrencyUnset
+	DefTiDBHashJoinConcurrency         = 5
 	DefTiDBProjectionConcurrency       = ConcurrencyUnset
 	DefTiDBOptimizerSelectivityLevel   = 0
 	DefTiDBAllowBatchCop               = 0
@@ -534,5 +533,6 @@ var (
 	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
 	MinExpensiveQueryTimeThreshold uint64 = 10 //10s
 	CapturePlanBaseline                   = serverGlobalVariable{globalVal: "0"}
-	DefExecutorConcurrency                = runtime.NumCPU()
+	// DefExecutorConcurrency is set to 4 currently to keep test pass easily, we may adjust this in the future.
+	DefExecutorConcurrency = 4
 )
