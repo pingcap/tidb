@@ -1639,8 +1639,8 @@ func (it *infoschemaTable) WritableCols() []*table.Column {
 	return it.cols
 }
 
-// DeletableCols implements table DeletableCols interface.
-func (it *infoschemaTable) DeletableCols() []*table.Column {
+// FullHiddenColsAndVisibleCols implements table FullHiddenColsAndVisibleCols interface.
+func (it *infoschemaTable) FullHiddenColsAndVisibleCols() []*table.Column {
 	return it.cols
 }
 
@@ -1766,8 +1766,8 @@ func (vt *VirtualTable) WritableCols() []*table.Column {
 	return nil
 }
 
-// DeletableCols implements table DeletableCols interface.
-func (vt *VirtualTable) DeletableCols() []*table.Column {
+// FullHiddenColsAndVisibleCols implements table FullHiddenColsAndVisibleCols interface.
+func (vt *VirtualTable) FullHiddenColsAndVisibleCols() []*table.Column {
 	return nil
 }
 
