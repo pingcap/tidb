@@ -414,6 +414,7 @@ func (ts *testSuite) TestHiddenColumn(c *C) {
 	tc.VisibleColumns = nil
 	tc.WritableColumns = nil
 	tc.HiddenColumns = nil
+	tc.FullHiddenColsAndVisibleColumns = nil
 
 	// Basic test
 	cols := tb.VisibleCols()
@@ -428,6 +429,17 @@ func (ts *testSuite) TestHiddenColumn(c *C) {
 	c.Assert(table.FindCol(hiddenCols, "c"), IsNil)
 	c.Assert(table.FindCol(hiddenCols, "d"), NotNil)
 	c.Assert(table.FindCol(hiddenCols, "e"), IsNil)
+	colInfo[1].State = model.StateDeleteOnly
+	colInfo[2].State = model.StateDeleteOnly
+	fullHiddenColsAndVisibleColumns := tb.FullHiddenColsAndVisibleCols()
+	c.Assert(table.FindCol(fullHiddenColsAndVisibleColumns, "a"), NotNil)
+	c.Assert(table.FindCol(fullHiddenColsAndVisibleColumns, "b"), NotNil)
+	c.Assert(table.FindCol(fullHiddenColsAndVisibleColumns, "c"), IsNil)
+	c.Assert(table.FindCol(fullHiddenColsAndVisibleColumns, "d"), NotNil)
+	c.Assert(table.FindCol(fullHiddenColsAndVisibleColumns, "e"), NotNil)
+	// Reset schema states.
+	colInfo[1].State = model.StatePublic
+	colInfo[2].State = model.StatePublic
 
 	// Test show create table
 	tk.MustQuery("show create table t;").Check(testkit.Rows(
