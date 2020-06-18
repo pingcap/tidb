@@ -177,6 +177,19 @@ func (pd *planDecoder) alignFields(planInfos []*planInfo) {
 	if len(planInfos) == 0 {
 		return
 	}
+	// Align fields length. Some plan may doesn't have runtime info, need append `` to align with other plan fields.
+	maxLen := -1
+	for _, p := range planInfos {
+		if len(p.fields) > maxLen {
+			maxLen = len(p.fields)
+		}
+	}
+	for _, p := range planInfos {
+		for len(p.fields) < maxLen {
+			p.fields = append(p.fields, "")
+		}
+	}
+
 	fieldsLen := len(planInfos[0].fields)
 	// Last field no need to align.
 	fieldsLen--
@@ -253,7 +266,8 @@ func decodePlanInfo(str string) (*planInfo, error) {
 }
 
 // EncodePlanNode is used to encode the plan to a string.
-func EncodePlanNode(depth, pid int, planType string, isRoot bool, rowCount float64, explainInfo string, buf *bytes.Buffer) {
+func EncodePlanNode(depth, pid int, planType string, isRoot bool, rowCount float64,
+	explainInfo, actRows, analyzeInfo, memoryInfo, diskInfo string, buf *bytes.Buffer) {
 	buf.WriteString(strconv.Itoa(depth))
 	buf.WriteByte(separator)
 	buf.WriteString(encodeID(planType, pid))
@@ -267,6 +281,17 @@ func EncodePlanNode(depth, pid int, planType string, isRoot bool, rowCount float
 	buf.WriteString(strconv.FormatFloat(rowCount, 'f', -1, 64))
 	buf.WriteByte(separator)
 	buf.WriteString(explainInfo)
+	// Check whether has runtime info.
+	if len(actRows) > 0 || len(analyzeInfo) > 0 || len(memoryInfo) > 0 || len(diskInfo) > 0 {
+		buf.WriteByte(separator)
+		buf.WriteString(actRows)
+		buf.WriteByte(separator)
+		buf.WriteString(analyzeInfo)
+		buf.WriteByte(separator)
+		buf.WriteString(memoryInfo)
+		buf.WriteByte(separator)
+		buf.WriteString(diskInfo)
+	}
 	buf.WriteByte(lineBreaker)
 }
 
