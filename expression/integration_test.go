@@ -6539,8 +6539,6 @@ func (s *testIntegrationSuite) TestIssue17287(c *C) {
 	tk.MustQuery("execute stmt7 using @val1;").Check(testkit.Rows("1589873945"))
 	tk.MustQuery("execute stmt7 using @val2;").Check(testkit.Rows("1589873946"))
 }
-<<<<<<< HEAD
-=======
 
 func (s *testIntegrationSuite) TestIssue17727(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -6589,4 +6587,3 @@ func (s *testIntegrationSerialSuite) TestIssue17891(c *C) {
 	tk.MustExec("drop table t")
 	tk.MustExec("create table test(id int, value set ('a','b','c') charset utf8mb4 collate utf8mb4_general_ci default 'a,B ,C');")
 }
->>>>>>> 8a33340... expression: fix the panic when we use `unix_time` expression in `prepare and execute` statement. (#17855)
