@@ -1185,7 +1185,7 @@ var tableTableTiFlashTablesCols = []columnInfo{
 	{name: "STORAGE_META_NUM_NORMAL_PAGES", tp: mysql.TypeLonglong, size: 64},
 	{name: "STORAGE_META_MAX_PAGE_ID", tp: mysql.TypeLonglong, size: 64},
 	{name: "BACKGROUND_TASKS_LENGTH", tp: mysql.TypeLonglong, size: 64},
-	{name: "TIFLASH_NODE", tp: mysql.TypeVarchar, size: 64},
+	{name: "TIFLASH_INSTANCE", tp: mysql.TypeVarchar, size: 64},
 }
 
 var tableTableTiFlashSegmentsCols = []columnInfo{
@@ -1206,7 +1206,7 @@ var tableTableTiFlashSegmentsCols = []columnInfo{
 	{name: "AVG_STABLE_PACK_ROWS", tp: mysql.TypeDouble, size: 64},
 	{name: "DELTA_RATE", tp: mysql.TypeDouble, size: 64},
 	{name: "DELTA_CACHE_SIZE", tp: mysql.TypeLonglong, size: 64},
-	{name: "TIFLASH_NODE", tp: mysql.TypeVarchar, size: 64},
+	{name: "TIFLASH_INSTANCE", tp: mysql.TypeVarchar, size: 64},
 }
 
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.

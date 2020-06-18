@@ -1771,15 +1771,15 @@ func (e *memtableRetriever) setDataForStatementsSummary(ctx sessionctx.Context, 
 // TiFlashSystemTableRetriever is used to read system table from tiflash.
 type TiFlashSystemTableRetriever struct {
 	dummyCloser
-	table       *model.TableInfo
-	outputCols  []*model.ColumnInfo
-	nodeCount   int
-	nodeIdx     int
-	nodeInfos   []tiflashNodeInfo
-	rowIdx      int
-	retrieved   bool
-	initialized bool
-	extractor   *plannercore.TiFlashSystemTableExtractor
+	table         *model.TableInfo
+	outputCols    []*model.ColumnInfo
+	instanceCount int
+	instanceIdx   int
+	instanceInfos []tiflashInstanceInfo
+	rowIdx        int
+	retrieved     bool
+	initialized   bool
+	extractor     *plannercore.TiFlashSystemTableExtractor
 }
 
 func (e *TiFlashSystemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
@@ -1787,12 +1787,12 @@ func (e *TiFlashSystemTableRetriever) retrieve(ctx context.Context, sctx session
 		return nil, nil
 	}
 	if !e.initialized {
-		err := e.initialize(sctx, e.extractor.TiFlashNodes)
+		err := e.initialize(sctx, e.extractor.TiFlashInstances)
 		if err != nil {
 			return nil, err
 		}
 	}
-	if e.nodeCount == 0 || e.nodeIdx >= e.nodeCount {
+	if e.instanceCount == 0 || e.instanceIdx >= e.instanceCount {
 		e.retrieved = true
 		return nil, nil
 	}
@@ -1800,12 +1800,12 @@ func (e *TiFlashSystemTableRetriever) retrieve(ctx context.Context, sctx session
 	return e.dataForTiFlashSystemTables(sctx)
 }
 
-type tiflashNodeInfo struct {
+type tiflashInstanceInfo struct {
 	id  string
 	url string
 }
 
-func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflashNodes set.StringSet) error {
+func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflashInstances set.StringSet) error {
 	store := sctx.GetStore()
 	if etcd, ok := store.(tikv.EtcdBackend); ok {
 		if addrs := etcd.EtcdAddrs(); addrs != nil {
@@ -1839,16 +1839,16 @@ func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflas
 
 			for _, ev := range resp.Kvs {
 				id := string(ev.Key)[len(prefix):]
-				if len(tiflashNodes) > 0 && !tiflashNodes.Exist(id) {
+				if len(tiflashInstances) > 0 && !tiflashInstances.Exist(id) {
 					continue
 				}
 				// TODO: Support https in tiflash
 				url := fmt.Sprintf("http://%s", ev.Value)
-				e.nodeInfos = append(e.nodeInfos, tiflashNodeInfo{
+				e.instanceInfos = append(e.instanceInfos, tiflashInstanceInfo{
 					id:  id,
 					url: url,
 				})
-				e.nodeCount += 1
+				e.instanceCount += 1
 			}
 			e.initialized = true
 			return nil
@@ -1861,7 +1861,7 @@ func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflas
 func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.Context) ([][]types.Datum, error) {
 	var columnNames []string
 	for _, c := range e.outputCols {
-		if c.Name.O == "TIFLASH_NODE" {
+		if c.Name.O == "TIFLASH_INSTANCE" {
 			continue
 		}
 		columnNames = append(columnNames, c.Name.L)
@@ -1871,8 +1871,8 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.
 	sql := fmt.Sprintf("SELECT %s FROM system.%s LIMIT %d, %d", strings.Join(columnNames, ","), targetTable, e.rowIdx, maxCount)
 	notNumber := "nan"
 	httpClient := http.DefaultClient
-	nodeInfo := e.nodeInfos[e.nodeIdx]
-	url := nodeInfo.url
+	instanceInfo := e.instanceInfos[e.instanceIdx]
+	url := instanceInfo.url
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1901,7 +1901,7 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.
 		}
 		row := make([]types.Datum, len(e.outputCols))
 		for index, column := range e.outputCols {
-			if column.Name.O == "TIFLASH_NODE" {
+			if column.Name.O == "TIFLASH_INSTANCE" {
 				continue
 			}
 			if column.Tp == mysql.TypeVarchar {
@@ -1928,11 +1928,11 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.
 				return nil, errors.Errorf("Meet column of unknown type %v", column)
 			}
 		}
-		row[len(e.outputCols)-1].SetString(nodeInfo.id, mysql.DefaultCollationName)
+		row[len(e.outputCols)-1].SetString(instanceInfo.id, mysql.DefaultCollationName)
 		rows = append(rows, row)
 	}
 	if len(rows) < maxCount {
-		e.nodeIdx += 1
+		e.instanceIdx += 1
 		e.rowIdx = 0
 	}
 	return rows, nil

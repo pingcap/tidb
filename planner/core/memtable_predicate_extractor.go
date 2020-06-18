@@ -1050,9 +1050,9 @@ type TiFlashSystemTableExtractor struct {
 
 	// TiFlashNodes represents all tiflash nodes we should send request to.
 	// e.g:
-	// 1. SELECT * FROM <table_name> WHERE tiflash_node='192.168.1.7:3930'
-	// 2. SELECT * FROM <table_name> WHERE tiflash_node in ('192.168.1.7:3930', '192.168.1.9:3930')
-	TiFlashNodes set.StringSet
+	// 1. SELECT * FROM <table_name> WHERE tiflash_instance='192.168.1.7:3930'
+	// 2. SELECT * FROM <table_name> WHERE tiflash_instance in ('192.168.1.7:3930', '192.168.1.9:3930')
+	TiFlashInstances set.StringSet
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
@@ -1061,9 +1061,9 @@ func (e *TiFlashSystemTableExtractor) Extract(_ sessionctx.Context,
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) []expression.Expression {
-	remained, skipRequest, tiflashNodes := e.extractCol(schema, names, predicates, "tiflash_node", false)
+	remained, skipRequest, tiflashInstances := e.extractCol(schema, names, predicates, "tiflash_instance", false)
 	e.SkipRequest = skipRequest
-	e.TiFlashNodes = tiflashNodes
+	e.TiFlashInstances = tiflashInstances
 	return remained
 }
 
@@ -1072,8 +1072,8 @@ func (e *TiFlashSystemTableExtractor) explainInfo(p *PhysicalMemTable) string {
 		return "skip_request:true"
 	}
 	r := new(bytes.Buffer)
-	if len(e.TiFlashNodes) > 0 {
-		r.WriteString(fmt.Sprintf("tiflash_nodes:[%s], ", extractStringFromStringSet(e.TiFlashNodes)))
+	if len(e.TiFlashInstances) > 0 {
+		r.WriteString(fmt.Sprintf("tiflash_instances:[%s], ", extractStringFromStringSet(e.TiFlashInstances)))
 	}
 
 	// remove the last ", " in the message info
