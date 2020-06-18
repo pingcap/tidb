@@ -742,6 +742,8 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	// SPM
 	if sei.PlanInSPM {
 		ssElement.planInSPM = true
+	} else {
+		ssElement.planInSPM = false
 	}
 
 	// other
