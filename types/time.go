@@ -2351,20 +2351,7 @@ func parseDigits(input string, count int) (int, bool) {
 	return int(v), true
 }
 
-<<<<<<< HEAD
-func hour24TwoDigits(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
-	v, succ := parseDigits(input, 2)
-	if !succ || v >= 24 {
-		return input, false
-	}
-	t.hour = v
-	return input[2:], true
-}
-
 func secondsNumeric(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
-=======
-func secondsNumeric(t *CoreTime, input string, ctx map[string]int) (string, bool) {
->>>>>>> 959ad88... types: fix StrToDate handling of %h and %p (#17395)
 	result := oneOrTwoDigitRegex.FindString(input)
 	length := len(result)
 
