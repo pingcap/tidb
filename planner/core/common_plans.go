@@ -461,6 +461,24 @@ func (e *Execute) rebuildRange(p Plan) error {
 			}
 		}
 	case *PointGetPlan:
+		if x.Path != nil {
+			if x.Path.IsTablePath {
+				x.Path.Ranges, err = ranger.BuildTableRange(x.Path.AccessConds, sc, x.Path.PkCol.RetType)
+				// For col = NULL case, the length of the final ranges could be empty.
+				if err != nil || len(x.Path.Ranges) != 1 {
+					return errors.Errorf("Rebuilding range for PointGet failed")
+				}
+				x.Handle = x.Path.Ranges[0].LowVal[0].GetInt64()
+				return nil
+			}
+			res, err := ranger.DetachCondAndBuildRangeForIndex(p.SCtx(), x.Path.AccessConds, x.Path.IdxCols, x.Path.IdxColLens)
+			// For col = NULL case, the length of the final ranges could be empty.
+			if err != nil || len(res.Ranges) != 1 {
+				return errors.Errorf("Rebuilding range for PointGet failed")
+			}
+			x.IndexValues = res.Ranges[0].LowVal
+			return nil
+		}
 		if x.HandleParam != nil {
 			x.Handle, err = x.HandleParam.Datum.ToInt64(sc)
 			if err != nil {
