@@ -97,6 +97,9 @@ func buildApproxCountDistinct(aggFuncDesc *aggregation.AggFuncDesc, ordinal int)
 		ordinal: ordinal,
 	}}
 
+	// In partition table, union need to compute partial result into partial result.
+	// We can detect and handle this case by checking whether return type is string.
+
 	switch aggFuncDesc.RetTp.Tp {
 	case mysql.TypeLonglong:
 		switch aggFuncDesc.Mode {
