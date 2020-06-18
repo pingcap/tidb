@@ -14,6 +14,8 @@
 package decoder
 
 import (
+	"github.com/pingcap/parser/model"
+	log "github.com/sirupsen/logrus"
 	"sort"
 	"time"
 
@@ -78,7 +80,7 @@ func NewRowDecoder(tbl table.Table, decodeColMap map[int64]Column) *RowDecoder {
 	}
 }
 
-func (rd *RowDecoder) tryDecodeFromHandle(dCol Column, handle kv.Handle) (bool, error) {
+func (rd *RowDecoder) tryDecodeFromHandle(dCol Column, handle kv.Handle, pkCols []int64) (bool, error) {
 	if handle == nil {
 		return false, nil
 	}
@@ -91,19 +93,24 @@ func (rd *RowDecoder) tryDecodeFromHandle(dCol Column, handle kv.Handle) (bool, 
 		}
 		return true, nil
 	}
-	if !handle.IsInt() && mysql.HasPriKeyFlag(dCol.Col.Flag) {
-		_, d, err := codec.DecodeOne(handle.EncodedCol(colInfo.Offset))
-		if err != nil {
-			return false, errors.Trace(err)
+	// Try to decode common handle.
+	if mysql.HasPriKeyFlag(dCol.Col.Flag) {
+		for i, hid := range pkCols {
+			if dCol.Col.ID == hid {
+				_, d, err := codec.DecodeOne(handle.EncodedCol(i))
+				if err != nil {
+					return false, errors.Trace(err)
+				}
+				rd.mutRow.SetValue(colInfo.Offset, d)
+				return true, nil
+			}
 		}
-		rd.mutRow.SetValue(colInfo.Offset, d)
-		return true, nil
 	}
 	return false, nil
 }
 
 // DecodeAndEvalRowWithMap decodes a byte slice into datums and evaluates the generated column value.
-func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.Handle, b []byte, decodeLoc, sysLoc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
+func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.Handle, b []byte, decodeLoc, sysLoc *time.Location, row map[int64]types.Datum, tbl *model.TableInfo) (map[int64]types.Datum, error) {
 	var err error
 	if rowcodec.IsNewFormat(b) {
 		row, err = tablecodec.DecodeRowWithMapNew(b, rd.colTypes, decodeLoc, row)
@@ -113,22 +120,31 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.
 	if err != nil {
 		return nil, err
 	}
-	if !rd.haveGenColumn {
-		return row, nil
+	var pkCols []int64
+	if tbl.IsCommonHandle {
+		pkIdx := tables.FindPrimaryIndex(tbl)
+		for _, idxCol := range pkIdx.Columns {
+			pkCols = append(pkCols, tbl.Columns[idxCol.Offset].ID)
+		}
 	}
-
+	log.Warnf("3333333333333333333 ", rd.columns)
 	for _, dCol := range rd.columns {
 		colInfo := dCol.Col.ColumnInfo
 		val, ok := row[colInfo.ID]
+		log.Warnf("44444444444444444444444444 ")
 		if ok || dCol.GenExpr != nil {
+			log.Warnf("55555555555555555555 ", val.String())
 			rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
 			continue
 		}
-		ok, err := rd.tryDecodeFromHandle(dCol, handle)
+		log.Warnf("2222222222222222222222222222222222 ", dCol.Col.String())
+		ok, err := rd.tryDecodeFromHandle(dCol, handle, pkCols)
 		if err != nil {
 			return nil, err
 		}
 		if ok {
+			row[colInfo.ID] = rd.mutRow.ToRow().GetDatum(colInfo.Offset, &dCol.Col.FieldType)
+			log.Warnf("11111111111111111111111111111 ", dCol.Col.String())
 			continue
 		}
 		// Get the default value of the column in the generated column expression.
