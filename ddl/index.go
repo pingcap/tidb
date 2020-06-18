@@ -15,6 +15,7 @@ package ddl
 
 import (
 	"context"
+	"github.com/prometheus/common/log"
 	"math"
 	"strconv"
 	"sync/atomic"
@@ -881,6 +882,7 @@ func (w *addIndexWorker) getIndexRecord(handle kv.Handle, recordKey []byte, rawR
 	}
 	idxVal := make([]types.Datum, len(idxInfo.Columns))
 	for j, v := range idxInfo.Columns {
+		log.Warnf("xxxxxxxxxxxxxxxxxxxxxxxxx ", v.Name)
 		col := cols[v.Offset]
 		idxColumnVal, ok := w.rowMap[col.ID]
 		if ok {

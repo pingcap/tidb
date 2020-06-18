@@ -59,11 +59,11 @@ func NewRowDecoder(tbl table.Table, decodeColMap map[int64]Column) *RowDecoder {
 			haveGenCol = true
 		}
 	}
-	if !haveGenCol {
-		return &RowDecoder{
-			colTypes: colFieldMap,
-		}
-	}
+	//if !haveGenCol {
+	//	return &RowDecoder{
+	//		colTypes: colFieldMap,
+	//	}
+	//}
 
 	cols := tbl.Cols()
 	tps := make([]*types.FieldType, len(cols))
@@ -189,6 +189,15 @@ func BuildFullDecodeColMap(indexedCols []*table.Column, t table.Table, genExprPr
 	pendingCols := make([]*table.Column, len(indexedCols))
 	copy(pendingCols, indexedCols)
 	decodeColMap := make(map[int64]Column, len(pendingCols))
+
+	for _, col := range t.Cols() {
+		if mysql.HasPriKeyFlag(col.Flag) {
+			log.Warn("hhhhhhhhhhhhhhhhhhhhh")
+			decodeColMap[col.ID] = Column{
+				Col: col,
+			}
+		}
+	}
 
 	for i := 0; i < len(pendingCols); i++ {
 		col := pendingCols[i]
