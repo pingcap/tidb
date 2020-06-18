@@ -54,11 +54,11 @@ var StmtExecDetailKey = stmtExecDetailKeyType{}
 
 // StmtExecDetails contains stmt level execution detail info.
 type StmtExecDetails struct {
-	BackoffCount       int64
-	BackoffDuration    int64
-	WaitKVRespDuration int64
-	WaitPDRespDuration int64
-	RespClientDuration time.Duration
+	BackoffCount         int64
+	BackoffDuration      int64
+	WaitKVRespDuration   int64
+	WaitPDRespDuration   int64
+	WriteSQLRespDuration time.Duration
 }
 
 // CommitDetails contains commit detail information.

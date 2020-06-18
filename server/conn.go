@@ -1486,7 +1486,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 			}
 		}
 		if stmtDetail != nil {
-			stmtDetail.RespClientDuration += time.Since(start)
+			stmtDetail.WriteSQLRespDuration += time.Since(start)
 		}
 	}
 	return cc.writeEOF(serverStatus)
@@ -1556,7 +1556,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 		}
 	}
 	if stmtDetail != nil {
-		stmtDetail.RespClientDuration += time.Since(start)
+		stmtDetail.WriteSQLRespDuration += time.Since(start)
 	}
 	if cl, ok := rs.(fetchNotifier); ok {
 		cl.OnFetchReturned()
