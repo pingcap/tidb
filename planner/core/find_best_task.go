@@ -174,7 +174,7 @@ func (p *baseLogicalPlan) rebuildChildTasks(childTasks *[]task, pp PhysicalPlan,
 		child.rollBackTaskMap(TS)
 	}
 
-	var multAll int64 = 1
+	multAll := int64(1)
 	var curClock CountDown
 	for _, x := range childCnts {
 		multAll *= x
