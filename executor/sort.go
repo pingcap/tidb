@@ -36,7 +36,7 @@ import (
 
 var rowChunksLabel fmt.Stringer = stringutil.StringerStr("rowChunks")
 
-var ErrInsertToPartitionFailed = terror.ClassExecutor.New(1, "Insert the records unsuccessfully. The SortedRowContainer is sorted.")
+var errInsertToPartitionFailed = terror.ClassExecutor.New(1, "Insert the records unsuccessfully. The SortedRowContainer is sorted.")
 
 // SortExec represents sorting executor.
 type SortExec struct {
@@ -242,7 +242,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 			break
 		}
 		if err := e.rowChunks.Add(chk); err != nil {
-			if ErrInsertToPartitionFailed.Equal(err) {
+			if errInsertToPartitionFailed.Equal(err) {
 				e.partitionList = append(e.partitionList, e.rowChunks)
 				e.rowChunks = NewSortedRowContainer(fields, e.maxChunkSize, e.ByItems, e.keyColumns, e.keyCmpFuncs)
 				e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
@@ -606,7 +606,7 @@ func (c *SortedRowContainer) Add(chk *chunk.Chunk) (err error) {
 	c.m.RLock()
 	defer c.m.RUnlock()
 	if c.m.rowPtrs != nil {
-		return ErrInsertToPartitionFailed
+		return errInsertToPartitionFailed
 	}
 	return c.RowContainer.Add(chk)
 }
