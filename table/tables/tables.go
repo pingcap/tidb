@@ -176,6 +176,7 @@ func initTableIndices(t *TableCommon) error {
 		idx := NewIndex(t.physicalTableID, tblInfo, idxInfo)
 		t.indices = append(t.indices, idx)
 	}
+	t.writableIndices = t.WritableIndices()
 	return nil
 }
 
