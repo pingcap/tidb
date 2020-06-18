@@ -200,8 +200,8 @@ record-db-qps = false
 # Max CPUs to use, 0 use number of CPUs in the machine.
 max-procs = 0
 
-# Max memory size to use, 0 use the total usable memory in the machine.
-max-memory = 0
+# Memory size quota for tidb server, 0 means unlimited
+server-memory-quota = 0
 
 # StmtCountLimit limits the max count of statement inside a transaction.
 stmt-count-limit = 5000
