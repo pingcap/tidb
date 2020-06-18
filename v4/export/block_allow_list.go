@@ -35,8 +35,8 @@ func filterTables(conf *Config) {
 				ignoredDBTable.AppendTable(dbName, table)
 			}
 		}
-		// 1. this dbName doesn't match black white list, don't add
-		// 2. this dbName matches black white list, but there is no table in this database, add
+		// 1. this dbName doesn't match block allow list, don't add
+		// 2. this dbName matches block allow list, but there is no table in this database, add
 		if _, ok := dbTables[dbName]; !ok && conf.TableFilter.MatchSchema(dbName) {
 			dbTables[dbName] = make([]*TableInfo, 0)
 		}
