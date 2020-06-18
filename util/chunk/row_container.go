@@ -81,6 +81,8 @@ func (c *RowContainer) SpillToDisk(inReadLock bool) (err error) {
 
 // Reset resets RowContainer.
 func (c *RowContainer) Reset() error {
+	c.m.Lock()
+	defer c.m.Unlock()
 	if c.AlreadySpilled() {
 		err := c.m.recordsInDisk.Close()
 		c.m.recordsInDisk = nil

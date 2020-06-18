@@ -258,7 +258,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		}
 	}
 	if e.rowChunks.NumRow() > 0 {
-		e.rowChunks.initPointerAndSort(false)
+		e.rowChunks.initPointerAndSort(true)
 		e.partitionList = append(e.partitionList, e.rowChunks)
 	}
 	return nil
@@ -570,9 +570,9 @@ func (c *SortedRowContainer) keyColumnsLess(i, j int) bool {
 	return c.lessRow(rowI, rowJ)
 }
 
-func (c *SortedRowContainer) initPointerAndSort(inSpilling bool) {
+func (c *SortedRowContainer) initPointerAndSort(needLock bool) {
 	// In spilling function, it has got the Lock and initPointerAndSort don't need to get lock again.
-	if !inSpilling {
+	if needLock {
 		c.m.Lock()
 		defer c.m.Unlock()
 	}
@@ -591,13 +591,7 @@ func (c *SortedRowContainer) initPointerAndSort(inSpilling bool) {
 }
 
 func (c *SortedRowContainer) sortAndSpillToDisk(inReadLock bool) (err error) {
-	if inReadLock {
-		c.m.RUnlock()
-		defer c.m.RLock()
-	}
-	c.m.Lock()
-	defer c.m.Unlock()
-	c.initPointerAndSort(true)
+	c.initPointerAndSort(false)
 	return c.RowContainer.SpillToDisk(inReadLock)
 }
 
