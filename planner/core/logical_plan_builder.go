@@ -2744,7 +2744,8 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		// If we use tbl.Cols() here, the update statement, will ignore the col `c`, and the data `3` will lost.
 		columns = tbl.WritableCols()
 	} else if b.inDeleteStmt {
-		columns = tbl.DeletableCols()
+		// All hidden columns are needed because we need to delete the expression index that consists of hidden columns.
+		columns = tbl.FullHiddenColsAndVisibleCols()
 	} else {
 		columns = tbl.Cols()
 	}
