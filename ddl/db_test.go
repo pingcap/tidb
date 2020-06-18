@@ -79,7 +79,6 @@ type testDBSuite struct {
 	store      kv.Storage
 	dom        *domain.Domain
 	schemaName string
-	tk         *testkit.TestKit
 	s          session.Session
 	lease      time.Duration
 	autoIDStep int64
