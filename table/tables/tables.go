@@ -51,17 +51,18 @@ import (
 type TableCommon struct {
 	tableID int64
 	// physicalTableID is a unique int64 to identify a physical table.
-	physicalTableID int64
-	Columns         []*table.Column
-	PublicColumns   []*table.Column
-	VisibleColumns  []*table.Column
-	HiddenColumns   []*table.Column
-	WritableColumns []*table.Column
-	writableIndices []table.Index
-	indices         []table.Index
-	meta            *model.TableInfo
-	allocs          autoid.Allocators
-	sequence        *sequenceCommon
+	physicalTableID                 int64
+	Columns                         []*table.Column
+	PublicColumns                   []*table.Column
+	VisibleColumns                  []*table.Column
+	HiddenColumns                   []*table.Column
+	WritableColumns                 []*table.Column
+	FullHiddenColsAndVisibleColumns []*table.Column
+	writableIndices                 []table.Index
+	indices                         []table.Index
+	meta                            *model.TableInfo
+	allocs                          autoid.Allocators
+	sequence                        *sequenceCommon
 
 	// recordPrefix and indexPrefix are generated using physicalTableID.
 	recordPrefix kv.Key
@@ -156,6 +157,7 @@ func initTableCommon(t *TableCommon, tblInfo *model.TableInfo, physicalTableID i
 	t.VisibleColumns = t.VisibleCols()
 	t.HiddenColumns = t.HiddenCols()
 	t.WritableColumns = t.WritableCols()
+	t.FullHiddenColsAndVisibleColumns = t.FullHiddenColsAndVisibleCols()
 	t.writableIndices = t.WritableIndices()
 	t.recordPrefix = tablecodec.GenTableRecordPrefix(physicalTableID)
 	t.indexPrefix = tablecodec.GenTableIndexPrefix(physicalTableID)
@@ -293,9 +295,19 @@ func (t *TableCommon) WritableCols() []*table.Column {
 	return writableColumns
 }
 
-// DeletableCols implements table DeletableCols interface.
-func (t *TableCommon) DeletableCols() []*table.Column {
-	return t.Columns
+// FullHiddenColsAndVisibleCols implements table FullHiddenColsAndVisibleCols interface.
+func (t *TableCommon) FullHiddenColsAndVisibleCols() []*table.Column {
+	if len(t.FullHiddenColsAndVisibleColumns) > 0 {
+		return t.FullHiddenColsAndVisibleColumns
+	}
+
+	cols := make([]*table.Column, 0, len(t.Columns))
+	for _, col := range t.Columns {
+		if col.Hidden || col.State == model.StatePublic {
+			cols = append(cols, col)
+		}
+	}
+	return cols
 }
 
 // RecordPrefix implements table.Table interface.
