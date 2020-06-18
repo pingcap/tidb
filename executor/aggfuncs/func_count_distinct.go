@@ -464,13 +464,14 @@ type approxCountDistinctHashValue uint32
 
 // partialResult4ApproxCountDistinct use `BJKST` algorithm to compute approximate result of count distinct.
 // According to an experimental survey http://www.vldb.org/pvldb/vol11/p499-harmouch.pdf, the error guarantee of BJKST
-// was even better than the theoretical lower bounds (i.e., relative error was always far less than 1%).
+// was even better than the theoretical lower bounds.
 // For the calculation state, it uses a sample of element hash values with a size up to uniquesHashMaxSize. Compared
 // with the widely known HyperLogLog algorithm, this algorithm is less effective in terms of accuracy and
 // memory consumption (even up to proportionality), but it is adaptive. This means that with fairly high accuracy, it
 // consumes less memory during simultaneous computation of cardinality for a large number of data sets whose cardinality
 // has power law distribution (i.e. in cases when most of the data sets are small).
-// This algorithm is also very accurate for data sets with small cardinality and very efficient on CPU.
+// This algorithm is also very accurate for data sets with small cardinality and very efficient on CPU. If number of
+// distinct element is more than 2^32, relative error may be high.
 type partialResult4ApproxCountDistinct struct {
 	size       uint32 /// Number of elements.
 	sizeDegree uint8  /// The size of the table as a power of 2.
