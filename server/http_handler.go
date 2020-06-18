@@ -1718,13 +1718,26 @@ func (h *testHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
-// Supported op:
-//   * resolvelock?safepoint={uint64}&physical={bool}
+// Supported operations:
+//   * resolvelock?safepoint={uint64}&physical={bool}:
+//	   * safepoint: resolve all locks whose timestamp is less than the safepoint.
+//	   * physical: whether it uses physical(green GC) mode to scan locks. Default is true.
 func (h *testHandler) handleGC(op string, w http.ResponseWriter, req *http.Request) {
-	if op != "resolvelock" {
-		writeError(w, errors.NotSupportedf("op(%s)", op))
+	if !atomic.CompareAndSwapUint32(&h.gcIsRunning, 0, 1) {
+		writeError(w, errors.New("GC is running"))
 		return
 	}
+	defer atomic.StoreUint32(&h.gcIsRunning, 0)
+
+	switch op {
+	case "resolvelock":
+		h.handleGCResolveLocks(w, req)
+	default:
+		writeError(w, errors.NotSupportedf("operation(%s)", op))
+	}
+}
+
+func (h *testHandler) handleGCResolveLocks(w http.ResponseWriter, req *http.Request) {
 	s := req.FormValue("safepoint")
 	safePoint, err := strconv.ParseUint(s, 10, 64)
 	if err != nil {
@@ -1740,15 +1753,10 @@ func (h *testHandler) handleGC(op string, w http.ResponseWriter, req *http.Reque
 			return
 		}
 	}
-	if !atomic.CompareAndSwapUint32(&h.gcIsRunning, 0, 1) {
-		writeError(w, errors.New("gc is running"))
-		return
-	}
-	defer atomic.StoreUint32(&h.gcIsRunning, 0)
 
 	ctx := req.Context()
 	logutil.Logger(ctx).Info("start resolving locks", zap.Uint64("safePoint", safePoint), zap.Bool("physical", usePhysical))
-	physicalUsed, err := gcworker.RunResolveLocks(ctx, h.Store, h.RegionCache.PDClient(), safePoint, "test", 3, usePhysical)
+	physicalUsed, err := gcworker.RunResolveLocks(ctx, h.Store, h.RegionCache.PDClient(), safePoint, "testGCWorker", 3, usePhysical)
 	if err != nil {
 		writeError(w, errors.Annotate(err, "resolveLocks failed"))
 	} else {
