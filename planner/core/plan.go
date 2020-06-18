@@ -317,7 +317,7 @@ func (p *baseLogicalPlan) rollBackTaskMap(TS time.Time) {
 			i--
 			N--
 
-			// if cur is not an invalid log, then roll back.
+			// if cur is a valid log, then roll back.
 			if cur != "" {
 				p.taskMap[cur] = nil
 			}
