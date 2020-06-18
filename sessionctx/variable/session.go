@@ -1591,7 +1591,7 @@ const (
 	// SlowLogPlanFromCache is used to indicate whether this plan is from plan cache.
 	SlowLogPlanFromCache = "Plan_from_cache"
 	// SlowLogPlanFromSPM is used to indicate whether this plan is matched with the hints in the binding.
-	SlowLogPlanFromSPM = "Plan_from_SPM"
+	SlowLogPlanFromSPM = "Plan_from_binding"
 	// SlowLogHasMoreResults is used to indicate whether this sql has more following results.
 	SlowLogHasMoreResults = "Has_more_results"
 	// SlowLogSucc is used to indicate whether this sql execute successfully.
