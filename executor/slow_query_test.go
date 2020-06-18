@@ -56,7 +56,7 @@ func (s *testExecSuite) TestParseSlowLogFile(c *C) {
 # Mem_max: 70724
 # Disk_max: 65536
 # Plan_from_cache: true
-# Plan_from_SPM: true
+# Plan_from_binding: true
 # Succ: false
 # Plan_digest: 60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4
 # Prev_stmt: update t set i = 1;
