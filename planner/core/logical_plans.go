@@ -498,6 +498,9 @@ type DataSource struct {
 	// TblCols contains the original columns of table before being pruned, and it
 	// is used for estimating table scan cost.
 	TblCols []*expression.Column
+	// commonHandleCols and commonHandleLens save the info of primary key which is the clustered index.
+	commonHandleCols []*expression.Column
+	commonHandleLens []int
 	// TblColHists contains the Histogram of all original table columns,
 	// it is converted from statisticTable, and used for IO/network cost estimating.
 	TblColHists *statistics.HistColl
@@ -626,7 +629,7 @@ func (ds *DataSource) Convert2Gathers() (gathers []LogicalPlan) {
 			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.Index)
 			path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.Index)
 			// If index columns can cover all of the needed columns, we can use a IndexGather + IndexScan.
-			if isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo.PKIsHandle) {
+			if ds.isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo) {
 				gathers = append(gathers, ds.buildIndexGather(path))
 			}
 			// TODO: If index columns can not cover the schema, use IndexLookUpGather.
@@ -857,7 +860,7 @@ func (ds *DataSource) deriveIndexPathStats(path *util.AccessPath, conds []expres
 			}
 		}
 	}
-	path.IndexFilters, path.TableFilters = splitIndexFilterConditions(path.TableFilters, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo)
+	path.IndexFilters, path.TableFilters = ds.splitIndexFilterConditions(path.TableFilters, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo)
 	// If the `CountAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
 	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
 	if path.CountAfterAccess < ds.stats.RowCount && !isIm {
