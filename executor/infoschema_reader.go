@@ -1798,7 +1798,7 @@ func (e *TiFlashSystemTableRetriever) retrieve(ctx context.Context, sctx session
 	}
 
 	for {
-		rows, err := e.dataForTiFlashSystemTables(sctx)
+		rows, err := e.dataForTiFlashSystemTables(sctx, e.extractor.TiDBDatabases, e.extractor.TiDBTables)
 		if err != nil {
 			return nil, err
 		}
@@ -1866,7 +1866,7 @@ func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflas
 	return errors.Errorf("%T not an etcd backend", store)
 }
 
-func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.Context) ([][]types.Datum, error) {
+func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.Context, tidbDatabases string, tidbTables string) ([][]types.Datum, error) {
 	var columnNames []string
 	for _, c := range e.outputCols {
 		if c.Name.O == "TIFLASH_INSTANCE" {
@@ -1876,7 +1876,18 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.
 	}
 	maxCount := 1024
 	targetTable := strings.ToLower(strings.Replace(e.table.Name.O, "TIFLASH", "DT", 1))
-	sql := fmt.Sprintf("SELECT %s FROM system.%s LIMIT %d, %d", strings.Join(columnNames, ","), targetTable, e.rowIdx, maxCount)
+	var filters []string
+	if len(tidbDatabases) > 0 {
+		filters = append(filters, fmt.Sprintf("tidb_database IN (%s)", strings.ReplaceAll(tidbDatabases, "\"", "'")))
+	}
+	if len(tidbTables) > 0 {
+		filters = append(filters, fmt.Sprintf("tidb_table IN (%s)", strings.ReplaceAll(tidbTables, "\"", "'")))
+	}
+	sql := fmt.Sprintf("SELECT %s FROM system.%s", strings.Join(columnNames, ","), targetTable)
+	if len(filters) > 0 {
+		sql = fmt.Sprintf("%s WHERE %s", sql, strings.Join(filters, " AND "))
+	}
+	sql = fmt.Sprintf("%s LIMIT %d, %d", sql, e.rowIdx, maxCount)
 	notNumber := "nan"
 	httpClient := http.DefaultClient
 	instanceInfo := e.instanceInfos[e.instanceIdx]
