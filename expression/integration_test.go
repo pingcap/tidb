@@ -6575,15 +6575,3 @@ func (s *testIntegrationSuite) TestIssue17727(c *C) {
 	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1591940878"))
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 }
-
-func (s *testIntegrationSerialSuite) TestIssue17891(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(id int, value set ('a','b','c') charset utf8mb4 collate utf8mb4_bin default 'a,b ');")
-	tk.MustExec("drop table t")
-	tk.MustExec("create table test(id int, value set ('a','b','c') charset utf8mb4 collate utf8mb4_general_ci default 'a,B ,C');")
-}
