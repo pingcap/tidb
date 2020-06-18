@@ -590,9 +590,9 @@ func (c *SortedRowContainer) initPointerAndSort(needLock bool) {
 	c.GetMemTracker().Consume(int64(8 * cap(c.m.rowPtrs)))
 }
 
-func (c *SortedRowContainer) sortAndSpillToDisk(inReadLock bool) (err error) {
-	c.initPointerAndSort(false)
-	return c.RowContainer.SpillToDisk(inReadLock)
+func (c *SortedRowContainer) sortAndSpillToDisk(triggerIsSelf bool) (err error) {
+	c.initPointerAndSort(!triggerIsSelf)
+	return c.RowContainer.SpillToDisk(triggerIsSelf)
 }
 
 // Add appends a chunk into the SortedRowContainer.
