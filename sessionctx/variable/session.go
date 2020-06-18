@@ -1155,7 +1155,6 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.IndexLookupSize = tidbOptPositiveInt32(val, DefIndexLookupSize)
 	case TiDBHashJoinConcurrency:
 		s.hashJoinConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
-		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
 	case TiDBProjectionConcurrency:
 		s.projectionConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
 		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
@@ -1170,7 +1169,6 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
 	case TiDBDistSQLScanConcurrency:
 		s.distSQLScanConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
-		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
 	case TiDBIndexSerialScanConcurrency:
 		s.indexSerialScanConcurrency = tidbOptPositiveInt32(val, DefIndexSerialScanConcurrency)
 	case TiDBExecutorConcurrency:

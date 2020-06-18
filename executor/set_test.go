@@ -982,7 +982,8 @@ func (s *testSuite5) TestSetConcurrency(c *C) {
 	checkSet(variable.TiDBIndexLookupJoinConcurrency)
 	c.Assert(vars.IndexLookupJoinConcurrency(), Equals, 1)
 
-	checkSet(variable.TiDBHashJoinConcurrency)
+	tk.MustExec(fmt.Sprintf("set @@%s=1;", variable.TiDBHashJoinConcurrency))
+	tk.MustQuery(fmt.Sprintf("select @@%s;", variable.TiDBHashJoinConcurrency)).Check(testkit.Rows("1"))
 	c.Assert(vars.HashJoinConcurrency(), Equals, 1)
 
 	checkSet(variable.TiDBHashAggPartialConcurrency)
@@ -997,7 +998,8 @@ func (s *testSuite5) TestSetConcurrency(c *C) {
 	checkSet(variable.TiDBWindowConcurrency)
 	c.Assert(vars.WindowConcurrency(), Equals, 1)
 
-	checkSet(variable.TiDBDistSQLScanConcurrency)
+	tk.MustExec(fmt.Sprintf("set @@%s=1;", variable.TiDBDistSQLScanConcurrency))
+	tk.MustQuery(fmt.Sprintf("select @@%s;", variable.TiDBDistSQLScanConcurrency)).Check(testkit.Rows("1"))
 	c.Assert(vars.DistSQLScanConcurrency(), Equals, 1)
 
 	tk.MustExec("set @@tidb_index_serial_scan_concurrency=4")
