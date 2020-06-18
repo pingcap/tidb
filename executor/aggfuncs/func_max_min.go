@@ -74,17 +74,16 @@ func (h *maxMinHeap) Append(val interface{}) {
 	}
 }
 func (h *maxMinHeap) Remove(val interface{}) {
-	switch {
-	case h.varSet[val] > 1:
+	if h.varSet[val] > 0 {
 		h.varSet[val]--
-	case h.varSet[val] == 1:
-		for i, v := range h.data {
-			if h.cmpFunc(v, val) != 0 {
-				continue
+		if h.varSet[val] == 0 {
+			for i, qVal := range h.data {
+				if h.cmpFunc(qVal, val) == 0 {
+					heap.Remove(h, i)
+					break
+				}
 			}
-			heap.Remove(h, i)
 		}
-		h.varSet[val] = 0
 	}
 }
 func (h *maxMinHeap) Reset() {
