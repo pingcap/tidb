@@ -169,14 +169,14 @@ func testAddIndexWithPK(s *testSerialDBSuite, c *C)  {
 func (s *testSerialDBSuite) TestAddIndexWithPK(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
-	save := config.GetGlobalConfig().AlterPrimaryKey
-	config.GetGlobalConfig().AlterPrimaryKey = false
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = false
+	})
+	defer config.RestoreFunc()()
 
 	testAddIndexWithPK(s, c)
 	s.tk.MustExec("set @@tidb_enable_clustered_index = 1;")
 	testAddIndexWithPK(s, c)
-
-	config.GetGlobalConfig().AlterPrimaryKey = save
 }
 
 func (s *testDBSuite1) TestRenameIndex(c *C) {
@@ -3772,14 +3772,14 @@ func testAddIndexForGeneratedColumn(s *testSerialDBSuite, c *C) {
 }
 func (s *testSerialDBSuite) TestAddIndexForGeneratedColumn(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
-	save := config.GetGlobalConfig().AlterPrimaryKey
-	config.GetGlobalConfig().AlterPrimaryKey = false
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = false
+	})
+	defer config.RestoreFunc()()
 
 	testAddIndexForGeneratedColumn(s, c)
 	s.tk.MustExec("set @@tidb_enable_clustered_index = 1;")
 	testAddIndexForGeneratedColumn(s, c)
-
-	config.GetGlobalConfig().AlterPrimaryKey = save
 }
 
 func (s *testDBSuite5) TestModifyGeneratedColumn(c *C) {

@@ -74,7 +74,7 @@ func NewRowDecoder(tbl table.Table, decodeColMap map[int64]Column) *RowDecoder {
 	}
 }
 
-func (rd *RowDecoder) tryDecodeFromHandleAndSetRow(dCol Column, handle kv.Handle, pkCols []int64, row map[int64]types.Datum) (bool, error) {
+func (rd *RowDecoder) tryDecodeFromHandleAndSetRow(dCol Column, handle kv.Handle, pkCols []int64, row map[int64]types.Datum, decodeLoc *time.Location) (bool, error) {
 	if handle == nil {
 		return false, nil
 	}
@@ -96,6 +96,9 @@ func (rd *RowDecoder) tryDecodeFromHandleAndSetRow(dCol Column, handle kv.Handle
 				_, d, err := codec.DecodeOne(handle.EncodedCol(i))
 				if err != nil {
 					return false, errors.Trace(err)
+				}
+				if d, err = tablecodec.Unflatten(d, &dCol.Col.FieldType, decodeLoc); err != nil {
+					return false, err
 				}
 				row[colInfo.ID] = d
 				rd.mutRow.SetValue(colInfo.Offset, d)
@@ -125,7 +128,7 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.
 			rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
 			continue
 		}
-		ok, err := rd.tryDecodeFromHandleAndSetRow(dCol, handle, pkCols, row)
+		ok, err := rd.tryDecodeFromHandleAndSetRow(dCol, handle, pkCols, row, decodeLoc)
 		if err != nil {
 			return nil, err
 		}
