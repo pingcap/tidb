@@ -5873,9 +5873,9 @@ func (s *testSuite) TestGenerateColumnReplace(c *C) {
 func (s *testSuite) TestSlowQuerySensitiveQuery(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	originCfg := config.GetGlobalConfig()
-	newCfg := config.NewConfig()
+	newCfg := *originCfg
 	newCfg.Log.SlowQueryFile = path.Join(os.TempDir(), "tidb-slow.log")
-	config.StoreGlobalConfig(newCfg)
+	config.StoreGlobalConfig(&newCfg)
 	defer func() {
 		tk.MustExec("set tidb_slow_log_threshold=300;")
 		config.StoreGlobalConfig(originCfg)
