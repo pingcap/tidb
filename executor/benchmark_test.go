@@ -448,6 +448,8 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 			args = append(args, src.Schema().Columns[0])
 		case ast.AggFuncBitXor:
 			args = append(args, src.Schema().Columns[0])
+		case ast.AggFuncMax, ast.AggFuncMin:
+			args = append(args, src.Schema().Columns[0])
 		default:
 			args = append(args, partitionBy[0])
 		}
