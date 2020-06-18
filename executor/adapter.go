@@ -972,10 +972,13 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	copTaskInfo := stmtCtx.CopTasksDetails()
 	memMax := stmtCtx.MemTracker.MaxConsumed()
 	diskMax := stmtCtx.DiskTracker.MaxConsumed()
-
+	sql := a.Text
+	if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
+		sql = sensitiveStmt.SecureText()
+	}
 	stmtsummary.StmtSummaryByDigestMap.AddStatement(&stmtsummary.StmtExecInfo{
 		SchemaName:     strings.ToLower(sessVars.CurrentDB),
-		OriginalSQL:    a.Text,
+		OriginalSQL:    sql,
 		NormalizedSQL:  normalizedSQL,
 		Digest:         digest,
 		PrevSQL:        prevSQL,
