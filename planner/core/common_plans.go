@@ -833,7 +833,7 @@ func (e *Explain) RenderResult() error {
 		}
 	case ast.ExplainFormatHint:
 		hints := GenHintsFromPhysicalPlan(e.TargetPlan)
-		hints = append(hints, hint.ExtractTableHintsFromStmtNode(e.ExecStmt)...)
+		hints = append(hints, hint.ExtractTableHintsFromStmtNode(e.ExecStmt, nil)...)
 		e.Rows = append(e.Rows, []string{hint.RestoreOptimizerHints(hints)})
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)

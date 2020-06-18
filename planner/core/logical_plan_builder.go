@@ -2827,7 +2827,8 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			IsHidden: col.Hidden,
 		}
 
-		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
+		// TODO: The common handle may be multi columns, need to change ds.handleCol to a slice.
+		if col.IsPKHandleColumn(tableInfo) || col.IsCommonHandleColumn(tableInfo) {
 			handleCol = newCol
 		}
 		schema.Append(newCol)
@@ -2859,6 +2860,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	ds.names = names
 	ds.setPreferredStoreType(b.TableHints())
 
+	// Init commonHandleCols and commonHandleLens for data source.
+	if tableInfo.IsCommonHandle {
+		ds.commonHandleCols, ds.commonHandleLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, tables.FindPrimaryIndex(tableInfo))
+	}
 	// Init FullIdxCols, FullIdxColLens for accessPaths.
 	for _, path := range ds.possibleAccessPaths {
 		if !path.IsTablePath() {

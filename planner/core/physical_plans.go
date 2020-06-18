@@ -549,6 +549,7 @@ func (lt *PhysicalTopN) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 type PhysicalApply struct {
 	PhysicalHashJoin
 
+	CanUseCache bool
 	OuterSchema []*expression.CorrelatedColumn
 }
 
