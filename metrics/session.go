@@ -23,7 +23,7 @@ var (
 			Subsystem: "session",
 			Name:      "parse_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) in parse SQL.",
-			Buckets:   prometheus.ExponentialBuckets(0.00004, 2, 22), // 40us ~ 84s
+			Buckets:   prometheus.ExponentialBuckets(0.00004, 2, 28), // 40us ~ 1.5h
 		}, []string{LblSQLType})
 	SessionExecuteCompileDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -32,7 +32,7 @@ var (
 			Name:      "compile_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) in query optimize.",
 			// Build plan may execute the statement, or allocate table ID, so it might take a long time.
-			Buckets: prometheus.ExponentialBuckets(0.00004, 2, 22), // 40us ~ 84s
+			Buckets: prometheus.ExponentialBuckets(0.00004, 2, 28), // 40us ~ 1.5h
 		}, []string{LblSQLType})
 	SessionExecuteRunDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -40,7 +40,7 @@ var (
 			Subsystem: "session",
 			Name:      "execute_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) in running executor.",
-			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 22), // 100us ~ 209s
+			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 30), // 100us ~ 15h
 		}, []string{LblSQLType})
 	SchemaLeaseErrorCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -88,7 +88,7 @@ var (
 			Subsystem: "session",
 			Name:      "transaction_duration_seconds",
 			Help:      "Bucketed histogram of a transaction execution duration, including retry.",
-			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
 		}, []string{LblSQLType, LblType})
 
 	StatementDeadlockDetectDuration = prometheus.NewHistogram(
@@ -97,7 +97,7 @@ var (
 			Subsystem: "session",
 			Name:      "statement_deadlock_detect_duration_seconds",
 			Help:      "Bucketed histogram of a statement deadlock detect duration.",
-			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
 		},
 	)
 

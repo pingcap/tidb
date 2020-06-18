@@ -120,6 +120,7 @@ func (a *baseFuncDesc) typeInfer(ctx sessionctx.Context) error {
 func (a *baseFuncDesc) typeInfer4Count(ctx sessionctx.Context) {
 	a.RetTp = types.NewFieldType(mysql.TypeLonglong)
 	a.RetTp.Flen = 21
+	a.RetTp.Decimal = 0
 	types.SetBinChsClnFlag(a.RetTp)
 }
 

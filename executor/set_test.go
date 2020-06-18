@@ -416,6 +416,17 @@ func (s *testSuite5) TestSetVar(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "tidb_metric_query_range_duration(9) cannot be smaller than 10 or larger than 216000")
 	tk.MustQuery("select @@session.tidb_metric_query_range_duration;").Check(testkit.Rows("120"))
+
+	// test for tidb_slow_log_masking
+	tk.MustQuery(`select @@global.tidb_slow_log_masking;`).Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_slow_log_masking = 1")
+	tk.MustQuery(`select @@global.tidb_slow_log_masking;`).Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_slow_log_masking = 0")
+	tk.MustQuery(`select @@global.tidb_slow_log_masking;`).Check(testkit.Rows("0"))
+	_, err = tk.Exec("set session tidb_slow_log_masking = 0")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec(`select @@session.tidb_slow_log_masking;`)
+	c.Assert(err, NotNil)
 }
 
 func (s *testSuite5) TestSetCharset(c *C) {

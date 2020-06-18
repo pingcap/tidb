@@ -241,6 +241,30 @@
     ]
   },
   {
+    "Name": "TestIsolationReadDoNotFilterSystemDB",
+    "Cases": [
+      {
+        "SQL": "desc select * from metrics_schema.tidb_query_duration where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13'",
+        "Plan": [
+          "MemTableScan_5 10000.00 root table:tidb_query_duration PromQL:histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le,sql_type,instance)), start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, step:1m0s"
+        ]
+      },
+      {
+        "SQL": "desc select * from information_schema.tables",
+        "Plan": [
+          "MemTableScan_4 10000.00 root table:TABLES "
+        ]
+      },
+      {
+        "SQL": "desc select * from mysql.stats_meta",
+        "Plan": [
+          "TableReader_5 10000.00 root  data:TableFullScan_4",
+          "└─TableFullScan_4 10000.00 cop[tikv] table:stats_meta keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestIsolationReadTiFlashNotChoosePointGet",
     "Cases": [
       {
