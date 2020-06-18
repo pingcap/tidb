@@ -168,9 +168,8 @@ type Table interface {
 	// Writable states includes Public, WriteOnly, WriteOnlyReorganization.
 	WritableCols() []*Column
 
-	// DeletableCols returns columns of the table in deletable states.
-	// Writable states includes Public, WriteOnly, WriteOnlyReorganization, DeleteOnly.
-	DeletableCols() []*Column
+	// FullHiddenColsAndVisibleCols returns hidden columns in all states and unhidden columns in public states.
+	FullHiddenColsAndVisibleCols() []*Column
 
 	// Indices returns the indices of the table.
 	Indices() []Index

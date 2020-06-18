@@ -599,6 +599,9 @@ func (do *Domain) isClose() bool {
 
 // Close closes the Domain and release its resource.
 func (do *Domain) Close() {
+	if do == nil {
+		return
+	}
 	startTime := time.Now()
 	if do.ddl != nil {
 		terror.Log(do.ddl.Stop())
@@ -671,9 +674,8 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 				DialOptions: []grpc.DialOption{
 					grpc.WithBackoffMaxDelay(time.Second * 3),
 					grpc.WithKeepaliveParams(keepalive.ClientParameters{
-						Time:                time.Duration(cfg.TiKVClient.GrpcKeepAliveTime) * time.Second,
-						Timeout:             time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout) * time.Second,
-						PermitWithoutStream: true,
+						Time:    time.Duration(cfg.TiKVClient.GrpcKeepAliveTime) * time.Second,
+						Timeout: time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout) * time.Second,
 					}),
 				},
 				TLS: ebd.TLSConfig(),

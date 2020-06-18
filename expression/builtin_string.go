@@ -1587,6 +1587,7 @@ func (c *hexFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 		if err != nil {
 			return nil, err
 		}
+		bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 		// Use UTF-8 as default
 		bf.tp.Flen = args[0].GetType().Flen * 3 * 2
 		sig := &builtinHexStrArgSig{bf}

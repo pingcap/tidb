@@ -280,6 +280,25 @@ type TableSnapshot struct {
 
 type txnIsolationLevelOneShotState uint
 
+// RewritePhaseInfo records some information about the rewrite phase
+type RewritePhaseInfo struct {
+	// DurationRewrite is the duration of rewriting the SQL.
+	DurationRewrite time.Duration
+
+	// DurationPreprocessSubQuery is the duration of pre-processing sub-queries.
+	DurationPreprocessSubQuery time.Duration
+
+	// PreprocessSubQueries is the number of pre-processed sub-queries.
+	PreprocessSubQueries int
+}
+
+// Reset resets all fields in RewritePhaseInfo.
+func (r *RewritePhaseInfo) Reset() {
+	r.DurationRewrite = 0
+	r.DurationPreprocessSubQuery = 0
+	r.PreprocessSubQueries = 0
+}
+
 const (
 	// oneShotDef means default, that is tx_isolation_one_shot not set.
 	oneShotDef txnIsolationLevelOneShotState = iota
@@ -542,6 +561,15 @@ type SessionVars struct {
 	// DurationCompile is the duration of compiling AST to execution plan of the last query.
 	DurationCompile time.Duration
 
+	// RewritePhaseInfo records all information about the rewriting phase.
+	RewritePhaseInfo
+
+	// DurationOptimization is the duration of optimizing a query.
+	DurationOptimization time.Duration
+
+	// DurationWaitTS is the duration of waiting for a snapshot TS
+	DurationWaitTS time.Duration
+
 	// PrevStmt is used to store the previous executed statement in the current session.
 	PrevStmt fmt.Stringer
 
@@ -606,6 +634,15 @@ type SessionVars struct {
 
 	// OptimizerUseInvisibleIndexes indicates whether optimizer can use invisible index
 	OptimizerUseInvisibleIndexes bool
+
+	// SelectLimit limits the max counts of select statement's output
+	SelectLimit uint64
+
+	// EnableClusteredIndex indicates whether to enable clustered index when creating a new table.
+	EnableClusteredIndex bool
+
+	// EnableSlowLogMasking indicates that whether masking the query data when log slow query.
+	EnableSlowLogMasking bool
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -693,7 +730,10 @@ func NewSessionVars() *SessionVars {
 		WindowingUseHighPrecision:   true,
 		PrevFoundInPlanCache:        DefTiDBFoundInPlanCache,
 		FoundInPlanCache:            DefTiDBFoundInPlanCache,
+		SelectLimit:                 math.MaxUint64,
 		AllowAutoRandExplicitInsert: DefTiDBAllowAutoRandExplicitInsert,
+		EnableClusteredIndex:        DefTiDBEnableClusteredIndex,
+		EnableSlowLogMasking:        DefTiDBSlowLogMasking,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -708,7 +748,8 @@ func NewSessionVars() *SessionVars {
 		WindowConcurrency:          DefTiDBWindowConcurrency,
 	}
 	vars.MemQuota = MemQuota{
-		MemQuotaQuery: config.GetGlobalConfig().MemQuotaQuery,
+		MemQuotaQuery:               config.GetGlobalConfig().MemQuotaQuery,
+		NestedLoopJoinCacheCapacity: config.GetGlobalConfig().NestedLoopJoinCacheCapacity,
 
 		// The variables below do not take any effect anymore, it's remaining for compatibility.
 		// TODO: remove them in v4.1
@@ -1055,12 +1096,10 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		}
 	case AutoIncrementIncrement:
 		// AutoIncrementIncrement is valid in [1, 65535].
-		temp := tidbOptPositiveInt32(val, DefAutoIncrementIncrement)
-		s.AutoIncrementIncrement = adjustAutoIncrementParameter(temp)
+		s.AutoIncrementIncrement = tidbOptPositiveInt32(val, DefAutoIncrementIncrement)
 	case AutoIncrementOffset:
 		// AutoIncrementOffset is valid in [1, 65535].
-		temp := tidbOptPositiveInt32(val, DefAutoIncrementOffset)
-		s.AutoIncrementOffset = adjustAutoIncrementParameter(temp)
+		s.AutoIncrementOffset = tidbOptPositiveInt32(val, DefAutoIncrementOffset)
 	case MaxExecutionTime:
 		timeoutMS := tidbOptPositiveInt32(val, 0)
 		s.MaxExecutionTime = uint64(timeoutMS)
@@ -1147,6 +1186,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.InitChunkSize = tidbOptPositiveInt32(val, DefInitChunkSize)
 	case TIDBMemQuotaQuery:
 		s.MemQuotaQuery = tidbOptInt64(val, config.GetGlobalConfig().MemQuotaQuery)
+	case TIDBNestedLoopJoinCacheCapacity:
+		s.NestedLoopJoinCacheCapacity = tidbOptInt64(val, config.GetGlobalConfig().NestedLoopJoinCacheCapacity)
 	case TIDBMemQuotaHashJoin:
 		s.MemQuotaHashJoin = tidbOptInt64(val, DefTiDBMemQuotaHashJoin)
 		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TIDBMemQuotaQuery))
@@ -1294,8 +1335,18 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.FoundInPlanCache = TiDBOptOn(val)
 	case TiDBEnableCollectExecutionInfo:
 		config.GetGlobalConfig().EnableCollectExecutionInfo = TiDBOptOn(val)
+	case SQLSelectLimit:
+		result, err := strconv.ParseUint(val, 10, 64)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		s.SelectLimit = result
 	case TiDBAllowAutoRandExplicitInsert:
 		s.AllowAutoRandExplicitInsert = TiDBOptOn(val)
+	case TiDBEnableClusteredIndex:
+		s.EnableClusteredIndex = TiDBOptOn(val)
+	case TiDBSlowLogMasking:
+		s.EnableSlowLogMasking = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
@@ -1419,6 +1470,9 @@ type MemQuota struct {
 	// MemQuotaQuery defines the memory quota for a query.
 	MemQuotaQuery int64
 
+	// NestedLoopJoinCacheCapacity defines the memory capacity for apply cache.
+	NestedLoopJoinCacheCapacity int64
+
 	// The variables below do not take any effect anymore, it's remaining for compatibility.
 	// TODO: remove them in v4.1
 	// MemQuotaHashJoin defines the memory quota for a hash join executor.
@@ -1483,6 +1537,16 @@ const (
 	SlowLogParseTimeStr = "Parse_time"
 	// SlowLogCompileTimeStr is the compile plan time.
 	SlowLogCompileTimeStr = "Compile_time"
+	// SlowLogRewriteTimeStr is the rewrite time.
+	SlowLogRewriteTimeStr = "Rewrite_time"
+	// SlowLogOptimizeTimeStr is the optimization time.
+	SlowLogOptimizeTimeStr = "Optimize_time"
+	// SlowLogWaitTSTimeStr is the time of waiting TS.
+	SlowLogWaitTSTimeStr = "Wait_TS"
+	// SlowLogPreprocSubQueriesStr is the number of pre-processed sub-queries.
+	SlowLogPreprocSubQueriesStr = "Preproc_subqueries"
+	// SlowLogPreProcSubQueryTimeStr is the total time of pre-processing sub-queries.
+	SlowLogPreProcSubQueryTimeStr = "Preproc_subqueries_time"
 	// SlowLogDBStr is slow log field name.
 	SlowLogDBStr = "DB"
 	// SlowLogIsInternalStr is slow log field name.
@@ -1550,6 +1614,8 @@ type SlowQueryLogItems struct {
 	TimeTotal      time.Duration
 	TimeParse      time.Duration
 	TimeCompile    time.Duration
+	TimeOptimize   time.Duration
+	TimeWaitTS     time.Duration
 	IndexNames     string
 	StatsInfos     map[string]uint64
 	CopTasks       *stmtctx.CopTasksDetails
@@ -1563,6 +1629,7 @@ type SlowQueryLogItems struct {
 	PrevStmt       string
 	Plan           string
 	PlanDigest     string
+	RewriteInfo    RewritePhaseInfo
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -1599,6 +1666,17 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	writeSlowLogItem(&buf, SlowLogQueryTimeStr, strconv.FormatFloat(logItems.TimeTotal.Seconds(), 'f', -1, 64))
 	writeSlowLogItem(&buf, SlowLogParseTimeStr, strconv.FormatFloat(logItems.TimeParse.Seconds(), 'f', -1, 64))
 	writeSlowLogItem(&buf, SlowLogCompileTimeStr, strconv.FormatFloat(logItems.TimeCompile.Seconds(), 'f', -1, 64))
+
+	buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v", SlowLogRewriteTimeStr,
+		SlowLogSpaceMarkStr, strconv.FormatFloat(logItems.RewriteInfo.DurationRewrite.Seconds(), 'f', -1, 64)))
+	if logItems.RewriteInfo.PreprocessSubQueries > 0 {
+		buf.WriteString(fmt.Sprintf(" %v%v%v %v%v%v", SlowLogPreprocSubQueriesStr, SlowLogSpaceMarkStr, logItems.RewriteInfo.PreprocessSubQueries,
+			SlowLogPreProcSubQueryTimeStr, SlowLogSpaceMarkStr, strconv.FormatFloat(logItems.RewriteInfo.DurationPreprocessSubQuery.Seconds(), 'f', -1, 64)))
+	}
+	buf.WriteString("\n")
+
+	writeSlowLogItem(&buf, SlowLogOptimizeTimeStr, strconv.FormatFloat(logItems.TimeOptimize.Seconds(), 'f', -1, 64))
+	writeSlowLogItem(&buf, SlowLogWaitTSTimeStr, strconv.FormatFloat(logItems.TimeWaitTS.Seconds(), 'f', -1, 64))
 
 	if execDetailStr := logItems.ExecDetail.String(); len(execDetailStr) > 0 {
 		buf.WriteString(SlowLogRowPrefixStr + execDetailStr + "\n")
@@ -1716,16 +1794,4 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 // writeSlowLogItem writes a slow log item in the form of: "# ${key}:${value}"
 func writeSlowLogItem(buf *bytes.Buffer, key, value string) {
 	buf.WriteString(SlowLogRowPrefixStr + key + SlowLogSpaceMarkStr + value + "\n")
-}
-
-// adjustAutoIncrementParameter adjust the increment and offset of AutoIncrement.
-// AutoIncrementIncrement / AutoIncrementOffset is valid in [1, 65535].
-func adjustAutoIncrementParameter(temp int) int {
-	if temp <= 0 {
-		return 1
-	} else if temp > math.MaxUint16 {
-		return math.MaxUint16
-	} else {
-		return temp
-	}
 }

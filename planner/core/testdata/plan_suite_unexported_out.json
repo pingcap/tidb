@@ -809,17 +809,17 @@
   {
     "Name": "TestTablePartition",
     "Cases": [
-      "UnionAll{Partition(41)->Partition(42)->Partition(43)->Partition(44)->Partition(45)}->Projection",
-      "UnionAll{Partition(41)->Partition(42)}->Projection",
-      "UnionAll{Partition(41)->Partition(42)->Partition(43)}->Projection",
-      "UnionAll{Partition(42)->Partition(43)}->Projection",
-      "UnionAll{UnionAll{Partition(42)->Partition(43)}->Projection->Projection->UnionAll{Partition(42)->Partition(43)}->Projection->Projection}",
-      "UnionAll{UnionAll{Partition(42)->Partition(43)}->Projection->Projection->UnionAll{Partition(42)->Partition(43)}->Projection->Projection}",
+      "PartitionUnionAll{Partition(41)->Partition(42)->Partition(43)->Partition(44)->Partition(45)}->Projection",
+      "PartitionUnionAll{Partition(41)->Partition(42)}->Projection",
+      "PartitionUnionAll{Partition(41)->Partition(42)->Partition(43)}->Projection",
+      "PartitionUnionAll{Partition(42)->Partition(43)}->Projection",
+      "UnionAll{PartitionUnionAll{Partition(42)->Partition(43)}->Projection->Projection->PartitionUnionAll{Partition(42)->Partition(43)}->Projection->Projection}",
+      "UnionAll{PartitionUnionAll{Partition(42)->Partition(43)}->Projection->Projection->PartitionUnionAll{Partition(42)->Partition(43)}->Projection->Projection}",
       "Partition(41)->Projection",
       "Partition(45)->Projection",
       "Dual->Projection",
       "Partition(41)->Projection",
-      "UnionAll{Partition(41)->Partition(44)}->Projection"
+      "PartitionUnionAll{Partition(41)->Partition(44)}->Projection"
     ]
   },
   {
@@ -897,8 +897,8 @@
   {
     "Name": "TestOuterJoinEliminator",
     "Cases": [
-      "DataScan(t1)->Aggr(firstrow(test.t.a),firstrow(test.t.b))",
-      "DataScan(t2)->Aggr(firstrow(test.t.a),firstrow(test.t.b))",
+      "DataScan(t1)->Projection",
+      "DataScan(t2)->Projection",
       "DataScan(t1)->Aggr(max(test.t.a),min(test.t.b))->Projection",
       "DataScan(t1)->Aggr(sum(distinct test.t.a))->Projection",
       "DataScan(t1)->Aggr(count(distinct test.t.a, test.t.b))->Projection",

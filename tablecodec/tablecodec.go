@@ -244,11 +244,14 @@ func DecodeTableID(key kv.Key) int64 {
 
 // DecodeRowKey decodes the key and gets the handle.
 func DecodeRowKey(key kv.Key) (kv.Handle, error) {
-	if len(key) != RecordRowKeyLen || !hasTablePrefix(key) || !hasRecordPrefixSep(key[prefixLen-2:]) {
+	if len(key) < RecordRowKeyLen || !hasTablePrefix(key) || !hasRecordPrefixSep(key[prefixLen-2:]) {
 		return kv.IntHandle(0), errInvalidKey.GenWithStack("invalid key - %q", key)
 	}
-	u := binary.BigEndian.Uint64(key[prefixLen:])
-	return kv.IntHandle(codec.DecodeCmpUintToInt(u)), nil
+	if len(key) == RecordRowKeyLen {
+		u := binary.BigEndian.Uint64(key[prefixLen:])
+		return kv.IntHandle(codec.DecodeCmpUintToInt(u)), nil
+	}
+	return kv.NewCommonHandle(key[prefixLen:])
 }
 
 // EncodeValue encodes a go value to bytes.
@@ -345,7 +348,7 @@ func DecodeColumnValue(data []byte, ft *types.FieldType, loc *time.Location) (ty
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	colDatum, err := unflatten(d, ft, loc)
+	colDatum, err := Unflatten(d, ft, loc)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
@@ -368,13 +371,8 @@ func DecodeRowWithMapNew(b []byte, cols map[int64]*types.FieldType, loc *time.Lo
 	var idx int
 	for id, tp := range cols {
 		reqCols[idx] = rowcodec.ColInfo{
-			ID:      id,
-			Tp:      int32(tp.Tp),
-			Flag:    int32(tp.Flag),
-			Flen:    tp.Flen,
-			Decimal: tp.Decimal,
-			Elems:   tp.Elems,
-			Collate: tp.Collate,
+			ID: id,
+			Ft: tp,
 		}
 		idx++
 	}
@@ -424,7 +422,7 @@ func DecodeRowWithMap(b []byte, cols map[int64]*types.FieldType, loc *time.Locat
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			v, err = unflatten(v, ft, loc)
+			v, err = Unflatten(v, ft, loc)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -491,7 +489,7 @@ func CutRowNew(data []byte, colIDs map[int64]int) ([][]byte, error) {
 func UnflattenDatums(datums []types.Datum, fts []*types.FieldType, loc *time.Location) ([]types.Datum, error) {
 	for i, datum := range datums {
 		ft := fts[i]
-		uDatum, err := unflatten(datum, ft, loc)
+		uDatum, err := Unflatten(datum, ft, loc)
 		if err != nil {
 			return datums, errors.Trace(err)
 		}
@@ -500,8 +498,8 @@ func UnflattenDatums(datums []types.Datum, fts []*types.FieldType, loc *time.Loc
 	return datums, nil
 }
 
-// unflatten converts a raw datum to a column datum.
-func unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (types.Datum, error) {
+// Unflatten converts a raw datum to a column datum.
+func Unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (types.Datum, error) {
 	if datum.IsNull() {
 		return datum, nil
 	}
@@ -561,9 +559,17 @@ func unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 
 // EncodeIndexSeekKey encodes an index value to kv.Key.
 func EncodeIndexSeekKey(tableID int64, idxID int64, encodedValue []byte) kv.Key {
-	key := make([]byte, 0, prefixLen+len(encodedValue))
+	key := make([]byte, 0, RecordRowKeyLen+len(encodedValue))
 	key = appendTableIndexPrefix(key, tableID)
 	key = codec.EncodeInt(key, idxID)
+	key = append(key, encodedValue...)
+	return key
+}
+
+// EncodeCommonHandleSeekKey encodes a common handle value to kv.Key.
+func EncodeCommonHandleSeekKey(tableID int64, encodedValue []byte) kv.Key {
+	key := make([]byte, 0, prefixLen+len(encodedValue))
+	key = appendTableRecordPrefix(key, tableID)
 	key = append(key, encodedValue...)
 	return key
 }
@@ -595,6 +601,23 @@ func CutIndexPrefix(key kv.Key) []byte {
 // if it is non-unique index.
 func CutIndexKeyNew(key kv.Key, length int) (values [][]byte, b []byte, err error) {
 	b = key[prefixLen+idLen:]
+	values = make([][]byte, 0, length)
+	for i := 0; i < length; i++ {
+		var val []byte
+		val, b, err = codec.CutOne(b)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		values = append(values, val)
+	}
+	return
+}
+
+// CutCommonHandle cuts encoded common handle key into colIDs to bytes slices.
+// The returned value b is the remaining bytes of the key which would be empty if it is unique index or handle data
+// if it is non-unique index.
+func CutCommonHandle(key kv.Key, length int) (values [][]byte, b []byte, err error) {
+	b = key[prefixLen:]
 	values = make([][]byte, 0, length)
 	for i := 0; i < length; i++ {
 		var val []byte
@@ -842,17 +865,6 @@ func appendTableIndexPrefix(buf []byte, tableID int64) []byte {
 	buf = append(buf, tablePrefix...)
 	buf = codec.EncodeInt(buf, tableID)
 	buf = append(buf, indexPrefixSep...)
-	return buf
-}
-
-// ReplaceRecordKeyTableID replace the tableID in the recordKey buf.
-func ReplaceRecordKeyTableID(buf []byte, tableID int64) []byte {
-	if len(buf) < len(tablePrefix)+8 {
-		return buf
-	}
-
-	u := codec.EncodeIntToCmpUint(tableID)
-	binary.BigEndian.PutUint64(buf[len(tablePrefix):], u)
 	return buf
 }
 

@@ -17,6 +17,7 @@ import (
 	"context"
 	"math"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
@@ -51,7 +52,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 
 	sctx.PrepareTSFuture(ctx)
 
-	tableHints := hint.ExtractTableHintsFromStmtNode(node)
+	tableHints := hint.ExtractTableHintsFromStmtNode(node, sctx)
 	stmtHints, warns := handleStmtHints(tableHints)
 	defer func() {
 		sctx.GetSessionVars().StmtCtx.StmtHints = stmtHints
@@ -73,6 +74,10 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 	bindRecord, scope := getBindRecord(sctx, stmtNode)
 	if bindRecord == nil {
+		return bestPlan, names, nil
+	}
+	if sctx.GetSessionVars().SelectLimit != math.MaxUint64 {
+		sctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("sql_select_limit is set, so plan binding is not activated"))
 		return bestPlan, names, nil
 	}
 	bestPlanHint := plannercore.GenHintsFromPhysicalPlan(bestPlan)
@@ -147,10 +152,15 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	hintProcessor := &hint.BlockHintProcessor{Ctx: sctx}
 	node.Accept(hintProcessor)
 	builder := plannercore.NewPlanBuilder(sctx, is, hintProcessor)
+
+	// reset fields about rewrite
+	sctx.GetSessionVars().RewritePhaseInfo.Reset()
+	beginRewrite := time.Now()
 	p, err := builder.Build(ctx, node)
 	if err != nil {
 		return nil, nil, 0, err
 	}
+	sctx.GetSessionVars().RewritePhaseInfo.DurationRewrite = time.Since(beginRewrite)
 
 	sctx.GetSessionVars().StmtCtx.Tables = builder.GetDBTableInfo()
 	activeRoles := sctx.GetSessionVars().ActiveRoles
@@ -186,7 +196,10 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		finalPlan, cost, err := cascades.DefaultOptimizer.FindBestPlan(sctx, logic)
 		return finalPlan, names, cost, err
 	}
+
+	beginOpt := time.Now()
 	finalPlan, cost, err := plannercore.DoOptimize(ctx, sctx, builder.GetOptFlag(), logic)
+	sctx.GetSessionVars().DurationOptimization = time.Since(beginOpt)
 	return finalPlan, names, cost, err
 }
 
@@ -332,7 +345,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 	// Handle MEMORY_QUOTA
 	if memoryQuotaHintCnt != 0 {
 		if memoryQuotaHintCnt > 1 {
-			warn := errors.New("There are multiple MEMORY_QUOTA hints, only the last one will take effect")
+			warn := errors.Errorf("MEMORY_QUOTA() s defined more than once, only the last definition takes effect: MEMORY_QUOTA(%v)", memoryQuotaHint.HintData.(int64))
 			warns = append(warns, warn)
 		}
 		// Executor use MemoryQuota <= 0 to indicate no memory limit, here use < 0 to handle hint syntax error.
@@ -351,7 +364,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 	// Handle USE_TOJA
 	if useToJAHintCnt != 0 {
 		if useToJAHintCnt > 1 {
-			warn := errors.New("There are multiple USE_TOJA hints, only the last one will take effect")
+			warn := errors.Errorf("USE_TOJA() is defined more than once, only the last definition takes effect: USE_TOJA(%v)", useToJAHint.HintData.(bool))
 			warns = append(warns, warn)
 		}
 		stmtHints.HasAllowInSubqToJoinAndAggHint = true
@@ -369,7 +382,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 	// Handle NO_INDEX_MERGE
 	if noIndexMergeHintCnt != 0 {
 		if noIndexMergeHintCnt > 1 {
-			warn := errors.New("There are multiple NO_INDEX_MERGE hints, only the last one will take effect")
+			warn := errors.New("NO_INDEX_MERGE() is defined more than once, only the last definition takes effect")
 			warns = append(warns, warn)
 		}
 		stmtHints.NoIndexMergeHint = true
@@ -377,7 +390,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 	// Handle READ_CONSISTENT_REPLICA
 	if readReplicaHintCnt != 0 {
 		if readReplicaHintCnt > 1 {
-			warn := errors.New("There are multiple READ_CONSISTENT_REPLICA hints, only the last one will take effect")
+			warn := errors.New("READ_CONSISTENT_REPLICA() is defined more than once, only the last definition takes effect")
 			warns = append(warns, warn)
 		}
 		stmtHints.HasReplicaReadHint = true
@@ -386,7 +399,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 	// Handle MAX_EXECUTION_TIME
 	if maxExecutionTimeCnt != 0 {
 		if maxExecutionTimeCnt > 1 {
-			warn := errors.New("There are multiple MAX_EXECUTION_TIME hints, only the last one will take effect")
+			warn := errors.Errorf("MAX_EXECUTION_TIME() is defined more than once, only the last definition takes effect: MAX_EXECUTION_TIME(%v)", maxExecutionTime.HintData.(uint64))
 			warns = append(warns, warn)
 		}
 		stmtHints.HasMaxExecutionTime = true
