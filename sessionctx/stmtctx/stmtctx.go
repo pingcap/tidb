@@ -178,6 +178,11 @@ type StmtHints struct {
 	HasEnableCascadesPlannerHint   bool
 }
 
+// TaskMapNeedBackUp indicates that whether we need to back up taskMap during physical optimizing.
+func (sh *StmtHints) TaskMapNeedBackUp() bool {
+	return sh.ForceNthPlan != -1
+}
+
 // GetNowTsCached getter for nowTs, if not set get now time and cache it
 func (sc *StatementContext) GetNowTsCached() time.Time {
 	if !sc.stmtTimeCached {

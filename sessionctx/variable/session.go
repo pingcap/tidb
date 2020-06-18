@@ -643,9 +643,6 @@ type SessionVars struct {
 
 	// EnableSlowLogMasking indicates that whether masking the query data when log slow query.
 	EnableSlowLogMasking bool
-
-	// TaskMapNeedBackUp indicates that whether we need to back up taskMap during physical optimizing.
-	TaskMapNeedBackUp bool
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -737,7 +734,6 @@ func NewSessionVars() *SessionVars {
 		AllowAutoRandExplicitInsert: DefTiDBAllowAutoRandExplicitInsert,
 		EnableClusteredIndex:        DefTiDBEnableClusteredIndex,
 		EnableSlowLogMasking:        DefTiDBSlowLogMasking,
-		TaskMapNeedBackUp:           DefTaskMapNeedBackUp,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{

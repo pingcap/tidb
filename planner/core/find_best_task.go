@@ -136,7 +136,7 @@ func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty, clock *
 	// If the required property is not empty and the row count > 1,
 	// we cannot ensure this required property.
 	// But if the row count is 0 or 1, we don't need to care about the property.
-	if (!prop.IsEmpty() && p.RowCount > 1) || *clock == 0 {
+	if (!prop.IsEmpty() && p.RowCount > 1) || clock.Empty() {
 		return invalidTask, 0, nil
 	}
 	dual := PhysicalTableDual{
@@ -201,11 +201,10 @@ func (p *baseLogicalPlan) rebuildChildTasks(childTasks *[]task, pp PhysicalPlan,
 
 func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPlan, prop *property.PhysicalProperty, clock *CountDown) (task, int64, error) {
 	var bestTask task = invalidTask
-	var curCntPlan int64
-	var cntPlan int64 = 0
+	var curCntPlan, cntPlan int64
 	childTasks := make([]task, 0, len(p.children))
-	// childCnts : record the number of tasks founded during generating childTasks
 	childCnts := make([]int64, len(p.children))
+	cntPlan = 0
 	for _, pp := range physicalPlans {
 		// find best child tasks firstly.
 		childTasks = childTasks[:0]
@@ -274,17 +273,13 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, clock *C
 	// If p is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
 	// and set inner child prop nil, so here we do nothing.
 	if prop == nil {
-		return nil, 0, nil
+		return nil, 1, nil
 	}
 	// Look up the task with this prop in the task map.
 	// It's used to reduce double counting.
 	bestTask = p.getTask(prop)
 	if bestTask != nil {
 		clock.Dec(1)
-		if p.ctx.GetSessionVars().TaskMapNeedBackUp {
-			// Ensure that a key will be pushed into taskMapBak every time we call the function.
-			p.storeTask(prop, bestTask)
-		}
 		return bestTask, 1, nil
 	}
 
@@ -556,17 +551,13 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, clock *Count
 	// If ds is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
 	// and set inner child prop nil, so here we do nothing.
 	if prop == nil {
-		return nil, 0, nil
+		return nil, 1, nil
 	}
 
 	t = ds.getTask(prop)
 	if t != nil {
 		cntPlan = 1
 		clock.Dec(1)
-		// Ensure that a key will be pushed into taskMapBak every time we call the function.
-		if ds.ctx.GetSessionVars().TaskMapNeedBackUp {
-			ds.storeTask(prop, t)
-		}
 		return
 	}
 	var cnt int64

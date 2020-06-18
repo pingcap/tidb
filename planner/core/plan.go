@@ -156,6 +156,7 @@ type LogicalPlan interface {
 	// Some logical plans will convert the children to the physical plans in different ways, and return the one
 	// with the lowest cost and how many plans are found in this function.
 	// clock is a counter for planner to force a plan.
+	// if clock > 0, the clock_th plan generated in this function will be returned.
 	// if clock = 0, the plan generated in this function will not be considered.
 	// if clock = -1, then we will not force plan.
 	findBestTask(prop *property.PhysicalProperty, clock *CountDown) (task, int64, error)
@@ -249,9 +250,9 @@ type baseLogicalPlan struct {
 	basePlan
 
 	taskMap map[string]task
-	// taskMapBak and taskMapBakID form a backlog stack of taskMap, used to roll back the task.
+	// taskMapBak forms a backlog stack of taskMap, used to roll back the taskMap.
+	taskMapBak []string
 	// taskMapBakTS stores the TimeStamps of logs.
-	taskMapBak   []string
 	taskMapBakTS []time.Time
 	self         LogicalPlan
 	maxOneRow    bool
@@ -299,7 +300,7 @@ func (p *baseLogicalPlan) GetBakTimeStamp() time.Time {
 }
 
 func (p *baseLogicalPlan) rollBackTaskMap(TS time.Time) {
-	if !p.ctx.GetSessionVars().TaskMapNeedBackUp {
+	if !p.ctx.GetSessionVars().StmtCtx.StmtHints.TaskMapNeedBackUp() {
 		return
 	}
 	if len(p.taskMapBak) > 0 {
@@ -324,7 +325,6 @@ func (p *baseLogicalPlan) rollBackTaskMap(TS time.Time) {
 		}
 	}
 	for _, child := range p.children {
-		// only baseLogicalPlan and DataSource will be affected.
 		child.rollBackTaskMap(TS)
 	}
 }
@@ -336,10 +336,8 @@ func (p *baseLogicalPlan) getTask(prop *property.PhysicalProperty) task {
 
 func (p *baseLogicalPlan) storeTask(prop *property.PhysicalProperty, task task) {
 	key := prop.HashCode()
-	if p.ctx.GetSessionVars().TaskMapNeedBackUp {
-		// when we storeTask, we have taskMap[key] is nil.
-		// so to roll back, we need only store the key and set taskMap[key] to nil.
-		// empty string for useless change.
+	if p.ctx.GetSessionVars().StmtCtx.StmtHints.TaskMapNeedBackUp() {
+		// Empty string for useless change.
 		TS := p.GetBakTimeStamp()
 		if p.taskMap[string(key)] != nil {
 			p.taskMapBakTS = append(p.taskMapBakTS, TS)
@@ -405,10 +403,11 @@ func newBasePlan(ctx sessionctx.Context, tp string, offset int) basePlan {
 
 func newBaseLogicalPlan(ctx sessionctx.Context, tp string, self LogicalPlan, offset int) baseLogicalPlan {
 	return baseLogicalPlan{
-		taskMap:    make(map[string]task),
-		taskMapBak: make([]string, 0, 100),
-		basePlan:   newBasePlan(ctx, tp, offset),
-		self:       self,
+		taskMap:      make(map[string]task),
+		taskMapBak:   make([]string, 0, 10),
+		taskMapBakTS: make([]time.Time, 0, 10),
+		basePlan:     newBasePlan(ctx, tp, offset),
+		self:         self,
 	}
 }
 

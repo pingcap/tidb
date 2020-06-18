@@ -265,8 +265,9 @@ func (s *testPlanNormalize) TestNthPlanHint(c *C) {
 		"└─Selection_21(Probe) 0.01 cop[tikv]  eq(test.tt.b, 1)",
 		"  └─TableRowIDScan_20 10.00 cop[tikv] table:tt keep order:false, stats:pseudo"))
 
-	_, err := tk.Exec("explain select /*+nth_plan(4)*/ * from tt where a=1 and b=1;")
-	c.Assert(err, NotNil)
+	tk.MustExec("explain select /*+nth_plan(4)*/ * from tt where a=1 and b=1;")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 The parameter of nth_plan() is out of range."))
 
 	// test hints for nth_plan(x)
 	tk.MustExec("drop table if exists t")
@@ -278,8 +279,9 @@ func (s *testPlanNormalize) TestNthPlanHint(c *C) {
 	tk.MustQuery("explain format='hint' select /*+ nth_plan(2) */ * from t where a=1 and b=1").Check(testkit.Rows(
 		"use_index(@`sel_1` `test`.`t` `a_2`), nth_plan(2)"))
 
-	_, err = tk.Exec("explain format='hint' select /*+ nth_plan(3) */ * from t where a=1 and b=1")
-	c.Assert(err, NotNil)
+	tk.MustExec("explain format='hint' select /*+ nth_plan(3) */ * from t where a=1 and b=1")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 The parameter of nth_plan() is out of range."))
 
 	// test warning for multiply hints
 	tk.MustQuery("explain format='hint' select /*+ nth_plan(1) nth_plan(2) */ * from t where a=1 and b=1").Check(testkit.Rows(

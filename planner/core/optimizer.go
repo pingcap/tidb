@@ -132,7 +132,7 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
 		return nil, 0, errors.Trace(ErrCartesianProductUnsupported)
 	}
-	var clock = CountDown(sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan)
+	clock := CountDown(sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan)
 	if clock == 0 {
 		clock = -1
 	}
@@ -185,13 +185,12 @@ func physicalOptimize(logic LogicalPlan, clock *CountDown) (PhysicalPlan, float6
 		ExpectedCnt: math.MaxFloat64,
 	}
 
-	logic.SCtx().GetSessionVars().TaskMapNeedBackUp = clock.IsForce()
 	t, _, err := logic.findBestTask(prop, clock)
 	if err != nil {
 		return nil, 0, err
 	}
 	if *clock > 0 {
-		return nil, 0, ErrInternal.GenWithStackByArgs("The parameter of nth_plan() is out of range.")
+		logic.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The parameter of nth_plan() is out of range."))
 	}
 	if t.invalid() {
 		return nil, 0, ErrInternal.GenWithStackByArgs("Can't find a proper physical plan for this query")
