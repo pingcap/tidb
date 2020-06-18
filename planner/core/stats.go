@@ -183,7 +183,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		ds.pushedDownConds[i] = expression.PushDownNot(ds.ctx, expr)
 	}
 	for _, path := range ds.possibleAccessPaths {
-		if path.IsTablePath {
+		if path.IsTablePath() {
 			continue
 		}
 		err := ds.fillIndexPath(path, ds.pushedDownConds)
@@ -193,7 +193,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	}
 	ds.stats = ds.deriveStatsByFilter(ds.pushedDownConds, ds.possibleAccessPaths)
 	for _, path := range ds.possibleAccessPaths {
-		if path.IsTablePath {
+		if path.IsTablePath() {
 			noIntervalRanges, err := ds.deriveTablePathStats(path, ds.pushedDownConds, false)
 			if err != nil {
 				return nil, err
@@ -368,11 +368,15 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 	var results = make([]*util.AccessPath, 0, usedIndexCount)
 	for i := 0; i < usedIndexCount; i++ {
 		path := &util.AccessPath{}
-		if ds.possibleAccessPaths[i].IsTablePath {
+		if ds.possibleAccessPaths[i].IsTablePath() {
 			if !ds.isInIndexMergeHints("primary") {
 				continue
 			}
-			path.IsTablePath = true
+			if ds.tableInfo.IsCommonHandle {
+				path.IsCommonHandlePath = true
+			} else {
+				path.IsIntHandlePath = true
+			}
 			noIntervalRanges, err := ds.deriveTablePathStats(path, conditions, true)
 			if err != nil {
 				logutil.BgLogger().Debug("can not derive statistics of a path", zap.Error(err))
