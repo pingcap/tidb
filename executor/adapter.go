@@ -820,6 +820,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	normalizedSQL, digest := sessVars.StmtCtx.SQLDigest()
 	if sessVars.EnableSlowLogMasking {
 		sql = FormatSQL(normalizedSQL, nil)
+	} else if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
+		sql = FormatSQL(sensitiveStmt.SecureText(), nil)
 	} else {
 		sql = FormatSQL(a.Text, sessVars.PreparedParams)
 	}
