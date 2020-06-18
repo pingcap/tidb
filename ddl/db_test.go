@@ -264,7 +264,9 @@ func (s *testDBSuite2) TestAddUniqueIndexRollback(c *C) {
 }
 
 func (s *testSerialDBSuite) TestAddExpressionIndexRollback(c *C) {
-	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = true
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
 	tk.MustExec("drop table if exists t1")
@@ -4454,7 +4456,9 @@ func (s *testDBSuite2) TestTablesLockDelayClean(c *C) {
 
 	tk.MustExec("lock tables t1 write")
 	checkTableLock(c, tk.Se, "test", "t1", model.TableLockWrite)
-	config.GetGlobalConfig().DelayCleanTableLock = 100
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.DelayCleanTableLock = 100
+	})
 	var wg sync.WaitGroup
 	wg.Add(1)
 	var startTime time.Time
@@ -4468,7 +4472,9 @@ func (s *testDBSuite2) TestTablesLockDelayClean(c *C) {
 	wg.Wait()
 	c.Assert(time.Since(startTime).Seconds() > 0.1, IsTrue)
 	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
-	config.GetGlobalConfig().DelayCleanTableLock = 0
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.DelayCleanTableLock = 0
+	})
 }
 
 // TestConcurrentLockTables test concurrent lock/unlock tables.
@@ -4704,6 +4710,25 @@ func (s *testSerialDBSuite) TestDDLJobErrorCount(c *C) {
 		kv.ErrEntryTooLarge.Equal(historyJob.Error)
 		break
 	}
+}
+
+func (s *testDBSuite1) TestAlterTableWithValidation(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	s.tk.MustExec("drop table if exists t1")
+	defer s.tk.MustExec("drop table if exists t1")
+
+	s.tk.MustExec("create table t1 (c1 int, c2 int as (c1 + 1));")
+
+	// Test for alter table with validation.
+	s.tk.MustExec("alter table t1 with validation")
+	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|8200|ALTER TABLE WITH VALIDATION is currently unsupported"))
+
+	// Test for alter table without validation.
+	s.tk.MustExec("alter table t1 without validation")
+	c.Assert(s.tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	s.tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|8200|ALTER TABLE WITHOUT VALIDATION is currently unsupported"))
 }
 
 func init() {
