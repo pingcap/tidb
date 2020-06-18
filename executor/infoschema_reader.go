@@ -1935,5 +1935,6 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.
 		e.instanceIdx += 1
 		e.rowIdx = 0
 	}
+	e.rowIdx += len(rows)
 	return rows, nil
 }
