@@ -975,15 +975,15 @@ func (s *testSequenceSuite) TestSequenceDefaultLogic(c *C) {
 
 // Close issue #17945, sequence cache shouldn't be negative.
 func (s *testSequenceSuite) TestSequenceCacheShouldNotBeNegative(c *C) {
-	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("use test")
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
 
-	s.tk.MustExec("drop sequence if exists seq")
-	_, err := s.tk.Exec("create sequence seq cache -1")
+	tk.MustExec("drop sequence if exists seq")
+	_, err := tk.Exec("create sequence seq cache -1")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:4136]Sequence 'test.seq' values are conflicting")
 
-	_, err = s.tk.Exec("create sequence seq cache 0")
+	_, err = tk.Exec("create sequence seq cache 0")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:4136]Sequence 'test.seq' values are conflicting")
 
@@ -993,9 +993,9 @@ func (s *testSequenceSuite) TestSequenceCacheShouldNotBeNegative(c *C) {
 	// 3: increment = -9223372036854775807 by user
 	// `seqInfo.CacheValue < (math.MaxInt64-absIncrement)/absIncrement` will
 	// ensure there is enough value for one cache allocation at least.
-	_, err = s.tk.Exec("create sequence seq INCREMENT -9223372036854775807 cache 1")
+	_, err = tk.Exec("create sequence seq INCREMENT -9223372036854775807 cache 1")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:4136]Sequence 'test.seq' values are conflicting")
 
-	s.tk.MustExec("create sequence seq cache 1")
+	tk.MustExec("create sequence seq cache 1")
 }
