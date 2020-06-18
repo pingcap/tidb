@@ -230,7 +230,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 			continue
 		}
 
-		// If the aim plan can be found in this physicalPlan(pp), rebuild childTasks to make the corresponding combination.
+		// If the target plan can be found in this physicalPlan(pp), rebuild childTasks to build the corresponding combination.
 		if clock.IsForce() && int64(*clock) <= curCntPlan {
 			curCntPlan = int64(*clock)
 			err := p.rebuildChildTasks(&childTasks, pp, childCnts, int64(*clock), TimeStampNow)
