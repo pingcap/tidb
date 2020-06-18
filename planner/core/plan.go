@@ -154,11 +154,11 @@ type LogicalPlan interface {
 	// findBestTask converts the logical plan to the physical plan. It's a new interface.
 	// It is called recursively from the parent to the children to create the result physical plan.
 	// Some logical plans will convert the children to the physical plans in different ways, and return the one
-	// with the lowest cost and how many plans are found in this function.
+	// With the lowest cost and how many plans are found in this function.
 	// clock is a counter for planner to force a plan.
-	// if clock > 0, the clock_th plan generated in this function will be returned.
-	// if clock = 0, the plan generated in this function will not be considered.
-	// if clock = -1, then we will not force plan.
+	// If clock > 0, the clock_th plan generated in this function will be returned.
+	// If clock = 0, the plan generated in this function will not be considered.
+	// If clock = -1, then we will not force plan.
 	findBestTask(prop *property.PhysicalProperty, clock *CountDown) (task, int64, error)
 
 	// BuildKeyInfo will collect the information of unique keys into schema.
@@ -203,7 +203,7 @@ type LogicalPlan interface {
 	// SetChild sets the ith child for the plan.
 	SetChild(i int, child LogicalPlan)
 
-	// rollBackTaskMap roll back all taskMap's logs after TimeStamp TS
+	// rollBackTaskMap roll back all taskMap's logs after TimeStamp TS.
 	rollBackTaskMap(TS time.Time)
 }
 
@@ -252,7 +252,7 @@ type baseLogicalPlan struct {
 	taskMap map[string]task
 	// taskMapBak forms a backlog stack of taskMap, used to roll back the taskMap.
 	taskMapBak []string
-	// taskMapBakTS stores the TimeStamps of logs.
+	// taskMapBakTS stores the timestamps of logs.
 	taskMapBakTS []time.Time
 	self         LogicalPlan
 	maxOneRow    bool
@@ -304,7 +304,7 @@ func (p *baseLogicalPlan) rollBackTaskMap(TS time.Time) {
 		return
 	}
 	if len(p.taskMapBak) > 0 {
-		// rollback all the logs with TimeStamp TS
+		// Rollback all the logs with TimeStamp TS.
 		N := len(p.taskMapBak)
 		for i := 0; i < N; i++ {
 			cur := p.taskMapBak[i]
@@ -312,13 +312,13 @@ func (p *baseLogicalPlan) rollBackTaskMap(TS time.Time) {
 				continue
 			}
 
-			// remove the i_th log
+			// Remove the i_th log.
 			p.taskMapBak = append(p.taskMapBak[:i], p.taskMapBak[i+1:]...)
 			p.taskMapBakTS = append(p.taskMapBakTS[:i], p.taskMapBakTS[i+1:]...)
 			i--
 			N--
 
-			// if cur is a valid log, then roll back.
+			// If cur is a valid log, then roll back.
 			if cur != "" {
 				p.taskMap[cur] = nil
 			}

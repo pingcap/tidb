@@ -65,10 +65,10 @@ var aggFuncFactor = map[string]float64{
 // CountDown is used in hint nth_plan() to indicate which plan to use.
 type CountDown int8
 
-// Sign is the default value of CountDown, indicating that optimizer needn't to force a plan.
+// Sign is the default value of CountDown, indicating that optimizer needn't force a plan.
 var Sign CountDown = -1
 
-// Dec minus countdown by x
+// Dec minus CountDown value by x.
 func (c *CountDown) Dec(x int8) {
 	if *c <= 0 {
 		return
@@ -167,9 +167,9 @@ func (p *LogicalShowDDLJobs) findBestTask(prop *property.PhysicalProperty, clock
 	return &rootTask{p: pShow}, 1, nil
 }
 
-// rebuildChildTasks rebuild the childTasks to make the clock_th combination.
+// The function rebuildChildTasks rebuilds the childTasks to make the clock_th combination.
 func (p *baseLogicalPlan) rebuildChildTasks(childTasks *[]task, pp PhysicalPlan, childCnts []int64, clock int64, TS time.Time) error {
-	// the taskMap of children nodes should be rolled back.
+	// The taskMap of children nodes should be rolled back first.
 	for _, child := range p.children {
 		child.rollBackTaskMap(TS)
 	}
@@ -206,9 +206,9 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 	childCnts := make([]int64, len(p.children))
 	cntPlan = 0
 	for _, pp := range physicalPlans {
-		// find best child tasks firstly.
+		// Find best child tasks firstly.
 		childTasks = childTasks[:0]
-		// curCntPlan record the number of possible plan for pp
+		// The curCntPlan records the number of possible plans for pp
 		curCntPlan = 1
 		TimeStampNow := p.GetBakTimeStamp()
 		for j, child := range p.children {
@@ -238,21 +238,21 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 			}
 		}
 
-		// combine best child tasks with parent physical plan.
+		// Combine best child tasks with parent physical plan.
 		curTask := pp.attach2Task(childTasks...)
 
-		// enforce curTask property
+		// Enforce curTask property
 		if prop.Enforced {
 			curTask = enforceProperty(prop, curTask, p.basePlan.ctx)
 		}
 
-		// optimize by shuffle executor to running in parallel manner.
+		// Optimize by shuffle executor to running in parallel manner.
 		if prop.IsEmpty() {
-			// currently, we don not regard shuffled plan as a new plan.
+			// Currently, we don not regard shuffled plan as a new plan.
 			curTask = optimizeByShuffle(pp, curTask, p.basePlan.ctx)
 		}
 
-		// get the most efficient one.
+		// Get the most efficient one.
 		cntPlan += curCntPlan
 		clock.Dec(int8(curCntPlan))
 

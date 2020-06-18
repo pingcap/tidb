@@ -240,7 +240,7 @@ func (s *testPlanNormalize) TestNthPlanHint(c *C) {
 	tk.MustExec("create table tt (a int,b int, index(a), index(b));")
 	tk.MustExec("insert into tt values (1, 1), (2, 2), (3, 4)")
 
-	// test the explained plans.
+	// Test the explained plans.
 	tk.MustQuery("explain select /*+nth_plan(1)*/ * from tt where a=1 and b=1;").Check(testkit.Rows(
 		"TableReader_18 0.01 root  data:Selection_17",
 		"└─Selection_17 0.01 cop[tikv]  eq(test.tt.a, 1), eq(test.tt.b, 1)",
@@ -258,7 +258,7 @@ func (s *testPlanNormalize) TestNthPlanHint(c *C) {
 		"└─Selection_25(Probe) 0.01 cop[tikv]  eq(test.tt.a, 1)",
 		"  └─TableRowIDScan_24 10.00 cop[tikv] table:tt keep order:false, stats:pseudo"))
 
-	// with the same param in nth_plan, we should get the same plan.
+	// With the same param in nth_plan, we should get the same plan.
 	tk.MustQuery("explain select /*+nth_plan(2)*/ * from tt where a=1 and b=1;").Check(testkit.Rows(
 		"IndexLookUp_22 0.01 root  ",
 		"├─IndexRangeScan_19(Build) 10.00 cop[tikv] table:tt, index:a(a) range:[1,1], keep order:false, stats:pseudo",
@@ -269,7 +269,7 @@ func (s *testPlanNormalize) TestNthPlanHint(c *C) {
 	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Warning 1105 The parameter of nth_plan() is out of range."))
 
-	// test hints for nth_plan(x)
+	// Test hints for nth_plan(x).
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, c int, index(a), index(b), index(a,b))")
 	tk.MustQuery("explain format='hint' select * from t where a=1 and b=1").Check(testkit.Rows(
@@ -283,14 +283,14 @@ func (s *testPlanNormalize) TestNthPlanHint(c *C) {
 	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Warning 1105 The parameter of nth_plan() is out of range."))
 
-	// test warning for multiply hints
+	// Test warning for multiply hints.
 	tk.MustQuery("explain format='hint' select /*+ nth_plan(1) nth_plan(2) */ * from t where a=1 and b=1").Check(testkit.Rows(
 		"use_index(@`sel_1` `test`.`t` `a_2`), nth_plan(1), nth_plan(2)"))
 	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Warning 1105 NTH_PLAN() is defined more than once, only the last definition takes effect: NTH_PLAN(2)",
 		"Warning 1105 NTH_PLAN() is defined more than once, only the last definition takes effect: NTH_PLAN(2)"))
 
-	// test the correctness of generated plans.
+	// Test the correctness of generated plans.
 	tk.MustExec("insert into t values (1,1,1)")
 	tk.MustQuery("select  /*+ nth_plan(1) */ * from t where a=1 and b=1;").Check(testkit.Rows(
 		"1 1 1"))
