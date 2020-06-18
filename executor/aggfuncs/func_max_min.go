@@ -62,16 +62,10 @@ func (h *maxMinHeap) Pop() interface{} {
 }
 
 func (h *maxMinHeap) Top() (val interface{}, isEmpty bool) {
-retry:
 	if h.Len() == 0 {
 		return nil, true
 	}
-	top := h.data[0]
-	if h.varSet[top] == 0 {
-		_ = heap.Pop(h)
-		goto retry
-	}
-	return top, false
+	return h.data[0], false
 }
 func (h *maxMinHeap) Append(val interface{}) {
 	h.varSet[val]++
@@ -80,8 +74,17 @@ func (h *maxMinHeap) Append(val interface{}) {
 	}
 }
 func (h *maxMinHeap) Remove(val interface{}) {
-	if h.varSet[val] > 0 {
+	switch {
+	case h.varSet[val] > 1:
 		h.varSet[val]--
+	case h.varSet[val] == 1:
+		for i, v := range h.data {
+			if h.cmpFunc(v, val) != 0 {
+				continue
+			}
+			heap.Remove(h, i)
+		}
+		h.varSet[val] = 0
 	}
 }
 func (h *maxMinHeap) Reset() {
