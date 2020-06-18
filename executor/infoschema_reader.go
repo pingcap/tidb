@@ -1931,10 +1931,10 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.
 		row[len(e.outputCols)-1].SetString(instanceInfo.id, mysql.DefaultCollationName)
 		rows = append(rows, row)
 	}
+	e.rowIdx += len(rows)
 	if len(rows) < maxCount {
 		e.instanceIdx += 1
 		e.rowIdx = 0
 	}
-	e.rowIdx += len(rows)
 	return rows, nil
 }
