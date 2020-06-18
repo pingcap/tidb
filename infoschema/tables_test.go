@@ -1278,7 +1278,10 @@ func (s *testTableSuite) TestStmtSummarySensitiveQuery(c *C) {
 	tk.MustExec("create user user_sensitive identified by '123456789';")
 	tk.MustExec("alter user 'user_sensitive'@'%' identified by 'abcdefg';")
 	tk.MustExec("set password for 'user_sensitive'@'%' = 'xyzuvw';")
-	tk.MustQuery("select query_sample_text from `information_schema`.`STATEMENTS_SUMMARY` where query_sample_text like 'set password%' or query_sample_text like 'create user%' or query_sample_text like 'alter user%' order by query_sample_text;").
+	tk.MustQuery("select query_sample_text from `information_schema`.`STATEMENTS_SUMMARY` " +
+		"where query_sample_text like '%user_sensitive%' and " +
+		"(query_sample_text like 'set password%' or query_sample_text like 'create user%' or query_sample_text like 'alter user%') " +
+		"order by query_sample_text;").
 		Check(testkit.Rows(
 			"alter user {user_sensitive@% password = ***}",
 			"create user {user_sensitive@% password = ***}",

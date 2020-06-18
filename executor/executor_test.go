@@ -5891,7 +5891,9 @@ func (s *testSuite) TestSlowQuerySensitiveQuery(c *C) {
 	tk.MustExec("create user user_sensitive identified by '123456789';")
 	tk.MustExec("alter user 'user_sensitive'@'%' identified by 'abcdefg';")
 	tk.MustExec("set password for 'user_sensitive'@'%' = 'xyzuvw';")
-	tk.MustQuery("select query from `information_schema`.`slow_query` where query like 'set password%' or query like 'create user%' or query like 'alter user%' order by query;").
+	tk.MustQuery("select query from `information_schema`.`slow_query` " +
+		"where (query like 'set password%' or query like 'create user%' or query like 'alter user%') " +
+		"and query like '%user_sensitive%' order by query;").
 		Check(testkit.Rows(
 			"alter user {user_sensitive@% password = ***};",
 			"create user {user_sensitive@% password = ***};",
