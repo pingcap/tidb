@@ -1,7 +1,7 @@
 # Global Kill
 
 - Author(s):     [pingyu](https://github.com/pingyu) (Ping Yu)
-- Last updated:  2020-06-17
+- Last updated:  2020-06-18
 - Discussion at: https://github.com/pingcap/tidb/issues/8854
 
 ## Abstract
@@ -24,20 +24,20 @@ To support "Global Kill", we need:
 #### 1. Structure of `connId`
 ##### 64 bits version
 ```
- 63                   48 47                   32    31    30                                        0
-+-----------------------+-----------------------+--------+-------------------------------------------+
-|       reserved        |        serverId       | markup |              local connId                 |
-|        (16b)          |          (16b)        |(1b,==1)|                 (31b)                     |
-+-----------------------+-----------------------+--------+-------------------------------------------+
+ 63                   41 40                                   1    0    
++-----------------------+--------------------------------------+--------+
+|       serverId        |             local connId             | markup |
+|        (23b)          |                 (40b)                |(1b,==1)|
++-----------------------+--------------------------------------+--------+
 ```
 ##### 32 bits version
 (To be discussed in another RFC)
 ```
-    31    30                                   0
-+--------+--------------------------------------+
-| markup |                  ???                 |
-|(1b,==0)|                  ???                 |
-+--------+--------------------------------------+
+                                  31                          1    0
+                                 +-----------------------------+--------+
+                                 |             ???             | markup |
+                                 |             ???             |(1b,==0)|
+                                 +-----------------------------+--------+
 ```
 
 #### 2. markup
@@ -47,15 +47,18 @@ To support "Global Kill", we need:
 
 
 #### 3. serverId
-`serverId` is allocated to each TiDB instance on startup by PD, begin with 1.
+`serverId` is allocated to each TiDB instance on startup by PD, begin with 1, to insure that high 32 bits of `connId` should always be non-zero, and make it possible to detect truncation.
 
-On single TiDB instance without PD, a `serverId` of `0` is allocated.
+On single TiDB instance without PD, a `serverId` of `0` is assigned.
 
 When `serverId == 0`, we deal with `KILL x` as in [early versions](https://pingcap.com/docs/stable/sql-statements/sql-statement-kill/).
 
+Integer overflow is ignored at this stage, as `serverId` should be long enough.
 
 #### 4. local connId
 `local connId` is allocated by each TiDB instance on establishing connections.
+
+Integer overflow is ignored at this stage, as `local connId` should be long enouth.
 
 #### 5. global kill
 On processing `KILL x` command, first extract `serverId` from `x`. Then if `serverId` aims to a remote TiDB instance, get address from cluster info, and redirect the command to it by "MySQL API", along with the original user authentication.
