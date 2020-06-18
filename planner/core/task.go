@@ -1098,6 +1098,17 @@ func BuildFinalModeAggregation(
 				args = append(args, partial.Schema.Columns[partialCursor])
 				partialCursor++
 			}
+			if finalAggFunc.Name == ast.AggFuncApproxCountDistinct {
+				ft := types.NewFieldType(mysql.TypeString)
+				ft.Charset, ft.Collate = charset.CharsetBin, charset.CollationBin
+				ft.Flag |= mysql.NotNullFlag
+				partial.Schema.Append(&expression.Column{
+					UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
+					RetType:  ft,
+				})
+				args = append(args, partial.Schema.Columns[partialCursor])
+				partialCursor++
+			}
 			if aggregation.NeedValue(finalAggFunc.Name) {
 				partial.Schema.Append(&expression.Column{
 					UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
@@ -1115,6 +1126,11 @@ func BuildFinalModeAggregation(
 				sumAgg.Name = ast.AggFuncSum
 				sumAgg.RetTp = partial.Schema.Columns[partialCursor-1].GetType()
 				partial.AggFuncs = append(partial.AggFuncs, &cntAgg, &sumAgg)
+			} else if aggFunc.Name == ast.AggFuncApproxCountDistinct {
+				approxCountDistinctAgg := *aggFunc
+				approxCountDistinctAgg.Name = ast.AggFuncApproxCountDistinct
+				approxCountDistinctAgg.RetTp = partial.Schema.Columns[partialCursor-1].GetType()
+				partial.AggFuncs = append(partial.AggFuncs, &approxCountDistinctAgg)
 			} else {
 				partial.AggFuncs = append(partial.AggFuncs, aggFunc)
 			}
@@ -1236,15 +1252,24 @@ func RemoveUnnecessaryFirstRow(
 				continue
 			}
 		}
-		if aggregation.NeedCount(aggFunc.Name) {
-			partialCursor++
-		}
-		if aggregation.NeedValue(aggFunc.Name) {
-			partialCursor++
-		}
+		partialCursor += computePartialCursorOffset(aggFunc.Name)
 		newAggFuncs = append(newAggFuncs, aggFunc)
 	}
 	return newAggFuncs
+}
+
+func computePartialCursorOffset(name string) int {
+	offset := 0
+	if aggregation.NeedCount(name) {
+		offset++
+	}
+	if aggregation.NeedValue(name) {
+		offset++
+	}
+	if name == ast.AggFuncApproxCountDistinct {
+		offset++
+	}
+	return offset
 }
 
 func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
