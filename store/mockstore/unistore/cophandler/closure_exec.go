@@ -351,7 +351,7 @@ func (e *closureExecutor) execute() ([]tipb.Chunk, error) {
 	}
 	dbReader := e.dbReader
 	for i, ran := range e.kvRanges {
-		if e.isPointRange(ran) {
+		if e.isPointGetRange(ran) {
 			val, err := dbReader.Get(ran.StartKey, e.startTS)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -389,7 +389,7 @@ func (e *closureExecutor) execute() ([]tipb.Chunk, error) {
 	return e.oldChunks, err
 }
 
-func (e *closureExecutor) isPointRange(ran kv.KeyRange) bool {
+func (e *closureExecutor) isPointGetRange(ran kv.KeyRange) bool {
 	if e.idxScanCtx != nil || len(e.primaryCols) == 0 {
 		return e.unique && ran.IsPoint()
 	}
