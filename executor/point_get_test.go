@@ -527,10 +527,31 @@ func (s *testPointGetSuite) TestReturnValues(c *C) {
 	txnCtx := tk.Se.GetSessionVars().TxnCtx
 	val, ok := txnCtx.GetKeyInPessimisticLockCache(pk)
 	c.Assert(ok, IsTrue)
-	handle, err := tables.DecodeHandleInUniqueIndexValue(val)
+	handle, err := tables.DecodeHandleInUniqueIndexValue(val, false)
 	c.Assert(err, IsNil)
-	rowKey := tablecodec.EncodeRowKeyWithHandle(tid, kv.IntHandle(handle))
+	rowKey := tablecodec.EncodeRowKeyWithHandle(tid, handle)
 	_, ok = txnCtx.GetKeyInPessimisticLockCache(rowKey)
 	c.Assert(ok, IsTrue)
 	tk.MustExec("rollback")
+}
+
+func (s *testPointGetSuite) TestClusterIndexPointGet(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists pgt")
+	tk.MustExec("create table pgt (a varchar(64), b varchar(64), uk int, v int, primary key(a, b), unique key uuk(uk))")
+	tk.MustExec("insert pgt values ('a', 'a1', 1, 11), ('b', 'b1', 2, 22), ('c', 'c1', 3, 33)")
+	tk.MustQuery(`select * from pgt where (a, b) in (('a', 'a1'), ('c', 'c1'))`).Check(testkit.Rows("a a1 1 11", "c c1 3 33"))
+	tk.MustQuery(`select * from pgt where a = 'b' and b = 'b1'`).Check(testkit.Rows("b b1 2 22"))
+	tk.MustQuery(`select * from pgt where uk = 1`).Check(testkit.Rows("a a1 1 11"))
+	tk.MustQuery(`select * from pgt where uk in (1, 2, 3)`).Check(testkit.Rows("a a1 1 11", "b b1 2 22", "c c1 3 33"))
+	tk.MustExec(`admin check table pgt`)
+
+	tk.MustExec(`drop table if exists snp`)
+	tk.MustExec(`create table snp(id1 int, id2 int, v int, primary key(id1, id2))`)
+	tk.MustQuery(`explain select * from snp where id1 = 1`).Check(testkit.Rows("TableReader_6 10.00 root  data:TableRangeScan_5",
+		"└─TableRangeScan_5 10.00 cop[tikv] table:snp range:[1,1], keep order:false, stats:pseudo"))
+	tk.MustQuery(`explain select * from snp where id1 in (1, 100)`).Check(testkit.Rows("TableReader_6 20.00 root  data:TableRangeScan_5",
+		"└─TableRangeScan_5 20.00 cop[tikv] table:snp range:[1,1], [100,100], keep order:false, stats:pseudo"))
 }

@@ -714,6 +714,11 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogQueryTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogParseTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogCompileTimeStr, tp: mysql.TypeDouble, size: 22},
+	{name: variable.SlowLogRewriteTimeStr, tp: mysql.TypeDouble, size: 22},
+	{name: variable.SlowLogPreprocSubQueriesStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
+	{name: variable.SlowLogPreProcSubQueryTimeStr, tp: mysql.TypeDouble, size: 22},
+	{name: variable.SlowLogOptimizeTimeStr, tp: mysql.TypeDouble, size: 22},
+	{name: variable.SlowLogWaitTSTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: execdetails.PreWriteTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: execdetails.WaitPrewriteBinlogTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: execdetails.CommitTimeStr, tp: mysql.TypeDouble, size: 22},
@@ -1340,6 +1345,15 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	}
 	var servers []ServerInfo
 	for _, store := range stores {
+		failpoint.Inject("mockStoreTombstone", func(val failpoint.Value) {
+			if val.(bool) {
+				store.State = metapb.StoreState_Tombstone
+			}
+		})
+
+		if store.GetState() == metapb.StoreState_Tombstone {
+			continue
+		}
 		var tp string
 		if isTiFlashStore(store) {
 			tp = "tiflash"

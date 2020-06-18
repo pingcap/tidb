@@ -474,11 +474,12 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 				err = w.finishDDLJob(t, job)
 				return errors.Trace(err)
 			}
-			if runJobErr != nil && !job.IsRollingback() {
+			if runJobErr != nil && !job.IsRollingback() && !job.IsRollbackDone() {
 				// If the running job meets an error
 				// and the job state is rolling back, it means that we have already handled this error.
 				// Some DDL jobs (such as adding indexes) may need to update the table info and the schema version,
 				// then shouldn't discard the KV modification.
+				// And the job state is rollback done, it means the job was already finished, also shouldn't discard too.
 				// Otherwise, we should discard the KV modification when running job.
 				txn.Discard()
 			}
@@ -616,6 +617,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onDropTablePartition(t, job)
 	case model.ActionTruncateTablePartition:
 		ver, err = onTruncateTablePartition(d, t, job)
+	case model.ActionExchangeTablePartition:
+		ver, err = w.onExchangeTablePartition(d, t, job)
 	case model.ActionAddColumn:
 		ver, err = onAddColumn(d, t, job)
 	case model.ActionAddColumns:
@@ -841,6 +844,23 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 			return 0, errors.Trace(err)
 		}
 		diff.TableID = job.TableID
+	case model.ActionExchangeTablePartition:
+		var (
+			ptSchemaID int64
+			ptTableID  int64
+		)
+		err = job.DecodeArgs(&diff.TableID, &ptSchemaID, &ptTableID)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		diff.OldTableID = job.TableID
+		affects := make([]*model.AffectedOption, 1)
+		affects[0] = &model.AffectedOption{
+			SchemaID:   ptSchemaID,
+			TableID:    ptTableID,
+			OldTableID: ptTableID,
+		}
+		diff.AffectedOpts = affects
 	default:
 		diff.TableID = job.TableID
 	}

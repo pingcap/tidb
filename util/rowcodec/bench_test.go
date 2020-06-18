@@ -75,13 +75,8 @@ func BenchmarkDecode(b *testing.B) {
 	cols := make([]rowcodec.ColInfo, len(tps))
 	for i, tp := range tps {
 		cols[i] = rowcodec.ColInfo{
-			ID:      colIDs[i],
-			Tp:      int32(tp.Tp),
-			Flag:    int32(tp.Flag),
-			Flen:    tp.Flen,
-			Decimal: tp.Decimal,
-			Elems:   tp.Elems,
-			Collate: tp.Collate,
+			ID: colIDs[i],
+			Ft: tp,
 		}
 	}
 	decoder := rowcodec.NewChunkDecoder(cols, []int64{-1}, nil, time.Local)
