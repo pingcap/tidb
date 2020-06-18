@@ -20,6 +20,7 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -34,6 +35,8 @@ import (
 )
 
 var rowChunksLabel fmt.Stringer = stringutil.StringerStr("rowChunks")
+
+var ErrInsertToPartitionFailed = terror.ClassExecutor.New(1, "Insert the records unsuccessfully. The SortedRowContainer is sorted.")
 
 // SortExec represents sorting executor.
 type SortExec struct {
@@ -568,6 +571,7 @@ func (c *SortedRowContainer) keyColumnsLess(i, j int) bool {
 }
 
 func (c *SortedRowContainer) initPointerAndSort(inSpilling bool) {
+	// In spilling function, it has got the Lock and initPointerAndSort don't need to get lock again.
 	if !inSpilling {
 		c.m.Lock()
 		defer c.m.Unlock()
@@ -593,7 +597,6 @@ func (c *SortedRowContainer) sortAndSpillToDisk(inReadLock bool) (err error) {
 	}
 	c.m.Lock()
 	defer c.m.Unlock()
-	// If needLock is true, get the WLock above and don't need to get lock again.
 	c.initPointerAndSort(true)
 	return c.RowContainer.SpillToDisk(inReadLock)
 }

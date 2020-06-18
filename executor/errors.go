@@ -42,7 +42,6 @@ var (
 	ErrRoleNotGranted              = terror.ClassPrivilege.New(mysql.ErrRoleNotGranted, mysql.MySQLErrName[mysql.ErrRoleNotGranted])
 	ErrDeadlock                    = terror.ClassExecutor.New(mysql.ErrLockDeadlock, mysql.MySQLErrName[mysql.ErrLockDeadlock])
 	ErrQueryInterrupted            = terror.ClassExecutor.New(mysql.ErrQueryInterrupted, mysql.MySQLErrName[mysql.ErrQueryInterrupted])
-	ErrInsertToPartitionFailed     = terror.ClassExecutor.New(mysql.ErrInsertToPartitionFailed, mysql.MySQLErrName[mysql.ErrInsertToPartitionFailed])
 
 	ErrBRIEBackupFailed  = terror.ClassExecutor.New(mysql.ErrBRIEBackupFailed, mysql.MySQLErrName[mysql.ErrBRIEBackupFailed])
 	ErrBRIERestoreFailed = terror.ClassExecutor.New(mysql.ErrBRIERestoreFailed, mysql.MySQLErrName[mysql.ErrBRIERestoreFailed])

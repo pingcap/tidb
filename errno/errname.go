@@ -1069,7 +1069,6 @@ var MySQLErrName = map[uint16]string{
 	ErrMixOfGroupFuncAndFieldsIncompatible: "In aggregated query without GROUP BY, expression #%d of SELECT list contains nonaggregated column '%s'; this is incompatible with sql_mode=only_full_group_by",
 	ErrUnsupportedSecondArgumentType:       "JSON_OBJECTAGG: unsupported second argument type %v",
 	ErrLockExpire:                          "TTL manager has timed out, pessimistic locks may expire, please commit or rollback this transaction",
-	ErrInsertToPartitionFailed:             "Insert the records unsuccessfully. The SortedRowContainer is spilled",
 
 	ErrBRIEBackupFailed:  "Backup failed: %s",
 	ErrBRIERestoreFailed: "Restore failed: %s",
