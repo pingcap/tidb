@@ -285,7 +285,7 @@ func (s *testPartitionPruningSuite) TestPartitionRangePrunner2VarChar(c *C) {
 		lessThan[i] = tmp[0]
 	}
 
-	prunner := &rangeColumnPruner{lessThan, tc.columns[0], true}
+	prunner := &rangeColumnsPruner{lessThan, tc.columns[0], true}
 	cases := []struct {
 		input  string
 		result partitionRangeOR
@@ -333,7 +333,7 @@ func (s *testPartitionPruningSuite) TestPartitionRangePrunner2Date(c *C) {
 		lessThan[i] = tmp[0]
 	}
 
-	prunner := &rangeColumnPruner{lessThan, tc.columns[0], false}
+	prunner := &rangeColumnsPruner{lessThan, tc.columns[0], false}
 	cases := []struct {
 		input  string
 		result partitionRangeOR

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/fastrand"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
@@ -44,15 +45,14 @@ const (
 )
 
 var (
-	tikvBackoffHistogramRPC          = metrics.TiKVBackoffHistogram.WithLabelValues("tikvRPC")
-	tikvBackoffHistogramLock         = metrics.TiKVBackoffHistogram.WithLabelValues("txnLock")
-	tikvBackoffHistogramLockFast     = metrics.TiKVBackoffHistogram.WithLabelValues("tikvLockFast")
-	tikvBackoffHistogramPD           = metrics.TiKVBackoffHistogram.WithLabelValues("pdRPC")
-	tikvBackoffHistogramRegionMiss   = metrics.TiKVBackoffHistogram.WithLabelValues("regionMiss")
-	tikvBackoffHistogramUpdateLeader = metrics.TiKVBackoffHistogram.WithLabelValues("updateLeader")
-	tikvBackoffHistogramServerBusy   = metrics.TiKVBackoffHistogram.WithLabelValues("serverBusy")
-	tikvBackoffHistogramStaleCmd     = metrics.TiKVBackoffHistogram.WithLabelValues("staleCommand")
-	tikvBackoffHistogramEmpty        = metrics.TiKVBackoffHistogram.WithLabelValues("")
+	tikvBackoffHistogramRPC        = metrics.TiKVBackoffHistogram.WithLabelValues("tikvRPC")
+	tikvBackoffHistogramLock       = metrics.TiKVBackoffHistogram.WithLabelValues("txnLock")
+	tikvBackoffHistogramLockFast   = metrics.TiKVBackoffHistogram.WithLabelValues("tikvLockFast")
+	tikvBackoffHistogramPD         = metrics.TiKVBackoffHistogram.WithLabelValues("pdRPC")
+	tikvBackoffHistogramRegionMiss = metrics.TiKVBackoffHistogram.WithLabelValues("regionMiss")
+	tikvBackoffHistogramServerBusy = metrics.TiKVBackoffHistogram.WithLabelValues("serverBusy")
+	tikvBackoffHistogramStaleCmd   = metrics.TiKVBackoffHistogram.WithLabelValues("staleCommand")
+	tikvBackoffHistogramEmpty      = metrics.TiKVBackoffHistogram.WithLabelValues("")
 )
 
 func (t backoffType) metric() prometheus.Observer {
@@ -67,8 +67,6 @@ func (t backoffType) metric() prometheus.Observer {
 		return tikvBackoffHistogramPD
 	case BoRegionMiss:
 		return tikvBackoffHistogramRegionMiss
-	case BoUpdateLeader:
-		return tikvBackoffHistogramUpdateLeader
 	case boServerBusy:
 		return tikvBackoffHistogramServerBusy
 	case boStaleCmd:
@@ -134,7 +132,6 @@ const (
 	boTxnLockFast
 	BoPDRPC
 	BoRegionMiss
-	BoUpdateLeader
 	boServerBusy
 	boTxnNotFound
 	boStaleCmd
@@ -158,8 +155,6 @@ func (t backoffType) createFn(vars *kv.Variables) func(context.Context, int) int
 		return NewBackoffFn(2, 500, NoJitter)
 	case boTxnNotFound:
 		return NewBackoffFn(2, 500, NoJitter)
-	case BoUpdateLeader:
-		return NewBackoffFn(1, 10, NoJitter)
 	case boServerBusy:
 		return NewBackoffFn(2000, 10000, EqualJitter)
 	case boStaleCmd:
@@ -180,8 +175,6 @@ func (t backoffType) String() string {
 		return "pdRPC"
 	case BoRegionMiss:
 		return "regionMiss"
-	case BoUpdateLeader:
-		return "updateLeader"
 	case boServerBusy:
 		return "serverBusy"
 	case boStaleCmd:
@@ -200,7 +193,7 @@ func (t backoffType) TError() error {
 		return ErrResolveLockTimeout
 	case BoPDRPC:
 		return ErrPDServerTimeout
-	case BoRegionMiss, BoUpdateLeader:
+	case BoRegionMiss:
 		return ErrRegionUnavailable
 	case boServerBusy:
 		return ErrTiKVServerBusy
@@ -342,6 +335,13 @@ func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err err
 		b.backoffTimes = make(map[backoffType]int)
 	}
 	b.backoffTimes[typ]++
+
+	stmtExec := b.ctx.Value(execdetails.StmtExecDetailKey)
+	if stmtExec != nil {
+		detail := stmtExec.(*execdetails.StmtExecDetails)
+		atomic.AddInt64(&detail.BackoffDuration, int64(realSleep)*int64(time.Millisecond))
+		atomic.AddInt64(&detail.BackoffCount, 1)
+	}
 
 	if b.vars != nil && b.vars.Killed != nil {
 		if atomic.CompareAndSwapUint32(b.vars.Killed, 1, 0) {

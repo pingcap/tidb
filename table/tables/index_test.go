@@ -389,9 +389,8 @@ func createRowcodecColInfo(table *model.TableInfo, index *model.IndexInfo) []row
 		col := table.Columns[idxCol.Offset]
 		colInfos = append(colInfos, rowcodec.ColInfo{
 			ID:         col.ID,
-			Tp:         int32(col.Tp),
-			Flag:       int32(col.Flag),
 			IsPKHandle: table.PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
+			Ft:         rowcodec.FieldTypeFromModelColumn(col),
 		})
 	}
 	return colInfos

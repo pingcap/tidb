@@ -423,6 +423,11 @@ func (alloc *allocator) GetType() AllocatorType {
 
 // NextStep return new auto id step according to previous step and consuming time.
 func NextStep(curStep int64, consumeDur time.Duration) int64 {
+	failpoint.Inject("mockAutoIDCustomize", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(3)
+		}
+	})
 	failpoint.Inject("mockAutoIDChange", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(step)
@@ -897,6 +902,14 @@ func EncodeIntToCmpUint(v int64) uint64 {
 // DecodeCmpUintToInt decodes the u that encoded by EncodeIntToCmpUint
 func DecodeCmpUintToInt(u uint64) int64 {
 	return int64(u ^ signMask)
+}
+
+// TestModifyBaseAndEndInjection exported for testing modifying the base and end.
+func TestModifyBaseAndEndInjection(alloc Allocator, base, end int64) {
+	alloc.(*allocator).mu.Lock()
+	alloc.(*allocator).base = base
+	alloc.(*allocator).end = end
+	alloc.(*allocator).mu.Unlock()
 }
 
 // AutoRandomIDLayout is used to calculate the bits length of different section in auto_random id.

@@ -1346,7 +1346,7 @@ func (d *Datum) convertToMysqlEnum(sc *stmtctx.StatementContext, target *FieldTy
 	)
 	switch d.k {
 	case KindString, KindBytes:
-		e, err = ParseEnumName(target.Elems, d.GetString())
+		e, err = ParseEnumName(target.Elems, d.GetString(), target.Collate)
 	default:
 		var uintDatum Datum
 		uintDatum, err = d.convertToUint(sc, target)
@@ -1371,7 +1371,7 @@ func (d *Datum) convertToMysqlSet(sc *stmtctx.StatementContext, target *FieldTyp
 	)
 	switch d.k {
 	case KindString, KindBytes:
-		s, err = ParseSetName(target.Elems, d.GetString())
+		s, err = ParseSetName(target.Elems, d.GetString(), target.Collate)
 	default:
 		var uintDatum Datum
 		uintDatum, err = d.convertToUint(sc, target)
@@ -1667,6 +1667,8 @@ func (d *Datum) ToString() (string, error) {
 		return d.GetMysqlJSON().String(), nil
 	case KindBinaryLiteral, KindMysqlBit:
 		return d.GetBinaryLiteral().ToString(), nil
+	case KindNull:
+		return "", nil
 	default:
 		return "", errors.Errorf("cannot convert %v(type %T) to string", d.GetValue(), d.GetValue())
 	}

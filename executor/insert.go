@@ -61,6 +61,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 	if err != nil {
 		return err
 	}
+	txnSize := txn.Size()
 	sessVars.StmtCtx.AddRecordRows(uint64(len(rows)))
 	// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
 	// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
@@ -83,16 +84,16 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 		for i, row := range rows {
 			var err error
 			if i == 0 {
-				_, err = e.addRecordWithAutoIDHint(ctx, row, len(rows))
+				err = e.addRecordWithAutoIDHint(ctx, row, len(rows))
 			} else {
-				_, err = e.addRecord(ctx, row)
+				err = e.addRecord(ctx, row)
 			}
 			if err != nil {
 				return err
 			}
 		}
 	}
-	e.memTracker.Consume(int64(txn.Size()))
+	e.memTracker.Consume(int64(txn.Size() - txnSize))
 	return nil
 }
 
@@ -133,11 +134,11 @@ func prefetchConflictedOldRows(ctx context.Context, txn kv.Transaction, rows []t
 	for _, r := range rows {
 		for _, uk := range r.uniqueKeys {
 			if val, found := values[string(uk.newKV.key)]; found {
-				handle, err := tables.DecodeHandleInUniqueIndexValue(val)
+				handle, err := tables.DecodeHandleInUniqueIndexValue(val, uk.commonHandle)
 				if err != nil {
 					return err
 				}
-				batchKeys = append(batchKeys, r.t.RecordKey(kv.IntHandle(handle)))
+				batchKeys = append(batchKeys, r.t.RecordKey(handle))
 			}
 		}
 	}
@@ -216,19 +217,19 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 				}
 				return err
 			}
-			handle, err := tables.DecodeHandleInUniqueIndexValue(val)
+			handle, err := tables.DecodeHandleInUniqueIndexValue(val, uk.commonHandle)
 			if err != nil {
 				return err
 			}
 
-			err = e.updateDupRow(ctx, txn, r, kv.IntHandle(handle), e.OnDuplicate)
+			err = e.updateDupRow(ctx, txn, r, handle, e.OnDuplicate)
 			if err != nil {
 				if kv.IsErrNotFound(err) {
 					// Data index inconsistent? A unique key provide the handle information, but the
 					// handle points to nothing.
 					logutil.BgLogger().Error("get old row failed when insert on dup",
 						zap.String("uniqueKey", hex.EncodeToString(uk.newKV.key)),
-						zap.Int64("handle", handle),
+						zap.Stringer("handle", handle),
 						zap.String("toBeInsertedRow", types.DatumsToStrNoErr(r.row)))
 				}
 				return err
@@ -243,7 +244,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 		// and key-values should be filled back to dupOldRowValues for the further row check,
 		// due to there may be duplicate keys inside the insert statement.
 		if newRows[i] != nil {
-			_, err := e.addRecord(ctx, newRows[i])
+			err := e.addRecord(ctx, newRows[i])
 			if err != nil {
 				return err
 			}
@@ -333,7 +334,7 @@ func (e *InsertExec) doDupRowUpdate(ctx context.Context, handle kv.Handle, oldRo
 		if err1 != nil {
 			return err1
 		}
-		e.row4Update[col.Col.Index], err1 = table.CastValue(e.ctx, val, col.Col.ToInfo(), false)
+		e.row4Update[col.Col.Index], err1 = table.CastValue(e.ctx, val, col.Col.ToInfo(), false, false)
 		if err1 != nil {
 			return err1
 		}

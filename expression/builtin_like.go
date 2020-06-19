@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"sync"
 
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -121,7 +122,7 @@ func (c *regexpFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	}
 	bf.tp.Flen = 1
 	var sig builtinFunc
-	if types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[1].GetType()) {
+	if bf.collation == charset.CollationBin {
 		sig = newBuiltinRegexpSig(bf)
 		sig.setPbCode(tipb.ScalarFuncSig_RegexpSig)
 	} else {
@@ -189,8 +190,12 @@ type builtinRegexpUTF8Sig struct {
 
 func newBuiltinRegexpUTF8Sig(bf baseBuiltinFunc) *builtinRegexpUTF8Sig {
 	shared := builtinRegexpSharedSig{baseBuiltinFunc: bf}
-	shared.compile = func(pat string) (*regexp.Regexp, error) {
-		return regexp.Compile("(?i)" + pat)
+	if collate.IsCICollation(bf.collation) {
+		shared.compile = func(pat string) (*regexp.Regexp, error) {
+			return regexp.Compile("(?i)" + pat)
+		}
+	} else {
+		shared.compile = regexp.Compile
 	}
 	return &builtinRegexpUTF8Sig{builtinRegexpSharedSig: shared}
 }

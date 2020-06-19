@@ -80,7 +80,7 @@ const (
 	// EmbedUnistore is the mock storage based on unistore.
 	EmbedUnistore
 
-	defaultStoreType = MockTiKV
+	defaultStoreType = EmbedUnistore
 )
 
 type mockOptions struct {

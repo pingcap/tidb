@@ -90,7 +90,8 @@ const (
 
 	// The following session variables controls the memory quota during query execution.
 	// "tidb_mem_quota_query":				control the memory quota of a query.
-	TIDBMemQuotaQuery = "tidb_mem_quota_query" // Bytes.
+	TIDBMemQuotaQuery               = "tidb_mem_quota_query" // Bytes.
+	TIDBNestedLoopJoinCacheCapacity = "tidb_nested_loop_join_cache_capacity"
 	// TODO: remove them below sometime, it should have only one Quota(TIDBMemQuotaQuery).
 	TIDBMemQuotaHashJoin          = "tidb_mem_quota_hashjoin"          // Bytes.
 	TIDBMemQuotaMergeJoin         = "tidb_mem_quota_mergejoin"         // Bytes.
@@ -171,6 +172,9 @@ const (
 
 	// TiDBFoundInPlanCache indicates whether the last statement was found in plan cache
 	TiDBFoundInPlanCache = "last_plan_from_cache"
+
+	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
+	TiDBAllowAutoRandExplicitInsert = "allow_auto_random_explicit_insert"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -393,6 +397,12 @@ const (
 
 	// TiDBEnableCollectExecutionInfo indicates that whether execution info is collected.
 	TiDBEnableCollectExecutionInfo = "tidb_enable_collect_execution_info"
+
+	// TiDBEnableClusteredIndex indicates if clustered index feature is enabled.
+	TiDBEnableClusteredIndex = "tidb_enable_clustered_index"
+
+	// TiDBSlowLogMasking indicates that whether masking the query data when log slow query.
+	TiDBSlowLogMasking = "tidb_slow_log_masking"
 )
 
 // Default TiDB system variable values.
@@ -487,6 +497,9 @@ const (
 	DefTiDBMetricSchemaRangeDuration   = 60 // 60s
 	DefTiDBFoundInPlanCache            = false
 	DefTidbEnableCollectExecutionInfo  = false
+	DefTiDBAllowAutoRandExplicitInsert = false
+	DefTiDBEnableClusteredIndex        = false
+	DefTiDBSlowLogMasking              = false
 )
 
 // Process global variables.

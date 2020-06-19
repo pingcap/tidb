@@ -62,7 +62,6 @@ import (
 
 var (
 	_ Executor = &baseExecutor{}
-	_ Executor = &CheckIndexExec{}
 	_ Executor = &CheckTableExec{}
 	_ Executor = &HashAggExec{}
 	_ Executor = &HashJoinExec{}
@@ -637,6 +636,7 @@ type CheckTableExec struct {
 	is         infoschema.InfoSchema
 	exitCh     chan struct{}
 	retCh      chan error
+	checkIndex bool
 }
 
 // Open implements the Executor Open interface.
@@ -718,12 +718,22 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	defer func() { e.done = true }()
 
+	if e.table.Meta().IsCommonHandle {
+		// TODO: fix me to support cluster index table admin check table.
+		// https://github.com/pingcap/tidb/projects/45#card-39562229
+		return nil
+	}
+
 	idxNames := make([]string, 0, len(e.indexInfos))
 	for _, idx := range e.indexInfos {
 		idxNames = append(idxNames, idx.Name.O)
 	}
 	greater, idxOffset, err := admin.CheckIndicesCount(e.ctx, e.dbName, e.table.Meta().Name.O, idxNames)
 	if err != nil {
+		// For admin check index statement, for speed up and compatibility, doesn't do below checks.
+		if e.checkIndex {
+			return errors.Trace(err)
+		}
 		if greater == admin.IdxCntGreater {
 			err = e.checkTableIndexHandle(ctx, e.indexInfos[idxOffset])
 		} else if greater == admin.TblCntGreater {
@@ -746,7 +756,7 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			util.WithRecovery(func() {
 				err1 := e.checkIndexHandle(ctx, e.srcs[num])
 				if err1 != nil {
-					logutil.Logger(ctx).Info("check index handle failed", zap.Error(err))
+					logutil.Logger(ctx).Info("check index handle failed", zap.Error(err1))
 				}
 			}, e.handlePanic)
 		}(i)
@@ -785,61 +795,6 @@ func (e *CheckTableExec) checkTableRecord(idxOffset int) error {
 		idx := tables.NewIndex(def.ID, e.table.Meta(), idxInfo)
 		if err := admin.CheckRecordAndIndex(e.ctx, txn, partition, idx, genExprs); err != nil {
 			return errors.Trace(err)
-		}
-	}
-	return nil
-}
-
-// CheckIndexExec represents the executor of checking an index.
-// It is built from the "admin check index" statement, and it checks
-// the consistency of the index data with the records of the table.
-type CheckIndexExec struct {
-	baseExecutor
-
-	dbName    string
-	tableName string
-	idxName   string
-	src       *IndexLookUpExecutor
-	done      bool
-	is        infoschema.InfoSchema
-}
-
-// Open implements the Executor Open interface.
-func (e *CheckIndexExec) Open(ctx context.Context) error {
-	if err := e.baseExecutor.Open(ctx); err != nil {
-		return err
-	}
-	if err := e.src.Open(ctx); err != nil {
-		return err
-	}
-	e.done = false
-	return nil
-}
-
-// Close implements the Executor Close interface.
-func (e *CheckIndexExec) Close() error {
-	return e.src.Close()
-}
-
-// Next implements the Executor Next interface.
-func (e *CheckIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	if e.done {
-		return nil
-	}
-	defer func() { e.done = true }()
-
-	_, _, err := admin.CheckIndicesCount(e.ctx, e.dbName, e.tableName, []string{e.idxName})
-	if err != nil {
-		return err
-	}
-	chk := newFirstChunk(e.src)
-	for {
-		err := Next(ctx, e.src, chk)
-		if err != nil {
-			return err
-		}
-		if chk.NumRows() == 0 {
-			break
 		}
 	}
 	return nil
@@ -1126,6 +1081,12 @@ func init() {
 	// but the plan package cannot import the executor package because of the dependency cycle.
 	// So we assign a function implemented in the executor package to the plan package to avoid the dependency cycle.
 	plannercore.EvalSubqueryFirstRow = func(ctx context.Context, p plannercore.PhysicalPlan, is infoschema.InfoSchema, sctx sessionctx.Context) ([]types.Datum, error) {
+		defer func(begin time.Time) {
+			s := sctx.GetSessionVars()
+			s.RewritePhaseInfo.PreprocessSubQueries++
+			s.RewritePhaseInfo.DurationPreprocessSubQuery += time.Since(begin)
+		}(time.Now())
+
 		if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 			span1 := span.Tracer().StartSpan("executor.EvalSubQuery", opentracing.ChildOf(span.Context()))
 			defer span1.Finish()
@@ -1304,10 +1265,7 @@ type TableScanExec struct {
 	baseExecutor
 
 	t                     table.Table
-	seekHandle            kv.Handle
-	iter                  kv.Iterator
 	columns               []*model.ColumnInfo
-	isVirtualTable        bool
 	virtualTableChunkList *chunk.List
 	virtualTableChunkIdx  int
 }
@@ -1315,25 +1273,7 @@ type TableScanExec struct {
 // Next implements the Executor Next interface.
 func (e *TableScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.maxChunkSize)
-	if e.isVirtualTable {
-		return e.nextChunk4InfoSchema(ctx, req)
-	}
-	handle, found, err := e.nextHandle()
-	if err != nil || !found {
-		return err
-	}
-
-	mutableRow := chunk.MutRowFromTypes(retTypes(e))
-	for req.NumRows() < req.Capacity() {
-		row, err := e.getRow(handle)
-		if err != nil {
-			return err
-		}
-		e.seekHandle = handle.Next()
-		mutableRow.SetDatums(row...)
-		req.AppendRow(mutableRow.ToRow())
-	}
-	return nil
+	return e.nextChunk4InfoSchema(ctx, req)
 }
 
 func (e *TableScanExec) nextChunk4InfoSchema(ctx context.Context, chk *chunk.Chunk) error {
@@ -1364,31 +1304,8 @@ func (e *TableScanExec) nextChunk4InfoSchema(ctx context.Context, chk *chunk.Chu
 	return nil
 }
 
-// nextHandle gets the unique handle for next row.
-func (e *TableScanExec) nextHandle() (handle kv.Handle, found bool, err error) {
-	handle, found, err = e.t.Seek(e.ctx, e.seekHandle)
-	if err != nil || !found {
-		return nil, false, err
-	}
-	return handle, true, nil
-}
-
-func (e *TableScanExec) getRow(handle kv.Handle) ([]types.Datum, error) {
-	columns := make([]*table.Column, e.schema.Len())
-	for i, v := range e.columns {
-		columns[i] = table.ToColumn(v)
-	}
-	row, err := e.t.RowWithCols(e.ctx, handle, columns)
-	if err != nil {
-		return nil, err
-	}
-
-	return row, nil
-}
-
 // Open implements the Executor Open interface.
 func (e *TableScanExec) Open(ctx context.Context) error {
-	e.iter = nil
 	e.virtualTableChunkList = nil
 	return nil
 }
@@ -1760,7 +1677,7 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 			}
 			// Because the expression might return different type from
 			// the generated column, we should wrap a CAST on the result.
-			castDatum, err := table.CastValue(sctx, datum, columns[idx], true)
+			castDatum, err := table.CastValue(sctx, datum, columns[idx], false, true)
 			if err != nil {
 				return err
 			}
