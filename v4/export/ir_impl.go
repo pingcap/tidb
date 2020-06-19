@@ -289,6 +289,7 @@ func splitTableDataIntoChunks(
 	}
 
 	count := estimateCount(dbName, tableName, db, field, conf)
+	log.Info("get estimated rows count", zap.Uint64("estimateCount", count))
 	if count < conf.Rows {
 		// skip chunk logic if estimates are low
 		log.Debug("skip concurrent dump due to estimate count < rows",

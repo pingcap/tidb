@@ -41,51 +41,60 @@ type Config struct {
 	CsvNullValue  string
 	Sql           string
 
-	TableFilter     filter.Filter
-	Rows            uint64
-	Where           string
-	FileType        string
-	EscapeBackslash bool
+	TableFilter       filter.Filter
+	Rows              uint64
+	Where             string
+	FileType          string
+	EscapeBackslash   bool
+	DumpEmptyDatabase bool
+	TiDBMemQuotaQuery uint64
 }
 
 func DefaultConfig() *Config {
 	allFilter, _ := filter.Parse([]string{"*.*"})
 	return &Config{
-		Databases:     nil,
-		Host:          "127.0.0.1",
-		User:          "root",
-		Port:          3306,
-		Password:      "",
-		Threads:       4,
-		Logger:        nil,
-		StatusAddr:    ":8281",
-		FileSize:      UnspecifiedSize,
-		StatementSize: UnspecifiedSize,
-		OutputDirPath: ".",
-		ServerInfo:    ServerInfoUnknown,
-		SortByPk:      true,
-		Tables:        nil,
-		Snapshot:      "",
-		Consistency:   "auto",
-		NoViews:       true,
-		Rows:          UnspecifiedSize,
-		Where:         "",
-		FileType:      "SQL",
-		NoHeader:      false,
-		NoSchemas:     false,
-		NoData:        false,
-		CsvNullValue:  "\\N",
-		Sql:           "",
-		TableFilter:   allFilter,
+		Databases:         nil,
+		Host:              "127.0.0.1",
+		User:              "root",
+		Port:              3306,
+		Password:          "",
+		Threads:           4,
+		Logger:            nil,
+		StatusAddr:        ":8281",
+		FileSize:          UnspecifiedSize,
+		StatementSize:     UnspecifiedSize,
+		OutputDirPath:     ".",
+		ServerInfo:        ServerInfoUnknown,
+		SortByPk:          true,
+		Tables:            nil,
+		Snapshot:          "",
+		Consistency:       "auto",
+		NoViews:           true,
+		Rows:              UnspecifiedSize,
+		Where:             "",
+		FileType:          "SQL",
+		NoHeader:          false,
+		NoSchemas:         false,
+		NoData:            false,
+		CsvNullValue:      "\\N",
+		Sql:               "",
+		TableFilter:       allFilter,
+		DumpEmptyDatabase: true,
+		TiDBMemQuotaQuery: UnspecifiedSize,
 	}
 }
 
 func (conf *Config) getDSN(db string) string {
-	return fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4", conf.User, conf.Password, conf.Host, conf.Port, db)
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4", conf.User, conf.Password, conf.Host, conf.Port, db)
+	if conf.TiDBMemQuotaQuery != UnspecifiedSize {
+		dsn += fmt.Sprintf("&tidb_mem_quota_query=%v", conf.TiDBMemQuotaQuery)
+	}
+	return dsn
 }
 
 const (
 	UnspecifiedSize            = 0
+	DefaultTiDBMemQuotaQuery   = 32 * (1 << 30)
 	defaultDumpThreads         = 128
 	defaultDumpGCSafePointTTL  = 5 * 60
 	dumplingServiceSafePointID = "dumpling"

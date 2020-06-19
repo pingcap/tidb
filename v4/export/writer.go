@@ -6,8 +6,6 @@ import (
 	"os"
 	"path"
 
-	"github.com/pingcap/errors"
-
 	"go.uber.org/zap"
 
 	"github.com/pingcap/dumpling/v4/log"
@@ -24,10 +22,6 @@ type SimpleWriter struct {
 }
 
 func NewSimpleWriter(config *Config) (Writer, error) {
-	if config.Sql != "" {
-		log.Error("unsupported dump data in sql format", zap.String("sql", config.Sql))
-		return nil, errors.New("unsupported dump data in sql format when specific sql")
-	}
 	sw := &SimpleWriter{cfg: config}
 	return sw, os.MkdirAll(config.OutputDirPath, 0755)
 }
@@ -47,8 +41,6 @@ func (f *SimpleWriter) WriteTableMeta(ctx context.Context, db, table, createSQL 
 func (f *SimpleWriter) WriteTableData(ctx context.Context, ir TableDataIR) error {
 	log.Debug("start dumping table...", zap.String("table", ir.TableName()))
 
-	chunkIndex := ir.ChunkIndex()
-	fileName := fmt.Sprintf("%s.%s.%d.sql", ir.DatabaseName(), ir.TableName(), ir.ChunkIndex())
 	// just let `database.table.sql` be `database.table.0.sql`
 	/*if fileName == "" {
 		// set initial file name
@@ -57,6 +49,9 @@ func (f *SimpleWriter) WriteTableData(ctx context.Context, ir TableDataIR) error
 			fileName = fmt.Sprintf("%s.%s.%d.sql", ir.DatabaseName(), ir.TableName(), 0)
 		}
 	}*/
+
+	namer := newOutputFileNamer(ir)
+	fileName := fmt.Sprintf("%s.sql", namer.NextName())
 	chunksIter := buildChunksIter(ir, f.cfg.FileSize, f.cfg.StatementSize)
 	defer chunksIter.Rows().Close()
 
@@ -76,8 +71,7 @@ func (f *SimpleWriter) WriteTableData(ctx context.Context, ir TableDataIR) error
 		if f.cfg.FileSize == UnspecifiedSize {
 			break
 		}
-		chunkIndex += 1
-		fileName = fmt.Sprintf("%s.%s.%d.sql", ir.DatabaseName(), ir.TableName(), chunkIndex)
+		fileName = fmt.Sprintf("%s.sql", namer.NextName())
 	}
 	log.Debug("dumping table successfully",
 		zap.String("table", ir.TableName()))

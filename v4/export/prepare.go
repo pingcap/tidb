@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/dumpling/v4/log"
+	"github.com/pingcap/errors"
 )
 
 func adjustConfig(conf *Config) error {
@@ -39,9 +40,23 @@ func detectServerInfo(db *sql.DB) (ServerInfo, error) {
 }
 
 func prepareDumpingDatabases(conf *Config, db *sql.DB) ([]string, error) {
+	databases, err := ShowDatabases(db)
 	if len(conf.Databases) == 0 {
-		return ShowDatabases(db)
+		return databases, err
 	} else {
+		dbMap := make(map[string]interface{}, len(databases))
+		for _, database := range databases {
+			dbMap[database] = struct{}{}
+		}
+		var notExistsDatabases []string
+		for _, database := range conf.Databases {
+			if _, ok := dbMap[database]; !ok {
+				notExistsDatabases = append(notExistsDatabases, database)
+			}
+		}
+		if len(notExistsDatabases) > 0 {
+			return nil, errors.Errorf("Unknown databases [%s]", strings.Join(notExistsDatabases, ","))
+		}
 		return conf.Databases, nil
 	}
 }

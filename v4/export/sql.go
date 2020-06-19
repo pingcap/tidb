@@ -142,12 +142,19 @@ func SelectFromSql(conf *Config, db *sql.DB) (TableDataIR, error) {
 	if err != nil {
 		return nil, withStack(errors.WithMessage(err, conf.Sql))
 	}
+	cols, err := rows.Columns()
+	if err != nil {
+		return nil, withStack(errors.WithMessage(err, conf.Sql))
+	}
+	for i := range cols {
+		cols[i] = wrapBackTicks(cols[i])
+	}
 	return &tableData{
 		database:        "",
 		table:           "",
 		rows:            rows,
 		colTypes:        colTypes,
-		selectedField:   "",
+		selectedField:   strings.Join(cols, ","),
 		escapeBackslash: conf.EscapeBackslash,
 		specCmts: []string{
 			"/*!40101 SET NAMES binary*/;",
@@ -502,12 +509,12 @@ func estimateCount(dbName, tableName string, db *sql.DB, field string, conf *Con
 		+----+-------------+-------+------------+-------+---------------+-----------+---------+------+------+----------+-------------+
 	*/
 	if estRows > 0 {
-		return uint64(estRows)
+		return estRows
 	}
 	return 0
 }
 
-func detectEstimateRows(db *sql.DB, query string, fieldNames []string) int {
+func detectEstimateRows(db *sql.DB, query string, fieldNames []string) uint64 {
 	row, err := db.Query(query)
 	if err != nil {
 		log.Warn("can't execute query from db",
@@ -544,7 +551,7 @@ found:
 			zap.String("query", query), zap.Error(err))
 		return 0
 	}
-	return int(estRows)
+	return uint64(estRows)
 }
 
 func buildWhereCondition(conf *Config, where string) string {
