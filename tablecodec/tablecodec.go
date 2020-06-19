@@ -559,7 +559,7 @@ func Unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 
 // EncodeIndexSeekKey encodes an index value to kv.Key.
 func EncodeIndexSeekKey(tableID int64, idxID int64, encodedValue []byte) kv.Key {
-	key := make([]byte, 0, prefixLen+len(encodedValue))
+	key := make([]byte, 0, RecordRowKeyLen+len(encodedValue))
 	key = appendTableIndexPrefix(key, tableID)
 	key = codec.EncodeInt(key, idxID)
 	key = append(key, encodedValue...)

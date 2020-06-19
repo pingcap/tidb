@@ -737,12 +737,22 @@ func isPrimaryIndex(indexName model.CIStr) bool {
 
 func genTiFlashPath(tblInfo *model.TableInfo, isGlobalRead bool) *util.AccessPath {
 	tiFlashPath := &util.AccessPath{StoreType: kv.TiFlash, IsGlobalRead: isGlobalRead}
-	if tblInfo.IsCommonHandle {
-		tiFlashPath.IsCommonHandlePath = true
-	} else {
-		tiFlashPath.IsIntHandlePath = true
-	}
+	fillContentForTablePath(tiFlashPath, tblInfo)
 	return tiFlashPath
+}
+
+func fillContentForTablePath(tablePath *util.AccessPath, tblInfo *model.TableInfo) {
+	if tblInfo.IsCommonHandle {
+		tablePath.IsCommonHandlePath = true
+		for _, index := range tblInfo.Indices {
+			if index.Primary {
+				tablePath.Index = index
+				break
+			}
+		}
+	} else {
+		tablePath.IsIntHandlePath = true
+	}
 }
 
 func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName model.CIStr) ([]*util.AccessPath, error) {
@@ -753,11 +763,7 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl ta
 		tp = kv.TiDB
 	}
 	tablePath := &util.AccessPath{StoreType: tp}
-	if tblInfo.IsCommonHandle {
-		tablePath.IsCommonHandlePath = true
-	} else {
-		tablePath.IsIntHandlePath = true
-	}
+	fillContentForTablePath(tablePath, tblInfo)
 	publicPaths = append(publicPaths, tablePath)
 	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
 		publicPaths = append(publicPaths, genTiFlashPath(tblInfo, false))
@@ -768,6 +774,9 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl ta
 		if index.State == model.StatePublic {
 			// Filter out invisible index, because they are not visible for optimizer
 			if !optimizerUseInvisibleIndexes && index.Invisible {
+				continue
+			}
+			if tblInfo.IsCommonHandle && index.Primary {
 				continue
 			}
 			publicPaths = append(publicPaths, &util.AccessPath{Index: index})
