@@ -1285,13 +1285,6 @@ func (s *testEvaluatorSuite) TestChar(c *C) {
 	r, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(r, testutil.DatumEquals, types.NewDatum("AB"))
-
-	// Test unsupported charset.
-	fc = funcs[ast.CharFunc]
-	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums("65", "tidb")))
-	c.Assert(err, IsNil)
-	_, err = evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err.Error(), Equals, "unknown encoding: tidb")
 }
 
 func (s *testEvaluatorSuite) TestCharLength(c *C) {
