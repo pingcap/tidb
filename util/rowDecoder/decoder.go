@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -72,7 +71,7 @@ func NewRowDecoder(tbl table.Table, decodeColMap map[int64]Column) *RowDecoder {
 		colTypes:      colFieldMap,
 		haveGenColumn: haveGenCol,
 		defaultVals:   make([]types.Datum, len(cols)),
-		pkCols:        tables.TryGetCommonPkColumnIds(tbl),
+		pkCols:        tables.TryGetCommonPkColumnIds(tbl.Meta()),
 	}
 }
 
