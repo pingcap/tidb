@@ -401,6 +401,10 @@ type allServerInfoHandler struct {
 	*tikvHandlerTool
 }
 
+type profileHandler struct {
+	*tikvHandlerTool
+}
+
 // valueHandler is the handler for get value.
 type valueHandler struct {
 }
@@ -1696,3 +1700,26 @@ func (h dbTableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	dbTblInfo.DBInfo = dbInfo
 	writeData(w, dbTblInfo)
 }
+
+func (h profileHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	sctx, err := session.CreateSession(h.Store)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	pb:= executor.NewProfileBuilder(sctx)
+	err = pb.Collect()
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	profile := pb.Build()
+	fmt.Printf("%v \n\n------\n", profile.String())
+	err = profile.Write(w)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+}
+
+

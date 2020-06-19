@@ -1069,7 +1069,7 @@ var MetricTableMap = map[string]MetricTableDef{
 		Comment:  "The quantile size of requests into request batch per TiKV instance",
 	},
 
-	"tikv_grpc_messge_duration": {
+	"tikv_grpc_message_duration": {
 		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_grpc_msg_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,type,instance))`,
 		Labels:   []string{"instance", "type"},
 		Quantile: 0.99,
@@ -2757,12 +2757,12 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels:  []string{"instance", "task"},
 		Comment: "The total time of time consumed when executing GC tasks",
 	},
-	"tikv_grpc_messge_total_count": {
+	"tikv_grpc_message_total_count": {
 		PromQL:  "sum(increase(tikv_grpc_msg_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,type)",
 		Labels:  []string{"instance", "type"},
 		Comment: "The total count of tikv execution gRPC message",
 	},
-	"tikv_grpc_messge_total_time": {
+	"tikv_grpc_message_total_time": {
 		PromQL:  "sum(increase(tikv_grpc_msg_duration_seconds_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,type)",
 		Labels:  []string{"instance", "type"},
 		Comment: "The total time of execution time of gRPC message",
