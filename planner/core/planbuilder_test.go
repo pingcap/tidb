@@ -441,14 +441,14 @@ func checkDeepCloned(v1, v2 reflect.Value, path string, whiteList []string, visi
 		}
 		if v1.Pointer() == v2.Pointer() {
 			typeName := v1.Type().String()
-			inWhileList := false
+			inWhiteList := false
 			for _, whiteName := range whiteList {
 				if whiteName == typeName {
-					inWhileList = true
+					inWhiteList = true
 					break
 				}
 			}
-			if inWhileList {
+			if inWhiteList {
 				return nil
 			}
 			return errors.Errorf("same pointer, path %v", path)
