@@ -30,11 +30,11 @@ require (
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
 	github.com/pingcap/kvproto v0.0.0-20200518112156-d4aeb467de29
 	github.com/pingcap/log v0.0.0-20200511115504-543df19646ad
-	github.com/pingcap/parser v0.0.0-20200616060540-a87fd8a746fc
+	github.com/pingcap/parser v0.0.0-20200618113039-789c193fe4b7
 	github.com/pingcap/pd/v4 v4.0.0-rc.2.0.20200520083007-2c251bd8f181
 	github.com/pingcap/sysutil v0.0.0-20200408114249-ed3bd6f7fdb1
 	github.com/pingcap/tidb-tools v4.0.0-rc.1.0.20200514040632-f76b3e428e19+incompatible
-	github.com/pingcap/tipb v0.0.0-20200417094153-7316d94df1ee
+	github.com/pingcap/tipb v0.0.0-20200522051215-f31a15d98fce
 	github.com/prometheus/client_golang v1.5.1
 	github.com/prometheus/client_model v0.2.0
 	github.com/prometheus/common v0.9.1
