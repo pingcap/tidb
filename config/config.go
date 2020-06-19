@@ -77,21 +77,22 @@ var (
 
 // Config contains configuration options.
 type Config struct {
-	Host             string `toml:"host" json:"host"`
-	AdvertiseAddress string `toml:"advertise-address" json:"advertise-address"`
-	Port             uint   `toml:"port" json:"port"`
-	Cors             string `toml:"cors" json:"cors"`
-	Store            string `toml:"store" json:"store"`
-	Path             string `toml:"path" json:"path"`
-	Socket           string `toml:"socket" json:"socket"`
-	Lease            string `toml:"lease" json:"lease"`
-	RunDDL           bool   `toml:"run-ddl" json:"run-ddl"`
-	SplitTable       bool   `toml:"split-table" json:"split-table"`
-	TokenLimit       uint   `toml:"token-limit" json:"token-limit"`
-	OOMUseTmpStorage bool   `toml:"oom-use-tmp-storage" json:"oom-use-tmp-storage"`
-	TempStoragePath  string `toml:"tmp-storage-path" json:"tmp-storage-path"`
-	OOMAction        string `toml:"oom-action" json:"oom-action"`
-	MemQuotaQuery    int64  `toml:"mem-quota-query" json:"mem-quota-query"`
+	Host                        string `toml:"host" json:"host"`
+	AdvertiseAddress            string `toml:"advertise-address" json:"advertise-address"`
+	Port                        uint   `toml:"port" json:"port"`
+	Cors                        string `toml:"cors" json:"cors"`
+	Store                       string `toml:"store" json:"store"`
+	Path                        string `toml:"path" json:"path"`
+	Socket                      string `toml:"socket" json:"socket"`
+	Lease                       string `toml:"lease" json:"lease"`
+	RunDDL                      bool   `toml:"run-ddl" json:"run-ddl"`
+	SplitTable                  bool   `toml:"split-table" json:"split-table"`
+	TokenLimit                  uint   `toml:"token-limit" json:"token-limit"`
+	OOMUseTmpStorage            bool   `toml:"oom-use-tmp-storage" json:"oom-use-tmp-storage"`
+	TempStoragePath             string `toml:"tmp-storage-path" json:"tmp-storage-path"`
+	OOMAction                   string `toml:"oom-action" json:"oom-action"`
+	MemQuotaQuery               int64  `toml:"mem-quota-query" json:"mem-quota-query"`
+	NestedLoopJoinCacheCapacity int64  `toml:"nested-loop-join-cache-capacity" json:"nested-loop-join-cache-capacity"`
 	// TempStorageQuota describe the temporary storage Quota during query exector when OOMUseTmpStorage is enabled
 	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error
 	TempStorageQuota int64           `toml:"tmp-storage-quota" json:"tmp-storage-quota"` // Bytes
@@ -362,8 +363,10 @@ type Status struct {
 
 // Performance is the performance section of the config.
 type Performance struct {
-	MaxProcs             uint    `toml:"max-procs" json:"max-procs"`
+	MaxProcs uint `toml:"max-procs" json:"max-procs"`
+	// Deprecated: use ServerMemoryQuota instead
 	MaxMemory            uint64  `toml:"max-memory" json:"max-memory"`
+	ServerMemoryQuota    uint64  `toml:"server-memory-quota" json:"server-memory-quota"`
 	StatsLease           string  `toml:"stats-lease" json:"stats-lease"`
 	StmtCountLimit       uint    `toml:"stmt-count-limit" json:"stmt-count-limit"`
 	FeedbackProbability  float64 `toml:"feedback-probability" json:"feedback-probability"`
@@ -559,6 +562,7 @@ var defaultConf = Config{
 	TempStoragePath:              tempStorageDirName,
 	OOMAction:                    OOMActionCancel,
 	MemQuotaQuery:                1 << 30,
+	NestedLoopJoinCacheCapacity:  20971520,
 	EnableStreaming:              false,
 	EnableBatchDML:               false,
 	CheckMb4ValueInUTF8:          true,
@@ -601,6 +605,7 @@ var defaultConf = Config{
 	},
 	Performance: Performance{
 		MaxMemory:            0,
+		ServerMemoryQuota:    0,
 		TCPKeepAlive:         true,
 		CrossJoin:            true,
 		StatsLease:           "3s",
@@ -708,9 +713,12 @@ func StoreGlobalConfig(config *Config) {
 var deprecatedConfig = map[string]struct{}{
 	"pessimistic-txn.ttl":        {},
 	"log.file.log-rotate":        {},
+	"log.log-slow-query":         {},
 	"txn-local-latches":          {},
 	"txn-local-latches.enabled":  {},
 	"txn-local-latches.capacity": {},
+	"performance.max-memory":     {},
+	"max-txn-time-use":           {},
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {

@@ -737,6 +737,8 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	if sei.PlanInCache {
 		ssElement.planInCache = true
 		ssElement.planCacheHits += 1
+	} else {
+		ssElement.planInCache = false
 	}
 
 	// SPM

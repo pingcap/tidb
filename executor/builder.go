@@ -1569,6 +1569,8 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) *NestedLoopAp
 		outer:        v.JoinType != plannercore.InnerJoin,
 		joiner:       tupleJoiner,
 		outerSchema:  v.OuterSchema,
+		ctx:          b.ctx,
+		canUseCache:  v.CanUseCache,
 	}
 	executorCounterNestedLoopApplyExec.Inc()
 	return e
@@ -1842,6 +1844,14 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 		ColumnsInfo:   util.ColumnsToProto(cols, task.PKInfo != nil),
 		CmsketchDepth: &depth,
 		CmsketchWidth: &width,
+	}
+	if task.TblInfo != nil && task.TblInfo.IsCommonHandle {
+		pkIdx := tables.FindPrimaryIndex(task.TblInfo)
+		var pkColIds []int64
+		for _, idxCol := range pkIdx.Columns {
+			pkColIds = append(pkColIds, task.TblInfo.Columns[idxCol.Offset].ID)
+		}
+		e.analyzePB.ColReq.PrimaryColumnIds = pkColIds
 	}
 	b.err = plannercore.SetPBColumnsDefaultValue(b.ctx, e.analyzePB.ColReq.ColumnsInfo, cols)
 	job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze columns"}
