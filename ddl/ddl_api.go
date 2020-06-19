@@ -778,7 +778,7 @@ func setSetDefaultValue(v types.Datum, col *table.Column) (string, error) {
 	if existCnt != len(valMap) {
 		return "", ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
 	}
-	setVal, err := types.ParseSetName(col.Elems, str)
+	setVal, err := types.ParseSetName(col.Elems, str, col.Collate)
 	if err != nil {
 		return "", ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
 	}
