@@ -294,6 +294,55 @@ func ShowMasterStatus(db *sql.DB, fieldNum int) ([]string, error) {
 	return oneRow, nil
 }
 
+func GetSpecifiedColumnValue(rows *sql.Rows, columnName string) ([]string, error) {
+	var strs []string
+	columns, _ := rows.Columns()
+	addr := make([]interface{}, len(columns))
+	oneRow := make([]sql.NullString, len(columns))
+	var fieldIndex = -1
+	for i, col := range columns {
+		if strings.ToUpper(col) == columnName {
+			fieldIndex = i
+		}
+		addr[i] = &oneRow[i]
+	}
+	if fieldIndex == -1 {
+		return strs, nil
+	}
+	for rows.Next() {
+		err := rows.Scan(addr...)
+		if err != nil {
+			return strs, err
+		}
+		strs = append(strs, oneRow[fieldIndex].String)
+	}
+	return strs, nil
+}
+
+func GetPdAddrs(db *sql.DB) ([]string, error) {
+	query := "SELECT * FROM information_schema.cluster_info where type = 'pd';"
+	rows, err := db.Query(query)
+	if err != nil {
+		log.Warn("can't execute query from db",
+			zap.String("query", query), zap.Error(err))
+		return []string{}, err
+	}
+	defer rows.Close()
+	return GetSpecifiedColumnValue(rows, "STATUS_ADDRESS")
+}
+
+func GetTiDBDDLIDs(db *sql.DB) ([]string, error) {
+	query := "SELECT * FROM information_schema.tidb_servers_info;"
+	rows, err := db.Query(query)
+	if err != nil {
+		log.Warn("can't execute query from db",
+			zap.String("query", query), zap.Error(err))
+		return []string{}, err
+	}
+	defer rows.Close()
+	return GetSpecifiedColumnValue(rows, "DDL_ID")
+}
+
 func SetTiDBSnapshot(db *sql.DB, snapshot string) error {
 	_, err := db.Exec("SET SESSION tidb_snapshot = ?", snapshot)
 	return withStack(err)

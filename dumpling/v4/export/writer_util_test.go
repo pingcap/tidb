@@ -2,6 +2,7 @@ package export
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -60,7 +61,7 @@ func (s *testUtilSuite) TestWriteInsert(c *C) {
 	tableIR := newMockTableIR("test", "employee", data, specCmts, colTypes)
 	bf := &bytes.Buffer{}
 
-	err := WriteInsert(tableIR, bf)
+	err := WriteInsert(context.Background(), tableIR, bf)
 	c.Assert(err, IsNil)
 	expected := "/*!40101 SET NAMES binary*/;\n" +
 		"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;\n" +
@@ -89,7 +90,7 @@ func (s *testUtilSuite) TestWriteInsertReturnsError(c *C) {
 	tableIR := newMockTableIRWithError("test", "employee", data, specCmts, colTypes, rowErr)
 	bf := &bytes.Buffer{}
 
-	err := WriteInsert(tableIR, bf)
+	err := WriteInsert(context.Background(), tableIR, bf)
 	c.Assert(err, Equals, rowErr)
 	expected := "/*!40101 SET NAMES binary*/;\n" +
 		"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;\n" +
@@ -111,7 +112,7 @@ func (s *testUtilSuite) TestWriteInsertInCsv(c *C) {
 	tableIR := newMockTableIR("test", "employee", data, nil, colTypes)
 	bf := &bytes.Buffer{}
 
-	err := WriteInsertInCsv(tableIR, bf, true, "\\N")
+	err := WriteInsertInCsv(context.Background(), tableIR, bf, true, "\\N")
 	c.Assert(err, IsNil)
 	expected := "1,\"male\",\"bob@mail.com\",\"020-1234\",\\N\n" +
 		"2,\"female\",\"sarah@mail.com\",\"020-1253\",\"healthy\"\n" +
@@ -135,7 +136,7 @@ func (s *testUtilSuite) TestSQLDataTypes(c *C) {
 		tableIR := newMockTableIR("test", "t", tableData, nil, colType)
 		bf := &bytes.Buffer{}
 
-		err := WriteInsert(tableIR, bf)
+		err := WriteInsert(context.Background(), tableIR, bf)
 		c.Assert(err, IsNil)
 		lines := strings.Split(bf.String(), "\n")
 		c.Assert(len(lines), Equals, 3)

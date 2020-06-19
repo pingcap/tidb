@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/coreos/go-semver/semver"
 	"github.com/pingcap/dumpling/v4/log"
@@ -84,9 +85,14 @@ func (conf *Config) getDSN(db string) string {
 }
 
 const (
-	UnspecifiedSize    = 0
-	defaultDumpThreads = 128
+	UnspecifiedSize            = 0
+	defaultDumpThreads         = 128
+	defaultDumpGCSafePointTTL  = 5 * 60
+	dumplingServiceSafePointID = "dumpling"
+	defaultEtcdDialTimeOut     = 3 * time.Second
 )
+
+var gcSafePointVersion, _ = semver.NewVersion("4.0.0")
 
 type ServerInfo struct {
 	ServerType    ServerType
