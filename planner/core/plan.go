@@ -155,11 +155,11 @@ type LogicalPlan interface {
 	// It is called recursively from the parent to the children to create the result physical plan.
 	// Some logical plans will convert the children to the physical plans in different ways, and return the one
 	// With the lowest cost and how many plans are found in this function.
-	// clock is a counter for planner to force a plan.
-	// If clock > 0, the clock_th plan generated in this function will be returned.
-	// If clock = 0, the plan generated in this function will not be considered.
-	// If clock = -1, then we will not force plan.
-	findBestTask(prop *property.PhysicalProperty, clock *PlanCounterTp) (task, int64, error)
+	// planCounter is a counter for planner to force a plan.
+	// If planCounter > 0, the clock_th plan generated in this function will be returned.
+	// If planCounter = 0, the plan generated in this function will not be considered.
+	// If planCounter = -1, then we will not force plan.
+	findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp) (task, int64, error)
 
 	// BuildKeyInfo will collect the information of unique keys into schema.
 	// Because this method is also used in cascades planner, we cannot use

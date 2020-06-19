@@ -132,11 +132,11 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
 		return nil, 0, errors.Trace(ErrCartesianProductUnsupported)
 	}
-	clock := PlanCounterTp(sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan)
-	if clock == 0 {
-		clock = -1
+	planCounter := PlanCounterTp(sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan)
+	if planCounter == 0 {
+		planCounter = -1
 	}
-	physical, cost, err := physicalOptimize(logic, &clock)
+	physical, cost, err := physicalOptimize(logic, &planCounter)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -173,7 +173,7 @@ func isLogicalRuleDisabled(r logicalOptRule) bool {
 	return disabled
 }
 
-func physicalOptimize(logic LogicalPlan, clock *PlanCounterTp) (PhysicalPlan, float64, error) {
+func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (PhysicalPlan, float64, error) {
 	if _, err := logic.recursiveDeriveStats(); err != nil {
 		return nil, 0, err
 	}
@@ -185,11 +185,11 @@ func physicalOptimize(logic LogicalPlan, clock *PlanCounterTp) (PhysicalPlan, fl
 		ExpectedCnt: math.MaxFloat64,
 	}
 
-	t, _, err := logic.findBestTask(prop, clock)
+	t, _, err := logic.findBestTask(prop, planCounter)
 	if err != nil {
 		return nil, 0, err
 	}
-	if *clock > 0 {
+	if *planCounter > 0 {
 		logic.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The parameter of nth_plan() is out of range."))
 	}
 	if t.invalid() {
