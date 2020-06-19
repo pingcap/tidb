@@ -1191,13 +1191,58 @@ func (ts *HTTPHandlerTestSuite) TestFailpointHandler(c *C) {
 	ts.stopServer(c)
 
 	// enable failpoint integration and start server
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/server/integrateFailpoint", "return"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/server/enableTestAPI", "return"), IsNil)
 	ts.startServer(c)
 	resp, err = ts.fetchStatus("/fail/")
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	b, err := ioutil.ReadAll(resp.Body)
 	c.Assert(err, IsNil)
-	c.Assert(strings.Contains(string(b), "github.com/pingcap/tidb/server/integrateFailpoint=return"), IsTrue)
+	c.Assert(strings.Contains(string(b), "github.com/pingcap/tidb/server/enableTestAPI=return"), IsTrue)
 	c.Assert(resp.Body.Close(), IsNil)
+}
+
+func (ts *HTTPHandlerTestSuite) TestTestHandler(c *C) {
+	defer ts.stopServer(c)
+
+	// start server without enabling failpoint integration
+	ts.startServer(c)
+	resp, err := ts.fetchStatus("/test")
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusNotFound)
+	ts.stopServer(c)
+
+	// enable failpoint integration and start server
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/server/enableTestAPI", "return"), IsNil)
+	ts.startServer(c)
+
+	resp, err = ts.fetchStatus("/test/gc/gc")
+	c.Assert(err, IsNil)
+	resp.Body.Close()
+	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
+
+	resp, err = ts.fetchStatus("/test/gc/resolvelock")
+	c.Assert(err, IsNil)
+	resp.Body.Close()
+	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
+
+	resp, err = ts.fetchStatus("/test/gc/resolvelock?safepoint=a")
+	c.Assert(err, IsNil)
+	resp.Body.Close()
+	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
+
+	resp, err = ts.fetchStatus("/test/gc/resolvelock?physical=1")
+	c.Assert(err, IsNil)
+	resp.Body.Close()
+	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
+
+	resp, err = ts.fetchStatus("/test/gc/resolvelock?physical=true")
+	c.Assert(err, IsNil)
+	resp.Body.Close()
+	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
+
+	resp, err = ts.fetchStatus("/test/gc/resolvelock?safepoint=10000&physical=true")
+	c.Assert(err, IsNil)
+	resp.Body.Close()
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 }

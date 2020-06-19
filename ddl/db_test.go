@@ -136,10 +136,8 @@ type testDBSuite6 struct{ *testDBSuite }
 type testDBSuite7 struct{ *testDBSuite }
 type testSerialDBSuite struct{ *testDBSuite }
 
-func (s *testDBSuite4) TestAddIndexWithPK(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use " + s.schemaName)
-
+func testAddIndexWithPK(tk *testkit.TestKit, s *testSerialDBSuite, c *C) {
+	tk.MustExec("drop table if exists test_add_index_with_pk")
 	tk.MustExec("create table test_add_index_with_pk(a int not null, b int not null default '0', primary key(a))")
 	tk.MustExec("insert into test_add_index_with_pk values(1, 2)")
 	tk.MustExec("alter table test_add_index_with_pk add index idx (a)")
@@ -147,16 +145,35 @@ func (s *testDBSuite4) TestAddIndexWithPK(c *C) {
 	tk.MustExec("insert into test_add_index_with_pk values(2, 2)")
 	tk.MustExec("alter table test_add_index_with_pk add index idx1 (a, b)")
 	tk.MustQuery("select * from test_add_index_with_pk").Check(testkit.Rows("1 2", "2 2"))
+	tk.MustExec("drop table if exists test_add_index_with_pk1")
 	tk.MustExec("create table test_add_index_with_pk1(a int not null, b int not null default '0', c int, d int, primary key(c))")
 	tk.MustExec("insert into test_add_index_with_pk1 values(1, 1, 1, 1)")
 	tk.MustExec("alter table test_add_index_with_pk1 add index idx (c)")
 	tk.MustExec("insert into test_add_index_with_pk1 values(2, 2, 2, 2)")
 	tk.MustQuery("select * from test_add_index_with_pk1").Check(testkit.Rows("1 1 1 1", "2 2 2 2"))
+	tk.MustExec("drop table if exists test_add_index_with_pk2")
 	tk.MustExec("create table test_add_index_with_pk2(a int not null, b int not null default '0', c int unsigned, d int, primary key(c))")
 	tk.MustExec("insert into test_add_index_with_pk2 values(1, 1, 1, 1)")
 	tk.MustExec("alter table test_add_index_with_pk2 add index idx (c)")
 	tk.MustExec("insert into test_add_index_with_pk2 values(2, 2, 2, 2)")
 	tk.MustQuery("select * from test_add_index_with_pk2").Check(testkit.Rows("1 1 1 1", "2 2 2 2"))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int, primary key(a, b));")
+	tk.MustExec("insert into t values (1, 2, 3);")
+	tk.MustExec("create index idx on t (a, b);")
+}
+
+func (s *testSerialDBSuite) TestAddIndexWithPK(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use " + s.schemaName)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = false
+	})
+	defer config.RestoreFunc()()
+
+	testAddIndexWithPK(tk, s, c)
+	tk.MustExec("set @@tidb_enable_clustered_index = 1;")
+	testAddIndexWithPK(tk, s, c)
 }
 
 func (s *testDBSuite1) TestRenameIndex(c *C) {
@@ -3716,9 +3733,9 @@ func (s *testDBSuite4) TestIfExists(c *C) {
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1507|Error in list of partitions to p1"))
 }
 
-func (s *testDBSuite5) TestAddIndexForGeneratedColumn(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func testAddIndexForGeneratedColumn(tk *testkit.TestKit, s *testSerialDBSuite, c *C) {
 	tk.MustExec("use test_db")
+	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(y year NOT NULL DEFAULT '2155')")
 	defer s.mustExec(tk, c, "drop table t;")
 	for i := 0; i < 50; i++ {
@@ -3740,6 +3757,7 @@ func (s *testDBSuite5) TestAddIndexForGeneratedColumn(c *C) {
 	//s.mustExec(c, "alter table t drop index idx_y")
 
 	// Fix issue 9311.
+	tk.MustExec("drop table if exists gcai_table")
 	tk.MustExec("create table gcai_table (id int primary key);")
 	tk.MustExec("insert into gcai_table values(1);")
 	tk.MustExec("ALTER TABLE gcai_table ADD COLUMN d date DEFAULT '9999-12-31';")
@@ -3754,6 +3772,17 @@ func (s *testDBSuite5) TestAddIndexForGeneratedColumn(c *C) {
 	tk.MustQuery("select * from gcai_table").Check(testkit.Rows("1 9999-12-31 9999-11-30 6"))
 	tk.MustQuery("select id1 from gcai_table use index(idx1)").Check(testkit.Rows("6"))
 	tk.MustExec("admin check table gcai_table")
+}
+func (s *testSerialDBSuite) TestAddIndexForGeneratedColumn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = false
+	})
+	defer config.RestoreFunc()()
+
+	testAddIndexForGeneratedColumn(tk, s, c)
+	tk.MustExec("set @@tidb_enable_clustered_index = 1;")
+	testAddIndexForGeneratedColumn(tk, s, c)
 }
 
 func (s *testDBSuite5) TestModifyGeneratedColumn(c *C) {
