@@ -495,16 +495,16 @@ type CommonAddRecordCtx struct {
 	buffer *kv.BufferStore
 }
 
-// CommonAddRecordKey is used as key in `sessionctx.Context.Value(key)`
-type CommonAddRecordKey struct{}
+// commonAddRecordKey is used as key in `sessionctx.Context.Value(key)`
+type commonAddRecordKey struct{}
 
 // String implement `stringer.String` for CommonAddRecordKey
-func (c CommonAddRecordKey) String() string {
+func (c commonAddRecordKey) String() string {
 	return "_common_add_record_context_key"
 }
 
 // addRecordCtxKey is key in `sessionctx.Context` for CommonAddRecordCtx
-var addRecordCtxKey = CommonAddRecordKey{}
+var addRecordCtxKey = commonAddRecordKey{}
 
 // SetAddRecordCtx set a CommonAddRecordCtx to session context
 func SetAddRecordCtx(ctx sessionctx.Context, r *CommonAddRecordCtx) {
