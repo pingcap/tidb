@@ -819,7 +819,7 @@ func (s *testSerialSuite) TestCancelJobByErrorCountLimit(c *C) {
 	c.Assert(err, IsNil)
 	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %d", limit))
 
-	// TODO fix this
+	// TODO: Uncomment lines below after fixing #18141.
 	//_, err = tk.Exec("create table t (a int)")
 	//c.Assert(err, NotNil)
 	//c.Assert(err.Error(), Equals, "[ddl:-1]DDL job rollback, error msg: mock do job error")
@@ -838,7 +838,7 @@ func (s *testSerialSuite) TestTruncateTableUpdateSchemaVersionErr(c *C) {
 	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %d", limit))
 
 	tk.MustExec("create table t (a int)")
-	// TODO fix this
+	// TODO: Uncomment lines below after fixing #18142.
 	//_, err = tk.Exec("truncate table t")
 	//c.Assert(err, NotNil)
 	//c.Assert(err.Error(), Equals, "[ddl:-1]DDL job rollback, error msg: mock update version error")
