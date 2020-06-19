@@ -310,7 +310,9 @@ func (st *TxnState) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 // GetMemBuffer overrides the Transaction interface.
 func (st *TxnState) GetMemBuffer() kv.MemBuffer {
 	if st.stmtBuf == nil || st.stmtBuf.Size() == 0 {
-		return st.Transaction.GetMemBuffer()
+		if st.Transaction != nil {
+			return st.Transaction.GetMemBuffer()
+		}
 	}
 	return kv.NewBufferStoreFrom(st.Transaction.GetMemBuffer(), st.stmtBuf)
 }
