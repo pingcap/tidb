@@ -112,7 +112,7 @@ func (rd *RowDecoder) tryDecodeFromHandleAndSetRow(dCol Column, handle kv.Handle
 }
 
 // DecodeAndEvalRowWithMap decodes a byte slice into datums and evaluates the generated column value.
-func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.Handle, b []byte, decodeLoc, sysLoc *time.Location, row map[int64]types.Datum, tbl *model.TableInfo) (map[int64]types.Datum, error) {
+func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.Handle, b []byte, decodeLoc, sysLoc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
 	var err error
 	if rowcodec.IsNewFormat(b) {
 		row, err = tablecodec.DecodeRowWithMapNew(b, rd.colTypes, decodeLoc, row)
