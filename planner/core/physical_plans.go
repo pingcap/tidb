@@ -94,11 +94,11 @@ func (sg *TiKVSingleGather) GetPhysicalIndexReader(schema *expression.Schema, st
 // Clone implements PhysicalPlan interface.
 func (p *PhysicalTableReader) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalTableReader)
-	prod, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
+	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
 	if err != nil {
 		return nil, err
 	}
-	cloned.physicalSchemaProducer = *prod
+	cloned.physicalSchemaProducer = *base
 	cloned.StoreType = p.StoreType
 	if cloned.tablePlan, err = p.tablePlan.Clone(); err != nil {
 		return nil, err
@@ -232,7 +232,6 @@ func (p *PhysicalIndexLookUpReader) Clone() (PhysicalPlan, error) {
 		return nil, err
 	}
 	cloned.ExtraHandleCol = p.ExtraHandleCol.Clone().(*expression.Column)
-	cloned.PushedLimit = new(PushedDownLimit)
 	cloned.PushedLimit = p.PushedLimit.Clone()
 	return cloned, nil
 }
@@ -524,12 +523,13 @@ type PhysicalTopN struct {
 // Clone implements PhysicalPlan interface.
 func (lt *PhysicalTopN) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalTopN)
-	cloned.Offset, cloned.Count = lt.Offset, lt.Count
+	*cloned = *lt
 	base, err := lt.basePhysicalPlan.cloneWithSelf(cloned)
 	if err != nil {
 		return nil, err
 	}
 	cloned.basePhysicalPlan = *base
+	cloned.ByItems = make([]*util.ByItems, 0, len(lt.ByItems))
 	for _, it := range lt.ByItems {
 		cloned.ByItems = append(cloned.ByItems, it.Clone())
 	}
