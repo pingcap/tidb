@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"sync"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
@@ -197,13 +198,14 @@ func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 
 	// multiple test, '1000' is both effective and efficient.
 	repeats := 1000
-	ch := make(chan int)
+	var wg sync.WaitGroup
+	wg.Add(2)
 
 	go func() {
 		for i := 0; i < repeats; i++ {
 			tk1.MustExec(executeQuery)
 		}
-		ch <- 0
+		wg.Done()
 	}()
 
 	go func() {
@@ -213,11 +215,10 @@ func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 			})
 			tk2.MustQuery(explainQuery).Check(explainResult)
 		}
-		ch <- 0
+		wg.Done()
 	}()
 
-	<-ch
-	<-ch
+	wg.Wait()
 }
 
 func (s *testPrepareSerialSuite) TestExplainDotForExplainPlan(c *C) {
