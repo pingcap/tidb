@@ -14,7 +14,6 @@
 package types
 
 import (
-	"bytes"
 	"math"
 	"strconv"
 
@@ -1195,7 +1194,7 @@ func (d *MyDecimal) WriteBin(precision, frac int, buf []byte) ([]byte, error) {
 	if bufLen+intSize+fracSize <= cap(buf) {
 		buf = buf[:bufLen+intSize+fracSize]
 	} else {
-		buf = append(buf, bytes.Repeat([]byte{0}, intSize+fracSize)...)
+		buf = append(buf, make([]byte, intSize+fracSize)...)
 	}
 	bin := buf[bufLen:]
 	binIdx := 0
