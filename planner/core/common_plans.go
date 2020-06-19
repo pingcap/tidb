@@ -784,6 +784,19 @@ type Explain struct {
 	explainedPlans map[int]bool
 }
 
+// GetExplainRowsForPlan get explain rows for plan.
+func GetExplainRowsForPlan(plan Plan) (rows [][]string) {
+	explain := &Explain{
+		TargetPlan: plan,
+		Format:     ast.ExplainFormatROW,
+		Analyze:    false,
+	}
+	if err := explain.RenderResult(); err != nil {
+		return rows
+	}
+	return explain.Rows
+}
+
 // prepareSchema prepares explain's result schema.
 func (e *Explain) prepareSchema() error {
 	var fieldNames []string
@@ -822,10 +835,12 @@ func (e *Explain) RenderResult() error {
 	}
 	switch strings.ToLower(e.Format) {
 	case ast.ExplainFormatROW:
-		e.explainedPlans = map[int]bool{}
-		err := e.explainPlanInRowFormat(e.TargetPlan, "root", "", "", true)
-		if err != nil {
-			return err
+		if e.Rows == nil || e.Analyze {
+			e.explainedPlans = map[int]bool{}
+			err := e.explainPlanInRowFormat(e.TargetPlan, "root", "", "", true)
+			if err != nil {
+				return err
+			}
 		}
 	case ast.ExplainFormatDOT:
 		if physicalPlan, ok := e.TargetPlan.(PhysicalPlan); ok {
