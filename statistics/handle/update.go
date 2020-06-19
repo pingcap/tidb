@@ -288,6 +288,7 @@ func (h *Handle) siftFeedbacks() {
 		h.feedback.Feedbacks[k] = h.feedback.Feedbacks[k][:1]
 		h.feedback.Feedbacks[k][0].Feedback, _ = statistics.NonOverlappedFeedbacks(sc, fbs)
 	}
+	h.feedback.Size = len(h.feedback.Feedbacks)
 }
 
 // DumpStatsDeltaToKV sweeps the whole list and updates the global map, then we dumps every table that held in map to KV.
