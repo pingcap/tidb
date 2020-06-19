@@ -39,6 +39,7 @@ func New(path string) (*RPCClient, pd.Client, *Cluster, error) {
 	}
 
 	conf := usconf.DefaultConf
+	conf.Engine.ValueThreshold = 0
 	conf.Engine.DBPath = path
 	conf.Server.Raft = false
 
