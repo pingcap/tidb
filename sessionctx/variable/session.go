@@ -1301,6 +1301,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.SelectLimit = result
 	case TiDBSlowLogMasking:
 		s.EnableSlowLogMasking = TiDBOptOn(val)
+	case TiDBEnableCollectExecutionInfo:
+		config.GetGlobalConfig().EnableCollectExecutionInfo = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
