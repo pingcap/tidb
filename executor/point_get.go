@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -354,6 +355,7 @@ func decodeRowValToChunk(e *baseExecutor, tblInfo *model.TableInfo, handle kv.Ha
 }
 
 func decodeOldRowValToChunk(e *baseExecutor, tblInfo *model.TableInfo, handle kv.Handle, rowVal []byte, chk *chunk.Chunk) error {
+	pkCols := tables.TryGetCommonPkColumnIds(tblInfo)
 	colID2CutPos := make(map[int64]int, e.schema.Len())
 	for _, col := range e.schema.Columns {
 		if _, ok := colID2CutPos[col.ID]; !ok {
@@ -374,7 +376,11 @@ func decodeOldRowValToChunk(e *baseExecutor, tblInfo *model.TableInfo, handle kv
 			chk.AppendNull(i)
 			continue
 		}
-		if tryDecodeFromHandle(tblInfo, i, col, handle, chk, decoder) {
+		ok, err := tryDecodeFromHandle(tblInfo, i, col, handle, chk, decoder, pkCols)
+		if err != nil {
+			return err
+		}
+		if ok {
 			continue
 		}
 		cutPos := colID2CutPos[col.ID]
@@ -395,23 +401,28 @@ func decodeOldRowValToChunk(e *baseExecutor, tblInfo *model.TableInfo, handle kv
 	return nil
 }
 
-func tryDecodeFromHandle(tblInfo *model.TableInfo, i int, col *expression.Column, handle kv.Handle, chk *chunk.Chunk, decoder *codec.Decoder) bool {
+func tryDecodeFromHandle(tblInfo *model.TableInfo, i int, col *expression.Column, handle kv.Handle, chk *chunk.Chunk, decoder *codec.Decoder, pkCols []int64) (bool, error) {
 	if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.Flag) {
 		chk.AppendInt64(i, handle.IntValue())
-		return true
+		return true, nil
 	}
 	if col.ID == model.ExtraHandleID {
 		chk.AppendInt64(i, handle.IntValue())
-		return true
+		return true, nil
 	}
-	if tblInfo.IsCommonHandle && mysql.HasPriKeyFlag(col.RetType.Flag) {
-		_, err := decoder.DecodeOne(handle.EncodedCol(i), i, col.RetType)
-		if err != nil {
-			return false
+	// Try to decode common handle.
+	if mysql.HasPriKeyFlag(col.RetType.Flag) {
+		for i, hid := range pkCols {
+			if col.ID == hid {
+				_, err := decoder.DecodeOne(handle.EncodedCol(i), i, col.RetType)
+				if err != nil {
+					return false, errors.Trace(err)
+				}
+				return true, nil
+			}
 		}
-		return true
 	}
-	return false
+	return false, nil
 }
 
 func getColInfoByID(tbl *model.TableInfo, colID int64) *model.ColumnInfo {

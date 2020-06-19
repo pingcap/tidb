@@ -86,13 +86,8 @@ func getKeysNeedCheck(ctx context.Context, sctx sessionctx.Context, t table.Tabl
 				break
 			}
 		}
-	}
-	if t.Meta().IsCommonHandle {
-		pkIdx := tables.FindPrimaryIndex(t.Meta())
-		cols := t.Cols()
-		for _, idxCol := range pkIdx.Columns {
-			handleCols = append(handleCols, cols[idxCol.Offset])
-		}
+	} else {
+		handleCols = tables.TryGetCommonPkColumns(t)
 	}
 
 	var err error
