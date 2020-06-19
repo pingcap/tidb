@@ -523,6 +523,11 @@ func SetAddRecordCtx(ctx sessionctx.Context, r *CommonAddRecordCtx) {
 	ctx.SetValue(addRecordCtxKey, r)
 }
 
+// ClearAddRecordCtx remove `CommonAddRecordCtx` from session context
+func ClearAddRecordCtx(ctx sessionctx.Context) {
+	ctx.ClearValue(addRecordCtxKey)
+}
+
 // NewCommonAddRecordCtx create a context used for `AddRecord`
 func NewCommonAddRecordCtx(size int, buffer *kv.BufferStore) *CommonAddRecordCtx {
 	return &CommonAddRecordCtx{
