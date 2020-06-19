@@ -62,30 +62,30 @@ var aggFuncFactor = map[string]float64{
 	"default":              1.5,
 }
 
-// CountDown is used in hint nth_plan() to indicate which plan to use.
-type CountDown int8
+// PlanCounterTp is used in hint nth_plan() to indicate which plan to use.
+type PlanCounterTp int8
 
-// Sign is the default value of CountDown, indicating that optimizer needn't force a plan.
-var Sign CountDown = -1
+// PlanCounterDisabled is the default value of PlanCounterTp, indicating that optimizer needn't force a plan.
+var PlanCounterDisabled PlanCounterTp = -1
 
-// Dec minus CountDown value by x.
-func (c *CountDown) Dec(x int8) {
+// Dec minus PlanCounterTp value by x.
+func (c *PlanCounterTp) Dec(x int8) {
 	if *c <= 0 {
 		return
 	}
-	*c = CountDown(int8(*c) - x)
+	*c = PlanCounterTp(int8(*c) - x)
 	if *c < 0 {
 		*c = 0
 	}
 }
 
-// Empty indicates whether the CountDown is clear now.
-func (c *CountDown) Empty() bool {
+// Empty indicates whether the PlanCounterTp is clear now.
+func (c *PlanCounterTp) Empty() bool {
 	return *c == 0
 }
 
 // IsForce indicates whether to force a plan.
-func (c *CountDown) IsForce() bool {
+func (c *PlanCounterTp) IsForce() bool {
 	return *c != -1
 }
 
@@ -132,7 +132,7 @@ func GetPropByOrderByItemsContainScalarFunc(items []*util.ByItems) (*property.Ph
 	return &property.PhysicalProperty{Items: propItems}, true, onlyColumn
 }
 
-func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty, clock *CountDown) (task, int64, error) {
+func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty, clock *PlanCounterTp) (task, int64, error) {
 	// If the required property is not empty and the row count > 1,
 	// we cannot ensure this required property.
 	// But if the row count is 0 or 1, we don't need to care about the property.
@@ -147,7 +147,7 @@ func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty, clock *
 	return &rootTask{p: dual}, 1, nil
 }
 
-func (p *LogicalShow) findBestTask(prop *property.PhysicalProperty, clock *CountDown) (task, int64, error) {
+func (p *LogicalShow) findBestTask(prop *property.PhysicalProperty, clock *PlanCounterTp) (task, int64, error) {
 	if !prop.IsEmpty() || clock.Empty() {
 		return invalidTask, 0, nil
 	}
@@ -157,7 +157,7 @@ func (p *LogicalShow) findBestTask(prop *property.PhysicalProperty, clock *Count
 	return &rootTask{p: pShow}, 1, nil
 }
 
-func (p *LogicalShowDDLJobs) findBestTask(prop *property.PhysicalProperty, clock *CountDown) (task, int64, error) {
+func (p *LogicalShowDDLJobs) findBestTask(prop *property.PhysicalProperty, clock *PlanCounterTp) (task, int64, error) {
 	if !prop.IsEmpty() || clock.Empty() {
 		return invalidTask, 0, nil
 	}
@@ -175,21 +175,21 @@ func (p *baseLogicalPlan) rebuildChildTasks(childTasks *[]task, pp PhysicalPlan,
 	}
 
 	multAll := int64(1)
-	var curClock CountDown
+	var curClock PlanCounterTp
 	for _, x := range childCnts {
 		multAll *= x
 	}
 	*childTasks = (*childTasks)[:0]
 	for j, child := range p.children {
 		multAll /= childCnts[j]
-		curClock = CountDown((clock-1)/multAll + 1)
+		curClock = PlanCounterTp((clock-1)/multAll + 1)
 		childTask, _, err := child.findBestTask(pp.GetChildReqProps(j), &curClock)
 		clock = (clock-1)%multAll + 1
 		if err != nil {
 			return err
 		}
 		if curClock != 0 {
-			return errors.Errorf("CountDown clock is not handled")
+			return errors.Errorf("PlanCounterTp clock is not handled")
 		}
 		if childTask != nil && childTask.invalid() {
 			return errors.Errorf("The current plan is invalid, please skip this plan.")
@@ -199,7 +199,7 @@ func (p *baseLogicalPlan) rebuildChildTasks(childTasks *[]task, pp PhysicalPlan,
 	return nil
 }
 
-func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPlan, prop *property.PhysicalProperty, clock *CountDown) (task, int64, error) {
+func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPlan, prop *property.PhysicalProperty, clock *PlanCounterTp) (task, int64, error) {
 	var bestTask task = invalidTask
 	var curCntPlan, cntPlan int64
 	childTasks := make([]task, 0, len(p.children))
@@ -212,7 +212,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		curCntPlan = 1
 		TimeStampNow := p.GetBakTimeStamp()
 		for j, child := range p.children {
-			childTask, cnt, err := child.findBestTask(pp.GetChildReqProps(j), &Sign)
+			childTask, cnt, err := child.findBestTask(pp.GetChildReqProps(j), &PlanCounterDisabled)
 			childCnts[j] = cnt
 			if err != nil {
 				return nil, 0, err
@@ -269,7 +269,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 }
 
 // findBestTask implements LogicalPlan interface.
-func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, clock *CountDown) (bestTask task, cntPlan int64, err error) {
+func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, clock *PlanCounterTp) (bestTask task, cntPlan int64, err error) {
 	// If p is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
 	// and set inner child prop nil, so here we do nothing.
 	if prop == nil {
@@ -359,7 +359,7 @@ END:
 	return bestTask, cntPlan, nil
 }
 
-func (p *LogicalMemTable) findBestTask(prop *property.PhysicalProperty, clock *CountDown) (t task, cntPlan int64, err error) {
+func (p *LogicalMemTable) findBestTask(prop *property.PhysicalProperty, clock *PlanCounterTp) (t task, cntPlan int64, err error) {
 	if !prop.IsEmpty() || clock.Empty() {
 		return invalidTask, 0, nil
 	}
@@ -547,7 +547,7 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 
 // findBestTask implements the PhysicalPlan interface.
 // It will enumerate all the available indices and choose a plan with least cost.
-func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, clock *CountDown) (t task, cntPlan int64, err error) {
+func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, clock *PlanCounterTp) (t task, cntPlan int64, err error) {
 	// If ds is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
 	// and set inner child prop nil, so here we do nothing.
 	if prop == nil {

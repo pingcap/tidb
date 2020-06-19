@@ -132,7 +132,7 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
 		return nil, 0, errors.Trace(ErrCartesianProductUnsupported)
 	}
-	clock := CountDown(sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan)
+	clock := PlanCounterTp(sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan)
 	if clock == 0 {
 		clock = -1
 	}
@@ -173,7 +173,7 @@ func isLogicalRuleDisabled(r logicalOptRule) bool {
 	return disabled
 }
 
-func physicalOptimize(logic LogicalPlan, clock *CountDown) (PhysicalPlan, float64, error) {
+func physicalOptimize(logic LogicalPlan, clock *PlanCounterTp) (PhysicalPlan, float64, error) {
 	if _, err := logic.recursiveDeriveStats(); err != nil {
 		return nil, 0, err
 	}
