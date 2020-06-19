@@ -113,21 +113,6 @@ func (e *PointGetExecutor) buildVirtualColumnInfo() {
 
 // Open implements the Executor interface.
 func (e *PointGetExecutor) Open(context.Context) error {
-	return nil
-}
-
-// Close implements the Executor interface.
-func (e *PointGetExecutor) Close() error {
-	return nil
-}
-
-// Next implements the Executor interface.
-func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
-	req.Reset()
-	if e.done {
-		return nil
-	}
-	e.done = true
 	txnCtx := e.ctx.GetSessionVars().TxnCtx
 	snapshotTS := e.startTS
 	if e.lock {
@@ -150,14 +135,31 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		e.snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
 	e.snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
+	return nil
+}
+
+// Close implements the Executor interface.
+func (e *PointGetExecutor) Close() error {
+	return nil
+}
+
+// Next implements the Executor interface.
+func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
+	req.Reset()
+	if e.done {
+		return nil
+	}
+	e.done = true
+
 	var tblID int64
+	var err error
 	if e.partInfo != nil {
 		tblID = e.partInfo.ID
 	} else {
 		tblID = e.tblInfo.ID
 	}
 	if e.idxInfo != nil {
-		if e.tblInfo.IsCommonHandle && e.idxInfo.Primary {
+		if isCommonHandleRead(e.tblInfo, e.idxInfo) {
 			handleBytes, err := codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, nil, e.idxVals...)
 			if err != nil {
 				return err
@@ -185,12 +187,12 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				}
 				return e.lockKeyIfNeeded(ctx, e.idxKey)
 			}
-			var iv int64
-			iv, err = tables.DecodeHandleInUniqueIndexValue(e.handleVal)
+			var iv kv.Handle
+			iv, err = tables.DecodeHandleInUniqueIndexValue(e.handleVal, e.tblInfo.IsCommonHandle)
 			if err != nil {
 				return err
 			}
-			e.handle = kv.IntHandle(iv)
+			e.handle = iv
 
 			// The injection is used to simulate following scenario:
 			// 1. Session A create a point get query but pause before second time `GET` kv from backend
@@ -214,7 +216,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 	if len(val) == 0 {
-		if e.idxInfo != nil && !e.idxInfo.Primary {
+		if e.idxInfo != nil && !isCommonHandleRead(e.tblInfo, e.idxInfo) {
 			return kv.ErrNotExist.GenWithStack("inconsistent extra index %s, handle %d not found in table",
 				e.idxInfo.Name.O, e.handle)
 		}
@@ -372,7 +374,7 @@ func decodeOldRowValToChunk(e *baseExecutor, tblInfo *model.TableInfo, handle kv
 			chk.AppendNull(i)
 			continue
 		}
-		if tryDecodeFromHandle(tblInfo, i, col, handle, chk) {
+		if tryDecodeFromHandle(tblInfo, i, col, handle, chk, decoder) {
 			continue
 		}
 		cutPos := colID2CutPos[col.ID]
@@ -393,13 +395,20 @@ func decodeOldRowValToChunk(e *baseExecutor, tblInfo *model.TableInfo, handle kv
 	return nil
 }
 
-func tryDecodeFromHandle(tblInfo *model.TableInfo, i int, col *expression.Column, handle kv.Handle, chk *chunk.Chunk) bool {
+func tryDecodeFromHandle(tblInfo *model.TableInfo, i int, col *expression.Column, handle kv.Handle, chk *chunk.Chunk, decoder *codec.Decoder) bool {
 	if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.Flag) {
 		chk.AppendInt64(i, handle.IntValue())
 		return true
 	}
 	if col.ID == model.ExtraHandleID {
 		chk.AppendInt64(i, handle.IntValue())
+		return true
+	}
+	if tblInfo.IsCommonHandle && mysql.HasPriKeyFlag(col.RetType.Flag) {
+		_, err := decoder.DecodeOne(handle.EncodedCol(i), i, col.RetType)
+		if err != nil {
+			return false
+		}
 		return true
 	}
 	return false

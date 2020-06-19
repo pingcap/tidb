@@ -49,17 +49,25 @@ func (e *DeleteExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return e.deleteSingleTableByChunk(ctx)
 }
 
-func (e *DeleteExec) deleteOneRow(tbl table.Table, handleIndex int, isExtraHandle bool, row []types.Datum) error {
+func (e *DeleteExec) deleteOneRow(tbl table.Table, handleIndex []int, isExtraHandle bool, row []types.Datum) error {
 	end := len(row)
 	if isExtraHandle {
 		end--
 	}
-	handle := kv.IntHandle(row[handleIndex].GetInt64())
+	var handle kv.Handle
+	if !tbl.Meta().IsCommonHandle {
+		handle = kv.IntHandle(row[handleIndex[0]].GetInt64())
+	} else {
+		var err error
+		handle, err = kv.BuildHandleFromDatumRow(e.ctx.GetSessionVars().StmtCtx, row, handleIndex)
+		if err != nil {
+			return err
+		}
+	}
 	err := e.removeRow(e.ctx, tbl, handle, row[:end])
 	if err != nil {
 		return err
 	}
-
 	return nil
 }
 
@@ -67,13 +75,17 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	var (
 		tbl           table.Table
 		isExtrahandle bool
-		handleIndex   int
+		handleIndex   []int
 		rowCount      int
 	)
 	for _, info := range e.tblColPosInfos {
 		tbl = e.tblID2Table[info.TblID]
-		handleIndex = info.HandleOrdinal
-		isExtrahandle = handleIsExtra(e.children[0].Schema().Columns[info.HandleOrdinal])
+		if !tbl.Meta().IsCommonHandle {
+			handleIndex = []int{info.HandleOrdinal[0]}
+			isExtrahandle = handleIsExtra(e.children[0].Schema().Columns[info.HandleOrdinal[0]])
+		} else {
+			handleIndex = info.HandleOrdinal
+		}
 	}
 
 	// If tidb_batch_delete is ON and not in a transaction, we could use BatchDelete mode.
@@ -119,16 +131,26 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	return nil
 }
 
-func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []plannercore.TblColPosInfo, joinedRow []types.Datum) {
+func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []plannercore.TblColPosInfo, joinedRow []types.Datum) error {
 	// iterate all the joined tables, and got the copresonding rows in joinedRow.
 	for _, info := range colPosInfos {
 		if tblRowMap[info.TblID] == nil {
 			tblRowMap[info.TblID] = kv.NewHandleMap()
 		}
-		handle := kv.IntHandle(joinedRow[info.HandleOrdinal].GetInt64())
+		var handle kv.Handle
+		if !info.IsCommonHandle {
+			handle = kv.IntHandle(joinedRow[info.HandleOrdinal[0]].GetInt64())
+		} else {
+			var err error
+			handle, err = kv.BuildHandleFromDatumRow(e.ctx.GetSessionVars().StmtCtx, joinedRow, info.HandleOrdinal)
+			if err != nil {
+				return err
+			}
+		}
 		// tblRowMap[info.TblID][handle] hold the row datas binding to this table and this handle.
 		tblRowMap[info.TblID].Set(handle, joinedRow[info.Start:info.End])
 	}
+	return nil
 }
 
 func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
@@ -152,7 +174,10 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 
 		for joinedChunkRow := iter.Begin(); joinedChunkRow != iter.End(); joinedChunkRow = iter.Next() {
 			joinedDatumRow := joinedChunkRow.GetDatumRow(fields)
-			e.composeTblRowMap(tblRowMap, colPosInfos, joinedDatumRow)
+			err := e.composeTblRowMap(tblRowMap, colPosInfos, joinedDatumRow)
+			if err != nil {
+				return err
+			}
 		}
 		chk = chunk.Renew(chk, e.maxChunkSize)
 	}

@@ -784,6 +784,19 @@ type Explain struct {
 	explainedPlans map[int]bool
 }
 
+// GetExplainRowsForPlan get explain rows for plan.
+func GetExplainRowsForPlan(plan Plan) (rows [][]string) {
+	explain := &Explain{
+		TargetPlan: plan,
+		Format:     ast.ExplainFormatROW,
+		Analyze:    false,
+	}
+	if err := explain.RenderResult(); err != nil {
+		return rows
+	}
+	return explain.Rows
+}
+
 // prepareSchema prepares explain's result schema.
 func (e *Explain) prepareSchema() error {
 	var fieldNames []string
@@ -822,10 +835,12 @@ func (e *Explain) RenderResult() error {
 	}
 	switch strings.ToLower(e.Format) {
 	case ast.ExplainFormatROW:
-		e.explainedPlans = map[int]bool{}
-		err := e.explainPlanInRowFormat(e.TargetPlan, "root", "", "", true)
-		if err != nil {
-			return err
+		if e.Rows == nil || e.Analyze {
+			e.explainedPlans = map[int]bool{}
+			err := e.explainPlanInRowFormat(e.TargetPlan, "root", "", "", true)
+			if err != nil {
+				return err
+			}
 		}
 	case ast.ExplainFormatDOT:
 		if physicalPlan, ok := e.TargetPlan.(PhysicalPlan); ok {
@@ -833,7 +848,7 @@ func (e *Explain) RenderResult() error {
 		}
 	case ast.ExplainFormatHint:
 		hints := GenHintsFromPhysicalPlan(e.TargetPlan)
-		hints = append(hints, hint.ExtractTableHintsFromStmtNode(e.ExecStmt)...)
+		hints = append(hints, hint.ExtractTableHintsFromStmtNode(e.ExecStmt, nil)...)
 		e.Rows = append(e.Rows, []string{hint.RestoreOptimizerHints(hints)})
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
@@ -938,6 +953,47 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 	return
 }
 
+func getRuntimeInfo(ctx sessionctx.Context, p Plan) (actRows, analyzeInfo, memoryInfo, diskInfo string) {
+	runtimeStatsColl := ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
+	if runtimeStatsColl == nil {
+		return
+	}
+	explainID := p.ExplainID().String()
+
+	// There maybe some mock information for cop task to let runtimeStatsColl.Exists(p.ExplainID()) is true.
+	// So check copTaskEkxecDetail first and print the real cop task information if it's not empty.
+	if runtimeStatsColl.ExistsCopStats(explainID) {
+		copstats := runtimeStatsColl.GetCopStats(explainID)
+		analyzeInfo = copstats.String()
+		actRows = fmt.Sprint(copstats.GetActRows())
+	} else if runtimeStatsColl.ExistsRootStats(explainID) {
+		rootstats := runtimeStatsColl.GetRootStats(explainID)
+		analyzeInfo = rootstats.String()
+		actRows = fmt.Sprint(rootstats.GetActRows())
+	} else {
+		analyzeInfo = "time:0ns, loops:0"
+	}
+	switch p.(type) {
+	case *PhysicalTableReader, *PhysicalIndexReader, *PhysicalIndexLookUpReader:
+		if s := runtimeStatsColl.GetReaderStats(explainID); s != nil && len(s.String()) > 0 {
+			analyzeInfo += ", " + s.String()
+		}
+	}
+
+	memoryInfo = "N/A"
+	memTracker := ctx.GetSessionVars().StmtCtx.MemTracker.SearchTracker(p.ExplainID().String())
+	if memTracker != nil {
+		memoryInfo = memTracker.BytesToString(memTracker.MaxConsumed())
+	}
+
+	diskInfo = "N/A"
+	diskTracker := ctx.GetSessionVars().StmtCtx.DiskTracker.SearchTracker(p.ExplainID().String())
+	if diskTracker != nil {
+		diskInfo = diskTracker.BytesToString(diskTracker.MaxConsumed())
+	}
+	return
+}
+
 // prepareOperatorInfo generates the following information for every plan:
 // operator id, estimated rows, task type, access object and other operator info.
 func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent string, isLastChild bool) {
@@ -962,42 +1018,7 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 
 	var row []string
 	if e.Analyze {
-		runtimeStatsColl := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
-		explainID := p.ExplainID().String()
-		var actRows, analyzeInfo string
-
-		// There maybe some mock information for cop task to let runtimeStatsColl.Exists(p.ExplainID()) is true.
-		// So check copTaskEkxecDetail first and print the real cop task information if it's not empty.
-		if runtimeStatsColl.ExistsCopStats(explainID) {
-			copstats := runtimeStatsColl.GetCopStats(explainID)
-			analyzeInfo = copstats.String()
-			actRows = fmt.Sprint(copstats.GetActRows())
-		} else if runtimeStatsColl.ExistsRootStats(explainID) {
-			rootstats := runtimeStatsColl.GetRootStats(explainID)
-			analyzeInfo = rootstats.String()
-			actRows = fmt.Sprint(rootstats.GetActRows())
-		} else {
-			analyzeInfo = "time:0ns, loops:0"
-		}
-		switch p.(type) {
-		case *PhysicalTableReader, *PhysicalIndexReader, *PhysicalIndexLookUpReader:
-			if s := runtimeStatsColl.GetReaderStats(explainID); s != nil && len(s.String()) > 0 {
-				analyzeInfo += ", " + s.String()
-			}
-		}
-
-		memoryInfo := "N/A"
-		memTracker := e.ctx.GetSessionVars().StmtCtx.MemTracker.SearchTracker(p.ExplainID().String())
-		if memTracker != nil {
-			memoryInfo = memTracker.BytesToString(memTracker.MaxConsumed())
-		}
-
-		diskInfo := "N/A"
-		diskTracker := e.ctx.GetSessionVars().StmtCtx.DiskTracker.SearchTracker(p.ExplainID().String())
-		if diskTracker != nil {
-			diskInfo = diskTracker.BytesToString(diskTracker.MaxConsumed())
-		}
-
+		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfo(e.ctx, p)
 		row = []string{id, estRows, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo}
 	} else {
 		row = []string{id, estRows, taskType, accessObject, operatorInfo}

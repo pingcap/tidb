@@ -20,6 +20,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 )
 
@@ -380,4 +382,21 @@ func (m *HandleMap) Range(fn func(h Handle, val interface{}) bool) {
 			return
 		}
 	}
+}
+
+// BuildHandleFromDatumRow builds kv.Handle from cols in row.
+func BuildHandleFromDatumRow(sctx *stmtctx.StatementContext, row []types.Datum, handleOrdinals []int) (Handle, error) {
+	pkDts := make([]types.Datum, 0, len(handleOrdinals))
+	for _, ordinal := range handleOrdinals {
+		pkDts = append(pkDts, row[ordinal])
+	}
+	handleBytes, err := codec.EncodeKey(sctx, nil, pkDts...)
+	if err != nil {
+		return nil, err
+	}
+	handle, err := NewCommonHandle(handleBytes)
+	if err != nil {
+		return nil, err
+	}
+	return handle, nil
 }

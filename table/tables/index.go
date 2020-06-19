@@ -37,14 +37,42 @@ import (
 )
 
 // EncodeHandleInUniqueIndexValue encodes handle in data.
-func EncodeHandleInUniqueIndexValue(h int64) []byte {
-	var data [8]byte
-	binary.BigEndian.PutUint64(data[:], uint64(h))
-	return data[:]
+func EncodeHandleInUniqueIndexValue(h kv.Handle, isUntouched bool) []byte {
+	if h.IsInt() {
+		var data [8]byte
+		binary.BigEndian.PutUint64(data[:], uint64(h.IntValue()))
+		return data[:]
+	}
+	var untouchedFlag byte
+	if isUntouched {
+		untouchedFlag = 1
+	}
+	return encodeCommonHandle([]byte{untouchedFlag}, h)
 }
 
 // DecodeHandleInUniqueIndexValue decodes handle in data.
-func DecodeHandleInUniqueIndexValue(data []byte) (int64, error) {
+func DecodeHandleInUniqueIndexValue(data []byte, isCommonHandle bool) (kv.Handle, error) {
+	if !isCommonHandle {
+		dLen := len(data)
+		if dLen <= tablecodec.MaxOldEncodeValueLen {
+			return kv.IntHandle(int64(binary.BigEndian.Uint64(data))), nil
+		}
+		return kv.IntHandle(int64(binary.BigEndian.Uint64(data[dLen-int(data[0]):]))), nil
+	}
+	tailLen := int(data[0])
+	data = data[:len(data)-tailLen]
+	handleLen := uint16(data[2])<<8 + uint16(data[3])
+	handleEndOff := 4 + handleLen
+	h, err := kv.NewCommonHandle(data[4:handleEndOff])
+	if err != nil {
+		return nil, err
+	}
+	return h, nil
+}
+
+// DecodeHandleInUniqueIndexValueDeprecated decodes old handle in data.
+// TODO: remove me after ddl full support cluster index
+func DecodeHandleInUniqueIndexValueDeprecated(data []byte) (int64, error) {
 	dLen := len(data)
 	if dLen <= tablecodec.MaxOldEncodeValueLen {
 		return int64(binary.BigEndian.Uint64(data)), nil
@@ -86,12 +114,10 @@ func (c *indexIter) Next() (val []types.Datum, h kv.Handle, err error) {
 		val = vv[0 : len(vv)-1]
 	} else {
 		// If the index is unique and the value isn't nil, the handle is in value.
-		var iv int64
-		iv, err = DecodeHandleInUniqueIndexValue(c.it.Value())
+		h, err = DecodeHandleInUniqueIndexValue(c.it.Value(), c.idx.tblInfo.IsCommonHandle)
 		if err != nil {
 			return nil, nil, err
 		}
-		h = kv.IntHandle(iv)
 		val = vv
 	}
 	// update new iter to next
@@ -356,7 +382,7 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 		if h.IsInt() && distinct {
 			// The len of the idxVal is always >= 10 since len (restoredValue) > 0.
 			tailLen += 8
-			idxVal = append(idxVal, EncodeHandleInUniqueIndexValue(h.IntValue())...)
+			idxVal = append(idxVal, EncodeHandleInUniqueIndexValue(h, false)...)
 		} else if len(idxVal) < 10 {
 			// Padding the len to 10
 			paddingLen := 10 - len(idxVal)
@@ -374,16 +400,7 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 	} else {
 		idxVal = make([]byte, 0)
 		if distinct {
-			if h.IsInt() {
-				idxVal = EncodeHandleInUniqueIndexValue(h.IntValue())
-			} else {
-				if opt.Untouched {
-					idxVal = append(idxVal, 1)
-				} else {
-					idxVal = append(idxVal, 0)
-				}
-				idxVal = encodeCommonHandle(idxVal, h)
-			}
+			idxVal = EncodeHandleInUniqueIndexValue(h, opt.Untouched)
 		}
 		if opt.Untouched {
 			// If index is untouched and fetch here means the key is exists in TiKV, but not in txn mem-buffer,
@@ -420,11 +437,11 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 		return nil, err
 	}
 
-	handle, err := DecodeHandleInUniqueIndexValue(value)
+	handle, err := DecodeHandleInUniqueIndexValue(value, c.tblInfo.IsCommonHandle)
 	if err != nil {
 		return nil, err
 	}
-	return kv.IntHandle(handle), kv.ErrKeyExists
+	return handle, kv.ErrKeyExists
 }
 
 func encodeCommonHandle(idxVal []byte, h kv.Handle) []byte {
@@ -516,16 +533,14 @@ func (c *index) Exist(sc *stmtctx.StatementContext, rm kv.RetrieverMutator, inde
 
 	// For distinct index, the value of key is handle.
 	if distinct {
-		var iv int64
-		iv, err := DecodeHandleInUniqueIndexValue(value)
+		var handle kv.Handle
+		handle, err := DecodeHandleInUniqueIndexValue(value, c.tblInfo.IsCommonHandle)
 		if err != nil {
 			return false, nil, err
 		}
-		handle := kv.IntHandle(iv)
 		if !handle.Equal(h) {
 			return true, handle, kv.ErrKeyExists
 		}
-
 		return true, handle, nil
 	}
 

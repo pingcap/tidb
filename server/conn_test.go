@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/testkit"
@@ -451,10 +450,6 @@ func (ts *ConnTestSuite) TestConnExecutionTimeout(c *C) {
 type mockTiDBCtx struct {
 	TiDBContext
 	err error
-}
-
-func (c *mockTiDBCtx) GetSessionVars() *variable.SessionVars {
-	return &variable.SessionVars{}
 }
 
 func (ts *ConnTestSuite) TestShutDown(c *C) {

@@ -180,6 +180,9 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 # Query_time: 1
 # Parse_time: 0.00000001
 # Compile_time: 0.00000001
+# Rewrite_time: 0.000000003 Preproc_subqueries: 2 Preproc_subqueries_time: 0.000000002
+# Optimize_time: 0.00000001
+# Wait_TS: 0.000000003
 # Process_time: 2 Wait_time: 60 Backoff_time: 0.001 Request_count: 2 Total_keys: 10000 Process_keys: 20001
 # DB: test
 # Index_names: [t1:a,t2:b]
@@ -197,37 +200,51 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 # Prepared: true
 # Plan_from_cache: true
 # Has_more_results: true
+# KV_total: 10
+# PD_total: 11
+# Backoff_total: 12
+# Write_sql_response_total: 1
 # Succ: true
 select * from t;`
 	sql := "select * from t"
 	_, digest := parser.NormalizeDigest(sql)
 	logString := seVar.SlowLogFormat(&variable.SlowQueryLogItems{
-		TxnTS:          txnTS,
-		SQL:            sql,
-		Digest:         digest,
-		TimeTotal:      costTime,
-		TimeParse:      time.Duration(10),
-		TimeCompile:    time.Duration(10),
-		IndexNames:     "[t1:a,t2:b]",
-		StatsInfos:     statsInfos,
-		CopTasks:       copTasks,
-		ExecDetail:     execDetail,
-		MemMax:         memMax,
-		DiskMax:        diskMax,
-		Prepared:       true,
-		PlanFromCache:  true,
-		HasMoreResults: true,
-		Succ:           true,
+		TxnTS:             txnTS,
+		SQL:               sql,
+		Digest:            digest,
+		TimeTotal:         costTime,
+		TimeParse:         time.Duration(10),
+		TimeCompile:       time.Duration(10),
+		TimeOptimize:      time.Duration(10),
+		TimeWaitTS:        time.Duration(3),
+		IndexNames:        "[t1:a,t2:b]",
+		StatsInfos:        statsInfos,
+		CopTasks:          copTasks,
+		ExecDetail:        execDetail,
+		MemMax:            memMax,
+		DiskMax:           diskMax,
+		Prepared:          true,
+		PlanFromCache:     true,
+		HasMoreResults:    true,
+		KVTotal:           10 * time.Second,
+		PDTotal:           11 * time.Second,
+		BackoffTotal:      12 * time.Second,
+		WriteSQLRespTotal: 1 * time.Second,
+		Succ:              true,
+		RewriteInfo: variable.RewritePhaseInfo{
+			DurationRewrite:            3,
+			DurationPreprocessSubQuery: 2,
+			PreprocessSubQueries:       2,
+		},
 	})
 	c.Assert(logString, Equals, resultString)
 }
 
 func (*testSessionSuite) TestIsolationRead(c *C) {
-	originIsolationEngines := config.GetGlobalConfig().IsolationRead.Engines
-	defer func() {
-		config.GetGlobalConfig().IsolationRead.Engines = originIsolationEngines
-	}()
-	config.GetGlobalConfig().IsolationRead.Engines = []string{"tiflash", "tidb"}
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.IsolationRead.Engines = []string{"tiflash", "tidb"}
+	})
 	sessVars := variable.NewSessionVars()
 	_, ok := sessVars.IsolationReadEngines[kv.TiDB]
 	c.Assert(ok, Equals, true)
