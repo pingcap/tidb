@@ -362,7 +362,8 @@ func checkPhysicalPlanClone(p PhysicalPlan) error {
 }
 
 // checkDeepCloned is used to check if v2 is deep cloned from v1.
-// It's modified from reflect.deepValueEqual.
+// It's modified from reflect.deepValueEqual. We cannot use reflect.DeepEqual here since they have different
+// logic, for example, if two pointers point the same address, they will pass the DeepEqual check while failing in the DeepClone check.
 func checkDeepCloned(v1, v2 reflect.Value, path string, whiteList []string, visited map[visit]bool) error {
 	if !v1.IsValid() || !v2.IsValid() {
 		if v1.IsValid() != v2.IsValid() {
