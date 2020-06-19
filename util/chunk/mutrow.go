@@ -121,7 +121,7 @@ func zeroValForType(tp *types.FieldType) interface{} {
 func makeMutRowColumn(in interface{}) *Column {
 	switch x := in.(type) {
 	case nil:
-		col := makeMutRowUint64Column(uint64(0))
+		col := makeMutRowBytesColumn(nil)
 		col.nullBitmap[0] = 0
 		return col
 	case int:

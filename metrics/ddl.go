@@ -31,7 +31,7 @@ var (
 			Subsystem: "ddl",
 			Name:      "handle_job_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of handle jobs",
-			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 22), // 10ms ~ 6hours
+			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 24), // 10ms ~ 24hours
 		}, []string{LblType, LblResult})
 
 	BatchAddIdxHistogram = prometheus.NewHistogramVec(
@@ -40,7 +40,7 @@ var (
 			Subsystem: "ddl",
 			Name:      "batch_add_idx_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of batch handle data",
-			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 22), // 1ms ~ 0.5hours
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
 		}, []string{LblType})
 
 	SyncerInit            = "init"
@@ -91,7 +91,7 @@ var (
 			Subsystem: "ddl",
 			Name:      "worker_operation_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of ddl worker operations",
-			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 22), // 1ms ~ 2048s
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
 		}, []string{LblType, LblAction, LblResult})
 
 	CreateDDLInstance = "create_ddl_instance"

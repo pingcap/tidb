@@ -962,6 +962,7 @@ var tableInspectionSummaryCols = []columnInfo{
 	{name: "AVG_VALUE", tp: mysql.TypeDouble, size: 22, decimal: 6},
 	{name: "MIN_VALUE", tp: mysql.TypeDouble, size: 22, decimal: 6},
 	{name: "MAX_VALUE", tp: mysql.TypeDouble, size: 22, decimal: 6},
+	{name: "COMMENT", tp: mysql.TypeVarchar, size: 256},
 }
 
 var tableInspectionRulesCols = []columnInfo{
@@ -1393,6 +1394,15 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	}
 	var servers []ServerInfo
 	for _, store := range stores {
+		failpoint.Inject("mockStoreTombstone", func(val failpoint.Value) {
+			if val.(bool) {
+				store.State = metapb.StoreState_Tombstone
+			}
+		})
+
+		if store.GetState() == metapb.StoreState_Tombstone {
+			continue
+		}
 		var tp string
 		if isTiFlashStore(store) {
 			tp = "tiflash"
