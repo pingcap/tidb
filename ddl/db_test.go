@@ -2446,12 +2446,12 @@ func (s *testDBSuite5) TestRepairTableWithPartition(c *C) {
 	turnRepairModeAndInit(true)
 	defer turnRepairModeAndInit(false)
 	// Domain reload the tableInfo and add it into repairInfo.
-	tk.MustExec("create table origin (a int not null) partition by RANGE(a) (" +
-		"partition p10 values less than (10)," +
-		"partition p30 values less than (30)," +
-		"partition p50 values less than (50)," +
-		"partition p70 values less than (70)," +
-		"partition p90 values less than (90));")
+	//tk.MustExec("create table origin (a int not null) partition by RANGE(a) (" +
+	//	"partition p10 values less than (10)," +
+	//	"partition p30 values less than (30)," +
+	//	"partition p50 values less than (50)," +
+	//	"partition p70 values less than (70)," +
+	//	"partition p90 values less than (90));")
 	// Test for some old partition has lost.
 	_, err := tk.Exec("admin repair table origin create table origin (a int not null) partition by RANGE(a) (" +
 		"partition p10 values less than (10)," +
