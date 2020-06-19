@@ -99,9 +99,6 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.
 			rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
 			continue
 		}
-		if rd.tryDecodeFromHandle(dCol, handle) {
-			continue
-		}
 		// Get the default value of the column in the generated column expression.
 		val, err = tables.GetColDefaultValue(ctx, dCol.Col, rd.defaultVals)
 		if err != nil {
@@ -136,22 +133,6 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.
 		row[id] = val
 	}
 	return row, nil
-}
-
-func (rd *RowDecoder) tryDecodeFromHandle(dCol Column, handle kv.Handle) bool {
-	if handle == nil {
-		return false
-	}
-	colInfo := dCol.Col.ColumnInfo
-	if dCol.Col.IsPKHandleColumn(rd.tbl.Meta()) {
-		if mysql.HasUnsignedFlag(colInfo.Flag) {
-			rd.mutRow.SetValue(colInfo.Offset, uint64(handle.IntValue()))
-		} else {
-			rd.mutRow.SetValue(colInfo.Offset, handle.IntValue())
-		}
-		return true
-	}
-	return false
 }
 
 // BuildFullDecodeColMap build a map that contains [columnID -> struct{*table.Column, expression.Expression}] from
