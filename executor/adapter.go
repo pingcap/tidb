@@ -866,6 +866,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		Prepared:          a.isPreparedStmt,
 		HasMoreResults:    hasMoreResults,
 		PlanFromCache:     sessVars.FoundInPlanCache,
+		PlanFromSPM:       sessVars.FoundInSPM,
 		RewriteInfo:       sessVars.RewritePhaseInfo,
 		KVTotal:           time.Duration(atomic.LoadInt64(&stmtDetail.WaitKVRespDuration)),
 		PDTotal:           time.Duration(atomic.LoadInt64(&stmtDetail.WaitPDRespDuration)),
@@ -1006,5 +1007,6 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		IsInternal:     sessVars.InRestrictedSQL,
 		Succeed:        succ,
 		PlanInCache:    sessVars.FoundInPlanCache,
+		PlanInSPM:      sessVars.FoundInSPM,
 	})
 }
