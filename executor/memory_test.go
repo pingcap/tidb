@@ -20,16 +20,24 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util/testkit"
 )
 
 var _ = SerialSuites(&testMemoryLeak{})
 
+var _ = SerialSuites(&testGlobalTracker{&baseTestSuite{}})
+
 type testMemoryLeak struct {
 	store  kv.Storage
 	domain *domain.Domain
+}
+
+type testGlobalTracker struct {
+	*baseTestSuite
 }
 
 func (s *testMemoryLeak) SetUpSuite(c *C) {
@@ -113,4 +121,18 @@ func (s *testMemoryLeak) memDiff(m1, m2 uint64) uint64 {
 		return m1 - m2
 	}
 	return m2 - m1
+}
+
+func (s *testGlobalTracker) testGlobalMemoryTrackerOnCleanUp(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int)")
+	tk.MustExec("insert t (id) values (1)")
+	tk.MustExec("insert t (id) values (2)")
+	tk.MustExec("insert t (id) values (3)")
+	tk.MustExec("update t set id = 4 where id = 1")
+	tk.MustExec("update t set id = 5 where id = 2")
+	tk.MustExec("update t set id = 6 where id = 3")
+	c.Assert(executor.GlobalMemoryUsageTracker.MaxConsumed(), Greater, 0)
+	c.Assert(executor.GlobalMemoryUsageTracker.BytesConsumed(), Equals, 0)
 }
