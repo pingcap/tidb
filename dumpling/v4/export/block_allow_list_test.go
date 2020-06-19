@@ -47,8 +47,9 @@ func (s *testBWListSuite) TestFilterDatabaseWithNoTable(c *C) {
 		ServerInfo: ServerInfo{
 			ServerType: ServerTypeTiDB,
 		},
-		Tables:      dbTables,
-		TableFilter: tf.NewSchemasFilter("yyy"),
+		Tables:            dbTables,
+		TableFilter:       tf.NewSchemasFilter("yyy"),
+		DumpEmptyDatabase: true,
 	}
 	filterTables(conf)
 	c.Assert(conf.Tables, HasLen, 0)
@@ -59,5 +60,13 @@ func (s *testBWListSuite) TestFilterDatabaseWithNoTable(c *C) {
 	conf.TableFilter = tf.NewSchemasFilter("xxx")
 	filterTables(conf)
 	c.Assert(conf.Tables, HasLen, 1)
+	c.Assert(conf.Tables, DeepEquals, expectedDBTables)
+
+	dbTables["xxx"] = []*TableInfo{}
+	expectedDBTables = DatabaseTables{}
+	conf.Tables = dbTables
+	conf.DumpEmptyDatabase = false
+	filterTables(conf)
+	c.Assert(conf.Tables, HasLen, 0)
 	c.Assert(conf.Tables, DeepEquals, expectedDBTables)
 }

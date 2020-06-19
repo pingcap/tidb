@@ -37,8 +37,10 @@ func filterTables(conf *Config) {
 		}
 		// 1. this dbName doesn't match block allow list, don't add
 		// 2. this dbName matches block allow list, but there is no table in this database, add
-		if _, ok := dbTables[dbName]; !ok && conf.TableFilter.MatchSchema(dbName) {
-			dbTables[dbName] = make([]*TableInfo, 0)
+		if conf.DumpEmptyDatabase {
+			if _, ok := dbTables[dbName]; !ok && conf.TableFilter.MatchSchema(dbName) {
+				dbTables[dbName] = make([]*TableInfo, 0)
+			}
 		}
 	}
 

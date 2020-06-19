@@ -36,7 +36,19 @@ func Dump(pCtx context.Context, conf *Config) (err error) {
 
 	conf.ServerInfo, err = detectServerInfo(pool)
 	if err != nil {
-		return err
+		if strings.Contains(err.Error(), "tidb_mem_quota_query") {
+			conf.TiDBMemQuotaQuery = UnspecifiedSize
+			pool, err = sql.Open("mysql", conf.getDSN(""))
+			if err != nil {
+				return withStack(err)
+			}
+			conf.ServerInfo, err = detectServerInfo(pool)
+			if err != nil {
+				return withStack(err)
+			}
+		} else {
+			return withStack(err)
+		}
 	}
 
 	databases, err := prepareDumpingDatabases(conf, pool)
