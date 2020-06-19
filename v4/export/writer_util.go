@@ -89,7 +89,7 @@ func WriteMeta(meta MetaIR, w io.StringWriter) error {
 	return nil
 }
 
-func WriteInsert(tblIR TableDataIR, w io.Writer) error {
+func WriteInsert(pCtx context.Context, tblIR TableDataIR, w io.Writer) error {
 	fileRowIter := tblIR.Rows()
 	if !fileRowIter.HasNext() {
 		return nil
@@ -166,8 +166,12 @@ func WriteInsert(tblIR TableDataIR, w io.Writer) error {
 				bf.WriteString(";\n")
 			}
 
-			if err = wp.Error(); err != nil {
+			select {
+			case <-pCtx.Done():
+				return pCtx.Err()
+			case err := <-wp.errCh:
 				return err
+			default:
 			}
 		}
 	}
@@ -185,7 +189,7 @@ func WriteInsert(tblIR TableDataIR, w io.Writer) error {
 	return wp.Error()
 }
 
-func WriteInsertInCsv(tblIR TableDataIR, w io.Writer, noHeader bool, csvNullValue string) error {
+func WriteInsertInCsv(pCtx context.Context, tblIR TableDataIR, w io.Writer, noHeader bool, csvNullValue string) error {
 	fileRowIter := tblIR.Rows()
 	if !fileRowIter.HasNext() {
 		return nil
@@ -250,8 +254,13 @@ func WriteInsertInCsv(tblIR TableDataIR, w io.Writer, noHeader bool, csvNullValu
 
 			fileRowIter.Next()
 			bf.WriteByte('\n')
-			if err = wp.Error(); err != nil {
+
+			select {
+			case <-pCtx.Done():
+				return pCtx.Err()
+			case err := <-wp.errCh:
 				return err
+			default:
 			}
 		}
 	}

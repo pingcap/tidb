@@ -14,6 +14,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	_ "net/http/pprof"
@@ -170,7 +171,7 @@ func main() {
 	conf.Sql = sql
 	conf.TableFilter = tableFilter
 
-	err = export.Dump(conf)
+	err = export.Dump(context.Background(), conf)
 	if err != nil {
 		log.Error("dump failed error stack info", zap.Error(err))
 		fmt.Printf("\ndump failed: %s\n", err.Error())
