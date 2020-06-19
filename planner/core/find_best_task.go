@@ -509,33 +509,16 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 				p: dual,
 			}, nil
 		}
-		canConvertPointGet := (!ds.isPartition && len(path.Ranges) > 0) || (ds.isPartition && len(path.Ranges) == 1)
-		canConvertPointGet = canConvertPointGet && candidate.path.StoreType != kv.TiFlash
-		if !candidate.path.IsTablePath {
-			canConvertPointGet = canConvertPointGet &&
-				candidate.path.Index.Unique &&
-				!candidate.path.Index.HasPrefixIndex() &&
-				len(candidate.path.Ranges[0].LowVal) == len(candidate.path.Index.Columns)
-		}
-		if canConvertPointGet {
-			allRangeIsPoint := true
-			for _, ran := range path.Ranges {
-				if !ran.IsPoint(ds.ctx.GetSessionVars().StmtCtx) {
-					allRangeIsPoint = false
-					break
-				}
+		if ds.canConvertToPointGet(candidate) {
+			var pointGetTask task
+			if len(path.Ranges) == 1 {
+				pointGetTask = ds.convertToPointGet(prop, candidate)
+			} else {
+				pointGetTask = ds.convertToBatchPointGet(prop, candidate)
 			}
-			if allRangeIsPoint {
-				var pointGetTask task
-				if len(path.Ranges) == 1 {
-					pointGetTask = ds.convertToPointGet(prop, candidate)
-				} else {
-					pointGetTask = ds.convertToBatchPointGet(prop, candidate)
-				}
-				if pointGetTask.cost() < t.cost() {
-					t = pointGetTask
-					continue
-				}
+			if pointGetTask.cost() < t.cost() {
+				t = pointGetTask
+				continue
 			}
 		}
 		if path.IsTablePath {
@@ -568,6 +551,55 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 	}
 
 	return
+}
+
+func (ds *DataSource) canConvertToPointGet(candidate *candidatePath) bool {
+	path := candidate.path
+
+	canConvertPointGet := (!ds.isPartition && len(path.Ranges) > 0) || (ds.isPartition && len(path.Ranges) == 1)
+	canConvertPointGet = canConvertPointGet && candidate.path.StoreType != kv.TiFlash
+	if !candidate.path.IsTablePath {
+		canConvertPointGet = canConvertPointGet &&
+			candidate.path.Index.Unique &&
+			!candidate.path.Index.HasPrefixIndex() &&
+			len(candidate.path.Ranges[0].LowVal) == len(candidate.path.Index.Columns)
+	}
+	if !canConvertPointGet {
+		return false
+	}
+	allRangeIsPoint := true
+	for _, ran := range path.Ranges {
+		if !ran.IsPoint(ds.ctx.GetSessionVars().StmtCtx) {
+			allRangeIsPoint = false
+			break
+		}
+	}
+	if !allRangeIsPoint {
+		return false
+	}
+
+	// When cache enabled, we only cache the case only eq condition exists.
+	// The current impl make it hard to deal with all cases when cache enabled.
+	if PreparedPlanCacheEnabled() {
+		hasParamMarkerConst := false
+		for _, cond := range path.AccessConds {
+			hasParamMarkerConst = hasParamMarkerConst || expression.ParamConstInExpression(cond)
+		}
+		if !hasParamMarkerConst {
+			return true
+		}
+		// When this is a table path. We check that there's only a equal condition in access.
+		if path.IsTablePath && (len(path.AccessConds) != 1 || path.AccessConds[0].(*expression.ScalarFunction).FuncName.L != ast.EQ) {
+			return false
+		}
+		// If it's a index path. We check the `EqCondCount`.
+		//When it's the same with the number of index columns, there's just exact one equal condition on each index column.
+		if !path.IsTablePath && path.EqCondCount != len(path.FullIdxCols) {
+			return false
+		}
+	}
+
+	return true
 }
 
 func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, candidate *candidatePath) (task task, err error) {
@@ -1162,6 +1194,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		outputNames:  ds.OutputNames(),
 		LockWaitTime: ds.ctx.GetSessionVars().LockWaitTimeout,
 		Columns:      ds.Columns,
+		Path:         candidate.path,
 	}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(1.0), ds.blockOffset)
 	var partitionInfo *model.PartitionDefinition
 	if ds.isPartition {
