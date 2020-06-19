@@ -1495,6 +1495,7 @@ func (s *testPlanSuite) TestNthPlanHintWithExplain(c *C) {
 	_, err = se.Execute(ctx, `drop table if exists test.tt`)
 	c.Assert(err, IsNil)
 	_, err = se.Execute(ctx, `create table test.tt (a int,b int, index(a), index(b));`)
+	c.Assert(err, IsNil)
 
 	_, err = se.Execute(ctx, "insert into tt values (1, 1), (2, 2), (3, 4)")
 	c.Assert(err, IsNil)
