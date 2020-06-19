@@ -6549,8 +6549,6 @@ func (s *testIntegrationSuite) TestIssue17287(c *C) {
 	tk.MustQuery("execute stmt7 using @val1;").Check(testkit.Rows("1589873945"))
 	tk.MustQuery("execute stmt7 using @val2;").Check(testkit.Rows("1589873946"))
 }
-<<<<<<< HEAD
-=======
 
 func (s *testIntegrationSuite) TestIssue17727(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -6680,4 +6678,3 @@ func (s *testIntegrationSerialSuite) TestIssue17233(c *C) {
 	tk.MustQuery("SELECT col_1 FROM test.view_4").Sort().Check(testkit.Rows("8", "8", "8", "8", "8"))
 	tk.MustQuery("SELECT view_10.col_1 FROM view_4 JOIN view_10").Check(testkit.Rows("16", "16", "16", "16", "16", "18", "18", "18", "18", "18", "19", "19", "19", "19", "19"))
 }
->>>>>>> 2293925... planner: avoid overwriting `path.IndexFilters` when deriving index path statistics (#18076)
