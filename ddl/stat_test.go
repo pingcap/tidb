@@ -18,7 +18,9 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 )
 
@@ -91,6 +93,63 @@ LOOP:
 			// m, err := d.Stats(nil)
 			// c.Assert(err, IsNil)
 			break LOOP
+		}
+	}
+}
+
+func (s *testStatSuite) TestDDLStatsInfo(c *C) {
+	store := testCreateStore(c, "test_stat")
+	defer store.Close()
+
+	d := testNewDDLAndStart(
+		context.Background(),
+		c,
+		WithStore(store),
+		WithLease(testLease),
+	)
+	defer d.Stop()
+
+	dbInfo := testSchemaInfo(c, d, "test")
+	testCreateSchema(c, testNewContext(d), d, dbInfo)
+	tblInfo := testTableInfo(c, d, "t", 2)
+	ctx := testNewContext(d)
+	testCreateTable(c, ctx, d, dbInfo, tblInfo)
+
+	t := testGetTable(c, d, dbInfo.ID, tblInfo.ID)
+	// insert t values (1, 1), (2, 2), (3, 3)
+	_, err := t.AddRecord(ctx, types.MakeDatums(1, 1))
+	c.Assert(err, IsNil)
+	_, err = t.AddRecord(ctx, types.MakeDatums(2, 2))
+	c.Assert(err, IsNil)
+	_, err = t.AddRecord(ctx, types.MakeDatums(3, 3))
+	c.Assert(err, IsNil)
+	txn, err := ctx.Txn(true)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+
+	job := buildCreateIdxJob(dbInfo, tblInfo, true, "idx", "c1")
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/checkIndexWorkerNum", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/checkIndexWorkerNum"), IsNil)
+	}()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- d.doDDLJob(ctx, job)
+	}()
+
+	exit := false
+	for !exit {
+		select {
+		case err := <-done:
+			c.Assert(err, IsNil)
+			exit = true
+		case <-TestCheckWorkerNumCh:
+			varMap, err := d.Stats(nil)
+			c.Assert(err, IsNil)
+			c.Assert(varMap[ddlJobReorgHandle], Equals, "1")
 		}
 	}
 }
