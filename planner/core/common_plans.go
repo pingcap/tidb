@@ -835,9 +835,6 @@ func (e *Explain) RenderResult() error {
 		hints := GenHintsFromPhysicalPlan(e.TargetPlan)
 		hints = append(hints, hint.ExtractTableHintsFromStmtNode(e.ExecStmt, nil)...)
 		e.Rows = append(e.Rows, []string{hint.RestoreOptimizerHints(hints)})
-	case ast.ExplainFormatVerbose:
-		// TODO: add explain format = verbose here.
-		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}

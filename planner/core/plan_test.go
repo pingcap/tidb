@@ -240,31 +240,6 @@ func (s *testPlanNormalize) TestNthPlanHint(c *C) {
 	tk.MustExec("create table tt (a int,b int, index(a), index(b));")
 	tk.MustExec("insert into tt values (1, 1), (2, 2), (3, 4)")
 
-	// Test the explained plans.
-	tk.MustQuery("explain select /*+nth_plan(1)*/ * from tt where a=1 and b=1;").Check(testkit.Rows(
-		"TableReader_18 0.01 root  data:Selection_17",
-		"└─Selection_17 0.01 cop[tikv]  eq(test.tt.a, 1), eq(test.tt.b, 1)",
-		"  └─TableFullScan_16 10000.00 cop[tikv] table:tt keep order:false, stats:pseudo"))
-
-	tk.MustQuery("explain select /*+nth_plan(2)*/ * from tt where a=1 and b=1;").Check(testkit.Rows(
-		"IndexLookUp_22 0.01 root  ",
-		"├─IndexRangeScan_19(Build) 10.00 cop[tikv] table:tt, index:a(a) range:[1,1], keep order:false, stats:pseudo",
-		"└─Selection_21(Probe) 0.01 cop[tikv]  eq(test.tt.b, 1)",
-		"  └─TableRowIDScan_20 10.00 cop[tikv] table:tt keep order:false, stats:pseudo"))
-
-	tk.MustQuery("explain select /*+nth_plan(3)*/ * from tt where a=1 and b=1;").Check(testkit.Rows(
-		"IndexLookUp_26 0.01 root  ",
-		"├─IndexRangeScan_23(Build) 10.00 cop[tikv] table:tt, index:b(b) range:[1,1], keep order:false, stats:pseudo",
-		"└─Selection_25(Probe) 0.01 cop[tikv]  eq(test.tt.a, 1)",
-		"  └─TableRowIDScan_24 10.00 cop[tikv] table:tt keep order:false, stats:pseudo"))
-
-	// With the same param in nth_plan, we should get the same plan.
-	tk.MustQuery("explain select /*+nth_plan(2)*/ * from tt where a=1 and b=1;").Check(testkit.Rows(
-		"IndexLookUp_22 0.01 root  ",
-		"├─IndexRangeScan_19(Build) 10.00 cop[tikv] table:tt, index:a(a) range:[1,1], keep order:false, stats:pseudo",
-		"└─Selection_21(Probe) 0.01 cop[tikv]  eq(test.tt.b, 1)",
-		"  └─TableRowIDScan_20 10.00 cop[tikv] table:tt keep order:false, stats:pseudo"))
-
 	tk.MustExec("explain select /*+nth_plan(4)*/ * from tt where a=1 and b=1;")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Warning 1105 The parameter of nth_plan() is out of range."))
