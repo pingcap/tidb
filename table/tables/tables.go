@@ -486,7 +486,7 @@ func FindPrimaryIndex(tblInfo *model.TableInfo) *model.IndexInfo {
 	return pkIdx
 }
 
-// CommonAddRecordCtx is used in AddRecordWithCtx to avoid memory malloc for some temp slices.
+// CommonAddRecordCtx is used in `AddRecord` to avoid memory malloc for some temp slices.
 // This is useful in lightning parse row data to key-values pairs. This can gain upto 5%  performance
 // improvement in lightning's local mode.
 type CommonAddRecordCtx struct {
@@ -495,7 +495,23 @@ type CommonAddRecordCtx struct {
 	buffer *kv.BufferStore
 }
 
-// NewCommonAddRecordCtx create a context used for `AddRecordWithCtx`
+// CommonAddRecordKey is used as key in `sessionctx.Context.Value(key)`
+type CommonAddRecordKey struct{}
+
+// String implement `stringer.String` for CommonAddRecordKey
+func (c CommonAddRecordKey) String() string {
+	return "_common_add_record_context_key"
+}
+
+// addRecordCtxKey is key in `sessionctx.Context` for CommonAddRecordCtx
+var addRecordCtxKey = CommonAddRecordKey{}
+
+// SetAddRecordCtx set a CommonAddRecordCtx to session context
+func SetAddRecordCtx(ctx sessionctx.Context, r *CommonAddRecordCtx) {
+	ctx.SetValue(addRecordCtxKey, r)
+}
+
+// NewCommonAddRecordCtx create a context used for `AddRecord`
 func NewCommonAddRecordCtx(size int, buffer *kv.BufferStore) *CommonAddRecordCtx {
 	return &CommonAddRecordCtx{
 		colIDs: make([]int64, 0, size),
@@ -506,11 +522,6 @@ func NewCommonAddRecordCtx(size int, buffer *kv.BufferStore) *CommonAddRecordCtx
 
 // AddRecord implements table.Table AddRecord interface.
 func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
-	return t.AddRecordWithCtx(ctx, r, nil, opts...)
-}
-
-// AddRecordWithCtx implements table.Table AddRecordWithCtx interface.
-func (t *TableCommon) AddRecordWithCtx(ctx sessionctx.Context, r []types.Datum, addCtx interface{}, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
 	var opt table.AddRecordOpt
 	for _, fn := range opts {
 		fn.ApplyOn(&opt)
@@ -573,7 +584,7 @@ func (t *TableCommon) AddRecordWithCtx(ctx sessionctx.Context, r []types.Datum, 
 	var execBuf *kv.BufferStore
 	var colIDs, binlogColIDs []int64
 	var row, binlogRow []types.Datum
-	if recordCtx, ok := addCtx.(*CommonAddRecordCtx); ok {
+	if recordCtx, ok := ctx.Value(addRecordCtxKey).(*CommonAddRecordCtx); ok {
 		colIDs = recordCtx.colIDs[:0]
 		row = recordCtx.row[:0]
 		execBuf = recordCtx.buffer
