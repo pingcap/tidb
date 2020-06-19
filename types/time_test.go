@@ -15,6 +15,7 @@ package types_test
 
 import (
 	"math"
+	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -1811,4 +1812,21 @@ func (s *testTimeSuite) TestFromGoTime(c *C) {
 		c.Assert(t1, Equals, types.FromDate(ca.yy, ca.mm, ca.dd, ca.hh, ca.min, ca.sec, ca.micro), Commentf("idx %d", ith))
 	}
 
+}
+
+func benchmarkDateFormat(b *testing.B, name, str string) {
+	b.Run(name, func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			types.ParseDateFormat(str)
+		}
+	})
+}
+
+func BenchmarkParseDateFormat(b *testing.B) {
+	benchmarkDateFormat(b, "date basic", "2011-12-13")
+	benchmarkDateFormat(b, "date internal", "20111213")
+	benchmarkDateFormat(b, "datetime basic", "2011-12-13 14:15:16")
+	benchmarkDateFormat(b, "datetime internal", "20111213141516")
+	benchmarkDateFormat(b, "datetime basic frac", "2011-12-13 14:15:16.123456")
+	benchmarkDateFormat(b, "datetime repeated delimiters", "2011---12---13 14::15::16..123456")
 }
