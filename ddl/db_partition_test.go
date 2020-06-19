@@ -480,6 +480,9 @@ func (s *testIntegrationSuite3) TestCreateTableWithKeyPartition(c *C) {
 		s1 char(32) primary key
 	)
 	partition by key(s1) partitions 10;`)
+
+	tk.MustExec(`drop table if exists tm2`)
+	tk.MustExec(`create table tm2 (a char(5), unique key(a(5))) partition by key() partitions 5;`)
 }
 
 func (s *testIntegrationSuite5) TestAlterTableAddPartition(c *C) {
@@ -1213,6 +1216,22 @@ func (s *testIntegrationSuite5) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
                partition p2 values less than (11, 22)
         )`
 	tk.MustGetErrCode(sql11, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
+
+	sql12 := `create table part12 (a varchar(20), b binary, unique index (a(5))) partition by range columns (a) (
+			partition p0 values less than ('aaaaa'),
+			partition p1 values less than ('bbbbb'),
+			partition p2 values less than ('ccccc'))`
+	tk.MustGetErrCode(sql12, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
+	tk.MustExec(`create table part12 (a varchar(20), b binary) partition by range columns (a) (
+			partition p0 values less than ('aaaaa'),
+			partition p1 values less than ('bbbbb'),
+			partition p2 values less than ('ccccc'))`)
+	tk.MustGetErrCode("alter table part12 add unique index (a(5))", tmysql.ErrUniqueKeyNeedAllFieldsInPf)
+	sql13 := `create table part13 (a varchar(20), b varchar(10), unique index (a(5),b)) partition by range columns (b) (
+			partition p0 values less than ('aaaaa'),
+			partition p1 values less than ('bbbbb'),
+			partition p2 values less than ('ccccc'))`
+	tk.MustExec(sql13)
 }
 
 func (s *testIntegrationSuite2) TestPartitionDropPrimaryKey(c *C) {

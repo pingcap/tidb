@@ -96,7 +96,7 @@ func getEqOrInColOffset(expr expression.Expression, cols []*expression.Column) i
 	if !ok {
 		return -1
 	}
-	_, collation, _ := expr.CharsetAndCollation(f.GetCtx())
+	_, collation := expr.CharsetAndCollation(f.GetCtx())
 	if f.FuncName.L == ast.EQ {
 		if c, ok := f.GetArgs()[0].(*expression.Column); ok {
 			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.Collate, collation) {

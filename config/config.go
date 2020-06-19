@@ -136,6 +136,8 @@ type Config struct {
 	NewCollationsEnabledOnFirstBootstrap bool `toml:"new_collations_enabled_on_first_bootstrap" json:"new_collations_enabled_on_first_bootstrap"`
 	// Experimental contains parameters for experimental features.
 	Experimental Experimental `toml:"experimental" json:"experimental"`
+	// EnableCollectExecutionInfo enables the TiDB to collect execution info.
+	EnableCollectExecutionInfo bool `toml:"enable-collect-execution-info" json:"enable-collect-execution-info"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -554,7 +556,7 @@ var defaultConf = Config{
 	OOMUseTmpStorage:             true,
 	TempStorageQuota:             -1,
 	TempStoragePath:              tempStorageDirName,
-	OOMAction:                    OOMActionCancel,
+	OOMAction:                    OOMActionLog,
 	MemQuotaQuery:                1 << 30,
 	EnableStreaming:              false,
 	EnableBatchDML:               false,
@@ -677,6 +679,7 @@ var defaultConf = Config{
 		AllowAutoRandom:       false,
 		AllowsExpressionIndex: false,
 	},
+	EnableCollectExecutionInfo: false,
 }
 
 var (

@@ -266,7 +266,7 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 	// put collation information into the RetType enforcedly and push it down to TiKV/MockTiKV
 	tp := *expr.RetType
 	if collate.NewCollationEnabled() {
-		_, tp.Collate, _ = expr.CharsetAndCollation(expr.GetCtx())
+		_, tp.Collate = expr.CharsetAndCollation(expr.GetCtx())
 	}
 
 	// Construct expression ProtoBuf.

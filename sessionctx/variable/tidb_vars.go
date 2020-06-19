@@ -390,6 +390,12 @@ const (
 
 	// TiDBMetricSchemaRangeDuration indicates the range duration when query metric schema.
 	TiDBMetricSchemaRangeDuration = "tidb_metric_query_range_duration"
+
+	// TiDBSlowLogMasking indicates that whether masking the query data when log slow query.
+	TiDBSlowLogMasking = "tidb_slow_log_masking"
+
+	// TiDBEnableCollectExecutionInfo indicates that whether execution info is collected.
+	TiDBEnableCollectExecutionInfo = "tidb_enable_collect_execution_info"
 )
 
 // Default TiDB system variable values.
@@ -483,6 +489,8 @@ const (
 	DefTiDBMetricSchemaStep            = 60 // 60s
 	DefTiDBMetricSchemaRangeDuration   = 60 // 60s
 	DefTiDBFoundInPlanCache            = false
+	DefTiDBSlowLogMasking              = false
+	DefTiDBEnableCollectExecutionInfo  = false
 )
 
 // Process global variables.

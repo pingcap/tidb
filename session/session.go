@@ -83,9 +83,6 @@ var (
 	transactionDurationGeneralCommit     = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, metrics.LblCommit)
 	transactionDurationGeneralAbort      = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, metrics.LblAbort)
 
-	sessionExecuteRunDurationInternal = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblInternal)
-	sessionExecuteRunDurationGeneral  = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblGeneral)
-
 	sessionExecuteCompileDurationInternal = metrics.SessionExecuteCompileDuration.WithLabelValues(metrics.LblInternal)
 	sessionExecuteCompileDurationGeneral  = metrics.SessionExecuteCompileDuration.WithLabelValues(metrics.LblGeneral)
 	sessionExecuteParseDurationInternal   = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblInternal)
@@ -267,7 +264,7 @@ func (s *session) cleanRetryInfo() {
 	for i, stmtID := range retryInfo.DroppedPreparedStmtIDs {
 		if planCacheEnabled {
 			if i > 0 && preparedAst != nil {
-				plannercore.SetPstmtIDSchemaVersion(cacheKey, stmtID, preparedAst.SchemaVersion)
+				plannercore.SetPstmtIDSchemaVersion(cacheKey, stmtID, preparedAst.SchemaVersion, s.sessionVars.IsolationReadEngines)
 			}
 			s.PreparedPlanCache().Delete(cacheKey)
 		}
@@ -1037,7 +1034,6 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 
 func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode ast.StmtNode, stmt sqlexec.Statement, recordSets []sqlexec.RecordSet, inMulitQuery bool) ([]sqlexec.RecordSet, error) {
 	logStmt(stmtNode, s.sessionVars)
-	startTime := time.Now()
 	recordSet, err := runStmt(ctx, s, stmt)
 	if err != nil {
 		if !kv.ErrKeyExists.Equal(err) {
@@ -1047,11 +1043,6 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 				zap.String("session", s.String()))
 		}
 		return nil, err
-	}
-	if s.isInternal() {
-		sessionExecuteRunDurationInternal.Observe(time.Since(startTime).Seconds())
-	} else {
-		sessionExecuteRunDurationGeneral.Observe(time.Since(startTime).Seconds())
 	}
 
 	if inMulitQuery && recordSet == nil {
@@ -1214,6 +1205,7 @@ func (s *session) CommonExec(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
+	sessionExecuteCompileDurationGeneral.Observe(time.Since(s.sessionVars.StartTime).Seconds())
 	logQuery(st.OriginText(), s.sessionVars)
 	return runStmt(ctx, s, st)
 }
@@ -1243,7 +1235,10 @@ func (s *session) CachedPlanExec(ctx context.Context,
 		OutputNames: execPlan.OutputNames(),
 		PsStmt:      prepareStmt,
 	}
-	s.GetSessionVars().DurationCompile = time.Since(s.sessionVars.StartTime)
+	compileDuration := time.Since(s.sessionVars.StartTime)
+	sessionExecuteCompileDurationGeneral.Observe(compileDuration.Seconds())
+	s.GetSessionVars().DurationCompile = compileDuration
+
 	stmt.Text = prepared.Stmt.Text()
 	stmtCtx.OriginalSQL = stmt.Text
 	stmtCtx.InitSQLDigest(prepareStmt.NormalizedSQL, prepareStmt.SQLDigest)
@@ -1321,6 +1316,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	if !ok {
 		return nil, errors.Errorf("invalid CachedPrepareStmt type")
 	}
+	executor.CountStmtNode(preparedStmt.PreparedAst.Stmt, s.sessionVars.InRestrictedSQL)
 	ok, err = s.IsCachedExecOk(ctx, preparedStmt)
 	if err != nil {
 		return nil, err
@@ -1829,7 +1825,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = version45
+	currentBootstrapVersion = version47
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -1904,6 +1900,7 @@ var builtinGlobalVariable = []string{
 	variable.MaxExecutionTime,
 	variable.InnodbLockWaitTimeout,
 	variable.WindowingUseHighPrecision,
+	variable.SQLSelectLimit,
 
 	/* TiDB specific global variables: */
 	variable.TiDBSkipUTF8Check,
@@ -1962,6 +1959,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEvolvePlanBaselines,
 	variable.TiDBIsolationReadEngines,
 	variable.TiDBStoreLimit,
+	variable.TiDBSlowLogMasking,
 }
 
 var (

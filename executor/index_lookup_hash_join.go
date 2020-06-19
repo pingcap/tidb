@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
@@ -295,7 +296,7 @@ func (e *IndexNestedLoopHashJoin) Close() error {
 	}
 	if e.runtimeStats != nil {
 		concurrency := cap(e.joinChkResourceCh)
-		e.runtimeStats.SetConcurrencyInfo("Concurrency", concurrency)
+		e.runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", concurrency))
 	}
 	for i := range e.joinChkResourceCh {
 		close(e.joinChkResourceCh[i])

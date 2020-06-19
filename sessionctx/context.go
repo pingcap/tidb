@@ -134,7 +134,7 @@ type connIDCtxKeyType struct{}
 // ConnID is the key in context.
 var ConnID = connIDCtxKeyType{}
 
-// SetCommitCtx sets the variables for context before commit a transaction.
+// SetCommitCtx sets connection id into context
 func SetCommitCtx(ctx context.Context, sessCtx Context) context.Context {
 	return context.WithValue(ctx, ConnID, sessCtx.GetSessionVars().ConnectionID)
 }

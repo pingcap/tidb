@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/spaolacci/murmur3"
 	"go.uber.org/zap"
@@ -144,7 +145,7 @@ func (e *ShuffleExec) Close() error {
 	e.executed = false
 
 	if e.runtimeStats != nil {
-		e.runtimeStats.SetConcurrencyInfo("ShuffleConcurrency", e.concurrency)
+		e.runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("ShuffleConcurrency", e.concurrency))
 	}
 
 	err := e.dataSource.Close()

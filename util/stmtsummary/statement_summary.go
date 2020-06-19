@@ -168,6 +168,9 @@ type stmtSummaryByDigestElement struct {
 	firstSeen time.Time
 	// The last time this type of SQL executes.
 	lastSeen time.Time
+	// plan cache
+	planInCache   bool
+	planCacheHits int64
 }
 
 // StmtExecInfo records execution information of each statement.
@@ -192,6 +195,7 @@ type StmtExecInfo struct {
 	StartTime      time.Time
 	IsInternal     bool
 	Succeed        bool
+	PlanInCache    bool
 }
 
 // newStmtSummaryByDigestMap creates an empty stmtSummaryByDigestMap.
@@ -568,13 +572,15 @@ func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalS
 		// PrevSQL is already truncated to cfg.Log.QueryLogMaxLen.
 		prevSQL: sei.PrevSQL,
 		// samplePlan needs to be decoded so it can't be truncated.
-		samplePlan:   sei.PlanGenerator(),
-		indexNames:   sei.StmtCtx.IndexNames,
-		minLatency:   sei.TotalLatency,
-		firstSeen:    sei.StartTime,
-		lastSeen:     sei.StartTime,
-		backoffTypes: make(map[fmt.Stringer]int),
-		authUsers:    make(map[string]struct{}),
+		samplePlan:    sei.PlanGenerator(),
+		indexNames:    sei.StmtCtx.IndexNames,
+		minLatency:    sei.TotalLatency,
+		firstSeen:     sei.StartTime,
+		lastSeen:      sei.StartTime,
+		backoffTypes:  make(map[fmt.Stringer]int),
+		authUsers:     make(map[string]struct{}),
+		planInCache:   false,
+		planCacheHits: 0,
 	}
 	ssElement.add(sei, intervalSeconds)
 	return ssElement
@@ -721,6 +727,12 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 		commitDetails.Mu.Unlock()
 	}
 
+	//plan cache
+	if sei.PlanInCache {
+		ssElement.planInCache = true
+		ssElement.planCacheHits += 1
+	}
+
 	// other
 	ssElement.sumAffectedRows += sei.StmtCtx.AffectedRows()
 	ssElement.sumMem += sei.MemMax
@@ -815,6 +827,8 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		avgFloat(int64(ssElement.sumAffectedRows), ssElement.execCount),
 		types.NewTime(types.FromGoTime(ssElement.firstSeen), mysql.TypeTimestamp, 0),
 		types.NewTime(types.FromGoTime(ssElement.lastSeen), mysql.TypeTimestamp, 0),
+		ssElement.planInCache,
+		ssElement.planCacheHits,
 		ssElement.sampleSQL,
 		ssElement.prevSQL,
 		ssbd.planDigest,

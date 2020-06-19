@@ -112,6 +112,19 @@ func (s *testPointGetSuite) TestPointGet(c *C) {
 		"<nil> <nil>"))
 }
 
+func (s *testPointGetSuite) TestPointGetOverflow(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("CREATE TABLE t0(c1 BOOL UNIQUE)")
+	tk.MustExec("INSERT INTO t0(c1) VALUES (-128)")
+	tk.MustExec("INSERT INTO t0(c1) VALUES (127)")
+	tk.MustQuery("SELECT t0.c1 FROM t0 WHERE t0.c1=-129").Check(testkit.Rows()) // no result
+	tk.MustQuery("SELECT t0.c1 FROM t0 WHERE t0.c1=-128").Check(testkit.Rows("-128"))
+	tk.MustQuery("SELECT t0.c1 FROM t0 WHERE t0.c1=128").Check(testkit.Rows())
+	tk.MustQuery("SELECT t0.c1 FROM t0 WHERE t0.c1=127").Check(testkit.Rows("127"))
+}
+
 func (s *testPointGetSuite) TestPointGetCharPK(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test;`)

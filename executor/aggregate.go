@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/set"
@@ -243,8 +244,9 @@ func (e *HashAggExec) Close() error {
 			partialConcurrency = cap(e.partialWorkers)
 			finalConcurrency = cap(e.finalWorkers)
 		}
-		e.runtimeStats.SetConcurrencyInfo("PartialConcurrency", partialConcurrency)
-		e.runtimeStats.SetConcurrencyInfo("FinalConcurrency", finalConcurrency)
+		partialConcurrencyInfo := execdetails.NewConcurrencyInfo("PartialConcurrency", partialConcurrency)
+		finalConcurrencyInfo := execdetails.NewConcurrencyInfo("FinalConcurrency", finalConcurrency)
+		e.runtimeStats.SetConcurrencyInfo(partialConcurrencyInfo, finalConcurrencyInfo)
 	}
 	return e.baseExecutor.Close()
 }

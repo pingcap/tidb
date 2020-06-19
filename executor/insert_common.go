@@ -320,7 +320,7 @@ func (e *InsertValues) evalRow(ctx context.Context, list []expression.Expression
 		if err = e.handleErr(e.insertColumns[i], &val, rowIdx, err); err != nil {
 			return nil, err
 		}
-		val1, err := table.CastValue(e.ctx, val, e.insertColumns[i].ToInfo(), false)
+		val1, err := table.CastValue(e.ctx, val, e.insertColumns[i].ToInfo(), false, false)
 		if err = e.handleErr(e.insertColumns[i], &val, rowIdx, err); err != nil {
 			return nil, err
 		}
@@ -349,7 +349,7 @@ func (e *InsertValues) fastEvalRow(ctx context.Context, list []expression.Expres
 		if err = e.handleErr(e.insertColumns[i], &val, rowIdx, err); err != nil {
 			return nil, err
 		}
-		val1, err := table.CastValue(e.ctx, val, e.insertColumns[i].ToInfo(), false)
+		val1, err := table.CastValue(e.ctx, val, e.insertColumns[i].ToInfo(), false, false)
 		if err = e.handleErr(e.insertColumns[i], &val, rowIdx, err); err != nil {
 			return nil, err
 		}
@@ -473,7 +473,7 @@ func (e *InsertValues) getRow(ctx context.Context, vals []types.Datum) ([]types.
 	row := make([]types.Datum, len(e.Table.Cols()))
 	hasValue := make([]bool, len(e.Table.Cols()))
 	for i, v := range vals {
-		casted, err := table.CastValue(e.ctx, v, e.insertColumns[i].ToInfo(), false)
+		casted, err := table.CastValue(e.ctx, v, e.insertColumns[i].ToInfo(), false, false)
 		if e.handleErr(nil, &v, 0, err) != nil {
 			return nil, err
 		}
@@ -576,7 +576,7 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 		if e.handleErr(gCol, &val, 0, err) != nil {
 			return nil, err
 		}
-		row[colIdx], err = table.CastValue(e.ctx, val, gCol.ToInfo(), false)
+		row[colIdx], err = table.CastValue(e.ctx, val, gCol.ToInfo(), false, false)
 		if err != nil {
 			return nil, err
 		}
@@ -723,7 +723,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 				retryInfo.AddAutoIncrementID(id)
 
 				// The value of d is adjusted by auto ID, so we need to cast it again.
-				d, err := table.CastValue(e.ctx, d, col.ToInfo(), false)
+				d, err := table.CastValue(e.ctx, d, col.ToInfo(), false, false)
 				if err != nil {
 					return nil, err
 				}
@@ -736,7 +736,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 		retryInfo.AddAutoIncrementID(recordID)
 
 		// the value of d is adjusted by auto ID, so we need to cast it again.
-		autoDatum, err = table.CastValue(e.ctx, autoDatum, col.ToInfo(), false)
+		autoDatum, err = table.CastValue(e.ctx, autoDatum, col.ToInfo(), false, false)
 		if err != nil {
 			return nil, err
 		}
@@ -796,7 +796,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 	retryInfo.AddAutoIncrementID(recordID)
 
 	// the value of d is adjusted by auto ID, so we need to cast it again.
-	casted, err := table.CastValue(e.ctx, d, c.ToInfo(), false)
+	casted, err := table.CastValue(e.ctx, d, c.ToInfo(), false, false)
 	if err != nil {
 		return types.Datum{}, err
 	}
@@ -878,7 +878,7 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 	d.SetAutoID(recordID, c.Flag)
 	retryInfo.AddAutoRandomID(recordID)
 
-	casted, err := table.CastValue(e.ctx, d, c.ToInfo(), false)
+	casted, err := table.CastValue(e.ctx, d, c.ToInfo(), false, false)
 	if err != nil {
 		return types.Datum{}, err
 	}

@@ -345,7 +345,7 @@ func (w *worker) onModifyColumn(t *meta.Meta, job *model.Job) (ver int64, _ erro
 
 // doModifyColumn updates the column information and reorders all columns.
 func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldName *model.CIStr, pos *ast.ColumnPosition, modifyColumnTp byte) (ver int64, _ error) {
-	dbInfo, err := t.GetDatabase(job.SchemaID)
+	dbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -623,13 +623,13 @@ func generateOriginDefaultValue(col *model.ColumnInfo) (interface{}, error) {
 	return odValue, nil
 }
 
-func findColumnInIndexCols(c string, cols []*model.IndexColumn) bool {
+func findColumnInIndexCols(c string, cols []*model.IndexColumn) *model.IndexColumn {
 	for _, c1 := range cols {
 		if c == c1.Name.L {
-			return true
+			return c1
 		}
 	}
-	return false
+	return nil
 }
 
 func getColumnInfoByName(tbInfo *model.TableInfo, column string) *model.ColumnInfo {

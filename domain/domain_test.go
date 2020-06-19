@@ -119,6 +119,10 @@ func TestInfo(t *testing.T) {
 		ddl.WithInfoHandle(dom.infoHandle),
 		ddl.WithLease(ddlLease),
 	)
+	err = dom.ddl.Start(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	err = failpoint.Enable("github.com/pingcap/tidb/domain/MockReplaceDDL", `return(true)`)
 	if err != nil {
 		t.Fatal(err)

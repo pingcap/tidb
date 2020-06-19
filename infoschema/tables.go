@@ -946,6 +946,7 @@ var tableInspectionResultCols = []columnInfo{
 	{name: "ITEM", tp: mysql.TypeVarchar, size: 64},
 	{name: "TYPE", tp: mysql.TypeVarchar, size: 64},
 	{name: "INSTANCE", tp: mysql.TypeVarchar, size: 64},
+	{name: "STATUS_ADDRESS", tp: mysql.TypeVarchar, size: 64},
 	{name: "VALUE", tp: mysql.TypeVarchar, size: 64},
 	{name: "REFERENCE", tp: mysql.TypeVarchar, size: 64},
 	{name: "SEVERITY", tp: mysql.TypeVarchar, size: 64},
@@ -961,6 +962,7 @@ var tableInspectionSummaryCols = []columnInfo{
 	{name: "AVG_VALUE", tp: mysql.TypeDouble, size: 22, decimal: 6},
 	{name: "MIN_VALUE", tp: mysql.TypeDouble, size: 22, decimal: 6},
 	{name: "MAX_VALUE", tp: mysql.TypeDouble, size: 22, decimal: 6},
+	{name: "COMMENT", tp: mysql.TypeVarchar, size: 256},
 }
 
 var tableInspectionRulesCols = []columnInfo{
@@ -1194,6 +1196,8 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: "AVG_AFFECTED_ROWS", tp: mysql.TypeDouble, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average number of rows affected"},
 	{name: "FIRST_SEEN", tp: mysql.TypeTimestamp, size: 26, flag: mysql.NotNullFlag, comment: "The time these statements are seen for the first time"},
 	{name: "LAST_SEEN", tp: mysql.TypeTimestamp, size: 26, flag: mysql.NotNullFlag, comment: "The time these statements are seen for the last time"},
+	{name: "PLAN_IN_CACHE", tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, comment: "Whether the last statement hit plan cache"},
+	{name: "PLAN_CACHE_HITS", tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag, comment: "The number of times these statements hit plan cache"},
 	{name: "QUERY_SAMPLE_TEXT", tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "Sampled original statement"},
 	{name: "PREV_SAMPLE_TEXT", tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "The previous statement before commit"},
 	{name: "PLAN_DIGEST", tp: mysql.TypeVarchar, size: 64, comment: "Digest of its execution plan"},
@@ -1390,6 +1394,15 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	}
 	var servers []ServerInfo
 	for _, store := range stores {
+		failpoint.Inject("mockStoreTombstone", func(val failpoint.Value) {
+			if val.(bool) {
+				store.State = metapb.StoreState_Tombstone
+			}
+		})
+
+		if store.GetState() == metapb.StoreState_Tombstone {
+			continue
+		}
 		var tp string
 		if isTiFlashStore(store) {
 			tp = "tiflash"

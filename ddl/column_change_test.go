@@ -59,8 +59,9 @@ func (s *testColumnChangeSuite) TearDownSuite(c *C) {
 }
 
 func (s *testColumnChangeSuite) TestColumnChange(c *C) {
-	d := newDDL(
+	d := testNewDDLAndStart(
 		context.Background(),
+		c,
 		WithStore(s.store),
 		WithLease(testLease),
 	)

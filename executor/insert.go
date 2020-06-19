@@ -61,6 +61,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 	if err != nil {
 		return err
 	}
+	txnSize := txn.Size()
 	sessVars.StmtCtx.AddRecordRows(uint64(len(rows)))
 	// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
 	// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
@@ -92,7 +93,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 			}
 		}
 	}
-	e.memTracker.Consume(int64(txn.Size()))
+	e.memTracker.Consume(int64(txn.Size() - txnSize))
 	return nil
 }
 
@@ -333,7 +334,7 @@ func (e *InsertExec) doDupRowUpdate(ctx context.Context, handle int64, oldRow []
 		if err1 != nil {
 			return nil, false, 0, err1
 		}
-		e.row4Update[col.Col.Index], err1 = table.CastValue(e.ctx, val, col.Col.ToInfo(), false)
+		e.row4Update[col.Col.Index], err1 = table.CastValue(e.ctx, val, col.Col.ToInfo(), false, false)
 		if err1 != nil {
 			return nil, false, 0, err1
 		}

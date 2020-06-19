@@ -217,7 +217,6 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 		}
 		a.PsStmt.Executor = newExecutor
 	}
-	stmtNodeCounterSelect.Inc()
 	pointExecutor := a.PsStmt.Executor.(*PointGetExecutor)
 	if err = pointExecutor.Open(ctx); err != nil {
 		terror.Call(pointExecutor.Close)
@@ -718,6 +717,7 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 		if err != nil {
 			return nil, err
 		}
+		a.Ctx.SetValue(sessionctx.QueryString, executorExec.stmt.Text())
 		a.OutputNames = executorExec.outputNames
 		a.isPreparedStmt = true
 		a.Plan = executorExec.plan
@@ -764,18 +764,38 @@ func FormatSQL(sql string, pps variable.PreparedParams) stringutil.StringerFunc 
 	}
 }
 
+var (
+	sessionExecuteRunDurationInternal = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblInternal)
+	sessionExecuteRunDurationGeneral  = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblGeneral)
+)
+
 // CloseRecordSet will finish the execution of current statement and do some record work
 func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
-	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
-	a.LogSlowQuery(txnStartTS, lastErr == nil, false)
-	a.SummaryStmt(lastErr == nil)
-	sessVars := a.Ctx.GetSessionVars()
-	pps := types.CloneRow(sessVars.PreparedParams)
-	sessVars.PrevStmt = FormatSQL(a.OriginText(), pps)
+	a.FinishExecuteStmt(txnStartTS, lastErr == nil, false)
 	a.logAudit()
 	// Detach the disk tracker from GlobalDiskUsageTracker after every execution
 	if stmtCtx := a.Ctx.GetSessionVars().StmtCtx; stmtCtx != nil && stmtCtx.DiskTracker != nil {
 		stmtCtx.DiskTracker.DetachFromGlobalTracker()
+	}
+}
+
+// FinishExecuteStmt is used to record some information after `ExecStmt` execution finished:
+// 1. record slow log if needed.
+// 2. record summary statement.
+// 3. record execute duration metric.
+// 4. update the `PrevStmt` in session variable.
+func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, succ bool, hasMoreResults bool) {
+	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
+	a.LogSlowQuery(txnTS, succ, hasMoreResults)
+	a.SummaryStmt(succ)
+	sessVars := a.Ctx.GetSessionVars()
+	pps := types.CloneRow(sessVars.PreparedParams)
+	sessVars.PrevStmt = FormatSQL(a.OriginText(), pps)
+	executeDuration := time.Since(sessVars.StartTime) - sessVars.DurationCompile
+	if sessVars.InRestrictedSQL {
+		sessionExecuteRunDurationInternal.Observe(executeDuration.Seconds())
+	} else {
+		sessionExecuteRunDurationGeneral.Observe(executeDuration.Seconds())
 	}
 }
 
@@ -791,7 +811,13 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	if (!enable || costTime < threshold) && level > zapcore.DebugLevel {
 		return
 	}
-	sql := FormatSQL(a.Text, sessVars.PreparedParams)
+	var sql stringutil.StringerFunc
+	normalizedSQL, digest := sessVars.StmtCtx.SQLDigest()
+	if sessVars.EnableSlowLogMasking {
+		sql = FormatSQL(normalizedSQL, nil)
+	} else {
+		sql = FormatSQL(a.Text, sessVars.PreparedParams)
+	}
 
 	var tableIDs, indexNames string
 	if len(sessVars.StmtCtx.TableIDs) > 0 {
@@ -804,7 +830,6 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	copTaskInfo := sessVars.StmtCtx.CopTasksDetails()
 	statsInfos := plannercore.GetStatsInfo(a.Plan)
 	memMax := sessVars.StmtCtx.MemTracker.MaxConsumed()
-	_, digest := sessVars.StmtCtx.SQLDigest()
 	_, planDigest := getPlanDigest(a.Ctx, a.Plan)
 	slowItems := &variable.SlowQueryLogItems{
 		TxnTS:          txnTS,
@@ -956,5 +981,6 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		StartTime:      sessVars.StartTime,
 		IsInternal:     sessVars.InRestrictedSQL,
 		Succeed:        succ,
+		PlanInCache:    sessVars.FoundInPlanCache,
 	})
 }

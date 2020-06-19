@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
+	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.etcd.io/etcd/clientv3"
 	"go.etcd.io/etcd/clientv3/concurrency"
@@ -421,6 +422,8 @@ const (
 var NeededCleanTTL = int64(-60)
 
 func (s *schemaVersionSyncer) StartCleanWork() {
+	defer tidbutil.Recover(metrics.LabelDDLSyncer, "StartCleanWorker", nil, false)
+
 	for {
 		select {
 		case <-s.notifyCleanExpiredPathsCh:

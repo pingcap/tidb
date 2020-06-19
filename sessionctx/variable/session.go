@@ -599,6 +599,12 @@ type SessionVars struct {
 	FoundInPlanCache bool
 	// PrevFoundInPlanCache indicates whether the last statement was found in plan cache.
 	PrevFoundInPlanCache bool
+
+	// SelectLimit limits the max counts of select statement's output
+	SelectLimit uint64
+
+	// EnableSlowLogMasking indicates that whether masking the query data when log slow query.
+	EnableSlowLogMasking bool
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -678,7 +684,7 @@ func NewSessionVars() *SessionVars {
 		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
 		UsePlanBaselines:            DefTiDBUsePlanBaselines,
 		EvolvePlanBaselines:         DefTiDBEvolvePlanBaselines,
-		IsolationReadEngines:        map[kv.StoreType]struct{}{kv.TiKV: {}, kv.TiFlash: {}, kv.TiDB: {}},
+		IsolationReadEngines:        make(map[kv.StoreType]struct{}),
 		LockWaitTimeout:             DefInnodbLockWaitTimeout * 1000,
 		MetricSchemaStep:            DefTiDBMetricSchemaStep,
 		MetricSchemaRangeDuration:   DefTiDBMetricSchemaRangeDuration,
@@ -686,6 +692,8 @@ func NewSessionVars() *SessionVars {
 		WindowingUseHighPrecision:   true,
 		PrevFoundInPlanCache:        DefTiDBFoundInPlanCache,
 		FoundInPlanCache:            DefTiDBFoundInPlanCache,
+		SelectLimit:                 math.MaxUint64,
+		EnableSlowLogMasking:        DefTiDBSlowLogMasking,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -737,6 +745,16 @@ func NewSessionVars() *SessionVars {
 		enableChunkRPC = "0"
 	}
 	terror.Log(vars.SetSystemVar(TiDBEnableChunkRPC, enableChunkRPC))
+	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
+		switch engine {
+		case kv.TiFlash.Name():
+			vars.IsolationReadEngines[kv.TiFlash] = struct{}{}
+		case kv.TiKV.Name():
+			vars.IsolationReadEngines[kv.TiKV] = struct{}{}
+		case kv.TiDB.Name():
+			vars.IsolationReadEngines[kv.TiDB] = struct{}{}
+		}
+	}
 	return vars
 }
 
@@ -1256,6 +1274,16 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		config.GetGlobalConfig().CheckMb4ValueInUTF8 = TiDBOptOn(val)
 	case TiDBFoundInPlanCache:
 		s.FoundInPlanCache = TiDBOptOn(val)
+	case SQLSelectLimit:
+		result, err := strconv.ParseUint(val, 10, 64)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		s.SelectLimit = result
+	case TiDBSlowLogMasking:
+		s.EnableSlowLogMasking = TiDBOptOn(val)
+	case TiDBEnableCollectExecutionInfo:
+		config.GetGlobalConfig().EnableCollectExecutionInfo = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil

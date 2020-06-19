@@ -228,7 +228,7 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 		// when expr in args is changed
 		refExprArr := cowExprRef{v.GetArgs(), nil}
 		substituted := false
-		_, coll, _ := DeriveCollationFromExprs(v.GetCtx(), v.GetArgs()...)
+		_, coll := DeriveCollationFromExprs(v.GetCtx(), v.GetArgs()...)
 		for idx, arg := range v.GetArgs() {
 			changed, newFuncExpr := ColumnSubstituteImpl(arg, schema, newExprs)
 			if collate.NewCollationEnabled() {
@@ -237,7 +237,7 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 					changed = false
 					tmpArgs := make([]Expression, 0, len(v.GetArgs()))
 					_ = append(append(append(tmpArgs, refExprArr.Result()[0:idx]...), refExprArr.Result()[idx+1:]...), newFuncExpr)
-					_, newColl, _ := DeriveCollationFromExprs(v.GetCtx(), append(v.GetArgs(), newFuncExpr)...)
+					_, newColl := DeriveCollationFromExprs(v.GetCtx(), append(v.GetArgs(), newFuncExpr)...)
 					if coll == newColl {
 						collStrictness, ok1 := CollationStrictness[coll]
 						newResStrictness, ok2 := CollationStrictness[newFuncExpr.GetType().Collate]

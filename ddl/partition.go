@@ -717,8 +717,8 @@ func getPartitionIDs(table *model.TableInfo) []int64 {
 	return physicalTableIDs
 }
 
-// checkRangePartitioningKeysConstraints checks that the range partitioning key is included in the table constraint.
-func checkRangePartitioningKeysConstraints(sctx sessionctx.Context, s *ast.CreateTableStmt, tblInfo *model.TableInfo) error {
+// checkPartitioningKeysConstraints checks that the range partitioning key is included in the table constraint.
+func checkPartitioningKeysConstraints(sctx sessionctx.Context, s *ast.CreateTableStmt, tblInfo *model.TableInfo) error {
 	// Returns directly if there are no unique keys in the table.
 	if len(tblInfo.Indices) == 0 && !tblInfo.PKIsHandle {
 		return nil
@@ -736,6 +736,9 @@ func checkRangePartitioningKeysConstraints(sctx sessionctx.Context, s *ast.Creat
 		partCols = columnInfoSlice(partColumns)
 	} else if len(s.Partition.ColumnNames) > 0 {
 		partCols = columnNameSlice(s.Partition.ColumnNames)
+	} else {
+		// TODO: Check keys constraints for list, key partition type and so on.
+		return nil
 	}
 
 	// Checks that the partitioning key is included in the constraint.
@@ -858,7 +861,13 @@ type stringSlice interface {
 func checkUniqueKeyIncludePartKey(partCols stringSlice, idxCols []*model.IndexColumn) bool {
 	for i := 0; i < partCols.Len(); i++ {
 		partCol := partCols.At(i)
-		if !findColumnInIndexCols(partCol, idxCols) {
+		idxCol := findColumnInIndexCols(partCol, idxCols)
+		if idxCol == nil {
+			// Partition column is not found in the index columns.
+			return false
+		}
+		if idxCol.Length > 0 {
+			// The partition column is found in the index columns, but the index column is a prefix index
 			return false
 		}
 	}

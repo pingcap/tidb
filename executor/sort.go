@@ -243,7 +243,8 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 	e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
 	var onExceededCallback func(rowContainer *chunk.RowContainer)
-	if config.GetGlobalConfig().OOMUseTmpStorage {
+	var openSortSpillDisk = false
+	if openSortSpillDisk && config.GetGlobalConfig().OOMUseTmpStorage {
 		e.spillAction = e.rowChunks.ActionSpill()
 		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(e.spillAction)
 		onExceededCallback = func(rowContainer *chunk.RowContainer) {
@@ -266,7 +267,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		if err := e.rowChunks.Add(chk); err != nil {
 			return err
 		}
-		if e.rowChunks.AlreadySpilled() {
+		if openSortSpillDisk && e.rowChunks.AlreadySpilled() {
 			e.rowChunks = chunk.NewRowContainer(retTypes(e), e.maxChunkSize)
 			e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 			e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)

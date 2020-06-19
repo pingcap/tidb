@@ -659,6 +659,8 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 		return false, nil
 	}
 
+	path.PkCol = pkCol
+
 	path.Ranges = ranger.FullIntRange(isUnsigned)
 	if len(conds) == 0 {
 		return false, nil
@@ -878,6 +880,11 @@ func (ds *DataSource) TableInfo() *model.TableInfo {
 // LogicalUnionAll represents LogicalUnionAll plan.
 type LogicalUnionAll struct {
 	logicalSchemaProducer
+}
+
+// LogicalPartitionUnionAll represents the LogicalUnionAll plan is for partition table.
+type LogicalPartitionUnionAll struct {
+	LogicalUnionAll
 }
 
 // LogicalSort stands for the order by plan.

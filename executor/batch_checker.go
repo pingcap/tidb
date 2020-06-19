@@ -198,7 +198,7 @@ func getOldRow(ctx context.Context, sctx sessionctx.Context, txn kv.Transaction,
 				if err != nil {
 					return nil, err
 				}
-				oldRow[col.Offset], err = table.CastValue(sctx, val, col.ToInfo(), false)
+				oldRow[col.Offset], err = table.CastValue(sctx, val, col.ToInfo(), false, false)
 				if err != nil {
 					return nil, err
 				}

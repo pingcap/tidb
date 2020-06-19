@@ -2671,7 +2671,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	tableInfo := tbl.Meta()
 	var authErr error
 	if sessionVars.User != nil {
-		authErr = ErrTableaccessDenied.FastGenByArgs("SELECT", sessionVars.User.Username, sessionVars.User.Hostname, tableInfo.Name.L)
+		authErr = ErrTableaccessDenied.FastGenByArgs("SELECT", sessionVars.User.AuthUsername, sessionVars.User.AuthHostname, tableInfo.Name.L)
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "", authErr)
 
@@ -2688,14 +2688,20 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 
 	if tableInfo.GetPartitionInfo() != nil {
 		b.optFlag = b.optFlag | flagPartitionProcessor
-		b.partitionedTable = append(b.partitionedTable, tbl.(table.PartitionedTable))
+		pt := tbl.(table.PartitionedTable)
 		// check partition by name.
-		for _, name := range tn.PartitionNames {
-			_, err = tables.FindPartitionByName(tableInfo, name.L)
-			if err != nil {
-				return nil, err
+		if len(tn.PartitionNames) > 0 {
+			pids := make(map[int64]struct{}, len(tn.PartitionNames))
+			for _, name := range tn.PartitionNames {
+				pid, err := tables.FindPartitionByName(tableInfo, name.L)
+				if err != nil {
+					return nil, err
+				}
+				pids[pid] = struct{}{}
 			}
+			pt = tables.NewPartitionTableithGivenSets(pt, pids)
 		}
+		b.partitionedTable = append(b.partitionedTable, pt)
 	} else if len(tn.PartitionNames) != 0 {
 		return nil, ErrPartitionClauseOnNonpartitioned
 	}
@@ -3374,6 +3380,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	if err == nil {
 		err = checkUpdateList(b.ctx, tblID2table, updt)
 	}
+	updt.PartitionedTable = b.partitionedTable
 	return updt, err
 }
 

@@ -314,6 +314,18 @@ func (s *testSessionSuite) TestQueryString(c *C) {
 	c.Assert(err, IsNil)
 	qs := tk.Se.Value(sessionctx.QueryString)
 	c.Assert(qs.(string), Equals, "CREATE TABLE t2(id bigint PRIMARY KEY, age int)")
+
+	// Test execution of DDL through the "Execute" interface.
+	_, err = tk.Se.Execute(context.Background(), "use test;")
+	c.Assert(err, IsNil)
+	_, err = tk.Se.Execute(context.Background(), "drop table t2")
+	c.Assert(err, IsNil)
+	_, err = tk.Se.Execute(context.Background(), "prepare stmt from 'CREATE TABLE t2(id bigint PRIMARY KEY, age int)'")
+	c.Assert(err, IsNil)
+	_, err = tk.Se.Execute(context.Background(), "execute stmt")
+	c.Assert(err, IsNil)
+	qs = tk.Se.Value(sessionctx.QueryString)
+	c.Assert(qs.(string), Equals, "CREATE TABLE t2(id bigint PRIMARY KEY, age int)")
 }
 
 func (s *testSessionSuite) TestAffectedRows(c *C) {
@@ -616,6 +628,12 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	result.Check(testkit.Rows("sql_select_limit 18446744073709551615"))
 	result = tk.MustQuery("show session variables where variable_name='sql_select_limit';")
 	result.Check(testkit.Rows("sql_select_limit 100000000000"))
+	tk.MustExec("set @@global.sql_select_limit = 1")
+	result = tk.MustQuery("show global variables where variable_name='sql_select_limit';")
+	result.Check(testkit.Rows("sql_select_limit 1"))
+	tk.MustExec("set @@global.sql_select_limit = default")
+	result = tk.MustQuery("show global variables where variable_name='sql_select_limit';")
+	result.Check(testkit.Rows("sql_select_limit 18446744073709551615"))
 
 	result = tk.MustQuery("select @@global.autocommit;")
 	result.Check(testkit.Rows("1"))
@@ -3070,6 +3088,18 @@ func (s *testSessionSuite2) TestStmtHints(c *C) {
 	val = int64(0)
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.CheckBytesLimit(val), IsTrue)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a int);")
+	tk.MustExec("insert /*+ MEMORY_QUOTA(1 MB) */ into t1 (a) values (1);")
+	val = int64(1) * 1024 * 1024
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.CheckBytesLimit(val), IsTrue)
+
+	tk.MustExec("insert /*+ MEMORY_QUOTA(1 MB) */  into t1 select /*+ MEMORY_QUOTA(3 MB) */ * from t1;")
+	val = int64(1) * 1024 * 1024
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.CheckBytesLimit(val), IsTrue)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), Equals, "[util:3126]Hint MEMORY_QUOTA(`3145728`) is ignored as conflicting/duplicated.")
 
 	// Test NO_INDEX_MERGE hint
 	tk.Se.GetSessionVars().SetEnableIndexMerge(true)

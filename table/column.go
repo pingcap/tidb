@@ -143,7 +143,7 @@ func CastValues(ctx sessionctx.Context, rec []types.Datum, cols []*Column) (err 
 	sc := ctx.GetSessionVars().StmtCtx
 	for _, c := range cols {
 		var converted types.Datum
-		converted, err = CastValue(ctx, rec[c.Offset], c.ToInfo(), false)
+		converted, err = CastValue(ctx, rec[c.Offset], c.ToInfo(), false, false)
 		if err != nil {
 			if sc.DupKeyAsWarning {
 				sc.AppendWarning(err)
@@ -168,15 +168,19 @@ func handleWrongUtf8Value(ctx sessionctx.Context, col *model.ColumnInfo, casted 
 }
 
 // CastValue casts a value based on column type.
-// If forceIgnoreTruncate is true, the err returned will be always nil.
+// If forceIgnoreTruncate is true, truncated errors will be ignored.
+// If returnOverflow is true, don't handle overflow errors in this function.
 // It's safe now and it's the same as the behavior of select statement.
 // Set it to true only in FillVirtualColumnValue and UnionScanExec.Next()
 // If the handle of err is changed latter, the behavior of forceIgnoreTruncate also need to change.
 // TODO: change the third arg to TypeField. Not pass ColumnInfo.
-func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, forceIgnoreTruncate bool) (casted types.Datum, err error) {
+func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, returnOverflow, forceIgnoreTruncate bool) (casted types.Datum, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	casted, err = val.ConvertTo(sc, &col.FieldType)
 	// TODO: make sure all truncate errors are handled by ConvertTo.
+	if types.ErrOverflow.Equal(err) && returnOverflow {
+		return casted, err
+	}
 	if types.ErrTruncated.Equal(err) {
 		str, err1 := val.ToString()
 		if err1 != nil {
@@ -398,7 +402,7 @@ func EvalColDefaultExpr(ctx sessionctx.Context, col *model.ColumnInfo, defaultEx
 		return types.Datum{}, err
 	}
 	// Check the evaluated data type by cast.
-	value, err := CastValue(ctx, d, col, false)
+	value, err := CastValue(ctx, d, col, false, false)
 	if err != nil {
 		return types.Datum{}, err
 	}
@@ -417,7 +421,7 @@ func getColDefaultExprValue(ctx sessionctx.Context, col *model.ColumnInfo, defau
 		return types.Datum{}, err
 	}
 	// Check the evaluated data type by cast.
-	value, err := CastValue(ctx, d, col, false)
+	value, err := CastValue(ctx, d, col, false, false)
 	if err != nil {
 		return types.Datum{}, err
 	}
@@ -430,7 +434,7 @@ func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVa
 	}
 
 	if col.Tp != mysql.TypeTimestamp && col.Tp != mysql.TypeDatetime {
-		value, err := CastValue(ctx, types.NewDatum(defaultVal), col, false)
+		value, err := CastValue(ctx, types.NewDatum(defaultVal), col, false, false)
 		if err != nil {
 			return types.Datum{}, err
 		}
