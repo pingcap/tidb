@@ -272,6 +272,8 @@ func (h *Handle) sweepList() {
 	h.siftFeedbacks()
 }
 
+// siftFeedbacks eliminates feedbacks which are overlapped with others. It is a tradeoff between
+// feedback accuracy and its overhead.
 func (h *Handle) siftFeedbacks() {
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	for k, qs := range h.feedback.Feedbacks {
@@ -280,6 +282,7 @@ func (h *Handle) siftFeedbacks() {
 			fbs = append(fbs, q.Feedback...)
 		}
 		if len(fbs) == 0 {
+			delete(h.feedback.Feedbacks, k)
 			continue
 		}
 		h.feedback.Feedbacks[k] = h.feedback.Feedbacks[k][:1]
