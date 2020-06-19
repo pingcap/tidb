@@ -315,7 +315,7 @@ func (alloc *allocator) rebase(tableID, requiredBase int64, allocIDs bool) error
 		}
 		if allocIDs {
 			newBase = alloc.max(currentEnd, requiredBase)
-			_, newEnd = alloc.plus(newBase, alloc.step)
+			newEnd, _ = alloc.plus(newBase, alloc.step)
 		} else {
 			if alloc.cmp(currentEnd, requiredBase).is(greaterEq) {
 				newBase = currentEnd
@@ -377,28 +377,28 @@ func (alloc *allocator) max(a, b int64) int64 {
 	return a
 }
 
-func (alloc *allocator) plus(a, b int64) (overflow bool, result int64) {
+func (alloc *allocator) plus(a, b int64) (result int64, overflow bool) {
 	if alloc.isUnsigned {
 		isOverflow := math.MaxUint64-uint64(a) < uint64(b)
 		if isOverflow {
-			return true, -1 // int64(math.MaxUint64)
+			return -1 /* int64(math.MaxUint64) */, true
 		}
-		return false, a + b
+		return a + b, false
 	}
 	isOverflow := math.MaxInt64-a < b
 	if isOverflow {
-		return true, math.MaxInt64
+		return math.MaxInt64, true
 	}
-	return false, a + b
+	return a + b, false
 }
 
-func (alloc *allocator) multiply(a, b int64) (overflow bool, result int64) {
+func (alloc *allocator) multiply(a, b int64) (result int64, overflow bool) {
 	ua, ub := uint64(a), uint64(b)
 	if ua <= 1 || ub <= 1 {
-		return false, a * b
+		return a * b, false
 	}
 	d := ua * ub
-	return d/ub != ua, int64(d)
+	return int64(d), d/ub != ua
 }
 
 // Rebase implements autoid.Allocator RebaseSeq interface.
@@ -563,7 +563,7 @@ func (alloc *allocator) alloc(tableID int64, n uint64, increment, offset int64) 
 		current:   firstID,
 		increment: increment,
 	}
-	_, alloc.base = alloc.plus(alloc.base, batchSize)
+	alloc.base, _ = alloc.plus(alloc.base, batchSize)
 	return iter, nil
 }
 
@@ -590,25 +590,25 @@ func validIncrementAndOffset(increment, offset int64) bool {
 // then plus the length remained, which could be (n-1) * increment.
 func (alloc *allocator) calcNeededBatchSize(base, n, increment, offset int64) (firstID, batchSize, expectedEnd int64, isOverflow bool) {
 	if increment == 1 {
-		overflow, expectedEnd := alloc.plus(base, n)
+		expectedEnd, overflow := alloc.plus(base, n)
 		if overflow {
 			return 0, n, 0, true
 		}
-		overflow, firstID := alloc.seekToFirstAutoID(base, increment, offset)
+		firstID, overflow := alloc.seekToFirstAutoID(base, increment, offset)
 		if overflow {
 			return 0, n, 0, true
 		}
 		return firstID, n, expectedEnd, false
 	}
-	overflow, diff := alloc.multiply(n-1, increment)
+	diff, overflow := alloc.multiply(n-1, increment)
 	if overflow {
 		return 0, 0, 0, true
 	}
-	overflow, firstID = alloc.seekToFirstAutoID(base, increment, offset)
+	firstID, overflow = alloc.seekToFirstAutoID(base, increment, offset)
 	if overflow {
 		return 0, 0, 0, true
 	}
-	overflow, expectedEnd = alloc.plus(firstID, diff)
+	expectedEnd, overflow = alloc.plus(firstID, diff)
 	if overflow {
 		return 0, 0, 0, true
 	}
@@ -626,7 +626,7 @@ func (alloc *allocator) adjustStepByTime(startTime time.Time) {
 // calcActualStep assumes `base + batchSize` doesn't overflow.
 func (alloc *allocator) calcActualStepAndAdjust(base, batchSize int64) (actualStep int64) {
 	actualStep = alloc.step
-	if isOverflow, _ := alloc.plus(base, alloc.step); isOverflow {
+	if _, isOverflow := alloc.plus(base, alloc.step); isOverflow {
 		// base < batchSize < alloc.step
 		actualStep = batchSize
 	}
@@ -739,24 +739,24 @@ func SeekToFirstSequenceValue(base, increment, offset, MIN, MAX int64) (int64, b
 	return first, true
 }
 
-func (alloc *allocator) seekToFirstAutoID(base, increment, offset int64) (isOverflow bool, firstID int64) {
+func (alloc *allocator) seekToFirstAutoID(base, increment, offset int64) (firstID int64, isOverflow bool) {
 	if alloc.isUnsigned {
 		if increment == 1 && offset == 1 {
 			firstID := uint64(base) + 1
-			return uint64(base) >= firstID, int64(firstID)
+			return int64(firstID), uint64(base) >= firstID
 		}
 		uBase, uInc, uOff := uint64(base), uint64(increment), uint64(offset)
 		nr := (uBase + uInc - uOff) / uInc
 		nr = nr*uInc + uOff
-		return uBase >= nr, int64(nr)
+		return int64(nr), uBase >= nr
 	}
 	if increment == 1 && offset == 1 {
 		firstID := base + 1
-		return base >= firstID, firstID
+		return firstID, base >= firstID
 	}
 	nr := (base + increment - offset) / increment
 	nr = nr*increment + offset
-	return base >= nr, nr
+	return nr, base >= nr
 }
 
 // alloc4Sequence is used to alloc value for sequence, there are several aspects different from autoid logic.

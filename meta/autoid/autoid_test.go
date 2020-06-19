@@ -861,12 +861,14 @@ func (*testSuite) TestAllocComputationIssue(c *C) {
 	autoid.TestModifyBaseAndEndInjection(signedAlloc, 4, 6)
 
 	// Here will recompute the new allocator batch size base on new base = 10, which will get 6.
-	min, max, err := unsignedAlloc.Alloc(1, 2, 3, 1)
+	iter, err := unsignedAlloc.Alloc(1, 2, 3, 1)
 	c.Assert(err, IsNil)
-	c.Assert(min, Equals, int64(10))
-	c.Assert(max, Equals, int64(16))
-	min, max, err = signedAlloc.Alloc(2, 2, 3, 1)
+	c.Assert(iter.Count(), Equals, uint64(2))
+	c.Assert(iter.First(), Equals, int64(13))
+	c.Assert(iter.Last(), Equals, int64(16))
+	iter, err = signedAlloc.Alloc(2, 2, 3, 1)
 	c.Assert(err, IsNil)
-	c.Assert(min, Equals, int64(7))
-	c.Assert(max, Equals, int64(13))
+	c.Assert(iter.Count(), Equals, uint64(2))
+	c.Assert(iter.First(), Equals, int64(10))
+	c.Assert(iter.Last(), Equals, int64(13))
 }
