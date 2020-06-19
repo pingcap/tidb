@@ -139,7 +139,7 @@ type testDBSuite6 struct{ *testDBSuite }
 type testDBSuite7 struct{ *testDBSuite }
 type testSerialDBSuite struct{ *testDBSuite }
 
-func testAddIndexWithPK(s *testSerialDBSuite, c *C)  {
+func testAddIndexWithPK(s *testSerialDBSuite, c *C) {
 	s.tk.MustExec("drop table if exists test_add_index_with_pk")
 	s.tk.MustExec("create table test_add_index_with_pk(a int not null, b int not null default '0', primary key(a))")
 	s.tk.MustExec("insert into test_add_index_with_pk values(1, 2)")
