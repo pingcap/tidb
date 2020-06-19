@@ -724,7 +724,7 @@ func getRegionMeta(tikvStore tikv.Storage, regionMetas []*tikv.Region, uniqueReg
 		uniqueRegionMap[r.GetID()] = struct{}{}
 		regions = append(regions, regionMeta{
 			region:   r.GetMeta(),
-			leaderID: r.GetLeaderID(),
+			leaderID: r.GetLeaderPeerID(),
 			storeID:  r.GetLeaderStoreID(),
 		})
 	}
