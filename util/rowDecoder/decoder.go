@@ -46,6 +46,7 @@ type RowDecoder struct {
 	colTypes      map[int64]*types.FieldType
 	haveGenColumn bool
 	defaultVals   []types.Datum
+	pkCols        []int64
 }
 
 // NewRowDecoder returns a new RowDecoder.
@@ -71,10 +72,11 @@ func NewRowDecoder(tbl table.Table, decodeColMap map[int64]Column) *RowDecoder {
 		colTypes:      colFieldMap,
 		haveGenColumn: haveGenCol,
 		defaultVals:   make([]types.Datum, len(cols)),
+		pkCols:        tables.TryGetCommonPkColumnIds(tbl),
 	}
 }
 
-func (rd *RowDecoder) tryDecodeFromHandleAndSetRow(dCol Column, handle kv.Handle, pkCols []int64, row map[int64]types.Datum, decodeLoc *time.Location) (bool, error) {
+func (rd *RowDecoder) tryDecodeFromHandleAndSetRow(dCol Column, handle kv.Handle, row map[int64]types.Datum, decodeLoc *time.Location) (bool, error) {
 	if handle == nil {
 		return false, nil
 	}
@@ -91,7 +93,7 @@ func (rd *RowDecoder) tryDecodeFromHandleAndSetRow(dCol Column, handle kv.Handle
 	}
 	// Try to decode common handle.
 	if mysql.HasPriKeyFlag(dCol.Col.Flag) {
-		for i, hid := range pkCols {
+		for i, hid := range rd.pkCols {
 			if dCol.Col.ID == hid {
 				_, d, err := codec.DecodeOne(handle.EncodedCol(i))
 				if err != nil {
@@ -120,7 +122,6 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.
 	if err != nil {
 		return nil, err
 	}
-	pkCols := tables.TryGetCommonPkColumnIds(tbl)
 	for _, dCol := range rd.columns {
 		colInfo := dCol.Col.ColumnInfo
 		val, ok := row[colInfo.ID]
@@ -128,7 +129,7 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.
 			rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
 			continue
 		}
-		ok, err := rd.tryDecodeFromHandleAndSetRow(dCol, handle, pkCols, row, decodeLoc)
+		ok, err := rd.tryDecodeFromHandleAndSetRow(dCol, handle, row, decodeLoc)
 		if err != nil {
 			return nil, err
 		}
