@@ -164,7 +164,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		}
 		w.reorgCtx.clean()
 		return errors.Trace(err)
-	case <-w.quitCh:
+	case <-w.ctx.Done():
 		logutil.BgLogger().Info("[ddl] run reorg job quit")
 		w.reorgCtx.setNextHandle(nil)
 		w.reorgCtx.setRowCount(0)
@@ -226,7 +226,7 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 }
 
 func (w *worker) isReorgRunnable(d *ddlCtx) error {
-	if isChanClosed(w.quitCh) {
+	if isChanClosed(w.ctx.Done()) {
 		// Worker is closed. So it can't do the reorganizational job.
 		return errInvalidWorker.GenWithStack("worker is closed")
 	}
