@@ -1466,10 +1466,13 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbC
 	if err != nil {
 		return nil, err
 	}
-	if err = checkTableInfoValidExtra(tbInfo); err != nil {
+	// Fix issue 17952 which will cause partition range expr can't be parsed as Int.
+	// checkTableInfoValidWithStmt will do the constant fold the partition expression first,
+	// then checkTableInfoValidExtra will pass the tableInfo check successfully.
+	if err = checkTableInfoValidWithStmt(ctx, tbInfo, s); err != nil {
 		return nil, err
 	}
-	if err = checkTableInfoValidWithStmt(ctx, tbInfo, s); err != nil {
+	if err = checkTableInfoValidExtra(tbInfo); err != nil {
 		return nil, err
 	}
 	return tbInfo, nil
@@ -2308,6 +2311,10 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			err = d.OrderByColumns(ctx, ident)
 		case ast.AlterTableIndexInvisible:
 			err = d.AlterIndexVisibility(ctx, ident, spec.IndexName, spec.Visibility)
+		case ast.AlterTableWithValidation:
+			ctx.GetSessionVars().StmtCtx.AppendWarning(errUnsupportedAlterTableWithValidation)
+		case ast.AlterTableWithoutValidation:
+			ctx.GetSessionVars().StmtCtx.AppendWarning(errUnsupportedAlterTableWithoutValidation)
 		default:
 			// Nothing to do now.
 		}

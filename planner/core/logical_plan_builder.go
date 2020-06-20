@@ -2744,7 +2744,8 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		// If we use tbl.Cols() here, the update statement, will ignore the col `c`, and the data `3` will lost.
 		columns = tbl.WritableCols()
 	} else if b.inDeleteStmt {
-		columns = tbl.DeletableCols()
+		// All hidden columns are needed because we need to delete the expression index that consists of hidden columns.
+		columns = tbl.FullHiddenColsAndVisibleCols()
 	} else {
 		columns = tbl.Cols()
 	}
@@ -2764,7 +2765,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				for _, idxName := range hint.indexHint.IndexNames {
 					hasIdxName := false
 					for _, path := range possiblePaths {
-						if path.IsTablePath {
+						if path.IsTablePath() {
 							if idxName.L == "primary" {
 								hasIdxName = true
 								break
@@ -2827,7 +2828,8 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			IsHidden: col.Hidden,
 		}
 
-		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
+		// TODO: The common handle may be multi columns, need to change ds.handleCol to a slice.
+		if col.IsPKHandleColumn(tableInfo) || col.IsCommonHandleColumn(tableInfo) {
 			handleCol = newCol
 		}
 		schema.Append(newCol)
@@ -2859,9 +2861,13 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	ds.names = names
 	ds.setPreferredStoreType(b.TableHints())
 
+	// Init commonHandleCols and commonHandleLens for data source.
+	if tableInfo.IsCommonHandle {
+		ds.commonHandleCols, ds.commonHandleLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, tables.FindPrimaryIndex(tableInfo))
+	}
 	// Init FullIdxCols, FullIdxColLens for accessPaths.
 	for _, path := range ds.possibleAccessPaths {
-		if !path.IsTablePath {
+		if !path.IsTablePath() {
 			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.Index)
 		}
 	}

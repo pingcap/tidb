@@ -1569,6 +1569,8 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) *NestedLoopAp
 		outer:        v.JoinType != plannercore.InnerJoin,
 		joiner:       tupleJoiner,
 		outerSchema:  v.OuterSchema,
+		ctx:          b.ctx,
+		canUseCache:  v.CanUseCache,
 	}
 	executorCounterNestedLoopApplyExec.Inc()
 	return e
@@ -1753,6 +1755,7 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 	e := &AnalyzeIndexExec{
 		ctx:             b.ctx,
 		physicalTableID: task.PhysicalTableID,
+		isCommonHandle:  task.TblInfo.IsCommonHandle,
 		idxInfo:         task.IndexInfo,
 		concurrency:     b.ctx.GetSessionVars().IndexSerialScanConcurrency,
 		analyzePB: &tipb.AnalyzeReq{
@@ -1765,6 +1768,9 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 	e.analyzePB.IdxReq = &tipb.AnalyzeIndexReq{
 		BucketSize: int64(opts[ast.AnalyzeOptNumBuckets]),
 		NumColumns: int32(len(task.IndexInfo.Columns)),
+	}
+	if e.isCommonHandle && e.idxInfo.Primary {
+		e.analyzePB.Tp = tipb.AnalyzeType_TypeCommonHandle
 	}
 	depth := int32(opts[ast.AnalyzeOptCMSketchDepth])
 	width := int32(opts[ast.AnalyzeOptCMSketchWidth])
@@ -1838,6 +1844,9 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 		ColumnsInfo:   util.ColumnsToProto(cols, task.PKInfo != nil),
 		CmsketchDepth: &depth,
 		CmsketchWidth: &width,
+	}
+	if task.TblInfo != nil {
+		e.analyzePB.ColReq.PrimaryColumnIds = tables.TryGetCommonPkColumnIds(task.TblInfo)
 	}
 	b.err = plannercore.SetPBColumnsDefaultValue(b.ctx, e.analyzePB.ColReq.ColumnsInfo, cols)
 	job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze columns"}
@@ -3003,12 +3012,8 @@ func newRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 		}
 	}
 	if len(pkCols) == 0 {
-		if tbl.IsCommonHandle {
-			pkIdx := tables.FindPrimaryIndex(tbl)
-			for _, idxCol := range pkIdx.Columns {
-				pkCols = append(pkCols, tbl.Columns[idxCol.Offset].ID)
-			}
-		} else {
+		pkCols = tables.TryGetCommonPkColumnIds(tbl)
+		if len(pkCols) == 0 {
 			pkCols = []int64{0}
 		}
 	}

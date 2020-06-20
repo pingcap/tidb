@@ -20,6 +20,7 @@ import (
 	"math"
 	"net"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 	"sync"
@@ -84,11 +85,10 @@ func TestT(t *testing.T) {
 	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	autoid.SetStep(5000)
 
-	old := config.GetGlobalConfig()
-	new := *old
-	new.Log.SlowThreshold = 30000 // 30s
-	new.Experimental.AllowsExpressionIndex = true
-	config.StoreGlobalConfig(&new)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.SlowThreshold = 30000 // 30s
+		conf.Experimental.AllowsExpressionIndex = true
+	})
 	tmpDir := config.GetGlobalConfig().TempStoragePath
 	_ = os.RemoveAll(tmpDir) // clean the uncleared temp file during the last run.
 	_ = os.MkdirAll(tmpDir, 0755)
@@ -161,10 +161,9 @@ func (s *baseTestSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	d.SetStatsUpdating(true)
 	s.domain = d
-	originCfg := config.GetGlobalConfig()
-	newConf := *originCfg
-	newConf.OOMAction = config.OOMActionLog
-	config.StoreGlobalConfig(&newConf)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMAction = config.OOMActionLog
+	})
 }
 
 func (s *baseTestSuite) TearDownSuite(c *C) {
@@ -4650,11 +4649,10 @@ func (s *testSuite) TestOOMPanicAction(c *C) {
 	}
 	tk.Se.SetSessionManager(sm)
 	s.domain.ExpensiveQueryHandle().SetSessionManager(sm)
-	orgAction := config.GetGlobalConfig().OOMAction
-	setOOMAction(config.OOMActionCancel)
-	defer func() {
-		setOOMAction(orgAction)
-	}()
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMAction = config.OOMActionCancel
+	})
 	tk.MustExec("set @@tidb_mem_quota_query=1;")
 	err := tk.QueryToErr("select sum(b) from t group by a;")
 	c.Assert(err, NotNil)
@@ -4700,13 +4698,6 @@ func (s *testSuite) TestOOMPanicAction(c *C) {
 	tk.MustExec("set @@tidb_mem_quota_query=244;")
 	_, err = tk.Exec("update t set a = 4")
 	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
-}
-
-func setOOMAction(action string) {
-	old := config.GetGlobalConfig()
-	newConf := *old
-	newConf.OOMAction = action
-	config.StoreGlobalConfig(&newConf)
 }
 
 type testRecoverTable struct {
@@ -5445,9 +5436,9 @@ func (s *testClusterTableSuite) setUpRPCService(c *C, addr string) (*grpc.Server
 		err = srv.Serve(lis)
 		c.Assert(err, IsNil)
 	}()
-	cfg := config.GetGlobalConfig()
-	cfg.Status.StatusPort = uint(port)
-	config.StoreGlobalConfig(cfg)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Status.StatusPort = uint(port)
+	})
 	return srv, addr
 }
 func (s *testClusterTableSuite) TearDownSuite(c *C) {
@@ -5824,6 +5815,48 @@ func (s *testSuite1) TestUpdateGivenPartitionSet(c *C) {
 	tk.MustExec("update t2 partition(p0, p3) set a = 33 where a = 1")
 }
 
+func (s *testSuiteP2) TestApplyCache(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t values (1),(1),(1),(1),(1),(1),(1),(1),(1);")
+	tk.MustExec("analyze table t;")
+	result := tk.MustQuery("explain analyze SELECT count(1) FROM (SELECT (SELECT min(a) FROM t as t2 WHERE t2.a > t1.a) AS a from t as t1) t;")
+	c.Assert(result.Rows()[1][0], Equals, "└─Apply_41")
+	var (
+		ind  int
+		flag bool
+	)
+	value := (result.Rows()[1][5]).(string)
+	for ind = 0; ind < len(value)-5; ind++ {
+		if value[ind:ind+5] == "cache" {
+			flag = true
+			break
+		}
+	}
+	c.Assert(flag, Equals, true)
+	c.Assert(value[ind:], Equals, "cache:ON, cacheHitRatio:88.889%")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t values (1),(2),(3),(4),(5),(6),(7),(8),(9);")
+	tk.MustExec("analyze table t;")
+	result = tk.MustQuery("explain analyze SELECT count(1) FROM (SELECT (SELECT min(a) FROM t as t2 WHERE t2.a > t1.a) AS a from t as t1) t;")
+	c.Assert(result.Rows()[1][0], Equals, "└─Apply_41")
+	flag = false
+	value = (result.Rows()[1][5]).(string)
+	for ind = 0; ind < len(value)-5; ind++ {
+		if value[ind:ind+5] == "cache" {
+			flag = true
+			break
+		}
+	}
+	c.Assert(flag, Equals, true)
+	c.Assert(value[ind:], Equals, "cache:OFF")
+}
+
 // For issue 17256
 func (s *testSuite) TestGenerateColumnReplace(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -5835,4 +5868,33 @@ func (s *testSuite) TestGenerateColumnReplace(c *C) {
 	tk.MustQuery("select * from t1").Check(testkit.Rows("2 3"))
 	tk.MustExec("insert into `t1` (`a`) VALUES (2) on duplicate key update a = 3;")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("3 4"))
+}
+
+func (s *testSuite) TestSlowQuerySensitiveQuery(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	newCfg.Log.SlowQueryFile = path.Join(os.TempDir(), "tidb-slow.log")
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		tk.MustExec("set tidb_slow_log_threshold=300;")
+		config.StoreGlobalConfig(originCfg)
+		os.Remove(newCfg.Log.SlowQueryFile)
+	}()
+	err := logutil.InitLogger(newCfg.Log.ToLogConfig())
+	c.Assert(err, IsNil)
+
+	tk.MustExec("set tidb_slow_log_threshold=0;")
+	tk.MustExec("drop user if exists user_sensitive;")
+	tk.MustExec("create user user_sensitive identified by '123456789';")
+	tk.MustExec("alter user 'user_sensitive'@'%' identified by 'abcdefg';")
+	tk.MustExec("set password for 'user_sensitive'@'%' = 'xyzuvw';")
+	tk.MustQuery("select query from `information_schema`.`slow_query` " +
+		"where (query like 'set password%' or query like 'create user%' or query like 'alter user%') " +
+		"and query like '%user_sensitive%' order by query;").
+		Check(testkit.Rows(
+			"alter user {user_sensitive@% password = ***};",
+			"create user {user_sensitive@% password = ***};",
+			"set password for user user_sensitive@%;",
+		))
 }

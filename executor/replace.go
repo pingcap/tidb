@@ -191,6 +191,7 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 	if err != nil {
 		return err
 	}
+	txnSize := txn.Size()
 
 	// Use BatchGet to fill cache.
 	// It's an optimization and could be removed without affecting correctness.
@@ -205,7 +206,7 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 			return err
 		}
 	}
-	e.memTracker.Consume(int64(txn.Size()))
+	e.memTracker.Consume(int64(txn.Size() - txnSize))
 	return nil
 }
 

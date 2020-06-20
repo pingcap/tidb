@@ -695,7 +695,7 @@ func (b *PlanBuilder) detectSelectWindow(sel *ast.SelectStmt) bool {
 func getPathByIndexName(paths []*util.AccessPath, idxName model.CIStr, tblInfo *model.TableInfo) *util.AccessPath {
 	var tablePath *util.AccessPath
 	for _, path := range paths {
-		if path.IsTablePath {
+		if path.IsTablePath() {
 			tablePath = path
 			continue
 		}
@@ -713,6 +713,20 @@ func isPrimaryIndex(indexName model.CIStr) bool {
 	return indexName.L == "primary"
 }
 
+func fillContentForTablePath(tablePath *util.AccessPath, tblInfo *model.TableInfo) {
+	if tblInfo.IsCommonHandle {
+		tablePath.IsCommonHandlePath = true
+		for _, index := range tblInfo.Indices {
+			if index.Primary {
+				tablePath.Index = index
+				break
+			}
+		}
+	} else {
+		tablePath.IsIntHandlePath = true
+	}
+}
+
 func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName model.CIStr) ([]*util.AccessPath, error) {
 	tblInfo := tbl.Meta()
 	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
@@ -720,15 +734,22 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl ta
 	if tbl.Type().IsClusterTable() {
 		tp = kv.TiDB
 	}
-	publicPaths = append(publicPaths, &util.AccessPath{IsTablePath: true, StoreType: tp})
+	tablePath := &util.AccessPath{StoreType: tp}
+	fillContentForTablePath(tablePath, tblInfo)
+	publicPaths = append(publicPaths, tablePath)
 	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
-		publicPaths = append(publicPaths, &util.AccessPath{IsTablePath: true, StoreType: kv.TiFlash})
+		tiFlashPath := &util.AccessPath{StoreType: kv.TiFlash}
+		fillContentForTablePath(tiFlashPath, tblInfo)
+		publicPaths = append(publicPaths, tiFlashPath)
 	}
 	optimizerUseInvisibleIndexes := b.ctx.GetSessionVars().OptimizerUseInvisibleIndexes
 	for _, index := range tblInfo.Indices {
 		if index.State == model.StatePublic {
 			// Filter out invisible index, because they are not visible for optimizer
 			if !optimizerUseInvisibleIndexes && index.Invisible {
+				continue
+			}
+			if tblInfo.IsCommonHandle && index.Primary {
 				continue
 			}
 			publicPaths = append(publicPaths, &util.AccessPath{Index: index})
@@ -812,7 +833,7 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl ta
 	// If we have got "FORCE" or "USE" index hint but got no available index,
 	// we have to use table scan.
 	if len(available) == 0 {
-		available = append(available, &util.AccessPath{IsTablePath: true})
+		available = append(available, tablePath)
 	}
 	return available, nil
 }
@@ -852,7 +873,7 @@ func removeIgnoredPaths(paths, ignoredPaths []*util.AccessPath, tblInfo *model.T
 	}
 	remainedPaths := make([]*util.AccessPath, 0, len(paths))
 	for _, path := range paths {
-		if path.IsTablePath || getPathByIndexName(ignoredPaths, path.Index.Name, tblInfo) == nil {
+		if path.IsTablePath() || getPathByIndexName(ignoredPaths, path.Index.Name, tblInfo) == nil {
 			remainedPaths = append(remainedPaths, path)
 		}
 	}
@@ -1288,7 +1309,7 @@ func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []
 		if col.IsGenerated() && !col.GeneratedStored {
 			continue
 		}
-		if tbl.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
+		if tbl.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) && !tbl.IsCommonHandle {
 			pkCol = col
 		} else {
 			colsInfo = append(colsInfo, col)
@@ -1385,7 +1406,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 		return nil, err
 	}
 	for _, idxName := range as.IndexNames {
-		if isPrimaryIndex(idxName) && tblInfo.PKIsHandle {
+		if isPrimaryIndex(idxName) && tblInfo.PKIsHandle && !tblInfo.IsCommonHandle {
 			pkCol := tblInfo.GetPkColInfo()
 			for i, id := range physicalIDs {
 				info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], PhysicalTableID: id, Incremental: as.Incremental}
@@ -1420,7 +1441,7 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 			}
 		}
 	}
-	if tblInfo.PKIsHandle {
+	if tblInfo.PKIsHandle && !tblInfo.IsCommonHandle {
 		pkCol := tblInfo.GetPkColInfo()
 		for i, id := range physicalIDs {
 			info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], PhysicalTableID: id, Incremental: as.Incremental}
@@ -2864,12 +2885,13 @@ func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
 	return p, nil
 }
 
-func (b *PlanBuilder) buildExplainPlan(targetPlan Plan, format string, analyze bool, execStmt ast.StmtNode) (Plan, error) {
+func (b *PlanBuilder) buildExplainPlan(targetPlan Plan, format string, rows [][]string, analyze bool, execStmt ast.StmtNode) (Plan, error) {
 	p := &Explain{
 		TargetPlan: targetPlan,
 		Format:     format,
 		Analyze:    analyze,
 		ExecStmt:   execStmt,
+		Rows:       rows,
 	}
 	p.ctx = b.ctx
 	return p, p.prepareSchema()
@@ -2895,7 +2917,7 @@ func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (Plan, err
 		return &Explain{Format: explainFor.Format}, nil
 	}
 
-	return b.buildExplainPlan(targetPlan, explainFor.Format, false, nil)
+	return b.buildExplainPlan(targetPlan, explainFor.Format, processInfo.PlanExplainRows, false, nil)
 }
 
 func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt) (Plan, error) {
@@ -2907,7 +2929,7 @@ func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt
 		return nil, err
 	}
 
-	return b.buildExplainPlan(targetPlan, explain.Format, explain.Analyze, explain.Stmt)
+	return b.buildExplainPlan(targetPlan, explain.Format, nil, explain.Analyze, explain.Stmt)
 }
 
 func (b *PlanBuilder) buildSelectInto(ctx context.Context, sel *ast.SelectStmt) (Plan, error) {
