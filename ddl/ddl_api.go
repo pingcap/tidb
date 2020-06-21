@@ -233,6 +233,9 @@ func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constra
 	switch v.Tp {
 	case ast.ConstraintPrimaryKey:
 		for _, key := range v.Keys {
+			if key.Expr != nil {
+				continue
+			}
 			c, ok := colMap[key.Column.Name.L]
 			if !ok {
 				continue
@@ -243,6 +246,9 @@ func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constra
 		}
 	case ast.ConstraintUniq, ast.ConstraintUniqIndex, ast.ConstraintUniqKey:
 		for i, key := range v.Keys {
+			if key.Expr != nil {
+				continue
+			}
 			c, ok := colMap[key.Column.Name.L]
 			if !ok {
 				continue
