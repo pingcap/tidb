@@ -829,6 +829,7 @@ func (s *session) ExecRestrictedSQLWithSnapshot(sql string) ([]chunk.Row, []*ast
 }
 
 func execRestrictedSQL(ctx context.Context, se *session, sql string) ([]chunk.Row, []*ast.ResultField, error) {
+	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	startTime := time.Now()
 	recordSets, err := se.Execute(ctx, sql)
 	if err != nil {
@@ -1023,6 +1024,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		DB:               s.sessionVars.CurrentDB,
 		Command:          command,
 		Plan:             s.currentPlan,
+		PlanExplainRows:  plannercore.GetExplainRowsForPlan(s.currentPlan),
 		Time:             t,
 		State:            s.Status(),
 		Info:             sql,
@@ -1310,6 +1312,7 @@ func (s *session) cachedPlanExec(ctx context.Context,
 
 	stmtCtx := s.GetSessionVars().StmtCtx
 	stmt := &executor.ExecStmt{
+		GoCtx:       ctx,
 		InfoSchema:  is,
 		Plan:        execPlan,
 		StmtNode:    execAst,
