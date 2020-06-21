@@ -116,6 +116,7 @@ type Server struct {
 	clients           map[uint64]*clientConn
 	capability        uint32
 	dom               *domain.Domain
+	globalConnID      *GlobalConnID
 
 	statusAddr     string
 	statusListener net.Listener
@@ -146,6 +147,14 @@ func (s *Server) releaseToken(token *Token) {
 // SetDomain use to set the server domain.
 func (s *Server) SetDomain(dom *domain.Domain) {
 	s.dom = dom
+}
+
+// InitGlobalConnID initialize global connection id.
+func (s *Server) InitGlobalConnID(serverID uint64) {
+	s.globalConnID = &GlobalConnID{
+		serverID: serverID,
+		is64bits: true,
+	}
 }
 
 // newConn creates a new *clientConn from a net.Conn.
@@ -506,6 +515,12 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 	logutil.BgLogger().Info("kill", zap.Uint64("connID", connectionID), zap.Bool("query", query))
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventKill).Inc()
 
+	globalConnID := ParseGlobalConnID(connectionID)
+	if globalConnID.serverID != s.globalConnID.serverID {
+		s.killRemoteConn(&globalConnID)
+		return
+	}
+
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
 	conn, ok := s.clients[connectionID]
@@ -548,6 +563,10 @@ func (s *Server) KillAllConnections() {
 		}
 		killConn(conn)
 	}
+}
+
+func (s *Server) killRemoteConn(globalConnID *GlobalConnID) {
+
 }
 
 var gracefulCloseConnectionsTimeout = 15 * time.Second

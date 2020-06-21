@@ -140,7 +140,7 @@ var (
 func newClientConn(s *Server) *clientConn {
 	return &clientConn{
 		server:       s,
-		connectionID: (uint64)(atomic.AddUint32(&baseConnID, 1)) | 0x123_0000_0000,
+		connectionID: s.globalConnID.NextID(),
 		collation:    mysql.DefaultCollationID,
 		alloc:        arena.NewAllocator(32 * 1024),
 		status:       connStatusDispatching,

@@ -96,6 +96,7 @@ type InfoSyncer struct {
 type ServerInfo struct {
 	ServerVersionInfo
 	ID             string `json:"ddl_id"`
+	ServerID       uint64 `json:"server_id"`
 	IP             string `json:"ip"`
 	Port           uint   `json:"listening_port"`
 	StatusPort     uint   `json:"status_port"`
@@ -128,10 +129,10 @@ func setGlobalInfoSyncer(is *InfoSyncer) {
 }
 
 // GlobalInfoSyncerInit return a new InfoSyncer. It is exported for testing.
-func GlobalInfoSyncerInit(ctx context.Context, id string, etcdCli *clientv3.Client) (*InfoSyncer, error) {
+func GlobalInfoSyncerInit(ctx context.Context, id string, serverID uint64, etcdCli *clientv3.Client) (*InfoSyncer, error) {
 	is := &InfoSyncer{
 		etcdCli:        etcdCli,
-		info:           getServerInfo(id),
+		info:           getServerInfo(id, serverID),
 		serverInfoPath: fmt.Sprintf("%s/%s", ServerInformationPath, id),
 		minStartTSPath: fmt.Sprintf("%s/%s", ServerMinStartTSPath, id),
 	}
@@ -264,7 +265,7 @@ func GetTiFlashTableSyncProgress(ctx context.Context) (map[int64]float64, error)
 func (is *InfoSyncer) getAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
 	allInfo := make(map[string]*ServerInfo)
 	if is.etcdCli == nil {
-		allInfo[is.info.ID] = getServerInfo(is.info.ID)
+		allInfo[is.info.ID] = getServerInfo(is.info.ID, is.info.ServerID)
 		return allInfo, nil
 	}
 	allInfo, err := getInfo(ctx, is.etcdCli, ServerInformationPath, keyOpDefaultRetryCnt, keyOpDefaultTimeout, clientv3.WithPrefix())
@@ -598,10 +599,11 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 }
 
 // getServerInfo gets self tidb server information.
-func getServerInfo(id string) *ServerInfo {
+func getServerInfo(id string, serverID uint64) *ServerInfo {
 	cfg := config.GetGlobalConfig()
 	info := &ServerInfo{
 		ID:             id,
+		ServerID:       serverID,
 		IP:             cfg.AdvertiseAddress,
 		Port:           cfg.Port,
 		StatusPort:     cfg.Status.StatusPort,

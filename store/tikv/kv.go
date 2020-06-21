@@ -433,6 +433,10 @@ func (s *tikvStore) GetTiKVClient() (client Client) {
 	return s.client
 }
 
+func (s *tikvStore) PDClient() pd.Client {
+	return s.pdClient
+}
+
 func init() {
 	mc.cache = make(map[string]*tikvStore)
 	rand.Seed(time.Now().UnixNano())

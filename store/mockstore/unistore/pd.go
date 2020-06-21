@@ -17,6 +17,7 @@ import (
 	"errors"
 	"math"
 	"sync"
+	"sync/atomic"
 
 	us "github.com/ngaut/unistore/tikv"
 	"github.com/pingcap/kvproto/pkg/pdpb"
@@ -95,4 +96,20 @@ func (c *pdClient) UpdateServiceGCSafePoint(ctx context.Context, serviceID strin
 
 func (c *pdClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error) {
 	return &pdpb.GetOperatorResponse{Status: pdpb.OperatorStatus_SUCCESS}, nil
+}
+
+var (
+	defaultIDAllocator uint64
+	serverIDAllocator  uint64
+)
+
+func (c *pdClient) AllocID(ctx context.Context, idType pdpb.AllocIDRequest_IDType) (uint64, error) {
+	var id uint64
+	switch idType {
+	case pdpb.AllocIDRequest_SERVER_ID:
+		id = atomic.AddUint64(&serverIDAllocator, 1)
+	default:
+		id = atomic.AddUint64(&defaultIDAllocator, 1)
+	}
+	return id, nil
 }

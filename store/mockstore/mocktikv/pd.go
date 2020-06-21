@@ -17,12 +17,13 @@ import (
 	"context"
 	"math"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	"github.com/pingcap/pd/v4/client"
+	pd "github.com/pingcap/pd/v4/client"
 )
 
 // Use global variables to prevent pdClients from creating duplicate timestamps.
@@ -176,3 +177,19 @@ func (c *pdClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetO
 }
 
 func (c *pdClient) GetLeaderAddr() string { return "mockpd" }
+
+var (
+	defaultIDAllocator uint64
+	serverIDAllocator  uint64
+)
+
+func (c *pdClient) AllocID(ctx context.Context, idType pdpb.AllocIDRequest_IDType) (uint64, error) {
+	var id uint64
+	switch idType {
+	case pdpb.AllocIDRequest_SERVER_ID:
+		id = atomic.AddUint64(&serverIDAllocator, 1)
+	default:
+		id = atomic.AddUint64(&defaultIDAllocator, 1)
+	}
+	return id, nil
+}

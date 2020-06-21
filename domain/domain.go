@@ -20,6 +20,8 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/pingcap/kvproto/pkg/pdpb"
+
 	"github.com/ngaut/pools"
 	"github.com/ngaut/sync2"
 	"github.com/pingcap/errors"
@@ -77,6 +79,7 @@ type Domain struct {
 	wg                   sync.WaitGroup
 	statsUpdating        sync2.AtomicInt32
 	cancel               context.CancelFunc
+	serverID             uint64
 }
 
 // loadInfoSchema loads infoschema at startTS into handle, usedSchemaVersion is the currently used
@@ -728,7 +731,15 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	if err != nil {
 		return err
 	}
-	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.etcdClient)
+
+	do.serverID, err = do.store.PDClient().AllocID(ctx, pdpb.AllocIDRequest_SERVER_ID)
+	if err != nil {
+		logutil.BgLogger().Error("acquire serverID failed", zap.Error(err))
+		do.serverID = 0
+	}
+	logutil.BgLogger().Info("acquire serverID", zap.Uint64("serverID", do.serverID))
+
+	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.serverID, do.etcdClient)
 	if err != nil {
 		return err
 	}
@@ -1206,6 +1217,11 @@ func (do *Domain) NotifyUpdatePrivilege(ctx sessionctx.Context) {
 	if err != nil {
 		logutil.BgLogger().Error("unable to update privileges", zap.Error(err))
 	}
+}
+
+// ServerID gets serverID.
+func (do *Domain) ServerID() uint64 {
+	return do.serverID
 }
 
 var (

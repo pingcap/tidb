@@ -1030,6 +1030,7 @@ func (e *memtableRetriever) dataForTiDBClusterInfo(ctx sessionctx.Context) error
 			upTimeStr = time.Since(startTime).String()
 		}
 		row := types.MakeDatums(
+			server.ServerID,
 			server.ServerType,
 			server.Address,
 			server.StatusAddr,

@@ -936,6 +936,7 @@ var filesCols = []columnInfo{
 }
 
 var tableClusterInfoCols = []columnInfo{
+	{name: "SERVER_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "TYPE", tp: mysql.TypeVarchar, size: 64},
 	{name: "INSTANCE", tp: mysql.TypeVarchar, size: 64},
 	{name: "STATUS_ADDRESS", tp: mysql.TypeVarchar, size: 64},
@@ -1164,6 +1165,7 @@ const (
 
 // ServerInfo represents the basic server information of single cluster component
 type ServerInfo struct {
+	ServerID       uint64
 	ServerType     string
 	Address        string
 	StatusAddr     string
@@ -1219,6 +1221,7 @@ func GetTiDBServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	}
 	for _, node := range tidbNodes {
 		servers = append(servers, ServerInfo{
+			ServerID:       node.ServerID,
 			ServerType:     "tidb",
 			Address:        fmt.Sprintf("%s:%d", node.IP, node.Port),
 			StatusAddr:     fmt.Sprintf("%s:%d", node.IP, node.StatusPort),
