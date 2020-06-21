@@ -2150,6 +2150,9 @@ func (s *testIntegrationSuite7) TestCreateExpressionIndexError(c *C) {
 }
 
 func (s *testIntegrationSuite7) TestAddExpressionIndexOnPartition(c *C) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
@@ -2165,15 +2168,15 @@ func (s *testIntegrationSuite7) TestAddExpressionIndexOnPartition(c *C) {
 	);`)
 	tk.MustExec("insert into t values (1, 'test', 2), (12, 'test', 3), (15, 'test', 10), (20, 'test', 20);")
 	// TODO: Uncomment lines below after fixing #18132.
-	//tk.MustExec("alter table t add index idx((a+c));")
+	tk.MustExec("alter table t add index idx((a+c));")
 
-	//tblInfo, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	//c.Assert(err, IsNil)
-	//columns := tblInfo.Meta().Columns
-	//c.Assert(len(columns), Equals, 4)
-	//c.Assert(columns[3].Hidden, IsTrue)
+	tblInfo, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	columns := tblInfo.Meta().Columns
+	c.Assert(len(columns), Equals, 4)
+	c.Assert(columns[3].Hidden, IsTrue)
 
-	//tk.MustQuery("select * from t;").Check(testkit.Rows("1 'test' 2", "12 'test' 3", "15 'test' 10", "20 'test' 20"))
+	tk.MustQuery("select * from t order by a;").Check(testkit.Rows("1 test 2", "12 test 3", "15 test 10", "20 test 20"))
 }
 
 // TestCreateTableWithAutoIdCache test the auto_id_cache table option.
