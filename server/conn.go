@@ -59,16 +59,21 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
@@ -157,7 +162,7 @@ type clientConn struct {
 	salt         []byte            // random bytes used for authentication.
 	alloc        arena.Allocator   // an memory allocator for reducing memory allocation.
 	lastPacket   []byte            // latest sql query string, currently used for logging error.
-	ctx          QueryCtx          // an interface to execute sql statements.
+	ctx          *TiDBContext      // an interface to execute sql statements.
 	attrs        map[string]string // attributes parsed from client handshake response, not used for now.
 	peerHost     string            // peer host
 	peerPort     string            // peer port
@@ -1284,8 +1289,25 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 
 	warns := sc.GetWarnings()
 	parserWarns := warns[len(prevWarns):]
+
+	var pointPlans []plannercore.Plan
+	if len(stmts) > 1 {
+		// Only pre-build point plans for multi-statement query
+		pointPlans, err = cc.prefetchPointPlanKeys(stmts)
+		if err != nil {
+			return err
+		}
+	}
+	if len(pointPlans) > 0 {
+		defer cc.ctx.ClearValue(plannercore.PointPlanKey)
+	}
 	for i, stmt := range stmts {
-		if err = cc.handleStmt(ctx, stmt, parserWarns, i == len(stmts)-1); err != nil {
+		if len(pointPlans) > 0 {
+			// Save the point plan in Session so we don't need to build the point plan again.
+			cc.ctx.SetValue(plannercore.PointPlanKey, plannercore.PointPlanVal{Plan: pointPlans[i]})
+		}
+		err = cc.handleStmt(ctx, stmt, parserWarns, i == len(stmts)-1)
+		if err != nil {
 			break
 		}
 	}
@@ -1293,6 +1315,74 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
 	}
 	return err
+}
+
+// prefetchPointPlanKeys extracts the point keys in multi-statement query,
+// use BatchGet to get the keys, so the values will be cached in the snapshot cache, save RPC call cost.
+func (cc *clientConn) prefetchPointPlanKeys(stmts []ast.StmtNode) ([]plannercore.Plan, error) {
+	txn, err := cc.ctx.Txn(false)
+	if err != nil {
+		return nil, err
+	}
+	if !txn.Valid() {
+		// Only build in-transaction query for simplicity.
+		// Later we can support out-transaction multi-statement query.
+		return nil, nil
+	}
+	vars := cc.ctx.GetSessionVars()
+	if vars.TxnCtx.IsPessimistic && vars.TxnCtx.Isolation == ast.ReadCommitted {
+		// ReadCommitted isolation update ForUpdateTS for every statement, the snapshot cache would be invalidated.
+		// Later we can support it by avoid update ForUpdateTS for multi-statement query.
+		return nil, nil
+	}
+	pointPlans := make([]plannercore.Plan, len(stmts))
+	var idxKeys []kv.Key
+	var rowKeys []kv.Key
+	is := domain.GetDomain(cc.ctx).InfoSchema()
+	sc := vars.StmtCtx
+	for i, stmt := range stmts {
+		if err = plannercore.Preprocess(cc.ctx, stmt, is); err != nil {
+			return nil, err
+		}
+		p := plannercore.TryFastPlan(cc.ctx.Session, stmt)
+		pointPlans[i] = p
+		if p == nil {
+			continue
+		}
+		// Only support Update for now.
+		// TODO: support other point plans.
+		switch x := p.(type) {
+		case *plannercore.Update:
+			updateStmt := stmt.(*ast.UpdateStmt)
+			if pp, ok := x.SelectPlan.(*plannercore.PointGetPlan); ok {
+				if pp.IndexInfo != nil {
+					executor.ResetUpdateStmtCtx(sc, updateStmt, vars)
+					encoded, err1 := codec.EncodeKey(sc, nil, pp.IndexValues...)
+					if err1 != nil {
+						return nil, err1
+					}
+					idxKeys = append(idxKeys, tablecodec.EncodeIndexSeekKey(pp.TblInfo.ID, pp.IndexInfo.ID, encoded))
+				} else {
+					rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(pp.TblInfo.ID, pp.Handle))
+				}
+			}
+		}
+	}
+	if len(idxKeys) == 0 && len(rowKeys) == 0 {
+		return pointPlans, nil
+	}
+	snapshot := txn.GetSnapshot()
+	idxVals, _ := snapshot.BatchGet(context.Background(), idxKeys)
+	for idxKey, idxVal := range idxVals {
+		h, _ := tables.DecodeHandleInUniqueIndexValue(idxVal, false)
+		tblId := tablecodec.DecodeTableID(hack.Slice(idxKey))
+		rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(tblId, h))
+	}
+	_, err = snapshot.BatchGet(context.Background(), rowKeys)
+	if err != nil {
+		return nil, err
+	}
+	return pointPlans, nil
 }
 
 func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns []stmtctx.SQLWarn, lastStmt bool) error {

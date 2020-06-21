@@ -70,6 +70,7 @@ type tikvSnapshot struct {
 	// It's OK as long as there are no zero-byte values in the protocol.
 	mu struct {
 		sync.RWMutex
+		hitCnt int
 		cached map[string][]byte
 	}
 }
@@ -108,6 +109,7 @@ func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string]
 		tmp := keys[:0]
 		for _, key := range keys {
 			if val, ok := s.mu.cached[string(key)]; ok {
+				s.mu.hitCnt++
 				if len(val) > 0 {
 					m[string(key)] = val
 				}
@@ -326,6 +328,7 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 	s.mu.RLock()
 	if s.mu.cached != nil {
 		if value, ok := s.mu.cached[string(k)]; ok {
+			s.mu.hitCnt++
 			s.mu.RUnlock()
 			return value, nil
 		}
@@ -432,6 +435,17 @@ func (s *tikvSnapshot) DelOption(opt kv.Option) {
 	case kv.ReplicaRead:
 		s.replicaRead = kv.ReplicaReadLeader
 	}
+}
+
+// SnapCacheHitCount gets the snapshot cache hit count.
+func SnapCacheHitCount(snap kv.Snapshot) int {
+	tikvSnap, ok := snap.(*tikvSnapshot)
+	if !ok {
+		return 0
+	}
+	tikvSnap.mu.RLock()
+	defer tikvSnap.mu.RUnlock()
+	return tikvSnap.mu.hitCnt
 }
 
 func extractLockFromKeyErr(keyErr *pb.KeyError) (*Lock, error) {
