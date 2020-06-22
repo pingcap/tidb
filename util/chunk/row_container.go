@@ -15,8 +15,10 @@ package chunk
 
 import (
 	"errors"
+	"sort"
 	"sync"
 
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -284,6 +286,198 @@ func (a *SpillDiskAction) SetLogHook(hook func(uint64)) {}
 
 // ResetRowContainer resets the spill action and sets the RowContainer for the SpillDiskAction.
 func (a *SpillDiskAction) ResetRowContainer(c *RowContainer) {
+	a.m.Lock()
+	defer a.m.Unlock()
+	a.c = c
+}
+
+// ErrInsertToPartitionFailed indicate that the SortedRowContainer is sorted and prohibit inserting data.
+var ErrInsertToPartitionFailed = terror.ClassExecutor.New(1, "Insert the records unsuccessfully. The SortedRowContainer is sorted.")
+
+// SortedRowContainer provides a place for many rows, so many that we might want to sort and spill them into disk.
+type SortedRowContainer struct {
+	*RowContainer
+	M struct {
+		// RWMutex guarantees the operator for rowPtrs is mutually exclusive.
+		sync.RWMutex
+		// rowPointer store the chunk index and row index for each row.
+		RowPtrs []RowPtr
+	}
+
+	ByItemsDesc []bool
+	// keyColumns is the column index of the by items.
+	keyColumns []int
+	// keyCmpFuncs is used to compare each ByItem.
+	keyCmpFuncs []CompareFunc
+
+	actionSpill *SortAndSpillDiskAction
+}
+
+// NewSortedRowContainer creates a new SortedRowContainer in memory.
+func NewSortedRowContainer(fieldType []*types.FieldType, chunkSize int, ByItemsDesc []bool,
+	keyColumns []int, keyCmpFuncs []CompareFunc) *SortedRowContainer {
+	return &SortedRowContainer{RowContainer: NewRowContainer(fieldType, chunkSize),
+		ByItemsDesc: ByItemsDesc, keyColumns: keyColumns, keyCmpFuncs: keyCmpFuncs}
+}
+
+// Close close the SortedRowContainer
+func (c *SortedRowContainer) Close() error {
+	c.GetMemTracker().Consume(int64(-8 * cap(c.M.RowPtrs)))
+	return c.RowContainer.Close()
+}
+
+// InitPointers inits pointers.
+func (c *SortedRowContainer) InitPointers() {
+	c.M.RowPtrs = make([]RowPtr, 0, c.NumRow())
+	for chkIdx := 0; chkIdx < c.NumChunks(); chkIdx++ {
+		rowChk, err := c.GetChunk(chkIdx)
+		// err must be nil, because the chunk is in memory.
+		if err != nil {
+			panic(err)
+		}
+		for rowIdx := 0; rowIdx < rowChk.NumRows(); rowIdx++ {
+			c.M.RowPtrs = append(c.M.RowPtrs, RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
+		}
+	}
+	c.GetMemTracker().Consume(int64(8 * cap(c.M.RowPtrs)))
+}
+
+func (c *SortedRowContainer) lessRow(rowI, rowJ Row) bool {
+	for i, colIdx := range c.keyColumns {
+		cmpFunc := c.keyCmpFuncs[i]
+		cmp := cmpFunc(rowI, colIdx, rowJ, colIdx)
+		if c.ByItemsDesc[i] {
+			cmp = -cmp
+		}
+		if cmp < 0 {
+			return true
+		} else if cmp > 0 {
+			return false
+		}
+	}
+	return false
+}
+
+// keyColumnsLess is the less function for key columns.
+func (c *SortedRowContainer) keyColumnsLess(i, j int) bool {
+	rowI := c.GetList().GetRow(c.M.RowPtrs[i])
+	rowJ := c.GetList().GetRow(c.M.RowPtrs[j])
+	return c.lessRow(rowI, rowJ)
+}
+
+// InitPointersAndSort inits pointers and sorts the records.
+func (c *SortedRowContainer) InitPointersAndSort() {
+	c.M.Lock()
+	defer c.M.Unlock()
+	if c.M.RowPtrs != nil {
+		return
+	}
+	c.M.RowPtrs = make([]RowPtr, 0, c.NumRow())
+	for chkIdx := 0; chkIdx < c.NumChunks(); chkIdx++ {
+		rowChk, err := c.GetChunk(chkIdx)
+		// err must be nil, because the chunk is in memory.
+		if err != nil {
+			panic(err)
+		}
+		for rowIdx := 0; rowIdx < rowChk.NumRows(); rowIdx++ {
+			c.M.RowPtrs = append(c.M.RowPtrs, RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
+		}
+	}
+	sort.Slice(c.M.RowPtrs, c.keyColumnsLess)
+}
+
+func (c *SortedRowContainer) sortAndSpillToDisk() {
+	c.InitPointersAndSort()
+	c.RowContainer.SpillToDisk()
+	return
+}
+
+// Add appends a chunk into the SortedRowContainer.
+func (c *SortedRowContainer) Add(chk *Chunk) (err error) {
+	c.M.RLock()
+	defer c.M.RUnlock()
+	if c.M.RowPtrs != nil {
+		return ErrInsertToPartitionFailed
+	}
+	return c.RowContainer.Add(chk)
+}
+
+// GetRow returns the row the ptr pointed to.
+func (c *SortedRowContainer) GetRow(ptr RowPtr) (Row, error) {
+	c.M.RLock()
+	defer c.M.RUnlock()
+	return c.RowContainer.GetRow(ptr)
+}
+
+// GetRowByIdx returns the row the idx pointed to.
+func (c *SortedRowContainer) GetRowByIdx(idx int) (Row, error) {
+	c.M.RLock()
+	ptr := c.M.RowPtrs[idx]
+	c.M.RUnlock()
+	return c.GetRow(ptr)
+}
+
+// ActionSpill returns a SortAndSpillDiskAction for sorting and spilling over to disk.
+func (c *SortedRowContainer) ActionSpill() *SortAndSpillDiskAction {
+	c.actionSpill = &SortAndSpillDiskAction{c: c}
+	return c.actionSpill
+}
+
+// ActionSpillForTest returns a SortAndSpillDiskAction for sorting and spilling over to disk for test.
+func (c *SortedRowContainer) ActionSpillForTest(inputFunc func(), outputFunc func()) *SortAndSpillDiskAction {
+	c.actionSpill = &SortAndSpillDiskAction{c: c, testSyncInputFunc: inputFunc, testSyncOutputFunc: outputFunc}
+	return c.actionSpill
+}
+
+// SortAndSpillDiskAction implements memory.ActionOnExceed for chunk.List. If
+// the memory quota of a query is exceeded, SortAndSpillDiskAction.Action is
+// triggered.
+type SortAndSpillDiskAction struct {
+	c              *SortedRowContainer
+	fallbackAction memory.ActionOnExceed
+	m              sync.Mutex
+
+	// test function only used for test sync.
+	testSyncInputFunc  func()
+	testSyncOutputFunc func()
+}
+
+// Action sends a signal to trigger sortAndSpillToDisk method of RowContainer
+// and if it is already triggered before, call its fallbackAction.
+func (a *SortAndSpillDiskAction) Action(t *memory.Tracker) {
+	a.m.Lock()
+	defer a.m.Unlock()
+	if a.c.AlreadySpilledSafe() || a.c.GetMemTracker().BytesConsumed() == 0 {
+		if a.fallbackAction != nil {
+			a.fallbackAction.Action(t)
+		}
+	} else {
+		// TODO: Refine processing various errors. Return or Panic.
+		logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
+			zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
+		if a.testSyncInputFunc != nil {
+			a.testSyncInputFunc()
+			c := a.c
+			go func() {
+				c.sortAndSpillToDisk()
+				a.testSyncOutputFunc()
+			}()
+			return
+		}
+		go a.c.sortAndSpillToDisk()
+	}
+}
+
+// SetFallback sets the fallback action.
+func (a *SortAndSpillDiskAction) SetFallback(fallback memory.ActionOnExceed) {
+	a.fallbackAction = fallback
+}
+
+// SetLogHook sets the hook, it does nothing just to form the memory.ActionOnExceed interface.
+func (a *SortAndSpillDiskAction) SetLogHook(hook func(uint64)) {}
+
+// ResetRowContainer resets the spill action and sets the SortedRowContainer for the SortAndSpillDiskAction.
+func (a *SortAndSpillDiskAction) ResetRowContainer(c *SortedRowContainer) {
 	a.m.Lock()
 	defer a.m.Unlock()
 	a.c = c

@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"crypto/tls"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
@@ -313,6 +314,7 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 	}
 	// Test 2 partitions and all data in disk.
 	// Now spilling is parallel.
+	time.Sleep(200 * time.Millisecond)
 	if len(exec.partitionList) == 2 {
 		c.Assert(len(exec.partitionList), Equals, 2)
 		c.Assert(exec.partitionList[0].AlreadySpilledSafe(), Equals, true)

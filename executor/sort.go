@@ -18,9 +18,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"sync"
 
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -28,15 +26,11 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/disk"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stringutil"
-	"go.uber.org/zap"
 )
 
 var rowChunksLabel fmt.Stringer = stringutil.StringerStr("rowChunks")
-
-var errInsertToPartitionFailed = terror.ClassExecutor.New(1, "Insert the records unsuccessfully. The SortedRowContainer is sorted.")
 
 // SortExec represents sorting executor.
 type SortExec struct {
@@ -54,19 +48,19 @@ type SortExec struct {
 	// keyCmpFuncs is used to compare each ByItem.
 	keyCmpFuncs []chunk.CompareFunc
 	// rowChunks is the chunks to store row values.
-	rowChunks *SortedRowContainer
+	rowChunks *chunk.SortedRowContainer
 
 	memTracker  *memory.Tracker
 	diskTracker *disk.Tracker
 
 	// partitionList is the chunks to store row values for partitions.
-	partitionList []*SortedRowContainer
+	partitionList []*chunk.SortedRowContainer
 
 	// multiWayMerge uses multi-way merge for spill disk.
 	// The multi-way merge algorithm can refer to https://en.wikipedia.org/wiki/K-way_merge_algorithm
 	multiWayMerge *multiWayMerge
 	// spillAction save the Action for spill disk.
-	spillAction *SortAndSpillDiskAction
+	spillAction *chunk.SortAndSpillDiskAction
 }
 
 // Close implements the Executor Close interface.
@@ -222,7 +216,11 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 
 func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	fields := retTypes(e)
-	e.rowChunks = NewSortedRowContainer(fields, e.maxChunkSize, e.ByItems, e.keyColumns, e.keyCmpFuncs)
+	byItemsDesc := make([]bool, len(e.ByItems))
+	for i, byItem := range e.ByItems {
+		byItemsDesc[i] = byItem.Desc
+	}
+	e.rowChunks = chunk.NewSortedRowContainer(fields, e.maxChunkSize, byItemsDesc, e.keyColumns, e.keyCmpFuncs)
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 	e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
 	if config.GetGlobalConfig().OOMUseTmpStorage {
@@ -242,10 +240,10 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 			break
 		}
 		if err := e.rowChunks.Add(chk); err != nil {
-			if errInsertToPartitionFailed.Equal(err) {
-				e.rowChunks.GetMemTracker().Consume(int64(8 * cap(e.rowChunks.m.rowPtrs)))
+			if chunk.ErrInsertToPartitionFailed.Equal(err) {
+				e.rowChunks.GetMemTracker().Consume(int64(8 * cap(e.rowChunks.M.RowPtrs)))
 				e.partitionList = append(e.partitionList, e.rowChunks)
-				e.rowChunks = NewSortedRowContainer(fields, e.maxChunkSize, e.ByItems, e.keyColumns, e.keyCmpFuncs)
+				e.rowChunks = chunk.NewSortedRowContainer(fields, e.maxChunkSize, byItemsDesc, e.keyColumns, e.keyCmpFuncs)
 				e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 				e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
 				e.rowChunks.GetDiskTracker().AttachTo(e.diskTracker)
@@ -259,8 +257,8 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		}
 	}
 	if e.rowChunks.NumRow() > 0 {
-		e.rowChunks.initPointerAndSort()
-		e.rowChunks.GetMemTracker().Consume(int64(8 * cap(e.rowChunks.m.rowPtrs)))
+		e.rowChunks.InitPointersAndSort()
+		e.rowChunks.GetMemTracker().Consume(int64(8 * cap(e.rowChunks.M.RowPtrs)))
 		e.partitionList = append(e.partitionList, e.rowChunks)
 	}
 	return nil
@@ -300,8 +298,8 @@ func (e *SortExec) lessRow(rowI, rowJ chunk.Row) bool {
 
 // keyColumnsLess is the less function for key columns.
 func (e *SortExec) keyColumnsLess(i, j int) bool {
-	rowI := e.rowChunks.GetList().GetRow(e.rowChunks.m.rowPtrs[i])
-	rowJ := e.rowChunks.GetList().GetRow(e.rowChunks.m.rowPtrs[j])
+	rowI := e.rowChunks.GetList().GetRow(e.rowChunks.M.RowPtrs[i])
+	rowJ := e.rowChunks.GetList().GetRow(e.rowChunks.M.RowPtrs[j])
 	return e.lessRow(rowI, rowJ)
 }
 
@@ -323,8 +321,8 @@ type topNChunkHeap struct {
 // Less implement heap.Interface, but since we mantains a max heap,
 // this function returns true if row i is greater than row j.
 func (h *topNChunkHeap) Less(i, j int) bool {
-	rowI := h.rowChunks.GetList().GetRow(h.rowChunks.m.rowPtrs[i])
-	rowJ := h.rowChunks.GetList().GetRow(h.rowChunks.m.rowPtrs[j])
+	rowI := h.rowChunks.GetList().GetRow(h.rowChunks.M.RowPtrs[i])
+	rowJ := h.rowChunks.GetList().GetRow(h.rowChunks.M.RowPtrs[j])
 	return h.greaterRow(rowI, rowJ)
 }
 
@@ -345,7 +343,7 @@ func (h *topNChunkHeap) greaterRow(rowI, rowJ chunk.Row) bool {
 }
 
 func (h *topNChunkHeap) Len() int {
-	return len(h.rowChunks.m.rowPtrs)
+	return len(h.rowChunks.M.RowPtrs)
 }
 
 func (h *topNChunkHeap) Push(x interface{}) {
@@ -353,13 +351,13 @@ func (h *topNChunkHeap) Push(x interface{}) {
 }
 
 func (h *topNChunkHeap) Pop() interface{} {
-	h.rowChunks.m.rowPtrs = h.rowChunks.m.rowPtrs[:len(h.rowChunks.m.rowPtrs)-1]
+	h.rowChunks.M.RowPtrs = h.rowChunks.M.RowPtrs[:len(h.rowChunks.M.RowPtrs)-1]
 	// We don't need the popped value, return nil to avoid memory allocation.
 	return nil
 }
 
 func (h *topNChunkHeap) Swap(i, j int) {
-	h.rowChunks.m.rowPtrs[i], h.rowChunks.m.rowPtrs[j] = h.rowChunks.m.rowPtrs[j], h.rowChunks.m.rowPtrs[i]
+	h.rowChunks.M.RowPtrs[i], h.rowChunks.M.RowPtrs[j] = h.rowChunks.M.RowPtrs[j], h.rowChunks.M.RowPtrs[i]
 }
 
 // Open implements the Executor Open interface.
@@ -385,11 +383,11 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		e.fetched = true
 	}
-	if e.Idx >= len(e.rowChunks.m.rowPtrs) {
+	if e.Idx >= len(e.rowChunks.M.RowPtrs) {
 		return nil
 	}
-	for !req.IsFull() && e.Idx < len(e.rowChunks.m.rowPtrs) {
-		row, err := e.rowChunks.GetRow(e.rowChunks.m.rowPtrs[e.Idx])
+	for !req.IsFull() && e.Idx < len(e.rowChunks.M.RowPtrs) {
+		row, err := e.rowChunks.GetRow(e.rowChunks.M.RowPtrs[e.Idx])
 		if err != nil {
 			return err
 		}
@@ -401,7 +399,7 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 	e.chkHeap = &topNChunkHeap{e}
-	e.rowChunks = NewSortedRowContainer(retTypes(e), e.maxChunkSize, nil, nil, nil)
+	e.rowChunks = chunk.NewSortedRowContainer(retTypes(e), e.maxChunkSize, nil, nil, nil)
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 	e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
 	for uint64(e.rowChunks.NumRow()) < e.totalLimit {
@@ -419,7 +417,7 @@ func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 			return err
 		}
 	}
-	e.rowChunks.initPointers()
+	e.rowChunks.InitPointers()
 	e.initCompareFuncs()
 	e.buildKeyColumns()
 	return nil
@@ -429,7 +427,7 @@ const topNCompactionFactor = 4
 
 func (e *TopNExec) executeTopN(ctx context.Context) error {
 	heap.Init(e.chkHeap)
-	for uint64(len(e.rowChunks.m.rowPtrs)) > e.totalLimit {
+	for uint64(len(e.rowChunks.M.RowPtrs)) > e.totalLimit {
 		// The number of rows we loaded may exceeds total limit, remove greatest rows by Pop.
 		heap.Pop(e.chkHeap)
 	}
@@ -446,20 +444,20 @@ func (e *TopNExec) executeTopN(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if e.rowChunks.NumRow() > len(e.rowChunks.m.rowPtrs)*topNCompactionFactor {
+		if e.rowChunks.NumRow() > len(e.rowChunks.M.RowPtrs)*topNCompactionFactor {
 			err = e.doCompaction()
 			if err != nil {
 				return err
 			}
 		}
 	}
-	sort.Slice(e.rowChunks.m.rowPtrs, e.keyColumnsLess)
+	sort.Slice(e.rowChunks.M.RowPtrs, e.keyColumnsLess)
 	return nil
 }
 
 func (e *TopNExec) processChildChk(childRowChk *chunk.Chunk) error {
 	for i := 0; i < childRowChk.NumRows(); i++ {
-		heapMaxPtr := e.rowChunks.m.rowPtrs[0]
+		heapMaxPtr := e.rowChunks.M.RowPtrs[0]
 		var heapMax, next chunk.Row
 		heapMax, err := e.rowChunks.GetRow(heapMaxPtr)
 		if err != nil {
@@ -468,7 +466,7 @@ func (e *TopNExec) processChildChk(childRowChk *chunk.Chunk) error {
 		next = childRowChk.GetRow(i)
 		if e.chkHeap.greaterRow(heapMax, next) {
 			// Evict heap max, keep the next row.
-			e.rowChunks.m.rowPtrs[0], err = e.rowChunks.AppendRow(childRowChk.GetRow(i))
+			e.rowChunks.M.RowPtrs[0], err = e.rowChunks.AppendRow(childRowChk.GetRow(i))
 			if err != nil {
 				return err
 			}
@@ -483,9 +481,9 @@ func (e *TopNExec) processChildChk(childRowChk *chunk.Chunk) error {
 // but we want descending top N, then we will keep all data in memory.
 // But if data is distributed randomly, this function will be called log(n) times.
 func (e *TopNExec) doCompaction() error {
-	newRowChunks := NewSortedRowContainer(retTypes(e), e.maxChunkSize, nil, nil, nil)
+	newRowChunks := chunk.NewSortedRowContainer(retTypes(e), e.maxChunkSize, nil, nil, nil)
 	newRowPtrs := make([]chunk.RowPtr, 0, e.rowChunks.NumRow())
-	for _, rowPtr := range e.rowChunks.m.rowPtrs {
+	for _, rowPtr := range e.rowChunks.M.RowPtrs {
 		row, err := e.rowChunks.GetRow(rowPtr)
 		if err != nil {
 			return err
@@ -500,195 +498,8 @@ func (e *TopNExec) doCompaction() error {
 	e.memTracker.ReplaceChild(e.rowChunks.GetMemTracker(), newRowChunks.GetMemTracker())
 	e.rowChunks = newRowChunks
 
-	e.memTracker.Consume(int64(-8 * len(e.rowChunks.m.rowPtrs)))
+	e.memTracker.Consume(int64(-8 * len(e.rowChunks.M.RowPtrs)))
 	e.memTracker.Consume(int64(8 * len(newRowPtrs)))
-	e.rowChunks.m.rowPtrs = newRowPtrs
+	e.rowChunks.M.RowPtrs = newRowPtrs
 	return nil
-}
-
-// SortedRowContainer provides a place for many rows, so many that we might want to sort and spill them into disk.
-type SortedRowContainer struct {
-	*chunk.RowContainer
-	m struct {
-		// RWMutex guarantees the operator for rowPtrs is mutually exclusive.
-		sync.RWMutex
-		// rowPointer store the chunk index and row index for each row.
-		rowPtrs []chunk.RowPtr
-	}
-
-	ByItems []*util.ByItems
-	// keyColumns is the column index of the by items.
-	keyColumns []int
-	// keyCmpFuncs is used to compare each ByItem.
-	keyCmpFuncs []chunk.CompareFunc
-
-	actionSpill *SortAndSpillDiskAction
-}
-
-// NewSortedRowContainer creates a new SortedRowContainer in memory.
-func NewSortedRowContainer(fieldType []*types.FieldType, chunkSize int, ByItems []*util.ByItems,
-	keyColumns []int, keyCmpFuncs []chunk.CompareFunc) *SortedRowContainer {
-	return &SortedRowContainer{RowContainer: chunk.NewRowContainer(fieldType, chunkSize),
-		ByItems: ByItems, keyColumns: keyColumns, keyCmpFuncs: keyCmpFuncs}
-}
-
-// Close close the SortedRowContainer
-func (c *SortedRowContainer) Close() error {
-	c.GetMemTracker().Consume(int64(-8 * cap(c.m.rowPtrs)))
-	return c.RowContainer.Close()
-}
-
-func (c *SortedRowContainer) initPointers() {
-	c.m.rowPtrs = make([]chunk.RowPtr, 0, c.NumRow())
-	for chkIdx := 0; chkIdx < c.NumChunks(); chkIdx++ {
-		rowChk, err := c.GetChunk(chkIdx)
-		// err must be nil, because the chunk is in memory.
-		if err != nil {
-			panic(err)
-		}
-		for rowIdx := 0; rowIdx < rowChk.NumRows(); rowIdx++ {
-			c.m.rowPtrs = append(c.m.rowPtrs, chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
-		}
-	}
-	c.GetMemTracker().Consume(int64(8 * cap(c.m.rowPtrs)))
-}
-
-func (c *SortedRowContainer) lessRow(rowI, rowJ chunk.Row) bool {
-	for i, colIdx := range c.keyColumns {
-		cmpFunc := c.keyCmpFuncs[i]
-		cmp := cmpFunc(rowI, colIdx, rowJ, colIdx)
-		if c.ByItems[i].Desc {
-			cmp = -cmp
-		}
-		if cmp < 0 {
-			return true
-		} else if cmp > 0 {
-			return false
-		}
-	}
-	return false
-}
-
-// keyColumnsLess is the less function for key columns.
-func (c *SortedRowContainer) keyColumnsLess(i, j int) bool {
-	rowI := c.GetList().GetRow(c.m.rowPtrs[i])
-	rowJ := c.GetList().GetRow(c.m.rowPtrs[j])
-	return c.lessRow(rowI, rowJ)
-}
-
-func (c *SortedRowContainer) initPointerAndSort() {
-	c.m.Lock()
-	defer c.m.Unlock()
-	if c.m.rowPtrs != nil {
-		return
-	}
-	c.m.rowPtrs = make([]chunk.RowPtr, 0, c.NumRow())
-	for chkIdx := 0; chkIdx < c.NumChunks(); chkIdx++ {
-		rowChk, err := c.GetChunk(chkIdx)
-		// err must be nil, because the chunk is in memory.
-		if err != nil {
-			panic(err)
-		}
-		for rowIdx := 0; rowIdx < rowChk.NumRows(); rowIdx++ {
-			c.m.rowPtrs = append(c.m.rowPtrs, chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
-		}
-	}
-	sort.Slice(c.m.rowPtrs, c.keyColumnsLess)
-}
-
-func (c *SortedRowContainer) sortAndSpillToDisk() {
-	c.initPointerAndSort()
-	c.RowContainer.SpillToDisk()
-	return
-}
-
-// Add appends a chunk into the SortedRowContainer.
-func (c *SortedRowContainer) Add(chk *chunk.Chunk) (err error) {
-	c.m.RLock()
-	defer c.m.RUnlock()
-	if c.m.rowPtrs != nil {
-		return errInsertToPartitionFailed
-	}
-	return c.RowContainer.Add(chk)
-}
-
-// GetRow returns the row the ptr pointed to.
-func (c *SortedRowContainer) GetRow(ptr chunk.RowPtr) (chunk.Row, error) {
-	c.m.RLock()
-	defer c.m.RUnlock()
-	return c.RowContainer.GetRow(ptr)
-}
-
-// GetRowByIdx returns the row the idx pointed to.
-func (c *SortedRowContainer) GetRowByIdx(idx int) (chunk.Row, error) {
-	c.m.RLock()
-	ptr := c.m.rowPtrs[idx]
-	c.m.RUnlock()
-	return c.GetRow(ptr)
-}
-
-// ActionSpill returns a SortAndSpillDiskAction for sorting and spilling over to disk.
-func (c *SortedRowContainer) ActionSpill() *SortAndSpillDiskAction {
-	c.actionSpill = &SortAndSpillDiskAction{c: c}
-	return c.actionSpill
-}
-
-// ActionSpillForTest returns a SortAndSpillDiskAction for sorting and spilling over to disk for test.
-func (c *SortedRowContainer) ActionSpillForTest(inputFunc func(), outputFunc func()) *SortAndSpillDiskAction {
-	c.actionSpill = &SortAndSpillDiskAction{c: c, testSyncInputFunc: inputFunc, testSyncOutputFunc: outputFunc}
-	return c.actionSpill
-}
-
-// SortAndSpillDiskAction implements memory.ActionOnExceed for chunk.List. If
-// the memory quota of a query is exceeded, SortAndSpillDiskAction.Action is
-// triggered.
-type SortAndSpillDiskAction struct {
-	c              *SortedRowContainer
-	fallbackAction memory.ActionOnExceed
-	m              sync.Mutex
-
-	// test function only used for test sync.
-	testSyncInputFunc  func()
-	testSyncOutputFunc func()
-}
-
-// Action sends a signal to trigger sortAndSpillToDisk method of RowContainer
-// and if it is already triggered before, call its fallbackAction.
-func (a *SortAndSpillDiskAction) Action(t *memory.Tracker) {
-	a.m.Lock()
-	defer a.m.Unlock()
-	if a.c.AlreadySpilledSafe() || a.c.GetMemTracker().BytesConsumed() == 0 {
-		if a.fallbackAction != nil {
-			a.fallbackAction.Action(t)
-		}
-	} else {
-		// TODO: Refine processing various errors. Return or Panic.
-		logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
-			zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
-		if a.testSyncInputFunc != nil {
-			a.testSyncInputFunc()
-			c := a.c
-			go func() {
-				c.sortAndSpillToDisk()
-				a.testSyncOutputFunc()
-			}()
-			return
-		}
-		go a.c.sortAndSpillToDisk()
-	}
-}
-
-// SetFallback sets the fallback action.
-func (a *SortAndSpillDiskAction) SetFallback(fallback memory.ActionOnExceed) {
-	a.fallbackAction = fallback
-}
-
-// SetLogHook sets the hook, it does nothing just to form the memory.ActionOnExceed interface.
-func (a *SortAndSpillDiskAction) SetLogHook(hook func(uint64)) {}
-
-// ResetRowContainer resets the spill action and sets the SortedRowContainer for the SortAndSpillDiskAction.
-func (a *SortAndSpillDiskAction) ResetRowContainer(c *SortedRowContainer) {
-	a.m.Lock()
-	defer a.m.Unlock()
-	a.c = c
 }
