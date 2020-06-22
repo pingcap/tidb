@@ -149,7 +149,7 @@ func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
 }
 
 func enableParallelApply(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
-	if sctx.GetSessionVars().Concurrency.ApplyConcurrency <= 1 {
+	if !sctx.GetSessionVars().EnableParallelApply {
 		return plan
 	}
 	// the parallel apply has three limitation:
@@ -164,7 +164,7 @@ func enableParallelApply(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPla
 		_, err := apply.Children()[apply.InnerChildIdx].Clone()
 		supportClone := err == nil // limitation 2
 		if noOrder && supportClone {
-			apply.Concurrency = sctx.GetSessionVars().Concurrency.ApplyConcurrency
+			apply.Concurrency = 4
 		}
 
 		apply.SetChild(outerIdx, enableParallelApply(sctx, apply.Children()[outerIdx]))
