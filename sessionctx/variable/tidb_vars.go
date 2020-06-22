@@ -283,6 +283,9 @@ const (
 	// tidb_window_concurrency is used for window parallel executor.
 	TiDBWindowConcurrency = "tidb_window_concurrency"
 
+	// tidb_apply_concurrency is used for apply parallel executor.
+	TiDBApplyConcurrency = "tidb_apply_concurrency"
+
 	// tidb_backoff_lock_fast is used for tikv backoff base time in milliseconds.
 	TiDBBackoffLockFast = "tidb_backoff_lock_fast"
 
@@ -345,9 +348,6 @@ const (
 
 	// TiDBEnableFastAnalyze indicates to use fast analyze.
 	TiDBEnableFastAnalyze = "tidb_enable_fast_analyze"
-
-	// TiDBEnableParallelApply indicates to use parallel apply.
-	TiDBEnableParallelApply = "tidb_enable_parallel_apply"
 
 	// TiDBExpensiveQueryTimeThreshold indicates the time threshold of expensive query.
 	TiDBExpensiveQueryTimeThreshold = "tidb_expensive_query_time_threshold"
@@ -475,6 +475,7 @@ const (
 	DefTiDBHashAggPartialConcurrency   = 4
 	DefTiDBHashAggFinalConcurrency     = 4
 	DefTiDBWindowConcurrency           = 4
+	DefTiDBApplyConcurrency            = 1 // close parallel apply by default
 	DefTiDBForcePriority               = mysql.NoPriority
 	DefTiDBUseRadixJoin                = false
 	DefEnableWindowFunction            = true
@@ -503,7 +504,6 @@ const (
 	DefTiDBAllowAutoRandExplicitInsert = false
 	DefTiDBEnableClusteredIndex        = false
 	DefTiDBSlowLogMasking              = false
-	DefTiDBEnableParallelApply         = false
 )
 
 // Process global variables.

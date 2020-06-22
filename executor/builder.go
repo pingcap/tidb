@@ -1584,15 +1584,11 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) Executor {
 	executorCounterNestedLoopApplyExec.Inc()
 
 	// try parallel mode
-	concurrency := 4
-	if _, err := b.safeClone(v); err != nil {
-		concurrency = 1
-	}
-	if concurrency > 1 {
-		innerExecs := make([]Executor, 0, concurrency)
-		innerFilters := make([]expression.CNFExprs, 0, concurrency)
-		corCols := make([][]*expression.CorrelatedColumn, 0, concurrency)
-		for i := 0; i < concurrency; i++ {
+	if v.Concurrency > 1 {
+		innerExecs := make([]Executor, 0, v.Concurrency)
+		innerFilters := make([]expression.CNFExprs, 0, v.Concurrency)
+		corCols := make([][]*expression.CorrelatedColumn, 0, v.Concurrency)
+		for i := 0; i < v.Concurrency; i++ {
 			clonedInnerPlan, err := innerPlan.Clone()
 			if err != nil {
 				b.err = nil
@@ -1619,7 +1615,8 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) Executor {
 			outer:        v.JoinType != plannercore.InnerJoin,
 			joiner:       tupleJoiner,
 			corCols:      corCols,
-			concurrency:  concurrency,
+			concurrency:  v.Concurrency,
+			useCache:     v.CanUseCache,
 		}
 	}
 	return serialExec

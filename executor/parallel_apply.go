@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"github.com/pingcap/tidb/util/codec"
 	"sync"
 	"sync/atomic"
 
@@ -63,7 +64,7 @@ type ParallelNestedLoopApplyExec struct {
 	hasMatch      []bool
 	hasNull       []bool
 
-	// fields are used to do concurrency control
+	// fields about concurrency control
 	concurrency int
 	started     bool
 	freeChkCh   chan *chunk.Chunk
@@ -72,6 +73,12 @@ type ParallelNestedLoopApplyExec struct {
 	numWorkers  int32
 	exit        chan struct{}
 	wg          sync.WaitGroup
+
+	// fields about cache
+	cache              *applyCache
+	useCache           bool
+	cacheHitCounter    int64
+	cacheAccessCounter int64
 
 	joiner     joiner          // it's stateless
 	memTracker *memory.Tracker // track memory usage.
@@ -111,6 +118,13 @@ func (e *ParallelNestedLoopApplyExec) Open(ctx context.Context) error {
 	for i := 0; i < e.concurrency; i++ {
 		e.freeChkCh <- newFirstChunk(e)
 	}
+
+	if e.useCache {
+		if e.cache, err = newApplyCache(e.ctx); err != nil {
+			return err
+		}
+		e.cache.GetMemTracker().AttachTo(e.memTracker)
+	}
 	return nil
 }
 
@@ -143,6 +157,17 @@ func (e *ParallelNestedLoopApplyExec) Close() error {
 		close(e.exit)
 		e.started = false
 		e.wg.Wait()
+	}
+	if e.runtimeStats != nil {
+		if e.useCache {
+			var hitRatio float64
+			if e.cacheAccessCounter > 0 {
+				hitRatio = float64(e.cacheHitCounter) / float64(e.cacheAccessCounter)
+			}
+			e.runtimeStats.SetCacheInfo(true, hitRatio)
+		} else {
+			e.runtimeStats.SetCacheInfo(false, 0)
+		}
 	}
 	return err
 }
@@ -228,13 +253,42 @@ func (e *ParallelNestedLoopApplyExec) handleWorkerPanic(ctx context.Context) {
 }
 
 // fetchAllInners reads all data from the inner table and stores them in a List.
-func (e *ParallelNestedLoopApplyExec) fetchAllInners(ctx context.Context, id int) error {
-	err := e.innerExecs[id].Open(ctx)
+func (e *ParallelNestedLoopApplyExec) fetchAllInners(ctx context.Context, id int) (err error) {
+	var key []byte
+	for _, col := range e.corCols[id] {
+		*col.Data = e.outerRow[id].GetDatum(col.Index, col.RetType)
+		if e.useCache {
+			if key, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, key, *col.Data); err != nil {
+				return err
+			}
+		}
+	}
+	if e.useCache { // look up the cache
+		atomic.AddInt64(&e.cacheAccessCounter, 1)
+		value, err := e.cache.Get(key)
+		if err != nil {
+			return err
+		}
+		if value != nil {
+			e.innerList[id] = value
+			atomic.AddInt64(&e.cacheHitCounter, 1)
+			return nil
+		}
+	}
+
+	err = e.innerExecs[id].Open(ctx)
 	defer terror.Call(e.innerExecs[id].Close)
 	if err != nil {
 		return err
 	}
-	e.innerList[id].Reset()
+
+	if e.useCache {
+		// create a new one in this case since it may be in the cache
+		e.innerList[id] = chunk.NewList(retTypes(e.innerExecs[id]), e.initCap, e.maxChunkSize)
+	} else {
+		e.innerList[id].Reset()
+	}
+
 	innerIter := chunk.NewIterator4Chunk(e.innerChunk[id])
 	for {
 		err := Next(ctx, e.innerExecs[id], e.innerChunk[id])
@@ -242,7 +296,7 @@ func (e *ParallelNestedLoopApplyExec) fetchAllInners(ctx context.Context, id int
 			return err
 		}
 		if e.innerChunk[id].NumRows() == 0 {
-			return nil
+			break
 		}
 
 		e.innerSelected[id], err = expression.VectorizedFilter(e.ctx, e.innerFilter[id], innerIter, e.innerSelected[id])
@@ -255,6 +309,13 @@ func (e *ParallelNestedLoopApplyExec) fetchAllInners(ctx context.Context, id int
 			}
 		}
 	}
+
+	if e.useCache { // update the cache
+		if _, err := e.cache.Set(key, e.innerList[id]); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (e *ParallelNestedLoopApplyExec) fetchNextOuterRow(req *chunk.Chunk) (row *chunk.Row, exit bool) {
@@ -296,9 +357,6 @@ func (e *ParallelNestedLoopApplyExec) fillInnerChunk(ctx context.Context, id int
 			e.hasMatch[id] = false
 			e.hasNull[id] = false
 
-			for _, col := range e.corCols[id] {
-				*col.Data = e.outerRow[id].GetDatum(col.Index, col.RetType)
-			}
 			err = e.fetchAllInners(ctx, id)
 			if err != nil {
 				return err

@@ -643,9 +643,6 @@ type SessionVars struct {
 
 	// EnableSlowLogMasking indicates that whether masking the query data when log slow query.
 	EnableSlowLogMasking bool
-
-	// EnableParallelApply indicates that whether to use parallel apply.
-	EnableParallelApply bool
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -749,6 +746,7 @@ func NewSessionVars() *SessionVars {
 		HashAggPartialConcurrency:  DefTiDBHashAggPartialConcurrency,
 		HashAggFinalConcurrency:    DefTiDBHashAggFinalConcurrency,
 		WindowConcurrency:          DefTiDBWindowConcurrency,
+		ApplyConcurrency:           DefTiDBApplyConcurrency,
 	}
 	vars.MemQuota = MemQuota{
 		MemQuotaQuery:               config.GetGlobalConfig().MemQuotaQuery,
@@ -1163,6 +1161,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.HashAggFinalConcurrency = tidbOptPositiveInt32(val, DefTiDBHashAggFinalConcurrency)
 	case TiDBWindowConcurrency:
 		s.WindowConcurrency = tidbOptPositiveInt32(val, DefTiDBWindowConcurrency)
+	case TiDBApplyConcurrency:
+		s.ApplyConcurrency = tidbOptPositiveInt32(val, DefTiDBApplyConcurrency)
 	case TiDBDistSQLScanConcurrency:
 		s.DistSQLScanConcurrency = tidbOptPositiveInt32(val, DefDistSQLScanConcurrency)
 	case TiDBIndexSerialScanConcurrency:
@@ -1350,8 +1350,6 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableClusteredIndex = TiDBOptOn(val)
 	case TiDBSlowLogMasking:
 		s.EnableSlowLogMasking = TiDBOptOn(val)
-	case TiDBEnableParallelApply:
-		s.EnableParallelApply = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
@@ -1468,6 +1466,9 @@ type Concurrency struct {
 
 	// IndexSerialScanConcurrency is the number of concurrent index serial scan worker.
 	IndexSerialScanConcurrency int
+
+	// ApplyConcurrency is the number of concurrent apply inner worker.
+	ApplyConcurrency int
 }
 
 // MemQuota defines memory quota values.

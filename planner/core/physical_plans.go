@@ -549,9 +549,9 @@ func (lt *PhysicalTopN) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 type PhysicalApply struct {
 	PhysicalHashJoin
 
-	CanUseCache    bool
-	EnableParallel bool
-	OuterSchema    []*expression.CorrelatedColumn
+	CanUseCache bool
+	Concurrency int
+	OuterSchema []*expression.CorrelatedColumn
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.

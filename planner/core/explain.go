@@ -386,6 +386,17 @@ func (p *PhysicalIndexJoin) ExplainNormalizedInfo() string {
 	return p.explainInfo(true)
 }
 
+func (p *PhysicalApply) ExplainInfo() string {
+	buffer := new(bytes.Buffer)
+	if p.CanUseCache {
+		buffer.WriteString("cache: ON, ")
+	}
+	if p.Concurrency > 1 {
+		buffer.WriteString(fmt.Sprintf("concurrency: %v, ", p.Concurrency))
+	}
+	return buffer.String() + p.PhysicalHashJoin.ExplainInfo()
+}
+
 // ExplainInfo implements Plan interface.
 func (p *PhysicalHashJoin) ExplainInfo() string {
 	return p.explainInfo(false)

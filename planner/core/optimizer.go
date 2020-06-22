@@ -149,21 +149,26 @@ func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
 }
 
 func enableParallelApply(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
-	if !sctx.GetSessionVars().EnableParallelApply {
+	if sctx.GetSessionVars().Concurrency.ApplyConcurrency <= 1 {
 		return plan
 	}
-	// the parallel apply has two limitation:
+	// the parallel apply has three limitation:
 	// 1. the parallel implementation now cannot keep order;
-	// 2. if one Apply is in inner of another Apply, it cannot be parallel, for example:
+	// 2. the inner child have to support clone;
+	// 3. if one Apply is in inner of another Apply, it cannot be parallel, for example:
 	//		The topology of 3 Apply operators are A1(A2, A3), which means A2 is the outer child of A1
 	//		while A3 is the inner child. Then A1 and A2 can be parallel and A3 cannot.
 	if apply, ok := plan.(*PhysicalApply); ok {
 		outerIdx := 1 - apply.InnerChildIdx
-		orderedCols := apply.GetChildReqProps(outerIdx).Items
-		apply.EnableParallel = len(orderedCols) == 0 // limitation 1
+		noOrder := len(apply.GetChildReqProps(outerIdx).Items) == 0 // limitation 1
+		_, err := apply.Children()[apply.InnerChildIdx].Clone()
+		supportClone := err == nil // limitation 2
+		if noOrder && supportClone {
+			apply.Concurrency = sctx.GetSessionVars().Concurrency.ApplyConcurrency
+		}
 
 		apply.SetChild(outerIdx, enableParallelApply(sctx, apply.Children()[outerIdx]))
-		// apply.SetChild(innerIdx, enableParallelApply(innerChild)) <--- limitation 2
+		// apply.SetChild(innerIdx, enableParallelApply(innerChild)) <--- limitation 3
 		return apply
 	}
 	for i, child := range plan.Children() {
