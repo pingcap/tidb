@@ -97,6 +97,11 @@ func (p *PointGetPlan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 	return nil, nil
 }
 
+// Clone implements PhysicalPlan interface.
+func (p *PointGetPlan) Clone() (PhysicalPlan, error) {
+	return nil, errors.Errorf("%T doesn't support cloning.", p)
+}
+
 // ExplainInfo implements Plan interface.
 func (p *PointGetPlan) ExplainInfo() string {
 	accessObject, operatorInfo := p.AccessObject(), p.OperatorInfo(false)
@@ -244,6 +249,11 @@ type BatchPointGetPlan struct {
 	Lock             bool
 	LockWaitTime     int64
 	Columns          []*model.ColumnInfo
+}
+
+// Clone implements PhysicalPlan interface.
+func (p *BatchPointGetPlan) Clone() (PhysicalPlan, error) {
+	return nil, errors.Errorf("%T doesn't support cloning", p)
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
