@@ -257,11 +257,14 @@ func (s *Server) startHTTPServer() {
 	fetcher := sqlInfoFetcher{store: tikvHandlerTool.Store}
 	serverMux.HandleFunc("/debug/sub-optimal-plan", fetcher.zipInfoForSQL)
 
-	failpoint.Inject("integrateFailpoint", func() {
+	// failpoint is enabled only for tests so we can add some http APIs here for tests.
+	failpoint.Inject("enableTestAPI", func() {
 		serverMux.HandleFunc("/fail/", func(w http.ResponseWriter, r *http.Request) {
 			r.URL.Path = strings.TrimPrefix(r.URL.Path, "/fail")
 			new(failpoint.HttpHandler).ServeHTTP(w, r)
 		})
+
+		router.Handle("/test/{mod}/{op}", &testHandler{tikvHandlerTool, 0})
 	})
 
 	var (

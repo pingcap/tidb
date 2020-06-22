@@ -882,14 +882,6 @@ func (w *addIndexWorker) getIndexRecord(handle kv.Handle, recordKey []byte, rawR
 	idxVal := make([]types.Datum, len(idxInfo.Columns))
 	for j, v := range idxInfo.Columns {
 		col := cols[v.Offset]
-		if col.IsPKHandleColumn(t.Meta()) {
-			if mysql.HasUnsignedFlag(col.Flag) {
-				idxVal[j].SetUint64(uint64(handle.IntValue()))
-			} else {
-				idxVal[j].SetInt64(handle.IntValue())
-			}
-			continue
-		}
 		idxColumnVal, ok := w.rowMap[col.ID]
 		if ok {
 			idxVal[j] = idxColumnVal
