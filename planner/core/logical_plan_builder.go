@@ -1318,7 +1318,7 @@ func getUintFromNode(ctx sessionctx.Context, n ast.Node) (uVal uint64, isNull bo
 		}
 	case string:
 		sc := ctx.GetSessionVars().StmtCtx
-		uVal, err := types.StrToUint(sc, v)
+		uVal, err := types.StrToUint(sc, v, false)
 		if err != nil {
 			return 0, false, false
 		}
