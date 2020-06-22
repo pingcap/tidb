@@ -94,80 +94,72 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/truncateTableErr"), IsNil)
 	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database cancel_job_db")
+	tk.MustExec("use cancel_job_db")
+
 	// test for truncating table
-	_, err := s.se.Execute(context.Background(), "create database cancel_job_db")
-	c.Assert(err, IsNil)
-	_, err = s.se.Execute(context.Background(), "use cancel_job_db")
-	c.Assert(err, IsNil)
-	_, err = s.se.Execute(context.Background(), "create table t(a int)")
-	c.Assert(err, IsNil)
-	_, err = s.se.Execute(context.Background(), "insert into t values(1)")
-	c.Assert(err, IsNil)
-	_, err = s.se.Execute(context.Background(), "truncate table t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1)")
+	_, err := tk.Exec("truncate table t")
 	c.Assert(err, NotNil)
+
 	// Make sure that the table's data has not been deleted.
-	rs, err := s.se.Execute(context.Background(), "select count(*) from t")
-	c.Assert(err, IsNil)
-	req := rs[0].NewChunk()
-	err = rs[0].Next(context.Background(), req)
-	c.Assert(err, IsNil)
-	c.Assert(req.NumRows() == 0, IsFalse)
-	row := req.GetRow(0)
-	c.Assert(row.Len(), Equals, 1)
-	c.Assert(row.GetInt64(0), DeepEquals, int64(1))
-	c.Assert(rs[0].Close(), IsNil)
-	// Execute ddl statement reload schema.
-	_, err = s.se.Execute(context.Background(), "alter table t comment 'test1'")
-	c.Assert(err, IsNil)
+	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
+	// Execute ddl statement reload schema
+	tk.MustExec("alter table t comment 'test1'")
 	err = s.dom.DDL().GetHook().OnChanged(nil)
 	c.Assert(err, IsNil)
-	s.se, err = session.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
-	_, err = s.se.Execute(context.Background(), "use cancel_job_db")
-	c.Assert(err, IsNil)
-	// Test schema is correct.
-	_, err = s.se.Execute(context.Background(), "select * from t")
-	c.Assert(err, IsNil)
 
+	tk = testkit.NewTestKit(c, s.store)
+	tk.MustExec("use cancel_job_db")
+	// Test schema is correct.
+	tk.MustExec("select * from t")
 	// test for renaming table
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/renameTableErr", `return(true)`), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/renameTableErr"), IsNil)
 	}()
-
-	_, err = s.se.Execute(context.Background(), "create table tx(a int)")
-	c.Assert(err, IsNil)
-	_, err = s.se.Execute(context.Background(), "insert into tx values(1)")
-	c.Assert(err, IsNil)
-	_, err = s.se.Execute(context.Background(), "rename table tx to ty")
+	tk.MustExec("create table tx(a int)")
+	tk.MustExec("insert into tx values(1)")
+	_, err = tk.Exec("rename table tx to ty")
 	c.Assert(err, NotNil)
 	// Make sure that the table's data has not been deleted.
-	rs, err = s.se.Execute(context.Background(), "select count(*) from tx")
-	c.Assert(err, IsNil)
-	req = rs[0].NewChunk()
-	err = rs[0].Next(context.Background(), req)
-	c.Assert(err, IsNil)
-	c.Assert(req.NumRows() == 0, IsFalse)
-	row = req.GetRow(0)
-	c.Assert(row.Len(), Equals, 1)
-	c.Assert(row.GetInt64(0), DeepEquals, int64(1))
-	c.Assert(rs[0].Close(), IsNil)
+	tk.MustQuery("select * from tx").Check(testkit.Rows("1"))
 	// Execute ddl statement reload schema.
-	_, err = s.se.Execute(context.Background(), "alter table tx comment 'tx'")
-	c.Assert(err, IsNil)
+	tk.MustExec("alter table tx comment 'tx'")
 	err = s.dom.DDL().GetHook().OnChanged(nil)
 	c.Assert(err, IsNil)
-	s.se, err = session.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
-	_, err = s.se.Execute(context.Background(), "use cancel_job_db")
-	c.Assert(err, IsNil)
-	// Test schema is correct.
-	_, err = s.se.Execute(context.Background(), "select * from tx")
+
+	tk = testkit.NewTestKit(c, s.store)
+	tk.MustExec("use cancel_job_db")
+	tk.MustExec("select * from tx")
+	// test for exchanging partition
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/exchangePartitionErr", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/exchangePartitionErr"), IsNil)
+	}()
+	tk.MustExec("create table pt(a int) partition by hash (a) partitions 2")
+	tk.MustExec("insert into pt values(1), (3), (5)")
+	tk.MustExec("create table nt(a int)")
+	tk.MustExec("insert into nt values(7)")
+	_, err = tk.Exec("alter table pt exchange partition p1 with table nt")
+	c.Assert(err, NotNil)
+
+	tk.MustQuery("select * from pt").Check(testkit.Rows("1", "3", "5"))
+	tk.MustQuery("select * from nt").Check(testkit.Rows("7"))
+	// Execute ddl statement reload schema.
+	tk.MustExec("alter table pt comment 'pt'")
+	err = s.dom.DDL().GetHook().OnChanged(nil)
 	c.Assert(err, IsNil)
 
+	tk = testkit.NewTestKit(c, s.store)
+	tk.MustExec("use cancel_job_db")
+	// Test schema is correct.
+	tk.MustExec("select * from pt")
+
 	// clean up
-	_, err = s.se.Execute(context.Background(), "drop database cancel_job_db")
-	c.Assert(err, IsNil)
+	tk.MustExec("drop database cancel_job_db")
 }
 
 // TestInitializeOffsetAndState tests the case that the column's offset and state don't be initialized in the file of ddl_api.go when

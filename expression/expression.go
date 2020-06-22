@@ -426,7 +426,7 @@ func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Colum
 			if buf.IsNull(i) {
 				isZero[i] = -1
 			} else {
-				iVal, err := types.StrToFloat(sc, buf.GetString(i))
+				iVal, err := types.StrToFloat(sc, buf.GetString(i), false)
 				if err != nil {
 					return err
 				}
@@ -1014,6 +1014,12 @@ func IsPushDownEnabled(name string, storeType kv.StoreType) bool {
 		mask := storeTypeMask(storeType)
 		return !(value&mask == mask)
 	}
+
+	if storeType != kv.TiFlash && name == ast.AggFuncApproxCountDistinct {
+		// Can not push down approx_count_distinct to other store except tiflash by now.
+		return false
+	}
+
 	return true
 }
 

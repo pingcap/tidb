@@ -15,6 +15,7 @@ package tables
 
 import (
 	"bytes"
+	"context"
 	stderr "errors"
 	"fmt"
 	"sort"
@@ -163,7 +164,7 @@ type ForRangePruning struct {
 }
 
 // dataForRangePruning extracts the less than parts from 'partition p0 less than xx ... partitoin p1 less than ...'
-func dataForRangePruning(pi *model.PartitionInfo) (*ForRangePruning, error) {
+func dataForRangePruning(sctx sessionctx.Context, pi *model.PartitionInfo) (*ForRangePruning, error) {
 	var maxValue bool
 	var unsigned bool
 	lessThan := make([]int64, len(pi.Definitions))
@@ -182,7 +183,12 @@ func dataForRangePruning(pi *model.PartitionInfo) (*ForRangePruning, error) {
 				unsigned = true
 			}
 			if err != nil {
-				return nil, errors.WithStack(err)
+				val, ok := fixOldVersionPartitionInfo(sctx, pi.Definitions[i].LessThan[0])
+				if !ok {
+					logutil.BgLogger().Error("wrong partition definition", zap.String("less than", pi.Definitions[i].LessThan[0]))
+					return nil, errors.WithStack(err)
+				}
+				lessThan[i] = val
 			}
 		}
 	}
@@ -191,6 +197,20 @@ func dataForRangePruning(pi *model.PartitionInfo) (*ForRangePruning, error) {
 		MaxValue: maxValue,
 		Unsigned: unsigned,
 	}, nil
+}
+
+func fixOldVersionPartitionInfo(sctx sessionctx.Context, str string) (int64, bool) {
+	// less than value should be calculate to integer before persistent.
+	// Old version TiDB may not do it and store the raw expression.
+	tmp, err := parseSimpleExprWithNames(parser.New(), sctx, str, nil, nil)
+	if err != nil {
+		return 0, false
+	}
+	ret, isNull, err := tmp.EvalInt(sctx, chunk.Row{})
+	if err != nil || isNull {
+		return 0, false
+	}
+	return ret, true
 }
 
 // rangePartitionString returns the partition string for a range typed partition.
@@ -240,7 +260,7 @@ func generateRangePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 
 	switch len(pi.Columns) {
 	case 0:
-		tmp, err := dataForRangePruning(pi)
+		tmp, err := dataForRangePruning(ctx, pi)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -356,10 +376,11 @@ func (t *partitionedTable) locateHashPartition(ctx sessionctx.Context, pi *model
 	if isNull {
 		return 0, nil
 	}
+	ret = ret % int64(t.meta.Partition.Num)
 	if ret < 0 {
-		ret = 0 - ret
+		ret = -ret
 	}
-	return int(ret % int64(t.meta.Partition.Num)), nil
+	return int(ret), nil
 }
 
 // GetPartition returns a Table, which is actually a partition.
@@ -442,15 +463,15 @@ func (t *partitionedTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r [
 // UpdateRecord implements table.Table UpdateRecord interface.
 // `touched` means which columns are really modified, used for secondary indices.
 // Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
-func (t *partitionedTable) UpdateRecord(ctx sessionctx.Context, h kv.Handle, currData, newData []types.Datum, touched []bool) error {
-	return partitionedTableUpdateRecord(ctx, t, h, currData, newData, touched, nil)
+func (t *partitionedTable) UpdateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, currData, newData []types.Datum, touched []bool) error {
+	return partitionedTableUpdateRecord(ctx, sctx, t, h, currData, newData, touched, nil)
 }
 
-func (t *partitionTableWithGivenSets) UpdateRecord(ctx sessionctx.Context, h kv.Handle, currData, newData []types.Datum, touched []bool) error {
-	return partitionedTableUpdateRecord(ctx, t.partitionedTable, h, currData, newData, touched, t.partitions)
+func (t *partitionTableWithGivenSets) UpdateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, currData, newData []types.Datum, touched []bool) error {
+	return partitionedTableUpdateRecord(ctx, sctx, t.partitionedTable, h, currData, newData, touched, t.partitions)
 }
 
-func partitionedTableUpdateRecord(ctx sessionctx.Context, t *partitionedTable, h kv.Handle, currData, newData []types.Datum, touched []bool, partitionSelection map[int64]struct{}) error {
+func partitionedTableUpdateRecord(gctx context.Context, ctx sessionctx.Context, t *partitionedTable, h kv.Handle, currData, newData []types.Datum, touched []bool, partitionSelection map[int64]struct{}) error {
 	partitionInfo := t.meta.GetPartitionInfo()
 	from, err := t.locatePartition(ctx, partitionInfo, currData)
 	if err != nil {
@@ -488,7 +509,7 @@ func partitionedTableUpdateRecord(ctx sessionctx.Context, t *partitionedTable, h
 	}
 
 	tbl := t.GetPartition(to)
-	return tbl.UpdateRecord(ctx, h, currData, newData, touched)
+	return tbl.UpdateRecord(gctx, ctx, h, currData, newData, touched)
 }
 
 // FindPartitionByName finds partition in table meta by name.

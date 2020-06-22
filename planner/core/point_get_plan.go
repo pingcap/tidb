@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/math"
@@ -94,6 +95,11 @@ func (p *PointGetPlan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 	return nil, nil
 }
 
+// Clone implements PhysicalPlan interface.
+func (p *PointGetPlan) Clone() (PhysicalPlan, error) {
+	return nil, errors.Errorf("%T doesn't support cloning.", p)
+}
+
 // ExplainInfo implements Plan interface.
 func (p *PointGetPlan) ExplainInfo() string {
 	accessObject, operatorInfo := p.AccessObject(), p.OperatorInfo(false)
@@ -154,6 +160,11 @@ func (p *PointGetPlan) OperatorInfo(normalized bool) string {
 		buffer.Truncate(buffer.Len() - 2)
 	}
 	return buffer.String()
+}
+
+// ExtractCorrelatedCols implements PhysicalPlan interface.
+func (p *PointGetPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	return nil
 }
 
 // GetChildReqProps gets the required property by child index.
@@ -236,6 +247,16 @@ type BatchPointGetPlan struct {
 	Lock             bool
 	LockWaitTime     int64
 	Columns          []*model.ColumnInfo
+}
+
+// Clone implements PhysicalPlan interface.
+func (p *BatchPointGetPlan) Clone() (PhysicalPlan, error) {
+	return nil, errors.Errorf("%T doesn't support cloning", p)
+}
+
+// ExtractCorrelatedCols implements PhysicalPlan interface.
+func (p *BatchPointGetPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	return nil
 }
 
 // attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
@@ -1031,16 +1052,17 @@ func buildPointUpdatePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 	if orderedList == nil {
 		return nil
 	}
-	handleCol := findHandleCol(tbl, pointPlan.Schema())
+	handleCols := findHandleColIdx(tbl, pointPlan.Schema())
 	updatePlan := Update{
 		SelectPlan:  pointPlan,
 		OrderedList: orderedList,
 		TblColPosInfos: TblColPosInfoSlice{
 			TblColPosInfo{
-				TblID:         tbl.ID,
-				Start:         0,
-				End:           pointPlan.Schema().Len(),
-				HandleOrdinal: handleCol.Index,
+				TblID:          tbl.ID,
+				Start:          0,
+				End:            pointPlan.Schema().Len(),
+				HandleOrdinal:  handleCols,
+				IsCommonHandle: tbl.IsCommonHandle,
 			},
 		},
 		AllAssignmentsAreConstant: allAssignmentsAreConstant,
@@ -1117,15 +1139,16 @@ func buildPointDeletePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 	if checkFastPlanPrivilege(ctx, dbName, tbl.Name.L, mysql.SelectPriv, mysql.DeletePriv) != nil {
 		return nil
 	}
-	handleCol := findHandleCol(tbl, pointPlan.Schema())
+	handleCols := findHandleColIdx(tbl, pointPlan.Schema())
 	delPlan := Delete{
 		SelectPlan: pointPlan,
 		TblColPosInfos: TblColPosInfoSlice{
 			TblColPosInfo{
-				TblID:         tbl.ID,
-				Start:         0,
-				End:           pointPlan.Schema().Len(),
-				HandleOrdinal: handleCol.Index,
+				TblID:          tbl.ID,
+				Start:          0,
+				End:            pointPlan.Schema().Len(),
+				HandleOrdinal:  handleCols,
+				IsCommonHandle: tbl.IsCommonHandle,
 			},
 		},
 	}.Init(ctx)
@@ -1151,6 +1174,30 @@ func colInfoToColumn(col *model.ColumnInfo, idx int) *expression.Column {
 	}
 }
 
+func findHandleColIdx(tbl *model.TableInfo, schema *expression.Schema) (ids []int) {
+	// fields len is 0 for update and delete.
+	if tbl.PKIsHandle {
+		for i, col := range tbl.Columns {
+			if mysql.HasPriKeyFlag(col.Flag) && tbl.PKIsHandle {
+				return []int{schema.Columns[i].Index}
+			}
+		}
+	}
+
+	if tbl.IsCommonHandle {
+		pkIdx := tables.FindPrimaryIndex(tbl)
+		var handleCols []int
+		for _, idxCol := range pkIdx.Columns {
+			handleCols = append(handleCols, schema.Columns[idxCol.Offset].Index)
+		}
+		return handleCols
+	}
+
+	handleCol := colInfoToColumn(model.NewExtraHandleColInfo(), schema.Len())
+	schema.Append(handleCol)
+	return []int{handleCol.Index}
+}
+
 func findHandleCol(tbl *model.TableInfo, schema *expression.Schema) *expression.Column {
 	// fields len is 0 for update and delete.
 	var handleCol *expression.Column
@@ -1161,7 +1208,7 @@ func findHandleCol(tbl *model.TableInfo, schema *expression.Schema) *expression.
 			}
 		}
 	}
-	if handleCol == nil {
+	if !tbl.IsCommonHandle && handleCol == nil {
 		handleCol = colInfoToColumn(model.NewExtraHandleColInfo(), schema.Len())
 		schema.Append(handleCol)
 	}
@@ -1177,7 +1224,7 @@ func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []name
 	for i, pair := range pairs {
 		if partitionColName.Name.L == pair.colName {
 			val := pair.value.GetInt64()
-			pos := math.Abs(val) % int64(pi.Num)
+			pos := math.Abs(val % int64(pi.Num))
 			return &pi.Definitions[pos], i
 		}
 	}
