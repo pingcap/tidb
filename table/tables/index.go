@@ -116,7 +116,7 @@ func (c *index) Meta() *model.IndexInfo {
 // GenIndexKey generates storage key for index values. Returned distinct indicates whether the
 // indexed values should be distinct in storage (i.e. whether handle is encoded in the key).
 func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.Datum, h kv.Handle, buf []byte) (key []byte, distinct bool, err error) {
-	return tablecodec.GenIndexKey(sc, c.tblInfo, c.idxInfo, c.prefix, indexedValues, h, buf)
+	return tablecodec.GenIndexKeyUsingPrefix(sc, c.tblInfo, c.idxInfo, c.prefix, indexedValues, h, buf)
 }
 
 // Create creates a new entry in the kvIndex data.

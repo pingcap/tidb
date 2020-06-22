@@ -947,8 +947,16 @@ func GetIndexKeyBuf(buf []byte, defaultCap int) []byte {
 	return make([]byte, 0, defaultCap)
 }
 
-// GenIndexKey creates index keys using input buf
+// GenIndexKey generates index key using input physical table id
 func GenIndexKey(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
+	phyTblID int64, indexedValues []types.Datum, h kv.Handle, buf []byte) (key []byte, distinct bool, err error) {
+	// The prefix can't encode from tblInfo.ID, because table partition may change the id to partition id.
+	prefix := EncodeTableIndexPrefix(phyTblID, idxInfo.ID)
+	return GenIndexKeyUsingPrefix(sc, tblInfo, idxInfo, prefix, indexedValues, h, buf)
+}
+
+// GenIndexKeyUsingPrefix generates index keys using input buf with input prefix
+func GenIndexKeyUsingPrefix(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
 	idxPrefix kv.Key, indexedValues []types.Datum, h kv.Handle, buf []byte) (key []byte, distinct bool, err error) {
 	if idxInfo.Unique {
 		// See https://dev.mysql.com/doc/refman/5.7/en/create-index.html
