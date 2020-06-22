@@ -19,6 +19,7 @@ import (
 	"strconv"
 
 	"github.com/cznic/mathutil"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
@@ -236,6 +237,9 @@ type PhysicalPlan interface {
 
 	// ExplainNormalizedInfo returns operator normalized information for generating digest.
 	ExplainNormalizedInfo() string
+
+	// Clone clones this physical plan.
+	Clone() (PhysicalPlan, error)
 }
 
 type baseLogicalPlan struct {
@@ -262,6 +266,29 @@ type basePhysicalPlan struct {
 	childrenReqProps []*property.PhysicalProperty
 	self             PhysicalPlan
 	children         []PhysicalPlan
+}
+
+func (p *basePhysicalPlan) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalPlan, error) {
+	base := &basePhysicalPlan{
+		basePlan: p.basePlan,
+		self:     newSelf,
+	}
+	for _, child := range p.children {
+		cloned, err := child.Clone()
+		if err != nil {
+			return nil, err
+		}
+		base.children = append(base.children, cloned)
+	}
+	for _, prop := range p.childrenReqProps {
+		base.childrenReqProps = append(base.childrenReqProps, prop.Clone())
+	}
+	return base, nil
+}
+
+// Clone implements PhysicalPlan interface.
+func (p *basePhysicalPlan) Clone() (PhysicalPlan, error) {
+	return nil, errors.Errorf("%T doesn't support cloning", p.self)
 }
 
 // ExplainInfo implements Plan interface.

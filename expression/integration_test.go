@@ -6620,6 +6620,16 @@ func (s *testIntegrationSuite) TestIssue17287(c *C) {
 	tk.MustQuery("execute stmt7 using @val2;").Check(testkit.Rows("1589873946"))
 }
 
+func (s *testIntegrationSuite) TestIssue17898(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table t0")
+	tk.MustExec("create table t0(a char(10), b int as ((a)));")
+	tk.MustExec("insert into t0(a) values(\"0.5\");")
+	tk.MustQuery("select * from t0;").Check(testkit.Rows("0.5 1"))
+}
+
 func (s *testIntegrationSuite) TestIssue17727(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
