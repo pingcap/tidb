@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/expensivequery"
@@ -952,6 +953,41 @@ func (do *Domain) handleEvolvePlanTasksLoop(ctx sessionctx.Context) {
 				err := do.bindHandle.HandleEvolvePlanTask(ctx, false)
 				if err != nil {
 					logutil.BgLogger().Info("evolve plan failed", zap.Error(err))
+				}
+			}
+		}
+	}()
+}
+
+// TelemetryLoop create a goroutine that reports usage data in a loop, it should
+// be called only once in BootstrapSession.
+func (do *Domain) TelemetryLoop(ctx sessionctx.Context) {
+	do.handleTelemetryLoop(ctx)
+}
+
+func (do *Domain) handleTelemetryLoop(ctx sessionctx.Context) {
+	do.wg.Add(1)
+	go func() {
+		defer func() {
+			do.wg.Done()
+			logutil.BgLogger().Info("handleTelemetryLoop exited.")
+			util.Recover(metrics.LabelDomain, "handleTelemetryLoop", nil, false)
+		}()
+		owner := do.newOwnerManager(telemetry.Prompt, telemetry.OwnerKey)
+		for {
+			select {
+			case <-do.exit:
+				owner.Cancel()
+				return
+			case <-time.After(telemetry.ReportInterval):
+			}
+			if owner.IsOwner() {
+				//err := do.bindHandle.HandleEvolvePlanTask(ctx, false)
+				//if err != nil {
+				//	logutil.BgLogger().Info("evolve plan failed", zap.Error(err))
+				//}
+				if config.GetGlobalConfig().EnableTelemetry {
+					logutil.BgLogger().Info("This TiDB is owner and will report!")
 				}
 			}
 		}
