@@ -2851,22 +2851,16 @@ func checkTiFlashReplicaCompatible(source *model.TiFlashReplicaInfo, target *mod
 	if source == nil || target == nil {
 		return false
 	}
-		if source.Count != target.Count ||
-			source.Available != target.Available ||  len(source.LocationLabels) != len(target.LocationLabels){
-			return false
-		}
-		if len(source.LocationLabels) == len(target.LocationLabels) {
-			for i, lable := range source.LocationLabels {
-				if target.LocationLabels[i] != lable {
-					return false
-				}
-			}
-		} else {
-			return false
-		}
-		return true
+	if source.Count != target.Count ||
+		source.Available != target.Available || len(source.LocationLabels) != len(target.LocationLabels) {
+		return false
 	}
-	return false
+	for i, lable := range source.LocationLabels {
+		if target.LocationLabels[i] != lable {
+			return false
+		}
+	}
+	return true
 }
 
 func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) error {
