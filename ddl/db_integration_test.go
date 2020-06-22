@@ -2167,7 +2167,6 @@ func (s *testIntegrationSuite7) TestAddExpressionIndexOnPartition(c *C) {
 		PARTITION p3 VALUES LESS THAN (21)
 	);`)
 	tk.MustExec("insert into t values (1, 'test', 2), (12, 'test', 3), (15, 'test', 10), (20, 'test', 20);")
-	// TODO: Uncomment lines below after fixing #18132.
 	tk.MustExec("alter table t add index idx((a+c));")
 
 	tblInfo, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
