@@ -28,7 +28,7 @@ func (r *rowContainerTestSuite) TestNewRowContainer(c *check.C) {
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	rc := NewRowContainer(fields, 1024)
 	c.Assert(rc, check.NotNil)
-	c.Assert(rc.AlreadySpilled(), check.Equals, false)
+	c.Assert(rc.AlreadySpilledSafe(), check.Equals, false)
 }
 
 func (r *rowContainerTestSuite) TestSel(c *check.C) {
@@ -36,7 +36,7 @@ func (r *rowContainerTestSuite) TestSel(c *check.C) {
 	sz := 4
 	rc := NewRowContainer(fields, sz)
 	c.Assert(rc, check.NotNil)
-	c.Assert(rc.AlreadySpilled(), check.Equals, false)
+	c.Assert(rc.AlreadySpilledSafe(), check.Equals, false)
 	n := 64
 	chk := NewChunkWithCapacity(fields, sz)
 	numRows := 0
@@ -73,7 +73,7 @@ func (r *rowContainerTestSuite) TestSel(c *check.C) {
 	rc.SpillToDisk()
 	err := rc.m.spillError
 	c.Assert(err, check.IsNil)
-	c.Assert(rc.AlreadySpilled(), check.Equals, true)
+	c.Assert(rc.AlreadySpilledSafe(), check.Equals, true)
 	checkByIter(NewMultiIterator(NewIterator4RowContainer(rc), NewIterator4Chunk(chk)))
 	err = rc.Close()
 	c.Assert(err, check.IsNil)
@@ -95,16 +95,16 @@ func (r *rowContainerTestSuite) TestSpillAction(c *check.C) {
 	tracker.SetBytesLimit(chk.MemoryUsage() + 1)
 	tracker.FallbackOldAndSetNewAction(rc.ActionSpill())
 
-	c.Assert(rc.AlreadySpilled(), check.Equals, false)
+	c.Assert(rc.AlreadySpilledSafe(), check.Equals, false)
 	err = rc.Add(chk)
 	c.Assert(err, check.IsNil)
-	c.Assert(rc.AlreadySpilled(), check.Equals, false)
+	c.Assert(rc.AlreadySpilledSafe(), check.Equals, false)
 	c.Assert(rc.GetMemTracker().BytesConsumed(), check.Equals, chk.MemoryUsage())
 	// The following line is erroneous, since chk is already handled by rc, Add it again causes duplicated memory usage account.
 	// It is only for test of spill, do not double-add a chunk elsewhere.
 	err = rc.Add(chk)
 	c.Assert(err, check.IsNil)
-	c.Assert(rc.AlreadySpilled(), check.Equals, true)
+	c.Assert(rc.AlreadySpilledSafe(), check.Equals, true)
 	err = rc.Reset()
 	c.Assert(err, check.IsNil)
 }
