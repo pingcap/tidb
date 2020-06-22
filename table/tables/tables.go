@@ -497,6 +497,33 @@ func FindPrimaryIndex(tblInfo *model.TableInfo) *model.IndexInfo {
 	return pkIdx
 }
 
+// TryGetCommonPkColumnIds get the IDs of primary key column if the table has common handle.
+func TryGetCommonPkColumnIds(tbl *model.TableInfo) []int64 {
+	var pkColIds []int64
+	if !tbl.IsCommonHandle {
+		return nil
+	}
+	pkIdx := FindPrimaryIndex(tbl)
+	for _, idxCol := range pkIdx.Columns {
+		pkColIds = append(pkColIds, tbl.Columns[idxCol.Offset].ID)
+	}
+	return pkColIds
+}
+
+// TryGetCommonPkColumns get the primary key columns if the table has common handle.
+func TryGetCommonPkColumns(tbl table.Table) []*table.Column {
+	var pkCols []*table.Column
+	if !tbl.Meta().IsCommonHandle {
+		return nil
+	}
+	pkIdx := FindPrimaryIndex(tbl.Meta())
+	cols := tbl.Cols()
+	for _, idxCol := range pkIdx.Columns {
+		pkCols = append(pkCols, cols[idxCol.Offset])
+	}
+	return pkCols
+}
+
 // AddRecord implements table.Table AddRecord interface.
 func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
 	var opt table.AddRecordOpt
