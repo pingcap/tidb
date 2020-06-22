@@ -1372,9 +1372,15 @@ func (cc *clientConn) prefetchPointPlanKeys(stmts []ast.StmtNode) ([]plannercore
 		return pointPlans, nil
 	}
 	snapshot := txn.GetSnapshot()
-	idxVals, _ := snapshot.BatchGet(context.Background(), idxKeys)
+	idxVals, err1 := snapshot.BatchGet(context.Background(), idxKeys)
+	if err1 != nil {
+		return nil, err1
+	}
 	for idxKey, idxVal := range idxVals {
-		h, _ := tables.DecodeHandleInUniqueIndexValue(idxVal, false)
+		h, err2 := tables.DecodeHandleInUniqueIndexValue(idxVal, false)
+		if err2 != nil {
+			return nil, err2
+		}
 		tblId := tablecodec.DecodeTableID(hack.Slice(idxKey))
 		rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(tblId, h))
 	}
