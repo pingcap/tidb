@@ -164,7 +164,7 @@ func enableParallelApply(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPla
 		_, err := apply.Children()[apply.InnerChildIdx].Clone()
 		supportClone := err == nil // limitation 2
 		if noOrder && supportClone {
-			apply.Concurrency = 4
+			apply.Concurrency = sctx.GetSessionVars().ExecutorConcurrency
 		}
 
 		apply.SetChild(outerIdx, enableParallelApply(sctx, apply.Children()[outerIdx]))

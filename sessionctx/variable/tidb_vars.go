@@ -514,6 +514,7 @@ const (
 	DefTiDBAllowAutoRandExplicitInsert = false
 	DefTiDBEnableClusteredIndex        = false
 	DefTiDBSlowLogMasking              = false
+	DefTiDBEnableParallelApply         = false
 )
 
 // Process global variables.
