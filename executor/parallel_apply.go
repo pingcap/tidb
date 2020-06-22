@@ -63,6 +63,7 @@ type ParallelNestedLoopApplyExec struct {
 	outerRow      []*chunk.Row
 	hasMatch      []bool
 	hasNull       []bool
+	joiners        []joiner
 
 	// fields about concurrency control
 	concurrency int
@@ -79,8 +80,8 @@ type ParallelNestedLoopApplyExec struct {
 	useCache           bool
 	cacheHitCounter    int64
 	cacheAccessCounter int64
+	cacheLock          sync.RWMutex
 
-	joiner     joiner          // it's stateless
 	memTracker *memory.Tracker // track memory usage.
 }
 
@@ -265,7 +266,9 @@ func (e *ParallelNestedLoopApplyExec) fetchAllInners(ctx context.Context, id int
 	}
 	if e.useCache { // look up the cache
 		atomic.AddInt64(&e.cacheAccessCounter, 1)
+		e.cacheLock.RLock()
 		value, err := e.cache.Get(key)
+		e.cacheLock.RUnlock()
 		if err != nil {
 			return err
 		}
@@ -311,6 +314,8 @@ func (e *ParallelNestedLoopApplyExec) fetchAllInners(ctx context.Context, id int
 	}
 
 	if e.useCache { // update the cache
+		e.cacheLock.Lock()
+		defer e.cacheLock.Unlock()
 		if _, err := e.cache.Set(key, e.innerList[id]); err != nil {
 			return err
 		}
@@ -318,7 +323,7 @@ func (e *ParallelNestedLoopApplyExec) fetchAllInners(ctx context.Context, id int
 	return nil
 }
 
-func (e *ParallelNestedLoopApplyExec) fetchNextOuterRow(req *chunk.Chunk) (row *chunk.Row, exit bool) {
+func (e *ParallelNestedLoopApplyExec) fetchNextOuterRow(id int, req *chunk.Chunk) (row *chunk.Row, exit bool) {
 	for {
 		select {
 		case outerRow, ok := <-e.outerRowCh:
@@ -327,7 +332,7 @@ func (e *ParallelNestedLoopApplyExec) fetchNextOuterRow(req *chunk.Chunk) (row *
 			}
 			if !outerRow.selected {
 				if e.outer {
-					e.joiner.onMissMatch(false, *outerRow.row, req)
+					e.joiners[id].onMissMatch(false, *outerRow.row, req)
 					if req.IsFull() {
 						return nil, false
 					}
@@ -346,10 +351,10 @@ func (e *ParallelNestedLoopApplyExec) fillInnerChunk(ctx context.Context, id int
 	for {
 		if e.innerIter[id] == nil || e.innerIter[id].Current() == e.innerIter[id].End() {
 			if e.outerRow[id] != nil && !e.hasMatch[id] {
-				e.joiner.onMissMatch(e.hasNull[id], *e.outerRow[id], req)
+				e.joiners[id].onMissMatch(e.hasNull[id], *e.outerRow[id], req)
 			}
 			var exit bool
-			e.outerRow[id], exit = e.fetchNextOuterRow(req)
+			e.outerRow[id], exit = e.fetchNextOuterRow(id, req)
 			if exit || req.IsFull() || e.outerRow[id] == nil {
 				return nil
 			}
@@ -365,7 +370,7 @@ func (e *ParallelNestedLoopApplyExec) fillInnerChunk(ctx context.Context, id int
 			e.innerIter[id].Begin()
 		}
 
-		matched, isNull, err := e.joiner.tryToMatchInners(*e.outerRow[id], e.innerIter[id], req)
+		matched, isNull, err := e.joiners[id].tryToMatchInners(*e.outerRow[id], e.innerIter[id], req)
 		e.hasMatch[id] = e.hasMatch[id] || matched
 		e.hasNull[id] = e.hasNull[id] || isNull
 

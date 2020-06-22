@@ -1579,6 +1579,7 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) Executor {
 		innerExecs := make([]Executor, 0, v.Concurrency)
 		innerFilters := make([]expression.CNFExprs, 0, v.Concurrency)
 		corCols := make([][]*expression.CorrelatedColumn, 0, v.Concurrency)
+		joiners := make([]joiner, 0, v.Concurrency)
 		for i := 0; i < v.Concurrency; i++ {
 			clonedInnerPlan, err := plannercore.SafeClone(innerPlan)
 			if err != nil {
@@ -1594,9 +1595,12 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) Executor {
 			innerExecs = append(innerExecs, clonedInnerExec)
 			corCols = append(corCols, corCol)
 			innerFilters = append(innerFilters, innerFilter.Clone())
+			joiners[i] = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0,
+				defaultValues, otherConditions, retTypes(leftChild), retTypes(rightChild), nil)
 		}
 
 		allExecs := append([]Executor{outerExec}, innerExecs...)
+
 		return &ParallelNestedLoopApplyExec{
 			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), allExecs...),
 			innerExecs:   innerExecs,
@@ -1604,10 +1608,10 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) Executor {
 			outerFilter:  outerFilter,
 			innerFilter:  innerFilters,
 			outer:        v.JoinType != plannercore.InnerJoin,
-			joiner:       tupleJoiner,
+			joiners:      joiners,
 			corCols:      corCols,
 			concurrency:  v.Concurrency,
-			useCache:     v.CanUseCache,
+			useCache:     true,
 		}
 	}
 	return serialExec
