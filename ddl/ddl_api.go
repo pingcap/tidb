@@ -2850,7 +2850,7 @@ func checkTiFlashReplicaCompatible(source *model.TiFlashReplicaInfo, target *mod
 	}
 	if source != nil && target != nil {
 		if source.Count != target.Count ||
-			source.Available != target.Available {
+			source.Available != target.Available ||  len(source.LocationLabels) != len(target.LocationLabels){
 			return false
 		}
 		if len(source.LocationLabels) == len(target.LocationLabels) {
