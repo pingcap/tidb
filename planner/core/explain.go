@@ -386,6 +386,7 @@ func (p *PhysicalIndexJoin) ExplainNormalizedInfo() string {
 	return p.explainInfo(true)
 }
 
+// ExplainInfo implements Plan interface.
 func (p *PhysicalApply) ExplainInfo() string {
 	buffer := new(bytes.Buffer)
 	if p.CanUseCache {
