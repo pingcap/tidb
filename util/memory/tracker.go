@@ -47,10 +47,6 @@ type Tracker struct {
 	actionMu struct {
 		sync.Mutex
 		actionOnExceed ActionOnExceed
-		// actionDoing indicates whether this tracker is running an oom-action.
-		// 0 indicates no oom-action is doing now and the oom-action can be triggered normally.
-		// 1 indicates an oom-action is doing now and reject triggering repeated.
-		actionDoing uint32
 	}
 	parMu struct {
 		sync.Mutex
@@ -224,14 +220,10 @@ func (t *Tracker) Consume(bytes int64) {
 		}
 	}
 	if bytes > 0 && rootExceed != nil {
-		if !atomic.CompareAndSwapUint32(&rootExceed.actionMu.actionDoing, 0, 1) {
-			return
-		}
 		rootExceed.actionMu.Lock()
 		defer rootExceed.actionMu.Unlock()
-		defer atomic.StoreUint32(&rootExceed.actionMu.actionDoing, 0)
 		if rootExceed.actionMu.actionOnExceed != nil {
-			rootExceed.actionMu.actionOnExceed.Action(rootExceed, t)
+			rootExceed.actionMu.actionOnExceed.Action(rootExceed)
 		}
 	}
 }

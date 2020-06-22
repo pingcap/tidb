@@ -68,7 +68,7 @@ func (s *testSuite) TestIssue16696(c *C) {
 	for i := 0; i < 6; i++ {
 		tk.MustExec("insert into t select * from t")
 	}
-	tk.MustExec("set tidb_mem_quota_query = 3125000;") // 3.125 MB
+	tk.MustExec("set tidb_mem_quota_query = 4125000;") // 4.125 MB
 	rows := tk.MustQuery("explain analyze  select t1.a, t1.a +1 from t t1 join t t2 join t t3 order by t1.a").Rows()
 	for _, row := range rows {
 		length := len(row)

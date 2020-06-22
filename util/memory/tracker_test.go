@@ -121,9 +121,9 @@ type mockAction struct {
 func (a *mockAction) SetLogHook(hook func(uint64)) {
 }
 
-func (a *mockAction) Action(t *Tracker, trigger *Tracker) {
+func (a *mockAction) Action(t *Tracker) {
 	if a.called && a.fallback != nil {
-		a.fallback.Action(t, trigger)
+		a.fallback.Action(t)
 		return
 	}
 	a.called = true

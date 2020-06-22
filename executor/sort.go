@@ -243,6 +243,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		}
 		if err := e.rowChunks.Add(chk); err != nil {
 			if errInsertToPartitionFailed.Equal(err) {
+				e.rowChunks.GetMemTracker().Consume(int64(8 * cap(e.rowChunks.m.rowPtrs)))
 				e.partitionList = append(e.partitionList, e.rowChunks)
 				e.rowChunks = NewSortedRowContainer(fields, e.maxChunkSize, e.ByItems, e.keyColumns, e.keyCmpFuncs)
 				e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
@@ -258,7 +259,8 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		}
 	}
 	if e.rowChunks.NumRow() > 0 {
-		e.rowChunks.initPointerAndSort(true)
+		e.rowChunks.initPointerAndSort()
+		e.rowChunks.GetMemTracker().Consume(int64(8 * cap(e.rowChunks.m.rowPtrs)))
 		e.partitionList = append(e.partitionList, e.rowChunks)
 	}
 	return nil
@@ -570,12 +572,9 @@ func (c *SortedRowContainer) keyColumnsLess(i, j int) bool {
 	return c.lessRow(rowI, rowJ)
 }
 
-func (c *SortedRowContainer) initPointerAndSort(needLock bool) {
-	// In spilling function, it has got the Lock and initPointerAndSort don't need to get lock again.
-	if needLock {
-		c.m.Lock()
-		defer c.m.Unlock()
-	}
+func (c *SortedRowContainer) initPointerAndSort() {
+	c.m.Lock()
+	defer c.m.Unlock()
 	if c.m.rowPtrs != nil {
 		return
 	}
@@ -587,12 +586,11 @@ func (c *SortedRowContainer) initPointerAndSort(needLock bool) {
 		}
 	}
 	sort.Slice(c.m.rowPtrs, c.keyColumnsLess)
-	c.GetMemTracker().Consume(int64(8 * cap(c.m.rowPtrs)))
 }
 
-func (c *SortedRowContainer) sortAndSpillToDisk(triggerIsSelf bool) (err error) {
-	c.initPointerAndSort(!triggerIsSelf)
-	return c.RowContainer.SpillToDisk(triggerIsSelf)
+func (c *SortedRowContainer) sortAndSpillToDisk() (err error) {
+	c.initPointerAndSort()
+	return c.RowContainer.SpillToDisk()
 }
 
 // Add appends a chunk into the SortedRowContainer.
@@ -637,21 +635,21 @@ type SortAndSpillDiskAction struct {
 
 // Action sends a signal to trigger sortAndSpillToDisk method of RowContainer
 // and if it is already triggered before, call its fallbackAction.
-func (a *SortAndSpillDiskAction) Action(t *memory.Tracker, trigger *memory.Tracker) {
+func (a *SortAndSpillDiskAction) Action(t *memory.Tracker) {
 	a.m.Lock()
 	defer a.m.Unlock()
 	if a.c.AlreadySpilledSafe() || a.c.GetMemTracker().BytesConsumed() == 0 {
 		if a.fallbackAction != nil {
-			a.fallbackAction.Action(t, trigger)
+			a.fallbackAction.Action(t)
 		}
 	} else {
 		// TODO: Refine processing various errors. Return or Panic.
 		logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
 			zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
-		err := a.c.sortAndSpillToDisk(a.c.GetMemTracker() == trigger)
-		if err != nil {
-			panic(err)
-		}
+		go func() {
+			err := a.c.sortAndSpillToDisk()
+			a.c.SetSpillError(err)
+		}()
 	}
 }
 

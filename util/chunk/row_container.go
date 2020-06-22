@@ -34,6 +34,8 @@ type RowContainer struct {
 		records *List
 		// recordsInDisk stores the chunks in disk.
 		recordsInDisk *ListInDisk
+		// spillError stores the error when spilling.
+		spillError error
 	}
 
 	fieldType []*types.FieldType
@@ -56,15 +58,12 @@ func NewRowContainer(fieldType []*types.FieldType, chunkSize int) *RowContainer 
 }
 
 // SpillToDisk spills data to disk.
-func (c *RowContainer) SpillToDisk(inReadLock bool) (err error) {
-	// Maybe the function call stack includes RowContainer.Add() and gets lock in that function,
-	// so we don't need to get the lock again.
-	if inReadLock {
-		c.m.RUnlock()
-		defer c.m.RLock()
-	}
+func (c *RowContainer) SpillToDisk() (err error) {
 	c.m.Lock()
 	defer c.m.Unlock()
+	if c.AlreadySpilled() {
+		return nil
+	}
 	N := c.m.records.NumChunks()
 	c.m.recordsInDisk = NewListInDisk(c.m.records.FieldTypes())
 	c.m.recordsInDisk.diskTracker.AttachTo(c.diskTracker)
@@ -105,6 +104,20 @@ func (c *RowContainer) AlreadySpilledSafe() bool {
 	c.m.RLock()
 	defer c.m.RUnlock()
 	return c.m.recordsInDisk != nil
+}
+
+// SetSpillError sets the error when spilling.
+func (c *RowContainer) SetSpillError(err error) {
+	c.m.Lock()
+	defer c.m.Unlock()
+	c.m.spillError = err
+}
+
+// GetSpillError gets the error when spilling.
+func (c *RowContainer) GetSpillError() error {
+	c.m.RLock()
+	defer c.m.RUnlock()
+	return c.m.spillError
 }
 
 // NumRow returns the number of rows in the container
@@ -219,21 +232,21 @@ type SpillDiskAction struct {
 
 // Action sends a signal to trigger spillToDisk method of RowContainer
 // and if it is already triggered before, call its fallbackAction.
-func (a *SpillDiskAction) Action(t *memory.Tracker, trigger *memory.Tracker) {
+func (a *SpillDiskAction) Action(t *memory.Tracker) {
 	a.m.Lock()
 	defer a.m.Unlock()
 	if a.c.AlreadySpilledSafe() {
 		if a.fallbackAction != nil {
-			a.fallbackAction.Action(t, trigger)
+			a.fallbackAction.Action(t)
 		}
 	} else {
 		// TODO: Refine processing for various errors. Return or Panic.
 		logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
 			zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
-		err := a.c.SpillToDisk(a.c.GetMemTracker() == trigger)
-		if err != nil {
-			panic(err)
-		}
+		go func() {
+			err := a.c.SpillToDisk()
+			a.c.SetSpillError(err)
+		}()
 	}
 }
 
