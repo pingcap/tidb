@@ -737,7 +737,7 @@ func NewSessionVars() *SessionVars {
 		AllowAutoRandExplicitInsert: DefTiDBAllowAutoRandExplicitInsert,
 		EnableClusteredIndex:        DefTiDBEnableClusteredIndex,
 		EnableSlowLogMasking:        DefTiDBSlowLogMasking,
-		EnableParallelApply:         DefTiDBEnableNoopFuncs,
+		EnableParallelApply:         DefTiDBEnableParallelApply,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{

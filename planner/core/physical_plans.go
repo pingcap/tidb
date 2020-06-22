@@ -16,6 +16,7 @@ package core
 import (
 	"unsafe"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
@@ -1124,4 +1125,14 @@ func BuildMergeJoinPlan(ctx sessionctx.Context, joinType JoinType, leftKeys, rig
 		RightJoinKeys: rightKeys,
 	}
 	return PhysicalMergeJoin{basePhysicalJoin: baseJoin}.Init(ctx, nil, 0)
+}
+
+// SafeClone clones this PhysicalPlan and handles its panic.
+func SafeClone(v PhysicalPlan) (_ PhysicalPlan, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = errors.Errorf("%v", r)
+		}
+	}()
+	return v.Clone()
 }

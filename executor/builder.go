@@ -1526,15 +1526,6 @@ func (b *executorBuilder) buildTopN(v *plannercore.PhysicalTopN) Executor {
 	}
 }
 
-func (b *executorBuilder) safeClone(v plannercore.PhysicalPlan) (_ plannercore.PhysicalPlan, err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			err = errors.Errorf("%v", r)
-		}
-	}()
-	return v.Clone()
-}
-
 func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) Executor {
 	var (
 		innerPlan plannercore.PhysicalPlan
@@ -1589,7 +1580,7 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) Executor {
 		innerFilters := make([]expression.CNFExprs, 0, v.Concurrency)
 		corCols := make([][]*expression.CorrelatedColumn, 0, v.Concurrency)
 		for i := 0; i < v.Concurrency; i++ {
-			clonedInnerPlan, err := innerPlan.Clone()
+			clonedInnerPlan, err := plannercore.SafeClone(innerPlan)
 			if err != nil {
 				b.err = nil
 				return serialExec
