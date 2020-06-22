@@ -36,7 +36,7 @@ type testStoreSuite struct {
 	testStoreSuiteBase
 }
 
-type testStoreFailedSuite struct {
+type testStoreSerialSuite struct {
 	testStoreSuiteBase
 }
 
@@ -46,7 +46,7 @@ type testStoreSuiteBase struct {
 }
 
 var _ = Suite(&testStoreSuite{})
-var _ = SerialSuites(&testStoreFailedSuite{})
+var _ = SerialSuites(&testStoreSerialSuite{})
 
 func (s *testStoreSuiteBase) SetUpTest(c *C) {
 	s.store = NewTestStore(c).(*tikvStore)
@@ -280,7 +280,7 @@ func (s *testStoreSuite) TestRequestPriority(c *C) {
 	iter.Close()
 }
 
-func (s *testStoreSuite) TestOracleChangeByFailpoint(c *C) {
+func (s *testStoreSerialSuite) TestOracleChangeByFailpoint(c *C) {
 	defer func() {
 		failpoint.Disable("github.com/pingcap/tidb/store/tikv/oracle/changeTSFromPD")
 	}()
