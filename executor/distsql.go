@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -877,7 +877,7 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 					vals = append(vals, row.GetDatum(i, &col.FieldType))
 				}
 			}
-			vals = tables.TruncateIndexValuesIfNeeded(tblInfo, w.idxLookup.index, vals)
+			vals = tablecodec.TruncateIndexValuesIfNeeded(tblInfo, w.idxLookup.index, vals)
 			for i, val := range vals {
 				col := w.idxTblCols[i]
 				tp := &col.FieldType
