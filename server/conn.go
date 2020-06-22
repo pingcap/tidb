@@ -1342,6 +1342,7 @@ func (cc *clientConn) prefetchPointPlanKeys(stmts []ast.StmtNode) ([]plannercore
 	is := domain.GetDomain(cc.ctx).InfoSchema()
 	sc := vars.StmtCtx
 	for i, stmt := range stmts {
+		// TODO: the preprocess is run twice, we should find some way to avoid do it again.
 		if err = plannercore.Preprocess(cc.ctx, stmt, is); err != nil {
 			return nil, err
 		}

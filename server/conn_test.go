@@ -492,30 +492,23 @@ func (ts *ConnTestSuite) TestPrefetchPointKeys(c *C) {
 			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
 		},
 	}
-	se, err := session.CreateSession4Test(ts.store)
-
-	c.Assert(err, IsNil)
-	cc.ctx = &TiDBContext{Session: se}
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	cc.ctx = &TiDBContext{Session: tk.Se}
 	ctx := context.Background()
-	_, err = se.Execute(ctx, "use test")
-	c.Assert(err, IsNil)
-	_, err = se.Execute(ctx, "create table prefetch (a int, b int, c int, primary key (a, b))")
-	c.Assert(err, IsNil)
-	_, err = se.Execute(ctx, "insert prefetch values (1, 1, 1), (2, 2, 2), (3, 3, 3)")
-	c.Assert(err, IsNil)
-	_, err = se.Execute(ctx, "begin")
-	c.Assert(err, IsNil)
-
+	tk.MustExec("create table prefetch (a int, b int, c int, primary key (a, b))")
+	tk.MustExec("insert prefetch values (1, 1, 1), (2, 2, 2), (3, 3, 3)")
+	tk.MustExec("begin optimistic")
+	tk.MustExec("update prefetch set c = c + 1 where a = 2 and b = 2")
 	query := "update prefetch set c = c + 1 where a = 1 and b = 1;" +
 		"update prefetch set c = c + 1 where a = 2 and b = 2;" +
 		"update prefetch set c = c + 1 where a = 3 and b = 3;"
-	err = cc.handleQuery(ctx, query)
+	err := cc.handleQuery(ctx, query)
 	c.Assert(err, IsNil)
-	txn, err := se.Txn(false)
+	txn, err := tk.Se.Txn(false)
 	c.Assert(err, IsNil)
 	c.Assert(txn.Valid(), IsTrue)
 	snap := txn.GetSnapshot()
-	c.Assert(tikv.SnapCacheHitCount(snap), Equals, 6)
-	_, err = se.Execute(ctx, "commit")
-	c.Assert(err, IsNil)
+	c.Assert(tikv.SnapCacheHitCount(snap), Equals, 4)
+	tk.MustExec("commit")
+	tk.MustQuery("select * from prefetch").Check(testkit.Rows("1 1 2", "2 2 4", "3 3 4"))
 }
