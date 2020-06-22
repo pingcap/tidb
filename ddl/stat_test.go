@@ -25,6 +25,7 @@ import (
 )
 
 var _ = Suite(&testStatSuite{})
+var _ = SerialSuites(&testSerialStatSuite{})
 
 type testStatSuite struct {
 }
@@ -33,6 +34,9 @@ func (s *testStatSuite) SetUpSuite(c *C) {
 }
 
 func (s *testStatSuite) TearDownSuite(c *C) {
+}
+
+type testSerialStatSuite struct {
 }
 
 func (s *testStatSuite) getDDLSchemaVer(c *C, d *ddl) int64 {
@@ -97,7 +101,7 @@ LOOP:
 	}
 }
 
-func (s *testDDLSerialSuite) TestDDLStatsInfo(c *C) {
+func (s *testSerialStatSuite) TestDDLStatsInfo(c *C) {
 	store := testCreateStore(c, "test_stat")
 	defer store.Close()
 
