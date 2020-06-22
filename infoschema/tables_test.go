@@ -814,13 +814,13 @@ func (s *testClusterTableSuite) TestSelectClusterTablePrivelege(c *C) {
 	c.Assert(err, IsNil)
 	_, err = f.Write([]byte(
 		`# Time: 2019-02-12T19:33:57.571953+08:00
-# User: user2@127.0.0.1
+# User@Host: user2 [user2] @ 127.0.0.1 [127.0.0.1]
 select * from t2;
 # Time: 2019-02-12T19:33:56.571953+08:00
-# User: user1@127.0.0.1
+# User@Host: user1 [user1] @ 127.0.0.1 [127.0.0.1]
 select * from t1;
 # Time: 2019-02-12T19:33:58.571953+08:00
-# User: user2@127.0.0.1
+# User@Host: user2 [user2] @ 127.0.0.1 [127.0.0.1]
 select * from t3;
 # Time: 2019-02-12T19:33:59.571953+08:00
 select * from t3;
