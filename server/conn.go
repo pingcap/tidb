@@ -1325,14 +1325,15 @@ func (cc *clientConn) prefetchPointPlanKeys(stmts []ast.StmtNode) ([]plannercore
 		return nil, err
 	}
 	if !txn.Valid() {
-		// Only build in-transaction query for simplicity.
+		// Only prefetch in-transaction query for simplicity.
 		// Later we can support out-transaction multi-statement query.
 		return nil, nil
 	}
 	vars := cc.ctx.GetSessionVars()
-	if vars.TxnCtx.IsPessimistic && vars.TxnCtx.Isolation == ast.ReadCommitted {
-		// ReadCommitted isolation update ForUpdateTS for every statement, the snapshot cache would be invalidated.
-		// Later we can support it by avoid update ForUpdateTS for multi-statement query.
+	if vars.TxnCtx.IsPessimistic {
+		// Pessimistic transaction do not benefit from the prefetch because the keys will be returned by Lock,
+		// we can get the keys from the lock cache.
+		// TODO: In the future we can support pre lock point keys for pessimistic transactions.
 		return nil, nil
 	}
 	pointPlans := make([]plannercore.Plan, len(stmts))
@@ -1381,8 +1382,8 @@ func (cc *clientConn) prefetchPointPlanKeys(stmts []ast.StmtNode) ([]plannercore
 		if err2 != nil {
 			return nil, err2
 		}
-		tblId := tablecodec.DecodeTableID(hack.Slice(idxKey))
-		rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(tblId, h))
+		tblID := tablecodec.DecodeTableID(hack.Slice(idxKey))
+		rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(tblID, h))
 	}
 	_, err = snapshot.BatchGet(context.Background(), rowKeys)
 	if err != nil {
