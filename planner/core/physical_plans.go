@@ -680,7 +680,7 @@ func NewPhysicalHashJoin(p *LogicalJoin, innerIdx int, useOuterToBuild bool, new
 	hashJoin := PhysicalHashJoin{
 		basePhysicalJoin: baseJoin,
 		EqualConditions:  p.EqualConditions,
-		Concurrency:      uint(p.ctx.GetSessionVars().HashJoinConcurrency),
+		Concurrency:      uint(p.ctx.GetSessionVars().HashJoinConcurrency()),
 		UseOuterToBuild:  useOuterToBuild,
 	}.Init(p.ctx, newStats, p.blockOffset, prop...)
 	return hashJoin

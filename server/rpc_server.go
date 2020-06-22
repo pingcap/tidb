@@ -204,8 +204,8 @@ func (s *rpcServer) createSession() (session.Session, error) {
 	se.GetSessionVars().TxnCtx.InfoSchema = is
 	// This is for disable parallel hash agg.
 	// TODO: remove this.
-	se.GetSessionVars().HashAggPartialConcurrency = 1
-	se.GetSessionVars().HashAggFinalConcurrency = 1
+	se.GetSessionVars().SetHashAggPartialConcurrency(1)
+	se.GetSessionVars().SetHashAggFinalConcurrency(1)
 	se.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(stringutil.StringerStr("coprocessor"), -1)
 	se.SetSessionManager(s.sm)
 	return se, nil
