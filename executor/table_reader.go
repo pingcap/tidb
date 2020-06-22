@@ -113,7 +113,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 			e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionExceed)
 		default:
 			// If the origin originalAction is not above, TableReader's Action won't cover it.
-			logutil.Event(ctx,"table scan oom action won't cover any other action except log and cancel" )
+			logutil.Event(ctx, "table scan oom action won't cover any other action except log and cancel")
 		}
 	}
 
