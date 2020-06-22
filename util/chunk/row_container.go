@@ -360,8 +360,8 @@ func (c *SortedRowContainer) lessRow(rowI, rowJ Row) bool {
 
 // keyColumnsLess is the less function for key columns.
 func (c *SortedRowContainer) keyColumnsLess(i, j int) bool {
-	rowI := c.GetList().GetRow(c.M.RowPtrs[i])
-	rowJ := c.GetList().GetRow(c.M.RowPtrs[j])
+	rowI := c.m.records.GetRow(c.M.RowPtrs[i])
+	rowJ := c.m.records.GetRow(c.M.RowPtrs[j])
 	return c.lessRow(rowI, rowJ)
 }
 

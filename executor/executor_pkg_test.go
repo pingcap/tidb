@@ -342,6 +342,7 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 		}
 	}
 	// Test only 1 partition but spill disk.
+	time.Sleep(200 * time.Millisecond)
 	c.Assert(len(exec.partitionList), Equals, 1)
 	c.Assert(exec.partitionList[0].AlreadySpilledSafe(), Equals, true)
 	c.Assert(exec.partitionList[0].NumRow(), Equals, 2048)
