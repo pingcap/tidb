@@ -123,6 +123,19 @@ func (r *RegionStore) accessStoreNum(mode AccessMode) int {
 	return len(r.accessIndex[mode])
 }
 
+func (r *RegionStore) accessStoreByID(mode AccessMode, storeID uint64) (storeIdx int, accessIdx AccessIndex, store *Store) {
+	for aidx, sidx := range r.accessIndex[mode] {
+		s := r.stores[sidx]
+		if s.storeID == storeID {
+			storeIdx = sidx
+			store = s
+			accessIdx = AccessIndex(aidx)
+			return
+		}
+	}
+	return
+}
+
 // clone clones region store struct.
 func (r *RegionStore) clone() *RegionStore {
 	storeEpochs := make([]uint32, len(r.stores))
@@ -341,7 +354,6 @@ type RPCContext struct {
 	Region     RegionVerID
 	Meta       *metapb.Region
 	Peer       *metapb.Peer
-	AccessIdx  AccessIndex
 	Store      *Store
 	Addr       string
 	AccessMode AccessMode
@@ -352,8 +364,8 @@ func (c *RPCContext) String() string {
 	if c.Store != nil {
 		runStoreType = c.Store.storeType.Name()
 	}
-	return fmt.Sprintf("region ID: %d, meta: %s, peer: %s, addr: %s, idx: %d, reqStoreType: %s, runStoreType: %s",
-		c.Region.GetID(), c.Meta, c.Peer, c.Addr, c.AccessIdx, c.AccessMode, runStoreType)
+	return fmt.Sprintf("region ID: %d, meta: %s, peer: %s, addr: %s, reqStoreType: %s, runStoreType: %s",
+		c.Region.GetID(), c.Meta, c.Peer, c.Addr, c.AccessMode, runStoreType)
 }
 
 // GetTiKVRPCContext returns RPCContext for a region. If it returns nil, the region
@@ -372,18 +384,17 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 
 	regionStore := cachedRegion.getStore()
 	var (
-		store     *Store
-		peer      *metapb.Peer
-		storeIdx  int
-		accessIdx AccessIndex
+		store    *Store
+		peer     *metapb.Peer
+		storeIdx int
 	)
 	switch replicaRead {
 	case kv.ReplicaReadFollower:
-		store, peer, accessIdx, storeIdx = cachedRegion.FollowerStorePeer(regionStore, followerStoreSeed)
+		store, peer, storeIdx = cachedRegion.FollowerStorePeer(regionStore, followerStoreSeed)
 	case kv.ReplicaReadMixed:
-		store, peer, accessIdx, storeIdx = cachedRegion.AnyStorePeer(regionStore, followerStoreSeed)
+		store, peer, storeIdx = cachedRegion.AnyStorePeer(regionStore, followerStoreSeed)
 	default:
-		store, peer, accessIdx, storeIdx = cachedRegion.WorkStorePeer(regionStore)
+		store, peer, storeIdx = cachedRegion.WorkStorePeer(regionStore)
 	}
 	addr, err := c.getStoreAddr(bo, cachedRegion, store, storeIdx)
 	if err != nil {
@@ -414,7 +425,6 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 		Region:     id,
 		Meta:       cachedRegion.meta,
 		Peer:       peer,
-		AccessIdx:  accessIdx,
 		Store:      store,
 		Addr:       addr,
 		AccessMode: TiKvOnly,
@@ -466,7 +476,6 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID) (*RPCC
 			Region:     id,
 			Meta:       cachedRegion.meta,
 			Peer:       peer,
-			AccessIdx:  accessIdx,
 			Store:      store,
 			Addr:       addr,
 			AccessMode: TiFlashOnly,
@@ -555,32 +564,36 @@ func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload 
 	r := c.getCachedRegionWithRLock(ctx.Region)
 	if r != nil {
 		rs := r.getStore()
-		if err != nil {
-			storeIdx, s := rs.accessStore(ctx.AccessMode, ctx.AccessIdx)
-			followerRead := rs.workTiKVIdx != ctx.AccessIdx
+		storeIdx, accessIdx, s := rs.accessStoreByID(ctx.AccessMode, ctx.Peer.StoreId)
+		if s != nil {
+			if err != nil {
+				followerRead := rs.workTiKVIdx != accessIdx
 
-			// send fail but store is reachable, keep retry current peer for replica leader request.
-			// but we still need switch peer for follower-read or learner-read(i.e. tiflash)
-			if ctx.Store.storeType == kv.TiKV && !followerRead && s.requestLiveness(bo) == reachable {
-				return
+				// send fail but store is reachable, keep retry current peer for replica leader request.
+				// but we still need switch peer for follower-read or learner-read(i.e. tiflash)
+				if ctx.Store.storeType == kv.TiKV && !followerRead && s.requestLiveness(bo) == reachable {
+					return
+				}
+
+				// invalidate regions in store.
+				epoch := rs.storeEpochs[storeIdx]
+				if atomic.CompareAndSwapUint32(&s.epoch, epoch, epoch+1) {
+					logutil.BgLogger().Info("mark store's regions need be refill", zap.String("store", s.addr))
+					tikvRegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
+				}
+
+				// schedule a store addr resolve.
+				s.markNeedCheck(c.notifyCheckCh)
 			}
 
-			// invalidate regions in store.
-			epoch := rs.storeEpochs[storeIdx]
-			if atomic.CompareAndSwapUint32(&s.epoch, epoch, epoch+1) {
-				logutil.BgLogger().Info("mark store's regions need be refill", zap.String("store", s.addr))
-				tikvRegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
+			// try next peer to found new leader.
+			if ctx.AccessMode == TiKvOnly {
+				rs.switchNextTiKVPeer(r, accessIdx)
+			} else {
+				rs.switchNextFlashPeer(r, accessIdx)
 			}
-
-			// schedule a store addr resolve.
-			s.markNeedCheck(c.notifyCheckCh)
-		}
-
-		// try next peer to found new leader.
-		if ctx.AccessMode == TiKvOnly {
-			rs.switchNextTiKVPeer(r, ctx.AccessIdx)
 		} else {
-			rs.switchNextFlashPeer(r, ctx.AccessIdx)
+			scheduleReload = true
 		}
 
 		// force reload region when retry all known peers in region.
@@ -782,7 +795,7 @@ func (c *RegionCache) InvalidateCachedRegion(id RegionVerID) {
 }
 
 // UpdateLeader update some region cache with newer leader info.
-func (c *RegionCache) UpdateLeader(regionID RegionVerID, leaderStoreID uint64, currentPeerIdx AccessIndex) {
+func (c *RegionCache) UpdateLeader(regionID RegionVerID, leaderStoreID uint64, currentStoreID uint64) {
 	r := c.getCachedRegionWithRLock(regionID)
 	if r == nil {
 		logutil.BgLogger().Debug("regionCache: cannot find region when updating leader",
@@ -793,9 +806,16 @@ func (c *RegionCache) UpdateLeader(regionID RegionVerID, leaderStoreID uint64, c
 
 	if leaderStoreID == 0 {
 		rs := r.getStore()
-		rs.switchNextTiKVPeer(r, currentPeerIdx)
+		_, accessIdx, s := rs.accessStoreByID(TiKvOnly, currentStoreID)
+		if s == nil {
+			logutil.BgLogger().Info("switch region peer to next due to NotLeader with NULL leader, but store no long in peers list, maybe caused by region changed",
+				zap.Int("currStore", int(currentStoreID)),
+				zap.Uint64("regionID", regionID.GetID()))
+			return
+		}
+		rs.switchNextTiKVPeer(r, accessIdx)
 		logutil.BgLogger().Info("switch region peer to next due to NotLeader with NULL leader",
-			zap.Int("currIdx", int(currentPeerIdx)),
+			zap.Int("currStore", int(currentStoreID)),
 			zap.Uint64("regionID", regionID.GetID()))
 		return
 	}
@@ -803,13 +823,13 @@ func (c *RegionCache) UpdateLeader(regionID RegionVerID, leaderStoreID uint64, c
 	if !c.switchWorkLeaderToPeer(r, leaderStoreID) {
 		logutil.BgLogger().Info("invalidate region cache due to cannot find peer when updating leader",
 			zap.Uint64("regionID", regionID.GetID()),
-			zap.Int("currIdx", int(currentPeerIdx)),
+			zap.Int("currStore", int(currentStoreID)),
 			zap.Uint64("leaderStoreID", leaderStoreID))
 		r.invalidate()
 	} else {
 		logutil.BgLogger().Info("switch region leader to specific leader due to kv return NotLeader",
 			zap.Uint64("regionID", regionID.GetID()),
-			zap.Int("currIdx", int(currentPeerIdx)),
+			zap.Int("currStore", int(currentStoreID)),
 			zap.Uint64("leaderStoreID", leaderStoreID))
 	}
 }
@@ -1231,25 +1251,24 @@ func (r *Region) GetLeaderStoreID() uint64 {
 	return r.meta.Peers[storeIdx].StoreId
 }
 
-func (r *Region) getKvStorePeer(rs *RegionStore, aidx AccessIndex) (store *Store, peer *metapb.Peer, accessIdx AccessIndex, storeIdx int) {
+func (r *Region) getKvStorePeer(rs *RegionStore, aidx AccessIndex) (store *Store, peer *metapb.Peer, storeIdx int) {
 	storeIdx, store = rs.accessStore(TiKvOnly, aidx)
 	peer = r.meta.Peers[storeIdx]
-	accessIdx = aidx
 	return
 }
 
 // WorkStorePeer returns current work store with work peer.
-func (r *Region) WorkStorePeer(rs *RegionStore) (store *Store, peer *metapb.Peer, accessIdx AccessIndex, storeIdx int) {
+func (r *Region) WorkStorePeer(rs *RegionStore) (store *Store, peer *metapb.Peer, storeIdx int) {
 	return r.getKvStorePeer(rs, rs.workTiKVIdx)
 }
 
 // FollowerStorePeer returns a follower store with follower peer.
-func (r *Region) FollowerStorePeer(rs *RegionStore, followerStoreSeed uint32) (store *Store, peer *metapb.Peer, accessIdx AccessIndex, storeIdx int) {
+func (r *Region) FollowerStorePeer(rs *RegionStore, followerStoreSeed uint32) (store *Store, peer *metapb.Peer, storeIdx int) {
 	return r.getKvStorePeer(rs, rs.follower(followerStoreSeed))
 }
 
 // AnyStorePeer returns a leader or follower store with the associated peer.
-func (r *Region) AnyStorePeer(rs *RegionStore, followerStoreSeed uint32) (store *Store, peer *metapb.Peer, accessIdx AccessIndex, storeIdx int) {
+func (r *Region) AnyStorePeer(rs *RegionStore, followerStoreSeed uint32) (store *Store, peer *metapb.Peer, storeIdx int) {
 	return r.getKvStorePeer(rs, rs.kvPeer(followerStoreSeed))
 }
 
