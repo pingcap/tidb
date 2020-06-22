@@ -737,15 +737,16 @@ func NewSessionVars() *SessionVars {
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
-		IndexLookupConcurrency:     DefIndexLookupConcurrency,
-		IndexSerialScanConcurrency: DefIndexSerialScanConcurrency,
-		IndexLookupJoinConcurrency: DefIndexLookupJoinConcurrency,
-		HashJoinConcurrency:        DefTiDBHashJoinConcurrency,
-		ProjectionConcurrency:      DefTiDBProjectionConcurrency,
-		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
-		HashAggPartialConcurrency:  DefTiDBHashAggPartialConcurrency,
-		HashAggFinalConcurrency:    DefTiDBHashAggFinalConcurrency,
-		WindowConcurrency:          DefTiDBWindowConcurrency,
+		indexLookupConcurrency:     DefIndexLookupConcurrency,
+		indexSerialScanConcurrency: DefIndexSerialScanConcurrency,
+		indexLookupJoinConcurrency: DefIndexLookupJoinConcurrency,
+		hashJoinConcurrency:        DefTiDBHashJoinConcurrency,
+		projectionConcurrency:      DefTiDBProjectionConcurrency,
+		distSQLScanConcurrency:     DefDistSQLScanConcurrency,
+		hashAggPartialConcurrency:  DefTiDBHashAggPartialConcurrency,
+		hashAggFinalConcurrency:    DefTiDBHashAggFinalConcurrency,
+		windowConcurrency:          DefTiDBWindowConcurrency,
+		ExecutorConcurrency:        DefExecutorConcurrency,
 	}
 	vars.MemQuota = MemQuota{
 		MemQuotaQuery:               config.GetGlobalConfig().MemQuotaQuery,
@@ -1141,9 +1142,11 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBOptConcurrencyFactor:
 		s.ConcurrencyFactor = tidbOptFloat64(val, DefOptConcurrencyFactor)
 	case TiDBIndexLookupConcurrency:
-		s.IndexLookupConcurrency = tidbOptPositiveInt32(val, DefIndexLookupConcurrency)
+		s.indexLookupConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
+		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
 	case TiDBIndexLookupJoinConcurrency:
-		s.IndexLookupJoinConcurrency = tidbOptPositiveInt32(val, DefIndexLookupJoinConcurrency)
+		s.indexLookupJoinConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
+		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
 	case TiDBIndexJoinBatchSize:
 		s.IndexJoinBatchSize = tidbOptPositiveInt32(val, DefIndexJoinBatchSize)
 	case TiDBAllowBatchCop:
@@ -1151,19 +1154,25 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBIndexLookupSize:
 		s.IndexLookupSize = tidbOptPositiveInt32(val, DefIndexLookupSize)
 	case TiDBHashJoinConcurrency:
-		s.HashJoinConcurrency = tidbOptPositiveInt32(val, DefTiDBHashJoinConcurrency)
+		s.hashJoinConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
 	case TiDBProjectionConcurrency:
-		s.ProjectionConcurrency = tidbOptInt64(val, DefTiDBProjectionConcurrency)
+		s.projectionConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
+		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
 	case TiDBHashAggPartialConcurrency:
-		s.HashAggPartialConcurrency = tidbOptPositiveInt32(val, DefTiDBHashAggPartialConcurrency)
+		s.hashAggPartialConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
+		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
 	case TiDBHashAggFinalConcurrency:
-		s.HashAggFinalConcurrency = tidbOptPositiveInt32(val, DefTiDBHashAggFinalConcurrency)
+		s.hashAggFinalConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
+		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
 	case TiDBWindowConcurrency:
-		s.WindowConcurrency = tidbOptPositiveInt32(val, DefTiDBWindowConcurrency)
+		s.windowConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
+		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
 	case TiDBDistSQLScanConcurrency:
-		s.DistSQLScanConcurrency = tidbOptPositiveInt32(val, DefDistSQLScanConcurrency)
+		s.distSQLScanConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
 	case TiDBIndexSerialScanConcurrency:
-		s.IndexSerialScanConcurrency = tidbOptPositiveInt32(val, DefIndexSerialScanConcurrency)
+		s.indexSerialScanConcurrency = tidbOptPositiveInt32(val, DefIndexSerialScanConcurrency)
+	case TiDBExecutorConcurrency:
+		s.ExecutorConcurrency = tidbOptPositiveInt32(val, DefExecutorConcurrency)
 	case TiDBBackoffLockFast:
 		s.KVVars.BackoffLockFast = tidbOptPositiveInt32(val, kv.DefBackoffLockFast)
 	case TiDBBackOffWeight:
@@ -1435,34 +1444,163 @@ type TableDelta struct {
 	InitTime time.Time // InitTime is the time that this delta is generated.
 }
 
+// ConcurrencyUnset means the value the of the concurrency related variable is unset.
+const ConcurrencyUnset = -1
+
 // Concurrency defines concurrency values.
 type Concurrency struct {
-	// IndexLookupConcurrency is the number of concurrent index lookup worker.
-	IndexLookupConcurrency int
+	// indexLookupConcurrency is the number of concurrent index lookup worker.
+	// indexLookupConcurrency is deprecated, use ExecutorConcurrency instead.
+	indexLookupConcurrency int
 
-	// IndexLookupJoinConcurrency is the number of concurrent index lookup join inner worker.
-	IndexLookupJoinConcurrency int
+	// indexLookupJoinConcurrency is the number of concurrent index lookup join inner worker.
+	// indexLookupJoinConcurrency is deprecated, use ExecutorConcurrency instead.
+	indexLookupJoinConcurrency int
 
-	// DistSQLScanConcurrency is the number of concurrent dist SQL scan worker.
-	DistSQLScanConcurrency int
+	// distSQLScanConcurrency is the number of concurrent dist SQL scan worker.
+	// distSQLScanConcurrency is deprecated, use ExecutorConcurrency instead.
+	distSQLScanConcurrency int
 
-	// HashJoinConcurrency is the number of concurrent hash join outer worker.
-	HashJoinConcurrency int
+	// hashJoinConcurrency is the number of concurrent hash join outer worker.
+	// hashJoinConcurrency is deprecated, use ExecutorConcurrency instead.
+	hashJoinConcurrency int
 
-	// ProjectionConcurrency is the number of concurrent projection worker.
-	ProjectionConcurrency int64
+	// projectionConcurrency is the number of concurrent projection worker.
+	// projectionConcurrency is deprecated, use ExecutorConcurrency instead.
+	projectionConcurrency int
 
-	// HashAggPartialConcurrency is the number of concurrent hash aggregation partial worker.
-	HashAggPartialConcurrency int
+	// hashAggPartialConcurrency is the number of concurrent hash aggregation partial worker.
+	// hashAggPartialConcurrency is deprecated, use ExecutorConcurrency instead.
+	hashAggPartialConcurrency int
 
-	// HashAggFinalConcurrency is the number of concurrent hash aggregation final worker.
-	HashAggFinalConcurrency int
+	// hashAggFinalConcurrency is the number of concurrent hash aggregation final worker.
+	// hashAggFinalConcurrency is deprecated, use ExecutorConcurrency instead.
+	hashAggFinalConcurrency int
 
-	// WindowConcurrency is the number of concurrent window worker.
-	WindowConcurrency int
+	// windowConcurrency is the number of concurrent window worker.
+	// windowConcurrency is deprecated, use ExecutorConcurrency instead.
+	windowConcurrency int
 
-	// IndexSerialScanConcurrency is the number of concurrent index serial scan worker.
-	IndexSerialScanConcurrency int
+	// indexSerialScanConcurrency is the number of concurrent index serial scan worker.
+	indexSerialScanConcurrency int
+
+	// ExecutorConcurrency is the number of concurrent worker for all executors.
+	ExecutorConcurrency int
+}
+
+// SetIndexLookupConcurrency set the number of concurrent index lookup worker.
+func (c *Concurrency) SetIndexLookupConcurrency(n int) {
+	c.indexLookupConcurrency = n
+}
+
+// SetIndexLookupJoinConcurrency set the number of concurrent index lookup join inner worker.
+func (c *Concurrency) SetIndexLookupJoinConcurrency(n int) {
+	c.indexLookupJoinConcurrency = n
+}
+
+// SetDistSQLScanConcurrency set the number of concurrent dist SQL scan worker.
+func (c *Concurrency) SetDistSQLScanConcurrency(n int) {
+	c.distSQLScanConcurrency = n
+}
+
+// SetHashJoinConcurrency set the number of concurrent hash join outer worker.
+func (c *Concurrency) SetHashJoinConcurrency(n int) {
+	c.hashJoinConcurrency = n
+}
+
+// SetProjectionConcurrency set the number of concurrent projection worker.
+func (c *Concurrency) SetProjectionConcurrency(n int) {
+	c.projectionConcurrency = n
+}
+
+// SetHashAggPartialConcurrency set the number of concurrent hash aggregation partial worker.
+func (c *Concurrency) SetHashAggPartialConcurrency(n int) {
+	c.hashAggPartialConcurrency = n
+}
+
+// SetHashAggFinalConcurrency set the number of concurrent hash aggregation final worker.
+func (c *Concurrency) SetHashAggFinalConcurrency(n int) {
+	c.hashAggFinalConcurrency = n
+}
+
+// SetWindowConcurrency set the number of concurrent window worker.
+func (c *Concurrency) SetWindowConcurrency(n int) {
+	c.windowConcurrency = n
+}
+
+// SetIndexSerialScanConcurrency set the number of concurrent index serial scan worker.
+func (c *Concurrency) SetIndexSerialScanConcurrency(n int) {
+	c.indexSerialScanConcurrency = n
+}
+
+// IndexLookupConcurrency return the number of concurrent index lookup worker.
+func (c *Concurrency) IndexLookupConcurrency() int {
+	if c.indexLookupConcurrency != ConcurrencyUnset {
+		return c.indexLookupConcurrency
+	}
+	return c.ExecutorConcurrency
+}
+
+// IndexLookupJoinConcurrency return the number of concurrent index lookup join inner worker.
+func (c *Concurrency) IndexLookupJoinConcurrency() int {
+	if c.indexLookupJoinConcurrency != ConcurrencyUnset {
+		return c.indexLookupJoinConcurrency
+	}
+	return c.ExecutorConcurrency
+}
+
+// DistSQLScanConcurrency return the number of concurrent dist SQL scan worker.
+func (c *Concurrency) DistSQLScanConcurrency() int {
+	if c.distSQLScanConcurrency != ConcurrencyUnset {
+		return c.distSQLScanConcurrency
+	}
+	return c.ExecutorConcurrency
+}
+
+// HashJoinConcurrency return the number of concurrent hash join outer worker.
+func (c *Concurrency) HashJoinConcurrency() int {
+	if c.hashJoinConcurrency != ConcurrencyUnset {
+		return c.hashJoinConcurrency
+	}
+	return c.ExecutorConcurrency
+}
+
+// ProjectionConcurrency return the number of concurrent projection worker.
+func (c *Concurrency) ProjectionConcurrency() int {
+	if c.projectionConcurrency != ConcurrencyUnset {
+		return c.projectionConcurrency
+	}
+	return c.ExecutorConcurrency
+}
+
+// HashAggPartialConcurrency return the number of concurrent hash aggregation partial worker.
+func (c *Concurrency) HashAggPartialConcurrency() int {
+	if c.hashAggPartialConcurrency != ConcurrencyUnset {
+		return c.hashAggPartialConcurrency
+	}
+	return c.ExecutorConcurrency
+}
+
+// HashAggFinalConcurrency return the number of concurrent hash aggregation final worker.
+func (c *Concurrency) HashAggFinalConcurrency() int {
+	if c.hashAggFinalConcurrency != ConcurrencyUnset {
+		return c.hashAggFinalConcurrency
+	}
+	return c.ExecutorConcurrency
+}
+
+// WindowConcurrency return the number of concurrent window worker.
+func (c *Concurrency) WindowConcurrency() int {
+	if c.windowConcurrency != ConcurrencyUnset {
+		return c.windowConcurrency
+	}
+	return c.ExecutorConcurrency
+}
+
+// IndexSerialScanConcurrency return the number of concurrent index serial scan worker.
+// This option is not sync with ExecutorConcurrency since it's used by Analyze table.
+func (c *Concurrency) IndexSerialScanConcurrency() int {
+	return c.indexSerialScanConcurrency
 }
 
 // MemQuota defines memory quota values.
