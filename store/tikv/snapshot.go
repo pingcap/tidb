@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"unsafe"
 
 	"github.com/opentracing/opentracing-go"
@@ -70,7 +71,7 @@ type tikvSnapshot struct {
 	// It's OK as long as there are no zero-byte values in the protocol.
 	mu struct {
 		sync.RWMutex
-		hitCnt int
+		hitCnt int64
 		cached map[string][]byte
 	}
 }
@@ -109,7 +110,7 @@ func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string]
 		tmp := keys[:0]
 		for _, key := range keys {
 			if val, ok := s.mu.cached[string(key)]; ok {
-				s.mu.hitCnt++
+				atomic.AddInt64(&s.mu.hitCnt, 1)
 				if len(val) > 0 {
 					m[string(key)] = val
 				}
@@ -328,7 +329,7 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 	s.mu.RLock()
 	if s.mu.cached != nil {
 		if value, ok := s.mu.cached[string(k)]; ok {
-			s.mu.hitCnt++
+			atomic.AddInt64(&s.mu.hitCnt, 1)
 			s.mu.RUnlock()
 			return value, nil
 		}
@@ -443,9 +444,7 @@ func SnapCacheHitCount(snap kv.Snapshot) int {
 	if !ok {
 		return 0
 	}
-	tikvSnap.mu.RLock()
-	defer tikvSnap.mu.RUnlock()
-	return tikvSnap.mu.hitCnt
+	return int(atomic.LoadInt64(&tikvSnap.mu.hitCnt))
 }
 
 func extractLockFromKeyErr(keyErr *pb.KeyError) (*Lock, error) {
