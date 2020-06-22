@@ -614,8 +614,8 @@ func (c *SortedRowContainer) GetRow(ptr chunk.RowPtr) (chunk.Row, error) {
 // GetRowByIdx returns the row the idx pointed to.
 func (c *SortedRowContainer) GetRowByIdx(idx int) (chunk.Row, error) {
 	c.m.RLock()
-	defer c.m.RUnlock()
 	ptr := c.m.rowPtrs[idx]
+	c.m.RUnlock()
 	return c.GetRow(ptr)
 }
 
@@ -647,9 +647,7 @@ func (a *SortAndSpillDiskAction) Action(t *memory.Tracker) {
 		// TODO: Refine processing various errors. Return or Panic.
 		logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
 			zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
-		go func() {
-			a.c.sortAndSpillToDisk()
-		}()
+		go a.c.sortAndSpillToDisk()
 	}
 }
 

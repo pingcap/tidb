@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/memory"
+	"time"
 )
 
 var _ = check.Suite(&rowContainerTestSuite{})
@@ -103,6 +104,7 @@ func (r *rowContainerTestSuite) TestSpillAction(c *check.C) {
 	// The following line is erroneous, since chk is already handled by rc, Add it again causes duplicated memory usage account.
 	// It is only for test of spill, do not double-add a chunk elsewhere.
 	err = rc.Add(chk)
+	time.Sleep(200 * time.Millisecond)
 	c.Assert(err, check.IsNil)
 	c.Assert(rc.AlreadySpilledSafe(), check.Equals, true)
 	err = rc.Reset()
