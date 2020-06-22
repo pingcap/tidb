@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
@@ -863,6 +864,7 @@ func benchmarkHashJoinExecWithCase(b *testing.B, casTest *hashJoinTestCase) {
 			totalRow += chk.NumRows()
 		}
 
+		time.Sleep(200 * time.Millisecond)
 		if spilled := exec.rowContainer.alreadySpilledSafe(); spilled != casTest.disk {
 			b.Fatal("wrong usage with disk:", spilled, casTest.disk)
 		}
@@ -1052,6 +1054,8 @@ func benchmarkBuildHashTableForList(b *testing.B, casTest *hashJoinTestCase) {
 			b.Fatal(err)
 		}
 		b.StopTimer()
+
+		time.Sleep(200 * time.Millisecond)
 		if exec.rowContainer.alreadySpilledSafe() != casTest.disk {
 			b.Fatal("wrong usage with disk")
 		}

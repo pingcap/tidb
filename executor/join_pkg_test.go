@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
@@ -67,6 +68,7 @@ func (s *pkgTestSuite) TestJoinExec(c *C) {
 				}
 				result.Append(chk, 0, chk.NumRows())
 			}
+			time.Sleep(200 * time.Millisecond)
 			c.Assert(exec.rowContainer.alreadySpilledSafe(), Equals, casTest.disk)
 			err = exec.Close()
 			c.Assert(err, IsNil)
