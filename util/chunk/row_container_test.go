@@ -70,7 +70,8 @@ func (r *rowContainerTestSuite) TestSel(c *check.C) {
 		c.Assert(i, check.Equals, n-1)
 	}
 	checkByIter(NewMultiIterator(NewIterator4RowContainer(rc), NewIterator4Chunk(chk)))
-	err := rc.SpillToDisk()
+	rc.SpillToDisk()
+	err := rc.m.spillError
 	c.Assert(err, check.IsNil)
 	c.Assert(rc.AlreadySpilled(), check.Equals, true)
 	checkByIter(NewMultiIterator(NewIterator4RowContainer(rc), NewIterator4Chunk(chk)))

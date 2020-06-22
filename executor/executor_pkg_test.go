@@ -312,11 +312,19 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 		}
 	}
 	// Test 2 partitions and all data in disk.
-	c.Assert(len(exec.partitionList), Equals, 2)
-	c.Assert(exec.partitionList[0].AlreadySpilled(), Equals, true)
-	c.Assert(exec.partitionList[1].AlreadySpilled(), Equals, true)
-	c.Assert(exec.partitionList[0].NumRow(), Equals, 1024)
-	c.Assert(exec.partitionList[1].NumRow(), Equals, 1024)
+	// Now spilling is parallel.
+	if len(exec.partitionList) == 2 {
+		c.Assert(len(exec.partitionList), Equals, 2)
+		c.Assert(exec.partitionList[0].AlreadySpilled(), Equals, true)
+		c.Assert(exec.partitionList[1].AlreadySpilled(), Equals, true)
+		c.Assert(exec.partitionList[0].NumRow(), Equals, 1024)
+		c.Assert(exec.partitionList[1].NumRow(), Equals, 1024)
+	} else {
+		c.Assert(len(exec.partitionList), Equals, 1)
+		c.Assert(exec.partitionList[0].AlreadySpilled(), Equals, true)
+		c.Assert(exec.partitionList[0].NumRow(), Equals, 2048)
+	}
+
 	err = exec.Close()
 	c.Assert(err, IsNil)
 

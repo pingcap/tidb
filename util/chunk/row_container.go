@@ -58,12 +58,13 @@ func NewRowContainer(fieldType []*types.FieldType, chunkSize int) *RowContainer 
 }
 
 // SpillToDisk spills data to disk.
-func (c *RowContainer) SpillToDisk() (err error) {
+func (c *RowContainer) SpillToDisk() {
 	c.m.Lock()
 	defer c.m.Unlock()
 	if c.AlreadySpilled() {
-		return nil
+		return
 	}
+	var err error
 	N := c.m.records.NumChunks()
 	c.m.recordsInDisk = NewListInDisk(c.m.records.FieldTypes())
 	c.m.recordsInDisk.diskTracker.AttachTo(c.diskTracker)
@@ -71,6 +72,7 @@ func (c *RowContainer) SpillToDisk() (err error) {
 		chk := c.m.records.GetChunk(i)
 		err = c.m.recordsInDisk.Add(chk)
 		if err != nil {
+			c.m.spillError = err
 			return
 		}
 	}
@@ -104,20 +106,6 @@ func (c *RowContainer) AlreadySpilledSafe() bool {
 	c.m.RLock()
 	defer c.m.RUnlock()
 	return c.m.recordsInDisk != nil
-}
-
-// SetSpillError sets the error when spilling.
-func (c *RowContainer) SetSpillError(err error) {
-	c.m.Lock()
-	defer c.m.Unlock()
-	c.m.spillError = err
-}
-
-// GetSpillError gets the error when spilling.
-func (c *RowContainer) GetSpillError() error {
-	c.m.RLock()
-	defer c.m.RUnlock()
-	return c.m.spillError
 }
 
 // NumRow returns the number of rows in the container
@@ -155,6 +143,9 @@ func (c *RowContainer) Add(chk *Chunk) (err error) {
 	c.m.RLock()
 	defer c.m.RUnlock()
 	if c.AlreadySpilled() {
+		if c.m.spillError != nil {
+			return c.m.spillError
+		}
 		err = c.m.recordsInDisk.Add(chk)
 	} else {
 		c.m.records.Add(chk)
@@ -190,6 +181,9 @@ func (c *RowContainer) GetRow(ptr RowPtr) (Row, error) {
 	c.m.RLock()
 	defer c.m.RUnlock()
 	if c.AlreadySpilled() {
+		if c.m.spillError != nil {
+			return Row{}, c.m.spillError
+		}
 		return c.m.recordsInDisk.GetRow(ptr)
 	}
 	return c.m.records.GetRow(ptr), nil
@@ -244,8 +238,7 @@ func (a *SpillDiskAction) Action(t *memory.Tracker) {
 		logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
 			zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
 		go func() {
-			err := a.c.SpillToDisk()
-			a.c.SetSpillError(err)
+			a.c.SpillToDisk()
 		}()
 	}
 }

@@ -588,9 +588,10 @@ func (c *SortedRowContainer) initPointerAndSort() {
 	sort.Slice(c.m.rowPtrs, c.keyColumnsLess)
 }
 
-func (c *SortedRowContainer) sortAndSpillToDisk() (err error) {
+func (c *SortedRowContainer) sortAndSpillToDisk() {
 	c.initPointerAndSort()
-	return c.RowContainer.SpillToDisk()
+	c.RowContainer.SpillToDisk()
+	return
 }
 
 // Add appends a chunk into the SortedRowContainer.
@@ -647,8 +648,7 @@ func (a *SortAndSpillDiskAction) Action(t *memory.Tracker) {
 		logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
 			zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
 		go func() {
-			err := a.c.sortAndSpillToDisk()
-			a.c.SetSpillError(err)
+			a.c.sortAndSpillToDisk()
 		}()
 	}
 }
