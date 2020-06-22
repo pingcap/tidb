@@ -2284,44 +2284,32 @@ func (s *testDBSuite1) TestCreateTable(c *C) {
 	//tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
 	//_, err = tk.Exec("create table t_enum (a enum('B','b'));")
 	//c.Assert(err.Error(), Equals, "[types:1291]Column 'a' has duplicated value 'B' in ENUM")
-}
 
-func (s *testDBSuite1) TestTableOptionUnionUnsupported(c *C) {
-	s.tk.MustExec("use test")
-	s.tk.MustExec("CREATE TABLE x (a INT) ENGINE = MyISAM;")
-	s.tk.MustExec("CREATE TABLE y (a INT) ENGINE = MyISAM;")
-	s.tk.MustExec("INSERT INTO x VALUES (1);")
-	s.tk.MustExec("INSERT INTO y VALUES (2);")
+	// test for table option "union" not supported
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE x (a INT) ENGINE = MyISAM;")
+	tk.MustExec("CREATE TABLE y (a INT) ENGINE = MyISAM;")
+	tk.MustExec("INSERT INTO x VALUES (1);")
+	tk.MustExec("INSERT INTO y VALUES (2);")
+	failSQL = "CREATE TABLE z (a INT) ENGINE = MERGE UNION = (x, y);"
+	tk.MustGetErrCode(failSQL, errno.ErrTableOptionUnionUnsupported)
+	failSQL = "ALTER TABLE x UNION = (y);"
+	tk.MustGetErrCode(failSQL, errno.ErrTableOptionUnionUnsupported)
+	tk.MustExec("drop table x;")
+	tk.MustExec("drop table y;")
 
-	failSQL := "CREATE TABLE z (a INT) ENGINE = MERGE UNION = (x, y);"
-	failMsg := "[ddl:8231]CREATE/ALTER table with union option is not supported"
-	_, err := s.tk.Exec(failSQL)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, failMsg)
-
-	failSQL = "ALTER TABLE x ENGINE = MERGE UNION = (y);"
-	_, err = s.tk.Exec(failSQL)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, failMsg)
-}
-
-func (s *testDBSuite1) TestTableOptionInsertMethodUnsupported(c *C) {
-	s.tk.MustExec("use test")
-	s.tk.MustExec("CREATE TABLE x (a INT) ENGINE = MyISAM;")
-	s.tk.MustExec("CREATE TABLE y (a INT) ENGINE = MyISAM;")
-	s.tk.MustExec("INSERT INTO x VALUES (1);")
-	s.tk.MustExec("INSERT INTO y VALUES (2);")
-
-	failSQL := "CREATE TABLE z (a INT) ENGINE = MERGE INSERT_METHOD=LAST;"
-	failMsg := "[ddl:8232]CREATE/ALTER table with insert method option is not supported"
-	_, err := s.tk.Exec(failSQL)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, failMsg)
-
-	failSQL = "ALTER TABLE x ENGINE = MERGE INSERT_METHOD=LAST;"
-	_, err = s.tk.Exec(failSQL)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, failMsg)
+	// test for table option "insert method" not supported
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE x (a INT) ENGINE = MyISAM;")
+	tk.MustExec("CREATE TABLE y (a INT) ENGINE = MyISAM;")
+	tk.MustExec("INSERT INTO x VALUES (1);")
+	tk.MustExec("INSERT INTO y VALUES (2);")
+	failSQL = "CREATE TABLE z (a INT) ENGINE = MERGE INSERT_METHOD=LAST;"
+	tk.MustGetErrCode(failSQL, errno.ErrTableOptionInsertMethodUnsupported)
+	failSQL = "ALTER TABLE x INSERT_METHOD=LAST;"
+	tk.MustGetErrCode(failSQL, errno.ErrTableOptionInsertMethodUnsupported)
+	tk.MustExec("drop table x;")
+	tk.MustExec("drop table y;")
 }
 
 func (s *testDBSuite5) TestRepairTable(c *C) {
