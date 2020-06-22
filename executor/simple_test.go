@@ -587,6 +587,41 @@ func (s *testSuite3) TestDropStats(c *C) {
 	h.SetLease(0)
 }
 
+func (s *testSuite3) TestDropStatsFromKV(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (c1 varchar(20), c2 varchar(20))")
+	tk.MustExec(`insert into t values("1","1"),("2","2"),("3","3"),("4","4")`)
+	tk.MustExec("insert into t select * from t")
+	tk.MustExec("insert into t select * from t")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("select table_id, modify_count, count from mysql.stats_meta where table_id = 45").Check(
+		testkit.Rows("45 0 16"))
+	tk.MustQuery("select table_id, hist_id from mysql.stats_histograms where table_id = 45").Check(
+		testkit.Rows("45 1", "45 2"))
+	tk.MustQuery("select table_id, hist_id, bucket_id from mysql.stats_buckets where table_id = 45").Check(
+		testkit.Rows("45 1 0",
+			"45 1 1",
+			"45 1 2",
+			"45 1 3",
+			"45 2 0",
+			"45 2 1",
+			"45 2 2",
+			"45 2 3"))
+	tk.MustQuery("select table_id, hist_id from mysql.stats_top_n where table_id = 45").Check(
+		testkit.Rows("45 1", "45 1", "45 1", "45 1", "45 2", "45 2", "45 2", "45 2"))
+
+	tk.MustExec("drop stats t")
+	tk.MustQuery("select table_id, modify_count, count from mysql.stats_meta where table_id = 45").Check(
+		testkit.Rows("45 0 16"))
+	tk.MustQuery("select table_id, hist_id from mysql.stats_histograms where table_id = 45").Check(
+		testkit.Rows())
+	tk.MustQuery("select table_id, hist_id, bucket_id from mysql.stats_buckets where table_id = 45").Check(
+		testkit.Rows())
+	tk.MustQuery("select table_id, hist_id from mysql.stats_top_n where table_id = 45").Check(
+		testkit.Rows())
+}
+
 func (s *testSuite3) TestFlushTables(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
