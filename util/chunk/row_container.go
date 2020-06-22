@@ -248,6 +248,7 @@ func (a *SpillDiskAction) Action(t *memory.Tracker) {
 				c.SpillToDisk()
 				a.TestSyncOutputFunc()
 			}()
+			return
 		}
 		go a.c.SpillToDisk()
 	}
