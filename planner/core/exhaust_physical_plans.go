@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
 	"go.uber.org/zap"
@@ -448,8 +449,16 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 			keyOffMap[idxOff] = i
 		}
 		sort.Slice(keyOffMapList, func(i, j int) bool { return keyOffMapList[i] < keyOffMapList[j] })
+		keyIsIndexPrefix := true
 		for keyOff, idxOff := range keyOffMapList {
+			if keyOff != idxOff {
+				keyIsIndexPrefix = false
+				break
+			}
 			keyOff2KeyOffOrderByIdx[keyOffMap[idxOff]] = keyOff
+		}
+		if !keyIsIndexPrefix {
+			continue
 		}
 		// isOuterKeysPrefix means whether the outer join keys are the prefix of the prop items.
 		isOuterKeysPrefix := len(join.OuterJoinKeys) <= len(prop.Items)
@@ -571,7 +580,7 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 	outerIdx int, us *LogicalUnionScan, avgInnerRowCnt float64) (joins []PhysicalPlan) {
 	var tblPath *util.AccessPath
 	for _, path := range ds.possibleAccessPaths {
-		if path.IsTablePath && path.StoreType == kv.TiKV {
+		if path.IsTablePath() && path.StoreType == kv.TiKV {
 			tblPath = path
 			break
 		}
@@ -627,7 +636,7 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 	outerIdx int, us *LogicalUnionScan, avgInnerRowCnt float64) (joins []PhysicalPlan) {
 	helper := &indexJoinBuildHelper{join: p}
 	for _, path := range ds.possibleAccessPaths {
-		if path.IsTablePath {
+		if path.IsTablePath() {
 			continue
 		}
 		emptyRange, err := helper.analyzeLookUpFilters(path, ds, innerJoinKeys)
@@ -838,7 +847,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		tblCols:     ds.TblCols,
 		keepOrder:   is.KeepOrder,
 	}
-	if !isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, is.Table.PKIsHandle) {
+	if !ds.isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, is.Table) {
 		// On this way, it's double read case.
 		ts := PhysicalTableScan{
 			Columns:         ds.Columns,
@@ -855,7 +864,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		cop.tablePlan = ts
 	}
 	is.initSchema(path.Index, path.FullIdxCols, cop.tablePlan != nil)
-	indexConds, tblConds := splitIndexFilterConditions(filterConds, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo)
+	indexConds, tblConds := ds.splitIndexFilterConditions(filterConds, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo)
 	// Specially handle cases when input rowCount is 0, which can only happen in 2 scenarios:
 	// - estimated row count of outer plan is 0;
 	// - estimated row count of inner "DataSource + filters" is 0;
@@ -1546,9 +1555,29 @@ func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 		return nil, true
 	}
 	join := la.GetHashJoin(prop)
+	var columns []*expression.Column
+	for _, colColumn := range la.CorCols {
+		columns = append(columns, &colColumn.Column)
+	}
+	cacheHitRatio := 0.0
+	if la.stats.RowCount != 0 {
+		ndv := getCardinality(columns, la.schema, la.stats)
+		// for example, if there are 100 rows and the number of distinct values of these correlated columns
+		// are 70, then we can assume 30 rows can hit the cache so the cache hit ratio is 1 - (70/100) = 0.3
+		cacheHitRatio = 1 - (ndv / la.stats.RowCount)
+	}
+
+	var canUseCache bool
+	if cacheHitRatio > 0.1 && la.ctx.GetSessionVars().NestedLoopJoinCacheCapacity > 0 {
+		canUseCache = true
+	} else {
+		canUseCache = false
+	}
+
 	apply := PhysicalApply{
 		PhysicalHashJoin: *join,
 		OuterSchema:      la.CorCols,
+		CanUseCache:      canUseCache,
 	}.Init(la.ctx,
 		la.stats.ScaleByExpectCnt(prop.ExpectedCnt),
 		la.blockOffset,
@@ -1599,7 +1628,9 @@ func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalPrope
 		Enforced:    true,
 		Items:       property.ItemsFromCols(la.groupByCols, desc),
 	}
-
+	if !prop.IsPrefix(childProp) {
+		return enforcedAggs
+	}
 	taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType}
 	if la.HasDistinct() {
 		// TODO: remove AllowDistinctAggPushDown after the cost estimation of distinct pushdown is implemented.
@@ -1818,6 +1849,14 @@ func (p *LogicalUnionAll) exhaustPhysicalPlans(prop *property.PhysicalProperty) 
 	ua := PhysicalUnionAll{}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, chReqProps...)
 	ua.SetSchema(p.Schema())
 	return []PhysicalPlan{ua}, true
+}
+
+func (p *LogicalPartitionUnionAll) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
+	uas, flagHint := p.LogicalUnionAll.exhaustPhysicalPlans(prop)
+	for _, ua := range uas {
+		ua.(*PhysicalUnionAll).tp = plancodec.TypePartitionUnion
+	}
+	return uas, flagHint
 }
 
 func (ls *LogicalSort) getPhysicalSort(prop *property.PhysicalProperty) *PhysicalSort {

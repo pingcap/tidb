@@ -47,6 +47,20 @@ type ExecDetails struct {
 	CommitDetail     *CommitDetails
 }
 
+type stmtExecDetailKeyType struct{}
+
+// StmtExecDetailKey used to carry StmtExecDetail info in context.Context.
+var StmtExecDetailKey = stmtExecDetailKeyType{}
+
+// StmtExecDetails contains stmt level execution detail info.
+type StmtExecDetails struct {
+	BackoffCount         int64
+	BackoffDuration      int64
+	WaitKVRespDuration   int64
+	WaitPDRespDuration   int64
+	WriteSQLRespDuration time.Duration
+}
+
 // CommitDetails contains commit detail information.
 type CommitDetails struct {
 	GetCommitTsTime        time.Duration
@@ -360,10 +374,30 @@ type RuntimeStatsColl struct {
 	readerStats map[string]*ReaderRuntimeStats
 }
 
-// concurrencyInfo is used to save the concurrency information of the executor operator
-type concurrencyInfo struct {
+// ConcurrencyInfo is used to save the concurrency information of the executor operator
+type ConcurrencyInfo struct {
 	concurrencyName string
 	concurrencyNum  int
+}
+
+// NewConcurrencyInfo creates new executor's concurrencyInfo.
+func NewConcurrencyInfo(name string, num int) *ConcurrencyInfo {
+	return &ConcurrencyInfo{name, num}
+}
+
+// cacheInfo is used to save the concurrency information of the executor operator
+type cacheInfo struct {
+	hitRatio float64
+	useCache bool
+}
+
+// SetCacheInfo sets the cache information. Only used for apply executor.
+func (e *RuntimeStats) SetCacheInfo(useCache bool, hitRatio float64) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.applyCache = true
+	e.cache.useCache = useCache
+	e.cache.hitRatio = hitRatio
 }
 
 // RuntimeStats collects one executor's execution info.
@@ -378,7 +412,9 @@ type RuntimeStats struct {
 	// protect concurrency
 	mu sync.Mutex
 	// executor concurrency information
-	concurrency []concurrencyInfo
+	concurrency []*ConcurrencyInfo
+	applyCache  bool
+	cache       cacheInfo
 
 	// additional information for executors
 	additionalInfo string
@@ -466,12 +502,16 @@ func (e *RuntimeStats) SetRowNum(rowNum int64) {
 	atomic.StoreInt64(&e.rows, rowNum)
 }
 
-// SetConcurrencyInfo sets the concurrency information.
+// SetConcurrencyInfo sets the concurrency informations.
+// We must clear the concurrencyInfo first when we call the SetConcurrencyInfo.
 // When the num <= 0, it means the exector operator is not executed parallel.
-func (e *RuntimeStats) SetConcurrencyInfo(name string, num int) {
+func (e *RuntimeStats) SetConcurrencyInfo(infos ...*ConcurrencyInfo) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.concurrency = append(e.concurrency, concurrencyInfo{concurrencyName: name, concurrencyNum: num})
+	e.concurrency = e.concurrency[:0]
+	for _, info := range infos {
+		e.concurrency = append(e.concurrency, info)
+	}
 }
 
 // SetAdditionalInfo sets the additional information.
@@ -495,6 +535,13 @@ func (e *RuntimeStats) String() string {
 			} else {
 				result += fmt.Sprintf(", %s:OFF", concurrency.concurrencyName)
 			}
+		}
+	}
+	if e.applyCache {
+		if e.cache.useCache {
+			result += fmt.Sprintf(", cache:ON, cacheHitRatio:%.3f%%", e.cache.hitRatio*100)
+		} else {
+			result += fmt.Sprintf(", cache:OFF")
 		}
 	}
 	if len(e.additionalInfo) > 0 {

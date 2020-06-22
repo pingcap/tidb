@@ -1894,7 +1894,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "QPS By Instance",
+          "title": "CPS By Instance",
           "tooltip": {
             "shared": true,
             "sort": 2,

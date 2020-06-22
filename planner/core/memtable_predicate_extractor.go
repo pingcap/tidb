@@ -861,7 +861,34 @@ func (e *InspectionSummaryTableExtractor) Extract(
 }
 
 func (e *InspectionSummaryTableExtractor) explainInfo(p *PhysicalMemTable) string {
-	return ""
+	if e.SkipInspection {
+		return "skip_inspection: true"
+	}
+
+	r := new(bytes.Buffer)
+	if len(e.Rules) > 0 {
+		r.WriteString(fmt.Sprintf("rules:[%s], ", extractStringFromStringSet(e.Rules)))
+	}
+	if len(e.MetricNames) > 0 {
+		r.WriteString(fmt.Sprintf("metric_names:[%s], ", extractStringFromStringSet(e.MetricNames)))
+	}
+	if len(e.Quantiles) > 0 {
+		r.WriteString("quantiles:[")
+		for i, quantile := range e.Quantiles {
+			if i > 0 {
+				r.WriteByte(',')
+			}
+			r.WriteString(fmt.Sprintf("%f", quantile))
+		}
+		r.WriteString("], ")
+	}
+
+	// remove the last ", " in the message info
+	s := r.String()
+	if len(s) > 2 {
+		return s[:len(s)-2]
+	}
+	return s
 }
 
 // InspectionRuleTableExtractor is used to extract some predicates of `inspection_rules`
@@ -947,6 +974,57 @@ func (e *SlowQueryExtractor) setTimeRange(start, end int64) {
 	}
 	e.StartTime, e.EndTime = startTime, endTime
 	e.Enable = true
+}
+
+// TableStorageStatsExtractor is used to extract some predicates of `disk_usage`.
+type TableStorageStatsExtractor struct {
+	extractHelper
+	// SkipRequest means the where clause always false, we don't need to request any component.
+	SkipRequest bool
+	// TableSchema represents tableSchema applied to, and we should apply all table disk usage if there is no schema specified.
+	// e.g: SELECT * FROM information_schema.disk_usage WHERE table_schema in ('test', 'information_schema').
+	TableSchema set.StringSet
+	// TableName represents tableName applied to, and we should apply all table disk usage if there is no table specified.
+	// e.g: SELECT * FROM information_schema.disk_usage WHERE table in ('schemata', 'tables').
+	TableName set.StringSet
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface.
+func (e *TableStorageStatsExtractor) Extract(
+	_ sessionctx.Context,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) []expression.Expression {
+	// Extract the `table_schema` columns.
+	remained, schemaSkip, tableSchema := e.extractCol(schema, names, predicates, "table_schema", true)
+	// Extract the `table_name` columns.
+	remained, tableSkip, tableName := e.extractCol(schema, names, remained, "table_name", true)
+	e.SkipRequest = schemaSkip || tableSkip
+	if e.SkipRequest {
+		return nil
+	}
+	e.TableSchema = tableSchema
+	e.TableName = tableName
+	return remained
+}
+
+func (e *TableStorageStatsExtractor) explainInfo(p *PhysicalMemTable) string {
+	if e.SkipRequest {
+		return "skip_request: true"
+	}
+
+	r := new(bytes.Buffer)
+	if len(e.TableSchema) > 0 {
+		r.WriteString(fmt.Sprintf("schema:[%s]", extractStringFromStringSet(e.TableSchema)))
+	}
+	if r.Len() > 0 && len(e.TableName) > 0 {
+		r.WriteString(", ")
+	}
+	if len(e.TableName) > 0 {
+		r.WriteString(fmt.Sprintf("table:[%s]", extractStringFromStringSet(e.TableName)))
+	}
+	return r.String()
 }
 
 func (e *SlowQueryExtractor) explainInfo(p *PhysicalMemTable) string {

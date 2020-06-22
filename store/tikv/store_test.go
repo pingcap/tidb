@@ -36,7 +36,7 @@ type testStoreSuite struct {
 	testStoreSuiteBase
 }
 
-type testStoreFailedSuite struct {
+type testStoreSerialSuite struct {
 	testStoreSuiteBase
 }
 
@@ -46,7 +46,7 @@ type testStoreSuiteBase struct {
 }
 
 var _ = Suite(&testStoreSuite{})
-var _ = SerialSuites(&testStoreFailedSuite{})
+var _ = SerialSuites(&testStoreSerialSuite{})
 
 func (s *testStoreSuiteBase) SetUpTest(c *C) {
 	s.store = NewTestStore(c).(*tikvStore)
@@ -139,32 +139,32 @@ func (c *mockPDClient) GetTSAsync(ctx context.Context) pd.TSFuture {
 	return nil
 }
 
-func (c *mockPDClient) GetRegion(ctx context.Context, key []byte) (*metapb.Region, *metapb.Peer, error) {
+func (c *mockPDClient) GetRegion(ctx context.Context, key []byte) (*pd.Region, error) {
 	c.RLock()
 	defer c.RUnlock()
 
 	if c.stop {
-		return nil, nil, errors.Trace(errStopped)
+		return nil, errors.Trace(errStopped)
 	}
 	return c.client.GetRegion(ctx, key)
 }
 
-func (c *mockPDClient) GetPrevRegion(ctx context.Context, key []byte) (*metapb.Region, *metapb.Peer, error) {
+func (c *mockPDClient) GetPrevRegion(ctx context.Context, key []byte) (*pd.Region, error) {
 	c.RLock()
 	defer c.RUnlock()
 
 	if c.stop {
-		return nil, nil, errors.Trace(errStopped)
+		return nil, errors.Trace(errStopped)
 	}
 	return c.client.GetPrevRegion(ctx, key)
 }
 
-func (c *mockPDClient) GetRegionByID(ctx context.Context, regionID uint64) (*metapb.Region, *metapb.Peer, error) {
+func (c *mockPDClient) GetRegionByID(ctx context.Context, regionID uint64) (*pd.Region, error) {
 	c.RLock()
 	defer c.RUnlock()
 
 	if c.stop {
-		return nil, nil, errors.Trace(errStopped)
+		return nil, errors.Trace(errStopped)
 	}
 	return c.client.GetRegionByID(ctx, regionID)
 }
@@ -280,7 +280,7 @@ func (s *testStoreSuite) TestRequestPriority(c *C) {
 	iter.Close()
 }
 
-func (s *testStoreSuite) TestOracleChangeByFailpoint(c *C) {
+func (s *testStoreSerialSuite) TestOracleChangeByFailpoint(c *C) {
 	defer func() {
 		failpoint.Disable("github.com/pingcap/tidb/store/tikv/oracle/changeTSFromPD")
 	}()

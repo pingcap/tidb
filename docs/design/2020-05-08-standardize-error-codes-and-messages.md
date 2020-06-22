@@ -24,15 +24,15 @@ keep a metafile in the code repository. The metafile should be a toml file which
 
 ```toml
 [error.8005]
-error = '''Write Conflict, txnStartTS is stale'''
-message = '''Transactions in TiDB encounter write conflicts.'''
+message = '''Write Conflict, txnStartTS is stale'''
+description = '''Transactions in TiDB encounter write conflicts.'''
 workaround = '''
 Check whether `tidb_disable_txn_auto_retry` is set to `on`. If so, set it to `off`; if it is already `off`, increase the value of `tidb_retry_limit` until the error no longer occurs.
 '''
 
 [error.9005]
-error = '''Region is unavailable'''
-message = '''
+message = '''Region is unavailable'''
+description = '''
 A certain Raft Group is not available, such as the number of replicas is not enough.
 This error usually occurs when the TiKV server is busy or the TiKV node is down.
 '''
@@ -60,14 +60,14 @@ The json format of metafile is like:
 [
     {
         "code": 8005,
-        "error": "Write Conflict, txnStartTS is stale",
-        "message": "Transactions in TiDB encounter write conflicts.",
+        "message": "Write Conflict, txnStartTS is stale",
+        "description": "Transactions in TiDB encounter write conflicts.",
         "workaround": "Check whether `tidb_disable_txn_auto_retry` is set to `on`. If so, set it to `off`; if it is already `off`, increase the value of `tidb_retry_limit` until the error no longer occurs."
     },
     {
         "code": 9005,
-        "error": "Region is unavailable",
-        "message": "A certain Raft Group is not available, such as the number of replicas is not enough.\nThis error usually occurs when the TiKV server is busy or the TiKV node is down.",
+        "message": "Region is unavailable",
+        "description": "A certain Raft Group is not available, such as the number of replicas is not enough.\nThis error usually occurs when the TiKV server is busy or the TiKV node is down.",
         "workaround": "Check the status, monitoring data and log of the TiKV server."
     }
 ]
@@ -136,8 +136,8 @@ As the syntax above, the 9005 block is the message part of 8005 block, so we exp
 
 ```toml
 [error.8005]
-error = '''Write Conflict, txnStartTS is stale'''
-message = '''Transactions in TiDB encounter write conflicts.'''
+message = '''Write Conflict, txnStartTS is stale'''
+description = '''Transactions in TiDB encounter write conflicts.'''
 workaround = '''
 ## Code: 9005
 ### Error
@@ -170,8 +170,8 @@ In the discussion above, an error has at least 4 parts:
 Besides, we can append a optional tags field to it:
 ```toml
 [error.9005]
-error = ""
 message = ""
+description = ""
 workaround = ""
 tags = ["tikv"]
 ```

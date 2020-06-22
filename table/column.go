@@ -122,7 +122,7 @@ func FindOnUpdateCols(cols []*Column) []*Column {
 	return rcols
 }
 
-// truncateTrailingSpaces trancates trailing spaces for CHAR[(M)] column.
+// truncateTrailingSpaces truncates trailing spaces for CHAR[(M)] column.
 // fix: https://github.com/pingcap/tidb/issues/3660
 func truncateTrailingSpaces(v *types.Datum) {
 	if v.Kind() == types.KindNull {
@@ -363,6 +363,11 @@ func (c *Column) HandleBadNull(d types.Datum, sc *stmtctx.StatementContext) (typ
 // IsPKHandleColumn checks if the column is primary key handle column.
 func (c *Column) IsPKHandleColumn(tbInfo *model.TableInfo) bool {
 	return mysql.HasPriKeyFlag(c.Flag) && tbInfo.PKIsHandle
+}
+
+// IsCommonHandleColumn checks if the column is common handle column.
+func (c *Column) IsCommonHandleColumn(tbInfo *model.TableInfo) bool {
+	return mysql.HasPriKeyFlag(c.Flag) && tbInfo.IsCommonHandle
 }
 
 // CheckNotNull checks if row has nil value set to a column with NotNull flag set.

@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
@@ -113,10 +114,12 @@ const (
 
 // GlobalPrivValue is store json format for priv column in mysql.global_priv.
 type GlobalPrivValue struct {
-	SSLType     SSLType `json:"ssl_type,omitempty"`
-	SSLCipher   string  `json:"ssl_cipher,omitempty"`
-	X509Issuer  string  `json:"x509_issuer,omitempty"`
-	X509Subject string  `json:"x509_subject,omitempty"`
+	SSLType     SSLType                   `json:"ssl_type,omitempty"`
+	SSLCipher   string                    `json:"ssl_cipher,omitempty"`
+	X509Issuer  string                    `json:"x509_issuer,omitempty"`
+	X509Subject string                    `json:"x509_subject,omitempty"`
+	SAN         string                    `json:"san,omitempty"`
+	SANs        map[util.SANType][]string `json:"-"`
 }
 
 // RequireStr returns describe string after `REQUIRE` clause.
@@ -140,6 +143,10 @@ func (g *GlobalPrivValue) RequireStr() string {
 		if len(g.X509Subject) > 0 {
 			s = append(s, "SUBJECT")
 			s = append(s, "'"+g.X509Subject+"'")
+		}
+		if len(g.SAN) > 0 {
+			s = append(s, "SAN")
+			s = append(s, "'"+g.SAN+"'")
 		}
 		if len(s) > 0 {
 			require = strings.Join(s, " ")
@@ -629,6 +636,13 @@ func (p *MySQLPrivilege) decodeGlobalPrivTableRow(row chunk.Row, fs []*ast.Resul
 					value.Priv.SSLCipher = privValue.SSLCipher
 					value.Priv.X509Issuer = privValue.X509Issuer
 					value.Priv.X509Subject = privValue.X509Subject
+					value.Priv.SAN = privValue.SAN
+					if len(value.Priv.SAN) > 0 {
+						value.Priv.SANs, err = util.ParseAndCheckSAN(value.Priv.SAN)
+						if err != nil {
+							value.Broken = true
+						}
+					}
 				}
 			}
 		default:

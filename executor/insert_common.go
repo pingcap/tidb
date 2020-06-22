@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -847,6 +848,9 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 	}
 	// Use the value if it's not null and not 0.
 	if recordID != 0 {
+		if !e.ctx.GetSessionVars().AllowAutoRandExplicitInsert {
+			return types.Datum{}, ddl.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomExplicitInsertDisabledErrMsg)
+		}
 		err = e.rebaseAutoRandomID(recordID, &c.FieldType)
 		if err != nil {
 			return types.Datum{}, err
@@ -889,7 +893,9 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 func (e *InsertValues) allocAutoRandomID(fieldType *types.FieldType) (int64, error) {
 	alloc := e.Table.Allocators(e.ctx).Get(autoid.AutoRandomType)
 	tableInfo := e.Table.Meta()
-	_, autoRandomID, err := alloc.Alloc(tableInfo.ID, 1, 1, 1)
+	increment := e.ctx.GetSessionVars().AutoIncrementIncrement
+	offset := e.ctx.GetSessionVars().AutoIncrementOffset
+	_, autoRandomID, err := alloc.Alloc(tableInfo.ID, 1, int64(increment), int64(offset))
 	if err != nil {
 		return 0, err
 	}
@@ -923,7 +929,7 @@ func (e *InsertValues) handleWarning(err error) {
 
 // batchCheckAndInsert checks rows with duplicate errors.
 // All duplicate rows will be ignored and appended as duplicate warnings.
-func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.Datum, addRecord func(ctx context.Context, row []types.Datum) (int64, error)) error {
+func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.Datum, addRecord func(ctx context.Context, row []types.Datum) error) error {
 	// all the rows will be checked, so it is safe to set BatchCheck = true
 	e.ctx.GetSessionVars().StmtCtx.BatchCheck = true
 
@@ -973,7 +979,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 		// There may be duplicate keys inside the insert statement.
 		if !skip {
 			e.ctx.GetSessionVars().StmtCtx.AddCopiedRows(1)
-			_, err = addRecord(ctx, rows[i])
+			err = addRecord(ctx, rows[i])
 			if err != nil {
 				return err
 			}
@@ -982,30 +988,29 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	return nil
 }
 
-func (e *InsertValues) addRecord(ctx context.Context, row []types.Datum) (int64, error) {
+func (e *InsertValues) addRecord(ctx context.Context, row []types.Datum) error {
 	return e.addRecordWithAutoIDHint(ctx, row, 0)
 }
 
-func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.Datum, reserveAutoIDCount int) (int64, error) {
+func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.Datum, reserveAutoIDCount int) error {
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
-		return 0, err
+		return err
 	}
 	if !e.ctx.GetSessionVars().ConstraintCheckInPlace {
 		txn.SetOption(kv.PresumeKeyNotExists, nil)
 	}
-	var h kv.Handle
 	if reserveAutoIDCount > 0 {
-		h, err = e.Table.AddRecord(e.ctx, row, table.WithCtx(ctx), table.WithReserveAutoIDHint(reserveAutoIDCount))
+		_, err = e.Table.AddRecord(e.ctx, row, table.WithCtx(ctx), table.WithReserveAutoIDHint(reserveAutoIDCount))
 	} else {
-		h, err = e.Table.AddRecord(e.ctx, row, table.WithCtx(ctx))
+		_, err = e.Table.AddRecord(e.ctx, row, table.WithCtx(ctx))
 	}
 	txn.DelOption(kv.PresumeKeyNotExists)
 	if err != nil {
-		return 0, err
+		return err
 	}
 	if e.lastInsertID != 0 {
 		e.ctx.GetSessionVars().SetLastInsertID(e.lastInsertID)
 	}
-	return h.IntValue(), nil
+	return nil
 }

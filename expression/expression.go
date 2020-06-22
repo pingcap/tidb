@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -427,7 +426,7 @@ func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Colum
 			if buf.IsNull(i) {
 				isZero[i] = -1
 			} else {
-				iVal, err := types.StrToFloat(sc, buf.GetString(i))
+				iVal, err := types.StrToFloat(sc, buf.GetString(i), false)
 				if err != nil {
 					return err
 				}
@@ -1015,6 +1014,12 @@ func IsPushDownEnabled(name string, storeType kv.StoreType) bool {
 		mask := storeTypeMask(storeType)
 		return !(value&mask == mask)
 	}
+
+	if storeType != kv.TiFlash && name == ast.AggFuncApproxCountDistinct {
+		// Can not push down approx_count_distinct to other store except tiflash by now.
+		return false
+	}
+
 	return true
 }
 
@@ -1059,7 +1064,7 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 }
 
 func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType) bool {
-	if storeType == kv.TiFlash && (expr.GetType().Tp == mysql.TypeDuration || expr.GetType().Tp == mysql.TypeJSON || collate.NewCollationEnabled()) {
+	if storeType == kv.TiFlash && expr.GetType().Tp == mysql.TypeDuration {
 		return false
 	}
 	switch x := expr.(type) {
@@ -1114,12 +1119,12 @@ func scalarExprSupportedByTiDB(function *ScalarFunction) bool {
 
 func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 	switch function.FuncName.L {
-	case ast.Plus, ast.Minus, ast.Div, ast.Mul,
-		ast.NullEQ, ast.GE, ast.LE, ast.EQ, ast.NE,
-		ast.LT, ast.GT, ast.Ifnull, ast.IsNull, ast.Or,
-		ast.In, ast.Mod, ast.And, ast.LogicOr, ast.LogicAnd,
+	case ast.Plus, ast.Minus, ast.Div, ast.Mul, ast.GE, ast.LE,
+		ast.EQ, ast.NE, ast.LT, ast.GT, ast.Ifnull, ast.IsNull,
+		ast.Or, ast.In, ast.Mod, ast.And, ast.LogicOr, ast.LogicAnd,
 		ast.Like, ast.UnaryNot, ast.Case, ast.Month, ast.Substr,
-		ast.Substring, ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime:
+		ast.Substring, ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime,
+		ast.JSONLength, ast.If, ast.BitNeg, ast.Xor:
 		return true
 	case ast.Cast:
 		switch function.Function.PbCode() {

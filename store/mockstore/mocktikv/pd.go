@@ -91,19 +91,19 @@ func (m *mockTSFuture) Wait() (int64, int64, error) {
 	return m.pdc.GetTS(m.ctx)
 }
 
-func (c *pdClient) GetRegion(ctx context.Context, key []byte) (*metapb.Region, *metapb.Peer, error) {
+func (c *pdClient) GetRegion(ctx context.Context, key []byte) (*pd.Region, error) {
 	region, peer := c.cluster.GetRegionByKey(key)
-	return region, peer, nil
+	return &pd.Region{Meta: region, Leader: peer}, nil
 }
 
-func (c *pdClient) GetPrevRegion(ctx context.Context, key []byte) (*metapb.Region, *metapb.Peer, error) {
+func (c *pdClient) GetPrevRegion(ctx context.Context, key []byte) (*pd.Region, error) {
 	region, peer := c.cluster.GetPrevRegionByKey(key)
-	return region, peer, nil
+	return &pd.Region{Meta: region, Leader: peer}, nil
 }
 
-func (c *pdClient) GetRegionByID(ctx context.Context, regionID uint64) (*metapb.Region, *metapb.Peer, error) {
+func (c *pdClient) GetRegionByID(ctx context.Context, regionID uint64) (*pd.Region, error) {
 	region, peer := c.cluster.GetRegionByID(regionID)
-	return region, peer, nil
+	return &pd.Region{Meta: region, Leader: peer}, nil
 }
 
 func (c *pdClient) ScanRegions(ctx context.Context, startKey []byte, endKey []byte, limit int) ([]*metapb.Region, []*metapb.Peer, error) {

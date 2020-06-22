@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/memory"
 )
 
@@ -116,6 +117,22 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 					return false, err
 				}
 			}
+			if col.IsCommonHandleColumn(t.Meta()) {
+				pkIdx := tables.FindPrimaryIndex(t.Meta())
+				handleChanged = true
+				pkDts := make([]types.Datum, 0, len(pkIdx.Columns))
+				for _, idxCol := range pkIdx.Columns {
+					pkDts = append(pkDts, newData[idxCol.Offset])
+				}
+				handleBytes, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx, nil, pkDts...)
+				if err != nil {
+					return false, err
+				}
+				newHandle, err = kv.NewCommonHandle(handleBytes)
+				if err != nil {
+					return false, err
+				}
+			}
 		} else {
 			if mysql.HasOnUpdateNowFlag(col.Flag) && modified[i] {
 				// It's for "UPDATE t SET ts = ts" and ts is a timestamp.
@@ -190,7 +207,7 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 		}
 	} else {
 		// Update record to new value and update index.
-		if err = t.UpdateRecord(sctx, h, oldData, newData, modified); err != nil {
+		if err = t.UpdateRecord(ctx, sctx, h, oldData, newData, modified); err != nil {
 			return false, err
 		}
 		if onDup {

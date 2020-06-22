@@ -28,23 +28,23 @@ type codecPDClient struct {
 
 // GetRegion encodes the key before send requests to pd-server and decodes the
 // returned StartKey && EndKey from pd-server.
-func (c *codecPDClient) GetRegion(ctx context.Context, key []byte) (*metapb.Region, *metapb.Peer, error) {
+func (c *codecPDClient) GetRegion(ctx context.Context, key []byte) (*pd.Region, error) {
 	encodedKey := codec.EncodeBytes([]byte(nil), key)
-	region, peer, err := c.Client.GetRegion(ctx, encodedKey)
-	return processRegionResult(region, peer, err)
+	region, err := c.Client.GetRegion(ctx, encodedKey)
+	return processRegionResult(region, err)
 }
 
-func (c *codecPDClient) GetPrevRegion(ctx context.Context, key []byte) (*metapb.Region, *metapb.Peer, error) {
+func (c *codecPDClient) GetPrevRegion(ctx context.Context, key []byte) (*pd.Region, error) {
 	encodedKey := codec.EncodeBytes([]byte(nil), key)
-	region, peer, err := c.Client.GetPrevRegion(ctx, encodedKey)
-	return processRegionResult(region, peer, err)
+	region, err := c.Client.GetPrevRegion(ctx, encodedKey)
+	return processRegionResult(region, err)
 }
 
 // GetRegionByID encodes the key before send requests to pd-server and decodes the
 // returned StartKey && EndKey from pd-server.
-func (c *codecPDClient) GetRegionByID(ctx context.Context, regionID uint64) (*metapb.Region, *metapb.Peer, error) {
-	region, peer, err := c.Client.GetRegionByID(ctx, regionID)
-	return processRegionResult(region, peer, err)
+func (c *codecPDClient) GetRegionByID(ctx context.Context, regionID uint64) (*pd.Region, error) {
+	region, err := c.Client.GetRegionByID(ctx, regionID)
+	return processRegionResult(region, err)
 }
 
 func (c *codecPDClient) ScanRegions(ctx context.Context, startKey []byte, endKey []byte, limit int) ([]*metapb.Region, []*metapb.Peer, error) {
@@ -68,18 +68,18 @@ func (c *codecPDClient) ScanRegions(ctx context.Context, startKey []byte, endKey
 	return regions, peers, nil
 }
 
-func processRegionResult(region *metapb.Region, peer *metapb.Peer, err error) (*metapb.Region, *metapb.Peer, error) {
+func processRegionResult(region *pd.Region, err error) (*pd.Region, error) {
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	if region == nil {
-		return nil, nil, nil
+	if region == nil || region.Meta == nil {
+		return nil, nil
 	}
-	err = decodeRegionMetaKeyInPlace(region)
+	err = decodeRegionMetaKeyInPlace(region.Meta)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	return region, peer, nil
+	return region, nil
 }
 
 func decodeRegionMetaKeyInPlace(r *metapb.Region) error {

@@ -502,8 +502,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 			respCh = task.respChan
 		}
 
-		bo := NewBackoffer(ctx, copNextMaxBackoff).WithVars(worker.vars)
-		worker.handleTask(bo, task, respCh)
+		worker.handleTask(ctx, task, respCh)
 		close(task.respChan)
 		select {
 		case <-worker.finishCh:
@@ -687,8 +686,20 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	return resp, nil
 }
 
+// Associate each region with an independent backoffer. In this way, when multiple regions are
+// unavailable, TiDB can execute very quickly without blocking
+func chooseBackoffer(ctx context.Context, backoffermap map[uint64]*Backoffer, task *copTask, worker *copIteratorWorker) *Backoffer {
+	bo, ok := backoffermap[task.region.id]
+	if ok {
+		return bo
+	}
+	newbo := NewBackoffer(ctx, copNextMaxBackoff).WithVars(worker.vars)
+	backoffermap[task.region.id] = newbo
+	return newbo
+}
+
 // handleTask handles single copTask, sends the result to channel, retry automatically on error.
-func (worker *copIteratorWorker) handleTask(bo *Backoffer, task *copTask, respCh chan<- *copResponse) {
+func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, respCh chan<- *copResponse) {
 	defer func() {
 		r := recover()
 		if r != nil {
@@ -701,8 +712,11 @@ func (worker *copIteratorWorker) handleTask(bo *Backoffer, task *copTask, respCh
 		}
 	}()
 	remainTasks := []*copTask{task}
+	backoffermap := make(map[uint64]*Backoffer)
 	for len(remainTasks) > 0 {
-		tasks, err := worker.handleTaskOnce(bo, remainTasks[0], respCh)
+		curTask := remainTasks[0]
+		bo := chooseBackoffer(ctx, backoffermap, curTask, worker)
+		tasks, err := worker.handleTaskOnce(bo, curTask, respCh)
 		if err != nil {
 			resp := &copResponse{err: errors.Trace(err)}
 			worker.sendToRespCh(resp, respCh, true)
@@ -757,7 +771,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		}
 	}
 
-	req := tikvrpc.NewReplicaReadRequest(task.cmdType, &copReq, worker.req.ReplicaRead, worker.replicaReadSeed, kvrpcpb.Context{
+	req := tikvrpc.NewReplicaReadRequest(task.cmdType, &copReq, worker.req.ReplicaRead, &worker.replicaReadSeed, kvrpcpb.Context{
 		IsolationLevel: pbIsolationLevel(worker.req.IsolationLevel),
 		Priority:       kvPriorityToCommandPri(worker.req.Priority),
 		NotFillCache:   worker.req.NotFillCache,
@@ -830,11 +844,19 @@ type clientHelper struct {
 	*RegionCache
 	*minCommitTSPushed
 	Client
+	resolveLite bool
 }
 
 // ResolveLocks wraps the ResolveLocks function and store the resolved result.
 func (ch *clientHelper) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks []*Lock) (int64, error) {
-	msBeforeTxnExpired, resolvedLocks, err := ch.LockResolver.ResolveLocks(bo, callerStartTS, locks)
+	var err error
+	var resolvedLocks []uint64
+	var msBeforeTxnExpired int64
+	if ch.resolveLite {
+		msBeforeTxnExpired, resolvedLocks, err = ch.LockResolver.resolveLocksLite(bo, callerStartTS, locks)
+	} else {
+		msBeforeTxnExpired, resolvedLocks, err = ch.LockResolver.ResolveLocks(bo, callerStartTS, locks)
+	}
 	if err != nil {
 		return msBeforeTxnExpired, err
 	}
