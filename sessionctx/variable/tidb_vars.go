@@ -187,6 +187,7 @@ const (
 	// A distsql scan task can be a table scan or a index scan, which may be distributed to many TiKV nodes.
 	// Higher concurrency may reduce latency, but with the cost of higher memory usage and system performance impact.
 	// If the query has a LIMIT clause, high concurrency makes the system do much more work than needed.
+	// tidb_distsql_scan_concurrency is deprecated, use tidb_executor_concurrency instead.
 	TiDBDistSQLScanConcurrency = "tidb_distsql_scan_concurrency"
 
 	// tidb_opt_insubquery_to_join_and_agg is used to enable/disable the optimizer rule of rewriting IN subquery.
@@ -235,11 +236,13 @@ const (
 	// in many TiKV nodes, we executes multiple concurrent index lookup tasks concurrently to reduce the time
 	// waiting for a task to finish.
 	// Set this value higher may reduce the latency but consumes more system resource.
+	// tidb_index_lookup_concurrency is deprecated, use tidb_executor_concurrency instead.
 	TiDBIndexLookupConcurrency = "tidb_index_lookup_concurrency"
 
 	// tidb_index_lookup_join_concurrency is used for index lookup join executor.
 	// IndexLookUpJoin starts "tidb_index_lookup_join_concurrency" inner workers
 	// to fetch inner rows and join the matched (outer, inner) row pairs.
+	// tidb_index_lookup_join_concurrency is deprecated, use tidb_executor_concurrency instead.
 	TiDBIndexLookupJoinConcurrency = "tidb_index_lookup_join_concurrency"
 
 	// tidb_index_serial_scan_concurrency is used for controlling the concurrency of index scan operation
@@ -266,21 +269,26 @@ const (
 
 	// tidb_hash_join_concurrency is used for hash join executor.
 	// The hash join outer executor starts multiple concurrent join workers to probe the hash table.
+	// tidb_hash_join_concurrency is deprecated, use tidb_executor_concurrency instead.
 	TiDBHashJoinConcurrency = "tidb_hash_join_concurrency"
 
 	// tidb_projection_concurrency is used for projection operator.
 	// This variable controls the worker number of projection operator.
+	// tidb_projection_concurrency is deprecated, use tidb_executor_concurrency instead.
 	TiDBProjectionConcurrency = "tidb_projection_concurrency"
 
 	// tidb_hashagg_partial_concurrency is used for hash agg executor.
 	// The hash agg executor starts multiple concurrent partial workers to do partial aggregate works.
+	// tidb_hashagg_partial_concurrency is deprecated, use tidb_executor_concurrency instead.
 	TiDBHashAggPartialConcurrency = "tidb_hashagg_partial_concurrency"
 
 	// tidb_hashagg_final_concurrency is used for hash agg executor.
 	// The hash agg executor starts multiple concurrent final workers to do final aggregate works.
+	// tidb_hashagg_final_concurrency is deprecated, use tidb_executor_concurrency instead.
 	TiDBHashAggFinalConcurrency = "tidb_hashagg_final_concurrency"
 
 	// tidb_window_concurrency is used for window parallel executor.
+	// tidb_window_concurrency is deprecated, use tidb_executor_concurrency instead.
 	TiDBWindowConcurrency = "tidb_window_concurrency"
 
 	// tidb_backoff_lock_fast is used for tikv backoff base time in milliseconds.
@@ -398,6 +406,9 @@ const (
 	// TiDBEnableCollectExecutionInfo indicates that whether execution info is collected.
 	TiDBEnableCollectExecutionInfo = "tidb_enable_collect_execution_info"
 
+	// DefExecutorConcurrency is used for controlling the concurrency of all types of executors.
+	TiDBExecutorConcurrency = "tidb_executor_concurrency"
+
 	// TiDBEnableClusteredIndex indicates if clustered index feature is enabled.
 	TiDBEnableClusteredIndex = "tidb_enable_clustered_index"
 
@@ -408,8 +419,8 @@ const (
 // Default TiDB system variable values.
 const (
 	DefHostname                        = "localhost"
-	DefIndexLookupConcurrency          = 4
-	DefIndexLookupJoinConcurrency      = 4
+	DefIndexLookupConcurrency          = ConcurrencyUnset
+	DefIndexLookupJoinConcurrency      = ConcurrencyUnset
 	DefIndexSerialScanConcurrency      = 1
 	DefIndexJoinBatchSize              = 25000
 	DefIndexLookupSize                 = 20000
@@ -459,7 +470,7 @@ const (
 	DefTiDBDisableTxnAutoRetry         = true
 	DefTiDBConstraintCheckInPlace      = false
 	DefTiDBHashJoinConcurrency         = 5
-	DefTiDBProjectionConcurrency       = 4
+	DefTiDBProjectionConcurrency       = ConcurrencyUnset
 	DefTiDBOptimizerSelectivityLevel   = 0
 	DefTiDBAllowBatchCop               = 0
 	DefTiDBTxnMode                     = ""
@@ -469,9 +480,9 @@ const (
 	DefTiDBDDLReorgBatchSize           = 256
 	DefTiDBDDLErrorCountLimit          = 512
 	DefTiDBMaxDeltaSchemaCount         = 1024
-	DefTiDBHashAggPartialConcurrency   = 4
-	DefTiDBHashAggFinalConcurrency     = 4
-	DefTiDBWindowConcurrency           = 4
+	DefTiDBHashAggPartialConcurrency   = ConcurrencyUnset
+	DefTiDBHashAggFinalConcurrency     = ConcurrencyUnset
+	DefTiDBWindowConcurrency           = ConcurrencyUnset
 	DefTiDBForcePriority               = mysql.NoPriority
 	DefTiDBUseRadixJoin                = false
 	DefEnableWindowFunction            = true
@@ -522,4 +533,6 @@ var (
 	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
 	MinExpensiveQueryTimeThreshold uint64 = 10 //10s
 	CapturePlanBaseline                   = serverGlobalVariable{globalVal: "0"}
+	// DefExecutorConcurrency is set to 4 currently to keep test pass easily, we may adjust this in the future.
+	DefExecutorConcurrency = 4
 )
