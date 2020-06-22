@@ -61,7 +61,7 @@ func NewRowContainer(fieldType []*types.FieldType, chunkSize int) *RowContainer 
 func (c *RowContainer) SpillToDisk() {
 	c.m.Lock()
 	defer c.m.Unlock()
-	if c.AlreadySpilled() {
+	if c.alreadySpilled() {
 		return
 	}
 	var err error
@@ -84,7 +84,7 @@ func (c *RowContainer) SpillToDisk() {
 func (c *RowContainer) Reset() error {
 	c.m.Lock()
 	defer c.m.Unlock()
-	if c.AlreadySpilled() {
+	if c.alreadySpilled() {
 		err := c.m.recordsInDisk.Close()
 		c.m.recordsInDisk = nil
 		if err != nil {
@@ -96,8 +96,8 @@ func (c *RowContainer) Reset() error {
 	return nil
 }
 
-// AlreadySpilled indicates that records have spilled out into disk.
-func (c *RowContainer) AlreadySpilled() bool {
+// alreadySpilled indicates that records have spilled out into disk.
+func (c *RowContainer) alreadySpilled() bool {
 	return c.m.recordsInDisk != nil
 }
 
@@ -112,7 +112,7 @@ func (c *RowContainer) AlreadySpilledSafe() bool {
 func (c *RowContainer) NumRow() int {
 	c.m.RLock()
 	defer c.m.RUnlock()
-	if c.AlreadySpilled() {
+	if c.alreadySpilled() {
 		return c.m.recordsInDisk.Len()
 	}
 	return c.m.records.Len()
@@ -122,7 +122,7 @@ func (c *RowContainer) NumRow() int {
 func (c *RowContainer) NumRowsOfChunk(chkID int) int {
 	c.m.RLock()
 	defer c.m.RUnlock()
-	if c.AlreadySpilled() {
+	if c.alreadySpilled() {
 		return c.m.recordsInDisk.NumRowsOfChunk(chkID)
 	}
 	return c.m.records.NumRowsOfChunk(chkID)
@@ -132,7 +132,7 @@ func (c *RowContainer) NumRowsOfChunk(chkID int) int {
 func (c *RowContainer) NumChunks() int {
 	c.m.RLock()
 	defer c.m.RUnlock()
-	if c.AlreadySpilled() {
+	if c.alreadySpilled() {
 		return c.m.recordsInDisk.NumChunks()
 	}
 	return c.m.records.NumChunks()
@@ -142,7 +142,7 @@ func (c *RowContainer) NumChunks() int {
 func (c *RowContainer) Add(chk *Chunk) (err error) {
 	c.m.RLock()
 	defer c.m.RUnlock()
-	if c.AlreadySpilled() {
+	if c.alreadySpilled() {
 		if c.m.spillError != nil {
 			return c.m.spillError
 		}
@@ -155,7 +155,7 @@ func (c *RowContainer) Add(chk *Chunk) (err error) {
 
 // AppendRow appends a row to the RowContainer, the row is copied to the RowContainer.
 func (c *RowContainer) AppendRow(row Row) (RowPtr, error) {
-	if c.AlreadySpilled() {
+	if c.alreadySpilled() {
 		return RowPtr{}, errors.New("ListInDisk don't support AppendRow")
 	}
 	return c.m.records.AppendRow(row), nil
@@ -170,7 +170,7 @@ func (c *RowContainer) AllocChunk() (chk *Chunk) {
 func (c *RowContainer) GetChunk(chkIdx int) (*Chunk, error) {
 	c.m.RLock()
 	defer c.m.RUnlock()
-	if !c.AlreadySpilled() {
+	if !c.alreadySpilled() {
 		return c.m.records.GetChunk(chkIdx), nil
 	}
 	chk := NewChunkWithCapacity(c.m.records.FieldTypes(), c.m.records.maxChunkSize)
@@ -194,7 +194,7 @@ func (c *RowContainer) GetList() *List {
 func (c *RowContainer) GetRow(ptr RowPtr) (Row, error) {
 	c.m.RLock()
 	defer c.m.RUnlock()
-	if c.AlreadySpilled() {
+	if c.alreadySpilled() {
 		if c.m.spillError != nil {
 			return Row{}, c.m.spillError
 		}
@@ -215,7 +215,7 @@ func (c *RowContainer) GetDiskTracker() *disk.Tracker {
 
 // Close close the RowContainer
 func (c *RowContainer) Close() (err error) {
-	if c.AlreadySpilled() {
+	if c.alreadySpilled() {
 		err = c.m.recordsInDisk.Close()
 		c.m.recordsInDisk = nil
 	}

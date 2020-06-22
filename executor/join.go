@@ -421,7 +421,7 @@ func (e *HashJoinExec) handleUnmatchedRowsFromHashTableInDisk(workerID uint) {
 func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
 	e.joinWorkerWaitGroup.Wait()
 	if e.useOuterToBuild {
-		if e.rowContainer.alreadySpilled() {
+		if e.rowContainer.alreadySpilledSafe() {
 			// Sequentially handling unmatched rows from the hash table to avoid random accessing IO
 			e.handleUnmatchedRowsFromHashTableInDisk(0)
 		} else {

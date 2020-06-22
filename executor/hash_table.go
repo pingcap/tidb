@@ -158,9 +158,6 @@ func (c *hashRowContainer) matchJoinKey(buildRow, probeRow chunk.Row, probeHCtx 
 		probeRow, probeHCtx.allTypes, probeHCtx.keyColIdx)
 }
 
-// alreadySpilled indicates that records have spilled out into disk.
-func (c *hashRowContainer) alreadySpilled() bool { return c.rowContainer.AlreadySpilled() }
-
 // alreadySpilledSafe indicates that records have spilled out into disk. It's thread-safe.
 func (c *hashRowContainer) alreadySpilledSafe() bool { return c.rowContainer.AlreadySpilledSafe() }
 
