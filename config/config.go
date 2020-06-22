@@ -484,7 +484,9 @@ type CoprocessorCache struct {
 	Enable bool `toml:"enable" json:"enable"`
 	// The capacity in MB of the cache.
 	CapacityMB float64 `toml:"capacity-mb" json:"capacity-mb"`
-	// Only cache requests whose result set is small.
+	// Only cache requests whose result set is larger than AdmissionMaxResultMB.
+	AdmissionMinResultMB float64 `toml:"admission-min-result-mb" json:"admission-min-result-mb"`
+	// Only cache requests whose result set is less than AdmissionMaxResultMB.
 	AdmissionMaxResultMB float64 `toml:"admission-max-result-mb" json:"admission-max-result-mb"`
 	// Only cache requests takes notable time to process.
 	AdmissionMinProcessMs uint64 `toml:"admission-min-process-ms" json:"admission-min-process-ms"`
@@ -659,6 +661,7 @@ var defaultConf = Config{
 		CoprCache: CoprocessorCache{
 			Enable:                true,
 			CapacityMB:            1000,
+			AdmissionMinResultMB:  0,
 			AdmissionMaxResultMB:  10,
 			AdmissionMinProcessMs: 5,
 		},

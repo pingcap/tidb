@@ -29,6 +29,7 @@ import (
 
 type coprCache struct {
 	cache                   *ristretto.Cache
+	admissionMinSize		int
 	admissionMaxSize        int
 	admissionMinProcessTime time.Duration
 }
@@ -63,9 +64,20 @@ func newCoprCache(config *config.CoprocessorCache) (*coprCache, error) {
 	if capacityInBytes == 0 {
 		return nil, errors.New("Capacity must be > 0 to enable the cache")
 	}
+	minEntityInBytes := int64(config.AdmissionMinResultMB * 1024.0 * 1024.0)
+	if minEntityInBytes < 0 {
+		return nil, errors.New("AdmissionMinResultMB must be >= 0 to enable the cache")
+	}
 	maxEntityInBytes := int64(config.AdmissionMaxResultMB * 1024.0 * 1024.0)
-	if maxEntityInBytes == 0 {
+	if maxEntityInBytes <= 0 {
 		return nil, errors.New("AdmissionMaxResultMB must be > 0 to enable the cache")
+	}
+	if maxEntityInBytes < minEntityInBytes {
+		errMsg := fmt.Sprintf(
+			"AdmissionMaxResultMB[%f] must be larger than AdmissionMinResultMB[%f] to enable the cache",
+			config.AdmissionMaxResultMB,
+			config.AdmissionMinResultMB)
+		return nil, errors.New(errMsg)
 	}
 	estimatedEntities := capacityInBytes / maxEntityInBytes * 2
 	if estimatedEntities < 10 {
@@ -81,6 +93,7 @@ func newCoprCache(config *config.CoprocessorCache) (*coprCache, error) {
 	}
 	c := coprCache{
 		cache:                   cache,
+		admissionMinSize:		 int(minEntityInBytes),
 		admissionMaxSize:        int(maxEntityInBytes),
 		admissionMinProcessTime: time.Duration(config.AdmissionMinProcessMs) * time.Millisecond,
 	}
@@ -163,7 +176,7 @@ func (c *coprCache) CheckAdmission(dataSize int, processTime time.Duration) bool
 	if c == nil {
 		return false
 	}
-	if dataSize == 0 || dataSize > c.admissionMaxSize {
+	if dataSize == 0 || dataSize > c.admissionMaxSize || dataSize < c.admissionMinSize {
 		return false
 	}
 	if processTime < c.admissionMinProcessTime {

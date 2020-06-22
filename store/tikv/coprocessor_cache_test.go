@@ -100,7 +100,7 @@ func (s *testCoprocessorSuite) TestDisable(c *C) {
 }
 
 func (s *testCoprocessorSuite) TestAdmission(c *C) {
-	cache, err := newCoprCache(&config.CoprocessorCache{Enable: true, AdmissionMinProcessMs: 5, AdmissionMaxResultMB: 1, CapacityMB: 1})
+	cache, err := newCoprCache(&config.CoprocessorCache{Enable: true, AdmissionMinProcessMs: 5, AdmissionMinResultMB: 0, AdmissionMaxResultMB: 1, CapacityMB: 1})
 	c.Assert(err, IsNil)
 	c.Assert(cache, NotNil)
 
@@ -132,6 +132,40 @@ func (s *testCoprocessorSuite) TestAdmission(c *C) {
 	c.Assert(v, Equals, false)
 
 	v = cache.CheckAdmission(1024*1024+1, 4*time.Millisecond)
+	c.Assert(v, Equals, false)
+
+	cache, err = newCoprCache(&config.CoprocessorCache{Enable: true, AdmissionMinProcessMs: 5, AdmissionMinResultMB: 1, AdmissionMaxResultMB: 1, CapacityMB: 1})
+	c.Assert(err, IsNil)
+	c.Assert(cache, NotNil)
+	v = cache.CheckAdmission(1024*1024, 5*time.Millisecond)
+	c.Assert(v, Equals, true)
+
+	v = cache.CheckAdmission(1024*1024, 4*time.Millisecond)
+	c.Assert(v, Equals, false)
+
+	_, err = newCoprCache(&config.CoprocessorCache{Enable: true, AdmissionMinProcessMs: 5, AdmissionMinResultMB: -1, AdmissionMaxResultMB: 1, CapacityMB: 1})
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "AdmissionMinResultMB must be >= 0 to enable the cache")
+
+	_, err = newCoprCache(&config.CoprocessorCache{Enable: true, AdmissionMinProcessMs: 5, AdmissionMinResultMB: 0, AdmissionMaxResultMB: -1, CapacityMB: 1})
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "AdmissionMaxResultMB must be > 0 to enable the cache")
+
+	_, err = newCoprCache(&config.CoprocessorCache{Enable: true, AdmissionMinProcessMs: 5, AdmissionMinResultMB: 2, AdmissionMaxResultMB: 1, CapacityMB: 1})
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "AdmissionMaxResultMB[1.000000] must be larger than AdmissionMinResultMB[2.000000] to enable the cache")
+
+	cache, err = newCoprCache(&config.CoprocessorCache{Enable: true, AdmissionMinProcessMs: 5, AdmissionMinResultMB: 0.5, AdmissionMaxResultMB: 1, CapacityMB: 1})
+	c.Assert(err, IsNil)
+	c.Assert(cache, NotNil)
+
+	v = cache.CheckAdmission(512*1024, 5*time.Millisecond)
+	c.Assert(v, Equals, true)
+
+	v = cache.CheckAdmission(512*1024, 4*time.Millisecond)
+	c.Assert(v, Equals, false)
+
+	v = cache.CheckAdmission(512*1024 - 1, 5*time.Millisecond)
 	c.Assert(v, Equals, false)
 }
 
