@@ -222,6 +222,10 @@ type SpillDiskAction struct {
 	c              *RowContainer
 	fallbackAction memory.ActionOnExceed
 	m              sync.Mutex
+
+	// test function only used for test sync.
+	TestSyncInputFunc  func()
+	TestSyncOutputFunc func()
 }
 
 // Action sends a signal to trigger spillToDisk method of RowContainer
@@ -237,9 +241,15 @@ func (a *SpillDiskAction) Action(t *memory.Tracker) {
 		// TODO: Refine processing for various errors. Return or Panic.
 		logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
 			zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
-		go func() {
-			a.c.SpillToDisk()
-		}()
+		if a.TestSyncInputFunc != nil {
+			a.TestSyncInputFunc()
+			c := a.c
+			go func() {
+				c.SpillToDisk()
+				a.TestSyncOutputFunc()
+			}()
+		}
+		go a.c.SpillToDisk()
 	}
 }
 

@@ -632,6 +632,10 @@ type SortAndSpillDiskAction struct {
 	c              *SortedRowContainer
 	fallbackAction memory.ActionOnExceed
 	m              sync.Mutex
+
+	// test function only used for test sync.
+	testSyncInputFunc  func()
+	testSyncOutputFunc func()
 }
 
 // Action sends a signal to trigger sortAndSpillToDisk method of RowContainer
@@ -647,6 +651,14 @@ func (a *SortAndSpillDiskAction) Action(t *memory.Tracker) {
 		// TODO: Refine processing various errors. Return or Panic.
 		logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
 			zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
+		if a.testSyncInputFunc != nil {
+			a.testSyncInputFunc()
+			c := a.c
+			go func() {
+				c.SpillToDisk()
+				a.testSyncOutputFunc()
+			}()
+		}
 		go a.c.sortAndSpillToDisk()
 	}
 }

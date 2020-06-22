@@ -14,11 +14,12 @@
 package chunk
 
 import (
+	"sync"
+
 	"github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/memory"
-	"time"
 )
 
 var _ = check.Suite(&rowContainerTestSuite{})
@@ -86,6 +87,13 @@ func (r *rowContainerTestSuite) TestSpillAction(c *check.C) {
 	sz := 4
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	rc := NewRowContainer(fields, sz)
+	wg := sync.WaitGroup{}
+	rc.actionSpill.TestSyncInputFunc = func() {
+		wg.Add(1)
+	}
+	rc.actionSpill.TestSyncOutputFunc = func() {
+		wg.Done()
+	}
 	chk := NewChunkWithCapacity(fields, sz)
 	for i := 0; i < sz; i++ {
 		chk.AppendInt64(0, int64(i))
@@ -98,13 +106,14 @@ func (r *rowContainerTestSuite) TestSpillAction(c *check.C) {
 
 	c.Assert(rc.AlreadySpilledSafe(), check.Equals, false)
 	err = rc.Add(chk)
+	wg.Wait()
 	c.Assert(err, check.IsNil)
 	c.Assert(rc.AlreadySpilledSafe(), check.Equals, false)
 	c.Assert(rc.GetMemTracker().BytesConsumed(), check.Equals, chk.MemoryUsage())
 	// The following line is erroneous, since chk is already handled by rc, Add it again causes duplicated memory usage account.
 	// It is only for test of spill, do not double-add a chunk elsewhere.
 	err = rc.Add(chk)
-	time.Sleep(200 * time.Millisecond)
+	wg.Wait()
 	c.Assert(err, check.IsNil)
 	c.Assert(rc.AlreadySpilledSafe(), check.Equals, true)
 	err = rc.Reset()

@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"hash"
 	"hash/fnv"
+	"sync"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
@@ -151,6 +152,13 @@ func (s *pkgTestSuite) testHashRowContainer(c *C, hashFunc func() hash.Hash64, s
 		hCtx.hashVals = append(hCtx.hashVals, hashFunc())
 	}
 	rowContainer := newHashRowContainer(sctx, 0, hCtx)
+	wg := sync.WaitGroup{}
+	rowContainer.rowContainer.ActionSpill().TestSyncInputFunc = func() {
+		wg.Add(1)
+	}
+	rowContainer.rowContainer.ActionSpill().TestSyncOutputFunc = func() {
+		wg.Done()
+	}
 	tracker := rowContainer.GetMemTracker()
 	tracker.SetLabel(buildSideResultLabel)
 	if spill {
@@ -161,7 +169,7 @@ func (s *pkgTestSuite) testHashRowContainer(c *C, hashFunc func() hash.Hash64, s
 	c.Assert(err, IsNil)
 	err = rowContainer.PutChunk(chk1)
 	c.Assert(err, IsNil)
-
+	wg.Wait()
 	c.Assert(rowContainer.alreadySpilledSafe(), Equals, spill)
 	c.Assert(rowContainer.GetMemTracker().BytesConsumed() == 0, Equals, spill)
 	c.Assert(rowContainer.GetMemTracker().BytesConsumed() > 0, Equals, !spill)
