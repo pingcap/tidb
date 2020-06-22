@@ -129,7 +129,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 	c.Assert(seVar, NotNil)
 
 	seVar.User = &auth.UserIdentity{Username: "root", Hostname: "192.168.0.1"}
-	seVar.ConnectionInfo = &variable.ConnectionInfo{ClientIP:"192.168.0.1"}
+	seVar.ConnectionInfo = &variable.ConnectionInfo{ClientIP: "192.168.0.1"}
 	seVar.ConnectionID = 1
 	seVar.CurrentDB = "test"
 	seVar.InRestrictedSQL = true
