@@ -147,6 +147,9 @@ func (s *testIntegrationSuite) TestBitColErrorMessage(c *C) {
 func (s *testIntegrationSuite) TestPushLimitDownIndexLookUpReader(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
+	tk.MustExec("set @@session.tidb_executor_concurrency = 4;")
+	tk.MustExec("set @@session.tidb_hash_join_concurrency = 5;")
+	tk.MustExec("set @@session.tidb_distsql_scan_concurrency = 15;")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tbl")
 	tk.MustExec("create table tbl(a int, b int, c int, key idx_b_c(b,c))")
@@ -896,6 +899,9 @@ func (s *testIntegrationSuite) TestIssue17813(c *C) {
 
 func (s *testIntegrationSuite) TestHintWithRequiredProperty(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@session.tidb_executor_concurrency = 4;")
+	tk.MustExec("set @@session.tidb_hash_join_concurrency = 5;")
+	tk.MustExec("set @@session.tidb_distsql_scan_concurrency = 15;")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int, c int, key b(b))")
