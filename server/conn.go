@@ -1357,6 +1357,9 @@ func (cc *clientConn) prefetchPointPlanKeys(stmts []ast.StmtNode) ([]plannercore
 		case *plannercore.Update:
 			updateStmt := stmt.(*ast.UpdateStmt)
 			if pp, ok := x.SelectPlan.(*plannercore.PointGetPlan); ok {
+				if pp.PartitionInfo != nil {
+					continue
+				}
 				if pp.IndexInfo != nil {
 					executor.ResetUpdateStmtCtx(sc, updateStmt, vars)
 					encoded, err1 := codec.EncodeKey(sc, nil, pp.IndexValues...)
