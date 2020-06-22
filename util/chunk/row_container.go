@@ -215,6 +215,12 @@ func (c *RowContainer) ActionSpill() *SpillDiskAction {
 	return c.actionSpill
 }
 
+// ActionSpillForTest returns a SpillDiskAction for spilling over to disk for test.
+func (c *RowContainer) ActionSpillForTest(inputFunc func(), outputFunc func()) *SpillDiskAction {
+	c.actionSpill = &SpillDiskAction{c: c, testSyncInputFunc: inputFunc, testSyncOutputFunc: outputFunc}
+	return c.actionSpill
+}
+
 // SpillDiskAction implements memory.ActionOnExceed for chunk.List. If
 // the memory quota of a query is exceeded, SpillDiskAction.Action is
 // triggered.
@@ -224,8 +230,8 @@ type SpillDiskAction struct {
 	m              sync.Mutex
 
 	// test function only used for test sync.
-	TestSyncInputFunc  func()
-	TestSyncOutputFunc func()
+	testSyncInputFunc  func()
+	testSyncOutputFunc func()
 }
 
 // Action sends a signal to trigger spillToDisk method of RowContainer
@@ -241,12 +247,12 @@ func (a *SpillDiskAction) Action(t *memory.Tracker) {
 		// TODO: Refine processing for various errors. Return or Panic.
 		logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
 			zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
-		if a.TestSyncInputFunc != nil {
-			a.TestSyncInputFunc()
+		if a.testSyncInputFunc != nil {
+			a.testSyncInputFunc()
 			c := a.c
 			go func() {
 				c.SpillToDisk()
-				a.TestSyncOutputFunc()
+				a.testSyncOutputFunc()
 			}()
 			return
 		}

@@ -87,6 +87,14 @@ func (r *rowContainerTestSuite) TestSpillAction(c *check.C) {
 	sz := 4
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	rc := NewRowContainer(fields, sz)
+	wg := sync.WaitGroup{}
+	testSyncInputFunc := func() {
+		wg.Add(1)
+	}
+	testSyncOutputFunc := func() {
+		wg.Done()
+	}
+
 	chk := NewChunkWithCapacity(fields, sz)
 	for i := 0; i < sz; i++ {
 		chk.AppendInt64(0, int64(i))
@@ -95,16 +103,7 @@ func (r *rowContainerTestSuite) TestSpillAction(c *check.C) {
 	var err error
 	tracker = rc.GetMemTracker()
 	tracker.SetBytesLimit(chk.MemoryUsage() + 1)
-	tracker.FallbackOldAndSetNewAction(rc.ActionSpill())
-
-	wg := sync.WaitGroup{}
-	rc.actionSpill.TestSyncInputFunc = func() {
-		wg.Add(1)
-	}
-	rc.actionSpill.TestSyncOutputFunc = func() {
-		wg.Done()
-	}
-
+	tracker.FallbackOldAndSetNewAction(rc.ActionSpillForTest(testSyncInputFunc, testSyncOutputFunc))
 	c.Assert(rc.AlreadySpilledSafe(), check.Equals, false)
 	err = rc.Add(chk)
 	wg.Wait()
