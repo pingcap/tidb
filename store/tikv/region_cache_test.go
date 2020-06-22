@@ -338,7 +338,7 @@ func (s *testRegionCacheSuite) TestSendFailedButLeaderNotChange(c *C) {
 	c.Assert(ctxFollower1.Peer.Id, Not(Equals), ctxFollower2.Peer.Id)
 
 	// access 1 it will return NotLeader, leader back to 2 again
-	s.cache.UpdateLeader(loc.Region, s.store2, ctx.AccessIdx)
+	s.cache.UpdateLeader(loc.Region, s.store2, ctx.Peer.StoreId)
 	ctx, err = s.cache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadLeader, 0)
 	c.Assert(err, IsNil)
 	c.Assert(ctx.Peer.Id, Equals, s.peer2)
@@ -419,7 +419,7 @@ func (s *testRegionCacheSuite) TestSendFailedInHibernateRegion(c *C) {
 	c.Assert(ctxFollower1.Peer.Id, Not(Equals), ctxFollower2.Peer.Id)
 
 	// access 2, it's in hibernate and return 0 leader, so switch to 3
-	s.cache.UpdateLeader(loc.Region, 0, ctx.AccessIdx)
+	s.cache.UpdateLeader(loc.Region, 0, ctx.Peer.StoreId)
 	ctx, err = s.cache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadLeader, 0)
 	c.Assert(err, IsNil)
 	c.Assert(ctx.Peer.Id, Equals, peer3)
@@ -444,7 +444,7 @@ func (s *testRegionCacheSuite) TestSendFailedInHibernateRegion(c *C) {
 	// again peer back to 1
 	ctx, err = s.cache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadLeader, 0)
 	c.Assert(err, IsNil)
-	s.cache.UpdateLeader(loc.Region, 0, ctx.AccessIdx)
+	s.cache.UpdateLeader(loc.Region, 0, ctx.Peer.StoreId)
 	ctx, err = s.cache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadLeader, 0)
 	c.Assert(err, IsNil)
 	c.Assert(ctx.Peer.Id, Equals, s.peer1)
@@ -573,7 +573,7 @@ func (s *testRegionCacheSuite) TestSendFailedInMultipleNode(c *C) {
 	c.Assert(ctxFollower1.Peer.Id, Equals, ctxFollower2.Peer.Id)
 
 	// 3 can be access, so switch to 1
-	s.cache.UpdateLeader(loc.Region, s.store1, ctx.AccessIdx)
+	s.cache.UpdateLeader(loc.Region, s.store1, ctx.Peer.StoreId)
 	ctx, err = s.cache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadLeader, 0)
 	c.Assert(err, IsNil)
 	c.Assert(ctx.Peer.Id, Equals, s.peer1)
@@ -870,7 +870,7 @@ func (s *testRegionCacheSuite) TestScanRegions(c *C) {
 	c.Assert(len(scannedRegions), Equals, 5)
 	for i := 0; i < 5; i++ {
 		r := scannedRegions[i]
-		_, p, _, _ := r.WorkStorePeer(r.getStore())
+		_, p, _ := r.WorkStorePeer(r.getStore())
 
 		c.Assert(r.meta.Id, Equals, regions[i])
 		c.Assert(p.Id, Equals, peers[i][0])
@@ -881,7 +881,7 @@ func (s *testRegionCacheSuite) TestScanRegions(c *C) {
 	c.Assert(len(scannedRegions), Equals, 3)
 	for i := 1; i < 4; i++ {
 		r := scannedRegions[i-1]
-		_, p, _, _ := r.WorkStorePeer(r.getStore())
+		_, p, _ := r.WorkStorePeer(r.getStore())
 
 		c.Assert(r.meta.Id, Equals, regions[i])
 		c.Assert(p.Id, Equals, peers[i][0])
@@ -892,7 +892,7 @@ func (s *testRegionCacheSuite) TestScanRegions(c *C) {
 	c.Assert(len(scannedRegions), Equals, 1)
 
 	r0 := scannedRegions[0]
-	_, p0, _, _ := r0.WorkStorePeer(r0.getStore())
+	_, p0, _ := r0.WorkStorePeer(r0.getStore())
 	c.Assert(r0.meta.Id, Equals, regions[1])
 	c.Assert(p0.Id, Equals, peers[1][0])
 
@@ -903,7 +903,7 @@ func (s *testRegionCacheSuite) TestScanRegions(c *C) {
 	c.Assert(err, IsNil)
 	for i := 0; i < 3; i++ {
 		r := scannedRegions[i]
-		_, p, _, _ := r.WorkStorePeer(r.getStore())
+		_, p, _ := r.WorkStorePeer(r.getStore())
 
 		c.Assert(r.meta.Id, Equals, regions[i*2])
 		c.Assert(p.Id, Equals, peers[i*2][0])
@@ -1175,20 +1175,22 @@ func BenchmarkOnRequestFail(b *testing.B) {
 	region := cache.getRegionByIDFromCache(loc.Region.id)
 	b.ResetTimer()
 	regionStore := region.getStore()
-	store, peer, accessIdx, _ := region.WorkStorePeer(regionStore)
+	store, peer, _ := region.WorkStorePeer(regionStore)
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			rpcCtx := &RPCContext{
 				Region:     loc.Region,
 				Meta:       region.meta,
-				AccessIdx:  accessIdx,
 				Peer:       peer,
 				Store:      store,
 				AccessMode: TiKvOnly,
 			}
 			r := cache.getCachedRegionWithRLock(rpcCtx.Region)
 			if r != nil {
-				r.getStore().switchNextTiKVPeer(r, rpcCtx.AccessIdx)
+				_, accessIdx, s := r.getStore().accessStoreByID(TiKvOnly, peer.StoreId)
+				if s != nil {
+					r.getStore().switchNextTiKVPeer(r, accessIdx)
+				}
 			}
 		}
 	})
