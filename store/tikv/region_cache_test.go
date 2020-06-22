@@ -277,8 +277,6 @@ func (s *testRegionCacheSuite) TestUpdateLeader3(c *C) {
 	addr2 := s.getAddr(c, []byte("a"), kv.ReplicaReadFollower, seed+1)
 	c.Assert(addr, Not(Equals), s.storeAddr(store3))
 	c.Assert(addr2, Not(Equals), s.storeAddr(store3))
-	c.Assert(addr, Not(Equals), "")
-	c.Assert(addr2, Not(Equals), "")
 }
 
 func (s *testRegionCacheSuite) TestSendFailedButLeaderNotChange(c *C) {
