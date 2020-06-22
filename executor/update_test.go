@@ -279,6 +279,12 @@ func (s *testSuite11) TestUpdateClusterIndex(c *C) {
 	tk.MustQuery(`select * from ut1pku`).Check(testkit.Rows("a 3 2", "b 2 3"))
 	tk.MustGetErrCode(`update ut1pku set uk = 2 where id = 'a'`, errno.ErrDupEntry)
 	tk.MustQuery(`select * from ut1pku`).Check(testkit.Rows("a 3 2", "b 2 3"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10) primary key, b char(10));")
+	tk.MustExec("insert into t values('a', 'b');")
+	tk.MustExec("update t set a='c' where t.a='a' and b='b';")
+	tk.MustQuery("select * from t").Check(testkit.Rows("c b"))
 }
 
 func (s *testSuite11) TestDeleteClusterIndex(c *C) {
