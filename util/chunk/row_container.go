@@ -167,8 +167,22 @@ func (c *RowContainer) AllocChunk() (chk *Chunk) {
 }
 
 // GetChunk returns chkIdx th chunk of in memory records.
-func (c *RowContainer) GetChunk(chkIdx int) *Chunk {
-	return c.m.records.GetChunk(chkIdx)
+func (c *RowContainer) GetChunk(chkIdx int) (*Chunk, error) {
+	c.m.RLock()
+	defer c.m.RUnlock()
+	if !c.AlreadySpilled() {
+		return c.m.records.GetChunk(chkIdx), nil
+	}
+	chk := NewChunkWithCapacity(c.m.records.FieldTypes(), c.m.records.maxChunkSize)
+	offsets := c.m.recordsInDisk.offsets[chkIdx]
+	for rowIdx := range offsets {
+		row, err := c.m.recordsInDisk.GetRow(RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
+		if err != nil {
+			return chk, err
+		}
+		chk.AppendRow(row)
+	}
+	return chk, nil
 }
 
 // GetList returns the list of in memory records.

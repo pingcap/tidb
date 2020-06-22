@@ -227,7 +227,7 @@ func (c *hashRowContainer) NumRowsOfChunk(chkID int) int {
 }
 
 // GetChunk returns chkIdx th chunk of in memory records, only works if rowContainer is not spilled
-func (c *hashRowContainer) GetChunk(chkIdx int) *chunk.Chunk {
+func (c *hashRowContainer) GetChunk(chkIdx int) (*chunk.Chunk, error) {
 	return c.rowContainer.GetChunk(chkIdx)
 }
 

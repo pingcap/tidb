@@ -541,7 +541,11 @@ func (c *SortedRowContainer) Close() error {
 func (c *SortedRowContainer) initPointers() {
 	c.m.rowPtrs = make([]chunk.RowPtr, 0, c.NumRow())
 	for chkIdx := 0; chkIdx < c.NumChunks(); chkIdx++ {
-		rowChk := c.GetChunk(chkIdx)
+		rowChk, err := c.GetChunk(chkIdx)
+		// err must be nil, because the chunk is in memory.
+		if err != nil {
+			panic(err)
+		}
 		for rowIdx := 0; rowIdx < rowChk.NumRows(); rowIdx++ {
 			c.m.rowPtrs = append(c.m.rowPtrs, chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
 		}
@@ -580,7 +584,11 @@ func (c *SortedRowContainer) initPointerAndSort() {
 	}
 	c.m.rowPtrs = make([]chunk.RowPtr, 0, c.NumRow())
 	for chkIdx := 0; chkIdx < c.NumChunks(); chkIdx++ {
-		rowChk := c.GetChunk(chkIdx)
+		rowChk, err := c.GetChunk(chkIdx)
+		// err must be nil, because the chunk is in memory.
+		if err != nil {
+			panic(err)
+		}
 		for rowIdx := 0; rowIdx < rowChk.NumRows(); rowIdx++ {
 			c.m.rowPtrs = append(c.m.rowPtrs, chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
 		}
