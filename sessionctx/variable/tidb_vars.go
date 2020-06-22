@@ -346,6 +346,9 @@ const (
 	// TiDBEnableFastAnalyze indicates to use fast analyze.
 	TiDBEnableFastAnalyze = "tidb_enable_fast_analyze"
 
+	// TiDBEnableParallelApply indicates to use parallel apply.
+	TiDBEnableParallelApply = "tidb_enable_parallel_apply"
+
 	// TiDBExpensiveQueryTimeThreshold indicates the time threshold of expensive query.
 	TiDBExpensiveQueryTimeThreshold = "tidb_expensive_query_time_threshold"
 
@@ -500,6 +503,7 @@ const (
 	DefTiDBAllowAutoRandExplicitInsert = false
 	DefTiDBEnableClusteredIndex        = false
 	DefTiDBSlowLogMasking              = false
+	DefTiDBEnableParallelApply         = false
 )
 
 // Process global variables.

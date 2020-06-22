@@ -2053,6 +2053,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBAllowAutoRandExplicitInsert,
 	variable.TiDBEnableClusteredIndex,
 	variable.TiDBSlowLogMasking,
+	variable.TiDBEnableParallelApply,
 }
 
 var (

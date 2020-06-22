@@ -144,6 +144,31 @@ func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
 	plan = eliminatePhysicalProjection(plan)
 	plan = injectExtraProjection(plan)
 	plan = eliminateUnionScanAndLock(sctx, plan)
+	plan = enableParallelApply(sctx, plan)
+	return plan
+}
+
+func enableParallelApply(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
+	if !sctx.GetSessionVars().EnableParallelApply {
+		return plan
+	}
+	// the parallel apply has two limitation:
+	// 1. the parallel implementation now cannot keep order;
+	// 2. if one Apply is in inner of another Apply, it cannot be parallel, for example:
+	//		The topology of 3 Apply operators are A1(A2, A3), which means A2 is the outer child of A1
+	//		while A3 is the inner child. Then A1 and A2 can be parallel and A3 cannot.
+	if apply, ok := plan.(*PhysicalApply); ok {
+		outerIdx := 1 - apply.InnerChildIdx
+		orderedCols := apply.GetChildReqProps(outerIdx).Items
+		apply.EnableParallel = len(orderedCols) == 0 // limitation 1
+
+		apply.SetChild(outerIdx, enableParallelApply(sctx, apply.Children()[outerIdx]))
+		// apply.SetChild(innerIdx, enableParallelApply(innerChild)) <--- limitation 2
+		return apply
+	}
+	for i, child := range plan.Children() {
+		plan.SetChild(i, enableParallelApply(sctx, child))
+	}
 	return plan
 }
 

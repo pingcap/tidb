@@ -643,6 +643,9 @@ type SessionVars struct {
 
 	// EnableSlowLogMasking indicates that whether masking the query data when log slow query.
 	EnableSlowLogMasking bool
+
+	// EnableParallelApply indicates that whether to use parallel apply.
+	EnableParallelApply bool
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -1347,6 +1350,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableClusteredIndex = TiDBOptOn(val)
 	case TiDBSlowLogMasking:
 		s.EnableSlowLogMasking = TiDBOptOn(val)
+	case TiDBEnableParallelApply:
+		s.EnableParallelApply = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
