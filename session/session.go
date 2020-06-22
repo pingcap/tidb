@@ -1299,7 +1299,7 @@ func CompileExecutePreparedStmt(ctx context.Context, s Session, ID uint32, args 
 	if err != nil {
 		return nil, err
 	}
-	// s.(*session).currentPlan = execPlan
+	s.(*session).currentPlan = execPlan
 
 	stmt := &executor.ExecStmt{
 		GoCtx:       ctx,
