@@ -96,7 +96,7 @@ func optimizeByShuffle(pp PhysicalPlan, tsk task, ctx sessionctx.Context) task {
 }
 
 func optimizeByShuffle4Window(pp *PhysicalWindow, ctx sessionctx.Context) *PhysicalShuffle {
-	concurrency := ctx.GetSessionVars().WindowConcurrency
+	concurrency := ctx.GetSessionVars().WindowConcurrency()
 	if concurrency <= 1 {
 		return nil
 	}

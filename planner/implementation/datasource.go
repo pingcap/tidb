@@ -79,7 +79,7 @@ func (impl *TableReaderImpl) CalcCost(outCount float64, children ...memo.Impleme
 	// the cost to cop iterator workers. According to `CopClient::Send`, the concurrency
 	// is Min(DistSQLScanConcurrency, numRegionsInvolvedInScan), since we cannot infer
 	// the number of regions involved, we simply use DistSQLScanConcurrency.
-	copIterWorkers := float64(sessVars.DistSQLScanConcurrency)
+	copIterWorkers := float64(sessVars.DistSQLScanConcurrency())
 	impl.cost = (networkCost + children[0].GetCost()) / copIterWorkers
 	return impl.cost
 }
@@ -88,7 +88,7 @@ func (impl *TableReaderImpl) CalcCost(outCount float64, children ...memo.Impleme
 func (impl *TableReaderImpl) GetCostLimit(costLimit float64, children ...memo.Implementation) float64 {
 	reader := impl.plan.(*plannercore.PhysicalTableReader)
 	sessVars := reader.SCtx().GetSessionVars()
-	copIterWorkers := float64(sessVars.DistSQLScanConcurrency)
+	copIterWorkers := float64(sessVars.DistSQLScanConcurrency())
 	if math.MaxFloat64/copIterWorkers < costLimit {
 		return math.MaxFloat64
 	}
@@ -135,7 +135,7 @@ type IndexReaderImpl struct {
 func (impl *IndexReaderImpl) GetCostLimit(costLimit float64, children ...memo.Implementation) float64 {
 	reader := impl.plan.(*plannercore.PhysicalIndexReader)
 	sessVars := reader.SCtx().GetSessionVars()
-	copIterWorkers := float64(sessVars.DistSQLScanConcurrency)
+	copIterWorkers := float64(sessVars.DistSQLScanConcurrency())
 	if math.MaxFloat64/copIterWorkers < costLimit {
 		return math.MaxFloat64
 	}
@@ -147,7 +147,7 @@ func (impl *IndexReaderImpl) CalcCost(outCount float64, children ...memo.Impleme
 	reader := impl.plan.(*plannercore.PhysicalIndexReader)
 	sessVars := reader.SCtx().GetSessionVars()
 	networkCost := outCount * sessVars.NetworkFactor * impl.tblColHists.GetAvgRowSize(reader.SCtx(), children[0].GetPlan().Schema().Columns, true, false)
-	copIterWorkers := float64(sessVars.DistSQLScanConcurrency)
+	copIterWorkers := float64(sessVars.DistSQLScanConcurrency())
 	impl.cost = (networkCost + children[0].GetCost()) / copIterWorkers
 	return impl.cost
 }
