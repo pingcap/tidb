@@ -103,6 +103,20 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
+	actionExceed := e.memTracker.GetActionOnExceed()
+	if actionExceed != nil {
+		originalAction := e.ctx.GetSessionVars().StmtCtx.MemTracker.GetActionOnExceed()
+		switch originalAction.(type) {
+		case *memory.PanicOnExceed:
+			e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionExceed)
+		case *memory.LogOnExceed:
+			e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionExceed)
+		default:
+			// If the origin originalAction is not above, TableReader's Action won't cover it.
+			logutil.Event(ctx,"table scan oom action won't cover any other action except log and cancel" )
+		}
+	}
+
 	var err error
 	if e.corColInFilter {
 		e.dagPB.Executors, _, err = constructDistExec(e.ctx, e.plans)
@@ -163,20 +177,6 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 		}
 		return tableName
 	}), e.ranges)
-	if e.memTracker != nil {
-		actionExceed := e.memTracker.GetActionOnExceed()
-		if actionExceed != nil {
-			originalAction := e.ctx.GetSessionVars().StmtCtx.MemTracker.GetActionOnExceed()
-			switch originalAction.(type) {
-			case *memory.PanicOnExceed:
-				e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionExceed)
-			case *memory.LogOnExceed:
-				e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionExceed)
-			default:
-				// If the origin originalAction is not above, TableReader's Action won't cover it.
-			}
-		}
-	}
 
 	if err := e.resultHandler.nextChunk(ctx, req); err != nil {
 		e.feedback.Invalidate()
