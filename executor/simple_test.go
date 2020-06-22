@@ -595,29 +595,31 @@ func (s *testSuite3) TestDropStatsFromKV(c *C) {
 	tk.MustExec("insert into t select * from t")
 	tk.MustExec("insert into t select * from t")
 	tk.MustExec("analyze table t")
-	tblID := tk.MustQuery("select table_id from mysql.stats_meta").Rows()[0][0].(string)
-	tk.MustQuery("select table_id, hist_id from mysql.stats_histograms where table_id = " + tblID).Check(
-		testkit.Rows("45 1", "45 2"))
-	tk.MustQuery("select table_id, hist_id, bucket_id from mysql.stats_buckets where table_id = " + tblID).Check(
-		testkit.Rows("45 1 0",
-			"45 1 1",
-			"45 1 2",
-			"45 1 3",
-			"45 2 0",
-			"45 2 1",
-			"45 2 2",
-			"45 2 3"))
-	tk.MustQuery("select table_id, hist_id from mysql.stats_top_n where table_id = " + tblID).Check(
-		testkit.Rows("45 1", "45 1", "45 1", "45 1", "45 2", "45 2", "45 2", "45 2"))
+	tblID := tk.MustQuery(`select tidb_table_id from information_schema.tables where table_name = "t" and table_schema = "test"`).Rows()[0][0].(string)
+	tk.MustQuery("select modify_count, count from mysql.stats_meta where table_id = " + tblID).Check(
+		testkit.Rows("0 16"))
+	tk.MustQuery("select hist_id from mysql.stats_histograms where table_id = " + tblID).Check(
+		testkit.Rows("1", "2"))
+	tk.MustQuery("select hist_id, bucket_id from mysql.stats_buckets where table_id = " + tblID).Check(
+		testkit.Rows("1 0",
+			"1 1",
+			"1 2",
+			"1 3",
+			"2 0",
+			"2 1",
+			"2 2",
+			"2 3"))
+	tk.MustQuery("select hist_id from mysql.stats_top_n where table_id = " + tblID).Check(
+		testkit.Rows("1", "1", "1", "1", "2", "2", "2", "2"))
 
 	tk.MustExec("drop stats t")
-	tk.MustQuery("select table_id, modify_count, count from mysql.stats_meta where table_id = " + tblID).Check(
-		testkit.Rows("45 0 16"))
-	tk.MustQuery("select table_id, hist_id from mysql.stats_histograms where table_id = " + tblID).Check(
+	tk.MustQuery("select modify_count, count from mysql.stats_meta where table_id = " + tblID).Check(
+		testkit.Rows("0 16"))
+	tk.MustQuery("select hist_id from mysql.stats_histograms where table_id = " + tblID).Check(
 		testkit.Rows())
-	tk.MustQuery("select table_id, hist_id, bucket_id from mysql.stats_buckets where table_id = " + tblID).Check(
+	tk.MustQuery("select hist_id, bucket_id from mysql.stats_buckets where table_id = " + tblID).Check(
 		testkit.Rows())
-	tk.MustQuery("select table_id, hist_id from mysql.stats_top_n where table_id = " + tblID).Check(
+	tk.MustQuery("select hist_id from mysql.stats_top_n where table_id = " + tblID).Check(
 		testkit.Rows())
 }
 
