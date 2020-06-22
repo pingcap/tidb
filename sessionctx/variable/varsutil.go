@@ -506,14 +506,26 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		return checkUInt64SystemVar(name, value, uint64(0), math.MaxInt64, vars)
 	case TiDBExpensiveQueryTimeThreshold:
 		return checkUInt64SystemVar(name, value, MinExpensiveQueryTimeThreshold, math.MaxInt64, vars)
-	case TiDBIndexLookupConcurrency, TiDBIndexLookupJoinConcurrency, TiDBIndexJoinBatchSize,
-		TiDBIndexLookupSize,
+	case TiDBIndexLookupConcurrency,
+		TiDBIndexLookupJoinConcurrency,
 		TiDBHashJoinConcurrency,
 		TiDBHashAggPartialConcurrency,
 		TiDBHashAggFinalConcurrency,
 		TiDBWindowConcurrency,
-		TiDBDistSQLScanConcurrency,
-		TiDBIndexSerialScanConcurrency, TiDBDDLReorgWorkerCount,
+		TiDBDistSQLScanConcurrency:
+		v, err := strconv.Atoi(value)
+		if err != nil {
+			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
+		}
+		if v <= 0 && v != ConcurrencyUnset {
+			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+		}
+		return value, nil
+	case TiDBExecutorConcurrency,
+		TiDBIndexSerialScanConcurrency,
+		TiDBIndexJoinBatchSize,
+		TiDBIndexLookupSize,
+		TiDBDDLReorgWorkerCount,
 		TiDBBackoffLockFast, TiDBBackOffWeight,
 		TiDBDMLBatchSize, TiDBOptimizerSelectivityLevel:
 		v, err := strconv.Atoi(value)

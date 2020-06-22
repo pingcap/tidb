@@ -95,6 +95,11 @@ func (p *PointGetPlan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 	return nil, nil
 }
 
+// Clone implements PhysicalPlan interface.
+func (p *PointGetPlan) Clone() (PhysicalPlan, error) {
+	return nil, errors.Errorf("%T doesn't support cloning.", p)
+}
+
 // ExplainInfo implements Plan interface.
 func (p *PointGetPlan) ExplainInfo() string {
 	accessObject, operatorInfo := p.AccessObject(), p.OperatorInfo(false)
@@ -219,7 +224,7 @@ func (p *PointGetPlan) GetCost(cols []*expression.Column) float64 {
 	}
 	cost += rowSize * sessVars.NetworkFactor
 	cost += sessVars.SeekFactor
-	cost /= float64(sessVars.DistSQLScanConcurrency)
+	cost /= float64(sessVars.DistSQLScanConcurrency())
 	return cost
 }
 
@@ -242,6 +247,11 @@ type BatchPointGetPlan struct {
 	Lock             bool
 	LockWaitTime     int64
 	Columns          []*model.ColumnInfo
+}
+
+// Clone implements PhysicalPlan interface.
+func (p *BatchPointGetPlan) Clone() (PhysicalPlan, error) {
+	return nil, errors.Errorf("%T doesn't support cloning", p)
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
@@ -364,7 +374,7 @@ func (p *BatchPointGetPlan) GetCost(cols []*expression.Column) float64 {
 	}
 	cost += rowCount * rowSize * sessVars.NetworkFactor
 	cost += rowCount * sessVars.SeekFactor
-	cost /= float64(sessVars.DistSQLScanConcurrency)
+	cost /= float64(sessVars.DistSQLScanConcurrency())
 	return cost
 }
 
