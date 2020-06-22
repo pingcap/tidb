@@ -97,7 +97,7 @@ LOOP:
 	}
 }
 
-func (s *testStatSuite) TestDDLStatsInfo(c *C) {
+func (s *testDDLSerialSuite) TestDDLStatsInfo(c *C) {
 	store := testCreateStore(c, "test_stat")
 	defer store.Close()
 
