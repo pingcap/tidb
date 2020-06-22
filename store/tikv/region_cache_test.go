@@ -279,6 +279,27 @@ func (s *testRegionCacheSuite) TestUpdateLeader3(c *C) {
 	c.Assert(addr2, Not(Equals), s.storeAddr(store3))
 }
 
+func (s *testRegionCacheSuite) TestRemoveStoreBetweenRetry(c *C) {
+	// region1: store1, store2 and store2 is leader
+	s.cluster.ChangeLeader(s.region1, s.peer2)
+
+	// get init ctx
+	loc, err := s.cache.LocateKey(s.bo, []byte("a"))
+	c.Assert(err, IsNil)
+	ctx, err := s.cache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadLeader, 0)
+	c.Assert(err, IsNil)
+	c.Assert(ctx.Store.storeID, Equals, s.store2)
+
+	// offline store1 and reload region cache(e.g. by other request)
+	s.cluster.RemoveStore(s.store1)
+	s.cache.InvalidateCachedRegion(ctx.Region)
+	loc, err = s.cache.LocateKey(s.bo, []byte("a"))
+	c.Assert(err, IsNil)
+
+	// send fail and handle with old ctx should not panic
+	s.cache.OnSendFail(s.bo, ctx, false, errors.New(""))
+}
+
 func (s *testRegionCacheSuite) TestSendFailedButLeaderNotChange(c *C) {
 	// 3 nodes and no.1 is leader.
 	store3 := s.cluster.AllocID()

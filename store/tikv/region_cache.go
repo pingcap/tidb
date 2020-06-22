@@ -578,7 +578,7 @@ func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload 
 				// invalidate regions in store.
 				epoch := rs.storeEpochs[storeIdx]
 				if atomic.CompareAndSwapUint32(&s.epoch, epoch, epoch+1) {
-					logutil.BgLogger().Info("mark store's regions need be refill", zap.String("store", s.addr))
+					logutil.Logger(bo.ctx).Info("mark store's regions need be refill", zap.String("store", s.addr))
 					tikvRegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
 				}
 
@@ -592,18 +592,21 @@ func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload 
 			} else {
 				rs.switchNextFlashPeer(r, accessIdx)
 			}
+
+			logutil.Logger(bo.ctx).Info("switch region peer to next due to send request fail",
+				zap.Stringer("current", ctx),
+				zap.Bool("needReload", scheduleReload),
+				zap.Error(err))
 		} else {
-			scheduleReload = true
+			logutil.Logger(bo.ctx).Info("region's peer list maybe changed before receive kv response, retry directly ",
+				zap.Uint64("sendStoreID", ctx.Peer.StoreId),
+				zap.Stringer("ctx", ctx))
 		}
 
 		// force reload region when retry all known peers in region.
 		if scheduleReload {
 			r.scheduleReload()
 		}
-		logutil.Logger(bo.ctx).Info("switch region peer to next due to send request fail",
-			zap.Stringer("current", ctx),
-			zap.Bool("needReload", scheduleReload),
-			zap.Error(err))
 	}
 }
 
