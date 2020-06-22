@@ -136,8 +136,6 @@
       "select /*+ stream_agg() */ count(*) c from t group by a order by a limit 1",
       "select /*+ stream_agg() */ count(*) c from t group by a order by a"
     ]
-<<<<<<< HEAD
-=======
   },
   {
     "name": "TestOptimizeHintOnPartitionTable",
@@ -153,17 +151,5 @@
       "select /*+ use_index(t partition(p0) b) */ * from t partition(p0, p1)",
       "select /*+ read_from_storage(tikv[t partition(p0)], tiflash[t partition(p1, p2)]) */ * from t"
     ]
-  },
-  {
-    "name": "TestAccessPathOnClusterIndex",
-    "cases": [
-      "select * from t1",
-      "select * from t1 where t1.a >= 1 and t1.a < 4",
-      "select * from t1 where t1.a = 1 and t1.b < \"333\"",
-      "select * from t1 where t1.c = 3.3",
-      "select t1.b, t1.c from t1 where t1.c = 2.2",
-      "select /*+ use_index(t1, c) */ * from t1"
-    ]
->>>>>>> 3e5db05... planner: support specify table partition in optimize hint (#17638)
   }
 ]

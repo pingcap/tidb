@@ -778,25 +778,7 @@ func isPrimaryIndex(indexName model.CIStr) bool {
 	return indexName.L == "primary"
 }
 
-<<<<<<< HEAD
-func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName model.CIStr) ([]*util.AccessPath, error) {
-=======
-func fillContentForTablePath(tablePath *util.AccessPath, tblInfo *model.TableInfo) {
-	if tblInfo.IsCommonHandle {
-		tablePath.IsCommonHandlePath = true
-		for _, index := range tblInfo.Indices {
-			if index.Primary {
-				tablePath.Index = index
-				break
-			}
-		}
-	} else {
-		tablePath.IsIntHandlePath = true
-	}
-}
-
 func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName model.CIStr) ([]*util.AccessPath, error) {
->>>>>>> 3e5db05... planner: support specify table partition in optimize hint (#17638)
 	tblInfo := tbl.Meta()
 	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
 	tp := kv.TiKV
@@ -807,10 +789,6 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
 		publicPaths = append(publicPaths, &util.AccessPath{IsTablePath: true, StoreType: kv.TiFlash})
 	}
-<<<<<<< HEAD
-=======
-	optimizerUseInvisibleIndexes := ctx.GetSessionVars().OptimizerUseInvisibleIndexes
->>>>>>> 3e5db05... planner: support specify table partition in optimize hint (#17638)
 	for _, index := range tblInfo.Indices {
 		if index.State == model.StatePublic {
 			publicPaths = append(publicPaths, &util.AccessPath{Index: index})
