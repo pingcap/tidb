@@ -141,6 +141,7 @@ type TransactionContext struct {
 	SchemaVersion int64
 	StartTS       uint64
 
+	// ShardStep indicates the max size of continuous rowid shard in one transaction.
 	ShardStep    int
 	shardRemain  int
 	currentShard int64
@@ -168,6 +169,7 @@ type TransactionContext struct {
 	LockExpire     uint32
 }
 
+// GetShard returns the shard prefix for the next `count` rowids.
 func (tc *TransactionContext) GetShard(shardRowIDBits uint64, typeBitsLength uint64, reserveSignBit bool, count int) int64 {
 	if shardRowIDBits == 0 {
 		return 0
@@ -678,6 +680,7 @@ type SessionVars struct {
 	// EnableSlowLogMasking indicates that whether masking the query data when log slow query.
 	EnableSlowLogMasking bool
 
+	// ShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
 	ShardAllocateStep int64
 }
 

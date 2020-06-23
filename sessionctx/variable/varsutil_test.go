@@ -96,7 +96,7 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.EnableFastAnalyze, Equals, DefTiDBUseFastAnalyze)
 	c.Assert(vars.FoundInPlanCache, Equals, DefTiDBFoundInPlanCache)
 	c.Assert(vars.AllowAutoRandExplicitInsert, Equals, DefTiDBAllowAutoRandExplicitInsert)
-	c.Assert(vars.ShardAllocateStep, Equals, DefTiDBShardAllocateStep)
+	c.Assert(vars.ShardAllocateStep, Equals, int64(DefTiDBShardAllocateStep))
 
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.MemQuota))
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.BatchSize))
