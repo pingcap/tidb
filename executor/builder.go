@@ -1595,8 +1595,8 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) Executor {
 			innerExecs = append(innerExecs, clonedInnerExec)
 			corCols = append(corCols, corCol)
 			innerFilters = append(innerFilters, innerFilter.Clone())
-			joiners[i] = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0,
-				defaultValues, otherConditions, retTypes(leftChild), retTypes(rightChild), nil)
+			joiners = append(joiners, newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0,
+				defaultValues, otherConditions, retTypes(leftChild), retTypes(rightChild), nil))
 		}
 
 		allExecs := append([]Executor{outerExec}, innerExecs...)
