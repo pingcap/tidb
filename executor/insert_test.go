@@ -1006,7 +1006,7 @@ func (s *testSuite9) TestAutoRandomID(c *C) {
 	tk.MustExec(`drop table ar`)
 	tk.MustExec(`create table ar (id bigint key auto_random(15), name char(10))`)
 	overflowVal := 1 << (64 - 5)
-	errMsg := fmt.Sprintf(autoid.AutoRandomRebaseOverflow, overflowVal, 1 << (64 - 16) - 1)
+	errMsg := fmt.Sprintf(autoid.AutoRandomRebaseOverflow, overflowVal, 1<<(64-16)-1)
 	_, err = tk.Exec(fmt.Sprintf("alter table ar auto_random_base = %d", overflowVal))
 	c.Assert(err, NotNil)
 	c.Assert(strings.Contains(err.Error(), errMsg), IsTrue)
