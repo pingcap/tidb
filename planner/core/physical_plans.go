@@ -556,17 +556,17 @@ type PhysicalApply struct {
 }
 
 // Clone implements PhysicalPlan interface.
-func (p *PhysicalApply) Clone() (PhysicalPlan, error) {
+func (la *PhysicalApply) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalApply)
-	base, err := p.PhysicalHashJoin.Clone()
+	base, err := la.PhysicalHashJoin.Clone()
 	if err != nil {
 		return nil, err
 	}
 	hj := base.(*PhysicalHashJoin)
 	cloned.PhysicalHashJoin = *hj
-	cloned.CanUseCache = p.CanUseCache
-	cloned.Concurrency = p.Concurrency
-	for _, col := range p.OuterSchema {
+	cloned.CanUseCache = la.CanUseCache
+	cloned.Concurrency = la.Concurrency
+	for _, col := range la.OuterSchema {
 		cloned.OuterSchema = append(cloned.OuterSchema, col.Clone().(*expression.CorrelatedColumn))
 	}
 	return cloned, nil
