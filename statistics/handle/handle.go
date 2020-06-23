@@ -15,11 +15,13 @@ package handle
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
@@ -28,6 +30,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
@@ -593,6 +596,46 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 			return nil, err
 		}
 	}
+	return h.extendedStatsFromStorage(reader, table, physicalID, loadAll)
+}
+
+func (h *Handle) extendedStatsFromStorage(reader *statsReader, table *statistics.Table, physicalID int64, loadAll bool) (*statistics.Table, error) {
+	lastVersion := uint64(0)
+	if table.ExtendedStats != nil && !loadAll {
+		lastVersion = table.ExtendedStats.LastUpdateVersion
+	} else {
+		table.ExtendedStats = statistics.NewExtendedStatsColl()
+	}
+	sql := fmt.Sprintf("select stats_name, db, status, type, column_ids, scalar_stats, blob_stats, version from mysql.stats_extended where table_id = %d and status in (%d, %d) and version > %d", physicalID, StatsStatusAnalyzed, StatsStatusDeleted, lastVersion)
+	rows, _, err := reader.read(sql)
+	if err != nil || len(rows) == 0 {
+		return table, nil
+	}
+	for _, row := range rows {
+		lastVersion = mathutil.MaxUint64(lastVersion, row.GetUint64(7))
+		key := statistics.ExtendedStatsKey{
+			StatsName: row.GetString(0),
+			DB:        row.GetString(1),
+		}
+		status := uint8(row.GetInt64(2))
+		if status == StatsStatusDeleted {
+			delete(table.ExtendedStats.Stats, key)
+		} else {
+			item := &statistics.ExtendedStatsItem{
+				Tp:         uint8(row.GetInt64(3)),
+				ScalarVals: row.GetFloat64(5),
+				StringVals: row.GetString(6),
+			}
+			colIDs := row.GetString(4)
+			err := json.Unmarshal([]byte(colIDs), &item.ColIDs)
+			if err != nil {
+				logutil.BgLogger().Debug("decode column IDs failed", zap.String("column_ids", colIDs), zap.Error(err))
+				return nil, err
+			}
+			table.ExtendedStats.Stats[key] = item
+		}
+	}
+	table.ExtendedStats.LastUpdateVersion = lastVersion
 	return table, nil
 }
 
@@ -818,4 +861,104 @@ func (h *Handle) releaseStatsReader(reader *statsReader) error {
 	_, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), "commit")
 	h.mu.Unlock()
 	return err
+}
+
+const (
+	// StatsStatusInited is the status for extended stats which are just registered but have not been analyzed yet.
+	StatsStatusInited uint8 = iota
+	// StatsStatusAnalyzed is the status for extended stats which have been collected in analyze.
+	StatsStatusAnalyzed
+	// StatsStatusDeleted is the status for extended stats which were dropped. These "deleted" records would be removed from storage by GCStats().
+	StatsStatusDeleted
+)
+
+// InsertExtendedStats inserts a record into mysql.stats_extended and update version in mysql.stats_meta.
+func (h *Handle) InsertExtendedStats(statsName, db string, colIDs []int64, tp int, tableID int64, ifNotExists bool) (err error) {
+	bytes, err := json.Marshal(colIDs)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	strColIDs := string(bytes)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	ctx := context.TODO()
+	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	_, err = exec.Execute(ctx, "begin pessimistic")
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		err = finishTransaction(ctx, exec, err)
+	}()
+	txn, err := h.mu.ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	version := txn.StartTS()
+	sql := fmt.Sprintf("INSERT INTO mysql.stats_extended(stats_name, db, type, table_id, column_ids, version, status) VALUES ('%s', '%s', %d, %d, '%s', %d, %d)", statsName, db, tp, tableID, strColIDs, version, StatsStatusInited)
+	_, err = exec.Execute(ctx, sql)
+	// Key exists, but `if not exists` is specified, so we ignore this error.
+	if kv.ErrKeyExists.Equal(err) && ifNotExists {
+		err = nil
+	}
+	return
+}
+
+// MarkExtendedStatsDeleted update the status of mysql.stats_extended to be `deleted` and the version of mysql.stats_meta.
+func (h *Handle) MarkExtendedStatsDeleted(statsName, db string, tableID int64) (err error) {
+	if tableID < 0 {
+		sql := fmt.Sprintf("SELECT table_id FROM mysql.stats_extended WHERE stats_name = '%s' and db = '%s'", statsName, db)
+		rows, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if len(rows) == 0 {
+			return nil
+		}
+		tableID = rows[0].GetInt64(0)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	ctx := context.TODO()
+	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	_, err = exec.Execute(ctx, "begin pessimistic")
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		err = finishTransaction(ctx, exec, err)
+	}()
+	txn, err := h.mu.ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	version := txn.StartTS()
+	sqls := make([]string, 2)
+	sqls[0] = fmt.Sprintf("UPDATE mysql.stats_extended SET version = %d, status = %d WHERE stats_name = '%s' and db = '%s'", version, StatsStatusDeleted, statsName, db)
+	sqls[1] = fmt.Sprintf("UPDATE mysql.stats_meta SET version = %d WHERE table_id = %d", version, tableID)
+	return execSQLs(ctx, exec, sqls)
+}
+
+// ReloadExtendedStatistics drops the cache for extended statistics and reload data from mysql.stats_extended.
+func (h *Handle) ReloadExtendedStatistics() error {
+	reader, err := h.getStatsReader(nil)
+	if err != nil {
+		return err
+	}
+	oldCache := h.statsCache.Load().(statsCache)
+	tables := make([]*statistics.Table, 0, len(oldCache.tables))
+	for physicalID, tbl := range oldCache.tables {
+		t, err := h.extendedStatsFromStorage(reader, tbl.Copy(), physicalID, true)
+		if err != nil {
+			return err
+		}
+		tables = append(tables, t)
+	}
+	err = h.releaseStatsReader(reader)
+	if err != nil {
+		return err
+	}
+	// Note that this update may fail when the statsCache.version has been modified by others.
+	h.updateStatsCache(oldCache.update(tables, nil, oldCache.version))
+	return nil
 }

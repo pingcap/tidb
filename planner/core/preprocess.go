@@ -188,6 +188,8 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		if node.Kind == ast.BRIEKindRestore {
 			p.flag |= inCreateOrDropTable
 		}
+	case *ast.CreateStatisticsStmt, *ast.DropStatisticsStmt:
+		p.checkStatisticsOpGrammar(in)
 	default:
 		p.flag &= ^parentIsJoin
 	}
@@ -620,6 +622,21 @@ func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 		return
 	}
 	p.err = checkIndexInfo(stmt.IndexName, stmt.IndexPartSpecifications)
+}
+
+func (p *preprocessor) checkStatisticsOpGrammar(node ast.Node) {
+	var statsName string
+	switch stmt := node.(type) {
+	case *ast.CreateStatisticsStmt:
+		statsName = stmt.StatsName
+	case *ast.DropStatisticsStmt:
+		statsName = stmt.StatsName
+	}
+	if isIncorrectName(statsName) {
+		msg := fmt.Sprintf("Incorrect statistics name: %s", statsName)
+		p.err = ErrInternal.GenWithStack(msg)
+	}
+	return
 }
 
 func (p *preprocessor) checkRenameTableGrammar(stmt *ast.RenameTableStmt) {
