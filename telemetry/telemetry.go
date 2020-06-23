@@ -79,7 +79,7 @@ func PreviewUsageData(ctx sessionctx.Context, etcdClient *clientv3.Client) (stri
 		return "", errors.Trace(err)
 	}
 
-	// note: trackingID may be empty. However, as a preview data, it is fine.
+	// NOTE: trackingID may be empty. However, as a preview data, it is fine.
 	data := generateTelemetryData(ctx, trackingID)
 
 	prettyJSON, err := json.MarshalIndent(data, "", "  ")
