@@ -70,7 +70,7 @@ func getClusterHardware(ctx sessionctx.Context) ([]*clusterHardwareItem, error) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	// warning: the key of this variable is not hashed, it must not be returned directly
+	// WARNING: The key of this variable is not hashed, it must not be returned directly.
 	itemsByInstance := make(map[string]*clusterHardwareItem)
 L:
 	for _, row := range rows {
@@ -144,7 +144,7 @@ L:
 		}
 	}
 
-	r := make([]*clusterHardwareItem, 0)
+	r := make([]*clusterHardwareItem, 0, len(itemsByInstance))
 	for _, item := range itemsByInstance {
 		r = append(r, item)
 	}
