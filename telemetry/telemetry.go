@@ -121,6 +121,8 @@ func reportUsageData(ctx sessionctx.Context, etcdClient *clientv3.Client) (bool,
 		return false, errors.Trace(err)
 	}
 
+	// TODO: We should use the context from domain, so that when request is blocked for a long time it will not
+	// affect TiDB shutdown.
 	reqCtx, cancel := context.WithTimeout(context.Background(), uploadTimeout)
 	defer cancel()
 
@@ -134,7 +136,8 @@ func reportUsageData(ctx sessionctx.Context, etcdClient *clientv3.Client) (bool,
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	if resp.StatusCode != 200 {
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
 		return false, errors.Errorf("Received non-Ok response when reporting usage data, http code: %d", resp.StatusCode)
 	}
 
