@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
@@ -325,7 +326,8 @@ type IndexLookUpExecutor struct {
 	dagPB   *tipb.DAGRequest
 	startTS uint64
 	// handleIdx is the index of handle, which is only used for case of keeping order.
-	handleIdx    int
+	handleIdx    []int
+	handleCols   []*expression.Column
 	tableRequest *tipb.DAGRequest
 	// columns are only required by union scan.
 	columns []*model.ColumnInfo
@@ -432,6 +434,25 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 	return nil
 }
 
+func (e *IndexLookUpExecutor) isCommonHandle() bool {
+	return !(len(e.handleCols) == 1 && e.handleCols[0].ID == model.ExtraHandleID) && e.table.Meta() != nil && e.table.Meta().IsCommonHandle
+}
+
+func (e *IndexLookUpExecutor) getRetTpsByHandle() []*types.FieldType {
+	var tps []*types.FieldType
+	if e.isCommonHandle() {
+		for _, handleCol := range e.handleCols {
+			tps = append(tps, handleCol.RetType)
+		}
+	} else {
+		tps = []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
+	}
+	if e.checkIndexValue != nil {
+		tps = e.idxColTps
+	}
+	return tps
+}
+
 // startIndexWorker launch a background goroutine to fetch handles, send the results to workCh.
 func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []kv.KeyRange, workCh chan<- *lookupTableTask, initBatchSize int) error {
 	if e.runtimeStats != nil {
@@ -454,10 +475,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 	if err != nil {
 		return err
 	}
-	tps := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
-	if e.checkIndexValue != nil {
-		tps = e.idxColTps
-	}
+	tps := e.getRetTpsByHandle()
 	// Since the first read only need handle information. So its returned col is only 1.
 	result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, tps, e.feedback, getPhysicalPlanIDs(e.idxPlans), e.id)
 	if err != nil {
@@ -660,12 +678,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 			}
 		}
 	}()
-	var chk *chunk.Chunk
-	if w.checkIndexValue != nil {
-		chk = chunk.NewChunkWithCapacity(w.idxColTps, w.maxChunkSize)
-	} else {
-		chk = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, w.idxLookup.maxChunkSize)
-	}
+	chk := chunk.NewChunkWithCapacity(w.idxLookup.getRetTpsByHandle(), w.idxLookup.maxChunkSize)
 	for {
 		handles, retChunk, scannedKeys, err := w.extractTaskHandles(ctx, chk, result, count)
 		if err != nil {
@@ -694,7 +707,13 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 
 func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult, count uint64) (
 	handles []kv.Handle, retChk *chunk.Chunk, scannedKeys uint64, err error) {
-	handleOffset := chk.NumCols() - 1
+	var handleOffset []int
+	for i := range w.idxLookup.handleCols {
+		handleOffset = append(handleOffset, chk.NumCols()-len(w.idxLookup.handleCols)+i)
+	}
+	if len(handleOffset) == 0 {
+		handleOffset = []int{chk.NumCols() - 1}
+	}
 	handles = make([]kv.Handle, 0, w.batchSize)
 	// PushedLimit would always be nil for CheckIndex or CheckTable, we add this check just for insurance.
 	checkLimit := (w.PushedLimit != nil) && (w.checkIndexValue == nil)
@@ -729,7 +748,10 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 					return handles, nil, scannedKeys, nil
 				}
 			}
-			h := kv.IntHandle(chk.GetRow(i).GetInt64(handleOffset))
+			h, err := w.idxLookup.getHandle(chk.GetRow(i), handleOffset, w.idxLookup.isCommonHandle())
+			if err != nil {
+				return handles, retChk, scannedKeys, err
+			}
 			handles = append(handles, h)
 		}
 		if w.checkIndexValue != nil {
@@ -788,7 +810,7 @@ type tableWorker struct {
 	finished       <-chan struct{}
 	buildTblReader func(ctx context.Context, handles []kv.Handle) (Executor, error)
 	keepOrder      bool
-	handleIdx      int
+	handleIdx      []int
 
 	// memTracker is used to track the memory usage of this executor.
 	memTracker *memory.Tracker
@@ -827,6 +849,31 @@ func (w *tableWorker) pickAndExecTask(ctx context.Context) {
 	}
 }
 
+func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int, isCommonHandle bool) (handle kv.Handle, err error) {
+	if isCommonHandle {
+		var handleEncoded []byte
+		var datums []types.Datum
+		for i, idx := range handleIdx {
+			datums = append(datums, row.GetDatum(idx, e.handleCols[i].RetType))
+		}
+		handleEncoded, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, nil, datums...)
+		if err != nil {
+			return nil, err
+		}
+		handle, err = kv.NewCommonHandle(handleEncoded)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		if len(handleIdx) == 0 {
+			handle = kv.IntHandle(row.GetInt64(0))
+		} else {
+			handle = kv.IntHandle(row.GetInt64(handleIdx[0]))
+		}
+	}
+	return
+}
+
 func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, tableReader Executor) error {
 	chk := newFirstChunk(tableReader)
 	tblInfo := w.idxLookup.table.Meta()
@@ -851,7 +898,10 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 		tblReaderExec := tableReader.(*TableReaderExecutor)
 		iter := chunk.NewIterator4Chunk(chk)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			handle := kv.IntHandle(row.GetInt64(w.handleIdx))
+			handle, err := w.idxLookup.getHandle(row, w.handleIdx, w.idxLookup.isCommonHandle())
+			if err != nil {
+				return err
+			}
 			v, ok := task.indexOrder.Get(handle)
 			if !ok {
 				v, _ = task.duplicatedIndexOrder.Get(handle)
@@ -937,7 +987,10 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 	if w.keepOrder {
 		task.rowIdx = make([]int, 0, len(task.rows))
 		for i := range task.rows {
-			handle := kv.IntHandle(task.rows[i].GetInt64(w.handleIdx))
+			handle, err := w.idxLookup.getHandle(task.rows[i], w.handleIdx, w.idxLookup.isCommonHandle())
+			if err != nil {
+				return err
+			}
 			rowIdx, _ := task.indexOrder.Get(handle)
 			task.rowIdx = append(task.rowIdx, rowIdx.(int))
 		}
@@ -951,7 +1004,10 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		if len(w.idxLookup.tblPlans) == 1 {
 			obtainedHandlesMap := kv.NewHandleMap()
 			for _, row := range task.rows {
-				handle := kv.IntHandle(row.GetInt64(w.handleIdx))
+				handle, err := w.idxLookup.getHandle(row, w.handleIdx, w.idxLookup.isCommonHandle())
+				if err != nil {
+					return err
+				}
 				obtainedHandlesMap.Set(handle, true)
 			}
 

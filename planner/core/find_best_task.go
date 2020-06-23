@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -726,6 +727,12 @@ func (ds *DataSource) isCoveringIndex(columns, indexColumns []*expression.Column
 	return true
 }
 
+func (ts *PhysicalTableScan) appendCommonHandleCols(ds *DataSource) []*expression.Column {
+	pk := tables.FindPrimaryIndex(ds.tableInfo)
+	cols, _ := expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, pk)
+	return cols
+}
+
 // If there is a table reader which needs to keep order, we should append a pk to table scan.
 func (ts *PhysicalTableScan) appendExtraHandleCol(ds *DataSource) (*expression.Column, bool) {
 	handleCol := ds.handleCol
@@ -774,6 +781,9 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 	}
 	cop.cst = cost
 	task = cop
+	if cop.tablePlan != nil && ds.tableInfo.IsCommonHandle {
+		cop.commonHandleCols = cop.tablePlan.(*PhysicalTableScan).appendCommonHandleCols(ds)
+	}
 	if candidate.isMatchProp {
 		if cop.tablePlan != nil && !ds.tableInfo.IsCommonHandle {
 			col, isNew := cop.tablePlan.(*PhysicalTableScan).appendExtraHandleCol(ds)
@@ -819,7 +829,7 @@ func (is *PhysicalIndexScan) initSchema(idx *model.IndexInfo, idxExprCols []*exp
 
 	if is.NeedCommonHandle {
 		if len(is.IdxCols) < len(is.Columns) {
-			for i := len(is.IdxCols); i < len(idxExprCols); i++ {
+			for i := len(is.Index.Columns); i < len(idxExprCols); i++ {
 				indexCols = append(indexCols, idxExprCols[i])
 			}
 		}
