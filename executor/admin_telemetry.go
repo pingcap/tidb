@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-// AdminShowTelemetryExec is an executor for ADMIN SHOW TELEMETRY_ID.
+// AdminShowTelemetryExec is an executor for ADMIN SHOW TELEMETRY.
 type AdminShowTelemetryExec struct {
 	baseExecutor
 	done bool

@@ -150,7 +150,7 @@ type AdminPlugins struct {
 	Plugins []string
 }
 
-// AdminShowTelemetry displays current telemetry tracking ID.
+// AdminShowTelemetry displays telemetry status including tracking ID, status and so on.
 type AdminShowTelemetry struct {
 	baseSchemaProducer
 }
