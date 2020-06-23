@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/iancoleman/strcase"
 	"github.com/pingcap/errors"
 
 	"github.com/pingcap/tidb/sessionctx"
@@ -41,9 +42,9 @@ func init() {
 }
 
 type clusterHardwareItem struct {
-	InstanceType   string                       `json:"instance_type"`
-	ListenHostHash string                       `json:"listen_host_hash"`
-	ListenPort     string                       `json:"listen_port"`
+	InstanceType   string                       `json:"instanceType"`
+	ListenHostHash string                       `json:"listenHostHash"`
+	ListenPort     string                       `json:"listenPort"`
 	CPU            map[string]string            `json:"cpu,omitempty"`
 	Memory         map[string]string            `json:"memory,omitempty"`
 	Disk           map[string]map[string]string `json:"disk,omitempty"`
@@ -59,6 +60,10 @@ func normalizeDiskName(name string) string {
 
 func isNormalizedDiskNameAllowed(name string) bool {
 	return regexDiskAllowedNames.MatchString(name)
+}
+
+func normalizeFieldName(name string) string {
+	return strcase.ToLowerCamel(name)
 }
 
 func getClusterHardware(ctx sessionctx.Context) ([]*clusterHardwareItem, error) {
@@ -101,7 +106,7 @@ L:
 			if !sortedStringContains(sortedCPUAllowedFieldNames, fieldName) {
 				continue L
 			}
-			activeItem.CPU[fieldName] = fieldValue
+			activeItem.CPU[normalizeFieldName(fieldName)] = fieldValue
 		case "memory":
 			if deviceName != "memory" {
 				continue L
@@ -109,7 +114,7 @@ L:
 			if !sortedStringContains(sortedMemoryAllowedFieldNames, fieldName) {
 				continue L
 			}
-			activeItem.Memory[fieldName] = fieldValue
+			activeItem.Memory[normalizeFieldName(fieldName)] = fieldValue
 		case "disk":
 			var hashedDeviceName string
 			normalizedDiskName := normalizeDiskName(deviceName)
@@ -122,18 +127,20 @@ L:
 			activeDiskItem, ok := activeItem.Disk[hashedDeviceName]
 			if !ok {
 				activeDiskItem = make(map[string]string)
-				activeDiskItem["device-name"] = hashedDeviceName
+				activeDiskItem[normalizeFieldName("deviceName")] = hashedDeviceName
 				activeItem.Disk[hashedDeviceName] = activeDiskItem
 			}
 			if fieldName == "path" {
+				var path string
 				if sortedStringContains(sortedDiskAllowedPaths, fieldValue) {
 					// Use plain text only when it is in a list that we know safe.
-					activeDiskItem["path"] = fieldValue
+					path = fieldValue
 				} else {
-					activeDiskItem["path"] = hashString(fieldValue)
+					path = hashString(fieldValue)
 				}
+				activeDiskItem[normalizeFieldName("path")] = path
 			} else if sortedStringContains(sortedDiskAllowedFieldNames, fieldName) {
-				activeDiskItem[fieldName] = fieldValue
+				activeDiskItem[normalizeFieldName(fieldName)] = fieldValue
 			}
 		}
 	}

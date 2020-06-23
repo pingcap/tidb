@@ -41,3 +41,13 @@ func (s *testClusterHardwareSuite) TestIsNormalizedDiskNameAllowed(c *C) {
 		c.Assert(isNormalizedDiskNameAllowed(n), Equals, false)
 	}
 }
+
+func (s *testClusterHardwareSuite) TestNormalizeFieldName(c *C) {
+	c.Parallel()
+
+	c.Assert(normalizeFieldName("deviceName"), Equals, "deviceName")
+	c.Assert(normalizeFieldName("device-name"), Equals, "deviceName")
+	c.Assert(normalizeFieldName("device_name"), Equals, "deviceName")
+	c.Assert(normalizeFieldName("l1-cache-size"), Equals, "l1CacheSize")
+	c.Assert(normalizeFieldName("free-percent"), Equals, "freePercent")
+}

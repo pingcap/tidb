@@ -21,15 +21,15 @@ import (
 )
 
 type clusterInfoItem struct {
-	InstanceType   string `json:"instance_type"`
-	ListenHostHash string `json:"listen_host_hash"`
-	ListenPort     string `json:"listen_port"`
-	StatusHostHash string `json:"status_host_hash,omitempty"`
-	StatusPort     string `json:"status_port,omitempty"`
+	InstanceType   string `json:"instanceType"`
+	ListenHostHash string `json:"listenHostHash"`
+	ListenPort     string `json:"listenPort"`
+	StatusHostHash string `json:"statusHostHash,omitempty"`
+	StatusPort     string `json:"statusPort,omitempty"`
 	Version        string `json:"version,omitempty"`
-	GitHash        string `json:"git_hash,omitempty"`
-	StartTime      string `json:"start_time,omitempty"`
-	UpTime         string `json:"up_time,omitempty"`
+	GitHash        string `json:"gitHash,omitempty"`
+	StartTime      string `json:"startTime,omitempty"`
+	UpTime         string `json:"upTime,omitempty"`
 }
 
 func getClusterInfo(ctx sessionctx.Context) ([]*clusterInfoItem, error) {

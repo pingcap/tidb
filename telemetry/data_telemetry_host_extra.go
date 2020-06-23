@@ -21,16 +21,16 @@ import (
 // Some information that is not included in current system tables. There is no easy way to retrieve information
 // of all hosts, so current host only.
 type telemetryHostExtraInfo struct {
-	CPUFlags             []string `json:"cpu_flags,omitempty"`        // ex: fpu, vme, de, ...
-	CPUModelName         string   `json:"cpu_model_name,omitempty"`   // ex: Intel(R) Core(TM) i7-2640M CPU @ 2.80GHz
-	OS                   string   `json:"os,omitempty"`               // ex: freebsd, linux
-	Platform             string   `json:"platform,omitempty"`         // ex: ubuntu, linuxmint
-	PlatformFamily       string   `json:"platform_family,omitempty"`  // ex: debian, rhel
-	PlatformVersion      string   `json:"platform_version,omitempty"` // version of the complete OS
-	KernelVersion        string   `json:"kernel_version,omitempty"`   // version of the OS kernel (if available)
-	KernelArch           string   `json:"kernel_arch,omitempty"`      // native cpu architecture queried at runtime, as returned by `uname -m` or empty string in case of error
-	VirtualizationSystem string   `json:"virtualization_system,omitempty"`
-	VirtualizationRole   string   `json:"virtualization_role,omitempty"` // guest or host
+	CPUFlags             []string `json:"cpuFlags,omitempty"`             // ex: fpu, vme, de, ...
+	CPUModelName         string   `json:"cpuModelName,omitempty"`         // ex: Intel(R) Core(TM) i7-2640M CPU @ 2.80GHz
+	OS                   string   `json:"os,omitempty"`                   // ex: freebsd, linux
+	Platform             string   `json:"platform,omitempty"`             // ex: ubuntu, linuxmint
+	PlatformFamily       string   `json:"platformFamily,omitempty"`       // ex: debian, rhel
+	PlatformVersion      string   `json:"platformVersion,omitempty"`      // version of the complete OS
+	KernelVersion        string   `json:"kernelVersion,omitempty"`        // version of the OS kernel (if available)
+	KernelArch           string   `json:"kernelArch,omitempty"`           // native cpu architecture queried at runtime, as returned by `uname -m` or empty string in case of error
+	VirtualizationSystem string   `json:"virtualizationSystem,omitempty"` // ex: kvm
+	VirtualizationRole   string   `json:"virtualizationRole,omitempty"`   // guest or host
 }
 
 func getTelemetryHostExtraInfo() *telemetryHostExtraInfo {

@@ -22,9 +22,9 @@ import (
 type telemetryData struct {
 	Hardware           []*clusterHardwareItem  `json:"hardware"`
 	Instances          []*clusterInfoItem      `json:"instances"`
-	TelemetryHostExtra *telemetryHostExtraInfo `json:"telemetry_host_extra"`
-	ReportTimestamp    int64                   `json:"report_timestamp"`
-	TrackingID         string                  `json:"tracking_id"`
+	TelemetryHostExtra *telemetryHostExtraInfo `json:"hostExtra"`
+	ReportTimestamp    int64                   `json:"reportTimestamp"`
+	TrackingID         string                  `json:"trackingId"`
 }
 
 func generateTelemetryData(ctx sessionctx.Context, trackingID string) telemetryData {
