@@ -2343,6 +2343,7 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 		for _, c := range tbInfo.Columns {
 			if mysql.HasPriKeyFlag(c.Flag) {
 				autoRandColTp = c.FieldType
+				break
 			}
 		}
 		layout := autoid.NewAutoRandomIDLayout(&autoRandColTp, tbInfo.AutoRandomBits)
