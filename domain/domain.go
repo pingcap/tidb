@@ -959,13 +959,10 @@ func (do *Domain) handleEvolvePlanTasksLoop(ctx sessionctx.Context) {
 	}()
 }
 
-// TelemetryLoop create a goroutine that reports usage data in a loop, it should
-// be called only once in BootstrapSession.
+// TelemetryLoop create a goroutine that reports usage data in a loop, it should be called only once
+// in BootstrapSession.
 func (do *Domain) TelemetryLoop(ctx sessionctx.Context) {
-	do.handleTelemetryLoop(ctx)
-}
-
-func (do *Domain) handleTelemetryLoop(ctx sessionctx.Context) {
+	ctx.GetSessionVars().InRestrictedSQL = true
 	do.wg.Add(1)
 	go func() {
 		defer func() {
@@ -982,12 +979,13 @@ func (do *Domain) handleTelemetryLoop(ctx sessionctx.Context) {
 			case <-time.After(telemetry.ReportInterval):
 			}
 			if owner.IsOwner() {
-				//err := do.bindHandle.HandleEvolvePlanTask(ctx, false)
-				//if err != nil {
-				//	logutil.BgLogger().Info("evolve plan failed", zap.Error(err))
-				//}
-				if config.GetGlobalConfig().EnableTelemetry {
-					logutil.BgLogger().Info("This TiDB is owner and will report!")
+				if !config.GetGlobalConfig().EnableTelemetry {
+					continue
+				}
+				err := telemetry.ReportUsageData(ctx, do.GetEtcdClient())
+				if err != nil {
+					// Only status update errors will be printed out
+					logutil.BgLogger().Warn("handleTelemetryLoop status update failed", zap.Error(err))
 				}
 			}
 		}

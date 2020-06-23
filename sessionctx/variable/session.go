@@ -1356,8 +1356,6 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableClusteredIndex = TiDBOptOn(val)
 	case TiDBSlowLogMasking:
 		s.EnableSlowLogMasking = TiDBOptOn(val)
-	case TiDBEnableTelemetry:
-		config.GetGlobalConfig().EnableTelemetry = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil

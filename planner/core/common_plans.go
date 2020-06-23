@@ -150,6 +150,16 @@ type AdminPlugins struct {
 	Plugins []string
 }
 
+// AdminShowTelemetry displays current telemetry tracking ID.
+type AdminShowTelemetry struct {
+	baseSchemaProducer
+}
+
+// AdminResetTelemetryID regenerates a new telemetry tracking ID.
+type AdminResetTelemetryID struct {
+	baseSchemaProducer
+}
+
 // Change represents a change plan.
 type Change struct {
 	baseSchemaProducer

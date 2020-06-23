@@ -142,7 +142,7 @@ type Config struct {
 	// EnableCollectExecutionInfo enables the TiDB to collect execution info.
 	EnableCollectExecutionInfo bool `toml:"enable-collect-execution-info" json:"enable-collect-execution-info"`
 	// EnableTelemetry enables the usage data report to PingCAP.
-	EnableTelemetry bool `toml:"enable-telemetry"`
+	EnableTelemetry bool `toml:"enable-telemetry" json:"enable-telemetry"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
