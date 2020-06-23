@@ -41,6 +41,8 @@ func (s *testUtilSuite) TestParseAddress(c *C) {
 		expectedHost string
 		expectedPort string
 	}{
+		{"12345", "12345", ""},
+		{"12345:567", "12345", "567"},
 		{"store1", "store1", ""},
 		{"0.0.0.0:4000", "0.0.0.0", "4000"},
 		{"my_addr:12345", "my_addr", "12345"},
