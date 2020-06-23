@@ -327,10 +327,6 @@ func getPhysID(tblInfo *model.TableInfo, val int64) int64 {
 	if pi == nil {
 		return tblInfo.ID
 	}
-<<<<<<< HEAD
-	partIdx := math.Abs(val) % int64(pi.Num)
-=======
-	partIdx := math.Abs(val.IntValue() % int64(pi.Num)) // TODO: fix me for table, partition on cluster index.
->>>>>>> d445e55... planner,executor: fix select big number on hash partition table panic (#17881)
+	partIdx := math.Abs(val % int64(pi.Num))
 	return pi.Definitions[partIdx].ID
 }
