@@ -970,7 +970,7 @@ func (s *testSuiteAgg) TestIssue10608(c *C) {
 
 func (s *testSuiteAgg) TestIssue12759HashAggCalledByApply(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.Se.GetSessionVars().HashAggFinalConcurrency = 4
+	tk.Se.GetSessionVars().SetHashAggFinalConcurrency(4)
 	tk.MustExec(`insert into mysql.opt_rule_blacklist value("decorrelate");`)
 	defer func() {
 		tk.MustExec(`delete from mysql.opt_rule_blacklist where name = "decorrelate";`)

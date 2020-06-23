@@ -151,13 +151,7 @@ func (p *PhysicalLimit) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*t
 
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
-	var pkColIds []int64
-	if p.Table.IsCommonHandle {
-		pkIdx := tables.FindPrimaryIndex(p.Table)
-		for _, idxCol := range pkIdx.Columns {
-			pkColIds = append(pkColIds, p.Table.Columns[idxCol.Offset].ID)
-		}
-	}
+	pkColIds := tables.TryGetCommonPkColumnIds(p.Table)
 	tsExec := &tipb.TableScan{
 		TableId:          p.Table.ID,
 		Columns:          util.ColumnsToProto(p.Columns, p.Table.PKIsHandle),
@@ -219,10 +213,7 @@ func (p *PhysicalIndexScan) ToPB(ctx sessionctx.Context, _ kv.StoreType) (*tipb.
 	}
 	var pkColIds []int64
 	if p.NeedCommonHandle {
-		pkIdx := tables.FindPrimaryIndex(p.Table)
-		for _, idxCol := range pkIdx.Columns {
-			pkColIds = append(pkColIds, p.Table.Columns[idxCol.Offset].ID)
-		}
+		pkColIds = tables.TryGetCommonPkColumnIds(p.Table)
 	}
 	idxExec := &tipb.IndexScan{
 		TableId:          p.Table.ID,

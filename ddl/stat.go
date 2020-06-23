@@ -82,7 +82,7 @@ func (d *ddl) Stats(vars *variable.SessionVars) (map[string]interface{}, error) 
 	m[ddlJobSchemaID] = job.SchemaID
 	m[ddlJobTableID] = job.TableID
 	m[ddlJobSnapshotVer] = job.SnapshotVer
-	m[ddlJobReorgHandle] = ddlInfo.ReorgHandle
+	m[ddlJobReorgHandle] = toString(ddlInfo.ReorgHandle)
 	m[ddlJobArgs] = job.Args
 	return m, nil
 }
