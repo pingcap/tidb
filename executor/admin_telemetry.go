@@ -53,7 +53,7 @@ func (e *AdminShowTelemetryExec) Next(ctx context.Context, req *chunk.Chunk) err
 	return nil
 }
 
-// AdminShowTelemetryExec is an executor for ADMIN RESET TELEMETRY_ID.
+// AdminResetTelemetryIDExec is an executor for ADMIN RESET TELEMETRY_ID.
 type AdminResetTelemetryIDExec struct {
 	baseExecutor
 	done bool

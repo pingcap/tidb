@@ -83,12 +83,12 @@ func PreviewUsageData(ctx sessionctx.Context, etcdClient *clientv3.Client) (stri
 	// note: trackingID may be empty. However, as a preview data, it is fine.
 	data := generateTelemetryData(ctx, trackingID)
 
-	prettyJson, err := json.MarshalIndent(data, "", "  ")
+	prettyJSON, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
 		return "", errors.Trace(err)
 	}
 
-	return string(prettyJson), nil
+	return string(prettyJSON), nil
 }
 
 func reportUsageData(ctx sessionctx.Context, etcdClient *clientv3.Client) (bool, error) {
@@ -117,7 +117,7 @@ func reportUsageData(ctx sessionctx.Context, etcdClient *clientv3.Client) (bool,
 
 	data := generateTelemetryData(ctx, trackingID)
 
-	rawJson, err := json.Marshal(data)
+	rawJSON, err := json.Marshal(data)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -125,7 +125,7 @@ func reportUsageData(ctx sessionctx.Context, etcdClient *clientv3.Client) (bool,
 	reqCtx, cancel := context.WithTimeout(context.Background(), uploadTimeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(reqCtx, "POST", apiEndpoint, bytes.NewReader(rawJson))
+	req, err := http.NewRequestWithContext(reqCtx, "POST", apiEndpoint, bytes.NewReader(rawJSON))
 	if err != nil {
 		return false, errors.Trace(err)
 	}
