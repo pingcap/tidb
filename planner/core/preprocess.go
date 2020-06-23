@@ -467,7 +467,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		}
 		switch tp := constraint.Tp; tp {
 		case ast.ConstraintKey, ast.ConstraintIndex, ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
-			err := checkIndexInfo(constraint.Name, constraint.Keys)
+			err := checkIndexInfo(constraint.Name, constraint.Keys, false)
 			if err != nil {
 				p.err = err
 				return
@@ -478,7 +478,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 				return
 			}
 			countPrimaryKey++
-			err := checkIndexInfo(constraint.Name, constraint.Keys)
+			err := checkIndexInfo(constraint.Name, constraint.Keys, true)
 			if err != nil {
 				p.err = err
 				return
@@ -614,7 +614,7 @@ func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tName)
 		return
 	}
-	p.err = checkIndexInfo(stmt.IndexName, stmt.IndexPartSpecifications)
+	p.err = checkIndexInfo(stmt.IndexName, stmt.IndexPartSpecifications, false)
 }
 
 func (p *preprocessor) checkRenameTableGrammar(stmt *ast.RenameTableStmt) {
@@ -677,8 +677,13 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 		case ast.AlterTableAddConstraint:
 			switch spec.Constraint.Tp {
 			case ast.ConstraintKey, ast.ConstraintIndex, ast.ConstraintUniq, ast.ConstraintUniqIndex,
-				ast.ConstraintUniqKey, ast.ConstraintPrimaryKey:
-				p.err = checkIndexInfo(spec.Constraint.Name, spec.Constraint.Keys)
+				ast.ConstraintUniqKey:
+				p.err = checkIndexInfo(spec.Constraint.Name, spec.Constraint.Keys, false)
+				if p.err != nil {
+					return
+				}
+			case ast.ConstraintPrimaryKey:
+				p.err = checkIndexInfo(spec.Constraint.Name, spec.Constraint.Keys, true)
 				if p.err != nil {
 					return
 				}
@@ -707,8 +712,11 @@ func checkDuplicateColumnName(IndexPartSpecifications []*ast.IndexPartSpecificat
 }
 
 // checkIndexInfo checks index name and index column names.
-func checkIndexInfo(indexName string, IndexPartSpecifications []*ast.IndexPartSpecification) error {
+func checkIndexInfo(indexName string, IndexPartSpecifications []*ast.IndexPartSpecification, isPrimary bool) error {
 	if strings.EqualFold(indexName, mysql.PrimaryKeyName) {
+		return ddl.ErrWrongNameForIndex.GenWithStackByArgs(indexName)
+	}
+	if !isPrimary && len(indexName) == 0 {
 		return ddl.ErrWrongNameForIndex.GenWithStackByArgs(indexName)
 	}
 	if len(IndexPartSpecifications) > mysql.MaxKeyParts {
