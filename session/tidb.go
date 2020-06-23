@@ -23,7 +23,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
@@ -42,12 +41,6 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
-
-type domainInitializer func(
-	dom *domain.Domain,
-	ddlLease time.Duration,
-	sysFactory func(*domain.Domain) (pools.Resource, error),
-) error
 
 type domainMap struct {
 	domains map[string]*domain.Domain
