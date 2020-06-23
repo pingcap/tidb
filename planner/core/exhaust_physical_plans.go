@@ -1535,9 +1535,7 @@ func (p *LogicalJoin) tryToGetBroadCastJoinByPreferGlobalIdx(prop *property.Phys
 		basePhysicalJoin: baseJoin,
 		globalChildIndex: preferredGlobalIndex,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, childrenReqProps...)
-	results := make([]PhysicalPlan, 0, 1)
-	results = append(results, join)
-	return results
+	return []PhysicalPlan{join}
 }
 
 // TryToGetChildProp will check if this sort property can be pushed or not.
