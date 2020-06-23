@@ -65,14 +65,6 @@ type SortExec struct {
 
 // Close implements the Executor Close interface.
 func (e *SortExec) Close() error {
-	for _, chunkInDisk := range e.partitionList {
-		if chunkInDisk != nil {
-			if err := chunkInDisk.Close(); err != nil {
-				return err
-			}
-		}
-	}
-
 	for _, container := range e.partitionList {
 		err := container.Close()
 		if err != nil {
