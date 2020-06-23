@@ -57,7 +57,8 @@ type copTask struct {
 	// in double read case, it may output one more column for handle(row id).
 	doubleReadNeedProj bool
 
-	extraHandleCol *expression.Column
+	extraHandleCol   *expression.Column
+	commonHandleCols []*expression.Column
 	// tblColHists stores the original stats of DataSource, it is used to get
 	// average row width when computing network cost.
 	tblColHists *statistics.HistColl
@@ -585,9 +586,10 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 	newTask := &rootTask{cst: t.cst}
 	sessVars := ctx.GetSessionVars()
 	p := PhysicalIndexLookUpReader{
-		tablePlan:      t.tablePlan,
-		indexPlan:      t.indexPlan,
-		ExtraHandleCol: t.extraHandleCol,
+		tablePlan:        t.tablePlan,
+		indexPlan:        t.indexPlan,
+		ExtraHandleCol:   t.extraHandleCol,
+		CommonHandleCols: t.commonHandleCols,
 	}.Init(ctx, t.tablePlan.SelectBlockOffset())
 	setTableScanToTableRowIDScan(p.tablePlan)
 	p.stats = t.tablePlan.statsInfo()
