@@ -169,6 +169,9 @@ type TransactionContext struct {
 }
 
 func (tc *TransactionContext) GetShard(shardRowIDBits uint64, typeBitsLength uint64, reserveSignBit bool, count int) int64 {
+	if shardRowIDBits == 0 {
+		return 0
+	}
 	if tc.shardRand == nil {
 		tc.shardRand = rand.New(rand.NewSource(int64(tc.StartTS)))
 	}
