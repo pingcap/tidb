@@ -35,7 +35,7 @@ const (
 	// Prompt is the prompt for telemetry owner manager.
 	Prompt = "telemetry"
 	// ReportInterval is the interval of the report.
-	ReportInterval = 3 * time.Hour
+	ReportInterval = 24 * time.Hour
 )
 
 const (
