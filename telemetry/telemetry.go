@@ -136,7 +136,8 @@ func reportUsageData(ctx sessionctx.Context, etcdClient *clientv3.Client) (bool,
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	defer resp.Body.Close()
+	err = resp.Body.Close() // We don't even want to know any response body. Just close it.
+	_ = err
 	if resp.StatusCode != http.StatusOK {
 		return false, errors.Errorf("Received non-Ok response when reporting usage data, http code: %d", resp.StatusCode)
 	}
