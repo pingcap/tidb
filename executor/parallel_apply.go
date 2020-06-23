@@ -63,7 +63,7 @@ type ParallelNestedLoopApplyExec struct {
 	outerRow      []*chunk.Row
 	hasMatch      []bool
 	hasNull       []bool
-	joiners        []joiner
+	joiners       []joiner
 
 	// fields about concurrency control
 	concurrency int
