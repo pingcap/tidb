@@ -233,7 +233,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		}
 		if err := e.rowChunks.Add(chk); err != nil {
 			if chunk.ErrInsertToPartitionFailed.Equal(err) {
-				e.rowChunks.GetMemTracker().Consume(int64(8 * cap(e.rowChunks.M.RowPtrs)))
+				e.rowChunks.GetMemTracker().Consume(int64(8 * e.rowChunks.NumRow()))
 				e.partitionList = append(e.partitionList, e.rowChunks)
 				e.rowChunks = chunk.NewSortedRowContainer(fields, e.maxChunkSize, byItemsDesc, e.keyColumns, e.keyCmpFuncs)
 				e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
@@ -250,7 +250,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	}
 	if e.rowChunks.NumRow() > 0 {
 		e.rowChunks.InitPointersAndSort()
-		e.rowChunks.GetMemTracker().Consume(int64(8 * cap(e.rowChunks.M.RowPtrs)))
+		e.rowChunks.GetMemTracker().Consume(int64(8 * e.rowChunks.NumRow()))
 		e.partitionList = append(e.partitionList, e.rowChunks)
 	}
 	return nil
@@ -288,19 +288,17 @@ func (e *SortExec) lessRow(rowI, rowJ chunk.Row) bool {
 	return false
 }
 
-// keyColumnsLess is the less function for key columns.
-func (e *SortExec) keyColumnsLess(i, j int) bool {
-	rowI := e.rowChunks.GetList().GetRow(e.rowChunks.M.RowPtrs[i])
-	rowJ := e.rowChunks.GetList().GetRow(e.rowChunks.M.RowPtrs[j])
-	return e.lessRow(rowI, rowJ)
-}
-
 // TopNExec implements a Top-N algorithm and it is built from a SELECT statement with ORDER BY and LIMIT.
 // Instead of sorting all the rows fetched from the table, it keeps the Top-N elements only in a heap to reduce memory usage.
 type TopNExec struct {
 	SortExec
 	limit      *plannercore.PhysicalLimit
 	totalLimit uint64
+
+	// rowChunks is the chunks to store row values.
+	rowChunks *chunk.List
+	// rowPointer store the chunk index and row index for each row.
+	rowPtrs []chunk.RowPtr
 
 	chkHeap *topNChunkHeap
 }
@@ -313,8 +311,8 @@ type topNChunkHeap struct {
 // Less implement heap.Interface, but since we mantains a max heap,
 // this function returns true if row i is greater than row j.
 func (h *topNChunkHeap) Less(i, j int) bool {
-	rowI := h.rowChunks.GetList().GetRow(h.rowChunks.M.RowPtrs[i])
-	rowJ := h.rowChunks.GetList().GetRow(h.rowChunks.M.RowPtrs[j])
+	rowI := h.rowChunks.GetRow(h.rowPtrs[i])
+	rowJ := h.rowChunks.GetRow(h.rowPtrs[j])
 	return h.greaterRow(rowI, rowJ)
 }
 
@@ -335,7 +333,7 @@ func (h *topNChunkHeap) greaterRow(rowI, rowJ chunk.Row) bool {
 }
 
 func (h *topNChunkHeap) Len() int {
-	return len(h.rowChunks.M.RowPtrs)
+	return len(h.rowPtrs)
 }
 
 func (h *topNChunkHeap) Push(x interface{}) {
@@ -343,20 +341,42 @@ func (h *topNChunkHeap) Push(x interface{}) {
 }
 
 func (h *topNChunkHeap) Pop() interface{} {
-	h.rowChunks.M.RowPtrs = h.rowChunks.M.RowPtrs[:len(h.rowChunks.M.RowPtrs)-1]
+	h.rowPtrs = h.rowPtrs[:len(h.rowPtrs)-1]
 	// We don't need the popped value, return nil to avoid memory allocation.
 	return nil
 }
 
 func (h *topNChunkHeap) Swap(i, j int) {
-	h.rowChunks.M.RowPtrs[i], h.rowChunks.M.RowPtrs[j] = h.rowChunks.M.RowPtrs[j], h.rowChunks.M.RowPtrs[i]
+	h.rowPtrs[i], h.rowPtrs[j] = h.rowPtrs[j], h.rowPtrs[i]
+}
+
+// keyColumnsLess is the less function for key columns.
+func (e *TopNExec) keyColumnsLess(i, j int) bool {
+	rowI := e.rowChunks.GetRow(e.rowPtrs[i])
+	rowJ := e.rowChunks.GetRow(e.rowPtrs[j])
+	return e.lessRow(rowI, rowJ)
+}
+
+func (e *TopNExec) initPointers() {
+	e.rowPtrs = make([]chunk.RowPtr, 0, e.rowChunks.Len())
+	e.memTracker.Consume(int64(8 * e.rowChunks.Len()))
+	for chkIdx := 0; chkIdx < e.rowChunks.NumChunks(); chkIdx++ {
+		rowChk := e.rowChunks.GetChunk(chkIdx)
+		for rowIdx := 0; rowIdx < rowChk.NumRows(); rowIdx++ {
+			e.rowPtrs = append(e.rowPtrs, chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
+		}
+	}
 }
 
 // Open implements the Executor Open interface.
 func (e *TopNExec) Open(ctx context.Context) error {
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
-	return e.SortExec.Open(ctx)
+
+	e.fetched = false
+	e.Idx = 0
+
+	return e.children[0].Open(ctx)
 }
 
 // Next implements the Executor Next interface.
@@ -375,14 +395,11 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		e.fetched = true
 	}
-	if e.Idx >= len(e.rowChunks.M.RowPtrs) {
+	if e.Idx >= len(e.rowPtrs) {
 		return nil
 	}
-	for !req.IsFull() && e.Idx < len(e.rowChunks.M.RowPtrs) {
-		row, err := e.rowChunks.GetRow(e.rowChunks.M.RowPtrs[e.Idx])
-		if err != nil {
-			return err
-		}
+	for !req.IsFull() && e.Idx < len(e.rowPtrs) {
+		row := e.rowChunks.GetRow(e.rowPtrs[e.Idx])
 		req.AppendRow(row)
 		e.Idx++
 	}
@@ -391,13 +408,13 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 	e.chkHeap = &topNChunkHeap{e}
-	e.rowChunks = chunk.NewSortedRowContainer(retTypes(e), e.maxChunkSize, nil, nil, nil)
+	e.rowChunks = chunk.NewList(retTypes(e), e.initCap, e.maxChunkSize)
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 	e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
-	for uint64(e.rowChunks.NumRow()) < e.totalLimit {
+	for uint64(e.rowChunks.Len()) < e.totalLimit {
 		srcChk := newFirstChunk(e.children[0])
 		// adjust required rows by total limit
-		srcChk.SetRequiredRows(int(e.totalLimit-uint64(e.rowChunks.NumRow())), e.maxChunkSize)
+		srcChk.SetRequiredRows(int(e.totalLimit-uint64(e.rowChunks.Len())), e.maxChunkSize)
 		err := Next(ctx, e.children[0], srcChk)
 		if err != nil {
 			return err
@@ -405,11 +422,9 @@ func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 		if srcChk.NumRows() == 0 {
 			break
 		}
-		if err := e.rowChunks.Add(srcChk); err != nil {
-			return err
-		}
+		e.rowChunks.Add(srcChk)
 	}
-	e.rowChunks.InitPointers()
+	e.initPointers()
 	e.initCompareFuncs()
 	e.buildKeyColumns()
 	return nil
@@ -419,7 +434,7 @@ const topNCompactionFactor = 4
 
 func (e *TopNExec) executeTopN(ctx context.Context) error {
 	heap.Init(e.chkHeap)
-	for uint64(len(e.rowChunks.M.RowPtrs)) > e.totalLimit {
+	for uint64(len(e.rowPtrs)) > e.totalLimit {
 		// The number of rows we loaded may exceeds total limit, remove greatest rows by Pop.
 		heap.Pop(e.chkHeap)
 	}
@@ -436,32 +451,26 @@ func (e *TopNExec) executeTopN(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if e.rowChunks.NumRow() > len(e.rowChunks.M.RowPtrs)*topNCompactionFactor {
+		if e.rowChunks.Len() > len(e.rowPtrs)*topNCompactionFactor {
 			err = e.doCompaction()
 			if err != nil {
 				return err
 			}
 		}
 	}
-	sort.Slice(e.rowChunks.M.RowPtrs, e.keyColumnsLess)
+	sort.Slice(e.rowPtrs, e.keyColumnsLess)
 	return nil
 }
 
 func (e *TopNExec) processChildChk(childRowChk *chunk.Chunk) error {
 	for i := 0; i < childRowChk.NumRows(); i++ {
-		heapMaxPtr := e.rowChunks.M.RowPtrs[0]
+		heapMaxPtr := e.rowPtrs[0]
 		var heapMax, next chunk.Row
-		heapMax, err := e.rowChunks.GetRow(heapMaxPtr)
-		if err != nil {
-			return err
-		}
+		heapMax = e.rowChunks.GetRow(heapMaxPtr)
 		next = childRowChk.GetRow(i)
 		if e.chkHeap.greaterRow(heapMax, next) {
 			// Evict heap max, keep the next row.
-			e.rowChunks.M.RowPtrs[0], err = e.rowChunks.AppendRow(childRowChk.GetRow(i))
-			if err != nil {
-				return err
-			}
+			e.rowPtrs[0] = e.rowChunks.AppendRow(childRowChk.GetRow(i))
 			heap.Fix(e.chkHeap, 0)
 		}
 	}
@@ -473,25 +482,18 @@ func (e *TopNExec) processChildChk(childRowChk *chunk.Chunk) error {
 // but we want descending top N, then we will keep all data in memory.
 // But if data is distributed randomly, this function will be called log(n) times.
 func (e *TopNExec) doCompaction() error {
-	newRowChunks := chunk.NewSortedRowContainer(retTypes(e), e.maxChunkSize, nil, nil, nil)
-	newRowPtrs := make([]chunk.RowPtr, 0, e.rowChunks.NumRow())
-	for _, rowPtr := range e.rowChunks.M.RowPtrs {
-		row, err := e.rowChunks.GetRow(rowPtr)
-		if err != nil {
-			return err
-		}
-		newRowPtr, err := newRowChunks.AppendRow(row)
-		if err != nil {
-			return err
-		}
+	newRowChunks := chunk.NewList(retTypes(e), e.initCap, e.maxChunkSize)
+	newRowPtrs := make([]chunk.RowPtr, 0, e.rowChunks.Len())
+	for _, rowPtr := range e.rowPtrs {
+		newRowPtr := newRowChunks.AppendRow(e.rowChunks.GetRow(rowPtr))
 		newRowPtrs = append(newRowPtrs, newRowPtr)
 	}
 	newRowChunks.GetMemTracker().SetLabel(rowChunksLabel)
 	e.memTracker.ReplaceChild(e.rowChunks.GetMemTracker(), newRowChunks.GetMemTracker())
 	e.rowChunks = newRowChunks
 
-	e.memTracker.Consume(int64(-8 * len(e.rowChunks.M.RowPtrs)))
+	e.memTracker.Consume(int64(-8 * len(e.rowPtrs)))
 	e.memTracker.Consume(int64(8 * len(newRowPtrs)))
-	e.rowChunks.M.RowPtrs = newRowPtrs
+	e.rowPtrs = newRowPtrs
 	return nil
 }

@@ -187,11 +187,6 @@ func (c *RowContainer) GetChunk(chkIdx int) (*Chunk, error) {
 	return chk, nil
 }
 
-// GetList returns the list of in memory records.
-func (c *RowContainer) GetList() *List {
-	return c.m.records
-}
-
 // GetRow returns the row the ptr pointed to.
 func (c *RowContainer) GetRow(ptr RowPtr) (Row, error) {
 	c.m.RLock()
@@ -297,11 +292,11 @@ var ErrInsertToPartitionFailed = terror.ClassExecutor.New(1, "Insert the records
 // SortedRowContainer provides a place for many rows, so many that we might want to sort and spill them into disk.
 type SortedRowContainer struct {
 	*RowContainer
-	M struct {
+	ptrM struct {
 		// RWMutex guarantees the operator for rowPtrs is mutually exclusive.
 		sync.RWMutex
 		// rowPointer store the chunk index and row index for each row.
-		RowPtrs []RowPtr
+		rowPtrs []RowPtr
 	}
 
 	ByItemsDesc []bool
@@ -322,13 +317,13 @@ func NewSortedRowContainer(fieldType []*types.FieldType, chunkSize int, ByItemsD
 
 // Close close the SortedRowContainer
 func (c *SortedRowContainer) Close() error {
-	c.GetMemTracker().Consume(int64(-8 * cap(c.M.RowPtrs)))
+	c.GetMemTracker().Consume(int64(-8 * cap(c.ptrM.rowPtrs)))
 	return c.RowContainer.Close()
 }
 
 // InitPointers inits pointers.
 func (c *SortedRowContainer) InitPointers() {
-	c.M.RowPtrs = make([]RowPtr, 0, c.NumRow())
+	c.ptrM.rowPtrs = make([]RowPtr, 0, c.NumRow())
 	for chkIdx := 0; chkIdx < c.NumChunks(); chkIdx++ {
 		rowChk, err := c.GetChunk(chkIdx)
 		// err must be nil, because the chunk is in memory.
@@ -336,10 +331,10 @@ func (c *SortedRowContainer) InitPointers() {
 			panic(err)
 		}
 		for rowIdx := 0; rowIdx < rowChk.NumRows(); rowIdx++ {
-			c.M.RowPtrs = append(c.M.RowPtrs, RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
+			c.ptrM.rowPtrs = append(c.ptrM.rowPtrs, RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
 		}
 	}
-	c.GetMemTracker().Consume(int64(8 * cap(c.M.RowPtrs)))
+	c.GetMemTracker().Consume(int64(8 * cap(c.ptrM.rowPtrs)))
 }
 
 func (c *SortedRowContainer) lessRow(rowI, rowJ Row) bool {
@@ -360,19 +355,19 @@ func (c *SortedRowContainer) lessRow(rowI, rowJ Row) bool {
 
 // keyColumnsLess is the less function for key columns.
 func (c *SortedRowContainer) keyColumnsLess(i, j int) bool {
-	rowI := c.m.records.GetRow(c.M.RowPtrs[i])
-	rowJ := c.m.records.GetRow(c.M.RowPtrs[j])
+	rowI := c.m.records.GetRow(c.ptrM.rowPtrs[i])
+	rowJ := c.m.records.GetRow(c.ptrM.rowPtrs[j])
 	return c.lessRow(rowI, rowJ)
 }
 
 // InitPointersAndSort inits pointers and sorts the records.
 func (c *SortedRowContainer) InitPointersAndSort() {
-	c.M.Lock()
-	defer c.M.Unlock()
-	if c.M.RowPtrs != nil {
+	c.ptrM.Lock()
+	defer c.ptrM.Unlock()
+	if c.ptrM.rowPtrs != nil {
 		return
 	}
-	c.M.RowPtrs = make([]RowPtr, 0, c.NumRow())
+	c.ptrM.rowPtrs = make([]RowPtr, 0, c.NumRow())
 	for chkIdx := 0; chkIdx < c.NumChunks(); chkIdx++ {
 		rowChk, err := c.GetChunk(chkIdx)
 		// err must be nil, because the chunk is in memory.
@@ -380,10 +375,10 @@ func (c *SortedRowContainer) InitPointersAndSort() {
 			panic(err)
 		}
 		for rowIdx := 0; rowIdx < rowChk.NumRows(); rowIdx++ {
-			c.M.RowPtrs = append(c.M.RowPtrs, RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
+			c.ptrM.rowPtrs = append(c.ptrM.rowPtrs, RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
 		}
 	}
-	sort.Slice(c.M.RowPtrs, c.keyColumnsLess)
+	sort.Slice(c.ptrM.rowPtrs, c.keyColumnsLess)
 }
 
 func (c *SortedRowContainer) sortAndSpillToDisk() {
@@ -394,9 +389,9 @@ func (c *SortedRowContainer) sortAndSpillToDisk() {
 
 // Add appends a chunk into the SortedRowContainer.
 func (c *SortedRowContainer) Add(chk *Chunk) (err error) {
-	c.M.RLock()
-	defer c.M.RUnlock()
-	if c.M.RowPtrs != nil {
+	c.ptrM.RLock()
+	defer c.ptrM.RUnlock()
+	if c.ptrM.rowPtrs != nil {
 		return ErrInsertToPartitionFailed
 	}
 	return c.RowContainer.Add(chk)
@@ -404,16 +399,16 @@ func (c *SortedRowContainer) Add(chk *Chunk) (err error) {
 
 // GetRow returns the row the ptr pointed to.
 func (c *SortedRowContainer) GetRow(ptr RowPtr) (Row, error) {
-	c.M.RLock()
-	defer c.M.RUnlock()
+	c.ptrM.RLock()
+	defer c.ptrM.RUnlock()
 	return c.RowContainer.GetRow(ptr)
 }
 
 // GetRowByIdx returns the row the idx pointed to.
 func (c *SortedRowContainer) GetRowByIdx(idx int) (Row, error) {
-	c.M.RLock()
-	ptr := c.M.RowPtrs[idx]
-	c.M.RUnlock()
+	c.ptrM.RLock()
+	ptr := c.ptrM.rowPtrs[idx]
+	c.ptrM.RUnlock()
 	return c.GetRow(ptr)
 }
 
