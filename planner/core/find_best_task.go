@@ -825,13 +825,11 @@ func (is *PhysicalIndexScan) indexScanRowSize(idx *model.IndexInfo, ds *DataSour
 func (is *PhysicalIndexScan) initSchema(idx *model.IndexInfo, idxExprCols []*expression.Column, isDoubleRead bool) {
 	indexCols := make([]*expression.Column, len(is.IdxCols), len(idx.Columns)+1)
 	copy(indexCols, is.IdxCols)
-	is.NeedCommonHandle = is.Table.IsCommonHandle
+	is.NeedCommonHandle = is.Table.IsCommonHandle && len(is.IdxCols) < len(is.Columns)
 
 	if is.NeedCommonHandle {
-		if len(is.IdxCols) < len(is.Columns) {
-			for i := len(is.Index.Columns); i < len(idxExprCols); i++ {
-				indexCols = append(indexCols, idxExprCols[i])
-			}
+		for i := len(is.Index.Columns); i < len(idxExprCols); i++ {
+			indexCols = append(indexCols, idxExprCols[i])
 		}
 		is.SetSchema(expression.NewSchema(indexCols...))
 		return
