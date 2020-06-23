@@ -140,16 +140,6 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		e.feedback.Invalidate()
 		return err
 	}
-	if len(secondPartRanges) == 0 {
-		e.resultHandler.open(nil, firstResult)
-		return nil
-	}
-	var secondResult distsql.SelectResult
-	secondResult, err = e.buildResp(ctx, secondPartRanges)
-	if err != nil {
-		e.feedback.Invalidate()
-		return err
-	}
 
 	actionExceed := e.memTracker.GetActionOnExceed()
 	if actionExceed != nil {
@@ -167,6 +157,18 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 			}
 		}
 	}
+
+	if len(secondPartRanges) == 0 {
+		e.resultHandler.open(nil, firstResult)
+		return nil
+	}
+	var secondResult distsql.SelectResult
+	secondResult, err = e.buildResp(ctx, secondPartRanges)
+	if err != nil {
+		e.feedback.Invalidate()
+		return err
+	}
+
 	e.resultHandler.open(firstResult, secondResult)
 	return nil
 }
