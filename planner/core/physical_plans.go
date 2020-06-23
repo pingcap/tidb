@@ -555,6 +555,23 @@ type PhysicalApply struct {
 	OuterSchema []*expression.CorrelatedColumn
 }
 
+// Clone implements PhysicalPlan interface.
+func (p *PhysicalApply) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalApply)
+	base, err := p.PhysicalHashJoin.Clone()
+	if err != nil {
+		return nil, err
+	}
+	hj := base.(*PhysicalHashJoin)
+	cloned.PhysicalHashJoin = *hj
+	cloned.CanUseCache = p.CanUseCache
+	cloned.Concurrency = p.Concurrency
+	for _, col := range p.OuterSchema {
+		cloned.OuterSchema = append(cloned.OuterSchema, col.Clone().(*expression.CorrelatedColumn))
+	}
+	return cloned, nil
+}
+
 // ExtractCorrelatedCols implements PhysicalPlan interface.
 func (la *PhysicalApply) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := la.PhysicalHashJoin.ExtractCorrelatedCols()
