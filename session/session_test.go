@@ -2197,7 +2197,7 @@ func (s *testSchemaSuite) TestTableReaderChunk(c *C) {
 	c.Assert(err, IsNil)
 	s.cluster.SplitTable(tbl.Meta().ID, 10)
 
-	tk.Se.GetSessionVars().DistSQLScanConcurrency = 1
+	tk.Se.GetSessionVars().SetDistSQLScanConcurrency(1)
 	tk.MustExec("set tidb_init_chunk_size = 2")
 	defer func() {
 		tk.MustExec(fmt.Sprintf("set tidb_init_chunk_size = %d", variable.DefInitChunkSize))
@@ -2234,7 +2234,7 @@ func (s *testSchemaSuite) TestInsertExecChunk(c *C) {
 	}
 	tk.MustExec("create table test2(a int)")
 
-	tk.Se.GetSessionVars().DistSQLScanConcurrency = 1
+	tk.Se.GetSessionVars().SetDistSQLScanConcurrency(1)
 	tk.MustExec("insert into test2(a) select a from test1;")
 
 	rs, err := tk.Exec("select * from test2")
@@ -2266,7 +2266,7 @@ func (s *testSchemaSuite) TestUpdateExecChunk(c *C) {
 		tk.MustExec(fmt.Sprintf("insert chk values (%d)", i))
 	}
 
-	tk.Se.GetSessionVars().DistSQLScanConcurrency = 1
+	tk.Se.GetSessionVars().SetDistSQLScanConcurrency(1)
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("update chk set a = a + 100 where a = %d", i))
 	}
@@ -2301,7 +2301,7 @@ func (s *testSchemaSuite) TestDeleteExecChunk(c *C) {
 		tk.MustExec(fmt.Sprintf("insert chk values (%d)", i))
 	}
 
-	tk.Se.GetSessionVars().DistSQLScanConcurrency = 1
+	tk.Se.GetSessionVars().SetDistSQLScanConcurrency(1)
 
 	for i := 0; i < 99; i++ {
 		tk.MustExec(fmt.Sprintf("delete from chk where a = %d", i))
@@ -2333,7 +2333,7 @@ func (s *testSchemaSuite) TestDeleteMultiTableExecChunk(c *C) {
 		tk.MustExec(fmt.Sprintf("insert chk2 values (%d)", i))
 	}
 
-	tk.Se.GetSessionVars().DistSQLScanConcurrency = 1
+	tk.Se.GetSessionVars().SetDistSQLScanConcurrency(1)
 
 	tk.MustExec("delete chk1, chk2 from chk1 inner join chk2 where chk1.a = chk2.a")
 

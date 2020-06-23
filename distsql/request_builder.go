@@ -176,7 +176,7 @@ func (builder *RequestBuilder) getKVPriority(sv *variable.SessionVars) int {
 // SetFromSessionVars sets the following fields for "kv.Request" from session variables:
 // "Concurrency", "IsolationLevel", "NotFillCache", "ReplicaRead", "SchemaVar".
 func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *RequestBuilder {
-	builder.Request.Concurrency = sv.DistSQLScanConcurrency
+	builder.Request.Concurrency = sv.DistSQLScanConcurrency()
 	builder.Request.IsolationLevel = builder.getIsolationLevel()
 	builder.Request.NotFillCache = sv.StmtCtx.NotFillCache
 	builder.Request.TaskID = sv.StmtCtx.TaskID
