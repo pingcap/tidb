@@ -15,6 +15,7 @@ package tables_test
 
 import (
 	"context"
+	"strconv"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -393,6 +394,23 @@ func (ts *testSuite) TestTableFromMeta(c *C) {
 
 	_, err = tables.AllocHandle(tk.Se, tb)
 	c.Assert(err, NotNil)
+}
+
+func (ts *testSuite) TestShardRowIDBitsStep(c *C) {
+	tk := testkit.NewTestKit(c, ts.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists shard_t;")
+	tk.MustExec("create table shard_t (a int) shard_row_id_bits = 7;")
+	tk.MustExec("set @@tidb_shard_allocate_step=3;")
+	tk.MustExec("insert into shard_t values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10), (11);")
+	rows := tk.MustQuery("select _tidb_rowid from shard_t;").Rows()
+	shards := make(map[int]struct{})
+	for _, row := range rows {
+		id, err := strconv.ParseUint(row[0].(string), 10, 64)
+		c.Assert(err, IsNil)
+		shards[int(id>>56)] = struct{}{}
+	}
+	c.Assert(len(shards), Equals, 4)
 }
 
 func (ts *testSuite) TestHiddenColumn(c *C) {
