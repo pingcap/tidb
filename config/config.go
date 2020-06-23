@@ -141,6 +141,8 @@ type Config struct {
 	Experimental Experimental `toml:"experimental" json:"experimental"`
 	// EnableCollectExecutionInfo enables the TiDB to collect execution info.
 	EnableCollectExecutionInfo bool `toml:"enable-collect-execution-info" json:"enable-collect-execution-info"`
+	// NoRegister tells TiDB don't register itself to the dashboard.
+	NoRegister bool `toml:"no-register" json:"no-register"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed

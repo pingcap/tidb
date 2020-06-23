@@ -149,6 +149,9 @@ func (is *InfoSyncer) init(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if config.GetGlobalConfig().NoRegister {
+		return nil
+	}
 	return is.newTopologySessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
 }
 

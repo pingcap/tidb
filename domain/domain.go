@@ -659,14 +659,6 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 
 // Init initializes a domain.
 func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.Resource, error)) error {
-	if err := do.InitWithNoRegister(ddlLease, sysFactory); err != nil {
-		return err
-	}
-	return do.initInfoSyncer(context.Background())
-}
-
-// InitWithNoRegister initializes a domain, but not register itself to PD.
-func (do *Domain) InitWithNoRegister(ddlLease time.Duration, sysFactory func(*Domain) (pools.Resource, error)) error {
 	perfschema.Init()
 	if ebd, ok := do.store.(tikv.EtcdBackend); ok {
 		if addrs := ebd.EtcdAddrs(); addrs != nil {
@@ -735,6 +727,10 @@ func (do *Domain) InitWithNoRegister(ddlLease time.Duration, sysFactory func(*Do
 	if err != nil {
 		return err
 	}
+	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.etcdClient)
+	if err != nil {
+		return err
+	}
 	err = do.Reload()
 	if err != nil {
 		return err
@@ -749,20 +745,14 @@ func (do *Domain) InitWithNoRegister(ddlLease time.Duration, sysFactory func(*Do
 	}
 	do.wg.Add(1)
 	go do.topNSlowQueryLoop()
-	return nil
-}
-
-func (do *Domain) initInfoSyncer(ctx context.Context) (err error) {
-	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.etcdClient)
-	if err != nil {
-		return
-	}
 
 	do.wg.Add(1)
 	go do.infoSyncerKeeper()
 
-	do.wg.Add(1)
-	go do.topologySyncerKeeper()
+	if !config.GetGlobalConfig().NoRegister {
+		do.wg.Add(1)
+		go do.topologySyncerKeeper()
+	}
 
 	return nil
 }
