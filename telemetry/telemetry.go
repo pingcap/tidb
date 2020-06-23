@@ -22,11 +22,10 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"go.etcd.io/etcd/clientv3"
-
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"go.etcd.io/etcd/clientv3"
 )
 
 const (

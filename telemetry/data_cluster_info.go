@@ -15,7 +15,6 @@ package telemetry
 
 import (
 	"github.com/pingcap/errors"
-
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/sqlexec"
 )

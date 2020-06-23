@@ -20,7 +20,6 @@ import (
 
 	"github.com/iancoleman/strcase"
 	"github.com/pingcap/errors"
-
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
