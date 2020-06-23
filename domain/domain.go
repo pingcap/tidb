@@ -979,9 +979,6 @@ func (do *Domain) TelemetryLoop(ctx sessionctx.Context) {
 			case <-time.After(telemetry.ReportInterval):
 			}
 			if owner.IsOwner() {
-				if !config.GetGlobalConfig().EnableTelemetry {
-					continue
-				}
 				err := telemetry.ReportUsageData(ctx, do.GetEtcdClient())
 				if err != nil {
 					// Only status update errors will be printed out
