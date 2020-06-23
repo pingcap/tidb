@@ -321,22 +321,6 @@ func (c *SortedRowContainer) Close() error {
 	return c.RowContainer.Close()
 }
 
-// InitPointers inits pointers.
-func (c *SortedRowContainer) InitPointers() {
-	c.ptrM.rowPtrs = make([]RowPtr, 0, c.NumRow())
-	for chkIdx := 0; chkIdx < c.NumChunks(); chkIdx++ {
-		rowChk, err := c.GetChunk(chkIdx)
-		// err must be nil, because the chunk is in memory.
-		if err != nil {
-			panic(err)
-		}
-		for rowIdx := 0; rowIdx < rowChk.NumRows(); rowIdx++ {
-			c.ptrM.rowPtrs = append(c.ptrM.rowPtrs, RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
-		}
-	}
-	c.GetMemTracker().Consume(int64(8 * cap(c.ptrM.rowPtrs)))
-}
-
 func (c *SortedRowContainer) lessRow(rowI, rowJ Row) bool {
 	for i, colIdx := range c.keyColumns {
 		cmpFunc := c.keyCmpFuncs[i]
@@ -397,19 +381,12 @@ func (c *SortedRowContainer) Add(chk *Chunk) (err error) {
 	return c.RowContainer.Add(chk)
 }
 
-// GetRow returns the row the ptr pointed to.
-func (c *SortedRowContainer) GetRow(ptr RowPtr) (Row, error) {
-	c.ptrM.RLock()
-	defer c.ptrM.RUnlock()
-	return c.RowContainer.GetRow(ptr)
-}
-
 // GetRowByIdx returns the row the idx pointed to.
 func (c *SortedRowContainer) GetRowByIdx(idx int) (Row, error) {
 	c.ptrM.RLock()
+	defer c.ptrM.RUnlock()
 	ptr := c.ptrM.rowPtrs[idx]
-	c.ptrM.RUnlock()
-	return c.GetRow(ptr)
+	return c.RowContainer.GetRow(ptr)
 }
 
 // ActionSpill returns a SortAndSpillDiskAction for sorting and spilling over to disk.
