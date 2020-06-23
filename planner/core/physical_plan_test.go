@@ -120,6 +120,11 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
+	ctx := se.(sessionctx.Context)
+	sessionVars := ctx.GetSessionVars()
+	sessionVars.ExecutorConcurrency = 4
+	sessionVars.SetDistSQLScanConcurrency(15)
+	sessionVars.SetHashJoinConcurrency(5)
 
 	var input []string
 	var output []struct {
@@ -157,8 +162,11 @@ func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
 	se.Execute(context.Background(), "set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	ctx := se.(sessionctx.Context)
 	sessionVars := ctx.GetSessionVars()
-	sessionVars.HashAggFinalConcurrency = 1
-	sessionVars.HashAggPartialConcurrency = 1
+	sessionVars.SetHashAggFinalConcurrency(1)
+	sessionVars.SetHashAggPartialConcurrency(1)
+	sessionVars.SetHashJoinConcurrency(5)
+	sessionVars.SetDistSQLScanConcurrency(15)
+	sessionVars.ExecutorConcurrency = 4
 	var input []string
 	var output []struct {
 		SQL  string
@@ -341,8 +349,10 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 	se.Execute(context.Background(), "set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	ctx := se.(sessionctx.Context)
 	sessionVars := ctx.GetSessionVars()
-	sessionVars.HashAggFinalConcurrency = 1
-	sessionVars.HashAggPartialConcurrency = 1
+	sessionVars.SetHashAggFinalConcurrency(1)
+	sessionVars.SetHashAggPartialConcurrency(1)
+	sessionVars.SetDistSQLScanConcurrency(15)
+	sessionVars.ExecutorConcurrency = 4
 
 	var input []string
 	var output []struct {
@@ -740,8 +750,8 @@ func (s *testPlanSuite) TestAggregationHints(c *C) {
 	c.Assert(err, IsNil)
 
 	sessionVars := se.(sessionctx.Context).GetSessionVars()
-	sessionVars.HashAggFinalConcurrency = 1
-	sessionVars.HashAggPartialConcurrency = 1
+	sessionVars.SetHashAggFinalConcurrency(1)
+	sessionVars.SetHashAggPartialConcurrency(1)
 
 	var input []struct {
 		SQL         string
