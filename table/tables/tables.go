@@ -568,7 +568,6 @@ func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 			// Make the IDs continuous benefit for the performance of TiKV.
 			stmtCtx := ctx.GetSessionVars().StmtCtx
 			stmtCtx.BaseRowID, stmtCtx.MaxRowID, err = allocHandleIDs(ctx, t, uint64(opt.ReserveAutoID))
-			println("reverse", stmtCtx.BaseRowID, stmtCtx.MaxRowID)
 			if err != nil {
 				return nil, err
 			}
@@ -1152,7 +1151,6 @@ func allocHandleIDs(ctx sessionctx.Context, t table.Table, n uint64) (int64, int
 			return 0, 0, autoid.ErrAutoincReadFailed
 		}
 		txnCtx := ctx.GetSessionVars().TxnCtx
-		// shard := CalcShard(meta.ShardRowIDBits, txnCtx.StartTS, autoid.RowIDBitLength, true)
 		shard := txnCtx.GetShard(meta.ShardRowIDBits, autoid.RowIDBitLength, true, int(n))
 		base |= shard
 		maxID |= shard
