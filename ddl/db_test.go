@@ -37,11 +37,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	testddlutil "github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
->>>>>>> e053ce0... *: Fix HTTP api get TiFlash replica failed cause by concurrent DDL. (#17872)
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
