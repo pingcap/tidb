@@ -73,7 +73,8 @@ type ParallelNestedLoopApplyExec struct {
 	outerRowCh  chan outerRow
 	numWorkers  int32
 	exit        chan struct{}
-	wg          sync.WaitGroup
+	workerWg    sync.WaitGroup
+	notifyWg    sync.WaitGroup
 
 	// fields about cache
 	cache              *applyCache
@@ -132,13 +133,15 @@ func (e *ParallelNestedLoopApplyExec) Open(ctx context.Context) error {
 // Next implements the Executor interface.
 func (e *ParallelNestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	if !e.started {
-		e.wg.Add(1)
+		e.workerWg.Add(1)
 		go e.outerWorker(ctx)
 		for i := 0; i < e.concurrency; i++ {
-			e.wg.Add(1)
+			e.workerWg.Add(1)
 			atomic.AddInt32(&e.numWorkers, 1)
 			go e.innerWorker(ctx, i)
 		}
+		e.notifyWg.Add(1)
+		go e.notifyWorker(ctx)
 		e.started = true
 	}
 	result := <-e.resultChkCh
@@ -157,7 +160,7 @@ func (e *ParallelNestedLoopApplyExec) Close() error {
 	if e.started {
 		close(e.exit)
 		e.started = false
-		e.wg.Wait()
+		e.notifyWg.Wait()
 	}
 	if e.runtimeStats != nil {
 		if e.useCache {
@@ -171,6 +174,14 @@ func (e *ParallelNestedLoopApplyExec) Close() error {
 		}
 	}
 	return err
+}
+
+// notifyWorker waits for all inner/outer-workers finishing and then put an empty
+// chunk into the resultCh to notify the upper executor there is no more data.
+func (e *ParallelNestedLoopApplyExec) notifyWorker(ctx context.Context) {
+	e.workerWg.Wait()
+	e.putResult(nil, nil)
+	e.notifyWg.Done()
 }
 
 func (e *ParallelNestedLoopApplyExec) outerWorker(ctx context.Context) {
@@ -250,7 +261,7 @@ func (e *ParallelNestedLoopApplyExec) handleWorkerPanic(ctx context.Context) {
 		logutil.Logger(ctx).Error("parallel nested loop join worker panicked", zap.Error(err), zap.Stack("stack"))
 		e.resultChkCh <- result{nil, err}
 	}
-	e.wg.Done()
+	e.workerWg.Done()
 }
 
 // fetchAllInners reads all data from the inner table and stores them in a List.

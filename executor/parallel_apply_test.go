@@ -108,5 +108,5 @@ func (s *testSuite) TestParallelApply(c *C) {
 |                     └─Selection_62           | 7992.00  | cop[tikv] |               | gt(test.t.a, test.t.a), gt(test.t.a, test.t.a), not(isnull(test.t.b)) |
 |                       └─TableFullScan_61     | 10000.00 | cop[tikv] | table:t2      | keep order:false, stats:pseudo                                        |`
 	checkApplyPlan(c, tk, q2, p2) // only the outside apply can be parallel
-	tk.MustQuery(q1).Sort().Check(testkit.Rows("1 1", "2 2", "3 3", "4 4", "5 5", "6 6", "7 7", "8 8", "9 9"))
+	tk.MustQuery(q2).Sort().Check(testkit.Rows("1 1", "2 2", "3 3", "4 4", "5 5", "6 6", "7 7", "8 8", "9 9"))
 }
