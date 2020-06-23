@@ -14,6 +14,7 @@
 package variable
 
 import (
+	"math"
 	"os"
 
 	"github.com/pingcap/parser/mysql"
@@ -414,6 +415,8 @@ const (
 
 	// TiDBSlowLogMasking indicates that whether masking the query data when log slow query.
 	TiDBSlowLogMasking = "tidb_slow_log_masking"
+
+	TiDBShardAllocateStep = "tidb_shard_allocate_step"
 )
 
 // Default TiDB system variable values.
@@ -511,6 +514,7 @@ const (
 	DefTiDBAllowAutoRandExplicitInsert = false
 	DefTiDBEnableClusteredIndex        = false
 	DefTiDBSlowLogMasking              = false
+	DefTiDBShardAllocateStep           = math.MaxInt64
 )
 
 // Process global variables.
