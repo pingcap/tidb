@@ -205,12 +205,14 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	}
 
 	err = SetSessionSystemVar(v, "tidb_opt_broadcast_join", types.NewStringDatum("1"))
-	c.Assert(terror.ErrorEqual(err, ErrWrongValueForVar), IsTrue)
-	err = SetSessionSystemVar(v, "tidb_allow_batch_cop", types.NewStringDatum("1"))
-	c.Assert(err, IsNil)
-	err = SetSessionSystemVar(v, "tidb_opt_broadcast_join", types.NewStringDatum("1"))
 	c.Assert(err, IsNil)
 	err = SetSessionSystemVar(v, "tidb_allow_batch_cop", types.NewStringDatum("0"))
+	c.Assert(terror.ErrorEqual(err, ErrWrongValueForVar), IsTrue)
+	err = SetSessionSystemVar(v, "tidb_opt_broadcast_join", types.NewStringDatum("0"))
+	c.Assert(err, IsNil)
+	err = SetSessionSystemVar(v, "tidb_allow_batch_cop", types.NewStringDatum("0"))
+	c.Assert(err, IsNil)
+	err = SetSessionSystemVar(v, "tidb_opt_broadcast_join", types.NewStringDatum("1"))
 	c.Assert(terror.ErrorEqual(err, ErrWrongValueForVar), IsTrue)
 
 	// Combined sql_mode
