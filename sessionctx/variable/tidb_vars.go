@@ -418,6 +418,8 @@ const (
 
 	// TiDBShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
 	TiDBShardAllocateStep = "tidb_shard_allocate_step"
+	// TiDBEnableTelemetry indicates that whether usage data report to PingCAP is enabled.
+	TiDBEnableTelemetry = "tidb_enable_telemetry"
 )
 
 // Default TiDB system variable values.
@@ -516,6 +518,7 @@ const (
 	DefTiDBEnableClusteredIndex        = false
 	DefTiDBSlowLogMasking              = false
 	DefTiDBShardAllocateStep           = math.MaxInt64
+	DefTiDBEnableTelemetry             = true
 )
 
 // Process global variables.
