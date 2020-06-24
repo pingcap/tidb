@@ -210,11 +210,11 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 		truncateTrailingSpaces(&casted)
 	}
 
-	if ctx.GetSessionVars().SkipUTF8Check {
-		return casted, nil
-	}
-
 	if col.Charset == charset.CharsetASCII {
+		if ctx.GetSessionVars().SkipASCIICheck {
+			return casted, nil
+		}
+
 		str := casted.GetString()
 		for i := 0; i < len(str); i++ {
 			if str[i] > unicode.MaxASCII {
@@ -226,6 +226,10 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 			err = nil
 		}
 		return casted, err
+	}
+
+	if ctx.GetSessionVars().SkipUTF8Check {
+		return casted, nil
 	}
 
 	if !mysql.IsUTF8Charset(col.Charset) {
