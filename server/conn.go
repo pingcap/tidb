@@ -69,7 +69,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/chunk"
@@ -1382,7 +1381,7 @@ func (cc *clientConn) prefetchPointPlanKeys(stmts []ast.StmtNode) ([]plannercore
 		return nil, err1
 	}
 	for idxKey, idxVal := range idxVals {
-		h, err2 := tables.DecodeHandleInUniqueIndexValue(idxVal, false)
+		h, err2 := tablecodec.DecodeHandleInUniqueIndexValue(idxVal, false)
 		if err2 != nil {
 			return nil, err2
 		}
