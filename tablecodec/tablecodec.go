@@ -983,7 +983,7 @@ func GenIndexKey(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo
 	return
 }
 
-// GenIndexValue creates encoded index value and return the result
+// GenIndexValue creates encoded index value and returns the result
 func GenIndexValue(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
 	containNonBinaryString bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle) ([]byte, error) {
 	var idxVal []byte
