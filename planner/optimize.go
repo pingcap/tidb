@@ -41,7 +41,13 @@ import (
 // The node must be prepared first.
 func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, error) {
 	if _, isolationReadContainTiKV := sctx.GetSessionVars().GetIsolationReadEngines()[kv.TiKV]; isolationReadContainTiKV {
-		fp := plannercore.TryFastPlan(sctx, node)
+		var fp plannercore.Plan
+		if fpv, ok := sctx.Value(plannercore.PointPlanKey).(plannercore.PointPlanVal); ok {
+			// point plan is already tried in a multi-statement query.
+			fp = fpv.Plan
+		} else {
+			fp = plannercore.TryFastPlan(sctx, node)
+		}
 		if fp != nil {
 			if !useMaxTS(sctx, fp) {
 				sctx.PrepareTSFuture(ctx)
