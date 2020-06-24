@@ -1319,10 +1319,10 @@
           "explain select /*+ TIDB_INLJ(t2) */ * from t t1, t t2 where t1.a = t2.a"
         ],
         "Plan": [
-          "IndexJoin_12 12500.00 root  inner join, inner:UnionScan_11, outer key:test.t.a, inner key:test.t.a",
-          "├─UnionScan_15(Build) 10000.00 root  ",
-          "│ └─TableReader_17 10000.00 root  data:TableFullScan_16",
-          "│   └─TableFullScan_16 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "IndexJoin_15 12500.00 root  inner join, inner:UnionScan_11, outer key:test.t.a, inner key:test.t.a",
+          "├─UnionScan_18(Build) 10000.00 root  ",
+          "│ └─TableReader_20 10000.00 root  data:TableFullScan_19",
+          "│   └─TableFullScan_19 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "└─UnionScan_11(Probe) 1.00 root  ",
           "  └─TableReader_10 1.00 root  data:TableRangeScan_9",
           "    └─TableRangeScan_9 1.00 cop[tikv] table:t2 range: decided by [test.t.a], keep order:false, stats:pseudo"
@@ -1334,14 +1334,14 @@
           "explain select /*+ TIDB_INLJ(t2) */ * from t t1, t t2 where t1.a = t2.b"
         ],
         "Plan": [
-          "HashJoin_15 12487.50 root  inner join, equal:[eq(test.t.a, test.t.b)]",
-          "├─UnionScan_17(Build) 9990.00 root  not(isnull(test.t.b))",
-          "│ └─TableReader_20 9990.00 root  data:Selection_19",
-          "│   └─Selection_19 9990.00 cop[tikv]  not(isnull(test.t.b))",
-          "│     └─TableFullScan_18 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "└─UnionScan_21(Probe) 10000.00 root  ",
-          "  └─TableReader_23 10000.00 root  data:TableFullScan_22",
-          "    └─TableFullScan_22 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "HashJoin_18 12487.50 root  inner join, equal:[eq(test.t.a, test.t.b)]",
+          "├─UnionScan_20(Build) 9990.00 root  not(isnull(test.t.b))",
+          "│ └─TableReader_23 9990.00 root  data:Selection_22",
+          "│   └─Selection_22 9990.00 cop[tikv]  not(isnull(test.t.b))",
+          "│     └─TableFullScan_21 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─UnionScan_24(Probe) 10000.00 root  ",
+          "  └─TableReader_26 10000.00 root  data:TableFullScan_25",
+          "    └─TableFullScan_25 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1350,14 +1350,14 @@
           "explain select /*+ TIDB_INLJ(t2) */ t1.a , t2.b from t t1, t t2 where t1.a = t2.b"
         ],
         "Plan": [
-          "HashJoin_15 12487.50 root  inner join, equal:[eq(test.t.a, test.t.b)]",
-          "├─UnionScan_17(Build) 9990.00 root  not(isnull(test.t.b))",
-          "│ └─TableReader_20 9990.00 root  data:Selection_19",
-          "│   └─Selection_19 9990.00 cop[tikv]  not(isnull(test.t.b))",
-          "│     └─TableFullScan_18 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "└─UnionScan_21(Probe) 10000.00 root  ",
-          "  └─TableReader_23 10000.00 root  data:TableFullScan_22",
-          "    └─TableFullScan_22 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "HashJoin_18 12487.50 root  inner join, equal:[eq(test.t.a, test.t.b)]",
+          "├─UnionScan_20(Build) 9990.00 root  not(isnull(test.t.b))",
+          "│ └─TableReader_23 9990.00 root  data:Selection_22",
+          "│   └─Selection_22 9990.00 cop[tikv]  not(isnull(test.t.b))",
+          "│     └─TableFullScan_21 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─UnionScan_24(Probe) 10000.00 root  ",
+          "  └─TableReader_26 10000.00 root  data:TableFullScan_25",
+          "    └─TableFullScan_25 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {
