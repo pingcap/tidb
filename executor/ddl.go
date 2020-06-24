@@ -421,15 +421,6 @@ func GetDropOrTruncateTableInfoFromJobs(jobs []*model.Job, gcSafePoint uint64, d
 		if err != nil {
 			return false, err
 		}
-<<<<<<< HEAD
-		// Get table meta from snapshot infoSchema.
-		table, ok := snapInfo.TableByID(job.TableID)
-		if !ok {
-			return false, infoschema.ErrTableNotExists.GenWithStackByArgs(
-				fmt.Sprintf("(Schema ID %d)", job.SchemaID),
-				fmt.Sprintf("(Table ID %d)", job.TableID),
-			)
-=======
 		tbl, err := snapMeta.GetTable(job.SchemaID, job.TableID)
 		if err != nil {
 			if meta.ErrDBNotExists.Equal(err) {
@@ -445,7 +436,6 @@ func GetDropOrTruncateTableInfoFromJobs(jobs []*model.Job, gcSafePoint uint64, d
 			// then can't find the table from the snapshot info-schema. Should just ignore error here,
 			// see more in TestParallelDropSchemaAndDropTable.
 			continue
->>>>>>> 3895619... executor: optimize the get snapshot table meta for tiflash/replica HTTP API (#17969)
 		}
 		finish, err := fn(job, tbl)
 		if err != nil || finish {
