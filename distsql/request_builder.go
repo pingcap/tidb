@@ -202,6 +202,15 @@ func (builder *RequestBuilder) SetConcurrency(concurrency int) *RequestBuilder {
 	return builder
 }
 
+// SetTiDBServerIDs sets "TiDBServerIDs" for "kv.Request"
+func (builder *RequestBuilder) SetTiDBServerIDs(serverIDs ...uint64) *RequestBuilder {
+	builder.Request.TiDBServerIDs = make(map[uint64]interface{})
+	for _, id := range serverIDs {
+		builder.Request.TiDBServerIDs[id] = nil
+	}
+	return builder
+}
+
 // TableRangesToKVRanges converts table ranges to "KeyRange".
 func TableRangesToKVRanges(tid int64, ranges []*ranger.Range, fb *statistics.QueryFeedback) []kv.KeyRange {
 	if fb == nil || fb.Hist == nil {

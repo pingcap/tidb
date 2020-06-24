@@ -17,6 +17,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/parser/mysql"
@@ -145,4 +146,68 @@ type SessionManager interface {
 	GetProcessInfo(id uint64) (*ProcessInfo, bool)
 	Kill(connectionID uint64, query bool)
 	UpdateTLSConfig(cfg *tls.Config)
+	ServerID() uint64
+}
+
+// GlobalConnID is the global connection ID, providing UNIQUE connection IDs across the whole TiDB cluster.
+// 64 bits version:
+//  63                   41 40                                   1    0
+// +-----------------------+--------------------------------------+--------+
+// |       serverId        |             local connId             | markup |
+// |        (23b)          |                 (40b)                |(1b,==1)|
+// +-----------------------+--------------------------------------+--------+
+// 32 bits version(coming soon):
+// 31                          1    0
+// +-----------------------------+--------+
+// |             ???             | markup |
+// |             ???             |(1b,==0)|
+// +-----------------------------+--------+
+type GlobalConnID struct {
+	ServerID    uint64
+	LocalConnID uint64
+	Is64bits    bool
+	IsTruncated bool
+}
+
+func (g *GlobalConnID) makeID(localConnID uint64) uint64 {
+	var id uint64
+	if g.Is64bits {
+		id |= 0x1
+		id |= localConnID & 0xff_ffff_ffff << 1 // 40 bits local connID.
+		id |= g.ServerID & 0x7f_ffff << 41      // 23 bits serverID.
+	} else {
+		// TODO: update after new design for 32 bits version.
+		id |= localConnID & 0x7fff_ffff << 1 // 31 bits local connID.
+	}
+	return id
+}
+
+// ID returns the connection id
+func (g *GlobalConnID) ID() uint64 {
+	return g.makeID(g.LocalConnID)
+}
+
+// NextID returns next connection id
+func (g *GlobalConnID) NextID() uint64 {
+	localConnID := atomic.AddUint64(&g.LocalConnID, 1)
+	return g.makeID(localConnID)
+}
+
+// ParseGlobalConnID parses an uint64 to GlobalConnID.
+func ParseGlobalConnID(id uint64) GlobalConnID {
+	if id&0x1 > 0 {
+		return GlobalConnID{
+			Is64bits:    true,
+			LocalConnID: (id >> 1) & 0xff_ffff_ffff,
+			ServerID:    (id >> 41) & 0x7f_ffff,
+			IsTruncated: id&0xffffffff_00000000 == 0,
+		}
+	}
+	// TODO: update after new design for 32 bits version.
+	return GlobalConnID{
+		Is64bits:    false,
+		LocalConnID: (id >> 1) & 0x7fff_ffff,
+		ServerID:    0,
+		IsTruncated: false,
+	}
 }

@@ -324,6 +324,8 @@ type Request struct {
 	BatchCop bool
 	// TaskID is an unique ID for an execution of a statement
 	TaskID uint64
+	// TiDBServerIDs are the specified TiDB serverIDs to execute request. `nil` means all TiDB instances.
+	TiDBServerIDs map[uint64]interface{}
 }
 
 // ResultSubset represents a result subset from a single storage unit.

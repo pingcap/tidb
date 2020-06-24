@@ -41,7 +41,6 @@ import (
 	"math"
 	"net/http"
 	"strconv"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/parser/mysql"
@@ -383,58 +382,4 @@ func (h CorsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Access-Control-Allow-Methods", "GET")
 	}
 	h.handler.ServeHTTP(w, req)
-}
-
-// GlobalConnID is the global connection ID, providing UNIQUE connection IDs across the whole TiDB cluster.
-// 64 bits version:
-//  63                   41 40                                   1    0
-// +-----------------------+--------------------------------------+--------+
-// |       serverId        |             local connId             | markup |
-// |        (23b)          |                 (40b)                |(1b,==1)|
-// +-----------------------+--------------------------------------+--------+
-// 32 bits version(coming soon):
-// 31                          1    0
-// +-----------------------------+--------+
-// |             ???             | markup |
-// |             ???             |(1b,==0)|
-// +-----------------------------+--------+
-type GlobalConnID struct {
-	serverID    uint64
-	localConnID uint64
-	is64bits    bool
-	isTruncated bool
-}
-
-// NextID returns next connection id
-func (g *GlobalConnID) NextID() uint64 {
-	var id uint64
-	localConnID := atomic.AddUint64(&g.localConnID, 1)
-	if g.is64bits {
-		id |= 0x1
-		id |= localConnID & 0xff_ffff_ffff << 1 // 40 bits local connID.
-		id |= g.serverID & 0x7f_ffff << 41      // 23 bits serverID.
-	} else {
-		// TODO: update after new design for 32 bits version.
-		id |= localConnID & 0x7fff_ffff << 1 // 31 bits local connID.
-	}
-	return id
-}
-
-// ParseGlobalConnID parses an uint64 to GlobalConnID.
-func ParseGlobalConnID(id uint64) GlobalConnID {
-	if id&0x1 > 0 {
-		return GlobalConnID{
-			is64bits:    true,
-			localConnID: (id >> 1) & 0xff_ffff_ffff,
-			serverID:    (id >> 41) & 0x7f_ffff,
-			isTruncated: id&0xffffffff_00000000 == 0,
-		}
-	}
-	// TODO: update after new design for 32 bits version.
-	return GlobalConnID{
-		is64bits:    false,
-		localConnID: (id >> 1) & 0x7fff_ffff,
-		serverID:    0,
-		isTruncated: false,
-	}
 }

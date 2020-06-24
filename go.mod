@@ -71,4 +71,5 @@ go 1.13
 replace (
 	github.com/pingcap/kvproto => github.com/pingyu/kvproto v0.0.0-20200620130450-f6224dbfde74
 	github.com/pingcap/pd/v4 => github.com/pingyu/pd/v4 v4.0.0-20200621023959-07a17ec0123f
+	github.com/pingcap/tipb => github.com/pingyu/tipb v0.0.0-20200624160448-105ff4559211
 )

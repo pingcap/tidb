@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -41,6 +42,8 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
@@ -125,7 +128,7 @@ func (e *SimpleExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	case *ast.SetPwdStmt:
 		err = e.executeSetPwd(x)
 	case *ast.KillStmt:
-		err = e.executeKillStmt(x)
+		err = e.executeKillStmt(ctx, x)
 	case *ast.BinlogStmt:
 		// We just ignore it.
 		return nil
@@ -1058,19 +1061,84 @@ func (e *SimpleExec) executeSetPwd(s *ast.SetPwdStmt) error {
 	return err
 }
 
-func (e *SimpleExec) executeKillStmt(s *ast.KillStmt) error {
-	conf := config.GetGlobalConfig()
-	if s.TiDBExtension || conf.CompatibleKillQuery {
-		sm := e.ctx.GetSessionManager()
-		if sm == nil {
-			return nil
-		}
-		sm.Kill(s.ConnectionID, s.Query)
-	} else {
-		err := errors.New("Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] connectionID' instead")
+func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error {
+	connID := util.ParseGlobalConnID(s.ConnectionID)
+	if connID.IsTruncated {
+		err := errors.New("Invalid operation. ConnectionID is truncated to 32 bits")
 		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		return nil
 	}
+
+	sm := e.ctx.GetSessionManager()
+	if sm == nil {
+		return nil
+	}
+
+	if connID.ServerID != sm.ServerID() {
+		if err := killRemoteConn(ctx, e.ctx, &connID, s.Query); err != nil {
+			err1 := errors.New("Kill remote connection failed: " + err.Error())
+			e.ctx.GetSessionVars().StmtCtx.AppendWarning(err1)
+		}
+		return nil
+	}
+
+	if sm.ServerID() == 0 {
+		// `sm.ServerID() == 0` indicates serverID allocation by PD would be not working.
+		// So "CompatibleKill" is required. Otherwise it's possible to kill a wrong one.
+		conf := config.GetGlobalConfig()
+		if s.TiDBExtension || conf.CompatibleKillQuery {
+			sm.Kill(s.ConnectionID, s.Query)
+		} else {
+			err := errors.New("Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] connectionID' instead")
+			e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		}
+	} else {
+		sm.Kill(s.ConnectionID, s.Query)
+	}
+
 	return nil
+}
+
+func killRemoteConn(ctx context.Context, sctx sessionctx.Context, connID *util.GlobalConnID, query bool) error {
+	if connID.ServerID == 0 {
+		return errors.New("ServerID is ZERO")
+	}
+
+	killExec := &tipb.Executor{
+		Tp:   tipb.ExecType_TypeKill,
+		Kill: &tipb.Kill{ConnID: connID.ID(), Query: query},
+	}
+
+	dagReq := &tipb.DAGRequest{}
+	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(sctx.GetSessionVars().Location())
+	sc := sctx.GetSessionVars().StmtCtx
+	if sc.RuntimeStatsColl != nil {
+		collExec := true
+		dagReq.CollectExecutionSummaries = &collExec
+	}
+	dagReq.Flags = sc.PushDownFlags()
+	dagReq.Executors = []*tipb.Executor{killExec}
+
+	var builder distsql.RequestBuilder
+	kvReq, err := builder.
+		SetDAGRequest(dagReq).
+		SetFromSessionVars(sctx.GetSessionVars()).
+		SetStoreType(kv.TiDB).
+		SetTiDBServerIDs(connID.ServerID).
+		Build()
+	if err != nil {
+		return err
+	}
+
+	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars)
+	if resp == nil {
+		err := errors.New("client returns nil response")
+		return err
+	}
+
+	logutil.BgLogger().Info("Kill remote connection", zap.Uint64("serverID", connID.ServerID),
+		zap.Uint64("connID", connID.ID()), zap.Bool("query", query))
+	return err
 }
 
 func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {

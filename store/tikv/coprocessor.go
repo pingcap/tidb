@@ -284,6 +284,12 @@ func buildTiDBMemCopTasks(ranges *copRanges, req *kv.Request) ([]*copTask, error
 	}
 	tasks := make([]*copTask, 0, len(servers))
 	for _, ser := range servers {
+		if req.TiDBServerIDs != nil {
+			if _, ok := req.TiDBServerIDs[ser.ServerID]; !ok {
+				continue
+			}
+		}
+
 		addr := ser.IP + ":" + strconv.FormatUint(uint64(ser.StatusPort), 10)
 		tasks = append(tasks, &copTask{
 			ranges:    ranges,

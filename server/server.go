@@ -116,7 +116,7 @@ type Server struct {
 	clients           map[uint64]*clientConn
 	capability        uint32
 	dom               *domain.Domain
-	globalConnID      *GlobalConnID
+	globalConnID      *util.GlobalConnID
 
 	statusAddr     string
 	statusListener net.Listener
@@ -151,9 +151,9 @@ func (s *Server) SetDomain(dom *domain.Domain) {
 
 // InitGlobalConnID initialize global connection id.
 func (s *Server) InitGlobalConnID(serverID uint64) {
-	s.globalConnID = &GlobalConnID{
-		serverID: serverID,
-		is64bits: true,
+	s.globalConnID = &util.GlobalConnID{
+		ServerID: serverID,
+		Is64bits: true,
 	}
 }
 
@@ -515,12 +515,6 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 	logutil.BgLogger().Info("kill", zap.Uint64("connID", connectionID), zap.Bool("query", query))
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventKill).Inc()
 
-	globalConnID := ParseGlobalConnID(connectionID)
-	if globalConnID.serverID != s.globalConnID.serverID {
-		s.killRemoteConn(&globalConnID)
-		return
-	}
-
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
 	conn, ok := s.clients[connectionID]
@@ -563,10 +557,6 @@ func (s *Server) KillAllConnections() {
 		}
 		killConn(conn)
 	}
-}
-
-func (s *Server) killRemoteConn(globalConnID *GlobalConnID) {
-
 }
 
 var gracefulCloseConnectionsTimeout = 15 * time.Second
@@ -631,6 +621,11 @@ func (s *Server) kickIdleConnection() {
 			logutil.BgLogger().Error("close connection", zap.Error(err))
 		}
 	}
+}
+
+// ServerID implements SessionManager interface.
+func (s *Server) ServerID() uint64 {
+	return s.globalConnID.ServerID
 }
 
 // setSysTimeZoneOnce is used for parallel run tests. When several servers are running,
