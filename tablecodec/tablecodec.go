@@ -950,14 +950,6 @@ func GetIndexKeyBuf(buf []byte, defaultCap int) []byte {
 // GenIndexKey generates index key using input physical table id
 func GenIndexKey(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
 	phyTblID int64, indexedValues []types.Datum, h kv.Handle, buf []byte) (key []byte, distinct bool, err error) {
-	// The prefix can't encode from tblInfo.ID, because table partition may change the id to partition id.
-	prefix := EncodeTableIndexPrefix(phyTblID, idxInfo.ID)
-	return GenIndexKeyUsingPrefix(sc, tblInfo, idxInfo, prefix, indexedValues, h, buf)
-}
-
-// GenIndexKeyUsingPrefix generates index keys using input buf with input prefix
-func GenIndexKeyUsingPrefix(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
-	idxPrefix kv.Key, indexedValues []types.Datum, h kv.Handle, buf []byte) (key []byte, distinct bool, err error) {
 	if idxInfo.Unique {
 		// See https://dev.mysql.com/doc/refman/5.7/en/create-index.html
 		// A UNIQUE index creates a constraint such that all values in the index must be distinct.
@@ -971,12 +963,12 @@ func GenIndexKeyUsingPrefix(sc *stmtctx.StatementContext, tblInfo *model.TableIn
 			}
 		}
 	}
-
 	// For string columns, indexes can be created using only the leading part of column values,
 	// using col_name(length) syntax to specify an index prefix length.
 	indexedValues = TruncateIndexValuesIfNeeded(tblInfo, idxInfo, indexedValues)
-	key = GetIndexKeyBuf(buf, len(idxPrefix)+len(indexedValues)*9+9)
-	key = append(key, []byte(idxPrefix)...)
+	key = GetIndexKeyBuf(buf, RecordRowKeyLen+len(indexedValues)*9+9)
+	key = appendTableIndexPrefix(key, phyTblID)
+	key = codec.EncodeInt(key, idxInfo.ID)
 	key, err = codec.EncodeKey(sc, key, indexedValues...)
 	if err != nil {
 		return nil, false, err
