@@ -1436,7 +1436,7 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 		}
 	})
 
-	if prop.IsFlashOnlyProp() && ((p.preferJoinType&preferMergeJoin) > 0 || (p.preferJoinType&preferHashJoin) > 0) {
+	if prop.IsFlashOnlyProp() && ((p.preferJoinType&preferBCJoin) == 0 && p.preferJoinType > 0) {
 		return nil, false
 	}
 	joins := make([]PhysicalPlan, 0, 5)
@@ -1760,7 +1760,7 @@ func (la *LogicalAggregation) distinctArgsMeetsProperty() bool {
 }
 
 func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []PhysicalPlan {
-	// todo support CopTiFlash task type in stream agg
+	// TODO: support CopTiFlash task type in stream agg
 	if prop.IsFlashOnlyProp() {
 		return nil
 	}

@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/plancodec"
@@ -565,8 +564,6 @@ func (p *PhysicalBroadCastJoin) GetCost(lCnt, rCnt float64) float64 {
 func (p *PhysicalBroadCastJoin) attach2Task(tasks ...task) task {
 	lTask, lok := tasks[0].(*copTask)
 	rTask, rok := tasks[1].(*copTask)
-	lGlobalRead := p.childrenReqProps[0].TaskTp == property.CopTiFlashGlobalReadTaskType
-	rGlobalRead := p.childrenReqProps[1].TaskTp == property.CopTiFlashGlobalReadTaskType
 	if !lok || !rok || (lTask.getStoreType() != kv.TiFlash && rTask.getStoreType() != kv.TiFlash) {
 		return invalidTask
 	}
@@ -581,21 +578,6 @@ func (p *PhysicalBroadCastJoin) attach2Task(tasks ...task) task {
 
 	lCost := lTask.cost()
 	rCost := rTask.cost()
-	if !(lGlobalRead && rGlobalRead) {
-		// the cost model for top level broadcast join is
-		// globalReadSideCost * copTaskNumber + localReadSideCost + broadcast operator cost
-		// because for broadcast join, the global side is executed in every copTask.
-		copTaskNumber := int32(1)
-		copClient, ok := p.ctx.GetClient().(*tikv.CopClient)
-		if ok {
-			copTaskNumber = copClient.GetBatchCopTaskNumber()
-		}
-		if lGlobalRead {
-			lCost = lCost * float64(copTaskNumber)
-		} else {
-			rCost = rCost * float64(copTaskNumber)
-		}
-	}
 
 	task := &copTask{
 		tblColHists:       rTask.tblColHists,
@@ -724,11 +706,6 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 	// is Min(DistSQLScanConcurrency, numRegionsInvolvedInScan), since we cannot infer
 	// the number of regions involved, we simply use DistSQLScanConcurrency.
 	copIterWorkers := float64(t.plan().SCtx().GetSessionVars().DistSQLScanConcurrency())
-	if t.tablePlan != nil && t.tablePlan.TP() == plancodec.TypeBroadcastJoin {
-		if copClient, ok := ctx.GetClient().(*tikv.CopClient); ok {
-			copIterWorkers = math.Min(float64(copClient.GetBatchCopTaskNumber()), copIterWorkers)
-		}
-	}
 	t.finishIndexPlan()
 	// Network cost of transferring rows of table scan to TiDB.
 	if t.tablePlan != nil {

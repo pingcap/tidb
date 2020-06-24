@@ -97,7 +97,7 @@ func (p *PhysicalProperty) GetAllPossibleChildTaskTypes() []TaskType {
 	if p.TaskTp == RootTaskType {
 		return wholeTaskTypes
 	}
-	// todo for CopSingleReadTaskType and CopDoubleReadTaskType, this function should never be called
+	// TODO: For CopSingleReadTaskType and CopDoubleReadTaskType, this function should never be called
 	return []TaskType{p.TaskTp}
 }
 

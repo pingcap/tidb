@@ -271,8 +271,7 @@ type RegionCache struct {
 	}
 	storeMu struct {
 		sync.RWMutex
-		stores           map[uint64]*Store
-		flashStoreNumber int32
+		stores map[uint64]*Store
 	}
 	notifyCheckCh chan struct{}
 	closeCh       chan struct{}
@@ -286,7 +285,6 @@ func NewRegionCache(pdClient pd.Client) *RegionCache {
 	c.mu.regions = make(map[RegionVerID]*Region)
 	c.mu.sorted = btree.New(btreeDegree)
 	c.storeMu.stores = make(map[uint64]*Store)
-	c.storeMu.flashStoreNumber = 0
 	c.notifyCheckCh = make(chan struct{}, 1)
 	c.closeCh = make(chan struct{})
 	go c.asyncCheckAndResolveLoop()
@@ -1079,13 +1077,6 @@ func (c *RegionCache) getStoreAddr(bo *Backoffer, region *Region, store *Store, 
 		return
 	case unresolved:
 		addr, err = store.initResolve(bo, c)
-		if store.storeType == kv.TiFlash {
-			c.storeMu.Lock()
-			if _, exists := c.storeMu.stores[store.storeID]; exists {
-				c.storeMu.flashStoreNumber++
-			}
-			c.storeMu.Unlock()
-		}
 		return
 	case deleted:
 		addr = c.changeToActiveStore(region, store, storeIdx)
@@ -1498,14 +1489,7 @@ func (s *Store) reResolve(c *RegionCache) {
 		newStore := &Store{storeID: s.storeID, addr: addr, saddr: store.GetStatusAddress(), storeType: storeType}
 		newStore.state = *(*uint64)(&state)
 		c.storeMu.Lock()
-		orgStore, exists := c.storeMu.stores[newStore.storeID]
-		if exists && orgStore.storeType == kv.TiFlash {
-			c.storeMu.flashStoreNumber--
-		}
 		c.storeMu.stores[newStore.storeID] = newStore
-		if newStore.storeType == kv.TiFlash {
-			c.storeMu.flashStoreNumber++
-		}
 		c.storeMu.Unlock()
 	retryMarkDel:
 		// all region used those

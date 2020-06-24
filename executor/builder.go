@@ -2020,7 +2020,7 @@ func markChildrenUsedCols(outputSchema *expression.Schema, childSchema ...*expre
 
 func constructDistExecForTiFlash(sctx sessionctx.Context, p plannercore.PhysicalPlan) ([]*tipb.Executor, bool, error) {
 	execPB, err := p.ToPB(sctx, kv.TiFlash)
-	return []*tipb.Executor{execPB}, false, errors.Trace(err)
+	return []*tipb.Executor{execPB}, false, err
 
 }
 
