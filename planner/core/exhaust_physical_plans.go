@@ -588,41 +588,76 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 	if tblPath == nil {
 		return nil
 	}
-	pkCol := ds.getPKIsHandleCol()
-	if pkCol == nil {
-		return nil
-	}
 	keyOff2IdxOff := make([]int, len(innerJoinKeys))
 	newOuterJoinKeys := make([]*expression.Column, 0)
-	pkMatched := false
-	for i, key := range innerJoinKeys {
-		if !key.Equal(nil, pkCol) {
-			keyOff2IdxOff[i] = -1
-			continue
+	var innerTask, innerTask2 task
+	if ds.tableInfo.IsCommonHandle {
+		helper := &indexJoinBuildHelper{join: p}
+		for _, path := range ds.possibleAccessPaths {
+			if path.IsCommonHandlePath && path.Index != nil {
+				path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.Index)
+				emptyRange, err := helper.analyzeLookUpFilters(path, ds, innerJoinKeys)
+				if emptyRange {
+					return nil
+				}
+				if err != nil {
+					logutil.BgLogger().Warn("build index join failed", zap.Error(err))
+				}
+				break
+			}
 		}
-		pkMatched = true
-		keyOff2IdxOff[i] = 0
-		// Add to newOuterJoinKeys only if conditions contain inner primary key. For issue #14822.
-		newOuterJoinKeys = append(newOuterJoinKeys, outerJoinKeys[i])
-	}
-	outerJoinKeys = newOuterJoinKeys
-	if !pkMatched {
-		return nil
+		if helper.chosenPath == nil {
+			return nil
+		}
+		for i := range keyOff2IdxOff {
+			keyOff2IdxOff[i] = -1
+		}
+		for idxOff, keyOff := range helper.idxOff2KeyOff {
+			if keyOff != -1 {
+				keyOff2IdxOff[keyOff] = idxOff
+			}
+		}
+		innerTask = p.constructInnerTableScanTask(ds, nil, outerJoinKeys, us, false, false, avgInnerRowCnt)
+		// The index merge join's inner plan is different from index join, so we
+		// should construct another inner plan for it.
+		// Because we can't keep order for union scan, if there is a union scan in inner task,
+		// we can't construct index merge join.
+		innerTask2 = p.constructInnerTableScanTask(ds, nil, outerJoinKeys, us, true, !prop.IsEmpty() && prop.Items[0].Desc, avgInnerRowCnt)
+	} else {
+		pkMatched := false
+		pkCol := ds.getPKIsHandleCol()
+		if pkCol == nil {
+			return nil
+		}
+		for i, key := range innerJoinKeys {
+			if !key.Equal(nil, pkCol) {
+				keyOff2IdxOff[i] = -1
+				continue
+			}
+			pkMatched = true
+			keyOff2IdxOff[i] = 0
+			// Add to newOuterJoinKeys only if conditions contain inner primary key. For issue #14822.
+			newOuterJoinKeys = append(newOuterJoinKeys, outerJoinKeys[i])
+		}
+		outerJoinKeys = newOuterJoinKeys
+		if !pkMatched {
+			return nil
+		}
+		innerTask = p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, false, false, avgInnerRowCnt)
+		// The index merge join's inner plan is different from index join, so we
+		// should construct another inner plan for it.
+		// Because we can't keep order for union scan, if there is a union scan in inner task,
+		// we can't construct index merge join.
+		innerTask2 = p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, true, !prop.IsEmpty() && prop.Items[0].Desc, avgInnerRowCnt)
 	}
 	joins = make([]PhysicalPlan, 0, 3)
-	innerTask := p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, false, false, avgInnerRowCnt)
 	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(p.constructIndexHashJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil))
 		}
 	})
 	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil)...)
-	// The index merge join's inner plan is different from index join, so we
-	// should construct another inner plan for it.
-	// Because we can't keep order for union scan, if there is a union scan in inner task,
-	// we can't construct index merge join.
 	if us == nil {
-		innerTask2 := p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, true, !prop.IsEmpty() && prop.Items[0].Desc, avgInnerRowCnt)
 		joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, nil, keyOff2IdxOff, nil, nil)...)
 	}
 	// We can reuse the `innerTask` here since index nested loop hash join
@@ -746,7 +781,13 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 	desc bool,
 	rowCount float64,
 ) task {
-	ranges := ranger.FullIntRange(mysql.HasUnsignedFlag(pk.RetType.Flag))
+	var ranges []*ranger.Range
+	// pk is nil means the table uses the common handle.
+	if pk == nil {
+		ranges = ranger.FullRange()
+	} else {
+		ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(pk.RetType.Flag))
+	}
 	ts := PhysicalTableScan{
 		Table:           ds.tableInfo,
 		Columns:         ds.Columns,
