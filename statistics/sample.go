@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/fastrand"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/spaolacci/murmur3"
+	"github.com/twmb/murmur3"
 )
 
 // SampleItem is an item of sampled column value.
