@@ -394,13 +394,11 @@ const (
 	// TiDBSlowLogMasking indicates that whether masking the query data when log slow query.
 	TiDBSlowLogMasking = "tidb_slow_log_masking"
 
-<<<<<<< HEAD
 	// TiDBEnableCollectExecutionInfo indicates that whether execution info is collected.
 	TiDBEnableCollectExecutionInfo = "tidb_enable_collect_execution_info"
-=======
+
 	// TiDBEnableTelemetry indicates that whether usage data report to PingCAP is enabled.
 	TiDBEnableTelemetry = "tidb_enable_telemetry"
->>>>>>> 3b63270... telemetry: Add telemetry initial implementation (#18180)
 )
 
 // Default TiDB system variable values.
@@ -495,11 +493,8 @@ const (
 	DefTiDBMetricSchemaRangeDuration   = 60 // 60s
 	DefTiDBFoundInPlanCache            = false
 	DefTiDBSlowLogMasking              = false
-<<<<<<< HEAD
 	DefTiDBEnableCollectExecutionInfo  = false
-=======
 	DefTiDBEnableTelemetry             = true
->>>>>>> 3b63270... telemetry: Add telemetry initial implementation (#18180)
 )
 
 // Process global variables.
