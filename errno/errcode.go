@@ -1077,8 +1077,9 @@ const (
 	ErrColumnTypeUnsupportedNextValue     = 8228
 	ErrLockExpire                         = 8229
 	ErrAddColumnWithSequenceAsDefault     = 8230
-	ErrTableOptionUnionUnsupported        = 8231
-	ErrTableOptionInsertMethodUnsupported = 8232
+	ErrUnsupportedConstraintCheck         = 8231
+	ErrTableOptionUnionUnsupported        = 8232
+	ErrTableOptionInsertMethodUnsupported = 8233
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout        = 9001

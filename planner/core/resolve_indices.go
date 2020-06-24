@@ -295,6 +295,13 @@ func (p *PhysicalIndexLookUpReader) ResolveIndices() (err error) {
 		}
 		p.ExtraHandleCol = newCol.(*expression.Column)
 	}
+	for i, commonHandleCol := range p.CommonHandleCols {
+		newCol, err := commonHandleCol.ResolveIndices(p.tablePlan.Schema())
+		if err != nil {
+			return err
+		}
+		p.CommonHandleCols[i] = newCol.(*expression.Column)
+	}
 	return
 }
 
