@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/spaolacci/murmur3"
+	"github.com/twmb/murmur3"
 	"go.uber.org/zap"
 )
 
