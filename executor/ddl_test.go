@@ -959,7 +959,7 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 	}
 	uniqueHandles := make(map[int64]struct{})
 	for _, h := range extractAllHandles() {
-		uniqueHandles[h & ((1 << (63 - 5)) - 1)] = struct{}{}
+		uniqueHandles[h&((1<<(63-5))-1)] = struct{}{}
 	}
 	c.Assert(len(uniqueHandles), Equals, 30)
 	tk.MustExec("drop database test_auto_random_bits_rename;")
