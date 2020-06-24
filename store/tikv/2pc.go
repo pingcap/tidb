@@ -49,7 +49,9 @@ type twoPhaseCommitAction interface {
 	String() string
 }
 
-type actionPrewrite struct{}
+type actionPrewrite struct {
+	secondaryKeys [][]byte
+}
 type actionCommit struct{ retry bool }
 type actionCleanup struct{}
 type actionPessimisticLock struct {
@@ -411,6 +413,16 @@ func (c *twoPhaseCommitter) primary() []byte {
 	return c.primaryKey
 }
 
+func (c *twoPhaseCommitter) secondaries() [][]byte {
+	if !config.GetGlobalConfig().TiKVClient.EnableParallelCommit || len(c.mutations.keys) == 0 {
+		return [][]byte{}
+	}
+	if bytes.Compare(c.mutations.keys[0], c.primary()) == 0 {
+		return c.mutations.keys[1:]
+	}
+	return [][]byte{}
+}
+
 const bytesPerMiB = 1024 * 1024
 
 func txnLockTTL(startTime time.Time, txnSize int) uint64 {
@@ -658,7 +670,7 @@ func (c *twoPhaseCommitter) keySize(key, value []byte) int {
 	return len(key)
 }
 
-func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize uint64) *tikvrpc.Request {
+func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, secondaryKeys [][]byte, txnSize uint64) *tikvrpc.Request {
 	m := &batch.mutations
 	mutations := make([]*pb.Mutation, m.len())
 	for i := range m.keys {
@@ -692,10 +704,18 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 		TxnSize:           txnSize,
 		MinCommitTs:       minCommitTS,
 	}
+
+	if config.GetGlobalConfig().TiKVClient.EnableParallelCommit {
+		if batch.isPrimary {
+			req.Secondaries = secondaryKeys
+		}
+		req.UseParallelCommit = true
+	}
+
 	return tikvrpc.NewRequest(tikvrpc.CmdPrewrite, req, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
 }
 
-func (actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch batchMutations) error {
+func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch batchMutations) error {
 	txnSize := uint64(c.regionTxnSize[batch.region.id])
 	// When we retry because of a region miss, we don't know the transaction size. We set the transaction size here
 	// to MaxUint64 to avoid unexpected "resolve lock lite".
@@ -703,7 +723,7 @@ func (actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, bat
 		txnSize = math.MaxUint64
 	}
 
-	req := c.buildPrewriteRequest(batch, txnSize)
+	req := c.buildPrewriteRequest(batch, action.secondaryKeys, txnSize)
 	for {
 		resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
 		if err != nil {
@@ -718,7 +738,7 @@ func (actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, bat
 			if err != nil {
 				return errors.Trace(err)
 			}
-			err = c.prewriteMutations(bo, batch.mutations)
+			err = c.prewriteMutations(bo, action.secondaryKeys, batch.mutations)
 			return errors.Trace(err)
 		}
 		if resp.Resp == nil {
@@ -1196,14 +1216,14 @@ func (actionCleanup) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batc
 	return nil
 }
 
-func (c *twoPhaseCommitter) prewriteMutations(bo *Backoffer, mutations committerMutations) error {
+func (c *twoPhaseCommitter) prewriteMutations(bo *Backoffer, secondaryKeys [][]byte, mutations committerMutations) error {
 	if span := opentracing.SpanFromContext(bo.ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("twoPhaseCommitter.prewriteMutations", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		bo.ctx = opentracing.ContextWithSpan(bo.ctx, span1)
 	}
 
-	return c.doActionOnMutations(bo, actionPrewrite{}, mutations)
+	return c.doActionOnMutations(bo, actionPrewrite{secondaryKeys}, mutations)
 }
 
 func (c *twoPhaseCommitter) commitMutations(bo *Backoffer, mutations committerMutations) error {
@@ -1269,7 +1289,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	binlogChan := c.prewriteBinlog(ctx)
 	prewriteBo := NewBackoffer(ctx, PrewriteMaxBackoff).WithVars(c.txn.vars)
 	start := time.Now()
-	err = c.prewriteMutations(prewriteBo, c.mutations)
+	err = c.prewriteMutations(prewriteBo, c.secondaries(), c.mutations)
 	commitDetail := c.getDetail()
 	commitDetail.PrewriteTime = time.Since(start)
 	if prewriteBo.totalSleep > 0 {

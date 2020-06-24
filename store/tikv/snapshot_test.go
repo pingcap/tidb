@@ -222,7 +222,7 @@ func (s *testSnapshotSuite) TestSkipLargeTxnLock(c *C) {
 	committer, err := newTwoPhaseCommitterWithInit(txn, 0)
 	c.Assert(err, IsNil)
 	committer.lockTTL = 3000
-	c.Assert(committer.prewriteMutations(bo, committer.mutations), IsNil)
+	c.Assert(committer.prewriteMutations(bo, [][]byte{}, committer.mutations), IsNil)
 
 	txn1 := s.beginTxn(c)
 	// txn1 is not blocked by txn in the large txn protocol.
@@ -253,7 +253,7 @@ func (s *testSnapshotSuite) TestPointGetSkipTxnLock(c *C) {
 	committer, err := newTwoPhaseCommitterWithInit(txn, 0)
 	c.Assert(err, IsNil)
 	committer.lockTTL = 3000
-	c.Assert(committer.prewriteMutations(bo, committer.mutations), IsNil)
+	c.Assert(committer.prewriteMutations(bo, [][]byte{}, committer.mutations), IsNil)
 
 	snapshot := newTiKVSnapshot(s.store, kv.MaxVersion, 0)
 	start := time.Now()
