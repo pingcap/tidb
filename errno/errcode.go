@@ -1077,6 +1077,7 @@ const (
 	ErrColumnTypeUnsupportedNextValue = 8228
 	ErrLockExpire                     = 8229
 	ErrAddColumnWithSequenceAsDefault = 8230
+	ErrUnsupportedConstraintCheck     = 8231
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout        = 9001

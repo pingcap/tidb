@@ -50,7 +50,7 @@ import (
 	"github.com/pingcap/tidb/util/storeutil"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/timeutil"
-	"github.com/spaolacci/murmur3"
+	"github.com/twmb/murmur3"
 )
 
 var preparedStmtCount int64
