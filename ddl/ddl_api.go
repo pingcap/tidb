@@ -3382,13 +3382,13 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		// a new version TiDB builds the DDL job that doesn't be set the column's offset and state,
 		// and the old version TiDB is the DDL owner, it doesn't get offset and state from the store. Then it will encounter errors.
 		// So here we set offset and state to support the rolling upgrade.
-		Offset:             col.Offset,
-		State:              col.State,
-		OriginDefaultValue: col.OriginDefaultValue,
+		Offset:                col.Offset,
+		State:                 col.State,
+		OriginDefaultValue:    col.OriginDefaultValue,
 		OriginDefaultValueBit: col.OriginDefaultValueBit,
-		FieldType:          *specNewColumn.Tp,
-		Name:               newColName,
-		Version:            col.Version,
+		FieldType:             *specNewColumn.Tp,
+		Name:                  newColName,
+		Version:               col.Version,
 	})
 
 	var chs, coll string
