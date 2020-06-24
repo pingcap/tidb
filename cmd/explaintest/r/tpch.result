@@ -454,7 +454,7 @@ Sort_22	769.96	root		tpch.nation.n_name, tpch.nation.n_name, Column#50
         └─HashJoin_51(Probe)	24465505.20	root		inner join, equal:[eq(tpch.orders.o_custkey, tpch.customer.c_custkey)]
           ├─TableReader_91(Build)	7500000.00	root		data:TableFullScan_90
           │ └─TableFullScan_90	7500000.00	cop[tikv]	table:customer	keep order:false
-          └─IndexMergeJoin_60(Probe)	24465505.20	root		inner join, inner:TableReader_58, outer key:tpch.lineitem.l_orderkey, inner key:tpch.orders.o_orderkey
+          └─IndexMergeJoin_60(Probe)	24465505.20	root		inner join, inner:TableReader_57, outer key:tpch.lineitem.l_orderkey, inner key:tpch.orders.o_orderkey
             ├─HashJoin_66(Build)	24465505.20	root		inner join, equal:[eq(tpch.supplier.s_suppkey, tpch.lineitem.l_suppkey)]
             │ ├─HashJoin_79(Build)	40000.00	root		inner join, equal:[eq(tpch.nation.n_nationkey, tpch.supplier.s_nationkey)]
             │ │ ├─TableReader_84(Build)	2.00	root		data:Selection_83
@@ -465,8 +465,8 @@ Sort_22	769.96	root		tpch.nation.n_name, tpch.nation.n_name, Column#50
             │ └─TableReader_87(Probe)	91446230.29	root		data:Selection_86
             │   └─Selection_86	91446230.29	cop[tikv]		ge(tpch.lineitem.l_shipdate, 1995-01-01 00:00:00.000000), le(tpch.lineitem.l_shipdate, 1996-12-31 00:00:00.000000)
             │     └─TableFullScan_85	300005811.00	cop[tikv]	table:lineitem	keep order:false
-            └─TableReader_58(Probe)	1.00	root		data:TableRangeScan_57
-              └─TableRangeScan_57	1.00	cop[tikv]	table:orders	range: decided by [tpch.lineitem.l_orderkey], keep order:true
+            └─TableReader_57(Probe)	1.00	root		data:TableRangeScan_56
+              └─TableRangeScan_56	1.00	cop[tikv]	table:orders	range: decided by [tpch.lineitem.l_orderkey], keep order:true
 /*
 Q8 National Market Share Query
 This query determines how the market share of a given nation within a given region has changed over two years for
@@ -769,12 +769,12 @@ Sort_9	1.00	root		tpch.lineitem.l_shipmode
 └─Projection_11	1.00	root		tpch.lineitem.l_shipmode, Column#27, Column#28
   └─HashAgg_14	1.00	root		group by:Column#40, funcs:sum(Column#37)->Column#27, funcs:sum(Column#38)->Column#28, funcs:firstrow(Column#39)->tpch.lineitem.l_shipmode
     └─Projection_54	10023369.01	root		cast(case(or(eq(tpch.orders.o_orderpriority, 1-URGENT), eq(tpch.orders.o_orderpriority, 2-HIGH)), 1, 0), decimal(65,0) BINARY)->Column#37, cast(case(and(ne(tpch.orders.o_orderpriority, 1-URGENT), ne(tpch.orders.o_orderpriority, 2-HIGH)), 1, 0), decimal(65,0) BINARY)->Column#38, tpch.lineitem.l_shipmode, tpch.lineitem.l_shipmode
-      └─IndexMergeJoin_22	10023369.01	root		inner join, inner:TableReader_20, outer key:tpch.lineitem.l_orderkey, inner key:tpch.orders.o_orderkey
+      └─IndexMergeJoin_22	10023369.01	root		inner join, inner:TableReader_19, outer key:tpch.lineitem.l_orderkey, inner key:tpch.orders.o_orderkey
         ├─TableReader_50(Build)	10023369.01	root		data:Selection_49
         │ └─Selection_49	10023369.01	cop[tikv]		ge(tpch.lineitem.l_receiptdate, 1997-01-01 00:00:00.000000), in(tpch.lineitem.l_shipmode, "RAIL", "FOB"), lt(tpch.lineitem.l_commitdate, tpch.lineitem.l_receiptdate), lt(tpch.lineitem.l_receiptdate, 1998-01-01), lt(tpch.lineitem.l_shipdate, tpch.lineitem.l_commitdate)
         │   └─TableFullScan_48	300005811.00	cop[tikv]	table:lineitem	keep order:false
-        └─TableReader_20(Probe)	1.00	root		data:TableRangeScan_19
-          └─TableRangeScan_19	1.00	cop[tikv]	table:orders	range: decided by [tpch.lineitem.l_orderkey], keep order:true
+        └─TableReader_19(Probe)	1.00	root		data:TableRangeScan_18
+          └─TableRangeScan_18	1.00	cop[tikv]	table:orders	range: decided by [tpch.lineitem.l_orderkey], keep order:true
 /*
 Q13 Customer Distribution Query
 This query seeks relationships between customers and the size of their orders.
@@ -840,12 +840,12 @@ id	estRows	task	access object	operator info
 Projection_8	1.00	root		div(mul(100.00, Column#27), Column#28)->Column#29
 └─StreamAgg_13	1.00	root		funcs:sum(Column#31)->Column#27, funcs:sum(Column#32)->Column#28
   └─Projection_41	4121984.49	root		case(like(tpch.part.p_type, PROMO%, 92), mul(tpch.lineitem.l_extendedprice, minus(1, tpch.lineitem.l_discount)), 0)->Column#31, mul(tpch.lineitem.l_extendedprice, minus(1, tpch.lineitem.l_discount))->Column#32
-    └─IndexMergeJoin_36	4121984.49	root		inner join, inner:TableReader_34, outer key:tpch.lineitem.l_partkey, inner key:tpch.part.p_partkey
+    └─IndexMergeJoin_36	4121984.49	root		inner join, inner:TableReader_33, outer key:tpch.lineitem.l_partkey, inner key:tpch.part.p_partkey
       ├─TableReader_27(Build)	4121984.49	root		data:Selection_26
       │ └─Selection_26	4121984.49	cop[tikv]		ge(tpch.lineitem.l_shipdate, 1996-12-01 00:00:00.000000), lt(tpch.lineitem.l_shipdate, 1997-01-01)
       │   └─TableFullScan_25	300005811.00	cop[tikv]	table:lineitem	keep order:false
-      └─TableReader_34(Probe)	1.00	root		data:TableRangeScan_33
-        └─TableRangeScan_33	1.00	cop[tikv]	table:part	range: decided by [tpch.lineitem.l_partkey], keep order:true
+      └─TableReader_33(Probe)	1.00	root		data:TableRangeScan_32
+        └─TableRangeScan_32	1.00	cop[tikv]	table:part	range: decided by [tpch.lineitem.l_partkey], keep order:true
 /*
 Q15 Top Supplier Query
 This query determines the top supplier so it can be rewarded, given more business, or identified for special recognition.
@@ -1089,13 +1089,13 @@ and l_shipinstruct = 'DELIVER IN PERSON'
 id	estRows	task	access object	operator info
 StreamAgg_13	1.00	root		funcs:sum(Column#28)->Column#27
 └─Projection_46	6286493.79	root		mul(tpch.lineitem.l_extendedprice, minus(1, tpch.lineitem.l_discount))->Column#28
-  └─IndexMergeJoin_41	6286493.79	root		inner join, inner:TableReader_39, outer key:tpch.lineitem.l_partkey, inner key:tpch.part.p_partkey, other cond:or(and(and(eq(tpch.part.p_brand, "Brand#52"), in(tpch.part.p_container, "SM CASE", "SM BOX", "SM PACK", "SM PKG")), and(ge(tpch.lineitem.l_quantity, 4), and(le(tpch.lineitem.l_quantity, 14), le(tpch.part.p_size, 5)))), or(and(and(eq(tpch.part.p_brand, "Brand#11"), in(tpch.part.p_container, "MED BAG", "MED BOX", "MED PKG", "MED PACK")), and(ge(tpch.lineitem.l_quantity, 18), and(le(tpch.lineitem.l_quantity, 28), le(tpch.part.p_size, 10)))), and(and(eq(tpch.part.p_brand, "Brand#51"), in(tpch.part.p_container, "LG CASE", "LG BOX", "LG PACK", "LG PKG")), and(ge(tpch.lineitem.l_quantity, 29), and(le(tpch.lineitem.l_quantity, 39), le(tpch.part.p_size, 15))))))
+  └─IndexMergeJoin_41	6286493.79	root		inner join, inner:TableReader_38, outer key:tpch.lineitem.l_partkey, inner key:tpch.part.p_partkey, other cond:or(and(and(eq(tpch.part.p_brand, "Brand#52"), in(tpch.part.p_container, "SM CASE", "SM BOX", "SM PACK", "SM PKG")), and(ge(tpch.lineitem.l_quantity, 4), and(le(tpch.lineitem.l_quantity, 14), le(tpch.part.p_size, 5)))), or(and(and(eq(tpch.part.p_brand, "Brand#11"), in(tpch.part.p_container, "MED BAG", "MED BOX", "MED PKG", "MED PACK")), and(ge(tpch.lineitem.l_quantity, 18), and(le(tpch.lineitem.l_quantity, 28), le(tpch.part.p_size, 10)))), and(and(eq(tpch.part.p_brand, "Brand#51"), in(tpch.part.p_container, "LG CASE", "LG BOX", "LG PACK", "LG PKG")), and(ge(tpch.lineitem.l_quantity, 29), and(le(tpch.lineitem.l_quantity, 39), le(tpch.part.p_size, 15))))))
     ├─TableReader_29(Build)	6286493.79	root		data:Selection_28
     │ └─Selection_28	6286493.79	cop[tikv]		eq(tpch.lineitem.l_shipinstruct, "DELIVER IN PERSON"), in(tpch.lineitem.l_shipmode, "AIR", "AIR REG"), or(and(ge(tpch.lineitem.l_quantity, 4), le(tpch.lineitem.l_quantity, 14)), or(and(ge(tpch.lineitem.l_quantity, 18), le(tpch.lineitem.l_quantity, 28)), and(ge(tpch.lineitem.l_quantity, 29), le(tpch.lineitem.l_quantity, 39))))
     │   └─TableFullScan_27	300005811.00	cop[tikv]	table:lineitem	keep order:false
-    └─TableReader_39(Probe)	0.80	root		data:Selection_38
-      └─Selection_38	0.80	cop[tikv]		ge(tpch.part.p_size, 1), or(and(eq(tpch.part.p_brand, "Brand#52"), and(in(tpch.part.p_container, "SM CASE", "SM BOX", "SM PACK", "SM PKG"), le(tpch.part.p_size, 5))), or(and(eq(tpch.part.p_brand, "Brand#11"), and(in(tpch.part.p_container, "MED BAG", "MED BOX", "MED PKG", "MED PACK"), le(tpch.part.p_size, 10))), and(eq(tpch.part.p_brand, "Brand#51"), and(in(tpch.part.p_container, "LG CASE", "LG BOX", "LG PACK", "LG PKG"), le(tpch.part.p_size, 15)))))
-        └─TableRangeScan_37	1.00	cop[tikv]	table:part	range: decided by [tpch.lineitem.l_partkey], keep order:true
+    └─TableReader_38(Probe)	0.80	root		data:Selection_37
+      └─Selection_37	0.80	cop[tikv]		ge(tpch.part.p_size, 1), or(and(eq(tpch.part.p_brand, "Brand#52"), and(in(tpch.part.p_container, "SM CASE", "SM BOX", "SM PACK", "SM PKG"), le(tpch.part.p_size, 5))), or(and(eq(tpch.part.p_brand, "Brand#11"), and(in(tpch.part.p_container, "MED BAG", "MED BOX", "MED PKG", "MED PACK"), le(tpch.part.p_size, 10))), and(eq(tpch.part.p_brand, "Brand#51"), and(in(tpch.part.p_container, "LG CASE", "LG BOX", "LG PACK", "LG PKG"), le(tpch.part.p_size, 15)))))
+        └─TableRangeScan_36	1.00	cop[tikv]	table:part	range: decided by [tpch.lineitem.l_partkey], keep order:true
 /*
 Q20 Potential Part Promotion Query
 The Potential Part Promotion Query identifies suppliers in a particular nation having selected parts that may be candidates
@@ -1220,7 +1220,7 @@ Projection_25	100.00	root		tpch.supplier.s_name, Column#72
   └─HashAgg_34	12800.00	root		group by:tpch.supplier.s_name, funcs:count(1)->Column#72, funcs:firstrow(tpch.supplier.s_name)->tpch.supplier.s_name
     └─IndexHashJoin_49	7828961.66	root		anti semi join, inner:IndexLookUp_39, outer key:tpch.lineitem.l_orderkey, inner key:tpch.lineitem.l_orderkey, other cond:ne(tpch.lineitem.l_suppkey, tpch.lineitem.l_suppkey)
       ├─IndexHashJoin_88(Build)	9786202.08	root		semi join, inner:IndexLookUp_79, outer key:tpch.lineitem.l_orderkey, inner key:tpch.lineitem.l_orderkey, other cond:ne(tpch.lineitem.l_suppkey, tpch.lineitem.l_suppkey), ne(tpch.lineitem.l_suppkey, tpch.supplier.s_suppkey)
-      │ ├─IndexMergeJoin_99(Build)	12232752.60	root		inner join, inner:TableReader_97, outer key:tpch.lineitem.l_orderkey, inner key:tpch.orders.o_orderkey
+      │ ├─IndexMergeJoin_99(Build)	12232752.60	root		inner join, inner:TableReader_96, outer key:tpch.lineitem.l_orderkey, inner key:tpch.orders.o_orderkey
       │ │ ├─HashJoin_105(Build)	12232752.60	root		inner join, equal:[eq(tpch.supplier.s_suppkey, tpch.lineitem.l_suppkey)]
       │ │ │ ├─HashJoin_118(Build)	20000.00	root		inner join, equal:[eq(tpch.nation.n_nationkey, tpch.supplier.s_nationkey)]
       │ │ │ │ ├─TableReader_123(Build)	1.00	root		data:Selection_122
@@ -1231,9 +1231,9 @@ Projection_25	100.00	root		tpch.supplier.s_name, Column#72
       │ │ │ └─TableReader_126(Probe)	240004648.80	root		data:Selection_125
       │ │ │   └─Selection_125	240004648.80	cop[tikv]		gt(tpch.lineitem.l_receiptdate, tpch.lineitem.l_commitdate)
       │ │ │     └─TableFullScan_124	300005811.00	cop[tikv]	table:l1	keep order:false
-      │ │ └─TableReader_97(Probe)	0.49	root		data:Selection_96
-      │ │   └─Selection_96	0.49	cop[tikv]		eq(tpch.orders.o_orderstatus, "F")
-      │ │     └─TableRangeScan_95	1.00	cop[tikv]	table:orders	range: decided by [tpch.lineitem.l_orderkey], keep order:true
+      │ │ └─TableReader_96(Probe)	0.49	root		data:Selection_95
+      │ │   └─Selection_95	0.49	cop[tikv]		eq(tpch.orders.o_orderstatus, "F")
+      │ │     └─TableRangeScan_94	1.00	cop[tikv]	table:orders	range: decided by [tpch.lineitem.l_orderkey], keep order:true
       │ └─IndexLookUp_79(Probe)	4.05	root		
       │   ├─IndexRangeScan_77(Build)	4.05	cop[tikv]	table:l2, index:PRIMARY(L_ORDERKEY, L_LINENUMBER)	range: decided by [eq(tpch.lineitem.l_orderkey, tpch.lineitem.l_orderkey)], keep order:false
       │   └─TableRowIDScan_78(Probe)	4.05	cop[tikv]	table:l2	keep order:false
