@@ -45,7 +45,7 @@ func TestT(t *testing.T) {
 }
 
 func (s *testSuite) SetUpSuite(c *C) {
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 
 	session.SetSchemaLease(0)
