@@ -2712,22 +2712,35 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 	handles := make([]kv.Handle, 0, len(lookUpContents))
 	var isValidHandle bool
 	for _, content := range lookUpContents {
-		handle := kv.IntHandle(content.keys[0].GetInt64())
+		var handle kv.Handle
 		isValidHandle = true
-		for _, key := range content.keys {
-			if handle.IntValue() != key.GetInt64() {
-				isValidHandle = false
-				break
+		if v.IsCommonHandle {
+			var handleEncoded []byte
+			handleEncoded, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, nil, content.keys...)
+			if err != nil {
+				return nil, err
+			}
+			handle, err = kv.NewCommonHandle(handleEncoded)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			handle = kv.IntHandle(content.keys[0].GetInt64())
+			for _, key := range content.keys {
+				if handle.IntValue() != key.GetInt64() {
+					isValidHandle = false
+					break
+				}
 			}
 		}
 		if isValidHandle {
 			handles = append(handles, handle)
 		}
 	}
-	return builder.buildTableReaderFromHandles(ctx, e, handles)
+	return builder.buildTableReaderFromHandles(ctx, e, handles, 0xff)
 }
 
-func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Context, e *TableReaderExecutor, handles []kv.Handle) (Executor, error) {
+func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Context, e *TableReaderExecutor, handles []kv.Handle, handleAppend byte) (Executor, error) {
 	startTS, err := builder.getSnapshotTS()
 	if err != nil {
 		return nil, err
@@ -2736,7 +2749,7 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 		return handles[i].Compare(handles[j]) < 0
 	})
 	var b distsql.RequestBuilder
-	kvReq, err := b.SetTableHandles(getPhysicalTableID(e.table), handles).
+	kvReq, err := b.SetTableHandles(getPhysicalTableID(e.table), handles, handleAppend).
 		SetDAGRequest(e.dagPB).
 		SetStartTS(startTS).
 		SetDesc(e.desc).
