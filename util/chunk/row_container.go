@@ -251,6 +251,9 @@ func (a *SpillDiskAction) Action(t *memory.Tracker) {
 	a.m.Lock()
 	defer a.m.Unlock()
 	if a.c.AlreadySpilledSafe() {
+		if !t.CheckExceed() {
+			return
+		}
 		if a.fallbackAction != nil {
 			a.fallbackAction.Action(t)
 		}
@@ -420,6 +423,9 @@ func (a *SortAndSpillDiskAction) Action(t *memory.Tracker) {
 	a.m.Lock()
 	defer a.m.Unlock()
 	if a.c.AlreadySpilledSafe() || a.c.GetMemTracker().BytesConsumed() == 0 {
+		if !t.CheckExceed() {
+			return
+		}
 		if a.fallbackAction != nil {
 			a.fallbackAction.Action(t)
 		}
