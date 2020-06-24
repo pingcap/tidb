@@ -178,6 +178,7 @@ func initTableIndices(t *TableCommon) error {
 		idx := NewIndex(t.physicalTableID, tblInfo, idxInfo)
 		t.indices = append(t.indices, idx)
 	}
+	t.writableIndices = t.WritableIndices()
 	return nil
 }
 
@@ -369,7 +370,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 		} else {
 			value = newData[col.Offset]
 		}
-		if !t.canSkip(col, value) {
+		if !t.canSkip(col, &value) {
 			colIDs = append(colIDs, col.ID)
 			row = append(row, value)
 		}
@@ -497,6 +498,45 @@ func FindPrimaryIndex(tblInfo *model.TableInfo) *model.IndexInfo {
 	return pkIdx
 }
 
+// CommonAddRecordCtx is used in `AddRecord` to avoid memory malloc for some temp slices.
+// This is useful in lightning parse row data to key-values pairs. This can gain upto 5%  performance
+// improvement in lightning's local mode.
+type CommonAddRecordCtx struct {
+	colIDs []int64
+	row    []types.Datum
+	buffer *kv.BufferStore
+}
+
+// commonAddRecordKey is used as key in `sessionctx.Context.Value(key)`
+type commonAddRecordKey struct{}
+
+// String implement `stringer.String` for CommonAddRecordKey
+func (c commonAddRecordKey) String() string {
+	return "_common_add_record_context_key"
+}
+
+// addRecordCtxKey is key in `sessionctx.Context` for CommonAddRecordCtx
+var addRecordCtxKey = commonAddRecordKey{}
+
+// SetAddRecordCtx set a CommonAddRecordCtx to session context
+func SetAddRecordCtx(ctx sessionctx.Context, r *CommonAddRecordCtx) {
+	ctx.SetValue(addRecordCtxKey, r)
+}
+
+// ClearAddRecordCtx remove `CommonAddRecordCtx` from session context
+func ClearAddRecordCtx(ctx sessionctx.Context) {
+	ctx.ClearValue(addRecordCtxKey)
+}
+
+// NewCommonAddRecordCtx create a context used for `AddRecord`
+func NewCommonAddRecordCtx(size int, buffer *kv.BufferStore) *CommonAddRecordCtx {
+	return &CommonAddRecordCtx{
+		colIDs: make([]int64, 0, size),
+		row:    make([]types.Datum, 0, size),
+		buffer: buffer,
+	}
+}
+
 // TryGetCommonPkColumnIds get the IDs of primary key column if the table has common handle.
 func TryGetCommonPkColumnIds(tbl *model.TableInfo) []int64 {
 	var pkColIds []int64
@@ -585,10 +625,21 @@ func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 	if err != nil {
 		return nil, err
 	}
-	execBuf := kv.NewStagingBufferStore(txn)
+	var execBuf *kv.BufferStore
+	var colIDs, binlogColIDs []int64
+	var row, binlogRow []types.Datum
+	if recordCtx, ok := ctx.Value(addRecordCtxKey).(*CommonAddRecordCtx); ok {
+		colIDs = recordCtx.colIDs[:0]
+		row = recordCtx.row[:0]
+		execBuf = recordCtx.buffer
+	} else {
+		colIDs = make([]int64, 0, len(r))
+		row = make([]types.Datum, 0, len(r))
+		execBuf = kv.NewStagingBufferStore(txn)
+	}
 	defer execBuf.Discard()
-	sessVars := ctx.GetSessionVars()
 
+	sessVars := ctx.GetSessionVars()
 	var createIdxOpts []table.CreateIdxOptFunc
 	if len(opts) > 0 {
 		createIdxOpts = make([]table.CreateIdxOptFunc, 0, len(opts))
@@ -603,11 +654,6 @@ func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 	if err != nil {
 		return h, err
 	}
-
-	var colIDs, binlogColIDs []int64
-	var row, binlogRow []types.Datum
-	colIDs = make([]int64, 0, len(r))
-	row = make([]types.Datum, 0, len(r))
 
 	for _, col := range t.WritableCols() {
 		var value types.Datum
@@ -629,7 +675,7 @@ func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 		} else {
 			value = r[col.Offset]
 		}
-		if !t.canSkip(col, value) {
+		if !t.canSkip(col, &value) {
 			colIDs = append(colIDs, col.ID)
 			row = append(row, value)
 		}
@@ -1254,7 +1300,7 @@ func (t *TableCommon) getMutation(ctx sessionctx.Context) *binlog.TableMutation 
 	return ctx.StmtGetMutation(t.tableID)
 }
 
-func (t *TableCommon) canSkip(col *table.Column, value types.Datum) bool {
+func (t *TableCommon) canSkip(col *table.Column, value *types.Datum) bool {
 	return CanSkip(t.Meta(), col, value)
 }
 
@@ -1262,7 +1308,7 @@ func (t *TableCommon) canSkip(col *table.Column, value types.Datum) bool {
 // 1. the column is included in primary key;
 // 2. the column's default value is null, and the value equals to that;
 // 3. the column is virtual generated.
-func CanSkip(info *model.TableInfo, col *table.Column, value types.Datum) bool {
+func CanSkip(info *model.TableInfo, col *table.Column, value *types.Datum) bool {
 	if col.IsPKHandleColumn(info) {
 		return true
 	}
