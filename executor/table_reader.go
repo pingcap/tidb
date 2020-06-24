@@ -156,6 +156,8 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 				logutil.Event(ctx, "table scan oom action won't cover any other action except log and cancel")
 			}
 		}
+	} else {
+		logutil.Event(ctx, "failed to find actionExceed, leave it be.")
 	}
 
 	if len(secondPartRanges) == 0 {

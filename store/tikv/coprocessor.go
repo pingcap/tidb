@@ -515,10 +515,10 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 
 		worker.actionOnExceed.mu.Lock()
 		if worker.actionOnExceed.mu.exceeded != 0 {
-			logutil.BgLogger().Info("memory exceeds quota, end one copIterator worker.",
-				zap.String("copIteratorWorker id ", worker.id))
-
 			worker.actionOnExceed.mu.aliveWorker--
+			logutil.BgLogger().Info("end one copIterator worker.",
+				zap.String("copIteratorWorker id", worker.id), zap.Int("remain alive worker", worker.actionOnExceed.mu.aliveWorker))
+
 			// reset action
 			worker.actionOnExceed.mu.exceeded = 0
 			worker.actionOnExceed.once = sync.Once{}
@@ -1205,8 +1205,8 @@ func (e *EndCopWorkerAction) Action(t *memory.Tracker) {
 	// set exceeded as 1
 	e.once.Do(func() {
 		e.mu.exceeded = 1
-		logutil.BgLogger().Info("memory exceeds quota, end one copIterator worker.",
-			zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
+		logutil.BgLogger().Info("memory exceeds quota, mark EndCopWorkerAction exceed signal.",
+			zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()), zap.Int64("maxConsumed", t.MaxConsumed()))
 	})
 }
 
