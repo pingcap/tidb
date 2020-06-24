@@ -436,6 +436,10 @@ func (sm *mockSessionManager) Kill(connectionID uint64, query bool) {}
 
 func (sm *mockSessionManager) UpdateTLSConfig(cfg *tls.Config) {}
 
+func (sm *mockSessionManager) ServerID() uint64 {
+	return 1
+}
+
 func (s *testTableSuite) TestSomeTables(c *C) {
 	se, err := session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)

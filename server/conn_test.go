@@ -384,14 +384,14 @@ func (ts *ConnTestSuite) TestConnExecutionTimeout(c *C) {
 	se, err := session.CreateSession4Test(ts.store)
 	c.Assert(err, IsNil)
 
-	connID := 1
-	se.SetConnectionID(uint64(connID))
+	connID := uint64(1)
+	se.SetConnectionID(connID)
 	tc := &TiDBContext{
 		Session: se,
 		stmts:   make(map[int]*TiDBStatement),
 	}
 	cc := &clientConn{
-		connectionID: uint32(connID),
+		connectionID: connID,
 		server: &Server{
 			capability: defaultCapability,
 		},
@@ -399,8 +399,8 @@ func (ts *ConnTestSuite) TestConnExecutionTimeout(c *C) {
 		alloc: arena.NewAllocator(32 * 1024),
 	}
 	srv := &Server{
-		clients: map[uint32]*clientConn{
-			uint32(connID): cc,
+		clients: map[uint64]*clientConn{
+			connID: cc,
 		},
 	}
 	handle := ts.dom.ExpensiveQueryHandle().SetSessionManager(srv)

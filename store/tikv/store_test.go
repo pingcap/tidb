@@ -24,7 +24,7 @@ import (
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	"github.com/pingcap/pd/v4/client"
+	pd "github.com/pingcap/pd/v4/client"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -218,6 +218,10 @@ func (c *mockPDClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.
 }
 
 func (c *mockPDClient) GetLeaderAddr() string { return "mockpd" }
+
+func (c *mockPDClient) AllocID(ctx context.Context, idType pdpb.AllocIDRequest_IDType) (uint64, error) {
+	return 1, nil
+}
 
 type checkRequestClient struct {
 	Client

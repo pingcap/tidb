@@ -60,6 +60,10 @@ func (msm *mockSessionManager1) Kill(cid uint64, query bool) {
 func (msm *mockSessionManager1) UpdateTLSConfig(cfg *tls.Config) {
 }
 
+func (msm *mockSessionManager1) ServerID() uint64 {
+	return 1
+}
+
 func (s *testSuite) TestExplainFor(c *C) {
 	tkRoot := testkit.NewTestKitWithInit(c, s.store)
 	tkUser := testkit.NewTestKitWithInit(c, s.store)

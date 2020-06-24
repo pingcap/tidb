@@ -215,7 +215,7 @@ func (s *testLogSuite) TestZapLoggerWithKeys(c *C) {
 	conf := NewLogConfig("info", DefaultLogFormat, "", fileCfg, false)
 	err := InitZapLogger(conf)
 	c.Assert(err, IsNil)
-	connID := uint32(123)
+	connID := uint64(123)
 	ctx := WithConnID(context.Background(), connID)
 	s.testZapLogger(ctx, c, fileCfg.Filename, zapLogWithConnIDPattern)
 	os.Remove(fileCfg.Filename)

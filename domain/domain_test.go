@@ -236,6 +236,10 @@ func (msm *mockSessionManager) Kill(cid uint64, query bool) {}
 
 func (msm *mockSessionManager) UpdateTLSConfig(cfg *tls.Config) {}
 
+func (msm *mockSessionManager) ServerID() uint64 {
+	return 1
+}
+
 func (*testSuite) TestT(c *C) {
 	defer testleak.AfterTest(c)()
 	store, err := mockstore.NewMockStore()

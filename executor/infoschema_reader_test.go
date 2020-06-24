@@ -689,6 +689,10 @@ func (sm *mockSessionManager) Kill(connectionID uint64, query bool) {}
 
 func (sm *mockSessionManager) UpdateTLSConfig(cfg *tls.Config) {}
 
+func (sm *mockSessionManager) ServerID() uint64 {
+	return 1
+}
+
 type mockStore struct {
 	tikv.Storage
 	host string
