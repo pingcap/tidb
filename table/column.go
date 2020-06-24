@@ -158,7 +158,7 @@ func CastValues(ctx sessionctx.Context, rec []types.Datum, cols []*Column) (err 
 	return nil
 }
 
-func handleWrongAsciiValue(ctx sessionctx.Context, col *model.ColumnInfo, casted *types.Datum, str string, i int) (types.Datum, error) {
+func handleWrongASCIIValue(ctx sessionctx.Context, col *model.ColumnInfo, casted *types.Datum, str string, i int) (types.Datum, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	err := ErrTruncatedWrongValueForField.FastGen("incorrect ascii value %x(%s) for column %s", casted.GetBytes(), str, col.Name)
 	logutil.BgLogger().Error("incorrect ASCII value", zap.Uint64("conn", ctx.GetSessionVars().ConnectionID), zap.Error(err))
@@ -218,7 +218,7 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 		str := casted.GetString()
 		for i := 0; i < len(str); i++ {
 			if str[i] > unicode.MaxASCII {
-				casted, err = handleWrongAsciiValue(ctx, col, &casted, str, i)
+				casted, err = handleWrongASCIIValue(ctx, col, &casted, str, i)
 				break
 			}
 		}
