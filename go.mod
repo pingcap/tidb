@@ -2,6 +2,7 @@ module github.com/pingcap/tidb
 
 require (
 	github.com/BurntSushi/toml v0.3.1
+	github.com/Jeffail/gabs/v2 v2.5.1
 	github.com/blacktear23/go-proxyprotocol v0.0.0-20180807104634-af7a81e8dd0d
 	github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548
 	github.com/cznic/sortutil v0.0.0-20181122101858-f5f958428db8
