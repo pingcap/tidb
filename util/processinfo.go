@@ -166,7 +166,6 @@ type GlobalConnID struct {
 	ServerID    uint64
 	LocalConnID uint64
 	Is64bits    bool
-	IsTruncated bool
 }
 
 func (g *GlobalConnID) makeID(localConnID uint64) uint64 {
@@ -194,20 +193,21 @@ func (g *GlobalConnID) NextID() uint64 {
 }
 
 // ParseGlobalConnID parses an uint64 to GlobalConnID.
-func ParseGlobalConnID(id uint64) GlobalConnID {
+func ParseGlobalConnID(id uint64) (g GlobalConnID, isTruncated bool) {
 	if id&0x1 > 0 {
+		if id&0xffffffff_00000000 == 0 {
+			return GlobalConnID{}, true
+		}
 		return GlobalConnID{
 			Is64bits:    true,
 			LocalConnID: (id >> 1) & 0xff_ffff_ffff,
 			ServerID:    (id >> 41) & 0x7f_ffff,
-			IsTruncated: id&0xffffffff_00000000 == 0,
-		}
+		}, false
 	}
 	// TODO: update after new design for 32 bits version.
 	return GlobalConnID{
 		Is64bits:    false,
 		LocalConnID: (id >> 1) & 0x7fff_ffff,
 		ServerID:    0,
-		IsTruncated: false,
-	}
+	}, false
 }

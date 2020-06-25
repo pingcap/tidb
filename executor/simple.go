@@ -1062,15 +1062,28 @@ func (e *SimpleExec) executeSetPwd(s *ast.SetPwdStmt) error {
 }
 
 func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error {
-	connID := util.ParseGlobalConnID(s.ConnectionID)
-	if connID.IsTruncated {
-		err := errors.New("Invalid operation. ConnectionID is truncated to 32 bits")
-		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+	sm := e.ctx.GetSessionManager()
+	if sm == nil {
 		return nil
 	}
 
-	sm := e.ctx.GetSessionManager()
-	if sm == nil {
+	if sm.ServerID() == 0 {
+		// `sm.ServerID() == 0` indicates serverID allocation by PD would be not working.
+		// Degrade to behavior as early versions.
+		conf := config.GetGlobalConfig()
+		if s.TiDBExtension || conf.CompatibleKillQuery {
+			sm.Kill(s.ConnectionID, s.Query)
+		} else {
+			err := errors.New("Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] connectionID' instead")
+			e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		}
+		return nil
+	}
+
+	connID, isTruncated := util.ParseGlobalConnID(s.ConnectionID)
+	if isTruncated {
+		err := errors.New("Invalid operation. ConnectionID is truncated to 32 bits")
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		return nil
 	}
 
@@ -1078,19 +1091,6 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 		if err := killRemoteConn(ctx, e.ctx, &connID, s.Query); err != nil {
 			err1 := errors.New("Kill remote connection failed: " + err.Error())
 			e.ctx.GetSessionVars().StmtCtx.AppendWarning(err1)
-		}
-		return nil
-	}
-
-	if sm.ServerID() == 0 {
-		// `sm.ServerID() == 0` indicates serverID allocation by PD would be not working.
-		// So "CompatibleKill" is required. Otherwise it's possible to kill a wrong one.
-		conf := config.GetGlobalConfig()
-		if s.TiDBExtension || conf.CompatibleKillQuery {
-			sm.Kill(s.ConnectionID, s.Query)
-		} else {
-			err := errors.New("Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] connectionID' instead")
-			e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
 	} else {
 		sm.Kill(s.ConnectionID, s.Query)

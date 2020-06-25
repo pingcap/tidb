@@ -116,7 +116,7 @@ type Server struct {
 	clients           map[uint64]*clientConn
 	capability        uint32
 	dom               *domain.Domain
-	globalConnID      *util.GlobalConnID
+	globalConnID      util.GlobalConnID
 
 	statusAddr     string
 	statusListener net.Listener
@@ -151,7 +151,7 @@ func (s *Server) SetDomain(dom *domain.Domain) {
 
 // InitGlobalConnID initialize global connection id.
 func (s *Server) InitGlobalConnID(serverID uint64) {
-	s.globalConnID = &util.GlobalConnID{
+	s.globalConnID = util.GlobalConnID{
 		ServerID: serverID,
 		Is64bits: true,
 	}
@@ -217,6 +217,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		driver:            driver,
 		concurrentLimiter: NewTokenLimiter(cfg.TokenLimit),
 		clients:           make(map[uint64]*clientConn),
+		globalConnID:      util.GlobalConnID{ServerID: 0, Is64bits: true},
 	}
 
 	tlsConfig, err := util.LoadTLSCertificates(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)

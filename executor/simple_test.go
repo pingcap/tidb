@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"context"
+	"strconv"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -502,10 +504,29 @@ func (s *testSuite3) TestSetPwd(c *C) {
 func (s *testSuite3) TestKillStmt(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("kill 1")
+	sm := &mockSessionManager{
+		serverID: 0,
+	}
+	tk.Se.SetSessionManager(sm)
 
+	// ZERO serverID
+	tk.MustExec("kill 1")
 	result := tk.MustQuery("show warnings")
 	result.Check(testkit.Rows("Warning 1105 Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] connectionID' instead"))
+
+	// truncated
+	sm.SetServerID(1)
+	tk.MustExec("kill 101")
+	result = tk.MustQuery("show warnings")
+	result.Check(testkit.Rows("Warning 1105 Invalid operation. ConnectionID is truncated to 32 bits"))
+
+	// local kill
+	connID := util.GlobalConnID{Is64bits: true, ServerID: 1, LocalConnID: 101}
+	tk.MustExec("kill " + strconv.FormatUint(connID.ID(), 10))
+	result = tk.MustQuery("show warnings")
+	result.Check(testkit.Rows())
+
+	// TODO: remote kill
 }
 
 func (s *testSuite3) TestFlushPrivileges(c *C) {
