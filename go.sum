@@ -488,8 +488,12 @@ github.com/pingcap/tidb-tools v4.0.0+incompatible h1:znKDL3y92StJVS0ON1fx3yaKSq8
 github.com/pingcap/tidb-tools v4.0.0+incompatible/go.mod h1:XGdcy9+yqlDSEMTpOXnwf3hiTeqrV6MN/u1se9N8yIM=
 github.com/pingyu/kvproto v0.0.0-20200620130450-f6224dbfde74 h1:RkXchCO6iqOiQIwWghWCAOpCVbQM9D+BsCdpEaC+wfQ=
 github.com/pingyu/kvproto v0.0.0-20200620130450-f6224dbfde74/go.mod h1:IOdRDPLyda8GX2hE/jO7gqaCV/PNFh8BZQCQZXfIOqI=
+github.com/pingyu/kvproto v0.0.0-20200625060901-6757a66da095 h1:jpWI2xl6gqsIwibVC7ZbogXK660UXGQSqRlqhCUb66c=
+github.com/pingyu/kvproto v0.0.0-20200625060901-6757a66da095/go.mod h1:IOdRDPLyda8GX2hE/jO7gqaCV/PNFh8BZQCQZXfIOqI=
 github.com/pingyu/pd/v4 v4.0.0-20200621023959-07a17ec0123f h1:nZ+4AvtPCZGY8AUA7pAu1cqfMMZGaz02F19RoaOWgDQ=
 github.com/pingyu/pd/v4 v4.0.0-20200621023959-07a17ec0123f/go.mod h1:P80uyA+HtXPbqgNtXYIoEy4a/TniDCQtbCIjjnJJs00=
+github.com/pingyu/pd/v4 v4.0.0-20200621165438-ce3c2afac420 h1:XYQxH+Vq6uLm3RCCqFkqyz6uY3XlZyh90YSBEkCqFJM=
+github.com/pingyu/pd/v4 v4.0.0-20200621165438-ce3c2afac420/go.mod h1:P80uyA+HtXPbqgNtXYIoEy4a/TniDCQtbCIjjnJJs00=
 github.com/pingyu/tipb v0.0.0-20200624160448-105ff4559211 h1:gwmPqXgG/VeT+F/XZ3CPXcsX+2rBUYzVk8w2UcElLHE=
 github.com/pingyu/tipb v0.0.0-20200624160448-105ff4559211/go.mod h1:oEDbDqh5tHk927UawYC9IeZTwhrsdS1FK2V/q3qMalg=
 github.com/pkg/errors v0.8.0/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=
