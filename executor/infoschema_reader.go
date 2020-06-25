@@ -1030,7 +1030,6 @@ func (e *memtableRetriever) dataForTiDBClusterInfo(ctx sessionctx.Context) error
 			upTimeStr = time.Since(startTime).String()
 		}
 		row := types.MakeDatums(
-			server.ServerID,
 			server.ServerType,
 			server.Address,
 			server.StatusAddr,
@@ -1038,6 +1037,7 @@ func (e *memtableRetriever) dataForTiDBClusterInfo(ctx sessionctx.Context) error
 			server.GitHash,
 			startTimeStr,
 			upTimeStr,
+			server.ServerID,
 		)
 		rows = append(rows, row)
 	}

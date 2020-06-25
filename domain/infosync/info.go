@@ -96,13 +96,13 @@ type InfoSyncer struct {
 type ServerInfo struct {
 	ServerVersionInfo
 	ID             string `json:"ddl_id"`
-	ServerID       uint64 `json:"server_id"`
 	IP             string `json:"ip"`
 	Port           uint   `json:"listening_port"`
 	StatusPort     uint   `json:"status_port"`
 	Lease          string `json:"lease"`
 	BinlogStatus   string `json:"binlog_status"`
 	StartTimestamp int64  `json:"start_timestamp"`
+	ServerID       uint64 `json:"server_id"`
 }
 
 // ServerVersionInfo is the server version and git_hash.
@@ -603,13 +603,13 @@ func getServerInfo(id string, serverID uint64) *ServerInfo {
 	cfg := config.GetGlobalConfig()
 	info := &ServerInfo{
 		ID:             id,
-		ServerID:       serverID,
 		IP:             cfg.AdvertiseAddress,
 		Port:           cfg.Port,
 		StatusPort:     cfg.Status.StatusPort,
 		Lease:          cfg.Lease,
 		BinlogStatus:   binloginfo.GetStatus().String(),
 		StartTimestamp: time.Now().Unix(),
+		ServerID:       serverID,
 	}
 	info.Version = mysql.ServerVersion
 	info.GitHash = printer.TiDBGitHash
