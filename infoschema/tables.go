@@ -1183,12 +1183,17 @@ func GetClusterServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 			var servers []ServerInfo
 			for _, server := range strings.Split(s, ";") {
 				parts := strings.Split(server, ",")
+				serverID, err := strconv.ParseUint(parts[5], 10, 64)
+				if err != nil {
+					panic("convert parts[5] to uint64 failed")
+				}
 				servers = append(servers, ServerInfo{
 					ServerType: parts[0],
 					Address:    parts[1],
 					StatusAddr: parts[2],
 					Version:    parts[3],
 					GitHash:    parts[4],
+					ServerID:   serverID,
 				})
 			}
 			failpoint.Return(servers, nil)
