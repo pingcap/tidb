@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math"
@@ -764,7 +765,24 @@ func FormatSQL(sql string, pps variable.PreparedParams) stringutil.StringerFunc 
 		if maxQueryLen := atomic.LoadUint64(&cfg.Log.QueryLogMaxLen); uint64(length) > maxQueryLen {
 			sql = fmt.Sprintf("%.*q(len:%d)", maxQueryLen, sql, length)
 		}
-		return QueryReplacer.Replace(sql) + pps.String()
+		replaceSQl := QueryReplacer.Replace(sql)
+		if len(pps) == 0 {
+			return replaceSQl + pps.String()
+		}
+
+		sqlBuffer := bytes.NewBuffer([]byte{})
+		paramsIndex := 0
+		for i := 0; i < len(replaceSQl); i++ {
+			c := replaceSQl[i]
+			if c != '?' {
+				sqlBuffer.WriteByte(c)
+				continue
+			}
+			paramStr, _ := types.ToString(pps[paramsIndex].GetValue())
+			sqlBuffer.WriteString(paramStr)
+			paramsIndex++
+		}
+		return sqlBuffer.String()
 	}
 }
 
@@ -827,7 +845,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	} else if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
 		sql = FormatSQL(sensitiveStmt.SecureText(), nil)
 	} else {
-		sql = FormatSQL(a.Text, sessVars.PreparedParams)
+		sql = FormatSQL(normalizedSQL, sessVars.PreparedParams)
 	}
 
 	var tableIDs, indexNames string
