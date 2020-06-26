@@ -819,10 +819,11 @@ func (s *testAutoRandomSuite) TestAutoRandomBase(c *C) {
 	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
 		""+
 			"t CREATE TABLE `t` (\n"+
-			"  b` int(11) NOT NULL AUTO_INCREMENT,\n"+
+			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
+			"  `b` int(11) NOT NULL AUTO_INCREMENT,\n"+
 			"  PRIMARY KEY (`a`),\n"+
 			"  UNIQUE KEY `b` (`b`)\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin1  AUTO_INCREMENT=2000100 /*T![auto_rand_base] AUTO_RANDOM_BASE=2000100 */",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin  AUTO_INCREMENT=2000100 /*T![auto_rand_base] AUTO_RANDOM_BASE=2000100 */",
 	))
 }
 
