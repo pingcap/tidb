@@ -1234,10 +1234,6 @@ func (s *testSuite10) TestClusterPrimaryTableInsertDuplicate(c *C) {
 }
 
 func (s *testSuite10) TestClusterPrimaryKeyForIndexScan(c *C) {
-	// TODO: support double read on cluster index.
-	c.Skip("because we do not support the double read on cluster index, so this test will fail since " +
-		"https://github.com/pingcap/tidb/pull/18054 merged. After we support the double read on cluster index, we " +
-		"should remake the test effective.")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
