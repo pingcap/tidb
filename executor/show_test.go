@@ -815,6 +815,16 @@ func (s *testAutoRandomSuite) TestAutoRandomBase(c *C) {
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a bigint primary key auto_random(5), b int unique key auto_increment) auto_random_base = 100, auto_increment = 100")
+	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
+			"  `b` int(11) NOT NULL AUTO_INCREMENT,\n"+
+			"  PRIMARY KEY (`a`),\n"+
+			"  UNIQUE KEY `b` (`b`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=100 /*T![auto_rand_base] AUTO_RANDOM_BASE=100 */",
+	))
+
 	tk.MustExec("insert into t(`a`) values (1000)")
 	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
 		""+
