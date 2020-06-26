@@ -920,7 +920,13 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	}
 
 	if tableInfo.AutoRandID != 0 {
-		fmt.Fprintf(buf, " /*T![auto_rand_base] AUTO_RANDOM_BASE=%d */", autoIncID)
+		var autoRandomBase = tableInfo.AutoRandID
+
+		if autoIncID > 1 {
+			autoRandomBase = autoIncID
+		}
+
+		fmt.Fprintf(buf, " /*T![auto_rand_base] AUTO_RANDOM_BASE=%d */", autoRandomBase)
 	}
 
 	if tableInfo.ShardRowIDBits > 0 {
