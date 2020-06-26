@@ -903,12 +903,11 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		fmt.Fprintf(buf, " COMPRESSION='%s'", tableInfo.Compression)
 	}
 
-	autoIncID, err := allocator.NextGlobalAutoID(tableInfo.ID)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	if hasAutoIncID {
+		autoIncID, err := allocator.NextGlobalAutoID(tableInfo.ID)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		// It's compatible with MySQL.
 		if autoIncID > 1 {
 			fmt.Fprintf(buf, " AUTO_INCREMENT=%d", autoIncID)
@@ -920,6 +919,11 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	}
 
 	if tableInfo.AutoRandID != 0 {
+		autoIncID, err := allocator.NextGlobalAutoID(tableInfo.ID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
 		autoRandomBase := tableInfo.AutoRandID
 
 		if autoIncID > 1 {
