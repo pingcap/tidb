@@ -814,8 +814,6 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 
 	// Clear the tiflash replica available status.
 	if pt.TiFlashReplica != nil {
-		pt.TiFlashReplica.Available = false
-		nt.TiFlashReplica.Available = false
 		// Set partition replica become unavailable.
 		for i, id := range pt.TiFlashReplica.AvailablePartitionIDs {
 			if id == tempID {

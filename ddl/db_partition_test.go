@@ -976,12 +976,12 @@ func (s *testIntegrationSuite4) TestAlterTableExchangePartition(c *C) {
 	partition = e15.Meta().Partition
 
 	c.Assert(e15.Meta().TiFlashReplica, NotNil)
-	c.Assert(e15.Meta().TiFlashReplica.Available, IsFalse)
+	c.Assert(e15.Meta().TiFlashReplica.Available, IsTrue)
 	c.Assert(e15.Meta().TiFlashReplica.AvailablePartitionIDs, DeepEquals, []int64{partition.Definitions[0].ID})
 
 	e16 = testGetTableByName(c, s.ctx, "test", "e16")
 	c.Assert(e16.Meta().TiFlashReplica, NotNil)
-	c.Assert(e16.Meta().TiFlashReplica.Available, IsFalse)
+	c.Assert(e16.Meta().TiFlashReplica.Available, IsTrue)
 
 	tk.MustExec("drop table e15, e16")
 	tk.MustExec("create table e15 (a int) partition by hash(a) partitions 1;")
