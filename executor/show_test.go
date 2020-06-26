@@ -808,6 +808,23 @@ func (s *testAutoRandomSuite) TestAutoIdCache(c *C) {
 	))
 }
 
+func (s *testAutoRandomSuite) TestAutoRandomBase(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a bigint primary key auto_random(5), b int unique key auto_increment) auto_random_base = 100, auto_increment = 100")
+	tk.MustExec("insert into t values (1000)")
+	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  b` int(11) NOT NULL AUTO_INCREMENT,\n"+
+			"  PRIMARY KEY (`a`),\n"+
+			"  UNIQUE KEY `b` (`b`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin1  AUTO_INCREMENT=2000100 /*T![auto_rand_base] AUTO_RANDOM_BASE=2000100 */",
+	))
+}
+
 func (s *testSuite5) TestShowEscape(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 

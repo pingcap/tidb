@@ -314,9 +314,9 @@ func getColumnsTypes(columns []*model.ColumnInfo) []*types.FieldType {
 }
 
 // buildDescTableScan builds a desc table scan upon tblInfo.
-func (d *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl table.PhysicalTable,
+func (dc *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl table.PhysicalTable,
 	handleCols []*model.ColumnInfo, limit uint64) (distsql.SelectResult, error) {
-	sctx := newContext(d.store)
+	sctx := newContext(dc.store)
 	dagPB, err := buildDescTableScanDAG(sctx, tbl, handleCols, limit)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -346,7 +346,7 @@ func (d *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl tab
 }
 
 // GetTableMaxHandle gets the max handle of a PhysicalTable.
-func (d *ddlCtx) GetTableMaxHandle(startTS uint64, tbl table.PhysicalTable) (maxHandle kv.Handle, emptyTable bool, err error) {
+func (dc *ddlCtx) GetTableMaxHandle(startTS uint64, tbl table.PhysicalTable) (maxHandle kv.Handle, emptyTable bool, err error) {
 	var handleCols []*model.ColumnInfo
 	tblInfo := tbl.Meta()
 	switch {
@@ -369,7 +369,7 @@ func (d *ddlCtx) GetTableMaxHandle(startTS uint64, tbl table.PhysicalTable) (max
 
 	ctx := context.Background()
 	// build a desc scan of tblInfo, which limit is 1, we can use it to retrieve the last handle of the table.
-	result, err := d.buildDescTableScan(ctx, startTS, tbl, handleCols, 1)
+	result, err := dc.buildDescTableScan(ctx, startTS, tbl, handleCols, 1)
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
@@ -385,7 +385,7 @@ func (d *ddlCtx) GetTableMaxHandle(startTS uint64, tbl table.PhysicalTable) (max
 		// empty table
 		return nil, true, nil
 	}
-	sessCtx := newContext(d.store)
+	sessCtx := newContext(dc.store)
 	row := chk.GetRow(0)
 	if tblInfo.IsCommonHandle {
 		maxHandle, err = buildHandleFromChunkRow(sessCtx.GetSessionVars().StmtCtx, row, handleCols)
