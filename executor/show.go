@@ -919,15 +919,17 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	}
 
 	if tableInfo.AutoRandID != 0 {
-		autoIncID, err := allocator.NextGlobalAutoID(tableInfo.ID)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
 		autoRandomBase := tableInfo.AutoRandID
 
-		if autoIncID > 1 {
-			autoRandomBase = autoIncID
+		if hasAutoIncID {
+			autoIncID, err := allocator.NextGlobalAutoID(tableInfo.ID)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			if autoIncID > 1 {
+				autoRandomBase = autoIncID
+			}
 		}
 
 		fmt.Fprintf(buf, " /*T![auto_rand_base] AUTO_RANDOM_BASE=%d */", autoRandomBase)
