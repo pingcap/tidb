@@ -14,14 +14,14 @@
 package executor_test
 
 import (
+	"time"
+
+	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
-	"time"
-
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
