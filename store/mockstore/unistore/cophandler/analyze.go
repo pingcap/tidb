@@ -59,6 +59,8 @@ func handleCopAnalyzeRequest(dbReader *dbreader.DBReader, req *coprocessor.Reque
 	y.Assert(len(ranges) == 1)
 	if analyzeReq.Tp == tipb.AnalyzeType_TypeIndex {
 		resp, err = handleAnalyzeIndexReq(dbReader, ranges[0], analyzeReq, req.StartTs)
+	} else if analyzeReq.Tp == tipb.AnalyzeType_TypeCommonHandle {
+		resp, err = handleAnalyzeCommonHandleReq(dbReader, ranges[0], analyzeReq, req.StartTs)
 	} else {
 		resp, err = handleAnalyzeColumnsReq(dbReader, ranges[0], analyzeReq, req.StartTs)
 	}
@@ -72,6 +74,30 @@ func handleCopAnalyzeRequest(dbReader *dbreader.DBReader, req *coprocessor.Reque
 
 func handleAnalyzeIndexReq(dbReader *dbreader.DBReader, ran kv.KeyRange, analyzeReq *tipb.AnalyzeReq, startTS uint64) (*coprocessor.Response, error) {
 	processor := &analyzeIndexProcessor{
+		colLen:       int(analyzeReq.IdxReq.NumColumns),
+		statsBuilder: statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob)),
+	}
+	if analyzeReq.IdxReq.CmsketchDepth != nil && analyzeReq.IdxReq.CmsketchWidth != nil {
+		processor.cms = statistics.NewCMSketch(*analyzeReq.IdxReq.CmsketchDepth, *analyzeReq.IdxReq.CmsketchWidth)
+	}
+	err := dbReader.Scan(ran.StartKey, ran.EndKey, math.MaxInt64, startTS, processor)
+	if err != nil {
+		return nil, err
+	}
+	hg := statistics.HistogramToProto(processor.statsBuilder.Hist())
+	var cm *tipb.CMSketch
+	if processor.cms != nil {
+		cm = statistics.CMSketchToProto(processor.cms)
+	}
+	data, err := proto.Marshal(&tipb.AnalyzeIndexResp{Hist: hg, Cms: cm})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &coprocessor.Response{Data: data}, nil
+}
+
+func handleAnalyzeCommonHandleReq(dbReader *dbreader.DBReader, ran kv.KeyRange, analyzeReq *tipb.AnalyzeReq, startTS uint64) (*coprocessor.Response, error) {
+	processor := &analyzeCommonHandleProcessor{
 		colLen:       int(analyzeReq.IdxReq.NumColumns),
 		statsBuilder: statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob)),
 	}
@@ -123,6 +149,35 @@ func (p *analyzeIndexProcessor) Process(key, value []byte) error {
 	return nil
 }
 
+type analyzeCommonHandleProcessor struct {
+	skipVal
+
+	colLen       int
+	statsBuilder *statistics.SortedBuilder
+	cms          *statistics.CMSketch
+	rowBuf       []byte
+}
+
+func (p *analyzeCommonHandleProcessor) Process(key, value []byte) error {
+	values, _, err := tablecodec.CutCommonHandle(key, p.colLen)
+	if err != nil {
+		return err
+	}
+	p.rowBuf = p.rowBuf[:0]
+	for _, val := range values {
+		p.rowBuf = append(p.rowBuf, val...)
+		if p.cms != nil {
+			p.cms.InsertBytes(p.rowBuf)
+		}
+	}
+	rowData := safeCopy(p.rowBuf)
+	err = p.statsBuilder.Iterate(types.NewBytesDatum(rowData))
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 type analyzeColumnsExec struct {
 	skipVal
 	reader  *dbreader.DBReader
@@ -143,6 +198,9 @@ func handleAnalyzeColumnsReq(dbReader *dbreader.DBReader, ran kv.KeyRange, analy
 	evalCtx := &evalContext{sc: sc}
 	columns := analyzeReq.ColReq.ColumnsInfo
 	evalCtx.setColumnInfo(columns)
+	if len(analyzeReq.ColReq.PrimaryColumnIds) > 0 {
+		evalCtx.primaryCols = analyzeReq.ColReq.PrimaryColumnIds
+	}
 	decoder, err := evalCtx.newRowDecoder()
 	if err != nil {
 		return nil, err

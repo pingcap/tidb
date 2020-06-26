@@ -855,7 +855,7 @@ func (b *builtinCastStringAsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk
 		val := strings.TrimSpace(buf.GetString(i))
 		isNegative := len(val) > 1 && val[0] == '-'
 		if !isNegative {
-			ures, err = types.StrToUint(sc, val)
+			ures, err = types.StrToUint(sc, val, true)
 			if !isUnsigned && err == nil && ures > uint64(math.MaxInt64) {
 				sc.AppendWarning(types.ErrCastAsSignedOverflow)
 			}
@@ -863,7 +863,7 @@ func (b *builtinCastStringAsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk
 		} else if unionUnsigned {
 			res = 0
 		} else {
-			res, err = types.StrToInt(sc, val)
+			res, err = types.StrToInt(sc, val, true)
 			if err == nil && isUnsigned {
 				// If overflow, don't append this warnings
 				sc.AppendWarning(types.ErrCastNegIntAsUnsigned)
@@ -1554,7 +1554,7 @@ func (b *builtinCastStringAsRealSig) vecEvalReal(input *chunk.Chunk, result *chu
 		if result.IsNull(i) {
 			continue
 		}
-		res, err := types.StrToFloat(sc, buf.GetString(i))
+		res, err := types.StrToFloat(sc, buf.GetString(i), true)
 		if err != nil {
 			return err
 		}

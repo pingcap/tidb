@@ -2583,6 +2583,22 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels:  []string{"instance", "sql_type"},
 		Comment: "The total time of TiDB query durations(second)",
 	},
+	"tidb_txn_cmd_duration": {
+		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tidb_tikvclient_txn_cmd_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,type,instance))`,
+		Labels:   []string{"instance", "type"},
+		Quantile: 0.90,
+		Comment:  "The quantile of TiDB transaction command durations(second)",
+	},
+	"tidb_txn_cmd_total_count": {
+		PromQL:  "sum(increase(tidb_tikvclient_txn_cmd_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total count of TiDB transaction command",
+	},
+	"tidb_txn_cmd_total_time": {
+		PromQL:  "sum(increase(tidb_tikvclient_txn_cmd_duration_seconds_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total time of TiDB transaction command",
+	},
 	"tidb_slow_query_cop_process_total_count": {
 		PromQL:  "sum(increase(tidb_server_slow_query_cop_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)",
 		Labels:  []string{"instance"},

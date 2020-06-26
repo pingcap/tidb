@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 	"unsafe"
 
 	"github.com/opentracing/opentracing-go"
@@ -70,6 +72,7 @@ type tikvSnapshot struct {
 	// It's OK as long as there are no zero-byte values in the protocol.
 	mu struct {
 		sync.RWMutex
+		hitCnt int64
 		cached map[string][]byte
 	}
 }
@@ -108,6 +111,7 @@ func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string]
 		tmp := keys[:0]
 		for _, key := range keys {
 			if val, ok := s.mu.cached[string(key)]; ok {
+				atomic.AddInt64(&s.mu.hitCnt, 1)
 				if len(val) > 0 {
 					m[string(key)] = val
 				}
@@ -184,6 +188,9 @@ func appendBatchKeysBySize(b []batchKeys, region RegionVerID, keys [][]byte, siz
 }
 
 func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, collectF func(k, v []byte)) error {
+	defer func(start time.Time) {
+		tikvTxnCmdHistogramWithBatchGet.Observe(time.Since(start).Seconds())
+	}(time.Now())
 	groups, _, err := s.store.regionCache.GroupKeysByRegion(bo, keys, nil)
 	if err != nil {
 		return errors.Trace(err)
@@ -305,6 +312,10 @@ func (s *tikvSnapshot) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
+	defer func(start time.Time) {
+		tikvTxnCmdHistogramWithGet.Observe(time.Since(start).Seconds())
+	}(time.Now())
+
 	ctx = context.WithValue(ctx, txnStartKey, s.version.Ver)
 	val, err := s.get(NewBackoffer(ctx, getMaxBackoff), k)
 	if err != nil {
@@ -326,6 +337,7 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 	s.mu.RLock()
 	if s.mu.cached != nil {
 		if value, ok := s.mu.cached[string(k)]; ok {
+			atomic.AddInt64(&s.mu.hitCnt, 1)
 			s.mu.RUnlock()
 			return value, nil
 		}
@@ -432,6 +444,15 @@ func (s *tikvSnapshot) DelOption(opt kv.Option) {
 	case kv.ReplicaRead:
 		s.replicaRead = kv.ReplicaReadLeader
 	}
+}
+
+// SnapCacheHitCount gets the snapshot cache hit count.
+func SnapCacheHitCount(snap kv.Snapshot) int {
+	tikvSnap, ok := snap.(*tikvSnapshot)
+	if !ok {
+		return 0
+	}
+	return int(atomic.LoadInt64(&tikvSnap.mu.hitCnt))
 }
 
 func extractLockFromKeyErr(keyErr *pb.KeyError) (*Lock, error) {
