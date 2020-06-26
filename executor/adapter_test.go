@@ -14,8 +14,9 @@
 package executor_test
 
 import (
-	"fmt"
-	"os"
+	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -38,17 +39,11 @@ func (s *testSuiteP2) TestQueryTime(c *C) {
 	c.Assert(costTime < 1*time.Second, IsTrue)
 }
 
-func (s *testSuiteP2) TestPreparedSQL(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	slowLogFileName := "tidb_slow.log"
-	f, err := os.OpenFile(slowLogFileName, os.O_CREATE|os.O_WRONLY, 0644)
-	c.Assert(err, IsNil)
-	c.Assert(f.Close(), IsNil)
-	c.Assert(err, IsNil)
-
-	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", slowLogFileName))
-	tk.MustExec("prepare mysleep from 'select sleep(?+?)'")
-	tk.MustExec("set @a=2, @b=3.0;")
-	tk.MustExec("execute mysleep using @a, @b;")
-	tk.MustQuery("select Query from INFORMATION_SCHEMA.SLOW_QUERY;").Check(testkit.Rows("select sleep ( 2 + 3.0 );"))
+func (s *testSuiteP2) TestFormatSQL(c *C) {
+	preparedParams := variable.PreparedParams{
+		types.NewIntDatum(2),
+		types.NewIntDatum(3),
+	}
+	preparedSQL := executor.FormatSQL("select sleep ( ? + ? );", preparedParams)()
+	c.Check(preparedSQL, Equals, "select sleep ( 2 + 3 );")
 }
