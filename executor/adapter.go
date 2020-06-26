@@ -765,15 +765,15 @@ func FormatSQL(sql string, pps variable.PreparedParams) stringutil.StringerFunc 
 		if maxQueryLen := atomic.LoadUint64(&cfg.Log.QueryLogMaxLen); uint64(length) > maxQueryLen {
 			sql = fmt.Sprintf("%.*q(len:%d)", maxQueryLen, sql, length)
 		}
-		replaceSQl := QueryReplacer.Replace(sql)
+		replaceSQL := QueryReplacer.Replace(sql)
 		if len(pps) == 0 {
-			return replaceSQl + pps.String()
+			return replaceSQL + pps.String()
 		}
 
 		sqlBuffer := bytes.NewBuffer([]byte{})
 		paramsIndex := 0
-		for i := 0; i < len(replaceSQl); i++ {
-			c := replaceSQl[i]
+		for i := 0; i < len(replaceSQL); i++ {
+			c := replaceSQL[i]
 			if c != '?' {
 				sqlBuffer.WriteByte(c)
 				continue
