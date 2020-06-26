@@ -14,7 +14,9 @@
 package executor_test
 
 import (
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"time"
@@ -41,9 +43,24 @@ func (s *testSuiteP2) TestQueryTime(c *C) {
 
 func (s *testSuiteP2) TestFormatSQL(c *C) {
 	preparedParams := variable.PreparedParams{
-		types.NewIntDatum(2),
-		types.NewIntDatum(3),
+		types.NewIntDatum(1),
+		types.NewFloat64Datum(2),
+		types.NewStringDatum("\"hello, 世界\""),
+		types.NewStringDatum("[1, 2, 3]"),
+		types.NewStringDatum("{}"),
+		types.NewStringDatum(`{"a": "9223372036854775809"}`),
+		mustParseTimeIntoDatum("2011-11-10 11:11:11.111111", mysql.TypeTimestamp, 6),
 	}
-	preparedSQL := executor.FormatSQL("select sleep ( ? + ? );", preparedParams)()
-	c.Check(preparedSQL, Equals, "select sleep ( 2 + 3 );")
+	preparedSQL := executor.FormatSQL("select ?, ?, ?, ?, ?, ?, ?;", preparedParams)()
+	c.Check(preparedSQL, Equals, "select 1, 2, \"hello, 世界\", [1, 2, 3], {}, {\"a\": \"9223372036854775809\"}, 2011-11-10 11:11:11.111111;")
+}
+
+// mustParseTimeIntoDatum is similar to ParseTime but panic if any error occurs.
+func mustParseTimeIntoDatum(s string, tp byte, fsp int8) (d types.Datum) {
+	t, err := types.ParseTime(&stmtctx.StatementContext{TimeZone: time.UTC}, s, tp, fsp)
+	if err != nil {
+		panic("ParseTime fail")
+	}
+	d.SetMysqlTime(t)
+	return
 }

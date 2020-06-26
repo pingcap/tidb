@@ -778,8 +778,7 @@ func FormatSQL(sql string, pps variable.PreparedParams) stringutil.StringerFunc 
 				sqlBuffer.WriteByte(c)
 				continue
 			}
-			paramStr, _ := types.ToString(pps[paramsIndex].GetValue())
-			sqlBuffer.WriteString(paramStr)
+			sqlBuffer.WriteString(fmt.Sprintf("%v", pps[paramsIndex].GetValue()))
 			paramsIndex++
 		}
 		return sqlBuffer.String()
