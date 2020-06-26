@@ -419,6 +419,9 @@ const (
 
 	// TiDBSlowLogMasking indicates that whether masking the query data when log slow query.
 	TiDBSlowLogMasking = "tidb_slow_log_masking"
+
+	// TiDBEnableTelemetry indicates that whether usage data report to PingCAP is enabled.
+	TiDBEnableTelemetry = "tidb_enable_telemetry"
 )
 
 // Default TiDB system variable values.
@@ -478,7 +481,7 @@ const (
 	DefTiDBHashJoinConcurrency         = 5
 	DefTiDBProjectionConcurrency       = ConcurrencyUnset
 	DefTiDBOptimizerSelectivityLevel   = 0
-	DefTiDBAllowBatchCop               = 0
+	DefTiDBAllowBatchCop               = 1
 	DefTiDBTxnMode                     = ""
 	DefTiDBRowFormatV1                 = 1
 	DefTiDBRowFormatV2                 = 2
@@ -517,6 +520,7 @@ const (
 	DefTiDBAllowAutoRandExplicitInsert = false
 	DefTiDBEnableClusteredIndex        = false
 	DefTiDBSlowLogMasking              = false
+	DefTiDBEnableTelemetry             = true
 )
 
 // Process global variables.

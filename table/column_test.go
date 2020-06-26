@@ -115,18 +115,19 @@ func (t *testTableSuite) TestCheck(c *C) {
 func (t *testTableSuite) TestHandleBadNull(c *C) {
 	col := newCol("a")
 	sc := new(stmtctx.StatementContext)
-	d, err := col.HandleBadNull(types.Datum{}, sc)
+	d := types.Datum{}
+	err := col.HandleBadNull(&d, sc)
 	c.Assert(err, IsNil)
 	cmp, err := d.CompareDatum(sc, &types.Datum{})
 	c.Assert(err, IsNil)
 	c.Assert(cmp, Equals, 0)
 
 	col.Flag |= mysql.NotNullFlag
-	d, err = col.HandleBadNull(types.Datum{}, sc)
+	err = col.HandleBadNull(&types.Datum{}, sc)
 	c.Assert(err, NotNil)
 
 	sc.BadNullAsWarning = true
-	d, err = col.HandleBadNull(types.Datum{}, sc)
+	err = col.HandleBadNull(&types.Datum{}, sc)
 	c.Assert(err, IsNil)
 }
 
