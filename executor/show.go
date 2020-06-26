@@ -920,7 +920,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	}
 
 	if tableInfo.AutoRandID != 0 {
-		var autoRandomBase = tableInfo.AutoRandID
+		autoRandomBase := tableInfo.AutoRandID
 
 		if autoIncID > 1 {
 			autoRandomBase = autoIncID
