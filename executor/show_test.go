@@ -810,11 +810,12 @@ func (s *testAutoRandomSuite) TestAutoIdCache(c *C) {
 
 func (s *testAutoRandomSuite) TestAutoRandomBase(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 	tk.MustExec("use test")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a bigint primary key auto_random(5), b int unique key auto_increment) auto_random_base = 100, auto_increment = 100")
-	tk.MustExec("insert into t values (1000)")
+	tk.MustExec("insert into t(`a`) values (1000)")
 	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
 		""+
 			"t CREATE TABLE `t` (\n"+
