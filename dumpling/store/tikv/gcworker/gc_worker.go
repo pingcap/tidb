@@ -135,7 +135,7 @@ const (
 	gcScanLockModeKey      = "tikv_gc_scan_lock_mode"
 	gcScanLockModeLegacy   = "legacy"
 	gcScanLockModePhysical = "physical"
-	gcScanLockModeDefault  = gcScanLockModeLegacy
+	gcScanLockModeDefault  = gcScanLockModePhysical
 
 	gcAutoConcurrencyKey     = "tikv_gc_auto_concurrency"
 	gcDefaultAutoConcurrency = true
@@ -157,6 +157,7 @@ var gcVariableComments = map[string]string{
 	gcEnableKey:          "Current GC enable status",
 	gcModeKey:            "Mode of GC, \"central\" or \"distributed\"",
 	gcAutoConcurrencyKey: "Let TiDB pick the concurrency automatically. If set false, tikv_gc_concurrency will be used",
+	gcScanLockModeKey:    "Mode of scanning locks, \"physical\" or \"legacy\"",
 }
 
 func (w *GCWorker) start(ctx context.Context, wg *sync.WaitGroup) {
@@ -914,7 +915,10 @@ func (w *GCWorker) checkUsePhysicalScanLock() (bool, error) {
 		return false, errors.Trace(err)
 	}
 	if str == "" {
-		// Do not save it here, so that this config is hidden.
+		err = w.saveValueToSysTable(gcScanLockModeKey, gcScanLockModeDefault)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
 		str = gcScanLockModeDefault
 	}
 	if strings.EqualFold(str, gcScanLockModePhysical) {
