@@ -1354,6 +1354,22 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels:  []string{"instance", "type"},
 		Comment: "The average time which is caused by latch wait in command",
 	},
+	"tikv_scheduler_processing_read_duration": {
+		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_scheduler_processing_read_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance,type))`,
+		Labels:   []string{"instance", "type"},
+		Quantile: 0.99,
+		Comment:  "The quantile time of scheduler processing read in command",
+	},
+	"tikv_scheduler_processing_read_total_count": {
+		PromQL:  "sum(increase(tikv_scheduler_processing_read_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total count of scheduler processing read in command",
+	},
+	"tikv_scheduler_processing_read_total_time": {
+		PromQL:  "sum(increase(tikv_scheduler_processing_read_duration_seconds_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,type)",
+		Labels:  []string{"instance", "type"},
+		Comment: "The total time of scheduler processing read in command",
+	},
 
 	"tikv_scheduler_keys_read": {
 		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_scheduler_kv_command_key_read_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance,type))`,
@@ -1573,8 +1589,8 @@ var MetricTableMap = map[string]MetricTableDef{
 		Comment:  "The quantile of time consumed when handling coprocessor requests",
 	},
 	"tikv_cop_wait_duration": {
-		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_coprocessor_request_wait_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,req,instance))`,
-		Labels:   []string{"instance", "req"},
+		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_coprocessor_request_wait_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,req,type,instance))`,
+		Labels:   []string{"instance", "req", "type"},
 		Quantile: 1,
 		Comment:  "The quantile of time consumed when coprocessor requests are wait for being handled",
 	},
@@ -2744,13 +2760,13 @@ var MetricTableMap = map[string]MetricTableDef{
 		Comment: "The total time of time consumed to handle coprocessor read requests",
 	},
 	"tikv_cop_wait_total_count": {
-		PromQL:  "sum(increase(tikv_coprocessor_request_wait_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,req)",
-		Labels:  []string{"instance", "req"},
+		PromQL:  "sum(increase(tikv_coprocessor_request_wait_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,req,type)",
+		Labels:  []string{"instance", "req", "type"},
 		Comment: "The total count of coprocessor requests that wait for being handled",
 	},
 	"tikv_cop_wait_total_time": {
-		PromQL:  "sum(increase(tikv_coprocessor_request_wait_seconds_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,req)",
-		Labels:  []string{"instance", "req"},
+		PromQL:  "sum(increase(tikv_coprocessor_request_wait_seconds_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,req,type)",
+		Labels:  []string{"instance", "req", "type"},
 		Comment: "The total time of time consumed when coprocessor requests are wait for being handled",
 	},
 	"tikv_raft_store_events_total_count": {
