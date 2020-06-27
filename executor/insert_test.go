@@ -271,6 +271,17 @@ func (s *testSuite3) TestInsertWrongValueForField(c *C) {
 	tk.MustExec(`create table t1(a bigint);`)
 	_, err := tk.Exec(`insert into t1 values("asfasdfsajhlkhlksdaf");`)
 	c.Assert(terror.ErrorEqual(err, table.ErrTruncatedWrongValueForField), IsTrue)
+
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec(`create table t1(a varchar(10)) charset ascii;`)
+	_, err = tk.Exec(`insert into t1 values('我');`)
+	c.Assert(terror.ErrorEqual(err, table.ErrTruncatedWrongValueForField), IsTrue)
+
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec(`create table t1(a char(10) charset utf8);`)
+	tk.MustExec(`insert into t1 values('我');`)
+	tk.MustExec(`alter table t1 add column b char(10) charset ascii as ((a));`)
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`我 `))
 }
 
 func (s *testSuite3) TestInsertDateTimeWithTimeZone(c *C) {
