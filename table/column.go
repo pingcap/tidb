@@ -178,10 +178,10 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 	sc := ctx.GetSessionVars().StmtCtx
 	casted, err = val.ConvertTo(sc, &col.FieldType)
 	// TODO: make sure all truncate errors are handled by ConvertTo.
-	if types.ErrOverflow.Equal(err) && returnOverflow {
+	if returnOverflow && types.ErrOverflow.Equal(err) {
 		return casted, err
 	}
-	if types.ErrTruncated.Equal(err) {
+	if err != nil && types.ErrTruncated.Equal(err) {
 		str, err1 := val.ToString()
 		if err1 != nil {
 			logutil.BgLogger().Warn("Datum ToString failed", zap.Stringer("Datum", val), zap.Error(err1))
@@ -340,7 +340,7 @@ func CheckOnce(cols []*Column) error {
 }
 
 // CheckNotNull checks if nil value set to a column with NotNull flag is set.
-func (c *Column) CheckNotNull(data types.Datum) error {
+func (c *Column) CheckNotNull(data *types.Datum) error {
 	if (mysql.HasNotNullFlag(c.Flag) || mysql.HasPreventNullInsertFlag(c.Flag)) && data.IsNull() {
 		return ErrColumnCantNull.GenWithStackByArgs(c.Name)
 	}
@@ -349,15 +349,16 @@ func (c *Column) CheckNotNull(data types.Datum) error {
 
 // HandleBadNull handles the bad null error.
 // If BadNullAsWarning is true, it will append the error as a warning, else return the error.
-func (c *Column) HandleBadNull(d types.Datum, sc *stmtctx.StatementContext) (types.Datum, error) {
+func (c *Column) HandleBadNull(d *types.Datum, sc *stmtctx.StatementContext) error {
 	if err := c.CheckNotNull(d); err != nil {
 		if sc.BadNullAsWarning {
 			sc.AppendWarning(err)
-			return GetZeroValue(c.ToInfo()), nil
+			*d = GetZeroValue(c.ToInfo())
+			return nil
 		}
-		return types.Datum{}, err
+		return err
 	}
-	return d, nil
+	return nil
 }
 
 // IsPKHandleColumn checks if the column is primary key handle column.
@@ -373,7 +374,7 @@ func (c *Column) IsCommonHandleColumn(tbInfo *model.TableInfo) bool {
 // CheckNotNull checks if row has nil value set to a column with NotNull flag set.
 func CheckNotNull(cols []*Column, row []types.Datum) error {
 	for _, c := range cols {
-		if err := c.CheckNotNull(row[c.Offset]); err != nil {
+		if err := c.CheckNotNull(&row[c.Offset]); err != nil {
 			return err
 		}
 	}
