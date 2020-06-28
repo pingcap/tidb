@@ -688,6 +688,12 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 	e.rowContainer.GetDiskTracker().SetLabel(buildSideResultLabel)
 	if config.GetGlobalConfig().OOMUseTmpStorage {
 		actionSpill := e.rowContainer.ActionSpill()
+		failpoint.Inject("testRowContainerSpill", func(val failpoint.Value) {
+			if val.(bool) {
+				actionSpill = e.rowContainer.rowContainer.ActionSpillForTest()
+				defer actionSpill.(*chunk.SpillDiskAction).WaitForTest()
+			}
+		})
 		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionSpill)
 	}
 	for chk := range buildSideResultCh {

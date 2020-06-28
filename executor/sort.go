@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -218,6 +219,12 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
 	if config.GetGlobalConfig().OOMUseTmpStorage {
 		e.spillAction = e.rowChunks.ActionSpill()
+		failpoint.Inject("testSortedRowContainerSpill", func(val failpoint.Value) {
+			if val.(bool) {
+				e.spillAction = e.rowChunks.ActionSpillForTest()
+				defer e.spillAction.WaitForTest()
+			}
+		})
 		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(e.spillAction)
 		e.rowChunks.GetDiskTracker().AttachTo(e.diskTracker)
 		e.rowChunks.GetDiskTracker().SetLabel(rowChunksLabel)

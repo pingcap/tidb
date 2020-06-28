@@ -214,8 +214,16 @@ func (c *RowContainer) ActionSpill() *SpillDiskAction {
 }
 
 // ActionSpillForTest returns a SpillDiskAction for spilling over to disk for test.
-func (c *RowContainer) ActionSpillForTest(inputFunc func(), outputFunc func()) *SpillDiskAction {
-	c.actionSpill = &SpillDiskAction{c: c, testSyncInputFunc: inputFunc, testSyncOutputFunc: outputFunc}
+func (c *RowContainer) ActionSpillForTest() *SpillDiskAction {
+	c.actionSpill = &SpillDiskAction{
+		c: c,
+		testSyncInputFunc: func() {
+			c.actionSpill.testWg.Add(1)
+		},
+		testSyncOutputFunc: func() {
+			c.actionSpill.testWg.Done()
+		},
+	}
 	return c.actionSpill
 }
 
@@ -230,6 +238,7 @@ type SpillDiskAction struct {
 	// test function only used for test sync.
 	testSyncInputFunc  func()
 	testSyncOutputFunc func()
+	testWg             sync.WaitGroup
 }
 
 // Action sends a signal to trigger spillToDisk method of RowContainer
@@ -273,6 +282,11 @@ func (a *SpillDiskAction) ResetRowContainer(c *RowContainer) {
 	a.m.Lock()
 	defer a.m.Unlock()
 	a.c = c
+}
+
+// WaitForTest waits all goroutine have gone.
+func (a *SpillDiskAction) WaitForTest() {
+	a.testWg.Wait()
 }
 
 // ErrCannotAddBecauseSorted indicate that the SortedRowContainer is sorted and prohibit inserting data.
@@ -386,8 +400,16 @@ func (c *SortedRowContainer) ActionSpill() *SortAndSpillDiskAction {
 }
 
 // ActionSpillForTest returns a SortAndSpillDiskAction for sorting and spilling over to disk for test.
-func (c *SortedRowContainer) ActionSpillForTest(inputFunc func(), outputFunc func()) *SortAndSpillDiskAction {
-	c.actionSpill = &SortAndSpillDiskAction{c: c, testSyncInputFunc: inputFunc, testSyncOutputFunc: outputFunc}
+func (c *SortedRowContainer) ActionSpillForTest() *SortAndSpillDiskAction {
+	c.actionSpill = &SortAndSpillDiskAction{
+		c: c,
+		testSyncInputFunc: func() {
+			c.actionSpill.testWg.Add(1)
+		},
+		testSyncOutputFunc: func() {
+			c.actionSpill.testWg.Done()
+		},
+	}
 	return c.actionSpill
 }
 
@@ -402,6 +424,7 @@ type SortAndSpillDiskAction struct {
 	// test function only used for test sync.
 	testSyncInputFunc  func()
 	testSyncOutputFunc func()
+	testWg             sync.WaitGroup
 }
 
 // Action sends a signal to trigger sortAndSpillToDisk method of RowContainer
@@ -445,4 +468,9 @@ func (a *SortAndSpillDiskAction) ResetRowContainer(c *SortedRowContainer) {
 	a.m.Lock()
 	defer a.m.Unlock()
 	a.c = c
+}
+
+// WaitForTest waits all goroutine have gone.
+func (a *SortAndSpillDiskAction) WaitForTest() {
+	a.testWg.Wait()
 }
