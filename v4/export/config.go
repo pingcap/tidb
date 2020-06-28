@@ -18,7 +18,13 @@ type Config struct {
 	User      string
 	Port      int
 	Password  string
-	Threads   int
+	Security  struct {
+		CAPath   string
+		CertPath string
+		KeyPath  string
+	}
+
+	Threads int
 
 	LogLevel  string
 	LogFile   string
@@ -88,6 +94,9 @@ func (conf *Config) getDSN(db string) string {
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4", conf.User, conf.Password, conf.Host, conf.Port, db)
 	if conf.TiDBMemQuotaQuery != UnspecifiedSize {
 		dsn += fmt.Sprintf("&tidb_mem_quota_query=%v", conf.TiDBMemQuotaQuery)
+	}
+	if len(conf.Security.CAPath) > 0 {
+		dsn += "&tls=dumpling-tls-target"
 	}
 	return dsn
 }

@@ -18,7 +18,7 @@ Features
 
 - [x] SQL dump is split into multiple files (like `mydumper`) for easy management.
 - [x] Export multiple tables in parallel to speed up execution.
-- [ ] Multiple output formats: SQL, CSV, ...
+- [x] Multiple output formats: SQL, CSV, ...
 - [ ] Write to cloud storage (S3, GCS) natively
 - [x] Advanced table filtering
 
@@ -35,6 +35,8 @@ Building
     * `bin/tidb-lightning`
   - The following programs must be installed:
     * `mysql` (the CLI client)
+  - There must be a local mysql server listening on `127.0.0.1:3306`, and an active user with no password that can be connected through this TCP address.
+
 
 License
 -------
