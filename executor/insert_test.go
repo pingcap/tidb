@@ -22,6 +22,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -271,6 +272,17 @@ func (s *testSuite3) TestInsertWrongValueForField(c *C) {
 	tk.MustExec(`create table t1(a bigint);`)
 	_, err := tk.Exec(`insert into t1 values("asfasdfsajhlkhlksdaf");`)
 	c.Assert(terror.ErrorEqual(err, table.ErrTruncatedWrongValueForField), IsTrue)
+
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec(`create table t1(a varchar(10)) charset ascii;`)
+	_, err = tk.Exec(`insert into t1 values('我');`)
+	c.Assert(terror.ErrorEqual(err, table.ErrTruncatedWrongValueForField), IsTrue)
+
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec(`create table t1(a char(10) charset utf8);`)
+	tk.MustExec(`insert into t1 values('我');`)
+	tk.MustExec(`alter table t1 add column b char(10) charset ascii as ((a));`)
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`我 `))
 }
 
 func (s *testSuite3) TestInsertDateTimeWithTimeZone(c *C) {
@@ -1003,6 +1015,12 @@ func (s *testSuite9) TestAutoRandomID(c *C) {
 	tk.MustQuery(`select last_insert_id()`).Check(testkit.Rows(fmt.Sprintf("%d", firstValue)))
 
 	tk.MustExec(`drop table ar`)
+	tk.MustExec(`create table ar (id bigint key auto_random(15), name char(10))`)
+	overflowVal := 1 << (64 - 5)
+	errMsg := fmt.Sprintf(autoid.AutoRandomRebaseOverflow, overflowVal, 1<<(64-16)-1)
+	_, err = tk.Exec(fmt.Sprintf("alter table ar auto_random_base = %d", overflowVal))
+	c.Assert(err, NotNil)
+	c.Assert(strings.Contains(err.Error(), errMsg), IsTrue)
 }
 
 func (s *testSuite9) TestMultiAutoRandomID(c *C) {

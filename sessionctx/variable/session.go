@@ -460,6 +460,9 @@ type SessionVars struct {
 
 	/* TiDB system variables */
 
+	// SkipASCIICheck check on input value.
+	SkipASCIICheck bool
+
 	// SkipUTF8Check check on input value.
 	SkipUTF8Check bool
 
@@ -1111,6 +1114,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.WindowingUseHighPrecision = TiDBOptOn(val)
 	case TiDBSkipUTF8Check:
 		s.SkipUTF8Check = TiDBOptOn(val)
+	case TiDBSkipASCIICheck:
+		s.SkipASCIICheck = TiDBOptOn(val)
 	case TiDBOptAggPushDown:
 		s.AllowAggPushDown = TiDBOptOn(val)
 	case TiDBOptDistinctAggPushDown:
