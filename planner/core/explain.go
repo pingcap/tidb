@@ -735,6 +735,18 @@ func (p *LogicalTableScan) ExplainInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
+func (p *PhysicalApply) ExplainInfo() string {
+	buffer := new(bytes.Buffer)
+	if p.CanUseCache {
+		buffer.WriteString("cache: ON, ")
+	}
+	if p.Concurrency > 1 {
+		buffer.WriteString(fmt.Sprintf("concurrency: %v, ", p.Concurrency))
+	}
+	return buffer.String() + p.PhysicalHashJoin.ExplainInfo()
+}
+
+// ExplainInfo implements Plan interface.
 func (p *LogicalIndexScan) ExplainInfo() string {
 	buffer := bytes.NewBufferString(p.Source.ExplainInfo())
 	index := p.Index
