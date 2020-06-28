@@ -267,6 +267,11 @@ const (
 	// the input string values are valid, we can skip the check.
 	TiDBSkipUTF8Check = "tidb_skip_utf8_check"
 
+	// tidb_skip_ascii_check skips the ASCII validate process
+	// old tidb may already have fields with invalid ASCII bytes
+	// disable ASCII validate can guarantee a safe replication
+	TiDBSkipASCIICheck = "tidb_skip_ascii_check"
+
 	// tidb_hash_join_concurrency is used for hash join executor.
 	// The hash join outer executor starts multiple concurrent join workers to probe the hash table.
 	// tidb_hash_join_concurrency is deprecated, use tidb_executor_concurrency instead.
@@ -436,6 +441,7 @@ const (
 	DefAutoIncrementOffset             = 1
 	DefChecksumTableConcurrency        = 4
 	DefSkipUTF8Check                   = false
+	DefSkipASCIICheck                  = false
 	DefOptAggPushDown                  = false
 	DefOptWriteRowID                   = false
 	DefOptCorrelationThreshold         = 0.9

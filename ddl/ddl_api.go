@@ -2852,6 +2852,25 @@ func checkFieldTypeCompatible(ft *types.FieldType, other *types.FieldType) bool 
 	return true
 }
 
+func checkTiFlashReplicaCompatible(source *model.TiFlashReplicaInfo, target *model.TiFlashReplicaInfo) bool {
+	if source == target {
+		return true
+	}
+	if source == nil || target == nil {
+		return false
+	}
+	if source.Count != target.Count ||
+		source.Available != target.Available || len(source.LocationLabels) != len(target.LocationLabels) {
+		return false
+	}
+	for i, lable := range source.LocationLabels {
+		if target.LocationLabels[i] != lable {
+			return false
+		}
+	}
+	return true
+}
+
 func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) error {
 	// check auto_random
 	if source.AutoRandomBits != target.AutoRandomBits ||
@@ -2859,7 +2878,7 @@ func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) e
 		source.Collate != target.Collate ||
 		source.ShardRowIDBits != target.ShardRowIDBits ||
 		source.MaxShardRowIDBits != target.MaxShardRowIDBits ||
-		source.TiFlashReplica != target.TiFlashReplica {
+		!checkTiFlashReplicaCompatible(source.TiFlashReplica, target.TiFlashReplica) {
 		return errors.Trace(ErrTablesDifferentMetadata)
 	}
 	if len(source.Cols()) != len(target.Cols()) {

@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/pingcap/parser"
@@ -157,6 +158,15 @@ func CastValues(ctx sessionctx.Context, rec []types.Datum, cols []*Column) (err 
 	return nil
 }
 
+func handleWrongASCIIValue(ctx sessionctx.Context, col *model.ColumnInfo, casted *types.Datum, str string, i int) (types.Datum, error) {
+	sc := ctx.GetSessionVars().StmtCtx
+	err := ErrTruncatedWrongValueForField.FastGen("incorrect ascii value %x(%s) for column %s", casted.GetBytes(), str, col.Name)
+	logutil.BgLogger().Error("incorrect ASCII value", zap.Uint64("conn", ctx.GetSessionVars().ConnectionID), zap.Error(err))
+	truncateVal := types.NewStringDatum(str[:i])
+	err = sc.HandleTruncate(err)
+	return truncateVal, err
+}
+
 func handleWrongUtf8Value(ctx sessionctx.Context, col *model.ColumnInfo, casted *types.Datum, str string, i int) (types.Datum, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	err := ErrTruncatedWrongValueForField.FastGen("incorrect utf8 value %x(%s) for column %s", casted.GetBytes(), str, col.Name)
@@ -200,9 +210,28 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 		truncateTrailingSpaces(&casted)
 	}
 
+	if col.Charset == charset.CharsetASCII {
+		if ctx.GetSessionVars().SkipASCIICheck {
+			return casted, nil
+		}
+
+		str := casted.GetString()
+		for i := 0; i < len(str); i++ {
+			if str[i] > unicode.MaxASCII {
+				casted, err = handleWrongASCIIValue(ctx, col, &casted, str, i)
+				break
+			}
+		}
+		if forceIgnoreTruncate {
+			err = nil
+		}
+		return casted, err
+	}
+
 	if ctx.GetSessionVars().SkipUTF8Check {
 		return casted, nil
 	}
+
 	if !mysql.IsUTF8Charset(col.Charset) {
 		return casted, nil
 	}
