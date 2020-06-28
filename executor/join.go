@@ -347,7 +347,7 @@ func (e *HashJoinExec) handleJoinWorkerPanic(r interface{}) {
 }
 
 // Concurrently handling unmatched rows from the hash table
-func (e *HashJoinExec) handleUnmatchedRowsFromHashTableInMemory(workerID uint) {
+func (e *HashJoinExec) handleUnmatchedRowsFromHashTable(workerID uint) {
 	ok, joinResult := e.getNewJoinResult(workerID)
 	if !ok {
 		return
@@ -382,57 +382,16 @@ func (e *HashJoinExec) handleUnmatchedRowsFromHashTableInMemory(workerID uint) {
 	}
 }
 
-// Sequentially handling unmatched rows from the hash table
-func (e *HashJoinExec) handleUnmatchedRowsFromHashTableInDisk(workerID uint) {
-	ok, joinResult := e.getNewJoinResult(workerID)
-	if !ok {
-		return
-	}
-	numChks := e.rowContainer.NumChunks()
-	for i := 0; i < numChks; i++ {
-		numOfRows := e.rowContainer.NumRowsOfChunk(i)
-		for j := 0; j < numOfRows; j++ {
-			row, err := e.rowContainer.GetRow(chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(j)})
-			if err != nil {
-				// Catching the error and send it
-				joinResult.err = err
-				e.joinResultCh <- joinResult
-				return
-			}
-			if !e.outerMatchedStatus[i].UnsafeIsSet(j) { // process unmatched outer rows
-				e.joiners[workerID].onMissMatch(false, row, joinResult.chk)
-			}
-			if joinResult.chk.IsFull() {
-				e.joinResultCh <- joinResult
-				ok, joinResult = e.getNewJoinResult(workerID)
-				if !ok {
-					return
-				}
-			}
-		}
-	}
-	if joinResult == nil {
-		return
-	} else if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
-		e.joinResultCh <- joinResult
-	}
-}
-
 func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
 	e.joinWorkerWaitGroup.Wait()
 	if e.useOuterToBuild {
-		if e.rowContainer.alreadySpilledSafe() {
-			// Sequentially handling unmatched rows from the hash table to avoid random accessing IO
-			e.handleUnmatchedRowsFromHashTableInDisk(0)
-		} else {
-			// Concurrently handling unmatched rows from the hash table at the tail
-			for i := uint(0); i < e.concurrency; i++ {
-				var workerID = i
-				e.joinWorkerWaitGroup.Add(1)
-				go util.WithRecovery(func() { e.handleUnmatchedRowsFromHashTableInMemory(workerID) }, e.handleJoinWorkerPanic)
-			}
-			e.joinWorkerWaitGroup.Wait()
+		// Concurrently handling unmatched rows from the hash table at the tail
+		for i := uint(0); i < e.concurrency; i++ {
+			var workerID = i
+			e.joinWorkerWaitGroup.Add(1)
+			go util.WithRecovery(func() { e.handleUnmatchedRowsFromHashTable(workerID) }, e.handleJoinWorkerPanic)
 		}
+		e.joinWorkerWaitGroup.Wait()
 	}
 	close(e.joinResultCh)
 }
