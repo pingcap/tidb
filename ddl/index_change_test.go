@@ -15,6 +15,7 @@ package ddl
 
 import (
 	"context"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -85,6 +86,7 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 	tc := &TestDDLCallback{}
 	// set up hook
 	prevState := model.StateNone
+	addIndexDone := false
 	var (
 		deleteOnlyTable table.Table
 		writeOnlyTable  table.Table
@@ -124,10 +126,19 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
+			if job.State == model.JobStateSynced {
+				addIndexDone = true
+			}
 		}
 	}
 	d.SetHook(tc)
 	testCreateIndex(c, ctx, d, s.dbInfo, originTable.Meta(), false, "c2", "c2")
+	for i := 0; i <= 10; i ++ {
+		if addIndexDone {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	txn, err = ctx.Txn(true)
 	c.Assert(err, IsNil)
