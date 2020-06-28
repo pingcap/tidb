@@ -84,11 +84,13 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 
 	it.minCommitTSPushed.data = make(map[uint64]struct{}, 5)
 	it.tasks = tasks
-	// TODO: fetch region size from pd-api
-	singleRegionSize := 96 * 1024 * 1024
-	concurrencyLimit := int(math.Ceil(float64(req.MemUsageQuota)/float64(singleRegionSize)))
-	if it.concurrency > concurrencyLimit {
-		it.concurrency = concurrencyLimit
+	if req.MemUsageQuota > 0 {
+		// TODO: fetch region size from pd-api
+		singleRegionSize := 96 * 1024 * 1024
+		concurrencyLimit := int(math.Ceil(float64(req.MemUsageQuota) / float64(singleRegionSize)))
+		if it.concurrency > concurrencyLimit {
+			it.concurrency = concurrencyLimit
+		}
 	}
 	if it.concurrency < 1 {
 		// Make sure that there is at least one worker.
