@@ -1441,9 +1441,9 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 			}
 			pi := tbInfo.GetPartitionInfo()
 			if pi != nil {
-				preSplit = func() { splitPartitionTableRegion(sp, pi, scatterRegion) }
+				preSplit = func() { splitPartitionTableRegion(ctx, sp, pi, scatterRegion) }
 			} else {
-				preSplit = func() { splitTableRegion(sp, tbInfo, scatterRegion) }
+				preSplit = func() { splitTableRegion(ctx, sp, tbInfo, scatterRegion) }
 			}
 			if scatterRegion {
 				preSplit()
@@ -1514,9 +1514,9 @@ func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo
 		pi = tbInfo.GetPartitionInfo()
 	}
 	if pi != nil {
-		preSplit = func() { splitPartitionTableRegion(sp, pi, scatterRegion) }
+		preSplit = func() { splitPartitionTableRegion(ctx, sp, pi, scatterRegion) }
 	} else {
-		preSplit = func() { splitTableRegion(sp, tbInfo, scatterRegion) }
+		preSplit = func() { splitTableRegion(ctx, sp, tbInfo, scatterRegion) }
 	}
 	if scatterRegion {
 		preSplit()

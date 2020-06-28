@@ -1815,6 +1815,16 @@ func (b *PlanBuilder) checkOnlyFullGroupByWithGroupClause(p LogicalPlan, sel *as
 
 	if sel.OrderBy != nil {
 		for offset, item := range sel.OrderBy.Items {
+			if colName, ok := item.Expr.(*ast.ColumnNameExpr); ok {
+				index, err := resolveFromSelectFields(colName, sel.Fields.Fields, false)
+				if err != nil {
+					return err
+				}
+				// If the ByItem is in fields list, it has been checked already in above.
+				if index >= 0 {
+					continue
+				}
+			}
 			checkExprInGroupBy(p, item.Expr, offset, ErrExprInOrderBy, gbyCols, gbyExprs, notInGbyCols)
 		}
 	}
@@ -2285,7 +2295,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName) (L
 	tableInfo := tbl.Meta()
 	var authErr error
 	if b.ctx.GetSessionVars().User != nil {
-		authErr = ErrTableaccessDenied.FastGenByArgs("SELECT", b.ctx.GetSessionVars().User.Username, b.ctx.GetSessionVars().User.Hostname, tableInfo.Name.L)
+		authErr = ErrTableaccessDenied.FastGenByArgs("SELECT", b.ctx.GetSessionVars().User.AuthUsername, b.ctx.GetSessionVars().User.AuthHostname, tableInfo.Name.L)
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "", authErr)
 
