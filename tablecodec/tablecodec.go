@@ -140,15 +140,18 @@ func DecodeRecordKey(key kv.Key) (tableID int64, handle kv.Handle, err error) {
 func DecodeIndexKey(key kv.Key) (tableID int64, indexID int64, indexValues []string, err error) {
 	k := key
 
-	tableID, indexID, key, err = DecodeIndexKeyPrefix(key)
+	tableID, indexID, isRecord, err := DecodeKeyHead(key)
 	if err != nil {
 		return 0, 0, nil, errors.Trace(err)
 	}
-
-	for len(key) > 0 {
+	if isRecord {
+		return 0, 0, nil, errInvalidIndexKey.GenWithStack("invalid index key - %q", k)
+	}
+	indexKey := key[prefixLen+idLen:]
+	for len(indexKey) > 0 {
 		// FIXME: Without the schema information, we can only decode the raw kind of
 		// the column. For instance, MysqlTime is internally saved as uint64.
-		remain, d, e := codec.DecodeOne(key)
+		remain, d, e := codec.DecodeOne(indexKey)
 		if e != nil {
 			return 0, 0, nil, errInvalidIndexKey.GenWithStack("invalid index key - %q %v", k, e)
 		}
@@ -157,9 +160,9 @@ func DecodeIndexKey(key kv.Key) (tableID int64, indexID int64, indexValues []str
 			return 0, 0, nil, errInvalidIndexKey.GenWithStack("invalid index key - %q %v", k, e1)
 		}
 		indexValues = append(indexValues, str)
-		key = remain
+		indexKey = remain
 	}
-	return
+	return tableID, indexID, indexValues, nil
 }
 
 // DecodeMetaKey decodes the key and get the meta key and meta field.
@@ -181,22 +184,6 @@ func DecodeMetaKey(ek kv.Key) (key []byte, field []byte, err error) {
 	}
 	_, field, err = codec.DecodeBytes(ek, nil)
 	return key, field, errors.Trace(err)
-}
-
-// DecodeIndexKeyPrefix decodes the key and gets the tableID, indexID, indexValues.
-func DecodeIndexKeyPrefix(key kv.Key) (tableID int64, indexID int64, indexValues []byte, err error) {
-	k := key
-
-	tableID, indexID, isRecord, err := DecodeKeyHead(key)
-	if err != nil {
-		return 0, 0, nil, errors.Trace(err)
-	}
-	if isRecord {
-		return 0, 0, nil, errInvalidIndexKey.GenWithStack("invalid index key - %q", k)
-	}
-	indexValues = key[prefixLen+idLen:]
-
-	return tableID, indexID, indexValues, nil
 }
 
 // DecodeKeyHead decodes the key's head and gets the tableID, indexID. isRecordKey is true when is a record key.
