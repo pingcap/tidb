@@ -18,7 +18,6 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -59,7 +58,7 @@ func NewRowContainer(fieldType []*types.FieldType, chunkSize int) *RowContainer 
 	return rc
 }
 
-// SpillToDisk spills data to disk.
+// SpillToDisk spills data to disk. This function maybe called in parallel.
 func (c *RowContainer) SpillToDisk() {
 	c.m.Lock()
 	defer c.m.Unlock()
@@ -155,14 +154,6 @@ func (c *RowContainer) Add(chk *Chunk) (err error) {
 	return
 }
 
-// AppendRow appends a row to the RowContainer, the row is copied to the RowContainer.
-func (c *RowContainer) AppendRow(row Row) (RowPtr, error) {
-	if c.alreadySpilled() {
-		return RowPtr{}, errors.New("ListInDisk don't support AppendRow")
-	}
-	return c.m.records.AppendRow(row), nil
-}
-
 // AllocChunk allocates a new chunk from RowContainer.
 func (c *RowContainer) AllocChunk() (chk *Chunk) {
 	return c.m.records.allocChunk()
@@ -175,7 +166,7 @@ func (c *RowContainer) GetChunk(chkIdx int) (*Chunk, error) {
 	if !c.alreadySpilled() {
 		return c.m.records.GetChunk(chkIdx), nil
 	}
-	chk := NewChunkWithCapacity(c.m.records.FieldTypes(), c.m.records.maxChunkSize)
+	chk := NewChunkWithCapacity(c.m.records.FieldTypes(), c.m.recordsInDisk.NumRowsOfChunk(chkIdx))
 	offsets := c.m.recordsInDisk.offsets[chkIdx]
 	for rowIdx := range offsets {
 		row, err := c.m.recordsInDisk.GetRow(RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
@@ -258,7 +249,6 @@ func (a *SpillDiskAction) Action(t *memory.Tracker) {
 			a.fallbackAction.Action(t)
 		}
 	} else {
-		// TODO: Refine processing for various errors. Return or Panic.
 		logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
 			zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
 		if a.testSyncInputFunc != nil {
@@ -289,8 +279,8 @@ func (a *SpillDiskAction) ResetRowContainer(c *RowContainer) {
 	a.c = c
 }
 
-// ErrInsertToPartitionFailed indicate that the SortedRowContainer is sorted and prohibit inserting data.
-var ErrInsertToPartitionFailed = terror.ClassExecutor.New(1, "Insert the records unsuccessfully. The SortedRowContainer is sorted.")
+// ErrCannotAddBecauseSorted indicate that the SortedRowContainer is sorted and prohibit inserting data.
+var ErrCannotAddBecauseSorted = errors.New("can not add because sorted")
 
 // SortedRowContainer provides a place for many rows, so many that we might want to sort and spill them into disk.
 type SortedRowContainer struct {
@@ -347,8 +337,8 @@ func (c *SortedRowContainer) keyColumnsLess(i, j int) bool {
 	return c.lessRow(rowI, rowJ)
 }
 
-// InitPointersAndSort inits pointers and sorts the records.
-func (c *SortedRowContainer) InitPointersAndSort() {
+// Sort inits pointers and sorts the records.
+func (c *SortedRowContainer) Sort() {
 	c.ptrM.Lock()
 	defer c.ptrM.Unlock()
 	if c.ptrM.rowPtrs != nil {
@@ -369,7 +359,7 @@ func (c *SortedRowContainer) InitPointersAndSort() {
 }
 
 func (c *SortedRowContainer) sortAndSpillToDisk() {
-	c.InitPointersAndSort()
+	c.Sort()
 	c.RowContainer.SpillToDisk()
 	return
 }
@@ -379,13 +369,13 @@ func (c *SortedRowContainer) Add(chk *Chunk) (err error) {
 	c.ptrM.RLock()
 	defer c.ptrM.RUnlock()
 	if c.ptrM.rowPtrs != nil {
-		return ErrInsertToPartitionFailed
+		return ErrCannotAddBecauseSorted
 	}
 	return c.RowContainer.Add(chk)
 }
 
-// GetRowByIdx returns the row the idx pointed to.
-func (c *SortedRowContainer) GetRowByIdx(idx int) (Row, error) {
+// GetSortedRow returns the row the idx pointed to.
+func (c *SortedRowContainer) GetSortedRow(idx int) (Row, error) {
 	c.ptrM.RLock()
 	defer c.ptrM.RUnlock()
 	ptr := c.ptrM.rowPtrs[idx]
@@ -430,7 +420,6 @@ func (a *SortAndSpillDiskAction) Action(t *memory.Tracker) {
 			a.fallbackAction.Action(t)
 		}
 	} else {
-		// TODO: Refine processing various errors. Return or Panic.
 		logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
 			zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
 		if a.testSyncInputFunc != nil {

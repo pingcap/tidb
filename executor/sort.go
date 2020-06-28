@@ -16,6 +16,7 @@ package executor
 import (
 	"container/heap"
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 
@@ -129,7 +130,7 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 	} else {
 		for !req.IsFull() && e.Idx < e.partitionList[0].NumRow() {
-			row, err := e.partitionList[0].GetRowByIdx(e.Idx)
+			row, err := e.partitionList[0].GetSortedRow(e.Idx)
 			if err != nil {
 				return err
 			}
@@ -178,7 +179,7 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 	if e.multiWayMerge == nil {
 		e.multiWayMerge = &multiWayMerge{e.lessRow, make([]partitionPointer, 0, len(e.partitionList))}
 		for i := 0; i < len(e.partitionList); i++ {
-			row, err := e.partitionList[i].GetRowByIdx(0)
+			row, err := e.partitionList[i].GetSortedRow(0)
 			if err != nil {
 				return err
 			}
@@ -196,7 +197,7 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 			continue
 		}
 		partitionPtr.row, err = e.partitionList[partitionPtr.partitionID].
-			GetRowByIdx(partitionPtr.consumed)
+			GetSortedRow(partitionPtr.consumed)
 		if err != nil {
 			return err
 		}
@@ -232,7 +233,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 			break
 		}
 		if err := e.rowChunks.Add(chk); err != nil {
-			if chunk.ErrInsertToPartitionFailed.Equal(err) {
+			if errors.Is(err, chunk.ErrCannotAddBecauseSorted) {
 				e.rowChunks.GetMemTracker().Consume(int64(8 * e.rowChunks.NumRow()))
 				e.partitionList = append(e.partitionList, e.rowChunks)
 				e.rowChunks = chunk.NewSortedRowContainer(fields, e.maxChunkSize, byItemsDesc, e.keyColumns, e.keyCmpFuncs)
@@ -249,7 +250,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		}
 	}
 	if e.rowChunks.NumRow() > 0 {
-		e.rowChunks.InitPointersAndSort()
+		e.rowChunks.Sort()
 		e.rowChunks.GetMemTracker().Consume(int64(8 * e.rowChunks.NumRow()))
 		e.partitionList = append(e.partitionList, e.rowChunks)
 	}
