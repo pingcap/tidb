@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -83,8 +84,11 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 
 	it.minCommitTSPushed.data = make(map[uint64]struct{}, 5)
 	it.tasks = tasks
-	if it.concurrency > len(tasks) {
-		it.concurrency = len(tasks)
+	// TODO: fetch region size from pd-api
+	singleRegionSize := 96 * 1024 * 1024
+	concurrencyLimit := int(math.Ceil(float64(req.MemUsageQuota)/float64(singleRegionSize)))
+	if it.concurrency > concurrencyLimit {
+		it.concurrency = concurrencyLimit
 	}
 	if it.concurrency < 1 {
 		// Make sure that there is at least one worker.
@@ -497,22 +501,6 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 	defer worker.wg.Done()
 
 	for task := range worker.taskCh {
-		respCh := worker.respChan
-		if respCh == nil {
-			respCh = task.respChan
-		}
-
-		worker.handleTask(ctx, task, respCh)
-		close(task.respChan)
-		select {
-		case <-worker.finishCh:
-			worker.actionOnExceed.mu.Lock()
-			worker.actionOnExceed.mu.aliveWorker--
-			worker.actionOnExceed.mu.Unlock()
-			return
-		default:
-		}
-
 		worker.actionOnExceed.mu.Lock()
 		if worker.actionOnExceed.mu.exceeded != 0 {
 			worker.actionOnExceed.mu.aliveWorker--
@@ -528,6 +516,22 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 			return
 		}
 		worker.actionOnExceed.mu.Unlock()
+
+		respCh := worker.respChan
+		if respCh == nil {
+			respCh = task.respChan
+		}
+
+		worker.handleTask(ctx, task, respCh)
+		close(task.respChan)
+		select {
+		case <-worker.finishCh:
+			worker.actionOnExceed.mu.Lock()
+			worker.actionOnExceed.mu.aliveWorker--
+			worker.actionOnExceed.mu.Unlock()
+			return
+		default:
+		}
 	}
 }
 

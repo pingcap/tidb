@@ -300,6 +300,9 @@ type Request struct {
 	Priority int
 	// memTracker is used to trace and control memory usage in co-processor layer.
 	MemTracker *memory.Tracker
+	// memUsageQuota indicates the mem quota for a kv request, its value may come from memory tracker limit in
+	// Session/Server level or unlimited(memUsageQuota < 0).
+	MemUsageQuota int64
 	// KeepOrder is true, if the response should be returned in order.
 	KeepOrder bool
 	// Desc is true, if the request is sent in descending order.
