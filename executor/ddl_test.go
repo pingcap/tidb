@@ -943,7 +943,7 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 	c.Assert(signBitUnused, IsFalse)
 	tk.MustExec("drop table t;")
 
-	// Test rename rename table does not affect incremental part of auto_random ID.
+	// Test rename table does not affect incremental part of auto_random ID.
 	tk.MustExec("create database test_auto_random_bits_rename;")
 	tk.MustExec("create table t (a bigint auto_random primary key);")
 	for i := 0; i < 10; i++ {
