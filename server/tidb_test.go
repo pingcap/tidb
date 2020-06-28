@@ -784,7 +784,7 @@ func (ts *tidbTestSuite) TestCreateTableFlen(c *C) {
 	c.Assert(int(cols[1].ColumnLength), Equals, 22)
 }
 
-func Execute(ctx context.Context, qc QueryCtx, sql string) (ResultSet, error) {
+func Execute(ctx context.Context, qc *TiDBContext, sql string) (ResultSet, error) {
 	stmts, err := qc.Parse(ctx, sql)
 	if err != nil {
 		return nil, err

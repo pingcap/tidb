@@ -43,7 +43,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-binlog"
-	"github.com/spaolacci/murmur3"
+	"github.com/twmb/murmur3"
 	"go.uber.org/zap"
 )
 
@@ -51,17 +51,18 @@ import (
 type TableCommon struct {
 	tableID int64
 	// physicalTableID is a unique int64 to identify a physical table.
-	physicalTableID int64
-	Columns         []*table.Column
-	PublicColumns   []*table.Column
-	VisibleColumns  []*table.Column
-	HiddenColumns   []*table.Column
-	WritableColumns []*table.Column
-	writableIndices []table.Index
-	indices         []table.Index
-	meta            *model.TableInfo
-	allocs          autoid.Allocators
-	sequence        *sequenceCommon
+	physicalTableID                 int64
+	Columns                         []*table.Column
+	PublicColumns                   []*table.Column
+	VisibleColumns                  []*table.Column
+	HiddenColumns                   []*table.Column
+	WritableColumns                 []*table.Column
+	FullHiddenColsAndVisibleColumns []*table.Column
+	writableIndices                 []table.Index
+	indices                         []table.Index
+	meta                            *model.TableInfo
+	allocs                          autoid.Allocators
+	sequence                        *sequenceCommon
 
 	// recordPrefix and indexPrefix are generated using physicalTableID.
 	recordPrefix kv.Key
@@ -156,6 +157,7 @@ func initTableCommon(t *TableCommon, tblInfo *model.TableInfo, physicalTableID i
 	t.VisibleColumns = t.VisibleCols()
 	t.HiddenColumns = t.HiddenCols()
 	t.WritableColumns = t.WritableCols()
+	t.FullHiddenColsAndVisibleColumns = t.FullHiddenColsAndVisibleCols()
 	t.writableIndices = t.WritableIndices()
 	t.recordPrefix = tablecodec.GenTableRecordPrefix(physicalTableID)
 	t.indexPrefix = tablecodec.GenTableIndexPrefix(physicalTableID)
@@ -176,6 +178,7 @@ func initTableIndices(t *TableCommon) error {
 		idx := NewIndex(t.physicalTableID, tblInfo, idxInfo)
 		t.indices = append(t.indices, idx)
 	}
+	t.writableIndices = t.WritableIndices()
 	return nil
 }
 
@@ -293,9 +296,19 @@ func (t *TableCommon) WritableCols() []*table.Column {
 	return writableColumns
 }
 
-// DeletableCols implements table DeletableCols interface.
-func (t *TableCommon) DeletableCols() []*table.Column {
-	return t.Columns
+// FullHiddenColsAndVisibleCols implements table FullHiddenColsAndVisibleCols interface.
+func (t *TableCommon) FullHiddenColsAndVisibleCols() []*table.Column {
+	if len(t.FullHiddenColsAndVisibleColumns) > 0 {
+		return t.FullHiddenColsAndVisibleColumns
+	}
+
+	cols := make([]*table.Column, 0, len(t.Columns))
+	for _, col := range t.Columns {
+		if col.Hidden || col.State == model.StatePublic {
+			cols = append(cols, col)
+		}
+	}
+	return cols
 }
 
 // RecordPrefix implements table.Table interface.
@@ -321,8 +334,8 @@ func (t *TableCommon) FirstKey() kv.Key {
 // UpdateRecord implements table.Table UpdateRecord interface.
 // `touched` means which columns are really modified, used for secondary indices.
 // Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
-func (t *TableCommon) UpdateRecord(ctx sessionctx.Context, h kv.Handle, oldData, newData []types.Datum, touched []bool) error {
-	txn, err := ctx.Txn(true)
+func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, oldData, newData []types.Datum, touched []bool) error {
+	txn, err := sctx.Txn(true)
 	if err != nil {
 		return err
 	}
@@ -331,7 +344,7 @@ func (t *TableCommon) UpdateRecord(ctx sessionctx.Context, h kv.Handle, oldData,
 	defer execBuf.Discard()
 
 	// rebuild index
-	err = t.rebuildIndices(ctx, execBuf, h, touched, oldData, newData)
+	err = t.rebuildIndices(sctx, execBuf, h, touched, oldData, newData, table.WithCtx(ctx))
 	if err != nil {
 		return err
 	}
@@ -341,7 +354,7 @@ func (t *TableCommon) UpdateRecord(ctx sessionctx.Context, h kv.Handle, oldData,
 	var row, binlogOldRow, binlogNewRow []types.Datum
 	colIDs = make([]int64, 0, numColsCap)
 	row = make([]types.Datum, 0, numColsCap)
-	if shouldWriteBinlog(ctx) {
+	if shouldWriteBinlog(sctx) {
 		binlogColIDs = make([]int64, 0, numColsCap)
 		binlogOldRow = make([]types.Datum, 0, numColsCap)
 		binlogNewRow = make([]types.Datum, 0, numColsCap)
@@ -357,11 +370,11 @@ func (t *TableCommon) UpdateRecord(ctx sessionctx.Context, h kv.Handle, oldData,
 		} else {
 			value = newData[col.Offset]
 		}
-		if !t.canSkip(col, value) {
+		if !t.canSkip(col, &value) {
 			colIDs = append(colIDs, col.ID)
 			row = append(row, value)
 		}
-		if shouldWriteBinlog(ctx) && !t.canSkipUpdateBinlog(col, value) {
+		if shouldWriteBinlog(sctx) && !t.canSkipUpdateBinlog(col, value) {
 			binlogColIDs = append(binlogColIDs, col.ID)
 			binlogOldRow = append(binlogOldRow, oldData[col.Offset])
 			binlogNewRow = append(binlogNewRow, value)
@@ -369,7 +382,7 @@ func (t *TableCommon) UpdateRecord(ctx sessionctx.Context, h kv.Handle, oldData,
 	}
 
 	key := t.RecordKey(h)
-	sessVars := ctx.GetSessionVars()
+	sessVars := sctx.GetSessionVars()
 	sc, rd := sessVars.StmtCtx, &sessVars.RowEncoder
 	value, err := tablecodec.EncodeRow(sc, row, colIDs, nil, nil, rd)
 	if err != nil {
@@ -381,15 +394,15 @@ func (t *TableCommon) UpdateRecord(ctx sessionctx.Context, h kv.Handle, oldData,
 	if _, err := execBuf.Flush(); err != nil {
 		return err
 	}
-	ctx.StmtAddDirtyTableOP(table.DirtyTableDeleteRow, t.physicalTableID, h)
-	ctx.StmtAddDirtyTableOP(table.DirtyTableAddRow, t.physicalTableID, h)
-	if shouldWriteBinlog(ctx) {
+	sctx.StmtAddDirtyTableOP(table.DirtyTableDeleteRow, t.physicalTableID, h)
+	sctx.StmtAddDirtyTableOP(table.DirtyTableAddRow, t.physicalTableID, h)
+	if shouldWriteBinlog(sctx) {
 		if !t.meta.PKIsHandle {
 			binlogColIDs = append(binlogColIDs, model.ExtraHandleID)
 			binlogOldRow = append(binlogOldRow, types.NewIntDatum(h.IntValue()))
 			binlogNewRow = append(binlogNewRow, types.NewIntDatum(h.IntValue()))
 		}
-		err = t.addUpdateBinlog(ctx, binlogOldRow, binlogNewRow, binlogColIDs)
+		err = t.addUpdateBinlog(sctx, binlogOldRow, binlogNewRow, binlogColIDs)
 		if err != nil {
 			return err
 		}
@@ -412,7 +425,7 @@ func (t *TableCommon) UpdateRecord(ctx sessionctx.Context, h kv.Handle, oldData,
 	return nil
 }
 
-func (t *TableCommon) rebuildIndices(ctx sessionctx.Context, rm kv.RetrieverMutator, h kv.Handle, touched []bool, oldData []types.Datum, newData []types.Datum) error {
+func (t *TableCommon) rebuildIndices(ctx sessionctx.Context, rm kv.RetrieverMutator, h kv.Handle, touched []bool, oldData []types.Datum, newData []types.Datum, opts ...table.CreateIdxOptFunc) error {
 	txn, err := ctx.Txn(true)
 	if err != nil {
 		return err
@@ -455,7 +468,7 @@ func (t *TableCommon) rebuildIndices(ctx sessionctx.Context, rm kv.RetrieverMuta
 		if err != nil {
 			return err
 		}
-		if err := t.buildIndexForRow(ctx, rm, h, newVs, idx, txn, untouched); err != nil {
+		if err := t.buildIndexForRow(ctx, rm, h, newVs, idx, txn, untouched, opts...); err != nil {
 			return err
 		}
 	}
@@ -483,6 +496,72 @@ func FindPrimaryIndex(tblInfo *model.TableInfo) *model.IndexInfo {
 		}
 	}
 	return pkIdx
+}
+
+// CommonAddRecordCtx is used in `AddRecord` to avoid memory malloc for some temp slices.
+// This is useful in lightning parse row data to key-values pairs. This can gain upto 5%  performance
+// improvement in lightning's local mode.
+type CommonAddRecordCtx struct {
+	colIDs []int64
+	row    []types.Datum
+	buffer *kv.BufferStore
+}
+
+// commonAddRecordKey is used as key in `sessionctx.Context.Value(key)`
+type commonAddRecordKey struct{}
+
+// String implement `stringer.String` for CommonAddRecordKey
+func (c commonAddRecordKey) String() string {
+	return "_common_add_record_context_key"
+}
+
+// addRecordCtxKey is key in `sessionctx.Context` for CommonAddRecordCtx
+var addRecordCtxKey = commonAddRecordKey{}
+
+// SetAddRecordCtx set a CommonAddRecordCtx to session context
+func SetAddRecordCtx(ctx sessionctx.Context, r *CommonAddRecordCtx) {
+	ctx.SetValue(addRecordCtxKey, r)
+}
+
+// ClearAddRecordCtx remove `CommonAddRecordCtx` from session context
+func ClearAddRecordCtx(ctx sessionctx.Context) {
+	ctx.ClearValue(addRecordCtxKey)
+}
+
+// NewCommonAddRecordCtx create a context used for `AddRecord`
+func NewCommonAddRecordCtx(size int, buffer *kv.BufferStore) *CommonAddRecordCtx {
+	return &CommonAddRecordCtx{
+		colIDs: make([]int64, 0, size),
+		row:    make([]types.Datum, 0, size),
+		buffer: buffer,
+	}
+}
+
+// TryGetCommonPkColumnIds get the IDs of primary key column if the table has common handle.
+func TryGetCommonPkColumnIds(tbl *model.TableInfo) []int64 {
+	var pkColIds []int64
+	if !tbl.IsCommonHandle {
+		return nil
+	}
+	pkIdx := FindPrimaryIndex(tbl)
+	for _, idxCol := range pkIdx.Columns {
+		pkColIds = append(pkColIds, tbl.Columns[idxCol.Offset].ID)
+	}
+	return pkColIds
+}
+
+// TryGetCommonPkColumns get the primary key columns if the table has common handle.
+func TryGetCommonPkColumns(tbl table.Table) []*table.Column {
+	var pkCols []*table.Column
+	if !tbl.Meta().IsCommonHandle {
+		return nil
+	}
+	pkIdx := FindPrimaryIndex(tbl.Meta())
+	cols := tbl.Cols()
+	for _, idxCol := range pkIdx.Columns {
+		pkCols = append(pkCols, cols[idxCol.Offset])
+	}
+	return pkCols
 }
 
 // AddRecord implements table.Table AddRecord interface.
@@ -546,10 +625,21 @@ func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 	if err != nil {
 		return nil, err
 	}
-	execBuf := kv.NewStagingBufferStore(txn)
+	var execBuf *kv.BufferStore
+	var colIDs, binlogColIDs []int64
+	var row, binlogRow []types.Datum
+	if recordCtx, ok := ctx.Value(addRecordCtxKey).(*CommonAddRecordCtx); ok {
+		colIDs = recordCtx.colIDs[:0]
+		row = recordCtx.row[:0]
+		execBuf = recordCtx.buffer
+	} else {
+		colIDs = make([]int64, 0, len(r))
+		row = make([]types.Datum, 0, len(r))
+		execBuf = kv.NewStagingBufferStore(txn)
+	}
 	defer execBuf.Discard()
-	sessVars := ctx.GetSessionVars()
 
+	sessVars := ctx.GetSessionVars()
 	var createIdxOpts []table.CreateIdxOptFunc
 	if len(opts) > 0 {
 		createIdxOpts = make([]table.CreateIdxOptFunc, 0, len(opts))
@@ -564,11 +654,6 @@ func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 	if err != nil {
 		return h, err
 	}
-
-	var colIDs, binlogColIDs []int64
-	var row, binlogRow []types.Datum
-	colIDs = make([]int64, 0, len(r))
-	row = make([]types.Datum, 0, len(r))
 
 	for _, col := range t.WritableCols() {
 		var value types.Datum
@@ -590,7 +675,7 @@ func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 		} else {
 			value = r[col.Offset]
 		}
-		if !t.canSkip(col, value) {
+		if !t.canSkip(col, &value) {
 			colIDs = append(colIDs, col.ID)
 			row = append(row, value)
 		}
@@ -961,8 +1046,9 @@ func (t *TableCommon) removeRowIndex(sc *stmtctx.StatementContext, rm kv.Retriev
 }
 
 // buildIndexForRow implements table.Table BuildIndexForRow interface.
-func (t *TableCommon) buildIndexForRow(ctx sessionctx.Context, rm kv.RetrieverMutator, h kv.Handle, vals []types.Datum, idx table.Index, txn kv.Transaction, untouched bool) error {
+func (t *TableCommon) buildIndexForRow(ctx sessionctx.Context, rm kv.RetrieverMutator, h kv.Handle, vals []types.Datum, idx table.Index, txn kv.Transaction, untouched bool, popts ...table.CreateIdxOptFunc) error {
 	var opts []table.CreateIdxOptFunc
+	opts = append(opts, popts...)
 	if untouched {
 		opts = append(opts, table.IndexIsUntouched)
 	}
@@ -1214,7 +1300,7 @@ func (t *TableCommon) getMutation(ctx sessionctx.Context) *binlog.TableMutation 
 	return ctx.StmtGetMutation(t.tableID)
 }
 
-func (t *TableCommon) canSkip(col *table.Column, value types.Datum) bool {
+func (t *TableCommon) canSkip(col *table.Column, value *types.Datum) bool {
 	return CanSkip(t.Meta(), col, value)
 }
 
@@ -1222,7 +1308,7 @@ func (t *TableCommon) canSkip(col *table.Column, value types.Datum) bool {
 // 1. the column is included in primary key;
 // 2. the column's default value is null, and the value equals to that;
 // 3. the column is virtual generated.
-func CanSkip(info *model.TableInfo, col *table.Column, value types.Datum) bool {
+func CanSkip(info *model.TableInfo, col *table.Column, value *types.Datum) bool {
 	if col.IsPKHandleColumn(info) {
 		return true
 	}

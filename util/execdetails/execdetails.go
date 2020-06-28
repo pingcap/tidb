@@ -47,6 +47,20 @@ type ExecDetails struct {
 	CommitDetail     *CommitDetails
 }
 
+type stmtExecDetailKeyType struct{}
+
+// StmtExecDetailKey used to carry StmtExecDetail info in context.Context.
+var StmtExecDetailKey = stmtExecDetailKeyType{}
+
+// StmtExecDetails contains stmt level execution detail info.
+type StmtExecDetails struct {
+	BackoffCount         int64
+	BackoffDuration      int64
+	WaitKVRespDuration   int64
+	WaitPDRespDuration   int64
+	WriteSQLRespDuration time.Duration
+}
+
 // CommitDetails contains commit detail information.
 type CommitDetails struct {
 	GetCommitTsTime        time.Duration

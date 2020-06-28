@@ -109,6 +109,11 @@ max-server-connections = 0
 # Whether new collations are enabled, as indicated by its name, this configuration entry take effect ONLY when a TiDB cluster bootstraps for the first time.
 new_collations_enabled_on_first_bootstrap = false
 
+# When enabled, usage data (for example, instance versions) will be reported to PingCAP periodically for user experience analytics.
+# If this config is set to `false` on all TiDB servers, telemetry will be always disabled regardless of the value of the global variable `tidb_enable_telemetry`.
+# See PingCAP privacy policy for details: https://pingcap.com/en/privacy-policy/
+enable-telemetry = true
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"
@@ -200,8 +205,8 @@ record-db-qps = false
 # Max CPUs to use, 0 use number of CPUs in the machine.
 max-procs = 0
 
-# Max memory size to use, 0 use the total usable memory in the machine.
-max-memory = 0
+# Memory size quota for tidb server, 0 means unlimited
+server-memory-quota = 0
 
 # StmtCountLimit limits the max count of statement inside a transaction.
 stmt-count-limit = 5000

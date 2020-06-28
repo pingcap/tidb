@@ -256,6 +256,30 @@ log-rotate = true`)
 	tmp := err.(*ErrConfigValidationFailed)
 	c.Assert(isAllDeprecatedConfigItems(tmp.UndecodedItems), IsTrue)
 
+	// Test telemetry config default value and whether it will be overwritten.
+	conf = NewConfig()
+	f.Truncate(0)
+	f.Seek(0, 0)
+	c.Assert(f.Sync(), IsNil)
+	c.Assert(conf.Load(configFile), IsNil)
+	c.Assert(conf.EnableTelemetry, Equals, true)
+
+	_, err = f.WriteString(`
+enable-table-lock = true
+`)
+	c.Assert(err, IsNil)
+	c.Assert(f.Sync(), IsNil)
+	c.Assert(conf.Load(configFile), IsNil)
+	c.Assert(conf.EnableTelemetry, Equals, true)
+
+	_, err = f.WriteString(`
+enable-telemetry = false
+`)
+	c.Assert(err, IsNil)
+	c.Assert(f.Sync(), IsNil)
+	c.Assert(conf.Load(configFile), IsNil)
+	c.Assert(conf.EnableTelemetry, Equals, false)
+
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
 
