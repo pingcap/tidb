@@ -918,21 +918,15 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		fmt.Fprintf(buf, " /*T![auto_id_cache] AUTO_ID_CACHE=%d */", tableInfo.AutoIdCache)
 	}
 
-	if tableInfo.AutoRandID != 0 {
-		autoRandomBase := tableInfo.AutoRandID
-
-		if randomAllocator != nil {
-			autoRandID, err := randomAllocator.NextGlobalAutoID(tableInfo.ID)
-			if err != nil {
-				return errors.Trace(err)
-			}
-
-			if autoRandID > 1 {
-				autoRandomBase = autoRandID
-			}
+	if randomAllocator != nil {
+		autoRandID, err := randomAllocator.NextGlobalAutoID(tableInfo.ID)
+		if err != nil {
+			return errors.Trace(err)
 		}
 
-		fmt.Fprintf(buf, " /*T![auto_rand_base] AUTO_RANDOM_BASE=%d */", autoRandomBase)
+		if autoRandID > 1 {
+			fmt.Fprintf(buf, " /*T![auto_rand_base] AUTO_RANDOM_BASE=%d */", autoRandID)
+		}
 	}
 
 	if tableInfo.ShardRowIDBits > 0 {
