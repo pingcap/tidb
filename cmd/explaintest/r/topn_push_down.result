@@ -173,7 +173,7 @@ Projection_13	0.00	root	test.te.expect_time
     ├─TopN_95	0.00	root	test.te.expect_time:asc, offset:0, count:5
     │ └─IndexJoin_36	0.00	root	inner join, inner:IndexLookUp_35, outer key:test.tr.id, inner key:test.te.trade_id
     │   ├─IndexLookUp_74	0.00	root	
-    │   │ ├─Selection_72	0.00	cop	eq(test.tr.business_type, 18), in(test.tr.trade_type, 1)
+    │   │ ├─Selection_72	0.00	cop	eq(test.tr.business_type, 18), eq(test.tr.trade_type, 1)
     │   │ │ └─IndexScan_70	10.00	cop	table:tr, index:shop_identy, trade_status, business_type, trade_pay_status, trade_type, delivery_type, source, biz_date, range:[810094178,810094178], keep order:false, stats:pseudo
     │   │ └─Selection_73	0.00	cop	eq(test.tr.brand_identy, 32314), eq(test.tr.domain_type, 2)
     │   │   └─TableScan_71	0.00	cop	table:tr, keep order:false, stats:pseudo

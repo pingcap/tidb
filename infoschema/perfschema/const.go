@@ -15,7 +15,8 @@ package perfschema
 
 // Performance Schema Name.
 const (
-	Name = "PERFORMANCE_SCHEMA"
+	Name      = "PERFORMANCE_SCHEMA"
+	LowerName = "performance_schema"
 )
 
 // perfSchemaTables is a shortcut to involve all table names.

@@ -261,6 +261,30 @@ func (s *testSuite3) TestCreateView(c *C) {
 	c.Assert(terror.ErrorEqual(err, plannercore.ErrNoSuchTable), IsTrue)
 	tk.MustExec("drop table test_v_nested")
 	tk.MustExec("drop view v_nested, v_nested2")
+
+	// issue 16253
+	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("create definer='root'@'localhost' view v_issue_16253 as select * from t1")
+	tk.MustExec("insert into t values(1)")
+	tk.MustExec("insert into t1 values(1)")
+	tk.MustQuery("select a from t").Check(testkit.Rows("1"))
+	tk.MustExec("update t, v_issue_16253 set t.a = 2 where t.a = v_issue_16253.a")
+	tk.MustQuery("select a from t").Check(testkit.Rows("2"))
+	_, err = tk.Exec("update t, v_issue_16253 set v_issue_16253.a = 2 where t.a = v_issue_16253.a")
+	c.Assert(err.Error(), Equals, "update view v_issue_16253 is not supported now.")
+
+	tk.MustExec("drop database if exists test2")
+	tk.MustExec("create database test2")
+	tk.MustExec("use test2")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1)")
+	tk.MustQuery("select a from t").Check(testkit.Rows("1"))
+	tk.MustExec("update t, test.v_issue_16253 set t.a = 2 where t.a = test.v_issue_16253.a")
+	tk.MustQuery("select a from t").Check(testkit.Rows("2"))
+	_, err = tk.Exec("update t, test.v_issue_16253 set test.v_issue_16253.a = 2 where t.a = test.v_issue_16253.a")
+	c.Assert(err.Error(), Equals, "update view v_issue_16253 is not supported now.")
 }
 
 func (s *testSuite3) TestIssue16250(c *C) {

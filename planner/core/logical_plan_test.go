@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -51,7 +52,9 @@ type testPlanSuite struct {
 func (s *testPlanSuite) SetUpSuite(c *C) {
 	s.is = infoschema.MockInfoSchema([]*model.TableInfo{MockSignedTable(), MockView()})
 	s.ctx = MockContext()
+	s.ctx.GetSessionVars().EnableWindowFunction = true
 	s.Parser = parser.New()
+	s.Parser.EnableWindowFunc(true)
 }
 
 func (s *testPlanSuite) TestPredicatePushDown(c *C) {
@@ -2117,7 +2120,8 @@ func (s *testPlanSuite) TestNameResolver(c *C) {
 		{"delete a from (select * from t ) as a, t", "[planner:1288]The target table a of the DELETE is not updatable"},
 		{"delete b from (select * from t ) as a, t", "[planner:1109]Unknown table 'b' in MULTI DELETE"},
 		{"select '' as fakeCol from t group by values(fakeCol)", "[planner:1054]Unknown column '' in 'VALUES() function'"},
-		{"update t, (select * from t) as b set b.a = t.a", "[planner:1288]The target table b of the UPDATE is not updatable"},
+		{"update t, (select * from ht) as b set b.a = t.a", "[planner:1288]The target table b of the UPDATE is not updatable"},
+		{"select row_number() over () from t group by 1", "[planner:1056]Can't group on 'row_number() over ()'"},
 	}
 
 	ctx := context.Background()
@@ -2583,7 +2587,7 @@ func (s *testPlanSuite) optimize(ctx context.Context, sql string) (PhysicalPlan,
 	return p.(PhysicalPlan), stmt, err
 }
 
-func byItemsToProperty(byItems []*ByItems) *property.PhysicalProperty {
+func byItemsToProperty(byItems []*util.ByItems) *property.PhysicalProperty {
 	pp := &property.PhysicalProperty{}
 	for _, item := range byItems {
 		pp.Items = append(pp.Items, property.Item{Col: item.Expr.(*expression.Column), Desc: item.Desc})
@@ -2669,7 +2673,7 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 		_, err = lp.recursiveDeriveStats()
 		c.Assert(err, IsNil)
 		var ds *DataSource
-		var byItems []*ByItems
+		var byItems []*util.ByItems
 		for ds == nil {
 			switch v := lp.(type) {
 			case *DataSource:
@@ -2726,4 +2730,28 @@ func (s *testPlanSuite) TestFastPlanContextTables(c *C) {
 			c.Assert(len(s.ctx.GetSessionVars().StmtCtx.Tables), Equals, 0)
 		}
 	}
+}
+
+func (s *testPlanSuite) TestSimplyOuterJoinWithOnlyOuterExpr(c *C) {
+	defer testleak.AfterTest(c)()
+	sql := "select * from t t1 right join t t0 ON TRUE where CONCAT_WS(t0.e=t0.e, 0, NULL) IS NULL"
+	ctx := context.TODO()
+	stmt, err := s.ParseOneStmt(sql, "", "")
+	c.Assert(err, IsNil)
+	Preprocess(s.ctx, stmt, s.is)
+	builder := &PlanBuilder{
+		ctx:       MockContext(),
+		is:        s.is,
+		colMapper: make(map[*ast.ColumnNameExpr]int),
+	}
+	p, err := builder.Build(ctx, stmt)
+	c.Assert(err, IsNil)
+	p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
+	c.Assert(err, IsNil)
+	proj, ok := p.(*LogicalProjection)
+	c.Assert(ok, IsTrue)
+	join, ok := proj.Children()[0].(*LogicalJoin)
+	c.Assert(ok, IsTrue)
+	// previous wrong JoinType is InnerJoin
+	c.Assert(join.JoinType, Equals, RightOuterJoin)
 }

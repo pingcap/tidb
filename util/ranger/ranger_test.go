@@ -433,7 +433,7 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		{
 			indexPos:    0,
 			exprStr:     `a in ('a') and b in ('1', 2.0, NULL)`,
-			accessConds: "[in(test.t.a, a) in(test.t.b, 1, 2, <nil>)]",
+			accessConds: "[eq(test.t.a, a) in(test.t.b, 1, 2, <nil>)]",
 			filterConds: "[]",
 			resultStr:   `[["a" 1,"a" 1] ["a" 2,"a" 2]]`,
 		},
@@ -475,7 +475,7 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		{
 			indexPos:    0,
 			exprStr:     "a in (NULL)",
-			accessConds: "[in(test.t.a, <nil>)]",
+			accessConds: "[eq(test.t.a, <nil>)]",
 			filterConds: "[]",
 			resultStr:   "[]",
 		},
@@ -496,14 +496,14 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		{
 			indexPos:    0,
 			exprStr:     "not (a not in (NULL) and a > '2')",
-			accessConds: "[or(in(test.t.a, <nil>), le(test.t.a, 2))]",
+			accessConds: "[or(eq(test.t.a, <nil>), le(test.t.a, 2))]",
 			filterConds: "[]",
 			resultStr:   "[[-inf,\"2\"]]",
 		},
 		{
 			indexPos:    0,
 			exprStr:     "not (a not in (NULL) or a > '2')",
-			accessConds: "[and(in(test.t.a, <nil>), le(test.t.a, 2))]",
+			accessConds: "[and(eq(test.t.a, <nil>), le(test.t.a, 2))]",
 			filterConds: "[]",
 			resultStr:   "[]",
 		},
@@ -558,17 +558,17 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		},
 		{
 			indexPos:    2,
-			exprStr:     `d in ("你好啊")`,
-			accessConds: "[in(test.t.d, 你好啊)]",
-			filterConds: "[in(test.t.d, 你好啊)]",
-			resultStr:   "[[\"你好\",\"你好\"]]",
+			exprStr:     `d in ("你好啊", "再见")`,
+			accessConds: "[in(test.t.d, 你好啊, 再见)]",
+			filterConds: "[in(test.t.d, 你好啊, 再见)]",
+			resultStr:   "[[\"你好\",\"你好\"] [\"再见\",\"再见\"]]",
 		},
 		{
 			indexPos:    2,
 			exprStr:     `d not in ("你好啊")`,
-			accessConds: "[not(in(test.t.d, 你好啊))]",
-			filterConds: "[not(in(test.t.d, 你好啊))]",
-			resultStr:   "[(NULL,+inf]]",
+			accessConds: "[]",
+			filterConds: "[ne(test.t.d, 你好啊)]",
+			resultStr:   "[[NULL,+inf]]",
 		},
 		{
 			indexPos:    2,
@@ -661,9 +661,9 @@ func (s *testRangerSuite) TestIndexRangeForUnsignedInt(c *C) {
 		{
 			indexPos:    0,
 			exprStr:     `a not in (111)`,
-			accessConds: "[not(in(test.t.a, 111))]",
+			accessConds: "[ne(test.t.a, 111)]",
 			filterConds: "[]",
-			resultStr:   `[(NULL,111) (111,+inf]]`,
+			resultStr:   `[[-inf,111) (111,+inf]]`,
 		},
 		{
 			indexPos:    0,

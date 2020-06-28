@@ -71,7 +71,6 @@ var (
 	_ Executor = &TableScanExec{}
 	_ Executor = &TopNExec{}
 	_ Executor = &UnionExec{}
-	_ Executor = &CheckIndexExec{}
 	_ Executor = &HashJoinExec{}
 	_ Executor = &IndexLookUpExecutor{}
 	_ Executor = &MergeJoinExec{}
@@ -481,6 +480,7 @@ type CheckTableExec struct {
 	is         infoschema.InfoSchema
 	exitCh     chan struct{}
 	retCh      chan error
+	checkIndex bool
 }
 
 // Open implements the Executor Open interface.
@@ -568,6 +568,10 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	greater, idxOffset, err := admin.CheckIndicesCount(e.ctx, e.dbName, e.table.Meta().Name.O, idxNames)
 	if err != nil {
+		// For admin check index statement, for speed up and compatibility, doesn't do below checks.
+		if e.checkIndex {
+			return errors.Trace(err)
+		}
 		if greater == admin.IdxCntGreater {
 			err = e.checkTableIndexHandle(ctx, e.indexInfos[idxOffset])
 		} else if greater == admin.TblCntGreater {
@@ -590,7 +594,7 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			util.WithRecovery(func() {
 				err1 := e.checkIndexHandle(ctx, e.srcs[num])
 				if err1 != nil {
-					logutil.Logger(ctx).Info("check index handle failed", zap.Error(err))
+					logutil.Logger(ctx).Info("check index handle failed", zap.Error(err1))
 				}
 			}, e.handlePanic)
 		}(i)
@@ -629,61 +633,6 @@ func (e *CheckTableExec) checkTableRecord(idxOffset int) error {
 		idx := tables.NewIndex(def.ID, e.table.Meta(), idxInfo)
 		if err := admin.CheckRecordAndIndex(e.ctx, txn, partition, idx, genExprs); err != nil {
 			return errors.Trace(err)
-		}
-	}
-	return nil
-}
-
-// CheckIndexExec represents the executor of checking an index.
-// It is built from the "admin check index" statement, and it checks
-// the consistency of the index data with the records of the table.
-type CheckIndexExec struct {
-	baseExecutor
-
-	dbName    string
-	tableName string
-	idxName   string
-	src       *IndexLookUpExecutor
-	done      bool
-	is        infoschema.InfoSchema
-}
-
-// Open implements the Executor Open interface.
-func (e *CheckIndexExec) Open(ctx context.Context) error {
-	if err := e.baseExecutor.Open(ctx); err != nil {
-		return err
-	}
-	if err := e.src.Open(ctx); err != nil {
-		return err
-	}
-	e.done = false
-	return nil
-}
-
-// Close implements the Executor Close interface.
-func (e *CheckIndexExec) Close() error {
-	return e.src.Close()
-}
-
-// Next implements the Executor Next interface.
-func (e *CheckIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	if e.done {
-		return nil
-	}
-	defer func() { e.done = true }()
-
-	_, _, err := admin.CheckIndicesCount(e.ctx, e.dbName, e.tableName, []string{e.idxName})
-	if err != nil {
-		return err
-	}
-	chk := newFirstChunk(e.src)
-	for {
-		err := Next(ctx, e.src, chk)
-		if err != nil {
-			return err
-		}
-		if chk.NumRows() == 0 {
-			break
 		}
 	}
 	return nil
@@ -974,7 +923,7 @@ func init() {
 	// While doing optimization in the plan package, we need to execute uncorrelated subquery,
 	// but the plan package cannot import the executor package because of the dependency cycle.
 	// So we assign a function implemented in the executor package to the plan package to avoid the dependency cycle.
-	plannercore.EvalSubquery = func(ctx context.Context, p plannercore.PhysicalPlan, is infoschema.InfoSchema, sctx sessionctx.Context) (rows [][]types.Datum, err error) {
+	plannercore.EvalSubqueryFirstRow = func(ctx context.Context, p plannercore.PhysicalPlan, is infoschema.InfoSchema, sctx sessionctx.Context) ([]types.Datum, error) {
 		if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 			span1 := span.Tracer().StartSpan("executor.EvalSubQuery", opentracing.ChildOf(span.Context()))
 			defer span1.Finish()
@@ -983,28 +932,24 @@ func init() {
 		e := &executorBuilder{is: is, ctx: sctx}
 		exec := e.build(p)
 		if e.err != nil {
-			return rows, e.err
+			return nil, e.err
 		}
-		err = exec.Open(ctx)
+		err := exec.Open(ctx)
 		defer terror.Call(exec.Close)
 		if err != nil {
-			return rows, err
+			return nil, err
 		}
 		chk := newFirstChunk(exec)
 		for {
 			err = Next(ctx, exec, chk)
 			if err != nil {
-				return rows, err
+				return nil, err
 			}
 			if chk.NumRows() == 0 {
-				return rows, nil
+				return nil, nil
 			}
-			iter := chunk.NewIterator4Chunk(chk)
-			for r := iter.Begin(); r != iter.End(); r = iter.Next() {
-				row := r.GetDatumRow(retTypes(exec))
-				rows = append(rows, row)
-			}
-			chk = chunk.Renew(chk, sctx.GetSessionVars().MaxChunkSize)
+			row := chk.GetRow(0).GetDatumRow(retTypes(exec))
+			return row, err
 		}
 	}
 }

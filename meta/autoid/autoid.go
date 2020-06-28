@@ -44,6 +44,20 @@ var step = int64(30000)
 
 var errInvalidTableID = terror.ClassAutoid.New(codeInvalidTableID, "invalid TableID")
 
+// CustomAutoIncCacheOption is one kind of AllocOption to customize the allocator step length.
+type CustomAutoIncCacheOption int64
+
+// ApplyOn is implement the AllocOption interface.
+func (step CustomAutoIncCacheOption) ApplyOn(alloc *allocator) {
+	alloc.step = int64(step)
+	alloc.customStep = true
+}
+
+// AllocOption is a interface to define allocator custom options coming in future.
+type AllocOption interface {
+	ApplyOn(*allocator)
+}
+
 // Allocator is an auto increment id generator.
 // Just keep id unique actually.
 type Allocator interface {
@@ -78,6 +92,7 @@ type allocator struct {
 	isUnsigned    bool
 	lastAllocTime time.Time
 	step          int64
+	customStep    bool
 }
 
 // GetStep is only used by tests
@@ -230,6 +245,11 @@ func (alloc *allocator) Rebase(tableID, requiredBase int64, allocIDs bool) error
 
 // NextStep return new auto id step according to previous step and consuming time.
 func NextStep(curStep int64, consumeDur time.Duration) int64 {
+	failpoint.Inject("mockAutoIDCustomize", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(3)
+		}
+	})
 	failpoint.Inject("mockAutoIDChange", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(step)
@@ -247,14 +267,18 @@ func NextStep(curStep int64, consumeDur time.Duration) int64 {
 }
 
 // NewAllocator returns a new auto increment id generator on the store.
-func NewAllocator(store kv.Storage, dbID int64, isUnsigned bool) Allocator {
-	return &allocator{
+func NewAllocator(store kv.Storage, dbID int64, isUnsigned bool, opts ...AllocOption) Allocator {
+	alloc := &allocator{
 		store:         store,
 		dbID:          dbID,
 		isUnsigned:    isUnsigned,
 		step:          step,
 		lastAllocTime: time.Now(),
 	}
+	for _, fn := range opts {
+		fn.ApplyOn(alloc)
+	}
+	return alloc
 }
 
 //codeInvalidTableID is the code of autoid error.
@@ -362,14 +386,11 @@ func (alloc *allocator) alloc4Signed(tableID int64, n uint64, increment, offset 
 	if alloc.base+n1 > alloc.end {
 		var newBase, newEnd int64
 		startTime := time.Now()
-		// Although it may skip a segment here, we still think it is consumed.
-		consumeDur := startTime.Sub(alloc.lastAllocTime)
-		nextStep := NextStep(alloc.step, consumeDur)
-		// Make sure nextStep is big enough.
-		if nextStep <= n1 {
-			alloc.step = mathutil.MinInt64(n1*2, maxStep)
-		} else {
-			alloc.step = nextStep
+		nextStep := alloc.step
+		if !alloc.customStep {
+			// Although it may skip a segment here, we still think it is consumed.
+			consumeDur := startTime.Sub(alloc.lastAllocTime)
+			nextStep = NextStep(alloc.step, consumeDur)
 		}
 		err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
 			m := meta.NewMeta(txn)
@@ -378,7 +399,13 @@ func (alloc *allocator) alloc4Signed(tableID int64, n uint64, increment, offset 
 			if err1 != nil {
 				return err1
 			}
-			tmpStep := mathutil.MinInt64(math.MaxInt64-newBase, alloc.step)
+			// CalcNeededBatchSize calculates the total batch size needed on global base.
+			n1 = CalcNeededBatchSize(newBase, int64(n), increment, offset, alloc.isUnsigned)
+			// Although the step is customized by user, we still need to make sure nextStep is big enough for insert batch.
+			if nextStep < n1 {
+				nextStep = n1
+			}
+			tmpStep := mathutil.MinInt64(math.MaxInt64-newBase, nextStep)
 			// The global rest is not enough for alloc.
 			if tmpStep < n1 {
 				return ErrAutoincReadFailed
@@ -389,6 +416,10 @@ func (alloc *allocator) alloc4Signed(tableID int64, n uint64, increment, offset 
 		metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 		if err != nil {
 			return 0, 0, err
+		}
+		// Store the step for non-customized-step allocator to calculate next dynamic step.
+		if !alloc.customStep {
+			alloc.step = nextStep
 		}
 		alloc.lastAllocTime = time.Now()
 		if newBase == math.MaxInt64 {
@@ -424,14 +455,11 @@ func (alloc *allocator) alloc4Unsigned(tableID int64, n uint64, increment, offse
 	if uint64(alloc.base)+uint64(n1) > uint64(alloc.end) {
 		var newBase, newEnd int64
 		startTime := time.Now()
-		// Although it may skip a segment here, we still treat it as consumed.
-		consumeDur := startTime.Sub(alloc.lastAllocTime)
-		nextStep := NextStep(alloc.step, consumeDur)
-		// Make sure nextStep is big enough.
-		if nextStep <= n1 {
-			alloc.step = mathutil.MinInt64(n1*2, maxStep)
-		} else {
-			alloc.step = nextStep
+		nextStep := alloc.step
+		if !alloc.customStep {
+			// Although it may skip a segment here, we still treat it as consumed.
+			consumeDur := startTime.Sub(alloc.lastAllocTime)
+			nextStep = NextStep(alloc.step, consumeDur)
 		}
 		err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
 			m := meta.NewMeta(txn)
@@ -440,7 +468,13 @@ func (alloc *allocator) alloc4Unsigned(tableID int64, n uint64, increment, offse
 			if err1 != nil {
 				return err1
 			}
-			tmpStep := int64(mathutil.MinUint64(math.MaxUint64-uint64(newBase), uint64(alloc.step)))
+			// CalcNeededBatchSize calculates the total batch size needed on new base.
+			n1 = CalcNeededBatchSize(newBase, int64(n), increment, offset, alloc.isUnsigned)
+			// Although the step is customized by user, we still need to make sure nextStep is big enough for insert batch.
+			if nextStep < n1 {
+				nextStep = n1
+			}
+			tmpStep := int64(mathutil.MinUint64(math.MaxUint64-uint64(newBase), uint64(nextStep)))
 			// The global rest is not enough for alloc.
 			if tmpStep < n1 {
 				return ErrAutoincReadFailed
@@ -451,6 +485,10 @@ func (alloc *allocator) alloc4Unsigned(tableID int64, n uint64, increment, offse
 		metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 		if err != nil {
 			return 0, 0, err
+		}
+		// Store the step for non-customized-step allocator to calculate next dynamic step.
+		if !alloc.customStep {
+			alloc.step = nextStep
 		}
 		alloc.lastAllocTime = time.Now()
 		if uint64(newBase) == math.MaxUint64 {
@@ -467,4 +505,12 @@ func (alloc *allocator) alloc4Unsigned(tableID int64, n uint64, increment, offse
 	// Use uint64 n directly.
 	alloc.base = int64(uint64(alloc.base) + uint64(n1))
 	return min, alloc.base, nil
+}
+
+// TestModifyBaseAndEndInjection exported for testing modifying the base and end.
+func TestModifyBaseAndEndInjection(alloc Allocator, base, end int64) {
+	alloc.(*allocator).mu.Lock()
+	alloc.(*allocator).base = base
+	alloc.(*allocator).end = end
+	alloc.(*allocator).mu.Unlock()
 }
