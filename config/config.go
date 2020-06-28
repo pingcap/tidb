@@ -143,6 +143,8 @@ type Config struct {
 	EnableCollectExecutionInfo bool `toml:"enable-collect-execution-info" json:"enable-collect-execution-info"`
 	// SkipRegisterToDashboard tells TiDB don't register itself to the dashboard.
 	SkipRegisterToDashboard bool `toml:"skip-register-to-dashboard" json:"skip-register-to-dashboard"`
+	// EnableTelemetry enables the usage data report to PingCAP.
+	EnableTelemetry bool `toml:"enable-telemetry" json:"enable-telemetry"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -688,6 +690,7 @@ var defaultConf = Config{
 		AllowsExpressionIndex: false,
 	},
 	EnableCollectExecutionInfo: false,
+	EnableTelemetry:            true,
 }
 
 var (

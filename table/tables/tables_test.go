@@ -559,3 +559,43 @@ func (ts *testSuite) TestHiddenColumn(c *C) {
 		"e|int(11)|YES||<nil>|",
 		"f|tinyint(4)|YES||<nil>|VIRTUAL GENERATED"))
 }
+
+func (ts *testSuite) TestAddRecordWithCtx(c *C) {
+	ts.se.Execute(context.Background(), "DROP TABLE IF EXISTS test.tRecord")
+	_, err := ts.se.Execute(context.Background(), "CREATE TABLE test.tRecord (a bigint unsigned primary key, b varchar(255))")
+	c.Assert(err, IsNil)
+	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tRecord"))
+	c.Assert(err, IsNil)
+	defer ts.se.Execute(context.Background(), "DROP TABLE test.tRecord")
+
+	c.Assert(ts.se.NewTxn(context.Background()), IsNil)
+	txn, err := ts.se.Txn(true)
+	c.Assert(err, IsNil)
+	store := kv.NewStagingBufferStore(txn)
+	recordCtx := tables.NewCommonAddRecordCtx(len(tb.Cols()), store)
+	tables.SetAddRecordCtx(ts.se, recordCtx)
+	defer tables.ClearAddRecordCtx(ts.se)
+
+	records := [][]types.Datum{types.MakeDatums(uint64(1), "abc"), types.MakeDatums(uint64(2), "abcd")}
+	for _, r := range records {
+		rid, err := tb.AddRecord(ts.se, r)
+		c.Assert(err, IsNil)
+		row, err := tb.Row(ts.se, rid)
+		c.Assert(err, IsNil)
+		c.Assert(len(row), Equals, len(r))
+		c.Assert(row[0].Kind(), Equals, types.KindUint64)
+	}
+
+	i := 0
+	err = tb.IterRecords(ts.se, tb.FirstKey(), tb.Cols(), func(h int64, rec []types.Datum, cols []*table.Column) (bool, error) {
+		i++
+		return true, nil
+	})
+	c.Assert(err, IsNil)
+	c.Assert(i, Equals, len(records))
+
+	c.Assert(ts.se.StmtCommit(nil), IsNil)
+	txn, err = ts.se.Txn(true)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Commit(context.Background()), IsNil)
+}

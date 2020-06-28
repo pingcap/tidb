@@ -507,14 +507,15 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 		}
 		w.waitDependencyJobFinished(job, &waitDependencyJobCnt)
 
-		d.mu.RLock()
-		d.mu.hook.OnJobUpdated(job)
-		d.mu.RUnlock()
-
 		// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
 		// If the job is done or still running or rolling back, we will wait 2 * lease time to guarantee other servers to update
 		// the newest schema.
 		w.waitSchemaChanged(nil, d, waitTime, schemaVer, job)
+
+		d.mu.RLock()
+		d.mu.hook.OnJobUpdated(job)
+		d.mu.RUnlock()
+
 		if job.IsSynced() || job.IsCancelled() {
 			asyncNotify(d.ddlJobDoneCh)
 		}
