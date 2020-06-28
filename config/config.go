@@ -141,6 +141,8 @@ type Config struct {
 	Experimental Experimental `toml:"experimental" json:"experimental"`
 	// EnableCollectExecutionInfo enables the TiDB to collect execution info.
 	EnableCollectExecutionInfo bool `toml:"enable-collect-execution-info" json:"enable-collect-execution-info"`
+	// EnableTelemetry enables the usage data report to PingCAP.
+	EnableTelemetry bool `toml:"enable-telemetry" json:"enable-telemetry"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -363,8 +365,10 @@ type Status struct {
 
 // Performance is the performance section of the config.
 type Performance struct {
-	MaxProcs             uint    `toml:"max-procs" json:"max-procs"`
+	MaxProcs uint `toml:"max-procs" json:"max-procs"`
+	// Deprecated: use ServerMemoryQuota instead
 	MaxMemory            uint64  `toml:"max-memory" json:"max-memory"`
+	ServerMemoryQuota    uint64  `toml:"server-memory-quota" json:"server-memory-quota"`
 	StatsLease           string  `toml:"stats-lease" json:"stats-lease"`
 	StmtCountLimit       uint    `toml:"stmt-count-limit" json:"stmt-count-limit"`
 	FeedbackProbability  float64 `toml:"feedback-probability" json:"feedback-probability"`
@@ -603,6 +607,7 @@ var defaultConf = Config{
 	},
 	Performance: Performance{
 		MaxMemory:            0,
+		ServerMemoryQuota:    0,
 		TCPKeepAlive:         true,
 		CrossJoin:            true,
 		StatsLease:           "3s",
@@ -683,6 +688,7 @@ var defaultConf = Config{
 		AllowsExpressionIndex: false,
 	},
 	EnableCollectExecutionInfo: false,
+	EnableTelemetry:            true,
 }
 
 var (
@@ -714,6 +720,7 @@ var deprecatedConfig = map[string]struct{}{
 	"txn-local-latches":          {},
 	"txn-local-latches.enabled":  {},
 	"txn-local-latches.capacity": {},
+	"performance.max-memory":     {},
 	"max-txn-time-use":           {},
 }
 

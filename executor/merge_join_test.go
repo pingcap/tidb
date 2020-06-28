@@ -459,6 +459,10 @@ func (s *testSuite2) Test3WaysMergeJoin(c *C) {
 
 func (s *testSuite2) TestMergeJoinDifferentTypes(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@session.tidb_executor_concurrency = 4;")
+	tk.MustExec("set @@session.tidb_hash_join_concurrency = 5;")
+	tk.MustExec("set @@session.tidb_distsql_scan_concurrency = 15;")
+
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t1;`)
 	tk.MustExec(`drop table if exists t2;`)
