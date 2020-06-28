@@ -232,8 +232,12 @@ func (p *PhysicalIndexLookUpReader) Clone() (PhysicalPlan, error) {
 	if cloned.tablePlan, err = p.tablePlan.Clone(); err != nil {
 		return nil, err
 	}
-	cloned.ExtraHandleCol = p.ExtraHandleCol.Clone().(*expression.Column)
-	cloned.PushedLimit = p.PushedLimit.Clone()
+	if p.ExtraHandleCol != nil {
+		cloned.ExtraHandleCol = p.ExtraHandleCol.Clone().(*expression.Column)
+	}
+	if p.PushedLimit != nil {
+		cloned.PushedLimit = p.PushedLimit.Clone()
+	}
 	return cloned, nil
 }
 
