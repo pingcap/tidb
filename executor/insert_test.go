@@ -20,7 +20,12 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/config"
+=======
+	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/meta/autoid"
+>>>>>>> 6e7994a... ddl: limit the range of auto_random_base (#18188)
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -905,6 +910,12 @@ func (s *testAutoRandomSuite) TestAutoRandomID(c *C) {
 	tk.MustQuery(`select last_insert_id()`).Check(testkit.Rows(fmt.Sprintf("%d", firstValue)))
 
 	tk.MustExec(`drop table ar`)
+	tk.MustExec(`create table ar (id bigint key auto_random(15), name char(10))`)
+	overflowVal := 1 << (64 - 5)
+	errMsg := fmt.Sprintf(autoid.AutoRandomRebaseOverflow, overflowVal, 1<<(64-16)-1)
+	_, err = tk.Exec(fmt.Sprintf("alter table ar auto_random_base = %d", overflowVal))
+	c.Assert(err, NotNil)
+	c.Assert(strings.Contains(err.Error(), errMsg), IsTrue)
 }
 
 func (s *testAutoRandomSuite) TestMultiAutoRandomID(c *C) {

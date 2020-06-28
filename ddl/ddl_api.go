@@ -2150,7 +2150,35 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 	if err != nil {
 		return errors.Trace(err)
 	}
+<<<<<<< HEAD
 	autoIncID, err := t.Allocator(ctx, tp).NextGlobalAutoID(t.Meta().ID)
+=======
+	var actionType model.ActionType
+	switch tp {
+	case autoid.AutoRandomType:
+		tbInfo := t.Meta()
+		if tbInfo.AutoRandomBits == 0 {
+			return errors.Trace(ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomRebaseNotApplicable))
+		}
+		var autoRandColTp types.FieldType
+		for _, c := range tbInfo.Columns {
+			if mysql.HasPriKeyFlag(c.Flag) {
+				autoRandColTp = c.FieldType
+				break
+			}
+		}
+		layout := autoid.NewAutoRandomIDLayout(&autoRandColTp, tbInfo.AutoRandomBits)
+		if layout.IncrementalMask()&newBase != newBase {
+			errMsg := fmt.Sprintf(autoid.AutoRandomRebaseOverflow, newBase, layout.IncrementalBitsCapacity())
+			return errors.Trace(ErrInvalidAutoRandom.GenWithStackByArgs(errMsg))
+		}
+		actionType = model.ActionRebaseAutoRandomBase
+	case autoid.RowIDAllocType:
+		actionType = model.ActionRebaseAutoID
+	}
+
+	autoID, err := t.Allocators(ctx).Get(tp).NextGlobalAutoID(t.Meta().ID)
+>>>>>>> 6e7994a... ddl: limit the range of auto_random_base (#18188)
 	if err != nil {
 		return errors.Trace(err)
 	}
