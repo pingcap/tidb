@@ -1,8 +1,16 @@
 #!/bin/sh
 
+SQL="$1"
+shift
+
 set -e
 
-echo "[$(date)] Executing SQL: $1"
+echo "[$(date)] Executing SQL: $SQL"
 
-mysql --defaults-extra-file="$DUMPLING_TEST_DIR/mysql.cnf" \
-  --database="$DUMPLING_TEST_DATABASE" -e "$1"
+mysql \
+  -u "$DUMPLING_TEST_USER" \
+  -h 127.0.0.1 \
+  -P "$DUMPLING_TEST_PORT" \
+  --default-character-set=utf8mb4 \
+  --database="$DUMPLING_TEST_DATABASE" \
+  -E -e "$SQL" "$@"

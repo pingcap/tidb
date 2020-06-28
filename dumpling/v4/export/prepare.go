@@ -4,8 +4,10 @@ import (
 	"database/sql"
 	"strings"
 
+	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/dumpling/v4/log"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb-tools/pkg/utils"
 )
 
 func adjustConfig(conf *Config) error {
@@ -18,6 +20,18 @@ func adjustConfig(conf *Config) error {
 			File:   conf.LogFile,
 			Format: conf.LogFormat,
 		})
+		if err != nil {
+			return err
+		}
+	}
+
+	// Register TLS config
+	if len(conf.Security.CAPath) > 0 {
+		tlsConfig, err := utils.ToTLSConfig(conf.Security.CAPath, conf.Security.CertPath, conf.Security.KeyPath)
+		if err != nil {
+			return err
+		}
+		err = mysql.RegisterTLSConfig("dumpling-tls-target", tlsConfig)
 		if err != nil {
 			return err
 		}

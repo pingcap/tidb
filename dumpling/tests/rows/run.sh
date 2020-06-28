@@ -8,11 +8,11 @@ TABLE_NAME="t"
 
 # drop database on tidb
 export DUMPLING_TEST_PORT=4000
-run_sql "drop database if exists $DB_NAME;"
+run_sql "drop database if exists \`$DB_NAME\`;"
 
 # drop database on mysql
 export DUMPLING_TEST_PORT=3306
-run_sql "drop database if exists $DB_NAME;"
+run_sql "drop database if exists \`$DB_NAME\`;"
 
 # build data on mysql
 run_sql "create database $DB_NAME;"
