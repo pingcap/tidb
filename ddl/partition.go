@@ -812,9 +812,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	// exchange table meta id
 	partDef.ID = nt.ID
 
-	// Clear the tiflash replica available status.
 	if pt.TiFlashReplica != nil {
-		// Set partition replica become unavailable.
 		for i, id := range pt.TiFlashReplica.AvailablePartitionIDs {
 			if id == tempID {
 				pt.TiFlashReplica.AvailablePartitionIDs[i] = partDef.ID
