@@ -864,7 +864,9 @@ func benchmarkHashJoinExecWithCase(b *testing.B, casTest *hashJoinTestCase) {
 			totalRow += chk.NumRows()
 		}
 
+		b.StopTimer()
 		time.Sleep(200 * time.Millisecond)
+		b.StartTimer()
 		if spilled := exec.rowContainer.alreadySpilledSafe(); spilled != casTest.disk {
 			b.Fatal("wrong usage with disk:", spilled, casTest.disk)
 		}

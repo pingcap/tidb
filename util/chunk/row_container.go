@@ -166,6 +166,9 @@ func (c *RowContainer) GetChunk(chkIdx int) (*Chunk, error) {
 	if !c.alreadySpilled() {
 		return c.m.records.GetChunk(chkIdx), nil
 	}
+	if c.m.spillError != nil {
+		return nil, c.m.spillError
+	}
 	chk := NewChunkWithCapacity(c.m.records.FieldTypes(), c.m.recordsInDisk.NumRowsOfChunk(chkIdx))
 	offsets := c.m.recordsInDisk.offsets[chkIdx]
 	for rowIdx := range offsets {
@@ -203,6 +206,8 @@ func (c *RowContainer) GetDiskTracker() *disk.Tracker {
 
 // Close close the RowContainer
 func (c *RowContainer) Close() (err error) {
+	c.m.RLock()
+	defer c.m.RUnlock()
 	if c.alreadySpilled() {
 		err = c.m.recordsInDisk.Close()
 		c.m.recordsInDisk = nil
@@ -356,6 +361,7 @@ func (c *SortedRowContainer) Sort() {
 		}
 	}
 	sort.Slice(c.ptrM.rowPtrs, c.keyColumnsLess)
+	c.GetMemTracker().Consume(int64(8 * c.numRow))
 }
 
 func (c *SortedRowContainer) sortAndSpillToDisk() {

@@ -234,7 +234,6 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		}
 		if err := e.rowChunks.Add(chk); err != nil {
 			if errors.Is(err, chunk.ErrCannotAddBecauseSorted) {
-				e.rowChunks.GetMemTracker().Consume(int64(8 * e.rowChunks.NumRow()))
 				e.partitionList = append(e.partitionList, e.rowChunks)
 				e.rowChunks = chunk.NewSortedRowContainer(fields, e.maxChunkSize, byItemsDesc, e.keyColumns, e.keyCmpFuncs)
 				e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
@@ -251,7 +250,6 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	}
 	if e.rowChunks.NumRow() > 0 {
 		e.rowChunks.Sort()
-		e.rowChunks.GetMemTracker().Consume(int64(8 * e.rowChunks.NumRow()))
 		e.partitionList = append(e.partitionList, e.rowChunks)
 	}
 	return nil
