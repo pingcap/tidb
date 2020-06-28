@@ -858,7 +858,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		}.Init(ds.ctx, ds.blockOffset)
 		ts.schema = is.dataSourceSchema.Clone()
 		if ds.tableInfo.IsCommonHandle {
-			cop.commonHandleCols = ts.appendCommonHandleCols(ds)
+			cop.commonHandleCols = ds.commonHandleCols
 		}
 		// If inner cop task need keep order, the extraHandleCol should be set.
 		if cop.keepOrder {
