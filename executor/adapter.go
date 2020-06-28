@@ -767,7 +767,7 @@ func FormatSQL(sql string, pps variable.PreparedParams) stringutil.StringerFunc 
 		}
 		replaceSQL := QueryReplacer.Replace(sql)
 		if len(pps) == 0 {
-			return replaceSQL + pps.String()
+			return replaceSQL
 		}
 
 		sqlBuffer := bytes.NewBuffer([]byte{})

@@ -17,7 +17,9 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -53,6 +55,22 @@ func (s *testSuiteP2) TestFormatSQL(c *C) {
 	}
 	preparedSQL := executor.FormatSQL("select ?, ?, ?, ?, ?, ?, ?;", preparedParams)()
 	c.Check(preparedSQL, Equals, "select 1, 2, \"hello, 世界\", [1, 2, 3], {}, {\"a\": \"9223372036854775809\"}, 2011-11-10 11:11:11.111111;")
+
+	cfg := config.NewConfig()
+	cfg.Log.QueryLogMaxLen = 10
+	config.StoreGlobalConfig(cfg)
+	preparedSQL = executor.FormatSQL("select ?, ?, ?, ?, ?, ?, ?;", preparedParams)()
+	c.Check(preparedSQL, Equals, "\"select 1, \"(len:27)")
+
+	config.StoreGlobalConfig(config.NewConfig())
+	preparedParams = variable.PreparedParams{
+		types.NewIntDatum(1),
+	}
+	preparedSQL = executor.FormatSQL("select count(*), ?;", preparedParams)()
+	c.Check(preparedSQL, Equals, "select count(*), 1;")
+
+	normalized, _ := parser.NormalizeDigest("select count(*);")
+	c.Check(normalized, Equals, "select count(*);")
 }
 
 // mustParseTimeIntoDatum is similar to ParseTime but panic if any error occurs.
