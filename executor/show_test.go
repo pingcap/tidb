@@ -833,7 +833,7 @@ func (s *testAutoRandomSuite) TestAutoRandomBase(c *C) {
 			"  `b` int(11) NOT NULL AUTO_INCREMENT,\n"+
 			"  PRIMARY KEY (`a`),\n"+
 			"  UNIQUE KEY `b` (`b`)\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=2000100 /*T![auto_rand_base] AUTO_RANDOM_BASE=2000100 */",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=2000100 /*T![auto_rand_base] AUTO_RANDOM_BASE=6001 */",
 	))
 }
 
