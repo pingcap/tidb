@@ -526,19 +526,6 @@ func (s *testStateChangeSuite) TestWriteOnlyOnDupUpdate(c *C) {
 	s.runTestInSchemaState(c, model.StateWriteOnly, true, addColumnSQL, sqls, expectQuery)
 }
 
-<<<<<<< HEAD
-=======
-func (s *testStateChangeSuite) TestWriteOnlyOnDupUpdateForAddColumns(c *C) {
-	sqls := make([]sqlWithErr, 3)
-	sqls[0] = sqlWithErr{"delete from t", nil}
-	sqls[1] = sqlWithErr{"insert t set c1 = 'c1_dup', c3 = '2018-02-12', c4 = 2 on duplicate key update c1 = values(c1)", nil}
-	sqls[2] = sqlWithErr{"insert t set c1 = 'c1_new', c3 = '2019-02-12', c4 = 2 on duplicate key update c1 = values(c1)", nil}
-	addColumnsSQL := "alter table t add column c5 int not null default 1 after c4, add column c44 int not null default 1"
-	expectQuery := &expectQuery{"select c4, c5, c44 from t", []string{"2 1 1"}}
-	s.runTestInSchemaState(c, model.StateWriteOnly, true, addColumnsSQL, sqls, expectQuery)
-}
-
->>>>>>> 2acd1f2... ddl: stabilize ddl tests (#18205)
 // TestWriteOnly tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
 func (s *testStateChangeSuite) TestWriteOnly(c *C) {
 	sqls := make([]sqlWithErr, 3)
