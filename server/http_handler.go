@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/gcworker"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -1654,7 +1655,7 @@ type dbTableInfo struct {
 	SchemaVersion int64            `json:"schema_version"`
 }
 
-//ServeHTTP handles request of database information and table information by tableID.
+// ServeHTTP handles request of database information and table information by tableID.
 func (h dbTableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	params := mux.Vars(req)
 	tableID := params[pTableID]
@@ -1695,4 +1696,72 @@ func (h dbTableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	dbTblInfo.TableInfo = tbl.Meta()
 	dbTblInfo.DBInfo = dbInfo
 	writeData(w, dbTblInfo)
+}
+
+// testHandler is the handler for tests. It's convenient to provide some APIs for integration tests.
+type testHandler struct {
+	*tikvHandlerTool
+	gcIsRunning uint32
+}
+
+// ServeHTTP handles test related requests.
+func (h *testHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	params := mux.Vars(req)
+	mod := strings.ToLower(params["mod"])
+	op := strings.ToLower(params["op"])
+
+	switch mod {
+	case "gc":
+		h.handleGC(op, w, req)
+	default:
+		writeError(w, errors.NotSupportedf("module(%s)", mod))
+	}
+}
+
+// Supported operations:
+//   * resolvelock?safepoint={uint64}&physical={bool}:
+//	   * safepoint: resolve all locks whose timestamp is less than the safepoint.
+//	   * physical: whether it uses physical(green GC) mode to scan locks. Default is true.
+func (h *testHandler) handleGC(op string, w http.ResponseWriter, req *http.Request) {
+	if !atomic.CompareAndSwapUint32(&h.gcIsRunning, 0, 1) {
+		writeError(w, errors.New("GC is running"))
+		return
+	}
+	defer atomic.StoreUint32(&h.gcIsRunning, 0)
+
+	switch op {
+	case "resolvelock":
+		h.handleGCResolveLocks(w, req)
+	default:
+		writeError(w, errors.NotSupportedf("operation(%s)", op))
+	}
+}
+
+func (h *testHandler) handleGCResolveLocks(w http.ResponseWriter, req *http.Request) {
+	s := req.FormValue("safepoint")
+	safePoint, err := strconv.ParseUint(s, 10, 64)
+	if err != nil {
+		writeError(w, errors.Errorf("parse safePoint(%s) failed", s))
+		return
+	}
+	usePhysical := true
+	s = req.FormValue("physical")
+	if s != "" {
+		usePhysical, err = strconv.ParseBool(s)
+		if err != nil {
+			writeError(w, errors.Errorf("parse physical(%s) failed", s))
+			return
+		}
+	}
+
+	ctx := req.Context()
+	logutil.Logger(ctx).Info("start resolving locks", zap.Uint64("safePoint", safePoint), zap.Bool("physical", usePhysical))
+	physicalUsed, err := gcworker.RunResolveLocks(ctx, h.Store, h.RegionCache.PDClient(), safePoint, "testGCWorker", 3, usePhysical)
+	if err != nil {
+		writeError(w, errors.Annotate(err, "resolveLocks failed"))
+	} else {
+		writeData(w, map[string]interface{}{
+			"physicalUsed": physicalUsed,
+		})
+	}
 }

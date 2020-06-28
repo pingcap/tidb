@@ -241,6 +241,10 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		dom.Close()
 		store.Close()
 	}()
+	testKit.MustExec("set @@session.tidb_executor_concurrency = 4;")
+	testKit.MustExec("set @@session.tidb_hash_join_concurrency = 5;")
+	testKit.MustExec("set @@session.tidb_distsql_scan_concurrency = 15;")
+
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t, t1")
 	testKit.MustExec("create table t (a int primary key, b int, c varchar(200), d datetime DEFAULT CURRENT_TIMESTAMP, e int, ts timestamp DEFAULT CURRENT_TIMESTAMP)")
@@ -431,13 +435,13 @@ func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
 		store.Close()
 	}()
 
-	cfg := config.GetGlobalConfig()
-	orgEnable := cfg.PreparedPlanCache.Enabled
-	orgCapacity := cfg.PreparedPlanCache.Capacity
+	defer config.RestoreFunc()()
 	flags := []bool{false, true}
 	for _, flag := range flags {
-		cfg.PreparedPlanCache.Enabled = flag
-		cfg.PreparedPlanCache.Capacity = 100
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.PreparedPlanCache.Enabled = flag
+			conf.PreparedPlanCache.Capacity = 100
+		})
 		testKit := testkit.NewTestKit(c, store)
 		testKit.MustExec("use test")
 		testKit.MustExec("drop table if exists t")
@@ -460,8 +464,6 @@ func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
 
 		c.Assert(core.ToString(p), Equals, best, Commentf("for %s", sql))
 	}
-	cfg.PreparedPlanCache.Enabled = orgEnable
-	cfg.PreparedPlanCache.Capacity = orgCapacity
 }
 
 func (s *testAnalyzeSuite) TestNullCount(c *C) {
@@ -777,6 +779,9 @@ func (s *testAnalyzeSuite) TestLimitCrossEstimation(c *C) {
 		store.Close()
 	}()
 
+	tk.MustExec("set @@session.tidb_executor_concurrency = 4;")
+	tk.MustExec("set @@session.tidb_hash_join_concurrency = 5;")
+	tk.MustExec("set @@session.tidb_distsql_scan_concurrency = 15;")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int not null, c int not null default 0, index idx_bc(b, c))")

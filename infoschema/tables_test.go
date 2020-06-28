@@ -133,9 +133,9 @@ func (s *testClusterTableSuite) setUpRPCService(c *C, addr string) (*grpc.Server
 		err = srv.Serve(lis)
 		c.Assert(err, IsNil)
 	}()
-	cfg := config.GetGlobalConfig()
-	cfg.Status.StatusPort = uint(port)
-	config.StoreGlobalConfig(cfg)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Status.StatusPort = uint(port)
+	})
 	return srv, addr
 }
 
@@ -1268,6 +1268,25 @@ func (s *testTableSuite) TestStmtSummaryPreparedStatements(c *C) {
 	tk.MustQuery(`select exec_count
 		from information_schema.statements_summary
 		where digest_text like "select ?"`).Check(testkit.Rows("1"))
+}
+
+func (s *testTableSuite) TestStmtSummarySensitiveQuery(c *C) {
+	tk := s.newTestKitWithRoot(c)
+	tk.MustExec("set global tidb_enable_stmt_summary = 0")
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+	tk.MustExec("drop user if exists user_sensitive;")
+	tk.MustExec("create user user_sensitive identified by '123456789';")
+	tk.MustExec("alter user 'user_sensitive'@'%' identified by 'abcdefg';")
+	tk.MustExec("set password for 'user_sensitive'@'%' = 'xyzuvw';")
+	tk.MustQuery("select query_sample_text from `information_schema`.`STATEMENTS_SUMMARY` " +
+		"where query_sample_text like '%user_sensitive%' and " +
+		"(query_sample_text like 'set password%' or query_sample_text like 'create user%' or query_sample_text like 'alter user%') " +
+		"order by query_sample_text;").
+		Check(testkit.Rows(
+			"alter user {user_sensitive@% password = ***}",
+			"create user {user_sensitive@% password = ***}",
+			"set password for user user_sensitive@%",
+		))
 }
 
 func (s *testTableSuite) TestPerformanceSchemaforPlanCache(c *C) {
