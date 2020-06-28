@@ -903,7 +903,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		fmt.Fprintf(buf, " COMPRESSION='%s'", tableInfo.Compression)
 	}
 
-	if hasAutoIncID {
+	if hasAutoIncID && incrementAllocator != nil {
 		autoIncID, err := incrementAllocator.NextGlobalAutoID(tableInfo.ID)
 		if err != nil {
 			return errors.Trace(err)
@@ -1026,7 +1026,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	}
 
 	tableInfo := tb.Meta()
-	incrementAllocator := tb.Allocators(e.ctx).Get(autoid.AutoIncrementType)
+	incrementAllocator := tb.Allocators(e.ctx).Get(autoid.RowIDAllocType)
 	randomAllocator := tb.Allocators(e.ctx).Get(autoid.AutoRandomType)
 	var buf bytes.Buffer
 	// TODO: let the result more like MySQL.
