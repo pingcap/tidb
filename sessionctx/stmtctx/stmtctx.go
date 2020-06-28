@@ -153,6 +153,7 @@ type StatementContext struct {
 	LockKeysCount         int32
 	TblInfo2UnionScan     map[*model.TableInfo]bool
 	TaskID                uint64 // unique ID for an execution of a statement
+	TaskMapBakTS          uint64 // counter for
 }
 
 // StmtHints are SessionVars related sql hints.
