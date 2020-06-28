@@ -290,9 +290,25 @@ func (t *testTableSuite) TestCastValue(c *C) {
 	_, err = CastValue(ctx, types.NewDatum([]byte{0xf0, 0x9f, 0x8c, 0x80}), &colInfoS, false, false)
 	c.Assert(err, NotNil)
 
+	colInfoS.Charset = mysql.UTF8Charset
+	_, err = CastValue(ctx, types.NewDatum([]byte{0xf0, 0x9f, 0x8c, 0x80}), &colInfoS, false, true)
+	c.Assert(err, IsNil)
+
 	colInfoS.Charset = mysql.UTF8MB4Charset
 	_, err = CastValue(ctx, types.NewDatum([]byte{0xf0, 0x9f, 0x80}), &colInfoS, false, false)
 	c.Assert(err, NotNil)
+
+	colInfoS.Charset = mysql.UTF8MB4Charset
+	_, err = CastValue(ctx, types.NewDatum([]byte{0xf0, 0x9f, 0x80}), &colInfoS, false, true)
+	c.Assert(err, IsNil)
+
+	colInfoS.Charset = charset.CharsetASCII
+	_, err = CastValue(ctx, types.NewDatum([]byte{0x32, 0xf0}), &colInfoS, false, false)
+	c.Assert(err, NotNil)
+
+	colInfoS.Charset = charset.CharsetASCII
+	_, err = CastValue(ctx, types.NewDatum([]byte{0x32, 0xf0}), &colInfoS, false, true)
+	c.Assert(err, IsNil)
 }
 
 func (t *testTableSuite) TestGetDefaultValue(c *C) {
