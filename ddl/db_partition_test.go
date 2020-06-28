@@ -19,6 +19,7 @@ import (
 	"math"
 	"math/rand"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -2316,7 +2317,7 @@ func (s *testIntegrationSuite3) TestUnsupportedPartitionManagementDDLs(c *C) {
 	c.Assert(err, ErrorMatches, ".*alter table partition is unsupported")
 }
 
-func (s *testIntegrationSuite3) TestCommitWhenSchemaChange(c *C) {
+func (s *testIntegrationSuite7) TestCommitWhenSchemaChange(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table schema_change (a int, b timestamp)
@@ -2336,6 +2337,10 @@ func (s *testIntegrationSuite3) TestCommitWhenSchemaChange(c *C) {
 
 	tk.MustExec("insert into schema_change values (5, '2019-12-25 13:27:43')")
 	tk.MustExec("insert into schema_change values (9, '2019-12-25 13:27:44')")
+	atomic.StoreUint32(&session.SchemaChangedWithoutRetry, 1)
+	defer func() {
+		atomic.StoreUint32(&session.SchemaChangedWithoutRetry, 0)
+	}()
 	_, err := tk.Se.Execute(context.Background(), "commit")
 	c.Assert(domain.ErrInfoSchemaChanged.Equal(err), IsTrue)
 
@@ -2354,7 +2359,6 @@ func (s *testIntegrationSuite3) TestCommitWhenSchemaChange(c *C) {
 	tk.MustExec("insert into nt values (1), (3), (5);")
 	tk2.MustExec("alter table pt exchange partition p1 with table nt;")
 	tk.MustExec("insert into nt values (7), (9);")
-
 	_, err = tk.Se.Execute(context.Background(), "commit")
 	c.Assert(domain.ErrInfoSchemaChanged.Equal(err), IsTrue)
 
