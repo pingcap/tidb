@@ -1997,6 +1997,7 @@ var builtinGlobalVariable = []string{
 	variable.SQLSelectLimit,
 
 	/* TiDB specific global variables: */
+	variable.TiDBSkipASCIICheck,
 	variable.TiDBSkipUTF8Check,
 	variable.TiDBIndexJoinBatchSize,
 	variable.TiDBIndexLookupSize,

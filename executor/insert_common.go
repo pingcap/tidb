@@ -565,7 +565,7 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 				return nil, err
 			}
 			if !e.lazyFillAutoID || (e.lazyFillAutoID && !mysql.HasAutoIncrementFlag(c.Flag)) {
-				if row[i], err = c.HandleBadNull(row[i], e.ctx.GetSessionVars().StmtCtx); err != nil {
+				if err = c.HandleBadNull(&row[i], e.ctx.GetSessionVars().StmtCtx); err != nil {
 					return nil, err
 				}
 			}
@@ -582,7 +582,7 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 			return nil, err
 		}
 		// Handle the bad null error.
-		if row[colIdx], err = gCol.HandleBadNull(row[colIdx], e.ctx.GetSessionVars().StmtCtx); err != nil {
+		if err = gCol.HandleBadNull(&row[colIdx], e.ctx.GetSessionVars().StmtCtx); err != nil {
 			return nil, err
 		}
 	}
@@ -640,7 +640,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatumInRetry(ctx context.Context, 
 			}
 			autoDatum.SetAutoID(id, col.Flag)
 
-			if autoDatum, err = col.HandleBadNull(autoDatum, e.ctx.GetSessionVars().StmtCtx); err != nil {
+			if err = col.HandleBadNull(&autoDatum, e.ctx.GetSessionVars().StmtCtx); err != nil {
 				return nil, err
 			}
 			rows[i][colIdx] = autoDatum
