@@ -681,7 +681,7 @@ func (s *testCommitterSuite) TestElapsedTTL(c *C) {
 	c.Assert(lockInfo.LockTtl-atomic.LoadUint64(&ManagedLockTTL), Less, uint64(150))
 }
 
-func (s *testCommitterSuite) TestNoPrimary(c *C) {
+func (s *testCommitterSuite) TestDeleteYourWriteCauseGhostPrimary(c *C) {
 	s.cluster.SplitKeys(kv.Key("d"), kv.Key("a"), 4)
 	k1 := kv.Key("a") // insert but deleted key at first pos in txn1
 	k2 := kv.Key("b") // insert key at second pos in txn1
@@ -714,7 +714,7 @@ func (s *testCommitterSuite) TestNoPrimary(c *C) {
 	// resume after after primary key be committed
 	<-txn1.committer.testingKnobs.acAfterCommitPrimary
 
-	// start txn2 to read k3(prewrite success and primary should be commited)
+	// start txn2 to read k3(prewrite success and primary should be committed)
 	txn2 := s.begin(c)
 	txn2.DelOption(kv.Pessimistic)
 	txn2.store.txnLatches = nil
