@@ -21,12 +21,9 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/config"
-=======
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/meta/autoid"
->>>>>>> 6e7994a... ddl: limit the range of auto_random_base (#18188)
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
