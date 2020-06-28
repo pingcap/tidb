@@ -17,9 +17,9 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/infoschema/perfschema"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util"
 )
 
 // Checker uses to check tables lock.
@@ -38,8 +38,8 @@ func (c *Checker) CheckTableLock(db, table string, privilege mysql.PrivilegeType
 	if db == "" && table == "" {
 		return nil
 	}
-	// Below database are not support table lock.
-	if db == infoschema.LowerName || db == perfschema.LowerName || db == mysql.SystemDB {
+	// System DB and memory DB are not support table lock.
+	if util.IsMemOrSysDB(db) {
 		return nil
 	}
 	// check operation on database.

@@ -3608,6 +3608,11 @@ id	count	task	operator info
 TableReader_8	10.00	root	data:Selection_7
 └─Selection_7	10.00	cop	eq(test.t2.a, 833)
   └─TableScan_6	10000.00	cop	table:t2, partition:p4, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select * from t2 where a in (10,20,30);
+id	count	task	operator info
+TableReader_8	30.00	root	data:Selection_7
+└─Selection_7	30.00	cop	in(test.t2.a, 10, 20, 30)
+  └─TableScan_6	10000.00	cop	table:t2, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select * from t2 where (a = 100 OR a = 900);
 id	count	task	operator info
 Union_8	40.00	root	

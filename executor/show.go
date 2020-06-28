@@ -883,6 +883,10 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		}
 	}
 
+	if tb.Meta().AutoIdCache != 0 {
+		fmt.Fprintf(&buf, " /*T![auto_id_cache] AUTO_ID_CACHE=%d */", tb.Meta().AutoIdCache)
+	}
+
 	if tb.Meta().ShardRowIDBits > 0 {
 		fmt.Fprintf(&buf, "/*!90000 SHARD_ROW_ID_BITS=%d ", tb.Meta().ShardRowIDBits)
 		if tb.Meta().PreSplitRegions > 0 {
@@ -962,7 +966,7 @@ func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer) 
 	}
 	for i, def := range partitionInfo.Definitions {
 		lessThans := strings.Join(def.LessThan, ",")
-		fmt.Fprintf(buf, "  PARTITION %s VALUES LESS THAN (%s)", def.Name, lessThans)
+		fmt.Fprintf(buf, "  PARTITION `%s` VALUES LESS THAN (%s)", def.Name, lessThans)
 		if i < len(partitionInfo.Definitions)-1 {
 			buf.WriteString(",\n")
 		} else {

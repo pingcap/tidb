@@ -113,6 +113,9 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		err = e.executeLockTables(x)
 	case *ast.UnlockTablesStmt:
 		err = e.executeUnlockTables(x)
+	case *ast.CleanupTableLockStmt:
+		err = e.executeCleanupTableLock(x)
+
 	}
 	if err != nil {
 		return e.toErr(err)
@@ -390,7 +393,7 @@ func (e *DDLExec) getRecoverTableByTableName(s *ast.RecoverTableStmt, t *meta.Me
 	}
 	schemaName := s.Table.Schema.L
 	if schemaName == "" {
-		schemaName = e.ctx.GetSessionVars().CurrentDB
+		schemaName = strings.ToLower(e.ctx.GetSessionVars().CurrentDB)
 	}
 	if schemaName == "" {
 		return nil, nil, errors.Trace(core.ErrNoDB)
@@ -422,9 +425,7 @@ func (e *DDLExec) getRecoverTableByTableName(s *ast.RecoverTableStmt, t *meta.Me
 		if table.Meta().Name.L == s.Table.Name.L {
 			schema, ok := dom.InfoSchema().SchemaByID(job.SchemaID)
 			if !ok {
-				return nil, nil, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(
-					fmt.Sprintf("(Schema ID %d)", job.SchemaID),
-				)
+				continue
 			}
 			if schema.Name.L == schemaName {
 				tblInfo = table.Meta()
@@ -451,4 +452,9 @@ func (e *DDLExec) executeUnlockTables(s *ast.UnlockTablesStmt) error {
 	}
 	lockedTables := e.ctx.GetAllTableLocks()
 	return domain.GetDomain(e.ctx).DDL().UnlockTables(e.ctx, lockedTables)
+}
+
+func (e *DDLExec) executeCleanupTableLock(s *ast.CleanupTableLockStmt) error {
+	err := domain.GetDomain(e.ctx).DDL().CleanupTableLock(e.ctx, s.Tables)
+	return err
 }

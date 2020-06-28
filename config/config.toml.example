@@ -77,6 +77,9 @@ server-version = ""
 # enable-table-lock is used to control table lock feature. Default is false, indicate the table lock feature is disabled.
 enable-table-lock = false
 
+# delay-clean-table-lock is used to control whether delayed-release the table lock in the abnormal situation. (Milliseconds)
+delay-clean-table-lock = 0
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"

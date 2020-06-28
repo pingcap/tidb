@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -45,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
@@ -1439,9 +1441,9 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 			}
 			pi := tbInfo.GetPartitionInfo()
 			if pi != nil {
-				preSplit = func() { splitPartitionTableRegion(sp, pi, scatterRegion) }
+				preSplit = func() { splitPartitionTableRegion(ctx, sp, pi, scatterRegion) }
 			} else {
-				preSplit = func() { splitTableRegion(sp, tbInfo, scatterRegion) }
+				preSplit = func() { splitTableRegion(ctx, sp, tbInfo, scatterRegion) }
 			}
 			if scatterRegion {
 				preSplit()
@@ -1449,7 +1451,6 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 				go preSplit()
 			}
 		}
-
 		if tbInfo.AutoIncID > 1 {
 			// Default tableAutoIncID base is 0.
 			// If the first ID is expected to greater than 1, we need to do rebase.
@@ -1491,6 +1492,37 @@ func (d *ddl) RecoverTable(ctx sessionctx.Context, tbInfo *model.TableInfo, sche
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
+}
+
+// preSplitAndScatter performs pre-split and scatter of the table's regions.
+func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *model.PartitionInfo) {
+	sp, ok := d.store.(kv.SplitableStore)
+	if !ok || atomic.LoadUint32(&EnableSplitTableRegion) == 0 {
+		return
+	}
+	var (
+		preSplit      func()
+		scatterRegion bool
+	)
+	val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBScatterRegion)
+	if err != nil {
+		logutil.Logger(context.Background()).Warn("[ddl] won't scatter region", zap.Error(err))
+	} else {
+		scatterRegion = variable.TiDBOptOn(val)
+	}
+	if pi == nil {
+		pi = tbInfo.GetPartitionInfo()
+	}
+	if pi != nil {
+		preSplit = func() { splitPartitionTableRegion(ctx, sp, pi, scatterRegion) }
+	} else {
+		preSplit = func() { splitTableRegion(ctx, sp, tbInfo, scatterRegion) }
+	}
+	if scatterRegion {
+		preSplit()
+	} else {
+		go preSplit()
+	}
 }
 
 func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err error) {
@@ -1746,7 +1778,12 @@ func checkCharsetAndCollation(cs string, co string) error {
 // handleAutoIncID handles auto_increment option in DDL. It creates a ID counter for the table and initiates the counter to a proper value.
 // For example if the option sets auto_increment to 10. The counter will be set to 9. So the next allocated ID will be 10.
 func (d *ddl) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64) error {
-	alloc := autoid.NewAllocator(d.store, tbInfo.GetDBID(schemaID), tbInfo.IsAutoIncColUnsigned())
+	var alloc autoid.Allocator
+	if tbInfo.AutoIdCache > 0 {
+		alloc = autoid.NewAllocator(d.store, tbInfo.GetDBID(schemaID), tbInfo.IsAutoIncColUnsigned(), autoid.CustomAutoIncCacheOption(tbInfo.AutoIdCache))
+	} else {
+		alloc = autoid.NewAllocator(d.store, tbInfo.GetDBID(schemaID), tbInfo.IsAutoIncColUnsigned())
+	}
 	tbInfo.State = model.StatePublic
 	tb, err := table.TableFromMeta(alloc, tbInfo)
 	if err != nil {
@@ -1782,6 +1819,12 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 		switch op.Tp {
 		case ast.TableOptionAutoIncrement:
 			tbInfo.AutoIncID = int64(op.UintValue)
+		case ast.TableOptionAutoIdCache:
+			if op.UintValue > uint64(math.MaxInt64) {
+				// TODO: Refine this error.
+				return errors.New("table option auto_id_cache overflows int64")
+			}
+			tbInfo.AutoIdCache = int64(op.UintValue)
 		case ast.TableOptionComment:
 			tbInfo.Comment = op.StrValue
 		case ast.TableOptionCompression:
@@ -1966,6 +2009,12 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 					err = d.ShardRowID(ctx, ident, opt.UintValue)
 				case ast.TableOptionAutoIncrement:
 					err = d.RebaseAutoID(ctx, ident, int64(opt.UintValue))
+				case ast.TableOptionAutoIdCache:
+					if opt.UintValue > uint64(math.MaxInt64) {
+						// TODO: Refine this error.
+						return errors.New("table option auto_id_cache overflows int64")
+					}
+					err = d.AlterTableAutoIDCache(ctx, ident, int64(opt.UintValue))
 				case ast.TableOptionComment:
 					spec.Comment = opt.StrValue
 					err = d.AlterTableComment(ctx, ident, spec)
@@ -2219,6 +2268,9 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	}
 
 	err = d.doDDLJob(ctx, job)
+	if err == nil {
+		d.preSplitAndScatter(ctx, meta, partInfo)
+	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
@@ -2878,6 +2930,27 @@ func (d *ddl) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, spec *a
 	return errors.Trace(err)
 }
 
+// AlterTableAutoIDCache updates the table comment information.
+func (d *ddl) AlterTableAutoIDCache(ctx sessionctx.Context, ident ast.Ident, newCache int64) error {
+	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tb.Meta().ID,
+		SchemaName: schema.Name.L,
+		Type:       model.ActionModifyTableAutoIdCache,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{newCache},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
 // AlterTableCharset changes the table charset and collate.
 func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Ident, toCharset, toCollate string) error {
 	// use the last one.
@@ -3113,6 +3186,14 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		}
 		return errors.Trace(err)
 	}
+
+	oldTblInfo := tb.Meta()
+	if oldTblInfo.PreSplitRegions > 0 {
+		if _, tb, err := d.getSchemaAndTableByIdent(ctx, ti); err == nil {
+			d.preSplitAndScatter(ctx, tb.Meta(), tb.Meta().GetPartitionInfo())
+		}
+	}
+
 	if !config.TableLockEnabled() {
 		return nil
 	}
@@ -3605,16 +3686,12 @@ func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 		SessionID: ctx.GetSessionVars().ConnectionID,
 	}
 	uniqueTableID := make(map[int64]struct{})
-	// Check whether the table was already locked by other.
+	// Check whether the table was already locked by another.
 	for _, tl := range stmt.TableLocks {
 		tb := tl.Table
-		// TODO: replace const string "performance_schema" with xxx.LowerName.
-		// Currently use perfschema.LowerName will have import cycle problem.
-		if tb.Schema.L == infoschema.LowerName || tb.Schema.L == "performance_schema" || tb.Schema.L == mysql.SystemDB {
-			if ctx.GetSessionVars().User != nil {
-				return infoschema.ErrAccessDenied.GenWithStackByArgs(ctx.GetSessionVars().User.Username, ctx.GetSessionVars().User.Hostname)
-			}
-			return infoschema.ErrAccessDenied
+		err := throwErrIfInMemOrSysDB(ctx, tb.Schema.L)
+		if err != nil {
+			return err
 		}
 		schema, t, err := d.getSchemaAndTableByIdent(ctx, ast.Ident{Schema: tb.Schema, Name: tb.Name})
 		if err != nil {
@@ -3686,10 +3763,75 @@ func (d *ddl) UnlockTables(ctx sessionctx.Context, unlockTables []model.TableLoc
 	return errors.Trace(err)
 }
 
+func throwErrIfInMemOrSysDB(ctx sessionctx.Context, dbLowerName string) error {
+	if util.IsMemOrSysDB(dbLowerName) {
+		if ctx.GetSessionVars().User != nil {
+			return infoschema.ErrAccessDenied.GenWithStackByArgs(ctx.GetSessionVars().User.Username, ctx.GetSessionVars().User.Hostname)
+		}
+		return infoschema.ErrAccessDenied.GenWithStackByArgs("", "")
+	}
+	return nil
+}
+
+func (d *ddl) CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) error {
+	uniqueTableID := make(map[int64]struct{})
+	cleanupTables := make([]model.TableLockTpInfo, 0, len(tables))
+	unlockedTablesNum := 0
+	// Check whether the table was already locked by another.
+	for _, tb := range tables {
+		err := throwErrIfInMemOrSysDB(ctx, tb.Schema.L)
+		if err != nil {
+			return err
+		}
+		schema, t, err := d.getSchemaAndTableByIdent(ctx, ast.Ident{Schema: tb.Schema, Name: tb.Name})
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if t.Meta().IsView() {
+			return table.ErrUnsupportedOp
+		}
+		// Maybe the table t was not locked, but still try to unlock this table.
+		// If we skip unlock the table here, the job maybe not consistent with the job.Query.
+		// eg: unlock tables t1,t2;  If t2 is not locked and skip here, then the job will only unlock table t1,
+		// and this behaviour is not consistent with the sql query.
+		if !t.Meta().IsLocked() {
+			unlockedTablesNum++
+		}
+		if _, ok := uniqueTableID[t.Meta().ID]; ok {
+			return infoschema.ErrNonuniqTable.GenWithStackByArgs(t.Meta().Name)
+		}
+		uniqueTableID[t.Meta().ID] = struct{}{}
+		cleanupTables = append(cleanupTables, model.TableLockTpInfo{SchemaID: schema.ID, TableID: t.Meta().ID})
+	}
+	// If the num of cleanupTables is 0, or all cleanupTables is unlocked, just return here.
+	if len(cleanupTables) == 0 || len(cleanupTables) == unlockedTablesNum {
+		return nil
+	}
+
+	arg := &lockTablesArg{
+		UnlockTables: cleanupTables,
+		IsCleanup:    true,
+	}
+	job := &model.Job{
+		SchemaID:   cleanupTables[0].SchemaID,
+		TableID:    cleanupTables[0].TableID,
+		Type:       model.ActionUnlockTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{arg},
+	}
+	err := d.doDDLJob(ctx, job)
+	if err == nil {
+		ctx.ReleaseTableLocks(cleanupTables)
+	}
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
 type lockTablesArg struct {
 	LockTables    []model.TableLockTpInfo
 	IndexOfLock   int
 	UnlockTables  []model.TableLockTpInfo
 	IndexOfUnlock int
 	SessionInfo   model.SessionInfo
+	IsCleanup     bool
 }

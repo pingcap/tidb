@@ -574,18 +574,18 @@ func (s *testSuite2) TestShowCreateTable(c *C) {
 		"KEY `IDX_UserId_EndTime` (`USER_ID`,`END_TIME`)" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=505488 " +
 		"PARTITION BY RANGE ( month(`end_time`) ) (" +
-		"PARTITION p1 VALUES LESS THAN (2)," +
-		"PARTITION p2 VALUES LESS THAN (3)," +
-		"PARTITION p3 VALUES LESS THAN (4)," +
-		"PARTITION p4 VALUES LESS THAN (5)," +
-		"PARTITION p5 VALUES LESS THAN (6)," +
-		"PARTITION p6 VALUES LESS THAN (7)," +
-		"PARTITION p7 VALUES LESS THAN (8)," +
-		"PARTITION p8 VALUES LESS THAN (9)," +
-		"PARTITION p9 VALUES LESS THAN (10)," +
-		"PARTITION p10 VALUES LESS THAN (11)," +
-		"PARTITION p11 VALUES LESS THAN (12)," +
-		"PARTITION p12 VALUES LESS THAN (MAXVALUE))")
+		"PARTITION `p1` VALUES LESS THAN (2)," +
+		"PARTITION `p2` VALUES LESS THAN (3)," +
+		"PARTITION `p3` VALUES LESS THAN (4)," +
+		"PARTITION `p4` VALUES LESS THAN (5)," +
+		"PARTITION `p5` VALUES LESS THAN (6)," +
+		"PARTITION `p6` VALUES LESS THAN (7)," +
+		"PARTITION `p7` VALUES LESS THAN (8)," +
+		"PARTITION `p8` VALUES LESS THAN (9)," +
+		"PARTITION `p9` VALUES LESS THAN (10)," +
+		"PARTITION `p10` VALUES LESS THAN (11)," +
+		"PARTITION `p11` VALUES LESS THAN (12)," +
+		"PARTITION `p12` VALUES LESS THAN (MAXVALUE))")
 	tk.MustQuery("show create table log").Check(testutil.RowsWithSep("|",
 		"log CREATE TABLE `log` (\n"+
 			"  `LOG_ID` bigint(20) unsigned NOT NULL AUTO_INCREMENT,\n"+
@@ -601,18 +601,18 @@ func (s *testSuite2) TestShowCreateTable(c *C) {
 			"  KEY `IDX_UserId_EndTime` (`USER_ID`,`END_TIME`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=505488\n"+
 			"PARTITION BY RANGE ( month(`end_time`) ) (\n"+
-			"  PARTITION p1 VALUES LESS THAN (2),\n"+
-			"  PARTITION p2 VALUES LESS THAN (3),\n"+
-			"  PARTITION p3 VALUES LESS THAN (4),\n"+
-			"  PARTITION p4 VALUES LESS THAN (5),\n"+
-			"  PARTITION p5 VALUES LESS THAN (6),\n"+
-			"  PARTITION p6 VALUES LESS THAN (7),\n"+
-			"  PARTITION p7 VALUES LESS THAN (8),\n"+
-			"  PARTITION p8 VALUES LESS THAN (9),\n"+
-			"  PARTITION p9 VALUES LESS THAN (10),\n"+
-			"  PARTITION p10 VALUES LESS THAN (11),\n"+
-			"  PARTITION p11 VALUES LESS THAN (12),\n"+
-			"  PARTITION p12 VALUES LESS THAN (MAXVALUE)\n"+
+			"  PARTITION `p1` VALUES LESS THAN (2),\n"+
+			"  PARTITION `p2` VALUES LESS THAN (3),\n"+
+			"  PARTITION `p3` VALUES LESS THAN (4),\n"+
+			"  PARTITION `p4` VALUES LESS THAN (5),\n"+
+			"  PARTITION `p5` VALUES LESS THAN (6),\n"+
+			"  PARTITION `p6` VALUES LESS THAN (7),\n"+
+			"  PARTITION `p7` VALUES LESS THAN (8),\n"+
+			"  PARTITION `p8` VALUES LESS THAN (9),\n"+
+			"  PARTITION `p9` VALUES LESS THAN (10),\n"+
+			"  PARTITION `p10` VALUES LESS THAN (11),\n"+
+			"  PARTITION `p11` VALUES LESS THAN (12),\n"+
+			"  PARTITION `p12` VALUES LESS THAN (MAXVALUE)\n"+
 			")"))
 	//for issue #11831
 	tk.MustExec("create table ttt4(a varchar(123) default null collate utf8mb4_unicode_ci)engine=innodb default charset=utf8mb4 collate=utf8mb4_unicode_ci;")
@@ -629,6 +629,43 @@ func (s *testSuite2) TestShowCreateTable(c *C) {
 			"  `a` varchar(123) DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
+}
+
+// Override testSuite2 to test auto id cache.
+func (s *testSuite2) TestAutoIdCache(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int auto_increment key) auto_id_cache = 10")
+	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) NOT NULL AUTO_INCREMENT,\n"+
+			"  PRIMARY KEY (`a`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=10 */",
+	))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int auto_increment unique, b int key) auto_id_cache 100")
+	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) NOT NULL AUTO_INCREMENT,\n"+
+			"  `b` int(11) NOT NULL,\n"+
+			"  PRIMARY KEY (`b`),\n"+
+			"  UNIQUE KEY `a` (`a`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=100 */",
+	))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int key) auto_id_cache 5")
+	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) NOT NULL,\n"+
+			"  PRIMARY KEY (`a`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=5 */",
+	))
+	tk.MustExec("drop table if exists t")
 }
 
 func (s *testSuite2) TestShowEscape(c *C) {

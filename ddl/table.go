@@ -339,7 +339,12 @@ func checkSafePoint(w *worker, snapshotTS uint64) error {
 }
 
 func getTable(store kv.Storage, schemaID int64, tblInfo *model.TableInfo) (table.Table, error) {
-	alloc := autoid.NewAllocator(store, tblInfo.GetDBID(schemaID), tblInfo.IsAutoIncColUnsigned())
+	var alloc autoid.Allocator
+	if tblInfo.AutoIdCache > 0 {
+		alloc = autoid.NewAllocator(store, tblInfo.GetDBID(schemaID), tblInfo.IsAutoIncColUnsigned(), autoid.CustomAutoIncCacheOption(tblInfo.AutoIdCache))
+	} else {
+		alloc = autoid.NewAllocator(store, tblInfo.GetDBID(schemaID), tblInfo.IsAutoIncColUnsigned())
+	}
 	tbl, err := table.TableFromMeta(alloc, tblInfo)
 	return tbl, errors.Trace(err)
 }
@@ -441,6 +446,12 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		return ver, errors.Trace(err)
 	}
 
+	failpoint.Inject("mockTruncateTableUpdateVersionError", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(ver, errors.New("mock update version error"))
+		}
+	})
+
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -480,6 +491,27 @@ func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job) (ver int64, 
 		return ver, errors.Trace(err)
 	}
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, nil
+}
+
+func onModifyTableAutoIDCache(t *meta.Meta, job *model.Job) (int64, error) {
+	var cache int64
+	if err := job.DecodeArgs(&cache); err != nil {
+		job.State = model.JobStateCancelled
+		return 0, errors.Trace(err)
+	}
+
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	tblInfo.AutoIdCache = cache
+	ver, err := updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
