@@ -509,56 +509,19 @@ func StoreGlobalConfig(config *Config) {
 	globalConf.Store(config)
 }
 
-<<<<<<< HEAD
 // ReloadGlobalConfig reloads global configuration for this server.
 func ReloadGlobalConfig() error {
 	confReloadLock.Lock()
 	defer confReloadLock.Unlock()
-=======
-var deprecatedConfig = map[string]struct{}{
-	"pessimistic-txn.ttl":        {},
-	"log.file.log-rotate":        {},
-	"txn-local-latches":          {},
-	"txn-local-latches.enabled":  {},
-	"txn-local-latches.capacity": {},
-}
->>>>>>> 2df7112... config: remove txn-local-latches from config file (#15765)
 
 	nc := NewConfig()
 	if err := nc.Load(reloadConfPath); err != nil {
 		return err
 	}
-<<<<<<< HEAD
 	if err := nc.Valid(); err != nil {
 		return err
 	}
 	c := GetGlobalConfig()
-=======
-	return true
-}
-
-// InitializeConfig initialize the global config handler.
-// The function enforceCmdArgs is used to merge the config file with command arguments:
-// For example, if you start TiDB by the command "./tidb-server --port=3000", the port number should be
-// overwritten to 3000 and ignore the port number in the config file.
-func InitializeConfig(confPath string, configCheck, configStrict bool, reloadFunc ConfReloadFunc, enforceCmdArgs func(*Config)) {
-	cfg := GetGlobalConfig()
-	var err error
-	if confPath != "" {
-		if err = cfg.Load(confPath); err != nil {
-			// Unused config item error turns to warnings.
-			if tmp, ok := err.(*ErrConfigValidationFailed); ok {
-				// This block is to accommodate an interim situation where strict config checking
-				// is not the default behavior of TiDB. The warning message must be deferred until
-				// logging has been set up. After strict config checking is the default behavior,
-				// This should all be removed.
-				if (!configCheck && !configStrict) || isAllDeprecatedConfigItems(tmp.UndecodedItems) {
-					fmt.Fprintln(os.Stderr, err.Error())
-					err = nil
-				}
-			}
-		}
->>>>>>> 2df7112... config: remove txn-local-latches from config file (#15765)
 
 	diffs := collectsDiff(*nc, *c, "")
 	if len(diffs) == 0 {
