@@ -60,6 +60,9 @@ var (
 	sql           string
 	filters       []string
 	caseSensitive bool
+	caPath        string
+	certPath      string
+	keyPath       string
 
 	dumpEmptyDatabase bool
 	escapeBackslash   bool
@@ -109,6 +112,9 @@ func main() {
 	pflag.BoolVar(&caseSensitive, "case-sensitive", false, "whether the filter should be case-sensitive")
 	pflag.BoolVar(&dumpEmptyDatabase, "dump-empty-database", true, "whether to dump empty database")
 	pflag.Uint64Var(&tidbMemQuotaQuery, "tidb-mem-quota-query", export.DefaultTiDBMemQuotaQuery, "The maximum memory limit for a single SQL statement, in bytes. Default: 32GB")
+	pflag.StringVar(&caPath, "ca", "", "The path name to the certificate authority file for TLS connection")
+	pflag.StringVar(&certPath, "cert", "", "The path name to the client certificate file for TLS connection")
+	pflag.StringVar(&keyPath, "key", "", "The path name to the client private key file for TLS connection")
 
 	printVersion := pflag.BoolP("version", "V", false, "Print Dumpling version")
 
@@ -176,6 +182,9 @@ func main() {
 	conf.Sql = sql
 	conf.TableFilter = tableFilter
 	conf.TiDBMemQuotaQuery = tidbMemQuotaQuery
+	conf.Security.CAPath = caPath
+	conf.Security.CertPath = certPath
+	conf.Security.KeyPath = keyPath
 
 	err = export.Dump(context.Background(), conf)
 	if err != nil {

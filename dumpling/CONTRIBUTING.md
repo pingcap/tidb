@@ -24,7 +24,7 @@ make
 ```
 
 This project contains unit tests and integration tests with coverage collection.
-See [README.md](https://github.com/pingcap/dumpling#building) for how to execute tests.
+See [README.md](README.md#building) for how to execute tests.
 
 ### Updating dependencies
 
