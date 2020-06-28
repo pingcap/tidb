@@ -209,6 +209,8 @@ type PhysicalIndexLookUpReader struct {
 	ExtraHandleCol *expression.Column
 	// PushedLimit is used to avoid unnecessary table scan tasks of IndexLookUpReader.
 	PushedLimit *PushedDownLimit
+
+	CommonHandleCols []*expression.Column
 }
 
 // Clone implements PhysicalPlan interface.
@@ -679,7 +681,7 @@ func NewPhysicalHashJoin(p *LogicalJoin, innerIdx int, useOuterToBuild bool, new
 	hashJoin := PhysicalHashJoin{
 		basePhysicalJoin: baseJoin,
 		EqualConditions:  p.EqualConditions,
-		Concurrency:      uint(p.ctx.GetSessionVars().HashJoinConcurrency),
+		Concurrency:      uint(p.ctx.GetSessionVars().HashJoinConcurrency()),
 		UseOuterToBuild:  useOuterToBuild,
 	}.Init(p.ctx, newStats, p.blockOffset, prop...)
 	return hashJoin

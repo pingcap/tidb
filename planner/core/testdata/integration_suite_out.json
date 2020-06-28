@@ -808,9 +808,9 @@
           "└─TableFullScan_4 3.00 cop[tikv] table:t1 keep order:false"
         ],
         "Res": [
-          "1 111 1.1000000000",
-          "2 222 2.2000000000",
-          "3 333 3.3000000000"
+          "1 111 1.1000000000 11",
+          "2 222 2.2000000000 12",
+          "3 333 3.3000000000 13"
         ]
       },
       {
@@ -820,9 +820,9 @@
           "└─TableRangeScan_5 3.00 cop[tikv] table:t1 range:[1,4), keep order:false"
         ],
         "Res": [
-          "1 111 1.1000000000",
-          "2 222 2.2000000000",
-          "3 333 3.3000000000"
+          "1 111 1.1000000000 11",
+          "2 222 2.2000000000 12",
+          "3 333 3.3000000000 13"
         ]
       },
       {
@@ -832,11 +832,11 @@
           "└─TableRangeScan_5 0.67 cop[tikv] table:t1 range:[1 -inf,1 \"333\"), keep order:false"
         ],
         "Res": [
-          "1 111 1.1000000000"
+          "1 111 1.1000000000 11"
         ]
       },
       {
-        "SQL": "select * from t1 where t1.c = 3.3",
+        "SQL": "select t1.a, t1.b, t1.c from t1 where t1.c = 3.3",
         "Plan": [
           "IndexReader_6 1.00 root  index:IndexRangeScan_5",
           "└─IndexRangeScan_5 1.00 cop[tikv] table:t1, index:c(c) range:[3.3000000000,3.3000000000], keep order:false"
@@ -858,13 +858,26 @@
       {
         "SQL": "select /*+ use_index(t1, c) */ * from t1",
         "Plan": [
-          "IndexReader_5 3.00 root  index:IndexFullScan_4",
-          "└─IndexFullScan_4 3.00 cop[tikv] table:t1, index:c(c) keep order:false"
+          "IndexLookUp_6 3.00 root  ",
+          "├─IndexFullScan_4(Build) 3.00 cop[tikv] table:t1, index:c(c) keep order:false",
+          "└─TableRowIDScan_5(Probe) 3.00 cop[tikv] table:t1 keep order:false"
         ],
         "Res": [
-          "1 111 1.1000000000",
-          "2 222 2.2000000000",
-          "3 333 3.3000000000"
+          "1 111 1.1000000000 11",
+          "2 222 2.2000000000 12",
+          "3 333 3.3000000000 13"
+        ]
+      },
+      {
+        "SQL": "select * from t1 use index(c) where t1.c in (2.2, 3.3)",
+        "Plan": [
+          "IndexLookUp_7 2.00 root  ",
+          "├─IndexRangeScan_5(Build) 2.00 cop[tikv] table:t1, index:c(c) range:[2.2000000000,2.2000000000], [3.3000000000,3.3000000000], keep order:false",
+          "└─TableRowIDScan_6(Probe) 2.00 cop[tikv] table:t1 keep order:false"
+        ],
+        "Res": [
+          "2 222 2.2000000000 12",
+          "3 333 3.3000000000 13"
         ]
       }
     ]

@@ -176,7 +176,7 @@ func (builder *RequestBuilder) getKVPriority(sv *variable.SessionVars) int {
 // SetFromSessionVars sets the following fields for "kv.Request" from session variables:
 // "Concurrency", "IsolationLevel", "NotFillCache", "ReplicaRead", "SchemaVar".
 func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *RequestBuilder {
-	builder.Request.Concurrency = sv.DistSQLScanConcurrency
+	builder.Request.Concurrency = sv.DistSQLScanConcurrency()
 	builder.Request.IsolationLevel = builder.getIsolationLevel()
 	builder.Request.NotFillCache = sv.StmtCtx.NotFillCache
 	builder.Request.TaskID = sv.StmtCtx.TaskID
@@ -262,6 +262,15 @@ func TableHandlesToKVRanges(tid int64, handles []kv.Handle) []kv.KeyRange {
 	krs := make([]kv.KeyRange, 0, len(handles))
 	i := 0
 	for i < len(handles) {
+		if commonHandle, ok := handles[i].(*kv.CommonHandle); ok {
+			ran := kv.KeyRange{
+				StartKey: tablecodec.EncodeRowKey(tid, commonHandle.Encoded()),
+				EndKey:   tablecodec.EncodeRowKey(tid, append(commonHandle.Encoded(), 0)),
+			}
+			krs = append(krs, ran)
+			i++
+			continue
+		}
 		j := i + 1
 		for ; j < len(handles) && handles[j-1].IntValue() != math.MaxInt64; j++ {
 			if handles[j].IntValue() != handles[j-1].IntValue()+1 {
