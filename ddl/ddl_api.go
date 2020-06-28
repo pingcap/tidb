@@ -580,6 +580,8 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				}
 			case ast.ColumnOptionFulltext:
 				ctx.GetSessionVars().StmtCtx.AppendWarning(ErrTableCantHandleFt)
+			case ast.ColumnOptionCheck:
+				ctx.GetSessionVars().StmtCtx.AppendWarning(ErrUnsupportedConstraintCheck.GenWithStackByArgs("Column check"))
 			}
 		}
 	}
@@ -1466,10 +1468,13 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbC
 	if err != nil {
 		return nil, err
 	}
-	if err = checkTableInfoValidExtra(tbInfo); err != nil {
+	// Fix issue 17952 which will cause partition range expr can't be parsed as Int.
+	// checkTableInfoValidWithStmt will do the constant fold the partition expression first,
+	// then checkTableInfoValidExtra will pass the tableInfo check successfully.
+	if err = checkTableInfoValidWithStmt(ctx, tbInfo, s); err != nil {
 		return nil, err
 	}
-	if err = checkTableInfoValidWithStmt(ctx, tbInfo, s); err != nil {
+	if err = checkTableInfoValidExtra(tbInfo); err != nil {
 		return nil, err
 	}
 	return tbInfo, nil
@@ -2240,6 +2245,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 				err = d.CreatePrimaryKey(ctx, ident, model.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option)
 			case ast.ConstraintFulltext:
 				ctx.GetSessionVars().StmtCtx.AppendWarning(ErrTableCantHandleFt)
+			case ast.ConstraintCheck:
+				ctx.GetSessionVars().StmtCtx.AppendWarning(ErrUnsupportedConstraintCheck.GenWithStackByArgs("ADD CONSTRAINT CHECK"))
 			default:
 				// Nothing to do now.
 			}
@@ -2308,6 +2315,14 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			err = d.OrderByColumns(ctx, ident)
 		case ast.AlterTableIndexInvisible:
 			err = d.AlterIndexVisibility(ctx, ident, spec.IndexName, spec.Visibility)
+		case ast.AlterTableAlterCheck:
+			ctx.GetSessionVars().StmtCtx.AppendWarning(ErrUnsupportedConstraintCheck.GenWithStackByArgs("ALTER CHECK"))
+		case ast.AlterTableDropCheck:
+			ctx.GetSessionVars().StmtCtx.AppendWarning(ErrUnsupportedConstraintCheck.GenWithStackByArgs("DROP CHECK"))
+		case ast.AlterTableWithValidation:
+			ctx.GetSessionVars().StmtCtx.AppendWarning(errUnsupportedAlterTableWithValidation)
+		case ast.AlterTableWithoutValidation:
+			ctx.GetSessionVars().StmtCtx.AppendWarning(errUnsupportedAlterTableWithoutValidation)
 		default:
 			// Nothing to do now.
 		}
@@ -2837,6 +2852,25 @@ func checkFieldTypeCompatible(ft *types.FieldType, other *types.FieldType) bool 
 	return true
 }
 
+func checkTiFlashReplicaCompatible(source *model.TiFlashReplicaInfo, target *model.TiFlashReplicaInfo) bool {
+	if source == target {
+		return true
+	}
+	if source == nil || target == nil {
+		return false
+	}
+	if source.Count != target.Count ||
+		source.Available != target.Available || len(source.LocationLabels) != len(target.LocationLabels) {
+		return false
+	}
+	for i, lable := range source.LocationLabels {
+		if target.LocationLabels[i] != lable {
+			return false
+		}
+	}
+	return true
+}
+
 func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) error {
 	// check auto_random
 	if source.AutoRandomBits != target.AutoRandomBits ||
@@ -2844,7 +2878,7 @@ func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) e
 		source.Collate != target.Collate ||
 		source.ShardRowIDBits != target.ShardRowIDBits ||
 		source.MaxShardRowIDBits != target.MaxShardRowIDBits ||
-		source.TiFlashReplica != target.TiFlashReplica {
+		!checkTiFlashReplicaCompatible(source.TiFlashReplica, target.TiFlashReplica) {
 		return errors.Trace(ErrTablesDifferentMetadata)
 	}
 	if len(source.Cols()) != len(target.Cols()) {
@@ -3299,6 +3333,8 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 			return errors.Trace(errUnsupportedModifyColumn.GenWithStackByArgs("can't modify with references"))
 		case ast.ColumnOptionFulltext:
 			return errors.Trace(errUnsupportedModifyColumn.GenWithStackByArgs("can't modify with full text"))
+		case ast.ColumnOptionCheck:
+			return errors.Trace(errUnsupportedModifyColumn.GenWithStackByArgs("can't modify with check"))
 		// Ignore ColumnOptionAutoRandom. It will be handled later.
 		case ast.ColumnOptionAutoRandom:
 		default:

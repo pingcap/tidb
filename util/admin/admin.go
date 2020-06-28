@@ -43,7 +43,7 @@ import (
 // DDLInfo is for DDL information.
 type DDLInfo struct {
 	SchemaVer   int64
-	ReorgHandle int64        // It's only used for DDL information.
+	ReorgHandle kv.Handle    // It's only used for DDL information.
 	Jobs        []*model.Job // It's the currently running jobs.
 }
 
@@ -77,7 +77,11 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 		return info, nil
 	}
 
-	info.ReorgHandle, _, _, err = t.GetDDLReorgHandle(addIdxJob)
+	tbl, err := t.GetTable(addIdxJob.SchemaID, addIdxJob.TableID)
+	if err != nil {
+		return info, nil
+	}
+	info.ReorgHandle, _, _, err = t.GetDDLReorgHandle(addIdxJob, tbl.IsCommonHandle)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -440,15 +444,7 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 		}
 		data := make([]types.Datum, 0, len(cols))
 		for _, col := range cols {
-			if col.IsPKHandleColumn(t.Meta()) {
-				if mysql.HasUnsignedFlag(col.Flag) {
-					data = append(data, types.NewUintDatum(uint64(handle.IntValue())))
-				} else {
-					data = append(data, types.NewIntDatum(handle.IntValue()))
-				}
-			} else {
-				data = append(data, rowMap[col.ID])
-			}
+			data = append(data, rowMap[col.ID])
 		}
 		more, err := fn(handle.IntValue(), data, cols)
 		if !more || err != nil {

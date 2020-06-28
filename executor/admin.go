@@ -390,7 +390,7 @@ func (e *RecoverIndexExec) batchMarkDup(txn kv.Transaction, rows []recoverRows) 
 	for i, key := range e.batchKeys {
 		if val, found := values[string(key)]; found {
 			if distinctFlags[i] {
-				handle, err1 := tables.DecodeHandleInUniqueIndexValueDeprecated(val)
+				handle, err1 := tablecodec.DecodeHandleInUniqueIndexValueDeprecated(val)
 				if err1 != nil {
 					return err1
 				}

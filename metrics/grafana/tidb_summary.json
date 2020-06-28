@@ -1632,10 +1632,10 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "sum(rate(tidb_session_transaction_duration_seconds_count{sql_type=\"general\"}[1m])) by (type)",
+              "expr": "sum(rate(tidb_session_transaction_duration_seconds_count[1m])) by (type, txn_mode)",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "{{type}}",
+              "legendFormat": "{{type}}-{{txn_mode}}",
               "refId": "A",
               "step": 10
             }
@@ -1723,24 +1723,24 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "histogram_quantile(0.99, sum(rate(tidb_session_transaction_duration_seconds_bucket{sql_type=\"general\"}[1m])) by (le))",
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_session_transaction_duration_seconds_bucket{sql_type=\"general\"}[1m])) by (le, txn_mode))",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "99",
+              "legendFormat": "99-{{txn_mode}}",
               "refId": "A"
             },
             {
-              "expr": "histogram_quantile(0.95, sum(rate(tidb_session_transaction_duration_seconds_bucket{sql_type=\"general\"}[1m])) by (le))",
+              "expr": "histogram_quantile(0.95, sum(rate(tidb_session_transaction_duration_seconds_bucket{sql_type=\"general\"}[1m])) by (le, txn_mode))",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "95",
+              "legendFormat": "95-{{txn_mode}}",
               "refId": "B"
             },
             {
-              "expr": "histogram_quantile(0.80, sum(rate(tidb_session_transaction_duration_seconds_bucket{sql_type=\"general\"}[1m])) by (le))",
+              "expr": "histogram_quantile(0.80, sum(rate(tidb_session_transaction_duration_seconds_bucket{sql_type=\"general\"}[1m])) by (le, txn_mode))",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "80",
+              "legendFormat": "80-{{txn_mode}}",
               "refId": "C"
             }
           ],
@@ -1825,10 +1825,10 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "histogram_quantile(1, sum(rate(tidb_session_transaction_statement_num_bucket{sql_type=\"general\"}[30s])) by (le))",
+              "expr": "histogram_quantile(1, sum(rate(tidb_session_transaction_statement_num_bucket[30s])) by (le))",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "99",
+              "legendFormat": "max",
               "refId": "A"
             }
           ],

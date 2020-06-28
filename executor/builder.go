@@ -229,6 +229,10 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildIndexMergeReader(v)
 	case *plannercore.SelectInto:
 		return b.buildSelectInto(v)
+	case *plannercore.AdminShowTelemetry:
+		return b.buildAdminShowTelemetry(v)
+	case *plannercore.AdminResetTelemetryID:
+		return b.buildAdminResetTelemetryID(v)
 	default:
 		if mp, ok := p.(MockPhysicalPlan); ok {
 			return mp.GetExecutor()
@@ -340,7 +344,7 @@ func buildIndexLookUpChecker(b *executorBuilder, readerPlan *plannercore.Physica
 	}
 	readerExec.ranges = ranger.FullRange()
 	ts := readerPlan.TablePlans[0].(*plannercore.PhysicalTableScan)
-	readerExec.handleIdx = ts.HandleIdx
+	readerExec.handleIdx = []int{ts.HandleIdx}
 
 	tps := make([]*types.FieldType, 0, len(is.Columns)+1)
 	for _, col := range is.Columns {
@@ -1185,7 +1189,7 @@ func (b *executorBuilder) buildHashAgg(v *plannercore.PhysicalHashAgg) Executor 
 	// When we set both tidb_hashagg_final_concurrency and tidb_hashagg_partial_concurrency to 1,
 	// we do not need to parallelly execute hash agg,
 	// and this action can be a workaround when meeting some unexpected situation using parallelExec.
-	if finalCon, partialCon := sessionVars.HashAggFinalConcurrency, sessionVars.HashAggPartialConcurrency; finalCon <= 0 || partialCon <= 0 || finalCon == 1 && partialCon == 1 {
+	if finalCon, partialCon := sessionVars.HashAggFinalConcurrency(), sessionVars.HashAggPartialConcurrency(); finalCon <= 0 || partialCon <= 0 || finalCon == 1 && partialCon == 1 {
 		e.isUnparallelExec = true
 	}
 	partialOrdinal := 0
@@ -1268,7 +1272,7 @@ func (b *executorBuilder) buildProjection(v *plannercore.PhysicalProjection) Exe
 	}
 	e := &ProjectionExec{
 		baseExecutor:     newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), childExec),
-		numWorkers:       b.ctx.GetSessionVars().ProjectionConcurrency,
+		numWorkers:       int64(b.ctx.GetSessionVars().ProjectionConcurrency()),
 		evaluatorSuit:    expression.NewEvaluatorSuite(v.Exprs, v.AvoidColumnEvaluator),
 		calculateNoDelay: v.CalculateNoDelay,
 	}
@@ -1569,6 +1573,8 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) *NestedLoopAp
 		outer:        v.JoinType != plannercore.InnerJoin,
 		joiner:       tupleJoiner,
 		outerSchema:  v.OuterSchema,
+		ctx:          b.ctx,
+		canUseCache:  v.CanUseCache,
 	}
 	executorCounterNestedLoopApplyExec.Inc()
 	return e
@@ -1753,8 +1759,9 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 	e := &AnalyzeIndexExec{
 		ctx:             b.ctx,
 		physicalTableID: task.PhysicalTableID,
+		isCommonHandle:  task.TblInfo.IsCommonHandle,
 		idxInfo:         task.IndexInfo,
-		concurrency:     b.ctx.GetSessionVars().IndexSerialScanConcurrency,
+		concurrency:     b.ctx.GetSessionVars().IndexSerialScanConcurrency(),
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeIndex,
 			Flags:          sc.PushDownFlags(),
@@ -1765,6 +1772,9 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 	e.analyzePB.IdxReq = &tipb.AnalyzeIndexReq{
 		BucketSize: int64(opts[ast.AnalyzeOptNumBuckets]),
 		NumColumns: int32(len(task.IndexInfo.Columns)),
+	}
+	if e.isCommonHandle && e.idxInfo.Primary {
+		e.analyzePB.Tp = tipb.AnalyzeType_TypeCommonHandle
 	}
 	depth := int32(opts[ast.AnalyzeOptCMSketchDepth])
 	width := int32(opts[ast.AnalyzeOptCMSketchWidth])
@@ -1821,7 +1831,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 		physicalTableID: task.PhysicalTableID,
 		colsInfo:        task.ColsInfo,
 		pkInfo:          task.PKInfo,
-		concurrency:     b.ctx.GetSessionVars().DistSQLScanConcurrency,
+		concurrency:     b.ctx.GetSessionVars().DistSQLScanConcurrency(),
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeColumn,
 			Flags:          sc.PushDownFlags(),
@@ -1838,6 +1848,9 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 		ColumnsInfo:   util.ColumnsToProto(cols, task.PKInfo != nil),
 		CmsketchDepth: &depth,
 		CmsketchWidth: &width,
+	}
+	if task.TblInfo != nil {
+		e.analyzePB.ColReq.PrimaryColumnIds = tables.TryGetCommonPkColumnIds(task.TblInfo)
 	}
 	b.err = plannercore.SetPBColumnsDefaultValue(b.ctx, e.analyzePB.ColReq.ColumnsInfo, cols)
 	job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze columns"}
@@ -2205,8 +2218,8 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 		lastColHelper: v.CompareFilters,
 	}
 	childrenUsedSchema := markChildrenUsedCols(v.Schema(), v.Children()[0].Schema(), v.Children()[1].Schema())
-	joiners := make([]joiner, e.ctx.GetSessionVars().IndexLookupJoinConcurrency)
-	for i := 0; i < e.ctx.GetSessionVars().IndexLookupJoinConcurrency; i++ {
+	joiners := make([]joiner, e.ctx.GetSessionVars().IndexLookupJoinConcurrency())
+	for i := 0; i < len(joiners); i++ {
 		joiners[i] = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, leftTypes, rightTypes, childrenUsedSchema)
 	}
 	e.joiners = joiners
@@ -2219,7 +2232,7 @@ func (b *executorBuilder) buildIndexNestedLoopHashJoin(v *plannercore.PhysicalIn
 		IndexLookUpJoin: *e,
 		keepOuterOrder:  v.KeepOuterOrder,
 	}
-	concurrency := e.ctx.GetSessionVars().IndexLookupJoinConcurrency
+	concurrency := e.ctx.GetSessionVars().IndexLookupJoinConcurrency()
 	idxHash.joiners = make([]joiner, concurrency)
 	for i := 0; i < concurrency; i++ {
 		idxHash.joiners[i] = e.joiner.Clone()
@@ -2429,18 +2442,24 @@ func buildTableReq(b *executorBuilder, schemaLen int, plans []plannercore.Physic
 	return tableReq, tableStreaming, tbl, err
 }
 
-func buildIndexReq(b *executorBuilder, schemaLen int, plans []plannercore.PhysicalPlan) (dagReq *tipb.DAGRequest, streaming bool, err error) {
+func buildIndexReq(b *executorBuilder, schemaLen, handleLen int, plans []plannercore.PhysicalPlan) (dagReq *tipb.DAGRequest, streaming bool, err error) {
 	indexReq, indexStreaming, err := b.constructDAGReq(plans)
 	if err != nil {
 		return nil, false, err
 	}
-	indexReq.OutputOffsets = []uint32{uint32(schemaLen)}
+	indexReq.OutputOffsets = []uint32{}
+	for i := 0; i < handleLen; i++ {
+		indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(schemaLen+i))
+	}
+	if len(indexReq.OutputOffsets) == 0 {
+		indexReq.OutputOffsets = []uint32{uint32(schemaLen)}
+	}
 	return indexReq, indexStreaming, err
 }
 
 func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIndexLookUpReader) (*IndexLookUpExecutor, error) {
 	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
-	indexReq, indexStreaming, err := buildIndexReq(b, len(is.Index.Columns), v.IndexPlans)
+	indexReq, indexStreaming, err := buildIndexReq(b, len(is.Index.Columns), len(v.CommonHandleCols), v.IndexPlans)
 	if err != nil {
 		return nil, err
 	}
@@ -2490,7 +2509,13 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	}
 	e.dagPB.CollectRangeCounts = &collectIndex
 	if v.ExtraHandleCol != nil {
-		e.handleIdx = v.ExtraHandleCol.Index
+		e.handleIdx = append(e.handleIdx, v.ExtraHandleCol.Index)
+		e.handleCols = []*expression.Column{v.ExtraHandleCol}
+	} else {
+		for _, handleCol := range v.CommonHandleCols {
+			e.handleIdx = append(e.handleIdx, handleCol.Index)
+		}
+		e.handleCols = v.CommonHandleCols
 	}
 	return e, nil
 }
@@ -2539,7 +2564,8 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		feedbacks = append(feedbacks, feedback)
 
 		if is, ok := v.PartialPlans[i][0].(*plannercore.PhysicalIndexScan); ok {
-			tempReq, tempStreaming, err = buildIndexReq(b, len(is.Index.Columns), v.PartialPlans[i])
+			// TODO: handle length for cluster index.
+			tempReq, tempStreaming, err = buildIndexReq(b, len(is.Index.Columns), 0, v.PartialPlans[i])
 			keepOrders = append(keepOrders, is.KeepOrder)
 			descs = append(descs, is.Desc)
 			indexes = append(indexes, is.Index)
@@ -2777,7 +2803,7 @@ func (builder *dataReaderBuilder) buildProjectionForIndexJoin(ctx context.Contex
 
 	e := &ProjectionExec{
 		baseExecutor:     newBaseExecutor(builder.ctx, v.Schema(), v.ExplainID(), childExec),
-		numWorkers:       builder.ctx.GetSessionVars().ProjectionConcurrency,
+		numWorkers:       int64(builder.ctx.GetSessionVars().ProjectionConcurrency()),
 		evaluatorSuit:    expression.NewEvaluatorSuite(v.Exprs, v.AvoidColumnEvaluator),
 		calculateNoDelay: v.CalculateNoDelay,
 	}
@@ -3003,12 +3029,8 @@ func newRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 		}
 	}
 	if len(pkCols) == 0 {
-		if tbl.IsCommonHandle {
-			pkIdx := tables.FindPrimaryIndex(tbl)
-			for _, idxCol := range pkIdx.Columns {
-				pkCols = append(pkCols, tbl.Columns[idxCol.Offset].ID)
-			}
-		} else {
+		pkCols = tables.TryGetCommonPkColumnIds(tbl)
+		if len(pkCols) == 0 {
 			pkCols = []int64{0}
 		}
 	}
@@ -3106,4 +3128,12 @@ func getPhysicalTableID(t table.Table) int64 {
 		return p.GetPhysicalID()
 	}
 	return t.Meta().ID
+}
+
+func (b *executorBuilder) buildAdminShowTelemetry(v *plannercore.AdminShowTelemetry) Executor {
+	return &AdminShowTelemetryExec{baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID())}
+}
+
+func (b *executorBuilder) buildAdminResetTelemetryID(v *plannercore.AdminResetTelemetryID) Executor {
+	return &AdminResetTelemetryIDExec{baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID())}
 }

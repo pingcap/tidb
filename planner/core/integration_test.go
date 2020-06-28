@@ -147,6 +147,9 @@ func (s *testIntegrationSuite) TestBitColErrorMessage(c *C) {
 func (s *testIntegrationSuite) TestPushLimitDownIndexLookUpReader(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
+	tk.MustExec("set @@session.tidb_executor_concurrency = 4;")
+	tk.MustExec("set @@session.tidb_hash_join_concurrency = 5;")
+	tk.MustExec("set @@session.tidb_distsql_scan_concurrency = 15;")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tbl")
 	tk.MustExec("create table tbl(a int, b int, c int, key idx_b_c(b,c))")
@@ -301,8 +304,10 @@ func (s *testIntegrationSerialSuite) TestNoneAccessPathsFoundByIsolationRead(c *
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash, tikv'")
 	tk.MustExec("select * from t")
-	config.GetGlobalConfig().IsolationRead.Engines = []string{"tiflash"}
-	defer func() { config.GetGlobalConfig().IsolationRead.Engines = []string{"tikv", "tiflash"} }()
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.IsolationRead.Engines = []string{"tiflash"}
+	})
 	// Change instance config doesn't affect isolation read.
 	tk.MustExec("select * from t")
 }
@@ -342,6 +347,42 @@ func (s *testIntegrationSerialSuite) TestSelPushDownTiFlash(c *C) {
 		res := tk.MustQuery(tt)
 		res.Check(testkit.Rows(output[i].Plan...))
 	}
+}
+
+func (s *testIntegrationSerialSuite) TestAggPushDownEngine(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b varchar(20))")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+
+	tk.MustQuery("desc select approx_count_distinct(a) from t").Check(testkit.Rows(
+		"StreamAgg_16 1.00 root  funcs:approx_count_distinct(Column#5)->Column#3",
+		"└─TableReader_17 1.00 root  data:StreamAgg_8",
+		"  └─StreamAgg_8 1.00 cop[tiflash]  funcs:approx_count_distinct(test.t.a)->Column#5",
+		"    └─TableFullScan_15 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"))
+
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tikv'")
+
+	tk.MustQuery("desc select approx_count_distinct(a) from t").Check(testkit.Rows(
+		"HashAgg_5 1.00 root  funcs:approx_count_distinct(test.t.a)->Column#3",
+		"└─TableReader_11 10000.00 root  data:TableFullScan_10",
+		"  └─TableFullScan_10 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 }
 
 func (s *testIntegrationSerialSuite) TestIssue15110(c *C) {
@@ -825,8 +866,42 @@ func (s *testIntegrationSuite) TestIssue15546(c *C) {
 	tk.MustQuery("select * from pt, vt where pt.a = vt.a").Check(testkit.Rows("1 1 1 1"))
 }
 
+func (s *testIntegrationSuite) TestApproxCountDistinctInPartitionTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int(11), b int) partition by range (a) (partition p0 values less than (3), partition p1 values less than maxvalue);")
+	tk.MustExec("insert into t values(1, 1), (2, 1), (3, 1), (4, 2), (4, 2)")
+	tk.MustExec(fmt.Sprintf("set session tidb_opt_agg_push_down=1"))
+	tk.MustQuery("explain select approx_count_distinct(a), b from t group by b order by b desc").Check(testkit.Rows("Sort_11 16000.00 root  test.t.b:desc",
+		"└─HashAgg_16 16000.00 root  group by:test.t.b, funcs:approx_count_distinct(Column#5)->Column#4, funcs:firstrow(Column#6)->test.t.b",
+		"  └─PartitionUnion_17 16000.00 root  ",
+		"    ├─HashAgg_18 8000.00 root  group by:test.t.b, funcs:approx_count_distinct(test.t.a)->Column#5, funcs:firstrow(test.t.b)->Column#6, funcs:firstrow(test.t.b)->test.t.b",
+		"    │ └─TableReader_22 10000.00 root  data:TableFullScan_21",
+		"    │   └─TableFullScan_21 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
+		"    └─HashAgg_25 8000.00 root  group by:test.t.b, funcs:approx_count_distinct(test.t.a)->Column#5, funcs:firstrow(test.t.b)->Column#6, funcs:firstrow(test.t.b)->test.t.b",
+		"      └─TableReader_29 10000.00 root  data:TableFullScan_28",
+		"        └─TableFullScan_28 10000.00 cop[tikv] table:t, partition:p1 keep order:false, stats:pseudo"))
+	tk.MustQuery("select approx_count_distinct(a), b from t group by b order by b desc").Check(testkit.Rows("1 2", "3 1"))
+}
+
+func (s *testIntegrationSuite) TestIssue17813(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists hash_partition_overflow")
+	tk.MustExec("create table hash_partition_overflow (c0 bigint unsigned) partition by hash(c0) partitions 3")
+	tk.MustExec("insert into hash_partition_overflow values (9223372036854775808)")
+	tk.MustQuery("select * from hash_partition_overflow where c0 = 9223372036854775808").Check(testkit.Rows("9223372036854775808"))
+	tk.MustQuery("select * from hash_partition_overflow where c0 in (1, 9223372036854775808)").Check(testkit.Rows("9223372036854775808"))
+}
+
 func (s *testIntegrationSuite) TestHintWithRequiredProperty(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@session.tidb_executor_concurrency = 4;")
+	tk.MustExec("set @@session.tidb_hash_join_concurrency = 5;")
+	tk.MustExec("set @@session.tidb_distsql_scan_concurrency = 15;")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int, c int, key b(b))")
@@ -1033,6 +1108,52 @@ func (s *testIntegrationSuite) TestStreamAggProp(c *C) {
 	}
 }
 
+func (s *testIntegrationSuite) TestOptimizeHintOnPartitionTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t (
+					a int, b int, c varchar(20),
+					primary key(a), key(b), key(c)
+				) partition by range columns(a) (
+					partition p0 values less than(6),
+					partition p1 values less than(11),
+					partition p2 values less than(16));`)
+	tk.MustExec(`insert into t values (1,1,"1"), (2,2,"2"), (8,8,"8"), (11,11,"11"), (15,15,"15")`)
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Warn []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
+			output[i].Warn = s.testData.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows())
+		})
+		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warn...))
+	}
+}
+
 func (s *testIntegrationSuite) TestSelectLimit(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -1127,4 +1248,31 @@ func (s *testIntegrationSuite) TestIssue16935(c *C) {
 	tk.MustExec("CREATE definer='root'@'localhost' VIEW v0(c0) AS SELECT NULL FROM t0;")
 
 	tk.MustQuery("SELECT * FROM t0 LEFT JOIN v0 ON TRUE WHERE v0.c0 IS NULL;")
+}
+
+func (s *testIntegrationSuite) TestAccessPathOnClusterIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_clustered_index = 1")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int, b varchar(20), c decimal(40,10), d int, primary key(a,b), key(c))")
+	tk.MustExec(`insert into t1 values (1,"111",1.1,11), (2,"222",2.2,12), (3,"333",3.3,13)`)
+	tk.MustExec("analyze table t1")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Res  []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
+			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Res...))
+	}
 }

@@ -210,7 +210,9 @@ func checkAndOverridePartitionID(newTableInfo, oldTableInfo *model.TableInfo) er
 	for i, newOne := range newTableInfo.Partition.Definitions {
 		found := false
 		for _, oldOne := range oldTableInfo.Partition.Definitions {
-			if newOne.Name.L == oldOne.Name.L && stringSliceEqual(newOne.LessThan, oldOne.LessThan) {
+			// Fix issue 17952 which wanna substitute partition range expr.
+			// So eliminate stringSliceEqual(newOne.LessThan, oldOne.LessThan) here.
+			if newOne.Name.L == oldOne.Name.L {
 				newTableInfo.Partition.Definitions[i].ID = oldOne.ID
 				found = true
 				break
@@ -809,6 +811,15 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	tempID := partDef.ID
 	// exchange table meta id
 	partDef.ID = nt.ID
+
+	if pt.TiFlashReplica != nil {
+		for i, id := range pt.TiFlashReplica.AvailablePartitionIDs {
+			if id == tempID {
+				pt.TiFlashReplica.AvailablePartitionIDs[i] = partDef.ID
+				break
+			}
+		}
+	}
 
 	err = t.UpdateTable(ptSchemaID, pt)
 	if err != nil {

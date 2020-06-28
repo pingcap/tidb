@@ -45,8 +45,8 @@ import (
 )
 
 var (
-	transactionDurationInternalRollback = metrics.TransactionDuration.WithLabelValues(metrics.LblInternal, metrics.LblRollback)
-	transactionDurationGeneralRollback  = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, metrics.LblRollback)
+	transactionDurationPessimisticRollback = metrics.TransactionDuration.WithLabelValues(metrics.LblPessimistic, metrics.LblRollback)
+	transactionDurationOptimisticRollback  = metrics.TransactionDuration.WithLabelValues(metrics.LblOptimistic, metrics.LblRollback)
 )
 
 // SimpleExec represents simple statement executor.
@@ -649,10 +649,10 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	}
 	if txn.Valid() {
 		duration := time.Since(sessVars.TxnCtx.CreateTime).Seconds()
-		if sessVars.InRestrictedSQL {
-			transactionDurationInternalRollback.Observe(duration)
+		if sessVars.TxnCtx.IsPessimistic {
+			transactionDurationPessimisticRollback.Observe(duration)
 		} else {
-			transactionDurationGeneralRollback.Observe(duration)
+			transactionDurationOptimisticRollback.Observe(duration)
 		}
 		sessVars.TxnCtx.ClearDelta()
 		return txn.Rollback()
