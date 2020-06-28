@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
@@ -195,7 +196,7 @@ type PhysicalProjection struct {
 type PhysicalTopN struct {
 	basePhysicalPlan
 
-	ByItems []*ByItems
+	ByItems []*util.ByItems
 	Offset  uint64
 	Count   uint64
 }
@@ -353,7 +354,7 @@ type PhysicalStreamAgg struct {
 type PhysicalSort struct {
 	basePhysicalPlan
 
-	ByItems []*ByItems
+	ByItems []*util.ByItems
 }
 
 // NominalSort asks sort properties for its child. It is a fake operator that will not

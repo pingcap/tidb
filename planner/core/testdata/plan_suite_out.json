@@ -930,6 +930,65 @@
     ]
   },
   {
+    "Name": "TestGroupConcatOrderby",
+    "Cases": [
+      {
+        "SQL": "select /*+ agg_to_cop */ group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;",
+        "Plan": [
+          "StreamAgg_8 1.00 root funcs:group_concat(col_0 order by col_1 desc separator \"++\"), group_concat(col_2 order by col_3 desc, col_4 asc separator \"--\")",
+          "└─Projection_18 10000.00 root cast(test.test.name), test.test.name, cast(test.test.id), test.test.name, test.test.id",
+          "  └─TableReader_15 10000.00 root data:TableScan_14",
+          "    └─TableScan_14 10000.00 cop table:test, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "500++200++30++20++20++10 3--3--1--1--2--1"
+        ]
+      },
+      {
+        "SQL": "select /*+ agg_to_cop */ group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from ptest;",
+        "Plan": [
+          "StreamAgg_12 1.00 root funcs:group_concat(col_0 order by col_1 desc separator \"++\"), group_concat(col_2 order by col_3 desc, col_4 asc separator \"--\")",
+          "└─Projection_23 20000.00 root cast(test.ptest.name), test.ptest.name, cast(test.ptest.id), test.ptest.name, test.ptest.id",
+          "  └─Union_18 20000.00 root ",
+          "    ├─TableReader_20 10000.00 root data:TableScan_19",
+          "    │ └─TableScan_19 10000.00 cop table:ptest, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "    └─TableReader_22 10000.00 root data:TableScan_21",
+          "      └─TableScan_21 10000.00 cop table:ptest, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "500++200++30++20++20++10 3--3--1--1--2--1"
+        ]
+      },
+      {
+        "SQL": "select /*+ agg_to_cop */ group_concat(distinct name order by name desc) from test;",
+        "Plan": [
+          "StreamAgg_8 1.00 root funcs:group_concat(distinct col_0 order by col_1 desc separator \",\")",
+          "└─Projection_18 10000.00 root cast(test.test.name), test.test.name",
+          "  └─TableReader_15 10000.00 root data:TableScan_14",
+          "    └─TableScan_14 10000.00 cop table:test, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "500,200,30,20,10"
+        ]
+      },
+      {
+        "SQL": "select /*+ agg_to_cop */ group_concat(distinct name order by name desc) from ptest;",
+        "Plan": [
+          "StreamAgg_12 1.00 root funcs:group_concat(distinct col_0 order by col_1 desc separator \",\")",
+          "└─Projection_23 20000.00 root cast(test.ptest.name), test.ptest.name",
+          "  └─Union_18 20000.00 root ",
+          "    ├─TableReader_20 10000.00 root data:TableScan_19",
+          "    │ └─TableScan_19 10000.00 cop table:ptest, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "    └─TableReader_22 10000.00 root data:TableScan_21",
+          "      └─TableScan_21 10000.00 cop table:ptest, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "500,200,30,20,10"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestIndexJoinUnionScan",
     "Cases": [
       {

@@ -294,10 +294,6 @@ func buildGroupConcat(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDe
 	case aggregation.DedupMode:
 		return nil
 	default:
-		base := baseAggFunc{
-			args:    aggFuncDesc.Args[:len(aggFuncDesc.Args)-1],
-			ordinal: ordinal,
-		}
 		// The last arg is promised to be a not-null string constant, so the error can be ignored.
 		c, _ := aggFuncDesc.Args[len(aggFuncDesc.Args)-1].(*expression.Constant)
 		sep, _, err := c.EvalString(nil, chunk.Row{})
@@ -316,10 +312,26 @@ func buildGroupConcat(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDe
 			panic(fmt.Sprintf("Error happened when buildGroupConcat: %s", err.Error()))
 		}
 		var truncated int32
-		if aggFuncDesc.HasDistinct {
-			return &groupConcatDistinct{baseGroupConcat4String{baseAggFunc: base, sep: sep, maxLen: maxLen, truncated: &truncated}}
+		base := baseGroupConcat4String{
+			baseAggFunc: baseAggFunc{
+				args:    aggFuncDesc.Args[:len(aggFuncDesc.Args)-1],
+				ordinal: ordinal,
+			},
+			byItems:   aggFuncDesc.OrderByItems,
+			sep:       sep,
+			maxLen:    maxLen,
+			truncated: &truncated,
 		}
-		return &groupConcat{baseGroupConcat4String{baseAggFunc: base, sep: sep, maxLen: maxLen, truncated: &truncated}}
+		if aggFuncDesc.HasDistinct {
+			if len(aggFuncDesc.OrderByItems) > 0 {
+				return &groupConcatDistinctOrder{base}
+			}
+			return &groupConcatDistinct{base}
+		}
+		if len(aggFuncDesc.OrderByItems) > 0 {
+			return &groupConcatOrder{base}
+		}
+		return &groupConcat{base}
 	}
 }
 
