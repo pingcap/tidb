@@ -935,6 +935,76 @@ func (s *testIntegrationSuite4) TestAlterTableExchangePartition(c *C) {
 	tk.MustExec("alter table e12 add index (a);")
 	tk.MustGetErrCode("alter table e12 exchange partition p0 with table e14", tmysql.ErrPartitionExchangeDifferentOption)
 
+	// test for tiflash replica
+	tk.MustExec("create table e15 (a int) partition by hash(a) partitions 1;")
+	tk.MustExec("create table e16 (a int)")
+	tk.MustExec("alter table e15 set tiflash replica 1;")
+	tk.MustExec("alter table e16 set tiflash replica 2;")
+
+	e15 := testGetTableByName(c, s.ctx, "test", "e15")
+	partition := e15.Meta().Partition
+
+	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, partition.Definitions[0].ID, true)
+	c.Assert(err, IsNil)
+
+	e16 := testGetTableByName(c, s.ctx, "test", "e16")
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, e16.Meta().ID, true)
+	c.Assert(err, IsNil)
+
+	tk.MustGetErrCode("alter table e15 exchange partition p0 with table e16", tmysql.ErrTablesDifferentMetadata)
+	tk.MustExec("drop table e15, e16")
+
+	tk.MustExec("create table e15 (a int) partition by hash(a) partitions 1;")
+	tk.MustExec("create table e16 (a int)")
+	tk.MustExec("alter table e15 set tiflash replica 1;")
+	tk.MustExec("alter table e16 set tiflash replica 1;")
+
+	e15 = testGetTableByName(c, s.ctx, "test", "e15")
+	partition = e15.Meta().Partition
+
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, partition.Definitions[0].ID, true)
+	c.Assert(err, IsNil)
+
+	e16 = testGetTableByName(c, s.ctx, "test", "e16")
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, e16.Meta().ID, true)
+	c.Assert(err, IsNil)
+
+	tk.MustExec("alter table e15 exchange partition p0 with table e16")
+
+	e15 = testGetTableByName(c, s.ctx, "test", "e15")
+
+	partition = e15.Meta().Partition
+
+	c.Assert(e15.Meta().TiFlashReplica, NotNil)
+	c.Assert(e15.Meta().TiFlashReplica.Available, IsTrue)
+	c.Assert(e15.Meta().TiFlashReplica.AvailablePartitionIDs, DeepEquals, []int64{partition.Definitions[0].ID})
+
+	e16 = testGetTableByName(c, s.ctx, "test", "e16")
+	c.Assert(e16.Meta().TiFlashReplica, NotNil)
+	c.Assert(e16.Meta().TiFlashReplica.Available, IsTrue)
+
+	tk.MustExec("drop table e15, e16")
+	tk.MustExec("create table e15 (a int) partition by hash(a) partitions 1;")
+	tk.MustExec("create table e16 (a int)")
+	tk.MustExec("alter table e16 set tiflash replica 1;")
+
+	tk.MustExec("alter table e15 set tiflash replica 1 location labels 'a', 'b';")
+
+	tk.MustGetErrCode("alter table e15 exchange partition p0 with table e16", tmysql.ErrTablesDifferentMetadata)
+
+	tk.MustExec("alter table e16 set tiflash replica 1 location labels 'a', 'b';")
+
+	e15 = testGetTableByName(c, s.ctx, "test", "e15")
+	partition = e15.Meta().Partition
+
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, partition.Definitions[0].ID, true)
+	c.Assert(err, IsNil)
+
+	e16 = testGetTableByName(c, s.ctx, "test", "e16")
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, e16.Meta().ID, true)
+	c.Assert(err, IsNil)
+
+	tk.MustExec("alter table e15 exchange partition p0 with table e16")
 }
 
 func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
@@ -1134,7 +1204,6 @@ func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
 			tk.MustExec(t.exchangeSQL)
 		}
 	}
-
 }
 
 func (s *testIntegrationSuite7) TestExchangePartitionExpressIndex(c *C) {
