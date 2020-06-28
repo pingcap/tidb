@@ -887,6 +887,7 @@ var MySQLErrName = map[uint16]string{
 	ErrGeneratedColumnNonPrior:                               "Generated column can refer only to generated columns defined prior to it.",
 	ErrDependentByGeneratedColumn:                            "Column '%s' has a generated column dependency.",
 	ErrGeneratedColumnRefAutoInc:                             "Generated column '%s' cannot refer to auto-increment column.",
+	ErrWarnConflictingHint:                                   "Hint %s is ignored as conflicting/duplicated.",
 	ErrInvalidFieldSize:                                      "Invalid size for column '%s'.",
 	ErrIncorrectType:                                         "Incorrect type for argument %s in function %s.",
 	ErrInvalidJSONData:                                       "Invalid JSON data provided to function %s: %s",
@@ -946,6 +947,7 @@ var MySQLErrName = map[uint16]string{
 	ErrJSONValueOutOfRangeForFuncIndex:                       "Out of range JSON value for CAST for functional index '%s'",
 	ErrFunctionalIndexDataIsTooLong:                          "Data too long for functional index '%s'",
 	ErrFunctionalIndexNotApplicable:                          "Cannot use functional index '%s' due to type or collation conversion",
+	ErrUnsupportedConstraintCheck:                            "%s is not supported",
 
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed:         "Only one DEFAULT partition allowed",

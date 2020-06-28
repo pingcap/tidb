@@ -610,7 +610,7 @@ func (s *testSuite3) TestAdminCheckPartitionTableFailed(c *C) {
 		err = txn.Commit(context.Background())
 		c.Assert(err, IsNil)
 		err = tk.ExecToErr("admin check table admin_test_p")
-		c.Assert(err.Error(), Equals, fmt.Sprintf("[executor:8003]admin_test_p err:[admin:8223]index:<nil> != record:&admin.RecordData{Handle:%d, Values:[]types.Datum{types.Datum{k:0x1, collation:\"\", decimal:0x0, length:0x0, i:%d, b:[]uint8(nil), x:interface {}(nil)}}}", i, i))
+		c.Assert(err.Error(), Equals, fmt.Sprintf("[executor:8003]admin_test_p err:[admin:8223]index:<nil> != record:&admin.RecordData{Handle:%d, Values:[]types.Datum{types.Datum{k:0x1, decimal:0x0, length:0x0, i:%d, collation:\"\", b:[]uint8(nil), x:interface {}(nil)}}}", i, i))
 		c.Assert(executor.ErrAdminCheckTable.Equal(err), IsTrue)
 		// TODO: fix admin recover for partition table.
 		//r := tk.MustQuery("admin recover index admin_test_p idx")
@@ -639,7 +639,7 @@ func (s *testSuite3) TestAdminCheckPartitionTableFailed(c *C) {
 		c.Assert(err, IsNil)
 		err = tk.ExecToErr("admin check table admin_test_p")
 		c.Assert(err, NotNil)
-		c.Assert(err.Error(), Equals, fmt.Sprintf("handle %d, index:types.Datum{k:0x1, collation:\"\", decimal:0x0, length:0x0, i:%d, b:[]uint8(nil), x:interface {}(nil)} != record:<nil>", i+8, i+8))
+		c.Assert(err.Error(), Equals, fmt.Sprintf("handle %d, index:types.Datum{k:0x1, decimal:0x0, length:0x0, i:%d, collation:\"\", b:[]uint8(nil), x:interface {}(nil)} != record:<nil>", i+8, i+8))
 		// TODO: fix admin recover for partition table.
 		txn, err = s.store.Begin()
 		c.Assert(err, IsNil)
@@ -662,7 +662,7 @@ func (s *testSuite3) TestAdminCheckPartitionTableFailed(c *C) {
 		c.Assert(err, IsNil)
 		err = tk.ExecToErr("admin check table admin_test_p")
 		c.Assert(err, NotNil)
-		c.Assert(err.Error(), Equals, fmt.Sprintf("col c2, handle %d, index:types.Datum{k:0x1, collation:\"\", decimal:0x0, length:0x0, i:%d, b:[]uint8(nil), x:interface {}(nil)} != record:types.Datum{k:0x1, collation:\"\", decimal:0x0, length:0x0, i:%d, b:[]uint8(nil), x:interface {}(nil)}", i, i+8, i))
+		c.Assert(err.Error(), Equals, fmt.Sprintf("col c2, handle %d, index:types.Datum{k:0x1, decimal:0x0, length:0x0, i:%d, collation:\"\", b:[]uint8(nil), x:interface {}(nil)} != record:types.Datum{k:0x1, decimal:0x0, length:0x0, i:%d, collation:\"\", b:[]uint8(nil), x:interface {}(nil)}", i, i+8, i))
 		// TODO: fix admin recover for partition table.
 		txn, err = s.store.Begin()
 		c.Assert(err, IsNil)
@@ -707,7 +707,7 @@ func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	c.Assert(err, IsNil)
 	err = tk.ExecToErr("admin check table admin_test")
 	c.Assert(err.Error(), Equals,
-		"[executor:8003]admin_test err:[admin:8223]index:<nil> != record:&admin.RecordData{Handle:-1, Values:[]types.Datum{types.Datum{k:0x1, collation:\"\", decimal:0x0, length:0x0, i:-10, b:[]uint8(nil), x:interface {}(nil)}}}")
+		"[executor:8003]admin_test err:[admin:8223]index:<nil> != record:&admin.RecordData{Handle:-1, Values:[]types.Datum{types.Datum{k:0x1, decimal:0x0, length:0x0, i:-10, collation:\"\", b:[]uint8(nil), x:interface {}(nil)}}}")
 	c.Assert(executor.ErrAdminCheckTable.Equal(err), IsTrue)
 	r := tk.MustQuery("admin recover index admin_test c2")
 	r.Check(testkit.Rows("1 7"))
@@ -723,7 +723,7 @@ func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	err = tk.ExecToErr("admin check table admin_test")
-	c.Assert(err.Error(), Equals, "handle 0, index:types.Datum{k:0x1, collation:\"\", decimal:0x0, length:0x0, i:0, b:[]uint8(nil), x:interface {}(nil)} != record:<nil>")
+	c.Assert(err.Error(), Equals, "handle 0, index:types.Datum{k:0x1, decimal:0x0, length:0x0, i:0, collation:\"\", b:[]uint8(nil), x:interface {}(nil)} != record:<nil>")
 
 	// Add one row of index.
 	// Table count < index count.
@@ -740,7 +740,7 @@ func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	err = tk.ExecToErr("admin check table admin_test")
-	c.Assert(err.Error(), Equals, "col c2, handle 2, index:types.Datum{k:0x1, collation:\"\", decimal:0x0, length:0x0, i:13, b:[]uint8(nil), x:interface {}(nil)} != record:types.Datum{k:0x1, collation:\"\", decimal:0x0, length:0x0, i:12, b:[]uint8(nil), x:interface {}(nil)}")
+	c.Assert(err.Error(), Equals, "col c2, handle 2, index:types.Datum{k:0x1, decimal:0x0, length:0x0, i:13, collation:\"\", b:[]uint8(nil), x:interface {}(nil)} != record:types.Datum{k:0x1, decimal:0x0, length:0x0, i:12, collation:\"\", b:[]uint8(nil), x:interface {}(nil)}")
 
 	// Table count = index count.
 	// Two indices have the same handle.
@@ -753,7 +753,7 @@ func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	err = tk.ExecToErr("admin check table admin_test")
-	c.Assert(err.Error(), Equals, "col c2, handle 10, index:types.Datum{k:0x1, collation:\"\", decimal:0x0, length:0x0, i:19, b:[]uint8(nil), x:interface {}(nil)} != record:types.Datum{k:0x1, collation:\"\", decimal:0x0, length:0x0, i:20, b:[]uint8(nil), x:interface {}(nil)}")
+	c.Assert(err.Error(), Equals, "col c2, handle 10, index:types.Datum{k:0x1, decimal:0x0, length:0x0, i:19, collation:\"\", b:[]uint8(nil), x:interface {}(nil)} != record:types.Datum{k:0x1, decimal:0x0, length:0x0, i:20, collation:\"\", b:[]uint8(nil), x:interface {}(nil)}")
 
 	// Table count = index count.
 	// Index c2 has one line of data is 19, the corresponding table data is 20.
@@ -766,7 +766,7 @@ func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	err = tk.ExecToErr("admin check table admin_test")
-	c.Assert(err.Error(), Equals, "col c2, handle 10, index:types.Datum{k:0x1, collation:\"\", decimal:0x0, length:0x0, i:19, b:[]uint8(nil), x:interface {}(nil)} != record:types.Datum{k:0x1, collation:\"\", decimal:0x0, length:0x0, i:20, b:[]uint8(nil), x:interface {}(nil)}")
+	c.Assert(err.Error(), Equals, "col c2, handle 10, index:types.Datum{k:0x1, decimal:0x0, length:0x0, i:19, collation:\"\", b:[]uint8(nil), x:interface {}(nil)} != record:types.Datum{k:0x1, decimal:0x0, length:0x0, i:20, collation:\"\", b:[]uint8(nil), x:interface {}(nil)}")
 
 	// Recover records.
 	txn, err = s.store.Begin()

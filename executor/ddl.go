@@ -471,21 +471,28 @@ func GetDropOrTruncateTableInfoFromJobs(jobs []*model.Job, gcSafePoint uint64, d
 		if err != nil {
 			return false, err
 		}
-		// Get the snapshot infoSchema before drop table.
-		// TODO: only get the related database info and table info.
-		snapInfo, err := dom.GetSnapshotInfoSchema(job.StartTS)
+
+		snapMeta, err := dom.GetSnapshotMeta(job.StartTS)
 		if err != nil {
 			return false, err
 		}
-		// Get table meta from snapshot infoSchema.
-		table, ok := snapInfo.TableByID(job.TableID)
-		if !ok {
+		tbl, err := snapMeta.GetTable(job.SchemaID, job.TableID)
+		if err != nil {
+			if meta.ErrDBNotExists.Equal(err) {
+				// The dropped/truncated DDL maybe execute failed that caused by the parallel DDL execution,
+				// then can't find the table from the snapshot info-schema. Should just ignore error here,
+				// see more in TestParallelDropSchemaAndDropTable.
+				continue
+			}
+			return false, err
+		}
+		if tbl == nil {
 			// The dropped/truncated DDL maybe execute failed that caused by the parallel DDL execution,
 			// then can't find the table from the snapshot info-schema. Should just ignore error here,
 			// see more in TestParallelDropSchemaAndDropTable.
 			continue
 		}
-		finish, err := fn(job, table.Meta())
+		finish, err := fn(job, tbl)
 		if err != nil || finish {
 			return finish, err
 		}

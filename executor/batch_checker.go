@@ -53,7 +53,7 @@ func encodeNewRow(ctx sessionctx.Context, t table.Table, row []types.Datum) ([]b
 	colIDs := make([]int64, 0, len(row))
 	skimmedRow := make([]types.Datum, 0, len(row))
 	for _, col := range t.Cols() {
-		if !tables.CanSkip(t.Meta(), col, row[col.Offset]) {
+		if !tables.CanSkip(t.Meta(), col, &row[col.Offset]) {
 			colIDs = append(colIDs, col.ID)
 			skimmedRow = append(skimmedRow, row[col.Offset])
 		}
@@ -86,13 +86,8 @@ func getKeysNeedCheck(ctx context.Context, sctx sessionctx.Context, t table.Tabl
 				break
 			}
 		}
-	}
-	if t.Meta().IsCommonHandle {
-		pkIdx := tables.FindPrimaryIndex(t.Meta())
-		cols := t.Cols()
-		for _, idxCol := range pkIdx.Columns {
-			handleCols = append(handleCols, cols[idxCol.Offset])
-		}
+	} else {
+		handleCols = tables.TryGetCommonPkColumns(t)
 	}
 
 	var err error
