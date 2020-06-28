@@ -169,16 +169,7 @@ func (c *RowContainer) GetChunk(chkIdx int) (*Chunk, error) {
 	if c.m.spillError != nil {
 		return nil, c.m.spillError
 	}
-	chk := NewChunkWithCapacity(c.m.records.FieldTypes(), c.m.recordsInDisk.NumRowsOfChunk(chkIdx))
-	offsets := c.m.recordsInDisk.offsets[chkIdx]
-	for rowIdx := range offsets {
-		row, err := c.m.recordsInDisk.GetRow(RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
-		if err != nil {
-			return chk, err
-		}
-		chk.AppendRow(row)
-	}
-	return chk, nil
+	return c.m.recordsInDisk.GetChunk(chkIdx)
 }
 
 // GetRow returns the row the ptr pointed to.
