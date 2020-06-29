@@ -17,6 +17,7 @@ import (
 	"errors"
 	"sort"
 	"sync"
+	"sync/atomic"
 
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/disk"
@@ -37,6 +38,8 @@ type RowContainer struct {
 		recordsInDisk *ListInDisk
 		// spillError stores the error when spilling.
 		spillError error
+		// spilled indicate whether the RowContainer is spilled.
+		spilled uint32
 	}
 
 	fieldType []*types.FieldType
@@ -78,6 +81,7 @@ func (c *RowContainer) SpillToDisk() {
 		}
 	}
 	c.m.records.Clear()
+	atomic.StoreUint32(&c.m.spilled, 1)
 	return
 }
 
@@ -103,10 +107,10 @@ func (c *RowContainer) alreadySpilled() bool {
 }
 
 // AlreadySpilledSafe indicates that records have spilled out into disk. It's thread-safe.
+// TODO: Use a Rlock to wait spill result when executing spilling in parallel.
+// Now using atomic value to avoid potential deadlock.
 func (c *RowContainer) AlreadySpilledSafe() bool {
-	c.m.RLock()
-	defer c.m.RUnlock()
-	return c.m.recordsInDisk != nil
+	return atomic.LoadUint32(&c.m.spilled) == 1
 }
 
 // NumRow returns the number of rows in the container
