@@ -389,7 +389,13 @@ func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, t *meta.Meta, 
 	}
 
 	// Get the snapshot infoSchema before drop table.
-	snapInfo, err := dom.GetSnapshotInfoSchema(job.StartTS)
+	
+  
+  
+  
+  
+  
+  , err := dom.GetSnapshotInfoSchema(job.StartTS)
 	if err != nil {
 		return nil, nil, err
 	}
