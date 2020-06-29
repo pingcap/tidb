@@ -606,7 +606,7 @@ func (s *TestDDLSuite) TestSimpleInsert(c *C) {
 		return true, nil
 	})
 	c.Assert(err, IsNil)
-	c.Assert(handles, HasLen, rowCount, Commentf("%d %d", handles.Len(), rowCount))
+	c.Assert(handles.Len(), Equals, rowCount, Commentf("%d %d", handles.Len(), rowCount))
 }
 
 func (s *TestDDLSuite) TestSimpleConflictInsert(c *C) {
