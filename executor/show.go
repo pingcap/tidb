@@ -719,7 +719,7 @@ func getDefaultCollate(charsetName string) string {
 }
 
 // ConstructResultOfShowCreateTable constructs the result for show create table.
-func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.TableInfo, incrementAllocator autoid.Allocator, randomAllocator autoid.Allocator, buf *bytes.Buffer) (err error) {
+func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.TableInfo, allocators autoid.Allocators, buf *bytes.Buffer) (err error) {
 	if tableInfo.IsView() {
 		fetchShowCreateTable4View(ctx, tableInfo, buf)
 		return nil
@@ -903,6 +903,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		fmt.Fprintf(buf, " COMPRESSION='%s'", tableInfo.Compression)
 	}
 
+	incrementAllocator := allocators.Get(autoid.AutoIncrementType)
 	if hasAutoIncID && incrementAllocator != nil {
 		autoIncID, err := incrementAllocator.NextGlobalAutoID(tableInfo.ID)
 		if err != nil {
@@ -918,6 +919,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		fmt.Fprintf(buf, " /*T![auto_id_cache] AUTO_ID_CACHE=%d */", tableInfo.AutoIdCache)
 	}
 
+	randomAllocator := allocators.Get(autoid.AutoRandomType)
 	if randomAllocator != nil {
 		autoRandID, err := randomAllocator.NextGlobalAutoID(tableInfo.ID)
 		if err != nil {
@@ -1020,11 +1022,9 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	}
 
 	tableInfo := tb.Meta()
-	incrementAllocator := tb.Allocators(e.ctx).Get(autoid.RowIDAllocType)
-	randomAllocator := tb.Allocators(e.ctx).Get(autoid.AutoRandomType)
 	var buf bytes.Buffer
 	// TODO: let the result more like MySQL.
-	if err = ConstructResultOfShowCreateTable(e.ctx, tableInfo, incrementAllocator, randomAllocator, &buf); err != nil {
+	if err = ConstructResultOfShowCreateTable(e.ctx, tableInfo, tb.Allocators(e.ctx), &buf); err != nil {
 		return err
 	}
 	if tableInfo.IsView() {
