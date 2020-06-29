@@ -840,6 +840,40 @@ func benchmarkHashJoinExecWithCase(b *testing.B, casTest *hashJoinTestCase) {
 	dataSource1 := buildMockDataSource(opt1)
 	dataSource2 := buildMockDataSource(opt2)
 
+	{ // Check Spill.
+		exec := prepare4HashJoin(casTest, dataSource1, dataSource2)
+		tmpCtx := context.Background()
+		chk := newFirstChunk(exec)
+		dataSource1.prepareChunks()
+		dataSource2.prepareChunks()
+		totalRow := 0
+		b.StartTimer()
+		if err := exec.Open(tmpCtx); err != nil {
+			b.Fatal(err)
+		}
+		for {
+			if err := exec.Next(tmpCtx, chk); err != nil {
+				b.Fatal(err)
+			}
+			if chk.NumRows() == 0 {
+				break
+			}
+			totalRow += chk.NumRows()
+		}
+
+		time.Sleep(200 * time.Millisecond)
+		if spilled := exec.rowContainer.alreadySpilledSafe(); spilled != casTest.disk {
+			b.Fatal("wrong usage with disk:", spilled, casTest.disk)
+		}
+
+		if err := exec.Close(); err != nil {
+			b.Fatal(err)
+		}
+		if totalRow == 0 {
+			b.Fatal("totalRow == 0")
+		}
+	}
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
@@ -864,12 +898,6 @@ func benchmarkHashJoinExecWithCase(b *testing.B, casTest *hashJoinTestCase) {
 			totalRow += chk.NumRows()
 		}
 
-		b.StopTimer()
-		time.Sleep(200 * time.Millisecond)
-		b.StartTimer()
-		if spilled := exec.rowContainer.alreadySpilledSafe(); spilled != casTest.disk {
-			b.Fatal("wrong usage with disk:", spilled, casTest.disk)
-		}
 		if err := exec.Close(); err != nil {
 			b.Fatal(err)
 		}
