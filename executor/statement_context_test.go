@@ -83,6 +83,28 @@ func (s *testSuite1) TestStatementContext(c *C) {
 	runeErrStr := string(utf8.RuneError)
 	tk.MustExec(fmt.Sprintf("insert sc2 values ('%s')", runeErrStr))
 
+	// Test invalid ASCII
+	tk.MustExec("create table sc3 (a varchar(255)) charset ascii")
+
+	tk.MustExec(nonStrictModeSQL)
+	tk.MustExec("insert sc3 values (unhex('4040ffff'))")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Greater, uint16(0))
+	tk.MustQuery("select * from sc3").Check(testkit.Rows("@@"))
+
+	tk.MustExec(strictModeSQL)
+	_, err = tk.Exec("insert sc3 values (unhex('4040ffff'))")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, table.ErrTruncatedWrongValueForField), IsTrue, Commentf("err %v", err))
+
+	tk.MustExec("set @@tidb_skip_ascii_check = '1'")
+	_, err = tk.Exec("insert sc3 values (unhex('4040ffff'))")
+	c.Assert(err, IsNil)
+	tk.MustQuery("select length(a) from sc3").Check(testkit.Rows("2", "4"))
+
+	// no placeholder in ASCII, so just insert '@@'...
+	tk.MustExec("set @@tidb_skip_ascii_check = '0'")
+	tk.MustExec("insert sc3 values (unhex('4040'))")
+
 	// Test non-BMP characters.
 	tk.MustExec(nonStrictModeSQL)
 	tk.MustExec("drop table if exists t1")

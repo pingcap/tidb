@@ -121,7 +121,7 @@ func (ts *testSuite) TestBasic(c *C) {
 
 	c.Assert(tb.UpdateRecord(context.Background(), ctx, rid, types.MakeDatums(1, "abc"), types.MakeDatums(1, "cba"), []bool{false, true}), IsNil)
 
-	tb.IterRecords(ctx, tb.FirstKey(), tb.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+	tb.IterRecords(ctx, tb.FirstKey(), tb.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		return true, nil
 	})
 
@@ -336,7 +336,7 @@ func (ts *testSuite) TestIterRecords(c *C) {
 	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tIter"))
 	c.Assert(err, IsNil)
 	totalCount := 0
-	err = tb.IterRecords(ts.se, tb.FirstKey(), tb.Cols(), func(h int64, rec []types.Datum, cols []*table.Column) (bool, error) {
+	err = tb.IterRecords(ts.se, tb.FirstKey(), tb.Cols(), func(_ kv.Handle, rec []types.Datum, cols []*table.Column) (bool, error) {
 		totalCount++
 		c.Assert(rec[0].IsNull(), IsFalse)
 		return true, nil
@@ -558,4 +558,44 @@ func (ts *testSuite) TestHiddenColumn(c *C) {
 		"d|int(11)|YES||<nil>|STORED GENERATED",
 		"e|int(11)|YES||<nil>|",
 		"f|tinyint(4)|YES||<nil>|VIRTUAL GENERATED"))
+}
+
+func (ts *testSuite) TestAddRecordWithCtx(c *C) {
+	ts.se.Execute(context.Background(), "DROP TABLE IF EXISTS test.tRecord")
+	_, err := ts.se.Execute(context.Background(), "CREATE TABLE test.tRecord (a bigint unsigned primary key, b varchar(255))")
+	c.Assert(err, IsNil)
+	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tRecord"))
+	c.Assert(err, IsNil)
+	defer ts.se.Execute(context.Background(), "DROP TABLE test.tRecord")
+
+	c.Assert(ts.se.NewTxn(context.Background()), IsNil)
+	txn, err := ts.se.Txn(true)
+	c.Assert(err, IsNil)
+	store := kv.NewStagingBufferStore(txn)
+	recordCtx := tables.NewCommonAddRecordCtx(len(tb.Cols()), store)
+	tables.SetAddRecordCtx(ts.se, recordCtx)
+	defer tables.ClearAddRecordCtx(ts.se)
+
+	records := [][]types.Datum{types.MakeDatums(uint64(1), "abc"), types.MakeDatums(uint64(2), "abcd")}
+	for _, r := range records {
+		rid, err := tb.AddRecord(ts.se, r)
+		c.Assert(err, IsNil)
+		row, err := tb.Row(ts.se, rid)
+		c.Assert(err, IsNil)
+		c.Assert(len(row), Equals, len(r))
+		c.Assert(row[0].Kind(), Equals, types.KindUint64)
+	}
+
+	i := 0
+	err = tb.IterRecords(ts.se, tb.FirstKey(), tb.Cols(), func(_ kv.Handle, rec []types.Datum, cols []*table.Column) (bool, error) {
+		i++
+		return true, nil
+	})
+	c.Assert(err, IsNil)
+	c.Assert(i, Equals, len(records))
+
+	c.Assert(ts.se.StmtCommit(nil), IsNil)
+	txn, err = ts.se.Txn(true)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Commit(context.Background()), IsNil)
 }
