@@ -327,6 +327,9 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 			} else if ord > 0 {
 				break
 			} else {
+				if len(c.primaryKey) == 0 {
+					c.primaryKey = lockKey
+				}
 				mutations.push(pb.Op_Lock, lockKey, nil, c.isPessimistic)
 				lockCnt++
 				size += len(lockKey)
@@ -349,6 +352,9 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	}
 	// add the remaining locks to mutations and keys
 	for _, lockKey := range txn.lockKeys[lockIdx:] {
+		if len(c.primaryKey) == 0 {
+			c.primaryKey = lockKey
+		}
 		mutations.push(pb.Op_Lock, lockKey, nil, c.isPessimistic)
 		lockCnt++
 		size += len(lockKey)
