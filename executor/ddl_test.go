@@ -842,6 +842,12 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 	tk.MustExec("use test_auto_random_bits")
 	tk.MustExec("drop table if exists t")
 
+	extractAllHandles := func() []int64 {
+		allHds, err := ddltestutil.ExtractAllTableHandles(tk.Se, "test_auto_random_bits", "t")
+		c.Assert(err, IsNil)
+		return allHds
+	}
+
 	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
 	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
@@ -850,8 +856,7 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 	for i := 0; i < 100; i++ {
 		tk.MustExec("insert into t(b) values (?)", i)
 	}
-	allHandles, err := ddltestutil.ExtractAllTableHandles(tk.Se, "test_auto_random_bits", "t")
-	c.Assert(err, IsNil)
+	allHandles := extractAllHandles()
 	tk.MustExec("drop table t")
 
 	// Test auto random id number.
@@ -875,7 +880,7 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 	for i := -10; i < 10; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values(%d, %d)", i+autoRandBitsUpperBound, i))
 	}
-	_, err = tk.Exec("insert into t (b) values (0)")
+	_, err := tk.Exec("insert into t (b) values (0)")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, autoid.ErrAutoRandReadFailed.GenWithStackByArgs().Error())
 	tk.MustExec("drop table t")
@@ -904,10 +909,8 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 		tk.MustExec("insert into t(b) values (?)", i)
 		tk.MustExec("insert into t(a, b) values (?, ?)", -i, i)
 	}
-	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Se, "test_auto_random_bits", "t")
-	c.Assert(err, IsNil)
 	// orderedHandles should be [-100, -99, ..., -2, -1, 1, 2, ..., 99, 100]
-	orderedHandles = testutil.ConfigTestUtils.MaskSortHandles(allHandles, 15, mysql.TypeLonglong)
+	orderedHandles = testutil.ConfigTestUtils.MaskSortHandles(extractAllHandles(), 15, mysql.TypeLonglong)
 	size = int64(len(allHandles))
 	for i := int64(0); i < 100; i++ {
 		c.Assert(orderedHandles[i], Equals, i-100)
@@ -922,8 +925,7 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 	for i := 0; i < 100; i++ {
 		tk.MustExec("insert into t (b) values(?)", i)
 	}
-	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Se, "test_auto_random_bits", "t")
-	for _, h := range allHandles {
+	for _, h := range extractAllHandles() {
 		// Sign bit should be reserved.
 		c.Assert(h > 0, IsTrue)
 	}
@@ -933,14 +935,35 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 	for i := 0; i < 100; i++ {
 		tk.MustExec("insert into t (b) values(?)", i)
 	}
-	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Se, "test_auto_random_bits", "t")
 	signBitUnused := true
-	for _, h := range allHandles {
+	for _, h := range extractAllHandles() {
 		signBitUnused = signBitUnused && (h > 0)
 	}
 	// Sign bit should be used for shard.
 	c.Assert(signBitUnused, IsFalse)
-	tk.MustExec("drop table t")
+	tk.MustExec("drop table t;")
+
+	// Test rename table does not affect incremental part of auto_random ID.
+	tk.MustExec("create database test_auto_random_bits_rename;")
+	tk.MustExec("create table t (a bigint auto_random primary key);")
+	for i := 0; i < 10; i++ {
+		tk.MustExec("insert into t values ();")
+	}
+	tk.MustExec("alter table t rename to test_auto_random_bits_rename.t1;")
+	for i := 0; i < 10; i++ {
+		tk.MustExec("insert into test_auto_random_bits_rename.t1 values ();")
+	}
+	tk.MustExec("alter table test_auto_random_bits_rename.t1 rename to t;")
+	for i := 0; i < 10; i++ {
+		tk.MustExec("insert into t values ();")
+	}
+	uniqueHandles := make(map[int64]struct{})
+	for _, h := range extractAllHandles() {
+		uniqueHandles[h&((1<<(63-5))-1)] = struct{}{}
+	}
+	c.Assert(len(uniqueHandles), Equals, 30)
+	tk.MustExec("drop database test_auto_random_bits_rename;")
+	tk.MustExec("drop table t;")
 }
 
 func (s *testAutoRandomSuite) TestAutoRandomTableOption(c *C) {
