@@ -408,8 +408,8 @@ func reloadConfig(nc, c *config.Config) {
 	// like config.GetGlobalConfig().OOMAction.
 	// These config items will become available naturally after the global config pointer
 	// is updated in function ReloadGlobalConfig.
-	if nc.Performance.MaxMemory != c.Performance.MaxMemory {
-		plannercore.PreparedPlanCacheMaxMemory.Store(nc.Performance.MaxMemory)
+	if nc.Performance.ServerMemoryQuota != c.Performance.ServerMemoryQuota {
+		plannercore.PreparedPlanCacheMaxMemory.Store(nc.Performance.ServerMemoryQuota)
 	}
 	if nc.Performance.CrossJoin != c.Performance.CrossJoin {
 		plannercore.AllowCartesianProduct.Store(nc.Performance.CrossJoin)
@@ -574,6 +574,10 @@ func setGlobalVars() {
 	plannercore.AllowCartesianProduct.Store(cfg.Performance.CrossJoin)
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
 	kv.TxnTotalSizeLimit = cfg.Performance.TxnTotalSizeLimit
+	if cfg.Performance.TxnEntrySizeLimit > 120*1024*1024 {
+		log.Fatal("cannot set txn entry size limit larger than 120M")
+	}
+	kv.TxnEntrySizeLimit = cfg.Performance.TxnEntrySizeLimit
 
 	priority := mysql.Str2Priority(cfg.Performance.ForcePriority)
 	variable.ForcePriority = int32(priority)
@@ -598,7 +602,7 @@ func setGlobalVars() {
 		if plannercore.PreparedPlanCacheMemoryGuardRatio < 0.0 || plannercore.PreparedPlanCacheMemoryGuardRatio > 1.0 {
 			plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
 		}
-		plannercore.PreparedPlanCacheMaxMemory.Store(cfg.Performance.MaxMemory)
+		plannercore.PreparedPlanCacheMaxMemory.Store(cfg.Performance.ServerMemoryQuota)
 		total, err := memory.MemTotal()
 		terror.MustNil(err)
 		if plannercore.PreparedPlanCacheMaxMemory.Load() > total || plannercore.PreparedPlanCacheMaxMemory.Load() <= 0 {
@@ -612,11 +616,11 @@ func setGlobalVars() {
 	domainutil.RepairInfo.SetRepairTableList(cfg.RepairTableList)
 	c := config.GetGlobalConfig()
 	executor.GlobalDiskUsageTracker.SetBytesLimit(c.TempStorageQuota)
-	if c.Performance.MaxMemory < 1 {
+	if c.Performance.ServerMemoryQuota < 1 {
 		// If MaxMemory equals 0, it means unlimited
 		executor.GlobalMemoryUsageTracker.SetBytesLimit(-1)
 	} else {
-		executor.GlobalMemoryUsageTracker.SetBytesLimit(int64(c.Performance.MaxMemory))
+		executor.GlobalMemoryUsageTracker.SetBytesLimit(int64(c.Performance.ServerMemoryQuota))
 	}
 	kvcache.GlobalLRUMemUsageTracker.AttachToGlobalTracker(executor.GlobalMemoryUsageTracker)
 }

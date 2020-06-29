@@ -104,19 +104,8 @@ func (p *PhysicalLimit) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
-	var pkColIds []int64
-	if p.Table.IsCommonHandle {
-		pkIdx := tables.FindPrimaryIndex(p.Table)
-		for _, idxCol := range pkIdx.Columns {
-			pkColIds = append(pkColIds, p.Table.Columns[idxCol.Offset].ID)
-		}
-	}
-	tsExec := &tipb.TableScan{
-		TableId:          p.Table.ID,
-		Columns:          util.ColumnsToProto(p.Columns, p.Table.PKIsHandle),
-		Desc:             p.Desc,
-		PrimaryColumnIds: pkColIds,
-	}
+	tsExec := tables.BuildTableScanFromInfos(p.Table, p.Columns)
+	tsExec.Desc = p.Desc
 	if p.isPartition {
 		tsExec.TableId = p.physicalTableID
 	}
@@ -161,10 +150,7 @@ func (p *PhysicalIndexScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
 	}
 	var pkColIds []int64
 	if p.NeedCommonHandle {
-		pkIdx := tables.FindPrimaryIndex(p.Table)
-		for _, idxCol := range pkIdx.Columns {
-			pkColIds = append(pkColIds, p.Table.Columns[idxCol.Offset].ID)
-		}
+		pkColIds = tables.TryGetCommonPkColumnIds(p.Table)
 	}
 	idxExec := &tipb.IndexScan{
 		TableId:          p.Table.ID,

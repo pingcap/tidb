@@ -43,7 +43,7 @@ import (
 // DDLInfo is for DDL information.
 type DDLInfo struct {
 	SchemaVer   int64
-	ReorgHandle int64        // It's only used for DDL information.
+	ReorgHandle kv.Handle    // It's only used for DDL information.
 	Jobs        []*model.Job // It's the currently running jobs.
 }
 
@@ -77,7 +77,11 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 		return info, nil
 	}
 
-	info.ReorgHandle, _, _, err = t.GetDDLReorgHandle(addIdxJob)
+	tbl, err := t.GetTable(addIdxJob.SchemaID, addIdxJob.TableID)
+	if err != nil {
+		return info, nil
+	}
+	info.ReorgHandle, _, _, err = t.GetDDLReorgHandle(addIdxJob, tbl.IsCommonHandle)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -282,7 +286,7 @@ func IterAllDDLJobs(txn kv.Transaction, finishFn func([]*model.Job) (bool, error
 
 // RecordData is the record data composed of a handle and values.
 type RecordData struct {
-	Handle int64
+	Handle kv.Handle
 	Values []types.Datum
 }
 
@@ -350,7 +354,7 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 	}
 
 	startKey := t.RecordKey(kv.IntHandle(math.MinInt64))
-	filterFunc := func(h1 int64, vals1 []types.Datum, cols []*table.Column) (bool, error) {
+	filterFunc := func(h1 kv.Handle, vals1 []types.Datum, cols []*table.Column) (bool, error) {
 		for i, val := range vals1 {
 			col := cols[i]
 			if val.IsNull() {
@@ -365,10 +369,10 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 				vals1[i] = colDefVal
 			}
 		}
-		isExist, h2, err := idx.Exist(sc, txn, vals1, kv.IntHandle(h1))
+		isExist, h2, err := idx.Exist(sc, txn, vals1, h1)
 		if kv.ErrKeyExists.Equal(err) {
 			record1 := &RecordData{Handle: h1, Values: vals1}
-			record2 := &RecordData{Handle: h2.IntValue(), Values: vals1}
+			record2 := &RecordData{Handle: h2, Values: vals1}
 			return false, ErrDataInConsistent.GenWithStack("index:%#v != record:%#v", record2, record1)
 		}
 		if err != nil {
@@ -440,17 +444,9 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 		}
 		data := make([]types.Datum, 0, len(cols))
 		for _, col := range cols {
-			if col.IsPKHandleColumn(t.Meta()) {
-				if mysql.HasUnsignedFlag(col.Flag) {
-					data = append(data, types.NewUintDatum(uint64(handle.IntValue())))
-				} else {
-					data = append(data, types.NewIntDatum(handle.IntValue()))
-				}
-			} else {
-				data = append(data, rowMap[col.ID])
-			}
+			data = append(data, rowMap[col.ID])
 		}
-		more, err := fn(handle.IntValue(), data, cols)
+		more, err := fn(handle, data, cols)
 		if !more || err != nil {
 			return errors.Trace(err)
 		}

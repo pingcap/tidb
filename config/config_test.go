@@ -188,6 +188,7 @@ server-version = "test_version"
 repair-mode = true
 max-server-connections = 200
 mem-quota-query = 10000
+nested-loop-join-cache-capacity = 100
 max-index-length = 3080
 [performance]
 txn-total-size-limit=2000
@@ -242,6 +243,7 @@ engines = ["tiflash"]
 	c.Assert(conf.RepairMode, Equals, true)
 	c.Assert(conf.MaxServerConnections, Equals, uint32(200))
 	c.Assert(conf.MemQuotaQuery, Equals, int64(10000))
+	c.Assert(conf.NestedLoopJoinCacheCapacity, Equals, int64(100))
 	c.Assert(conf.Experimental.AllowsExpressionIndex, IsTrue)
 	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})
 	c.Assert(conf.MaxIndexLength, Equals, 3080)
@@ -253,6 +255,30 @@ log-rotate = true`)
 	err = conf.Load(configFile)
 	tmp := err.(*ErrConfigValidationFailed)
 	c.Assert(isAllDeprecatedConfigItems(tmp.UndecodedItems), IsTrue)
+
+	// Test telemetry config default value and whether it will be overwritten.
+	conf = NewConfig()
+	f.Truncate(0)
+	f.Seek(0, 0)
+	c.Assert(f.Sync(), IsNil)
+	c.Assert(conf.Load(configFile), IsNil)
+	c.Assert(conf.EnableTelemetry, Equals, true)
+
+	_, err = f.WriteString(`
+enable-table-lock = true
+`)
+	c.Assert(err, IsNil)
+	c.Assert(f.Sync(), IsNil)
+	c.Assert(conf.Load(configFile), IsNil)
+	c.Assert(conf.EnableTelemetry, Equals, true)
+
+	_, err = f.WriteString(`
+enable-telemetry = false
+`)
+	c.Assert(err, IsNil)
+	c.Assert(f.Sync(), IsNil)
+	c.Assert(conf.Load(configFile), IsNil)
+	c.Assert(conf.EnableTelemetry, Equals, false)
 
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)

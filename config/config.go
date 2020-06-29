@@ -42,6 +42,8 @@ import (
 // Config number limitations
 const (
 	MaxLogFileSize = 4096 // MB
+	// DefTxnEntrySizeLimit is the default value of TxnEntrySizeLimit.
+	DefTxnEntrySizeLimit = 6 * 1024 * 1024
 	// DefTxnTotalSizeLimit is the default value of TxnTxnTotalSizeLimit.
 	DefTxnTotalSizeLimit = 100 * 1024 * 1024
 	// DefMaxIndexLength is the maximum index length(in bytes). This value is consistent with MySQL.
@@ -77,21 +79,22 @@ var (
 
 // Config contains configuration options.
 type Config struct {
-	Host             string `toml:"host" json:"host"`
-	AdvertiseAddress string `toml:"advertise-address" json:"advertise-address"`
-	Port             uint   `toml:"port" json:"port"`
-	Cors             string `toml:"cors" json:"cors"`
-	Store            string `toml:"store" json:"store"`
-	Path             string `toml:"path" json:"path"`
-	Socket           string `toml:"socket" json:"socket"`
-	Lease            string `toml:"lease" json:"lease"`
-	RunDDL           bool   `toml:"run-ddl" json:"run-ddl"`
-	SplitTable       bool   `toml:"split-table" json:"split-table"`
-	TokenLimit       uint   `toml:"token-limit" json:"token-limit"`
-	OOMUseTmpStorage bool   `toml:"oom-use-tmp-storage" json:"oom-use-tmp-storage"`
-	TempStoragePath  string `toml:"tmp-storage-path" json:"tmp-storage-path"`
-	OOMAction        string `toml:"oom-action" json:"oom-action"`
-	MemQuotaQuery    int64  `toml:"mem-quota-query" json:"mem-quota-query"`
+	Host                        string `toml:"host" json:"host"`
+	AdvertiseAddress            string `toml:"advertise-address" json:"advertise-address"`
+	Port                        uint   `toml:"port" json:"port"`
+	Cors                        string `toml:"cors" json:"cors"`
+	Store                       string `toml:"store" json:"store"`
+	Path                        string `toml:"path" json:"path"`
+	Socket                      string `toml:"socket" json:"socket"`
+	Lease                       string `toml:"lease" json:"lease"`
+	RunDDL                      bool   `toml:"run-ddl" json:"run-ddl"`
+	SplitTable                  bool   `toml:"split-table" json:"split-table"`
+	TokenLimit                  uint   `toml:"token-limit" json:"token-limit"`
+	OOMUseTmpStorage            bool   `toml:"oom-use-tmp-storage" json:"oom-use-tmp-storage"`
+	TempStoragePath             string `toml:"tmp-storage-path" json:"tmp-storage-path"`
+	OOMAction                   string `toml:"oom-action" json:"oom-action"`
+	MemQuotaQuery               int64  `toml:"mem-quota-query" json:"mem-quota-query"`
+	NestedLoopJoinCacheCapacity int64  `toml:"nested-loop-join-cache-capacity" json:"nested-loop-join-cache-capacity"`
 	// TempStorageQuota describe the temporary storage Quota during query exector when OOMUseTmpStorage is enabled
 	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error
 	TempStorageQuota int64           `toml:"tmp-storage-quota" json:"tmp-storage-quota"` // Bytes
@@ -140,6 +143,8 @@ type Config struct {
 	Experimental Experimental `toml:"experimental" json:"experimental"`
 	// EnableCollectExecutionInfo enables the TiDB to collect execution info.
 	EnableCollectExecutionInfo bool `toml:"enable-collect-execution-info" json:"enable-collect-execution-info"`
+	// EnableTelemetry enables the usage data report to PingCAP.
+	EnableTelemetry bool `toml:"enable-telemetry" json:"enable-telemetry"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -362,8 +367,10 @@ type Status struct {
 
 // Performance is the performance section of the config.
 type Performance struct {
-	MaxProcs             uint    `toml:"max-procs" json:"max-procs"`
+	MaxProcs uint `toml:"max-procs" json:"max-procs"`
+	// Deprecated: use ServerMemoryQuota instead
 	MaxMemory            uint64  `toml:"max-memory" json:"max-memory"`
+	ServerMemoryQuota    uint64  `toml:"server-memory-quota" json:"server-memory-quota"`
 	StatsLease           string  `toml:"stats-lease" json:"stats-lease"`
 	StmtCountLimit       uint    `toml:"stmt-count-limit" json:"stmt-count-limit"`
 	FeedbackProbability  float64 `toml:"feedback-probability" json:"feedback-probability"`
@@ -371,6 +378,7 @@ type Performance struct {
 	PseudoEstimateRatio  float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
 	ForcePriority        string  `toml:"force-priority" json:"force-priority"`
 	BindInfoLease        string  `toml:"bind-info-lease" json:"bind-info-lease"`
+	TxnEntrySizeLimit    uint64  `toml:"txn-entry-size-limit" json:"txn-entry-size-limit"`
 	TxnTotalSizeLimit    uint64  `toml:"txn-total-size-limit" json:"txn-total-size-limit"`
 	TCPKeepAlive         bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
 	CrossJoin            bool    `toml:"cross-join" json:"cross-join"`
@@ -559,6 +567,7 @@ var defaultConf = Config{
 	TempStoragePath:              tempStorageDirName,
 	OOMAction:                    OOMActionCancel,
 	MemQuotaQuery:                1 << 30,
+	NestedLoopJoinCacheCapacity:  20971520,
 	EnableStreaming:              false,
 	EnableBatchDML:               false,
 	CheckMb4ValueInUTF8:          true,
@@ -601,6 +610,7 @@ var defaultConf = Config{
 	},
 	Performance: Performance{
 		MaxMemory:            0,
+		ServerMemoryQuota:    0,
 		TCPKeepAlive:         true,
 		CrossJoin:            true,
 		StatsLease:           "3s",
@@ -611,6 +621,7 @@ var defaultConf = Config{
 		PseudoEstimateRatio:  0.8,
 		ForcePriority:        "NO_PRIORITY",
 		BindInfoLease:        "3s",
+		TxnEntrySizeLimit:    DefTxnEntrySizeLimit,
 		TxnTotalSizeLimit:    DefTxnTotalSizeLimit,
 		DistinctAggPushDown:  false,
 		CommitterConcurrency: 16,
@@ -681,6 +692,7 @@ var defaultConf = Config{
 		AllowsExpressionIndex: false,
 	},
 	EnableCollectExecutionInfo: false,
+	EnableTelemetry:            true,
 }
 
 var (
@@ -708,9 +720,12 @@ func StoreGlobalConfig(config *Config) {
 var deprecatedConfig = map[string]struct{}{
 	"pessimistic-txn.ttl":        {},
 	"log.file.log-rotate":        {},
+	"log.log-slow-query":         {},
 	"txn-local-latches":          {},
 	"txn-local-latches.enabled":  {},
 	"txn-local-latches.capacity": {},
+	"performance.max-memory":     {},
+	"max-txn-time-use":           {},
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
