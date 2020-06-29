@@ -599,14 +599,14 @@ func (s *TestDDLSuite) TestSimpleInsert(c *C) {
 	c.Assert(err, IsNil)
 
 	tbl := s.getTable(c, "test_insert")
-	handles := make(map[int64]struct{})
-	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
-		handles[h] = struct{}{}
+	handles := kv.NewHandleMap()
+	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+		handles.Set(h, struct{}{})
 		c.Assert(data[0].GetValue(), Equals, data[1].GetValue())
 		return true, nil
 	})
 	c.Assert(err, IsNil)
-	c.Assert(handles, HasLen, rowCount, Commentf("%d %d", len(handles), rowCount))
+	c.Assert(handles.Len(), Equals, rowCount, Commentf("%d %d", handles.Len(), rowCount))
 }
 
 func (s *TestDDLSuite) TestSimpleConflictInsert(c *C) {
@@ -644,15 +644,15 @@ func (s *TestDDLSuite) TestSimpleConflictInsert(c *C) {
 	c.Assert(err, IsNil)
 
 	tbl := s.getTable(c, "test_conflict_insert")
-	handles := make(map[int64]struct{})
-	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
-		handles[h] = struct{}{}
+	handles := kv.NewHandleMap()
+	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+		handles.Set(h, struct{}{})
 		c.Assert(keysMap, HasKey, data[0].GetValue())
 		c.Assert(data[0].GetValue(), Equals, data[1].GetValue())
 		return true, nil
 	})
 	c.Assert(err, IsNil)
-	c.Assert(len(handles), Equals, len(keysMap))
+	c.Assert(handles.Len(), Equals, len(keysMap))
 }
 
 func (s *TestDDLSuite) TestSimpleUpdate(c *C) {
@@ -692,15 +692,15 @@ func (s *TestDDLSuite) TestSimpleUpdate(c *C) {
 	c.Assert(err, IsNil)
 
 	tbl := s.getTable(c, "test_update")
-	handles := make(map[int64]struct{})
-	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
-		handles[h] = struct{}{}
+	handles := kv.NewHandleMap()
+	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+		handles.Set(h, struct{}{})
 		key := data[0].GetInt64()
 		c.Assert(data[1].GetValue(), Equals, keysMap[key])
 		return true, nil
 	})
 	c.Assert(err, IsNil)
-	c.Assert(handles, HasLen, rowCount)
+	c.Assert(handles.Len(), Equals, rowCount)
 }
 
 func (s *TestDDLSuite) TestSimpleConflictUpdate(c *C) {
@@ -760,9 +760,9 @@ func (s *TestDDLSuite) TestSimpleConflictUpdate(c *C) {
 	c.Assert(err, IsNil)
 
 	tbl := s.getTable(c, "test_conflict_update")
-	handles := make(map[int64]struct{})
-	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
-		handles[h] = struct{}{}
+	handles := kv.NewHandleMap()
+	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+		handles.Set(h, struct{}{})
 		c.Assert(keysMap, HasKey, data[0].GetValue())
 
 		if !reflect.DeepEqual(data[1].GetValue(), data[0].GetValue()) && !reflect.DeepEqual(data[1].GetValue(), defaultValue) {
@@ -772,7 +772,7 @@ func (s *TestDDLSuite) TestSimpleConflictUpdate(c *C) {
 		return true, nil
 	})
 	c.Assert(err, IsNil)
-	c.Assert(handles, HasLen, rowCount)
+	c.Assert(handles.Len(), Equals, rowCount)
 }
 
 func (s *TestDDLSuite) TestSimpleDelete(c *C) {
@@ -805,13 +805,13 @@ func (s *TestDDLSuite) TestSimpleDelete(c *C) {
 	c.Assert(err, IsNil)
 
 	tbl := s.getTable(c, "test_delete")
-	handles := make(map[int64]struct{})
-	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
-		handles[h] = struct{}{}
+	handles := kv.NewHandleMap()
+	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+		handles.Set(h, struct{}{})
 		return true, nil
 	})
 	c.Assert(err, IsNil)
-	c.Assert(handles, HasLen, 0)
+	c.Assert(handles.Len(), Equals, 0)
 }
 
 func (s *TestDDLSuite) TestSimpleConflictDelete(c *C) {
@@ -870,14 +870,14 @@ func (s *TestDDLSuite) TestSimpleConflictDelete(c *C) {
 	c.Assert(err, IsNil)
 
 	tbl := s.getTable(c, "test_conflict_delete")
-	handles := make(map[int64]struct{})
-	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
-		handles[h] = struct{}{}
+	handles := kv.NewHandleMap()
+	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+		handles.Set(h, struct{}{})
 		c.Assert(keysMap, HasKey, data[0].GetValue())
 		return true, nil
 	})
 	c.Assert(err, IsNil)
-	c.Assert(len(handles), Equals, len(keysMap))
+	c.Assert(handles.Len(), Equals, len(keysMap))
 }
 
 func (s *TestDDLSuite) TestSimpleMixed(c *C) {
@@ -936,7 +936,7 @@ func (s *TestDDLSuite) TestSimpleMixed(c *C) {
 	tbl := s.getTable(c, "test_mixed")
 	updateCount := int64(0)
 	insertCount := int64(0)
-	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		if reflect.DeepEqual(data[1].GetValue(), data[0].GetValue()) {
 			insertCount++
 		} else if reflect.DeepEqual(data[1].GetValue(), defaultValue) && data[0].GetInt64() < int64(rowCount) {
@@ -1001,7 +1001,7 @@ func (s *TestDDLSuite) TestSimpleInc(c *C) {
 	c.Assert(err, IsNil)
 
 	tbl := s.getTable(c, "test_inc")
-	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		if reflect.DeepEqual(data[0].GetValue(), int64(0)) {
 			if *enableRestart {
 				c.Assert(data[1].GetValue(), GreaterEqual, int64(rowCount))
