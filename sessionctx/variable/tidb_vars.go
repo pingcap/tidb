@@ -424,7 +424,7 @@ const (
 	DefIndexSerialScanConcurrency      = 1
 	DefIndexJoinBatchSize              = 25000
 	DefIndexLookupSize                 = 20000
-	DefDistSQLScanConcurrency          = ConcurrencyUnset
+	DefDistSQLScanConcurrency          = 15
 	DefBuildStatsConcurrency           = 4
 	DefAutoAnalyzeRatio                = 0.5
 	DefAutoAnalyzeStartTime            = "00:00 +0000"
@@ -533,5 +533,5 @@ var (
 	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
 	MinExpensiveQueryTimeThreshold uint64 = 10 //10s
 	CapturePlanBaseline                   = serverGlobalVariable{globalVal: "0"}
-	DefExecutorConcurrency                = 15
+	DefExecutorConcurrency                = 5
 )

@@ -78,7 +78,7 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.HashAggPartialConcurrency(), Equals, DefExecutorConcurrency)
 	c.Assert(vars.HashAggFinalConcurrency(), Equals, DefExecutorConcurrency)
 	c.Assert(vars.WindowConcurrency(), Equals, DefExecutorConcurrency)
-	c.Assert(vars.DistSQLScanConcurrency(), Equals, DefExecutorConcurrency)
+	c.Assert(vars.DistSQLScanConcurrency(), Equals, DefDistSQLScanConcurrency)
 	c.Assert(vars.ExecutorConcurrency, Equals, DefExecutorConcurrency)
 	c.Assert(vars.MaxChunkSize, Equals, DefMaxChunkSize)
 	c.Assert(vars.DMLBatchSize, Equals, DefDMLBatchSize)
