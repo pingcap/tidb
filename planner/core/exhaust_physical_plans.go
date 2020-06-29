@@ -590,6 +590,7 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 	}
 	keyOff2IdxOff := make([]int, len(innerJoinKeys))
 	newOuterJoinKeys := make([]*expression.Column, 0)
+	var ranges []*ranger.Range
 	var innerTask, innerTask2 task
 	if ds.tableInfo.IsCommonHandle {
 		helper := &indexJoinBuildHelper{join: p}
@@ -625,6 +626,7 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 		if us == nil {
 			innerTask2 = p.constructInnerTableScanTask(ds, nil, outerJoinKeys, us, true, !prop.IsEmpty() && prop.Items[0].Desc, avgInnerRowCnt)
 		}
+		ranges = helper.chosenRanges
 	} else {
 		pkMatched := false
 		pkCol := ds.getPKIsHandleCol()
@@ -660,13 +662,13 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 			failpoint.Return(p.constructIndexHashJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil))
 		}
 	})
-	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil)...)
+	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, nil, nil)...)
 	if us == nil {
-		joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, nil, keyOff2IdxOff, nil, nil)...)
+		joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, ranges, keyOff2IdxOff, nil, nil)...)
 	}
 	// We can reuse the `innerTask` here since index nested loop hash join
 	// do not need the inner child to promise the order.
-	joins = append(joins, p.constructIndexHashJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil)...)
+	joins = append(joins, p.constructIndexHashJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, nil, nil)...)
 	return joins
 }
 

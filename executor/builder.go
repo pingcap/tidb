@@ -2712,7 +2712,33 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 	}
 	if v.IsCommonHandle {
 		e.kvRanges, err = buildKvRangesForIndexJoin(e.ctx, getPhysicalTableID(e.table), -1, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
-		return e, err
+		if err != nil {
+			return nil, err
+		}
+		startTS, err := builder.getSnapshotTS()
+		if err != nil {
+			return nil, err
+		}
+		var b distsql.RequestBuilder
+		kvReq, err := b.SetKeyRanges(e.kvRanges).
+			SetDAGRequest(e.dagPB).
+			SetStartTS(startTS).
+			SetDesc(e.desc).
+			SetKeepOrder(e.keepOrder).
+			SetStreaming(e.streaming).
+			SetFromSessionVars(e.ctx.GetSessionVars()).
+			Build()
+		if err != nil {
+			return nil, err
+		}
+		result, err := builder.SelectResult(ctx, builder.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
+		if err != nil {
+			return nil, err
+		}
+		result.Fetch(ctx)
+		e.resultHandler = &tableResultHandler{}
+		e.resultHandler.open(nil, result)
+		return e, nil
 	}
 	handles := make([]kv.Handle, 0, len(lookUpContents))
 	for _, content := range lookUpContents {
