@@ -107,7 +107,7 @@ var (
 )
 
 // RecordIterFunc is used for low-level record iteration.
-type RecordIterFunc func(h int64, rec []types.Datum, cols []*Column) (more bool, err error)
+type RecordIterFunc func(h kv.Handle, rec []types.Datum, cols []*Column) (more bool, err error)
 
 // AddRecordOpt contains the options will be used when adding a record.
 type AddRecordOpt struct {
