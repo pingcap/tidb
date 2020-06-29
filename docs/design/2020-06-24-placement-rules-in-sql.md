@@ -230,7 +230,7 @@ Rule priorities can be implemented by properties `index` and `override`. `overri
 
 In such a way, the most granular rule always works.
 
-When multiple placement rules are defined on the same granular object, the new one always overwrites the old one. To achieve this, property `groud_id` in placement rules can be used to identify the database object.
+When multiple placement rules are defined on the same granular object, the new one always overwrites the old one. To achieve this, property `group_id` in placement rules can be used to identify the database object.
 
 For example, `groud_id` can be in such a format:
 
@@ -321,7 +321,7 @@ Advantages of building system table include:
 
 But there’re a problem here. The system table only contains stored placement rules, and users cannot query the effective rule of one object from it.
 
-For example, table `t` has two partitions `p0` and `p1`, and a placement rule is added on `t`. If the user wants to query the working rule of `p0`. Then he’ll find no placement rule is defined for `p0` through the system table. Based on the rule priorities described before, he must query the placement rule on `t`. This procedure may be annoying.
+For example, table `t` has two partitions `p0` and `p1`, and a placement rule is added on `t`. If the user wants to query the working rule of `p0`, they will find no placement rule is defined for `p0` through the system table. Based on the rule priorities described before, they must query the placement rule on `t`. This procedure may be annoying.
 
 To simplify this procedure, a SHOW statement should be provided to query the effective rule for one specified object.
 
