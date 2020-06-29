@@ -834,7 +834,16 @@ type testAutoRandomSuite struct {
 	*baseTestSuite
 }
 
+func (s *testAutoRandomSuite)SetupTest()  {
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+}
+
+func(s *testAutoRandomSuite)TeardownTest(){
+	testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+}
+
 func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
+	s.SetUpSuite(c);
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("create database if not exists test_auto_random_bits")

@@ -813,8 +813,8 @@ func (s *testAutoRandomSuite) TestAutoRandomBase(c *C) {
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 	tk.MustExec("use test")
 
-	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+    s.SetupTest()
+	defer s.TeardownTest()
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a bigint primary key auto_random(5), b int unique key auto_increment) auto_random_base = 100, auto_increment = 100")
