@@ -64,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
@@ -4523,6 +4524,9 @@ func (s *testSuite1) TestIssue15718(c *C) {
 }
 
 func (s *testSuite) TestSlowQuerySensitiveQuery(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("skip race test")
+	}
 	tk := testkit.NewTestKit(c, s.store)
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
