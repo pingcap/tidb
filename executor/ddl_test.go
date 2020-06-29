@@ -834,11 +834,11 @@ type testAutoRandomSuite struct {
 	*baseTestSuite
 }
 
-func (s *testAutoRandomSuite) SetUpTest() {
+func (s *testAutoRandomSuite) SetUpTest(c *C) {
 	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
 }
 
-func (s *testAutoRandomSuite) TearDownTest() {
+func (s *testAutoRandomSuite) TearDownTest(c *C) {
 	testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
 }
 
