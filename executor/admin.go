@@ -215,13 +215,11 @@ func (e *RecoverIndexExec) Open(ctx context.Context) error {
 	return nil
 }
 
-func (e *RecoverIndexExec) constructTableScanPB(pbColumnInfos []*tipb.ColumnInfo) *tipb.Executor {
-	tblScan := &tipb.TableScan{
-		TableId: e.physicalID,
-		Columns: pbColumnInfos,
-	}
-
-	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tblScan}
+func (e *RecoverIndexExec) constructTableScanPB(tblInfo *model.TableInfo, colInfos []*model.ColumnInfo) (*tipb.Executor, error) {
+	tblScan := tables.BuildTableScanFromInfos(tblInfo, colInfos)
+	tblScan.TableId = e.physicalID
+	err := plannercore.SetPBColumnsDefaultValue(e.ctx, tblScan.Columns, e.columns)
+	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tblScan}, err
 }
 
 func (e *RecoverIndexExec) constructLimitPB(count uint64) *tipb.Executor {
@@ -240,13 +238,10 @@ func (e *RecoverIndexExec) buildDAGPB(txn kv.Transaction, limitCnt uint64) (*tip
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
 
-	tblInfo := e.table.Meta()
-	pbColumnInfos := util.ColumnsToProto(e.columns, tblInfo.PKIsHandle)
-	err := plannercore.SetPBColumnsDefaultValue(e.ctx, pbColumnInfos, e.columns)
+	tblScanExec, err := e.constructTableScanPB(e.table.Meta(), e.columns)
 	if err != nil {
 		return nil, err
 	}
-	tblScanExec := e.constructTableScanPB(pbColumnInfos)
 	dagReq.Executors = append(dagReq.Executors, tblScanExec)
 
 	limitExec := e.constructLimitPB(limitCnt)
