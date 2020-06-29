@@ -16,8 +16,6 @@ package executor_test
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/failpoint"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/auth"
@@ -814,7 +812,7 @@ func (s *testAutoRandomSuite) TestAutoRandomBase(c *C) {
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 	tk.MustExec("use test")
 
-    s.SetupTest()
+	s.SetupTest()
 	defer s.TeardownTest()
 
 	tk.MustExec("drop table if exists t")
