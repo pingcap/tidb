@@ -551,6 +551,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 	// If ds is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
 	// and set inner child prop nil, so here we do nothing.
 	if prop == nil {
+		planCounter.Dec(1)
 		return nil, 1, nil
 	}
 
