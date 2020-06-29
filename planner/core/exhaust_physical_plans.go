@@ -594,7 +594,7 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 	if ds.tableInfo.IsCommonHandle {
 		helper := &indexJoinBuildHelper{join: p}
 		for _, path := range ds.possibleAccessPaths {
-			if path.IsCommonHandlePath && path.Index != nil {
+			if path.IsCommonHandlePath {
 				path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.Index)
 				emptyRange, err := helper.analyzeLookUpFilters(path, ds, innerJoinKeys)
 				if emptyRange {
@@ -622,7 +622,9 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 		// should construct another inner plan for it.
 		// Because we can't keep order for union scan, if there is a union scan in inner task,
 		// we can't construct index merge join.
-		innerTask2 = p.constructInnerTableScanTask(ds, nil, outerJoinKeys, us, true, !prop.IsEmpty() && prop.Items[0].Desc, avgInnerRowCnt)
+		if us == nil {
+			innerTask2 = p.constructInnerTableScanTask(ds, nil, outerJoinKeys, us, true, !prop.IsEmpty() && prop.Items[0].Desc, avgInnerRowCnt)
+		}
 	} else {
 		pkMatched := false
 		pkCol := ds.getPKIsHandleCol()
@@ -648,7 +650,9 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 		// should construct another inner plan for it.
 		// Because we can't keep order for union scan, if there is a union scan in inner task,
 		// we can't construct index merge join.
-		innerTask2 = p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, true, !prop.IsEmpty() && prop.Items[0].Desc, avgInnerRowCnt)
+		if us == nil {
+			innerTask2 = p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, true, !prop.IsEmpty() && prop.Items[0].Desc, avgInnerRowCnt)
+		}
 	}
 	joins = make([]PhysicalPlan, 0, 3)
 	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {

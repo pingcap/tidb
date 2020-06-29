@@ -77,8 +77,8 @@ func (builder *RequestBuilder) SetCommonHandleRanges(sc *stmtctx.StatementContex
 
 // SetTableHandles sets "KeyRanges" for "kv.Request" by converting table handles
 // "handles" to "KeyRanges" firstly.
-func (builder *RequestBuilder) SetTableHandles(tid int64, handles []kv.Handle, handleAppend byte) *RequestBuilder {
-	builder.Request.KeyRanges = TableHandlesToKVRanges(tid, handles, handleAppend)
+func (builder *RequestBuilder) SetTableHandles(tid int64, handles []kv.Handle) *RequestBuilder {
+	builder.Request.KeyRanges = TableHandlesToKVRanges(tid, handles)
 	return builder
 }
 
@@ -258,14 +258,14 @@ func encodeHandleKey(ran *ranger.Range) ([]byte, []byte) {
 
 // TableHandlesToKVRanges converts sorted handle to kv ranges.
 // For continuous handles, we should merge them to a single key range.
-func TableHandlesToKVRanges(tid int64, handles []kv.Handle, handleAppend byte) []kv.KeyRange {
+func TableHandlesToKVRanges(tid int64, handles []kv.Handle) []kv.KeyRange {
 	krs := make([]kv.KeyRange, 0, len(handles))
 	i := 0
 	for i < len(handles) {
 		if commonHandle, ok := handles[i].(*kv.CommonHandle); ok {
 			ran := kv.KeyRange{
 				StartKey: tablecodec.EncodeRowKey(tid, commonHandle.Encoded()),
-				EndKey:   tablecodec.EncodeRowKey(tid, append(commonHandle.Encoded(), handleAppend)),
+				EndKey:   tablecodec.EncodeRowKey(tid, append(commonHandle.Encoded(), 0)),
 			}
 			krs = append(krs, ran)
 			i++

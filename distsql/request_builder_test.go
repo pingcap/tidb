@@ -124,7 +124,7 @@ func (s *testSuite) TestTableHandlesToKVRanges(c *C) {
 
 	// Build key ranges.
 	expect := s.getExpectedRanges(1, hrs)
-	actual := TableHandlesToKVRanges(1, handles, 0)
+	actual := TableHandlesToKVRanges(1, handles)
 
 	// Compare key ranges and expected key ranges.
 	c.Assert(len(actual), Equals, len(expect))
@@ -406,7 +406,7 @@ func (s *testSuite) TestRequestBuilder3(c *C) {
 	handles := []kv.Handle{kv.IntHandle(0), kv.IntHandle(2), kv.IntHandle(3), kv.IntHandle(4),
 		kv.IntHandle(5), kv.IntHandle(10), kv.IntHandle(11), kv.IntHandle(100)}
 
-	actual, err := (&RequestBuilder{}).SetTableHandles(15, handles, 0).
+	actual, err := (&RequestBuilder{}).SetTableHandles(15, handles).
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).

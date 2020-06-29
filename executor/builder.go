@@ -2658,7 +2658,7 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 	IndexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager) (Executor, error) {
 	switch v := plan.(type) {
 	case *plannercore.PhysicalTableReader:
-		return builder.buildTableReaderForIndexJoin(ctx, v, lookUpContents)
+		return builder.buildTableReaderForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc)
 	case *plannercore.PhysicalIndexReader:
 		return builder.buildIndexReaderForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc)
 	case *plannercore.PhysicalIndexLookUpReader:
@@ -2704,43 +2704,34 @@ func (builder *dataReaderBuilder) buildUnionScanForIndexJoin(ctx context.Context
 	return us, err
 }
 
-func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Context, v *plannercore.PhysicalTableReader, lookUpContents []*indexJoinLookUpContent) (Executor, error) {
+func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Context, v *plannercore.PhysicalTableReader,
+	lookUpContents []*indexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager) (Executor, error) {
 	e, err := buildNoRangeTableReader(builder.executorBuilder, v)
 	if err != nil {
 		return nil, err
 	}
+	if v.IsCommonHandle {
+		e.kvRanges, err = buildKvRangesForIndexJoin(e.ctx, getPhysicalTableID(e.table), -1, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
+		return e, err
+	}
 	handles := make([]kv.Handle, 0, len(lookUpContents))
-	var isValidHandle bool
 	for _, content := range lookUpContents {
-		var handle kv.Handle
-		isValidHandle = true
-		if v.IsCommonHandle {
-			var handleEncoded []byte
-			handleEncoded, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, nil, content.keys...)
-			if err != nil {
-				return nil, err
-			}
-			handle, err = kv.NewCommonHandle(handleEncoded)
-			if err != nil {
-				return nil, err
-			}
-		} else {
-			handle = kv.IntHandle(content.keys[0].GetInt64())
-			for _, key := range content.keys {
-				if handle.IntValue() != key.GetInt64() {
-					isValidHandle = false
-					break
-				}
+		isValidHandle := true
+		handle := kv.IntHandle(content.keys[0].GetInt64())
+		for _, key := range content.keys {
+			if handle.IntValue() != key.GetInt64() {
+				isValidHandle = false
+				break
 			}
 		}
 		if isValidHandle {
 			handles = append(handles, handle)
 		}
 	}
-	return builder.buildTableReaderFromHandles(ctx, e, handles, 0xff)
+	return builder.buildTableReaderFromHandles(ctx, e, handles)
 }
 
-func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Context, e *TableReaderExecutor, handles []kv.Handle, handleAppend byte) (Executor, error) {
+func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Context, e *TableReaderExecutor, handles []kv.Handle) (Executor, error) {
 	startTS, err := builder.getSnapshotTS()
 	if err != nil {
 		return nil, err
@@ -2749,7 +2740,7 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 		return handles[i].Compare(handles[j]) < 0
 	})
 	var b distsql.RequestBuilder
-	kvReq, err := b.SetTableHandles(getPhysicalTableID(e.table), handles, handleAppend).
+	kvReq, err := b.SetTableHandles(getPhysicalTableID(e.table), handles).
 		SetDAGRequest(e.dagPB).
 		SetStartTS(startTS).
 		SetDesc(e.desc).
@@ -2843,7 +2834,14 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 			}
 		}
 		if cwc == nil {
-			tmpKvRanges, err := distsql.IndexRangesToKVRanges(sc, tableID, indexID, ranges, nil)
+			// Index id is -1 means it's a common handle.
+			var tmpKvRanges []kv.KeyRange
+			var err error
+			if indexID == -1 {
+				tmpKvRanges, err = distsql.CommonHandleRangesToKVRanges(sc, tableID, ranges)
+			} else {
+				tmpKvRanges, err = distsql.IndexRangesToKVRanges(sc, tableID, indexID, ranges, nil)
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -2875,6 +2873,10 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 	tmpDatumRanges, err = ranger.UnionRanges(ctx.GetSessionVars().StmtCtx, tmpDatumRanges)
 	if err != nil {
 		return nil, err
+	}
+	// Index id is -1 means it's a common handle.
+	if indexID == -1 {
+		return distsql.CommonHandleRangesToKVRanges(ctx.GetSessionVars().StmtCtx, tableID, tmpDatumRanges)
 	}
 	return distsql.IndexRangesToKVRanges(ctx.GetSessionVars().StmtCtx, tableID, indexID, tmpDatumRanges, nil)
 }
