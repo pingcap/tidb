@@ -25,15 +25,13 @@ import (
 	"sync"
 	"time"
 
-	"go.etcd.io/etcd/clientv3"
-
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -54,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
+	"go.etcd.io/etcd/clientv3"
 )
 
 type memtableRetriever struct {
@@ -1814,56 +1813,34 @@ type tiflashInstanceInfo struct {
 }
 
 func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflashInstances set.StringSet) error {
-	store := sctx.GetStore()
-	if etcd, ok := store.(tikv.EtcdBackend); ok {
-		if addrs := etcd.EtcdAddrs(); addrs != nil {
-			cfg := config.GetGlobalConfig()
-			cli, err := clientv3.New(clientv3.Config{
-				Endpoints:            addrs,
-				AutoSyncInterval:     30 * time.Second,
-				DialTimeout:          5 * time.Second,
-				TLS:                  etcd.TLSConfig(),
-				DialKeepAliveTime:    time.Second * time.Duration(cfg.TiKVClient.GrpcKeepAliveTime),
-				DialKeepAliveTimeout: time.Second * time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout),
-				PermitWithoutStream:  true,
-			})
-			if err != nil {
-				return errors.Trace(err)
-			}
-			defer func() {
-				err := cli.Close()
-				if err != nil {
-					// ignore
-				}
-			}()
-			prefix := "/tiflash/cluster/http_port/"
-			kv := clientv3.NewKV(cli)
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			resp, err := kv.Get(ctx, prefix, clientv3.WithPrefix())
-			cancel()
-			if err != nil {
-				return errors.Trace(err)
-			}
-
-			for _, ev := range resp.Kvs {
-				id := string(ev.Key)[len(prefix):]
-				if len(tiflashInstances) > 0 && !tiflashInstances.Exist(id) {
-					continue
-				}
-				// TODO: Support https in tiflash
-				url := fmt.Sprintf("http://%s", ev.Value)
-				e.instanceInfos = append(e.instanceInfos, tiflashInstanceInfo{
-					id:  id,
-					url: url,
-				})
-				e.instanceCount += 1
-			}
-			e.initialized = true
-			return nil
+	domainFromCtx := domain.GetDomain(sctx)
+	if domainFromCtx != nil {
+		cli := domainFromCtx.GetEtcdClient()
+		prefix := "/tiflash/cluster/http_port/"
+		kv := clientv3.NewKV(cli)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		resp, err := kv.Get(ctx, prefix, clientv3.WithPrefix())
+		cancel()
+		if err != nil {
+			return errors.Trace(err)
 		}
-		return errors.Errorf("Etcd addrs not found")
+		for _, ev := range resp.Kvs {
+			id := string(ev.Key)[len(prefix):]
+			if len(tiflashInstances) > 0 && !tiflashInstances.Exist(id) {
+				continue
+			}
+			// TODO: Support https in tiflash
+			url := fmt.Sprintf("http://%s", ev.Value)
+			e.instanceInfos = append(e.instanceInfos, tiflashInstanceInfo{
+				id:  id,
+				url: url,
+			})
+			e.instanceCount += 1
+		}
+		e.initialized = true
+		return nil
 	}
-	return errors.Errorf("%T not an etcd backend", store)
+	return errors.Errorf("Etcd client not found")
 }
 
 func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.Context, tidbDatabases string, tidbTables string) ([][]types.Datum, error) {
