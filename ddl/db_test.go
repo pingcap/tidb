@@ -1153,11 +1153,11 @@ LOOP:
 	ctx := tk.Se.(sessionctx.Context)
 	c.Assert(ctx.NewTxn(context.Background()), IsNil)
 	t := testGetTableByName(c, ctx, "test_db", "test_add_index")
-	handles := make(map[int64]struct{})
+	handles := kv.NewHandleMap()
 	startKey := t.RecordKey(kv.IntHandle(math.MinInt64))
 	err := t.IterRecords(ctx, startKey, t.Cols(),
-		func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
-			handles[h] = struct{}{}
+		func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+			handles.Set(h, struct{}{})
 			return true, nil
 		})
 	c.Assert(err, IsNil)
@@ -1194,11 +1194,11 @@ LOOP:
 		}
 
 		c.Assert(err, IsNil)
-		_, ok := handles[h.IntValue()]
+		_, ok := handles.Get(h)
 		c.Assert(ok, IsTrue)
-		delete(handles, h.IntValue())
+		handles.Delete(h)
 	}
-	c.Assert(handles, HasLen, 0)
+	c.Assert(handles.Len(), Equals, 0)
 	tk.MustExec("drop table test_add_index")
 }
 
@@ -1808,7 +1808,7 @@ LOOP:
 		}
 	}()
 	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(),
-		func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+		func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 			i++
 			// c4 must be -1 or > 0
 			v, err1 := data[3].ToInt64(ctx.GetSessionVars().StmtCtx)
