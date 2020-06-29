@@ -596,7 +596,6 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 		helper := &indexJoinBuildHelper{join: p}
 		for _, path := range ds.possibleAccessPaths {
 			if path.IsCommonHandlePath {
-				path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.Index)
 				emptyRange, err := helper.analyzeLookUpFilters(path, ds, innerJoinKeys)
 				if emptyRange {
 					return nil
