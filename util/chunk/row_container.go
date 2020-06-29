@@ -320,8 +320,8 @@ func NewSortedRowContainer(fieldType []*types.FieldType, chunkSize int, ByItemsD
 
 // Close close the SortedRowContainer
 func (c *SortedRowContainer) Close() error {
-	c.m.Lock()
-	defer c.m.Unlock()
+	c.ptrM.Lock()
+	defer c.ptrM.Unlock()
 	c.GetMemTracker().Consume(int64(-8 * cap(c.ptrM.rowPtrs)))
 	c.ptrM.rowPtrs = nil
 	return c.RowContainer.Close()
