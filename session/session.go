@@ -2059,6 +2059,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableClusteredIndex,
 	variable.TiDBSlowLogMasking,
 	variable.TiDBEnableTelemetry,
+	variable.TiDBShardAllocateStep,
 }
 
 var (
