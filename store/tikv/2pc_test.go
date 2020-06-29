@@ -667,7 +667,7 @@ func (s *testCommitterSuite) TestElapsedTTL(c *C) {
 }
 
 func (s *testCommitterSuite) TestDeleteYourWriteCauseGhostPrimary(c *C) {
-	s.cluster.SplitKeys(kv.Key("d"), kv.Key("a"), 4)
+	s.cluster.SplitKeys(s.mvccStore, kv.Key("d"), kv.Key("a"), 4)
 	k1 := kv.Key("a") // insert but deleted key at first pos in txn1
 	k2 := kv.Key("b") // insert key at second pos in txn1
 	k3 := kv.Key("c") // insert key in txn1 and will be conflict read by txn2
