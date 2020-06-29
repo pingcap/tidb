@@ -82,6 +82,15 @@ func (st *TxnState) stmtBufSize() int {
 	return st.stmtBuf.Size()
 }
 
+// GetSnapshot implements the kv.Transaction interface.
+func (st *TxnState) GetSnapshot() kv.Snapshot {
+	txn := st.Transaction
+	if txn != nil && txn.Valid() {
+		return txn.GetSnapshot()
+	}
+	return nil
+}
+
 func (st *TxnState) stmtBufGet(ctx context.Context, k kv.Key) ([]byte, error) {
 	if st.stmtBuf == nil {
 		return nil, kv.ErrNotExist
