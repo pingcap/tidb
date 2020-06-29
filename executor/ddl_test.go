@@ -834,11 +834,11 @@ type testAutoRandomSuite struct {
 	*baseTestSuite
 }
 
-func (s *testAutoRandomSuite) SetupTest() {
+func (s *testAutoRandomSuite) SetUpTest() {
 	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
 }
 
-func (s *testAutoRandomSuite) TeardownTest() {
+func (s *testAutoRandomSuite) TearDownTest() {
 	testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
 }
 
@@ -856,8 +856,6 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 		return allHds
 	}
 
-	s.SetupTest()
-	defer s.TeardownTest()
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 
 	tk.MustExec("create table t (a bigint primary key auto_random(15), b int)")
@@ -979,9 +977,6 @@ func (s *testAutoRandomSuite) TestAutoRandomTableOption(c *C) {
 	tk.MustExec("use test")
 
 	// test table option is auto-random
-	s.SetupTest()
-	defer s.TeardownTest()
-
 	tk.MustExec("drop table if exists auto_random_table_option")
 	tk.MustExec("create table auto_random_table_option (a bigint auto_random(5) key) auto_random_base = 1000")
 	t, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("auto_random_table_option"))
@@ -1049,9 +1044,6 @@ func (s *testAutoRandomSuite) TestFilterDifferentAllocators(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t1")
-
-	s.SetupTest()
-	defer s.TeardownTest()
 
 	tk.MustExec("create table t(a bigint auto_random(5) key, b int auto_increment unique)")
 	tk.MustExec("insert into t values()")

@@ -708,9 +708,6 @@ func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
-	s.SetupTest()
-	defer s.TeardownTest()
-
 	// Basic show create table.
 	tk.MustExec("create table auto_random_tbl1 (a bigint primary key auto_random(3), b varchar(255))")
 	tk.MustQuery("show create table `auto_random_tbl1`").Check(testutil.RowsWithSep("|",
@@ -818,9 +815,6 @@ func (s *testAutoRandomSuite) TestAutoRandomBase(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 	tk.MustExec("use test")
-
-	s.SetupTest()
-	defer s.TeardownTest()
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a bigint primary key auto_random(5), b int unique key auto_increment) auto_random_base = 100, auto_increment = 100")
