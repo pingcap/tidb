@@ -595,39 +595,11 @@ func (s *testTableSuite) TestPartitionsTable(c *C) {
 	tk.MustExec(`CREATE TABLE test_partitions (a int, b int, c varchar(5), primary key(a), index idx(c)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6), PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16));`)
 	tk.MustExec(`insert into test_partitions(a, b, c) values(1, 2, "c"), (7, 3, "d"), (12, 4, "e");`)
 
-<<<<<<< HEAD
 	tk.MustQuery("select PARTITION_NAME, PARTITION_DESCRIPTION from information_schema.PARTITIONS where table_name='test_partitions';").Check(
 		testkit.Rows("" +
 			"p0 6]\n" +
 			"[p1 11]\n" +
 			"[p2 16"))
-=======
-func (s *testTableSuite) TestStmtSummarySensitiveQuery(c *C) {
-	tk := s.newTestKitWithRoot(c)
-	tk.MustExec("set global tidb_enable_stmt_summary = 0")
-	tk.MustExec("set global tidb_enable_stmt_summary = 1")
-	tk.MustExec("drop user if exists user_sensitive;")
-	tk.MustExec("create user user_sensitive identified by '123456789';")
-	tk.MustExec("alter user 'user_sensitive'@'%' identified by 'abcdefg';")
-	tk.MustExec("set password for 'user_sensitive'@'%' = 'xyzuvw';")
-	tk.MustQuery("select query_sample_text from `information_schema`.`STATEMENTS_SUMMARY` " +
-		"where query_sample_text like '%user_sensitive%' and " +
-		"(query_sample_text like 'set password%' or query_sample_text like 'create user%' or query_sample_text like 'alter user%') " +
-		"order by query_sample_text;").
-		Check(testkit.Rows(
-			"alter user {user_sensitive@% password = ***}",
-			"create user {user_sensitive@% password = ***}",
-			"set password for user user_sensitive@%",
-		))
-}
-
-func (s *testTableSuite) TestPerformanceSchemaforPlanCache(c *C) {
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
-	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
-	}()
-	plannercore.SetPreparedPlanCache(true)
->>>>>>> dfca52c... executor: remove sensitive information in slow-log and statement (#18107)
 
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.PARTITIONS where table_name='test_partitions';").Check(
 		testkit.Rows("" +
