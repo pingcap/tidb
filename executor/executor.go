@@ -1285,7 +1285,7 @@ func (e *TableScanExec) nextChunk4InfoSchema(ctx context.Context, chk *chunk.Chu
 			columns[i] = table.ToColumn(colInfo)
 		}
 		mutableRow := chunk.MutRowFromTypes(retTypes(e))
-		err := e.t.IterRecords(e.ctx, nil, columns, func(h int64, rec []types.Datum, cols []*table.Column) (bool, error) {
+		err := e.t.IterRecords(e.ctx, nil, columns, func(_ kv.Handle, rec []types.Datum, cols []*table.Column) (bool, error) {
 			mutableRow.SetDatums(rec...)
 			e.virtualTableChunkList.AppendRow(mutableRow.ToRow())
 			return true, nil
@@ -1562,14 +1562,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	// pushing them down to TiKV as flags.
 	switch stmt := s.(type) {
 	case *ast.UpdateStmt:
-		sc.InUpdateStmt = true
-		sc.DupKeyAsWarning = stmt.IgnoreErr
-		sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
-		sc.TruncateAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
-		sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
-		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
-		sc.IgnoreZeroInDate = !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
-		sc.Priority = stmt.Priority
+		ResetUpdateStmtCtx(sc, stmt, vars)
 	case *ast.DeleteStmt:
 		sc.InDeleteStmt = true
 		sc.DupKeyAsWarning = stmt.IgnoreErr
@@ -1661,6 +1654,18 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.PrevFoundInPlanCache = vars.FoundInPlanCache
 	vars.FoundInPlanCache = false
 	return
+}
+
+// ResetUpdateStmtCtx resets statement context for UpdateStmt.
+func ResetUpdateStmtCtx(sc *stmtctx.StatementContext, stmt *ast.UpdateStmt, vars *variable.SessionVars) {
+	sc.InUpdateStmt = true
+	sc.DupKeyAsWarning = stmt.IgnoreErr
+	sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+	sc.TruncateAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+	sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+	sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
+	sc.IgnoreZeroInDate = !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
+	sc.Priority = stmt.Priority
 }
 
 // FillVirtualColumnValue will calculate the virtual column value by evaluating generated

@@ -1255,8 +1255,8 @@ func (s *testIntegrationSuite) TestAccessPathOnClusterIndex(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_clustered_index = 1")
 	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1 (a int, b varchar(20), c decimal(40,10), primary key(a,b), key(c))")
-	tk.MustExec(`insert into t1 values (1,"111",1.1), (2,"222",2.2), (3,"333",3.3)`)
+	tk.MustExec("create table t1 (a int, b varchar(20), c decimal(40,10), d int, primary key(a,b), key(c))")
+	tk.MustExec(`insert into t1 values (1,"111",1.1,11), (2,"222",2.2,12), (3,"333",3.3,13)`)
 	tk.MustExec("analyze table t1")
 
 	var input []string
