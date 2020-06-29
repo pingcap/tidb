@@ -877,7 +877,6 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 	c.Assert(err.Error(), Equals, autoid.ErrAutoRandReadFailed.GenWithStackByArgs().Error())
 	tk.MustExec("drop table t")
 
-<<<<<<< HEAD
 	tk.MustExec("create table t (a tinyint primary key auto_random(2), b int)")
 	tk.MustExec("insert into t values (1, 2)")
 	tk.MustExec("update t set a = 31 where a = 1")
@@ -885,46 +884,6 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, autoid.ErrAutoRandReadFailed.GenWithStackByArgs().Error())
 	tk.MustExec("drop table t")
-=======
-	// Test insert negative integers explicitly won't trigger rebase.
-	tk.MustExec("create table t (a bigint primary key auto_random(15), b int)")
-	for i := 1; i <= 100; i++ {
-		tk.MustExec("insert into t(b) values (?)", i)
-		tk.MustExec("insert into t(a, b) values (?, ?)", -i, i)
-	}
-	// orderedHandles should be [-100, -99, ..., -2, -1, 1, 2, ..., 99, 100]
-	orderedHandles = testutil.ConfigTestUtils.MaskSortHandles(extractAllHandles(), 15, mysql.TypeLonglong)
-	size = int64(len(allHandles))
-	for i := int64(0); i < 100; i++ {
-		c.Assert(orderedHandles[i], Equals, i-100)
-	}
-	for i := int64(100); i < size; i++ {
-		c.Assert(orderedHandles[i], Equals, i-99)
-	}
-	tk.MustExec("drop table t")
-
-	// Test signed/unsigned types.
-	tk.MustExec("create table t (a bigint primary key auto_random(10), b int)")
-	for i := 0; i < 100; i++ {
-		tk.MustExec("insert into t (b) values(?)", i)
-	}
-	for _, h := range extractAllHandles() {
-		// Sign bit should be reserved.
-		c.Assert(h > 0, IsTrue)
-	}
-	tk.MustExec("drop table t")
-
-	tk.MustExec("create table t (a bigint unsigned primary key auto_random(10), b int)")
-	for i := 0; i < 100; i++ {
-		tk.MustExec("insert into t (b) values(?)", i)
-	}
-	signBitUnused := true
-	for _, h := range extractAllHandles() {
-		signBitUnused = signBitUnused && (h > 0)
-	}
-	// Sign bit should be used for shard.
-	c.Assert(signBitUnused, IsFalse)
-	tk.MustExec("drop table t;")
 
 	// Test rename table does not affect incremental part of auto_random ID.
 	tk.MustExec("create database test_auto_random_bits_rename;")
@@ -947,7 +906,6 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 	c.Assert(len(uniqueHandles), Equals, 30)
 	tk.MustExec("drop database test_auto_random_bits_rename;")
 	tk.MustExec("drop table t;")
->>>>>>> 28cc5e6... ddl: save and restore auto_random id when rename table (#18212)
 }
 
 func (s *testAutoRandomSuite) TestAutoRandomTableOption(c *C) {
