@@ -385,7 +385,7 @@ func (s *testSuite) TestDDL(c *C) {
 		if job.ID == historyJob1.ID {
 			c.Assert(*(job.Args[0].(*string)), Equals, historyJob1.Args[0])
 		} else {
-			c.Assert(job.Args, IsNil)
+			c.Assert(job.Args, HasLen, 0)
 		}
 	}
 
