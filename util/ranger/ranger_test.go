@@ -1124,3 +1124,34 @@ func (s *testRangerSuite) TestCompIndexInExprCorrCol(c *C) {
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
 	}
 }
+
+func (s *testRangerSuite) TestIndexStringIsTrueRange(c *C) {
+	defer testleak.AfterTest(c)()
+	dom, store, err := newDomainStoreWithBootstrap(c)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t0")
+	testKit.MustExec("CREATE TABLE t0(c0 TEXT(10));")
+	testKit.MustExec("INSERT INTO t0(c0) VALUES (1);")
+	testKit.MustExec("CREATE INDEX i0 ON t0(c0(10));")
+	testKit.MustExec("analyze table t0;")
+
+	var input []string
+	var output []struct {
+		SQL    string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Result = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+		})
+		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+	}
+}
