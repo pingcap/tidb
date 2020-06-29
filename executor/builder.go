@@ -2715,34 +2715,11 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 		return nil, err
 	}
 	if v.IsCommonHandle {
-		e.kvRanges, err = buildKvRangesForIndexJoin(e.ctx, getPhysicalTableID(e.table), -1, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
+		kvRanges, err := buildKvRangesForIndexJoin(e.ctx, getPhysicalTableID(e.table), -1, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
 		if err != nil {
 			return nil, err
 		}
-		startTS, err := builder.getSnapshotTS()
-		if err != nil {
-			return nil, err
-		}
-		var b distsql.RequestBuilder
-		kvReq, err := b.SetKeyRanges(e.kvRanges).
-			SetDAGRequest(e.dagPB).
-			SetStartTS(startTS).
-			SetDesc(e.desc).
-			SetKeepOrder(e.keepOrder).
-			SetStreaming(e.streaming).
-			SetFromSessionVars(e.ctx.GetSessionVars()).
-			Build()
-		if err != nil {
-			return nil, err
-		}
-		result, err := builder.SelectResult(ctx, builder.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
-		if err != nil {
-			return nil, err
-		}
-		result.Fetch(ctx)
-		e.resultHandler = &tableResultHandler{}
-		e.resultHandler.open(nil, result)
-		return e, nil
+		return builder.buildTableReaderFromKvRanges(ctx, e, kvRanges)
 	}
 	handles := make([]kv.Handle, 0, len(lookUpContents))
 	for _, content := range lookUpContents {
@@ -2761,16 +2738,12 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 	return builder.buildTableReaderFromHandles(ctx, e, handles)
 }
 
-func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Context, e *TableReaderExecutor, handles []kv.Handle) (Executor, error) {
+func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *TableReaderExecutor, reqBuilderWithRange distsql.RequestBuilder) (Executor, error) {
 	startTS, err := builder.getSnapshotTS()
 	if err != nil {
 		return nil, err
 	}
-	sort.Slice(handles, func(i, j int) bool {
-		return handles[i].Compare(handles[j]) < 0
-	})
-	var b distsql.RequestBuilder
-	kvReq, err := b.SetTableHandles(getPhysicalTableID(e.table), handles).
+	kvReq, err := reqBuilderWithRange.
 		SetDAGRequest(e.dagPB).
 		SetStartTS(startTS).
 		SetDesc(e.desc).
@@ -2790,6 +2763,21 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 	result.Fetch(ctx)
 	e.resultHandler.open(nil, result)
 	return e, nil
+}
+
+func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Context, e *TableReaderExecutor, handles []kv.Handle) (Executor, error) {
+	sort.Slice(handles, func(i, j int) bool {
+		return handles[i].Compare(handles[j]) < 0
+	})
+	var b distsql.RequestBuilder
+	b.SetTableHandles(getPhysicalTableID(e.table), handles)
+	return builder.buildTableReaderBase(ctx, e, b)
+}
+
+func (builder *dataReaderBuilder) buildTableReaderFromKvRanges(ctx context.Context, e *TableReaderExecutor, ranges []kv.KeyRange) (Executor, error) {
+	var b distsql.RequestBuilder
+	b.SetKeyRanges(ranges)
+	return builder.buildTableReaderBase(ctx, e, b)
 }
 
 func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Context, v *plannercore.PhysicalIndexReader,
