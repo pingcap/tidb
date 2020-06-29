@@ -356,6 +356,21 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	if mutations.len() == 0 {
 		return nil
 	}
+
+	// initialize the primary key if necessary.
+	if c.primaryKey == nil {
+		for i := 0; i < mutations.len(); i++ {
+			key := mutations.keys[i]
+			if _, ok := noNeedCommitKey[string(key)]; !ok {
+				c.primaryKey = mutations.keys[i]
+				break
+			}
+		}
+		// No actural modification? treat it as read-only.
+		if c.primaryKey == nil {
+			return nil
+		}
+	}
 	c.txnSize = size
 
 	if size > int(kv.TxnTotalSizeLimit) {

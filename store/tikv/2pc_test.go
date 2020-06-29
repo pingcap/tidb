@@ -1063,3 +1063,25 @@ func (s *testCommitterSuite) TestResolveMixed(c *C) {
 	err = txn2.Rollback()
 	c.Assert(err, IsNil)
 }
+
+func (s *testCommitterSuite) TestPKNotChange(c *C) {
+	// Test the primary key used by prewrite and commit should be the same.
+	// Cover a bug that after stripNoNeedCommitKeys the primary key changes.
+	k1 := kv.Key("deleteYourWritePK")
+	txn := s.begin(c)
+	txn.Set(k1, []byte("v1"))
+	txn.Set(kv.Key("k2"), []byte("v2"))
+	
+	commiter, err := newTwoPhaseCommitterWithInit(txn, 0)
+	c.Assert(err, IsNil)
+	bo := NewBackoffer(context.Background(), PrewriteMaxBackoff)
+	err = commiter.prewriteMutations(bo, commiter.mutations)
+	pk1 := commiter.primary()
+	
+	commiter.noNeedCommitKeys[string(k1)] = struct{}{}
+	commiter.stripNoNeedCommitKeys()
+	
+	err = commiter.commitMutations(bo, commiter.mutations)
+	pk2 := commiter.primary()
+	c.Assert(bytes.Equal(pk1, pk2), IsTrue)
+}
