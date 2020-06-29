@@ -64,7 +64,6 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
@@ -99,6 +98,7 @@ var _ = Suite(&testOOMSuite{})
 var _ = Suite(&testPointGetSuite{})
 var _ = Suite(&testFlushSuite{})
 var _ = SerialSuites(&testShowStatsSuite{})
+var _ = SerialSuites(&testSlowLogSuite{testSuite{}})
 
 type testSuite struct {
 	cluster   *mocktikv.Cluster
@@ -4523,10 +4523,11 @@ func (s *testSuite1) TestIssue15718(c *C) {
 	tk.MustQuery("SELECT * FROM t0 WHERE NOT(0 OR t0.c0);").Check(testkit.Rows())
 }
 
-func (s *testSuite) TestSlowQuerySensitiveQuery(c *C) {
-	if israce.RaceEnabled {
-		c.Skip("skip race test")
-	}
+type testSlowLogSuite struct {
+	testSuite
+}
+
+func (s *testSlowLogSuite) TestSlowQuerySensitiveQuery(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
