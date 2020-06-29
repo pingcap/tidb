@@ -314,7 +314,9 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 		}
 	}
 	// Test 2 partitions and all data in disk.
-	// Now spilling is parallel.
+	// Now spilling is in parallel.
+	// Maybe the second add() will called before spilling, depends on
+	// Golang goroutine scheduling. So the result has two possibilities.
 	if len(exec.partitionList) == 2 {
 		c.Assert(len(exec.partitionList), Equals, 2)
 		c.Assert(exec.partitionList[0].AlreadySpilledSafe(), Equals, true)
