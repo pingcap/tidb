@@ -16,6 +16,7 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/failpoint"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -809,6 +810,11 @@ func (s *testAutoRandomSuite) TestAutoIdCache(c *C) {
 }
 
 func (s *testAutoRandomSuite) TestAutoRandomBase(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
+	}()
+
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 	tk.MustExec("use test")
