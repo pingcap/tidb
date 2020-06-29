@@ -843,7 +843,6 @@ func(s *testAutoRandomSuite)TeardownTest(){
 }
 
 func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
-	s.SetUpSuite(c);
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("create database if not exists test_auto_random_bits")
