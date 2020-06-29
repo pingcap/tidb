@@ -844,7 +844,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	} else if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
 		sql = FormatSQL(sensitiveStmt.SecureText(), nil)
 	} else {
-		sql = FormatSQL(normalizedSQL, sessVars.PreparedParams)
+		sql = FormatSQL(sessVars.StmtCtx.OriginalSQL, sessVars.PreparedParams)
 	}
 
 	var tableIDs, indexNames string

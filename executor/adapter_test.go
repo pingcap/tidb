@@ -17,7 +17,6 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
@@ -68,9 +67,6 @@ func (s *testSuiteP2) TestFormatSQL(c *C) {
 	}
 	preparedSQL = executor.FormatSQL("select count(*), ?;", preparedParams)()
 	c.Check(preparedSQL, Equals, "select count(*), 1;")
-
-	normalized, _ := parser.NormalizeDigest("select count(*);")
-	c.Check(normalized, Equals, "select count(*);")
 }
 
 // mustParseTimeIntoDatum is similar to ParseTime but panic if any error occurs.
