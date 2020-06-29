@@ -1708,15 +1708,32 @@ func (h profileHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		writeError(w, err)
 		return
 	}
-	pb := executor.NewProfileBuilder(sctx)
+	var start, end time.Time
+	if req.FormValue("end") != "" {
+		end, err = time.ParseInLocation(time.RFC3339, req.FormValue("end"), sctx.GetSessionVars().Location())
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+	} else {
+		end = time.Now()
+	}
+	if req.FormValue("start") != "" {
+		start, err = time.ParseInLocation(time.RFC3339, req.FormValue("start"), sctx.GetSessionVars().Location())
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+	} else {
+		start = end.Add(-time.Minute * 10)
+	}
+	pb := executor.NewProfileBuilder(sctx, start, end)
 	err = pb.Collect()
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	buf := pb.Build()
-	fmt.Printf("%v \n\n------\n", string(buf))
-	_, err = w.Write(buf)
+	_, err = w.Write(pb.Build())
 	terror.Log(errors.Trace(err))
 }
 

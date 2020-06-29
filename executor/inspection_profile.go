@@ -22,6 +22,7 @@ type metricNode struct {
 	unit           int64
 	children       []*metricNode
 	isPartOfParent bool
+	initialized    bool
 }
 
 func (n *metricNode) getName(label string) string {
@@ -36,11 +37,17 @@ func (n *metricNode) getName(label string) string {
 }
 
 func (n *metricNode) getValue(pb *profileBuilder) (float64, error) {
-	if n.value == 0 {
-		v, err := pb.getMetricValue(n)
-		if err != nil {
-			return 0, err
-		}
+	if n.initialized {
+		return n.value, nil
+	}
+	n.initialized = true
+	v, err := pb.getMetricValue(n)
+	if err != nil {
+		return 0, err
+	}
+	if math.IsNaN(v) {
+		n.value = 0
+	} else {
 		n.value = v
 	}
 	return n.value, nil
@@ -88,7 +95,6 @@ func (pb *profileBuilder) getMetricValue(n *metricNode) (float64, error) {
 		n.labelValue[label] = v
 		n.value += v
 	}
-	fmt.Printf("%v, %#v, %#v  \n", n.name, n.labelValue, n.value)
 	return n.value, nil
 }
 
@@ -105,15 +111,15 @@ type profileBuilder struct {
 	end   time.Time
 }
 
-func NewProfileBuilder(sctx sessionctx.Context) *profileBuilder {
+func NewProfileBuilder(sctx sessionctx.Context, start, end time.Time) *profileBuilder {
 	return &profileBuilder{
 		sctx:        sctx,
 		idMap:       make(map[string]uint64),
 		idAllocator: uint64(1),
 		buf:         bytes.NewBuffer(make([]byte, 0, 1024)),
 		uniqueMap:   make(map[*metricNode]struct{}),
-		start:       time.Now().Add(-time.Minute * 10),
-		end:         time.Now(),
+		start:       start,
+		end:         end,
 	}
 }
 
@@ -122,7 +128,6 @@ func (pb *profileBuilder) Collect() error {
 	pb.buf.WriteByte('\n')
 	pb.buf.WriteString(`node [style=filled fillcolor="#f8f8f8"]`)
 	pb.buf.WriteByte('\n')
-
 	err := pb.addMetricTree(pb.genTiDBQueryTree(), "tidb_query_total_time")
 	if err != nil {
 		return err
@@ -155,7 +160,11 @@ func (pb *profileBuilder) addMetricTree(root *metricNode, name string) error {
 	if err != nil {
 		return err
 	}
-	pb.totalValue = v
+	if v != 0 {
+		pb.totalValue = v
+	} else {
+		pb.totalValue = 1
+	}
 	return pb.traversal(root)
 }
 
@@ -266,6 +275,7 @@ func (pb *profileBuilder) ignoreFraction(value, total float64) bool {
 	return value*100/total < 0.01
 }
 
+// dotColor function was copy from https://github.com/google/pprof.
 func (pb *profileBuilder) dotColor(score float64, isBackground bool) string {
 	// A float between 0.0 and 1.0, indicating the extent to which
 	// colors should be shifted away from grey (to make positive and
