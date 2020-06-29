@@ -778,6 +778,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		if _, err := collate.GetCollationByName(value); err != nil {
 			return value, errors.Trace(err)
 		}
+	case TiDBShardAllocateStep:
+		return checkInt64SystemVar(name, value, 1, math.MaxInt64, vars)
 	}
 	return value, nil
 }
