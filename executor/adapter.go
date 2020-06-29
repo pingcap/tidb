@@ -769,20 +769,24 @@ func FormatSQL(sql string, pps variable.PreparedParams) stringutil.StringerFunc 
 		if len(pps) == 0 {
 			return replaceSQL
 		}
-
-		sqlBuffer := bytes.NewBuffer([]byte{})
-		paramsIndex := 0
-		for i := 0; i < len(replaceSQL); i++ {
-			c := replaceSQL[i]
-			if c != '?' {
-				sqlBuffer.WriteByte(c)
-				continue
-			}
-			sqlBuffer.WriteString(fmt.Sprintf("%v", pps[paramsIndex].GetValue()))
-			paramsIndex++
-		}
-		return sqlBuffer.String()
+		return formatPreparedSQL(replaceSQL, pps)
 	}
+}
+
+// formatPreparedSQL is used to replace the prepared params for original SQL
+func formatPreparedSQL(sql string, pps variable.PreparedParams) string {
+	sqlBuffer := bytes.NewBuffer([]byte{})
+	paramsIndex := 0
+	for i := 0; i < len(sql); i++ {
+		c := sql[i]
+		if c != '?' {
+			sqlBuffer.WriteByte(c)
+			continue
+		}
+		sqlBuffer.WriteString(fmt.Sprintf("%v", pps[paramsIndex].GetValue()))
+		paramsIndex++
+	}
+	return sqlBuffer.String()
 }
 
 var (
@@ -1005,6 +1009,8 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	sql := a.Text
 	if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
 		sql = sensitiveStmt.SecureText()
+	} else if len(sessVars.PreparedParams) > 0 {
+		sql = formatPreparedSQL(sessVars.StmtCtx.OriginalSQL, sessVars.PreparedParams)
 	}
 	stmtsummary.StmtSummaryByDigestMap.AddStatement(&stmtsummary.StmtExecInfo{
 		SchemaName:     strings.ToLower(sessVars.CurrentDB),
