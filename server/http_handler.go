@@ -1714,13 +1714,10 @@ func (h profileHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		writeError(w, err)
 		return
 	}
-	profile := pb.Build()
-	fmt.Printf("%v \n\n------\n", profile.String())
-	err = profile.Write(w)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
+	buf := pb.Build()
+	fmt.Printf("%v \n\n------\n", string(buf))
+	_, err = w.Write(buf)
+	terror.Log(errors.Trace(err))
 }
 
 // testHandler is the handler for tests. It's convenient to provide some APIs for integration tests.

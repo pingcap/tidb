@@ -1,235 +1,429 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"fmt"
-	"github.com/google/pprof/profile"
+	"math"
+	"strings"
+	"time"
+
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"time"
 )
 
 type metricNode struct {
-	name          string
-	children      []*metricNode
-	value         int64
-	unit int64
-	childrenValue int64
+	table          string
+	name           string
+	label          []string
+	condition      string
+	labelValue     map[string]float64
+	value          float64
+	unit           int64
+	children       []*metricNode
+	isPartOfParent bool
 }
 
-type metricValueType int
+func (n *metricNode) getName(label string) string {
+	name := n.table
+	if n.name != "" {
+		name = n.name
+	}
+	if len(label) != 0 {
+		name = name + "." + label
+	}
+	return name
+}
 
-const (
-	metricValueSum      metricValueType = 1
-	metricValueQuantile metricValueType = 2
-)
+func (n *metricNode) getValue(pb *profileBuilder) (float64, error) {
+	if n.value == 0 {
+		v, err := pb.getMetricValue(n)
+		if err != nil {
+			return 0, err
+		}
+		n.value = v
+	}
+	return n.value, nil
+}
+
+func (pb *profileBuilder) getMetricValue(n *metricNode) (float64, error) {
+	if n.labelValue != nil {
+		return n.value, nil
+	}
+	n.labelValue = make(map[string]float64)
+	var query string
+	format := "2006-01-02 15:04:05"
+	//pb.start = pb.start.In(time.UTC)
+	//pb.end = pb.end.In(time.UTC)
+	queryCondition := fmt.Sprintf("where time >= '%v' and time <= '%v'", pb.start.Format(format), pb.end.Format(format))
+	if n.condition != "" {
+		queryCondition += (" and " + n.condition)
+	}
+	if len(n.label) == 0 {
+		query = fmt.Sprintf("select sum(value), '' from `metrics_schema`.`%v_total_time` %v", n.table, queryCondition)
+	} else {
+		query = fmt.Sprintf("select sum(value), `%[3]s` from `metrics_schema`.`%[1]s_total_time` %[2]s group by `%[3]s` having sum(value) > 0",
+			n.table, queryCondition, strings.Join(n.label, "`,`"))
+	}
+	rows, _, err := pb.sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(context.Background(), query)
+	if err != nil {
+		return 0, err
+	}
+	if len(rows) == 0 || rows[0].Len() == 0 {
+		return 0, nil
+	}
+
+	for _, row := range rows {
+		v := row.GetFloat64(0)
+		if n.unit != 0 {
+			v = v / float64(n.unit)
+		}
+		label := ""
+		for i := 1; i < row.Len(); i++ {
+			if i > 1 {
+				label += ","
+			}
+			label += row.GetString(i)
+		}
+		n.labelValue[label] = v
+		n.value += v
+	}
+	fmt.Printf("%v, %#v, %#v  \n", n.name, n.labelValue, n.value)
+	return n.value, nil
+}
 
 type profileBuilder struct {
-	sctx sessionctx.Context
-	samples     []*profile.Sample
-	locations   []*profile.Location
-	functions   []*profile.Function
+	sctx        sessionctx.Context
 	queue       []*metricNode
 	idMap       map[string]uint64
 	idAllocator uint64
-	valueTp     metricValueType
-	quantile    float64
-	start       time.Time
-	end         time.Time
+	totalValue  float64
+	uniqueMap   map[*metricNode]struct{}
+	buf         *bytes.Buffer
+
+	start time.Time
+	end   time.Time
 }
 
-func (pb *profileBuilder) getMetricValue(n *metricNode) (int64, error) {
-	var query string
-	format := "2006-01-02 15:04:05"
-	pb.start = pb.start.In(time.UTC)
-	pb.end = pb.end.In(time.UTC)
-	queryCondition := fmt.Sprintf("where time >= '%v' and time <= '%v'", pb.start.Format(format), pb.end.Format(format))
-	switch pb.valueTp {
-	case metricValueQuantile:
-		query = fmt.Sprintf("select avg(value) from `metrics_schema`.`%v_duration` %v and quantile = %v",
-			n.name, queryCondition, pb.quantile)
-	case metricValueSum:
-		fallthrough
-	default:
-		query = fmt.Sprintf("select sum(value) from `metrics_schema`.`%v_total_time` %v", n.name, queryCondition)
+func NewProfileBuilder(sctx sessionctx.Context) *profileBuilder {
+	return &profileBuilder{
+		sctx:        sctx,
+		idMap:       make(map[string]uint64),
+		idAllocator: uint64(1),
+		buf:         bytes.NewBuffer(make([]byte, 0, 1024)),
+		uniqueMap:   make(map[*metricNode]struct{}),
+		start:       time.Now().Add(-time.Minute * 10),
+		end:         time.Now(),
 	}
-	rows, _, err := pb.sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(context.Background(), query)
-	//fmt.Printf("sql: %v  \n%v\n",query, err)
+}
+
+func (pb *profileBuilder) Collect() error {
+	pb.buf.WriteString(fmt.Sprintf(`digraph "%s" {`, "tidb_profile"))
+	pb.buf.WriteByte('\n')
+	pb.buf.WriteString(`node [style=filled fillcolor="#f8f8f8"]`)
+	pb.buf.WriteByte('\n')
+
+	err := pb.addMetricTree(pb.genTiDBQueryTree(), "tidb_query_total_time")
 	if err != nil {
-		return 0,err
+		return err
 	}
-	if len(rows)==0 || rows[0].Len() != 1 {
-		return 0,nil
-	}
-
-	//fmt.Printf("sql: %v  \n%v\n",query, rows[0].GetFloat64(0))
-	if n.unit != 0 {
-		return int64(rows[0].GetFloat64(0)*float64(n.unit)), nil
-	}
-	return int64(rows[0].GetFloat64(0)*float64(time.Second)), nil
+	return nil
 }
 
+func (pb *profileBuilder) Build() []byte {
+	pb.buf.WriteByte('}')
+	return pb.buf.Bytes()
+}
 
-func (pb *profileBuilder) getNodeID(n *metricNode) uint64 {
-	if id, ok := pb.idMap[n.name]; ok {
+func (pb *profileBuilder) getNameID(name string) uint64 {
+	if id, ok := pb.idMap[name]; ok {
 		return id
 	}
 	id := pb.idAllocator
 	pb.idAllocator++
-	pb.idMap[n.name] = id
+	pb.idMap[name] = id
 	return id
 }
 
-func (pb *profileBuilder) genLocation(n *metricNode) *profile.Location {
-	id := pb.getNodeID(n)
-	fn := &profile.Function{
-		ID:   id,
-		Name: n.name,
+func (pb *profileBuilder) addMetricTree(root *metricNode, name string) error {
+	if root == nil {
+		return nil
 	}
-	return &profile.Location{ID: id, Line: []profile.Line{{Function: fn}}}
+	pb.buf.WriteString(fmt.Sprintf(`subgraph tidb_%[1]s { "%[1]s" [shape=box fontsize=16 label="Type: TiDB %[1]s\lTime: %s\lDuration: %s\l"] }`, name, pb.start.String(), pb.end.Sub(pb.start).String()))
+	pb.buf.WriteByte('\n')
+	v, err := root.getValue(pb)
+	if err != nil {
+		return err
+	}
+	pb.totalValue = v
+	return pb.traversal(root)
 }
 
-func (pb *profileBuilder) genLocations(n *metricNode) []*profile.Location {
-	loc := pb.genLocation(n)
-	locations := []*profile.Location{loc}
-	buf := []string{n.name}
-	for i := len(pb.queue) - 1; i >= 0; i-- {
-		locations = append(locations, pb.genLocation(pb.queue[i]))
-		buf = append(buf,pb.queue[i].name)
+func (pb *profileBuilder) traversal(n *metricNode) error {
+	if n == nil {
+		return nil
 	}
-	fmt.Printf("loc: %v\n\n", buf)
-	return locations
+	if _, ok := pb.uniqueMap[n]; ok {
+		return nil
+	}
+	pb.uniqueMap[n] = struct{}{}
+	totalChildrenValue := float64(0)
+	for _, child := range n.children {
+		childValue, err := child.getValue(pb)
+		if err != nil {
+			return err
+		}
+		pb.addNodeEdge(n, child, childValue)
+		if !child.isPartOfParent {
+			totalChildrenValue += childValue
+		}
+	}
+	selfValue, err := n.getValue(pb)
+	if err != nil {
+		return err
+	}
+	selfCost := selfValue - totalChildrenValue
+	pb.addNode(n, selfCost, selfValue)
+	for _, child := range n.children {
+		err := pb.traversal(child)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (pb *profileBuilder) addNodeEdge(parent, child *metricNode, childValue float64) {
+	style := ""
+	if child.isPartOfParent {
+		style = "dotted"
+	}
+	if len(parent.label) == 0 {
+		label := ""
+		if !child.isPartOfParent {
+			label = fmt.Sprintf(" %.2fs", childValue)
+		}
+		pb.addEdge(parent.getName(""), child.getName(""), label, style, childValue)
+	} else {
+		for label, v := range parent.labelValue {
+			if pb.ignoreFraction(v, pb.totalValue) {
+				continue
+			}
+			pb.addEdge(parent.getName(label), child.getName(""), "", style, childValue)
+		}
+	}
+}
+
+func (pb *profileBuilder) addNode(n *metricNode, selfCost, nodeTotal float64) {
+	name := n.getName("")
+	weight := selfCost
+	if len(n.label) > 0 {
+		for label, v := range n.labelValue {
+			if pb.ignoreFraction(v, pb.totalValue) {
+				continue
+			}
+			labelValue := fmt.Sprintf(" %.2fs", v)
+			pb.addEdge(n.getName(""), n.getName(label), labelValue, "", v)
+			labelValue = fmt.Sprintf("%s\n %.2fs (%.2f%%)", n.getName(label), v, v*100/pb.totalValue)
+			pb.addNodeDef(n.getName(label), labelValue, v, v)
+		}
+		weight = selfCost / 2
+		selfCost = selfCost / 5
+	}
+
+	label := fmt.Sprintf("%s\n %.2fs (%.2f%%)\nof %.2fs (%.2f%%)",
+		name, selfCost, selfCost*100/pb.totalValue, nodeTotal, nodeTotal*100/pb.totalValue)
+	pb.addNodeDef(n.getName(""), label, weight, selfCost)
+}
+
+func (pb *profileBuilder) addNodeDef(name, labelValue string, fontWeight, colorWeight float64) {
+	baseFontSize, maxFontGrowth := 5, 18.0
+	fontSize := baseFontSize
+	fontSize += int(math.Ceil(maxFontGrowth * math.Sqrt(math.Abs(fontWeight)/pb.totalValue)))
+
+	pb.buf.WriteString(fmt.Sprintf(`N%d [label="%s" fontsize=%d shape=box color="%s" fillcolor="%s"]`,
+		pb.getNameID(name), labelValue, fontSize,
+		pb.dotColor(colorWeight/pb.totalValue, false),
+		pb.dotColor(colorWeight/pb.totalValue, true)))
+	pb.buf.WriteByte('\n')
+}
+
+func (pb *profileBuilder) addEdge(from, to, label, style string, value float64) {
+	weight := 1 + int(math.Min(value*100/pb.totalValue, 100))
+	color := pb.dotColor(value/pb.totalValue, false)
+	pb.buf.WriteString(fmt.Sprintf(`N%d -> N%d [`, pb.getNameID(from), pb.getNameID(to)))
+	if label != "" {
+		pb.buf.WriteString(fmt.Sprintf(` label="%s" `, label))
+	}
+	if style != "" {
+		pb.buf.WriteString(fmt.Sprintf(` style="%s" `, style))
+	}
+	pb.buf.WriteString(fmt.Sprintf(` weight=%d color="%s"]`, weight, color))
+	pb.buf.WriteByte('\n')
+}
+
+func (pb *profileBuilder) ignoreFraction(value, total float64) bool {
+	return value*100/total < 0.01
+}
+
+func (pb *profileBuilder) dotColor(score float64, isBackground bool) string {
+	// A float between 0.0 and 1.0, indicating the extent to which
+	// colors should be shifted away from grey (to make positive and
+	// negative values easier to distinguish, and to make more use of
+	// the color range.)
+	const shift = 0.7
+
+	// Saturation and value (in hsv colorspace) for background colors.
+	const bgSaturation = 0.1
+	const bgValue = 0.93
+
+	// Saturation and value (in hsv colorspace) for foreground colors.
+	const fgSaturation = 1.0
+	const fgValue = 0.7
+
+	// Choose saturation and value based on isBackground.
+	var saturation float64
+	var value float64
+	if isBackground {
+		saturation = bgSaturation
+		value = bgValue
+	} else {
+		saturation = fgSaturation
+		value = fgValue
+	}
+
+	// Limit the score values to the range [-1.0, 1.0].
+	score = math.Max(-1.0, math.Min(1.0, score))
+
+	// Reduce saturation near score=0 (so it is colored grey, rather than yellow).
+	if math.Abs(score) < 0.2 {
+		saturation *= math.Abs(score) / 0.2
+	}
+
+	// Apply 'shift' to move scores away from 0.0 (grey).
+	if score > 0.0 {
+		score = math.Pow(score, (1.0 - shift))
+	}
+	if score < 0.0 {
+		score = -math.Pow(-score, (1.0 - shift))
+	}
+
+	var r, g, b float64 // red, green, blue
+	if score < 0.0 {
+		g = value
+		r = value * (1 + saturation*score)
+	} else {
+		r = value
+		g = value * (1 - saturation*score)
+	}
+	b = value * (1 - saturation)
+	return fmt.Sprintf("#%02x%02x%02x", uint8(r*255.0), uint8(g*255.0), uint8(b*255.0))
 }
 
 func (pb *profileBuilder) genTiDBQueryTree() *metricNode {
-	tikvGRPC := &metricNode{
-		name: "tikv_grpc_message",
-	}
-	tidbExecute := &metricNode{
-		name: "tidb_execute",
+	tidbKVRequest := &metricNode{
+		table:          "tidb_kv_request",
+		isPartOfParent: true,
+		label:          []string{"type"},
 		children: []*metricNode{
 			{
-				name: "pd_start_tso_wait",
-			},
-			{
-				name: "tidb_kv_backoff",
-			},
-			{
-				name: "tidb_kv_request",
+				table: "tikv_grpc_message",
 				children: []*metricNode{
-					tikvGRPC,
+					{
+						table: "tikv_cop_request",
+						children: []*metricNode{
+							{
+								table: "tikv_cop_wait",
+								label: []string{"type"},
+							},
+							{table: "tikv_cop_handle"},
+						},
+					},
+					{
+						table: "tikv_scheduler_command",
+						children: []*metricNode{
+							{table: "tikv_scheduler_latch_wait"},
+							{table: "tikv_scheduler_processing_read"},
+							{
+								table: "tikv_storage_async_request",
+								//label: []string{"type"},
+								children: []*metricNode{
+									{
+										table:     "tikv_storage_async_request",
+										name:      "tikv_storage_async_request.snapshot",
+										condition: "type='snapshot'",
+									},
+									{
+										table:     "tikv_storage_async_request",
+										name:      "tikv_storage_async_request.write",
+										condition: "type='write'",
+										children: []*metricNode{
+											{table: "tikv_propose_wait"},
+											{
+												table: "tikv_process",
+												children: []*metricNode{
+													{table: "tikv_append_log"},
+												},
+											},
+											{table: "tikv_commit_log"},
+											{table: "tikv_apply_wait"},
+											{table: "tikv_apply_log"},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	tidbExecute := &metricNode{
+		table: "tidb_execute",
+		children: []*metricNode{
+			{
+				table: "pd_start_tso_wait",
+			},
+			{
+				table: "tidb_cop",
+				children: []*metricNode{
+					{
+						table:          "tidb_kv_backoff",
+						isPartOfParent: true,
+					},
+					tidbKVRequest,
+				},
+			},
+			{
+				table: "tidb_txn_cmd",
+				label: []string{"type"},
+				children: []*metricNode{
+					{
+						table:          "tidb_kv_backoff",
+						isPartOfParent: true,
+					},
+					tidbKVRequest,
 				},
 			},
 		},
 	}
 	queryTime := &metricNode{
-		name: "tidb_query",
+		table: "tidb_query",
+		label: []string{"sql_type"},
 		children: []*metricNode{
 			{
-				name: "tidb_get_token",
-				unit: int64(time.Second/10e5),
+				table: "tidb_get_token",
+				unit:  int64(10e5),
 			},
 			{
-				name: "tidb_parse",
+				table: "tidb_parse",
 			},
 			{
-				name: "tidb_compile",
+				table: "tidb_compile",
 			},
 			tidbExecute,
 		},
 	}
 
 	return queryTime
-}
-
-func NewProfileBuilder(sctx sessionctx.Context) *profileBuilder {
-	return &profileBuilder{
-		sctx: sctx,
-		idMap:       make(map[string]uint64),
-		idAllocator: uint64(1),
-		start: time.Now().Add(-time.Minute*10),
-		end: time.Now(),
-		valueTp: metricValueQuantile,
-		quantile: 0.999,
-	}
-}
-
-func (pb *profileBuilder) Collect() error {
-	err :=pb.addMetricTree(pb.genTiDBQueryTree())
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (pb *profileBuilder) Build() *profile.Profile {
-	return &profile.Profile{
-		SampleType: []*profile.ValueType{
-			{Type: "cpu", Unit: "nanoseconds"},
-		},
-		TimeNanos:     int64(time.Now().Nanosecond()),
-		DurationNanos: int64(time.Second * 100),
-		Period:        1,
-		Sample:        pb.samples,
-		Location:      pb.locations,
-		Function:      pb.functions,
-	}
-}
-
-func (pb *profileBuilder) addMetricTree(root *metricNode) error {
-	stack := []*metricNode{root}
-	for len(stack) > 0 {
-		n := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		value,err := pb.getMetricValue(n)
-		if err != nil {
-			return err
-		}
-		n.value=value
-
-		loc := pb.genLocation(n)
-		pb.locations = append(pb.locations, loc)
-		pb.functions = append(pb.functions, loc.Line[0].Function)
-		if len(n.children) > 0 {
-			pb.queue = append(pb.queue, n)
-			for _, child := range n.children {
-				stack = append(stack, child)
-			}
-		} else {
-			pb.samples = append(pb.samples, &profile.Sample{
-				Value:    []int64{n.value},
-				Location: pb.genLocations(n),
-			})
-			//fmt.Printf("append child: %v,%v -----\n\n", n.name, n.value)
-			pb.appendParent()
-		}
-	}
-	if len(pb.queue) != 0 {
-		panic(fmt.Sprintf("%v------\n", pb.queue))
-	}
-	return nil
-}
-
-func (pb *profileBuilder) appendParent() {
-	if len(pb.queue) == 0 {
-		return
-	}
-	parent := pb.queue[len(pb.queue)-1]
-	parent.childrenValue += parent.children[len(parent.children)-1].value
-	//fmt.Printf("---------------add child: %v,%v -----\n\n", parent.name, parent.childrenValue)
-	parent.children = parent.children[:len(parent.children)-1]
-	if len(parent.children) > 0 {
-		return
-	}
-	pb.queue = pb.queue[:len(pb.queue)-1]
-
-	//fmt.Printf("-----------------------------------append parent %v, %v, %v ---\n", parent.name, parent.value, parent.childrenValue)
-	if parent.value > parent.childrenValue {
-		pb.samples = append(pb.samples, &profile.Sample{
-			Value:    []int64{parent.value - parent.childrenValue},
-			Location: pb.genLocations(parent),
-		})
-	}
-	pb.appendParent()
 }
