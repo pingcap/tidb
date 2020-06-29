@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -630,6 +631,27 @@ func (s *testSerialSuite) TestRecoverTableByTableName(c *C) {
 	tk.MustExec("insert into t_recover values (10)")
 	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "7", "8", "9", "10"))
 
+	tk.MustExec("drop database if exists Test2")
+	tk.MustExec("create database Test2")
+	tk.MustExec("use Test2")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values (1),(2)")
+	tk.MustExec("drop table t")
+	tk.MustExec("recover table t")
+	tk.MustQuery("select a from t order by a").Check(testkit.Rows("1", "2"))
+
+	tk.MustExec("drop table t")
+	tk.MustExec("drop database if exists Test3")
+	tk.MustExec("create database Test3")
+	tk.MustExec("use Test3")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("drop table t")
+	tk.MustExec("drop database Test3")
+	tk.MustExec("use Test2")
+	tk.MustExec("recover table t")
+	tk.MustExec("insert into t values (3)")
+	tk.MustQuery("select a from t order by a").Check(testkit.Rows("1", "2", "3"))
+
 	gcEnable, err := gcutil.CheckGCEnable(tk.Se)
 	c.Assert(err, IsNil)
 	c.Assert(gcEnable, Equals, false)
@@ -777,6 +799,25 @@ func (s *testSerialSuite) TestCancelJobByErrorCountLimit(c *C) {
 	c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
 }
 
+func (s *testSerialSuite) TestTruncateTableUpdateSchemaVersionErr(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockTruncateTableUpdateVersionError", `return(true)`), IsNil)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 5")
+	err := ddlutil.LoadDDLVars(tk.Se)
+	c.Assert(err, IsNil)
+
+	tk.MustExec("create table t (a int)")
+	_, err = tk.Exec("truncate table t")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+	// Disable fail point.
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockTruncateTableUpdateVersionError"), IsNil)
+	tk.MustExec("truncate table t")
+}
+
 func (s *testSerialSuite) TestCanceledJobTakeTime(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -849,17 +890,22 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	assertWithAutoInc := func(sql string) {
 		assertInvalidAutoRandomErr(sql, autoid.AutoRandomIncompatibleWithAutoIncErrMsg)
 	}
-	assertOverflow := func(sql, colType string, autoRandBits, maxFieldLength uint64) {
-		assertInvalidAutoRandomErr(sql, autoid.AutoRandomOverflowErrMsg, colType, maxFieldLength, autoRandBits, colType, maxFieldLength-1)
+	assertOverflow := func(sql, colName string, autoRandBits uint64) {
+		assertInvalidAutoRandomErr(sql, autoid.AutoRandomOverflowErrMsg, autoid.MaxAutoRandomBits, autoRandBits, colName)
 	}
 	assertModifyColType := func(sql string) {
-		assertInvalidAutoRandomErr(sql, autoid.AutoRandomModifyColTypeErrMsg)
+		_, err := tk.Exec(sql)
+		c.Assert(err, NotNil)
+		c.Assert(strings.Contains(err.Error(), "[ddl:203]unsupported modify column length"), IsTrue)
 	}
 	assertDefault := func(sql string) {
 		assertInvalidAutoRandomErr(sql, autoid.AutoRandomIncompatibleWithDefaultValueErrMsg)
 	}
 	assertNonPositive := func(sql string) {
 		assertInvalidAutoRandomErr(sql, autoid.AutoRandomNonPositive)
+	}
+	assertBigIntOnly := func(sql, colType string) {
+		assertInvalidAutoRandomErr(sql, autoid.AutoRandomOnNonBigIntColumn, colType)
 	}
 	mustExecAndDrop := func(sql string, fns ...func()) {
 		tk.MustExec(sql)
@@ -871,21 +917,22 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 
 	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
 	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+
+	// Only bigint column can set auto_random
+	assertBigIntOnly("create table t (a char primary key auto_random(3), b int)", "char")
+	assertBigIntOnly("create table t (a varchar(255) primary key auto_random(3), b int)", "varchar")
+	assertBigIntOnly("create table t (a timestamp primary key auto_random(3), b int)", "timestamp")
+
 	// PKIsHandle, but auto_random is defined on non-primary key.
-	assertPKIsNotHandle("create table t (a bigint auto_random (3) primary key, b int auto_random (3))", "b")
-	assertPKIsNotHandle("create table t (a bigint auto_random (3), b int auto_random(3), primary key(a))", "b")
-	assertPKIsNotHandle("create table t (a bigint auto_random (3), b int auto_random(3) primary key)", "a")
+	assertPKIsNotHandle("create table t (a bigint auto_random (3) primary key, b bigint auto_random (3))", "b")
+	assertPKIsNotHandle("create table t (a bigint auto_random (3), b bigint auto_random(3), primary key(a))", "b")
+	assertPKIsNotHandle("create table t (a bigint auto_random (3), b bigint auto_random(3) primary key)", "a")
 
 	// PKIsNotHandle: no primary key.
-	assertPKIsNotHandle("create table t (a int auto_random(3), b int)", "a")
 	assertPKIsNotHandle("create table t (a bigint auto_random(3), b int)", "a")
-	// PKIsNotHandle: primary key is not integer column.
-	assertPKIsNotHandle("create table t (a char primary key auto_random(3), b int)", "a")
-	assertPKIsNotHandle("create table t (a varchar(255) primary key auto_random(3), b int)", "a")
-	assertPKIsNotHandle("create table t (a timestamp primary key auto_random(3), b int)", "a")
 	// PKIsNotHandle: primary key is not a single column.
-	assertPKIsNotHandle("create table t (a bigint auto_random(3), b int, primary key (a, b))", "a")
-	assertPKIsNotHandle("create table t (a int auto_random(3), b int, c char, primary key (a, c))", "a")
+	assertPKIsNotHandle("create table t (a bigint auto_random(3), b bigint, primary key (a, b))", "a")
+	assertPKIsNotHandle("create table t (a bigint auto_random(3), b int, c char, primary key (a, c))", "a")
 
 	// Can not set auto_random along with auto_increment.
 	assertWithAutoInc("create table t (a bigint auto_random(3) primary key auto_increment)")
@@ -893,45 +940,40 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	assertWithAutoInc("create table t (a bigint auto_increment primary key auto_random(3))")
 	assertWithAutoInc("create table t (a bigint auto_random(3) auto_increment, primary key (a))")
 
-	// Overflow data type max length.
-	assertOverflow("create table t (a bigint auto_random(65) primary key)", "a", 65, 64)
-	assertOverflow("create table t (a int auto_random(33) primary key)", "a", 33, 32)
-	assertOverflow("create table t (a mediumint auto_random(25) primary key)", "a", 25, 24)
-	assertOverflow("create table t (a smallint auto_random(17) primary key)", "a", 17, 16)
-	assertOverflow("create table t (a tinyint auto_random(9) primary key)", "a", 9, 8)
-
-	assertNonPositive("create table t (a bigint auto_random(0) primary key)")
-
 	// Can not set auto_random along with default.
-	assertDefault("create table t (a int auto_random primary key default 3)")
+	assertDefault("create table t (a bigint auto_random primary key default 3)")
 	assertDefault("create table t (a bigint auto_random(2) primary key default 5)")
-	mustExecAndDrop("create table t (a int auto_random primary key)", func() {
-		assertDefault("alter table t modify column a int auto_random default 3")
+	mustExecAndDrop("create table t (a bigint auto_random primary key)", func() {
+		assertDefault("alter table t modify column a bigint auto_random default 3")
 	})
 
-	// Basic usage.
-	mustExecAndDrop("create table t (a bigint auto_random(4) primary key, b varchar(255))")
-	mustExecAndDrop("create table t (a bigint primary key auto_random(4), b varchar(255))")
-	mustExecAndDrop("create table t (a bigint auto_random(4), b varchar(255), primary key (a))")
+	// Overflow data type max length.
+	assertOverflow("create table t (a bigint auto_random(64) primary key)", "a", 64)
+	assertOverflow("create table t (a bigint auto_random(16) primary key)", "a", 16)
 
-	// Different primary key field types.
+	assertNonPositive("create table t (a bigint auto_random(0) primary key)")
+	_, err := tk.Exec("create table t (a bigint auto_random(-1) primary key)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, `[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 38 near "-1) primary key)" `)
+
+	// Basic usage.
+	mustExecAndDrop("create table t (a bigint auto_random(1) primary key)")
 	mustExecAndDrop("create table t (a bigint auto_random(4) primary key)")
-	mustExecAndDrop("create table t (a int auto_random(4) primary key)")
-	mustExecAndDrop("create table t (a mediumint auto_random(4) primary key)")
-	mustExecAndDrop("create table t (a smallint auto_random(4) primary key)")
-	mustExecAndDrop("create table t (a tinyint auto_random(4) primary key)")
+	mustExecAndDrop("create table t (a bigint auto_random(15) primary key)")
+	mustExecAndDrop("create table t (a bigint primary key auto_random(4))")
+	mustExecAndDrop("create table t (a bigint auto_random(4), primary key (a))")
 
 	// Auto_random can occur multiple times like other column attributes.
 	mustExecAndDrop("create table t (a bigint auto_random(3) auto_random(2) primary key)")
-	mustExecAndDrop("create table t (a int, b bigint auto_random(3) primary key auto_random(2))")
-	mustExecAndDrop("create table t (a int auto_random(1) auto_random(2) auto_random(3), primary key (a))")
+	mustExecAndDrop("create table t (a bigint, b bigint auto_random(3) primary key auto_random(2))")
+	mustExecAndDrop("create table t (a bigint auto_random(1) auto_random(2) auto_random(3), primary key (a))")
 
 	// Add/drop the auto_random attribute is not allowed.
 	mustExecAndDrop("create table t (a bigint auto_random(3) primary key)", func() {
 		assertAlterValue("alter table t modify column a bigint")
 		assertAlterValue("alter table t change column a b bigint")
 	})
-	mustExecAndDrop("create table t (a int, b char, c int auto_random(3), primary key(c))", func() {
+	mustExecAndDrop("create table t (a bigint, b char, c bigint auto_random(3), primary key(c))", func() {
 		assertAlterValue("alter table t modify column c bigint")
 		assertAlterValue("alter table t change column c d bigint")
 	})
@@ -941,10 +983,42 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	})
 
 	// Modifying the field type of a auto_random column is not allowed.
-	mustExecAndDrop("create table t (a tinyint primary key auto_random(3))", func() {
+	// Here the throw error is `ERROR 8200 (HY000): Unsupported modify column: length 11 is less than origin 20`,
+	// instead of `ERROR 8216 (HY000): Invalid auto random: modifying the auto_random column type is not supported`
+	// Because the origin column is `bigint`, it can not change to any other column type in TiDB limitation.
+	mustExecAndDrop("create table t (a bigint primary key auto_random(3))", func() {
 		assertModifyColType("alter table t modify column a int auto_random(3)")
 		assertModifyColType("alter table t modify column a mediumint auto_random(3)")
 		assertModifyColType("alter table t modify column a smallint auto_random(3)")
+	})
+
+	// Test show warnings when create auto_random table.
+	assertShowWarningCorrect := func(sql string, times int) {
+		mustExecAndDrop(sql, func() {
+			note := fmt.Sprintf(autoid.AutoRandomAvailableAllocTimesNote, times)
+			result := fmt.Sprintf("Note|1105|%s", note)
+			tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", result))
+			c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
+		})
+	}
+	assertShowWarningCorrect("create table t (a bigint auto_random(15) primary key)", 281474976710655)
+	assertShowWarningCorrect("create table t (a bigint unsigned auto_random(15) primary key)", 562949953421311)
+
+	// Test insert into auto_random column explicitly is not allowed by default.
+	assertExplicitInsertDisallowed := func(sql string) {
+		assertInvalidAutoRandomErr(sql, autoid.AutoRandomExplicitInsertDisabledErrMsg)
+	}
+	tk.MustExec("set @@allow_auto_random_explicit_insert = false")
+	mustExecAndDrop("create table t (a bigint auto_random primary key)", func() {
+		assertExplicitInsertDisallowed("insert into t values (1)")
+		assertExplicitInsertDisallowed("insert into t values (3)")
+		tk.MustExec("insert into t values()")
+	})
+	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
+	mustExecAndDrop("create table t (a bigint auto_random primary key)", func() {
+		tk.MustExec("insert into t values(1)")
+		tk.MustExec("insert into t values(3)")
+		tk.MustExec("insert into t values()")
 	})
 
 	// Disallow using it when allow-auto-random is not enabled.
