@@ -18,6 +18,7 @@ import (
 	"math"
 	"math/rand"
 	"strings"
+	"sync"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -31,8 +32,9 @@ import (
 
 type testCommitterSuite struct {
 	OneByOneSuite
-	cluster *mocktikv.Cluster
-	store   *tikvStore
+	cluster   *mocktikv.Cluster
+	store     *tikvStore
+	mvccStore mocktikv.MVCCStore
 }
 
 var _ = Suite(&testCommitterSuite{})
@@ -45,9 +47,10 @@ func (s *testCommitterSuite) SetUpSuite(c *C) {
 func (s *testCommitterSuite) SetUpTest(c *C) {
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithMultiRegions(s.cluster, []byte("a"), []byte("b"), []byte("c"))
-	mvccStore, err := mocktikv.NewMVCCLevelDB("")
+	var err error
+	s.mvccStore, err = mocktikv.NewMVCCLevelDB("")
 	c.Assert(err, IsNil)
-	client := mocktikv.NewRPCClient(s.cluster, mvccStore)
+	client := mocktikv.NewRPCClient(s.cluster, s.mvccStore)
 	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
 	spkv := NewMockSafePointKV()
 	store, err := newTikvStore("mocktikv-store", pdCli, spkv, client, false)
@@ -594,7 +597,7 @@ func (s *testCommitterSuite) TestElapsedTTL(c *C) {
 }
 
 func (s *testCommitterSuite) TestDeleteYourWriteCauseGhostPrimary(c *C) {
-	s.cluster.SplitKeys(kv.Key("d"), kv.Key("a"), 4)
+	s.cluster.SplitKeys(s.mvccStore, kv.Key("d"), kv.Key("a"), 4)
 	k1 := kv.Key("a") // insert but deleted key at first pos in txn1
 	k2 := kv.Key("b") // insert key at second pos in txn1
 	k3 := kv.Key("c") // insert key in txn1 and will be conflict read by txn2
@@ -603,9 +606,9 @@ func (s *testCommitterSuite) TestDeleteYourWriteCauseGhostPrimary(c *C) {
 	txn1 := s.begin(c)
 	txn1.DelOption(kv.Pessimistic)
 	txn1.SetOption(kv.PresumeKeyNotExists, nil)
-	txn1.SetOption(kv.PresumeKeyNotExistsError, kv.NewExistErrInfo("name", "value"))
+	txn1.SetOption(kv.PresumeKeyNotExistsError, kv.ErrKeyExists.FastGen(""))
 	txn1.store.txnLatches = nil
-	txn1.Get(context.Background(), k1)
+	txn1.Get(k1)
 	txn1.Set(k1, []byte{0})
 	txn1.Set(k2, []byte{1})
 	txn1.Set(k3, []byte{2})
@@ -630,7 +633,7 @@ func (s *testCommitterSuite) TestDeleteYourWriteCauseGhostPrimary(c *C) {
 	txn2 := s.begin(c)
 	txn2.DelOption(kv.Pessimistic)
 	txn2.store.txnLatches = nil
-	v, err := txn2.Get(context.Background(), k3)
+	v, err := txn2.Get(k3)
 	c.Assert(err, IsNil) // should resolve lock and read txn1 k3 result instead of rollback it.
 	c.Assert(v[0], Equals, byte(2))
 	txn1.committer.testingKnobs.bkAfterCommitPrimary <- struct{}{}

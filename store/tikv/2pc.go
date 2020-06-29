@@ -224,11 +224,12 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		}
 	}
 	err := txn.us.WalkBuffer(func(k kv.Key, v []byte) error {
+		var op pb.Op
 		if len(v) > 0 {
 			if tablecodec.IsUntouchedIndexKValue(k, v) {
 				return nil
 			}
-			op := pb.Op_Put
+			op = pb.Op_Put
 			if c := txn.us.LookupConditionPair(k); c != nil && c.ShouldNotExist() {
 				op = pb.Op_Insert
 			}
@@ -241,7 +242,6 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 			}
 			putCnt++
 		} else {
-			var op pb.Op
 			if !txn.IsPessimistic() && txn.us.LookupConditionPair(k) != nil {
 				// delete-your-writes keys in optimistic txn need check not exists in prewrite-phase
 				// due to `Op_CheckNotExists` doesn't prewrite lock, so mark those keys should not be used in commit-phase.
@@ -265,15 +265,11 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 				keys = append(keys, k)
 			}
 		} else {
+			if len(c.primaryKey) == 0 && op != pb.Op_CheckNotExists {
+				c.primaryKey = k
+			}
 			keys = append(keys, k)
 		}
-<<<<<<< HEAD
-=======
-		if len(c.primaryKey) == 0 && op != pb.Op_CheckNotExists {
-			c.primaryKey = k
-		}
-		mutations.push(op, k, value, isPessimisticLock)
->>>>>>> 3eaee1a... tikv: fix primary selection when delete-your-writes (#18244)
 		entrySize := len(k) + len(v)
 		if entrySize > kv.TxnEntrySizeLimit {
 			return kv.ErrEntryTooLarge.GenWithStackByArgs(kv.TxnEntrySizeLimit, entrySize)
