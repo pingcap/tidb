@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
@@ -268,17 +267,9 @@ func (r *reorgInfo) String() string {
 }
 
 func constructDescTableScanPB(physicalTableID int64, tblInfo *model.TableInfo, handleCols []*model.ColumnInfo) *tipb.Executor {
-	handleColPBs := util.ColumnsToProto(handleCols, tblInfo.PKIsHandle)
-	pkColIDs := make([]int64, 0, len(handleCols))
-	for _, c := range handleCols {
-		pkColIDs = append(pkColIDs, c.ID)
-	}
-	tblScan := &tipb.TableScan{
-		TableId:          physicalTableID,
-		Columns:          handleColPBs,
-		Desc:             true,
-		PrimaryColumnIds: pkColIDs,
-	}
+	tblScan := tables.BuildTableScanFromInfos(tblInfo, handleCols)
+	tblScan.TableId = physicalTableID
+	tblScan.Desc = true
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tblScan}
 }
 
