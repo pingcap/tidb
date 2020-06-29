@@ -153,6 +153,7 @@ func (builder *RequestBuilder) SetAllowBatchCop(batchCop bool) *RequestBuilder {
 	return builder
 }
 
+// SetMemUsageQuota sets `MemUsageQuota` property
 func (builder *RequestBuilder) SetMemUsageQuota(quota int64) *RequestBuilder {
 	builder.MemUsageQuota = quota
 	return builder
