@@ -435,7 +435,7 @@ func getCurrentTable(d *ddl, schemaID, tableID int64) (table.Table, error) {
 
 func checkResult(ctx sessionctx.Context, t table.Table, cols []*table.Column, rows [][]interface{}) error {
 	var gotRows [][]interface{}
-	err := t.IterRecords(ctx, t.FirstKey(), cols, func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+	err := t.IterRecords(ctx, t.FirstKey(), cols, func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		gotRows = append(gotRows, datumsToInterfaces(data))
 		return true, nil
 	})
