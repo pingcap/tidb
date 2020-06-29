@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/mock"
@@ -1153,11 +1154,11 @@ LOOP:
 	ctx := tk.Se.(sessionctx.Context)
 	c.Assert(ctx.NewTxn(context.Background()), IsNil)
 	t := testGetTableByName(c, ctx, "test_db", "test_add_index")
-	handles := make(map[int64]struct{})
+	handles := kv.NewHandleMap()
 	startKey := t.RecordKey(kv.IntHandle(math.MinInt64))
 	err := t.IterRecords(ctx, startKey, t.Cols(),
-		func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
-			handles[h] = struct{}{}
+		func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+			handles.Set(h, struct{}{})
 			return true, nil
 		})
 	c.Assert(err, IsNil)
@@ -1194,11 +1195,11 @@ LOOP:
 		}
 
 		c.Assert(err, IsNil)
-		_, ok := handles[h.IntValue()]
+		_, ok := handles.Get(h)
 		c.Assert(ok, IsTrue)
-		delete(handles, h.IntValue())
+		handles.Delete(h)
 	}
-	c.Assert(handles, HasLen, 0)
+	c.Assert(handles.Len(), Equals, 0)
 	tk.MustExec("drop table test_add_index")
 }
 
@@ -1808,7 +1809,7 @@ LOOP:
 		}
 	}()
 	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(),
-		func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+		func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 			i++
 			// c4 must be -1 or > 0
 			v, err1 := data[3].ToInt64(ctx.GetSessionVars().StmtCtx)
@@ -2227,7 +2228,7 @@ func (s *testDBSuite4) TestCreateTableWithLike2(c *C) {
 	c.Assert(t1.Meta().TiFlashReplica.AvailablePartitionIDs, DeepEquals, []int64{partition.Definitions[0].ID, partition.Definitions[1].ID})
 }
 
-func (s *testDBSuite1) TestCreateTable(c *C) {
+func (s *testSerialDBSuite) TestCreateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE `t` (`a` double DEFAULT 1.0 DEFAULT now() DEFAULT 2.0 );")
@@ -2270,20 +2271,23 @@ func (s *testDBSuite1) TestCreateTable(c *C) {
 	tk.MustExec("use test")
 	failSQL := "create table t_enum (a enum('e','e'));"
 	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
-	// TODO: Uncomment lines below after fixing #18134.
-	//failSQL = "create table t_enum (a enum('e','E'));"
-	//tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
-	//failSQL = "create table t_enum (a enum('abc','Abc'));"
-	//tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk = testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	failSQL = "create table t_enum (a enum('e','E')) charset=utf8 collate=utf8_general_ci;"
+	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
+	failSQL = "create table t_enum (a enum('abc','Abc')) charset=utf8 collate=utf8_general_ci;"
+	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
 	// test for set column
-	//failSQL = "create table t_enum (a set('e','e'));"
-	//tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
-	//failSQL = "create table t_enum (a set('e','E'));"
-	//tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
-	//failSQL = "create table t_enum (a set('abc','Abc'));"
-	//tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
-	//_, err = tk.Exec("create table t_enum (a enum('B','b'));")
-	//c.Assert(err.Error(), Equals, "[types:1291]Column 'a' has duplicated value 'B' in ENUM")
+	failSQL = "create table t_enum (a set('e','e'));"
+	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
+	failSQL = "create table t_enum (a set('e','E')) charset=utf8 collate=utf8_general_ci;"
+	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
+	failSQL = "create table t_enum (a set('abc','Abc')) charset=utf8 collate=utf8_general_ci;"
+	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
+	_, err = tk.Exec("create table t_enum (a enum('B','b')) charset=utf8 collate=utf8_general_ci;")
+	c.Assert(err.Error(), Equals, "[types:1291]Column 'a' has duplicated value 'b' in ENUM")
 }
 
 func (s *testDBSuite5) TestRepairTable(c *C) {
@@ -4655,6 +4659,49 @@ func (s *testDBSuite2) TestDDLWithInvalidTableInfo(c *C) {
 	_, err = tk.Exec("alter table t add column d int GENERATED ALWAYS AS ((case when (a = 0) then 0when (a > 0) then (b / a) end));")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 94 near \"then (b / a) end));\" ")
+}
+
+func (s *testDBSuite4) TestColumnCheck(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use " + s.schemaName)
+	tk.MustExec("drop table if exists column_check")
+	tk.MustExec("create table column_check (pk int primary key, a int check (a > 1))")
+	defer tk.MustExec("drop table if exists column_check")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|8231|Column check is not supported"))
+}
+
+func (s *testDBSuite5) TestAlterCheck(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use " + s.schemaName)
+	tk.MustExec("drop table if exists alter_check")
+	tk.MustExec("create table alter_check (pk int primary key)")
+	defer tk.MustExec("drop table if exists alter_check")
+	tk.MustExec("alter table alter_check alter check crcn ENFORCED")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|8231|ALTER CHECK is not supported"))
+}
+
+func (s *testDBSuite6) TestDropCheck(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use " + s.schemaName)
+	tk.MustExec("drop table if exists drop_check")
+	tk.MustExec("create table drop_check (pk int primary key)")
+	defer tk.MustExec("drop table if exists drop_check")
+	tk.MustExec("alter table drop_check drop check crcn")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|8231|DROP CHECK is not supported"))
+}
+
+func (s *testDBSuite7) TestAddConstraintCheck(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use " + s.schemaName)
+	tk.MustExec("drop table if exists add_constraint_check")
+	tk.MustExec("create table add_constraint_check (pk int primary key, a int)")
+	defer tk.MustExec("drop table if exists add_constraint_check")
+	tk.MustExec("alter table add_constraint_check add constraint crn check (a > 1)")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|8231|ADD CONSTRAINT CHECK is not supported"))
 }
 
 func (s *testDBSuite6) TestAlterOrderBy(c *C) {

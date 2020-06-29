@@ -39,6 +39,7 @@ func New(path string) (*RPCClient, pd.Client, *Cluster, error) {
 	}
 
 	conf := usconf.DefaultConf
+	conf.Engine.ValueThreshold = 0
 	conf.Engine.DBPath = path
 	conf.Server.Raft = false
 
@@ -48,6 +49,7 @@ func New(path string) (*RPCClient, pd.Client, *Cluster, error) {
 		conf.Engine.SyncWrite = false
 		conf.Engine.NumCompactors = 1
 		conf.Engine.CompactL0WhenClose = false
+		conf.Engine.VlogFileSize = 16 << 20
 	}
 
 	srv, rm, pd, err := ussvr.NewMock(&conf, 1)
