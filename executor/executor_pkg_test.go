@@ -262,7 +262,9 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 		conf.MemQuotaQuery = 1
 	})
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill", "return(true)"), IsNil)
-
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill"), IsNil)
+	}()
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefMaxChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
@@ -349,6 +351,4 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 	c.Assert(exec.partitionList[0].NumRow(), Equals, 2048)
 	err = exec.Close()
 	c.Assert(err, IsNil)
-
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill"), IsNil)
 }

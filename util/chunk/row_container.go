@@ -58,7 +58,7 @@ func NewRowContainer(fieldType []*types.FieldType, chunkSize int) *RowContainer 
 	return rc
 }
 
-// SpillToDisk spills data to disk. This function maybe called in parallel.
+// SpillToDisk spills data to disk. This function may be called in parallel.
 func (c *RowContainer) SpillToDisk() {
 	c.m.Lock()
 	defer c.m.Unlock()
@@ -320,7 +320,10 @@ func NewSortedRowContainer(fieldType []*types.FieldType, chunkSize int, ByItemsD
 
 // Close close the SortedRowContainer
 func (c *SortedRowContainer) Close() error {
+	c.m.Lock()
+	defer c.m.Unlock()
 	c.GetMemTracker().Consume(int64(-8 * cap(c.ptrM.rowPtrs)))
+	c.ptrM.rowPtrs = nil
 	return c.RowContainer.Close()
 }
 

@@ -25,6 +25,7 @@ import (
 
 func (s *pkgTestSuite) TestJoinExec(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testRowContainerSpill", "return(true)"), IsNil)
+	defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testRowContainerSpill"), IsNil) }()
 	colTypes := []*types.FieldType{
 		types.NewFieldType(mysql.TypeLonglong),
 		types.NewFieldType(mysql.TypeDouble),
@@ -102,5 +103,4 @@ func (s *pkgTestSuite) TestJoinExec(c *C) {
 			}
 		}
 	}
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testRowContainerSpill"), IsNil)
 }
