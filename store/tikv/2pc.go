@@ -134,6 +134,11 @@ type twoPhaseCommitter struct {
 	regionTxnSize map[uint64]int
 	// Used by pessimistic transaction and large transaction.
 	ttlManager
+
+	testingKnobs struct {
+		acAfterCommitPrimary chan struct{}
+		bkAfterCommitPrimary chan struct{}
+	}
 }
 
 type mutationEx struct {
@@ -262,6 +267,13 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		} else {
 			keys = append(keys, k)
 		}
+<<<<<<< HEAD
+=======
+		if len(c.primaryKey) == 0 && op != pb.Op_CheckNotExists {
+			c.primaryKey = k
+		}
+		mutations.push(op, k, value, isPessimisticLock)
+>>>>>>> 3eaee1a... tikv: fix primary selection when delete-your-writes (#18244)
 		entrySize := len(k) + len(v)
 		if entrySize > kv.TxnEntrySizeLimit {
 			return kv.ErrEntryTooLarge.GenWithStackByArgs(kv.TxnEntrySizeLimit, entrySize)
@@ -434,6 +446,10 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 		err = c.doActionOnBatches(bo, action, batches[:1])
 		if err != nil {
 			return errors.Trace(err)
+		}
+		if actionIsCommit && c.testingKnobs.bkAfterCommitPrimary != nil && c.testingKnobs.acAfterCommitPrimary != nil {
+			c.testingKnobs.acAfterCommitPrimary <- struct{}{}
+			<-c.testingKnobs.bkAfterCommitPrimary
 		}
 		batches = batches[1:]
 	}
