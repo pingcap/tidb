@@ -16,6 +16,7 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/failpoint"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -809,6 +810,11 @@ func (s *testAutoRandomSuite) TestAutoIdCache(c *C) {
 }
 
 func (s *testAutoRandomSuite) TestAutoRandomBase(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
+	}()
+
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 	tk.MustExec("use test")
@@ -836,7 +842,7 @@ func (s *testAutoRandomSuite) TestAutoRandomBase(c *C) {
 			"  `b` int(11) NOT NULL AUTO_INCREMENT,\n"+
 			"  PRIMARY KEY (`a`),\n"+
 			"  UNIQUE KEY `b` (`b`)\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=2000100 /*T![auto_rand_base] AUTO_RANDOM_BASE=6001 */",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=5100 /*T![auto_rand_base] AUTO_RANDOM_BASE=6001 */",
 	))
 }
 
