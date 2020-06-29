@@ -1499,6 +1499,7 @@ func init() {
 }
 
 func (s *Store) requestLiveness(bo *Backoffer) (l livenessState) {
+	return unreachable
 	saddr := s.saddr
 	if len(saddr) == 0 {
 		l = unknown
