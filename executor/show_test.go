@@ -16,10 +16,10 @@ package executor_test
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/failpoint"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
