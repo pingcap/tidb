@@ -1324,7 +1324,7 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 		se.SetConnectionID(firstConnID)
 		_, err1 := se.Execute(context.Background(), "alter table test_table drop column c2")
 		c.Assert(err1, IsNil)
-		// Sleep a while to make sure the connection 1 break out the first loop.
+		// Sleep a while to make sure the connection 2 break out the first for loop in OnGetInfoSchemaExported, otherwise atomic.LoadInt32(&sessionCnt) == 2 will be false forever.
 		time.Sleep(100 * time.Millisecond)
 		atomic.StoreInt32(&sessionCnt, finishedCnt)
 	}()
