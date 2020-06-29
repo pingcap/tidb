@@ -24,6 +24,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/gcworker"
 	"github.com/pingcap/tidb/table"
@@ -49,10 +50,10 @@ func (s *TestDDLSuite) checkAddIndex(c *C, indexInfo *model.IndexInfo) {
 	tbl := s.getTable(c, "test_index")
 
 	// read handles form table
-	handles := make(map[int64]struct{})
+	handles := kv.NewHandleMap()
 	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(),
-		func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
-			handles[h] = struct{}{}
+		func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+			handles.Set(h, struct{}{})
 			return true, nil
 		})
 	c.Assert(err, IsNil)
@@ -78,11 +79,12 @@ func (s *TestDDLSuite) checkAddIndex(c *C, indexInfo *model.IndexInfo) {
 		}
 
 		c.Assert(err, IsNil)
-		c.Assert(handles, HasKey, h.IntValue())
-		delete(handles, h.IntValue())
+		_, ok := handles.Get(h)
+		c.Assert(ok, IsTrue)
+		handles.Delete(h)
 	}
 
-	c.Assert(handles, HasLen, 0)
+	c.Assert(handles.Len(), Equals, 0)
 }
 
 func (s *TestDDLSuite) checkDropIndex(c *C, indexInfo *model.IndexInfo) {
@@ -108,7 +110,7 @@ func (s *TestDDLSuite) checkDropIndex(c *C, indexInfo *model.IndexInfo) {
 	c.Assert(err, IsNil)
 	defer it.Close()
 
-	handles := make(map[int64]struct{})
+	handles := kv.NewHandleMap()
 	for {
 		_, h, err := it.Next()
 		if terror.ErrorEqual(err, io.EOF) {
@@ -116,11 +118,11 @@ func (s *TestDDLSuite) checkDropIndex(c *C, indexInfo *model.IndexInfo) {
 		}
 
 		c.Assert(err, IsNil)
-		handles[h.IntValue()] = struct{}{}
+		handles.Set(h, struct{}{})
 	}
 
 	// TODO: Uncomment this after apply pool is finished
-	// c.Assert(handles, HasLen, 0)
+	// c.Assert(handles.Len(), Equals, 0)
 }
 
 // TestIndex operations on table test_index (c int, c1 bigint, c2 double, c3 varchar(256), primary key(c)).

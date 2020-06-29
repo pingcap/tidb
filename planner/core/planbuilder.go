@@ -1212,12 +1212,14 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 		ts.isPartition = true
 	}
 	cop := &copTask{
-		indexPlan:   is,
-		tablePlan:   ts,
-		tblColHists: is.stats.HistColl,
+		indexPlan:        is,
+		tablePlan:        ts,
+		tblColHists:      is.stats.HistColl,
+		extraHandleCol:   nil,
+		commonHandleCols: nil,
 	}
 	ts.HandleIdx = pkOffset
-	is.initSchema(idx, fullIdxCols, true)
+	is.initSchema(fullIdxCols, true)
 	rootT := finishCopTask(b.ctx, cop).(*rootTask)
 	return rootT.p, nil
 }
