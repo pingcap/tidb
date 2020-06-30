@@ -139,8 +139,10 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	}
 	snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
 	var batchGetter kv.BatchGetter = snapshot
-	if mb := txn.GetMemBuffer(); sessVars.InTxn() && mb != nil {
-		batchGetter = kv.NewBufferBatchGetter(mb, &PessimisticLockCacheGetter{txnCtx: txnCtx}, snapshot)
+	if sessVars.InTxn() {
+		if mb := txn.GetMemBuffer(); mb != nil {
+			batchGetter = kv.NewBufferBatchGetter(mb, &PessimisticLockCacheGetter{txnCtx: txnCtx}, snapshot)
+		}
 	}
 	var handleVals map[string][]byte
 	var indexKeys []kv.Key
