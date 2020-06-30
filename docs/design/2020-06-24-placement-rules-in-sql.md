@@ -232,13 +232,13 @@ In such a way, the most granular rule always works.
 
 When multiple placement rules are defined on the same granular object, the new one always overwrites the old one. To achieve this, property `group_id` in placement rules can be used to identify the database object.
 
-For example, `groud_id` can be in such a format:
+For example, `group_id` can be in such a format:
 
-* `groud_id` of a database is the database id
-* `groud_id` of a table is the table id
-* `groud_id` of a partition is the partition id
-* `groud_id` of an unpartitioned index is the concatenation of table id and index id, e.g. `100-1`
-* `groud_id` of a partitioned index is the concatenation of partition id and index id
+* `group_id` of a database is the database id
+* `group_id` of a table is the table id
+* `group_id` of a partition is the partition id
+* `group_id` of an unpartitioned index is the concatenation of table id and index id, e.g. `100-1`
+* `group_id` of a partitioned index is the concatenation of partition id and index id
 
 ## DDL management
 
@@ -328,15 +328,21 @@ To simplify this procedure, a SHOW statement should be provided to query the eff
 The statement is in such a format:
 
 ```sql
-SHOW PLACEMENT FOR TABLE {table_name | partition_name};
-SHOW PLACEMENT FOR INDEX index_name FROM {table_name | partition_name};
+SHOW PLACEMENT FOR {DATABASE | SCHEMA} schema_name;
+SHOW PLACEMENT FOR TABLE table_name [PARTITION partition_name];
+SHOW PLACEMENT FOR INDEX index_name FROM table_name [PARTITION partition_name];
 ```
 
 TiDB will automatically find the effective rule based on the rule priorities.
 
+This statement outputs at most 1 line. For example, when querying a table, only the placement rule defined on the table itself is shown, and the partitions and indices in it will not be shown.
+
 The output of this statement contains these fields:
 
-* target: The object queried. It can be a table, partition, or index. For table and partition, it is shown in the format `TABLE table_name`; For index, it is shown in the format `INDEX index_name FROM table_name`.
+* target: The object queried. It can be a table, partition, or index.
+    * For table, it is shown in the format `TABLE table_name`
+    * For partition, it is shown in the format `TABLE table_name PARTITION partition_name`
+    * For index, it is shown in the format `INDEX index_name FROM table_name`
 * placement: The original ALTER statement that affects the placement of this rule. Note that the object in this ALTER statement may be different with `target`. In the example above, if `target` is `p0`, the ALTER statement shown may be `ALTER TABLE t …`.
 
 ### Show create table
@@ -357,10 +363,10 @@ Privilege management is the same as before:
 
 ## Ecosystem tools
 
-There’re many tools that are based on binlog or metadata, such as DM, Lighting, Syncer, etc. Placement rules need to be compatible with these tools.
+Many tools are based on binlog or metadata. For example, TiDB-binlog is based on binlog, while Lightning and Dumpling are based on metadata. Placement rules need to be compatible with these tools.
 
 If the downstream is not TiDB, no change needs to be made. But even if it is TiDB, TiKV nodes may have a different geographical topology, which means the labels of TiKV nodes may be different. In this case, placement rules can not be enforced on them.
 
-Based on this consideration, placement rules need not to be exported to binlog or metadata. Also, placement rules are not written to binlog.
+Based on this consideration, placement rules need not to be exported to binlog or metadata.
 
 However, there may be also cases where users want exactly the same placement rules as the upstream, and altering placement rules manually is very annoying. It will be considered in the future if there’s a need.
