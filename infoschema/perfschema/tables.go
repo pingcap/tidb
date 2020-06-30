@@ -168,8 +168,8 @@ func (vt *perfSchemaTable) WritableCols() []*table.Column {
 	return vt.cols
 }
 
-// DeletableCols implements table DeletableCols interface.
-func (vt *perfSchemaTable) DeletableCols() []*table.Column {
+// FullHiddenColsAndVisibleCols implements table FullHiddenColsAndVisibleCols interface.
+func (vt *perfSchemaTable) FullHiddenColsAndVisibleCols() []*table.Column {
 	return vt.cols
 }
 
@@ -247,7 +247,7 @@ func (vt *perfSchemaTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, 
 		return err
 	}
 	for i, row := range rows {
-		more, err := fn(int64(i), row, cols)
+		more, err := fn(kv.IntHandle(i), row, cols)
 		if err != nil {
 			return err
 		}

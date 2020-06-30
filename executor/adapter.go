@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/plancodec"
@@ -159,6 +160,8 @@ func (a *recordSet) OnFetchReturned() {
 
 // ExecStmt implements the sqlexec.Statement interface, it builds a planner.Plan to an sqlexec.Statement.
 type ExecStmt struct {
+	// GoCtx stores parent go context.Context for a stmt.
+	GoCtx context.Context
 	// InfoSchema stores a reference to the schema information.
 	InfoSchema infoschema.InfoSchema
 	// Plan stores a reference to the final physical plan.
@@ -295,19 +298,20 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	}()
 
 	sctx := a.Ctx
+	ctx = sessionctx.SetCommitCtx(ctx, sctx)
 	if _, ok := a.Plan.(*plannercore.Analyze); ok && sctx.GetSessionVars().InRestrictedSQL {
 		oriStats, _ := sctx.GetSessionVars().GetSystemVar(variable.TiDBBuildStatsConcurrency)
-		oriScan := sctx.GetSessionVars().DistSQLScanConcurrency
-		oriIndex := sctx.GetSessionVars().IndexSerialScanConcurrency
+		oriScan := sctx.GetSessionVars().DistSQLScanConcurrency()
+		oriIndex := sctx.GetSessionVars().IndexSerialScanConcurrency()
 		oriIso, _ := sctx.GetSessionVars().GetSystemVar(variable.TxnIsolation)
 		terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, "1"))
-		sctx.GetSessionVars().DistSQLScanConcurrency = 1
-		sctx.GetSessionVars().IndexSerialScanConcurrency = 1
+		sctx.GetSessionVars().SetDistSQLScanConcurrency(1)
+		sctx.GetSessionVars().SetIndexSerialScanConcurrency(1)
 		terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, ast.ReadCommitted))
 		defer func() {
 			terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, oriStats))
-			sctx.GetSessionVars().DistSQLScanConcurrency = oriScan
-			sctx.GetSessionVars().IndexSerialScanConcurrency = oriIndex
+			sctx.GetSessionVars().SetDistSQLScanConcurrency(oriScan)
+			sctx.GetSessionVars().SetIndexSerialScanConcurrency(oriIndex)
 			terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, oriIso))
 		}()
 	}
@@ -810,7 +814,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	level := log.GetLevel()
 	cfg := config.GetGlobalConfig()
 	costTime := time.Since(sessVars.StartTime) + sessVars.DurationParse
-	threshold := time.Duration(cfg.Log.SlowThreshold) * time.Millisecond
+	threshold := time.Duration(atomic.LoadUint64(&cfg.Log.SlowThreshold)) * time.Millisecond
 	enable := cfg.Log.EnableSlowLog
 	// if the level is Debug, print slow logs anyway
 	if (!enable || costTime < threshold) && level > zapcore.DebugLevel {
@@ -820,6 +824,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	normalizedSQL, digest := sessVars.StmtCtx.SQLDigest()
 	if sessVars.EnableSlowLogMasking {
 		sql = FormatSQL(normalizedSQL, nil)
+	} else if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
+		sql = FormatSQL(sensitiveStmt.SecureText(), nil)
 	} else {
 		sql = FormatSQL(a.Text, sessVars.PreparedParams)
 	}
@@ -831,6 +837,11 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	if len(sessVars.StmtCtx.IndexNames) > 0 {
 		indexNames = strings.Replace(fmt.Sprintf("%v", sessVars.StmtCtx.IndexNames), " ", ",", -1)
 	}
+	var stmtDetail execdetails.StmtExecDetails
+	stmtDetailRaw := a.GoCtx.Value(execdetails.StmtExecDetailKey)
+	if stmtDetailRaw != nil {
+		stmtDetail = *(stmtDetailRaw.(*execdetails.StmtExecDetails))
+	}
 	execDetail := sessVars.StmtCtx.GetExecDetails()
 	copTaskInfo := sessVars.StmtCtx.CopTasksDetails()
 	statsInfos := plannercore.GetStatsInfo(a.Plan)
@@ -838,27 +849,31 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	diskMax := sessVars.StmtCtx.DiskTracker.MaxConsumed()
 	_, planDigest := getPlanDigest(a.Ctx, a.Plan)
 	slowItems := &variable.SlowQueryLogItems{
-		TxnTS:          txnTS,
-		SQL:            sql.String(),
-		Digest:         digest,
-		TimeTotal:      costTime,
-		TimeParse:      sessVars.DurationParse,
-		TimeCompile:    sessVars.DurationCompile,
-		TimeOptimize:   sessVars.DurationOptimization,
-		TimeWaitTS:     sessVars.DurationWaitTS,
-		IndexNames:     indexNames,
-		StatsInfos:     statsInfos,
-		CopTasks:       copTaskInfo,
-		ExecDetail:     execDetail,
-		MemMax:         memMax,
-		DiskMax:        diskMax,
-		Succ:           succ,
-		Plan:           getPlanTree(a.Plan),
-		PlanDigest:     planDigest,
-		Prepared:       a.isPreparedStmt,
-		HasMoreResults: hasMoreResults,
-		PlanFromCache:  sessVars.FoundInPlanCache,
-		RewriteInfo:    sessVars.RewritePhaseInfo,
+		TxnTS:             txnTS,
+		SQL:               sql.String(),
+		Digest:            digest,
+		TimeTotal:         costTime,
+		TimeParse:         sessVars.DurationParse,
+		TimeCompile:       sessVars.DurationCompile,
+		TimeOptimize:      sessVars.DurationOptimization,
+		TimeWaitTS:        sessVars.DurationWaitTS,
+		IndexNames:        indexNames,
+		StatsInfos:        statsInfos,
+		CopTasks:          copTaskInfo,
+		ExecDetail:        execDetail,
+		MemMax:            memMax,
+		DiskMax:           diskMax,
+		Succ:              succ,
+		Plan:              getPlanTree(a.Plan),
+		PlanDigest:        planDigest,
+		Prepared:          a.isPreparedStmt,
+		HasMoreResults:    hasMoreResults,
+		PlanFromCache:     sessVars.FoundInPlanCache,
+		RewriteInfo:       sessVars.RewritePhaseInfo,
+		KVTotal:           time.Duration(atomic.LoadInt64(&stmtDetail.WaitKVRespDuration)),
+		PDTotal:           time.Duration(atomic.LoadInt64(&stmtDetail.WaitPDRespDuration)),
+		BackoffTotal:      time.Duration(atomic.LoadInt64(&stmtDetail.BackoffDuration)),
+		WriteSQLRespTotal: stmtDetail.WriteSQLRespDuration,
 	}
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {
 		slowItems.PrevStmt = sessVars.PrevStmt.String()
@@ -970,10 +985,13 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	copTaskInfo := stmtCtx.CopTasksDetails()
 	memMax := stmtCtx.MemTracker.MaxConsumed()
 	diskMax := stmtCtx.DiskTracker.MaxConsumed()
-
+	sql := a.Text
+	if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
+		sql = sensitiveStmt.SecureText()
+	}
 	stmtsummary.StmtSummaryByDigestMap.AddStatement(&stmtsummary.StmtExecInfo{
 		SchemaName:     strings.ToLower(sessVars.CurrentDB),
-		OriginalSQL:    a.Text,
+		OriginalSQL:    sql,
 		NormalizedSQL:  normalizedSQL,
 		Digest:         digest,
 		PrevSQL:        prevSQL,
