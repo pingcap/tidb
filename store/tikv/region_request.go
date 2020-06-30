@@ -180,7 +180,11 @@ func (s *RegionRequestSender) SendReqCtx(
 	} else {
 		replicaRead = kv.ReplicaReadLeader
 	}
+	tryTimes := 0
 	for {
+		if (tryTimes > 0) && (tryTimes%100000 == 0) {
+			logutil.Logger(bo.ctx).Warn("retry get ", zap.Uint64("region = ", regionID.GetID()), zap.Int("times = ", tryTimes))
+		}
 		switch sType {
 		case kv.TiKV:
 			var seed uint32
@@ -225,7 +229,16 @@ func (s *RegionRequestSender) SendReqCtx(
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
+		// test whether the ctx is cancelled
+		select {
+		case <-bo.ctx.Done():
+			logutil.Logger(bo.ctx).Warn("copIteratorWorker is cancelled!")
+			return nil, nil, bo.ctx.Err()
+		default:
+		}
+
 		if retry {
+			tryTimes++
 			continue
 		}
 
@@ -240,6 +253,7 @@ func (s *RegionRequestSender) SendReqCtx(
 				return nil, nil, errors.Trace(err)
 			}
 			if retry {
+				tryTimes++
 				continue
 			}
 		}
@@ -259,6 +273,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 		defer s.releaseStoreToken(ctx.Store)
 	}
 	resp, err = s.client.SendRequest(bo.ctx, ctx.Addr, req, timeout)
+
 	if err != nil {
 		s.rpcError = err
 		if e := s.onSendFail(bo, ctx, err); e != nil {

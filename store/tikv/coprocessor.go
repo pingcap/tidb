@@ -511,6 +511,10 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		worker.handleTask(ctx, task, respCh)
 		close(task.respChan)
 		select {
+		// test whether the ctx is cancelled
+		case <-ctx.Done():
+			logutil.Logger(ctx).Warn("copIteratorWorker is cancelled!")
+			return
 		case <-worker.finishCh:
 			worker.actionOnExceed.mu.Lock()
 			worker.actionOnExceed.mu.aliveWorker--
@@ -728,10 +732,20 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 			worker.sendToRespCh(resp, respCh, true)
 			return
 		}
+		// test whether the ctx is cancelled
+		select {
+		case <-ctx.Done():
+			logutil.Logger(ctx).Warn("copIteratorWorker is cancelled!")
+			return
+		default:
+		}
 		if len(tasks) > 0 {
 			remainTasks = append(tasks, remainTasks[1:]...)
 		} else {
 			remainTasks = remainTasks[1:]
+		}
+		if len(remainTasks) > 0 {
+			logutil.Logger(ctx).Info("coprocessor task to get more than one region")
 		}
 	}
 }
@@ -795,6 +809,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		}
 		return nil, errors.Trace(err)
 	}
+
 	// Set task.storeAddr field so its task.String() method have the store address information.
 	task.storeAddr = storeAddr
 	costTime := time.Since(startTime)
