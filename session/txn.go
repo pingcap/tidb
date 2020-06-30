@@ -82,15 +82,6 @@ func (st *TxnState) stmtBufSize() int {
 	return st.stmtBuf.Size()
 }
 
-// GetSnapshot implements the kv.Transaction interface.
-func (st *TxnState) GetSnapshot() kv.Snapshot {
-	txn := st.Transaction
-	if txn != nil && txn.Valid() {
-		return txn.GetSnapshot()
-	}
-	return nil
-}
-
 func (st *TxnState) stmtBufGet(ctx context.Context, k kv.Key) ([]byte, error) {
 	if st.stmtBuf == nil {
 		return nil, kv.ErrNotExist
@@ -319,7 +310,7 @@ func (st *TxnState) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 // GetMemBuffer overrides the Transaction interface.
 func (st *TxnState) GetMemBuffer() kv.MemBuffer {
 	if st.stmtBuf == nil || st.stmtBuf.Size() == 0 {
-		return txn.GetMemBuffer()
+		return st.Transaction.GetMemBuffer()
 	}
 	return kv.NewBufferStoreFrom(st.Transaction.GetMemBuffer(), st.stmtBuf)
 }
