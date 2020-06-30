@@ -342,6 +342,8 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 				// Use SecureText to avoid leak password information.
 				sql = ss.SecureText()
 			}
+		} else if len(sctx.GetSessionVars().PreparedParams) > 0 {
+			sql = formatPreparedSQL(sctx.GetSessionVars().StmtCtx.OriginalSQL, sctx.GetSessionVars().PreparedParams)
 		}
 		maxExecutionTime := getMaxExecutionTime(sctx)
 		// Update processinfo, ShowProcess() will use it.
