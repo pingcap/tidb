@@ -104,13 +104,8 @@ func (p *PhysicalLimit) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
-	pkColIds := tables.TryGetCommonPkColumnIds(p.Table)
-	tsExec := &tipb.TableScan{
-		TableId:          p.Table.ID,
-		Columns:          util.ColumnsToProto(p.Columns, p.Table.PKIsHandle),
-		Desc:             p.Desc,
-		PrimaryColumnIds: pkColIds,
-	}
+	tsExec := tables.BuildTableScanFromInfos(p.Table, p.Columns)
+	tsExec.Desc = p.Desc
 	if p.isPartition {
 		tsExec.TableId = p.physicalTableID
 	}
