@@ -205,6 +205,7 @@ func (c *RowContainer) Close() (err error) {
 	c.m.RLock()
 	defer c.m.RUnlock()
 	if c.alreadySpilled() {
+		atomic.StoreUint32(&c.m.spilled, 0)
 		err = c.m.recordsInDisk.Close()
 		c.m.recordsInDisk = nil
 	}
