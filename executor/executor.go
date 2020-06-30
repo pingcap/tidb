@@ -257,6 +257,7 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 	}
 	sessVars := base.ctx.GetSessionVars()
 	if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
+		logutil.Logger(ctx).Warn("query is cancelled!")
 		return ErrQueryInterrupted
 	}
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
@@ -266,8 +267,9 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 	}
 	err := e.Next(ctx, req)
 
-	// recheck whether the session is killed during the Next()
+	// recheck whether the session/query is killed during the Next()
 	if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
+		logutil.Logger(ctx).Warn("query is cancelled!")
 		return ErrQueryInterrupted
 	} else {
 		return err

@@ -229,12 +229,10 @@ func (s *RegionRequestSender) SendReqCtx(
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		// test whether the ctx is cancelled
-		select {
-		case <-bo.ctx.Done():
-			logutil.Logger(bo.ctx).Warn("copIteratorWorker is cancelled!")
-			return nil, nil, bo.ctx.Err()
-		default:
+
+		// recheck whether the session/query is killed during the Next()
+		if atomic.LoadUint32(bo.vars.Killed) == 1 {
+			return nil, nil, ErrQueryInterrupted
 		}
 
 		if retry {

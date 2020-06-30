@@ -150,25 +150,24 @@ func newClientConn(s *Server) *clientConn {
 // clientConn represents a connection between server and client, it maintains connection specific state,
 // handles client query.
 type clientConn struct {
-	pkt          *packetIO          // a helper to read and write data in packet format.
-	bufReadConn  *bufferedReadConn  // a buffered-read net.Conn or buffered-read tls.Conn.
-	tlsConn      *tls.Conn          // TLS connection, nil if not TLS.
-	server       *Server            // a reference of server instance.
-	capability   uint32             // client capability affects the way server handles client request.
-	connectionID uint32             // atomically allocated by a global variable, unique in process scope.
-	user         string             // user of the client.
-	dbname       string             // default database name.
-	salt         []byte             // random bytes used for authentication.
-	alloc        arena.Allocator    // an memory allocator for reducing memory allocation.
-	lastPacket   []byte             // latest sql query string, currently used for logging error.
-	ctx          *TiDBContext       // an interface to execute sql statements.
-	attrs        map[string]string  // attributes parsed from client handshake response, not used for now.
-	peerHost     string             // peer host
-	peerPort     string             // peer port
-	status       int32              // dispatching/reading/shutdown/waitshutdown
-	lastCode     uint16             // last error code
-	collation    uint8              // collation used by client, may be different from the collation used by database.
-	cancel       context.CancelFunc // a handle to cancel this conn
+	pkt          *packetIO         // a helper to read and write data in packet format.
+	bufReadConn  *bufferedReadConn // a buffered-read net.Conn or buffered-read tls.Conn.
+	tlsConn      *tls.Conn         // TLS connection, nil if not TLS.
+	server       *Server           // a reference of server instance.
+	capability   uint32            // client capability affects the way server handles client request.
+	connectionID uint32            // atomically allocated by a global variable, unique in process scope.
+	user         string            // user of the client.
+	dbname       string            // default database name.
+	salt         []byte            // random bytes used for authentication.
+	alloc        arena.Allocator   // an memory allocator for reducing memory allocation.
+	lastPacket   []byte            // latest sql query string, currently used for logging error.
+	ctx          *TiDBContext      // an interface to execute sql statements.
+	attrs        map[string]string // attributes parsed from client handshake response, not used for now.
+	peerHost     string            // peer host
+	peerPort     string            // peer port
+	status       int32             // dispatching/reading/shutdown/waitshutdown
+	lastCode     uint16            // last error code
+	collation    uint8             // collation used by client, may be different from the collation used by database.
 }
 
 func (cc *clientConn) String() string {
@@ -1551,6 +1550,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 	if stmtDetailRaw != nil {
 		stmtDetail = stmtDetailRaw.(*execdetails.StmtExecDetails)
 	}
+
 	for {
 		// Here server.tidbResultSet implements Next method.
 		err := rs.Next(ctx, req)

@@ -510,11 +510,11 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 
 		worker.handleTask(ctx, task, respCh)
 		close(task.respChan)
-		select {
 		// test whether the ctx is cancelled
-		case <-ctx.Done():
-			logutil.Logger(ctx).Warn("copIteratorWorker is cancelled!")
+		if atomic.LoadUint32(worker.vars.Killed) == 1 {
 			return
+		}
+		select {
 		case <-worker.finishCh:
 			worker.actionOnExceed.mu.Lock()
 			worker.actionOnExceed.mu.aliveWorker--
@@ -733,12 +733,11 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 			return
 		}
 		// test whether the ctx is cancelled
-		select {
-		case <-ctx.Done():
-			logutil.Logger(ctx).Warn("copIteratorWorker is cancelled!")
+		if atomic.LoadUint32(bo.vars.Killed) == 1 {
+			logutil.Logger(bo.ctx).Warn("copIteratorWorker is cancelled!")
 			return
-		default:
 		}
+
 		if len(tasks) > 0 {
 			remainTasks = append(tasks, remainTasks[1:]...)
 		} else {
@@ -767,8 +766,8 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		SchemaVer: worker.req.SchemaVar,
 	}
 
-	var cacheKey []byte
-	var cacheValue *coprCacheValue
+	var cacheKey []byte = nil
+	var cacheValue *coprCacheValue = nil
 
 	// If there are many ranges, it is very likely to be a TableLookupRequest. They are not worth to cache since
 	// computing is not the main cost. Ignore such requests directly to avoid slowly building the cache key.
