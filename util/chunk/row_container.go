@@ -41,7 +41,7 @@ type RowContainer struct {
 		// spillError stores the error when spilling.
 		spillError error
 		// spilled indicates that records have spilled out into disk.
-		// It's for concurrency usage, so access it with atomic.
+		// It's for concurrency usage, e.g. AlreadySpilledSafe() maybe access it without lock, so access it with atomic.
 		spilled uint32
 	}
 
