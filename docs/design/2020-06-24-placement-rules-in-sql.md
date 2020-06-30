@@ -367,6 +367,6 @@ Many tools are based on binlog or metadata. For example, TiDB-binlog is based on
 
 If the downstream is not TiDB, no change needs to be made. But even if it is TiDB, TiKV nodes may have a different geographical topology, which means the labels of TiKV nodes may be different. In this case, placement rules can not be enforced on them.
 
-Based on this consideration, placement rules need not to be exported to binlog or metadata.
+Based on this consideration, placement rules need not to be exported to binlog or metadata. This is applicable for all tools, including TiCDC and BR.
 
 However, there may be also cases where users want exactly the same placement rules as the upstream, and altering placement rules manually is very annoying. It will be considered in the future if there’s a need.
