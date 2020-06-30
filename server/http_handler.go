@@ -1702,6 +1702,7 @@ func (h dbTableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	writeData(w, dbTblInfo)
 }
 
+// ServeHTTP handles request of TiDB metric profile.
 func (h profileHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	sctx, err := session.CreateSession(h.Store)
 	if err != nil {

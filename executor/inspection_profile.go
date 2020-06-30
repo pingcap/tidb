@@ -1,3 +1,16 @@
+// Copyright 2020 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package executor
 
 import (
@@ -11,6 +24,19 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
+
+type profileBuilder struct {
+	sctx        sessionctx.Context
+	queue       []*metricNode
+	idMap       map[string]uint64
+	idAllocator uint64
+	totalValue  float64
+	uniqueMap   map[*metricNode]struct{}
+	buf         *bytes.Buffer
+
+	start time.Time
+	end   time.Time
+}
 
 type metricNode struct {
 	table          string
@@ -98,19 +124,7 @@ func (pb *profileBuilder) getMetricValue(n *metricNode) (float64, error) {
 	return n.value, nil
 }
 
-type profileBuilder struct {
-	sctx        sessionctx.Context
-	queue       []*metricNode
-	idMap       map[string]uint64
-	idAllocator uint64
-	totalValue  float64
-	uniqueMap   map[*metricNode]struct{}
-	buf         *bytes.Buffer
-
-	start time.Time
-	end   time.Time
-}
-
+// NewProfileBuilder returns a new profileBuilder.
 func NewProfileBuilder(sctx sessionctx.Context, start, end time.Time) *profileBuilder {
 	return &profileBuilder{
 		sctx:        sctx,
@@ -123,6 +137,7 @@ func NewProfileBuilder(sctx sessionctx.Context, start, end time.Time) *profileBu
 	}
 }
 
+// Collect uses to collect the related metric information.
 func (pb *profileBuilder) Collect() error {
 	pb.buf.WriteString(fmt.Sprintf(`digraph "%s" {`, "tidb_profile"))
 	pb.buf.WriteByte('\n')
@@ -135,6 +150,7 @@ func (pb *profileBuilder) Collect() error {
 	return nil
 }
 
+// Build returns the metric profile dot.
 func (pb *profileBuilder) Build() []byte {
 	pb.buf.WriteByte('}')
 	return pb.buf.Bytes()
