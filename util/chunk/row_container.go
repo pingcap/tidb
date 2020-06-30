@@ -90,6 +90,7 @@ func (c *RowContainer) Reset() error {
 	c.m.Lock()
 	defer c.m.Unlock()
 	if c.alreadySpilled() {
+		atomic.StoreUint32(&c.m.spilled, 0)
 		err := c.m.recordsInDisk.Close()
 		c.m.recordsInDisk = nil
 		if err != nil {
