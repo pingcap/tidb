@@ -570,6 +570,36 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 	return p.buildIndexJoinInner2IndexScan(prop, ds, innerJoinKeys, outerJoinKeys, outerIdx, us, avgInnerRowCnt)
 }
 
+func (p *LogicalJoin) getIndexJoinBuildHelper(ds *DataSource, innerJoinKeys []*expression.Column,
+	checkPathValid func(path *util.AccessPath) bool) (*indexJoinBuildHelper, []int) {
+	helper := &indexJoinBuildHelper{join: p}
+	for _, path := range ds.possibleAccessPaths {
+		if checkPathValid(path) {
+			emptyRange, err := helper.analyzeLookUpFilters(path, ds, innerJoinKeys)
+			if emptyRange {
+				return nil, nil
+			}
+			if err != nil {
+				logutil.BgLogger().Warn("build index join failed", zap.Error(err))
+			}
+			break
+		}
+	}
+	if helper.chosenPath == nil {
+		return nil, nil
+	}
+	keyOff2IdxOff := make([]int, len(innerJoinKeys))
+	for i := range keyOff2IdxOff {
+		keyOff2IdxOff[i] = -1
+	}
+	for idxOff, keyOff := range helper.idxOff2KeyOff {
+		if keyOff != -1 {
+			keyOff2IdxOff[keyOff] = idxOff
+		}
+	}
+	return helper, keyOff2IdxOff
+}
+
 // buildIndexJoinInner2TableScan builds a TableScan as the inner child for an
 // IndexJoin if possible.
 // If the inner side of a index join is a TableScan, only one tuple will be
@@ -592,30 +622,11 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 	newOuterJoinKeys := make([]*expression.Column, 0)
 	var ranges []*ranger.Range
 	var innerTask, innerTask2 task
+	var helper *indexJoinBuildHelper
 	if ds.tableInfo.IsCommonHandle {
-		helper := &indexJoinBuildHelper{join: p}
-		for _, path := range ds.possibleAccessPaths {
-			if path.IsCommonHandlePath {
-				emptyRange, err := helper.analyzeLookUpFilters(path, ds, innerJoinKeys)
-				if emptyRange {
-					return nil
-				}
-				if err != nil {
-					logutil.BgLogger().Warn("build index join failed", zap.Error(err))
-				}
-				break
-			}
-		}
-		if helper.chosenPath == nil {
+		helper, keyOff2IdxOff = p.getIndexJoinBuildHelper(ds, innerJoinKeys, func(path *util.AccessPath) bool { return path.IsCommonHandlePath })
+		if helper == nil {
 			return nil
-		}
-		for i := range keyOff2IdxOff {
-			keyOff2IdxOff[i] = -1
-		}
-		for idxOff, keyOff := range helper.idxOff2KeyOff {
-			if keyOff != -1 {
-				keyOff2IdxOff[keyOff] = idxOff
-			}
 		}
 		innerTask = p.constructInnerTableScanTask(ds, nil, outerJoinKeys, us, false, false, avgInnerRowCnt)
 		// The index merge join's inner plan is different from index join, so we
@@ -662,42 +673,21 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 		}
 	})
 	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, nil, nil)...)
-	if us == nil {
-		joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, ranges, keyOff2IdxOff, nil, nil)...)
-	}
 	// We can reuse the `innerTask` here since index nested loop hash join
 	// do not need the inner child to promise the order.
 	joins = append(joins, p.constructIndexHashJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, nil, nil)...)
+	if innerTask2 == nil {
+		joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, ranges, keyOff2IdxOff, nil, nil)...)
+	}
 	return joins
 }
 
 func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 	prop *property.PhysicalProperty, ds *DataSource, innerJoinKeys, outerJoinKeys []*expression.Column,
 	outerIdx int, us *LogicalUnionScan, avgInnerRowCnt float64) (joins []PhysicalPlan) {
-	helper := &indexJoinBuildHelper{join: p}
-	for _, path := range ds.possibleAccessPaths {
-		if path.IsTablePath() {
-			continue
-		}
-		emptyRange, err := helper.analyzeLookUpFilters(path, ds, innerJoinKeys)
-		if emptyRange {
-			return nil
-		}
-		if err != nil {
-			logutil.BgLogger().Warn("build index join failed", zap.Error(err))
-		}
-	}
-	if helper.chosenPath == nil {
+	helper, keyOff2IdxOff := p.getIndexJoinBuildHelper(ds, innerJoinKeys, func(path *util.AccessPath) bool { return !path.IsTablePath() })
+	if helper == nil {
 		return nil
-	}
-	keyOff2IdxOff := make([]int, len(innerJoinKeys))
-	for i := range keyOff2IdxOff {
-		keyOff2IdxOff[i] = -1
-	}
-	for idxOff, keyOff := range helper.idxOff2KeyOff {
-		if keyOff != -1 {
-			keyOff2IdxOff[keyOff] = idxOff
-		}
 	}
 	joins = make([]PhysicalPlan, 0, 3)
 	rangeInfo := helper.buildRangeDecidedByInformation(helper.chosenPath.IdxCols, outerJoinKeys)
@@ -718,6 +708,9 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 		}
 	})
 	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
+	// We can reuse the `innerTask` here since index nested loop hash join
+	// do not need the inner child to promise the order.
+	joins = append(joins, p.constructIndexHashJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
 	// The index merge join's inner plan is different from index join, so we
 	// should construct another inner plan for it.
 	// Because we can't keep order for union scan, if there is a union scan in inner task,
@@ -726,9 +719,6 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 		innerTask2 := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRemained, outerJoinKeys, us, rangeInfo, true, !prop.IsEmpty() && prop.Items[0].Desc, avgInnerRowCnt, maxOneRow)
 		joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
 	}
-	// We can reuse the `innerTask` here since index nested loop hash join
-	// do not need the inner child to promise the order.
-	joins = append(joins, p.constructIndexHashJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
 	return joins
 }
 
