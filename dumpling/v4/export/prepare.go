@@ -41,6 +41,10 @@ func adjustConfig(conf *Config) error {
 		// Disable filesize if rows was set
 		conf.FileSize = UnspecifiedSize
 	}
+	if conf.SessionParams == nil {
+		conf.SessionParams = make(map[string]interface{})
+	}
+	resolveAutoConsistency(conf)
 
 	return nil
 }

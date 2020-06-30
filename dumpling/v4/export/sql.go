@@ -3,6 +3,7 @@ package export
 import (
 	"database/sql"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -384,11 +385,6 @@ func GetTiDBDDLIDs(db *sql.DB) ([]string, error) {
 	return GetSpecifiedColumnValue(rows, "DDL_ID")
 }
 
-func SetTiDBSnapshot(db *sql.DB, snapshot string) error {
-	_, err := db.Exec("SET SESSION tidb_snapshot = ?", snapshot)
-	return withStack(err)
-}
-
 func CheckTiDBWithTiKV(db *sql.DB) (bool, error) {
 	var count int
 	handleOneRow := func(rows *sql.Rows) error {
@@ -399,6 +395,54 @@ func CheckTiDBWithTiKV(db *sql.DB) (bool, error) {
 		return false, err
 	}
 	return count > 0, nil
+}
+
+func getSnapshot(db *sql.DB) (string, error) {
+	str, err := ShowMasterStatus(db, showMasterStatusFieldNum)
+	if err != nil {
+		return "", err
+	}
+	return str[snapshotFieldIndex], nil
+}
+
+func isUnknownSystemVariableErr(err error) bool {
+	return strings.Contains(err.Error(), "Unknown system variable")
+}
+
+func resetDBWithSessionParams(db *sql.DB, dsn string, params map[string]interface{}) (*sql.DB, error) {
+	support := make(map[string]interface{})
+	for k, v := range params {
+		s := fmt.Sprintf("SET SESSION %s = ?", k)
+		_, err := db.Exec(s, v)
+		if err != nil {
+			if isUnknownSystemVariableErr(err) {
+				log.Info("session variable is not supported by db", zap.String("variable", k), zap.Reflect("value", v))
+				continue
+			}
+			return nil, withStack(err)
+		}
+
+		support[k] = v
+	}
+
+	for k, v := range support {
+		var s string
+		if str, ok := v.(string); ok {
+			s = wrapStringWith(str, "'")
+		} else {
+			s = fmt.Sprintf("%v", v)
+		}
+		dsn += fmt.Sprintf("&%s=%s", k, url.QueryEscape(s))
+	}
+
+	newDB, err := sql.Open("mysql", dsn)
+	if err != nil {
+		return nil, withStack(err)
+	}
+
+	db.Close()
+
+	return newDB, nil
 }
 
 func buildSelectField(db *sql.DB, dbName, tableName string) (string, error) {

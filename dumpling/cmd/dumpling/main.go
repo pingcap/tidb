@@ -181,10 +181,10 @@ func main() {
 	conf.CsvNullValue = csvNullValue
 	conf.Sql = sql
 	conf.TableFilter = tableFilter
-	conf.TiDBMemQuotaQuery = tidbMemQuotaQuery
 	conf.Security.CAPath = caPath
 	conf.Security.CertPath = certPath
 	conf.Security.KeyPath = keyPath
+	conf.SessionParams["tidb_mem_quota_query"] = tidbMemQuotaQuery
 
 	err = export.Dump(context.Background(), conf)
 	if err != nil {
