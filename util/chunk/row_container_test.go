@@ -144,13 +144,12 @@ func (r *rowContainerTestSerialSuite) TestSpillActionDeadLock(c *check.C) {
 	tracker.FallbackOldAndSetNewAction(ac)
 	c.Assert(rc.AlreadySpilledSafe(), check.Equals, false)
 	go func() {
-		err = rc.Add(chk)
-		rc.actionSpill.WaitForTest()
+		time.Sleep(200 * time.Millisecond)
+		ac.Action(tracker)
 	}()
-	time.Sleep(200 * time.Millisecond)
-	ac.Action(tracker)
-	rc.actionSpill.WaitForTest()
+	err = rc.Add(chk)
 	c.Assert(err, check.IsNil)
+	rc.actionSpill.WaitForTest()
 	c.Assert(rc.AlreadySpilledSafe(), check.Equals, true)
 }
 
