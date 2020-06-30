@@ -3,6 +3,7 @@ package export
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"strconv"
 	"strings"
 	"time"
@@ -28,6 +29,7 @@ func Dump(pCtx context.Context, conf *Config) (err error) {
 			}
 		}
 	}()
+
 	pool, err := sql.Open("mysql", conf.getDSN(""))
 	if err != nil {
 		return withStack(err)
@@ -36,40 +38,8 @@ func Dump(pCtx context.Context, conf *Config) (err error) {
 
 	conf.ServerInfo, err = detectServerInfo(pool)
 	if err != nil {
-		if strings.Contains(err.Error(), "tidb_mem_quota_query") {
-			conf.TiDBMemQuotaQuery = UnspecifiedSize
-			pool, err = sql.Open("mysql", conf.getDSN(""))
-			if err != nil {
-				return withStack(err)
-			}
-			conf.ServerInfo, err = detectServerInfo(pool)
-			if err != nil {
-				return withStack(err)
-			}
-		} else {
-			return withStack(err)
-		}
+		return withStack(err)
 	}
-
-	databases, err := prepareDumpingDatabases(conf, pool)
-	if err != nil {
-		return err
-	}
-
-	conf.Tables, err = listAllTables(pool, databases)
-	if err != nil {
-		return err
-	}
-
-	if !conf.NoViews {
-		views, err := listAllViews(pool, databases)
-		if err != nil {
-			return err
-		}
-		conf.Tables.Merge(views)
-	}
-
-	filterTables(conf)
 
 	ctx, cancel := context.WithCancel(pCtx)
 	defer cancel()
@@ -95,13 +65,23 @@ func Dump(pCtx context.Context, conf *Config) (err error) {
 		}
 	}
 
-	if conf.Snapshot == "" && (doPdGC || conf.Consistency == "flush") {
-		if conf.Snapshot == "" {
-			str, err := ShowMasterStatus(pool, showMasterStatusFieldNum)
-			if err != nil {
-				return err
-			}
-			conf.Snapshot = str[snapshotFieldIndex]
+	if conf.Snapshot == "" && (doPdGC || conf.Consistency == "snapshot") {
+		conf.Snapshot, err = getSnapshot(pool)
+		if err != nil {
+			return err
+		}
+	}
+
+	if conf.Snapshot != "" {
+		if conf.ServerInfo.ServerType != ServerTypeTiDB {
+			return errors.New("snapshot consistency is not supported for this server")
+		}
+		hasTiKV, err := CheckTiDBWithTiKV(pool)
+		if err != nil {
+			return err
+		}
+		if hasTiKV {
+			conf.SessionParams["tidb_snapshot"] = conf.Snapshot
 		}
 	}
 
@@ -117,6 +97,31 @@ func Dump(pCtx context.Context, conf *Config) (err error) {
 			"Before dumping: run sql `update mysql.tidb set VARIABLE_VALUE = '720h' where VARIABLE_NAME = 'tikv_gc_life_time';` in tidb.\n" +
 			"After dumping: run sql `update mysql.tidb set VARIABLE_VALUE = '10m' where VARIABLE_NAME = 'tikv_gc_life_time';` in tidb.\n")
 	}
+
+	pool, err = resetDBWithSessionParams(pool, conf.getDSN(""), conf.SessionParams)
+	if err != nil {
+		return err
+	}
+
+	databases, err := prepareDumpingDatabases(conf, pool)
+	if err != nil {
+		return err
+	}
+
+	conf.Tables, err = listAllTables(pool, databases)
+	if err != nil {
+		return err
+	}
+
+	if !conf.NoViews {
+		views, err := listAllViews(pool, databases)
+		if err != nil {
+			return err
+		}
+		conf.Tables.Merge(views)
+	}
+
+	filterTables(conf)
 
 	conCtrl, err := NewConsistencyController(conf, pool)
 	if err != nil {

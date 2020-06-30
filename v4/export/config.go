@@ -53,7 +53,7 @@ type Config struct {
 	FileType          string
 	EscapeBackslash   bool
 	DumpEmptyDatabase bool
-	TiDBMemQuotaQuery uint64
+	SessionParams     map[string]interface{}
 }
 
 func DefaultConfig() *Config {
@@ -86,15 +86,12 @@ func DefaultConfig() *Config {
 		Sql:               "",
 		TableFilter:       allFilter,
 		DumpEmptyDatabase: true,
-		TiDBMemQuotaQuery: UnspecifiedSize,
+		SessionParams:     make(map[string]interface{}),
 	}
 }
 
 func (conf *Config) getDSN(db string) string {
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4", conf.User, conf.Password, conf.Host, conf.Port, db)
-	if conf.TiDBMemQuotaQuery != UnspecifiedSize {
-		dsn += fmt.Sprintf("&tidb_mem_quota_query=%v", conf.TiDBMemQuotaQuery)
-	}
 	if len(conf.Security.CAPath) > 0 {
 		dsn += "&tls=dumpling-tls-target"
 	}

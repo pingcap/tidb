@@ -49,23 +49,10 @@ func (s *testConsistencySuite) TestConsistencyController(c *C) {
 
 	conf.Consistency = "snapshot"
 	conf.ServerInfo.ServerType = ServerTypeTiDB
-	conf.Snapshot = "" // let dumpling detect the TSO
-	rows := sqlmock.NewRows([]string{"File", "Position", "Binlog_Do_DB", "Binlog_Ignore_DB", "Executed_Gtid_Set"})
-	rows.AddRow("tidb-binlog", "413802961528946688", "", "", "")
-	tidbRows := sqlmock.NewRows([]string{"c"})
-	tidbRows.AddRow(1)
-	mock.ExpectQuery("SHOW MASTER STATUS").WillReturnRows(rows)
-	mock.ExpectQuery("SELECT COUNT\\(1\\) as c FROM MYSQL.TiDB WHERE VARIABLE_NAME='tikv_gc_safe_point'").
-		WillReturnRows(tidbRows)
-	mock.ExpectExec("SET SESSION tidb_snapshot").
-		WillReturnResult(sqlmock.NewResult(0, 1))
 	ctrl, _ = NewConsistencyController(conf, db)
-	_, ok = ctrl.(*ConsistencySnapshot)
+	_, ok = ctrl.(*ConsistencyNone)
 	c.Assert(ok, IsTrue)
 	s.assertLifetimeErrNil(ctrl, c)
-	if err = mock.ExpectationsWereMet(); err != nil {
-		c.Fatalf(err.Error())
-	}
 
 	conf.Consistency = "lock"
 	conf.Tables = NewDatabaseTables().
@@ -119,14 +106,13 @@ func (s *testConsistencySuite) TestConsistencyControllerError(c *C) {
 	// snapshot consistency is only available in TiDB
 	conf.Consistency = "snapshot"
 	conf.ServerInfo.ServerType = ServerTypeUnknown
-	ctrl, _ := NewConsistencyController(conf, db)
-	err = ctrl.Setup()
+	_, err = NewConsistencyController(conf, db)
 	c.Assert(err, NotNil)
 
 	// flush consistency is unavailable in TiDB
 	conf.Consistency = "flush"
 	conf.ServerInfo.ServerType = ServerTypeTiDB
-	ctrl, _ = NewConsistencyController(conf, db)
+	ctrl, _ := NewConsistencyController(conf, db)
 	err = ctrl.Setup()
 	c.Assert(err, NotNil)
 

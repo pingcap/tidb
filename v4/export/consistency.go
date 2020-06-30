@@ -20,11 +20,10 @@ func NewConsistencyController(conf *Config, session *sql.DB) (ConsistencyControl
 			allTables: conf.Tables,
 		}, nil
 	case "snapshot":
-		return &ConsistencySnapshot{
-			serverType: conf.ServerInfo.ServerType,
-			snapshot:   conf.Snapshot,
-			db:         session,
-		}, nil
+		if conf.ServerInfo.ServerType != ServerTypeTiDB {
+			return nil, withStack(errors.New("snapshot consistency is not supported for this server"))
+		}
+		return &ConsistencyNone{}, nil
 	case "none":
 		return &ConsistencyNone{}, nil
 	default:
@@ -92,39 +91,8 @@ func (c *ConsistencyLockDumpingTables) TearDown() error {
 	return UnlockTables(c.db)
 }
 
-type ConsistencySnapshot struct {
-	serverType ServerType
-	snapshot   string
-	db         *sql.DB
-}
-
 const showMasterStatusFieldNum = 5
 const snapshotFieldIndex = 1
-
-func (c *ConsistencySnapshot) Setup() error {
-	if c.serverType != ServerTypeTiDB {
-		return withStack(errors.New("snapshot consistency is not supported for this server"))
-	}
-	if c.snapshot == "" {
-		str, err := ShowMasterStatus(c.db, showMasterStatusFieldNum)
-		if err != nil {
-			return err
-		}
-		c.snapshot = str[snapshotFieldIndex]
-	}
-	hasTiKV, err := CheckTiDBWithTiKV(c.db)
-	if err != nil {
-		return err
-	}
-	if !hasTiKV {
-		return nil
-	}
-	return SetTiDBSnapshot(c.db, c.snapshot)
-}
-
-func (c *ConsistencySnapshot) TearDown() error {
-	return nil
-}
 
 func resolveAutoConsistency(conf *Config) {
 	if conf.Consistency != "auto" {
