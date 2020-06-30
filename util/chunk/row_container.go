@@ -18,7 +18,9 @@ import (
 	"sort"
 	"sync"
 	"sync/atomic"
+	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -148,6 +150,11 @@ func (c *RowContainer) NumChunks() int {
 func (c *RowContainer) Add(chk *Chunk) (err error) {
 	c.m.RLock()
 	defer c.m.RUnlock()
+	failpoint.Inject("testSortedRowContainerSpill", func(val failpoint.Value) {
+		if val.(bool) {
+			time.Sleep(time.Second)
+		}
+	})
 	if c.alreadySpilled() {
 		if c.m.spillError != nil {
 			return c.m.spillError

@@ -15,16 +15,20 @@ package chunk
 
 import (
 	"errors"
+	"time"
 
 	"github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/memory"
 )
 
 var _ = check.Suite(&rowContainerTestSuite{})
+var _ = check.SerialSuites(&rowContainerTestSerialSuite{})
 
 type rowContainerTestSuite struct{}
+type rowContainerTestSerialSuite struct{}
 
 func (r *rowContainerTestSuite) TestNewRowContainer(c *check.C) {
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
@@ -111,6 +115,43 @@ func (r *rowContainerTestSuite) TestSpillAction(c *check.C) {
 	c.Assert(rc.AlreadySpilledSafe(), check.Equals, true)
 	err = rc.Reset()
 	c.Assert(err, check.IsNil)
+}
+
+func (r *rowContainerTestSerialSuite) TestSpillActionDeadLock(c *check.C) {
+	// Maybe get deadlock if we use two RLock in one goroutine, for oom-action call stack.
+	// Now the implement avoids the situation.
+	// Goroutine 1: rc.Add() (RLock) -> list.Add() -> tracker.Consume() -> SpillDiskAction -> rc.AlreadySpilledSafe() (RLock)
+	// Goroutine 2: ------------------> SpillDiskAction -> new Goroutine to spill -> ------------------
+	// new Goroutine created by 2: ---> rc.SpillToDisk (Lock)
+	// In golang, RLock will be blocked after try to get Lock. So it will cause deadlock.
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/util/chunk/testSortedRowContainerSpill", "return(true)"), check.IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/util/chunk/testSortedRowContainerSpill"), check.IsNil)
+	}()
+	sz := 4
+	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
+	rc := NewRowContainer(fields, sz)
+
+	chk := NewChunkWithCapacity(fields, sz)
+	for i := 0; i < sz; i++ {
+		chk.AppendInt64(0, int64(i))
+	}
+	var tracker *memory.Tracker
+	var err error
+	tracker = rc.GetMemTracker()
+	tracker.SetBytesLimit(1)
+	ac := rc.ActionSpillForTest()
+	tracker.FallbackOldAndSetNewAction(ac)
+	c.Assert(rc.AlreadySpilledSafe(), check.Equals, false)
+	go func() {
+		err = rc.Add(chk)
+		rc.actionSpill.WaitForTest()
+	}()
+	time.Sleep(200 * time.Millisecond)
+	ac.Action(tracker)
+	rc.actionSpill.WaitForTest()
+	c.Assert(err, check.IsNil)
+	c.Assert(rc.AlreadySpilledSafe(), check.Equals, true)
 }
 
 func (r *rowContainerTestSuite) TestNewSortedRowContainer(c *check.C) {
