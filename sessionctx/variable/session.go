@@ -16,8 +16,10 @@ package variable
 import (
 	"bytes"
 	"crypto/tls"
+	"encoding/binary"
 	"fmt"
 	"math"
+	"math/rand"
 	"sort"
 	"strconv"
 	"strings"
@@ -48,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/util/storeutil"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/twmb/murmur3"
 )
 
 var preparedStmtCount int64
@@ -137,7 +140,13 @@ type TransactionContext struct {
 	History       interface{}
 	SchemaVersion int64
 	StartTS       uint64
-	Shard         *int64
+
+	// ShardStep indicates the max size of continuous rowid shard in one transaction.
+	ShardStep    int
+	shardRemain  int
+	currentShard int64
+	shardRand    *rand.Rand
+
 	// TableDeltaMap is used in the schema validator for DDL changes in one table not to block others.
 	// It's also used in the statistias updating.
 	// Note: for the partitionted table, it stores all the partition IDs.
@@ -158,6 +167,33 @@ type TransactionContext struct {
 	IsPessimistic  bool
 	Isolation      string
 	LockExpire     uint32
+}
+
+// GetShard returns the shard prefix for the next `count` rowids.
+func (tc *TransactionContext) GetShard(shardRowIDBits uint64, typeBitsLength uint64, reserveSignBit bool, count int) int64 {
+	if shardRowIDBits == 0 {
+		return 0
+	}
+	if tc.shardRand == nil {
+		tc.shardRand = rand.New(rand.NewSource(int64(tc.StartTS)))
+	}
+	if tc.shardRemain <= 0 {
+		tc.updateShard()
+		tc.shardRemain = tc.ShardStep
+	}
+	tc.shardRemain -= count
+
+	var signBitLength uint64
+	if reserveSignBit {
+		signBitLength = 1
+	}
+	return (tc.currentShard & (1<<shardRowIDBits - 1)) << (typeBitsLength - shardRowIDBits - signBitLength)
+}
+
+func (tc *TransactionContext) updateShard() {
+	var buf [8]byte
+	binary.LittleEndian.PutUint64(buf[:], tc.shardRand.Uint64())
+	tc.currentShard = int64(murmur3.Sum32(buf[:]))
 }
 
 // AddUnchangedRowKey adds an unchanged row key in update statement for pessimistic lock.
@@ -649,6 +685,9 @@ type SessionVars struct {
 
 	// EnableParallelApply indicates that thether to use parallel apply.
 	EnableParallelApply bool
+
+	// ShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
+	ShardAllocateStep int64
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -741,6 +780,7 @@ func NewSessionVars() *SessionVars {
 		EnableClusteredIndex:        DefTiDBEnableClusteredIndex,
 		EnableSlowLogMasking:        DefTiDBSlowLogMasking,
 		EnableParallelApply:         DefTiDBEnableParallelApply,
+		ShardAllocateStep:           DefTiDBShardAllocateStep,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1367,6 +1407,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableSlowLogMasking = TiDBOptOn(val)
 	case TiDBEnableParallelApply:
 		s.EnableParallelApply = TiDBOptOn(val)
+	case TiDBShardAllocateStep:
+		s.ShardAllocateStep = tidbOptInt64(val, DefTiDBShardAllocateStep)
 	}
 	s.systems[name] = val
 	return nil
