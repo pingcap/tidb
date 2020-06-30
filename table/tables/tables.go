@@ -19,7 +19,6 @@ package tables
 
 import (
 	"context"
-	"encoding/binary"
 	"math"
 	"strconv"
 	"strings"
@@ -44,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/twmb/murmur3"
 	"go.uber.org/zap"
 )
 
@@ -1200,12 +1198,9 @@ func allocHandleIDs(ctx sessionctx.Context, t table.Table, n uint64) (int64, int
 			return 0, 0, autoid.ErrAutoincReadFailed
 		}
 		txnCtx := ctx.GetSessionVars().TxnCtx
-		if txnCtx.Shard == nil {
-			shard := CalcShard(meta.ShardRowIDBits, txnCtx.StartTS, autoid.RowIDBitLength, true)
-			txnCtx.Shard = &shard
-		}
-		base |= *txnCtx.Shard
-		maxID |= *txnCtx.Shard
+		shard := txnCtx.GetShard(meta.ShardRowIDBits, autoid.RowIDBitLength, true, int(n))
+		base |= shard
+		maxID |= shard
 	}
 	return base, maxID, nil
 }
@@ -1218,18 +1213,6 @@ func OverflowShardBits(recordID int64, shardRowIDBits uint64, typeBitsLength uin
 	}
 	mask := (1<<shardRowIDBits - 1) << (typeBitsLength - shardRowIDBits - signBit)
 	return recordID&int64(mask) > 0
-}
-
-// CalcShard calculates the shard prefix by hashing the startTS. Make sure OverflowShardBits is false before calling it.
-func CalcShard(shardRowIDBits uint64, startTS uint64, typeBitsLength uint64, reserveSignBit bool) int64 {
-	var buf [8]byte
-	binary.LittleEndian.PutUint64(buf[:], startTS)
-	hashVal := int64(murmur3.Sum32(buf[:]))
-	var signBitLength uint64
-	if reserveSignBit {
-		signBitLength = 1
-	}
-	return (hashVal & (1<<shardRowIDBits - 1)) << (typeBitsLength - shardRowIDBits - signBitLength)
 }
 
 // Allocators implements table.Table Allocators interface.
