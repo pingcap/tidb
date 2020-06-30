@@ -18,6 +18,7 @@ import (
 	"crypto/tls"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
@@ -255,6 +256,7 @@ func assertEqualStrings(c *C, got []field, expect []string) {
 }
 
 func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
+<<<<<<< HEAD
 	c.Skip("Close the feature temporarily.")
 	originCfg := config.GetGlobalConfig()
 	newConf := *originCfg
@@ -263,6 +265,17 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 	config.StoreGlobalConfig(&newConf)
 	defer config.StoreGlobalConfig(originCfg)
 
+=======
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMUseTmpStorage = true
+		conf.MemQuotaQuery = 1
+	})
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill", "return(true)"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill"), IsNil)
+	}()
+>>>>>>> 9d9f330... executor, util: fix spilling disk when oom. (#16895)
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefMaxChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
@@ -297,7 +310,7 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 	}
 	// Test only 1 partition and all data in memory.
 	c.Assert(len(exec.partitionList), Equals, 1)
-	c.Assert(exec.partitionList[0].AlreadySpilled(), Equals, false)
+	c.Assert(exec.partitionList[0].AlreadySpilledSafe(), Equals, false)
 	c.Assert(exec.partitionList[0].NumRow(), Equals, 2048)
 	err = exec.Close()
 	c.Assert(err, IsNil)
@@ -314,11 +327,21 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 		}
 	}
 	// Test 2 partitions and all data in disk.
-	c.Assert(len(exec.partitionList), Equals, 2)
-	c.Assert(exec.partitionList[0].AlreadySpilled(), Equals, true)
-	c.Assert(exec.partitionList[1].AlreadySpilled(), Equals, true)
-	c.Assert(exec.partitionList[0].NumRow(), Equals, 1024)
-	c.Assert(exec.partitionList[1].NumRow(), Equals, 1024)
+	// Now spilling is in parallel.
+	// Maybe the second add() will called before spilling, depends on
+	// Golang goroutine scheduling. So the result has two possibilities.
+	if len(exec.partitionList) == 2 {
+		c.Assert(len(exec.partitionList), Equals, 2)
+		c.Assert(exec.partitionList[0].AlreadySpilledSafe(), Equals, true)
+		c.Assert(exec.partitionList[1].AlreadySpilledSafe(), Equals, true)
+		c.Assert(exec.partitionList[0].NumRow(), Equals, 1024)
+		c.Assert(exec.partitionList[1].NumRow(), Equals, 1024)
+	} else {
+		c.Assert(len(exec.partitionList), Equals, 1)
+		c.Assert(exec.partitionList[0].AlreadySpilledSafe(), Equals, true)
+		c.Assert(exec.partitionList[0].NumRow(), Equals, 2048)
+	}
+
 	err = exec.Close()
 	c.Assert(err, IsNil)
 
@@ -335,7 +358,7 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 	}
 	// Test only 1 partition but spill disk.
 	c.Assert(len(exec.partitionList), Equals, 1)
-	c.Assert(exec.partitionList[0].AlreadySpilled(), Equals, true)
+	c.Assert(exec.partitionList[0].AlreadySpilledSafe(), Equals, true)
 	c.Assert(exec.partitionList[0].NumRow(), Equals, 2048)
 	err = exec.Close()
 	c.Assert(err, IsNil)
