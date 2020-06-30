@@ -64,19 +64,19 @@ func (s *testPrepareSuite) TestListAllTables(c *C) {
 		AppendViews("db3", "t6", "t7", "t8")
 
 	var dbNames []databaseName
+	rows := sqlmock.NewRows([]string{"table_schema", "table_name"})
 	for dbName, tableInfos := range data {
 		dbNames = append(dbNames, dbName)
 
-		rows := sqlmock.NewRows([]string{"Table_name"})
 		for _, tbInfo := range tableInfos {
 			if tbInfo.Type == TableTypeView {
 				continue
 			}
-			rows.AddRow(tbInfo.Name)
+			rows.AddRow(dbName, tbInfo.Name)
 		}
-		query := "SELECT table_name FROM information_schema.tables WHERE table_schema = (.*) and table_type = (.*)"
-		mock.ExpectQuery(query).WillReturnRows(rows)
 	}
+	query := "SELECT table_schema,table_name FROM information_schema.tables WHERE table_type = (.*)"
+	mock.ExpectQuery(query).WillReturnRows(rows)
 
 	tables, err := listAllTables(db, dbNames)
 	c.Assert(err, IsNil)
@@ -94,8 +94,8 @@ func (s *testPrepareSuite) TestListAllTables(c *C) {
 	data = NewDatabaseTables().
 		AppendTables("db", "t1").
 		AppendViews("db", "t2")
-	query := "SELECT table_name FROM information_schema.tables WHERE table_schema = (.*) and table_type = (.*)"
-	mock.ExpectQuery(query).WillReturnRows(sqlmock.NewRows([]string{"Table_name"}).AddRow("t2"))
+	query = "SELECT table_schema,table_name FROM information_schema.tables WHERE table_type = (.*)"
+	mock.ExpectQuery(query).WillReturnRows(sqlmock.NewRows([]string{"table_schema", "table_name"}).AddRow("db", "t2"))
 	tables, err = listAllViews(db, []string{"db"})
 	c.Assert(err, IsNil)
 	c.Assert(len(tables), Equals, 1)
