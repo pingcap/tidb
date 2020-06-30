@@ -150,7 +150,7 @@ func (c *RowContainer) NumChunks() int {
 func (c *RowContainer) Add(chk *Chunk) (err error) {
 	c.m.RLock()
 	defer c.m.RUnlock()
-	failpoint.Inject("testSortedRowContainerSpill", func(val failpoint.Value) {
+	failpoint.Inject("testRowContainerDeadLock", func(val failpoint.Value) {
 		if val.(bool) {
 			time.Sleep(time.Second)
 		}
