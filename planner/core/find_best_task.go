@@ -167,7 +167,7 @@ func (p *LogicalShowDDLJobs) findBestTask(prop *property.PhysicalProperty, planC
 	return &rootTask{p: pShow}, 1, nil
 }
 
-// The function rebuildChildTasks rebuilds the childTasks to make the clock_th combination.
+// rebuildChildTasks rebuilds the childTasks to make the clock_th combination.
 func (p *baseLogicalPlan) rebuildChildTasks(childTasks *[]task, pp PhysicalPlan, childCnts []int64, planCounter int64, TS uint64) error {
 	// The taskMap of children nodes should be rolled back first.
 	for _, child := range p.children {
