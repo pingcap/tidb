@@ -127,8 +127,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		// We can safely reuse the transaction snapshot if startTS is equal to forUpdateTS.
 		// The snapshot may contains cache that can reduce RPC call.
 		snapshot = txn.GetSnapshot()
-	}
-	if snapshot == nil {
+	} else {
 		snapshot, err = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: e.snapshotTS})
 		if err != nil {
 			return err
@@ -140,10 +139,9 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
 	var batchGetter kv.BatchGetter = snapshot
 	if sessVars.InTxn() {
-		if mb := txn.GetMemBuffer(); mb != nil {
-			batchGetter = kv.NewBufferBatchGetter(mb, &PessimisticLockCacheGetter{txnCtx: txnCtx}, snapshot)
-		}
+		batchGetter = kv.NewBufferBatchGetter(txn.GetMemBuffer(), &PessimisticLockCacheGetter{txnCtx: txnCtx}, snapshot)
 	}
+
 	var handleVals map[string][]byte
 	var indexKeys []kv.Key
 	if e.idxInfo != nil {

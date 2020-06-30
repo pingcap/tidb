@@ -140,8 +140,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	if sessVars.InTxn() && txnCtx.StartTS == txnCtx.GetForUpdateTS() {
 		e.snapshot = e.txn.GetSnapshot()
-	}
-	if e.snapshot == nil {
+	} else {
 		e.snapshot, err = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: snapshotTS})
 		if err != nil {
 			return err
@@ -280,24 +279,22 @@ func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) erro
 // then the store. Kv.ErrNotExist will be returned if key is not found
 func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) {
 	if e.ctx.GetSessionVars().InTxn() && !e.txn.IsReadOnly() {
-		if mb := e.txn.GetMemBuffer(); mb != nil {
-			// We cannot use txn.Get directly here because the snapshot in txn and the snapshot of e.snapshot may be
-			// different for pessimistic transaction.
-			val, err := mb.Get(ctx, key)
-			if err == nil {
-				return val, err
-			}
-			if !kv.IsErrNotFound(err) {
-				return nil, err
-			}
-			// key does not exist in mem buffer, check the lock cache
-			var ok bool
-			val, ok = e.ctx.GetSessionVars().TxnCtx.GetKeyInPessimisticLockCache(key)
-			if ok {
-				return val, nil
-			}
-			// fallthrough to snapshot get.
+		// We cannot use txn.Get directly here because the snapshot in txn and the snapshot of e.snapshot may be
+		// different for pessimistic transaction.
+		val, err := e.txn.GetMemBuffer().Get(ctx, key)
+		if err == nil {
+			return val, err
 		}
+		if !kv.IsErrNotFound(err) {
+			return nil, err
+		}
+		// key does not exist in mem buffer, check the lock cache
+		var ok bool
+		val, ok = e.ctx.GetSessionVars().TxnCtx.GetKeyInPessimisticLockCache(key)
+		if ok {
+			return val, nil
+		}
+		// fallthrough to snapshot get.
 	}
 	return e.snapshot.Get(ctx, key)
 }
