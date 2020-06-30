@@ -40,7 +40,8 @@ type RowContainer struct {
 		recordsInDisk *ListInDisk
 		// spillError stores the error when spilling.
 		spillError error
-		// spilled indicate whether the RowContainer is spilled.
+		// spilled indicates that records have spilled out into disk.
+		// It's for concurrency usage, so access it with atomic.
 		spilled uint32
 	}
 
@@ -309,9 +310,10 @@ var ErrCannotAddBecauseSorted = errors.New("can not add because sorted")
 type SortedRowContainer struct {
 	*RowContainer
 	ptrM struct {
-		// RWMutex guarantees the operator for rowPtrs is mutually exclusive.
 		sync.RWMutex
-		// rowPointer store the chunk index and row index for each row.
+		// rowPtrs store the chunk index and row index for each row.
+		// rowPtrs != nil indicates the pointer is initialized and sorted.
+		// It will get an ErrCannotAddBecauseSorted when trying to insert data if rowPtrs != nil.
 		rowPtrs []RowPtr
 	}
 

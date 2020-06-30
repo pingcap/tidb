@@ -55,7 +55,7 @@ type SortExec struct {
 	memTracker  *memory.Tracker
 	diskTracker *disk.Tracker
 
-	// partitionList is the chunks to store row values for partitions.
+	// partitionList is the chunks to store row values for partitions. Every partition is a sorted list.
 	partitionList []*chunk.SortedRowContainer
 
 	// multiWayMerge uses multi-way merge for spill disk.
