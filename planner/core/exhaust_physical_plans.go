@@ -676,7 +676,7 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 	// We can reuse the `innerTask` here since index nested loop hash join
 	// do not need the inner child to promise the order.
 	joins = append(joins, p.constructIndexHashJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, nil, nil)...)
-	if innerTask2 == nil {
+	if innerTask2 != nil {
 		joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, ranges, keyOff2IdxOff, nil, nil)...)
 	}
 	return joins

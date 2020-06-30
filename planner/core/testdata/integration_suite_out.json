@@ -293,7 +293,7 @@
         "SQL": "desc select /*+ INL_HASH_JOIN(t2) */ * from t t1, t t2 where t1.a = t2.b order by t2.a",
         "Plan": [
           "Sort_7 12487.50 root  test.t.a",
-          "└─IndexHashJoin_23 12487.50 root  inner join, inner:IndexLookUp_14, outer key:test.t.a, inner key:test.t.b",
+          "└─IndexHashJoin_17 12487.50 root  inner join, inner:IndexLookUp_14, outer key:test.t.a, inner key:test.t.b",
           "  ├─TableReader_25(Build) 10000.00 root  data:TableFullScan_24",
           "  │ └─TableFullScan_24 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "  └─IndexLookUp_14(Probe) 1.25 root  ",
@@ -309,7 +309,7 @@
           "HashJoin_21 15625.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
           "├─TableReader_60(Build) 10000.00 root  data:TableFullScan_59",
           "│ └─TableFullScan_59 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
-          "└─IndexMergeJoin_56(Probe) 12500.00 root  inner join, inner:TableReader_53, outer key:test.t.a, inner key:test.t.a",
+          "└─IndexMergeJoin_58(Probe) 12500.00 root  inner join, inner:TableReader_53, outer key:test.t.a, inner key:test.t.a",
           "  ├─TableReader_45(Build) 10000.00 root  data:TableFullScan_44",
           "  │ └─TableFullScan_44 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "  └─TableReader_53(Probe) 1.00 root  data:TableRangeScan_52",
@@ -336,7 +336,7 @@
       {
         "SQL": "desc select /*+ INL_HASH_JOIN(t2) */ distinct t2.a from t t1 join t t2 on t1.a = t2.a",
         "Plan": [
-          "IndexHashJoin_17 12500.00 root  inner join, inner:TableReader_10, outer key:test.t.a, inner key:test.t.a",
+          "IndexHashJoin_15 12500.00 root  inner join, inner:TableReader_10, outer key:test.t.a, inner key:test.t.a",
           "├─TableReader_19(Build) 10000.00 root  data:TableFullScan_18",
           "│ └─TableFullScan_18 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "└─TableReader_10(Probe) 1.00 root  data:TableRangeScan_9",
@@ -903,7 +903,7 @@
       {
         "SQL": "select /*+ inl_merge_join(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a",
         "Plan": [
-          "IndexMergeJoin_12 3.00 root  inner join, inner:TableReader_9, outer key:test.t.a, inner key:test.t.a",
+          "IndexMergeJoin_14 3.00 root  inner join, inner:TableReader_9, outer key:test.t.a, inner key:test.t.a",
           "├─TableReader_25(Build) 3.00 root  data:TableFullScan_24",
           "│ └─TableFullScan_24 3.00 cop[tikv] table:t1 keep order:false",
           "└─TableReader_9(Probe) 1.00 root  data:TableRangeScan_8",
@@ -918,7 +918,7 @@
       {
         "SQL": "select /*+ inl_hash_join(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a",
         "Plan": [
-          "IndexHashJoin_14 3.00 root  inner join, inner:TableReader_7, outer key:test.t.a, inner key:test.t.a",
+          "IndexHashJoin_12 3.00 root  inner join, inner:TableReader_7, outer key:test.t.a, inner key:test.t.a",
           "├─TableReader_25(Build) 3.00 root  data:TableFullScan_24",
           "│ └─TableFullScan_24 3.00 cop[tikv] table:t1 keep order:false",
           "└─TableReader_7(Probe) 1.00 root  data:TableRangeScan_6",

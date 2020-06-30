@@ -5010,9 +5010,6 @@ func (s *testIntegrationSuite) TestIssue16973(c *C) {
 	rows := tk.MustQuery("explain SELECT /*+ INL_MERGE_JOIN(t1,t2) */ COUNT(*) FROM  t1 LEFT JOIN t2 ON t1.id = t2.order_id WHERE t1.ns = 'a' AND t1.org_id IN (1) " +
 		"AND t1.status IN (2,6,10) AND timestampdiff(month, t2.begin_time, date'2020-05-06') = 0;").Rows()
 	c.Assert(fmt.Sprintf("%v", rows[1][0]), Matches, ".*IndexMergeJoin.*")
-	c.Assert(fmt.Sprintf("%v", rows[4][3]), Equals, "table:t1")
-	c.Assert(fmt.Sprintf("%v", rows[5][0]), Matches, ".*Selection.*")
-	c.Assert(fmt.Sprintf("%v", rows[9][3]), Equals, "table:t2")
 	tk.MustQuery("SELECT /*+ INL_MERGE_JOIN(t1,t2) */ COUNT(*) FROM  t1 LEFT JOIN t2 ON t1.id = t2.order_id WHERE t1.ns = 'a' AND t1.org_id IN (1) " +
 		"AND t1.status IN (2,6,10) AND timestampdiff(month, t2.begin_time, date'2020-05-06') = 0;").Check(testkit.Rows("1"))
 }
