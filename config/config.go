@@ -59,7 +59,7 @@ const (
 	// DefStatusHost is the default status host of TiDB
 	DefStatusHost = "0.0.0.0"
 	// DefStoreLivenessTimeout is the default value for store liveness timeout.
-	DefStoreLivenessTimeout = "120s"
+	DefStoreLivenessTimeout = "5s"
 )
 
 // Valid config maps
