@@ -267,13 +267,13 @@ func decodePlanInfo(str string) (*planInfo, error) {
 }
 
 // EncodePlanNode is used to encode the plan to a string.
-func EncodePlanNode(depth, pid int, planType string, isRoot bool, storeType kv.StoreType, rowCount float64,
-	explainInfo, actRows, analyzeInfo, memoryInfo, diskInfo string, buf *bytes.Buffer) {
+func EncodePlanNode(depth, pid int, planType string, rowCount float64,
+	taskTypeInfo, explainInfo, actRows, analyzeInfo, memoryInfo, diskInfo string, buf *bytes.Buffer) {
 	buf.WriteString(strconv.Itoa(depth))
 	buf.WriteByte(separator)
 	buf.WriteString(encodeID(planType, pid))
 	buf.WriteByte(separator)
-	buf.WriteString(encodeTaskType(isRoot, storeType))
+	buf.WriteString(taskTypeInfo)
 	buf.WriteByte(separator)
 	buf.WriteString(strconv.FormatFloat(rowCount, 'f', -1, 64))
 	buf.WriteByte(separator)
@@ -313,7 +313,8 @@ func encodeID(planType string, id int) string {
 	return strconv.Itoa(planID) + idSeparator + strconv.Itoa(id)
 }
 
-func encodeTaskType(isRoot bool, storeType kv.StoreType) string {
+// EncodeTaskType is used to encode task type to a string.
+func EncodeTaskType(isRoot bool, storeType kv.StoreType) string {
 	if isRoot {
 		return rootTaskType
 	}

@@ -69,8 +69,9 @@ func (pn *planEncoder) encodePlan(p PhysicalPlan, isRoot bool, depth int) {
 			storeType = kv.TiKV
 		}
 	}
+	taskTypeInfo := plancodec.EncodeTaskType(isRoot, storeType)
 	actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfo(p.SCtx(), p)
-	plancodec.EncodePlanNode(depth, p.ID(), p.TP(), isRoot, storeType, p.statsInfo().RowCount, p.ExplainInfo(), actRows, analyzeInfo, memoryInfo, diskInfo, &pn.buf)
+	plancodec.EncodePlanNode(depth, p.ID(), p.TP(), p.statsInfo().RowCount, taskTypeInfo, p.ExplainInfo(), actRows, analyzeInfo, memoryInfo, diskInfo, &pn.buf)
 	pn.encodedPlans[p.ID()] = true
 
 	depth++
