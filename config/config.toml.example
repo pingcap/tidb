@@ -250,6 +250,10 @@ distinct-agg-push-down = false
 # If binlog is disabled or binlog is enabled without Kafka, this value should be less than 10737418240(10G).
 txn-total-size-limit = 104857600
 
+# The limitation of the size in byte for each entry in one transaction.
+# NOTE: Increasing this limit may cause performance problems.
+txn-entry-size-limit = 6291456
+
 # The max number of running concurrency two phase committer request for an SQL.
 committer-concurrency = 16
 
@@ -360,7 +364,7 @@ region-cache-ttl = 600
 store-limit = 0
 
 # store-liveness-timeout is used to control timeout for store liveness after sending request failed.
-store-liveness-timeout = "120s"
+store-liveness-timeout = "5s"
 
 [tikv-client.copr-cache]
 # Whether to enable the copr cache. The copr cache saves the result from TiKV Coprocessor in the memory and
