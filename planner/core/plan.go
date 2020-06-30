@@ -321,7 +321,8 @@ func (p *basePhysicalPlan) ExtractCorrelatedCols() []*expression.CorrelatedColum
 	return nil
 }
 
-func (p *baseLogicalPlan) GetBakTimeStamp() uint64 {
+// GetlogicalTS4TaskMap get the logical TimeStamp now to help rollback the TaskMap changes after that.
+func (p *baseLogicalPlan) GetlogicalTS4TaskMap() uint64 {
 	p.ctx.GetSessionVars().StmtCtx.TaskMapBakTS += 1
 	return p.ctx.GetSessionVars().StmtCtx.TaskMapBakTS
 }
@@ -365,7 +366,7 @@ func (p *baseLogicalPlan) storeTask(prop *property.PhysicalProperty, task task) 
 	key := prop.HashCode()
 	if p.ctx.GetSessionVars().StmtCtx.StmtHints.TaskMapNeedBackUp() {
 		// Empty string for useless change.
-		TS := p.GetBakTimeStamp()
+		TS := p.GetlogicalTS4TaskMap()
 		if p.taskMap[string(key)] != nil {
 			p.taskMapBakTS = append(p.taskMapBakTS, TS)
 			p.taskMapBak = append(p.taskMapBak, "")
