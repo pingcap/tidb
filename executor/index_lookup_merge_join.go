@@ -29,10 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/util/execdetails"
-=======
->>>>>>> 0eaa757... executor: log stack info when panic converting to error (#15627)
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
@@ -398,7 +395,6 @@ func (imw *innerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancel
 	defer func() {
 		wg.Done()
 		if r := recover(); r != nil {
-<<<<<<< HEAD
 			if task != nil {
 				task.doneErr = errors.Errorf("%v", r)
 				close(task.results)
@@ -407,11 +403,6 @@ func (imw *innerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancel
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
 			logutil.Logger(ctx).Error("innerMergeWorker panicked", zap.String("stack", string(buf)))
-=======
-			logutil.Logger(ctx).Error("panic in innerMergeWorker.run",
-				zap.Reflect("r", r),
-				zap.Stack("stack trace"))
->>>>>>> 0eaa757... executor: log stack info when panic converting to error (#15627)
 			cancelFunc()
 		}
 	}()
