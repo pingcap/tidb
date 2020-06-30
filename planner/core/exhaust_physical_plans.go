@@ -582,7 +582,6 @@ func (p *LogicalJoin) getIndexJoinBuildHelper(ds *DataSource, innerJoinKeys []*e
 			if err != nil {
 				logutil.BgLogger().Warn("build index join failed", zap.Error(err))
 			}
-			break
 		}
 	}
 	if helper.chosenPath == nil {
