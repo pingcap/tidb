@@ -96,6 +96,7 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.EnableFastAnalyze, Equals, DefTiDBUseFastAnalyze)
 	c.Assert(vars.FoundInPlanCache, Equals, DefTiDBFoundInPlanCache)
 	c.Assert(vars.AllowAutoRandExplicitInsert, Equals, DefTiDBAllowAutoRandExplicitInsert)
+	c.Assert(vars.ShardAllocateStep, Equals, int64(DefTiDBShardAllocateStep))
 
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.MemQuota))
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.BatchSize))
@@ -532,6 +533,9 @@ func (s *testVarsutilSuite) TestValidate(c *C) {
 		{TiDBIsolationReadEngines, "tikv", false},
 		{TiDBIsolationReadEngines, "TiKV,tiflash", false},
 		{TiDBIsolationReadEngines, "   tikv,   tiflash  ", false},
+		{TiDBShardAllocateStep, "ad", true},
+		{TiDBShardAllocateStep, "-123", false},
+		{TiDBShardAllocateStep, "128", false},
 	}
 
 	for _, t := range tests {

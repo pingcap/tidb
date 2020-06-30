@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/mock"
@@ -2227,7 +2228,7 @@ func (s *testDBSuite4) TestCreateTableWithLike2(c *C) {
 	c.Assert(t1.Meta().TiFlashReplica.AvailablePartitionIDs, DeepEquals, []int64{partition.Definitions[0].ID, partition.Definitions[1].ID})
 }
 
-func (s *testDBSuite1) TestCreateTable(c *C) {
+func (s *testSerialDBSuite) TestCreateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE `t` (`a` double DEFAULT 1.0 DEFAULT now() DEFAULT 2.0 );")
@@ -2270,20 +2271,23 @@ func (s *testDBSuite1) TestCreateTable(c *C) {
 	tk.MustExec("use test")
 	failSQL := "create table t_enum (a enum('e','e'));"
 	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
-	// TODO: Uncomment lines below after fixing #18134.
-	//failSQL = "create table t_enum (a enum('e','E'));"
-	//tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
-	//failSQL = "create table t_enum (a enum('abc','Abc'));"
-	//tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk = testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	failSQL = "create table t_enum (a enum('e','E')) charset=utf8 collate=utf8_general_ci;"
+	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
+	failSQL = "create table t_enum (a enum('abc','Abc')) charset=utf8 collate=utf8_general_ci;"
+	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
 	// test for set column
-	//failSQL = "create table t_enum (a set('e','e'));"
-	//tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
-	//failSQL = "create table t_enum (a set('e','E'));"
-	//tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
-	//failSQL = "create table t_enum (a set('abc','Abc'));"
-	//tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
-	//_, err = tk.Exec("create table t_enum (a enum('B','b'));")
-	//c.Assert(err.Error(), Equals, "[types:1291]Column 'a' has duplicated value 'B' in ENUM")
+	failSQL = "create table t_enum (a set('e','e'));"
+	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
+	failSQL = "create table t_enum (a set('e','E')) charset=utf8 collate=utf8_general_ci;"
+	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
+	failSQL = "create table t_enum (a set('abc','Abc')) charset=utf8 collate=utf8_general_ci;"
+	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
+	_, err = tk.Exec("create table t_enum (a enum('B','b')) charset=utf8 collate=utf8_general_ci;")
+	c.Assert(err.Error(), Equals, "[types:1291]Column 'a' has duplicated value 'b' in ENUM")
 }
 
 func (s *testDBSuite5) TestRepairTable(c *C) {
