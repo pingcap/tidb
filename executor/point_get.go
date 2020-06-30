@@ -127,7 +127,8 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 	e.done = true
-	txnCtx := e.ctx.GetSessionVars().TxnCtx
+	sessVars := e.ctx.GetSessionVars()
+	txnCtx := sessVars.TxnCtx
 	snapshotTS := e.startTS
 	if e.lock {
 		snapshotTS = txnCtx.GetForUpdateTS()
@@ -137,7 +138,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
-	if txnCtx.StartTS == txnCtx.GetForUpdateTS() {
+	if sessVars.InTxn() && txnCtx.StartTS == txnCtx.GetForUpdateTS() {
 		e.snapshot = e.txn.GetSnapshot()
 	}
 	if e.snapshot == nil {
@@ -278,24 +279,25 @@ func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) erro
 // get will first try to get from txn buffer, then check the pessimistic lock cache,
 // then the store. Kv.ErrNotExist will be returned if key is not found
 func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) {
-	mb := e.txn.GetMemBuffer()
-	if mb != nil && !e.txn.IsReadOnly() {
-		// We cannot use txn.Get directly here because the snapshot in txn and the snapshot of e.snapshot may be
-		// different for pessimistic transaction.
-		val, err := mb.Get(ctx, key)
-		if err == nil {
-			return val, err
+	if e.ctx.GetSessionVars().InTxn() && !e.txn.IsReadOnly() {
+		if mb := e.txn.GetMemBuffer(); mb != nil {
+			// We cannot use txn.Get directly here because the snapshot in txn and the snapshot of e.snapshot may be
+			// different for pessimistic transaction.
+			val, err := mb.Get(ctx, key)
+			if err == nil {
+				return val, err
+			}
+			if !kv.IsErrNotFound(err) {
+				return nil, err
+			}
+			// key does not exist in mem buffer, check the lock cache
+			var ok bool
+			val, ok = e.ctx.GetSessionVars().TxnCtx.GetKeyInPessimisticLockCache(key)
+			if ok {
+				return val, nil
+			}
+			// fallthrough to snapshot get.
 		}
-		if !kv.IsErrNotFound(err) {
-			return nil, err
-		}
-		// key does not exist in mem buffer, check the lock cache
-		var ok bool
-		val, ok = e.ctx.GetSessionVars().TxnCtx.GetKeyInPessimisticLockCache(key)
-		if ok {
-			return val, nil
-		}
-		// fallthrough to snapshot get.
 	}
 	return e.snapshot.Get(ctx, key)
 }
