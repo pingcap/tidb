@@ -217,13 +217,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	e.rowChunks = chunk.NewSortedRowContainer(fields, e.maxChunkSize, byItemsDesc, e.keyColumns, e.keyCmpFuncs)
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 	e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
-<<<<<<< HEAD
-	var onExceededCallback func(rowContainer *chunk.RowContainer)
-	var openSortSpillDisk = false
-	if openSortSpillDisk && config.GetGlobalConfig().OOMUseTmpStorage {
-=======
 	if config.GetGlobalConfig().OOMUseTmpStorage {
->>>>>>> 9d9f330... executor, util: fix spilling disk when oom. (#16895)
 		e.spillAction = e.rowChunks.ActionSpill()
 		failpoint.Inject("testSortedRowContainerSpill", func(val failpoint.Value) {
 			if val.(bool) {
@@ -246,18 +240,6 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 			break
 		}
 		if err := e.rowChunks.Add(chk); err != nil {
-<<<<<<< HEAD
-			return err
-		}
-		if openSortSpillDisk && e.rowChunks.AlreadySpilled() {
-			e.rowChunks = chunk.NewRowContainer(retTypes(e), e.maxChunkSize)
-			e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
-			e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
-			e.rowChunks.SetOnExceededCallback(onExceededCallback)
-			e.spillAction.ResetOnceAndSetRowContainer(e.rowChunks)
-			e.rowChunks.GetDiskTracker().AttachTo(e.diskTracker)
-			e.rowChunks.GetDiskTracker().SetLabel(rowChunksLabel)
-=======
 			if errors.Is(err, chunk.ErrCannotAddBecauseSorted) {
 				e.partitionList = append(e.partitionList, e.rowChunks)
 				e.rowChunks = chunk.NewSortedRowContainer(fields, e.maxChunkSize, byItemsDesc, e.keyColumns, e.keyCmpFuncs)
@@ -271,7 +253,6 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
->>>>>>> 9d9f330... executor, util: fix spilling disk when oom. (#16895)
 		}
 	}
 	if e.rowChunks.NumRow() > 0 {

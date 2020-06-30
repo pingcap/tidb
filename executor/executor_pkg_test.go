@@ -256,8 +256,6 @@ func assertEqualStrings(c *C, got []field, expect []string) {
 }
 
 func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
-<<<<<<< HEAD
-	c.Skip("Close the feature temporarily.")
 	originCfg := config.GetGlobalConfig()
 	newConf := *originCfg
 	newConf.OOMUseTmpStorage = true
@@ -265,17 +263,10 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 	config.StoreGlobalConfig(&newConf)
 	defer config.StoreGlobalConfig(originCfg)
 
-=======
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.OOMUseTmpStorage = true
-		conf.MemQuotaQuery = 1
-	})
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill", "return(true)"), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill"), IsNil)
 	}()
->>>>>>> 9d9f330... executor, util: fix spilling disk when oom. (#16895)
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefMaxChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize

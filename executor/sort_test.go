@@ -24,7 +24,6 @@ import (
 )
 
 func (s *testSuite) TestSortInDisk(c *C) {
-	c.Skip("Close the feature temporarily.")
 	originCfg := config.GetGlobalConfig()
 	newConf := *originCfg
 	newConf.OOMUseTmpStorage = true
