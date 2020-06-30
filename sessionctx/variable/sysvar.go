@@ -638,6 +638,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, TiDBIndexLookupJoinConcurrency, strconv.Itoa(DefIndexLookupJoinConcurrency)},
 	{ScopeGlobal | ScopeSession, TiDBIndexSerialScanConcurrency, strconv.Itoa(DefIndexSerialScanConcurrency)},
 	{ScopeGlobal | ScopeSession, TiDBSkipUTF8Check, BoolToIntStr(DefSkipUTF8Check)},
+	{ScopeGlobal | ScopeSession, TiDBSkipASCIICheck, BoolToIntStr(DefSkipASCIICheck)},
 	{ScopeSession, TiDBBatchInsert, BoolToIntStr(DefBatchInsert)},
 	{ScopeSession, TiDBBatchDelete, BoolToIntStr(DefBatchDelete)},
 	{ScopeSession, TiDBBatchCommit, BoolToIntStr(DefBatchCommit)},
@@ -725,6 +726,8 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBAllowAutoRandExplicitInsert, boolToOnOff(DefTiDBAllowAutoRandExplicitInsert)},
 	{ScopeGlobal | ScopeSession, TiDBEnableClusteredIndex, BoolToIntStr(DefTiDBEnableClusteredIndex)},
 	{ScopeGlobal, TiDBSlowLogMasking, BoolToIntStr(DefTiDBSlowLogMasking)},
+	{ScopeGlobal | ScopeSession, TiDBShardAllocateStep, strconv.Itoa(DefTiDBShardAllocateStep)},
+	{ScopeGlobal, TiDBEnableTelemetry, BoolToIntStr(DefTiDBEnableTelemetry)},
 }
 
 // SynonymsSysVariables is synonyms of system variables.

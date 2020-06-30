@@ -857,13 +857,16 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 			physicalTableID: ds.physicalTableID,
 		}.Init(ds.ctx, ds.blockOffset)
 		ts.schema = is.dataSourceSchema.Clone()
+		if ds.tableInfo.IsCommonHandle {
+			cop.commonHandleCols = ds.commonHandleCols
+		}
 		// If inner cop task need keep order, the extraHandleCol should be set.
 		if cop.keepOrder {
 			cop.extraHandleCol, cop.doubleReadNeedProj = ts.appendExtraHandleCol(ds)
 		}
 		cop.tablePlan = ts
 	}
-	is.initSchema(path.Index, path.FullIdxCols, cop.tablePlan != nil)
+	is.initSchema(path.FullIdxCols, cop.tablePlan != nil)
 	indexConds, tblConds := ds.splitIndexFilterConditions(filterConds, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo)
 	// Specially handle cases when input rowCount is 0, which can only happen in 2 scenarios:
 	// - estimated row count of outer plan is 0;
