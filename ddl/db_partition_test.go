@@ -2115,7 +2115,7 @@ func getPartitionTableRecordsNum(c *C, ctx sessionctx.Context, tbl table.Partiti
 		startKey := partition.RecordKey(kv.IntHandle(math.MinInt64))
 		c.Assert(ctx.NewTxn(context.Background()), IsNil)
 		err := partition.IterRecords(ctx, startKey, partition.Cols(),
-			func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+			func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 				num++
 				return true, nil
 			})
