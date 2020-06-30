@@ -264,7 +264,14 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-	return e.Next(ctx, req)
+	err := e.Next(ctx, req)
+
+	// recheck whether the session is killed during the Next()
+	if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
+		return ErrQueryInterrupted
+	} else {
+		return err
+	}
 }
 
 // CancelDDLJobsExec represents a cancel DDL jobs executor.
