@@ -152,7 +152,7 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/mvcc/index/{db}/{table}/{index}/{handle}", mvccTxnHandler{tikvHandlerTool, opMvccGetByIdx})
 
 	// HTTP path for generate metric profile.
-	router.Handle("/metric/profile", profileHandler{tikvHandlerTool})
+	router.Handle("/metrics/profile", profileHandler{tikvHandlerTool})
 	// HTTP path for web UI.
 	if host, port, err := net.SplitHostPort(s.statusAddr); err == nil {
 		if host == "" {
