@@ -346,10 +346,8 @@ func (p *baseLogicalPlan) rollBackTaskMap(TS uint64) {
 			i--
 			N--
 
-			// If cur is a valid log, then roll back.
-			if cur != "" {
-				p.taskMap[cur] = nil
-			}
+			// Roll back taskMap.
+			p.taskMap[cur] = nil
 		}
 	}
 	for _, child := range p.children {
@@ -367,13 +365,8 @@ func (p *baseLogicalPlan) storeTask(prop *property.PhysicalProperty, task task) 
 	if p.ctx.GetSessionVars().StmtCtx.StmtHints.TaskMapNeedBackUp() {
 		// Empty string for useless change.
 		TS := p.GetlogicalTS4TaskMap()
-		if p.taskMap[string(key)] != nil {
-			p.taskMapBakTS = append(p.taskMapBakTS, TS)
-			p.taskMapBak = append(p.taskMapBak, "")
-		} else {
-			p.taskMapBakTS = append(p.taskMapBakTS, TS)
-			p.taskMapBak = append(p.taskMapBak, string(key))
-		}
+		p.taskMapBakTS = append(p.taskMapBakTS, TS)
+		p.taskMapBak = append(p.taskMapBak, string(key))
 	}
 	p.taskMap[string(key)] = task
 }
