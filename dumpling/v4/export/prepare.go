@@ -77,29 +77,12 @@ func prepareDumpingDatabases(conf *Config, db *sql.DB) ([]string, error) {
 
 func listAllTables(db *sql.DB, databaseNames []string) (DatabaseTables, error) {
 	log.Debug("list all the tables")
-	dbTables := DatabaseTables{}
-	for _, dbName := range databaseNames {
-		tables, err := ListAllTables(db, dbName)
-		if err != nil {
-			return nil, err
-		}
-		dbTables[dbName] = make([]*TableInfo, 0, len(tables))
-		dbTables = dbTables.AppendTables(dbName, tables...)
-	}
-	return dbTables, nil
+	return ListAllDatabasesTables(db, databaseNames, TableTypeBase)
 }
 
 func listAllViews(db *sql.DB, databaseNames []string) (DatabaseTables, error) {
 	log.Debug("list all the views")
-	dbTables := DatabaseTables{}
-	for _, dbName := range databaseNames {
-		views, err := ListAllViews(db, dbName)
-		if err != nil {
-			return nil, err
-		}
-		dbTables = dbTables.AppendViews(dbName, views...)
-	}
-	return dbTables, nil
+	return ListAllDatabasesTables(db, databaseNames, TableTypeView)
 }
 
 type databaseName = string

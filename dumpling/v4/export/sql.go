@@ -77,6 +77,40 @@ func ListAllTables(db *sql.DB, database string) ([]string, error) {
 	return tables.data, nil
 }
 
+func ListAllDatabasesTables(db *sql.DB, databaseNames []string, tableType TableType) (DatabaseTables, error) {
+	var tableTypeStr string
+	switch tableType {
+	case TableTypeBase:
+		tableTypeStr = "BASE TABLE"
+	case TableTypeView:
+		tableTypeStr = "VIEW"
+	default:
+		return nil, errors.Errorf("unknown table type %v", tableType)
+	}
+
+	query := fmt.Sprintf("SELECT table_schema,table_name FROM information_schema.tables WHERE table_type = '%s'", tableTypeStr)
+	dbTables := DatabaseTables{}
+	for _, schema := range databaseNames {
+		dbTables[schema] = make([]*TableInfo, 0)
+	}
+
+	if err := simpleQueryWithArgs(db, func(rows *sql.Rows) error {
+		var schema, table string
+		if err := rows.Scan(&schema, &table); err != nil {
+			return withStack(err)
+		}
+
+		// only append tables to schemas in databaseNames
+		if _, ok := dbTables[schema]; ok {
+			dbTables[schema] = append(dbTables[schema], &TableInfo{table, tableType})
+		}
+		return nil
+	}, query); err != nil {
+		return nil, errors.WithMessage(err, query)
+	}
+	return dbTables, nil
+}
+
 func ListAllViews(db *sql.DB, database string) ([]string, error) {
 	var views oneStrColumnTable
 	const query = "SELECT table_name FROM information_schema.tables WHERE table_schema = ? and table_type = 'VIEW'"
@@ -426,7 +460,7 @@ func simpleQueryWithArgs(db *sql.DB, handleOneRow func(*sql.Rows) error, sql str
 			return withStack(err)
 		}
 	}
-	return nil
+	return rows.Err()
 }
 
 func pickupPossibleField(dbName, tableName string, db *sql.DB, conf *Config) (string, error) {
