@@ -444,9 +444,6 @@ type SortAndSpillDiskAction struct {
 	m              sync.Mutex
 	once           sync.Once
 
-	// sortAndSpillLock guarantee only one SortedRowContainer is spilling at the same time.
-	sortAndSpillLock sync.Mutex
-
 	// test function only used for test sync.
 	testSyncInputFunc  func()
 	testSyncOutputFunc func()
@@ -458,7 +455,7 @@ type SortAndSpillDiskAction struct {
 func (a *SortAndSpillDiskAction) Action(t *memory.Tracker) {
 	a.m.Lock()
 	defer a.m.Unlock()
-	if a.c.AlreadySpilledSafe() || a.c.GetMemTracker().BytesConsumed() == 0 {
+	if a.c.AlreadySpilledSafe() || a.c.GetMemTracker().BytesConsumed() <= t.GetBytesLimit() {
 		if !t.CheckExceed() {
 			return
 		}
@@ -478,11 +475,7 @@ func (a *SortAndSpillDiskAction) Action(t *memory.Tracker) {
 				}()
 				return
 			}
-			go func(c *SortedRowContainer) {
-				a.sortAndSpillLock.Lock()
-				defer a.sortAndSpillLock.Unlock()
-				c.sortAndSpillToDisk()
-			}(a.c)
+			go a.c.sortAndSpillToDisk()
 		})
 	}
 }
