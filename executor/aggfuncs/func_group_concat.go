@@ -87,7 +87,7 @@ type groupConcat struct {
 func (e *groupConcat) AllocPartialResult() (PartialResult, int64) {
 	p := new(partialResult4GroupConcat)
 	p.valsBuf = &bytes.Buffer{}
-	return PartialResult(p), int64(0)
+	return PartialResult(p), 0
 }
 
 func (e *groupConcat) ResetPartialResult(pr PartialResult) {
@@ -104,7 +104,7 @@ func (e *groupConcat) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 		for _, arg := range e.args {
 			v, isNull, err = arg.EvalString(sctx, row)
 			if err != nil {
-				return int64(0), err
+				return 0, err
 			}
 			if isNull {
 				break
@@ -122,23 +122,23 @@ func (e *groupConcat) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 		p.buffer.WriteString(p.valsBuf.String())
 	}
 	if p.buffer != nil {
-		return int64(0), e.truncatePartialResultIfNeed(sctx, p.buffer)
+		return 0, e.truncatePartialResultIfNeed(sctx, p.buffer)
 	}
-	return int64(0), nil
+	return 0, nil
 }
 
 func (e *groupConcat) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (int64, error) {
 	p1, p2 := (*partialResult4GroupConcat)(src), (*partialResult4GroupConcat)(dst)
 	if p1.buffer == nil {
-		return int64(0), nil
+		return 0, nil
 	}
 	if p2.buffer == nil {
 		p2.buffer = p1.buffer
-		return int64(0), nil
+		return 0, nil
 	}
 	p2.buffer.WriteString(e.sep)
 	p2.buffer.WriteString(p1.buffer.String())
-	return int64(0), e.truncatePartialResultIfNeed(sctx, p2.buffer)
+	return 0, e.truncatePartialResultIfNeed(sctx, p2.buffer)
 }
 
 // SetTruncated will be called in `executorBuilder#buildHashAgg` with duck-type.
@@ -165,7 +165,7 @@ func (e *groupConcatDistinct) AllocPartialResult() (PartialResult, int64) {
 	p := new(partialResult4GroupConcatDistinct)
 	p.valsBuf = &bytes.Buffer{}
 	p.valSet = set.NewStringSet()
-	return PartialResult(p), int64(0)
+	return PartialResult(p), 0
 }
 
 func (e *groupConcatDistinct) ResetPartialResult(pr PartialResult) {
@@ -183,7 +183,7 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		for _, arg := range e.args {
 			v, isNull, err = arg.EvalString(sctx, row)
 			if err != nil {
-				return int64(0), err
+				return 0, err
 			}
 			if isNull {
 				break
@@ -209,9 +209,9 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		p.buffer.WriteString(p.valsBuf.String())
 	}
 	if p.buffer != nil {
-		return int64(0), e.truncatePartialResultIfNeed(sctx, p.buffer)
+		return 0, e.truncatePartialResultIfNeed(sctx, p.buffer)
 	}
-	return int64(0), nil
+	return 0, nil
 }
 
 // SetTruncated will be called in `executorBuilder#buildHashAgg` with duck-type.
@@ -357,7 +357,7 @@ func (e *groupConcatOrder) AllocPartialResult() (PartialResult, int64) {
 			sepSize:   uint64(len(e.sep)),
 		},
 	}
-	return PartialResult(p), int64(0)
+	return PartialResult(p), 0
 }
 
 func (e *groupConcatOrder) ResetPartialResult(pr PartialResult) {
@@ -375,7 +375,7 @@ func (e *groupConcatOrder) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 		for _, arg := range e.args {
 			v, isNull, err = arg.EvalString(sctx, row)
 			if err != nil {
-				return int64(0), err
+				return 0, err
 			}
 			if isNull {
 				break
@@ -392,27 +392,27 @@ func (e *groupConcatOrder) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 		for _, byItem := range e.byItems {
 			d, err := byItem.Expr.Eval(row)
 			if err != nil {
-				return int64(0), err
+				return 0, err
 			}
 			sortRow.byItems = append(sortRow.byItems, d.Clone())
 		}
 		truncated := p.topN.tryToAdd(sortRow)
 		if p.topN.err != nil {
-			return int64(0), p.topN.err
+			return 0, p.topN.err
 		}
 		if truncated {
 			if err := e.handleTruncateError(sctx); err != nil {
-				return int64(0), err
+				return 0, err
 			}
 		}
 	}
-	return int64(0), nil
+	return 0, nil
 }
 
 func (e *groupConcatOrder) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (int64, error) {
 	// If order by exists, the parallel hash aggregation is forbidden in executorBuilder.buildHashAgg.
 	// So MergePartialResult will not be called.
-	return int64(0), terror.ClassOptimizer.New(mysql.ErrInternal, mysql.MySQLErrName[mysql.ErrInternal]).GenWithStack("groupConcatOrder.MergePartialResult should not be called")
+	return 0, terror.ClassOptimizer.New(mysql.ErrInternal, mysql.MySQLErrName[mysql.ErrInternal]).GenWithStack("groupConcatOrder.MergePartialResult should not be called")
 }
 
 // SetTruncated will be called in `executorBuilder#buildHashAgg` with duck-type.
@@ -459,7 +459,7 @@ func (e *groupConcatDistinctOrder) AllocPartialResult() (PartialResult, int64) {
 		},
 		valSet: set.NewStringSet(),
 	}
-	return PartialResult(p), int64(0)
+	return PartialResult(p), 0
 }
 
 func (e *groupConcatDistinctOrder) ResetPartialResult(pr PartialResult) {
@@ -479,7 +479,7 @@ func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx sessionctx.Context, 
 		for _, arg := range e.args {
 			v, isNull, err = arg.EvalString(sctx, row)
 			if err != nil {
-				return int64(0), err
+				return 0, err
 			}
 			if isNull {
 				break
@@ -502,25 +502,25 @@ func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx sessionctx.Context, 
 		for _, byItem := range e.byItems {
 			d, err := byItem.Expr.Eval(row)
 			if err != nil {
-				return int64(0), err
+				return 0, err
 			}
 			sortRow.byItems = append(sortRow.byItems, d.Clone())
 		}
 		truncated := p.topN.tryToAdd(sortRow)
 		if p.topN.err != nil {
-			return int64(0), p.topN.err
+			return 0, p.topN.err
 		}
 		if truncated {
 			if err := e.handleTruncateError(sctx); err != nil {
-				return int64(0), err
+				return 0, err
 			}
 		}
 	}
-	return int64(0), nil
+	return 0, nil
 }
 
 func (e *groupConcatDistinctOrder) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (int64, error) {
 	// If order by exists, the parallel hash aggregation is forbidden in executorBuilder.buildHashAgg.
 	// So MergePartialResult will not be called.
-	return int64(0), terror.ClassOptimizer.New(mysql.ErrInternal, mysql.MySQLErrName[mysql.ErrInternal]).GenWithStack("groupConcatDistinctOrder.MergePartialResult should not be called")
+	return 0, terror.ClassOptimizer.New(mysql.ErrInternal, mysql.MySQLErrName[mysql.ErrInternal]).GenWithStack("groupConcatDistinctOrder.MergePartialResult should not be called")
 }

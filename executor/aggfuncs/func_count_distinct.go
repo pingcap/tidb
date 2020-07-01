@@ -43,7 +43,7 @@ type countOriginalWithDistinct4Int struct {
 func (e *countOriginalWithDistinct4Int) AllocPartialResult() (PartialResult, int64) {
 	return PartialResult(&partialResult4CountDistinctInt{
 		valSet: set.NewInt64Set(),
-	}), int64(0)
+	}), 0
 }
 
 func (e *countOriginalWithDistinct4Int) ResetPartialResult(pr PartialResult) {
@@ -63,7 +63,7 @@ func (e *countOriginalWithDistinct4Int) UpdatePartialResult(sctx sessionctx.Cont
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalInt(sctx, row)
 		if err != nil {
-			return int64(0), err
+			return 0, err
 		}
 		if isNull {
 			continue
@@ -74,7 +74,7 @@ func (e *countOriginalWithDistinct4Int) UpdatePartialResult(sctx sessionctx.Cont
 		p.valSet.Insert(input)
 	}
 
-	return int64(0), nil
+	return 0, nil
 }
 
 type partialResult4CountDistinctReal struct {
@@ -88,7 +88,7 @@ type countOriginalWithDistinct4Real struct {
 func (e *countOriginalWithDistinct4Real) AllocPartialResult() (PartialResult, int64) {
 	return PartialResult(&partialResult4CountDistinctReal{
 		valSet: set.NewFloat64Set(),
-	}), int64(0)
+	}), 0
 }
 
 func (e *countOriginalWithDistinct4Real) ResetPartialResult(pr PartialResult) {
@@ -108,7 +108,7 @@ func (e *countOriginalWithDistinct4Real) UpdatePartialResult(sctx sessionctx.Con
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalReal(sctx, row)
 		if err != nil {
-			return int64(0), err
+			return 0, err
 		}
 		if isNull {
 			continue
@@ -119,7 +119,7 @@ func (e *countOriginalWithDistinct4Real) UpdatePartialResult(sctx sessionctx.Con
 		p.valSet.Insert(input)
 	}
 
-	return int64(0), nil
+	return 0, nil
 }
 
 type partialResult4CountDistinctDecimal struct {
@@ -133,7 +133,7 @@ type countOriginalWithDistinct4Decimal struct {
 func (e *countOriginalWithDistinct4Decimal) AllocPartialResult() (PartialResult, int64) {
 	return PartialResult(&partialResult4CountDistinctDecimal{
 		valSet: set.NewStringSet(),
-	}), int64(0)
+	}), 0
 }
 
 func (e *countOriginalWithDistinct4Decimal) ResetPartialResult(pr PartialResult) {
@@ -153,14 +153,14 @@ func (e *countOriginalWithDistinct4Decimal) UpdatePartialResult(sctx sessionctx.
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
 		if err != nil {
-			return int64(0), err
+			return 0, err
 		}
 		if isNull {
 			continue
 		}
 		hash, err := input.ToHashKey()
 		if err != nil {
-			return int64(0), err
+			return 0, err
 		}
 		decStr := string(hack.String(hash))
 		if p.valSet.Exist(decStr) {
@@ -169,7 +169,7 @@ func (e *countOriginalWithDistinct4Decimal) UpdatePartialResult(sctx sessionctx.
 		p.valSet.Insert(decStr)
 	}
 
-	return int64(0), nil
+	return 0, nil
 }
 
 type partialResult4CountDistinctDuration struct {
@@ -183,7 +183,7 @@ type countOriginalWithDistinct4Duration struct {
 func (e *countOriginalWithDistinct4Duration) AllocPartialResult() (PartialResult, int64) {
 	return PartialResult(&partialResult4CountDistinctDuration{
 		valSet: set.NewInt64Set(),
-	}), int64(0)
+	}), 0
 }
 
 func (e *countOriginalWithDistinct4Duration) ResetPartialResult(pr PartialResult) {
@@ -203,7 +203,7 @@ func (e *countOriginalWithDistinct4Duration) UpdatePartialResult(sctx sessionctx
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalDuration(sctx, row)
 		if err != nil {
-			return int64(0), err
+			return 0, err
 		}
 		if isNull {
 			continue
@@ -215,7 +215,7 @@ func (e *countOriginalWithDistinct4Duration) UpdatePartialResult(sctx sessionctx
 		p.valSet.Insert(int64(input.Duration))
 	}
 
-	return int64(0), nil
+	return 0, nil
 }
 
 type partialResult4CountDistinctString struct {
@@ -229,7 +229,7 @@ type countOriginalWithDistinct4String struct {
 func (e *countOriginalWithDistinct4String) AllocPartialResult() (PartialResult, int64) {
 	return PartialResult(&partialResult4CountDistinctString{
 		valSet: set.NewStringSet(),
-	}), int64(0)
+	}), 0
 }
 
 func (e *countOriginalWithDistinct4String) ResetPartialResult(pr PartialResult) {
@@ -250,7 +250,7 @@ func (e *countOriginalWithDistinct4String) UpdatePartialResult(sctx sessionctx.C
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalString(sctx, row)
 		if err != nil {
-			return int64(0), err
+			return 0, err
 		}
 		if isNull {
 			continue
@@ -264,7 +264,7 @@ func (e *countOriginalWithDistinct4String) UpdatePartialResult(sctx sessionctx.C
 		p.valSet.Insert(input)
 	}
 
-	return int64(0), nil
+	return 0, nil
 }
 
 type countOriginalWithDistinct struct {
@@ -278,7 +278,7 @@ type partialResult4CountWithDistinct struct {
 func (e *countOriginalWithDistinct) AllocPartialResult() (PartialResult, int64) {
 	return PartialResult(&partialResult4CountWithDistinct{
 		valSet: set.NewStringSet(),
-	}), int64(0)
+	}), 0
 }
 
 func (e *countOriginalWithDistinct) ResetPartialResult(pr PartialResult) {
@@ -307,7 +307,7 @@ func (e *countOriginalWithDistinct) UpdatePartialResult(sctx sessionctx.Context,
 		for i := 0; i < len(e.args) && !hasNull; i++ {
 			encodedBytes, isNull, err = evalAndEncode(sctx, e.args[i], row, buf, encodedBytes)
 			if err != nil {
-				return int64(0), err
+				return 0, err
 			}
 			if isNull {
 				hasNull = true
@@ -321,7 +321,7 @@ func (e *countOriginalWithDistinct) UpdatePartialResult(sctx sessionctx.Context,
 		p.valSet.Insert(encodedString)
 	}
 
-	return int64(0), nil
+	return 0, nil
 }
 
 // evalAndEncode eval one row with an expression and encode value to bytes.
@@ -731,7 +731,7 @@ func (e *baseApproxCountDistinct) AppendFinalResult2Chunk(sctx sessionctx.Contex
 }
 
 func (e *baseApproxCountDistinct) AllocPartialResult() (PartialResult, int64) {
-	return (PartialResult)(NewPartialResult4ApproxCountDistinct()), int64(0)
+	return (PartialResult)(NewPartialResult4ApproxCountDistinct()), 0
 }
 
 func (e *baseApproxCountDistinct) ResetPartialResult(pr PartialResult) {
@@ -742,7 +742,7 @@ func (e *baseApproxCountDistinct) ResetPartialResult(pr PartialResult) {
 func (e *baseApproxCountDistinct) MergePartialResult(sctx sessionctx.Context, src PartialResult, dst PartialResult) (int64, error) {
 	p1, p2 := (*partialResult4ApproxCountDistinct)(src), (*partialResult4ApproxCountDistinct)(dst)
 	p2.merge(p1)
-	return int64(0), nil
+	return 0, nil
 }
 
 type approxCountDistinctOriginal struct {
@@ -763,7 +763,7 @@ func (e *approxCountDistinctOriginal) UpdatePartialResult(sctx sessionctx.Contex
 		for i := 0; i < len(e.args) && !hasNull; i++ {
 			encodedBytes, isNull, err = evalAndEncode(sctx, e.args[i], row, buf, encodedBytes)
 			if err != nil {
-				return int64(0), err
+				return 0, err
 			}
 			if isNull {
 				hasNull = true
@@ -778,7 +778,7 @@ func (e *approxCountDistinctOriginal) UpdatePartialResult(sctx sessionctx.Contex
 		p.InsertHash64(x)
 	}
 
-	return int64(0), nil
+	return 0, nil
 }
 
 type approxCountDistinctPartial1 struct {
@@ -800,7 +800,7 @@ func (e *approxCountDistinctPartial2) UpdatePartialResult(sctx sessionctx.Contex
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalString(sctx, row)
 		if err != nil {
-			return int64(0), err
+			return 0, err
 		}
 
 		if isNull {
@@ -809,10 +809,10 @@ func (e *approxCountDistinctPartial2) UpdatePartialResult(sctx sessionctx.Contex
 
 		err = p.readAndMerge(hack.Slice(input))
 		if err != nil {
-			return int64(0), err
+			return 0, err
 		}
 	}
-	return int64(0), nil
+	return 0, nil
 }
 
 type approxCountDistinctFinal struct {

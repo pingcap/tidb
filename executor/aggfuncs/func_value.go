@@ -227,7 +227,7 @@ type partialResult4FirstValue struct {
 }
 
 func (v *firstValue) AllocPartialResult() (PartialResult, int64) {
-	return PartialResult(&partialResult4FirstValue{evaluator: buildValueEvaluator(v.tp)}), int64(0)
+	return PartialResult(&partialResult4FirstValue{evaluator: buildValueEvaluator(v.tp)}), 0
 }
 
 func (v *firstValue) ResetPartialResult(pr PartialResult) {
@@ -238,16 +238,16 @@ func (v *firstValue) ResetPartialResult(pr PartialResult) {
 func (v *firstValue) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int64, error) {
 	p := (*partialResult4FirstValue)(pr)
 	if p.gotFirstValue {
-		return int64(0), nil
+		return 0, nil
 	}
 	if len(rowsInGroup) > 0 {
 		p.gotFirstValue = true
 		err := p.evaluator.evaluateRow(sctx, v.args[0], rowsInGroup[0])
 		if err != nil {
-			return int64(0), err
+			return 0, err
 		}
 	}
-	return int64(0), nil
+	return 0, nil
 }
 
 func (v *firstValue) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -272,7 +272,7 @@ type partialResult4LastValue struct {
 }
 
 func (v *lastValue) AllocPartialResult() (PartialResult, int64) {
-	return PartialResult(&partialResult4LastValue{evaluator: buildValueEvaluator(v.tp)}), int64(0)
+	return PartialResult(&partialResult4LastValue{evaluator: buildValueEvaluator(v.tp)}), 0
 }
 
 func (v *lastValue) ResetPartialResult(pr PartialResult) {
@@ -286,10 +286,10 @@ func (v *lastValue) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []c
 		p.gotLastValue = true
 		err := p.evaluator.evaluateRow(sctx, v.args[0], rowsInGroup[len(rowsInGroup)-1])
 		if err != nil {
-			return int64(0), err
+			return 0, err
 		}
 	}
-	return int64(0), nil
+	return 0, nil
 }
 
 func (v *lastValue) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -315,7 +315,7 @@ type partialResult4NthValue struct {
 }
 
 func (v *nthValue) AllocPartialResult() (PartialResult, int64) {
-	return PartialResult(&partialResult4NthValue{evaluator: buildValueEvaluator(v.tp)}), int64(0)
+	return PartialResult(&partialResult4NthValue{evaluator: buildValueEvaluator(v.tp)}), 0
 }
 
 func (v *nthValue) ResetPartialResult(pr PartialResult) {
@@ -325,18 +325,18 @@ func (v *nthValue) ResetPartialResult(pr PartialResult) {
 
 func (v *nthValue) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int64, error) {
 	if v.nth == 0 {
-		return int64(0), nil
+		return 0, nil
 	}
 	p := (*partialResult4NthValue)(pr)
 	numRows := uint64(len(rowsInGroup))
 	if v.nth > p.seenRows && v.nth-p.seenRows <= numRows {
 		err := p.evaluator.evaluateRow(sctx, v.args[0], rowsInGroup[v.nth-p.seenRows-1])
 		if err != nil {
-			return int64(0), err
+			return 0, err
 		}
 	}
 	p.seenRows += numRows
-	return int64(0), nil
+	return 0, nil
 }
 
 func (v *nthValue) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {

@@ -35,7 +35,7 @@ type partialResult4VarPopFloat64 struct {
 }
 
 func (e *varPop4Float64) AllocPartialResult() (PartialResult, int64) {
-	return PartialResult(&partialResult4VarPopFloat64{}), int64(0)
+	return PartialResult(&partialResult4VarPopFloat64{}), 0
 }
 
 func (e *varPop4Float64) ResetPartialResult(pr PartialResult) {
@@ -67,7 +67,7 @@ func (e *varPop4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGrou
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalReal(sctx, row)
 		if err != nil {
-			return int64(0), errors.Trace(err)
+			return 0, errors.Trace(err)
 		}
 		if isNull {
 			continue
@@ -78,7 +78,7 @@ func (e *varPop4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGrou
 			p.variance = calculateIntermediate(p.count, p.sum, input, p.variance)
 		}
 	}
-	return int64(0), nil
+	return 0, nil
 }
 
 func calculateMerge(srcCount, dstCount int64, srcSum, dstSum, srcVariance, dstVariance float64) float64 {
@@ -93,20 +93,20 @@ func calculateMerge(srcCount, dstCount int64, srcSum, dstSum, srcVariance, dstVa
 func (e *varPop4Float64) MergePartialResult(sctx sessionctx.Context, src PartialResult, dst PartialResult) (int64, error) {
 	p1, p2 := (*partialResult4VarPopFloat64)(src), (*partialResult4VarPopFloat64)(dst)
 	if p1.count == 0 {
-		return int64(0), nil
+		return 0, nil
 	}
 	if p2.count == 0 {
 		p2.count = p1.count
 		p2.sum = p1.sum
 		p2.variance = p1.variance
-		return int64(0), nil
+		return 0, nil
 	}
 	if p2.count != 0 && p1.count != 0 {
 		p2.variance = calculateMerge(p1.count, p2.count, p1.sum, p2.sum, p1.variance, p2.variance)
 		p2.count += p1.count
 		p2.sum += p1.sum
 	}
-	return int64(0), nil
+	return 0, nil
 }
 
 type varPop4DistinctFloat64 struct {
@@ -126,7 +126,7 @@ func (e *varPop4DistinctFloat64) AllocPartialResult() (PartialResult, int64) {
 	p.sum = 0
 	p.variance = 0
 	p.valSet = set.NewFloat64Set()
-	return PartialResult(p), int64(0)
+	return PartialResult(p), 0
 }
 
 func (e *varPop4DistinctFloat64) ResetPartialResult(pr PartialResult) {
@@ -153,7 +153,7 @@ func (e *varPop4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, ro
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalReal(sctx, row)
 		if err != nil {
-			return int64(0), errors.Trace(err)
+			return 0, errors.Trace(err)
 		}
 		if isNull || p.valSet.Exist(input) {
 			continue
@@ -165,5 +165,5 @@ func (e *varPop4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, ro
 			p.variance = calculateIntermediate(p.count, p.sum, input, p.variance)
 		}
 	}
-	return int64(0), nil
+	return 0, nil
 }

@@ -94,7 +94,7 @@ type firstRow4Int struct {
 }
 
 func (e *firstRow4Int) AllocPartialResult() (PartialResult, int64) {
-	return PartialResult(new(partialResult4FirstRowInt)), int64(0)
+	return PartialResult(new(partialResult4FirstRowInt)), 0
 }
 
 func (e *firstRow4Int) ResetPartialResult(pr PartialResult) {
@@ -105,16 +105,16 @@ func (e *firstRow4Int) ResetPartialResult(pr PartialResult) {
 func (e *firstRow4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int64, error) {
 	p := (*partialResult4FirstRowInt)(pr)
 	if p.gotFirstRow {
-		return int64(0), nil
+		return 0, nil
 	}
 	if len(rowsInGroup) > 0 {
 		input, isNull, err := e.args[0].EvalInt(sctx, rowsInGroup[0])
 		if err != nil {
-			return int64(0), err
+			return 0, err
 		}
 		p.gotFirstRow, p.isNull, p.val = true, isNull, input
 	}
-	return int64(0), nil
+	return 0, nil
 }
 
 func (*firstRow4Int) MergePartialResult(sctx sessionctx.Context, src PartialResult, dst PartialResult) (int64, error) {
@@ -122,7 +122,7 @@ func (*firstRow4Int) MergePartialResult(sctx sessionctx.Context, src PartialResu
 	if !p2.gotFirstRow {
 		*p2 = *p1
 	}
-	return int64(0), nil
+	return 0, nil
 }
 
 func (e *firstRow4Int) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -140,7 +140,7 @@ type firstRow4Float32 struct {
 }
 
 func (e *firstRow4Float32) AllocPartialResult() (PartialResult, int64) {
-	return PartialResult(new(partialResult4FirstRowFloat32)), int64(0)
+	return PartialResult(new(partialResult4FirstRowFloat32)), 0
 }
 
 func (e *firstRow4Float32) ResetPartialResult(pr PartialResult) {
@@ -151,16 +151,16 @@ func (e *firstRow4Float32) ResetPartialResult(pr PartialResult) {
 func (e *firstRow4Float32) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int64, error) {
 	p := (*partialResult4FirstRowFloat32)(pr)
 	if p.gotFirstRow {
-		return int64(0), nil
+		return 0, nil
 	}
 	if len(rowsInGroup) > 0 {
 		input, isNull, err := e.args[0].EvalReal(sctx, rowsInGroup[0])
 		if err != nil {
-			return int64(0), err
+			return 0, err
 		}
 		p.gotFirstRow, p.isNull, p.val = true, isNull, float32(input)
 	}
-	return int64(0), nil
+	return 0, nil
 }
 
 func (*firstRow4Float32) MergePartialResult(sctx sessionctx.Context, src PartialResult, dst PartialResult) (int64, error) {
@@ -168,7 +168,7 @@ func (*firstRow4Float32) MergePartialResult(sctx sessionctx.Context, src Partial
 	if !p2.gotFirstRow {
 		*p2 = *p1
 	}
-	return int64(0), nil
+	return 0, nil
 }
 
 func (e *firstRow4Float32) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -186,7 +186,7 @@ type firstRow4Float64 struct {
 }
 
 func (e *firstRow4Float64) AllocPartialResult() (PartialResult, int64) {
-	return PartialResult(new(partialResult4FirstRowFloat64)), int64(0)
+	return PartialResult(new(partialResult4FirstRowFloat64)), 0
 }
 
 func (e *firstRow4Float64) ResetPartialResult(pr PartialResult) {
@@ -197,16 +197,16 @@ func (e *firstRow4Float64) ResetPartialResult(pr PartialResult) {
 func (e *firstRow4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int64, error) {
 	p := (*partialResult4FirstRowFloat64)(pr)
 	if p.gotFirstRow {
-		return int64(0), nil
+		return 0, nil
 	}
 	if len(rowsInGroup) > 0 {
 		input, isNull, err := e.args[0].EvalReal(sctx, rowsInGroup[0])
 		if err != nil {
-			return int64(0), err
+			return 0, err
 		}
 		p.gotFirstRow, p.isNull, p.val = true, isNull, input
 	}
-	return int64(0), nil
+	return 0, nil
 }
 
 func (*firstRow4Float64) MergePartialResult(sctx sessionctx.Context, src PartialResult, dst PartialResult) (int64, error) {
@@ -214,7 +214,7 @@ func (*firstRow4Float64) MergePartialResult(sctx sessionctx.Context, src Partial
 	if !p2.gotFirstRow {
 		*p2 = *p1
 	}
-	return int64(0), nil
+	return 0, nil
 }
 
 func (e *firstRow4Float64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -232,7 +232,7 @@ type firstRow4String struct {
 }
 
 func (e *firstRow4String) AllocPartialResult() (PartialResult, int64) {
-	return PartialResult(new(partialResult4FirstRowString)), int64(0)
+	return PartialResult(new(partialResult4FirstRowString)), 0
 }
 
 func (e *firstRow4String) ResetPartialResult(pr PartialResult) {
@@ -243,16 +243,16 @@ func (e *firstRow4String) ResetPartialResult(pr PartialResult) {
 func (e *firstRow4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int64, error) {
 	p := (*partialResult4FirstRowString)(pr)
 	if p.gotFirstRow {
-		return int64(0), nil
+		return 0, nil
 	}
 	if len(rowsInGroup) > 0 {
 		input, isNull, err := e.args[0].EvalString(sctx, rowsInGroup[0])
 		if err != nil {
-			return int64(0), err
+			return 0, err
 		}
 		p.gotFirstRow, p.isNull, p.val = true, isNull, stringutil.Copy(input)
 	}
-	return int64(0), nil
+	return 0, nil
 }
 
 func (*firstRow4String) MergePartialResult(sctx sessionctx.Context, src PartialResult, dst PartialResult) (int64, error) {
@@ -260,7 +260,7 @@ func (*firstRow4String) MergePartialResult(sctx sessionctx.Context, src PartialR
 	if !p2.gotFirstRow {
 		*p2 = *p1
 	}
-	return int64(0), nil
+	return 0, nil
 }
 
 func (e *firstRow4String) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -278,7 +278,7 @@ type firstRow4Time struct {
 }
 
 func (e *firstRow4Time) AllocPartialResult() (PartialResult, int64) {
-	return PartialResult(new(partialResult4FirstRowTime)), int64(0)
+	return PartialResult(new(partialResult4FirstRowTime)), 0
 }
 
 func (e *firstRow4Time) ResetPartialResult(pr PartialResult) {
@@ -289,16 +289,16 @@ func (e *firstRow4Time) ResetPartialResult(pr PartialResult) {
 func (e *firstRow4Time) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int64, error) {
 	p := (*partialResult4FirstRowTime)(pr)
 	if p.gotFirstRow {
-		return int64(0), nil
+		return 0, nil
 	}
 	if len(rowsInGroup) > 0 {
 		input, isNull, err := e.args[0].EvalTime(sctx, rowsInGroup[0])
 		if err != nil {
-			return int64(0), err
+			return 0, err
 		}
 		p.gotFirstRow, p.isNull, p.val = true, isNull, input
 	}
-	return int64(0), nil
+	return 0, nil
 }
 
 func (*firstRow4Time) MergePartialResult(sctx sessionctx.Context, src PartialResult, dst PartialResult) (int64, error) {
@@ -306,7 +306,7 @@ func (*firstRow4Time) MergePartialResult(sctx sessionctx.Context, src PartialRes
 	if !p2.gotFirstRow {
 		*p2 = *p1
 	}
-	return int64(0), nil
+	return 0, nil
 }
 
 func (e *firstRow4Time) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -324,7 +324,7 @@ type firstRow4Duration struct {
 }
 
 func (e *firstRow4Duration) AllocPartialResult() (PartialResult, int64) {
-	return PartialResult(new(partialResult4FirstRowDuration)), int64(0)
+	return PartialResult(new(partialResult4FirstRowDuration)), 0
 }
 
 func (e *firstRow4Duration) ResetPartialResult(pr PartialResult) {
@@ -335,16 +335,16 @@ func (e *firstRow4Duration) ResetPartialResult(pr PartialResult) {
 func (e *firstRow4Duration) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int64, error) {
 	p := (*partialResult4FirstRowDuration)(pr)
 	if p.gotFirstRow {
-		return int64(0), nil
+		return 0, nil
 	}
 	if len(rowsInGroup) > 0 {
 		input, isNull, err := e.args[0].EvalDuration(sctx, rowsInGroup[0])
 		if err != nil {
-			return int64(0), err
+			return 0, err
 		}
 		p.gotFirstRow, p.isNull, p.val = true, isNull, input
 	}
-	return int64(0), nil
+	return 0, nil
 }
 
 func (*firstRow4Duration) MergePartialResult(sctx sessionctx.Context, src PartialResult, dst PartialResult) (int64, error) {
@@ -352,7 +352,7 @@ func (*firstRow4Duration) MergePartialResult(sctx sessionctx.Context, src Partia
 	if !p2.gotFirstRow {
 		*p2 = *p1
 	}
-	return int64(0), nil
+	return 0, nil
 }
 
 func (e *firstRow4Duration) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -370,7 +370,7 @@ type firstRow4JSON struct {
 }
 
 func (e *firstRow4JSON) AllocPartialResult() (PartialResult, int64) {
-	return PartialResult(new(partialResult4FirstRowJSON)), int64(0)
+	return PartialResult(new(partialResult4FirstRowJSON)), 0
 }
 
 func (e *firstRow4JSON) ResetPartialResult(pr PartialResult) {
@@ -381,23 +381,23 @@ func (e *firstRow4JSON) ResetPartialResult(pr PartialResult) {
 func (e *firstRow4JSON) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int64, error) {
 	p := (*partialResult4FirstRowJSON)(pr)
 	if p.gotFirstRow {
-		return int64(0), nil
+		return 0, nil
 	}
 	if len(rowsInGroup) > 0 {
 		input, isNull, err := e.args[0].EvalJSON(sctx, rowsInGroup[0])
 		if err != nil {
-			return int64(0), err
+			return 0, err
 		}
 		p.gotFirstRow, p.isNull, p.val = true, isNull, input.Copy()
 	}
-	return int64(0), nil
+	return 0, nil
 }
 func (*firstRow4JSON) MergePartialResult(sctx sessionctx.Context, src PartialResult, dst PartialResult) (int64, error) {
 	p1, p2 := (*partialResult4FirstRowJSON)(src), (*partialResult4FirstRowJSON)(dst)
 	if !p2.gotFirstRow {
 		*p2 = *p1
 	}
-	return int64(0), nil
+	return 0, nil
 }
 
 func (e *firstRow4JSON) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -415,7 +415,7 @@ type firstRow4Decimal struct {
 }
 
 func (e *firstRow4Decimal) AllocPartialResult() (PartialResult, int64) {
-	return PartialResult(new(partialResult4FirstRowDecimal)), int64(0)
+	return PartialResult(new(partialResult4FirstRowDecimal)), 0
 }
 
 func (e *firstRow4Decimal) ResetPartialResult(pr PartialResult) {
@@ -426,19 +426,19 @@ func (e *firstRow4Decimal) ResetPartialResult(pr PartialResult) {
 func (e *firstRow4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int64, error) {
 	p := (*partialResult4FirstRowDecimal)(pr)
 	if p.gotFirstRow {
-		return int64(0), nil
+		return 0, nil
 	}
 	if len(rowsInGroup) > 0 {
 		input, isNull, err := e.args[0].EvalDecimal(sctx, rowsInGroup[0])
 		if err != nil {
-			return int64(0), err
+			return 0, err
 		}
 		p.gotFirstRow, p.isNull = true, isNull
 		if input != nil {
 			p.val = *input
 		}
 	}
-	return int64(0), nil
+	return 0, nil
 }
 
 func (e *firstRow4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -456,7 +456,7 @@ func (*firstRow4Decimal) MergePartialResult(sctx sessionctx.Context, src Partial
 	if !p2.gotFirstRow {
 		*p2 = *p1
 	}
-	return int64(0), nil
+	return 0, nil
 }
 
 type firstRow4Enum struct {
@@ -464,7 +464,7 @@ type firstRow4Enum struct {
 }
 
 func (e *firstRow4Enum) AllocPartialResult() (PartialResult, int64) {
-	return PartialResult(new(partialResult4FirstRowEnum)), int64(0)
+	return PartialResult(new(partialResult4FirstRowEnum)), 0
 }
 
 func (e *firstRow4Enum) ResetPartialResult(pr PartialResult) {
@@ -475,17 +475,17 @@ func (e *firstRow4Enum) ResetPartialResult(pr PartialResult) {
 func (e *firstRow4Enum) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int64, error) {
 	p := (*partialResult4FirstRowEnum)(pr)
 	if p.gotFirstRow {
-		return int64(0), nil
+		return 0, nil
 	}
 	for _, row := range rowsInGroup {
 		d, err := e.args[0].Eval(row)
 		if err != nil {
-			return int64(0), err
+			return 0, err
 		}
 		p.gotFirstRow, p.isNull, p.val = true, d.IsNull(), d.GetMysqlEnum().Copy()
 		break
 	}
-	return int64(0), nil
+	return 0, nil
 }
 
 func (*firstRow4Enum) MergePartialResult(sctx sessionctx.Context, src PartialResult, dst PartialResult) (int64, error) {
@@ -493,7 +493,7 @@ func (*firstRow4Enum) MergePartialResult(sctx sessionctx.Context, src PartialRes
 	if !p2.gotFirstRow {
 		*p2 = *p1
 	}
-	return int64(0), nil
+	return 0, nil
 }
 
 func (e *firstRow4Enum) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -511,7 +511,7 @@ type firstRow4Set struct {
 }
 
 func (e *firstRow4Set) AllocPartialResult() (PartialResult, int64) {
-	return PartialResult(new(partialResult4FirstRowSet)), int64(0)
+	return PartialResult(new(partialResult4FirstRowSet)), 0
 }
 
 func (e *firstRow4Set) ResetPartialResult(pr PartialResult) {
@@ -522,17 +522,17 @@ func (e *firstRow4Set) ResetPartialResult(pr PartialResult) {
 func (e *firstRow4Set) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int64, error) {
 	p := (*partialResult4FirstRowSet)(pr)
 	if p.gotFirstRow {
-		return int64(0), nil
+		return 0, nil
 	}
 	for _, row := range rowsInGroup {
 		d, err := e.args[0].Eval(row)
 		if err != nil {
-			return int64(0), err
+			return 0, err
 		}
 		p.gotFirstRow, p.isNull, p.val = true, d.IsNull(), d.GetMysqlSet().Copy()
 		break
 	}
-	return int64(0), nil
+	return 0, nil
 }
 
 func (*firstRow4Set) MergePartialResult(sctx sessionctx.Context, src PartialResult, dst PartialResult) (int64, error) {
@@ -540,7 +540,7 @@ func (*firstRow4Set) MergePartialResult(sctx sessionctx.Context, src PartialResu
 	if !p2.gotFirstRow {
 		*p2 = *p1
 	}
-	return int64(0), nil
+	return 0, nil
 }
 
 func (e *firstRow4Set) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {

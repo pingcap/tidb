@@ -30,7 +30,7 @@ type partialResult4CumeDist struct {
 }
 
 func (r *cumeDist) AllocPartialResult() (PartialResult, int64) {
-	return PartialResult(&partialResult4CumeDist{}), int64(0)
+	return PartialResult(&partialResult4CumeDist{}), 0
 }
 
 func (r *cumeDist) ResetPartialResult(pr PartialResult) {
@@ -43,7 +43,7 @@ func (r *cumeDist) ResetPartialResult(pr PartialResult) {
 func (r *cumeDist) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int64, error) {
 	p := (*partialResult4CumeDist)(pr)
 	p.rows = append(p.rows, rowsInGroup...)
-	return int64(0), nil
+	return 0, nil
 }
 
 func (r *cumeDist) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {

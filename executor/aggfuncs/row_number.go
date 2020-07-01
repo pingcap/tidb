@@ -27,7 +27,7 @@ type partialResult4RowNumber struct {
 }
 
 func (rn *rowNumber) AllocPartialResult() (PartialResult, int64) {
-	return PartialResult(&partialResult4RowNumber{}), int64(0)
+	return PartialResult(&partialResult4RowNumber{}), 0
 }
 
 func (rn *rowNumber) ResetPartialResult(pr PartialResult) {
@@ -36,7 +36,7 @@ func (rn *rowNumber) ResetPartialResult(pr PartialResult) {
 }
 
 func (rn *rowNumber) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int64, error) {
-	return int64(0), nil
+	return 0, nil
 }
 
 func (rn *rowNumber) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {

@@ -33,7 +33,7 @@ type partialResult4LeadLag struct {
 }
 
 func (v *baseLeadLag) AllocPartialResult() (PartialResult, int64) {
-	return PartialResult(&partialResult4LeadLag{}), int64(0)
+	return PartialResult(&partialResult4LeadLag{}), 0
 }
 
 func (v *baseLeadLag) ResetPartialResult(pr PartialResult) {
@@ -45,7 +45,7 @@ func (v *baseLeadLag) ResetPartialResult(pr PartialResult) {
 func (v *baseLeadLag) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int64, error) {
 	p := (*partialResult4LeadLag)(pr)
 	p.rows = append(p.rows, rowsInGroup...)
-	return int64(0), nil
+	return 0, nil
 }
 
 type lead struct {

@@ -27,7 +27,7 @@ type baseBitAggFunc struct {
 type partialResult4BitFunc = uint64
 
 func (e *baseBitAggFunc) AllocPartialResult() (PartialResult, int64) {
-	return PartialResult(new(partialResult4BitFunc)), int64(0)
+	return PartialResult(new(partialResult4BitFunc)), 0
 }
 
 func (e *baseBitAggFunc) ResetPartialResult(pr PartialResult) {
@@ -50,20 +50,20 @@ func (e *bitOrUint64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 	for _, row := range rowsInGroup {
 		inputValue, isNull, err := e.args[0].EvalInt(sctx, row)
 		if err != nil {
-			return int64(0), err
+			return 0, err
 		}
 		if isNull {
 			continue
 		}
 		*p |= uint64(inputValue)
 	}
-	return int64(0), nil
+	return 0, nil
 }
 
 func (*bitOrUint64) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (int64, error) {
 	p1, p2 := (*partialResult4BitFunc)(src), (*partialResult4BitFunc)(dst)
 	*p2 |= *p1
-	return int64(0), nil
+	return 0, nil
 }
 
 type bitXorUint64 struct {
@@ -75,14 +75,14 @@ func (e *bitXorUint64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup 
 	for _, row := range rowsInGroup {
 		inputValue, isNull, err := e.args[0].EvalInt(sctx, row)
 		if err != nil {
-			return int64(0), err
+			return 0, err
 		}
 		if isNull {
 			continue
 		}
 		*p ^= uint64(inputValue)
 	}
-	return int64(0), nil
+	return 0, nil
 }
 
 func (e *bitXorUint64) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
@@ -113,7 +113,7 @@ func (e *bitXorUint64) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStar
 func (*bitXorUint64) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (int64, error) {
 	p1, p2 := (*partialResult4BitFunc)(src), (*partialResult4BitFunc)(dst)
 	*p2 ^= *p1
-	return int64(0), nil
+	return 0, nil
 }
 
 type bitAndUint64 struct {
@@ -123,7 +123,7 @@ type bitAndUint64 struct {
 func (e *bitAndUint64) AllocPartialResult() (PartialResult, int64) {
 	p := new(partialResult4BitFunc)
 	*p = math.MaxUint64
-	return PartialResult(p), int64(0)
+	return PartialResult(p), 0
 }
 
 func (e *bitAndUint64) ResetPartialResult(pr PartialResult) {
@@ -136,18 +136,18 @@ func (e *bitAndUint64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup 
 	for _, row := range rowsInGroup {
 		inputValue, isNull, err := e.args[0].EvalInt(sctx, row)
 		if err != nil {
-			return int64(0), err
+			return 0, err
 		}
 		if isNull {
 			continue
 		}
 		*p &= uint64(inputValue)
 	}
-	return int64(0), nil
+	return 0, nil
 }
 
 func (*bitAndUint64) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (int64, error) {
 	p1, p2 := (*partialResult4BitFunc)(src), (*partialResult4BitFunc)(dst)
 	*p2 &= *p1
-	return int64(0), nil
+	return 0, nil
 }

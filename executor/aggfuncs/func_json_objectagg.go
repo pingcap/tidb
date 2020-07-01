@@ -33,7 +33,7 @@ type partialResult4JsonObjectAgg struct {
 func (e *jsonObjectAgg) AllocPartialResult() (PartialResult, int64) {
 	p := partialResult4JsonObjectAgg{}
 	p.entries = make(map[string]interface{})
-	return PartialResult(&p), int64(0)
+	return PartialResult(&p), 0
 }
 
 func (e *jsonObjectAgg) ResetPartialResult(pr PartialResult) {
@@ -75,22 +75,22 @@ func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 	for _, row := range rowsInGroup {
 		key, err := e.args[0].Eval(row)
 		if err != nil {
-			return int64(0), errors.Trace(err)
+			return 0, errors.Trace(err)
 		}
 
 		value, err := e.args[1].Eval(row)
 		if err != nil {
-			return int64(0), errors.Trace(err)
+			return 0, errors.Trace(err)
 		}
 
 		if key.IsNull() {
-			return int64(0), json.ErrJSONDocumentNULLKey
+			return 0, json.ErrJSONDocumentNULLKey
 		}
 
 		// the result json's key is string, so it needs to convert the first arg to string
 		keyString, err := key.ToString()
 		if err != nil {
-			return int64(0), errors.Trace(err)
+			return 0, errors.Trace(err)
 		}
 		keyString = stringutil.Copy(keyString)
 
@@ -99,10 +99,10 @@ func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 		case nil, bool, int64, uint64, float64, string, json.BinaryJSON, *types.MyDecimal, []uint8, types.Time, types.Duration:
 			p.entries[keyString] = realVal
 		default:
-			return int64(0), json.ErrUnsupportedSecondArgumentType.GenWithStackByArgs(x)
+			return 0, json.ErrUnsupportedSecondArgumentType.GenWithStackByArgs(x)
 		}
 	}
-	return int64(0), nil
+	return 0, nil
 }
 
 func (e *jsonObjectAgg) MergePartialResult(sctx sessionctx.Context, src PartialResult, dst PartialResult) (int64, error) {
@@ -112,5 +112,5 @@ func (e *jsonObjectAgg) MergePartialResult(sctx sessionctx.Context, src PartialR
 	for k, v := range p1.entries {
 		p2.entries[k] = v
 	}
-	return int64(0), nil
+	return 0, nil
 }
