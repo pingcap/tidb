@@ -269,9 +269,8 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 	// recheck whether the session/query is killed during the Next()
 	if atomic.LoadUint32(&sessVars.Killed) == 1 {
 		return ErrQueryInterrupted
-	} else {
-		return err
 	}
+	return err
 }
 
 // CancelDDLJobsExec represents a cancel DDL jobs executor.
