@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -49,7 +50,7 @@ import (
 
 const eps = 1e-9
 
-var _ = Suite(&testStatsSuite{})
+var _ = SerialSuites(&testStatsSuite{})
 
 type testStatsSuite struct {
 	store    kv.Storage
@@ -610,4 +611,31 @@ func (s *testStatsSuite) TestSelectivityGreedyAlgo(c *C) {
 	usedSets = statistics.GetUsableSetsByGreedy(nodes)
 	c.Assert(len(usedSets), Equals, 1)
 	c.Assert(usedSets[0].ID, Equals, int64(1))
+}
+
+func (s *testStatsSuite) TestCollationColumnEstimate(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a varchar(20) collate utf8mb4_general_ci)")
+	tk.MustExec("insert into t values('aaa'), ('bbb'), ('AAA'), ('BBB')")
+	h := s.do.StatsHandle()
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	tk.MustExec("analyze table t")
+	tk.MustExec("explain select * from t where a = 'aaa'")
+	c.Assert(h.LoadNeededHistograms(), IsNil)
+	var (
+		input  []string
+		output [][]string
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	for i := 0; i < len(input); i++ {
+		s.testData.OnRecord(func() {
+			output[i] = s.testData.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
+		})
+		tk.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
+	}
 }

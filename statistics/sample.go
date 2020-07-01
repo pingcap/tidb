@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/fastrand"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
@@ -201,6 +202,8 @@ type SampleBuilder struct {
 	MaxFMSketchSize int64
 	CMSketchDepth   int32
 	CMSketchWidth   int32
+	Collators       []collate.Collator
+	ColsFieldType   []*types.FieldType
 }
 
 // CollectColumnStats collects sample from the result set using Reservoir Sampling algorithm,
@@ -245,6 +248,18 @@ func (s SampleBuilder) CollectColumnStats() ([]*SampleCollector, *SortedBuilder,
 				datums = datums[1:]
 			}
 			for i, val := range datums {
+				if s.Collators[i] != nil && !val.IsNull() {
+					decodedVal, err := tablecodec.DecodeColumnValue(val.GetBytes(), s.ColsFieldType[i], s.Sc.TimeZone)
+					if err != nil {
+						return nil, nil, err
+					}
+					decodedVal.SetBytesAsString(s.Collators[i].Key(decodedVal.GetString()), decodedVal.Collation(), uint32(decodedVal.Length()))
+					encodedKey, err := tablecodec.EncodeValue(s.Sc, nil, decodedVal)
+					if err != nil {
+						return nil, nil, err
+					}
+					val.SetBytes(encodedKey)
+				}
 				err = collectors[i].collect(s.Sc, val)
 				if err != nil {
 					return nil, nil, errors.Trace(err)
