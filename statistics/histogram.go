@@ -1153,7 +1153,8 @@ type dataCnt struct {
 	cnt  uint64
 }
 
-func getIndexPrefixLens(data []byte, numCols int) (prefixLens []int, err error) {
+// GetIndexPrefixLens returns an array representing
+func GetIndexPrefixLens(data []byte, numCols int) (prefixLens []int, err error) {
 	prefixLens = make([]int, 0, numCols)
 	var colData []byte
 	prefixLen := 0
@@ -1181,7 +1182,7 @@ func (hg *Histogram) ExtractTopN(cms *CMSketch, numCols int, numTopN uint32) err
 	// Since our histogram are equal depth, they must occurs on the boundaries of buckets.
 	for i := 0; i < hg.Bounds.NumRows(); i++ {
 		data := hg.Bounds.GetRow(i).GetBytes(0)
-		prefixLens, err := getIndexPrefixLens(data, numCols)
+		prefixLens, err := GetIndexPrefixLens(data, numCols)
 		if err != nil {
 			return err
 		}
@@ -1206,7 +1207,7 @@ func (hg *Histogram) ExtractTopN(cms *CMSketch, numCols int, numTopN uint32) err
 	for _, dataCnt := range dataCnts {
 		h1, h2 := murmur3.Sum128(dataCnt.data)
 		realCnt := cms.queryHashValue(h1, h2)
-		cms.subValue(h1, h2, realCnt)
+		cms.SubValue(h1, h2, realCnt)
 		cms.topN[h1] = append(cms.topN[h1], &TopNMeta{h2, dataCnt.data, realCnt})
 	}
 	return nil

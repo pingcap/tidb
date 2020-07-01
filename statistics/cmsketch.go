@@ -260,7 +260,8 @@ func (c *CMSketch) setValue(h1, h2 uint64, count uint64) {
 	}
 }
 
-func (c *CMSketch) subValue(h1, h2 uint64, count uint64) {
+// SubValue remove a value from the CMSketch.
+func (c *CMSketch) SubValue(h1, h2 uint64, count uint64) {
 	c.count -= count
 	for i := range c.table {
 		j := (h1 + h2*uint64(i)) % uint64(c.width)
@@ -532,6 +533,16 @@ func (c *CMSketch) AppendTopN(data []byte, count uint64) {
 	}
 	h1, h2 := murmur3.Sum128(data)
 	c.topN[h1] = append(c.topN[h1], &TopNMeta{h2, data, count})
+}
+
+// AppendTopNAndSub appends a topn into the cm sketch and remove it from the table.
+func (c *CMSketch) AppendTopNAndSub(data []byte, count uint64) {
+	if c.topN == nil {
+		c.topN = make(map[uint64][]*TopNMeta)
+	}
+	h1, h2 := murmur3.Sum128(data)
+	c.topN[h1] = append(c.topN[h1], &TopNMeta{h2, data, count})
+	c.SubValue(h1, h2, count)
 }
 
 // GetWidthAndDepth returns the width and depth of CM Sketch.

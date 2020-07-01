@@ -14,7 +14,9 @@
 package cophandler
 
 import (
+	"bytes"
 	"math"
+	"sort"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -78,6 +80,9 @@ func handleAnalyzeIndexReq(dbReader *dbreader.DBReader, ran kv.KeyRange, analyze
 		colLen:       int(analyzeReq.IdxReq.NumColumns),
 		statsBuilder: statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob)),
 	}
+	if analyzeReq.IdxReq.TopNSize != nil {
+		processor.topNCount = *analyzeReq.IdxReq.TopNSize
+	}
 	if analyzeReq.IdxReq.CmsketchDepth != nil && analyzeReq.IdxReq.CmsketchWidth != nil {
 		processor.cms = statistics.NewCMSketch(*analyzeReq.IdxReq.CmsketchDepth, *analyzeReq.IdxReq.CmsketchWidth)
 	}
@@ -85,9 +90,27 @@ func handleAnalyzeIndexReq(dbReader *dbreader.DBReader, ran kv.KeyRange, analyze
 	if err != nil {
 		return nil, err
 	}
+	if processor.topNCurValuePair.cnt != 0 {
+		processor.topNValuePairs = append(processor.topNValuePairs, processor.topNCurValuePair)
+	}
+	sort.Slice(processor.topNValuePairs, func(i, j int) bool {
+		cmp := processor.topNValuePairs[i].cnt - processor.topNValuePairs[j].cnt
+		if cmp > 0 {
+			return true
+		} else if cmp < 0 {
+			return false
+		}
+		return bytes.Compare(processor.topNValuePairs[i].val, processor.topNValuePairs[j].val) < 0
+	})
+	if len(processor.topNValuePairs) > int(processor.topNCount) {
+		processor.topNValuePairs = processor.topNValuePairs[:processor.topNCount]
+	}
 	hg := statistics.HistogramToProto(processor.statsBuilder.Hist())
 	var cm *tipb.CMSketch
 	if processor.cms != nil {
+		for _, valueCnt := range processor.topNValuePairs {
+			processor.cms.AppendTopNAndSub(valueCnt.val, uint64(valueCnt.cnt))
+		}
 		cm = statistics.CMSketchToProto(processor.cms)
 	}
 	data, err := proto.Marshal(&tipb.AnalyzeIndexResp{Hist: hg, Cms: cm})
@@ -128,19 +151,38 @@ type analyzeIndexProcessor struct {
 	statsBuilder *statistics.SortedBuilder
 	cms          *statistics.CMSketch
 	rowBuf       []byte
+
+	topNCount        int32
+	topNValuePairs   []valueCntPair
+	topNCurValuePair valueCntPair
 }
 
-func (p *analyzeIndexProcessor) Process(key, value []byte) error {
+type valueCntPair struct {
+	val []byte
+	cnt int
+}
+
+func (p *analyzeIndexProcessor) Process(key, _ []byte) error {
 	values, _, err := tablecodec.CutIndexKeyNew(key, p.colLen)
 	if err != nil {
 		return err
 	}
 	p.rowBuf = p.rowBuf[:0]
+
 	for _, val := range values {
 		p.rowBuf = append(p.rowBuf, val...)
 		if p.cms != nil {
 			p.cms.InsertBytes(p.rowBuf)
 		}
+	}
+	if bytes.Compare(p.topNCurValuePair.val, p.rowBuf) == 0 {
+		p.topNCurValuePair.cnt++
+	} else {
+		if p.topNCurValuePair.cnt > 0 {
+			p.topNValuePairs = append(p.topNValuePairs, p.topNCurValuePair)
+		}
+		p.topNCurValuePair.val = safeCopy(p.rowBuf)
+		p.topNCurValuePair.cnt = 1
 	}
 	rowData := safeCopy(p.rowBuf)
 	err = p.statsBuilder.Iterate(types.NewBytesDatum(rowData))

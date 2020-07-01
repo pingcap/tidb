@@ -180,6 +180,54 @@ func (s *testSuite1) TestAnalyzeTooLongColumns(c *C) {
 	c.Assert(tbl.Columns[1].TotColSize, Equals, int64(65559))
 }
 
+func (s *testSuite1) TestAnalyzeIndexExtractTopN(c *C) {
+	store, err := mockstore.NewMockStore()
+	c.Assert(err, IsNil)
+	defer store.Close()
+	var dom *domain.Domain
+	session.DisableStats4Test()
+	session.SetSchemaLease(0)
+	dom, err = session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer dom.Close()
+	tk := testkit.NewTestKit(c, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx(a, b))")
+	tk.MustExec("insert into t values(1, 1), (1, 1), (1, 2), (1, 2)")
+	tk.MustExec("analyze table t with 10 cmsketch width")
+
+	is := infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := table.Meta()
+	tbl := dom.StatsHandle().GetTableStats(tableInfo)
+
+	// Construct TopN, should be (1, 1) -> 2 and (1, 2) -> 2
+	cms := statistics.NewCMSketch(5, 10)
+	{
+		key1, err := codec.EncodeKey(tk.Se.GetSessionVars().StmtCtx, nil, types.NewIntDatum(1), types.NewIntDatum(1))
+		c.Assert(err, IsNil)
+		cms.AppendTopN(key1, 2)
+		key2, err := codec.EncodeKey(tk.Se.GetSessionVars().StmtCtx, nil, types.NewIntDatum(1), types.NewIntDatum(2))
+		c.Assert(err, IsNil)
+		cms.AppendTopN(key2, 2)
+		prefixKey, err := codec.EncodeKey(tk.Se.GetSessionVars().StmtCtx, nil, types.NewIntDatum(1))
+		c.Assert(err, IsNil)
+		cms.InsertBytes(prefixKey)
+		cms.InsertBytes(prefixKey)
+		cms.InsertBytes(prefixKey)
+		cms.InsertBytes(prefixKey)
+	}
+	for _, idx := range tbl.Indices {
+		ok, err := checkHistogram(tk.Se.GetSessionVars().StmtCtx, &idx.Histogram)
+		c.Assert(err, IsNil)
+		c.Assert(ok, IsTrue)
+		c.Assert(idx.CMSketch.Equal(cms), IsTrue)
+	}
+}
+
 func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 	var cls cluster.Cluster
 	store, err := mockstore.NewMockStore(

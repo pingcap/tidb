@@ -336,13 +336,12 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, nee
 		if needCMS {
 			if resp.Cms == nil {
 				logutil.Logger(context.TODO()).Warn("nil CMS in response", zap.String("table", e.idxInfo.Table.O), zap.String("index", e.idxInfo.Name.O))
-			} else if err := cms.MergeCMSketch(statistics.CMSketchFromProto(resp.Cms), 0); err != nil {
+			} else if err := cms.MergeCMSketch(statistics.CMSketchFromProto(resp.Cms), uint32(e.opts[ast.AnalyzeOptNumTopN])); err != nil {
 				return nil, nil, err
 			}
 		}
 	}
-	err := hist.ExtractTopN(cms, len(e.idxInfo.Columns), uint32(e.opts[ast.AnalyzeOptNumTopN]))
-	return hist, cms, err
+	return hist, cms, nil
 }
 
 func (e *AnalyzeIndexExec) buildStats(ranges []*ranger.Range, considerNull bool) (hist *statistics.Histogram, cms *statistics.CMSketch, err error) {
