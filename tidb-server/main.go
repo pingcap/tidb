@@ -196,7 +196,7 @@ func exit() {
 
 func syncLog() {
 	if ignoredErr := log.Sync(); ignoredErr != nil {
-		// it's save to ignore zaplog Sync error https://github.com/uber-go/zap/pull/347
+		// it's safe to ignore zaplog Sync error https://github.com/uber-go/zap/pull/347
 	}
 	logutil.RemoveStderrIfEmpty()
 }
