@@ -38,7 +38,7 @@ func EncodeFromOldRow(encoder *Encoder, sc *stmtctx.StatementContext, oldRow, bu
 		if err != nil {
 			return nil, err
 		}
-		encoder.appendColVal(colID, d)
+		encoder.appendColVal(colID, &d)
 	}
 	numCols, notNullIdx := encoder.reformatCols()
 	err := encoder.encodeRowCols(sc, numCols, notNullIdx)

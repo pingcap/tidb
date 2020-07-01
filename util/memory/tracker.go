@@ -103,6 +103,11 @@ func (t *Tracker) GetBytesLimit() int64 {
 	return t.bytesLimit
 }
 
+// CheckExceed checks whether the consumed bytes is exceed for this tracker.
+func (t *Tracker) CheckExceed() bool {
+	return atomic.LoadInt64(&t.bytesConsumed) >= t.bytesLimit && t.bytesLimit > 0
+}
+
 // SetActionOnExceed sets the action when memory usage exceeds bytesLimit.
 func (t *Tracker) SetActionOnExceed(a ActionOnExceed) {
 	t.actionMu.Lock()
@@ -219,7 +224,7 @@ func (t *Tracker) Consume(bytes int64) {
 			break
 		}
 	}
-	if rootExceed != nil {
+	if bytes > 0 && rootExceed != nil {
 		rootExceed.actionMu.Lock()
 		defer rootExceed.actionMu.Unlock()
 		if rootExceed.actionMu.actionOnExceed != nil {

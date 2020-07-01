@@ -681,6 +681,125 @@ func (s *testCommitterSuite) TestElapsedTTL(c *C) {
 	c.Assert(lockInfo.LockTtl-atomic.LoadUint64(&ManagedLockTTL), Less, uint64(150))
 }
 
+func (s *testCommitterSuite) TestDeleteYourWriteCauseGhostPrimary(c *C) {
+	s.cluster.SplitKeys(kv.Key("d"), kv.Key("a"), 4)
+	k1 := kv.Key("a") // insert but deleted key at first pos in txn1
+	k2 := kv.Key("b") // insert key at second pos in txn1
+	k3 := kv.Key("c") // insert key in txn1 and will be conflict read by txn2
+
+	// insert k1, k2, k3 and delete k1
+	txn1 := s.begin(c)
+	txn1.DelOption(kv.Pessimistic)
+	txn1.SetOption(kv.PresumeKeyNotExists, nil)
+	txn1.SetOption(kv.PresumeKeyNotExistsError, kv.NewExistErrInfo("name", "value"))
+	txn1.store.txnLatches = nil
+	txn1.Get(context.Background(), k1)
+	txn1.Set(k1, []byte{0})
+	txn1.Set(k2, []byte{1})
+	txn1.Set(k3, []byte{2})
+	txn1.Delete(k1)
+	committer1, err := newTwoPhaseCommitter(txn1, 0)
+	c.Assert(err, IsNil)
+	// setup test knob in txn's committer
+	committer1.testingKnobs.acAfterCommitPrimary = make(chan struct{})
+	committer1.testingKnobs.bkAfterCommitPrimary = make(chan struct{})
+	txn1.committer = committer1
+	var txn1Done sync.WaitGroup
+	txn1Done.Add(1)
+	go func() {
+		err1 := txn1.Commit(context.Background())
+		c.Assert(err1, IsNil)
+		txn1Done.Done()
+	}()
+	// resume after after primary key be committed
+	<-txn1.committer.testingKnobs.acAfterCommitPrimary
+
+	// start txn2 to read k3(prewrite success and primary should be committed)
+	txn2 := s.begin(c)
+	txn2.DelOption(kv.Pessimistic)
+	txn2.store.txnLatches = nil
+	v, err := txn2.Get(context.Background(), k3)
+	c.Assert(err, IsNil) // should resolve lock and read txn1 k3 result instead of rollback it.
+	c.Assert(v[0], Equals, byte(2))
+	txn1.committer.testingKnobs.bkAfterCommitPrimary <- struct{}{}
+	txn1Done.Wait()
+}
+
+func (s *testCommitterSuite) TestDeleteAllYourWrites(c *C) {
+	s.cluster.SplitKeys(kv.Key("d"), kv.Key("a"), 4)
+	k1 := kv.Key("a")
+	k2 := kv.Key("b")
+	k3 := kv.Key("c")
+
+	// insert k1, k2, k3 and delete k1, k2, k3
+	txn1 := s.begin(c)
+	txn1.DelOption(kv.Pessimistic)
+	txn1.SetOption(kv.PresumeKeyNotExists, nil)
+	txn1.SetOption(kv.PresumeKeyNotExistsError, kv.NewExistErrInfo("name", "value"))
+	txn1.store.txnLatches = nil
+	txn1.Get(context.Background(), k1)
+	txn1.Set(k1, []byte{0})
+	txn1.Delete(k1)
+	txn1.Get(context.Background(), k2)
+	txn1.Set(k2, []byte{1})
+	txn1.Delete(k2)
+	txn1.Get(context.Background(), k3)
+	txn1.Set(k3, []byte{2})
+	txn1.Delete(k3)
+	err1 := txn1.Commit(context.Background())
+	c.Assert(err1, IsNil)
+}
+
+func (s *testCommitterSuite) TestDeleteAllYourWritesWithSFU(c *C) {
+	s.cluster.SplitKeys(kv.Key("d"), kv.Key("a"), 4)
+	k1 := kv.Key("a")
+	k2 := kv.Key("b")
+	k3 := kv.Key("c")
+
+	// insert k1, k2, k2 and delete k1
+	txn1 := s.begin(c)
+	txn1.DelOption(kv.Pessimistic)
+	txn1.SetOption(kv.PresumeKeyNotExists, nil)
+	txn1.SetOption(kv.PresumeKeyNotExistsError, kv.NewExistErrInfo("name", "value"))
+	txn1.store.txnLatches = nil
+	txn1.Get(context.Background(), k1)
+	txn1.Set(k1, []byte{0})
+	txn1.Delete(k1)
+	err := txn1.LockKeys(context.Background(), &kv.LockCtx{}, k2, k3) // select * from t where x in (k2, k3) for update
+	c.Assert(err, IsNil)
+
+	committer1, err := newTwoPhaseCommitter(txn1, 0)
+	c.Assert(err, IsNil)
+	// setup test knob in txn's committer
+	committer1.testingKnobs.acAfterCommitPrimary = make(chan struct{})
+	committer1.testingKnobs.bkAfterCommitPrimary = make(chan struct{})
+	txn1.committer = committer1
+	var txn1Done sync.WaitGroup
+	txn1Done.Add(1)
+	go func() {
+		err1 := txn1.Commit(context.Background())
+		c.Assert(err1, IsNil)
+		txn1Done.Done()
+	}()
+	// resume after after primary key be committed
+	<-txn1.committer.testingKnobs.acAfterCommitPrimary
+	// start txn2 to read k3
+	txn2 := s.begin(c)
+	txn2.DelOption(kv.Pessimistic)
+	txn2.store.txnLatches = nil
+	err = txn2.Set(k3, []byte{33})
+	c.Assert(err, IsNil)
+	var meetLocks []*Lock
+	txn2.store.lockResolver.testingKnobs.meetLock = func(locks []*Lock) {
+		meetLocks = append(meetLocks, locks...)
+	}
+	err = txn2.Commit(context.Background())
+	c.Assert(err, IsNil)
+	txn1.committer.testingKnobs.bkAfterCommitPrimary <- struct{}{}
+	txn1Done.Wait()
+	c.Assert(meetLocks[0].Primary[0], Equals, k2[0])
+}
+
 // TestAcquireFalseTimeoutLock tests acquiring a key which is a secondary key of another transaction.
 // The lock's own TTL is expired but the primary key is still alive due to heartbeats.
 func (s *testCommitterSuite) TestAcquireFalseTimeoutLock(c *C) {
