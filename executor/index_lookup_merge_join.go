@@ -511,8 +511,12 @@ func (imw *innerMergeWorker) fetchNewChunkWhenFull(ctx context.Context, task *lo
 		return false
 	}
 	var ok bool
-	*chk, ok = <-imw.joinChkResourceCh
-	if !ok {
+	select {
+	case *chk, ok = <-imw.joinChkResourceCh:
+		if !ok {
+			return false
+		}
+	case <-ctx.Done():
 		return false
 	}
 	(*chk).Reset()
@@ -710,9 +714,6 @@ func (e *IndexLookUpMergeJoin) Close() error {
 		for range e.resultCh {
 		}
 		e.resultCh = nil
-	}
-	for i := range e.joinChkResourceCh {
-		close(e.joinChkResourceCh[i])
 	}
 	e.joinChkResourceCh = nil
 	// joinChkResourceCh is to recycle result chunks, used by inner worker.
