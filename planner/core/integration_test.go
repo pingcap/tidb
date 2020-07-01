@@ -1276,3 +1276,30 @@ func (s *testIntegrationSuite) TestAccessPathOnClusterIndex(c *C) {
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Res...))
 	}
 }
+
+func (s *testIntegrationSuite) TestIndexJoinOnClusteredIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_clustered_index = 1")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t (a int, b varchar(20), c decimal(40,10), d int, primary key(a,b), key(c))")
+	tk.MustExec(`insert into t values (1,"111",1.1,11), (2,"222",2.2,12), (3,"333",3.3,13)`)
+	tk.MustExec("analyze table t")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Res  []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
+			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Res...))
+	}
+}
