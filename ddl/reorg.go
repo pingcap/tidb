@@ -289,19 +289,14 @@ func getColumnsTypes(columns []*model.ColumnInfo) []*types.FieldType {
 }
 
 // buildDescTableScan builds a desc table scan upon tblInfo.
-<<<<<<< HEAD
-func (d *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl table.PhysicalTable, columns []*model.ColumnInfo, limit uint64) (distsql.SelectResult, error) {
-	sctx := newContext(d.store)
-	dagPB, err := buildDescTableScanDAG(sctx, tbl, columns, limit)
-=======
 func (dc *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl table.PhysicalTable,
 	handleCols []*model.ColumnInfo, limit uint64) (distsql.SelectResult, error) {
 	sctx := newContext(dc.store)
 	dagPB, err := buildDescTableScanDAG(sctx, tbl, handleCols, limit)
->>>>>>> aa1d2d2... executor,ddl: update auto_random_base in 'show create table' after insertion (#18217)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
 	ranges := ranger.FullIntRange(false)
 	var builder distsql.RequestBuilder
 	builder.SetTableRanges(tbl.GetPhysicalID(), ranges, nil).
@@ -326,20 +321,11 @@ func (dc *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl ta
 	return result, nil
 }
 
-<<<<<<< HEAD
 // GetTableMaxRowID gets the last row id of the table partition.
-func (d *ddlCtx) GetTableMaxRowID(startTS uint64, tbl table.PhysicalTable) (maxRowID int64, emptyTable bool, err error) {
+func (dc *ddlCtx) GetTableMaxRowID(startTS uint64, tbl table.PhysicalTable) (maxRowID int64, emptyTable bool, err error) {
 	maxRowID = int64(math.MaxInt64)
 	var columns []*model.ColumnInfo
 	if tbl.Meta().PKIsHandle {
-=======
-// GetTableMaxHandle gets the max handle of a PhysicalTable.
-func (dc *ddlCtx) GetTableMaxHandle(startTS uint64, tbl table.PhysicalTable) (maxHandle kv.Handle, emptyTable bool, err error) {
-	var handleCols []*model.ColumnInfo
-	tblInfo := tbl.Meta()
-	switch {
-	case tblInfo.PKIsHandle:
->>>>>>> aa1d2d2... executor,ddl: update auto_random_base in 'show create table' after insertion (#18217)
 		for _, col := range tbl.Meta().Columns {
 			if mysql.HasPriKeyFlag(col.Flag) {
 				columns = []*model.ColumnInfo{col}
@@ -352,11 +338,7 @@ func (dc *ddlCtx) GetTableMaxHandle(startTS uint64, tbl table.PhysicalTable) (ma
 
 	ctx := context.Background()
 	// build a desc scan of tblInfo, which limit is 1, we can use it to retrieve the last handle of the table.
-<<<<<<< HEAD
-	result, err := d.buildDescTableScan(ctx, startTS, tbl, columns, 1)
-=======
-	result, err := dc.buildDescTableScan(ctx, startTS, tbl, handleCols, 1)
->>>>>>> aa1d2d2... executor,ddl: update auto_random_base in 'show create table' after insertion (#18217)
+	result, err := dc.buildDescTableScan(ctx, startTS, tbl, columns, 1)
 	if err != nil {
 		return maxRowID, false, errors.Trace(err)
 	}
@@ -372,10 +354,7 @@ func (dc *ddlCtx) GetTableMaxHandle(startTS uint64, tbl table.PhysicalTable) (ma
 		// empty table
 		return maxRowID, true, nil
 	}
-<<<<<<< HEAD
-=======
-	sessCtx := newContext(dc.store)
->>>>>>> aa1d2d2... executor,ddl: update auto_random_base in 'show create table' after insertion (#18217)
+
 	row := chk.GetRow(0)
 	maxRowID = row.GetInt64(0)
 	return maxRowID, false, nil

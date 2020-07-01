@@ -830,12 +830,7 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 		return allHds
 	}
 
-<<<<<<< HEAD
-	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
-=======
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
->>>>>>> aa1d2d2... executor,ddl: update auto_random_base in 'show create table' after insertion (#18217)
 
 	tk.MustExec("create table t (a bigint primary key auto_random(15), b int)")
 	for i := 0; i < 100; i++ {
