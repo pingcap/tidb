@@ -231,7 +231,7 @@ func (s *RegionRequestSender) SendReqCtx(
 		}
 
 		// recheck whether the session/query is killed during the Next()
-		if bo.vars.Killed != nil && atomic.LoadUint32(bo.vars.Killed) == 1 {
+		if bo.vars != nil && bo.vars.Killed != nil && atomic.LoadUint32(bo.vars.Killed) == 1 {
 			return nil, nil, ErrQueryInterrupted
 		}
 

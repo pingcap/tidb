@@ -510,7 +510,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 
 		worker.handleTask(ctx, task, respCh)
 		close(task.respChan)
-		if worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
+		if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
 			return
 		}
 		select {
@@ -732,7 +732,7 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 			return
 		}
 		// test whether the ctx is cancelled
-		if bo.vars.Killed != nil && atomic.LoadUint32(bo.vars.Killed) == 1 {
+		if bo.vars != nil && bo.vars.Killed != nil && atomic.LoadUint32(bo.vars.Killed) == 1 {
 			return
 		}
 
