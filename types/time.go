@@ -739,8 +739,8 @@ func ParseDateFormat(format string) []string {
 		return nil
 	}
 
-	// Date format must start and end with number.
-	if !isDigit(format[0]) || !isDigit(format[len(format)-1]) {
+	// Date format must start with number.
+	if !isDigit(format[0]) {
 		return nil
 	}
 
@@ -786,7 +786,15 @@ func isValidSeparator(c byte, prevParts int) bool {
 		return true
 	}
 
-	return prevParts == 2 && (c == ' ' || c == 'T')
+	if prevParts == 2 && (c == ' ' || c == 'T') {
+		return true
+	}
+
+	if prevParts > 4 && !isDigit(c) {
+		return true
+	}
+
+	return false
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
@@ -814,6 +822,8 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat b
 	seps, fracStr := splitDateTime(str)
 	var truncatedOrIncorrect bool
 	switch len(seps) {
+	case 0:
+		return ZeroDatetime, errors.Trace(ErrWrongValue.GenWithStackByArgs(DateTimeStr, str))
 	case 1:
 		l := len(seps[0])
 		switch l {
@@ -898,13 +908,11 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat b
 	case 5:
 		// YYYY-MM-DD HH-MM
 		err = scanTimeArgs(seps, &year, &month, &day, &hour, &minute)
-	case 6:
+	default:
 		// We don't have fractional seconds part.
 		// YYYY-MM-DD HH-MM-SS
-		err = scanTimeArgs(seps, &year, &month, &day, &hour, &minute, &second)
+		err = scanTimeArgs(seps[:6], &year, &month, &day, &hour, &minute, &second)
 		hhmmss = true
-	default:
-		return ZeroDatetime, errors.Trace(ErrWrongValue.GenWithStackByArgs(DateTimeStr, str))
 	}
 	if err != nil {
 		return ZeroDatetime, errors.Trace(err)
@@ -945,6 +953,10 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat b
 	}
 
 	nt := NewTime(tmp, mysql.TypeDatetime, fsp)
+
+	if len(seps) > 6 && sc != nil {
+		sc.AppendWarning(errors.Trace(ErrWrongValue.GenWithStackByArgs(DateTimeStr, str)))
+	}
 
 	return nt, nil
 }
