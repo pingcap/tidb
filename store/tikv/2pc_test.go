@@ -1145,7 +1145,7 @@ func (s *testCommitterSuite) TestResolveMixed(c *C) {
 func (s *testCommitterSuite) TestPrewiteSecondaryKeys(c *C) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.EnableParallelCommit = true
+		conf.TiKVClient.EnableAsyncCommit = true
 	})
 
 	// Prepare two regions first: (, 100) and [100, )
@@ -1188,7 +1188,7 @@ type mockClient struct {
 func (m *mockClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	// If we find a prewrite request, check if it satisfies our constraints.
 	if pr := req.Prewrite(); pr != nil {
-		if pr.UseParallelCommit {
+		if pr.UseAsyncCommit {
 			if isPrimary(pr) {
 				// The primary key should not be included, nor should there be any duplicates. All keys should be present.
 				if !includesPrimary(pr) && allKeysNoDups(pr) {
@@ -1211,7 +1211,7 @@ func (m *mockClient) Close() error {
 
 func isPrimary(req *kvrpcpb.PrewriteRequest) bool {
 	for _, m := range req.Mutations {
-		if bytes.Compare(req.PrimaryLock, m.Key) == 0 {
+		if bytes.Equal(req.PrimaryLock, m.Key) {
 			return true
 		}
 	}
@@ -1221,7 +1221,7 @@ func isPrimary(req *kvrpcpb.PrewriteRequest) bool {
 
 func includesPrimary(req *kvrpcpb.PrewriteRequest) bool {
 	for _, k := range req.Secondaries {
-		if bytes.Compare(req.PrimaryLock, k) == 0 {
+		if bytes.Equal(req.PrimaryLock, k) {
 			return true
 		}
 	}
@@ -1244,7 +1244,7 @@ func allKeysNoDups(req *kvrpcpb.PrewriteRequest) bool {
 	// Check every key is present.
 	for i := byte(50); i < 120; i++ {
 		k := []byte{i}
-		if bytes.Compare(req.PrimaryLock, k) != 0 && !check[string(k)] {
+		if !bytes.Equal(req.PrimaryLock, k) && !check[string(k)] {
 			return false
 		}
 	}

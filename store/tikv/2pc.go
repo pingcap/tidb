@@ -414,10 +414,10 @@ func (c *twoPhaseCommitter) primary() []byte {
 }
 
 func (c *twoPhaseCommitter) secondaries() [][]byte {
-	if !config.GetGlobalConfig().TiKVClient.EnableParallelCommit || len(c.mutations.keys) == 0 {
+	if !config.GetGlobalConfig().TiKVClient.EnableAsyncCommit || len(c.mutations.keys) == 0 {
 		return [][]byte{}
 	}
-	if bytes.Compare(c.mutations.keys[0], c.primary()) == 0 {
+	if bytes.Equal(c.mutations.keys[0], c.primary()) {
 		return c.mutations.keys[1:]
 	}
 	return [][]byte{}
@@ -705,11 +705,11 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, secondary
 		MinCommitTs:       minCommitTS,
 	}
 
-	if config.GetGlobalConfig().TiKVClient.EnableParallelCommit {
+	if config.GetGlobalConfig().TiKVClient.EnableAsyncCommit {
 		if batch.isPrimary {
 			req.Secondaries = secondaryKeys
 		}
-		req.UseParallelCommit = true
+		req.UseAsyncCommit = true
 	}
 
 	return tikvrpc.NewRequest(tikvrpc.CmdPrewrite, req, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
