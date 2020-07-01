@@ -55,21 +55,18 @@ func (s *testSuiteP2) TestFormatSQL(c *C) {
 	preparedSQL := executor.FormatSQL("select ?, ?, ?, ?, ?, ?, ?;", preparedParams)()
 	c.Check(preparedSQL, Equals, "select 1, 2, \"hello, 世界\", [1, 2, 3], {}, {\"a\": \"9223372036854775809\"}, 2011-11-10 11:11:11.111111;")
 
-	preparedParams = variable.PreparedParams{
-		types.NewIntDatum(1),
-	}
-	preparedSQL = executor.FormatSQL("select count(*), ?;", preparedParams)()
+	preparedSQL = executor.FormatSQL("select count(*), ?;", variable.PreparedParams{types.NewIntDatum(1)})()
 	c.Check(preparedSQL, Equals, "select count(*), 1;")
 
-	cfg := config.GetGlobalConfig()
-	originQueryLogMaxLen := cfg.Log.QueryLogMaxLen
-	cfg.Log.QueryLogMaxLen = 10
-	config.StoreGlobalConfig(cfg)
-	preparedSQL = executor.FormatSQL("select ?, ?, ?, ?, ?, ?, ?;", preparedParams)()
-	c.Check(preparedSQL, Equals, "\"select 1, \"(len:27)")
-
-	cfg.Log.QueryLogMaxLen = originQueryLogMaxLen
-	config.StoreGlobalConfig(cfg)
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	newCfg.Log.QueryLogMaxLen = 6
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		config.StoreGlobalConfig(originCfg)
+	}()
+	preparedSQL = executor.FormatSQL("select ?;", variable.PreparedParams{types.NewIntDatum(1)})()
+	c.Check(preparedSQL, Equals, "\"select\"(len:9)")
 }
 
 // mustParseTimeIntoDatum is similar to ParseTime but panic if any error occurs.
