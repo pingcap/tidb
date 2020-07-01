@@ -234,7 +234,11 @@ func (s *RegionRequestSender) SendReqCtx(
 		if bo.vars != nil && bo.vars.Killed != nil && atomic.LoadUint32(bo.vars.Killed) == 1 {
 			return nil, nil, ErrQueryInterrupted
 		}
-
+		failpoint.Inject("mockRetrySendReqToRegion", func(val failpoint.Value) {
+			if val.(bool) {
+				retry = true
+			}
+		})
 		if retry {
 			tryTimes++
 			continue
