@@ -734,7 +734,6 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 		}
 		// test whether the ctx is cancelled
 		if atomic.LoadUint32(bo.vars.Killed) == 1 {
-			logutil.Logger(bo.ctx).Warn("copIteratorWorker is cancelled!")
 			return
 		}
 
@@ -742,9 +741,6 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 			remainTasks = append(tasks, remainTasks[1:]...)
 		} else {
 			remainTasks = remainTasks[1:]
-		}
-		if len(remainTasks) > 0 {
-			logutil.Logger(ctx).Info("coprocessor task to get more than one region")
 		}
 	}
 }
