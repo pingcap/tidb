@@ -333,9 +333,6 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 				lockIdx++
 			}
 		}
-		if len(c.primaryKey) == 0 && op != pb.Op_CheckNotExists {
-			c.primaryKey = k
-		}
 		mutations.push(op, k, value, isPessimisticLock)
 		entrySize := len(k) + len(v)
 		if uint64(entrySize) > kv.TxnEntrySizeLimit {
@@ -357,6 +354,15 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		return nil
 	}
 	c.txnSize = size
+
+	if len(c.primaryKey) == 0 {
+		for i, op := range mutations.ops {
+			if op != pb.Op_CheckNotExists {
+				c.primaryKey = mutations.keys[i]
+				break
+			}
+		}
+	}
 
 	if size > int(kv.TxnTotalSizeLimit) {
 		return kv.ErrTxnTooLarge.GenWithStackByArgs(size)
