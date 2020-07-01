@@ -619,6 +619,23 @@ create table t(
 			filterConds: "[like(test.t.f, @%, 92)]",
 			resultStr:   "[[NULL,+inf]]",
 		},
+
+		// utf8mb4_unicode_ci now has same behaviour as utf8mb4_bin
+		// should change when actual implement
+		{
+			indexPos:    4,
+			exprStr:     "f = 'a' and f = 'B' collate utf8mb4_bin",
+			accessConds: "[eq(test.t.f, a)]",
+			filterConds: "[eq(test.t.f, B)]",
+			resultStr:   "[[\"a\",\"a\"]]",
+		},
+		{
+			indexPos:    4,
+			exprStr:     "f like '@%' collate utf8mb4_bin",
+			accessConds: "[]",
+			filterConds: "[like(test.t.f, @%, 92)]",
+			resultStr:   "[[NULL,+inf]]",
+		},
 	}
 
 	collate.SetNewCollationEnabledForTest(true)

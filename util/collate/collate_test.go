@@ -134,6 +134,35 @@ func (s *testCollateSuite) TestGeneralCICollator(c *C) {
 	testKeyTable(keyTable, "utf8mb4_general_ci", c)
 }
 
+func (s *testCollateSuite) TestUnicodeCICollator(c *C) {
+	defer testleak.AfterTest(c)()
+	SetNewCollationEnabledForTest(true)
+	defer SetNewCollationEnabledForTest(false)
+
+	// utf8mb4_unicode_ci now has same behaviour as utf8mb4_bin
+	// should change when actual implement
+	compareTable := []compareTable{
+		{"a", "b", -1},
+		{"a", "A", 1},
+		{"abc", "abc", 0},
+		{"abc", "ab", 1},
+		{"a", "a ", 0},
+		{"a ", "a  ", 0},
+		{"a\t", "a", 1},
+	}
+	keyTable := []keyTable{
+		{"a", []byte{0x61}},
+		{"A", []byte{0x41}},
+		{"Foo © bar 𝌆 baz ☃ qux", []byte{0x46, 0x6f, 0x6f, 0x20, 0xc2, 0xa9, 0x20, 0x62, 0x61,
+			0x72, 0x20, 0xf0, 0x9d, 0x8c, 0x86, 0x20, 0x62, 0x61, 0x7a, 0x20, 0xe2, 0x98, 0x83, 0x20, 0x71, 0x75, 0x78}},
+		{"a ", []byte{0x61}},
+		{"a", []byte{0x61}},
+	}
+
+	testCompareTable(compareTable, "utf8mb4_unicode_ci", c)
+	testKeyTable(keyTable, "utf8mb4_unicode_ci", c)
+}
+
 func (s *testCollateSuite) TestSetNewCollateEnabled(c *C) {
 	defer SetNewCollationEnabledForTest(false)
 
@@ -162,6 +191,8 @@ func (s *testCollateSuite) TestGetCollator(c *C) {
 	c.Assert(GetCollator("binary"), FitsTypeOf, &binCollator{})
 	c.Assert(GetCollator("utf8mb4_bin"), FitsTypeOf, &binPaddingCollator{})
 	c.Assert(GetCollator("utf8_bin"), FitsTypeOf, &binPaddingCollator{})
+	c.Assert(GetCollator("utf8mb4_unicode_ci"), FitsTypeOf, &unicodeCICollator{})
+	c.Assert(GetCollator("utf8_unicode_ci"), FitsTypeOf, &unicodeCICollator{})
 	c.Assert(GetCollator("utf8mb4_general_ci"), FitsTypeOf, &generalCICollator{})
 	c.Assert(GetCollator("utf8_general_ci"), FitsTypeOf, &generalCICollator{})
 	c.Assert(GetCollator("default_test"), FitsTypeOf, &binPaddingCollator{})
@@ -176,6 +207,8 @@ func (s *testCollateSuite) TestGetCollator(c *C) {
 	c.Assert(GetCollator("binary"), FitsTypeOf, &binCollator{})
 	c.Assert(GetCollator("utf8mb4_bin"), FitsTypeOf, &binCollator{})
 	c.Assert(GetCollator("utf8_bin"), FitsTypeOf, &binCollator{})
+	c.Assert(GetCollator("utf8mb4_unicode_ci"), FitsTypeOf, &binCollator{})
+	c.Assert(GetCollator("utf8_unicode_ci"), FitsTypeOf, &binCollator{})
 	c.Assert(GetCollator("utf8mb4_general_ci"), FitsTypeOf, &binCollator{})
 	c.Assert(GetCollator("utf8_general_ci"), FitsTypeOf, &binCollator{})
 	c.Assert(GetCollator("default_test"), FitsTypeOf, &binCollator{})

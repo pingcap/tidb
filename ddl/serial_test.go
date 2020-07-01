@@ -1197,21 +1197,26 @@ func (s *testSerialSuite) TestModifyingColumn4NewCollations(c *C) {
 	// Column collation can be changed as long as there is no index defined.
 	tk.MustExec("alter table t modify b varchar(10) collate utf8_general_ci")
 	tk.MustExec("alter table t modify c varchar(10) collate utf8_bin")
+	tk.MustExec("alter table t modify c varchar(10) collate utf8_unicode_ci")
 	tk.MustExec("alter table t charset utf8 collate utf8_general_ci")
 	tk.MustExec("alter table t convert to charset utf8 collate utf8_bin")
+	tk.MustExec("alter table t convert to charset utf8 collate utf8_unicode_ci")
 	tk.MustExec("alter table t convert to charset utf8 collate utf8_general_ci")
+	tk.MustExec("alter table t modify b varchar(10) collate utf8_unicode_ci")
 	tk.MustExec("alter table t modify b varchar(10) collate utf8_bin")
 
 	tk.MustExec("alter table t add index b_idx(b)")
 	tk.MustExec("alter table t add index c_idx(c)")
 	tk.MustGetErrMsg("alter table t modify b varchar(10) collate utf8_general_ci", "[ddl:8200]Unsupported modifying collation of column 'b' from 'utf8_bin' to 'utf8_general_ci' when index is defined on it.")
 	tk.MustGetErrMsg("alter table t modify c varchar(10) collate utf8_bin", "[ddl:8200]Unsupported modifying collation of column 'c' from 'utf8_general_ci' to 'utf8_bin' when index is defined on it.")
+	tk.MustGetErrMsg("alter table t modify c varchar(10) collate utf8_unicode_ci", "[ddl:8200]Unsupported modifying collation of column 'c' from 'utf8_general_ci' to 'utf8_unicode_ci' when index is defined on it.")
 	tk.MustGetErrMsg("alter table t convert to charset utf8 collate utf8_general_ci", "[ddl:8200]Unsupported converting collation of column 'b' from 'utf8_bin' to 'utf8_general_ci' when index is defined on it.")
 	// Change to a compatible collation is allowed.
 	tk.MustExec("alter table t modify c varchar(10) collate utf8mb4_general_ci")
 	// Change the default collation of table is allowed.
 	tk.MustExec("alter table t collate utf8mb4_general_ci")
 	tk.MustExec("alter table t charset utf8mb4 collate utf8mb4_bin")
+	tk.MustExec("alter table t charset utf8mb4 collate utf8mb4_unicode_ci")
 	// Change the default collation of database is allowed.
 	tk.MustExec("alter database dct charset utf8mb4 collate utf8mb4_general_ci")
 }
