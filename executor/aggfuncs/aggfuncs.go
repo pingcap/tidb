@@ -152,7 +152,7 @@ type baseAggFunc struct {
 }
 
 func (*baseAggFunc) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (int64, error) {
-	return int64(0), nil
+	return 0, nil
 }
 
 // SlidingWindowAggFunc is the interface to evaluate the aggregate functions using sliding window.
