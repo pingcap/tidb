@@ -762,16 +762,15 @@ func (a *ExecStmt) logAudit() {
 // FormatSQL is used to format the original SQL, e.g. truncating long SQL, appending prepared arguments.
 func FormatSQL(sql string, pps variable.PreparedParams) stringutil.StringerFunc {
 	return func() string {
+		if len(pps) > 0 {
+			sql = formatPreparedSQL(sql, pps)
+		}
 		cfg := config.GetGlobalConfig()
 		length := len(sql)
 		if maxQueryLen := atomic.LoadUint64(&cfg.Log.QueryLogMaxLen); uint64(length) > maxQueryLen {
 			sql = fmt.Sprintf("%.*q(len:%d)", maxQueryLen, sql, length)
 		}
-		replaceSQL := QueryReplacer.Replace(sql)
-		if len(pps) == 0 {
-			return replaceSQL
-		}
-		return formatPreparedSQL(replaceSQL, pps)
+		return QueryReplacer.Replace(sql)
 	}
 }
 
