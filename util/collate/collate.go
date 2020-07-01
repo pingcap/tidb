@@ -233,8 +233,16 @@ func init() {
 	newCollatorIDMap[int(mysql.CollationNames["utf8mb4_bin"])] = &binPaddingCollator{}
 	newCollatorMap["utf8_bin"] = &binPaddingCollator{}
 	newCollatorIDMap[int(mysql.CollationNames["utf8_bin"])] = &binPaddingCollator{}
+
+	//general_ci support
 	newCollatorMap["utf8mb4_general_ci"] = &generalCICollator{}
 	newCollatorIDMap[int(mysql.CollationNames["utf8mb4_general_ci"])] = &generalCICollator{}
 	newCollatorMap["utf8_general_ci"] = &generalCICollator{}
 	newCollatorIDMap[int(mysql.CollationNames["utf8_general_ci"])] = &generalCICollator{}
+
+	//unicode_ci support
+	newCollatorMap["utf8mb4_unicode_ci"] = &unicodeCICollator{}
+	newCollatorIDMap[int(mysql.CollationNames["utf8mb4_unicode_ci"])] = &unicodeCICollator{}
+	newCollatorMap["utf8_unicode_ci"] = &unicodeCICollator{}
+	newCollatorIDMap[int(mysql.CollationNames["utf8_unicode_ci"])] = &unicodeCICollator{}
 }
