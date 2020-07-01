@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
@@ -1137,4 +1138,115 @@ func (s *testCommitterSuite) TestResolveMixed(c *C) {
 	c.Assert(err, IsNil)
 	err = txn2.Rollback()
 	c.Assert(err, IsNil)
+}
+
+// TestSecondaryKeys tests that when parallel commit is enabled, each prewrite message includes an
+// accurate list of secondary keys.
+func (s *testCommitterSuite) TestPrewiteSecondaryKeys(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.EnableParallelCommit = true
+	})
+
+	// Prepare two regions first: (, 100) and [100, )
+	region, _ := s.cluster.GetRegionByKey([]byte{50})
+	newRegionID := s.cluster.AllocID()
+	newPeerID := s.cluster.AllocID()
+	s.cluster.Split(region.Id, newRegionID, []byte{100}, []uint64{newPeerID}, newPeerID)
+
+	txn := s.begin(c)
+	var val [1024]byte
+	for i := byte(50); i < 120; i++ {
+		err := txn.Set([]byte{i}, val[:])
+		c.Assert(err, IsNil)
+	}
+	// Some duplicates.
+	for i := byte(50); i < 120; i += 10 {
+		err := txn.Set([]byte{i}, val[512:700])
+		c.Assert(err, IsNil)
+	}
+
+	committer, err := newTwoPhaseCommitterWithInit(txn, 1)
+	c.Assert(err, IsNil)
+
+	mock := mockClient{inner: s.store.client}
+	s.store.client = &mock
+	ctx := context.Background()
+	err = committer.execute(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(mock.seenPrimaryReq && mock.seenSecondaryReq, IsTrue)
+
+	s.store.client = mock.inner
+}
+
+type mockClient struct {
+	inner            Client
+	seenPrimaryReq   bool
+	seenSecondaryReq bool
+}
+
+func (m *mockClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	// If we find a prewrite request, check if it satisfies our constraints.
+	if pr := req.Prewrite(); pr != nil {
+		if pr.UseParallelCommit {
+			if isPrimary(pr) {
+				// The primary key should not be included, nor should there be any duplicates. All keys should be present.
+				if !includesPrimary(pr) && allKeysNoDups(pr) {
+					m.seenPrimaryReq = true
+				}
+			} else {
+				// Secondaries should only be sent with the primary key
+				if len(pr.Secondaries) == 0 {
+					m.seenSecondaryReq = true
+				}
+			}
+		}
+	}
+	return m.inner.SendRequest(ctx, addr, req, timeout)
+}
+
+func (m *mockClient) Close() error {
+	return m.inner.Close()
+}
+
+func isPrimary(req *kvrpcpb.PrewriteRequest) bool {
+	for _, m := range req.Mutations {
+		if bytes.Compare(req.PrimaryLock, m.Key) == 0 {
+			return true
+		}
+	}
+
+	return false
+}
+
+func includesPrimary(req *kvrpcpb.PrewriteRequest) bool {
+	for _, k := range req.Secondaries {
+		if bytes.Compare(req.PrimaryLock, k) == 0 {
+			return true
+		}
+	}
+
+	return false
+}
+
+func allKeysNoDups(req *kvrpcpb.PrewriteRequest) bool {
+	check := make(map[string]bool)
+
+	// Create the check map and check for duplicates.
+	for _, k := range req.Secondaries {
+		s := string(k)
+		if check[s] {
+			return false
+		}
+		check[s] = true
+	}
+
+	// Check every key is present.
+	for i := byte(50); i < 120; i++ {
+		k := []byte{i}
+		if bytes.Compare(req.PrimaryLock, k) != 0 && !check[string(k)] {
+			return false
+		}
+	}
+	return true
 }
