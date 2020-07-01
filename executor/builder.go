@@ -1459,10 +1459,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 				table:        v.Table,
-				retriever: &memtableRetriever{
-					table:   v.Table,
-					columns: v.Columns,
-				},
+				retriever:    newMemTableRetriever(v.Table, v.Columns),
 			}
 		case strings.ToLower(infoschema.TableSlowQuery), strings.ToLower(infoschema.ClusterTableSlowLog):
 			return &MemTableReaderExec{
