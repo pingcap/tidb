@@ -195,10 +195,10 @@ func exit() {
 }
 
 func syncLog() {
-	if err := log.Sync(); err != nil {
-		fmt.Fprintln(os.Stderr, "sync log err:", err)
-		os.Exit(1)
+	if ignoredErr := log.Sync(); ignoredErr != nil {
+		// it's save to ignore zaplog Sync error https://github.com/uber-go/zap/pull/347
 	}
+	logutil.RemoveStderrIfEmpty()
 }
 
 func initializeTempDir() {
@@ -638,6 +638,9 @@ func setupLog() {
 	terror.MustNil(err)
 
 	err = logutil.InitLogger(cfg.Log.ToLogConfig())
+	terror.MustNil(err)
+
+	err = logutil.RedirectStderrToPidFile(filepath.Dir(cfg.Log.SlowQueryFile))
 	terror.MustNil(err)
 
 	if len(os.Getenv("GRPC_DEBUG")) > 0 {
