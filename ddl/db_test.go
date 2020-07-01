@@ -2293,8 +2293,6 @@ func (s *testSerialDBSuite) TestCreateTable(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE x (a INT) ENGINE = MyISAM;")
 	tk.MustExec("CREATE TABLE y (a INT) ENGINE = MyISAM;")
-	tk.MustExec("INSERT INTO x VALUES (1);")
-	tk.MustExec("INSERT INTO y VALUES (2);")
 	failSQL = "CREATE TABLE z (a INT) ENGINE = MERGE UNION = (x, y);"
 	tk.MustGetErrCode(failSQL, errno.ErrTableOptionUnionUnsupported)
 	failSQL = "ALTER TABLE x UNION = (y);"
@@ -2306,8 +2304,6 @@ func (s *testSerialDBSuite) TestCreateTable(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE x (a INT) ENGINE = MyISAM;")
 	tk.MustExec("CREATE TABLE y (a INT) ENGINE = MyISAM;")
-	tk.MustExec("INSERT INTO x VALUES (1);")
-	tk.MustExec("INSERT INTO y VALUES (2);")
 	failSQL = "CREATE TABLE z (a INT) ENGINE = MERGE INSERT_METHOD=LAST;"
 	tk.MustGetErrCode(failSQL, errno.ErrTableOptionInsertMethodUnsupported)
 	failSQL = "ALTER TABLE x INSERT_METHOD=LAST;"
