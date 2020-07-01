@@ -444,14 +444,14 @@ type SortAndSpillDiskAction struct {
 	m              sync.Mutex
 	once           sync.Once
 
+	// sortAndSpillLock guarantee only one SortedRowContainer is spilling at the same time.
+	sortAndSpillLock sync.Mutex
+
 	// test function only used for test sync.
 	testSyncInputFunc  func()
 	testSyncOutputFunc func()
 	testWg             sync.WaitGroup
 }
-
-// sortAndSpillLock guarantee only one SortedRowContainer is spilling.
-var sortAndSpillLock sync.Mutex
 
 // Action sends a signal to trigger sortAndSpillToDisk method of RowContainer
 // and if it is already triggered before, call its fallbackAction.
@@ -479,8 +479,8 @@ func (a *SortAndSpillDiskAction) Action(t *memory.Tracker) {
 				return
 			}
 			go func(c *SortedRowContainer) {
-				sortAndSpillLock.Lock()
-				defer sortAndSpillLock.Unlock()
+				a.sortAndSpillLock.Lock()
+				defer a.sortAndSpillLock.Unlock()
 				c.sortAndSpillToDisk()
 			}(a.c)
 		})
