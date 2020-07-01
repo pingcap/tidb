@@ -14,6 +14,7 @@
 package variable
 
 import (
+	"math"
 	"os"
 
 	"github.com/pingcap/parser/mysql"
@@ -420,6 +421,8 @@ const (
 	// TiDBSlowLogMasking indicates that whether masking the query data when log slow query.
 	TiDBSlowLogMasking = "tidb_slow_log_masking"
 
+	// TiDBShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
+	TiDBShardAllocateStep = "tidb_shard_allocate_step"
 	// TiDBEnableTelemetry indicates that whether usage data report to PingCAP is enabled.
 	TiDBEnableTelemetry = "tidb_enable_telemetry"
 )
@@ -520,6 +523,7 @@ const (
 	DefTiDBAllowAutoRandExplicitInsert = false
 	DefTiDBEnableClusteredIndex        = false
 	DefTiDBSlowLogMasking              = false
+	DefTiDBShardAllocateStep           = math.MaxInt64
 	DefTiDBEnableTelemetry             = true
 )
 
