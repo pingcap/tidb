@@ -619,13 +619,13 @@ func generateOriginDefaultValue(col *model.ColumnInfo) (interface{}, error) {
 	return odValue, nil
 }
 
-func findColumnInIndexCols(c string, cols []*model.IndexColumn) bool {
+func findColumnInIndexCols(c string, cols []*model.IndexColumn) *model.IndexColumn {
 	for _, c1 := range cols {
 		if c == c1.Name.L {
-			return true
+			return c1
 		}
 	}
-	return false
+	return nil
 }
 
 func getColumnInfoByName(tbInfo *model.TableInfo, column string) *model.ColumnInfo {
