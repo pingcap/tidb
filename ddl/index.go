@@ -882,14 +882,6 @@ func (w *addIndexWorker) getIndexRecord(handle kv.Handle, recordKey []byte, rawR
 	idxVal := make([]types.Datum, len(idxInfo.Columns))
 	for j, v := range idxInfo.Columns {
 		col := cols[v.Offset]
-		if col.IsPKHandleColumn(t.Meta()) {
-			if mysql.HasUnsignedFlag(col.Flag) {
-				idxVal[j].SetUint64(uint64(handle.IntValue()))
-			} else {
-				idxVal[j].SetInt64(handle.IntValue())
-			}
-			continue
-		}
 		idxColumnVal, ok := w.rowMap[col.ID]
 		if ok {
 			idxVal[j] = idxColumnVal
@@ -1049,7 +1041,7 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 	for i, key := range w.batchCheckKeys {
 		if val, found := batchVals[string(key)]; found {
 			if w.distinctCheckFlags[i] {
-				handle, err1 := tables.DecodeHandleInUniqueIndexValue(val, w.table.Meta().IsCommonHandle)
+				handle, err1 := tablecodec.DecodeHandleInUniqueIndexValue(val, w.table.Meta().IsCommonHandle)
 				if err1 != nil {
 					return errors.Trace(err1)
 				}
@@ -1063,7 +1055,7 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 			// The keys in w.batchCheckKeys also maybe duplicate,
 			// so we need to backfill the not found key into `batchVals` map.
 			if w.distinctCheckFlags[i] {
-				batchVals[string(key)] = tables.EncodeHandleInUniqueIndexValue(idxRecords[i].handle, false)
+				batchVals[string(key)] = tablecodec.EncodeHandleInUniqueIndexValue(idxRecords[i].handle, false)
 			}
 		}
 	}

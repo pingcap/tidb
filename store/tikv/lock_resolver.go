@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -64,6 +65,9 @@ type LockResolver struct {
 		resolved       map[uint64]TxnStatus
 		recentResolved *list.List
 	}
+	testingKnobs struct {
+		meetLock func(locks []*Lock)
+	}
 }
 
 func newLockResolver(store Storage) *LockResolver {
@@ -90,6 +94,7 @@ func NewLockResolver(etcdAddrs []string, security config.Security, opts ...pd.Cl
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	pdCli = execdetails.InterceptedPDClient{Client: pdCli}
 	uuid := fmt.Sprintf("tikv-%v", pdCli.GetClusterID(context.TODO()))
 
 	tlsConfig, err := security.ToTLSConfig()
@@ -296,6 +301,9 @@ func (lr *LockResolver) resolveLocksLite(bo *Backoffer, callerStartTS uint64, lo
 }
 
 func (lr *LockResolver) resolveLocks(bo *Backoffer, callerStartTS uint64, locks []*Lock, forWrite bool, lite bool) (int64, []uint64 /*pushed*/, error) {
+	if lr.testingKnobs.meetLock != nil {
+		lr.testingKnobs.meetLock(locks)
+	}
 	var msBeforeTxnExpired txnExpireTime
 	if len(locks) == 0 {
 		return msBeforeTxnExpired.value(), nil, nil

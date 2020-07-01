@@ -27,7 +27,7 @@ func (s *testSuite1) TestIndexLookupJoinHang(c *C) {
 	tk.MustExec("insert idxJoinOuter values (1), (1), (1), (1), (1)")
 	tk.MustExec("insert idxJoinInner values (1)")
 	tk.Se.GetSessionVars().IndexJoinBatchSize = 1
-	tk.Se.GetSessionVars().IndexLookupJoinConcurrency = 1
+	tk.Se.GetSessionVars().SetIndexLookupJoinConcurrency(1)
 
 	rs, err := tk.Exec("select /*+ INL_JOIN(i)*/ * from idxJoinOuter o left join idxJoinInner i on o.a = i.a where o.a in (1, 2) and (i.a - 3) > 0")
 	c.Assert(err, IsNil)

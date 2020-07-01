@@ -34,6 +34,9 @@ token-limit = 1000
 # The maximum memory available for a single SQL statement. Default: 1GB
 mem-quota-query = 1073741824
 
+# The maximum number available of a NLJ cache for a single SQL statement. Default: 20MB
+nested-loop-join-cache-capacity = 20971520
+
 # Controls whether to enable the temporary storage for some operators when a single SQL statement exceeds the memory quota specified by mem-quota-query.
 oom-use-tmp-storage = true
 
@@ -105,6 +108,11 @@ max-server-connections = 0
 
 # Whether new collations are enabled, as indicated by its name, this configuration entry take effect ONLY when a TiDB cluster bootstraps for the first time.
 new_collations_enabled_on_first_bootstrap = false
+
+# When enabled, usage data (for example, instance versions) will be reported to PingCAP periodically for user experience analytics.
+# If this config is set to `false` on all TiDB servers, telemetry will be always disabled regardless of the value of the global variable `tidb_enable_telemetry`.
+# See PingCAP privacy policy for details: https://pingcap.com/en/privacy-policy/
+enable-telemetry = true
 
 [log]
 # Log level: debug, info, warn, error, fatal.
@@ -197,8 +205,8 @@ record-db-qps = false
 # Max CPUs to use, 0 use number of CPUs in the machine.
 max-procs = 0
 
-# Max memory size to use, 0 use the total usable memory in the machine.
-max-memory = 0
+# Memory size quota for tidb server, 0 means unlimited
+server-memory-quota = 0
 
 # StmtCountLimit limits the max count of statement inside a transaction.
 stmt-count-limit = 5000
@@ -241,6 +249,10 @@ distinct-agg-push-down = false
 # this value should be less than 1073741824(1G) because this is the maximum size that can be handled by Kafka.
 # If binlog is disabled or binlog is enabled without Kafka, this value should be less than 10737418240(10G).
 txn-total-size-limit = 104857600
+
+# The limitation of the size in byte for each entry in one transaction.
+# NOTE: Increasing this limit may cause performance problems.
+txn-entry-size-limit = 6291456
 
 # The max number of running concurrency two phase committer request for an SQL.
 committer-concurrency = 16
@@ -352,7 +364,7 @@ region-cache-ttl = 600
 store-limit = 0
 
 # store-liveness-timeout is used to control timeout for store liveness after sending request failed.
-store-liveness-timeout = "120s"
+store-liveness-timeout = "5s"
 
 [tikv-client.copr-cache]
 # Whether to enable the copr cache. The copr cache saves the result from TiKV Coprocessor in the memory and

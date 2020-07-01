@@ -894,6 +894,7 @@ const (
 	ErrGeneratedColumnNonPrior                                      = 3107
 	ErrDependentByGeneratedColumn                                   = 3108
 	ErrGeneratedColumnRefAutoInc                                    = 3109
+	ErrWarnConflictingHint                                          = 3126
 	ErrInvalidJSONText                                              = 3140
 	ErrInvalidJSONPath                                              = 3143
 	ErrInvalidTypeForJSON                                           = 3146
@@ -1076,6 +1077,7 @@ const (
 	ErrColumnTypeUnsupportedNextValue = 8228
 	ErrLockExpire                     = 8229
 	ErrAddColumnWithSequenceAsDefault = 8230
+	ErrUnsupportedConstraintCheck     = 8231
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout        = 9001
