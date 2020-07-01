@@ -288,14 +288,12 @@ func getColumnsTypes(columns []*model.ColumnInfo) []*types.FieldType {
 }
 
 // buildDescTableScan builds a desc table scan upon tblInfo.
-func (dc *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl table.PhysicalTable,
-	handleCols []*model.ColumnInfo, limit uint64) (distsql.SelectResult, error) {
+func (dc *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl table.PhysicalTable, columns []*model.ColumnInfo, limit uint64) (distsql.SelectResult, error) {
 	sctx := newContext(dc.store)
-	dagPB, err := buildDescTableScanDAG(sctx, tbl, handleCols, limit)
+	dagPB, err := buildDescTableScanDAG(sctx, tbl, columns, limit)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
 	ranges := ranger.FullIntRange(false)
 	var builder distsql.RequestBuilder
 	builder.SetTableRanges(tbl.GetPhysicalID(), ranges, nil).
@@ -353,7 +351,6 @@ func (dc *ddlCtx) GetTableMaxRowID(startTS uint64, tbl table.PhysicalTable) (max
 		// empty table
 		return maxRowID, true, nil
 	}
-
 	row := chk.GetRow(0)
 	maxRowID = row.GetInt64(0)
 	return maxRowID, false, nil
