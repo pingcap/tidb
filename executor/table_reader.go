@@ -171,7 +171,6 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		e.feedback.Invalidate()
 		return err
 	}
-
 	e.resultHandler.open(firstResult, secondResult)
 	return nil
 }
