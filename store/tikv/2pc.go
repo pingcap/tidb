@@ -345,14 +345,24 @@ func (c *twoPhaseCommitter) doActionOnMutations(bo *Backoffer, action twoPhaseCo
 	if mutations.len() == 0 {
 		return nil
 	}
-	groups, err := c.store.regionCache.GroupSortedMutationsByRegion(bo, mutations)
+	groups, err := c.groupMutations(bo, mutations)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
+	return c.doActionOnGroupMutations(bo, action, groups)
+}
+
+// groupMutations groups mutations by region, then checks for any large groups and in that case pre-splits the region.
+func (c *twoPhaseCommitter) groupMutations(bo *Backoffer, mutations committerMutations) ([]groupedMutations, error) {
+	groups, err := c.store.regionCache.GroupSortedMutationsByRegion(bo, mutations)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	// Pre-split regions to avoid too much write workload into a single region.
 	// In the large transaction case, this operation is important to avoid TiKV 'server is busy' error.
-	var preSplited bool
+	var didPreSplit bool
 	preSplitDetectThresholdVal := atomic.LoadUint32(&preSplitDetectThreshold)
 	for _, group := range groups {
 		if uint32(group.mutations.len()) >= preSplitDetectThresholdVal {
@@ -360,67 +370,27 @@ func (c *twoPhaseCommitter) doActionOnMutations(bo *Backoffer, action twoPhaseCo
 				zap.Uint64("region", group.region.GetID()),
 				zap.Int("mutations count", group.mutations.len()))
 			// Use context.Background, this time should not add up to Backoffer.
-			if preSplitAndScatterIn2PC(context.Background(), c.store, group) {
-				preSplited = true
+			if c.store.preSplitRegion(context.Background(), group) {
+				didPreSplit = true
 			}
 		}
 	}
 	// Reload region cache again.
-	if preSplited {
+	if didPreSplit {
 		groups, err = c.store.regionCache.GroupSortedMutationsByRegion(bo, mutations)
 		if err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 	}
 
-	return c.doActionOnGroupMutations(bo, action, groups)
+	return groups, nil
 }
 
-func preSplitAndScatterIn2PC(ctx context.Context, store *tikvStore, group groupedMutations) bool {
-	splitKeys := make([][]byte, 0, 4)
-
-	preSplitSizeThresholdVal := atomic.LoadUint32(&preSplitSizeThreshold)
-	regionSize := 0
-	keysLength := group.mutations.len()
-	valsLength := len(group.mutations.values)
-	// The value length maybe zero for pessimistic lock keys
-	for i := 0; i < keysLength; i++ {
-		regionSize = regionSize + len(group.mutations.keys[i])
-		if i < valsLength {
-			regionSize = regionSize + len(group.mutations.values[i])
-		}
-		// The second condition is used for testing.
-		if regionSize >= int(preSplitSizeThresholdVal) {
-			regionSize = 0
-			splitKeys = append(splitKeys, group.mutations.keys[i])
-		}
-	}
-	if len(splitKeys) == 0 {
-		return false
-	}
-
-	regionIDs, err := store.SplitRegions(ctx, splitKeys, true)
-	if err != nil {
-		logutil.BgLogger().Warn("2PC split regions failed", zap.Uint64("regionID", group.region.id),
-			zap.Int("keys count", keysLength), zap.Int("values count", valsLength), zap.Error(err))
-		return false
-	}
-
-	for _, regionID := range regionIDs {
-		err := store.WaitScatterRegionFinish(ctx, regionID, 0)
-		if err != nil {
-			logutil.BgLogger().Warn("2PC wait scatter region failed", zap.Uint64("regionID", regionID), zap.Error(err))
-		}
-	}
-	// Invalidate the old region cache information.
-	store.regionCache.InvalidateCachedRegion(group.region)
-	return true
-}
-
+// doActionOnGroupedMutations splits groups into batches (there is one group per region, and potentially many batches per group, but all mutations
+// in a batch will belong to the same region).
 func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPhaseCommitAction, groups []groupedMutations) error {
 	action.tiKVTxnRegionsNumHistogram().Observe(float64(len(groups)))
 
-	var batches []batchMutations
 	var sizeFunc = c.keySize
 	if _, ok := action.(actionPrewrite); ok {
 		// Do not update regionTxnSize on retries. They are not used when building a PrewriteRequest.
@@ -433,18 +403,11 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 		atomic.AddInt32(&c.getDetail().PrewriteRegionNum, int32(len(groups)))
 	}
 
-	primaryIdx := -1
+	batchBuilder := newBatched(c.primary())
 	for _, group := range groups {
-		batches = c.appendBatchMutationsBySize(batches, group.region, group.mutations, sizeFunc, txnCommitBatchSize, &primaryIdx)
+		batchBuilder.appendBatchMutationsBySize(group.region, group.mutations, sizeFunc, txnCommitBatchSize)
 	}
-
-	firstIsPrimary := false
-	// If the batches include the primary key, put it to the first
-	if primaryIdx >= 0 {
-		batches[primaryIdx].isPrimary = true
-		batches[0], batches[primaryIdx] = batches[primaryIdx], batches[0]
-		firstIsPrimary = true
-	}
+	firstIsPrimary := batchBuilder.setPrimary()
 
 	actionCommit, actionIsCommit := action.(actionCommit)
 	_, actionIsCleanup := action.(actionCleanup)
@@ -458,10 +421,10 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 				logutil.Logger(bo.ctx).Warn("pessimisticLock failpoint", zap.String("valStr", valStr))
 				switch valStr {
 				case "pessimisticLockSkipPrimary":
-					err = c.doActionOnBatches(bo, action, batches)
+					err = c.doActionOnBatches(bo, action, batchBuilder.allBatches())
 					failpoint.Return(err)
 				case "pessimisticLockSkipSecondary":
-					err = c.doActionOnBatches(bo, action, batches[:1])
+					err = c.doActionOnBatches(bo, action, batchBuilder.primaryBatch())
 					failpoint.Return(err)
 				}
 			}
@@ -477,7 +440,7 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 
 	if firstIsPrimary && (actionIsCommit || actionIsCleanup || actionIsPessimiticLock) {
 		// primary should be committed/cleanup/pessimistically locked first
-		err = c.doActionOnBatches(bo, action, batches[:1])
+		err = c.doActionOnBatches(bo, action, batchBuilder.primaryBatch())
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -485,7 +448,7 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 			c.testingKnobs.acAfterCommitPrimary <- struct{}{}
 			<-c.testingKnobs.bkAfterCommitPrimary
 		}
-		batches = batches[1:]
+		batchBuilder.forgetPrimary()
 	}
 	if actionIsCommit && !actionCommit.retry {
 		// Commit secondary batches in background goroutine to reduce latency.
@@ -494,7 +457,7 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 		// by test suites.
 		secondaryBo := NewBackoffer(context.Background(), CommitMaxBackoff).WithVars(c.txn.vars)
 		go func() {
-			e := c.doActionOnBatches(secondaryBo, action, batches)
+			e := c.doActionOnBatches(secondaryBo, action, batchBuilder.allBatches())
 			if e != nil {
 				logutil.BgLogger().Debug("2PC async doActionOnBatches",
 					zap.Uint64("conn", c.connID),
@@ -504,7 +467,7 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 			}
 		}()
 	} else {
-		err = c.doActionOnBatches(bo, action, batches)
+		err = c.doActionOnBatches(bo, action, batchBuilder.allBatches())
 	}
 	return errors.Trace(err)
 }
@@ -933,10 +896,22 @@ type batchMutations struct {
 	mutations committerMutations
 	isPrimary bool
 }
+type batched struct {
+	batches    []batchMutations
+	primaryIdx int
+	primaryKey []byte
+}
+
+func newBatched(primaryKey []byte) *batched {
+	return &batched{
+		primaryIdx: -1,
+		primaryKey: primaryKey,
+	}
+}
 
 // appendBatchMutationsBySize appends mutations to b. It may split the keys to make
 // sure each batch's size does not exceed the limit.
-func (c *twoPhaseCommitter) appendBatchMutationsBySize(b []batchMutations, region RegionVerID, mutations committerMutations, sizeFn func(k, v []byte) int, limit int, primaryIdx *int) []batchMutations {
+func (b *batched) appendBatchMutationsBySize(region RegionVerID, mutations committerMutations, sizeFn func(k, v []byte) int, limit int) {
 	var start, end int
 	for start = 0; start < mutations.len(); start = end {
 		var size int
@@ -947,16 +922,46 @@ func (c *twoPhaseCommitter) appendBatchMutationsBySize(b []batchMutations, regio
 				v = mutations.values[end]
 			}
 			size += sizeFn(k, v)
-			if *primaryIdx < 0 && bytes.Equal(k, c.primary()) {
-				*primaryIdx = len(b)
+			if b.primaryIdx < 0 && bytes.Equal(k, b.primaryKey) {
+				b.primaryIdx = len(b.batches)
 			}
 		}
-		b = append(b, batchMutations{
+		b.batches = append(b.batches, batchMutations{
 			region:    region,
 			mutations: mutations.subRange(start, end),
 		})
 	}
-	return b
+}
+
+func (b *batched) setPrimary() bool {
+	// If the batches include the primary key, put it to the first
+	if b.primaryIdx >= 0 {
+		if len(b.batches) > 0 {
+			b.batches[b.primaryIdx].isPrimary = true
+			b.batches[0], b.batches[b.primaryIdx] = b.batches[b.primaryIdx], b.batches[0]
+			b.primaryIdx = 0
+		}
+		return true
+	}
+
+	return false
+}
+
+func (b *batched) allBatches() []batchMutations {
+	return b.batches
+}
+
+// primaryBatch returns the batch containing the primary key.
+// Precondition: `b.setPrimary() == true`
+func (b *batched) primaryBatch() []batchMutations {
+	return b.batches[:1]
+}
+
+func (b *batched) forgetPrimary() {
+	if len(b.batches) == 0 {
+		return
+	}
+	b.batches = b.batches[1:]
 }
 
 // batchExecutor is txn controller providing rate control like utils
