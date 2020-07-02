@@ -12,12 +12,12 @@ type unicodeCICollator struct {
 
 // Compare implement Collator interface.
 func (uc *unicodeCICollator) Compare(a, b string) int {
-	return strings.Compare(a, b)
+	return strings.Compare(truncateTailingSpace(a), truncateTailingSpace(b))
 }
 
 // Key implements Collator interface.
 func (uc *unicodeCICollator) Key(str string) []byte {
-	return []byte(str)
+	return []byte(truncateTailingSpace(str))
 }
 
 // Pattern implements Collator interface.

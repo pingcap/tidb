@@ -91,6 +91,22 @@ func (s *testEvaluatorSerialSuites) TestCILike(c *C) {
 		c.Assert(err, IsNil, commentf)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.match), commentf)
 	}
+
+	// utf8_unicode_ci now has same behaviour as utf8_bin
+	//TODO: should change when actual implement
+	// comment temporary or test will failed
+	// for _, tt := range tests {
+	// 	commentf := Commentf(`for input = "%s", pattern = "%s"`, tt.input, tt.pattern)
+	// 	fc := funcs[ast.Like]
+	// 	inputs := s.datumsToConstants(types.MakeDatums(tt.input, tt.pattern, 0))
+	// 	f, err := fc.getFunction(s.ctx, inputs)
+	// 	c.Assert(err, IsNil, commentf)
+
+	// 	f.setCollator(collate.GetCollator("utf8mb4_unicode_ci"))
+	// 	r, err := evalBuiltinFunc(f, chunk.Row{})
+	// 	c.Assert(err, IsNil, commentf)
+	// 	c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.match), commentf)
+	// }
 }
 
 func (s *testEvaluatorSuite) TestRegexp(c *C) {

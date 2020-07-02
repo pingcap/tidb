@@ -39,6 +39,12 @@ func (s *testCollationSuites) TestCompareString(c *C) {
 	c.Assert(types.CompareString("À", "A", "binary"), Not(Equals), 0)
 	c.Assert(types.CompareString("😜", "😃", "binary"), Not(Equals), 0)
 	c.Assert(types.CompareString("a ", "a  ", "binary"), Not(Equals), 0)
+	// utf8_unicode_ci now has same behaviour as utf8_bin
+	// TODO: should change when actual implement
+	c.Assert(types.CompareString("a", "A", "utf8_unicode_ci"), Not(Equals), 0)
+	c.Assert(types.CompareString("À", "A", "utf8_unicode_ci"), Not(Equals), 0)
+	c.Assert(types.CompareString("😜", "😃", "utf8_unicode_ci"), Not(Equals), 0)
+	c.Assert(types.CompareString("a ", "a  ", "utf8_unicode_ci"), Not(Equals), 0)
 
 	ctx := mock.NewContext()
 	ft := types.NewFieldType(mysql.TypeVarString)

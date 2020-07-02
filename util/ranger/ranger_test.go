@@ -621,7 +621,7 @@ create table t(
 		},
 
 		// utf8mb4_unicode_ci now has same behaviour as utf8mb4_bin
-		// should change when actual implement
+		// TODO: should change when actual implement
 		{
 			indexPos:    4,
 			exprStr:     "f = 'a' and f = 'B' collate utf8mb4_bin",
