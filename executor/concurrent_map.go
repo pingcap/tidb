@@ -1,3 +1,16 @@
+// Copyright 2020 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package executor
 
 import (
@@ -29,6 +42,21 @@ func newConcurrentMap() concurrentMap {
 // GetShard returns shard under given key
 func (m concurrentMap) GetShard(hashKey uint64) *concurrentMapShared {
 	return m[hashKey%uint64(ShardCount)]
+}
+
+// Insert inserts a value in a shard safely
+func (m concurrentMap) Insert(key uint64, value *entry) {
+	shard := m.GetShard(key)
+	shard.Lock()
+	v, ok := shard.items[key]
+	if !ok {
+		shard.items[key] = value
+	} else {
+		value.next = v
+		shard.items[key] = value
+	}
+	shard.Unlock()
+	return
 }
 
 // UpsertCb : Callback to return new element to be inserted into the map

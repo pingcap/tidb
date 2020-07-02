@@ -91,7 +91,7 @@ type hashRowContainer struct {
 	hCtx *hashContext
 	stat hashStatistic
 
-	// hashMap stores the map of hashKey and RowPtr
+	// hashTable stores the map of hashKey and RowPtr
 	hashTable baseHashTable
 
 	rowContainer *chunk.RowContainer
@@ -377,18 +377,10 @@ func (ht *concurrentMapHashTable) Len() uint64 {
 
 // Put puts the key/rowPtr pairs to the concurrentMapHashTable, multiple rowPtrs are stored in a list.
 func (ht *concurrentMapHashTable) Put(hashKey uint64, rowPtr chunk.RowPtr) {
-	cb := func(exists bool, valueInMap, newValue *entry) *entry {
-		if !exists {
-			return newValue
-		}
-		nv := newValue
-		nv.next = valueInMap
-		return nv
-	}
 	newEntry := ht.entryStore.GetStore()
 	newEntry.ptr = rowPtr
 	newEntry.next = nil
-	ht.hashMap.Upsert(hashKey, newEntry, cb)
+	ht.hashMap.Insert(hashKey, newEntry)
 	atomic.AddUint64(&ht.length, 1)
 }
 

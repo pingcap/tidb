@@ -38,7 +38,6 @@ func (s *pkgTestSuite) testHashTables(c *C) {
 				rawData[i] = append(rawData[i], chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(j)})
 			}
 		}
-		ht = newUnsafeHashTable(0, true)
 		// put all rawData into ht vertically
 		for j := uint64(0); j < initialEntrySliceLen*9; j++ {
 			for i := 9; i >= 0; i-- {
@@ -60,7 +59,7 @@ func (s *pkgTestSuite) testHashTables(c *C) {
 	// test unsafeHashTable
 	ht = newUnsafeHashTable(0, true)
 	test()
-	// test unsafeHashTable
+	// test ConcurrentMapHashTable
 	ht = newConcurrentMapHashTable(0)
 	test()
 }
