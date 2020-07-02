@@ -2075,5 +2075,26 @@
         "Plan": "IndexHashJoin{IndexReader(Index(t2.idx_a)[[-inf,+inf]])->IndexReader(Index(t1.idx_a)[[NULL,+inf]]->Sel([not(isnull(test.t1.a))]))}(test.t2.a,test.t1.a)"
       }
     ]
+  },
+  {
+    "Name": "TestNthPlanHintWithExplain",
+    "Cases": [
+      {
+        "SQL": "select /*+nth_plan(1)*/ * from test.tt where a=1 and b=1",
+        "Plan": "TableReader(Table(tt)->Sel([eq(test.tt.a, 1) eq(test.tt.b, 1)]))"
+      },
+      {
+        "SQL": "select /*+nth_plan(2)*/ * from test.tt where a=1 and b=1;",
+        "Plan": "IndexLookUp(Index(tt.a)[[1,1]], Table(tt)->Sel([eq(test.tt.b, 1)]))"
+      },
+      {
+        "SQL": "select /*+nth_plan(3)*/ * from test.tt where a=1 and b=1;",
+        "Plan": "IndexLookUp(Index(tt.b)[[1,1]], Table(tt)->Sel([eq(test.tt.a, 1)]))"
+      },
+      {
+        "SQL": "select /*+nth_plan(2)*/ * from test.tt where a=1 and b=1;",
+        "Plan": "IndexLookUp(Index(tt.a)[[1,1]], Table(tt)->Sel([eq(test.tt.b, 1)]))"
+      }
+    ]
   }
 ]

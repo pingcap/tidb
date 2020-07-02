@@ -1058,3 +1058,13 @@ func (s *testSuiteAgg) TestIssue15690(c *C) {
 	tk.MustQuery(`select /*+ stream_agg() */ distinct * from t;`).Check(testkit.Rows("<nil>", "a", "b"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
 }
+
+func (s *testSuiteAgg) TestIssue15958(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.Se.GetSessionVars().MaxChunkSize = 2
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(y year);`)
+	tk.MustExec(`insert into t values (2020), (2000), (2050);`)
+	tk.MustQuery(`select sum(y) from t`).Check(testkit.Rows("6070"))
+	tk.MustQuery(`select avg(y) from t`).Check(testkit.Rows("2023.3333"))
+}
