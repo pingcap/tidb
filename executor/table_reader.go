@@ -20,7 +20,6 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -221,12 +220,6 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		reqBuilder = builder.SetCommonHandleRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), ranges)
 	} else {
 		reqBuilder = builder.SetTableRanges(getPhysicalTableID(e.table), ranges, e.feedback)
-	}
-
-	memQuota := e.ctx.GetSessionVars().MemQuotaQuery
-	// session MemQuotaQuery is not set, use server quota instead
-	if e.ctx.GetSessionVars().MemQuotaQuery < 0 {
-		memQuota = config.GetGlobalConfig().MemQuotaQuery
 	}
 
 	kvReq, err := reqBuilder.
