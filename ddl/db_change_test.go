@@ -516,8 +516,7 @@ func (s *testStateChangeSuite) TestWriteOnlyWriteNULL(c *C) {
 	sqls[0] = sqlWithErr{"insert t set c1 = 'c1_new', c3 = '2019-02-12', c4 = 8 on duplicate key update c1 = values(c1)", nil}
 	addColumnSQL := "alter table t add column c5 int not null default 1 after c4"
 	expectQuery := &expectQuery{"select c4, c5 from t", []string{"8 1"}}
-	// TODO: This case should always fail in write-only state, but it doesn't. We use write-reorganization state here to keep it running stable. It need a double check.
-	s.runTestInSchemaState(c, model.StateWriteReorganization, true, addColumnSQL, sqls, expectQuery)
+	s.runTestInSchemaState(c, model.StateWriteOnly, true, addColumnSQL, sqls, expectQuery)
 }
 
 func (s *testStateChangeSuite) TestWriteOnlyOnDupUpdate(c *C) {
@@ -527,8 +526,7 @@ func (s *testStateChangeSuite) TestWriteOnlyOnDupUpdate(c *C) {
 	sqls[2] = sqlWithErr{"insert t set c1 = 'c1_new', c3 = '2019-02-12', c4 = 2 on duplicate key update c1 = values(c1)", nil}
 	addColumnSQL := "alter table t add column c5 int not null default 1 after c4"
 	expectQuery := &expectQuery{"select c4, c5 from t", []string{"2 1"}}
-	// TODO: This case should always fail in write-only state, but it doesn't. We use write-reorganization state here to keep it running stable. It need a double check.
-	s.runTestInSchemaState(c, model.StateWriteReorganization, true, addColumnSQL, sqls, expectQuery)
+	s.runTestInSchemaState(c, model.StateWriteOnly, true, addColumnSQL, sqls, expectQuery)
 }
 
 func (s *testStateChangeSuite) TestWriteOnlyOnDupUpdateForAddColumns(c *C) {
@@ -538,8 +536,7 @@ func (s *testStateChangeSuite) TestWriteOnlyOnDupUpdateForAddColumns(c *C) {
 	sqls[2] = sqlWithErr{"insert t set c1 = 'c1_new', c3 = '2019-02-12', c4 = 2 on duplicate key update c1 = values(c1)", nil}
 	addColumnsSQL := "alter table t add column c5 int not null default 1 after c4, add column c44 int not null default 1"
 	expectQuery := &expectQuery{"select c4, c5, c44 from t", []string{"2 1 1"}}
-	// TODO: This case should always fail in write-only state, but it doesn't. We use write-reorganization state here to keep it running stable. It need a double check.
-	s.runTestInSchemaState(c, model.StateWriteReorganization, true, addColumnsSQL, sqls, expectQuery)
+	s.runTestInSchemaState(c, model.StateWriteOnly, true, addColumnsSQL, sqls, expectQuery)
 }
 
 // TestWriteOnly tests whether the correct columns is used in PhysicalIndexScan's ToPB function.

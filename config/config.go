@@ -42,6 +42,8 @@ import (
 // Config number limitations
 const (
 	MaxLogFileSize = 4096 // MB
+	// DefTxnEntrySizeLimit is the default value of TxnEntrySizeLimit.
+	DefTxnEntrySizeLimit = 6 * 1024 * 1024
 	// DefTxnTotalSizeLimit is the default value of TxnTxnTotalSizeLimit.
 	DefTxnTotalSizeLimit = 100 * 1024 * 1024
 	// DefMaxIndexLength is the maximum index length(in bytes). This value is consistent with MySQL.
@@ -57,7 +59,7 @@ const (
 	// DefStatusHost is the default status host of TiDB
 	DefStatusHost = "0.0.0.0"
 	// DefStoreLivenessTimeout is the default value for store liveness timeout.
-	DefStoreLivenessTimeout = "120s"
+	DefStoreLivenessTimeout = "5s"
 )
 
 // Valid config maps
@@ -141,6 +143,8 @@ type Config struct {
 	Experimental Experimental `toml:"experimental" json:"experimental"`
 	// EnableCollectExecutionInfo enables the TiDB to collect execution info.
 	EnableCollectExecutionInfo bool `toml:"enable-collect-execution-info" json:"enable-collect-execution-info"`
+	// EnableTelemetry enables the usage data report to PingCAP.
+	EnableTelemetry bool `toml:"enable-telemetry" json:"enable-telemetry"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -374,6 +378,7 @@ type Performance struct {
 	PseudoEstimateRatio  float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
 	ForcePriority        string  `toml:"force-priority" json:"force-priority"`
 	BindInfoLease        string  `toml:"bind-info-lease" json:"bind-info-lease"`
+	TxnEntrySizeLimit    uint64  `toml:"txn-entry-size-limit" json:"txn-entry-size-limit"`
 	TxnTotalSizeLimit    uint64  `toml:"txn-total-size-limit" json:"txn-total-size-limit"`
 	TCPKeepAlive         bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
 	CrossJoin            bool    `toml:"cross-join" json:"cross-join"`
@@ -616,6 +621,7 @@ var defaultConf = Config{
 		PseudoEstimateRatio:  0.8,
 		ForcePriority:        "NO_PRIORITY",
 		BindInfoLease:        "3s",
+		TxnEntrySizeLimit:    DefTxnEntrySizeLimit,
 		TxnTotalSizeLimit:    DefTxnTotalSizeLimit,
 		DistinctAggPushDown:  false,
 		CommitterConcurrency: 16,
@@ -686,6 +692,7 @@ var defaultConf = Config{
 		AllowsExpressionIndex: false,
 	},
 	EnableCollectExecutionInfo: false,
+	EnableTelemetry:            true,
 }
 
 var (

@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -300,7 +301,7 @@ func (ts *ConnTestSuite) TestDispatch(c *C) {
 	se, err := session.CreateSession4Test(ts.store)
 	c.Assert(err, IsNil)
 	tc := &TiDBContext{
-		session: se,
+		Session: se,
 		stmts:   make(map[int]*TiDBStatement),
 	}
 	_, err = se.Execute(context.Background(), "create table test.t(a int)")
@@ -348,7 +349,7 @@ func (ts *ConnTestSuite) TestGetSessionVarsWaitTimeout(c *C) {
 	se, err := session.CreateSession4Test(ts.store)
 	c.Assert(err, IsNil)
 	tc := &TiDBContext{
-		session: se,
+		Session: se,
 		stmts:   make(map[int]*TiDBStatement),
 	}
 	cc := &clientConn{
@@ -386,7 +387,7 @@ func (ts *ConnTestSuite) TestConnExecutionTimeout(c *C) {
 	connID := 1
 	se.SetConnectionID(uint64(connID))
 	tc := &TiDBContext{
-		session: se,
+		Session: se,
 		stmts:   make(map[int]*TiDBStatement),
 	}
 	cc := &clientConn{
@@ -447,20 +448,11 @@ func (ts *ConnTestSuite) TestConnExecutionTimeout(c *C) {
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/server/FakeClientConn"), IsNil)
 }
 
-type mockTiDBCtx struct {
-	TiDBContext
-	err error
-}
-
 func (ts *ConnTestSuite) TestShutDown(c *C) {
 	cc := &clientConn{}
 	se, err := session.CreateSession4Test(ts.store)
 	c.Assert(err, IsNil)
-	// mock delay response
-	cc.ctx = &mockTiDBCtx{
-		TiDBContext: TiDBContext{session: se},
-		err:         nil,
-	}
+	cc.ctx = &TiDBContext{Session: se}
 	// set killed flag
 	cc.status = connStatusShutdown
 	// assert ErrQueryInterrupted
@@ -473,7 +465,7 @@ func (ts *ConnTestSuite) TestShutdownOrNotify(c *C) {
 	se, err := session.CreateSession4Test(ts.store)
 	c.Assert(err, IsNil)
 	tc := &TiDBContext{
-		session: se,
+		Session: se,
 		stmts:   make(map[int]*TiDBStatement),
 	}
 	cc := &clientConn{
@@ -491,4 +483,32 @@ func (ts *ConnTestSuite) TestShutdownOrNotify(c *C) {
 	cc.status = connStatusDispatching
 	c.Assert(cc.ShutdownOrNotify(), IsFalse)
 	c.Assert(cc.status, Equals, connStatusWaitShutdown)
+}
+
+func (ts *ConnTestSuite) TestPrefetchPointKeys(c *C) {
+	cc := &clientConn{
+		alloc: arena.NewAllocator(1024),
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
+		},
+	}
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	cc.ctx = &TiDBContext{Session: tk.Se}
+	ctx := context.Background()
+	tk.MustExec("create table prefetch (a int, b int, c int, primary key (a, b))")
+	tk.MustExec("insert prefetch values (1, 1, 1), (2, 2, 2), (3, 3, 3)")
+	tk.MustExec("begin optimistic")
+	tk.MustExec("update prefetch set c = c + 1 where a = 2 and b = 2")
+	query := "update prefetch set c = c + 1 where a = 1 and b = 1;" +
+		"update prefetch set c = c + 1 where a = 2 and b = 2;" +
+		"update prefetch set c = c + 1 where a = 3 and b = 3;"
+	err := cc.handleQuery(ctx, query)
+	c.Assert(err, IsNil)
+	txn, err := tk.Se.Txn(false)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Valid(), IsTrue)
+	snap := txn.GetSnapshot()
+	c.Assert(tikv.SnapCacheHitCount(snap), Equals, 4)
+	tk.MustExec("commit")
+	tk.MustQuery("select * from prefetch").Check(testkit.Rows("1 1 2", "2 2 4", "3 3 4"))
 }

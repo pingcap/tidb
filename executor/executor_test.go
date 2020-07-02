@@ -3351,7 +3351,7 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "admin check index t c")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "handle 3, index:types.Datum{k:0x1, collation:\"\", decimal:0x0, length:0x0, i:30, b:[]uint8(nil), x:interface {}(nil)} != record:<nil>")
+	c.Assert(err.Error(), Equals, "handle 3, index:types.Datum{k:0x1, decimal:0x0, length:0x0, i:30, collation:\"\", b:[]uint8(nil), x:interface {}(nil)} != record:<nil>")
 
 	// set data to:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30), (4, 40)
@@ -4409,6 +4409,23 @@ func (s *testSplitTable) TestShowTableRegion(c *C) {
 	c.Assert(rows[1][1], Equals, fmt.Sprintf("t_%d_r_2305843009213693952", tbl.Meta().ID))
 	c.Assert(rows[2][1], Equals, fmt.Sprintf("t_%d_r_4611686018427387904", tbl.Meta().ID))
 	c.Assert(rows[3][1], Equals, fmt.Sprintf("t_%d_r_6917529027641081856", tbl.Meta().ID))
+
+	// Test pre-split table region when create table.
+	tk.MustExec("drop table if exists pt_pre")
+	tk.MustExec("create table pt_pre (a int, b int) shard_row_id_bits = 2 pre_split_regions=2 partition by hash(a) partitions 3;")
+	re = tk.MustQuery("show table pt_pre regions")
+	rows = re.Rows()
+	// Table t_regions should have 4 regions now.
+	c.Assert(len(rows), Equals, 12)
+	tbl = testGetTableByName(c, tk.Se, "test", "pt_pre")
+	pi := tbl.Meta().GetPartitionInfo().Definitions
+	c.Assert(len(pi), Equals, 3)
+	for i, p := range pi {
+		c.Assert(rows[1+4*i][1], Equals, fmt.Sprintf("t_%d_r_2305843009213693952", p.ID))
+		c.Assert(rows[2+4*i][1], Equals, fmt.Sprintf("t_%d_r_4611686018427387904", p.ID))
+		c.Assert(rows[3+4*i][1], Equals, fmt.Sprintf("t_%d_r_6917529027641081856", p.ID))
+	}
+
 	defer atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
 
 	// Test split partition table.
