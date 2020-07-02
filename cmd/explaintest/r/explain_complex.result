@@ -131,15 +131,15 @@ explain select gad.id as gid,sdk.id as sid,gad.aid as aid,gad.cm as cm,sdk.dic a
 id	estRows	task	access object	operator info
 Projection_10	0.00	root		test.st.id, test.dd.id, test.st.aid, test.st.cm, test.dd.dic, test.dd.ip, test.dd.t, test.st.p1, test.st.p2, test.st.p3, test.st.p4, test.st.p5, test.st.p6_md5, test.st.p7_md5, test.st.ext
 └─Limit_13	0.00	root		offset:0, count:3000
-  └─IndexMergeJoin_24	0.00	root		inner join, inner:IndexLookUp_22, outer key:test.st.aid, inner key:test.dd.aid, other cond:eq(test.st.dic, test.dd.mac), lt(test.st.t, test.dd.t)
+  └─IndexMergeJoin_26	0.00	root		inner join, inner:IndexLookUp_24, outer key:test.st.aid, inner key:test.dd.aid, other cond:eq(test.st.dic, test.dd.mac), lt(test.st.t, test.dd.t)
     ├─IndexLookUp_35(Build)	0.00	root		
     │ ├─IndexRangeScan_32(Build)	3333.33	cop[tikv]	table:gad, index:t(t)	range:(1477971479,+inf], keep order:false, stats:pseudo
     │ └─Selection_34(Probe)	0.00	cop[tikv]		eq(test.st.bm, 0), eq(test.st.dit, "mac"), eq(test.st.pt, "ios"), not(isnull(test.st.dic))
     │   └─TableRowIDScan_33	3333.33	cop[tikv]	table:gad	keep order:false, stats:pseudo
-    └─IndexLookUp_22(Probe)	0.00	root		
-      ├─IndexRangeScan_19(Build)	10000.00	cop[tikv]	table:sdk, index:aid(aid, dic)	range: decided by [eq(test.dd.aid, test.st.aid)], keep order:true, stats:pseudo
-      └─Selection_21(Probe)	0.00	cop[tikv]		eq(test.dd.bm, 0), eq(test.dd.pt, "ios"), gt(test.dd.t, 1477971479), not(isnull(test.dd.mac)), not(isnull(test.dd.t))
-        └─TableRowIDScan_20	10000.00	cop[tikv]	table:sdk	keep order:false, stats:pseudo
+    └─IndexLookUp_24(Probe)	0.00	root		
+      ├─IndexRangeScan_21(Build)	10000.00	cop[tikv]	table:sdk, index:aid(aid, dic)	range: decided by [eq(test.dd.aid, test.st.aid)], keep order:true, stats:pseudo
+      └─Selection_23(Probe)	0.00	cop[tikv]		eq(test.dd.bm, 0), eq(test.dd.pt, "ios"), gt(test.dd.t, 1477971479), not(isnull(test.dd.mac)), not(isnull(test.dd.t))
+        └─TableRowIDScan_22	10000.00	cop[tikv]	table:sdk	keep order:false, stats:pseudo
 explain SELECT cm, p1, p2, p3, p4, p5, p6_md5, p7_md5, count(1) as click_pv, count(DISTINCT ip) as click_ip FROM st WHERE (t between 1478188800 and 1478275200) and aid='cn.sbkcq' and pt='android' GROUP BY cm, p1, p2, p3, p4, p5, p6_md5, p7_md5;
 id	estRows	task	access object	operator info
 Projection_5	1.00	root		test.st.cm, test.st.p1, test.st.p2, test.st.p3, test.st.p4, test.st.p5, test.st.p6_md5, test.st.p7_md5, Column#20, Column#21
@@ -152,15 +152,15 @@ explain select dt.id as id, dt.aid as aid, dt.pt as pt, dt.dic as dic, dt.cm as 
 id	estRows	task	access object	operator info
 Projection_10	0.00	root		test.dt.id, test.dt.aid, test.dt.pt, test.dt.dic, test.dt.cm, test.rr.gid, test.rr.acd, test.rr.t, test.dt.p1, test.dt.p2, test.dt.p3, test.dt.p4, test.dt.p5, test.dt.p6_md5, test.dt.p7_md5
 └─Limit_13	0.00	root		offset:0, count:2000
-  └─IndexMergeJoin_41	0.00	root		inner join, inner:IndexLookUp_39, outer key:test.rr.aid, test.rr.dic, inner key:test.dt.aid, test.dt.dic
+  └─IndexMergeJoin_43	0.00	root		inner join, inner:IndexLookUp_41, outer key:test.rr.aid, test.rr.dic, inner key:test.dt.aid, test.dt.dic
     ├─TableReader_61(Build)	3.33	root		data:Selection_60
     │ └─Selection_60	3.33	cop[tikv]		eq(test.rr.pt, "ios"), gt(test.rr.t, 1478185592)
     │   └─TableFullScan_59	10000.00	cop[tikv]	table:rr	keep order:false, stats:pseudo
-    └─IndexLookUp_39(Probe)	0.00	root		
-      ├─Selection_37(Build)	1.00	cop[tikv]		not(isnull(test.dt.dic))
-      │ └─IndexRangeScan_35	1.00	cop[tikv]	table:dt, index:aid(aid, dic)	range: decided by [eq(test.dt.aid, test.rr.aid) eq(test.dt.dic, test.rr.dic)], keep order:true, stats:pseudo
-      └─Selection_38(Probe)	0.00	cop[tikv]		eq(test.dt.bm, 0), eq(test.dt.pt, "ios"), gt(test.dt.t, 1478185592)
-        └─TableRowIDScan_36	1.00	cop[tikv]	table:dt	keep order:false, stats:pseudo
+    └─IndexLookUp_41(Probe)	0.00	root		
+      ├─Selection_39(Build)	1.00	cop[tikv]		not(isnull(test.dt.dic))
+      │ └─IndexRangeScan_37	1.00	cop[tikv]	table:dt, index:aid(aid, dic)	range: decided by [eq(test.dt.aid, test.rr.aid) eq(test.dt.dic, test.rr.dic)], keep order:true, stats:pseudo
+      └─Selection_40(Probe)	0.00	cop[tikv]		eq(test.dt.bm, 0), eq(test.dt.pt, "ios"), gt(test.dt.t, 1478185592)
+        └─TableRowIDScan_38	1.00	cop[tikv]	table:dt	keep order:false, stats:pseudo
 explain select pc,cr,count(DISTINCT uid) as pay_users,count(oid) as pay_times,sum(am) as am from pp where ps=2  and ppt>=1478188800 and ppt<1478275200  and pi in ('510017','520017') and uid in ('18089709','18090780') group by pc,cr;
 id	estRows	task	access object	operator info
 Projection_5	1.00	root		test.pp.pc, test.pp.cr, Column#22, Column#23, Column#24
@@ -247,16 +247,16 @@ Sort_10	1.00	root		test.org_department.left_value
 └─HashAgg_15	1.00	root		group by:test.org_department.id, funcs:firstrow(test.org_department.id)->test.org_department.id, funcs:firstrow(test.org_department.ctx)->test.org_department.ctx, funcs:firstrow(test.org_department.name)->test.org_department.name, funcs:firstrow(test.org_department.left_value)->test.org_department.left_value, funcs:firstrow(test.org_department.right_value)->test.org_department.right_value, funcs:firstrow(test.org_department.depth)->test.org_department.depth, funcs:firstrow(test.org_department.leader_id)->test.org_department.leader_id, funcs:firstrow(test.org_department.status)->test.org_department.status, funcs:firstrow(test.org_department.created_on)->test.org_department.created_on, funcs:firstrow(test.org_department.updated_on)->test.org_department.updated_on
   └─Selection_22	0.01	root		or(eq(test.org_employee_position.user_id, 62), or(eq(test.org_department.id, 20), eq(test.org_department.id, 20)))
     └─HashJoin_24	0.02	root		left outer join, equal:[eq(test.org_position.id, test.org_employee_position.position_id)]
-      ├─IndexMergeJoin_40(Build)	0.01	root		left outer join, inner:IndexLookUp_38, outer key:test.org_department.id, inner key:test.org_position.department_id
+      ├─IndexMergeJoin_42(Build)	0.01	root		left outer join, inner:IndexLookUp_40, outer key:test.org_department.id, inner key:test.org_position.department_id
       │ ├─IndexLookUp_62(Build)	0.01	root		
       │ │ ├─IndexRangeScan_59(Build)	10.00	cop[tikv]	table:d, index:org_department_ctx_index(ctx)	range:[1,1], keep order:false, stats:pseudo
       │ │ └─Selection_61(Probe)	0.01	cop[tikv]		eq(test.org_department.status, 1000)
       │ │   └─TableRowIDScan_60	10.00	cop[tikv]	table:d	keep order:false, stats:pseudo
-      │ └─IndexLookUp_38(Probe)	1.25	root		
-      │   ├─Selection_36(Build)	1250.00	cop[tikv]		not(isnull(test.org_position.department_id))
-      │   │ └─IndexRangeScan_34	1251.25	cop[tikv]	table:p, index:org_position_department_id_index(department_id)	range: decided by [eq(test.org_position.department_id, test.org_department.id)], keep order:true, stats:pseudo
-      │   └─Selection_37(Probe)	1.25	cop[tikv]		eq(test.org_position.status, 1000)
-      │     └─TableRowIDScan_35	1250.00	cop[tikv]	table:p	keep order:false, stats:pseudo
+      │ └─IndexLookUp_40(Probe)	1.25	root		
+      │   ├─Selection_38(Build)	1250.00	cop[tikv]		not(isnull(test.org_position.department_id))
+      │   │ └─IndexRangeScan_36	1251.25	cop[tikv]	table:p, index:org_position_department_id_index(department_id)	range: decided by [eq(test.org_position.department_id, test.org_department.id)], keep order:true, stats:pseudo
+      │   └─Selection_39(Probe)	1.25	cop[tikv]		eq(test.org_position.status, 1000)
+      │     └─TableRowIDScan_37	1250.00	cop[tikv]	table:p	keep order:false, stats:pseudo
       └─TableReader_72(Probe)	9.99	root		data:Selection_71
         └─Selection_71	9.99	cop[tikv]		eq(test.org_employee_position.status, 1000), not(isnull(test.org_employee_position.position_id))
           └─TableFullScan_70	10000.00	cop[tikv]	table:ep	keep order:false, stats:pseudo
