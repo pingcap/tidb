@@ -224,9 +224,18 @@ type CommonHandle struct {
 // NewCommonHandle creates a CommonHandle from a encoded bytes which is encoded by code.EncodeKey.
 func NewCommonHandle(encoded []byte) (*CommonHandle, error) {
 	ch := &CommonHandle{encoded: encoded}
+	if len(encoded) < 9 {
+		padded := make([]byte, 9)
+		copy(padded, encoded)
+		ch.encoded = padded
+	}
 	remain := encoded
 	endOff := uint16(0)
 	for len(remain) > 0 {
+		if remain[0] == 0 {
+			// padded data
+			break
+		}
 		var err error
 		var col []byte
 		col, remain, err = codec.CutOne(remain)

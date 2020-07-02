@@ -1277,6 +1277,19 @@ func (s *testIntegrationSuite) TestAccessPathOnClusterIndex(c *C) {
 	}
 }
 
+func (s *testIntegrationSuite) TestClusterIndexUniqueDoubleRead(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database cluster_idx_unique_double_read;")
+	tk.MustExec("use cluster_idx_unique_double_read;")
+	defer tk.MustExec("drop database cluster_idx_unique_double_read;")
+	tk.MustExec("set @@tidb_enable_clustered_index = 1")
+	tk.MustExec("drop table if exists t")
+
+	tk.MustExec("create table t (a varchar(64), b varchar(64), uk int, v int, primary key(a, b), unique key uuk(uk));")
+	tk.MustExec("insert t values ('a', 'a1', 1, 11), ('b', 'b1', 2, 22), ('c', 'c1', 3, 33);")
+	tk.MustQuery("select * from t use index (uuk);").Check(testkit.Rows("a a1 1 11", "b b1 2 22", "c c1 3 33"))
+}
+
 func (s *testIntegrationSuite) TestIndexJoinOnClusteredIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
