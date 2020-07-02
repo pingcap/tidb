@@ -135,11 +135,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 			// Check already exists error
 			if alreadyExist := keyErr.GetAlreadyExist(); alreadyExist != nil {
 				key := alreadyExist.GetKey()
-				existErrInfo := c.txn.us.GetKeyExistErrInfo(key)
-				if existErrInfo == nil {
-					return errors.Errorf("conn %d, existErr for key:%s should not be nil", c.connID, key)
-				}
-				return existErrInfo.Err()
+				return c.extractKeyExistsErr(key)
 			}
 
 			// Extract lock from key error
