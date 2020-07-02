@@ -239,7 +239,6 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		SetMemTracker(e.memTracker).
 		SetStoreType(e.storeType).
 		SetAllowBatchCop(e.batchCop).
-		SetMemUsageQuota(memQuota).
 		Build()
 	if err != nil {
 		return nil, err
