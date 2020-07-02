@@ -1017,6 +1017,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		DB:               s.sessionVars.CurrentDB,
 		Command:          command,
 		Plan:             s.currentPlan,
+		PlanExplainRows:  plannercore.GetExplainRowsForPlan(s.currentPlan),
 		Time:             t,
 		State:            s.Status(),
 		Info:             sql,
@@ -1718,6 +1719,8 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 
+	dom.TelemetryLoop(se)
+
 	se1, err := createSession(store)
 	if err != nil {
 		return nil, err
@@ -1960,6 +1963,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBIsolationReadEngines,
 	variable.TiDBStoreLimit,
 	variable.TiDBSlowLogMasking,
+	variable.TiDBEnableTelemetry,
 }
 
 var (
