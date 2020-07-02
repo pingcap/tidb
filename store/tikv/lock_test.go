@@ -65,7 +65,7 @@ func (s *testLockSuite) lockKey(c *C, key, value, primaryKey, primaryValue []byt
 	tpc.primaryKey = primaryKey
 
 	ctx := context.Background()
-	err = tpc.prewriteMutations(NewBackoffer(ctx, PrewriteMaxBackoff), [][]byte{}, tpc.mutations)
+	err = tpc.prewriteMutations(NewBackoffer(ctx, PrewriteMaxBackoff), tpc.mutations)
 	c.Assert(err, IsNil)
 
 	if commitPrimary {
@@ -332,7 +332,7 @@ func (s *testLockSuite) TestCheckTxnStatusNoWait(c *C) {
 
 	// Only prewrite the secondary key to simulate a concurrent prewrite case:
 	// prewrite secondary regions success and prewrite the primary region is pending.
-	err = committer.prewriteMutations(NewBackoffer(context.Background(), PrewriteMaxBackoff), [][]byte{}, committer.mutationsOfKeys([][]byte{[]byte("second")}))
+	err = committer.prewriteMutations(NewBackoffer(context.Background(), PrewriteMaxBackoff), committer.mutationsOfKeys([][]byte{[]byte("second")}))
 	c.Assert(err, IsNil)
 
 	oracle := s.store.GetOracle()
@@ -349,7 +349,7 @@ func (s *testLockSuite) TestCheckTxnStatusNoWait(c *C) {
 
 	errCh := make(chan error)
 	go func() {
-		errCh <- committer.prewriteMutations(NewBackoffer(context.Background(), PrewriteMaxBackoff), [][]byte{}, committer.mutationsOfKeys([][]byte{[]byte("key")}))
+		errCh <- committer.prewriteMutations(NewBackoffer(context.Background(), PrewriteMaxBackoff), committer.mutationsOfKeys([][]byte{[]byte("key")}))
 	}()
 
 	lock := &Lock{
@@ -392,7 +392,7 @@ func (s *testLockSuite) prewriteTxnWithTTL(c *C, txn *tikvTxn, ttl uint64) {
 		elapsed := time.Since(txn.startTime) / time.Millisecond
 		committer.lockTTL = uint64(elapsed) + ttl
 	}
-	err = committer.prewriteMutations(NewBackoffer(context.Background(), PrewriteMaxBackoff), [][]byte{}, committer.mutations)
+	err = committer.prewriteMutations(NewBackoffer(context.Background(), PrewriteMaxBackoff), committer.mutations)
 	c.Assert(err, IsNil)
 }
 

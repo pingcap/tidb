@@ -79,6 +79,7 @@ type twoPhaseCommitter struct {
 	noNeedCommitKeys map[string]struct{}
 
 	primaryKey  []byte
+	primaryIdx  int
 	forUpdateTS uint64
 
 	mu struct {
@@ -155,6 +156,7 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 			ch: make(chan struct{}),
 		},
 		isPessimistic: txn.IsPessimistic(),
+		primaryIdx:    -1,
 	}, nil
 }
 
@@ -247,6 +249,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		for i, op := range mutations.ops {
 			if op != pb.Op_CheckNotExists {
 				c.primaryKey = mutations.keys[i]
+				c.primaryIdx = i
 				break
 			}
 		}
@@ -300,13 +303,25 @@ func (c *twoPhaseCommitter) primary() []byte {
 }
 
 func (c *twoPhaseCommitter) secondaries() [][]byte {
-	if !config.GetGlobalConfig().TiKVClient.EnableAsyncCommit || len(c.mutations.keys) == 0 {
+	if c.primaryIdx < 0 {
 		return [][]byte{}
 	}
-	if bytes.Equal(c.mutations.keys[0], c.primary()) {
+	// Easy case, primary key is first.
+	if c.primaryIdx == 0 {
 		return c.mutations.keys[1:]
 	}
-	return [][]byte{}
+
+	// Hard case, primary key is in the middle somewhere, need to copy the array and skip the primary key.
+	secondaries := make([][]byte, len(c.mutations.keys)-1)
+	offset := 0
+	for i, k := range c.mutations.keys {
+		if i == c.primaryIdx {
+			offset = 1
+			continue
+		}
+		secondaries[i-offset] = k
+	}
+	return secondaries
 }
 
 const bytesPerMiB = 1024 * 1024
@@ -686,7 +701,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	binlogChan := c.prewriteBinlog(ctx)
 	prewriteBo := NewBackoffer(ctx, PrewriteMaxBackoff).WithVars(c.txn.vars)
 	start := time.Now()
-	err = c.prewriteMutations(prewriteBo, c.secondaries(), c.mutations)
+	err = c.prewriteMutations(prewriteBo, c.mutations)
 	commitDetail := c.getDetail()
 	commitDetail.PrewriteTime = time.Since(start)
 	if prewriteBo.totalSleep > 0 {

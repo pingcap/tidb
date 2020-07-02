@@ -31,9 +31,7 @@ import (
 	"go.uber.org/zap"
 )
 
-type actionPrewrite struct {
-	secondaryKeys [][]byte
-}
+type actionPrewrite struct{}
 
 var _ twoPhaseCommitAction = actionPrewrite{}
 var tiKVTxnRegionsNumHistogramPrewrite = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues(metricsTag("prewrite"))
@@ -46,7 +44,7 @@ func (actionPrewrite) tiKVTxnRegionsNumHistogram() prometheus.Observer {
 	return tiKVTxnRegionsNumHistogramPrewrite
 }
 
-func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, secondaryKeys [][]byte, txnSize uint64) *tikvrpc.Request {
+func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize uint64) *tikvrpc.Request {
 	m := &batch.mutations
 	mutations := make([]*pb.Mutation, m.len())
 	for i := range m.keys {
@@ -83,7 +81,7 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, secondary
 
 	if config.GetGlobalConfig().TiKVClient.EnableAsyncCommit {
 		if batch.isPrimary {
-			req.Secondaries = secondaryKeys
+			req.Secondaries = c.secondaries()
 		}
 		req.UseAsyncCommit = true
 	}
@@ -99,7 +97,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 		txnSize = math.MaxUint64
 	}
 
-	req := c.buildPrewriteRequest(batch, action.secondaryKeys, txnSize)
+	req := c.buildPrewriteRequest(batch, txnSize)
 	for {
 		resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
 		if err != nil {
@@ -114,7 +112,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 			if err != nil {
 				return errors.Trace(err)
 			}
-			err = c.prewriteMutations(bo, action.secondaryKeys, batch.mutations)
+			err = c.prewriteMutations(bo, batch.mutations)
 			return errors.Trace(err)
 		}
 		if resp.Resp == nil {
@@ -169,12 +167,12 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 	}
 }
 
-func (c *twoPhaseCommitter) prewriteMutations(bo *Backoffer, secondaryKeys [][]byte, mutations committerMutations) error {
+func (c *twoPhaseCommitter) prewriteMutations(bo *Backoffer, mutations committerMutations) error {
 	if span := opentracing.SpanFromContext(bo.ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("twoPhaseCommitter.prewriteMutations", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		bo.ctx = opentracing.ContextWithSpan(bo.ctx, span1)
 	}
 
-	return c.doActionOnMutations(bo, actionPrewrite{secondaryKeys}, mutations)
+	return c.doActionOnMutations(bo, actionPrewrite{}, mutations)
 }
