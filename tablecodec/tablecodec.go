@@ -647,7 +647,7 @@ const (
 )
 
 // reEncodeHandle encodes the handle as a Datum so it can be properly decoded later.
-// If it is common handle, it is encoded as a list of Bytes Datum.
+// If it is common handle, it returns the encoded column values.
 // If it is int handle, it is encoded as int Datum or uint Datum decided by the unsigned.
 func reEncodeHandle(handle kv.Handle, unsigned bool) ([][]byte, error) {
 	if !handle.IsInt() {
