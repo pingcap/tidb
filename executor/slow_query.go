@@ -384,8 +384,20 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 		}
 	case variable.SlowLogTxnStartTSStr:
 		st.txnStartTs, err = strconv.ParseUint(value, 10, 64)
+	case variable.SlowLogUserStr:
+		// the old User format is kept for compatibility
+		fields := strings.SplitN(value, "@", 2)
+		if len(field) > 0 {
+			st.user = fields[0]
+		}
+		if len(field) > 1 {
+			st.host = fields[1]
+		}
+		if checker != nil {
+			valid = checker.hasPrivilege(st.user)
+		}
 	case variable.SlowLogUserAndHostStr:
-		// root[root] @ localhost [127.0.0.1]
+		// the new User&Host format: root[root] @ localhost [127.0.0.1]
 		fields := strings.SplitN(value, "@", 2)
 		if len(fields) > 0 {
 			tmp := strings.Split(fields[0], "[")
