@@ -71,7 +71,6 @@ type ParallelNestedLoopApplyExec struct {
 	freeChkCh   chan *chunk.Chunk
 	resultChkCh chan result
 	outerRowCh  chan outerRow
-	numWorkers  int32
 	exit        chan struct{}
 	workerWg    sync.WaitGroup
 	notifyWg    sync.WaitGroup
@@ -137,7 +136,6 @@ func (e *ParallelNestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk
 		go e.outerWorker(ctx)
 		for i := 0; i < e.concurrency; i++ {
 			e.workerWg.Add(1)
-			atomic.AddInt32(&e.numWorkers, 1)
 			go e.innerWorker(ctx, i)
 		}
 		e.notifyWg.Add(1)
@@ -147,6 +145,10 @@ func (e *ParallelNestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk
 	result := <-e.resultChkCh
 	if result.err != nil {
 		return result.err
+	}
+	if result.chk == nil { // no more data
+		req.Reset()
+		return nil
 	}
 	req.SwapColumns(result.chk)
 	e.freeChkCh <- result.chk
@@ -227,17 +229,6 @@ func (e *ParallelNestedLoopApplyExec) innerWorker(ctx context.Context, id int) {
 		}
 		err := e.fillInnerChunk(ctx, id, chk)
 		if err == nil && chk.NumRows() == 0 { // no more data, this goroutine can exit
-			for {
-				numWorkers := atomic.LoadInt32(&e.numWorkers) // decrease the numWorkers counter
-				if atomic.CompareAndSwapInt32(&e.numWorkers, numWorkers, numWorkers-1) {
-					if numWorkers == 1 { // it's the last one, deliver an empty chunk to notify the upper executor
-						if e.putResult(chk, nil) {
-							return
-						}
-					}
-					break
-				}
-			}
 			return
 		}
 		if e.putResult(chk, err) {
