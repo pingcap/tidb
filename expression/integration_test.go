@@ -5915,7 +5915,7 @@ func (s *testIntegrationSerialSuite) TestWeightString(c *C) {
 	}
 	// utf8_unicode_ci now has same behaviour as utf8_bin
 	//TODO: should change when actual implement
-	rows = tk.MustQuery("select weight_string(a collate utf8mb4_unicode) from t order by id").Rows()
+	rows = tk.MustQuery("select weight_string(a collate utf8mb4_unicode_ci) from t order by id").Rows()
 	for i, out := range cases.resultExplicitCollateBin {
 		c.Assert(rows[i][0].(string), Equals, out)
 	}
@@ -5947,15 +5947,35 @@ func (s *testIntegrationSerialSuite) TestCollateConstantPropagation(c *C) {
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a char(10) collate utf8mb4_unicode_ci, b char(10) collate utf8mb4_general_ci);")
+	tk.MustExec("create table t (a char(10) collate utf8mb4_bin, b char(10) collate utf8mb4_general_ci);")
 	tk.MustExec("insert into t values ('a', 'A');")
 	tk.MustQuery("select * from t t1, t t2 where t1.a=t2.b and t2.b='a' collate utf8mb4_general_ci;").Check(nil)
 	tk.MustQuery("select * from t t1, t t2 where t1.a=t2.b and t2.b>='a' collate utf8mb4_general_ci;").Check(nil)
 	tk.MustExec("drop table t;")
+
+	// utf8mb4_unicode_ci
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a char(10) collate utf8mb4_unicode_ci, b char(10) collate utf8mb4_general_ci);")
+	tk.MustExec("insert into t values ('a', 'A');")
+	// use collation utf8mb4_general_ci
+	// see also https://pingcap.com/docs-cn/stable/character-set-and-collation/
+	tk.MustQuery("select * from t t1, t t2 where t1.a=t2.b and t2.b='a' collate utf8mb4_general_ci;").Check(testkit.Rows("a A a A"))
+	tk.MustQuery("select * from t t1, t t2 where t1.a=t2.b and t2.b>='a' collate utf8mb4_general_ci;").Check(testkit.Rows("a A a A"))
+
+	tk.MustExec("drop table t;")
 	tk.MustExec("create table t (a char(10) collate utf8mb4_general_ci, b char(10) collate utf8mb4_general_ci);")
 	tk.MustExec("insert into t values ('A', 'a');")
+	tk.MustQuery("select * from t t1, t t2 where t1.a=t2.b and t2.b='a' collate utf8mb4_bin;").Check(testkit.Rows("A a A a"))
+	tk.MustQuery("select * from t t1, t t2 where t1.a=t2.b and t2.b>='a' collate utf8mb4_bin;").Check(testkit.Rows("A a A a"))
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a char(10) collate utf8mb4_general_ci, b char(10) collate utf8mb4_general_ci);")
+	tk.MustExec("insert into t values ('A', 'a');")
+	// utf8_unicode_ci now has same behaviour as utf8_bin
+	// TODO: should change when actual implement
 	tk.MustQuery("select * from t t1, t t2 where t1.a=t2.b and t2.b='a' collate utf8mb4_unicode_ci;").Check(testkit.Rows("A a A a"))
 	tk.MustQuery("select * from t t1, t t2 where t1.a=t2.b and t2.b>='a' collate utf8mb4_unicode_ci;").Check(testkit.Rows("A a A a"))
+
 	tk.MustExec("drop table t;")
 	tk.MustExec("set names utf8mb4")
 	tk.MustExec("create table t (a char(10) collate utf8mb4_general_ci, b char(10) collate utf8_general_ci);")
@@ -5972,10 +5992,23 @@ func (s *testIntegrationSerialSuite) TestCollateConstantPropagation(c *C) {
 	tk.MustExec("drop table if exists t1, t2;")
 	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci;")
 	tk.MustExec("create table t1(a char, b varchar(10)) charset utf8mb4 collate utf8mb4_general_ci;")
-	tk.MustExec("create table t2(a char, b varchar(10)) charset utf8mb4 collate utf8mb4_unicode_ci;")
+	tk.MustExec("create table t2(a char, b varchar(10)) charset utf8mb4 collate utf8mb4_bin;")
 	tk.MustExec("insert into t1 values ('A', 'a');")
 	tk.MustExec("insert into t2 values ('a', 'a')")
 	tk.MustQuery("select * from t1 left join t2 on t1.a = t2.a where t1.a = 'a';").Check(testkit.Rows("A a <nil> <nil>"))
+
+	// utf8_unicode_ci now has same behaviour as utf8_bin
+	// TODO: should change when actual implement
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci;")
+	tk.MustExec("create table t1(a char, b varchar(10)) charset utf8mb4 collate utf8mb4_general_ci;")
+	tk.MustExec("create table t2(a char, b varchar(10)) charset utf8mb4 collate utf8mb4_unicode_ci;")
+	tk.MustExec("insert into t1 values ('A', 'a');")
+	tk.MustExec("insert into t2 values ('a', 'a')")
+	// use collation utf8mb4_general_ci
+	// see also https://pingcap.com/docs-cn/stable/character-set-and-collation/
+	tk.MustQuery("select * from t1 left join t2 on t1.a = t2.a where t1.a = 'a';").Check(testkit.Rows("A a a a"))
+
 	tk.MustExec("drop table t;")
 	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci;")
 	tk.MustExec("create table t(a char collate utf8mb4_unicode_ci, b char collate utf8mb4_general_ci);")
