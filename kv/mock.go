@@ -125,17 +125,12 @@ func (t *mockTxn) SetVars(vars *Variables) {
 
 }
 
-<<<<<<< HEAD:kv/mock.go
-// NewMockTxn new a mockTxn.
-func NewMockTxn() Transaction {
-=======
 func (t *mockTxn) GetVars() *Variables {
 	return nil
 }
 
-// newMockTxn new a mockTxn.
-func newMockTxn() Transaction {
->>>>>>> 180c021... kv: fix KVVars not set on Transaction (#18351):kv/interface_mock_test.go
+// NewMockTxn new a mockTxn.
+func NewMockTxn() Transaction {
 	return &mockTxn{
 		opts:  make(map[Option]interface{}),
 		valid: true,
