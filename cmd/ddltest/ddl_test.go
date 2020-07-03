@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
@@ -516,66 +517,34 @@ func match(c *C, row []interface{}, expected ...interface{}) {
 }
 
 func (s *TestDDLSuite) Bootstrap(c *C) {
-	goCtx := goctx.Background()
-	// Initialize test data, you must use session to do it
-	_, err := s.s.Execute(goCtx, "use test_ddl")
-	c.Assert(err, IsNil)
-
-	_, err = s.s.Execute(goCtx, "drop table if exists test_index, test_column, test_insert, test_conflict_insert, "+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_ddl")
+	tk.MustExec("drop table if exists test_index, test_column, test_insert, test_conflict_insert, " +
 		"test_update, test_conflict_update, test_delete, test_conflict_delete, test_mixed, test_inc")
-	c.Assert(err, IsNil)
 
-	_, err = s.s.Execute(goCtx, "create table test_index (c int, c1 bigint, c2 double, c3 varchar(256), primary key(c))")
-	c.Assert(err, IsNil)
+	tk.MustExec("create table test_index (c int, c1 bigint, c2 double, c3 varchar(256), primary key(c))")
+	tk.MustExec("create table test_column (c1 int, c2 int, primary key(c1))")
+	tk.MustExec("create table test_insert (c1 int, c2 int, primary key(c1))")
+	tk.MustExec("create table test_conflict_insert (c1 int, c2 int, primary key(c1))")
+	tk.MustExec("create table test_update (c1 int, c2 int, primary key(c1))")
+	tk.MustExec("create table test_conflict_update (c1 int, c2 int, primary key(c1))")
+	tk.MustExec("create table test_delete (c1 int, c2 int, primary key(c1))")
+	tk.MustExec("create table test_conflict_delete (c1 int, c2 int, primary key(c1))")
+	tk.MustExec("create table test_mixed (c1 int, c2 int, primary key(c1))")
+	tk.MustExec("create table test_inc (c1 int, c2 int, primary key(c1))")
 
-	_, err = s.s.Execute(goCtx, "create table test_column (c1 int, c2 int, primary key(c1))")
-	c.Assert(err, IsNil)
-
-	_, err = s.s.Execute(goCtx, "create table test_insert (c1 int, c2 int, primary key(c1))")
-	c.Assert(err, IsNil)
-
-	_, err = s.s.Execute(goCtx, "create table test_conflict_insert (c1 int, c2 int, primary key(c1))")
-	c.Assert(err, IsNil)
-
-	_, err = s.s.Execute(goCtx, "create table test_update (c1 int, c2 int, primary key(c1))")
-	c.Assert(err, IsNil)
-
-	_, err = s.s.Execute(goCtx, "create table test_conflict_update (c1 int, c2 int, primary key(c1))")
-	c.Assert(err, IsNil)
-
-	_, err = s.s.Execute(goCtx, "create table test_delete (c1 int, c2 int, primary key(c1))")
-	c.Assert(err, IsNil)
-
-	_, err = s.s.Execute(goCtx, "create table test_conflict_delete (c1 int, c2 int, primary key(c1))")
-	c.Assert(err, IsNil)
-
-	_, err = s.s.Execute(goCtx, "create table test_mixed (c1 int, c2 int, primary key(c1))")
-	c.Assert(err, IsNil)
-
-	_, err = s.s.Execute(goCtx, "create table test_inc (c1 int, c2 int, primary key(c1))")
-	c.Assert(err, IsNil)
-
-	_, err = s.s.Execute(goCtx, "set @@tidb_enable_clustered_index = 1")
-	c.Assert(err, IsNil)
-	_, err = s.s.Execute(goCtx, "drop table if exists test_insert_common, test_conflict_insert_common, "+
+	tk.MustExec("set @@tidb_enable_clustered_index = 1")
+	tk.MustExec("drop table if exists test_insert_common, test_conflict_insert_common, " +
 		"test_update_common, test_conflict_update_common")
-
-	_, err = s.s.Execute(goCtx, "create table test_insert_common (c1 int, c2 int, primary key(c1, c2))")
-	c.Assert(err, IsNil)
-	_, err = s.s.Execute(goCtx, "create table test_conflict_insert_common (c1 int, c2 int, primary key(c1, c2))")
-	c.Assert(err, IsNil)
-	_, err = s.s.Execute(goCtx, "create table test_update_common (c1 int, c2 int, primary key(c1, c2))")
-	c.Assert(err, IsNil)
-	_, err = s.s.Execute(goCtx, "create table test_conflict_update_common (c1 int, c2 int, primary key(c1, c2))")
-	c.Assert(err, IsNil)
-	_, err = s.s.Execute(goCtx, "create table test_delete_common (c1 int, c2 int, primary key(c1, c2))")
-	c.Assert(err, IsNil)
-	_, err = s.s.Execute(goCtx, "create table test_conflict_delete_common (c1 int, c2 int, primary key(c1, c2))")
-	c.Assert(err, IsNil)
-	_, err = s.s.Execute(goCtx, "create table test_mixed_common (c1 int, c2 int, primary key(c1, c2))")
-	c.Assert(err, IsNil)
-	_, err = s.s.Execute(goCtx, "create table test_inc_common (c1 int, c2 int, primary key(c1, c2))")
-	c.Assert(err, IsNil)
+	tk.MustExec("create table test_insert_common (c1 int, c2 int, primary key(c1, c2))")
+	tk.MustExec("create table test_conflict_insert_common (c1 int, c2 int, primary key(c1, c2))")
+	tk.MustExec("create table test_update_common (c1 int, c2 int, primary key(c1, c2))")
+	tk.MustExec("create table test_conflict_update_common (c1 int, c2 int, primary key(c1, c2))")
+	tk.MustExec("create table test_delete_common (c1 int, c2 int, primary key(c1, c2))")
+	tk.MustExec("create table test_conflict_delete_common (c1 int, c2 int, primary key(c1, c2))")
+	tk.MustExec("create table test_mixed_common (c1 int, c2 int, primary key(c1, c2))")
+	tk.MustExec("create table test_inc_common (c1 int, c2 int, primary key(c1, c2))")
+	tk.MustExec("set @@tidb_enable_clustered_index = 0")
 }
 
 func (s *TestDDLSuite) TestSimple(c *C) {
