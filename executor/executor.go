@@ -870,7 +870,7 @@ type SelectLockExec struct {
 	Lock ast.SelectLockType
 	keys []kv.Key
 
-	tblID2Handle     map[int64][]*expression.Column
+	tblID2Handle     map[int64][][]*expression.Column
 	partitionedTable []table.PartitionedTable
 
 	// tblID2Table is cached to reduce cost.
@@ -912,7 +912,7 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if req.NumRows() > 0 {
 		iter := chunk.NewIterator4Chunk(req)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			for id, cols := range e.tblID2Handle {
+			for id, rows := range e.tblID2Handle {
 				physicalID := id
 				if pt, ok := e.tblID2Table[id]; ok {
 					// On a partitioned table, we have to use physical ID to encode the lock key!
@@ -922,9 +922,10 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 					}
 					physicalID = p.GetPhysicalID()
 				}
-
-				for _, col := range cols {
-					e.keys = append(e.keys, tablecodec.EncodeRowKeyWithHandle(physicalID, kv.IntHandle(row.GetInt64(col.Index))))
+				for _, cols := range rows {
+					for _, col := range cols {
+						e.keys = append(e.keys, tablecodec.EncodeRowKeyWithHandle(physicalID, kv.IntHandle(row.GetInt64(col.Index))))
+					}
 				}
 			}
 		}

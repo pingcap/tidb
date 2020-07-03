@@ -766,7 +766,7 @@ type PhysicalLock struct {
 
 	Lock ast.SelectLockType
 
-	TblID2Handle     map[int64][]*expression.Column
+	TblID2Handle     map[int64][][]*expression.Column
 	PartitionedTable []table.PartitionedTable
 }
 

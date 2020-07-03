@@ -532,13 +532,15 @@ func (p *PhysicalLock) ResolveIndices() (err error) {
 	if err != nil {
 		return err
 	}
-	for i, cols := range p.TblID2Handle {
-		for j, col := range cols {
-			resolvedCol, err := col.ResolveIndices(p.children[0].Schema())
-			if err != nil {
-				return err
+	for i, row := range p.TblID2Handle {
+		for j, cols := range row {
+			for k, col := range cols {
+				resolvedCol, err := col.ResolveIndices(p.children[0].Schema())
+				if err != nil {
+					return err
+				}
+				p.TblID2Handle[i][j][k] = resolvedCol.(*expression.Column)
 			}
-			p.TblID2Handle[i][j] = resolvedCol.(*expression.Column)
 		}
 	}
 	return nil

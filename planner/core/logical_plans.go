@@ -1022,7 +1022,7 @@ type LogicalLock struct {
 	baseLogicalPlan
 
 	Lock             ast.SelectLockType
-	tblID2Handle     map[int64][]*expression.Column
+	tblID2Handle     map[int64][][]*expression.Column
 	partitionedTable []table.PartitionedTable
 }
 

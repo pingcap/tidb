@@ -366,8 +366,10 @@ func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column) error {
 		return p.children[0].PruneColumns(p.Schema().Columns)
 	}
 
-	for _, cols := range p.tblID2Handle {
-		parentUsedCols = append(parentUsedCols, cols...)
+	for _, row := range p.tblID2Handle {
+		for _, cols := range row {
+			parentUsedCols = append(parentUsedCols, cols...)
+		}
 	}
 	return p.children[0].PruneColumns(parentUsedCols)
 }

@@ -2861,8 +2861,8 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if len(handleCols) > 0 {
 		// TODO: The common handle may be multi columns, need to change ds.handleCol to a slice.
 		ds.handleCol = handleCols[0]
-		handleMap := make(map[int64][]*expression.Column)
-		handleMap[tableInfo.ID] = handleCols
+		handleMap := make(map[int64][][]*expression.Column)
+		handleMap[tableInfo.ID] = append(handleMap[tableInfo.ID], handleCols)
 		b.handleHelper.pushMap(handleMap)
 	} else {
 		b.handleHelper.pushMap(nil)
@@ -2972,8 +2972,8 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 	}
 
 	if handleCol != nil {
-		handleMap := make(map[int64][]*expression.Column)
-		handleMap[tableInfo.ID] = []*expression.Column{handleCol}
+		handleMap := make(map[int64][][]*expression.Column)
+		handleMap[tableInfo.ID] = [][]*expression.Column{{handleCol}}
 		b.handleHelper.pushMap(handleMap)
 	} else {
 		b.handleHelper.pushMap(nil)
@@ -3262,12 +3262,12 @@ func (c TblColPosInfoSlice) FindHandle(colOrdinal int) (int, bool) {
 // buildColumns2Handle builds columns to handle mapping.
 func buildColumns2Handle(
 	names []*types.FieldName,
-	tblID2Handle map[int64][]*expression.Column,
+	tblID2Handle map[int64][][]*expression.Column,
 	tblID2Table map[int64]table.Table,
 	onlyWritableCol bool,
 ) (TblColPosInfoSlice, error) {
 	var cols2Handles TblColPosInfoSlice
-	for tblID, handleCols := range tblID2Handle {
+	for tblID, rows := range tblID2Handle {
 		tbl := tblID2Table[tblID]
 		var tblLen int
 		if onlyWritableCol {
@@ -3275,17 +3275,21 @@ func buildColumns2Handle(
 		} else {
 			tblLen = len(tbl.Cols())
 		}
-		if len(handleCols) > 0 {
-			offset, err := getTableOffset(names, names[handleCols[len(handleCols)-1].Index])
-			if err != nil {
-				return nil, err
+		if len(rows) > 0 {
+			for _, cols := range rows {
+				if len(cols) > 0 {
+					offset, err := getTableOffset(names, names[cols[len(cols)-1].Index])
+					if err != nil {
+						return nil, err
+					}
+					end := offset + tblLen
+					ordinals := make([]int, 0, len(cols))
+					for _, col := range cols {
+						ordinals = append(ordinals, col.Index)
+					}
+					cols2Handles = append(cols2Handles, TblColPosInfo{tblID, offset, end, ordinals, tbl.Meta().IsCommonHandle})
+				}
 			}
-			end := offset + tblLen
-			handleOrdinal := make([]int, 0, len(handleCols))
-			for _, h := range handleCols {
-				handleOrdinal = append(handleOrdinal, h.Index)
-			}
-			cols2Handles = append(cols2Handles, TblColPosInfo{tblID, offset, end, handleOrdinal, tbl.Meta().IsCommonHandle})
 		}
 	}
 	sort.Sort(cols2Handles)
@@ -3740,15 +3744,19 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 	return del, err
 }
 
-func resolveIndicesForTblID2Handle(tblID2Handle map[int64][]*expression.Column, schema *expression.Schema) (map[int64][]*expression.Column, error) {
-	newMap := make(map[int64][]*expression.Column, len(tblID2Handle))
-	for i, cols := range tblID2Handle {
-		for _, col := range cols {
-			resolvedCol, err := col.ResolveIndices(schema)
-			if err != nil {
-				return nil, err
+func resolveIndicesForTblID2Handle(tblID2Handle map[int64][][]*expression.Column, schema *expression.Schema) (map[int64][][]*expression.Column, error) {
+	newMap := make(map[int64][][]*expression.Column, len(tblID2Handle))
+	for tbl, rows := range tblID2Handle {
+		for _, row := range rows {
+			var newRowCols []*expression.Column
+			for _, col := range row {
+				resolvedCol, err := col.ResolveIndices(schema)
+				if err != nil {
+					return nil, err
+				}
+				newRowCols = append(newRowCols, resolvedCol.(*expression.Column))
 			}
-			newMap[i] = append(newMap[i], resolvedCol.(*expression.Column))
+			newMap[tbl] = append(newMap[tbl], newRowCols)
 		}
 	}
 	return newMap, nil
@@ -3756,25 +3764,28 @@ func resolveIndicesForTblID2Handle(tblID2Handle map[int64][]*expression.Column, 
 
 func (p *Delete) cleanTblID2HandleMap(
 	tablesToDelete map[int64][]*ast.TableName,
-	tblID2Handle map[int64][]*expression.Column,
+	tblID2Handle map[int64][][]*expression.Column,
 	outputNames []*types.FieldName,
-) map[int64][]*expression.Column {
-	for id, cols := range tblID2Handle {
+) map[int64][][]*expression.Column {
+	for id, rows := range tblID2Handle {
 		names, ok := tablesToDelete[id]
 		if !ok {
 			delete(tblID2Handle, id)
 			continue
 		}
-		for i := len(cols) - 1; i >= 0; i-- {
-			if !p.matchingDeletingTable(names, outputNames[cols[i].Index]) {
-				cols = append(cols[:i], cols[i+1:]...)
+		for j, cols := range rows {
+			for i := len(cols) - 1; i >= 0; i-- {
+				if !p.matchingDeletingTable(names, outputNames[cols[i].Index]) {
+					cols = append(cols[:i], cols[i+1:]...)
+				}
 			}
+			rows[j] = cols
 		}
-		if len(cols) == 0 {
+		if len(rows) == 0 {
 			delete(tblID2Handle, id)
 			continue
 		}
-		tblID2Handle[id] = cols
+		tblID2Handle[id] = rows
 	}
 	return tblID2Handle
 }

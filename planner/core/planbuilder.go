@@ -421,45 +421,41 @@ type PlanBuilder struct {
 }
 
 type handleColHelper struct {
-	id2HandleMapStack []map[int64][]*expression.Column
+	// tbl-id => {{row1-handleCol1, row1-handleCol2, ...}, {row2-handleCol1, row2-handleCol2, ...}}
+	id2HandleMapStack []map[int64][][]*expression.Column
 	stackTail         int
 }
 
-func (hch *handleColHelper) appendColToLastMap(tblID int64, col *expression.Column) {
-	tailMap := hch.id2HandleMapStack[hch.stackTail-1]
-	tailMap[tblID] = append(tailMap[tblID], col)
-}
-
-func (hch *handleColHelper) popMap() map[int64][]*expression.Column {
+func (hch *handleColHelper) popMap() map[int64][][]*expression.Column {
 	ret := hch.id2HandleMapStack[hch.stackTail-1]
 	hch.stackTail--
 	hch.id2HandleMapStack = hch.id2HandleMapStack[:hch.stackTail]
 	return ret
 }
 
-func (hch *handleColHelper) pushMap(m map[int64][]*expression.Column) {
+func (hch *handleColHelper) pushMap(m map[int64][][]*expression.Column) {
 	hch.id2HandleMapStack = append(hch.id2HandleMapStack, m)
 	hch.stackTail++
 }
 
-func (hch *handleColHelper) mergeAndPush(m1, m2 map[int64][]*expression.Column) {
-	newMap := make(map[int64][]*expression.Column, mathutil.Max(len(m1), len(m2)))
+func (hch *handleColHelper) mergeAndPush(m1, m2 map[int64][][]*expression.Column) {
+	newMap := make(map[int64][][]*expression.Column, mathutil.Max(len(m1), len(m2)))
 	for k, v := range m1 {
-		newMap[k] = make([]*expression.Column, len(v))
+		newMap[k] = make([][]*expression.Column, len(v))
 		copy(newMap[k], v)
 	}
 	for k, v := range m2 {
 		if _, ok := newMap[k]; ok {
 			newMap[k] = append(newMap[k], v...)
 		} else {
-			newMap[k] = make([]*expression.Column, len(v))
+			newMap[k] = make([][]*expression.Column, len(v))
 			copy(newMap[k], v)
 		}
 	}
 	hch.pushMap(newMap)
 }
 
-func (hch *handleColHelper) tailMap() map[int64][]*expression.Column {
+func (hch *handleColHelper) tailMap() map[int64][][]*expression.Column {
 	return hch.id2HandleMapStack[hch.stackTail-1]
 }
 
@@ -519,7 +515,7 @@ func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor
 		ctx:           sctx,
 		is:            is,
 		colMapper:     make(map[*ast.ColumnNameExpr]int),
-		handleHelper:  &handleColHelper{id2HandleMapStack: make([]map[int64][]*expression.Column, 0)},
+		handleHelper:  &handleColHelper{id2HandleMapStack: make([]map[int64][][]*expression.Column, 0)},
 		hintProcessor: processor,
 	}
 }
