@@ -525,6 +525,7 @@ func (worker *copIteratorWorker) checkWorkerOOM() (bool, int) {
 	endWorker := false
 	remainWorkers := 0
 	worker.actionOnExceed.mu.Lock()
+	defer worker.actionOnExceed.mu.Unlock()
 	if worker.actionOnExceed.mu.exceeded != 0 {
 		endWorker = true
 		worker.actionOnExceed.mu.aliveWorker--
@@ -532,10 +533,7 @@ func (worker *copIteratorWorker) checkWorkerOOM() (bool, int) {
 		// reset action
 		worker.actionOnExceed.mu.exceeded = 0
 		worker.actionOnExceed.once = sync.Once{}
-
-		worker.actionOnExceed.mu.Unlock()
 	}
-	worker.actionOnExceed.mu.Unlock()
 	return endWorker, remainWorkers
 }
 
