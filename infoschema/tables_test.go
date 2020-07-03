@@ -253,7 +253,6 @@ func (s *testTableSuite) TestInfoschemaFieldValue(c *C) {
 		testkit.Rows("<nil>"))
 
 	tk.MustExec("create user xxx")
-	tk.MustExec("flush privileges")
 
 	// Test for length of enum and set
 	tk.MustExec("drop table if exists t")
