@@ -170,6 +170,9 @@ func DecodeCompactBytes(b []byte) ([]byte, []byte, error) {
 	return b[n:], b[:n], nil
 }
 
+// DecodeEscapeString decode the raw escape string 
+// It takes raw string like `\130\131\132` and return "XYZ"
+// This function is copied from tidb-ctl project
 func DecodeEscapeString(text string) (string, error) {
 	var buf []byte
 	r := bytes.NewBuffer([]byte(text))
