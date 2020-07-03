@@ -440,8 +440,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 			return value, ErrWrongValueForVar.GenWithStackByArgs("Can't set BCJ to 1 but tidb_allow_batch_cop is 0, please active batch cop at first.")
 		}
 		return value, nil
-	case TiDBSkipUTF8Check, TiDBOptAggPushDown, TiDBOptDistinctAggPushDown,
-		TiDBOptInSubqToJoinAndAgg, TiDBEnableFastAnalyze,
+	case TiDBSkipUTF8Check, TiDBSkipASCIICheck, TiDBOptAggPushDown,
+		TiDBOptDistinctAggPushDown, TiDBOptInSubqToJoinAndAgg, TiDBEnableFastAnalyze,
 		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming, TiDBEnableChunkRPC,
 		TiDBBatchDelete, TiDBBatchCommit, TiDBEnableCascadesPlanner, TiDBEnableWindowFunction, TiDBPProfSQLCPU,
 		TiDBLowResolutionTSO, TiDBEnableIndexMerge, TiDBEnableNoopFuncs,
@@ -787,6 +787,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		if _, err := collate.GetCollationByName(value); err != nil {
 			return value, errors.Trace(err)
 		}
+	case TiDBShardAllocateStep:
+		return checkInt64SystemVar(name, value, 1, math.MaxInt64, vars)
 	}
 	return value, nil
 }
