@@ -1379,7 +1379,7 @@ func (s *testPlanSuite) optimize(ctx context.Context, sql string) (PhysicalPlan,
 	if err != nil {
 		return nil, nil, err
 	}
-	p, _, err = physicalOptimize(p.(LogicalPlan))
+	p, _, err = physicalOptimize(p.(LogicalPlan), &PlanCounterDisabled)
 	return p.(PhysicalPlan), stmt, err
 }
 

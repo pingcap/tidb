@@ -202,6 +202,16 @@ func (s *testSuite8) TestInsertOnDuplicateKey(c *C) {
 	tk.MustQuery(`select * from t1 use index(primary)`).Check(testkit.Rows(`1.0000`))
 }
 
+func (s *testSuite10) TestPaddingCommonHandle(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_clustered_index = 1")
+	tk.MustExec(`create table t1(c1 decimal(6,4), primary key(c1))`)
+	tk.MustExec(`insert into t1 set c1 = 0.1`)
+	tk.MustExec(`insert into t1 set c1 = 0.1 on duplicate key update c1 = 1`)
+	tk.MustQuery(`select * from t1`).Check(testkit.Rows(`1.0000`))
+}
+
 func (s *testSuite2) TestInsertReorgDelete(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
