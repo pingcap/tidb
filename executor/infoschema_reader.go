@@ -541,10 +541,10 @@ func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []
 	return nil
 }
 
-func (e *hugeMemTableRetriever) setDataForColumns(ctx sessionctx.Context) ([][]types.Datum, error) {
+func (e *hugeMemTableRetriever) setDataForColumns(ctx sessionctx.Context) error {
 	checker := privilege.GetPrivilegeManager(ctx)
+	e.rows = e.rows[:0]
 	batch := 1024
-	rows := make([][]types.Datum, 0, batch)
 	for ; e.dbsIdx < len(e.dbs); e.dbsIdx++ {
 		schema := e.dbs[e.dbsIdx]
 		for ; e.tblIdx < len(schema.Tables); e.tblIdx++ {
@@ -553,19 +553,17 @@ func (e *hugeMemTableRetriever) setDataForColumns(ctx sessionctx.Context) ([][]t
 				continue
 			}
 
-			rs := e.dataForColumnsInTable(schema, table)
-			rows = append(rows, rs...)
-			if len(rows) >= batch {
-				return rows, nil
+			e.dataForColumnsInTable(schema, table)
+			if len(e.rows) >= batch {
+				return nil
 			}
 		}
 		e.tblIdx = 0
 	}
-	return rows, nil
+	return nil
 }
 
-func (e *hugeMemTableRetriever) dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types.Datum {
-	rows := make([][]types.Datum, 0, len(tbl.Columns))
+func (e *hugeMemTableRetriever) dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) {
 	for i, col := range tbl.Columns {
 		if col.Hidden {
 			continue
@@ -646,9 +644,8 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(schema *model.DBInfo, tbl 
 			columnDesc.Comment,                   // COLUMN_COMMENT
 			col.GeneratedExprString,              // GENERATION_EXPRESSION
 		)
-		rows = append(rows, record)
+		e.rows = append(e.rows, record)
 	}
-	return rows
 }
 
 func (e *memtableRetriever) setDataFromPartitions(ctx sessionctx.Context, schemas []*model.DBInfo) error {
@@ -1775,6 +1772,7 @@ type hugeMemTableRetriever struct {
 	columns     []*model.ColumnInfo
 	retrieved   bool
 	initialized bool
+	rows        [][]types.Datum
 	dbs         []*model.DBInfo
 	dbsIdx      int
 	tblIdx      int
@@ -1792,20 +1790,21 @@ func (e *hugeMemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 		sort.Sort(infoschema.SchemasSorter(dbs))
 		e.dbs = dbs
 		e.initialized = true
+		e.rows = make([][]types.Datum, 0, 1024)
 	}
 
 	var err error
-	var rows [][]types.Datum
 	switch e.table.Name.O {
 	case infoschema.TableColumns:
-		rows, err = e.setDataForColumns(sctx)
+		err = e.setDataForColumns(sctx)
 	}
 	if err != nil {
 		return nil, err
 	}
+	e.retrieved = len(e.rows) == 0
 
 	//Adjust the amount of each return
-	return adjustColumns(rows, e.columns, e.table), nil
+	return adjustColumns(e.rows, e.columns, e.table), nil
 }
 
 func adjustColumns(input [][]types.Datum, outColumns []*model.ColumnInfo, table *model.TableInfo) [][]types.Datum {
