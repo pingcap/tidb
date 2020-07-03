@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -734,7 +735,7 @@ func (c *tidbDecodeKeyFunctionClass) getFunction(ctx sessionctx.Context, args []
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETJson, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -753,19 +754,19 @@ func (b *builtinTiDBDecodeKeySig) Clone() builtinFunc {
 }
 
 // evalInt evals a builtinTiDBIsDDLOwnerSig.
-func (b *builtinTiDBDecodeKeySig) evalString(row chunk.Row) (string, bool, error) {
+func (b *builtinTiDBDecodeKeySig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
 	s, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
-		return "", isNull, err
+		return res, isNull, err
 	}
 	return decodeKey(b.ctx, s), false, nil
 }
 
-func decodeKey(ctx sessionctx.Context, s string) string {
+func decodeKey(ctx sessionctx.Context, s string) (res json.BinaryJSON) {
 	key, err := hex.DecodeString(s)
 	if err != nil {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("invalid record/index key: %X", key))
-		return s
+		return res
 	}
 	// Auto decode byte if needed.
 	_, bs, err := codec.DecodeBytes(key, nil)
@@ -775,18 +776,25 @@ func decodeKey(ctx sessionctx.Context, s string) string {
 	// Try to decode it as a record key.
 	tableID, handle, err := tablecodec.DecodeRecordKey(key)
 	if err == nil {
-		return "tableID=" + strconv.FormatInt(tableID, 10) + ", _tidb_rowid=" + strconv.FormatInt(handle.IntValue(), 10)
+		return json.CreateBinary(map[string]interface{} {
+			"tableID": 	   strconv.FormatInt(tableID, 10),
+			"_tidb_rowid": strconv.FormatInt(handle.IntValue(), 10),
+		})
 	}
 	// Try decode as table index key.
 	tableID, indexID, indexValues, err := tablecodec.DecodeIndexKeyPrefix(key)
 	if err == nil {
 		idxValueStr := fmt.Sprintf("%X", indexValues)
-		return "tableID=" + strconv.FormatInt(tableID, 10) + ", indexID=" + strconv.FormatInt(indexID, 10) + ", indexValues=" + idxValueStr
+		return json.CreateBinary(map[string]interface{} {
+			"tableID": 	   strconv.FormatInt(tableID, 10),
+			"indexID":     strconv.FormatInt(indexID, 10),
+			"indexValues": idxValueStr,
+		})
 	}
 
 	// TODO: try to decode other type key.
 	ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("invalid record/index key: %X", key))
-	return s
+	return res
 }
 
 type tidbDecodePlanFunctionClass struct {
