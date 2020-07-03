@@ -2817,7 +2817,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		preferPartitions:    make(map[int][]model.CIStr),
 	}.Init(b.ctx, b.getSelectOffset())
 
-	var handleCol *expression.Column
+	var handleCols []*expression.Column
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
 	names := make([]*types.FieldName, 0, len(columns))
 	for i, col := range columns {
@@ -2838,31 +2838,31 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			IsHidden: col.Hidden,
 		}
 
-		// TODO: The common handle may be multi columns, need to change ds.handleCol to a slice.
 		if col.IsPKHandleColumn(tableInfo) || col.IsCommonHandleColumn(tableInfo) {
-			handleCol = newCol
+			handleCols = append(handleCols, newCol)
 		}
 		schema.Append(newCol)
 		ds.TblCols = append(ds.TblCols, newCol)
 	}
 	// We append an extra handle column to the schema when the handle
 	// column is not the primary key of "ds".
-	if handleCol == nil {
+	if len(handleCols) == 0 {
 		ds.Columns = append(ds.Columns, model.NewExtraHandleColInfo())
-		handleCol = ds.newExtraHandleSchemaCol()
-		schema.Append(handleCol)
+		handleCols = append(handleCols, ds.newExtraHandleSchemaCol())
+		schema.Append(handleCols...)
 		names = append(names, &types.FieldName{
 			DBName:      dbName,
 			TblName:     tableInfo.Name,
 			ColName:     model.ExtraHandleName,
 			OrigColName: model.ExtraHandleName,
 		})
-		ds.TblCols = append(ds.TblCols, handleCol)
+		ds.TblCols = append(ds.TblCols, handleCols...)
 	}
-	if handleCol != nil {
-		ds.handleCol = handleCol
+	if len(handleCols) > 0 {
+		// TODO: The common handle may be multi columns, need to change ds.handleCol to a slice.
+		ds.handleCol = handleCols[0]
 		handleMap := make(map[int64][]*expression.Column)
-		handleMap[tableInfo.ID] = []*expression.Column{handleCol}
+		handleMap[tableInfo.ID] = handleCols
 		b.handleHelper.pushMap(handleMap)
 	} else {
 		b.handleHelper.pushMap(nil)
@@ -2885,7 +2885,8 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	var result LogicalPlan = ds
 	dirty := tableHasDirtyContent(b.ctx, tableInfo)
 	if dirty {
-		us := LogicalUnionScan{handleCol: handleCol}.Init(b.ctx, b.getSelectOffset())
+		// TODO: The common handle may be multi columns, need to change ds.handleCol to a slice.
+		us := LogicalUnionScan{handleCol: handleCols[0]}.Init(b.ctx, b.getSelectOffset())
 		us.SetChildren(ds)
 		result = us
 	}
@@ -3274,14 +3275,17 @@ func buildColumns2Handle(
 		} else {
 			tblLen = len(tbl.Cols())
 		}
-		for _, handleCol := range handleCols {
-			offset, err := getTableOffset(names, names[handleCol.Index])
+		if len(handleCols) > 0 {
+			offset, err := getTableOffset(names, names[handleCols[len(handleCols)-1].Index])
 			if err != nil {
 				return nil, err
 			}
 			end := offset + tblLen
-			cols2Handles = append(cols2Handles, TblColPosInfo{tblID, offset, end, []int{handleCol.Index}, tbl.Meta().IsCommonHandle})
-			// TODO: fix me for cluster index
+			handleOrdinal := make([]int, 0, len(handleCols))
+			for _, h := range handleCols {
+				handleOrdinal = append(handleOrdinal, h.Index)
+			}
+			cols2Handles = append(cols2Handles, TblColPosInfo{tblID, offset, end, handleOrdinal, tbl.Meta().IsCommonHandle})
 		}
 	}
 	sort.Sort(cols2Handles)
