@@ -78,7 +78,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		actionOnExceed:  &EndCopWorkerAction{},
 	}
 	if it.memTracker != nil {
-		it.memTracker.SetActionOnExceed(it.actionOnExceed)
+		it.memTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
 	}
 
 	it.minCommitTSPushed.data = make(map[uint64]struct{}, 5)
@@ -497,22 +497,12 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 	defer worker.wg.Done()
 
 	for task := range worker.taskCh {
-		worker.actionOnExceed.mu.Lock()
-		if worker.actionOnExceed.mu.exceeded != 0 {
-			worker.actionOnExceed.mu.aliveWorker--
+		endWorker, remainWorkers := worker.checkWorkerOOM()
+		if endWorker {
 			logutil.BgLogger().Info("end one copIterator worker.",
-				zap.String("copIteratorWorker id", worker.id), zap.Int("remain alive worker", worker.actionOnExceed.mu.aliveWorker))
-
-			// reset action
-			worker.actionOnExceed.mu.exceeded = 0
-			worker.actionOnExceed.once = sync.Once{}
-
-			worker.actionOnExceed.mu.Unlock()
-			// end this worker
+				zap.String("copIteratorWorker id", worker.id), zap.Int("remain alive worker", remainWorkers))
 			return
 		}
-		worker.actionOnExceed.mu.Unlock()
-
 		respCh := worker.respChan
 		if respCh == nil {
 			respCh = task.respChan
@@ -529,6 +519,24 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		default:
 		}
 	}
+}
+
+func (worker *copIteratorWorker) checkWorkerOOM() (bool, int) {
+	endWorker := false
+	remainWorkers := 0
+	worker.actionOnExceed.mu.Lock()
+	if worker.actionOnExceed.mu.exceeded != 0 {
+		endWorker = true
+		worker.actionOnExceed.mu.aliveWorker--
+		remainWorkers = worker.actionOnExceed.mu.aliveWorker
+		// reset action
+		worker.actionOnExceed.mu.exceeded = 0
+		worker.actionOnExceed.once = sync.Once{}
+
+		worker.actionOnExceed.mu.Unlock()
+	}
+	worker.actionOnExceed.mu.Unlock()
+	return endWorker, remainWorkers
 }
 
 // open starts workers and sender goroutines.

@@ -26,7 +26,6 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -143,19 +142,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 
 	actionExceed := e.memTracker.GetActionOnExceed()
 	if actionExceed != nil {
-		_, ok := actionExceed.(*tikv.EndCopWorkerAction)
-		if ok {
-			originalAction := e.ctx.GetSessionVars().StmtCtx.MemTracker.GetActionOnExceed()
-			switch originalAction.(type) {
-			case *memory.PanicOnExceed:
-				e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionExceed)
-			case *memory.LogOnExceed:
-				e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionExceed)
-			default:
-				// If the origin originalAction is not above, TableReader's Action won't cover it.
-				logutil.Event(ctx, "table scan oom action won't cover any other action except log and cancel")
-			}
-		}
+		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionExceed)
 	} else {
 		logutil.Event(ctx, "failed to find actionExceed, leave it be.")
 	}
