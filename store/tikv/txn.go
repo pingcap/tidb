@@ -109,6 +109,10 @@ func (txn *tikvTxn) SetVars(vars *kv.Variables) {
 	txn.snapshot.vars = vars
 }
 
+func (txn *tikvTxn) GetVars() *kv.Variables {
+	return txn.vars
+}
+
 // tikvTxnStagingBuffer is the staging buffer returned to tikvTxn user.
 // Because tikvTxn needs to maintain dirty state when Flush staging data into txn.
 type tikvTxnStagingBuffer struct {
