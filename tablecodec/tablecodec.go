@@ -647,17 +647,23 @@ const (
 )
 
 // reEncodeHandle encodes the handle as a Datum so it can be properly decoded later.
-// If it is common handle, it is encoded as Bytes Datum.
+// If it is common handle, it returns the encoded column values.
 // If it is int handle, it is encoded as int Datum or uint Datum decided by the unsigned.
-func reEncodeHandle(handle kv.Handle, unsigned bool) ([]byte, error) {
+func reEncodeHandle(handle kv.Handle, unsigned bool) ([][]byte, error) {
 	if !handle.IsInt() {
-		return codec.EncodeValue(nil, nil, types.NewBytesDatum(handle.Encoded()))
+		handleColLen := handle.NumCols()
+		cHandleBytes := make([][]byte, 0, handleColLen)
+		for i := 0; i < handleColLen; i++ {
+			cHandleBytes = append(cHandleBytes, handle.EncodedCol(i))
+		}
+		return cHandleBytes, nil
 	}
 	handleDatum := types.NewIntDatum(handle.IntValue())
 	if unsigned {
 		handleDatum.SetUint64(handleDatum.GetUint64())
 	}
-	return codec.EncodeValue(nil, nil, handleDatum)
+	intHandleBytes, err := codec.EncodeValue(nil, nil, handleDatum)
+	return [][]byte{intHandleBytes}, err
 }
 
 func decodeIndexKvNewCollation(key, value []byte, hdStatus HandleStatus, columns []rowcodec.ColInfo) ([][]byte, error) {
@@ -686,15 +692,15 @@ func decodeIndexKvNewCollation(key, value []byte, hdStatus HandleStatus, columns
 		if err != nil {
 			return nil, err
 		}
-		resultValues = append(resultValues, handleBytes)
+		resultValues = append(resultValues, handleBytes...)
 	} else {
-		// In unique index.
+		// In unique int handle index.
 		handle := decodeIntHandleInIndexValue(value[vLen-tailLen:])
 		handleBytes, err := reEncodeHandle(handle, hdStatus == HandleIsUnsigned)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		resultValues = append(resultValues, handleBytes)
+		resultValues = append(resultValues, handleBytes...)
 	}
 	return resultValues, nil
 }
@@ -728,28 +734,19 @@ func decodeIndexKvOldCollation(key, value []byte, colsLen int, hdStatus HandleSt
 		if err != nil {
 			return nil, err
 		}
-		if !handle.IsInt() {
-			// Re-encode handle to bytes datum.
-			var handleBytes []byte
-			handleBytes, err = codec.EncodeValue(nil, nil, types.NewBytesDatum(b))
-			if err != nil {
-				return nil, err
-			}
-			resultValues = append(resultValues, handleBytes)
-		} else {
-			resultValues = append(resultValues, b)
-		}
-	} else {
-		// unique index
-		handle, err = decodeHandleInIndexValue(value)
-		if err != nil {
-			return nil, err
-		}
 		handleBytes, err := reEncodeHandle(handle, hdStatus == HandleIsUnsigned)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		resultValues = append(resultValues, handleBytes)
+		resultValues = append(resultValues, handleBytes...)
+	} else {
+		// In unique int handle index.
+		handle = decodeIntHandleInIndexValue(value)
+		handleBytes, err := reEncodeHandle(handle, hdStatus == HandleIsUnsigned)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		resultValues = append(resultValues, handleBytes...)
 	}
 	return resultValues, nil
 }
@@ -788,12 +785,15 @@ func decodeIndexKVUniqueCommonHandle(key, value []byte, colsLen int, hdStatus Ha
 	if hdStatus == HandleNotNeeded {
 		return resultValues, nil
 	}
-	// reEncode the common handle to a bytes column
-	reEncodedHandle, err1 := codec.EncodeValue(nil, nil, types.NewBytesDatum(value[4:handleEndOff]))
-	if err1 != nil {
-		return nil, err1
+	cHandle, err := decodeHandleInIndexKey(value[4:handleEndOff])
+	if err != nil {
+		return nil, err
 	}
-	resultValues = append(resultValues, reEncodedHandle)
+	cHandleBytes, err := reEncodeHandle(cHandle, false /* doesn't matter */)
+	if err != nil {
+		return nil, err
+	}
+	resultValues = append(resultValues, cHandleBytes...)
 	return resultValues, nil
 }
 
