@@ -135,6 +135,14 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 		conf.AlterPrimaryKey = true
 	})
 
+	_, err = tk.Exec("alter table primary_key_test2 add primary key(a)")
+	c.Assert(infoschema.ErrMultiplePriKey.Equal(err), IsTrue)
+	// We can't add a primary key when the table's pk_is_handle is true.
+	_, err = tk.Exec("alter table primary_key_test1 add primary key(a)")
+	c.Assert(infoschema.ErrMultiplePriKey.Equal(err), IsTrue)
+	_, err = tk.Exec("alter table primary_key_test1 add primary key(b)")
+	c.Assert(infoschema.ErrMultiplePriKey.Equal(err), IsTrue)
+
 	_, err = tk.Exec("alter table primary_key_test1 drop primary key")
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when the table's pkIsHandle is true")
 	tk.MustExec("alter table primary_key_test2 drop primary key")
@@ -819,10 +827,9 @@ func (s *testSerialSuite) TestCancelJobByErrorCountLimit(c *C) {
 	c.Assert(err, IsNil)
 	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %d", limit))
 
-	// TODO: Uncomment lines below after fixing #18141.
-	//_, err = tk.Exec("create table t (a int)")
-	//c.Assert(err, NotNil)
-	//c.Assert(err.Error(), Equals, "[ddl:-1]DDL job rollback, error msg: mock do job error")
+	_, err = tk.Exec("create table t (a int)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:-1]DDL job rollback, error msg: mock do job error")
 }
 
 func (s *testSerialSuite) TestTruncateTableUpdateSchemaVersionErr(c *C) {
@@ -838,10 +845,9 @@ func (s *testSerialSuite) TestTruncateTableUpdateSchemaVersionErr(c *C) {
 	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %d", limit))
 
 	tk.MustExec("create table t (a int)")
-	// TODO: Uncomment lines below after fixing #18142.
-	//_, err = tk.Exec("truncate table t")
-	//c.Assert(err, NotNil)
-	//c.Assert(err.Error(), Equals, "[ddl:-1]DDL job rollback, error msg: mock update version error")
+	_, err = tk.Exec("truncate table t")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:-1]DDL job rollback, error msg: mock update version error")
 	// Disable fail point.
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockTruncateTableUpdateVersionError"), IsNil)
 	tk.MustExec("truncate table t")

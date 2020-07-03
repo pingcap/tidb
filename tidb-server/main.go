@@ -574,6 +574,10 @@ func setGlobalVars() {
 	plannercore.AllowCartesianProduct.Store(cfg.Performance.CrossJoin)
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
 	kv.TxnTotalSizeLimit = cfg.Performance.TxnTotalSizeLimit
+	if cfg.Performance.TxnEntrySizeLimit > 120*1024*1024 {
+		log.Fatal("cannot set txn entry size limit larger than 120M")
+	}
+	kv.TxnEntrySizeLimit = cfg.Performance.TxnEntrySizeLimit
 
 	priority := mysql.Str2Priority(cfg.Performance.ForcePriority)
 	variable.ForcePriority = int32(priority)
@@ -619,6 +623,13 @@ func setGlobalVars() {
 		executor.GlobalMemoryUsageTracker.SetBytesLimit(int64(c.Performance.ServerMemoryQuota))
 	}
 	kvcache.GlobalLRUMemUsageTracker.AttachToGlobalTracker(executor.GlobalMemoryUsageTracker)
+
+	t, err := time.ParseDuration(cfg.TiKVClient.StoreLivenessTimeout)
+	if err != nil {
+		logutil.BgLogger().Fatal("invalid duration value for store-liveness-timeout",
+			zap.String("currentValue", config.GetGlobalConfig().TiKVClient.StoreLivenessTimeout))
+	}
+	tikv.StoreLivenessTimeout = t
 }
 
 func setupLog() {

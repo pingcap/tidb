@@ -173,9 +173,9 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.
 
 // BuildFullDecodeColMap build a map that contains [columnID -> struct{*table.Column, expression.Expression}] from
 // indexed columns and all of its depending columns. `genExprProducer` is used to produce a generated expression based on a table.Column.
-func BuildFullDecodeColMap(indexedCols []*table.Column, t table.Table, genExprProducer func(*table.Column) (expression.Expression, error)) (map[int64]Column, error) {
-	pendingCols := make([]*table.Column, len(indexedCols))
-	copy(pendingCols, indexedCols)
+func BuildFullDecodeColMap(cols []*table.Column, t table.Table, genExprProducer func(*table.Column) (expression.Expression, error)) (map[int64]Column, error) {
+	pendingCols := make([]*table.Column, len(cols))
+	copy(pendingCols, cols)
 	decodeColMap := make(map[int64]Column, len(pendingCols))
 
 	for i := 0; i < len(pendingCols); i++ {
