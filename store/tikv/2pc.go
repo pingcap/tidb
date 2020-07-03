@@ -79,7 +79,6 @@ type twoPhaseCommitter struct {
 	noNeedCommitKeys map[string]struct{}
 
 	primaryKey  []byte
-	primaryIdx  int
 	forUpdateTS uint64
 
 	mu struct {
@@ -156,7 +155,6 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 			ch: make(chan struct{}),
 		},
 		isPessimistic: txn.IsPessimistic(),
-		primaryIdx:    -1,
 	}, nil
 }
 
@@ -249,7 +247,6 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		for i, op := range mutations.ops {
 			if op != pb.Op_CheckNotExists {
 				c.primaryKey = mutations.keys[i]
-				c.primaryIdx = i
 				break
 			}
 		}
@@ -302,24 +299,14 @@ func (c *twoPhaseCommitter) primary() []byte {
 	return c.primaryKey
 }
 
-func (c *twoPhaseCommitter) secondaries() [][]byte {
-	if c.primaryIdx < 0 {
-		return [][]byte{}
-	}
-	// Easy case, primary key is first.
-	if c.primaryIdx == 0 {
-		return c.mutations.keys[1:]
-	}
-
-	// Hard case, primary key is in the middle somewhere, need to copy the array and skip the primary key.
-	secondaries := make([][]byte, len(c.mutations.keys)-1)
-	offset := 0
+// asyncSecondaries returns all keys that must be checked in the recovery phase of an async commit.
+func (c *twoPhaseCommitter) asyncSecondaries() [][]byte {
+	secondaries := make([][]byte, 0, len(c.mutations.keys))
 	for i, k := range c.mutations.keys {
-		if i == c.primaryIdx {
-			offset = 1
+		if bytes.Equal(k, c.primary()) || c.mutations.ops[i] == pb.Op_CheckNotExists {
 			continue
 		}
-		secondaries[i-offset] = k
+		secondaries = append(secondaries, k)
 	}
 	return secondaries
 }

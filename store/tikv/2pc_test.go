@@ -1140,7 +1140,7 @@ func (s *testCommitterSuite) TestResolveMixed(c *C) {
 	c.Assert(err, IsNil)
 }
 
-// TestSecondaryKeys tests that when parallel commit is enabled, each prewrite message includes an
+// TestSecondaryKeys tests that when async commit is enabled, each prewrite message includes an
 // accurate list of secondary keys.
 func (s *testCommitterSuite) TestPrewiteSecondaryKeys(c *C) {
 	defer config.RestoreFunc()()
@@ -1185,7 +1185,7 @@ type mockClient struct {
 
 func (m *mockClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	// If we find a prewrite request, check if it satisfies our constraints.
-	if pr := req.Prewrite(); pr != nil {
+	if pr, ok := req.Req.(*kvrpcpb.PrewriteRequest); ok {
 		if pr.UseAsyncCommit {
 			if isPrimary(pr) {
 				// The primary key should not be included, nor should there be any duplicates. All keys should be present.

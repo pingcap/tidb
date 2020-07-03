@@ -81,7 +81,7 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 
 	if config.GetGlobalConfig().TiKVClient.EnableAsyncCommit {
 		if batch.isPrimary {
-			req.Secondaries = c.secondaries()
+			req.Secondaries = c.asyncSecondaries()
 		}
 		req.UseAsyncCommit = true
 	}
