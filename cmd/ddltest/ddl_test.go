@@ -557,7 +557,7 @@ func (s *TestDDLSuite) Bootstrap(c *C) {
 
 	_, err = s.s.Execute(goCtx, "set @@tidb_enable_clustered_index = 1")
 	c.Assert(err, IsNil)
-	_, err = s.s.Execute(goCtx, "drop table if exists test_insert_common, test_conflict_insert_common, " +
+	_, err = s.s.Execute(goCtx, "drop table if exists test_insert_common, test_conflict_insert_common, "+
 		"test_update_common, test_conflict_update_common")
 
 	_, err = s.s.Execute(goCtx, "create table test_insert_common (c1 int, c2 int, primary key(c1, c2))")
@@ -825,8 +825,8 @@ func (s *TestDDLSuite) TestSimpleConflictUpdate(c *C) {
 func (s *TestDDLSuite) TestSimpleDelete(c *C) {
 	tblName := "test_delete"
 	if s.IsCommonHandle {
-				tblName = "test_delete_common"
-		}
+		tblName = "test_delete_common"
+	}
 	workerNum := 10
 	rowCount := 10000
 	batch := rowCount / workerNum
@@ -869,7 +869,7 @@ func (s *TestDDLSuite) TestSimpleDelete(c *C) {
 func (s *TestDDLSuite) TestSimpleConflictDelete(c *C) {
 	tblName := "test_conflict_delete"
 	if s.IsCommonHandle {
-			tblName = "test_conflict_delete_common"
+		tblName = "test_conflict_delete_common"
 	}
 	var mu sync.Mutex
 	keysMap := make(map[int64]int64)
@@ -941,7 +941,7 @@ func (s *TestDDLSuite) TestSimpleMixed(c *C) {
 	tblName := "test_mixed"
 	if s.IsCommonHandle {
 		tblName = "test_mixed_common"
-		}
+	}
 	workerNum := 10
 	rowCount := 10000
 	batch := rowCount / workerNum
@@ -1021,7 +1021,7 @@ func (s *TestDDLSuite) TestSimpleInc(c *C) {
 	tblName := "test_inc"
 	if s.IsCommonHandle {
 		tblName = "test_inc_common"
-		}
+	}
 	workerNum := 10
 	rowCount := 1000
 	batch := rowCount / workerNum
