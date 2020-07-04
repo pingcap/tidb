@@ -20,7 +20,6 @@ package expression
 import (
 	"encoding/base64"
 	"encoding/hex"
-	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -837,13 +836,12 @@ func decodeKeyInner(ctx sessionctx.Context, key []byte) (res json.BinaryJSON) {
 		})
 	}
 	// Try decode as table index key.
-	tableID, indexID, indexValues, err := tablecodec.DecodeIndexKeyPrefix(key)
+	tableID, indexID, indexValues, err := tablecodec.DecodeIndexKey(key)
 	if err == nil {
-		idxValueStr := fmt.Sprintf("%X", indexValues)
 		return json.CreateBinary(map[string]interface{}{
 			"tableID":     strconv.FormatInt(tableID, 10),
 			"indexID":     strconv.FormatInt(indexID, 10),
-			"indexValues": idxValueStr,
+			"indexValues": strings.Join(indexValues, ","),
 		})
 	}
 
