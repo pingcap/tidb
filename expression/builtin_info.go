@@ -18,6 +18,7 @@
 package expression
 
 import (
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"sort"
@@ -58,6 +59,7 @@ var (
 	_ functionClass = &tidbIsDDLOwnerFunctionClass{}
 	_ functionClass = &tidbDecodePlanFunctionClass{}
 	_ functionClass = &tidbDecodeKeyFunctionClass{}
+	_ functionClass = &tidbDecodeBase64KeyFunctionClass{}
 	_ functionClass = &nextValFunctionClass{}
 	_ functionClass = &lastValFunctionClass{}
 	_ functionClass = &setValFunctionClass{}
@@ -77,6 +79,7 @@ var (
 	_ builtinFunc = &builtinTiDBVersionSig{}
 	_ builtinFunc = &builtinRowCountSig{}
 	_ builtinFunc = &builtinTiDBDecodeKeySig{}
+	_ builtinFunc = &builtinTiDBDecodeBase64KeySig{}
 	_ builtinFunc = &builtinNextValSig{}
 	_ builtinFunc = &builtinLastValSig{}
 	_ builtinFunc = &builtinSetValSig{}
@@ -753,26 +756,73 @@ func (b *builtinTiDBDecodeKeySig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalInt evals a builtinTiDBIsDDLOwnerSig.
 func (b *builtinTiDBDecodeKeySig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
 	s, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	return decodeKey(b.ctx, s), false, nil
+	return b.decodeKey(s), false, nil
 }
 
-func decodeKey(ctx sessionctx.Context, s string) (res json.BinaryJSON) {
+func (b *builtinTiDBDecodeKeySig) decodeKey(s string) (res json.BinaryJSON) {
 	key, err := hex.DecodeString(s)
 	if err != nil {
 		//not hex string, try escape string
 		stringKey, err := codec.DecodeEscapeString(s)
 		if err != nil {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("invalid record/index key: %X", s))
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("invalid record/index key: %X", s))
 			return res
 		}
 		key = []byte(stringKey)
 	}
+
+	return decodeKeyInner(b.ctx, key)
+}
+
+type tidbDecodeBase64KeyFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *tidbDecodeBase64KeyFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETJson, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	sig := &builtinTiDBDecodeBase64KeySig{bf}
+	return sig, nil
+}
+
+type builtinTiDBDecodeBase64KeySig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinTiDBDecodeBase64KeySig) Clone() builtinFunc {
+	newSig := &builtinTiDBDecodeBase64KeySig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinTiDBDecodeBase64KeySig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
+	s, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return res, isNull, err
+	}
+	return b.decodeBase64Key(s), false, nil
+}
+
+func (b *builtinTiDBDecodeBase64KeySig) decodeBase64Key(s string) (res json.BinaryJSON) {
+	b64decode, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("invalid record/index key: %X", s))
+		return res
+	}
+	return decodeKeyInner(b.ctx, b64decode)
+}
+
+func decodeKeyInner(ctx sessionctx.Context, key []byte) (res json.BinaryJSON) {
 	// Auto decode byte if needed.
 	_, bs, err := codec.DecodeBytes(key, nil)
 	if err == nil {
@@ -798,8 +848,7 @@ func decodeKey(ctx sessionctx.Context, s string) (res json.BinaryJSON) {
 	}
 
 	// TODO: try to decode other type key.
-	// ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("invalid record/index key: %X", key))
-	ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("error"))
+	ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("invalid record/index key: %X", key))
 	return res
 }
 

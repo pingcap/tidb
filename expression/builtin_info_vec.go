@@ -345,7 +345,32 @@ func (b *builtinTiDBDecodeKeySig) vecEvalJSON(input *chunk.Chunk, result *chunk.
 			result.AppendNull()
 			continue
 		}
-		result.AppendJSON(decodeKey(b.ctx, buf.GetString(i)))
+		result.AppendJSON(b.decodeKey(buf.GetString(i)))
+	}
+	return nil
+}
+
+func (b *builtinTiDBDecodeBase64KeySig) vectorized() bool {
+	return true
+}
+
+func (b *builtinTiDBDecodeBase64KeySig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETJson, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ReserveJSON(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		result.AppendJSON(b.decodeBase64Key(buf.GetString(i)))
 	}
 	return nil
 }

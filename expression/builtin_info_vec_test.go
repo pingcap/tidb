@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"encoding/base64"
 	"encoding/hex"
 	"math/rand"
 	"testing"
@@ -26,23 +27,35 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
+func generateTiDBKey(inner *defaultGener) []byte {
+	tableID := inner.gen().(int64)
+	var result []byte
+	if rand.Intn(2) == 1 {
+		// Generate a record key
+		handle := inner.gen().(int64)
+		result = tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(handle))
+	} else {
+		// Generate an index key
+		idx := inner.gen().(int64)
+		result = tablecodec.EncodeTableIndexPrefix(tableID, idx)
+	}
+	return result
+}
+
 type tidbKeyGener struct {
 	inner *defaultGener
 }
 
 func (g *tidbKeyGener) gen() interface{} {
-	tableID := g.inner.gen().(int64)
-	var result []byte
-	if rand.Intn(2) == 1 {
-		// Generate a record key
-		handle := g.inner.gen().(int64)
-		result = tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(handle))
-	} else {
-		// Generate an index key
-		idx := g.inner.gen().(int64)
-		result = tablecodec.EncodeTableIndexPrefix(tableID, idx)
-	}
-	return hex.EncodeToString(result)
+	return hex.EncodeToString(generateTiDBKey(g.inner))
+}
+
+type tidbBase64KeyGener struct {
+	inner *defaultGener
+}
+
+func (g *tidbBase64KeyGener) gen() interface{} {
+	return base64.StdEncoding.EncodeToString(generateTiDBKey(g.inner))
 }
 
 var vecBuiltinInfoCases = map[string][]vecExprBenchCase{
@@ -69,6 +82,15 @@ var vecBuiltinInfoCases = map[string][]vecExprBenchCase{
 			retEvalType:   types.ETJson,
 			childrenTypes: []types.EvalType{types.ETString},
 			geners: []dataGenerator{&tidbKeyGener{
+				inner: newDefaultGener(0, types.ETInt),
+			}},
+		},
+	},
+	ast.TiDBDecodeBase64Key: {
+		{
+			retEvalType:   types.ETJson,
+			childrenTypes: []types.EvalType{types.ETString},
+			geners: []dataGenerator{&tidbBase64KeyGener{
 				inner: newDefaultGener(0, types.ETInt),
 			}},
 		},

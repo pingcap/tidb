@@ -4442,6 +4442,21 @@ func (s *testIntegrationSuite) TestTiDBDecodeKeyFunc(c *C) {
 	c.Assert(warns[0].Err.Error(), Equals, "invalid record/index key: 7480000000000000FF2E5F728000000011FFE1A3000000000000")
 }
 
+func (s *testIntegrationSuite) TestTiDBDecodeBase64KeyFunc(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+
+	result := tk.MustQuery("select tidb_decode_base64_key( 'dIAAAAAAAABAX3KAAAAAAAAAAQ==' )")
+	result.Check(testkit.Rows(`{"_tidb_rowid": "1", "tableID": "64"}`))
+
+	// Test invalid record/index key.
+	result = tk.MustQuery("select tidb_decode_base64_key( 'CAQCBmFiYw==' )")
+	result.Check(testkit.Rows(""))
+	warns := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+	c.Assert(warns, HasLen, 1)
+	c.Assert(warns[0].Err.Error(), Equals, "invalid record/index key: CAQCBmFiYw==")
+}
+
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	store, err := mockstore.NewMockStore()
 	if err != nil {
