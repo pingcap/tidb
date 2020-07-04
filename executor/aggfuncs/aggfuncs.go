@@ -112,7 +112,7 @@ type AggFunc interface {
 	// memory usage. Aggregate operator implementation, no matter it's a hash
 	// or stream, should hold this allocated PartialResult for the further
 	// operations like: "ResetPartialResult", "UpdatePartialResult".
-	AllocPartialResult() (PartialResult, int64)
+	AllocPartialResult() (pr PartialResult, memDelta int64)
 
 	// ResetPartialResult resets the partial result to the original state for a
 	// specific aggregate function. It converts the input PartialResult to the
@@ -127,14 +127,14 @@ type AggFunc interface {
 	// partial result according to the functionality and the state of the
 	// aggregate function. The returned value is the memDelta used to trace memory
 	// usage.
-	UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int64, error)
+	UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error)
 
 	// MergePartialResult will be called in the final phase when parallelly
 	// executing. It converts the PartialResult `src`, `dst` to the same specific
 	// data structure which stores the partial results, and then evaluate the
 	// final result using the partial results as input values. The returned value
 	// is the memDelta used to trace memory usage.
-	MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (int64, error)
+	MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error)
 
 	// AppendFinalResult2Chunk finalizes the partial result and append the
 	// final result to the input chunk. Like other operations, it converts the
@@ -154,7 +154,7 @@ type baseAggFunc struct {
 	ordinal int
 }
 
-func (*baseAggFunc) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (int64, error) {
+func (*baseAggFunc) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	return 0, nil
 }
 

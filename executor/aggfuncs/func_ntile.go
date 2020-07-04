@@ -34,7 +34,7 @@ type partialResult4Ntile struct {
 	numRows     uint64
 }
 
-func (n *ntile) AllocPartialResult() (PartialResult, int64) {
+func (n *ntile) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(&partialResult4Ntile{curGroupIdx: 1}), 0
 }
 
@@ -45,7 +45,7 @@ func (n *ntile) ResetPartialResult(pr PartialResult) {
 	p.numRows = 0
 }
 
-func (n *ntile) UpdatePartialResult(_ sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int64, error) {
+func (n *ntile) UpdatePartialResult(_ sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4Ntile)(pr)
 	p.numRows += uint64(len(rowsInGroup))
 	// Update the quotient and remainder.

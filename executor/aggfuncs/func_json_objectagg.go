@@ -30,7 +30,7 @@ type partialResult4JsonObjectAgg struct {
 	entries map[string]interface{}
 }
 
-func (e *jsonObjectAgg) AllocPartialResult() (PartialResult, int64) {
+func (e *jsonObjectAgg) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := partialResult4JsonObjectAgg{}
 	p.entries = make(map[string]interface{})
 	return PartialResult(&p), 0
@@ -70,7 +70,7 @@ func (e *jsonObjectAgg) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Part
 	return nil
 }
 
-func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int64, error) {
+func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4JsonObjectAgg)(pr)
 	for _, row := range rowsInGroup {
 		key, err := e.args[0].Eval(row)
@@ -105,7 +105,7 @@ func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 	return 0, nil
 }
 
-func (e *jsonObjectAgg) MergePartialResult(sctx sessionctx.Context, src PartialResult, dst PartialResult) (int64, error) {
+func (e *jsonObjectAgg) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4JsonObjectAgg)(src), (*partialResult4JsonObjectAgg)(dst)
 	// When the result of this function is normalized, values having duplicate keys are discarded,
 	// and only the last value encountered is used with that key in the returned object

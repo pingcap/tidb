@@ -26,7 +26,7 @@ type partialResult4RowNumber struct {
 	curIdx int64
 }
 
-func (rn *rowNumber) AllocPartialResult() (PartialResult, int64) {
+func (rn *rowNumber) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(&partialResult4RowNumber{}), 0
 }
 
@@ -35,7 +35,7 @@ func (rn *rowNumber) ResetPartialResult(pr PartialResult) {
 	p.curIdx = 0
 }
 
-func (rn *rowNumber) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int64, error) {
+func (rn *rowNumber) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	return 0, nil
 }
 

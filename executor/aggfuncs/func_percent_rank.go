@@ -25,7 +25,7 @@ type percentRank struct {
 	rowComparer
 }
 
-func (pr *percentRank) AllocPartialResult() (PartialResult, int64) {
+func (pr *percentRank) AllocPartialResult() (partial PartialResult, memDelta int64) {
 	return PartialResult(&partialResult4Rank{}), 0
 }
 
@@ -36,7 +36,7 @@ func (pr *percentRank) ResetPartialResult(partial PartialResult) {
 	p.rows = p.rows[:0]
 }
 
-func (pr *percentRank) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, partial PartialResult) (int64, error) {
+func (pr *percentRank) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, partial PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4Rank)(partial)
 	p.rows = append(p.rows, rowsInGroup...)
 	return 0, nil

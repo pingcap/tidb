@@ -34,7 +34,7 @@ type partialResult4VarPopFloat64 struct {
 	variance float64
 }
 
-func (e *varPop4Float64) AllocPartialResult() (PartialResult, int64) {
+func (e *varPop4Float64) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(&partialResult4VarPopFloat64{}), 0
 }
 
@@ -62,7 +62,7 @@ func calculateIntermediate(count int64, sum float64, input float64, variance flo
 	return variance
 }
 
-func (e *varPop4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int64, error) {
+func (e *varPop4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4VarPopFloat64)(pr)
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalReal(sctx, row)
@@ -90,7 +90,7 @@ func calculateMerge(srcCount, dstCount int64, srcSum, dstSum, srcVariance, dstVa
 	return dstVariance
 }
 
-func (e *varPop4Float64) MergePartialResult(sctx sessionctx.Context, src PartialResult, dst PartialResult) (int64, error) {
+func (e *varPop4Float64) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4VarPopFloat64)(src), (*partialResult4VarPopFloat64)(dst)
 	if p1.count == 0 {
 		return 0, nil
@@ -120,7 +120,7 @@ type partialResult4VarPopDistinctFloat64 struct {
 	valSet   set.Float64Set
 }
 
-func (e *varPop4DistinctFloat64) AllocPartialResult() (PartialResult, int64) {
+func (e *varPop4DistinctFloat64) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4VarPopDistinctFloat64)
 	p.count = 0
 	p.sum = 0
@@ -148,7 +148,7 @@ func (e *varPop4DistinctFloat64) AppendFinalResult2Chunk(sctx sessionctx.Context
 	return nil
 }
 
-func (e *varPop4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int64, error) {
+func (e *varPop4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4VarPopDistinctFloat64)(pr)
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalReal(sctx, row)

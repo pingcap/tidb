@@ -38,7 +38,7 @@ type partialResult4AvgDecimal struct {
 	count int64
 }
 
-func (e *baseAvgDecimal) AllocPartialResult() (PartialResult, int64) {
+func (e *baseAvgDecimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(&partialResult4AvgDecimal{}), 0
 }
 
@@ -80,7 +80,7 @@ type avgOriginal4Decimal struct {
 	baseAvgDecimal
 }
 
-func (e *avgOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int64, error) {
+func (e *avgOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4AvgDecimal)(pr)
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
@@ -143,7 +143,7 @@ type avgPartial4Decimal struct {
 	baseAvgDecimal
 }
 
-func (e *avgPartial4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int64, error) {
+func (e *avgPartial4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4AvgDecimal)(pr)
 	for _, row := range rowsInGroup {
 		inputSum, isNull, err := e.args[1].EvalDecimal(sctx, row)
@@ -173,13 +173,13 @@ func (e *avgPartial4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 	return 0, nil
 }
 
-func (e *avgPartial4Decimal) MergePartialResult(sctx sessionctx.Context, src PartialResult, dst PartialResult) (int64, error) {
+func (e *avgPartial4Decimal) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4AvgDecimal)(src), (*partialResult4AvgDecimal)(dst)
 	if p1.count == 0 {
 		return 0, nil
 	}
 	newSum := new(types.MyDecimal)
-	err := types.DecimalAdd(&p1.sum, &p2.sum, newSum)
+	err = types.DecimalAdd(&p1.sum, &p2.sum, newSum)
 	if err != nil {
 		return 0, err
 	}
@@ -197,7 +197,7 @@ type avgOriginal4DistinctDecimal struct {
 	baseAggFunc
 }
 
-func (e *avgOriginal4DistinctDecimal) AllocPartialResult() (PartialResult, int64) {
+func (e *avgOriginal4DistinctDecimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := &partialResult4AvgDistinctDecimal{
 		valSet: set.NewStringSet(),
 	}
@@ -211,7 +211,7 @@ func (e *avgOriginal4DistinctDecimal) ResetPartialResult(pr PartialResult) {
 	p.valSet = set.NewStringSet()
 }
 
-func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int64, error) {
+func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4AvgDistinctDecimal)(pr)
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
@@ -281,7 +281,7 @@ type partialResult4AvgFloat64 struct {
 	count int64
 }
 
-func (e *baseAvgFloat64) AllocPartialResult() (PartialResult, int64) {
+func (e *baseAvgFloat64) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return (PartialResult)(&partialResult4AvgFloat64{}), 0
 }
 
@@ -305,7 +305,7 @@ type avgOriginal4Float64HighPrecision struct {
 	baseAvgFloat64
 }
 
-func (e *avgOriginal4Float64HighPrecision) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int64, error) {
+func (e *avgOriginal4Float64HighPrecision) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4AvgFloat64)(pr)
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalReal(sctx, row)
@@ -357,7 +357,7 @@ type avgPartial4Float64 struct {
 	baseAvgFloat64
 }
 
-func (e *avgPartial4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int64, error) {
+func (e *avgPartial4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4AvgFloat64)(pr)
 	for _, row := range rowsInGroup {
 		inputSum, isNull, err := e.args[1].EvalReal(sctx, row)
@@ -381,7 +381,7 @@ func (e *avgPartial4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 	return 0, nil
 }
 
-func (e *avgPartial4Float64) MergePartialResult(sctx sessionctx.Context, src PartialResult, dst PartialResult) (int64, error) {
+func (e *avgPartial4Float64) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4AvgFloat64)(src), (*partialResult4AvgFloat64)(dst)
 	p2.sum += p1.sum
 	p2.count += p1.count
@@ -397,7 +397,7 @@ type avgOriginal4DistinctFloat64 struct {
 	baseAggFunc
 }
 
-func (e *avgOriginal4DistinctFloat64) AllocPartialResult() (PartialResult, int64) {
+func (e *avgOriginal4DistinctFloat64) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := &partialResult4AvgDistinctFloat64{
 		valSet: set.NewFloat64Set(),
 	}
@@ -411,7 +411,7 @@ func (e *avgOriginal4DistinctFloat64) ResetPartialResult(pr PartialResult) {
 	p.valSet = set.NewFloat64Set()
 }
 
-func (e *avgOriginal4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int64, error) {
+func (e *avgOriginal4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4AvgDistinctFloat64)(pr)
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalReal(sctx, row)

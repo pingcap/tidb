@@ -31,7 +31,7 @@ type partialResult4Rank struct {
 	rows     []chunk.Row
 }
 
-func (r *rank) AllocPartialResult() (PartialResult, int64) {
+func (r *rank) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(&partialResult4Rank{}), 0
 }
 
@@ -42,7 +42,7 @@ func (r *rank) ResetPartialResult(pr PartialResult) {
 	p.rows = p.rows[:0]
 }
 
-func (r *rank) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int64, error) {
+func (r *rank) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4Rank)(pr)
 	p.rows = append(p.rows, rowsInGroup...)
 	return 0, nil

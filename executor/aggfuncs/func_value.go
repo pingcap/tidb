@@ -226,7 +226,7 @@ type partialResult4FirstValue struct {
 	evaluator     valueEvaluator
 }
 
-func (v *firstValue) AllocPartialResult() (PartialResult, int64) {
+func (v *firstValue) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(&partialResult4FirstValue{evaluator: buildValueEvaluator(v.tp)}), 0
 }
 
@@ -235,7 +235,7 @@ func (v *firstValue) ResetPartialResult(pr PartialResult) {
 	p.gotFirstValue = false
 }
 
-func (v *firstValue) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int64, error) {
+func (v *firstValue) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4FirstValue)(pr)
 	if p.gotFirstValue {
 		return 0, nil
@@ -271,7 +271,7 @@ type partialResult4LastValue struct {
 	evaluator    valueEvaluator
 }
 
-func (v *lastValue) AllocPartialResult() (PartialResult, int64) {
+func (v *lastValue) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(&partialResult4LastValue{evaluator: buildValueEvaluator(v.tp)}), 0
 }
 
@@ -280,7 +280,7 @@ func (v *lastValue) ResetPartialResult(pr PartialResult) {
 	p.gotLastValue = false
 }
 
-func (v *lastValue) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int64, error) {
+func (v *lastValue) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4LastValue)(pr)
 	if len(rowsInGroup) > 0 {
 		p.gotLastValue = true
@@ -314,7 +314,7 @@ type partialResult4NthValue struct {
 	evaluator valueEvaluator
 }
 
-func (v *nthValue) AllocPartialResult() (PartialResult, int64) {
+func (v *nthValue) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(&partialResult4NthValue{evaluator: buildValueEvaluator(v.tp)}), 0
 }
 
@@ -323,7 +323,7 @@ func (v *nthValue) ResetPartialResult(pr PartialResult) {
 	p.seenRows = 0
 }
 
-func (v *nthValue) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int64, error) {
+func (v *nthValue) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	if v.nth == 0 {
 		return 0, nil
 	}
