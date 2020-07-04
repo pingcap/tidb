@@ -108,7 +108,8 @@ type PartialResult unsafe.Pointer
 type AggFunc interface {
 	// AllocPartialResult allocates a specific data structure to store the
 	// partial result, initializes it, and converts it to PartialResult to
-	// return back. Aggregate operator implementation, no matter it's a hash
+	// return back. The second returned value is the memDelta used to trace
+	// memory usage. Aggregate operator implementation, no matter it's a hash
 	// or stream, should hold this allocated PartialResult for the further
 	// operations like: "ResetPartialResult", "UpdatePartialResult".
 	AllocPartialResult() (PartialResult, int64)
@@ -124,13 +125,15 @@ type AggFunc interface {
 	// It converts the PartialResult to the specific data structure which stores
 	// the partial result and then iterates on the input rows and update that
 	// partial result according to the functionality and the state of the
-	// aggregate function.
+	// aggregate function. The returned value is the memDelta used to trace memory
+	// usage.
 	UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (int64, error)
 
 	// MergePartialResult will be called in the final phase when parallelly
 	// executing. It converts the PartialResult `src`, `dst` to the same specific
 	// data structure which stores the partial results, and then evaluate the
-	// final result using the partial results as input values.
+	// final result using the partial results as input values. The returned value
+	// is the memDelta used to trace memory usage.
 	MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (int64, error)
 
 	// AppendFinalResult2Chunk finalizes the partial result and append the
