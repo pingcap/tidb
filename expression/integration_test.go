@@ -4447,11 +4447,11 @@ func (s *testIntegrationSuite) TestTiDBDecodeKeyFunc(c *C) {
 	c.Assert(warns, HasLen, 1)
 	c.Assert(warns[0].Err.Error(), Equals, "invalid record/index key: 74103067040000078F728000000000083BBA")
 
-	result = tk.MustQuery("select tidb_decode_key( 'characters created by cosmic rays\033\xff\n\\' )")
+	result = tk.MustQuery(`select tidb_decode_key( 'characters created by cosmic rays\\033\\xff\\n\\' )`)
 	result.Check(testkit.Rows(""))
 	warns = tk.Se.GetSessionVars().StmtCtx.GetWarnings()
 	c.Assert(warns, HasLen, 1)
-	c.Assert(warns[0].Err.Error(), Equals, "invalid record/index key: 63686172616374657273206372656174656420627920636F736D69632072617973")
+	c.Assert(warns[0].Err.Error(), Equals, "invalid record/index key: 63686172616374657273206372656174656420627920636F736D696320726179735C3033335C7866665C6E5C")
 }
 
 func (s *testIntegrationSuite) TestTiDBDecodeBase64KeyFunc(c *C) {
