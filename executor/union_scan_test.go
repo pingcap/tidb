@@ -332,3 +332,15 @@ func (s *testSuite7) TestForUpdateUntouchedIndex(c *C) {
 	tk.MustExec("commit")
 	tk.MustExec("admin check table t")
 }
+
+func (s *testSuite7) TestClusteredIndexUnionScan(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (a int,b int,c int, PRIMARY KEY (a,b))")
+	tk.MustExec("insert t (a, b) values (1, 1)")
+	tk.MustExec("begin")
+	tk.MustExec("update t set c = 1")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 1"))
+	tk.MustExec("rollback")
+}
