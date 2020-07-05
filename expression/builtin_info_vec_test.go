@@ -47,6 +47,9 @@ type tidbKeyGener struct {
 }
 
 func (g *tidbKeyGener) gen() interface{} {
+	if rand.Intn(5) == 1 {
+		return nil
+	}
 	return hex.EncodeToString(generateTiDBKey(g.inner))
 }
 
@@ -55,6 +58,9 @@ type tidbBase64KeyGener struct {
 }
 
 func (g *tidbBase64KeyGener) gen() interface{} {
+	if rand.Intn(5) == 1 {
+		return nil
+	}
 	return base64.StdEncoding.EncodeToString(generateTiDBKey(g.inner))
 }
 
