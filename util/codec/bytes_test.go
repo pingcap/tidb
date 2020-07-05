@@ -97,3 +97,34 @@ func (s *testBytesSuite) TestBytesCodec(c *C) {
 		c.Assert(err, NotNil)
 	}
 }
+
+func (s *testBytesSuite) TestDecodeEscapeString(c *C) {
+	defer testleak.AfterTest(c)()
+	testCase := []struct {
+		input string
+		want  string
+	}{
+		{`\130\131\132`, "XYZ"},
+		{"\130\131\132", "XYZ"},
+		{"abc", "abc"},
+		{`a\130b\131c\132`, "aXbYcZ"},
+		{`abc\n`, "abc\n"},
+		{`abc\x58`, "abcX"},
+		{`abc\130`, "abcX"},
+		{"", ""},
+	}
+
+	for _, t := range testCase {
+		decode, err := DecodeEscapeString(t.input)
+		c.Assert(err, IsNil)
+		c.Assert(decode, Equals, t.want)
+	}
+
+	errCase := []string{`\xgg`, `\999`}
+
+	for _, input := range errCase {
+		decode, err := DecodeEscapeString(input)
+		c.Assert(err, NotNil)
+		c.Assert(decode, Equals, "")
+	}
+}
