@@ -544,7 +544,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 				func() {
 					addIndexErr = errCancelledDDLJob.GenWithStack("add table `%v` index `%v` panic", tblInfo.Name, indexInfo.Name)
 				}, false)
-			return w.addTableIndex(tbl, indexInfo, reorgInfo)
+			return w.addTableIndex(tbl, indexInfo, reorgInfo, false)
 		})
 		if err != nil {
 			if errWaitReorgTimeout.Equal(err) {
@@ -804,8 +804,13 @@ type addIndexWorker struct {
 
 type reorgIndexTask struct {
 	physicalTableID int64
-	startHandle     kv.Handle
-	endHandle       kv.Handle
+	// indexTableID is used for global index.
+	// Index backfilling on global index will create entries on table but not paritions.
+	// If table is not partitioned, or when backfilling a local index,
+	// indexTableID would be physicalTableID.
+	indexTableID int64
+	startHandle  kv.Handle
+	endHandle    kv.Handle
 	// endIncluded indicates whether the range include the endHandle.
 	// When the last handle is math.MaxInt64, set endIncluded to true to
 	// tell worker backfilling index of endHandle.
@@ -843,8 +848,9 @@ func mergeAddIndexCtxToResult(taskCtx *addIndexTaskContext, result *addIndexResu
 	result.scanCount += taskCtx.scanCount
 }
 
-func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, indexInfo *model.IndexInfo, decodeColMap map[int64]decoder.Column) *addIndexWorker {
-	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
+func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable,
+	indexInfo *model.IndexInfo, decodeColMap map[int64]decoder.Column, indexTableID int64) *addIndexWorker {
+	index := tables.NewIndex(indexTableID, t.Meta(), indexInfo)
 	rowDecoder := decoder.NewRowDecoder(t, decodeColMap)
 	return &addIndexWorker{
 		id:          id,
@@ -1347,9 +1353,13 @@ func (w *worker) handleReorgTasks(reorgInfo *reorgInfo, totalAddedCount *int64, 
 
 // sendRangeTaskToWorkers sends tasks to workers, and returns remaining kvRanges that is not handled.
 func (w *worker) sendRangeTaskToWorkers(t table.Table, workers []*addIndexWorker, reorgInfo *reorgInfo,
-	totalAddedCount *int64, kvRanges []kv.KeyRange, globalEndHandle kv.Handle) ([]kv.KeyRange, error) {
+	totalAddedCount *int64, kvRanges []kv.KeyRange, globalEndHandle kv.Handle, isGlobalIndex bool) ([]kv.KeyRange, error) {
 	batchTasks := make([]*reorgIndexTask, 0, len(workers))
 	physicalTableID := reorgInfo.PhysicalTableID
+	indexTableID := physicalTableID
+	if isGlobalIndex {
+		indexTableID = reorgInfo.TableID
+	}
 
 	// Build reorg indices tasks.
 	for _, keyRange := range kvRanges {
@@ -1362,7 +1372,7 @@ func (w *worker) sendRangeTaskToWorkers(t table.Table, workers []*addIndexWorker
 		if endHandle.Equal(globalEndHandle) {
 			endIncluded = true
 		}
-		task := &reorgIndexTask{physicalTableID, startHandle, endHandle, endIncluded}
+		task := &reorgIndexTask{physicalTableID, indexTableID, startHandle, endHandle, endIncluded}
 		batchTasks = append(batchTasks, task)
 
 		if len(batchTasks) >= len(workers) {
@@ -1409,6 +1419,8 @@ func loadDDLReorgVars(w *worker) error {
 
 // addPhysicalTableIndex handles the add index reorganization state for a non-partitioned table or a partition.
 // For a partitioned table, it should be handled partition by partition.
+// indexTableID specifies the tableID index entries append on.
+// normally, indexTableID is partitionID, but in global index, use tableID instead.
 //
 // How to add index in reorganization state?
 // Concurrently process the defaultTaskHandleCnt tasks. Each task deals with a handle range of the index record.
@@ -1421,7 +1433,7 @@ func loadDDLReorgVars(w *worker) error {
 //	4. Wait all these running tasks finished, then continue to step 3, until all tasks is done.
 // The above operations are completed in a transaction.
 // Finally, update the concurrent processing of the total number of rows, and store the completed handle value.
-func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.IndexInfo, reorgInfo *reorgInfo) error {
+func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.IndexInfo, reorgInfo *reorgInfo, indexTableID int64) error {
 	job := reorgInfo.Job
 	logutil.BgLogger().Info("[ddl] start to add table index", zap.String("job", job.String()), zap.String("reorgInfo", reorgInfo.String()))
 	totalAddedCount := job.GetRowCount()
@@ -1465,7 +1477,7 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.I
 		// Enlarge the worker size.
 		for i := len(idxWorkers); i < int(workerCnt); i++ {
 			sessCtx := newContext(reorgInfo.d.store)
-			idxWorker := newAddIndexWorker(sessCtx, w, i, t, indexInfo, decodeColMap)
+			idxWorker := newAddIndexWorker(sessCtx, w, i, t, indexInfo, decodeColMap, indexTableID)
 			idxWorker.priority = job.Priority
 			idxWorkers = append(idxWorkers, idxWorker)
 			go idxWorkers[i].run(reorgInfo.d)
@@ -1495,7 +1507,7 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.I
 
 		logutil.BgLogger().Info("[ddl] start add index workers to reorg index", zap.Int("workerCnt", len(idxWorkers)),
 			zap.Int("regionCnt", len(kvRanges)), zap.String("startHandle", toString(startHandle)), zap.String("endHandle", toString(endHandle)))
-		remains, err := w.sendRangeTaskToWorkers(t, idxWorkers, reorgInfo, &totalAddedCount, kvRanges, endHandle)
+		remains, err := w.sendRangeTaskToWorkers(t, idxWorkers, reorgInfo, &totalAddedCount, kvRanges, endHandle, false)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1512,7 +1524,7 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.I
 }
 
 // addTableIndex handles the add index reorganization state for a table.
-func (w *worker) addTableIndex(t table.Table, idx *model.IndexInfo, reorgInfo *reorgInfo) error {
+func (w *worker) addTableIndex(t table.Table, idx *model.IndexInfo, reorgInfo *reorgInfo, isGlobalIndex bool) error {
 	var err error
 	if tbl, ok := t.(table.PartitionedTable); ok {
 		var finish bool
@@ -1521,7 +1533,12 @@ func (w *worker) addTableIndex(t table.Table, idx *model.IndexInfo, reorgInfo *r
 			if p == nil {
 				return errCancelledDDLJob.GenWithStack("Can not find partition id %d for table %d", reorgInfo.PhysicalTableID, t.Meta().ID)
 			}
-			err = w.addPhysicalTableIndex(p, idx, reorgInfo)
+			if isGlobalIndex {
+				err = w.addPhysicalTableIndex(p, idx, reorgInfo, t.Meta().ID)
+			} else {
+				err = w.addPhysicalTableIndex(p, idx, reorgInfo, p.GetPhysicalID())
+			}
+
 			if err != nil {
 				break
 			}
@@ -1531,7 +1548,7 @@ func (w *worker) addTableIndex(t table.Table, idx *model.IndexInfo, reorgInfo *r
 			}
 		}
 	} else {
-		err = w.addPhysicalTableIndex(t.(table.PhysicalTable), idx, reorgInfo)
+		err = w.addPhysicalTableIndex(t.(table.PhysicalTable), idx, reorgInfo, t.Meta().ID)
 	}
 	return errors.Trace(err)
 }
