@@ -99,11 +99,19 @@ func (c *index) checkContainNonBinaryString() bool {
 
 // NewIndex builds a new Index object.
 func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) table.Index {
+	// The prefix can't encode from tblInfo.ID, because table partition may change the id to partition id.
+	var prefix kv.Key
+	if indexInfo.Global {
+		// In glabal index of partition table, prefix start with tblInfo.ID.
+		prefix = tablecodec.EncodeTableIndexPrefix(tblInfo.ID, indexInfo.ID)
+	} else {
+		// Otherwise, start with physicalID.
+		prefix = tablecodec.EncodeTableIndexPrefix(physicalID, indexInfo.ID)
+	}
 	index := &index{
-		idxInfo: indexInfo,
-		tblInfo: tblInfo,
-		// The prefix can't encode from tblInfo.ID, because table partition may change the id to partition id.
-		prefix:   tablecodec.EncodeTableIndexPrefix(physicalID, indexInfo.ID),
+		idxInfo:  indexInfo,
+		tblInfo:  tblInfo,
+		prefix:   prefix,
 		phyTblID: physicalID,
 	}
 	index.containNonBinaryString = index.checkContainNonBinaryString()
@@ -118,99 +126,129 @@ func (c *index) Meta() *model.IndexInfo {
 // GenIndexKey generates storage key for index values. Returned distinct indicates whether the
 // indexed values should be distinct in storage (i.e. whether handle is encoded in the key).
 func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.Datum, h kv.Handle, buf []byte) (key []byte, distinct bool, err error) {
-	return tablecodec.GenIndexKey(sc, c.tblInfo, c.idxInfo, c.phyTblID, indexedValues, h, buf)
+	idxTblID := c.phyTblID
+	if c.idxInfo.Global {
+		idxTblID = c.tblInfo.ID
+	}
+	return tablecodec.GenIndexKey(sc, c.tblInfo, c.idxInfo, idxTblID, indexedValues, h, buf)
 }
 
 // Create creates a new entry in the kvIndex data.
 // If the index is unique and there is an existing entry with the same key,
 // Create will return the existing entry's handle as the first return value, ErrKeyExists as the second return value.
 // Value layout:
-//		+--With Restore Data(for indices on string columns)
+//		+--Local Index
 //		|  |
-//		|  +--Non Unique (TailLen = len(PaddingData) + len(Flag), TailLen < 8 always)
+//		|  +--With Restore Data(for indices on string columns)
 //		|  |  |
-//		|  |  +--Without Untouched Flag:
+//		|  |  +--Non Unique (TailLen = len(PaddingData) + len(Flag), TailLen < 8 always)
+//		|  |  |  |
+//		|  |  |  +--Without Untouched Flag:
+//		|  |  |  |
+//		|  |  |  |  Layout: TailLen |      RestoreData  |      PaddingData
+//		|  |  |  |  Length: 1       | size(RestoreData) | size(paddingData)
+//		|  |  |  |
+//		|  |  |  |  The length >= 10 always because of padding.
+//		|  |  |  |
+//		|  |  |  +--With Untouched Flag:
 //		|  |  |
-//		|  |  |  Layout: TailLen |      RestoreData  |      PaddingData
-//		|  |  |  Length: 1       | size(RestoreData) | size(paddingData)
+//		|  |  |     Layout: TailLen |    RestoreData    |      PaddingData  | Flag
+//		|  |  |     Length: 1       | size(RestoreData) | size(paddingData) |  1
 //		|  |  |
-//		|  |  |  The length >= 10 always because of padding.
+//		|  |  |     The length >= 11 always because of padding.
 //		|  |  |
-//		|  |  +--With Untouched Flag:
+//		|  |  +--Unique Common Handle
+//		|  |  |  |
+//		|  |  |  +--Without Untouched Flag:
+//		|  |  |  |
+//		|  |  |  |  Layout: 0x00 | CHandle Flag | CHandle Len | CHandle       | RestoreData
+//		|  |  |  |  Length: 1    | 1            | 2           | size(CHandle) | size(RestoreData)
+//		|  |  |  |
+//		|  |  |  |  The length > 10 always because of CHandle size.
+//		|  |  |  |
+//		|  |  |  +--With Untouched Flag:
+//		|  |  |
+//		|  |  |     Layout: 0x01 | CHandle Flag | CHandle Len | CHandle       | RestoreData       | Flag
+//		|  |  |     Length: 1    | 1            | 2           | size(CHandle) | size(RestoreData) | 1
+//		|  |  |
+//		|  |  |     The length > 10 always because of CHandle size.
+//		|  |  |
+//		|  |  +--Unique Integer Handle (TailLen = len(Handle) + len(Flag), TailLen == 8 || TailLen == 9)
+//		|  |     |
+//		|  |     +--Without Untouched Flag:
+//		|  |     |
+//		|  |     |  Layout: 0x08 |    RestoreData    |  Handle
+//		|  |     |  Length: 1    | size(RestoreData) |   8
+//		|  |     |
+//		|  |     |  The length >= 10 always since size(RestoreData) > 0.
+//		|  |     |
+//		|  |     +--With Untouched Flag:
 //		|  |
-//		|  |     Layout: TailLen |    RestoreData    |      PaddingData  | Flag
-//		|  |     Length: 1       | size(RestoreData) | size(paddingData) |  1
+//		|  |        Layout: 0x09 |      RestoreData  |  Handle  | Flag
+//		|  |        Length: 1    | size(RestoreData) |   8      | 1
 //		|  |
-//		|  |     The length >= 11 always because of padding.
+//		|  |   	 The length >= 11 always since size(RestoreData) > 0.
 //		|  |
-//		|  +--Unique Common Handle
-//		|  |  |
-//		|  |  +--Without Untouched Flag:
-//		|  |  |
-//		|  |  |  Layout: 0x00 | CHandle Flag | CHandle Len | CHandle       | RestoreData
-//		|  |  |  Length: 1    | 1            | 2           | size(CHandle) | size(RestoreData)
-//		|  |  |
-//		|  |  |  The length > 10 always because of CHandle size.
-//		|  |  |
-//		|  |  +--With Untouched Flag:
-//		|  |
-//		|  |     Layout: 0x01 | CHandle Flag | CHandle Len | CHandle       | RestoreData       | Flag
-//		|  |     Length: 1    | 1            | 2           | size(CHandle) | size(RestoreData) | 1
-//		|  |
-//		|  |     The length > 10 always because of CHandle size.
-//		|  |
-//		|  +--Unique Integer Handle (TailLen = len(Handle) + len(Flag), TailLen == 8 || TailLen == 9)
+//		|  +--Without Restore Data
 //		|     |
-//		|     +--Without Untouched Flag:
+//		|     +--Non Unique
+//		|     |  |
+//		|     |  +--Without Untouched Flag:
+//		|     |  |
+//		|     |  |  Layout: '0'
+//		|     |  |  Length:  1
+//		|     |  |
+//		|     |  +--With Untouched Flag:
 //		|     |
-//		|     |  Layout: 0x08 |    RestoreData    |  Handle
-//		|     |  Length: 1    | size(RestoreData) |   8
+//		|     |     Layout: Flag
+//		|     |     Length:  1
 //		|     |
-//		|     |  The length >= 10 always since size(RestoreData) > 0.
+//		|     +--Unique Common Handle
+//		|     |  |
+//		|     |  +--Without Untouched Flag:
+//		|     |  |
+//		|     |  |  Layout: 0x00 | CHandle Flag | CHandle Len | CHandle
+//      |     |  |  Length: 1    | 1            | 2           | size(CHandle)
+//		|     |  |
+//		|     |  +--With Untouched Flag:
 //		|     |
-//		|     +--With Untouched Flag:
+//		|     |     Layout: 0x01 | CHandle Flag | CHandle Len | CHandle       | Flag
+//		|     |     Length: 1    | 1            | 2           | size(CHandle) | 1
+//		|     |
+//		|     +--Unique Integer Handle
+//		|        |
+//		|        +--Without Untouched Flag:
+//		|        |
+//		|        |  Layout: Handle
+//		|        |  Length:   8
+//		|        |
+//		|        +--With Untouched Flag:
 //		|
-//		|        Layout: 0x09 |      RestoreData  |  Handle  | Flag
-//		|        Length: 1    | size(RestoreData) |   8      | 1
+//		|           Layout: Handle | Flag
+//		|           Length:   8    |  1
 //		|
-//		|   	 The length >= 11 always since size(RestoreData) > 0.
-//		|
-//		+--Without Restore Data
-//		|
-//		+--Non Unique
+//		+--Global Index (Similar to Local Index, except partitionID is append to the end.)
 //		|  |
-//		|  +--Without Untouched Flag:
-//		|  |
-//		|  |  Layout: '0'
-//		|  |  Length:  1
-//		|  |
-//		|  +--With Untouched Flag:
-//		|
-//		|     Layout: Flag
-//		|     Length:  1
-//		+--Unique Common Handle
-//		|  |
-//		|  +--Without Untouched Flag:
-//		|  |
-//		|  |  Layout: 0x00 | CHandle Flag | CHandle Len | CHandle
-//      |  |  Length: 1    | 1            | 2           | size(CHandle)
-//		|  |
-//		|  +--With Untouched Flag:
-//		|
-//		|     Layout: 0x01 | CHandle Flag | CHandle Len | CHandle       | Flag
-//		|     Length: 1    | 1            | 2           | size(CHandle) | 1
-//		|
-//		+--Unique Integer Handle
-//		|
-//		+--Without Untouched Flag:
-//		|
-//		|  Layout: Handle
-//		|  Length:   8
-//		|
-//		+--With Untouched Flag:
+//		|  +--With Restore Data(for indices on string columns)
+//		|  |  |
+//		|  |  +--Non Unique (TailLen = len(PaddingData) + len(Flag), TailLen < 8 always)
+//		|  |  |  |
+//		|  |  |  +--Without Untouched Flag:
+//		|  |  |  |
+//		|  |  |  |  Layout: TailLen |      RestoreData  |      PaddingData  | PartitionID |
+//		|  |  |  |  Length: 1       | size(RestoreData) | size(paddingData) |     8       |
+//		|  |  |  |
+//		|  |  |  |  The length >= 18 always because of padding.
+//		|  |  |  |
+//		|  |  |  +--With Untouched Flag:
+//		|  |  |
+//		|  |  |     Layout: TailLen |    RestoreData    |      PaddingData  | Flag | PartitionID |
+//		|  |  |     Length: 1       | size(RestoreData) | size(paddingData) |  1   |     8       |
+//		|  |  |
+//		|  |  |     The length >= 19 always because of padding.
+//		|  |  |
+//		... (Truncated because of length.)
 //
-//		Layout: Handle | Flag
-//		Length:   8    |  1
 func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedValues []types.Datum, h kv.Handle, opts ...table.CreateIdxOptFunc) (kv.Handle, error) {
 	var opt table.CreateIdxOpt
 	for _, fn := range opts {
@@ -242,7 +280,7 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 	// save the key buffer to reuse.
 	writeBufs.IndexKeyBuf = key
 	idxVal, err := tablecodec.GenIndexValue(sctx.GetSessionVars().StmtCtx, c.tblInfo, c.idxInfo,
-		c.containNonBinaryString, distinct, opt.Untouched, indexedValues, h)
+		c.containNonBinaryString, distinct, opt.Untouched, indexedValues, h, c.phyTblID)
 	if err != nil {
 		return nil, err
 	}

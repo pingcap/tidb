@@ -468,6 +468,9 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 			} else {
 				indexInfo.Tp = indexOption.Tp
 			}
+			if indexOption.Locality == ast.IndexLocalityGlobal {
+				indexInfo.Global = true
+			}
 		} else {
 			// Use btree as default index type.
 			indexInfo.Tp = model.IndexTypeBtree

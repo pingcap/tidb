@@ -971,8 +971,8 @@ func GenIndexKey(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo
 }
 
 // GenIndexValue creates encoded index value and returns the result
-func GenIndexValue(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
-	containNonBinaryString bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle) ([]byte, error) {
+func GenIndexValue(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, containNonBinaryString bool,
+	distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64) ([]byte, error) {
 	var idxVal []byte
 	if collate.NewCollationEnabled() && containNonBinaryString {
 		colIds := make([]int64, len(idxInfo.Columns))
@@ -1024,6 +1024,9 @@ func GenIndexValue(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxIn
 		if len(idxVal) == 0 {
 			idxVal = []byte{'0'}
 		}
+	}
+	if idxInfo.Global {
+		idxVal = append(idxVal, codec.EncodeInt(nil, partitionID)...)
 	}
 	return idxVal, nil
 }
