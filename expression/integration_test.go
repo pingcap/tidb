@@ -4440,6 +4440,18 @@ func (s *testIntegrationSuite) TestTiDBDecodeKeyFunc(c *C) {
 	warns := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
 	c.Assert(warns, HasLen, 1)
 	c.Assert(warns[0].Err.Error(), Equals, "invalid record/index key: 7480000000000000FF2E5F728000000011FFE1A3000000000000")
+
+	result = tk.MustQuery("select tidb_decode_key( 't\x10\x30\x67\x04\x00\x00\x07\x8fr\x80\x00\x00\x00\x00\x08\x3b\xba' )")
+	result.Check(testkit.Rows(""))
+	warns = tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+	c.Assert(warns, HasLen, 1)
+	c.Assert(warns[0].Err.Error(), Equals, "invalid record/index key: 74103067040000078F728000000000083BBA")
+
+	result = tk.MustQuery("select tidb_decode_key( 'characters created by cosmic rays' )")
+	result.Check(testkit.Rows(""))
+	warns = tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+	c.Assert(warns, HasLen, 1)
+	c.Assert(warns[0].Err.Error(), Equals, "invalid record/index key: 63686172616374657273206372656174656420627920636F736D69632072617973")
 }
 
 func (s *testIntegrationSuite) TestTiDBDecodeBase64KeyFunc(c *C) {
@@ -4450,6 +4462,7 @@ func (s *testIntegrationSuite) TestTiDBDecodeBase64KeyFunc(c *C) {
 	result.Check(testkit.Rows(`{"_tidb_rowid": "1", "tableID": "64"}`))
 
 	// Test invalid record/index key.
+	// cannot decode only index values now. tidb-ctl decode this correctly
 	result = tk.MustQuery("select tidb_decode_base64_key( 'CAQCBmFiYw==' )")
 	result.Check(testkit.Rows(""))
 	warns := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
