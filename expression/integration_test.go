@@ -4425,14 +4425,14 @@ func (s *testIntegrationSuite) TestTiDBDecodeKeyFunc(c *C) {
 	result := tk.MustQuery("select tidb_decode_key( '74800000000000002B5F72800000000000A5D3' )")
 	result.Check(testkit.Rows(`{"_tidb_rowid": "42451", "tableID": "43"}`))
 
-	result = tk.MustQuery(`select tidb_decode_key('t\\x80\\x00\\x00\\x00\\x00\\x00\\x07\\x8f_r\\x80\\x00\\x00\\x00\\x00\\x08\\x3b\xba')`)
+	result = tk.MustQuery("select tidb_decode_key('t\x80\x00\x00\x00\x00\x00\x07\x8f_r\x80\x00\x00\x00\x00\x08\x3b\xba')")
 	result.Check(testkit.Rows(`{"_tidb_rowid": "539578", "tableID": "1935"}`))
 
 	result = tk.MustQuery("select tidb_decode_key( '74800000000000019B5F698000000000000001015257303100000000FB013736383232313130FF3900000000000000F8010000000000000000F7' )")
 	result.Check(testkit.Rows(`{"indexID": "1", "indexValues": "RW01,768221109,", "tableID": "411"}`))
 
-	result = tk.MustQuery(`select tidb_decode_key( 't\\200\\000\\000\\000\\000\\000\\000\\255_i\\200\\000\\000\\000\\000\\000\\000\\001\\003\\200\\000\\000\\000\\000e\\221|\\003\\200\\000\\000\\000\\0008\\307\\024\\003\\200\\000\\000\\000\\0014\\025\\230\\003\\200\\000\\000\\000' )`)
-	result.Check(testkit.Rows(`{"indexID": "1", "indexValues": "03800000000065917C03800000000038C7140380000000013415980380000000", "tableID": "173"}`))
+	result = tk.MustQuery("select tidb_decode_key( 't\200\000\000\000\000\000\000\255_i\200\000\000\000\000\000\000\001\003\200\000\000\000\000e\221|\003\200\000\000\000\0008\307\024\003\200\000\000\000\0014\025\230\003\200\000\000\000' )")
+	result.Check(testkit.Rows(`{"indexID": "1", "indexValues": "6656380,3720980,20190616", "tableID": "173"}`))
 
 	// Test invalid record/index key.
 	result = tk.MustQuery("select tidb_decode_key( '7480000000000000FF2E5F728000000011FFE1A3000000000000' )")

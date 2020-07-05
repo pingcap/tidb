@@ -153,7 +153,8 @@ func DecodeIndexKey(key kv.Key) (tableID int64, indexID int64, indexValues []str
 		// the column. For instance, MysqlTime is internally saved as uint64.
 		remain, d, e := codec.DecodeOne(indexKey)
 		if e != nil {
-			return 0, 0, nil, errInvalidIndexKey.GenWithStack("invalid index key - %q %v", k, e)
+			// in project tidb-ctl, it is 'break'.
+			break
 		}
 		str, e1 := d.ToString()
 		if e1 != nil {
