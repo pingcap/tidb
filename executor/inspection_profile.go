@@ -31,7 +31,7 @@ type profileBuilder struct {
 	idMap       map[string]uint64
 	idAllocator uint64
 	totalValue  float64
-	uniqueMap   map[*metricNode]struct{}
+	uniqueMap   map[string]struct{}
 	buf         *bytes.Buffer
 
 	start time.Time
@@ -118,6 +118,9 @@ func (pb *profileBuilder) getMetricValue(n *metricNode) (float64, error) {
 			}
 			label += row.GetString(i)
 		}
+		if label == "" && len(n.label) > 0 {
+			continue
+		}
 		n.labelValue[label] = v
 		n.value += v
 	}
@@ -131,7 +134,7 @@ func NewProfileBuilder(sctx sessionctx.Context, start, end time.Time) *profileBu
 		idMap:       make(map[string]uint64),
 		idAllocator: uint64(1),
 		buf:         bytes.NewBuffer(make([]byte, 0, 1024)),
-		uniqueMap:   make(map[*metricNode]struct{}),
+		uniqueMap:   make(map[string]struct{}),
 		start:       start,
 		end:         end,
 	}
@@ -188,10 +191,11 @@ func (pb *profileBuilder) traversal(n *metricNode) error {
 	if n == nil {
 		return nil
 	}
-	if _, ok := pb.uniqueMap[n]; ok {
+	nodeName := n.getName("")
+	if _, ok := pb.uniqueMap[nodeName]; ok {
 		return nil
 	}
-	pb.uniqueMap[n] = struct{}{}
+	pb.uniqueMap[nodeName] = struct{}{}
 	selfValue, err := n.getValue(pb)
 	if err != nil {
 		return err
@@ -432,10 +436,12 @@ func (pb *profileBuilder) genTiDBQueryTree() *metricNode {
 				table: "tidb_auto_id_request",
 			},
 			{
-				table: "tidb_cop",
+				table:          "tidb_cop",
+				isPartOfParent: true,
 				children: []*metricNode{
 					{
 						table:          "tidb_kv_backoff",
+						label:          []string{"type"},
 						isPartOfParent: true,
 					},
 					tidbKVRequest,
@@ -447,6 +453,7 @@ func (pb *profileBuilder) genTiDBQueryTree() *metricNode {
 				children: []*metricNode{
 					{
 						table:          "tidb_kv_backoff",
+						label:          []string{"type"},
 						isPartOfParent: true,
 					},
 					tidbKVRequest,
