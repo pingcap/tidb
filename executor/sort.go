@@ -247,7 +247,8 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 				e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
 				e.rowChunks.GetDiskTracker().AttachTo(e.diskTracker)
 				e.rowChunks.GetDiskTracker().SetLabel(rowChunksLabel)
-				e.spillAction.ResetRowContainer(e.rowChunks)
+				e.spillAction = e.rowChunks.ActionSpill()
+				e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(e.spillAction)
 				err = e.rowChunks.Add(chk)
 			}
 			if err != nil {
