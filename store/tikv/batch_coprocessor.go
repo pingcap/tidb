@@ -124,12 +124,17 @@ func buildBatchCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, re
 		for _, task := range tasks {
 			rpcCtx, err := cache.GetTiFlashRPCContext(bo, task.region)
 			if err != nil {
-				return nil, err
+				return nil, errors.Trace(err)
 			}
 			// If the region is not found in cache, it must be out
 			// of date and already be cleaned up. We should retry and generate new tasks.
 			if rpcCtx == nil {
 				needRetry = true
+				err = bo.Backoff(BoRegionMiss, errors.New("Cannot find region or TiFlash peer"))
+				logutil.BgLogger().Info("retry for TiFlash peer or region missing", zap.Uint64("region id", task.region.GetID()))
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
 				break
 			}
 			if batchCop, ok := storeTaskMap[rpcCtx.Addr]; ok {
