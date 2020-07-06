@@ -4241,7 +4241,9 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 	}
 
 	indexName = model.NewCIStr(mysql.PrimaryKeyName)
-	if indexInfo := t.Meta().FindIndexByName(indexName.L); indexInfo != nil {
+	if indexInfo := t.Meta().FindIndexByName(indexName.L); indexInfo != nil ||
+		// If the table's PKIsHandle is true, it also means that this table has a primary key.
+		t.Meta().PKIsHandle {
 		return infoschema.ErrMultiplePriKey
 	}
 
