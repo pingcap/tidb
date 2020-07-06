@@ -49,20 +49,6 @@ import (
 	"github.com/pingcap/tidb/util/stmtsummary"
 )
 
-func newMemTableRetriever(table *model.TableInfo, columns []*model.ColumnInfo) memTableRetriever {
-	switch table.Name.O {
-	case infoschema.TableColumns:
-		return &hugeMemTableRetriever{
-			table:   table,
-			columns: columns,
-		}
-	}
-	return &memtableRetriever{
-		table:   table,
-		columns: columns,
-	}
-}
-
 type memtableRetriever struct {
 	dummyCloser
 	table       *model.TableInfo
@@ -1803,7 +1789,6 @@ func (e *hugeMemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 	}
 	e.retrieved = len(e.rows) == 0
 
-	//Adjust the amount of each return
 	return adjustColumns(e.rows, e.columns, e.table), nil
 }
 
