@@ -1515,7 +1515,7 @@ func (it *infoschemaTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, 
 		return err
 	}
 	for i, row := range rows {
-		more, err := fn(int64(i), row, cols)
+		more, err := fn(kv.IntHandle(i), row, cols)
 		if err != nil {
 			return err
 		}
@@ -1646,7 +1646,7 @@ type VirtualTable struct{}
 
 // IterRecords implements table.Table IterRecords interface.
 func (vt *VirtualTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols []*table.Column,
-	fn table.RecordIterFunc) error {
+	_ table.RecordIterFunc) error {
 	if len(startKey) != 0 {
 		return table.ErrUnsupportedOp
 	}

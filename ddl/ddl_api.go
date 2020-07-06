@@ -1708,7 +1708,7 @@ func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo
 		scatterRegion = variable.TiDBOptOn(val)
 	}
 	if pi != nil {
-		preSplit = func() { splitPartitionTableRegion(ctx, sp, pi, scatterRegion) }
+		preSplit = func() { splitPartitionTableRegion(ctx, sp, tbInfo, pi, scatterRegion) }
 	} else {
 		preSplit = func() { splitTableRegion(ctx, sp, tbInfo, scatterRegion) }
 	}
@@ -2343,8 +2343,21 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 	var actionType model.ActionType
 	switch tp {
 	case autoid.AutoRandomType:
-		if t.Meta().AutoRandomBits == 0 {
+		tbInfo := t.Meta()
+		if tbInfo.AutoRandomBits == 0 {
 			return errors.Trace(ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomRebaseNotApplicable))
+		}
+		var autoRandColTp types.FieldType
+		for _, c := range tbInfo.Columns {
+			if mysql.HasPriKeyFlag(c.Flag) {
+				autoRandColTp = c.FieldType
+				break
+			}
+		}
+		layout := autoid.NewAutoRandomIDLayout(&autoRandColTp, tbInfo.AutoRandomBits)
+		if layout.IncrementalMask()&newBase != newBase {
+			errMsg := fmt.Sprintf(autoid.AutoRandomRebaseOverflow, newBase, layout.IncrementalBitsCapacity())
+			return errors.Trace(ErrInvalidAutoRandom.GenWithStackByArgs(errMsg))
 		}
 		actionType = model.ActionRebaseAutoRandomBase
 	case autoid.RowIDAllocType:
@@ -4228,7 +4241,9 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 	}
 
 	indexName = model.NewCIStr(mysql.PrimaryKeyName)
-	if indexInfo := t.Meta().FindIndexByName(indexName.L); indexInfo != nil {
+	if indexInfo := t.Meta().FindIndexByName(indexName.L); indexInfo != nil ||
+		// If the table's PKIsHandle is true, it also means that this table has a primary key.
+		t.Meta().PKIsHandle {
 		return infoschema.ErrMultiplePriKey
 	}
 
