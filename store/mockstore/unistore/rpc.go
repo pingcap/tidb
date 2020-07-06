@@ -19,6 +19,7 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -48,6 +49,7 @@ type RPCClient struct {
 	cluster    *Cluster
 	path       string
 	persistent bool
+	closed     int32
 
 	// rpcCli uses to redirects RPC request to TiDB rpc server, It is only use for test.
 	// Mock TiDB rpc service will have circle import problem, so just use a real RPC client to send this RPC  server.
@@ -72,6 +74,11 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	default:
+	}
+
+	if atomic.LoadInt32(&c.closed) != 0 {
+		// Return `context.Canceled` can break Backoff.
+		return nil, context.Canceled
 	}
 
 	resp := &tikvrpc.Response{}
@@ -264,6 +271,7 @@ func (c *RPCClient) redirectRequestToRPCServer(ctx context.Context, addr string,
 
 // Close closes RPCClient and cleanup temporal resources.
 func (c *RPCClient) Close() error {
+	atomic.StoreInt32(&c.closed, 1)
 	if c.usSvr != nil {
 		c.usSvr.Stop()
 	}
