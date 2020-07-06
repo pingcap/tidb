@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"math"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -112,6 +113,8 @@ func (s *tikvStore) batchSplitSingleRegion(bo *Backoffer, batch batch, scatter b
 		}
 	})
 
+	logutil.BgLogger().Warn("[QUPENG] splitting region", zap.Uint64("region", batch.regionID.id))
+
 	req := tikvrpc.NewRequest(tikvrpc.CmdSplitRegion, &kvrpcpb.SplitRegionRequest{
 		SplitKeys: batch.keys,
 	}, kvrpcpb.Context{
@@ -119,7 +122,7 @@ func (s *tikvStore) batchSplitSingleRegion(bo *Backoffer, batch batch, scatter b
 	})
 
 	sender := NewRegionRequestSender(s.regionCache, s.client)
-	resp, err := sender.SendReq(bo, req, batch.regionID, readTimeoutShort)
+	resp, err := sender.SendReq(bo, req, batch.regionID, ReadTimeoutLong)
 
 	batchResp := singleBatchResp{resp: resp}
 	if err != nil {
@@ -134,9 +137,17 @@ func (s *tikvStore) batchSplitSingleRegion(bo *Backoffer, batch batch, scatter b
 	if regionErr != nil {
 		err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 		if err != nil {
+			logutil.BgLogger().Warn("[QUPENG] split meets region error, won't retry again",
+				zap.String("region_error", regionErr.String()),
+				zap.Uint64("region", batch.regionID.id),
+			)
 			batchResp.err = errors.Trace(err)
 			return batchResp
 		}
+		logutil.BgLogger().Info("[QUPENG] split meets region error, retrying",
+			zap.String("region_error", regionErr.String()),
+			zap.Uint64("region", batch.regionID.id),
+		)
 		resp, err = s.splitBatchRegionsReq(bo, batch.keys, scatter)
 		batchResp.resp = resp
 		batchResp.err = err
@@ -150,7 +161,7 @@ func (s *tikvStore) batchSplitSingleRegion(bo *Backoffer, batch batch, scatter b
 		// so n-1 needs to be scattered to other stores.
 		spResp.Regions = regions[:len(regions)-1]
 	}
-	logutil.BgLogger().Info("batch split regions complete",
+	logutil.BgLogger().Info("[QUPENG] batch split regions complete",
 		zap.Uint64("batch region ID", batch.regionID.id),
 		zap.Stringer("first at", kv.Key(batch.keys[0])),
 		zap.Stringer("first new region left", stringutil.MemoizeStr(func() string {
@@ -168,22 +179,30 @@ func (s *tikvStore) batchSplitSingleRegion(bo *Backoffer, batch batch, scatter b
 		return batchResp
 	}
 
-	for i, r := range spResp.Regions {
+	for idx := 0; idx < len(spResp.Regions); {
+		r := spResp.Regions[idx]
+		logutil.BgLogger().Info("[QUPENG] scattering region... ", zap.Uint64("region ID", r.Id))
+
 		err = s.pdClient.ScatterRegion(bo.ctx, r.Id)
-		if err == nil {
-			logutil.BgLogger().Info("batch split regions, scatter region complete",
-				zap.Uint64("batch region ID", batch.regionID.id),
-				zap.Stringer("at", kv.Key(batch.keys[i])),
-				zap.Stringer("new region left", logutil.Hex(r)))
+		if err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				logutil.BgLogger().Info("[QUPENG] scatter region failed, retry",
+					zap.Uint64("region ID", r.Id),
+					zap.Error(err),
+				)
+			} else {
+				logutil.BgLogger().Info("[QUPENG] scatter region failed",
+					zap.Uint64("region ID", r.Id),
+					zap.Error(err),
+				)
+				idx += 1
+			}
 			continue
 		}
-
-		logutil.BgLogger().Info("batch split regions, scatter region failed",
-			zap.Uint64("batch region ID", batch.regionID.id),
-			zap.Stringer("at", kv.Key(batch.keys[i])),
-			zap.Stringer("new region left", logutil.Hex(r)),
-			zap.Error(err))
+		logutil.BgLogger().Info("[QUPENG] scatter region complete", zap.Uint64("region ID", r.Id))
+		idx += 1
 	}
+
 	return batchResp
 }
 

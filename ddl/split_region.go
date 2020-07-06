@@ -95,10 +95,17 @@ func preSplitPhysicalTableByShardRowID(ctx context.Context, store kv.SplittableS
 		splitTableKeys = append(splitTableKeys, key)
 	}
 	var err error
+	logutil.BgLogger().Info("[ddl QUPENG] pre split table record regions...",
+		zap.Stringer("table", tbInfo.Name),
+		zap.Int("keys", len(splitTableKeys)),
+	)
 	regionIDs, err := store.SplitRegions(ctx, splitTableKeys, scatter)
 	if err != nil {
-		logutil.BgLogger().Warn("[ddl] pre split some table regions failed",
-			zap.Stringer("table", tbInfo.Name), zap.Int("successful region count", len(regionIDs)), zap.Error(err))
+		logutil.BgLogger().Warn("[ddl QUPENG] pre split table record regions failed",
+			zap.Stringer("table", tbInfo.Name),
+			zap.Int("successful region count", len(regionIDs)),
+			zap.Error(err),
+		)
 	}
 	regionIDs = append(regionIDs, splitIndexRegion(store, tbInfo, scatter)...)
 	return regionIDs
@@ -123,10 +130,17 @@ func splitIndexRegion(store kv.SplittableStore, tblInfo *model.TableInfo, scatte
 		indexPrefix := tablecodec.EncodeTableIndexPrefix(tblInfo.ID, idx.ID)
 		splitKeys = append(splitKeys, indexPrefix)
 	}
+	logutil.BgLogger().Info("[ddl QUPENG] pre split table index regions...",
+		zap.Stringer("table", tblInfo.Name),
+		zap.Int("keys", len(splitKeys)),
+	)
 	regionIDs, err := store.SplitRegions(context.Background(), splitKeys, scatter)
 	if err != nil {
-		logutil.BgLogger().Warn("[ddl] pre split some table index regions failed",
-			zap.Stringer("table", tblInfo.Name), zap.Int("successful region count", len(regionIDs)), zap.Error(err))
+		logutil.BgLogger().Warn("[ddl QUPENG] pre split table index regions failed",
+			zap.Stringer("table", tblInfo.Name),
+			zap.Int("successful region count", len(regionIDs)),
+			zap.Error(err),
+		)
 	}
 	return regionIDs
 }
