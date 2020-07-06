@@ -19,6 +19,7 @@ import (
 	"sort"
 
 	"github.com/opentracing/opentracing-go"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
@@ -144,7 +145,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	if actionExceed != nil {
 		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionExceed)
 	} else {
-		logutil.Event(ctx, "failed to find actionExceed, leave it be.")
+		return errors.Trace(fmt.Errorf("failed to find actionExceed in TableReaderExecutor Open phase"))
 	}
 
 	if len(secondPartRanges) == 0 {
