@@ -1586,16 +1586,15 @@ func (s *session) GetSessionVars() *variable.SessionVars {
 func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []byte) bool {
 	pm := privilege.GetPrivilegeManager(s)
 
-	// check account lock.
-	locked := pm.CheckAccountLocked(s, user.Username, user.Hostname)
-	if locked {
-		return false
-	}
-
 	// Check IP or localhost.
 	var success bool
 	user.AuthUsername, user.AuthHostname, success = pm.ConnectionVerification(user.Username, user.Hostname, authentication, salt, s.sessionVars.TLSConnectionState)
 	if success {
+		// check account lock.
+		locked := pm.CheckAccountLocked(s, user.AuthUsername, user.AuthHostname)
+		if locked {
+			return false
+		}
 		s.sessionVars.User = user
 		s.sessionVars.ActiveRoles = pm.GetDefaultRoles(user.AuthUsername, user.AuthHostname)
 		return true
@@ -1608,6 +1607,11 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 	for _, addr := range getHostByIP(user.Hostname) {
 		u, h, success := pm.ConnectionVerification(user.Username, addr, authentication, salt, s.sessionVars.TLSConnectionState)
 		if success {
+			// check account lock.
+			locked := pm.CheckAccountLocked(s, u, h)
+			if locked {
+				return false
+			}
 			s.sessionVars.User = &auth.UserIdentity{
 				Username:     user.Username,
 				Hostname:     addr,
