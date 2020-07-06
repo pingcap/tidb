@@ -4426,7 +4426,9 @@ func (s *testIntegrationSuite) TestTiDBInternalFunc(c *C) {
 	result.Check(testkit.Rows("tableID=43, _tidb_rowid=42451"))
 
 	result = tk.MustQuery("select tidb_decode_key( '74800000000000019B5F698000000000000001015257303100000000FB013736383232313130FF3900000000000000F8010000000000000000F7' )")
-	result.Check(testkit.Rows("tableID=411, indexID=1, indexValues=015257303100000000FB013736383232313130FF3900000000000000F8010000000000000000F7"))
+	result.Check(testkit.Rows("tableID=411, indexID=1, indexValues=RW01,768221109,"))
+	result = tk.MustQuery("select tidb_decode_key( '7480000000000000695F698000000000000001038000000000004E20' )")
+	result.Check(testkit.Rows("tableID=105, indexID=1, indexValues=20000"))
 
 	// Test invalid record/index key.
 	result = tk.MustQuery("select tidb_decode_key( '7480000000000000FF2E5F728000000011FFE1A3000000000000' )")
@@ -5410,7 +5412,7 @@ func (s *testIntegrationSuite) TestDecodetoChunkReuse(c *C) {
 		tk.MustExec(fmt.Sprintf("insert chk values (%d,'%s')", i, strconv.Itoa(i)))
 	}
 
-	tk.Se.GetSessionVars().DistSQLScanConcurrency = 1
+	tk.Se.GetSessionVars().SetDistSQLScanConcurrency(1)
 	tk.MustExec("set tidb_init_chunk_size = 2")
 	tk.MustExec("set tidb_max_chunk_size = 32")
 	defer func() {
@@ -6618,6 +6620,16 @@ func (s *testIntegrationSuite) TestIssue17287(c *C) {
 	tk.MustExec("set @val2 = 1589873946;")
 	tk.MustQuery("execute stmt7 using @val1;").Check(testkit.Rows("1589873945"))
 	tk.MustQuery("execute stmt7 using @val2;").Check(testkit.Rows("1589873946"))
+}
+
+func (s *testIntegrationSuite) TestIssue17898(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table t0")
+	tk.MustExec("create table t0(a char(10), b int as ((a)));")
+	tk.MustExec("insert into t0(a) values(\"0.5\");")
+	tk.MustQuery("select * from t0;").Check(testkit.Rows("0.5 1"))
 }
 
 func (s *testIntegrationSuite) TestIssue17727(c *C) {

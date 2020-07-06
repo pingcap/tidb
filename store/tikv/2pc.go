@@ -159,6 +159,11 @@ type twoPhaseCommitter struct {
 	regionTxnSize map[uint64]int
 	// Used by pessimistic transaction and large transaction.
 	ttlManager
+
+	testingKnobs struct {
+		acAfterCommitPrimary chan struct{}
+		bkAfterCommitPrimary chan struct{}
+	}
 }
 
 type committerMutations struct {
@@ -330,7 +335,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		}
 		mutations.push(op, k, value, isPessimisticLock)
 		entrySize := len(k) + len(v)
-		if entrySize > kv.TxnEntrySizeLimit {
+		if uint64(entrySize) > kv.TxnEntrySizeLimit {
 			return kv.ErrEntryTooLarge.GenWithStackByArgs(kv.TxnEntrySizeLimit, entrySize)
 		}
 		size += entrySize
@@ -349,6 +354,15 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		return nil
 	}
 	c.txnSize = size
+
+	if len(c.primaryKey) == 0 {
+		for i, op := range mutations.ops {
+			if op != pb.Op_CheckNotExists {
+				c.primaryKey = mutations.keys[i]
+				break
+			}
+		}
+	}
 
 	if size > int(kv.TxnTotalSizeLimit) {
 		return kv.ErrTxnTooLarge.GenWithStackByArgs(size)
@@ -568,6 +582,10 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 		err = c.doActionOnBatches(bo, action, batches[:1])
 		if err != nil {
 			return errors.Trace(err)
+		}
+		if actionIsCommit && c.testingKnobs.bkAfterCommitPrimary != nil && c.testingKnobs.acAfterCommitPrimary != nil {
+			c.testingKnobs.acAfterCommitPrimary <- struct{}{}
+			<-c.testingKnobs.bkAfterCommitPrimary
 		}
 		batches = batches[1:]
 	}

@@ -812,6 +812,15 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	// exchange table meta id
 	partDef.ID = nt.ID
 
+	if pt.TiFlashReplica != nil {
+		for i, id := range pt.TiFlashReplica.AvailablePartitionIDs {
+			if id == tempID {
+				pt.TiFlashReplica.AvailablePartitionIDs[i] = partDef.ID
+				break
+			}
+		}
+	}
+
 	err = t.UpdateTable(ptSchemaID, pt)
 	if err != nil {
 		job.State = model.JobStateCancelled

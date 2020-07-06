@@ -970,7 +970,7 @@ func (s *testSuiteAgg) TestIssue10608(c *C) {
 
 func (s *testSuiteAgg) TestIssue12759HashAggCalledByApply(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.Se.GetSessionVars().HashAggFinalConcurrency = 4
+	tk.Se.GetSessionVars().SetHashAggFinalConcurrency(4)
 	tk.MustExec(`insert into mysql.opt_rule_blacklist value("decorrelate");`)
 	defer func() {
 		tk.MustExec(`delete from mysql.opt_rule_blacklist where name = "decorrelate";`)
@@ -1057,4 +1057,14 @@ func (s *testSuiteAgg) TestIssue15690(c *C) {
 	tk.MustExec(`insert into t values('a'),('b');`)
 	tk.MustQuery(`select /*+ stream_agg() */ distinct * from t;`).Check(testkit.Rows("<nil>", "a", "b"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
+}
+
+func (s *testSuiteAgg) TestIssue15958(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.Se.GetSessionVars().MaxChunkSize = 2
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(y year);`)
+	tk.MustExec(`insert into t values (2020), (2000), (2050);`)
+	tk.MustQuery(`select sum(y) from t`).Check(testkit.Rows("6070"))
+	tk.MustQuery(`select avg(y) from t`).Check(testkit.Rows("2023.3333"))
 }
