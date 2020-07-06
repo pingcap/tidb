@@ -50,7 +50,7 @@ func (cks checksum) Write(p []byte) (n int, err error) {
 	buf[0] = byte(version & 0x0000ff00 >> 8)
 	buf[1] = byte(version & 0x000000ff)
 	p = append(p, buf...)
-	sum := crc32.Checksum(p, crc32.MakeTable(crc64.ISO))
+	sum := crc32.Checksum(p, crc32.MakeTable(crc32.IEEE))
 	buf = make([]byte, 4)
 	buf[0] = byte(sum & 0xff000000 >> 24)
 	buf[1] = byte(sum & 0x00ff0000 >> 16)
