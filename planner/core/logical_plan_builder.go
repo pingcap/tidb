@@ -3766,6 +3766,7 @@ func (p *Delete) cleanTblID2HandleMap(
 			for j := 0; j < hCols.NumCols(); j++ {
 				if p.matchingDeletingTable(names, outputNames[hCols.GetCol(j).Index]) {
 					hasMatch = true
+					break
 				}
 			}
 			if !hasMatch {
