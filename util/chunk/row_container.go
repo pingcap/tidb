@@ -473,7 +473,7 @@ type SortAndSpillDiskAction struct {
 func (a *SortAndSpillDiskAction) Action(t *memory.Tracker) {
 	a.m.Lock()
 	defer a.m.Unlock()
-
+	// Guarantee that each partition size is at least 10% of the threshold, to avoid opening too many files.
 	if atomic.LoadUint32(&a.status) == 0 && a.c.GetMemTracker().BytesConsumed() > t.GetBytesLimit()/10 {
 		a.once.Do(func() {
 			logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
