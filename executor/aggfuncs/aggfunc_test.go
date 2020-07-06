@@ -145,11 +145,11 @@ func (s *testSuite) testMergePartialResult(c *C, p aggTest) {
 
 	// build partial func for partial phase.
 	partialFunc := aggfuncs.Build(s.ctx, partialDesc, 0)
-	partialResult := partialFunc.AllocPartialResult()
+	partialResult, _ := partialFunc.AllocPartialResult()
 
 	// build final func for final phase.
 	finalFunc := aggfuncs.Build(s.ctx, finalDesc, 0)
-	finalPr := finalFunc.AllocPartialResult()
+	finalPr, _ := finalFunc.AllocPartialResult()
 	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{p.dataType}, 1)
 	if p.funcName == ast.AggFuncApproxCountDistinct {
 		resultChk = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 1)
@@ -169,7 +169,7 @@ func (s *testSuite) testMergePartialResult(c *C, p aggTest) {
 	c.Assert(err, IsNil)
 	c.Assert(result, Equals, 0, Commentf("%v != %v", dt.String(), p.results[0]))
 
-	err = finalFunc.MergePartialResult(s.ctx, partialResult, finalPr)
+	_, err = finalFunc.MergePartialResult(s.ctx, partialResult, finalPr)
 	c.Assert(err, IsNil)
 	partialFunc.ResetPartialResult(partialResult)
 
@@ -190,7 +190,7 @@ func (s *testSuite) testMergePartialResult(c *C, p aggTest) {
 	result, err = dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[1])
 	c.Assert(err, IsNil)
 	c.Assert(result, Equals, 0, Commentf("%v != %v", dt.String(), p.results[1]))
-	err = finalFunc.MergePartialResult(s.ctx, partialResult, finalPr)
+	_, err = finalFunc.MergePartialResult(s.ctx, partialResult, finalPr)
 	c.Assert(err, IsNil)
 
 	if p.funcName == ast.AggFuncApproxCountDistinct {
@@ -246,11 +246,11 @@ func (s *testSuite) testMultiArgsMergePartialResult(c *C, p multiArgsAggTest) {
 
 	// build partial func for partial phase.
 	partialFunc := aggfuncs.Build(s.ctx, partialDesc, 0)
-	partialResult := partialFunc.AllocPartialResult()
+	partialResult, _ := partialFunc.AllocPartialResult()
 
 	// build final func for final phase.
 	finalFunc := aggfuncs.Build(s.ctx, finalDesc, 0)
-	finalPr := finalFunc.AllocPartialResult()
+	finalPr, _ := finalFunc.AllocPartialResult()
 	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{p.retType}, 1)
 
 	// update partial result.
@@ -264,7 +264,7 @@ func (s *testSuite) testMultiArgsMergePartialResult(c *C, p multiArgsAggTest) {
 	c.Assert(err, IsNil)
 	c.Assert(result, Equals, 0)
 
-	err = finalFunc.MergePartialResult(s.ctx, partialResult, finalPr)
+	_, err = finalFunc.MergePartialResult(s.ctx, partialResult, finalPr)
 	c.Assert(err, IsNil)
 	partialFunc.ResetPartialResult(partialResult)
 
@@ -282,7 +282,7 @@ func (s *testSuite) testMultiArgsMergePartialResult(c *C, p multiArgsAggTest) {
 	result, err = dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[1])
 	c.Assert(err, IsNil)
 	c.Assert(result, Equals, 0)
-	err = finalFunc.MergePartialResult(s.ctx, partialResult, finalPr)
+	_, err = finalFunc.MergePartialResult(s.ctx, partialResult, finalPr)
 	c.Assert(err, IsNil)
 
 	resultChk.Reset()
@@ -374,7 +374,7 @@ func (s *testSuite) testAggFunc(c *C, p aggTest) {
 		}
 	}
 	finalFunc := aggfuncs.Build(s.ctx, desc, 0)
-	finalPr := finalFunc.AllocPartialResult()
+	finalPr, _ := finalFunc.AllocPartialResult()
 	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{desc.RetTp}, 1)
 
 	iter := chunk.NewIterator4Chunk(srcChk)
@@ -406,7 +406,7 @@ func (s *testSuite) testAggFunc(c *C, p aggTest) {
 		}
 	}
 	finalFunc = aggfuncs.Build(s.ctx, desc, 0)
-	finalPr = finalFunc.AllocPartialResult()
+	finalPr, _ = finalFunc.AllocPartialResult()
 
 	resultChk.Reset()
 	srcChk = p.genSrcChk()
@@ -456,7 +456,7 @@ func (s *testSuite) testMultiArgsAggFunc(c *C, p multiArgsAggTest) {
 		}
 	}
 	finalFunc := aggfuncs.Build(s.ctx, desc, 0)
-	finalPr := finalFunc.AllocPartialResult()
+	finalPr, _ := finalFunc.AllocPartialResult()
 	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{desc.RetTp}, 1)
 
 	iter := chunk.NewIterator4Chunk(srcChk)
@@ -488,7 +488,7 @@ func (s *testSuite) testMultiArgsAggFunc(c *C, p multiArgsAggTest) {
 		}
 	}
 	finalFunc = aggfuncs.Build(s.ctx, desc, 0)
-	finalPr = finalFunc.AllocPartialResult()
+	finalPr, _ = finalFunc.AllocPartialResult()
 
 	resultChk.Reset()
 	srcChk = p.genSrcChk()
@@ -623,7 +623,7 @@ func (s *testSuite) benchmarkMultiArgsAggFunc(b *testing.B, p multiArgsAggTest) 
 
 func (s *testSuite) baseBenchmarkAggFunc(b *testing.B,
 	finalFunc aggfuncs.AggFunc, input []chunk.Row, output *chunk.Chunk) {
-	finalPr := finalFunc.AllocPartialResult()
+	finalPr, _ := finalFunc.AllocPartialResult()
 	output.Reset()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

@@ -2914,7 +2914,8 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 		}
 		agg := aggfuncs.BuildWindowFunctions(b.ctx, aggDesc, resultColIdx, orderByCols)
 		windowFuncs = append(windowFuncs, agg)
-		partialResults = append(partialResults, agg.AllocPartialResult())
+		partialResult, _ := agg.AllocPartialResult()
+		partialResults = append(partialResults, partialResult)
 		resultColIdx++
 	}
 	var processor windowProcessor
