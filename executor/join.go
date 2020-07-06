@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/bitmap"
@@ -346,14 +347,20 @@ func (e *HashJoinExec) handleJoinWorkerPanic(r interface{}) {
 }
 
 // Concurrently handling unmatched rows from the hash table
-func (e *HashJoinExec) handleUnmatchedRowsFromHashTableInMemory(workerID uint) {
+func (e *HashJoinExec) handleUnmatchedRowsFromHashTable(workerID uint) {
 	ok, joinResult := e.getNewJoinResult(workerID)
 	if !ok {
 		return
 	}
 	numChks := e.rowContainer.NumChunks()
 	for i := int(workerID); i < numChks; i += int(e.concurrency) {
-		chk := e.rowContainer.GetChunk(i)
+		chk, err := e.rowContainer.GetChunk(i)
+		if err != nil {
+			// Catching the error and send it
+			joinResult.err = err
+			e.joinResultCh <- joinResult
+			return
+		}
 		for j := 0; j < chk.NumRows(); j++ {
 			if !e.outerMatchedStatus[i].UnsafeIsSet(j) { // process unmatched outer rows
 				e.joiners[workerID].onMissMatch(false, chk.GetRow(j), joinResult.chk)
@@ -375,57 +382,16 @@ func (e *HashJoinExec) handleUnmatchedRowsFromHashTableInMemory(workerID uint) {
 	}
 }
 
-// Sequentially handling unmatched rows from the hash table
-func (e *HashJoinExec) handleUnmatchedRowsFromHashTableInDisk(workerID uint) {
-	ok, joinResult := e.getNewJoinResult(workerID)
-	if !ok {
-		return
-	}
-	numChks := e.rowContainer.NumChunks()
-	for i := 0; i < numChks; i++ {
-		numOfRows := e.rowContainer.NumRowsOfChunk(i)
-		for j := 0; j < numOfRows; j++ {
-			row, err := e.rowContainer.GetRow(chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(j)})
-			if err != nil {
-				// Catching the error and send it
-				joinResult.err = err
-				e.joinResultCh <- joinResult
-				return
-			}
-			if !e.outerMatchedStatus[i].UnsafeIsSet(j) { // process unmatched outer rows
-				e.joiners[workerID].onMissMatch(false, row, joinResult.chk)
-			}
-			if joinResult.chk.IsFull() {
-				e.joinResultCh <- joinResult
-				ok, joinResult = e.getNewJoinResult(workerID)
-				if !ok {
-					return
-				}
-			}
-		}
-	}
-	if joinResult == nil {
-		return
-	} else if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
-		e.joinResultCh <- joinResult
-	}
-}
-
 func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
 	e.joinWorkerWaitGroup.Wait()
 	if e.useOuterToBuild {
-		if e.rowContainer.alreadySpilled() {
-			// Sequentially handling unmatched rows from the hash table to avoid random accessing IO
-			e.handleUnmatchedRowsFromHashTableInDisk(0)
-		} else {
-			// Concurrently handling unmatched rows from the hash table at the tail
-			for i := uint(0); i < e.concurrency; i++ {
-				var workerID = i
-				e.joinWorkerWaitGroup.Add(1)
-				go util.WithRecovery(func() { e.handleUnmatchedRowsFromHashTableInMemory(workerID) }, e.handleJoinWorkerPanic)
-			}
-			e.joinWorkerWaitGroup.Wait()
+		// Concurrently handling unmatched rows from the hash table at the tail
+		for i := uint(0); i < e.concurrency; i++ {
+			var workerID = i
+			e.joinWorkerWaitGroup.Add(1)
+			go util.WithRecovery(func() { e.handleUnmatchedRowsFromHashTable(workerID) }, e.handleJoinWorkerPanic)
 		}
+		e.joinWorkerWaitGroup.Wait()
 	}
 	close(e.joinResultCh)
 }
@@ -722,6 +688,12 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 	e.rowContainer.GetDiskTracker().SetLabel(buildSideResultLabel)
 	if config.GetGlobalConfig().OOMUseTmpStorage {
 		actionSpill := e.rowContainer.ActionSpill()
+		failpoint.Inject("testRowContainerSpill", func(val failpoint.Value) {
+			if val.(bool) {
+				actionSpill = e.rowContainer.rowContainer.ActionSpillForTest()
+				defer actionSpill.(*chunk.SpillDiskAction).WaitForTest()
+			}
+		})
 		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionSpill)
 	}
 	for chk := range buildSideResultCh {
@@ -755,6 +727,7 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 type NestedLoopApplyExec struct {
 	baseExecutor
 
+	ctx         sessionctx.Context
 	innerRows   []chunk.Row
 	cursor      int
 	innerExec   Executor
@@ -763,6 +736,11 @@ type NestedLoopApplyExec struct {
 	outerFilter expression.CNFExprs
 
 	joiner joiner
+
+	cache              *applyCache
+	canUseCache        bool
+	cacheHitCounter    int
+	cacheAccessCounter int
 
 	outerSchema []*expression.CorrelatedColumn
 
@@ -785,8 +763,18 @@ type NestedLoopApplyExec struct {
 // Close implements the Executor interface.
 func (e *NestedLoopApplyExec) Close() error {
 	e.innerRows = nil
-
 	e.memTracker = nil
+	if e.runtimeStats != nil {
+		if e.canUseCache {
+			var hitRatio float64
+			if e.cacheAccessCounter > 0 {
+				hitRatio = float64(e.cacheHitCounter) / float64(e.cacheAccessCounter)
+			}
+			e.runtimeStats.SetCacheInfo(true, hitRatio)
+		} else {
+			e.runtimeStats.SetCacheInfo(false, 0)
+		}
+	}
 	return e.outerExec.Close()
 }
 
@@ -810,6 +798,15 @@ func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 	e.innerList.GetMemTracker().SetLabel(innerListLabel)
 	e.innerList.GetMemTracker().AttachTo(e.memTracker)
 
+	if e.canUseCache {
+		e.cache, err = newApplyCache(e.ctx)
+		if err != nil {
+			return err
+		}
+		e.cacheHitCounter = 0
+		e.cacheAccessCounter = 0
+		e.cache.GetMemTracker().AttachTo(e.memTracker)
+	}
 	return nil
 }
 
@@ -851,7 +848,13 @@ func (e *NestedLoopApplyExec) fetchAllInners(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	e.innerList.Reset()
+
+	if e.canUseCache {
+		// create a new one since it may be in the cache
+		e.innerList = chunk.NewList(retTypes(e.innerExec), e.initCap, e.maxChunkSize)
+	} else {
+		e.innerList.Reset()
+	}
 	innerIter := chunk.NewIterator4Chunk(e.innerChunk)
 	for {
 		err := Next(ctx, e.innerExec, e.innerChunk)
@@ -889,12 +892,40 @@ func (e *NestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk) (err e
 			e.hasMatch = false
 			e.hasNull = false
 
-			for _, col := range e.outerSchema {
-				*col.Data = e.outerRow.GetDatum(col.Index, col.RetType)
-			}
-			err = e.fetchAllInners(ctx)
-			if err != nil {
-				return err
+			if e.canUseCache {
+				var key []byte
+				for _, col := range e.outerSchema {
+					*col.Data = e.outerRow.GetDatum(col.Index, col.RetType)
+					key, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, key, *col.Data)
+					if err != nil {
+						return err
+					}
+				}
+				e.cacheAccessCounter++
+				value, err := e.cache.Get(key)
+				if err != nil {
+					return err
+				}
+				if value != nil {
+					e.innerList = value
+					e.cacheHitCounter++
+				} else {
+					err = e.fetchAllInners(ctx)
+					if err != nil {
+						return err
+					}
+					if _, err := e.cache.Set(key, e.innerList); err != nil {
+						return err
+					}
+				}
+			} else {
+				for _, col := range e.outerSchema {
+					*col.Data = e.outerRow.GetDatum(col.Index, col.RetType)
+				}
+				err = e.fetchAllInners(ctx)
+				if err != nil {
+					return err
+				}
 			}
 			e.innerIter = chunk.NewIterator4List(e.innerList)
 			e.innerIter.Begin()

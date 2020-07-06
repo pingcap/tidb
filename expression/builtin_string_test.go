@@ -1285,13 +1285,6 @@ func (s *testEvaluatorSuite) TestChar(c *C) {
 	r, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(r, testutil.DatumEquals, types.NewDatum("AB"))
-
-	// Test unsupported charset.
-	fc = funcs[ast.CharFunc]
-	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums("65", "tidb")))
-	c.Assert(err, IsNil)
-	_, err = evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err.Error(), Equals, "unknown encoding: tidb")
 }
 
 func (s *testEvaluatorSuite) TestCharLength(c *C) {
@@ -1769,7 +1762,7 @@ func (s *testEvaluatorSuite) TestFormat(c *C) {
 		{"12332.1234567890123456789012345678901", 22, "12,332.1234567890110000000000", 0},
 		{nil, 22, nil, 0},
 		{1, 1024, "1.000000000000000000000000000000", 0},
-		{"", 1, "0.0", 1},
+		{"", 1, "0.0", 0},
 		{1, "", "1", 1},
 	}
 	formatTests2 := struct {

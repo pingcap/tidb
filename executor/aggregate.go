@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/set"
-	"github.com/spaolacci/murmur3"
+	"github.com/twmb/murmur3"
 	"go.uber.org/zap"
 )
 
@@ -279,8 +279,8 @@ func (e *HashAggExec) initForUnparallelExec() {
 
 func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 	sessionVars := e.ctx.GetSessionVars()
-	finalConcurrency := sessionVars.HashAggFinalConcurrency
-	partialConcurrency := sessionVars.HashAggPartialConcurrency
+	finalConcurrency := sessionVars.HashAggFinalConcurrency()
+	partialConcurrency := sessionVars.HashAggPartialConcurrency()
 	e.isChildReturnEmpty = true
 	e.finalOutputCh = make(chan *AfFinalResult, finalConcurrency)
 	e.inputCh = make(chan *HashAggInput, partialConcurrency)

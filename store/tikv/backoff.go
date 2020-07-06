@@ -21,10 +21,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/fastrand"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
@@ -283,6 +285,11 @@ func (b *Backoffer) WithVars(vars *kv.Variables) *Backoffer {
 // Backoff sleeps a while base on the backoffType and records the error message.
 // It returns a retryable error if total sleep time exceeds maxSleep.
 func (b *Backoffer) Backoff(typ backoffType, err error) error {
+	if span := opentracing.SpanFromContext(b.ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan(fmt.Sprintf("tikv.backoff.%s", typ), opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		opentracing.ContextWithSpan(b.ctx, span1)
+	}
 	return b.BackoffWithMaxSleep(typ, -1, err)
 }
 
@@ -334,6 +341,13 @@ func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err err
 		b.backoffTimes = make(map[backoffType]int)
 	}
 	b.backoffTimes[typ]++
+
+	stmtExec := b.ctx.Value(execdetails.StmtExecDetailKey)
+	if stmtExec != nil {
+		detail := stmtExec.(*execdetails.StmtExecDetails)
+		atomic.AddInt64(&detail.BackoffDuration, int64(realSleep)*int64(time.Millisecond))
+		atomic.AddInt64(&detail.BackoffCount, 1)
+	}
 
 	if b.vars != nil && b.vars.Killed != nil {
 		if atomic.CompareAndSwapUint32(b.vars.Killed, 1, 0) {

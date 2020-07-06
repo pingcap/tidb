@@ -100,6 +100,9 @@ func (s *testSerialSuite) TestChangeMaxIndexLength(c *C) {
 		conf.MaxIndexLength = config.DefMaxOfMaxIndexLength
 	})
 
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("drop table if exists t1;")
+
 	tk.MustExec("create table t (c1 varchar(3073), index(c1)) charset = ascii;")
 	tk.MustExec(fmt.Sprintf("create table t1 (c1 varchar(%d), index(c1)) charset = ascii;", config.DefMaxOfMaxIndexLength))
 	_, err := tk.Exec(fmt.Sprintf("create table t2 (c1 varchar(%d), index(c1)) charset = ascii;", config.DefMaxOfMaxIndexLength+1))
@@ -131,6 +134,14 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.AlterPrimaryKey = true
 	})
+
+	_, err = tk.Exec("alter table primary_key_test2 add primary key(a)")
+	c.Assert(infoschema.ErrMultiplePriKey.Equal(err), IsTrue)
+	// We can't add a primary key when the table's pk_is_handle is true.
+	_, err = tk.Exec("alter table primary_key_test1 add primary key(a)")
+	c.Assert(infoschema.ErrMultiplePriKey.Equal(err), IsTrue)
+	_, err = tk.Exec("alter table primary_key_test1 add primary key(b)")
+	c.Assert(infoschema.ErrMultiplePriKey.Equal(err), IsTrue)
 
 	_, err = tk.Exec("alter table primary_key_test1 drop primary key")
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when the table's pkIsHandle is true")

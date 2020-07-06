@@ -1515,7 +1515,7 @@ func (it *infoschemaTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, 
 		return err
 	}
 	for i, row := range rows {
-		more, err := fn(int64(i), row, cols)
+		more, err := fn(kv.IntHandle(i), row, cols)
 		if err != nil {
 			return err
 		}
@@ -1556,8 +1556,8 @@ func (it *infoschemaTable) WritableCols() []*table.Column {
 	return it.cols
 }
 
-// DeletableCols implements table DeletableCols interface.
-func (it *infoschemaTable) DeletableCols() []*table.Column {
+// FullHiddenColsAndVisibleCols implements table FullHiddenColsAndVisibleCols interface.
+func (it *infoschemaTable) FullHiddenColsAndVisibleCols() []*table.Column {
 	return it.cols
 }
 
@@ -1607,7 +1607,7 @@ func (it *infoschemaTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r [
 }
 
 // UpdateRecord implements table.Table UpdateRecord interface.
-func (it *infoschemaTable) UpdateRecord(ctx sessionctx.Context, h kv.Handle, oldData, newData []types.Datum, touched []bool) error {
+func (it *infoschemaTable) UpdateRecord(gctx context.Context, ctx sessionctx.Context, h kv.Handle, oldData, newData []types.Datum, touched []bool) error {
 	return table.ErrUnsupportedOp
 }
 
@@ -1646,7 +1646,7 @@ type VirtualTable struct{}
 
 // IterRecords implements table.Table IterRecords interface.
 func (vt *VirtualTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols []*table.Column,
-	fn table.RecordIterFunc) error {
+	_ table.RecordIterFunc) error {
 	if len(startKey) != 0 {
 		return table.ErrUnsupportedOp
 	}
@@ -1683,8 +1683,8 @@ func (vt *VirtualTable) WritableCols() []*table.Column {
 	return nil
 }
 
-// DeletableCols implements table DeletableCols interface.
-func (vt *VirtualTable) DeletableCols() []*table.Column {
+// FullHiddenColsAndVisibleCols implements table FullHiddenColsAndVisibleCols interface.
+func (vt *VirtualTable) FullHiddenColsAndVisibleCols() []*table.Column {
 	return nil
 }
 
@@ -1734,7 +1734,7 @@ func (vt *VirtualTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []ty
 }
 
 // UpdateRecord implements table.Table UpdateRecord interface.
-func (vt *VirtualTable) UpdateRecord(ctx sessionctx.Context, h kv.Handle, oldData, newData []types.Datum, touched []bool) error {
+func (vt *VirtualTable) UpdateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, oldData, newData []types.Datum, touched []bool) error {
 	return table.ErrUnsupportedOp
 }
 

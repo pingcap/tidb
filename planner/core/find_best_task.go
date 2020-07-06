@@ -16,6 +16,7 @@ package core
 import (
 	"math"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -25,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -59,6 +59,33 @@ var aggFuncFactor = map[string]float64{
 	ast.AggFuncStddevPop:   3.0,
 	ast.AggFuncStddevSamp:  3.0,
 	"default":              1.5,
+}
+
+// PlanCounterTp is used in hint nth_plan() to indicate which plan to use.
+type PlanCounterTp int8
+
+// PlanCounterDisabled is the default value of PlanCounterTp, indicating that optimizer needn't force a plan.
+var PlanCounterDisabled PlanCounterTp = -1
+
+// Dec minus PlanCounterTp value by x.
+func (c *PlanCounterTp) Dec(x int8) {
+	if *c <= 0 {
+		return
+	}
+	*c = PlanCounterTp(int8(*c) - x)
+	if *c < 0 {
+		*c = 0
+	}
+}
+
+// Empty indicates whether the PlanCounterTp is clear now.
+func (c *PlanCounterTp) Empty() bool {
+	return *c == 0
+}
+
+// IsForce indicates whether to force a plan.
+func (c *PlanCounterTp) IsForce() bool {
+	return *c != -1
 }
 
 // wholeTaskTypes records all possible kinds of task that a plan can return. For Agg, TopN and Limit, we will try to get
@@ -104,49 +131,92 @@ func GetPropByOrderByItemsContainScalarFunc(items []*util.ByItems) (*property.Ph
 	return &property.PhysicalProperty{Items: propItems}, true, onlyColumn
 }
 
-func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty) (task, error) {
+func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp) (task, int64, error) {
 	// If the required property is not empty and the row count > 1,
 	// we cannot ensure this required property.
 	// But if the row count is 0 or 1, we don't need to care about the property.
-	if !prop.IsEmpty() && p.RowCount > 1 {
-		return invalidTask, nil
+	if (!prop.IsEmpty() && p.RowCount > 1) || planCounter.Empty() {
+		return invalidTask, 0, nil
 	}
 	dual := PhysicalTableDual{
 		RowCount: p.RowCount,
 	}.Init(p.ctx, p.stats, p.blockOffset)
 	dual.SetSchema(p.schema)
-	return &rootTask{p: dual}, nil
+	planCounter.Dec(1)
+	return &rootTask{p: dual}, 1, nil
 }
 
-func (p *LogicalShow) findBestTask(prop *property.PhysicalProperty) (task, error) {
-	if !prop.IsEmpty() {
-		return invalidTask, nil
+func (p *LogicalShow) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp) (task, int64, error) {
+	if !prop.IsEmpty() || planCounter.Empty() {
+		return invalidTask, 0, nil
 	}
 	pShow := PhysicalShow{ShowContents: p.ShowContents}.Init(p.ctx)
 	pShow.SetSchema(p.schema)
-	return &rootTask{p: pShow}, nil
+	planCounter.Dec(1)
+	return &rootTask{p: pShow}, 1, nil
 }
 
-func (p *LogicalShowDDLJobs) findBestTask(prop *property.PhysicalProperty) (task, error) {
-	if !prop.IsEmpty() {
-		return invalidTask, nil
+func (p *LogicalShowDDLJobs) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp) (task, int64, error) {
+	if !prop.IsEmpty() || planCounter.Empty() {
+		return invalidTask, 0, nil
 	}
 	pShow := PhysicalShowDDLJobs{JobNumber: p.JobNumber}.Init(p.ctx)
 	pShow.SetSchema(p.schema)
-	return &rootTask{p: pShow}, nil
+	planCounter.Dec(1)
+	return &rootTask{p: pShow}, 1, nil
 }
 
-func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPlan, prop *property.PhysicalProperty) (task, error) {
+// rebuildChildTasks rebuilds the childTasks to make the clock_th combination.
+func (p *baseLogicalPlan) rebuildChildTasks(childTasks *[]task, pp PhysicalPlan, childCnts []int64, planCounter int64, TS uint64) error {
+	// The taskMap of children nodes should be rolled back first.
+	for _, child := range p.children {
+		child.rollBackTaskMap(TS)
+	}
+
+	multAll := int64(1)
+	var curClock PlanCounterTp
+	for _, x := range childCnts {
+		multAll *= x
+	}
+	*childTasks = (*childTasks)[:0]
+	for j, child := range p.children {
+		multAll /= childCnts[j]
+		curClock = PlanCounterTp((planCounter-1)/multAll + 1)
+		childTask, _, err := child.findBestTask(pp.GetChildReqProps(j), &curClock)
+		planCounter = (planCounter-1)%multAll + 1
+		if err != nil {
+			return err
+		}
+		if curClock != 0 {
+			return errors.Errorf("PlanCounterTp planCounter is not handled")
+		}
+		if childTask != nil && childTask.invalid() {
+			return errors.Errorf("The current plan is invalid, please skip this plan.")
+		}
+		*childTasks = append(*childTasks, childTask)
+	}
+	return nil
+}
+
+func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPlan, prop *property.PhysicalProperty, planCounter *PlanCounterTp) (task, int64, error) {
 	var bestTask task = invalidTask
+	var curCntPlan, cntPlan int64
 	childTasks := make([]task, 0, len(p.children))
+	childCnts := make([]int64, len(p.children))
+	cntPlan = 0
 	for _, pp := range physicalPlans {
-		// find best child tasks firstly.
+		// Find best child tasks firstly.
 		childTasks = childTasks[:0]
-		for i, child := range p.children {
-			childTask, err := child.findBestTask(pp.GetChildReqProps(i))
+		// The curCntPlan records the number of possible plans for pp
+		curCntPlan = 1
+		TimeStampNow := p.GetlogicalTS4TaskMap()
+		for j, child := range p.children {
+			childTask, cnt, err := child.findBestTask(pp.GetChildReqProps(j), &PlanCounterDisabled)
+			childCnts[j] = cnt
 			if err != nil {
-				return nil, err
+				return nil, 0, err
 			}
+			curCntPlan = curCntPlan * cnt
 			if childTask != nil && childTask.invalid() {
 				break
 			}
@@ -158,48 +228,68 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 			continue
 		}
 
-		// combine best child tasks with parent physical plan.
+		// If the target plan can be found in this physicalPlan(pp), rebuild childTasks to build the corresponding combination.
+		if planCounter.IsForce() && int64(*planCounter) <= curCntPlan {
+			curCntPlan = int64(*planCounter)
+			err := p.rebuildChildTasks(&childTasks, pp, childCnts, int64(*planCounter), TimeStampNow)
+			if err != nil {
+				return nil, 0, err
+			}
+		}
+
+		// Combine best child tasks with parent physical plan.
 		curTask := pp.attach2Task(childTasks...)
 
-		// enforce curTask property
+		// Enforce curTask property
 		if prop.Enforced {
 			curTask = enforceProperty(prop, curTask, p.basePlan.ctx)
 		}
 
-		// optimize by shuffle executor to running in parallel manner.
+		// Optimize by shuffle executor to running in parallel manner.
 		if prop.IsEmpty() {
+			// Currently, we do not regard shuffled plan as a new plan.
 			curTask = optimizeByShuffle(pp, curTask, p.basePlan.ctx)
 		}
 
-		// get the most efficient one.
+		cntPlan += curCntPlan
+		planCounter.Dec(int8(curCntPlan))
+
+		if planCounter.Empty() {
+			bestTask = curTask
+			break
+		}
+
+		// Get the most efficient one.
 		if curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()) {
 			bestTask = curTask
 		}
 	}
-	return bestTask, nil
+	return bestTask, cntPlan, nil
 }
 
 // findBestTask implements LogicalPlan interface.
-func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTask task, err error) {
+func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp) (bestTask task, cntPlan int64, err error) {
 	// If p is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
 	// and set inner child prop nil, so here we do nothing.
 	if prop == nil {
-		return nil, nil
+		return nil, 1, nil
 	}
 	// Look up the task with this prop in the task map.
 	// It's used to reduce double counting.
 	bestTask = p.getTask(prop)
 	if bestTask != nil {
-		return bestTask, nil
+		planCounter.Dec(1)
+		return bestTask, 1, nil
 	}
 
 	if prop.TaskTp != property.RootTaskType {
 		// Currently all plan cannot totally push down.
 		p.storeTask(prop, invalidTask)
-		return invalidTask, nil
+		return invalidTask, 0, nil
 	}
 
 	bestTask = invalidTask
+	cntPlan = 0
 	// prop should be read only because its cached hashcode might be not consistent
 	// when it is changed. So we clone a new one for the temporary changes.
 	newProp := prop.Clone()
@@ -239,25 +329,38 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 	}
 
 	newProp.Enforced = false
-	if bestTask, err = p.enumeratePhysicalPlans4Task(plansFitsProp, newProp); err != nil {
-		return nil, err
+	var cnt int64
+	var curTask task
+	if bestTask, cnt, err = p.enumeratePhysicalPlans4Task(plansFitsProp, newProp, planCounter); err != nil {
+		return nil, 0, err
 	}
+	cntPlan += cnt
+	if planCounter.Empty() {
+		goto END
+	}
+
 	newProp.Enforced = true
-	curTask, err := p.enumeratePhysicalPlans4Task(plansNeedEnforce, newProp)
+	curTask, cnt, err = p.enumeratePhysicalPlans4Task(plansNeedEnforce, newProp, planCounter)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	cntPlan += cnt
+	if planCounter.Empty() {
+		bestTask = curTask
+		goto END
 	}
 	if curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()) {
 		bestTask = curTask
 	}
 
+END:
 	p.storeTask(prop, bestTask)
-	return bestTask, nil
+	return bestTask, cntPlan, nil
 }
 
-func (p *LogicalMemTable) findBestTask(prop *property.PhysicalProperty) (t task, err error) {
-	if !prop.IsEmpty() {
-		return invalidTask, nil
+func (p *LogicalMemTable) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp) (t task, cntPlan int64, err error) {
+	if !prop.IsEmpty() || planCounter.Empty() {
+		return invalidTask, 0, nil
 	}
 	memTable := PhysicalMemTable{
 		DBName:         p.DBName,
@@ -267,7 +370,8 @@ func (p *LogicalMemTable) findBestTask(prop *property.PhysicalProperty) (t task,
 		QueryTimeRange: p.QueryTimeRange,
 	}.Init(p.ctx, p.stats, p.blockOffset)
 	memTable.SetSchema(p.schema)
-	return &rootTask{p: memTable}, nil
+	planCounter.Dec(1)
+	return &rootTask{p: memTable}, 1, nil
 }
 
 // tryToGetDualTask will check if the push down predicate has false constant. If so, it will return table dual.
@@ -407,7 +511,7 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 		if path.IsTablePath() {
 			currentCandidate = ds.getTableCandidate(path, prop)
 		} else {
-			coveredByIdx := isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo.PKIsHandle)
+			coveredByIdx := ds.isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo)
 			if len(path.AccessConds) > 0 || !prop.IsEmpty() || path.Forced || coveredByIdx {
 				// We will use index to generate physical plan if any of the following conditions is satisfied:
 				// 1. This path's access cond is not nil.
@@ -442,30 +546,35 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 
 // findBestTask implements the PhysicalPlan interface.
 // It will enumerate all the available indices and choose a plan with least cost.
-func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err error) {
+func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp) (t task, cntPlan int64, err error) {
 	// If ds is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
 	// and set inner child prop nil, so here we do nothing.
 	if prop == nil {
-		return nil, nil
+		planCounter.Dec(1)
+		return nil, 1, nil
 	}
 
 	t = ds.getTask(prop)
 	if t != nil {
+		cntPlan = 1
+		planCounter.Dec(1)
 		return
 	}
+	var cnt int64
 	// If prop.enforced is true, the prop.cols need to be set nil for ds.findBestTask.
 	// Before function return, reset it for enforcing task prop and storing map<prop,task>.
 	oldPropCols := prop.Items
 	if prop.Enforced {
 		// First, get the bestTask without enforced prop
 		prop.Enforced = false
-		t, err = ds.findBestTask(prop)
+		t, cnt, err = ds.findBestTask(prop, planCounter)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		prop.Enforced = true
 		if t != invalidTask {
 			ds.storeTask(prop, t)
+			cntPlan = cnt
 			return
 		}
 		// Next, get the bestTask with enforced prop
@@ -484,21 +593,30 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 
 	t, err = ds.tryToGetDualTask()
 	if err != nil || t != nil {
-		return t, err
+		planCounter.Dec(1)
+		return t, 1, err
 	}
 
 	t = invalidTask
 	candidates := ds.skylinePruning(prop)
 
+	cntPlan = 0
 	for _, candidate := range candidates {
 		path := candidate.path
 		if path.PartialIndexPaths != nil {
 			idxMergeTask, err := ds.convertToIndexMergeScan(prop, candidate)
 			if err != nil {
-				return nil, err
+				return nil, 0, err
 			}
-			if idxMergeTask.cost() < t.cost() {
+			if !idxMergeTask.invalid() {
+				cntPlan += 1
+				planCounter.Dec(1)
+			}
+			if idxMergeTask.cost() < t.cost() || planCounter.Empty() {
 				t = idxMergeTask
+			}
+			if planCounter.Empty() {
+				return t, cntPlan, nil
 			}
 			continue
 		}
@@ -506,13 +624,15 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 		if len(path.Ranges) == 0 && !ds.ctx.GetSessionVars().StmtCtx.UseCache {
 			dual := PhysicalTableDual{}.Init(ds.ctx, ds.stats, ds.blockOffset)
 			dual.SetSchema(ds.schema)
+			cntPlan += 1
+			planCounter.Dec(1)
 			return &rootTask{
 				p: dual,
-			}, nil
+			}, cntPlan, nil
 		}
 		canConvertPointGet := (!ds.isPartition && len(path.Ranges) > 0) || (ds.isPartition && len(path.Ranges) == 1)
 		canConvertPointGet = canConvertPointGet && candidate.path.StoreType != kv.TiFlash
-		if !candidate.path.IsTablePath() {
+		if !candidate.path.IsIntHandlePath {
 			canConvertPointGet = canConvertPointGet &&
 				candidate.path.Index.Unique &&
 				!candidate.path.Index.HasPrefixIndex() &&
@@ -533,8 +653,15 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 				} else {
 					pointGetTask = ds.convertToBatchPointGet(prop, candidate)
 				}
-				if pointGetTask.cost() < t.cost() {
+				if !pointGetTask.invalid() {
+					cntPlan += 1
+					planCounter.Dec(1)
+				}
+				if pointGetTask.cost() < t.cost() || planCounter.Empty() {
 					t = pointGetTask
+					if planCounter.Empty() {
+						return
+					}
 					continue
 				}
 			}
@@ -548,10 +675,17 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 			}
 			tblTask, err := ds.convertToTableScan(prop, candidate)
 			if err != nil {
-				return nil, err
+				return nil, 0, err
 			}
-			if tblTask.cost() < t.cost() {
+			if !tblTask.invalid() {
+				cntPlan += 1
+				planCounter.Dec(1)
+			}
+			if tblTask.cost() < t.cost() || planCounter.Empty() {
 				t = tblTask
+			}
+			if planCounter.Empty() {
+				return t, cntPlan, nil
 			}
 			continue
 		}
@@ -561,10 +695,17 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 		}
 		idxTask, err := ds.convertToIndexScan(prop, candidate)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
-		if idxTask.cost() < t.cost() {
+		if !idxTask.invalid() {
+			cntPlan += 1
+			planCounter.Dec(1)
+		}
+		if idxTask.cost() < t.cost() || planCounter.Empty() {
 			t = idxTask
+		}
+		if planCounter.Empty() {
+			return t, cntPlan, nil
 		}
 	}
 
@@ -700,25 +841,27 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 	return ts, partialCost
 }
 
-func isCoveringIndex(columns, indexColumns []*expression.Column, idxColLens []int, pkIsHandle bool) bool {
+func indexCoveringCol(col *expression.Column, indexCols []*expression.Column, idxColLens []int) bool {
+	for i, indexCol := range indexCols {
+		isFullLen := idxColLens[i] == types.UnspecifiedLength || idxColLens[i] == col.RetType.Flen
+		// We use col.OrigColName instead of col.ColName.
+		// Related issue: https://github.com/pingcap/tidb/issues/9636.
+		if indexCol != nil && col.Equal(nil, indexCol) && isFullLen {
+			return true
+		}
+	}
+	return false
+}
+
+func (ds *DataSource) isCoveringIndex(columns, indexColumns []*expression.Column, idxColLens []int, tblInfo *model.TableInfo) bool {
 	for _, col := range columns {
-		if pkIsHandle && mysql.HasPriKeyFlag(col.RetType.Flag) {
+		if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.Flag) {
 			continue
 		}
 		if col.ID == model.ExtraHandleID {
 			continue
 		}
-		isIndexColumn := false
-		for i, indexCol := range indexColumns {
-			isFullLen := idxColLens[i] == types.UnspecifiedLength || idxColLens[i] == col.RetType.Flen
-			// We use col.OrigColName instead of col.ColName.
-			// Related issue: https://github.com/pingcap/tidb/issues/9636.
-			if indexCol != nil && col.Equal(nil, indexCol) && isFullLen {
-				isIndexColumn = true
-				break
-			}
-		}
-		if !isIndexColumn {
+		if !indexCoveringCol(col, indexColumns, idxColLens) && !indexCoveringCol(col, ds.commonHandleCols, ds.commonHandleLens) {
 			return false
 		}
 	}
@@ -773,8 +916,11 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 	}
 	cop.cst = cost
 	task = cop
+	if cop.tablePlan != nil && ds.tableInfo.IsCommonHandle {
+		cop.commonHandleCols = ds.commonHandleCols
+	}
 	if candidate.isMatchProp {
-		if cop.tablePlan != nil {
+		if cop.tablePlan != nil && !ds.tableInfo.IsCommonHandle {
 			col, isNew := cop.tablePlan.(*PhysicalTableScan).appendExtraHandleCol(ds)
 			cop.extraHandleCol = col
 			cop.doubleReadNeedProj = isNew
@@ -811,22 +957,38 @@ func (is *PhysicalIndexScan) indexScanRowSize(idx *model.IndexInfo, ds *DataSour
 	return ds.TblColHists.GetAvgRowSize(is.ctx, scanCols, true, false)
 }
 
-func (is *PhysicalIndexScan) initSchema(idx *model.IndexInfo, idxExprCols []*expression.Column, isDoubleRead bool) {
-	indexCols := make([]*expression.Column, len(is.IdxCols), len(idx.Columns)+1)
+// initSchema is used to set the schema of PhysicalIndexScan. Before calling this,
+// make sure the following field of PhysicalIndexScan are initialized:
+//   PhysicalIndexScan.Table         *model.TableInfo
+//   PhysicalIndexScan.Index         *model.IndexInfo
+//   PhysicalIndexScan.Index.Columns []*IndexColumn
+//   PhysicalIndexScan.IdxCols       []*expression.Column
+//   PhysicalIndexScan.Columns       []*model.ColumnInfo
+func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoubleRead bool) {
+	indexCols := make([]*expression.Column, len(is.IdxCols), len(is.Index.Columns)+1)
 	copy(indexCols, is.IdxCols)
-	for i := len(is.IdxCols); i < len(idx.Columns); i++ {
+	is.NeedCommonHandle = is.Table.IsCommonHandle && len(is.IdxCols) < len(is.Columns)
+
+	if is.NeedCommonHandle {
+		for i := len(is.Index.Columns); i < len(idxExprCols); i++ {
+			indexCols = append(indexCols, idxExprCols[i])
+		}
+		is.SetSchema(expression.NewSchema(indexCols...))
+		return
+	}
+	for i := len(is.IdxCols); i < len(is.Index.Columns); i++ {
 		if idxExprCols[i] != nil {
 			indexCols = append(indexCols, idxExprCols[i])
 		} else {
 			// TODO: try to reuse the col generated when building the DataSource.
 			indexCols = append(indexCols, &expression.Column{
-				ID:       is.Table.Columns[idx.Columns[i].Offset].ID,
-				RetType:  &is.Table.Columns[idx.Columns[i].Offset].FieldType,
+				ID:       is.Table.Columns[is.Index.Columns[i].Offset].ID,
+				RetType:  &is.Table.Columns[is.Index.Columns[i].Offset].FieldType,
 				UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID(),
 			})
 		}
 	}
-	setHandle := len(indexCols) > len(idx.Columns)
+	setHandle := len(indexCols) > len(is.Index.Columns)
 	if !setHandle {
 		for i, col := range is.Columns {
 			if (mysql.HasPriKeyFlag(col.Flag) && is.Table.PKIsHandle) || col.ID == model.ExtraHandleID {
@@ -836,19 +998,6 @@ func (is *PhysicalIndexScan) initSchema(idx *model.IndexInfo, idxExprCols []*exp
 			}
 		}
 	}
-
-	if is.Table.IsCommonHandle {
-		pkIdx := tables.FindPrimaryIndex(is.Table)
-		for _, col := range pkIdx.Columns {
-			indexCols = append(indexCols, &expression.Column{
-				ID:       is.Table.Columns[col.Offset].ID,
-				RetType:  &is.Table.Columns[col.Offset].FieldType,
-				UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID(),
-			})
-		}
-		is.NeedCommonHandle = true
-	}
-
 	// If it's double read case, the first index must return handle. So we should add extra handle column
 	// if there isn't a handle column.
 	if isDoubleRead && !setHandle {
@@ -860,6 +1009,7 @@ func (is *PhysicalIndexScan) initSchema(idx *model.IndexInfo, idxExprCols []*exp
 			})
 		}
 	}
+
 	is.SetSchema(expression.NewSchema(indexCols...))
 }
 
@@ -922,11 +1072,11 @@ func matchIndicesProp(idxCols []*expression.Column, colLens []int, propItems []p
 	return true
 }
 
-func splitIndexFilterConditions(conditions []expression.Expression, indexColumns []*expression.Column, idxColLens []int,
+func (ds *DataSource) splitIndexFilterConditions(conditions []expression.Expression, indexColumns []*expression.Column, idxColLens []int,
 	table *model.TableInfo) (indexConds, tableConds []expression.Expression) {
 	var indexConditions, tableConditions []expression.Expression
 	for _, cond := range conditions {
-		if isCoveringIndex(expression.ExtractColumns(cond), indexColumns, idxColLens, table.PKIsHandle) {
+		if ds.isCoveringIndex(expression.ExtractColumns(cond), indexColumns, idxColLens, table) {
 			indexConditions = append(indexConditions, cond)
 		} else {
 			tableConditions = append(tableConditions, cond)
@@ -1128,7 +1278,7 @@ func (s *LogicalIndexScan) GetPhysicalIndexScan(schema *expression.Schema, stats
 		physicalTableID:  ds.physicalTableID,
 	}.Init(ds.ctx, ds.blockOffset)
 	is.stats = stats
-	is.initSchema(s.Index, s.FullIdxCols, s.IsDoubleRead)
+	is.initSchema(s.FullIdxCols, s.IsDoubleRead)
 	return is
 }
 
@@ -1408,7 +1558,7 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 		is.Hist = &statsTbl.Indices[idx.ID].Histogram
 	}
 	rowCount := path.CountAfterAccess
-	is.initSchema(idx, path.FullIdxCols, !isSingleScan)
+	is.initSchema(append(path.FullIdxCols, ds.commonHandleCols...), !isSingleScan)
 	// Only use expectedCnt when it's smaller than the count we calculated.
 	// e.g. IndexScan(count1)->After Filter(count2). The `ds.stats.RowCount` is count2. count1 is the one we need to calculate
 	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.

@@ -57,7 +57,8 @@ type copTask struct {
 	// in double read case, it may output one more column for handle(row id).
 	doubleReadNeedProj bool
 
-	extraHandleCol *expression.Column
+	extraHandleCol   *expression.Column
+	commonHandleCols []*expression.Column
 	// tblColHists stores the original stats of DataSource, it is used to get
 	// average row width when computing network cost.
 	tblColHists *statistics.HistColl
@@ -251,7 +252,7 @@ func (p *PhysicalIndexMergeJoin) GetCost(outerTask, innerTask task) float64 {
 	// (outerCnt / batchSize) * (batchSize * distinctFactor) * cpuFactor
 	// Since we don't know the number of copTasks built, ignore these network cost now.
 	innerCPUCost += outerCnt * distinctFactor * sessVars.CPUFactor
-	innerConcurrency := float64(p.ctx.GetSessionVars().IndexLookupJoinConcurrency)
+	innerConcurrency := float64(p.ctx.GetSessionVars().IndexLookupJoinConcurrency())
 	cpuCost += innerCPUCost / innerConcurrency
 	// Cost of merge join in inner worker.
 	numPairs := outerCnt * innerCnt
@@ -322,7 +323,7 @@ func (p *PhysicalIndexHashJoin) GetCost(outerTask, innerTask task) float64 {
 	// (outerCnt / batchSize) * (batchSize * distinctFactor) * CPUFactor
 	// Since we don't know the number of copTasks built, ignore these network cost now.
 	innerCPUCost += outerCnt * distinctFactor * sessVars.CPUFactor
-	concurrency := float64(sessVars.IndexLookupJoinConcurrency)
+	concurrency := float64(sessVars.IndexLookupJoinConcurrency())
 	cpuCost += innerCPUCost / concurrency
 	// CPU cost of building hash table for outer results concurrently.
 	// (outerCnt / batchSize) * (batchSize * CPUFactor)
@@ -400,7 +401,7 @@ func (p *PhysicalIndexJoin) GetCost(outerTask, innerTask task) float64 {
 	// CPU cost of building hash table for inner results:
 	// (outerCnt / batchSize) * (batchSize * distinctFactor) * innerCnt * CPUFactor
 	innerCPUCost += outerCnt * distinctFactor * innerCnt * sessVars.CPUFactor
-	innerConcurrency := float64(p.ctx.GetSessionVars().IndexLookupJoinConcurrency)
+	innerConcurrency := float64(p.ctx.GetSessionVars().IndexLookupJoinConcurrency())
 	cpuCost += innerCPUCost / innerConcurrency
 	// Cost of probing hash table in main thread.
 	numPairs := outerCnt * innerCnt
@@ -585,9 +586,10 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 	newTask := &rootTask{cst: t.cst}
 	sessVars := ctx.GetSessionVars()
 	p := PhysicalIndexLookUpReader{
-		tablePlan:      t.tablePlan,
-		indexPlan:      t.indexPlan,
-		ExtraHandleCol: t.extraHandleCol,
+		tablePlan:        t.tablePlan,
+		indexPlan:        t.indexPlan,
+		ExtraHandleCol:   t.extraHandleCol,
+		CommonHandleCols: t.commonHandleCols,
 	}.Init(ctx, t.tablePlan.SelectBlockOffset())
 	setTableScanToTableRowIDScan(p.tablePlan)
 	p.stats = t.tablePlan.statsInfo()
@@ -598,7 +600,7 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 	indexRows := t.indexPlan.statsInfo().RowCount
 	newTask.cst += indexRows * sessVars.CPUFactor
 	// Add cost of worker goroutines in index lookup.
-	numTblWorkers := float64(sessVars.IndexLookupConcurrency)
+	numTblWorkers := float64(sessVars.IndexLookupConcurrency())
 	newTask.cst += (numTblWorkers + 1) * sessVars.ConcurrencyFactor
 	// When building table reader executor for each batch, we would sort the handles. CPU
 	// cost of sort is:
@@ -642,7 +644,7 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 	// the cost to cop iterator workers. According to `CopClient::Send`, the concurrency
 	// is Min(DistSQLScanConcurrency, numRegionsInvolvedInScan), since we cannot infer
 	// the number of regions involved, we simply use DistSQLScanConcurrency.
-	copIterWorkers := float64(t.plan().SCtx().GetSessionVars().DistSQLScanConcurrency)
+	copIterWorkers := float64(t.plan().SCtx().GetSessionVars().DistSQLScanConcurrency())
 	t.finishIndexPlan()
 	// Network cost of transferring rows of table scan to TiDB.
 	if t.tablePlan != nil {
@@ -671,8 +673,9 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 		}
 		ts := tp.(*PhysicalTableScan)
 		p := PhysicalTableReader{
-			tablePlan: t.tablePlan,
-			StoreType: ts.StoreType,
+			tablePlan:      t.tablePlan,
+			StoreType:      ts.StoreType,
+			IsCommonHandle: ts.Table.IsCommonHandle,
 		}.Init(ctx, t.tablePlan.SelectBlockOffset())
 		p.stats = t.tablePlan.statsInfo()
 		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
@@ -910,7 +913,7 @@ func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 func (p *PhysicalProjection) GetCost(count float64) float64 {
 	sessVars := p.ctx.GetSessionVars()
 	cpuCost := count * sessVars.CPUFactor
-	concurrency := float64(sessVars.ProjectionConcurrency)
+	concurrency := float64(sessVars.ProjectionConcurrency())
 	if concurrency <= 0 {
 		return cpuCost
 	}
@@ -1097,6 +1100,17 @@ func BuildFinalModeAggregation(
 				args = append(args, partial.Schema.Columns[partialCursor])
 				partialCursor++
 			}
+			if finalAggFunc.Name == ast.AggFuncApproxCountDistinct {
+				ft := types.NewFieldType(mysql.TypeString)
+				ft.Charset, ft.Collate = charset.CharsetBin, charset.CollationBin
+				ft.Flag |= mysql.NotNullFlag
+				partial.Schema.Append(&expression.Column{
+					UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
+					RetType:  ft,
+				})
+				args = append(args, partial.Schema.Columns[partialCursor])
+				partialCursor++
+			}
 			if aggregation.NeedValue(finalAggFunc.Name) {
 				partial.Schema.Append(&expression.Column{
 					UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
@@ -1114,6 +1128,11 @@ func BuildFinalModeAggregation(
 				sumAgg.Name = ast.AggFuncSum
 				sumAgg.RetTp = partial.Schema.Columns[partialCursor-1].GetType()
 				partial.AggFuncs = append(partial.AggFuncs, &cntAgg, &sumAgg)
+			} else if aggFunc.Name == ast.AggFuncApproxCountDistinct {
+				approxCountDistinctAgg := *aggFunc
+				approxCountDistinctAgg.Name = ast.AggFuncApproxCountDistinct
+				approxCountDistinctAgg.RetTp = partial.Schema.Columns[partialCursor-1].GetType()
+				partial.AggFuncs = append(partial.AggFuncs, &approxCountDistinctAgg)
 			} else {
 				partial.AggFuncs = append(partial.AggFuncs, aggFunc)
 			}
@@ -1235,15 +1254,24 @@ func RemoveUnnecessaryFirstRow(
 				continue
 			}
 		}
-		if aggregation.NeedCount(aggFunc.Name) {
-			partialCursor++
-		}
-		if aggregation.NeedValue(aggFunc.Name) {
-			partialCursor++
-		}
+		partialCursor += computePartialCursorOffset(aggFunc.Name)
 		newAggFuncs = append(newAggFuncs, aggFunc)
 	}
 	return newAggFuncs
+}
+
+func computePartialCursorOffset(name string) int {
+	offset := 0
+	if aggregation.NeedCount(name) {
+		offset++
+	}
+	if aggregation.NeedValue(name) {
+		offset++
+	}
+	if name == ast.AggFuncApproxCountDistinct {
+		offset++
+	}
+	return offset
 }
 
 func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
@@ -1304,7 +1332,7 @@ func (p *PhysicalHashAgg) cpuCostDivisor(hasDistinct bool) (float64, float64) {
 		return 0, 0
 	}
 	sessionVars := p.ctx.GetSessionVars()
-	finalCon, partialCon := sessionVars.HashAggFinalConcurrency, sessionVars.HashAggPartialConcurrency
+	finalCon, partialCon := sessionVars.HashAggFinalConcurrency(), sessionVars.HashAggPartialConcurrency()
 	// According to `ValidateSetSystemVar`, `finalCon` and `partialCon` cannot be less than or equal to 0.
 	if finalCon == 1 && partialCon == 1 {
 		return 0, 0

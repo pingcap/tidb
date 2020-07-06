@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/spaolacci/murmur3"
+	"github.com/twmb/murmur3"
 )
 
 // topNThreshold is the minimum ratio of the number of topn elements in CMSketch, 10 means 1 / 10 = 10%.

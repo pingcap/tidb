@@ -186,7 +186,7 @@ func (e *IndexLookUpMergeJoin) Open(ctx context.Context) error {
 func (e *IndexLookUpMergeJoin) startWorkers(ctx context.Context) {
 	// TODO: consider another session currency variable for index merge join.
 	// Because its parallelization is not complete.
-	concurrency := e.ctx.GetSessionVars().IndexLookupJoinConcurrency
+	concurrency := e.ctx.GetSessionVars().IndexLookupJoinConcurrency()
 	resultCh := make(chan *lookUpMergeJoinTask, concurrency)
 	e.resultCh = resultCh
 	e.joinChkResourceCh = make([]chan *chunk.Chunk, concurrency)
@@ -220,6 +220,9 @@ func (e *IndexLookUpMergeJoin) newOuterWorker(resultCh, innerCh chan *lookUpMerg
 		parentMemTracker:      e.memTracker,
 		nextColCompareFilters: e.lastColHelper,
 	}
+	failpoint.Inject("testIssue18068", func() {
+		omw.batchSize = 1
+	})
 	return omw
 }
 
@@ -508,8 +511,12 @@ func (imw *innerMergeWorker) fetchNewChunkWhenFull(ctx context.Context, task *lo
 		return false
 	}
 	var ok bool
-	*chk, ok = <-imw.joinChkResourceCh
-	if !ok {
+	select {
+	case *chk, ok = <-imw.joinChkResourceCh:
+		if !ok {
+			return false
+		}
+	case <-ctx.Done():
 		return false
 	}
 	(*chk).Reset()
@@ -519,6 +526,9 @@ func (imw *innerMergeWorker) fetchNewChunkWhenFull(ctx context.Context, task *lo
 func (imw *innerMergeWorker) doMergeJoin(ctx context.Context, task *lookUpMergeJoinTask) (err error) {
 	chk := <-imw.joinChkResourceCh
 	defer func() {
+		if chk == nil {
+			return
+		}
 		if chk.NumRows() > 0 {
 			select {
 			case task.results <- &indexMergeJoinResult{chk, imw.joinChkResourceCh}:
@@ -700,11 +710,16 @@ func (e *IndexLookUpMergeJoin) Close() error {
 		e.cancelFunc()
 		e.cancelFunc = nil
 	}
-	e.workerWg.Wait()
-	for i := range e.joinChkResourceCh {
-		close(e.joinChkResourceCh[i])
+	if e.resultCh != nil {
+		for range e.resultCh {
+		}
+		e.resultCh = nil
 	}
 	e.joinChkResourceCh = nil
+	// joinChkResourceCh is to recycle result chunks, used by inner worker.
+	// resultCh is the main thread get the results, used by main thread and inner worker.
+	// cancelFunc control the outer worker and outer worker close the task channel.
+	e.workerWg.Wait()
 	e.memTracker = nil
 	if e.runtimeStats != nil {
 		concurrency := cap(e.resultCh)
