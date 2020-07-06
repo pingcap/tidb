@@ -96,9 +96,14 @@ func (e *SplitIndexRegionExec) splitIndexRegion(ctx context.Context) error {
 	start := time.Now()
 	ctxWithTimeout, cancel := context.WithTimeout(ctx, e.ctx.GetSessionVars().GetSplitRegionTimeout())
 	defer cancel()
+	logutil.BgLogger().Info("[QUPENG] split table index region...",
+		zap.String("table", e.tableInfo.Name.L),
+		zap.String("index", e.indexInfo.Name.L),
+		zap.Int("keys", len(e.splitIdxKeys)),
+	)
 	regionIDs, err := s.SplitRegions(ctxWithTimeout, e.splitIdxKeys, true)
 	if err != nil {
-		logutil.BgLogger().Warn("split table index region failed",
+		logutil.BgLogger().Warn("[QUPENG] split table index region failed",
 			zap.String("table", e.tableInfo.Name.L),
 			zap.String("index", e.indexInfo.Name.L),
 			zap.Error(err))
