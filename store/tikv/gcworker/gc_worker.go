@@ -1043,6 +1043,7 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 			locks[i] = tikv.NewLock(locksInfo[i])
 		}
 
+	retryResolveLockBatch:
 		ok, err1 := w.store.GetLockResolver().BatchResolveLocks(bo, locks, loc.Region)
 		if err1 != nil {
 			return stat, errors.Trace(err1)
@@ -1051,6 +1052,14 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 			err = bo.Backoff(tikv.BoTxnLock, errors.Errorf("remain locks: %d", len(locks)))
 			if err != nil {
 				return stat, errors.Trace(err)
+			}
+			stillInSame, refreshedLoc, err := w.tryRelocateLockRegion(bo, locks)
+			if err != nil {
+				return stat, errors.Trace(err)
+			}
+			if stillInSame {
+				loc = refreshedLoc
+				goto retryResolveLockBatch
 			}
 			continue
 		}
@@ -1076,6 +1085,23 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 		})
 	}
 	return stat, nil
+}
+
+func (w *GCWorker) tryRelocateLockRegion(bo *tikv.Backoffer, locks []*tikv.Lock) (stillInSameRegion bool, refreshedLoc *tikv.KeyLocation, err error) {
+	if len(locks) == 0 {
+		return
+	}
+	refreshedLoc, err = w.store.GetRegionCache().LocateKey(bo, locks[0].Key)
+	if err != nil {
+		return
+	}
+	for _, l := range locks {
+		if !refreshedLoc.Contains(l.Key) {
+			return
+		}
+	}
+	stillInSameRegion = true
+	return
 }
 
 // resolveLocksPhysical uses TiKV's `PhysicalScanLock` to scan stale locks in the cluster and resolve them. It tries to
