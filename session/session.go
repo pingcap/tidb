@@ -1360,6 +1360,7 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 			s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
 		}
 		s.sessionVars.TxnCtx.CouldRetry = s.isTxnRetryable()
+		s.txn.SetVars(s.sessionVars.KVVars)
 		if s.sessionVars.GetReplicaRead().IsFollowerRead() {
 			s.txn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 		}
@@ -1719,6 +1720,8 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 
+	dom.TelemetryLoop(se)
+
 	se1, err := createSession(store)
 	if err != nil {
 		return nil, err
@@ -1961,6 +1964,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBIsolationReadEngines,
 	variable.TiDBStoreLimit,
 	variable.TiDBSlowLogMasking,
+	variable.TiDBEnableTelemetry,
 }
 
 var (
