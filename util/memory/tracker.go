@@ -88,17 +88,27 @@ func (t *Tracker) AttachTo(parent *Tracker) {
 }
 
 func (t *Tracker) remove(oldChild *Tracker) {
+	found := false
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	for i, child := range t.mu.children {
-		if child != oldChild {
-			continue
+		if child == oldChild {
+			t.mu.children = append(t.mu.children[:i], t.mu.children[i+1:]...)
+			found = true
+			break
 		}
+<<<<<<< HEAD
 
 		t.Consume(-oldChild.BytesConsumed())
 		oldChild.parent = nil
 		t.mu.children = append(t.mu.children[:i], t.mu.children[i+1:]...)
 		break
+=======
+	}
+	t.mu.Unlock()
+	if found {
+		oldChild.setParent(nil)
+		t.Consume(-oldChild.BytesConsumed())
+>>>>>>> a9177fe... util/memory: avoid potential deadlock for Consume in remove (#16987)
 	}
 }
 
