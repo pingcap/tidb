@@ -50,14 +50,18 @@ import (
 
 // GCWorker periodically triggers GC process on tikv server.
 type GCWorker struct {
-	uuid        string
-	desc        string
-	store       tikv.Storage
-	pdClient    pd.Client
-	gcIsRunning bool
-	lastFinish  time.Time
-	cancel      context.CancelFunc
-	done        chan error
+	uuid         string
+	desc         string
+	store        tikv.Storage
+	pdClient     pd.Client
+	gcIsRunning  bool
+	lastFinish   time.Time
+	cancel       context.CancelFunc
+	done         chan error
+	testingKnobs struct {
+		scanLocks    func(key []byte) []*tikv.Lock
+		resolveLocks func(regionID tikv.RegionVerID) (ok bool, err error)
+	}
 }
 
 // NewGCWorker creates a GCWorker instance.
@@ -1042,9 +1046,14 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 		for i := range locksInfo {
 			locks[i] = tikv.NewLock(locksInfo[i])
 		}
-
+		if w.testingKnobs.scanLocks != nil {
+			locks = append(locks, w.testingKnobs.scanLocks(key)...)
+		}
 	retryResolveLockBatch:
 		ok, err1 := w.store.GetLockResolver().BatchResolveLocks(bo, locks, loc.Region)
+		if w.testingKnobs.resolveLocks != nil {
+			ok, err1 = w.testingKnobs.resolveLocks(loc.Region)
+		}
 		if err1 != nil {
 			return stat, errors.Trace(err1)
 		}
