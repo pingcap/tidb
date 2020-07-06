@@ -402,16 +402,16 @@ func (pb *profileBuilder) genTiDBQueryTree() *metricNode {
 										name:      "tikv_storage_async_request.write",
 										condition: "type='write'",
 										children: []*metricNode{
-											{table: "tikv_propose_wait"},
+											{table: "tikv_raftstore_propose_wait"},
 											{
-												table: "tikv_process",
+												table: "tikv_raftstore_process",
 												children: []*metricNode{
-													{table: "tikv_append_log"},
+													{table: "tikv_raftstore_append_log"},
 												},
 											},
-											{table: "tikv_commit_log"},
-											{table: "tikv_apply_wait"},
-											{table: "tikv_apply_log"},
+											{table: "tikv_raftstore_commit_log"},
+											{table: "tikv_raftstore_apply_wait"},
+											{table: "tikv_raftstore_apply_log"},
 										},
 									},
 								},

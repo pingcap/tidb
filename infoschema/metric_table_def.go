@@ -1154,33 +1154,33 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels:  []string{"instance", "type"},
 		Comment: "The total number of peers validated by the PD worker",
 	},
-	"tikv_apply_log_avg_duration": {
+	"tikv_raftstore_apply_log_avg_duration": {
 		PromQL:  `sum(rate(tikv_raftstore_apply_log_duration_seconds_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) / sum(rate(tikv_raftstore_apply_log_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) `,
 		Labels:  []string{"instance"},
 		Comment: "The average time consumed when Raft applies log",
 	},
-	"tikv_apply_log_duration": {
+	"tikv_raftstore_apply_log_duration": {
 		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_raftstore_apply_log_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance))`,
 		Labels:   []string{"instance"},
 		Quantile: 0.99,
 		Comment:  "The quantile time consumed when Raft applies log",
 	},
-	"tikv_append_log_avg_duration": {
+	"tikv_raftstore_append_log_avg_duration": {
 		PromQL:  `sum(rate(tikv_raftstore_append_log_duration_seconds_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) / sum(rate(tikv_raftstore_append_log_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION]))`,
 		Labels:  []string{"instance"},
 		Comment: "The avg time consumed when Raft appends log",
 	},
-	"tikv_append_log_duration": {
+	"tikv_raftstore_append_log_duration": {
 		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_raftstore_append_log_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance))`,
 		Labels:   []string{"instance"},
 		Quantile: 0.99,
 		Comment:  "The quantile time consumed when Raft appends log",
 	},
-	"tikv_commit_log_avg_duration": {
+	"tikv_raftstore_commit_log_avg_duration": {
 		PromQL:  `sum(rate(tikv_raftstore_commit_log_duration_seconds_sum[$RANGE_DURATION])) / sum(rate(tikv_raftstore_commit_log_duration_seconds_count[$RANGE_DURATION]))`,
 		Comment: "The time consumed when Raft commits log",
 	},
-	"tikv_commit_log_duration": {
+	"tikv_raftstore_commit_log_duration": {
 		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_raftstore_commit_log_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance))`,
 		Labels:   []string{"instance"},
 		Quantile: 0.99,
@@ -1191,12 +1191,12 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels:  []string{"instance"},
 		Comment: "The count of ready handled of Raft",
 	},
-	"tikv_process_handled": {
+	"tikv_raftstore_process_handled": {
 		PromQL:  `sum(rate(tikv_raftstore_raft_process_duration_secs_count{$LABEL_CONDITIONS}[$RANGE_DURATION]))`,
 		Labels:  []string{"instance", "type"},
 		Comment: "The count of different process type of Raft",
 	},
-	"tikv_process_duration": {
+	"tikv_raftstore_process_duration": {
 		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_raftstore_raft_process_duration_secs_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance,type))`,
 		Labels:   []string{"instance", "type"},
 		Quantile: 0.99,
@@ -1265,7 +1265,7 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels:  []string{"instance", "type"},
 		Comment: "The total number of proposals per type in raft",
 	},
-	"tikv_propose_wait_duration": {
+	"tikv_raftstore_propose_wait_duration": {
 		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_raftstore_request_wait_time_duration_secs_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance))`,
 		Labels:   []string{"instance"},
 		Quantile: 0.99,
@@ -1276,7 +1276,7 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels:  []string{"instance"},
 		Comment: "The average wait time of each proposal",
 	},
-	"tikv_apply_wait_duration": {
+	"tikv_raftstore_apply_wait_duration": {
 		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tikv_raftstore_apply_wait_time_duration_secs_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance))`,
 		Labels:   []string{"instance"},
 		Quantile: 0.99,
@@ -2691,31 +2691,31 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels:  []string{"instance", "type", "sql_type"},
 		Comment: "The total time of transaction execution durations, including retry(second)",
 	},
-	"tikv_append_log_total_count": {
+	"tikv_raftstore_append_log_total_count": {
 		PromQL:  "sum(increase(tikv_raftstore_append_log_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)",
 		Labels:  []string{"instance"},
 		Comment: "The total count of Raft appends log",
 	},
-	"tikv_append_log_total_time": {
+	"tikv_raftstore_append_log_total_time": {
 		PromQL:  "sum(increase(tikv_raftstore_append_log_duration_seconds_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)",
 		Labels:  []string{"instance"},
 		Comment: "The total time of Raft appends log",
 	},
-	"tikv_apply_log_total_count": {
+	"tikv_raftstore_apply_log_total_count": {
 		PromQL:  "sum(increase(tikv_raftstore_apply_log_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)",
 		Labels:  []string{"instance"},
 		Comment: "The total count of Raft applies log",
 	},
-	"tikv_apply_log_total_time": {
+	"tikv_raftstore_apply_log_total_time": {
 		PromQL:  "sum(increase(tikv_raftstore_apply_log_duration_seconds_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)",
 		Labels:  []string{"instance"},
 		Comment: "The total time of Raft applies log",
 	},
-	"tikv_apply_wait_total_count": {
+	"tikv_raftstore_apply_wait_total_count": {
 		PromQL: "sum(increase(tikv_raftstore_apply_wait_time_duration_secs_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)",
 		Labels: []string{"instance"},
 	},
-	"tikv_apply_wait_total_time": {
+	"tikv_raftstore_apply_wait_total_time": {
 		PromQL: "sum(increase(tikv_raftstore_apply_wait_time_duration_secs_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)",
 		Labels: []string{"instance"},
 	},
@@ -2745,12 +2745,12 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels:  []string{"instance"},
 		Comment: "The total time of time consumed when running split check in .9999",
 	},
-	"tikv_commit_log_total_count": {
+	"tikv_raftstore_commit_log_total_count": {
 		PromQL:  "sum(increase(tikv_raftstore_commit_log_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)",
 		Labels:  []string{"instance"},
 		Comment: "The total count of Raft commits log",
 	},
-	"tikv_commit_log_total_time": {
+	"tikv_raftstore_commit_log_total_time": {
 		PromQL:  "sum(increase(tikv_raftstore_commit_log_duration_seconds_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)",
 		Labels:  []string{"instance"},
 		Comment: "The total time of Raft commits log",
@@ -2851,22 +2851,22 @@ var MetricTableMap = map[string]MetricTableDef{
 		PromQL: "sum(increase(tikv_lock_manager_waiter_lifetime_duration_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)",
 		Labels: []string{"instance"},
 	},
-	"tikv_process_total_count": {
+	"tikv_raftstore_process_total_count": {
 		PromQL:  "sum(increase(tikv_raftstore_raft_process_duration_secs_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,type)",
 		Labels:  []string{"instance", "type"},
 		Comment: "The total count of peer processes in Raft",
 	},
-	"tikv_process_total_time": {
+	"tikv_raftstore_process_total_time": {
 		PromQL:  "sum(increase(tikv_raftstore_raft_process_duration_secs_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,type)",
 		Labels:  []string{"instance", "type"},
 		Comment: "The total time of peer processes in Raft",
 	},
-	"tikv_propose_wait_total_count": {
+	"tikv_raftstore_propose_wait_total_count": {
 		PromQL:  "sum(increase(tikv_raftstore_request_wait_time_duration_secs_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)",
 		Labels:  []string{"instance"},
 		Comment: "The total count of each proposal",
 	},
-	"tikv_propose_wait_total_time": {
+	"tikv_raftstore_propose_wait_total_time": {
 		PromQL:  "sum(increase(tikv_raftstore_request_wait_time_duration_secs_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)",
 		Labels:  []string{"instance"},
 		Comment: "The total time of wait time of each proposal",
