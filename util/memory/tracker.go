@@ -115,6 +115,13 @@ func (t *Tracker) SetActionOnExceed(a ActionOnExceed) {
 	t.actionMu.Unlock()
 }
 
+// GetActionOnExceed return the actionOnExceed
+func (t *Tracker) GetActionOnExceed() ActionOnExceed {
+	t.actionMu.Lock()
+	defer t.actionMu.Unlock()
+	return t.actionMu.actionOnExceed
+}
+
 // FallbackOldAndSetNewAction sets the action when memory usage exceeds bytesLimit
 // and set the original action as its fallback.
 func (t *Tracker) FallbackOldAndSetNewAction(a ActionOnExceed) {
@@ -163,17 +170,19 @@ func (t *Tracker) Detach() {
 }
 
 func (t *Tracker) remove(oldChild *Tracker) {
+	found := false
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	for i, child := range t.mu.children {
-		if child != oldChild {
-			continue
+		if child == oldChild {
+			t.mu.children = append(t.mu.children[:i], t.mu.children[i+1:]...)
+			found = true
+			break
 		}
-
-		t.Consume(-oldChild.BytesConsumed())
+	}
+	t.mu.Unlock()
+	if found {
 		oldChild.setParent(nil)
-		t.mu.children = append(t.mu.children[:i], t.mu.children[i+1:]...)
-		break
+		t.Consume(-oldChild.BytesConsumed())
 	}
 }
 
