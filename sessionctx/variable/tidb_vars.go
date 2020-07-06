@@ -396,6 +396,9 @@ const (
 
 	// TiDBEnableCollectExecutionInfo indicates that whether execution info is collected.
 	TiDBEnableCollectExecutionInfo = "tidb_enable_collect_execution_info"
+
+	// TiDBEnableTelemetry indicates that whether usage data report to PingCAP is enabled.
+	TiDBEnableTelemetry = "tidb_enable_telemetry"
 )
 
 // Default TiDB system variable values.
@@ -491,6 +494,7 @@ const (
 	DefTiDBFoundInPlanCache            = false
 	DefTiDBSlowLogMasking              = false
 	DefTiDBEnableCollectExecutionInfo  = false
+	DefTiDBEnableTelemetry             = true
 )
 
 // Process global variables.
