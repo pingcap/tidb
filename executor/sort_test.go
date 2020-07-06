@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"fmt"
+	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
@@ -56,4 +57,28 @@ func (s *testSuite) TestSortInDisk(c *C) {
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), Greater, int64(0))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.DiskTracker.BytesConsumed(), Equals, int64(0))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.DiskTracker.MaxConsumed(), Greater, int64(0))
+}
+
+func (s *testSuite) TestIssue16696(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (`a` int(11) DEFAULT NULL,`b` int(11) DEFAULT NULL)")
+	tk.MustExec("insert into t values (1, 1)")
+	for i := 0; i < 6; i++ {
+		tk.MustExec("insert into t select * from t")
+	}
+	tk.MustExec("set tidb_mem_quota_query = 4125000;") // 4.125 MB
+	rows := tk.MustQuery("explain analyze  select t1.a, t1.a +1 from t t1 join t t2 join t t3 order by t1.a").Rows()
+	for _, row := range rows {
+		length := len(row)
+		line := fmt.Sprintf("%v", row)
+		disk := fmt.Sprintf("%v", row[length-1])
+		if strings.Contains(line, "Sort") || strings.Contains(line, "HashJoin") {
+			c.Assert(strings.Contains(disk, "0 Bytes"), IsFalse)
+			c.Assert(strings.Contains(disk, "MB") ||
+				strings.Contains(disk, "KB") ||
+				strings.Contains(disk, "Bytes"), IsTrue)
+		}
+	}
 }

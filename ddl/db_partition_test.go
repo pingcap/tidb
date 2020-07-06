@@ -935,6 +935,76 @@ func (s *testIntegrationSuite4) TestAlterTableExchangePartition(c *C) {
 	tk.MustExec("alter table e12 add index (a);")
 	tk.MustGetErrCode("alter table e12 exchange partition p0 with table e14", tmysql.ErrPartitionExchangeDifferentOption)
 
+	// test for tiflash replica
+	tk.MustExec("create table e15 (a int) partition by hash(a) partitions 1;")
+	tk.MustExec("create table e16 (a int)")
+	tk.MustExec("alter table e15 set tiflash replica 1;")
+	tk.MustExec("alter table e16 set tiflash replica 2;")
+
+	e15 := testGetTableByName(c, s.ctx, "test", "e15")
+	partition := e15.Meta().Partition
+
+	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, partition.Definitions[0].ID, true)
+	c.Assert(err, IsNil)
+
+	e16 := testGetTableByName(c, s.ctx, "test", "e16")
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, e16.Meta().ID, true)
+	c.Assert(err, IsNil)
+
+	tk.MustGetErrCode("alter table e15 exchange partition p0 with table e16", tmysql.ErrTablesDifferentMetadata)
+	tk.MustExec("drop table e15, e16")
+
+	tk.MustExec("create table e15 (a int) partition by hash(a) partitions 1;")
+	tk.MustExec("create table e16 (a int)")
+	tk.MustExec("alter table e15 set tiflash replica 1;")
+	tk.MustExec("alter table e16 set tiflash replica 1;")
+
+	e15 = testGetTableByName(c, s.ctx, "test", "e15")
+	partition = e15.Meta().Partition
+
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, partition.Definitions[0].ID, true)
+	c.Assert(err, IsNil)
+
+	e16 = testGetTableByName(c, s.ctx, "test", "e16")
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, e16.Meta().ID, true)
+	c.Assert(err, IsNil)
+
+	tk.MustExec("alter table e15 exchange partition p0 with table e16")
+
+	e15 = testGetTableByName(c, s.ctx, "test", "e15")
+
+	partition = e15.Meta().Partition
+
+	c.Assert(e15.Meta().TiFlashReplica, NotNil)
+	c.Assert(e15.Meta().TiFlashReplica.Available, IsTrue)
+	c.Assert(e15.Meta().TiFlashReplica.AvailablePartitionIDs, DeepEquals, []int64{partition.Definitions[0].ID})
+
+	e16 = testGetTableByName(c, s.ctx, "test", "e16")
+	c.Assert(e16.Meta().TiFlashReplica, NotNil)
+	c.Assert(e16.Meta().TiFlashReplica.Available, IsTrue)
+
+	tk.MustExec("drop table e15, e16")
+	tk.MustExec("create table e15 (a int) partition by hash(a) partitions 1;")
+	tk.MustExec("create table e16 (a int)")
+	tk.MustExec("alter table e16 set tiflash replica 1;")
+
+	tk.MustExec("alter table e15 set tiflash replica 1 location labels 'a', 'b';")
+
+	tk.MustGetErrCode("alter table e15 exchange partition p0 with table e16", tmysql.ErrTablesDifferentMetadata)
+
+	tk.MustExec("alter table e16 set tiflash replica 1 location labels 'a', 'b';")
+
+	e15 = testGetTableByName(c, s.ctx, "test", "e15")
+	partition = e15.Meta().Partition
+
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, partition.Definitions[0].ID, true)
+	c.Assert(err, IsNil)
+
+	e16 = testGetTableByName(c, s.ctx, "test", "e16")
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, e16.Meta().ID, true)
+	c.Assert(err, IsNil)
+
+	tk.MustExec("alter table e15 exchange partition p0 with table e16")
 }
 
 func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
@@ -1134,7 +1204,6 @@ func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
 			tk.MustExec(t.exchangeSQL)
 		}
 	}
-
 }
 
 func (s *testIntegrationSuite7) TestExchangePartitionExpressIndex(c *C) {
@@ -2046,7 +2115,7 @@ func getPartitionTableRecordsNum(c *C, ctx sessionctx.Context, tbl table.Partiti
 		startKey := partition.RecordKey(kv.IntHandle(math.MinInt64))
 		c.Assert(ctx.NewTxn(context.Background()), IsNil)
 		err := partition.IterRecords(ctx, startKey, partition.Cols(),
-			func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+			func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 				num++
 				return true, nil
 			})
@@ -2248,7 +2317,7 @@ func (s *testIntegrationSuite3) TestUnsupportedPartitionManagementDDLs(c *C) {
 	c.Assert(err, ErrorMatches, ".*alter table partition is unsupported")
 }
 
-func (s *testIntegrationSuite3) TestCommitWhenSchemaChange(c *C) {
+func (s *testIntegrationSuite7) TestCommitWhenSchemaChange(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table schema_change (a int, b timestamp)
@@ -2269,8 +2338,10 @@ func (s *testIntegrationSuite3) TestCommitWhenSchemaChange(c *C) {
 	tk.MustExec("insert into schema_change values (5, '2019-12-25 13:27:43')")
 	tk.MustExec("insert into schema_change values (9, '2019-12-25 13:27:44')")
 	atomic.StoreUint32(&session.SchemaChangedWithoutRetry, 1)
+	defer func() {
+		atomic.StoreUint32(&session.SchemaChangedWithoutRetry, 0)
+	}()
 	_, err := tk.Se.Execute(context.Background(), "commit")
-	atomic.StoreUint32(&session.SchemaChangedWithoutRetry, 0)
 	c.Assert(domain.ErrInfoSchemaChanged.Equal(err), IsTrue)
 
 	// Cover a bug that schema validator does not prevent transaction commit when
@@ -2288,10 +2359,7 @@ func (s *testIntegrationSuite3) TestCommitWhenSchemaChange(c *C) {
 	tk.MustExec("insert into nt values (1), (3), (5);")
 	tk2.MustExec("alter table pt exchange partition p1 with table nt;")
 	tk.MustExec("insert into nt values (7), (9);")
-
-	atomic.StoreUint32(&session.SchemaChangedWithoutRetry, 1)
 	_, err = tk.Se.Execute(context.Background(), "commit")
-	atomic.StoreUint32(&session.SchemaChangedWithoutRetry, 0)
 	c.Assert(domain.ErrInfoSchemaChanged.Equal(err), IsTrue)
 
 	tk.MustExec("admin check table pt")
@@ -2303,9 +2371,7 @@ func (s *testIntegrationSuite3) TestCommitWhenSchemaChange(c *C) {
 	tk.MustExec("insert into pt values (1), (3), (5);")
 	tk2.MustExec("alter table pt exchange partition p1 with table nt;")
 	tk.MustExec("insert into pt values (7), (9);")
-	atomic.StoreUint32(&session.SchemaChangedWithoutRetry, 1)
 	_, err = tk.Se.Execute(context.Background(), "commit")
-	atomic.StoreUint32(&session.SchemaChangedWithoutRetry, 0)
 	c.Assert(domain.ErrInfoSchemaChanged.Equal(err), IsTrue)
 
 	tk.MustExec("admin check table pt")

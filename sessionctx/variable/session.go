@@ -16,8 +16,10 @@ package variable
 import (
 	"bytes"
 	"crypto/tls"
+	"encoding/binary"
 	"fmt"
 	"math"
+	"math/rand"
 	"sort"
 	"strconv"
 	"strings"
@@ -48,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/util/storeutil"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/twmb/murmur3"
 )
 
 var preparedStmtCount int64
@@ -137,7 +140,13 @@ type TransactionContext struct {
 	History       interface{}
 	SchemaVersion int64
 	StartTS       uint64
-	Shard         *int64
+
+	// ShardStep indicates the max size of continuous rowid shard in one transaction.
+	ShardStep    int
+	shardRemain  int
+	currentShard int64
+	shardRand    *rand.Rand
+
 	// TableDeltaMap is used in the schema validator for DDL changes in one table not to block others.
 	// It's also used in the statistias updating.
 	// Note: for the partitionted table, it stores all the partition IDs.
@@ -158,6 +167,33 @@ type TransactionContext struct {
 	IsPessimistic  bool
 	Isolation      string
 	LockExpire     uint32
+}
+
+// GetShard returns the shard prefix for the next `count` rowids.
+func (tc *TransactionContext) GetShard(shardRowIDBits uint64, typeBitsLength uint64, reserveSignBit bool, count int) int64 {
+	if shardRowIDBits == 0 {
+		return 0
+	}
+	if tc.shardRand == nil {
+		tc.shardRand = rand.New(rand.NewSource(int64(tc.StartTS)))
+	}
+	if tc.shardRemain <= 0 {
+		tc.updateShard()
+		tc.shardRemain = tc.ShardStep
+	}
+	tc.shardRemain -= count
+
+	var signBitLength uint64
+	if reserveSignBit {
+		signBitLength = 1
+	}
+	return (tc.currentShard & (1<<shardRowIDBits - 1)) << (typeBitsLength - shardRowIDBits - signBitLength)
+}
+
+func (tc *TransactionContext) updateShard() {
+	var buf [8]byte
+	binary.LittleEndian.PutUint64(buf[:], tc.shardRand.Uint64())
+	tc.currentShard = int64(murmur3.Sum32(buf[:]))
 }
 
 // AddUnchangedRowKey adds an unchanged row key in update statement for pessimistic lock.
@@ -460,6 +496,9 @@ type SessionVars struct {
 
 	/* TiDB system variables */
 
+	// SkipASCIICheck check on input value.
+	SkipASCIICheck bool
+
 	// SkipUTF8Check check on input value.
 	SkipUTF8Check bool
 
@@ -643,6 +682,9 @@ type SessionVars struct {
 
 	// EnableSlowLogMasking indicates that whether masking the query data when log slow query.
 	EnableSlowLogMasking bool
+
+	// ShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
+	ShardAllocateStep int64
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -734,6 +776,7 @@ func NewSessionVars() *SessionVars {
 		AllowAutoRandExplicitInsert: DefTiDBAllowAutoRandExplicitInsert,
 		EnableClusteredIndex:        DefTiDBEnableClusteredIndex,
 		EnableSlowLogMasking:        DefTiDBSlowLogMasking,
+		ShardAllocateStep:           DefTiDBShardAllocateStep,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1111,6 +1154,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.WindowingUseHighPrecision = TiDBOptOn(val)
 	case TiDBSkipUTF8Check:
 		s.SkipUTF8Check = TiDBOptOn(val)
+	case TiDBSkipASCIICheck:
+		s.SkipASCIICheck = TiDBOptOn(val)
 	case TiDBOptAggPushDown:
 		s.AllowAggPushDown = TiDBOptOn(val)
 	case TiDBOptDistinctAggPushDown:
@@ -1356,6 +1401,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableClusteredIndex = TiDBOptOn(val)
 	case TiDBSlowLogMasking:
 		s.EnableSlowLogMasking = TiDBOptOn(val)
+	case TiDBShardAllocateStep:
+		s.ShardAllocateStep = tidbOptInt64(val, DefTiDBShardAllocateStep)
 	}
 	s.systems[name] = val
 	return nil
@@ -1663,6 +1710,8 @@ const (
 	SlowLogStartPrefixStr = SlowLogRowPrefixStr + SlowLogTimeStr + SlowLogSpaceMarkStr
 	// SlowLogTxnStartTSStr is slow log field name.
 	SlowLogTxnStartTSStr = "Txn_start_ts"
+	// SlowLogUserAndHostStr is the user and host field name, which is compatible with MySQL.
+	SlowLogUserAndHostStr = "User@Host"
 	// SlowLogUserStr is slow log field name.
 	SlowLogUserStr = "User"
 	// SlowLogHostStr only for slow_query table usage.
@@ -1786,7 +1835,7 @@ type SlowQueryLogItems struct {
 // The slow log output is like below:
 // # Time: 2019-04-28T15:24:04.309074+08:00
 // # Txn_start_ts: 406315658548871171
-// # User: root@127.0.0.1
+// # User@Host: root[root] @ localhost [127.0.0.1]
 // # Conn_ID: 6
 // # Query_time: 4.895492
 // # Process_time: 0.161 Request_count: 1 Total_keys: 100001 Processed_keys: 100000
@@ -1808,7 +1857,11 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 
 	writeSlowLogItem(&buf, SlowLogTxnStartTSStr, strconv.FormatUint(logItems.TxnTS, 10))
 	if s.User != nil {
-		writeSlowLogItem(&buf, SlowLogUserStr, s.User.String())
+		hostAddress := s.User.Hostname
+		if s.ConnectionInfo != nil {
+			hostAddress = s.ConnectionInfo.ClientIP
+		}
+		writeSlowLogItem(&buf, SlowLogUserAndHostStr, fmt.Sprintf("%s[%s] @ %s [%s]", s.User.Username, s.User.Username, s.User.Hostname, hostAddress))
 	}
 	if s.ConnectionID != 0 {
 		writeSlowLogItem(&buf, SlowLogConnIDStr, strconv.FormatUint(s.ConnectionID, 10))
