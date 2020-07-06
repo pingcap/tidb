@@ -51,9 +51,9 @@ type baseSum4Float64 struct {
 	baseSumAggFunc
 }
 
-func (e *baseSum4Float64) AllocPartialResult() PartialResult {
+func (e *baseSum4Float64) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4SumFloat64)
-	return PartialResult(p)
+	return PartialResult(p), 0
 }
 
 func (e *baseSum4Float64) ResetPartialResult(pr PartialResult) {
@@ -72,12 +72,12 @@ func (e *baseSum4Float64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Pa
 	return nil
 }
 
-func (e *baseSum4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+func (e *baseSum4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4SumFloat64)(pr)
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalReal(sctx, row)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if isNull {
 			continue
@@ -85,17 +85,17 @@ func (e *baseSum4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGro
 		p.val += input
 		p.notNullRowCount++
 	}
-	return nil
+	return 0, nil
 }
 
-func (e *baseSum4Float64) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error {
+func (e *baseSum4Float64) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4SumFloat64)(src), (*partialResult4SumFloat64)(dst)
 	if p1.notNullRowCount == 0 {
-		return nil
+		return 0, nil
 	}
 	p2.val += p1.val
 	p2.notNullRowCount += p1.notNullRowCount
-	return nil
+	return 0, nil
 }
 
 type sum4Float64 struct {
@@ -137,9 +137,9 @@ type sum4Decimal struct {
 	baseSumAggFunc
 }
 
-func (e *sum4Decimal) AllocPartialResult() PartialResult {
+func (e *sum4Decimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4SumDecimal)
-	return PartialResult(p)
+	return PartialResult(p), 0
 }
 
 func (e *sum4Decimal) ResetPartialResult(pr PartialResult) {
@@ -157,12 +157,12 @@ func (e *sum4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Partia
 	return nil
 }
 
-func (e *sum4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+func (e *sum4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4SumDecimal)(pr)
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if isNull {
 			continue
@@ -176,12 +176,12 @@ func (e *sum4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 		newSum := new(types.MyDecimal)
 		err = types.DecimalAdd(&p.val, input, newSum)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		p.val = *newSum
 		p.notNullRowCount++
 	}
-	return nil
+	return 0, nil
 }
 
 func (e *sum4Decimal) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
@@ -226,30 +226,30 @@ func (e *sum4Decimal) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart
 	return nil
 }
 
-func (e *sum4Decimal) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error {
+func (e *sum4Decimal) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4SumDecimal)(src), (*partialResult4SumDecimal)(dst)
 	if p1.notNullRowCount == 0 {
-		return nil
+		return 0, nil
 	}
 	newSum := new(types.MyDecimal)
-	err := types.DecimalAdd(&p1.val, &p2.val, newSum)
+	err = types.DecimalAdd(&p1.val, &p2.val, newSum)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	p2.val = *newSum
 	p2.notNullRowCount += p1.notNullRowCount
-	return nil
+	return 0, nil
 }
 
 type sum4DistinctFloat64 struct {
 	baseSumAggFunc
 }
 
-func (e *sum4DistinctFloat64) AllocPartialResult() PartialResult {
+func (e *sum4DistinctFloat64) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4SumDistinctFloat64)
 	p.isNull = true
 	p.valSet = set.NewFloat64Set()
-	return PartialResult(p)
+	return PartialResult(p), 0
 }
 
 func (e *sum4DistinctFloat64) ResetPartialResult(pr PartialResult) {
@@ -258,12 +258,12 @@ func (e *sum4DistinctFloat64) ResetPartialResult(pr PartialResult) {
 	p.valSet = set.NewFloat64Set()
 }
 
-func (e *sum4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+func (e *sum4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4SumDistinctFloat64)(pr)
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalReal(sctx, row)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if isNull || p.valSet.Exist(input) {
 			continue
@@ -276,7 +276,7 @@ func (e *sum4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		}
 		p.val += input
 	}
-	return nil
+	return 0, nil
 }
 
 func (e *sum4DistinctFloat64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -293,11 +293,11 @@ type sum4DistinctDecimal struct {
 	baseSumAggFunc
 }
 
-func (e *sum4DistinctDecimal) AllocPartialResult() PartialResult {
+func (e *sum4DistinctDecimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4SumDistinctDecimal)
 	p.isNull = true
 	p.valSet = set.NewStringSet()
-	return PartialResult(p)
+	return PartialResult(p), 0
 }
 
 func (e *sum4DistinctDecimal) ResetPartialResult(pr PartialResult) {
@@ -306,19 +306,19 @@ func (e *sum4DistinctDecimal) ResetPartialResult(pr PartialResult) {
 	p.valSet = set.NewStringSet()
 }
 
-func (e *sum4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+func (e *sum4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4SumDistinctDecimal)(pr)
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if isNull {
 			continue
 		}
 		hash, err := input.ToHashKey()
 		if err != nil {
-			return err
+			return 0, err
 		}
 		decStr := string(hack.String(hash))
 		if p.valSet.Exist(decStr) {
@@ -332,11 +332,11 @@ func (e *sum4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		}
 		newSum := new(types.MyDecimal)
 		if err = types.DecimalAdd(&p.val, input, newSum); err != nil {
-			return err
+			return 0, err
 		}
 		p.val = *newSum
 	}
-	return nil
+	return 0, nil
 }
 
 func (e *sum4DistinctDecimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {

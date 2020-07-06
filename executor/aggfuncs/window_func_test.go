@@ -47,12 +47,12 @@ func (s *testSuite) testWindowFunc(c *C, p windowTest) {
 	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.funcName, p.args, false)
 	c.Assert(err, IsNil)
 	finalFunc := aggfuncs.BuildWindowFunctions(s.ctx, desc, 0, p.orderByCols)
-	finalPr := finalFunc.AllocPartialResult()
+	finalPr, _ := finalFunc.AllocPartialResult()
 	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{desc.RetTp}, 1)
 
 	iter := chunk.NewIterator4Chunk(srcChk)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		err = finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
+		_, err = finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
 		c.Assert(err, IsNil)
 	}
 
