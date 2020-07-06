@@ -18,7 +18,6 @@ import (
 	"errors"
 	"fmt"
 	"hash/crc32"
-	"hash/crc64"
 	"io"
 	"io/ioutil"
 	"os"
