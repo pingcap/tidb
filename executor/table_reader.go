@@ -19,6 +19,7 @@ import (
 	"sort"
 
 	"github.com/opentracing/opentracing-go"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
@@ -139,6 +140,14 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		e.feedback.Invalidate()
 		return err
 	}
+
+	actionExceed := e.memTracker.GetActionOnExceed()
+	if actionExceed != nil {
+		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionExceed)
+	} else {
+		return errors.Trace(fmt.Errorf("failed to find actionExceed in TableReaderExecutor Open phase"))
+	}
+
 	if len(secondPartRanges) == 0 {
 		e.resultHandler.open(nil, firstResult)
 		return nil
@@ -194,7 +203,18 @@ func (e *TableReaderExecutor) Close() error {
 // to fetch all results.
 func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Range) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder
+<<<<<<< HEAD
 	kvReq, err := builder.SetTableRanges(getPhysicalTableID(e.table), ranges, e.feedback).
+=======
+	var reqBuilder *distsql.RequestBuilder
+	if e.table.Meta() != nil && e.table.Meta().IsCommonHandle {
+		reqBuilder = builder.SetCommonHandleRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), ranges)
+	} else {
+		reqBuilder = builder.SetTableRanges(getPhysicalTableID(e.table), ranges, e.feedback)
+	}
+
+	kvReq, err := reqBuilder.
+>>>>>>> a5829ae... coprocessor: Exceed action for copiterator (#17324)
 		SetDAGRequest(e.dagPB).
 		SetStartTS(e.startTS).
 		SetDesc(e.desc).
