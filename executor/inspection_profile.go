@@ -353,6 +353,9 @@ func (pb *profileBuilder) genTiDBQueryTree() *metricNode {
 		label:          []string{"type"},
 		children: []*metricNode{
 			{
+				table: "tidb_batch_client_wait",
+			},
+			{
 				table: "tikv_grpc_message",
 				children: []*metricNode{
 					{
@@ -409,6 +412,9 @@ func (pb *profileBuilder) genTiDBQueryTree() *metricNode {
 		children: []*metricNode{
 			{
 				table: "pd_start_tso_wait",
+			},
+			{
+				table: "tidb_auto_id_request",
 			},
 			{
 				table: "tidb_cop",
