@@ -673,8 +673,9 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 		}
 		ts := tp.(*PhysicalTableScan)
 		p := PhysicalTableReader{
-			tablePlan: t.tablePlan,
-			StoreType: ts.StoreType,
+			tablePlan:      t.tablePlan,
+			StoreType:      ts.StoreType,
+			IsCommonHandle: ts.Table.IsCommonHandle,
 		}.Init(ctx, t.tablePlan.SelectBlockOffset())
 		p.stats = t.tablePlan.statsInfo()
 		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)

@@ -644,12 +644,12 @@ func (ds *DataSource) Convert2Gathers() (gathers []LogicalPlan) {
 func (ds *DataSource) deriveCommonHandleTablePathStats(path *util.AccessPath, conds []expression.Expression, isIm bool) (bool, error) {
 	path.CountAfterAccess = float64(ds.statisticTable.Count)
 	path.Ranges = ranger.FullNotNullRange()
+	path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.Index)
+	path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.Index)
 	if len(conds) == 0 {
 		return false, nil
 	}
 	sc := ds.ctx.GetSessionVars().StmtCtx
-	path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.Index)
-	path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.Index)
 	if len(path.IdxCols) != 0 {
 		res, err := ranger.DetachCondAndBuildRangeForIndex(ds.ctx, conds, path.IdxCols, path.IdxColLens)
 		if err != nil {
