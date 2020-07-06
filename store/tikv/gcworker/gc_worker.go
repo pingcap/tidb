@@ -1053,7 +1053,7 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 			if err != nil {
 				return stat, errors.Trace(err)
 			}
-			stillInSame, refreshedLoc, err := w.tryRelocateLockRegion(bo, locks)
+			stillInSame, refreshedLoc, err := w.tryRelocateLocksRegion(bo, locks)
 			if err != nil {
 				return stat, errors.Trace(err)
 			}
@@ -1087,7 +1087,7 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 	return stat, nil
 }
 
-func (w *GCWorker) tryRelocateLockRegion(bo *tikv.Backoffer, locks []*tikv.Lock) (stillInSameRegion bool, refreshedLoc *tikv.KeyLocation, err error) {
+func (w *GCWorker) tryRelocateLocksRegion(bo *tikv.Backoffer, locks []*tikv.Lock) (stillInSameRegion bool, refreshedLoc *tikv.KeyLocation, err error) {
 	if len(locks) == 0 {
 		return
 	}
@@ -1095,8 +1095,8 @@ func (w *GCWorker) tryRelocateLockRegion(bo *tikv.Backoffer, locks []*tikv.Lock)
 	if err != nil {
 		return
 	}
-	for _, l := range locks {
-		if !refreshedLoc.Contains(l.Key) {
+	for i := len(locks) - 1; i > 0; i-- {
+		if !refreshedLoc.Contains(locks[i].Key) {
 			return
 		}
 	}
