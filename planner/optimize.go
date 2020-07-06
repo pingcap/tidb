@@ -326,8 +326,8 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 	if len(hints) == 0 {
 		return
 	}
-	var memoryQuotaHint, useToJAHint, useCascadesHint, maxExecutionTime *ast.TableOptimizerHint
-	var memoryQuotaHintCnt, useToJAHintCnt, useCascadesHintCnt, noIndexMergeHintCnt, readReplicaHintCnt, maxExecutionTimeCnt int
+	var memoryQuotaHint, useToJAHint, useCascadesHint, maxExecutionTime, forceNthPlan *ast.TableOptimizerHint
+	var memoryQuotaHintCnt, useToJAHintCnt, useCascadesHintCnt, noIndexMergeHintCnt, readReplicaHintCnt, maxExecutionTimeCnt, forceNthPlanCnt int
 	for _, hint := range hints {
 		switch hint.HintName.L {
 		case "memory_quota":
@@ -346,6 +346,9 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 		case "max_execution_time":
 			maxExecutionTimeCnt++
 			maxExecutionTime = hint
+		case "nth_plan":
+			forceNthPlanCnt++
+			forceNthPlan = hint
 		}
 	}
 	// Handle MEMORY_QUOTA
@@ -410,6 +413,25 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 		}
 		stmtHints.HasMaxExecutionTime = true
 		stmtHints.MaxExecutionTime = maxExecutionTime.HintData.(uint64)
+	}
+	// Handle NTH_PLAN
+	if forceNthPlanCnt != 0 {
+		if forceNthPlanCnt > 1 {
+			warn := errors.Errorf("NTH_PLAN() is defined more than once, only the last definition takes effect: NTH_PLAN(%v)", forceNthPlan.HintData.(int64))
+			warns = append(warns, warn)
+		}
+		stmtHints.ForceNthPlan = forceNthPlan.HintData.(int64)
+		if stmtHints.ForceNthPlan < 1 {
+			stmtHints.ForceNthPlan = -1
+			warn := errors.Errorf("the hintdata for NTH_PLAN() is too small, hint ignored.")
+			warns = append(warns, warn)
+		} else if stmtHints.ForceNthPlan > 100 {
+			stmtHints.ForceNthPlan = -1
+			warn := errors.Errorf("the hintdata for NTH_PLAN() is too big, hint ignored.")
+			warns = append(warns, warn)
+		}
+	} else {
+		stmtHints.ForceNthPlan = -1
 	}
 	return
 }
