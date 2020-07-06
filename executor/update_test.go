@@ -321,7 +321,6 @@ func (s *testSuite11) TestDeleteClusterIndex(c *C) {
 	tk.MustQuery(`select * from dt3pku`).Check(testkit.Rows())
 	tk.MustExec(`insert into dt3pku(id, uk, v) values('a', 1, 2)`)
 
-
 	tk.MustExec("drop table if exists s1")
 	tk.MustExec("create table s1 (a int, b int, c int, primary key (a, b))")
 	tk.MustExec("insert s1 values (3, 3, 3), (5, 5, 5)")
