@@ -248,6 +248,7 @@ type SpillDiskAction struct {
 	c              *RowContainer
 	fallbackAction memory.ActionOnExceed
 	m              sync.Mutex
+	once           sync.Once
 
 	// test function only used for test sync.
 	testSyncInputFunc  func()
@@ -268,18 +269,20 @@ func (a *SpillDiskAction) Action(t *memory.Tracker) {
 			a.fallbackAction.Action(t)
 		}
 	} else {
-		logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
-			zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
-		if a.testSyncInputFunc != nil {
-			a.testSyncInputFunc()
-			c := a.c
-			go func() {
-				c.SpillToDisk()
-				a.testSyncOutputFunc()
-			}()
-			return
-		}
-		go a.c.SpillToDisk()
+		a.once.Do(func() {
+			logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
+				zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
+			if a.testSyncInputFunc != nil {
+				a.testSyncInputFunc()
+				c := a.c
+				go func() {
+					c.SpillToDisk()
+					a.testSyncOutputFunc()
+				}()
+				return
+			}
+			go a.c.SpillToDisk()
+		})
 	}
 }
 
@@ -296,6 +299,7 @@ func (a *SpillDiskAction) ResetRowContainer(c *RowContainer) {
 	a.m.Lock()
 	defer a.m.Unlock()
 	a.c = c
+	a.once = sync.Once{}
 }
 
 // WaitForTest waits all goroutine have gone.
@@ -438,6 +442,7 @@ type SortAndSpillDiskAction struct {
 	c              *SortedRowContainer
 	fallbackAction memory.ActionOnExceed
 	m              sync.Mutex
+	once           sync.Once
 
 	// test function only used for test sync.
 	testSyncInputFunc  func()
@@ -450,7 +455,8 @@ type SortAndSpillDiskAction struct {
 func (a *SortAndSpillDiskAction) Action(t *memory.Tracker) {
 	a.m.Lock()
 	defer a.m.Unlock()
-	if a.c.AlreadySpilledSafe() || a.c.GetMemTracker().BytesConsumed() == 0 {
+	// Guarantee that each partition size is at least 10% of the threshold, to avoid opening too many files.
+	if a.c.AlreadySpilledSafe() || a.c.GetMemTracker().BytesConsumed() <= t.GetBytesLimit()/10 {
 		if !t.CheckExceed() {
 			return
 		}
@@ -458,18 +464,20 @@ func (a *SortAndSpillDiskAction) Action(t *memory.Tracker) {
 			a.fallbackAction.Action(t)
 		}
 	} else {
-		logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
-			zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
-		if a.testSyncInputFunc != nil {
-			a.testSyncInputFunc()
-			c := a.c
-			go func() {
-				c.sortAndSpillToDisk()
-				a.testSyncOutputFunc()
-			}()
-			return
-		}
-		go a.c.sortAndSpillToDisk()
+		a.once.Do(func() {
+			logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
+				zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
+			if a.testSyncInputFunc != nil {
+				a.testSyncInputFunc()
+				c := a.c
+				go func() {
+					c.sortAndSpillToDisk()
+					a.testSyncOutputFunc()
+				}()
+				return
+			}
+			go a.c.sortAndSpillToDisk()
+		})
 	}
 }
 
@@ -486,6 +494,7 @@ func (a *SortAndSpillDiskAction) ResetRowContainer(c *SortedRowContainer) {
 	a.m.Lock()
 	defer a.m.Unlock()
 	a.c = c
+	a.once = sync.Once{}
 }
 
 // WaitForTest waits all goroutine have gone.
