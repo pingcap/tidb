@@ -655,6 +655,22 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels:   []string{"instance"},
 		Quantile: 0.95,
 	},
+	"tidb_batch_client_wait_conn_duration": {
+		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_tikvclient_batch_client_wait_connection_establish_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le, instance))",
+		Labels:   []string{"instance"},
+		Quantile: 0.95,
+		Comment:  "The quantile of batch client wait new connection establish durations",
+	},
+	"tidb_batch_client_wait_conn_total_count": {
+		PromQL:  "sum(increase(tidb_tikvclient_batch_client_wait_connection_establish_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total count of batch client wait new connection establish",
+	},
+	"tidb_batch_client_wait_conn_total_time": {
+		PromQL:  "sum(increase(tidb_tikvclient_batch_client_wait_connection_establish_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)",
+		Labels:  []string{"instance"},
+		Comment: "The total time of batch client wait new connection establish",
+	},
 	"tidb_batch_client_unavailable_duration": {
 		Comment:  "The quantile of kv storage batch processing unvailable durations",
 		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_tikvclient_batch_client_unavailable_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le, instance))",

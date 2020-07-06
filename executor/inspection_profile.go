@@ -356,6 +356,16 @@ func (pb *profileBuilder) genTiDBQueryTree() *metricNode {
 				table: "tidb_batch_client_wait",
 			},
 			{
+				table: "tidb_batch_client_wait_conn",
+			},
+			{
+				table: "tidb_batch_client_unavailable",
+			},
+			{
+				table:     "pd_client_cmd",
+				condition: "type not in ('tso','wait','tso_async_wait')",
+			},
+			{
 				table: "tikv_grpc_message",
 				children: []*metricNode{
 					{
