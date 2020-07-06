@@ -170,7 +170,7 @@ func (pb *profileBuilder) addMetricTree(root *metricNode, name string) error {
 	if root == nil {
 		return nil
 	}
-	pb.buf.WriteString(fmt.Sprintf(`subgraph tidb_%[1]s { "%[1]s" [shape=box fontsize=16 label="Type: TiDB %[1]s\lTime: %s\lDuration: %s\l"] }`, name, pb.start.String(), pb.end.Sub(pb.start).String()))
+	pb.buf.WriteString(fmt.Sprintf(`subgraph %[1]s { "%[1]s" [shape=box fontsize=16 label="Type: %[1]s\lTime: %s\lDuration: %s\l"] }`, name, pb.start.String(), pb.end.Sub(pb.start).String()))
 	pb.buf.WriteByte('\n')
 	v, err := root.getValue(pb)
 	if err != nil {
@@ -192,6 +192,14 @@ func (pb *profileBuilder) traversal(n *metricNode) error {
 		return nil
 	}
 	pb.uniqueMap[n] = struct{}{}
+	selfValue, err := n.getValue(pb)
+	if err != nil {
+		return err
+	}
+
+	if pb.ignoreFraction(selfValue, pb.totalValue) {
+		return nil
+	}
 	totalChildrenValue := float64(0)
 	for _, child := range n.children {
 		childValue, err := child.getValue(pb)
@@ -202,10 +210,6 @@ func (pb *profileBuilder) traversal(n *metricNode) error {
 		if !child.isPartOfParent {
 			totalChildrenValue += childValue
 		}
-	}
-	selfValue, err := n.getValue(pb)
-	if err != nil {
-		return err
 	}
 	selfCost := selfValue - totalChildrenValue
 	pb.addNode(n, selfCost, selfValue)
@@ -219,6 +223,9 @@ func (pb *profileBuilder) traversal(n *metricNode) error {
 }
 
 func (pb *profileBuilder) addNodeEdge(parent, child *metricNode, childValue float64) {
+	if pb.ignoreFraction(childValue, pb.totalValue) {
+		return
+	}
 	style := ""
 	if child.isPartOfParent {
 		style = "dotted"
@@ -253,7 +260,8 @@ func (pb *profileBuilder) addNode(n *metricNode, selfCost, nodeTotal float64) {
 			pb.addNodeDef(n.getName(label), labelValue, v, v)
 		}
 		weight = selfCost / 2
-		selfCost = selfCost / 5
+		// Since this node has labels, all cost was consume on the children, so the selfCost is 0.
+		selfCost = 0
 	}
 
 	label := fmt.Sprintf("%s\n %.2fs (%.2f%%)\nof %.2fs (%.2f%%)",
@@ -298,15 +306,12 @@ func (pb *profileBuilder) dotColor(score float64, isBackground bool) string {
 	// negative values easier to distinguish, and to make more use of
 	// the color range.)
 	const shift = 0.7
-
 	// Saturation and value (in hsv colorspace) for background colors.
 	const bgSaturation = 0.1
 	const bgValue = 0.93
-
 	// Saturation and value (in hsv colorspace) for foreground colors.
 	const fgSaturation = 1.0
 	const fgValue = 0.7
-
 	// Choose saturation and value based on isBackground.
 	var saturation float64
 	var value float64
