@@ -70,6 +70,7 @@ func (c *RowContainer) SpillToDisk() {
 	}
 	if c.actionSpill != nil {
 		atomic.StoreUint32(&c.actionSpill.status, 1)
+		defer c.actionSpill.cond.Broadcast()
 		defer atomic.StoreUint32(&c.actionSpill.status, 2)
 	}
 	var err error
@@ -110,6 +111,7 @@ func (c *RowContainer) alreadySpilled() bool {
 }
 
 // AlreadySpilledSafe indicates that records have spilled out into disk. It's thread-safe.
+// The function is only used for test.
 func (c *RowContainer) AlreadySpilledSafe() bool {
 	c.m.RLock()
 	defer c.m.RUnlock()
@@ -248,8 +250,12 @@ type SpillDiskAction struct {
 	fallbackAction memory.ActionOnExceed
 	m              sync.Mutex
 	once           sync.Once
-	status         uint32
-	cond           *sync.Cond
+	// status indicates different stages for the Action
+	// 0 indicates the rowContainer is not spilled.
+	// 1 indicates the rowContainer is spilling.
+	// 2 indicates thr rowContainer is spilled.
+	status uint32
+	cond   *sync.Cond
 
 	// test function only used for test sync.
 	testSyncInputFunc  func()
@@ -272,16 +278,11 @@ func (a *SpillDiskAction) Action(t *memory.Tracker) {
 				c := a.c
 				go func() {
 					c.SpillToDisk()
-					a.cond.Broadcast()
 					a.testSyncOutputFunc()
 				}()
 				return
 			}
-			c := a.c
-			go func() {
-				c.SpillToDisk()
-				a.cond.Broadcast()
-			}()
+			go a.c.SpillToDisk()
 		})
 		return
 	}
@@ -483,16 +484,11 @@ func (a *SortAndSpillDiskAction) Action(t *memory.Tracker) {
 				c := a.c
 				go func() {
 					c.sortAndSpillToDisk()
-					a.cond.Broadcast()
 					a.testSyncOutputFunc()
 				}()
 				return
 			}
-			c := a.c
-			go func() {
-				c.sortAndSpillToDisk()
-				a.cond.Broadcast()
-			}()
+			go a.c.sortAndSpillToDisk()
 		})
 		return
 	}
