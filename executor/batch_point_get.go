@@ -112,7 +112,8 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	e.snapshotTS = e.startTS
-	txnCtx := e.ctx.GetSessionVars().TxnCtx
+	sessVars := e.ctx.GetSessionVars()
+	txnCtx := sessVars.TxnCtx
 	if e.lock {
 		e.snapshotTS = txnCtx.GetForUpdateTS()
 	}
@@ -122,7 +123,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	}
 	e.txn = txn
 	var snapshot kv.Snapshot
-	if txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() {
+	if sessVars.InTxn() && txnCtx.StartTS == txnCtx.GetForUpdateTS() {
 		// We can safely reuse the transaction snapshot if startTS is equal to forUpdateTS.
 		// The snapshot may contains cache that can reduce RPC call.
 		snapshot = txn.GetSnapshot()
@@ -137,7 +138,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	}
 	snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
 	var batchGetter kv.BatchGetter = snapshot
-	if txn.Valid() {
+	if sessVars.InTxn() {
 		batchGetter = kv.NewBufferBatchGetter(txn.GetMemBuffer(), &PessimisticLockCacheGetter{txnCtx: txnCtx}, snapshot)
 	}
 
