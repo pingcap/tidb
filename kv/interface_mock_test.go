@@ -125,6 +125,10 @@ func (t *mockTxn) SetVars(vars *Variables) {
 
 }
 
+func (t *mockTxn) GetVars() *Variables {
+	return nil
+}
+
 // newMockTxn new a mockTxn.
 func newMockTxn() Transaction {
 	return &mockTxn{

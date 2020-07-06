@@ -129,6 +129,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 	c.Assert(seVar, NotNil)
 
 	seVar.User = &auth.UserIdentity{Username: "root", Hostname: "192.168.0.1"}
+	seVar.ConnectionInfo = &variable.ConnectionInfo{ClientIP: "192.168.0.1"}
 	seVar.ConnectionID = 1
 	seVar.CurrentDB = "test"
 	seVar.InRestrictedSQL = true
@@ -175,7 +176,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 	var memMax int64 = 2333
 	var diskMax int64 = 6666
 	resultString := `# Txn_start_ts: 406649736972468225
-# User: root@192.168.0.1
+# User@Host: root[root] @ 192.168.0.1 [192.168.0.1]
 # Conn_ID: 1
 # Query_time: 1
 # Parse_time: 0.00000001
