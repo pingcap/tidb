@@ -17,13 +17,13 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"hash/crc64"
 	"io"
 	"io/ioutil"
 	"os"
 	"sync"
 
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -33,6 +33,32 @@ const (
 	writeBufSize = 128 * 1024
 	readBufSize  = 4 * 1024
 )
+
+const ChecksumVersion = 1
+
+type checksum struct {
+	wr io.Writer
+}
+
+func Checksum(w io.Writer) io.Writer {
+	return &checksum{wr: w}
+}
+
+func (cks checksum) Write(p []byte) (n int, err error) {
+	buf := make([]byte, 2)
+	version := int32(ChecksumVersion)
+	buf[0] = byte(version & 0x0000ff00 >> 8)
+	buf[1] = byte(version & 0x000000ff)
+	p = append(p, buf...)
+	sum := crc64.Checksum(p, crc64.MakeTable(crc64.ISO))
+	buf = make([]byte, 4)
+	buf[0] = byte(sum & 0xff000000 >> 24)
+	buf[1] = byte(sum & 0x00ff0000 >> 16)
+	buf[2] = byte(sum & 0x0000ff00 >> 8)
+	buf[3] = byte(sum & 0x000000ff)
+	p = append(p, buf...)
+	return cks.wr.Write(p)
+}
 
 var bufWriterPool = sync.Pool{
 	New: func() interface{} { return bufio.NewWriterSize(nil, writeBufSize) },
@@ -71,12 +97,12 @@ func NewListInDisk(fieldTypes []*types.FieldType) *ListInDisk {
 }
 
 func (l *ListInDisk) initDiskFile() (err error) {
-	l.disk, err = ioutil.TempFile(config.GetGlobalConfig().TempStoragePath, l.diskTracker.Label().String())
+	l.disk, err = ioutil.TempFile("/Users/mayujie", l.diskTracker.Label().String())
 	if err != nil {
 		return
 	}
 	l.bufWriter = bufWriterPool.Get().(*bufio.Writer)
-	l.bufWriter.Reset(l.disk)
+	l.bufWriter.Reset(Checksum(l.disk))
 	l.bufFlushMutex = sync.RWMutex{}
 	return
 }

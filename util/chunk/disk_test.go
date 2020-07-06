@@ -15,17 +15,16 @@ package chunk
 
 import (
 	"fmt"
-	"math/rand"
-	"os"
-	"path/filepath"
-	"strings"
-	"testing"
-
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"math/rand"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
 )
 
 func initChunks(numChk, numRow int) ([]*Chunk, []*types.FieldType) {
@@ -131,4 +130,21 @@ func BenchmarkListInDiskGetRow(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
+}
+
+func Test1(t *testing.T) {
+	numChk, numRow := 2, 2
+	chks, fields := initChunks(numChk, numRow)
+	l := NewListInDisk(fields)
+	defer func() {
+		t.Log(l.flush())
+		t.Log(os.Stat(l.disk.Name()))
+	}()
+	for _, chk := range chks {
+		err := l.Add(chk)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	fmt.Println(l.disk.Name())
 }
