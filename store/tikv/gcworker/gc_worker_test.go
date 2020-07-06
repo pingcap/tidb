@@ -507,8 +507,9 @@ func (s *testGCWorkerSuite) TestCheckScanLockMode(c *C) {
 }
 
 func (s *testGCWorkerSuite) TestNeedsGCOperationForStore(c *C) {
-	newStore := func(hasEngineLabel bool, engineLabel string) *metapb.Store {
+	newStore := func(state metapb.StoreState, hasEngineLabel bool, engineLabel string) *metapb.Store {
 		store := &metapb.Store{}
+		store.State = state
 		if hasEngineLabel {
 			store.Labels = []*metapb.StoreLabel{{Key: engineLabelKey, Value: engineLabel}}
 		}
@@ -516,23 +517,25 @@ func (s *testGCWorkerSuite) TestNeedsGCOperationForStore(c *C) {
 	}
 
 	// TiKV needs to do the store-level GC operations.
-	res, err := needsGCOperationForStore(newStore(false, ""))
-	c.Assert(err, IsNil)
-	c.Assert(res, IsTrue)
-	res, err = needsGCOperationForStore(newStore(true, ""))
-	c.Assert(err, IsNil)
-	c.Assert(res, IsTrue)
-	res, err = needsGCOperationForStore(newStore(true, engineLabelTiKV))
-	c.Assert(err, IsNil)
-	c.Assert(res, IsTrue)
+	for _, state := range []metapb.StoreState{metapb.StoreState_Up, metapb.StoreState_Offline, metapb.StoreState_Tombstone} {
+		needGC := state != metapb.StoreState_Tombstone
+		res, err := needsGCOperationForStore(newStore(state, false, ""))
+		c.Assert(err, IsNil)
+		c.Assert(res, Equals, needGC)
+		res, err = needsGCOperationForStore(newStore(state, true, ""))
+		c.Assert(err, IsNil)
+		c.Assert(res, Equals, needGC)
+		res, err = needsGCOperationForStore(newStore(state, true, engineLabelTiKV))
+		c.Assert(err, IsNil)
+		c.Assert(res, Equals, needGC)
 
-	// TiFlash does not need these operations.
-	res, err = needsGCOperationForStore(newStore(true, engineLabelTiFlash))
-	c.Assert(err, IsNil)
-	c.Assert(res, IsFalse)
-
+		// TiFlash does not need these operations.
+		res, err = needsGCOperationForStore(newStore(state, true, engineLabelTiFlash))
+		c.Assert(err, IsNil)
+		c.Assert(res, IsFalse)
+	}
 	// Throw an error for unknown store types.
-	_, err = needsGCOperationForStore(newStore(true, "invalid"))
+	_, err := needsGCOperationForStore(newStore(metapb.StoreState_Up, true, "invalid"))
 	c.Assert(err, NotNil)
 }
 
@@ -579,7 +582,7 @@ func (s *testGCWorkerSuite) testDeleteRangesFailureImpl(c *C, failType int) {
 	c.Assert(err, IsNil)
 	c.Assert(preparedRanges, DeepEquals, ranges)
 
-	stores, err := s.gcWorker.getUpStoresForGC(context.Background())
+	stores, err := s.gcWorker.getStoresForGC(context.Background())
 	c.Assert(err, IsNil)
 	c.Assert(len(stores), Equals, 3)
 
@@ -1000,7 +1003,7 @@ func (s *testGCWorkerSuite) makeMergedMockClient(c *C, count int) (*mergeLockSca
 
 	const scanLockLimit = 3
 
-	storesMap, err := s.gcWorker.getUpStoresMapForGC(context.Background())
+	storesMap, err := s.gcWorker.getStoresMapForGC(context.Background())
 	c.Assert(err, IsNil)
 	scanner := newMergeLockScanner(100000, s.client, storesMap)
 	scanner.scanLockLimit = scanLockLimit
