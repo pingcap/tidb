@@ -455,6 +455,7 @@ type SortAndSpillDiskAction struct {
 func (a *SortAndSpillDiskAction) Action(t *memory.Tracker) {
 	a.m.Lock()
 	defer a.m.Unlock()
+	// Guarantee that each partition size is at least 10% of the threshold, to avoid opening too many files.
 	if a.c.AlreadySpilledSafe() || a.c.GetMemTracker().BytesConsumed() <= t.GetBytesLimit()/10 {
 		if !t.CheckExceed() {
 			return
