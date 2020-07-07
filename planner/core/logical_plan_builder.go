@@ -2816,8 +2816,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		TblCols:             make([]*expression.Column, 0, len(columns)),
 		preferPartitions:    make(map[int][]model.CIStr),
 	}.Init(b.ctx, b.getSelectOffset())
-
-	var handleCol *expression.Column
+	var handleCols HandleCols
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
 	names := make([]*types.FieldName, 0, len(columns))
 	for i, col := range columns {
@@ -2837,36 +2836,36 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			OrigName: names[i].String(),
 			IsHidden: col.Hidden,
 		}
-
-		// TODO: The common handle may be multi columns, need to change ds.handleCol to a slice.
-		if col.IsPKHandleColumn(tableInfo) || col.IsCommonHandleColumn(tableInfo) {
-			handleCol = newCol
+		if col.IsPKHandleColumn(tableInfo) {
+			handleCols = &IntHandleCols{col: newCol}
 		}
 		schema.Append(newCol)
 		ds.TblCols = append(ds.TblCols, newCol)
 	}
 	// We append an extra handle column to the schema when the handle
 	// column is not the primary key of "ds".
-	if handleCol == nil {
-		ds.Columns = append(ds.Columns, model.NewExtraHandleColInfo())
-		handleCol = ds.newExtraHandleSchemaCol()
-		schema.Append(handleCol)
-		names = append(names, &types.FieldName{
-			DBName:      dbName,
-			TblName:     tableInfo.Name,
-			ColName:     model.ExtraHandleName,
-			OrigColName: model.ExtraHandleName,
-		})
-		ds.TblCols = append(ds.TblCols, handleCol)
+	if handleCols == nil {
+		if tableInfo.IsCommonHandle {
+			primaryIdx := tables.FindPrimaryIndex(tableInfo)
+			handleCols = NewCommonHandleCols(b.ctx.GetSessionVars().StmtCtx, tableInfo, primaryIdx, ds.TblCols)
+		} else {
+			extraCol := ds.newExtraHandleSchemaCol()
+			handleCols = &IntHandleCols{col: extraCol}
+			ds.Columns = append(ds.Columns, model.NewExtraHandleColInfo())
+			schema.Append(extraCol)
+			names = append(names, &types.FieldName{
+				DBName:      dbName,
+				TblName:     tableInfo.Name,
+				ColName:     model.ExtraHandleName,
+				OrigColName: model.ExtraHandleName,
+			})
+			ds.TblCols = append(ds.TblCols, extraCol)
+		}
 	}
-	if handleCol != nil {
-		ds.handleCol = handleCol
-		handleMap := make(map[int64][]*expression.Column)
-		handleMap[tableInfo.ID] = []*expression.Column{handleCol}
-		b.handleHelper.pushMap(handleMap)
-	} else {
-		b.handleHelper.pushMap(nil)
-	}
+	ds.handleCols = handleCols
+	handleMap := make(map[int64][]HandleCols)
+	handleMap[tableInfo.ID] = []HandleCols{handleCols}
+	b.handleHelper.pushMap(handleMap)
 	ds.SetSchema(schema)
 	ds.names = names
 	ds.setPreferredStoreType(b.TableHints())
@@ -2885,7 +2884,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	var result LogicalPlan = ds
 	dirty := tableHasDirtyContent(b.ctx, tableInfo)
 	if dirty {
-		us := LogicalUnionScan{handleCol: handleCol}.Init(b.ctx, b.getSelectOffset())
+		us := LogicalUnionScan{handleCols: handleCols}.Init(b.ctx, b.getSelectOffset())
 		us.SetChildren(ds)
 		result = us
 	}
@@ -2949,7 +2948,7 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 	// a stable schema and there is no online DDL on the memory table.
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns))...)
 	names := make([]*types.FieldName, 0, len(tableInfo.Columns))
-	var handleCol *expression.Column
+	var handleCols HandleCols
 	for _, col := range tableInfo.Columns {
 		names = append(names, &types.FieldName{
 			DBName:      dbName,
@@ -2965,14 +2964,14 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 			RetType:  &col.FieldType,
 		}
 		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
-			handleCol = newCol
+			handleCols = &IntHandleCols{col: newCol}
 		}
 		schema.Append(newCol)
 	}
 
-	if handleCol != nil {
-		handleMap := make(map[int64][]*expression.Column)
-		handleMap[tableInfo.ID] = []*expression.Column{handleCol}
+	if handleCols != nil {
+		handleMap := make(map[int64][]HandleCols)
+		handleMap[tableInfo.ID] = []HandleCols{handleCols}
 		b.handleHelper.pushMap(handleMap)
 	} else {
 		b.handleHelper.pushMap(nil)
@@ -3218,7 +3217,7 @@ type TblColPosInfo struct {
 	// Start and End represent the ordinal range [Start, End) of the consecutive columns.
 	Start, End int
 	// HandleOrdinal represents the ordinal of the handle column.
-	HandleOrdinal  []int
+	HandleCols     HandleCols
 	IsCommonHandle bool // TODO: fix redesign update join table and remove me!
 }
 
@@ -3255,13 +3254,13 @@ func (c TblColPosInfoSlice) FindHandle(colOrdinal int) (int, bool) {
 		// TODO: fix redesign update join table to fix me.
 		return 0, false
 	}
-	return c[rangeBehindOrdinal-1].HandleOrdinal[0], true
+	return c[rangeBehindOrdinal-1].HandleCols.GetCol(0).Index, true
 }
 
 // buildColumns2Handle builds columns to handle mapping.
 func buildColumns2Handle(
 	names []*types.FieldName,
-	tblID2Handle map[int64][]*expression.Column,
+	tblID2Handle map[int64][]HandleCols,
 	tblID2Table map[int64]table.Table,
 	onlyWritableCol bool,
 ) (TblColPosInfoSlice, error) {
@@ -3275,12 +3274,12 @@ func buildColumns2Handle(
 			tblLen = len(tbl.Cols())
 		}
 		for _, handleCol := range handleCols {
-			offset, err := getTableOffset(names, names[handleCol.Index])
+			offset, err := getTableOffset(names, names[handleCol.GetCol(0).Index])
 			if err != nil {
 				return nil, err
 			}
 			end := offset + tblLen
-			cols2Handles = append(cols2Handles, TblColPosInfo{tblID, offset, end, []int{handleCol.Index}, tbl.Meta().IsCommonHandle})
+			cols2Handles = append(cols2Handles, TblColPosInfo{tblID, offset, end, handleCol, tbl.Meta().IsCommonHandle})
 			// TODO: fix me for cluster index
 		}
 	}
@@ -3736,15 +3735,15 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 	return del, err
 }
 
-func resolveIndicesForTblID2Handle(tblID2Handle map[int64][]*expression.Column, schema *expression.Schema) (map[int64][]*expression.Column, error) {
-	newMap := make(map[int64][]*expression.Column, len(tblID2Handle))
+func resolveIndicesForTblID2Handle(tblID2Handle map[int64][]HandleCols, schema *expression.Schema) (map[int64][]HandleCols, error) {
+	newMap := make(map[int64][]HandleCols, len(tblID2Handle))
 	for i, cols := range tblID2Handle {
 		for _, col := range cols {
 			resolvedCol, err := col.ResolveIndices(schema)
 			if err != nil {
 				return nil, err
 			}
-			newMap[i] = append(newMap[i], resolvedCol.(*expression.Column))
+			newMap[i] = append(newMap[i], resolvedCol)
 		}
 	}
 	return newMap, nil
@@ -3752,9 +3751,9 @@ func resolveIndicesForTblID2Handle(tblID2Handle map[int64][]*expression.Column, 
 
 func (p *Delete) cleanTblID2HandleMap(
 	tablesToDelete map[int64][]*ast.TableName,
-	tblID2Handle map[int64][]*expression.Column,
+	tblID2Handle map[int64][]HandleCols,
 	outputNames []*types.FieldName,
-) map[int64][]*expression.Column {
+) map[int64][]HandleCols {
 	for id, cols := range tblID2Handle {
 		names, ok := tablesToDelete[id]
 		if !ok {
@@ -3762,7 +3761,15 @@ func (p *Delete) cleanTblID2HandleMap(
 			continue
 		}
 		for i := len(cols) - 1; i >= 0; i-- {
-			if !p.matchingDeletingTable(names, outputNames[cols[i].Index]) {
+			hCols := cols[i]
+			var hasMatch bool
+			for j := 0; j < hCols.NumCols(); j++ {
+				if p.matchingDeletingTable(names, outputNames[hCols.GetCol(j).Index]) {
+					hasMatch = true
+					break
+				}
+			}
+			if !hasMatch {
 				cols = append(cols[:i], cols[i+1:]...)
 			}
 		}
