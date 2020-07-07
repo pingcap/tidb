@@ -1348,15 +1348,7 @@ func CheckHandleExists(ctx context.Context, sctx sessionctx.Context, t table.Tab
 	}
 	// Check key exists.
 	recordKey := t.RecordKey(recordID)
-	if sctx.GetSessionVars().PresumeKeyNotExists {
-		var v []byte
-		v, err = txn.GetMemBuffer().Get(ctx, recordKey)
-		if err == nil && len(v) == 0 {
-			err = kv.ErrNotExist
-		}
-	} else {
-		_, err = txn.Get(ctx, recordKey)
-	}
+	_, err = txn.Get(ctx, recordKey)
 	if err == nil {
 		return kv.ErrKeyExists.FastGenByArgs(recordID.String(), "PRIMARY")
 	} else if !kv.ErrNotExist.Equal(err) {
