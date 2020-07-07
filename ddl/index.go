@@ -1215,7 +1215,7 @@ func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table, indexInfo *mo
 	}
 
 	dbName := model.NewCIStr(sessCtx.GetSessionVars().CurrentDB)
-	exprCols, names := expression.ColumnInfos2ColumnsAndNames(sessCtx, dbName, t.Meta().Name, t.Meta().Columns, t.Meta())
+	exprCols, _ := expression.ColumnInfos2ColumnsAndNames(sessCtx, dbName, t.Meta().Name, t.Meta().Columns, t.Meta())
 	mockSchema := expression.NewSchema(exprCols...)
 
 	decodeColMap, err := decoder.BuildFullDecodeColMap(t, mockSchema)

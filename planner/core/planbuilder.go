@@ -1190,7 +1190,9 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 	ts.HandleIdx = pkOffset
 	is.initSchema(fullIdxCols, true)
 	rootT := finishCopTask(b.ctx, cop).(*rootTask)
-	rootT.p.ResolveIndices()
+	if err := rootT.p.ResolveIndices(); err != nil {
+		return nil, err
+	}
 	return rootT.p, nil
 }
 
