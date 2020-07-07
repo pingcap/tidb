@@ -76,7 +76,7 @@ type worker struct {
 	id       int32
 	tp       workerType
 	ddlJobCh chan struct{}
-	quitCh   chan struct{}
+	ctx      context.Context
 	wg       sync.WaitGroup
 
 	sessPool        *sessionPool // sessPool is used to new sessions to execute SQL in ddl package.
@@ -85,12 +85,12 @@ type worker struct {
 	logCtx          context.Context
 }
 
-func newWorker(tp workerType, store kv.Storage, sessPool *sessionPool, delRangeMgr delRangeManager) *worker {
+func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRangeMgr delRangeManager) *worker {
 	worker := &worker{
 		id:              atomic.AddInt32(&ddlWorkerID, 1),
 		tp:              tp,
 		ddlJobCh:        make(chan struct{}, 1),
-		quitCh:          make(chan struct{}),
+		ctx:             ctx,
 		reorgCtx:        &reorgCtx{notifyCancelReorgJob: 0},
 		sessPool:        sessPool,
 		delRangeManager: delRangeMgr,
@@ -119,7 +119,6 @@ func (w *worker) String() string {
 
 func (w *worker) close() {
 	startTime := time.Now()
-	close(w.quitCh)
 	w.wg.Wait()
 	logutil.Logger(w.logCtx).Info("[ddl] DDL worker closed", zap.Duration("take time", time.Since(startTime)))
 }
@@ -148,7 +147,7 @@ func (w *worker) start(d *ddlCtx) {
 		case <-ticker.C:
 			logutil.Logger(w.logCtx).Debug("[ddl] wait to check DDL status again", zap.Duration("interval", checkTime))
 		case <-w.ddlJobCh:
-		case <-w.quitCh:
+		case <-w.ctx.Done():
 			return
 		}
 
@@ -215,7 +214,7 @@ func (d *ddl) limitDDLJobs() {
 				tasks = append(tasks, <-d.limitJobCh)
 			}
 			d.addBatchDDLJobs(tasks)
-		case <-d.quitCh:
+		case <-d.ctx.Done():
 			return
 		}
 	}
@@ -421,7 +420,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 	once := true
 	waitDependencyJobCnt := 0
 	for {
-		if isChanClosed(w.quitCh) {
+		if isChanClosed(w.ctx.Done()) {
 			return nil
 		}
 
@@ -510,7 +509,9 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 		// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
 		// If the job is done or still running or rolling back, we will wait 2 * lease time to guarantee other servers to update
 		// the newest schema.
-		w.waitSchemaChanged(nil, d, waitTime, schemaVer, job)
+		ctx, cancel := context.WithTimeout(w.ctx, waitTime)
+		w.waitSchemaChanged(ctx, d, waitTime, schemaVer, job)
+		cancel()
 
 		d.mu.RLock()
 		d.mu.hook.OnJobUpdated(job)
@@ -750,11 +751,6 @@ func (w *worker) waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time
 		return
 	}
 
-	if ctx == nil {
-		var cancelFunc context.CancelFunc
-		ctx, cancelFunc = context.WithTimeout(context.Background(), waitTime)
-		defer cancelFunc()
-	}
 	err = d.schemaSyncer.OwnerUpdateGlobalVersion(ctx, latestSchemaVersion)
 	if err != nil {
 		logutil.Logger(w.logCtx).Info("[ddl] update latest schema version failed", zap.Int64("ver", latestSchemaVersion), zap.Error(err))
@@ -795,8 +791,7 @@ func (w *worker) waitSchemaSynced(d *ddlCtx, job *model.Job, waitTime time.Durat
 	if !job.IsRunning() && !job.IsRollingback() && !job.IsDone() && !job.IsRollbackDone() {
 		return
 	}
-	// TODO: Make ctx exits when the d is close.
-	ctx, cancelFunc := context.WithTimeout(context.Background(), waitTime)
+	ctx, cancelFunc := context.WithTimeout(w.ctx, waitTime)
 	defer cancelFunc()
 
 	latestSchemaVersion, err := d.schemaSyncer.MustGetGlobalVersion(ctx)
@@ -869,7 +864,7 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 	return schemaVersion, errors.Trace(err)
 }
 
-func isChanClosed(quitCh chan struct{}) bool {
+func isChanClosed(quitCh <-chan struct{}) bool {
 	select {
 	case <-quitCh:
 		return true
