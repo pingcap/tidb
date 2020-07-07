@@ -245,7 +245,11 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) error {
 			handleCol = originSchemaColumns[0]
 			handleColInfo = originColumns[0]
 		} else {
-			handleCol = ds.handleCols.GetCol(0)
+			if ds.handleCols != nil {
+				handleCol = ds.handleCols.GetCol(0)
+			} else {
+				handleCol = ds.newExtraHandleSchemaCol()
+			}
 			handleColInfo = model.NewExtraHandleColInfo()
 		}
 		ds.Columns = append(ds.Columns, handleColInfo)
