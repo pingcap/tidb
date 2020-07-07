@@ -248,7 +248,7 @@ func (*testSuite) TestEnqueueActionType(c *C) {
 	}
 	c.Assert(validator.deltaSchemaInfos, DeepEquals, ret)
 	// Check the flag set by schema diff, note tableID = 3 has been set flag 0x3 in schema version 9, and flag 0x4
-	// in schema version 10, so the resActions for tableID = 3 should be 0x3 & 0x4 = 0x7
+	// in schema version 10, so the resActions for tableID = 3 should be 0x3 & 0x4 = 0x7.
 	relatedChanges, isTablesChanged := validator.isRelatedTablesChanged(5, []int64{1, 2, 3, 4})
 	c.Assert(isTablesChanged, Equals, true)
 	c.Assert(relatedChanges.PhyTblIDS, DeepEquals, []int64{1, 2, 3, 4})

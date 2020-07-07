@@ -55,7 +55,7 @@ func (s *SchemaChecker) Check(txnTS uint64) (*tikv.RelatedSchemaChange, error) {
 	return s.CheckBySchemaVer(txnTS, intSchemaVer(s.schemaVer))
 }
 
-// CheckBySchemaVer checks if the schema version valid or not at txnTS
+// CheckBySchemaVer checks if the schema version valid or not at txnTS.
 func (s *SchemaChecker) CheckBySchemaVer(txnTS uint64, startSchemaVer tikv.SchemaVer) (*tikv.RelatedSchemaChange, error) {
 	schemaOutOfDateRetryInterval := atomic.LoadInt64(&SchemaOutOfDateRetryInterval)
 	schemaOutOfDateRetryTimes := int(atomic.LoadInt32(&SchemaOutOfDateRetryTimes))

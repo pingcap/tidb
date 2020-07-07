@@ -69,7 +69,7 @@ type tikvTxn struct {
 	valid bool
 	dirty bool
 
-	// txnInfoSchema is the infoSchema fetched at startTS
+	// txnInfoSchema is the infoSchema fetched at startTS.
 	txnInfoSchema SchemaVer
 }
 
