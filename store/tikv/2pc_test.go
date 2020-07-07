@@ -711,7 +711,7 @@ func (s *testCommitterSuite) TestDeleteYourWriteCauseGhostPrimary(c *C) {
 }
 
 func (s *testCommitterSuite) TestDeleteAllYourWrites(c *C) {
-	s.cluster.SplitKeys(kv.Key("d"), kv.Key("a"), 4)
+	s.cluster.SplitKeys(s.mvccStore, kv.Key("d"), kv.Key("a"), 4)
 	k1 := kv.Key("a")
 	k2 := kv.Key("b")
 	k3 := kv.Key("c")
@@ -736,7 +736,7 @@ func (s *testCommitterSuite) TestDeleteAllYourWrites(c *C) {
 }
 
 func (s *testCommitterSuite) TestDeleteAllYourWritesWithSFU(c *C) {
-	s.cluster.SplitKeys(kv.Key("d"), kv.Key("a"), 4)
+	s.cluster.SplitKeys(s.mvccStore, kv.Key("d"), kv.Key("a"), 4)
 	k1 := kv.Key("a")
 	k2 := kv.Key("b")
 	k3 := kv.Key("c")
