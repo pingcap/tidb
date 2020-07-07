@@ -65,13 +65,13 @@ func (s *testLockSuite) lockKey(c *C, key, value, primaryKey, primaryValue []byt
 	tpc.primaryKey = primaryKey
 
 	ctx := context.Background()
-	err = tpc.prewriteMutations(NewBackoffer(ctx, PrewriteMaxBackoff), tpc.mutations)
+	err = tpc.prewriteMutations(NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil), tpc.mutations)
 	c.Assert(err, IsNil)
 
 	if commitPrimary {
 		tpc.commitTS, err = s.store.oracle.GetTimestamp(ctx)
 		c.Assert(err, IsNil)
-		err = tpc.commitMutations(NewBackoffer(ctx, CommitMaxBackoff), tpc.mutationsOfKeys([][]byte{primaryKey}))
+		err = tpc.commitMutations(NewBackofferWithVars(ctx, CommitMaxBackoff, nil), tpc.mutationsOfKeys([][]byte{primaryKey}))
 		c.Assert(err, IsNil)
 	}
 	return txn.startTS, tpc.commitTS
@@ -209,7 +209,7 @@ func (s *testLockSuite) TestCheckTxnStatusTTL(c *C) {
 	txn.Set(kv.Key("key"), []byte("value"))
 	s.prewriteTxnWithTTL(c, txn.(*tikvTxn), 1000)
 
-	bo := NewBackoffer(context.Background(), PrewriteMaxBackoff)
+	bo := NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, nil)
 	lr := newLockResolver(s.store)
 	callerStartTS, err := lr.store.GetOracle().GetTimestamp(bo.ctx)
 	c.Assert(err, IsNil)
@@ -249,7 +249,7 @@ func (s *testLockSuite) TestTxnHeartBeat(c *C) {
 	txn.Set(kv.Key("key"), []byte("value"))
 	s.prewriteTxn(c, txn.(*tikvTxn))
 
-	bo := NewBackoffer(context.Background(), PrewriteMaxBackoff)
+	bo := NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, nil)
 	newTTL, err := sendTxnHeartBeat(bo, s.store, []byte("key"), txn.StartTS(), 6666)
 	c.Assert(err, IsNil)
 	c.Assert(newTTL, Equals, uint64(6666))
@@ -281,7 +281,7 @@ func (s *testLockSuite) TestCheckTxnStatus(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(currentTS, Greater, txn.StartTS())
 
-	bo := NewBackoffer(context.Background(), PrewriteMaxBackoff)
+	bo := NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, nil)
 	resolver := newLockResolver(s.store)
 	// Call getTxnStatus to check the lock status.
 	status, err := resolver.getTxnStatus(bo, txn.StartTS(), []byte("key"), currentTS, currentTS, true)
@@ -332,13 +332,13 @@ func (s *testLockSuite) TestCheckTxnStatusNoWait(c *C) {
 
 	// Only prewrite the secondary key to simulate a concurrent prewrite case:
 	// prewrite secondary regions success and prewrite the primary region is pending.
-	err = committer.prewriteMutations(NewBackoffer(context.Background(), PrewriteMaxBackoff), committer.mutationsOfKeys([][]byte{[]byte("second")}))
+	err = committer.prewriteMutations(NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, nil), committer.mutationsOfKeys([][]byte{[]byte("second")}))
 	c.Assert(err, IsNil)
 
 	oracle := s.store.GetOracle()
 	currentTS, err := oracle.GetTimestamp(context.Background())
 	c.Assert(err, IsNil)
-	bo := NewBackoffer(context.Background(), PrewriteMaxBackoff)
+	bo := NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, nil)
 	resolver := newLockResolver(s.store)
 
 	// Call getTxnStatus for the TxnNotFound case.
@@ -349,7 +349,7 @@ func (s *testLockSuite) TestCheckTxnStatusNoWait(c *C) {
 
 	errCh := make(chan error)
 	go func() {
-		errCh <- committer.prewriteMutations(NewBackoffer(context.Background(), PrewriteMaxBackoff), committer.mutationsOfKeys([][]byte{[]byte("key")}))
+		errCh <- committer.prewriteMutations(NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, nil), committer.mutationsOfKeys([][]byte{[]byte("key")}))
 	}()
 
 	lock := &Lock{
@@ -392,14 +392,14 @@ func (s *testLockSuite) prewriteTxnWithTTL(c *C, txn *tikvTxn, ttl uint64) {
 		elapsed := time.Since(txn.startTime) / time.Millisecond
 		committer.lockTTL = uint64(elapsed) + ttl
 	}
-	err = committer.prewriteMutations(NewBackoffer(context.Background(), PrewriteMaxBackoff), committer.mutations)
+	err = committer.prewriteMutations(NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, nil), committer.mutations)
 	c.Assert(err, IsNil)
 }
 
 func (s *testLockSuite) mustGetLock(c *C, key []byte) *Lock {
 	ver, err := s.store.CurrentVersion()
 	c.Assert(err, IsNil)
-	bo := NewBackoffer(context.Background(), getMaxBackoff)
+	bo := NewBackofferWithVars(context.Background(), getMaxBackoff, nil)
 	req := tikvrpc.NewRequest(tikvrpc.CmdGet, &kvrpcpb.GetRequest{
 		Key:     key,
 		Version: ver.Ver,
@@ -470,7 +470,7 @@ func (s *testLockSuite) TestBatchResolveLocks(c *C) {
 	c.Assert(msBeforeLockExpired, Greater, int64(0))
 
 	lr := newLockResolver(s.store)
-	bo := NewBackoffer(context.Background(), GcResolveLockMaxBackoff)
+	bo := NewBackofferWithVars(context.Background(), GcResolveLockMaxBackoff, nil)
 	loc, err := lr.store.GetRegionCache().LocateKey(bo, l.Primary)
 	c.Assert(err, IsNil)
 	// Check BatchResolveLocks resolve the lock even the ttl is not expired.
@@ -496,7 +496,7 @@ func (s *testLockSuite) TestZeroMinCommitTS(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	txn.Set(kv.Key("key"), []byte("value"))
-	bo := NewBackoffer(context.Background(), PrewriteMaxBackoff)
+	bo := NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, nil)
 
 	mockValue := fmt.Sprintf(`return(%d)`, txn.StartTS())
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockZeroCommitTS", mockValue), IsNil)
