@@ -342,7 +342,7 @@ func (a *autoRandom) RestoreAutoRandomTestConfig() {
 	globalCfg.AlterPrimaryKey = a.originAlterPrimaryKey
 }
 
-// MaskSortHandles masks highest shard_bits numbers of table handles and sort it.
+// MaskSortHandles sorts the handles by lowest (fieldTypeBits - 1 - shardBitsCount) bits.
 func (a *autoRandom) MaskSortHandles(handles []int64, shardBitsCount int, fieldType byte) []int64 {
 	typeBitsLength := mysql.DefaultLengthOfMysqlTypes[fieldType] * 8
 	const signBitCount = 1
