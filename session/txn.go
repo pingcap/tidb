@@ -391,7 +391,6 @@ func (st *TxnState) KeysNeedToLock() ([]kv.Key, error) {
 			return nil
 		}
 		// If the key is already locked, it will be deduplicated in LockKeys method later.
-		// The statement MemBuffer will be reused, so we must copy the key here.
 		keys = append(keys, k)
 		return nil
 	}); err != nil {
