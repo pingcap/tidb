@@ -271,6 +271,7 @@ func (p *MySQLPrivilege) FindAllRole(activeRoles []*auth.RoleIdentity) []*auth.R
 	return ret
 }
 
+// IncLoginFail is used to increase lock timer.
 func (p *MySQLPrivilege) IncLoginFail(user, host string) int {
 	key := user + "@" + host
 	cnt, exist := p.PwdErrorCnt[key]
@@ -282,6 +283,7 @@ func (p *MySQLPrivilege) IncLoginFail(user, host string) int {
 	return 1
 }
 
+// ClearLoginFail resets login fail timer.
 func (p *MySQLPrivilege) ClearLoginFail(user, host string) {
 	key := user + "@" + host
 	if p.PwdErrorCnt == nil {
@@ -290,6 +292,7 @@ func (p *MySQLPrivilege) ClearLoginFail(user, host string) {
 	p.PwdErrorCnt[key] = 0
 }
 
+// LockAccount puts account into black list.
 func (p *MySQLPrivilege) LockAccount(user, host string, sctx sessionctx.Context) error {
 	lock := types.CurrentTime(0)
 	ctx := context.Background()
@@ -298,6 +301,7 @@ func (p *MySQLPrivilege) LockAccount(user, host string, sctx sessionctx.Context)
 	return err
 }
 
+// CheckAccountLock checks whether account in the black list.
 func (p *MySQLPrivilege) CheckAccountLock(user, host string, sctx sessionctx.Context, limit time.Duration) bool {
 	recs, exist := p.BlackList[user]
 	if exist {
@@ -312,15 +316,15 @@ func (p *MySQLPrivilege) CheckAccountLock(user, host string, sctx sessionctx.Con
 						// ignore
 					}
 					return false
-				} else {
-					return true
 				}
+				return true
 			}
 		}
 	}
 	return false
 }
 
+// LoadBlackList loads the `mysql.login_blacklist` tables from database to memory.
 func (p *MySQLPrivilege) LoadBlackList(ctx sessionctx.Context) error {
 	p.BlackList = make(map[string][]blackListItem)
 	err := p.loadTable(ctx, "select HOST, USER, lock_time from mysql.login_blacklist;", p.decodeBlackListRow)

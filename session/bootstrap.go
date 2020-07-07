@@ -286,6 +286,7 @@ const (
 		name char(100) NOT NULL
 	);`
 
+	// CreateLoginBlackList stores the list of blocked user.
 	CreateLoginBlackList = `CREATE TABLE IF NOT EXISTS mysql.login_blacklist (
 		HOST char(60) COLLATE utf8_bin NOT NULL DEFAULT '',
 		USER char(32) COLLATE utf8_bin NOT NULL DEFAULT '',

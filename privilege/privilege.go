@@ -71,7 +71,7 @@ type Manager interface {
 	// GetAllRoles return all roles of user.
 	GetAllRoles(user, host string) []*auth.RoleIdentity
 
-	// CheckAccountLock return if the account has been locked.
+	// CheckAccountLocked return if the account has been locked.
 	CheckAccountLocked(ctx sessionctx.Context, user, host string) bool
 
 	// IncFailTimer is used to increase lock timer.
