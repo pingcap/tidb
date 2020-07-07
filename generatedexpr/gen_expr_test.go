@@ -40,4 +40,3 @@ func (s *testGenExprSuite) TestParseExpression(c *C) {
 		}
 	}
 }
-
