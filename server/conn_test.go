@@ -432,6 +432,7 @@ func (ts *ConnTestSuite) testDispatch(c *C, inputs []dispatchInput, capability u
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, tidbdrv)
 	c.Assert(err, IsNil)
+	defer server.Close()
 
 	cc := &clientConn{
 		connectionID: 1,
