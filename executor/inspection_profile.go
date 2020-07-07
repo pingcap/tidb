@@ -27,26 +27,25 @@ import (
 
 type profileBuilder struct {
 	sctx        sessionctx.Context
-	queue       []*metricNode
 	idMap       map[string]uint64
 	idAllocator uint64
 	totalValue  float64
 	uniqueMap   map[string]struct{}
 	buf         *bytes.Buffer
-
-	start time.Time
-	end   time.Time
+	start       time.Time
+	end         time.Time
 }
 
 type metricNode struct {
-	table          string
-	name           string
-	label          []string
-	condition      string
-	labelValue     map[string]float64
-	value          float64
-	unit           int64
-	children       []*metricNode
+	table      string
+	name       string
+	label      []string
+	condition  string
+	labelValue map[string]float64
+	value      float64
+	unit       int64
+	children   []*metricNode
+	// isPartOfParent indicates the parent of this node not fully contain this node.
 	isPartOfParent bool
 	initialized    bool
 }
