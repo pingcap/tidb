@@ -103,7 +103,6 @@ func (t *mergeJoinTable) init(exec *MergeJoinExec) {
 			failpoint.Inject("testMergeJoinRowContainerSpill", func(val failpoint.Value) {
 				if val.(bool) {
 					actionSpill = t.rowContainer.ActionSpillForTest()
-					defer actionSpill.WaitForTest()
 				}
 			})
 			exec.ctx.GetSessionVars().StmtCtx.MemTracker.SetActionOnExceed(actionSpill)
@@ -122,6 +121,12 @@ func (t *mergeJoinTable) finish() error {
 	t.memTracker.Consume(-t.childChunk.MemoryUsage())
 
 	if t.isInner {
+		failpoint.Inject("testMergeJoinRowContainerSpill", func(val failpoint.Value) {
+			if val.(bool) {
+				actionSpill := t.rowContainer.ActionSpill()
+				actionSpill.WaitForTest()
+			}
+		})
 		if err := t.rowContainer.Close(); err != nil {
 			return err
 		}
