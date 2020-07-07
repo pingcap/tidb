@@ -342,6 +342,9 @@ grpc-keepalive-timeout = 3
 # Max time for commit command, must be twice bigger than raft election timeout.
 commit-timeout = "41s"
 
+# Enable async commit for all transactions.
+enable-async-commit = false
+
 # Max batch size in gRPC.
 max-batch-size = 128
 # Overload threshold of TiKV.
