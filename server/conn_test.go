@@ -428,7 +428,7 @@ func (ts *ConnTestSuite) testDispatch(c *C, inputs []dispatchInput, capability u
 	var outBuffer bytes.Buffer
 	tidbdrv := NewTiDBDriver(ts.store)
 	cfg := config.NewConfig()
-	cfg.Port = 4005
+	cfg.Port = genPort()
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, tidbdrv)
 	c.Assert(err, IsNil)
