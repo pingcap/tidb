@@ -244,7 +244,6 @@ type MySQLPrivilege struct {
 	RoleGraph     map[string]roleGraphEdgesTable
 	PwdErrorCnt   map[string]int
 	BlackList     map[string][]blackListItem
-
 }
 
 // FindAllRole is used to find all roles grant to this user.
