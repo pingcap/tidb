@@ -753,7 +753,9 @@ type SplitRegion struct {
 	PartitionNames []model.CIStr
 	IndexInfo      *model.IndexInfo
 	Lower          []types.Datum
+	LowerHandle    int64
 	Upper          []types.Datum
+	UpperHandle    int64
 	Num            int
 	ValueLists     [][]types.Datum
 }

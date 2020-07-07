@@ -2568,25 +2568,38 @@ func (b *PlanBuilder) buildSplitIndexRegion(node *ast.SplitRegionStmt) (Plan, er
 	}
 
 	// Split index regions by lower, upper value.
-	checkLowerUpperValue := func(valuesItem []ast.ExprNode, name string) ([]types.Datum, error) {
+	checkLowerUpperValue := func(valuesItem []ast.ExprNode, name string) ([]types.Datum, int64, error) {
+		handle := int64(-1)
 		if len(valuesItem) == 0 {
-			return nil, errors.Errorf("Split index `%v` region %s value count should more than 0", indexInfo.Name, name)
+			return nil, handle, errors.Errorf("Split index `%v` region %s value count should more than 0", indexInfo.Name, name)
+		}
+		if len(valuesItem) == len(indexInfo.Columns)+1 {
+			handleCol := model.NewExtraHandleColInfo()
+			v, err := b.convertValue(valuesItem[len(valuesItem)-1], mockTablePlan, handleCol)
+			if err != nil {
+				return nil, handle, err
+			}
+			handle = v.GetInt64()
+			valuesItem = valuesItem[:len(valuesItem)-1]
 		}
 		if len(valuesItem) > len(indexInfo.Columns) {
-			return nil, errors.Errorf("Split index `%v` region column count doesn't match value count at %v", indexInfo.Name, name)
+			return nil, handle, errors.Errorf("Split index `%v` region column count doesn't match value count at %v", indexInfo.Name, name)
 		}
-		return b.convertValue2ColumnType(valuesItem, mockTablePlan, indexInfo, tblInfo)
+		values, err := b.convertValue2ColumnType(valuesItem, mockTablePlan, indexInfo, tblInfo)
+		return values, handle, err
 	}
-	lowerValues, err := checkLowerUpperValue(node.SplitOpt.Lower, "lower")
+	lowerValues, lowerHandle, err := checkLowerUpperValue(node.SplitOpt.Lower, "lower")
 	if err != nil {
 		return nil, err
 	}
-	upperValues, err := checkLowerUpperValue(node.SplitOpt.Upper, "upper")
+	upperValues, upperHandle, err := checkLowerUpperValue(node.SplitOpt.Upper, "upper")
 	if err != nil {
 		return nil, err
 	}
 	p.Lower = lowerValues
+	p.LowerHandle = lowerHandle
 	p.Upper = upperValues
+	p.UpperHandle = upperHandle
 
 	maxSplitRegionNum := int64(config.GetGlobalConfig().SplitRegionMaxNum)
 	if node.SplitOpt.Num > maxSplitRegionNum {
