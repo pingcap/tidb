@@ -56,6 +56,7 @@ func createEtcdKV(addrs []string, tlsConfig *tls.Config) (*clientv3.Client, erro
 		Endpoints:        addrs,
 		AutoSyncInterval: 30 * time.Second,
 		DialTimeout:      5 * time.Second,
+		TLS:              tlsConfig,
 	})
 	if err != nil {
 		return nil, errors.Trace(err)
