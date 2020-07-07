@@ -694,7 +694,7 @@ var defaultConf = Config{
 	Experimental: Experimental{
 		AllowsExpressionIndex: false,
 	},
-	EnableCollectExecutionInfo: false,
+	EnableCollectExecutionInfo: true,
 	EnableTelemetry:            true,
 }
 
