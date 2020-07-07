@@ -148,7 +148,7 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 		zap.Int64("neededSchemaVersion", neededSchemaVersion),
 		zap.Duration("start time", time.Since(startTime)))
 	newISBuilder.Build()
-	return neededSchemaVersion, change, fullLoad, nil
+	return neededSchemaVersion, nil, fullLoad, nil
 }
 
 func (do *Domain) fetchAllSchemasWithTables(m *meta.Meta) ([]*model.DBInfo, error) {
