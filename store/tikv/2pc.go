@@ -819,7 +819,7 @@ type SchemaVer interface {
 
 type schemaLeaseChecker interface {
 	// CheckBySchemaVer checks if the schema has changed for the transaction related tables between the startSchemaVer
-	// and the schema version at txnTS, if getAllChangedInfo is true, all the related schema changes will be returned.
+	// and the schema version at txnTS, all the related schema changes will be returned.
 	CheckBySchemaVer(txnTS uint64, startSchemaVer SchemaVer) (*RelatedSchemaChange, error)
 }
 
