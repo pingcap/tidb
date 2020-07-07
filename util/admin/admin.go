@@ -397,13 +397,12 @@ func makeRowDecoder(t table.Table, decodeCol []*table.Column, sctx sessionctx.Co
 	dbName := model.NewCIStr(sctx.GetSessionVars().CurrentDB)
 	exprCols, names := expression.ColumnInfos2ColumnsAndNames(sctx, dbName, t.Meta().Name, t.Meta().Columns, t.Meta())
 	mockSchema := expression.NewSchema(exprCols...)
-	decodeColsMap, ignored := decoder.BuildFullDecodeColMap(decodeCol, t, mockSchema, sctx, names)
+	decodeColsMap, ignored := decoder.BuildFullDecodeColMap(t, mockSchema)
 	_ = ignored
 
 	return decoder.NewRowDecoder(t, decodeColsMap)
 }
 
-// genExprs use to calculate generated column value.
 func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Table, startKey kv.Key, cols []*table.Column, fn table.RecordIterFunc) error {
 	prefix := t.RecordPrefix()
 	keyUpperBound := prefix.PrefixNext()

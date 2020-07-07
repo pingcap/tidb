@@ -1218,8 +1218,7 @@ func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table, indexInfo *mo
 	exprCols, names := expression.ColumnInfos2ColumnsAndNames(sessCtx, dbName, t.Meta().Name, t.Meta().Columns, t.Meta())
 	mockSchema := expression.NewSchema(exprCols...)
 
-	var containsVirtualCol bool
-	decodeColMap, err := decoder.BuildFullDecodeColMap(indexedCols, t, mockSchema, sessCtx, names)
+	decodeColMap, err := decoder.BuildFullDecodeColMap(t, mockSchema)
 	if err != nil {
 		return nil, err
 	}
@@ -1231,10 +1230,6 @@ func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table, indexInfo *mo
 				return nil, err
 			}
 		}
-	}
-	if containsVirtualCol {
-		//decoder.SubstituteGenColsInDecodeColMap(decodeColMap)
-		//decoder.RemoveUnusedVirtualCols(decodeColMap, indexedCols)
 	}
 	return decodeColMap, nil
 }

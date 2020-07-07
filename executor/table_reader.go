@@ -16,6 +16,8 @@ package executor
 import (
 	"context"
 	"fmt"
+	"sort"
+
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
@@ -33,8 +35,6 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/prometheus/common/log"
-	"sort"
 )
 
 // make sure `TableReaderExecutor` implements `Executor`.
@@ -236,7 +236,6 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 func buildVirtualColumnIndex(schema *expression.Schema, columns []*model.ColumnInfo) []int {
 	virtualColumnIndex := make([]int, 0, len(columns))
 	for i, col := range schema.Columns {
-		log.Warn("qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq", col.VirtualExpr != nil, col.OrigName)
 		if col.VirtualExpr != nil {
 			virtualColumnIndex = append(virtualColumnIndex, i)
 		}
@@ -251,9 +250,6 @@ func buildVirtualColumnIndex(schema *expression.Schema, columns []*model.ColumnI
 // buildVirtualColumnInfo saves virtual column indices and sort them in definition order
 func (e *TableReaderExecutor) buildVirtualColumnInfo() {
 	e.virtualColumnIndex = buildVirtualColumnIndex(e.Schema(), e.columns)
-	for _, idx := range e.virtualColumnIndex {
-		log.Warnf("11111111111111111111111   %d", idx)
-	}
 	if len(e.virtualColumnIndex) > 0 {
 		e.virtualColumnRetFieldTypes = make([]*types.FieldType, len(e.virtualColumnIndex))
 		for i, idx := range e.virtualColumnIndex {
