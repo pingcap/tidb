@@ -409,7 +409,7 @@ func (ts *ConnTestSuite) TestDispatchClientProtocol41(c *C) {
 }
 
 func (ts *ConnTestSuite) testDispatch(c *C, inputs []dispatchInput, capability uint32) {
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 	dom, err := session.BootstrapSession(store)
