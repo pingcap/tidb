@@ -85,8 +85,6 @@ func (pb *profileBuilder) getMetricValue(n *metricNode) (float64, error) {
 	n.labelValue = make(map[string]float64)
 	var query string
 	format := "2006-01-02 15:04:05"
-	//pb.start = pb.start.In(time.UTC)
-	//pb.end = pb.end.In(time.UTC)
 	queryCondition := fmt.Sprintf("where time >= '%v' and time <= '%v'", pb.start.Format(format), pb.end.Format(format))
 	if n.condition != "" {
 		queryCondition += (" and " + n.condition)
