@@ -131,5 +131,26 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestIndexEqualUnknown",
+    "Cases": [
+      {
+        "SQL": "explain select * from t where a = 7639902",
+        "Plan": [
+          "IndexReader_6 2.03 root index:IndexScan_5",
+          "└─IndexScan_5 2.03 cop[tikv] table:t, index:a, c, b, range:[7639902,7639902], keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain select c, b from t where a = 7639902 order by b asc limit 6",
+        "Plan": [
+          "Projection_7 2.03 root test.t.c, test.t.b",
+          "└─TopN_10 2.03 root test.t.b:asc, offset:0, count:6",
+          "  └─IndexReader_18 2.03 root index:IndexScan_17",
+          "    └─IndexScan_17 2.03 cop[tikv] table:t, index:a, c, b, range:[7639902,7639902], keep order:false"
+        ]
+      }
+    ]
   }
 ]
