@@ -870,11 +870,11 @@ func (ds *DataSource) isCoveringIndex(columns, indexColumns []*expression.Column
 
 // If there is a table reader which needs to keep order, we should append a pk to table scan.
 func (ts *PhysicalTableScan) appendExtraHandleCol(ds *DataSource) (*expression.Column, bool) {
-	handleCol := ds.handleCol
-	if handleCol != nil {
-		return handleCol, false
+	handleCols := ds.handleCols
+	if handleCols != nil {
+		return handleCols.GetCol(0), false
 	}
-	handleCol = ds.newExtraHandleSchemaCol()
+	handleCol := ds.newExtraHandleSchemaCol()
 	ts.schema.Append(handleCol)
 	ts.Columns = append(ts.Columns, model.NewExtraHandleColInfo())
 	return handleCol, true
@@ -1347,7 +1347,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 	var cost float64
 	if candidate.path.IsIntHandlePath {
 		pointGetPlan.Handle = kv.IntHandle(candidate.path.Ranges[0].LowVal[0].GetInt64())
-		pointGetPlan.UnsignedHandle = mysql.HasUnsignedFlag(ds.getHandleCol().RetType.Flag)
+		pointGetPlan.UnsignedHandle = mysql.HasUnsignedFlag(ds.handleCols.GetCol(0).RetType.Flag)
 		pointGetPlan.PartitionInfo = partitionInfo
 		cost = pointGetPlan.GetCost(ds.TblCols)
 		// Add filter condition to table plan now.
@@ -1517,7 +1517,7 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 	} else {
 		// If `ds.handleCol` is nil, then the schema of tableScan doesn't have handle column.
 		// This logic can be ensured in column pruning.
-		rowSize = ds.TblColHists.GetTableAvgRowSize(ds.ctx, ts.Schema().Columns, ts.StoreType, ds.handleCol != nil)
+		rowSize = ds.TblColHists.GetTableAvgRowSize(ds.ctx, ts.Schema().Columns, ts.StoreType, ds.handleCols != nil)
 	}
 	sessVars := ds.ctx.GetSessionVars()
 	cost := rowCount * rowSize * sessVars.ScanFactor
