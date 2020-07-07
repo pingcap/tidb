@@ -18,12 +18,13 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/store/tikv"
 )
 
 // SchemaChecker is used for checking schema-validity.
 type SchemaChecker struct {
 	SchemaValidator
-	schemaVer       int64
+	schemaVer       tikv.SchemaVer
 	relatedTableIDs []int64
 }
 
@@ -35,7 +36,7 @@ var (
 )
 
 // NewSchemaChecker creates a new schema checker.
-func NewSchemaChecker(do *Domain, schemaVer int64, relatedTableIDs []int64) *SchemaChecker {
+func NewSchemaChecker(do *Domain, schemaVer tikv.SchemaVer, relatedTableIDs []int64) *SchemaChecker {
 	return &SchemaChecker{
 		SchemaValidator: do.SchemaValidator,
 		schemaVer:       schemaVer,
@@ -44,22 +45,31 @@ func NewSchemaChecker(do *Domain, schemaVer int64, relatedTableIDs []int64) *Sch
 }
 
 // Check checks the validity of the schema version.
-func (s *SchemaChecker) Check(txnTS uint64) error {
+func (s *SchemaChecker) Check(txnTS uint64, getAllChangedInfo bool) (*tikv.RelatedSchemaChange, bool, error) {
+	return s.CheckBySchemaVer(txnTS, s.schemaVer, getAllChangedInfo)
+}
+
+// CheckBySchemaVer checks if the schema version valid or not at txnTS
+func (s *SchemaChecker) CheckBySchemaVer(txnTS uint64, startSchemaVer tikv.SchemaVer, getAllChangedInfo bool) (*tikv.RelatedSchemaChange, bool, error) {
 	schemaOutOfDateRetryInterval := atomic.LoadInt64(&SchemaOutOfDateRetryInterval)
 	schemaOutOfDateRetryTimes := int(atomic.LoadInt32(&SchemaOutOfDateRetryTimes))
 	for i := 0; i < schemaOutOfDateRetryTimes; i++ {
-		result := s.SchemaValidator.Check(txnTS, s.schemaVer, s.relatedTableIDs)
-		switch result {
+		relatedChange, CheckResult := s.SchemaValidator.Check(txnTS, startSchemaVer.SchemaMetaVersion(), s.relatedTableIDs, getAllChangedInfo)
+		switch CheckResult {
 		case ResultSucc:
-			return nil
+			return nil, false, nil
 		case ResultFail:
 			metrics.SchemaLeaseErrorCounter.WithLabelValues("changed").Inc()
-			return ErrInfoSchemaChanged
+			amendable := getAllChangedInfo && relatedChange != nil && (len(relatedChange.PhyTblIDS) > 0)
+			if amendable {
+				return relatedChange, amendable, ErrInfoSchemaChanged
+			}
+			return nil, false, ErrInfoSchemaChanged
 		case ResultUnknown:
 			time.Sleep(time.Duration(schemaOutOfDateRetryInterval))
 		}
 
 	}
 	metrics.SchemaLeaseErrorCounter.WithLabelValues("outdated").Inc()
-	return ErrInfoSchemaExpired
+	return nil, false, ErrInfoSchemaExpired
 }
