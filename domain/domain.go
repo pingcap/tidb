@@ -83,7 +83,7 @@ type Domain struct {
 // infoschema version, if it is the same as the schema version at startTS, we don't need to reload again.
 // It returns the latest schema version, the changed table IDs, whether it's a full load and an error.
 func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion int64,
-	startTS uint64) (neededSchemaVersion int64, change tikv.RelatedSchemaChange, fullLoad bool, err error) {
+	startTS uint64) (neededSchemaVersion int64, change *tikv.RelatedSchemaChange, fullLoad bool, err error) {
 	snapshot, err := do.store.GetSnapshot(kv.NewVersion(startTS))
 	if err != nil {
 		return 0, change, fullLoad, err
@@ -236,23 +236,22 @@ func isTooOldSchema(usedVersion, newVersion int64) bool {
 // Return true if the schema is loaded successfully.
 // Return false if the schema can not be loaded by schema diff, then we need to do full load.
 // The second returned value is the delta updated table and partition IDs.
-func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64) (bool, tikv.RelatedSchemaChange, error) {
-	relatedChange := tikv.RelatedSchemaChange{}
+func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64) (bool, *tikv.RelatedSchemaChange, error) {
 	// If there isn't any used version, or used version is too old, we do full load.
 	// And when users use history read feature, we will set usedVersion to initialVersion, then full load is needed.
 	if isTooOldSchema(usedVersion, newVersion) {
-		return false, relatedChange, nil
+		return false, nil, nil
 	}
 	var diffs []*model.SchemaDiff
 	for usedVersion < newVersion {
 		usedVersion++
 		diff, err := m.GetSchemaDiff(usedVersion)
 		if err != nil {
-			return false, relatedChange, err
+			return false, nil, err
 		}
 		if diff == nil {
 			// If diff is missing for any version between used and new version, we fall back to full reload.
-			return false, relatedChange, nil
+			return false, nil, nil
 		}
 		diffs = append(diffs, diff)
 	}
@@ -262,7 +261,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 	for _, diff := range diffs {
 		IDs, err := builder.ApplyDiff(m, diff)
 		if err != nil {
-			return false, relatedChange, err
+			return false, nil, err
 		}
 		if canSkipSchemaCheckerDDL(diff.Type) {
 			continue
@@ -273,9 +272,10 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		}
 	}
 	builder.Build()
+	relatedChange := tikv.RelatedSchemaChange{}
 	relatedChange.PhyTblIDS = phyTblIDs
 	relatedChange.ActionTypes = actions
-	return true, relatedChange, nil
+	return true, &relatedChange, nil
 }
 
 func canSkipSchemaCheckerDDL(tp model.ActionType) bool {
@@ -363,7 +363,7 @@ func (do *Domain) Reload() error {
 
 	var (
 		fullLoad       bool
-		relatedChanges tikv.RelatedSchemaChange
+		relatedChanges *tikv.RelatedSchemaChange
 	)
 	neededSchemaVersion, relatedChanges, fullLoad, err = do.loadInfoSchema(do.infoHandle, schemaVersion, ver.Ver)
 	metrics.LoadSchemaDuration.Observe(time.Since(startTime).Seconds())
@@ -377,7 +377,7 @@ func (do *Domain) Reload() error {
 		logutil.BgLogger().Info("full load and reset schema validator")
 		do.SchemaValidator.Reset()
 	}
-	do.SchemaValidator.Update(ver.Ver, schemaVersion, neededSchemaVersion, &relatedChanges)
+	do.SchemaValidator.Update(ver.Ver, schemaVersion, neededSchemaVersion, relatedChanges)
 
 	lease := do.DDL().GetLease()
 	sub := time.Since(startTime)

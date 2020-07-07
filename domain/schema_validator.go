@@ -46,7 +46,6 @@ type SchemaValidator interface {
 	// which is produced when the oldSchemaVer is updated to the newSchemaVer.
 	Update(leaseGrantTime uint64, oldSchemaVer, newSchemaVer int64, change *tikv.RelatedSchemaChange)
 	// Check is it valid for a transaction to use schemaVer and related tables, at timestamp txnTS.
-	// If getAllInfo is set to true, try to return all changed table id and action type array
 	Check(txnTS uint64, schemaVer int64, relatedPhysicalTableIDs []int64) (*tikv.RelatedSchemaChange, checkResult)
 	// Stop stops checking the valid of transaction.
 	Stop()
