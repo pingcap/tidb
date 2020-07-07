@@ -1450,6 +1450,7 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 			s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
 		}
 		s.sessionVars.TxnCtx.CouldRetry = s.isTxnRetryable()
+		s.txn.SetVars(s.sessionVars.KVVars)
 		if s.sessionVars.GetReplicaRead().IsFollowerRead() {
 			s.txn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 		}
