@@ -26,9 +26,12 @@ type UnionStore interface {
 	HasPresumeKeyNotExists(k Key) bool
 	// DeleteKeyExistErrInfo deletes the key exist error info for the lazy check.
 	UnmarkPresumeKeyNotExists(k Key)
-
-	GetIndexName(tableID, indexID int64) string
+	// CacheIndexName caches the index name.
+	// PresumeKeyNotExists will use this to help decode error message.
 	CacheIndexName(tableID, indexID int64, name string)
+	// GetIndexName returns the cached index name.
+	// If there is no such index already inserted through CacheIndexName, it will return UNKNOWN.
+	GetIndexName(tableID, indexID int64) string
 
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option.
