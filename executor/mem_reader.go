@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
@@ -41,8 +42,8 @@ type memIndexReader struct {
 	addedRowsLen  int
 	retFieldTypes []*types.FieldType
 	outputOffset  []int
-	// belowHandleIndex is the handle's position of the below scan plan.
-	belowHandleIndex int
+	// belowHandleCols is the handle's position of the below scan plan.
+	belowHandleCols plannercore.HandleCols
 }
 
 func buildMemIndexReader(us *UnionScanExec, idxReader *IndexReaderExecutor) *memIndexReader {
@@ -52,16 +53,16 @@ func buildMemIndexReader(us *UnionScanExec, idxReader *IndexReaderExecutor) *mem
 		outputOffset = append(outputOffset, col.Index)
 	}
 	return &memIndexReader{
-		ctx:              us.ctx,
-		index:            idxReader.index,
-		table:            idxReader.table.Meta(),
-		kvRanges:         kvRanges,
-		desc:             us.desc,
-		conditions:       us.conditions,
-		addedRows:        make([][]types.Datum, 0, us.dirty.addedRows.Len()),
-		retFieldTypes:    retTypes(us),
-		outputOffset:     outputOffset,
-		belowHandleIndex: us.belowHandleIndex,
+		ctx:             us.ctx,
+		index:           idxReader.index,
+		table:           idxReader.table.Meta(),
+		kvRanges:        kvRanges,
+		desc:            us.desc,
+		conditions:      us.conditions,
+		addedRows:       make([][]types.Datum, 0, us.dirty.addedRows.Len()),
+		retFieldTypes:   retTypes(us),
+		outputOffset:    outputOffset,
+		belowHandleCols: us.belowHandleCols,
 	}
 }
 
@@ -369,15 +370,15 @@ func buildMemIndexLookUpReader(us *UnionScanExec, idxLookUpReader *IndexLookUpEx
 	kvRanges := idxLookUpReader.kvRanges
 	outputOffset := []int{len(idxLookUpReader.index.Columns)}
 	memIdxReader := &memIndexReader{
-		ctx:              us.ctx,
-		index:            idxLookUpReader.index,
-		table:            idxLookUpReader.table.Meta(),
-		kvRanges:         kvRanges,
-		desc:             idxLookUpReader.desc,
-		addedRowsLen:     us.dirty.addedRows.Len(),
-		retFieldTypes:    retTypes(us),
-		outputOffset:     outputOffset,
-		belowHandleIndex: us.belowHandleIndex,
+		ctx:             us.ctx,
+		index:           idxLookUpReader.index,
+		table:           idxLookUpReader.table.Meta(),
+		kvRanges:        kvRanges,
+		desc:            idxLookUpReader.desc,
+		addedRowsLen:    us.dirty.addedRows.Len(),
+		retFieldTypes:   retTypes(us),
+		outputOffset:    outputOffset,
+		belowHandleCols: us.belowHandleCols,
 	}
 
 	return &memIndexLookUpReader{

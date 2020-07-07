@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"math"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -230,6 +231,47 @@ func (s *tikvStore) scatterRegion(bo *Backoffer, regionID uint64) error {
 	logutil.BgLogger().Debug("scatter region complete",
 		zap.Uint64("regionID", regionID))
 	return nil
+}
+
+func (s *tikvStore) preSplitRegion(ctx context.Context, group groupedMutations) bool {
+	splitKeys := make([][]byte, 0, 4)
+
+	preSplitSizeThresholdVal := atomic.LoadUint32(&preSplitSizeThreshold)
+	regionSize := 0
+	keysLength := group.mutations.len()
+	valsLength := len(group.mutations.values)
+	// The value length maybe zero for pessimistic lock keys
+	for i := 0; i < keysLength; i++ {
+		regionSize = regionSize + len(group.mutations.keys[i])
+		if i < valsLength {
+			regionSize = regionSize + len(group.mutations.values[i])
+		}
+		// The second condition is used for testing.
+		if regionSize >= int(preSplitSizeThresholdVal) {
+			regionSize = 0
+			splitKeys = append(splitKeys, group.mutations.keys[i])
+		}
+	}
+	if len(splitKeys) == 0 {
+		return false
+	}
+
+	regionIDs, err := s.SplitRegions(ctx, splitKeys, true)
+	if err != nil {
+		logutil.BgLogger().Warn("2PC split regions failed", zap.Uint64("regionID", group.region.id),
+			zap.Int("keys count", keysLength), zap.Int("values count", valsLength), zap.Error(err))
+		return false
+	}
+
+	for _, regionID := range regionIDs {
+		err := s.WaitScatterRegionFinish(ctx, regionID, 0)
+		if err != nil {
+			logutil.BgLogger().Warn("2PC wait scatter region failed", zap.Uint64("regionID", regionID), zap.Error(err))
+		}
+	}
+	// Invalidate the old region cache information.
+	s.regionCache.InvalidateCachedRegion(group.region)
+	return true
 }
 
 // WaitScatterRegionFinish implements SplittableStore interface.
