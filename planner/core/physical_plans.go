@@ -351,10 +351,6 @@ func (p *PhysicalIndexScan) Clone() (PhysicalPlan, error) {
 	if p.Hist != nil {
 		cloned.Hist = p.Hist.Copy()
 	}
-	cloned.GenExprs = make(map[model.TableColumnID]expression.Expression)
-	for id, expr := range p.GenExprs {
-		cloned.GenExprs[id] = expr.Clone()
-	}
 	return cloned, nil
 }
 

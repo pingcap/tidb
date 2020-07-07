@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/generatedexpr"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -112,11 +113,11 @@ func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Ta
 
 		col := table.ToColumn(colInfo)
 		if col.IsGenerated() {
-			expr, err := parseExpression(colInfo.GeneratedExprString)
+			expr, err := generatedexpr.ParseExpression(colInfo.GeneratedExprString)
 			if err != nil {
 				return nil, err
 			}
-			expr, err = simpleResolveName(expr, tblInfo)
+			expr, err = generatedexpr.SimpleResolveName(expr, tblInfo)
 			if err != nil {
 				return nil, err
 			}
@@ -124,7 +125,7 @@ func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Ta
 		}
 		// default value is expr.
 		if col.DefaultIsExpr {
-			expr, err := parseExpression(colInfo.DefaultValue.(string))
+			expr, err := generatedexpr.ParseExpression(colInfo.DefaultValue.(string))
 			if err != nil {
 				return nil, err
 			}

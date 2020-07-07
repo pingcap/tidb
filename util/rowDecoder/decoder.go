@@ -157,7 +157,7 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.
 		if err != nil {
 			return nil, err
 		}
-		val, err = table.CastValue(ctx, val, col.Col.ColumnInfo, false, false)
+		val, err = table.CastValue(ctx, val, col.Col.ColumnInfo, false, true)
 		if err != nil {
 			return nil, err
 		}
@@ -181,38 +181,12 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.
 
 // BuildFullDecodeColMap build a map that contains [columnID -> struct{*table.Column, expression.Expression}] from
 // indexed columns and all of its depending columns. `genExprProducer` is used to produce a generated expression based on a table.Column.
-func BuildFullDecodeColMap(cols []*table.Column, t table.Table, genExprProducer func(*table.Column) (expression.Expression, error)) (map[int64]Column, error) {
-	pendingCols := make([]*table.Column, len(cols))
-	copy(pendingCols, cols)
-	decodeColMap := make(map[int64]Column, len(pendingCols))
-
-	for i := 0; i < len(pendingCols); i++ {
-		col := pendingCols[i]
-		if _, ok := decodeColMap[col.ID]; ok {
-			continue // already discovered
-		}
-
-		if col.IsGenerated() && !col.GeneratedStored {
-			// Find depended columns and put them into pendingCols. For example, idx(c) with column definition `c int as (a + b)`,
-			// depended columns of `c` is `a` and `b`, and both of them will be put into the pendingCols, waiting for next traversal.
-			for _, c := range t.Cols() {
-				if _, ok := col.Dependences[c.Name.L]; ok {
-					pendingCols = append(pendingCols, c)
-				}
-			}
-
-			e, err := expression.RewriteSimpleExprWithNames(ctx, col.GeneratedExpr, schema, names)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			decodeColMap[col.ID] = Column{
-				Col:     col,
-				GenExpr: e,
-			}
-		} else {
-			decodeColMap[col.ID] = Column{
-				Col: col,
-			}
+func BuildFullDecodeColMap(indexedCols []*table.Column, t table.Table, schema *expression.Schema, ctx sessionctx.Context, names []*types.FieldName) (map[int64]Column, error) {
+	decodeColMap := make(map[int64]Column, len(t.Cols()))
+	for _, col := range t.Cols() {
+		decodeColMap[col.ID] = Column{
+			Col:     col,
+			GenExpr: schema.Columns[col.Offset].VirtualExpr,
 		}
 	}
 	return decodeColMap, nil

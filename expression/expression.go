@@ -16,6 +16,7 @@ package expression
 import (
 	goJSON "encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/generatedexpr"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -713,7 +714,7 @@ func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 
 // TableInfo2SchemaAndNames converts the TableInfo to the schema and name slice.
 func TableInfo2SchemaAndNames(ctx sessionctx.Context, dbName model.CIStr, tbl *model.TableInfo) (*Schema, []*types.FieldName) {
-	cols, names := ColumnInfos2ColumnsAndNames(ctx, dbName, tbl.Name, tbl.Columns)
+	cols, names := ColumnInfos2ColumnsAndNames(ctx, dbName, tbl.Name, tbl.Columns, tbl)
 	keys := make([]KeyInfo, 0, len(tbl.Indices)+1)
 	for _, idx := range tbl.Indices {
 		if !idx.Unique || idx.State != model.StatePublic {
@@ -756,7 +757,7 @@ func TableInfo2SchemaAndNames(ctx sessionctx.Context, dbName model.CIStr, tbl *m
 }
 
 // ColumnInfos2ColumnsAndNames converts the ColumnInfo to the *Column and NameSlice.
-func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.CIStr, colInfos []*model.ColumnInfo) ([]*Column, types.NameSlice) {
+func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.CIStr, colInfos []*model.ColumnInfo, tblInfo *model.TableInfo) ([]*Column, types.NameSlice) {
 	columns := make([]*Column, 0, len(colInfos))
 	names := make([]*types.FieldName, 0, len(colInfos))
 	for i, col := range colInfos {
@@ -779,6 +780,29 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 			IsHidden: col.Hidden,
 		}
 		columns = append(columns, newCol)
+	}
+	// Resolve virtual generated column.
+	mockSchema := NewSchema(columns...)
+	for i, col := range colInfos {
+		if col.State != model.StatePublic {
+			continue
+		}
+		if col.IsGenerated() && !col.GeneratedStored {
+			expr, err := generatedexpr.ParseExpression(col.GeneratedExprString)
+			if err != nil {
+				terror.Log(err)
+			}
+			expr, err = generatedexpr.SimpleResolveName(expr, tblInfo)
+			if err != nil {
+				terror.Log(err)
+			}
+
+			e, err := RewriteSimpleExprWithNames(ctx, expr, mockSchema, names)
+			if err != nil {
+				terror.Log(err)
+			}
+			columns[i].VirtualExpr = e.Clone()
+		}
 	}
 	return columns, names
 }
