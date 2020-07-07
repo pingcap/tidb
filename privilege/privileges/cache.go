@@ -244,6 +244,7 @@ type MySQLPrivilege struct {
 	RoleGraph     map[string]roleGraphEdgesTable
 	PwdErrorCnt   map[string]int
 	BlackList     map[string][]blackListItem
+
 }
 
 // FindAllRole is used to find all roles grant to this user.
@@ -308,7 +309,7 @@ func (p *MySQLPrivilege) CheckAccountLock(user, host string, sctx sessionctx.Con
 		for _, r := range recs {
 			if r.Host == host {
 				t := r.startTime
-				if time.Now().Sub(t) > limit*time.Second {
+				if time.Since(t) > limit*time.Second {
 					ctx := context.Background()
 					sql := fmt.Sprintf("delete from mysql.login_blacklist where user = '%s' and host = '%s'", user, host)
 					_, err := sctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
