@@ -3053,7 +3053,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Write Binlog Error",
+          "title": "Panic And Critial Error",
           "tooltip": {
             "shared": true,
             "sort": 0,
