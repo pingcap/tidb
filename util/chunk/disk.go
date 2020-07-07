@@ -15,8 +15,10 @@ package chunk
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
+	"github.com/pingcap/tidb/config"
 	"hash/crc32"
 	"io"
 	"io/ioutil"
@@ -31,33 +33,64 @@ import (
 
 const (
 	writeBufSize = 128 * 1024
-	readBufSize  = 4 * 1024
+	readBufSize  = 128 * 1024
 )
 
 const ChecksumVersion = 1
 
 type checksum struct {
-	wr io.Writer
+	w io.Writer
 }
 
 func Checksum(w io.Writer) io.Writer {
-	return &checksum{wr: w}
+	return &checksum{w: w}
 }
 
 func (cks checksum) Write(p []byte) (n int, err error) {
+	buffer := make([]byte, 0, 2+4+len(p))
 	buf := make([]byte, 2)
-	version := int32(ChecksumVersion)
+	version := uint16(ChecksumVersion)
 	buf[0] = byte(version & 0x0000ff00 >> 8)
 	buf[1] = byte(version & 0x000000ff)
-	p = append(p, buf...)
+	buffer = append(buffer, buf...)
 	sum := crc32.Checksum(p, crc32.MakeTable(crc32.IEEE))
 	buf = make([]byte, 4)
 	buf[0] = byte(sum & 0xff000000 >> 24)
 	buf[1] = byte(sum & 0x00ff0000 >> 16)
 	buf[2] = byte(sum & 0x0000ff00 >> 8)
 	buf[3] = byte(sum & 0x000000ff)
-	p = append(p, buf...)
-	return cks.wr.Write(p)
+	buffer = append(buffer, buf...)
+	buffer = append(buffer, p...)
+	return cks.w.Write(buffer)
+}
+
+func Verify(f *os.File) (r *bytes.Reader, err error) {
+	_, err = f.Seek(0, io.SeekStart)
+	if err != nil {
+		return r, err
+	}
+
+	data, err := ioutil.ReadAll(f)
+	if err != nil {
+		return r, err
+	}
+
+	header := data[:6]
+	var versionOrigin uint16
+	versionOrigin = uint16(header[0])<<8 | uint16(header[1])
+	if versionOrigin != uint16(ChecksumVersion) {
+		return r, errors.New("checksum version error")
+	}
+
+	payLoad := data[6:]
+	sum := crc32.Checksum(payLoad, crc32.MakeTable(crc32.IEEE))
+	var sumOrigin uint32
+	sumOrigin = uint32(header[2])<<24 | uint32(header[3])<<16 | uint32(header[4])<<8 | uint32(header[5])
+	if sumOrigin != sum {
+		return r, errors.New("checksum error")
+	}
+
+	return bytes.NewReader(payLoad), nil
 }
 
 var bufWriterPool = sync.Pool{
@@ -97,7 +130,7 @@ func NewListInDisk(fieldTypes []*types.FieldType) *ListInDisk {
 }
 
 func (l *ListInDisk) initDiskFile() (err error) {
-	l.disk, err = ioutil.TempFile("/Users/mayujie", l.diskTracker.Label().String())
+	l.disk, err = ioutil.TempFile(config.GetGlobalConfig().TempStoragePath, l.diskTracker.Label().String())
 	if err != nil {
 		return
 	}
@@ -167,6 +200,11 @@ func (l *ListInDisk) GetRow(ptr RowPtr) (row Row, err error) {
 		return
 	}
 	off := l.offsets[ptr.ChkIdx][ptr.RowIdx]
+
+	reader, err := Verify(l.disk)
+	if err != nil {
+		return row, err
+	}
 	r := io.NewSectionReader(l.disk, off, l.offWrite-off)
 	bufReader := bufReaderPool.Get().(*bufio.Reader)
 	bufReader.Reset(r)
