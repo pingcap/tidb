@@ -24,8 +24,14 @@ import (
 // SchemaChecker is used for checking schema-validity.
 type SchemaChecker struct {
 	SchemaValidator
-	schemaVer       tikv.SchemaVer
+	schemaVer       int64
 	relatedTableIDs []int64
+}
+
+type intSchemaVer int64
+
+func (i intSchemaVer) SchemaMetaVersion() int64 {
+	return int64(i)
 }
 
 var (
@@ -36,7 +42,7 @@ var (
 )
 
 // NewSchemaChecker creates a new schema checker.
-func NewSchemaChecker(do *Domain, schemaVer tikv.SchemaVer, relatedTableIDs []int64) *SchemaChecker {
+func NewSchemaChecker(do *Domain, schemaVer int64, relatedTableIDs []int64) *SchemaChecker {
 	return &SchemaChecker{
 		SchemaValidator: do.SchemaValidator,
 		schemaVer:       schemaVer,
@@ -45,31 +51,27 @@ func NewSchemaChecker(do *Domain, schemaVer tikv.SchemaVer, relatedTableIDs []in
 }
 
 // Check checks the validity of the schema version.
-func (s *SchemaChecker) Check(txnTS uint64, getAllChangedInfo bool) (*tikv.RelatedSchemaChange, bool, error) {
-	return s.CheckBySchemaVer(txnTS, s.schemaVer, getAllChangedInfo)
+func (s *SchemaChecker) Check(txnTS uint64) (*tikv.RelatedSchemaChange, error) {
+	return s.CheckBySchemaVer(txnTS, intSchemaVer(s.schemaVer))
 }
 
 // CheckBySchemaVer checks if the schema version valid or not at txnTS
-func (s *SchemaChecker) CheckBySchemaVer(txnTS uint64, startSchemaVer tikv.SchemaVer, getAllChangedInfo bool) (*tikv.RelatedSchemaChange, bool, error) {
+func (s *SchemaChecker) CheckBySchemaVer(txnTS uint64, startSchemaVer tikv.SchemaVer) (*tikv.RelatedSchemaChange, error) {
 	schemaOutOfDateRetryInterval := atomic.LoadInt64(&SchemaOutOfDateRetryInterval)
 	schemaOutOfDateRetryTimes := int(atomic.LoadInt32(&SchemaOutOfDateRetryTimes))
 	for i := 0; i < schemaOutOfDateRetryTimes; i++ {
-		relatedChange, CheckResult := s.SchemaValidator.Check(txnTS, startSchemaVer.SchemaMetaVersion(), s.relatedTableIDs, getAllChangedInfo)
+		relatedChange, CheckResult := s.SchemaValidator.Check(txnTS, startSchemaVer.SchemaMetaVersion(), s.relatedTableIDs)
 		switch CheckResult {
 		case ResultSucc:
-			return nil, false, nil
+			return nil, nil
 		case ResultFail:
 			metrics.SchemaLeaseErrorCounter.WithLabelValues("changed").Inc()
-			amendable := getAllChangedInfo && relatedChange != nil && (len(relatedChange.PhyTblIDS) > 0)
-			if amendable {
-				return relatedChange, amendable, ErrInfoSchemaChanged
-			}
-			return nil, false, ErrInfoSchemaChanged
+			return relatedChange, ErrInfoSchemaChanged
 		case ResultUnknown:
 			time.Sleep(time.Duration(schemaOutOfDateRetryInterval))
 		}
 
 	}
 	metrics.SchemaLeaseErrorCounter.WithLabelValues("outdated").Inc()
-	return nil, false, ErrInfoSchemaExpired
+	return nil, ErrInfoSchemaExpired
 }

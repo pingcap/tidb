@@ -314,24 +314,24 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	ts := ver.Ver
 
-	_, succ := dom.SchemaValidator.Check(ts, schemaVer, nil, false)
+	_, succ := dom.SchemaValidator.Check(ts, schemaVer, nil)
 	c.Assert(succ, Equals, ResultSucc)
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed", `return(true)`), IsNil)
 	err = dom.Reload()
 	c.Assert(err, NotNil)
-	_, succ = dom.SchemaValidator.Check(ts, schemaVer, nil, false)
+	_, succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
 	c.Assert(succ, Equals, ResultSucc)
 	time.Sleep(ddlLease)
 
 	ver, err = store.CurrentVersion()
 	c.Assert(err, IsNil)
 	ts = ver.Ver
-	_, succ = dom.SchemaValidator.Check(ts, schemaVer, nil, false)
+	_, succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
 	c.Assert(succ, Equals, ResultUnknown)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed"), IsNil)
 	err = dom.Reload()
 	c.Assert(err, IsNil)
-	_, succ = dom.SchemaValidator.Check(ts, schemaVer, nil, false)
+	_, succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
 	c.Assert(succ, Equals, ResultSucc)
 
 	// For slow query.
@@ -385,7 +385,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(scope, Equals, variable.DefaultStatusVarScopeFlag)
 
 	// For schema check, it tests for getting the result of "ResultUnknown".
-	schemaChecker := NewSchemaChecker(dom, is, nil)
+	schemaChecker := NewSchemaChecker(dom, is.SchemaMetaVersion(), nil)
 	originalRetryTime := SchemaOutOfDateRetryTimes
 	originalRetryInterval := SchemaOutOfDateRetryInterval
 	// Make sure it will retry one time and doesn't take a long time.
@@ -396,7 +396,7 @@ func (*testSuite) TestT(c *C) {
 		SchemaOutOfDateRetryInterval = originalRetryInterval
 	}()
 	dom.SchemaValidator.Stop()
-	_, _, err = schemaChecker.Check(uint64(123456), false)
+	_, err = schemaChecker.Check(uint64(123456))
 	c.Assert(err.Error(), Equals, ErrInfoSchemaExpired.Error())
 	dom.SchemaValidator.Reset()
 

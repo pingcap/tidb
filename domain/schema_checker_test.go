@@ -21,14 +21,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 )
 
-type intSchemaVer struct {
-	schemaVer int64
-}
-
-func (i *intSchemaVer) SchemaMetaVersion() int64 {
-	return i.schemaVer
-}
-
 func (s *testSuite) TestSchemaCheckerSimple(c *C) {
 	lease := 5 * time.Millisecond
 	validator := NewSchemaValidator(lease, nil)
@@ -36,38 +28,38 @@ func (s *testSuite) TestSchemaCheckerSimple(c *C) {
 
 	// Add some schema versions and delta table IDs.
 	ts := uint64(time.Now().UnixNano())
-	validator.Update(ts, 0, 2, tikv.RelatedSchemaChange{PhyTblIDS: []int64{1}, ActionTypes: []uint64{1}})
-	validator.Update(ts, 2, 4, tikv.RelatedSchemaChange{PhyTblIDS: []int64{2}, ActionTypes: []uint64{2}})
+	validator.Update(ts, 0, 2, &tikv.RelatedSchemaChange{PhyTblIDS: []int64{1}, ActionTypes: []uint64{1}})
+	validator.Update(ts, 2, 4, &tikv.RelatedSchemaChange{PhyTblIDS: []int64{2}, ActionTypes: []uint64{2}})
 
 	// checker's schema version is the same as the current schema version.
-	checker.schemaVer = &intSchemaVer{4}
-	_, _, err := checker.Check(ts, false)
+	checker.schemaVer = 4
+	_, err := checker.Check(ts)
 	c.Assert(err, IsNil)
 
 	// checker's schema version is less than the current schema version, and it doesn't exist in validator's items.
 	// checker's related table ID isn't in validator's changed table IDs.
-	checker.schemaVer = &intSchemaVer{2}
+	checker.schemaVer = 2
 	checker.relatedTableIDs = []int64{3}
-	_, _, err = checker.Check(ts, false)
+	_, err = checker.Check(ts)
 	c.Assert(err, IsNil)
 	// The checker's schema version isn't in validator's items.
-	checker.schemaVer = &intSchemaVer{1}
+	checker.schemaVer = 1
 	checker.relatedTableIDs = []int64{3}
-	_, _, err = checker.Check(ts, false)
+	_, err = checker.Check(ts)
 	c.Assert(terror.ErrorEqual(err, ErrInfoSchemaChanged), IsTrue)
 	// checker's related table ID is in validator's changed table IDs.
 	checker.relatedTableIDs = []int64{2}
-	_, _, err = checker.Check(ts, false)
+	_, err = checker.Check(ts)
 	c.Assert(terror.ErrorEqual(err, ErrInfoSchemaChanged), IsTrue)
 
 	// validator's latest schema version is expired.
 	time.Sleep(lease + time.Microsecond)
-	checker.schemaVer = &intSchemaVer{4}
+	checker.schemaVer = 4
 	checker.relatedTableIDs = []int64{3}
-	_, _, err = checker.Check(ts, false)
+	_, err = checker.Check(ts)
 	c.Assert(err, IsNil)
 	nowTS := uint64(time.Now().UnixNano())
 	// Use checker.SchemaValidator.Check instead of checker.Check here because backoff make CI slow.
-	_, result := checker.SchemaValidator.Check(nowTS, checker.schemaVer.SchemaMetaVersion(), checker.relatedTableIDs, false)
+	_, result := checker.SchemaValidator.Check(nowTS, checker.schemaVer, checker.relatedTableIDs)
 	c.Assert(result, Equals, ResultUnknown)
 }

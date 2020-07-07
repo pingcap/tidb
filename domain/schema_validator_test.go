@@ -50,37 +50,37 @@ func (*testSuite) TestSchemaValidator(c *C) {
 		time.Sleep(delay)
 		// Reload can run arbitrarily, at any time.
 		item := <-leaseGrantCh
-		validator.Update(item.leaseGrantTS, item.oldVer, item.schemaVer, tikv.RelatedSchemaChange{})
+		validator.Update(item.leaseGrantTS, item.oldVer, item.schemaVer, nil)
 	}
 
 	// Take a lease, check it's valid.
 	item := <-leaseGrantCh
 	validator.Update(item.leaseGrantTS, item.oldVer, item.schemaVer,
-		tikv.RelatedSchemaChange{PhyTblIDS: []int64{10}, ActionTypes: []uint64{10}})
-	_, valid := validator.Check(item.leaseGrantTS, item.schemaVer, []int64{10}, false)
+		&tikv.RelatedSchemaChange{PhyTblIDS: []int64{10}, ActionTypes: []uint64{10}})
+	_, valid := validator.Check(item.leaseGrantTS, item.schemaVer, []int64{10})
 	c.Assert(valid, Equals, ResultSucc)
 
 	// Stop the validator, validator's items value is nil.
 	validator.Stop()
 	c.Assert(validator.IsStarted(), IsFalse)
-	_, isTablesChanged := validator.isRelatedTablesChanged(item.schemaVer, []int64{10}, false)
+	_, isTablesChanged := validator.isRelatedTablesChanged(item.schemaVer, []int64{10})
 	c.Assert(isTablesChanged, IsTrue)
-	_, valid = validator.Check(item.leaseGrantTS, item.schemaVer, []int64{10}, false)
+	_, valid = validator.Check(item.leaseGrantTS, item.schemaVer, []int64{10})
 	c.Assert(valid, Equals, ResultUnknown)
 	validator.Restart()
 
 	// Increase the current time by 2 leases, check schema is invalid.
 	ts := uint64(time.Now().Add(2 * lease).UnixNano()) // Make sure that ts has timed out a lease.
-	_, valid = validator.Check(ts, item.schemaVer, []int64{10}, false)
+	_, valid = validator.Check(ts, item.schemaVer, []int64{10})
 	c.Assert(valid, Equals, ResultUnknown, Commentf("validator latest schema ver %v, time %v, item schema ver %v, ts %v",
 		validator.latestSchemaVer, validator.latestSchemaExpire, 0, oracle.GetTimeFromTS(ts)))
 	// Make sure newItem's version is greater than item.schema.
 	newItem := getGreaterVersionItem(c, lease, leaseGrantCh, item.schemaVer)
 	currVer := newItem.schemaVer
-	validator.Update(newItem.leaseGrantTS, newItem.oldVer, currVer, tikv.RelatedSchemaChange{})
-	_, valid = validator.Check(ts, item.schemaVer, nil, false)
+	validator.Update(newItem.leaseGrantTS, newItem.oldVer, currVer, nil)
+	_, valid = validator.Check(ts, item.schemaVer, nil)
 	c.Assert(valid, Equals, ResultFail, Commentf("currVer %d, newItem %v", currVer, item))
-	_, valid = validator.Check(ts, item.schemaVer, []int64{0}, false)
+	_, valid = validator.Check(ts, item.schemaVer, []int64{0})
 	c.Assert(valid, Equals, ResultFail, Commentf("currVer %d, newItem %v", currVer, item))
 	// Check the latest schema version must changed.
 	c.Assert(item.schemaVer, Less, validator.latestSchemaVer)
@@ -88,20 +88,20 @@ func (*testSuite) TestSchemaValidator(c *C) {
 	// Make sure newItem's version is greater than currVer.
 	newItem = getGreaterVersionItem(c, lease, leaseGrantCh, currVer)
 	// Update current schema version to newItem's version and the delta table IDs is 1, 2, 3.
-	validator.Update(ts, currVer, newItem.schemaVer, tikv.RelatedSchemaChange{PhyTblIDS: []int64{1, 2, 3}, ActionTypes: []uint64{1, 2, 3}})
+	validator.Update(ts, currVer, newItem.schemaVer, &tikv.RelatedSchemaChange{PhyTblIDS: []int64{1, 2, 3}, ActionTypes: []uint64{1, 2, 3}})
 	// Make sure the updated table IDs don't be covered with the same schema version.
-	validator.Update(ts, newItem.schemaVer, newItem.schemaVer, tikv.RelatedSchemaChange{})
-	_, isTablesChanged = validator.isRelatedTablesChanged(currVer, nil, false)
+	validator.Update(ts, newItem.schemaVer, newItem.schemaVer, nil)
+	_, isTablesChanged = validator.isRelatedTablesChanged(currVer, nil)
 	c.Assert(isTablesChanged, IsFalse)
-	_, isTablesChanged = validator.isRelatedTablesChanged(currVer, []int64{2}, false)
+	_, isTablesChanged = validator.isRelatedTablesChanged(currVer, []int64{2})
 	c.Assert(isTablesChanged, IsTrue, Commentf("currVer %d, newItem %v", currVer, newItem))
 	// The current schema version is older than the oldest schema version.
-	_, isTablesChanged = validator.isRelatedTablesChanged(-1, nil, false)
+	_, isTablesChanged = validator.isRelatedTablesChanged(-1, nil)
 	c.Assert(isTablesChanged, IsTrue, Commentf("currVer %d, newItem %v", currVer, newItem))
 
 	// All schema versions is expired.
 	ts = uint64(time.Now().Add(2 * lease).UnixNano())
-	_, valid = validator.Check(ts, newItem.schemaVer, nil, false)
+	_, valid = validator.Check(ts, newItem.schemaVer, nil)
 	c.Assert(valid, Equals, ResultUnknown)
 
 	close(exit)
@@ -157,7 +157,7 @@ func (*testSuite) TestEnqueue(c *C) {
 	c.Assert(validator.IsStarted(), IsTrue)
 	// maxCnt is 0.
 	variable.SetMaxDeltaSchemaCount(0)
-	validator.enqueue(1, tikv.RelatedSchemaChange{PhyTblIDS: []int64{11}, ActionTypes: []uint64{11}})
+	validator.enqueue(1, &tikv.RelatedSchemaChange{PhyTblIDS: []int64{11}, ActionTypes: []uint64{11}})
 	c.Assert(validator.deltaSchemaInfos, HasLen, 0)
 
 	// maxCnt is 10.
@@ -175,9 +175,9 @@ func (*testSuite) TestEnqueue(c *C) {
 		{9, []int64{1, 2, 3}, []uint64{1, 2, 3}},
 	}
 	for _, d := range ds {
-		validator.enqueue(d.schemaVersion, tikv.RelatedSchemaChange{PhyTblIDS: d.relatedIDs, ActionTypes: d.relatedActions})
+		validator.enqueue(d.schemaVersion, &tikv.RelatedSchemaChange{PhyTblIDS: d.relatedIDs, ActionTypes: d.relatedActions})
 	}
-	validator.enqueue(10, tikv.RelatedSchemaChange{PhyTblIDS: []int64{1}, ActionTypes: []uint64{1}})
+	validator.enqueue(10, &tikv.RelatedSchemaChange{PhyTblIDS: []int64{1}, ActionTypes: []uint64{1}})
 	ret := []deltaSchemaInfo{
 		{0, []int64{1}, []uint64{1}},
 		{2, []int64{1}, []uint64{1}},
@@ -189,16 +189,16 @@ func (*testSuite) TestEnqueue(c *C) {
 	}
 	c.Assert(validator.deltaSchemaInfos, DeepEquals, ret)
 	// The Items' relatedTableIDs have different order.
-	validator.enqueue(11, tikv.RelatedSchemaChange{PhyTblIDS: []int64{1, 2, 3, 4}, ActionTypes: []uint64{1, 2, 3, 4}})
-	validator.enqueue(12, tikv.RelatedSchemaChange{PhyTblIDS: []int64{4, 1, 2, 3, 1}, ActionTypes: []uint64{4, 1, 2, 3, 1}})
-	validator.enqueue(13, tikv.RelatedSchemaChange{PhyTblIDS: []int64{4, 1, 3, 2, 5}, ActionTypes: []uint64{4, 1, 3, 2, 5}})
+	validator.enqueue(11, &tikv.RelatedSchemaChange{PhyTblIDS: []int64{1, 2, 3, 4}, ActionTypes: []uint64{1, 2, 3, 4}})
+	validator.enqueue(12, &tikv.RelatedSchemaChange{PhyTblIDS: []int64{4, 1, 2, 3, 1}, ActionTypes: []uint64{4, 1, 2, 3, 1}})
+	validator.enqueue(13, &tikv.RelatedSchemaChange{PhyTblIDS: []int64{4, 1, 3, 2, 5}, ActionTypes: []uint64{4, 1, 3, 2, 5}})
 	ret[len(ret)-1] = deltaSchemaInfo{13, []int64{4, 1, 3, 2, 5}, []uint64{4, 1, 3, 2, 5}}
 	c.Assert(validator.deltaSchemaInfos, DeepEquals, ret)
 	// The length of deltaSchemaInfos is greater then maxCnt.
-	validator.enqueue(14, tikv.RelatedSchemaChange{PhyTblIDS: []int64{1}, ActionTypes: []uint64{1}})
-	validator.enqueue(15, tikv.RelatedSchemaChange{PhyTblIDS: []int64{2}, ActionTypes: []uint64{2}})
-	validator.enqueue(16, tikv.RelatedSchemaChange{PhyTblIDS: []int64{3}, ActionTypes: []uint64{3}})
-	validator.enqueue(17, tikv.RelatedSchemaChange{PhyTblIDS: []int64{4}, ActionTypes: []uint64{4}})
+	validator.enqueue(14, &tikv.RelatedSchemaChange{PhyTblIDS: []int64{1}, ActionTypes: []uint64{1}})
+	validator.enqueue(15, &tikv.RelatedSchemaChange{PhyTblIDS: []int64{2}, ActionTypes: []uint64{2}})
+	validator.enqueue(16, &tikv.RelatedSchemaChange{PhyTblIDS: []int64{3}, ActionTypes: []uint64{3}})
+	validator.enqueue(17, &tikv.RelatedSchemaChange{PhyTblIDS: []int64{4}, ActionTypes: []uint64{4}})
 	ret = append(ret, deltaSchemaInfo{14, []int64{1}, []uint64{1}})
 	ret = append(ret, deltaSchemaInfo{15, []int64{2}, []uint64{2}})
 	ret = append(ret, deltaSchemaInfo{16, []int64{3}, []uint64{3}})
@@ -215,7 +215,7 @@ func (*testSuite) TestEnqueueActionType(c *C) {
 	c.Assert(validator.IsStarted(), IsTrue)
 	// maxCnt is 0.
 	variable.SetMaxDeltaSchemaCount(0)
-	validator.enqueue(1, tikv.RelatedSchemaChange{PhyTblIDS: []int64{11}, ActionTypes: []uint64{11}})
+	validator.enqueue(1, &tikv.RelatedSchemaChange{PhyTblIDS: []int64{11}, ActionTypes: []uint64{11}})
 	c.Assert(validator.deltaSchemaInfos, HasLen, 0)
 
 	// maxCnt is 10.
@@ -233,9 +233,9 @@ func (*testSuite) TestEnqueueActionType(c *C) {
 		{9, []int64{1, 2, 3}, []uint64{1, 2, 4}},
 	}
 	for _, d := range ds {
-		validator.enqueue(d.schemaVersion, tikv.RelatedSchemaChange{PhyTblIDS: d.relatedIDs, ActionTypes: d.relatedActions})
+		validator.enqueue(d.schemaVersion, &tikv.RelatedSchemaChange{PhyTblIDS: d.relatedIDs, ActionTypes: d.relatedActions})
 	}
-	validator.enqueue(10, tikv.RelatedSchemaChange{PhyTblIDS: []int64{1}, ActionTypes: []uint64{15}})
+	validator.enqueue(10, &tikv.RelatedSchemaChange{PhyTblIDS: []int64{1}, ActionTypes: []uint64{15}})
 	ret := []deltaSchemaInfo{
 		{0, []int64{1}, []uint64{1}},
 		{2, []int64{1}, []uint64{1}},
@@ -249,7 +249,7 @@ func (*testSuite) TestEnqueueActionType(c *C) {
 	c.Assert(validator.deltaSchemaInfos, DeepEquals, ret)
 	// Check the flag set by schema diff, note tableID = 3 has been set flag 0x3 in schema version 9, and flag 0x4
 	// in schema version 10, so the resActions for tableID = 3 should be 0x3 & 0x4 = 0x7
-	relatedChanges, isTablesChanged := validator.isRelatedTablesChanged(5, []int64{1, 2, 3, 4}, true)
+	relatedChanges, isTablesChanged := validator.isRelatedTablesChanged(5, []int64{1, 2, 3, 4})
 	c.Assert(isTablesChanged, Equals, true)
 	c.Assert(relatedChanges.PhyTblIDS, DeepEquals, []int64{1, 2, 3, 4})
 	c.Assert(relatedChanges.ActionTypes, DeepEquals, []uint64{15, 2, 7, 4})

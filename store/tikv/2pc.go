@@ -820,7 +820,7 @@ type SchemaVer interface {
 type schemaLeaseChecker interface {
 	// CheckBySchemaVer checks if the schema has changed for the transaction related tables between the startSchemaVer
 	// and the schema version at txnTS, if getAllChangedInfo is true, all the related schema changes will be returned
-	CheckBySchemaVer(txnTS uint64, startSchemaVer SchemaVer, getAllChangedInfo bool) (*RelatedSchemaChange, bool, error)
+	CheckBySchemaVer(txnTS uint64, startSchemaVer SchemaVer) (*RelatedSchemaChange, error)
 }
 
 // RelatedSchemaChange contains information about schema diff between two schema versions
@@ -828,12 +828,13 @@ type RelatedSchemaChange struct {
 	PhyTblIDS        []int64
 	ActionTypes      []uint64
 	LatestInfoSchema SchemaVer
+	Amendable        bool
 }
 
 func (c *twoPhaseCommitter) checkSchemaValid() error {
 	checker, ok := c.txn.us.GetOption(kv.SchemaChecker).(schemaLeaseChecker)
 	if ok {
-		_, _, err := checker.CheckBySchemaVer(c.commitTS, c.txn.txnInfoSchema, false)
+		_, err := checker.CheckBySchemaVer(c.commitTS, c.txn.txnInfoSchema)
 		if err != nil {
 			return errors.Trace(err)
 		}

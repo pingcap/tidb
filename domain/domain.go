@@ -377,7 +377,7 @@ func (do *Domain) Reload() error {
 		logutil.BgLogger().Info("full load and reset schema validator")
 		do.SchemaValidator.Reset()
 	}
-	do.SchemaValidator.Update(ver.Ver, schemaVersion, neededSchemaVersion, relatedChanges)
+	do.SchemaValidator.Update(ver.Ver, schemaVersion, neededSchemaVersion, &relatedChanges)
 
 	lease := do.DDL().GetLease()
 	sub := time.Since(startTime)
