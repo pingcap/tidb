@@ -393,9 +393,9 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 	return nil
 }
 
-func makeRowDecoder(t table.Table, decodeCol []*table.Column, sctx sessionctx.Context) *decoder.RowDecoder {
+func makeRowDecoder(t table.Table, sctx sessionctx.Context) *decoder.RowDecoder {
 	dbName := model.NewCIStr(sctx.GetSessionVars().CurrentDB)
-	exprCols, names := expression.ColumnInfos2ColumnsAndNames(sctx, dbName, t.Meta().Name, t.Meta().Columns, t.Meta())
+	exprCols, _ := expression.ColumnInfos2ColumnsAndNames(sctx, dbName, t.Meta().Name, t.Meta().Columns, t.Meta())
 	mockSchema := expression.NewSchema(exprCols...)
 	decodeColsMap, ignored := decoder.BuildFullDecodeColMap(t, mockSchema)
 	_ = ignored
@@ -421,7 +421,7 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 		zap.Stringer("startKey", startKey),
 		zap.Stringer("key", it.Key()),
 		zap.Binary("value", it.Value()))
-	rowDecoder := makeRowDecoder(t, cols, sessCtx)
+	rowDecoder := makeRowDecoder(t, sessCtx)
 	for it.Valid() && it.Key().HasPrefix(prefix) {
 		// first kv pair is row lock information.
 		// TODO: check valid lock
