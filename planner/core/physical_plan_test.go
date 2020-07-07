@@ -1493,6 +1493,7 @@ func (s *testPlanSuite) TestNthPlanHintWithExplain(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
 	defer func() {
 		dom.Close()
 		store.Close()
@@ -1513,20 +1514,14 @@ func (s *testPlanSuite) TestNthPlanHintWithExplain(c *C) {
 	var input []string
 	var output []struct {
 		SQL  string
-		Plan string
+		Plan []string
 	}
-	is := domain.GetDomain(se).InfoSchema()
 	s.testData.GetTestCases(c, &input, &output)
-	for i, tt := range input {
-		comment := Commentf("case:%v sql: %s", i, tt)
-		stmt, err := s.ParseOneStmt(tt, "", "")
-		c.Assert(err, IsNil, comment)
-		p, _, err := planner.Optimize(ctx, se, stmt, is)
-		c.Assert(err, IsNil, comment)
+	for i, ts := range input {
 		s.testData.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = core.ToString(p)
+			output[i].SQL = ts
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
 		})
-		c.Assert(core.ToString(p), Equals, output[i].Plan, comment)
+		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
 	}
 }
