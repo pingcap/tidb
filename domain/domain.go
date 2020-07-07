@@ -86,15 +86,15 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 	startTS uint64) (neededSchemaVersion int64, change *tikv.RelatedSchemaChange, fullLoad bool, err error) {
 	snapshot, err := do.store.GetSnapshot(kv.NewVersion(startTS))
 	if err != nil {
-		return 0, change, fullLoad, err
+		return 0, nil, fullLoad, err
 	}
 	m := meta.NewSnapshotMeta(snapshot)
 	neededSchemaVersion, err = m.GetSchemaVersion()
 	if err != nil {
-		return 0, change, fullLoad, err
+		return 0, nil, fullLoad, err
 	}
 	if usedSchemaVersion != 0 && usedSchemaVersion == neededSchemaVersion {
-		return neededSchemaVersion, change, fullLoad, nil
+		return neededSchemaVersion, nil, fullLoad, nil
 	}
 
 	// Update self schema version to etcd.
@@ -136,12 +136,12 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 	fullLoad = true
 	schemas, err := do.fetchAllSchemasWithTables(m)
 	if err != nil {
-		return 0, change, fullLoad, err
+		return 0, nil, fullLoad, err
 	}
 
 	newISBuilder, err := infoschema.NewBuilder(handle).InitWithDBInfos(schemas, neededSchemaVersion)
 	if err != nil {
-		return 0, change, fullLoad, err
+		return 0, nil, fullLoad, err
 	}
 	logutil.BgLogger().Info("full load InfoSchema success",
 		zap.Int64("usedSchemaVersion", usedSchemaVersion),
