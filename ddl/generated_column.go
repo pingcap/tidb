@@ -69,11 +69,13 @@ func verifyColumnGenerationSingle(dependColNames map[string]struct{}, cols []*ta
 	return nil
 }
 
-// checkDependedColExist ensure all depended columns exist.
+// checkDependedColExist ensure all depended columns exist and not hidden.
 // NOTE: this will MODIFY parameter `dependCols`.
 func checkDependedColExist(dependCols map[string]struct{}, cols []*table.Column) error {
 	for _, col := range cols {
-		delete(dependCols, col.Name.L)
+		if !col.Hidden {
+			delete(dependCols, col.Name.L)
+		}
 	}
 	if len(dependCols) != 0 {
 		for arbitraryCol := range dependCols {
@@ -163,7 +165,7 @@ func checkModifyGeneratedColumn(tbl table.Table, oldCol, newCol *table.Column, n
 	oldColIsStored := !oldCol.IsGenerated() || oldCol.GeneratedStored
 	newColIsStored := !newCol.IsGenerated() || newCol.GeneratedStored
 	if oldColIsStored != newColIsStored {
-		return errUnsupportedOnGeneratedColumn.GenWithStackByArgs("Changing the STORED status")
+		return ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("Changing the STORED status")
 	}
 
 	// rule 2.
@@ -224,16 +226,27 @@ func checkModifyGeneratedColumn(tbl table.Table, oldCol, newCol *table.Column, n
 }
 
 type illegalFunctionChecker struct {
-	found bool
+	hasIllegalFunc bool
+	hasAggFunc     bool
 }
 
 func (c *illegalFunctionChecker) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
 	switch node := inNode.(type) {
 	case *ast.FuncCallExpr:
-		if _, found := expression.IllegalFunctions4GeneratedColumns[node.FnName.L]; found {
-			c.found = true
+		// Blocked functions & non-builtin functions is not allowed
+		_, IsFunctionBlocked := expression.IllegalFunctions4GeneratedColumns[node.FnName.L]
+		if IsFunctionBlocked || !expression.IsFunctionSupported(node.FnName.L) {
+			c.hasIllegalFunc = true
 			return inNode, true
 		}
+	case *ast.SubqueryExpr, *ast.ValuesExpr, *ast.VariableExpr:
+		// Subquery & `values(x)` & variable is not allowed
+		c.hasIllegalFunc = true
+		return inNode, true
+	case *ast.AggregateFuncExpr:
+		// Aggregate function is not allowed
+		c.hasAggFunc = true
+		return inNode, true
 	}
 	return inNode, false
 }
@@ -248,8 +261,11 @@ func checkIllegalFn4GeneratedColumn(colName string, expr ast.ExprNode) error {
 	}
 	var c illegalFunctionChecker
 	expr.Accept(&c)
-	if c.found {
+	if c.hasIllegalFunc {
 		return ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs(colName)
+	}
+	if c.hasAggFunc {
+		return ErrInvalidGroupFuncUse
 	}
 	return nil
 }
@@ -269,13 +285,13 @@ func checkIndexOrStored(tbl table.Table, oldCol, newCol *table.Column) error {
 	}
 
 	if newCol.GeneratedStored {
-		return errUnsupportedOnGeneratedColumn.GenWithStackByArgs("modifying a stored column")
+		return ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("modifying a stored column")
 	}
 
 	for _, idx := range tbl.Indices() {
 		for _, col := range idx.Meta().Columns {
 			if col.Name.L == newCol.Name.L {
-				return errUnsupportedOnGeneratedColumn.GenWithStackByArgs("modifying an indexed column")
+				return ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("modifying an indexed column")
 			}
 		}
 	}

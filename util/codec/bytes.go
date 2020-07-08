@@ -28,8 +28,7 @@ const (
 )
 
 var (
-	pads    = make([]byte, encGroupSize)
-	encPads = []byte{encPad}
+	pads = make([]byte, encGroupSize)
 )
 
 // EncodeBytes guarantees the encoded value is in ascending order for comparison,
@@ -66,6 +65,13 @@ func EncodeBytes(b []byte, data []byte) []byte {
 	}
 
 	return result
+}
+
+// EncodedBytesLength returns the length of data after encoded
+func EncodedBytesLength(dataLen int) int {
+	mod := dataLen % encGroupSize
+	padCount := encGroupSize - mod
+	return dataLen + padCount + 1 + dataLen/encGroupSize
 }
 
 func decodeBytes(b []byte, buf []byte, reverse bool) ([]byte, []byte, error) {

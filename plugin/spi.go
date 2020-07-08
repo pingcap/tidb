@@ -31,10 +31,8 @@ const (
 
 // Manifest describes plugin info and how it can do by plugin itself.
 type Manifest struct {
-	Kind           Kind
 	Name           string
 	Description    string
-	Version        uint16
 	RequireVersion map[string]uint16
 	License        string
 	BuildTime      string
@@ -54,6 +52,9 @@ type Manifest struct {
 	// return error will write log and continue watch following flush.
 	OnFlush      func(ctx context.Context, manifest *Manifest) error
 	flushWatcher *flushWatcher
+
+	Version uint16
+	Kind    Kind
 }
 
 // ExportManifest exports a manifest to TiDB as a known format.

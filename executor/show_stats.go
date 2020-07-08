@@ -19,7 +19,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
@@ -110,7 +109,7 @@ func (e *ShowExec) histogramToRow(dbName, tblName, partitionName, colName string
 
 func (e *ShowExec) versionToTime(version uint64) types.Time {
 	t := time.Unix(0, oracle.ExtractPhysical(version)*int64(time.Millisecond))
-	return types.Time{Time: types.FromGoTime(t), Type: mysql.TypeDatetime}
+	return types.NewTime(types.FromGoTime(t), mysql.TypeDatetime, 0)
 }
 
 func (e *ShowExec) fetchShowStatsBuckets() error {
@@ -224,7 +223,7 @@ func (e *ShowExec) appendTableForStatsHealthy(dbName, tblName, partitionName str
 }
 
 func (e *ShowExec) fetchShowAnalyzeStatus() {
-	rows := infoschema.DataForAnalyzeStatus()
+	rows := dataForAnalyzeStatusHelper(e.baseExecutor.ctx)
 	for _, row := range rows {
 		for i, val := range row {
 			e.result.AppendDatum(i, &val)

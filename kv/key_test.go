@@ -114,6 +114,98 @@ func (s *testKeySuite) TestBasicFunc(c *C) {
 	c.Assert(IsTxnRetryableError(errors.New("test")), IsFalse)
 }
 
+func (s *testKeySuite) TestHandle(c *C) {
+	ih := IntHandle(100)
+	c.Assert(ih.IsInt(), IsTrue)
+	_, iv, _ := codec.DecodeInt(ih.Encoded())
+	c.Assert(iv, Equals, ih.IntValue())
+	ih2 := ih.Next()
+	c.Assert(ih2.IntValue(), Equals, int64(101))
+	c.Assert(ih.Equal(ih2), IsFalse)
+	c.Assert(ih.Compare(ih2), Equals, -1)
+	c.Assert(ih.String(), Equals, "100")
+	ch := mustNewCommonHandle(c, 100, "abc")
+	c.Assert(ch.IsInt(), IsFalse)
+	ch2 := ch.Next()
+	c.Assert(ch.Equal(ch2), IsFalse)
+	c.Assert(ch.Compare(ch2), Equals, -1)
+	c.Assert(ch2.Encoded(), HasLen, len(ch.Encoded()))
+	c.Assert(ch.NumCols(), Equals, 2)
+	_, d, err := codec.DecodeOne(ch.EncodedCol(0))
+	c.Assert(err, IsNil)
+	c.Assert(d.GetInt64(), Equals, int64(100))
+	_, d, err = codec.DecodeOne(ch.EncodedCol(1))
+	c.Assert(err, IsNil)
+	c.Assert(d.GetString(), Equals, "abc")
+	c.Assert(ch.String(), Equals, "{100, abc}")
+}
+
+func (s *testKeySuite) TestPaddingHandle(c *C) {
+	dec := types.NewDecFromInt(1)
+	encoded, err := codec.EncodeKey(new(stmtctx.StatementContext), nil, types.NewDecimalDatum(dec))
+	c.Assert(err, IsNil)
+	c.Assert(len(encoded), Less, 9)
+	handle, err := NewCommonHandle(encoded)
+	c.Assert(err, IsNil)
+	c.Assert(handle.Encoded(), HasLen, 9)
+	c.Assert(handle.EncodedCol(0), BytesEquals, encoded)
+	newHandle, err := NewCommonHandle(handle.Encoded())
+	c.Assert(err, IsNil)
+	c.Assert(newHandle.EncodedCol(0), BytesEquals, handle.EncodedCol(0))
+}
+
+func (s *testKeySuite) TestHandleMap(c *C) {
+	m := NewHandleMap()
+	h := IntHandle(1)
+	m.Set(h, 1)
+	v, ok := m.Get(h)
+	c.Assert(ok, IsTrue)
+	c.Assert(v, Equals, 1)
+	m.Delete(h)
+	v, ok = m.Get(h)
+	c.Assert(ok, IsFalse)
+	c.Assert(v, IsNil)
+	ch := mustNewCommonHandle(c, 100, "abc")
+	m.Set(ch, "a")
+	v, ok = m.Get(ch)
+	c.Assert(ok, IsTrue)
+	c.Assert(v, Equals, "a")
+	m.Delete(ch)
+	v, ok = m.Get(ch)
+	c.Assert(ok, IsFalse)
+	c.Assert(v, IsNil)
+	m.Set(ch, "a")
+	ch2 := mustNewCommonHandle(c, 101, "abc")
+	m.Set(ch2, "b")
+	ch3 := mustNewCommonHandle(c, 99, "def")
+	m.Set(ch3, "c")
+	c.Assert(m.Len(), Equals, 3)
+	cnt := 0
+	m.Range(func(h Handle, val interface{}) bool {
+		cnt++
+		if h.Equal(ch) {
+			c.Assert(val, Equals, "a")
+		} else if h.Equal(ch2) {
+			c.Assert(val, Equals, "b")
+		} else {
+			c.Assert(val, Equals, "c")
+		}
+		if cnt == 2 {
+			return false
+		}
+		return true
+	})
+	c.Assert(cnt, Equals, 2)
+}
+
+func mustNewCommonHandle(c *C, values ...interface{}) *CommonHandle {
+	encoded, err := codec.EncodeKey(new(stmtctx.StatementContext), nil, types.MakeDatums(values...)...)
+	c.Assert(err, IsNil)
+	ch, err := NewCommonHandle(encoded)
+	c.Assert(err, IsNil)
+	return ch
+}
+
 func BenchmarkIsPoint(b *testing.B) {
 	b.ReportAllocs()
 	kr := KeyRange{

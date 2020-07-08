@@ -230,8 +230,9 @@ func (tk *CTestKit) ConcurrentRun(c *check.C, concurrent int, loops int,
 
 // PermInt returns, as a slice of n ints, a pseudo-random permutation of the integers [0,n).
 func (tk *CTestKit) PermInt(n int) []interface{} {
-	var v []interface{}
-	for _, i := range rand.Perm(n) {
+	randPermSlice := rand.Perm(n)
+	v := make([]interface{}, 0, len(randPermSlice))
+	for _, i := range randPermSlice {
 		v = append(v, i)
 	}
 	return v

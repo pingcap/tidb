@@ -1,7 +1,7 @@
 ---
-name: "\U0001F947 Performance Questions"
-about: Performance question about TiDB which is not caused by bug.
-labels: question, type/performance
+name: "\U0001F947 Ask a Database Performance Question"
+about: I want to ask a database performance question.
+labels: type/question, type/performance
 ---
 
 ## Performance Questions

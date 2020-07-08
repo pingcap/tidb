@@ -38,6 +38,18 @@ func (mr MutRow) Len() int {
 	return len(mr.c.columns)
 }
 
+// Clone deep clone a MutRow.
+func (mr MutRow) Clone() MutRow {
+	newChk := mr.c
+	if mr.c != nil {
+		newChk = mr.c.CopyConstruct()
+	}
+	return MutRow{
+		c:   newChk,
+		idx: mr.idx,
+	}
+}
+
 // MutRowFromValues creates a MutRow from a interface slice.
 func MutRowFromValues(vals ...interface{}) MutRow {
 	c := &Chunk{columns: make([]*Column, 0, len(vals))}
@@ -109,7 +121,7 @@ func zeroValForType(tp *types.FieldType) interface{} {
 func makeMutRowColumn(in interface{}) *Column {
 	switch x := in.(type) {
 	case nil:
-		col := makeMutRowUint64Column(uint64(0))
+		col := makeMutRowBytesColumn(nil)
 		col.nullBitmap[0] = 0
 		return col
 	case int:
@@ -135,8 +147,8 @@ func makeMutRowColumn(in interface{}) *Column {
 		*(*types.MyDecimal)(unsafe.Pointer(&col.data[0])) = *x
 		return col
 	case types.Time:
-		col := newMutRowFixedLenColumn(16)
-		writeTime(col.data, x)
+		col := newMutRowFixedLenColumn(sizeTime)
+		*(*types.Time)(unsafe.Pointer(&col.data[0])) = x
 		return col
 	case json.BinaryJSON:
 		col := newMutRowVarLenColumn(len(x.Value) + 1)
@@ -149,12 +161,12 @@ func makeMutRowColumn(in interface{}) *Column {
 		return col
 	case types.Enum:
 		col := newMutRowVarLenColumn(len(x.Name) + 8)
-		*(*uint64)(unsafe.Pointer(&col.data[0])) = x.Value
+		copy(col.data, (*[8]byte)(unsafe.Pointer(&x.Value))[:])
 		copy(col.data[8:], x.Name)
 		return col
 	case types.Set:
 		col := newMutRowVarLenColumn(len(x.Name) + 8)
-		*(*uint64)(unsafe.Pointer(&col.data[0])) = x.Value
+		copy(col.data, (*[8]byte)(unsafe.Pointer(&x.Value))[:])
 		copy(col.data[8:], x.Name)
 		return col
 	default:
@@ -163,12 +175,12 @@ func makeMutRowColumn(in interface{}) *Column {
 }
 
 func newMutRowFixedLenColumn(elemSize int) *Column {
-	buf := make([]byte, elemSize+1)
+	buf := make([]byte, elemSize)
 	col := &Column{
 		length:     1,
-		elemBuf:    buf[:elemSize],
-		data:       buf[:elemSize],
-		nullBitmap: buf[elemSize:],
+		elemBuf:    buf,
+		data:       buf,
+		nullBitmap: make([]byte, 1),
 	}
 	col.nullBitmap[0] = 1
 	return col
@@ -195,7 +207,6 @@ func makeMutRowUint64Column(val uint64) *Column {
 func makeMutRowBytesColumn(bin []byte) *Column {
 	col := newMutRowVarLenColumn(len(bin))
 	copy(col.data, bin)
-	col.nullBitmap[0] = 1
 	return col
 }
 
@@ -253,7 +264,7 @@ func (mr MutRow) SetValue(colIdx int, val interface{}) {
 	case *types.MyDecimal:
 		*(*types.MyDecimal)(unsafe.Pointer(&col.data[0])) = *x
 	case types.Time:
-		writeTime(col.data, x)
+		*(*types.Time)(unsafe.Pointer(&col.data[0])) = x
 	case types.Enum:
 		setMutRowNameValue(col, x.Name, x.Value)
 	case types.Set:
@@ -286,7 +297,7 @@ func (mr MutRow) SetDatum(colIdx int, d types.Datum) {
 	case types.KindString, types.KindBytes, types.KindBinaryLiteral:
 		setMutRowBytes(col, d.GetBytes())
 	case types.KindMysqlTime:
-		writeTime(col.data, d.GetMysqlTime())
+		*(*types.Time)(unsafe.Pointer(&col.data[0])) = d.GetMysqlTime()
 	case types.KindMysqlDuration:
 		*(*int64)(unsafe.Pointer(&col.data[0])) = int64(d.GetMysqlDuration().Duration)
 	case types.KindMysqlDecimal:

@@ -17,8 +17,8 @@ import (
 	"encoding/binary"
 	"unicode/utf8"
 
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	mysql "github.com/pingcap/tidb/errno"
 )
 
 // TypeCode indicates JSON type.
@@ -53,21 +53,20 @@ const (
 const unknownTypeCodeErrorMsg = "unknown type code: %d"
 const unknownTypeErrorMsg = "unknown type: %s"
 
-// htmlSafeSet holds the value true if the ASCII character with the given
-// array position can be safely represented inside a JSON string, embedded
-// inside of HTML <script> tags, without any additional escaping.
+// safeSet holds the value true if the ASCII character with the given array
+// position can be represented inside a JSON string without any further
+// escaping.
 //
 // All values are true except for the ASCII control characters (0-31), the
-// double quote ("), the backslash character ("\"), HTML opening and closing
-// tags ("<" and ">"), and the ampersand ("&").
-var htmlSafeSet = [utf8.RuneSelf]bool{
+// double quote ("), and the backslash character ("\").
+var safeSet = [utf8.RuneSelf]bool{
 	' ':      true,
 	'!':      true,
 	'"':      false,
 	'#':      true,
 	'$':      true,
 	'%':      true,
-	'&':      false,
+	'&':      true,
 	'\'':     true,
 	'(':      true,
 	')':      true,
@@ -89,9 +88,9 @@ var htmlSafeSet = [utf8.RuneSelf]bool{
 	'9':      true,
 	':':      true,
 	';':      true,
-	'<':      false,
+	'<':      true,
 	'=':      true,
-	'>':      false,
+	'>':      true,
 	'?':      true,
 	'@':      true,
 	'A':      true,
@@ -216,20 +215,13 @@ var (
 	ErrInvalidJSONPathWildcard = terror.ClassJSON.New(mysql.ErrInvalidJSONPathWildcard, mysql.MySQLErrName[mysql.ErrInvalidJSONPathWildcard])
 	// ErrInvalidJSONContainsPathType means invalid JSON contains path type.
 	ErrInvalidJSONContainsPathType = terror.ClassJSON.New(mysql.ErrInvalidJSONContainsPathType, mysql.MySQLErrName[mysql.ErrInvalidJSONContainsPathType])
+	// ErrJSONDocumentNULLKey means that json's key is null
+	ErrJSONDocumentNULLKey = terror.ClassJSON.New(mysql.ErrJSONDocumentNULLKey, mysql.MySQLErrName[mysql.ErrJSONDocumentNULLKey])
 	// ErrInvalidJSONPathArrayCell means invalid JSON path for an array cell.
 	ErrInvalidJSONPathArrayCell = terror.ClassJSON.New(mysql.ErrInvalidJSONPathArrayCell, mysql.MySQLErrName[mysql.ErrInvalidJSONPathArrayCell])
+	// ErrUnsupportedSecondArgumentType means unsupported second argument type in json_objectagg
+	ErrUnsupportedSecondArgumentType = terror.ClassJSON.New(mysql.ErrUnsupportedSecondArgumentType, mysql.MySQLErrName[mysql.ErrUnsupportedSecondArgumentType])
 )
-
-func init() {
-	terror.ErrClassToMySQLCodes[terror.ClassJSON] = map[terror.ErrCode]uint16{
-		mysql.ErrInvalidJSONText:             mysql.ErrInvalidJSONText,
-		mysql.ErrInvalidJSONPath:             mysql.ErrInvalidJSONPath,
-		mysql.ErrInvalidJSONData:             mysql.ErrInvalidJSONData,
-		mysql.ErrInvalidJSONPathWildcard:     mysql.ErrInvalidJSONPathWildcard,
-		mysql.ErrInvalidJSONContainsPathType: mysql.ErrInvalidJSONContainsPathType,
-		mysql.ErrInvalidJSONPathArrayCell:    mysql.ErrInvalidJSONPathArrayCell,
-	}
-}
 
 // json_contains_path function type choices
 // See: https://dev.mysql.com/doc/refman/5.7/en/json-search-functions.html#function_json-contains-path

@@ -26,7 +26,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-sql-driver/mysql"
+	_ "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
@@ -140,11 +140,11 @@ LOOP:
 				break LOOP
 			default:
 				if strings.HasPrefix(s, "--error") {
-					t.expectedErrs = strings.Split(strings.TrimSpace(strings.TrimLeft(s, "--error")), ",")
+					t.expectedErrs = strings.Split(strings.TrimSpace(strings.TrimPrefix(s, "--error")), ",")
 				} else if strings.HasPrefix(s, "-- error") {
-					t.expectedErrs = strings.Split(strings.TrimSpace(strings.TrimLeft(s, "-- error")), ",")
+					t.expectedErrs = strings.Split(strings.TrimSpace(strings.TrimPrefix(s, "-- error")), ",")
 				} else if strings.HasPrefix(s, "--echo") {
-					echo := strings.TrimSpace(strings.TrimLeft(s, "--echo"))
+					echo := strings.TrimSpace(strings.TrimPrefix(s, "--echo"))
 					t.buf.WriteString(echo)
 					t.buf.WriteString("\n")
 				}
@@ -369,10 +369,6 @@ func (t *tester) execute(query query) error {
 }
 
 func filterWarning(err error) error {
-	causeErr := errors.Cause(err)
-	if _, ok := causeErr.(mysql.MySQLWarnings); ok {
-		return nil
-	}
 	return err
 }
 
@@ -578,17 +574,6 @@ func loadAllTests() ([]string, error) {
 	return tests, nil
 }
 
-func resultExists(name string) bool {
-	resultFile := fmt.Sprintf("./r/%s.result", name)
-
-	if _, err := os.Stat(resultFile); err != nil {
-		if os.IsNotExist(err) {
-			return false
-		}
-	}
-	return true
-}
-
 // openDBWithRetry opens a database specified by its database driver name and a
 // driver-specific data source name. And it will do some retries if the connection fails.
 func openDBWithRetry(driverName, dataSourceName string) (mdb *sql.DB, err error) {
@@ -608,9 +593,8 @@ func openDBWithRetry(driverName, dataSourceName string) (mdb *sql.DB, err error)
 			break
 		}
 		log.Warn("ping DB failed", zap.Int("retry count", i), zap.Error(err))
-		err = mdb.Close()
-		if err != nil {
-			log.Error("close DB failed", zap.Error(err))
+		if err1 := mdb.Close(); err1 != nil {
+			log.Error("close DB failed", zap.Error(err1))
 		}
 		time.Sleep(sleepTime)
 	}
@@ -632,7 +616,7 @@ func main() {
 
 	mdb, err = openDBWithRetry(
 		"mysql",
-		"root@tcp(localhost:4001)/"+dbName+"?strict=true&allowAllFiles=true",
+		"root@tcp(localhost:4001)/"+dbName+"?allowAllFiles=true",
 	)
 	if err != nil {
 		log.Fatal("open DB failed", zap.Error(err))
@@ -659,6 +643,20 @@ func main() {
 	}
 	if _, err = mdb.Exec("set @@tidb_hash_join_concurrency=1"); err != nil {
 		log.Fatal("set @@tidb_hash_join_concurrency=1 failed", zap.Error(err))
+	}
+	resets := []string{
+		"set @@tidb_index_lookup_concurrency=4",
+		"set @@tidb_index_lookup_join_concurrency=4",
+		"set @@tidb_hashagg_final_concurrency=4",
+		"set @@tidb_hashagg_partial_concurrency=4",
+		"set @@tidb_window_concurrency=4",
+		"set @@tidb_projection_concurrency=4",
+		"set @@tidb_distsql_scan_concurrency=15",
+	}
+	for _, sql := range resets {
+		if _, err = mdb.Exec(sql); err != nil {
+			log.Fatal(fmt.Sprintf("%s failed", sql), zap.Error(err))
+		}
 	}
 
 	if _, err = mdb.Exec("set sql_mode='STRICT_TRANS_TABLES'"); err != nil {
@@ -693,7 +691,7 @@ func main() {
 		log.Info("run test ok", zap.String("test", t))
 	}
 
-	println("\nGreat, All tests passed")
+	log.Info("Explain test passed")
 }
 
 var queryStmtTable = []string{"explain", "select", "show", "execute", "describe", "desc", "admin"}

@@ -26,13 +26,14 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testUtilSuite{})
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -64,25 +65,21 @@ func (s *testUtilSuite) TearDownSuite(c *C) {
 func (s *testUtilSuite) TestDumpBinaryTime(c *C) {
 	t, err := types.ParseTimestamp(nil, "0000-00-00 00:00:00.0000000")
 	c.Assert(err, IsNil)
-	d, err := dumpBinaryDateTime(nil, t, nil)
-	c.Assert(err, IsNil)
+	d := dumpBinaryDateTime(nil, t)
 	c.Assert(d, DeepEquals, []byte{11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0})
 	t, err = types.ParseDatetime(nil, "0000-00-00 00:00:00.0000000")
 	c.Assert(err, IsNil)
-	d, err = dumpBinaryDateTime(nil, t, nil)
-	c.Assert(err, IsNil)
+	d = dumpBinaryDateTime(nil, t)
 	c.Assert(d, DeepEquals, []byte{11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0})
 
 	t, err = types.ParseDate(nil, "0000-00-00")
 	c.Assert(err, IsNil)
-	d, err = dumpBinaryDateTime(nil, t, nil)
-	c.Assert(err, IsNil)
+	d = dumpBinaryDateTime(nil, t)
 	c.Assert(d, DeepEquals, []byte{4, 0, 0, 0, 0})
 
 	t, err = types.ParseDate(nil, "0000-00-00")
 	c.Assert(err, IsNil)
-	d, err = dumpBinaryDateTime(nil, t, nil)
-	c.Assert(err, IsNil)
+	d = dumpBinaryDateTime(nil, t)
 	c.Assert(d, DeepEquals, []byte{4, 0, 0, 0, 0})
 
 	myDuration, err := types.ParseDuration(nil, "0000-00-00 00:00:00.0000000", 6)
@@ -163,7 +160,13 @@ func (s *testUtilSuite) TestDumpTextValue(c *C) {
 
 	var d types.Datum
 
-	time, err := types.ParseTime(nil, "2017-01-05 23:59:59.575601", mysql.TypeDatetime, 0)
+	sc := mock.NewContext().GetSessionVars().StmtCtx
+	sc.IgnoreZeroInDate = true
+	losAngelesTz, err := time.LoadLocation("America/Los_Angeles")
+	c.Assert(err, IsNil)
+	sc.TimeZone = losAngelesTz
+
+	time, err := types.ParseTime(sc, "2017-01-05 23:59:59.575601", mysql.TypeDatetime, 0)
 	c.Assert(err, IsNil)
 	d.SetMysqlTime(time)
 	columns[0].Type = mysql.TypeDatetime
@@ -171,7 +174,7 @@ func (s *testUtilSuite) TestDumpTextValue(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "2017-01-06 00:00:00")
 
-	duration, err := types.ParseDuration(nil, "11:30:45", 0)
+	duration, err := types.ParseDuration(sc, "11:30:45", 0)
 	c.Assert(err, IsNil)
 	d.SetMysqlDuration(duration)
 	columns[0].Type = mysql.TypeDuration
@@ -205,7 +208,7 @@ func (s *testUtilSuite) TestDumpTextValue(c *C) {
 	c.Assert(mustDecodeStr(c, bs), Equals, "ename")
 
 	set := types.Datum{}
-	set.SetMysqlSet(types.Set{Name: "sname", Value: 0})
+	set.SetMysqlSet(types.Set{Name: "sname", Value: 0}, mysql.DefaultCollationName)
 	columns[0].Type = mysql.TypeSet
 	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{set}).ToRow())
 	c.Assert(err, IsNil)

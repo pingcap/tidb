@@ -36,10 +36,16 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 				return err
 			}
 		}
-	case model.ActionAddColumn:
+	case model.ActionAddColumn, model.ActionAddColumns:
 		ids := getPhysicalIDs(t.TableInfo)
 		for _, id := range ids {
-			if err := h.insertColStats2KV(id, t.ColumnInfo); err != nil {
+			if err := h.insertColStats2KV(id, t.ColumnInfos); err != nil {
+				return err
+			}
+		}
+	case model.ActionAddTablePartition, model.ActionTruncateTablePartition:
+		for _, def := range t.PartInfo.Definitions {
+			if err := h.insertTableStats2KV(t.TableInfo, def.ID); err != nil {
 				return err
 			}
 		}
@@ -95,7 +101,7 @@ func (h *Handle) insertTableStats2KV(info *model.TableInfo, physicalID int64) (e
 
 // insertColStats2KV insert a record to stats_histograms with distinct_count 1 and insert a bucket to stats_buckets with default value.
 // This operation also updates version.
-func (h *Handle) insertColStats2KV(physicalID int64, colInfo *model.ColumnInfo) (err error) {
+func (h *Handle) insertColStats2KV(physicalID int64, colInfos []*model.ColumnInfo) (err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -135,24 +141,26 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfo *model.ColumnInfo) 
 			return
 		}
 		count := req.GetRow(0).GetInt64(0)
-		value := types.NewDatum(colInfo.OriginDefaultValue)
-		value, err = value.ConvertTo(h.mu.ctx.GetSessionVars().StmtCtx, &colInfo.FieldType)
-		if err != nil {
-			return
-		}
-		sqls := make([]string, 0, 1)
-		if value.IsNull() {
-			// If the adding column has default value null, all the existing rows have null value on the newly added column.
-			sqls = append(sqls, fmt.Sprintf("insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count, null_count) values (%d, %d, 0, %d, 0, %d)", startTS, physicalID, colInfo.ID, count))
-		} else {
-			// If this stats exists, we insert histogram meta first, the distinct_count will always be one.
-			sqls = append(sqls, fmt.Sprintf("insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count, tot_col_size) values (%d, %d, 0, %d, 1, %d)", startTS, physicalID, colInfo.ID, int64(len(value.GetBytes()))*count))
-			value, err = value.ConvertTo(h.mu.ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeBlob))
+		sqls := make([]string, 0, len(colInfos))
+		for _, colInfo := range colInfos {
+			value := types.NewDatum(colInfo.OriginDefaultValue)
+			value, err = value.ConvertTo(h.mu.ctx.GetSessionVars().StmtCtx, &colInfo.FieldType)
 			if err != nil {
 				return
 			}
-			// There must be only one bucket for this new column and the value is the default value.
-			sqls = append(sqls, fmt.Sprintf("insert into mysql.stats_buckets (table_id, is_index, hist_id, bucket_id, repeats, count, lower_bound, upper_bound) values (%d, 0, %d, 0, %d, %d, X'%X', X'%X')", physicalID, colInfo.ID, count, count, value.GetBytes(), value.GetBytes()))
+			if value.IsNull() {
+				// If the adding column has default value null, all the existing rows have null value on the newly added column.
+				sqls = append(sqls, fmt.Sprintf("insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count, null_count) values (%d, %d, 0, %d, 0, %d)", startTS, physicalID, colInfo.ID, count))
+			} else {
+				// If this stats exists, we insert histogram meta first, the distinct_count will always be one.
+				sqls = append(sqls, fmt.Sprintf("insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count, tot_col_size) values (%d, %d, 0, %d, 1, %d)", startTS, physicalID, colInfo.ID, int64(len(value.GetBytes()))*count))
+				value, err = value.ConvertTo(h.mu.ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeBlob))
+				if err != nil {
+					return
+				}
+				// There must be only one bucket for this new column and the value is the default value.
+				sqls = append(sqls, fmt.Sprintf("insert into mysql.stats_buckets (table_id, is_index, hist_id, bucket_id, repeats, count, lower_bound, upper_bound) values (%d, 0, %d, 0, %d, %d, X'%X', X'%X')", physicalID, colInfo.ID, count, count, value.GetBytes(), value.GetBytes()))
+			}
 		}
 		return execSQLs(context.Background(), exec, sqls)
 	}

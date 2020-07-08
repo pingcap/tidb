@@ -90,3 +90,50 @@ PARTITION max VALUES LESS THAN MAXVALUE);
 EXPLAIN SELECT * FROM sgc3 WHERE a <= 1;
 EXPLAIN SELECT * FROM sgc3 WHERE a < 7;
 
+-- Virtual generated columns as indices
+
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1(a INT, b INT AS (a+1) VIRTUAL, c INT AS (b+1) VIRTUAL, d INT AS (c+1) VIRTUAL, KEY(b), INDEX IDX(c, d));
+INSERT INTO t1 (a) VALUES (0);
+
+EXPLAIN SELECT b FROM t1 WHERE b=1;
+EXPLAIN SELECT b, c, d FROM t1 WHERE b=1;
+EXPLAIN SELECT * FROM t1 WHERE b=1;
+EXPLAIN SELECT c FROM t1 WHERE c=2 AND d=3;
+
+DROP TABLE IF EXISTS person;
+CREATE TABLE person (
+id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+name VARCHAR(255) NOT NULL,
+address_info JSON,
+city_no INT AS (JSON_EXTRACT(address_info, '$.city_no')) VIRTUAL,
+KEY(city_no));
+
+INSERT INTO person (name, address_info) VALUES ("John", CAST('{"city_no": 1}' AS JSON));
+EXPLAIN SELECT name FROM person where city_no=1;
+
+-- Virtual generated columns in aggregate statement
+-- ISSUE https://github.com/pingcap/tidb/issues/14072
+
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1 (a INT,
+                 b INT GENERATED ALWAYS AS (-a) VIRTUAL,
+                 c INT GENERATED ALWAYS AS (-a) STORED,
+                 index (c));
+INSERT INTO t1 (a) VALUES (2), (1), (1), (3), (NULL);
+
+EXPLAIN SELECT sum(a) FROM t1 GROUP BY b;
+EXPLAIN SELECT sum(a) FROM t1 GROUP BY c;
+EXPLAIN SELECT sum(b) FROM t1 GROUP BY a;
+EXPLAIN SELECT sum(b) FROM t1 GROUP BY c;
+EXPLAIN SELECT sum(c) FROM t1 GROUP BY a;
+EXPLAIN SELECT sum(c) FROM t1 GROUP BY b;
+
+-- Virtual generated column for point get and batch point get
+DROP TABLE IF EXISTS tu;
+CREATE TABLE tu (a INT, b INT, c INT GENERATED ALWAYS AS (a + b) VIRTUAL, primary key (a), unique key uk(c));
+INSERT INTO tu(a, b) VALUES(1, 2);
+EXPLAIN SELECT * FROM tu WHERE c = 1;
+EXPLAIN SELECT a, c FROM tu WHERE c = 1;
+EXPLAIN SELECT * FROM tu WHERE c in(1, 2, 3);
+EXPLAIN SELECT c, a FROM tu WHERE c in(1, 2, 3);

@@ -45,7 +45,7 @@ type mockLogicalJoin struct {
 }
 
 func (mj mockLogicalJoin) init(ctx sessionctx.Context) *mockLogicalJoin {
-	mj.baseLogicalPlan = newBaseLogicalPlan(ctx, "MockLogicalJoin", &mj)
+	mj.baseLogicalPlan = newBaseLogicalPlan(ctx, "MockLogicalJoin", &mj, 0)
 	return &mj
 }
 
@@ -146,16 +146,13 @@ func (s *testJoinReorderDPSuite) makeStatsMapForTPCHQ5() {
 }
 
 func (s *testJoinReorderDPSuite) newDataSource(name string, count int) LogicalPlan {
-	ds := DataSource{}.Init(s.ctx)
+	ds := DataSource{}.Init(s.ctx, 0)
 	tan := model.NewCIStr(name)
 	ds.TableAsName = &tan
 	ds.schema = expression.NewSchema()
 	s.ctx.GetSessionVars().PlanColumnID++
 	ds.schema.Append(&expression.Column{
 		UniqueID: s.ctx.GetSessionVars().PlanColumnID,
-		ColName:  model.NewCIStr(fmt.Sprintf("%s_a", name)),
-		TblName:  model.NewCIStr(name),
-		DBName:   model.NewCIStr("test"),
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	})
 	ds.stats = &property.StatsInfo{

@@ -21,8 +21,13 @@ import (
 )
 
 var _ = Suite(&testMyDecimalSuite{})
+var _ = SerialSuites(&testMyDecimalSerialSuite{})
 
 type testMyDecimalSuite struct {
+}
+
+// testMyDecimalSerialSuite hold test cases that must run in serial
+type testMyDecimalSerialSuite struct {
 }
 
 func (s *testMyDecimalSuite) TestFromInt(c *C) {
@@ -254,7 +259,8 @@ func (s *testMyDecimalSuite) TestRemoveTrailingZeros(c *C) {
 	}
 }
 
-func (s *testMyDecimalSuite) TestShift(c *C) {
+// this test will change global variable `wordBufLen`, so it must run in serial
+func (s *testMyDecimalSerialSuite) TestShift(c *C) {
 	type tcase struct {
 		input  string
 		shift  int
@@ -472,7 +478,8 @@ func (s *testMyDecimalSuite) TestRoundWithCeil(c *C) {
 	}
 }
 
-func (s *testMyDecimalSuite) TestFromString(c *C) {
+// this test will change global variable `wordBufLen`, so it must run in serial
+func (s *testMyDecimalSerialSuite) TestFromString(c *C) {
 	type tcase struct {
 		input  string
 		output string
@@ -891,6 +898,21 @@ func (s *testMyDecimalSuite) TestMaxOrMin(c *C) {
 		dec := NewMaxOrMinDec(tt.neg, tt.prec, tt.frac)
 		c.Assert(dec.String(), Equals, tt.result)
 	}
+}
+
+func (s *testMyDecimalSuite) TestReset(c *C) {
+	var x1, y1, z1 MyDecimal
+	c.Assert(x1.FromString([]byte("38520.130741106671")), IsNil)
+	c.Assert(y1.FromString([]byte("9863.944799797851")), IsNil)
+	c.Assert(DecimalAdd(&x1, &y1, &z1), IsNil)
+
+	var x2, y2, z2 MyDecimal
+	c.Assert(x2.FromString([]byte("121519.080207244")), IsNil)
+	c.Assert(y2.FromString([]byte("54982.444519146")), IsNil)
+	c.Assert(DecimalAdd(&x2, &y2, &z2), IsNil)
+
+	c.Assert(DecimalAdd(&x2, &y2, &z1), IsNil)
+	c.Assert(z1, Equals, z2)
 }
 
 func benchmarkMyDecimalToBinOrHashCases() []string {

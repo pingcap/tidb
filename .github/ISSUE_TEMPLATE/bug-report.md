@@ -1,6 +1,6 @@
 ---
 name: "\U0001F41B Bug Report"
-about: Something isn't working as expected
+about: As a User, I want to report a Bug.
 labels: type/bug
 ---
 
@@ -8,17 +8,18 @@ labels: type/bug
 
 Please answer these questions before submitting your issue. Thanks!
 
-1. What did you do?
-If possible, provide a recipe for reproducing the error.
+### 1. Minimal reproduce step (Required)
 
+<!-- a step by step guide for reproducing the bug. -->
 
-2. What did you expect to see?
+### 2. What did you expect to see? (Required)
 
+### 3. What did you see instead (Required)
 
+### 4. Affected version (Required)
 
-3. What did you see instead?
+<!-- v3.0.0, v4.0.0, etc -->
 
+### 5. Root Cause Analysis
 
-
-4. What version of TiDB are you using (`tidb-server -V` or run `select tidb_version();` on TiDB)?
-
+<!-- should be filled by the investigator before it's closed -->

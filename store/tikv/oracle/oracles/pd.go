@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/pd/client"
+	"github.com/pingcap/pd/v4/client"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/logutil"
@@ -121,6 +121,7 @@ func (o *pdOracle) setLastTS(ts uint64) {
 
 func (o *pdOracle) updateTS(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
@@ -131,7 +132,6 @@ func (o *pdOracle) updateTS(ctx context.Context, interval time.Duration) {
 			}
 			o.setLastTS(ts)
 		case <-o.quit:
-			ticker.Stop()
 			return
 		}
 	}

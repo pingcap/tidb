@@ -54,19 +54,11 @@ func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 	case types.KindMysqlTime:
 		valueTime := value.GetMysqlTime()
 		var minTime types.Time
-		switch valueTime.Type {
+		switch valueTime.Type() {
 		case mysql.TypeDate:
-			minTime = types.Time{
-				Time: types.MinDatetime,
-				Type: mysql.TypeDate,
-				Fsp:  types.DefaultFsp,
-			}
+			minTime = types.NewTime(types.MinDatetime, mysql.TypeDate, types.DefaultFsp)
 		case mysql.TypeDatetime:
-			minTime = types.Time{
-				Time: types.MinDatetime,
-				Type: mysql.TypeDatetime,
-				Fsp:  types.DefaultFsp,
-			}
+			minTime = types.NewTime(types.MinDatetime, mysql.TypeDatetime, types.DefaultFsp)
 		case mysql.TypeTimestamp:
 			minTime = types.MinTimestamp
 		}
@@ -237,8 +229,8 @@ func enumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []type
 		return values
 	case types.KindMysqlDuration:
 		lowDur, highDur := low.GetMysqlDuration(), high.GetMysqlDuration()
-		fsp := mathutil.Max(lowDur.Fsp, highDur.Fsp)
-		stepSize := int64(math.Pow10(types.MaxFsp-fsp)) * int64(time.Microsecond)
+		fsp := mathutil.MaxInt8(lowDur.Fsp, highDur.Fsp)
+		stepSize := int64(math.Pow10(int(types.MaxFsp-fsp))) * int64(time.Microsecond)
 		lowDur.Duration = lowDur.Duration.Round(time.Duration(stepSize))
 		remaining := int64(highDur.Duration-lowDur.Duration)/stepSize + 1 - int64(exclude)
 		if remaining >= maxNumStep {
@@ -255,22 +247,22 @@ func enumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []type
 		return values
 	case types.KindMysqlTime:
 		lowTime, highTime := low.GetMysqlTime(), high.GetMysqlTime()
-		if lowTime.Type != highTime.Type {
+		if lowTime.Type() != highTime.Type() {
 			return nil
 		}
-		fsp := mathutil.Max(lowTime.Fsp, highTime.Fsp)
+		fsp := mathutil.MaxInt8(lowTime.Fsp(), highTime.Fsp())
 		var stepSize int64
 		sc := &stmtctx.StatementContext{TimeZone: time.UTC}
-		if lowTime.Type == mysql.TypeDate {
+		if lowTime.Type() == mysql.TypeDate {
 			stepSize = 24 * int64(time.Hour)
-			lowTime.Time = types.FromDate(lowTime.Time.Year(), lowTime.Time.Month(), lowTime.Time.Day(), 0, 0, 0, 0)
+			lowTime.SetCoreTime(types.FromDate(lowTime.Year(), lowTime.Month(), lowTime.Day(), 0, 0, 0, 0))
 		} else {
 			var err error
 			lowTime, err = lowTime.RoundFrac(sc, fsp)
 			if err != nil {
 				return nil
 			}
-			stepSize = int64(math.Pow10(types.MaxFsp-fsp)) * int64(time.Microsecond)
+			stepSize = int64(math.Pow10(int(types.MaxFsp-fsp))) * int64(time.Microsecond)
 		}
 		remaining := int64(highTime.Sub(sc, &lowTime).Duration)/stepSize + 1 - int64(exclude)
 		if remaining >= maxNumStep {

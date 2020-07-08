@@ -24,6 +24,13 @@ import (
 )
 
 func (s *testSuite) TestMergePartialResult4FirstRow(c *C) {
+	elems := []string{"a", "b", "c", "d", "e"}
+	enumA, _ := types.ParseEnumName(elems, "a", mysql.DefaultCollationName)
+	enumC, _ := types.ParseEnumName(elems, "c", mysql.DefaultCollationName)
+
+	setA, _ := types.ParseSetName(elems, "a", mysql.DefaultCollationName)
+	setAB, _ := types.ParseSetName(elems, "a,b", mysql.DefaultCollationName)
+
 	tests := []aggTest{
 		buildAggTester(ast.AggFuncFirstRow, mysql.TypeLonglong, 5, 0, 2, 0),
 		buildAggTester(ast.AggFuncFirstRow, mysql.TypeFloat, 5, 0.0, 2.0, 0.0),
@@ -33,6 +40,8 @@ func (s *testSuite) TestMergePartialResult4FirstRow(c *C) {
 		buildAggTester(ast.AggFuncFirstRow, mysql.TypeDate, 5, types.TimeFromDays(365), types.TimeFromDays(367), types.TimeFromDays(365)),
 		buildAggTester(ast.AggFuncFirstRow, mysql.TypeDuration, 5, types.Duration{Duration: time.Duration(0)}, types.Duration{Duration: time.Duration(2)}, types.Duration{Duration: time.Duration(0)}),
 		buildAggTester(ast.AggFuncFirstRow, mysql.TypeJSON, 5, json.CreateBinary(int64(0)), json.CreateBinary(int64(2)), json.CreateBinary(int64(0))),
+		buildAggTester(ast.AggFuncFirstRow, mysql.TypeEnum, 5, enumA, enumC, enumA),
+		buildAggTester(ast.AggFuncFirstRow, mysql.TypeSet, 5, setA, setAB, setA),
 	}
 	for _, test := range tests {
 		s.testMergePartialResult(c, test)

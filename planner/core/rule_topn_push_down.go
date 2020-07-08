@@ -18,6 +18,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/planner/util"
 )
 
 // pushDownTopNOptimizer pushes down the topN or limit. In the future we will remove the limit from `requiredProperty` in CBO phase.
@@ -57,7 +58,7 @@ func (lt *LogicalTopN) setChild(p LogicalPlan) LogicalPlan {
 		limit := LogicalLimit{
 			Count:  lt.Count,
 			Offset: lt.Offset,
-		}.Init(lt.ctx)
+		}.Init(lt.ctx, lt.blockOffset)
 		limit.SetChildren(p)
 		return limit
 	}
@@ -78,7 +79,7 @@ func (ls *LogicalSort) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 }
 
 func (p *LogicalLimit) convertToTopN() *LogicalTopN {
-	return LogicalTopN{Offset: p.Offset, Count: p.Count}.Init(p.ctx)
+	return LogicalTopN{Offset: p.Offset, Count: p.Count}.Init(p.ctx, p.blockOffset)
 }
 
 func (p *LogicalLimit) pushDownTopN(topN *LogicalTopN) LogicalPlan {
@@ -93,9 +94,9 @@ func (p *LogicalUnionAll) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 	for i, child := range p.children {
 		var newTopN *LogicalTopN
 		if topN != nil {
-			newTopN = LogicalTopN{Count: topN.Count + topN.Offset}.Init(p.ctx)
+			newTopN = LogicalTopN{Count: topN.Count + topN.Offset}.Init(p.ctx, topN.blockOffset)
 			for _, by := range topN.ByItems {
-				newTopN.ByItems = append(newTopN.ByItems, &ByItems{by.Expr, by.Desc})
+				newTopN.ByItems = append(newTopN.ByItems, &util.ByItems{Expr: by.Expr, Desc: by.Desc})
 			}
 		}
 		p.children[i] = child.pushDownTopN(newTopN)
@@ -107,9 +108,14 @@ func (p *LogicalUnionAll) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 }
 
 func (p *LogicalProjection) pushDownTopN(topN *LogicalTopN) LogicalPlan {
+	for _, expr := range p.Exprs {
+		if expression.HasAssignSetVarFunc(expr) {
+			return p.baseLogicalPlan.pushDownTopN(topN)
+		}
+	}
 	if topN != nil {
 		for _, by := range topN.ByItems {
-			by.Expr = expression.ColumnSubstitute(by.Expr, p.schema, p.Exprs)
+			by.Expr = expression.FoldConstant(expression.ColumnSubstitute(by.Expr, p.schema, p.Exprs))
 		}
 
 		// remove meaningless constant sort items.
@@ -122,6 +128,13 @@ func (p *LogicalProjection) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 	}
 	p.children[0] = p.children[0].pushDownTopN(topN)
 	return p
+}
+
+func (p *LogicalLock) pushDownTopN(topN *LogicalTopN) LogicalPlan {
+	if topN != nil {
+		p.children[0] = p.children[0].pushDownTopN(topN)
+	}
+	return p.self
 }
 
 // pushDownTopNToChild will push a topN to one child of join. The idx stands for join child index. 0 is for left child.
@@ -141,8 +154,8 @@ func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int) LogicalPla
 
 	newTopN := LogicalTopN{
 		Count:   topN.Count + topN.Offset,
-		ByItems: make([]*ByItems, len(topN.ByItems)),
-	}.Init(topN.ctx)
+		ByItems: make([]*util.ByItems, len(topN.ByItems)),
+	}.Init(topN.ctx, topN.blockOffset)
 	for i := range topN.ByItems {
 		newTopN.ByItems[i] = topN.ByItems[i].Clone()
 	}

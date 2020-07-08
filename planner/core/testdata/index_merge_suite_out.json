@@ -1,0 +1,13 @@
+[
+  {
+    "Name": "TestIndexMergePathGeneration",
+    "Cases": [
+      "[]",
+      "[]",
+      "[{Idxs:[c_d_e,f_g],TbFilters:[]}]",
+      "[{Idxs:[c_d_e,f_g],TbFilters:[or(gt(test.t.c, 5), lt(test.t.f, 7))]},{Idxs:[c_d_e,f_g],TbFilters:[or(lt(test.t.c, 1), gt(test.t.f, 2))]}]",
+      "[{Idxs:[c_d_e,f_g],TbFilters:[or(gt(test.t.c, 5), lt(test.t.f, 7)),or(lt(test.t.c, 1), gt(test.t.g, 2))]},{Idxs:[c_d_e,f_g],TbFilters:[or(lt(test.t.c, 1), gt(test.t.f, 2)),or(lt(test.t.c, 1), gt(test.t.g, 2))]},{Idxs:[c_d_e,g],TbFilters:[or(lt(test.t.c, 1), gt(test.t.f, 2)),or(gt(test.t.c, 5), lt(test.t.f, 7))]}]",
+      "[{Idxs:[c_d_e,f_g],TbFilters:[or(gt(test.t.c, 5), lt(test.t.f, 7)),or(lt(test.t.e, 1), gt(test.t.f, 2))]},{Idxs:[c_d_e,f_g],TbFilters:[or(lt(test.t.c, 1), gt(test.t.f, 2)),or(lt(test.t.e, 1), gt(test.t.f, 2))]}]"
+    ]
+  }
+]

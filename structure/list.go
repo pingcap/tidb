@@ -49,7 +49,7 @@ func (t *TxStructure) RPush(key []byte, values ...[]byte) error {
 
 func (t *TxStructure) listPush(key []byte, left bool, values ...[]byte) error {
 	if t.readWriter == nil {
-		return errWriteOnSnapshot
+		return ErrWriteOnSnapshot
 	}
 	if len(values) == 0 {
 		return nil
@@ -92,7 +92,7 @@ func (t *TxStructure) RPop(key []byte) ([]byte, error) {
 
 func (t *TxStructure) listPop(key []byte, left bool) ([]byte, error) {
 	if t.readWriter == nil {
-		return nil, errWriteOnSnapshot
+		return nil, ErrWriteOnSnapshot
 	}
 	metaKey := t.encodeListMetaKey(key)
 	meta, err := t.loadListMeta(metaKey)
@@ -176,7 +176,7 @@ func (t *TxStructure) LIndex(key []byte, index int64) ([]byte, error) {
 // LSet updates an element in the list by its index.
 func (t *TxStructure) LSet(key []byte, index int64, value []byte) error {
 	if t.readWriter == nil {
-		return errWriteOnSnapshot
+		return ErrWriteOnSnapshot
 	}
 	metaKey := t.encodeListMetaKey(key)
 	meta, err := t.loadListMeta(metaKey)
@@ -189,13 +189,13 @@ func (t *TxStructure) LSet(key []byte, index int64, value []byte) error {
 	if index >= meta.LIndex && index < meta.RIndex {
 		return t.readWriter.Set(t.encodeListDataKey(key, index), value)
 	}
-	return errInvalidListIndex.GenWithStack("invalid list index %d", index)
+	return ErrInvalidListIndex.GenWithStack("invalid list index %d", index)
 }
 
 // LClear removes the list of the key.
 func (t *TxStructure) LClear(key []byte) error {
 	if t.readWriter == nil {
-		return errWriteOnSnapshot
+		return ErrWriteOnSnapshot
 	}
 	metaKey := t.encodeListMetaKey(key)
 	meta, err := t.loadListMeta(metaKey)
@@ -228,7 +228,7 @@ func (t *TxStructure) loadListMeta(metaKey []byte) (listMeta, error) {
 	}
 
 	if len(v) != 16 {
-		return meta, errInvalidListMetaData
+		return meta, ErrInvalidListMetaData
 	}
 
 	meta.LIndex = int64(binary.BigEndian.Uint64(v[0:8]))

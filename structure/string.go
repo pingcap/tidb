@@ -24,7 +24,7 @@ import (
 // Set sets the string value of the key.
 func (t *TxStructure) Set(key []byte, value []byte) error {
 	if t.readWriter == nil {
-		return errWriteOnSnapshot
+		return ErrWriteOnSnapshot
 	}
 	ek := t.encodeStringDataKey(key)
 	return t.readWriter.Set(ek, value)
@@ -55,7 +55,7 @@ func (t *TxStructure) GetInt64(key []byte) (int64, error) {
 // the value after the increment.
 func (t *TxStructure) Inc(key []byte, step int64) (int64, error) {
 	if t.readWriter == nil {
-		return 0, errWriteOnSnapshot
+		return 0, ErrWriteOnSnapshot
 	}
 	ek := t.encodeStringDataKey(key)
 	// txn Inc will lock this key, so we don't lock it here.
@@ -69,7 +69,7 @@ func (t *TxStructure) Inc(key []byte, step int64) (int64, error) {
 // Clear removes the string value of the key.
 func (t *TxStructure) Clear(key []byte) error {
 	if t.readWriter == nil {
-		return errWriteOnSnapshot
+		return ErrWriteOnSnapshot
 	}
 	ek := t.encodeStringDataKey(key)
 	err := t.readWriter.Delete(ek)

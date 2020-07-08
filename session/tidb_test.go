@@ -20,6 +20,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -37,10 +39,12 @@ func TestT(t *testing.T) {
 	logLevel := os.Getenv("log_level")
 	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	CustomVerboseFlag = true
+	SetSchemaLease(20 * time.Millisecond)
 	TestingT(t)
 }
 
 var _ = Suite(&testMainSuite{})
+var _ = SerialSuites(&testBootstrapSuite{})
 
 type testMainSuite struct {
 	dbName string
@@ -67,8 +71,8 @@ func (s *testMainSuite) TearDownSuite(c *C) {
 
 func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {
 	store, dom := newStoreWithBootstrap(c, s.dbName+"goroutine_leak")
-	defer dom.Close()
 	defer store.Close()
+	defer dom.Close()
 	se, err := createSession(store)
 	c.Assert(err, IsNil)
 
@@ -79,7 +83,7 @@ func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {
 	wg.Add(count)
 	for i := 0; i < count; i++ {
 		go func(se *session) {
-			_, _, err := se.ExecRestrictedSQL(se, "select * from mysql.user limit 1")
+			_, _, err := se.ExecRestrictedSQL("select * from mysql.user limit 1")
 			c.Assert(err, IsNil)
 			wg.Done()
 		}(se)
@@ -100,13 +104,13 @@ func (s *testMainSuite) TestParseErrorWarn(c *C) {
 }
 
 func newStore(c *C, dbPath string) kv.Storage {
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	return store
 }
 
 func newStoreWithBootstrap(c *C, dbPath string) (kv.Storage, *domain.Domain) {
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	dom, err := BootstrapSession(store)
 	c.Assert(err, IsNil)
@@ -166,5 +170,32 @@ func match(c *C, row []types.Datum, expected ...interface{}) {
 		got := fmt.Sprintf("%v", row[i].GetValue())
 		need := fmt.Sprintf("%v", expected[i])
 		c.Assert(got, Equals, need)
+	}
+}
+
+func (s *testMainSuite) TestKeysNeedLock(c *C) {
+	rowKey := tablecodec.EncodeRowKeyWithHandle(1, kv.IntHandle(1))
+	indexKey := tablecodec.EncodeIndexSeekKey(1, 1, []byte{1})
+	uniqueValue := make([]byte, 8)
+	uniqueUntouched := append(uniqueValue, '1')
+	nonUniqueVal := []byte{'0'}
+	nonUniqueUntouched := []byte{'1'}
+	var deleteVal []byte
+	rowVal := []byte{'a', 'b', 'c'}
+	tests := []struct {
+		key  []byte
+		val  []byte
+		need bool
+	}{
+		{rowKey, rowVal, true},
+		{rowKey, deleteVal, true},
+		{indexKey, nonUniqueVal, false},
+		{indexKey, nonUniqueUntouched, false},
+		{indexKey, uniqueValue, true},
+		{indexKey, uniqueUntouched, false},
+		{indexKey, deleteVal, false},
+	}
+	for _, tt := range tests {
+		c.Assert(keyNeedToLock(tt.key, tt.val), Equals, tt.need)
 	}
 }

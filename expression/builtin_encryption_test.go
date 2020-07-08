@@ -19,12 +19,14 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 var cryptTests = []struct {
@@ -47,7 +49,6 @@ var cryptTests = []struct {
 }
 
 func (s *testEvaluatorSuite) TestSQLDecode(c *C) {
-	defer testleak.AfterTest(c)()
 	fc := funcs[ast.Decode]
 	for _, tt := range cryptTests {
 		str := types.NewDatum(tt.origin)
@@ -63,7 +64,6 @@ func (s *testEvaluatorSuite) TestSQLDecode(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestSQLEncode(c *C) {
-	defer testleak.AfterTest(c)()
 	fc := funcs[ast.Encode]
 	for _, test := range cryptTests {
 		password := types.NewDatum(test.password)
@@ -118,7 +118,6 @@ var aesTests = []struct {
 }
 
 func (s *testEvaluatorSuite) TestAESEncrypt(c *C) {
-	defer testleak.AfterTest(c)()
 	fc := funcs[ast.AesEncrypt]
 	for _, tt := range aesTests {
 		variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.BlockEncryptionMode, types.NewDatum(tt.mode))
@@ -138,7 +137,6 @@ func (s *testEvaluatorSuite) TestAESEncrypt(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestAESDecrypt(c *C) {
-	defer testleak.AfterTest(c)()
 	fc := funcs[ast.AesDecrypt]
 	for _, tt := range aesTests {
 		variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.BlockEncryptionMode, types.NewDatum(tt.mode))
@@ -150,7 +148,11 @@ func (s *testEvaluatorSuite) TestAESDecrypt(c *C) {
 		c.Assert(err, IsNil)
 		str, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
-		c.Assert(str, DeepEquals, types.NewDatum(tt.origin))
+		if tt.origin == nil {
+			c.Assert(str.IsNull(), IsTrue)
+			continue
+		}
+		c.Assert(str, DeepEquals, types.NewCollationStringDatum(tt.origin.(string), charset.CollationBin, collate.DefaultLen))
 	}
 	variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.BlockEncryptionMode, types.NewDatum("aes-128-ecb"))
 	s.testNullInput(c, ast.AesDecrypt)
@@ -202,7 +204,7 @@ func toHex(d types.Datum) (h types.Datum) {
 		return
 	}
 	x, _ := d.ToString()
-	h.SetString(strings.ToUpper(hex.EncodeToString(hack.Slice(x))))
+	h.SetString(strings.ToUpper(hex.EncodeToString(hack.Slice(x))), mysql.DefaultCollationName)
 	return
 }
 
@@ -230,7 +232,6 @@ var sha1Tests = []struct {
 }
 
 func (s *testEvaluatorSuite) TestSha1Hash(c *C) {
-	defer testleak.AfterTest(c)()
 	fc := funcs[ast.SHA]
 	for _, tt := range sha1Tests {
 		in := types.NewDatum(tt.origin)
@@ -271,7 +272,6 @@ var sha2Tests = []struct {
 }
 
 func (s *testEvaluatorSuite) TestSha2Hash(c *C) {
-	defer testleak.AfterTest(c)()
 	fc := funcs[ast.SHA2]
 	for _, tt := range sha2Tests {
 		str := types.NewDatum(tt.origin)
@@ -291,8 +291,6 @@ func (s *testEvaluatorSuite) TestSha2Hash(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestMD5Hash(c *C) {
-	defer testleak.AfterTest(c)()
-
 	cases := []struct {
 		args     interface{}
 		expected string
@@ -323,13 +321,12 @@ func (s *testEvaluatorSuite) TestMD5Hash(c *C) {
 			}
 		}
 	}
-	_, err := funcs[ast.MD5].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.MD5].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
 
 }
 
 func (s *testEvaluatorSuite) TestRandomBytes(c *C) {
-	defer testleak.AfterTest(c)()
 	fc := funcs[ast.RandomBytes]
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(32)}))
 	c.Assert(err, IsNil)
@@ -366,7 +363,6 @@ func decodeHex(str string) []byte {
 }
 
 func (s *testEvaluatorSuite) TestCompress(c *C) {
-	defer testleak.AfterTest(c)()
 	tests := []struct {
 		in     interface{}
 		expect interface{}
@@ -383,12 +379,15 @@ func (s *testEvaluatorSuite) TestCompress(c *C) {
 		c.Assert(err, IsNil, Commentf("%v", test))
 		out, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil, Commentf("%v", test))
-		c.Assert(out, DeepEquals, types.NewDatum(test.expect), Commentf("%v", test))
+		if test.expect == nil {
+			c.Assert(out.IsNull(), IsTrue, Commentf("%v", test))
+			continue
+		}
+		c.Assert(out, DeepEquals, types.NewCollationStringDatum(test.expect.(string), charset.CollationBin, collate.DefaultLen), Commentf("%v", test))
 	}
 }
 
 func (s *testEvaluatorSuite) TestUncompress(c *C) {
-	defer testleak.AfterTest(c)()
 	tests := []struct {
 		in     interface{}
 		expect interface{}
@@ -414,12 +413,15 @@ func (s *testEvaluatorSuite) TestUncompress(c *C) {
 		c.Assert(err, IsNil, Commentf("%v", test))
 		out, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil, Commentf("%v", test))
-		c.Assert(out, DeepEquals, types.NewDatum(test.expect), Commentf("%v", test))
+		if test.expect == nil {
+			c.Assert(out.IsNull(), IsTrue, Commentf("%v", test))
+			continue
+		}
+		c.Assert(out, DeepEquals, types.NewCollationStringDatum(test.expect.(string), charset.CollationBin, collate.DefaultLen), Commentf("%v", test))
 	}
 }
 
 func (s *testEvaluatorSuite) TestUncompressLength(c *C) {
-	defer testleak.AfterTest(c)()
 	tests := []struct {
 		in     interface{}
 		expect interface{}
@@ -449,7 +451,6 @@ func (s *testEvaluatorSuite) TestUncompressLength(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestPassword(c *C) {
-	defer testleak.AfterTest(c)()
 	cases := []struct {
 		args     interface{}
 		expected string
@@ -490,6 +491,6 @@ func (s *testEvaluatorSuite) TestPassword(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.PasswordFunc].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.PasswordFunc].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
 }

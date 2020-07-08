@@ -24,7 +24,12 @@ import (
 )
 
 func (s *testColumnChangeSuite) TestFailBeforeDecodeArgs(c *C) {
-	d := testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
+	d := testNewDDLAndStart(
+		context.Background(),
+		c,
+		WithStore(s.store),
+		WithLease(testLease),
+	)
 	defer d.Stop()
 	// create table t_fail (c1 int, c2 int);
 	tblInfo := testTableInfo(c, d, "t_fail", 2)

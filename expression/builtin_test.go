@@ -15,6 +15,7 @@ package expression
 
 import (
 	"reflect"
+	"sync"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
@@ -24,8 +25,28 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/testleak"
 )
+
+func evalBuiltinFuncConcurrent(f builtinFunc, row chunk.Row) (d types.Datum, err error) {
+	wg := sync.WaitGroup{}
+	concurrency := 10
+	wg.Add(concurrency)
+	var lock sync.Mutex
+	err = nil
+	for i := 0; i < concurrency; i++ {
+		go func() {
+			defer wg.Done()
+			di, erri := evalBuiltinFunc(f, chunk.Row{})
+			lock.Lock()
+			if err == nil {
+				d, err = di, erri
+			}
+			lock.Unlock()
+		}()
+	}
+	wg.Wait()
+	return
+}
 
 func evalBuiltinFunc(f builtinFunc, row chunk.Row) (d types.Datum, err error) {
 	var (
@@ -56,10 +77,10 @@ func evalBuiltinFunc(f builtinFunc, row chunk.Row) (d types.Datum, err error) {
 	}
 
 	if isNull || err != nil {
-		d.SetValue(nil)
+		d.SetNull()
 		return d, err
 	}
-	d.SetValue(res)
+	d.SetValue(res, f.getRetTp())
 	return
 }
 
@@ -99,8 +120,6 @@ func makeDatums(i interface{}) []types.Datum {
 }
 
 func (s *testEvaluatorSuite) TestIsNullFunc(c *C) {
-	defer testleak.AfterTest(c)()
-
 	fc := funcs[ast.IsNull]
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(1)))
 	c.Assert(err, IsNil)
@@ -116,8 +135,6 @@ func (s *testEvaluatorSuite) TestIsNullFunc(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestLock(c *C) {
-	defer testleak.AfterTest(c)()
-
 	lock := funcs[ast.GetLock]
 	f, err := lock.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil, 1)))
 	c.Assert(err, IsNil)

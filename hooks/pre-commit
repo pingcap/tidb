@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # This file modified from k8s
 # https://github.com/kubernetes/kubernetes/blob/master/hooks/pre-commit
 # Now It's removed, The Reason is https://github.com/kubernetes/community/issues/729
@@ -12,6 +12,8 @@
 readonly reset=$(tput sgr0)
 readonly red=$(tput bold; tput setaf 1)
 readonly green=$(tput bold; tput setaf 2)
+
+readonly goword=./tools/bin/goword
 
 exit_code=0
 
@@ -53,7 +55,7 @@ files_need_goword=()
 files=($(git diff --cached --name-only --diff-filter ACM | grep "\.go" | grep -v -e "^_vendor"))
 for file in "${files[@]}"; do
     # Check for files that fail goword.
-    diff=$(goword ${file})
+    diff=$(${goword} ${file})
     if [[ -n "$diff" ]]; then
         files_need_goword+=("${file}")
     fi
@@ -63,7 +65,7 @@ if [[ "${#files_need_goword[@]}" -ne 0 ]]; then
     echo "${red}ERROR!"
     echo "Some files may have spelling errors."
     echo "copy and paste the following for where fails this test:"
-    echo "  goword ${files_need_goword[@]}"
+    echo "  $ ${goword} ${files_need_goword[@]}"
     exit_code=1
 else
     echo "${green}OK"

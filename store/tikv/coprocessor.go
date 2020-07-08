@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -26,43 +27,61 @@ import (
 	"unsafe"
 
 	"github.com/cznic/mathutil"
+	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
 var tikvTxnRegionsNumHistogramWithCoprocessor = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("coprocessor")
+var tikvTxnRegionsNumHistogramWithBatchCoprocessor = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("batch_coprocessor")
 
 // CopClient is coprocessor client.
 type CopClient struct {
 	kv.RequestTypeSupportedChecker
-	store *tikvStore
+	store           *tikvStore
+	replicaReadSeed uint32
 }
 
 // Send builds the request and gets the coprocessor iterator response.
 func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variables) kv.Response {
+	if req.StoreType == kv.TiFlash && req.BatchCop {
+		logutil.BgLogger().Debug("send batch requests")
+		return c.sendBatch(ctx, req, vars)
+	}
 	ctx = context.WithValue(ctx, txnStartKey, req.StartTs)
-	bo := NewBackoffer(ctx, copBuildTaskMaxBackoff).WithVars(vars)
-	tasks, err := buildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req.Desc, req.Streaming)
+	bo := NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
+	tasks, err := buildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req)
 	if err != nil {
 		return copErrorResponse{err}
 	}
 	it := &copIterator{
-		store:       c.store,
-		req:         req,
-		concurrency: req.Concurrency,
-		finishCh:    make(chan struct{}),
-		vars:        vars,
-		memTracker:  req.MemTracker,
+		store:           c.store,
+		req:             req,
+		concurrency:     req.Concurrency,
+		finishCh:        make(chan struct{}),
+		vars:            vars,
+		memTracker:      req.MemTracker,
+		replicaReadSeed: c.replicaReadSeed,
+		actionOnExceed:  &EndCopWorkerAction{},
 	}
+	if it.memTracker != nil {
+		it.memTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
+	}
+
+	it.minCommitTSPushed.data = make(map[uint64]struct{}, 5)
 	it.tasks = tasks
 	if it.concurrency > len(tasks) {
 		it.concurrency = len(tasks)
@@ -76,6 +95,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 	} else {
 		it.respChan = make(chan *copResponse, it.concurrency)
 	}
+	it.actionOnExceed.mu.aliveWorker = it.concurrency
 	it.open(ctx)
 	return it
 }
@@ -88,6 +108,7 @@ type copTask struct {
 	respChan  chan *copResponse
 	storeAddr string
 	cmdType   tikvrpc.CmdType
+	storeType kv.StoreType
 }
 
 func (r *copTask) String() string {
@@ -208,28 +229,33 @@ func (r *copRanges) split(key []byte) (*copRanges, *copRanges) {
 // rangesPerTask limits the length of the ranges slice sent in one copTask.
 const rangesPerTask = 25000
 
-func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bool, streaming bool) ([]*copTask, error) {
+func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv.Request) ([]*copTask, error) {
 	start := time.Now()
-	rangesLen := ranges.len()
 	cmdType := tikvrpc.CmdCop
-	if streaming {
+	if req.Streaming {
 		cmdType = tikvrpc.CmdCopStream
 	}
 
+	if req.StoreType == kv.TiDB {
+		return buildTiDBMemCopTasks(ranges, req)
+	}
+
+	rangesLen := ranges.len()
 	var tasks []*copTask
-	appendTask := func(region RegionVerID, ranges *copRanges) {
+	appendTask := func(regionWithRangeInfo *KeyLocation, ranges *copRanges) {
 		// TiKV will return gRPC error if the message is too large. So we need to limit the length of the ranges slice
 		// to make sure the message can be sent successfully.
 		rLen := ranges.len()
 		for i := 0; i < rLen; {
 			nextI := mathutil.Min(i+rangesPerTask, rLen)
 			tasks = append(tasks, &copTask{
-				region: region,
+				region: regionWithRangeInfo.Region,
 				ranges: ranges.slice(i, nextI),
 				// Channel buffer is 2 for handling region split.
 				// In a common case, two region split tasks will not be blocked.
-				respChan: make(chan *copResponse, 2),
-				cmdType:  cmdType,
+				respChan:  make(chan *copResponse, 2),
+				cmdType:   cmdType,
+				storeType: req.StoreType,
 			})
 			i = nextI
 		}
@@ -240,7 +266,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 		return nil, errors.Trace(err)
 	}
 
-	if desc {
+	if req.Desc {
 		reverseTasks(tasks)
 	}
 	if elapsed := time.Since(start); elapsed > time.Millisecond*500 {
@@ -253,7 +279,30 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 	return tasks, nil
 }
 
-func splitRanges(bo *Backoffer, cache *RegionCache, ranges *copRanges, fn func(region RegionVerID, ranges *copRanges)) error {
+func buildTiDBMemCopTasks(ranges *copRanges, req *kv.Request) ([]*copTask, error) {
+	servers, err := infosync.GetAllServerInfo(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	cmdType := tikvrpc.CmdCop
+	if req.Streaming {
+		cmdType = tikvrpc.CmdCopStream
+	}
+	tasks := make([]*copTask, 0, len(servers))
+	for _, ser := range servers {
+		addr := ser.IP + ":" + strconv.FormatUint(uint64(ser.StatusPort), 10)
+		tasks = append(tasks, &copTask{
+			ranges:    ranges,
+			respChan:  make(chan *copResponse, 2),
+			cmdType:   cmdType,
+			storeType: req.StoreType,
+			storeAddr: addr,
+		})
+	}
+	return tasks, nil
+}
+
+func splitRanges(bo *Backoffer, cache *RegionCache, ranges *copRanges, fn func(regionWithRangeInfo *KeyLocation, ranges *copRanges)) error {
 	for ranges.len() > 0 {
 		loc, err := cache.LocateKey(bo, ranges.at(0).StartKey)
 		if err != nil {
@@ -270,7 +319,7 @@ func splitRanges(bo *Backoffer, cache *RegionCache, ranges *copRanges, fn func(r
 		}
 		// All rest ranges belong to the same region.
 		if i == ranges.len() {
-			fn(loc.Region, ranges)
+			fn(loc, ranges)
 			break
 		}
 
@@ -282,7 +331,7 @@ func splitRanges(bo *Backoffer, cache *RegionCache, ranges *copRanges, fn func(r
 				StartKey: r.StartKey,
 				EndKey:   loc.EndKey,
 			}
-			fn(loc.Region, taskRanges)
+			fn(loc, taskRanges)
 
 			ranges = ranges.slice(i+1, ranges.len())
 			ranges.first = &kv.KeyRange{
@@ -292,7 +341,7 @@ func splitRanges(bo *Backoffer, cache *RegionCache, ranges *copRanges, fn func(r
 		} else {
 			// rs[i] is not in the region.
 			taskRanges := ranges.slice(0, i)
-			fn(loc.Region, taskRanges)
+			fn(loc, taskRanges)
 			ranges = ranges.slice(i, ranges.len())
 		}
 	}
@@ -305,7 +354,7 @@ func SplitRegionRanges(bo *Backoffer, cache *RegionCache, keyRanges []kv.KeyRang
 	ranges := copRanges{mid: keyRanges}
 
 	var ret []kv.KeyRange
-	appendRange := func(region RegionVerID, ranges *copRanges) {
+	appendRange := func(regionWithRangeInfo *KeyLocation, ranges *copRanges) {
 		for i := 0; i < ranges.len(); i++ {
 			ret = append(ret, ranges.at(i))
 		}
@@ -330,10 +379,6 @@ type copIterator struct {
 	req         *kv.Request
 	concurrency int
 	finishCh    chan struct{}
-	// closed represents when the Close is called.
-	// There are two cases we need to close the `finishCh` channel, one is when context is done, the other one is
-	// when the Close is called. we use atomic.CompareAndSwap `closed` to to make sure the channel is not closed twice.
-	closed uint32
 
 	// If keepOrder, results are stored in copTask.respChan, read them out one by one.
 	tasks []*copTask
@@ -344,15 +389,27 @@ type copIterator struct {
 
 	// Otherwise, results are stored in respChan.
 	respChan chan *copResponse
-	wg       sync.WaitGroup
 
 	vars *kv.Variables
 
 	memTracker *memory.Tracker
+
+	replicaReadSeed uint32
+
+	wg sync.WaitGroup
+	// closed represents when the Close is called.
+	// There are two cases we need to close the `finishCh` channel, one is when context is done, the other one is
+	// when the Close is called. we use atomic.CompareAndSwap `closed` to to make sure the channel is not closed twice.
+	closed uint32
+
+	minCommitTSPushed
+
+	actionOnExceed *EndCopWorkerAction
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
 type copIteratorWorker struct {
+	id       string
 	taskCh   <-chan *copTask
 	wg       *sync.WaitGroup
 	store    *tikvStore
@@ -360,8 +417,13 @@ type copIteratorWorker struct {
 	respChan chan<- *copResponse
 	finishCh <-chan struct{}
 	vars     *kv.Variables
+	clientHelper
 
 	memTracker *memory.Tracker
+
+	replicaReadSeed uint32
+
+	actionOnExceed *EndCopWorkerAction
 }
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
@@ -380,6 +442,7 @@ type copResponse struct {
 	startKey kv.Key
 	err      error
 	respSize int64
+	respTime time.Duration
 }
 
 const (
@@ -422,30 +485,56 @@ func (rs *copResponse) MemSize() int64 {
 	return rs.respSize
 }
 
+func (rs *copResponse) RespTime() time.Duration {
+	return rs.respTime
+}
+
 const minLogCopTaskTime = 300 * time.Millisecond
 
 // run is a worker function that get a copTask from channel, handle it and
 // send the result back.
 func (worker *copIteratorWorker) run(ctx context.Context) {
 	defer worker.wg.Done()
+
 	for task := range worker.taskCh {
+		endWorker, remainWorkers := worker.checkWorkerOOM()
+		if endWorker {
+			logutil.BgLogger().Info("end one copIterator worker.",
+				zap.String("copIteratorWorker id", worker.id), zap.Int("remain alive worker", remainWorkers))
+			return
+		}
 		respCh := worker.respChan
 		if respCh == nil {
 			respCh = task.respChan
 		}
 
-		bo := NewBackoffer(ctx, copNextMaxBackoff).WithVars(worker.vars)
-		worker.handleTask(bo, task, respCh)
-		if bo.totalSleep > 0 {
-			metrics.TiKVBackoffHistogram.Observe(float64(bo.totalSleep) / 1000)
-		}
+		worker.handleTask(ctx, task, respCh)
 		close(task.respChan)
 		select {
 		case <-worker.finishCh:
+			worker.actionOnExceed.mu.Lock()
+			worker.actionOnExceed.mu.aliveWorker--
+			worker.actionOnExceed.mu.Unlock()
 			return
 		default:
 		}
 	}
+}
+
+func (worker *copIteratorWorker) checkWorkerOOM() (bool, int) {
+	endWorker := false
+	remainWorkers := 0
+	worker.actionOnExceed.mu.Lock()
+	defer worker.actionOnExceed.mu.Unlock()
+	if worker.actionOnExceed.mu.exceeded != 0 {
+		endWorker = true
+		worker.actionOnExceed.mu.aliveWorker--
+		remainWorkers = worker.actionOnExceed.mu.aliveWorker
+		// reset action
+		worker.actionOnExceed.mu.exceeded = 0
+		worker.actionOnExceed.once = sync.Once{}
+	}
+	return endWorker, remainWorkers
 }
 
 // open starts workers and sender goroutines.
@@ -455,6 +544,7 @@ func (it *copIterator) open(ctx context.Context) {
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency; i++ {
 		worker := &copIteratorWorker{
+			id:       fmt.Sprintf("copIteratorWorker-%d", i),
 			taskCh:   taskCh,
 			wg:       &it.wg,
 			store:    it.store,
@@ -462,8 +552,17 @@ func (it *copIterator) open(ctx context.Context) {
 			respChan: it.respChan,
 			finishCh: it.finishCh,
 			vars:     it.vars,
+			clientHelper: clientHelper{
+				LockResolver:      it.store.lockResolver,
+				RegionCache:       it.store.regionCache,
+				minCommitTSPushed: &it.minCommitTSPushed,
+				Client:            it.store.client,
+			},
 
 			memTracker: it.memTracker,
+
+			replicaReadSeed: it.replicaReadSeed,
+			actionOnExceed:  it.actionOnExceed,
 		}
 		go worker.run(ctx)
 	}
@@ -509,7 +608,7 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 	select {
 	case resp, ok = <-respCh:
 		if it.memTracker != nil && resp != nil {
-			it.memTracker.Consume(-int64(resp.MemSize()))
+			it.memTracker.Consume(-resp.MemSize())
 		}
 	case <-it.finishCh:
 		exit = true
@@ -534,7 +633,7 @@ func (sender *copIteratorTaskSender) sendToTaskCh(t *copTask) (exit bool) {
 
 func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *copResponse, checkOOM bool) (exit bool) {
 	if worker.memTracker != nil && checkOOM {
-		worker.memTracker.Consume(int64(resp.MemSize()))
+		worker.memTracker.Consume(resp.MemSize())
 	}
 	select {
 	case respCh <- resp:
@@ -593,8 +692,20 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	return resp, nil
 }
 
+// Associate each region with an independent backoffer. In this way, when multiple regions are
+// unavailable, TiDB can execute very quickly without blocking
+func chooseBackoffer(ctx context.Context, backoffermap map[uint64]*Backoffer, task *copTask, worker *copIteratorWorker) *Backoffer {
+	bo, ok := backoffermap[task.region.id]
+	if ok {
+		return bo
+	}
+	newbo := NewBackofferWithVars(ctx, copNextMaxBackoff, worker.vars)
+	backoffermap[task.region.id] = newbo
+	return newbo
+}
+
 // handleTask handles single copTask, sends the result to channel, retry automatically on error.
-func (worker *copIteratorWorker) handleTask(bo *Backoffer, task *copTask, respCh chan<- *copResponse) {
+func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, respCh chan<- *copResponse) {
 	defer func() {
 		r := recover()
 		if r != nil {
@@ -607,8 +718,11 @@ func (worker *copIteratorWorker) handleTask(bo *Backoffer, task *copTask, respCh
 		}
 	}()
 	remainTasks := []*copTask{task}
+	backoffermap := make(map[uint64]*Backoffer)
 	for len(remainTasks) > 0 {
-		tasks, err := worker.handleTaskOnce(bo, remainTasks[0], respCh)
+		curTask := remainTasks[0]
+		bo := chooseBackoffer(ctx, backoffermap, curTask, worker)
+		tasks, err := worker.handleTaskOnce(bo, curTask, respCh)
 		if err != nil {
 			resp := &copResponse{err: errors.Trace(err)}
 			worker.sendToRespCh(resp, respCh, true)
@@ -631,25 +745,58 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		}
 	})
 
-	sender := NewRegionRequestSender(worker.store.regionCache, worker.store.client)
-	req := tikvrpc.NewRequest(task.cmdType, &coprocessor.Request{
-		Tp:     worker.req.Tp,
-		Data:   worker.req.Data,
-		Ranges: task.ranges.toPBRanges(),
-	}, kvrpcpb.Context{
+	copReq := coprocessor.Request{
+		Tp:        worker.req.Tp,
+		StartTs:   worker.req.StartTs,
+		Data:      worker.req.Data,
+		Ranges:    task.ranges.toPBRanges(),
+		SchemaVer: worker.req.SchemaVar,
+	}
+
+	var cacheKey []byte
+	var cacheValue *coprCacheValue
+
+	// If there are many ranges, it is very likely to be a TableLookupRequest. They are not worth to cache since
+	// computing is not the main cost. Ignore such requests directly to avoid slowly building the cache key.
+	if task.cmdType == tikvrpc.CmdCop && worker.store.coprCache != nil && worker.req.Cacheable && len(copReq.Ranges) < 10 {
+		cKey, err := coprCacheBuildKey(&copReq)
+		if err == nil {
+			cacheKey = cKey
+			cValue := worker.store.coprCache.Get(cKey)
+			copReq.IsCacheEnabled = true
+			if cValue != nil && cValue.RegionID == task.region.id && cValue.TimeStamp <= worker.req.StartTs {
+				// Append cache version to the request to skip Coprocessor computation if possible
+				// when request result is cached
+				copReq.CacheIfMatchVersion = cValue.RegionDataVersion
+				cacheValue = cValue
+			} else {
+				copReq.CacheIfMatchVersion = 0
+			}
+		} else {
+			logutil.BgLogger().Warn("Failed to build copr cache key", zap.Error(err))
+		}
+	}
+
+	req := tikvrpc.NewReplicaReadRequest(task.cmdType, &copReq, worker.req.ReplicaRead, &worker.replicaReadSeed, kvrpcpb.Context{
 		IsolationLevel: pbIsolationLevel(worker.req.IsolationLevel),
 		Priority:       kvPriorityToCommandPri(worker.req.Priority),
 		NotFillCache:   worker.req.NotFillCache,
 		HandleTime:     true,
 		ScanDetail:     true,
+		TaskId:         worker.req.TaskID,
 	})
+	req.StoreTp = task.storeType
 	startTime := time.Now()
-	resp, rpcCtx, err := sender.SendReqCtx(bo, req, task.region, ReadTimeoutMedium)
+	resp, rpcCtx, storeAddr, err := worker.SendReqCtx(bo, req, task.region, ReadTimeoutMedium, task.storeType, task.storeAddr)
 	if err != nil {
+		if task.storeType == kv.TiDB {
+			err = worker.handleTiDBSendReqErr(err, task, ch)
+			return nil, err
+		}
 		return nil, errors.Trace(err)
 	}
 	// Set task.storeAddr field so its task.String() method have the store address information.
-	task.storeAddr = sender.storeAddr
+	task.storeAddr = storeAddr
 	costTime := time.Since(startTime)
 	if costTime > minLogCopTaskTime {
 		worker.logTimeCopTask(costTime, task, bo, resp)
@@ -657,11 +804,84 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	metrics.TiKVCoprocessorHistogram.Observe(costTime.Seconds())
 
 	if task.cmdType == tikvrpc.CmdCopStream {
-		return worker.handleCopStreamResult(bo, rpcCtx, resp.Resp.(*tikvrpc.CopStreamResponse), task, ch)
+		return worker.handleCopStreamResult(bo, rpcCtx, resp.Resp.(*tikvrpc.CopStreamResponse), task, ch, costTime)
 	}
 
 	// Handles the response for non-streaming copTask.
-	return worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: resp.Resp.(*coprocessor.Response)}, task, ch, nil)
+	return worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: resp.Resp.(*coprocessor.Response)}, cacheKey, cacheValue, task, ch, nil, costTime)
+}
+
+type minCommitTSPushed struct {
+	data map[uint64]struct{}
+	sync.RWMutex
+}
+
+func (m *minCommitTSPushed) Update(from []uint64) {
+	m.Lock()
+	for _, v := range from {
+		m.data[v] = struct{}{}
+	}
+	m.Unlock()
+}
+
+func (m *minCommitTSPushed) Get() []uint64 {
+	m.RLock()
+	defer m.RUnlock()
+	if len(m.data) == 0 {
+		return nil
+	}
+
+	ret := make([]uint64, 0, len(m.data))
+	for k := range m.data {
+		ret = append(ret, k)
+	}
+	return ret
+}
+
+// clientHelper wraps LockResolver and RegionRequestSender.
+// It's introduced to support the new lock resolving pattern in the large transaction.
+// In the large transaction protocol, sending requests and resolving locks are
+// context-dependent. For example, when a send request meets a secondary lock, we'll
+// call ResolveLock, and if the lock belongs to a large transaction, we may retry
+// the request. If there is no context information about the resolved locks, we'll
+// meet the secondary lock again and run into a deadloop.
+type clientHelper struct {
+	*LockResolver
+	*RegionCache
+	*minCommitTSPushed
+	Client
+	resolveLite bool
+}
+
+// ResolveLocks wraps the ResolveLocks function and store the resolved result.
+func (ch *clientHelper) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks []*Lock) (int64, error) {
+	var err error
+	var resolvedLocks []uint64
+	var msBeforeTxnExpired int64
+	if ch.resolveLite {
+		msBeforeTxnExpired, resolvedLocks, err = ch.LockResolver.resolveLocksLite(bo, callerStartTS, locks)
+	} else {
+		msBeforeTxnExpired, resolvedLocks, err = ch.LockResolver.ResolveLocks(bo, callerStartTS, locks)
+	}
+	if err != nil {
+		return msBeforeTxnExpired, err
+	}
+	if len(resolvedLocks) > 0 {
+		ch.minCommitTSPushed.Update(resolvedLocks)
+		return 0, nil
+	}
+	return msBeforeTxnExpired, nil
+}
+
+// SendReqCtx wraps the SendReqCtx function and use the resolved lock result in the kvrpcpb.Context.
+func (ch *clientHelper) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration, sType kv.StoreType, directStoreAddr string) (*tikvrpc.Response, *RPCContext, string, error) {
+	sender := NewRegionRequestSender(ch.RegionCache, ch.Client)
+	if len(directStoreAddr) > 0 {
+		sender.storeAddr = directStoreAddr
+	}
+	req.Context.ResolvedLocks = ch.minCommitTSPushed.Get()
+	resp, ctx, err := sender.SendReqCtx(bo, req, regionID, timeout, sType)
+	return resp, ctx, sender.storeAddr, err
 }
 
 const (
@@ -709,7 +929,7 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 			}
 		}
 	}
-	logutil.BgLogger().Info(logStr)
+	logutil.Logger(bo.ctx).Info(logStr)
 }
 
 func appendScanDetail(logStr string, columnFamily string, scanInfo *kvrpcpb.ScanInfo) string {
@@ -720,7 +940,7 @@ func appendScanDetail(logStr string, columnFamily string, scanInfo *kvrpcpb.Scan
 	return logStr
 }
 
-func (worker *copIteratorWorker) handleCopStreamResult(bo *Backoffer, rpcCtx *RPCContext, stream *tikvrpc.CopStreamResponse, task *copTask, ch chan<- *copResponse) ([]*copTask, error) {
+func (worker *copIteratorWorker) handleCopStreamResult(bo *Backoffer, rpcCtx *RPCContext, stream *tikvrpc.CopStreamResponse, task *copTask, ch chan<- *copResponse, costTime time.Duration) ([]*copTask, error) {
 	defer stream.Close()
 	var resp *coprocessor.Response
 	var lastRange *coprocessor.KeyRange
@@ -730,7 +950,7 @@ func (worker *copIteratorWorker) handleCopStreamResult(bo *Backoffer, rpcCtx *RP
 		return nil, nil
 	}
 	for {
-		remainedTasks, err := worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: resp}, task, ch, lastRange)
+		remainedTasks, err := worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: resp}, nil, nil, task, ch, lastRange, costTime)
 		if err != nil || len(remainedTasks) != 0 {
 			return remainedTasks, errors.Trace(err)
 		}
@@ -752,7 +972,9 @@ func (worker *copIteratorWorker) handleCopStreamResult(bo *Backoffer, rpcCtx *RP
 			}
 			return worker.buildCopTasksFromRemain(bo, lastRange, task)
 		}
-		lastRange = resp.Range
+		if resp.Range != nil {
+			lastRange = resp.Range
+		}
 	}
 }
 
@@ -760,18 +982,25 @@ func (worker *copIteratorWorker) handleCopStreamResult(bo *Backoffer, rpcCtx *RP
 // returns more tasks when that happens, or handles the response if no error.
 // if we're handling streaming coprocessor response, lastRange is the range of last
 // successful response, otherwise it's nil.
-func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCContext, resp *copResponse, task *copTask, ch chan<- *copResponse, lastRange *coprocessor.KeyRange) ([]*copTask, error) {
+func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCContext, resp *copResponse, cacheKey []byte, cacheValue *coprCacheValue, task *copTask, ch chan<- *copResponse, lastRange *coprocessor.KeyRange, costTime time.Duration) ([]*copTask, error) {
 	if regionErr := resp.pbResp.GetRegionError(); regionErr != nil {
-		if err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String())); err != nil {
+		if rpcCtx != nil && task.storeType == kv.TiDB {
+			resp.err = errors.Errorf("error: %v", regionErr)
+			worker.sendToRespCh(resp, ch, true)
+			return nil, nil
+		}
+		errStr := fmt.Sprintf("region_id:%v, region_ver:%v, store_type:%s, peer_addr:%s, error:%s",
+			task.region.id, task.region.ver, task.storeType.Name(), task.storeAddr, regionErr.String())
+		if err := bo.Backoff(BoRegionMiss, errors.New(errStr)); err != nil {
 			return nil, errors.Trace(err)
 		}
 		// We may meet RegionError at the first packet, but not during visiting the stream.
-		return buildCopTasks(bo, worker.store.regionCache, task.ranges, worker.req.Desc, worker.req.Streaming)
+		return buildCopTasks(bo, worker.store.regionCache, task.ranges, worker.req)
 	}
 	if lockErr := resp.pbResp.GetLocked(); lockErr != nil {
 		logutil.BgLogger().Debug("coprocessor encounters",
 			zap.Stringer("lock", lockErr))
-		msBeforeExpired, err1 := worker.store.lockResolver.ResolveLocks(bo, []*Lock{NewLock(lockErr)})
+		msBeforeExpired, err1 := worker.ResolveLocks(bo, worker.req.StartTs, []*Lock{NewLock(lockErr)})
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
@@ -794,16 +1023,24 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 	// When the request is using streaming API, the `Range` is not nil.
 	if resp.pbResp.Range != nil {
 		resp.startKey = resp.pbResp.Range.Start
-	} else {
+	} else if task.ranges != nil && task.ranges.len() > 0 {
 		resp.startKey = task.ranges.at(0).StartKey
 	}
 	if resp.detail == nil {
 		resp.detail = new(execdetails.ExecDetails)
 	}
 	resp.detail.BackoffTime = time.Duration(bo.totalSleep) * time.Millisecond
+	resp.detail.BackoffSleep = make(map[string]time.Duration, len(bo.backoffTimes))
+	resp.detail.BackoffTimes = make(map[string]int, len(bo.backoffTimes))
+	for backoff := range bo.backoffTimes {
+		backoffName := backoff.String()
+		resp.detail.BackoffTimes[backoffName] = bo.backoffTimes[backoff]
+		resp.detail.BackoffSleep[backoffName] = time.Duration(bo.backoffSleepMS[backoff]) * time.Millisecond
+	}
 	if rpcCtx != nil {
 		resp.detail.CalleeAddress = rpcCtx.Addr
 	}
+	resp.respTime = costTime
 	if pbDetails := resp.pbResp.ExecDetails; pbDetails != nil {
 		if handleTime := pbDetails.HandleTime; handleTime != nil {
 			resp.detail.WaitTime = time.Duration(handleTime.WaitMs) * time.Millisecond
@@ -816,8 +1053,62 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 			}
 		}
 	}
+	if resp.pbResp.IsCacheHit {
+		if cacheValue == nil {
+			return nil, errors.New("Internal error: received illegal TiKV response")
+		}
+		// Cache hit and is valid: use cached data as response data and we don't update the cache.
+		data := make([]byte, len(cacheValue.Data))
+		copy(data, cacheValue.Data)
+		resp.pbResp.Data = data
+	} else {
+		// Cache not hit or cache hit but not valid: update the cache if the response can be cached.
+		if cacheKey != nil && resp.pbResp.CanBeCached && resp.pbResp.CacheLastVersion > 0 {
+			if worker.store.coprCache.CheckAdmission(resp.pbResp.Data.Size(), resp.detail.ProcessTime) {
+				data := make([]byte, len(resp.pbResp.Data))
+				copy(data, resp.pbResp.Data)
+
+				newCacheValue := coprCacheValue{
+					Data:              data,
+					TimeStamp:         worker.req.StartTs,
+					RegionID:          task.region.id,
+					RegionDataVersion: resp.pbResp.CacheLastVersion,
+				}
+				worker.store.coprCache.Set(cacheKey, &newCacheValue)
+			}
+		}
+	}
 	worker.sendToRespCh(resp, ch, true)
 	return nil, nil
+}
+
+func (worker *copIteratorWorker) handleTiDBSendReqErr(err error, task *copTask, ch chan<- *copResponse) error {
+	errCode := errno.ErrUnknown
+	errMsg := err.Error()
+	if terror.ErrorEqual(err, ErrTiKVServerTimeout) {
+		errCode = errno.ErrTiKVServerTimeout
+		errMsg = "TiDB server timeout, address is " + task.storeAddr
+	}
+	selResp := tipb.SelectResponse{
+		Warnings: []*tipb.Error{
+			{
+				Code: int32(errCode),
+				Msg:  errMsg,
+			},
+		},
+	}
+	data, err := proto.Marshal(&selResp)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	resp := &copResponse{
+		pbResp: &coprocessor.Response{
+			Data: data,
+		},
+		detail: &execdetails.ExecDetails{},
+	}
+	worker.sendToRespCh(resp, ch, true)
+	return nil
 }
 
 func (worker *copIteratorWorker) buildCopTasksFromRemain(bo *Backoffer, lastRange *coprocessor.KeyRange, task *copTask) ([]*copTask, error) {
@@ -825,7 +1116,7 @@ func (worker *copIteratorWorker) buildCopTasksFromRemain(bo *Backoffer, lastRang
 	if worker.req.Streaming && lastRange != nil {
 		remainedRanges = worker.calculateRemain(task.ranges, lastRange, worker.req.Desc)
 	}
-	return buildCopTasks(bo, worker.store.regionCache, remainedRanges, worker.req.Desc, worker.req.Streaming)
+	return buildCopTasks(bo, worker.store.regionCache, remainedRanges, worker.req)
 }
 
 // calculateRemain splits the input ranges into two, and take one of them according to desc flag.
@@ -888,4 +1179,49 @@ func (it copErrorResponse) Next(ctx context.Context) (kv.ResultSubset, error) {
 
 func (it copErrorResponse) Close() error {
 	return nil
+}
+
+// EndCopWorkerAction implements memory.ActionOnExceed for copIteratorWorker. If
+// the memory quota of a query is exceeded, EndCopWorkAction.Action would end one copIteratorWorker.
+// If there is only one or zero worker is running, delegate to the fallback action.
+type EndCopWorkerAction struct {
+	once           sync.Once
+	fallbackAction memory.ActionOnExceed
+	mu             struct {
+		sync.Mutex
+		// exceeded indicates that datasource have exceeded memQuota.
+		exceeded uint32
+
+		// alive worker indicates how many copIteratorWorker are running
+		aliveWorker int
+	}
+}
+
+// Action sends a signal to trigger end one copIterator worker.
+func (e *EndCopWorkerAction) Action(t *memory.Tracker) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	// only one or zero worker is running, delegate to the fallback action
+	if e.mu.aliveWorker < 2 {
+		if e.fallbackAction != nil {
+			e.fallbackAction.Action(t)
+		}
+		return
+	}
+	// set exceeded as 1
+	e.once.Do(func() {
+		e.mu.exceeded = 1
+		logutil.BgLogger().Info("memory exceeds quota, mark EndCopWorkerAction exceed signal.",
+			zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()), zap.Int64("maxConsumed", t.MaxConsumed()))
+	})
+}
+
+// SetLogHook implements ActionOnExceed.SetLogHook
+func (e *EndCopWorkerAction) SetLogHook(hook func(uint64)) {
+
+}
+
+// SetFallback implements ActionOnExceed.SetFallback
+func (e *EndCopWorkerAction) SetFallback(a memory.ActionOnExceed) {
+	e.fallbackAction = a
 }

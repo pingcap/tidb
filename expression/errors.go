@@ -29,6 +29,7 @@ var (
 	ErrOperandColumns          = terror.ClassExpression.New(mysql.ErrOperandColumns, mysql.MySQLErrName[mysql.ErrOperandColumns])
 	ErrCutValueGroupConcat     = terror.ClassExpression.New(mysql.ErrCutValueGroupConcat, mysql.MySQLErrName[mysql.ErrCutValueGroupConcat])
 	ErrFunctionsNoopImpl       = terror.ClassExpression.New(mysql.ErrNotSupportedYet, "function %s has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions")
+	ErrIncorrectType           = terror.ClassExpression.New(mysql.ErrIncorrectType, mysql.MySQLErrName[mysql.ErrIncorrectType])
 
 	// All the un-exported errors are defined here:
 	errFunctionNotExists             = terror.ClassExpression.New(mysql.ErrSpDoesNotExist, mysql.MySQLErrName[mysql.ErrSpDoesNotExist])
@@ -43,35 +44,16 @@ var (
 	errWarnOptionIgnored             = terror.ClassExpression.New(mysql.WarnOptionIgnored, mysql.MySQLErrName[mysql.WarnOptionIgnored])
 	errTruncatedWrongValue           = terror.ClassExpression.New(mysql.ErrTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValue])
 	errUnknownLocale                 = terror.ClassExpression.New(mysql.ErrUnknownLocale, mysql.MySQLErrName[mysql.ErrUnknownLocale])
-)
+	errNonUniq                       = terror.ClassExpression.New(mysql.ErrNonUniq, mysql.MySQLErrName[mysql.ErrNonUniq])
 
-func init() {
-	expressionMySQLErrCodes := map[terror.ErrCode]uint16{
-		mysql.ErrWrongParamcountToNativeFct:        mysql.ErrWrongParamcountToNativeFct,
-		mysql.ErrDivisionByZero:                    mysql.ErrDivisionByZero,
-		mysql.ErrSpDoesNotExist:                    mysql.ErrSpDoesNotExist,
-		mysql.ErrZlibZData:                         mysql.ErrZlibZData,
-		mysql.ErrZlibZBuf:                          mysql.ErrZlibZBuf,
-		mysql.ErrWrongArguments:                    mysql.ErrWrongArguments,
-		mysql.ErrUnknownCharacterSet:               mysql.ErrUnknownCharacterSet,
-		mysql.ErrInvalidDefault:                    mysql.ErrInvalidDefault,
-		mysql.ErrWarnDeprecatedSyntaxNoReplacement: mysql.ErrWarnDeprecatedSyntaxNoReplacement,
-		mysql.ErrOperandColumns:                    mysql.ErrOperandColumns,
-		mysql.ErrCutValueGroupConcat:               mysql.ErrCutValueGroupConcat,
-		mysql.ErrRegexp:                            mysql.ErrRegexp,
-		mysql.ErrWarnAllowedPacketOverflowed:       mysql.ErrWarnAllowedPacketOverflowed,
-		mysql.WarnOptionIgnored:                    mysql.WarnOptionIgnored,
-		mysql.ErrTruncatedWrongValue:               mysql.ErrTruncatedWrongValue,
-		mysql.ErrUnknownLocale:                     mysql.ErrUnknownLocale,
-		mysql.ErrBadField:                          mysql.ErrBadField,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassExpression] = expressionMySQLErrCodes
-}
+	// Sequence usage privilege check.
+	errSequenceAccessDenied = terror.ClassExpression.New(mysql.ErrTableaccessDenied, mysql.MySQLErrName[mysql.ErrTableaccessDenied])
+)
 
 // handleInvalidTimeError reports error or warning depend on the context.
 func handleInvalidTimeError(ctx sessionctx.Context, err error) error {
-	if err == nil || !(terror.ErrorEqual(err, types.ErrInvalidTimeFormat) || types.ErrIncorrectDatetimeValue.Equal(err) ||
-		types.ErrTruncatedWrongValue.Equal(err) || types.ErrInvalidWeekModeFormat.Equal(err) ||
+	if err == nil || !(types.ErrWrongValue.Equal(err) ||
+		types.ErrTruncatedWrongVal.Equal(err) || types.ErrInvalidWeekModeFormat.Equal(err) ||
 		types.ErrDatetimeFunctionOverflow.Equal(err)) {
 		return err
 	}

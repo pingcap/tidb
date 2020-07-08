@@ -14,6 +14,8 @@
 package set
 
 import (
+	"fmt"
+
 	"github.com/pingcap/check"
 )
 
@@ -31,6 +33,7 @@ func (s *stringSetTestSuite) TestStringSet(c *check.C) {
 		set.Insert(vals[i])
 		set.Insert(vals[i])
 	}
+	c.Assert(set.Count(), check.Equals, len(vals))
 
 	c.Assert(len(set), check.Equals, len(vals))
 	for i := range vals {
@@ -38,4 +41,24 @@ func (s *stringSetTestSuite) TestStringSet(c *check.C) {
 	}
 
 	c.Assert(set.Exist("11"), check.IsFalse)
+
+	set = NewStringSet("1", "2", "3", "4", "5", "6")
+	for i := 1; i < 7; i++ {
+		c.Assert(set.Exist(fmt.Sprintf("%d", i)), check.IsTrue)
+	}
+	c.Assert(set.Exist("7"), check.IsFalse)
+
+	s1 := NewStringSet("1", "2", "3")
+	s2 := NewStringSet("4", "2", "3")
+	s3 := s1.Intersection(s2)
+	c.Assert(s3, check.DeepEquals, NewStringSet("2", "3"))
+
+	s4 := NewStringSet("4", "5", "3")
+	c.Assert(s3.Intersection(s4), check.DeepEquals, NewStringSet("3"))
+
+	s5 := NewStringSet("4", "5")
+	c.Assert(s3.Intersection(s5), check.DeepEquals, NewStringSet())
+
+	s6 := NewStringSet()
+	c.Assert(s3.Intersection(s6), check.DeepEquals, NewStringSet())
 }

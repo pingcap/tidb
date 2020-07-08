@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	field_types "github.com/pingcap/parser/types"
@@ -78,7 +79,7 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionCreateTable, TableInfo: tbInfo})
 		return ver, nil
 	default:
-		return ver, ErrInvalidTableState.GenWithStack("invalid table state %v", tbInfo.State)
+		return ver, ErrInvalidDDLState.GenWithStackByArgs("table", tbInfo.State)
 	}
 }
 
@@ -89,6 +90,15 @@ func createTableOrViewWithCheck(t *meta.Meta, job *model.Job, schemaID int64, tb
 		return errors.Trace(err)
 	}
 	return t.CreateTableOrView(schemaID, tbInfo)
+}
+
+func repairTableOrViewWithCheck(t *meta.Meta, job *model.Job, schemaID int64, tbInfo *model.TableInfo) error {
+	err := checkTableInfoValid(tbInfo)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return errors.Trace(err)
+	}
+	return t.UpdateTable(schemaID, tbInfo)
 }
 
 func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -140,7 +150,7 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionCreateView, TableInfo: tbInfo})
 		return ver, nil
 	default:
-		return ver, ErrInvalidTableState.GenWithStack("invalid view state %v", tbInfo.State)
+		return ver, ErrInvalidDDLState.GenWithStackByArgs("table", tbInfo.State)
 	}
 }
 
@@ -168,15 +178,21 @@ func onDropTableOrView(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		if err = t.DropTableOrView(job.SchemaID, job.TableID, true); err != nil {
-			break
+		if tblInfo.IsSequence() {
+			if err = t.DropSequence(job.SchemaID, job.TableID, true); err != nil {
+				break
+			}
+		} else {
+			if err = t.DropTableOrView(job.SchemaID, job.TableID, true); err != nil {
+				break
+			}
 		}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 		startKey := tablecodec.EncodeTablePrefix(job.TableID)
 		job.Args = append(job.Args, startKey, getPartitionIDs(tblInfo))
 	default:
-		err = ErrInvalidTableState.GenWithStack("invalid table state %v", tblInfo.State)
+		err = ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State)
 	}
 
 	return ver, errors.Trace(err)
@@ -191,9 +207,10 @@ const (
 func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	schemaID := job.SchemaID
 	tblInfo := &model.TableInfo{}
-	var autoID, dropJobID, recoverTableCheckFlag int64
+	var autoIncID, autoRandID, dropJobID, recoverTableCheckFlag int64
 	var snapshotTS uint64
-	if err = job.DecodeArgs(tblInfo, &autoID, &dropJobID, &snapshotTS, &recoverTableCheckFlag); err != nil {
+	const checkFlagIndexInJobArgs = 4 // The index of `recoverTableCheckFlag` in job arg list.
+	if err = job.DecodeArgs(tblInfo, &autoIncID, &dropJobID, &snapshotTS, &recoverTableCheckFlag, &autoRandID); err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -207,6 +224,14 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	}
 
 	err = checkTableNotExists(d, t, schemaID, tblInfo.Name.L)
+	if err != nil {
+		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableExists.Equal(err) {
+			job.State = model.JobStateCancelled
+		}
+		return ver, errors.Trace(err)
+	}
+
+	err = checkTableIDNotExists(t, schemaID, tblInfo.ID)
 	if err != nil {
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableExists.Equal(err) {
 			job.State = model.JobStateCancelled
@@ -235,9 +260,9 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		// none -> write only
 		// check GC enable and update flag.
 		if gcEnable {
-			job.Args[len(job.Args)-1] = recoverTableCheckFlagEnableGC
+			job.Args[checkFlagIndexInJobArgs] = recoverTableCheckFlagEnableGC
 		} else {
-			job.Args[len(job.Args)-1] = recoverTableCheckFlagDisableGC
+			job.Args[checkFlagIndexInJobArgs] = recoverTableCheckFlagDisableGC
 		}
 
 		job.SchemaState = model.StateWriteOnly
@@ -263,14 +288,20 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			return ver, errors.Trace(err)
 		}
 		// Remove dropped table DDL job from gc_delete_range table.
-		err = w.delRangeManager.removeFromGCDeleteRange(dropJobID, tblInfo.ID)
+		var tids []int64
+		if tblInfo.GetPartitionInfo() != nil {
+			tids = getPartitionIDs(tblInfo)
+		} else {
+			tids = []int64{tblInfo.ID}
+		}
+		err = w.delRangeManager.removeFromGCDeleteRange(dropJobID, tids)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 
 		tblInfo.State = model.StatePublic
 		tblInfo.UpdateTS = t.StartTS
-		err = t.CreateTableAndSetAutoID(schemaID, tblInfo, autoID)
+		err = t.CreateTableAndSetAutoID(schemaID, tblInfo, autoIncID, autoRandID)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -289,14 +320,14 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	default:
-		return ver, ErrInvalidTableState.GenWithStack("invalid recover table state %v", tblInfo.State)
+		return ver, ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State)
 	}
 	return ver, nil
 }
 
 // mockRecoverTableCommitErrOnce uses to make sure
 // `mockRecoverTableCommitErr` only mock error once.
-var mockRecoverTableCommitErrOnce uint32 = 0
+var mockRecoverTableCommitErrOnce uint32
 
 func enableGC(w *worker) error {
 	ctx, err := w.sessPool.get()
@@ -339,8 +370,8 @@ func checkSafePoint(w *worker, snapshotTS uint64) error {
 }
 
 func getTable(store kv.Storage, schemaID int64, tblInfo *model.TableInfo) (table.Table, error) {
-	alloc := autoid.NewAllocator(store, tblInfo.GetDBID(schemaID), tblInfo.IsAutoIncColUnsigned())
-	tbl, err := table.TableFromMeta(alloc, tblInfo)
+	allocs := autoid.NewAllocatorsFromTblInfo(store, schemaID, tblInfo)
+	tbl, err := table.TableFromMeta(allocs, tblInfo)
 	return tbl, errors.Trace(err)
 }
 
@@ -352,7 +383,7 @@ func getTableInfoAndCancelFaultJob(t *meta.Meta, job *model.Job, schemaID int64)
 
 	if tblInfo.State != model.StatePublic {
 		job.State = model.JobStateCancelled
-		return nil, ErrInvalidTableState.GenWithStack("table %s is not in public, but %s", tblInfo.Name, tblInfo.State)
+		return nil, ErrInvalidDDLState.GenWithStack("table %s is not in public, but %s", tblInfo.Name, tblInfo.State)
 	}
 
 	return tblInfo, nil
@@ -407,6 +438,10 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+	if tblInfo.IsView() || tblInfo.IsSequence() {
+		job.State = model.JobStateCancelled
+		return ver, infoschema.ErrTableNotExists.GenWithStackByArgs(job.SchemaName, tblInfo.Name.O)
+	}
 
 	err = t.DropTableOrView(schemaID, tblInfo.ID, true)
 	if err != nil {
@@ -430,12 +465,24 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		}
 	}
 
+	// Clear the tiflash replica available status.
+	if tblInfo.TiFlashReplica != nil {
+		tblInfo.TiFlashReplica.AvailablePartitionIDs = nil
+		tblInfo.TiFlashReplica.Available = false
+	}
+
 	tblInfo.ID = newTableID
 	err = t.CreateTableOrView(schemaID, tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+
+	failpoint.Inject("mockTruncateTableUpdateVersionError", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(ver, errors.New("mock update version error"))
+		}
+	})
 
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
@@ -448,7 +495,15 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 	return ver, nil
 }
 
-func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onRebaseRowIDType(store kv.Storage, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	return onRebaseAutoID(store, t, job, autoid.RowIDAllocType)
+}
+
+func onRebaseAutoRandomType(store kv.Storage, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	return onRebaseAutoID(store, t, job, autoid.AutoRandomType)
+}
+
+func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job, tp autoid.AllocatorType) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	var newBase int64
 	err := job.DecodeArgs(&newBase)
@@ -462,7 +517,12 @@ func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job) (ver int64, 
 		return ver, errors.Trace(err)
 	}
 	// No need to check `newBase` again, because `RebaseAutoID` will do this check.
-	tblInfo.AutoIncID = newBase
+	if tp == autoid.RowIDAllocType {
+		tblInfo.AutoIncID = newBase
+	} else {
+		tblInfo.AutoRandID = newBase
+	}
+
 	tbl, err := getTable(store, schemaID, tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -471,11 +531,32 @@ func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job) (ver int64, 
 	// The operation of the minus 1 to make sure that the current value doesn't be used,
 	// the next Alloc operation will get this value.
 	// Its behavior is consistent with MySQL.
-	err = tbl.RebaseAutoID(nil, tblInfo.AutoIncID-1, false)
+	err = tbl.RebaseAutoID(nil, newBase-1, false, tp)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, nil
+}
+
+func onModifyTableAutoIDCache(t *meta.Meta, job *model.Job) (int64, error) {
+	var cache int64
+	if err := job.DecodeArgs(&cache); err != nil {
+		job.State = model.JobStateCancelled
+		return 0, errors.Trace(err)
+	}
+
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	tblInfo.AutoIdCache = cache
+	ver, err := updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -528,11 +609,11 @@ func verifyNoOverflowShardBits(s *sessionPool, tbl table.Table, shardRowIDBits u
 	defer s.put(ctx)
 
 	// Check next global max auto ID first.
-	autoIncID, err := tbl.Allocator(ctx).NextGlobalAutoID(tbl.Meta().ID)
+	autoIncID, err := tbl.Allocators(ctx).Get(autoid.RowIDAllocType).NextGlobalAutoID(tbl.Meta().ID)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if tables.OverflowShardBits(autoIncID, shardRowIDBits) {
+	if tables.OverflowShardBits(autoIncID, shardRowIDBits, autoid.RowIDBitLength, true) {
 		return autoid.ErrAutoincReadFailed.GenWithStack("shard_row_id_bits %d will cause next global auto ID %v overflow", shardRowIDBits, autoIncID)
 	}
 	return nil
@@ -560,11 +641,17 @@ func onRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		return ver, errors.Trace(err)
 	}
 
-	var baseID int64
+	var autoTableID int64
+	var autoRandID int64
 	shouldDelAutoID := false
 	if newSchemaID != oldSchemaID {
 		shouldDelAutoID = true
-		baseID, err = t.GetAutoTableID(tblInfo.GetDBID(oldSchemaID), tblInfo.ID)
+		autoTableID, err = t.GetAutoTableID(tblInfo.GetDBID(oldSchemaID), tblInfo.ID)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		autoRandID, err = t.GetAutoRandomID(tblInfo.GetDBID(oldSchemaID), tblInfo.ID)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
@@ -595,7 +682,12 @@ func onRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	}
 	// Update the table's auto-increment ID.
 	if newSchemaID != oldSchemaID {
-		_, err = t.GenAutoTableID(newSchemaID, tblInfo.ID, baseID)
+		_, err = t.GenAutoTableID(newSchemaID, tblInfo.ID, autoTableID)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		_, err = t.GenAutoRandomID(newSchemaID, tblInfo.ID, autoRandID)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
@@ -633,7 +725,8 @@ func onModifyTableComment(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 
 func onModifyTableCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var toCharset, toCollate string
-	if err := job.DecodeArgs(&toCharset, &toCollate); err != nil {
+	var needsOverwriteCols bool
+	if err := job.DecodeArgs(&toCharset, &toCollate, &needsOverwriteCols); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -649,7 +742,7 @@ func onModifyTableCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ 
 	}
 
 	// double check.
-	_, err = checkAlterTableCharset(tblInfo, dbInfo, toCharset, toCollate)
+	_, err = checkAlterTableCharset(tblInfo, dbInfo, toCharset, toCollate, needsOverwriteCols)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -657,15 +750,103 @@ func onModifyTableCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ 
 
 	tblInfo.Charset = toCharset
 	tblInfo.Collate = toCollate
-	// update column charset.
-	for _, col := range tblInfo.Columns {
-		if field_types.HasCharset(&col.FieldType) {
-			col.Charset = toCharset
-			col.Collate = toCollate
-		} else {
-			col.Charset = charset.CharsetBin
-			col.Collate = charset.CharsetBin
+
+	if needsOverwriteCols {
+		// update column charset.
+		for _, col := range tblInfo.Columns {
+			if field_types.HasCharset(&col.FieldType) {
+				col.Charset = toCharset
+				col.Collate = toCollate
+			} else {
+				col.Charset = charset.CharsetBin
+				col.Collate = charset.CharsetBin
+			}
 		}
+	}
+
+	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, nil
+}
+
+func onSetTableFlashReplica(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	var replicaInfo ast.TiFlashReplicaSpec
+	if err := job.DecodeArgs(&replicaInfo); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	if replicaInfo.Count > 0 {
+		tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+			Count:          replicaInfo.Count,
+			LocationLabels: replicaInfo.Labels,
+		}
+	} else {
+		tblInfo.TiFlashReplica = nil
+	}
+
+	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, nil
+}
+
+func onUpdateFlashReplicaStatus(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	var available bool
+	var physicalID int64
+	if err := job.DecodeArgs(&available, &physicalID); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	if tblInfo.TiFlashReplica == nil || (tblInfo.ID == physicalID && tblInfo.TiFlashReplica.Available == available) ||
+		(tblInfo.ID != physicalID && available == tblInfo.TiFlashReplica.IsPartitionAvailable(physicalID)) {
+		job.State = model.JobStateCancelled
+		return ver, errors.Errorf("the replica available status of table %s is already updated", tblInfo.Name.String())
+	}
+
+	if tblInfo.ID == physicalID {
+		tblInfo.TiFlashReplica.Available = available
+	} else if pi := tblInfo.GetPartitionInfo(); pi != nil {
+		// Partition replica become available.
+		if available {
+			allAvailable := true
+			for _, p := range pi.Definitions {
+				if p.ID == physicalID {
+					tblInfo.TiFlashReplica.AvailablePartitionIDs = append(tblInfo.TiFlashReplica.AvailablePartitionIDs, physicalID)
+				}
+				allAvailable = allAvailable && tblInfo.TiFlashReplica.IsPartitionAvailable(p.ID)
+			}
+			tblInfo.TiFlashReplica.Available = allAvailable
+		} else {
+			// Partition replica become unavailable.
+			for i, id := range tblInfo.TiFlashReplica.AvailablePartitionIDs {
+				if id == physicalID {
+					newIDs := tblInfo.TiFlashReplica.AvailablePartitionIDs[:i]
+					newIDs = append(newIDs, tblInfo.TiFlashReplica.AvailablePartitionIDs[i+1:]...)
+					tblInfo.TiFlashReplica.AvailablePartitionIDs = newIDs
+					tblInfo.TiFlashReplica.Available = false
+					break
+				}
+			}
+		}
+	} else {
+		job.State = model.JobStateCancelled
+		return ver, errors.Errorf("unknown physical ID %v in table %v", physicalID, tblInfo.Name.O)
 	}
 
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
@@ -692,6 +873,20 @@ func checkTableNotExists(d *ddlCtx, t *meta.Meta, schemaID int64, tableName stri
 	}
 
 	return checkTableNotExistsFromStore(t, schemaID, tableName)
+}
+
+func checkTableIDNotExists(t *meta.Meta, schemaID, tableID int64) error {
+	tbl, err := t.GetTable(schemaID, tableID)
+	if err != nil {
+		if meta.ErrDBNotExists.Equal(err) {
+			return infoschema.ErrDatabaseNotExists.GenWithStackByArgs("")
+		}
+		return errors.Trace(err)
+	}
+	if tbl != nil {
+		return infoschema.ErrTableExists.GenWithStackByArgs(tbl.Name)
+	}
+	return nil
 }
 
 func checkTableNotExistsFromInfoSchema(is infoschema.InfoSchema, schemaID int64, tableName string) error {
@@ -735,7 +930,6 @@ func updateVersionAndTableInfoWithCheck(t *meta.Meta, job *model.Job, tblInfo *m
 		return ver, errors.Trace(err)
 	}
 	return updateVersionAndTableInfo(t, job, tblInfo, shouldUpdateVer)
-
 }
 
 // updateVersionAndTableInfo updates the schema version and the table information.
@@ -755,7 +949,7 @@ func updateVersionAndTableInfo(t *meta.Meta, job *model.Job, tblInfo *model.Tabl
 }
 
 // TODO: It may have the issue when two clients concurrently add partitions to a table.
-func onAddTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	partInfo := &model.PartitionInfo{}
 	err := job.DecodeArgs(&partInfo)
 	if err != nil {
@@ -780,7 +974,7 @@ func onAddTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 
-	err = checkPartitionNameUnique(tblInfo, partInfo)
+	err = checkAddPartitionNameUnique(tblInfo, partInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -793,6 +987,7 @@ func onAddTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	}
 	// Finish this job.
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	asyncNotifyEvent(d, &util.Event{Tp: model.ActionAddTablePartition, TableInfo: tblInfo, PartInfo: partInfo})
 	return ver, errors.Trace(err)
 }
 
@@ -838,4 +1033,47 @@ func checkAddPartitionValue(meta *model.TableInfo, part *model.PartitionInfo) er
 		}
 	}
 	return nil
+}
+
+func onRepairTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	schemaID := job.SchemaID
+	tblInfo := &model.TableInfo{}
+
+	if err := job.DecodeArgs(tblInfo); err != nil {
+		// Invalid arguments, cancel this job.
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	tblInfo.State = model.StateNone
+
+	// Check the old DB and old table exist.
+	_, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	// When in repair mode, the repaired table in a server is not access to user,
+	// the table after repairing will be removed from repair list. Other server left
+	// behind alive may need to restart to get the latest schema version.
+	ver, err = updateSchemaVersion(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	switch tblInfo.State {
+	case model.StateNone:
+		// none -> public
+		tblInfo.State = model.StatePublic
+		tblInfo.UpdateTS = t.StartTS
+		err = repairTableOrViewWithCheck(t, job, schemaID, tblInfo)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		// Finish this job.
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+		asyncNotifyEvent(d, &util.Event{Tp: model.ActionRepairTable, TableInfo: tblInfo})
+		return ver, nil
+	default:
+		return ver, ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State)
+	}
 }

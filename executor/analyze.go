@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
@@ -125,7 +126,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
-	return statsHandle.Update(GetInfoSchema(e.ctx))
+	return statsHandle.Update(infoschema.GetInfoSchema(e.ctx))
 }
 
 func getBuildStatsConcurrency(ctx sessionctx.Context) (int, error) {
@@ -243,6 +244,7 @@ type AnalyzeIndexExec struct {
 	ctx             sessionctx.Context
 	physicalTableID int64
 	idxInfo         *model.IndexInfo
+	isCommonHandle  bool
 	concurrency     int
 	priority        int
 	analyzePB       *tipb.AnalyzeReq
@@ -257,8 +259,15 @@ type AnalyzeIndexExec struct {
 // special null range for single-column index to get the null count.
 func (e *AnalyzeIndexExec) fetchAnalyzeResult(ranges []*ranger.Range, isNullRange bool) error {
 	var builder distsql.RequestBuilder
-	kvReq, err := builder.SetIndexRanges(e.ctx.GetSessionVars().StmtCtx, e.physicalTableID, e.idxInfo.ID, ranges).
+	var kvReqBuilder *distsql.RequestBuilder
+	if e.isCommonHandle && e.idxInfo.Primary {
+		kvReqBuilder = builder.SetCommonHandleRanges(e.ctx.GetSessionVars().StmtCtx, e.physicalTableID, ranges)
+	} else {
+		kvReqBuilder = builder.SetIndexRanges(e.ctx.GetSessionVars().StmtCtx, e.physicalTableID, e.idxInfo.ID, ranges)
+	}
+	kvReq, err := kvReqBuilder.
 		SetAnalyzeRequest(e.analyzePB).
+		SetStartTS(math.MaxUint64).
 		SetKeepOrder(true).
 		SetConcurrency(e.concurrency).
 		Build()
@@ -429,6 +438,7 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 	// correct `correlation` of columns.
 	kvReq, err := builder.SetTableRanges(e.physicalTableID, ranges, nil).
 		SetAnalyzeRequest(e.analyzePB).
+		SetStartTS(math.MaxUint64).
 		SetKeepOrder(true).
 		SetConcurrency(e.concurrency).
 		Build()
@@ -506,7 +516,10 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range) (hists []*statis
 		cms = append(cms, nil)
 	}
 	for i, col := range e.colsInfo {
-		collectors[i].ExtractTopN(uint32(e.opts[ast.AnalyzeOptNumTopN]))
+		err := collectors[i].ExtractTopN(uint32(e.opts[ast.AnalyzeOptNumTopN]), e.ctx.GetSessionVars().StmtCtx, &col.FieldType, timeZone)
+		if err != nil {
+			return nil, nil, err
+		}
 		for j, s := range collectors[i].Samples {
 			collectors[i].Samples[j].Ordinal = j
 			collectors[i].Samples[j].Value, err = tablecodec.DecodeColumnValue(s.Value.GetBytes(), &col.FieldType, timeZone)
@@ -605,7 +618,7 @@ type AnalyzeFastExec struct {
 
 func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild *bool, err *error, sampTasks *[]*AnalyzeFastTask) {
 	defer func() {
-		if *needRebuild == true {
+		if *needRebuild {
 			for ok := true; ok; _, ok = <-e.sampLocs {
 				// Do nothing, just clear the channel.
 			}
@@ -623,7 +636,8 @@ func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild
 		})
 		var resp *tikvrpc.Response
 		var rpcCtx *tikv.RPCContext
-		rpcCtx, *err = e.cache.GetRPCContext(bo, loc.Region)
+		// we always use the first follower when follower read is enabled
+		rpcCtx, *err = e.cache.GetTiKVRPCContext(bo, loc.Region, e.ctx.GetSessionVars().GetReplicaRead(), 0)
 		if *err != nil {
 			return
 		}
@@ -705,7 +719,7 @@ func (e *AnalyzeFastExec) getNextSampleKey(bo *tikv.Backoffer, startKey kv.Key) 
 // and need to rebuild.
 func (e *AnalyzeFastExec) buildSampTask() (needRebuild bool, err error) {
 	// Do get regions row count.
-	bo := tikv.NewBackoffer(context.Background(), 500)
+	bo := tikv.NewBackofferWithVars(context.Background(), 500, nil)
 	needRebuildForRoutine := make([]bool, e.concurrency)
 	errs := make([]error, e.concurrency)
 	sampTasksForRoutine := make([][]*AnalyzeFastTask, e.concurrency)
@@ -805,7 +819,7 @@ func (e *AnalyzeFastExec) updateCollectorSamples(sValue []byte, sKey kv.Key, sam
 	if err != nil {
 		return err
 	}
-	var rowID int64
+	var rowID kv.Handle
 	rowID, err = tablecodec.DecodeRowKey(sKey)
 	if err != nil {
 		return err
@@ -814,12 +828,12 @@ func (e *AnalyzeFastExec) updateCollectorSamples(sValue []byte, sKey kv.Key, sam
 	if hasPKInfo > 0 {
 		v, ok := values[e.pkInfo.ID]
 		if !ok {
-			var key int64
+			var key kv.Handle
 			_, key, err = tablecodec.DecodeRecordKey(sKey)
 			if err != nil {
 				return err
 			}
-			v = types.NewIntDatum(key)
+			v = types.NewIntDatum(key.IntValue())
 		}
 		if mysql.HasUnsignedFlag(e.pkInfo.Flag) {
 			v.SetUint64(uint64(v.GetInt64()))
@@ -827,7 +841,7 @@ func (e *AnalyzeFastExec) updateCollectorSamples(sValue []byte, sKey kv.Key, sam
 		if e.collectors[0].Samples[samplePos] == nil {
 			e.collectors[0].Samples[samplePos] = &statistics.SampleItem{}
 		}
-		e.collectors[0].Samples[samplePos].RowID = rowID
+		e.collectors[0].Samples[samplePos].RowID = rowID.IntValue()
 		e.collectors[0].Samples[samplePos].Value = v
 	}
 	// Update the columns' collectors.
@@ -839,14 +853,14 @@ func (e *AnalyzeFastExec) updateCollectorSamples(sValue []byte, sKey kv.Key, sam
 		if e.collectors[hasPKInfo+j].Samples[samplePos] == nil {
 			e.collectors[hasPKInfo+j].Samples[samplePos] = &statistics.SampleItem{}
 		}
-		e.collectors[hasPKInfo+j].Samples[samplePos].RowID = rowID
+		e.collectors[hasPKInfo+j].Samples[samplePos].RowID = rowID.IntValue()
 		e.collectors[hasPKInfo+j].Samples[samplePos].Value = v
 	}
 	// Update the indexes' collectors.
 	for j, idxInfo := range e.idxsInfo {
 		idxVals := make([]types.Datum, 0, len(idxInfo.Columns))
 		for _, idxCol := range idxInfo.Columns {
-			for _, colInfo := range e.colsInfo {
+			for _, colInfo := range e.tblInfo.Columns {
 				if colInfo.Name == idxCol.Name {
 					v, err := e.getValueByInfo(colInfo, values)
 					if err != nil {
@@ -865,7 +879,7 @@ func (e *AnalyzeFastExec) updateCollectorSamples(sValue []byte, sKey kv.Key, sam
 		if e.collectors[len(e.colsInfo)+hasPKInfo+j].Samples[samplePos] == nil {
 			e.collectors[len(e.colsInfo)+hasPKInfo+j].Samples[samplePos] = &statistics.SampleItem{}
 		}
-		e.collectors[len(e.colsInfo)+hasPKInfo+j].Samples[samplePos].RowID = rowID
+		e.collectors[len(e.colsInfo)+hasPKInfo+j].Samples[samplePos].RowID = rowID.IntValue()
 		e.collectors[len(e.colsInfo)+hasPKInfo+j].Samples[samplePos].Value = types.NewBytesDatum(bytes)
 	}
 	return nil
@@ -924,6 +938,9 @@ func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer) (keysSize int, err
 	if err != nil {
 		return 0, err
 	}
+	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
+		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+	}
 	for _, t := range e.scanTasks {
 		iter, err := snapshot.Iter(t.StartKey, t.EndKey)
 		if err != nil {
@@ -942,17 +959,22 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, workID int, err *e
 	defer e.wg.Done()
 	var snapshot kv.Snapshot
 	snapshot, *err = e.ctx.GetStore().(tikv.Storage).GetSnapshot(kv.MaxVersion)
-	rander := rand.New(rand.NewSource(e.randSeed + int64(workID)))
 	if *err != nil {
 		return
 	}
+	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
+		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+	}
+	rander := rand.New(rand.NewSource(e.randSeed + int64(workID)))
+
 	for i := workID; i < len(e.sampTasks); i += e.concurrency {
 		task := e.sampTasks[i]
 		if task.SampSize == 0 {
 			continue
 		}
 
-		var tableID, minRowID, maxRowID int64
+		var tableID int64
+		var minRowID, maxRowID kv.Handle
 		startKey, endKey := task.Location.StartKey, task.Location.EndKey
 		tableID, minRowID, *err = tablecodec.DecodeRecordKey(startKey)
 		if *err != nil {
@@ -965,8 +987,8 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, workID int, err *e
 
 		keys := make([]kv.Key, 0, task.SampSize)
 		for i := 0; i < int(task.SampSize); i++ {
-			randKey := rander.Int63n(maxRowID-minRowID) + minRowID
-			keys = append(keys, tablecodec.EncodeRowKeyWithHandle(tableID, randKey))
+			randKey := rander.Int63n(maxRowID.IntValue()-minRowID.IntValue()) + minRowID.IntValue()
+			keys = append(keys, tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(randKey)))
 		}
 
 		kvMap := make(map[string][]byte, len(keys))
@@ -1012,7 +1034,7 @@ func (e *AnalyzeFastExec) buildColumnStats(ID int64, collector *statistics.Sampl
 }
 
 func (e *AnalyzeFastExec) buildIndexStats(idxInfo *model.IndexInfo, collector *statistics.SampleCollector, rowCount int64) (*statistics.Histogram, *statistics.CMSketch, error) {
-	data := make([][][]byte, len(idxInfo.Columns), len(idxInfo.Columns))
+	data := make([][][]byte, len(idxInfo.Columns))
 	for _, sample := range collector.Samples {
 		var preLen int
 		remained := sample.Value.GetBytes()
@@ -1062,7 +1084,7 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 	}
 
 	e.wg.Add(e.concurrency)
-	bo := tikv.NewBackoffer(context.Background(), 500)
+	bo := tikv.NewBackofferWithVars(context.Background(), 500, nil)
 	for i := 0; i < e.concurrency; i++ {
 		go e.handleSampTasks(bo, i, &errs[i])
 	}
@@ -1094,7 +1116,9 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 		// Adjust the row count in case the count of `tblStats` is not accurate and too small.
 		rowCount = mathutil.MaxInt64(rowCount, int64(len(collector.Samples)))
 		// Scale the total column size.
-		collector.TotalSize *= rowCount / int64(len(collector.Samples))
+		if len(collector.Samples) > 0 {
+			collector.TotalSize *= rowCount / int64(len(collector.Samples))
+		}
 		if i < hasPKInfo {
 			hists[i], cms[i], err = e.buildColumnStats(e.pkInfo.ID, e.collectors[i], &e.pkInfo.FieldType, rowCount)
 		} else if i < hasPKInfo+len(e.colsInfo) {
@@ -1202,7 +1226,7 @@ type analyzeIndexIncrementalExec struct {
 
 func analyzeIndexIncremental(idxExec *analyzeIndexIncrementalExec) analyzeResult {
 	startPos := idxExec.oldHist.GetUpper(idxExec.oldHist.Len() - 1)
-	values, err := codec.DecodeRange(startPos.GetBytes(), len(idxExec.idxInfo.Columns))
+	values, _, err := codec.DecodeRange(startPos.GetBytes(), len(idxExec.idxInfo.Columns))
 	if err != nil {
 		return analyzeResult{Err: err, job: idxExec.job}
 	}

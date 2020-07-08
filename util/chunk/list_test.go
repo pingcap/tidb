@@ -15,11 +15,13 @@ package chunk
 
 import (
 	"math"
+	"math/rand"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
@@ -91,7 +93,7 @@ func (s *testChunkSuite) TestListMemoryUsage(c *check.C) {
 
 	jsonObj, err := json.ParseBinaryFromString("1")
 	c.Assert(err, check.IsNil)
-	timeObj := types.Time{Time: types.FromGoTime(time.Now()), Fsp: 0, Type: mysql.TypeDatetime}
+	timeObj := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 0)
 	durationObj := types.Duration{Duration: math.MaxInt64, Fsp: 0}
 
 	maxChunkSize := 2
@@ -165,7 +167,7 @@ func BenchmarkListMemoryUsage(b *testing.B) {
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDuration})
 
 	chk := NewChunkWithCapacity(fieldTypes, 2)
-	timeObj := types.Time{Time: types.FromGoTime(time.Now()), Fsp: 0, Type: mysql.TypeDatetime}
+	timeObj := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 0)
 	durationObj := types.Duration{Duration: math.MaxInt64, Fsp: 0}
 	chk.AppendFloat64(0, 123.123)
 	chk.AppendString(1, "123")
@@ -216,5 +218,41 @@ func BenchmarkPreAllocChunk(b *testing.B) {
 		for j := 0; j < 32768; j++ {
 			finalChk.preAlloc(row)
 		}
+	}
+}
+
+func BenchmarkListAdd(b *testing.B) {
+	numChk, numRow := 1, 2
+	chks, fields := initChunks(numChk, numRow)
+	chk := chks[0]
+	l := NewList(fields, numRow, numRow)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		l.Add(chk)
+	}
+}
+
+func BenchmarkListGetRow(b *testing.B) {
+	numChk, numRow := 10000, 2
+	chks, fields := initChunks(numChk, numRow)
+	l := NewList(fields, numRow, numRow)
+	for _, chk := range chks {
+		l.Add(chk)
+	}
+	rand.Seed(0)
+	ptrs := make([]RowPtr, 0, b.N)
+	for i := 0; i < mathutil.Min(b.N, 10000); i++ {
+		ptrs = append(ptrs, RowPtr{
+			ChkIdx: rand.Uint32() % uint32(numChk),
+			RowIdx: rand.Uint32() % uint32(numRow),
+		})
+	}
+	for i := 10000; i < cap(ptrs); i++ {
+		ptrs = append(ptrs, ptrs[i%10000])
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		l.GetRow(ptrs[i])
 	}
 }

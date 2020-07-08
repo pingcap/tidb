@@ -17,6 +17,8 @@ import (
 	"bytes"
 	"crypto/tls"
 	"sync"
+
+	"github.com/pingcap/tidb/util"
 )
 
 var statisticsList []Statistics
@@ -92,6 +94,9 @@ var tlsCiphers = []uint16{
 	tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
 	tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
 	tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,
+	tls.TLS_AES_128_GCM_SHA256,
+	tls.TLS_AES_256_GCM_SHA384,
+	tls.TLS_CHACHA20_POLY1305_SHA256,
 }
 
 var tlsSupportedCiphers string
@@ -102,32 +107,7 @@ var tlsVersionString = map[uint16]string{
 	tls.VersionTLS10: "TLSv1",
 	tls.VersionTLS11: "TLSv1.1",
 	tls.VersionTLS12: "TLSv1.2",
-}
-
-// Taken from https://testssl.sh/openssl-rfc.mapping.html .
-var tlsCipherString = map[uint16]string{
-	tls.TLS_RSA_WITH_RC4_128_SHA:                "RC4-SHA",
-	tls.TLS_RSA_WITH_3DES_EDE_CBC_SHA:           "DES-CBC3-SHA",
-	tls.TLS_RSA_WITH_AES_128_CBC_SHA:            "AES128-SHA",
-	tls.TLS_RSA_WITH_AES_256_CBC_SHA:            "AES256-SHA",
-	tls.TLS_RSA_WITH_AES_128_CBC_SHA256:         "AES128-SHA256",
-	tls.TLS_RSA_WITH_AES_128_GCM_SHA256:         "AES128-GCM-SHA256",
-	tls.TLS_RSA_WITH_AES_256_GCM_SHA384:         "AES256-GCM-SHA384",
-	tls.TLS_ECDHE_ECDSA_WITH_RC4_128_SHA:        "ECDHE-ECDSA-RC4-SHA",
-	tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA:    "ECDHE-ECDSA-AES128-SHA",
-	tls.TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA:    "ECDHE-ECDSA-AES256-SHA",
-	tls.TLS_ECDHE_RSA_WITH_RC4_128_SHA:          "ECDHE-RSA-RC4-SHA",
-	tls.TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA:     "ECDHE-RSA-DES-CBC3-SHA",
-	tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA:      "ECDHE-RSA-AES128-SHA",
-	tls.TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA:      "ECDHE-RSA-AES256-SHA",
-	tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256: "ECDHE-ECDSA-AES128-SHA256",
-	tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256:   "ECDHE-RSA-AES128-SHA256",
-	tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256:   "ECDHE-RSA-AES128-GCM-SHA256",
-	tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256: "ECDHE-ECDSA-AES128-GCM-SHA256",
-	tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384:   "ECDHE-RSA-AES256-GCM-SHA384",
-	tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384: "ECDHE-ECDSA-AES256-GCM-SHA384",
-	tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305:    "ECDHE-RSA-CHACHA20-POLY1305",
-	tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305:  "ECDHE-ECDSA-CHACHA20-POLY1305",
+	tls.VersionTLS13: "TLSv1.3",
 }
 
 var defaultStatus = map[string]*StatusVal{
@@ -145,7 +125,7 @@ func (s defaultStatusStat) GetScope(status string) ScopeFlag {
 }
 
 func (s defaultStatusStat) Stats(vars *SessionVars) (map[string]interface{}, error) {
-	statusVars := make(map[string]interface{})
+	statusVars := make(map[string]interface{}, len(defaultStatus))
 
 	for name, v := range defaultStatus {
 		statusVars[name] = v.Value
@@ -153,7 +133,7 @@ func (s defaultStatusStat) Stats(vars *SessionVars) (map[string]interface{}, err
 
 	// `vars` may be nil in unit tests.
 	if vars != nil && vars.TLSConnectionState != nil {
-		statusVars["Ssl_cipher"] = tlsCipherString[vars.TLSConnectionState.CipherSuite]
+		statusVars["Ssl_cipher"] = util.TLSCipher2String(vars.TLSConnectionState.CipherSuite)
 		statusVars["Ssl_cipher_list"] = tlsSupportedCiphers
 		// tls.VerifyClientCertIfGiven == SSL_VERIFY_PEER | SSL_VERIFY_CLIENT_ONCE
 		statusVars["Ssl_verify_mode"] = 0x01 | 0x04
@@ -166,7 +146,7 @@ func (s defaultStatusStat) Stats(vars *SessionVars) (map[string]interface{}, err
 func init() {
 	var ciphersBuffer bytes.Buffer
 	for _, v := range tlsCiphers {
-		ciphersBuffer.WriteString(tlsCipherString[v])
+		ciphersBuffer.WriteString(util.TLSCipher2String(v))
 		ciphersBuffer.WriteString(":")
 	}
 	tlsSupportedCiphers = ciphersBuffer.String()

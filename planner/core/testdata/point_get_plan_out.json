@@ -1,0 +1,71 @@
+[
+  {
+    "Name": "TestCBOPointGet",
+    "Cases": [
+      {
+        "SQL": "select * from t where t.a in ('1','2','4') and t.a+1=2 order by t.a desc",
+        "Plan": [
+          "Selection_12 2.40 root  eq(plus(cast(test.t.a), 1), 2)",
+          "└─Batch_Point_Get_11 2.40 root table:t, index:PRIMARY(a) keep order:true, desc:true"
+        ],
+        "Res": [
+          "1 4 4 1"
+        ]
+      },
+      {
+        "SQL": "select b, c from t where t.b = 2 and t.c = 2 and t.b+1=3",
+        "Plan": [
+          "Selection_6 0.80 root  eq(plus(test.t.b, 1), 3)",
+          "└─Point_Get_5 1.00 root table:t, index:b(b, c) "
+        ],
+        "Res": [
+          "2 2"
+        ]
+      },
+      {
+        "SQL": "select * from t where t.a = '1' and t.b = 4",
+        "Plan": [
+          "Selection_6 0.00 root  eq(test.t.b, 4)",
+          "└─Point_Get_5 1.00 root table:t, index:PRIMARY(a) "
+        ],
+        "Res": [
+          "1 4 4 1"
+        ]
+      },
+      {
+        "SQL": "select * from t where t.a in ('1','3') and t.d = 3",
+        "Plan": [
+          "Selection_6 0.00 root  eq(test.t.d, 3)",
+          "└─Batch_Point_Get_5 0.00 root table:t, index:PRIMARY(a) keep order:false, desc:false"
+        ],
+        "Res": [
+          "3 2 2 3"
+        ]
+      },
+      {
+        "SQL": "select * from t t1 join t t2 on t1.a = t2.a where t1.a = '4' and (t2.b, t2.c) in ((1,1),(2,2))",
+        "Plan": [
+          "Projection_7 0.80 root  test.t.a, test.t.b, test.t.c, test.t.d, test.t.a, test.t.b, test.t.c, test.t.d",
+          "└─HashJoin_9 0.80 root  CARTESIAN inner join",
+          "  ├─Selection_11(Build) 0.80 root  or(and(eq(test.t.b, 1), eq(test.t.c, 1)), and(eq(test.t.b, 2), eq(test.t.c, 2)))",
+          "  │ └─Point_Get_10 1.00 root table:t, index:PRIMARY(a) ",
+          "  └─Point_Get_12(Probe) 1.00 root table:t, index:PRIMARY(a) "
+        ],
+        "Res": [
+          "4 1 1 4 4 1 1 4"
+        ]
+      },
+      {
+        "SQL": "select * from t where (t.b, t.c) in ((2,2), (3,3), (4,4)) order by t.b, t.c",
+        "Plan": [
+          "Batch_Point_Get_10 3.00 root table:t, index:b(b, c) keep order:true, desc:false"
+        ],
+        "Res": [
+          "3 2 2 3",
+          "2 3 3 2",
+          "1 4 4 1"
+        ]
+      }
+    ]
+  }
+]

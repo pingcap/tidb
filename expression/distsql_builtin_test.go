@@ -24,13 +24,69 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
 var _ = Suite(&testEvalSuite{})
+var _ = SerialSuites(&testEvalSerialSuite{})
 
 type testEvalSuite struct {
 	colID int64
+}
+
+type testEvalSerialSuite struct {
+}
+
+func (s *testEvalSerialSuite) TestPBToExprWithNewCollation(c *C) {
+	sc := new(stmtctx.StatementContext)
+	fieldTps := make([]*types.FieldType, 1)
+
+	cases := []struct {
+		name    string
+		expName string
+		id      int32
+		pbID    int32
+	}{
+		{"utf8_general_ci", "utf8_general_ci", 33, 33},
+		{"UTF8MB4_BIN", "utf8mb4_bin", 46, 46},
+		{"utf8mb4_bin", "utf8mb4_bin", 46, 46},
+		{"utf8mb4_general_ci", "utf8mb4_general_ci", 45, 45},
+		{"", "utf8mb4_bin", 46, 46},
+		{"some_error_collation", "utf8mb4_bin", 46, 46},
+	}
+
+	for _, cs := range cases {
+		ft := types.NewFieldType(mysql.TypeString)
+		ft.Collate = cs.name
+		expr := new(tipb.Expr)
+		expr.Tp = tipb.ExprType_String
+		expr.FieldType = toPBFieldType(ft)
+		c.Assert(expr.FieldType.Collate, Equals, cs.pbID)
+
+		e, err := PBToExpr(expr, fieldTps, sc)
+		c.Assert(err, IsNil)
+		cons, ok := e.(*Constant)
+		c.Assert(ok, IsTrue)
+		c.Assert(cons.Value.Collation(), Equals, cs.expName)
+	}
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	for _, cs := range cases {
+		ft := types.NewFieldType(mysql.TypeString)
+		ft.Collate = cs.name
+		expr := new(tipb.Expr)
+		expr.Tp = tipb.ExprType_String
+		expr.FieldType = toPBFieldType(ft)
+		c.Assert(expr.FieldType.Collate, Equals, -cs.pbID)
+
+		e, err := PBToExpr(expr, fieldTps, sc)
+		c.Assert(err, IsNil)
+		cons, ok := e.(*Constant)
+		c.Assert(ok, IsTrue)
+		c.Assert(cons.Value.Collation(), Equals, cs.expName)
+	}
 }
 
 func (s *testEvalSuite) SetUpSuite(c *C) {
@@ -40,6 +96,10 @@ func (s *testEvalSuite) SetUpSuite(c *C) {
 func (s *testEvalSuite) allocColID() int64 {
 	s.colID++
 	return s.colID
+}
+
+func (s *testEvalSuite) TearDownTest(c *C) {
+	s.colID = 0
 }
 
 func (s *testEvalSuite) TestPBToExpr(c *C) {
@@ -160,6 +220,13 @@ func (s *testEvalSuite) TestEval(c *C) {
 				jsonDatumExpr(c, `[10, {"a": 20}]`),
 			),
 			types.NewIntDatum(3),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_JsonStorageSizeSig,
+				toPBFieldType(newIntFieldType()),
+				jsonDatumExpr(c, `[{"a":{"a":1},"b":2}]`),
+			),
+			types.NewIntDatum(25),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_JsonSearchSig,
@@ -431,6 +498,11 @@ func (s *testEvalSuite) TestEval(c *C) {
 			scalarFunctionExpr(tipb.ScalarFuncSig_RealIsNull,
 				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewDatum(nil))),
 			types.NewIntDatum(1),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_LeftShift,
+				ToPBFieldType(newIntFieldType()), datumExpr(c, types.NewDatum(1)), datumExpr(c, types.NewIntDatum(1))),
+			types.NewIntDatum(2),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_AbsInt,
@@ -792,21 +864,6 @@ func (s *testEvalSuite) TestEval(c *C) {
 	}
 }
 
-func buildExpr(tp tipb.ExprType, children ...interface{}) *tipb.Expr {
-	expr := new(tipb.Expr)
-	expr.Tp = tp
-	expr.Children = make([]*tipb.Expr, len(children))
-	for i, child := range children {
-		switch x := child.(type) {
-		case types.Datum:
-			expr.Children[i] = datumExpr(nil, x)
-		case *tipb.Expr:
-			expr.Children[i] = x
-		}
-	}
-	return expr
-}
-
 func datumExpr(c *C, d types.Datum) *tipb.Expr {
 	expr := new(tipb.Expr)
 	switch d.Kind() {
@@ -818,6 +875,7 @@ func datumExpr(c *C, d types.Datum) *tipb.Expr {
 		expr.Val = codec.EncodeUint(nil, d.GetUint64())
 	case types.KindString:
 		expr.Tp = tipb.ExprType_String
+		expr.FieldType = toPBFieldType(types.NewFieldType(mysql.TypeString))
 		expr.Val = d.GetBytes()
 	case types.KindBytes:
 		expr.Tp = tipb.ExprType_Bytes
@@ -845,7 +903,7 @@ func datumExpr(c *C, d types.Datum) *tipb.Expr {
 	case types.KindMysqlTime:
 		expr.Tp = tipb.ExprType_MysqlTime
 		var err error
-		expr.Val, err = codec.EncodeMySQLTime(nil, d, mysql.TypeUnspecified, nil)
+		expr.Val, err = codec.EncodeMySQLTime(nil, d.GetMysqlTime(), mysql.TypeUnspecified, nil)
 		c.Assert(err, IsNil)
 		expr.FieldType = ToPBFieldType(newDateFieldType())
 	default:
@@ -920,8 +978,8 @@ func newIntFieldType() *types.FieldType {
 
 func newDurFieldType() *types.FieldType {
 	return &types.FieldType{
-		Tp:   mysql.TypeDuration,
-		Flag: types.DefaultFsp,
+		Tp:      mysql.TypeDuration,
+		Decimal: int(types.DefaultFsp),
 	}
 }
 
@@ -949,6 +1007,46 @@ func newDecimalFieldType() *types.FieldType {
 func newJSONFieldType() *types.FieldType {
 	return &types.FieldType{
 		Tp:      mysql.TypeJSON,
+		Flen:    types.UnspecifiedLength,
+		Decimal: 0,
+		Charset: charset.CharsetBin,
+		Collate: charset.CollationBin,
+	}
+}
+
+func newFloatFieldType() *types.FieldType {
+	return &types.FieldType{
+		Tp:      mysql.TypeFloat,
+		Flen:    types.UnspecifiedLength,
+		Decimal: 0,
+		Charset: charset.CharsetBin,
+		Collate: charset.CollationBin,
+	}
+}
+
+func newBinaryLiteralFieldType() *types.FieldType {
+	return &types.FieldType{
+		Tp:      mysql.TypeBit,
+		Flen:    types.UnspecifiedLength,
+		Decimal: 0,
+		Charset: charset.CharsetBin,
+		Collate: charset.CollationBin,
+	}
+}
+
+func newBlobFieldType() *types.FieldType {
+	return &types.FieldType{
+		Tp:      mysql.TypeBlob,
+		Flen:    types.UnspecifiedLength,
+		Decimal: 0,
+		Charset: charset.CharsetBin,
+		Collate: charset.CollationBin,
+	}
+}
+
+func newEnumFieldType() *types.FieldType {
+	return &types.FieldType{
+		Tp:      mysql.TypeEnum,
 		Flen:    types.UnspecifiedLength,
 		Decimal: 0,
 		Charset: charset.CharsetBin,

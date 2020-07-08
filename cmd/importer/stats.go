@@ -25,8 +25,6 @@ import (
 	stats "github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
 	"go.uber.org/zap"
 )
 
@@ -66,18 +64,6 @@ func (h *histogram) getRandomBoundIdx() int {
 	return 0
 }
 
-func (h *histogram) decodeInt(row *chunk.Row) int64 {
-	if h.index == nil {
-		return row.GetInt64(0)
-	}
-	data := row.GetBytes(0)
-	_, result, err := codec.DecodeInt(data)
-	if err != nil {
-		log.Fatal(err.Error())
-	}
-	return result
-}
-
 func (h *histogram) randInt() int64 {
 	idx := h.getRandomBoundIdx()
 	if idx%2 == 0 {
@@ -86,52 +72,6 @@ func (h *histogram) randInt() int64 {
 		return randInt64(lower, upper)
 	}
 	return h.Bounds.GetRow(idx).GetInt64(0)
-}
-
-func (h *histogram) randFloat64() float64 {
-	idx := h.getRandomBoundIdx()
-	if idx%2 == 0 {
-		lower := h.Bounds.GetRow(idx).GetFloat64(0)
-		upper := h.Bounds.GetRow(idx + 1).GetFloat64(0)
-		rd := rand.Float64()
-		return lower + rd*(upper-lower)
-	}
-	return h.Bounds.GetRow(idx).GetFloat64(0)
-}
-
-func (h *histogram) randFloat32() float32 {
-	idx := h.getRandomBoundIdx()
-	if idx%2 == 0 {
-		lower := h.Bounds.GetRow(idx).GetFloat32(0)
-		upper := h.Bounds.GetRow(idx + 1).GetFloat32(0)
-		rd := rand.Float32()
-		return lower + rd*(upper-lower)
-	}
-	return h.Bounds.GetRow(idx).GetFloat32(0)
-}
-
-func (h *histogram) randDecimal() *types.MyDecimal {
-	idx := h.getRandomBoundIdx()
-	if idx%2 == 0 {
-		lower := h.Bounds.GetRow(idx).GetMyDecimal(0)
-		upper := h.Bounds.GetRow(idx + 1).GetMyDecimal(0)
-		rd := rand.Float64()
-		l, err := lower.ToFloat64()
-		if err != nil {
-			log.Fatal(err.Error())
-		}
-		r, err := upper.ToFloat64()
-		if err != nil {
-			log.Fatal(err.Error())
-		}
-		dec := &types.MyDecimal{}
-		err = dec.FromFloat64(l + rd*(r-l))
-		if err != nil {
-			log.Fatal(err.Error())
-		}
-		return dec
-	}
-	return h.Bounds.GetRow(idx).GetMyDecimal(0)
 }
 
 func getValidPrefix(lower, upper string) string {
@@ -143,7 +83,7 @@ func getValidPrefix(lower, upper string) string {
 			randCh := uint8(rand.Intn(int(upper[i]-lower[i]))) + lower[i]
 			newBytes := make([]byte, i, i+1)
 			copy(newBytes, lower[:i])
-			newBytes = append(newBytes, byte(randCh))
+			newBytes = append(newBytes, randCh)
 			return string(newBytes)
 		}
 	}
@@ -196,7 +136,7 @@ func (h *histogram) randDate(unit string, mysqlFmt string, dateFmt string) strin
 			return str
 		}
 		delta := randInt(0, int(diff)-1)
-		l, err := lower.Time.GoTime(time.Local)
+		l, err := lower.GoTime(time.Local)
 		if err != nil {
 			log.Fatal(err.Error())
 		}

@@ -24,9 +24,10 @@ import (
 )
 
 // UnspecifiedLength is unspecified length.
-const (
-	UnspecifiedLength = -1
-)
+const UnspecifiedLength = -1
+
+// ErrorLength is error length for blob or text.
+const ErrorLength = 0
 
 // FieldType records field type information.
 type FieldType = ast.FieldType
@@ -34,10 +35,28 @@ type FieldType = ast.FieldType
 // NewFieldType returns a FieldType,
 // with a type and other information about field type.
 func NewFieldType(tp byte) *FieldType {
-	return &FieldType{
+	ft := &FieldType{
 		Tp:      tp,
 		Flen:    UnspecifiedLength,
 		Decimal: UnspecifiedLength,
+	}
+	if tp != mysql.TypeVarchar && tp != mysql.TypeVarString && tp != mysql.TypeString {
+		ft.Collate = charset.CollationBin
+	} else {
+		ft.Collate = mysql.DefaultCollationName
+	}
+	// TODO: use DefaultCharsetForType to set charset and collate
+	return ft
+}
+
+// NewFieldTypeWithCollation returns a FieldType,
+// with a type and other information about field type.
+func NewFieldTypeWithCollation(tp byte, collation string, length int) *FieldType {
+	return &FieldType{
+		Tp:      tp,
+		Flen:    length,
+		Decimal: UnspecifiedLength,
+		Collate: collation,
 	}
 }
 
@@ -53,6 +72,7 @@ func AggFieldType(tps []*FieldType) *FieldType {
 		}
 		mtp := MergeFieldType(currType.Tp, t.Tp)
 		currType.Tp = mtp
+		currType.Flag = mergeTypeFlag(currType.Flag, t.Flag)
 	}
 
 	return &currType
@@ -128,7 +148,7 @@ func DefaultParamTypeForValue(value interface{}, tp *FieldType) {
 		tp.Flen = UnspecifiedLength
 		tp.Decimal = UnspecifiedLength
 	default:
-		DefaultTypeForValue(value, tp)
+		DefaultTypeForValue(value, tp, mysql.DefaultCharset, mysql.DefaultCollationName)
 		if hasVariantFieldLength(tp) {
 			tp.Flen = UnspecifiedLength
 		}
@@ -148,7 +168,7 @@ func hasVariantFieldLength(tp *FieldType) bool {
 }
 
 // DefaultTypeForValue returns the default FieldType for the value.
-func DefaultTypeForValue(value interface{}, tp *FieldType) {
+func DefaultTypeForValue(value interface{}, tp *FieldType, char string, collate string) {
 	switch x := value.(type) {
 	case nil:
 		tp.Tp = mysql.TypeNull
@@ -182,7 +202,13 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		// TODO: tp.Flen should be len(x) * 3 (max bytes length of CharsetUTF8)
 		tp.Flen = len(x)
 		tp.Decimal = UnspecifiedLength
-		tp.Charset, tp.Collate = charset.GetDefaultCharsetAndCollate()
+		tp.Charset, tp.Collate = char, collate
+	case float32:
+		tp.Tp = mysql.TypeFloat
+		s := strconv.FormatFloat(float64(x), 'f', -1, 32)
+		tp.Flen = len(s)
+		tp.Decimal = UnspecifiedLength
+		SetBinChsClnFlag(tp)
 	case float64:
 		tp.Tp = mysql.TypeDouble
 		s := strconv.FormatFloat(x, 'f', -1, 64)
@@ -201,7 +227,7 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		SetBinChsClnFlag(tp)
 	case HexLiteral:
 		tp.Tp = mysql.TypeVarString
-		tp.Flen = len(x)
+		tp.Flen = len(x) * 3
 		tp.Decimal = 0
 		tp.Flag |= mysql.UnsignedFlag
 		SetBinChsClnFlag(tp)
@@ -213,26 +239,26 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		tp.Flag &= ^mysql.BinaryFlag
 		tp.Flag |= mysql.UnsignedFlag
 	case Time:
-		tp.Tp = x.Type
-		switch x.Type {
+		tp.Tp = x.Type()
+		switch x.Type() {
 		case mysql.TypeDate:
 			tp.Flen = mysql.MaxDateWidth
 			tp.Decimal = UnspecifiedLength
 		case mysql.TypeDatetime, mysql.TypeTimestamp:
 			tp.Flen = mysql.MaxDatetimeWidthNoFsp
-			if x.Fsp > DefaultFsp { // consider point('.') and the fractional part.
-				tp.Flen += x.Fsp + 1
+			if x.Fsp() > DefaultFsp { // consider point('.') and the fractional part.
+				tp.Flen += int(x.Fsp()) + 1
 			}
-			tp.Decimal = x.Fsp
+			tp.Decimal = int(x.Fsp())
 		}
 		SetBinChsClnFlag(tp)
 	case Duration:
 		tp.Tp = mysql.TypeDuration
 		tp.Flen = len(x.String())
 		if x.Fsp > DefaultFsp { // consider point('.') and the fractional part.
-			tp.Flen = x.Fsp + 1
+			tp.Flen = int(x.Fsp) + 1
 		}
-		tp.Decimal = x.Fsp
+		tp.Decimal = int(x.Fsp)
 		SetBinChsClnFlag(tp)
 	case *MyDecimal:
 		tp.Tp = mysql.TypeNewDecimal
@@ -253,8 +279,8 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		tp.Tp = mysql.TypeJSON
 		tp.Flen = UnspecifiedLength
 		tp.Decimal = 0
-		tp.Charset = charset.CharsetBin
-		tp.Collate = charset.CollationBin
+		tp.Charset = charset.CharsetUTF8MB4
+		tp.Collate = charset.CollationUTF8MB4
 	default:
 		tp.Tp = mysql.TypeUnspecified
 		tp.Flen = UnspecifiedLength
@@ -266,7 +292,7 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 func DefaultCharsetForType(tp byte) (string, string) {
 	switch tp {
 	case mysql.TypeVarString, mysql.TypeString, mysql.TypeVarchar:
-		// Default charset for string types is utf8.
+		// Default charset for string types is utf8mb4.
 		return mysql.DefaultCharset, mysql.DefaultCollationName
 	}
 	return charset.CharsetBin, charset.CollationBin
@@ -281,6 +307,13 @@ func MergeFieldType(a byte, b byte) byte {
 	ia := getFieldTypeIndex(a)
 	ib := getFieldTypeIndex(b)
 	return fieldTypeMergeRules[ia][ib]
+}
+
+// mergeTypeFlag merges two MySQL type flag to a new one
+// currently only NotNullFlag is checked
+// todo more flag need to be checked, for example: UnsignedFlag
+func mergeTypeFlag(a, b uint) uint {
+	return a & (b&mysql.NotNullFlag | ^mysql.NotNullFlag)
 }
 
 func getFieldTypeIndex(tp byte) int {

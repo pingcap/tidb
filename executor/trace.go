@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/opentracing/basictracer-go"
@@ -199,6 +200,18 @@ func dfsTree(t *appdash.Trace, prefix string, isLast bool, chk *chunk.Chunk) {
 	chk.AppendString(1, start.Format("15:04:05.000000"))
 	chk.AppendString(2, duration.String())
 
+	// Sort events by their start time
+	sort.Slice(t.Sub, func(i, j int) bool {
+		var istart, jstart time.Time
+		if ievent, err := t.Sub[i].TimespanEvent(); err == nil {
+			istart = ievent.Start()
+		}
+		if jevent, err := t.Sub[j].TimespanEvent(); err == nil {
+			jstart = jevent.Start()
+		}
+		return istart.Before(jstart)
+	})
+
 	for i, sp := range t.Sub {
 		dfsTree(sp, newPrefix, i == (len(t.Sub))-1 /*last element of array*/, chk)
 	}
@@ -208,7 +221,7 @@ func generateLogResult(allSpans []basictracer.RawSpan, chk *chunk.Chunk) {
 	for rIdx := range allSpans {
 		span := &allSpans[rIdx]
 
-		chk.AppendTime(0, types.Time{Time: types.FromGoTime(span.Start), Type: mysql.TypeTimestamp, Fsp: 6})
+		chk.AppendTime(0, types.NewTime(types.FromGoTime(span.Start), mysql.TypeTimestamp, 6))
 		chk.AppendString(1, "--- start span "+span.Operation+" ----")
 		chk.AppendString(2, "")
 		chk.AppendString(3, span.Operation)
@@ -220,7 +233,7 @@ func generateLogResult(allSpans []basictracer.RawSpan, chk *chunk.Chunk) {
 		for _, l := range span.Logs {
 			for _, field := range l.Fields {
 				if field.Key() == logutil.TraceEventKey {
-					chk.AppendTime(0, types.Time{Time: types.FromGoTime(l.Timestamp), Type: mysql.TypeTimestamp, Fsp: 6})
+					chk.AppendTime(0, types.NewTime(types.FromGoTime(l.Timestamp), mysql.TypeTimestamp, 6))
 					chk.AppendString(1, field.Value().(string))
 					chk.AppendString(2, tags)
 					chk.AppendString(3, span.Operation)

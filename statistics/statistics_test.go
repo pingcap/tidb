@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -277,6 +278,8 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 		ColLen:          1,
 		MaxSampleSize:   1000,
 		MaxFMSketchSize: 1000,
+		Collators:       make([]collate.Collator, 1),
+		ColsFieldType:   []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)},
 	}
 	c.Assert(s.pk.Close(), IsNil)
 	collectors, _, err := builder.CollectColumnStats()
@@ -287,7 +290,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	checkRepeats(c, col)
 	c.Assert(col.Len(), Equals, 250)
 
-	tblCount, col, _, err := buildIndex(ctx, bucketCount, 1, sqlexec.RecordSet(s.rc))
+	tblCount, col, _, err := buildIndex(ctx, bucketCount, 1, s.rc)
 	c.Check(err, IsNil)
 	checkRepeats(c, col)
 	col.PreCalculateScalar()
@@ -304,7 +307,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	c.Check(int(count), Equals, 0)
 
 	s.pk.(*recordSet).cursor = 0
-	tblCount, col, err = buildPK(ctx, bucketCount, 4, sqlexec.RecordSet(s.pk))
+	tblCount, col, err = buildPK(ctx, bucketCount, 4, s.pk)
 	c.Check(err, IsNil)
 	checkRepeats(c, col)
 	col.PreCalculateScalar()
@@ -338,7 +341,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 func (s *testStatisticsSuite) TestHistogramProtoConversion(c *C) {
 	ctx := mock.NewContext()
 	c.Assert(s.rc.Close(), IsNil)
-	tblCount, col, _, err := buildIndex(ctx, 256, 1, sqlexec.RecordSet(s.rc))
+	tblCount, col, _, err := buildIndex(ctx, 256, 1, s.rc)
 	c.Check(err, IsNil)
 	c.Check(int(tblCount), Equals, 100000)
 

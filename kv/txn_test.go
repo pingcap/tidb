@@ -70,7 +70,7 @@ func (s *testTxnSuite) TestRetryExceedCountError(c *C) {
 	err1 := errors.New("foo")
 	cfg.SetGetError(err1)
 	cfg.SetCommitError(err1)
-	storage := NewInjectedStore(NewMockStorage(), &cfg)
+	storage := NewInjectedStore(newMockStorage(), &cfg)
 	err = RunInNewTxn(storage, true, func(txn Transaction) error {
 		return nil
 	})

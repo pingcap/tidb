@@ -15,24 +15,19 @@ package structure
 
 import (
 	"github.com/pingcap/parser/terror"
+	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 )
 
-// structure error codes.
-const (
-	codeInvalidHashKeyFlag   terror.ErrCode = 1
-	codeInvalidHashKeyPrefix                = 2
-	codeInvalidListIndex                    = 3
-	codeInvalidListMetaData                 = 4
-	codeWriteOnSnapshot                     = 5
-)
-
 var (
-	errInvalidHashKeyFlag   = terror.ClassStructure.New(codeInvalidHashKeyFlag, "invalid encoded hash key flag")
-	errInvalidHashKeyPrefix = terror.ClassStructure.New(codeInvalidHashKeyPrefix, "invalid encoded hash key prefix")
-	errInvalidListIndex     = terror.ClassStructure.New(codeInvalidListMetaData, "invalid list index")
-	errInvalidListMetaData  = terror.ClassStructure.New(codeInvalidListMetaData, "invalid list meta data")
-	errWriteOnSnapshot      = terror.ClassStructure.New(codeWriteOnSnapshot, "write on snapshot")
+	// ErrInvalidHashKeyFlag used by structure
+	ErrInvalidHashKeyFlag = terror.ClassStructure.New(mysql.ErrInvalidHashKeyFlag, mysql.MySQLErrName[mysql.ErrInvalidHashKeyFlag])
+	// ErrInvalidListIndex used by structure
+	ErrInvalidListIndex = terror.ClassStructure.New(mysql.ErrInvalidListIndex, mysql.MySQLErrName[mysql.ErrInvalidListIndex])
+	// ErrInvalidListMetaData used by structure
+	ErrInvalidListMetaData = terror.ClassStructure.New(mysql.ErrInvalidListMetaData, mysql.MySQLErrName[mysql.ErrInvalidListMetaData])
+	// ErrWriteOnSnapshot used by structure
+	ErrWriteOnSnapshot = terror.ClassStructure.New(mysql.ErrWriteOnSnapshot, mysql.MySQLErrName[mysql.ErrWriteOnSnapshot])
 )
 
 // NewStructure creates a TxStructure with Retriever, RetrieverMutator and key prefix.

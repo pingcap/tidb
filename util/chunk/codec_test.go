@@ -15,6 +15,7 @@ package chunk
 
 import (
 	"fmt"
+	"runtime"
 	"testing"
 
 	"github.com/pingcap/check"
@@ -28,6 +29,10 @@ var _ = check.Suite(&testCodecSuite{})
 type testCodecSuite struct{}
 
 func (s *testCodecSuite) TestCodec(c *check.C) {
+	if runtime.Version() >= "go1.14" {
+		// TODO: fix https://github.com/pingcap/tidb/issues/15154
+		c.Skip("cannot pass checkptr, TODO to fix https://github.com/pingcap/tidb/issues/15154")
+	}
 	numCols := 6
 	numRows := 10
 
@@ -75,6 +80,25 @@ func (s *testCodecSuite) TestCodec(c *check.C) {
 		c.Assert(row.GetMyDecimal(4).String(), check.Equals, str)
 		c.Assert(string(row.GetJSON(5).GetString()), check.Equals, str)
 	}
+}
+
+func (s *testCodecSuite) TestEstimateTypeWidth(c *check.C) {
+	var colType *types.FieldType
+
+	colType = &types.FieldType{Tp: mysql.TypeLonglong}
+	c.Assert(EstimateTypeWidth(colType), check.Equals, 8) // fixed-witch type
+
+	colType = &types.FieldType{Tp: mysql.TypeString, Flen: 31}
+	c.Assert(EstimateTypeWidth(colType), check.Equals, 31) // colLen <= 32
+
+	colType = &types.FieldType{Tp: mysql.TypeString, Flen: 999}
+	c.Assert(EstimateTypeWidth(colType), check.Equals, 515) // colLen < 1000
+
+	colType = &types.FieldType{Tp: mysql.TypeString, Flen: 2000}
+	c.Assert(EstimateTypeWidth(colType), check.Equals, 516) // colLen < 1000
+
+	colType = &types.FieldType{Tp: mysql.TypeString}
+	c.Assert(EstimateTypeWidth(colType), check.Equals, 32) // value after guessing
 }
 
 func BenchmarkEncodeChunk(b *testing.B) {

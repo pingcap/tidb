@@ -18,7 +18,7 @@ import (
 	"encoding/binary"
 	"io"
 	"os"
-	"path"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"sync"
@@ -117,15 +117,11 @@ type FileSorter struct {
 	nWorkers int // number of workers used in async sorting
 	cWorker  int // the next worker to which the sorting job is sent
 
-	mu       sync.Mutex
-	wg       sync.WaitGroup
-	tmpDir   string
-	files    []string
-	nFiles   int
-	closed   bool
-	fetched  bool
-	external bool // mark the necessity of performing external file sort
-	cursor   int  // required when performing full in-memory sort
+	mu     sync.Mutex
+	tmpDir string
+	files  []string
+	nFiles int
+	cursor int // required when performing full in-memory sort
 
 	rowHeap    *rowHeap
 	fds        []*os.File
@@ -135,6 +131,11 @@ type FileSorter struct {
 	keySize    int
 	valSize    int
 	maxRowSize int
+
+	wg       sync.WaitGroup
+	closed   bool
+	fetched  bool
+	external bool // mark the necessity of performing external file sort
 }
 
 // Worker sorts file asynchronously.
@@ -267,7 +268,7 @@ func (b *Builder) Build() (*FileSorter, error) {
 func (fs *FileSorter) getUniqueFileName() string {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
-	ret := path.Join(fs.tmpDir, strconv.Itoa(fs.nFiles))
+	ret := filepath.Join(fs.tmpDir, strconv.Itoa(fs.nFiles))
 	fs.nFiles++
 	return ret
 }
@@ -620,5 +621,4 @@ func (w *Worker) flushToFile() {
 	w.ctx.appendFileName(fileName)
 	w.buf = w.buf[:0]
 	atomic.StoreInt32(&(w.busy), int32(0))
-	return
 }

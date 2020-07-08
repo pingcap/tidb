@@ -14,11 +14,17 @@
 package domain
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/stmtsummary"
+	"go.uber.org/zap"
+	"golang.org/x/sync/singleflight"
 )
 
 // GlobalVariableCache caches global variables.
@@ -29,10 +35,11 @@ type GlobalVariableCache struct {
 	fields     []*ast.ResultField
 
 	// Unit test may like to disable it.
-	disable bool
+	disable     bool
+	SingleFight singleflight.Group
 }
 
-const globalVariableCacheExpiry time.Duration = 2 * time.Second
+const globalVariableCacheExpiry = 2 * time.Second
 
 // Update updates the global variable cache.
 func (gvc *GlobalVariableCache) Update(rows []chunk.Row, fields []*ast.ResultField) {
@@ -41,6 +48,8 @@ func (gvc *GlobalVariableCache) Update(rows []chunk.Row, fields []*ast.ResultFie
 	gvc.rows = rows
 	gvc.fields = fields
 	gvc.Unlock()
+
+	checkEnableServerGlobalVar(rows)
 }
 
 // Get gets the global variables from cache.
@@ -55,12 +64,68 @@ func (gvc *GlobalVariableCache) Get() (succ bool, rows []chunk.Row, fields []*as
 	return
 }
 
-// Disable disables the global variabe cache, used in test only.
+type loadResult struct {
+	rows   []chunk.Row
+	fields []*ast.ResultField
+}
+
+// LoadGlobalVariables will load from global cache first, loadFn will be executed if cache is not valid
+func (gvc *GlobalVariableCache) LoadGlobalVariables(loadFn func() ([]chunk.Row, []*ast.ResultField, error)) ([]chunk.Row, []*ast.ResultField, error) {
+	succ, rows, fields := gvc.Get()
+	if succ {
+		return rows, fields, nil
+	}
+	fn := func() (interface{}, error) {
+		resRows, resFields, loadErr := loadFn()
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		gvc.Update(resRows, resFields)
+		return &loadResult{resRows, resFields}, nil
+	}
+	res, err, _ := gvc.SingleFight.Do("loadGlobalVariable", fn)
+	if err != nil {
+		return nil, nil, err
+	}
+	loadRes := res.(*loadResult)
+	return loadRes.rows, loadRes.fields, nil
+}
+
+// Disable disables the global variable cache, used in test only.
 func (gvc *GlobalVariableCache) Disable() {
 	gvc.Lock()
 	defer gvc.Unlock()
 	gvc.disable = true
-	return
+}
+
+// checkEnableServerGlobalVar processes variables that acts in server and global level.
+func checkEnableServerGlobalVar(rows []chunk.Row) {
+	for _, row := range rows {
+		sVal := ""
+		if !row.IsNull(1) {
+			sVal = row.GetString(1)
+		}
+		var err error
+		switch row.GetString(0) {
+		case variable.TiDBEnableStmtSummary:
+			err = stmtsummary.StmtSummaryByDigestMap.SetEnabled(sVal, false)
+		case variable.TiDBStmtSummaryInternalQuery:
+			err = stmtsummary.StmtSummaryByDigestMap.SetEnabledInternalQuery(sVal, false)
+		case variable.TiDBStmtSummaryRefreshInterval:
+			err = stmtsummary.StmtSummaryByDigestMap.SetRefreshInterval(sVal, false)
+		case variable.TiDBStmtSummaryHistorySize:
+			err = stmtsummary.StmtSummaryByDigestMap.SetHistorySize(sVal, false)
+		case variable.TiDBStmtSummaryMaxStmtCount:
+			err = stmtsummary.StmtSummaryByDigestMap.SetMaxStmtCount(sVal, false)
+		case variable.TiDBStmtSummaryMaxSQLLength:
+			err = stmtsummary.StmtSummaryByDigestMap.SetMaxSQLLength(sVal, false)
+		case variable.TiDBCapturePlanBaseline:
+			variable.CapturePlanBaseline.Set(sVal, false)
+		}
+		if err != nil {
+			logutil.BgLogger().Error(fmt.Sprintf("load global variable %s error", row.GetString(0)), zap.Error(err))
+		}
+	}
 }
 
 // GetGlobalVarsCache gets the global variable cache.

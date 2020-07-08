@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/disjointset"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -63,22 +64,47 @@ func (s *basePropConstSolver) tryToUpdateEQList(col *Column, con *Constant) (boo
 	return true, false
 }
 
+func validEqualCondHelper(ctx sessionctx.Context, eq *ScalarFunction, colIsLeft bool) (*Column, *Constant) {
+	var col *Column
+	var con *Constant
+	colOk := false
+	conOk := false
+	if colIsLeft {
+		col, colOk = eq.GetArgs()[0].(*Column)
+	} else {
+		col, colOk = eq.GetArgs()[1].(*Column)
+	}
+	if !colOk {
+		return nil, nil
+	}
+	if colIsLeft {
+		con, conOk = eq.GetArgs()[1].(*Constant)
+	} else {
+		con, conOk = eq.GetArgs()[0].(*Constant)
+	}
+	if !conOk {
+		return nil, nil
+	}
+	if ContainMutableConst(ctx, []Expression{con}) {
+		return nil, nil
+	}
+	if !collate.CompatibleCollate(col.GetType().Collate, con.GetType().Collate) {
+		return nil, nil
+	}
+	return col, con
+}
+
 // validEqualCond checks if the cond is an expression like [column eq constant].
-func validEqualCond(cond Expression) (*Column, *Constant) {
+func validEqualCond(ctx sessionctx.Context, cond Expression) (*Column, *Constant) {
 	if eq, ok := cond.(*ScalarFunction); ok {
 		if eq.FuncName.L != ast.EQ {
 			return nil, nil
 		}
-		if col, colOk := eq.GetArgs()[0].(*Column); colOk {
-			if con, conOk := eq.GetArgs()[1].(*Constant); conOk {
-				return col, con
-			}
+		col, con := validEqualCondHelper(ctx, eq, true)
+		if col == nil {
+			return validEqualCondHelper(ctx, eq, false)
 		}
-		if col, colOk := eq.GetArgs()[1].(*Column); colOk {
-			if con, conOk := eq.GetArgs()[0].(*Constant); conOk {
-				return col, con
-			}
-		}
+		return col, con
 	}
 	return nil, nil
 }
@@ -93,7 +119,7 @@ func validEqualCond(cond Expression) (*Column, *Constant) {
 //  for 'a, b, a < 3', it returns 'true, false, b < 3'
 //  for 'a, b, sin(a) + cos(a) = 5', it returns 'true, false, returns sin(b) + cos(b) = 5'
 //  for 'a, b, cast(a) < rand()', it returns 'false, true, cast(a) < rand()'
-func tryToReplaceCond(ctx sessionctx.Context, src *Column, tgt *Column, cond Expression) (bool, bool, Expression) {
+func tryToReplaceCond(ctx sessionctx.Context, src *Column, tgt *Column, cond Expression, rejectControl bool) (bool, bool, Expression) {
 	sf, ok := cond.(*ScalarFunction)
 	if !ok {
 		return false, false, cond
@@ -106,8 +132,19 @@ func tryToReplaceCond(ctx sessionctx.Context, src *Column, tgt *Column, cond Exp
 	if _, ok := inequalFunctions[sf.FuncName.L]; ok {
 		return false, true, cond
 	}
+	// See https://github.com/pingcap/tidb/issues/15782. The control function's result may rely on the original nullable
+	// information of the outer side column. Its args cannot be replaced easily.
+	// A more strict check is that after we replace the arg. We check the nullability of the new expression.
+	// But we haven't maintained it yet, so don't replace the arg of the control function currently.
+	if rejectControl && (sf.FuncName.L == ast.Ifnull || sf.FuncName.L == ast.If || sf.FuncName.L == ast.Case) {
+		return false, false, cond
+	}
 	for idx, expr := range sf.GetArgs() {
 		if src.Equal(nil, expr) {
+			_, coll := cond.CharsetAndCollation(ctx)
+			if tgt.GetType().Collate != coll {
+				continue
+			}
 			replaced = true
 			if args == nil {
 				args = make([]Expression, len(sf.GetArgs()))
@@ -115,7 +152,7 @@ func tryToReplaceCond(ctx sessionctx.Context, src *Column, tgt *Column, cond Exp
 			}
 			args[idx] = tgt
 		} else {
-			subReplaced, isNonDeterministic, subExpr := tryToReplaceCond(ctx, src, tgt, expr)
+			subReplaced, isNonDeterministic, subExpr := tryToReplaceCond(ctx, src, tgt, expr, rejectControl)
 			if isNonDeterministic {
 				return false, true, cond
 			} else if subReplaced {
@@ -191,7 +228,7 @@ func (s *propConstSolver) propagateColumnEQ() {
 		if fun, ok := s.conditions[i].(*ScalarFunction); ok && fun.FuncName.L == ast.EQ {
 			lCol, lOk := fun.GetArgs()[0].(*Column)
 			rCol, rOk := fun.GetArgs()[1].(*Column)
-			if lOk && rOk {
+			if lOk && rOk && lCol.GetType().Collate == rCol.GetType().Collate {
 				lID := s.getColID(lCol)
 				rID := s.getColID(rCol)
 				s.unionSet.Union(lID, rID)
@@ -214,11 +251,11 @@ func (s *propConstSolver) propagateColumnEQ() {
 					continue
 				}
 				cond := s.conditions[k]
-				replaced, _, newExpr := tryToReplaceCond(s.ctx, coli, colj, cond)
+				replaced, _, newExpr := tryToReplaceCond(s.ctx, coli, colj, cond, false)
 				if replaced {
 					s.conditions = append(s.conditions, newExpr)
 				}
-				replaced, _, newExpr = tryToReplaceCond(s.ctx, colj, coli, cond)
+				replaced, _, newExpr = tryToReplaceCond(s.ctx, colj, coli, cond, false)
 				if replaced {
 					s.conditions = append(s.conditions, newExpr)
 				}
@@ -241,20 +278,26 @@ func (s *propConstSolver) pickNewEQConds(visited []bool) (retMapper map[int]*Con
 		if visited[i] {
 			continue
 		}
-		col, con := validEqualCond(cond)
+		col, con := validEqualCond(s.ctx, cond)
 		// Then we check if this CNF item is a false constant. If so, we will set the whole condition to false.
 		var ok bool
 		if col == nil {
-			if con, ok = cond.(*Constant); ok {
-				value, _, err := EvalBool(s.ctx, []Expression{con}, chunk.Row{})
-				if err != nil {
-					terror.Log(err)
-					return nil
-				}
-				if !value {
-					s.setConds2ConstFalse()
-					return nil
-				}
+			con, ok = cond.(*Constant)
+			if !ok {
+				continue
+			}
+			visited[i] = true
+			if ContainMutableConst(s.ctx, []Expression{con}) {
+				continue
+			}
+			value, _, err := EvalBool(s.ctx, []Expression{con}, chunk.Row{})
+			if err != nil {
+				terror.Log(err)
+				return nil
+			}
+			if !value {
+				s.setConds2ConstFalse()
+				return nil
 			}
 			continue
 		}
@@ -337,20 +380,26 @@ func (s *propOuterJoinConstSolver) pickEQCondsOnOuterCol(retMapper map[int]*Cons
 		if visited[i+condsOffset] {
 			continue
 		}
-		col, con := validEqualCond(cond)
+		col, con := validEqualCond(s.ctx, cond)
 		// Then we check if this CNF item is a false constant. If so, we will set the whole condition to false.
 		var ok bool
 		if col == nil {
-			if con, ok = cond.(*Constant); ok {
-				value, _, err := EvalBool(s.ctx, []Expression{con}, chunk.Row{})
-				if err != nil {
-					terror.Log(err)
-					return nil
-				}
-				if !value {
-					s.setConds2ConstFalse(filterConds)
-					return nil
-				}
+			con, ok = cond.(*Constant)
+			if !ok {
+				continue
+			}
+			visited[i+condsOffset] = true
+			if ContainMutableConst(s.ctx, []Expression{con}) {
+				continue
+			}
+			value, _, err := EvalBool(s.ctx, []Expression{con}, chunk.Row{})
+			if err != nil {
+				terror.Log(err)
+				return nil
+			}
+			if !value {
+				s.setConds2ConstFalse(filterConds)
+				return nil
 			}
 			continue
 		}
@@ -426,7 +475,7 @@ func (s *propOuterJoinConstSolver) validColEqualCond(cond Expression) (*Column, 
 	if fun, ok := cond.(*ScalarFunction); ok && fun.FuncName.L == ast.EQ {
 		lCol, lOk := fun.GetArgs()[0].(*Column)
 		rCol, rOk := fun.GetArgs()[1].(*Column)
-		if lOk && rOk {
+		if lOk && rOk && lCol.GetType().Collate == rCol.GetType().Collate {
 			return s.colsFromOuterAndInner(lCol, rCol)
 		}
 	}
@@ -456,7 +505,7 @@ func (s *propOuterJoinConstSolver) deriveConds(outerCol, innerCol *Column, schem
 			visited[k+offset] = true
 			continue
 		}
-		replaced, _, newExpr := tryToReplaceCond(s.ctx, outerCol, innerCol, cond)
+		replaced, _, newExpr := tryToReplaceCond(s.ctx, outerCol, innerCol, cond, true)
 		if replaced {
 			s.joinConds = append(s.joinConds, newExpr)
 		}

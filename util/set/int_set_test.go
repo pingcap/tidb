@@ -31,6 +31,7 @@ func (s *intSetTestSuite) TestIntSet(c *check.C) {
 		set.Insert(vals[i])
 		set.Insert(vals[i])
 	}
+	c.Assert(set.Count(), check.Equals, len(vals))
 
 	c.Assert(len(set), check.Equals, len(vals))
 	for i := range vals {
@@ -57,4 +58,10 @@ func (s *intSetTestSuite) TestInt64Set(c *check.C) {
 	}
 
 	c.Assert(set.Exist(11), check.IsFalse)
+
+	set = NewInt64Set(1, 2, 3, 4, 5, 6)
+	for i := 1; i < 7; i++ {
+		c.Assert(set.Exist(int64(i)), check.IsTrue)
+	}
+	c.Assert(set.Exist(7), check.IsFalse)
 }

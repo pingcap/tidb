@@ -28,8 +28,8 @@ import (
 type concatFunction struct {
 	aggFunction
 	separator string
-	sepInited bool
 	maxLen    uint64
+	sepInited bool
 	// truncated according to MySQL, a 'group_concat' function generates exactly one 'truncated' warning during its life time, no matter
 	// how many group actually truncated. 'truncated' acts as a sentinel to indicate whether this warning has already been
 	// generated.
@@ -113,7 +113,7 @@ func (cf *concatFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Statem
 // GetResult implements Aggregation interface.
 func (cf *concatFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum) {
 	if evalCtx.Buffer != nil {
-		d.SetString(evalCtx.Buffer.String())
+		d.SetString(evalCtx.Buffer.String(), cf.RetTp.Collate)
 	} else {
 		d.SetNull()
 	}

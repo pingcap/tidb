@@ -17,7 +17,6 @@ import (
 	"context"
 
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -36,11 +35,13 @@ import (
 // This is implemented in session.go.
 type RestrictedSQLExecutor interface {
 	// ExecRestrictedSQL run sql statement in ctx with some restriction.
-	ExecRestrictedSQL(ctx sessionctx.Context, sql string) ([]chunk.Row, []*ast.ResultField, error)
+	ExecRestrictedSQL(sql string) ([]chunk.Row, []*ast.ResultField, error)
+	// ExecRestrictedSQLWithContext run sql statement in ctx with some restriction.
+	ExecRestrictedSQLWithContext(ctx context.Context, sql string) ([]chunk.Row, []*ast.ResultField, error)
 	// ExecRestrictedSQLWithSnapshot run sql statement in ctx with some restriction and with snapshot.
 	// If current session sets the snapshot timestamp, then execute with this snapshot timestamp.
 	// Otherwise, execute with the current transaction start timestamp if the transaction is valid.
-	ExecRestrictedSQLWithSnapshot(ctx sessionctx.Context, sql string) ([]chunk.Row, []*ast.ResultField, error)
+	ExecRestrictedSQLWithSnapshot(sql string) ([]chunk.Row, []*ast.ResultField, error)
 }
 
 // SQLExecutor is an interface provides executing normal sql statement.
@@ -49,6 +50,8 @@ type RestrictedSQLExecutor interface {
 // session.Session.Execute, then privilege/privileges and tidb would become a circle.
 type SQLExecutor interface {
 	Execute(ctx context.Context, sql string) ([]RecordSet, error)
+	// ExecuteInternal means execute sql as the internal sql.
+	ExecuteInternal(ctx context.Context, sql string) ([]RecordSet, error)
 }
 
 // SQLParser is an interface provides parsing sql statement.

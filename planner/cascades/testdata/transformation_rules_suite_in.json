@@ -1,0 +1,220 @@
+[
+  {
+    "name": "TestPredicatePushDown",
+    "cases": [
+      "select a, b from (select a, b from t as t1 order by a) as t2 where t2.b > 10",
+      "select a, b from (select a, b from t as t1 order by a) as t2 where t2.a > 10",
+      "select a, b from (select a, b, a+b as a_b from t as t1) as t2 where a_b > 10 and b = 1",
+      "select b, @i:=@i+1 as ii from (select b, @i:=0 from t as t1) as t2 where @i < 10",
+      "select b, @i:=@i+1 as ii from (select a, b, @i:=0 from t as t1) as t2 where @i < 10 and a > 10",
+      "select a, max(b) from t group by a having a > 1",
+      "select a, avg(b) from t group by a having a > 1 and max(b) > 10",
+      "select a, approx_count_distinct(b) from t group by a having a > 1 and max(b) > 10",
+      "select t1.a, t1.b, t2.b from t t1, t t2 where t1.a = t2.a and t2.b = t1.b and t1.a > 10 and t2.b > 10 and t1.a > t2.b",
+      "select t1.a, t1.b from t t1, t t2 where t1.a = t2.a and t1.a = 10 and t2.a = 5",
+      "select a, f from t where f > 1",
+      "select a, f from (select a, f, g from t where f = 1) t1 where g > 1",
+      "select a, f from t where g > 1 and f > 1",
+      "select t1.a, t1.b from t t1, t t2 where t1.a = t2.a and t1.a = 10 and t2.a = 5",
+      "select a, b from ((select a, b from t) union all(select c as a, d as b from t)) as t1 where a > 1",
+      "select a, b from (select a, b, min(a) over(partition by b) as min_a from t)as tt where a < 10 and b > 10 and b = min_a",
+      "select b, c from (select b, c from t where b > 1 and c > 1) as t1 where b > 2 and c > 2"
+    ]
+  },
+  {
+    "name": "TestAggPushDownGather",
+    "cases": [
+      "select b, sum(a) from t group by b",
+      "select b, sum(a) from t group by c, b",
+      "select b, sum(a) from t group by sin(b)+sin(c), b"
+    ]
+  },
+  {
+    "name": "TestTopNRules",
+    "cases": [
+      "select b from t order by a limit 2",
+      "select b from t limit 2",
+      "select a+b from t order by a limit 1 offset 2",
+      "select c from t order by t.a limit 1",
+      "select c from t order by t.a + t.b limit 1",
+      "select a, b, c from t t1 where t1.a in (select t2.a as a from t t2 where t2.b > t1.b order by t1.b limit 1)",
+      "select a, b, c from t t1 where t1.a in (select a from (select t2.a as a, t1.b as b from t t2 where t2.b > t1.b) x order by b limit 1)",
+      "select a, b from (select @i as a, @i := @i+1 as b from t) t order by a desc limit 1",
+      "select * from t t1 left join t t2 on t1.b = t2.b order by t1.b limit 1",
+      "select * from t t1 left join t t2 on t1.b = t2.b order by t1.a, t1.c limit 1",
+      "select * from t t1 left join t t2 on t1.b = t2.b order by t2.a, t2.c limit 1",
+      "select * from t t1 left join t t2 on t1.b = t2.b order by t1.a, t2.c limit 1",
+      "select * from t t1 right join t t2 on t1.b = t2.b order by t1.a, t1.c limit 1",
+      "select * from t t1 right join t t2 on t1.b = t2.b order by t2.a, t2.c limit 1",
+      "select * from t t1 right join t t2 on t1.b = t2.b order by t1.a, t2.c limit 1",
+      "select * from t t1 left join t t2 on t1.b = t2.b limit 1",
+      "select * from t t1 left join t t2 on t1.b = t2.b limit 5 offset 4",
+      "select * from t t1 right join t t2 on t1.b = t2.b limit 1",
+      "select * from t t1 right join t t2 on t1.b = t2.b limit 5 offset 4",
+      "(select a from t) union all (select b from t) order by a limit 2;",
+      "(select a from t) union all (select b from t) limit 2;",
+      "(select a from t) union all (select b from t) limit 2 offset 5;",
+      "(select a from t) union all (select sum(a) from t where a > 2 group by b) order by a limit 2;",
+      "(select a from t) union all (select sum(a) from t where a > 2 group by b) order by a limit 1, 2;",
+      "(select a from t where a = 1) union all (select b from t where a = 2) union all (select c from t where a = 3) order by a limit 2;"
+    ]
+  },
+  {
+    "name": "TestProjectionElimination",
+    "cases": [
+      "select a, b from (select a, b from t) as t2",
+      "select a+b from (select a, b from t) as t2",
+      "select a from (select floor(a) as a from t) as t2",
+      "select a from (select a, b from (select a, b, c from t) as t2) as t3",
+      "select a+c from (select floor(a) as a, b, c from t) as t2"
+    ]
+  },
+  {
+    "name": "TestEliminateMaxMin",
+    "cases": [
+      "select max(a) from t;",
+      "select min(a) from t;"
+    ]
+  },
+  {
+    "name": "TestMergeAggregationProjection",
+    "cases": [
+      "select b, max(a) from (select a, c+d as b from t as t1) as t2 group by b",
+      "select max(a) from (select c+d as b, a+c as a from t as t1) as t2",
+      "select b, max(a) from (select a, c+d as b, @i:=0 from t as t1) as t2 group by b"
+    ]
+  },
+  {
+    "name": "TestMergeAdjacentLimit",
+    "cases": [
+      "select b from (select b from t limit 5) as t1 limit 10",
+      "select b from (select b from t limit 20) as t1 limit 10",
+      "select b from (select b from t limit 10) as t1 limit 10",
+      "select b from (select b from t limit 10 offset 10) as t1 limit 10 offset 5",
+      "select b from (select b from t limit 10 offset 2) as t1 limit 3 offset 5",
+      "select b from (select b from t limit 10 offset 5) as t1 limit 5 offset 5",
+      "select a from (select a from t limit 3 offset 5) t1 limit 3 offset 5"
+    ]
+  },
+  {
+    "name": "TestMergeAdjacentTopN",
+    "cases": [
+      "select b from (select b from t where c > 1 order by b limit 3) as t1 order by b limit 2",
+      "select a from (select a from t where b > 2 order by a limit 3 offset 1) as t1 order by a limit 2 offset 1",
+      "select * from (select * from t order by a limit 3) as t1 order by a limit 5",
+      "select b from (select b from t order by b limit 5) as t1 order by b limit 10",
+      "select b from (select b from t order by b limit 20) as t1 order by b limit 10",
+      "select b from (select b from t order by b limit 10) as t1 order by b limit 10",
+      "select b from (select b from t order by b limit 10 offset 10) as t1 order by b limit 10 offset 5",
+      "select b from (select b from t order by b limit 10 offset 2) as t1 order by b limit 3 offset 5",
+      "select b from (select b from t order by b limit 10 offset 5) as t1 order by b limit 5 offset 5",
+      "select a from (select a from t order by a limit 3 offset 5) as t1 order by a limit 3 offset 5",
+      "select b from (select b from t where c > 1 order by b, a limit 3) as t1 order by b limit 2",
+      "select a from (select a from t where b > 2 order by a, b limit 3 offset 1) as t1 order by a limit 2 offset 1"
+    ]
+  },
+  {
+    "name": "TestTransformLimitToTableDual",
+    "cases": [
+      "select a from t limit 0 offset 1",
+      "select * from t as t1 left join (select * from t limit 0 offset 1) as t2 on t1.a = t2.a;",
+      "select a, b from ((select a, b from t) union all(select c as a, d as b from t limit 0 offset 5)) as t1 where a > 1"
+    ]
+  },
+  {
+    "name": "TestPostTransformationRules",
+    "cases": [
+      "select b from (select b+10 as b from t) as t1 order by b + 10 limit 10",
+      "select * from (select a+1 as c, a+b as d from t) as t1 order by c+d limit 10",
+      "select a from (select a, b from t order by b limit 10) as t1"
+    ]
+  },
+  {
+    "name": "TestPushLimitDownTiKVSingleGather",
+    "cases": [
+      "select * from t limit 1",
+      "select * from t as t1 left join (select * from t limit 2) as t2 on t1.a = t2.a;",
+      "select a, b from ((select a, b from t) union all(select c as a, d as b from t limit 3)) as t1 where a > 1"
+    ]
+  },
+  {
+    "name": "TestEliminateOuterJoin",
+    "cases": [
+      "select t1.a, max(t1.b) from t as t1 left join (select * from t) as t2 on t1.a = t2.a and t1.b = 3 group by t1.a;",
+      "select t1.a, max(t1.b) from t as t1 left join (select * from t) as t2 on t1.a = t2.a group by t1.a;",
+      "select t1.a, sum(t1.h) from t as t1 left join (select * from t) as t2 on t1.h = t2.h group by t1.a;",
+      "select t1.a, sum(distinct t1.h) from t as t1 left join (select * from t) as t2 on t1.h = t2.h group by t1.a;",
+      "select t1.a, max(t1.b) from t as t1 left join (select * from t) as t2 on t1.a = t2.a group by t2.a;",
+      "select t1.a, max(t2.b) from t as t1 left join (select * from t) as t2 on t1.a = t2.a group by t1.a;",
+      "select t2.a, max(t2.b) from t as t1 right join (select * from t) as t2 on t1.a = t2.a group by t2.a;",
+      "select t2.a, max(t2.b) from t as t1 right join (select * from t) as t2 on t1.a = t2.a and t2.c = 3 group by t2.a;",
+      "select t2.a, sum(t2.h) from t as t1 right join (select * from t) as t2 on t1.h = t2.h group by t2.a;",
+      "select t2.a, sum(distinct t2.h) from t as t1 right join (select * from t) as t2 on t1.h = t2.h group by t2.a;",
+      "select t2.a, max(t2.b) from t as t1 right join (select * from t) as t2 on t1.a = t2.a group by t1.a;",
+      "select t2.a, max(t1.b) from t as t1 right join (select * from t) as t2 on t1.a = t2.a group by t2.a;",
+      "select t1.a, t1.b from t as t1 left join t as t2 on t1.a = t2.a and t1.b = 3 and t2.b = 3;",
+      "select t1.a, t1.b from t as t1 left join t as t2 on t1.b = t2.b and t1.a = 3 and t2.b = 3;",
+      "select t2.a, t1.b from t as t1 left join t as t2 on t1.a = t2.a and t1.a = 3 and t2.b = 3;",
+      "select t2.a, t2.b from t as t1 right join t as t2 on t1.a = t2.a and t1.b = 3 and t2.b = 3;",
+      "select t2.a, t2.b from t as t1 right join t as t2 on t1.b = t2.b and t1.a = 3 and t2.b = 3;",
+      "select t1.a, t2.b from t as t1 right join t as t2 on t1.a = t2.a and t1.a = 3 and t2.b = 3;",
+      "select t3.a, max(t3.b) from (select t1.a, t1.b from t as t1 left join t as t2 on t1.a = t2.a) t3 group by t3.a"
+    ]
+  },
+  {
+    "name": "TestTransformAggregateCaseToSelection",
+    "cases": [
+      "select count(case when a > 10 then b end) from t",
+      "select count(case when a > 10 then b end) from t group by c",
+      "select count(case when a > 10 then b end) from t group by 'a'",
+      "select count(case when a > 10 then b end) from t group by concat(c, a)",
+      "select count(case when a > 10 then b end) from t group by concat(c, 'a')",
+      "select count(case when a > 10 then b end) from t group by concat('a', 'c')",
+      "select count(case when a > 10 then b else null end) from t",
+      "select count(case when a > 10 then null else b end) from t",
+      "select count(case when a > 10 then c else b end) from t",
+      "select count(case when a > 10 then c else 0 end) from t",
+      "select sum(case when a > 10 then c else 0 end) from t",
+      "select sum(case when a > 10 then c else 0.0 end) from t",
+      "select sum(case when a > 10 then c else 1-1 end) from t",
+      "select sum(case when a > 0 then (case when a <= 1000 then b end) else 0 end) from t",
+      "select sum(case when a > 10 then 0 else c end) from t",
+      "select sum(case when a > 10 then 2 else 1 end) from t",
+      "select count(DISTINCT case when a > 10 then null else c end) from t",
+      "select approx_count_distinct(case when a > 10 then null else c end) from t",
+      "select sum(DISTINCT case when a > 10 then c else 0 end) from t",
+      "select case when c > 10 then c end from t",
+      "select count(case when a > 10 then c end), c from t",
+      "select count(case when a > 10 and d < 5 then b end) from t",
+      "select count(case when a > 10 and d < 5 then null else b end) from t"
+    ]
+  },
+  {
+    "name": "TestTransformAggToProj",
+    "cases": [
+      "select count(b) from t group by a",
+      "select count(b) from t group by b",
+      "select count(b) from t",
+      "select a from t group by a having sum(b) > 4",
+      "select count(b), sum(b), avg(b), b, max(b), min(b), bit_and(b), bit_or(b), bit_xor(b) from t group by a having sum(b) >= 0 and count(b) >= 0 order by b",
+      "select count(b), sum(b), avg(b), f, max(c), min(c), bit_and(c), bit_or(d), bit_xor(g) from t group by a",
+      "select count(b), sum(b), avg(b), f, max(c), min(c), bit_and(c), bit_or(d), bit_xor(g), var_pop(b) from t group by a",
+      "select count(b), sum(b), avg(b), f, max(c), min(c), bit_and(c), bit_or(d), bit_xor(g), group_concat(b, c, d, f) from t group by a"
+    ]
+  },
+  {
+    "name": "TestDecorrelate",
+    "cases": [
+      "select a from t t1 where exists (select 1 from t t2 where t1.a = t2.b)"
+    ]
+  },
+  {
+    "name": "TestInjectProj",
+    "cases": [
+      "select * from t order by (a+b) limit 10",
+      "select max(a), min(b), avg(c) from t group by a+b",
+      "select max(a), min(b), avg(a / b) from t group by a",
+      "select max(a), min(b), avg(a / b) from t group by (a+b)"
+    ]
+  }
+]

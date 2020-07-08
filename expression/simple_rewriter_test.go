@@ -165,4 +165,9 @@ func (s *testEvaluatorSuite) TestSimpleRewriter(c *C) {
 	c.Assert(err, IsNil)
 	num, _, _ = exprs[0].EvalInt(ctx, chunk.Row{})
 	c.Assert(num, Equals, int64(31842))
+
+	exprs, err = ParseSimpleExprsWithSchema(ctx, "unix_timestamp('2008-05-01 00:00:00')", sch)
+	c.Assert(err, IsNil)
+	num, _, _ = exprs[0].EvalInt(ctx, chunk.Row{})
+	c.Assert(num, Equals, int64(1209571200))
 }

@@ -229,7 +229,6 @@ func (c *checksumContext) appendRequest(ctx sessionctx.Context, tableID int64, r
 
 func (c *checksumContext) buildTableRequest(ctx sessionctx.Context, tableID int64) (*kv.Request, error) {
 	checksum := &tipb.ChecksumRequest{
-		StartTs:   c.StartTs,
 		ScanOn:    tipb.ChecksumScanOn_Table,
 		Algorithm: tipb.ChecksumAlgorithm_Crc64_Xor,
 	}
@@ -239,13 +238,13 @@ func (c *checksumContext) buildTableRequest(ctx sessionctx.Context, tableID int6
 	var builder distsql.RequestBuilder
 	return builder.SetTableRanges(tableID, ranges, nil).
 		SetChecksumRequest(checksum).
-		SetConcurrency(ctx.GetSessionVars().DistSQLScanConcurrency).
+		SetStartTS(c.StartTs).
+		SetConcurrency(ctx.GetSessionVars().DistSQLScanConcurrency()).
 		Build()
 }
 
 func (c *checksumContext) buildIndexRequest(ctx sessionctx.Context, tableID int64, indexInfo *model.IndexInfo) (*kv.Request, error) {
 	checksum := &tipb.ChecksumRequest{
-		StartTs:   c.StartTs,
 		ScanOn:    tipb.ChecksumScanOn_Index,
 		Algorithm: tipb.ChecksumAlgorithm_Crc64_Xor,
 	}
@@ -255,7 +254,8 @@ func (c *checksumContext) buildIndexRequest(ctx sessionctx.Context, tableID int6
 	var builder distsql.RequestBuilder
 	return builder.SetIndexRanges(ctx.GetSessionVars().StmtCtx, tableID, indexInfo.ID, ranges).
 		SetChecksumRequest(checksum).
-		SetConcurrency(ctx.GetSessionVars().DistSQLScanConcurrency).
+		SetStartTS(c.StartTs).
+		SetConcurrency(ctx.GetSessionVars().DistSQLScanConcurrency()).
 		Build()
 }
 

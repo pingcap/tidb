@@ -21,7 +21,6 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
 	"strings"
 	"text/template"
@@ -89,7 +88,7 @@ func init() {
 }
 
 func usage() {
-	log.Printf("Usage: %s --pkg-dir [plugin source pkg folder] --out-dir [plugin packaged folder path]\n", path.Base(os.Args[0]))
+	log.Printf("Usage: %s --pkg-dir [plugin source pkg folder] --out-dir [plugin packaged folder path]\n", filepath.Base(os.Args[0]))
 	flag.PrintDefaults()
 	os.Exit(1)
 }
@@ -155,10 +154,8 @@ func main() {
 	}
 
 	outputFile := filepath.Join(outDir, pluginName+"-"+version+".so")
-	pluginPath := `-pluginpath=` + pluginName + "-" + version
 	ctx := context.Background()
 	buildCmd := exec.CommandContext(ctx, "go", "build",
-		"-ldflags", pluginPath,
 		"-buildmode=plugin",
 		"-o", outputFile, pkgDir)
 	buildCmd.Dir = pkgDir

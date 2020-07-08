@@ -14,6 +14,7 @@
 package types
 
 import (
+	"math"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -50,11 +51,11 @@ func (s *testCompareSuite) TestCompare(c *C) {
 		{"1", float64(2), -1},
 		{"1", uint64(1), 0},
 		{"1", NewDecFromInt(1), 0},
-		{"2011-01-01 11:11:11", Time{Time: FromGoTime(time.Now()), Type: mysql.TypeDatetime, Fsp: 0}, -1},
+		{"2011-01-01 11:11:11", NewTime(FromGoTime(time.Now()), mysql.TypeDatetime, 0), -1},
 		{"12:00:00", ZeroDuration, 1},
 		{ZeroDuration, ZeroDuration, 0},
-		{Time{Time: FromGoTime(time.Now().Add(time.Second * 10)), Type: mysql.TypeDatetime, Fsp: 0},
-			Time{Time: FromGoTime(time.Now()), Type: mysql.TypeDatetime, Fsp: 0}, 1},
+		{NewTime(FromGoTime(time.Now().Add(time.Second*10)), mysql.TypeDatetime, 0),
+			NewTime(FromGoTime(time.Now()), mysql.TypeDatetime, 0), 1},
 
 		{nil, 2, -1},
 		{nil, nil, 0},
@@ -70,15 +71,15 @@ func (s *testCompareSuite) TestCompare(c *C) {
 		{float64(354.23), float64(3.45), 1},
 		{float64(3.452), float64(3.452), 0},
 
-		{int(432), nil, 1},
-		{-4, int(32), -1},
-		{int(4), -32, 1},
-		{int(432), int64(12), 1},
-		{int(23), int64(128), -1},
-		{int(123), int64(123), 0},
-		{int(432), int(12), 1},
-		{int(23), int(123), -1},
-		{int64(133), int(183), -1},
+		{432, nil, 1},
+		{-4, 32, -1},
+		{4, -32, 1},
+		{432, int64(12), 1},
+		{23, int64(128), -1},
+		{123, int64(123), 0},
+		{432, 12, 1},
+		{23, 123, -1},
+		{int64(133), 183, -1},
 
 		{uint64(133), uint64(183), -1},
 		{uint64(2), int64(-2), 1},
@@ -92,9 +93,9 @@ func (s *testCompareSuite) TestCompare(c *C) {
 		{[]byte(""), nil, 1},
 		{[]byte(""), []byte("sff"), -1},
 
-		{Time{Time: ZeroTime}, nil, 1},
-		{Time{Time: ZeroTime}, Time{Time: FromGoTime(time.Now()), Type: mysql.TypeDatetime, Fsp: 3}, -1},
-		{Time{Time: FromGoTime(time.Now()), Type: mysql.TypeDatetime, Fsp: 3}, "0000-00-00 00:00:00", 1},
+		{NewTime(ZeroCoreTime, 0, 0), nil, 1},
+		{NewTime(ZeroCoreTime, 0, 0), NewTime(FromGoTime(time.Now()), mysql.TypeDatetime, 3), -1},
+		{NewTime(FromGoTime(time.Now()), mysql.TypeDatetime, 3), "0000-00-00 00:00:00", 1},
 
 		{Duration{Duration: time.Duration(34), Fsp: 2}, nil, 1},
 		{Duration{Duration: time.Duration(34), Fsp: 2}, Duration{Duration: time.Duration(29034), Fsp: 2}, -1},
@@ -184,5 +185,83 @@ func (s *testCompareSuite) TestCompareDatum(c *C) {
 		ret, err = t.rhs.CompareDatum(sc, &t.lhs)
 		c.Assert(err, IsNil)
 		c.Assert(ret, Equals, -t.ret, comment)
+	}
+}
+
+func (s *testCompareSuite) TestVecCompareIntAndUint(c *C) {
+	defer testleak.AfterTest(c)()
+	cmpTblUU := []struct {
+		lhs []uint64
+		rhs []uint64
+		ret []int64
+	}{
+		{[]uint64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, []uint64{9, 8, 7, 6, 5, 4, 3, 2, 1, 0}, []int64{-1, -1, -1, -1, -1, 1, 1, 1, 1, 1}},
+		{[]uint64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, []uint64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, []int64{0, 0, 0, 0, 0, 0, 0, 0, 0, 0}},
+		{[]uint64{math.MaxInt64, math.MaxInt64 + 1, math.MaxInt64 + 2, math.MaxInt64 + 3, math.MaxInt64 + 4, math.MaxInt64 + 5, math.MaxInt64 + 6, math.MaxInt64 + 7, math.MaxInt64 + 8, math.MaxInt64 + 9}, []uint64{math.MaxInt64, math.MaxInt64 + 1, math.MaxInt64 + 2, math.MaxInt64 + 3, math.MaxInt64 + 4, math.MaxInt64 + 5, math.MaxInt64 + 6, math.MaxInt64 + 7, math.MaxInt64 + 8, math.MaxInt64 + 9}, []int64{0, 0, 0, 0, 0, 0, 0, 0, 0, 0}},
+	}
+	for _, t := range cmpTblUU {
+		res := []int64{0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+		VecCompareUU(t.lhs, t.rhs, res)
+		c.Assert(len(res), Equals, len(t.ret))
+		for i, v := range res {
+			c.Assert(v, Equals, t.ret[i])
+		}
+	}
+
+	cmpTblII := []struct {
+		lhs []int64
+		rhs []int64
+		ret []int64
+	}{
+		{[]int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, []int64{9, 8, 7, 6, 5, 4, 3, 2, 1, 0}, []int64{-1, -1, -1, -1, -1, 1, 1, 1, 1, 1}},
+		{[]int64{0, -1, -2, -3, -4, -5, -6, -7, -8, -9}, []int64{9, 8, 7, 6, 5, 4, 3, 2, 1, 0}, []int64{-1, -1, -1, -1, -1, -1, -1, -1, -1, -1}},
+		{[]int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, []int64{-9, -8, -7, -6, -5, -4, -3, -2, -1, 0}, []int64{1, 1, 1, 1, 1, 1, 1, 1, 1, 1}},
+		{[]int64{0, -1, -2, -3, -4, -5, -6, -7, -8, -9}, []int64{-9, -8, -7, -6, -5, -4, -3, -2, -1, 0}, []int64{1, 1, 1, 1, 1, -1, -1, -1, -1, -1}},
+		{[]int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, []int64{0, 0, 0, 0, 0, 0, 0, 0, 0, 0}},
+	}
+	for _, t := range cmpTblII {
+		res := []int64{0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+		VecCompareII(t.lhs, t.rhs, res)
+		c.Assert(len(res), Equals, len(t.ret))
+		for i, v := range res {
+			c.Assert(v, Equals, t.ret[i])
+		}
+	}
+
+	cmpTblIU := []struct {
+		lhs []int64
+		rhs []uint64
+		ret []int64
+	}{
+		{[]int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, []uint64{9, 8, 7, 6, 5, 4, 3, 2, 1, 0}, []int64{-1, -1, -1, -1, -1, 1, 1, 1, 1, 1}},
+		{[]int64{0, -1, -2, -3, -4, -5, -6, -7, -8, -9}, []uint64{9, 8, 7, 6, 5, 4, 3, 2, 1, 0}, []int64{-1, -1, -1, -1, -1, -1, -1, -1, -1, -1}},
+		{[]int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, []uint64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, []int64{0, 0, 0, 0, 0, 0, 0, 0, 0, 0}},
+		{[]int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, []uint64{math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1}, []int64{-1, -1, -1, -1, -1, -1, -1, -1, -1, -1}},
+	}
+	for _, t := range cmpTblIU {
+		res := []int64{0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+		VecCompareIU(t.lhs, t.rhs, res)
+		c.Assert(len(res), Equals, len(t.ret))
+		for i, v := range res {
+			c.Assert(v, Equals, t.ret[i])
+		}
+	}
+
+	cmpTblUI := []struct {
+		lhs []uint64
+		rhs []int64
+		ret []int64
+	}{
+		{[]uint64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, []int64{9, 8, 7, 6, 5, 4, 3, 2, 1, 0}, []int64{-1, -1, -1, -1, -1, 1, 1, 1, 1, 1}},
+		{[]uint64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, []int64{-9, -8, -7, -6, -5, -4, -3, -2, -1, 0}, []int64{1, 1, 1, 1, 1, 1, 1, 1, 1, 1}},
+		{[]uint64{math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1, math.MaxInt64 + 1}, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, []int64{1, 1, 1, 1, 1, 1, 1, 1, 1, 1}},
+	}
+	for _, t := range cmpTblUI {
+		res := []int64{0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+		VecCompareUI(t.lhs, t.rhs, res)
+		c.Assert(len(res), Equals, len(t.ret))
+		for i, v := range res {
+			c.Assert(v, Equals, t.ret[i])
+		}
 	}
 }

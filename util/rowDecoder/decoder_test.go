@@ -21,11 +21,13 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -77,10 +79,7 @@ func (s *testDecoderSuite) TestRowDecoder(c *C) {
 
 	timeZoneIn8, err := time.LoadLocation("Asia/Shanghai")
 	c.Assert(err, IsNil)
-	time1 := types.Time{
-		Time: types.FromDate(2019, 01, 01, 8, 01, 01, 0),
-		Type: mysql.TypeTimestamp,
-	}
+	time1 := types.NewTime(types.FromDate(2019, 01, 01, 8, 01, 01, 0), mysql.TypeTimestamp, types.DefaultFsp)
 	t1 := types.NewTimeDatum(time1)
 	d1 := types.NewDurationDatum(types.Duration{
 		Duration: time.Hour + time.Second,
@@ -119,16 +118,17 @@ func (s *testDecoderSuite) TestRowDecoder(c *C) {
 			[]types.Datum{types.NewDatum(nil), types.NewDatum(nil), types.NewDatum(nil), types.NewDatum(nil), types.NewDatum(nil), types.NewDatum(nil)},
 		},
 	}
+	rd := rowcodec.Encoder{Enable: true}
 	for i, row := range testRows {
 		// test case for pk is unsigned.
 		if i > 0 {
 			c7.Flag |= mysql.UnsignedFlag
 		}
-		bs, err := tablecodec.EncodeRow(sc, row.input, row.cols, nil, nil)
+		bs, err := tablecodec.EncodeRow(sc, row.input, row.cols, nil, nil, &rd)
 		c.Assert(err, IsNil)
 		c.Assert(bs, NotNil)
 
-		r, err := de.DecodeAndEvalRowWithMap(ctx, int64(i), bs, time.UTC, timeZoneIn8, nil)
+		r, err := de.DecodeAndEvalRowWithMap(ctx, kv.IntHandle(i), bs, time.UTC, timeZoneIn8, nil)
 		c.Assert(err, IsNil)
 		// Last column is primary-key column, and the table primary-key is handle, then the primary-key value won't be
 		// stored in raw data, but store in the raw key.
@@ -146,7 +146,7 @@ func (s *testDecoderSuite) TestRowDecoder(c *C) {
 			}
 		}
 		// test decode with no generated column.
-		r2, err := deWithNoGenCols.DecodeAndEvalRowWithMap(ctx, int64(i), bs, time.UTC, timeZoneIn8, nil)
+		r2, err := deWithNoGenCols.DecodeAndEvalRowWithMap(ctx, kv.IntHandle(i), bs, time.UTC, timeZoneIn8, nil)
 		c.Assert(err, IsNil)
 		for k, v := range r2 {
 			v1, ok := r[k]

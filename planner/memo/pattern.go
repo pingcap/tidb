@@ -27,41 +27,55 @@ type Operand int
 const (
 	// OperandAny is a placeholder for any Operand.
 	OperandAny Operand = iota
-	// OperandJoin for LogicalJoin.
+	// OperandJoin is the operand for LogicalJoin.
 	OperandJoin
-	// OperandAggregation for LogicalAggregation.
+	// OperandAggregation is the operand for LogicalAggregation.
 	OperandAggregation
-	// OperandProjection for LogicalProjection.
+	// OperandProjection is the operand for LogicalProjection.
 	OperandProjection
-	// OperandSelection for LogicalSelection.
+	// OperandSelection is the operand for LogicalSelection.
 	OperandSelection
-	// OperandApply for LogicalApply.
+	// OperandApply is the operand for LogicalApply.
 	OperandApply
-	// OperandMaxOneRow for LogicalMaxOneRow.
+	// OperandMaxOneRow is the operand for LogicalMaxOneRow.
 	OperandMaxOneRow
-	// OperandTableDual for LogicalTableDual.
+	// OperandTableDual is the operand for LogicalTableDual.
 	OperandTableDual
-	// OperandDataSource for DataSource.
+	// OperandDataSource is the operand for DataSource.
 	OperandDataSource
-	// OperandUnionScan for LogicalUnionScan.
+	// OperandUnionScan is the operand for LogicalUnionScan.
 	OperandUnionScan
-	// OperandUnionAll for LogicalUnionAll.
+	// OperandUnionAll is the operand for LogicalUnionAll.
 	OperandUnionAll
-	// OperandSort for LogicalSort.
+	// OperandSort is the operand for LogicalSort.
 	OperandSort
-	// OperandTopN for LogicalTopN.
+	// OperandTopN is the operand for LogicalTopN.
 	OperandTopN
-	// OperandLock for LogicalLock.
+	// OperandLock is the operand for LogicalLock.
 	OperandLock
-	// OperandLimit for LogicalLimit.
+	// OperandLimit is the operand for LogicalLimit.
 	OperandLimit
-	// OperandUnsupported is upper bound of defined Operand yet.
+	// OperandTiKVSingleGather is the operand for TiKVSingleGather.
+	OperandTiKVSingleGather
+	// OperandMemTableScan is the operand for MemTableScan.
+	OperandMemTableScan
+	// OperandTableScan is the operand for TableScan.
+	OperandTableScan
+	// OperandIndexScan is the operand for IndexScan.
+	OperandIndexScan
+	// OperandShow is the operand for Show.
+	OperandShow
+	// OperandWindow is the operand for window function.
+	OperandWindow
+	// OperandUnsupported is the operand for unsupported operators.
 	OperandUnsupported
 )
 
 // GetOperand maps logical plan operator to Operand.
 func GetOperand(p plannercore.LogicalPlan) Operand {
 	switch p.(type) {
+	case *plannercore.LogicalApply:
+		return OperandApply
 	case *plannercore.LogicalJoin:
 		return OperandJoin
 	case *plannercore.LogicalAggregation:
@@ -70,8 +84,6 @@ func GetOperand(p plannercore.LogicalPlan) Operand {
 		return OperandProjection
 	case *plannercore.LogicalSelection:
 		return OperandSelection
-	case *plannercore.LogicalApply:
-		return OperandApply
 	case *plannercore.LogicalMaxOneRow:
 		return OperandMaxOneRow
 	case *plannercore.LogicalTableDual:
@@ -90,6 +102,18 @@ func GetOperand(p plannercore.LogicalPlan) Operand {
 		return OperandLock
 	case *plannercore.LogicalLimit:
 		return OperandLimit
+	case *plannercore.TiKVSingleGather:
+		return OperandTiKVSingleGather
+	case *plannercore.LogicalTableScan:
+		return OperandTableScan
+	case *plannercore.LogicalMemTable:
+		return OperandMemTableScan
+	case *plannercore.LogicalIndexScan:
+		return OperandIndexScan
+	case *plannercore.LogicalShow:
+		return OperandShow
+	case *plannercore.LogicalWindow:
+		return OperandWindow
 	default:
 		return OperandUnsupported
 	}
@@ -106,17 +130,30 @@ func (o Operand) Match(t Operand) bool {
 	return false
 }
 
-// Pattern defines the Match pattern for a rule.
-// It describes a piece of logical expression.
-// It's a tree-like structure and each node in the tree is an Operand.
+// Pattern defines the match pattern for a rule. It's a tree-like structure
+// which is a piece of a logical expression. Each node in the Pattern tree is
+// defined by an Operand and EngineType pair.
 type Pattern struct {
 	Operand
+	EngineTypeSet
 	Children []*Pattern
 }
 
-// NewPattern creats a pattern node according to the Operand.
-func NewPattern(operand Operand) *Pattern {
-	return &Pattern{Operand: operand}
+// Match checks whether the EngineTypeSet contains the given EngineType
+// and whether the two Operands match.
+func (p *Pattern) Match(o Operand, e EngineType) bool {
+	return p.EngineTypeSet.Contains(e) && p.Operand.Match(o)
+}
+
+// MatchOperandAny checks whether the pattern's Operand is OperandAny
+// and the EngineTypeSet contains the given EngineType.
+func (p *Pattern) MatchOperandAny(e EngineType) bool {
+	return p.EngineTypeSet.Contains(e) && p.Operand == OperandAny
+}
+
+// NewPattern creates a pattern node according to the Operand and EngineType.
+func NewPattern(operand Operand, engineTypeSet EngineTypeSet) *Pattern {
+	return &Pattern{Operand: operand, EngineTypeSet: engineTypeSet}
 }
 
 // SetChildren sets the Children information for a pattern node.
@@ -124,10 +161,10 @@ func (p *Pattern) SetChildren(children ...*Pattern) {
 	p.Children = children
 }
 
-// BuildPattern builds a Pattern from Operand and child Patterns.
+// BuildPattern builds a Pattern from Operand, EngineType and child Patterns.
 // Used in GetPattern() of Transformation interface to generate a Pattern.
-func BuildPattern(operand Operand, children ...*Pattern) *Pattern {
-	p := &Pattern{Operand: operand}
+func BuildPattern(operand Operand, engineTypeSet EngineTypeSet, children ...*Pattern) *Pattern {
+	p := &Pattern{Operand: operand, EngineTypeSet: engineTypeSet}
 	p.Children = children
 	return p
 }

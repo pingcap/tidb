@@ -29,7 +29,7 @@ type testUnionStoreSuite struct {
 }
 
 func (s *testUnionStoreSuite) SetUpTest(c *C) {
-	s.store = NewMemDbBuffer(DefaultTxnMembufCap)
+	s.store = NewMemDbBuffer()
 	s.us = NewUnionStore(&mockSnapshot{s.store})
 }
 
@@ -137,19 +137,19 @@ func (s *testUnionStoreSuite) TestLazyConditionCheck(c *C) {
 	c.Assert(v, BytesEquals, []byte("1"))
 
 	s.us.SetOption(PresumeKeyNotExists, nil)
-	s.us.SetOption(PresumeKeyNotExistsError, ErrNotExist)
+	s.us.SetOption(PresumeKeyNotExistsError, NewExistErrInfo("name", "value"))
 	_, err = s.us.Get(context.TODO(), []byte("2"))
 	c.Assert(terror.ErrorEqual(err, ErrNotExist), IsTrue, Commentf("err %v", err))
 
-	condionPair1 := s.us.LookupConditionPair([]byte("1"))
-	c.Assert(condionPair1, IsNil)
+	existErr1 := s.us.GetKeyExistErrInfo([]byte("1"))
+	c.Assert(existErr1, IsNil)
 
-	condionPair2 := s.us.LookupConditionPair([]byte("2"))
-	c.Assert(condionPair2, NotNil)
-	c.Assert(condionPair2.ShouldNotExist(), IsTrue)
+	existErr2 := s.us.GetKeyExistErrInfo([]byte("2"))
+	c.Assert(existErr2, NotNil)
 
-	err2 := s.us.LookupConditionPair([]byte("2")).Err()
-	c.Assert(terror.ErrorEqual(err2, ErrNotExist), IsTrue, Commentf("err %v", err2))
+	err2 := s.us.GetKeyExistErrInfo([]byte("2"))
+	c.Assert(err2.GetIdxName(), Equals, "name", Commentf("err %v", err2))
+	c.Assert(err2.GetValue(), Equals, "value", Commentf("err %v", err2))
 }
 
 func checkIterator(c *C, iter Iterator, keys [][]byte, values [][]byte) {
@@ -163,17 +163,4 @@ func checkIterator(c *C, iter Iterator, keys [][]byte, values [][]byte) {
 		c.Assert(iter.Next(), IsNil)
 	}
 	c.Assert(iter.Valid(), IsFalse)
-}
-
-func (s *testUnionStoreSuite) TestBasic(c *C) {
-	iter := invalidIterator{}
-	c.Assert(iter.Valid(), IsFalse)
-	c.Assert(iter.Next(), IsNil)
-	c.Assert(iter.Key(), IsNil)
-	c.Assert(iter.Value(), IsNil)
-
-	s.us.SetOption(1, 1)
-	c.Assert(s.us.GetOption(1), Equals, 1)
-	s.us.DelOption(1)
-	c.Assert(s.us.GetOption(1), IsNil)
 }
