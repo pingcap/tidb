@@ -68,10 +68,13 @@ type tikvTxn struct {
 
 	valid bool
 	dirty bool
+
+	// txnInfoSchema is the infoSchema fetched at startTS.
+	txnInfoSchema SchemaVer
 }
 
 func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
-	bo := NewBackoffer(context.Background(), tsoMaxBackoff)
+	bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
 	startTS, err := store.getTimestampWithRetry(bo)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -107,6 +110,10 @@ func (a assertionPair) String() string {
 func (txn *tikvTxn) SetVars(vars *kv.Variables) {
 	txn.vars = vars
 	txn.snapshot.vars = vars
+}
+
+func (txn *tikvTxn) GetVars() *kv.Variables {
+	return txn.vars
 }
 
 // tikvTxnStagingBuffer is the staging buffer returned to tikvTxn user.
@@ -199,6 +206,8 @@ func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
 		txn.snapshot.keyOnly = val.(bool)
 	case kv.SnapshotTS:
 		txn.snapshot.setSnapshotTS(val.(uint64))
+	case kv.InfoSchema:
+		txn.txnInfoSchema = val.(SchemaVer)
 	}
 }
 
@@ -323,7 +332,7 @@ func (txn *tikvTxn) rollbackPessimisticLocks() error {
 	if len(txn.lockKeys) == 0 {
 		return nil
 	}
-	return txn.committer.pessimisticRollbackMutations(NewBackoffer(context.Background(), cleanupMaxBackoff), committerMutations{keys: txn.lockKeys})
+	return txn.committer.pessimisticRollbackMutations(NewBackofferWithVars(context.Background(), cleanupMaxBackoff, txn.vars), committerMutations{keys: txn.lockKeys})
 }
 
 // lockWaitTime in ms, except that kv.LockAlwaysWait(0) means always wait lock, kv.LockNowait(-1) means nowait lock
@@ -380,7 +389,7 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 			assignedPrimaryKey = true
 		}
 
-		bo := NewBackoffer(ctx, pessimisticLockMaxBackoff).WithVars(txn.vars)
+		bo := NewBackofferWithVars(ctx, pessimisticLockMaxBackoff, txn.vars)
 		txn.committer.forUpdateTS = lockCtx.ForUpdateTS
 		// If the number of keys greater than 1, it can be on different region,
 		// concurrently execute on multiple regions may lead to deadlock.
@@ -460,7 +469,7 @@ func (txn *tikvTxn) asyncPessimisticRollback(ctx context.Context, keys [][]byte)
 		failpoint.Inject("AsyncRollBackSleep", func() {
 			time.Sleep(100 * time.Millisecond)
 		})
-		err := committer.pessimisticRollbackMutations(NewBackoffer(ctx, pessimisticRollbackMaxBackoff).WithVars(txn.vars), committerMutations{keys: keys})
+		err := committer.pessimisticRollbackMutations(NewBackofferWithVars(ctx, pessimisticRollbackMaxBackoff, txn.vars), committerMutations{keys: keys})
 		if err != nil {
 			logutil.Logger(ctx).Warn("[kv] pessimisticRollback failed.", zap.Error(err))
 		}

@@ -459,6 +459,8 @@ type TiKVClient struct {
 	GrpcKeepAliveTimeout uint `toml:"grpc-keepalive-timeout" json:"grpc-keepalive-timeout"`
 	// CommitTimeout is the max time which command 'commit' will wait.
 	CommitTimeout string `toml:"commit-timeout" json:"commit-timeout"`
+	// EnableAsyncCommit enables async commit for all transactions.
+	EnableAsyncCommit bool `toml:"enable-async-commit" json:"enable-async-commit"`
 
 	// MaxBatchSize is the max batch size when calling batch commands API.
 	MaxBatchSize uint `toml:"max-batch-size" json:"max-batch-size"`
@@ -477,9 +479,10 @@ type TiKVClient struct {
 	// prevent the store occupying too much token in dispatching level.
 	StoreLimit int64 `toml:"store-limit" json:"store-limit"`
 	// StoreLivenessTimeout is the timeout for store liveness check request.
-	StoreLivenessTimeout string `toml:"store-liveness-timeout" json:"store-liveness-timeout"`
-
-	CoprCache CoprocessorCache `toml:"copr-cache" json:"copr-cache"`
+	StoreLivenessTimeout string           `toml:"store-liveness-timeout" json:"store-liveness-timeout"`
+	CoprCache            CoprocessorCache `toml:"copr-cache" json:"copr-cache"`
+	// TTLRefreshedTxnSize controls whether a transaction should update its TTL or not.
+	TTLRefreshedTxnSize int64 `toml:"ttl-refreshed-txn-size" json:"ttl-refreshed-txn-size"`
 }
 
 // CoprocessorCache is the config for coprocessor cache.
@@ -650,6 +653,7 @@ var defaultConf = Config{
 		GrpcKeepAliveTime:    10,
 		GrpcKeepAliveTimeout: 3,
 		CommitTimeout:        "41s",
+		EnableAsyncCommit:    false,
 
 		MaxBatchSize:      128,
 		OverloadThreshold: 200,
@@ -661,6 +665,8 @@ var defaultConf = Config{
 		RegionCacheTTL:       600,
 		StoreLimit:           0,
 		StoreLivenessTimeout: DefStoreLivenessTimeout,
+
+		TTLRefreshedTxnSize: 32 * 1024 * 1024,
 
 		CoprCache: CoprocessorCache{
 			Enable:                true,

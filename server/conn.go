@@ -1621,6 +1621,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 	// tell the client COM_STMT_FETCH has finished by setting proper serverStatus,
 	// and close ResultSet.
 	if len(fetchedRows) == 0 {
+		serverStatus &^= mysql.ServerStatusCursorExists
 		serverStatus |= mysql.ServerStatusLastRowSend
 		terror.Call(rs.Close)
 		return cc.writeEOF(serverStatus)
