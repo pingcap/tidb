@@ -56,6 +56,8 @@ const (
 	ReplicaRead
 	// Set task ID
 	TaskID
+	// InfoSchema is schema version used by txn startTS.
+	InfoSchema
 )
 
 // Priority value for transaction priority.
