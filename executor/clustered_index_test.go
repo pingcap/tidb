@@ -60,7 +60,6 @@ func (s *testClusteredSuite) TestClusteredIndexLookUp(c *C) {
 func (s *testClusteredSuite) TestClusteredIndexLookUp2(c *C) {
 	tk := s.newTK(c)
 	tk.MustExec("drop table if exists c3")
-	tk.MustExec("set @@tidb_enable_clustered_index = 1")
 	createTable := `
 CREATE TABLE c3 (
   c_id int(11) NOT NULL,

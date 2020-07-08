@@ -987,6 +987,7 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 			indexCols = append(indexCols, idxExprCols[i])
 		}
 		is.SetSchema(expression.NewSchema(indexCols...))
+		return
 	}
 	setHandle := len(indexCols) > len(is.Index.Columns)
 	if !setHandle {
