@@ -1,5 +1,7 @@
 module github.com/pingcap/tidb
 
+go 1.14
+
 require (
 	github.com/BurntSushi/toml v0.3.1
 	github.com/StackExchange/wmi v0.0.0-20180725035823-b12b22c5341f // indirect
