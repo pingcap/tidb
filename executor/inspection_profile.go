@@ -391,7 +391,6 @@ func (pb *profileBuilder) genTiDBQueryTree() *metricNode {
 							{table: "tikv_scheduler_processing_read"},
 							{
 								table: "tikv_storage_async_request",
-								//label: []string{"type"},
 								children: []*metricNode{
 									{
 										table:     "tikv_storage_async_request",
