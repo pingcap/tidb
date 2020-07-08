@@ -46,6 +46,8 @@ type Config struct {
 	NoData        bool
 	CsvNullValue  string
 	Sql           string
+	CsvSeparator  string
+	CsvDelimiter  string
 
 	TableFilter       filter.Filter
 	Rows              uint64

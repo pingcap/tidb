@@ -63,6 +63,8 @@ var (
 	caPath        string
 	certPath      string
 	keyPath       string
+	csvSeparator  string
+	csvDelimiter  string
 
 	dumpEmptyDatabase bool
 	escapeBackslash   bool
@@ -115,6 +117,8 @@ func main() {
 	pflag.StringVar(&caPath, "ca", "", "The path name to the certificate authority file for TLS connection")
 	pflag.StringVar(&certPath, "cert", "", "The path name to the client certificate file for TLS connection")
 	pflag.StringVar(&keyPath, "key", "", "The path name to the client private key file for TLS connection")
+	pflag.StringVar(&csvSeparator, "csv-separator", ",", "The separator for csv files, default ','")
+	pflag.StringVar(&csvDelimiter, "csv-delimiter", "\"", "The delimiter for values in csv files, default '\"'")
 
 	printVersion := pflag.BoolP("version", "V", false, "Print Dumpling version")
 
@@ -185,6 +189,8 @@ func main() {
 	conf.Security.CertPath = certPath
 	conf.Security.KeyPath = keyPath
 	conf.SessionParams["tidb_mem_quota_query"] = tidbMemQuotaQuery
+	conf.CsvSeparator = csvSeparator
+	conf.CsvDelimiter = csvDelimiter
 
 	err = export.Dump(context.Background(), conf)
 	if err != nil {

@@ -148,7 +148,7 @@ func (m *mockTableIR) EscapeBackSlash() bool {
 	return m.escapeBackSlash
 }
 
-func newMockTableIR(databaseName, tableName string, data [][]driver.Value, specialComments, colTypes []string) TableDataIR {
+func newMockTableIR(databaseName, tableName string, data [][]driver.Value, specialComments, colTypes []string) *mockTableIR {
 	return &mockTableIR{
 		dbName:        databaseName,
 		tblName:       tableName,
@@ -156,17 +156,5 @@ func newMockTableIR(databaseName, tableName string, data [][]driver.Value, speci
 		specCmt:       specialComments,
 		selectedField: "*",
 		colTypes:      colTypes,
-	}
-}
-
-func newMockTableIRWithError(databaseName, tableName string, data [][]driver.Value, specialComments, colTypes []string, err error) TableDataIR {
-	return &mockTableIR{
-		dbName:        databaseName,
-		tblName:       tableName,
-		data:          data,
-		specCmt:       specialComments,
-		selectedField: "*",
-		colTypes:      colTypes,
-		rowErr:        err,
 	}
 }

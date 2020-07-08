@@ -118,6 +118,12 @@ type outputFileNamer struct {
 	tableName  string
 }
 
+type csvOption struct {
+	nullValue string
+	separator []byte
+	delimiter []byte
+}
+
 func newOutputFileNamer(ir TableDataIR) *outputFileNamer {
 	return &outputFileNamer{
 		chunkIndex: ir.ChunkIndex(),
@@ -142,10 +148,16 @@ func (f *CsvWriter) WriteTableData(ctx context.Context, ir TableDataIR) error {
 	chunksIter := buildChunksIter(ir, f.cfg.FileSize, f.cfg.StatementSize)
 	defer chunksIter.Rows().Close()
 
+	opt := &csvOption{
+		nullValue: f.cfg.CsvNullValue,
+		separator: []byte(f.cfg.CsvSeparator),
+		delimiter: []byte(f.cfg.CsvDelimiter),
+	}
+
 	for {
 		filePath := path.Join(f.cfg.OutputDirPath, fileName)
 		fileWriter, tearDown := buildInterceptFileWriter(filePath)
-		err := WriteInsertInCsv(ctx, chunksIter, fileWriter, f.cfg.NoHeader, f.cfg.CsvNullValue)
+		err := WriteInsertInCsv(ctx, chunksIter, fileWriter, f.cfg.NoHeader, opt)
 		tearDown()
 		if err != nil {
 			return err
