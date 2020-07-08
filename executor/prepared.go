@@ -94,7 +94,7 @@ var prepareStmtLabel = stringutil.StringerStr("PrepareStmt")
 
 // NewPrepareExec creates a new PrepareExec.
 func NewPrepareExec(ctx sessionctx.Context, is infoschema.InfoSchema, sqlTxt string) *PrepareExec {
-	base := newBaseExecutor(ctx, nil, prepareStmtLabel)
+	base := newBaseExecutor(ctx, nil, prepareStmtLabel, 0)
 	base.initCap = chunk.ZeroCapacity
 	return &PrepareExec{
 		baseExecutor: base,

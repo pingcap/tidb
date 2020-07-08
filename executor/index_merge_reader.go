@@ -239,7 +239,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 
 func (e *IndexMergeReaderExecutor) buildPartialTableReader(ctx context.Context, workID int) Executor {
 	tableReaderExec := &TableReaderExecutor{
-		baseExecutor: newBaseExecutor(e.ctx, e.schema, stringutil.MemoizeStr(func() string { return e.id.String() + "_tableReader" })),
+		baseExecutor: newBaseExecutor(e.ctx, e.schema, stringutil.MemoizeStr(func() string { return e.name.String() + "_tableReader" }), 0),
 		table:        e.table,
 		dagPB:        e.dagPBs[workID],
 		startTS:      e.startTS,
@@ -406,7 +406,7 @@ func (e *IndexMergeReaderExecutor) startIndexMergeTableScanWorker(ctx context.Co
 
 func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, handles []kv.Handle) (Executor, error) {
 	tableReaderExec := &TableReaderExecutor{
-		baseExecutor: newBaseExecutor(e.ctx, e.schema, stringutil.MemoizeStr(func() string { return e.id.String() + "_tableReader" })),
+		baseExecutor: newBaseExecutor(e.ctx, e.schema, stringutil.MemoizeStr(func() string { return e.name.String() + "_tableReader" }), 0),
 		table:        e.table,
 		dagPB:        e.tableRequest,
 		startTS:      e.startTS,

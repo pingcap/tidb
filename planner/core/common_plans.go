@@ -968,7 +968,7 @@ func getRuntimeInfo(ctx sessionctx.Context, p Plan) (actRows, analyzeInfo, memor
 	if runtimeStatsColl == nil {
 		return
 	}
-	explainID := p.ExplainID().String()
+	explainID := p.ID()
 
 	// There maybe some mock information for cop task to let runtimeStatsColl.Exists(p.ExplainID()) is true.
 	// So check copTaskEkxecDetail first and print the real cop task information if it's not empty.

@@ -173,7 +173,7 @@ var brieStmtLabel fmt.Stringer = stringutil.StringerStr("BRIEStmt")
 
 func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) Executor {
 	e := &BRIEExec{
-		baseExecutor: newBaseExecutor(b.ctx, schema, brieStmtLabel),
+		baseExecutor: newBaseExecutor(b.ctx, schema, brieStmtLabel, 0),
 		info: &brieTaskInfo{
 			kind: s.Kind,
 		},

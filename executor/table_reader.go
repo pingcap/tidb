@@ -43,11 +43,11 @@ var _ Executor = &TableReaderExecutor{}
 // selectResultHook is used to hack distsql.SelectWithRuntimeStats safely for testing.
 type selectResultHook struct {
 	selectResultFunc func(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
-		fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []fmt.Stringer) (distsql.SelectResult, error)
+		fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []int) (distsql.SelectResult, error)
 }
 
 func (sr selectResultHook) SelectResult(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
-	fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []fmt.Stringer, rootPlanID fmt.Stringer) (distsql.SelectResult, error) {
+	fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []int, rootPlanID int) (distsql.SelectResult, error) {
 	if sr.selectResultFunc == nil {
 		return distsql.SelectWithRuntimeStats(ctx, sctx, kvReq, fieldTypes, fb, copPlanIDs, rootPlanID)
 	}
@@ -101,7 +101,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	e.memTracker = memory.NewTracker(e.id, -1)
+	e.memTracker = memory.NewTracker(e.name, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
 	var err error
@@ -192,7 +192,7 @@ func (e *TableReaderExecutor) Close() error {
 		err = e.resultHandler.Close()
 	}
 	if e.runtimeStats != nil {
-		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.plans[0].ExplainID().String())
+		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.plans[0].ID())
 		copStats.SetRowNum(e.feedback.Actual())
 	}
 	e.ctx.StoreQueryFeedback(e.feedback)

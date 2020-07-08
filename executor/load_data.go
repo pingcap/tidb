@@ -53,7 +53,7 @@ var insertValuesLabel fmt.Stringer = stringutil.StringerStr("InsertValues")
 
 // NewLoadDataInfo returns a LoadDataInfo structure, and it's only used for tests now.
 func NewLoadDataInfo(ctx sessionctx.Context, row []types.Datum, tbl table.Table, cols []*table.Column) *LoadDataInfo {
-	insertVal := &InsertValues{baseExecutor: newBaseExecutor(ctx, nil, insertValuesLabel), Table: tbl}
+	insertVal := &InsertValues{baseExecutor: newBaseExecutor(ctx, nil, insertValuesLabel, 0), Table: tbl}
 	return &LoadDataInfo{
 		row:          row,
 		InsertValues: insertVal,

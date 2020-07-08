@@ -93,7 +93,8 @@ var (
 
 type baseExecutor struct {
 	ctx           sessionctx.Context
-	id            fmt.Stringer
+	name          fmt.Stringer
+	id            int
 	schema        *expression.Schema // output schema
 	initCap       int
 	maxChunkSize  int
@@ -206,18 +207,19 @@ func (e *baseExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id fmt.Stringer, children ...Executor) baseExecutor {
+func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, name fmt.Stringer, id int, children ...Executor) baseExecutor {
 	e := baseExecutor{
 		children:     children,
 		ctx:          ctx,
+		name:         name,
 		id:           id,
 		schema:       schema,
 		initCap:      ctx.GetSessionVars().InitChunkSize,
 		maxChunkSize: ctx.GetSessionVars().MaxChunkSize,
 	}
 	if ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
-		if e.id != nil {
-			e.runtimeStats = e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.id.String())
+		if e.id != 0 {
+			e.runtimeStats = e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.id)
 		}
 	}
 	if schema != nil {
@@ -1177,7 +1179,7 @@ func (e *SelectionExec) Open(ctx context.Context) error {
 }
 
 func (e *SelectionExec) open(ctx context.Context) error {
-	e.memTracker = memory.NewTracker(e.id, -1)
+	e.memTracker = memory.NewTracker(e.name, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	e.childResult = newFirstChunk(e.children[0])
 	e.memTracker.Consume(e.childResult.MemoryUsage())

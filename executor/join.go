@@ -156,10 +156,10 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 	}
 
 	e.prepared = false
-	e.memTracker = memory.NewTracker(e.id, -1)
+	e.memTracker = memory.NewTracker(e.name, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
-	e.diskTracker = disk.NewTracker(e.id, -1)
+	e.diskTracker = disk.NewTracker(e.name, -1)
 	e.diskTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.DiskTracker)
 
 	e.closeCh = make(chan struct{})
@@ -792,7 +792,7 @@ func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 	e.innerChunk = newFirstChunk(e.innerExec)
 	e.innerList = chunk.NewList(retTypes(e.innerExec), e.initCap, e.maxChunkSize)
 
-	e.memTracker = memory.NewTracker(e.id, -1)
+	e.memTracker = memory.NewTracker(e.name, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
 	e.innerList.GetMemTracker().SetLabel(innerListLabel)

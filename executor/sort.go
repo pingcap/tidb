@@ -93,9 +93,9 @@ func (e *SortExec) Open(ctx context.Context) error {
 
 	// To avoid duplicated initialization for TopNExec.
 	if e.memTracker == nil {
-		e.memTracker = memory.NewTracker(e.id, -1)
+		e.memTracker = memory.NewTracker(e.name, -1)
 		e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
-		e.diskTracker = memory.NewTracker(e.id, -1)
+		e.diskTracker = memory.NewTracker(e.name, -1)
 		e.diskTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.DiskTracker)
 	}
 	e.partitionList = e.partitionList[:0]
@@ -376,7 +376,7 @@ func (e *TopNExec) initPointers() {
 
 // Open implements the Executor Open interface.
 func (e *TopNExec) Open(ctx context.Context) error {
-	e.memTracker = memory.NewTracker(e.id, -1)
+	e.memTracker = memory.NewTracker(e.name, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
 	e.fetched = false

@@ -15,7 +15,6 @@ package distsql
 
 import (
 	"context"
-	"fmt"
 	"sync/atomic"
 	"time"
 
@@ -77,8 +76,8 @@ type selectResult struct {
 
 	// copPlanIDs contains all copTasks' planIDs,
 	// which help to collect copTasks' runtime stats.
-	copPlanIDs []fmt.Stringer
-	rootPlanID fmt.Stringer
+	copPlanIDs []int
+	rootPlanID int
 
 	fetchDuration    time.Duration
 	durationReported bool
@@ -248,13 +247,13 @@ func (r *selectResult) updateCopRuntimeStats(detail *execdetails.ExecDetails, re
 		return
 	}
 
-	r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordOneReaderStats(r.rootPlanID.String(), respTime, detail)
+	r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordOneReaderStats(r.rootPlanID, respTime, detail)
 	for i, detail := range r.selectResp.GetExecutionSummaries() {
 		if detail != nil && detail.TimeProcessedNs != nil &&
 			detail.NumProducedRows != nil && detail.NumIterations != nil {
 			planID := r.copPlanIDs[i]
 			r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.
-				RecordOneCopTask(planID.String(), callee, detail)
+				RecordOneCopTask(planID, callee, detail)
 		}
 	}
 }

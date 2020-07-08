@@ -15,7 +15,6 @@ package distsql
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -37,7 +36,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-func (s *testSuite) createSelectNormal(batch, totalRows int, c *C, planIDs []string) (*selectResult, []*types.FieldType) {
+func (s *testSuite) createSelectNormal(batch, totalRows int, c *C, planIDs []int) (*selectResult, []*types.FieldType) {
 	request, err := (&RequestBuilder{}).SetKeyRanges(nil).
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
@@ -67,12 +66,7 @@ func (s *testSuite) createSelectNormal(batch, totalRows int, c *C, planIDs []str
 	if planIDs == nil {
 		response, err = Select(context.TODO(), s.sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false))
 	} else {
-		var planIDFuncs []fmt.Stringer
-		for i := range planIDs {
-			idx := i
-			planIDFuncs = append(planIDFuncs, stringutil.StringerStr(planIDs[idx]))
-		}
-		response, err = SelectWithRuntimeStats(context.TODO(), s.sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false), planIDFuncs, stringutil.StringerStr("root_0"))
+		response, err = SelectWithRuntimeStats(context.TODO(), s.sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false), planIDs, 1)
 	}
 
 	c.Assert(err, IsNil)
@@ -135,13 +129,13 @@ func (s *testSuite) TestSelectNormalChunkSize(c *C) {
 }
 
 func (s *testSuite) TestSelectWithRuntimeStats(c *C) {
-	planIDs := []string{"1", "2", "3"}
+	planIDs := []int{1, 2, 3}
 	response, colTypes := s.createSelectNormal(1, 2, c, planIDs)
 	if len(response.copPlanIDs) != len(planIDs) {
 		c.Fatal("invalid copPlanIDs")
 	}
 	for i := range planIDs {
-		if response.copPlanIDs[i].String() != planIDs[i] {
+		if response.copPlanIDs[i] != planIDs[i] {
 			c.Fatal("invalid copPlanIDs")
 		}
 	}

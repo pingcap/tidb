@@ -243,7 +243,7 @@ func (e *IndexReaderExecutor) Close() error {
 	err := e.result.Close()
 	e.result = nil
 	if e.runtimeStats != nil {
-		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.plans[0].ExplainID().String())
+		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.plans[0].ID())
 		copStats.SetRowNum(e.feedback.Actual())
 	}
 	e.ctx.StoreQueryFeedback(e.feedback)
@@ -291,7 +291,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	}
 	e.kvRanges = kvRanges
 
-	e.memTracker = memory.NewTracker(e.id, -1)
+	e.memTracker = memory.NewTracker(e.name, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetKeyRanges(kvRanges).
@@ -399,7 +399,7 @@ func (e *IndexLookUpExecutor) open(ctx context.Context) error {
 	// instead of in function "Open", because this "IndexLookUpExecutor" may be
 	// constructed by a "IndexLookUpJoin" and "Open" will not be called in that
 	// situation.
-	e.memTracker = memory.NewTracker(e.id, -1)
+	e.memTracker = memory.NewTracker(e.name, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
 	e.finished = make(chan struct{})
@@ -509,9 +509,9 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 			logutil.Logger(ctx).Error("close Select result failed", zap.Error(err))
 		}
 		if e.runtimeStats != nil {
-			copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.idxPlans[len(e.idxPlans)-1].ExplainID().String())
+			copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.idxPlans[len(e.idxPlans)-1].ID())
 			copStats.SetRowNum(int64(count))
-			copStats = e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.tblPlans[0].ExplainID().String())
+			copStats = e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.tblPlans[0].ID())
 			copStats.SetRowNum(int64(count))
 		}
 		e.ctx.StoreQueryFeedback(e.feedback)
@@ -550,7 +550,7 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 
 func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []kv.Handle) (Executor, error) {
 	tableReaderExec := &TableReaderExecutor{
-		baseExecutor:   newBaseExecutor(e.ctx, e.schema, stringutil.MemoizeStr(func() string { return e.id.String() + "_tableReader" })),
+		baseExecutor:   newBaseExecutor(e.ctx, e.schema, stringutil.MemoizeStr(func() string { return e.name.String() + "_tableReader" }), e.id),
 		table:          e.table,
 		dagPB:          e.tableRequest,
 		startTS:        e.startTS,
@@ -586,7 +586,7 @@ func (e *IndexLookUpExecutor) Close() error {
 	e.workerStarted = false
 	e.memTracker = nil
 	if e.runtimeStats != nil {
-		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.idxPlans[0].ExplainID().String())
+		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.idxPlans[0].ID())
 		copStats.SetRowNum(e.feedback.Actual())
 	}
 	return nil
@@ -1049,10 +1049,10 @@ func GetLackHandles(expectedHandles []kv.Handle, obtainedHandlesMap *kv.HandleMa
 	return diffHandles
 }
 
-func getPhysicalPlanIDs(plans []plannercore.PhysicalPlan) []fmt.Stringer {
-	planIDs := make([]fmt.Stringer, 0, len(plans))
+func getPhysicalPlanIDs(plans []plannercore.PhysicalPlan) []int {
+	planIDs := make([]int, 0, len(plans))
 	for _, p := range plans {
-		planIDs = append(planIDs, p.ExplainID())
+		planIDs = append(planIDs, p.ID())
 	}
 	return planIDs
 }

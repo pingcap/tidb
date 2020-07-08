@@ -369,9 +369,44 @@ func (rrs *ReaderRuntimeStats) String() string {
 // RuntimeStatsColl collects executors's execution info.
 type RuntimeStatsColl struct {
 	mu          sync.Mutex
-	rootStats   map[string]*RuntimeStats
-	copStats    map[string]*CopRuntimeStats
-	readerStats map[string]*ReaderRuntimeStats
+	rootStats   map[int]*RuntimeStats
+	copStats    map[int]*CopRuntimeStats
+	readerStats map[int]*ReaderRuntimeStats
+	//operatorStats map[int]RuntimeInformation
+}
+
+type RuntimeInformation interface {
+	OperatorInfo() string
+	ActRows() int64
+}
+
+type BasicRuntimeStats struct {
+	// executor's Next() called times.
+	loop int32
+	// executor consume time.
+	consume int64
+	// executor return row count.
+	rows int64
+}
+
+func (e *BasicRuntimeStats) OperatorInfo() string {
+	return fmt.Sprintf("time:%v, loops:%d", time.Duration(e.consume), e.loop)
+}
+
+func (e *BasicRuntimeStats) ActRows() int64 {
+	return e.rows
+}
+
+// Record records executor's execution.
+func (e *BasicRuntimeStats) Record(d time.Duration, rowNum int) {
+	atomic.AddInt32(&e.loop, 1)
+	atomic.AddInt64(&e.consume, int64(d))
+	atomic.AddInt64(&e.rows, int64(rowNum))
+}
+
+// SetRowNum sets the row num.
+func (e *BasicRuntimeStats) SetRowNum(rowNum int64) {
+	atomic.StoreInt64(&e.rows, rowNum)
 }
 
 // ConcurrencyInfo is used to save the concurrency information of the executor operator
@@ -422,12 +457,12 @@ type RuntimeStats struct {
 
 // NewRuntimeStatsColl creates new executor collector.
 func NewRuntimeStatsColl() *RuntimeStatsColl {
-	return &RuntimeStatsColl{rootStats: make(map[string]*RuntimeStats),
-		copStats: make(map[string]*CopRuntimeStats), readerStats: make(map[string]*ReaderRuntimeStats)}
+	return &RuntimeStatsColl{rootStats: make(map[int]*RuntimeStats),
+		copStats: make(map[int]*CopRuntimeStats), readerStats: make(map[int]*ReaderRuntimeStats)}
 }
 
 // GetRootStats gets execStat for a executor.
-func (e *RuntimeStatsColl) GetRootStats(planID string) *RuntimeStats {
+func (e *RuntimeStatsColl) GetRootStats(planID int) *RuntimeStats {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	runtimeStats, exists := e.rootStats[planID]
@@ -439,7 +474,7 @@ func (e *RuntimeStatsColl) GetRootStats(planID string) *RuntimeStats {
 }
 
 // GetCopStats gets the CopRuntimeStats specified by planID.
-func (e *RuntimeStatsColl) GetCopStats(planID string) *CopRuntimeStats {
+func (e *RuntimeStatsColl) GetCopStats(planID int) *CopRuntimeStats {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	copStats, ok := e.copStats[planID]
@@ -451,19 +486,19 @@ func (e *RuntimeStatsColl) GetCopStats(planID string) *CopRuntimeStats {
 }
 
 // RecordOneCopTask records a specific cop tasks's execution detail.
-func (e *RuntimeStatsColl) RecordOneCopTask(planID, address string, summary *tipb.ExecutorExecutionSummary) {
+func (e *RuntimeStatsColl) RecordOneCopTask(planID int, address string, summary *tipb.ExecutorExecutionSummary) {
 	copStats := e.GetCopStats(planID)
 	copStats.RecordOneCopTask(address, summary)
 }
 
 // RecordOneReaderStats records a specific stats for TableReader, IndexReader and IndexLookupReader.
-func (e *RuntimeStatsColl) RecordOneReaderStats(planID string, copRespTime time.Duration, detail *ExecDetails) {
+func (e *RuntimeStatsColl) RecordOneReaderStats(planID int, copRespTime time.Duration, detail *ExecDetails) {
 	readerStats := e.GetReaderStats(planID)
 	readerStats.recordOneCopTask(copRespTime, detail)
 }
 
 // ExistsRootStats checks if the planID exists in the rootStats collection.
-func (e *RuntimeStatsColl) ExistsRootStats(planID string) bool {
+func (e *RuntimeStatsColl) ExistsRootStats(planID int) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	_, exists := e.rootStats[planID]
@@ -471,7 +506,7 @@ func (e *RuntimeStatsColl) ExistsRootStats(planID string) bool {
 }
 
 // ExistsCopStats checks if the planID exists in the copStats collection.
-func (e *RuntimeStatsColl) ExistsCopStats(planID string) bool {
+func (e *RuntimeStatsColl) ExistsCopStats(planID int) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	_, exists := e.copStats[planID]
@@ -479,7 +514,7 @@ func (e *RuntimeStatsColl) ExistsCopStats(planID string) bool {
 }
 
 // GetReaderStats gets the ReaderRuntimeStats specified by planID.
-func (e *RuntimeStatsColl) GetReaderStats(planID string) *ReaderRuntimeStats {
+func (e *RuntimeStatsColl) GetReaderStats(planID int) *ReaderRuntimeStats {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	stats, exists := e.readerStats[planID]

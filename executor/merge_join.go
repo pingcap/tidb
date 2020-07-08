@@ -292,9 +292,9 @@ func (e *MergeJoinExec) Open(ctx context.Context) error {
 		return err
 	}
 
-	e.memTracker = memory.NewTracker(e.id, -1)
+	e.memTracker = memory.NewTracker(e.name, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
-	e.diskTracker = disk.NewTracker(e.id, -1)
+	e.diskTracker = disk.NewTracker(e.name, -1)
 	e.diskTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.DiskTracker)
 
 	e.innerTable.init(e)
