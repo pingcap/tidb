@@ -380,50 +380,10 @@ func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, t *meta.Meta, 
 	return job, table.Meta(), nil
 }
 
-<<<<<<< HEAD
 func (e *DDLExec) getRecoverTableByTableName(s *ast.RecoverTableStmt, t *meta.Meta, dom *domain.Domain) (*model.Job, *model.TableInfo, error) {
 	jobs, err := t.GetAllHistoryDDLJobs()
 	if err != nil {
 		return nil, nil, err
-=======
-// GetDropOrTruncateTableInfoFromJobs gets the dropped/truncated table information from DDL jobs,
-// it will use the `start_ts` of DDL job as snapshot to get the dropped/truncated table information.
-func GetDropOrTruncateTableInfoFromJobs(jobs []*model.Job, gcSafePoint uint64, dom *domain.Domain, fn func(*model.Job, *model.TableInfo) (bool, error)) (bool, error) {
-	for _, job := range jobs {
-		// Check GC safe point for getting snapshot infoSchema.
-		err := gcutil.ValidateSnapshotWithGCSafePoint(job.StartTS, gcSafePoint)
-		if err != nil {
-			return false, err
-		}
-		if job.Type != model.ActionDropTable && job.Type != model.ActionTruncateTable {
-			continue
-		}
-
-		snapMeta, err := dom.GetSnapshotMeta(job.StartTS)
-		if err != nil {
-			return false, err
-		}
-		tbl, err := snapMeta.GetTable(job.SchemaID, job.TableID)
-		if err != nil {
-			if meta.ErrDBNotExists.Equal(err) {
-				// The dropped/truncated DDL maybe execute failed that caused by the parallel DDL execution,
-				// then can't find the table from the snapshot info-schema. Should just ignore error here,
-				// see more in TestParallelDropSchemaAndDropTable.
-				continue
-			}
-			return false, err
-		}
-		if tbl == nil {
-			// The dropped/truncated DDL maybe execute failed that caused by the parallel DDL execution,
-			// then can't find the table from the snapshot info-schema. Should just ignore error here,
-			// see more in TestParallelDropSchemaAndDropTable.
-			continue
-		}
-		finish, err := fn(job, tbl)
-		if err != nil || finish {
-			return finish, err
-		}
->>>>>>> c13e4ab... executor: check gc safe time first when iterate the history ddl jobs (#18380)
 	}
 	var job *model.Job
 	var tblInfo *model.TableInfo
@@ -441,13 +401,13 @@ func GetDropOrTruncateTableInfoFromJobs(jobs []*model.Job, gcSafePoint uint64, d
 	// TODO: only search recent `e.JobNum` DDL jobs.
 	for i := len(jobs) - 1; i > 0; i-- {
 		job = jobs[i]
-		if job.Type != model.ActionDropTable && job.Type != model.ActionTruncateTable {
-			continue
-		}
 		// Check GC safe point for getting snapshot infoSchema.
 		err = gcutil.ValidateSnapshotWithGCSafePoint(job.StartTS, gcSafePoint)
 		if err != nil {
 			return nil, nil, err
+		}
+		if job.Type != model.ActionDropTable && job.Type != model.ActionTruncateTable {
+			continue
 		}
 		// Get the snapshot infoSchema before drop table.
 		snapInfo, err := dom.GetSnapshotInfoSchema(job.StartTS)
