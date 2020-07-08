@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	tidbMath "github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/parser"
+	"github.com/pingcap/tidb/util/timeutil"
 )
 
 // Time format without fractional seconds precision.
@@ -556,6 +557,42 @@ func GetFsp(s string) int8 {
 	return int8(fsp)
 }
 
+// IstTimeZone finds if there is a timezone in the string.
+// for example '2020-07-07 17:55:00.163721+08:00'.
+func IstTimeZone(s string) (tz bool) {
+	timezoneRegexp := regexp.MustCompile(`.{11,}([-|+][\d]{2}:[\d]{2})$`)
+	timezoneList := timezoneRegexp.FindStringSubmatch(s)
+
+	if len(timezoneList) > 0 {
+		return true
+	}
+	return false
+}
+
+// timezone offsets are supported for inserted datetime values.
+// See: https://dev.mysql.com/doc/refman/8.0/en/time-zone-support.html
+func handleTimeZone(timeSeps []string, timeZone string) (seps []string) {
+	timeStr := fmt.Sprintf("%v-%v-%v %v:%v:%v", timeSeps[0], timeSeps[1], timeSeps[2], timeSeps[3], timeSeps[4], timeSeps[5])
+	formatTime, _ := gotime.Parse("2006-01-02 15:04:05", timeStr)
+
+	location, _ := gotime.LoadLocation(timeutil.InferSystemTZ())
+	_, offset := gotime.Now().In(location).Zone()
+
+	hour, _ := strconv.Atoi(timeZone[1:3])
+	minute, _ := strconv.Atoi(timeZone[4:6])
+	timeDiff := 0
+	if timeZone[0:1] == "+" {
+		timeDiff = offset/60 - (hour*60 + minute)
+	} else {
+		timeDiff = offset/60 + (hour*60 + minute)
+	}
+
+	diffMinute, _ := gotime.ParseDuration(fmt.Sprintf("%vm", timeDiff))
+	newFormatTime := formatTime.Add(diffMinute)
+
+	return ParseDateFormat(newFormatTime.Format("2006-01-02 15:04:05"))
+}
+
 // GetFracIndex finds the last '.' for get fracStr, index = -1 means fracStr not found.
 // but for format like '2019.01.01 00:00:00', the index should be -1.
 func GetFracIndex(s string) (index int) {
@@ -792,6 +829,13 @@ func isValidSeparator(c byte, prevParts int) bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
 // The only delimiter recognized between a date and time part and a fractional seconds part is the decimal point.
 func splitDateTime(format string) (seps []string, fracStr string) {
+	isTimezone := IstTimeZone(format)
+	var timeZone string
+	if isTimezone {
+		timeZone = format[len(format)-6:]
+		format = format[:len(format)-6]
+	}
+
 	index := GetFracIndex(format)
 	if index > 0 {
 		fracStr = format[index+1:]
@@ -799,6 +843,10 @@ func splitDateTime(format string) (seps []string, fracStr string) {
 	}
 
 	seps = ParseDateFormat(format)
+
+	if isTimezone {
+		seps = handleTimeZone(seps, timeZone)
+	}
 	return
 }
 
