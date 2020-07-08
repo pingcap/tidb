@@ -300,7 +300,7 @@ func (pb *profileBuilder) ignoreFraction(value, total float64) bool {
 	return value*100/total < 0.01
 }
 
-// dotColor function was copy from https://github.com/google/pprof.
+// dotColor function is copy from https://github.com/google/pprof.
 func (pb *profileBuilder) dotColor(score float64, isBackground bool) string {
 	// A float between 0.0 and 1.0, indicating the extent to which
 	// colors should be shifted away from grey (to make positive and
