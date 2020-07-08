@@ -16,6 +16,7 @@ package tikv
 import (
 	"context"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -75,11 +76,17 @@ func NewRegionBatchRequestSender(cache *RegionCache, client Client) *RegionBatch
 
 func (ss *RegionBatchRequestSender) sendReqToAddr(bo *Backoffer, ctxs []copTaskAndRPCContext, req *tikvrpc.Request, timout time.Duration) (resp *tikvrpc.Response, retry bool, err error) {
 	// use the first ctx to send request, because every ctx has same address.
-	ctx := ctxs[0].ctx
-	if e := tikvrpc.SetContext(req, ctx.Meta, ctx.Peer); e != nil {
+	rpcCtx := ctxs[0].ctx
+	if e := tikvrpc.SetContext(req, rpcCtx.Meta, rpcCtx.Peer); e != nil {
 		return nil, false, errors.Trace(e)
 	}
-	resp, err = ss.client.SendRequest(bo.ctx, ctx.Addr, req, timout)
+	ctx := bo.ctx
+	if rawHook := ctx.Value(RPCCancelHookCtxKey{}); rawHook != nil {
+		var cancel context.CancelFunc
+		ctx, cancel = rawHook.(*RPCCancelHook).WithCancel(ctx)
+		defer cancel()
+	}
+	resp, err = ss.client.SendRequest(ctx, rpcCtx.Addr, req, timout)
 	if err != nil {
 		ss.rpcError = err
 		for _, failedCtx := range ctxs {
@@ -247,21 +254,54 @@ func (s *RegionRequestSender) SendReqCtx(
 	}
 }
 
-func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, req *tikvrpc.Request, timeout time.Duration) (resp *tikvrpc.Response, retry bool, err error) {
-	if e := tikvrpc.SetContext(req, ctx.Meta, ctx.Peer); e != nil {
+// RPCCancelHookCtxKey is context key attach rpc send cancelFunc collector to ctx.
+type RPCCancelHookCtxKey struct{}
+
+// RPCCancelHook is rpc send cancelFunc collector.
+type RPCCancelHook struct {
+	sync.Mutex
+	Cancels []context.CancelFunc
+}
+
+// WithCancel generates new context with cancel func.
+func (h *RPCCancelHook) WithCancel(ctx context.Context) (nctx context.Context, cancel context.CancelFunc) {
+	nctx, cancel = context.WithCancel(ctx)
+	h.Lock()
+	h.Cancels = append(h.Cancels, cancel)
+	h.Unlock()
+	return
+}
+
+// CancelAll cancels all inflight rpc context.
+func (h *RPCCancelHook) CancelAll() {
+	h.Lock()
+	for _, c := range h.Cancels {
+		c()
+	}
+	h.Unlock()
+}
+
+func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext, req *tikvrpc.Request, timeout time.Duration) (resp *tikvrpc.Response, retry bool, err error) {
+	if e := tikvrpc.SetContext(req, rpcCtx.Meta, rpcCtx.Peer); e != nil {
 		return nil, false, errors.Trace(e)
 	}
 	// judge the store limit switch.
 	if limit := storeutil.StoreLimit.Load(); limit > 0 {
-		if err := s.getStoreToken(ctx.Store, limit); err != nil {
+		if err := s.getStoreToken(rpcCtx.Store, limit); err != nil {
 			return nil, false, err
 		}
-		defer s.releaseStoreToken(ctx.Store)
+		defer s.releaseStoreToken(rpcCtx.Store)
 	}
-	resp, err = s.client.SendRequest(bo.ctx, ctx.Addr, req, timeout)
+	ctx := bo.ctx
+	if rawHook := ctx.Value(RPCCancelHookCtxKey{}); rawHook != nil {
+		var cancel context.CancelFunc
+		ctx, cancel = rawHook.(*RPCCancelHook).WithCancel(ctx)
+		defer cancel()
+	}
+	resp, err = s.client.SendRequest(ctx, rpcCtx.Addr, req, timeout)
 	if err != nil {
 		s.rpcError = err
-		if e := s.onSendFail(bo, ctx, err); e != nil {
+		if e := s.onSendFail(bo, rpcCtx, err); e != nil {
 			return nil, false, errors.Trace(e)
 		}
 		return nil, true, nil
