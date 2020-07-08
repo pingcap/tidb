@@ -198,7 +198,7 @@ enable-async-commit=true
 max-batch-size=128
 region-cache-ttl=6000
 store-limit=0
-ttl-based-txn-size=8192
+ttl-refreshed-txn-size=8192
 [stmt-summary]
 enable=false
 enable-internal-query=true

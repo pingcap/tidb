@@ -481,8 +481,8 @@ type TiKVClient struct {
 	// StoreLivenessTimeout is the timeout for store liveness check request.
 	StoreLivenessTimeout string           `toml:"store-liveness-timeout" json:"store-liveness-timeout"`
 	CoprCache            CoprocessorCache `toml:"copr-cache" json:"copr-cache"`
-	// TTLBasedTxnSize controls whether a transaction should update its TTL or not.
-	TTLBasedTxnSize int64 `toml:"ttl-based-txn-size" json:"ttl-based-txn-size"`
+	// TTLRefreshedTxnSize controls whether a transaction should update its TTL or not.
+	TTLRefreshedTxnSize int64 `toml:"ttl-refreshed-txn-size" json:"ttl-refreshed-txn-size"`
 }
 
 // CoprocessorCache is the config for coprocessor cache.
@@ -666,7 +666,7 @@ var defaultConf = Config{
 		StoreLimit:           0,
 		StoreLivenessTimeout: DefStoreLivenessTimeout,
 
-		TTLBasedTxnSize: 32 * 1024 * 1024,
+		TTLRefreshedTxnSize: 32 * 1024 * 1024,
 
 		CoprCache: CoprocessorCache{
 			Enable:                true,
