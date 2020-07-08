@@ -2113,6 +2113,15 @@
           "└─Selection_10(Probe) 0.01 cop[tikv]  eq(test.tt.b, 1)",
           "  └─TableRowIDScan_9 10.00 cop[tikv] table:tt keep order:false, stats:pseudo"
         ]
+      },
+      {
+        "SQL": "select * from test.tt where a=1 and b=1",
+        "Plan": [
+          "IndexLookUp_11 0.01 root  ",
+          "├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:tt, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+          "└─Selection_10(Probe) 0.01 cop[tikv]  eq(test.tt.b, 1)",
+          "  └─TableRowIDScan_9 10.00 cop[tikv] table:tt keep order:false, stats:pseudo"
+        ]
       }
     ]
   }
