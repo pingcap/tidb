@@ -432,10 +432,7 @@ func (ts *PhysicalTableScan) Clone() (PhysicalPlan, error) {
 	}
 	clonedScan.Columns = cloneColInfos(ts.Columns)
 	clonedScan.Ranges = cloneRanges(ts.Ranges)
-	clonedScan.PkCols = make([]*expression.Column, len(ts.PkCols))
-	for i, pkCol := range ts.PkCols {
-		clonedScan.PkCols[i] = pkCol.Clone().(*expression.Column)
-	}
+	clonedScan.PkCols = cloneCols(ts.PkCols)
 	clonedScan.TableAsName = ts.TableAsName
 	if ts.Hist != nil {
 		clonedScan.Hist = ts.Hist.Copy()
