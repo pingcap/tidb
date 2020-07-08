@@ -57,6 +57,30 @@ func (s *testClusteredSuite) TestClusteredIndexLookUp(c *C) {
 	tk.MustQuery("select d from t use index (idx)").Check(testkit.Rows("1"))
 }
 
+func (s *testClusteredSuite) TestClusteredIndexLookUp2(c *C) {
+	tk := s.newTK(c)
+	tk.MustExec("drop table if exists c3")
+	tk.MustExec("set @@tidb_enable_clustered_index = 1")
+	createTable := `
+CREATE TABLE c3 (
+  c_id int(11) NOT NULL,
+  c_d_id int(11) NOT NULL,
+  c_w_id int(11) NOT NULL,
+  c_first varchar(16) DEFAULT NULL,
+  c_middle char(2) DEFAULT NULL,
+  c_last varchar(16) DEFAULT NULL,
+  c_balance decimal(12,2) DEFAULT NULL,
+  PRIMARY KEY (c_w_id,c_d_id,c_id),
+  KEY idx (c_w_id,c_d_id,c_last,c_first)
+);`
+	tk.MustExec(createTable)
+	tk.MustExec("insert c3 values (772,1,1,'aaa','OE','CALL',0),(1905,1,1,'bbb','OE','CALL',0);")
+	query := `
+SELECT c_balance, c_first, c_middle, c_id FROM c3 use index (idx) WHERE c_w_id = 1 AND c_d_id = 1 and c_last = 'CALL' ORDER BY c_first
+`
+	tk.MustQuery(query).Check(testkit.Rows("0.00 aaa OE 772", "0.00 bbb OE 1905"))
+}
+
 func (s *testClusteredSuite) TestClusteredTopN(c *C) {
 	tk := s.newTK(c)
 	tk.MustExec("drop table if exists o3")
