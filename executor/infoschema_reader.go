@@ -17,7 +17,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
+	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -27,6 +30,8 @@ import (
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -47,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
+	"go.etcd.io/etcd/clientv3"
 )
 
 type memtableRetriever struct {
@@ -1759,4 +1765,179 @@ func (e *memtableRetriever) setDataForStatementsSummary(ctx sessionctx.Context, 
 		e.rows = rows
 	}
 	return nil
+}
+
+// TiFlashSystemTableRetriever is used to read system table from tiflash.
+type TiFlashSystemTableRetriever struct {
+	dummyCloser
+	table         *model.TableInfo
+	outputCols    []*model.ColumnInfo
+	instanceCount int
+	instanceIdx   int
+	instanceInfos []tiflashInstanceInfo
+	rowIdx        int
+	retrieved     bool
+	initialized   bool
+	extractor     *plannercore.TiFlashSystemTableExtractor
+}
+
+func (e *TiFlashSystemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+	if e.extractor.SkipRequest || e.retrieved {
+		return nil, nil
+	}
+	if !e.initialized {
+		err := e.initialize(sctx, e.extractor.TiFlashInstances)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if e.instanceCount == 0 || e.instanceIdx >= e.instanceCount {
+		e.retrieved = true
+		return nil, nil
+	}
+
+	for {
+		rows, err := e.dataForTiFlashSystemTables(sctx, e.extractor.TiDBDatabases, e.extractor.TiDBTables)
+		if err != nil {
+			return nil, err
+		}
+		if len(rows) > 0 || e.instanceIdx >= e.instanceCount {
+			return rows, nil
+		}
+	}
+}
+
+type tiflashInstanceInfo struct {
+	id  string
+	url string
+}
+
+func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflashInstances set.StringSet) error {
+	store := sctx.GetStore()
+	if etcd, ok := store.(tikv.EtcdBackend); ok {
+		if addrs := etcd.EtcdAddrs(); addrs != nil {
+			domainFromCtx := domain.GetDomain(sctx)
+			if domainFromCtx != nil {
+				cli := domainFromCtx.GetEtcdClient()
+				prefix := "/tiflash/cluster/http_port/"
+				kv := clientv3.NewKV(cli)
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				resp, err := kv.Get(ctx, prefix, clientv3.WithPrefix())
+				cancel()
+				if err != nil {
+					return errors.Trace(err)
+				}
+				for _, ev := range resp.Kvs {
+					id := string(ev.Key)[len(prefix):]
+					if len(tiflashInstances) > 0 && !tiflashInstances.Exist(id) {
+						continue
+					}
+					// TODO: Support https in tiflash
+					url := fmt.Sprintf("http://%s", ev.Value)
+					e.instanceInfos = append(e.instanceInfos, tiflashInstanceInfo{
+						id:  id,
+						url: url,
+					})
+					e.instanceCount += 1
+				}
+				e.initialized = true
+				return nil
+			}
+			return errors.Errorf("Etcd client not found")
+		}
+		return errors.Errorf("Etcd addrs not found")
+	}
+	return errors.Errorf("%T not an etcd backend", store)
+}
+
+func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.Context, tidbDatabases string, tidbTables string) ([][]types.Datum, error) {
+	var columnNames []string
+	for _, c := range e.outputCols {
+		if c.Name.O == "TIFLASH_INSTANCE" {
+			continue
+		}
+		columnNames = append(columnNames, c.Name.L)
+	}
+	maxCount := 1024
+	targetTable := strings.ToLower(strings.Replace(e.table.Name.O, "TIFLASH", "DT", 1))
+	var filters []string
+	if len(tidbDatabases) > 0 {
+		filters = append(filters, fmt.Sprintf("tidb_database IN (%s)", strings.ReplaceAll(tidbDatabases, "\"", "'")))
+	}
+	if len(tidbTables) > 0 {
+		filters = append(filters, fmt.Sprintf("tidb_table IN (%s)", strings.ReplaceAll(tidbTables, "\"", "'")))
+	}
+	sql := fmt.Sprintf("SELECT %s FROM system.%s", strings.Join(columnNames, ","), targetTable)
+	if len(filters) > 0 {
+		sql = fmt.Sprintf("%s WHERE %s", sql, strings.Join(filters, " AND "))
+	}
+	sql = fmt.Sprintf("%s LIMIT %d, %d", sql, e.rowIdx, maxCount)
+	notNumber := "nan"
+	httpClient := http.DefaultClient
+	instanceInfo := e.instanceInfos[e.instanceIdx]
+	url := instanceInfo.url
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	q := req.URL.Query()
+	q.Add("query", sql)
+	req.URL.RawQuery = q.Encode()
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	body, err := ioutil.ReadAll(resp.Body)
+	terror.Log(resp.Body.Close())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	records := strings.Split(string(body), "\n")
+	var rows [][]types.Datum
+	for _, record := range records {
+		if len(record) == 0 {
+			continue
+		}
+		fields := strings.Split(record, "\t")
+		if len(fields) < len(e.outputCols)-1 {
+			return nil, errors.Errorf("Record from tiflash doesn't match schema %v", fields)
+		}
+		row := make([]types.Datum, len(e.outputCols))
+		for index, column := range e.outputCols {
+			if column.Name.O == "TIFLASH_INSTANCE" {
+				continue
+			}
+			if column.Tp == mysql.TypeVarchar {
+				row[index].SetString(fields[index], mysql.DefaultCollationName)
+			} else if column.Tp == mysql.TypeLonglong {
+				if fields[index] == notNumber {
+					continue
+				}
+				value, err := strconv.ParseInt(fields[index], 10, 64)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				row[index].SetInt64(value)
+			} else if column.Tp == mysql.TypeDouble {
+				if fields[index] == notNumber {
+					continue
+				}
+				value, err := strconv.ParseFloat(fields[index], 64)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				row[index].SetFloat64(value)
+			} else {
+				return nil, errors.Errorf("Meet column of unknown type %v", column)
+			}
+		}
+		row[len(e.outputCols)-1].SetString(instanceInfo.id, mysql.DefaultCollationName)
+		rows = append(rows, row)
+	}
+	e.rowIdx += len(rows)
+	if len(rows) < maxCount {
+		e.instanceIdx += 1
+		e.rowIdx = 0
+	}
+	return rows, nil
 }
