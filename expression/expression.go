@@ -28,13 +28,13 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/generatedexpr"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/generatedexpr"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -49,6 +49,9 @@ const (
 
 // EvalAstExpr evaluates ast expression directly.
 var EvalAstExpr func(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error)
+
+// RewriteAstExpr rewrite ast expression directly.
+var RewriteAstExpr func(sctx sessionctx.Context, expr ast.ExprNode, schema *Schema, names types.NameSlice) (Expression, error)
 
 // VecExpr contains all vectorized evaluation methods.
 type VecExpr interface {
@@ -796,8 +799,7 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 			if err != nil {
 				terror.Log(err)
 			}
-
-			e, err := RewriteSimpleExprWithNames(ctx, expr, mockSchema, names)
+			e, err := RewriteAstExpr(ctx, expr, mockSchema, names)
 			if err != nil {
 				terror.Log(err)
 			}
