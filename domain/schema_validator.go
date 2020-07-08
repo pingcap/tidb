@@ -285,7 +285,7 @@ func (s *schemaValidator) enqueue(schemaVersion int64, change *tikv.RelatedSchem
 	}
 }
 
-// containIn is checks if a is included in b.
+// containIn is checks if lasteDelta is included in curDelta considering table id and action type.
 func containIn(lastDelta, curDelta deltaSchemaInfo) bool {
 	if len(lastDelta.relatedIDs) > len(curDelta.relatedIDs) {
 		return false
