@@ -1227,9 +1227,15 @@ func (ds *DataSource) crossEstimateRowCount(path *util.AccessPath, expectedCnt f
 	if err != nil {
 		return 0, false, corr
 	}
-	scanCount := rangeCount + expectedCnt - count
-	if len(remained) > 0 {
-		scanCount = scanCount / SelectionFactor
+	var scanCount float64
+	// if cannot reach the expectedCnt, it should fully scan the full table
+	if rangeCount < expectedCnt {
+		scanCount = path.CountAfterAccess
+	} else {
+		scanCount = rangeCount + expectedCnt - count
+		if len(remained) > 0 {
+			scanCount = scanCount / SelectionFactor
+		}
 	}
 	scanCount = math.Min(scanCount, path.CountAfterAccess)
 	return scanCount, true, 0
