@@ -60,6 +60,8 @@ const (
 	CollectRuntimeStats
 	// CheckExist map for key existence check.
 	CheckExists
+	// InfoSchema is schema version used by txn startTS.
+	InfoSchema
 )
 
 // Priority value for transaction priority.

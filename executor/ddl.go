@@ -59,7 +59,7 @@ func (e *DDLExec) toErr(err error) error {
 		logutil.BgLogger().Error("active txn failed", zap.Error(err))
 		return err1
 	}
-	schemaInfoErr := checker.Check(txn.StartTS())
+	_, schemaInfoErr := checker.Check(txn.StartTS())
 	if schemaInfoErr != nil {
 		return errors.Trace(schemaInfoErr)
 	}

@@ -1392,14 +1392,30 @@ func (c *twoPhaseCommitter) stripNoNeedCommitKeys() {
 	c.mutations = m.subRange(0, newIdx)
 }
 
+// SchemaVer is the infoSchema which will return the schema version.
+type SchemaVer interface {
+	// SchemaMetaVersion returns the meta schema version.
+	SchemaMetaVersion() int64
+}
+
 type schemaLeaseChecker interface {
-	Check(txnTS uint64) error
+	// CheckBySchemaVer checks if the schema has changed for the transaction related tables between the startSchemaVer
+	// and the schema version at txnTS, all the related schema changes will be returned.
+	CheckBySchemaVer(txnTS uint64, startSchemaVer SchemaVer) (*RelatedSchemaChange, error)
+}
+
+// RelatedSchemaChange contains information about schema diff between two schema versions.
+type RelatedSchemaChange struct {
+	PhyTblIDS        []int64
+	ActionTypes      []uint64
+	LatestInfoSchema SchemaVer
+	Amendable        bool
 }
 
 func (c *twoPhaseCommitter) checkSchemaValid() error {
 	checker, ok := c.txn.us.GetOption(kv.SchemaChecker).(schemaLeaseChecker)
 	if ok {
-		err := checker.Check(c.commitTS)
+		_, err := checker.CheckBySchemaVer(c.commitTS, c.txn.txnInfoSchema)
 		if err != nil {
 			return errors.Trace(err)
 		}
