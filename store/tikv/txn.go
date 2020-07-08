@@ -68,6 +68,9 @@ type tikvTxn struct {
 
 	valid bool
 	dirty bool
+
+	// txnInfoSchema is the infoSchema fetched at startTS.
+	txnInfoSchema SchemaVer
 }
 
 func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
@@ -203,6 +206,8 @@ func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
 		txn.snapshot.keyOnly = val.(bool)
 	case kv.SnapshotTS:
 		txn.snapshot.setSnapshotTS(val.(uint64))
+	case kv.InfoSchema:
+		txn.txnInfoSchema = val.(SchemaVer)
 	}
 }
 
