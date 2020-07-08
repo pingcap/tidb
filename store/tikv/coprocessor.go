@@ -96,6 +96,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		it.respChan = make(chan *copResponse, it.concurrency)
 	}
 	it.actionOnExceed.mu.aliveWorker = it.concurrency
+	ctx = context.WithValue(ctx, RPCCancelHookCtxKey{}, &it.rpcCancel)
 	it.open(ctx)
 	return it
 }
@@ -395,6 +396,8 @@ type copIterator struct {
 	memTracker *memory.Tracker
 
 	replicaReadSeed uint32
+
+	rpcCancel RPCCancelHook
 
 	wg sync.WaitGroup
 	// closed represents when the Close is called.
@@ -1148,6 +1151,7 @@ func (it *copIterator) Close() error {
 	if atomic.CompareAndSwapUint32(&it.closed, 0, 1) {
 		close(it.finishCh)
 	}
+	it.rpcCancel.CancelAll()
 	it.wg.Wait()
 	return nil
 }

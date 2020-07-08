@@ -189,6 +189,7 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *kv.Var
 			minCommitTSPushed: &minCommitTSPushed{data: make(map[uint64]struct{}, 5)},
 		},
 	}
+	ctx = context.WithValue(ctx, RPCCancelHookCtxKey{}, &it.rpcCancel)
 	it.tasks = tasks
 	it.respChan = make(chan *batchCopResponse, 2048)
 	go it.run(ctx)
@@ -212,6 +213,8 @@ type batchCopIterator struct {
 	memTracker *memory.Tracker
 
 	replicaReadSeed uint32
+
+	rpcCancel RPCCancelHook
 
 	wg sync.WaitGroup
 	// closed represents when the Close is called.
@@ -277,6 +280,7 @@ func (b *batchCopIterator) Close() error {
 	if atomic.CompareAndSwapUint32(&b.closed, 0, 1) {
 		close(b.finishCh)
 	}
+	b.rpcCancel.CancelAll()
 	b.wg.Wait()
 	return nil
 }
