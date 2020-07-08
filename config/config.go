@@ -331,6 +331,7 @@ var defaultConf = Config{
 		MetricsInterval: 15,
 	},
 	Performance: Performance{
+<<<<<<< HEAD
 		TCPKeepAlive:        true,
 		CrossJoin:           true,
 		StatsLease:          "3s",
@@ -347,6 +348,26 @@ var defaultConf = Config{
 	XProtocol: XProtocol{
 		XHost: "",
 		XPort: 0,
+=======
+		MaxMemory:            0,
+		ServerMemoryQuota:    0,
+		TCPKeepAlive:         true,
+		CrossJoin:            true,
+		StatsLease:           "3s",
+		RunAutoAnalyze:       true,
+		StmtCountLimit:       5000,
+		FeedbackProbability:  0.05,
+		QueryFeedbackLimit:   512,
+		PseudoEstimateRatio:  0.8,
+		ForcePriority:        "NO_PRIORITY",
+		BindInfoLease:        "3s",
+		TxnEntrySizeLimit:    DefTxnEntrySizeLimit,
+		TxnTotalSizeLimit:    DefTxnTotalSizeLimit,
+		DistinctAggPushDown:  false,
+		CommitterConcurrency: 16,
+		MaxTxnTTL:            10 * 60 * 1000, // 10min
+		MemProfileInterval:   "1m",
+>>>>>>> a99fdc0... statistics: ease the impact of stats feedback on cluster (#15503)
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",

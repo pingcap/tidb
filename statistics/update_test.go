@@ -488,14 +488,29 @@ func (s *testStatsUpdateSuite) TestUpdateErrorRate(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	h := s.do.StatsHandle()
 	is := s.do.InfoSchema()
+<<<<<<< HEAD:statistics/update_test.go
 	h.Lease = 0
 	h.Update(is)
 
+=======
+	h.SetLease(0)
+	c.Assert(h.Update(is), IsNil)
+>>>>>>> a99fdc0... statistics: ease the impact of stats feedback on cluster (#15503):statistics/handle/update_test.go
 	oriProbability := statistics.FeedbackProbability
+	oriMinLogCount := handle.MinLogScanCount
+	oriErrorRate := handle.MinLogErrorRate
 	defer func() {
 		statistics.FeedbackProbability = oriProbability
+		handle.MinLogScanCount = oriMinLogCount
+		handle.MinLogErrorRate = oriErrorRate
 	}()
+<<<<<<< HEAD:statistics/update_test.go
 	statistics.FeedbackProbability = 1
+=======
+	statistics.FeedbackProbability.Store(1)
+	handle.MinLogScanCount = 0
+	handle.MinLogErrorRate = 0
+>>>>>>> a99fdc0... statistics: ease the impact of stats feedback on cluster (#15503):statistics/handle/update_test.go
 
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -554,6 +569,68 @@ func (s *testStatsUpdateSuite) TestUpdateErrorRate(c *C) {
 	c.Assert(tbl.Indices[bID].QueryTotal, Equals, int64(0))
 }
 
+<<<<<<< HEAD:statistics/update_test.go
+=======
+func (s *testStatsSuite) TestUpdatePartitionErrorRate(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	h := s.do.StatsHandle()
+	is := s.do.InfoSchema()
+	h.SetLease(0)
+	c.Assert(h.Update(is), IsNil)
+	oriProbability := statistics.FeedbackProbability
+	oriMinLogCount := handle.MinLogScanCount
+	oriErrorRate := handle.MinLogErrorRate
+	defer func() {
+		statistics.FeedbackProbability = oriProbability
+		handle.MinLogScanCount = oriMinLogCount
+		handle.MinLogErrorRate = oriErrorRate
+	}()
+	statistics.FeedbackProbability.Store(1)
+	handle.MinLogScanCount = 0
+	handle.MinLogErrorRate = 0
+
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("set @@session.tidb_enable_table_partition=1")
+	testKit.MustExec("create table t (a bigint(64), primary key(a)) partition by range (a) (partition p0 values less than (30))")
+	h.HandleDDLEvent(<-h.DDLEventCh())
+
+	testKit.MustExec("insert into t values (1)")
+
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	testKit.MustExec("analyze table t")
+
+	testKit.MustExec("insert into t values (2)")
+	testKit.MustExec("insert into t values (5)")
+	testKit.MustExec("insert into t values (8)")
+	testKit.MustExec("insert into t values (12)")
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	is = s.do.InfoSchema()
+	c.Assert(h.Update(is), IsNil)
+
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo := table.Meta()
+	pid := tblInfo.Partition.Definitions[0].ID
+	tbl := h.GetPartitionStats(tblInfo, pid)
+	aID := tblInfo.Columns[0].ID
+
+	// The statistic table is outdated now.
+	c.Assert(tbl.Columns[aID].NotAccurate(), IsTrue)
+
+	testKit.MustQuery("select * from t where a between 1 and 10")
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.DumpStatsFeedbackToKV(), IsNil)
+	c.Assert(h.HandleUpdateStats(is), IsNil)
+	h.UpdateErrorRate(is)
+	c.Assert(h.Update(is), IsNil)
+	tbl = h.GetPartitionStats(tblInfo, pid)
+
+	// The error rate of this column is not larger than MaxErrorRate now.
+	c.Assert(tbl.Columns[aID].NotAccurate(), IsFalse)
+}
+
+>>>>>>> a99fdc0... statistics: ease the impact of stats feedback on cluster (#15503):statistics/handle/update_test.go
 func appendBucket(h *statistics.Histogram, l, r int64) {
 	lower, upper := types.NewIntDatum(l), types.NewIntDatum(r)
 	h.AppendBucket(&lower, &upper, 0, 0)
@@ -625,11 +702,21 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 	h := s.do.StatsHandle()
 	oriProbability := statistics.FeedbackProbability
 	oriNumber := statistics.MaxNumberOfRanges
+	oriMinLogCount := handle.MinLogScanCount
+	oriErrorRate := handle.MinLogErrorRate
 	defer func() {
 		statistics.FeedbackProbability = oriProbability
 		statistics.MaxNumberOfRanges = oriNumber
+		handle.MinLogScanCount = oriMinLogCount
+		handle.MinLogErrorRate = oriErrorRate
 	}()
+<<<<<<< HEAD:statistics/update_test.go
 	statistics.FeedbackProbability = 1
+=======
+	statistics.FeedbackProbability.Store(1)
+	handle.MinLogScanCount = 0
+	handle.MinLogErrorRate = 0
+>>>>>>> a99fdc0... statistics: ease the impact of stats feedback on cluster (#15503):statistics/handle/update_test.go
 	tests := []struct {
 		sql     string
 		hist    string
@@ -683,7 +770,7 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 	testKit.MustQuery("select * from t where t.a <= 5 limit 1")
 	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	feedback := h.GetQueryFeedback()
-	c.Assert(len(feedback), Equals, 0)
+	c.Assert(feedback.Size, Equals, 0)
 
 	// Test only collect for max number of ranges.
 	statistics.MaxNumberOfRanges = 0
@@ -691,7 +778,7 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 		testKit.MustQuery(t.sql)
 		h.DumpStatsDeltaToKV(statistics.DumpAll)
 		feedback := h.GetQueryFeedback()
-		c.Assert(len(feedback), Equals, 0)
+		c.Assert(feedback.Size, Equals, 0)
 	}
 
 	// Test collect feedback by probability.
@@ -701,7 +788,7 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 		testKit.MustQuery(t.sql)
 		h.DumpStatsDeltaToKV(statistics.DumpAll)
 		feedback := h.GetQueryFeedback()
-		c.Assert(len(feedback), Equals, 0)
+		c.Assert(feedback.Size, Equals, 0)
 	}
 
 	// Test that after drop stats, the feedback won't cause panic.
@@ -738,11 +825,23 @@ func (s *testStatsUpdateSuite) TestQueryFeedbackForPartition(c *C) {
 	testKit.MustExec("analyze table t")
 
 	oriProbability := statistics.FeedbackProbability
+	oriMinLogCount := handle.MinLogScanCount
+	oriErrorRate := handle.MinLogErrorRate
 	defer func() {
 		statistics.FeedbackProbability = oriProbability
+		handle.MinLogScanCount = oriMinLogCount
+		handle.MinLogErrorRate = oriErrorRate
 	}()
+<<<<<<< HEAD:statistics/update_test.go
 	h := s.do.StatsHandle()
 	statistics.FeedbackProbability = 1
+=======
+	statistics.FeedbackProbability.Store(1)
+	handle.MinLogScanCount = 0
+	handle.MinLogErrorRate = 0
+
+	h := s.do.StatsHandle()
+>>>>>>> a99fdc0... statistics: ease the impact of stats feedback on cluster (#15503):statistics/handle/update_test.go
 	tests := []struct {
 		sql     string
 		hist    string
@@ -816,7 +915,7 @@ func (s *testStatsUpdateSuite) TestUpdateSystemTable(c *C) {
 	c.Assert(h.Update(s.do.InfoSchema()), IsNil)
 	feedback := h.GetQueryFeedback()
 	// We may have query feedback for system tables, but we do not need to store them.
-	c.Assert(len(feedback), Equals, 0)
+	c.Assert(feedback.Size, Equals, 0)
 }
 
 func (s *testStatsUpdateSuite) TestOutOfOrderUpdate(c *C) {
@@ -859,14 +958,23 @@ func (s *testStatsUpdateSuite) TestUpdateStatsByLocalFeedback(c *C) {
 	testKit.MustExec("analyze table t")
 	testKit.MustExec("insert into t values (3,5)")
 	h := s.do.StatsHandle()
-
 	oriProbability := statistics.FeedbackProbability
+	oriMinLogCount := handle.MinLogScanCount
+	oriErrorRate := handle.MinLogErrorRate
 	oriNumber := statistics.MaxNumberOfRanges
 	defer func() {
 		statistics.FeedbackProbability = oriProbability
+		handle.MinLogScanCount = oriMinLogCount
+		handle.MinLogErrorRate = oriErrorRate
 		statistics.MaxNumberOfRanges = oriNumber
 	}()
+<<<<<<< HEAD:statistics/update_test.go
 	statistics.FeedbackProbability = 1
+=======
+	statistics.FeedbackProbability.Store(1)
+	handle.MinLogScanCount = 0
+	handle.MinLogErrorRate = 0
+>>>>>>> a99fdc0... statistics: ease the impact of stats feedback on cluster (#15503):statistics/handle/update_test.go
 
 	is := s.do.InfoSchema()
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -904,6 +1012,49 @@ func (s *testStatsUpdateSuite) TestUpdateStatsByLocalFeedback(c *C) {
 	h.UpdateStatsByLocalFeedback(s.do.InfoSchema())
 }
 
+<<<<<<< HEAD:statistics/update_test.go
+=======
+func (s *testStatsSuite) TestUpdatePartitionStatsByLocalFeedback(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("set @@session.tidb_enable_table_partition=1")
+	testKit.MustExec("create table t (a bigint(64), b bigint(64), primary key(a)) partition by range (a) (partition p0 values less than (6))")
+	testKit.MustExec("insert into t values (1,2),(2,2),(4,5)")
+	testKit.MustExec("analyze table t")
+	testKit.MustExec("insert into t values (3,5)")
+	h := s.do.StatsHandle()
+	oriProbability := statistics.FeedbackProbability
+	oriMinLogCount := handle.MinLogScanCount
+	oriErrorRate := handle.MinLogErrorRate
+	defer func() {
+		statistics.FeedbackProbability = oriProbability
+		handle.MinLogScanCount = oriMinLogCount
+		handle.MinLogErrorRate = oriErrorRate
+	}()
+	statistics.FeedbackProbability.Store(1)
+	handle.MinLogScanCount = 0
+	handle.MinLogErrorRate = 0
+
+	is := s.do.InfoSchema()
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+
+	testKit.MustQuery("select * from t where a > 1")
+
+	h.UpdateStatsByLocalFeedback(s.do.InfoSchema())
+
+	tblInfo := table.Meta()
+	pid := tblInfo.Partition.Definitions[0].ID
+	tbl := h.GetPartitionStats(tblInfo, pid)
+
+	c.Assert(tbl.Columns[tblInfo.Columns[0].ID].ToString(0), Equals, "column:1 ndv:3 totColSize:0\n"+
+		"num: 1 lower_bound: 1 upper_bound: 1 repeats: 1\n"+
+		"num: 2 lower_bound: 2 upper_bound: 4 repeats: 0\n"+
+		"num: 1 lower_bound: 4 upper_bound: 9223372036854775807 repeats: 0")
+}
+
+>>>>>>> a99fdc0... statistics: ease the impact of stats feedback on cluster (#15503):statistics/handle/update_test.go
 type logHook struct {
 	zapcore.Core
 	results string
@@ -1257,10 +1408,67 @@ func (s *testStatsUpdateSuite) TestAbnormalIndexFeedback(c *C) {
 	testKit := testkit.NewTestKit(c, s.store)
 
 	oriProbability := statistics.FeedbackProbability
+	oriMinLogCount := handle.MinLogScanCount
+	oriErrorRate := handle.MinLogErrorRate
 	defer func() {
 		statistics.FeedbackProbability = oriProbability
+		handle.MinLogScanCount = oriMinLogCount
+		handle.MinLogErrorRate = oriErrorRate
 	}()
+<<<<<<< HEAD:statistics/update_test.go
 	statistics.FeedbackProbability = 1
+=======
+	statistics.FeedbackProbability.Store(1)
+	handle.MinLogScanCount = 0
+	handle.MinLogErrorRate = 0
+
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (a bigint(64), index idx(a))")
+	for i := 0; i < 20; i++ {
+		testKit.MustExec(`insert into t values (1)`)
+	}
+	h := s.do.StatsHandle()
+	h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	testKit.MustExec("set @@tidb_enable_fast_analyze = 1")
+	testKit.MustExec("analyze table t with 3 buckets")
+	for i := 0; i < 20; i++ {
+		testKit.MustExec(`insert into t values (1)`)
+	}
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	is := s.do.InfoSchema()
+	c.Assert(h.Update(is), IsNil)
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo := table.Meta()
+
+	testKit.MustQuery("select * from t use index(idx) where a = 1")
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.DumpStatsFeedbackToKV(), IsNil)
+	c.Assert(h.HandleUpdateStats(s.do.InfoSchema()), IsNil)
+	c.Assert(h.Update(is), IsNil)
+	tbl := h.GetTableStats(tblInfo)
+	val, err := codec.EncodeKey(testKit.Se.GetSessionVars().StmtCtx, nil, types.NewIntDatum(1))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Indices[1].CMSketch.QueryBytes(val), Equals, uint64(40))
+}
+
+func (s *testStatsSuite) TestAbnormalIndexFeedback(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+
+	oriProbability := statistics.FeedbackProbability
+	oriMinLogCount := handle.MinLogScanCount
+	oriErrorRate := handle.MinLogErrorRate
+	defer func() {
+		statistics.FeedbackProbability = oriProbability
+		handle.MinLogScanCount = oriMinLogCount
+		handle.MinLogErrorRate = oriErrorRate
+	}()
+	statistics.FeedbackProbability.Store(1)
+	handle.MinLogScanCount = 0
+	handle.MinLogErrorRate = 0
+>>>>>>> a99fdc0... statistics: ease the impact of stats feedback on cluster (#15503):statistics/handle/update_test.go
 
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a bigint(64), b bigint(64), index idx_ab(a,b))")
@@ -1325,11 +1533,21 @@ func (s *testStatsUpdateSuite) TestFeedbackRanges(c *C) {
 	h := s.do.StatsHandle()
 	oriProbability := statistics.FeedbackProbability
 	oriNumber := statistics.MaxNumberOfRanges
+	oriMinLogCount := handle.MinLogScanCount
+	oriErrorRate := handle.MinLogErrorRate
 	defer func() {
 		statistics.FeedbackProbability = oriProbability
 		statistics.MaxNumberOfRanges = oriNumber
+		handle.MinLogScanCount = oriMinLogCount
+		handle.MinLogErrorRate = oriErrorRate
 	}()
+<<<<<<< HEAD:statistics/update_test.go
 	statistics.FeedbackProbability = 1
+=======
+	statistics.FeedbackProbability.Store(1)
+	handle.MinLogScanCount = 0
+	handle.MinLogErrorRate = 0
+>>>>>>> a99fdc0... statistics: ease the impact of stats feedback on cluster (#15503):statistics/handle/update_test.go
 
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a tinyint, b tinyint, primary key(a), index idx(a, b))")
@@ -1392,13 +1610,24 @@ func (s *testStatsUpdateSuite) TestUnsignedFeedbackRanges(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	h := s.do.StatsHandle()
+
 	oriProbability := statistics.FeedbackProbability
+	oriMinLogCount := handle.MinLogScanCount
+	oriErrorRate := handle.MinLogErrorRate
 	oriNumber := statistics.MaxNumberOfRanges
 	defer func() {
 		statistics.FeedbackProbability = oriProbability
+		handle.MinLogScanCount = oriMinLogCount
+		handle.MinLogErrorRate = oriErrorRate
 		statistics.MaxNumberOfRanges = oriNumber
 	}()
+<<<<<<< HEAD:statistics/update_test.go
 	statistics.FeedbackProbability = 1
+=======
+	statistics.FeedbackProbability.Store(1)
+	handle.MinLogScanCount = 0
+	handle.MinLogErrorRate = 0
+>>>>>>> a99fdc0... statistics: ease the impact of stats feedback on cluster (#15503):statistics/handle/update_test.go
 
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a bigint unsigned, primary key(a))")
@@ -1466,6 +1695,7 @@ func (s *testStatsUpdateSuite) TestDeleteUpdateFeedback(c *C) {
 	testKit.MustExec("analyze table t with 3 buckets")
 
 	testKit.MustExec("delete from t where a = 1")
+<<<<<<< HEAD:statistics/update_test.go
 	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
 	c.Assert(len(h.GetQueryFeedback()), Equals, 0)
 	testKit.MustExec("update t set a = 6 where a = 2")
@@ -1474,4 +1704,14 @@ func (s *testStatsUpdateSuite) TestDeleteUpdateFeedback(c *C) {
 	testKit.MustExec("explain analyze delete from t where a = 3")
 	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
 	c.Assert(len(h.GetQueryFeedback()), Equals, 0)
+=======
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.GetQueryFeedback().Size, Equals, 0)
+	testKit.MustExec("update t set a = 6 where a = 2")
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.GetQueryFeedback().Size, Equals, 0)
+	testKit.MustExec("explain analyze delete from t where a = 3")
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.GetQueryFeedback().Size, Equals, 0)
+>>>>>>> a99fdc0... statistics: ease the impact of stats feedback on cluster (#15503):statistics/handle/update_test.go
 }

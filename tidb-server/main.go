@@ -44,6 +44,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+<<<<<<< HEAD
+=======
+	kvstore "github.com/pingcap/tidb/store"
+>>>>>>> a99fdc0... statistics: ease the impact of stats feedback on cluster (#15503)
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/gcworker"
@@ -296,6 +300,7 @@ func flagBoolean(name string, defaultVal bool, usage string) *bool {
 	return flag.Bool(name, defaultVal, usage)
 }
 
+<<<<<<< HEAD
 func loadConfig() string {
 	cfg = config.GetGlobalConfig()
 	if *configPath != "" {
@@ -313,6 +318,42 @@ func loadConfig() string {
 		if *configCheck {
 			fmt.Fprintln(os.Stderr, "config check failed", errors.New("no config file specified for config-check"))
 			os.Exit(1)
+=======
+func reloadConfig(nc, c *config.Config) {
+	// Just a part of config items need to be reload explicitly.
+	// Some of them like OOMAction are always used by getting from global config directly
+	// like config.GetGlobalConfig().OOMAction.
+	// These config items will become available naturally after the global config pointer
+	// is updated in function ReloadGlobalConfig.
+	if nc.Performance.ServerMemoryQuota != c.Performance.ServerMemoryQuota {
+		plannercore.PreparedPlanCacheMaxMemory.Store(nc.Performance.ServerMemoryQuota)
+	}
+	if nc.Performance.CrossJoin != c.Performance.CrossJoin {
+		plannercore.AllowCartesianProduct.Store(nc.Performance.CrossJoin)
+	}
+	if nc.Performance.FeedbackProbability != c.Performance.FeedbackProbability {
+		statistics.FeedbackProbability.Store(nc.Performance.FeedbackProbability)
+	}
+	if nc.Performance.QueryFeedbackLimit != c.Performance.QueryFeedbackLimit {
+		statistics.MaxQueryFeedbackCount.Store(int64(nc.Performance.QueryFeedbackLimit))
+	}
+	if nc.Performance.PseudoEstimateRatio != c.Performance.PseudoEstimateRatio {
+		statistics.RatioOfPseudoEstimate.Store(nc.Performance.PseudoEstimateRatio)
+	}
+	if nc.Performance.MaxProcs != c.Performance.MaxProcs {
+		runtime.GOMAXPROCS(int(nc.Performance.MaxProcs))
+	}
+	if nc.TiKVClient.StoreLimit != c.TiKVClient.StoreLimit {
+		storeutil.StoreLimit.Store(nc.TiKVClient.StoreLimit)
+	}
+
+	if nc.PreparedPlanCache.Enabled != c.PreparedPlanCache.Enabled {
+		plannercore.SetPreparedPlanCache(nc.PreparedPlanCache.Enabled)
+	}
+	if nc.Log.Level != c.Log.Level {
+		if err := logutil.SetLevel(nc.Log.Level); err != nil {
+			logutil.BgLogger().Error("update log level error", zap.Error(err))
+>>>>>>> a99fdc0... statistics: ease the impact of stats feedback on cluster (#15503)
 		}
 	}
 	return ""
@@ -446,9 +487,15 @@ func setGlobalVars() {
 	statsLeaseDuration := parseDuration(cfg.Performance.StatsLease)
 	session.SetStatsLease(statsLeaseDuration)
 	domain.RunAutoAnalyze = cfg.Performance.RunAutoAnalyze
+<<<<<<< HEAD
 	statistics.FeedbackProbability = cfg.Performance.FeedbackProbability
 	statistics.MaxQueryFeedbackCount = int(cfg.Performance.QueryFeedbackLimit)
 	statistics.RatioOfPseudoEstimate = cfg.Performance.PseudoEstimateRatio
+=======
+	statistics.FeedbackProbability.Store(cfg.Performance.FeedbackProbability)
+	statistics.MaxQueryFeedbackCount.Store(int64(cfg.Performance.QueryFeedbackLimit))
+	statistics.RatioOfPseudoEstimate.Store(cfg.Performance.PseudoEstimateRatio)
+>>>>>>> a99fdc0... statistics: ease the impact of stats feedback on cluster (#15503)
 	ddl.RunWorker = cfg.RunDDL
 	if cfg.SplitTable {
 		atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
