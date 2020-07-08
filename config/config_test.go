@@ -232,7 +232,7 @@ engines = ["tiflash"]
 	c.Assert(conf.TiKVClient.MaxBatchSize, Equals, uint(128))
 	c.Assert(conf.TiKVClient.RegionCacheTTL, Equals, uint(6000))
 	c.Assert(conf.TiKVClient.StoreLimit, Equals, int64(0))
-	c.Assert(conf.TiKVClient.TTLBasedTxnSize, Equals, int64(8192))
+	c.Assert(conf.TiKVClient.TTLRefreshedTxnSize, Equals, int64(8192))
 	c.Assert(conf.TokenLimit, Equals, uint(1000))
 	c.Assert(conf.EnableTableLock, IsTrue)
 	c.Assert(conf.DelayCleanTableLock, Equals, uint64(5))
