@@ -1524,4 +1524,10 @@ func (s *testPlanSuite) TestNthPlanHintWithExplain(c *C) {
 		})
 		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
 	}
+
+	// This assert makes sure a query with or without nth_plan() hint output exactly the same plan(including plan ID).
+	// The query below is the same as queries in the testdata except for nth_plan() hint.
+	// Currently its output is the same as the second test case in the testdata, which is `output[1]`. If this doesn't
+	// hold in the future, you may need to modify this.
+	tk.MustQuery("explain select * from test.tt where a=1 and b=1").Check(testkit.Rows(output[1].Plan...))
 }
