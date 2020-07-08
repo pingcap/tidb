@@ -1243,6 +1243,15 @@ func (b *PlanBuilder) buildExcept(ctx context.Context, selects []LogicalPlan, af
 			if err != nil {
 				return nil, err
 			}
+			joinPlan := LogicalJoin{JoinType: AntiSemiJoin}.Init(b.ctx, b.getSelectOffset())
+			joinPlan.SetChildren(leftPlan, rightPlan)
+			joinPlan.SetSchema(leftPlan.Schema())
+			joinPlan.names = make([]*types.FieldName, leftPlan.Schema().Len())
+			copy(joinPlan.names, leftPlan.OutputNames())
+			leftPlan, err = b.buildDistinct(joinPlan, leftPlan.Schema().Len())
+			if err != nil {
+				return nil, err
+			}
 			unionPlans = []LogicalPlan{leftPlan}
 			tmpAfterSetOpts = []*ast.SetOprType{nil}
 		} else {
