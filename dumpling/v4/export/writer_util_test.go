@@ -87,7 +87,8 @@ func (s *testUtilSuite) TestWriteInsertReturnsError(c *C) {
 	}
 	// row errors at last line
 	rowErr := errors.New("mock row error")
-	tableIR := newMockTableIRWithError("test", "employee", data, specCmts, colTypes, rowErr)
+	tableIR := newMockTableIR("test", "employee", data, specCmts, colTypes)
+	tableIR.rowErr = rowErr
 	bf := &bytes.Buffer{}
 
 	err := WriteInsert(context.Background(), tableIR, bf)
@@ -112,12 +113,50 @@ func (s *testUtilSuite) TestWriteInsertInCsv(c *C) {
 	tableIR := newMockTableIR("test", "employee", data, nil, colTypes)
 	bf := &bytes.Buffer{}
 
-	err := WriteInsertInCsv(context.Background(), tableIR, bf, true, "\\N")
+	// test nullValue
+	opt := &csvOption{separator: []byte(","), delimiter: doubleQuotationMark, nullValue: "\\N"}
+	err := WriteInsertInCsv(context.Background(), tableIR, bf, true, opt)
 	c.Assert(err, IsNil)
 	expected := "1,\"male\",\"bob@mail.com\",\"020-1234\",\\N\n" +
 		"2,\"female\",\"sarah@mail.com\",\"020-1253\",\"healthy\"\n" +
 		"3,\"male\",\"john@mail.com\",\"020-1256\",\"healthy\"\n" +
 		"4,\"female\",\"sarah@mail.com\",\"020-1235\",\"healthy\"\n"
+	c.Assert(bf.String(), Equals, expected)
+
+	// test delimiter
+	bf.Reset()
+	opt.delimiter = quotationMark
+	err = WriteInsertInCsv(context.Background(), tableIR, bf, true, opt)
+	c.Assert(err, IsNil)
+	expected = "1,'male','bob@mail.com','020-1234',\\N\n" +
+		"2,'female','sarah@mail.com','020-1253','healthy'\n" +
+		"3,'male','john@mail.com','020-1256','healthy'\n" +
+		"4,'female','sarah@mail.com','020-1235','healthy'\n"
+	c.Assert(bf.String(), Equals, expected)
+
+	// test separator
+	bf.Reset()
+	opt.separator = []byte(";")
+	err = WriteInsertInCsv(context.Background(), tableIR, bf, true, opt)
+	c.Assert(err, IsNil)
+	expected = "1;'male';'bob@mail.com';'020-1234';\\N\n" +
+		"2;'female';'sarah@mail.com';'020-1253';'healthy'\n" +
+		"3;'male';'john@mail.com';'020-1256';'healthy'\n" +
+		"4;'female';'sarah@mail.com';'020-1235';'healthy'\n"
+	c.Assert(bf.String(), Equals, expected)
+
+	// test delimiter that included in values
+	bf.Reset()
+	opt.separator = []byte("&;,?")
+	opt.delimiter = []byte("ma")
+	tableIR.colNames = []string{"id", "gender", "email", "phone_number", "status"}
+	err = WriteInsertInCsv(context.Background(), tableIR, bf, false, opt)
+	c.Assert(err, IsNil)
+	expected = "maidma&;,?magenderma&;,?maemamailma&;,?maphone_numberma&;,?mastatusma\n" +
+		"1&;,?mamamalema&;,?mabob@mamail.comma&;,?ma020-1234ma&;,?\\N\n" +
+		"2&;,?mafemamalema&;,?masarah@mamail.comma&;,?ma020-1253ma&;,?mahealthyma\n" +
+		"3&;,?mamamalema&;,?majohn@mamail.comma&;,?ma020-1256ma&;,?mahealthyma\n" +
+		"4&;,?mafemamalema&;,?masarah@mamail.comma&;,?ma020-1235ma&;,?mahealthyma\n"
 	c.Assert(bf.String(), Equals, expected)
 }
 
