@@ -172,8 +172,15 @@ func (s *RegionRequestSender) SendReqCtx(
 	} else {
 		replicaRead = kv.ReplicaReadLeader
 	}
+<<<<<<< HEAD
 	seed := req.ReplicaReadSeed
+=======
+	tryTimes := 0
+>>>>>>> 2b0b34b... executor: kill tableReader for each connection correctly (#18277)
 	for {
+		if (tryTimes > 0) && (tryTimes%100000 == 0) {
+			logutil.Logger(bo.ctx).Warn("retry get ", zap.Uint64("region = ", regionID.GetID()), zap.Int("times = ", tryTimes))
+		}
 		switch sType {
 		case kv.TiKV:
 			rpcCtx, err = s.regionCache.GetTiKVRPCContext(bo, regionID, replicaRead, seed)
@@ -214,7 +221,18 @@ func (s *RegionRequestSender) SendReqCtx(
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
+
+		// recheck whether the session/query is killed during the Next()
+		if bo.vars != nil && bo.vars.Killed != nil && atomic.LoadUint32(bo.vars.Killed) == 1 {
+			return nil, nil, ErrQueryInterrupted
+		}
+		failpoint.Inject("mockRetrySendReqToRegion", func(val failpoint.Value) {
+			if val.(bool) {
+				retry = true
+			}
+		})
 		if retry {
+			tryTimes++
 			continue
 		}
 
@@ -229,6 +247,7 @@ func (s *RegionRequestSender) SendReqCtx(
 				return nil, nil, errors.Trace(err)
 			}
 			if retry {
+				tryTimes++
 				continue
 			}
 		}
@@ -248,6 +267,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 		defer s.releaseStoreToken(ctx.Store)
 	}
 	resp, err = s.client.SendRequest(bo.ctx, ctx.Addr, req, timeout)
+
 	if err != nil {
 		s.rpcError = err
 		if e := s.onSendFail(bo, ctx, err); e != nil {
