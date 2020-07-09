@@ -188,8 +188,9 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *kv.Var
 			Client:            c.store.client,
 			minCommitTSPushed: &minCommitTSPushed{data: make(map[uint64]struct{}, 5)},
 		},
+		rpcCancel: NewRPCanceller(),
 	}
-	ctx = context.WithValue(ctx, RPCCancelHookCtxKey{}, &it.rpcCancel)
+	ctx = context.WithValue(ctx, RPCCancellerCtxKey{}, it.rpcCancel)
 	it.tasks = tasks
 	it.respChan = make(chan *batchCopResponse, 2048)
 	go it.run(ctx)
@@ -214,7 +215,7 @@ type batchCopIterator struct {
 
 	replicaReadSeed uint32
 
-	rpcCancel RPCCancelHook
+	rpcCancel *RPCCanceller
 
 	wg sync.WaitGroup
 	// closed represents when the Close is called.

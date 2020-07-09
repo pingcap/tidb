@@ -81,9 +81,9 @@ func (ss *RegionBatchRequestSender) sendReqToAddr(bo *Backoffer, ctxs []copTaskA
 		return nil, false, errors.Trace(e)
 	}
 	ctx := bo.ctx
-	if rawHook := ctx.Value(RPCCancelHookCtxKey{}); rawHook != nil {
+	if rawHook := ctx.Value(RPCCancellerCtxKey{}); rawHook != nil {
 		var cancel context.CancelFunc
-		ctx, cancel = rawHook.(*RPCCancelHook).WithCancel(ctx)
+		ctx, cancel = rawHook.(*RPCCanceller).WithCancel(ctx)
 		defer cancel()
 	}
 	resp, err = ss.client.SendRequest(ctx, rpcCtx.Addr, req, timout)
@@ -270,30 +270,50 @@ func (s *RegionRequestSender) SendReqCtx(
 	}
 }
 
-// RPCCancelHookCtxKey is context key attach rpc send cancelFunc collector to ctx.
-type RPCCancelHookCtxKey struct{}
+// RPCCancellerCtxKey is context key attach rpc send cancelFunc collector to ctx.
+type RPCCancellerCtxKey struct{}
 
-// RPCCancelHook is rpc send cancelFunc collector.
-type RPCCancelHook struct {
+// RPCCanceller is rpc send cancelFunc collector.
+type RPCCanceller struct {
 	sync.Mutex
-	Cancels []context.CancelFunc
+	allocID   int
+	cancels   map[int]func()
+	cancelled bool
+}
+
+// NewRPCanceller creates RPCCanceller with init state.
+func NewRPCanceller() *RPCCanceller {
+	return &RPCCanceller{cancels: make(map[int]func())}
 }
 
 // WithCancel generates new context with cancel func.
-func (h *RPCCancelHook) WithCancel(ctx context.Context) (nctx context.Context, cancel context.CancelFunc) {
-	nctx, cancel = context.WithCancel(ctx)
+func (h *RPCCanceller) WithCancel(ctx context.Context) (context.Context, func()) {
+	nctx, cancel := context.WithCancel(ctx)
 	h.Lock()
-	h.Cancels = append(h.Cancels, cancel)
+	if h.cancelled {
+		h.Unlock()
+		cancel()
+		return nctx, func() {}
+	}
+	id := h.allocID
+	h.allocID++
+	h.cancels[id] = cancel
 	h.Unlock()
-	return
+	return nctx, func() {
+		cancel()
+		h.Lock()
+		delete(h.cancels, id)
+		h.Unlock()
+	}
 }
 
 // CancelAll cancels all inflight rpc context.
-func (h *RPCCancelHook) CancelAll() {
+func (h *RPCCanceller) CancelAll() {
 	h.Lock()
-	for _, c := range h.Cancels {
+	for _, c := range h.cancels {
 		c()
 	}
+	h.cancelled = true
 	h.Unlock()
 }
 
@@ -309,9 +329,9 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 		defer s.releaseStoreToken(rpcCtx.Store)
 	}
 	ctx := bo.ctx
-	if rawHook := ctx.Value(RPCCancelHookCtxKey{}); rawHook != nil {
+	if rawHook := ctx.Value(RPCCancellerCtxKey{}); rawHook != nil {
 		var cancel context.CancelFunc
-		ctx, cancel = rawHook.(*RPCCancelHook).WithCancel(ctx)
+		ctx, cancel = rawHook.(*RPCCanceller).WithCancel(ctx)
 		defer cancel()
 	}
 	resp, err = s.client.SendRequest(ctx, rpcCtx.Addr, req, timeout)

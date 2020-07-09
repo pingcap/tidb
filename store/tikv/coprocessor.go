@@ -76,6 +76,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		memTracker:      req.MemTracker,
 		replicaReadSeed: c.replicaReadSeed,
 		actionOnExceed:  &EndCopWorkerAction{},
+		rpcCancel:       NewRPCanceller(),
 	}
 	if it.memTracker != nil {
 		it.memTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
@@ -96,7 +97,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		it.respChan = make(chan *copResponse, it.concurrency)
 	}
 	it.actionOnExceed.mu.aliveWorker = it.concurrency
-	ctx = context.WithValue(ctx, RPCCancelHookCtxKey{}, &it.rpcCancel)
+	ctx = context.WithValue(ctx, RPCCancellerCtxKey{}, it.rpcCancel)
 	it.open(ctx)
 	return it
 }
@@ -397,7 +398,7 @@ type copIterator struct {
 
 	replicaReadSeed uint32
 
-	rpcCancel RPCCancelHook
+	rpcCancel *RPCCanceller
 
 	wg sync.WaitGroup
 	// closed represents when the Close is called.
