@@ -549,7 +549,6 @@ func (c *batchCommandsClient) initBatchClient() error {
 		return errors.Trace(err)
 	}
 	c.client = streamClient
-	c.client.Context().Done()
 	go c.batchRecvLoop(c.tikvClientCfg, c.tikvLoad)
 	return nil
 }
