@@ -519,6 +519,7 @@ func (s *session) StmtCommit(memTracker *memory.Tracker) error {
 	}()
 	st := &s.txn
 	txnSize := st.Transaction.Size()
+	bufLen := st.stmtBufLen()
 
 	if _, err := st.flushStmtBuf(); err != nil {
 		return err
@@ -526,7 +527,7 @@ func (s *session) StmtCommit(memTracker *memory.Tracker) error {
 
 	var err error
 	failpoint.Inject("mockStmtCommitError", func(val failpoint.Value) {
-		if val.(bool) && st.stmtBufLen() > 3 {
+		if val.(bool) && bufLen > 3 {
 			err = errors.New("mock stmt commit error")
 		}
 	})

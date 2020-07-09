@@ -258,11 +258,16 @@ func (m *memDB) Release(h StagingHandler) (int, error) {
 	if len(m.buffers) == 2 && count > 0 {
 		m.dirty = true
 	}
+	m.buffers[idx] = nil
+	m.buffers = m.buffers[:idx]
 	return count, nil
 }
 
 func (m *memDB) Cleanup(h StagingHandler) {
-	if int(h) != len(m.buffers) {
+	if int(h) > len(m.buffers) {
+		return
+	}
+	if int(h) < len(m.buffers) {
 		// This should never happens in production environmen.
 		// Use panic to make debug easier.
 		panic("cannot cleanup staging buffer")

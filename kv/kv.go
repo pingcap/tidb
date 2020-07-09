@@ -182,7 +182,6 @@ type MemBuffer interface {
 	// When you think all modifications looks good, you can call `Release` to public all of them to the upper level buffer.
 	Staging() StagingHandler
 	// Release publish all modifications in the lastest staging buffer to upper level.
-	// You MUST call Cleanup after Release returned.
 	Release(StagingHandler) (int, error)
 	// Cleanup cleanup the resources referenced by the StagingHandler.
 	// If the changes are not published by `Release`, they will be discarded.

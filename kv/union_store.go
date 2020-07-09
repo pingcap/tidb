@@ -22,9 +22,9 @@ import (
 type UnionStore interface {
 	Retriever
 
-	// HasPresumeKeyNotExists gets the key exist error info for the lazy check.
+	// HasPresumeKeyNotExists returns whether the key presumed key not exists error for the lazy check.
 	HasPresumeKeyNotExists(k Key) bool
-	// DeleteKeyExistErrInfo deletes the key exist error info for the lazy check.
+	// DeleteKeyExistErrInfo deletes the key presume key not exists error flag for the lazy check.
 	UnmarkPresumeKeyNotExists(k Key)
 	// CacheIndexName caches the index name.
 	// PresumeKeyNotExists will use this to help decode error message.

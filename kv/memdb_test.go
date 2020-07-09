@@ -228,7 +228,6 @@ func (s *testKVSuite) TestMemDBStaging(c *C) {
 	c.Assert(len(v), Equals, 3)
 
 	buffer.Release(h2)
-	buffer.Cleanup(h2)
 
 	v, _ = buffer.Get(context.Background(), []byte("yz"))
 	c.Assert(len(v), Equals, 1)
