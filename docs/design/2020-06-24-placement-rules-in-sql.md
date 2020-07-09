@@ -17,7 +17,7 @@ There are 2 kinds of operations on the placement:
 * ADD: Add new `count` replicas to the table according to `label` and `role` configuration.
 * ALTER: Override the current replica configuration. Old configuration is discarded.
 
-They’re both achieved by executing ALTER statements.
+They’re both achieved by executing `ALTER TABLE` statements.
 
 ### Adding replicas
 
@@ -31,9 +31,19 @@ ALTER TABLE table_name
 
 This statement indicates TiDB to add replicas for all data, including indexes, of table `table_name`.
 
-`ADD PLACEMENT` clause can appear multiple times in a single `ALTER TABLE` statement, each for one Raft role. For example, one clause defines leader and one defines follower.
+`ADD PLACEMENT` is just a part of alter options, just like `ADD COLUMN` or `ADD CONSTRAINT`.
 
-This kind of operation can be used to separate data on different data centers, which may help to reduce multi-region latency.
+To define multiple roles at once, Multiple `ADD PLACEMENT` clauses can appear in a single `ALTER TABLE` statement, each for one Raft role:
+
+```sql
+ALTER TABLE table_name
+	ADD PLACEMENT LABEL="+zone=sh" ROLE=leader COUNT=1,
+	ADD PLACEMENT LABEL="-zone=sh" ROLE=follower COUNT=2;
+```
+
+This statement indicates PD to schedule the leader to `sh`, and do not schedule followers to `sh`.
+
+`ADD PLACEMENT` can be used to separate data on different data centers, which may help to reduce multi-region latency.
 
 Adding placement can be done through adding a placement rule in PD. The statement must wait until the PD returns a message.
 
@@ -67,11 +77,16 @@ The statement must wait until the PD returns a message.
 
 ### Label configuration
 
-`LABEL` in the statement indicates the label constraints. Data is placed on the TiKV nodes whose labels conform to `LABEL` constraint. `LABEL` option is always required in the `ADD PLACEMENT` or `ALTER PLACEMENT` clause, otherwise it would be meaningless.
+`LABEL` in the statement indicates the label constraints. Data is placed on the TiKV nodes whose labels conform to `LABEL` constraint. `LABEL` must be specified in `ADD PLACEMENT` or `ALTER PLACEMENT` clauses.
 
-Parameter `label` should be a string and in such a format: `{+|-}key=value,...`. Prefix `+` indicates that data can only be placed on those TiKV nodes whose labels contain such labels, and `-` indicates that data can’t be placed on those TiKV nodes whose labels contain such labels.
+Parameter `label` should be a string and in such a format: `{+|-}key=value,...`. Prefix `+` indicates that data can only be placed on those TiKV nodes whose labels contain such labels, and `-` indicates that data can’t be placed on those TiKV nodes whose labels contain such labels. `key` here refers to the label name, and `value` is the label value. `key` should be defined in TiKV labels.
 
-For example, `+zone=sh,+zone=bj` indicates to place data only in `sh` and `bj` zone.
+For example, `+zone=sh,+zone=bj` indicates to place data only in `sh` and `bj` zone. Also, `zone` should have already be defined in TiKV configuration. For example:
+
+```sql
+[server]
+labels = "zone=<zone>,rack=<rack>,host=<host>"
+```
 
 Label constraints can be implemented by defining `label_constraints` field in placement rules. `+` and `-` correspond to property `op`. Specifically, `+` is equivalent to `In` and `-` is equivalent to `NotIn`.
 
