@@ -405,7 +405,7 @@ func (s *SchemaAmender) AmendTxn(ctx context.Context, startInfoSchema tikv.Schem
 		}
 		if tblInfoAtStart.Meta().Partition != nil {
 			logutil.Logger(ctx).Info("Amend for partition table is not supported", zap.Int64("tableID", tblID))
-			return nil, nil, table.ErrUnsupportedOp
+			return nil, nil, errors.Trace(table.ErrUnsupportedOp)
 		}
 		tblInfoAtCommit, ok := infoSchemaAtCheck.TableByID(tblID)
 		if !ok {
