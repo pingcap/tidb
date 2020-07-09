@@ -262,18 +262,30 @@ func (b *batchCopIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 }
 
 func (b *batchCopIterator) recvFromRespCh(ctx context.Context) (resp *batchCopResponse, ok bool, exit bool) {
-	select {
-	case resp, ok = <-b.respChan:
-	case <-b.finishCh:
-		exit = true
-	case <-ctx.Done():
-		// We select the ctx.Done() in the thread of `Next` instead of in the worker to avoid the cost of `WithCancel`.
-		if atomic.CompareAndSwapUint32(&b.closed, 0, 1) {
-			close(b.finishCh)
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case resp, ok = <-b.respChan:
+			return
+		case <-ticker.C:
+			if atomic.LoadUint32(b.vars.Killed) == 1 {
+				resp = &batchCopResponse{err: ErrQueryInterrupted}
+				ok = true
+				return
+			}
+		case <-b.finishCh:
+			exit = true
+			return
+		case <-ctx.Done():
+			// We select the ctx.Done() in the thread of `Next` instead of in the worker to avoid the cost of `WithCancel`.
+			if atomic.CompareAndSwapUint32(&b.closed, 0, 1) {
+				close(b.finishCh)
+			}
+			exit = true
+			return
 		}
-		exit = true
 	}
-	return
 }
 
 // Close releases the resource.
