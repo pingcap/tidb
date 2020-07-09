@@ -876,7 +876,7 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat b
 
 	seps, fracStr, err := splitDateTime(str)
 	if err != nil {
-		return ZeroDatetime, errors.Trace(ErrWrongValue.GenWithStackByArgs(DateTimeStr, str))
+		return ZeroDatetime, errors.Trace(err)
 	}
 	var truncatedOrIncorrect bool
 	switch len(seps) {
