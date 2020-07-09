@@ -1561,8 +1561,6 @@ AlterTableSpec:
 			ret.PartitionNames = $4.([]model.CIStr)
 		}
 		$$ = ret
-		yylex.AppendError(yylex.Errorf("The OPTIMIZE PARTITION clause is parsed but ignored by all storage engines."))
-		parser.lastErrorAsWarn()
 	}
 |	"REPAIR" "PARTITION" NoWriteToBinLogAliasOpt AllOrPartitionNameList
 	{
@@ -1576,8 +1574,6 @@ AlterTableSpec:
 			ret.PartitionNames = $4.([]model.CIStr)
 		}
 		$$ = ret
-		yylex.AppendError(yylex.Errorf("The REPAIR PARTITION clause is parsed but ignored by all storage engines."))
-		parser.lastErrorAsWarn()
 	}
 |	"IMPORT" "PARTITION" AllOrPartitionNameList "TABLESPACE"
 	{
@@ -1637,8 +1633,6 @@ AlterTableSpec:
 			ret.PartitionNames = $4.([]model.CIStr)
 		}
 		$$ = ret
-		yylex.AppendError(yylex.Errorf("REBUILD PARTITION syntax is parsed but not implement for now."))
-		parser.lastErrorAsWarn()
 	}
 |	"REORGANIZE" "PARTITION" NoWriteToBinLogAliasOpt ReorganizePartitionRuleOpt
 	{
