@@ -1696,6 +1696,77 @@ func (s *testDBSuite4) TestAddIndexWithDupCols(c *C) {
 	tk.MustExec("drop table test_add_index_with_dup")
 }
 
+func (s *testDBSuite4) TestAddGlobalIndex(c *C) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("create table test_t1 (a int, b int) partition by range (b) (partition p0 values less than (10));")
+	tk.MustExec("insert test_t1 values (1, 1)")
+	tk.MustExec("alter table test_t1 add unique index p_a (a);")
+	t := s.testGetTable(c, "test_t1")
+	indexInfo := t.Meta().FindIndexByName("p_a")
+	c.Assert(indexInfo.Global, IsTrue)
+	tblInfo := t.Meta()
+	pid := tblInfo.Partition.Definitions[0].ID
+
+	ctx := s.s.(sessionctx.Context)
+	ctx.NewTxn(context.Background())
+	txn, err := ctx.Txn(true)
+	c.Assert(err, IsNil)
+
+	// Local index prefix: pid_idx
+	localPrefix := tablecodec.EncodeTableIndexPrefix(pid, indexInfo.ID)
+	it, err := txn.Iter(localPrefix, nil)
+	c.Assert(err, IsNil)
+	// no local index entry.
+	c.Assert(it.Valid() && it.Key().HasPrefix(localPrefix), IsFalse)
+	it.Close()
+
+	// Global index prefix: tid_idx
+	globalPrefix := tablecodec.EncodeTableIndexPrefix(tblInfo.ID, indexInfo.ID)
+	it, err = txn.Iter(globalPrefix, nil)
+	c.Assert(err, IsNil)
+	// has global index entry.
+	c.Assert(it.Valid() && it.Key().HasPrefix(globalPrefix), IsTrue)
+	it.Close()
+	txn.Commit(context.Background())
+
+	// Test add global Primary Key index
+	tk.MustExec("create table test_t2 (a int, b int) partition by range (b) (partition p0 values less than (10));")
+	tk.MustExec("insert test_t2 values (1, 1)")
+	tk.MustExec("alter table test_t2 add unique index p_b (a);")
+	t = s.testGetTable(c, "test_t2")
+	indexInfo = t.Meta().FindIndexByName("p_b")
+	c.Assert(indexInfo.Global, IsTrue)
+
+	ctx.NewTxn(context.Background())
+	txn, err = ctx.Txn(true)
+	c.Assert(err, IsNil)
+
+	// Local index prefix: pid_idx
+	localPrefix = tablecodec.EncodeTableIndexPrefix(pid, indexInfo.ID)
+	it, err = txn.Iter(localPrefix, nil)
+	c.Assert(err, IsNil)
+	// no local index entry.
+	c.Assert(it.Valid() && it.Key().HasPrefix(localPrefix), IsFalse)
+	it.Close()
+
+	// Global index prefix: tid_idx
+	globalPrefix = tablecodec.EncodeTableIndexPrefix(tblInfo.ID, indexInfo.ID)
+	it, err = txn.Iter(globalPrefix, nil)
+	c.Assert(err, IsNil)
+	// has global index entry.
+	c.Assert(it.Valid() && it.Key().HasPrefix(globalPrefix), IsTrue)
+	it.Close()
+	txn.Commit(context.Background())
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = false
+	})
+}
+
 func (s *testDBSuite) showColumns(tk *testkit.TestKit, c *C, tableName string) [][]interface{} {
 	return s.mustQuery(tk, c, fmt.Sprintf("show columns from %s", tableName))
 }

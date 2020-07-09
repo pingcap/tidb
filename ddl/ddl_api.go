@@ -4261,6 +4261,7 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 	// to job queue, the fail path logic is super fast.
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
+	// For same reason, decide whether index is global here.
 	indexColumns, err := buildIndexColumns(tblInfo.Columns, indexPartSpecifications)
 	if err != nil {
 		return errors.Trace(err)
@@ -4269,9 +4270,18 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 		return err
 	}
 
+	global := false
 	if tblInfo.GetPartitionInfo() != nil {
-		if err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), indexColumns, tblInfo, true); err != nil {
+		ck, err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), indexColumns, tblInfo)
+		if err != nil {
 			return err
+		}
+		if !ck {
+			if !config.GetGlobalConfig().EnableGlobalIndex {
+				return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY")
+			}
+			//index columns does not contain all partition columns, must set global
+			global = true
 		}
 	}
 
@@ -4288,7 +4298,7 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 		SchemaName: schema.Name.L,
 		Type:       model.ActionAddPrimaryKey,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{unique, indexName, indexPartSpecifications, indexOption, sqlMode},
+		Args:       []interface{}{unique, global, indexName, indexPartSpecifications, indexOption, sqlMode},
 		Priority:   ctx.GetSessionVars().DDLReorgPriority,
 	}
 
@@ -4419,13 +4429,26 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	// to job queue, the fail path logic is super fast.
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
+	// For same reason, decide whether index is global here.
 	indexColumns, err := buildIndexColumns(append(tblInfo.Columns, hiddenCols...), indexPartSpecifications)
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	global := false
 	if unique && tblInfo.GetPartitionInfo() != nil {
-		if err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), indexColumns, tblInfo, false); err != nil {
+		ck, err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), indexColumns, tblInfo)
+		if err != nil {
 			return err
+		}
+		logutil.BgLogger().Info("CK______NO_ERR")
+		if !ck {
+			if !config.GetGlobalConfig().EnableGlobalIndex {
+				return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
+			}
+			//index columns does not contain all partition columns, must set global
+			global = true
+			logutil.BgLogger().Info("CK______GLOBAL")
 		}
 	}
 	// May be truncate comment here, when index comment too long and sql_mode is't strict.
@@ -4438,7 +4461,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		SchemaName: schema.Name.L,
 		Type:       model.ActionAddIndex,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{unique, indexName, indexPartSpecifications, indexOption, hiddenCols},
+		Args:       []interface{}{unique, global, indexName, indexPartSpecifications, indexOption, hiddenCols},
 		Priority:   ctx.GetSessionVars().DDLReorgPriority,
 	}
 
