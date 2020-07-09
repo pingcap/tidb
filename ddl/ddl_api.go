@@ -4439,14 +4439,12 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		if err != nil {
 			return err
 		}
-		logutil.BgLogger().Info("CK______NO_ERR")
 		if !ck {
 			if !config.GetGlobalConfig().EnableGlobalIndex {
 				return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
 			}
 			//index columns does not contain all partition columns, must set global
 			global = true
-			logutil.BgLogger().Info("CK______GLOBAL")
 		}
 	}
 	// May be truncate comment here, when index comment too long and sql_mode is't strict.
