@@ -780,6 +780,7 @@ type IndexInfo struct {
 	Unique    bool           `json:"is_unique"`    // Whether the index is unique.
 	Primary   bool           `json:"is_primary"`   // Whether the index is primary key.
 	Invisible bool           `json:"is_invisible"` // Whether the index is invisible.
+	Global    bool           `json:"is_global"`    // Whether the index is global.
 }
 
 // Clone clones IndexInfo.
