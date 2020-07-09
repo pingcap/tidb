@@ -74,28 +74,28 @@ func NewRegionBatchRequestSender(cache *RegionCache, client Client) *RegionBatch
 	return &RegionBatchRequestSender{RegionRequestSender: RegionRequestSender{regionCache: cache, client: client}}
 }
 
-func (ss *RegionBatchRequestSender) sendReqToAddr(bo *Backoffer, ctxs []copTaskAndRPCContext, req *tikvrpc.Request, timout time.Duration) (resp *tikvrpc.Response, retry bool, err error) {
+func (ss *RegionBatchRequestSender) sendStreamReqToAddr(bo *Backoffer, ctxs []copTaskAndRPCContext, req *tikvrpc.Request, timout time.Duration) (resp *tikvrpc.Response, retry bool, cancel func(), err error) {
 	// use the first ctx to send request, because every ctx has same address.
+	cancel = func() {}
 	rpcCtx := ctxs[0].ctx
 	if e := tikvrpc.SetContext(req, rpcCtx.Meta, rpcCtx.Peer); e != nil {
-		return nil, false, errors.Trace(e)
+		return nil, false, cancel, errors.Trace(e)
 	}
 	ctx := bo.ctx
 	if rawHook := ctx.Value(RPCCancellerCtxKey{}); rawHook != nil {
-		var cancel context.CancelFunc
 		ctx, cancel = rawHook.(*RPCCanceller).WithCancel(ctx)
-		defer cancel()
 	}
 	resp, err = ss.client.SendRequest(ctx, rpcCtx.Addr, req, timout)
 	if err != nil {
+		cancel()
 		ss.rpcError = err
 		for _, failedCtx := range ctxs {
 			e := ss.onSendFail(bo, failedCtx.ctx, err)
 			if e != nil {
-				return nil, false, errors.Trace(e)
+				return nil, false, func() {}, errors.Trace(e)
 			}
 		}
-		return nil, true, nil
+		return nil, true, func() {}, nil
 	}
 	// We don't need to process region error or lock error. Because TiFlash will retry by itself.
 	return

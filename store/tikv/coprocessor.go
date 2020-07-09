@@ -97,7 +97,9 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		it.respChan = make(chan *copResponse, it.concurrency)
 	}
 	it.actionOnExceed.mu.aliveWorker = it.concurrency
-	ctx = context.WithValue(ctx, RPCCancellerCtxKey{}, it.rpcCancel)
+	if !it.req.Streaming {
+		ctx = context.WithValue(ctx, RPCCancellerCtxKey{}, it.rpcCancel)
+	}
 	it.open(ctx)
 	return it
 }
