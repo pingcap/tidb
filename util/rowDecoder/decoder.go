@@ -180,7 +180,7 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.
 }
 
 // BuildFullDecodeColMap build a map that contains [columnID -> struct{*table.Column, expression.Expression}] from all columns.
-func BuildFullDecodeColMap(t table.Table, schema *expression.Schema) (map[int64]Column, error) {
+func BuildFullDecodeColMap(t table.Table, schema *expression.Schema) map[int64]Column {
 	decodeColMap := make(map[int64]Column, len(t.Cols()))
 	for _, col := range t.Cols() {
 		decodeColMap[col.ID] = Column{
@@ -188,5 +188,5 @@ func BuildFullDecodeColMap(t table.Table, schema *expression.Schema) (map[int64]
 			GenExpr: schema.Columns[col.Offset].VirtualExpr,
 		}
 	}
-	return decodeColMap, nil
+	return decodeColMap
 }

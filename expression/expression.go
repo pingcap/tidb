@@ -803,7 +803,9 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 			if err != nil {
 				terror.Log(err)
 			}
-			columns[i].VirtualExpr = e.Clone()
+			if e != nil {
+				columns[i].VirtualExpr = e.Clone()
+			}
 		}
 	}
 	return columns, names

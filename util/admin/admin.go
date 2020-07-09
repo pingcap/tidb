@@ -397,8 +397,7 @@ func makeRowDecoder(t table.Table, sctx sessionctx.Context) *decoder.RowDecoder 
 	dbName := model.NewCIStr(sctx.GetSessionVars().CurrentDB)
 	exprCols, _ := expression.ColumnInfos2ColumnsAndNames(sctx, dbName, t.Meta().Name, t.Meta().Columns, t.Meta())
 	mockSchema := expression.NewSchema(exprCols...)
-	decodeColsMap, ignored := decoder.BuildFullDecodeColMap(t, mockSchema)
-	_ = ignored
+	decodeColsMap := decoder.BuildFullDecodeColMap(t, mockSchema)
 
 	return decoder.NewRowDecoder(t, decodeColsMap)
 }

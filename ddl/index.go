@@ -1218,11 +1218,9 @@ func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table, indexInfo *mo
 	exprCols, _ := expression.ColumnInfos2ColumnsAndNames(sessCtx, dbName, t.Meta().Name, t.Meta().Columns, t.Meta())
 	mockSchema := expression.NewSchema(exprCols...)
 
-	decodeColMap, err := decoder.BuildFullDecodeColMap(t, mockSchema)
-	if err != nil {
-		return nil, err
-	}
+	decodeColMap := decoder.BuildFullDecodeColMap(t, mockSchema)
 
+	var err error
 	for _, col := range decodeColMap {
 		if col.GenExpr != nil {
 			col.GenExpr, err = col.GenExpr.ResolveIndices(mockSchema)
