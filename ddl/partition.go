@@ -576,16 +576,16 @@ func validRangePartitionType(col *model.ColumnInfo) bool {
 }
 
 // checkDropTablePartition checks if the partition exists and does not allow deleting the last existing partition in the table.
-func checkDropTablePartition(meta *model.TableInfo, partNames []string) error {
+func checkDropTablePartition(meta *model.TableInfo, partLowerNames []string) error {
 	pi := meta.Partition
 	if pi.Type != model.PartitionTypeRange && pi.Type != model.PartitionTypeList {
 		return errOnlyOnRangeListPartition.GenWithStackByArgs("DROP")
 	}
 	oldDefs := pi.Definitions
-	for _, pn := range partNames {
+	for _, pn := range partLowerNames {
 		found := false
 		for _, def := range oldDefs {
-			if def.Name.L == strings.ToLower(pn) {
+			if def.Name.L == pn {
 				found = true
 				break
 			}
@@ -594,20 +594,20 @@ func checkDropTablePartition(meta *model.TableInfo, partNames []string) error {
 			return errors.Trace(ErrDropPartitionNonExistent.GenWithStackByArgs(pn))
 		}
 	}
-	if len(oldDefs) == len(partNames) {
+	if len(oldDefs) == len(partLowerNames) {
 		return errors.Trace(ErrDropLastPartition)
 	}
 	return nil
 }
 
 // removePartitionInfo each ddl job deletes a partition.
-func removePartitionInfo(tblInfo *model.TableInfo, partNames []string) []int64 {
+func removePartitionInfo(tblInfo *model.TableInfo, partLowerNames []string) []int64 {
 	oldDefs := tblInfo.Partition.Definitions
 	newDefs := make([]model.PartitionDefinition, 0, len(oldDefs)-1)
 	var pids []int64
-	for _, partName := range partNames {
+	for _, partName := range partLowerNames {
 		for i := 0; i < len(oldDefs); i++ {
-			if oldDefs[i].Name.L != strings.ToLower(partName) {
+			if oldDefs[i].Name.L != partName {
 				continue
 			}
 			pids = append(pids, oldDefs[i].ID)
