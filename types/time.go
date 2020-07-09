@@ -569,7 +569,7 @@ func IstTimeZone(s string) (tz bool) {
 	return false
 }
 
-// timezone offsets are supported for inserted datetime values.
+// handleTimeZone offsets are supported for inserted datetime values.
 // See: https://dev.mysql.com/doc/refman/8.0/en/time-zone-support.html
 func handleTimeZone(timeSeps []string, timeZone string) (seps []string) {
 	timeStr := fmt.Sprintf("%v-%v-%v %v:%v:%v", timeSeps[0], timeSeps[1], timeSeps[2], timeSeps[3], timeSeps[4], timeSeps[5])
@@ -816,7 +816,7 @@ func ParseDateFormat(format string) []string {
 	return seps
 }
 
-// helper for date part splitting, punctuation characters are valid separators anywhere,
+// isValidSeparator helper for date part splitting, punctuation characters are valid separators anywhere,
 // while space and 'T' are valid separators only between date and time.
 func isValidSeparator(c byte, prevParts int) bool {
 	if isPunctuation(c) {
@@ -826,8 +826,8 @@ func isValidSeparator(c byte, prevParts int) bool {
 	return prevParts == 2 && (c == ' ' || c == 'T')
 }
 
+// splitDateTime The only delimiter recognized between a date and time part and a fractional seconds part is the decimal point.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
-// The only delimiter recognized between a date and time part and a fractional seconds part is the decimal point.
 func splitDateTime(format string) (seps []string, fracStr string) {
 	isTimezone := IstTimeZone(format)
 	var timeZone string
@@ -850,7 +850,7 @@ func splitDateTime(format string) (seps []string, fracStr string) {
 	return
 }
 
-// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
+// parseDatetime See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
 func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat bool) (Time, error) {
 	var (
 		year, month, day, hour, minute, second int
