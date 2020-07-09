@@ -66,5 +66,5 @@ jobs:
         contains(github.event.issue.labels.*.name, 'component/infoschema') ||
         contains(github.event.issue.labels.*.name, 'component/parser')
       with:
-        project: 'https://github.com/orgs/pingcap/projects/28'
+        project: 'https://github.com/pingcap/tidb/projects/40'
         column_name: 'Issue Backlog: Need Triage'
