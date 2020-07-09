@@ -1282,6 +1282,8 @@ func (s *testPessimisticSuite) TestKillWaitLockTxn(c *C) {
 	err := <-errCh
 	c.Assert(err, IsNil)
 	tk.Exec("rollback")
+	// reset kill
+	atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0)
 	tk.MustExec("rollback")
 	tk2.MustExec("rollback")
 }
