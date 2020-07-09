@@ -967,15 +967,7 @@ func (is *PhysicalIndexScan) indexScanRowSize(idx *model.IndexInfo, ds *DataSour
 func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoubleRead bool) {
 	indexCols := make([]*expression.Column, len(is.IdxCols), len(is.Index.Columns)+1)
 	copy(indexCols, is.IdxCols)
-	is.NeedCommonHandle = is.Table.IsCommonHandle && len(is.IdxCols) < len(is.Columns)
 
-	if is.NeedCommonHandle {
-		for i := len(is.Index.Columns); i < len(idxExprCols); i++ {
-			indexCols = append(indexCols, idxExprCols[i])
-		}
-		is.SetSchema(expression.NewSchema(indexCols...))
-		return
-	}
 	for i := len(is.IdxCols); i < len(is.Index.Columns); i++ {
 		if idxExprCols[i] != nil {
 			indexCols = append(indexCols, idxExprCols[i])
@@ -987,6 +979,15 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 				UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID(),
 			})
 		}
+	}
+	is.NeedCommonHandle = is.Table.IsCommonHandle
+
+	if is.NeedCommonHandle {
+		for i := len(is.Index.Columns); i < len(idxExprCols); i++ {
+			indexCols = append(indexCols, idxExprCols[i])
+		}
+		is.SetSchema(expression.NewSchema(indexCols...))
+		return
 	}
 	setHandle := len(indexCols) > len(is.Index.Columns)
 	if !setHandle {
