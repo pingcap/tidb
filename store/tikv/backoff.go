@@ -355,7 +355,7 @@ func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err err
 	}
 
 	if b.vars != nil && b.vars.Killed != nil {
-		if atomic.CompareAndSwapUint32(b.vars.Killed, 1, 0) {
+		if atomic.LoadUint32(b.vars.Killed) == 1 {
 			return ErrQueryInterrupted
 		}
 	}
