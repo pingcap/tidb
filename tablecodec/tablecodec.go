@@ -140,15 +140,18 @@ func DecodeRecordKey(key kv.Key) (tableID int64, handle kv.Handle, err error) {
 func DecodeIndexKey(key kv.Key) (tableID int64, indexID int64, indexValues []string, err error) {
 	k := key
 
-	tableID, indexID, key, err = DecodeIndexKeyPrefix(key)
+	tableID, indexID, isRecord, err := DecodeKeyHead(key)
 	if err != nil {
 		return 0, 0, nil, errors.Trace(err)
 	}
-
-	for len(key) > 0 {
+	if isRecord {
+		return 0, 0, nil, errInvalidIndexKey.GenWithStack("invalid index key - %q", k)
+	}
+	indexKey := key[prefixLen+idLen:]
+	for len(indexKey) > 0 {
 		// FIXME: Without the schema information, we can only decode the raw kind of
 		// the column. For instance, MysqlTime is internally saved as uint64.
-		remain, d, e := codec.DecodeOne(key)
+		remain, d, e := codec.DecodeOne(indexKey)
 		if e != nil {
 			return 0, 0, nil, errInvalidIndexKey.GenWithStack("invalid index key - %q %v", k, e)
 		}
@@ -157,9 +160,9 @@ func DecodeIndexKey(key kv.Key) (tableID int64, indexID int64, indexValues []str
 			return 0, 0, nil, errInvalidIndexKey.GenWithStack("invalid index key - %q %v", k, e1)
 		}
 		indexValues = append(indexValues, str)
-		key = remain
+		indexKey = remain
 	}
-	return
+	return tableID, indexID, indexValues, nil
 }
 
 // DecodeMetaKey decodes the key and get the meta key and meta field.
@@ -181,22 +184,6 @@ func DecodeMetaKey(ek kv.Key) (key []byte, field []byte, err error) {
 	}
 	_, field, err = codec.DecodeBytes(ek, nil)
 	return key, field, errors.Trace(err)
-}
-
-// DecodeIndexKeyPrefix decodes the key and gets the tableID, indexID, indexValues.
-func DecodeIndexKeyPrefix(key kv.Key) (tableID int64, indexID int64, indexValues []byte, err error) {
-	k := key
-
-	tableID, indexID, isRecord, err := DecodeKeyHead(key)
-	if err != nil {
-		return 0, 0, nil, errors.Trace(err)
-	}
-	if isRecord {
-		return 0, 0, nil, errInvalidIndexKey.GenWithStack("invalid index key - %q", k)
-	}
-	indexValues = key[prefixLen+idLen:]
-
-	return tableID, indexID, indexValues, nil
 }
 
 // DecodeKeyHead decodes the key's head and gets the tableID, indexID. isRecordKey is true when is a record key.
@@ -647,17 +634,23 @@ const (
 )
 
 // reEncodeHandle encodes the handle as a Datum so it can be properly decoded later.
-// If it is common handle, it is encoded as Bytes Datum.
+// If it is common handle, it returns the encoded column values.
 // If it is int handle, it is encoded as int Datum or uint Datum decided by the unsigned.
-func reEncodeHandle(handle kv.Handle, unsigned bool) ([]byte, error) {
+func reEncodeHandle(handle kv.Handle, unsigned bool) ([][]byte, error) {
 	if !handle.IsInt() {
-		return codec.EncodeValue(nil, nil, types.NewBytesDatum(handle.Encoded()))
+		handleColLen := handle.NumCols()
+		cHandleBytes := make([][]byte, 0, handleColLen)
+		for i := 0; i < handleColLen; i++ {
+			cHandleBytes = append(cHandleBytes, handle.EncodedCol(i))
+		}
+		return cHandleBytes, nil
 	}
 	handleDatum := types.NewIntDatum(handle.IntValue())
 	if unsigned {
 		handleDatum.SetUint64(handleDatum.GetUint64())
 	}
-	return codec.EncodeValue(nil, nil, handleDatum)
+	intHandleBytes, err := codec.EncodeValue(nil, nil, handleDatum)
+	return [][]byte{intHandleBytes}, err
 }
 
 func decodeIndexKvNewCollation(key, value []byte, hdStatus HandleStatus, columns []rowcodec.ColInfo) ([][]byte, error) {
@@ -686,15 +679,15 @@ func decodeIndexKvNewCollation(key, value []byte, hdStatus HandleStatus, columns
 		if err != nil {
 			return nil, err
 		}
-		resultValues = append(resultValues, handleBytes)
+		resultValues = append(resultValues, handleBytes...)
 	} else {
-		// In unique index.
+		// In unique int handle index.
 		handle := decodeIntHandleInIndexValue(value[vLen-tailLen:])
 		handleBytes, err := reEncodeHandle(handle, hdStatus == HandleIsUnsigned)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		resultValues = append(resultValues, handleBytes)
+		resultValues = append(resultValues, handleBytes...)
 	}
 	return resultValues, nil
 }
@@ -728,28 +721,19 @@ func decodeIndexKvOldCollation(key, value []byte, colsLen int, hdStatus HandleSt
 		if err != nil {
 			return nil, err
 		}
-		if !handle.IsInt() {
-			// Re-encode handle to bytes datum.
-			var handleBytes []byte
-			handleBytes, err = codec.EncodeValue(nil, nil, types.NewBytesDatum(b))
-			if err != nil {
-				return nil, err
-			}
-			resultValues = append(resultValues, handleBytes)
-		} else {
-			resultValues = append(resultValues, b)
-		}
-	} else {
-		// unique index
-		handle, err = decodeHandleInIndexValue(value)
-		if err != nil {
-			return nil, err
-		}
 		handleBytes, err := reEncodeHandle(handle, hdStatus == HandleIsUnsigned)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		resultValues = append(resultValues, handleBytes)
+		resultValues = append(resultValues, handleBytes...)
+	} else {
+		// In unique int handle index.
+		handle = decodeIntHandleInIndexValue(value)
+		handleBytes, err := reEncodeHandle(handle, hdStatus == HandleIsUnsigned)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		resultValues = append(resultValues, handleBytes...)
 	}
 	return resultValues, nil
 }
@@ -788,12 +772,15 @@ func decodeIndexKVUniqueCommonHandle(key, value []byte, colsLen int, hdStatus Ha
 	if hdStatus == HandleNotNeeded {
 		return resultValues, nil
 	}
-	// reEncode the common handle to a bytes column
-	reEncodedHandle, err1 := codec.EncodeValue(nil, nil, types.NewBytesDatum(value[4:handleEndOff]))
-	if err1 != nil {
-		return nil, err1
+	cHandle, err := decodeHandleInIndexKey(value[4:handleEndOff])
+	if err != nil {
+		return nil, err
 	}
-	resultValues = append(resultValues, reEncodedHandle)
+	cHandleBytes, err := reEncodeHandle(cHandle, false /* doesn't matter */)
+	if err != nil {
+		return nil, err
+	}
+	resultValues = append(resultValues, cHandleBytes...)
 	return resultValues, nil
 }
 
