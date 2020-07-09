@@ -21,7 +21,7 @@ They’re both achieved by executing ALTER statements.
 
 ### Adding replicas
 
-Adding new replicas can be done by one or more `ADD PLACEMENT` subclauses:
+Adding new replicas can be done by one or more `ADD PLACEMENT` clauses:
 
 ```sql
 ALTER TABLE table_name
@@ -31,13 +31,15 @@ ALTER TABLE table_name
 
 This statement indicates TiDB to add replicas for all data, including indexes, of table `table_name`.
 
+`ADD PLACEMENT` clause can appear multiple times in a single `ALTER TABLE` statement, each for one Raft role. For example, one clause defines leader and one defines follower.
+
 This kind of operation can be used to separate data on different data centers, which may help to reduce multi-region latency.
 
 Adding placement can be done through adding a placement rule in PD. The statement must wait until the PD returns a message.
 
 ### Altering placement
 
-Altering current placement rules can be done by one or more `ALTER PLACEMENT` subclauses:
+Altering current placement rules can be done by one or more `ALTER PLACEMENT` clauses:
 
 ```sql
 ALTER TABLE table_name
@@ -65,7 +67,7 @@ The statement must wait until the PD returns a message.
 
 ### Label configuration
 
-`LABEL` in the statement indicates the label constraints. Data is placed on the TiKV nodes whose labels conform to `LABEL` constraint.
+`LABEL` in the statement indicates the label constraints. Data is placed on the TiKV nodes whose labels conform to `LABEL` constraint. `LABEL` option is always required in the `ADD PLACEMENT` or `ALTER PLACEMENT` clause, otherwise it would be meaningless.
 
 Parameter `label` should be a string and in such a format: `{+|-}key=value,...`. Prefix `+` indicates that data can only be placed on those TiKV nodes whose labels contain such labels, and `-` indicates that data can’t be placed on those TiKV nodes whose labels contain such labels.
 
@@ -198,7 +200,7 @@ However, sequence is typically used with cache enabled, which means very few req
 
 ## Drop placement rules
 
-Dropping a placement rule can be achieved by a DROP subclause:
+Dropping a placement rule can be achieved by a DROP clause:
 
 ```sql
 ALTER TABLE table_name
@@ -239,6 +241,8 @@ For example, `group_id` can be in such a format:
 * `group_id` of a partition is the partition id
 * `group_id` of an unpartitioned index is the concatenation of table id and index id, e.g. `100-1`
 * `group_id` of a partitioned index is the concatenation of partition id and index id
+
+`id` field in placement rules can be anything but empty.
 
 ## DDL management
 
