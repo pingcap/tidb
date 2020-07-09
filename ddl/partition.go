@@ -585,7 +585,7 @@ func checkDropTablePartition(meta *model.TableInfo, partNames []string) error {
 	for _, pn := range partNames {
 		found := false
 		for _, def := range oldDefs {
-			if strings.EqualFold(def.Name.L, strings.ToLower(pn)) {
+			if def.Name.L == strings.ToLower(pn) {
 				found = true
 				break
 			}
@@ -607,7 +607,7 @@ func removePartitionInfo(tblInfo *model.TableInfo, partNames []string) []int64 {
 	var pids []int64
 	for _, partName := range partNames {
 		for i := 0; i < len(oldDefs); i++ {
-			if !strings.EqualFold(oldDefs[i].Name.L, strings.ToLower(partName)) {
+			if oldDefs[i].Name.L != strings.ToLower(partName) {
 				continue
 			}
 			pids = append(pids, oldDefs[i].ID)
