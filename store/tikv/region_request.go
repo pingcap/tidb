@@ -102,8 +102,38 @@ func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, re
 		}
 	})
 
+<<<<<<< HEAD
 	for {
 		ctx, err := s.regionCache.GetRPCContext(bo, regionID)
+=======
+	var replicaRead kv.ReplicaReadType
+	if req.ReplicaRead {
+		replicaRead = kv.ReplicaReadFollower
+	} else {
+		replicaRead = kv.ReplicaReadLeader
+	}
+	tryTimes := 0
+	for {
+		if (tryTimes > 0) && (tryTimes%100000 == 0) {
+			logutil.Logger(bo.ctx).Warn("retry get ", zap.Uint64("region = ", regionID.GetID()), zap.Int("times = ", tryTimes))
+		}
+		switch sType {
+		case kv.TiKV:
+			var seed uint32
+			if req.ReplicaReadSeed != nil {
+				seed = *req.ReplicaReadSeed
+			}
+			rpcCtx, err = s.regionCache.GetTiKVRPCContext(bo, regionID, replicaRead, seed)
+		case kv.TiFlash:
+			rpcCtx, err = s.regionCache.GetTiFlashRPCContext(bo, regionID)
+		case kv.TiDB:
+			rpcCtx = &RPCContext{
+				Addr: s.storeAddr,
+			}
+		default:
+			err = errors.Errorf("unsupported storage type: %v", sType)
+		}
+>>>>>>> 2b0b34b... executor: kill tableReader for each connection correctly (#18277)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -131,7 +161,18 @@ func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, re
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
+
+		// recheck whether the session/query is killed during the Next()
+		if bo.vars != nil && bo.vars.Killed != nil && atomic.LoadUint32(bo.vars.Killed) == 1 {
+			return nil, nil, ErrQueryInterrupted
+		}
+		failpoint.Inject("mockRetrySendReqToRegion", func(val failpoint.Value) {
+			if val.(bool) {
+				retry = true
+			}
+		})
 		if retry {
+			tryTimes++
 			continue
 		}
 
@@ -145,6 +186,7 @@ func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, re
 				return nil, nil, errors.Trace(err)
 			}
 			if retry {
+				tryTimes++
 				continue
 			}
 		}
@@ -164,6 +206,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 		defer s.releaseStoreToken(ctx.Store)
 	}
 	resp, err = s.client.SendRequest(bo.ctx, ctx.Addr, req, timeout)
+
 	if err != nil {
 		s.rpcError = err
 		if e := s.onSendFail(bo, ctx, err); e != nil {

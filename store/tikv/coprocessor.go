@@ -473,6 +473,9 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 
 		worker.handleTask(ctx, task, respCh)
 		close(task.respChan)
+		if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
+			return
+		}
 		select {
 		case <-worker.finishCh:
 			return
@@ -662,6 +665,11 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 			worker.sendToRespCh(resp, respCh, true)
 			return
 		}
+		// test whether the ctx is cancelled
+		if bo.vars != nil && bo.vars.Killed != nil && atomic.LoadUint32(bo.vars.Killed) == 1 {
+			return
+		}
+
 		if len(tasks) > 0 {
 			remainTasks = append(tasks, remainTasks[1:]...)
 		} else {
@@ -679,6 +687,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		}
 	})
 
+<<<<<<< HEAD
 	sender := NewRegionRequestSender(worker.store.regionCache, worker.store.client)
 	req := &tikvrpc.Request{
 		Type: task.cmdType,
@@ -694,12 +703,45 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 			HandleTime:     true,
 			ScanDetail:     true,
 		},
+=======
+	copReq := coprocessor.Request{
+		Tp:        worker.req.Tp,
+		StartTs:   worker.req.StartTs,
+		Data:      worker.req.Data,
+		Ranges:    task.ranges.toPBRanges(),
+		SchemaVer: worker.req.SchemaVar,
+	}
+
+	var cacheKey []byte = nil
+	var cacheValue *coprCacheValue = nil
+
+	// If there are many ranges, it is very likely to be a TableLookupRequest. They are not worth to cache since
+	// computing is not the main cost. Ignore such requests directly to avoid slowly building the cache key.
+	if task.cmdType == tikvrpc.CmdCop && worker.store.coprCache != nil && worker.req.Cacheable && len(copReq.Ranges) < 10 {
+		cKey, err := coprCacheBuildKey(&copReq)
+		if err == nil {
+			cacheKey = cKey
+			cValue := worker.store.coprCache.Get(cKey)
+			copReq.IsCacheEnabled = true
+			if cValue != nil && cValue.RegionID == task.region.id && cValue.TimeStamp <= worker.req.StartTs {
+				// Append cache version to the request to skip Coprocessor computation if possible
+				// when request result is cached
+				copReq.CacheIfMatchVersion = cValue.RegionDataVersion
+				cacheValue = cValue
+			} else {
+				copReq.CacheIfMatchVersion = 0
+			}
+		} else {
+			logutil.BgLogger().Warn("Failed to build copr cache key", zap.Error(err))
+		}
+>>>>>>> 2b0b34b... executor: kill tableReader for each connection correctly (#18277)
 	}
 	startTime := time.Now()
 	resp, rpcCtx, err := sender.SendReqCtx(bo, req, task.region, ReadTimeoutMedium)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
 	// Set task.storeAddr field so its task.String() method have the store address information.
 	task.storeAddr = sender.storeAddr
 	costTime := time.Since(startTime)
