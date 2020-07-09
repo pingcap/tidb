@@ -10,7 +10,7 @@ This proposal proposes to more comprehensive support the column type modificatio
 
 ## Background
 
-This feature  mainly uses the syntax of `alter table ... change/modify column` to support the modification of column type. The specific syntax is as follows:
+This feature mainly uses the syntax of `alter table ... change/modify column` to support the modification of column type. The specific syntax is as follows:
 
 ```sql
 ALTER TABLE tbl_name
@@ -31,19 +31,19 @@ At present, the column type change only supports the lengthening of the same typ
 
 ## Proposal
 
-The column type modifications supported by this proposal will involve rewriting column data and refactoring related indexes. This operation still needs to meet the basic requirements of online DDL operation, and to meet the compatibility of the versions before and after TiDB.
+The column type modifications supported by this proposal will involve rewriting column data and refactoring related indexes. This operation still needs to meet the basic requirements of online DDL operation, and to meet the compatibility between previous and subsequent versions TiDB.
 
 To support this feature, it needs to add additional related columns to the modified column. The type of the newly added column is the type you want to modify. In addition, it is necessary to add each additional related index to the index that contains this column, and update the type of the corresponding column in new indexes.
 
 ## Rationale
 
-This proposal needs to add additional related columns and indexes to the corresponding column, that is, make a copy of the columns and related indexes of `change/modify column`. And if user data is written during the copying process, the corresponding data needs to be updated in real time. Assume that the type of `colA` is changed from `originalType` to `newType`, `idxA` (index with `colA`, here it is assumed that there is only one corresponding general index, and there is no correlation to generate columns).
+This proposal suggests adding additional related columns and indexes which has involved the column to be modified, that is, make a copy of the columns and indexes contained `the changed/modified column`. And if user data is written during the copying process, the corresponding data needs to be updated in real time. Assume that the type of `colA` is changed from `originalType` to `newType`, `idxA` (index with `colA`, here it is assumed that there is only one corresponding general index, and there is no correlation to generate columns).
 
 ### Pre-preparation
 
 Add `ChangingCol` and `ChangingIdx` fields to the column and related index that need to be modified, which are used to associate the modified column and index information.
 
-When performing an insert or update operation (that is, handling in the `AddRecord` or `UpdateRecord` function) on the column of the type to be modified, the column and index to be backed up are written or updated according to the `newType` type.
+When performing an insert or update operation (handle in the `AddRecord` or `UpdateRecord` function) on the column whose type is to be modified, the column and index to be backed up are written or updated according to the `newType` type.
 
 ### process
 
@@ -56,7 +56,7 @@ When performing an insert or update operation (that is, handling in the `AddReco
 
 ### Note
 
-This operation itself is an `alter table tableName modify/change column …` statement, which includes changing the column type, changing the column attribute from null to not null, changing the column offset, etc. Considering the atomicity, some operations need to be changed together. Considering the atomicity, some operations need to be changed together.
+This operation itself is an `alter table tableName modify/change column …` statement, which includes changing the column type, changing the column attribute from null to not null, changing the column offset, etc. Considering the atomicity, some operations need to be changed together.
 
 In addition, due to the complexity of this feature, considering that the friendly review needs to be divided into multiple PRs, a switch can be added to deal with the problem of multiple PRs.
 
@@ -87,7 +87,7 @@ In addition to considering the update of the corresponding column type and data,
 
 ### Generate columns
 
-When the modified type column has a related generated column (whether stored or virtaul), it has the following characteristics:
+When the modified type column has a related generated column (whether stored or virtual), it has the following characteristics:
 
 * The generated column type related to this column is unchanged.
 * When performing an insert operation, the column value of the modified type will be affected by the generated column expression with this column. 
