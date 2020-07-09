@@ -286,24 +286,19 @@ func (a *SpillDiskAction) Action(t *memory.Tracker) {
 		})
 		return
 	}
-	defer func() {
-		if !t.CheckExceed() {
-			return
-		}
-		if a.fallbackAction != nil {
-			a.fallbackAction.Action(t)
-		}
-	}()
-
-	if atomic.LoadUint32(&a.status) == 2 {
-		return
-	}
 
 	a.cond.L.Lock()
 	for atomic.LoadUint32(&a.status) == 1 {
 		a.cond.Wait()
 	}
 	a.cond.L.Unlock()
+
+	if !t.CheckExceed() {
+		return
+	}
+	if a.fallbackAction != nil {
+		a.fallbackAction.Action(t)
+	}
 }
 
 // SetFallback sets the fallback action.
@@ -492,24 +487,19 @@ func (a *SortAndSpillDiskAction) Action(t *memory.Tracker) {
 		})
 		return
 	}
-	defer func() {
-		if !t.CheckExceed() {
-			return
-		}
-		if a.fallbackAction != nil {
-			a.fallbackAction.Action(t)
-		}
-	}()
-
-	if atomic.LoadUint32(&a.status) == 2 {
-		return
-	}
 
 	a.cond.L.Lock()
 	for atomic.LoadUint32(&a.status) == 1 {
 		a.cond.Wait()
 	}
 	a.cond.L.Unlock()
+
+	if !t.CheckExceed() {
+		return
+	}
+	if a.fallbackAction != nil {
+		a.fallbackAction.Action(t)
+	}
 }
 
 // SetFallback sets the fallback action.
