@@ -318,7 +318,7 @@ func (a *amendOperationAddIndex) processKey(ctx context.Context, sctx sessionctx
 		// Check if the generated index keys are unique for unique index.
 		if a.indexInfoAtCommit.Meta().Unique {
 			if _, ok := a.processedNewIndexKeys[string(newIdxKey)]; ok {
-				return resAdd, resRemove, errors.Errorf("amend process key same key found")
+				return resAdd, resRemove, errors.Trace(errors.Errorf("amend process key same key found for unique index=%v", a.indexInfoAtCommit.Meta().Name))
 			}
 		}
 		a.processedNewIndexKeys[string(newIdxKey)] = nil
@@ -401,7 +401,7 @@ func (s *SchemaAmender) AmendTxn(ctx context.Context, startInfoSchema tikv.Schem
 		// Partition table is not supported now.
 		tblInfoAtStart, ok := infoSchemaAtStart.TableByID(tblID)
 		if !ok {
-			return nil, nil, errors.Trace(errors.Errorf(fmt.Sprintf("tableID=%d is not found in infoSchema", tblID)))
+			return nil, nil, errors.Trace(errors.Errorf("tableID=%d is not found in infoSchema", tblID))
 		}
 		if tblInfoAtStart.Meta().Partition != nil {
 			logutil.Logger(ctx).Info("Amend for partition table is not supported", zap.Int64("tableID", tblID))
@@ -409,7 +409,7 @@ func (s *SchemaAmender) AmendTxn(ctx context.Context, startInfoSchema tikv.Schem
 		}
 		tblInfoAtCommit, ok := infoSchemaAtCheck.TableByID(tblID)
 		if !ok {
-			return nil, nil, errors.Trace(errors.Errorf(fmt.Sprintf("tableID=%d is not found in infoSchema", tblID)))
+			return nil, nil, errors.Trace(errors.Errorf("tableID=%d is not found in infoSchema", tblID))
 		}
 		if actionType&(memBufAmendType) != 0 {
 			needAmendMem = true
