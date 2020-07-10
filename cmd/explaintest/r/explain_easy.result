@@ -121,7 +121,7 @@ MemTableScan_4	10000.00	root	table:COLUMNS
 explain select c2 = (select c2 from t2 where t1.c1 = t2.c1 order by c1 limit 1) from t1;
 id	estRows	task	access object	operator info
 Projection_12	10000.00	root		eq(test.t1.c2, test.t2.c2)->Column#8
-└─Apply_14	10000.00	root		cache: ON, CARTESIAN left outer join
+└─Apply_14	10000.00	root		CARTESIAN left outer join
   ├─TableReader_16(Build)	10000.00	root		data:TableFullScan_15
   │ └─TableFullScan_15	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
   └─Projection_43(Probe)	1.00	root		test.t2.c1, test.t2.c2
@@ -309,7 +309,7 @@ create table t(a int primary key, b int, c int, index idx(b));
 explain select t.c in (select count(*) from t s ignore index(idx), t t1 where s.a = t.a and s.a = t1.a) from t;
 id	estRows	task	access object	operator info
 Projection_11	10000.00	root		Column#11
-└─Apply_13	10000.00	root		cache: ON, CARTESIAN left outer semi join, other cond:eq(test.t.c, Column#10)
+└─Apply_13	10000.00	root		CARTESIAN left outer semi join, other cond:eq(test.t.c, Column#10)
   ├─TableReader_15(Build)	10000.00	root		data:TableFullScan_14
   │ └─TableFullScan_14	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
   └─StreamAgg_20(Probe)	1.00	root		funcs:count(1)->Column#10
@@ -321,7 +321,7 @@ Projection_11	10000.00	root		Column#11
 explain select t.c in (select count(*) from t s use index(idx), t t1 where s.b = t.a and s.a = t1.a) from t;
 id	estRows	task	access object	operator info
 Projection_11	10000.00	root		Column#11
-└─Apply_13	10000.00	root		cache: ON, CARTESIAN left outer semi join, other cond:eq(test.t.c, Column#10)
+└─Apply_13	10000.00	root		CARTESIAN left outer semi join, other cond:eq(test.t.c, Column#10)
   ├─TableReader_15(Build)	10000.00	root		data:TableFullScan_14
   │ └─TableFullScan_14	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
   └─StreamAgg_20(Probe)	1.00	root		funcs:count(1)->Column#10
@@ -333,7 +333,7 @@ Projection_11	10000.00	root		Column#11
 explain select t.c in (select count(*) from t s use index(idx), t t1 where s.b = t.a and s.c = t1.a) from t;
 id	estRows	task	access object	operator info
 Projection_11	10000.00	root		Column#11
-└─Apply_13	10000.00	root		cache: ON, CARTESIAN left outer semi join, other cond:eq(test.t.c, Column#10)
+└─Apply_13	10000.00	root		CARTESIAN left outer semi join, other cond:eq(test.t.c, Column#10)
   ├─TableReader_15(Build)	10000.00	root		data:TableFullScan_14
   │ └─TableFullScan_14	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
   └─StreamAgg_20(Probe)	1.00	root		funcs:count(1)->Column#10
@@ -582,7 +582,7 @@ HashJoin_9	4166.67	root		inner join, equal:[eq(test.t.nb, test.t.nb)]
 explain select ifnull(t.nc, 1) in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t;
 id	estRows	task	access object	operator info
 Projection_12	10000.00	root		Column#14
-└─Apply_14	10000.00	root		cache: ON, left outer semi join, equal:[eq(test.t.nc, Column#13)]
+└─Apply_14	10000.00	root		left outer semi join, equal:[eq(test.t.nc, Column#13)]
   ├─TableReader_16(Build)	10000.00	root		data:TableFullScan_15
   │ └─TableFullScan_15	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
   └─HashAgg_19(Probe)	1.00	root		funcs:count(Column#15)->Column#13
@@ -615,7 +615,7 @@ HashJoin_7	8000.00	root		right outer join, equal:[eq(test.t.nb, test.t.nb)]
 explain select ifnull(t.a, 1) in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t;
 id	estRows	task	access object	operator info
 Projection_12	10000.00	root		Column#14
-└─Apply_14	10000.00	root		cache: ON, CARTESIAN left outer semi join, other cond:eq(ifnull(test.t.a, 1), Column#13)
+└─Apply_14	10000.00	root		CARTESIAN left outer semi join, other cond:eq(ifnull(test.t.a, 1), Column#13)
   ├─TableReader_16(Build)	10000.00	root		data:TableFullScan_15
   │ └─TableFullScan_15	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
   └─HashAgg_19(Probe)	1.00	root		funcs:count(Column#15)->Column#13

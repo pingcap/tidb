@@ -57,7 +57,7 @@ func (s *testSuite) TestParallelApply(c *C) {
 
 	q1 := "select t1.b from t t1 where t1.b > (select max(b) from t t2 where t1.a > t2.a)"
 	p1Seria := `| Projection_15                        | 9990.00  | root      |               | test.t.b                                                                           |
-| └─Apply_17                           | 9990.00  | root      |               | cache: ON, CARTESIAN inner join, other cond:gt(test.t.b, Column#7) |
+| └─Apply_17                           | 9990.00  | root      |               | CARTESIAN inner join, other cond:gt(test.t.b, Column#7) |
 |   ├─TableReader_20(Build)            | 9990.00  | root      |               | data:Selection_19                                                                  |
 |   │ └─Selection_19                   | 9990.00  | cop[tikv] |               | not(isnull(test.t.b))                                                              |
 |   │   └─TableFullScan_18             | 10000.00 | cop[tikv] | table:t1      | keep order:false, stats:pseudo                                                     |
@@ -72,7 +72,7 @@ func (s *testSuite) TestParallelApply(c *C) {
 	tk.MustQuery(q1).Sort().Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
 	tk.MustExec("set tidb_enable_parallel_apply=true")
 	p1Paral := `| Projection_15                        | 9990.00  | root      |               | test.t.b                                                                           |
-| └─Apply_17                           | 9990.00  | root      |               | cache: ON, concurrency: 4, CARTESIAN inner join, other cond:gt(test.t.b, Column#7) |
+| └─Apply_17                           | 9990.00  | root      |               | CARTESIAN inner join, other cond:gt(test.t.b, Column#7) |
 |   ├─TableReader_20(Build)            | 9990.00  | root      |               | data:Selection_19                                                                  |
 |   │ └─Selection_19                   | 9990.00  | cop[tikv] |               | not(isnull(test.t.b))                                                              |
 |   │   └─TableFullScan_18             | 10000.00 | cop[tikv] | table:t1      | keep order:false, stats:pseudo                                                     |
@@ -89,14 +89,14 @@ func (s *testSuite) TestParallelApply(c *C) {
 	// Apply_45 is in the inner side of Apply_28
 	q2 := "select * from t t0 where t0.b <= (select max(t1.b) from t t1 where t1.b > (select max(b) from t t2 where t1.a > t2.a and t0.a > t2.a));"
 	p2 := `| Projection_26                                | 9990.00  | root      |               | test.t.a, test.t.b                                                    |
-| └─Apply_28                                   | 9990.00  | root      |               | cache: ON, concurrency: 4, CARTESIAN inner join, other cond:le(test.t.b, Column#11)   |
+| └─Apply_28                                   | 9990.00  | root      |               | CARTESIAN inner join, other cond:le(test.t.b, Column#11)   |
 |   ├─TableReader_31(Build)                    | 9990.00  | root      |               | data:Selection_30                                                     |
 |   │ └─Selection_30                           | 9990.00  | cop[tikv] |               | not(isnull(test.t.b))                                                 |
 |   │   └─TableFullScan_29                     | 10000.00 | cop[tikv] | table:t0      | keep order:false, stats:pseudo                                        |
 |   └─Selection_32(Probe)                      | 0.80     | root      |               | not(isnull(Column#11))                                                |
 |     └─StreamAgg_37                           | 1.00     | root      |               | funcs:max(test.t.b)->Column#11                                        |
 |       └─TopN_40                              | 1.00     | root      |               | test.t.b:desc, offset:0, count:1                                      |
-|         └─Apply_45                           | 9990.00  | root      |               | cache: ON, CARTESIAN inner join, other cond:gt(test.t.b, Column#10)   |
+|         └─Apply_45                           | 9990.00  | root      |               | CARTESIAN inner join, other cond:gt(test.t.b, Column#10)   |
 |           ├─TableReader_48(Build)            | 9990.00  | root      |               | data:Selection_47                                                     |
 |           │ └─Selection_47                   | 9990.00  | cop[tikv] |               | not(isnull(test.t.b))                                                 |
 |           │   └─TableFullScan_46             | 10000.00 | cop[tikv] | table:t1      | keep order:false, stats:pseudo                                        |
