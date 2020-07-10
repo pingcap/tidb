@@ -1221,6 +1221,14 @@ func (b *PlanBuilder) buildIntersect(ctx context.Context, selects []*ast.SelectS
 		joinPlan.SetSchema(leftPlan.Schema())
 		joinPlan.names = make([]*types.FieldName, leftPlan.Schema().Len())
 		copy(joinPlan.names, leftPlan.OutputNames())
+		for j := 0; j < len(rightPlan.Schema().Columns); j++ {
+			leftCol, rightCol := leftPlan.Schema().Columns[j], rightPlan.Schema().Columns[j]
+			eqCond, err := expression.NewFunction(b.ctx, ast.NullEQ, types.NewFieldType(mysql.TypeTiny), leftCol, rightCol)
+			if err != nil {
+				return nil, nil, err
+			}
+			joinPlan.EqualConditions = append(joinPlan.EqualConditions, eqCond.(*expression.ScalarFunction))
+		}
 		leftPlan, err = b.buildDistinct(joinPlan, leftPlan.Schema().Len())
 		if err != nil {
 			return nil, nil, err
@@ -1248,6 +1256,14 @@ func (b *PlanBuilder) buildExcept(ctx context.Context, selects []LogicalPlan, af
 			joinPlan.SetSchema(leftPlan.Schema())
 			joinPlan.names = make([]*types.FieldName, leftPlan.Schema().Len())
 			copy(joinPlan.names, leftPlan.OutputNames())
+			for j := 0; j < len(rightPlan.Schema().Columns); j++ {
+				leftCol, rightCol := leftPlan.Schema().Columns[j], rightPlan.Schema().Columns[j]
+				eqCond, err := expression.NewFunction(b.ctx, ast.NullEQ, types.NewFieldType(mysql.TypeTiny), leftCol, rightCol)
+				if err != nil {
+					return nil, err
+				}
+				joinPlan.EqualConditions = append(joinPlan.EqualConditions, eqCond.(*expression.ScalarFunction))
+			}
 			leftPlan, err = b.buildDistinct(joinPlan, leftPlan.Schema().Len())
 			if err != nil {
 				return nil, err
