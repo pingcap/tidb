@@ -1,20 +1,19 @@
 package export
 
 import (
+	"bytes"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path"
+	"strings"
 	"time"
 )
 
 type globalMetadata struct {
-	logFile string
-	pos     string
-	gtidSet string
+	buffer bytes.Buffer
 
-	filePath   string
-	startTime  time.Time
-	finishTime time.Time
+	filePath string
 }
 
 const (
@@ -31,43 +30,25 @@ const (
 func newGlobalMetadata(outputDir string) *globalMetadata {
 	return &globalMetadata{
 		filePath: path.Join(outputDir, metadataPath),
+		buffer:   bytes.Buffer{},
 	}
 }
 
 func (m globalMetadata) String() string {
-	str := ""
-	if m.startTime.IsZero() {
-		return str
-	}
-	str += "Started dump at: " + m.startTime.Format(metadataTimeLayout) + "\n"
-
-	str += "SHOW MASTER STATUS:\n"
-	if m.logFile != "" {
-		str += "\t\tLog: " + m.logFile + "\n"
-	}
-	if m.pos != "" {
-		str += "\t\tPos: " + m.pos + "\n"
-	}
-	if m.gtidSet != "" {
-		str += "\t\tGTID:" + m.gtidSet + "\n"
-	}
-
-	if m.finishTime.IsZero() {
-		return str
-	}
-	str += "Finished dump at: " + m.finishTime.Format(metadataTimeLayout) + "\n"
-	return str
+	return m.buffer.String()
 }
 
 func (m *globalMetadata) recordStartTime(t time.Time) {
-	m.startTime = t
+	m.buffer.WriteString("Started dump at: " + t.Format(metadataTimeLayout) + "\n")
 }
 
 func (m *globalMetadata) recordFinishTime(t time.Time) {
-	m.finishTime = t
+	m.buffer.WriteString("Finished dump at: " + t.Format(metadataTimeLayout) + "\n")
 }
 
-func (m *globalMetadata) getGlobalMetaData(db *sql.DB, serverType ServerType) error {
+func (m *globalMetadata) recordGlobalMetaData(db *sql.DB, serverType ServerType) error {
+	// get master status info
+	m.buffer.WriteString("SHOW MASTER STATUS:\n")
 	switch serverType {
 	// For MySQL:
 	// mysql> SHOW MASTER STATUS;
@@ -91,9 +72,15 @@ func (m *globalMetadata) getGlobalMetaData(db *sql.DB, serverType ServerType) er
 		if err != nil {
 			return err
 		}
-		m.logFile = str[fileFieldIndex]
-		m.pos = str[posFieldIndex]
-		m.gtidSet = str[gtidSetFieldIndex]
+		if logFile := str[fileFieldIndex]; logFile != "" {
+			m.buffer.WriteString("\tLog: " + logFile + "\n")
+		}
+		if pos := str[posFieldIndex]; pos != "" {
+			m.buffer.WriteString("\tPos: " + pos + "\n")
+		}
+		if gtidSet := str[gtidSetFieldIndex]; gtidSet != "" {
+			m.buffer.WriteString("\tGTID:" + gtidSet + "\n")
+		}
 	// For MariaDB:
 	// SHOW MASTER STATUS;
 	// +--------------------+----------+--------------+------------------+
@@ -113,16 +100,81 @@ func (m *globalMetadata) getGlobalMetaData(db *sql.DB, serverType ServerType) er
 		if err != nil {
 			return err
 		}
-		m.logFile = str[fileFieldIndex]
-		m.pos = str[posFieldIndex]
-		err = db.QueryRow("SELECT @@global.gtid_binlog_pos").Scan(&m.gtidSet)
+		if logFile := str[fileFieldIndex]; logFile != "" {
+			m.buffer.WriteString("\tLog: " + logFile + "\n")
+		}
+		if pos := str[posFieldIndex]; pos != "" {
+			m.buffer.WriteString("\tPos: " + pos + "\n")
+		}
+		var gtidSet string
+		err = db.QueryRow("SELECT @@global.gtid_binlog_pos").Scan(&gtidSet)
 		if err != nil {
 			return err
 		}
+		if gtidSet != "" {
+			m.buffer.WriteString("\tGTID:" + gtidSet + "\n")
+		}
 	default:
-		return errors.New("unsupported serverType" + serverType.String() + "for getGlobalMetaData")
+		return errors.New("unsupported serverType" + serverType.String() + "for recordGlobalMetaData")
 	}
-	return nil
+	m.buffer.WriteString("\n")
+	if serverType == ServerTypeTiDB {
+		return nil
+	}
+	// get follower status info
+	var (
+		isms  bool
+		query string
+	)
+	if err := simpleQuery(db, "SELECT @@default_master_connection", func(rows *sql.Rows) error {
+		isms = true
+		return nil
+	}); err != nil {
+		isms = false
+	}
+	if isms {
+		query = "SHOW ALL SLAVES STATUS"
+	} else {
+		query = "SHOW SLAVE STATUS"
+	}
+	return simpleQuery(db, query, func(rows *sql.Rows) error {
+		cols, err := rows.Columns()
+		if err != nil {
+			return err
+		}
+		data := make([]string, len(cols))
+		args := make([]interface{}, 0, len(cols))
+		for i := range data {
+			args = append(args, &data[i])
+		}
+		if err := rows.Scan(args...); err != nil {
+			return err
+		}
+		var connName, pos, logFile, host, gtidSet string
+		for i, col := range cols {
+			col = strings.ToLower(col)
+			switch col {
+			case "connection_name":
+				connName = data[i]
+			case "exec_master_log_pos":
+				pos = data[i]
+			case "relay_master_log_file":
+				logFile = data[i]
+			case "master_host":
+				host = data[i]
+			case "executed_gtid_set":
+				gtidSet = data[i]
+			}
+		}
+		if len(host) > 0 {
+			m.buffer.WriteString("SHOW SLAVE STATUS:\n")
+			if isms {
+				m.buffer.WriteString("\tConnection name: " + connName + "\n")
+			}
+			fmt.Fprintf(&m.buffer, "\tHost: %s\n\tLog: %s\n\tPos: %s\n\tGTID:%s\n\n", host, logFile, pos, gtidSet)
+		}
+		return nil
+	})
 }
 
 func (m *globalMetadata) writeGlobalMetaData() error {
