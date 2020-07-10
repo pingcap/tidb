@@ -76,12 +76,14 @@ func Dump(pCtx context.Context, conf *Config) (err error) {
 		if conf.ServerInfo.ServerType != ServerTypeTiDB {
 			return errors.New("snapshot consistency is not supported for this server")
 		}
-		hasTiKV, err := CheckTiDBWithTiKV(pool)
-		if err != nil {
-			return err
-		}
-		if hasTiKV {
-			conf.SessionParams["tidb_snapshot"] = conf.Snapshot
+		if conf.Consistency == "snapshot" {
+			hasTiKV, err := CheckTiDBWithTiKV(pool)
+			if err != nil {
+				return err
+			}
+			if hasTiKV {
+				conf.SessionParams["tidb_snapshot"] = conf.Snapshot
+			}
 		}
 	}
 
@@ -103,25 +105,22 @@ func Dump(pCtx context.Context, conf *Config) (err error) {
 		return err
 	}
 
-	databases, err := prepareDumpingDatabases(conf, pool)
-	if err != nil {
-		return err
-	}
+	m := newGlobalMetadata(conf.OutputDirPath)
+	// write metadata even if dump failed
+	defer m.writeGlobalMetaData()
 
-	conf.Tables, err = listAllTables(pool, databases)
-	if err != nil {
-		return err
-	}
-
-	if !conf.NoViews {
-		views, err := listAllViews(pool, databases)
+	// for consistency lock, we should lock tables at first to get the tables we want to lock & dump
+	// for consistency lock, record meta pos before lock tables because other tables may still be modified while locking tables
+	if conf.Consistency == "lock" {
+		m.recordStartTime(time.Now())
+		err = m.recordGlobalMetaData(pool, conf.ServerInfo.ServerType)
 		if err != nil {
+			log.Info("get global metadata failed", zap.Error(err))
+		}
+		if err = prepareTableListToDump(conf, pool); err != nil {
 			return err
 		}
-		conf.Tables.Merge(views)
 	}
-
-	filterTables(conf)
 
 	conCtrl, err := NewConsistencyController(conf, pool)
 	if err != nil {
@@ -131,13 +130,17 @@ func Dump(pCtx context.Context, conf *Config) (err error) {
 		return err
 	}
 
-	m := newGlobalMetadata(conf.OutputDirPath)
-	// write metadata even if dump failed
-	defer m.writeGlobalMetaData()
-	m.recordStartTime(time.Now())
-	err = m.getGlobalMetaData(pool, conf.ServerInfo.ServerType)
-	if err != nil {
-		log.Info("get global metadata failed", zap.Error(err))
+	// for other consistencies, we should get table list after consistency is set up and GlobalMetaData is cached
+	// for other consistencies, record snapshot after whole tables are locked. The recorded meta info is exactly the locked snapshot.
+	if conf.Consistency != "lock" {
+		m.recordStartTime(time.Now())
+		err = m.recordGlobalMetaData(pool, conf.ServerInfo.ServerType)
+		if err != nil {
+			log.Info("get global metadata failed", zap.Error(err))
+		}
+		if err = prepareTableListToDump(conf, pool); err != nil {
+			return err
+		}
 	}
 
 	var writer Writer
@@ -194,6 +197,29 @@ func dumpDatabases(ctx context.Context, conf *Config, db *sql.DB, writer Writer)
 			return err
 		}
 	}
+	return nil
+}
+
+func prepareTableListToDump(conf *Config, pool *sql.DB) error {
+	databases, err := prepareDumpingDatabases(conf, pool)
+	if err != nil {
+		return err
+	}
+
+	conf.Tables, err = listAllTables(pool, databases)
+	if err != nil {
+		return err
+	}
+
+	if !conf.NoViews {
+		views, err := listAllViews(pool, databases)
+		if err != nil {
+			return err
+		}
+		conf.Tables.Merge(views)
+	}
+
+	filterTables(conf)
 	return nil
 }
 
