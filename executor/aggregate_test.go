@@ -866,7 +866,7 @@ func (s *testSuite) TestPR15242ShallowCopy(c *C) {
 
 }
 
-func (s *testSuiteAgg) TestIssue15958(c *C) {
+func (s *testSuite) TestIssue15958(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.Se.GetSessionVars().MaxChunkSize = 2
 	tk.MustExec(`drop table if exists t;`)
