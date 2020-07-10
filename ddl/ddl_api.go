@@ -4296,7 +4296,7 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 		SchemaName: schema.Name.L,
 		Type:       model.ActionAddPrimaryKey,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{unique, global, indexName, indexPartSpecifications, indexOption, sqlMode},
+		Args:       []interface{}{unique, indexName, indexPartSpecifications, indexOption, sqlMode, nil, global},
 		Priority:   ctx.GetSessionVars().DDLReorgPriority,
 	}
 
@@ -4457,7 +4457,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		SchemaName: schema.Name.L,
 		Type:       model.ActionAddIndex,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{unique, global, indexName, indexPartSpecifications, indexOption, hiddenCols},
+		Args:       []interface{}{unique, indexName, indexPartSpecifications, indexOption, hiddenCols, global},
 		Priority:   ctx.GetSessionVars().DDLReorgPriority,
 	}
 

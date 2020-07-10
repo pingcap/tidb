@@ -1169,7 +1169,7 @@ func (s *testIntegrationSuite5) TestBackwardCompatibility(c *C) {
 		TableID:    tbl.Meta().ID,
 		Type:       model.ActionAddIndex,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{unique, false, indexName, indexPartSpecifications, indexOption},
+		Args:       []interface{}{unique, indexName, indexPartSpecifications, indexOption},
 	}
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
