@@ -326,7 +326,7 @@ func (s *tikvStore) UUID() string {
 }
 
 func (s *tikvStore) CurrentVersion() (kv.Version, error) {
-	bo := NewBackoffer(context.Background(), tsoMaxBackoff)
+	bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
 	startTS, err := s.getTimestampWithRetry(bo)
 	if err != nil {
 		return kv.NewVersion(0), errors.Trace(err)

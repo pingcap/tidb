@@ -62,7 +62,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		return c.sendBatch(ctx, req, vars)
 	}
 	ctx = context.WithValue(ctx, txnStartKey, req.StartTs)
-	bo := NewBackoffer(ctx, copBuildTaskMaxBackoff).WithVars(vars)
+	bo := NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
 	tasks, err := buildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req)
 	if err != nil {
 		return copErrorResponse{err}
@@ -699,7 +699,7 @@ func chooseBackoffer(ctx context.Context, backoffermap map[uint64]*Backoffer, ta
 	if ok {
 		return bo
 	}
-	newbo := NewBackoffer(ctx, copNextMaxBackoff).WithVars(worker.vars)
+	newbo := NewBackofferWithVars(ctx, copNextMaxBackoff, worker.vars)
 	backoffermap[task.region.id] = newbo
 	return newbo
 }
