@@ -1645,7 +1645,7 @@ func buildHandleCols(sc *stmtctx.StatementContext, tbInfo *model.TableInfo) plan
 	intCol := &expression.Column{
 		RetType: types.NewFieldType(mysql.TypeLonglong),
 	}
-	return plannercore.NewIntHandleCol(intCol)
+	return plannercore.NewIntHandleCols(intCol)
 }
 
 func (b *executorBuilder) buildSplitRegion(v *plannercore.SplitRegion) Executor {

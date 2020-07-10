@@ -325,7 +325,7 @@ func (s *testSplitIndex) TestSplitTable(c *C) {
 	e := &SplitTableRegionExec{
 		baseExecutor: newBaseExecutor(ctx, nil, nil),
 		tableInfo:    tbInfo,
-		handleCols:   core.NewIntHandleCol(&expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong)}),
+		handleCols:   core.NewIntHandleCols(&expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong)}),
 		lower:        []types.Datum{types.NewDatum(0)},
 		upper:        []types.Datum{types.NewDatum(100)},
 		num:          10,
