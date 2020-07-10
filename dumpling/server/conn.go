@@ -72,7 +72,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
@@ -1297,7 +1296,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	var pointPlans []plannercore.Plan
 	if len(stmts) > 1 {
 		// Only pre-build point plans for multi-statement query
-		pointPlans, err = cc.prefetchPointPlanKeys(stmts)
+		pointPlans, err = cc.prefetchPointPlanKeys(ctx, stmts)
 		if err != nil {
 			return err
 		}
@@ -1323,7 +1322,8 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 
 // prefetchPointPlanKeys extracts the point keys in multi-statement query,
 // use BatchGet to get the keys, so the values will be cached in the snapshot cache, save RPC call cost.
-func (cc *clientConn) prefetchPointPlanKeys(stmts []ast.StmtNode) ([]plannercore.Plan, error) {
+// For pessimistic transaction, the keys will be batch locked.
+func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.StmtNode) ([]plannercore.Plan, error) {
 	txn, err := cc.ctx.Txn(false)
 	if err != nil {
 		return nil, err
@@ -1335,10 +1335,14 @@ func (cc *clientConn) prefetchPointPlanKeys(stmts []ast.StmtNode) ([]plannercore
 	}
 	vars := cc.ctx.GetSessionVars()
 	if vars.TxnCtx.IsPessimistic {
-		// Pessimistic transaction do not benefit from the prefetch because the keys will be returned by Lock,
-		// we can get the keys from the lock cache.
-		// TODO: In the future we can support pre lock point keys for pessimistic transactions.
-		return nil, nil
+		if vars.IsReadConsistencyTxn() {
+			// TODO: to support READ-COMMITTED, we need to avoid getting new TS for each statement in the query.
+			return nil, nil
+		}
+		if vars.TxnCtx.GetForUpdateTS() != vars.TxnCtx.StartTS {
+			// Do not handle the case that ForUpdateTS is changed for simplicity.
+			return nil, nil
+		}
 	}
 	pointPlans := make([]plannercore.Plan, len(stmts))
 	var idxKeys []kv.Key
@@ -1366,11 +1370,11 @@ func (cc *clientConn) prefetchPointPlanKeys(stmts []ast.StmtNode) ([]plannercore
 				}
 				if pp.IndexInfo != nil {
 					executor.ResetUpdateStmtCtx(sc, updateStmt, vars)
-					encoded, err1 := codec.EncodeKey(sc, nil, pp.IndexValues...)
+					idxKey, err1 := executor.EncodeUniqueIndexKey(cc.ctx, pp.TblInfo, pp.IndexInfo, pp.IndexValues, pp.TblInfo.ID)
 					if err1 != nil {
 						return nil, err1
 					}
-					idxKeys = append(idxKeys, tablecodec.EncodeIndexSeekKey(pp.TblInfo.ID, pp.IndexInfo.ID, encoded))
+					idxKeys = append(idxKeys, idxKey)
 				} else {
 					rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(pp.TblInfo.ID, pp.Handle))
 				}
@@ -1381,7 +1385,7 @@ func (cc *clientConn) prefetchPointPlanKeys(stmts []ast.StmtNode) ([]plannercore
 		return pointPlans, nil
 	}
 	snapshot := txn.GetSnapshot()
-	idxVals, err1 := snapshot.BatchGet(context.Background(), idxKeys)
+	idxVals, err1 := snapshot.BatchGet(ctx, idxKeys)
 	if err1 != nil {
 		return nil, err1
 	}
@@ -1393,9 +1397,19 @@ func (cc *clientConn) prefetchPointPlanKeys(stmts []ast.StmtNode) ([]plannercore
 		tblID := tablecodec.DecodeTableID(hack.Slice(idxKey))
 		rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(tblID, h))
 	}
-	_, err = snapshot.BatchGet(context.Background(), rowKeys)
-	if err != nil {
-		return nil, err
+	if vars.TxnCtx.IsPessimistic {
+		allKeys := append(rowKeys, idxKeys...)
+		err = executor.LockKeys(ctx, cc.ctx, vars.LockWaitTimeout, allKeys...)
+		if err != nil {
+			// suppress the lock error, we are not going to handle it here for simplicity.
+			err = nil
+			logutil.BgLogger().Warn("lock keys error on prefetch", zap.Error(err))
+		}
+	} else {
+		_, err = snapshot.BatchGet(ctx, rowKeys)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return pointPlans, nil
 }
