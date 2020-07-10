@@ -537,7 +537,7 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency i
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = w.resolveLocks(ctx, safePoint, concurrency, usePhysical)
+	_, err = w.resolveLocks(ctx, safePoint, concurrency, usePhysical)
 	if err != nil {
 		logutil.Logger(ctx).Error("[gc worker] resolve locks returns an error",
 			zap.String("uuid", w.uuid),
@@ -925,15 +925,15 @@ func (w *GCWorker) checkUsePhysicalScanLock() (bool, error) {
 	return false, nil
 }
 
-func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64, concurrency int, usePhysical bool) error {
+func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64, concurrency int, usePhysical bool) (bool, error) {
 	if !usePhysical {
-		return w.legacyResolveLocks(ctx, safePoint, concurrency)
+		return false, w.legacyResolveLocks(ctx, safePoint, concurrency)
 	}
 
 	// First try resolve locks with physical scan
 	err := w.resolveLocksPhysical(ctx, safePoint)
 	if err == nil {
-		return nil
+		return true, nil
 	}
 
 	logutil.Logger(ctx).Error("[gc worker] resolve locks with physical scan failed, trying fallback to legacy resolve lock",
@@ -941,7 +941,7 @@ func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64, concurren
 		zap.Uint64("safePoint", safePoint),
 		zap.Error(err))
 
-	return w.legacyResolveLocks(ctx, safePoint, concurrency)
+	return false, w.legacyResolveLocks(ctx, safePoint, concurrency)
 }
 
 func (w *GCWorker) legacyResolveLocks(ctx context.Context, safePoint uint64, concurrency int) error {
@@ -986,12 +986,12 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 
 	var stat tikv.RangeTaskStat
 	key := startKey
-	bo := tikv.NewBackoffer(ctx, tikv.GcResolveLockMaxBackoff)
+	bo := tikv.NewBackofferWithVars(ctx, tikv.GcResolveLockMaxBackoff, nil)
 	failpoint.Inject("setGcResolveMaxBackoff", func(v failpoint.Value) {
 		sleep := v.(int)
 		// cooperate with github.com/pingcap/tidb/store/tikv/invalidCacheAndRetry
 		ctx = context.WithValue(ctx, "injectedBackoff", struct{}{})
-		bo = tikv.NewBackoffer(ctx, sleep)
+		bo = tikv.NewBackofferWithVars(ctx, sleep, nil)
 	})
 	for {
 		select {
@@ -1059,10 +1059,10 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 		if len(key) == 0 || (len(endKey) != 0 && bytes.Compare(key, endKey) >= 0) {
 			break
 		}
-		bo = tikv.NewBackoffer(ctx, tikv.GcResolveLockMaxBackoff)
+		bo = tikv.NewBackofferWithVars(ctx, tikv.GcResolveLockMaxBackoff, nil)
 		failpoint.Inject("setGcResolveMaxBackoff", func(v failpoint.Value) {
 			sleep := v.(int)
-			bo = tikv.NewBackoffer(ctx, sleep)
+			bo = tikv.NewBackofferWithVars(ctx, sleep, nil)
 		})
 	}
 	return stat, nil
@@ -1360,7 +1360,7 @@ func (w *GCWorker) resolveLocksAcrossRegions(ctx context.Context, locks []*tikv.
 		failpoint.Return(errors.New("injectedError"))
 	})
 
-	bo := tikv.NewBackoffer(ctx, tikv.GcResolveLockMaxBackoff)
+	bo := tikv.NewBackofferWithVars(ctx, tikv.GcResolveLockMaxBackoff, nil)
 
 	for {
 		if len(locks) == 0 {
@@ -1396,7 +1396,7 @@ func (w *GCWorker) resolveLocksAcrossRegions(ctx context.Context, locks []*tikv.
 		}
 
 		// Recreate backoffer for next region
-		bo = tikv.NewBackoffer(ctx, tikv.GcResolveLockMaxBackoff)
+		bo = tikv.NewBackofferWithVars(ctx, tikv.GcResolveLockMaxBackoff, nil)
 		locks = locks[len(locksInRegion):]
 	}
 
@@ -1407,7 +1407,7 @@ func (w *GCWorker) uploadSafePointToPD(ctx context.Context, safePoint uint64) er
 	var newSafePoint uint64
 	var err error
 
-	bo := tikv.NewBackoffer(ctx, tikv.GcOneRegionMaxBackoff)
+	bo := tikv.NewBackofferWithVars(ctx, tikv.GcOneRegionMaxBackoff, nil)
 	for {
 		newSafePoint, err = w.pdClient.UpdateGCSafePoint(ctx, safePoint)
 		if err != nil {
@@ -1444,7 +1444,7 @@ func (w *GCWorker) doGCForRange(ctx context.Context, startKey []byte, endKey []b
 	}()
 	key := startKey
 	for {
-		bo := tikv.NewBackoffer(ctx, tikv.GcOneRegionMaxBackoff)
+		bo := tikv.NewBackofferWithVars(ctx, tikv.GcOneRegionMaxBackoff, nil)
 		loc, err := w.store.GetRegionCache().LocateKey(bo, key)
 		if err != nil {
 			return stat, errors.Trace(err)
@@ -1747,7 +1747,7 @@ func RunGCJob(ctx context.Context, s tikv.Storage, pd pd.Client, safePoint uint6
 		return errors.Trace(err)
 	}
 
-	err = gcWorker.resolveLocks(ctx, safePoint, concurrency, false)
+	_, err = gcWorker.resolveLocks(ctx, safePoint, concurrency, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1780,7 +1780,7 @@ func RunDistributedGCJob(ctx context.Context, s tikv.Storage, pd pd.Client, safe
 		return errors.Trace(err)
 	}
 
-	err = gcWorker.resolveLocks(ctx, safePoint, concurrency, false)
+	_, err = gcWorker.resolveLocks(ctx, safePoint, concurrency, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1798,6 +1798,17 @@ func RunDistributedGCJob(ctx context.Context, s tikv.Storage, pd pd.Client, safe
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+// RunResolveLocks resolves all locks before the safePoint and returns whether the physical scan mode is used.
+// It is exported only for test, do not use it in the production environment.
+func RunResolveLocks(ctx context.Context, s tikv.Storage, pd pd.Client, safePoint uint64, identifier string, concurrency int, usePhysical bool) (bool, error) {
+	gcWorker := &GCWorker{
+		store:    s,
+		uuid:     identifier,
+		pdClient: pd,
+	}
+	return gcWorker.resolveLocks(ctx, safePoint, concurrency, usePhysical)
 }
 
 // MockGCWorker is for test.
