@@ -113,6 +113,7 @@ var _ = Suite(&testSuiteAgg{baseTestSuite: &baseTestSuite{}})
 var _ = Suite(&testSuite6{&baseTestSuite{}})
 var _ = Suite(&testSuite7{&baseTestSuite{}})
 var _ = Suite(&testSuite8{&baseTestSuite{}})
+var _ = Suite(&testClusteredSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testShowStatsSuite{&baseTestSuite{}})
 var _ = Suite(&testBypassSuite{})
 var _ = Suite(&testUpdateSuite{})
@@ -5914,4 +5915,22 @@ func (s *testSuite) TestSlowQuerySensitiveQuery(c *C) {
 			"create user {user_sensitive@% password = ***};",
 			"set password for user user_sensitive@%;",
 		))
+}
+
+func (s *testSuite) TestKillTableReader(c *C) {
+	var retry = "github.com/pingcap/tidb/store/tikv/mockRetrySendReqToRegion"
+	defer func() {
+		c.Assert(failpoint.Disable(retry), IsNil)
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert into t values (1),(2),(3)")
+	c.Assert(failpoint.Enable(retry, `return(true)`), IsNil)
+	go func() {
+		c.Assert(tk.QueryToErr("select * from t"), Equals, executor.ErrQueryInterrupted)
+	}()
+	time.Sleep(1 * time.Second)
+	atomic.StoreUint32(&tk.Se.GetSessionVars().Killed, 1)
 }

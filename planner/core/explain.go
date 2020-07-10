@@ -684,7 +684,7 @@ func (p *LogicalUnionScan) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
 	fmt.Fprintf(buffer, "conds:%s",
 		expression.SortedExplainExpressionList(p.conditions))
-	fmt.Fprintf(buffer, ", handle:%s", p.handleCol.ExplainInfo())
+	fmt.Fprintf(buffer, ", handle:%s", p.handleCols)
 	return buffer.String()
 }
 
@@ -740,8 +740,8 @@ func (p *LogicalLimit) ExplainInfo() string {
 // ExplainInfo implements Plan interface.
 func (p *LogicalTableScan) ExplainInfo() string {
 	buffer := bytes.NewBufferString(p.Source.ExplainInfo())
-	if p.Source.handleCol != nil {
-		fmt.Fprintf(buffer, ", pk col:%s", p.Source.handleCol.ExplainInfo())
+	if p.Source.handleCols != nil {
+		fmt.Fprintf(buffer, ", pk col:%s", p.Source.handleCols)
 	}
 	if len(p.AccessConds) > 0 {
 		fmt.Fprintf(buffer, ", cond:%v", p.AccessConds)

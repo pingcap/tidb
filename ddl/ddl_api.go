@@ -19,7 +19,6 @@ package ddl
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"math"
 	"strconv"
@@ -807,7 +806,6 @@ func setTimestampDefaultValue(c *table.Column, hasDefaultValue bool, setOnUpdate
 	if mysql.HasTimestampFlag(c.Flag) && mysql.HasNotNullFlag(c.Flag) {
 		if setOnUpdateNow {
 			if err := c.SetDefaultValue(types.ZeroDatetimeStr); err != nil {
-				context.Background()
 				logutil.BgLogger().Error("set default value failed", zap.Error(err))
 			}
 		} else {
@@ -4241,7 +4239,9 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 	}
 
 	indexName = model.NewCIStr(mysql.PrimaryKeyName)
-	if indexInfo := t.Meta().FindIndexByName(indexName.L); indexInfo != nil {
+	if indexInfo := t.Meta().FindIndexByName(indexName.L); indexInfo != nil ||
+		// If the table's PKIsHandle is true, it also means that this table has a primary key.
+		t.Meta().PKIsHandle {
 		return infoschema.ErrMultiplePriKey
 	}
 
