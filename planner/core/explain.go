@@ -190,9 +190,9 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 		var fmtStr string
 		switch i {
 		case 0:
-			fmtStr = "pk cols: {%s, "
+			fmtStr = "pk cols: (%s, "
 		case len(p.PkCols) - 1:
-			fmtStr = "%s}"
+			fmtStr = "%s)"
 		default:
 			fmtStr = "%s, "
 		}
