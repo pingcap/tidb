@@ -74,17 +74,12 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	// We try to reuse the old allocator, so the cached auto ID can be reused.
 	var allocs autoid.Allocators
 	if tableIDIsValid(oldTableID) {
-<<<<<<< HEAD
-		if oldTableID == newTableID && diff.Type != model.ActionRenameTable {
-=======
 		if oldTableID == newTableID && diff.Type != model.ActionRenameTable &&
-			diff.Type != model.ActionExchangeTablePartition &&
 			// For repairing table in TiDB cluster, given 2 normal node and 1 repair node.
 			// For normal node's information schema, repaired table is existed.
 			// For repair node's information schema, repaired table is filtered (couldn't find it in `is`).
 			// So here skip to reserve the allocators when repairing table.
 			diff.Type != model.ActionRepairTable {
->>>>>>> f31298f... ddl: fix admin repair table will reload fail on the other node (#18285)
 			oldAllocs, _ := b.is.AllocByID(oldTableID)
 			allocs = filterAllocators(diff, oldAllocs)
 		}
