@@ -1595,9 +1595,11 @@ func (b *builtinCastStringAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, resul
 		if result.IsNull(i) {
 			continue
 		}
+		val := strings.TrimSpace(buf.GetString(i))
+		isNegative := len(val) > 0 && val[0] == '-'
 		dec := new(types.MyDecimal)
-		if !(b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag) && dec.IsNegative()) {
-			if err := stmtCtx.HandleTruncate(dec.FromString([]byte(buf.GetString(i)))); err != nil {
+		if !(b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag) && isNegative) {
+			if err := stmtCtx.HandleTruncate(dec.FromString([]byte(val))); err != nil {
 				return err
 			}
 			dec, err := types.ProduceDecWithSpecifiedTp(dec, b.tp, stmtCtx)
