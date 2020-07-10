@@ -99,7 +99,7 @@ type baseExecutor struct {
 	maxChunkSize  int
 	children      []Executor
 	retFieldTypes []*types.FieldType
-	runtimeStats  *execdetails.RuntimeStats
+	runtimeStats  *execdetails.BasicRuntimeStats
 }
 
 const (
@@ -217,7 +217,8 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id fmt.S
 	}
 	if ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
 		if e.id != nil {
-			e.runtimeStats = e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.id.String())
+			e.runtimeStats = &execdetails.BasicRuntimeStats{}
+			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(id.String(), e.runtimeStats)
 		}
 	}
 	if schema != nil {
