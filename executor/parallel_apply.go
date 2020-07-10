@@ -181,13 +181,13 @@ func (e *ParallelNestedLoopApplyExec) Close() error {
 // notifyWorker waits for all inner/outer-workers finishing and then put an empty
 // chunk into the resultCh to notify the upper executor there is no more data.
 func (e *ParallelNestedLoopApplyExec) notifyWorker(ctx context.Context) {
+	defer e.handleWorkerPanic(ctx, &e.notifyWg)
 	e.workerWg.Wait()
 	e.putResult(nil, nil)
-	e.notifyWg.Done()
 }
 
 func (e *ParallelNestedLoopApplyExec) outerWorker(ctx context.Context) {
-	defer e.handleWorkerPanic(ctx)
+	defer e.handleWorkerPanic(ctx, &e.workerWg)
 	var selected []bool
 	var err error
 	for {
@@ -219,7 +219,7 @@ func (e *ParallelNestedLoopApplyExec) outerWorker(ctx context.Context) {
 }
 
 func (e *ParallelNestedLoopApplyExec) innerWorker(ctx context.Context, id int) {
-	defer e.handleWorkerPanic(ctx)
+	defer e.handleWorkerPanic(ctx, &e.workerWg)
 	for {
 		var chk *chunk.Chunk
 		select {
@@ -246,13 +246,15 @@ func (e *ParallelNestedLoopApplyExec) putResult(chk *chunk.Chunk, err error) (ex
 	}
 }
 
-func (e *ParallelNestedLoopApplyExec) handleWorkerPanic(ctx context.Context) {
+func (e *ParallelNestedLoopApplyExec) handleWorkerPanic(ctx context.Context, wg *sync.WaitGroup) {
 	if r := recover(); r != nil {
 		err := errors.Errorf("%v", r)
 		logutil.Logger(ctx).Error("parallel nested loop join worker panicked", zap.Error(err), zap.Stack("stack"))
 		e.resultChkCh <- result{nil, err}
 	}
-	e.workerWg.Done()
+	if wg != nil {
+		wg.Done()
+	}
 }
 
 // fetchAllInners reads all data from the inner table and stores them in a List.
