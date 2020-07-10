@@ -260,15 +260,17 @@ func (ft *FieldType) Restore(ctx *format.RestoreCtx) error {
 func (ft *FieldType) RestoreAsCastType(ctx *format.RestoreCtx) {
 	switch ft.Tp {
 	case mysql.TypeVarString:
+		skipWriteBinary := false
 		if ft.Charset == charset.CharsetBin && ft.Collate == charset.CollationBin {
 			ctx.WriteKeyWord("BINARY")
+			skipWriteBinary = true
 		} else {
 			ctx.WriteKeyWord("CHAR")
 		}
 		if ft.Flen != UnspecifiedLength {
 			ctx.WritePlainf("(%d)", ft.Flen)
 		}
-		if ft.Flag&mysql.BinaryFlag != 0 {
+		if !skipWriteBinary && ft.Flag&mysql.BinaryFlag != 0 {
 			ctx.WriteKeyWord(" BINARY")
 		}
 		if ft.Charset != charset.CharsetBin && ft.Charset != mysql.DefaultCharset {
