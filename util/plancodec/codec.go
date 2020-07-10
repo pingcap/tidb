@@ -52,6 +52,7 @@ func DecodePlan(planString string) (string, error) {
 	pd := decoderPool.Get().(*planDecoder)
 	defer decoderPool.Put(pd)
 	pd.buf.Reset()
+	pd.addHeader = true
 	return pd.decode(planString)
 }
 
@@ -63,6 +64,7 @@ func DecodeNormalizedPlan(planString string) (string, error) {
 	pd := decoderPool.Get().(*planDecoder)
 	defer decoderPool.Put(pd)
 	pd.buf.Reset()
+	pd.addHeader = false
 	return pd.buildPlanTree(planString)
 }
 
@@ -71,6 +73,7 @@ type planDecoder struct {
 	depths    []int
 	indents   [][]rune
 	planInfos []*planInfo
+	addHeader bool
 }
 
 type planInfo struct {
@@ -107,7 +110,9 @@ func (pd *planDecoder) buildPlanTree(planString string) (string, error) {
 		pd.depths = append(pd.depths, p.depth)
 	}
 
-	pd.addPlanHeader()
+	if pd.addHeader {
+		pd.addPlanHeader()
+	}
 
 	// Calculated indentation of plans.
 	pd.initPlanTreeIndents()
@@ -139,31 +144,22 @@ func (pd *planDecoder) addPlanHeader() {
 	if len(pd.planInfos) == 0 {
 		return
 	}
-	var header *planInfo
-	switch len(pd.planInfos[0].fields) {
-	case 4:
+	header := &planInfo{
+		depth:  0,
+		fields: []string{"id", "task", "estRows", "operator info", "actRows", "execution info", "memory", "disk"},
+	}
+	if len(pd.planInfos[0].fields) < len(header.fields) {
 		// plan without runtime information.
-		header = &planInfo{
-			depth:  0,
-			fields: []string{"id", "task", "estRows", "operator info"},
-		}
-	case 8:
-		// plan with runtime information.
-		header = &planInfo{
-			depth:  0,
-			fields: []string{"id", "task", "estRows", "operator info", "actRows", "execution info", "memory", "disk"},
-		}
+		header.fields = header.fields[:len(pd.planInfos[0].fields)]
 	}
-	if header != nil {
-		planInfos := make([]*planInfo, 0, len(pd.planInfos)+1)
-		depths := make([]int, 0, len(pd.planInfos)+1)
-		planInfos = append(planInfos, header)
-		planInfos = append(planInfos, pd.planInfos...)
-		depths = append(depths, header.depth)
-		depths = append(depths, pd.depths...)
-		pd.planInfos = planInfos
-		pd.depths = depths
-	}
+	planInfos := make([]*planInfo, 0, len(pd.planInfos)+1)
+	depths := make([]int, 0, len(pd.planInfos)+1)
+	planInfos = append(planInfos, header)
+	planInfos = append(planInfos, pd.planInfos...)
+	depths = append(depths, header.depth)
+	depths = append(depths, pd.depths...)
+	pd.planInfos = planInfos
+	pd.depths = depths
 }
 
 func (pd *planDecoder) initPlanTreeIndents() {
