@@ -571,26 +571,20 @@ func IstTimeZone(s string) (tz bool) {
 
 // handleTimeZone offsets are supported for inserted datetime values.
 // See: https://dev.mysql.com/doc/refman/8.0/en/time-zone-support.html
-func handleTimeZone(timeSeps []string, timeZone string) (seps []string, err error) {
-	timeStr := fmt.Sprintf("%v-%v-%v %v:%v:%v", timeSeps[0], timeSeps[1], timeSeps[2], timeSeps[3], timeSeps[4], timeSeps[5])
-	formatTime, err := gotime.Parse("2006-01-02 15:04:05", timeStr)
+func handleTimeZone(timeZone string) (diffMinute gotime.Duration, err error) {
+	systemTZ, err := gotime.LoadLocation(timeutil.InferSystemTZ())
 	if err != nil {
-		return timeSeps, errors.Trace(err)
+		return diffMinute, errors.Trace(err)
 	}
-
-	location, err := gotime.LoadLocation(timeutil.InferSystemTZ())
-	if err != nil {
-		return timeSeps, errors.Trace(err)
-	}
-	_, offset := gotime.Now().In(location).Zone()
+	_, offset := gotime.Now().In(systemTZ).Zone()
 
 	hour, err := strconv.Atoi(timeZone[1:3])
 	if err != nil {
-		return timeSeps, errors.Trace(err)
+		return diffMinute, errors.Trace(err)
 	}
 	minute, err := strconv.Atoi(timeZone[4:6])
 	if err != nil {
-		return timeSeps, errors.Trace(err)
+		return diffMinute, errors.Trace(err)
 	}
 	timeDiff := 0
 	if timeZone[0:1] == "+" {
@@ -599,13 +593,12 @@ func handleTimeZone(timeSeps []string, timeZone string) (seps []string, err erro
 		timeDiff = offset/60 + (hour*60 + minute)
 	}
 
-	diffMinute, err := gotime.ParseDuration(fmt.Sprintf("%vm", timeDiff))
+	diffMinute, err = gotime.ParseDuration(fmt.Sprintf("%vm", timeDiff))
 	if err != nil {
-		return timeSeps, errors.Trace(err)
+		return diffMinute, errors.Trace(err)
 	}
-	newFormatTime := formatTime.Add(diffMinute)
 
-	return ParseDateFormat(newFormatTime.Format("2006-01-02 15:04:05")), nil
+	return
 }
 
 // GetFracIndex finds the last '.' for get fracStr, index = -1 means fracStr not found.
@@ -843,7 +836,7 @@ func isValidSeparator(c byte, prevParts int) bool {
 
 // splitDateTime The only delimiter recognized between a date and time part and a fractional seconds part is the decimal point.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
-func splitDateTime(format string) (seps []string, fracStr string, err error) {
+func splitDateTime(format string) (seps []string, fracStr string, timeZoneDiff gotime.Duration, err error) {
 	isTimezone := IstTimeZone(format)
 	var timeZone string
 	if isTimezone {
@@ -860,7 +853,7 @@ func splitDateTime(format string) (seps []string, fracStr string, err error) {
 	seps = ParseDateFormat(format)
 
 	if isTimezone {
-		seps, err = handleTimeZone(seps, timeZone)
+		timeZoneDiff, err = handleTimeZone(timeZone)
 	}
 	return
 }
@@ -874,7 +867,7 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat b
 		err                                    error
 	)
 
-	seps, fracStr, err := splitDateTime(str)
+	seps, fracStr, timeZoneDiff, err := splitDateTime(str)
 	if err != nil {
 		return ZeroDatetime, errors.Trace(err)
 	}
@@ -1030,6 +1023,14 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat b
 			return ZeroDatetime, errors.Trace(err)
 		}
 		tmp = FromGoTime(t1.Add(gotime.Second))
+	}
+
+	if timeZoneDiff != 0 {
+		t1, err := tmp.GoTime(sc.TimeZone)
+		if err != nil {
+			return ZeroDatetime, errors.Trace(err)
+		}
+		tmp = FromGoTime(t1.Add(timeZoneDiff))
 	}
 
 	nt := NewTime(tmp, mysql.TypeDatetime, fsp)
