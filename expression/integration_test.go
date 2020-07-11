@@ -4431,7 +4431,7 @@ func (s *testIntegrationSuite) TestTiDBDecodeKeyFunc(c *C) {
 	result = tk.MustQuery("select tidb_decode_key( '74800000000000019B5F698000000000000001015257303100000000FB013736383232313130FF3900000000000000F8010000000000000000F7' )")
 	result.Check(testkit.Rows(`{"indexID": "1", "indexValues": "RW01,768221109,", "tableID": "411"}`))
 
-	result = tk.MustQuery("select tidb_decode_key( '7480000000000000695F698000000000000001038000000000004E20' )")	
+	result = tk.MustQuery("select tidb_decode_key( '7480000000000000695F698000000000000001038000000000004E20' )")
 	result.Check(testkit.Rows(`{"indexID": "1", "indexValues": "20000", "tableID": "105"}`))
 
 	result = tk.MustQuery("select tidb_decode_key( 't\200\000\000\000\000\000\000\255_i\200\000\000\000\000\000\000\001\003\200\000\000\000\000e\221|\003\200\000\000\000\0008\307\024\003\200\000\000\000\0014\025\230\003\200\000\000\000' )")
