@@ -174,7 +174,6 @@ func (l *ListInDisk) NumChunks() int {
 func (l *ListInDisk) Close() error {
 	if l.disk != nil {
 		l.diskTracker.Consume(-l.diskTracker.BytesConsumed())
-		terror.Call(l.checksum.Close)
 		terror.Call(l.disk.Close)
 		bufWriterPool.Put(l.bufWriter)
 		return os.Remove(l.disk.Name())

@@ -136,10 +136,6 @@ func Test1(t *testing.T) {
 	numChk, numRow := 2, 2
 	chks, fields := initChunks(numChk, numRow)
 	l := NewListInDisk(fields)
-	defer func() {
-		t.Log(l.flush())
-		t.Log(os.Stat(l.disk.Name()))
-	}()
 	for _, chk := range chks {
 		err := l.Add(chk)
 		if err != nil {
@@ -147,4 +143,9 @@ func Test1(t *testing.T) {
 		}
 	}
 	fmt.Println(l.disk.Name())
+
+	_, err := l.GetRow(RowPtr{ChkIdx: 0, RowIdx: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
 }
