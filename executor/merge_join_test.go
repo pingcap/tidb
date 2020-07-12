@@ -241,7 +241,7 @@ func checkPlanAndRun(tk *testkit.TestKit, c *C, plan string, sql string) *testki
 	return tk.MustQuery(sql)
 }
 
-func (s *testSuite2) TestMergeJoinInDisk(c *C) {
+func (s *testSerialSuite1) TestMergeJoinInDisk(c *C) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMUseTmpStorage = true
