@@ -134,6 +134,20 @@ func (l *ListInDisk) Add(chk *Chunk) (err error) {
 	return
 }
 
+// GetChunk gets a Chunk from the ListInDisk by chkIdx.
+func (l *ListInDisk) GetChunk(chkIdx int) (*Chunk, error) {
+	chk := NewChunkWithCapacity(l.fieldTypes, l.NumRowsOfChunk(chkIdx))
+	offsets := l.offsets[chkIdx]
+	for rowIdx := range offsets {
+		row, err := l.GetRow(RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
+		if err != nil {
+			return chk, err
+		}
+		chk.AppendRow(row)
+	}
+	return chk, nil
+}
+
 // GetRow gets a Row from the ListInDisk by RowPtr.
 func (l *ListInDisk) GetRow(ptr RowPtr) (row Row, err error) {
 	err = l.flush()

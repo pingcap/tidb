@@ -71,6 +71,8 @@ type PhysicalTableReader struct {
 
 	// StoreType indicates table read from which type of store.
 	StoreType kv.StoreType
+
+	IsCommonHandle bool
 }
 
 // GetPhysicalTableReader returns PhysicalTableReader for logical TiKVSingleGather.
@@ -100,6 +102,7 @@ func (p *PhysicalTableReader) Clone() (PhysicalPlan, error) {
 	}
 	cloned.physicalSchemaProducer = *base
 	cloned.StoreType = p.StoreType
+	cloned.IsCommonHandle = p.IsCommonHandle
 	if cloned.tablePlan, err = p.tablePlan.Clone(); err != nil {
 		return nil, err
 	}
@@ -763,7 +766,7 @@ type PhysicalLock struct {
 
 	Lock ast.SelectLockType
 
-	TblID2Handle     map[int64][]*expression.Column
+	TblID2Handle     map[int64][]HandleCols
 	PartitionedTable []table.PartitionedTable
 }
 
@@ -940,7 +943,7 @@ type PhysicalUnionScan struct {
 
 	Conditions []expression.Expression
 
-	HandleCol *expression.Column
+	HandleCols HandleCols
 }
 
 // IsPartition returns true and partition ID if it works on a partition.
