@@ -98,7 +98,7 @@ func (s *testEvaluatorSerialSuites) TestCILike(c *C) {
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.generalMatch), commentf)
 
 		f.setCollator(collate.GetCollator("utf8mb4_unicode_ci"))
-		r, err := evalBuiltinFunc(f, chunk.Row{})
+		r, err = evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil, commentf)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.unicodeMatch), commentf)
 	}

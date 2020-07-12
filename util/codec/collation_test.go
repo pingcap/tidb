@@ -70,9 +70,9 @@ func (s *testCollationSuite) TestHashGroupKeyCollation(c *C) {
 	}
 
 	tp.Collate = "utf8_unicode_ci"
-	buf1 := make([][]byte, n)
-	buf2 := make([][]byte, n)
-	buf1, err := HashGroupKey(sc, n, chk1.Column(0), buf1, tp)
+	buf1 = make([][]byte, n)
+	buf2 = make([][]byte, n)
+	buf1, err = HashGroupKey(sc, n, chk1.Column(0), buf1, tp)
 	c.Assert(err, IsNil)
 	buf2, err = HashGroupKey(sc, n, chk2.Column(0), buf2, tp)
 	c.Assert(err, IsNil)
