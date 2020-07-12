@@ -95,9 +95,16 @@ func (s *testEvaluatorSerialSuites) TestCILike(c *C) {
 		r, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil, commentf)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.generalMatch), commentf)
+	}
 
+	for _, tt := range tests {
+		commentf := Commentf(`for input = "%s", pattern = "%s"`, tt.input, tt.pattern)
+		fc := funcs[ast.Like]
+		inputs := s.datumsToConstants(types.MakeDatums(tt.input, tt.pattern, 0))
+		f, err := fc.getFunction(s.ctx, inputs)
+		c.Assert(err, IsNil, commentf)
 		f.setCollator(collate.GetCollator("utf8mb4_unicode_ci"))
-		r, err = evalBuiltinFunc(f, chunk.Row{})
+		r, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil, commentf)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.unicodeMatch), commentf)
 	}
