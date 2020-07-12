@@ -223,11 +223,11 @@ func (p *PhysicalUnionScan) ResolveIndices() (err error) {
 			return err
 		}
 	}
-	resolvedHandleCol, err := p.HandleCol.ResolveIndices(p.children[0].Schema())
+	resolvedHandleCol, err := p.HandleCols.ResolveIndices(p.children[0].Schema())
 	if err != nil {
 		return err
 	}
-	p.HandleCol = resolvedHandleCol.(*expression.Column)
+	p.HandleCols = resolvedHandleCol
 	return
 }
 
@@ -296,7 +296,7 @@ func (p *PhysicalIndexLookUpReader) ResolveIndices() (err error) {
 		p.ExtraHandleCol = newCol.(*expression.Column)
 	}
 	for i, commonHandleCol := range p.CommonHandleCols {
-		newCol, err := commonHandleCol.ResolveIndices(p.indexPlan.Schema())
+		newCol, err := commonHandleCol.ResolveIndices(p.tablePlan.Schema())
 		if err != nil {
 			return err
 		}
@@ -538,7 +538,7 @@ func (p *PhysicalLock) ResolveIndices() (err error) {
 			if err != nil {
 				return err
 			}
-			p.TblID2Handle[i][j] = resolvedCol.(*expression.Column)
+			p.TblID2Handle[i][j] = resolvedCol
 		}
 	}
 	return nil

@@ -766,7 +766,7 @@ type PhysicalLock struct {
 
 	Lock ast.SelectLockType
 
-	TblID2Handle     map[int64][]*expression.Column
+	TblID2Handle     map[int64][]HandleCols
 	PartitionedTable []table.PartitionedTable
 }
 
@@ -943,7 +943,7 @@ type PhysicalUnionScan struct {
 
 	Conditions []expression.Expression
 
-	HandleCol *expression.Column
+	HandleCols HandleCols
 }
 
 // IsPartition returns true and partition ID if it works on a partition.
