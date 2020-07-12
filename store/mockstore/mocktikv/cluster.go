@@ -204,14 +204,6 @@ func (c *Cluster) AddStore(storeID uint64, addr string) {
 	c.stores[storeID] = newStore(storeID, addr)
 }
 
-// AddTiFlashStore add a new tiflash Store to the cluster.
-func (c *Cluster) AddTiFlashStore(storeID uint64, addr string) {
-	c.Lock()
-	defer c.Unlock()
-
-	c.stores[storeID] = newStore(storeID, addr, &metapb.StoreLabel{Key:"engine", Value:kv.TiFlash.Name()})
-}
-
 // RemoveStore removes a Store from the cluster.
 func (c *Cluster) RemoveStore(storeID uint64) {
 	c.Lock()
