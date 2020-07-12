@@ -6111,9 +6111,7 @@ func (s *testIntegrationSerialSuite) TestCollateSort(c *C) {
 	tk.MustExec("insert into t values ('a'), ('A'), ('b')")
 	tk.MustExec("insert into t values ('a'), ('A'), ('b')")
 	tk.MustQuery("select * from t order by a collate utf8mb4_bin").Check(testkit.Rows("A", "A", "A", "a", "a", "a", "b", "b", "b"))
-	// utf8_unicode_ci now has same behaviour as utf8_bin
-	// TODO: should change when actual implement
-	tk.MustQuery("select * from t order by a collate utf8mb4_unicode_ci").Check(testkit.Rows("A", "A", "A", "a", "a", "a", "b", "b", "b"))
+	tk.MustQuery("select * from t order by a collate utf8mb4_unicode_ci").Check(testkit.Rows("a", "A", "a", "A", "a", "A", "b", "b", "b"))
 }
 
 func (s *testIntegrationSerialSuite) TestCollateHashAgg(c *C) {
@@ -6135,9 +6133,7 @@ func (s *testIntegrationSerialSuite) TestCollateHashAgg(c *C) {
 	tk.MustExec("insert into t values ('a'), ('A'), ('b')")
 	tk.MustExec("insert into t values ('a'), ('A'), ('b')")
 	tk.MustQuery("select count(1) from t group by a collate utf8mb4_bin").Check(testkit.Rows("3", "3", "3"))
-	// utf8_unicode_ci now has same behaviour as utf8_bin
-	// TODO: should change when actual implement
-	tk.MustQuery("select count(1) from t group by a collate utf8mb4_unicode_ci").Check(testkit.Rows("3", "3", "3"))
+	tk.MustQuery("select count(1) from t group by a collate utf8mb4_unicode_ci").Check(testkit.Rows("6", "3"))
 }
 
 func (s *testIntegrationSerialSuite) TestCollateStreamAgg(c *C) {
@@ -6203,9 +6199,7 @@ func (s *testIntegrationSerialSuite) TestCollateStringFunction(c *C) {
 	tk.MustQuery("select field('a', 'b', 'A');").Check(testkit.Rows("0"))
 	tk.MustQuery("select field('a', 'b', 'A' collate utf8mb4_bin);").Check(testkit.Rows("0"))
 	tk.MustQuery("select field('a', 'b', 'a ' collate utf8mb4_bin);").Check(testkit.Rows("2"))
-	// utf8_unicode_ci now has same behaviour as utf8_bin
-	// TODO: should change when actual implement
-	tk.MustQuery("select field('a', 'b', 'A' collate utf8mb4_unicode_ci);").Check(testkit.Rows("0"))
+	tk.MustQuery("select field('a', 'b', 'A' collate utf8mb4_unicode_ci);").Check(testkit.Rows("2"))
 	tk.MustQuery("select field('a', 'b', 'a ' collate utf8mb4_unicode_ci);").Check(testkit.Rows("2"))
 	tk.MustQuery("select field('a', 'b', 'A' collate utf8mb4_general_ci);").Check(testkit.Rows("2"))
 	tk.MustQuery("select field('a', 'b', 'a ' collate utf8mb4_general_ci);").Check(testkit.Rows("2"))
@@ -6220,9 +6214,7 @@ func (s *testIntegrationSerialSuite) TestCollateStringFunction(c *C) {
 	tk.MustQuery("select FIND_IN_SET('a','b,A,c,d');").Check(testkit.Rows("0"))
 	tk.MustQuery("select FIND_IN_SET('a','b,A,c,d' collate utf8mb4_bin);").Check(testkit.Rows("0"))
 	tk.MustQuery("select FIND_IN_SET('a','b,a ,c,d' collate utf8mb4_bin);").Check(testkit.Rows("2"))
-	// utf8_unicode_ci now has same behaviour as utf8_bin
-	// TODO: should change when actual implement
-	tk.MustQuery("select FIND_IN_SET('a','b,A,c,d' collate utf8mb4_unicode_ci);").Check(testkit.Rows("0"))
+	tk.MustQuery("select FIND_IN_SET('a','b,A,c,d' collate utf8mb4_unicode_ci);").Check(testkit.Rows("2"))
 	tk.MustQuery("select FIND_IN_SET('a','b,a ,c,d' collate utf8mb4_unicode_ci);").Check(testkit.Rows("2"))
 	tk.MustQuery("select FIND_IN_SET('a','b,A,c,d' collate utf8mb4_general_ci);").Check(testkit.Rows("2"))
 	tk.MustQuery("select FIND_IN_SET('a','b,a ,c,d' collate utf8mb4_general_ci);").Check(testkit.Rows("2"))

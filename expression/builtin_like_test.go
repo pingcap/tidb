@@ -81,10 +81,9 @@ func (s *testEvaluatorSerialSuites) TestCILike(c *C) {
 		{"áá", "a_%a", 0, 0},
 		{"áá", "a%_a", 0, 0},
 		{"áééáííí", "a_%a%", 1, 1},
-		{"ß", "s%", 1, 1},
 
 		//general and unicode different
-		{"ß", "ss", 0, 1},
+		{"ß", "s%", 1, 0},
 	}
 	for _, tt := range tests {
 		commentf := Commentf(`for input = "%s", pattern = "%s"`, tt.input, tt.pattern)
