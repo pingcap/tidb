@@ -210,12 +210,12 @@ func runeEqual(a, b rune) bool {
 	}
 
 	getWeight := func(r rune) []uint16 {
-		if unicodePlaneTable[r >> 8] == nil {
+		if unicodePlaneTable[r>>8] == nil {
 			return nil
 		}
 
-		offset := uint16(r & 0xff) * uint16(runeWeightLength[r >> 8])
-		return unicodePlaneTable[r >> 8][offset: offset+uint16(runeWeightLength[r >> 8])]
+		offset := uint16(r&0xff) * uint16(runeWeightLength[r>>8])
+		return unicodePlaneTable[r>>8][offset : offset+uint16(runeWeightLength[r>>8])]
 	}
 
 	weightA := getWeight(a)
@@ -242,7 +242,7 @@ func convertUnicodeToWeight(r rune) []uint16 {
 		return []uint16{0xFFFD}
 	}
 
-	if unicodePlaneTable[r >> 8] == nil {
+	if unicodePlaneTable[r>>8] == nil {
 		base := 0
 		if r >= 0x3400 && r <= 0x4DB5 {
 			base = 0xFB80 /* CJK Ideograph Extension */
@@ -255,7 +255,7 @@ func convertUnicodeToWeight(r rune) []uint16 {
 	}
 
 	plane := r >> 8
-	offset := uint16(r & 0xFF) * uint16(runeWeightLength[plane])
+	offset := uint16(r&0xFF) * uint16(runeWeightLength[plane])
 	if unicodePlaneTable[plane][offset] != terminal {
 		return unicodePlaneTable[plane][offset : offset+uint16(runeWeightLength[plane])]
 	}

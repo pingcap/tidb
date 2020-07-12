@@ -59,10 +59,10 @@ func (s *testEvaluatorSerialSuites) TestCILike(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 	tests := []struct {
-		input   string
-		pattern string
-		generalMatch   int
-		unicodeMatch   int
+		input        string
+		pattern      string
+		generalMatch int
+		unicodeMatch int
 	}{
 		//general and unicode same
 		{"a", "", 0, 0},
@@ -81,10 +81,10 @@ func (s *testEvaluatorSerialSuites) TestCILike(c *C) {
 		{"áá", "a_%a", 0, 0},
 		{"áá", "a%_a", 0, 0},
 		{"áééáííí", "a_%a%", 1, 1},
-		{'ß','s%', 1, 1}
+		{"ß", "s%", 1, 1},
 
 		//general and unicode different
-		{'ß','ss', 0, 1}
+		{"ß", "ss", 0, 1},
 	}
 	for _, tt := range tests {
 		commentf := Commentf(`for input = "%s", pattern = "%s"`, tt.input, tt.pattern)

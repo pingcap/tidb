@@ -36,8 +36,8 @@ func (s *testCollationSuites) TestCompareString(c *C) {
 	c.Assert(types.CompareString("À", "A", "utf8_general_ci"), Equals, 0)
 	c.Assert(types.CompareString("😜", "😃", "utf8_general_ci"), Equals, 0)
 	c.Assert(types.CompareString("a ", "a  ", "utf8_general_ci"), Equals, 0)
-	c.Assert(types.CompareString("ß" ,"s", "utf8_general_ci"), Equals, 0)
-	c.Assert(types.CompareString("ß" ,"ss", "utf8_general_ci"), Not(Equals), 0)
+	c.Assert(types.CompareString("ß", "s", "utf8_general_ci"), Equals, 0)
+	c.Assert(types.CompareString("ß", "ss", "utf8_general_ci"), Not(Equals), 0)
 
 	//binary
 	c.Assert(types.CompareString("a", "A", "binary"), Not(Equals), 0)
