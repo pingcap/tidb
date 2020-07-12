@@ -31,20 +31,27 @@ func (s *testCollationSuites) TestCompareString(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 
+	//general_ci
 	c.Assert(types.CompareString("a", "A", "utf8_general_ci"), Equals, 0)
 	c.Assert(types.CompareString("À", "A", "utf8_general_ci"), Equals, 0)
 	c.Assert(types.CompareString("😜", "😃", "utf8_general_ci"), Equals, 0)
 	c.Assert(types.CompareString("a ", "a  ", "utf8_general_ci"), Equals, 0)
+	c.Assert(types.CompareString("ß" ,"s", "utf8_general_ci"), Equals, 0)
+	c.Assert(types.CompareString("ß" ,"ss", "utf8_general_ci"), Not(Equals), 0)
+
+	//binary
 	c.Assert(types.CompareString("a", "A", "binary"), Not(Equals), 0)
 	c.Assert(types.CompareString("À", "A", "binary"), Not(Equals), 0)
 	c.Assert(types.CompareString("😜", "😃", "binary"), Not(Equals), 0)
 	c.Assert(types.CompareString("a ", "a  ", "binary"), Not(Equals), 0)
-	// utf8_unicode_ci now has same behaviour as utf8_bin
-	// TODO: should change when actual implement
-	c.Assert(types.CompareString("a", "A", "utf8_unicode_ci"), Not(Equals), 0)
-	c.Assert(types.CompareString("À", "A", "utf8_unicode_ci"), Not(Equals), 0)
-	c.Assert(types.CompareString("😜", "😃", "utf8_unicode_ci"), Not(Equals), 0)
+
+	// unicode_ci
+	c.Assert(types.CompareString("a", "A", "utf8_unicode_ci"), Equals, 0)
+	c.Assert(types.CompareString("À", "A", "utf8_unicode_ci"), Equals, 0)
+	c.Assert(types.CompareString("😜", "😃", "utf8_unicode_ci"), Equals, 0)
 	c.Assert(types.CompareString("a ", "a  ", "utf8_unicode_ci"), Equals, 0)
+	c.Assert(types.CompareString("ß", "s", "utf8_unicode_ci"), Not(Equals), 0)
+	c.Assert(types.CompareString("ß", "ss", "utf8_unicode_ci"), Equals, 0)
 
 	ctx := mock.NewContext()
 	ft := types.NewFieldType(mysql.TypeVarString)

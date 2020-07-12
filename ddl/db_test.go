@@ -2279,11 +2279,9 @@ func (s *testSerialDBSuite) TestCreateTable(c *C) {
 	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
 	failSQL = "create table t_enum (a enum('abc','Abc')) charset=utf8 collate=utf8_general_ci;"
 	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
-	// utf8_unicode_ci now has same behaviour as utf8_bin
-	// should change when actual implement
-	failSQL = "create table t_enum (a enum('e','e')) charset=utf8 collate=utf8_unicode_ci;"
+	failSQL = "create table t_enum (a enum('e','E')) charset=utf8 collate=utf8_unicode_ci;"
 	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
-	failSQL = "create table t_enum (a enum('abc','abc')) charset=utf8 collate=utf8_unicode_ci;"
+	failSQL = "create table t_enum (a enum('ss','ß')) charset=utf8 collate=utf8_unicode_ci;"
 	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
 	// test for set column
 	failSQL = "create table t_enum (a set('e','e'));"
@@ -2294,13 +2292,11 @@ func (s *testSerialDBSuite) TestCreateTable(c *C) {
 	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
 	_, err = tk.Exec("create table t_enum (a enum('B','b')) charset=utf8 collate=utf8_general_ci;")
 	c.Assert(err.Error(), Equals, "[types:1291]Column 'a' has duplicated value 'b' in ENUM")
-	// utf8_unicode_ci now has same behaviour as utf8_bin
-	// should change when actual implement
-	failSQL = "create table t_enum (a set('e','e')) charset=utf8 collate=utf8_unicode_ci;"
+	failSQL = "create table t_enum (a set('e','E')) charset=utf8 collate=utf8_unicode_ci;"
 	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
-	failSQL = "create table t_enum (a set('abc','abc')) charset=utf8 collate=utf8_unicode_ci;"
+	failSQL = "create table t_enum (a set('ss','ß')) charset=utf8 collate=utf8_unicode_ci;"
 	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
-	_, err = tk.Exec("create table t_enum (a enum('b','b')) charset=utf8 collate=utf8_unicode_ci;")
+	_, err = tk.Exec("create table t_enum (a enum('ss','ß')) charset=utf8 collate=utf8_unicode_ci;")
 	c.Assert(err.Error(), Equals, "[types:1291]Column 'a' has duplicated value 'b' in ENUM")
 }
 

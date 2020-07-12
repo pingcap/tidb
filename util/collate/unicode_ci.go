@@ -58,21 +58,25 @@ func (uc *unicodeCICollator) Compare(a, b string) int {
 	as := newUnicodeScanner(truncateTailingSpace(a))
 	bs := newUnicodeScanner(truncateTailingSpace(b))
 
-	an := uint16(1)
-	bn := uint16(1)
+	var an uint16
+	var bn uint16
 
-	for an != terminal && bn != terminal {
+	for {
 		an = as.next()
 		bn = bs.next()
+
+		if an == terminal || bn == terminal {
+			break
+		}
 
 		if an == bn {
 			continue
 		}
 
-		return int(an - bn)
+		return sign(int(an) - int(bn))
 	}
 
-	return int(an - bn)
+	return sign(int(an) - int(bn))
 }
 
 // Key implements Collator interface.

@@ -59,8 +59,6 @@ func (s *testSetSuite) TestSet(c *C) {
 		c.Assert(e.String(), Equals, t.ExpectedName)
 	}
 
-	// utf8_unicode_ci now has same behaviour as utf8_bin
-	// should change when actual implement
 	for _, t := range tbl {
 		e, err := ParseSetName(elems, t.Name, "utf8_unicode_ci")
 		c.Assert(err, IsNil)

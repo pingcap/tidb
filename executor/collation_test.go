@@ -49,7 +49,6 @@ func (s *testCollationSuite) TestVecGroupChecker(c *C) {
 	chk.Column(0).AppendString("À")
 	chk.Column(0).AppendString("A")
 
-	// it may want test binary, if test default collate, 'some_invalid_collate' will be more readable
 	tp.Collate = "binary"
 	groupChecker.reset()
 	_, err := groupChecker.splitIntoGroups(chk)
@@ -72,16 +71,14 @@ func (s *testCollationSuite) TestVecGroupChecker(c *C) {
 	}
 	c.Assert(groupChecker.isExhausted(), IsTrue)
 
-	// utf8_unicode_ci now has same behaviour as utf8_bin
-	// TODO: should change when actual implement
 	tp.Collate = "utf8_unicode_ci"
 	groupChecker.reset()
 	_, err = groupChecker.splitIntoGroups(chk)
 	c.Assert(err, IsNil)
-	for i := 0; i < 6; i++ {
+	for i := 0; i < 3; i++ {
 		b, e := groupChecker.getNextGroup()
-		c.Assert(b, Equals, i)
-		c.Assert(e, Equals, i+1)
+		c.Assert(b, Equals, i*2)
+		c.Assert(e, Equals, i*2+2)
 	}
 	c.Assert(groupChecker.isExhausted(), IsTrue)
 

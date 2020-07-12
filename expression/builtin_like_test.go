@@ -61,24 +61,30 @@ func (s *testEvaluatorSerialSuites) TestCILike(c *C) {
 	tests := []struct {
 		input   string
 		pattern string
-		match   int
+		generalMatch   int
+		unicodeMatch   int
 	}{
-		{"a", "", 0},
-		{"a", "a", 1},
-		{"a", "á", 1},
-		{"a", "b", 0},
-		{"aA", "Aa", 1},
-		{"áAb", `Aa%`, 1},
-		{"áAb", `%ab%`, 1},
-		{"áAb", `%ab`, 1},
-		{"ÀAb", "aA_", 1},
-		{"áééá", "a_%a", 1},
-		{"áééá", "a%_a", 1},
-		{"áéá", "a_%a", 1},
-		{"áéá", "a%_a", 1},
-		{"áá", "a_%a", 0},
-		{"áá", "a%_a", 0},
-		{"áééáííí", "a_%a%", 1},
+		//general and unicode same
+		{"a", "", 0, 0},
+		{"a", "a", 1, 1},
+		{"a", "á", 1, 1},
+		{"a", "b", 0, 0},
+		{"aA", "Aa", 1, 1},
+		{"áAb", `Aa%`, 1, 1},
+		{"áAb", `%ab%`, 1, 1},
+		{"áAb", `%ab`, 1, 1},
+		{"ÀAb", "aA_", 1, 1},
+		{"áééá", "a_%a", 1, 1},
+		{"áééá", "a%_a", 1, 1},
+		{"áéá", "a_%a", 1, 1},
+		{"áéá", "a%_a", 1, 1},
+		{"áá", "a_%a", 0, 0},
+		{"áá", "a%_a", 0, 0},
+		{"áééáííí", "a_%a%", 1, 1},
+		{'ß','s%', 1, 1}
+
+		//general and unicode different
+		{'ß','ss', 0, 1}
 	}
 	for _, tt := range tests {
 		commentf := Commentf(`for input = "%s", pattern = "%s"`, tt.input, tt.pattern)
@@ -89,24 +95,13 @@ func (s *testEvaluatorSerialSuites) TestCILike(c *C) {
 		f.setCollator(collate.GetCollator("utf8mb4_general_ci"))
 		r, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil, commentf)
-		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.match), commentf)
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.generalMatch), commentf)
+
+		f.setCollator(collate.GetCollator("utf8mb4_unicode_ci"))
+		r, err := evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil, commentf)
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.unicodeMatch), commentf)
 	}
-
-	// utf8_unicode_ci now has same behaviour as utf8_bin
-	//TODO: should change when actual implement
-	// comment temporary or test will failed
-	// for _, tt := range tests {
-	// 	commentf := Commentf(`for input = "%s", pattern = "%s"`, tt.input, tt.pattern)
-	// 	fc := funcs[ast.Like]
-	// 	inputs := s.datumsToConstants(types.MakeDatums(tt.input, tt.pattern, 0))
-	// 	f, err := fc.getFunction(s.ctx, inputs)
-	// 	c.Assert(err, IsNil, commentf)
-
-	// 	f.setCollator(collate.GetCollator("utf8mb4_unicode_ci"))
-	// 	r, err := evalBuiltinFunc(f, chunk.Row{})
-	// 	c.Assert(err, IsNil, commentf)
-	// 	c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.match), commentf)
-	// }
 }
 
 func (s *testEvaluatorSuite) TestRegexp(c *C) {

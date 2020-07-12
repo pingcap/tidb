@@ -64,8 +64,6 @@ func (s *testEnumSuite) TestEnum(c *C) {
 		c.Assert(e.ToNumber(), Equals, float64(t.Expected))
 	}
 
-	// utf8_unicode_ci now has same behaviour as utf8_bin
-	// should change when actual implement
 	for _, t := range tbl {
 		e, err := ParseEnumName(t.Elems, t.Name, "utf8_unicode_ci")
 		if t.Expected == 0 {
