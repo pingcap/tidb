@@ -1196,10 +1196,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.ConcurrencyFactor = tidbOptFloat64(val, DefOptConcurrencyFactor)
 	case TiDBIndexLookupConcurrency:
 		s.indexLookupConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
-		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
 	case TiDBIndexLookupJoinConcurrency:
 		s.indexLookupJoinConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
-		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
 	case TiDBIndexJoinBatchSize:
 		s.IndexJoinBatchSize = tidbOptPositiveInt32(val, DefIndexJoinBatchSize)
 	case TiDBAllowBatchCop:
@@ -1210,16 +1208,12 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.hashJoinConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
 	case TiDBProjectionConcurrency:
 		s.projectionConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
-		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
 	case TiDBHashAggPartialConcurrency:
 		s.hashAggPartialConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
-		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
 	case TiDBHashAggFinalConcurrency:
 		s.hashAggFinalConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
-		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
 	case TiDBWindowConcurrency:
 		s.windowConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
-		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
 	case TiDBDistSQLScanConcurrency:
 		s.distSQLScanConcurrency = tidbOptPositiveInt32(val, DefDistSQLScanConcurrency)
 	case TiDBIndexSerialScanConcurrency:
@@ -1252,25 +1246,18 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.NestedLoopJoinCacheCapacity = tidbOptInt64(val, config.GetGlobalConfig().NestedLoopJoinCacheCapacity)
 	case TIDBMemQuotaHashJoin:
 		s.MemQuotaHashJoin = tidbOptInt64(val, DefTiDBMemQuotaHashJoin)
-		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TIDBMemQuotaQuery))
 	case TIDBMemQuotaMergeJoin:
 		s.MemQuotaMergeJoin = tidbOptInt64(val, DefTiDBMemQuotaMergeJoin)
-		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TIDBMemQuotaQuery))
 	case TIDBMemQuotaSort:
 		s.MemQuotaSort = tidbOptInt64(val, DefTiDBMemQuotaSort)
-		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TIDBMemQuotaQuery))
 	case TIDBMemQuotaTopn:
 		s.MemQuotaTopn = tidbOptInt64(val, DefTiDBMemQuotaTopn)
-		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TIDBMemQuotaQuery))
 	case TIDBMemQuotaIndexLookupReader:
 		s.MemQuotaIndexLookupReader = tidbOptInt64(val, DefTiDBMemQuotaIndexLookupReader)
-		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TIDBMemQuotaQuery))
 	case TIDBMemQuotaIndexLookupJoin:
 		s.MemQuotaIndexLookupJoin = tidbOptInt64(val, DefTiDBMemQuotaIndexLookupJoin)
-		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TIDBMemQuotaQuery))
 	case TIDBMemQuotaNestedLoopApply:
 		s.MemQuotaNestedLoopApply = tidbOptInt64(val, DefTiDBMemQuotaNestedLoopApply)
-		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TIDBMemQuotaQuery))
 	case TiDBGeneralLog:
 		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt32(val, DefTiDBGeneralLog)))
 	case TiDBPProfSQLCPU:
