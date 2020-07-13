@@ -106,8 +106,7 @@ func findColByID(tbl table.Table, colID int64) *table.Column {
 	return nil
 }
 
-func (a *amendCollector) collectIndexAmendOps(ctx context.Context, phyTblID int64,
-	tblAtStart, tblAtCommit table.Table) ([]amendOp, error) {
+func (a *amendCollector) collectIndexAmendOps(phyTblID int64, tblAtStart, tblAtCommit table.Table) ([]amendOp, error) {
 	res := make([]amendOp, 0, 4)
 	// Check index having state change, collect index column info.
 	for _, idxInfoAtCommit := range tblAtCommit.Indices() {
@@ -158,7 +157,7 @@ func (a *amendCollector) collectTblAmendOps(ctx context.Context, sctx sessionctx
 		a.tblChk[phyTblID] = chunk.NewChunkWithCapacity(fieldTypes, 4)
 	}
 	// TODO currently only add index is considered
-	ops, err := a.collectIndexAmendOps(ctx, phyTblID, tblInfoAtStart, tblInfoAtCommit)
+	ops, err := a.collectIndexAmendOps(phyTblID, tblInfoAtStart, tblInfoAtCommit)
 	if err != nil {
 		return err
 	}
@@ -175,23 +174,21 @@ func isInsertOp(keyOp pb.Op) bool {
 }
 
 func (a *amendCollector) genMutationsForTbl(ctx context.Context, sess *session, commitMutations tikv.CommitterMutations,
-	kvMaps map[string][]byte, amendOps []amendOp) (tikv.CommitterMutations, tikv.CommitterMutations, error) {
+	kvMaps map[string][]byte, amendOps []amendOp) (tikv.CommitterMutations, error) {
 	resAddMutations := tikv.NewCommiterMutations(8)
-	resRemoveMutations := tikv.NewCommiterMutations(8)
 	for _, curOp := range amendOps {
-		curAddMutations, curRemoveMutations, err := curOp.genMutations(ctx, sess, commitMutations, kvMaps)
+		curAddMutations, err := curOp.genMutations(ctx, sess, commitMutations, kvMaps)
 		if err != nil {
-			return resAddMutations, resRemoveMutations, err
+			return resAddMutations, err
 		}
 		resAddMutations.MergeMutations(curAddMutations)
-		resRemoveMutations.MergeMutations(curRemoveMutations)
 	}
-	return resAddMutations, resRemoveMutations, nil
+	return resAddMutations, nil
 }
 
 type amendOp interface {
 	genMutations(ctx context.Context, sctx sessionctx.Context, commitMutations tikv.CommitterMutations,
-		kvMaps map[string][]byte) (tikv.CommitterMutations, tikv.CommitterMutations, error)
+		kvMaps map[string][]byte) (tikv.CommitterMutations, error)
 }
 
 // amendOperationAddIndex represents one amend operation related to a specific add index change.
@@ -221,23 +218,19 @@ func (a *amendOperationAddIndex) String() string {
 }
 
 func (a *amendOperationAddIndex) genMutations(ctx context.Context, sctx sessionctx.Context, commitMutations tikv.CommitterMutations,
-	kvMaps map[string][]byte) (tikv.CommitterMutations, tikv.CommitterMutations, error) {
+	kvMaps map[string][]byte) (tikv.CommitterMutations, error) {
 	resAddMutations := tikv.NewCommiterMutations(8)
-	resRemoveMutations := tikv.NewCommiterMutations(8)
 	for i, key := range commitMutations.GetKeys() {
 		keyOp := commitMutations.GetOps()[i]
-		addMutations, removeMutations, err := a.processKey(ctx, sctx, keyOp, key, kvMaps)
+		addMutations, err := a.processKey(ctx, sctx, keyOp, key, kvMaps)
 		if err != nil {
-			return resAddMutations, resRemoveMutations, err
+			return resAddMutations, err
 		}
 		if len(addMutations.GetKeys()) > 0 {
 			resAddMutations.MergeMutations(addMutations)
 		}
-		if len(removeMutations.GetKeys()) > 0 {
-			resRemoveMutations.MergeMutations(removeMutations)
-		}
 	}
-	return resAddMutations, resRemoveMutations, nil
+	return resAddMutations, nil
 }
 
 func (a *amendOperationAddIndex) genIndexKeyValue(ctx context.Context, sctx sessionctx.Context, kvMaps map[string][]byte,
@@ -290,21 +283,21 @@ func (a *amendOperationAddIndex) genIndexKeyValue(ctx context.Context, sctx sess
 }
 
 func (a *amendOperationAddIndex) processKey(ctx context.Context, sctx sessionctx.Context, keyOp pb.Op, key []byte,
-	kvMaps map[string][]byte) (resAdd tikv.CommitterMutations, resRemove tikv.CommitterMutations, err error) {
+	kvMaps map[string][]byte) (resAdd tikv.CommitterMutations, err error) {
 	if a.AmendOpType == AmendNone || tablecodec.IsIndexKey(key) {
 		return
 	}
 	kvHandle, err := tablecodec.DecodeRowKey(key)
 	if err != nil {
 		logutil.Logger(ctx).Error("decode key error", zap.String("key", hex.EncodeToString(key)), zap.Error(err))
-		return resAdd, resRemove, errors.Trace(err)
+		return resAdd, errors.Trace(err)
 	}
 
 	// Generated delete index key value.
 	if (a.AmendOpType == AmendNeedAddDelete || a.AmendOpType == AmendNeedAddDeleteAndInsert) && isDeleteOp(keyOp) {
 		newIdxKey, emptyVal, err := a.genIndexKeyValue(ctx, sctx, kvMaps, key, kvHandle, true)
 		if err != nil {
-			return resAdd, resRemove, errors.Trace(err)
+			return resAdd, errors.Trace(err)
 		}
 		resAdd.Push(keyOp, newIdxKey, emptyVal, false)
 	}
@@ -313,12 +306,12 @@ func (a *amendOperationAddIndex) processKey(ctx context.Context, sctx sessionctx
 	if (a.AmendOpType == AmendNeedAddDeleteAndInsert || a.AmendOpType == AmendNeedAddInsert) && isInsertOp(keyOp) {
 		newIdxKey, newIdxValue, err := a.genIndexKeyValue(ctx, sctx, kvMaps, key, kvHandle, false)
 		if err != nil {
-			return resAdd, resRemove, errors.Trace(err)
+			return resAdd, errors.Trace(err)
 		}
 		// Check if the generated index keys are unique for unique index.
 		if a.indexInfoAtCommit.Meta().Unique {
 			if _, ok := a.processedNewIndexKeys[string(newIdxKey)]; ok {
-				return resAdd, resRemove, errors.Trace(errors.Errorf("amend process key same key found for unique index=%v", a.indexInfoAtCommit.Meta().Name))
+				return resAdd, errors.Trace(errors.Errorf("amend process key same key found for unique index=%v", a.indexInfoAtCommit.Meta().Name))
 			}
 		}
 		a.processedNewIndexKeys[string(newIdxKey)] = nil
@@ -351,39 +344,37 @@ func (s *SchemaAmender) getAmendableKeys(commitMutations tikv.CommitterMutations
 
 // genAllAmendMutations generates CommitterMutations for all tables and related amend operations.
 func (s *SchemaAmender) genAllAmendMutations(ctx context.Context, commitMutations tikv.CommitterMutations,
-	info *amendCollector) (*tikv.CommitterMutations, *tikv.CommitterMutations, error) {
+	info *amendCollector) (*tikv.CommitterMutations, error) {
 	// Get keys need to be considered for the amend operation, currently only row keys.
 	kvKeys := s.getAmendableKeys(commitMutations)
 
 	// BatchGet the key values.
 	txn, err := s.sess.Txn(true)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	kvMaps, err := txn.BatchGet(ctx, kvKeys)
 	if err != nil {
 		logutil.Logger(ctx).Warn("amend failed to batch get kv keys", zap.Error(err))
-		return nil, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	// Do generate add/remove mutations processing each key.
 	addMutations := tikv.NewCommiterMutations(8)
-	removeMutations := tikv.NewCommiterMutations(8)
 	for _, amendOps := range info.tblAmendOpMap {
-		resAddMutations, resRemoveMutations, err := info.genMutationsForTbl(ctx, s.sess, commitMutations, kvMaps, amendOps)
+		resAddMutations, err := info.genMutationsForTbl(ctx, s.sess, commitMutations, kvMaps, amendOps)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		addMutations.MergeMutations(resAddMutations)
-		removeMutations.MergeMutations(resRemoveMutations)
 	}
-	return &addMutations, &removeMutations, nil
+	return &addMutations, nil
 }
 
 // AmendTxn does check and generate amend mutations based on input infoSchema and mutations, mutations need to prewrite
-// and mutations need to cleanup are returned, the input commitMutations will not be changed.
+// are returned, the input commitMutations will not be changed.
 func (s *SchemaAmender) AmendTxn(ctx context.Context, startInfoSchema tikv.SchemaVer, change *tikv.RelatedSchemaChange,
-	commitMutations tikv.CommitterMutations) (*tikv.CommitterMutations, *tikv.CommitterMutations, error) {
+	commitMutations tikv.CommitterMutations) (*tikv.CommitterMutations, error) {
 	// Get info schema meta
 	infoSchemaAtStart := startInfoSchema.(infoschema.InfoSchema)
 	infoSchemaAtCheck := change.LatestInfoSchema.(infoschema.InfoSchema)
@@ -396,26 +387,26 @@ func (s *SchemaAmender) AmendTxn(ctx context.Context, startInfoSchema tikv.Schem
 		// Check amendable flags, return if not supported flags exist.
 		if actionType&(^amendableType) != 0 {
 			logutil.Logger(ctx).Info("amend action type not supported for txn", zap.Int64("tblID", tblID), zap.Uint64("actionType", actionType))
-			return nil, nil, errors.Trace(table.ErrUnsupportedOp)
+			return nil, errors.Trace(table.ErrUnsupportedOp)
 		}
 		// Partition table is not supported now.
 		tblInfoAtStart, ok := infoSchemaAtStart.TableByID(tblID)
 		if !ok {
-			return nil, nil, errors.Trace(errors.Errorf("tableID=%d is not found in infoSchema", tblID))
+			return nil, errors.Trace(errors.Errorf("tableID=%d is not found in infoSchema", tblID))
 		}
 		if tblInfoAtStart.Meta().Partition != nil {
 			logutil.Logger(ctx).Info("Amend for partition table is not supported", zap.Int64("tableID", tblID))
-			return nil, nil, errors.Trace(table.ErrUnsupportedOp)
+			return nil, errors.Trace(table.ErrUnsupportedOp)
 		}
 		tblInfoAtCommit, ok := infoSchemaAtCheck.TableByID(tblID)
 		if !ok {
-			return nil, nil, errors.Trace(errors.Errorf("tableID=%d is not found in infoSchema", tblID))
+			return nil, errors.Trace(errors.Errorf("tableID=%d is not found in infoSchema", tblID))
 		}
 		if actionType&(memBufAmendType) != 0 {
 			needAmendMem = true
 			err := amendCollector.collectTblAmendOps(ctx, s.sess, tblID, tblInfoAtStart, tblInfoAtCommit)
 			if err != nil {
-				return nil, nil, err
+				return nil, err
 			}
 		}
 	}
@@ -423,7 +414,7 @@ func (s *SchemaAmender) AmendTxn(ctx context.Context, startInfoSchema tikv.Schem
 	if needAmendMem {
 		return s.genAllAmendMutations(ctx, commitMutations, amendCollector)
 	}
-	return nil, nil, nil
+	return nil, nil
 }
 
 func newRowChkDecoder(ctx sessionctx.Context, tbl *model.TableInfo) *rowcodec.ChunkDecoder {
