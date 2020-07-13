@@ -367,7 +367,6 @@ func (rrs *ReaderRuntimeStats) String() string {
 }
 
 type RuntimeInformation interface {
-	OperatorInfo() string
 	GetActRows() int64
 	SetRowNum(int64)
 	String() string
@@ -380,10 +379,6 @@ type BasicRuntimeStats struct {
 	consume int64
 	// executor return row count.
 	rows int64
-}
-
-func (e *BasicRuntimeStats) OperatorInfo() string {
-	return fmt.Sprintf("time:%v, loops:%d", time.Duration(e.consume), e.loop)
 }
 
 func (e *BasicRuntimeStats) GetActRows() int64 {
