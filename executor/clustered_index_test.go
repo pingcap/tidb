@@ -96,3 +96,10 @@ func (s *testClusteredSuite) TestClusteredTopN(c *C) {
 	tk.MustExec("insert o3 values (1, 6, 9, 3), (2, 6, 9, 5), (3, 6, 9, 7)")
 	tk.MustQuery("SELECT max(o_id) max_order FROM o3 use index (idx_order)").Check(testkit.Rows("3"))
 }
+
+func (s *testClusteredSuite) TestClusteredHint(c *C) {
+	tk := s.newTK(c)
+	tk.MustExec("drop table if exists ht")
+	tk.MustExec("create table ht (a varchar(64) primary key, b int)")
+	tk.MustQuery("select * from ht use index (`PRIMARY`)")
+}
