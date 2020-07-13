@@ -535,7 +535,8 @@ func (s *TestDDLSuite) Bootstrap(c *C) {
 
 	tk.MustExec("set @@tidb_enable_clustered_index = 1")
 	tk.MustExec("drop table if exists test_insert_common, test_conflict_insert_common, " +
-		"test_update_common, test_conflict_update_common")
+		"test_update_common, test_conflict_update_common, test_delete_common, test_conflict_delete_common, " +
+		"test_mixed_common, test_inc_common")
 	tk.MustExec("create table test_insert_common (c1 int, c2 int, primary key(c1, c2))")
 	tk.MustExec("create table test_conflict_insert_common (c1 int, c2 int, primary key(c1, c2))")
 	tk.MustExec("create table test_update_common (c1 int, c2 int, primary key(c1, c2))")
@@ -878,7 +879,7 @@ func (s *TestDDLSuite) TestSimpleConflictDelete(c *C) {
 
 			for j := 0; j < batch; j++ {
 				k := randomNum(rowCount)
-				s.mustExec(c, fmt.Sprintf("delete from test_conflict_delete where c1 = %d", k))
+				s.mustExec(c, fmt.Sprintf("delete from %s where c1 = %d", tblName, k))
 				mu.Lock()
 				delete(keysMap, int64(k))
 				mu.Unlock()
