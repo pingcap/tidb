@@ -2080,4 +2080,12 @@ func (s *testSuiteJoinSerial) TestIssue18070(c *C) {
 	tk.MustExec("set @@tidb_mem_quota_query=1000")
 	err := tk.QueryToErr("select /*+ inl_hash_join(t1)*/ * from t1 join t2 on t1.a = t2.a;")
 	c.Assert(err.Error(), Equals, "Out Of Memory Quota![conn_id=1]")
+
+	fpName := "github.com/pingcap/tidb/executor/mockIndexMergeJoinOOMPanic"
+	c.Assert(failpoint.Enable(fpName, `panic("ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable(fpName), IsNil)
+	}()
+	err = tk.QueryToErr("select /*+ inl_merge_join(t1)*/ * from t1 join t2 on t1.a = t2.a;")
+	c.Assert(err.Error(), Equals, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
 }
