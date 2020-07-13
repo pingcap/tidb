@@ -133,7 +133,7 @@ func BenchmarkListInDiskGetRow(b *testing.B) {
 }
 
 func Test1(t *testing.T) {
-	numChk, numRow := 2, 2
+	numChk, numRow := 1, 20
 	chks, fields := initChunks(numChk, numRow)
 	l := NewListInDisk(fields)
 	for _, chk := range chks {
@@ -144,8 +144,13 @@ func Test1(t *testing.T) {
 	}
 	fmt.Println(l.disk.Name())
 
-	_, err := l.GetRow(RowPtr{ChkIdx: 0, RowIdx: 0})
+	row, err := l.GetRow(RowPtr{ChkIdx: 0, RowIdx: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Log(row.GetString(0))
+	t.Log(row.GetInt64(1))
+	t.Log(row.GetString(2))
+	t.Log(row.GetInt64(3))
+	t.Log(row.GetJSON(4))
 }
