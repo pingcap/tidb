@@ -14,10 +14,13 @@
 package ddl
 
 import (
+	"context"
 	"fmt"
+	"go.uber.org/zap"
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -30,11 +33,15 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/gcutil"
+	"github.com/pingcap/tidb/util/logutil"
 )
+
+const TiFlashCheckTiDBHttpAPIInterval = 5 * time.Second
 
 func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	failpoint.Inject("mockExceedErrorLimit", func(val failpoint.Value) {
@@ -948,56 +955,162 @@ func updateVersionAndTableInfo(t *meta.Meta, job *model.Job, tblInfo *model.Tabl
 	return ver, t.UpdateTable(job.SchemaID, tblInfo)
 }
 
+func checkAddPartition(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.PartitionInfo, []*model.PartitionDefinition, error) {
+	schemaID := job.SchemaID
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
+	if err != nil {
+		return nil, nil, nil, errors.Trace(err)
+	}
+	partInfo := &model.PartitionInfo{}
+	err = job.DecodeArgs(&partInfo)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return nil, nil, nil, errors.Trace(err)
+	}
+	partDefPointers := make([]*model.PartitionDefinition, 0, len(partInfo.Definitions))
+	for _, pd := range partInfo.Definitions {
+		partitionDefInMeta := tblInfo.FindPartitionDefinitionByName(pd.Name.L)
+		if partitionDefInMeta != nil {
+			if partitionDefInMeta.State == model.StatePublic {
+				// Even one partition with the same name existed, whole job canceled.
+				// We already have these new added partition with the same name.
+				job.State = model.JobStateCancelled
+				return nil, nil, nil, errors.Trace(ErrSameNamePartition.GenWithStackByArgs(pd.Name.L))
+			}
+			// Collect the partition definition pointer in tableInfo for future state change.
+			partDefPointers = append(partDefPointers, partitionDefInMeta)
+		}
+	}
+	return tblInfo, partInfo, partDefPointers, nil
+}
+
+func checkPartitionReplica(partDefPointers []*model.PartitionDefinition, d *ddlCtx, job *model.Job) (needWait bool, err error) {
+	for _, pd := range partDefPointers {
+		startKey, endKey := tablecodec.GetTableHandleKeyRange(pd.ID)
+		ctx := context.Background()
+		pdCli := d.store.(tikv.Storage).GetRegionCache().PDClient()
+		regions, _, err := pdCli.ScanRegions(ctx, startKey, endKey, -1)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return needWait, errors.Trace(err)
+		}
+		// For every region in the partition, if it has some corresponding peers and
+		// no pending peers, that means the replication has completed.
+		for _, region := range regions {
+			regionState, err := pdCli.GetRegionByID(ctx, region.Id)
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return needWait, errors.Trace(err)
+			}
+			if len(regionState.PendingPeers) == 0 && len(regionState.Meta.Peers) > 0 {
+				continue
+			} else {
+				needWait = true
+				logutil.Logger(ctx).Info("[ddl] partition replica check failed", zap.Time("check time", time.Now()))
+				return needWait, nil
+			}
+		}
+	}
+	return needWait, nil
+}
+
 // TODO: It may have the issue when two clients concurrently add partitions to a table.
 func onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	partInfo := &model.PartitionInfo{}
-	err := job.DecodeArgs(&partInfo)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+	// Handle the rolling back job
+	if job.IsRollingback() {
+		ver, err := onDropTablePartition(t, job)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		return ver, nil
 	}
 
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	tblInfo, partInfo, partDefPointers, err := checkAddPartition(t, job)
 	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-	err = checkAddPartitionTooManyPartitions(uint64(len(tblInfo.Partition.Definitions) + len(partInfo.Definitions)))
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, err
 	}
 
-	err = checkAddPartitionValue(tblInfo, partInfo)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+	// partDefPointers's len is 0 meaning the job is in the initial state of add partition.
+	// Here should use partInfo from job directly and do some check action.
+	if len(partDefPointers) == 0 {
+		err = checkAddPartitionTooManyPartitions(uint64(len(tblInfo.Partition.Definitions) + len(partInfo.Definitions)))
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+
+		err = checkAddPartitionValue(tblInfo, partInfo)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+
+		err = checkAddPartitionNameUnique(tblInfo, partInfo)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		partDefPointers = updatePartitionInfo(partInfo, tblInfo)
 	}
 
-	err = checkAddPartitionNameUnique(tblInfo, partInfo)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+	originalState := partDefPointers[0].State
+	switch partDefPointers[0].State {
+	case model.StateNone:
+		// none -> delete only
+		job.SchemaState = model.StateDeleteOnly
+		for _, pdDef := range partDefPointers {
+			pdDef.State = model.StateDeleteOnly
+		}
+		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, originalState != partDefPointers[0].State)
+	case model.StateDeleteOnly:
+		// delete only -> public
+		// Here need do some tiflash replica complement check.
+		if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
+			// For available state, the new added partition should wait it's replica to
+			// be finished. Otherwise the query to this partition will be blocked.
+			needWait, err := checkPartitionReplica(partDefPointers, d, job)
+			if err != nil {
+				return ver, err
+			}
+			if needWait {
+				// The new added partition hasn't been replicated.
+				// Do nothing to the job this time, wait next worker round.
+				time.Sleep(TiFlashCheckTiDBHttpAPIInterval / 2)
+				return ver, nil
+			}
+		}
+
+		// For normal table, change the state to public directly.
+		for _, pdDef := range partDefPointers {
+			pdDef.State = model.StatePublic
+		}
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != partDefPointers[0].State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		// Finish this job.
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+		asyncNotifyEvent(d, &util.Event{Tp: model.ActionAddTablePartition, TableInfo: tblInfo, PartInfo: partInfo})
+	default:
+		err = ErrInvalidDDLState.GenWithStackByArgs("partition", partDefPointers[0].State)
 	}
 
-	updatePartitionInfo(partInfo, tblInfo)
-	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-	// Finish this job.
-	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-	asyncNotifyEvent(d, &util.Event{Tp: model.ActionAddTablePartition, TableInfo: tblInfo, PartInfo: partInfo})
 	return ver, errors.Trace(err)
 }
 
-func updatePartitionInfo(partitionInfo *model.PartitionInfo, tblInfo *model.TableInfo) {
+func updatePartitionInfo(partitionInfo *model.PartitionInfo, tblInfo *model.TableInfo) []*model.PartitionDefinition {
 	parInfo := &model.PartitionInfo{}
 	oldDefs, newDefs := tblInfo.Partition.Definitions, partitionInfo.Definitions
 	parInfo.Definitions = make([]model.PartitionDefinition, 0, len(newDefs)+len(oldDefs))
 	parInfo.Definitions = append(parInfo.Definitions, oldDefs...)
 	parInfo.Definitions = append(parInfo.Definitions, newDefs...)
 	tblInfo.Partition.Definitions = parInfo.Definitions
+	partDefPointers := make([]*model.PartitionDefinition, 0, len(partitionInfo.Definitions))
+	for _, pdAdded := range partitionInfo.Definitions {
+		pdInMetaPointer := tblInfo.FindPartitionDefinitionByName(pdAdded.Name.L)
+		partDefPointers = append(partDefPointers, pdInMetaPointer)
+	}
+	return partDefPointers
 }
 
 // checkAddPartitionValue values less than value must be strictly increasing for each partition.

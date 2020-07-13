@@ -131,6 +131,8 @@ func buildHashPartitionDefinitions(ctx sessionctx.Context, s *ast.CreateTableStm
 			defs[i].Name = def.Name
 			defs[i].Comment, _ = def.Comment()
 		}
+		// For create table statement, the created partition definition in tableInfo should be with public state.
+		defs[i].State = model.StatePublic
 	}
 	pi.Definitions = defs
 	return nil
@@ -155,6 +157,8 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, s *ast.CreateTableSt
 			piDef.LessThan = append(piDef.LessThan, buf.String())
 			buf.Reset()
 		}
+		// For create table statement, the created partition definition in tableInfo should be with public state.
+		piDef.State = model.StatePublic
 		pi.Definitions = append(pi.Definitions, piDef)
 	}
 	return nil
@@ -660,7 +664,12 @@ func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	}
 
 	// Finish this job.
-	job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+	if job.IsRollingback() {
+		job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
+	} else {
+		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+	}
+
 	// A background job will be created to delete old partition data.
 	job.Args = []interface{}{physicalTableIDs}
 	return ver, nil
