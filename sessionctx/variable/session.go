@@ -158,6 +158,7 @@ type TransactionContext struct {
 	// pessimisticLockCache is the cache for pessimistic locked keys,
 	// The value never changes during the transaction.
 	pessimisticLockCache map[string][]byte
+	PessimisticCacheHit  int
 
 	// CreateTime For metrics.
 	CreateTime     time.Time
@@ -236,6 +237,9 @@ func (tc *TransactionContext) GetKeyInPessimisticLockCache(key kv.Key) (val []by
 		return nil, false
 	}
 	val, ok = tc.pessimisticLockCache[string(key)]
+	if ok {
+		tc.PessimisticCacheHit++
+	}
 	return
 }
 
@@ -1213,7 +1217,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.windowConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
 		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
 	case TiDBDistSQLScanConcurrency:
-		s.distSQLScanConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
+		s.distSQLScanConcurrency = tidbOptPositiveInt32(val, DefDistSQLScanConcurrency)
 	case TiDBIndexSerialScanConcurrency:
 		s.indexSerialScanConcurrency = tidbOptPositiveInt32(val, DefIndexSerialScanConcurrency)
 	case TiDBExecutorConcurrency:
@@ -1598,10 +1602,7 @@ func (c *Concurrency) IndexLookupJoinConcurrency() int {
 
 // DistSQLScanConcurrency return the number of concurrent dist SQL scan worker.
 func (c *Concurrency) DistSQLScanConcurrency() int {
-	if c.distSQLScanConcurrency != ConcurrencyUnset {
-		return c.distSQLScanConcurrency
-	}
-	return c.ExecutorConcurrency
+	return c.distSQLScanConcurrency
 }
 
 // HashJoinConcurrency return the number of concurrent hash join outer worker.
