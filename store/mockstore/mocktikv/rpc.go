@@ -697,6 +697,9 @@ func (h *rpcHandler) handleBatchCopRequest(ctx context.Context, req *coprocessor
 			return nil, errors.Trace(err)
 		}
 		chunk, err := drainRowsFromExecutor(ctx, exec, dagReq)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		client.chunks = append(client.chunks, chunk)
 	}
 	return client, nil
