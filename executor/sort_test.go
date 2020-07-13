@@ -18,17 +18,30 @@ import (
 	"strings"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
+<<<<<<< HEAD
 func (s *testSuite) TestSortInDisk(c *C) {
 	originCfg := config.GetGlobalConfig()
 	newConf := *originCfg
 	newConf.OOMUseTmpStorage = true
 	config.StoreGlobalConfig(&newConf)
 	defer config.StoreGlobalConfig(originCfg)
+=======
+func (s *testSerialSuite1) TestSortInDisk(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMUseTmpStorage = true
+	})
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill", "return(true)"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill"), IsNil)
+	}()
+>>>>>>> b13fdb7... *: make test more TestSortInDisk stable (#18424)
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -60,7 +73,17 @@ func (s *testSuite) TestSortInDisk(c *C) {
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.DiskTracker.MaxConsumed(), Greater, int64(0))
 }
 
-func (s *testSuite) TestIssue16696(c *C) {
+func (s *testSerialSuite1) TestIssue16696(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMUseTmpStorage = true
+	})
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill", "return(true)"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill"), IsNil)
+	}()
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testRowContainerSpill", "return(true)"), IsNil)
+	defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testRowContainerSpill"), IsNil) }()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -69,7 +92,7 @@ func (s *testSuite) TestIssue16696(c *C) {
 	for i := 0; i < 6; i++ {
 		tk.MustExec("insert into t select * from t")
 	}
-	tk.MustExec("set tidb_mem_quota_query = 4125000;") // 4.125 MB
+	tk.MustExec("set tidb_mem_quota_query = 1;")
 	rows := tk.MustQuery("explain analyze  select t1.a, t1.a +1 from t t1 join t t2 join t t3 order by t1.a").Rows()
 	for _, row := range rows {
 		length := len(row)

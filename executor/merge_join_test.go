@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
@@ -240,12 +241,25 @@ func checkPlanAndRun(tk *testkit.TestKit, c *C, plan string, sql string) *testki
 	return tk.MustQuery(sql)
 }
 
+<<<<<<< HEAD
 func (s *testSuite2) TestMergeJoinInDisk(c *C) {
 	originCfg := config.GetGlobalConfig()
 	newConf := *originCfg
 	newConf.OOMUseTmpStorage = true
 	config.StoreGlobalConfig(&newConf)
 	defer config.StoreGlobalConfig(originCfg)
+=======
+func (s *testSerialSuite1) TestMergeJoinInDisk(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMUseTmpStorage = true
+	})
+>>>>>>> b13fdb7... *: make test more TestSortInDisk stable (#18424)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testMergeJoinRowContainerSpill", "return(true)"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testMergeJoinRowContainerSpill"), IsNil)
+	}()
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
