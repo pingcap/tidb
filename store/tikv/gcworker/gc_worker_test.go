@@ -847,7 +847,7 @@ func (s *testGCWorkerSuite) TestResolveLockRangeMeetRegionCacheMiss(c *C) {
 		resolveCntRef = &resolveCnt
 	)
 	s.gcWorker.testingKnobs.scanLocks = func(key []byte) []*tikv.Lock {
-		*scanCntRef = *scanCntRef + 1
+		*scanCntRef++
 		return []*tikv.Lock{
 			{
 				Key: []byte{1},
@@ -858,7 +858,7 @@ func (s *testGCWorkerSuite) TestResolveLockRangeMeetRegionCacheMiss(c *C) {
 		}
 	}
 	s.gcWorker.testingKnobs.resolveLocks = func(regionID tikv.RegionVerID) (ok bool, err error) {
-		*resolveCntRef = *resolveCntRef + 1
+		*resolveCntRef++
 		if *resolveCntRef == 1 {
 			s.gcWorker.store.GetRegionCache().InvalidateCachedRegion(regionID)
 			// mock the region cache miss error

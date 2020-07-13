@@ -1104,12 +1104,7 @@ func (w *GCWorker) tryRelocateLocksRegion(bo *tikv.Backoffer, locks []*tikv.Lock
 	if err != nil {
 		return
 	}
-	for i := len(locks) - 1; i > 0; i-- {
-		if !refreshedLoc.Contains(locks[i].Key) {
-			return
-		}
-	}
-	stillInSameRegion = true
+	stillInSameRegion = refreshedLoc.Contains(locks[len(locks)-1].Key)
 	return
 }
 
