@@ -492,6 +492,12 @@ const (
 	DefTiDBMetricSchemaStep            = 60 // 60s
 	DefTiDBMetricSchemaRangeDuration   = 60 // 60s
 	DefTiDBFoundInPlanCache            = false
+<<<<<<< HEAD
+=======
+	DefTiDBEnableCollectExecutionInfo  = true
+	DefTiDBAllowAutoRandExplicitInsert = false
+	DefTiDBEnableClusteredIndex        = false
+>>>>>>> 5574e1a... config: enable collect execution information by default (#18415)
 	DefTiDBSlowLogMasking              = false
 	DefTiDBEnableCollectExecutionInfo  = false
 	DefTiDBEnableTelemetry             = true
