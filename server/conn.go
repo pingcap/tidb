@@ -1407,15 +1407,6 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 	data := cc.alloc.AllocWithLen(4, 1024)
 	req := rs.NewChunk()
 	gotColumnInfo := false
-<<<<<<< HEAD
-=======
-	var stmtDetail *execdetails.StmtExecDetails
-	stmtDetailRaw := ctx.Value(execdetails.StmtExecDetailKey)
-	if stmtDetailRaw != nil {
-		stmtDetail = stmtDetailRaw.(*execdetails.StmtExecDetails)
-	}
-
->>>>>>> 2b0b34b... executor: kill tableReader for each connection correctly (#18277)
 	for {
 		// Here server.tidbResultSet implements Next method.
 		err := rs.Next(ctx, req)

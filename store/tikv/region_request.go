@@ -172,11 +172,8 @@ func (s *RegionRequestSender) SendReqCtx(
 	} else {
 		replicaRead = kv.ReplicaReadLeader
 	}
-<<<<<<< HEAD
 	seed := req.ReplicaReadSeed
-=======
 	tryTimes := 0
->>>>>>> 2b0b34b... executor: kill tableReader for each connection correctly (#18277)
 	for {
 		if (tryTimes > 0) && (tryTimes%100000 == 0) {
 			logutil.Logger(bo.ctx).Warn("retry get ", zap.Uint64("region = ", regionID.GetID()), zap.Int("times = ", tryTimes))
