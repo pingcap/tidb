@@ -260,6 +260,13 @@ func (e *slowQueryRetriever) parseSlowLog(ctx sessionctx.Context, reader *bufio.
 					}
 				}
 			} else if strings.HasSuffix(line, variable.SlowLogSQLSuffixStr) {
+				if strings.HasPrefix(line, "use") {
+					// `use DB` statements in the slow log is used to keep it be compatible with MySQL,
+					// since we already get the current DB from the `# DB` field, we can ignore it here,
+					// please see https://github.com/pingcap/tidb/issues/17846 for more details.
+					continue
+				}
+
 				// Get the sql string, and mark the start flag to false.
 				_, err = st.setFieldValue(tz, variable.SlowLogQuerySQLStr, string(hack.Slice(line)), e.fileLine, e.checker)
 				if err != nil {

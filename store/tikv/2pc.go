@@ -1319,7 +1319,8 @@ func do(bo *Backoffer, c *twoPhaseCommitter, action twoPhaseCommitAction) error 
 	batch.isPrimary = true
 	c.once.Do(func() {
 		c.primaryKey = batch.mutations.keys[0]
-	})	// Optimize for the simple case.
+	})
+	// Optimize for the simple case.
 	if noMore {
 		return action.handleSingleBatch(c, bo, batch)
 	}
