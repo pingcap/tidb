@@ -639,6 +639,14 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 	if !ok {
 		return task
 	}
+	if t.tablePlan != nil {
+		tp := t.tablePlan
+		for len(tp.Children()) > 0 {
+			tp = tp.Children()[0]
+		}
+		ts := tp.(*PhysicalTableScan)
+		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
+	}
 	sessVars := ctx.GetSessionVars()
 	// copTasks are run in parallel, to make the estimated cost closer to execution time, we amortize
 	// the cost to cop iterator workers. According to `CopClient::Send`, the concurrency
@@ -678,7 +686,6 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 			IsCommonHandle: ts.Table.IsCommonHandle,
 		}.Init(ctx, t.tablePlan.SelectBlockOffset())
 		p.stats = t.tablePlan.statsInfo()
-		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
 		newTask.p = p
 	}
 
