@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -170,7 +171,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				return err
 			}
 		} else {
-			e.idxKey, err = encodeIndexKey(e.base(), e.tblInfo, e.idxInfo, e.idxVals, tblID)
+			e.idxKey, err = EncodeUniqueIndexKey(e.ctx, e.tblInfo, e.idxInfo, e.idxVals, tblID)
 			if err != nil && !kv.ErrNotExist.Equal(err) {
 				return err
 			}
@@ -318,8 +319,9 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 	return e.snapshot.Get(ctx, key)
 }
 
-func encodeIndexKey(e *baseExecutor, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, idxVals []types.Datum, tID int64) (_ []byte, err error) {
-	sc := e.ctx.GetSessionVars().StmtCtx
+// EncodeUniqueIndexKey encodes a unique index key.
+func EncodeUniqueIndexKey(ctx sessionctx.Context, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, idxVals []types.Datum, tID int64) (_ []byte, err error) {
+	sc := ctx.GetSessionVars().StmtCtx
 	for i := range idxVals {
 		colInfo := tblInfo.Columns[idxInfo.Columns[i].Offset]
 		// table.CastValue will append 0x0 if the string value's length is smaller than the BINARY column's length.
@@ -330,7 +332,7 @@ func encodeIndexKey(e *baseExecutor, tblInfo *model.TableInfo, idxInfo *model.In
 			str, err = idxVals[i].ToString()
 			idxVals[i].SetString(str, colInfo.FieldType.Collate)
 		} else {
-			idxVals[i], err = table.CastValue(e.ctx, idxVals[i], colInfo, true, false)
+			idxVals[i], err = table.CastValue(ctx, idxVals[i], colInfo, true, false)
 			if types.ErrOverflow.Equal(err) {
 				return nil, kv.ErrNotExist
 			}

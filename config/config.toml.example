@@ -232,7 +232,7 @@ run-auto-analyze = true
 feedback-probability = 0.05
 
 # The max number of query feedback that cache in memory.
-query-feedback-limit = 1024
+query-feedback-limit = 512
 
 # Pseudo stats will be used if the ratio between the modify count and
 # row count in statistics of a table is greater than it.
@@ -373,6 +373,10 @@ store-limit = 0
 
 # store-liveness-timeout is used to control timeout for store liveness after sending request failed.
 store-liveness-timeout = "5s"
+
+# ttl-refreshed-txn-size decides whether a transaction should update its lock TTL.
+# If the size(in byte) of a transaction is large than `ttl-refreshed-txn-size`, it update the lock TTL during the 2PC.
+ttl-refreshed-txn-size = 33554432
 
 [tikv-client.copr-cache]
 # Whether to enable the copr cache. The copr cache saves the result from TiKV Coprocessor in the memory and
