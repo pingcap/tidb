@@ -6,7 +6,7 @@
 
 ## Abstract
 
-This proposal proposes to more comprehensive support the column type modification.
+This proposal proposes a new feature that supports column type modification more comprehensively.
 
 ## Background
 
@@ -23,7 +23,7 @@ CHANGE [COLUMN] old_col_name new_col_name column_definition
         [FIRST | AFTER col_name]
 ```
 
-At present, the column type change only supports the lengthening of the same type, that is, there is no true change to the data type of the storage layer. The specific support conditions are as follows:
+At present, column type modification only supports the lengthening of the same type, that is, there is no true change to the data type in the storage layer. The limitation of the new support is as follows:
 * Lossy changes are not supported, such as changing from BIGINT to INTEGER, or from VARCHAR(255) to VARCHAR(10)
 * Modification of the precision of DECIMAL type is not supported
 * Does not support changing the UNSIGNED attribute
@@ -31,13 +31,13 @@ At present, the column type change only supports the lengthening of the same typ
 
 ## Proposal
 
-The column type modifications supported by this proposal will involve rewriting column data and refactoring related indexes. This operation still needs to meet the basic requirements of online DDL operation, and to meet the compatibility between previous and subsequent versions TiDB.
+The column type modifications supported by this proposal will involve rewriting column data and refactoring related indexes. This operation still needs to meet the basic requirements of online DDL operation, and to meet the compatibility between previous and subsequent versions of TiDB.
 
-To support this feature, it needs to add additional related columns to the modified column. The type of the newly added column is the type you want to modify. In addition, it is necessary to add each additional related index to the index that contains this column, and update the type of the corresponding column in new indexes.
+To support this feature, TiDB needs to add additional related columns to the modified column. The type of the newly added column is the type you want to modify. In addition, it is necessary to add each additional related index to the index that contains this column, and update the type of the corresponding column in new indexes.
 
 ## Rationale
 
-This proposal suggests adding additional related columns and indexes which has involved the column to be modified, that is, make a copy of the columns and indexes contained `the changed/modified column`. And if user data is written during the copying process, the corresponding data needs to be updated in real time. Assume that the type of `colA` is changed from `originalType` to `newType`, `idxA` (index with `colA`, here it is assumed that there is only one corresponding general index, and there is no correlation to generate columns).
+This proposal suggests adding additional related columns and indexes which involve the column to be modified, that is, making a copy of the columns and indexes that contain `the changed/modified column`. And if user data is written during the copying process, the corresponding data needs to be updated in real time. Assume that the type of `colA` is changed from `originalType` to `newType`, `idxA` (index with `colA`, here it is assumed that there is only one corresponding general index, the index has no relation to column generation).
 
 ### Pre-preparation
 
@@ -77,17 +77,17 @@ The DDL statement itself already has a corresponding type (ActionModifyColumn). 
 * For new clusters, set this variable to true during bootstrap.
 * For clusters requiring rolling upgrade, the default value is false, and users need to explicitly set this variable to true.
 
-### Compatible with other components
+### Compatible issues with other components
 
-It needs to be synchronized this feature with components such as Tools, TiFlash and BR.
+This feature needs to be synchronized with components such as Tools, TiFlash, and BR.
 
 ## Implementation
 
-In addition to considering the update of the corresponding column type and data, and the update of the data in the index column involved, the modification of the column type operation also needs to consider some related characteristics as follows:
+In addition to considering the update of the corresponding column type and data, and the update of the data in the index column involved, the implementation of column type modification also needs to consider the following characteristics.
 
 ### Generate columns
 
-When the modified type column has a related generated column (whether stored or virtual), it has the following characteristics:
+When the modified type relates to generated columns (either stored or virtual), the implementation has the following characteristics:
 
 * The generated column type related to this column is unchanged.
 * When performing an insert operation, the column value of the modified type will be affected by the generated column expression with this column. 
@@ -95,7 +95,7 @@ When the modified type column has a related generated column (whether stored or 
 
 ### Expression index
 
-When the modified type column has a related expression index, it has the following characteristics:
+When columns of the modified type have a related expression index, the implementation has the following characteristics:
 
 * The Type, DBType and Max_length of the related expression index may be modified.
 * When performing an insert operation, the value of the column of the modified type will be affected by the expression in the expression index of this column.
