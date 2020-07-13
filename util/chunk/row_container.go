@@ -222,10 +222,12 @@ func (c *RowContainer) Close() (err error) {
 
 // ActionSpill returns a SpillDiskAction for spilling over to disk.
 func (c *RowContainer) ActionSpill() *SpillDiskAction {
-	c.actionSpill = &SpillDiskAction{c: c, cond: struct {
-		*sync.Cond
-		status uint32
-	}{sync.NewCond(new(sync.Mutex)), 0}}
+	if c.actionSpill == nil {
+		c.actionSpill = &SpillDiskAction{c: c, cond: struct {
+			*sync.Cond
+			status uint32
+		}{sync.NewCond(new(sync.Mutex)), 0}}
+	}
 	return c.actionSpill
 }
 
@@ -449,9 +451,11 @@ func (c *SortedRowContainer) GetSortedRow(idx int) (Row, error) {
 
 // ActionSpill returns a SortAndSpillDiskAction for sorting and spilling over to disk.
 func (c *SortedRowContainer) ActionSpill() *SortAndSpillDiskAction {
-	c.actionSpill = &SortAndSpillDiskAction{
-		c:               c,
-		SpillDiskAction: c.RowContainer.ActionSpill(),
+	if c.actionSpill == nil {
+		c.actionSpill = &SortAndSpillDiskAction{
+			c:               c,
+			SpillDiskAction: c.RowContainer.ActionSpill(),
+		}
 	}
 	return c.actionSpill
 }
