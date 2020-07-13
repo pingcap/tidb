@@ -154,9 +154,6 @@ type rpcHandler struct {
 	// rawStartKey is used for handling coprocessor request.
 	rawStartKey []byte
 	rawEndKey   []byte
-
-	batchStartKeys [][]byte
-	batchEndKeys   [][]byte
 	// isolationLevel is used for current request.
 	isolationLevel kvrpcpb.IsolationLevel
 	resolvedLocks  []uint64
