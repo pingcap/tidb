@@ -722,6 +722,10 @@ func GenRegionErrorResp(req *Request, e *errorpb.Error) (*Response, error) {
 		p = &kvrpcpb.CheckTxnStatusResponse{
 			RegionError: e,
 		}
+	//case CmdBatchCop:
+	//	p = &BatchCopStreamResponse{
+	//		BatchResponse: &coprocessor.BatchResponse{OtherError: e.Message},
+	//	}
 	default:
 		return nil, fmt.Errorf("invalid request type %v", req.Type)
 	}
