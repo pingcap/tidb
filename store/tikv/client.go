@@ -307,16 +307,6 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		defer cancel()
 		return tikvrpc.CallRPC(ctx1, client, req)
 	}
-<<<<<<< HEAD
-
-=======
-	ctx1, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	return tikvrpc.CallRPC(ctx1, client, req)
-}
-
-func (c *rpcClient) getCopStreamResponse(ctx context.Context, client tikvpb.TikvClient, req *tikvrpc.Request, timeout time.Duration, connArray *connArray) (*tikvrpc.Response, error) {
->>>>>>> 2b0b34b... executor: kill tableReader for each connection correctly (#18277)
 	// Coprocessor streaming request.
 	// Use context to support timeout for grpc streaming client.
 	ctx1, cancel := context.WithCancel(ctx)

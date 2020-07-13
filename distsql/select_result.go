@@ -119,54 +119,6 @@ func (r *selectResult) fetch(ctx context.Context) {
 			result.result = resultSubset
 			r.memConsume(int64(resultSubset.MemSize()))
 		}
-<<<<<<< HEAD
-=======
-		if resultSubset == nil {
-			r.selectResp = nil
-			atomic.StoreInt64(&r.selectRespSize, 0)
-			if !r.durationReported {
-				// final round of fetch
-				// TODO: Add a label to distinguish between success or failure.
-				// https://github.com/pingcap/tidb/issues/11397
-				metrics.DistSQLQueryHistogram.WithLabelValues(r.label, r.sqlType).Observe(r.fetchDuration.Seconds())
-				r.durationReported = true
-			}
-			return nil
-		}
-		r.selectResp = new(tipb.SelectResponse)
-		err = r.selectResp.Unmarshal(resultSubset.GetData())
-		if err != nil {
-			return errors.Trace(err)
-		}
-		respSize := int64(r.selectResp.Size())
-		atomic.StoreInt64(&r.selectRespSize, respSize)
-		r.memConsume(respSize)
-		if err := r.selectResp.Error; err != nil {
-			return terror.ClassTiKV.Synthesize(terror.ErrCode(err.Code), err.Msg)
-		}
-		sessVars := r.ctx.GetSessionVars()
-		if atomic.LoadUint32(&sessVars.Killed) == 1 {
-			return errors.Trace(errQueryInterrupted)
-		}
-		sc := sessVars.StmtCtx
-		for _, warning := range r.selectResp.Warnings {
-			sc.AppendWarning(terror.ClassTiKV.Synthesize(terror.ErrCode(warning.Code), warning.Msg))
-		}
-		resultDetail := resultSubset.GetExecDetails()
-		r.updateCopRuntimeStats(resultDetail, resultSubset.RespTime())
-		r.feedback.Update(resultSubset.GetStartKey(), r.selectResp.OutputCounts)
-		r.partialCount++
-		if resultDetail != nil {
-			resultDetail.CopTime = duration
-		}
-		sc.MergeExecDetails(resultDetail, nil)
-		if len(r.selectResp.Chunks) != 0 {
-			break
-		}
-	}
-	return nil
-}
->>>>>>> 2b0b34b... executor: kill tableReader for each connection correctly (#18277)
 
 		select {
 		case r.results <- result:
