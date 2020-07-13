@@ -68,7 +68,7 @@ This requires changing the state of `colA` and `idxA` to `StatePublic`, and then
 
 ### Compatibility issues with MySQL
 
-* Considering the complexity of supporting clustered-index, and the current TiDB does not fully support clustered-index, so temporarily does not support column with primary key for type modification.
+* Considering the complexity of supporting clustered-index and currently TiDB does not fully support clustered-index, so temporarily this feature does not support type modification for columns with the primary key.
 
 ### Compatibility issues with TiDB
 
