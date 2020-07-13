@@ -652,6 +652,8 @@ func (cc *clientConn) Run(ctx context.Context) {
 				zap.Reflect("err", r),
 				zap.String("stack", string(buf)),
 			)
+			err := cc.writeError(errors.New(fmt.Sprintf("%v", r)))
+			terror.Log(err)
 			metrics.PanicCounter.WithLabelValues(metrics.LabelSession).Inc()
 		}
 		if atomic.LoadInt32(&cc.status) != connStatusShutdown {
