@@ -23,7 +23,9 @@ import (
 	"go.uber.org/zap"
 )
 
-type actionCleanup struct{}
+type actionCleanup struct{
+	actionBase
+}
 
 var _ twoPhaseCommitAction = actionCleanup{}
 var tiKVTxnRegionsNumHistogramCleanup = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues(metricsTag("cleanup"))
@@ -36,7 +38,7 @@ func (actionCleanup) tiKVTxnRegionsNumHistogram() prometheus.Observer {
 	return tiKVTxnRegionsNumHistogramCleanup
 }
 
-func (actionCleanup) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch batchMutations) error {
+func (actionCleanup) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch *batchMutations) error {
 	req := tikvrpc.NewRequest(tikvrpc.CmdBatchRollback, &pb.BatchRollbackRequest{
 		Keys:         batch.mutations.keys,
 		StartVersion: c.startTS,

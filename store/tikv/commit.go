@@ -26,7 +26,10 @@ import (
 	"go.uber.org/zap"
 )
 
-type actionCommit struct{ retry bool }
+type actionCommit struct{
+	actionBase
+	retry bool
+}
 
 var _ twoPhaseCommitAction = actionCommit{}
 
@@ -41,7 +44,7 @@ func (actionCommit) tiKVTxnRegionsNumHistogram() prometheus.Observer {
 	return tiKVTxnRegionsNumHistogramCommit
 }
 
-func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch batchMutations) error {
+func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch *batchMutations) error {
 	req := tikvrpc.NewRequest(tikvrpc.CmdCommit, &pb.CommitRequest{
 		StartVersion:  c.startTS,
 		Keys:          batch.mutations.keys,

@@ -42,10 +42,32 @@ import (
 )
 
 type twoPhaseCommitAction interface {
-	handleSingleBatch(*twoPhaseCommitter, *Backoffer, batchMutations) error
+	handleSingleBatch(*twoPhaseCommitter, *Backoffer, *batchMutations) error
 	tiKVTxnRegionsNumHistogram() prometheus.Observer
 	String() string
+	handlePrimaryBatch(*Backoffer, *jobControl, *batchMutations, *twoPhaseCommitter, twoPhaseCommitAction) error
+	initKeysAndMutations(c *twoPhaseCommitter, batch *batchIter)
 }
+
+type actionBase struct{}
+
+func (actionBase) handlePrimaryBatch(bo *Backoffer, j *jobControl, batch *batchMutations, c *twoPhaseCommitter, action twoPhaseCommitAction) error {
+	// The default action for the primary batch is synchronized.
+	// commit/cleanup all use this setting.
+	// prewrite overrides this action.
+	return action.handleSingleBatch(c, bo, batch)
+}
+
+func (actionBase) initKeysAndMutations(c *twoPhaseCommitter, bi *batchIter) {
+}
+
+var (
+	_ twoPhaseCommitAction = &actionPrewrite{}
+	_ twoPhaseCommitAction = actionCommit{}
+	_ twoPhaseCommitAction = actionCleanup{}
+	_ twoPhaseCommitAction = actionPessimisticLock{}
+	_ twoPhaseCommitAction = actionPessimisticRollback{}
+)
 
 var (
 	tikvSecondaryLockCleanupFailureCounterRollback = metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("rollback")
@@ -78,6 +100,7 @@ type twoPhaseCommitter struct {
 	txnSize          int
 	noNeedCommitKeys map[string]struct{}
 
+	once sync.Once
 	primaryKey  []byte
 	forUpdateTS uint64
 
@@ -99,6 +122,7 @@ type twoPhaseCommitter struct {
 		acAfterCommitPrimary chan struct{}
 		bkAfterCommitPrimary chan struct{}
 	}
+	newImplement bool
 }
 
 type committerMutations struct {
@@ -394,7 +418,7 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 	action.tiKVTxnRegionsNumHistogram().Observe(float64(len(groups)))
 
 	var sizeFunc = c.keySize
-	if _, ok := action.(actionPrewrite); ok {
+	if _, ok := action.(*actionPrewrite); ok {
 		// Do not update regionTxnSize on retries. They are not used when building a PrewriteRequest.
 		if len(bo.errors) == 0 {
 			for _, group := range groups {
@@ -488,7 +512,7 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 	}
 	if noNeedFork {
 		for _, b := range batches {
-			e := action.handleSingleBatch(c, bo, b)
+			e := action.handleSingleBatch(c, bo, &b)
 			if e != nil {
 				logutil.BgLogger().Debug("2PC doActionOnBatches failed",
 					zap.Uint64("conn", c.connID),
@@ -660,7 +684,8 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 			c.cleanWg.Add(1)
 			go func() {
 				cleanupKeysCtx := context.WithValue(context.Background(), txnStartKey, ctx.Value(txnStartKey))
-				err := c.cleanupMutations(NewBackofferWithVars(cleanupKeysCtx, cleanupMaxBackoff, c.txn.vars), c.mutations)
+				bo := NewBackofferWithVars(cleanupKeysCtx, cleanupMaxBackoff, c.txn.vars)
+				err := c.cleanupMutations(bo, c.mutations)
 				if err != nil {
 					tikvSecondaryLockCleanupFailureCounterRollback.Inc()
 					logutil.Logger(ctx).Info("2PC cleanup failed",
@@ -688,7 +713,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	binlogChan := c.prewriteBinlog(ctx)
 	prewriteBo := NewBackofferWithVars(ctx, PrewriteMaxBackoff, c.txn.vars)
 	start := time.Now()
-	err = c.prewriteMutations(prewriteBo, c.mutations)
+	err = doPrewrite(prewriteBo, c)
 	commitDetail := c.getDetail()
 	commitDetail.PrewriteTime = time.Since(start)
 	if prewriteBo.totalSleep > 0 {
@@ -756,7 +781,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 
 	start = time.Now()
 	commitBo := NewBackofferWithVars(ctx, CommitMaxBackoff, c.txn.vars)
-	err = c.commitMutations(commitBo, c.mutations)
+	err = doCommit(commitBo, c)
 	commitDetail.CommitTime = time.Since(start)
 	if commitBo.totalSleep > 0 {
 		atomic.AddInt64(&commitDetail.CommitBackoffTime, int64(commitBo.totalSleep)*int64(time.Millisecond))
@@ -1031,7 +1056,7 @@ func (batchExe *batchExecutor) startWorker(exitCh chan struct{}, ch chan error, 
 					defer singleBatchCancel()
 				}
 				beforeSleep := singleBatchBackoffer.totalSleep
-				ch <- batchExe.action.handleSingleBatch(batchExe.committer, singleBatchBackoffer, batch)
+				ch <- batchExe.action.handleSingleBatch(batchExe.committer, singleBatchBackoffer, &batch)
 				commitDetail := batchExe.committer.getDetail()
 				if commitDetail != nil { // lock operations of pessimistic-txn will let commitDetail be nil
 					if delta := singleBatchBackoffer.totalSleep - beforeSleep; delta > 0 {
@@ -1063,7 +1088,7 @@ func (batchExe *batchExecutor) process(batches []batchMutations) error {
 	// For prewrite, stop sending other requests after receiving first error.
 	backoffer := batchExe.backoffer
 	var cancel context.CancelFunc
-	if _, ok := batchExe.action.(actionPrewrite); ok {
+	if _, ok := batchExe.action.(*actionPrewrite); ok {
 		backoffer, cancel = batchExe.backoffer.Fork()
 		defer cancel()
 	}
@@ -1140,4 +1165,351 @@ func (c *twoPhaseCommitter) getUndeterminedErr() error {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.mu.undeterminedErr
+}
+
+type lockIter struct {
+	lockKeys [][]byte
+	lockIdx  int
+}
+
+var _ kv.Iterator = &lockIter{}
+
+func (iter *lockIter) Valid() bool {
+	return iter.lockIdx < len(iter.lockKeys)
+}
+
+func (iter *lockIter) Key() kv.Key {
+	return iter.lockKeys[iter.lockIdx]
+}
+
+func (iter *lockIter) Value() []byte {
+	return nil
+}
+
+func (iter *lockIter) Next() error {
+	iter.lockIdx++
+	return nil
+}
+
+func (iter *lockIter) Close() {}
+
+// mergeSortIter choose from two iterators for merge sort.
+func mergeSortIter(iter1, iter2 kv.Iterator) (iter kv.Iterator, equal bool) {
+	if iter1.Valid() && iter2.Valid() {
+		ord := bytes.Compare(iter1.Key(), iter2.Key())
+		if ord < 0 {
+			iter = iter1
+		} else if ord > 0 {
+			iter = iter2
+		} else {
+			iter = iter1
+			equal = true
+		}
+		return
+	}
+
+	if iter1.Valid() {
+		iter = iter1
+	}
+	if iter2.Valid() {
+		iter = iter2
+	}
+	return
+}
+
+// jobControl wraps all the things for safe concurrency.
+// It contains the task channel and result channel,
+// It also provides run worker and send task to channel methods.
+// Something special about it is that the worker count is not fixed.
+type jobControl struct {
+	workerCnt int
+	taskCh    chan *batchMutations
+	// errCh is used by the worker to report something wrong
+	errCh  chan error
+	// exited is used by jobControl to notify workers to exit when something is wrong.
+	exited chan struct{}
+}
+
+func (j *jobControl) init() {
+	j.errCh = make(chan error, 1) // nonblock for the first error
+	j.taskCh = make(chan *batchMutations)
+	j.exited = make(chan struct{})
+	j.workerCnt = 0
+}
+
+func (j *jobControl) sendBatchMutationToWorker(bo *Backoffer, b *batchMutations, c *twoPhaseCommitter, action twoPhaseCommitAction) error {
+	if b.mutations.len() == 0 {
+		return nil
+	}
+	// Try for the first time, nonblock sending the task to the channel.
+	select {
+	case j.taskCh <- b:
+		return nil
+	default:
+		// Create a new worker if necessary.
+		if j.workerCnt < 32 {
+			j.workerCnt++
+			go j.runWorker(bo, c, action)
+		}
+	}
+
+	// Block sending the task to the worker.
+	select {
+	case j.taskCh <- b:
+	case err := <-j.errCh:
+		return err
+	}
+	return nil
+}
+
+func (j *jobControl) runWorker(bo *Backoffer, c *twoPhaseCommitter, action twoPhaseCommitAction) {
+	var cancel context.CancelFunc
+	bo, cancel = bo.Fork()
+	defer cancel()
+	var err error
+	for batch := range j.taskCh {
+		err = action.handleSingleBatch(c, bo, batch)
+		if err != nil {
+			break
+		}
+	}
+	select {
+	case j.errCh <- err:
+	case <-j.exited:
+	}
+}
+
+func (j *jobControl) wait(alreadyFail error) error {
+	defer close(j.exited)
+
+	// Notify all workers task send done and wait for them to finish.
+	close(j.taskCh)
+
+	// On fail, exit early, close exited to avoid goroutine leak.
+	if alreadyFail != nil {
+		return alreadyFail
+	}
+
+	// On success, wait for all the worker to finish.
+	for i := 0; i < j.workerCnt; i++ {
+		err := <-j.errCh
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func do(bo *Backoffer, c *twoPhaseCommitter, action twoPhaseCommitAction) error {
+	txn := c.txn
+	iter, err := txn.us.GetMemBuffer().Iter(nil, nil)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer iter.Close()
+	l := lockIter{lockKeys: txn.lockKeys}
+	bi := batchIter{iter: iter, lockIter: &l}
+
+	// Take the first batch.
+	batch, noMore, err := c.takeBatchMutationFromIterator(bo, action, &bi)
+	if err != nil || batch.mutations.len() == 0 {
+		return err
+	}
+	// Set the primary key.
+	batch.isPrimary = true
+	c.once.Do(func() {
+		c.primaryKey = batch.mutations.keys[0]
+	})	// Optimize for the simple case.
+	if noMore {
+		return action.handleSingleBatch(c, bo, batch)
+	}
+
+	var j jobControl
+	j.init()
+	err = action.handlePrimaryBatch(bo, &j, batch, c, action)
+	for err == nil && !noMore {
+		batch, noMore, err = c.takeBatchMutationFromIterator(bo, action, &bi)
+		if err != nil {
+			break
+		}
+		// The taskCh is not buffered, so the batch count is decided by the worker count,
+		// and the total memory is under control.
+		err = j.sendBatchMutationToWorker(bo, batch, c, action)
+	}
+	return j.wait(err)
+}
+
+func (c *twoPhaseCommitter) takeBatchMutationFromIterator(bo *Backoffer, action twoPhaseCommitAction, bi *batchIter) (*batchMutations, bool, error) {
+	lastLoc, mutations, noMore, err := takeBatchMutationFromIterator(bo, bi, c)
+	if lastLoc == nil {
+		return &batchMutations{}, true, nil
+	}
+	if err == nil && noMore {
+		action.initKeysAndMutations(c, bi)
+	}
+	return &batchMutations{
+		region:    lastLoc.Region,
+		mutations: mutations,
+	}, noMore, nil
+}
+
+type batchIter struct {
+	lastLoc  *KeyLocation
+	iter     kv.Iterator
+	lockIter kv.Iterator
+
+	writeSize   int
+	writeKeys   int
+	regionCount int
+}
+
+func takeBatchMutationFromIterator(bo *Backoffer, bi *batchIter, c *twoPhaseCommitter) (*KeyLocation, committerMutations, bool, error) {
+	var err error
+	hint := c.txn.Len()
+	if hint > txnCommitBatchSize {
+		hint = txnCommitBatchSize
+	}
+	batchSize := 0
+	mutations := newCommiterMutations(hint)
+	noMore := true
+	loc := bi.lastLoc
+	for bi.iter.Valid() || bi.lockIter.Valid() {
+		currIter, equal := mergeSortIter(bi.iter, bi.lockIter)
+		k := currIter.Key()
+		v := currIter.Value()
+		if bi.lastLoc == nil {
+			loc, err = c.store.regionCache.LocateKey(bo, k)
+			if err != nil {
+				return nil, mutations, noMore, err
+			}
+			bi.lastLoc = loc
+			bi.regionCount++
+		} else {
+			if !bi.lastLoc.Contains(k) {
+				noMore = false
+				bi.lastLoc = nil
+				break
+			}
+		}
+
+		batchSize = batchSize + len(k) + len(v)
+
+		if currIter == bi.lockIter {
+			mutations.push(pb.Op_Lock, k, nil, c.isPessimistic)
+		} else {
+			if op, skip := c.getOpByKeyValue(k, v); !skip {
+				mutations.push(op, k, v, c.isPessimistic)
+			}
+			if equal {
+				if bi.lockIter.Next() != nil {
+					// No error, pass golint check
+				}
+			}
+		}
+
+		if err := currIter.Next(); err != nil {
+			return nil, mutations, noMore, errors.Trace(err)
+		}
+		if batchSize >= txnCommitBatchSize {
+			noMore = false
+			break
+		}
+	}
+	bi.writeKeys = bi.writeKeys + mutations.len()
+	bi.writeSize = bi.writeSize + batchSize
+	return loc, mutations, noMore, nil
+}
+
+// getOpByKeyValue checks key value to decide the Op to perform.
+// Side effect: c.noNeedCommitKeys is modified in this function.
+func (c *twoPhaseCommitter) getOpByKeyValue(k kv.Key, v []byte) (op pb.Op, skip bool) {
+	if tablecodec.IsUntouchedIndexKValue(k, v) {
+		skip = true
+		return
+	}
+	txn := c.txn
+	if len(v) > 0 {
+		op = pb.Op_Put
+		if c := txn.us.GetKeyExistErrInfo(k); c != nil {
+			op = pb.Op_Insert
+		}
+		return
+	}
+
+	if !txn.IsPessimistic() && txn.us.GetKeyExistErrInfo(k) != nil {
+		// delete-your-writes keys in optimistic txn need check not exists in prewrite-phase
+		// due to `Op_CheckNotExists` doesn't prewrite lock, so mark those keys should not be used in commit-phase.
+		op = pb.Op_CheckNotExists
+		// Prewrite visit here for the first time, add the keys to the map.
+		// Commit & Cleanup visit here for the second time, mark as skip.
+		if _, ok := c.noNeedCommitKeys[string(k)]; !ok {
+			c.noNeedCommitKeys[string(k)] = struct{}{}
+		} else {
+			skip = true
+		}
+	} else {
+		// normal delete keys in optimistic txn can be delete without not exists checking
+		// delete-your-writes keys in pessimistic txn can ensure must be no exists so can directly delete them
+		op = pb.Op_Del
+	}
+	return
+}
+
+func doPrewrite(prewriteBo *Backoffer, c *twoPhaseCommitter) error {
+	var err error
+	if c.newImplement {
+		err = do(prewriteBo, c, &actionPrewrite{})
+	} else {
+		err = c.prewriteMutations(prewriteBo, c.mutations)
+	}
+	return err
+}
+
+func doCommit(commitBo *Backoffer, c *twoPhaseCommitter) error {
+	var err error
+	if c.newImplement {
+		err = do(commitBo, c, actionCommit{})
+	} else {
+		err = c.commitMutations(commitBo, c.mutations)
+	}
+	return err
+}
+
+func doCleanUp(bo *Backoffer, c *twoPhaseCommitter) error {
+	var err error
+	if c.newImplement {
+		err = do(bo, c, actionCleanup{})
+	} else {
+		err = c.cleanupMutations(bo, c.mutations)
+	}
+	return err
+}
+
+func (c *twoPhaseCommitter) initSimple() error {
+	c.newImplement = true
+	txn := c.txn
+	c.isPessimistic = txn.IsPessimistic()
+
+	// Merge ordered lockKeys and pairs in the memBuffer into the mutations array
+	sort.Slice(txn.lockKeys, func(i, j int) bool {
+		return bytes.Compare(txn.lockKeys[i], txn.lockKeys[j]) < 0
+	})
+
+	// Sanity check for startTS.
+	if txn.StartTS() == math.MaxUint64 {
+		err := errors.Errorf("try to commit with invalid txnStartTS: %d", txn.StartTS())
+		logutil.BgLogger().Error("commit failed",
+			zap.Uint64("conn", c.connID),
+			zap.Error(err))
+		return errors.Trace(err)
+	}
+	c.noNeedCommitKeys = make(map[string]struct{})
+
+	commitDetail := &execdetails.CommitDetails{}
+	metrics.TiKVTxnWriteKVCountHistogram.Observe(float64(commitDetail.WriteKeys))
+	metrics.TiKVTxnWriteSizeHistogram.Observe(float64(commitDetail.WriteSize))
+	c.priority = getTxnPriority(txn)
+	c.syncLog = getTxnSyncLog(txn)
+	c.setDetail(commitDetail)
+	return nil
 }

@@ -258,6 +258,23 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 		}
 	}
 	defer committer.ttlManager.close()
+	if txn.IsPessimistic() || committer.shouldWriteBinlog() {
+		if err := committer.initKeysAndMutations(); err != nil {
+			return errors.Trace(err)
+		}
+		if committer.mutations.len() == 0 {
+			return nil
+		}
+	} else {
+		// TODO: Replace the old implementation.
+		if err := committer.initSimple(); err != nil {
+			return errors.Trace(err)
+		}
+		if txn.Size() == 0 && len(txn.lockKeys) == 0 {
+			return nil
+		}
+	}
+
 	if err := committer.initKeysAndMutations(); err != nil {
 		return errors.Trace(err)
 	}
@@ -278,9 +295,8 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	}()
 	// latches disabled
 	// pessimistic transaction should also bypass latch.
-	if txn.store.txnLatches == nil || txn.IsPessimistic() {
+	if txn.store.txnLatches == nil || txn.IsPessimistic() || committer.newImplement {
 		err = committer.execute(ctx)
-		logutil.Logger(ctx).Debug("[kv] txnLatches disabled, 2pc directly", zap.Error(err))
 		return errors.Trace(err)
 	}
 

@@ -31,9 +31,12 @@ import (
 	"go.uber.org/zap"
 )
 
-type actionPrewrite struct{}
+type actionPrewrite struct{
+	actionBase
+	writeKeys int
+	writeSize int
+}
 
-var _ twoPhaseCommitAction = actionPrewrite{}
 var tiKVTxnRegionsNumHistogramPrewrite = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues(metricsTag("prewrite"))
 
 func (actionPrewrite) String() string {
@@ -44,7 +47,7 @@ func (actionPrewrite) tiKVTxnRegionsNumHistogram() prometheus.Observer {
 	return tiKVTxnRegionsNumHistogramPrewrite
 }
 
-func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize uint64) *tikvrpc.Request {
+func (c *twoPhaseCommitter) buildPrewriteRequest(batch *batchMutations, txnSize uint64) *tikvrpc.Request {
 	m := &batch.mutations
 	mutations := make([]*pb.Mutation, m.len())
 	for i := range m.keys {
@@ -89,11 +92,26 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 	return tikvrpc.NewRequest(tikvrpc.CmdPrewrite, req, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
 }
 
-func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch batchMutations) error {
+func (*actionPrewrite) handlePrimaryBatch(bo *Backoffer, j *jobControl, batch *batchMutations, c *twoPhaseCommitter, action twoPhaseCommitAction) error {
+	// Nonblock writing for the primary batch.
+	return j.sendBatchMutationToWorker(bo, batch, c, action)
+}
+
+func (a *actionPrewrite) initKeysAndMutations(c *twoPhaseCommitter, bi *batchIter) {
+	metrics.TiKVTxnWriteKVCountHistogram.Observe(float64(bi.writeSize))
+	metrics.TiKVTxnWriteSizeHistogram.Observe(float64(bi.writeKeys))
+	// c.setDetail(&execdetails.CommitDetails{
+	// 	WriteSize:         bi.writeSize,
+	// 	WriteKeys:         bi.writeKeys,
+	// 	PrewriteRegionNum: int32(bi.regionCount),
+	// })
+}
+
+func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch *batchMutations) error {
 	txnSize := uint64(c.regionTxnSize[batch.region.id])
 	// When we retry because of a region miss, we don't know the transaction size. We set the transaction size here
 	// to MaxUint64 to avoid unexpected "resolve lock lite".
-	if len(bo.errors) > 0 {
+	if len(bo.errors) > 0 || txnSize == 0 {
 		txnSize = math.MaxUint64
 	}
 
@@ -174,5 +192,5 @@ func (c *twoPhaseCommitter) prewriteMutations(bo *Backoffer, mutations committer
 		bo.ctx = opentracing.ContextWithSpan(bo.ctx, span1)
 	}
 
-	return c.doActionOnMutations(bo, actionPrewrite{}, mutations)
+	return c.doActionOnMutations(bo, &actionPrewrite{}, mutations)
 }
