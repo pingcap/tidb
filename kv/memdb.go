@@ -34,17 +34,20 @@ type KeyFlags uint8
 const (
 	flagPresumeKeyNotExists KeyFlags = 1 << iota
 
-	flagValidMark KeyFlags = 0x80
+	// flagTouched is a internal flag to help `Mark` operation.
+	// The default value of `KeyFlags` is 0 and the flags returned by any operation will set `flagTouched`.
+	// When merge two flags, if the newer one haven't set the `flagTouched`, the newer value will be ignored.
+	flagTouched KeyFlags = 0x80
 )
 
 // MarkPresumeKeyNotExists marks the existence of the associated key is checked lazily.
 func (m KeyFlags) MarkPresumeKeyNotExists() KeyFlags {
-	return (m | flagPresumeKeyNotExists) | flagValidMark
+	return (m | flagPresumeKeyNotExists) | flagTouched
 }
 
 // UnmarkPresumeKeyNotExists reverts MarkPresumeKeyNotExists.
 func (m KeyFlags) UnmarkPresumeKeyNotExists() KeyFlags {
-	return (m & ^flagPresumeKeyNotExists) | flagValidMark
+	return (m & ^flagPresumeKeyNotExists) | flagTouched
 }
 
 // HasPresumeKeyNotExists retruns whether the associated key use lazy check.
@@ -52,21 +55,16 @@ func (m KeyFlags) HasPresumeKeyNotExists() bool {
 	return m&flagPresumeKeyNotExists != 0
 }
 
-func (m KeyFlags) isValid() bool {
-	return m&flagValidMark != 0
+func (m KeyFlags) isTouched() bool {
+	return m&flagTouched != 0
 }
 
 // Merge used to merge two KeyFlags.
 func (m KeyFlags) Merge(old KeyFlags) KeyFlags {
-	if !m.isValid() {
+	if !m.isTouched() {
 		return old
 	}
-	if m.HasPresumeKeyNotExists() {
-		old = old.MarkPresumeKeyNotExists()
-	} else {
-		old = old.UnmarkPresumeKeyNotExists()
-	}
-	return old
+	return m
 }
 
 type memDB struct {
@@ -112,7 +110,7 @@ func (m *memDB) GetFlags(k Key) (KeyFlags, error) {
 			continue
 		}
 		exists = true
-		if flags.isValid() {
+		if flags.isTouched() {
 			return flags, nil
 		}
 	}
