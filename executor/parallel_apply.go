@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"github.com/pingcap/tidb/util/execdetails"
 	"sync"
 	"sync/atomic"
 
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stringutil"
