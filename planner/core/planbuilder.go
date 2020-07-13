@@ -2654,9 +2654,6 @@ func (b *PlanBuilder) buildSplitTableRegion(node *ast.SplitRegionStmt) (Plan, er
 	schema, names := expression.TableInfo2SchemaAndNames(b.ctx, node.Table.Schema, tblInfo)
 	mockTablePlan.SetSchema(schema)
 	mockTablePlan.names = names
-	convertFn := func(v ast.ExprNode, c *model.ColumnInfo) (types.Datum, error) {
-		return b.convertValue(v, mockTablePlan, c)
-	}
 
 	p := &SplitRegion{
 		TableInfo:      tblInfo,
@@ -2666,7 +2663,7 @@ func (b *PlanBuilder) buildSplitTableRegion(node *ast.SplitRegionStmt) (Plan, er
 	if len(node.SplitOpt.ValueLists) > 0 {
 		values := make([][]types.Datum, 0, len(node.SplitOpt.ValueLists))
 		for i, valuesItem := range node.SplitOpt.ValueLists {
-			data, err := convertValueListToData(valuesItem, handleColInfos, i, convertFn)
+			data, err := convertValueListToData(valuesItem, handleColInfos, i, b, mockTablePlan)
 			if err != nil {
 				return nil, err
 			}
@@ -2677,11 +2674,11 @@ func (b *PlanBuilder) buildSplitTableRegion(node *ast.SplitRegionStmt) (Plan, er
 	}
 
 	var err error
-	p.Lower, err = convertValueListToData(node.SplitOpt.Lower, handleColInfos, lowerBound, convertFn)
+	p.Lower, err = convertValueListToData(node.SplitOpt.Lower, handleColInfos, lowerBound, b, mockTablePlan)
 	if err != nil {
 		return nil, err
 	}
-	p.Upper, err = convertValueListToData(node.SplitOpt.Upper, handleColInfos, upperBound, convertFn)
+	p.Upper, err = convertValueListToData(node.SplitOpt.Upper, handleColInfos, upperBound, b, mockTablePlan)
 	if err != nil {
 		return nil, err
 	}
@@ -2722,7 +2719,7 @@ const (
 )
 
 func convertValueListToData(valueList []ast.ExprNode, handleColInfos []*model.ColumnInfo, rowIdx int,
-	convertFn func(ast.ExprNode, *model.ColumnInfo) (types.Datum, error)) ([]types.Datum, error) {
+	b *PlanBuilder, mockTablePlan *LogicalTableDual) ([]types.Datum, error) {
 	if len(valueList) != len(handleColInfos) {
 		var err error
 		switch rowIdx {
@@ -2737,7 +2734,7 @@ func convertValueListToData(valueList []ast.ExprNode, handleColInfos []*model.Co
 	}
 	data := make([]types.Datum, 0, len(handleColInfos))
 	for i, v := range valueList {
-		convertedDatum, err := convertFn(v, handleColInfos[i])
+		convertedDatum, err := b.convertValue(v, mockTablePlan, handleColInfos[i])
 		if err != nil {
 			return nil, err
 		}

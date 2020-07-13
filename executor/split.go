@@ -568,7 +568,6 @@ func (e *SplitTableRegionExec) calculateIntBoundValue() (lowerValue int64, step 
 func (e *SplitTableRegionExec) getSplitTablePhysicalKeysFromBound(physicalID int64, keys [][]byte) ([][]byte, error) {
 	recordPrefix := tablecodec.GenTableRecordPrefix(physicalID)
 	// Split a separate region for index.
-
 	containsIndex := len(e.tableInfo.Indices) > 0 && !(e.tableInfo.IsCommonHandle && len(e.tableInfo.Indices) == 1)
 	if containsIndex {
 		keys = append(keys, recordPrefix)
