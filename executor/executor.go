@@ -183,27 +183,9 @@ type Executor interface {
 
 // Next is a wrapper function on e.Next(), it handles some common codes.
 func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
-<<<<<<< HEAD
 	sessVars := e.base().ctx.GetSessionVars()
-	if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
-		return ErrQueryInterrupted
-	}
-
-	return e.Next(ctx, req)
-=======
-	base := e.base()
-	if base.runtimeStats != nil {
-		start := time.Now()
-		defer func() { base.runtimeStats.Record(time.Since(start), req.NumRows()) }()
-	}
-	sessVars := base.ctx.GetSessionVars()
 	if atomic.LoadUint32(&sessVars.Killed) == 1 {
 		return ErrQueryInterrupted
-	}
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan(fmt.Sprintf("%T.Next", e), opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 	err := e.Next(ctx, req)
 
@@ -215,7 +197,7 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 		err = ErrQueryInterrupted
 	}
 	return err
->>>>>>> 2b0b34b... executor: kill tableReader for each connection correctly (#18277)
+
 }
 
 // CancelDDLJobsExec represents a cancel DDL jobs executor.
