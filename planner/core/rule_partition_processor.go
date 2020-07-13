@@ -71,7 +71,7 @@ func (s *partitionProcessor) rewriteDataSource(lp LogicalPlan) (LogicalPlan, err
 			for _, child := range ua.Children() {
 				us := LogicalUnionScan{
 					conditions: p.conditions,
-					handleCol:  p.handleCol,
+					handleCols: p.handleCols,
 				}.Init(ua.ctx, ua.blockOffset)
 				us.SetChildren(child)
 				children = append(children, us)

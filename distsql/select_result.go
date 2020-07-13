@@ -125,7 +125,7 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 			return terror.ClassTiKV.Synthesize(terror.ErrCode(err.Code), err.Msg)
 		}
 		sessVars := r.ctx.GetSessionVars()
-		if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
+		if atomic.LoadUint32(&sessVars.Killed) == 1 {
 			return errors.Trace(errQueryInterrupted)
 		}
 		sc := sessVars.StmtCtx

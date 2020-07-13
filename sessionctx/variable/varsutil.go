@@ -516,8 +516,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		TiDBHashJoinConcurrency,
 		TiDBHashAggPartialConcurrency,
 		TiDBHashAggFinalConcurrency,
-		TiDBWindowConcurrency,
-		TiDBDistSQLScanConcurrency:
+		TiDBWindowConcurrency:
 		v, err := strconv.Atoi(value)
 		if err != nil {
 			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
@@ -527,6 +526,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		}
 		return value, nil
 	case TiDBExecutorConcurrency,
+		TiDBDistSQLScanConcurrency,
 		TiDBIndexSerialScanConcurrency,
 		TiDBIndexJoinBatchSize,
 		TiDBIndexLookupSize,
