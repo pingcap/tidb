@@ -39,7 +39,7 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/printer"
+	"github.com/pingcap/tidb/util/versioninfo"
 	"go.uber.org/zap"
 )
 
@@ -1085,7 +1085,7 @@ func (cli *testServerClient) runTestStatusAPI(c *C) {
 	err = decoder.Decode(&data)
 	c.Assert(err, IsNil)
 	c.Assert(data.Version, Equals, tmysql.ServerVersion)
-	c.Assert(data.GitHash, Equals, printer.TiDBGitHash)
+	c.Assert(data.GitHash, Equals, versioninfo.TiDBGitHash)
 }
 
 func (cli *testServerClient) runTestMultiStatements(c *C) {
