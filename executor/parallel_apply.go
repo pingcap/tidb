@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"github.com/pingcap/tidb/util/execdetails"
 	"sync"
 	"sync/atomic"
 
@@ -173,6 +174,9 @@ func (e *ParallelNestedLoopApplyExec) Close() error {
 			e.runtimeStats.SetCacheInfo(true, hitRatio)
 		} else {
 			e.runtimeStats.SetCacheInfo(false, 0)
+		}
+		if e.concurrency > 1 {
+			e.runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", e.concurrency))
 		}
 	}
 	return err
