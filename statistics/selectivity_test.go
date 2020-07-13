@@ -396,15 +396,15 @@ func (s *testStatsSuite) TestEstimationForUnknownValues(c *C) {
 	colID := table.Meta().Columns[0].ID
 	count, err := statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(30, 30))
 	c.Assert(err, IsNil)
-	c.Assert(count, Equals, 2.0)
+	c.Assert(count, Equals, 0.2)
 
 	count, err = statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(9, 30))
 	c.Assert(err, IsNil)
-	c.Assert(count, Equals, 4.2)
+	c.Assert(count, Equals, 2.4000000000000004)
 
 	count, err = statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(9, math.MaxInt64))
 	c.Assert(err, IsNil)
-	c.Assert(count, Equals, 4.2)
+	c.Assert(count, Equals, 2.4000000000000004)
 
 	idxID := table.Meta().Indices[0].ID
 	count, err = statsTbl.GetRowCountByIndexRanges(sc, idxID, getRange(30, 30))

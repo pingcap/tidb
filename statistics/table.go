@@ -392,6 +392,21 @@ func isSingleColIdxNullRange(idx *Index, ran *ranger.Range) bool {
 	return false
 }
 
+func outOfRangeEQSelectivity(ndv, modifyRows int64) float64 {
+	// It must be 0 since the histogram contains the whole data if modifyRows is 0.
+	if modifyRows == 0 {
+		return 0
+	}
+	// We simply set its selectivity to 1/NDV, and the magic number outOfRangeBetweenRate
+	// is used to avoid wrong selectivity caused by small NDV.
+	if ndv < outOfRangeBetweenRate {
+		ndv = outOfRangeBetweenRate
+	}
+	// TODO: After extracting TopN from histograms, we can minus the TopN fraction here.
+	// Please see https://github.com/pingcap/tidb/issues/18461 for more details.
+	return 1 / float64(ndv)
+}
+
 // getEqualCondSelectivity gets the selectivity of the equal conditions.
 func (coll *HistColl) getEqualCondSelectivity(idx *Index, bytes []byte, usedColsLen int) float64 {
 	coverAll := len(idx.Info.Columns) == usedColsLen
@@ -404,8 +419,7 @@ func (coll *HistColl) getEqualCondSelectivity(idx *Index, bytes []byte, usedCols
 		// When the value is out of range, we could not found this value in the CM Sketch,
 		// so we use heuristic methods to estimate the selectivity.
 		if idx.NDV > 0 && coverAll {
-			// for equality queries
-			return float64(coll.ModifyCount) / float64(idx.NDV) / idx.TotalRowCount()
+			return outOfRangeEQSelectivity(idx.NDV, coll.ModifyCount)
 		}
 		// The equal condition only uses prefix columns of the index.
 		colIDs := coll.Idx2ColumnIDs[idx.ID]
@@ -416,10 +430,7 @@ func (coll *HistColl) getEqualCondSelectivity(idx *Index, bytes []byte, usedCols
 			}
 			ndv = mathutil.MaxInt64(ndv, coll.Columns[colID].NDV)
 		}
-		if ndv > 0 {
-			return float64(coll.ModifyCount) / float64(ndv) / idx.TotalRowCount()
-		}
-		return float64(coll.ModifyCount) / outOfRangeBetweenRate / idx.TotalRowCount()
+		return outOfRangeEQSelectivity(ndv, coll.ModifyCount)
 	}
 	return float64(idx.CMSketch.QueryBytes(bytes)) / float64(idx.TotalRowCount())
 }
