@@ -159,7 +159,7 @@ func enableParallelApply(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPla
 	// the parallel apply has three limitation:
 	// 1. the parallel implementation now cannot keep order;
 	// 2. the inner child has to support clone;
-	// 3. if one Apply is in inner-side of another Apply, it cannot be parallel, for example:
+	// 3. if one Apply is in the inner side of another Apply, it cannot be parallel, for example:
 	//		The topology of 3 Apply operators are A1(A2, A3), which means A2 is the outer child of A1
 	//		while A3 is the inner child. Then A1 and A2 can be parallel and A3 cannot.
 	if apply, ok := plan.(*PhysicalApply); ok {
@@ -171,8 +171,9 @@ func enableParallelApply(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPla
 			apply.Concurrency = sctx.GetSessionVars().ExecutorConcurrency
 		}
 
+		// because of the limitation 3, we cannot parallelize Apply operators in this Apply's inner size,
+		// so we only invoke recursively for its outer child.
 		apply.SetChild(outerIdx, enableParallelApply(sctx, apply.Children()[outerIdx]))
-		// apply.SetChild(innerIdx, enableParallelApply(innerChild)) <--- limitation 3
 		return apply
 	}
 	for i, child := range plan.Children() {
