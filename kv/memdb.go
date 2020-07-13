@@ -61,7 +61,10 @@ func (m KeyFlags) isTouched() bool {
 
 // Merge used to merge two KeyFlags.
 func (m KeyFlags) Merge(old KeyFlags) KeyFlags {
-	if !m.isTouched() {
+	// Only consider flagPresumeKeyNotExists in merge operation for now.
+	// We should always respect to the older setting,
+	// the delete operation will overwrite flags in root tree instead of invoke merge.
+	if old.isTouched() {
 		return old
 	}
 	return m
