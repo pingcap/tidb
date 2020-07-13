@@ -5950,7 +5950,7 @@ func (s *testSuite) TestKillTableReader(c *C) {
 	tk.MustExec("insert into t values (1),(2),(3)")
 	c.Assert(failpoint.Enable(retry, `return(true)`), IsNil)
 	go func() {
-		c.Assert(errors.Cause(tk.QueryToErr("select * from t")).(*terror.Error).ToSQLError(), Equals, executor.ErrQueryInterrupted.Code())
+		c.Assert(int(errors.Cause(tk.QueryToErr("select * from t")).(*terror.Error).ToSQLError().Code), Equals, executor.ErrQueryInterrupted.Code())
 	}()
 	time.Sleep(1 * time.Second)
 	atomic.StoreUint32(&tk.Se.GetSessionVars().Killed, 1)
