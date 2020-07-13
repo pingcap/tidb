@@ -219,3 +219,8 @@ func (ib *IntHandleCols) Compare(a, b []types.Datum) (int, error) {
 	}
 	return 1, nil
 }
+
+// NewIntHandleCols creates a new IntHandleCols.
+func NewIntHandleCols(col *expression.Column) HandleCols {
+	return &IntHandleCols{col: col}
+}
