@@ -539,13 +539,14 @@ func (e *hugeMemTableRetriever) setDataForColumns(ctx sessionctx.Context) error 
 	batch := 1024
 	for ; e.dbsIdx < len(e.dbs); e.dbsIdx++ {
 		schema := e.dbs[e.dbsIdx]
-		for ; e.tblIdx < len(schema.Tables); e.tblIdx++ {
+		for e.tblIdx < len(schema.Tables) {
 			table := schema.Tables[e.tblIdx]
 			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
 
 			e.dataForColumnsInTable(schema, table)
+			e.tblIdx++
 			if len(e.rows) >= batch {
 				return nil
 			}

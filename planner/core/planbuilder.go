@@ -768,7 +768,7 @@ func getPathByIndexName(paths []*util.AccessPath, idxName model.CIStr, tblInfo *
 			return path
 		}
 	}
-	if isPrimaryIndex(idxName) && tblInfo.PKIsHandle {
+	if isPrimaryIndex(idxName) && (tblInfo.PKIsHandle || tblInfo.IsCommonHandle) {
 		return tablePath
 	}
 	return nil
