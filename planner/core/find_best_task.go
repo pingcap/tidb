@@ -210,6 +210,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		// The curCntPlan records the number of possible plans for pp
 		curCntPlan = 1
 		TimeStampNow := p.GetlogicalTS4TaskMap()
+		savedPlanID := p.ctx.GetSessionVars().PlanID
 		for j, child := range p.children {
 			childTask, cnt, err := child.findBestTask(pp.GetChildReqProps(j), &PlanCounterDisabled)
 			childCnts[j] = cnt
@@ -230,6 +231,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 
 		// If the target plan can be found in this physicalPlan(pp), rebuild childTasks to build the corresponding combination.
 		if planCounter.IsForce() && int64(*planCounter) <= curCntPlan {
+			p.ctx.GetSessionVars().PlanID = savedPlanID
 			curCntPlan = int64(*planCounter)
 			err := p.rebuildChildTasks(&childTasks, pp, childCnts, int64(*planCounter), TimeStampNow)
 			if err != nil {
@@ -967,15 +969,7 @@ func (is *PhysicalIndexScan) indexScanRowSize(idx *model.IndexInfo, ds *DataSour
 func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoubleRead bool) {
 	indexCols := make([]*expression.Column, len(is.IdxCols), len(is.Index.Columns)+1)
 	copy(indexCols, is.IdxCols)
-	is.NeedCommonHandle = is.Table.IsCommonHandle && len(is.IdxCols) < len(is.Columns)
 
-	if is.NeedCommonHandle {
-		for i := len(is.Index.Columns); i < len(idxExprCols); i++ {
-			indexCols = append(indexCols, idxExprCols[i])
-		}
-		is.SetSchema(expression.NewSchema(indexCols...))
-		return
-	}
 	for i := len(is.IdxCols); i < len(is.Index.Columns); i++ {
 		if idxExprCols[i] != nil {
 			indexCols = append(indexCols, idxExprCols[i])
@@ -987,6 +981,15 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 				UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID(),
 			})
 		}
+	}
+	is.NeedCommonHandle = is.Table.IsCommonHandle
+
+	if is.NeedCommonHandle {
+		for i := len(is.Index.Columns); i < len(idxExprCols); i++ {
+			indexCols = append(indexCols, idxExprCols[i])
+		}
+		is.SetSchema(expression.NewSchema(indexCols...))
+		return
 	}
 	setHandle := len(indexCols) > len(is.Index.Columns)
 	if !setHandle {

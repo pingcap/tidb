@@ -425,7 +425,7 @@ func (t *txnExpireTime) value() int64 {
 // seconds before calling it after Prewrite.
 func (lr *LockResolver) GetTxnStatus(txnID uint64, callerStartTS uint64, primary []byte) (TxnStatus, error) {
 	var status TxnStatus
-	bo := NewBackoffer(context.Background(), cleanupMaxBackoff)
+	bo := NewBackofferWithVars(context.Background(), cleanupMaxBackoff, nil)
 	currentTS, err := lr.store.GetOracle().GetLowResolutionTimestamp(bo.ctx)
 	if err != nil {
 		return status, err

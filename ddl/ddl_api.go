@@ -19,7 +19,6 @@ package ddl
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"math"
 	"strconv"
@@ -807,7 +806,6 @@ func setTimestampDefaultValue(c *table.Column, hasDefaultValue bool, setOnUpdate
 	if mysql.HasTimestampFlag(c.Flag) && mysql.HasNotNullFlag(c.Flag) {
 		if setOnUpdateNow {
 			if err := c.SetDefaultValue(types.ZeroDatetimeStr); err != nil {
-				context.Background()
 				logutil.BgLogger().Error("set default value failed", zap.Error(err))
 			}
 		} else {
@@ -2214,6 +2212,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			err = errors.Trace(errUnsupportedOptimizePartition)
 		case ast.AlterTableRemovePartitioning:
 			err = errors.Trace(errUnsupportedRemovePartition)
+		case ast.AlterTableRepairPartition:
+			err = errors.Trace(errUnsupportedRepairPartition)
 		case ast.AlterTableDropColumn:
 			err = d.DropColumn(ctx, ident, spec)
 		case ast.AlterTableDropIndex:
@@ -2772,6 +2772,7 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 	if err != nil {
 		return errors.Trace(err)
 	}
+	pids := []int64{pid}
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -2779,7 +2780,7 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 		SchemaName: schema.Name.L,
 		Type:       model.ActionTruncateTablePartition,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{pid},
+		Args:       []interface{}{pids},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -2811,7 +2812,8 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 	}
 
 	partName := spec.PartitionNames[0].L
-	err = checkDropTablePartition(meta, partName)
+	partNames := []string{partName}
+	err = checkDropTablePartition(meta, partNames)
 	if err != nil {
 		if ErrDropPartitionNonExistent.Equal(err) && spec.IfExists {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
@@ -2826,7 +2828,7 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 		SchemaName: schema.Name.L,
 		Type:       model.ActionDropTablePartition,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{partName},
+		Args:       []interface{}{partNames},
 	}
 
 	err = d.doDDLJob(ctx, job)
