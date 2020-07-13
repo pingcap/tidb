@@ -43,12 +43,12 @@ This proposal suggests adding additional related columns and indexes which invol
 
 Add `ChangingCol` and `ChangingIdx` fields to the column and related index that need to be modified, which are used to associate the modified column and index information.
 
-When performing an insert or update operation (handle in the `AddRecord` or `UpdateRecord` function) on the column whose type is to be modified, the column and index to be backed up are written or updated according to the `newType` type.
+When performing an insert or update operation (executed in the `AddRecord` or `UpdateRecord` function) on the column whose type is to be modified, the column and index to be backed up are written or updated according to the `newType` type.
 
-### process
+### Process
 
-1. Update the metadata information, including creating a corresponding col for `changingcolA` and `changingIdxA` for idxA, and add them to the end of the column array or index array in `TableInfo`. The state of `changingColA` and `changingIdxA` can be changed similar to add index operation, especially in `StateWriteReorganization` state, such as initializing reorganization information.
-2. In the reorganization processing stage, row data and index data need to be processed in batches, which can be similar to the `add index` operation during initial implementation. Get the batch processing range, and then use the `newType` to construct the `changingColA` and `changingIdxA` information for the insert operation (this operation requires the corresponding row and index column to be locked). If errors such as data truncated are encountered at this stage, it is necessary to report the errors and roll back to exit.
+1. Update the metadata information, including creating a corresponding column for `changingcolA` and `changingIdxA` for idxA, and add them to the end of the column array or index array in `TableInfo`. The state of `changingColA` and `changingIdxA` can be changed similar to add index operation, especially in `StateWriteReorganization` state, such as initializing reorganization information.
+2. In the reorganization processing stage, row data and index data need to be processed in batches, which is similar to the `add index` operation during initial implementation. Get the batch processing range, and then use the `newType` to construct the `changingColA` and `changingIdxA` information for the insert operation (this operation requires the corresponding row and index column to be locked). If data-truncated are encountered and errors at this stage, it is necessary to report the errors and roll back to exit.
 3. The next phase of change requires 3 status changes:
     * Lock this table and cannot write to it.
     * Drop `colA` and `idxA`, change the status of `changingColA` and `changingIdxA` to public, and change their names, offsets, etc.
@@ -72,7 +72,7 @@ This requires changing the state of `colA` and `idxA` to `StatePublic`, and then
 
 ### Compatibility issues with TiDB
 
-The DDL statement itself already has a corresponding type (ActionModifyColumn). If you need to improve this operation, you will encounter compatibility issues when rolling upgrades. This problem is handled by adding a global variable `tidb_enable_change_column_type`. When this value is true, the `modify/change column` statement is allowed to perform more types of column type changes (features supported by this proposal).
+The DDL statement itself already has a corresponding type (ActionModifyColumn). If you need to improve this operation, you will encounter compatibility issues when performing rolling upgrades. This problem is handled by adding a global variable `tidb_enable_change_column_type`. When this value is true, the `modify/change column` statement is allowed to perform more types of column type changes (features supported by this proposal).
 
 * For new clusters, set this variable to true during bootstrap.
 * For clusters requiring rolling upgrade, the default value is false, and users need to explicitly set this variable to true.
