@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
+	"strings"
 )
 
 type testSuiteJoin1 struct {
@@ -2087,5 +2088,5 @@ func (s *testSuiteJoinSerial) TestIssue18070(c *C) {
 		c.Assert(failpoint.Disable(fpName), IsNil)
 	}()
 	err = tk.QueryToErr("select /*+ inl_merge_join(t1)*/ * from t1 join t2 on t1.a = t2.a;")
-	c.Assert(err.Error(), Equals, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
+	c.Assert(strings.Contains(err.Error(), "Out Of Memory Quota!"), IsTrue)
 }
