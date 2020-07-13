@@ -901,6 +901,7 @@ func (s *testTableSuite) TestFormatVersion(c *C) {
 func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	tk := s.newTestKitWithRoot(c)
 
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk.MustQuery("select column_comment from information_schema.columns " +
 		"where table_name='STATEMENTS_SUMMARY' and column_name='STMT_TYPE'",
 	).Check(testkit.Rows("Statement type"))
