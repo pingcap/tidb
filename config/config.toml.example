@@ -434,6 +434,9 @@ history-size = 24
 # experimental section controls the features that are still experimental: their semantics,
 # interfaces are subject to change, using these features in the production environment is not recommended.
 [experimental]
+# whether to enable auto-random
+allow-auto-random = false
+
 # enable creating expression index.
 allow-expression-index = false
 
