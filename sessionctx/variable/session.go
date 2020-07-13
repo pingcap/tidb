@@ -158,6 +158,7 @@ type TransactionContext struct {
 	// pessimisticLockCache is the cache for pessimistic locked keys,
 	// The value never changes during the transaction.
 	pessimisticLockCache map[string][]byte
+	PessimisticCacheHit  int
 
 	// CreateTime For metrics.
 	CreateTime     time.Time
@@ -236,6 +237,9 @@ func (tc *TransactionContext) GetKeyInPessimisticLockCache(key kv.Key) (val []by
 		return nil, false
 	}
 	val, ok = tc.pessimisticLockCache[string(key)]
+	if ok {
+		tc.PessimisticCacheHit++
+	}
 	return
 }
 

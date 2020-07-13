@@ -2175,6 +2175,7 @@ func (s *testIntegrationSuite3) TestPartitionErrorCode(c *C) {
 	tk.MustGetErrCode("alter table t_part optimize partition p0,p1;", tmysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t_part rebuild partition p0,p1;", tmysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t_part remove partitioning;", tmysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t_part repair partition p1;", tmysql.ErrUnsupportedDDLOperation)
 }
 
 func (s *testIntegrationSuite5) TestConstAndTimezoneDepent(c *C) {
