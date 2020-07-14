@@ -767,11 +767,6 @@ func checkAlterIndexVisibility(t *meta.Meta, job *model.Job) (*model.TableInfo, 
 	return tblInfo, indexName, invisible, nil
 }
 
-const (
-	// DefaultTaskHandleCnt is default batch size of adding indices.
-	DefaultTaskHandleCnt = 128
-)
-
 // indexRecord is the record information of an index.
 type indexRecord struct {
 	handle kv.Handle
@@ -1247,7 +1242,7 @@ func splitTableRanges(t table.PhysicalTable, store kv.Storage, startHandle, endH
 	}
 
 	maxSleep := 10000 // ms
-	bo := tikv.NewBackoffer(context.Background(), maxSleep)
+	bo := tikv.NewBackofferWithVars(context.Background(), maxSleep, nil)
 	ranges, err := tikv.SplitRegionRanges(bo, s.GetRegionCache(), []kv.KeyRange{kvRange})
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1411,7 +1406,7 @@ func loadDDLReorgVars(w *worker) error {
 // For a partitioned table, it should be handled partition by partition.
 //
 // How to add index in reorganization state?
-// Concurrently process the defaultTaskHandleCnt tasks. Each task deals with a handle range of the index record.
+// Concurrently process the @@tidb_ddl_reorg_worker_cnt tasks. Each task deals with a handle range of the index record.
 // The handle range is split from PD regions now. Each worker deal with a region table key range one time.
 // Each handle range by estimation, concurrent processing needs to perform after the handle range has been acquired.
 // The operation flow is as follows:

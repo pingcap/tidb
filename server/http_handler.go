@@ -148,7 +148,7 @@ type mvccKV struct {
 }
 
 func (t *tikvHandlerTool) getRegionIDByKey(encodedKey []byte) (uint64, error) {
-	keyLocation, err := t.RegionCache.LocateKey(tikv.NewBackoffer(context.Background(), 500), encodedKey)
+	keyLocation, err := t.RegionCache.LocateKey(tikv.NewBackofferWithVars(context.Background(), 500, nil), encodedKey)
 	if err != nil {
 		return 0, err
 	}
@@ -169,7 +169,7 @@ func (t *tikvHandlerTool) getMvccByHandle(tableID, handle int64) (*mvccKV, error
 }
 
 func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey kv.Key) (*mvccKV, error) {
-	bo := tikv.NewBackoffer(context.Background(), 5000)
+	bo := tikv.NewBackofferWithVars(context.Background(), 5000, nil)
 	for {
 		curRegion, err := t.RegionCache.LocateKey(bo, startKey)
 		if err != nil {
@@ -399,6 +399,10 @@ type serverInfoHandler struct {
 }
 
 type allServerInfoHandler struct {
+	*tikvHandlerTool
+}
+
+type profileHandler struct {
 	*tikvHandlerTool
 }
 
@@ -1281,7 +1285,7 @@ func (h regionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			startKey := []byte{'m'}
 			endKey := []byte{'n'}
 
-			recordRegionIDs, err := h.RegionCache.ListRegionIDsInKeyRange(tikv.NewBackoffer(context.Background(), 500), startKey, endKey)
+			recordRegionIDs, err := h.RegionCache.ListRegionIDsInKeyRange(tikv.NewBackofferWithVars(context.Background(), 500, nil), startKey, endKey)
 			if err != nil {
 				writeError(w, err)
 				return
@@ -1328,7 +1332,7 @@ func (h regionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	regionID := uint64(regionIDInt)
 
 	// locate region
-	region, err := h.RegionCache.LocateRegionByID(tikv.NewBackoffer(context.Background(), 500), regionID)
+	region, err := h.RegionCache.LocateRegionByID(tikv.NewBackofferWithVars(context.Background(), 500, nil), regionID)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -1696,6 +1700,42 @@ func (h dbTableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	dbTblInfo.TableInfo = tbl.Meta()
 	dbTblInfo.DBInfo = dbInfo
 	writeData(w, dbTblInfo)
+}
+
+// ServeHTTP handles request of TiDB metric profile.
+func (h profileHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	sctx, err := session.CreateSession(h.Store)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	var start, end time.Time
+	if req.FormValue("end") != "" {
+		end, err = time.ParseInLocation(time.RFC3339, req.FormValue("end"), sctx.GetSessionVars().Location())
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+	} else {
+		end = time.Now()
+	}
+	if req.FormValue("start") != "" {
+		start, err = time.ParseInLocation(time.RFC3339, req.FormValue("start"), sctx.GetSessionVars().Location())
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+	} else {
+		start = end.Add(-time.Minute * 10)
+	}
+	pb := executor.NewProfileBuilder(sctx, start, end)
+	err = pb.Collect()
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	_, err = w.Write(pb.Build())
+	terror.Log(errors.Trace(err))
 }
 
 // testHandler is the handler for tests. It's convenient to provide some APIs for integration tests.
