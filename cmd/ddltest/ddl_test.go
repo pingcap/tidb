@@ -702,7 +702,7 @@ func (s *TestDDLSuite) TestSimpleUpdate(c *C) {
 	err := ctx.NewTxn(goctx.Background())
 	c.Assert(err, IsNil)
 
-	tbl := s.getTable(c, "test_update")
+	tbl := s.getTable(c, tblName)
 	handles := kv.NewHandleMap()
 	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		handles.Set(h, struct{}{})
