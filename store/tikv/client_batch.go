@@ -373,7 +373,7 @@ func (c *batchCommandsClient) reCreateStreamingClient(err error) (stopped bool) 
 	c.lockForRecreate()
 	defer c.unlockForRecreate()
 
-	b := NewBackoffer(context.Background(), math.MaxInt32)
+	b := NewBackofferWithVars(context.Background(), math.MaxInt32, nil)
 	for { // try to re-create the streaming in the loop.
 		if c.isStopped() {
 			return true

@@ -812,3 +812,11 @@ func (s *testInfoschemaTableSuite) TestSequences(c *C) {
 	tk.MustExec("CREATE SEQUENCE test.seq2 start = -9 minvalue -10 maxvalue 10 increment -1 cache 15")
 	tk.MustQuery("SELECT * FROM information_schema.sequences WHERE sequence_schema='test' AND sequence_name='seq2'").Check(testkit.Rows("def test seq2 1 15 0 -1 10 -10 -9 "))
 }
+
+func (s *testInfoschemaTableSuite) TestTiFlashSystemTables(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	err := tk.QueryToErr("select * from information_schema.TIFLASH_TABLES;")
+	c.Assert(err.Error(), Equals, "Etcd addrs not found")
+	err = tk.QueryToErr("select * from information_schema.TIFLASH_SEGMENTS;")
+	c.Assert(err.Error(), Equals, "Etcd addrs not found")
+}
