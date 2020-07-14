@@ -832,7 +832,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 
 	// test truncate table partition failed caused by canceled.
 	test = &tests[24]
-	truncateTblPartitionArgs := []interface{}{partitionTblInfo.Partition.Definitions[0].ID}
+	truncateTblPartitionArgs := []interface{}{[]int64{partitionTblInfo.Partition.Definitions[0].ID}}
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, partitionTblInfo.ID, test.act, truncateTblPartitionArgs, &test.cancelState)
 	c.Check(checkErr, IsNil)
 	changedTable = testGetTable(c, d, dbInfo.ID, partitionTblInfo.ID)

@@ -510,6 +510,9 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 
 		worker.handleTask(ctx, task, respCh)
 		close(task.respChan)
+		if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
+			return
+		}
 		select {
 		case <-worker.finishCh:
 			worker.actionOnExceed.mu.Lock()
@@ -728,6 +731,11 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 			worker.sendToRespCh(resp, respCh, true)
 			return
 		}
+		// test whether the ctx is cancelled
+		if bo.vars != nil && bo.vars.Killed != nil && atomic.LoadUint32(bo.vars.Killed) == 1 {
+			return
+		}
+
 		if len(tasks) > 0 {
 			remainTasks = append(tasks, remainTasks[1:]...)
 		} else {
@@ -753,8 +761,8 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		SchemaVer: worker.req.SchemaVar,
 	}
 
-	var cacheKey []byte
-	var cacheValue *coprCacheValue
+	var cacheKey []byte = nil
+	var cacheValue *coprCacheValue = nil
 
 	// If there are many ranges, it is very likely to be a TableLookupRequest. They are not worth to cache since
 	// computing is not the main cost. Ignore such requests directly to avoid slowly building the cache key.
@@ -795,6 +803,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		}
 		return nil, errors.Trace(err)
 	}
+
 	// Set task.storeAddr field so its task.String() method have the store address information.
 	task.storeAddr = storeAddr
 	costTime := time.Since(startTime)
