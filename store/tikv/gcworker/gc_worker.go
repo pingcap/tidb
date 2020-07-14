@@ -790,6 +790,9 @@ const (
 // needsGCOperationForStore checks if the store-level requests related to GC needs to be sent to the store. The store-level
 // requests includes UnsafeDestroyRange, PhysicalScanLock, etc.
 func needsGCOperationForStore(store *metapb.Store) (bool, error) {
+	// TombStone means the store has been removed from the cluster and there isn't any peer on the store, so needn't do GC for it.
+	// Offline means the store is being removed from the cluster and it becomes tombstone after all peers are removed from it,
+	// so we need to do GC for it.
 	if store.State == metapb.StoreState_Tombstone {
 		return false, nil
 	}
