@@ -130,18 +130,14 @@ func (h *maxMinHeap) Reset() {
 	h.varSet = make(map[interface{}]int64)
 }
 
-var (
-	int64CmpFunc = func(i, j interface{}) int {
-		return types.CompareInt64(i.(int64), j.(int64))
-	}
-)
-
 type partialResult4MaxMinInt struct {
 	val int64
 	// isNull is used to indicates:
 	// 1. whether the partial result is the initialization value which should not be compared during evaluation;
 	// 2. whether all the values of arg are all null, if so, we should return null as the default value for MAX/MIN.
 	isNull bool
+	// maxMinHeap is an ordered queue, using to evaluate the maximum or minimum value in a sliding window.
+	heap *maxMinHeap
 }
 
 type partialResult4MaxMinUint struct {
@@ -202,8 +198,6 @@ type maxMin4Int struct {
 
 type maxMin4IntSliding struct {
 	maxMin4Int
-	// maxMinHeap is an ordered queue, using to evaluate the maximum or minimum value in a sliding window.
-	heap *maxMinHeap
 }
 
 func (e *maxMin4Int) AllocPartialResult() (pr PartialResult, memDelta int64) {
@@ -265,11 +259,20 @@ func (e *maxMin4Int) MergePartialResult(sctx sessionctx.Context, src, dst Partia
 	return 0, nil
 }
 
+func (e *maxMin4IntSliding) AllocPartialResult() (pr PartialResult, memDelta int64) {
+	p := new(partialResult4MaxMinInt)
+	p.isNull = true
+	p.heap = newMaxMinHeap(e.isMax, func(i, j interface{}) int {
+		return types.CompareInt64(i.(int64), j.(int64))
+	})
+	return PartialResult(p), 0
+}
+
 func (e *maxMin4IntSliding) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinInt)(pr)
 	p.val = 0
 	p.isNull = true
-	e.heap.Reset()
+	p.heap.Reset()
 }
 
 func (e *maxMin4IntSliding) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
@@ -282,9 +285,9 @@ func (e *maxMin4IntSliding) UpdatePartialResult(sctx sessionctx.Context, rowsInG
 		if isNull {
 			continue
 		}
-		e.heap.Append(input)
+		p.heap.Append(input)
 	}
-	if val, isEmpty := e.heap.Top(); !isEmpty {
+	if val, isEmpty := p.heap.Top(); !isEmpty {
 		p.val = val.(int64)
 		p.isNull = false
 	} else {
@@ -303,7 +306,7 @@ func (e *maxMin4IntSliding) Slide(sctx sessionctx.Context, rows []chunk.Row, las
 		if isNull {
 			continue
 		}
-		e.heap.Append(input)
+		p.heap.Append(input)
 	}
 	for i := uint64(0); i < shiftStart; i++ {
 		input, isNull, err := e.args[0].EvalInt(sctx, rows[lastStart+i])
@@ -313,9 +316,9 @@ func (e *maxMin4IntSliding) Slide(sctx sessionctx.Context, rows []chunk.Row, las
 		if isNull {
 			continue
 		}
-		e.heap.Remove(input)
+		p.heap.Remove(input)
 	}
-	if val, isEmpty := e.heap.Top(); !isEmpty {
+	if val, isEmpty := p.heap.Top(); !isEmpty {
 		p.val = val.(int64)
 		p.isNull = false
 	} else {

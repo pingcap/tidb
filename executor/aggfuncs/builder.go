@@ -360,47 +360,12 @@ func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) 
 
 // buildMaxMinSliding builds the sliding window AggFunc implementation for function "MAX" and "MIN".
 func buildMaxMinSliding(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) AggFunc {
-	base := baseMaxMinAggFunc{
-		baseAggFunc: baseAggFunc{
-			args:    aggFuncDesc.Args,
-			ordinal: ordinal,
-		},
-		isMax: isMax,
+	base := buildMaxMin(aggFuncDesc, ordinal, isMax)
+	switch aggFunc := base.(type) {
+	case *maxMin4Int:
+		return &maxMin4IntSliding{*aggFunc}
 	}
-
-	evalType, fieldType := aggFuncDesc.RetTp.EvalType(), aggFuncDesc.RetTp
-	if fieldType.Tp == mysql.TypeBit {
-		evalType = types.ETString
-	}
-	switch aggFuncDesc.Mode {
-	case aggregation.DedupMode:
-	default:
-		switch evalType {
-		case types.ETInt:
-			if mysql.HasUnsignedFlag(fieldType.Flag) {
-				return &maxMin4Uint{base}
-			}
-			return &maxMin4IntSliding{maxMin4Int{base}, newMaxMinHeap(isMax, int64CmpFunc)}
-		case types.ETReal:
-			switch fieldType.Tp {
-			case mysql.TypeFloat:
-				return &maxMin4Float32{base}
-			case mysql.TypeDouble:
-				return &maxMin4Float64{base}
-			}
-		case types.ETDecimal:
-			return &maxMin4Decimal{base}
-		case types.ETString:
-			return &maxMin4String{baseMaxMinAggFunc: base, retTp: aggFuncDesc.RetTp}
-		case types.ETDatetime, types.ETTimestamp:
-			return &maxMin4Time{base}
-		case types.ETDuration:
-			return &maxMin4Duration{base}
-		case types.ETJson:
-			return &maxMin4JSON{base}
-		}
-	}
-	return nil
+	return base
 }
 
 // buildGroupConcat builds the AggFunc implementation for function "GROUP_CONCAT".
