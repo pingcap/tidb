@@ -808,6 +808,14 @@ type testAutoRandomSuite struct {
 	*baseTestSuite
 }
 
+func (s *testAutoRandomSuite) SetUpTest(c *C) {
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+}
+
+func (s *testAutoRandomSuite) TearDownTest(c *C) {
+	testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+}
+
 func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -821,9 +829,7 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 		c.Assert(err, IsNil)
 		return allHds
 	}
-
-	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 
 	tk.MustExec("create table t (a bigint primary key auto_random(15), b int)")
 	for i := 0; i < 100; i++ {
@@ -859,9 +865,7 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 
 	// Test overflow.
 	tk.MustExec("create table t (a tinyint primary key auto_random(2), b int)")
-	fieldLength := uint64(mysql.DefaultLengthOfMysqlTypes[mysql.TypeTiny] * 8)
-	signBit := uint64(1)
-	for i := 0; i < (1<<(fieldLength-2-signBit))-1; i++ {
+	for i := 0; i < 31; /* 2^(8-2-1)-1 */ i++ {
 		tk.MustExec(fmt.Sprintf("insert into t (b) values (%d)", i))
 	}
 	_, err = tk.Exec("insert into t (b) values (0)")
@@ -903,6 +907,32 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 		c.Assert(orderedHandles[i], Equals, i-99)
 	}
 	tk.MustExec("drop table t")
+
+	// Test signed/unsigned types.
+	tk.MustExec("create table t (a bigint primary key auto_random(10), b int)")
+	for i := 0; i < 100; i++ {
+		tk.MustExec("insert into t (b) values(?)", i)
+	}
+	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Se, "test_auto_random_bits", "t")
+	for _, h := range allHandles {
+		// Sign bit should be reserved.
+		c.Assert(h > 0, IsTrue)
+	}
+	tk.MustExec("drop table t")
+
+	tk.MustExec("create table t (a bigint unsigned primary key auto_random(10), b int)")
+	for i := 0; i < 100; i++ {
+		tk.MustExec("insert into t (b) values(?)", i)
+	}
+	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Se, "test_auto_random_bits", "t")
+	signBitUnused := true
+	for _, h := range allHandles {
+		signBitUnused = signBitUnused && (h > 0)
+	}
+	// Sign bit should be used for shard.
+	c.Assert(signBitUnused, IsFalse)
+	tk.MustExec("drop table t")
+
 	// Test rename table does not affect incremental part of auto_random ID.
 	tk.MustExec("create database test_auto_random_bits_rename;")
 	tk.MustExec("create table t (a bigint auto_random primary key);")
@@ -931,9 +961,6 @@ func (s *testAutoRandomSuite) TestAutoRandomTableOption(c *C) {
 	tk.MustExec("use test")
 
 	// test table option is auto-random
-	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
-
 	tk.MustExec("drop table if exists auto_random_table_option")
 	tk.MustExec("create table auto_random_table_option (a bigint auto_random(5) key) auto_random_base = 1000")
 	t, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("auto_random_table_option"))
@@ -1002,9 +1029,6 @@ func (s *testAutoRandomSuite) TestFilterDifferentAllocators(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t1")
-
-	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
 
 	tk.MustExec("create table t(a bigint auto_random(5) key, b int auto_increment unique)")
 	tk.MustExec("insert into t values()")
