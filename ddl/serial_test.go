@@ -133,6 +133,14 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 		config.StoreGlobalConfig(&newCfg)
 	}()
 
+	_, err = tk.Exec("alter table primary_key_test2 add primary key(a)")
+	c.Assert(infoschema.ErrMultiplePriKey.Equal(err), IsTrue)
+	// We can't add a primary key when the table's pk_is_handle is true.
+	_, err = tk.Exec("alter table primary_key_test1 add primary key(a)")
+	c.Assert(infoschema.ErrMultiplePriKey.Equal(err), IsTrue)
+	_, err = tk.Exec("alter table primary_key_test1 add primary key(b)")
+	c.Assert(infoschema.ErrMultiplePriKey.Equal(err), IsTrue)
+
 	_, err = tk.Exec("alter table primary_key_test1 drop primary key")
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when the table's pkIsHandle is true")
 	tk.MustExec("alter table primary_key_test2 drop primary key")
@@ -946,13 +954,30 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 			c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
 		})
 	}
-	assertShowWarningCorrect("create table t (a tinyint unsigned auto_random(6) primary key)", 1)
-	assertShowWarningCorrect("create table t (a tinyint unsigned auto_random(5) primary key)", 3)
+	assertShowWarningCorrect("create table t (a tinyint unsigned auto_random(6) primary key)", 3)
+	assertShowWarningCorrect("create table t (a tinyint unsigned auto_random(5) primary key)", 7)
 	assertShowWarningCorrect("create table t (a tinyint auto_random(4) primary key)", 7)
 	assertShowWarningCorrect("create table t (a bigint auto_random(62) primary key)", 1)
-	assertShowWarningCorrect("create table t (a bigint unsigned auto_random(61) primary key)", 3)
+	assertShowWarningCorrect("create table t (a bigint unsigned auto_random(61) primary key)", 7)
 	assertShowWarningCorrect("create table t (a int auto_random(30) primary key)", 1)
 	assertShowWarningCorrect("create table t (a int auto_random(29) primary key)", 3)
+
+	// Test insert into auto_random column explicitly is not allowed by default.
+	assertExplicitInsertDisallowed := func(sql string) {
+		assertInvalidAutoRandomErr(sql, autoid.AutoRandomExplicitInsertDisabledErrMsg)
+	}
+	tk.MustExec("set @@allow_auto_random_explicit_insert = false")
+	mustExecAndDrop("create table t (a bigint auto_random primary key)", func() {
+		assertExplicitInsertDisallowed("insert into t values (1)")
+		assertExplicitInsertDisallowed("insert into t values (3)")
+		tk.MustExec("insert into t values()")
+	})
+	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
+	mustExecAndDrop("create table t (a bigint auto_random primary key)", func() {
+		tk.MustExec("insert into t values(1)")
+		tk.MustExec("insert into t values(3)")
+		tk.MustExec("insert into t values()")
+	})
 
 	// Disallow using it when allow-auto-random is not enabled.
 	config.GetGlobalConfig().Experimental.AllowAutoRandom = false
