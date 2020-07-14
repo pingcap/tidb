@@ -52,7 +52,6 @@ func adjustConfig(conf *Config) error {
 			return err
 		}
 	}
-	resolveAutoConsistency(conf)
 
 	return nil
 }
