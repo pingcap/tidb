@@ -961,7 +961,11 @@ func (t *OpenTracing) ToTracingConfig() *tracing.Configuration {
 }
 
 func init() {
-	if versioninfo.TiDBEdition != versioninfo.CommunityEdition {
+	initByLDFlags(versioninfo.CommunityEdition, checkBeforeDropLDFlag)
+}
+
+func initByLDFlags(edition, checkBeforeDropLDFlag string) {
+	if edition != versioninfo.CommunityEdition {
 		defaultConf.EnableTelemetry = false
 	}
 	conf := defaultConf
