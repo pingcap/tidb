@@ -87,6 +87,29 @@ func (h *maxMinHeap) Remove(val interface{}) {
 		panic("remove a not exist value")
 	}
 }
+func (h *maxMinHeap) AppendMyDecimal(val types.MyDecimal) error {
+	key, err := val.ToHashKey()
+	if err != nil {
+		return err
+	}
+	h.varSet[key]++
+	if h.varSet[key] == 1 {
+		heap.Push(h, val)
+	}
+	return nil
+}
+func (h *maxMinHeap) RemoveMyDecimal(val types.MyDecimal) error {
+	key, err := val.ToHashKey()
+	if err != nil {
+		return err
+	}
+	if h.varSet[key] > 0 {
+		h.varSet[key]--
+	} else {
+		panic("remove a not exist value")
+	}
+	return nil
+}
 func (h *maxMinHeap) Reset() {
 	h.data = h.data[:0]
 	h.varSet = make(map[interface{}]int64)
@@ -584,7 +607,9 @@ func (e *maxMin4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGrou
 		if isNull {
 			continue
 		}
-		p.heap.Append(*input)
+		if err := p.heap.AppendMyDecimal(*input); err != nil {
+			return 0, err
+		}
 	}
 	if val, isEmpty := p.heap.Top(); !isEmpty {
 		p.val = val.(types.MyDecimal)
@@ -605,7 +630,9 @@ func (e *maxMin4Decimal) Slide(sctx sessionctx.Context, rows []chunk.Row, lastSt
 		if isNull {
 			continue
 		}
-		p.heap.Append(*input)
+		if err := p.heap.AppendMyDecimal(*input); err != nil {
+			return err
+		}
 	}
 	for i := uint64(0); i < shiftStart; i++ {
 		input, isNull, err := e.args[0].EvalDecimal(sctx, rows[lastStart+i])
@@ -615,7 +642,9 @@ func (e *maxMin4Decimal) Slide(sctx sessionctx.Context, rows []chunk.Row, lastSt
 		if isNull {
 			continue
 		}
-		p.heap.Remove(*input)
+		if err := p.heap.RemoveMyDecimal(*input); err != nil {
+			return err
+		}
 	}
 	if val, isEmpty := p.heap.Top(); !isEmpty {
 		p.val = val.(types.MyDecimal)
