@@ -73,10 +73,6 @@ func IsReadOnly(node ast.Node, vars *variable.SessionVars) bool {
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
 func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, error) {
-<<<<<<< HEAD
-	if _, isolationReadContainTiKV := sctx.GetSessionVars().GetIsolationReadEngines()[kv.TiKV]; isolationReadContainTiKV {
-		fp := plannercore.TryFastPlan(sctx, node)
-=======
 	sessVars := sctx.GetSessionVars()
 
 	// Because for write stmt, TiFlash has a different results when lock the data in point get plan. We ban the TiFlash
@@ -87,16 +83,8 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
 		}()
 	}
-
-	if _, isolationReadContainTiKV := sessVars.IsolationReadEngines[kv.TiKV]; isolationReadContainTiKV {
-		var fp plannercore.Plan
-		if fpv, ok := sctx.Value(plannercore.PointPlanKey).(plannercore.PointPlanVal); ok {
-			// point plan is already tried in a multi-statement query.
-			fp = fpv.Plan
-		} else {
-			fp = plannercore.TryFastPlan(sctx, node)
-		}
->>>>>>> b193db8... planner: ban tiflash engine when the statement is not read only (#18458)
+	if _, isolationReadContainTiKV := sctx.GetSessionVars().GetIsolationReadEngines()[kv.TiKV]; isolationReadContainTiKV {
+		fp := plannercore.TryFastPlan(sctx, node)
 		if fp != nil {
 			if !useMaxTS(sctx, fp) {
 				sctx.PrepareTSFuture(ctx)
