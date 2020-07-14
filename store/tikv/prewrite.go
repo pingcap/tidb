@@ -31,7 +31,7 @@ import (
 	"go.uber.org/zap"
 )
 
-type actionPrewrite struct{
+type actionPrewrite struct {
 	actionBase
 	writeKeys int
 	writeSize int

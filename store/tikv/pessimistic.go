@@ -30,7 +30,7 @@ type actionPessimisticLock struct {
 	actionBase
 	*kv.LockCtx
 }
-type actionPessimisticRollback struct{
+type actionPessimisticRollback struct {
 	actionBase
 }
 

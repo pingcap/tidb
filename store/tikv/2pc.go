@@ -16,6 +16,7 @@ package tikv
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math"
 	"sort"
 	"sync"
@@ -52,6 +53,7 @@ type twoPhaseCommitAction interface {
 type actionBase struct{}
 
 func (actionBase) handlePrimaryBatch(bo *Backoffer, j *jobControl, batch *batchMutations, c *twoPhaseCommitter, action twoPhaseCommitAction) error {
+	fmt.Println("actionBase handle primary batch ===", action)
 	// The default action for the primary batch is synchronized.
 	// commit/cleanup all use this setting.
 	// prewrite overrides this action.
@@ -100,7 +102,7 @@ type twoPhaseCommitter struct {
 	txnSize          int
 	noNeedCommitKeys map[string]struct{}
 
-	once sync.Once
+	once        sync.Once
 	primaryKey  []byte
 	forUpdateTS uint64
 
@@ -1225,7 +1227,7 @@ type jobControl struct {
 	workerCnt int
 	taskCh    chan *batchMutations
 	// errCh is used by the worker to report something wrong
-	errCh  chan error
+	errCh chan error
 	// exited is used by jobControl to notify workers to exit when something is wrong.
 	exited chan struct{}
 }
@@ -1246,8 +1248,9 @@ func (j *jobControl) sendBatchMutationToWorker(bo *Backoffer, b *batchMutations,
 	case j.taskCh <- b:
 		return nil
 	default:
+		rateLimit := config.GetGlobalConfig().Performance.CommitterConcurrency
 		// Create a new worker if necessary.
-		if j.workerCnt < 32 {
+		if j.workerCnt < rateLimit {
 			j.workerCnt++
 			go j.runWorker(bo, c, action)
 		}
@@ -1270,6 +1273,7 @@ func (j *jobControl) runWorker(bo *Backoffer, c *twoPhaseCommitter, action twoPh
 	for batch := range j.taskCh {
 		err = action.handleSingleBatch(c, bo, batch)
 		if err != nil {
+			fmt.Println("handle single batch fail ===", err)
 			break
 		}
 	}
@@ -1301,6 +1305,7 @@ func (j *jobControl) wait(alreadyFail error) error {
 }
 
 func do(bo *Backoffer, c *twoPhaseCommitter, action twoPhaseCommitAction) error {
+	fmt.Println("       do", action)
 	txn := c.txn
 	iter, err := txn.us.GetMemBuffer().Iter(nil, nil)
 	if err != nil {
@@ -1312,18 +1317,26 @@ func do(bo *Backoffer, c *twoPhaseCommitter, action twoPhaseCommitAction) error 
 
 	// Take the first batch.
 	batch, noMore, err := c.takeBatchMutationFromIterator(bo, action, &bi)
-	if err != nil || batch.mutations.len() == 0 {
+	if err != nil {
 		return err
 	}
+	fmt.Println("takeBatchMutationFromIterator ---", batch.mutations.len(), action)
+	if batch.mutations.len() == 0 {
+		fmt.Println("take batch mutation from iter error === WTF")
+		return nil
+	}
+
 	// Set the primary key.
 	batch.isPrimary = true
 	c.once.Do(func() {
 		c.primaryKey = batch.mutations.keys[0]
 	})
 	// Optimize for the simple case.
-	if noMore {
-		return action.handleSingleBatch(c, bo, batch)
-	}
+	/*
+		if noMore {
+			return action.handleSingleBatch(c, bo, batch)
+		}
+	*/
 
 	var j jobControl
 	j.init()
@@ -1374,10 +1387,12 @@ func takeBatchMutationFromIterator(bo *Backoffer, bi *batchIter, c *twoPhaseComm
 	mutations := newCommiterMutations(hint)
 	noMore := true
 	loc := bi.lastLoc
+	fmt.Println("iter valid", bi.iter.Valid(), "  lock valid", bi.lockIter.Valid())
 	for bi.iter.Valid() || bi.lockIter.Valid() {
 		currIter, equal := mergeSortIter(bi.iter, bi.lockIter)
 		k := currIter.Key()
 		v := currIter.Value()
+		fmt.Println("iter key ===", k)
 		if bi.lastLoc == nil {
 			loc, err = c.store.regionCache.LocateKey(bo, k)
 			if err != nil {
@@ -1389,6 +1404,7 @@ func takeBatchMutationFromIterator(bo *Backoffer, bi *batchIter, c *twoPhaseComm
 			if !bi.lastLoc.Contains(k) {
 				noMore = false
 				bi.lastLoc = nil
+				fmt.Println("bi last loc doesnot contain --break", k)
 				break
 			}
 		}
@@ -1397,9 +1413,13 @@ func takeBatchMutationFromIterator(bo *Backoffer, bi *batchIter, c *twoPhaseComm
 
 		if currIter == bi.lockIter {
 			mutations.push(pb.Op_Lock, k, nil, c.isPessimistic)
+			fmt.Println("push lock op", k)
 		} else {
 			if op, skip := c.getOpByKeyValue(k, v); !skip {
+				fmt.Println("push value op", k)
 				mutations.push(op, k, v, c.isPessimistic)
+			} else {
+				fmt.Println("skip value op", k)
 			}
 			if equal {
 				if bi.lockIter.Next() != nil {
@@ -1460,6 +1480,7 @@ func doPrewrite(prewriteBo *Backoffer, c *twoPhaseCommitter) error {
 	var err error
 	if c.newImplement {
 		err = do(prewriteBo, c, &actionPrewrite{})
+		fmt.Println("do prewrite ....", err)
 	} else {
 		err = c.prewriteMutations(prewriteBo, c.mutations)
 	}
@@ -1467,6 +1488,7 @@ func doPrewrite(prewriteBo *Backoffer, c *twoPhaseCommitter) error {
 }
 
 func doCommit(commitBo *Backoffer, c *twoPhaseCommitter) error {
+	fmt.Println("run here in do commit ===", c.newImplement)
 	var err error
 	if c.newImplement {
 		err = do(commitBo, c, actionCommit{})

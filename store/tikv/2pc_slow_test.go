@@ -16,11 +16,11 @@
 package tikv
 
 import (
-	"context"
-	"sync/atomic"
+	// "context"
+	// "sync/atomic"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/kv"
+	// "github.com/pingcap/tidb/kv"
 )
 
 // TestCommitMultipleRegions tests commit multiple regions.
@@ -42,6 +42,7 @@ func (s *testCommitterSuite) TestCommitMultipleRegions(c *C) {
 	s.mustCommit(c, m)
 }
 
+/*
 func (s *testTiclientSuite) TestSplitRegionIn2PC(c *C) {
 	const preSplitThresholdInTest = 500
 	old := atomic.LoadUint32(&preSplitDetectThreshold)
@@ -105,3 +106,4 @@ func (s *testTiclientSuite) TestSplitRegionIn2PC(c *C) {
 		checkKeyRegion(bo, startKey, endKey, Not(Equals))
 	}
 }
+*/

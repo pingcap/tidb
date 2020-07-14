@@ -23,7 +23,7 @@ import (
 	"go.uber.org/zap"
 )
 
-type actionCleanup struct{
+type actionCleanup struct {
 	actionBase
 }
 

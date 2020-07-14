@@ -258,7 +258,8 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 		}
 	}
 	defer committer.ttlManager.close()
-	if txn.IsPessimistic() || committer.shouldWriteBinlog() {
+	if true {
+		// if txn.IsPessimistic() || committer.shouldWriteBinlog() {
 		if err := committer.initKeysAndMutations(); err != nil {
 			return errors.Trace(err)
 		}
@@ -273,13 +274,6 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 		if txn.Size() == 0 && len(txn.lockKeys) == 0 {
 			return nil
 		}
-	}
-
-	if err := committer.initKeysAndMutations(); err != nil {
-		return errors.Trace(err)
-	}
-	if committer.mutations.len() == 0 {
-		return nil
 	}
 
 	defer func() {

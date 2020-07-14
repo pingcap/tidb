@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"encoding/hex"
+	"fmt"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -26,7 +27,7 @@ import (
 	"go.uber.org/zap"
 )
 
-type actionCommit struct{
+type actionCommit struct {
 	actionBase
 	retry bool
 }
@@ -42,6 +43,23 @@ func (actionCommit) String() string {
 
 func (actionCommit) tiKVTxnRegionsNumHistogram() prometheus.Observer {
 	return tiKVTxnRegionsNumHistogramCommit
+}
+
+func (actionCommit) handlePrimaryBatch(bo *Backoffer, j *jobControl, batch *batchMutations, c *twoPhaseCommitter, action twoPhaseCommitAction) error {
+	fmt.Println("===========phandlePrimaryBatch ==, action commit==", action)
+	err := action.handleSingleBatch(c, bo, batch)
+
+	if c.testingKnobs.bkAfterCommitPrimary != nil && c.testingKnobs.acAfterCommitPrimary != nil {
+		fmt.Println("before send to acAfter===")
+		c.testingKnobs.acAfterCommitPrimary <- struct{}{}
+		fmt.Println("after send to acAfter before bkAfter===")
+		<-c.testingKnobs.bkAfterCommitPrimary
+		fmt.Println("done commit primary ===")
+	} else {
+		fmt.Println("WWWWWWWWWWWWWWWWWWWWWWWTF")
+	}
+
+	return err
 }
 
 func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch *batchMutations) error {
@@ -141,6 +159,7 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 	// Group that contains primary key is always the first.
 	// We mark transaction's status committed when we receive the first success response.
 	c.mu.committed = true
+
 	return nil
 }
 

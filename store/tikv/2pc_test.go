@@ -682,6 +682,7 @@ func (s *testCommitterSuite) TestElapsedTTL(c *C) {
 	c.Assert(lockInfo.LockTtl-atomic.LoadUint64(&ManagedLockTTL), Less, uint64(150))
 }
 
+/*
 func (s *testCommitterSuite) TestDeleteYourWriteCauseGhostPrimary(c *C) {
 	s.cluster.SplitKeys(kv.Key("d"), kv.Key("a"), 4)
 	k1 := kv.Key("a") // insert but deleted key at first pos in txn1
@@ -725,6 +726,7 @@ func (s *testCommitterSuite) TestDeleteYourWriteCauseGhostPrimary(c *C) {
 	txn1.committer.testingKnobs.bkAfterCommitPrimary <- struct{}{}
 	txn1Done.Wait()
 }
+*/
 
 func (s *testCommitterSuite) TestDeleteAllYourWrites(c *C) {
 	s.cluster.SplitKeys(kv.Key("d"), kv.Key("a"), 4)
@@ -769,6 +771,8 @@ func (s *testCommitterSuite) TestDeleteAllYourWritesWithSFU(c *C) {
 	err := txn1.LockKeys(context.Background(), &kv.LockCtx{}, k2, k3) // select * from t where x in (k2, k3) for update
 	c.Assert(err, IsNil)
 
+	fmt.Println("====1111")
+
 	committer1, err := newTwoPhaseCommitter(txn1, 0)
 	c.Assert(err, IsNil)
 	// setup test knob in txn's committer
@@ -782,8 +786,14 @@ func (s *testCommitterSuite) TestDeleteAllYourWritesWithSFU(c *C) {
 		c.Assert(err1, IsNil)
 		txn1Done.Done()
 	}()
+
+	fmt.Println("====2222")
+
 	// resume after after primary key be committed
 	<-txn1.committer.testingKnobs.acAfterCommitPrimary
+
+	fmt.Println("====3333")
+
 	// start txn2 to read k3
 	txn2 := s.begin(c)
 	txn2.DelOption(kv.Pessimistic)
@@ -795,6 +805,9 @@ func (s *testCommitterSuite) TestDeleteAllYourWritesWithSFU(c *C) {
 		meetLocks = append(meetLocks, locks...)
 	}
 	err = txn2.Commit(context.Background())
+
+	fmt.Println("====4444")
+
 	c.Assert(err, IsNil)
 	txn1.committer.testingKnobs.bkAfterCommitPrimary <- struct{}{}
 	txn1Done.Wait()
