@@ -16,6 +16,7 @@ package ddl
 import (
 	"context"
 	"fmt"
+
 	"go.uber.org/zap"
 	"strconv"
 	"strings"
@@ -24,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
@@ -985,10 +987,15 @@ func checkAddPartition(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.P
 }
 
 func checkPartitionReplica(partDefPointers []*model.PartitionDefinition, d *ddlCtx, job *model.Job) (needWait bool, err error) {
+	ctx := context.Background()
+	pdCli := d.store.(tikv.Storage).GetRegionCache().PDClient()
+	stores, err := pdCli.GetAllStores(ctx)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return needWait, errors.Trace(err)
+	}
 	for _, pd := range partDefPointers {
 		startKey, endKey := tablecodec.GetTableHandleKeyRange(pd.ID)
-		ctx := context.Background()
-		pdCli := d.store.(tikv.Storage).GetRegionCache().PDClient()
 		regions, _, err := pdCli.ScanRegions(ctx, startKey, endKey, -1)
 		if err != nil {
 			job.State = model.JobStateCancelled
@@ -1002,16 +1009,41 @@ func checkPartitionReplica(partDefPointers []*model.PartitionDefinition, d *ddlC
 				job.State = model.JobStateCancelled
 				return needWait, errors.Trace(err)
 			}
-			if len(regionState.PendingPeers) == 0 && len(regionState.Meta.Peers) > 0 {
+			tiFlashPeerCount := checkTiFlashPeerStore(stores, regionState.Meta.Peers)
+			// It's unnecessary to wait all tiflash peer to be replicated.
+			// Here only make sure that tiflash peer count > 0 (at least one).
+			if tiFlashPeerCount > 0 {
 				continue
 			} else {
 				needWait = true
-				logutil.Logger(ctx).Info("[ddl] partition replica check failed", zap.Time("check time", time.Now()))
+				logutil.Logger(ctx).Info("[ddl] partition replica check failed in delete-only ddl state", zap.Int64("pid", pd.ID), zap.Uint64("wait region ID", region.Id), zap.Uint64("tiflash peer nums", tiFlashPeerCount), zap.Time("check time", time.Now()))
 				return needWait, nil
 			}
 		}
 	}
+	logutil.Logger(ctx).Info("[ddl] partition replica checks ok in delete-only ddl state")
 	return needWait, nil
+}
+
+func checkTiFlashPeerStore(stores []*metapb.Store, peers []*metapb.Peer) (tiFlashPeerCount uint64) {
+	for _, peer := range peers {
+		for _, store := range stores {
+			if peer.StoreId == store.Id && storeHasEngineTiFlashLabel(store) {
+				tiFlashPeerCount++
+				break
+			}
+		}
+	}
+	return
+}
+
+func storeHasEngineTiFlashLabel(store *metapb.Store) bool {
+	for _, label := range store.Labels {
+		if label.Key == "engine" && label.Value == "tiflash" {
+			return true
+		}
+	}
+	return false
 }
 
 // TODO: It may have the issue when two clients concurrently add partitions to a table.
