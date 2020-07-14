@@ -211,8 +211,6 @@ func (s *testPrepareSerialSuite) TestExplainDotForExplainPlan(c *C) {
 
 	tk.MustQuery(fmt.Sprintf("explain format=\"dot\" for connection %s", connID)).Check(nil)
 }
-<<<<<<< HEAD
-=======
 
 func (s *testSuite) TestExplainTableStorage(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
@@ -299,4 +297,3 @@ func (s *testSuite) TestExplainTiFlashSystemTables(c *C) {
 	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.TIFLASH_SEGMENTS where TIFLASH_INSTANCE = '%s' and TIDB_DATABASE = '%s' and TIDB_TABLE = '%s'", tiflashInstance, database, table)).Check(testkit.Rows(
 		fmt.Sprintf("MemTableScan_5 10000.00 root table:TIFLASH_SEGMENTS tiflash_instances:[\"%s\"], tidb_databases:[\"%s\"], tidb_tables:[\"%s\"]", tiflashInstance, database, table)))
 }
->>>>>>> 5f983b8... planner,executor,infoschema: add system tables `tiflash_tables` and `tiflash_segments` (#18092)
