@@ -1081,6 +1081,7 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	}
 	assertShowWarningCorrect("create table t (a bigint auto_random(15) primary key)", 281474976710655)
 	assertShowWarningCorrect("create table t (a bigint unsigned auto_random(15) primary key)", 562949953421311)
+	assertShowWarningCorrect("create table t (a bigint auto_random(1) primary key)", 4611686018427387903)
 
 	// Test insert into auto_random column explicitly is not allowed by default.
 	assertExplicitInsertDisallowed := func(sql string) {
