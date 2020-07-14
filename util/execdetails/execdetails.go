@@ -366,12 +366,14 @@ func (rrs *ReaderRuntimeStats) String() string {
 	return fmt.Sprintf("rpc num: %v, rpc max:%v, min:%v, avg:%v, p80:%v, p95:%v, proc keys max:%v, p95:%v", size, vMax, vMin, vAvg, vP80, vP95, keyMax, keyP95)
 }
 
-type RuntimeInformation interface {
+// RuntimeStats is used to express the executor runtime information.
+type RuntimeStats interface {
 	GetActRows() int64
 	SetRowNum(int64)
 	String() string
 }
 
+// BasicRuntimeStats is the basic runtime stats.
 type BasicRuntimeStats struct {
 	// executor's Next() called times.
 	loop int32
@@ -381,6 +383,7 @@ type BasicRuntimeStats struct {
 	rows int64
 }
 
+// GetActRows implements the RuntimeStats interface.
 func (e *BasicRuntimeStats) GetActRows() int64 {
 	return e.rows
 }
@@ -397,6 +400,7 @@ func (e *BasicRuntimeStats) SetRowNum(rowNum int64) {
 	atomic.StoreInt64(&e.rows, rowNum)
 }
 
+// String implements the RuntimeStats interface.
 func (e *BasicRuntimeStats) String() string {
 	return fmt.Sprintf("time:%v, loops:%d", time.Duration(e.consume), e.loop)
 }
@@ -404,25 +408,26 @@ func (e *BasicRuntimeStats) String() string {
 // RuntimeStatsColl collects executors's execution info.
 type RuntimeStatsColl struct {
 	mu          sync.Mutex
-	rootStats   map[string]RuntimeInformation
+	rootStats   map[string]RuntimeStats
 	copStats    map[string]*CopRuntimeStats
 	readerStats map[string]*ReaderRuntimeStats
 }
 
 // NewRuntimeStatsColl creates new executor collector.
 func NewRuntimeStatsColl() *RuntimeStatsColl {
-	return &RuntimeStatsColl{rootStats: make(map[string]RuntimeInformation),
+	return &RuntimeStatsColl{rootStats: make(map[string]RuntimeStats),
 		copStats: make(map[string]*CopRuntimeStats), readerStats: make(map[string]*ReaderRuntimeStats)}
 }
 
-func (e *RuntimeStatsColl) RegisterStats(planID string, info RuntimeInformation) {
+// RegisterStats register execStat for a executor.
+func (e *RuntimeStatsColl) RegisterStats(planID string, info RuntimeStats) {
 	e.mu.Lock()
 	e.rootStats[planID] = info
 	e.mu.Unlock()
 }
 
 // GetRootStats gets execStat for a executor.
-func (e *RuntimeStatsColl) GetRootStats(planID string) RuntimeInformation {
+func (e *RuntimeStatsColl) GetRootStats(planID string) RuntimeStats {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	runtimeStats, exists := e.rootStats[planID]
@@ -496,6 +501,7 @@ func NewConcurrencyInfo(name string, num int) *ConcurrencyInfo {
 	return &ConcurrencyInfo{name, num}
 }
 
+// RuntimeStatsWithConcurrencyInfo is the BasicRuntimeStats with ConcurrencyInfo.
 type RuntimeStatsWithConcurrencyInfo struct {
 	*BasicRuntimeStats
 
