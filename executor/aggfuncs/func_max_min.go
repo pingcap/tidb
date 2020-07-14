@@ -92,8 +92,8 @@ func (h *maxMinHeap) AppendMyDecimal(val types.MyDecimal) error {
 	if err != nil {
 		return err
 	}
-	h.varSet[key]++
-	if h.varSet[key] == 1 {
+	h.varSet[string(key)]++
+	if h.varSet[string(key)] == 1 {
 		heap.Push(h, val)
 	}
 	return nil
@@ -103,8 +103,8 @@ func (h *maxMinHeap) RemoveMyDecimal(val types.MyDecimal) error {
 	if err != nil {
 		return err
 	}
-	if h.varSet[key] > 0 {
-		h.varSet[key]--
+	if h.varSet[string(key)] > 0 {
+		h.varSet[string(key)]--
 	} else {
 		panic("remove a not exist value")
 	}
