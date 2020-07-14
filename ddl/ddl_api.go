@@ -4390,7 +4390,9 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	}
 
 	if indexInfo := t.Meta().FindIndexByName(indexName.L); indexInfo != nil {
-		err = ErrDupKeyName.GenWithStack("index already exist %s", indexName)
+		// NOTE: explicit error message. See issue #18363.
+		err = ErrDupKeyName.GenWithStack("index already exist %s; "+
+			"maybe a background job is trying to add the same index", indexName)
 		if ifNotExists {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			return nil

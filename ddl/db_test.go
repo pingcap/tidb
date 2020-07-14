@@ -3663,14 +3663,14 @@ func (s *testDBSuite4) TestIfNotExists(c *C) {
 	tk.MustGetErrCode(sql, errno.ErrDupKeyName)
 	s.mustExec(tk, c, "alter table t1 add index if not exists idx_b (b)")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1061|index already exist idx_b"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1061|index already exist idx_b; maybe a background job is trying to add the same index"))
 
 	// CREATE INDEX
 	sql = "create index idx_b on t1 (b)"
 	tk.MustGetErrCode(sql, errno.ErrDupKeyName)
 	s.mustExec(tk, c, "create index if not exists idx_b on t1 (b)")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1061|index already exist idx_b"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1061|index already exist idx_b; maybe a background job is trying to add the same index"))
 
 	// ADD PARTITION
 	s.mustExec(tk, c, "drop table if exists t2")
