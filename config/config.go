@@ -56,7 +56,7 @@ const (
 	// DefStatusHost is the default status host of TiDB
 	DefStatusHost = "0.0.0.0"
 	// DefStoreLivenessTimeout is the default value for store liveness timeout.
-	DefStoreLivenessTimeout = "120s"
+	DefStoreLivenessTimeout = "5s"
 )
 
 // Valid config maps
@@ -138,6 +138,8 @@ type Config struct {
 	Experimental Experimental `toml:"experimental" json:"experimental"`
 	// EnableCollectExecutionInfo enables the TiDB to collect execution info.
 	EnableCollectExecutionInfo bool `toml:"enable-collect-execution-info" json:"enable-collect-execution-info"`
+	// EnableTelemetry enables the usage data report to PingCAP.
+	EnableTelemetry bool `toml:"enable-telemetry" json:"enable-telemetry"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -556,7 +558,7 @@ var defaultConf = Config{
 	OOMUseTmpStorage:             true,
 	TempStorageQuota:             -1,
 	TempStoragePath:              tempStorageDirName,
-	OOMAction:                    OOMActionLog,
+	OOMAction:                    OOMActionCancel,
 	MemQuotaQuery:                1 << 30,
 	EnableStreaming:              false,
 	EnableBatchDML:               false,
@@ -679,7 +681,8 @@ var defaultConf = Config{
 		AllowAutoRandom:       false,
 		AllowsExpressionIndex: false,
 	},
-	EnableCollectExecutionInfo: false,
+	EnableCollectExecutionInfo: true,
+	EnableTelemetry:            true,
 }
 
 var (
