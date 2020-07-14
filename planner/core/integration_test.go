@@ -1176,14 +1176,17 @@ func (s *testIntegrationSerialSuite) TestNotReadOnlySQLOnTiFlash(c *C) {
 	}
 	err := tk.ExecToErr("select * from t for update")
 	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, `[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash'). Available values are 'tiflash, tikv'.`)
 
 	err = tk.ExecToErr("insert into t select * from t")
 	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, `[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash'). Available values are 'tiflash, tikv'.`)
 
 	tk.MustExec("prepare stmt_insert from 'insert into t select * from t where t.a = ?'")
 	tk.MustExec("set @a=1")
 	err = tk.ExecToErr("execute stmt_insert using @a")
 	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, `[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash'). Available values are 'tiflash, tikv'.`)
 }
 
 func (s *testIntegrationSuite) TestSelectLimit(c *C) {
