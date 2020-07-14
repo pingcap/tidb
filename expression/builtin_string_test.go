@@ -2375,13 +2375,40 @@ func (s *testEvaluatorSerialSuites) TestCIWeightString(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 
-	fc := funcs[ast.WeightString]
-	tests := []struct {
+	type CIWeightStringTests struct {
 		str     string
 		padding string
 		length  int
 		expect  interface{}
-	}{
+	}
+
+	fc := funcs[ast.WeightString]
+	checkResult := func(tests []CIWeightStringTests, collation string) {
+		for _, test := range tests {
+			str := types.NewCollationStringDatum(test.str, collation, utf8.RuneCountInString(test.str))
+			var f builtinFunc
+			var err error
+			if test.padding == "NONE" {
+				f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{str}))
+			} else {
+				padding := types.NewDatum(test.padding)
+				length := types.NewDatum(test.length)
+				f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{str, padding, length}))
+			}
+			c.Assert(err, IsNil)
+			result, err := evalBuiltinFunc(f, chunk.Row{})
+			c.Assert(err, IsNil)
+			if result.IsNull() {
+				c.Assert(test.expect, IsNil)
+				continue
+			}
+			res, err := result.ToString()
+			c.Assert(err, IsNil)
+			c.Assert(res, Equals, test.expect)
+		}
+	}
+
+	generalCITests := []CIWeightStringTests{
 		{"aAÁàãăâ", "NONE", 0, "\x00A\x00A\x00A\x00A\x00A\x00A\x00A"},
 		{"中", "NONE", 0, "\x4E\x2D"},
 		{"a", "CHAR", 5, "\x00A"},
@@ -2398,26 +2425,24 @@ func (s *testEvaluatorSerialSuites) TestCIWeightString(c *C) {
 		{"中", "BINARY", 5, "中\x00\x00"},
 	}
 
-	for _, test := range tests {
-		str := types.NewCollationStringDatum(test.str, "utf8mb4_general_ci", utf8.RuneCountInString(test.str))
-		var f builtinFunc
-		var err error
-		if test.padding == "NONE" {
-			f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{str}))
-		} else {
-			padding := types.NewDatum(test.padding)
-			length := types.NewDatum(test.length)
-			f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{str, padding, length}))
-		}
-		c.Assert(err, IsNil)
-		result, err := evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, IsNil)
-		if result.IsNull() {
-			c.Assert(test.expect, IsNil)
-			continue
-		}
-		res, err := result.ToString()
-		c.Assert(err, IsNil)
-		c.Assert(res, Equals, test.expect)
+	checkResult(generalCITests, "utf8mb4_general_ci")
+
+	unicodeCITests := []CIWeightStringTests{
+		{"aAÁàãăâ", "NONE", 0, "\x0e3\x0e3\x0e3\x0e3\x0e3\x0e3\x0e3"},
+		{"中", "NONE", 0, "\xfb\x40\xce\x2d"},
+		{"a", "CHAR", 5, "\x0e3"},
+		{"a ", "CHAR", 5, "\x0e3"},
+		{"中", "CHAR", 5, "\xfb\x40\xce\x2d"},
+		{"中 ", "CHAR", 5, "\xfb\x40\xce\x2d"},
+		{"a", "BINARY", 1, "a"},
+		{"ab", "BINARY", 1, "a"},
+		{"a", "BINARY", 5, "a\x00\x00\x00\x00"},
+		{"a ", "BINARY", 5, "a \x00\x00\x00"},
+		{"中", "BINARY", 1, "\xe4"},
+		{"中", "BINARY", 2, "\xe4\xb8"},
+		{"中", "BINARY", 3, "中"},
+		{"中", "BINARY", 5, "中\x00\x00"},
 	}
+
+	checkResult(unicodeCITests, "utf8mb4_unicode_ci")
 }
