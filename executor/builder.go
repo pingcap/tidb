@@ -1617,7 +1617,9 @@ func (b *executorBuilder) buildSplitRegion(v *plannercore.SplitRegion) Executor 
 			partitionNames: v.PartitionNames,
 			indexInfo:      v.IndexInfo,
 			lower:          v.Lower,
+			lowerHandle:    v.LowerHandle,
 			upper:          v.Upper,
+			upperHandle:    v.UpperHandle,
 			num:            v.Num,
 			valueLists:     v.ValueLists,
 		}

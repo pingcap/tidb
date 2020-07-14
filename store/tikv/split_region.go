@@ -18,6 +18,7 @@ import (
 	"context"
 	"math"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -185,21 +186,17 @@ func (s *tikvStore) batchSplitSingleRegion(bo *Backoffer, batch batch, scatter b
 
 		err = s.pdClient.ScatterRegion(bo.ctx, r.Id)
 		if err != nil {
-			if strings.Contains(err.Error(), "not found") {
-				logutil.BgLogger().Info("[QUPENG] scatter region failed, retry",
-					zap.Uint64("region ID", r.Id),
-					zap.Error(err),
-				)
-			} else {
-				logutil.BgLogger().Info("[QUPENG] scatter region failed",
-					zap.Uint64("region ID", r.Id),
-					zap.Error(err),
-				)
-				idx += 1
+			if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "not fully replicated") {
+				time.Sleep(100 * time.Millisecond)
+				continue
 			}
-			continue
+			logutil.BgLogger().Info("[QUPENG] scatter region failed",
+				zap.Uint64("region ID", r.Id),
+				zap.Error(err),
+			)
+		} else {
+			logutil.BgLogger().Info("[QUPENG] scatter region complete", zap.Uint64("region ID", r.Id))
 		}
-		logutil.BgLogger().Info("[QUPENG] scatter region complete", zap.Uint64("region ID", r.Id))
 		idx += 1
 	}
 
@@ -238,7 +235,8 @@ func (s *tikvStore) WaitScatterRegionFinish(ctx context.Context, regionID uint64
 		if err == nil && resp != nil {
 			if !bytes.Equal(resp.Desc, []byte("scatter-region")) || resp.Status != pdpb.OperatorStatus_RUNNING {
 				logutil.BgLogger().Info("wait scatter region finished",
-					zap.Uint64("regionID", regionID))
+					zap.Uint64("regionID", regionID),
+					zap.Stringer("status", resp.Status))
 				return nil
 			}
 			if resp.GetHeader().GetError() != nil {
