@@ -20,6 +20,11 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+<<<<<<< HEAD
+=======
+	"sync/atomic"
+	"time"
+>>>>>>> 9d536c4... *: add HTTP API to generate TiDB metric profile  (#18272)
 	"unsafe"
 
 	"github.com/opentracing/opentracing-go"
@@ -184,6 +189,9 @@ func appendBatchKeysBySize(b []batchKeys, region RegionVerID, keys [][]byte, siz
 }
 
 func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, collectF func(k, v []byte)) error {
+	defer func(start time.Time) {
+		tikvTxnCmdHistogramWithBatchGet.Observe(time.Since(start).Seconds())
+	}(time.Now())
 	groups, _, err := s.store.regionCache.GroupKeysByRegion(bo, keys, nil)
 	if err != nil {
 		return errors.Trace(err)
@@ -304,6 +312,10 @@ func (s *tikvSnapshot) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
+
+	defer func(start time.Time) {
+		tikvTxnCmdHistogramWithGet.Observe(time.Since(start).Seconds())
+	}(time.Now())
 
 	ctx = context.WithValue(ctx, txnStartKey, s.version.Ver)
 	val, err := s.get(NewBackofferWithVars(ctx, getMaxBackoff, s.vars), k)

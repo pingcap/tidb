@@ -137,4 +137,6 @@ const (
 	LblInternal    = "internal"
 	LblStore       = "store"
 	LblAddress     = "address"
+	LblBatchGet    = "batch_get"
+	LblGet         = "get"
 )
