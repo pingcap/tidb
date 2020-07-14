@@ -2090,3 +2090,14 @@ func (s *testSuiteJoinSerial) TestIssue18070(c *C) {
 	err = tk.QueryToErr("select /*+ inl_merge_join(t1)*/ * from t1 join t2 on t1.a = t2.a;")
 	c.Assert(strings.Contains(err.Error(), "Out Of Memory Quota!"), IsTrue)
 }
+
+func (s *testSuiteJoin1) TestIssue18564(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int, primary key(a), index idx(b,a));")
+	tk.MustExec("create table t2(a int, b int, primary key(a), index idx(b,a));")
+	tk.MustExec("insert into t1 values(1, 1)")
+	tk.MustExec("insert into t2 values(1, 1)")
+	tk.MustQuery("select /*+ INL_JOIN(t1) */ * from t1 FORCE INDEX (idx) join t2 on t1.b=t2.b and t1.a = t2.a").Check(testkit.Rows("1 1 1 1"))
+}
