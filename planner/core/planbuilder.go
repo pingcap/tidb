@@ -2649,15 +2649,7 @@ func (b *PlanBuilder) convertValue(valueItem ast.ExprNode, mockTablePlan Logical
 
 func (b *PlanBuilder) buildSplitTableRegion(node *ast.SplitRegionStmt) (Plan, error) {
 	tblInfo := node.Table.TableInfo
-	var pkCol *model.ColumnInfo
-	if tblInfo.PKIsHandle {
-		if col := tblInfo.GetPkColInfo(); col != nil {
-			pkCol = col
-		}
-	}
-	if pkCol == nil {
-		pkCol = model.NewExtraHandleColInfo()
-	}
+	handleColInfos := buildHandleColumnInfos(tblInfo)
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 	schema, names := expression.TableInfo2SchemaAndNames(b.ctx, node.Table.Schema, tblInfo)
 	mockTablePlan.SetSchema(schema)
@@ -2671,35 +2663,25 @@ func (b *PlanBuilder) buildSplitTableRegion(node *ast.SplitRegionStmt) (Plan, er
 	if len(node.SplitOpt.ValueLists) > 0 {
 		values := make([][]types.Datum, 0, len(node.SplitOpt.ValueLists))
 		for i, valuesItem := range node.SplitOpt.ValueLists {
-			if len(valuesItem) > 1 {
-				return nil, ErrWrongValueCountOnRow.GenWithStackByArgs(i + 1)
-			}
-			value, err := b.convertValue(valuesItem[0], mockTablePlan, pkCol)
+			data, err := convertValueListToData(valuesItem, handleColInfos, i, b, mockTablePlan)
 			if err != nil {
 				return nil, err
 			}
-			values = append(values, []types.Datum{value})
+			values = append(values, data)
 		}
 		p.ValueLists = values
 		return p, nil
 	}
 
-	checkLowerUpperValue := func(valuesItem []ast.ExprNode, name string) (types.Datum, error) {
-		if len(valuesItem) != 1 {
-			return types.Datum{}, errors.Errorf("Split table region %s value count should be 1", name)
-		}
-		return b.convertValue(valuesItem[0], mockTablePlan, pkCol)
-	}
-	lowerValues, err := checkLowerUpperValue(node.SplitOpt.Lower, "lower")
+	var err error
+	p.Lower, err = convertValueListToData(node.SplitOpt.Lower, handleColInfos, lowerBound, b, mockTablePlan)
 	if err != nil {
 		return nil, err
 	}
-	upperValue, err := checkLowerUpperValue(node.SplitOpt.Upper, "upper")
+	p.Upper, err = convertValueListToData(node.SplitOpt.Upper, handleColInfos, upperBound, b, mockTablePlan)
 	if err != nil {
 		return nil, err
 	}
-	p.Lower = []types.Datum{lowerValues}
-	p.Upper = []types.Datum{upperValue}
 
 	maxSplitRegionNum := int64(config.GetGlobalConfig().SplitRegionMaxNum)
 	if node.SplitOpt.Num > maxSplitRegionNum {
@@ -2709,6 +2691,56 @@ func (b *PlanBuilder) buildSplitTableRegion(node *ast.SplitRegionStmt) (Plan, er
 	}
 	p.Num = int(node.SplitOpt.Num)
 	return p, nil
+}
+
+func buildHandleColumnInfos(tblInfo *model.TableInfo) []*model.ColumnInfo {
+	switch {
+	case tblInfo.PKIsHandle:
+		if col := tblInfo.GetPkColInfo(); col != nil {
+			return []*model.ColumnInfo{col}
+		}
+	case tblInfo.IsCommonHandle:
+		pkIdx := tables.FindPrimaryIndex(tblInfo)
+		pkCols := make([]*model.ColumnInfo, 0, len(pkIdx.Columns))
+		cols := tblInfo.Columns
+		for _, idxCol := range pkIdx.Columns {
+			pkCols = append(pkCols, cols[idxCol.Offset])
+		}
+		return pkCols
+	default:
+		return []*model.ColumnInfo{model.NewExtraHandleColInfo()}
+	}
+	return nil
+}
+
+const (
+	lowerBound int = -1
+	upperBound int = -2
+)
+
+func convertValueListToData(valueList []ast.ExprNode, handleColInfos []*model.ColumnInfo, rowIdx int,
+	b *PlanBuilder, mockTablePlan *LogicalTableDual) ([]types.Datum, error) {
+	if len(valueList) != len(handleColInfos) {
+		var err error
+		switch rowIdx {
+		case lowerBound:
+			err = errors.Errorf("Split table region lower value count should be %d", len(handleColInfos))
+		case upperBound:
+			err = errors.Errorf("Split table region upper value count should be %d", len(handleColInfos))
+		default:
+			err = ErrWrongValueCountOnRow.GenWithStackByArgs(rowIdx)
+		}
+		return nil, err
+	}
+	data := make([]types.Datum, 0, len(handleColInfos))
+	for i, v := range valueList {
+		convertedDatum, err := b.convertValue(v, mockTablePlan, handleColInfos[i])
+		if err != nil {
+			return nil, err
+		}
+		data = append(data, convertedDatum)
+	}
+	return data, nil
 }
 
 func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, error) {
