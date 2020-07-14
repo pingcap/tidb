@@ -108,6 +108,8 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		err = e.executeFlashbackTable(x)
 	case *ast.RenameTableStmt:
 		err = e.executeRenameTable(x)
+	case *ast.RenameDatabaseStmt:
+		err = e.executeRenameDatabase(x)
 	case *ast.TruncateTableStmt:
 		err = e.executeTruncateTable(x)
 	case *ast.LockTablesStmt:
@@ -150,6 +152,19 @@ func (e *DDLExec) executeTruncateTable(s *ast.TruncateTableStmt) error {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	err := domain.GetDomain(e.ctx).DDL().TruncateTable(e.ctx, ident)
 	return err
+}
+
+func (e *DDLExec) executeRenameDatabase(s *ast.RenameDatabaseStmt) error {
+	oldDB := model.NewCIStr(s.OldDB)
+	newDB := model.NewCIStr(s.NewDB)
+
+	// Protect important system table from been dropped by a mistake.
+	// I can hardly find a case that a user really need to do this.
+	if oldDB.L == "mysql" {
+		return errors.New("Rename 'mysql' database is forbidden")
+	}
+
+	return domain.GetDomain(e.ctx).DDL().RenameSchema(e.ctx, oldDB, newDB)
 }
 
 func (e *DDLExec) executeRenameTable(s *ast.RenameTableStmt) error {

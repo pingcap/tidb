@@ -652,6 +652,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onRebaseAutoRandomType(d.store, t, job)
 	case model.ActionRenameTable:
 		ver, err = onRenameTable(d, t, job)
+	case model.ActionRenameDatabase:
+		ver, err = onRenameSchema(t, job)
 	case model.ActionShardRowID:
 		ver, err = w.onShardRowID(d, t, job)
 	case model.ActionModifyTableComment:
