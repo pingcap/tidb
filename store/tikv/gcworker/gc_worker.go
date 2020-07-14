@@ -458,7 +458,7 @@ func (w *GCWorker) checkGCInterval(now time.Time) (bool, error) {
 	return true, nil
 }
 
-// validateGCLiftTime checks whether life time is small than min gc life time.
+// validateGCLifeTime checks whether life time is small than min gc life time.
 func (w *GCWorker) validateGCLifeTime(lifeTime time.Duration) (time.Duration, error) {
 	if lifeTime >= gcMinLifeTime {
 		return lifeTime, nil
