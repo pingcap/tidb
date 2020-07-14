@@ -982,8 +982,7 @@ func (s *testSuite5) TestSetConcurrency(c *C) {
 	checkSet(variable.TiDBIndexLookupJoinConcurrency)
 	c.Assert(vars.IndexLookupJoinConcurrency(), Equals, 1)
 
-	tk.MustExec(fmt.Sprintf("set @@%s=1;", variable.TiDBHashJoinConcurrency))
-	tk.MustQuery(fmt.Sprintf("select @@%s;", variable.TiDBHashJoinConcurrency)).Check(testkit.Rows("1"))
+	checkSet(variable.TiDBHashJoinConcurrency)
 	c.Assert(vars.HashJoinConcurrency(), Equals, 1)
 
 	checkSet(variable.TiDBHashAggPartialConcurrency)

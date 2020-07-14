@@ -125,7 +125,7 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 			return terror.ClassTiKV.Synthesize(terror.ErrCode(err.Code), err.Msg)
 		}
 		sessVars := r.ctx.GetSessionVars()
-		if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
+		if atomic.LoadUint32(&sessVars.Killed) == 1 {
 			return errors.Trace(errQueryInterrupted)
 		}
 		sc := sessVars.StmtCtx
@@ -237,7 +237,7 @@ func (r *selectResult) readFromChunk(ctx context.Context, chk *chunk.Chunk) erro
 
 func (r *selectResult) updateCopRuntimeStats(detail *execdetails.ExecDetails, respTime time.Duration) {
 	callee := detail.CalleeAddress
-	if r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil || callee == "" {
+	if r.rootPlanID == nil || r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil || callee == "" {
 		return
 	}
 	if len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
