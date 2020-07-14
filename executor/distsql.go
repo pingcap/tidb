@@ -678,7 +678,8 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 			}
 		}
 	}()
-	chk := chunk.NewChunkWithCapacity(w.idxLookup.getRetTpsByHandle(), w.idxLookup.maxChunkSize)
+	retTps := w.idxLookup.getRetTpsByHandle()
+	chk := chunk.NewChunkWithCapacity(retTps, w.idxLookup.maxChunkSize)
 	for {
 		handles, retChunk, scannedKeys, err := w.extractTaskHandles(ctx, chk, result, count)
 		if err != nil {
