@@ -411,7 +411,7 @@ func (w *GCWorker) getGCConcurrency(ctx context.Context) (int, error) {
 		return w.loadGCConcurrencyWithDefault()
 	}
 
-	stores, err := w.getUpStoresForGC(ctx)
+	stores, err := w.getStoresForGC(ctx)
 	concurrency := len(stores)
 	if err != nil {
 		logutil.Logger(ctx).Error("[gc worker] failed to get up stores to calculate concurrency. use config.",
@@ -458,8 +458,8 @@ func (w *GCWorker) checkGCInterval(now time.Time) (bool, error) {
 	return true, nil
 }
 
-// validateGCLiftTime checks whether life time is small than min gc life time.
-func (w *GCWorker) validateGCLiftTime(lifeTime time.Duration) (time.Duration, error) {
+// validateGCLifeTime checks whether life time is small than min gc life time.
+func (w *GCWorker) validateGCLifeTime(lifeTime time.Duration) (time.Duration, error) {
 	if lifeTime >= gcMinLifeTime {
 		return lifeTime, nil
 	}
@@ -477,7 +477,7 @@ func (w *GCWorker) calculateNewSafePoint(ctx context.Context, now time.Time) (*t
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
-	*lifeTime, err = w.validateGCLiftTime(*lifeTime)
+	*lifeTime, err = w.validateGCLifeTime(*lifeTime)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -714,7 +714,7 @@ func (w *GCWorker) redoDeleteRanges(ctx context.Context, safePoint uint64, concu
 
 func (w *GCWorker) doUnsafeDestroyRangeRequest(ctx context.Context, startKey []byte, endKey []byte, concurrency int) error {
 	// Get all stores every time deleting a region. So the store list is less probably to be stale.
-	stores, err := w.getUpStoresForGC(ctx)
+	stores, err := w.getStoresForGC(ctx)
 	if err != nil {
 		logutil.Logger(ctx).Error("[gc worker] delete ranges: got an error while trying to get store list from PD",
 			zap.String("uuid", w.uuid),
@@ -790,8 +790,14 @@ const (
 // needsGCOperationForStore checks if the store-level requests related to GC needs to be sent to the store. The store-level
 // requests includes UnsafeDestroyRange, PhysicalScanLock, etc.
 func needsGCOperationForStore(store *metapb.Store) (bool, error) {
-	engineLabel := ""
+	// TombStone means the store has been removed from the cluster and there isn't any peer on the store, so needn't do GC for it.
+	// Offline means the store is being removed from the cluster and it becomes tombstone after all peers are removed from it,
+	// so we need to do GC for it.
+	if store.State == metapb.StoreState_Tombstone {
+		return false, nil
+	}
 
+	engineLabel := ""
 	for _, label := range store.GetLabels() {
 		if label.GetKey() == engineLabelKey {
 			engineLabel = label.GetValue()
@@ -820,8 +826,8 @@ func needsGCOperationForStore(store *metapb.Store) (bool, error) {
 	}
 }
 
-// getUpStoresForGC gets the list of stores that needs to be processed during GC.
-func (w *GCWorker) getUpStoresForGC(ctx context.Context) ([]*metapb.Store, error) {
+// getStoresForGC gets the list of stores that needs to be processed during GC.
+func (w *GCWorker) getStoresForGC(ctx context.Context) ([]*metapb.Store, error) {
 	stores, err := w.pdClient.GetAllStores(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -829,9 +835,6 @@ func (w *GCWorker) getUpStoresForGC(ctx context.Context) ([]*metapb.Store, error
 
 	upStores := make([]*metapb.Store, 0, len(stores))
 	for _, store := range stores {
-		if store.State != metapb.StoreState_Up {
-			continue
-		}
 		needsGCOp, err := needsGCOperationForStore(store)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -843,8 +846,8 @@ func (w *GCWorker) getUpStoresForGC(ctx context.Context) ([]*metapb.Store, error
 	return upStores, nil
 }
 
-func (w *GCWorker) getUpStoresMapForGC(ctx context.Context) (map[uint64]*metapb.Store, error) {
-	stores, err := w.getUpStoresForGC(ctx)
+func (w *GCWorker) getStoresMapForGC(ctx context.Context) (map[uint64]*metapb.Store, error) {
+	stores, err := w.getStoresForGC(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1087,7 +1090,7 @@ func (w *GCWorker) resolveLocksPhysical(ctx context.Context, safePoint uint64) e
 	registeredStores := make(map[uint64]*metapb.Store)
 	defer w.removeLockObservers(ctx, safePoint, registeredStores)
 
-	dirtyStores, err := w.getUpStoresMapForGC(ctx)
+	dirtyStores, err := w.getStoresMapForGC(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1108,7 +1111,7 @@ func (w *GCWorker) resolveLocksPhysical(ctx context.Context, safePoint uint64) e
 
 		failpoint.Inject("beforeCheckLockObservers", func() {})
 
-		stores, err := w.getUpStoresMapForGC(ctx)
+		stores, err := w.getStoresMapForGC(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
