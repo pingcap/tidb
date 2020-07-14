@@ -146,7 +146,18 @@ func (s *partitionProcessor) findUsedPartitions(ds *DataSource, pi *model.Partit
 			break
 		}
 	}
-	return used, nil
+
+	// unique slice
+	sort.Ints(used)
+	ret := make([]int, 0, len(used))
+	for i := 0; i < len(used); i++ {
+		if i == 0 {
+			ret = append(ret, used[i])
+		} else if used[i] != used[i - 1] {
+			ret = append(ret, used[i])
+		}
+	}
+	return ret, nil
 }
 
 func convertToRangeOr(used []int, pi *model.PartitionInfo) partitionRangeOR {
