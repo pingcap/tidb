@@ -496,7 +496,7 @@ const (
 	DefTiDBMetricSchemaRangeDuration   = 60 // 60s
 	DefTiDBFoundInPlanCache            = false
 	DefTiDBSlowLogMasking              = false
-	DefTiDBEnableCollectExecutionInfo  = false
+	DefTiDBEnableCollectExecutionInfo  = true
 	DefTiDBAllowAutoRandExplicitInsert = false
 	DefTiDBEnableTelemetry             = true
 )
