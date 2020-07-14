@@ -14,6 +14,7 @@
 package versioninfo
 
 const (
+	// CommunityEdition is the default edition for building.
 	CommunityEdition = "Community"
 )
 
