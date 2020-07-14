@@ -38,7 +38,7 @@ const (
 	// AutoRandomIncompatibleWithDefaultValueErrMsg is reported when auto_random and default are specified on the same column.
 	AutoRandomIncompatibleWithDefaultValueErrMsg = "auto_random is incompatible with default"
 	// AutoRandomOverflowErrMsg is reported when auto_random is greater than max length of a MySQL data type.
-	AutoRandomOverflowErrMsg = "Bits of column `%s` is %d, but auto_random bits is %d. Max allowed auto_random bits for column `%s` is %d"
+	AutoRandomOverflowErrMsg = "max allowed auto_random bits is %d, but got %d on column `%s`"
 	// AutoRandomModifyColTypeErrMsg is reported when a user is trying to modify the type of a column specified with auto_random.
 	AutoRandomModifyColTypeErrMsg = "modifying the auto_random column type is not supported"
 	// AutoRandomAlterErrMsg is reported when a user is trying to add/drop/modify the value of auto_random attribute.
@@ -53,4 +53,6 @@ const (
 	AutoRandomOnNonBigIntColumn = "auto_random option must be defined on `bigint` column, but not on `%s` column"
 	// AutoRandomRebaseNotApplicable is reported when alter auto_random base on a non auto_random table.
 	AutoRandomRebaseNotApplicable = "alter auto_random_base of a non auto_random table"
+	// AutoRandomRebaseOverflow is reported when alter auto_random_base to a value that overflows the incremental bits.
+	AutoRandomRebaseOverflow = "alter auto_random_base to %d overflows the incremental bits, max allowed base is %d"
 )
