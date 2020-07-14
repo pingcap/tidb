@@ -180,6 +180,7 @@ func (a *ExecStmt) IsPrepared() bool {
 // If current StmtNode is an ExecuteStmt, we can get its prepared stmt,
 // then using ast.IsReadOnly function to determine a statement is read only or not.
 func (a *ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
+<<<<<<< HEAD
 	if execStmt, ok := a.StmtNode.(*ast.ExecuteStmt); ok {
 		s, err := getPreparedStmt(execStmt, vars)
 		if err != nil {
@@ -189,6 +190,9 @@ func (a *ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
 		return ast.IsReadOnly(s)
 	}
 	return ast.IsReadOnly(a.StmtNode)
+=======
+	return planner.IsReadOnly(a.StmtNode, vars)
+>>>>>>> b193db8... planner: ban tiflash engine when the statement is not read only (#18458)
 }
 
 // RebuildPlan rebuilds current execute statement plan.

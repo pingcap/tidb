@@ -29,7 +29,11 @@ import (
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/sessionctx/variable"
+=======
+	"github.com/pingcap/tidb/types"
+>>>>>>> b193db8... planner: ban tiflash engine when the statement is not read only (#18458)
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
@@ -301,6 +305,7 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context, ID
 	}
 	return stmt, nil
 }
+<<<<<<< HEAD
 
 func getPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (ast.StmtNode, error) {
 	var ok bool
@@ -315,3 +320,5 @@ func getPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (ast.Stm
 	}
 	return nil, plannercore.ErrStmtNotFound
 }
+=======
+>>>>>>> b193db8... planner: ban tiflash engine when the statement is not read only (#18458)
