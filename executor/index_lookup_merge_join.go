@@ -301,15 +301,12 @@ func (e *IndexLookUpMergeJoin) getFinishedTask(ctx context.Context) {
 func (omw *outerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancelFunc context.CancelFunc) {
 	defer func() {
 		if r := recover(); r != nil {
-<<<<<<< HEAD
-=======
 			task := &lookUpMergeJoinTask{
 				doneErr: errors.New(fmt.Sprintf("%v", r)),
 				results: make(chan *indexMergeJoinResult, numResChkHold),
 			}
 			close(task.results)
 			omw.resultCh <- task
->>>>>>> 30858ec... executor: return error when recover indexHash/MergeJoin worker (#18509)
 			cancelFunc()
 		}
 		close(omw.resultCh)
