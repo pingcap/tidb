@@ -17,6 +17,7 @@ import (
 	"fmt"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -33,6 +34,8 @@ type testIntegrationSuite struct {
 }
 
 func newStoreWithBootstrap() (kv.Storage, error) {
+	// TODO: remove this and find out the root cause of race.
+	config.GetGlobalConfig().EnableCollectExecutionInfo = false
 	store, err := mockstore.NewMockTikvStore()
 	if err != nil {
 		return nil, err
