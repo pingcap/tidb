@@ -627,8 +627,8 @@ func (e *maxMin4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGrou
 			return 0, err
 		}
 	}
-	if val, isEmpty := p.heap.Top(); !isEmpty {
-		p.val = val.(types.MyDecimal)
+	if val, isEmpty := p.heap.TopDecimal(); !isEmpty {
+		p.val = val
 		p.isNull = false
 	} else {
 		p.isNull = true
