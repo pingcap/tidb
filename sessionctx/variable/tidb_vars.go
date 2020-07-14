@@ -14,6 +14,7 @@
 package variable
 
 import (
+	"math"
 	"os"
 
 	"github.com/pingcap/parser/mysql"
@@ -267,6 +268,11 @@ const (
 	// the input string values are valid, we can skip the check.
 	TiDBSkipUTF8Check = "tidb_skip_utf8_check"
 
+	// tidb_skip_ascii_check skips the ASCII validate process
+	// old tidb may already have fields with invalid ASCII bytes
+	// disable ASCII validate can guarantee a safe replication
+	TiDBSkipASCIICheck = "tidb_skip_ascii_check"
+
 	// tidb_hash_join_concurrency is used for hash join executor.
 	// The hash join outer executor starts multiple concurrent join workers to probe the hash table.
 	// tidb_hash_join_concurrency is deprecated, use tidb_executor_concurrency instead.
@@ -415,6 +421,8 @@ const (
 	// TiDBSlowLogMasking indicates that whether masking the query data when log slow query.
 	TiDBSlowLogMasking = "tidb_slow_log_masking"
 
+	// TiDBShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
+	TiDBShardAllocateStep = "tidb_shard_allocate_step"
 	// TiDBEnableTelemetry indicates that whether usage data report to PingCAP is enabled.
 	TiDBEnableTelemetry = "tidb_enable_telemetry"
 )
@@ -436,6 +444,7 @@ const (
 	DefAutoIncrementOffset             = 1
 	DefChecksumTableConcurrency        = 4
 	DefSkipUTF8Check                   = false
+	DefSkipASCIICheck                  = false
 	DefOptAggPushDown                  = false
 	DefOptWriteRowID                   = false
 	DefOptCorrelationThreshold         = 0.9
@@ -472,7 +481,7 @@ const (
 	DefTiDBRetryLimit                  = 10
 	DefTiDBDisableTxnAutoRetry         = true
 	DefTiDBConstraintCheckInPlace      = false
-	DefTiDBHashJoinConcurrency         = 5
+	DefTiDBHashJoinConcurrency         = ConcurrencyUnset
 	DefTiDBProjectionConcurrency       = ConcurrencyUnset
 	DefTiDBOptimizerSelectivityLevel   = 0
 	DefTiDBAllowBatchCop               = 1
@@ -510,10 +519,11 @@ const (
 	DefTiDBMetricSchemaStep            = 60 // 60s
 	DefTiDBMetricSchemaRangeDuration   = 60 // 60s
 	DefTiDBFoundInPlanCache            = false
-	DefTidbEnableCollectExecutionInfo  = false
+	DefTiDBEnableCollectExecutionInfo  = true
 	DefTiDBAllowAutoRandExplicitInsert = false
 	DefTiDBEnableClusteredIndex        = false
 	DefTiDBSlowLogMasking              = false
+	DefTiDBShardAllocateStep           = math.MaxInt64
 	DefTiDBEnableTelemetry             = true
 )
 
@@ -537,6 +547,5 @@ var (
 	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
 	MinExpensiveQueryTimeThreshold uint64 = 10 //10s
 	CapturePlanBaseline                   = serverGlobalVariable{globalVal: "0"}
-	// DefExecutorConcurrency is set to 4 currently to keep test pass easily, we may adjust this in the future.
-	DefExecutorConcurrency = 4
+	DefExecutorConcurrency                = 5
 )

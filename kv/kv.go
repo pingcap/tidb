@@ -57,6 +57,8 @@ const (
 	ReplicaRead
 	// Set task ID
 	TaskID
+	// InfoSchema is schema version used by txn startTS.
+	InfoSchema
 )
 
 // Priority value for transaction priority.
@@ -110,7 +112,7 @@ func (r ReplicaReadType) IsFollowerRead() bool {
 // Those limits is enforced to make sure the transaction can be well handled by TiKV.
 var (
 	// TxnEntrySizeLimit is limit of single entry size (len(key) + len(value)).
-	TxnEntrySizeLimit = 6 * 1024 * 1024
+	TxnEntrySizeLimit uint64 = config.DefTxnEntrySizeLimit
 	// TxnTotalSizeLimit is limit of the sum of all entry size.
 	TxnTotalSizeLimit uint64 = config.DefTxnTotalSizeLimit
 )
@@ -203,6 +205,8 @@ type Transaction interface {
 	GetSnapshot() Snapshot
 	// SetVars sets variables to the transaction.
 	SetVars(vars *Variables)
+	// GetVars gets variables from the transaction.
+	GetVars() *Variables
 	// BatchGet gets kv from the memory buffer of statement and transaction, and the kv storage.
 	// Do not use len(value) == 0 or value == nil to represent non-exist.
 	// If a key doesn't exist, there shouldn't be any corresponding entry in the result map.

@@ -1213,9 +1213,11 @@ func (b *builtinCastStringAsDecimalSig) evalDecimal(row chunk.Row) (res *types.M
 	if isNull || err != nil {
 		return res, isNull, err
 	}
+	val = strings.TrimSpace(val)
+	isNegative := len(val) > 1 && val[0] == '-'
 	res = new(types.MyDecimal)
 	sc := b.ctx.GetSessionVars().StmtCtx
-	if !(b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag) && res.IsNegative()) {
+	if !(b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag) && isNegative) {
 		err = sc.HandleTruncate(res.FromString([]byte(val)))
 		if err != nil {
 			return res, false, err

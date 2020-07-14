@@ -135,6 +135,14 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 		conf.AlterPrimaryKey = true
 	})
 
+	_, err = tk.Exec("alter table primary_key_test2 add primary key(a)")
+	c.Assert(infoschema.ErrMultiplePriKey.Equal(err), IsTrue)
+	// We can't add a primary key when the table's pk_is_handle is true.
+	_, err = tk.Exec("alter table primary_key_test1 add primary key(a)")
+	c.Assert(infoschema.ErrMultiplePriKey.Equal(err), IsTrue)
+	_, err = tk.Exec("alter table primary_key_test1 add primary key(b)")
+	c.Assert(infoschema.ErrMultiplePriKey.Equal(err), IsTrue)
+
 	_, err = tk.Exec("alter table primary_key_test1 drop primary key")
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when the table's pkIsHandle is true")
 	tk.MustExec("alter table primary_key_test2 drop primary key")
@@ -1073,6 +1081,7 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	}
 	assertShowWarningCorrect("create table t (a bigint auto_random(15) primary key)", 281474976710655)
 	assertShowWarningCorrect("create table t (a bigint unsigned auto_random(15) primary key)", 562949953421311)
+	assertShowWarningCorrect("create table t (a bigint auto_random(1) primary key)", 4611686018427387903)
 
 	// Test insert into auto_random column explicitly is not allowed by default.
 	assertExplicitInsertDisallowed := func(sql string) {

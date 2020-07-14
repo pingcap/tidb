@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
@@ -163,7 +164,7 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 	c.Assert(err, IsNil)
 	committer, err := newTwoPhaseCommitterWithInit(txn1, 0)
 	c.Assert(err, IsNil)
-	err = committer.prewriteMutations(NewBackoffer(ctx, PrewriteMaxBackoff), committer.mutations)
+	err = committer.prewriteMutations(NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil), committer.mutations)
 	c.Assert(err, IsNil)
 
 	txn2 := s.begin(c)
@@ -171,7 +172,7 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, BytesEquals, []byte("a0"))
 
-	err = committer.prewriteMutations(NewBackoffer(ctx, PrewriteMaxBackoff), committer.mutations)
+	err = committer.prewriteMutations(NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil), committer.mutations)
 	if err != nil {
 		// Retry.
 		txn1 = s.begin(c)
@@ -181,12 +182,12 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 		c.Assert(err, IsNil)
 		committer, err = newTwoPhaseCommitterWithInit(txn1, 0)
 		c.Assert(err, IsNil)
-		err = committer.prewriteMutations(NewBackoffer(ctx, PrewriteMaxBackoff), committer.mutations)
+		err = committer.prewriteMutations(NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil), committer.mutations)
 		c.Assert(err, IsNil)
 	}
 	committer.commitTS, err = s.store.oracle.GetTimestamp(ctx)
 	c.Assert(err, IsNil)
-	err = committer.commitMutations(NewBackoffer(ctx, CommitMaxBackoff), committerMutations{keys: [][]byte{[]byte("a")}})
+	err = committer.commitMutations(NewBackofferWithVars(ctx, CommitMaxBackoff, nil), committerMutations{keys: [][]byte{[]byte("a")}})
 	c.Assert(err, IsNil)
 
 	txn3 := s.begin(c)
@@ -204,7 +205,7 @@ func (s *testCommitterSuite) TestContextCancel(c *C) {
 	committer, err := newTwoPhaseCommitterWithInit(txn1, 0)
 	c.Assert(err, IsNil)
 
-	bo := NewBackoffer(context.Background(), PrewriteMaxBackoff)
+	bo := NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, nil)
 	backoffer, cancel := bo.Fork()
 	cancel() // cancel the context
 	err = committer.prewriteMutations(backoffer, committer.mutations)
@@ -233,7 +234,7 @@ func (s *testCommitterSuite) TestContextCancelRetryable(c *C) {
 	c.Assert(err, IsNil)
 	committer, err := newTwoPhaseCommitterWithInit(txn1, 0)
 	c.Assert(err, IsNil)
-	err = committer.prewriteMutations(NewBackoffer(context.Background(), PrewriteMaxBackoff), committer.mutations)
+	err = committer.prewriteMutations(NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, nil), committer.mutations)
 	c.Assert(err, IsNil)
 	// txn3 writes "c"
 	err = txn3.Set([]byte("c"), []byte("c3"))
@@ -255,7 +256,7 @@ func (s *testCommitterSuite) TestContextCancelRetryable(c *C) {
 }
 
 func (s *testCommitterSuite) mustGetRegionID(c *C, key []byte) uint64 {
-	loc, err := s.store.regionCache.LocateKey(NewBackoffer(context.Background(), getMaxBackoff), key)
+	loc, err := s.store.regionCache.LocateKey(NewBackofferWithVars(context.Background(), getMaxBackoff, nil), key)
 	c.Assert(err, IsNil)
 	return loc.Region.id
 }
@@ -263,7 +264,7 @@ func (s *testCommitterSuite) mustGetRegionID(c *C, key []byte) uint64 {
 func (s *testCommitterSuite) isKeyLocked(c *C, key []byte) bool {
 	ver, err := s.store.CurrentVersion()
 	c.Assert(err, IsNil)
-	bo := NewBackoffer(context.Background(), getMaxBackoff)
+	bo := NewBackofferWithVars(context.Background(), getMaxBackoff, nil)
 	req := tikvrpc.NewRequest(tikvrpc.CmdGet, &kvrpcpb.GetRequest{
 		Key:     key,
 		Version: ver.Ver,
@@ -369,9 +370,9 @@ func (s *testCommitterSuite) TestCommitBeforePrewrite(c *C) {
 	committer, err := newTwoPhaseCommitterWithInit(txn, 0)
 	c.Assert(err, IsNil)
 	ctx := context.Background()
-	err = committer.cleanupMutations(NewBackoffer(ctx, cleanupMaxBackoff), committer.mutations)
+	err = committer.cleanupMutations(NewBackofferWithVars(ctx, cleanupMaxBackoff, nil), committer.mutations)
 	c.Assert(err, IsNil)
-	err = committer.prewriteMutations(NewBackoffer(ctx, PrewriteMaxBackoff), committer.mutations)
+	err = committer.prewriteMutations(NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil), committer.mutations)
 	c.Assert(err, NotNil)
 	errMsgMustContain(c, err, "already rolled back")
 }
@@ -413,7 +414,7 @@ func (s *testCommitterSuite) TestPrewritePrimaryKeyFailed(c *C) {
 	ctx := context.Background()
 	committer, err := newTwoPhaseCommitterWithInit(txn2, 0)
 	c.Assert(err, IsNil)
-	err = committer.cleanupMutations(NewBackoffer(ctx, cleanupMaxBackoff), committer.mutations)
+	err = committer.cleanupMutations(NewBackofferWithVars(ctx, cleanupMaxBackoff, nil), committer.mutations)
 	c.Assert(err, IsNil)
 
 	// check the data after rollback twice.
@@ -484,7 +485,7 @@ func (s *testCommitterSuite) TestPrewriteTxnSize(c *C) {
 	c.Assert(err, IsNil)
 
 	ctx := context.Background()
-	err = committer.prewriteMutations(NewBackoffer(ctx, PrewriteMaxBackoff), committer.mutations)
+	err = committer.prewriteMutations(NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil), committer.mutations)
 	c.Assert(err, IsNil)
 
 	// Check the written locks in the first region (50 keys)
@@ -506,7 +507,7 @@ func (s *testCommitterSuite) TestRejectCommitTS(c *C) {
 
 	committer, err := newTwoPhaseCommitterWithInit(txn, 1)
 	c.Assert(err, IsNil)
-	bo := NewBackoffer(context.Background(), getMaxBackoff)
+	bo := NewBackofferWithVars(context.Background(), getMaxBackoff, nil)
 	loc, err := s.store.regionCache.LocateKey(bo, []byte("x"))
 	c.Assert(err, IsNil)
 	mutations := []*kvrpcpb.Mutation{
@@ -622,7 +623,7 @@ func (s *testCommitterSuite) TestPessimisticTTL(c *C) {
 	c.Assert(msBeforeLockExpired, GreaterEqual, int64(100))
 
 	lr := newLockResolver(s.store)
-	bo := NewBackoffer(context.Background(), getMaxBackoff)
+	bo := NewBackofferWithVars(context.Background(), getMaxBackoff, nil)
 	status, err := lr.getTxnStatus(bo, txn.startTS, key2, 0, txn.startTS, true)
 	c.Assert(err, IsNil)
 	c.Assert(status.ttl, GreaterEqual, lockInfo.LockTtl)
@@ -681,6 +682,125 @@ func (s *testCommitterSuite) TestElapsedTTL(c *C) {
 	c.Assert(lockInfo.LockTtl-atomic.LoadUint64(&ManagedLockTTL), Less, uint64(150))
 }
 
+func (s *testCommitterSuite) TestDeleteYourWriteCauseGhostPrimary(c *C) {
+	s.cluster.SplitKeys(kv.Key("d"), kv.Key("a"), 4)
+	k1 := kv.Key("a") // insert but deleted key at first pos in txn1
+	k2 := kv.Key("b") // insert key at second pos in txn1
+	k3 := kv.Key("c") // insert key in txn1 and will be conflict read by txn2
+
+	// insert k1, k2, k3 and delete k1
+	txn1 := s.begin(c)
+	txn1.DelOption(kv.Pessimistic)
+	txn1.SetOption(kv.PresumeKeyNotExists, nil)
+	txn1.SetOption(kv.PresumeKeyNotExistsError, kv.NewExistErrInfo("name", "value"))
+	txn1.store.txnLatches = nil
+	txn1.Get(context.Background(), k1)
+	txn1.Set(k1, []byte{0})
+	txn1.Set(k2, []byte{1})
+	txn1.Set(k3, []byte{2})
+	txn1.Delete(k1)
+	committer1, err := newTwoPhaseCommitter(txn1, 0)
+	c.Assert(err, IsNil)
+	// setup test knob in txn's committer
+	committer1.testingKnobs.acAfterCommitPrimary = make(chan struct{})
+	committer1.testingKnobs.bkAfterCommitPrimary = make(chan struct{})
+	txn1.committer = committer1
+	var txn1Done sync.WaitGroup
+	txn1Done.Add(1)
+	go func() {
+		err1 := txn1.Commit(context.Background())
+		c.Assert(err1, IsNil)
+		txn1Done.Done()
+	}()
+	// resume after after primary key be committed
+	<-txn1.committer.testingKnobs.acAfterCommitPrimary
+
+	// start txn2 to read k3(prewrite success and primary should be committed)
+	txn2 := s.begin(c)
+	txn2.DelOption(kv.Pessimistic)
+	txn2.store.txnLatches = nil
+	v, err := txn2.Get(context.Background(), k3)
+	c.Assert(err, IsNil) // should resolve lock and read txn1 k3 result instead of rollback it.
+	c.Assert(v[0], Equals, byte(2))
+	txn1.committer.testingKnobs.bkAfterCommitPrimary <- struct{}{}
+	txn1Done.Wait()
+}
+
+func (s *testCommitterSuite) TestDeleteAllYourWrites(c *C) {
+	s.cluster.SplitKeys(kv.Key("d"), kv.Key("a"), 4)
+	k1 := kv.Key("a")
+	k2 := kv.Key("b")
+	k3 := kv.Key("c")
+
+	// insert k1, k2, k3 and delete k1, k2, k3
+	txn1 := s.begin(c)
+	txn1.DelOption(kv.Pessimistic)
+	txn1.SetOption(kv.PresumeKeyNotExists, nil)
+	txn1.SetOption(kv.PresumeKeyNotExistsError, kv.NewExistErrInfo("name", "value"))
+	txn1.store.txnLatches = nil
+	txn1.Get(context.Background(), k1)
+	txn1.Set(k1, []byte{0})
+	txn1.Delete(k1)
+	txn1.Get(context.Background(), k2)
+	txn1.Set(k2, []byte{1})
+	txn1.Delete(k2)
+	txn1.Get(context.Background(), k3)
+	txn1.Set(k3, []byte{2})
+	txn1.Delete(k3)
+	err1 := txn1.Commit(context.Background())
+	c.Assert(err1, IsNil)
+}
+
+func (s *testCommitterSuite) TestDeleteAllYourWritesWithSFU(c *C) {
+	s.cluster.SplitKeys(kv.Key("d"), kv.Key("a"), 4)
+	k1 := kv.Key("a")
+	k2 := kv.Key("b")
+	k3 := kv.Key("c")
+
+	// insert k1, k2, k2 and delete k1
+	txn1 := s.begin(c)
+	txn1.DelOption(kv.Pessimistic)
+	txn1.SetOption(kv.PresumeKeyNotExists, nil)
+	txn1.SetOption(kv.PresumeKeyNotExistsError, kv.NewExistErrInfo("name", "value"))
+	txn1.store.txnLatches = nil
+	txn1.Get(context.Background(), k1)
+	txn1.Set(k1, []byte{0})
+	txn1.Delete(k1)
+	err := txn1.LockKeys(context.Background(), &kv.LockCtx{}, k2, k3) // select * from t where x in (k2, k3) for update
+	c.Assert(err, IsNil)
+
+	committer1, err := newTwoPhaseCommitter(txn1, 0)
+	c.Assert(err, IsNil)
+	// setup test knob in txn's committer
+	committer1.testingKnobs.acAfterCommitPrimary = make(chan struct{})
+	committer1.testingKnobs.bkAfterCommitPrimary = make(chan struct{})
+	txn1.committer = committer1
+	var txn1Done sync.WaitGroup
+	txn1Done.Add(1)
+	go func() {
+		err1 := txn1.Commit(context.Background())
+		c.Assert(err1, IsNil)
+		txn1Done.Done()
+	}()
+	// resume after after primary key be committed
+	<-txn1.committer.testingKnobs.acAfterCommitPrimary
+	// start txn2 to read k3
+	txn2 := s.begin(c)
+	txn2.DelOption(kv.Pessimistic)
+	txn2.store.txnLatches = nil
+	err = txn2.Set(k3, []byte{33})
+	c.Assert(err, IsNil)
+	var meetLocks []*Lock
+	txn2.store.lockResolver.testingKnobs.meetLock = func(locks []*Lock) {
+		meetLocks = append(meetLocks, locks...)
+	}
+	err = txn2.Commit(context.Background())
+	c.Assert(err, IsNil)
+	txn1.committer.testingKnobs.bkAfterCommitPrimary <- struct{}{}
+	txn1Done.Wait()
+	c.Assert(meetLocks[0].Primary[0], Equals, k2[0])
+}
+
 // TestAcquireFalseTimeoutLock tests acquiring a key which is a secondary key of another transaction.
 // The lock's own TTL is expired but the primary key is still alive due to heartbeats.
 func (s *testCommitterSuite) TestAcquireFalseTimeoutLock(c *C) {
@@ -733,7 +853,7 @@ func (s *testCommitterSuite) getLockInfo(c *C, key []byte) *kvrpcpb.LockInfo {
 	c.Assert(err, IsNil)
 	committer, err := newTwoPhaseCommitterWithInit(txn, 1)
 	c.Assert(err, IsNil)
-	bo := NewBackoffer(context.Background(), getMaxBackoff)
+	bo := NewBackofferWithVars(context.Background(), getMaxBackoff, nil)
 	loc, err := s.store.regionCache.LocateKey(bo, key)
 	c.Assert(err, IsNil)
 	batch := batchMutations{region: loc.Region, mutations: committer.mutations.subRange(0, 1)}
@@ -770,7 +890,7 @@ func (s *testCommitterSuite) TestPkNotFound(c *C) {
 
 	// Stop txn ttl manager and remove primary key, like tidb server crashes and the priamry key lock does not exists actually,
 	// while the secondary lock operation succeeded
-	bo := NewBackoffer(context.Background(), pessimisticLockMaxBackoff)
+	bo := NewBackofferWithVars(context.Background(), pessimisticLockMaxBackoff, nil)
 	txn1.committer.ttlManager.close()
 	err = txn1.committer.pessimisticRollbackMutations(bo, committerMutations{keys: [][]byte{k1}})
 	c.Assert(err, IsNil)
@@ -929,7 +1049,7 @@ func (s *testCommitterSuite) TestPushPessimisticLock(c *C) {
 	// Strip the prewrite of the primary key.
 	txn1.committer.mutations = txn1.committer.mutations.subRange(1, 2)
 	c.Assert(err, IsNil)
-	err = txn1.committer.prewriteMutations(NewBackoffer(ctx, PrewriteMaxBackoff), txn1.committer.mutations)
+	err = txn1.committer.prewriteMutations(NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil), txn1.committer.mutations)
 	c.Assert(err, IsNil)
 	// The primary lock is a pessimistic lock and the secondary lock is a optimistic lock.
 	lock1 := s.getLockInfo(c, k1)
@@ -980,7 +1100,7 @@ func (s *testCommitterSuite) TestResolveMixed(c *C) {
 	}
 	err = txn1.committer.initKeysAndMutations()
 	c.Assert(err, IsNil)
-	err = txn1.committer.prewriteMutations(NewBackoffer(ctx, PrewriteMaxBackoff), txn1.committer.mutations)
+	err = txn1.committer.prewriteMutations(NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil), txn1.committer.mutations)
 	c.Assert(err, IsNil)
 	// lock the pessimistic keys
 	err = txn1.LockKeys(context.Background(), lockCtx, pessimisticLockKey)
@@ -994,7 +1114,7 @@ func (s *testCommitterSuite) TestResolveMixed(c *C) {
 	c.Assert(lock2.PrimaryLock, BytesEquals, []byte(pk))
 
 	// stop txn ttl manager and remove primary key, make the other keys left behind
-	bo := NewBackoffer(context.Background(), pessimisticLockMaxBackoff)
+	bo := NewBackofferWithVars(context.Background(), pessimisticLockMaxBackoff, nil)
 	txn1.committer.ttlManager.close()
 	err = txn1.committer.pessimisticRollbackMutations(bo, committerMutations{keys: [][]byte{pk}})
 	c.Assert(err, IsNil)
@@ -1004,7 +1124,7 @@ func (s *testCommitterSuite) TestResolveMixed(c *C) {
 	time.Sleep(time.Duration(atomic.LoadUint64(&ManagedLockTTL)) * time.Millisecond)
 	optimisticLockInfo := s.getLockInfo(c, optimisticLockKey)
 	lock := NewLock(optimisticLockInfo)
-	err = s.store.lockResolver.resolveLock(NewBackoffer(ctx, pessimisticLockMaxBackoff), lock, TxnStatus{}, false, cleanTxns)
+	err = s.store.lockResolver.resolveLock(NewBackofferWithVars(ctx, pessimisticLockMaxBackoff, nil), lock, TxnStatus{}, false, cleanTxns)
 	c.Assert(err, IsNil)
 
 	// txn2 tries to lock the pessimisticLockKey, the lock should has been resolved in clean whole region resolve
@@ -1018,4 +1138,113 @@ func (s *testCommitterSuite) TestResolveMixed(c *C) {
 	c.Assert(err, IsNil)
 	err = txn2.Rollback()
 	c.Assert(err, IsNil)
+}
+
+// TestSecondaryKeys tests that when async commit is enabled, each prewrite message includes an
+// accurate list of secondary keys.
+func (s *testCommitterSuite) TestPrewiteSecondaryKeys(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.EnableAsyncCommit = true
+	})
+
+	// Prepare two regions first: (, 100) and [100, )
+	region, _ := s.cluster.GetRegionByKey([]byte{50})
+	newRegionID := s.cluster.AllocID()
+	newPeerID := s.cluster.AllocID()
+	s.cluster.Split(region.Id, newRegionID, []byte{100}, []uint64{newPeerID}, newPeerID)
+
+	txn := s.begin(c)
+	var val [1024]byte
+	for i := byte(50); i < 120; i++ {
+		err := txn.Set([]byte{i}, val[:])
+		c.Assert(err, IsNil)
+	}
+	// Some duplicates.
+	for i := byte(50); i < 120; i += 10 {
+		err := txn.Set([]byte{i}, val[512:700])
+		c.Assert(err, IsNil)
+	}
+
+	committer, err := newTwoPhaseCommitterWithInit(txn, 1)
+	c.Assert(err, IsNil)
+
+	mock := mockClient{inner: s.store.client}
+	s.store.client = &mock
+	ctx := context.Background()
+	err = committer.execute(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(mock.seenPrimaryReq > 0 && mock.seenSecondaryReq > 0, IsTrue)
+}
+
+type mockClient struct {
+	inner            Client
+	seenPrimaryReq   uint32
+	seenSecondaryReq uint32
+}
+
+func (m *mockClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	// If we find a prewrite request, check if it satisfies our constraints.
+	if pr, ok := req.Req.(*kvrpcpb.PrewriteRequest); ok {
+		if pr.UseAsyncCommit {
+			if isPrimary(pr) {
+				// The primary key should not be included, nor should there be any duplicates. All keys should be present.
+				if !includesPrimary(pr) && allKeysNoDups(pr) {
+					atomic.StoreUint32(&m.seenPrimaryReq, 1)
+				}
+			} else {
+				// Secondaries should only be sent with the primary key
+				if len(pr.Secondaries) == 0 {
+					atomic.StoreUint32(&m.seenSecondaryReq, 1)
+				}
+			}
+		}
+	}
+	return m.inner.SendRequest(ctx, addr, req, timeout)
+}
+
+func (m *mockClient) Close() error {
+	return m.inner.Close()
+}
+
+func isPrimary(req *kvrpcpb.PrewriteRequest) bool {
+	for _, m := range req.Mutations {
+		if bytes.Equal(req.PrimaryLock, m.Key) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func includesPrimary(req *kvrpcpb.PrewriteRequest) bool {
+	for _, k := range req.Secondaries {
+		if bytes.Equal(req.PrimaryLock, k) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func allKeysNoDups(req *kvrpcpb.PrewriteRequest) bool {
+	check := make(map[string]bool)
+
+	// Create the check map and check for duplicates.
+	for _, k := range req.Secondaries {
+		s := string(k)
+		if check[s] {
+			return false
+		}
+		check[s] = true
+	}
+
+	// Check every key is present.
+	for i := byte(50); i < 120; i++ {
+		k := []byte{i}
+		if !bytes.Equal(req.PrimaryLock, k) && !check[string(k)] {
+			return false
+		}
+	}
+	return true
 }
