@@ -300,15 +300,18 @@ func (e *IndexLookUpMergeJoin) getFinishedTask(ctx context.Context) {
 
 func (omw *outerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancelFunc context.CancelFunc) {
 	defer func() {
+		if r := recover(); r != nil {
+			task := &lookUpMergeJoinTask{
+				doneErr: errors.New(fmt.Sprintf("%v", r)),
+				results: make(chan *indexMergeJoinResult, numResChkHold),
+			}
+			close(task.results)
+			omw.resultCh <- task
+			cancelFunc()
+		}
 		close(omw.resultCh)
 		close(omw.innerCh)
 		wg.Done()
-		if r := recover(); r != nil {
-			logutil.Logger(ctx).Error("panic in outerMergeWorker.run",
-				zap.Reflect("r", r),
-				zap.Stack("stack trace"))
-			cancelFunc()
-		}
 	}()
 	for {
 		task, err := omw.buildTask(ctx)
@@ -318,6 +321,7 @@ func (omw *outerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancel
 			omw.pushToChan(ctx, task, omw.resultCh)
 			return
 		}
+		failpoint.Inject("mockIndexMergeJoinOOMPanic", nil)
 		if task == nil {
 			return
 		}

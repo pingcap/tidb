@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"hash"
 	"hash/fnv"
 	"sync"
@@ -189,7 +190,9 @@ func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
 
 func (e *IndexNestedLoopHashJoin) finishJoinWorkers(r interface{}) {
 	if r != nil {
-		logutil.BgLogger().Error("IndexNestedLoopHashJoin failed", zap.Error(errors.Errorf("%v", r)))
+		e.resultCh <- &indexHashJoinResult{
+			err: errors.New(fmt.Sprintf("%v", r)),
+		}
 		if e.cancelFunc != nil {
 			e.cancelFunc()
 		}
