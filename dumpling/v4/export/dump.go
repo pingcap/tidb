@@ -40,6 +40,7 @@ func Dump(pCtx context.Context, conf *Config) (err error) {
 	if err != nil {
 		return withStack(err)
 	}
+	resolveAutoConsistency(conf)
 
 	ctx, cancel := context.WithCancel(pCtx)
 	defer cancel()
