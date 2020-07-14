@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path"
+	"text/template"
 
 	. "github.com/pingcap/check"
 )
@@ -158,6 +159,8 @@ func (s *testDumpSuite) TestWriteTableDataWithStatementSize(c *C) {
 	config := DefaultConfig()
 	config.OutputDirPath = dir
 	config.StatementSize = 50
+	config.OutputFileTemplate, err = template.New("filename").Parse("specified-name")
+	c.Assert(err, IsNil)
 	ctx := context.Background()
 	defer os.RemoveAll(config.OutputDirPath)
 
@@ -181,7 +184,7 @@ func (s *testDumpSuite) TestWriteTableDataWithStatementSize(c *C) {
 
 	// only with statement size
 	cases := map[string]string{
-		"test.employee.0.sql": "/*!40101 SET NAMES binary*/;\n" +
+		"specified-name.sql": "/*!40101 SET NAMES binary*/;\n" +
 			"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;\n" +
 			"INSERT INTO `employee` VALUES\n" +
 			"(1,'male','bob@mail.com','020-1234',NULL),\n" +
@@ -203,20 +206,23 @@ func (s *testDumpSuite) TestWriteTableDataWithStatementSize(c *C) {
 	// with file size and statement size
 	config.FileSize = 90
 	config.StatementSize = 30
+	// test specifying filename format
+	config.OutputFileTemplate, err = template.New("filename").Parse("{{.Index}}-{{.Table}}-{{.DB}}")
+	c.Assert(err, IsNil)
 	os.RemoveAll(config.OutputDirPath)
 	config.OutputDirPath, err = ioutil.TempDir("", "dumpling")
 	fmt.Println(config.OutputDirPath)
 	c.Assert(err, IsNil)
 
 	cases = map[string]string{
-		"test.employee.0.sql": "/*!40101 SET NAMES binary*/;\n" +
+		"0-employee-test.sql": "/*!40101 SET NAMES binary*/;\n" +
 			"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;\n" +
 			"INSERT INTO `employee` VALUES\n" +
 			"(1,'male','bob@mail.com','020-1234',NULL),\n" +
 			"(2,'female','sarah@mail.com','020-1253','healthy');\n" +
 			"INSERT INTO `employee` VALUES\n" +
 			"(3,'male','john@mail.com','020-1256','healthy');\n",
-		"test.employee.1.sql": "/*!40101 SET NAMES binary*/;\n" +
+		"1-employee-test.sql": "/*!40101 SET NAMES binary*/;\n" +
 			"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;\n" +
 			"INSERT INTO `employee` VALUES\n" +
 			"(4,'female','sarah@mail.com','020-1235','healthy');\n",
