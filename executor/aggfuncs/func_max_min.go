@@ -110,6 +110,22 @@ func (h *maxMinHeap) RemoveMyDecimal(val types.MyDecimal) error {
 	}
 	return nil
 }
+func (h *maxMinHeap) TopDecimal() (val types.MyDecimal, isEmpty bool) {
+retry:
+	if h.Len() == 0 {
+		return types.MyDecimal{}, true
+	}
+	top := h.data[0].(types.MyDecimal)
+	key, err := top.ToHashKey()
+	if err != nil {
+		panic(err)
+	}
+	if h.varSet[string(key)] == 0 {
+		_ = heap.Pop(h)
+		goto retry
+	}
+	return top, false
+}
 func (h *maxMinHeap) Reset() {
 	h.data = h.data[:0]
 	h.varSet = make(map[interface{}]int64)
@@ -646,8 +662,8 @@ func (e *maxMin4Decimal) Slide(sctx sessionctx.Context, rows []chunk.Row, lastSt
 			return err
 		}
 	}
-	if val, isEmpty := p.heap.Top(); !isEmpty {
-		p.val = val.(types.MyDecimal)
+	if val, isEmpty := p.heap.TopDecimal(); !isEmpty {
+		p.val = val
 		p.isNull = false
 	} else {
 		p.isNull = true
