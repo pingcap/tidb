@@ -33,6 +33,13 @@ OVERALLS        := GO111MODULE=on overalls
 STATICCHECK     := GO111MODULE=on staticcheck
 TIDB_EDITION    ?= Community
 
+# Ensure TIDB_EDITION is set to Community or Enterprise before running build process.
+ifneq "$(TIDB_EDITION)" "Community"
+ifneq "$(TIDB_EDITION)" "Enterprise"
+  $(error Please set the correct environment variable TIDB_EDITION before running `make`)
+endif
+endif
+
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
 MAC       := "Darwin"
