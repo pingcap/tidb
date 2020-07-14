@@ -201,16 +201,17 @@ func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.
 //		|     Length: 1    | 1            | 2           | size(CHandle) | 1
 //		|
 //		+--Unique Integer Handle
+//		|  |
+//		|  +--Without Untouched Flag:
+//		|  |
+//		|  |  Layout: Handle
+//		|  |  Length:   8
+//		|  |
+//		|  +--With Untouched Flag:
 //		|
-//		+--Without Untouched Flag:
-//		|
-//		|  Layout: Handle
-//		|  Length:   8
-//		|
-//		+--With Untouched Flag:
-//
-//		Layout: Handle | Flag
-//		Length:   8    |  1
+//		|     Layout: Handle | Flag
+//		|     Length:   8    |  1
+//		+
 func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedValues []types.Datum, h kv.Handle, opts ...table.CreateIdxOptFunc) (kv.Handle, error) {
 	var opt table.CreateIdxOpt
 	for _, fn := range opts {
