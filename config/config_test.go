@@ -504,8 +504,9 @@ func (s *testConfigSuite) TestModifyThroughLDFlags(c *C) {
 	originalGlobalConfig := GetGlobalConfig()
 
 	for _, test := range tests {
-		defaultConf.EnableTelemetry = originalEnableTelemetry
-		CheckTableBeforeDrop = originalCheckTableBeforeDrop
+		defaultConf.EnableTelemetry = true
+		CheckTableBeforeDrop = false
+
 		initByLDFlags(test.Edition, test.CheckBeforeDropLDFlag)
 
 		conf := GetGlobalConfig()
