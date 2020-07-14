@@ -377,9 +377,8 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 			zap.String("ctx", ctx.String()))
 
 		if notLeader.GetLeader() == nil {
-			if err = bo.Backoff(BoRegionMiss, errors.Errorf("not leader: %v, ctx: %v", notLeader, ctx)); err != nil {
-				return false, errors.Trace(err)
-			}
+			// Don't know who is the current leader, ask PD.
+			s.regionCache.InvalidateCachedRegion(ctx.Region)
 		} else {
 			// don't backoff if a new leader is returned.
 			s.regionCache.UpdateLeader(ctx.Region, notLeader.GetLeader().GetStoreId(), ctx.AccessIdx)
