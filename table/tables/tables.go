@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
@@ -1105,6 +1106,7 @@ func (t *TableCommon) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols 
 		if err != nil {
 			return err
 		}
+		pkIds, decodeLoc := TryGetCommonPkColumnIds(t.meta), ctx.GetSessionVars().Location()
 		data := make([]types.Datum, len(cols))
 		for _, col := range cols {
 			if col.IsPKHandleColumn(t.meta) {
@@ -1112,6 +1114,12 @@ func (t *TableCommon) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols 
 					data[col.Offset].SetUint64(uint64(handle.IntValue()))
 				} else {
 					data[col.Offset].SetInt64(handle.IntValue())
+				}
+				continue
+			} else if mysql.HasPriKeyFlag(col.Flag) {
+				data[col.Offset], err = tryDecodeColumnFromCommonHandle(col, handle, pkIds, decodeLoc)
+				if err != nil {
+					return err
 				}
 				continue
 			}
@@ -1137,6 +1145,23 @@ func (t *TableCommon) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols 
 	}
 
 	return nil
+}
+
+func tryDecodeColumnFromCommonHandle(col *table.Column, handle kv.Handle, pkIds []int64, decodeLoc *time.Location) (types.Datum, error) {
+	for i, hid := range pkIds {
+		if hid != col.ID {
+			continue
+		}
+		_, d, err := codec.DecodeOne(handle.EncodedCol(i))
+		if err != nil {
+			return types.Datum{}, errors.Trace(err)
+		}
+		if d, err = tablecodec.Unflatten(d, &col.FieldType, decodeLoc); err != nil {
+			return types.Datum{}, err
+		}
+		return d, nil
+	}
+	return types.Datum{}, nil
 }
 
 // GetColDefaultValue gets a column default value.

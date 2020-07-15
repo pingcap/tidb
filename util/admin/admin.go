@@ -348,9 +348,9 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 // CheckRecordAndIndex is exported for testing.
 func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, idx table.Index, genExprs map[model.TableColumnID]expression.Expression) error {
 	sc := sessCtx.GetSessionVars().StmtCtx
-	cols := make([]*table.Column, len(idx.Meta().Columns))
+	idxCols := make([]*table.Column, len(idx.Meta().Columns))
 	for i, col := range idx.Meta().Columns {
-		cols[i] = t.Cols()[col.Offset]
+		idxCols[i] = t.Cols()[col.Offset]
 	}
 
 	startKey := t.RecordKey(kv.IntHandle(math.MinInt64))
@@ -385,7 +385,7 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 
 		return true, nil
 	}
-	err := iterRecords(sessCtx, txn, t, startKey, cols, filterFunc, genExprs)
+	err := iterRecords(sessCtx, txn, t, startKey, idxCols, filterFunc, genExprs)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -409,7 +409,7 @@ func makeRowDecoder(t table.Table, decodeCol []*table.Column, genExpr map[model.
 }
 
 // genExprs use to calculate generated column value.
-func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Table, startKey kv.Key, cols []*table.Column,
+func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Table, startKey kv.Key, idxCols []*table.Column,
 	fn table.RecordIterFunc, genExprs map[model.TableColumnID]expression.Expression) error {
 	prefix := t.RecordPrefix()
 	keyUpperBound := prefix.PrefixNext()
@@ -428,7 +428,7 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 		zap.Stringer("startKey", startKey),
 		zap.Stringer("key", it.Key()),
 		zap.Binary("value", it.Value()))
-	rowDecoder := makeRowDecoder(t, cols, genExprs)
+	rowDecoder := makeRowDecoder(t, idxCols, genExprs)
 	for it.Valid() && it.Key().HasPrefix(prefix) {
 		// first kv pair is row lock information.
 		// TODO: check valid lock
@@ -442,11 +442,11 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 		if err != nil {
 			return errors.Trace(err)
 		}
-		data := make([]types.Datum, 0, len(cols))
-		for _, col := range cols {
+		data := make([]types.Datum, 0, len(idxCols))
+		for _, col := range idxCols {
 			data = append(data, rowMap[col.ID])
 		}
-		more, err := fn(handle, data, cols)
+		more, err := fn(handle, data, idxCols)
 		if !more || err != nil {
 			return errors.Trace(err)
 		}
