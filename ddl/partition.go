@@ -242,7 +242,7 @@ func stringSliceEqual(a, b []string) bool {
 	return true
 }
 
-// See https://github.com/mysql/mysql-server/blob/5.7/sql/item_func.h#L387
+// hasTimestampField derives from https://github.com/mysql/mysql-server/blob/5.7/sql/item_func.h#L387
 func hasTimestampField(ctx sessionctx.Context, tblInfo *model.TableInfo, expr ast.ExprNode) (bool, error) {
 	partCols, err := checkPartitionColumns(tblInfo, expr)
 	if err != nil {
@@ -258,7 +258,7 @@ func hasTimestampField(ctx sessionctx.Context, tblInfo *model.TableInfo, expr as
 	return false, nil
 }
 
-// See https://github.com/mysql/mysql-server/blob/5.7/sql/item_func.h#L399
+// hasDateField derives from https://github.com/mysql/mysql-server/blob/5.7/sql/item_func.h#L399
 func hasDateField(ctx sessionctx.Context, tblInfo *model.TableInfo, expr ast.ExprNode) (bool, error) {
 	partCols, err := checkPartitionColumns(tblInfo, expr)
 	if err != nil {
@@ -274,7 +274,7 @@ func hasDateField(ctx sessionctx.Context, tblInfo *model.TableInfo, expr ast.Exp
 	return false, nil
 }
 
-// See https://github.com/mysql/mysql-server/blob/5.7/sql/item_func.h#L412
+// hasTimeField derives from https://github.com/mysql/mysql-server/blob/5.7/sql/item_func.h#L412
 func hasTimeField(ctx sessionctx.Context, tblInfo *model.TableInfo, expr ast.ExprNode) (bool, error) {
 	partCols, err := checkPartitionColumns(tblInfo, expr)
 	if err != nil {
@@ -290,13 +290,13 @@ func hasTimeField(ctx sessionctx.Context, tblInfo *model.TableInfo, expr ast.Exp
 	return false, nil
 }
 
+// defaultTimezoneDependent derives from https://github.com/mysql/mysql-server/blob/5.7/sql/item_func.h#L445
 // We assume the result of any function that has a TIMESTAMP argument to be
 // timezone-dependent, since a TIMESTAMP value in both numeric and string
 // contexts is interpreted according to the current timezone.
 // The only exception is UNIX_TIMESTAMP() which returns the internal
 // representation of a TIMESTAMP argument verbatim, and thus does not depend on
 // the timezone.
-// See https://github.com/mysql/mysql-server/blob/5.7/sql/item_func.h#L445
 func defaultTimezoneDependent(ctx sessionctx.Context, tblInfo *model.TableInfo, expr ast.ExprNode) (bool, error) {
 	v, err := hasTimestampField(ctx, tblInfo, expr)
 	if err != nil {
@@ -410,9 +410,9 @@ func checkPartitionFuncValid(ctx sessionctx.Context, tblInfo *model.TableInfo, e
 	return err
 }
 
+// checkResultOK derives from https://github.com/mysql/mysql-server/blob/5.7/sql/item_timefunc
 // For partition tables, mysql do not support Constant, random or timezone-dependent expressions
 // Based on mysql code to check whether field is valid, every time related type has check_valid_arguments_processor function.
-// See https://github.com/mysql/mysql-server/blob/5.7/sql/item_timefunc.
 func checkResultOK(ok bool, err error) error {
 	if err != nil {
 		return err
@@ -660,7 +660,7 @@ func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return ver, nil
 }
 
-// onDropTablePartition truncates old partition meta.
+// onTruncateTablePartition truncates old partition meta.
 func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
 	var ver int64
 	var oldIDs []int64
@@ -729,7 +729,7 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 // onExchangeTablePartition exchange partition data
 func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var (
-		//defID only for updateSchemaVersion
+		// defID only for updateSchemaVersion
 		defID          int64
 		ptSchemaID     int64
 		ptID           int64

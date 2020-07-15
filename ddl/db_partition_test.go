@@ -661,10 +661,11 @@ func (s *testIntegrationSuite5) TestAlterTableDropPartition(c *C) {
 	partition by range( hired ) (
 		partition p1 values less than (1991),
 		partition p2 values less than (1996),
-		partition p3 values less than (2001)
+		partition p3 values less than (2001),
+        partition p4 values less than (2006)
 	);`)
 
-	tk.MustExec("alter table employees drop partition p3;")
+	tk.MustExec("alter table employees drop partition p3, p4;")
 	ctx := tk.Se.(sessionctx.Context)
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("employees"))
