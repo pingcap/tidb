@@ -218,6 +218,7 @@ func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) erro
 	if err != nil {
 		return err
 	}
+	CheckDeprecationSetSystemVar(vars, name)
 	return vars.SetSystemVar(name, sVal)
 }
 
@@ -300,6 +301,21 @@ const (
 	// maxChunkSizeLowerBound indicates lower bound value of tidb_max_chunk_size.
 	maxChunkSizeLowerBound = 32
 )
+
+// CheckDeprecationSetSystemVar checks if the system variable is deprecated.
+func CheckDeprecationSetSystemVar(s *SessionVars, name string) {
+	switch name {
+	case TiDBIndexLookupConcurrency, TiDBIndexLookupJoinConcurrency,
+		TiDBHashJoinConcurrency, TiDBHashAggPartialConcurrency, TiDBHashAggFinalConcurrency,
+		TiDBProjectionConcurrency, TiDBWindowConcurrency:
+		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
+	case TIDBMemQuotaHashJoin, TIDBMemQuotaMergeJoin,
+		TIDBMemQuotaSort, TIDBMemQuotaTopn,
+		TIDBMemQuotaIndexLookupReader, TIDBMemQuotaIndexLookupJoin,
+		TIDBMemQuotaNestedLoopApply:
+		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TIDBMemQuotaQuery))
+	}
+}
 
 // ValidateSetSystemVar checks if system variable satisfies specific restriction.
 func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope ScopeFlag) (string, error) {
