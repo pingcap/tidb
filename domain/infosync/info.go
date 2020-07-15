@@ -41,7 +41,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
-	"github.com/pingcap/tidb/util/printer"
+	"github.com/pingcap/tidb/util/versioninfo"
 	"go.etcd.io/etcd/clientv3"
 	"go.etcd.io/etcd/clientv3/concurrency"
 	"go.uber.org/zap"
@@ -613,7 +613,7 @@ func getServerInfo(id string) *ServerInfo {
 		StartTimestamp: time.Now().Unix(),
 	}
 	info.Version = mysql.ServerVersion
-	info.GitHash = printer.TiDBGitHash
+	info.GitHash = versioninfo.TiDBGitHash
 
 	failpoint.Inject("mockServerInfo", func(val failpoint.Value) {
 		if val.(bool) {
