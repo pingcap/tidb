@@ -333,3 +333,9 @@ func (t *Tracker) DetachFromGlobalTracker() {
 	parent.Consume(-t.BytesConsumed())
 	t.parent = nil
 }
+
+func (t *Tracker) setParent(parent *Tracker) {
+	t.parMu.Lock()
+	defer t.parMu.Unlock()
+	t.parMu.parent = parent
+}
