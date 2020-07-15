@@ -61,7 +61,7 @@ func (a *maxMinEliminator) checkColCanUseIndex(plan LogicalPlan, col *expression
 	case *DataSource:
 		// Check whether there is an AccessPath can use index for col.
 		for _, path := range p.possibleAccessPaths {
-			if path.IsIntHandlePath || path.IsCommonHandlePath {
+			if path.IsTablePath() {
 				var handleColsNum int
 				if p.handleCols != nil {
 					handleColsNum = p.handleCols.NumCols()
