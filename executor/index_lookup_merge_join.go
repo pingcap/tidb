@@ -300,15 +300,18 @@ func (e *IndexLookUpMergeJoin) getFinishedTask(ctx context.Context) {
 
 func (omw *outerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancelFunc context.CancelFunc) {
 	defer func() {
+		if r := recover(); r != nil {
+			task := &lookUpMergeJoinTask{
+				doneErr: errors.New(fmt.Sprintf("%v", r)),
+				results: make(chan *indexMergeJoinResult, numResChkHold),
+			}
+			close(task.results)
+			omw.resultCh <- task
+			cancelFunc()
+		}
 		close(omw.resultCh)
 		close(omw.innerCh)
 		wg.Done()
-		if r := recover(); r != nil {
-			logutil.Logger(ctx).Error("panic in outerMergeWorker.run",
-				zap.Reflect("r", r),
-				zap.Stack("stack trace"))
-			cancelFunc()
-		}
 	}()
 	for {
 		task, err := omw.buildTask(ctx)
@@ -318,6 +321,7 @@ func (omw *outerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancel
 			omw.pushToChan(ctx, task, omw.resultCh)
 			return
 		}
+		failpoint.Inject("mockIndexMergeJoinOOMPanic", nil)
 		if task == nil {
 			return
 		}
@@ -511,8 +515,12 @@ func (imw *innerMergeWorker) fetchNewChunkWhenFull(ctx context.Context, task *lo
 		return false
 	}
 	var ok bool
-	*chk, ok = <-imw.joinChkResourceCh
-	if !ok {
+	select {
+	case *chk, ok = <-imw.joinChkResourceCh:
+		if !ok {
+			return false
+		}
+	case <-ctx.Done():
 		return false
 	}
 	(*chk).Reset()
@@ -710,9 +718,6 @@ func (e *IndexLookUpMergeJoin) Close() error {
 		for range e.resultCh {
 		}
 		e.resultCh = nil
-	}
-	for i := range e.joinChkResourceCh {
-		close(e.joinChkResourceCh[i])
 	}
 	e.joinChkResourceCh = nil
 	// joinChkResourceCh is to recycle result chunks, used by inner worker.
