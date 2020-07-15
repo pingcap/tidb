@@ -2792,11 +2792,6 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 }
 
 func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
-	// TODO: Support drop multiple partitions
-	if len(spec.PartitionNames) != 1 {
-		return errRunMultiSchemaChanges
-	}
-
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
@@ -2811,8 +2806,10 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
 	}
 
-	partName := spec.PartitionNames[0].L
-	partNames := []string{partName}
+	partNames := make([]string, len(spec.PartitionNames))
+	for i, partCIName := range spec.PartitionNames {
+		partNames[i] = partCIName.L
+	}
 	err = checkDropTablePartition(meta, partNames)
 	if err != nil {
 		if ErrDropPartitionNonExistent.Equal(err) && spec.IfExists {
