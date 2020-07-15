@@ -22,7 +22,6 @@ const (
 	segmentWidth             = 32
 	segmentWidthPower        = 5
 	bitMask           uint32 = 0x80000000
-	fullMask          uint32 = 0xffffffff
 )
 
 var bytesConcurrentBitmap = int64(int(unsafe.Sizeof(ConcurrentBitmap{})))
@@ -78,40 +77,6 @@ func (cb *ConcurrentBitmap) Set(bitIndex int) (isSetter bool) {
 		if isSetter {
 			return
 		}
-	}
-}
-
-// UnsafeSet unsafely sets the bit on bitIndex to be 1 (bitIndex starts from 0).
-func (cb *ConcurrentBitmap) UnsafeSet(bitIndex int) (isSetter bool) {
-	if bitIndex < 0 || bitIndex >= cb.bitLen {
-		return
-	}
-	oldValue := cb.segments[bitIndex>>segmentWidthPower]
-	mask := bitMask >> uint32(bitIndex%segmentWidth)
-	if (oldValue & mask) != 0 {
-		return
-	}
-	newValue := oldValue | mask
-	cb.segments[bitIndex>>segmentWidthPower] = newValue
-	return true
-}
-
-// UnsafeSetFull unsafely sets all bit to be 1 (bitIndex starts from 0).
-func (cb *ConcurrentBitmap) UnsafeSetFull() (isSetter bool) {
-	for i := 0; i < len(cb.segments); i++ {
-		cb.segments[i] |= fullMask
-	}
-	return true
-}
-
-// UnsafeGet unsafely gets the bit on bitIndex(bitIndex starts from 0).
-func (cb *ConcurrentBitmap) UnsafeGet(bitIndex int) int {
-	oldValue := cb.segments[bitIndex>>segmentWidthPower]
-	mask := bitMask >> uint32(bitIndex%segmentWidth)
-	if (oldValue & mask) != 0 {
-		return 1
-	} else {
-		return 0
 	}
 }
 

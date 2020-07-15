@@ -124,6 +124,7 @@ func (s *partitionProcessor) findUsedPartitions(ds *DataSource, pi *model.Partit
 	partIdx := expression.ExtractColumns(pe)
 	colLen := make([]int, 0, len(partIdx))
 	for i := 0; i < len(partIdx); i++ {
+		partIdx[i].Index = i
 		colLen = append(colLen, types.UnspecifiedLength)
 	}
 	ranges, _, err := ranger.DetachSimpleCondAndBuildRangeForIndex(ds.SCtx(), ds.allConds, partIdx, colLen)
@@ -140,24 +141,13 @@ func (s *partitionProcessor) findUsedPartitions(ds *DataSource, pi *model.Partit
 			if isNull {
 				pos = 0
 			}
-			used = append(used, int(pos%int64(pi.Num)))
+			used = append(used, int(math.Abs(pos)%int64(pi.Num)))
 		} else {
 			used = []int{ -1 }
 			break
 		}
 	}
-
-	// unique slice
-	sort.Ints(used)
-	ret := make([]int, 0, len(used))
-	for i := 0; i < len(used); i++ {
-		if i == 0 {
-			ret = append(ret, used[i])
-		} else if used[i] != used[i - 1] {
-			ret = append(ret, used[i])
-		}
-	}
-	return ret, nil
+	return used, nil
 }
 
 func convertToRangeOr(used []int, pi *model.PartitionInfo) partitionRangeOR {
@@ -288,7 +278,6 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	if pi == nil {
 		return ds, nil
 	}
-
 	// Try to locate partition directly for hash partition.
 	if pi.Type == model.PartitionTypeHash {
 		return s.newPruneHashPartition(ds, pi)
