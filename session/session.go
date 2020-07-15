@@ -1033,8 +1033,8 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	s.processInfo.Store(&pi)
 }
 
-func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode ast.StmtNode, stmt sqlexec.Statement, recordSets []sqlexec.RecordSet, inMulitQuery bool) ([]sqlexec.RecordSet, error) {
-	logStmt(stmtNode, s.sessionVars)
+func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode ast.StmtNode, stmt *executor.ExecStmt, recordSets []sqlexec.RecordSet, inMulitQuery bool) ([]sqlexec.RecordSet, error) {
+	logStmt(stmt, s.sessionVars)
 	recordSet, err := runStmt(ctx, s, stmt)
 	if err != nil {
 		if !kv.ErrKeyExists.Equal(err) {
@@ -1131,24 +1131,12 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		if err != nil {
 			s.rollbackOnError(ctx)
 
-<<<<<<< HEAD
 			// Only print log message when this SQL is from the user.
 			// Mute the warning for internal SQLs.
 			if !s.sessionVars.InRestrictedSQL {
 				logutil.Logger(ctx).Warn("compile SQL failed", zap.Error(err), zap.String("SQL", sql))
 			}
 			return nil, err
-=======
-	// Execute the physical plan.
-	logStmt(stmt, s.sessionVars)
-	recordSet, err := runStmt(ctx, s, stmt)
-	if err != nil {
-		if !kv.ErrKeyExists.Equal(err) {
-			logutil.Logger(ctx).Warn("run statement failed",
-				zap.Int64("schemaVersion", s.sessionVars.TxnCtx.SchemaVersion),
-				zap.Error(err),
-				zap.String("session", s.String()))
->>>>>>> 297acf7... log: add `tidb_log_desensitization` global variable to control whether do desensitization when log query (#18578)
 		}
 		durCompile := time.Since(s.sessionVars.StartTime)
 		s.GetSessionVars().DurationCompile = durCompile

@@ -398,17 +398,12 @@ const (
 	// Deprecated: use TiDBLogDesensitization instead.
 	TiDBSlowLogMasking = "tidb_slow_log_masking"
 
-<<<<<<< HEAD
 	// TiDBEnableCollectExecutionInfo indicates that whether execution info is collected.
 	TiDBEnableCollectExecutionInfo = "tidb_enable_collect_execution_info"
 
-=======
 	// TiDBLogDesensitization indicates that whether desensitization when log query.
 	TiDBLogDesensitization = "tidb_log_desensitization"
 
-	// TiDBShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
-	TiDBShardAllocateStep = "tidb_shard_allocate_step"
->>>>>>> 297acf7... log: add `tidb_log_desensitization` global variable to control whether do desensitization when log query (#18578)
 	// TiDBEnableTelemetry indicates that whether usage data report to PingCAP is enabled.
 	TiDBEnableTelemetry = "tidb_enable_telemetry"
 )
@@ -507,13 +502,7 @@ const (
 	DefTiDBSlowLogMasking              = false
 	DefTiDBEnableCollectExecutionInfo  = true
 	DefTiDBAllowAutoRandExplicitInsert = false
-<<<<<<< HEAD
-=======
-	DefTiDBEnableClusteredIndex        = false
-	DefTiDBSlowLogMasking              = false
 	DefTiDBLogDesensitization          = false
-	DefTiDBShardAllocateStep           = math.MaxInt64
->>>>>>> 297acf7... log: add `tidb_log_desensitization` global variable to control whether do desensitization when log query (#18578)
 	DefTiDBEnableTelemetry             = true
 )
 

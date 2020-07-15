@@ -606,22 +606,8 @@ type SessionVars struct {
 	// SelectLimit limits the max counts of select statement's output
 	SelectLimit uint64
 
-<<<<<<< HEAD
-	// EnableSlowLogMasking indicates that whether masking the query data when log slow query.
-	EnableSlowLogMasking bool
-=======
-	// EnableClusteredIndex indicates whether to enable clustered index when creating a new table.
-	EnableClusteredIndex bool
-
 	// EnableLogDesensitization indicates that whether desensitization when log query.
 	EnableLogDesensitization bool
-
-	// PresumeKeyNotExists indicates lazy existence checking is enabled.
-	PresumeKeyNotExists bool
-
-	// ShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
-	ShardAllocateStep int64
->>>>>>> 297acf7... log: add `tidb_log_desensitization` global variable to control whether do desensitization when log query (#18578)
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -711,13 +697,7 @@ func NewSessionVars() *SessionVars {
 		FoundInPlanCache:            DefTiDBFoundInPlanCache,
 		SelectLimit:                 math.MaxUint64,
 		AllowAutoRandExplicitInsert: DefTiDBAllowAutoRandExplicitInsert,
-<<<<<<< HEAD
-		EnableSlowLogMasking:        DefTiDBSlowLogMasking,
-=======
-		EnableClusteredIndex:        DefTiDBEnableClusteredIndex,
 		EnableLogDesensitization:    DefTiDBLogDesensitization,
-		ShardAllocateStep:           DefTiDBShardAllocateStep,
->>>>>>> 297acf7... log: add `tidb_log_desensitization` global variable to control whether do desensitization when log query (#18578)
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1302,23 +1282,12 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 			return errors.Trace(err)
 		}
 		s.SelectLimit = result
-<<<<<<< HEAD
-	case TiDBSlowLogMasking:
-		s.EnableSlowLogMasking = TiDBOptOn(val)
+	case TiDBSlowLogMasking, TiDBLogDesensitization:
+		s.EnableLogDesensitization = TiDBOptOn(val)
 	case TiDBEnableCollectExecutionInfo:
 		config.GetGlobalConfig().EnableCollectExecutionInfo = TiDBOptOn(val)
 	case TiDBAllowAutoRandExplicitInsert:
 		s.AllowAutoRandExplicitInsert = TiDBOptOn(val)
-=======
-	case TiDBAllowAutoRandExplicitInsert:
-		s.AllowAutoRandExplicitInsert = TiDBOptOn(val)
-	case TiDBEnableClusteredIndex:
-		s.EnableClusteredIndex = TiDBOptOn(val)
-	case TiDBSlowLogMasking, TiDBLogDesensitization:
-		s.EnableLogDesensitization = TiDBOptOn(val)
-	case TiDBShardAllocateStep:
-		s.ShardAllocateStep = tidbOptInt64(val, DefTiDBShardAllocateStep)
->>>>>>> 297acf7... log: add `tidb_log_desensitization` global variable to control whether do desensitization when log query (#18578)
 	}
 	s.systems[name] = val
 	return nil
