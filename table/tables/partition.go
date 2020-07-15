@@ -83,6 +83,9 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Tabl
 	pi := tblInfo.GetPartitionInfo()
 	partitions := make(map[int64]*partition, len(pi.Definitions))
 	for _, p := range pi.Definitions {
+		if p.State == model.StateDeleteOnly {
+			continue
+		}
 		var t partition
 		err := initTableCommonWithIndices(&t.TableCommon, tblInfo, p.ID, tbl.Columns, tbl.allocs)
 		if err != nil {
@@ -132,6 +135,9 @@ func dataForRangeColumnsPruning(ctx sessionctx.Context, pi *model.PartitionInfo,
 	var res ForRangeColumnsPruning
 	res.LessThan = make([]expression.Expression, len(pi.Definitions))
 	for i := 0; i < len(pi.Definitions); i++ {
+		if pi.Definitions[i].State == model.StateDeleteOnly {
+			continue
+		}
 		if strings.EqualFold(pi.Definitions[i].LessThan[0], "MAXVALUE") {
 			// Use a bool flag instead of math.MaxInt64 to avoid the corner cases.
 			res.MaxValue = true
@@ -168,7 +174,11 @@ func dataForRangePruning(sctx sessionctx.Context, pi *model.PartitionInfo) (*For
 	var maxValue bool
 	var unsigned bool
 	lessThan := make([]int64, len(pi.Definitions))
+	realLen := 0
 	for i := 0; i < len(pi.Definitions); i++ {
+		if pi.Definitions[i].State == model.StateDeleteOnly {
+			continue
+		}
 		if strings.EqualFold(pi.Definitions[i].LessThan[0], "MAXVALUE") {
 			// Use a bool flag instead of math.MaxInt64 to avoid the corner cases.
 			maxValue = true
@@ -191,9 +201,10 @@ func dataForRangePruning(sctx sessionctx.Context, pi *model.PartitionInfo) (*For
 				lessThan[i] = val
 			}
 		}
+		realLen++
 	}
 	return &ForRangePruning{
-		LessThan: lessThan,
+		LessThan: lessThan[:realLen],
 		MaxValue: maxValue,
 		Unsigned: unsigned,
 	}, nil
@@ -238,6 +249,9 @@ func generateRangePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 	partStr := rangePartitionString(pi)
 	p := parser.New()
 	for i := 0; i < len(pi.Definitions); i++ {
+		if pi.Definitions[i].State == model.StateDeleteOnly {
+			continue
+		}
 		if strings.EqualFold(pi.Definitions[i].LessThan[0], "MAXVALUE") {
 			// Expr less than maxvalue is always true.
 			fmt.Fprintf(&buf, "true")
