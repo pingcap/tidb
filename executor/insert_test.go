@@ -22,6 +22,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -978,7 +979,7 @@ func (s *testSuite9) TestAutoRandomID(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists ar`)
-	tk.MustExec(`create table ar (id int key auto_random, name char(10))`)
+	tk.MustExec(`create table ar (id bigint key auto_random, name char(10))`)
 
 	tk.MustExec(`insert into ar(id) values (null)`)
 	rs := tk.MustQuery(`select id from ar`)
@@ -1007,6 +1008,12 @@ func (s *testSuite9) TestAutoRandomID(c *C) {
 	tk.MustQuery(`select last_insert_id()`).Check(testkit.Rows(fmt.Sprintf("%d", firstValue)))
 
 	tk.MustExec(`drop table ar`)
+	tk.MustExec(`create table ar (id bigint key auto_random(15), name char(10))`)
+	overflowVal := 1 << (64 - 5)
+	errMsg := fmt.Sprintf(autoid.AutoRandomRebaseOverflow, overflowVal, 1<<(64-16)-1)
+	_, err = tk.Exec(fmt.Sprintf("alter table ar auto_random_base = %d", overflowVal))
+	c.Assert(err, NotNil)
+	c.Assert(strings.Contains(err.Error(), errMsg), IsTrue)
 }
 
 func (s *testSuite9) TestMultiAutoRandomID(c *C) {
@@ -1021,7 +1028,7 @@ func (s *testSuite9) TestMultiAutoRandomID(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists ar`)
-	tk.MustExec(`create table ar (id int key auto_random, name char(10))`)
+	tk.MustExec(`create table ar (id bigint key auto_random, name char(10))`)
 
 	tk.MustExec(`insert into ar(id) values (null),(null),(null)`)
 	rs := tk.MustQuery(`select id from ar order by id`)
@@ -1070,7 +1077,7 @@ func (s *testSuite9) TestAutoRandomIDAllowZero(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists ar`)
-	tk.MustExec(`create table ar (id int key auto_random, name char(10))`)
+	tk.MustExec(`create table ar (id bigint key auto_random, name char(10))`)
 
 	rs := tk.MustQuery(`select @@session.sql_mode`)
 	sqlMode := rs.Rows()[0][0].(string)
@@ -1106,9 +1113,11 @@ func (s *testSuite9) TestAutoRandomIDExplicit(c *C) {
 	}
 
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
+
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists ar`)
-	tk.MustExec(`create table ar (id int key auto_random, name char(10))`)
+	tk.MustExec(`create table ar (id bigint key auto_random, name char(10))`)
 
 	tk.MustExec(`insert into ar(id) values (1)`)
 	tk.MustQuery(`select id from ar`).Check(testkit.Rows("1"))
