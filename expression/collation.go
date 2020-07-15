@@ -148,9 +148,19 @@ func deriveCoercibilityForScarlarFunc(sf *ScalarFunction) Coercibility {
 		return CoercibilityNumeric
 	}
 	coer := CoercibilityIgnorable
+	collation := ""
 	for _, arg := range sf.GetArgs() {
 		if arg.Coercibility() < coer {
-			coer = arg.Coercibility()
+			coer, collation = arg.Coercibility(), arg.GetType().Collate
+		} else if arg.Coercibility() == coer {
+			p1, ok1 := collationPriority[collation]
+			p2, ok2 := collationPriority[arg.GetType().Collate]
+			if ok1 && ok2 && p1 <= p2 {
+				if p1 == p2 {
+					coer = CoercibilityNone
+				}
+				collation = findBinaryCollationByCharset(arg.GetType().Charset)
+			}
 		}
 	}
 	return coer
@@ -193,20 +203,35 @@ func DeriveCollationFromExprs(ctx sessionctx.Context, exprs ...Expression) (dstC
 
 		coer := e.Coercibility()
 		ft := e.GetType()
-		collationPriority := collationPriority[strings.ToLower(ft.Collate)]
+		priority := collationPriority[strings.ToLower(ft.Collate)]
 		if coer != curCoer {
 			if coer < curCoer {
-				curCoer, curCollationPriority, dstCharset, dstCollation = coer, collationPriority, ft.Charset, ft.Collate
+				curCoer, curCollationPriority, dstCharset, dstCollation = coer, priority, ft.Charset, ft.Collate
 			}
 			continue
 		}
-		if collationPriority <= curCollationPriority {
+		if priority <= curCollationPriority {
+			if priority == curCollationPriority && !strings.EqualFold(dstCollation, ft.Collate) {
+				dstCollation = findBinaryCollationByCharset(dstCharset)
+				curCollationPriority = collationPriority[dstCollation]
+			}
 			continue
 		}
-		curCollationPriority, dstCharset, dstCollation = collationPriority, ft.Charset, ft.Collate
+		curCollationPriority, dstCharset, dstCollation = priority, ft.Charset, ft.Collate
 	}
 	if !hasStrArg {
 		dstCharset, dstCollation = charset.CharsetBin, charset.CollationBin
 	}
 	return
+}
+
+func findBinaryCollationByCharset(cs string) string {
+	switch strings.ToLower(cs) {
+	case charset.CharsetUTF8:
+		return charset.CollationUTF8
+	case charset.CharsetUTF8MB4:
+		return charset.CollationUTF8MB4
+	}
+
+	panic("never reachable, something wrong [expression/collation.go]")
 }
