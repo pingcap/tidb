@@ -1220,15 +1220,6 @@ func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table, indexInfo *mo
 
 	decodeColMap := decoder.BuildFullDecodeColMap(t, mockSchema)
 
-	var err error
-	for _, col := range decodeColMap {
-		if col.GenExpr != nil {
-			col.GenExpr, err = col.GenExpr.ResolveIndices(mockSchema)
-			if err != nil {
-				return nil, err
-			}
-		}
-	}
 	return decodeColMap, nil
 }
 

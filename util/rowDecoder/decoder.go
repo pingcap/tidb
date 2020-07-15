@@ -51,12 +51,8 @@ type RowDecoder struct {
 // NewRowDecoder returns a new RowDecoder.
 func NewRowDecoder(tbl table.Table, decodeColMap map[int64]Column) *RowDecoder {
 	colFieldMap := make(map[int64]*types.FieldType, len(decodeColMap))
-	haveGenCol := false
 	for id, col := range decodeColMap {
 		colFieldMap[id] = &col.Col.ColumnInfo.FieldType
-		if col.GenExpr != nil {
-			haveGenCol = true
-		}
 	}
 
 	cols := tbl.Cols()
@@ -69,7 +65,6 @@ func NewRowDecoder(tbl table.Table, decodeColMap map[int64]Column) *RowDecoder {
 		mutRow:        chunk.MutRowFromTypes(tps),
 		columns:       decodeColMap,
 		colTypes:      colFieldMap,
-		haveGenColumn: haveGenCol,
 		defaultVals:   make([]types.Datum, len(cols)),
 		pkCols:        tables.TryGetCommonPkColumnIds(tbl.Meta()),
 	}
@@ -142,13 +137,15 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.
 		}
 		rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
 	}
-	var keys []int
-	for k := range rd.columns {
-		keys = append(keys, int(k))
+	keys := make([]int, 0)
+	ids := make(map[int]int)
+	for k, col := range rd.columns {
+		keys = append(keys, col.Col.Offset)
+		ids[col.Col.Offset] = int(k)
 	}
 	sort.Ints(keys)
 	for _, id := range keys {
-		col := rd.columns[int64(id)]
+		col := rd.columns[int64(ids[id])]
 		if col.GenExpr == nil {
 			continue
 		}
@@ -174,7 +171,7 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.
 		}
 		rd.mutRow.SetValue(col.Col.Offset, val.GetValue())
 
-		row[int64(id)] = val
+		row[int64(ids[id])] = val
 	}
 	return row, nil
 }

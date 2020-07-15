@@ -806,6 +806,10 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 			if e != nil {
 				columns[i].VirtualExpr = e.Clone()
 			}
+			columns[i].VirtualExpr, err = columns[i].VirtualExpr.ResolveIndices(mockSchema)
+			if err != nil {
+				terror.Log(err)
+			}
 		}
 	}
 	return columns, names
