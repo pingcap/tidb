@@ -189,6 +189,7 @@ repair-mode = true
 max-server-connections = 200
 mem-quota-query = 10000
 max-index-length = 3080
+skip-register-to-dashboard = true
 [performance]
 txn-total-size-limit=2000
 [tikv-client]
@@ -247,6 +248,7 @@ engines = ["tiflash"]
 	c.Assert(conf.Experimental.AllowAutoRandom, IsTrue)
 	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})
 	c.Assert(conf.MaxIndexLength, Equals, 3080)
+	c.Assert(conf.SkipRegisterToDashboard, Equals, true)
 
 	_, err = f.WriteString(`
 [log.file]

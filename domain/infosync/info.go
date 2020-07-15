@@ -128,14 +128,14 @@ func setGlobalInfoSyncer(is *InfoSyncer) {
 }
 
 // GlobalInfoSyncerInit return a new InfoSyncer. It is exported for testing.
-func GlobalInfoSyncerInit(ctx context.Context, id string, etcdCli *clientv3.Client) (*InfoSyncer, error) {
+func GlobalInfoSyncerInit(ctx context.Context, id string, etcdCli *clientv3.Client, skipRegisterToDashBoard bool) (*InfoSyncer, error) {
 	is := &InfoSyncer{
 		etcdCli:        etcdCli,
 		info:           getServerInfo(id),
 		serverInfoPath: fmt.Sprintf("%s/%s", ServerInformationPath, id),
 		minStartTSPath: fmt.Sprintf("%s/%s", ServerMinStartTSPath, id),
 	}
-	err := is.init(ctx)
+	err := is.init(ctx, skipRegisterToDashBoard)
 	if err != nil {
 		return nil, err
 	}
@@ -144,10 +144,13 @@ func GlobalInfoSyncerInit(ctx context.Context, id string, etcdCli *clientv3.Clie
 }
 
 // Init creates a new etcd session and stores server info to etcd.
-func (is *InfoSyncer) init(ctx context.Context) error {
+func (is *InfoSyncer) init(ctx context.Context, skipRegisterToDashboard bool) error {
 	err := is.newSessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
 	if err != nil {
 		return err
+	}
+	if skipRegisterToDashboard {
+		return nil
 	}
 	return is.newTopologySessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
 }
