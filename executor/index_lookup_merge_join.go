@@ -281,7 +281,7 @@ func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.Chunk) error
 			result.src <- result.chk
 			return nil
 		case <-ctx.Done():
-			return nil
+			return ctx.Err()
 		}
 	}
 
