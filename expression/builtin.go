@@ -134,7 +134,7 @@ func checkIllegalMixCollation(funcName string, args []Expression) error {
 		} else if arg.Coercibility() < curCoercibility {
 			noConflict = true
 			curCoercibility, curCollation = arg.Coercibility(), arg.GetType().Collate
-		} else if arg.Coercibility() == curCoercibility {
+		} else if arg.Coercibility() == curCoercibility && !strings.EqualFold(curCollation, arg.GetType().Collate) {
 			p1 := collationPriority[strings.ToLower(curCollation)]
 			p2 := collationPriority[strings.ToLower(arg.GetType().Collate)]
 

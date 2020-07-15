@@ -152,7 +152,7 @@ func deriveCoercibilityForScarlarFunc(sf *ScalarFunction) Coercibility {
 	for _, arg := range sf.GetArgs() {
 		if arg.Coercibility() < coer {
 			coer, collation = arg.Coercibility(), arg.GetType().Collate
-		} else if arg.Coercibility() == coer {
+		} else if arg.Coercibility() == coer && !strings.EqualFold(collation, arg.GetType().Collate) {
 			p1, ok1 := collationPriority[collation]
 			p2, ok2 := collationPriority[arg.GetType().Collate]
 			if ok1 && ok2 && p1 <= p2 {
