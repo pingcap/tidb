@@ -26,16 +26,8 @@ import (
 
 // Transaction options
 const (
-	// PresumeKeyNotExists indicates that when dealing with a Get operation but failing to read data from cache,
-	// we presume that the key does not exist in Store. The actual existence will be checked before the
-	// transaction's commit.
-	// This option is an optimization for frequent checks during a transaction, e.g. batch inserts.
-	PresumeKeyNotExists Option = iota + 1
-	// PresumeKeyNotExistsError is the option key for error.
-	// When PresumeKeyNotExists is set and condition is not match, should throw the error.
-	PresumeKeyNotExistsError
 	// BinlogInfo contains the binlog data and client.
-	BinlogInfo
+	BinlogInfo Option = iota + 1
 	// SchemaChecker is used for checking schema-validity.
 	SchemaChecker
 	// IsolationLevel sets isolation level for current transaction. The default level is SI.
@@ -148,36 +140,75 @@ type Mutator interface {
 	Delete(k Key) error
 }
 
+// StagingHandle is the reference of a staging buffer.
+type StagingHandle int
+
+var (
+	// InvalidStagingHandle is an invalid handler, MemBuffer will check handler to ensure safety.
+	InvalidStagingHandle StagingHandle = 0
+	// LastActiveStagingHandle is an special handler which always point to the last active staging buffer.
+	LastActiveStagingHandle StagingHandle = -1
+)
+
 // RetrieverMutator is the interface that groups Retriever and Mutator interfaces.
 type RetrieverMutator interface {
 	Retriever
 	Mutator
 }
 
-// MemBuffer is an in-memory kv collection, can be used to buffer write operations.
-type MemBuffer interface {
-	RetrieverMutator
+// StagingBuffer is a staging buffer in MemBuffer.
+type StagingBuffer interface {
+	Retriever
+
 	// Size returns sum of keys and values length.
 	Size() int
 	// Len returns the number of entries in the DB.
 	Len() int
-	// NewStagingBuffer returns a new write buffer,
-	// modifications in the returned buffer will not influence this buffer
-	// until you call Flush, or you can use Discard to discard all of them.
-	//
-	// Note: you cannot modify this MemBuffer until the child buffer finished,
-	// otherwise the Set operation will panic.
-	NewStagingBuffer() MemBuffer
-	// Flush flushes all kvs in this buffer to parrent buffer.
-	Flush() (int, error)
-	// Discard discads all kvs in this buffer.
-	Discard()
+}
+
+// MemBuffer is an in-memory kv collection, can be used to buffer write operations.
+type MemBuffer interface {
+	RetrieverMutator
+
+	// GetFlags returns the lastest flags associated with key.
+	GetFlags(Key) (KeyFlags, error)
+	// SetWithFlags put key-value into the last active staging buffer with the given KeyFlags.
+	SetWithFlags(Key, KeyFlags, []byte) error
+	// SetFlags update the flags associated with key.
+	SetFlags(Key, KeyFlags)
+	// Reset reset the MemBuffer to initial states.
+	Reset()
+
+	// Staging create a new staging buffer inside the MemBuffer.
+	// Subsequent writes will be temporarily stored in this new staging buffer.
+	// When you think all modifications looks good, you can call `Release` to public all of them to the upper level buffer.
+	Staging() StagingHandle
+	// Release publish all modifications in the lastest staging buffer to upper level.
+	Release(StagingHandle) (int, error)
+	// Cleanup cleanup the resources referenced by the StagingHandle.
+	// If the changes are not published by `Release`, they will be discarded.
+	Cleanup(StagingHandle)
+	// GetStagingBuffer returns the specified staging buffer
+	GetStagingBuffer(StagingHandle) StagingBuffer
+
+	// Size returns sum of keys and values length.
+	Size() int
+	// Len returns the number of entries in the DB.
+	Len() int
+	// Dirty returns whether the root staging buffer is updated.
+	Dirty() bool
 }
 
 // Transaction defines the interface for operations inside a Transaction.
 // This is not thread safe.
 type Transaction interface {
-	MemBuffer
+	RetrieverMutator
+	// Size returns sum of keys and values length.
+	Size() int
+	// Len returns the number of entries in the DB.
+	Len() int
+	// Reset reset the Transaction to initial states.
+	Reset()
 	// Commit commits the transaction operations to KV store.
 	Commit(context.Context) error
 	// Rollback undoes the transaction operations to KV store.
@@ -202,6 +233,8 @@ type Transaction interface {
 	GetMemBuffer() MemBuffer
 	// GetSnapshot returns the Snapshot binding to this transaction.
 	GetSnapshot() Snapshot
+	// GetUnionStore returns the UnionStore binding to this transaction.
+	GetUnionStore() UnionStore
 	// SetVars sets variables to the transaction.
 	SetVars(vars *Variables)
 	// GetVars gets variables from the transaction.

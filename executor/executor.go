@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
@@ -99,7 +100,7 @@ type baseExecutor struct {
 	maxChunkSize  int
 	children      []Executor
 	retFieldTypes []*types.FieldType
-	runtimeStats  *execdetails.RuntimeStats
+	runtimeStats  *execdetails.BasicRuntimeStats
 }
 
 const (
@@ -217,7 +218,8 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id fmt.S
 	}
 	if ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
 		if e.id != nil {
-			e.runtimeStats = e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.id.String())
+			e.runtimeStats = &execdetails.BasicRuntimeStats{}
+			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(id.String(), e.runtimeStats)
 		}
 	}
 	if schema != nil {
@@ -726,12 +728,6 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 	defer func() { e.done = true }()
-
-	if e.table.Meta().IsCommonHandle {
-		// TODO: fix me to support cluster index table admin check table.
-		// https://github.com/pingcap/tidb/projects/45#card-39562229
-		return nil
-	}
 
 	idxNames := make([]string, 0, len(e.indexInfos))
 	for _, idx := range e.indexInfos {
@@ -1555,7 +1551,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.MemTracker.SetActionOnExceed(action)
 	}
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
-		s, err = getPreparedStmt(execStmt, vars)
+		s, err = planner.GetPreparedStmt(execStmt, vars)
 		if err != nil {
 			return
 		}
