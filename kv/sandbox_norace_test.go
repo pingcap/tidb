@@ -13,7 +13,7 @@
 
 // +build !race
 
-package memdb
+package kv
 
 import (
 	"encoding/binary"
@@ -61,7 +61,7 @@ func (s testMemDBSuite) TestRandomDerive(c *C) {
 	s.testRandomDeriveRecur(c, NewSandbox(), memdb.New(comparer.DefaultComparer, 4*1024), 0)
 }
 
-func (s testMemDBSuite) testRandomDeriveRecur(c *C, sb *Sandbox, db *memdb.DB, depth int) {
+func (s testMemDBSuite) testRandomDeriveRecur(c *C, sb *sandbox, db *memdb.DB, depth int) {
 	var keys [][]byte
 	if rand.Float64() < 0.5 {
 		start, end := rand.Intn(512), rand.Intn(512)+512
