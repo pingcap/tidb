@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	field_types "github.com/pingcap/parser/types"
+	"github.com/pingcap/pd/v4/server/schedule/placement"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -43,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
@@ -2265,6 +2267,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			newIdent := ast.Ident{Schema: spec.NewTable.Schema, Name: spec.NewTable.Name}
 			isAlterTable := true
 			err = d.RenameTable(ctx, ident, newIdent, isAlterTable)
+		case ast.AlterTableAlterPartition:
+			err = d.AlterTablePartition(ctx, ident, spec)
 		case ast.AlterTablePartition:
 			// Prevent silent succeed if user executes ALTER TABLE x PARTITION BY ...
 			err = errors.New("alter table partition is unsupported")
@@ -5145,6 +5149,107 @@ func (d *ddl) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident, inde
 	}
 
 	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func validPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.Rule, error) {
+	rules := make([]*placement.Rule, 0, len(specs))
+	for k, spec := range specs {
+		rule := &placement.Rule{
+			ID:       "default_rule",
+			Count:    int(spec.Replicas),
+			Override: false,
+		}
+
+		switch spec.Tp {
+		case ast.PlacementAdd:
+		default:
+			return rules, errors.Errorf("invalid placement spec[%d], unknown action type: %d", k, spec.Tp)
+		}
+
+		switch spec.Role {
+		case ast.PlacementRoleFollower:
+			rule.Role = placement.Follower
+		case ast.PlacementRoleLeader:
+			rule.Role = placement.Leader
+		case ast.PlacementRoleLearner:
+			rule.Role = placement.Learner
+		case ast.PlacementRoleVoter:
+			rule.Role = placement.Voter
+		default:
+			return rules, errors.Errorf("invalid placement spec[%d], unknown role: %d", k, spec.Role)
+		}
+
+		for _, label := range strings.Split(spec.Constraints, ",") {
+			var op placement.LabelConstraintOp
+			switch label[0] {
+			case '+':
+				op = placement.In
+			case '-':
+				op = placement.NotIn
+			default:
+				return rules, errors.Errorf("invalid placement spec[%d], unknown operation: %c", k, label[0])
+			}
+
+			idx := strings.IndexByte(label, '=')
+			if idx+1 >= len(label) {
+				return rules, errors.Errorf("invalid placement spec[%d], empty label value: %s", k, label)
+			}
+
+			rule.LabelConstraints = append(rule.LabelConstraints, placement.LabelConstraint{
+				Key:    label[1:idx],
+				Op:     op,
+				Values: []string{label[idx+1:]},
+			})
+		}
+
+		rules = append(rules, rule)
+	}
+	return rules, nil
+}
+
+func (d *ddl) AlterTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) (err error) {
+	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	rules, err := validPlacementSpecs(spec.PlacementSpecs)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	meta := tb.Meta()
+	partitionId, err := tables.FindPartitionByName(meta, spec.PartitionNames[0].L)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	groupId := strconv.FormatInt(partitionId, 10)
+	startKey, endKey := tablecodec.GetTableHandleKeyRange(partitionId)
+	for _, rule := range rules {
+		rule.GroupID = groupId
+		rule.ID = "inserted_by_ddl"
+		rule.Index = 3
+		rule.StartKey = startKey
+		rule.EndKey = endKey
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    meta.ID,
+		SchemaName: schema.Name.L,
+		Type:       model.ActionAlterTableAlterPartition,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{rules},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }

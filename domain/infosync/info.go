@@ -14,9 +14,11 @@
 package infosync
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path"
@@ -29,6 +31,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/pd/v4/server/schedule/placement"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/errno"
@@ -262,6 +265,70 @@ func GetTiFlashTableSyncProgress(ctx context.Context) (map[int64]float64, error)
 		break
 	}
 	return progressMap, nil
+}
+
+// used by UpdatePlacementRules
+func doRequest(addrs []string, route, method string, body io.Reader) error {
+	var err error
+	var req *http.Request
+	for _, addr := range addrs {
+		var url string
+		if strings.HasPrefix(addr, "http://") {
+			url = fmt.Sprintf("%s%s/%s", addr, pdapi.Config, route)
+		} else {
+			url = fmt.Sprintf("http://%s%s/%s", addr, pdapi.Config, route)
+		}
+
+		req, err = http.NewRequest(method, url, body)
+		if err != nil {
+			return err
+		}
+		if body != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+
+		_, err = http.DefaultClient.Do(req)
+		if err == nil {
+			return nil
+		}
+	}
+	return err
+}
+
+// UpUpdatePlacementRules is used to notify PD changes of placement rules
+func UpdatePlacementRules(ctx context.Context, rules []*placement.Rule) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return err
+	}
+
+	var addrs []string
+	if is.etcdCli != nil {
+		addrs = is.etcdCli.Endpoints()
+	}
+
+	if len(addrs) == 0 {
+		return errors.Errorf("pd unavailable")
+	}
+
+	route := path.Join(pdapi.Config, "rule")
+
+	for _, rule := range rules {
+		if rule.Count > 0 {
+			b, _ := json.Marshal(rule)
+			err = doRequest(addrs, route, http.MethodPost, bytes.NewReader(b))
+			if err != nil {
+				return err
+			}
+		} else if rule.Count == 0 {
+			err = doRequest(addrs, path.Join(route, rule.GroupID, rule.ID), http.MethodDelete, nil)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }
 
 func (is *InfoSyncer) getAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {

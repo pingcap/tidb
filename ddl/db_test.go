@@ -5096,6 +5096,28 @@ func (s *testSerialDBSuite) TestCommitTxnWithIndexChange(c *C) {
 	tk.MustExec("admin check table t1")
 }
 
+func (s *testDBSuite1) TestAlterTableAlterPartition(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	defer tk.MustExec("drop table if exists t1")
+
+	tk.MustExec(`create table t (c int)
+PARTITION BY RANGE (c) (
+	PARTITION p0 VALUES LESS THAN (6),
+	PARTITION p1 VALUES LESS THAN (11),
+	PARTITION p2 VALUES LESS THAN (16),
+	PARTITION p3 VALUES LESS THAN (21)
+);`)
+
+	_, err := tk.Exec(`alter table t alter partition p0
+add placement policy
+	constraints='+zone=sh'
+	role=leader
+	replicas=3`)
+	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
+}
+
 func init() {
 	// Make sure it will only be executed once.
 	domain.SchemaOutOfDateRetryInterval = int64(50 * time.Millisecond)
