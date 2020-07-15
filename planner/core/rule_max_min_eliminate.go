@@ -61,16 +61,18 @@ func (a *maxMinEliminator) checkColCanUseIndex(plan LogicalPlan, col *expression
 	case *DataSource:
 		// Check whether there is an AccessPath can use index for col.
 		for _, path := range p.possibleAccessPaths {
-			// TODO: support common handle path.
-			if path.IsIntHandlePath {
-				// Since table path can contain accessConds of at most one column,
-				// we only need to check if all of the conditions can be pushed down as accessConds
-				// and `col` is the handle column.
-				if p.handleCols != nil && col.Equal(nil, p.handleCols.GetCol(0)) {
-					if _, filterConds := ranger.DetachCondsForColumn(p.ctx, conditions, col); len(filterConds) != 0 {
-						return false
+			if path.IsIntHandlePath || path.IsCommonHandlePath {
+				var handleColsNum int
+				if p.handleCols != nil {
+					handleColsNum = p.handleCols.NumCols()
+				}
+				for i := 0; i < handleColsNum; i++ {
+					if col.Equal(nil, p.handleCols.GetCol(i)) {
+						if _, filterConds := ranger.DetachCondsForColumn(p.ctx, conditions, col); len(filterConds) != 0 {
+							return false
+						}
+						return true
 					}
-					return true
 				}
 			} else {
 				// For index paths, we have to check:
