@@ -44,11 +44,11 @@ type testKVSuite struct {
 
 func (s *testKVSuite) SetUpSuite(c *C) {
 	s.bs = make([]MemBuffer, 1)
-	s.bs[0] = NewMemDbBuffer()
+	s.bs[0] = newMemDB()
 }
 
 func (s *testKVSuite) ResetMembuffers() {
-	s.bs[0] = NewMemDbBuffer()
+	s.bs[0] = newMemDB()
 }
 
 func insertData(c *C, buffer MemBuffer) {
@@ -153,7 +153,7 @@ func (s *testKVSuite) TestNewIterator(c *C) {
 
 func (s *testKVSuite) TestIterNextUntil(c *C) {
 	defer testleak.AfterTest(c)()
-	buffer := NewMemDbBuffer()
+	buffer := newMemDB()
 	insertData(c, buffer)
 
 	iter, err := buffer.Iter(nil, nil)
@@ -211,8 +211,35 @@ func (s *testKVSuite) TestNewIteratorMin(c *C) {
 	s.ResetMembuffers()
 }
 
+func (s *testKVSuite) TestMemDBStaging(c *C) {
+	buffer := newMemDB()
+	err := buffer.Set([]byte("x"), make([]byte, 2))
+	c.Assert(err, IsNil)
+
+	h1 := buffer.Staging()
+	err = buffer.Set([]byte("x"), make([]byte, 3))
+	c.Assert(err, IsNil)
+
+	h2 := buffer.Staging()
+	err = buffer.Set([]byte("yz"), make([]byte, 1))
+	c.Assert(err, IsNil)
+
+	v, _ := buffer.Get(context.Background(), []byte("x"))
+	c.Assert(len(v), Equals, 3)
+
+	buffer.Release(h2)
+
+	v, _ = buffer.Get(context.Background(), []byte("yz"))
+	c.Assert(len(v), Equals, 1)
+
+	buffer.Cleanup(h1)
+
+	v, _ = buffer.Get(context.Background(), []byte("x"))
+	c.Assert(len(v), Equals, 2)
+}
+
 func (s *testKVSuite) TestBufferLimit(c *C) {
-	buffer := NewMemDbBuffer().(*memDbBuffer)
+	buffer := newMemDB()
 	buffer.bufferSizeLimit = 1000
 	buffer.entrySizeLimit = 500
 
@@ -232,7 +259,7 @@ func (s *testKVSuite) TestBufferLimit(c *C) {
 }
 
 func (s *testKVSuite) TestBufferBatchGetter(c *C) {
-	snap := &mockSnapshot{store: NewMemDbBuffer()}
+	snap := &mockSnapshot{store: newMemDB()}
 	ka := []byte("a")
 	kb := []byte("b")
 	kc := []byte("c")
@@ -243,11 +270,11 @@ func (s *testKVSuite) TestBufferBatchGetter(c *C) {
 	snap.store.Set(kd, kd)
 
 	// middle value is the same as snap
-	middle := NewMemDbBuffer()
+	middle := newMemDB()
 	middle.Set(ka, []byte("a1"))
 	middle.Set(kc, []byte("c1"))
 
-	buffer := NewMemDbBuffer()
+	buffer := newMemDB()
 	buffer.Set(ka, []byte("a2"))
 	buffer.Delete(kb)
 
@@ -267,7 +294,7 @@ func BenchmarkMemDbBufferSequential(b *testing.B) {
 	for i := 0; i < opCnt; i++ {
 		data[i] = encodeInt(i)
 	}
-	buffer := NewMemDbBuffer()
+	buffer := newMemDB()
 	benchmarkSetGet(b, buffer, data)
 	b.ReportAllocs()
 }
@@ -278,20 +305,20 @@ func BenchmarkMemDbBufferRandom(b *testing.B) {
 		data[i] = encodeInt(i)
 	}
 	shuffle(data)
-	buffer := NewMemDbBuffer()
+	buffer := newMemDB()
 	benchmarkSetGet(b, buffer, data)
 	b.ReportAllocs()
 }
 
 func BenchmarkMemDbIter(b *testing.B) {
-	buffer := NewMemDbBuffer()
+	buffer := newMemDB()
 	benchIterator(b, buffer)
 	b.ReportAllocs()
 }
 
 func BenchmarkMemDbCreation(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		NewMemDbBuffer()
+		newMemDB()
 	}
 	b.ReportAllocs()
 }
