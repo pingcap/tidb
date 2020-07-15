@@ -773,6 +773,9 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		failpoint.Inject("beforeCommit", func() {})
 	}
 
+	c.mutations.values = nil
+	c.txn.GetMemBuffer().DiscardValues()
+
 	start = time.Now()
 	commitBo := NewBackofferWithVars(ctx, CommitMaxBackoff, c.txn.vars)
 	err = c.commitMutations(commitBo, c.mutations)
