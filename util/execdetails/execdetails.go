@@ -373,21 +373,6 @@ func (e *BasicRuntimeStats) GetActRows() int64 {
 	return e.rows
 }
 
-<<<<<<< HEAD
-// RuntimeStats collects one executor's execution info.
-type RuntimeStats struct {
-	// executor's Next() called times.
-	loop int32
-	// executor consume time.
-	consume int64
-	// executor return row count.
-	rows int64
-
-	// protect concurrency
-	mu sync.Mutex
-	// executor concurrency information
-	concurrency []*ConcurrencyInfo
-=======
 // Record records executor's execution.
 func (e *BasicRuntimeStats) Record(d time.Duration, rowNum int) {
 	atomic.AddInt32(&e.loop, 1)
@@ -404,7 +389,6 @@ func (e *BasicRuntimeStats) SetRowNum(rowNum int64) {
 func (e *BasicRuntimeStats) String() string {
 	return fmt.Sprintf("time:%v, loops:%d", time.Duration(e.consume), e.loop)
 }
->>>>>>> f0e5876... util/execdetails: refactor execdetails information of runtime collect (#18530)
 
 // RuntimeStatsColl collects executors's execution info.
 type RuntimeStatsColl struct {
@@ -538,11 +522,5 @@ func (e *RuntimeStatsWithConcurrencyInfo) String() string {
 			}
 		}
 	}
-<<<<<<< HEAD
-	if len(e.additionalInfo) > 0 {
-		result += ", " + e.additionalInfo
-	}
-=======
->>>>>>> f0e5876... util/execdetails: refactor execdetails information of runtime collect (#18530)
 	return result
 }
