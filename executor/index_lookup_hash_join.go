@@ -229,7 +229,7 @@ func (e *IndexNestedLoopHashJoin) Next(ctx context.Context, req *chunk.Chunk) er
 			return result.err
 		}
 	case <-ctx.Done():
-		return nil
+		return ctx.Err()
 	}
 	req.SwapColumns(result.chk)
 	result.src <- result.chk
@@ -255,7 +255,7 @@ func (e *IndexNestedLoopHashJoin) runInOrder(ctx context.Context, req *chunk.Chu
 				return result.err
 			}
 		case <-ctx.Done():
-			return nil
+			return ctx.Err()
 		}
 		req.SwapColumns(result.chk)
 		result.src <- result.chk
