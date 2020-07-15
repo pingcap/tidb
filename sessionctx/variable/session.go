@@ -691,6 +691,9 @@ type SessionVars struct {
 	// EnableLogDesensitization indicates that whether desensitization when log query.
 	EnableLogDesensitization bool
 
+	// PresumeKeyNotExists indicates lazy existence checking is enabled.
+	PresumeKeyNotExists bool
+
 	// ShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
 	ShardAllocateStep int64
 }
