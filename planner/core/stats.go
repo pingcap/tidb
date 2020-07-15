@@ -571,7 +571,7 @@ func (la *LogicalAggregation) DeriveStats(childStats []*property.StatsInfo, self
 // every matched bucket.
 func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
 	leftProfile, rightProfile := childStats[0], childStats[1]
-	leftJoinKeys, rightJoinKeys := p.GetJoinKeys()
+	leftJoinKeys, rightJoinKeys, _, _ := p.GetJoinKeys()
 	helper := &fullJoinRowCountHelper{
 		cartesian:     0 == len(p.EqualConditions),
 		leftProfile:   leftProfile,
