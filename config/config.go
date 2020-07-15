@@ -961,7 +961,7 @@ func (t *OpenTracing) ToTracingConfig() *tracing.Configuration {
 }
 
 func init() {
-	initByLDFlags(versioninfo.CommunityEdition, checkBeforeDropLDFlag)
+	initByLDFlags(versioninfo.TiDBEdition, checkBeforeDropLDFlag)
 }
 
 func initByLDFlags(edition, checkBeforeDropLDFlag string) {
