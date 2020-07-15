@@ -4390,7 +4390,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	}
 
 	if indexInfo := t.Meta().FindIndexByName(indexName.L); indexInfo != nil {
-		if indexInfo.State == model.StatePublic {
+		if indexInfo.State != model.StatePublic {
 			// NOTE: explicit error message. See issue #18363.
 			err = ErrDupKeyName.GenWithStack("index already exist %s; "+
 				"a background job is trying to add the same index, "+
