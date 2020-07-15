@@ -155,11 +155,13 @@ func deriveCoercibilityForScarlarFunc(sf *ScalarFunction) Coercibility {
 		} else if arg.Coercibility() == coer && !strings.EqualFold(collation, arg.GetType().Collate) {
 			p1, ok1 := collationPriority[collation]
 			p2, ok2 := collationPriority[arg.GetType().Collate]
-			if ok1 && ok2 && p1 <= p2 {
+			if ok1 && ok2 {
 				if p1 == p2 {
 					coer = CoercibilityNone
+					collation = findBinaryCollationByCharset(arg.GetType().Charset)
+				} else if p1 < p2 {
+					collation = arg.GetType().Collate
 				}
-				collation = findBinaryCollationByCharset(arg.GetType().Charset)
 			}
 		}
 	}
