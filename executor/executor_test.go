@@ -1123,8 +1123,8 @@ func (s *testSuiteWithData) TestSetOperation(c *C) {
 	tk.MustExec(`create table t1(a int)`)
 	tk.MustExec(`create table t2 like t1`)
 	tk.MustExec(`create table t3 like t1`)
-	tk.MustExec(`insert into t1 values (1),(1),(2),(3)`)
-	tk.MustExec(`insert into t2 values (1),(2)`)
+	tk.MustExec(`insert into t1 values (1),(1),(2),(3),(null)`)
+	tk.MustExec(`insert into t2 values (1),(2),(null),(null)`)
 	tk.MustExec(`insert into t3 values (2),(3)`)
 
 	var input []string
