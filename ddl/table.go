@@ -16,8 +16,6 @@ package ddl
 import (
 	"context"
 	"fmt"
-
-	"go.uber.org/zap"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -41,9 +39,10 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
-const TiFlashCheckTiDBHttpAPIInterval = 5 * time.Second
+const tiFlashCheckTiDBHttpAPIInterval = 5 * time.Second
 
 func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	failpoint.Inject("mockExceedErrorLimit", func(val failpoint.Value) {
@@ -1009,19 +1008,18 @@ func checkPartitionReplica(partDefPointers []*model.PartitionDefinition, d *ddlC
 				job.State = model.JobStateCancelled
 				return needWait, errors.Trace(err)
 			}
-			tiFlashPeerCount := checkTiFlashPeerStore(stores, regionState.Meta.Peers)
+			tiflashPeerCount := checkTiFlashPeerStore(stores, regionState.Meta.Peers)
 			// It's unnecessary to wait all tiflash peer to be replicated.
 			// Here only make sure that tiflash peer count > 0 (at least one).
-			if tiFlashPeerCount > 0 {
+			if tiflashPeerCount > 0 {
 				continue
-			} else {
-				needWait = true
-				logutil.Logger(ctx).Info("[ddl] partition replica check failed in delete-only ddl state", zap.Int64("pid", pd.ID), zap.Uint64("wait region ID", region.Id), zap.Uint64("tiflash peer nums", tiFlashPeerCount), zap.Time("check time", time.Now()))
-				return needWait, nil
 			}
+			needWait = true
+			logutil.Logger(ctx).Info("[DDL] partition replica check failed in delete-only ddl state", zap.Int64("pid", pd.ID), zap.Uint64("wait region ID", region.Id), zap.Uint64("tiflash peer nums", tiflashPeerCount), zap.Time("check time", time.Now()))
+			return needWait, nil
 		}
 	}
-	logutil.Logger(ctx).Info("[ddl] partition replica checks ok in delete-only ddl state")
+	logutil.Logger(ctx).Info("[DDL] partition replica checks ok in delete-only ddl state")
 	return needWait, nil
 }
 
@@ -1107,7 +1105,7 @@ func onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ 
 			if needWait {
 				// The new added partition hasn't been replicated.
 				// Do nothing to the job this time, wait next worker round.
-				time.Sleep(TiFlashCheckTiDBHttpAPIInterval / 2)
+				time.Sleep(tiFlashCheckTiDBHttpAPIInterval / 2)
 				return ver, nil
 			}
 		}
