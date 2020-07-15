@@ -1691,7 +1691,6 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.
 	return rows, nil
 }
 
-
 type hugeMemTableRetriever struct {
 	dummyCloser
 	table       *model.TableInfo
