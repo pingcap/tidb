@@ -6,7 +6,6 @@
       "explain select * from t3 where id = 9 and a = 1",
       "explain select * from t2 where id = 9 and a = -110",
       "explain select * from t1 where id = -17",
-      "explain select * from t2 where id = a and a = b and b = 2",
       "explain select * from t1 join t2 on (t1.id = t2.id) where t1.id = 5 and t2.a = 7",
       "explain select * from t1 left join t2 on t1.id = 1 and t2.a = 2 where t2.id = 7",
       "explain select * from t2 join t1 on t1.id = t2.id and t2.a = t1.id and t2.id = 12",
@@ -17,8 +16,12 @@
       "explain select * from t5 where d = '2019-10-07'",
       "explain select * from t6 where a is null",
       "explain select * from t6 where b is null",
+      "explain select * from t6 where a = 7 or a = 6",
+      "explain select * from t6 where a in (6, 7)",
       "explain select * from t5 where d is null",
-      "explain select * from t7 where b = -3 and a is null"
+      "explain select * from t7 where b = -3 and a is null",
+      "explain select * from t7 where (a, b) in ((3, 4), (5, 6))",
+      "explain select * from t7 where (a = 1 and b = 2) or (a = 3 and b = 4)"
     ]
   }
 ]

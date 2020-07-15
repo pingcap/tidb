@@ -123,6 +123,33 @@
         ]
       },
       {
+        "SQL": "explain select * from t6 where a = 7 or a = 6",
+        "Result": [
+          "PartitionUnion_9 60.00 root  ",
+          "├─TableReader_12 20.00 root  data:Selection_11",
+          "│ └─Selection_11 20.00 cop[tikv]  or(eq(test_partition.t6.a, 7), eq(test_partition.t6.a, 6))",
+          "│   └─TableFullScan_10 10000.00 cop[tikv] table:t6, partition:p0 keep order:false, stats:pseudo",
+          "├─TableReader_15 20.00 root  data:Selection_14",
+          "│ └─Selection_14 20.00 cop[tikv]  or(eq(test_partition.t6.a, 7), eq(test_partition.t6.a, 6))",
+          "│   └─TableFullScan_13 10000.00 cop[tikv] table:t6, partition:p1 keep order:false, stats:pseudo",
+          "└─TableReader_18 20.00 root  data:Selection_17",
+          "  └─Selection_17 20.00 cop[tikv]  or(eq(test_partition.t6.a, 7), eq(test_partition.t6.a, 6))",
+          "    └─TableFullScan_16 10000.00 cop[tikv] table:t6, partition:p2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select * from t6 where a in (6, 7)",
+        "Result": [
+          "Union_8 40.00 root  ",
+          "├─TableReader_11 20.00 root  data:Selection_10",
+          "│ └─Selection_10 20.00 cop[tikv]  in(test_partition.t6.a, 6, 7)",
+          "│   └─TableFullScan_9 10000.00 cop[tikv] table:t6, partition:p0 keep order:false, stats:pseudo",
+          "└─TableReader_14 20.00 root  data:Selection_13",
+          "  └─Selection_13 20.00 cop[tikv]  in(test_partition.t6.a, 6, 7)",
+          "    └─TableFullScan_12 10000.00 cop[tikv] table:t6, partition:p1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
         "SQL": "explain select * from t5 where d is null",
         "Result": [
           "TableDual_5 0.00 root  rows:0"
@@ -134,6 +161,30 @@
           "TableReader_7 0.01 root partition:p0 data:Selection_6",
           "└─Selection_6 0.01 cop[tikv]  eq(test_partition.t7.b, -3), isnull(test_partition.t7.a)",
           "  └─TableFullScan_5 10000.00 cop[tikv] table:t7 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select * from t7 where (a, b) in ((3, 4), (5, 6))",
+        "Result": [
+          "Union_8 16000.00 root  ",
+          "├─TableReader_11 8000.00 root  data:Selection_10",
+          "│ └─Selection_10 8000.00 cop[tikv]  or(and(eq(test_partition.t7.a, 3), eq(test_partition.t7.b, 4)), and(eq(test_partition.t7.a, 5), eq(test_partition.t7.b, 6)))",
+          "│   └─TableFullScan_9 10000.00 cop[tikv] table:t7, partition:p7 keep order:false, stats:pseudo",
+          "└─TableReader_14 8000.00 root  data:Selection_13",
+          "  └─Selection_13 8000.00 cop[tikv]  or(and(eq(test_partition.t7.a, 3), eq(test_partition.t7.b, 4)), and(eq(test_partition.t7.a, 5), eq(test_partition.t7.b, 6)))",
+          "    └─TableFullScan_12 10000.00 cop[tikv] table:t7, partition:p1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select * from t7 where (a = 1 and b = 2) or (a = 3 and b = 4)",
+        "Result": [
+          "Union_8 16000.00 root  ",
+          "├─TableReader_11 8000.00 root  data:Selection_10",
+          "│ └─Selection_10 8000.00 cop[tikv]  or(and(eq(test_partition.t7.a, 1), eq(test_partition.t7.b, 2)), and(eq(test_partition.t7.a, 3), eq(test_partition.t7.b, 4)))",
+          "│   └─TableFullScan_9 10000.00 cop[tikv] table:t7, partition:p3 keep order:false, stats:pseudo",
+          "└─TableReader_14 8000.00 root  data:Selection_13",
+          "  └─Selection_13 8000.00 cop[tikv]  or(and(eq(test_partition.t7.a, 1), eq(test_partition.t7.b, 2)), and(eq(test_partition.t7.a, 3), eq(test_partition.t7.b, 4)))",
+          "    └─TableFullScan_12 10000.00 cop[tikv] table:t7, partition:p7 keep order:false, stats:pseudo"
         ]
       }
     ]
