@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/versioninfo"
 	tracing "github.com/uber/jaeger-client-go/config"
 
 	"go.uber.org/zap"
@@ -960,6 +961,13 @@ func (t *OpenTracing) ToTracingConfig() *tracing.Configuration {
 }
 
 func init() {
+	initByLDFlags(versioninfo.TiDBEdition, checkBeforeDropLDFlag)
+}
+
+func initByLDFlags(edition, checkBeforeDropLDFlag string) {
+	if edition != versioninfo.CommunityEdition {
+		defaultConf.EnableTelemetry = false
+	}
 	conf := defaultConf
 	StoreGlobalConfig(&conf)
 	if checkBeforeDropLDFlag == "1" {
