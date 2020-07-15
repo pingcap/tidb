@@ -1033,7 +1033,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	s.processInfo.Store(&pi)
 }
 
-func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode ast.StmtNode, stmt *executor.ExecStmt, recordSets []sqlexec.RecordSet, inMulitQuery bool) ([]sqlexec.RecordSet, error) {
+func (s *session) executeStatement(ctx context.Context, stmt *executor.ExecStmt, recordSets []sqlexec.RecordSet, inMulitQuery bool) ([]sqlexec.RecordSet, error) {
 	logStmt(stmt, s.sessionVars)
 	recordSet, err := runStmt(ctx, s, stmt)
 	if err != nil {
@@ -1086,7 +1086,6 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 
 func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec.RecordSet, err error) {
 	s.PrepareTxnCtx(ctx)
-	connID := s.sessionVars.ConnectionID
 	err = s.loadCommonGlobalVariablesIfNeeded()
 	if err != nil {
 		return nil, err
@@ -1148,7 +1147,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		s.currentPlan = stmt.Plan
 
 		// Step3: Execute the physical plan.
-		if recordSets, err = s.executeStatement(ctx, connID, stmtNode, stmt, recordSets, multiQuery); err != nil {
+		if recordSets, err = s.executeStatement(ctx, stmt, recordSets, multiQuery); err != nil {
 			return nil, err
 		}
 	}
