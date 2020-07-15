@@ -135,6 +135,12 @@ func (s *partitionProcessor) findUsedPartitions(ds *DataSource, pi *model.Partit
 	used := make([]int, 0, len(ranges))
 	for _, r := range ranges {
 		if r.IsPointNullable(ds.ctx.GetSessionVars().StmtCtx) {
+			if !r.HighVal[0].IsNull() {
+				if len(r.HighVal) != len(partIdx) {
+					used = []int{-1}
+					break
+				}
+			}
 			pos, isNull, err := pe.EvalInt(ds.ctx, chunk.MutRowFromDatums(r.HighVal).ToRow())
 			if err != nil {
 				return nil, err
@@ -142,7 +148,7 @@ func (s *partitionProcessor) findUsedPartitions(ds *DataSource, pi *model.Partit
 			if isNull {
 				pos = 0
 			}
-			used = append(used, int(math.Abs(pos)%int64(pi.Num)))
+			used = append(used, int(math.Abs(pos%int64(pi.Num))))
 		} else {
 			used = []int{-1}
 			break
