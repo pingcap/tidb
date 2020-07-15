@@ -1004,6 +1004,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	})
 }
 
+// GetTextToLog return the query text to log.
 func (a *ExecStmt) GetTextToLog() string {
 	var sql string
 	sessVars := a.Ctx.GetSessionVars()
