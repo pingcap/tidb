@@ -105,7 +105,7 @@ func (s *MockSchemaSyncer) OwnerCheckAllVersions(ctx context.Context, latestVer 
 			return errors.Trace(ctx.Err())
 		case <-ticker.C:
 			ver := atomic.LoadInt64(&s.selfSchemaVersion)
-			if ver == latestVer {
+			if ver >= latestVer {
 				return nil
 			}
 		}
