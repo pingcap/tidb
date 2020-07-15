@@ -395,6 +395,9 @@ type SessionVars struct {
 	// If value is set to 2 , which means to force to send batch cop for any query. Value is set to 0 means never use batch cop.
 	AllowBatchCop int
 
+	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
+	AllowAutoRandExplicitInsert bool
+
 	// CorrelationThreshold is the guard to enable row count estimation using column order correlation.
 	CorrelationThreshold float64
 
@@ -693,6 +696,7 @@ func NewSessionVars() *SessionVars {
 		PrevFoundInPlanCache:        DefTiDBFoundInPlanCache,
 		FoundInPlanCache:            DefTiDBFoundInPlanCache,
 		SelectLimit:                 math.MaxUint64,
+		AllowAutoRandExplicitInsert: DefTiDBAllowAutoRandExplicitInsert,
 		EnableSlowLogMasking:        DefTiDBSlowLogMasking,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
@@ -1055,12 +1059,10 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		}
 	case AutoIncrementIncrement:
 		// AutoIncrementIncrement is valid in [1, 65535].
-		temp := tidbOptPositiveInt32(val, DefAutoIncrementIncrement)
-		s.AutoIncrementIncrement = adjustAutoIncrementParameter(temp)
+		s.AutoIncrementIncrement = tidbOptPositiveInt32(val, DefAutoIncrementIncrement)
 	case AutoIncrementOffset:
 		// AutoIncrementOffset is valid in [1, 65535].
-		temp := tidbOptPositiveInt32(val, DefAutoIncrementOffset)
-		s.AutoIncrementOffset = adjustAutoIncrementParameter(temp)
+		s.AutoIncrementOffset = tidbOptPositiveInt32(val, DefAutoIncrementOffset)
 	case MaxExecutionTime:
 		timeoutMS := tidbOptPositiveInt32(val, 0)
 		s.MaxExecutionTime = uint64(timeoutMS)
@@ -1284,6 +1286,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableSlowLogMasking = TiDBOptOn(val)
 	case TiDBEnableCollectExecutionInfo:
 		config.GetGlobalConfig().EnableCollectExecutionInfo = TiDBOptOn(val)
+	case TiDBAllowAutoRandExplicitInsert:
+		s.AllowAutoRandExplicitInsert = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
@@ -1704,16 +1708,4 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 // writeSlowLogItem writes a slow log item in the form of: "# ${key}:${value}"
 func writeSlowLogItem(buf *bytes.Buffer, key, value string) {
 	buf.WriteString(SlowLogRowPrefixStr + key + SlowLogSpaceMarkStr + value + "\n")
-}
-
-// adjustAutoIncrementParameter adjust the increment and offset of AutoIncrement.
-// AutoIncrementIncrement / AutoIncrementOffset is valid in [1, 65535].
-func adjustAutoIncrementParameter(temp int) int {
-	if temp <= 0 {
-		return 1
-	} else if temp > math.MaxUint16 {
-		return math.MaxUint16
-	} else {
-		return temp
-	}
 }
