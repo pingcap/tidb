@@ -369,7 +369,6 @@ func (rrs *ReaderRuntimeStats) String() string {
 // RuntimeStats is used to express the executor runtime information.
 type RuntimeStats interface {
 	GetActRows() int64
-	SetRowNum(int64)
 	String() string
 }
 
