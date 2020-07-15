@@ -589,8 +589,7 @@ func (ts *testSuite) TestAddRecordWithCtx(c *C) {
 	c.Assert(ts.se.NewTxn(context.Background()), IsNil)
 	txn, err := ts.se.Txn(true)
 	c.Assert(err, IsNil)
-	store := kv.NewStagingBufferStore(txn)
-	recordCtx := tables.NewCommonAddRecordCtx(len(tb.Cols()), store)
+	recordCtx := tables.NewCommonAddRecordCtx(len(tb.Cols()))
 	tables.SetAddRecordCtx(ts.se, recordCtx)
 	defer tables.ClearAddRecordCtx(ts.se)
 

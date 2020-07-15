@@ -419,7 +419,11 @@ const (
 	TiDBEnableClusteredIndex = "tidb_enable_clustered_index"
 
 	// TiDBSlowLogMasking indicates that whether masking the query data when log slow query.
+	// Deprecated: use TiDBLogDesensitization instead.
 	TiDBSlowLogMasking = "tidb_slow_log_masking"
+
+	// TiDBLogDesensitization indicates that whether desensitization when log query.
+	TiDBLogDesensitization = "tidb_log_desensitization"
 
 	// TiDBShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
 	TiDBShardAllocateStep = "tidb_shard_allocate_step"
@@ -519,10 +523,11 @@ const (
 	DefTiDBMetricSchemaStep            = 60 // 60s
 	DefTiDBMetricSchemaRangeDuration   = 60 // 60s
 	DefTiDBFoundInPlanCache            = false
-	DefTidbEnableCollectExecutionInfo  = false
+	DefTiDBEnableCollectExecutionInfo  = true
 	DefTiDBAllowAutoRandExplicitInsert = false
 	DefTiDBEnableClusteredIndex        = false
 	DefTiDBSlowLogMasking              = false
+	DefTiDBLogDesensitization          = false
 	DefTiDBShardAllocateStep           = math.MaxInt64
 	DefTiDBEnableTelemetry             = true
 )
