@@ -163,9 +163,6 @@ func (s *tikvStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bo
 		zap.Int("new region count", len(spResp.Regions)))
 
 	if !scatter {
-		if len(spResp.Regions) == 0 {
-			return batchResp
-		}
 		return batchResp
 	}
 
