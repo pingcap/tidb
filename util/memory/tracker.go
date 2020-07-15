@@ -166,19 +166,11 @@ func (t *Tracker) remove(oldChild *Tracker) {
 			found = true
 			break
 		}
-<<<<<<< HEAD
-
-		t.Consume(-oldChild.BytesConsumed())
-		oldChild.parent = nil
-		t.mu.children = append(t.mu.children[:i], t.mu.children[i+1:]...)
-		break
-=======
 	}
 	t.mu.Unlock()
 	if found {
 		oldChild.setParent(nil)
 		t.Consume(-oldChild.BytesConsumed())
->>>>>>> a9177fe... util/memory: avoid potential deadlock for Consume in remove (#16987)
 	}
 }
 
