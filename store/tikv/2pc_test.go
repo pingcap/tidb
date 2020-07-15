@@ -577,12 +577,9 @@ func (s *testCommitterSuite) TestUnsetPrimaryKey(c *C) {
 
 	txn = s.begin(c)
 	txn.SetOption(kv.Pessimistic, true)
-	txn.SetOption(kv.PresumeKeyNotExists, nil)
-	txn.SetOption(kv.PresumeKeyNotExistsError, kv.NewExistErrInfo("name", "value"))
 	_, _ = txn.us.Get(context.TODO(), key)
-	c.Assert(txn.Set(key, key), IsNil)
-	txn.DelOption(kv.PresumeKeyNotExistsError)
-	txn.DelOption(kv.PresumeKeyNotExists)
+	var flags kv.KeyFlags
+	c.Assert(txn.GetMemBuffer().SetWithFlags(key, flags.MarkPresumeKeyNotExists(), key), IsNil)
 	lockCtx := &kv.LockCtx{ForUpdateTS: txn.startTS, WaitStartTime: time.Now()}
 	err := txn.LockKeys(context.Background(), lockCtx, key)
 	c.Assert(err, NotNil)
@@ -691,11 +688,11 @@ func (s *testCommitterSuite) TestDeleteYourWriteCauseGhostPrimary(c *C) {
 	// insert k1, k2, k3 and delete k1
 	txn1 := s.begin(c)
 	txn1.DelOption(kv.Pessimistic)
-	txn1.SetOption(kv.PresumeKeyNotExists, nil)
-	txn1.SetOption(kv.PresumeKeyNotExistsError, kv.NewExistErrInfo("name", "value"))
 	txn1.store.txnLatches = nil
 	txn1.Get(context.Background(), k1)
-	txn1.Set(k1, []byte{0})
+	var flags kv.KeyFlags
+	flags = flags.MarkPresumeKeyNotExists()
+	txn1.GetMemBuffer().SetWithFlags(k1, flags, []byte{0})
 	txn1.Set(k2, []byte{1})
 	txn1.Set(k3, []byte{2})
 	txn1.Delete(k1)
@@ -732,20 +729,18 @@ func (s *testCommitterSuite) TestDeleteAllYourWrites(c *C) {
 	k2 := kv.Key("b")
 	k3 := kv.Key("c")
 
+	var flags kv.KeyFlags
+	flags = flags.MarkPresumeKeyNotExists()
+
 	// insert k1, k2, k3 and delete k1, k2, k3
 	txn1 := s.begin(c)
 	txn1.DelOption(kv.Pessimistic)
-	txn1.SetOption(kv.PresumeKeyNotExists, nil)
-	txn1.SetOption(kv.PresumeKeyNotExistsError, kv.NewExistErrInfo("name", "value"))
 	txn1.store.txnLatches = nil
-	txn1.Get(context.Background(), k1)
-	txn1.Set(k1, []byte{0})
+	txn1.GetMemBuffer().SetWithFlags(k1, flags, []byte{0})
 	txn1.Delete(k1)
-	txn1.Get(context.Background(), k2)
-	txn1.Set(k2, []byte{1})
+	txn1.GetMemBuffer().SetWithFlags(k2, flags, []byte{1})
 	txn1.Delete(k2)
-	txn1.Get(context.Background(), k3)
-	txn1.Set(k3, []byte{2})
+	txn1.GetMemBuffer().SetWithFlags(k3, flags, []byte{2})
 	txn1.Delete(k3)
 	err1 := txn1.Commit(context.Background())
 	c.Assert(err1, IsNil)
@@ -757,14 +752,14 @@ func (s *testCommitterSuite) TestDeleteAllYourWritesWithSFU(c *C) {
 	k2 := kv.Key("b")
 	k3 := kv.Key("c")
 
+	var flags kv.KeyFlags
+	flags = flags.MarkPresumeKeyNotExists()
+
 	// insert k1, k2, k2 and delete k1
 	txn1 := s.begin(c)
 	txn1.DelOption(kv.Pessimistic)
-	txn1.SetOption(kv.PresumeKeyNotExists, nil)
-	txn1.SetOption(kv.PresumeKeyNotExistsError, kv.NewExistErrInfo("name", "value"))
 	txn1.store.txnLatches = nil
-	txn1.Get(context.Background(), k1)
-	txn1.Set(k1, []byte{0})
+	txn1.GetMemBuffer().SetWithFlags(k1, flags, []byte{0})
 	txn1.Delete(k1)
 	err := txn1.LockKeys(context.Background(), &kv.LockCtx{}, k2, k3) // select * from t where x in (k2, k3) for update
 	c.Assert(err, IsNil)
