@@ -2154,6 +2154,7 @@ const (
 	AlterTableRenameIndex
 	AlterTableForce
 	AlterTableAddPartitions
+	AlterTableAlterPartition
 	AlterTableCoalescePartitions
 	AlterTableDropPartition
 	AlterTableTruncatePartition
@@ -2278,6 +2279,7 @@ type AlterTableSpec struct {
 	Num             uint64
 	Visibility      IndexVisibility
 	TiFlashReplica  *TiFlashReplicaSpec
+	PlacementSpecs  []*PlacementSpec
 }
 
 type TiFlashReplicaSpec struct {
@@ -2530,6 +2532,20 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord(" PARTITIONS ")
 			ctx.WritePlainf("%d", n.Num)
 		}
+	case AlterTableAlterPartition:
+		if len(n.PartitionNames) != 1 {
+			return errors.Errorf("Maybe partition options are combined.")
+		}
+
+		ctx.WriteKeyWord("ALTER PARTITION ")
+		ctx.WriteName(n.PartitionNames[0].O)
+		ctx.WritePlain(" ")
+
+		for i, spec := range n.PlacementSpecs {
+			if err := spec.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore AlterTableSpec.PlacementSpecs[%d]", i)
+			}
+		}
 	case AlterTableCoalescePartitions:
 		ctx.WriteKeyWord("COALESCE PARTITION ")
 		if n.NoWriteToBinlog {
@@ -2775,6 +2791,13 @@ func (n *AlterTableSpec) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.Position = node.(*ColumnPosition)
+	}
+	for i, spec := range n.PlacementSpecs {
+		node, ok := spec.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.PlacementSpecs[i] = node.(*PlacementSpec)
 	}
 	return v.Leave(n)
 }
@@ -3424,5 +3447,70 @@ func (n *FlashBackTableStmt) Accept(v Visitor) (Node, bool) {
 		}
 		n.Table = node.(*TableName)
 	}
+	return v.Leave(n)
+}
+
+type PlacementActionType int
+
+const (
+	PlacementAdd PlacementActionType = iota + 1
+)
+
+type PlacementRole int
+
+const (
+	PlacementRoleLeader PlacementRole = iota + 1
+	PlacementRoleFollower
+	PlacementRoleLearner
+	PlacementRoleVoter
+)
+
+type PlacementSpec struct {
+	node
+
+	Tp     PlacementActionType
+	Labels string
+	Role   PlacementRole
+	Count  uint64
+}
+
+func (n *PlacementSpec) Restore(ctx *format.RestoreCtx) error {
+	switch n.Tp {
+	case PlacementAdd:
+		ctx.WriteKeyWord("ADD PLACEMENT ")
+	default:
+		return errors.Errorf("invalid PlacementActionType: %d", n.Tp)
+	}
+
+	ctx.WriteKeyWord("LABEL")
+	ctx.WritePlain("=")
+	ctx.WriteString(n.Labels)
+
+	ctx.WriteKeyWord(" ROLE")
+	ctx.WritePlain("=")
+	switch n.Role {
+	case PlacementRoleFollower:
+		ctx.WriteKeyWord("FOLLOWER")
+	case PlacementRoleLeader:
+		ctx.WriteKeyWord("LEADER")
+	case PlacementRoleLearner:
+		ctx.WriteKeyWord("LEARNER")
+	case PlacementRoleVoter:
+		ctx.WriteKeyWord("VOTER")
+	default:
+		return errors.Errorf("invalid PlacementRole: %d", n.Role)
+	}
+
+	ctx.WriteKeyWord(" COUNT")
+	ctx.WritePlainf("=%d", n.Count)
+	return nil
+}
+
+func (n *PlacementSpec) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*PlacementSpec)
 	return v.Leave(n)
 }
