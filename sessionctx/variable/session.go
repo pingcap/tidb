@@ -688,8 +688,8 @@ type SessionVars struct {
 	// EnableClusteredIndex indicates whether to enable clustered index when creating a new table.
 	EnableClusteredIndex bool
 
-	// EnableSlowLogMasking indicates that whether masking the query data when log slow query.
-	EnableSlowLogMasking bool
+	// EnableLogDesensitization indicates that whether desensitization when log query.
+	EnableLogDesensitization bool
 
 	// PresumeKeyNotExists indicates lazy existence checking is enabled.
 	PresumeKeyNotExists bool
@@ -786,7 +786,7 @@ func NewSessionVars() *SessionVars {
 		SelectLimit:                 math.MaxUint64,
 		AllowAutoRandExplicitInsert: DefTiDBAllowAutoRandExplicitInsert,
 		EnableClusteredIndex:        DefTiDBEnableClusteredIndex,
-		EnableSlowLogMasking:        DefTiDBSlowLogMasking,
+		EnableLogDesensitization:    DefTiDBLogDesensitization,
 		ShardAllocateStep:           DefTiDBShardAllocateStep,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
@@ -1397,8 +1397,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.AllowAutoRandExplicitInsert = TiDBOptOn(val)
 	case TiDBEnableClusteredIndex:
 		s.EnableClusteredIndex = TiDBOptOn(val)
-	case TiDBSlowLogMasking:
-		s.EnableSlowLogMasking = TiDBOptOn(val)
+	case TiDBSlowLogMasking, TiDBLogDesensitization:
+		s.EnableLogDesensitization = TiDBOptOn(val)
 	case TiDBShardAllocateStep:
 		s.ShardAllocateStep = tidbOptInt64(val, DefTiDBShardAllocateStep)
 	}
