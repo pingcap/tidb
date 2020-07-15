@@ -386,7 +386,7 @@ type PhysicalTableScan struct {
 	Columns []*model.ColumnInfo
 	DBName  model.CIStr
 	Ranges  []*ranger.Range
-	pkCol   *expression.Column
+	PkCols  []*expression.Column
 
 	TableAsName *model.CIStr
 
@@ -399,7 +399,7 @@ type PhysicalTableScan struct {
 	rangeDecidedBy []*expression.Column
 
 	// HandleIdx is the index of handle, which is only used for admin check table.
-	HandleIdx int
+	HandleIdx []int
 
 	StoreType kv.StoreType
 
@@ -428,9 +428,7 @@ func (ts *PhysicalTableScan) Clone() (PhysicalPlan, error) {
 	}
 	clonedScan.Columns = cloneColInfos(ts.Columns)
 	clonedScan.Ranges = cloneRanges(ts.Ranges)
-	if ts.pkCol != nil {
-		clonedScan.pkCol = ts.pkCol.Clone().(*expression.Column)
-	}
+	clonedScan.PkCols = cloneCols(ts.PkCols)
 	clonedScan.TableAsName = ts.TableAsName
 	if ts.Hist != nil {
 		clonedScan.Hist = ts.Hist.Copy()
@@ -762,7 +760,7 @@ type PhysicalLock struct {
 
 	Lock ast.SelectLockType
 
-	TblID2Handle     map[int64][]*expression.Column
+	TblID2Handle     map[int64][]HandleCols
 	PartitionedTable []table.PartitionedTable
 }
 
@@ -939,7 +937,7 @@ type PhysicalUnionScan struct {
 
 	Conditions []expression.Expression
 
-	HandleCol *expression.Column
+	HandleCols HandleCols
 }
 
 // IsPartition returns true and partition ID if it works on a partition.

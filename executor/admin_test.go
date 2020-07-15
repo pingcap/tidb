@@ -706,6 +706,7 @@ func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	err = tk.ExecToErr("admin check table admin_test")
+	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals,
 		"[executor:8003]admin_test err:[admin:8223]index:<nil> != record:&admin.RecordData{Handle:-1, Values:[]types.Datum{types.Datum{k:0x1, decimal:0x0, length:0x0, i:-10, collation:\"\", b:[]uint8(nil), x:interface {}(nil)}}}")
 	c.Assert(executor.ErrAdminCheckTable.Equal(err), IsTrue)
@@ -715,7 +716,7 @@ func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 
 	// Add one row of index.
 	// Table count < index count.
-	// Index c2 has one more values ​​than table data: 0, and the handle 0 hasn't correlative record.
+	// Index c2 has one more values than table data: 0, and the handle 0 hasn't correlative record.
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
 	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(0), kv.IntHandle(0))
@@ -723,6 +724,7 @@ func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	err = tk.ExecToErr("admin check table admin_test")
+	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "handle 0, index:types.Datum{k:0x1, decimal:0x0, length:0x0, i:0, collation:\"\", b:[]uint8(nil), x:interface {}(nil)} != record:<nil>")
 
 	// Add one row of index.
@@ -740,6 +742,7 @@ func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	err = tk.ExecToErr("admin check table admin_test")
+	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "col c2, handle 2, index:types.Datum{k:0x1, decimal:0x0, length:0x0, i:13, collation:\"\", b:[]uint8(nil), x:interface {}(nil)} != record:types.Datum{k:0x1, decimal:0x0, length:0x0, i:12, collation:\"\", b:[]uint8(nil), x:interface {}(nil)}")
 
 	// Table count = index count.
@@ -753,6 +756,7 @@ func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	err = tk.ExecToErr("admin check table admin_test")
+	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "col c2, handle 10, index:types.Datum{k:0x1, decimal:0x0, length:0x0, i:19, collation:\"\", b:[]uint8(nil), x:interface {}(nil)} != record:types.Datum{k:0x1, decimal:0x0, length:0x0, i:20, collation:\"\", b:[]uint8(nil), x:interface {}(nil)}")
 
 	// Table count = index count.
@@ -766,6 +770,7 @@ func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	err = tk.ExecToErr("admin check table admin_test")
+	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "col c2, handle 10, index:types.Datum{k:0x1, decimal:0x0, length:0x0, i:19, collation:\"\", b:[]uint8(nil), x:interface {}(nil)} != record:types.Datum{k:0x1, decimal:0x0, length:0x0, i:20, collation:\"\", b:[]uint8(nil), x:interface {}(nil)}")
 
 	// Recover records.

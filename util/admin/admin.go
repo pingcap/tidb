@@ -393,13 +393,16 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 	return nil
 }
 
-func makeRowDecoder(t table.Table, sctx sessionctx.Context) *decoder.RowDecoder {
+func makeRowDecoder(t table.Table, sctx sessionctx.Context) (*decoder.RowDecoder, error) {
 	dbName := model.NewCIStr(sctx.GetSessionVars().CurrentDB)
-	exprCols, _ := expression.ColumnInfos2ColumnsAndNames(sctx, dbName, t.Meta().Name, t.Meta().Columns, t.Meta())
+	exprCols, _, err := expression.ColumnInfos2ColumnsAndNames(sctx, dbName, t.Meta().Name, t.Meta().Columns, t.Meta())
+	if err != nil {
+		return nil, err
+	}
 	mockSchema := expression.NewSchema(exprCols...)
 	decodeColsMap := decoder.BuildFullDecodeColMap(t, mockSchema)
 
-	return decoder.NewRowDecoder(t, decodeColsMap)
+	return decoder.NewRowDecoder(t, decodeColsMap), nil
 }
 
 func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Table, startKey kv.Key, cols []*table.Column, fn table.RecordIterFunc) error {
@@ -420,7 +423,10 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 		zap.Stringer("startKey", startKey),
 		zap.Stringer("key", it.Key()),
 		zap.Binary("value", it.Value()))
-	rowDecoder := makeRowDecoder(t, sessCtx)
+	rowDecoder, err := makeRowDecoder(t, sessCtx)
+	if err != nil {
+		return err
+	}
 	for it.Valid() && it.Key().HasPrefix(prefix) {
 		// first kv pair is row lock information.
 		// TODO: check valid lock

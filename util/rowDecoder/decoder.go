@@ -61,12 +61,12 @@ func NewRowDecoder(tbl table.Table, decodeColMap map[int64]Column) *RowDecoder {
 		tps[col.Offset] = &col.FieldType
 	}
 	return &RowDecoder{
-		tbl:           tbl,
-		mutRow:        chunk.MutRowFromTypes(tps),
-		columns:       decodeColMap,
-		colTypes:      colFieldMap,
-		defaultVals:   make([]types.Datum, len(cols)),
-		pkCols:        tables.TryGetCommonPkColumnIds(tbl.Meta()),
+		tbl:         tbl,
+		mutRow:      chunk.MutRowFromTypes(tps),
+		columns:     decodeColMap,
+		colTypes:    colFieldMap,
+		defaultVals: make([]types.Datum, len(cols)),
+		pkCols:      tables.TryGetCommonPkColumnIds(tbl.Meta()),
 	}
 }
 

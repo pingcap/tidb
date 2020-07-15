@@ -421,45 +421,45 @@ type PlanBuilder struct {
 }
 
 type handleColHelper struct {
-	id2HandleMapStack []map[int64][]*expression.Column
+	id2HandleMapStack []map[int64][]HandleCols
 	stackTail         int
 }
 
-func (hch *handleColHelper) appendColToLastMap(tblID int64, col *expression.Column) {
+func (hch *handleColHelper) appendColToLastMap(tblID int64, handleCols HandleCols) {
 	tailMap := hch.id2HandleMapStack[hch.stackTail-1]
-	tailMap[tblID] = append(tailMap[tblID], col)
+	tailMap[tblID] = append(tailMap[tblID], handleCols)
 }
 
-func (hch *handleColHelper) popMap() map[int64][]*expression.Column {
+func (hch *handleColHelper) popMap() map[int64][]HandleCols {
 	ret := hch.id2HandleMapStack[hch.stackTail-1]
 	hch.stackTail--
 	hch.id2HandleMapStack = hch.id2HandleMapStack[:hch.stackTail]
 	return ret
 }
 
-func (hch *handleColHelper) pushMap(m map[int64][]*expression.Column) {
+func (hch *handleColHelper) pushMap(m map[int64][]HandleCols) {
 	hch.id2HandleMapStack = append(hch.id2HandleMapStack, m)
 	hch.stackTail++
 }
 
-func (hch *handleColHelper) mergeAndPush(m1, m2 map[int64][]*expression.Column) {
-	newMap := make(map[int64][]*expression.Column, mathutil.Max(len(m1), len(m2)))
+func (hch *handleColHelper) mergeAndPush(m1, m2 map[int64][]HandleCols) {
+	newMap := make(map[int64][]HandleCols, mathutil.Max(len(m1), len(m2)))
 	for k, v := range m1 {
-		newMap[k] = make([]*expression.Column, len(v))
+		newMap[k] = make([]HandleCols, len(v))
 		copy(newMap[k], v)
 	}
 	for k, v := range m2 {
 		if _, ok := newMap[k]; ok {
 			newMap[k] = append(newMap[k], v...)
 		} else {
-			newMap[k] = make([]*expression.Column, len(v))
+			newMap[k] = make([]HandleCols, len(v))
 			copy(newMap[k], v)
 		}
 	}
 	hch.pushMap(newMap)
 }
 
-func (hch *handleColHelper) tailMap() map[int64][]*expression.Column {
+func (hch *handleColHelper) tailMap() map[int64][]HandleCols {
 	return hch.id2HandleMapStack[hch.stackTail-1]
 }
 
@@ -519,7 +519,7 @@ func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor
 		ctx:           sctx,
 		is:            is,
 		colMapper:     make(map[*ast.ColumnNameExpr]int),
-		handleHelper:  &handleColHelper{id2HandleMapStack: make([]map[int64][]*expression.Column, 0)},
+		handleHelper:  &handleColHelper{id2HandleMapStack: make([]map[int64][]HandleCols, 0)},
 		hintProcessor: processor,
 	}
 }
@@ -768,7 +768,7 @@ func getPathByIndexName(paths []*util.AccessPath, idxName model.CIStr, tblInfo *
 			return path
 		}
 	}
-	if isPrimaryIndex(idxName) && tblInfo.PKIsHandle {
+	if isPrimaryIndex(idxName) && (tblInfo.PKIsHandle || tblInfo.IsCommonHandle) {
 		return tablePath
 	}
 	return nil
@@ -1121,12 +1121,17 @@ func FindColumnInfoByID(colInfos []*model.ColumnInfo, id int64) *model.ColumnInf
 }
 
 func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName model.CIStr, tbl table.Table, idx *model.IndexInfo) (Plan, error) {
-	pkOffset := -1
+	var extraColHandle *expression.Column
+	var commonHandleCols []*expression.Column
+	var pkOffsets []int
 	tblInfo := tbl.Meta()
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(idx.Columns))...)
 	idxReaderCols := make([]*model.ColumnInfo, 0, len(idx.Columns))
 	tblReaderCols := make([]*model.ColumnInfo, 0, len(tbl.Cols()))
-	fullExprCols, _ := expression.TableInfo2SchemaAndNames(b.ctx, dbName, tblInfo)
+	fullExprCols, _, err := expression.TableInfo2SchemaAndNames(b.ctx, dbName, tblInfo)
+	if err != nil {
+		return nil, err
+	}
 	for _, idxCol := range idx.Columns {
 		for i, col := range tblInfo.Columns {
 			if idxCol.Name.L == col.Name.L {
@@ -1138,7 +1143,6 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 	}
 	idxCols, idxColLens := expression.IndexInfo2PrefixCols(tblReaderCols, schema.Columns, idx)
 	fullIdxCols, _ := expression.IndexInfo2Cols(tblReaderCols, schema.Columns, idx)
-	// Add generated columns to tblSchema and tblReaderCols.
 
 	is := PhysicalIndexScan{
 		Table:            tblInfo,
@@ -1157,20 +1161,35 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 	ts := PhysicalTableScan{Columns: tblReaderCols, Table: is.Table, TableAsName: &tblInfo.Name}.Init(b.ctx, b.getSelectOffset())
 	ts.SetSchema(schema.Clone())
 	ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
-	for offset, col := range ts.Columns {
-		if mysql.HasPriKeyFlag(col.Flag) {
-			pkOffset = offset
+	if tblInfo.IsCommonHandle {
+		pkOffsets = pkOffsets[:0]
+		pk := tables.FindPrimaryIndex(tblInfo)
+		commonHandleCols, _ = expression.IndexInfo2Cols(tblInfo.Columns, fullExprCols.Columns, pk)
+		for _, c := range commonHandleCols {
+			ts.schema.Append(c)
 		}
-	}
-	if !tbl.Meta().PKIsHandle || pkOffset == -1 {
-		ts.Columns = append(ts.Columns, model.NewExtraHandleColInfo())
-		handleCol := &expression.Column{
-			RetType:  types.NewFieldType(mysql.TypeLonglong),
-			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
-			ID:       model.ExtraHandleID,
+		for _, c := range tables.TryGetCommonPkColumns(tbl) {
+			ts.Columns = append(ts.Columns, c.ColumnInfo)
+			is.Columns = append(is.Columns, c.ColumnInfo)
+			pkOffsets = append(pkOffsets, len(ts.Columns)-1)
 		}
-		ts.schema.Append(handleCol)
-		pkOffset = len(ts.Columns) - 1
+	} else {
+		pkOffsets = pkOffsets[:0]
+		for offset, col := range ts.Columns {
+			if mysql.HasPriKeyFlag(col.Flag) {
+				pkOffsets = append(pkOffsets, offset)
+			}
+		}
+		if !tblInfo.PKIsHandle || len(pkOffsets) == 0 {
+			ts.Columns = append(ts.Columns, model.NewExtraHandleColInfo())
+			extraColHandle = &expression.Column{
+				RetType:  types.NewFieldType(mysql.TypeLonglong),
+				UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+				ID:       model.ExtraHandleID,
+			}
+			ts.schema.Append(extraColHandle)
+			pkOffsets = []int{len(ts.Columns) - 1}
+		}
 	}
 
 	if tbl.Meta().GetPartitionInfo() != nil {
@@ -1184,11 +1203,11 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 		indexPlan:        is,
 		tablePlan:        ts,
 		tblColHists:      is.stats.HistColl,
-		extraHandleCol:   nil,
-		commonHandleCols: nil,
+		extraHandleCol:   extraColHandle,
+		commonHandleCols: commonHandleCols,
 	}
-	ts.HandleIdx = pkOffset
-	is.initSchema(fullIdxCols, true)
+	ts.HandleIdx = pkOffsets
+	is.initSchema(append(fullIdxCols, commonHandleCols...), true)
 	rootT := finishCopTask(b.ctx, cop).(*rootTask)
 	if err := rootT.p.ResolveIndices(); err != nil {
 		return nil, err
@@ -2062,7 +2081,10 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		return nil, err
 	}
 	// Build Schema with DBName otherwise ColumnRef with DBName cannot match any Column in Schema.
-	schema, names := expression.TableInfo2SchemaAndNames(b.ctx, tn.Schema, tableInfo)
+	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx, tn.Schema, tableInfo)
+	if err != nil {
+		return nil, err
+	}
 	tableInPlan, ok := b.is.TableByID(tableInfo.ID)
 	if !ok {
 		return nil, errors.Errorf("Can't get table %s.", tableInfo.Name.O)
@@ -2465,12 +2487,14 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 		db := b.ctx.GetSessionVars().CurrentDB
 		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(db, tableInfo.Name.O)
 	}
-	schema, names := expression.TableInfo2SchemaAndNames(b.ctx, model.NewCIStr(""), tableInfo)
+	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx, model.NewCIStr(""), tableInfo)
+	if err != nil {
+		return nil, err
+	}
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 	mockTablePlan.SetSchema(schema)
 	mockTablePlan.names = names
 
-	var err error
 	p.GenCols, err = b.resolveGeneratedColumns(ctx, tableInPlan.Cols(), nil, mockTablePlan)
 	if err != nil {
 		return nil, err
@@ -2511,7 +2535,10 @@ func (b *PlanBuilder) buildSplitIndexRegion(node *ast.SplitRegionStmt) (Plan, er
 		return nil, ErrKeyDoesNotExist.GenWithStackByArgs(node.IndexName, tblInfo.Name)
 	}
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
-	schema, names := expression.TableInfo2SchemaAndNames(b.ctx, node.Table.Schema, tblInfo)
+	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx, node.Table.Schema, tblInfo)
+	if err != nil {
+		return nil, err
+	}
 	mockTablePlan.SetSchema(schema)
 	mockTablePlan.names = names
 
@@ -2621,17 +2648,12 @@ func (b *PlanBuilder) convertValue(valueItem ast.ExprNode, mockTablePlan Logical
 
 func (b *PlanBuilder) buildSplitTableRegion(node *ast.SplitRegionStmt) (Plan, error) {
 	tblInfo := node.Table.TableInfo
-	var pkCol *model.ColumnInfo
-	if tblInfo.PKIsHandle {
-		if col := tblInfo.GetPkColInfo(); col != nil {
-			pkCol = col
-		}
-	}
-	if pkCol == nil {
-		pkCol = model.NewExtraHandleColInfo()
-	}
+	handleColInfos := buildHandleColumnInfos(tblInfo)
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
-	schema, names := expression.TableInfo2SchemaAndNames(b.ctx, node.Table.Schema, tblInfo)
+	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx, node.Table.Schema, tblInfo)
+	if err != nil {
+		return nil, err
+	}
 	mockTablePlan.SetSchema(schema)
 	mockTablePlan.names = names
 
@@ -2643,35 +2665,24 @@ func (b *PlanBuilder) buildSplitTableRegion(node *ast.SplitRegionStmt) (Plan, er
 	if len(node.SplitOpt.ValueLists) > 0 {
 		values := make([][]types.Datum, 0, len(node.SplitOpt.ValueLists))
 		for i, valuesItem := range node.SplitOpt.ValueLists {
-			if len(valuesItem) > 1 {
-				return nil, ErrWrongValueCountOnRow.GenWithStackByArgs(i + 1)
-			}
-			value, err := b.convertValue(valuesItem[0], mockTablePlan, pkCol)
+			data, err := convertValueListToData(valuesItem, handleColInfos, i, b, mockTablePlan)
 			if err != nil {
 				return nil, err
 			}
-			values = append(values, []types.Datum{value})
+			values = append(values, data)
 		}
 		p.ValueLists = values
 		return p, nil
 	}
 
-	checkLowerUpperValue := func(valuesItem []ast.ExprNode, name string) (types.Datum, error) {
-		if len(valuesItem) != 1 {
-			return types.Datum{}, errors.Errorf("Split table region %s value count should be 1", name)
-		}
-		return b.convertValue(valuesItem[0], mockTablePlan, pkCol)
-	}
-	lowerValues, err := checkLowerUpperValue(node.SplitOpt.Lower, "lower")
+	p.Lower, err = convertValueListToData(node.SplitOpt.Lower, handleColInfos, lowerBound, b, mockTablePlan)
 	if err != nil {
 		return nil, err
 	}
-	upperValue, err := checkLowerUpperValue(node.SplitOpt.Upper, "upper")
+	p.Upper, err = convertValueListToData(node.SplitOpt.Upper, handleColInfos, upperBound, b, mockTablePlan)
 	if err != nil {
 		return nil, err
 	}
-	p.Lower = []types.Datum{lowerValues}
-	p.Upper = []types.Datum{upperValue}
 
 	maxSplitRegionNum := int64(config.GetGlobalConfig().SplitRegionMaxNum)
 	if node.SplitOpt.Num > maxSplitRegionNum {
@@ -2681,6 +2692,56 @@ func (b *PlanBuilder) buildSplitTableRegion(node *ast.SplitRegionStmt) (Plan, er
 	}
 	p.Num = int(node.SplitOpt.Num)
 	return p, nil
+}
+
+func buildHandleColumnInfos(tblInfo *model.TableInfo) []*model.ColumnInfo {
+	switch {
+	case tblInfo.PKIsHandle:
+		if col := tblInfo.GetPkColInfo(); col != nil {
+			return []*model.ColumnInfo{col}
+		}
+	case tblInfo.IsCommonHandle:
+		pkIdx := tables.FindPrimaryIndex(tblInfo)
+		pkCols := make([]*model.ColumnInfo, 0, len(pkIdx.Columns))
+		cols := tblInfo.Columns
+		for _, idxCol := range pkIdx.Columns {
+			pkCols = append(pkCols, cols[idxCol.Offset])
+		}
+		return pkCols
+	default:
+		return []*model.ColumnInfo{model.NewExtraHandleColInfo()}
+	}
+	return nil
+}
+
+const (
+	lowerBound int = -1
+	upperBound int = -2
+)
+
+func convertValueListToData(valueList []ast.ExprNode, handleColInfos []*model.ColumnInfo, rowIdx int,
+	b *PlanBuilder, mockTablePlan *LogicalTableDual) ([]types.Datum, error) {
+	if len(valueList) != len(handleColInfos) {
+		var err error
+		switch rowIdx {
+		case lowerBound:
+			err = errors.Errorf("Split table region lower value count should be %d", len(handleColInfos))
+		case upperBound:
+			err = errors.Errorf("Split table region upper value count should be %d", len(handleColInfos))
+		default:
+			err = ErrWrongValueCountOnRow.GenWithStackByArgs(rowIdx)
+		}
+		return nil, err
+	}
+	data := make([]types.Datum, 0, len(handleColInfos))
+	for i, v := range valueList {
+		convertedDatum, err := b.convertValue(v, mockTablePlan, handleColInfos[i])
+		if err != nil {
+			return nil, err
+		}
+		data = append(data, convertedDatum)
+	}
+	return data, nil
 }
 
 func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, error) {

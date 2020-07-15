@@ -716,8 +716,11 @@ func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 }
 
 // TableInfo2SchemaAndNames converts the TableInfo to the schema and name slice.
-func TableInfo2SchemaAndNames(ctx sessionctx.Context, dbName model.CIStr, tbl *model.TableInfo) (*Schema, []*types.FieldName) {
-	cols, names := ColumnInfos2ColumnsAndNames(ctx, dbName, tbl.Name, tbl.Columns, tbl)
+func TableInfo2SchemaAndNames(ctx sessionctx.Context, dbName model.CIStr, tbl *model.TableInfo) (*Schema, []*types.FieldName, error) {
+	cols, names, err := ColumnInfos2ColumnsAndNames(ctx, dbName, tbl.Name, tbl.Columns, tbl)
+	if err != nil {
+		return nil, nil, err
+	}
 	keys := make([]KeyInfo, 0, len(tbl.Indices)+1)
 	for _, idx := range tbl.Indices {
 		if !idx.Unique || idx.State != model.StatePublic {
@@ -756,11 +759,11 @@ func TableInfo2SchemaAndNames(ctx sessionctx.Context, dbName model.CIStr, tbl *m
 	}
 	schema := NewSchema(cols...)
 	schema.SetUniqueKeys(keys)
-	return schema, names
+	return schema, names, nil
 }
 
 // ColumnInfos2ColumnsAndNames converts the ColumnInfo to the *Column and NameSlice.
-func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.CIStr, colInfos []*model.ColumnInfo, tblInfo *model.TableInfo) ([]*Column, types.NameSlice) {
+func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.CIStr, colInfos []*model.ColumnInfo, tblInfo *model.TableInfo) ([]*Column, types.NameSlice, error) {
 	columns := make([]*Column, 0, len(colInfos))
 	names := make([]*types.FieldName, 0, len(colInfos))
 	for i, col := range colInfos {
@@ -793,26 +796,26 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 		if col.IsGenerated() && !col.GeneratedStored {
 			expr, err := generatedexpr.ParseExpression(col.GeneratedExprString)
 			if err != nil {
-				terror.Log(err)
+				return nil, nil, errors.Trace(err)
 			}
 			expr, err = generatedexpr.SimpleResolveName(expr, tblInfo)
 			if err != nil {
-				terror.Log(err)
+				return nil, nil, errors.Trace(err)
 			}
 			e, err := RewriteAstExpr(ctx, expr, mockSchema, names)
 			if err != nil {
-				terror.Log(err)
+				return nil, nil, errors.Trace(err)
 			}
 			if e != nil {
 				columns[i].VirtualExpr = e.Clone()
 			}
 			columns[i].VirtualExpr, err = columns[i].VirtualExpr.ResolveIndices(mockSchema)
 			if err != nil {
-				terror.Log(err)
+				return nil, nil, errors.Trace(err)
 			}
 		}
 	}
-	return columns, names
+	return columns, names, nil
 }
 
 // NewValuesFunc creates a new values function.
