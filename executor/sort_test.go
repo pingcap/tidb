@@ -66,10 +66,11 @@ func (s *testSerialSuite1) TestSortInDisk(c *C) {
 }
 
 func (s *testSerialSuite1) TestIssue16696(c *C) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.OOMUseTmpStorage = true
-	})
+	originCfg := config.GetGlobalConfig()
+	newConf := *originCfg
+	newConf.OOMUseTmpStorage = true
+	config.StoreGlobalConfig(&newConf)
+	defer config.StoreGlobalConfig(originCfg)
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill", "return(true)"), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill"), IsNil)
