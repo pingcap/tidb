@@ -35,6 +35,7 @@ type testIntegrationSuite struct {
 
 func newStoreWithBootstrap() (kv.Storage, error) {
 	// TODO: remove this and find out the root cause of race.
+	// See more in https://github.com/pingcap/tidb/issues/18526
 	config.GetGlobalConfig().EnableCollectExecutionInfo = false
 	store, err := mockstore.NewMockStore()
 	if err != nil {
