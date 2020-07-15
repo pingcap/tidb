@@ -127,13 +127,14 @@ func (s *partitionProcessor) findUsedPartitions(ds *DataSource, pi *model.Partit
 		partIdx[i].Index = i
 		colLen = append(colLen, types.UnspecifiedLength)
 	}
-	ranges, _, err := ranger.DetachSimpleCondAndBuildRangeForIndex(ds.SCtx(), ds.allConds, partIdx, colLen)
+	datcher, err := ranger.DetachCondAndBuildRangeForIndex(ds.SCtx(), ds.allConds, partIdx, colLen)
 	if err != nil {
 		return nil, err
 	}
-	used := make([]int, 0, 1)
+	ranges := datcher.Ranges
+	used := make([]int, 0, len(ranges))
 	for _, r := range ranges {
-		if r.IsPoint(ds.ctx.GetSessionVars().StmtCtx) {
+		if r.IsPointNullable(ds.ctx.GetSessionVars().StmtCtx) {
 			pos, isNull, err := pe.EvalInt(ds.ctx, chunk.MutRowFromDatums(r.HighVal).ToRow())
 			if err != nil {
 				return nil, err
@@ -143,7 +144,7 @@ func (s *partitionProcessor) findUsedPartitions(ds *DataSource, pi *model.Partit
 			}
 			used = append(used, int(math.Abs(pos)%int64(pi.Num)))
 		} else {
-			used = []int{ -1 }
+			used = []int{-1}
 			break
 		}
 	}
