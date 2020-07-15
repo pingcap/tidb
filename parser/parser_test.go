@@ -70,7 +70,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"delayed", "high_priority", "low_priority",
 		"cumeDist", "denseRank", "firstValue", "lag", "lastValue", "lead", "nthValue", "ntile",
 		"over", "percentRank", "rank", "row", "rows", "rowNumber", "window", "linear",
-		"match", "until",
+		"match", "until", "placement",
 		// TODO: support the following keywords
 		// "with",
 	}
@@ -107,6 +107,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"max_connections_per_hour", "max_queries_per_hour", "max_updates_per_hour", "max_user_connections", "event", "reload", "routine", "temporary",
 		"following", "preceding", "unbounded", "respect", "nulls", "current", "last", "against", "expansion",
 		"chain", "error", "general", "nvarchar", "pack_keys", "parser", "shard_row_id_bits", "pre_split_regions",
+		"label", "role", "count",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -2570,6 +2571,22 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE members REORGANIZE PARTITION p1,p2,p3 INTO ( PARTITION s0 VALUES LESS THAN (1960), PARTITION s1 VALUES LESS THAN (1970));", true, "ALTER TABLE `members` REORGANIZE PARTITION `p1`,`p2`,`p3` INTO (PARTITION `s0` VALUES LESS THAN (1960), PARTITION `s1` VALUES LESS THAN (1970))"},
 		{"alter table t reorganize partition remove partition;", false, ""},
 		{"alter table t reorganize partition no_write_to_binlog remove into (partition p0 VALUES LESS THAN (1991));", true, "ALTER TABLE `t` REORGANIZE PARTITION NO_WRITE_TO_BINLOG `remove` INTO (PARTITION `p0` VALUES LESS THAN (1991))"},
+
+		// alter placement rules
+		{"ALTER TABLE t ALTER PARTITION p ADD PLACEMENT LABEL='+zone=zone1' ROLE=LEADER COUNT=1", true, "ALTER TABLE `t` ALTER PARTITION `p` ADD PLACEMENT LABEL='+zone=zone1' ROLE=LEADER COUNT=1"},
+		{"ALTER TABLE t ALTER PARTITION p ADD PLACEMENT LABEL='-zone=zone1' ROLE=LEADER COUNT=1", true, "ALTER TABLE `t` ALTER PARTITION `p` ADD PLACEMENT LABEL='-zone=zone1' ROLE=LEADER COUNT=1"},
+		{"ALTER TABLE t ALTER PARTITION p ADD PLACEMENT LABEL='+zone=zone1,-zone=zone2' ROLE=LEADER COUNT=1", true, "ALTER TABLE `t` ALTER PARTITION `p` ADD PLACEMENT LABEL='+zone=zone1,-zone=zone2' ROLE=LEADER COUNT=1"},
+		{"ALTER TABLE t ALTER PARTITION p ADD PLACEMENT LABEL='+zone=zone1' ROLE=FOLLOWER COUNT=1", true, "ALTER TABLE `t` ALTER PARTITION `p` ADD PLACEMENT LABEL='+zone=zone1' ROLE=FOLLOWER COUNT=1"},
+		{"ALTER TABLE t ALTER PARTITION p ADD PLACEMENT ROLE=LEARNER LABEL='+zone=zone1' COUNT=1", true, "ALTER TABLE `t` ALTER PARTITION `p` ADD PLACEMENT LABEL='+zone=zone1' ROLE=LEARNER COUNT=1"},
+		{"ALTER TABLE t ALTER PARTITION p ADD PLACEMENT COUNT=1 LABEL='+zone=zone1' ROLE=VOTER", true, "ALTER TABLE `t` ALTER PARTITION `p` ADD PLACEMENT LABEL='+zone=zone1' ROLE=VOTER COUNT=1"},
+		{"ALTER TABLE t ALTER PARTITION p ADD PLACEMENT LABEL= ROLE=follower COUNT=1;", false, ""},
+		{"ALTER TABLE t ALTER PARTITION p ADD PLACEMENT LABEL='+zone=gh' ROLE=follower COUNT=-1;", false, ""},
+		{"ALTER TABLE t ALTER PARTITION p ADD PLACEMENT LABEL='+zone=gh' ROLE=follower COUNT=0;", false, ""},
+		{"ALTER TABLE t ALTER PARTITION p ADD PLACEMENT LABEL='+zone=gh' ROLE=follower COUNT=1 COUNT=2;", false, ""},
+		{"ALTER TABLE t ALTER PARTITION p ADD PLACEMENT LABEL='+zone=gh' ROLE=follower COUNT=1 ROLE=voter;", false, ""},
+		{"ALTER TABLE t ALTER PARTITION p ADD PLACEMENT LABEL='+zone=gh' ROLE=follower COUNT=1 LABEL='ttt';", false, ""},
+		{"ALTER TABLE t ALTER PARTITION p ADD PLACEMENT LABEL='' ROLE=follower COUNT=1;", false, ""},
+		{"ALTER TABLE t ALTER PARTITION p", false, ""},
 
 		// For create index statement
 		{"CREATE INDEX idx ON t (a)", true, "CREATE INDEX `idx` ON `t` (`a`)"},
