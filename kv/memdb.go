@@ -94,12 +94,12 @@ func (m *memDB) Reset() {
 	m.buffers = m.buffers[:1]
 }
 
-func (m *memDB) GetStagingBuffer(h StagingHandler) StagingBuffer {
-	if h == InvalidStagingHandler {
+func (m *memDB) GetStagingBuffer(h StagingHandle) StagingBuffer {
+	if h == InvalidStagingHandle {
 		return nil
 	}
 	idx := int(h) - 1
-	if h == LastActiveStagingHandler {
+	if h == LastActiveStagingHandle {
 		idx = len(m.buffers) - 1
 	}
 	return sandboxWrapper{m.buffers[idx]}
@@ -243,12 +243,12 @@ func (m *memDB) IterReverse(k Key) (Iterator, error) {
 	return it, nil
 }
 
-func (m *memDB) Staging() StagingHandler {
+func (m *memDB) Staging() StagingHandle {
 	m.buffers = append(m.buffers, m.getStagingBuffer().Derive())
-	return StagingHandler(len(m.buffers))
+	return StagingHandle(len(m.buffers))
 }
 
-func (m *memDB) Release(h StagingHandler) (int, error) {
+func (m *memDB) Release(h StagingHandle) (int, error) {
 	if int(h) != len(m.buffers) {
 		// This should never happens in production environmen.
 		// Use panic to make debug easier.
@@ -264,7 +264,7 @@ func (m *memDB) Release(h StagingHandler) (int, error) {
 	return count, nil
 }
 
-func (m *memDB) Cleanup(h StagingHandler) {
+func (m *memDB) Cleanup(h StagingHandle) {
 	if int(h) > len(m.buffers) {
 		return
 	}

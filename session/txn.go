@@ -49,9 +49,9 @@ type TxnState struct {
 	kv.Transaction
 	txnFuture *txnFuture
 
-	stagingHandler kv.StagingHandler
-	mutations      map[int64]*binlog.TableMutation
-	dirtyTableOP   []dirtyTableOperation
+	stagingHandle kv.StagingHandle
+	mutations     map[int64]*binlog.TableMutation
+	dirtyTableOP  []dirtyTableOperation
 
 	// If doNotCommit is not nil, Commit() will not commit the transaction.
 	// doNotCommit flag may be set when StmtCommit fail.
@@ -63,51 +63,51 @@ func (st *TxnState) init() {
 }
 
 func (st *TxnState) initStmtBuf() {
-	if st.stagingHandler == kv.InvalidStagingHandler {
-		st.stagingHandler = st.Transaction.GetMemBuffer().Staging()
+	if st.stagingHandle == kv.InvalidStagingHandle {
+		st.stagingHandle = st.Transaction.GetMemBuffer().Staging()
 	}
 }
 
 func (st *TxnState) stmtBuf() kv.StagingBuffer {
-	if st.stagingHandler == kv.InvalidStagingHandler {
+	if st.stagingHandle == kv.InvalidStagingHandle {
 		return nil
 	}
-	return st.GetMemBuffer().GetStagingBuffer(st.stagingHandler)
+	return st.GetMemBuffer().GetStagingBuffer(st.stagingHandle)
 }
 
 func (st *TxnState) stmtBufLen() int {
-	if st.stagingHandler == kv.InvalidStagingHandler {
+	if st.stagingHandle == kv.InvalidStagingHandle {
 		return 0
 	}
-	return st.GetMemBuffer().GetStagingBuffer(st.stagingHandler).Len()
+	return st.GetMemBuffer().GetStagingBuffer(st.stagingHandle).Len()
 }
 
 func (st *TxnState) stmtBufSize() int {
-	if st.stagingHandler == kv.InvalidStagingHandler {
+	if st.stagingHandle == kv.InvalidStagingHandle {
 		return 0
 	}
-	return st.GetMemBuffer().GetStagingBuffer(st.stagingHandler).Size()
+	return st.GetMemBuffer().GetStagingBuffer(st.stagingHandle).Size()
 }
 
 func (st *TxnState) stmtBufGet(ctx context.Context, k kv.Key) ([]byte, error) {
-	if st.stagingHandler == kv.InvalidStagingHandler {
+	if st.stagingHandle == kv.InvalidStagingHandle {
 		return nil, kv.ErrNotExist
 	}
-	return st.GetMemBuffer().GetStagingBuffer(st.stagingHandler).Get(ctx, k)
+	return st.GetMemBuffer().GetStagingBuffer(st.stagingHandle).Get(ctx, k)
 }
 
 func (st *TxnState) flushStmtBuf() (int, error) {
-	if st.stagingHandler == kv.InvalidStagingHandler {
+	if st.stagingHandle == kv.InvalidStagingHandle {
 		return 0, nil
 	}
-	return st.Transaction.GetMemBuffer().Release(st.stagingHandler)
+	return st.Transaction.GetMemBuffer().Release(st.stagingHandle)
 }
 
 func (st *TxnState) cleanupStmtBuf() {
-	if st.stagingHandler == kv.InvalidStagingHandler {
+	if st.stagingHandle == kv.InvalidStagingHandle {
 		return
 	}
-	st.Transaction.GetMemBuffer().Cleanup(st.stagingHandler)
+	st.Transaction.GetMemBuffer().Cleanup(st.stagingHandle)
 }
 
 // Size implements the MemBuffer interface.
@@ -195,7 +195,7 @@ func (st *TxnState) changePendingToValid() error {
 }
 
 func (st *TxnState) changeToInvalid() {
-	st.stagingHandler = kv.InvalidStagingHandler
+	st.stagingHandle = kv.InvalidStagingHandle
 	st.Transaction = nil
 	st.txnFuture = nil
 }
@@ -240,7 +240,7 @@ func (st *TxnState) Commit(ctx context.Context) error {
 	if len(st.mutations) != 0 || len(st.dirtyTableOP) != 0 || st.stmtBufLen() != 0 {
 		logutil.BgLogger().Error("the code should never run here",
 			zap.String("TxnState", st.GoString()),
-			zap.Int("staging handler", int(st.stagingHandler)),
+			zap.Int("staging handler", int(st.stagingHandle)),
 			zap.Stack("something must be wrong"))
 		return errors.Trace(kv.ErrInvalidTxn)
 	}
@@ -362,7 +362,7 @@ func (st *TxnState) GetUnionStore() kv.UnionStore {
 
 func (st *TxnState) cleanup() {
 	st.cleanupStmtBuf()
-	st.stagingHandler = kv.InvalidStagingHandler
+	st.stagingHandle = kv.InvalidStagingHandle
 	for key := range st.mutations {
 		delete(st.mutations, key)
 	}

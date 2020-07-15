@@ -140,14 +140,14 @@ type Mutator interface {
 	Delete(k Key) error
 }
 
-// StagingHandler is the reference of a staging buffer.
-type StagingHandler int
+// StagingHandle is the reference of a staging buffer.
+type StagingHandle int
 
 var (
-	// InvalidStagingHandler is an invalid handler, MemBuffer will check handler to ensure safety.
-	InvalidStagingHandler StagingHandler = 0
-	// LastActiveStagingHandler is an special handler which always point to the last active staging buffer.
-	LastActiveStagingHandler StagingHandler = -1
+	// InvalidStagingHandle is an invalid handler, MemBuffer will check handler to ensure safety.
+	InvalidStagingHandle StagingHandle = 0
+	// LastActiveStagingHandle is an special handler which always point to the last active staging buffer.
+	LastActiveStagingHandle StagingHandle = -1
 )
 
 // RetrieverMutator is the interface that groups Retriever and Mutator interfaces.
@@ -182,16 +182,15 @@ type MemBuffer interface {
 	// Staging create a new staging buffer inside the MemBuffer.
 	// Subsequent writes will be temporarily stored in this new staging buffer.
 	// When you think all modifications looks good, you can call `Release` to public all of them to the upper level buffer.
-	Staging() StagingHandler
+	Staging() StagingHandle
 	// Release publish all modifications in the lastest staging buffer to upper level.
-	Release(StagingHandler) (int, error)
-	// Cleanup cleanup the resources referenced by the StagingHandler.
+	Release(StagingHandle) (int, error)
+	// Cleanup cleanup the resources referenced by the StagingHandle.
 	// If the changes are not published by `Release`, they will be discarded.
-	Cleanup(StagingHandler)
+	Cleanup(StagingHandle)
 	// GetStagingBuffer returns the specified staging buffer
-	GetStagingBuffer(StagingHandler) StagingBuffer
+	GetStagingBuffer(StagingHandle) StagingBuffer
 
-	// GetWithOpts(opts *MemDBGetOptions, k Key) ([]byte, error)
 	// Size returns sum of keys and values length.
 	Size() int
 	// Len returns the number of entries in the DB.
