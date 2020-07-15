@@ -401,13 +401,13 @@ func (e *DDLExec) getRecoverTableByTableName(s *ast.RecoverTableStmt, t *meta.Me
 	// TODO: only search recent `e.JobNum` DDL jobs.
 	for i := len(jobs) - 1; i > 0; i-- {
 		job = jobs[i]
-		if job.Type != model.ActionDropTable && job.Type != model.ActionTruncateTable {
-			continue
-		}
 		// Check GC safe point for getting snapshot infoSchema.
 		err = gcutil.ValidateSnapshotWithGCSafePoint(job.StartTS, gcSafePoint)
 		if err != nil {
 			return nil, nil, err
+		}
+		if job.Type != model.ActionDropTable && job.Type != model.ActionTruncateTable {
+			continue
 		}
 		// Get the snapshot infoSchema before drop table.
 		snapInfo, err := dom.GetSnapshotInfoSchema(job.StartTS)
