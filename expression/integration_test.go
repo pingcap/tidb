@@ -5987,6 +5987,39 @@ func (s *testIntegrationSerialSuite) TestCollateConstantPropagation(c *C) {
 	tk.MustExec("insert into t values ('a', 'a');")
 	tk.MustQuery("select * from t t1, t t2 where  t2.b = 'A' and lower(concat(t1.a , '' ))  = t2.b;").Check(testkit.Rows("a a a a"))
 }
+
+func (s *testIntegrationSerialSuite) TestMixCollation(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk.MustGetErrMsg(`select 'a' collate utf8mb4_bin = 'a' collate utf8mb4_general_ci;`, "[expression:1267]Illegal mix of collations (utf8mb4_bin,EXPLICIT) and (utf8mb4_general_ci,EXPLICIT) for operation 'eq'")
+
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`create table t (
+    				mb4general varchar(10) charset utf8mb4 collate utf8mb4_general_ci,
+					mb4unicode varchar(10) charset utf8mb4 collate utf8mb4_unicode_ci,
+					mb4bin     varchar(10) charset utf8mb4 collate utf8mb4_bin,
+					general    varchar(10) charset utf8 collate utf8_general_ci,
+					unicode    varchar(10) charset utf8 collate utf8_unicode_ci,
+					bin        varchar(10) charset utf8 collate utf8_bin
+				);`)
+	tk.MustExec("insert into t values ('s', 's', 's', 's', 's', 's');")
+	tk.MustGetErrMsg("select * from t where mb4unicode = mb4general;", "[expression:1267]Illegal mix of collations (utf8mb4_unicode_ci,IMPLICIT) and (utf8mb4_general_ci,IMPLICIT) for operation 'eq'")
+	tk.MustGetErrMsg("select * from t where unicode = general;", "[expression:1267]Illegal mix of collations (utf8_unicode_ci,IMPLICIT) and (utf8_general_ci,IMPLICIT) for operation 'eq'")
+	tk.MustQuery("select * from t where mb4unicode = mb4bin;").Check(testkit.Rows("s s s s s s"))
+	tk.MustQuery("select * from t where general = mb4unicode;").Check(testkit.Rows("s s s s s s"))
+	tk.MustQuery("select * from t where unicode = mb4unicode;").Check(testkit.Rows("s s s s s s"))
+	tk.MustQuery("select concat(mb4general, mb4unicode, mb4bin) from t;").Check(testkit.Rows("sss"))
+	tk.MustQuery("select concat(mb4unicode, mb4general, 's' collate utf8mb4_general_ci) from t;").Check(testkit.Rows("sss"))
+	tk.MustQuery("select collation(concat(mb4unicode, mb4bin, concat(mb4general))) from t;").Check(testkit.Rows("utf8mb4_general_ci"))
+
+	//it is legal sql in mysql
+	tk.MustGetErrMsg("select concat(mb4unicode, mb4general) from t;", "[expression:1267]Illegal mix of collations (utf8mb4_unicode_ci,IMPLICIT) and (utf8mb4_general_ci,IMPLICIT) for operation 'concat'")
+	tk.MustGetErrMsg("select concat(unicode, general) from t;", "[expression:1267]Illegal mix of collations (utf8_unicode_ci,IMPLICIT) and (utf8_general_ci,IMPLICIT) for operation 'concat'")
+}
+
 func (s *testIntegrationSerialSuite) prepare4Join(c *C) *testkit.TestKit {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("USE test")

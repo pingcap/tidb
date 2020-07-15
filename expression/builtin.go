@@ -110,18 +110,60 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expressi
 
 func checkIllegalMixCollation(funcName string, args []Expression) error {
 	firstExplicitCollation := ""
+	// curCoercibility := CoercibilityIgnorable
+	// curCollation := ""
+	// noConflict := true
+	// recode collation for better error message if needed
+	// conflictCollation := make([]string, 2)
 	for _, arg := range args {
 		if arg.GetType().EvalType() != types.ETString {
 			continue
 		}
 		if arg.Coercibility() == CoercibilityExplicit {
 			if firstExplicitCollation == "" {
+				// noConflict = true
+				// curCoercibility = CoercibilityExplicit
 				firstExplicitCollation = arg.GetType().Collate
+				continue
 			} else if firstExplicitCollation != arg.GetType().Collate {
 				return collate.ErrIllegalMixCollation.GenWithStackByArgs(firstExplicitCollation, "EXPLICIT", arg.GetType().Collate, "EXPLICIT", funcName)
 			}
 		}
+
+		// if arg.Coercibility() < curCoercibility {
+		// 	noConflict = true
+		// 	curCoercibility = arg.Coercibility()
+		// 	curCollation = arg.GetType().Collate
+		// 	continue
+		// }
+
+		// if arg.Coercibility() == curCoercibility {
+		// 	p1 := collationPriority[strings.ToLower(curCollation)]
+		// 	p2 := collationPriority[strings.ToLower(arg.GetType().Collate)]
+
+		// 	if p1 == p2 {
+		// 		noConflict = false
+		// 		conflictCollation[0] = curCollation
+		// 		conflictCollation[1] = arg.GetType().Collate
+		// 	}
+
+		// 	if p1 < p2 {
+		// 		noConflict = true
+		// 		curCollation = arg.GetType().Collate
+		// 	}
+		// }
 	}
+
+	// if !noConflict {
+	// 	exp := ""
+	// 	if curCoercibility == CoercibilityExplicit {
+	// 		exp = "EXPLICIT"
+	// 	} else {
+	// 		exp = "IMPLICIT"
+	// 	}
+	// 	return collate.ErrIllegalMixCollation.GenWithStackByArgs(conflictCollation[0], exp, conflictCollation[1], exp, funcName)
+	// }
+
 	return nil
 }
 

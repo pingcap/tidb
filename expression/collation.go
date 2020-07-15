@@ -114,20 +114,24 @@ var (
 
 	// collationPriority is the priority when infer the result collation, the priority of collation a > b iff collationPriority[a] > collationPriority[b]
 	collationPriority = map[string]int{
-		charset.CollationASCII:   0,
-		charset.CollationLatin1:  1,
-		"utf8_general_ci":        2,
-		charset.CollationUTF8:    3,
-		"utf8mb4_general_ci":     4,
-		charset.CollationUTF8MB4: 5,
-		charset.CollationBin:     6,
+		charset.CollationASCII:   1,
+		charset.CollationLatin1:  2,
+		"utf8_general_ci":        3,
+		"utf8_unicode_ci":        3,
+		charset.CollationUTF8:    4,
+		"utf8mb4_general_ci":     5,
+		"utf8mb4_unicode_ci":     5,
+		charset.CollationUTF8MB4: 6,
+		charset.CollationBin:     7,
 	}
 
 	// CollationStrictness indicates the strictness of comparison of the collation. The unequal order in a weak collation also holds in a strict collation.
 	// For example, if a < b in a weak collation(e.g. general_ci), then there must be a < b in a strict collation(e.g. _bin).
 	CollationStrictness = map[string]int{
 		"utf8_general_ci":        0,
+		"utf8_unicode_ci":        0,
 		"utf8mb4_general_ci":     0,
+		"utf8mb4_unicode_ci":     0,
 		charset.CollationASCII:   1,
 		charset.CollationLatin1:  1,
 		charset.CollationUTF8:    1,
@@ -171,7 +175,7 @@ func deriveCoercibilityForColumn(c *Column) Coercibility {
 // DeriveCollationFromExprs derives collation information from these expressions.
 func DeriveCollationFromExprs(ctx sessionctx.Context, exprs ...Expression) (dstCharset, dstCollation string) {
 	curCoer := CoercibilityCoercible
-	curCollationPriority := -1
+	curCollationPriority := 0
 	dstCharset, dstCollation = charset.GetDefaultCharsetAndCollate()
 	if ctx != nil && ctx.GetSessionVars() != nil {
 		dstCharset, dstCollation = ctx.GetSessionVars().GetCharsetInfo()
@@ -189,17 +193,14 @@ func DeriveCollationFromExprs(ctx sessionctx.Context, exprs ...Expression) (dstC
 
 		coer := e.Coercibility()
 		ft := e.GetType()
-		collationPriority, ok := collationPriority[strings.ToLower(ft.Collate)]
-		if !ok {
-			collationPriority = -1
-		}
+		collationPriority := collationPriority[strings.ToLower(ft.Collate)]
 		if coer != curCoer {
 			if coer < curCoer {
 				curCoer, curCollationPriority, dstCharset, dstCollation = coer, collationPriority, ft.Charset, ft.Collate
 			}
 			continue
 		}
-		if !ok || collationPriority <= curCollationPriority {
+		if collationPriority <= curCollationPriority {
 			continue
 		}
 		curCollationPriority, dstCharset, dstCollation = collationPriority, ft.Charset, ft.Collate
