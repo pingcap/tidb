@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package memdb
+package kv
 
 import (
 	"bytes"
@@ -27,12 +27,12 @@ const (
 	initBlockSize  = 4 * 1024
 )
 
-// Sandbox is a space to keep pending kvs.
-type Sandbox struct {
+// sandbox is a space to keep pending kvs.
+type sandbox struct {
 	frozen bool
 	done   bool
 	head   headNode
-	parent *Sandbox
+	parent *sandbox
 	arena  *arena
 	height int
 	length int
@@ -42,26 +42,41 @@ type Sandbox struct {
 }
 
 // NewSandbox create a new Sandbox.
-func NewSandbox() *Sandbox {
+func NewSandbox() *sandbox {
 	arena := newArenaLocator()
-	return &Sandbox{
+	return &sandbox{
 		height:    1,
 		arena:     arena,
 		arenaSnap: arena.snapshot(),
 	}
 }
 
-// Get returns value for key in this sandbox's space.
-func (sb *Sandbox) Get(key []byte) []byte {
-	node, data, match := sb.findGreaterEqual(key)
+func (sb *sandbox) GetFlags(key []byte) (KeyFlags, bool) {
+	node, _, match := sb.findGreaterEqual(key)
 	if !match {
-		return nil
+		return 0, false
 	}
-	return node.getValue(data)
+	return node.flags, true
 }
 
-// Put inserts kv into this sandbox.
-func (sb *Sandbox) Put(key, value []byte) {
+// Get returns value for key in this sandbox's space.
+func (sb *sandbox) Get(key []byte) ([]byte, bool) {
+	node, data, match := sb.findGreaterEqual(key)
+	if !match {
+		return nil, false
+	}
+	return node.getValue(data), true
+}
+
+func (sb *sandbox) UpdateFlags(key []byte, flags KeyFlags) {
+	node, _, match := sb.findGreaterEqual(key)
+	if !match {
+		return
+	}
+	node.flags = flags
+}
+
+func (sb *sandbox) PutWithFlags(key []byte, flags KeyFlags, value []byte) {
 	if sb.frozen {
 		panic("cannot write to a sandbox when it has forked a new sanbox")
 	}
@@ -83,6 +98,7 @@ func (sb *Sandbox) Put(key, value []byte) {
 	if !exists {
 		height = sb.randomHeight()
 	} else {
+		flags = flags.Merge(next[0].flags)
 		height = sb.prepareOverwrite(next[:])
 	}
 
@@ -90,6 +106,7 @@ func (sb *Sandbox) Put(key, value []byte) {
 	if height > lsHeight {
 		sb.height = height
 	}
+	x.flags = flags
 
 	// We always insert from the base level and up. After you add a node in base level, we cannot
 	// create a node in the level above because it would have discovered the node in the base level.
@@ -110,13 +127,18 @@ func (sb *Sandbox) Put(key, value []byte) {
 	sb.size += len(key) + len(value)
 }
 
+// Put inserts kv into this sandbox.
+func (sb *sandbox) Put(key, value []byte) {
+	sb.PutWithFlags(key, 0, value)
+}
+
 // Derive derive a new sandbox to buffer a batch of modifactions.
-func (sb *Sandbox) Derive() *Sandbox {
+func (sb *sandbox) Derive() *sandbox {
 	if sb.frozen {
 		panic("cannot start second sandbox")
 	}
 	sb.frozen = true
-	new := &Sandbox{
+	new := &sandbox{
 		parent:    sb,
 		height:    1,
 		arena:     sb.arena,
@@ -126,7 +148,7 @@ func (sb *Sandbox) Derive() *Sandbox {
 }
 
 // Flush flushes all kvs into parent sandbox.
-func (sb *Sandbox) Flush() int {
+func (sb *sandbox) Flush() int {
 	if sb.parent == nil || sb.done {
 		return 0
 	}
@@ -139,14 +161,14 @@ func (sb *Sandbox) Flush() int {
 }
 
 // GetParent returns the parent sandbox.
-func (sb *Sandbox) GetParent() *Sandbox {
+func (sb *sandbox) GetParent() *sandbox {
 	return sb.parent
 }
 
 // Discard discards all kvs in this sandbox.
 // It is safe to discard a flushed sandbox, and it is recommend to
 // call discard using defer to maintain correct state of parent.
-func (sb *Sandbox) Discard() {
+func (sb *sandbox) Discard() {
 	if sb.done {
 		return
 	}
@@ -173,20 +195,20 @@ func (sb *Sandbox) Discard() {
 }
 
 // Len returns the number of entries in the DB.
-func (sb *Sandbox) Len() int {
+func (sb *sandbox) Len() int {
 	return sb.length
 }
 
 // Size returns sum of keys and values length. Note that deleted
 // key/value will not be accounted for, but it will still consume
 // the buffer, since the buffer is append only.
-func (sb *Sandbox) Size() int {
+func (sb *sandbox) Size() int {
 	return sb.size
 }
 
 // The pointers in findSpliceForLevel may point to the node which going to be overwrite,
 // prepareOverwrite update them to point to the next node, so we can link new node with the list correctly.
-func (sb *Sandbox) prepareOverwrite(next []nodeWithAddr) int {
+func (sb *sandbox) prepareOverwrite(next []nodeWithAddr) int {
 	old := next[0]
 
 	// Update necessary states.
@@ -206,12 +228,12 @@ func (sb *Sandbox) prepareOverwrite(next []nodeWithAddr) int {
 	return height
 }
 
-func (sb *Sandbox) getHead() nodeWithAddr {
+func (sb *sandbox) getHead() nodeWithAddr {
 	head := (*node)(unsafe.Pointer(&sb.head))
 	return nodeWithAddr{node: head}
 }
 
-func (sb *Sandbox) randomHeight() int {
+func (sb *sandbox) randomHeight() int {
 	h := 1
 	for h < maxHeight && fastrand.Uint32() < uint32(math.MaxUint32)/4 {
 		h++
@@ -222,7 +244,7 @@ func (sb *Sandbox) randomHeight() int {
 // findSpliceForLevel returns (outBefore, outAfter) with outBefore.key < key <= outAfter.key.
 // The input "before" tells us where to start looking.
 // If we found a node with the same key, then we return true.
-func (sb *Sandbox) findSpliceForLevel(key []byte, before nodeWithAddr, level int) (nodeWithAddr, nodeWithAddr, bool) {
+func (sb *sandbox) findSpliceForLevel(key []byte, before nodeWithAddr, level int) (nodeWithAddr, nodeWithAddr, bool) {
 	arena := sb.arena
 	for {
 		// Assume before.key < key.
@@ -242,7 +264,7 @@ func (sb *Sandbox) findSpliceForLevel(key []byte, before nodeWithAddr, level int
 	}
 }
 
-func (sb *Sandbox) findGreaterEqual(key []byte) (*node, []byte, bool) {
+func (sb *sandbox) findGreaterEqual(key []byte) (*node, []byte, bool) {
 	head := sb.getHead()
 	prev := head.node
 	level := sb.height - 1
@@ -277,7 +299,7 @@ func (sb *Sandbox) findGreaterEqual(key []byte) (*node, []byte, bool) {
 	}
 }
 
-func (sb *Sandbox) findLess(key []byte, allowEqual bool) (*node, []byte, bool) {
+func (sb *sandbox) findLess(key []byte, allowEqual bool) (*node, []byte, bool) {
 	var prevData []byte
 	head := sb.getHead()
 	prev := head.node
@@ -316,7 +338,7 @@ func (sb *Sandbox) findLess(key []byte, allowEqual bool) (*node, []byte, bool) {
 
 // findLast returns the last element. If head (empty db), we return nil. All the find functions
 // will NEVER return the head nodes.
-func (sb *Sandbox) findLast() (*node, []byte) {
+func (sb *sandbox) findLast() (*node, []byte) {
 	var nodeData []byte
 	head := sb.getHead()
 	node := head.node
@@ -340,7 +362,7 @@ func (sb *Sandbox) findLast() (*node, []byte) {
 	}
 }
 
-func (sb *Sandbox) merge(new *Sandbox) int {
+func (sb *sandbox) merge(new *sandbox) int {
 	var ms mergeState
 	arena := sb.arena
 
@@ -382,12 +404,15 @@ func (sb *Sandbox) merge(new *Sandbox) int {
 
 		height := int(newNode.height)
 		if exists {
+			newNode.flags = newNode.flags.Merge(ms.next[0].flags)
 			height = sb.prepareOverwrite(ms.next[:])
 			if height > int(newNode.height) {
 				// The space is not enough, we have to create a new node.
 				k := newNode.getKey(newNodeData)
 				v := newNode.getValue(newNodeData)
+				flags := newNode.flags
 				newNode, newNodeAddr = arena.newNode(k, v, height)
+				newNode.flags = flags
 			}
 		}
 
@@ -427,7 +452,7 @@ type mergeState struct {
 	next      [maxHeight + 1]nodeWithAddr
 }
 
-func (ms *mergeState) calculateRecomputeHeight(key []byte, sb *Sandbox) int {
+func (ms *mergeState) calculateRecomputeHeight(key []byte, sb *sandbox) int {
 	head := sb.getHead()
 	listHeight := sb.height
 	arena := sb.arena
@@ -476,7 +501,8 @@ func (ms *mergeState) calculateRecomputeHeight(key []byte, sb *Sandbox) int {
 }
 
 type nodeHeader struct {
-	height uint16
+	height uint8
+	flags  KeyFlags
 	keyLen uint16
 	valLen uint32
 }

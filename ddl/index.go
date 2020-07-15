@@ -767,11 +767,6 @@ func checkAlterIndexVisibility(t *meta.Meta, job *model.Job) (*model.TableInfo, 
 	return tblInfo, indexName, invisible, nil
 }
 
-const (
-	// DefaultTaskHandleCnt is default batch size of adding indices.
-	DefaultTaskHandleCnt = 128
-)
-
 // indexRecord is the record information of an index.
 type indexRecord struct {
 	handle kv.Handle
@@ -1109,7 +1104,7 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (taskCtx
 			}
 
 			// Create the index.
-			handle, err := w.index.Create(w.sessCtx, txn, idxRecord.vals, idxRecord.handle)
+			handle, err := w.index.Create(w.sessCtx, txn.GetUnionStore(), idxRecord.vals, idxRecord.handle)
 			if err != nil {
 				if kv.ErrKeyExists.Equal(err) && idxRecord.handle.Equal(handle) {
 					// Index already exists, skip it.
