@@ -734,11 +734,12 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 		}
 	})
 
+	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
 	err = do.ddl.SchemaSyncer().Init(ctx)
 	if err != nil {
 		return err
 	}
-	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.etcdClient)
+	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.etcdClient, skipRegisterToDashboard)
 	if err != nil {
 		return err
 	}
@@ -760,8 +761,10 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	do.wg.Add(1)
 	go do.infoSyncerKeeper()
 
-	do.wg.Add(1)
-	go do.topologySyncerKeeper()
+	if !skipRegisterToDashboard {
+		do.wg.Add(1)
+		go do.topologySyncerKeeper()
+	}
 
 	return nil
 }
