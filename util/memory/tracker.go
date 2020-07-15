@@ -169,7 +169,7 @@ func (t *Tracker) remove(oldChild *Tracker) {
 	}
 	t.mu.Unlock()
 	if found {
-		oldChild.setParent(nil)
+		oldChild.parent = nil
 		t.Consume(-oldChild.BytesConsumed())
 	}
 }
@@ -332,10 +332,4 @@ func (t *Tracker) DetachFromGlobalTracker() {
 	parent := t.parent
 	parent.Consume(-t.BytesConsumed())
 	t.parent = nil
-}
-
-func (t *Tracker) setParent(parent *Tracker) {
-	t.parMu.Lock()
-	defer t.parMu.Unlock()
-	t.parMu.parent = parent
 }
