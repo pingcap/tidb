@@ -789,6 +789,11 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 	}
 	// Resolve virtual generated column.
 	mockSchema := NewSchema(columns...)
+	save := ctx.GetSessionVars().StmtCtx.IgnoreTruncate
+	defer func() {
+		ctx.GetSessionVars().StmtCtx.IgnoreTruncate = save
+	}()
+	ctx.GetSessionVars().StmtCtx.IgnoreTruncate = true
 	for i, col := range colInfos {
 		if col.State != model.StatePublic {
 			continue
