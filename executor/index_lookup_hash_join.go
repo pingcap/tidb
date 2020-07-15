@@ -21,6 +21,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util"
@@ -158,7 +159,7 @@ func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
 	}
 	e.workerWg.Add(1)
 	ow := e.newOuterWorker(innerCh)
-	go util.WithRecovery(func() { ow.run(workerCtx, cancelFunc) }, e.finishJoinWorkers)
+	go util.WithRecovery(func() { ow.run(workerCtx) }, e.finishJoinWorkers)
 
 	if !e.keepOuterOrder {
 		e.resultCh = make(chan *indexHashJoinResult, concurrency)
@@ -308,16 +309,22 @@ func (e *IndexNestedLoopHashJoin) Close() error {
 	return e.baseExecutor.Close()
 }
 
-func (ow *indexHashJoinOuterWorker) run(ctx context.Context, cancelFunc context.CancelFunc) {
+func (ow *indexHashJoinOuterWorker) run(ctx context.Context) {
 	defer close(ow.innerCh)
 	for {
 		task, err := ow.buildTask(ctx)
-		if task == nil {
+		failpoint.Inject("testIndexHashJoinOuterWorkerErr", func() {
+			err = errors.New("mockIndexHashJoinOuterWorkerErr")
+		})
+		if err != nil {
+			task = &indexHashJoinTask{err: err}
+			ow.pushToChan(ctx, task, ow.innerCh)
+			if ow.keepOuterOrder {
+				ow.pushToChan(ctx, task, ow.taskCh)
+			}
 			return
 		}
-		if err != nil {
-			cancelFunc()
-			logutil.Logger(ctx).Error("indexHashJoinOuterWorker.run failed", zap.Error(err))
+		if task == nil {
 			return
 		}
 		if finished := ow.pushToChan(ctx, task, ow.innerCh); finished {
@@ -465,9 +472,11 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.
 			}
 		}
 	}
+	failpoint.Inject("testIndexHashJoinInnerWorkerErr", func() {
+		joinResult = &indexHashJoinResult{err: errors.New("mockIndexHashJoinInnerWorkerErr")}
+	})
 	if joinResult.err != nil {
-		cancelFunc()
-		logutil.Logger(ctx).Error("indexHashJoinInnerWorker.run failed", zap.Error(joinResult.err))
+		resultCh <- joinResult
 		return
 	}
 	// When task.keepOuterOrder is TRUE(resultCh != iw.resultCh), the last
