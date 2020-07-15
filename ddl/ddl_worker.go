@@ -469,7 +469,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			// and retry later if the job is not cancelled.
 			schemaVer, runJobErr = w.runDDLJob(d, t, job)
 			if job.IsCancelled() {
-				txn.Discard()
+				txn.Reset()
 				err = w.finishDDLJob(t, job)
 				return errors.Trace(err)
 			}
@@ -480,7 +480,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 				// then shouldn't discard the KV modification.
 				// And the job state is rollback done, it means the job was already finished, also shouldn't discard too.
 				// Otherwise, we should discard the KV modification when running job.
-				txn.Discard()
+				txn.Reset()
 			}
 			err = w.updateDDLJob(t, job, runJobErr != nil)
 			if err = w.handleUpdateJobError(t, job, err); err != nil {

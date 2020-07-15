@@ -217,7 +217,7 @@ func (s *testSuite3) TestInconsistentIndex(c *C) {
 	for i := 0; i < 10; i++ {
 		txn, err := s.store.Begin()
 		c.Assert(err, IsNil)
-		_, err = idxOp.Create(ctx, txn, types.MakeDatums(i+10), kv.IntHandle(100+i))
+		_, err = idxOp.Create(ctx, txn.GetUnionStore(), types.MakeDatums(i+10), kv.IntHandle(100+i))
 		c.Assert(err, IsNil)
 		err = txn.Commit(context.Background())
 		c.Assert(err, IsNil)
