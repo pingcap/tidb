@@ -82,8 +82,6 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			e.setDataForStatistics(sctx, dbs)
 		case infoschema.TableTables:
 			err = e.setDataFromTables(sctx, dbs)
-		case infoschema.TableColumns:
-			e.setDataForColumns(sctx, dbs)
 		case infoschema.TableSequences:
 			e.setDataFromSequences(sctx, dbs)
 		case infoschema.TablePartitions:
@@ -152,18 +150,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		ret[i-e.rowIdx] = e.rows[i]
 	}
 	e.rowIdx += retCount
-	if len(e.columns) == len(e.table.Columns) {
-		return ret, nil
-	}
-	rows := make([][]types.Datum, len(ret))
-	for i, fullRow := range ret {
-		row := make([]types.Datum, len(e.columns))
-		for j, col := range e.columns {
-			row[j] = fullRow[col.Offset]
-		}
-		rows[i] = row
-	}
-	return rows, nil
+	return adjustColumns(ret, e.columns, e.table), nil
 }
 
 func getRowCountAllTable(ctx sessionctx.Context) (map[int64]uint64, error) {
@@ -540,24 +527,30 @@ func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []
 	return nil
 }
 
-func (e *memtableRetriever) setDataForColumns(ctx sessionctx.Context, schemas []*model.DBInfo) {
+func (e *hugeMemTableRetriever) setDataForColumns(ctx sessionctx.Context) error {
 	checker := privilege.GetPrivilegeManager(ctx)
-	var rows [][]types.Datum
-	for _, schema := range schemas {
-		for _, table := range schema.Tables {
+	e.rows = e.rows[:0]
+	batch := 1024
+	for ; e.dbsIdx < len(e.dbs); e.dbsIdx++ {
+		schema := e.dbs[e.dbsIdx]
+		for e.tblIdx < len(schema.Tables) {
+			table := schema.Tables[e.tblIdx]
 			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
 
-			rs := e.dataForColumnsInTable(schema, table)
-			rows = append(rows, rs...)
+			e.dataForColumnsInTable(schema, table)
+			e.tblIdx++
+			if len(e.rows) >= batch {
+				return nil
+			}
 		}
+		e.tblIdx = 0
 	}
-	e.rows = rows
+	return nil
 }
 
-func (e *memtableRetriever) dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types.Datum {
-	rows := make([][]types.Datum, 0, len(tbl.Columns))
+func (e *hugeMemTableRetriever) dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) {
 	for i, col := range tbl.Columns {
 		if col.Hidden {
 			continue
@@ -638,9 +631,8 @@ func (e *memtableRetriever) dataForColumnsInTable(schema *model.DBInfo, tbl *mod
 			columnDesc.Comment,                   // COLUMN_COMMENT
 			col.GeneratedExprString,              // GENERATION_EXPRESSION
 		)
-		rows = append(rows, record)
+		e.rows = append(e.rows, record)
 	}
-	return rows
 }
 
 func (e *memtableRetriever) setDataFromPartitions(ctx sessionctx.Context, schemas []*model.DBInfo) error {
@@ -1697,4 +1689,60 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.
 		e.rowIdx = 0
 	}
 	return rows, nil
+}
+
+
+type hugeMemTableRetriever struct {
+	dummyCloser
+	table       *model.TableInfo
+	columns     []*model.ColumnInfo
+	retrieved   bool
+	initialized bool
+	rows        [][]types.Datum
+	dbs         []*model.DBInfo
+	dbsIdx      int
+	tblIdx      int
+}
+
+// retrieve implements the infoschemaRetriever interface
+func (e *hugeMemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+	if e.retrieved {
+		return nil, nil
+	}
+
+	if !e.initialized {
+		is := infoschema.GetInfoSchema(sctx)
+		dbs := is.AllSchemas()
+		sort.Sort(infoschema.SchemasSorter(dbs))
+		e.dbs = dbs
+		e.initialized = true
+		e.rows = make([][]types.Datum, 0, 1024)
+	}
+
+	var err error
+	switch e.table.Name.O {
+	case infoschema.TableColumns:
+		err = e.setDataForColumns(sctx)
+	}
+	if err != nil {
+		return nil, err
+	}
+	e.retrieved = len(e.rows) == 0
+
+	return adjustColumns(e.rows, e.columns, e.table), nil
+}
+
+func adjustColumns(input [][]types.Datum, outColumns []*model.ColumnInfo, table *model.TableInfo) [][]types.Datum {
+	if len(outColumns) == len(table.Columns) {
+		return input
+	}
+	rows := make([][]types.Datum, len(input))
+	for i, fullRow := range input {
+		row := make([]types.Datum, len(outColumns))
+		for j, col := range outColumns {
+			row[j] = fullRow[col.Offset]
+		}
+		rows[i] = row
+	}
+	return rows
 }
