@@ -223,3 +223,9 @@ func (t *Tracker) BytesToString(numBytes int64) string {
 
 	return fmt.Sprintf("%v Bytes", numBytes)
 }
+
+func (t *Tracker) setParent(parent *Tracker) {
+	t.parMu.Lock()
+	defer t.parMu.Unlock()
+	t.parMu.parent = parent
+}
