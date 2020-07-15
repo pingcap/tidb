@@ -6209,6 +6209,7 @@ func (s *testIntegrationSerialSuite) TestCollateHashAgg(c *C) {
 	tk.MustExec("insert into t values ('a'), ('A'), ('b')")
 	tk.MustQuery("select count(1) from t group by a collate utf8mb4_bin").Check(testkit.Rows("3", "3", "3"))
 	tk.MustQuery("select count(1) from t group by a collate utf8mb4_unicode_ci").Check(testkit.Rows("6", "3"))
+	tk.MustQuery("select count(1) from t group by a collate utf8mb4_general_ci").Check(testkit.Rows("6", "3"))
 }
 
 func (s *testIntegrationSerialSuite) TestCollateStreamAgg(c *C) {
