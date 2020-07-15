@@ -841,6 +841,10 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 // It also gets a token from server which is used to limit the concurrently handling clients.
 // The most frequently used command is ComQuery.
 func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
+	defer func() {
+		// reset killed for each request
+		atomic.StoreUint32(&cc.ctx.GetSessionVars().Killed, 0)
+	}()
 	span := opentracing.StartSpan("server.dispatch")
 
 	t := time.Now()
@@ -867,6 +871,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	}()
 
 	vars := cc.ctx.GetSessionVars()
+	// reset killed for each request
 	atomic.StoreUint32(&vars.Killed, 0)
 	if cmd < mysql.ComEnd {
 		cc.ctx.SetCommandValue(cmd)
@@ -1612,7 +1617,11 @@ func (cc getLastStmtInConn) String() string {
 	case mysql.ComFieldList:
 		return "ListFields " + string(data)
 	case mysql.ComQuery, mysql.ComStmtPrepare:
-		return queryStrForLog(string(hack.String(data)))
+		sql := string(hack.String(data))
+		if cc.ctx.GetSessionVars().EnableLogDesensitization {
+			sql, _ = parser.NormalizeDigest(sql)
+		}
+		return queryStrForLog(sql)
 	case mysql.ComStmtExecute, mysql.ComStmtFetch:
 		stmtID := binary.LittleEndian.Uint32(data[0:4])
 		return queryStrForLog(cc.preparedStmt2String(stmtID))
