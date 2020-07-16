@@ -1527,6 +1527,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 		StartTS:       txn.StartTS(),
 		ShardStep:     int(s.sessionVars.ShardAllocateStep),
 	}
+	s.txn.SetVars(s.sessionVars.KVVars)
 	return nil
 }
 
@@ -2193,6 +2194,7 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	if err != nil {
 		return err
 	}
+	s.txn.SetVars(s.sessionVars.KVVars)
 	return nil
 }
 
