@@ -67,18 +67,19 @@ func (cks *checksum) ReadAt(p []byte, off int64) (n int, err error) {
 	startBlock := off / checksumBlockSize
 	endBlock := (off + int64(len(p))) / checksumBlockSize
 	offsetInBlockPayload := off - startBlock*checksumBlockSize
-	writeOffset := 0
+	writeOffset := int64(0)
 	needWriteSize := int64(len(p))
 
 	r := io.NewSectionReader(cks.disk, startBlock*checksumBlockSize, (endBlock-startBlock+1)*checksumBlockSize)
 	readBuffer := bufio.NewReaderSize(r, checksumBlockSize)
 	buffer := make([]byte, checksumBlockSize)
-	for i := int64(0); i < endBlock-startBlock+1; i++ {
+	for i := int64(0); i < endBlock-startBlock+1 || needWriteSize == 0; i++ {
 		n1, err := readBuffer.Read(buffer)
 		n += n1
 		if n1 != checksumBlockSize {
 			return n, err
 		}
+
 		originChecksum := uint32(buffer[0])<<24 | uint32(buffer[1])<<16 | uint32(buffer[2])<<8 | uint32(buffer[3])
 		payload := buffer[checksumSize:]
 		checksum := crc32.Checksum(payload, crc32.MakeTable(crc32.IEEE))
@@ -86,17 +87,19 @@ func (cks *checksum) ReadAt(p []byte, off int64) (n int, err error) {
 			return 0, errors.New("checksum error")
 		}
 
+		// checksumPayloadSize-offsetInBlockPayload得到payload剩下应该复制的字节A
+		// 如果needWriteSize>=A，说明可以直接复制，不用担心越界
 		if needWriteSize >= checksumPayloadSize-offsetInBlockPayload {
 			copy(p[writeOffset:], payload[offsetInBlockPayload:])
 			needWriteSize -= int64(len(payload[offsetInBlockPayload:]))
-		} else {
-			copy(p[writeOffset:], payload[offsetInBlockPayload:offsetInBlockPayload+needWriteSize])
-			needWriteSize = 0
+			writeOffset += int64(len(payload[offsetInBlockPayload:]))
+			offsetInBlockPayload = 0
+			copy(buffer, emptyChecksumBlock)
+			continue
 		}
-		offsetInBlockPayload = 0
-		writeOffset += n1
-		copy(buffer, emptyChecksumBlock)
+		copy(p[writeOffset:], payload[offsetInBlockPayload:offsetInBlockPayload+needWriteSize])
+		break
 	}
 
-	return n, nil
+	return len(p), nil
 }

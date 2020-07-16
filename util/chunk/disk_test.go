@@ -137,7 +137,7 @@ type listInDiskOriginal struct {
 	ListInDisk
 }
 
-func (l *ListInDisk) fileWriter() io.Writer {
+func (l *listInDiskOriginal) fileWriter() io.Writer {
 	return l.disk
 }
 
@@ -159,7 +159,7 @@ func checkRow(t *testing.T, row1, row2 Row) {
 }
 
 func TestListInDiskOriginal(t *testing.T) {
-	numChk, numRow := 1, 2
+	numChk, numRow := 1, 200
 	chks, fields := initChunks(numChk, numRow)
 	lChecksum := NewListInDisk(fields)
 	lDisk := newListInDiskOriginal(fields)
