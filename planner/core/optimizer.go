@@ -15,6 +15,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -49,7 +50,7 @@ const (
 	flagMaxMinEliminate
 	flagPredicatePushDown
 	flagEliminateOuterJoin
-	flagPartitionProcessor
+	// flagPartitionProcessor
 	flagPushDownAgg
 	flagPushDownTopN
 	flagJoinReOrder
@@ -66,7 +67,7 @@ var optRuleList = []logicalOptRule{
 	&maxMinEliminator{},
 	&ppdSolver{},
 	&outerJoinEliminator{},
-	&partitionProcessor{},
+	// &partitionProcessor{},
 	&aggregationPushDownSolver{},
 	&pushDownTopNOptimizer{},
 	&joinReOrderSolver{},
@@ -136,10 +137,16 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	if planCounter == 0 {
 		planCounter = -1
 	}
+
+	fmt.Println("after logical optimize ==========", ToString(logic))
+
 	physical, cost, err := physicalOptimize(logic, &planCounter)
 	if err != nil {
 		return nil, 0, err
 	}
+
+	fmt.Println("after physical optimize ==========", ToString(logic))
+
 	finalPlan := postOptimize(sctx, physical)
 	return finalPlan, cost, nil
 }

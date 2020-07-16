@@ -212,6 +212,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildAnalyze(v)
 	case *plannercore.PhysicalTableReader:
 		return b.buildTableReader(v)
+	case *plannercore.PhysicalPartitionTable:
+		return b.buildPartitionTable(v)
 	case *plannercore.PhysicalIndexReader:
 		return b.buildIndexReader(v)
 	case *plannercore.PhysicalIndexLookUpReader:
@@ -2371,6 +2373,47 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 	}
 
 	return e, nil
+}
+
+func (b *executorBuilder) buildPartitionTable(v *plannercore.PhysicalPartitionTable) *PartitionTableExecutor {
+
+	fmt.Println("executorBuilder: build partition table ==== ")
+
+	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
+		if err := b.refreshForUpdateTSForRC(); err != nil {
+			b.err = err
+			return nil
+		}
+	}
+
+	startTS, err := b.getSnapshotTS()
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	tbl, ok := b.is.TableByID(v.Table.ID)
+	if !ok {
+		b.err = errors.New("table not found in executor builder")
+		return nil
+	}
+	ret := &PartitionTableExecutor{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		startTS:      startTS,
+		table:        tbl.(table.PartitionedTable),
+		conds:        v.Conditions,
+		copTask:      v.CopTask,
+	}
+	// ret, err := buildNoRangePartitionTable(b, v)
+	// if err != nil {
+	// 	b.err = err
+	// 	return nil
+	// }
+
+	// ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
+	// ret.ranges = ts.Ranges
+	// sctx := b.ctx.GetSessionVars().StmtCtx
+	// sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
+	return ret
 }
 
 // buildTableReader builds a table reader executor. It first build a no range table reader,

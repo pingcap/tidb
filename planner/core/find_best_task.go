@@ -14,6 +14,7 @@
 package core
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -271,6 +272,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 
 // findBestTask implements LogicalPlan interface.
 func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp) (bestTask task, cntPlan int64, err error) {
+	fmt.Println("base logical plan . findBestTask()")
 	// If p is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
 	// and set inner child prop nil, so here we do nothing.
 	if prop == nil {
@@ -549,6 +551,7 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 // findBestTask implements the PhysicalPlan interface.
 // It will enumerate all the available indices and choose a plan with least cost.
 func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp) (t task, cntPlan int64, err error) {
+	fmt.Println("DataSource findBestTask()")
 	// If ds is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
 	// and set inner child prop nil, so here we do nothing.
 	if prop == nil {
@@ -1287,6 +1290,8 @@ func (s *LogicalIndexScan) GetPhysicalIndexScan(schema *expression.Schema, stats
 
 // convertToTableScan converts the DataSource to table scan.
 func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candidate *candidatePath) (task task, err error) {
+	fmt.Println("datasource convertToTableScan===")
+
 	// It will be handled in convertToIndexScan.
 	if prop.TaskTp == property.CopDoubleReadTaskType {
 		return invalidTask, nil

@@ -239,6 +239,10 @@ func (p *PhysicalTableScan) isFullScan() bool {
 	return true
 }
 
+func (p *PhysicalPartitionTable) ExplainInfo() string {
+	return "data???:" + p.tablePlan.ExplainID().String()
+}
+
 // ExplainInfo implements Plan interface.
 func (p *PhysicalTableReader) ExplainInfo() string {
 	return "data:" + p.tablePlan.ExplainID().String()

@@ -374,9 +374,13 @@ func makePartitionByFnCol(sctx sessionctx.Context, columns []*expression.Column,
 		return nil, nil, err
 	}
 	partExpr := tmp[0]
+	return makePartitionByFnCol1(sctx, partExpr)
+}
+
+func makePartitionByFnCol1(sctx sessionctx.Context, partitionExpr expression.Expression) (*expression.Column, *expression.ScalarFunction, error) {
 	var col *expression.Column
 	var fn *expression.ScalarFunction
-	switch raw := partExpr.(type) {
+	switch raw := partitionExpr.(type) {
 	case *expression.ScalarFunction:
 		// Special handle for floor(unix_timestamp(ts)) as partition expression.
 		// This pattern is so common for timestamp(3) column as partition expression that it deserve an optimization.
@@ -983,4 +987,94 @@ func (p *rangeColumnsPruner) pruneUseBinarySearch(sctx sessionctx.Context, op st
 		end = length
 	}
 	return start, end
+}
+
+func PartitionPruning(sctx sessionctx.Context, tbl table.PartitionedTable, conds []expression.Expression) ([]table.PhysicalTable, error) {
+	pi := tbl.Meta().GetPartitionInfo()
+	if pi.Type == model.PartitionTypeHash {
+		return pruneHashPartition(sctx, tbl, pi, conds)
+	}
+
+	if pi.Type == model.PartitionTypeRange {
+		pRanges, err := pruneRangePartition(sctx, tbl, pi, conds)
+		if err != nil {
+			return nil, err
+		}
+
+		var res []table.PhysicalTable
+		// TODO: reserve slice for res
+		for _, r := range pRanges {
+			for i := r.start; i < r.end; i++ {
+				pid := pi.Definitions[i].ID
+				partition := tbl.GetPartition(pid)
+				res = append(res, partition)
+			}
+		}
+		return res, nil
+	}
+
+	return nil, errors.New("unsupported partition type")
+}
+
+func pruneRangePartition(sctx sessionctx.Context, tbl table.PartitionedTable, pi *model.PartitionInfo, queryExprs []expression.Expression) (partitionRangeOR, error) {
+	partExpr, err := tbl.(partitionTable).PartitionExpr()
+	if err != nil {
+		return nil, err
+	}
+
+	// TODO: Partition by range columns.
+	// if len(pi.Columns) > 0 {
+	// 	return pruneRangeColumnsPartition(sctx, tbl, pi, partExpr, queryExprs)
+	// }
+
+	pe, err := expression.ParseSimpleExprWithTableInfo(sctx, pi.Expr, tbl.Meta())
+	if err != nil {
+		return nil, err
+	}
+
+	// Partition by range.
+	col, fn, err := makePartitionByFnCol1(sctx, pe)
+	if err != nil {
+		return nil, err
+	}
+
+	result := fullRange(len(pi.Definitions))
+	// Extract the partition column, if the column is not null, it's possible to prune.
+	if col != nil {
+		pruner := rangePruner{
+			lessThan: lessThanDataInt{
+				data:     partExpr.ForRangePruning.LessThan,
+				maxvalue: partExpr.ForRangePruning.MaxValue,
+			},
+			col:    col,
+			partFn: fn,
+		}
+		result = partitionRangeForCNFExpr(sctx, queryExprs, &pruner, result)
+	}
+
+	return result, nil
+}
+
+func pruneHashPartition(sctx sessionctx.Context, tbl table.PartitionedTable, pi *model.PartitionInfo, filterConds []expression.Expression) ([]table.PhysicalTable, error) {
+	tblInfo := tbl.Meta()
+	pe, err := expression.ParseSimpleExprWithTableInfo(sctx, pi.Expr, tblInfo)
+	if err != nil {
+		return nil, err
+	}
+	pe.HashCode(sctx.GetSessionVars().StmtCtx)
+
+	val, ok, hasConflict := expression.FastLocateHashPartition(sctx, filterConds, pe)
+	if hasConflict {
+		// For condition like `a = 1 and a = 5`, return TableDual directly.
+		return nil, nil
+	}
+	if ok {
+		idx := math.Abs(val % int64(pi.Num))
+		pid := pi.Definitions[idx].ID
+		p := tbl.GetPartition(pid)
+		return []table.PhysicalTable{p}, nil
+	}
+
+	// TODO: full partition
+	return nil, nil
 }

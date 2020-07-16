@@ -421,7 +421,8 @@ func (s *testPlanSuite) TestTablePartition(c *C) {
 		})
 		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, isChoices[ca.IsIdx])
 		c.Assert(err, IsNil)
-		p, err = logicalOptimize(context.TODO(), flagDecorrelate|flagPrunColumns|flagPrunColumnsAgain|flagPredicatePushDown|flagPartitionProcessor, p.(LogicalPlan))
+		// p, err = logicalOptimize(context.TODO(), flagDecorrelate|flagPrunColumns|flagPrunColumnsAgain|flagPredicatePushDown|flagPartitionProcessor, p.(LogicalPlan))
+		p, err = logicalOptimize(context.TODO(), flagDecorrelate|flagPrunColumns|flagPrunColumnsAgain|flagPredicatePushDown, p.(LogicalPlan))
 		c.Assert(err, IsNil)
 		planString := ToString(p)
 		s.testData.OnRecord(func() {

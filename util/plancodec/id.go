@@ -102,6 +102,8 @@ const (
 	TypeClusterMemTableReader = "ClusterMemTableReader"
 	// TypeDataSource is the type of DataSource.
 	TypeDataSource = "DataSource"
+	// TypePartitionTable is the type of PartitionTable
+	TypePartitionTable = "PartitionTable"
 )
 
 // plan id.
@@ -147,6 +149,7 @@ const (
 	typeBatchPointGet             = 38
 	typeClusterMemTableReader     = 39
 	typeDataSourceID              = 40
+	typePartitionTableID          = 41
 )
 
 // TypeStringToPhysicalID converts the plan type string to plan id.
@@ -232,6 +235,8 @@ func TypeStringToPhysicalID(tp string) int {
 		return typeClusterMemTableReader
 	case TypeDataSource:
 		return typeDataSourceID
+	case TypePartitionTable:
+		return typePartitionTableID
 	}
 	// Should never reach here.
 	return 0

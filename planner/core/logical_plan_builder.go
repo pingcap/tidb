@@ -2707,7 +2707,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 
 	if tableInfo.GetPartitionInfo() != nil {
-		b.optFlag = b.optFlag | flagPartitionProcessor
+		// b.optFlag = b.optFlag | flagPartitionProcessor
 		pt := tbl.(table.PartitionedTable)
 		// check partition by name.
 		if len(tn.PartitionNames) > 0 {
