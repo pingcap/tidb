@@ -267,7 +267,7 @@ func GetTiFlashTableSyncProgress(ctx context.Context) (map[int64]float64, error)
 	return progressMap, nil
 }
 
-func doRequest(addrs []string, route, method string, body io.Reader) error {
+func doRequest(ctx context.Context, addrs []string, route, method string, body io.Reader) error {
 	var err error
 	var req *http.Request
 	for _, addr := range addrs {
@@ -278,7 +278,11 @@ func doRequest(addrs []string, route, method string, body io.Reader) error {
 			url = fmt.Sprintf("http://%s%s/%s", addr, pdapi.Config, route)
 		}
 
-		req, err = http.NewRequest(method, url, body)
+		if ctx != nil {
+			req, err = http.NewRequestWithContext(ctx, method, url, body)
+		} else {
+			req, err = http.NewRequest(method, url, body)
+		}
 		if err != nil {
 			return err
 		}
@@ -314,7 +318,7 @@ func UpdatePlacementRules(ctx context.Context, rules []*placement.Rule) error {
 
 	for _, rule := range rules {
 		b, _ := json.Marshal(rule)
-		err = doRequest(addrs, route, http.MethodPost, bytes.NewReader(b))
+		err = doRequest(ctx, addrs, route, http.MethodPost, bytes.NewReader(b))
 		if err != nil {
 			return err
 		}
