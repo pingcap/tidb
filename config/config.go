@@ -708,25 +708,14 @@ func StoreGlobalConfig(config *Config) {
 }
 
 var deprecatedConfig = map[string]struct{}{
-<<<<<<< HEAD
-	"pessimistic-txn.ttl":        {},
-	"log.file.log-rotate":        {},
-	"log.log-slow-query":         {},
-	"txn-local-latches":          {},
-	"txn-local-latches.enabled":  {},
-	"txn-local-latches.capacity": {},
-	"max-txn-time-use":           {},
-=======
 	"pessimistic-txn.ttl":            {},
 	"log.file.log-rotate":            {},
 	"log.log-slow-query":             {},
 	"txn-local-latches":              {},
 	"txn-local-latches.enabled":      {},
 	"txn-local-latches.capacity":     {},
-	"performance.max-memory":         {},
 	"max-txn-time-use":               {},
 	"experimental.allow-auto-random": {},
->>>>>>> 38621d2... config: deprecate allow-auto-random option (#18618)
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
