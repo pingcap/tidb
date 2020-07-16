@@ -674,7 +674,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			// We do not need to pass memTracker here, because that retry
 			// happened after commit, the memory usage was calculated during the
 			// first execution.
-			err = s.StmtCommit(nil)
+			err = s.StmtCommit()
 			if err != nil {
 				return err
 			}
@@ -1214,7 +1214,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 			if err != nil {
 				se.StmtRollback()
 			} else {
-				err = se.StmtCommit(sessVars.StmtCtx.MemTracker)
+				err = se.StmtCommit()
 			}
 		}
 	}

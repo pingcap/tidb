@@ -14,7 +14,6 @@
 package kv
 
 import (
-	"math"
 	"unsafe"
 )
 
@@ -33,13 +32,6 @@ func newArenaAddr(idx int, offset uint32) arenaAddr {
 		blockOffset: offset,
 	}
 }
-
-const (
-	alignMask = 1<<32 - 8 // 29 bit 1 and 3 bit 0.
-
-	nullBlockOffset = math.MaxUint32
-	maxBlockSize    = 128 << 20
-)
 
 type arena struct {
 	blockSize int
