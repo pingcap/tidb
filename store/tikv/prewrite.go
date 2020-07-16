@@ -79,7 +79,7 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 		MinCommitTs:       minCommitTS,
 	}
 
-	if c.useAsyncCommit {
+	if c.isAsyncCommit() {
 		if batch.isPrimary {
 			req.Secondaries = c.asyncSecondaries()
 		}
@@ -128,11 +128,22 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 					c.run(c, nil)
 				}
 			}
-			c.mu.Lock()
-			if prewriteResp.MinCommitTs > c.minCommitTS {
-				c.minCommitTS = prewriteResp.MinCommitTs
+			if c.isAsyncCommit() {
+				// 0 if the min_commit_ts is not ready or any other reason that async
+				// commit cannot proceed. The client can then fallback to normal way to
+				// continue committing the transaction if prewrite are all finished.
+				if prewriteResp.MinCommitTs == 0 {
+					logutil.Logger(bo.ctx).Warn("async commit cannot proceed since the returned minCommitTS is zero, "+
+						"fallback to normal path", zap.Uint64("startTS", c.startTS))
+					c.setAsyncCommit(false)
+				} else {
+					c.mu.Lock()
+					if prewriteResp.MinCommitTs > c.minCommitTS {
+						c.minCommitTS = prewriteResp.MinCommitTs
+					}
+					c.mu.Unlock()
+				}
 			}
-			c.mu.Unlock()
 			return nil
 		}
 		var locks []*Lock

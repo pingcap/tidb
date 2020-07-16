@@ -101,7 +101,7 @@ type twoPhaseCommitter struct {
 		bkAfterCommitPrimary chan struct{}
 	}
 
-	useAsyncCommit bool
+	useAsyncCommit uint32
 	minCommitTS    uint64
 }
 
@@ -670,7 +670,7 @@ func sendTxnHeartBeat(bo *Backoffer, store *tikvStore, primary []byte, startTS, 
 }
 
 // checkAsyncCommit checks if async commit protocol is available for current transaction commit, true is returned if possible.
-func (c *twoPhaseCommitter) checkAsyncCommit(ctx context.Context) bool {
+func (c *twoPhaseCommitter) checkAsyncCommit() bool {
 	const asyncCommitKeysLimit = 256
 	if c.connID > 0 && config.GetGlobalConfig().TiKVClient.EnableAsyncCommit && len(c.mutations.keys) <= asyncCommitKeysLimit {
 		return true
@@ -678,11 +678,23 @@ func (c *twoPhaseCommitter) checkAsyncCommit(ctx context.Context) bool {
 	return false
 }
 
+func (c *twoPhaseCommitter) isAsyncCommit() bool {
+	return atomic.LoadUint32(&c.useAsyncCommit) > 0
+}
+
+func (c *twoPhaseCommitter) setAsyncCommit(val bool) {
+	if val {
+		atomic.StoreUint32(&c.useAsyncCommit, 1)
+	} else {
+		atomic.StoreUint32(&c.useAsyncCommit, 0)
+	}
+}
+
 // execute executes the two-phase commit protocol.
 func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	var binlogSkipped bool
 	defer func() {
-		if !c.useAsyncCommit {
+		if !c.isAsyncCommit() {
 			// Always clean up all written keys if the txn does not commit.
 			c.mu.RLock()
 			committed := c.mu.committed
@@ -719,8 +731,8 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	}()
 
 	// Check async commit is available or not.
-	if c.checkAsyncCommit(ctx) {
-		c.useAsyncCommit = true
+	if c.checkAsyncCommit() {
+		c.setAsyncCommit(true)
 	}
 
 	binlogChan := c.prewriteBinlog(ctx)
@@ -736,6 +748,10 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		commitDetail.Mu.Unlock()
 	}
 	if binlogChan != nil {
+		if c.isAsyncCommit() {
+			err = errors.Errorf("async commit protocol is not compatible with TiDB Binlog by now")
+			return errors.Trace(err)
+		}
 		startWaitBinlog := time.Now()
 		binlogWriteResult := <-binlogChan
 		commitDetail.WaitPrewriteBinlogTime = time.Since(startWaitBinlog)
@@ -758,7 +774,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	c.stripNoNeedCommitKeys()
 
 	var commitTS uint64
-	if c.useAsyncCommit {
+	if c.isAsyncCommit() {
 		if c.minCommitTS == 0 {
 			err = errors.Errorf("conn %d invalid minCommitTS for async commit protocol after prewrite, startTS=%v", c.connID, c.startTS)
 			return errors.Trace(err)
@@ -801,7 +817,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		failpoint.Inject("beforeCommit", func() {})
 	}
 
-	if c.useAsyncCommit {
+	if c.isAsyncCommit() {
 		// For async commit protocol, the commit is considered success here.
 		c.txn.commitTS = c.commitTS
 		if binlogSkipped {
