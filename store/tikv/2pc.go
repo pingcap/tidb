@@ -815,6 +815,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 			failpoint.Inject("asyncCommitDoNothing", func() {
 				failpoint.Return()
 			})
+			defer c.ttlManager.close()
 			commitBo := NewBackofferWithVars(ctx, CommitMaxBackoff, c.txn.vars)
 			err := c.commitMutations(commitBo, c.mutations)
 			if err != nil {
