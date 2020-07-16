@@ -314,17 +314,10 @@ func UpdatePlacementRules(ctx context.Context, rules []*placement.Rule) error {
 	route := path.Join(pdapi.Config, "rule")
 
 	for _, rule := range rules {
-		if rule.Count > 0 {
-			b, _ := json.Marshal(rule)
-			err = doRequest(addrs, route, http.MethodPost, bytes.NewReader(b))
-			if err != nil {
-				return err
-			}
-		} else if rule.Count == 0 {
-			err = doRequest(addrs, path.Join(route, rule.GroupID, rule.ID), http.MethodDelete, nil)
-			if err != nil {
-				return err
-			}
+		b, _ := json.Marshal(rule)
+		err = doRequest(addrs, route, http.MethodPost, bytes.NewReader(b))
+		if err != nil {
+			return err
 		}
 	}
 
