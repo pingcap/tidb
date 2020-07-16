@@ -5217,7 +5217,7 @@ func (d *ddl) AlterTablePartition(ctx sessionctx.Context, ident ast.Ident, spec 
 		return errors.Trace(err)
 	}
 
-	rules, err := validPlacementSpecs(spec.PlacementSpecs)
+	rules, err := validatePlacementSpecs(spec.PlacementSpecs)
 	if err != nil {
 		return errors.Trace(err)
 	}
