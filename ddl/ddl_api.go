@@ -5225,13 +5225,17 @@ func (d *ddl) AlterTablePartition(ctx sessionctx.Context, ident ast.Ident, spec 
 		return errors.Trace(err)
 	}
 
-	rules, err := validatePlacementSpecs(spec.PlacementSpecs)
+	meta := tb.Meta()
+	if meta.Partition == nil {
+		return errors.Errorf("Alter partition '%s' on an unpartioned table", spec.PartitionNames[0].L)
+	}
+
+	partitionId, err := tables.FindPartitionByName(meta, spec.PartitionNames[0].L)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	meta := tb.Meta()
-	partitionId, err := tables.FindPartitionByName(meta, spec.PartitionNames[0].L)
+	rules, err := validatePlacementSpecs(spec.PlacementSpecs)
 	if err != nil {
 		return errors.Trace(err)
 	}
