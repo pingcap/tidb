@@ -267,7 +267,6 @@ func GetTiFlashTableSyncProgress(ctx context.Context) (map[int64]float64, error)
 	return progressMap, nil
 }
 
-// used by UpdatePlacementRules
 func doRequest(addrs []string, route, method string, body io.Reader) error {
 	var err error
 	var req *http.Request
@@ -295,7 +294,7 @@ func doRequest(addrs []string, route, method string, body io.Reader) error {
 	return err
 }
 
-// UpUpdatePlacementRules is used to notify PD changes of placement rules
+// UpdatePlacementRules is used to notify PD changes of placement rules.
 func UpdatePlacementRules(ctx context.Context, rules []*placement.Rule) error {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
