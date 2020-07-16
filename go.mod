@@ -24,19 +24,19 @@ require (
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.1.0
-	github.com/pingcap/br v0.0.0-20200623060633-439a1c2b2bfd
+	github.com/pingcap/br v0.0.0-20200716021245-f1df51c11469
 	github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712
 	github.com/pingcap/errors v0.11.5-0.20190809092503-95897b64e011
 	github.com/pingcap/failpoint v0.0.0-20200603062251-b230c36c413c
 	github.com/pingcap/fn v0.0.0-20191016082858-07623b84a47d
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
-	github.com/pingcap/kvproto v0.0.0-20200518112156-d4aeb467de29
+	github.com/pingcap/kvproto v0.0.0-20200706115936-1e0910aabe6c
 	github.com/pingcap/log v0.0.0-20200511115504-543df19646ad
 	github.com/pingcap/parser v0.0.0-20200623164729-3a18f1e5dceb
 	github.com/pingcap/pd/v4 v4.0.0-rc.2.0.20200520083007-2c251bd8f181
 <<<<<<< HEAD
 	github.com/pingcap/sysutil v0.0.0-20200408114249-ed3bd6f7fdb1
-	github.com/pingcap/tidb-tools v4.0.0-rc.1.0.20200514040632-f76b3e428e19+incompatible
+	github.com/pingcap/tidb-tools v4.0.0-rc.2.0.20200521050818-6dd445d83fe0+incompatible
 	github.com/pingcap/tipb v0.0.0-20200522051215-f31a15d98fce
 =======
 	github.com/pingcap/sysutil v0.0.0-20200715082929-4c47bcac246a
@@ -61,10 +61,9 @@ require (
 	golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e
 	golang.org/x/sys v0.0.0-20200323222414-85ca7c5b95cd
 	golang.org/x/text v0.3.2
-	golang.org/x/tools v0.0.0-20200325203130-f53864d0dba1
+	golang.org/x/tools v0.0.0-20200521211927-2b542361a4fc
 	google.golang.org/grpc v1.26.0
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0
-	honnef.co/go/tools v0.0.1-2020.1.4 // indirect
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20180531100431-4c381bd170b4
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )

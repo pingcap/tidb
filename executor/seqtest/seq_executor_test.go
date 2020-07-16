@@ -831,11 +831,8 @@ func HelperTestAdminShowNextID(c *C, s *seqTestSuite, str string) {
 	r.Check(testkit.Rows("test1 tt id 41 AUTO_INCREMENT"))
 	tk.MustExec("drop table tt")
 
-	oldAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
-	config.GetGlobalConfig().Experimental.AllowAutoRandom = true
-	defer func() {
-		config.GetGlobalConfig().Experimental.AllowAutoRandom = oldAutoRandom
-	}()
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 
 	// Test for a table with auto_random primary key.
