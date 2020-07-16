@@ -21,7 +21,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/goleveldb/leveldb/comparer"
-	"github.com/pingcap/goleveldb/leveldb/memdb"
+	leveldb "github.com/pingcap/goleveldb/leveldb/memdb"
 )
 
 // The test takes too long under the race detector.
@@ -35,7 +35,7 @@ func (s testMemDBSuite) TestRandom(c *C) {
 	}
 
 	p1 := NewSandbox()
-	p2 := memdb.New(comparer.DefaultComparer, 4*1024)
+	p2 := leveldb.New(comparer.DefaultComparer, 4*1024)
 	for _, k := range keys {
 		p1.Put(k, k)
 		_ = p2.Put(k, k)
@@ -58,10 +58,10 @@ func (s testMemDBSuite) TestRandom(c *C) {
 // The test takes too long under the race detector.
 func (s testMemDBSuite) TestRandomDerive(c *C) {
 	c.Parallel()
-	s.testRandomDeriveRecur(c, NewSandbox(), memdb.New(comparer.DefaultComparer, 4*1024), 0)
+	s.testRandomDeriveRecur(c, NewSandbox(), leveldb.New(comparer.DefaultComparer, 4*1024), 0)
 }
 
-func (s testMemDBSuite) testRandomDeriveRecur(c *C, sb *sandbox, db *memdb.DB, depth int) {
+func (s testMemDBSuite) testRandomDeriveRecur(c *C, sb *sandbox, db *leveldb.DB, depth int) {
 	var keys [][]byte
 	if rand.Float64() < 0.5 {
 		start, end := rand.Intn(512), rand.Intn(512)+512
@@ -86,7 +86,7 @@ func (s testMemDBSuite) testRandomDeriveRecur(c *C, sb *sandbox, db *memdb.DB, d
 	}
 
 	sbBuf := sb.Derive()
-	dbBuf := memdb.New(comparer.DefaultComparer, 4*1024)
+	dbBuf := leveldb.New(comparer.DefaultComparer, 4*1024)
 	for i := range keys {
 		sbBuf.Put(keys[i], vals[i])
 		_ = dbBuf.Put(keys[i], vals[i])
