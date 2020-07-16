@@ -74,10 +74,10 @@ func handleCopDAGRequest(dbReader *dbreader.DBReader, lockStore *lockstore.MemSt
 	}
 	closureExec, err := buildClosureExecutor(dagCtx, dagReq)
 	if err != nil {
-		return buildResp(nil, nil, err, dagCtx.sc.GetWarnings(), time.Since(startTime))
+		return buildResp(nil, nil, dagReq, err, dagCtx.sc.GetWarnings(), time.Since(startTime))
 	}
 	chunks, err := closureExec.execute()
-	return buildResp(chunks, closureExec.counts, err, dagCtx.sc.GetWarnings(), time.Since(startTime))
+	return buildResp(chunks, closureExec.counts, dagReq, err, dagCtx.sc.GetWarnings(), time.Since(startTime))
 }
 
 func buildDAG(reader *dbreader.DBReader, lockStore *lockstore.MemStore, req *coprocessor.Request) (*dagContext, *tipb.DAGRequest, error) {
@@ -268,12 +268,20 @@ func (e *ErrLocked) Error() string {
 	return fmt.Sprintf("key is locked, key: %q, Type: %v, primary: %q, startTS: %v", e.Key, e.LockType, e.Primary, e.StartTS)
 }
 
-func buildResp(chunks []tipb.Chunk, counts []int64, err error, warnings []stmtctx.SQLWarn, dur time.Duration) *coprocessor.Response {
+func buildResp(chunks []tipb.Chunk, counts []int64, dagReq *tipb.DAGRequest, err error, warnings []stmtctx.SQLWarn, dur time.Duration) *coprocessor.Response {
 	resp := &coprocessor.Response{}
 	selResp := &tipb.SelectResponse{
 		Error:        toPBError(err),
 		Chunks:       chunks,
 		OutputCounts: counts,
+	}
+	if dagReq.CollectExecutionSummaries != nil && *dagReq.CollectExecutionSummaries {
+		execSummary := make([]*tipb.ExecutorExecutionSummary, len(dagReq.Executors))
+		for i := range execSummary {
+			// TODO: Add real executor execution summary information.
+			execSummary[i] = &tipb.ExecutorExecutionSummary{}
+		}
+		selResp.ExecutionSummaries = execSummary
 	}
 	if len(warnings) > 0 {
 		selResp.Warnings = make([]*tipb.Error, 0, len(warnings))
