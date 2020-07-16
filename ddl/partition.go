@@ -603,7 +603,7 @@ func checkDropTablePartition(meta *model.TableInfo, partLowerNames []string) err
 // removePartitionInfo each ddl job deletes a partition.
 func removePartitionInfo(tblInfo *model.TableInfo, partLowerNames []string) []int64 {
 	oldDefs := tblInfo.Partition.Definitions
-	newDefs := make([]model.PartitionDefinition, 0, len(oldDefs)-len(partLowerNames))
+	newDefs := make([]model.PartitionDefinition, len(oldDefs)-len(partLowerNames))
 	j := 0
 	pids := make([]int64, len(partLowerNames))
 	k := 0
