@@ -608,6 +608,7 @@ func removePartitionInfo(tblInfo *model.TableInfo, partLowerNames []string) []in
 	pids := make([]int64, len(partLowerNames))
 	k := 0
 
+	// consider using a map to probe partLowerNames if too many partLowerNames
 	for i := range oldDefs {
 		found := false
 		for _, partName := range partLowerNames {

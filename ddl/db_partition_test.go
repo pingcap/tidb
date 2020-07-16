@@ -662,7 +662,7 @@ func (s *testIntegrationSuite5) TestAlterTableDropPartition(c *C) {
 		partition p1 values less than (1991),
 		partition p2 values less than (1996),
 		partition p3 values less than (2001),
-        partition p4 values less than (2006)
+		partition p4 values less than (2006)
 	);`)
 
 	tk.MustExec("alter table employees drop partition p3, p4;")
@@ -674,7 +674,6 @@ func (s *testIntegrationSuite5) TestAlterTableDropPartition(c *C) {
 	part := tbl.Meta().Partition
 	c.Assert(part.Type, Equals, model.PartitionTypeRange)
 	c.Assert(part.Expr, Equals, "`hired`")
-	// lance: what? only p3 succuessful dropped
 	c.Assert(part.Definitions, HasLen, 2)
 	c.Assert(part.Definitions[0].LessThan[0], Equals, "1991")
 	c.Assert(part.Definitions[0].Name, Equals, model.NewCIStr("p1"))
