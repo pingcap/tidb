@@ -78,7 +78,7 @@ func (i *memdbIterator) Next() error {
 			i.curr, i.currn = i.db.successor(i.curr, i.currn)
 		}
 
-		// We need to skip presistent flags only nodes.
+		// We need to skip persistent flags only nodes.
 		if i.includeFlags || i.curr.isNull() || !i.currn.vptr.isNull() {
 			break
 		}

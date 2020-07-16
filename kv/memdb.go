@@ -82,8 +82,8 @@ var tombstone = []byte{}
 // The value map is rollbackable, that means you can use the `Staging`, `Release` and `Cleanup` API to safely modify KVs.
 //
 // The flags map is not rollbackable. There are two types of flag, persistent and non-persistent.
-// When discading a newly added KV in `Cleanup`, the non-presistent flags will be cleared.
-// If there are presistent flags associated with key, we will keep this key in node without value.
+// When discading a newly added KV in `Cleanup`, the non-persistent flags will be cleared.
+// If there are persistent flags associated with key, we will keep this key in node without value.
 type memdb struct {
 	root      arenaAddr
 	allocator nodeAllocator
