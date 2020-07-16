@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package memdb
+package kv
 
 import (
 	"encoding/binary"
@@ -27,10 +27,6 @@ const (
 	valueSize = 128
 )
 
-func TestT(t *testing.T) {
-	TestingT(t)
-}
-
 type testMemDBSuite struct{}
 
 var _ = Suite(testMemDBSuite{})
@@ -42,7 +38,8 @@ func (s testMemDBSuite) TestGetSet(c *C) {
 	var buf [4]byte
 	for i := 0; i < cnt; i++ {
 		binary.BigEndian.PutUint32(buf[:], uint32(i))
-		v := p.Get(buf[:])
+		v, ok := p.Get(buf[:])
+		c.Check(ok, IsTrue)
 		c.Check(v, BytesEquals, buf[:])
 	}
 }
@@ -109,7 +106,8 @@ func (s testMemDBSuite) TestDiscard(c *C) {
 
 	for i := 0; i < cnt; i++ {
 		binary.BigEndian.PutUint32(buf[:], uint32(i))
-		v := p.Get(buf[:])
+		v, ok := p.Get(buf[:])
+		c.Check(ok, IsTrue)
 		c.Check(v, BytesEquals, buf[:])
 	}
 
@@ -149,7 +147,8 @@ func (s testMemDBSuite) TestFlushOverwrite(c *C) {
 	for i := 0; i < cnt; i++ {
 		binary.BigEndian.PutUint32(kbuf[:], uint32(i))
 		binary.BigEndian.PutUint32(vbuf[:], uint32(i+1))
-		v := p.Get(kbuf[:])
+		v, ok := p.Get(kbuf[:])
+		c.Check(ok, IsTrue)
 		c.Check(v, BytesEquals, vbuf[:])
 	}
 
@@ -196,7 +195,8 @@ func (s testMemDBSuite) TestComplexUpdate(c *C) {
 		if i >= keep {
 			binary.BigEndian.PutUint32(vbuf[:], uint32(i+1))
 		}
-		v := p.Get(kbuf[:])
+		v, ok := p.Get(kbuf[:])
+		c.Check(ok, IsTrue)
 		c.Check(v, BytesEquals, vbuf[:])
 	}
 }
@@ -223,7 +223,8 @@ func (s testMemDBSuite) TestNestedSandbox(c *C) {
 		if i < 100 {
 			binary.BigEndian.PutUint32(vbuf[:], uint32(i+1))
 		}
-		v := p.Get(kbuf[:])
+		v, ok := p.Get(kbuf[:])
+		c.Check(ok, IsTrue)
 		c.Check(v, BytesEquals, vbuf[:])
 	}
 
@@ -272,7 +273,8 @@ func (s testMemDBSuite) TestOverwrite(c *C) {
 
 	for i := 0; i < cnt; i++ {
 		binary.BigEndian.PutUint32(buf[:], uint32(i))
-		v := binary.BigEndian.Uint32(p.Get(buf[:]))
+		val, _ := p.Get(buf[:])
+		v := binary.BigEndian.Uint32(val)
 		if i%3 == 0 {
 			c.Check(v, Equals, uint32(i*10))
 		} else {
@@ -318,12 +320,15 @@ func (s testMemDBSuite) TestKVLargeThanBlock(c *C) {
 	c.Check(len(p.arena.blocks), Equals, 2)
 	p.Put([]byte{3}, make([]byte, 3000))
 	c.Check(len(p.arena.blocks), Equals, 2)
-	c.Check(len(p.Get([]byte{3})), Equals, 3000)
+	val, ok := p.Get([]byte{3})
+	c.Check(ok, IsTrue)
+	c.Check(len(val), Equals, 3000)
 }
 
 func (s testMemDBSuite) TestEmptyDB(c *C) {
 	p := NewSandbox()
-	c.Check(p.Get([]byte{0}), IsNil)
+	_, ok := p.Get([]byte{0})
+	c.Check(ok, IsFalse)
 	it := p.NewIterator()
 	it.SeekToFirst()
 	c.Check(it.Valid(), IsFalse)
@@ -337,7 +342,7 @@ func (s testMemDBSuite) TestEmptyDB(c *C) {
 	c.Check(it.Valid(), IsFalse)
 }
 
-func (s testMemDBSuite) checkConsist(c *C, p1 *Sandbox, p2 *memdb.DB) {
+func (s testMemDBSuite) checkConsist(c *C, p1 *sandbox, p2 *memdb.DB) {
 	c.Check(p1.Len(), Equals, p2.Len())
 	c.Check(p1.Size(), Equals, p2.Size())
 
@@ -379,13 +384,13 @@ func (s testMemDBSuite) checkConsist(c *C, p1 *Sandbox, p2 *memdb.DB) {
 	}
 }
 
-func (s testMemDBSuite) fillDB(cnt int) *Sandbox {
+func (s testMemDBSuite) fillDB(cnt int) *sandbox {
 	p := NewSandbox()
 	s.deriveAndFill(0, cnt, 0, p).Flush()
 	return p
 }
 
-func (s testMemDBSuite) deriveAndFill(start, end, valueBase int, parent *Sandbox) *Sandbox {
+func (s testMemDBSuite) deriveAndFill(start, end, valueBase int, parent *sandbox) *sandbox {
 	sb := parent.Derive()
 	var kbuf, vbuf [4]byte
 	for i := start; i < end; i++ {
