@@ -553,7 +553,7 @@ type IsolationRead struct {
 // Experimental controls the features that are still experimental: their semantics, interfaces are subject to change.
 // Using these features in the production environment is not recommended.
 type Experimental struct {
-	// Whether enable the syntax like `auto_random(3)` on the primary key column.
+	// Deprecated, it is not required to enable the auto_random feature.
 	AllowAutoRandom bool `toml:"allow-auto-random" json:"allow-auto-random"`
 	// Whether enable creating expression index.
 	AllowsExpressionIndex bool `toml:"allow-expression-index" json:"allow-expression-index"`

@@ -439,7 +439,7 @@ history-size = 24
 # experimental section controls the features that are still experimental: their semantics,
 # interfaces are subject to change, using these features in the production environment is not recommended.
 [experimental]
-# enable column attribute `auto_random` to be defined on the primary key column.
+# deprecated, it is not required to enable the `auto_random` feature.
 allow-auto-random = true
 # enable creating expression index.
 allow-expression-index = false
