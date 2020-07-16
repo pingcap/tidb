@@ -674,6 +674,7 @@ func (s *testIntegrationSuite5) TestAlterTableDropPartition(c *C) {
 	part := tbl.Meta().Partition
 	c.Assert(part.Type, Equals, model.PartitionTypeRange)
 	c.Assert(part.Expr, Equals, "`hired`")
+	// lance: what? only p3 succuessful dropped
 	c.Assert(part.Definitions, HasLen, 2)
 	c.Assert(part.Definitions[0].LessThan[0], Equals, "1991")
 	c.Assert(part.Definitions[0].Name, Equals, model.NewCIStr("p1"))
@@ -2311,8 +2312,6 @@ func (s *testIntegrationSuite3) TestUnsupportedPartitionManagementDDLs(c *C) {
 	`)
 
 	_, err := tk.Exec("alter table test_1465 truncate partition p1, p2")
-	c.Assert(err, ErrorMatches, ".*Unsupported multi schema change")
-	_, err = tk.Exec("alter table test_1465 drop partition p1, p2")
 	c.Assert(err, ErrorMatches, ".*Unsupported multi schema change")
 
 	_, err = tk.Exec("alter table test_1465 partition by hash(a)")
