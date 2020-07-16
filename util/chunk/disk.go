@@ -137,6 +137,10 @@ func (l *ListInDisk) Add(chk *Chunk) (err error) {
 	return
 }
 
+func (l *ListInDisk) fileReader() io.ReaderAt {
+	return l.checksum
+}
+
 // GetRow gets a Row from the ListInDisk by RowPtr.
 func (l *ListInDisk) GetRow(ptr RowPtr) (row Row, err error) {
 	err = l.flush()
@@ -145,7 +149,7 @@ func (l *ListInDisk) GetRow(ptr RowPtr) (row Row, err error) {
 	}
 	off := l.offsets[ptr.ChkIdx][ptr.RowIdx]
 
-	r := io.NewSectionReader(l.checksum, off, l.offWrite-off)
+	r := io.NewSectionReader(l.fileReader(), off, l.offWrite-off)
 	bufReader := bufReaderPool.Get().(*bufio.Reader)
 	bufReader.Reset(r)
 	defer bufReaderPool.Put(bufReader)

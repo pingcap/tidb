@@ -14,16 +14,20 @@
 package chunk
 
 import (
+	"bufio"
 	"fmt"
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"io"
+	"io/ioutil"
 	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -132,25 +136,71 @@ func BenchmarkListInDiskGetRow(b *testing.B) {
 	}
 }
 
-func Test1(t *testing.T) {
-	numChk, numRow := 1, 20
+type listInDiskOriginal struct {
+	ListInDisk
+}
+
+func (l *listInDiskOriginal) initDiskFile() (err error) {
+	l.disk, err = ioutil.TempFile("/Users/mayujie/", l.diskTracker.Label().String())
+	if err != nil {
+		return
+	}
+	l.bufWriter = bufWriterPool.Get().(*bufio.Writer)
+	l.bufWriter.Reset(l.disk)
+	l.bufFlushMutex = sync.RWMutex{}
+	return
+}
+
+func (l *listInDiskOriginal) fileReader() io.ReaderAt {
+	return l.disk
+}
+
+func newListInDiskOriginal(fieldTypes []*types.FieldType) *listInDiskOriginal {
+	l := listInDiskOriginal{*NewListInDisk(fieldTypes)}
+	return &l
+}
+
+func checkRow(t *testing.T, row1, row2 Row) {
+	t.Log(row1.GetString(0) == row2.GetString(0))
+	t.Log(row1.GetInt64(1) == row2.GetInt64(1))
+	t.Log(row1.GetString(2) == row2.GetString(2))
+	t.Log(row1.GetInt64(3) == row2.GetInt64(3))
+	t.Log(row1.GetJSON(4).String() == row2.GetJSON(4).String())
+}
+
+func TestListInDiskOriginal(t *testing.T) {
+	numChk, numRow := 1, 2
 	chks, fields := initChunks(numChk, numRow)
-	l := NewListInDisk(fields)
+	lChecksum := NewListInDisk(fields)
+	lDisk := newListInDiskOriginal(fields)
 	for _, chk := range chks {
-		err := l.Add(chk)
+		err := lChecksum.Add(chk)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = lDisk.Add(chk)
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
-	fmt.Println(l.disk.Name())
 
-	row, err := l.GetRow(RowPtr{ChkIdx: 0, RowIdx: 1})
-	if err != nil {
-		t.Fatal(err)
+	rand.Seed(0)
+	var ptrs []RowPtr
+	for i := 0; i < 2; i++ {
+		ptrs = append(ptrs, RowPtr{
+			ChkIdx: rand.Uint32() % uint32(numChk),
+			RowIdx: rand.Uint32() % uint32(numRow),
+		})
 	}
-	t.Log(row.GetString(0))
-	t.Log(row.GetInt64(1))
-	t.Log(row.GetString(2))
-	t.Log(row.GetInt64(3))
-	t.Log(row.GetJSON(4))
+	for _, rowPtr := range ptrs {
+		row1, err := lChecksum.GetRow(rowPtr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		row2, err := lDisk.GetRow(rowPtr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		checkRow(t, row1, row2)
+	}
 }
