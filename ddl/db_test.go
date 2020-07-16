@@ -164,6 +164,31 @@ func (s *testDBSuite4) TestAddIndexWithPK(c *C) {
 	s.tk.MustQuery("select * from test_add_index_with_pk2").Check(testkit.Rows("1 1 1 1", "2 2 2 2"))
 }
 
+func (s *testDBSuite5) TestAddIndexWithDupIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use " + s.schemaName)
+
+	err1 := ddl.ErrDupKeyName.GenWithStack("index already exist %s; "+
+		"a background job is trying to add the same index, "+
+		"please check by `ADMIN SHOW DDL JOBS`", "idx")
+	err2 := ddl.ErrDupKeyName.GenWithStack("index already exist %s", "idx")
+
+	// When there is already an duplicate index, show error message.
+	tk.MustExec("create table test_add_index_with_dup (a int, key idx (a))")
+	_, err := tk.Exec("alter table test_add_index_with_dup add index idx (a)")
+	c.Check(errors.Cause(err1).(*terror.Error).Equal(err), Equals, true)
+
+	// When there is another session adding duplicate index with state other than
+	// StatePublic, show explicit error message.
+	t := s.testGetTable(c, "test_add_index_with_dup")
+	indexInfo := t.Meta().FindIndexByName("idx")
+	indexInfo.State = model.StateNone
+	_, err = tk.Exec("alter table test_add_index_with_dup add index idx (a)")
+	c.Check(errors.Cause(err2).(*terror.Error).Equal(err), Equals, true)
+
+	tk.MustExec("drop table test_add_index_with_dup")
+}
+
 func (s *testDBSuite1) TestRenameIndex(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
