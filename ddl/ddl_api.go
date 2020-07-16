@@ -59,6 +59,8 @@ import (
 
 const expressionIndexPrefix = "_V$"
 
+const placementRuleDefaultID = "inserted_by_ddl"
+
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) error {
 	dbInfo := &model.DBInfo{Name: schema}
 	if charsetInfo != nil {
@@ -5157,7 +5159,7 @@ func validatePlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.Rule, erro
 	rules := make([]*placement.Rule, 0, len(specs))
 	for k, spec := range specs {
 		rule := &placement.Rule{
-			ID:       "default_rule",
+			ID:       placementRuleDefaultID,
 			Count:    int(spec.Replicas),
 			Override: false,
 		}
@@ -5230,7 +5232,6 @@ func (d *ddl) AlterTablePartition(ctx sessionctx.Context, ident ast.Ident, spec 
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(partitionId)
 	for _, rule := range rules {
 		rule.GroupID = groupId
-		rule.ID = "inserted_by_ddl"
 		rule.Index = 3
 		rule.StartKey = startKey
 		rule.EndKey = endKey
