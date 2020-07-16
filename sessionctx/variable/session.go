@@ -541,6 +541,8 @@ type SessionVars struct {
 	// DDLReorgPriority is the operation priority of adding indices.
 	DDLReorgPriority int
 
+	EnableChangeColumnType bool
+
 	// WaitSplitRegionFinish defines the split region behaviour is sync or async.
 	WaitSplitRegionFinish bool
 
@@ -785,6 +787,7 @@ func NewSessionVars() *SessionVars {
 		EnableClusteredIndex:        DefTiDBEnableClusteredIndex,
 		EnableSlowLogMasking:        DefTiDBSlowLogMasking,
 		ShardAllocateStep:           DefTiDBShardAllocateStep,
+		EnableChangeColumnType:      DefTiDBChangeColumnType,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1398,6 +1401,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableSlowLogMasking = TiDBOptOn(val)
 	case TiDBShardAllocateStep:
 		s.ShardAllocateStep = tidbOptInt64(val, DefTiDBShardAllocateStep)
+	case TiDBEnableChangeColumnType:
+		s.EnableChangeColumnType = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil

@@ -2063,6 +2063,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBSlowLogMasking,
 	variable.TiDBEnableTelemetry,
 	variable.TiDBShardAllocateStep,
+	variable.TiDBEnableChangeColumnType,
 }
 
 var (
