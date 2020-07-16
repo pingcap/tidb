@@ -79,7 +79,7 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 		MinCommitTs:       minCommitTS,
 	}
 
-	if config.GetGlobalConfig().TiKVClient.EnableAsyncCommit {
+	if c.useAsyncCommit {
 		if batch.isPrimary {
 			req.Secondaries = c.asyncSecondaries()
 		}
@@ -128,6 +128,11 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 					c.run(c, nil)
 				}
 			}
+			c.mu.Lock()
+			if prewriteResp.MinCommitTs > c.minCommitTS {
+				c.minCommitTS = prewriteResp.MinCommitTs
+			}
+			c.mu.Unlock()
 			return nil
 		}
 		var locks []*Lock
