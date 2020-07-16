@@ -5161,7 +5161,7 @@ func validatePlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.Rule, erro
 		rule := &placement.Rule{
 			ID:       placementRuleDefaultID,
 			Count:    int(spec.Replicas),
-			Override: false,
+			Override: true,
 		}
 
 		switch spec.Tp {
