@@ -5116,6 +5116,41 @@ add placement policy
 	role=leader
 	replicas=3`)
 	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
+
+	_, err = tk.Exec(`alter table t alter partition p0
+add placement policy
+	constraints=',,,'
+	role=leader
+	replicas=3`)
+	c.Assert(err, ErrorMatches, ".*constraint too short to be valid.*")
+
+	_, err = tk.Exec(`alter table t alter partition p0
+add placement policy
+	constraints='0000'
+	role=leader
+	replicas=3`)
+	c.Assert(err, ErrorMatches, ".*unknown operation.*")
+
+	_, err = tk.Exec(`alter table t alter partition p0
+add placement policy
+	constraints='+000'
+	role=leader
+	replicas=3`)
+	c.Assert(err, ErrorMatches, ".*invalid constraint format.*")
+
+	_, err = tk.Exec(`alter table t alter partition p0
+add placement policy
+	constraints='+=zone1'
+	role=leader
+	replicas=3`)
+	c.Assert(err, ErrorMatches, ".*empty constraint key.*")
+
+	_, err = tk.Exec(`alter table t alter partition p0
+add placement policy
+	constraints='+zone='
+	role=leader
+	replicas=3`)
+	c.Assert(err, ErrorMatches, ".*empty constraint value.*")
 }
 
 func init() {

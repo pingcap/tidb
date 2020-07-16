@@ -5184,6 +5184,10 @@ func validatePlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.Rule, erro
 		}
 
 		for _, label := range strings.Split(spec.Constraints, ",") {
+			if len(label) < 4 {
+				return rules, errors.Errorf("invalid placement spec[%d], constraint too short to be valid: %s", k, label)
+			}
+
 			var op placement.LabelConstraintOp
 			switch label[0] {
 			case '+':
@@ -5195,8 +5199,12 @@ func validatePlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.Rule, erro
 			}
 
 			idx := strings.IndexByte(label, '=')
-			if idx+1 >= len(label) {
-				return rules, errors.Errorf("invalid placement spec[%d], empty label value: %s", k, label)
+			if idx == -1 {
+				return rules, errors.Errorf("invalid placement spec[%d], invalid constraint format: %s", k, label)
+			} else if idx == 1 {
+				return rules, errors.Errorf("invalid placement spec[%d], empty constraint key: %s", k, label)
+			} else if idx+1 >= len(label) {
+				return rules, errors.Errorf("invalid placement spec[%d], empty constraint value: %s", k, label)
 			}
 
 			rule.LabelConstraints = append(rule.LabelConstraints, placement.LabelConstraint{
