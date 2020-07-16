@@ -79,7 +79,7 @@ func (l *ListInDisk) initDiskFile() (err error) {
 	}
 	l.checksum = NewChecksum(l.disk)
 	l.bufWriter = bufWriterPool.Get().(*bufio.Writer)
-	l.bufWriter.Reset(l.checksum)
+	l.bufWriter.Reset(l.fileWriter())
 	l.bufFlushMutex = sync.RWMutex{}
 	return
 }
@@ -135,6 +135,10 @@ func (l *ListInDisk) Add(chk *Chunk) (err error) {
 	l.diskTracker.Consume(n)
 	l.numRowsInDisk += chk.NumRows()
 	return
+}
+
+func (l *ListInDisk) fileWriter() io.Writer {
+	return l.checksum
 }
 
 func (l *ListInDisk) fileReader() io.ReaderAt {

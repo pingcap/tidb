@@ -14,7 +14,6 @@
 package chunk
 
 import (
-	"bufio"
 	"fmt"
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/check"
@@ -22,12 +21,10 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"io"
-	"io/ioutil"
 	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 )
 
@@ -140,15 +137,8 @@ type listInDiskOriginal struct {
 	ListInDisk
 }
 
-func (l *listInDiskOriginal) initDiskFile() (err error) {
-	l.disk, err = ioutil.TempFile("/Users/mayujie/", l.diskTracker.Label().String())
-	if err != nil {
-		return
-	}
-	l.bufWriter = bufWriterPool.Get().(*bufio.Writer)
-	l.bufWriter.Reset(l.disk)
-	l.bufFlushMutex = sync.RWMutex{}
-	return
+func (l *ListInDisk) fileWriter() io.Writer {
+	return l.disk
 }
 
 func (l *listInDiskOriginal) fileReader() io.ReaderAt {
