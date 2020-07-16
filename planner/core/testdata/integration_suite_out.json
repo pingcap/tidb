@@ -97,6 +97,45 @@
           "        └─Limit_61 1.00 cop[tikv]  offset:0, count:1",
           "          └─TableFullScan_60 1.00 cop[tikv] table:t keep order:true, stats:pseudo"
         ]
+      },
+      {
+        "SQL": "explain select min(a), max(a) from cluster_index_t",
+        "Plan": [
+          "HashJoin_16 1.00 root  CARTESIAN inner join",
+          "├─StreamAgg_43(Build) 1.00 root  funcs:max(test.cluster_index_t.a)->Column#5",
+          "│ └─Limit_47 1.00 root  offset:0, count:1",
+          "│   └─TableReader_57 1.00 root  data:Limit_56",
+          "│     └─Limit_56 1.00 cop[tikv]  offset:0, count:1",
+          "│       └─TableFullScan_55 1.00 cop[tikv] table:cluster_index_t keep order:true, desc, stats:pseudo",
+          "└─StreamAgg_22(Probe) 1.00 root  funcs:min(test.cluster_index_t.a)->Column#4",
+          "  └─Limit_26 1.00 root  offset:0, count:1",
+          "    └─TableReader_36 1.00 root  data:Limit_35",
+          "      └─Limit_35 1.00 cop[tikv]  offset:0, count:1",
+          "        └─TableFullScan_34 1.00 cop[tikv] table:cluster_index_t keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select max(b), max(b) from cluster_index_t where a = 1",
+        "Plan": [
+          "Projection_8 1.00 root  Column#4, Column#4",
+          "└─StreamAgg_13 1.00 root  funcs:max(test.cluster_index_t.b)->Column#4",
+          "  └─Limit_17 1.00 root  offset:0, count:1",
+          "    └─TableReader_27 1.00 root  data:Limit_26",
+          "      └─Limit_26 1.00 cop[tikv]  offset:0, count:1",
+          "        └─TableRangeScan_25 1.00 cop[tikv] table:cluster_index_t range:[1,1], keep order:true, desc, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select max(b), max(b) from cluster_index_t where b = 1",
+        "Plan": [
+          "Projection_8 1.00 root  Column#4, Column#4",
+          "└─StreamAgg_13 1.00 root  funcs:max(test.cluster_index_t.b)->Column#4",
+          "  └─TopN_14 1.00 root  test.cluster_index_t.b:desc, offset:0, count:1",
+          "    └─TableReader_23 1.00 root  data:TopN_22",
+          "      └─TopN_22 1.00 cop[tikv]  test.cluster_index_t.b:desc, offset:0, count:1",
+          "        └─Selection_21 10.00 cop[tikv]  eq(test.cluster_index_t.b, 1)",
+          "          └─TableFullScan_20 10000.00 cop[tikv] table:cluster_index_t keep order:false, stats:pseudo"
+        ]
       }
     ]
   },
