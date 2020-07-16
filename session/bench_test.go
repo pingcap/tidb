@@ -1561,9 +1561,7 @@ func BenchmarkHashPartitionPruningMultiSelect(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-	}
-	for i := 0; i < b.N; i++ {
-		rs, err := se.Execute(ctx, "select * from t where id = 1233 or id = 1512")
+		rs, err = se.Execute(ctx, "select * from t where id = 1233 or id = 1512")
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -1571,9 +1569,7 @@ func BenchmarkHashPartitionPruningMultiSelect(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-	}
-	for i := 0; i < b.N; i++ {
-		rs, err := se.Execute(ctx, "select * from t where id in (117, 1233, 15678)")
+		rs, err = se.Execute(ctx, "select * from t where id in (117, 1233, 15678)")
 		if err != nil {
 			b.Fatal(err)
 		}
