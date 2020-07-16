@@ -553,6 +553,8 @@ type IsolationRead struct {
 // Experimental controls the features that are still experimental: their semantics, interfaces are subject to change.
 // Using these features in the production environment is not recommended.
 type Experimental struct {
+	// Whether enable the syntax like `auto_random(3)` on the primary key column.
+	AllowAutoRandom bool `toml:"allow-auto-random" json:"allow-auto-random"`
 	// Whether enable creating expression index.
 	AllowsExpressionIndex bool `toml:"allow-expression-index" json:"allow-expression-index"`
 }
@@ -698,6 +700,7 @@ var defaultConf = Config{
 		Engines: []string{"tikv", "tiflash", "tidb"},
 	},
 	Experimental: Experimental{
+		AllowAutoRandom:       true,
 		AllowsExpressionIndex: false,
 	},
 	EnableCollectExecutionInfo: true,
@@ -727,14 +730,15 @@ func StoreGlobalConfig(config *Config) {
 }
 
 var deprecatedConfig = map[string]struct{}{
-	"pessimistic-txn.ttl":        {},
-	"log.file.log-rotate":        {},
-	"log.log-slow-query":         {},
-	"txn-local-latches":          {},
-	"txn-local-latches.enabled":  {},
-	"txn-local-latches.capacity": {},
-	"performance.max-memory":     {},
-	"max-txn-time-use":           {},
+	"pessimistic-txn.ttl":            {},
+	"log.file.log-rotate":            {},
+	"log.log-slow-query":             {},
+	"txn-local-latches":              {},
+	"txn-local-latches.enabled":      {},
+	"txn-local-latches.capacity":     {},
+	"performance.max-memory":         {},
+	"max-txn-time-use":               {},
+	"experimental.allow-auto-random": {},
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
