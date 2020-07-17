@@ -19,6 +19,7 @@ package ddl
 
 import (
 	"bytes"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"strconv"
@@ -49,6 +50,7 @@ import (
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/logutil"
@@ -5241,12 +5243,13 @@ func (d *ddl) AlterTablePartition(ctx sessionctx.Context, ident ast.Ident, spec 
 	}
 
 	groupID := strconv.FormatInt(partitionID, 10)
-	startKey, endKey := tablecodec.GetTableHandleKeyRange(partitionID)
+	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(partitionID)))
+	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(partitionID+1)))
 	for _, rule := range rules {
 		rule.GroupID = groupID
 		rule.Index = 3
-		rule.StartKey = startKey
-		rule.EndKey = endKey
+		rule.StartKeyHex = startKey
+		rule.EndKeyHex = endKey
 	}
 
 	job := &model.Job{
