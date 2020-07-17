@@ -235,5 +235,5 @@ func findBinaryCollationByCharset(cs string) string {
 		return charset.CollationUTF8MB4
 	}
 
-	panic("never reachable, something wrong [expression/collation.go]")
+	panic("never reachable, something went wrong [expression/collation.go]")
 }

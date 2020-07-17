@@ -108,13 +108,17 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expressi
 	return bf, nil
 }
 
-func checkIllegalMixCollation(funcName string, args []Expression) error {
-	allowMixFunction := map[string]struct{}{
+var (
+	// allowMixFunction is the functions allow mix incompatible collations which has same charset
+	allowMixFunction = map[string]struct{}{
 		"concat": {}, "concat_ws": {}, "reverse": {}, "replace": {}, "insert": {}, "lower": {},
 		"upper": {}, "left": {}, "right": {}, "sub_str": {}, "substr_index": {}, "trim": {},
 		"current_user": {}, "elt": {}, "make_set": {}, "repeat": {}, "rpad": {}, "lpad": {},
 		"export_set": {},
 	}
+)
+
+func checkIllegalMixCollation(funcName string, args []Expression) error {
 	firstExplicitCollation := ""
 	curCoercibility := CoercibilityIgnorable
 	curCollation := ""
