@@ -96,6 +96,10 @@ func (a *memdbArena) truncate(snap *memdbCheckpoint) {
 
 type nodeAllocator struct {
 	memdbArena
+
+	// Dummy node, so that we can make X.left.up = X.
+	// We then use this instead of NULL to mean the top or bottom
+	// end of the rb tree. It is a black node.
 	nullNode memdbNode
 }
 
@@ -104,6 +108,10 @@ func (a *nodeAllocator) init() {
 }
 
 func (a *nodeAllocator) getNode(addr memdbArenaAddr) *memdbNode {
+	if addr.isNull() {
+		return &a.nullNode
+	}
+
 	panic("todo")
 }
 
