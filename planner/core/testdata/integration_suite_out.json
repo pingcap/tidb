@@ -131,6 +131,16 @@
         ]
       },
       {
+        "SQL": "explain select min(a), max(a) from cluster_index_t where b = 1",
+        "Plan": [
+          "StreamAgg_20 1.00 root  funcs:min(Column#8)->Column#4, funcs:max(Column#9)->Column#5",
+          "└─TableReader_21 1.00 root  data:StreamAgg_9",
+          "  └─StreamAgg_9 1.00 cop[tikv]  funcs:min(test.cluster_index_t.a)->Column#8, funcs:max(test.cluster_index_t.a)->Column#9",
+          "    └─Selection_19 10.00 cop[tikv]  eq(test.cluster_index_t.b, 1)",
+          "      └─TableFullScan_18 10000.00 cop[tikv] table:cluster_index_t keep order:false, stats:pseudo"
+        ]
+      },
+      {
         "SQL": "explain select min(b), max(b) from cluster_index_t where b = 1",
         "Plan": [
           "StreamAgg_20 1.00 root  funcs:min(Column#8)->Column#4, funcs:max(Column#9)->Column#5",
