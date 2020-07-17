@@ -70,7 +70,6 @@ func (cks *checksum) ReadAt(p []byte, off int64) (n int, err error) {
 	buffer := make([]byte, checksumBlockSize)
 	for i := int64(0); i < endBlock-startBlock+1 || needWriteSize == 0; i++ {
 		n1, err := readBuffer.Read(buffer)
-		n += n1
 		if n1 != checksumBlockSize {
 			return n, err
 		}
@@ -79,8 +78,9 @@ func (cks *checksum) ReadAt(p []byte, off int64) (n int, err error) {
 		payload := buffer[checksumSize:]
 		checksum := crc32.Checksum(payload, crc32.MakeTable(crc32.IEEE))
 		if originChecksum != checksum {
-			return 0, errors.New("checksum error")
+			return n, errors.New("checksum error")
 		}
+		n += n1
 
 		// checksumPayloadSize-offsetInBlockPayload get the remaining payload which is in a checksum block to be copied.
 		if needWriteSize >= checksumPayloadSize-offsetInBlockPayload {
