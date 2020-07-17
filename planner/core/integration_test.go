@@ -1358,6 +1358,7 @@ func (s *testIntegrationSuite) TestXXX(c *C) {
 	tk.MustExec(`create table xxx (id int) partition by range (id) (
 partition p0 values less than (5),
 partition p1 values less than (10))`)
+	tk.MustExec("insert into xxx values (1),(4),(7)")
 
-	tk.MustQuery("select * from xxx")
+	tk.MustQuery("select * from xxx").Check(testkit.Rows("1"))
 }

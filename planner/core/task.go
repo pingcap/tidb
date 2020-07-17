@@ -672,17 +672,13 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 		for len(tp.Children()) > 0 {
 			tp = tp.Children()[0]
 		}
-		fmt.Println("finishCopTask: translate table scan to table reader")
-
 		ts := tp.(*PhysicalTableScan)
-
 		// A partition table.
 		if ts.Table.GetPartitionInfo() != nil {
 			fmt.Println("convert to partition table")
 			p := PhysicalPartitionTable{
 				Table:      ts.Table,
 				Conditions: ts.filterCondition,
-				CopTask:    t.tablePlan,
 
 				PhysicalTableReader: PhysicalTableReader{
 					tablePlan:      t.tablePlan,

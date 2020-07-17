@@ -15,7 +15,6 @@ package core
 
 import (
 	"context"
-	"fmt"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -138,14 +137,10 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 		planCounter = -1
 	}
 
-	fmt.Println("after logical optimize ==========", ToString(logic))
-
 	physical, cost, err := physicalOptimize(logic, &planCounter)
 	if err != nil {
 		return nil, 0, err
 	}
-
-	fmt.Println("after physical optimize ==========", ToString(logic))
 
 	finalPlan := postOptimize(sctx, physical)
 	return finalPlan, cost, nil

@@ -67,7 +67,6 @@ type PhysicalPartitionTable struct {
 
 	Table      *model.TableInfo
 	Conditions []expression.Expression
-	CopTask    PhysicalPlan
 }
 
 // PhysicalTableReader is the table reader in tidb.
@@ -467,6 +466,11 @@ func (ts *PhysicalTableScan) ExtractCorrelatedCols() []*expression.CorrelatedCol
 // IsPartition returns true and partition ID if it's actually a partition.
 func (ts *PhysicalTableScan) IsPartition() (bool, int64) {
 	return ts.isPartition, ts.physicalTableID
+}
+
+func (ts *PhysicalTableScan) SetPartition(pid int64) {
+	ts.isPartition = true
+	ts.physicalTableID = pid
 }
 
 // ExpandVirtualColumn expands the virtual column's dependent columns to ts's schema and column.

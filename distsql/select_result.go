@@ -134,7 +134,9 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		}
 		resultDetail := resultSubset.GetExecDetails()
 		r.updateCopRuntimeStats(resultDetail, resultSubset.RespTime())
-		r.feedback.Update(resultSubset.GetStartKey(), r.selectResp.OutputCounts)
+		if r.feedback != nil {
+		    r.feedback.Update(resultSubset.GetStartKey(), r.selectResp.OutputCounts)
+		}
 		r.partialCount++
 		if resultDetail != nil {
 			resultDetail.CopTime = duration
@@ -158,6 +160,7 @@ func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 			return nil
 		}
 	}
+
 	// TODO(Shenghui Wu): add metrics
 	switch r.selectResp.GetEncodeType() {
 	case tipb.EncodeType_TypeDefault:
@@ -204,6 +207,7 @@ func (r *selectResult) readFromChunk(ctx context.Context, chk *chunk.Chunk) erro
 			chunk.NewChunkWithCapacity(r.fieldTypes, 0),
 			r.fieldTypes,
 		)
+
 	}
 
 	for !chk.IsFull() {

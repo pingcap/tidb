@@ -2070,17 +2070,21 @@ func markChildrenUsedCols(outputSchema *expression.Schema, childSchema ...*expre
 }
 
 func (b *executorBuilder) constructDAGReq(plans []plannercore.PhysicalPlan) (dagReq *tipb.DAGRequest, streaming bool, err error) {
+	return constructDAGReq(b.ctx, plans)
+}
+
+func constructDAGReq(sctx sessionctx.Context, plans []plannercore.PhysicalPlan) (dagReq *tipb.DAGRequest, streaming bool, err error) {
 	dagReq = &tipb.DAGRequest{}
-	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(b.ctx.GetSessionVars().Location())
-	sc := b.ctx.GetSessionVars().StmtCtx
+	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(sctx.GetSessionVars().Location())
+	sc := sctx.GetSessionVars().StmtCtx
 	if sc.RuntimeStatsColl != nil {
 		collExec := true
 		dagReq.CollectExecutionSummaries = &collExec
 	}
 	dagReq.Flags = sc.PushDownFlags()
-	dagReq.Executors, streaming, err = constructDistExec(b.ctx, plans)
+	dagReq.Executors, streaming, err = constructDistExec(sctx, plans)
 
-	distsql.SetEncodeType(b.ctx, dagReq)
+	distsql.SetEncodeType(sctx, dagReq)
 	return dagReq, streaming, err
 }
 
@@ -2376,15 +2380,24 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 }
 
 func (b *executorBuilder) buildPartitionTable(v *plannercore.PhysicalPartitionTable) *PartitionTableExecutor {
+	// dagReq, streaming, err := b.constructDAGReq(v.TablePlans)
+	// if err != nil {
+	// 	b.err = err
+	// 	return nil
+	// }
 
-	fmt.Println("executorBuilder: build partition table ==== ")
-
-	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-		if err := b.refreshForUpdateTSForRC(); err != nil {
-			b.err = err
-			return nil
-		}
+	fmt.Printf("executorBuilder: build partition table ==== %#v\n", v)
+	fmt.Println("and table plans ===")
+	for _, xx := range v.TablePlans {
+		fmt.Printf("xxx  --- %#v\n", xx)
 	}
+
+	// if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
+	// 	if err := b.refreshForUpdateTSForRC(); err != nil {
+	// 		b.err = err
+	// 		return nil
+	// 	}
+	// }
 
 	startTS, err := b.getSnapshotTS()
 	if err != nil {
@@ -2396,21 +2409,35 @@ func (b *executorBuilder) buildPartitionTable(v *plannercore.PhysicalPartitionTa
 		b.err = errors.New("table not found in executor builder")
 		return nil
 	}
+	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
+	if ts == nil {
+		panic("should be table scan")
+	}
 	ret := &PartitionTableExecutor{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
-		startTS:      startTS,
+
+		tablePlans: v.TablePlans,
+		conds: v.Conditions,
+
+		// dagPB:          dagReq,
+		ranges: ts.Ranges,
+		startTS:        startTS,
 		table:        tbl.(table.PartitionedTable),
-		conds:        v.Conditions,
-		copTask:      v.CopTask,
+		keepOrder:      ts.KeepOrder,
+		desc:           ts.Desc,
+		// columns:        ts.Columns,
+		// streaming:      streaming,
+		// corColInFilter: b.corColInDistPlan(v.TablePlans),
+		// corColInAccess: b.corColInAccess(v.TablePlans[0]),
+		// plans:          v.TablePlans,
+		storeType:      v.StoreType,
 	}
-	// ret, err := buildNoRangePartitionTable(b, v)
-	// if err != nil {
-	// 	b.err = err
-	// 	return nil
+
+
+	// for i := range v.Schema().Columns {
+	// 	dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	// }
 
-	// ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
-	// ret.ranges = ts.Ranges
 	// sctx := b.ctx.GetSessionVars().StmtCtx
 	// sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
 	return ret
