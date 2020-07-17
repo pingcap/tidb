@@ -176,23 +176,23 @@ func (db *memdb) Get(_ context.Context, key Key) ([]byte, error) {
 		panic("vlog is resetted")
 	}
 
-	_, xn := db.tranverse(key, false)
-	if xn == nil {
+	x := db.tranverse(key, false)
+	if x.isNull() {
 		return nil, ErrNotExist
 	}
-	if xn.vptr.isNull() {
+	if x.vptr.isNull() {
 		// A flag only key, act as value not exists
 		return nil, ErrNotExist
 	}
-	return db.vlog.getValue(xn.vptr), nil
+	return db.vlog.getValue(x.vptr), nil
 }
 
 func (db *memdb) GetFlags(key Key) (NewKeyFlags, error) {
-	_, xn := db.tranverse(key, false)
-	if xn == nil {
+	x := db.tranverse(key, false)
+	if x.isNull() {
 		return 0, ErrNotExist
 	}
-	return xn.getKeyFlags(), nil
+	return x.getKeyFlags(), nil
 }
 
 func (db *memdb) UpdateFlags(key Key, ops ...FlagsOp) {
@@ -244,40 +244,40 @@ func (db *memdb) set(key Key, value []byte, ops ...FlagsOp) error {
 	if len(db.stages) == 0 {
 		db.dirty = true
 	}
-	x, xn := db.tranverse(key, true)
-	if xn.vptr.isNull() && value != nil {
+	x := db.tranverse(key, true)
+	if x.vptr.isNull() && value != nil {
 		db.size += len(key)
 		db.count++
 	}
 
 	if len(ops) != 0 {
-		flags := applyFlagsOps(xn.getKeyFlags(), ops...)
-		xn.setKeyFlags(flags)
+		flags := applyFlagsOps(x.getKeyFlags(), ops...)
+		x.setKeyFlags(flags)
 	}
 
 	if value == nil {
 		return nil
 	}
 
-	db.setValue(x, xn, value)
+	db.setValue(x, value)
 	if uint64(db.Size()) > db.bufferSizeLimit {
 		return ErrTxnTooLarge.GenWithStackByArgs(db.Size())
 	}
 	return nil
 }
 
-func (db *memdb) setValue(x memdbArenaAddr, xn *memdbNode, value []byte) {
+func (db *memdb) setValue(x memdbNodeAddr, value []byte) {
 	var activeCp *memdbCheckpoint
 	if len(db.stages) > 0 {
 		activeCp = &db.stages[len(db.stages)-1]
 	}
 
 	var oldVal []byte
-	if !xn.vptr.isNull() {
-		oldVal = db.vlog.getValue(xn.vptr)
+	if !x.vptr.isNull() {
+		oldVal = db.vlog.getValue(x.vptr)
 	}
 
-	if len(oldVal) > 0 && db.vlog.canModify(activeCp, xn.vptr) {
+	if len(oldVal) > 0 && db.vlog.canModify(activeCp, x.vptr) {
 		// For easier to implement, we only consider this case.
 		// It is the most common usage in TiDB's transaction buffers.
 		if len(oldVal) == len(value) {
@@ -285,29 +285,25 @@ func (db *memdb) setValue(x memdbArenaAddr, xn *memdbNode, value []byte) {
 			return
 		}
 	}
-	xn.vptr = db.vlog.appendValue(x, xn.vptr, value)
+	x.vptr = db.vlog.appendValue(x.addr, x.vptr, value)
 	db.size = db.size - len(oldVal) + len(value)
 }
 
 // tranverse search for and if not found and insert is true, will add a new node in.
 // Returns a pointer to the new node, or the node found.
-func (db *memdb) tranverse(key Key, insert bool) (memdbArenaAddr, *memdbNode) {
-	var (
-		x      = db.root
-		y      = nullAddr
-		xn, yn *memdbNode
-		found  = false
-	)
+func (db *memdb) tranverse(key Key, insert bool) memdbNodeAddr {
+	x := db.getNode(db.root)
+	y := memdbNodeAddr{nil, nullAddr}
+	found := false
 
 	// walk x down the tree
 	for !x.isNull() && !found {
 		y = x
-		xn = db.allocator.getNode(x)
-		cmp := bytes.Compare(key, xn.getKey())
+		cmp := bytes.Compare(key, x.getKey())
 		if cmp < 0 {
-			x = xn.left
+			x = x.getLeft(db)
 		} else if cmp > 0 {
-			x = xn.right
+			x = x.getRight(db)
 		} else {
 			found = true
 		}
@@ -315,111 +311,102 @@ func (db *memdb) tranverse(key Key, insert bool) (memdbArenaAddr, *memdbNode) {
 
 	if found || !insert {
 		if x.isNull() {
-			xn = nil
+			// Ensure pointer is nil.
+			x.memdbNode = nil
 		}
-		return x, xn
+		return x
 	}
 
-	z, zn := db.allocator.allocNode(key)
-	yn = db.allocator.getNode(y)
-	zn.up = y
+	z := db.allocNode(key)
+	z.up = y.addr
 
 	if y.isNull() {
-		db.root = z
+		db.root = z.addr
 	} else {
-		cmp := bytes.Compare(zn.getKey(), yn.getKey())
+		cmp := bytes.Compare(z.getKey(), y.getKey())
 		if cmp < 0 {
-			yn.left = z
+			y.left = z.addr
 		} else {
-			yn.right = z
+			y.right = z.addr
 		}
 	}
 
-	zn.left = nullAddr
-	zn.right = nullAddr
+	z.left = nullAddr
+	z.right = nullAddr
 
 	// colour this new node red
-	zn.setRed()
+	z.setRed()
 
 	// Having added a red node, we must now walk back up the tree balancing it,
 	// by a series of rotations and changing of colours
 	x = z
-	xn = zn
-
-	a := &db.allocator
 
 	// While we are not at the top and our parent node is red
 	// NOTE: Since the root node is guaranteed black, then we
 	// are also going to stop if we are the child of the root
 
-	for x != db.root {
-		xupn := a.getNode(xn.up)
-		if xupn.isBlack() {
+	for x.addr != db.root {
+		xup := x.getUp(db)
+		if xup.isBlack() {
 			break
 		}
 
-		xgrandupn := a.getNode(xupn.up)
+		xgrandup := db.getNode(xup.up)
 		// if our parent is on the left side of our grandparent
-		if xn.up == xgrandupn.left {
+		if x.up == xgrandup.left {
 			// get the right side of our grandparent (uncle?)
-			y = xgrandupn.right
-			yn = a.getNode(y)
-			if yn.isRed() {
+			y = db.getNode(xgrandup.right)
+			if y.isRed() {
 				// make our parent black
-				xupn.setBlack()
+				xup.setBlack()
 				// make our uncle black
-				yn.setBlack()
+				y.setBlack()
 				// make our grandparent red
-				xgrandupn.setRed()
+				xgrandup.setRed()
 				// now consider our grandparent
-				x = xupn.up
-				xn = xgrandupn
+				x = db.getNode(xup.up)
 			} else {
 				// if we are on the right side of our parent
-				if x == xupn.right {
+				if x.addr == xup.right {
 					// Move up to our parent
-					x = xn.up
-					xn = xupn
-					db.leftRotate(x, xn)
-					xupn = a.getNode(xn.up)
-					xgrandupn = a.getNode(xupn.up)
+					x = x.getUp(db)
+					db.leftRotate(x)
+					xup = x.getUp(db)
+					xgrandup = db.getNode(xup.up)
 				}
 
-				xupn.setBlack()
-				xgrandupn.setRed()
-				db.rightRotate(xupn.up, xgrandupn)
+				xup.setBlack()
+				xgrandup.setRed()
+				db.rightRotate(xgrandup)
 			}
 		} else {
 			// everything here is the same as above, but exchanging left for right
-			y = xgrandupn.left
-			yn = a.getNode(y)
-			if yn.isRed() {
-				xupn.setBlack()
-				yn.setBlack()
-				xgrandupn.setRed()
+			y = db.getNode(xgrandup.left)
+			if y.isRed() {
+				xup.setBlack()
+				y.setBlack()
+				xgrandup.setRed()
 
-				x = xupn.up
-				xn = xgrandupn
+				x = db.getNode(xup.up)
 			} else {
-				if x == xupn.left {
-					x = xn.up
-					xn = xupn
-					db.rightRotate(x, xn)
-					xupn = a.getNode(xn.up)
-					xgrandupn = a.getNode(xupn.up)
+				if x.addr == xup.left {
+					x = x.getUp(db)
+					db.rightRotate(x)
+					xup = x.getUp(db)
+					xgrandup = db.getNode(xup.up)
 				}
 
-				xupn.setBlack()
-				xgrandupn.setRed()
-				db.leftRotate(xupn.up, xgrandupn)
+				xup.setBlack()
+				xgrandup.setRed()
+				db.leftRotate(xgrandup)
 			}
 		}
 	}
 
 	// Set the root node black
-	a.getNode(db.root).setBlack()
+	db.getNode(db.root).setBlack()
 
-	return z, zn
+	return z
 }
 
 //
@@ -436,108 +423,100 @@ func (db *memdb) tranverse(key Key, insert bool) (memdbArenaAddr, *memdbNode) {
 // We assume that neither X or Y is NULL
 //
 
-func (db *memdb) leftRotate(x memdbArenaAddr, xn *memdbNode) {
-	y := xn.right
-	yn := db.allocator.getNode(y)
+func (db *memdb) leftRotate(x memdbNodeAddr) {
+	y := x.getRight(db)
 
 	// Turn Y's left subtree into X's right subtree (move B)
-	xn.right = yn.left
+	x.right = y.left
 
 	// If B is not null, set it's parent to be X
-	if !yn.left.isNull() {
-		db.allocator.getNode(yn.left).up = x
+	if !y.left.isNull() {
+		y.getLeft(db).up = x.addr
 	}
 
 	// Set Y's parent to be what X's parent was
-	yn.up = xn.up
+	y.up = x.up
 
 	// if X was the root
-	if xn.up.isNull() {
-		db.root = y
+	if x.up.isNull() {
+		db.root = y.addr
 	} else {
-		xupn := db.allocator.getNode(xn.up)
+		xup := x.getUp(db)
 		// Set X's parent's left or right pointer to be Y
-		if x == xupn.left {
-			xupn.left = y
+		if x.addr == xup.left {
+			xup.left = y.addr
 		} else {
-			xupn.right = y
+			xup.right = y.addr
 		}
 	}
 
 	// Put X on Y's left
-	yn.left = x
+	y.left = x.addr
 	// Set X's parent to be Y
-	xn.up = y
+	x.up = y.addr
 }
 
-func (db *memdb) rightRotate(y memdbArenaAddr, yn *memdbNode) {
-	x := yn.left
-	xn := db.allocator.getNode(x)
+func (db *memdb) rightRotate(y memdbNodeAddr) {
+	x := y.getLeft(db)
 
 	// Turn X's right subtree into Y's left subtree (move B)
-	yn.left = xn.right
+	y.left = x.right
 
 	// If B is not null, set it's parent to be Y
-	if !xn.right.isNull() {
-		db.allocator.getNode(xn.right).up = y
+	if !x.right.isNull() {
+		x.getRight(db).up = y.addr
 	}
 
 	// Set X's parent to be what Y's parent was
-	xn.up = yn.up
+	x.up = y.up
 
 	// if Y was the root
-	if yn.up.isNull() {
-		db.root = x
+	if y.up.isNull() {
+		db.root = x.addr
 	} else {
-		yupn := db.allocator.getNode(yn.up)
+		yup := y.getUp(db)
 		// Set Y's parent's left or right pointer to be X
-		if y == yupn.left {
-			yupn.left = x
+		if y.addr == yup.left {
+			yup.left = x.addr
 		} else {
-			yupn.right = x
+			yup.right = x.addr
 		}
 	}
 
 	// Put Y on X's right
-	xn.right = y
+	x.right = y.addr
 	// Set Y's parent to be X
-	yn.up = x
+	y.up = x.addr
 }
 
-func (db *memdb) deleteNode(z memdbArenaAddr, zn *memdbNode) {
-	var (
-		x, y   memdbArenaAddr
-		xn, yn *memdbNode
-	)
+func (db *memdb) deleteNode(z memdbNodeAddr) {
+	var x, y memdbNodeAddr
 
-	if zn.left.isNull() || zn.right.isNull() {
+	if z.left.isNull() || z.right.isNull() {
 		y = z
-		yn = zn
 	} else {
-		y, yn = db.successor(z, zn)
+		y = db.successor(z)
 	}
 
-	if !yn.left.isNull() {
-		x = yn.left
-		xn = db.allocator.getNode(x)
+	if !y.left.isNull() {
+		x = y.getLeft(db)
 	} else {
-		x = yn.right
-		xn = db.allocator.getNode(x)
+		x = y.getRight(db)
 	}
-	xn.up = yn.up
+	x.up = y.up
 
-	if yn.up.isNull() {
-		db.root = x
+	if y.up.isNull() {
+		db.root = x.addr
 	} else {
-		yupn := db.allocator.getNode(yn.up)
-		if y == yupn.left {
-			yupn.left = x
+		yup := y.getUp(db)
+		if y.addr == yup.left {
+			yup.left = x.addr
 		} else {
-			yupn.right = x
+			yup.right = x.addr
 		}
 	}
 
-	needFix := yn.isBlack()
+	needFix := y.isBlack()
 
 	// NOTE: traditional red-black tree will copy key from Y to Z and free Y.
 	// We cannot do the same thing here, due to Y's pointer is stored in vlog and the space in Z may not suitable for Y.
@@ -551,141 +530,128 @@ func (db *memdb) deleteNode(z memdbArenaAddr, zn *memdbNode) {
 		//     /   \
 		//    A     Y
 		//
-		if yn.up == z {
-			xn.up = y
+		if y.up == z.addr {
+			x.up = y.addr
 		}
-		db.replaceNode(y, yn, z, zn)
+		db.replaceNode(y, z)
 	}
 
 	if needFix {
-		db.deleteNodeFix(x, xn)
+		db.deleteNodeFix(x)
 	}
 
-	db.allocator.freeNode(z)
+	db.allocator.freeNode(z.addr)
 }
 
-func (db *memdb) replaceNode(x memdbArenaAddr, xn *memdbNode, y memdbArenaAddr, yn *memdbNode) {
-	if !yn.up.isNull() {
-		yupn := db.allocator.getNode(yn.up)
-		if y == yupn.left {
-			yupn.left = x
+func (db *memdb) replaceNode(x memdbNodeAddr, y memdbNodeAddr) {
+	if !y.up.isNull() {
+		yup := y.getUp(db)
+		if y.addr == yup.left {
+			yup.left = x.addr
 		} else {
-			yupn.right = x
+			yup.right = x.addr
 		}
 	} else {
-		db.root = x
+		db.root = x.addr
 	}
-	xn.up = yn.up
+	x.up = y.up
 
-	if !yn.left.isNull() {
-		db.allocator.getNode(yn.left).up = x
+	if !y.left.isNull() {
+		y.getLeft(db).up = x.addr
 	}
-	xn.left = yn.left
+	x.left = y.left
 
-	if !yn.right.isNull() {
-		db.allocator.getNode(yn.right).up = x
+	if !y.right.isNull() {
+		y.getRight(db).up = x.addr
 	}
-	xn.right = yn.right
+	x.right = y.right
 
-	if yn.isBlack() {
-		xn.setBlack()
+	if y.isBlack() {
+		x.setBlack()
 	} else {
-		xn.setRed()
+		x.setRed()
 	}
 }
 
-func (db *memdb) deleteNodeFix(x memdbArenaAddr, xn *memdbNode) {
-	a := &db.allocator
-	for x != db.root && xn.isBlack() {
-		xupn := a.getNode(xn.up)
-		if x == xupn.left {
-			w := xupn.right
-			wn := a.getNode(w)
-			if wn.isRed() {
-				wn.setBlack()
-				xupn.setRed()
-				db.leftRotate(xn.up, xupn)
-				w = a.getNode(xn.up).right
-				wn = a.getNode(w)
+func (db *memdb) deleteNodeFix(x memdbNodeAddr) {
+	for x.addr != db.root && x.isBlack() {
+		xup := x.getUp(db)
+		if x.addr == xup.left {
+			w := db.getNode(xup.right)
+			if w.isRed() {
+				w.setBlack()
+				xup.setRed()
+				db.leftRotate(xup)
+				w = x.getUp(db).getRight(db)
 			}
 
-			if a.getNode(wn.left).isBlack() && a.getNode(wn.right).isBlack() {
-				wn.setRed()
-				x = xn.up
-				xn = a.getNode(x)
+			if w.getLeft(db).isBlack() && w.getRight(db).isBlack() {
+				w.setRed()
+				x = x.getUp(db)
 			} else {
-				if a.getNode(wn.right).isBlack() {
-					a.getNode(wn.left).setBlack()
-					wn.setRed()
-					db.rightRotate(w, wn)
-					w = a.getNode(xn.up).right
-					wn = a.getNode(w)
+				if w.getRight(db).isBlack() {
+					w.getLeft(db).setBlack()
+					w.setRed()
+					db.rightRotate(w)
+					w = x.getUp(db).getRight(db)
 				}
 
-				xupn := a.getNode(xn.up)
-				if xupn.isBlack() {
-					wn.setBlack()
+				xup := x.getUp(db)
+				if xup.isBlack() {
+					w.setBlack()
 				} else {
-					wn.setRed()
+					w.setRed()
 				}
-				xupn.setBlack()
-				a.getNode(wn.right).setBlack()
-				db.leftRotate(xn.up, xupn)
-				x = db.root
-				xn = a.getNode(x)
+				xup.setBlack()
+				w.getRight(db).setBlack()
+				db.leftRotate(xup)
+				x = db.getNode(db.root)
 			}
 		} else {
-			w := xupn.left
-			wn := a.getNode(w)
-			if wn.isRed() {
-				wn.setBlack()
-				xupn.setRed()
-				db.rightRotate(xn.up, xupn)
-				w = a.getNode(xn.up).left
-				wn = a.getNode(w)
+			w := xup.getLeft(db)
+			if w.isRed() {
+				w.setBlack()
+				xup.setRed()
+				db.rightRotate(xup)
+				w = x.getUp(db).getLeft(db)
 			}
 
-			if a.getNode(wn.right).isBlack() && a.getNode(wn.left).isBlack() {
-				wn.setRed()
-				x = xn.up
-				xn = a.getNode(x)
+			if w.getRight(db).isBlack() && w.getLeft(db).isBlack() {
+				w.setRed()
+				x = x.getUp(db)
 			} else {
-				if a.getNode(wn.left).isBlack() {
-					a.getNode(wn.right).setBlack()
-					wn.setRed()
-					db.leftRotate(w, wn)
-					w = a.getNode(xn.up).left
-					wn = a.getNode(w)
+				if w.getLeft(db).isBlack() {
+					w.getRight(db).setBlack()
+					w.setRed()
+					db.leftRotate(w)
+					w = x.getUp(db).getLeft(db)
 				}
 
-				xupn := a.getNode(xn.up)
-				if xupn.isBlack() {
-					wn.setBlack()
+				xup := x.getUp(db)
+				if xup.isBlack() {
+					w.setBlack()
 				} else {
-					wn.setRed()
+					w.setRed()
 				}
-				xupn.setBlack()
-				a.getNode(wn.left).setBlack()
-				db.rightRotate(xn.up, xupn)
-				x = db.root
-				xn = a.getNode(x)
+				xup.setBlack()
+				w.getLeft(db).setBlack()
+				db.rightRotate(xup)
+				x = db.getNode(db.root)
 			}
 		}
 	}
-	xn.setBlack()
+	x.setBlack()
 }
 
-func (db *memdb) successor(x memdbArenaAddr, xn *memdbNode) (y memdbArenaAddr, yn *memdbNode) {
-	if !xn.right.isNull() {
+func (db *memdb) successor(x memdbNodeAddr) (y memdbNodeAddr) {
+	if !x.right.isNull() {
 		// If right is not NULL then go right one and
 		// then keep going left until we find a node with
 		// no left pointer.
 
-		y = xn.right
-		yn = db.allocator.getNode(y)
-		for !yn.left.isNull() {
-			y = yn.left
-			yn = db.allocator.getNode(y)
+		y = x.getRight(db)
+		for !y.left.isNull() {
+			y = y.getLeft(db)
 		}
 		return
 	}
@@ -694,29 +660,23 @@ func (db *memdb) successor(x memdbArenaAddr, xn *memdbNode) (y memdbArenaAddr, y
 	// left of its parent (or the root) and then return the
 	// parent.
 
-	y = xn.up
-	for !y.isNull() {
-		yn = db.allocator.getNode(y)
-		if x != yn.right {
-			return y, yn
-		}
+	y = x.getUp(db)
+	for !y.isNull() && x.addr == y.right {
 		x = y
-		y = yn.up
+		y = y.getUp(db)
 	}
-	return nullAddr, nil
+	return y
 }
 
-func (db *memdb) predecessor(x memdbArenaAddr, xn *memdbNode) (y memdbArenaAddr, yn *memdbNode) {
-	if !xn.left.isNull() {
+func (db *memdb) predecessor(x memdbNodeAddr) (y memdbNodeAddr) {
+	if !x.left.isNull() {
 		// If left is not NULL then go left one and
 		// then keep going right until we find a node with
 		// no right pointer.
 
-		y = xn.left
-		yn = db.allocator.getNode(y)
-		for !yn.right.isNull() {
-			y = yn.right
-			yn = db.allocator.getNode(y)
+		y = x.getLeft(db)
+		for !y.right.isNull() {
+			y = y.getRight(db)
 		}
 		return
 	}
@@ -725,16 +685,42 @@ func (db *memdb) predecessor(x memdbArenaAddr, xn *memdbNode) (y memdbArenaAddr,
 	// right of its parent (or the root) and then return the
 	// parent.
 
-	y = xn.up
-	for !y.isNull() {
-		yn = db.allocator.getNode(y)
-		if x != yn.left {
-			return y, yn
-		}
+	y = x.getUp(db)
+	for !y.isNull() && x.addr == y.left {
 		x = y
-		y = yn.up
+		y = y.getUp(db)
 	}
-	return nullAddr, nil
+	return y
+}
+
+func (db *memdb) getNode(x memdbArenaAddr) memdbNodeAddr {
+	return memdbNodeAddr{db.allocator.getNode(x), x}
+}
+
+func (db *memdb) allocNode(key Key) memdbNodeAddr {
+	x, xn := db.allocator.allocNode(key)
+	return memdbNodeAddr{xn, x}
+}
+
+type memdbNodeAddr struct {
+	*memdbNode
+	addr memdbArenaAddr
+}
+
+func (a *memdbNodeAddr) isNull() bool {
+	return a.addr.isNull()
+}
+
+func (a memdbNodeAddr) getUp(db *memdb) memdbNodeAddr {
+	return db.getNode(a.up)
+}
+
+func (a memdbNodeAddr) getLeft(db *memdb) memdbNodeAddr {
+	return db.getNode(a.left)
+}
+
+func (a memdbNodeAddr) getRight(db *memdb) memdbNodeAddr {
+	return db.getNode(a.right)
 }
 
 type memdbNode struct {
