@@ -693,6 +693,24 @@ func (c *twoPhaseCommitter) setAsyncCommit(val bool) {
 	}
 }
 
+func (c *twoPhaseCommitter) cleanup(ctx context.Context) {
+	c.cleanWg.Add(1)
+	go func() {
+		cleanupKeysCtx := context.WithValue(context.Background(), txnStartKey, ctx.Value(txnStartKey))
+		err := c.cleanupMutations(NewBackofferWithVars(cleanupKeysCtx, cleanupMaxBackoff, c.txn.vars), c.mutations)
+		if err != nil {
+			tikvSecondaryLockCleanupFailureCounterRollback.Inc()
+			logutil.Logger(ctx).Info("2PC cleanup failed",
+				zap.Error(err),
+				zap.Uint64("txnStartTS", c.startTS))
+		} else {
+			logutil.Logger(ctx).Info("2PC clean up done",
+				zap.Uint64("txnStartTS", c.startTS))
+		}
+		c.cleanWg.Done()
+	}()
+}
+
 // execute executes the two-phase commit protocol.
 func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	var binlogSkipped bool
@@ -704,21 +722,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 			undetermined := c.mu.undeterminedErr != nil
 			c.mu.RUnlock()
 			if !committed && !undetermined {
-				c.cleanWg.Add(1)
-				go func() {
-					cleanupKeysCtx := context.WithValue(context.Background(), txnStartKey, ctx.Value(txnStartKey))
-					err := c.cleanupMutations(NewBackofferWithVars(cleanupKeysCtx, cleanupMaxBackoff, c.txn.vars), c.mutations)
-					if err != nil {
-						tikvSecondaryLockCleanupFailureCounterRollback.Inc()
-						logutil.Logger(ctx).Info("2PC cleanup failed",
-							zap.Error(err),
-							zap.Uint64("txnStartTS", c.startTS))
-					} else {
-						logutil.Logger(ctx).Info("2PC clean up done",
-							zap.Uint64("txnStartTS", c.startTS))
-					}
-					c.cleanWg.Done()
-				}()
+				c.cleanup(ctx)
 			}
 			c.txn.commitTS = c.commitTS
 			if binlogSkipped {
@@ -729,6 +733,11 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 				} else {
 					c.writeFinishBinlog(ctx, binlog.BinlogType_Commit, int64(c.commitTS))
 				}
+			}
+		} else {
+			// The error means the async commit should not succeed.
+			if err != nil {
+				c.cleanup(ctx)
 			}
 		}
 	}()
