@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	checksumBlockSize   = 1024
+	checksumBlockSize   = 16
 	checksumSize        = 4
 	checksumPayloadSize = checksumBlockSize - checksumSize
 )
@@ -64,9 +64,9 @@ func (cks *checksum) Close() error {
 }
 
 func (cks *checksum) ReadAt(p []byte, off int64) (n int, err error) {
-	startBlock := off / checksumBlockSize
-	endBlock := (off + int64(len(p))) / checksumBlockSize
-	offsetInBlockPayload := off - startBlock*checksumBlockSize
+	startBlock := off / checksumPayloadSize
+	endBlock := (off + int64(len(p))) / checksumPayloadSize
+	offsetInBlockPayload := off - startBlock*checksumPayloadSize
 	writeOffset := int64(0)
 	needWriteSize := int64(len(p))
 

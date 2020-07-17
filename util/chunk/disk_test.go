@@ -14,6 +14,7 @@
 package chunk
 
 import (
+	"bufio"
 	"fmt"
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/check"
@@ -137,17 +138,32 @@ type listInDiskOriginal struct {
 	ListInDisk
 }
 
-func (l *listInDiskOriginal) fileWriter() io.Writer {
-	return l.disk
-}
-
-func (l *listInDiskOriginal) fileReader() io.ReaderAt {
-	return l.disk
-}
-
 func newListInDiskOriginal(fieldTypes []*types.FieldType) *listInDiskOriginal {
 	l := listInDiskOriginal{*NewListInDisk(fieldTypes)}
+	l.initDiskFile()
+	l.bufWriter.Reset(l.disk)
 	return &l
+}
+
+func (l *listInDiskOriginal) GetRow(ptr RowPtr) (row Row, err error) {
+	err = l.flush()
+	if err != nil {
+		return
+	}
+	off := l.offsets[ptr.ChkIdx][ptr.RowIdx]
+
+	r := io.NewSectionReader(l.disk, off, l.offWrite-off)
+	bufReader := bufReaderPool.Get().(*bufio.Reader)
+	bufReader.Reset(r)
+	defer bufReaderPool.Put(bufReader)
+
+	format := rowInDisk{numCol: len(l.fieldTypes)}
+	_, err = format.ReadFrom(bufReader)
+	if err != nil {
+		return row, err
+	}
+	row = format.toMutRow(l.fieldTypes).ToRow()
+	return row, err
 }
 
 func checkRow(t *testing.T, row1, row2 Row) {
@@ -159,7 +175,7 @@ func checkRow(t *testing.T, row1, row2 Row) {
 }
 
 func TestListInDiskOriginal(t *testing.T) {
-	numChk, numRow := 1, 200
+	numChk, numRow := 2, 2
 	chks, fields := initChunks(numChk, numRow)
 	lChecksum := NewListInDisk(fields)
 	lDisk := newListInDiskOriginal(fields)
@@ -173,14 +189,20 @@ func TestListInDiskOriginal(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	lDisk.flush()
+	lChecksum.flush()
+	t.Log("lChecksum", lChecksum.disk.Name())
+	t.Log("lDisk", lDisk.disk.Name())
 
 	rand.Seed(0)
 	var ptrs []RowPtr
-	for i := 0; i < 2; i++ {
-		ptrs = append(ptrs, RowPtr{
-			ChkIdx: rand.Uint32() % uint32(numChk),
-			RowIdx: rand.Uint32() % uint32(numRow),
-		})
+	for i := 0; i < numChk; i++ {
+		for j := 0; j < numRow; j++ {
+			ptrs = append(ptrs, RowPtr{
+				ChkIdx: uint32(i),
+				RowIdx: uint32(j),
+			})
+		}
 	}
 	for _, rowPtr := range ptrs {
 		row1, err := lChecksum.GetRow(rowPtr)
