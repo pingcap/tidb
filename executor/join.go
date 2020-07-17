@@ -951,7 +951,7 @@ type cacheInfo struct {
 	useCache bool
 }
 
-type JoinRuntimeStats struct {
+type joinRuntimeStats struct {
 	*execdetails.RuntimeStatsWithConcurrencyInfo
 
 	applyCache  bool
@@ -960,8 +960,8 @@ type JoinRuntimeStats struct {
 	hashStat    hashStatistic
 }
 
-func newJoinRuntimeStats(basic *execdetails.BasicRuntimeStats) *JoinRuntimeStats {
-	stats := &JoinRuntimeStats{
+func newJoinRuntimeStats(basic *execdetails.BasicRuntimeStats) *joinRuntimeStats {
+	stats := &joinRuntimeStats{
 		RuntimeStatsWithConcurrencyInfo: &execdetails.RuntimeStatsWithConcurrencyInfo{
 			BasicRuntimeStats: basic,
 		},
@@ -969,8 +969,7 @@ func newJoinRuntimeStats(basic *execdetails.BasicRuntimeStats) *JoinRuntimeStats
 	return stats
 }
 
-// setCacheInfo sets the cache information. Only used for apply executor.
-func (e *JoinRuntimeStats) setCacheInfo(useCache bool, hitRatio float64) {
+func (e *joinRuntimeStats) setCacheInfo(useCache bool, hitRatio float64) {
 	e.Lock()
 	e.applyCache = true
 	e.cache.useCache = useCache
@@ -978,14 +977,14 @@ func (e *JoinRuntimeStats) setCacheInfo(useCache bool, hitRatio float64) {
 	e.Unlock()
 }
 
-func (e *JoinRuntimeStats) setHashStat(hashStat hashStatistic) {
+func (e *joinRuntimeStats) setHashStat(hashStat hashStatistic) {
 	e.Lock()
 	e.hasHashStat = true
 	e.hashStat = hashStat
 	e.Unlock()
 }
 
-func (e *JoinRuntimeStats) String() string {
+func (e *joinRuntimeStats) String() string {
 	result := e.RuntimeStatsWithConcurrencyInfo.String()
 	if e.applyCache {
 		if e.cache.useCache {

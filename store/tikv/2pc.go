@@ -18,6 +18,7 @@ import (
 	"context"
 	"math"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -158,6 +159,24 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 	}, nil
 }
 
+func (c *twoPhaseCommitter) extractKeyExistsErr(key kv.Key) error {
+	if !c.txn.us.HasPresumeKeyNotExists(key) {
+		return errors.Errorf("conn %d, existErr for key:%s should not be nil", c.connID, key)
+	}
+
+	_, handle, err := tablecodec.DecodeRecordKey(key)
+	if err == nil {
+		return kv.ErrKeyExists.FastGenByArgs(handle.String(), "PRIMARY")
+	}
+
+	tableID, indexID, indexValues, err := tablecodec.DecodeIndexKey(key)
+	if err == nil {
+		return kv.ErrKeyExists.FastGenByArgs(strings.Join(indexValues, "-"), c.txn.us.GetIndexName(tableID, indexID))
+	}
+
+	return kv.ErrKeyExists.FastGenByArgs(key.String(), "UNKNOWN")
+}
+
 func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	var (
 		size            int
@@ -167,7 +186,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		noNeedCommitKey = make(map[string]struct{})
 	)
 	txn := c.txn
-	sizeHint := len(txn.lockKeys) + txn.us.Len()
+	sizeHint := len(txn.lockKeys) + txn.us.GetMemBuffer().Len()
 	mutations := newCommiterMutations(sizeHint)
 	c.isPessimistic = txn.IsPessimistic()
 
@@ -176,7 +195,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		return bytes.Compare(txn.lockKeys[i], txn.lockKeys[j]) < 0
 	})
 	lockIdx := 0
-	err := txn.us.WalkBuffer(func(k kv.Key, v []byte) error {
+	err := kv.WalkMemBuffer(txn.us.GetMemBuffer(), func(k kv.Key, v []byte) error {
 		var (
 			op                pb.Op
 			value             []byte
@@ -187,13 +206,13 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 				return nil
 			}
 			op = pb.Op_Put
-			if c := txn.us.GetKeyExistErrInfo(k); c != nil {
+			if txn.us.HasPresumeKeyNotExists(k) {
 				op = pb.Op_Insert
 			}
 			value = v
 			putCnt++
 		} else {
-			if !txn.IsPessimistic() && txn.us.GetKeyExistErrInfo(k) != nil {
+			if !txn.IsPessimistic() && txn.us.HasPresumeKeyNotExists(k) {
 				// delete-your-writes keys in optimistic txn need check not exists in prewrite-phase
 				// due to `Op_CheckNotExists` doesn't prewrite lock, so mark those keys should not be used in commit-phase.
 				op = pb.Op_CheckNotExists
