@@ -86,7 +86,7 @@ func (s testMemDBSuite) TestIterator(c *C) {
 func (s testMemDBSuite) TestRuntimeAssertion(c *C) {
 	p := NewSandbox()
 	p1 := p.Derive()
-	c.Check(func() { p.Put([]byte{0}, []byte{}) }, Panics, "cannot write to a sandbox when it has forked a new sanbox")
+	c.Check(func() { p.Put([]byte{0}, []byte{}) }, Panics, "cannot write to a sandbox when it has forked a new sandbox")
 	c.Check(func() { p.Derive() }, Panics, "cannot start second sandbox")
 	c.Check(func() { p.Discard() }, Panics, "root sandbox is freezed")
 	p1.Discard()
