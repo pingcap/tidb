@@ -880,6 +880,28 @@
           "2 222 2.2000000000 12",
           "3 333 3.3000000000 13"
         ]
+      },
+      {
+        "SQL": "select * from t1 where t1.a = 1 order by b",
+        "Plan": [
+          "TableReader_12 1.00 root  data:TableRangeScan_11",
+          "└─TableRangeScan_11 1.00 cop[tikv] table:t1 range:[1,1], keep order:true"
+        ],
+        "Res": [
+          "1 111 1.1000000000 11"
+        ]
+      },
+      {
+        "SQL": "select * from t1 order by a, b limit 1",
+        "Plan": [
+          "Limit_10 1.00 root  offset:0, count:1",
+          "└─TableReader_20 1.00 root  data:Limit_19",
+          "  └─Limit_19 1.00 cop[tikv]  offset:0, count:1",
+          "    └─TableFullScan_18 1.00 cop[tikv] table:t1 keep order:true"
+        ],
+        "Res": [
+          "1 111 1.1000000000 11"
+        ]
       }
     ]
   },
