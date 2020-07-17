@@ -87,27 +87,27 @@ func (s *testCacheableSuite) TestUnionReadOnly(c *C) {
 		LockTp: SelectLockForUpdateNoWait,
 	}
 
-	unionStmt := &UnionStmt{
-		SelectList: &UnionSelectList{
+	setOprStmt := &SetOprStmt{
+		SelectList: &SetOprSelectList{
 			Selects: []*SelectStmt{selectReadOnly, selectReadOnly},
 		},
 	}
-	c.Assert(IsReadOnly(unionStmt), IsTrue)
+	c.Assert(IsReadOnly(setOprStmt), IsTrue)
 
-	unionStmt.SelectList.Selects = []*SelectStmt{selectReadOnly, selectReadOnly, selectReadOnly}
-	c.Assert(IsReadOnly(unionStmt), IsTrue)
+	setOprStmt.SelectList.Selects = []*SelectStmt{selectReadOnly, selectReadOnly, selectReadOnly}
+	c.Assert(IsReadOnly(setOprStmt), IsTrue)
 
-	unionStmt.SelectList.Selects = []*SelectStmt{selectReadOnly, selectForUpdate}
-	c.Assert(IsReadOnly(unionStmt), IsFalse)
+	setOprStmt.SelectList.Selects = []*SelectStmt{selectReadOnly, selectForUpdate}
+	c.Assert(IsReadOnly(setOprStmt), IsFalse)
 
-	unionStmt.SelectList.Selects = []*SelectStmt{selectReadOnly, selectForUpdateNoWait}
-	c.Assert(IsReadOnly(unionStmt), IsFalse)
+	setOprStmt.SelectList.Selects = []*SelectStmt{selectReadOnly, selectForUpdateNoWait}
+	c.Assert(IsReadOnly(setOprStmt), IsFalse)
 
-	unionStmt.SelectList.Selects = []*SelectStmt{selectForUpdate, selectForUpdateNoWait}
-	c.Assert(IsReadOnly(unionStmt), IsFalse)
+	setOprStmt.SelectList.Selects = []*SelectStmt{selectForUpdate, selectForUpdateNoWait}
+	c.Assert(IsReadOnly(setOprStmt), IsFalse)
 
-	unionStmt.SelectList.Selects = []*SelectStmt{selectReadOnly, selectForUpdate, selectForUpdateNoWait}
-	c.Assert(IsReadOnly(unionStmt), IsFalse)
+	setOprStmt.SelectList.Selects = []*SelectStmt{selectReadOnly, selectForUpdate, selectForUpdateNoWait}
+	c.Assert(IsReadOnly(setOprStmt), IsFalse)
 }
 
 // CleanNodeText set the text of node and all child node empty.

@@ -24,7 +24,7 @@ import (
 var (
 	_ DMLNode = &DeleteStmt{}
 	_ DMLNode = &InsertStmt{}
-	_ DMLNode = &UnionStmt{}
+	_ DMLNode = &SetOprStmt{}
 	_ DMLNode = &UpdateStmt{}
 	_ DMLNode = &SelectStmt{}
 	_ DMLNode = &ShowStmt{}
@@ -44,7 +44,7 @@ var (
 	_ Node = &TableName{}
 	_ Node = &TableRefsClause{}
 	_ Node = &TableSource{}
-	_ Node = &UnionSelectList{}
+	_ Node = &SetOprSelectList{}
 	_ Node = &WildCardField{}
 	_ Node = &WindowSpec{}
 	_ Node = &PartitionByClause{}
@@ -379,7 +379,7 @@ type TableSource struct {
 	node
 
 	// Source is the source of the data, can be a TableName,
-	// a SelectStmt, a UnionStmt, or a JoinNode.
+	// a SelectStmt, a SetOprStmt, or a JoinNode.
 	Source ResultSetNode
 
 	// AsName is the alias name of the table source.
@@ -390,7 +390,7 @@ type TableSource struct {
 func (n *TableSource) Restore(ctx *format.RestoreCtx) error {
 	needParen := false
 	switch n.Source.(type) {
-	case *SelectStmt, *UnionStmt:
+	case *SelectStmt, *SetOprStmt:
 		needParen = true
 	}
 
@@ -797,8 +797,8 @@ type SelectStmt struct {
 	LockTp SelectLockType
 	// TableHints represents the table level Optimizer Hint for join type
 	TableHints []*TableOptimizerHint
-	// IsAfterUnionDistinct indicates whether it's a stmt after "union distinct".
-	IsAfterUnionDistinct bool
+	// AfterSetOperator indicates the SelectStmt after which type of set operator
+	AfterSetOperator *SetOprType
 	// IsInBraces indicates whether it's a stmt in brace.
 	IsInBraces bool
 	// QueryBlockOffset indicates the order of this SelectStmt if counted from left to right in the sql text.
@@ -1021,27 +1021,33 @@ func (n *SelectStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// UnionSelectList represents the select list in a union statement.
-type UnionSelectList struct {
+// SetOprSelectList represents the select list in a union statement.
+type SetOprSelectList struct {
 	node
 
 	Selects []*SelectStmt
 }
 
 // Restore implements Node interface.
-func (n *UnionSelectList) Restore(ctx *format.RestoreCtx) error {
+func (n *SetOprSelectList) Restore(ctx *format.RestoreCtx) error {
 	for i, selectStmt := range n.Selects {
 		if i != 0 {
-			ctx.WriteKeyWord(" UNION ")
-			if !selectStmt.IsAfterUnionDistinct {
-				ctx.WriteKeyWord("ALL ")
+			switch *selectStmt.AfterSetOperator {
+			case Union:
+				ctx.WriteKeyWord(" UNION ")
+			case UnionAll:
+				ctx.WriteKeyWord(" UNION ALL ")
+			case Except:
+				ctx.WriteKeyWord(" EXCEPT ")
+			case Intersect:
+				ctx.WriteKeyWord(" INTERSECT ")
 			}
 		}
 		if selectStmt.IsInBraces {
 			ctx.WritePlain("(")
 		}
 		if err := selectStmt.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while restore UnionSelectList.SelectStmt")
+			return errors.Annotate(err, "An error occurred while restore SetOprSelectList.SelectStmt")
 		}
 		if selectStmt.IsInBraces {
 			ctx.WritePlain(")")
@@ -1051,12 +1057,12 @@ func (n *UnionSelectList) Restore(ctx *format.RestoreCtx) error {
 }
 
 // Accept implements Node Accept interface.
-func (n *UnionSelectList) Accept(v Visitor) (Node, bool) {
+func (n *SetOprSelectList) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
 		return v.Leave(newNode)
 	}
-	n = newNode.(*UnionSelectList)
+	n = newNode.(*SetOprSelectList)
 	for i, sel := range n.Selects {
 		node, ok := sel.Accept(v)
 		if !ok {
@@ -1067,52 +1073,63 @@ func (n *UnionSelectList) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// UnionStmt represents "union statement"
+type SetOprType uint8
+
+const (
+	Union SetOprType = iota
+	UnionAll
+	Except
+	Intersect
+)
+
+// SetOprStmt represents "union/except/intersect statement"
 // See https://dev.mysql.com/doc/refman/5.7/en/union.html
-type UnionStmt struct {
+// See https://mariadb.com/kb/en/intersect/
+// See https://mariadb.com/kb/en/except/
+type SetOprStmt struct {
 	dmlNode
 	resultSetNode
 
-	SelectList *UnionSelectList
+	SelectList *SetOprSelectList
 	OrderBy    *OrderByClause
 	Limit      *Limit
 }
 
 // Restore implements Node interface.
-func (n *UnionStmt) Restore(ctx *format.RestoreCtx) error {
+func (n *SetOprStmt) Restore(ctx *format.RestoreCtx) error {
 	if err := n.SelectList.Restore(ctx); err != nil {
-		return errors.Annotate(err, "An error occurred while restore UnionStmt.SelectList")
+		return errors.Annotate(err, "An error occurred while restore SetOprStmt.SelectList")
 	}
 
 	if n.OrderBy != nil {
 		ctx.WritePlain(" ")
 		if err := n.OrderBy.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while restore UnionStmt.OrderBy")
+			return errors.Annotate(err, "An error occurred while restore SetOprStmt.OrderBy")
 		}
 	}
 
 	if n.Limit != nil {
 		ctx.WritePlain(" ")
 		if err := n.Limit.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while restore UnionStmt.Limit")
+			return errors.Annotate(err, "An error occurred while restore SetOprStmt.Limit")
 		}
 	}
 	return nil
 }
 
 // Accept implements Node Accept interface.
-func (n *UnionStmt) Accept(v Visitor) (Node, bool) {
+func (n *SetOprStmt) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
 		return v.Leave(newNode)
 	}
-	n = newNode.(*UnionStmt)
+	n = newNode.(*SetOprStmt)
 	if n.SelectList != nil {
 		node, ok := n.SelectList.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.SelectList = node.(*UnionSelectList)
+		n.SelectList = node.(*SetOprSelectList)
 	}
 	if n.OrderBy != nil {
 		node, ok := n.OrderBy.Accept(v)
@@ -1450,7 +1467,7 @@ func (n *InsertStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.Select != nil {
 		ctx.WritePlain(" ")
 		switch v := n.Select.(type) {
-		case *SelectStmt, *UnionStmt:
+		case *SelectStmt, *SetOprStmt:
 			if err := v.Restore(ctx); err != nil {
 				return errors.Annotate(err, "An error occurred while restore InsertStmt.Select")
 			}

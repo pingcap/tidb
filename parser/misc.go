@@ -378,6 +378,7 @@ var tokenMap = map[string]int{
 	"INT8":                     int8Type,
 	"INTEGER":                  integerType,
 	"INTERNAL":                 internal,
+	"INTERSECT":                intersect,
 	"INTERVAL":                 interval,
 	"INTO":                     into,
 	"INVISIBLE":                invisible,

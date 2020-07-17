@@ -38,8 +38,8 @@ func IsReadOnly(node Node) bool {
 		return !st.Analyze || IsReadOnly(st.Stmt)
 	case *DoStmt, *ShowStmt:
 		return true
-	case *UnionStmt:
-		for _, sel := range node.(*UnionStmt).SelectList.Selects {
+	case *SetOprStmt:
+		for _, sel := range node.(*SetOprStmt).SelectList.Selects {
 			if !IsReadOnly(sel) {
 				return false
 			}
