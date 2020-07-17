@@ -524,24 +524,7 @@ func (db *memdb) deleteNode(z memdbArenaAddr, zn *memdbNode) {
 		x = yn.right
 		xn = db.allocator.getNode(x)
 	}
-
-	// NOTE: traditional red-black tree will copy key from Y to Z and free Y.
-	// We cannot do the same thing here, due to Y's pointer is stored in vlog and the space in Z may not suitable for Y.
-	// So we need to copy states from Z to Y, and relink all nodes formerly connected to Z.
-	//
-	// There is a special case, consider we choose Z's right child as Y, and Y has no children, X will point to the dummy node.
-	// We need to set X's up to Y instead of Z, otherwise, the X will hold a dangling pointer to Z which will be freed later.
-	// We cannot handle this special case in `replaceNode`, due to the address of the dummy node is nullAddr
-	//
-	//       Z
-	//     /   \
-	//    A     Y
-	//
-	if yn.up == z {
-		xn.up = y
-	} else {
-		xn.up = yn.up
-	}
+	xn.up = yn.up
 
 	if yn.up.isNull() {
 		db.root = x
@@ -556,7 +539,21 @@ func (db *memdb) deleteNode(z memdbArenaAddr, zn *memdbNode) {
 
 	needFix := yn.isBlack()
 
+	// NOTE: traditional red-black tree will copy key from Y to Z and free Y.
+	// We cannot do the same thing here, due to Y's pointer is stored in vlog and the space in Z may not suitable for Y.
+	// So we need to copy states from Z to Y, and relink all nodes formerly connected to Z.
 	if y != z {
+		// There is a special case, consider we choose Z's right child as Y, and Y has no children, X will point to the dummy node.
+		// We need to set X's up to Y instead of Z, otherwise, the X will hold a dangling pointer to Z which will be freed later.
+		// We cannot handle this special case in `replaceNode`, due to the address of the dummy node is nullAddr
+		//
+		//       Z
+		//     /   \
+		//    A     Y
+		//
+		if yn.up == z {
+			xn.up = y
+		}
 		db.replaceNode(y, yn, z, zn)
 	}
 
