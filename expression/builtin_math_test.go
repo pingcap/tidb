@@ -263,16 +263,14 @@ func (s *testEvaluatorSuite) TestLog(c *C) {
 		c.Assert(err, IsNil)
 
 		result, err := f.Eval(chunk.Row{})
+		c.Assert(err, IsNil)
 		if test.warningCount > 0 {
-			c.Assert(err, IsNil)
 			c.Assert(s.ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, preWarningCnt+test.warningCount)
+		}
+		if test.isNil {
+			c.Assert(result.Kind(), Equals, types.KindNull)
 		} else {
-			c.Assert(err, IsNil)
-			if test.isNil {
-				c.Assert(result.Kind(), Equals, types.KindNull)
-			} else {
-				c.Assert(result.GetFloat64(), Equals, test.expect)
-			}
+			c.Assert(result.GetFloat64(), Equals, test.expect)
 		}
 	}
 
@@ -292,7 +290,7 @@ func (s *testEvaluatorSuite) TestLog2(c *C) {
 		{float64(16), 4, false, 0},
 		{int64(5), 2.321928094887362, false, 0},
 		{int64(-1), 0, true, 1},
-		{"4abc", 0, false, 1},
+		{"4abc", 2, false, 1},
 		{"abc", 0, true, 2},
 	}
 
@@ -302,16 +300,14 @@ func (s *testEvaluatorSuite) TestLog2(c *C) {
 		c.Assert(err, IsNil)
 
 		result, err := f.Eval(chunk.Row{})
+		c.Assert(err, IsNil)
 		if test.warningCount > 0 {
-			c.Assert(err, IsNil)
 			c.Assert(s.ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, preWarningCnt+test.warningCount)
+		}
+		if test.isNil {
+			c.Assert(result.Kind(), Equals, types.KindNull)
 		} else {
-			c.Assert(err, IsNil)
-			if test.isNil {
-				c.Assert(result.Kind(), Equals, types.KindNull)
-			} else {
-				c.Assert(result.GetFloat64(), Equals, test.expect)
-			}
+			c.Assert(result.GetFloat64(), Equals, test.expect)
 		}
 	}
 
@@ -331,7 +327,7 @@ func (s *testEvaluatorSuite) TestLog10(c *C) {
 		{float64(100), 2, false, 0},
 		{int64(101), 2.0043213737826426, false, 0},
 		{int64(-1), 0, true, 1},
-		{"100abc", 0, false, 1},
+		{"100abc", 2, false, 1},
 		{"abc", 0, true, 2},
 	}
 
@@ -341,16 +337,14 @@ func (s *testEvaluatorSuite) TestLog10(c *C) {
 		c.Assert(err, IsNil)
 
 		result, err := f.Eval(chunk.Row{})
+		c.Assert(err, IsNil)
 		if test.warningCount > 0 {
-			c.Assert(err, IsNil)
 			c.Assert(s.ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, preWarningCnt+test.warningCount)
+		}
+		if test.isNil {
+			c.Assert(result.Kind(), Equals, types.KindNull)
 		} else {
-			c.Assert(err, IsNil)
-			if test.isNil {
-				c.Assert(result.Kind(), Equals, types.KindNull)
-			} else {
-				c.Assert(result.GetFloat64(), Equals, test.expect)
-			}
+			c.Assert(result.GetFloat64(), Equals, test.expect)
 		}
 	}
 
