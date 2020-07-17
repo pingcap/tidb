@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/opentracing/opentracing-go"
@@ -49,6 +50,7 @@ type TxnState struct {
 	kv.Transaction
 	txnFuture *txnFuture
 
+	initBufMutex  sync.Mutex
 	stagingHandle kv.StagingHandle
 	mutations     map[int64]*binlog.TableMutation
 	dirtyTableOP  []dirtyTableOperation
@@ -63,6 +65,8 @@ func (st *TxnState) init() {
 }
 
 func (st *TxnState) initStmtBuf() {
+	st.initBufMutex.Lock()
+	defer st.initBufMutex.Unlock()
 	if st.stagingHandle == kv.InvalidStagingHandle {
 		st.stagingHandle = st.Transaction.GetMemBuffer().Staging()
 	}
