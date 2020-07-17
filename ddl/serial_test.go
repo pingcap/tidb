@@ -1028,6 +1028,7 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	// Add/drop the auto_random attribute is not allowed.
 	mustExecAndDrop("create table t (a bigint auto_random(3) primary key)", func() {
 		assertAlterValue("alter table t modify column a bigint")
+		assertAlterValue("alter table t modify column a bigint auto_random(0)")
 		assertAlterValue("alter table t change column a b bigint")
 	})
 	mustExecAndDrop("create table t (a bigint, b char, c bigint auto_random(3), primary key(c))", func() {
@@ -1069,6 +1070,8 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 		assertModifyColType("alter table t modify column a mediumint auto_random(3)")
 		assertModifyColType("alter table t modify column a smallint auto_random(3)")
 		tk.MustExec("alter table t modify column b int")
+		tk.MustExec("alter table t modify column b bigint")
+		tk.MustExec("alter table t modify column a bigint auto_random(3)")
 	})
 
 	// Test show warnings when create auto_random table.
