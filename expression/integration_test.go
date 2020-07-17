@@ -6199,7 +6199,7 @@ func (s *testIntegrationSerialSuite) TestCollateSort(c *C) {
 	tk.MustExec("insert into t values ('a'), ('A'), ('b')")
 	tk.MustExec("insert into t values ('a'), ('A'), ('b')")
 	tk.MustQuery("select * from t order by a collate utf8mb4_bin").Check(testkit.Rows("A", "A", "A", "a", "a", "a", "b", "b", "b"))
-	tk.MustQuery("select * from t order by a collate utf8mb4_general_ci").Check(testkit.Rows("A", "A", "A", "a", "a", "a", "b", "b", "b"))
+	tk.MustQuery("select * from t order by a collate utf8mb4_general_ci").Check(testkit.Rows("a", "A", "a", "A", "a", "A", "b", "b", "b"))
 	tk.MustQuery("select * from t order by a collate utf8mb4_unicode_ci").Check(testkit.Rows("a", "A", "a", "A", "a", "A", "b", "b", "b"))
 }
 
