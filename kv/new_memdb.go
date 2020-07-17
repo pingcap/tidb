@@ -518,13 +518,15 @@ func (db *memdb) deleteNode(z memdbNodeAddr) {
 	// We cannot do the same thing here, due to Y's pointer is stored in vlog and the space in Z may not suitable for Y.
 	// So we need to copy states from Z to Y, and relink all nodes formerly connected to Z.
 	if y != z {
-		// There is a special case, consider we choose Z's right child as Y, and Y has no children, X will point to the dummy node.
+		// There is a special case, consider we choose Z's right child as Y, and Y has no children, X will be the dummy node.
 		// We need to set X's up to Y instead of Z, otherwise, the X will hold a dangling pointer to Z which will be freed later.
 		// We cannot handle this special case in `replaceNode`, due to the address of the dummy node is nullAddr
 		//
 		//       Z
 		//     /   \
 		//    A     Y
+		//          \
+		//          X (null dummy node)
 		//
 		if y.up == z.addr {
 			x.up = y.addr
@@ -539,33 +541,33 @@ func (db *memdb) deleteNode(z memdbNodeAddr) {
 	db.allocator.freeNode(z.addr)
 }
 
-func (db *memdb) replaceNode(x memdbNodeAddr, y memdbNodeAddr) {
-	if !y.up.isNull() {
-		yUp := y.getUp(db)
-		if y.addr == yUp.left {
-			yUp.left = x.addr
+func (db *memdb) replaceNode(new memdbNodeAddr, old memdbNodeAddr) {
+	if !old.up.isNull() {
+		oldUp := old.getUp(db)
+		if old.addr == oldUp.left {
+			oldUp.left = new.addr
 		} else {
-			yUp.right = x.addr
+			oldUp.right = new.addr
 		}
 	} else {
-		db.root = x.addr
+		db.root = new.addr
 	}
-	x.up = y.up
+	new.up = old.up
 
-	if !y.left.isNull() {
-		y.getLeft(db).up = x.addr
+	if !old.left.isNull() {
+		old.getLeft(db).up = new.addr
 	}
-	x.left = y.left
+	new.left = old.left
 
-	if !y.right.isNull() {
-		y.getRight(db).up = x.addr
+	if !old.right.isNull() {
+		old.getRight(db).up = new.addr
 	}
-	x.right = y.right
+	new.right = old.right
 
-	if y.isBlack() {
-		x.setBlack()
+	if old.isBlack() {
+		new.setBlack()
 	} else {
-		x.setRed()
+		new.setRed()
 	}
 }
 
