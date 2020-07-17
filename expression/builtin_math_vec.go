@@ -35,6 +35,7 @@ func (b *builtinLog1ArgSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column
 			continue
 		}
 		if f64s[i] <= 0 {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
 			result.SetNull(i, true)
 		} else {
 			f64s[i] = math.Log(f64s[i])
@@ -57,6 +58,7 @@ func (b *builtinLog2Sig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) e
 			continue
 		}
 		if f64s[i] <= 0 {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
 			result.SetNull(i, true)
 		} else {
 			f64s[i] = math.Log2(f64s[i])
@@ -79,6 +81,7 @@ func (b *builtinLog10Sig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) 
 			continue
 		}
 		if f64s[i] <= 0 {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
 			result.SetNull(i, true)
 		} else {
 			f64s[i] = math.Log10(f64s[i])
@@ -474,6 +477,7 @@ func (b *builtinLog2ArgsSig) vecEvalReal(input *chunk.Chunk, result *chunk.Colum
 			continue
 		}
 		if d[i] <= 0 || d[i] == 1 || x[i] <= 0 {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
 			result.SetNull(i, true)
 		}
 		d[i] = math.Log(x[i]) / math.Log(d[i])

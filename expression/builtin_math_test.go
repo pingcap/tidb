@@ -238,21 +238,23 @@ func (s *testEvaluatorSuite) TestFloor(c *C) {
 
 func (s *testEvaluatorSuite) TestLog(c *C) {
 	tests := []struct {
-		args       []interface{}
-		expect     float64
-		isNil      bool
-		getWarning bool
+		args         []interface{}
+		expect       float64
+		isNil        bool
+		warningCount uint16
 	}{
-		{[]interface{}{nil}, 0, true, false},
-		{[]interface{}{nil, nil}, 0, true, false},
-		{[]interface{}{int64(100)}, 4.605170185988092, false, false},
-		{[]interface{}{float64(100)}, 4.605170185988092, false, false},
-		{[]interface{}{int64(10), int64(100)}, 2, false, false},
-		{[]interface{}{float64(10), float64(100)}, 2, false, false},
-		{[]interface{}{float64(-1)}, 0, true, false},
-		{[]interface{}{float64(1), float64(2)}, 0, true, false},
-		{[]interface{}{float64(0.5), float64(0.25)}, 2, false, false},
-		{[]interface{}{"abc"}, 0, false, true},
+		{[]interface{}{nil}, 0, true, 0},
+		{[]interface{}{nil, nil}, 0, true, 0},
+		{[]interface{}{int64(100)}, 4.605170185988092, false, 0},
+		{[]interface{}{float64(100)}, 4.605170185988092, false, 0},
+		{[]interface{}{int64(10), int64(100)}, 2, false, 0},
+		{[]interface{}{float64(10), float64(100)}, 2, false, 0},
+		{[]interface{}{float64(-1)}, 0, true, 1},
+		{[]interface{}{float64(2), float64(-1)}, 0, true, 1},
+		{[]interface{}{float64(-1), float64(2)}, 0, true, 1},
+		{[]interface{}{float64(1), float64(2)}, 0, true, 1},
+		{[]interface{}{float64(0.5), float64(0.25)}, 2, false, 0},
+		{[]interface{}{"abc"}, 0, true, 2},
 	}
 
 	for _, test := range tests {
@@ -261,9 +263,9 @@ func (s *testEvaluatorSuite) TestLog(c *C) {
 		c.Assert(err, IsNil)
 
 		result, err := f.Eval(chunk.Row{})
-		if test.getWarning {
+		if test.warningCount > 0 {
 			c.Assert(err, IsNil)
-			c.Assert(s.ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, preWarningCnt+1)
+			c.Assert(s.ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, preWarningCnt+test.warningCount)
 		} else {
 			c.Assert(err, IsNil)
 			if test.isNil {
@@ -280,17 +282,18 @@ func (s *testEvaluatorSuite) TestLog(c *C) {
 
 func (s *testEvaluatorSuite) TestLog2(c *C) {
 	tests := []struct {
-		args       interface{}
-		expect     float64
-		isNil      bool
-		getWarning bool
+		args         interface{}
+		expect       float64
+		isNil        bool
+		warningCount uint16
 	}{
-		{nil, 0, true, false},
-		{int64(16), 4, false, false},
-		{float64(16), 4, false, false},
-		{int64(5), 2.321928094887362, false, false},
-		{int64(-1), 0, true, false},
-		{"4abc", 0, false, true},
+		{nil, 0, true, 0},
+		{int64(16), 4, false, 0},
+		{float64(16), 4, false, 0},
+		{int64(5), 2.321928094887362, false, 0},
+		{int64(-1), 0, true, 1},
+		{"4abc", 0, false, 1},
+		{"abc", 0, true, 2},
 	}
 
 	for _, test := range tests {
@@ -299,9 +302,9 @@ func (s *testEvaluatorSuite) TestLog2(c *C) {
 		c.Assert(err, IsNil)
 
 		result, err := f.Eval(chunk.Row{})
-		if test.getWarning {
+		if test.warningCount > 0 {
 			c.Assert(err, IsNil)
-			c.Assert(s.ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, preWarningCnt+1)
+			c.Assert(s.ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, preWarningCnt+test.warningCount)
 		} else {
 			c.Assert(err, IsNil)
 			if test.isNil {
@@ -318,17 +321,18 @@ func (s *testEvaluatorSuite) TestLog2(c *C) {
 
 func (s *testEvaluatorSuite) TestLog10(c *C) {
 	tests := []struct {
-		args       interface{}
-		expect     float64
-		isNil      bool
-		getWarning bool
+		args         interface{}
+		expect       float64
+		isNil        bool
+		warningCount uint16
 	}{
-		{nil, 0, true, false},
-		{int64(100), 2, false, false},
-		{float64(100), 2, false, false},
-		{int64(101), 2.0043213737826426, false, false},
-		{int64(-1), 0, true, false},
-		{"100abc", 0, false, true},
+		{nil, 0, true, 0},
+		{int64(100), 2, false, 0},
+		{float64(100), 2, false, 0},
+		{int64(101), 2.0043213737826426, false, 0},
+		{int64(-1), 0, true, 1},
+		{"100abc", 0, false, 1},
+		{"abc", 0, true, 2},
 	}
 
 	for _, test := range tests {
@@ -337,9 +341,9 @@ func (s *testEvaluatorSuite) TestLog10(c *C) {
 		c.Assert(err, IsNil)
 
 		result, err := f.Eval(chunk.Row{})
-		if test.getWarning {
+		if test.warningCount > 0 {
 			c.Assert(err, IsNil)
-			c.Assert(s.ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, preWarningCnt+1)
+			c.Assert(s.ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, preWarningCnt+test.warningCount)
 		} else {
 			c.Assert(err, IsNil)
 			if test.isNil {
