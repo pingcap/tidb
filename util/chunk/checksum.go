@@ -21,7 +21,7 @@ type checksum struct {
 	bufWriter *bufio.Writer
 }
 
-func NewChecksum(disk *os.File) *checksum {
+func newChecksum(disk *os.File) *checksum {
 	cs := &checksum{disk: disk}
 	cs.bufWriter = bufio.NewWriterSize(disk, checksumPayloadSize)
 	return cs

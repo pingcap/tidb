@@ -76,7 +76,7 @@ func (l *ListInDisk) initDiskFile() (err error) {
 	if err != nil {
 		return
 	}
-	l.checksum = NewChecksum(l.disk)
+	l.checksum = newChecksum(l.disk)
 	l.bufWriter = bufWriterPool.Get().(*bufio.Writer)
 	l.bufWriter.Reset(l.checksum)
 	l.bufFlushMutex = sync.RWMutex{}
