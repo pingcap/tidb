@@ -366,7 +366,6 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 		ctx, cancel = rawHook.(*RPCCanceller).WithCancel(ctx)
 		defer cancel()
 	}
-
 	resp, err = s.client.SendRequest(ctx, rpcCtx.Addr, req, timeout)
 	if err != nil {
 		s.rpcError = err

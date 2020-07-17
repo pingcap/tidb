@@ -237,7 +237,6 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 		RegionCache:       s.store.regionCache,
 		minCommitTSPushed: &s.minCommitTSPushed,
 		Client:            s.store.client,
-		stats:             make(map[tikvrpc.CmdType]*RegionRequestRuntimeStats),
 	}
 	if s.stats != nil {
 		cli.stats = make(map[tikvrpc.CmdType]*RegionRequestRuntimeStats)
