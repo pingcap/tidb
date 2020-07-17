@@ -615,16 +615,14 @@ func (s *tikvSnapshot) mergeRegionRequestStats(stats map[tikvrpc.CmdType]*Region
 	}
 }
 
+// SnapshotRuntimeStats records the runtime stats of snapshot.
 type SnapshotRuntimeStats struct {
 	rpcStats       map[tikvrpc.CmdType]*RegionRequestRuntimeStats
 	backoffSleepMS map[backoffType]int
 	backoffTimes   map[backoffType]int
 }
 
-func NewSnapshotRuntimeStats() *SnapshotRuntimeStats {
-	return &SnapshotRuntimeStats{}
-}
-
+// String implements fmt.Stringer interface.
 func (rs *SnapshotRuntimeStats) String() string {
 	var buf bytes.Buffer
 	for k, v := range rs.rpcStats {

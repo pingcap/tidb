@@ -86,7 +86,7 @@ type PointGetExecutor struct {
 	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
 	virtualColumnRetFieldTypes []*types.FieldType
 
-	stats *PointGetRuntimeStats
+	stats *pointGetRuntimeStats
 }
 
 // Init set fields needed for PointGetExecutor reuse, this does NOT change baseExecutor field
@@ -138,8 +138,8 @@ func (e *PointGetExecutor) Open(context.Context) error {
 		}
 	}
 	if e.runtimeStats != nil {
-		snapshotStats := tikv.NewSnapshotRuntimeStats()
-		e.stats = &PointGetRuntimeStats{
+		snapshotStats := &tikv.SnapshotRuntimeStats{}
+		e.stats = &pointGetRuntimeStats{
 			BasicRuntimeStats:    e.runtimeStats,
 			SnapshotRuntimeStats: snapshotStats,
 		}
@@ -452,12 +452,12 @@ func getColInfoByID(tbl *model.TableInfo, colID int64) *model.ColumnInfo {
 	return nil
 }
 
-type PointGetRuntimeStats struct {
+type pointGetRuntimeStats struct {
 	*execdetails.BasicRuntimeStats
 	*tikv.SnapshotRuntimeStats
 }
 
-func (e *PointGetRuntimeStats) String() string {
+func (e *pointGetRuntimeStats) String() string {
 	var basic, rpcStatsStr string
 	if e.BasicRuntimeStats != nil {
 		basic = e.BasicRuntimeStats.String()

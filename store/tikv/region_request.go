@@ -65,6 +65,7 @@ type RegionRequestSender struct {
 	stats        map[tikvrpc.CmdType]*RegionRequestRuntimeStats
 }
 
+// RegionRequestRuntimeStats records the runtime stats of send region requests.
 type RegionRequestRuntimeStats struct {
 	count int64
 	// Send region request consume time.
