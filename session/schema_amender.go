@@ -106,6 +106,12 @@ func findColByID(tbl table.Table, colID int64) *table.Column {
 	return nil
 }
 
+func (a *amendCollector) keyHasAmendOp(key []byte) bool {
+	tblID := tablecodec.DecodeTableID(key)
+	ops := a.tblAmendOpMap[tblID]
+	return len(ops) > 0
+}
+
 func (a *amendCollector) collectIndexAmendOps(phyTblID int64, tblAtStart, tblAtCommit table.Table) ([]amendOp, error) {
 	res := make([]amendOp, 0, 4)
 	// Check index having state change, collect index column info.
@@ -145,7 +151,7 @@ func (a *amendCollector) collectIndexAmendOps(phyTblID int64, tblAtStart, tblAtC
 }
 
 // collectTblAmendOps collects amend operations for each table using the schema diff between startTS and commitTS.
-func (a *amendCollector) collectTblAmendOps(ctx context.Context, sctx sessionctx.Context, phyTblID int64,
+func (a *amendCollector) collectTblAmendOps(sctx sessionctx.Context, phyTblID int64,
 	tblInfoAtStart, tblInfoAtCommit table.Table) error {
 	if _, ok := a.tblAmendOpMap[phyTblID]; !ok {
 		a.tblAmendOpMap[phyTblID] = make([]amendOp, 0, 4)
@@ -222,6 +228,9 @@ func (a *amendOperationAddIndex) genMutations(ctx context.Context, sctx sessionc
 	resAddMutations := tikv.NewCommiterMutations(8)
 	for i, key := range commitMutations.GetKeys() {
 		keyOp := commitMutations.GetOps()[i]
+		if tablecodec.IsIndexKey(key) || tablecodec.DecodeTableID(key) != a.tblInfoAtCommit.Meta().ID {
+			continue
+		}
 		addMutations, err := a.processKey(ctx, sctx, keyOp, key, kvMaps)
 		if err != nil {
 			return resAddMutations, err
@@ -284,9 +293,6 @@ func (a *amendOperationAddIndex) genIndexKeyValue(ctx context.Context, sctx sess
 
 func (a *amendOperationAddIndex) processKey(ctx context.Context, sctx sessionctx.Context, keyOp pb.Op, key []byte,
 	kvMaps map[string][]byte) (resAdd tikv.CommitterMutations, err error) {
-	if a.AmendOpType == AmendNone || tablecodec.IsIndexKey(key) {
-		return
-	}
 	kvHandle, err := tablecodec.DecodeRowKey(key)
 	if err != nil {
 		logutil.Logger(ctx).Error("decode key error", zap.String("key", hex.EncodeToString(key)), zap.Error(err))
@@ -311,7 +317,8 @@ func (a *amendOperationAddIndex) processKey(ctx context.Context, sctx sessionctx
 		// Check if the generated index keys are unique for unique index.
 		if a.indexInfoAtCommit.Meta().Unique {
 			if _, ok := a.processedNewIndexKeys[string(newIdxKey)]; ok {
-				return resAdd, errors.Trace(errors.Errorf("amend process key same key found for unique index=%v", a.indexInfoAtCommit.Meta().Name))
+				return resAdd, errors.Trace(errors.Errorf("amend process key same key=%v found for unique index=%v",
+					newIdxKey, a.indexInfoAtCommit.Meta().Name))
 			}
 		}
 		a.processedNewIndexKeys[string(newIdxKey)] = nil
@@ -331,10 +338,10 @@ func NewSchemaAmenderForTikvTxn(sess *session) *SchemaAmender {
 	return amender
 }
 
-func (s *SchemaAmender) getAmendableKeys(commitMutations tikv.CommitterMutations) []kv.Key {
+func (s *SchemaAmender) getAmendableKeys(commitMutations tikv.CommitterMutations, info *amendCollector) []kv.Key {
 	kvKeys := make([]kv.Key, 0, len(commitMutations.GetKeys()))
 	for _, byteKey := range commitMutations.GetKeys() {
-		if tablecodec.IsIndexKey(byteKey) {
+		if tablecodec.IsIndexKey(byteKey) || !info.keyHasAmendOp(byteKey) {
 			continue
 		}
 		kvKeys = append(kvKeys, byteKey)
@@ -346,7 +353,7 @@ func (s *SchemaAmender) getAmendableKeys(commitMutations tikv.CommitterMutations
 func (s *SchemaAmender) genAllAmendMutations(ctx context.Context, commitMutations tikv.CommitterMutations,
 	info *amendCollector) (*tikv.CommitterMutations, error) {
 	// Get keys need to be considered for the amend operation, currently only row keys.
-	kvKeys := s.getAmendableKeys(commitMutations)
+	kvKeys := s.getAmendableKeys(commitMutations, info)
 
 	// BatchGet the key values.
 	txn, err := s.sess.Txn(true)
@@ -404,7 +411,7 @@ func (s *SchemaAmender) AmendTxn(ctx context.Context, startInfoSchema tikv.Schem
 		}
 		if actionType&(memBufAmendType) != 0 {
 			needAmendMem = true
-			err := amendCollector.collectTblAmendOps(ctx, s.sess, tblID, tblInfoAtStart, tblInfoAtCommit)
+			err := amendCollector.collectTblAmendOps(s.sess, tblID, tblInfoAtStart, tblInfoAtCommit)
 			if err != nil {
 				return nil, err
 			}

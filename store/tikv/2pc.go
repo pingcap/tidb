@@ -166,6 +166,11 @@ func (c *CommitterMutations) GetValues() [][]byte {
 	return c.values
 }
 
+// GetPessimisticFlags returns the key pessimistic flags.
+func (c *CommitterMutations) GetPessimisticFlags() []bool {
+	return c.isPessimisticLock
+}
+
 // MergeMutations append input mutations into current mutations.
 func (c *CommitterMutations) MergeMutations(mutations CommitterMutations) {
 	c.ops = append(c.ops, mutations.ops...)
@@ -999,11 +1004,11 @@ func (c *twoPhaseCommitter) getCommitTS(ctx context.Context, commitDetail *execd
 	}
 	commitDetail.GetCommitTsTime = time.Since(start)
 	logutil.Event(ctx, "finish get commit ts")
-	logutil.SetTag(ctx, "commitTs", commitTS)
+	logutil.SetTag(ctx, "commitTS", commitTS)
 
 	// Check commitTS.
 	if commitTS <= c.startTS {
-		err = errors.Errorf("conn %d Invalid transaction tso with txnStartTS=%v while txnCommitTS=%v",
+		err = errors.Errorf("conn %d invalid transaction tso with txnStartTS=%v while txnCommitTS=%v",
 			c.connID, c.startTS, commitTS)
 		logutil.BgLogger().Error("invalid transaction", zap.Error(err))
 		return 0, errors.Trace(err)
@@ -1016,24 +1021,27 @@ func (c *twoPhaseCommitter) getCommitTS(ctx context.Context, commitDetail *execd
 func (c *twoPhaseCommitter) checkSchemaValid(ctx context.Context, checkTS uint64, startInfoSchema SchemaVer,
 	tryAmend bool) (*RelatedSchemaChange, bool, error) {
 	checker, ok := c.txn.us.GetOption(kv.SchemaChecker).(schemaLeaseChecker)
-	if ok {
-		relatedChanges, err := checker.CheckBySchemaVer(checkTS, startInfoSchema)
-		if err != nil {
-			if tryAmend && relatedChanges != nil && relatedChanges.Amendable && c.txn.schemaAmender != nil {
-				memAmended, amendErr := c.tryAmendTxn(ctx, startInfoSchema, relatedChanges)
-				if amendErr != nil {
-					logutil.BgLogger().Info("txn amend has failed", zap.Uint64("connID", c.connID),
-						zap.Uint64("startTS", c.startTS), zap.Error(amendErr))
-					return nil, false, err
-				}
-				logutil.Logger(ctx).Info("amend txn successfully for pessimistic commit",
-					zap.Uint64("connID", c.connID), zap.Uint64("txn startTS", c.startTS), zap.Bool("memAmended", memAmended),
-					zap.Uint64("checkTS", checkTS), zap.Int64("startInfoSchemaVer", startInfoSchema.SchemaMetaVersion()),
-					zap.Int64s("table ids", relatedChanges.PhyTblIDS), zap.Uint64s("action types", relatedChanges.ActionTypes))
-				return relatedChanges, memAmended, nil
+	if !ok {
+		logutil.Logger(ctx).Warn("schemaLeaseChecker is not set for this transaction, schema check skipped",
+			zap.Uint64("connID", c.connID), zap.Uint64("startTS", c.startTS), zap.Uint64("commitTS", checkTS))
+		return nil, false, nil
+	}
+	relatedChanges, err := checker.CheckBySchemaVer(checkTS, startInfoSchema)
+	if err != nil {
+		if tryAmend && relatedChanges != nil && relatedChanges.Amendable && c.txn.schemaAmender != nil {
+			memAmended, amendErr := c.tryAmendTxn(ctx, startInfoSchema, relatedChanges)
+			if amendErr != nil {
+				logutil.BgLogger().Info("txn amend has failed", zap.Uint64("connID", c.connID),
+					zap.Uint64("startTS", c.startTS), zap.Error(amendErr))
+				return nil, false, err
 			}
-			return nil, false, errors.Trace(err)
+			logutil.Logger(ctx).Info("amend txn successfully for pessimistic commit",
+				zap.Uint64("connID", c.connID), zap.Uint64("txn startTS", c.startTS), zap.Bool("memAmended", memAmended),
+				zap.Uint64("checkTS", checkTS), zap.Int64("startInfoSchemaVer", startInfoSchema.SchemaMetaVersion()),
+				zap.Int64s("table ids", relatedChanges.PhyTblIDS), zap.Uint64s("action types", relatedChanges.ActionTypes))
+			return relatedChanges, memAmended, nil
 		}
+		return nil, false, errors.Trace(err)
 	}
 	return nil, false, nil
 }

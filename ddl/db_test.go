@@ -4898,6 +4898,10 @@ func (s *testSerialDBSuite) TestCommitTxnWithIndexChange(c *C) {
 	tk2 := testkit.NewTestKit(c, s.store)
 	tk2.MustExec("use test_db")
 
+	// tkSQLs are the sql statements for the pessimistic transaction.
+	// tk2DDL are the ddl statements executed before the pessimistic transaction.
+	// idxDDL is the DDL statement executed between pessimistic transaction begin and commit.
+	// failCommit means the pessimistic transaction commit should fail not.
 	type caseUnit struct {
 		tkSQLs     []string
 		tk2DDL     []string
@@ -4910,37 +4914,90 @@ func (s *testSerialDBSuite) TestCommitTxnWithIndexChange(c *C) {
 
 	cases := []caseUnit{
 		// Test secondary index
-		{[]string{"insert into t1 values(3, 30, 300)"},
-			[]string{"alter table t1 add index k2(c2)", "alter table t1 drop index k2",
-				"alter table t1 add index kk2(c2, c1)", "alter table t1 add index k2(c2)", "alter table t1 drop index k2"},
+		{[]string{"insert into t1 values(3, 30, 300)",
+			"insert into t2 values(11, 11, 11)"},
+			[]string{"alter table t1 add index k2(c2)",
+				"alter table t1 drop index k2",
+				"alter table t1 add index kk2(c2, c1)",
+				"alter table t1 add index k2(c2)",
+				"alter table t1 drop index k2"},
 			"alter table t1 add index k2(c2)",
 			[]string{"select c3, c2 from t1 use index(k2) where c2 = 20",
-				"select c3, c2 from t1 use index(k2) where c2 = 10", "select * from t1"},
-			[][]string{{"200 20"}, {"100 10"}, {"1 10 100", "2 20 200", "3 30 300"}},
+				"select c3, c2 from t1 use index(k2) where c2 = 10",
+				"select * from t1",
+				"select * from t2 where c1 = 11"},
+			[][]string{{"200 20"},
+				{"100 10"},
+				{"1 10 100", "2 20 200", "3 30 300"},
+				{"11 11 11"}},
+			false,
+			model.StateNone},
+		// Test secondary index
+		{[]string{"insert into t2 values(5, 50, 500)",
+			"insert into t2 values(11, 11, 11)",
+			"delete from t2 where c2 = 11",
+			"update t2 set c2 = 110 where c1 = 11"},
+			//"update t2 set c1 = 10 where c3 = 100"},
+			[]string{"alter table t1 add index k2(c2)",
+				"alter table t1 drop index k2",
+				"alter table t1 add index kk2(c2, c1)",
+				"alter table t1 add index k2(c2)",
+				"alter table t1 drop index k2"},
+			"alter table t1 add index k2(c2)",
+			[]string{"select c3, c2 from t1 use index(k2) where c2 = 20",
+				"select c3, c2 from t1 use index(k2) where c2 = 10",
+				"select * from t1",
+				"select * from t2 where c1 = 11",
+				"select * from t2 where c3 = 100"},
+			[][]string{{"200 20"},
+				{"100 10"},
+				{"1 10 100", "2 20 200"},
+				{},
+				{"1 10 100"}},
 			false,
 			model.StateNone},
 		// Test unique index
 		{[]string{"insert into t1 values(3, 30, 300)",
-			"insert into t1 values(4, 40, 400)"},
-			[]string{"alter table t1 add unique index uk3(c3)", "alter table t1 drop index uk3"},
+			"insert into t1 values(4, 40, 400)",
+			"insert into t2 values(11, 11, 11)",
+			"insert into t2 values(12, 12, 11)"},
+			[]string{"alter table t1 add unique index uk3(c3)",
+				"alter table t1 drop index uk3",
+				"alter table t2 add unique index ukc1c3(c1, c3)",
+				"alter table t2 add unique index ukc3(c3)",
+				"alter table t2 drop index ukc1c3",
+				"alter table t2 drop index ukc3",
+				"alter table t2 add index kc3(c3)"},
 			"alter table t1 add unique index uk3(c3)",
 			[]string{"select c3, c2 from t1 use index(uk3) where c3 = 200",
 				"select c3, c2 from t1 use index(uk3) where c3 = 300",
 				"select c3, c2 from t1 use index(uk3) where c3 = 400",
-				"select * from t1"},
-			[][]string{{"200 20"}, {"300 30"}, {"400 40"}, {"1 10 100", "2 20 200", "3 30 300", "4 40 400"}},
+				"select * from t1",
+				"select * from t2"},
+			[][]string{{"200 20"},
+				{"300 30"},
+				{"400 40"},
+				{"1 10 100", "2 20 200", "3 30 300", "4 40 400"},
+				{"1 10 100", "2 20 200", "11 11 11", "12 12 11"}},
 			false, model.StateNone},
 		// Test unique index fail to commit, this case needs the new index could be inserted
 		{[]string{"insert into t1 values(3, 30, 300)",
-			"insert into t1 values(4, 40, 300)"},
+			"insert into t1 values(4, 40, 300)",
+			"insert into t2 values(11, 11, 11)",
+			"insert into t2 values(12, 11, 12)"},
 			//[]string{"alter table t1 add unique index uk3(c3)", "alter table t1 drop index uk3"},
 			[]string{},
 			"alter table t1 add unique index uk3(c3)",
 			[]string{"select c3, c2 from t1 use index(uk3) where c3 = 200",
 				"select c3, c2 from t1 use index(uk3) where c3 = 300",
 				"select c3, c2 from t1 where c1 = 4",
-				"select * from t1"},
-			[][]string{{"200 20"}, {}, {}, {"1 10 100", "2 20 200"}},
+				"select * from t1",
+				"select * from t2"},
+			[][]string{{"200 20"},
+				{},
+				{},
+				{"1 10 100", "2 20 200"},
+				{"1 10 100", "2 20 200"}},
 			true,
 			model.StateWriteOnly},
 	}
@@ -4962,10 +5019,14 @@ func (s *testSerialDBSuite) TestCommitTxnWithIndexChange(c *C) {
 					break
 				}
 				tk2.MustExec("drop table if exists t1")
+				tk2.MustExec("drop table if exists t2")
 				tk2.MustExec("create table t1 (c1 int primary key, c2 int, c3 int, index ok2(c2))")
+				tk2.MustExec("create table t2 (c1 int primary key, c2 int, c3 int, index ok2(c2))")
 				tk2.MustExec("insert t1 values (1, 10, 100), (2, 20, 200)")
+				tk2.MustExec("insert t2 values (1, 10, 100), (2, 20, 200)")
 				tk2.MustQuery("select * from t1;").Check(testkit.Rows("1 10 100", "2 20 200"))
 				tk.MustQuery("select * from t1;").Check(testkit.Rows("1 10 100", "2 20 200"))
+				tk.MustQuery("select * from t2;").Check(testkit.Rows("1 10 100", "2 20 200"))
 
 				for _, DDLSQL := range curCase.tk2DDL {
 					tk2.MustExec(DDLSQL)
