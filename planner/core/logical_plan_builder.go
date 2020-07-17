@@ -1145,7 +1145,7 @@ func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (
 	selects := setOpr.SelectList.Selects
 	for i := 0; i < len(selects); i++ {
 		intersects := []*ast.SelectStmt{selects[i]}
-		for i + 1 < len(selects) && *selects[i+1].AfterSetOperator == ast.Intersect {
+		for i+1 < len(selects) && *selects[i+1].AfterSetOperator == ast.Intersect {
 			intersects = append(intersects, selects[i+1])
 			i++
 		}
