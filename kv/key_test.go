@@ -140,6 +140,20 @@ func (s *testKeySuite) TestHandle(c *C) {
 	c.Assert(ch.String(), Equals, "{100, abc}")
 }
 
+func (s *testKeySuite) TestPaddingHandle(c *C) {
+	dec := types.NewDecFromInt(1)
+	encoded, err := codec.EncodeKey(new(stmtctx.StatementContext), nil, types.NewDecimalDatum(dec))
+	c.Assert(err, IsNil)
+	c.Assert(len(encoded), Less, 9)
+	handle, err := NewCommonHandle(encoded)
+	c.Assert(err, IsNil)
+	c.Assert(handle.Encoded(), HasLen, 9)
+	c.Assert(handle.EncodedCol(0), BytesEquals, encoded)
+	newHandle, err := NewCommonHandle(handle.Encoded())
+	c.Assert(err, IsNil)
+	c.Assert(newHandle.EncodedCol(0), BytesEquals, handle.EncodedCol(0))
+}
+
 func (s *testKeySuite) TestHandleMap(c *C) {
 	m := NewHandleMap()
 	h := IntHandle(1)

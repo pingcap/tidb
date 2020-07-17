@@ -80,9 +80,6 @@ func (s *MockSchemaSyncer) Restart(_ context.Context) error {
 	return nil
 }
 
-// RemoveSelfVersionPath implements SchemaSyncer.RemoveSelfVersionPath interface.
-func (s *MockSchemaSyncer) RemoveSelfVersionPath() error { return nil }
-
 // OwnerUpdateGlobalVersion implements SchemaSyncer.OwnerUpdateGlobalVersion interface.
 func (s *MockSchemaSyncer) OwnerUpdateGlobalVersion(ctx context.Context, version int64) error {
 	select {
@@ -108,7 +105,7 @@ func (s *MockSchemaSyncer) OwnerCheckAllVersions(ctx context.Context, latestVer 
 			return errors.Trace(ctx.Err())
 		case <-ticker.C:
 			ver := atomic.LoadInt64(&s.selfSchemaVersion)
-			if ver == latestVer {
+			if ver >= latestVer {
 				return nil
 			}
 		}
@@ -121,8 +118,8 @@ func (s *MockSchemaSyncer) NotifyCleanExpiredPaths() bool { return true }
 // StartCleanWork implements SchemaSyncer.StartCleanWork interface.
 func (s *MockSchemaSyncer) StartCleanWork() {}
 
-// CloseCleanWork implements SchemaSyncer.CloseCleanWork interface.
-func (s *MockSchemaSyncer) CloseCleanWork() {}
+// Close implements SchemaSyncer.Close interface.
+func (s *MockSchemaSyncer) Close() {}
 
 type mockDelRange struct {
 }
