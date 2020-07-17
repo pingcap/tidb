@@ -23,6 +23,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -32,8 +33,6 @@ const (
 	writeBufSize = 128 * 1024
 	readBufSize  = 4 * 1024
 )
-
-const ChecksumVersion = 1
 
 var bufWriterPool = sync.Pool{
 	New: func() interface{} { return bufio.NewWriterSize(nil, writeBufSize) },
@@ -73,7 +72,7 @@ func NewListInDisk(fieldTypes []*types.FieldType) *ListInDisk {
 }
 
 func (l *ListInDisk) initDiskFile() (err error) {
-	l.disk, err = ioutil.TempFile("d:\\", l.diskTracker.Label().String())
+	l.disk, err = ioutil.TempFile(config.GetGlobalConfig().TempStoragePath, l.diskTracker.Label().String())
 	if err != nil {
 		return
 	}

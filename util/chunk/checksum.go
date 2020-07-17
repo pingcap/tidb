@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	checksumBlockSize   = 16
+	checksumBlockSize   = 1024
 	checksumSize        = 4
 	checksumPayloadSize = checksumBlockSize - checksumSize
 )
@@ -28,14 +28,14 @@ func NewChecksum(disk *os.File) *checksum {
 }
 
 func (cks *checksum) Write(p []byte) (n int, err error) {
-
 	start, end := 0, len(p)
 	if end > checksumPayloadSize {
 		end = checksumPayloadSize
 	}
 	payload := p[start:end]
+	buf := make([]byte, checksumBlockSize)
 	for len(payload) > 0 {
-		buf := make([]byte, checksumBlockSize)
+		// We need to fill in payload before calculating the checksum.
 		copy(buf[4:], payload)
 		checksum := crc32.Checksum(buf[4:], crc32.MakeTable(crc32.IEEE))
 		buf[0] = byte(checksum & 0xff000000 >> 24)
@@ -53,14 +53,9 @@ func (cks *checksum) Write(p []byte) (n int, err error) {
 			end = start + checksumPayloadSize
 		}
 		payload = p[start:end]
+		copy(buf, emptyChecksumBlock)
 	}
 	return
-}
-
-func (cks *checksum) Close() error {
-	if cks.bufWriter != nil {
-	}
-	return nil
 }
 
 func (cks *checksum) ReadAt(p []byte, off int64) (n int, err error) {
@@ -87,8 +82,7 @@ func (cks *checksum) ReadAt(p []byte, off int64) (n int, err error) {
 			return 0, errors.New("checksum error")
 		}
 
-		// checksumPayloadSize-offsetInBlockPayload得到payload剩下应该复制的字节A
-		// 如果needWriteSize>=A，说明可以直接复制，不用担心越界
+		// checksumPayloadSize-offsetInBlockPayload get the remaining payload which is in a checksum block to be copied.
 		if needWriteSize >= checksumPayloadSize-offsetInBlockPayload {
 			copy(p[writeOffset:], payload[offsetInBlockPayload:])
 			needWriteSize -= int64(len(payload[offsetInBlockPayload:]))

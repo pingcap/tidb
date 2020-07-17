@@ -16,17 +16,18 @@ package chunk
 import (
 	"bufio"
 	"fmt"
-	"github.com/cznic/mathutil"
-	"github.com/pingcap/check"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"io"
 	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cznic/mathutil"
+	"github.com/pingcap/check"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 )
 
 func initChunks(numChk, numRow int) ([]*Chunk, []*types.FieldType) {
@@ -59,7 +60,6 @@ func initChunks(numChk, numRow int) ([]*Chunk, []*types.FieldType) {
 }
 
 func (s *testChunkSuite) TestListInDisk(c *check.C) {
-
 	numChk, numRow := 2, 2
 	chks, fields := initChunks(numChk, numRow)
 	l := NewListInDisk(fields)
@@ -138,11 +138,14 @@ type listInDiskOriginal struct {
 	ListInDisk
 }
 
-func newListInDiskOriginal(fieldTypes []*types.FieldType) *listInDiskOriginal {
+func newListInDiskOriginal(fieldTypes []*types.FieldType) (*listInDiskOriginal, error) {
 	l := listInDiskOriginal{*NewListInDisk(fieldTypes)}
-	l.initDiskFile()
+	err := l.initDiskFile()
+	if err != nil {
+		return nil, err
+	}
 	l.bufWriter.Reset(l.disk)
-	return &l
+	return &l, nil
 }
 
 func (l *listInDiskOriginal) GetRow(ptr RowPtr) (row Row, err error) {
@@ -166,33 +169,34 @@ func (l *listInDiskOriginal) GetRow(ptr RowPtr) (row Row, err error) {
 	return row, err
 }
 
-func checkRow(t *testing.T, row1, row2 Row) {
-	t.Log(row1.GetString(0) == row2.GetString(0))
-	t.Log(row1.GetInt64(1) == row2.GetInt64(1))
-	t.Log(row1.GetString(2) == row2.GetString(2))
-	t.Log(row1.GetInt64(3) == row2.GetInt64(3))
-	t.Log(row1.GetJSON(4).String() == row2.GetJSON(4).String())
+func checkRow(c *check.C, row1, row2 Row) {
+	c.Check(row1.GetString(0), check.Equals, row2.GetString(0))
+	c.Check(row1.GetInt64(1), check.Equals, row2.GetInt64(1))
+	c.Check(row1.GetString(2), check.Equals, row2.GetString(2))
+	c.Check(row1.GetInt64(3), check.Equals, row2.GetInt64(3))
+	if !row1.IsNull(4) {
+		c.Check(row1.GetJSON(4).String(), check.Equals, row2.GetJSON(4).String())
+	}
 }
 
-func TestListInDiskOriginal(t *testing.T) {
-	numChk, numRow := 2, 2
+func (s *testChunkSuite) TestListInDiskOriginal(c *check.C) {
+	numChk, numRow := 20, 20
 	chks, fields := initChunks(numChk, numRow)
 	lChecksum := NewListInDisk(fields)
-	lDisk := newListInDiskOriginal(fields)
+	defer lChecksum.Close()
+	lDisk, err := newListInDiskOriginal(fields)
+	c.Check(err, check.IsNil)
+	defer lDisk.Close()
 	for _, chk := range chks {
 		err := lChecksum.Add(chk)
 		if err != nil {
-			t.Fatal(err)
+			c.Fatal(err)
 		}
 		err = lDisk.Add(chk)
 		if err != nil {
-			t.Fatal(err)
+			c.Fatal(err)
 		}
 	}
-	lDisk.flush()
-	lChecksum.flush()
-	t.Log("lChecksum", lChecksum.disk.Name())
-	t.Log("lDisk", lDisk.disk.Name())
 
 	rand.Seed(0)
 	var ptrs []RowPtr
@@ -207,12 +211,12 @@ func TestListInDiskOriginal(t *testing.T) {
 	for _, rowPtr := range ptrs {
 		row1, err := lChecksum.GetRow(rowPtr)
 		if err != nil {
-			t.Fatal(err)
+			c.Fatal(err)
 		}
 		row2, err := lDisk.GetRow(rowPtr)
 		if err != nil {
-			t.Fatal(err)
+			c.Fatal(err)
 		}
-		checkRow(t, row1, row2)
+		checkRow(c, row1, row2)
 	}
 }
