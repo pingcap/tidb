@@ -273,9 +273,9 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 	for _, addr := range addrs {
 		var url string
 		if strings.HasPrefix(addr, "http://") {
-			url = fmt.Sprintf("%s%s/%s", addr, pdapi.Config, route)
+			url = fmt.Sprintf("%s%s", addr, route)
 		} else {
-			url = fmt.Sprintf("http://%s%s/%s", addr, pdapi.Config, route)
+			url = fmt.Sprintf("http://%s%s", addr, route)
 		}
 
 		if ctx != nil {
