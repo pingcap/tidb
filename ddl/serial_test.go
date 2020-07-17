@@ -1064,10 +1064,11 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	// Here the throw error is `ERROR 8200 (HY000): Unsupported modify column: length 11 is less than origin 20`,
 	// instead of `ERROR 8216 (HY000): Invalid auto random: modifying the auto_random column type is not supported`
 	// Because the origin column is `bigint`, it can not change to any other column type in TiDB limitation.
-	mustExecAndDrop("create table t (a bigint primary key auto_random(3))", func() {
+	mustExecAndDrop("create table t (a bigint primary key auto_random(3), b int)", func() {
 		assertModifyColType("alter table t modify column a int auto_random(3)")
 		assertModifyColType("alter table t modify column a mediumint auto_random(3)")
 		assertModifyColType("alter table t modify column a smallint auto_random(3)")
+		tk.MustExec("alter table t modify column b int")
 	})
 
 	// Test show warnings when create auto_random table.
