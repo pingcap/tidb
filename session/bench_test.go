@@ -1540,7 +1540,6 @@ func BenchmarkHashPartitionPruningPointSelect(b *testing.B) {
 	b.StopTimer()
 }
 
-
 func BenchmarkHashPartitionPruningMultiSelect(b *testing.B) {
 	ctx := context.Background()
 	se, do, st := prepareBenchSession()

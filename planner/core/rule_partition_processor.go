@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -116,10 +115,10 @@ func generateHashPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo, 
 	return exprs[0], nil
 }
 
-func (s *partitionProcessor) findUsedPartitions(ds *DataSource, pi *model.PartitionInfo) ([]int, error) {
-	pe, err := generateHashPartitionExpr(ds.table, ds.ctx, ds.TblCols, ds.names)
+func (s *partitionProcessor) findUsedPartitions(ds *DataSource, pi *model.PartitionInfo) ([]int, []expression.Expression, error) {
+	pe, err := generateHashPartitionExpr(ds.ctx, ds.table.Meta().Partition, ds.TblCols, ds.names)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	partIdx := expression.ExtractColumns(pe)
 	colLen := make([]int, 0, len(partIdx))
@@ -127,11 +126,11 @@ func (s *partitionProcessor) findUsedPartitions(ds *DataSource, pi *model.Partit
 		partIdx[i].Index = i
 		colLen = append(colLen, types.UnspecifiedLength)
 	}
-	datcher, err := ranger.DetachCondAndBuildRangeForIndex(ds.SCtx(), ds.allConds, partIdx, colLen)
+	datchedResult, err := ranger.DetachCondAndBuildRangeForPartition(ds.SCtx(), ds.allConds, partIdx, colLen)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	ranges := datcher.Ranges
+	ranges := datchedResult.Ranges
 	used := make([]int, 0, len(ranges))
 	for _, r := range ranges {
 		if r.IsPointNullable(ds.ctx.GetSessionVars().StmtCtx) {
@@ -143,7 +142,7 @@ func (s *partitionProcessor) findUsedPartitions(ds *DataSource, pi *model.Partit
 			}
 			pos, isNull, err := pe.EvalInt(ds.ctx, chunk.MutRowFromDatums(r.HighVal).ToRow())
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			if isNull {
 				pos = 0
@@ -154,18 +153,14 @@ func (s *partitionProcessor) findUsedPartitions(ds *DataSource, pi *model.Partit
 			break
 		}
 	}
-	return used, nil
-}
-
-func convertToRangeOr(used []int, pi *model.PartitionInfo) partitionRangeOR {
-	if len(used) == 1 && used[0] == FullRange {
-		return fullRange(len(pi.Definitions))
+	sort.Ints(used)
+	ret := make([]int, 0, len(used))
+	for i := 0; i < len(used); i++ {
+		if i == 0 || used[i] != used[i-1] {
+			ret = append(ret, used[i])
+		}
 	}
-	ret := make(partitionRangeOR, len(used))
-	for _, i := range used {
-		ret = append(ret, partitionRange{i, i + 1})
-	}
-	return ret
+	return used, datchedResult.RemainedConds, nil
 }
 
 func (s *partitionProcessor) convertToIntSlice(or partitionRangeOR, pi *model.PartitionInfo, partitionNames []model.CIStr) []int {
@@ -186,59 +181,24 @@ func (s *partitionProcessor) convertToIntSlice(or partitionRangeOR, pi *model.Pa
 	return ret
 }
 
-func (s *partitionProcessor) produceHashPartitionPlan(ds *DataSource, used []int, pi *model.PartitionInfo) (LogicalPlan, error) {
-	if len(used) > 0 && used[0] == -1 {
-		return s.makeUnionAllChildren(ds, pi, fullRange(len(pi.Definitions)))
-	}
-	children := make([]LogicalPlan, 0, len(pi.Definitions))
-	for _, pos := range used {
-		if len(ds.partitionNames) > 0 && !s.findByName(ds.partitionNames, pi.Definitions[pos].Name.L) {
-			// For condition like `from t partition (p1) where a = 5`, but they are conflict, return TableDual directly.
-			tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.blockOffset)
-			tableDual.schema = ds.Schema()
-			return tableDual, nil
+func convertToRangeOr(used []int, pi *model.PartitionInfo) partitionRangeOR {
+	if len(used) == 1 && used[0] == -1 {
+		return fullRange(len(pi.Definitions))
+	} else {
+		ret := make(partitionRangeOR, len(used))
+		for _, i := range used {
+			ret = append(ret, partitionRange{i, i + 1})
 		}
-
-		// Not a deep copy.
-		newDataSource := *ds
-		newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.SCtx(), plancodec.TypeTableScan, &newDataSource, ds.blockOffset)
-		newDataSource.isPartition = true
-		newDataSource.physicalTableID = pi.Definitions[pos].ID
-		newDataSource.possibleAccessPaths = make([]*util.AccessPath, len(ds.possibleAccessPaths))
-		for i := range ds.possibleAccessPaths {
-			newPath := *ds.possibleAccessPaths[i]
-			newDataSource.possibleAccessPaths[i] = &newPath
-		}
-		// There are many expression nodes in the plan tree use the original datasource
-		// id as FromID. So we set the id of the newDataSource with the original one to
-		// avoid traversing the whole plan tree to update the references.
-		newDataSource.id = ds.id
-		newDataSource.statisticTable = getStatsTable(ds.SCtx(), ds.table.Meta(), pi.Definitions[pos].ID)
-		children = append(children, &newDataSource)
+		return ret
 	}
-	if len(children) == 0 {
-		// No result after table pruning.
-		tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.blockOffset)
-		tableDual.schema = ds.Schema()
-		return tableDual, nil
-	}
-	if len(children) == 1 {
-		// No need for the union all.
-		return children[0], nil
-	}
-	unionAll := LogicalUnionAll{}.Init(ds.SCtx(), ds.blockOffset)
-	unionAll.SetChildren(children...)
-	unionAll.SetSchema(ds.schema)
-	return unionAll, nil
 }
 
-
 func (s *partitionProcessor) newPruneHashPartition(ds *DataSource, pi *model.PartitionInfo) (LogicalPlan, error) {
-	used, err := s.findUsedPartitions(ds, pi)
+	used, _, err := s.findUsedPartitions(ds, pi)
 	if err != nil {
 		return nil, err
 	}
-	return s.produceHashPartitionPlan(ds, used, pi)
+	return s.makeUnionAllChildren(ds, pi, convertToRangeOr(used, pi))
 }
 
 
