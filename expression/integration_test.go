@@ -6776,7 +6776,7 @@ func (s *testIntegrationSerialSuite) TestIssue18638(c *C) {
 	tk.MustQuery("select * from t t1 left join t t2 on t1.a = t2.b collate utf8mb4_general_ci;").Check(testkit.Rows("a A a A"))
 }
 
-func (s *testIntegrationSerialSuite) TestIssue18663(c *C) {
+func (s *testIntegrationSerialSuite) TestIssue18662(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 
