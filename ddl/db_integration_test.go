@@ -889,7 +889,7 @@ func (s *testIntegrationSuite4) TestChangingTableCharset(c *C) {
 	}
 }
 
-func (s *testIntegrationSuite5) TestModifyingColumnOption(c *C) {
+func (s *testIntegrationSuite5) TestModifyColumnOption(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists test")
 	tk.MustExec("use test")
@@ -921,7 +921,7 @@ func (s *testIntegrationSuite5) TestModifyingColumnOption(c *C) {
 	_, err = tk.Exec("alter table t1 change a a datetime")
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: type datetime not match origin int(11)")
 	_, err = tk.Exec("alter table t1 change a a int(11) unsigned")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: can't change unsigned integer to signed or vice versa")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: can't change unsigned integer to signed or vice versa, enableColType false")
 	_, err = tk.Exec("alter table t2 change b b int(11) unsigned")
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: type int(11) not match origin char(1)")
 }

@@ -55,7 +55,11 @@ import (
 	"go.uber.org/zap"
 )
 
-const expressionIndexPrefix = "_V$"
+const (
+	expressionIndexPrefix = "_V$"
+	changingColumnPrefix  = "_Col$_"
+	changingIndexPrefix   = "_Idx$_"
+)
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) error {
 	dbInfo := &model.DBInfo{Name: schema}
@@ -3189,8 +3193,9 @@ func checkModifyCharsetAndCollation(toCharset, toCollate, origCharset, origColla
 // change or check existing data in the table.
 // It returns error if the two types has incompatible Charset and Collation, different sign, different
 // digital/string types, or length of new Flen and Decimal is less than origin.
-func checkModifyTypes(origin *types.FieldType, to *types.FieldType, needRewriteCollationData bool) error {
+func checkModifyTypes(ctx sessionctx.Context, origin *types.FieldType, to *types.FieldType, needRewriteCollationData bool) error {
 	unsupportedMsg := fmt.Sprintf("type %v not match origin %v", to.CompactStr(), origin.CompactStr())
+	var isIntType bool
 	switch origin.Tp {
 	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString,
 		mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
@@ -3203,6 +3208,7 @@ func checkModifyTypes(origin *types.FieldType, to *types.FieldType, needRewriteC
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		switch to.Tp {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+			isIntType = true
 		default:
 			return errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		}
@@ -3233,8 +3239,14 @@ func checkModifyTypes(origin *types.FieldType, to *types.FieldType, needRewriteC
 		}
 	}
 
-	if to.Flen > 0 && to.Flen < origin.Flen {
-		msg := fmt.Sprintf("length %d is less than origin %d", to.Flen, origin.Flen)
+	enableChangeColType := isIntType && ctx.GetSessionVars().EnableChangeColumnType
+	// TODO: Consider unsupport partition tables.
+	if mysql.HasPriKeyFlag(origin.Flag) && enableChangeColType {
+		msg := "enableChangeColType is true and this column has primary key flag"
+		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+	}
+	if to.Flen > 0 && to.Flen < origin.Flen && !enableChangeColType {
+		msg := fmt.Sprintf("length %d is less than origin %d, or enableChangeColType %v", to.Flen, origin.Flen, enableChangeColType)
 		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 	}
 	if to.Decimal > 0 && to.Decimal < origin.Decimal {
@@ -3244,8 +3256,8 @@ func checkModifyTypes(origin *types.FieldType, to *types.FieldType, needRewriteC
 
 	toUnsigned := mysql.HasUnsignedFlag(to.Flag)
 	originUnsigned := mysql.HasUnsignedFlag(origin.Flag)
-	if originUnsigned != toUnsigned {
-		msg := fmt.Sprintf("can't change unsigned integer to signed or vice versa")
+	if originUnsigned != toUnsigned && !enableChangeColType {
+		msg := fmt.Sprintf("can't change unsigned integer to signed or vice versa, enableColType %v", enableChangeColType)
 		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 	}
 
@@ -3459,7 +3471,11 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		return nil, errors.Trace(err)
 	}
 
-	if err = checkModifyTypes(&col.FieldType, &newCol.FieldType, isColumnWithIndex(col.Name.L, t.Meta().Indices)); err != nil {
+	if ctx.GetSessionVars().EnableChangeColumnType && (newCol.IsGenerated() || col.IsGenerated()) {
+		msg := fmt.Sprintf("enableChangeColType is ture, newCol IsGenerated %v, col IsGenerated %v", newCol.IsGenerated(), col.IsGenerated())
+		return nil, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+	}
+	if err = checkModifyTypes(ctx, &col.FieldType, &newCol.FieldType, isColumnWithIndex(col.Name.L, t.Meta().Indices)); err != nil {
 		if strings.Contains(err.Error(), "Unsupported modifying collation") {
 			colErrMsg := "Unsupported modifying collation of column '%s' from '%s' to '%s' when index is defined on it."
 			err = errUnsupportedModifyCollation.GenWithStack(colErrMsg, col.Name.L, col.Collate, newCol.Collate)

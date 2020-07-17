@@ -420,3 +420,62 @@ func (s *testFailDBSuite) TestPartitionAddIndexGC(c *C) {
 	}()
 	tk.MustExec("alter table partition_add_idx add index idx (id, hired)")
 }
+
+func (s *testFailDBSuite) TestModifyColumns(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	enableChangeColumnType := tk.Se.GetSessionVars().EnableChangeColumnType
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+	defer func() {
+		tk.Se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
+	}()
+
+	tk.MustExec("create table position (a int not null default 1, b int default 2, c int not null default 0, primary key(c), index idx(b), index idx1(a), index idx2(b, c))")
+	tk.MustExec("insert into position values(1, 2, 3), (11, 22, 33)")
+	_, err := tk.Exec("alter table position change column c cc mediumint")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: enableChangeColType is true and this column has primary key flag")
+	tk.MustExec("alter table position change column b bb mediumint first")
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("position"))
+	c.Assert(err, IsNil)
+	cols := tbl.Meta().Columns
+	colsStr := ""
+	idxsStr := ""
+	for _, col := range cols {
+		colsStr += col.Name.L + " "
+	}
+	for _, idx := range tbl.Meta().Indices {
+		idxsStr += idx.Name.L + " "
+	}
+	logutil.BgLogger().Warn(fmt.Sprintf("************** cols: %v, idxes: %v \n", colsStr, idxsStr))
+	c.Assert(len(cols), Equals, 3)
+	c.Assert(len(tbl.Meta().Indices), Equals, 3)
+	tk.MustQuery("select * from position").Check(testkit.Rows("2 1 3", "22 11 33"))
+	tk.MustQuery("show create table position").Check(testkit.Rows("position CREATE TABLE `position` (\n" +
+		"  `bb` mediumint(9) DEFAULT NULL,\n" +
+		"  `a` int(11) NOT NULL DEFAULT 1,\n" +
+		"  `c` int(11) NOT NULL DEFAULT 0,\n" +
+		"  PRIMARY KEY (`c`),\n" +
+		"  KEY `idx` (`bb`),\n" +
+		"  KEY `idx1` (`a`),\n" +
+		"  KEY `idx2` (`bb`,`c`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("admin check table position")
+	tk.MustExec("insert into position values(111, 222, 333)")
+	_, err = tk.Exec("alter table position change column a aa tinyint after c")
+	c.Assert(err.Error(), Equals, "[types:1690]constant 222 overflows tinyint")
+	tk.MustExec("alter table position change column a aa mediumint after c")
+	tk.MustQuery("show create table position").Check(testkit.Rows("position CREATE TABLE `position` (\n" +
+		"  `bb` mediumint(9) DEFAULT NULL,\n" +
+		"  `c` int(11) NOT NULL DEFAULT 0,\n" +
+		"  `aa` mediumint(9) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`c`),\n" +
+		"  KEY `idx` (`bb`),\n" +
+		"  KEY `idx1` (`aa`),\n" +
+		"  KEY `idx2` (`bb`,`c`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("select * from position").Check(testkit.Rows("2 3 1", "22 33 11", "111 333 222"))
+	tk.MustExec("admin check table position")
+}

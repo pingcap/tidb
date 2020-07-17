@@ -342,15 +342,9 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	execBuf := kv.NewStagingBufferStore(txn)
 	defer execBuf.Discard()
 
-	// rebuild index
-	err = t.rebuildIndices(sctx, execBuf, h, touched, oldData, newData, table.WithCtx(ctx))
-	if err != nil {
-		return err
-	}
-	numColsCap := len(newData) + 1 // +1 for the extra handle column that we may need to append.
-
 	var colIDs, binlogColIDs []int64
 	var row, binlogOldRow, binlogNewRow []types.Datum
+	numColsCap := len(newData) + 1 // +1 for the extra handle column that we may need to append.
 	colIDs = make([]int64, 0, numColsCap)
 	row = make([]types.Datum, 0, numColsCap)
 	if shouldWriteBinlog(sctx) {
@@ -366,6 +360,13 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 			// Because the oldData must be the orignal data(it's changed by other TiDBs.) or the orignal default value.
 			// TODO: Use newData directly.
 			value = oldData[col.Offset]
+			if col.ChangeStateInfo != nil {
+				// TODO: Check overflow or ignoreTruncate.
+				value, err = table.CastValue(sctx, newData[col.DependencyColumnOffset], col.ColumnInfo, false, false)
+				if err != nil {
+					return err
+				}
+			}
 		} else {
 			value = newData[col.Offset]
 		}
@@ -378,6 +379,12 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 			binlogOldRow = append(binlogOldRow, oldData[col.Offset])
 			binlogNewRow = append(binlogNewRow, value)
 		}
+	}
+
+	// rebuild index
+	err = t.rebuildIndices(sctx, execBuf, h, touched, oldData, newData, table.WithCtx(ctx))
+	if err != nil {
+		return err
 	}
 
 	key := t.RecordKey(h)
@@ -648,17 +655,19 @@ func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 			}
 		}
 	}
-	// Insert new entries into indices.
-	h, err := t.addIndices(ctx, recordID, r, execBuf, createIdxOpts)
-	if err != nil {
-		return h, err
-	}
 
 	for _, col := range t.WritableCols() {
 		var value types.Datum
-		// Update call `AddRecord` will already handle the write only column default value.
-		// Only insert should add default value for write only column.
-		if col.State != model.StatePublic && !opt.IsUpdate {
+
+		if col.State != model.StatePublic && col.ChangeStateInfo != nil {
+			// TODO: Check overflow or ignoreTruncate.
+			value, err = table.CastValue(ctx, r[col.DependencyColumnOffset], col.ColumnInfo, false, false)
+			if err != nil {
+				return recordID, err
+			}
+			// Update call `AddRecord` will already handle the write only column default value.
+			// Only insert should add default value for write only column.
+		} else if col.State != model.StatePublic && !opt.IsUpdate {
 			// If col is in write only or write reorganization state, we must add it with its default value.
 			value, err = table.GetColOriginDefaultValue(ctx, col.ToInfo())
 			if err != nil {
@@ -674,11 +683,19 @@ func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 		} else {
 			value = r[col.Offset]
 		}
+
 		if !t.canSkip(col, &value) {
 			colIDs = append(colIDs, col.ID)
 			row = append(row, value)
 		}
 	}
+
+	// Insert new entries into indices.
+	h, err := t.addIndices(ctx, recordID, r, execBuf, createIdxOpts)
+	if err != nil {
+		return h, err
+	}
+
 	writeBufs := sessVars.GetWriteStmtBufs()
 	adjustRowValuesBuf(writeBufs, len(row))
 	key := t.RecordKey(recordID)

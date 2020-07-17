@@ -1149,6 +1149,7 @@ func (s *testColumnSuite) TestModifyColumn(c *C) {
 		WithStore(s.store),
 		WithLease(testLease),
 	)
+	ctx := testNewContext(d)
 	defer d.Stop()
 	tests := []struct {
 		origin string
@@ -1156,11 +1157,11 @@ func (s *testColumnSuite) TestModifyColumn(c *C) {
 		err    error
 	}{
 		{"int", "bigint", nil},
-		{"int", "int unsigned", errUnsupportedModifyColumn.GenWithStackByArgs("length 10 is less than origin 11")},
+		{"int", "int unsigned", errUnsupportedModifyColumn.GenWithStackByArgs("length 10 is less than origin 11, or enableChangeColType false")},
 		{"varchar(10)", "text", nil},
 		{"varbinary(10)", "blob", nil},
 		{"text", "blob", errUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8mb4 to binary")},
-		{"varchar(10)", "varchar(8)", errUnsupportedModifyColumn.GenWithStackByArgs("length 8 is less than origin 10")},
+		{"varchar(10)", "varchar(8)", errUnsupportedModifyColumn.GenWithStackByArgs("length 8 is less than origin 10, or enableChangeColType false")},
 		{"varchar(10)", "varchar(11)", nil},
 		{"varchar(10) character set utf8 collate utf8_bin", "varchar(10) character set utf8", nil},
 		{"decimal(2,1)", "decimal(3,2)", errUnsupportedModifyColumn.GenWithStackByArgs("can't change decimal column precision")},
@@ -1170,7 +1171,7 @@ func (s *testColumnSuite) TestModifyColumn(c *C) {
 	for _, tt := range tests {
 		ftA := s.colDefStrToFieldType(c, tt.origin)
 		ftB := s.colDefStrToFieldType(c, tt.to)
-		err := checkModifyTypes(ftA, ftB, false)
+		err := checkModifyTypes(ctx, ftA, ftB, false)
 		if err == nil {
 			c.Assert(tt.err, IsNil)
 		} else {

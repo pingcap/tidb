@@ -126,6 +126,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
+	return statsHandle.Update(infoschema.GetInfoSchema(e.ctx))
 }
 
 func getBuildStatsConcurrency(ctx sessionctx.Context) (int, error) {

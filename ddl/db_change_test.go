@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/gcutil"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"go.uber.org/zap"
@@ -539,6 +540,37 @@ func (s *testStateChangeSuite) TestWriteOnlyOnDupUpdateForAddColumns(c *C) {
 	s.runTestInSchemaState(c, model.StateWriteOnly, true, addColumnsSQL, sqls, expectQuery)
 }
 
+// TestWriteOnlyForModifyColumn tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
+func (s *serialTestStateChangeSuite) TestWriteOnlyForModifyColumn(c *C) {
+	enableChangeColumnType := s.se.GetSessionVars().EnableChangeColumnType
+	s.se.GetSessionVars().EnableChangeColumnType = true
+	defer func() {
+		s.se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
+	}()
+
+	_, err := s.se.Execute(context.Background(), "use test_db_state")
+	c.Assert(err, IsNil)
+	_, err = s.se.Execute(context.Background(), `create table tt  (a varchar(64), b int default 1, c int not null default 0, index idx(c), index idx1(a), index idx2(a, c))`)
+	c.Assert(err, IsNil)
+	_, err = s.se.Execute(context.Background(), "insert into tt (a, c) values('a', 11)")
+	c.Assert(err, IsNil)
+	_, err = s.se.Execute(context.Background(), "insert into tt (a, c) values('b', 22)")
+	c.Assert(err, IsNil)
+	defer s.se.Execute(context.Background(), "drop table tt")
+
+	sqls := make([]sqlWithErr, 7)
+	sqls[0] = sqlWithErr{"delete from tt where c = 11", nil}
+	sqls[1] = sqlWithErr{"update tt use index(idx2) set a = 'a_update', c = 222 where c = 22", errors.Errorf("[types:1690]constant 222 overflows tinyint")}
+	sqls[2] = sqlWithErr{"update tt use index(idx2) set a = 'a_update', c = 2 where c = 22", nil}
+	sqls[3] = sqlWithErr{"update tt use index(idx2) set a = 'a_update_1' where c = 2", nil}
+	sqls[4] = sqlWithErr{"insert tt set a = 'a_insert', c = 333", errors.Errorf("[types:1690]constant 333 overflows tinyint")}
+	sqls[5] = sqlWithErr{"insert tt set a = 'a_insert', c = 111", nil}
+	sqls[6] = sqlWithErr{"insert tt set a = 'a_insert_1'", nil}
+	addColumnSQL := "alter table tt change column c cc tinyint not null default 1 first"
+	query := &expectQuery{sql: "select * from tt;", rows: []string{"2 a_update_1 1", "111 a_insert 1", "0 a_insert_1 1"}}
+	s.runTestInSchemaState(c, model.StateWriteReorganization, true, addColumnSQL, sqls, query)
+}
+
 // TestWriteOnly tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
 func (s *testStateChangeSuite) TestWriteOnly(c *C) {
 	sqls := make([]sqlWithErr, 3)
@@ -831,6 +863,31 @@ func (s *testStateChangeSuite) TestParallelAlterModifyColumn(c *C) {
 	s.testControlParallelExecSQL(c, sql, sql, f)
 }
 
+func (s *serialTestStateChangeSuite) TestParallelAlterModifyColumnAndAddPK(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = true
+	})
+
+	_, err := s.se.Execute(context.Background(), "set global tidb_enable_change_column_type = 1")
+	c.Assert(err, IsNil)
+	defer func() {
+		_, err = s.se.Execute(context.Background(), "set global tidb_enable_change_column_type = 0")
+		c.Assert(err, IsNil)
+	}()
+	domain.GetDomain(s.se).GetGlobalVarsCache().Disable()
+
+	sql1 := "ALTER TABLE t ADD PRIMARY KEY (b);"
+	sql2 := "ALTER TABLE t MODIFY COLUMN b tinyint;"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2.Error(), Equals, "[ddl:8200]Unsupported modify column: enableChangeColType is true and this column has primary key flag")
+		_, err := s.se.Execute(context.Background(), "select * from t")
+		c.Assert(err, IsNil)
+	}
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
+}
+
 // TODO: This test is not a test that performs two DDLs in parallel.
 // So we should not use the function of testControlParallelExecSQL. We will handle this test in the next PR.
 // func (s *testStateChangeSuite) TestParallelColumnModifyingDefinition(c *C) {
@@ -1028,6 +1085,7 @@ func (s *testStateChangeSuiteBase) prepareTestControlParallelExecSQL(c *C) (sess
 			if qLen == 2 {
 				break
 			}
+			logutil.BgLogger().Warn("-------------------- wait jobs")
 			time.Sleep(5 * time.Millisecond)
 		}
 		times++
