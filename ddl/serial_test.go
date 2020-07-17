@@ -1038,6 +1038,10 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	mustExecAndDrop("create table t (a bigint primary key)", func() {
 		assertAlterValue("alter table t modify column a bigint auto_random(3)")
 	})
+	mustExecAndDrop("create table t (a bigint, b bigint, primary key(a, b))", func() {
+		assertAlterValue("alter table t modify column a bigint auto_random(3)")
+		assertAlterValue("alter table t modify column b bigint auto_random(3)")
+	})
 
 	// Decrease auto_random bits is not allowed.
 	mustExecAndDrop("create table t (a bigint auto_random(10) primary key)", func() {
