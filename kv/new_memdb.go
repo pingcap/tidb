@@ -292,7 +292,7 @@ func (db *memdb) setValue(x memdbNodeAddr, value []byte) {
 // tranverse search for and if not found and insert is true, will add a new node in.
 // Returns a pointer to the new node, or the node found.
 func (db *memdb) tranverse(key Key, insert bool) memdbNodeAddr {
-	x := db.getNode(db.root)
+	x := db.getRoot()
 	y := memdbNodeAddr{nil, nullAddr}
 	found := false
 
@@ -310,10 +310,6 @@ func (db *memdb) tranverse(key Key, insert bool) memdbNodeAddr {
 	}
 
 	if found || !insert {
-		if x.isNull() {
-			// Ensure pointer is nil.
-			x.memdbNode = nil
-		}
 		return x
 	}
 
@@ -346,65 +342,65 @@ func (db *memdb) tranverse(key Key, insert bool) memdbNodeAddr {
 	// are also going to stop if we are the child of the root
 
 	for x.addr != db.root {
-		xup := x.getUp(db)
-		if xup.isBlack() {
+		xUp := x.getUp(db)
+		if xUp.isBlack() {
 			break
 		}
 
-		xgrandup := db.getNode(xup.up)
+		xUpUp := xUp.getUp(db)
 		// if our parent is on the left side of our grandparent
-		if x.up == xgrandup.left {
+		if x.up == xUpUp.left {
 			// get the right side of our grandparent (uncle?)
-			y = db.getNode(xgrandup.right)
+			y = xUpUp.getRight(db)
 			if y.isRed() {
 				// make our parent black
-				xup.setBlack()
+				xUp.setBlack()
 				// make our uncle black
 				y.setBlack()
 				// make our grandparent red
-				xgrandup.setRed()
+				xUpUp.setRed()
 				// now consider our grandparent
-				x = db.getNode(xup.up)
+				x = xUp.getUp(db)
 			} else {
 				// if we are on the right side of our parent
-				if x.addr == xup.right {
+				if x.addr == xUp.right {
 					// Move up to our parent
 					x = x.getUp(db)
 					db.leftRotate(x)
-					xup = x.getUp(db)
-					xgrandup = db.getNode(xup.up)
+					xUp = x.getUp(db)
+					xUpUp = xUp.getUp(db)
 				}
 
-				xup.setBlack()
-				xgrandup.setRed()
-				db.rightRotate(xgrandup)
+				xUp.setBlack()
+				xUpUp.setRed()
+				db.rightRotate(xUpUp)
 			}
 		} else {
 			// everything here is the same as above, but exchanging left for right
-			y = db.getNode(xgrandup.left)
+			y = xUpUp.getLeft(db)
 			if y.isRed() {
-				xup.setBlack()
+				xUp.setBlack()
 				y.setBlack()
-				xgrandup.setRed()
+				xUpUp.setRed()
 
-				x = db.getNode(xup.up)
+				x = xUp.getUp(db)
 			} else {
-				if x.addr == xup.left {
+				if x.addr == xUp.left {
 					x = x.getUp(db)
 					db.rightRotate(x)
-					xup = x.getUp(db)
-					xgrandup = db.getNode(xup.up)
+					xUp = x.getUp(db)
+					xUpUp = xUp.getUp(db)
 				}
 
-				xup.setBlack()
-				xgrandup.setRed()
-				db.leftRotate(xgrandup)
+				xUp.setBlack()
+				xUpUp.setRed()
+				db.leftRotate(xUpUp)
 			}
 		}
 	}
 
 	// Set the root node black
-	db.getNode(db.root).setBlack()
+	db.getRoot().setBlack()
 
 	return z
 }
@@ -441,12 +437,12 @@ func (db *memdb) leftRotate(x memdbNodeAddr) {
 	if x.up.isNull() {
 		db.root = y.addr
 	} else {
-		xup := x.getUp(db)
+		xUp := x.getUp(db)
 		// Set X's parent's left or right pointer to be Y
-		if x.addr == xup.left {
-			xup.left = y.addr
+		if x.addr == xUp.left {
+			xUp.left = y.addr
 		} else {
-			xup.right = y.addr
+			xUp.right = y.addr
 		}
 	}
 
@@ -474,12 +470,12 @@ func (db *memdb) rightRotate(y memdbNodeAddr) {
 	if y.up.isNull() {
 		db.root = x.addr
 	} else {
-		yup := y.getUp(db)
+		yUp := y.getUp(db)
 		// Set Y's parent's left or right pointer to be X
-		if y.addr == yup.left {
-			yup.left = x.addr
+		if y.addr == yUp.left {
+			yUp.left = x.addr
 		} else {
-			yup.right = x.addr
+			yUp.right = x.addr
 		}
 	}
 
@@ -508,11 +504,11 @@ func (db *memdb) deleteNode(z memdbNodeAddr) {
 	if y.up.isNull() {
 		db.root = x.addr
 	} else {
-		yup := y.getUp(db)
-		if y.addr == yup.left {
-			yup.left = x.addr
+		yUp := y.getUp(db)
+		if y.addr == yUp.left {
+			yUp.left = x.addr
 		} else {
-			yup.right = x.addr
+			yUp.right = x.addr
 		}
 	}
 
@@ -545,11 +541,11 @@ func (db *memdb) deleteNode(z memdbNodeAddr) {
 
 func (db *memdb) replaceNode(x memdbNodeAddr, y memdbNodeAddr) {
 	if !y.up.isNull() {
-		yup := y.getUp(db)
-		if y.addr == yup.left {
-			yup.left = x.addr
+		yUp := y.getUp(db)
+		if y.addr == yUp.left {
+			yUp.left = x.addr
 		} else {
-			yup.right = x.addr
+			yUp.right = x.addr
 		}
 	} else {
 		db.root = x.addr
@@ -575,13 +571,13 @@ func (db *memdb) replaceNode(x memdbNodeAddr, y memdbNodeAddr) {
 
 func (db *memdb) deleteNodeFix(x memdbNodeAddr) {
 	for x.addr != db.root && x.isBlack() {
-		xup := x.getUp(db)
-		if x.addr == xup.left {
-			w := db.getNode(xup.right)
+		xUp := x.getUp(db)
+		if x.addr == xUp.left {
+			w := xUp.getRight(db)
 			if w.isRed() {
 				w.setBlack()
-				xup.setRed()
-				db.leftRotate(xup)
+				xUp.setRed()
+				db.leftRotate(xUp)
 				w = x.getUp(db).getRight(db)
 			}
 
@@ -596,23 +592,23 @@ func (db *memdb) deleteNodeFix(x memdbNodeAddr) {
 					w = x.getUp(db).getRight(db)
 				}
 
-				xup := x.getUp(db)
-				if xup.isBlack() {
+				xUp := x.getUp(db)
+				if xUp.isBlack() {
 					w.setBlack()
 				} else {
 					w.setRed()
 				}
-				xup.setBlack()
+				xUp.setBlack()
 				w.getRight(db).setBlack()
-				db.leftRotate(xup)
-				x = db.getNode(db.root)
+				db.leftRotate(xUp)
+				x = db.getRoot()
 			}
 		} else {
-			w := xup.getLeft(db)
+			w := xUp.getLeft(db)
 			if w.isRed() {
 				w.setBlack()
-				xup.setRed()
-				db.rightRotate(xup)
+				xUp.setRed()
+				db.rightRotate(xUp)
 				w = x.getUp(db).getLeft(db)
 			}
 
@@ -627,16 +623,16 @@ func (db *memdb) deleteNodeFix(x memdbNodeAddr) {
 					w = x.getUp(db).getLeft(db)
 				}
 
-				xup := x.getUp(db)
-				if xup.isBlack() {
+				xUp := x.getUp(db)
+				if xUp.isBlack() {
 					w.setBlack()
 				} else {
 					w.setRed()
 				}
-				xup.setBlack()
+				xUp.setBlack()
 				w.getLeft(db).setBlack()
-				db.rightRotate(xup)
-				x = db.getNode(db.root)
+				db.rightRotate(xUp)
+				x = db.getRoot()
 			}
 		}
 	}
@@ -695,6 +691,10 @@ func (db *memdb) predecessor(x memdbNodeAddr) (y memdbNodeAddr) {
 
 func (db *memdb) getNode(x memdbArenaAddr) memdbNodeAddr {
 	return memdbNodeAddr{db.allocator.getNode(x), x}
+}
+
+func (db *memdb) getRoot() memdbNodeAddr {
+	return db.getNode(db.root)
 }
 
 func (db *memdb) allocNode(key Key) memdbNodeAddr {
