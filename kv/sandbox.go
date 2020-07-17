@@ -78,7 +78,7 @@ func (sb *sandbox) UpdateFlags(key []byte, flags KeyFlags) {
 
 func (sb *sandbox) PutWithFlags(key []byte, flags KeyFlags, value []byte) {
 	if sb.frozen {
-		panic("cannot write to a sandbox when it has forked a new sanbox")
+		panic("cannot write to a sandbox when it has forked a new sandbox")
 	}
 
 	head := sb.getHead()
