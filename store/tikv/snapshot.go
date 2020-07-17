@@ -585,8 +585,9 @@ func (s *tikvSnapshot) recordBackoffInfo(bo *Backoffer) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.stats.backoffSleepMS == nil {
-		s.stats.backoffSleepMS = make(map[backoffType]int)
-		s.stats.backoffTimes = make(map[backoffType]int)
+		s.stats.backoffSleepMS = bo.backoffSleepMS
+		s.stats.backoffTimes = bo.backoffTimes
+		return
 	}
 	for k, v := range bo.backoffSleepMS {
 		s.stats.backoffSleepMS[k] += v
@@ -599,6 +600,10 @@ func (s *tikvSnapshot) recordBackoffInfo(bo *Backoffer) {
 func (s *tikvSnapshot) mergeRegionRequestStats(stats map[tikvrpc.CmdType]*RegionRequestRuntimeStats) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.stats.rpcStats == nil {
+		s.stats.rpcStats = stats
+		return
+	}
 	for k, v := range stats {
 		stat, ok := s.stats.rpcStats[k]
 		if !ok {
@@ -617,9 +622,7 @@ type SnapshotRuntimeStats struct {
 }
 
 func NewSnapshotRuntimeStats() *SnapshotRuntimeStats {
-	return &SnapshotRuntimeStats{
-		rpcStats: make(map[tikvrpc.CmdType]*RegionRequestRuntimeStats),
-	}
+	return &SnapshotRuntimeStats{}
 }
 
 func (rs *SnapshotRuntimeStats) String() string {

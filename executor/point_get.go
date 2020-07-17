@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
@@ -463,9 +464,6 @@ func (e *PointGetRuntimeStats) String() string {
 	}
 	if e.SnapshotRuntimeStats != nil {
 		rpcStatsStr = e.SnapshotRuntimeStats.String()
-	}
-	if basic == "" && rpcStatsStr == "" {
-		return ""
 	}
 	if rpcStatsStr == "" {
 		return basic

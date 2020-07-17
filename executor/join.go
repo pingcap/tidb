@@ -969,6 +969,7 @@ func newJoinRuntimeStats(basic *execdetails.BasicRuntimeStats) *joinRuntimeStats
 	return stats
 }
 
+// setCacheInfo sets the cache information. Only used for apply executor.
 func (e *joinRuntimeStats) setCacheInfo(useCache bool, hitRatio float64) {
 	e.Lock()
 	e.applyCache = true
