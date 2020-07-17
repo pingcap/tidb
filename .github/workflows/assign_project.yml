@@ -57,3 +57,14 @@ jobs:
       with:
         project: 'https://github.com/pingcap/tidb/projects/44'
         column_name: 'To do'
+    - name: Run issues assignment to project SIG DDL Kanban
+      uses: srggrs/assign-one-project-github-action@1.2.0
+      if: |
+        contains(github.event.issue.labels.*.name, 'component/DDL') ||
+        contains(github.event.issue.labels.*.name, 'component/binlog') ||
+        contains(github.event.issue.labels.*.name, 'component/charset') ||
+        contains(github.event.issue.labels.*.name, 'component/infoschema') ||
+        contains(github.event.issue.labels.*.name, 'component/parser')
+      with:
+        project: 'https://github.com/pingcap/tidb/projects/40'
+        column_name: 'Issue Backlog: Need Triage'
