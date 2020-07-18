@@ -198,7 +198,6 @@ func (s *testChunkSuite) TestListInDiskOriginal(c *check.C) {
 		}
 	}
 
-	rand.Seed(0)
 	var ptrs []RowPtr
 	for i := 0; i < numChk; i++ {
 		for j := 0; j < numRow; j++ {

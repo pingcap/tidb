@@ -18,7 +18,7 @@ func (s *testChunkSuite) TestChecksumReadAt(c *check.C) {
 		c.Assert(err, check.IsNil)
 	}()
 
-	writeString := `0123456789`
+	writeString := "0123456789"
 	c.Assert(err, check.IsNil)
 	cs := newChecksum(f)
 	w := bytes.NewBuffer(nil)
