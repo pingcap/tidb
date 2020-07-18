@@ -44,10 +44,10 @@ func (s *testChunkSuite) TestChecksumReadAt(c *check.C) {
 	}
 
 	r = make([]byte, 1000)
-	n, err := cs.ReadAt(r, 1023)
+	n, err := cs.ReadAt(r, 1019)
 	c.Assert(err, check.IsNil)
 	c.Assert(n, check.Equals, 1000)
-	c.Assert(string(r[:10]), check.Equals, "3456789012")
+	c.Assert(string(r[:10]), check.Equals, "9012345678")
 
 	r = make([]byte, 1000)
 	n, err = cs.ReadAt(r, 1020*10-1)

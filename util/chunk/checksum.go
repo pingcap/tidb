@@ -100,5 +100,5 @@ func (cks *checksum) ReadAt(p []byte, off int64) (n int, err error) {
 		break
 	}
 
-	return len(p), nil
+	return n, nil
 }
