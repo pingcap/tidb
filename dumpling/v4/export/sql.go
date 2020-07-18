@@ -632,6 +632,28 @@ found:
 	return uint64(estRows)
 }
 
+func parseSnapshotToTSO(pool *sql.DB, snapshot string) (uint64, error) {
+	snapshotTS, err := strconv.ParseUint(snapshot, 10, 64)
+	if err == nil {
+		return snapshotTS, nil
+	}
+	var tso sql.NullInt64
+	err = simpleQueryWithArgs(pool, func(rows *sql.Rows) error {
+		err := rows.Scan(&tso)
+		if err != nil {
+			return err
+		}
+		if !tso.Valid {
+			return fmt.Errorf("snapshot %s format not supported. please use tso or '2006-01-02 15:04:05' format time", snapshot)
+		}
+		return nil
+	}, "SELECT unix_timestamp(?)", snapshot)
+	if err != nil {
+		return 0, withStack(err)
+	}
+	return (uint64(tso.Int64)<<18)*1000 + 1, nil
+}
+
 func buildWhereCondition(conf *Config, where string) string {
 	var query strings.Builder
 	separator := "WHERE"
