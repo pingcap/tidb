@@ -416,7 +416,7 @@ func (db *memdb) tranverse(key Key, insert bool) memdbNodeAddr {
 //
 // NOTE: This does not change the ordering.
 //
-// We assume that neither X or Y is NULL
+// We assume that neither X nor Y is NULL
 //
 
 func (db *memdb) leftRotate(x memdbNodeAddr) {
