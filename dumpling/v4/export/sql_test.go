@@ -190,6 +190,32 @@ func (s *testDumpSuite) TestBuildSelectField(c *C) {
 
 }
 
+func (s *testDumpSuite) TestParseSnapshotToTSO(c *C) {
+	db, mock, err := sqlmock.New()
+	c.Assert(err, IsNil)
+	defer db.Close()
+
+	snapshot := "2020/07/18 20:31:50"
+	var unixTimeStamp uint64 = 1595075510
+	// generate columns valid snapshot
+	mock.ExpectQuery(`SELECT unix_timestamp(?)`).
+		WithArgs(sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{`unix_timestamp("2020/07/18 20:31:50")`}).AddRow(1595075510))
+	tso, err := parseSnapshotToTSO(db, snapshot)
+	c.Assert(err, IsNil)
+	c.Assert(tso, Equals, (unixTimeStamp<<18)*1000+1)
+	c.Assert(mock.ExpectationsWereMet(), IsNil)
+
+	// generate columns not valid snapshot
+	mock.ExpectQuery(`SELECT unix_timestamp(?)`).
+		WithArgs(sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{`unix_timestamp("XXYYZZ")`}).AddRow(nil))
+	tso, err = parseSnapshotToTSO(db, "XXYYZZ")
+	c.Assert(err, ErrorMatches, "snapshot XXYYZZ format not supported. please use tso or '2006-01-02 15:04:05' format time")
+	c.Assert(tso, Equals, uint64(0))
+	c.Assert(mock.ExpectationsWereMet(), IsNil)
+}
+
 func makeVersion(major, minor, patch int64, preRelease string) *semver.Version {
 	return &semver.Version{
 		Major:      major,
