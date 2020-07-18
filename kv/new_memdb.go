@@ -518,7 +518,7 @@ func (db *memdb) deleteNode(z memdbNodeAddr) {
 	// We cannot do the same thing here, due to Y's pointer is stored in vlog and the space in Z may not suitable for Y.
 	// So we need to copy states from Z to Y, and relink all nodes formerly connected to Z.
 	if y != z {
-		db.replaceNode(y, z)
+		db.replaceNode(z, y)
 	}
 
 	if needFix {
@@ -528,7 +528,7 @@ func (db *memdb) deleteNode(z memdbNodeAddr) {
 	db.allocator.freeNode(z.addr)
 }
 
-func (db *memdb) replaceNode(new memdbNodeAddr, old memdbNodeAddr) {
+func (db *memdb) replaceNode(old memdbNodeAddr, new memdbNodeAddr) {
 	if !old.up.isNull() {
 		oldUp := old.getUp(db)
 		if old.addr == oldUp.left {
