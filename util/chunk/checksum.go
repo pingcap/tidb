@@ -55,7 +55,7 @@ func (cks *checksum) Write(p []byte) (n int, err error) {
 		payload = p[start:end]
 		copy(buf, emptyChecksumBlock)
 	}
-	return
+	return n, nil
 }
 
 func (cks *checksum) ReadAt(p []byte, off int64) (n int, err error) {
@@ -68,7 +68,7 @@ func (cks *checksum) ReadAt(p []byte, off int64) (n int, err error) {
 	r := io.NewSectionReader(cks.disk, startBlock*checksumBlockSize, (endBlock-startBlock+1)*checksumBlockSize)
 	readBuffer := bufio.NewReaderSize(r, checksumBlockSize)
 	buffer := make([]byte, checksumBlockSize)
-	for i := int64(0); i < endBlock-startBlock+1 || needWriteSize == 0; i++ {
+	for i := int64(0); i < endBlock-startBlock+1; i++ {
 		n1, err := readBuffer.Read(buffer)
 		if n1 != checksumBlockSize {
 			if err != io.EOF {

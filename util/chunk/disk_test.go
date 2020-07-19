@@ -169,35 +169,34 @@ func (l *listInDiskOriginal) GetRow(ptr RowPtr) (row Row, err error) {
 	return row, err
 }
 
-func checkRow(c *check.C, fieldTypes []*types.FieldType, row1, row2 Row) {
-	for i, f := range fieldTypes {
-		cmp := GetCompareFunc(f)
-		c.Check(cmp(row1, i, row2, i), check.IsTrue)
+func checkRow(c *check.C, row1, row2 Row) {
+	c.Assert(row1.GetString(0), check.Equals, row2.GetString(0))
+	c.Assert(row1.GetInt64(1), check.Equals, row2.GetInt64(1))
+	c.Assert(row1.GetString(2), check.Equals, row2.GetString(2))
+	c.Assert(row1.GetInt64(3), check.Equals, row2.GetInt64(3))
+	if !row1.IsNull(4) {
+		c.Assert(row1.GetJSON(4).String(), check.Equals, row2.GetJSON(4).String())
 	}
 }
 
 func (s *testChunkSuite) TestListInDiskOriginal(c *check.C) {
-	numChk, numRow := 20, 20
+	numChk, numRow := 3, 1000
 	chks, fields := initChunks(numChk, numRow)
 	lChecksum := NewListInDisk(fields)
-	defer lChecksum.Close()
+	//defer lChecksum.Close()
 	lDisk, err := newListInDiskOriginal(fields)
-	c.Check(err, check.IsNil)
-	defer lDisk.Close()
+	c.Assert(err, check.IsNil)
+	//defer lDisk.Close()
 	for _, chk := range chks {
 		err := lChecksum.Add(chk)
-		if err != nil {
-			c.Fatal(err)
-		}
+		c.Assert(err, check.IsNil)
 		err = lDisk.Add(chk)
-		if err != nil {
-			c.Fatal(err)
-		}
+		c.Assert(err, check.IsNil)
 	}
 
 	var ptrs []RowPtr
-	for i := 0; i < numChk; i++ {
-		for j := 0; j < numRow; j++ {
+	for i := 2; i < numChk; i++ {
+		for j := 402; j < numRow; j++ {
 			ptrs = append(ptrs, RowPtr{
 				ChkIdx: uint32(i),
 				RowIdx: uint32(j),
@@ -206,13 +205,10 @@ func (s *testChunkSuite) TestListInDiskOriginal(c *check.C) {
 	}
 	for _, rowPtr := range ptrs {
 		row1, err := lChecksum.GetRow(rowPtr)
-		if err != nil {
-			c.Fatal(err)
-		}
+		c.Assert(err, check.IsNil)
 		row2, err := lDisk.GetRow(rowPtr)
-		if err != nil {
-			c.Fatal(err)
-		}
-		checkRow(c, fields, row1, row2)
+		c.Assert(err, check.IsNil)
+		fmt.Println(rowPtr)
+		checkRow(c, row1, row2)
 	}
 }
