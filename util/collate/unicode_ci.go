@@ -14,9 +14,9 @@
 package collate
 
 import (
-	"unicode/utf8"
+	_ "unicode/utf8"
 
-	"github.com/pingcap/tidb/util/stringutil"
+	_ "github.com/pingcap/tidb/util/stringutil"
 )
 
 type unicodeCICollator struct {
