@@ -169,13 +169,10 @@ func (l *listInDiskOriginal) GetRow(ptr RowPtr) (row Row, err error) {
 	return row, err
 }
 
-func checkRow(c *check.C, row1, row2 Row) {
-	c.Check(row1.GetString(0), check.Equals, row2.GetString(0))
-	c.Check(row1.GetInt64(1), check.Equals, row2.GetInt64(1))
-	c.Check(row1.GetString(2), check.Equals, row2.GetString(2))
-	c.Check(row1.GetInt64(3), check.Equals, row2.GetInt64(3))
-	if !row1.IsNull(4) {
-		c.Check(row1.GetJSON(4).String(), check.Equals, row2.GetJSON(4).String())
+func checkRow(c *check.C, fieldTypes []*types.FieldType, row1, row2 Row) {
+	for i, f := range fieldTypes {
+		cmp := GetCompareFunc(f)
+		c.Check(cmp(row1, i, row2, i), check.IsTrue)
 	}
 }
 
@@ -216,6 +213,6 @@ func (s *testChunkSuite) TestListInDiskOriginal(c *check.C) {
 		if err != nil {
 			c.Fatal(err)
 		}
-		checkRow(c, row1, row2)
+		checkRow(c, fields, row1, row2)
 	}
 }
