@@ -18,6 +18,7 @@ import (
 	"math"
 	"reflect"
 	"sort"
+	"unsafe"
 
 	"github.com/cznic/mathutil"
 	"github.com/cznic/sortutil"
@@ -178,6 +179,21 @@ func (c *CMSketch) findTopNMeta(h1, h2 uint64, d []byte) *TopNMeta {
 		}
 	}
 	return nil
+}
+
+// MemoryUsage returns the total memory usage of a CMSketch in B.
+// We ignore the size of other metadata in CMSketch
+func (c *CMSketch) MemoryUsage() (sum int64) {
+	if c == nil {
+		return
+	}
+	sum = int64(cap(c.table))
+	for _, hs := range c.topN {
+		for _, meta := range hs {
+			sum += int64(unsafe.Sizeof(*meta))
+		}
+	}
+	return
 }
 
 // queryAddTopN TopN adds count to CMSketch.topN if exists, and returns the count of such elements after insert.

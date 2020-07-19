@@ -36,7 +36,9 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/stringutil"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -45,7 +47,8 @@ import (
 type statsCache struct {
 	tables map[int64]*statistics.Table
 	// version is the latest version of cache.
-	version uint64
+	version        uint64
+	stasticMemsize int64
 }
 
 // Handle can update stats info periodically.
@@ -66,6 +69,7 @@ type Handle struct {
 	statsCache struct {
 		sync.Mutex
 		atomic.Value
+		statMemoryTracker *memory.Tracker
 	}
 
 	restrictedExec sqlexec.RestrictedSQLExecutor
@@ -114,6 +118,9 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
 	if exec, ok := ctx.(sqlexec.RestrictedSQLExecutor); ok {
 		handle.restrictedExec = exec
 	}
+	handle.statsCache.statMemoryTracker = memory.NewTracker(
+		stringutil.MemoizeStr(func() string { return "statistics" }),
+		-1)
 	handle.mu.ctx = ctx
 	handle.mu.rateMap = make(errorRateDeltaMap)
 	handle.statsCache.Store(statsCache{tables: make(map[int64]*statistics.Table)})
@@ -252,6 +259,7 @@ func (h *Handle) updateStatsCache(newCache statsCache) {
 	oldCache := h.statsCache.Load().(statsCache)
 	if oldCache.version <= newCache.version {
 		h.statsCache.Store(newCache)
+		h.statsCache.statMemoryTracker.Consume(newCache.stasticMemsize - oldCache.stasticMemsize)
 	}
 	h.statsCache.Unlock()
 }
@@ -261,18 +269,38 @@ func (sc statsCache) copy() statsCache {
 	for k, v := range sc.tables {
 		newCache.tables[k] = v
 	}
+	newCache.stasticMemsize = sc.stasticMemsize
 	return newCache
+}
+
+func (sc statsCache) initMemoryUsage() {
+	sum := int64(0)
+	for _, tb := range sc.tables {
+		sum += tb.MemoryUsage()
+	}
+	sc.stasticMemsize = sum
+
+	return
 }
 
 // update updates the statistics table cache using copy on write.
 func (sc statsCache) update(tables []*statistics.Table, deletedIDs []int64, newVersion uint64) statsCache {
 	newCache := sc.copy()
+	sc.stasticMemsize = 0
 	newCache.version = newVersion
 	for _, tbl := range tables {
 		id := tbl.PhysicalID
+		if ptbl, ok := newCache.tables[id]; ok == false {
+			sc.stasticMemsize -= ptbl.MemoryUsage()
+		}
 		newCache.tables[id] = tbl
+		sc.stasticMemsize += tbl.MemoryUsage()
 	}
 	for _, id := range deletedIDs {
+		if ptbl, ok := newCache.tables[id]; ok == true {
+			sc.stasticMemsize -= ptbl.MemoryUsage()
+
+		}
 		delete(newCache.tables, id)
 	}
 	return newCache

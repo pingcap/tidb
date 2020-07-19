@@ -81,6 +81,23 @@ type HistColl struct {
 	Pseudo         bool
 }
 
+func (t *Table) MemoryUsage() (sum int64) {
+	if t == nil {
+		return
+	}
+	for _, col := range t.Columns {
+		if col != nil {
+			sum += col.MemoryUsage()
+		}
+	}
+	for _, index := range t.Indices {
+		if index != nil {
+			sum += index.MemoryUsage()
+		}
+	}
+	return
+}
+
 // Copy copies the current table.
 func (t *Table) Copy() *Table {
 	newHistColl := HistColl{

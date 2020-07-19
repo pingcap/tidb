@@ -112,6 +112,18 @@ func (hg *Histogram) GetUpper(idx int) *types.Datum {
 	return &d
 }
 
+// MemoryUsage returns the total memory usage of this Histogram.
+// everytime changed the Histogram of the table, it will cost O(n)
+// complexicity so calulate the memoryUsage might cost a little
+// We ignore the size of other metadata in Histogram
+func (hg *Histogram) MemoryUsage() (sum int64) {
+	if hg == nil {
+		return
+	}
+	sum = hg.Bounds.MemoryUsage() + int64(cap(hg.Buckets)) + int64(cap(hg.scalars))
+	return
+}
+
 // AvgColSize is the average column size of the histogram. These sizes are derived from function `encode`
 // and `Datum::ConvertTo`, so we need to update them if those 2 functions are changed.
 func (c *Column) AvgColSize(count int64, isKey bool) float64 {
@@ -738,6 +750,13 @@ func (c *Column) String() string {
 	return c.Histogram.ToString(0)
 }
 
+// MemoryUsage returns the total memory usage of a Column in B.
+// We ignore the size of other metadata in Column
+func (c *Column) MemoryUsage() (sum int64) {
+	sum = c.Histogram.MemoryUsage() + c.CMSketch.MemoryUsage()
+	return
+}
+
 // HistogramNeededColumns stores the columns whose Histograms need to be loaded from physical kv layer.
 // Currently, we only load index/pk's Histogram from kv automatically. Columns' are loaded by needs.
 var HistogramNeededColumns = neededColumnMap{cols: map[tableColumnID]struct{}{}}
@@ -879,6 +898,13 @@ func (idx *Index) String() string {
 // IsInvalid checks if this index is invalid.
 func (idx *Index) IsInvalid(collPseudo bool) bool {
 	return (collPseudo && idx.NotAccurate()) || idx.TotalRowCount() == 0
+}
+
+// MemoryUsage returns the total memory usage of a Column in B.
+// We ignore the size of other metadata in Column
+func (idx *Index) MemoryUsage() (sum int64) {
+	sum = idx.Histogram.MemoryUsage() + idx.CMSketch.MemoryUsage()
+	return
 }
 
 var nullKeyBytes, _ = codec.EncodeKey(nil, nil, types.NewDatum(nil))
