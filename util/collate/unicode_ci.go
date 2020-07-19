@@ -13,12 +13,6 @@
 
 package collate
 
-import (
-	_ "unicode/utf8"
-
-	_ "github.com/pingcap/tidb/util/stringutil"
-)
-
 type unicodeCICollator struct {
 }
 
