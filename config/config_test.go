@@ -84,6 +84,23 @@ func (s *testConfigSuite) TestNullableBoolUnmashal(c *C) {
 	c.Assert(log.DisableTimestamp, Equals, nbUnset)
 }
 
+func (s *testConfigSuite) TestNullableBoolMarshalText(c *C) {
+	var nb = nullableBool{false, false}
+	data, err := nb.MarshalText()
+	c.Assert(err, IsNil)
+	c.Assert(data, BytesEquals, []byte(""))
+
+	nb = nullableBool{true, false}
+	data, err = nb.MarshalText()
+	c.Assert(err, IsNil)
+	c.Assert(data, BytesEquals, []byte("false"))
+
+	nb = nullableBool{true, true}
+	data, err = nb.MarshalText()
+	c.Assert(err, IsNil)
+	c.Assert(data, BytesEquals, []byte("true"))
+}
+
 func (s *testConfigSuite) TestLogConfig(c *C) {
 	var conf Config
 	configFile := "log_config.toml"
