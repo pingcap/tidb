@@ -81,6 +81,9 @@ type HistColl struct {
 	Pseudo         bool
 }
 
+// MemoryUsage returns the total memory usage of this Table.
+// it will only calc the size of Columns and Indices stats data of table.
+// We ignore the size of other metadata in Table
 func (t *Table) MemoryUsage() (sum int64) {
 	if t == nil {
 		return
