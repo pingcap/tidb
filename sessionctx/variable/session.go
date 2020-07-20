@@ -158,6 +158,7 @@ type TransactionContext struct {
 	// pessimisticLockCache is the cache for pessimistic locked keys,
 	// The value never changes during the transaction.
 	pessimisticLockCache map[string][]byte
+	PessimisticCacheHit  int
 
 	// CreateTime For metrics.
 	CreateTime     time.Time
@@ -236,6 +237,9 @@ func (tc *TransactionContext) GetKeyInPessimisticLockCache(key kv.Key) (val []by
 		return nil, false
 	}
 	val, ok = tc.pessimisticLockCache[string(key)]
+	if ok {
+		tc.PessimisticCacheHit++
+	}
 	return
 }
 
@@ -408,6 +412,10 @@ type SessionVars struct {
 
 	// CurrentDB is the default database of this session.
 	CurrentDB string
+
+	// CurrentDBChanged indicates if the CurrentDB has been updated, and if it is we should print it into
+	// the slow log to make it be compatible with MySQL, https://github.com/pingcap/tidb/issues/17846.
+	CurrentDBChanged bool
 
 	// StrictSQLMode indicates if the session is in strict mode.
 	StrictSQLMode bool
@@ -680,8 +688,11 @@ type SessionVars struct {
 	// EnableClusteredIndex indicates whether to enable clustered index when creating a new table.
 	EnableClusteredIndex bool
 
-	// EnableSlowLogMasking indicates that whether masking the query data when log slow query.
-	EnableSlowLogMasking bool
+	// EnableLogDesensitization indicates that whether desensitization when log query.
+	EnableLogDesensitization bool
+
+	// PresumeKeyNotExists indicates lazy existence checking is enabled.
+	PresumeKeyNotExists bool
 
 	// ShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
 	ShardAllocateStep int64
@@ -775,7 +786,7 @@ func NewSessionVars() *SessionVars {
 		SelectLimit:                 math.MaxUint64,
 		AllowAutoRandExplicitInsert: DefTiDBAllowAutoRandExplicitInsert,
 		EnableClusteredIndex:        DefTiDBEnableClusteredIndex,
-		EnableSlowLogMasking:        DefTiDBSlowLogMasking,
+		EnableLogDesensitization:    DefTiDBLogDesensitization,
 		ShardAllocateStep:           DefTiDBShardAllocateStep,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
@@ -1188,10 +1199,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.ConcurrencyFactor = tidbOptFloat64(val, DefOptConcurrencyFactor)
 	case TiDBIndexLookupConcurrency:
 		s.indexLookupConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
-		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
 	case TiDBIndexLookupJoinConcurrency:
 		s.indexLookupJoinConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
-		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
 	case TiDBIndexJoinBatchSize:
 		s.IndexJoinBatchSize = tidbOptPositiveInt32(val, DefIndexJoinBatchSize)
 	case TiDBAllowBatchCop:
@@ -1202,18 +1211,14 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.hashJoinConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
 	case TiDBProjectionConcurrency:
 		s.projectionConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
-		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
 	case TiDBHashAggPartialConcurrency:
 		s.hashAggPartialConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
-		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
 	case TiDBHashAggFinalConcurrency:
 		s.hashAggFinalConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
-		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
 	case TiDBWindowConcurrency:
 		s.windowConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
-		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
 	case TiDBDistSQLScanConcurrency:
-		s.distSQLScanConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
+		s.distSQLScanConcurrency = tidbOptPositiveInt32(val, DefDistSQLScanConcurrency)
 	case TiDBIndexSerialScanConcurrency:
 		s.indexSerialScanConcurrency = tidbOptPositiveInt32(val, DefIndexSerialScanConcurrency)
 	case TiDBExecutorConcurrency:
@@ -1244,25 +1249,18 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.NestedLoopJoinCacheCapacity = tidbOptInt64(val, config.GetGlobalConfig().NestedLoopJoinCacheCapacity)
 	case TIDBMemQuotaHashJoin:
 		s.MemQuotaHashJoin = tidbOptInt64(val, DefTiDBMemQuotaHashJoin)
-		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TIDBMemQuotaQuery))
 	case TIDBMemQuotaMergeJoin:
 		s.MemQuotaMergeJoin = tidbOptInt64(val, DefTiDBMemQuotaMergeJoin)
-		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TIDBMemQuotaQuery))
 	case TIDBMemQuotaSort:
 		s.MemQuotaSort = tidbOptInt64(val, DefTiDBMemQuotaSort)
-		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TIDBMemQuotaQuery))
 	case TIDBMemQuotaTopn:
 		s.MemQuotaTopn = tidbOptInt64(val, DefTiDBMemQuotaTopn)
-		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TIDBMemQuotaQuery))
 	case TIDBMemQuotaIndexLookupReader:
 		s.MemQuotaIndexLookupReader = tidbOptInt64(val, DefTiDBMemQuotaIndexLookupReader)
-		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TIDBMemQuotaQuery))
 	case TIDBMemQuotaIndexLookupJoin:
 		s.MemQuotaIndexLookupJoin = tidbOptInt64(val, DefTiDBMemQuotaIndexLookupJoin)
-		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TIDBMemQuotaQuery))
 	case TIDBMemQuotaNestedLoopApply:
 		s.MemQuotaNestedLoopApply = tidbOptInt64(val, DefTiDBMemQuotaNestedLoopApply)
-		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TIDBMemQuotaQuery))
 	case TiDBGeneralLog:
 		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt32(val, DefTiDBGeneralLog)))
 	case TiDBPProfSQLCPU:
@@ -1399,8 +1397,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.AllowAutoRandExplicitInsert = TiDBOptOn(val)
 	case TiDBEnableClusteredIndex:
 		s.EnableClusteredIndex = TiDBOptOn(val)
-	case TiDBSlowLogMasking:
-		s.EnableSlowLogMasking = TiDBOptOn(val)
+	case TiDBSlowLogMasking, TiDBLogDesensitization:
+		s.EnableLogDesensitization = TiDBOptOn(val)
 	case TiDBShardAllocateStep:
 		s.ShardAllocateStep = tidbOptInt64(val, DefTiDBShardAllocateStep)
 	}
@@ -1598,10 +1596,7 @@ func (c *Concurrency) IndexLookupJoinConcurrency() int {
 
 // DistSQLScanConcurrency return the number of concurrent dist SQL scan worker.
 func (c *Concurrency) DistSQLScanConcurrency() int {
-	if c.distSQLScanConcurrency != ConcurrencyUnset {
-		return c.distSQLScanConcurrency
-	}
-	return c.ExecutorConcurrency
+	return c.distSQLScanConcurrency
 }
 
 // HashJoinConcurrency return the number of concurrent hash join outer worker.
@@ -1710,6 +1705,8 @@ const (
 	SlowLogStartPrefixStr = SlowLogRowPrefixStr + SlowLogTimeStr + SlowLogSpaceMarkStr
 	// SlowLogTxnStartTSStr is slow log field name.
 	SlowLogTxnStartTSStr = "Txn_start_ts"
+	// SlowLogUserAndHostStr is the user and host field name, which is compatible with MySQL.
+	SlowLogUserAndHostStr = "User@Host"
 	// SlowLogUserStr is slow log field name.
 	SlowLogUserStr = "User"
 	// SlowLogHostStr only for slow_query table usage.
@@ -1833,7 +1830,7 @@ type SlowQueryLogItems struct {
 // The slow log output is like below:
 // # Time: 2019-04-28T15:24:04.309074+08:00
 // # Txn_start_ts: 406315658548871171
-// # User: root@127.0.0.1
+// # User@Host: root[root] @ localhost [127.0.0.1]
 // # Conn_ID: 6
 // # Query_time: 4.895492
 // # Process_time: 0.161 Request_count: 1 Total_keys: 100001 Processed_keys: 100000
@@ -1855,7 +1852,11 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 
 	writeSlowLogItem(&buf, SlowLogTxnStartTSStr, strconv.FormatUint(logItems.TxnTS, 10))
 	if s.User != nil {
-		writeSlowLogItem(&buf, SlowLogUserStr, s.User.String())
+		hostAddress := s.User.Hostname
+		if s.ConnectionInfo != nil {
+			hostAddress = s.ConnectionInfo.ClientIP
+		}
+		writeSlowLogItem(&buf, SlowLogUserAndHostStr, fmt.Sprintf("%s[%s] @ %s [%s]", s.User.Username, s.User.Username, s.User.Hostname, hostAddress))
 	}
 	if s.ConnectionID != 0 {
 		writeSlowLogItem(&buf, SlowLogConnIDStr, strconv.FormatUint(s.ConnectionID, 10))
@@ -1983,6 +1984,11 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 
 	if logItems.PrevStmt != "" {
 		writeSlowLogItem(&buf, SlowLogPrevStmt, logItems.PrevStmt)
+	}
+
+	if s.CurrentDBChanged {
+		buf.WriteString(fmt.Sprintf("use %s;\n", s.CurrentDB))
+		s.CurrentDBChanged = false
 	}
 
 	buf.WriteString(logItems.SQL)

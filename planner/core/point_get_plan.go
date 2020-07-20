@@ -1062,7 +1062,7 @@ func buildPointUpdatePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 	if orderedList == nil {
 		return nil
 	}
-	handleCols := findHandleColIdx(tbl, pointPlan.Schema())
+	handleCols := buildHandleCols(ctx, tbl, pointPlan.Schema())
 	updatePlan := Update{
 		SelectPlan:  pointPlan,
 		OrderedList: orderedList,
@@ -1071,7 +1071,7 @@ func buildPointUpdatePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 				TblID:          tbl.ID,
 				Start:          0,
 				End:            pointPlan.Schema().Len(),
-				HandleOrdinal:  handleCols,
+				HandleCols:     handleCols,
 				IsCommonHandle: tbl.IsCommonHandle,
 			},
 		},
@@ -1149,7 +1149,7 @@ func buildPointDeletePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 	if checkFastPlanPrivilege(ctx, dbName, tbl.Name.L, mysql.SelectPriv, mysql.DeletePriv) != nil {
 		return nil
 	}
-	handleCols := findHandleColIdx(tbl, pointPlan.Schema())
+	handleCols := buildHandleCols(ctx, tbl, pointPlan.Schema())
 	delPlan := Delete{
 		SelectPlan: pointPlan,
 		TblColPosInfos: TblColPosInfoSlice{
@@ -1157,7 +1157,7 @@ func buildPointDeletePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 				TblID:          tbl.ID,
 				Start:          0,
 				End:            pointPlan.Schema().Len(),
-				HandleOrdinal:  handleCols,
+				HandleCols:     handleCols,
 				IsCommonHandle: tbl.IsCommonHandle,
 			},
 		},
@@ -1184,28 +1184,24 @@ func colInfoToColumn(col *model.ColumnInfo, idx int) *expression.Column {
 	}
 }
 
-func findHandleColIdx(tbl *model.TableInfo, schema *expression.Schema) (ids []int) {
+func buildHandleCols(ctx sessionctx.Context, tbl *model.TableInfo, schema *expression.Schema) HandleCols {
 	// fields len is 0 for update and delete.
 	if tbl.PKIsHandle {
 		for i, col := range tbl.Columns {
 			if mysql.HasPriKeyFlag(col.Flag) && tbl.PKIsHandle {
-				return []int{schema.Columns[i].Index}
+				return &IntHandleCols{col: schema.Columns[i]}
 			}
 		}
 	}
 
 	if tbl.IsCommonHandle {
 		pkIdx := tables.FindPrimaryIndex(tbl)
-		var handleCols []int
-		for _, idxCol := range pkIdx.Columns {
-			handleCols = append(handleCols, schema.Columns[idxCol.Offset].Index)
-		}
-		return handleCols
+		return NewCommonHandleCols(ctx.GetSessionVars().StmtCtx, tbl, pkIdx, schema.Columns)
 	}
 
 	handleCol := colInfoToColumn(model.NewExtraHandleColInfo(), schema.Len())
 	schema.Append(handleCol)
-	return []int{handleCol.Index}
+	return &IntHandleCols{col: handleCol}
 }
 
 func findHandleCol(tbl *model.TableInfo, schema *expression.Schema) *expression.Column {

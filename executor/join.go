@@ -140,9 +140,11 @@ func (e *HashJoinExec) Close() error {
 
 	if e.runtimeStats != nil {
 		concurrency := cap(e.joiners)
-		e.runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", concurrency))
+		runtimeStats := newJoinRuntimeStats(e.runtimeStats)
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id.String(), runtimeStats)
+		runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", concurrency))
 		if e.rowContainer != nil {
-			e.runtimeStats.SetAdditionalInfo(e.rowContainer.stat.String())
+			runtimeStats.setHashStat(e.rowContainer.stat)
 		}
 	}
 	err := e.baseExecutor.Close()
@@ -765,14 +767,16 @@ func (e *NestedLoopApplyExec) Close() error {
 	e.innerRows = nil
 	e.memTracker = nil
 	if e.runtimeStats != nil {
+		runtimeStats := newJoinRuntimeStats(e.runtimeStats)
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id.String(), runtimeStats)
 		if e.canUseCache {
 			var hitRatio float64
 			if e.cacheAccessCounter > 0 {
 				hitRatio = float64(e.cacheHitCounter) / float64(e.cacheAccessCounter)
 			}
-			e.runtimeStats.SetCacheInfo(true, hitRatio)
+			runtimeStats.setCacheInfo(true, hitRatio)
 		} else {
-			e.runtimeStats.SetCacheInfo(false, 0)
+			runtimeStats.setCacheInfo(false, 0)
 		}
 	}
 	return e.outerExec.Close()
@@ -939,4 +943,59 @@ func (e *NestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk) (err e
 			return err
 		}
 	}
+}
+
+// cacheInfo is used to save the concurrency information of the executor operator
+type cacheInfo struct {
+	hitRatio float64
+	useCache bool
+}
+
+type joinRuntimeStats struct {
+	*execdetails.RuntimeStatsWithConcurrencyInfo
+
+	applyCache  bool
+	cache       cacheInfo
+	hasHashStat bool
+	hashStat    hashStatistic
+}
+
+func newJoinRuntimeStats(basic *execdetails.BasicRuntimeStats) *joinRuntimeStats {
+	stats := &joinRuntimeStats{
+		RuntimeStatsWithConcurrencyInfo: &execdetails.RuntimeStatsWithConcurrencyInfo{
+			BasicRuntimeStats: basic,
+		},
+	}
+	return stats
+}
+
+// setCacheInfo sets the cache information. Only used for apply executor.
+func (e *joinRuntimeStats) setCacheInfo(useCache bool, hitRatio float64) {
+	e.Lock()
+	e.applyCache = true
+	e.cache.useCache = useCache
+	e.cache.hitRatio = hitRatio
+	e.Unlock()
+}
+
+func (e *joinRuntimeStats) setHashStat(hashStat hashStatistic) {
+	e.Lock()
+	e.hasHashStat = true
+	e.hashStat = hashStat
+	e.Unlock()
+}
+
+func (e *joinRuntimeStats) String() string {
+	result := e.RuntimeStatsWithConcurrencyInfo.String()
+	if e.applyCache {
+		if e.cache.useCache {
+			result += fmt.Sprintf(", cache:ON, cacheHitRatio:%.3f%%", e.cache.hitRatio*100)
+		} else {
+			result += fmt.Sprintf(", cache:OFF")
+		}
+	}
+	if e.hasHashStat {
+		result += ", " + e.hashStat.String()
+	}
+	return result
 }

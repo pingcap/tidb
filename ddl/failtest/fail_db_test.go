@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	. "github.com/pingcap/tidb/util/testutil"
 )
 
 func TestT(t *testing.T) {
@@ -59,6 +60,8 @@ type testFailDBSuite struct {
 	dom     *domain.Domain
 	se      session.Session
 	p       *parser.Parser
+
+	CommonHandleSuite
 }
 
 func (s *testFailDBSuite) SetUpSuite(c *C) {
@@ -331,7 +334,12 @@ func (s *testFailDBSuite) TestAddIndexWorkerNum(c *C) {
 	tk.MustExec("create database if not exists test_db")
 	tk.MustExec("use test_db")
 	tk.MustExec("drop table if exists test_add_index")
-	tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))")
+	if s.IsCommonHandle {
+		tk.MustExec("set @@tidb_enable_clustered_index = 1")
+		tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1, c3))")
+	} else {
+		tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))")
+	}
 
 	done := make(chan error, 1)
 	start := -10
@@ -358,10 +366,12 @@ func (s *testFailDBSuite) TestAddIndexWorkerNum(c *C) {
 	ddl.TestCheckWorkerNumber = lastSetWorkerCnt
 	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_worker_cnt=%d", originDDLAddIndexWorkerCnt))
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/checkIndexWorkerNum", `return(true)`), IsNil)
-	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/checkIndexWorkerNum"), IsNil)
-	}()
+	if !s.IsCommonHandle { // only enable failpoint once
+		c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/checkIndexWorkerNum", `return(true)`), IsNil)
+		defer func() {
+			c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/checkIndexWorkerNum"), IsNil)
+		}()
+	}
 
 	testutil.SessionExecInGoroutine(c, s.store, "create index c3_index on test_add_index (c3)", done)
 	checkNum := 0
@@ -384,6 +394,8 @@ LOOP:
 	c.Assert(checkNum, Greater, 5)
 	tk.MustExec("admin check table test_add_index")
 	tk.MustExec("drop table test_add_index")
+
+	s.RerunWithCommonHandleEnabled(c, s.TestAddIndexWorkerNum)
 }
 
 // TestRunDDLJobPanic tests recover panic when run ddl job panic.
