@@ -274,7 +274,6 @@ func (l *memdbVlog) revertToCheckpoint(db *memdb, cp *memdbCheckpoint) {
 		block := l.blocks[cursor.blocks-1].buf
 		var hdr memdbVlogHdr
 		hdr.load(block[hdrOff:])
-		hdr.load(block[hdrOff:])
 		node := db.getNode(hdr.nodeAddr)
 
 		node.vptr = hdr.oldValue
