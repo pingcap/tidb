@@ -250,7 +250,7 @@ func (m *memDB) Staging() StagingHandle {
 
 func (m *memDB) Release(h StagingHandle) (int, error) {
 	if int(h) != len(m.buffers) {
-		// This should never happens in production environmen.
+		// This should never happens in production environment.
 		// Use panic to make debug easier.
 		panic("cannot release staging buffer")
 	}
@@ -269,7 +269,7 @@ func (m *memDB) Cleanup(h StagingHandle) {
 		return
 	}
 	if int(h) < len(m.buffers) {
-		// This should never happens in production environmen.
+		// This should never happens in production environment.
 		// Use panic to make debug easier.
 		panic("cannot cleanup staging buffer")
 	}
