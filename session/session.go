@@ -1239,6 +1239,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	// NewPrepareExec may need startTS to build the executor, for example prepare statement has subquery in int.
 	// So we have to call PrepareTxnCtx here.
 	s.PrepareTxnCtx(ctx)
+	s.PrepareTxnFuture(ctx)
 	prepareExec := executor.NewPrepareExec(s, executor.GetInfoSchema(s), sql)
 	err = prepareExec.Next(ctx, nil)
 	if err != nil {
@@ -1707,7 +1708,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = version38
+	currentBootstrapVersion = version39
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -1816,6 +1817,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBMaxDeltaSchemaCount,
 	variable.TiDBStoreLimit,
 	variable.TiDBIsolationReadEngines,
+	variable.TiDBAllowAutoRandExplicitInsert,
 }
 
 var (
@@ -1893,8 +1895,6 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 		return
 	}
 
-	txnFuture := s.getTxnFuture(ctx)
-	s.txn.changeInvalidToPending(txnFuture)
 	is := domain.GetDomain(s).InfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
 		InfoSchema:    is,
@@ -1909,6 +1909,16 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// PrepareTxnFuture uses to try to get txn future.
+func (s *session) PrepareTxnFuture(ctx context.Context) {
+	if s.txn.validOrPending() {
+		return
+	}
+
+	txnFuture := s.getTxnFuture(ctx)
+	s.txn.changeInvalidToPending(txnFuture)
 }
 
 // RefreshTxnCtx implements context.RefreshTxnCtx interface.

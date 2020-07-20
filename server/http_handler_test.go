@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -393,10 +394,19 @@ func (ts *HTTPHandlerTestSuite) prepareData(c *C) {
 	dbt.mustExec("alter table tidb.test add index idx1 (a, b);")
 	dbt.mustExec("alter table tidb.test add unique index idx2 (a, b);")
 
-	dbt.mustExec(`create table tidb.pt (a int) partition by range (a)
+	dbt.mustExec(`create table tidb.pt (a int primary key, b varchar(20), key idx(a, b))
+partition by range (a)
 (partition p0 values less than (256),
  partition p1 values less than (512),
  partition p2 values less than (1024))`)
+
+	txn2, err := dbt.db.Begin()
+	c.Assert(err, IsNil)
+	txn2.Exec("insert into tidb.pt values (42, '123')")
+	txn2.Exec("insert into tidb.pt values (256, 'b')")
+	txn2.Exec("insert into tidb.pt values (666, 'def')")
+	err = txn2.Commit()
+	c.Assert(err, IsNil)
 }
 
 func decodeKeyMvcc(closer io.ReadCloser, c *C, valid bool) {
@@ -459,6 +469,29 @@ func (ts *HTTPHandlerTestSuite) TestGetTableMVCC(c *C) {
 	err = decoder.Decode(&data2)
 	c.Assert(err, IsNil)
 	c.Assert(data2, DeepEquals, data)
+
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/mvcc/key/tidb/test/1?decode=true"))
+	c.Assert(err, IsNil)
+	decoder = json.NewDecoder(resp.Body)
+	var data3 map[string]interface{}
+	err = decoder.Decode(&data3)
+	c.Assert(err, IsNil)
+	c.Assert(data3["key"], NotNil)
+	c.Assert(data3["info"], NotNil)
+	c.Assert(data3["data"], NotNil)
+	c.Assert(data3["decode_error"], IsNil)
+
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/mvcc/key/tidb/pt(p0)/42?decode=true"))
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+	decoder = json.NewDecoder(resp.Body)
+	var data4 map[string]interface{}
+	err = decoder.Decode(&data4)
+	c.Assert(err, IsNil)
+	c.Assert(data4["key"], NotNil)
+	c.Assert(data4["info"], NotNil)
+	c.Assert(data4["data"], NotNil)
+	c.Assert(data4["decode_error"], IsNil)
 }
 
 func (ts *HTTPHandlerTestSuite) TestGetMVCCNotFound(c *C) {
@@ -487,6 +520,31 @@ func (ts *HTTPHandlerTestSuite) TestTiFlashReplica(c *C) {
 	ts.startServer(c)
 	ts.prepareData(c)
 	defer ts.stopServer(c)
+
+	db, err := sql.Open("mysql", getDSN())
+	c.Assert(err, IsNil, Commentf("Error connecting"))
+	defer db.Close()
+	dbt := &DBTest{c, db}
+
+	defer func(originGC bool) {
+		if originGC {
+			ddl.EmulatorGCEnable()
+		} else {
+			ddl.EmulatorGCDisable()
+		}
+	}(ddl.IsEmulatorGCEnable())
+
+	// Disable emulator GC.
+	// Otherwise emulator GC will delete table record as soon as possible after execute drop table DDL.
+	ddl.EmulatorGCDisable()
+	gcTimeFormat := "20060102-15:04:05 -0700 MST"
+	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
+	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', ''),('tikv_gc_enable','true','')
+			       ON DUPLICATE KEY
+			       UPDATE variable_value = '%[1]s'`
+	// Set GC safe point and enable GC.
+	dbt.mustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+
 	resp, err := http.Get("http://127.0.0.1:10090/tiflash/replica")
 	c.Assert(err, IsNil)
 	decoder := json.NewDecoder(resp.Body)
@@ -494,11 +552,6 @@ func (ts *HTTPHandlerTestSuite) TestTiFlashReplica(c *C) {
 	err = decoder.Decode(&data)
 	c.Assert(err, IsNil)
 	c.Assert(len(data), Equals, 0)
-
-	db, err := sql.Open("mysql", getDSN())
-	c.Assert(err, IsNil, Commentf("Error connecting"))
-	defer db.Close()
-	dbt := &DBTest{c, db}
 
 	dbt.mustExec("use tidb")
 	dbt.mustExec("alter table test set tiflash replica 2 location labels 'a','b';")
@@ -546,6 +599,32 @@ func (ts *HTTPHandlerTestSuite) TestTiFlashReplica(c *C) {
 
 	// Should not take effect.
 	dbt.mustExec("alter table test set tiflash replica 2 location labels 'a','b';")
+	checkFunc := func() {
+		resp, err = http.Get("http://127.0.0.1:10090/tiflash/replica")
+		c.Assert(err, IsNil)
+		decoder = json.NewDecoder(resp.Body)
+		err = decoder.Decode(&data)
+		c.Assert(err, IsNil)
+		resp.Body.Close()
+		c.Assert(len(data), Equals, 1)
+		c.Assert(data[0].ReplicaCount, Equals, uint64(2))
+		c.Assert(strings.Join(data[0].LocationLabels, ","), Equals, "a,b")
+		c.Assert(data[0].Available, Equals, true) // The status should be true now.
+	}
+	checkFunc()
+
+	// Test for get dropped table tiflash replica info.
+	dbt.mustExec("drop table test")
+	checkFunc()
+
+	// Test unique table id replica info.
+	dbt.mustExec("recover table test")
+	checkFunc()
+	dbt.mustExec("drop table test")
+	checkFunc()
+	dbt.mustExec("recover table test")
+	checkFunc()
+
 	resp, err = http.Get("http://127.0.0.1:10090/tiflash/replica")
 	c.Assert(err, IsNil)
 	decoder = json.NewDecoder(resp.Body)
@@ -600,16 +679,24 @@ func (ts *HTTPHandlerTestSuite) TestTiFlashReplica(c *C) {
 	resp, err = http.Post("http://127.0.0.1:10090/tiflash/replica", "application/json", bytes.NewBuffer([]byte(req)))
 	c.Assert(err, IsNil)
 	resp.Body.Close()
-	resp, err = http.Get("http://127.0.0.1:10090/tiflash/replica")
-	c.Assert(err, IsNil)
-	decoder = json.NewDecoder(resp.Body)
-	err = decoder.Decode(&data)
-	c.Assert(err, IsNil)
-	resp.Body.Close()
-	c.Assert(len(data), Equals, 3)
-	c.Assert(data[0].Available, Equals, true)
-	c.Assert(data[1].Available, Equals, true)
-	c.Assert(data[2].Available, Equals, true)
+	checkFunc = func() {
+		resp, err = http.Get("http://127.0.0.1:10090/tiflash/replica")
+		c.Assert(err, IsNil)
+		decoder = json.NewDecoder(resp.Body)
+		err = decoder.Decode(&data)
+		c.Assert(err, IsNil)
+		resp.Body.Close()
+		c.Assert(len(data), Equals, 3)
+		c.Assert(data[0].Available, Equals, true)
+		c.Assert(data[1].Available, Equals, true)
+		c.Assert(data[2].Available, Equals, true)
+	}
+	checkFunc()
+
+	// Test for get truncated table tiflash replica info.
+	dbt.mustExec("truncate table pt")
+	dbt.mustExec("alter table pt set tiflash replica 0;")
+	checkFunc()
 }
 
 func (ts *HTTPHandlerTestSuite) TestDecodeColumnValue(c *C) {
@@ -731,6 +818,11 @@ func (ts *HTTPHandlerTestSuite) TestGetIndexMVCC(c *C) {
 	var data2 kvrpcpb.MvccGetByKeyResponse
 	err = decoder.Decode(&data2)
 	c.Assert(err, NotNil)
+
+	resp, err = http.Get("http://127.0.0.1:10090/mvcc/index/tidb/pt(p2)/idx/666?a=666&b=def")
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+	decodeKeyMvcc(resp.Body, c, true)
 }
 
 func (ts *HTTPHandlerTestSuite) TestGetSettings(c *C) {

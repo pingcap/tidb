@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
@@ -73,7 +74,6 @@ var (
 	_ Executor = &TableScanExec{}
 	_ Executor = &TopNExec{}
 	_ Executor = &UnionExec{}
-	_ Executor = &CheckIndexExec{}
 	_ Executor = &HashJoinExec{}
 	_ Executor = &IndexLookUpExecutor{}
 	_ Executor = &MergeJoinExec{}
@@ -187,11 +187,19 @@ type Executor interface {
 // Next is a wrapper function on e.Next(), it handles some common codes.
 func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 	sessVars := e.base().ctx.GetSessionVars()
-	if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
+	if atomic.LoadUint32(&sessVars.Killed) == 1 {
 		return ErrQueryInterrupted
 	}
+	err := e.Next(ctx, req)
 
-	return e.Next(ctx, req)
+	if err != nil {
+		return err
+	}
+	// recheck whether the session/query is killed during the Next()
+	if atomic.LoadUint32(&sessVars.Killed) == 1 {
+		err = ErrQueryInterrupted
+	}
+	return err
 }
 
 // CancelDDLJobsExec represents a cancel DDL jobs executor.
@@ -315,10 +323,13 @@ func (e *ShowDDLExec) Next(ctx context.Context, req *chunk.Chunk) error {
 type ShowDDLJobsExec struct {
 	baseExecutor
 
-	cursor    int
-	jobs      []*model.Job
-	jobNumber int64
-	is        infoschema.InfoSchema
+	cursor         int
+	runningJobs    []*model.Job
+	historyJobIter *meta.LastJobIterator
+	cacheJobs      []*model.Job
+	jobNumber      int
+	is             infoschema.InfoSchema
+	done           bool
 }
 
 // ShowDDLJobQueriesExec represents a show DDL job queries executor.
@@ -393,12 +404,13 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 	if e.jobNumber == 0 {
 		e.jobNumber = admin.DefNumHistoryJobs
 	}
-	historyJobs, err := admin.GetHistoryDDLJobs(txn, int(e.jobNumber))
+
+	m := meta.NewMeta(txn)
+	e.historyJobIter, err = m.GetLastHistoryDDLJobsIterator()
 	if err != nil {
 		return err
 	}
-	e.jobs = append(e.jobs, jobs...)
-	e.jobs = append(e.jobs, historyJobs...)
+	e.runningJobs = append(e.runningJobs, jobs...)
 	e.cursor = 0
 	return nil
 }
@@ -406,44 +418,68 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 // Next implements the Executor Next interface.
 func (e *ShowDDLJobsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.maxChunkSize)
-	if e.cursor >= len(e.jobs) {
+	if (e.cursor - len(e.runningJobs)) >= e.jobNumber {
 		return nil
 	}
-	numCurBatch := mathutil.Min(req.Capacity(), len(e.jobs)-e.cursor)
-	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
-		req.AppendInt64(0, e.jobs[i].ID)
-		schemaName := e.jobs[i].SchemaName
-		tableName := ""
-		finishTS := uint64(0)
-		if e.jobs[i].BinlogInfo != nil {
-			finishTS = e.jobs[i].BinlogInfo.FinishedTS
-			if e.jobs[i].BinlogInfo.TableInfo != nil {
-				tableName = e.jobs[i].BinlogInfo.TableInfo.Name.L
-			}
-			if len(schemaName) == 0 && e.jobs[i].BinlogInfo.DBInfo != nil {
-				schemaName = e.jobs[i].BinlogInfo.DBInfo.Name.L
-			}
+	count := 0
+	// Append running ddl jobs.
+	if e.cursor < len(e.runningJobs) {
+		numCurBatch := mathutil.Min(req.Capacity(), len(e.runningJobs)-e.cursor)
+		for i := e.cursor; i < e.cursor+numCurBatch; i++ {
+			e.appendJobToChunk(req, e.runningJobs[i])
 		}
-		// For compatibility, the old version of DDL Job wasn't store the schema name and table name.
-		if len(schemaName) == 0 {
-			schemaName = getSchemaName(e.is, e.jobs[i].SchemaID)
-		}
-		if len(tableName) == 0 {
-			tableName = getTableName(e.is, e.jobs[i].TableID)
-		}
-		req.AppendString(1, schemaName)
-		req.AppendString(2, tableName)
-		req.AppendString(3, e.jobs[i].Type.String())
-		req.AppendString(4, e.jobs[i].SchemaState.String())
-		req.AppendInt64(5, e.jobs[i].SchemaID)
-		req.AppendInt64(6, e.jobs[i].TableID)
-		req.AppendInt64(7, e.jobs[i].RowCount)
-		req.AppendString(8, model.TSConvert2Time(e.jobs[i].StartTS).String())
-		req.AppendString(9, model.TSConvert2Time(finishTS).String())
-		req.AppendString(10, e.jobs[i].State.String())
+		e.cursor += numCurBatch
+		count += numCurBatch
 	}
-	e.cursor += numCurBatch
+	var err error
+	// Append history ddl jobs.
+	if count < req.Capacity() {
+		num := req.Capacity() - count
+		remainNum := e.jobNumber - (e.cursor - len(e.runningJobs))
+		num = mathutil.Min(num, remainNum)
+		e.cacheJobs, err = e.historyJobIter.GetLastJobs(num, e.cacheJobs)
+		if err != nil {
+			return err
+		}
+		for _, job := range e.cacheJobs {
+			e.appendJobToChunk(req, job)
+		}
+		e.cursor += len(e.cacheJobs)
+	}
 	return nil
+}
+
+func (e *ShowDDLJobsExec) appendJobToChunk(req *chunk.Chunk, job *model.Job) {
+	req.AppendInt64(0, job.ID)
+	schemaName := job.SchemaName
+	tableName := ""
+	finishTS := uint64(0)
+	if job.BinlogInfo != nil {
+		finishTS = job.BinlogInfo.FinishedTS
+		if job.BinlogInfo.TableInfo != nil {
+			tableName = job.BinlogInfo.TableInfo.Name.L
+		}
+		if len(schemaName) == 0 && job.BinlogInfo.DBInfo != nil {
+			schemaName = job.BinlogInfo.DBInfo.Name.L
+		}
+	}
+	// For compatibility, the old version of DDL Job wasn't store the schema name and table name.
+	if len(schemaName) == 0 {
+		schemaName = getSchemaName(e.is, job.SchemaID)
+	}
+	if len(tableName) == 0 {
+		tableName = getTableName(e.is, job.TableID)
+	}
+	req.AppendString(1, schemaName)
+	req.AppendString(2, tableName)
+	req.AppendString(3, job.Type.String())
+	req.AppendString(4, job.SchemaState.String())
+	req.AppendInt64(5, job.SchemaID)
+	req.AppendInt64(6, job.TableID)
+	req.AppendInt64(7, job.RowCount)
+	req.AppendString(8, model.TSConvert2Time(job.StartTS).String())
+	req.AppendString(9, model.TSConvert2Time(finishTS).String())
+	req.AppendString(10, job.State.String())
 }
 
 func getSchemaName(is infoschema.InfoSchema, id int64) string {
@@ -482,6 +518,7 @@ type CheckTableExec struct {
 	is         infoschema.InfoSchema
 	exitCh     chan struct{}
 	retCh      chan error
+	checkIndex bool
 }
 
 // Open implements the Executor Open interface.
@@ -569,6 +606,10 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	greater, idxOffset, err := admin.CheckIndicesCount(e.ctx, e.dbName, e.table.Meta().Name.O, idxNames)
 	if err != nil {
+		// For admin check index statement, for speed up and compatibility, doesn't do below checks.
+		if e.checkIndex {
+			return errors.Trace(err)
+		}
 		if greater == admin.IdxCntGreater {
 			err = e.checkTableIndexHandle(ctx, e.indexInfos[idxOffset])
 		} else if greater == admin.TblCntGreater {
@@ -591,7 +632,7 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			util.WithRecovery(func() {
 				err1 := e.checkIndexHandle(ctx, e.srcs[num])
 				if err1 != nil {
-					logutil.Logger(ctx).Info("check index handle failed", zap.Error(err))
+					logutil.Logger(ctx).Info("check index handle failed", zap.Error(err1))
 				}
 			}, e.handlePanic)
 		}(i)
@@ -630,61 +671,6 @@ func (e *CheckTableExec) checkTableRecord(idxOffset int) error {
 		idx := tables.NewIndex(def.ID, e.table.Meta(), idxInfo)
 		if err := admin.CheckRecordAndIndex(e.ctx, txn, partition, idx, genExprs); err != nil {
 			return errors.Trace(err)
-		}
-	}
-	return nil
-}
-
-// CheckIndexExec represents the executor of checking an index.
-// It is built from the "admin check index" statement, and it checks
-// the consistency of the index data with the records of the table.
-type CheckIndexExec struct {
-	baseExecutor
-
-	dbName    string
-	tableName string
-	idxName   string
-	src       *IndexLookUpExecutor
-	done      bool
-	is        infoschema.InfoSchema
-}
-
-// Open implements the Executor Open interface.
-func (e *CheckIndexExec) Open(ctx context.Context) error {
-	if err := e.baseExecutor.Open(ctx); err != nil {
-		return err
-	}
-	if err := e.src.Open(ctx); err != nil {
-		return err
-	}
-	e.done = false
-	return nil
-}
-
-// Close implements the Executor Close interface.
-func (e *CheckIndexExec) Close() error {
-	return e.src.Close()
-}
-
-// Next implements the Executor Next interface.
-func (e *CheckIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	if e.done {
-		return nil
-	}
-	defer func() { e.done = true }()
-
-	_, _, err := admin.CheckIndicesCount(e.ctx, e.dbName, e.tableName, []string{e.idxName})
-	if err != nil {
-		return err
-	}
-	chk := newFirstChunk(e.src)
-	for {
-		err := Next(ctx, e.src, chk)
-		if err != nil {
-			return err
-		}
-		if chk.NumRows() == 0 {
-			break
 		}
 	}
 	return nil
@@ -975,7 +961,7 @@ func init() {
 	// While doing optimization in the plan package, we need to execute uncorrelated subquery,
 	// but the plan package cannot import the executor package because of the dependency cycle.
 	// So we assign a function implemented in the executor package to the plan package to avoid the dependency cycle.
-	plannercore.EvalSubquery = func(ctx context.Context, p plannercore.PhysicalPlan, is infoschema.InfoSchema, sctx sessionctx.Context) (rows [][]types.Datum, err error) {
+	plannercore.EvalSubqueryFirstRow = func(ctx context.Context, p plannercore.PhysicalPlan, is infoschema.InfoSchema, sctx sessionctx.Context) ([]types.Datum, error) {
 		if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 			span1 := span.Tracer().StartSpan("executor.EvalSubQuery", opentracing.ChildOf(span.Context()))
 			defer span1.Finish()
@@ -984,28 +970,24 @@ func init() {
 		e := &executorBuilder{is: is, ctx: sctx}
 		exec := e.build(p)
 		if e.err != nil {
-			return rows, e.err
+			return nil, e.err
 		}
-		err = exec.Open(ctx)
+		err := exec.Open(ctx)
 		defer terror.Call(exec.Close)
 		if err != nil {
-			return rows, err
+			return nil, err
 		}
 		chk := newFirstChunk(exec)
 		for {
 			err = Next(ctx, exec, chk)
 			if err != nil {
-				return rows, err
+				return nil, err
 			}
 			if chk.NumRows() == 0 {
-				return rows, nil
+				return nil, nil
 			}
-			iter := chunk.NewIterator4Chunk(chk)
-			for r := iter.Begin(); r != iter.End(); r = iter.Next() {
-				row := r.GetDatumRow(retTypes(exec))
-				rows = append(rows, row)
-			}
-			chk = chunk.Renew(chk, sctx.GetSessionVars().MaxChunkSize)
+			row := chk.GetRow(0).GetDatumRow(retTypes(exec))
+			return row, err
 		}
 	}
 }
@@ -1067,6 +1049,10 @@ func (e *SelectionExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
+	return e.open(ctx)
+}
+
+func (e *SelectionExec) open(ctx context.Context) error {
 	e.childResult = newFirstChunk(e.children[0])
 	e.batched = expression.Vectorizable(e.filters)
 	if e.batched {
@@ -1563,6 +1549,12 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			sc.NotFillCache = !opts.SQLCache
 		}
 		sc.CastStrToIntStrict = true
+	case *ast.UnionStmt:
+		sc.InSelectStmt = true
+		sc.OverflowAsWarning = true
+		sc.TruncateAsWarning = true
+		sc.IgnoreZeroInDate = true
+		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 	case *ast.ShowStmt:
 		sc.IgnoreTruncate = true
 		sc.IgnoreZeroInDate = true

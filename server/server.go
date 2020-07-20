@@ -112,6 +112,8 @@ type Server struct {
 	concurrentLimiter *TokenLimiter
 	clients           map[uint32]*clientConn
 	capability        uint32
+	statusAddr        string
+	statusListener    net.Listener
 	statusServer      *http.Server
 }
 
@@ -247,6 +249,9 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		s.listener = pplistener
 	}
 
+	if s.cfg.Status.ReportStatus && err == nil {
+		err = s.listenStatusHTTPServer()
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -498,7 +503,7 @@ func (s *Server) getTLSConfig() *tls.Config {
 
 func killConn(conn *clientConn) {
 	sessVars := conn.ctx.GetSessionVars()
-	atomic.CompareAndSwapUint32(&sessVars.Killed, 0, 1)
+	atomic.StoreUint32(&sessVars.Killed, 1)
 }
 
 // KillAllConnections kills all connections when server is not gracefully shutdown.

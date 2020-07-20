@@ -262,6 +262,39 @@ func (s *testSuite3) TestCreateView(c *C) {
 	c.Assert(terror.ErrorEqual(err, plannercore.ErrNoSuchTable), IsTrue)
 	tk.MustExec("drop table test_v_nested")
 	tk.MustExec("drop view v_nested, v_nested2")
+
+	// issue 16253
+	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("create definer='root'@'localhost' view v_issue_16253 as select * from t1")
+	tk.MustExec("insert into t values(1)")
+	tk.MustExec("insert into t1 values(1)")
+	tk.MustQuery("select a from t").Check(testkit.Rows("1"))
+	tk.MustExec("update t, v_issue_16253 set t.a = 2 where t.a = v_issue_16253.a")
+	tk.MustQuery("select a from t").Check(testkit.Rows("2"))
+	_, err = tk.Exec("update t, v_issue_16253 set v_issue_16253.a = 2 where t.a = v_issue_16253.a")
+	c.Assert(err.Error(), Equals, "update view v_issue_16253 is not supported now.")
+
+	tk.MustExec("drop database if exists test2")
+	tk.MustExec("create database test2")
+	tk.MustExec("use test2")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1)")
+	tk.MustQuery("select a from t").Check(testkit.Rows("1"))
+	tk.MustExec("update t, test.v_issue_16253 set t.a = 2 where t.a = test.v_issue_16253.a")
+	tk.MustQuery("select a from t").Check(testkit.Rows("2"))
+	_, err = tk.Exec("update t, test.v_issue_16253 set test.v_issue_16253.a = 2 where t.a = test.v_issue_16253.a")
+	c.Assert(err.Error(), Equals, "update view v_issue_16253 is not supported now.")
+}
+
+func (s *testSuite3) TestIssue16250(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table if not exists t(a int)")
+	tk.MustExec("create view view_issue16250 as select * from t")
+	_, err := tk.Exec("truncate table view_issue16250")
+	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.view_issue16250' doesn't exist")
 }
 
 func (s *testSuite3) TestCreateViewWithOverlongColName(c *C) {
@@ -788,7 +821,7 @@ func (s *testSuite3) TestShardRowIDBits(c *C) {
 	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	maxID := 1<<(64-15-1) - 1
-	err = tbl.RebaseAutoID(tk.Se, int64(maxID)-1, false)
+	err = tbl.RebaseAutoID(tk.Se, int64(maxID)-1, false, autoid.RowIDAllocType)
 	c.Assert(err, IsNil)
 	tk.MustExec("insert into t1 values(1)")
 
@@ -811,15 +844,21 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 	tk.MustExec("use test_auto_random_bits")
 	tk.MustExec("drop table if exists t")
 
+	extractAllHandles := func() []int64 {
+		allHds, err := ddltestutil.ExtractAllTableHandles(tk.Se, "test_auto_random_bits", "t")
+		c.Assert(err, IsNil)
+		return allHds
+	}
+
 	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
 	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 
 	tk.MustExec("create table t (a bigint primary key auto_random(15), b int)")
 	for i := 0; i < 100; i++ {
 		tk.MustExec("insert into t(b) values (?)", i)
 	}
-	allHandles, err := ddltestutil.ExtractAllTableHandles(tk.Se, "test_auto_random_bits", "t")
-	c.Assert(err, IsNil)
+	allHandles := extractAllHandles()
 	tk.MustExec("drop table t")
 
 	// Test auto random id number.
@@ -838,42 +877,220 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 	}
 
 	// Test explicit insert.
-	tk.MustExec("create table t (a tinyint primary key auto_random(2), b int)")
-	for i := 1; i <= 100; i++ {
-		tk.MustExec("insert into t values (?, ?)", i, i)
+	autoRandBitsUpperBound := 2<<47 - 1
+	tk.MustExec("create table t (a bigint primary key auto_random(15), b int)")
+	for i := -10; i < 10; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values(%d, %d)", i+autoRandBitsUpperBound, i))
 	}
-	_, err = tk.Exec("insert into t (b) values (0)")
+	_, err := tk.Exec("insert into t (b) values (0)")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, autoid.ErrAutoRandReadFailed.GenWithStackByArgs().Error())
 	tk.MustExec("drop table t")
 
 	// Test overflow.
-	tk.MustExec("create table t (a tinyint primary key auto_random(2), b int)")
-	fieldLength := uint64(mysql.DefaultLengthOfMysqlTypes[mysql.TypeTiny] * 8)
-	signBit := uint64(1)
-	for i := 0; i < (1<<(fieldLength-2-signBit))-1; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t (b) values (%d)", i))
-	}
+	tk.MustExec("create table t (a bigint primary key auto_random(15), b int)")
+	// Here we cannot fill the all values for a `bigint` column,
+	// so firstly we rebase auto_rand to the position before overflow.
+	tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", autoRandBitsUpperBound, 1))
 	_, err = tk.Exec("insert into t (b) values (0)")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, autoid.ErrAutoRandReadFailed.GenWithStackByArgs().Error())
 	tk.MustExec("drop table t")
 
-	// Test rebase.
-	tk.MustExec("create table t (a tinyint primary key auto_random(2), b int)")
-	tk.MustExec("insert into t values (31, 2)")
-	_, err = tk.Exec("insert into t (b) values (0)")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, autoid.ErrAutoRandReadFailed.GenWithStackByArgs().Error())
-	tk.MustExec("drop table t")
-
-	tk.MustExec("create table t (a tinyint primary key auto_random(2), b int)")
+	tk.MustExec("create table t (a bigint primary key auto_random(15), b int)")
 	tk.MustExec("insert into t values (1, 2)")
-	tk.MustExec("update t set a = 31 where a = 1")
+	tk.MustExec(fmt.Sprintf("update t set a = %d where a = 1", autoRandBitsUpperBound))
 	_, err = tk.Exec("insert into t (b) values (0)")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, autoid.ErrAutoRandReadFailed.GenWithStackByArgs().Error())
 	tk.MustExec("drop table t")
+
+	// Test insert negative integers explicitly won't trigger rebase.
+	tk.MustExec("create table t (a bigint primary key auto_random(15), b int)")
+	for i := 1; i <= 100; i++ {
+		tk.MustExec("insert into t(b) values (?)", i)
+		tk.MustExec("insert into t(a, b) values (?, ?)", -i, i)
+	}
+	// orderedHandles should be [-100, -99, ..., -2, -1, 1, 2, ..., 99, 100]
+	orderedHandles = testutil.ConfigTestUtils.MaskSortHandles(extractAllHandles(), 15, mysql.TypeLonglong)
+	size = int64(len(allHandles))
+	for i := int64(0); i < 100; i++ {
+		c.Assert(orderedHandles[i], Equals, i-100)
+	}
+	for i := int64(100); i < size; i++ {
+		c.Assert(orderedHandles[i], Equals, i-99)
+	}
+	tk.MustExec("drop table t")
+
+	// Test signed/unsigned types.
+	tk.MustExec("create table t (a bigint primary key auto_random(10), b int)")
+	for i := 0; i < 100; i++ {
+		tk.MustExec("insert into t (b) values(?)", i)
+	}
+	for _, h := range extractAllHandles() {
+		// Sign bit should be reserved.
+		c.Assert(h > 0, IsTrue)
+	}
+	tk.MustExec("drop table t")
+
+	tk.MustExec("create table t (a bigint unsigned primary key auto_random(10), b int)")
+	for i := 0; i < 100; i++ {
+		tk.MustExec("insert into t (b) values(?)", i)
+	}
+	signBitUnused := true
+	for _, h := range extractAllHandles() {
+		signBitUnused = signBitUnused && (h > 0)
+	}
+	// Sign bit should be used for shard.
+	c.Assert(signBitUnused, IsFalse)
+	tk.MustExec("drop table t;")
+
+	// Test rename table does not affect incremental part of auto_random ID.
+	tk.MustExec("create database test_auto_random_bits_rename;")
+	tk.MustExec("create table t (a bigint auto_random primary key);")
+	for i := 0; i < 10; i++ {
+		tk.MustExec("insert into t values ();")
+	}
+	tk.MustExec("alter table t rename to test_auto_random_bits_rename.t1;")
+	for i := 0; i < 10; i++ {
+		tk.MustExec("insert into test_auto_random_bits_rename.t1 values ();")
+	}
+	tk.MustExec("alter table test_auto_random_bits_rename.t1 rename to t;")
+	for i := 0; i < 10; i++ {
+		tk.MustExec("insert into t values ();")
+	}
+	uniqueHandles := make(map[int64]struct{})
+	for _, h := range extractAllHandles() {
+		uniqueHandles[h&((1<<(63-5))-1)] = struct{}{}
+	}
+	c.Assert(len(uniqueHandles), Equals, 30)
+	tk.MustExec("drop database test_auto_random_bits_rename;")
+	tk.MustExec("drop table t;")
+}
+
+func (s *testAutoRandomSuite) TestAutoRandomTableOption(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// test table option is auto-random
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+
+	tk.MustExec("drop table if exists auto_random_table_option")
+	tk.MustExec("create table auto_random_table_option (a bigint auto_random(5) key) auto_random_base = 1000")
+	t, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("auto_random_table_option"))
+	c.Assert(err, IsNil)
+	c.Assert(t.Meta().AutoRandID, Equals, int64(1000))
+	tk.MustExec("insert into auto_random_table_option values (),(),(),(),()")
+	allHandles, err := ddltestutil.ExtractAllTableHandles(tk.Se, "test", "auto_random_table_option")
+	c.Assert(err, IsNil)
+	c.Assert(len(allHandles), Equals, 5)
+	// Test non-shard-bits part of auto random id is monotonic increasing and continuous.
+	orderedHandles := testutil.ConfigTestUtils.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
+	size := int64(len(allHandles))
+	for i := int64(0); i < size; i++ {
+		c.Assert(i+1000, Equals, orderedHandles[i])
+	}
+
+	tk.MustExec("drop table if exists alter_table_auto_random_option")
+	tk.MustExec("create table alter_table_auto_random_option (a bigint primary key auto_random(4), b int)")
+	t, err = domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("alter_table_auto_random_option"))
+	c.Assert(err, IsNil)
+	c.Assert(t.Meta().AutoRandID, Equals, int64(0))
+	tk.MustExec("insert into alter_table_auto_random_option values(),(),(),(),()")
+	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Se, "test", "alter_table_auto_random_option")
+	c.Assert(err, IsNil)
+	orderedHandles = testutil.ConfigTestUtils.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
+	size = int64(len(allHandles))
+	for i := int64(0); i < size; i++ {
+		c.Assert(orderedHandles[i], Equals, i+1)
+	}
+	tk.MustExec("delete from alter_table_auto_random_option")
+
+	// alter table to change the auto_random option (it will dismiss the local allocator cache)
+	// To avoid the new base is in the range of local cache, which will leading the next
+	// value is not what we rebased, because the local cache is dropped, here we choose
+	// a quite big value to do this.
+	tk.MustExec("alter table alter_table_auto_random_option auto_random_base = 3000000")
+	t, err = domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("alter_table_auto_random_option"))
+	c.Assert(err, IsNil)
+	c.Assert(t.Meta().AutoRandID, Equals, int64(3000000))
+	tk.MustExec("insert into alter_table_auto_random_option values(),(),(),(),()")
+	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Se, "test", "alter_table_auto_random_option")
+	c.Assert(err, IsNil)
+	orderedHandles = testutil.ConfigTestUtils.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
+	size = int64(len(allHandles))
+	for i := int64(0); i < size; i++ {
+		c.Assert(orderedHandles[i], Equals, i+3000000)
+	}
+	tk.MustExec("drop table alter_table_auto_random_option")
+
+	// Alter auto_random_base on non auto_random table.
+	tk.MustExec("create table alter_auto_random_normal (a int)")
+	_, err = tk.Exec("alter table alter_auto_random_normal auto_random_base = 100")
+	c.Assert(err, NotNil)
+	c.Assert(strings.Contains(err.Error(), autoid.AutoRandomRebaseNotApplicable), IsTrue, Commentf(err.Error()))
+}
+
+// Test filter different kind of allocators.
+// In special ddl type, for example:
+// 1: ActionRenameTable             : it will abandon all the old allocators.
+// 2: ActionRebaseAutoID            : it will drop row-id-type allocator.
+// 3: ActionModifyTableAutoIdCache  : it will drop row-id-type allocator.
+// 3: ActionRebaseAutoRandomBase    : it will drop auto-rand-type allocator.
+func (s *testAutoRandomSuite) TestFilterDifferentAllocators(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+
+	tk.MustExec("create table t(a bigint auto_random(5) key, b int auto_increment unique)")
+	tk.MustExec("insert into t values()")
+	tk.MustQuery("select b from t").Check(testkit.Rows("1"))
+	allHandles, err := ddltestutil.ExtractAllTableHandles(tk.Se, "test", "t")
+	c.Assert(err, IsNil)
+	c.Assert(len(allHandles), Equals, 1)
+	orderedHandles := testutil.ConfigTestUtils.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
+	c.Assert(orderedHandles[0], Equals, int64(1))
+	tk.MustExec("delete from t")
+
+	// Test rebase auto_increment.
+	tk.MustExec("alter table t auto_increment 3000000")
+	tk.MustExec("insert into t values()")
+	tk.MustQuery("select b from t").Check(testkit.Rows("3000000"))
+	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Se, "test", "t")
+	c.Assert(err, IsNil)
+	c.Assert(len(allHandles), Equals, 1)
+	orderedHandles = testutil.ConfigTestUtils.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
+	c.Assert(orderedHandles[0], Equals, int64(2))
+	tk.MustExec("delete from t")
+
+	// Test rebase auto_random.
+	tk.MustExec("alter table t auto_random_base 3000000")
+	tk.MustExec("insert into t values()")
+	tk.MustQuery("select b from t").Check(testkit.Rows("3000001"))
+	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Se, "test", "t")
+	c.Assert(err, IsNil)
+	c.Assert(len(allHandles), Equals, 1)
+	orderedHandles = testutil.ConfigTestUtils.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
+	c.Assert(orderedHandles[0], Equals, int64(3000000))
+	tk.MustExec("delete from t")
+
+	// Test rename table.
+	tk.MustExec("rename table t to t1")
+	tk.MustExec("insert into t1 values()")
+	res := tk.MustQuery("select b from t1")
+	strInt64, err := strconv.ParseInt(res.Rows()[0][0].(string), 10, 64)
+	c.Assert(err, IsNil)
+	c.Assert(strInt64, Greater, int64(3000002))
+	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Se, "test", "t1")
+	c.Assert(err, IsNil)
+	c.Assert(len(allHandles), Equals, 1)
+	orderedHandles = testutil.ConfigTestUtils.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
+	c.Assert(orderedHandles[0], Greater, int64(3000001))
 }
 
 func (s *testSuite3) TestMaxHandleAddIndex(c *C) {

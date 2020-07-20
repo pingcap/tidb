@@ -15,6 +15,7 @@ package core_test
 
 import (
 	"context"
+	"fmt"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
@@ -616,7 +617,49 @@ func (s *testPlanSuite) TestUnmatchedTableInHint(c *C) {
 		}
 	}
 }
+func (s *testPlanSuite) TestGroupConcatOrderby(c *C) {
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Plan   []string
+			Result []string
+		}
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test;")
+	tk.MustExec("create table test(id int, name int)")
+	tk.MustExec("insert into test values(1, 10);")
+	tk.MustExec("insert into test values(1, 20);")
+	tk.MustExec("insert into test values(1, 30);")
+	tk.MustExec("insert into test values(2, 20);")
+	tk.MustExec("insert into test values(3, 200);")
+	tk.MustExec("insert into test values(3, 500);")
 
+	tk.MustExec("drop table if exists ptest;")
+	tk.MustExec("CREATE TABLE ptest (id int,name int) PARTITION BY RANGE ( id ) " +
+		"(PARTITION `p0` VALUES LESS THAN (2), PARTITION `p1` VALUES LESS THAN (11))")
+	tk.MustExec("insert into ptest select * from test;")
+	tk.MustExec(fmt.Sprintf("set session tidb_opt_agg_push_down = %v", 1))
+
+	for i, ts := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
+			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
+		})
+		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(ts).Check(testkit.Rows(output[i].Result...))
+	}
+}
 func (s *testPlanSuite) TestJoinHints(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
@@ -729,7 +772,6 @@ func (s *testPlanSuite) TestAggregationHints(c *C) {
 		{
 			sql:         "select /*+ STREAM_AGG(), USE_INDEX(t1), USE_INDEX(t2) */ sum(t1.a) from t t1 join t t2 on t1.b = t2.b group by t1.b",
 			best:        "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))->Sort->Projection->StreamAgg}(test.t2.b,test.t1.b)->HashAgg",
-			warning:     "[planner:1815]Optimizer Hint STREAM_AGG is inapplicable",
 			aggPushDown: true,
 		},
 	}
@@ -881,69 +923,31 @@ func (s *testPlanSuite) TestIndexHint(c *C) {
 	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
 
-	sessionVars := se.(sessionctx.Context).GetSessionVars()
-	sessionVars.HashAggFinalConcurrency = 1
-	sessionVars.HashAggPartialConcurrency = 1
-
-	tests := []struct {
-		sql     string
-		best    string
-		hasWarn bool
-	}{
-		// simple case
-		{
-			sql:     "select /*+ USE_INDEX(t, c_d_e) */ * from t",
-			best:    "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))",
-			hasWarn: false,
-		},
-		{
-			sql:     "select /*+ USE_INDEX(t, c_d_e) */ * from t t1",
-			best:    "TableReader(Table(t))",
-			hasWarn: false,
-		},
-		{
-			sql:     "select /*+ USE_INDEX(t1, c_d_e) */ * from t t1",
-			best:    "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))",
-			hasWarn: false,
-		},
-		{
-			sql:     "select /*+ USE_INDEX(t1, c_d_e), USE_INDEX(t2, f) */ * from t t1, t t2 where t1.a = t2.b",
-			best:    "LeftHashJoin{IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->IndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))}(test.t1.a,test.t2.b)",
-			hasWarn: false,
-		},
-		// test multiple indexes
-		{
-			sql:     "select /*+ USE_INDEX(t, c_d_e, f, g) */ * from t order by f",
-			best:    "IndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))",
-			hasWarn: false,
-		},
-		// use TablePath when the hint only contains table.
-		{
-			sql:     "select /*+ USE_INDEX(t) */ f from t where f > 10",
-			best:    "TableReader(Table(t)->Sel([gt(test.t.f, 10)]))",
-			hasWarn: false,
-		},
-		// there will be a warning instead of error when index not exist
-		{
-			sql:     "select /*+ USE_INDEX(t, no_such_index) */ * from t",
-			best:    "TableReader(Table(t))",
-			hasWarn: true,
-		},
+	var input []string
+	var output []struct {
+		SQL     string
+		Best    string
+		HasWarn bool
 	}
+	s.testData.GetTestCases(c, &input, &output)
 	ctx := context.Background()
-	for i, test := range tests {
-		comment := Commentf("case:%v sql:%s", i, test.sql)
+	for i, test := range input {
+		comment := Commentf("case:%v sql:%s", i, test)
 		se.GetSessionVars().StmtCtx.SetWarnings(nil)
 
-		stmt, err := s.ParseOneStmt(test.sql, "", "")
+		stmt, err := s.ParseOneStmt(test, "", "")
 		c.Assert(err, IsNil, comment)
 
 		p, err := planner.Optimize(ctx, se, stmt, s.is)
 		c.Assert(err, IsNil)
-		c.Assert(core.ToString(p), Equals, test.best, comment)
-
+		s.testData.OnRecord(func() {
+			output[i].SQL = test
+			output[i].Best = core.ToString(p)
+			output[i].HasWarn = len(se.GetSessionVars().StmtCtx.GetWarnings()) > 0
+		})
+		c.Assert(core.ToString(p), Equals, output[i].Best, comment)
 		warnings := se.GetSessionVars().StmtCtx.GetWarnings()
-		if test.hasWarn {
+		if output[i].HasWarn {
 			c.Assert(warnings, HasLen, 1, comment)
 		} else {
 			c.Assert(warnings, HasLen, 0, comment)

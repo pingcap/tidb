@@ -20,6 +20,7 @@ import (
 	"math/bits"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
@@ -96,6 +98,54 @@ func (la *LogicalAggregation) collectGroupByColumns() {
 	}
 }
 
+// aggOrderByResolver is currently resolving expressions of order by clause
+// in aggregate function GROUP_CONCAT.
+type aggOrderByResolver struct {
+	ctx       sessionctx.Context
+	err       error
+	args      []ast.ExprNode
+	exprDepth int // exprDepth is the depth of current expression in expression tree.
+}
+
+func (a *aggOrderByResolver) Enter(inNode ast.Node) (ast.Node, bool) {
+	a.exprDepth++
+	switch n := inNode.(type) {
+	case *driver.ParamMarkerExpr:
+		if a.exprDepth == 1 {
+			_, isNull, isExpectedType := getUintFromNode(a.ctx, n)
+			// For constant uint expression in top level, it should be treated as position expression.
+			if !isNull && isExpectedType {
+				return expression.ConstructPositionExpr(n), true
+			}
+		}
+	}
+	return inNode, false
+}
+
+func (a *aggOrderByResolver) Leave(inNode ast.Node) (ast.Node, bool) {
+	switch v := inNode.(type) {
+	case *ast.PositionExpr:
+		pos, isNull, err := expression.PosFromPositionExpr(a.ctx, v)
+		if err != nil {
+			a.err = err
+		}
+		if err != nil || isNull {
+			return inNode, false
+		}
+		if pos < 1 || pos > len(a.args) {
+			errPos := strconv.Itoa(pos)
+			if v.P != nil {
+				errPos = "?"
+			}
+			a.err = ErrUnknownColumn.FastGenByArgs(errPos, "order clause")
+			return inNode, false
+		}
+		ret := a.args[pos-1]
+		return ret, true
+	}
+	return inNode, true
+}
+
 func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFuncList []*ast.AggregateFuncExpr, gbyItems []expression.Expression) (LogicalPlan, map[int]int, error) {
 	b.optFlag = b.optFlag | flagBuildKeyInfo
 	b.optFlag = b.optFlag | flagPushDownAgg
@@ -129,6 +179,27 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 		newFunc, err := aggregation.NewAggFuncDesc(b.ctx, aggFunc.F, newArgList, aggFunc.Distinct)
 		if err != nil {
 			return nil, nil, err
+		}
+		if aggFunc.Order != nil {
+			trueArgs := aggFunc.Args[:len(aggFunc.Args)-1] // the last argument is SEPARATOR, remote it.
+			resolver := &aggOrderByResolver{
+				ctx:  b.ctx,
+				args: trueArgs,
+			}
+			for _, byItem := range aggFunc.Order.Items {
+				resolver.exprDepth = 0
+				resolver.err = nil
+				retExpr, _ := byItem.Expr.Accept(resolver)
+				if resolver.err != nil {
+					return nil, nil, errors.Trace(resolver.err)
+				}
+				newByItem, np, err := b.rewrite(ctx, retExpr.(ast.ExprNode), p, nil, true)
+				if err != nil {
+					return nil, nil, err
+				}
+				p = np
+				newFunc.OrderByItems = append(newFunc.OrderByItems, &util.ByItems{Expr: newByItem, Desc: byItem.Desc})
+			}
 		}
 		combined := false
 		for j, oldFunc := range plan4Agg.AggFuncs {
@@ -1035,25 +1106,6 @@ func (b *PlanBuilder) buildUnionAll(ctx context.Context, subPlan []LogicalPlan) 
 	return u
 }
 
-// ByItems wraps a "by" item.
-type ByItems struct {
-	Expr expression.Expression
-	Desc bool
-}
-
-// String implements fmt.Stringer interface.
-func (by *ByItems) String() string {
-	if by.Desc {
-		return fmt.Sprintf("%s true", by.Expr)
-	}
-	return by.Expr.String()
-}
-
-// Clone makes a copy of ByItems.
-func (by *ByItems) Clone() *ByItems {
-	return &ByItems{Expr: by.Expr.Clone(), Desc: by.Desc}
-}
-
 // itemTransformer transforms ParamMarkerExpr to PositionExpr in the context of ByItem
 type itemTransformer struct {
 }
@@ -1078,7 +1130,7 @@ func (b *PlanBuilder) buildSort(ctx context.Context, p LogicalPlan, byItems []*a
 		b.curClause = orderByClause
 	}
 	sort := LogicalSort{}.Init(b.ctx)
-	exprs := make([]*ByItems, 0, len(byItems))
+	exprs := make([]*util.ByItems, 0, len(byItems))
 	transformer := &itemTransformer{}
 	for _, item := range byItems {
 		newExpr, _ := item.Expr.Accept(transformer)
@@ -1089,7 +1141,7 @@ func (b *PlanBuilder) buildSort(ctx context.Context, p LogicalPlan, byItems []*a
 		}
 
 		p = np
-		exprs = append(exprs, &ByItems{Expr: it, Desc: item.Desc})
+		exprs = append(exprs, &util.ByItems{Expr: it, Desc: item.Desc})
 	}
 	sort.ByItems = exprs
 	sort.SetChildren(p)
@@ -1589,6 +1641,10 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 			g.err = ErrWrongGroupField.GenWithStackByArgs(g.fields[pos-1].Text())
 			return inNode, false
 		}
+		if _, ok := ret.(*ast.WindowFuncExpr); ok {
+			g.err = ErrWrongGroupField.GenWithStackByArgs(g.fields[pos-1].Text())
+			return inNode, false
+		}
 		return ret, true
 	case *ast.ValuesExpr:
 		if v.Column == nil {
@@ -1835,6 +1891,16 @@ func (b *PlanBuilder) checkOnlyFullGroupByWithGroupClause(p LogicalPlan, sel *as
 
 	if sel.OrderBy != nil {
 		for offset, item := range sel.OrderBy.Items {
+			if colName, ok := item.Expr.(*ast.ColumnNameExpr); ok {
+				index, err := resolveFromSelectFields(colName, sel.Fields.Fields, false)
+				if err != nil {
+					return err
+				}
+				// If the ByItem is in fields list, it has been checked already in above.
+				if index >= 0 {
+					continue
+				}
+			}
 			checkExprInGroupBy(p, item.Expr, offset, ErrExprInOrderBy, gbyCols, gbyExprs, notInGbyCols)
 		}
 	}
@@ -2094,10 +2160,25 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType n
 
 func (b *PlanBuilder) popTableHints() {
 	hintInfo := b.tableHintInfo[len(b.tableHintInfo)-1]
+	b.appendUnmatchedIndexHintWarning(hintInfo.indexHintList)
 	b.appendUnmatchedJoinHintWarning(HintINLJ, TiDBIndexNestedLoopJoin, hintInfo.indexNestedLoopJoinTables)
 	b.appendUnmatchedJoinHintWarning(HintSMJ, TiDBMergeJoin, hintInfo.sortMergeJoinTables)
 	b.appendUnmatchedJoinHintWarning(HintHJ, TiDBHashJoin, hintInfo.hashJoinTables)
 	b.tableHintInfo = b.tableHintInfo[:len(b.tableHintInfo)-1]
+}
+
+func (b *PlanBuilder) appendUnmatchedIndexHintWarning(indexHints []indexHintInfo) {
+	for _, hint := range indexHints {
+		if !hint.matched {
+			hintTypeString := hint.hintTypeString()
+			errMsg := fmt.Sprintf("%s(%s) is inapplicable, check whether the table(%s) exists",
+				hintTypeString,
+				hint.indexString(),
+				hint.tblName,
+			)
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(errMsg))
+		}
+	}
 }
 
 func (b *PlanBuilder) appendUnmatchedJoinHintWarning(joinType string, joinTypeAlias string, hintTables []hintTableInfo) {
@@ -2352,7 +2433,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	tableInfo := tbl.Meta()
 	var authErr error
 	if b.ctx.GetSessionVars().User != nil {
-		authErr = ErrTableaccessDenied.FastGenByArgs("SELECT", b.ctx.GetSessionVars().User.Username, b.ctx.GetSessionVars().User.Hostname, tableInfo.Name.L)
+		authErr = ErrTableaccessDenied.FastGenByArgs("SELECT", b.ctx.GetSessionVars().User.AuthUsername, b.ctx.GetSessionVars().User.AuthHostname, tableInfo.Name.L)
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "", authErr)
 
@@ -2764,9 +2845,6 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		if dbName == "" {
 			dbName = b.ctx.GetSessionVars().CurrentDB
 		}
-		if t.TableInfo.IsView() {
-			return nil, errors.Errorf("update view %s is not supported now.", t.Name.O)
-		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, t.Name.L, "", nil)
 	}
 
@@ -2962,8 +3040,12 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 	}
 
 	tblDbMap := make(map[string]string, len(tableList))
+	views := make(map[string]struct{}, len(tableList))
 	for _, tbl := range tableList {
 		tblDbMap[tbl.Name.L] = tbl.DBInfo.Name.L
+		if tbl.TableInfo.IsView() {
+			views[tbl.DBInfo.Name.L+"."+tbl.Name.L] = struct{}{}
+		}
 	}
 	for _, assign := range newList {
 		col := assign.Col
@@ -2972,6 +3054,9 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 		// To solve issue#10028, we need to get database name by the table alias name.
 		if dbNameTmp, ok := tblDbMap[col.TblName.L]; ok {
 			dbName = dbNameTmp
+		}
+		if _, ok := views[dbName+"."+col.TblName.L]; ok {
+			return nil, nil, errors.Errorf("update view %s is not supported now.", col.TblName.O)
 		}
 		if dbName == "" {
 			dbName = b.ctx.GetSessionVars().CurrentDB
@@ -3697,14 +3782,14 @@ func mergeWindowSpec(spec, ref *ast.WindowSpec) error {
 	if ref.Frame != nil {
 		return ErrWindowNoInherentFrame.GenWithStackByArgs(ref.Name.O)
 	}
+	if spec.PartitionBy != nil {
+		return errors.Trace(ErrWindowNoChildPartitioning)
+	}
 	if ref.OrderBy != nil {
 		if spec.OrderBy != nil {
 			return ErrWindowNoRedefineOrderBy.GenWithStackByArgs(getWindowName(spec.Name.O), ref.Name.O)
 		}
 		spec.OrderBy = ref.OrderBy
-	}
-	if spec.PartitionBy != nil {
-		return errors.Trace(ErrWindowNoChildPartitioning)
 	}
 	spec.PartitionBy = ref.PartitionBy
 	spec.Ref = model.NewCIStr("")

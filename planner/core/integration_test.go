@@ -18,10 +18,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -543,6 +545,29 @@ func (s *testIntegrationSuite) TestPartitionTableStats(c *C) {
 	}
 }
 
+func (s *testIntegrationSuite) TestPartitionPruningForInExpr(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int(11), b int) partition by range (a) (partition p0 values less than (4), partition p1 values less than(10), partition p2 values less than maxvalue);")
+	tk.MustExec("insert into t values (1, 1),(10, 10),(11, 11)")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
 func (s *testIntegrationSuite) TestErrNoDB(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create user test")
@@ -583,6 +608,38 @@ func (s *testIntegrationSuite) TestTopNByConstFunc(c *C) {
 	))
 }
 
+func (s *testIntegrationSuite) TestIndexHintWarning(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int, c int, key a(a))")
+	tk.MustExec("create table t2(a int, b int, c int, key a(a))")
+	var input []string
+	var output []struct {
+		SQL      string
+		Warnings []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			tk.MustQuery(tt)
+			warns := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+			output[i].Warnings = make([]string, len(warns))
+			for j := range warns {
+				output[i].Warnings[j] = warns[j].Err.Error()
+			}
+		})
+		tk.MustQuery(tt)
+		warns := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+		c.Assert(len(warns), Equals, len(output[i].Warnings))
+		for j := range warns {
+			c.Assert(warns[j].Level, Equals, stmtctx.WarnLevelWarning)
+			c.Assert(warns[j].Err.Error(), Equals, output[i].Warnings[j])
+		}
+	}
+}
+
 func (s *testIntegrationSuite) TestIssue15546(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -597,6 +654,37 @@ func (s *testIntegrationSuite) TestIssue15546(c *C) {
 	tk.MustQuery("select * from pt, vt where a2 = a1").Check(testkit.Rows("1 1 1 1"))
 }
 
+func (s *testIntegrationSuite) TestHintWithRequiredProperty(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b int, c int, key b(b))")
+	var input []string
+	var output []struct {
+		SQL      string
+		Plan     []string
+		Warnings []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+			output[i].Warnings = make([]string, len(warnings))
+			for j, warning := range warnings {
+				output[i].Warnings[j] = warning.Err.Error()
+			}
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+		warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+		c.Assert(len(warnings), Equals, len(output[i].Warnings))
+		for j, warning := range warnings {
+			c.Assert(output[i].Warnings[j], Equals, warning.Err.Error())
+		}
+	}
+}
+
 func (s *testIntegrationSuite) TestIssue15813(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -607,4 +695,109 @@ func (s *testIntegrationSuite) TestIssue15813(c *C) {
 	tk.MustExec("CREATE INDEX i0 ON t0(c0)")
 	tk.MustExec("CREATE INDEX i0 ON t1(c0)")
 	tk.MustQuery("select /*+ MERGE_JOIN(t0, t1) */ * from t0, t1 where t0.c0 = t1.c0").Check(testkit.Rows())
+}
+
+func (s *testIntegrationSuite) TestIssue16440(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(c0 int)")
+	tk.MustExec("INSERT INTO t1(c0) VALUES (NULL);")
+	tk.MustQuery("SELECT t1.c0 FROM t1 WHERE NOT t1.c0;").Check(testkit.Rows())
+	tk.MustExec("drop table t1")
+}
+
+func (s *testIntegrationSuite) TestFullGroupByOrderBy(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustQuery("select count(a) as b from t group by a order by b").Check(testkit.Rows())
+	err := tk.ExecToErr("select count(a) as cnt from t group by a order by b")
+	c.Assert(terror.ErrorEqual(err, core.ErrFieldNotInGroupBy), IsTrue)
+}
+
+func (s *testIntegrationSuite) TestIssue15846(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0, t1")
+	tk.MustExec("CREATE TABLE t0(t0 INT UNIQUE);")
+	tk.MustExec("CREATE TABLE t1(c0 FLOAT);")
+	tk.MustExec("INSERT INTO t1(c0) VALUES (0);")
+	tk.MustExec("INSERT INTO t0(t0) VALUES (NULL), (NULL);")
+	tk.MustQuery("SELECT t1.c0 FROM t1 LEFT JOIN t0 ON 1;").Check(testkit.Rows("0", "0"))
+
+	tk.MustExec("drop table if exists t0, t1")
+	tk.MustExec("CREATE TABLE t0(t0 INT);")
+	tk.MustExec("CREATE TABLE t1(c0 FLOAT);")
+	tk.MustExec("INSERT INTO t1(c0) VALUES (0);")
+	tk.MustExec("INSERT INTO t0(t0) VALUES (NULL), (NULL);")
+	tk.MustQuery("SELECT t1.c0 FROM t1 LEFT JOIN t0 ON 1;").Check(testkit.Rows("0", "0"))
+
+	tk.MustExec("drop table if exists t0, t1")
+	tk.MustExec("CREATE TABLE t0(t0 INT);")
+	tk.MustExec("CREATE TABLE t1(c0 FLOAT);")
+	tk.MustExec("create unique index idx on t0(t0);")
+	tk.MustExec("INSERT INTO t1(c0) VALUES (0);")
+	tk.MustExec("INSERT INTO t0(t0) VALUES (NULL), (NULL);")
+	tk.MustQuery("SELECT t1.c0 FROM t1 LEFT JOIN t0 ON 1;").Check(testkit.Rows("0", "0"))
+}
+
+func (s *testIntegrationSuite) TestFloorUnixTimestampPruning(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists floor_unix_timestamp")
+	tk.MustExec(`create table floor_unix_timestamp (ts timestamp(3))
+partition by range (floor(unix_timestamp(ts))) (
+partition p0 values less than (unix_timestamp('2020-04-05 00:00:00')),
+partition p1 values less than (unix_timestamp('2020-04-12 00:00:00')),
+partition p2 values less than (unix_timestamp('2020-04-15 00:00:00')))`)
+	tk.MustExec("insert into floor_unix_timestamp values ('2020-04-04 00:00:00')")
+	tk.MustExec("insert into floor_unix_timestamp values ('2020-04-04 23:59:59.999')")
+	tk.MustExec("insert into floor_unix_timestamp values ('2020-04-05 00:00:00')")
+	tk.MustExec("insert into floor_unix_timestamp values ('2020-04-05 00:00:00.001')")
+	tk.MustExec("insert into floor_unix_timestamp values ('2020-04-12 01:02:03.456')")
+	tk.MustExec("insert into floor_unix_timestamp values ('2020-04-14 00:00:42')")
+	tk.MustQuery("select count(*) from floor_unix_timestamp where '2020-04-05 00:00:00.001' = ts").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from floor_unix_timestamp where ts > '2020-04-05 00:00:00' order by ts").Check(testkit.Rows("2020-04-05 00:00:00.001", "2020-04-12 01:02:03.456", "2020-04-14 00:00:42.000"))
+	tk.MustQuery("select count(*) from floor_unix_timestamp where ts <= '2020-04-05 23:00:00'").Check(testkit.Rows("4"))
+	tk.MustQuery("select * from floor_unix_timestamp partition(p1, p2) where ts > '2020-04-14 00:00:00'").Check(testkit.Rows("2020-04-14 00:00:42.000"))
+}
+
+func (s *testIntegrationSuite) TestTableDualWithRequiredProperty(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1 (a int, b int) partition by range(a) " +
+		"(partition p0 values less than(10), partition p1 values less than MAXVALUE)")
+	tk.MustExec("create table t2 (a int, b int)")
+	tk.MustExec("select /*+ MERGE_JOIN(t1, t2) */ * from t1 partition (p0), t2  where t1.a > 100 and t1.a = t2.a")
+}
+
+func (s *testIntegrationSuite) TestStreamAggProp(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1),(1),(2)")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Res  []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
+			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Res...))
+	}
 }

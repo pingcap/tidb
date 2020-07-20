@@ -15,6 +15,7 @@ package planner
 
 import (
 	"context"
+
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -30,9 +31,14 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	if _, containTiKV := sctx.GetSessionVars().GetIsolationReadEngines()[kv.TiKV]; containTiKV {
 		fp := plannercore.TryFastPlan(sctx, node)
 		if fp != nil {
+			if !isPointGetWithoutDoubleRead(sctx, fp) {
+				sctx.PrepareTxnFuture(ctx)
+			}
 			return fp, nil
 		}
 	}
+
+	sctx.PrepareTxnFuture(ctx)
 
 	// build logical plan
 	sctx.GetSessionVars().PlanID = 0
@@ -77,6 +83,18 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		return cascades.FindBestPlan(sctx, logic)
 	}
 	return plannercore.DoOptimize(ctx, builder.GetOptFlag(), logic)
+}
+
+// isPointGetWithoutDoubleRead returns true when meets following conditions:
+//  1. ctx is auto commit tagged.
+//  2. plan is point get by pk.
+func isPointGetWithoutDoubleRead(ctx sessionctx.Context, p plannercore.Plan) bool {
+	if !ctx.GetSessionVars().IsAutocommit() {
+		return false
+	}
+
+	v, ok := p.(*plannercore.PointGetPlan)
+	return ok && v.IndexInfo == nil
 }
 
 func init() {

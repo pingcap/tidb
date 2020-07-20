@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/testkit"
 )
 
 type sqlInfoFetcher struct {
@@ -171,7 +170,7 @@ func (sh *sqlInfoFetcher) zipInfoForSQL(w http.ResponseWriter, r *http.Request) 
 			terror.Log(err)
 			return
 		}
-		sRows, err := testkit.ResultSetToStringSlice(reqCtx, sh.s, recordSets[0])
+		sRows, err := session.ResultSetToStringSlice(reqCtx, sh.s, recordSets[0])
 		if err != nil {
 			err = sh.writeErrFile(zw, "explain.err.txt", err)
 			terror.Log(err)
@@ -248,7 +247,7 @@ func (sh *sqlInfoFetcher) getExplainAnalyze(ctx context.Context, sql string, res
 		resultChan <- &explainAnalyzeResult{err: err}
 		return
 	}
-	rows, err := testkit.ResultSetToStringSlice(ctx, sh.s, recordSets[0])
+	rows, err := session.ResultSetToStringSlice(ctx, sh.s, recordSets[0])
 	if err != nil {
 		terror.Log(err)
 		rows = nil
@@ -292,7 +291,7 @@ func (sh *sqlInfoFetcher) getShowCreateTable(pair tableNamePair, zw *zip.Writer)
 	if err != nil {
 		return err
 	}
-	sRows, err := testkit.ResultSetToStringSlice(context.Background(), sh.s, recordSets[0])
+	sRows, err := session.ResultSetToStringSlice(context.Background(), sh.s, recordSets[0])
 	if err != nil {
 		terror.Log(err)
 		return nil

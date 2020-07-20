@@ -101,6 +101,25 @@ func buildCount(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	// use countOriginalWithDistinct.
 	if aggFuncDesc.HasDistinct &&
 		(aggFuncDesc.Mode == aggregation.CompleteMode || aggFuncDesc.Mode == aggregation.Partial1Mode) {
+		if len(base.args) == 1 {
+			// optimize with single column
+			// TODO: because Time and JSON does not have `hashcode()` or similar method
+			// so they're in exception for now.
+			// TODO: add hashCode method for all evaluate types (Decimal, Time, Duration, JSON).
+			// https://github.com/pingcap/tidb/issues/15857
+			switch aggFuncDesc.Args[0].GetType().EvalType() {
+			case types.ETInt:
+				return &countOriginalWithDistinct4Int{baseCount{base}}
+			case types.ETReal:
+				return &countOriginalWithDistinct4Real{baseCount{base}}
+			case types.ETDecimal:
+				return &countOriginalWithDistinct4Decimal{baseCount{base}}
+			case types.ETDuration:
+				return &countOriginalWithDistinct4Duration{baseCount{base}}
+			case types.ETString:
+				return &countOriginalWithDistinct4String{baseCount{base}}
+			}
+		}
 		return &countOriginalWithDistinct{baseCount{base}}
 	}
 
@@ -294,10 +313,6 @@ func buildGroupConcat(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDe
 	case aggregation.DedupMode:
 		return nil
 	default:
-		base := baseAggFunc{
-			args:    aggFuncDesc.Args[:len(aggFuncDesc.Args)-1],
-			ordinal: ordinal,
-		}
 		// The last arg is promised to be a not-null string constant, so the error can be ignored.
 		c, _ := aggFuncDesc.Args[len(aggFuncDesc.Args)-1].(*expression.Constant)
 		sep, _, err := c.EvalString(nil, chunk.Row{})
@@ -316,10 +331,26 @@ func buildGroupConcat(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDe
 			panic(fmt.Sprintf("Error happened when buildGroupConcat: %s", err.Error()))
 		}
 		var truncated int32
-		if aggFuncDesc.HasDistinct {
-			return &groupConcatDistinct{baseGroupConcat4String{baseAggFunc: base, sep: sep, maxLen: maxLen, truncated: &truncated}}
+		base := baseGroupConcat4String{
+			baseAggFunc: baseAggFunc{
+				args:    aggFuncDesc.Args[:len(aggFuncDesc.Args)-1],
+				ordinal: ordinal,
+			},
+			byItems:   aggFuncDesc.OrderByItems,
+			sep:       sep,
+			maxLen:    maxLen,
+			truncated: &truncated,
 		}
-		return &groupConcat{baseGroupConcat4String{baseAggFunc: base, sep: sep, maxLen: maxLen, truncated: &truncated}}
+		if aggFuncDesc.HasDistinct {
+			if len(aggFuncDesc.OrderByItems) > 0 {
+				return &groupConcatDistinctOrder{base}
+			}
+			return &groupConcatDistinct{base}
+		}
+		if len(aggFuncDesc.OrderByItems) > 0 {
+			return &groupConcatOrder{base}
+		}
+		return &groupConcat{base}
 	}
 }
 

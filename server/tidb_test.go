@@ -160,6 +160,19 @@ func (ts *TidbTestSuite) TestStatusAPI(c *C) {
 	runTestStatusAPI(c)
 }
 
+func (ts *TidbTestSuite) TestStatusPort(c *C) {
+	cfg := config.NewConfig()
+	cfg.Port = 4008
+	cfg.Status.ReportStatus = true
+	cfg.Status.StatusPort = 10090
+
+	server, err := NewServer(cfg, ts.tidbdrv)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals,
+		fmt.Sprintf("listen tcp 0.0.0.0:%d: bind: address already in use", cfg.Status.StatusPort))
+	c.Assert(server, IsNil)
+}
+
 func (ts *TidbTestSuite) TestStatusAPIWithTLSCNCheck(c *C) {
 	caPath := filepath.Join(os.TempDir(), "ca-cert-cn.pem")
 	serverKeyPath := filepath.Join(os.TempDir(), "server-key-cn.pem")

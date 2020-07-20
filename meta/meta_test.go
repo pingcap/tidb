@@ -385,7 +385,7 @@ func (s *testSuite) TestDDL(c *C) {
 		if job.ID == historyJob1.ID {
 			c.Assert(*(job.Args[0].(*string)), Equals, historyJob1.Args[0])
 		} else {
-			c.Assert(job.Args, IsNil)
+			c.Assert(job.Args, HasLen, 0)
 		}
 	}
 
@@ -393,8 +393,8 @@ func (s *testSuite) TestDDL(c *C) {
 	historyJobs, err := t.GetLastNHistoryDDLJobs(2)
 	c.Assert(err, IsNil)
 	c.Assert(len(historyJobs), Equals, 2)
-	c.Assert(historyJobs[0].ID == 123, IsTrue)
-	c.Assert(historyJobs[1].ID == 1234, IsTrue)
+	c.Assert(historyJobs[0].ID == 1234, IsTrue)
+	c.Assert(historyJobs[1].ID == 123, IsTrue)
 
 	// Test GetAllDDLJobsInQueue.
 	err = t.EnQueueDDLJob(job)

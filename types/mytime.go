@@ -70,8 +70,9 @@ func (t MysqlTime) Microsecond() int {
 func (t MysqlTime) Weekday() gotime.Weekday {
 	// TODO: Consider time_zone variable.
 	t1, err := t.GoTime(gotime.Local)
+	// allow invalid dates
 	if err != nil {
-		return 0
+		return t1.Weekday()
 	}
 	return t1.Weekday()
 }

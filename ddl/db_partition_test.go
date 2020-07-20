@@ -261,6 +261,34 @@ func (s *testIntegrationSuite9) TestCreateTableWithPartition(c *C) {
 		PARTITION p2 VALUES LESS THAN (2000),
 		PARTITION p3 VALUES LESS THAN (2005)
 	);`, tmysql.ErrBadField)
+
+	// Fix a timezone dependent check bug introduced in https://github.com/pingcap/tidb/pull/10655
+	tk.MustExec(`create table t34 (dt timestamp(3)) partition by range (floor(unix_timestamp(dt))) (
+		partition p0 values less than (unix_timestamp('2020-04-04 00:00:00')),
+		partition p1 values less than (unix_timestamp('2020-04-05 00:00:00')));`)
+
+	tk.MustGetErrCode(`create table t34 (dt timestamp(3)) partition by range (unix_timestamp(date(dt))) (
+		partition p0 values less than (unix_timestamp('2020-04-04 00:00:00')),
+		partition p1 values less than (unix_timestamp('2020-04-05 00:00:00')));`, tmysql.ErrWrongExprInPartitionFunc)
+
+	tk.MustGetErrCode(`create table t34 (dt datetime) partition by range (unix_timestamp(dt)) (
+		partition p0 values less than (unix_timestamp('2020-04-04 00:00:00')),
+		partition p1 values less than (unix_timestamp('2020-04-05 00:00:00')));`, tmysql.ErrWrongExprInPartitionFunc)
+
+	// Fix https://github.com/pingcap/tidb/issues/16333
+	tk.MustExec(`create table t35 (dt timestamp) partition by range (unix_timestamp(dt))
+(partition p0 values less than (unix_timestamp('2020-04-15 00:00:00')));`)
+
+	tk.MustExec(`drop table if exists too_long_identifier`)
+	tk.MustGetErrCode(`create table too_long_identifier(a int) 
+partition by range (a) 
+(partition p0pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp values less than (10));`, tmysql.ErrTooLongIdent)
+
+	tk.MustExec(`drop table if exists too_long_identifier`)
+	tk.MustExec("create table too_long_identifier(a int) partition by range(a) (partition p0 values less than(10))")
+	tk.MustGetErrCode("alter table too_long_identifier add partition "+
+		"(partition p0pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp values less than(20))", tmysql.ErrTooLongIdent)
+
 }
 
 func (s *testIntegrationSuite7) TestCreateTableWithHashPartition(c *C) {
@@ -292,6 +320,17 @@ func (s *testIntegrationSuite7) TestCreateTableWithHashPartition(c *C) {
 		store_id int
 	)
 	partition by hash( year(hired) ) partitions 4;`)
+
+	// This query makes tidb OOM without partition count check.
+	tk.MustGetErrCode(`CREATE TABLE employees (
+    id INT NOT NULL,
+    fname VARCHAR(30),
+    lname VARCHAR(30),
+    hired DATE NOT NULL DEFAULT '1970-01-01',
+    separated DATE NOT NULL DEFAULT '9999-12-31',
+    job_code INT,
+    store_id INT
+) PARTITION BY HASH(store_id) PARTITIONS 102400000000;`, tmysql.ErrTooManyPartitions)
 }
 
 func (s *testIntegrationSuite10) TestCreateTableWithRangeColumnPartition(c *C) {
@@ -1150,6 +1189,22 @@ func (s *testIntegrationSuite5) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
                partition p2 values less than (11, 22)
         )`
 	tk.MustGetErrCode(sql11, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
+
+	sql12 := `create table part12 (a varchar(20), b binary, unique index (a(5))) partition by range columns (a) (
+			partition p0 values less than ('aaaaa'),
+			partition p1 values less than ('bbbbb'),
+			partition p2 values less than ('ccccc'))`
+	tk.MustGetErrCode(sql12, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
+	tk.MustExec(`create table part12 (a varchar(20), b binary) partition by range columns (a) (
+			partition p0 values less than ('aaaaa'),
+			partition p1 values less than ('bbbbb'),
+			partition p2 values less than ('ccccc'))`)
+	tk.MustGetErrCode("alter table part12 add unique index (a(5))", tmysql.ErrUniqueKeyNeedAllFieldsInPf)
+	sql13 := `create table part13 (a varchar(20), b varchar(10), unique index (a(5),b)) partition by range columns (b) (
+			partition p0 values less than ('aaaaa'),
+			partition p1 values less than ('bbbbb'),
+			partition p2 values less than ('ccccc'))`
+	tk.MustExec(sql13)
 }
 
 func (s *testIntegrationSuite2) TestPartitionDropPrimaryKey(c *C) {

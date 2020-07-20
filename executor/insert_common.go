@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -575,7 +576,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 		}
 		// Use the value if it's not null and not 0.
 		if recordID != 0 {
-			err = e.Table.RebaseAutoID(e.ctx, recordID, true)
+			err = e.Table.RebaseAutoID(e.ctx, recordID, true, autoid.RowIDAllocType)
 			if err != nil {
 				return nil, err
 			}
@@ -662,7 +663,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 	}
 	// Use the value if it's not null and not 0.
 	if recordID != 0 {
-		err = e.Table.RebaseAutoID(e.ctx, recordID, true)
+		err = e.Table.RebaseAutoID(e.ctx, recordID, true, autoid.RowIDAllocType)
 		if err != nil {
 			return types.Datum{}, err
 		}
@@ -740,6 +741,9 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 	}
 	// Use the value if it's not null and not 0.
 	if recordID != 0 {
+		if !e.ctx.GetSessionVars().AllowAutoRandExplicitInsert {
+			return types.Datum{}, ddl.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomExplicitInsertDisabledErrMsg)
+		}
 		err = e.rebaseAutoRandomID(recordID, &c.FieldType)
 		if err != nil {
 			return types.Datum{}, err
@@ -787,23 +791,24 @@ func (e *InsertValues) allocAutoRandomID(fieldType *types.FieldType) (int64, err
 		return 0, err
 	}
 
-	typeBitsLength := uint64(mysql.DefaultLengthOfMysqlTypes[fieldType.Tp] * 8)
-	if tables.OverflowShardBits(autoRandomID, tableInfo.AutoRandomBits, typeBitsLength) {
+	layout := autoid.NewAutoRandomIDLayout(fieldType, tableInfo.AutoRandomBits)
+	if tables.OverflowShardBits(autoRandomID, tableInfo.AutoRandomBits, layout.TypeBitsLength, layout.HasSignBit) {
 		return 0, autoid.ErrAutoRandReadFailed
 	}
-	shard := tables.CalcShard(tableInfo.AutoRandomBits, e.ctx.GetSessionVars().TxnCtx.StartTS, typeBitsLength)
+	shard := tables.CalcShard(tableInfo.AutoRandomBits, e.ctx.GetSessionVars().TxnCtx.StartTS, layout.TypeBitsLength, layout.HasSignBit)
 	autoRandomID |= shard
 	return autoRandomID, nil
 }
 
 func (e *InsertValues) rebaseAutoRandomID(recordID int64, fieldType *types.FieldType) error {
+	if recordID < 0 {
+		return nil
+	}
 	alloc := e.Table.Allocator(e.ctx, autoid.AutoRandomType)
 	tableInfo := e.Table.Meta()
 
-	typeBitsLength := uint64(mysql.DefaultLengthOfMysqlTypes[fieldType.Tp] * 8)
-	signBit := uint64(1)
-	mask := (1 << (typeBitsLength - tableInfo.AutoRandomBits - signBit)) - 1
-	autoRandomID := int64(mask) & recordID
+	layout := autoid.NewAutoRandomIDLayout(fieldType, tableInfo.AutoRandomBits)
+	autoRandomID := layout.IncrementalMask() & recordID
 
 	return alloc.Rebase(tableInfo.ID, autoRandomID, true)
 }

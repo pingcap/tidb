@@ -15,6 +15,7 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"math"
@@ -107,7 +108,7 @@ func IsJobRollbackable(job *model.Job) bool {
 		model.ActionTruncateTable, model.ActionAddForeignKey,
 		model.ActionDropForeignKey, model.ActionRenameTable,
 		model.ActionModifyTableCharsetAndCollate, model.ActionTruncateTablePartition,
-		model.ActionModifySchemaCharsetAndCollate:
+		model.ActionModifySchemaCharsetAndCollate, model.ActionModifyTableAutoIdCache:
 		return job.SchemaState == model.StateNone
 	}
 	return true
@@ -157,7 +158,7 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 
 			job.State = model.JobStateCancelling
 			// Make sure RawArgs isn't overwritten.
-			err := job.DecodeArgs(job.RawArgs)
+			err := json.Unmarshal(job.RawArgs, &job.Args)
 			if err != nil {
 				errs[i] = errors.Trace(err)
 				continue
@@ -238,23 +239,47 @@ func GetHistoryDDLJobs(txn kv.Transaction, maxNumJobs int) ([]*model.Job, error)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
-	jobsLen := len(jobs)
-	if jobsLen > maxNumJobs {
-		start := jobsLen - maxNumJobs
-		jobs = jobs[start:]
-	}
-	jobsLen = len(jobs)
-	ret := make([]*model.Job, 0, jobsLen)
-	for i := jobsLen - 1; i >= 0; i-- {
-		ret = append(ret, jobs[i])
-	}
-	return ret, nil
+	return jobs, nil
 }
 
 func nextIndexVals(data []types.Datum) []types.Datum {
 	// Add 0x0 to the end of data.
 	return append(data, types.Datum{})
+}
+
+// IterHistoryDDLJobs iterates history DDL jobs until the `finishFn` return true or error.
+func IterHistoryDDLJobs(txn kv.Transaction, finishFn func([]*model.Job) (bool, error)) error {
+	txnMeta := meta.NewMeta(txn)
+	iter, err := txnMeta.GetLastHistoryDDLJobsIterator()
+	if err != nil {
+		return err
+	}
+	cacheJobs := make([]*model.Job, 0, DefNumHistoryJobs)
+	for {
+		cacheJobs, err = iter.GetLastJobs(DefNumHistoryJobs, cacheJobs)
+		if err != nil || len(cacheJobs) == 0 {
+			return err
+		}
+		finish, err := finishFn(cacheJobs)
+		if err != nil || finish {
+			return err
+		}
+	}
+}
+
+// IterAllDDLJobs will iterates running DDL jobs first, return directly if `finishFn` return true or error,
+// then iterates history DDL jobs until the `finishFn` return true or error.
+func IterAllDDLJobs(txn kv.Transaction, finishFn func([]*model.Job) (bool, error)) error {
+	jobs, err := GetDDLJobs(txn)
+	if err != nil {
+		return err
+	}
+
+	finish, err := finishFn(jobs)
+	if err != nil || finish {
+		return err
+	}
+	return IterHistoryDDLJobs(txn, finishFn)
 }
 
 // RecordData is the record data composed of a handle and values.
