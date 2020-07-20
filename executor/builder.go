@@ -2304,22 +2304,19 @@ func containsLimit(execs []*tipb.Executor) bool {
 
 // When allow batch cop is 1, only agg / topN uses batch cop.
 // When allow batch cop is 2, every query uses batch cop.
-func (e *TableReaderExecutor) setBatchCop(v *plannercore.PhysicalTableReader) {
-	if e.storeType != kv.TiFlash || e.keepOrder {
-		return
-	}
-	switch e.ctx.GetSessionVars().AllowBatchCop {
+func allowBatchCop(sctx sessionctx.Context, tablePlans []plannercore.PhysicalPlan) bool {
+	switch sctx.GetSessionVars().AllowBatchCop {
 	case 1:
-		for _, p := range v.TablePlans {
+		for _, p := range tablePlans {
 			switch p.(type) {
 			case *plannercore.PhysicalHashAgg, *plannercore.PhysicalStreamAgg, *plannercore.PhysicalTopN:
-				e.batchCop = true
+				return true
 			}
 		}
 	case 2:
-		e.batchCop = true
+		return true
 	}
-	return
+	return false
 }
 
 func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableReader) (*TableReaderExecutor, error) {
@@ -2338,6 +2335,11 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 	if err != nil {
 		return nil, err
 	}
+
+	var batchCop bool
+	if v.StoreType == kv.TiFlash && !ts.KeepOrder {
+		batchCop = allowBatchCop(b.ctx, v.TablePlans)
+	}
 	e := &TableReaderExecutor{
 		baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		dagPB:          dagReq,
@@ -2351,8 +2353,8 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		corColInAccess: b.corColInAccess(v.TablePlans[0]),
 		plans:          v.TablePlans,
 		storeType:      v.StoreType,
+		batchCop:       batchCop,
 	}
-	e.setBatchCop(v)
 	e.buildVirtualColumnInfo()
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, ts.Desc)
@@ -2380,24 +2382,18 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 }
 
 func (b *executorBuilder) buildPartitionTable(v *plannercore.PhysicalPartitionTable) *PartitionTableExecutor {
-	// dagReq, streaming, err := b.constructDAGReq(v.TablePlans)
-	// if err != nil {
-	// 	b.err = err
-	// 	return nil
-	// }
-
-	fmt.Printf("executorBuilder: build partition table ==== %#v\n", v)
-	fmt.Println("and table plans ===")
-	for _, xx := range v.TablePlans {
-		fmt.Printf("xxx  --- %#v\n", xx)
+	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
+		if err := b.refreshForUpdateTSForRC(); err != nil {
+			b.err = err
+			return nil
+		}
 	}
 
-	// if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-	// 	if err := b.refreshForUpdateTSForRC(); err != nil {
-	// 		b.err = err
-	// 		return nil
-	// 	}
-	// }
+	dagReq, streaming, err := constructDAGReq(b.ctx, v.TablePlans)
+	if err != nil {
+		b.err = err
+		return nil
+	}
 
 	startTS, err := b.getSnapshotTS()
 	if err != nil {
@@ -2410,37 +2406,65 @@ func (b *executorBuilder) buildPartitionTable(v *plannercore.PhysicalPartitionTa
 		return nil
 	}
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
-	if ts == nil {
-		panic("should be table scan")
+	var batchCop bool
+	if v.StoreType == kv.TiFlash && !ts.KeepOrder {
+		batchCop = allowBatchCop(b.ctx, v.TablePlans)
 	}
-	ret := &PartitionTableExecutor{
+
+	e := &PartitionTableExecutor{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 
-		tablePlans: v.TablePlans,
-		conds: v.Conditions,
-
-		// dagPB:          dagReq,
-		ranges: ts.Ranges,
-		startTS:        startTS,
-		table:        tbl.(table.PartitionedTable),
-		keepOrder:      ts.KeepOrder,
-		desc:           ts.Desc,
+		dagReq:    dagReq,
+		startTS:   startTS,
+		table:     tbl.(table.PartitionedTable),
+		keepOrder: ts.KeepOrder,
+		desc:      ts.Desc,
 		// columns:        ts.Columns,
-		// streaming:      streaming,
-		// corColInFilter: b.corColInDistPlan(v.TablePlans),
-		// corColInAccess: b.corColInAccess(v.TablePlans[0]),
-		// plans:          v.TablePlans,
+		streaming:      streaming,
+		corColInFilter: b.corColInDistPlan(v.TablePlans),
+		corColInAccess: b.corColInAccess(v.TablePlans[0]),
 		storeType:      v.StoreType,
+		batchCop:       batchCop,
+
+		plans: v.TablePlans,
+
+		ranges: ts.Ranges,
+		conds:  v.Conditions,
 	}
 
+	e.virtualColumnIndex = buildVirtualColumnIndex(e.Schema(), ts.Columns)
+	if len(e.virtualColumnIndex) > 0 {
+		e.virtualColumnRetFieldTypes = make([]*types.FieldType, len(e.virtualColumnIndex))
+		for i, idx := range e.virtualColumnIndex {
+			e.virtualColumnRetFieldTypes[i] = e.schema.Columns[idx].RetType
+		}
+	}
 
-	// for i := range v.Schema().Columns {
-	// 	dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
-	// }
+	if containsLimit(dagReq.Executors) {
+		e.feedback = statistics.NewQueryFeedback(0, nil, 0, ts.Desc)
+	} else {
+		e.feedback = statistics.NewQueryFeedback(getPhysicalTableID(tbl), ts.Hist, int64(ts.StatsCount()), ts.Desc)
+	}
+	collect := statistics.CollectFeedback(b.ctx.GetSessionVars().StmtCtx, e.feedback, len(ts.Ranges))
+	if !collect {
+		e.feedback.Invalidate()
+	}
+	e.dagReq.CollectRangeCounts = &collect
+	if v.StoreType == kv.TiDB && b.ctx.GetSessionVars().User != nil {
+		// User info is used to do privilege check. It is only used in TiDB cluster memory table.
+		e.dagReq.User = &tipb.UserIdentity{
+			UserName: b.ctx.GetSessionVars().User.Username,
+			UserHost: b.ctx.GetSessionVars().User.Hostname,
+		}
+	}
+
+	for i := range v.Schema().Columns {
+		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
+	}
 
 	// sctx := b.ctx.GetSessionVars().StmtCtx
 	// sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
-	return ret
+	return e
 }
 
 // buildTableReader builds a table reader executor. It first build a no range table reader,

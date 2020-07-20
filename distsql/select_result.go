@@ -135,7 +135,7 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		resultDetail := resultSubset.GetExecDetails()
 		r.updateCopRuntimeStats(resultDetail, resultSubset.RespTime())
 		if r.feedback != nil {
-		    r.feedback.Update(resultSubset.GetStartKey(), r.selectResp.OutputCounts)
+			r.feedback.Update(resultSubset.GetStartKey(), r.selectResp.OutputCounts)
 		}
 		r.partialCount++
 		if resultDetail != nil {
