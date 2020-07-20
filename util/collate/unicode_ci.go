@@ -16,12 +16,12 @@ package collate
 type unicodeCICollator struct {
 }
 
-// Compare implement Collator interface.
+// Compare implement Collator interface. Always return 0 temporary, will change when implement
 func (uc *unicodeCICollator) Compare(a, b string) int {
 	return 0
 }
 
-// Key implements Collator interface.
+// Key implements Collator interface. Always return nothing temporary, will change when implement
 func (uc *unicodeCICollator) Key(str string) []byte {
 	return []byte{}
 }
@@ -31,18 +31,17 @@ func (uc *unicodeCICollator) Pattern() WildcardPattern {
 	return &unicodePattern{}
 }
 
-// unicodePattern implement use binaryPattern temporary
 type unicodePattern struct {
 	patChars []rune
 	patTypes []byte
 }
 
-// Compile implements WildcardPattern interface.
+// Compile implements WildcardPattern interface. Do nothing temporary, will change when implement
 func (p *unicodePattern) Compile(patternStr string, escape byte) {
 
 }
 
-// Compile implements WildcardPattern interface.
+// DoMatch implements WildcardPattern interface. Always return false temporary, will change when implement
 func (p *unicodePattern) DoMatch(str string) bool {
 	return false
 }
