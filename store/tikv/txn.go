@@ -42,6 +42,8 @@ var (
 var (
 	tikvTxnCmdHistogramWithCommit   = metrics.TiKVTxnCmdHistogram.WithLabelValues(metrics.LblCommit)
 	tikvTxnCmdHistogramWithRollback = metrics.TiKVTxnCmdHistogram.WithLabelValues(metrics.LblRollback)
+	tikvTxnCmdHistogramWithBatchGet = metrics.TiKVTxnCmdHistogram.WithLabelValues(metrics.LblBatchGet)
+	tikvTxnCmdHistogramWithGet      = metrics.TiKVTxnCmdHistogram.WithLabelValues(metrics.LblGet)
 )
 
 // tikvTxn implements kv.Transaction.
@@ -68,10 +70,13 @@ type tikvTxn struct {
 
 	valid bool
 	dirty bool
+
+	// txnInfoSchema is the infoSchema fetched at startTS.
+	txnInfoSchema SchemaVer
 }
 
 func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
-	bo := NewBackoffer(context.Background(), tsoMaxBackoff)
+	bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
 	startTS, err := store.getTimestampWithRetry(bo)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -104,39 +109,21 @@ func (a assertionPair) String() string {
 	return fmt.Sprintf("key: %s, assertion type: %d", a.key, a.assertion)
 }
 
+// SetSuccess is used to probe if kv variables are set or not. It is ONLY used in test cases.
+var SetSuccess = false
+
 func (txn *tikvTxn) SetVars(vars *kv.Variables) {
 	txn.vars = vars
 	txn.snapshot.vars = vars
+	failpoint.Inject("probeSetVars", func(val failpoint.Value) {
+		if val.(bool) {
+			SetSuccess = true
+		}
+	})
 }
 
-// tikvTxnStagingBuffer is the staging buffer returned to tikvTxn user.
-// Because tikvTxn needs to maintain dirty state when Flush staging data into txn.
-type tikvTxnStagingBuffer struct {
-	kv.MemBuffer
-	txn *tikvTxn
-}
-
-func (buf *tikvTxnStagingBuffer) Flush() (int, error) {
-	cnt, err := buf.MemBuffer.Flush()
-	if cnt != 0 {
-		buf.txn.dirty = true
-	}
-	return cnt, err
-}
-
-func (txn *tikvTxn) NewStagingBuffer() kv.MemBuffer {
-	return &tikvTxnStagingBuffer{
-		MemBuffer: txn.us.NewStagingBuffer(),
-		txn:       txn,
-	}
-}
-
-func (txn *tikvTxn) Flush() (int, error) {
-	return txn.us.Flush()
-}
-
-func (txn *tikvTxn) Discard() {
-	txn.us.Discard()
+func (txn *tikvTxn) GetVars() *kv.Variables {
+	return txn.vars
 }
 
 // Get implements transaction interface.
@@ -163,9 +150,7 @@ func (txn *tikvTxn) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]b
 
 func (txn *tikvTxn) Set(k kv.Key, v []byte) error {
 	txn.setCnt++
-
-	txn.dirty = true
-	return txn.us.Set(k, v)
+	return txn.us.GetMemBuffer().Set(k, v)
 }
 
 func (txn *tikvTxn) String() string {
@@ -182,8 +167,7 @@ func (txn *tikvTxn) IterReverse(k kv.Key) (kv.Iterator, error) {
 }
 
 func (txn *tikvTxn) Delete(k kv.Key) error {
-	txn.dirty = true
-	return txn.us.Delete(k)
+	return txn.us.GetMemBuffer().Delete(k)
 }
 
 func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
@@ -199,6 +183,8 @@ func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
 		txn.snapshot.keyOnly = val.(bool)
 	case kv.SnapshotTS:
 		txn.snapshot.setSnapshotTS(val.(uint64))
+	case kv.InfoSchema:
+		txn.txnInfoSchema = val.(SchemaVer)
 	}
 }
 
@@ -323,7 +309,7 @@ func (txn *tikvTxn) rollbackPessimisticLocks() error {
 	if len(txn.lockKeys) == 0 {
 		return nil
 	}
-	return txn.committer.pessimisticRollbackMutations(NewBackoffer(context.Background(), cleanupMaxBackoff), committerMutations{keys: txn.lockKeys})
+	return txn.committer.pessimisticRollbackMutations(NewBackofferWithVars(context.Background(), cleanupMaxBackoff, txn.vars), committerMutations{keys: txn.lockKeys})
 }
 
 // lockWaitTime in ms, except that kv.LockAlwaysWait(0) means always wait lock, kv.LockNowait(-1) means nowait lock
@@ -380,7 +366,7 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 			assignedPrimaryKey = true
 		}
 
-		bo := NewBackoffer(ctx, pessimisticLockMaxBackoff).WithVars(txn.vars)
+		bo := NewBackofferWithVars(ctx, pessimisticLockMaxBackoff, txn.vars)
 		txn.committer.forUpdateTS = lockCtx.ForUpdateTS
 		// If the number of keys greater than 1, it can be on different region,
 		// concurrently execute on multiple regions may lead to deadlock.
@@ -394,7 +380,7 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 		}
 		if err != nil {
 			for _, key := range keys {
-				txn.us.DeleteKeyExistErrInfo(key)
+				txn.us.UnmarkPresumeKeyNotExists(key)
 			}
 			keyMayBeLocked := terror.ErrorNotEqual(kv.ErrWriteConflict, err) && terror.ErrorNotEqual(kv.ErrKeyExists, err)
 			// If there is only 1 key and lock fails, no need to do pessimistic rollback.
@@ -460,7 +446,7 @@ func (txn *tikvTxn) asyncPessimisticRollback(ctx context.Context, keys [][]byte)
 		failpoint.Inject("AsyncRollBackSleep", func() {
 			time.Sleep(100 * time.Millisecond)
 		})
-		err := committer.pessimisticRollbackMutations(NewBackoffer(ctx, pessimisticRollbackMaxBackoff).WithVars(txn.vars), committerMutations{keys: keys})
+		err := committer.pessimisticRollbackMutations(NewBackofferWithVars(ctx, pessimisticRollbackMaxBackoff, txn.vars), committerMutations{keys: keys})
 		if err != nil {
 			logutil.Logger(ctx).Warn("[kv] pessimisticRollback failed.", zap.Error(err))
 		}
@@ -479,7 +465,7 @@ func hashInKeys(deadlockKeyHash uint64, keys [][]byte) bool {
 }
 
 func (txn *tikvTxn) IsReadOnly() bool {
-	return !txn.dirty
+	return !txn.dirty && !txn.us.GetMemBuffer().Dirty()
 }
 
 func (txn *tikvTxn) StartTS() uint64 {
@@ -491,11 +477,19 @@ func (txn *tikvTxn) Valid() bool {
 }
 
 func (txn *tikvTxn) Len() int {
-	return txn.us.Len()
+	return txn.us.GetMemBuffer().Len()
 }
 
 func (txn *tikvTxn) Size() int {
-	return txn.us.Size()
+	return txn.us.GetMemBuffer().Size()
+}
+
+func (txn *tikvTxn) Reset() {
+	txn.us.GetMemBuffer().Reset()
+}
+
+func (txn *tikvTxn) GetUnionStore() kv.UnionStore {
+	return txn.us
 }
 
 func (txn *tikvTxn) GetMemBuffer() kv.MemBuffer {
