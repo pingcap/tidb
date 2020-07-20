@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -1155,7 +1156,7 @@ func (lt *LogicalTopN) getPhysLimits() []PhysicalPlan {
 }
 
 // Check if this prop's columns can match by items totally.
-func matchItems(p *property.PhysicalProperty, items []*ByItems) bool {
+func matchItems(p *property.PhysicalProperty, items []*util.ByItems) bool {
 	if len(items) < len(p.Items) {
 		return false
 	}
@@ -1233,7 +1234,9 @@ func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalPrope
 		Enforced:    true,
 		Items:       property.ItemsFromCols(la.groupByCols, desc),
 	}
-
+	if !prop.IsPrefix(childProp) {
+		return enforcedAggs
+	}
 	taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType}
 	if !la.aggHints.preferAggToCop {
 		taskTypes = append(taskTypes, property.RootTaskType)

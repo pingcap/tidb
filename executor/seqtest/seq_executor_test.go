@@ -1088,7 +1088,7 @@ func (s *seqTestSuite) TestAutoRandIDRetry(c *C) {
 	tk.MustExec("create database if not exists auto_random_retry")
 	tk.MustExec("use auto_random_retry")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id int auto_random(3) primary key)")
+	tk.MustExec("create table t (id bigint auto_random(3) primary key)")
 
 	extractMaskedOrderedHandles := func() []int64 {
 		handles, err := ddltestutil.ExtractAllTableHandles(tk.Se, "auto_random_retry", "t")
@@ -1166,7 +1166,7 @@ func (s *seqTestSuite) TestAutoRandRecoverTable(c *C) {
 	defer autoid.SetStep(stp)
 
 	// Check rebase auto_random id.
-	tk.MustExec("create table t_recover_auto_rand (a int auto_random(5) primary key);")
+	tk.MustExec("create table t_recover_auto_rand (a bigint auto_random(5) primary key);")
 	tk.MustExec("insert into t_recover_auto_rand values (),(),()")
 	tk.MustExec("drop table t_recover_auto_rand")
 	tk.MustExec("recover table t_recover_auto_rand")

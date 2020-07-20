@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -253,10 +254,10 @@ func (s *testExecSuite) TestSortRequiredRows(c *C) {
 		sctx := defaultCtx()
 		ctx := context.Background()
 		ds := newRequiredRowsDataSource(sctx, testCase.totalRows, testCase.expectedRowsDS)
-		byItems := make([]*plannercore.ByItems, 0, len(testCase.groupBy))
+		byItems := make([]*util.ByItems, 0, len(testCase.groupBy))
 		for _, groupBy := range testCase.groupBy {
 			col := ds.Schema().Columns[groupBy]
-			byItems = append(byItems, &plannercore.ByItems{Expr: col})
+			byItems = append(byItems, &util.ByItems{Expr: col})
 		}
 		exec := buildSortExec(sctx, byItems, ds)
 		c.Assert(exec.Open(ctx), IsNil)
@@ -271,7 +272,7 @@ func (s *testExecSuite) TestSortRequiredRows(c *C) {
 	}
 }
 
-func buildSortExec(sctx sessionctx.Context, byItems []*plannercore.ByItems, src Executor) Executor {
+func buildSortExec(sctx sessionctx.Context, byItems []*util.ByItems, src Executor) Executor {
 	sortExec := SortExec{
 		baseExecutor: newBaseExecutor(sctx, src.Schema(), nil, src),
 		ByItems:      byItems,
@@ -360,10 +361,10 @@ func (s *testExecSuite) TestTopNRequiredRows(c *C) {
 		sctx := defaultCtx()
 		ctx := context.Background()
 		ds := newRequiredRowsDataSource(sctx, testCase.totalRows, testCase.expectedRowsDS)
-		byItems := make([]*plannercore.ByItems, 0, len(testCase.groupBy))
+		byItems := make([]*util.ByItems, 0, len(testCase.groupBy))
 		for _, groupBy := range testCase.groupBy {
 			col := ds.Schema().Columns[groupBy]
-			byItems = append(byItems, &plannercore.ByItems{Expr: col})
+			byItems = append(byItems, &util.ByItems{Expr: col})
 		}
 		exec := buildTopNExec(sctx, testCase.topNOffset, testCase.topNCount, byItems, ds)
 		c.Assert(exec.Open(ctx), IsNil)
@@ -378,7 +379,7 @@ func (s *testExecSuite) TestTopNRequiredRows(c *C) {
 	}
 }
 
-func buildTopNExec(ctx sessionctx.Context, offset, count int, byItems []*plannercore.ByItems, src Executor) Executor {
+func buildTopNExec(ctx sessionctx.Context, offset, count int, byItems []*util.ByItems, src Executor) Executor {
 	sortExec := SortExec{
 		baseExecutor: newBaseExecutor(ctx, src.Schema(), nil, src),
 		ByItems:      byItems,

@@ -633,6 +633,7 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 		if err != nil {
 			return nil, err
 		}
+		a.Ctx.SetValue(sessionctx.QueryString, executorExec.stmt.Text())
 		a.isPreparedStmt = true
 		a.Plan = executorExec.plan
 		if executorExec.lowerPriority {
@@ -699,7 +700,12 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	if costTime < threshold && level > zapcore.DebugLevel {
 		return
 	}
-	sql := FormatSQL(a.Text, sessVars.PreparedParams)
+	var sql stringutil.StringerFunc
+	if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
+		sql = FormatSQL(sensitiveStmt.SecureText(), nil)
+	} else {
+		sql = FormatSQL(a.Text, sessVars.PreparedParams)
+	}
 
 	var tableIDs, indexNames string
 	if len(sessVars.StmtCtx.TableIDs) > 0 {
@@ -836,10 +842,13 @@ func (a *ExecStmt) SummaryStmt() {
 	if sessVars.User != nil {
 		userString = sessVars.User.Username
 	}
-
+	sql := a.Text
+	if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
+		sql = sensitiveStmt.SecureText()
+	}
 	stmtsummary.StmtSummaryByDigestMap.AddStatement(&stmtsummary.StmtExecInfo{
 		SchemaName:     strings.ToLower(sessVars.CurrentDB),
-		OriginalSQL:    a.Text,
+		OriginalSQL:    sql,
 		NormalizedSQL:  normalizedSQL,
 		Digest:         digest,
 		PrevSQL:        prevSQL,

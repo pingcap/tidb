@@ -82,6 +82,7 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.AllowWriteRowID, Equals, DefOptWriteRowID)
 	c.Assert(vars.TiDBOptJoinReorderThreshold, Equals, DefTiDBOptJoinReorderThreshold)
 	c.Assert(vars.EnableFastAnalyze, Equals, DefTiDBUseFastAnalyze)
+	c.Assert(vars.AllowAutoRandExplicitInsert, Equals, DefTiDBAllowAutoRandExplicitInsert)
 
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.Concurrency))
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.MemQuota))
