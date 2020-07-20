@@ -23,7 +23,6 @@ How it Works:
 ### Related changes
 
 - PR to update `pingcap/docs`/`pingcap/docs-cn`:
-- PR to update `pingcap/tidb-ansible`:
 - Need to cherry-pick to the release branch
 
 ### Check List <!--REMOVE the items that are not applicable-->
