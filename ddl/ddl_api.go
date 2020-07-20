@@ -3562,7 +3562,10 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 
 func checkAutoRandom(tableInfo *model.TableInfo, originCol *table.Column, specNewColumn *ast.ColumnDef) (uint64, error) {
 	// Disallow add/drop actions on auto_random.
-	oldRandBits := tableInfo.AutoRandomBits
+	var oldRandBits uint64
+	if tableInfo.PKIsHandle && (tableInfo.GetPkName().L == originCol.Name.L) {
+		oldRandBits = tableInfo.AutoRandomBits
+	}
 	newRandBits, err := extractAutoRandomBitsFromColDef(specNewColumn)
 	if err != nil {
 		return 0, errors.Trace(err)
