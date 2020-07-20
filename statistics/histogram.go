@@ -115,7 +115,7 @@ func (hg *Histogram) GetUpper(idx int) *types.Datum {
 
 // MemoryUsage returns the total memory usage of this Histogram.
 // everytime changed the Histogram of the table, it will cost O(n)
-// complexity so calulate the memoryUsage might cost little time.
+// complexity so calculate the memoryUsage might cost little time.
 // We ignore the size of other metadata in Histogram.
 func (hg *Histogram) MemoryUsage() (sum int64) {
 	if hg == nil {
