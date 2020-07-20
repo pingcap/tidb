@@ -140,9 +140,13 @@ func buildHashPartitionDefinitions(ctx sessionctx.Context, s *ast.CreateTableStm
 	return nil
 }
 
-func buildRangePartitionDefinitions(ctx sessionctx.Context, s *ast.CreateTableStmt, pi *model.PartitionInfo) error {
+func buildRangePartitionDefinitions(ctx sessionctx.Context, s *ast.CreateTableStmt, pi *model.PartitionInfo) (err error) {
 	for _, def := range s.Partition.Definitions {
 		comment, _ := def.Comment()
+		err = checkTooLongTable(def.Name)
+		if err != nil {
+			return err
+		}
 		piDef := model.PartitionDefinition{
 			Name:    def.Name,
 			Comment: comment,
@@ -702,7 +706,13 @@ type stringSlice interface {
 func checkUniqueKeyIncludePartKey(partCols stringSlice, idxCols []*model.IndexColumn) bool {
 	for i := 0; i < partCols.Len(); i++ {
 		partCol := partCols.At(i)
-		if !findColumnInIndexCols(partCol, idxCols) {
+		idxCol := findColumnInIndexCols(partCol, idxCols)
+		if idxCol == nil {
+			// Partition column is not found in the index columns.
+			return false
+		}
+		if idxCol.Length > 0 {
+			// The partition column is found in the index columns, but the index column is a prefix index
 			return false
 		}
 	}
