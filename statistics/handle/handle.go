@@ -69,7 +69,7 @@ type Handle struct {
 	statsCache struct {
 		sync.Mutex
 		atomic.Value
-		statMemoryTracker *memory.Tracker
+		memTracker *memory.Tracker
 	}
 
 	restrictedExec sqlexec.RestrictedSQLExecutor
@@ -91,6 +91,9 @@ type Handle struct {
 func (h *Handle) Clear() {
 	h.mu.Lock()
 	h.statsCache.Store(statsCache{tables: make(map[int64]*statistics.Table)})
+	h.statsCache.memTracker = memory.NewTracker(
+		stringutil.MemoizeStr(func() string { return "statsCache" }),
+		-1)
 	for len(h.ddlEventCh) > 0 {
 		<-h.ddlEventCh
 	}
@@ -118,8 +121,8 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
 	if exec, ok := ctx.(sqlexec.RestrictedSQLExecutor); ok {
 		handle.restrictedExec = exec
 	}
-	handle.statsCache.statMemoryTracker = memory.NewTracker(
-		stringutil.MemoizeStr(func() string { return "statistics" }),
+	handle.statsCache.memTracker = memory.NewTracker(
+		stringutil.MemoizeStr(func() string { return "statsCache" }),
 		-1)
 	handle.mu.ctx = ctx
 	handle.mu.rateMap = make(errorRateDeltaMap)
@@ -236,6 +239,12 @@ func buildPartitionID2TableID(is infoschema.InfoSchema) map[int64]int64 {
 	return mapper
 }
 
+// GetMemConsumed returns the mem size of statscache consumed
+func (h *Handle) GetMemConsumed() (size int64) {
+	size = h.statsCache.memTracker.BytesConsumed()
+	return
+}
+
 // GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
 func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *statistics.Table {
 	return h.GetPartitionStats(tblInfo, tblInfo.ID)
@@ -258,8 +267,8 @@ func (h *Handle) updateStatsCache(newCache statsCache) {
 	h.statsCache.Lock()
 	oldCache := h.statsCache.Load().(statsCache)
 	if oldCache.version <= newCache.version {
+		h.statsCache.memTracker.Consume(newCache.stasticMemsize - oldCache.stasticMemsize)
 		h.statsCache.Store(newCache)
-		h.statsCache.statMemoryTracker.Consume(newCache.stasticMemsize - oldCache.stasticMemsize)
 	}
 	h.statsCache.Unlock()
 }
@@ -280,7 +289,6 @@ func (sc statsCache) initMemoryUsage() {
 		sum += tb.MemoryUsage()
 	}
 	sc.stasticMemsize = sum
-
 	return
 }
 
@@ -290,15 +298,15 @@ func (sc statsCache) update(tables []*statistics.Table, deletedIDs []int64, newV
 	newCache.version = newVersion
 	for _, tbl := range tables {
 		id := tbl.PhysicalID
-		if ptbl, ok := newCache.tables[id]; ok == false {
-			sc.stasticMemsize -= ptbl.MemoryUsage()
+		if ptbl, ok := newCache.tables[id]; ok {
+			newCache.stasticMemsize -= ptbl.MemoryUsage()
 		}
 		newCache.tables[id] = tbl
-		sc.stasticMemsize += tbl.MemoryUsage()
+		newCache.stasticMemsize += tbl.MemoryUsage()
 	}
 	for _, id := range deletedIDs {
-		if ptbl, ok := newCache.tables[id]; ok == true {
-			sc.stasticMemsize -= ptbl.MemoryUsage()
+		if ptbl, ok := newCache.tables[id]; ok {
+			newCache.stasticMemsize -= ptbl.MemoryUsage()
 		}
 		delete(newCache.tables, id)
 	}

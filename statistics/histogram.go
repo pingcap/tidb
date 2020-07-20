@@ -115,8 +115,8 @@ func (hg *Histogram) GetUpper(idx int) *types.Datum {
 
 // MemoryUsage returns the total memory usage of this Histogram.
 // everytime changed the Histogram of the table, it will cost O(n)
-// complexicity so calulate the memoryUsage might cost a little
-// We ignore the size of other metadata in Histogram
+// complexity so calulate the memoryUsage might cost little time.
+// We ignore the size of other metadata in Histogram.
 func (hg *Histogram) MemoryUsage() (sum int64) {
 	if hg == nil {
 		return
@@ -751,10 +751,13 @@ func (c *Column) String() string {
 	return c.Histogram.ToString(0)
 }
 
-// MemoryUsage returns the total memory usage of a Column in B.
+// MemoryUsage returns the total memory usage of Histogram and CMSketch in Column.
 // We ignore the size of other metadata in Column
 func (c *Column) MemoryUsage() (sum int64) {
-	sum = c.Histogram.MemoryUsage() + c.CMSketch.MemoryUsage()
+	sum = c.Histogram.MemoryUsage()
+	if c.CMSketch != nil {
+		sum += c.CMSketch.MemoryUsage()
+	}
 	return
 }
 
@@ -901,10 +904,13 @@ func (idx *Index) IsInvalid(collPseudo bool) bool {
 	return (collPseudo && idx.NotAccurate()) || idx.TotalRowCount() == 0
 }
 
-// MemoryUsage returns the total memory usage of a Column in B.
-// We ignore the size of other metadata in Column
+// MemoryUsage returns the total memory usage of a Histogram and CMSketch in Index.
+// We ignore the size of other metadata in Index.
 func (idx *Index) MemoryUsage() (sum int64) {
-	sum = idx.Histogram.MemoryUsage() + idx.CMSketch.MemoryUsage()
+	sum = idx.Histogram.MemoryUsage()
+	if idx.CMSketch != nil {
+		sum += idx.CMSketch.MemoryUsage()
+	}
 	return
 }
 

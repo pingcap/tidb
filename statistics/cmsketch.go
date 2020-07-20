@@ -18,7 +18,6 @@ import (
 	"math"
 	"reflect"
 	"sort"
-	"unsafe"
 
 	"github.com/cznic/mathutil"
 	"github.com/cznic/sortutil"
@@ -181,18 +180,12 @@ func (c *CMSketch) findTopNMeta(h1, h2 uint64, d []byte) *TopNMeta {
 	return nil
 }
 
-// MemoryUsage returns the total memory usage of a CMSketch in B.
-// We ignore the size of other metadata in CMSketch
+// MemoryUsage returns the total memory usage of a CMSketch.
+// only calc the hashtable size(CMSketch.table) and the CMSketch.topN
+// data are not tracked because size of CMSketch.topN take little influence
+// We ignore the size of other metadata in CMSketch.
 func (c *CMSketch) MemoryUsage() (sum int64) {
-	if c == nil {
-		return
-	}
-	sum = int64(cap(c.table) * 4)
-	for _, hs := range c.topN {
-		for _, meta := range hs {
-			sum += int64(unsafe.Sizeof(*meta))
-		}
-	}
+	sum = int64(c.depth * c.width * 4)
 	return
 }
 

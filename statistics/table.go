@@ -85,9 +85,6 @@ type HistColl struct {
 // it will only calc the size of Columns and Indices stats data of table.
 // We ignore the size of other metadata in Table
 func (t *Table) MemoryUsage() (sum int64) {
-	if t == nil {
-		return
-	}
 	for _, col := range t.Columns {
 		if col != nil {
 			sum += col.MemoryUsage()
