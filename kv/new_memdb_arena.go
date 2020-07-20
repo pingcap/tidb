@@ -294,7 +294,7 @@ func (l *memdbVlog) revertToCheckpoint(db *memdb, cp *memdbCheckpoint) {
 			db.size += len(l.getValue(hdr.oldValue))
 		}
 
-		l.moveCursor(&cursor, &hdr)
+		l.moveBackCursor(&cursor, &hdr)
 	}
 }
 
@@ -314,11 +314,11 @@ func (l *memdbVlog) inspectKVInLog(db *memdb, head, tail *memdbCheckpoint, f fun
 			f(node.getKey(), node.getKeyFlags(), value)
 		}
 
-		l.moveCursor(&cursor, &hdr)
+		l.moveBackCursor(&cursor, &hdr)
 	}
 }
 
-func (l *memdbVlog) moveCursor(cursor *memdbCheckpoint, hdr *memdbVlogHdr) {
+func (l *memdbVlog) moveBackCursor(cursor *memdbCheckpoint, hdr *memdbVlogHdr) {
 	cursor.offsetInBlock -= (memdbVlogHdrSize + int(hdr.valueLen))
 	if cursor.offsetInBlock == 0 {
 		cursor.blocks--

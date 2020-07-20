@@ -30,12 +30,7 @@ func (db *memdb) Iter(k Key, upperBound Key) (Iterator, error) {
 		start: k,
 		end:   upperBound,
 	}
-	if len(i.start) == 0 {
-		i.seekToFirst()
-	} else {
-		i.seek(i.start)
-	}
-	i.fixPosition()
+	i.init()
 	return i, nil
 }
 
@@ -45,13 +40,29 @@ func (db *memdb) IterReverse(k Key) (Iterator, error) {
 		end:     k,
 		reverse: true,
 	}
-	if len(i.end) == 0 {
-		i.seekToLast()
-	} else {
-		i.seek(i.end)
-	}
-	i.fixPosition()
+	i.init()
 	return i, nil
+}
+
+func (i *memdbIterator) init() {
+	if i.reverse {
+		if len(i.end) == 0 {
+			i.seekToLast()
+		} else {
+			i.seek(i.end)
+		}
+	} else {
+		if len(i.start) == 0 {
+			i.seekToFirst()
+		} else {
+			i.seek(i.start)
+		}
+	}
+
+	if i.isFlagsOnly() && !i.includeFlags {
+		err := i.Next()
+		_ = err // memdbIterator will never fail
+	}
 }
 
 func (i *memdbIterator) Valid() bool {
@@ -78,7 +89,7 @@ func (i *memdbIterator) Next() error {
 		}
 
 		// We need to skip persistent flags only nodes.
-		if i.includeFlags || i.curr.isNull() || !i.curr.vptr.isNull() {
+		if i.includeFlags || !i.isFlagsOnly() {
 			break
 		}
 	}
@@ -146,9 +157,6 @@ func (i *memdbIterator) seek(key Key) {
 	i.curr = y
 }
 
-func (i *memdbIterator) fixPosition() {
-	if !i.curr.isNull() && i.curr.vptr.isNull() && !i.includeFlags {
-		err := i.Next()
-		_ = err // memdbIterator will never fail
-	}
+func (i *memdbIterator) isFlagsOnly() bool {
+	return !i.curr.isNull() && i.curr.vptr.isNull()
 }
