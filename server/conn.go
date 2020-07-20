@@ -133,6 +133,10 @@ var (
 	queryDurationHistogramExecute  = metrics.QueryDurationHistogram.WithLabelValues("Execute")
 	queryDurationHistogramSet      = metrics.QueryDurationHistogram.WithLabelValues("Set")
 	queryDurationHistogramGeneral  = metrics.QueryDurationHistogram.WithLabelValues(metrics.LblGeneral)
+
+	disconnectNormal            = metrics.DisconnectionCounter.WithLabelValues(metrics.LblOK)
+	disconnectByClientWithError = metrics.DisconnectionCounter.WithLabelValues(metrics.LblError)
+	disconnectErrorUndetermined = metrics.DisconnectionCounter.WithLabelValues("undetermined")
 )
 
 // newClientConn creates a *clientConn object.
@@ -711,6 +715,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 					}
 				}
 			}
+			disconnectByClientWithError.Inc()
 			return
 		}
 
@@ -722,9 +727,11 @@ func (cc *clientConn) Run(ctx context.Context) {
 		if err = cc.dispatch(ctx, data); err != nil {
 			if terror.ErrorEqual(err, io.EOF) {
 				cc.addMetrics(data[0], startTime, nil)
+				disconnectNormal.Inc()
 				return
 			} else if terror.ErrResultUndetermined.Equal(err) {
 				logutil.Logger(ctx).Error("result undetermined, close this connection", zap.Error(err))
+				disconnectErrorUndetermined.Inc()
 				return
 			} else if terror.ErrCritical.Equal(err) {
 				metrics.CriticalErrorCounter.Add(1)
@@ -1795,7 +1802,11 @@ func (cc getLastStmtInConn) String() string {
 	case mysql.ComFieldList:
 		return "ListFields " + string(data)
 	case mysql.ComQuery, mysql.ComStmtPrepare:
-		return queryStrForLog(string(hack.String(data)))
+		sql := string(hack.String(data))
+		if cc.ctx.GetSessionVars().EnableLogDesensitization {
+			sql, _ = parser.NormalizeDigest(sql)
+		}
+		return queryStrForLog(sql)
 	case mysql.ComStmtExecute, mysql.ComStmtFetch:
 		stmtID := binary.LittleEndian.Uint32(data[0:4])
 		return queryStrForLog(cc.preparedStmt2String(stmtID))

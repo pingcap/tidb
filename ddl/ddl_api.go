@@ -3562,7 +3562,10 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 
 func checkAutoRandom(tableInfo *model.TableInfo, originCol *table.Column, specNewColumn *ast.ColumnDef) (uint64, error) {
 	// Disallow add/drop actions on auto_random.
-	oldRandBits := tableInfo.AutoRandomBits
+	var oldRandBits uint64
+	if tableInfo.PKIsHandle && (tableInfo.GetPkName().L == originCol.Name.L) {
+		oldRandBits = tableInfo.AutoRandomBits
+	}
 	newRandBits, err := extractAutoRandomBitsFromColDef(specNewColumn)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -4390,7 +4393,14 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	}
 
 	if indexInfo := t.Meta().FindIndexByName(indexName.L); indexInfo != nil {
-		err = ErrDupKeyName.GenWithStack("index already exist %s", indexName)
+		if indexInfo.State != model.StatePublic {
+			// NOTE: explicit error message. See issue #18363.
+			err = ErrDupKeyName.GenWithStack("index already exist %s; "+
+				"a background job is trying to add the same index, "+
+				"please check by `ADMIN SHOW DDL JOBS`", indexName)
+		} else {
+			err = ErrDupKeyName.GenWithStack("index already exist %s", indexName)
+		}
 		if ifNotExists {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			return nil
