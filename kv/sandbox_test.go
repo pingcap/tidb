@@ -19,7 +19,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/goleveldb/leveldb/memdb"
+	leveldb "github.com/pingcap/goleveldb/leveldb/memdb"
 )
 
 const (
@@ -86,7 +86,7 @@ func (s testMemDBSuite) TestIterator(c *C) {
 func (s testMemDBSuite) TestRuntimeAssertion(c *C) {
 	p := NewSandbox()
 	p1 := p.Derive()
-	c.Check(func() { p.Put([]byte{0}, []byte{}) }, Panics, "cannot write to a sandbox when it has forked a new sanbox")
+	c.Check(func() { p.Put([]byte{0}, []byte{}) }, Panics, "cannot write to a sandbox when it has forked a new sandbox")
 	c.Check(func() { p.Derive() }, Panics, "cannot start second sandbox")
 	c.Check(func() { p.Discard() }, Panics, "root sandbox is freezed")
 	p1.Discard()
@@ -342,7 +342,7 @@ func (s testMemDBSuite) TestEmptyDB(c *C) {
 	c.Check(it.Valid(), IsFalse)
 }
 
-func (s testMemDBSuite) checkConsist(c *C, p1 *sandbox, p2 *memdb.DB) {
+func (s testMemDBSuite) checkConsist(c *C, p1 *sandbox, p2 *leveldb.DB) {
 	c.Check(p1.Len(), Equals, p2.Len())
 	c.Check(p1.Size(), Equals, p2.Size())
 

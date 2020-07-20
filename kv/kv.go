@@ -170,7 +170,7 @@ type StagingBuffer interface {
 type MemBuffer interface {
 	RetrieverMutator
 
-	// GetFlags returns the lastest flags associated with key.
+	// GetFlags returns the latest flags associated with key.
 	GetFlags(Key) (KeyFlags, error)
 	// SetWithFlags put key-value into the last active staging buffer with the given KeyFlags.
 	SetWithFlags(Key, KeyFlags, []byte) error
@@ -183,7 +183,7 @@ type MemBuffer interface {
 	// Subsequent writes will be temporarily stored in this new staging buffer.
 	// When you think all modifications looks good, you can call `Release` to public all of them to the upper level buffer.
 	Staging() StagingHandle
-	// Release publish all modifications in the lastest staging buffer to upper level.
+	// Release publish all modifications in the latest staging buffer to upper level.
 	Release(StagingHandle) (int, error)
 	// Cleanup cleanup the resources referenced by the StagingHandle.
 	// If the changes are not published by `Release`, they will be discarded.
