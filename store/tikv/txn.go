@@ -54,12 +54,11 @@ type tikvTxn struct {
 	startTS   uint64
 	startTime time.Time // Monotonic timestamp for recording txn time consuming.
 	commitTS  uint64
-	lockKeys  [][]byte
-	lockedMap map[string]struct{}
 	mu        sync.Mutex // For thread-safe LockKeys function.
 	setCnt    int64
 	vars      *kv.Variables
 	committer *twoPhaseCommitter
+	lockedCnt uint64
 
 	// For data consistency check.
 	// assertions[:confirmed] is the assertion of current transaction.
@@ -69,7 +68,6 @@ type tikvTxn struct {
 	confirmed  int
 
 	valid bool
-	dirty bool
 
 	// txnInfoSchema is the infoSchema fetched at startTS.
 	txnInfoSchema SchemaVer
@@ -91,7 +89,6 @@ func newTikvTxnWithStartTS(store *tikvStore, startTS uint64, replicaReadSeed uin
 	return &tikvTxn{
 		snapshot:  snapshot,
 		us:        kv.NewUnionStore(snapshot),
-		lockedMap: map[string]struct{}{},
 		store:     store,
 		startTS:   startTS,
 		startTime: time.Now(),
@@ -306,10 +303,25 @@ func (txn *tikvTxn) Rollback() error {
 }
 
 func (txn *tikvTxn) rollbackPessimisticLocks() error {
-	if len(txn.lockKeys) == 0 {
+	if atomic.LoadUint64(&txn.lockedCnt) == 0 {
 		return nil
 	}
-	return txn.committer.pessimisticRollbackMutations(NewBackofferWithVars(context.Background(), cleanupMaxBackoff, txn.vars), committerMutations{keys: txn.lockKeys})
+	bo := NewBackofferWithVars(context.Background(), cleanupMaxBackoff, txn.vars)
+	keys := txn.collectLockedKeys()
+	return txn.committer.pessimisticRollbackMutations(bo, committerMutations{keys: keys})
+}
+
+func (txn *tikvTxn) collectLockedKeys() [][]byte {
+	keys := make([][]byte, 0, atomic.LoadUint64(&txn.lockedCnt))
+	buf := txn.GetMemBuffer()
+	var err error
+	for it := buf.IterWithFlags(nil, nil); it.Valid(); err = it.Next() {
+		_ = err
+		if it.Flags().HasLocked() {
+			keys = append(keys, it.Key())
+		}
+	}
+	return keys
 }
 
 // lockWaitTime in ms, except that kv.LockAlwaysWait(0) means always wait lock, kv.LockNowait(-1) means nowait lock
@@ -331,9 +343,11 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 			*lockCtx.LockKeysCount += int32(len(keys))
 		}
 	}()
+	memBuf := txn.us.GetMemBuffer()
+
 	txn.mu.Lock()
 	for _, key := range keysInput {
-		if _, ok := txn.lockedMap[string(key)]; !ok {
+		if flags, err := memBuf.GetFlags(key); err != nil || !flags.HasLocked() {
 			keys = append(keys, key)
 		} else if lockCtx.ReturnValues {
 			// An already locked key can not return values, we add an entry to let the caller get the value
@@ -370,7 +384,7 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 		txn.committer.forUpdateTS = lockCtx.ForUpdateTS
 		// If the number of keys greater than 1, it can be on different region,
 		// concurrently execute on multiple regions may lead to deadlock.
-		txn.committer.isFirstLock = len(txn.lockKeys) == 0 && len(keys) == 1
+		txn.committer.isFirstLock = atomic.LoadUint64(&txn.lockedCnt) == 0 && len(keys) == 1
 		err = txn.committer.pessimisticLockMutations(bo, lockCtx, committerMutations{keys: keys})
 		if lockCtx.Killed != nil {
 			// If the kill signal is received during waiting for pessimisticLock,
@@ -380,7 +394,9 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 		}
 		if err != nil {
 			for _, key := range keys {
-				txn.us.UnmarkPresumeKeyNotExists(key)
+				if txn.us.HasPresumeKeyNotExists(key) {
+					txn.us.UnmarkPresumeKeyNotExists(key)
+				}
 			}
 			keyMayBeLocked := terror.ErrorNotEqual(kv.ErrWriteConflict, err) && terror.ErrorNotEqual(kv.ErrKeyExists, err)
 			// If there is only 1 key and lock fails, no need to do pessimistic rollback.
@@ -408,11 +424,10 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 		}
 	}
 	txn.mu.Lock()
-	txn.lockKeys = append(txn.lockKeys, keys...)
 	for _, key := range keys {
-		txn.lockedMap[string(key)] = struct{}{}
+		memBuf.UpdateFlags(key, kv.SetKeyLocked)
 	}
-	txn.dirty = true
+	atomic.AddUint64(&txn.lockedCnt, uint64(len(keys)))
 	txn.mu.Unlock()
 	return nil
 }
@@ -465,7 +480,7 @@ func hashInKeys(deadlockKeyHash uint64, keys [][]byte) bool {
 }
 
 func (txn *tikvTxn) IsReadOnly() bool {
-	return !txn.dirty && !txn.us.GetMemBuffer().Dirty()
+	return !txn.us.GetMemBuffer().Dirty()
 }
 
 func (txn *tikvTxn) StartTS() uint64 {

@@ -23,10 +23,10 @@ import (
 
 const (
 	flagPresumeKNE KeyFlags = 1 << iota
-	flagPessimisticLock
+	flagKeyLocked
 	flagNoNeedCommit
 
-	persistentFlags = flagPessimisticLock
+	persistentFlags = flagKeyLocked
 	// bit 1 => red, bit 0 => black
 	nodeColorBit  uint8 = 0x80
 	nodeFlagsMask       = ^nodeColorBit
@@ -40,9 +40,9 @@ func (f KeyFlags) HasPresumeKeyNotExists() bool {
 	return f&flagPresumeKNE != 0
 }
 
-// HasPessimisticLock retruns whether the associated key has acquired pessimistic lock.
-func (f KeyFlags) HasPessimisticLock() bool {
-	return f&flagPessimisticLock != 0
+// HasLocked retruns whether the associated key has acquired pessimistic lock.
+func (f KeyFlags) HasLocked() bool {
+	return f&flagKeyLocked != 0
 }
 
 // HasNoNeedCommit returns whether the key should be used in 2pc commit phase.
@@ -58,10 +58,10 @@ const (
 	SetPresumeKeyNotExists FlagsOp = 1 << iota
 	// DelPresumeKeyNotExists reverts SetPresumeKeyNotExists.
 	DelPresumeKeyNotExists
-	// SetPessimisticLock marks the associated key has acquired pessimistic lock.
-	SetPessimisticLock
-	// DelPessimisticLock reverts SetPessimisticLock.
-	DelPessimisticLock
+	// SetKeyLocked marks the associated key has acquired lock.
+	SetKeyLocked
+	// DelKeyLocked reverts SetKeyLocked.
+	DelKeyLocked
 	// SetNoNeedCommit marks the key shouldn't be used in 2pc commit phase.
 	SetNoNeedCommit
 )
@@ -73,10 +73,10 @@ func applyFlagsOps(origin KeyFlags, ops ...FlagsOp) KeyFlags {
 			origin |= flagPresumeKNE
 		case DelPresumeKeyNotExists:
 			origin &= ^flagPresumeKNE
-		case SetPessimisticLock:
-			origin |= flagPessimisticLock
-		case DelPessimisticLock:
-			origin &= ^flagPessimisticLock
+		case SetKeyLocked:
+			origin |= flagKeyLocked
+		case DelKeyLocked:
+			origin &= ^flagKeyLocked
 		case SetNoNeedCommit:
 			origin |= flagNoNeedCommit
 		}
@@ -262,6 +262,9 @@ func (db *memdb) set(key Key, value []byte, ops ...FlagsOp) error {
 
 	if len(ops) != 0 {
 		flags := applyFlagsOps(x.getKeyFlags(), ops...)
+		if flags&persistentFlags != 0 {
+			db.dirty = true
+		}
 		x.setKeyFlags(flags)
 	}
 

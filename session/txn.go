@@ -305,10 +305,9 @@ func (st *TxnState) KeysNeedToLock() ([]kv.Key, error) {
 	keys := make([]kv.Key, 0, st.countHint())
 	buf := st.Transaction.GetMemBuffer()
 	buf.InspectStage(st.stagingHandle, func(k kv.Key, flags kv.KeyFlags, v []byte) {
-		if !keyNeedToLock(k, v) {
+		if !keyNeedToLock(k, v) || flags.HasLocked() {
 			return
 		}
-		// If the key is already locked, it will be deduplicated in LockKeys method later.
 		keys = append(keys, k)
 	})
 	// LockKeys will sort and deduplicate keys.

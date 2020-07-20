@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"math"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -182,38 +181,42 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 
 	txn := c.txn
 	memBuf := txn.GetMemBuffer()
-	sizeHint := len(txn.lockKeys) + txn.us.GetMemBuffer().Len()
+	sizeHint := int(atomic.LoadUint64(&c.txn.lockedCnt)) + txn.us.GetMemBuffer().Len()
 	mutations := newCommiterMutations(sizeHint)
 	c.isPessimistic = txn.IsPessimistic()
 
-	// Merge ordered lockKeys and pairs in the memBuffer into the mutations array
-	sort.Slice(txn.lockKeys, func(i, j int) bool {
-		return bytes.Compare(txn.lockKeys[i], txn.lockKeys[j]) < 0
-	})
-	lockIdx := 0
-	err := kv.WalkMemBuffer(txn.us.GetMemBuffer(), func(k kv.Key, v []byte) error {
-		var (
-			op                pb.Op
-			value             []byte
-			isPessimisticLock bool
-		)
-		if len(v) > 0 {
-			if tablecodec.IsUntouchedIndexKValue(k, v) {
-				return nil
+	var err error
+	for it := memBuf.IterWithFlags(nil, nil); it.Valid(); err = it.Next() {
+		_ = err
+		key := it.Key()
+		flags := it.Flags()
+		if !it.HasValue() {
+			if flags.HasLocked() {
+				mutations.push(pb.Op_Lock, key, nil, c.isPessimistic)
+				size += len(key)
+				lockCnt++
+			}
+			continue
+		}
+
+		var op pb.Op
+		value := it.Value()
+		if len(value) > 0 {
+			if tablecodec.IsUntouchedIndexKValue(key, value) {
+				continue
 			}
 			op = pb.Op_Put
-			if txn.us.HasPresumeKeyNotExists(k) {
+			if flags.HasPresumeKeyNotExists() {
 				op = pb.Op_Insert
 			}
-			value = v
 			putCnt++
 		} else {
-			if !txn.IsPessimistic() && txn.us.HasPresumeKeyNotExists(k) {
+			if !txn.IsPessimistic() && flags.HasPresumeKeyNotExists() {
 				// delete-your-writes keys in optimistic txn need check not exists in prewrite-phase
 				// due to `Op_CheckNotExists` doesn't prewrite lock, so mark those keys should not be used in commit-phase.
 				op = pb.Op_CheckNotExists
 				checkCnt++
-				memBuf.UpdateFlags(k, kv.SetNoNeedCommit)
+				memBuf.UpdateFlags(key, kv.SetNoNeedCommit)
 			} else {
 				// normal delete keys in optimistic txn can be delete without not exists checking
 				// delete-your-writes keys in pessimistic txn can ensure must be no exists so can directly delete them
@@ -221,39 +224,14 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 				delCnt++
 			}
 		}
-		for lockIdx < len(txn.lockKeys) {
-			lockKey := txn.lockKeys[lockIdx]
-			ord := bytes.Compare(lockKey, k)
-			if ord == 0 {
-				isPessimisticLock = c.isPessimistic
-				lockIdx++
-				break
-			} else if ord > 0 {
-				break
-			} else {
-				mutations.push(pb.Op_Lock, lockKey, nil, c.isPessimistic)
-				lockCnt++
-				size += len(lockKey)
-				lockIdx++
-			}
+		var isPessimistic bool
+		if flags.HasLocked() {
+			isPessimistic = c.isPessimistic
 		}
-		mutations.push(op, k, value, isPessimisticLock)
-		entrySize := len(k) + len(v)
-		if uint64(entrySize) > kv.TxnEntrySizeLimit {
-			return kv.ErrEntryTooLarge.GenWithStackByArgs(kv.TxnEntrySizeLimit, entrySize)
-		}
-		size += entrySize
-		return nil
-	})
-	if err != nil {
-		return errors.Trace(err)
+		mutations.push(op, key, value, isPessimistic)
+		size += len(key) + len(value)
 	}
-	// add the remaining locks to mutations and keys
-	for _, lockKey := range txn.lockKeys[lockIdx:] {
-		mutations.push(pb.Op_Lock, lockKey, nil, c.isPessimistic)
-		lockCnt++
-		size += len(lockKey)
-	}
+
 	if mutations.len() == 0 {
 		return nil
 	}
