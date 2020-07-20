@@ -172,6 +172,8 @@ func (s *testCollateSuite) TestGetCollator(c *C) {
 	c.Assert(GetCollatorByID(83), FitsTypeOf, &binPaddingCollator{})
 	c.Assert(GetCollatorByID(45), FitsTypeOf, &generalCICollator{})
 	c.Assert(GetCollatorByID(33), FitsTypeOf, &generalCICollator{})
+	c.Assert(GetCollatorByID(224), FitsTypeOf, &unicodeCICollator{})
+	c.Assert(GetCollatorByID(192), FitsTypeOf, &unicodeCICollator{})
 	c.Assert(GetCollatorByID(9999), FitsTypeOf, &binPaddingCollator{})
 
 	SetNewCollationEnabledForTest(false)
@@ -188,5 +190,7 @@ func (s *testCollateSuite) TestGetCollator(c *C) {
 	c.Assert(GetCollatorByID(83), FitsTypeOf, &binCollator{})
 	c.Assert(GetCollatorByID(45), FitsTypeOf, &binCollator{})
 	c.Assert(GetCollatorByID(33), FitsTypeOf, &binCollator{})
+	c.Assert(GetCollatorByID(224), FitsTypeOf, &binCollator{})
+	c.Assert(GetCollatorByID(192), FitsTypeOf, &binCollator{})
 	c.Assert(GetCollatorByID(9999), FitsTypeOf, &binCollator{})
 }
