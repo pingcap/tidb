@@ -15,6 +15,8 @@ package domain
 
 import (
 	"context"
+	"fmt"
+	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -743,10 +745,11 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 		return err
 	}
 
-	do.serverID, err = do.store.PDClient().AllocID(ctx, pdpb.AllocIDRequest_SERVER_ID)
-	if err != nil {
-		logutil.BgLogger().Error("acquire serverID failed", zap.Error(err))
-		do.serverID = 0
+	if do.etcdClient != nil {
+		do.serverID, err = do.acquireServerID(ctx, do.etcdClient)
+		if err != nil {
+			logutil.BgLogger().Error("acquire serverID failed", zap.Error(err))
+		}
 	}
 	logutil.BgLogger().Info("acquire serverID", zap.Uint64("serverID", do.serverID))
 
@@ -1235,6 +1238,35 @@ func (do *Domain) NotifyUpdatePrivilege(ctx sessionctx.Context) {
 // ServerID gets serverID.
 func (do *Domain) ServerID() uint64 {
 	return do.serverID
+}
+
+const (
+	serverIDEtcdPath = "/tidb/server_id"
+	acquireServerIDRetryCnt = 5
+)
+
+func (do *Domain) acquireServerID(ctx context.Context, client *clientv3.Client) (serverID uint64, err error) {
+	for i:=0; i<acquireServerIDRetryCnt; i++ {
+		randServerID := rand.Int63n(util.MaxServerID) + 1 // get a random serverID [1, MaxServerID]
+		key := fmt.Sprintf("%s/%v", serverIDEtcdPath, randServerID)
+	
+		cmp clientv3.Cmp
+		cmp = clientv3.Compare(clientv3.CreateRevision(key), "=", 0)
+		value := typeutil.Uint64ToBytes(0)
+		txn := client.Txn(ctx)
+		t := txn.If([]clientv3.Cmp{cmp})
+		resp, err := t.Then(clientv3.OpPut(key, string(value))).Commit()
+		if err != nil {
+			return 0, err
+		}
+		if !resp.Succeeded {
+			logutil.BgLogger().Info("random serverID exists, try again", zap.Int32("randServerID", randServerID))
+			continue
+		}
+		return uint64(randServerID), nil
+	}
+	logutil.BgLogger().Warn("no serverID available", zap.Int32("retry count", acquireServerIDRetryCnt))
+	return 0, nil
 }
 
 var (

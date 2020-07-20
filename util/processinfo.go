@@ -168,6 +168,11 @@ type GlobalConnID struct {
 	Is64bits    bool
 }
 
+var (
+	// MaxServerID is maximum serverID
+	MaxServerID = 1<<23 - 1
+)
+
 func (g *GlobalConnID) makeID(localConnID uint64) uint64 {
 	var id uint64
 	if g.Is64bits {

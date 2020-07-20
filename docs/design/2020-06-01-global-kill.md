@@ -1,7 +1,7 @@
 # Global Kill
 
 - Author(s):     [pingyu](https://github.com/pingyu) (Ping Yu)
-- Last updated:  2020-06-18
+- Last updated:  2020-07-14
 - Discussion at: https://github.com/pingcap/tidb/issues/8854
 
 ## Abstract
