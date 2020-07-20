@@ -270,6 +270,7 @@ func (p *LogicalProjection) appendExpr(expr expression.Expression) *expression.C
 		UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  expr.GetType(),
 	}
+	col.SetCoercibility(expr.Coercibility())
 	p.schema.Append(col)
 	return col
 }
