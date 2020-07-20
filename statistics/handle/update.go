@@ -225,22 +225,37 @@ var (
 // needDumpStatsDelta returns true when only updates a small portion of the table and the time since last update
 // do not exceed one hour.
 func needDumpStatsDelta(h *Handle, id int64, item variable.TableDelta, currentTime time.Time) bool {
+	logutil.BgLogger().Info("[stats] Check needDumpStatsDelta", zap.Any("table_id", id),
+		zap.Any("InitTime", item.InitTime),
+		zap.Any("currentTime", currentTime))
 	if item.InitTime.IsZero() {
 		item.InitTime = currentTime
 	}
 	tbl, ok := h.statsCache.Load().(statsCache).tables[id]
 	if !ok {
+		logutil.BgLogger().Info("[stats] No need to dump if the stats is invalid", zap.Any("table_id", id))
 		// No need to dump if the stats is invalid.
 		return false
 	}
 	if currentTime.Sub(item.InitTime) > dumpStatsMaxDuration {
 		// Dump the stats to kv at least once an hour.
+		logutil.BgLogger().Info("[stats] Dump the stats to kv at least once an hour",
+			zap.Any("currenttime:", currentTime),
+			zap.Any("inittime", item.InitTime))
 		return true
 	}
 	if tbl.Count == 0 || float64(item.Count)/float64(tbl.Count) > DumpStatsDeltaRatio {
 		// Dump the stats when there are many modifications.
+		logutil.BgLogger().Info("[stats] Dump the stats when there are many modifications.",
+			zap.Any("item.Count", item.Count),
+			zap.Any("tbl.Count", tbl.Count),
+			zap.Any("float64(item.Count)/float64(tbl.Count) ", float64(item.Count)/float64(tbl.Count)))
 		return true
 	}
+	logutil.BgLogger().Info("[stats] Don't update modify_row",
+		zap.Any("item.Count", item.Count),
+		zap.Any("tbl.Count", tbl.Count),
+		zap.Any("float64(item.Count)/float64(tbl.Count) ", float64(item.Count)/float64(tbl.Count)))
 	return false
 }
 
@@ -286,16 +301,19 @@ func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
 	currentTime := time.Now()
 	for id, item := range h.globalMap {
 		if mode == DumpDelta && !needDumpStatsDelta(h, id, item, currentTime) {
+			logutil.BgLogger().Info("[stats] skip update", zap.Any("table id:", id))
 			continue
 		}
 		updated, err := h.dumpTableStatCountToKV(id, item)
 		if err != nil {
+			logutil.BgLogger().Info("[stats] dumpTableStatCountToKV fail.", zap.Error(err))
 			return errors.Trace(err)
 		}
 		if updated {
 			h.globalMap.update(id, -item.Delta, -item.Count, nil)
 		}
 		if err = h.dumpTableStatColSizeToKV(id, item); err != nil {
+			logutil.BgLogger().Info("[stats] dumpTableStatColSizeToKV fail.", zap.Error(err))
 			return errors.Trace(err)
 		}
 		if updated {
@@ -337,6 +355,7 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 	} else {
 		sql = fmt.Sprintf("update mysql.stats_meta set version = %d, count = count + %d, modify_count = modify_count + %d where table_id = %d", startTS, delta.Delta, delta.Count, id)
 	}
+	logutil.BgLogger().Info("[stats] update modify_row", zap.Any("sql", sql))
 	err = execSQLs(context.Background(), exec, []string{sql})
 	updated = h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0
 	return

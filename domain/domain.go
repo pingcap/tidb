@@ -1047,6 +1047,9 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 		do.SetStatsUpdating(false)
 		do.wg.Done()
 	}()
+	defer func() {
+		logutil.BgLogger().Info("[stats] stats worker exits.")
+	}()
 	for {
 		select {
 		case <-do.exit:
@@ -1062,7 +1065,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 		case <-deltaUpdateTicker.C:
 			err := statsHandle.DumpStatsDeltaToKV(handle.DumpDelta)
 			if err != nil {
-				logutil.BgLogger().Debug("dump stats delta failed", zap.Error(err))
+				logutil.BgLogger().Error("dump stats delta failed", zap.Error(err))
 			}
 			statsHandle.UpdateErrorRate(do.InfoSchema())
 		case <-loadFeedbackTicker.C:
