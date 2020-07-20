@@ -68,7 +68,7 @@ type ParallelNestedLoopApplyExec struct {
 
 	// fields about concurrency control
 	concurrency int
-	started     bool
+	started     uint32
 	freeChkCh   chan *chunk.Chunk
 	resultChkCh chan result
 	outerRowCh  chan outerRow
@@ -132,7 +132,7 @@ func (e *ParallelNestedLoopApplyExec) Open(ctx context.Context) error {
 
 // Next implements the Executor interface.
 func (e *ParallelNestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
-	if !e.started {
+	if atomic.CompareAndSwapUint32(&e.started, 0, 1) {
 		e.workerWg.Add(1)
 		go e.outerWorker(ctx)
 		for i := 0; i < e.concurrency; i++ {
@@ -141,7 +141,6 @@ func (e *ParallelNestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk
 		}
 		e.notifyWg.Add(1)
 		go e.notifyWorker(ctx)
-		e.started = true
 	}
 	result := <-e.resultChkCh
 	if result.err != nil {
@@ -160,10 +159,10 @@ func (e *ParallelNestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk
 func (e *ParallelNestedLoopApplyExec) Close() error {
 	e.memTracker = nil
 	err := e.outerExec.Close()
-	if e.started {
+	if atomic.LoadUint32(&e.started) == 1 {
 		close(e.exit)
-		e.started = false
 		e.notifyWg.Wait()
+		e.started = 0
 	}
 
 	if e.runtimeStats != nil {
@@ -178,9 +177,7 @@ func (e *ParallelNestedLoopApplyExec) Close() error {
 		} else {
 			runtimeStats.setCacheInfo(false, 0)
 		}
-		if e.concurrency > 1 {
-			runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", e.concurrency))
-		}
+		runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", e.concurrency))
 	}
 	return err
 }
@@ -363,6 +360,9 @@ func (e *ParallelNestedLoopApplyExec) fillInnerChunk(ctx context.Context, id int
 		if e.innerIter[id] == nil || e.innerIter[id].Current() == e.innerIter[id].End() {
 			if e.outerRow[id] != nil && !e.hasMatch[id] {
 				e.joiners[id].onMissMatch(e.hasNull[id], *e.outerRow[id], req)
+				if req.IsFull() {
+					return
+				}
 			}
 			var exit bool
 			e.outerRow[id], exit = e.fetchNextOuterRow(id, req)
