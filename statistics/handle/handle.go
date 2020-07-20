@@ -265,11 +265,12 @@ func (h *Handle) updateStatsCache(newCache statsCache) {
 }
 
 func (sc statsCache) copy() statsCache {
-	newCache := statsCache{tables: make(map[int64]*statistics.Table, len(sc.tables)), version: sc.version}
+	newCache := statsCache{tables: make(map[int64]*statistics.Table, len(sc.tables)),
+		version:        sc.version,
+		stasticMemsize: sc.stasticMemsize}
 	for k, v := range sc.tables {
 		newCache.tables[k] = v
 	}
-	newCache.stasticMemsize = sc.stasticMemsize
 	return newCache
 }
 
@@ -286,7 +287,6 @@ func (sc statsCache) initMemoryUsage() {
 // update updates the statistics table cache using copy on write.
 func (sc statsCache) update(tables []*statistics.Table, deletedIDs []int64, newVersion uint64) statsCache {
 	newCache := sc.copy()
-	sc.stasticMemsize = 0
 	newCache.version = newVersion
 	for _, tbl := range tables {
 		id := tbl.PhysicalID
@@ -299,7 +299,6 @@ func (sc statsCache) update(tables []*statistics.Table, deletedIDs []int64, newV
 	for _, id := range deletedIDs {
 		if ptbl, ok := newCache.tables[id]; ok == true {
 			sc.stasticMemsize -= ptbl.MemoryUsage()
-
 		}
 		delete(newCache.tables, id)
 	}

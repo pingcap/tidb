@@ -187,7 +187,7 @@ func (c *CMSketch) MemoryUsage() (sum int64) {
 	if c == nil {
 		return
 	}
-	sum = int64(cap(c.table))
+	sum = int64(cap(c.table) * 4)
 	for _, hs := range c.topN {
 		for _, meta := range hs {
 			sum += int64(unsafe.Sizeof(*meta))

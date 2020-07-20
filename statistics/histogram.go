@@ -20,6 +20,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
@@ -120,7 +121,7 @@ func (hg *Histogram) MemoryUsage() (sum int64) {
 	if hg == nil {
 		return
 	}
-	sum = hg.Bounds.MemoryUsage() + int64(cap(hg.Buckets)) + int64(cap(hg.scalars))
+	sum = hg.Bounds.MemoryUsage() + int64(cap(hg.Buckets)*int(unsafe.Sizeof(Bucket{}))) + int64(cap(hg.scalars)*int(unsafe.Sizeof(scalar{})))
 	return
 }
 
