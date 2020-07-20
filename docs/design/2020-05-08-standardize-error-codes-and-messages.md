@@ -191,6 +191,7 @@ The code of each components looks like:
 - CDC: CDC-([A-Z]+-)?[0-9]{3,}
 - Lightning: LN-([A-Z]+-)?[0-9]{3,}
 - Dumpling: DP-([A-Z]+-)?[0-9]{3,}
+- TiFlash: FLASH-([A-Z]+-)?[0-9]{3,}
 
 ### How It Works
 
