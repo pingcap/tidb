@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
@@ -99,7 +100,7 @@ type baseExecutor struct {
 	maxChunkSize  int
 	children      []Executor
 	retFieldTypes []*types.FieldType
-	runtimeStats  *execdetails.RuntimeStats
+	runtimeStats  *execdetails.BasicRuntimeStats
 }
 
 const (
@@ -217,7 +218,8 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id fmt.S
 	}
 	if ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
 		if e.id != nil {
-			e.runtimeStats = e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.id.String())
+			e.runtimeStats = &execdetails.BasicRuntimeStats{}
+			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(id.String(), e.runtimeStats)
 		}
 	}
 	if schema != nil {
@@ -256,7 +258,7 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 		defer func() { base.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
 	sessVars := base.ctx.GetSessionVars()
-	if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
+	if atomic.LoadUint32(&sessVars.Killed) == 1 {
 		return ErrQueryInterrupted
 	}
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
@@ -264,7 +266,16 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-	return e.Next(ctx, req)
+	err := e.Next(ctx, req)
+
+	if err != nil {
+		return err
+	}
+	// recheck whether the session/query is killed during the Next()
+	if atomic.LoadUint32(&sessVars.Killed) == 1 {
+		err = ErrQueryInterrupted
+	}
+	return err
 }
 
 // CancelDDLJobsExec represents a cancel DDL jobs executor.
@@ -718,12 +729,6 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	defer func() { e.done = true }()
 
-	if e.table.Meta().IsCommonHandle {
-		// TODO: fix me to support cluster index table admin check table.
-		// https://github.com/pingcap/tidb/projects/45#card-39562229
-		return nil
-	}
-
 	idxNames := make([]string, 0, len(e.indexInfos))
 	for _, idx := range e.indexInfos {
 		idxNames = append(idxNames, idx.Name.O)
@@ -870,7 +875,7 @@ type SelectLockExec struct {
 	Lock ast.SelectLockType
 	keys []kv.Key
 
-	tblID2Handle     map[int64][]*expression.Column
+	tblID2Handle     map[int64][]plannercore.HandleCols
 	partitionedTable []table.PartitionedTable
 
 	// tblID2Table is cached to reduce cost.
@@ -924,7 +929,11 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 				}
 
 				for _, col := range cols {
-					e.keys = append(e.keys, tablecodec.EncodeRowKeyWithHandle(physicalID, kv.IntHandle(row.GetInt64(col.Index))))
+					handle, err := col.BuildHandle(row)
+					if err != nil {
+						return err
+					}
+					e.keys = append(e.keys, tablecodec.EncodeRowKeyWithHandle(physicalID, handle))
 				}
 			}
 		}
@@ -1285,7 +1294,7 @@ func (e *TableScanExec) nextChunk4InfoSchema(ctx context.Context, chk *chunk.Chu
 			columns[i] = table.ToColumn(colInfo)
 		}
 		mutableRow := chunk.MutRowFromTypes(retTypes(e))
-		err := e.t.IterRecords(e.ctx, nil, columns, func(h int64, rec []types.Datum, cols []*table.Column) (bool, error) {
+		err := e.t.IterRecords(e.ctx, nil, columns, func(_ kv.Handle, rec []types.Datum, cols []*table.Column) (bool, error) {
 			mutableRow.SetDatums(rec...)
 			e.virtualTableChunkList.AppendRow(mutableRow.ToRow())
 			return true, nil
@@ -1542,7 +1551,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.MemTracker.SetActionOnExceed(action)
 	}
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
-		s, err = getPreparedStmt(execStmt, vars)
+		s, err = planner.GetPreparedStmt(execStmt, vars)
 		if err != nil {
 			return
 		}
@@ -1562,14 +1571,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	// pushing them down to TiKV as flags.
 	switch stmt := s.(type) {
 	case *ast.UpdateStmt:
-		sc.InUpdateStmt = true
-		sc.DupKeyAsWarning = stmt.IgnoreErr
-		sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
-		sc.TruncateAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
-		sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
-		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
-		sc.IgnoreZeroInDate = !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
-		sc.Priority = stmt.Priority
+		ResetUpdateStmtCtx(sc, stmt, vars)
 	case *ast.DeleteStmt:
 		sc.InDeleteStmt = true
 		sc.DupKeyAsWarning = stmt.IgnoreErr
@@ -1661,6 +1663,18 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.PrevFoundInPlanCache = vars.FoundInPlanCache
 	vars.FoundInPlanCache = false
 	return
+}
+
+// ResetUpdateStmtCtx resets statement context for UpdateStmt.
+func ResetUpdateStmtCtx(sc *stmtctx.StatementContext, stmt *ast.UpdateStmt, vars *variable.SessionVars) {
+	sc.InUpdateStmt = true
+	sc.DupKeyAsWarning = stmt.IgnoreErr
+	sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+	sc.TruncateAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+	sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+	sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
+	sc.IgnoreZeroInDate = !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
+	sc.Priority = stmt.Priority
 }
 
 // FillVirtualColumnValue will calculate the virtual column value by evaluating generated

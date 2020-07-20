@@ -218,7 +218,7 @@ func (s *testSnapshotSuite) TestSkipLargeTxnLock(c *C) {
 	c.Assert(txn.Set(x, []byte("x")), IsNil)
 	c.Assert(txn.Set(y, []byte("y")), IsNil)
 	ctx := context.Background()
-	bo := NewBackoffer(ctx, PrewriteMaxBackoff)
+	bo := NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil)
 	committer, err := newTwoPhaseCommitterWithInit(txn, 0)
 	c.Assert(err, IsNil)
 	committer.lockTTL = 3000
@@ -249,7 +249,7 @@ func (s *testSnapshotSuite) TestPointGetSkipTxnLock(c *C) {
 	c.Assert(txn.Set(x, []byte("x")), IsNil)
 	c.Assert(txn.Set(y, []byte("y")), IsNil)
 	ctx := context.Background()
-	bo := NewBackoffer(ctx, PrewriteMaxBackoff)
+	bo := NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil)
 	committer, err := newTwoPhaseCommitterWithInit(txn, 0)
 	c.Assert(err, IsNil)
 	committer.lockTTL = 3000

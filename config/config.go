@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/versioninfo"
 	tracing "github.com/uber/jaeger-client-go/config"
 
 	"go.uber.org/zap"
@@ -42,6 +43,8 @@ import (
 // Config number limitations
 const (
 	MaxLogFileSize = 4096 // MB
+	// DefTxnEntrySizeLimit is the default value of TxnEntrySizeLimit.
+	DefTxnEntrySizeLimit = 6 * 1024 * 1024
 	// DefTxnTotalSizeLimit is the default value of TxnTxnTotalSizeLimit.
 	DefTxnTotalSizeLimit = 100 * 1024 * 1024
 	// DefMaxIndexLength is the maximum index length(in bytes). This value is consistent with MySQL.
@@ -57,7 +60,7 @@ const (
 	// DefStatusHost is the default status host of TiDB
 	DefStatusHost = "0.0.0.0"
 	// DefStoreLivenessTimeout is the default value for store liveness timeout.
-	DefStoreLivenessTimeout = "120s"
+	DefStoreLivenessTimeout = "5s"
 )
 
 // Valid config maps
@@ -141,6 +144,10 @@ type Config struct {
 	Experimental Experimental `toml:"experimental" json:"experimental"`
 	// EnableCollectExecutionInfo enables the TiDB to collect execution info.
 	EnableCollectExecutionInfo bool `toml:"enable-collect-execution-info" json:"enable-collect-execution-info"`
+	// SkipRegisterToDashboard tells TiDB don't register itself to the dashboard.
+	SkipRegisterToDashboard bool `toml:"skip-register-to-dashboard" json:"skip-register-to-dashboard"`
+	// EnableTelemetry enables the usage data report to PingCAP.
+	EnableTelemetry bool `toml:"enable-telemetry" json:"enable-telemetry"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -374,6 +381,7 @@ type Performance struct {
 	PseudoEstimateRatio  float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
 	ForcePriority        string  `toml:"force-priority" json:"force-priority"`
 	BindInfoLease        string  `toml:"bind-info-lease" json:"bind-info-lease"`
+	TxnEntrySizeLimit    uint64  `toml:"txn-entry-size-limit" json:"txn-entry-size-limit"`
 	TxnTotalSizeLimit    uint64  `toml:"txn-total-size-limit" json:"txn-total-size-limit"`
 	TCPKeepAlive         bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
 	CrossJoin            bool    `toml:"cross-join" json:"cross-join"`
@@ -454,6 +462,8 @@ type TiKVClient struct {
 	GrpcKeepAliveTimeout uint `toml:"grpc-keepalive-timeout" json:"grpc-keepalive-timeout"`
 	// CommitTimeout is the max time which command 'commit' will wait.
 	CommitTimeout string `toml:"commit-timeout" json:"commit-timeout"`
+	// EnableAsyncCommit enables async commit for all transactions.
+	EnableAsyncCommit bool `toml:"enable-async-commit" json:"enable-async-commit"`
 
 	// MaxBatchSize is the max batch size when calling batch commands API.
 	MaxBatchSize uint `toml:"max-batch-size" json:"max-batch-size"`
@@ -472,9 +482,10 @@ type TiKVClient struct {
 	// prevent the store occupying too much token in dispatching level.
 	StoreLimit int64 `toml:"store-limit" json:"store-limit"`
 	// StoreLivenessTimeout is the timeout for store liveness check request.
-	StoreLivenessTimeout string `toml:"store-liveness-timeout" json:"store-liveness-timeout"`
-
-	CoprCache CoprocessorCache `toml:"copr-cache" json:"copr-cache"`
+	StoreLivenessTimeout string           `toml:"store-liveness-timeout" json:"store-liveness-timeout"`
+	CoprCache            CoprocessorCache `toml:"copr-cache" json:"copr-cache"`
+	// TTLRefreshedTxnSize controls whether a transaction should update its TTL or not.
+	TTLRefreshedTxnSize int64 `toml:"ttl-refreshed-txn-size" json:"ttl-refreshed-txn-size"`
 }
 
 // CoprocessorCache is the config for coprocessor cache.
@@ -612,10 +623,11 @@ var defaultConf = Config{
 		RunAutoAnalyze:       true,
 		StmtCountLimit:       5000,
 		FeedbackProbability:  0.05,
-		QueryFeedbackLimit:   1024,
+		QueryFeedbackLimit:   512,
 		PseudoEstimateRatio:  0.8,
 		ForcePriority:        "NO_PRIORITY",
 		BindInfoLease:        "3s",
+		TxnEntrySizeLimit:    DefTxnEntrySizeLimit,
 		TxnTotalSizeLimit:    DefTxnTotalSizeLimit,
 		DistinctAggPushDown:  false,
 		CommitterConcurrency: 16,
@@ -644,6 +656,7 @@ var defaultConf = Config{
 		GrpcKeepAliveTime:    10,
 		GrpcKeepAliveTimeout: 3,
 		CommitTimeout:        "41s",
+		EnableAsyncCommit:    false,
 
 		MaxBatchSize:      128,
 		OverloadThreshold: 200,
@@ -655,6 +668,8 @@ var defaultConf = Config{
 		RegionCacheTTL:       600,
 		StoreLimit:           0,
 		StoreLivenessTimeout: DefStoreLivenessTimeout,
+
+		TTLRefreshedTxnSize: 32 * 1024 * 1024,
 
 		CoprCache: CoprocessorCache{
 			Enable:                true,
@@ -685,7 +700,8 @@ var defaultConf = Config{
 	Experimental: Experimental{
 		AllowsExpressionIndex: false,
 	},
-	EnableCollectExecutionInfo: false,
+	EnableCollectExecutionInfo: true,
+	EnableTelemetry:            true,
 }
 
 var (
@@ -711,14 +727,15 @@ func StoreGlobalConfig(config *Config) {
 }
 
 var deprecatedConfig = map[string]struct{}{
-	"pessimistic-txn.ttl":        {},
-	"log.file.log-rotate":        {},
-	"log.log-slow-query":         {},
-	"txn-local-latches":          {},
-	"txn-local-latches.enabled":  {},
-	"txn-local-latches.capacity": {},
-	"performance.max-memory":     {},
-	"max-txn-time-use":           {},
+	"pessimistic-txn.ttl":            {},
+	"log.file.log-rotate":            {},
+	"log.log-slow-query":             {},
+	"txn-local-latches":              {},
+	"txn-local-latches.enabled":      {},
+	"txn-local-latches.capacity":     {},
+	"performance.max-memory":         {},
+	"max-txn-time-use":               {},
+	"experimental.allow-auto-random": {},
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
@@ -945,6 +962,13 @@ func (t *OpenTracing) ToTracingConfig() *tracing.Configuration {
 }
 
 func init() {
+	initByLDFlags(versioninfo.TiDBEdition, checkBeforeDropLDFlag)
+}
+
+func initByLDFlags(edition, checkBeforeDropLDFlag string) {
+	if edition != versioninfo.CommunityEdition {
+		defaultConf.EnableTelemetry = false
+	}
 	conf := defaultConf
 	StoreGlobalConfig(&conf)
 	if checkBeforeDropLDFlag == "1" {

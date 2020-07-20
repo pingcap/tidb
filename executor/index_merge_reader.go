@@ -336,7 +336,7 @@ func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan str
 		task := w.buildTableTask(handles, retChunk)
 		select {
 		case <-ctx.Done():
-			return count, nil
+			return count, ctx.Err()
 		case <-exitCh:
 			return count, nil
 		case <-finished:
@@ -381,7 +381,7 @@ func (w *partialTableWorker) buildTableTask(handles []kv.Handle, retChk *chunk.C
 }
 
 func (e *IndexMergeReaderExecutor) startIndexMergeTableScanWorker(ctx context.Context, workCh <-chan *lookupTableTask) {
-	lookupConcurrencyLimit := e.ctx.GetSessionVars().IndexLookupConcurrency
+	lookupConcurrencyLimit := e.ctx.GetSessionVars().IndexLookupConcurrency()
 	e.tblWorkerWg.Add(lookupConcurrencyLimit)
 	for i := 0; i < lookupConcurrencyLimit; i++ {
 		worker := &indexMergeTableScanWorker{
@@ -581,7 +581,7 @@ func (w *partialIndexWorker) fetchHandles(ctx context.Context, result distsql.Se
 		task := w.buildTableTask(handles, retChunk)
 		select {
 		case <-ctx.Done():
-			return count, nil
+			return count, ctx.Err()
 		case <-exitCh:
 			return count, nil
 		case <-finished:

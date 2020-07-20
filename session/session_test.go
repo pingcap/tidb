@@ -2197,7 +2197,7 @@ func (s *testSchemaSuite) TestTableReaderChunk(c *C) {
 	c.Assert(err, IsNil)
 	s.cluster.SplitTable(tbl.Meta().ID, 10)
 
-	tk.Se.GetSessionVars().DistSQLScanConcurrency = 1
+	tk.Se.GetSessionVars().SetDistSQLScanConcurrency(1)
 	tk.MustExec("set tidb_init_chunk_size = 2")
 	defer func() {
 		tk.MustExec(fmt.Sprintf("set tidb_init_chunk_size = %d", variable.DefInitChunkSize))
@@ -2234,7 +2234,7 @@ func (s *testSchemaSuite) TestInsertExecChunk(c *C) {
 	}
 	tk.MustExec("create table test2(a int)")
 
-	tk.Se.GetSessionVars().DistSQLScanConcurrency = 1
+	tk.Se.GetSessionVars().SetDistSQLScanConcurrency(1)
 	tk.MustExec("insert into test2(a) select a from test1;")
 
 	rs, err := tk.Exec("select * from test2")
@@ -2266,7 +2266,7 @@ func (s *testSchemaSuite) TestUpdateExecChunk(c *C) {
 		tk.MustExec(fmt.Sprintf("insert chk values (%d)", i))
 	}
 
-	tk.Se.GetSessionVars().DistSQLScanConcurrency = 1
+	tk.Se.GetSessionVars().SetDistSQLScanConcurrency(1)
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("update chk set a = a + 100 where a = %d", i))
 	}
@@ -2301,7 +2301,7 @@ func (s *testSchemaSuite) TestDeleteExecChunk(c *C) {
 		tk.MustExec(fmt.Sprintf("insert chk values (%d)", i))
 	}
 
-	tk.Se.GetSessionVars().DistSQLScanConcurrency = 1
+	tk.Se.GetSessionVars().SetDistSQLScanConcurrency(1)
 
 	for i := 0; i < 99; i++ {
 		tk.MustExec(fmt.Sprintf("delete from chk where a = %d", i))
@@ -2333,7 +2333,7 @@ func (s *testSchemaSuite) TestDeleteMultiTableExecChunk(c *C) {
 		tk.MustExec(fmt.Sprintf("insert chk2 values (%d)", i))
 	}
 
-	tk.Se.GetSessionVars().DistSQLScanConcurrency = 1
+	tk.Se.GetSessionVars().SetDistSQLScanConcurrency(1)
 
 	tk.MustExec("delete chk1, chk2 from chk1 inner join chk2 where chk1.a = chk2.a")
 
@@ -2627,52 +2627,33 @@ func (s *testSessionSuite2) TestDBUserNameLength(c *C) {
 }
 
 func (s *testSessionSerialSuite) TestKVVars(c *C) {
-	c.Skip("there is no backoff here in the large txn, so this test is stale")
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("create table kvvars (a int, b int)")
-	tk.MustExec("insert kvvars values (1, 1)")
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
-	tk2.MustExec("set @@tidb_backoff_lock_fast = 1")
-	tk2.MustExec("set @@tidb_backoff_weight = 100")
-	backoffVal := new(int64)
-	backOffWeightVal := new(int32)
-	tk2.Se.GetSessionVars().KVVars.Hook = func(name string, vars *kv.Variables) {
-		atomic.StoreInt64(backoffVal, int64(vars.BackoffLockFast))
-		atomic.StoreInt32(backOffWeightVal, int32(vars.BackOffWeight))
-	}
-	wg := new(sync.WaitGroup)
-	wg.Add(2)
-	go func() {
-		for {
-			tk2.MustQuery("select * from kvvars")
-			if atomic.LoadInt64(backoffVal) != 0 {
-				break
-			}
-		}
-		wg.Done()
-	}()
+	tk.MustExec("set @@tidb_backoff_lock_fast = 1")
+	tk.MustExec("set @@tidb_backoff_weight = 100")
+	tk.MustExec("create table if not exists kvvars (a int key)")
+	tk.MustExec("insert into kvvars values (1)")
+	tk.MustExec("begin")
+	txn, err := tk.Se.Txn(false)
+	c.Assert(err, IsNil)
+	vars := txn.GetVars()
+	c.Assert(vars.BackoffLockFast, Equals, 1)
+	c.Assert(vars.BackOffWeight, Equals, 100)
+	tk.MustExec("rollback")
+	tk.MustExec("set @@tidb_backoff_weight = 50")
+	tk.MustExec("set @@autocommit = 0")
+	tk.MustExec("select * from kvvars")
+	c.Assert(tk.Se.GetSessionVars().InTxn(), IsTrue)
+	txn, err = tk.Se.Txn(false)
+	c.Assert(err, IsNil)
+	vars = txn.GetVars()
+	c.Assert(vars.BackOffWeight, Equals, 50)
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockSleepBetween2PC", "return"), IsNil)
-	go func() {
-		for {
-			tk.MustExec("update kvvars set b = b + 1 where a = 1")
-			if atomic.LoadInt64(backoffVal) != 0 {
-				break
-			}
-		}
-		wg.Done()
-	}()
-	wg.Wait()
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/mockSleepBetween2PC"), IsNil)
-
-	for {
-		tk2.MustQuery("select * from kvvars")
-		if atomic.LoadInt32(backOffWeightVal) != 0 {
-			break
-		}
-	}
-	c.Assert(atomic.LoadInt64(backoffVal), Equals, int64(1))
-	c.Assert(atomic.LoadInt32(backOffWeightVal), Equals, int32(100))
+	tk.MustExec("set @@autocommit = 1")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/probeSetVars", `return(true)`), IsNil)
+	tk.MustExec("select * from kvvars where a = 1")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/probeSetVars"), IsNil)
+	c.Assert(tikv.SetSuccess, IsTrue)
+	tikv.SetSuccess = false
 }
 
 func (s *testSessionSuite2) TestCommitRetryCount(c *C) {

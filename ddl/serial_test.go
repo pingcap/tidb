@@ -100,6 +100,9 @@ func (s *testSerialSuite) TestChangeMaxIndexLength(c *C) {
 		conf.MaxIndexLength = config.DefMaxOfMaxIndexLength
 	})
 
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("drop table if exists t1;")
+
 	tk.MustExec("create table t (c1 varchar(3073), index(c1)) charset = ascii;")
 	tk.MustExec(fmt.Sprintf("create table t1 (c1 varchar(%d), index(c1)) charset = ascii;", config.DefMaxOfMaxIndexLength))
 	_, err := tk.Exec(fmt.Sprintf("create table t2 (c1 varchar(%d), index(c1)) charset = ascii;", config.DefMaxOfMaxIndexLength+1))
@@ -131,6 +134,14 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.AlterPrimaryKey = true
 	})
+
+	_, err = tk.Exec("alter table primary_key_test2 add primary key(a)")
+	c.Assert(infoschema.ErrMultiplePriKey.Equal(err), IsTrue)
+	// We can't add a primary key when the table's pk_is_handle is true.
+	_, err = tk.Exec("alter table primary_key_test1 add primary key(a)")
+	c.Assert(infoschema.ErrMultiplePriKey.Equal(err), IsTrue)
+	_, err = tk.Exec("alter table primary_key_test1 add primary key(b)")
+	c.Assert(infoschema.ErrMultiplePriKey.Equal(err), IsTrue)
 
 	_, err = tk.Exec("alter table primary_key_test1 drop primary key")
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when the table's pkIsHandle is true")
@@ -1017,6 +1028,7 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	// Add/drop the auto_random attribute is not allowed.
 	mustExecAndDrop("create table t (a bigint auto_random(3) primary key)", func() {
 		assertAlterValue("alter table t modify column a bigint")
+		assertAlterValue("alter table t modify column a bigint auto_random(0)")
 		assertAlterValue("alter table t change column a b bigint")
 	})
 	mustExecAndDrop("create table t (a bigint, b char, c bigint auto_random(3), primary key(c))", func() {
@@ -1025,6 +1037,10 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	})
 	mustExecAndDrop("create table t (a bigint primary key)", func() {
 		assertAlterValue("alter table t modify column a bigint auto_random(3)")
+	})
+	mustExecAndDrop("create table t (a bigint, b bigint, primary key(a, b))", func() {
+		assertAlterValue("alter table t modify column a bigint auto_random(3)")
+		assertAlterValue("alter table t modify column b bigint auto_random(3)")
 	})
 
 	// Decrease auto_random bits is not allowed.
@@ -1053,10 +1069,13 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	// Here the throw error is `ERROR 8200 (HY000): Unsupported modify column: length 11 is less than origin 20`,
 	// instead of `ERROR 8216 (HY000): Invalid auto random: modifying the auto_random column type is not supported`
 	// Because the origin column is `bigint`, it can not change to any other column type in TiDB limitation.
-	mustExecAndDrop("create table t (a bigint primary key auto_random(3))", func() {
+	mustExecAndDrop("create table t (a bigint primary key auto_random(3), b int)", func() {
 		assertModifyColType("alter table t modify column a int auto_random(3)")
 		assertModifyColType("alter table t modify column a mediumint auto_random(3)")
 		assertModifyColType("alter table t modify column a smallint auto_random(3)")
+		tk.MustExec("alter table t modify column b int")
+		tk.MustExec("alter table t modify column b bigint")
+		tk.MustExec("alter table t modify column a bigint auto_random(3)")
 	})
 
 	// Test show warnings when create auto_random table.
@@ -1070,6 +1089,7 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	}
 	assertShowWarningCorrect("create table t (a bigint auto_random(15) primary key)", 281474976710655)
 	assertShowWarningCorrect("create table t (a bigint unsigned auto_random(15) primary key)", 562949953421311)
+	assertShowWarningCorrect("create table t (a bigint auto_random(1) primary key)", 4611686018427387903)
 
 	// Test insert into auto_random column explicitly is not allowed by default.
 	assertExplicitInsertDisallowed := func(sql string) {

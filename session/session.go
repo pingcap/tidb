@@ -425,6 +425,7 @@ func (s *session) doCommit(ctx context.Context) error {
 	}
 	// Set this option for 2 phase commit to validate schema lease.
 	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.TxnCtx.SchemaVersion, physicalTableIDs))
+	s.txn.SetOption(kv.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
 
 	return s.txn.Commit(sessionctx.SetCommitCtx(ctx, s))
 }
@@ -992,6 +993,7 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 		return err
 	}
 	name = strings.ToLower(name)
+	variable.CheckDeprecationSetSystemVar(s.sessionVars, name)
 	sql := fmt.Sprintf(`REPLACE %s.%s VALUES ('%s', '%s');`,
 		mysql.SystemDB, mysql.GlobalVariablesTable, name, sVal)
 	_, _, err = s.ExecRestrictedSQL(sql)
@@ -1162,7 +1164,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	s.currentPlan = stmt.Plan
 
 	// Execute the physical plan.
-	logStmt(stmtNode, s.sessionVars)
+	logStmt(stmt, s.sessionVars)
 	recordSet, err := runStmt(ctx, s, stmt)
 	if err != nil {
 		if !kv.ErrKeyExists.Equal(err) {
@@ -1328,7 +1330,7 @@ func (s *session) cachedPlanExec(ctx context.Context,
 	stmtCtx.OriginalSQL = stmt.Text
 	stmtCtx.InitSQLDigest(prepareStmt.NormalizedSQL, prepareStmt.SQLDigest)
 	stmtCtx.SetPlanDigest(prepareStmt.NormalizedPlan, prepareStmt.PlanDigest)
-	logQuery(stmt.OriginText(), s.sessionVars)
+	logQuery(stmt.GetTextToLog(), s.sessionVars)
 
 	// run ExecStmt
 	var resultSet sqlexec.RecordSet
@@ -1450,6 +1452,7 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 			s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
 		}
 		s.sessionVars.TxnCtx.CouldRetry = s.isTxnRetryable()
+		s.txn.SetVars(s.sessionVars.KVVars)
 		if s.sessionVars.GetReplicaRead().IsFollowerRead() {
 			s.txn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 		}
@@ -1522,6 +1525,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 		SchemaVersion: is.SchemaMetaVersion(),
 		CreateTime:    time.Now(),
 		StartTS:       txn.StartTS(),
+		ShardStep:     int(s.sessionVars.ShardAllocateStep),
 	}
 	return nil
 }
@@ -1809,6 +1813,8 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 
+	dom.TelemetryLoop(se)
+
 	se1, err := createSession(store)
 	if err != nil {
 		return nil, err
@@ -1916,7 +1922,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = version47
+	currentBootstrapVersion = version48
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -1994,6 +2000,7 @@ var builtinGlobalVariable = []string{
 	variable.SQLSelectLimit,
 
 	/* TiDB specific global variables: */
+	variable.TiDBSkipASCIICheck,
 	variable.TiDBSkipUTF8Check,
 	variable.TiDBIndexJoinBatchSize,
 	variable.TiDBIndexLookupSize,
@@ -2005,6 +2012,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBHashAggPartialConcurrency,
 	variable.TiDBHashAggFinalConcurrency,
 	variable.TiDBWindowConcurrency,
+	variable.TiDBExecutorConcurrency,
 	variable.TiDBBackoffLockFast,
 	variable.TiDBBackOffWeight,
 	variable.TiDBConstraintCheckInPlace,
@@ -2053,6 +2061,9 @@ var builtinGlobalVariable = []string{
 	variable.TiDBAllowAutoRandExplicitInsert,
 	variable.TiDBEnableClusteredIndex,
 	variable.TiDBSlowLogMasking,
+	variable.TiDBLogDesensitization,
+	variable.TiDBEnableTelemetry,
+	variable.TiDBShardAllocateStep,
 }
 
 var (
@@ -2133,6 +2144,7 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 		InfoSchema:    is,
 		SchemaVersion: is.SchemaMetaVersion(),
 		CreateTime:    time.Now(),
+		ShardStep:     int(s.sessionVars.ShardAllocateStep),
 	}
 	if !s.sessionVars.IsAutocommit() {
 		pessTxnConf := config.GetGlobalConfig().PessimisticTxn
@@ -2176,6 +2188,7 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	if err != nil {
 		return err
 	}
+	txn.SetVars(s.sessionVars.KVVars)
 	s.txn.changeInvalidToValid(txn)
 	err = s.loadCommonGlobalVariablesIfNeeded()
 	if err != nil {
@@ -2200,14 +2213,14 @@ func (s *session) ShowProcess() *util.ProcessInfo {
 
 // logStmt logs some crucial SQL including: CREATE USER/GRANT PRIVILEGE/CHANGE PASSWORD/DDL etc and normal SQL
 // if variable.ProcessGeneralLog is set.
-func logStmt(node ast.StmtNode, vars *variable.SessionVars) {
-	switch stmt := node.(type) {
+func logStmt(execStmt *executor.ExecStmt, vars *variable.SessionVars) {
+	switch stmt := execStmt.StmtNode.(type) {
 	case *ast.CreateUserStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.SetPwdStmt, *ast.GrantStmt,
 		*ast.RevokeStmt, *ast.AlterTableStmt, *ast.CreateDatabaseStmt, *ast.CreateIndexStmt, *ast.CreateTableStmt,
 		*ast.DropDatabaseStmt, *ast.DropIndexStmt, *ast.DropTableStmt, *ast.RenameTableStmt, *ast.TruncateTableStmt:
 		user := vars.User
 		schemaVersion := vars.TxnCtx.SchemaVersion
-		if ss, ok := node.(ast.SensitiveStmtNode); ok {
+		if ss, ok := execStmt.StmtNode.(ast.SensitiveStmtNode); ok {
 			logutil.BgLogger().Info("CRUCIAL OPERATION",
 				zap.Uint64("conn", vars.ConnectionID),
 				zap.Int64("schemaVersion", schemaVersion),
@@ -2222,13 +2235,16 @@ func logStmt(node ast.StmtNode, vars *variable.SessionVars) {
 				zap.Stringer("user", user))
 		}
 	default:
-		logQuery(node.Text(), vars)
+		logQuery(execStmt.GetTextToLog(), vars)
 	}
 }
 
 func logQuery(query string, vars *variable.SessionVars) {
 	if atomic.LoadUint32(&variable.ProcessGeneralLog) != 0 && !vars.InRestrictedSQL {
 		query = executor.QueryReplacer.Replace(query)
+		if !vars.EnableLogDesensitization {
+			query = query + vars.PreparedParams.String()
+		}
 		logutil.BgLogger().Info("GENERAL_LOG",
 			zap.Uint64("conn", vars.ConnectionID),
 			zap.Stringer("user", vars.User),
@@ -2238,7 +2254,7 @@ func logQuery(query string, vars *variable.SessionVars) {
 			zap.Bool("isReadConsistency", vars.IsReadConsistencyTxn()),
 			zap.String("current_db", vars.CurrentDB),
 			zap.String("txn_mode", vars.GetReadableTxnMode()),
-			zap.String("sql", query+vars.PreparedParams.String()))
+			zap.String("sql", query))
 	}
 }
 
