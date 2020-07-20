@@ -15,6 +15,7 @@ package chunk
 
 import (
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/pingcap/check"
@@ -203,4 +204,49 @@ func (r *rowContainerTestSuite) TestSortedRowContainerSortSpillAction(c *check.C
 	c.Assert(errors.Is(err, ErrCannotAddBecauseSorted), check.IsTrue)
 	err = rc.Reset()
 	c.Assert(err, check.IsNil)
+}
+
+func (r *rowContainerTestSerialSuite) TestActionBlocked(c *check.C) {
+	sz := 4
+	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
+	rc := NewRowContainer(fields, sz)
+
+	chk := NewChunkWithCapacity(fields, sz)
+	for i := 0; i < sz; i++ {
+		chk.AppendInt64(0, int64(i))
+	}
+	var tracker *memory.Tracker
+	var err error
+	// Case 1
+	tracker = rc.GetMemTracker()
+	tracker.SetBytesLimit(1450)
+	ac := rc.ActionSpill()
+	tracker.FallbackOldAndSetNewAction(ac)
+	for i := 0; i < 10; i++ {
+		err = rc.Add(chk)
+		c.Assert(err, check.IsNil)
+	}
+
+	ac.cond.L.Lock()
+	for ac.cond.status == todoStatus ||
+		ac.cond.status == doingStatus {
+		ac.cond.Wait()
+	}
+	ac.cond.L.Unlock()
+
+	// Case 2
+	rc = NewRowContainer(fields, sz)
+	tracker = rc.GetMemTracker()
+	ac = rc.ActionSpill()
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	ac.setStatus(doingStatus)
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		ac.setStatus(doneStatus)
+		ac.cond.Broadcast()
+		wg.Done()
+	}()
+	ac.Action(tracker)
+	wg.Wait()
 }
