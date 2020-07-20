@@ -2188,6 +2188,7 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	if err != nil {
 		return err
 	}
+	txn.SetVars(s.sessionVars.KVVars)
 	s.txn.changeInvalidToValid(txn)
 	err = s.loadCommonGlobalVariablesIfNeeded()
 	if err != nil {
