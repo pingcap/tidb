@@ -67,7 +67,6 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-binlog"
@@ -1181,16 +1180,6 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 
 // runStmt executes the sqlexec.Statement and commit or rollback the current transaction.
 func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.RecordSet, err error) {
-	defer func() {
-		r := recover()
-		if r != nil {
-			if str, ok := r.(string); !ok || !strings.HasPrefix(str, memory.PanicMemoryExceed) {
-				panic(r)
-			}
-			err = errors.Errorf("%v", r)
-		}
-	}()
-
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("session.runStmt", opentracing.ChildOf(span.Context()))
 		span1.LogKV("sql", s.OriginText())
@@ -1214,6 +1203,11 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	rs, err = s.Exec(ctx)
 	sessVars.TxnCtx.StatementCount++
 	if !s.IsReadOnly(sessVars) {
+		// Handle the stmt panic in a transaction.
+		if err != nil {
+			se.txn.doNotCommit = err
+		}
+
 		// All the history should be added here.
 		if err == nil && sessVars.TxnCtx.CouldRetry {
 			GetHistory(se).Add(s, sessVars.StmtCtx)
