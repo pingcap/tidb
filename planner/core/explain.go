@@ -22,6 +22,9 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -240,7 +243,40 @@ func (p *PhysicalTableScan) isFullScan() bool {
 }
 
 func (p *PhysicalPartitionTable) ExplainInfo() string {
-	return "data???:" + p.tablePlan.ExplainID().String()
+	return "data:" + p.tablePlan.ExplainID().String()
+}
+
+func (p *PhysicalPartitionTable) OperatorInfo(normalized bool) string {
+	return "data:" + p.tablePlan.ExplainID().String()
+}
+
+// AccessObject implements dataAccesser interface.
+func (p *PhysicalPartitionTable) accessObject(sctx sessionctx.Context) string {
+	var buffer bytes.Buffer
+	is := infoschema.GetInfoSchema(sctx)
+	tmp, ok := is.TableByID(p.Table.ID)
+	if !ok {
+		fmt.Fprintf(&buffer, "partition table not found: %d", p.Table.ID)
+		return buffer.String()
+	}
+	tbl := tmp.(table.PartitionedTable)
+	partitions, err := PartitionPruning(sctx, tbl, p.Conditions)
+	if err != nil {
+		return "partition pruning error" + err.Error()
+	}
+
+	pi := p.Table.GetPartitionInfo()
+	for i, p := range partitions {
+		name := pi.GetNameByID(p.GetPhysicalID())
+		if i == 0 {
+			buffer.WriteString("partition:")
+		} else {
+			buffer.WriteString(",")
+		}
+		buffer.WriteString(name)
+	}
+
+	return buffer.String()
 }
 
 // ExplainInfo implements Plan interface.
