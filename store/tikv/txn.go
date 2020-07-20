@@ -109,9 +109,17 @@ func (a assertionPair) String() string {
 	return fmt.Sprintf("key: %s, assertion type: %d", a.key, a.assertion)
 }
 
+// SetSuccess is used to probe if kv variables are set or not. It is ONLY used in test cases.
+var SetSuccess = false
+
 func (txn *tikvTxn) SetVars(vars *kv.Variables) {
 	txn.vars = vars
 	txn.snapshot.vars = vars
+	failpoint.Inject("probeSetVars", func(val failpoint.Value) {
+		if val.(bool) {
+			SetSuccess = true
+		}
+	})
 }
 
 func (txn *tikvTxn) GetVars() *kv.Variables {
