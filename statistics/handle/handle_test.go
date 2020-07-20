@@ -111,9 +111,11 @@ func (s *testStatsSuite) TestStatsCacheMemTracker(c *C) {
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
+	c.Assert(statsTbl.MemoryUsage() > 0, IsTrue)
 	c.Assert(statsTbl.MemoryUsage(), Equals, do.StatsHandle().GetMemConsumed())
 
 	c.Assert(statsTbl.Pseudo, IsTrue)
+
 	testKit.MustExec("analyze table t")
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 
@@ -129,15 +131,18 @@ func (s *testStatsSuite) TestStatsCacheMemTracker(c *C) {
 
 	testKit.MustExec("analyze table t")
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+
 	c.Assert(statsTbl.Pseudo, IsFalse)
+
 	// If the new schema drop a column, the table stats can still work.
 	testKit.MustExec("alter table t drop column c2")
 	is = do.InfoSchema()
 	do.StatsHandle().Clear()
 	do.StatsHandle().Update(is)
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
-	c.Assert(statsTbl.MemoryUsage(), Equals, do.StatsHandle().GetMemConsumed())
 
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	c.Assert(statsTbl.MemoryUsage() > 0, IsTrue)
+	c.Assert(statsTbl.MemoryUsage(), Equals, do.StatsHandle().GetMemConsumed())
 	c.Assert(statsTbl.Pseudo, IsFalse)
 
 	// If the new schema add a column, the table stats can still work.
