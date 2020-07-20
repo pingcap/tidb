@@ -97,6 +97,58 @@
           "        └─Limit_61 1.00 cop[tikv]  offset:0, count:1",
           "          └─TableFullScan_60 1.00 cop[tikv] table:t keep order:true, stats:pseudo"
         ]
+      },
+      {
+        "SQL": "explain select min(a), max(a) from cluster_index_t",
+        "Plan": [
+          "HashJoin_16 1.00 root  CARTESIAN inner join",
+          "├─StreamAgg_43(Build) 1.00 root  funcs:max(test.cluster_index_t.a)->Column#5",
+          "│ └─Limit_47 1.00 root  offset:0, count:1",
+          "│   └─TableReader_57 1.00 root  data:Limit_56",
+          "│     └─Limit_56 1.00 cop[tikv]  offset:0, count:1",
+          "│       └─TableFullScan_55 1.00 cop[tikv] table:cluster_index_t keep order:true, desc, stats:pseudo",
+          "└─StreamAgg_22(Probe) 1.00 root  funcs:min(test.cluster_index_t.a)->Column#4",
+          "  └─Limit_26 1.00 root  offset:0, count:1",
+          "    └─TableReader_36 1.00 root  data:Limit_35",
+          "      └─Limit_35 1.00 cop[tikv]  offset:0, count:1",
+          "        └─TableFullScan_34 1.00 cop[tikv] table:cluster_index_t keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select min(b), max(b) from cluster_index_t where a = 1",
+        "Plan": [
+          "HashJoin_19 1.00 root  CARTESIAN inner join",
+          "├─StreamAgg_46(Build) 1.00 root  funcs:max(test.cluster_index_t.b)->Column#5",
+          "│ └─Limit_50 1.00 root  offset:0, count:1",
+          "│   └─TableReader_60 1.00 root  data:Limit_59",
+          "│     └─Limit_59 1.00 cop[tikv]  offset:0, count:1",
+          "│       └─TableRangeScan_58 1.00 cop[tikv] table:cluster_index_t range:[1,1], keep order:true, desc, stats:pseudo",
+          "└─StreamAgg_25(Probe) 1.00 root  funcs:min(test.cluster_index_t.b)->Column#4",
+          "  └─Limit_29 1.00 root  offset:0, count:1",
+          "    └─TableReader_39 1.00 root  data:Limit_38",
+          "      └─Limit_38 1.00 cop[tikv]  offset:0, count:1",
+          "        └─TableRangeScan_37 1.00 cop[tikv] table:cluster_index_t range:[1,1], keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select min(a), max(a) from cluster_index_t where b = 1",
+        "Plan": [
+          "StreamAgg_20 1.00 root  funcs:min(Column#8)->Column#4, funcs:max(Column#9)->Column#5",
+          "└─TableReader_21 1.00 root  data:StreamAgg_9",
+          "  └─StreamAgg_9 1.00 cop[tikv]  funcs:min(test.cluster_index_t.a)->Column#8, funcs:max(test.cluster_index_t.a)->Column#9",
+          "    └─Selection_19 10.00 cop[tikv]  eq(test.cluster_index_t.b, 1)",
+          "      └─TableFullScan_18 10000.00 cop[tikv] table:cluster_index_t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select min(b), max(b) from cluster_index_t where b = 1",
+        "Plan": [
+          "StreamAgg_20 1.00 root  funcs:min(Column#8)->Column#4, funcs:max(Column#9)->Column#5",
+          "└─TableReader_21 1.00 root  data:StreamAgg_9",
+          "  └─StreamAgg_9 1.00 cop[tikv]  funcs:min(test.cluster_index_t.b)->Column#8, funcs:max(test.cluster_index_t.b)->Column#9",
+          "    └─Selection_19 10.00 cop[tikv]  eq(test.cluster_index_t.b, 1)",
+          "      └─TableFullScan_18 10000.00 cop[tikv] table:cluster_index_t keep order:false, stats:pseudo"
+        ]
       }
     ]
   },
@@ -879,6 +931,28 @@
         "Res": [
           "2 222 2.2000000000 12",
           "3 333 3.3000000000 13"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where t1.a = 1 order by b",
+        "Plan": [
+          "TableReader_12 1.00 root  data:TableRangeScan_11",
+          "└─TableRangeScan_11 1.00 cop[tikv] table:t1 range:[1,1], keep order:true"
+        ],
+        "Res": [
+          "1 111 1.1000000000 11"
+        ]
+      },
+      {
+        "SQL": "select * from t1 order by a, b limit 1",
+        "Plan": [
+          "Limit_10 1.00 root  offset:0, count:1",
+          "└─TableReader_20 1.00 root  data:Limit_19",
+          "  └─Limit_19 1.00 cop[tikv]  offset:0, count:1",
+          "    └─TableFullScan_18 1.00 cop[tikv] table:t1 keep order:true"
+        ],
+        "Res": [
+          "1 111 1.1000000000 11"
         ]
       }
     ]
