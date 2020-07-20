@@ -1203,11 +1203,6 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	rs, err = s.Exec(ctx)
 	sessVars.TxnCtx.StatementCount++
 	if !s.IsReadOnly(sessVars) {
-		// Handle the stmt panic in a transaction.
-		if err != nil {
-			se.txn.doNotCommit = err
-		}
-
 		// All the history should be added here.
 		if err == nil && sessVars.TxnCtx.CouldRetry {
 			GetHistory(se).Add(s, sessVars.StmtCtx)

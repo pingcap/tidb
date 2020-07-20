@@ -516,6 +516,11 @@ func (s *session) StmtCommit(memTracker *memory.Tracker) error {
 		// in memTracker to avoid double-counting. If it's not batch mode, this
 		// work has no effect because that no more data will be appended into
 		// s.txn.
+
+		if r := recover(); r != nil {
+			err := errors.Errorf("%v", r)
+			s.txn.doNotCommit = err
+		}
 		if memTracker != nil {
 			memTracker.Consume(int64(-s.txn.Size()))
 		}
