@@ -61,7 +61,6 @@ func (a *maxMinEliminator) checkColCanUseIndex(plan LogicalPlan, col *expression
 	case *DataSource:
 		// Check whether there is an AccessPath can use index for col.
 		for _, path := range p.possibleAccessPaths {
-			// TODO: support common handle path.
 			if path.IsIntHandlePath {
 				// Since table path can contain accessConds of at most one column,
 				// we only need to check if all of the conditions can be pushed down as accessConds
@@ -73,15 +72,18 @@ func (a *maxMinEliminator) checkColCanUseIndex(plan LogicalPlan, col *expression
 					return true
 				}
 			} else {
-				// For index paths, we have to check:
+				indexCols, indexColLen := path.FullIdxCols, path.FullIdxColLens
+				if path.IsCommonHandlePath {
+					indexCols, indexColLen = commonHandleIndexColAndLength(p.handleCols)
+				}
 				// 1. whether all of the conditions can be pushed down as accessConds.
 				// 2. whether the AccessPath can satisfy the order property of `col` with these accessConds.
-				result, err := ranger.DetachCondAndBuildRangeForIndex(p.ctx, conditions, path.FullIdxCols, path.FullIdxColLens)
+				result, err := ranger.DetachCondAndBuildRangeForIndex(p.ctx, conditions, indexCols, indexColLen)
 				if err != nil || len(result.RemainedConds) != 0 {
 					continue
 				}
 				for i := 0; i <= result.EqCondCount; i++ {
-					if i < len(path.FullIdxCols) && col.Equal(nil, path.FullIdxCols[i]) {
+					if i < len(indexCols) && col.Equal(nil, indexCols[i]) {
 						return true
 					}
 				}
@@ -91,6 +93,17 @@ func (a *maxMinEliminator) checkColCanUseIndex(plan LogicalPlan, col *expression
 	default:
 		return false
 	}
+}
+
+func commonHandleIndexColAndLength(handleCols HandleCols) ([]*expression.Column, []int) {
+	handleLen := handleCols.NumCols()
+	indexCols := make([]*expression.Column, 0, handleLen)
+	indexColLen := make([]int, 0, handleLen)
+	for i := 0; i < handleLen; i++ {
+		indexCols = append(indexCols, handleCols.GetCol(i))
+		indexColLen = append(indexColLen, types.UnspecifiedLength)
+	}
+	return indexCols, indexColLen
 }
 
 // cloneSubPlans shallow clones the subPlan. We only consider `Selection` and `DataSource` here,
