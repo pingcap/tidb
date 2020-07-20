@@ -47,8 +47,8 @@ import (
 type statsCache struct {
 	tables map[int64]*statistics.Table
 	// version is the latest version of cache.
-	version        uint64
-	stasticMemsize int64
+	version  uint64
+	memUsage int64
 }
 
 // Handle can update stats info periodically.
@@ -267,7 +267,7 @@ func (h *Handle) updateStatsCache(newCache statsCache) {
 	h.statsCache.Lock()
 	oldCache := h.statsCache.Load().(statsCache)
 	if oldCache.version <= newCache.version {
-		h.statsCache.memTracker.Consume(newCache.stasticMemsize - oldCache.stasticMemsize)
+		h.statsCache.memTracker.Consume(newCache.memUsage - oldCache.memUsage)
 		h.statsCache.Store(newCache)
 	}
 	h.statsCache.Unlock()
@@ -275,8 +275,8 @@ func (h *Handle) updateStatsCache(newCache statsCache) {
 
 func (sc statsCache) copy() statsCache {
 	newCache := statsCache{tables: make(map[int64]*statistics.Table, len(sc.tables)),
-		version:        sc.version,
-		stasticMemsize: sc.stasticMemsize}
+		version:  sc.version,
+		memUsage: sc.memUsage}
 	for k, v := range sc.tables {
 		newCache.tables[k] = v
 	}
@@ -288,7 +288,7 @@ func (sc statsCache) initMemoryUsage() {
 	for _, tb := range sc.tables {
 		sum += tb.MemoryUsage()
 	}
-	sc.stasticMemsize = sum
+	sc.memUsage = sum
 	return
 }
 
@@ -299,14 +299,14 @@ func (sc statsCache) update(tables []*statistics.Table, deletedIDs []int64, newV
 	for _, tbl := range tables {
 		id := tbl.PhysicalID
 		if ptbl, ok := newCache.tables[id]; ok {
-			newCache.stasticMemsize -= ptbl.MemoryUsage()
+			newCache.memUsage -= ptbl.MemoryUsage()
 		}
 		newCache.tables[id] = tbl
-		newCache.stasticMemsize += tbl.MemoryUsage()
+		newCache.memUsage += tbl.MemoryUsage()
 	}
 	for _, id := range deletedIDs {
 		if ptbl, ok := newCache.tables[id]; ok {
-			newCache.stasticMemsize -= ptbl.MemoryUsage()
+			newCache.memUsage -= ptbl.MemoryUsage()
 		}
 		delete(newCache.tables, id)
 	}
