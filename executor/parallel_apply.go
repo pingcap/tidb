@@ -165,18 +165,21 @@ func (e *ParallelNestedLoopApplyExec) Close() error {
 		e.started = false
 		e.notifyWg.Wait()
 	}
+
 	if e.runtimeStats != nil {
+		runtimeStats := newJoinRuntimeStats(e.runtimeStats)
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id.String(), runtimeStats)
 		if e.useCache {
 			var hitRatio float64
 			if e.cacheAccessCounter > 0 {
 				hitRatio = float64(e.cacheHitCounter) / float64(e.cacheAccessCounter)
 			}
-			e.runtimeStats.SetCacheInfo(true, hitRatio)
+			runtimeStats.setCacheInfo(true, hitRatio)
 		} else {
-			e.runtimeStats.SetCacheInfo(false, 0)
+			runtimeStats.setCacheInfo(false, 0)
 		}
 		if e.concurrency > 1 {
-			e.runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", e.concurrency))
+			runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", e.concurrency))
 		}
 	}
 	return err
