@@ -202,7 +202,7 @@ func BenchmarkUnicodeCIKeySpecial(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for _, t := range keyTable {
-			if bytes.Compare(collator.Key(t.Str), t.Expect) {
+			if bytes.Compare(collator.Key(t.Str), t.Expect) != 0 {
 				b.Fatal("equal expected.")
 			}
 		}
