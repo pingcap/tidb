@@ -307,7 +307,6 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		defer cancel()
 		return tikvrpc.CallRPC(ctx1, client, req)
 	}
-
 	// Coprocessor streaming request.
 	// Use context to support timeout for grpc streaming client.
 	ctx1, cancel := context.WithCancel(ctx)

@@ -117,6 +117,7 @@ func (r *selectResult) fetch(ctx context.Context) {
 		} else {
 			result.result = resultSubset
 			r.memConsume(int64(resultSubset.MemSize()))
+
 		}
 
 		select {
