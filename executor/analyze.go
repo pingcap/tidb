@@ -111,7 +111,11 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			continue
 		}
 		for i, hg := range result.Hist {
-			err1 := statsHandle.SaveStatsToStorage(result.TableID.Physical, result.Count, result.IsIndex, hg, result.Cms[i], 1)
+			tblID := result.TableID.Physical[0]
+			if len(result.TableID.Physical) > 1 {
+				tblID = result.TableID.Logical
+			}
+			err1 := statsHandle.SaveStatsToStorage(tblID, result.Count, result.IsIndex, hg, result.Cms[i], 1)
 			if err1 != nil {
 				err = err1
 				logutil.Logger(ctx).Error("save stats to storage failed", zap.Error(err))
@@ -262,9 +266,9 @@ func (e *AnalyzeIndexExec) fetchAnalyzeResult(ranges []*ranger.Range, isNullRang
 	var builder distsql.RequestBuilder
 	var kvReqBuilder *distsql.RequestBuilder
 	if e.isCommonHandle && e.idxInfo.Primary {
-		kvReqBuilder = builder.SetCommonHandleRanges(e.ctx.GetSessionVars().StmtCtx, e.tableID.Physical, ranges)
+		kvReqBuilder = builder.SetMultiCommonHandleRanges(e.ctx.GetSessionVars().StmtCtx, e.tableID.Physical, ranges)
 	} else {
-		kvReqBuilder = builder.SetIndexRanges(e.ctx.GetSessionVars().StmtCtx, e.tableID.Physical, e.idxInfo.ID, ranges)
+		kvReqBuilder = builder.SetMultiIndexRanges(e.ctx.GetSessionVars().StmtCtx, e.tableID.Physical, e.idxInfo.ID, ranges)
 	}
 	kvReq, err := kvReqBuilder.
 		SetAnalyzeRequest(e.analyzePB).
@@ -437,7 +441,7 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 	var builder distsql.RequestBuilder
 	// Always set KeepOrder of the request to be true, in order to compute
 	// correct `correlation` of columns.
-	kvReq, err := builder.SetTableRanges(e.tableID.Physical, ranges, nil).
+	kvReq, err := builder.SetTablesRanges(e.tableID.Physical, ranges, nil).
 		SetAnalyzeRequest(e.analyzePB).
 		SetStartTS(math.MaxUint64).
 		SetKeepOrder(true).
@@ -747,7 +751,7 @@ func (e *AnalyzeFastExec) buildSampTask() (needRebuild bool, err error) {
 
 	store, _ := e.ctx.GetStore().(tikv.Storage)
 	e.cache = store.GetRegionCache()
-	startKey, endKey := tablecodec.GetTableHandleKeyRange(e.tableID.Physical)
+	startKey, endKey := tablecodec.GetTableHandleKeyRange(e.tableID.Physical[0]) // TODO: fix me to support fast analyze.
 	targetKey, err := e.getNextSampleKey(bo, startKey)
 	if err != nil {
 		return false, err

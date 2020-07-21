@@ -240,9 +240,8 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 		IdxsInfo:    indicesInfo,
 		Concurrency: 1,
 		TableID: core.HybridTableID{
-			Physical:   tbl.(table.PhysicalTable).GetPhysicalID(),
-			Logical:    tblInfo.ID,
-			MergeStats: tblInfo.IsNewPartition,
+			Physical: []int64{tbl.(table.PhysicalTable).GetPhysicalID()},
+			Logical:  tblInfo.ID,
 		},
 		TblInfo: tblInfo,
 		Opts:    opts,

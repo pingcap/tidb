@@ -1994,6 +1994,9 @@ func (d *ddl) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64, tp autoid
 
 // handleTableOptions updates tableInfo according to table options.
 func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) error {
+	if tbInfo.Partition != nil && len(tbInfo.Partition.Definitions) > 0 {
+		tbInfo.IsNewPartition = true
+	}
 	for _, op := range options {
 		switch op.Tp {
 		case ast.TableOptionAutoIncrement:

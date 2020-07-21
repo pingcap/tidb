@@ -678,9 +678,12 @@ type Delete struct {
 }
 
 type HybridTableID struct {
-	Physical   int64
-	Logical    int64
-	MergeStats bool
+	Logical  int64
+	Physical []int64
+}
+
+func (h *HybridTableID) String() string {
+	return fmt.Sprintf("%d-%v", h.Logical, h.Physical)
 }
 
 // analyzeInfo is used to store the database name, table name and partition name of analyze task.
