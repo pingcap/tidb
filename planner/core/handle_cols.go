@@ -148,7 +148,7 @@ func (cb *CommonHandleCols) Compare(a, b []types.Datum) (int, error) {
 	return 0, nil
 }
 
-// GetFieldTypes implements the kv.HandleCols interface.
+// GetFieldsTypes implements the kv.HandleCols interface.
 func (cb *CommonHandleCols) GetFieldsTypes() []*types.FieldType {
 	fieldTps := make([]*types.FieldType, 0, len(cb.columns))
 	for _, col := range cb.columns {
@@ -232,7 +232,7 @@ func (ib *IntHandleCols) Compare(a, b []types.Datum) (int, error) {
 	return 1, nil
 }
 
-// GetFieldTypes implements the kv.HandleCols interface.
+// GetFieldsTypes implements the kv.HandleCols interface.
 func (ib *IntHandleCols) GetFieldsTypes() []*types.FieldType {
 	return []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 }
