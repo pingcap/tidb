@@ -224,7 +224,7 @@ func BenchmarkUnicodeCIMatchSpecial(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		match := p.DoMatch(target, patChars, patTypes)
+		match := p.DoMatch(target)
 		if match {
 			b.Fatal("Unmatch expected.")
 		}
