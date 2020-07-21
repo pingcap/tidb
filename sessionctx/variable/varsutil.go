@@ -453,7 +453,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case TiDBOptBCJ:
 		if (strings.EqualFold(value, "ON") || value == "1") && vars.AllowBatchCop == 0 {
-			return value, ErrWrongValueForVar.GenWithStackByArgs("Can't set BCJ to 1 but tidb_allow_batch_cop is 0, please active batch cop at first.")
+			return value, ErrWrongValueForVar.GenWithStackByArgs("Can't set Broadcast Join to 1 but tidb_allow_batch_cop is 0, please active batch cop at first.")
 		}
 		return value, nil
 	case TiDBSkipUTF8Check, TiDBSkipASCIICheck, TiDBOptAggPushDown,
@@ -581,7 +581,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
 		}
 		if v == 0 && vars.AllowBCJ {
-			return value, ErrWrongValueForVar.GenWithStackByArgs("Can't set batch cop 0 but tidb_opt_broadcast_join is 1, please set bcj 0 at first")
+			return value, ErrWrongValueForVar.GenWithStackByArgs("Can't set batch cop 0 but tidb_opt_broadcast_join is 1, please set tidb_opt_broadcast_join 0 at first")
 		}
 		if v < 0 || v > 2 {
 			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)

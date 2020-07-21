@@ -801,7 +801,7 @@ func isPrimaryIndex(indexName model.CIStr) bool {
 }
 
 func genTiFlashPath(tblInfo *model.TableInfo, isGlobalRead bool) *util.AccessPath {
-	tiFlashPath := &util.AccessPath{StoreType: kv.TiFlash, IsGlobalRead: isGlobalRead}
+	tiFlashPath := &util.AccessPath{StoreType: kv.TiFlash, IsTiFlashGlobalRead: isGlobalRead}
 	fillContentForTablePath(tiFlashPath, tblInfo)
 	return tiFlashPath
 }

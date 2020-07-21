@@ -53,7 +53,7 @@ const (
 	// TypeHashJoin is the type of hash join.
 	TypeHashJoin = "HashJoin"
 	// TypeBroadcastJoin is the type of broad cast join.
-	TypeBroadcastJoin = "TypeBroadcastJoin"
+	TypeBroadcastJoin = "BroadcastJoin"
 	// TypeMergeJoin is the type of merge join.
 	TypeMergeJoin = "MergeJoin"
 	// TypeIndexJoin is the type of index look up join.
