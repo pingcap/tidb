@@ -42,7 +42,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const tiFlashCheckTiDBHttpAPIInterval = 5 * time.Second
+const tiflashCheckTiDBHttpAPIHalfInterval = 2500 * time.Millisecond
 
 func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	failpoint.Inject("mockExceedErrorLimit", func(val failpoint.Value) {
@@ -971,16 +971,14 @@ func checkAddPartition(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.P
 	partDefPointers := make([]*model.PartitionDefinition, 0, len(partInfo.Definitions))
 	for _, pd := range partInfo.Definitions {
 		partitionDefInMeta := tblInfo.FindPartitionDefinitionByName(pd.Name.L)
-		if partitionDefInMeta != nil {
-			if partitionDefInMeta.State == model.StatePublic {
-				// Even one partition with the same name existed, whole job canceled.
-				// We already have these new added partition with the same name.
-				job.State = model.JobStateCancelled
-				return nil, nil, nil, errors.Trace(ErrSameNamePartition.GenWithStackByArgs(pd.Name.L))
-			}
-			// Collect the partition definition pointer in tableInfo for future state change.
-			partDefPointers = append(partDefPointers, partitionDefInMeta)
+		if partitionDefInMeta != nil && partitionDefInMeta.State == model.StatePublic {
+			// Even one partition with the same name existed, whole job canceled.
+			// We already have these new added partition with the same name.
+			job.State = model.JobStateCancelled
+			return nil, nil, nil, errors.Trace(ErrSameNamePartition.GenWithStackByArgs(pd.Name.L))
 		}
+		// Collect the partition definition pointer in tableInfo for future state change.
+		partDefPointers = append(partDefPointers, partitionDefInMeta)
 	}
 	return tblInfo, partInfo, partDefPointers, nil
 }
@@ -990,14 +988,12 @@ func checkPartitionReplica(partDefPointers []*model.PartitionDefinition, d *ddlC
 	pdCli := d.store.(tikv.Storage).GetRegionCache().PDClient()
 	stores, err := pdCli.GetAllStores(ctx)
 	if err != nil {
-		job.State = model.JobStateCancelled
 		return needWait, errors.Trace(err)
 	}
 	for _, pd := range partDefPointers {
 		startKey, endKey := tablecodec.GetTableHandleKeyRange(pd.ID)
 		regions, _, err := pdCli.ScanRegions(ctx, startKey, endKey, -1)
 		if err != nil {
-			job.State = model.JobStateCancelled
 			return needWait, errors.Trace(err)
 		}
 		// For every region in the partition, if it has some corresponding peers and
@@ -1005,7 +1001,6 @@ func checkPartitionReplica(partDefPointers []*model.PartitionDefinition, d *ddlC
 		for _, region := range regions {
 			regionState, err := pdCli.GetRegionByID(ctx, region.Id)
 			if err != nil {
-				job.State = model.JobStateCancelled
 				return needWait, errors.Trace(err)
 			}
 			tiflashPeerCount := checkTiFlashPeerStore(stores, regionState.Meta.Peers)
@@ -1015,11 +1010,11 @@ func checkPartitionReplica(partDefPointers []*model.PartitionDefinition, d *ddlC
 				continue
 			}
 			needWait = true
-			logutil.Logger(ctx).Info("[DDL] partition replica check failed in delete-only ddl state", zap.Int64("pid", pd.ID), zap.Uint64("wait region ID", region.Id), zap.Uint64("tiflash peer nums", tiflashPeerCount), zap.Time("check time", time.Now()))
+			logutil.BgLogger().Info("[ddl] partition replicas check failed in delete-only DDL state", zap.Int64("pID", pd.ID), zap.Uint64("wait region ID", region.Id), zap.Uint64("tiflash peer nums", tiflashPeerCount), zap.Time("check time", time.Now()))
 			return needWait, nil
 		}
 	}
-	logutil.Logger(ctx).Info("[DDL] partition replica checks ok in delete-only ddl state")
+	logutil.BgLogger().Info("[ddl] partition replicas check ok in delete-only DDL state")
 	return needWait, nil
 }
 
@@ -1100,12 +1095,13 @@ func onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ 
 			// be finished. Otherwise the query to this partition will be blocked.
 			needWait, err := checkPartitionReplica(partDefPointers, d, job)
 			if err != nil {
+				ver, err := convertAddTablePartitionJob2RollbackJob(t, job, err)
 				return ver, err
 			}
 			if needWait {
 				// The new added partition hasn't been replicated.
 				// Do nothing to the job this time, wait next worker round.
-				time.Sleep(tiFlashCheckTiDBHttpAPIInterval / 2)
+				time.Sleep(tiflashCheckTiDBHttpAPIHalfInterval)
 				return ver, nil
 			}
 		}

@@ -4746,8 +4746,6 @@ func buildPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, d *ddl, s
 			Name:    def.Name,
 			ID:      genIDs[ith],
 			Comment: comment,
-			// buildPartitionInfo is used in add table partition action, so the state of the partition definition should be StateNone firstly.
-			State: model.StateNone,
 		}
 
 		buf := new(bytes.Buffer)

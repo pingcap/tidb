@@ -236,16 +236,16 @@ func rollingbackAddIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, isP
 	return
 }
 
-func rollingbackAddTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) {
+func convertAddTablePartitionJob2RollbackJob(t *meta.Meta, job *model.Job, otherwiseErr error) (ver int64, err error) {
 	job.State = model.JobStateRollingback
 	tblInfo, _, partDefPointers, err := checkAddPartition(t, job)
 	if err != nil {
-		return ver, err
+		return ver, errors.Trace(err)
 	}
 	// partDefPointers' len = 0 means the job hasn't reached the delete-only state.
 	if len(partDefPointers) == 0 {
 		job.State = model.JobStateCancelled
-		return ver, errCancelledDDLJob
+		return ver, otherwiseErr
 	}
 	partNames := make([]string, 0, len(partDefPointers))
 	for _, pd := range partDefPointers {
@@ -256,7 +256,11 @@ func rollingbackAddTablePartition(t *meta.Meta, job *model.Job) (ver int64, err 
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	return ver, errCancelledDDLJob
+	return ver, errors.Trace(otherwiseErr)
+}
+
+func rollingbackAddTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) {
+	return convertAddTablePartitionJob2RollbackJob(t, job, errCancelledDDLJob)
 }
 
 func rollingbackDropTableOrView(t *meta.Meta, job *model.Job) error {
