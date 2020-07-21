@@ -134,6 +134,11 @@ type twoPhaseCommitter struct {
 	regionTxnSize map[uint64]int
 	// Used by pessimistic transaction and large transaction.
 	ttlManager
+
+	testingKnobs struct {
+		acAfterCommitPrimary chan struct{}
+		bkAfterCommitPrimary chan struct{}
+	}
 }
 
 type mutationEx struct {
@@ -219,11 +224,12 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		}
 	}
 	err := txn.us.WalkBuffer(func(k kv.Key, v []byte) error {
+		var op pb.Op
 		if len(v) > 0 {
 			if tablecodec.IsUntouchedIndexKValue(k, v) {
 				return nil
 			}
-			op := pb.Op_Put
+			op = pb.Op_Put
 			if c := txn.us.LookupConditionPair(k); c != nil && c.ShouldNotExist() {
 				op = pb.Op_Insert
 			}
@@ -236,7 +242,6 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 			}
 			putCnt++
 		} else {
-			var op pb.Op
 			if !txn.IsPessimistic() && txn.us.LookupConditionPair(k) != nil {
 				// delete-your-writes keys in optimistic txn need check not exists in prewrite-phase
 				// due to `Op_CheckNotExists` doesn't prewrite lock, so mark those keys should not be used in commit-phase.
@@ -260,6 +265,9 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 				keys = append(keys, k)
 			}
 		} else {
+			if len(c.primaryKey) == 0 && op != pb.Op_CheckNotExists {
+				c.primaryKey = k
+			}
 			keys = append(keys, k)
 		}
 		entrySize := len(k) + len(v)
@@ -434,6 +442,10 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 		err = c.doActionOnBatches(bo, action, batches[:1])
 		if err != nil {
 			return errors.Trace(err)
+		}
+		if actionIsCommit && c.testingKnobs.bkAfterCommitPrimary != nil && c.testingKnobs.acAfterCommitPrimary != nil {
+			c.testingKnobs.acAfterCommitPrimary <- struct{}{}
+			<-c.testingKnobs.bkAfterCommitPrimary
 		}
 		batches = batches[1:]
 	}
