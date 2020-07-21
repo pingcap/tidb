@@ -186,7 +186,7 @@ func BuildFullDecodeColMap(cols []*table.Column, t table.Table, genExprProducer 
 
 		if col.IsGenerated() && !col.GeneratedStored {
 			// Find depended columns and put them into pendingCols. For example, idx(c) with column definition `c int as (a + b)`,
-			// depended columns of `c` is `a` and `b`, and both of them will be put into the pendingCols, waiting for next traversal.
+			// depended columns of `c` are `a` and `b`, and both of them will be put into the pendingCols, waiting for next traversal.
 			for _, c := range t.Cols() {
 				if _, ok := col.Dependences[c.Name.L]; ok {
 					pendingCols = append(pendingCols, c)

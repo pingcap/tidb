@@ -223,7 +223,9 @@ func (c *RowContainer) Close() (err error) {
 
 // ActionSpill returns a SpillDiskAction for spilling over to disk.
 func (c *RowContainer) ActionSpill() *SpillDiskAction {
-	c.actionSpill = &SpillDiskAction{c: c}
+	if c.actionSpill == nil {
+		c.actionSpill = &SpillDiskAction{c: c}
+	}
 	return c.actionSpill
 }
 
@@ -417,7 +419,9 @@ func (c *SortedRowContainer) GetSortedRow(idx int) (Row, error) {
 
 // ActionSpill returns a SortAndSpillDiskAction for sorting and spilling over to disk.
 func (c *SortedRowContainer) ActionSpill() *SortAndSpillDiskAction {
-	c.actionSpill = &SortAndSpillDiskAction{c: c}
+	if c.actionSpill == nil {
+		c.actionSpill = &SortAndSpillDiskAction{c: c}
+	}
 	return c.actionSpill
 }
 

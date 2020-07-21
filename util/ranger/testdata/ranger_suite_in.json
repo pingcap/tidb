@@ -17,5 +17,19 @@
       "explain select * from t0 where c0 and c0 in ('123','456','789')",
       "explain SELECT * FROM t0 WHERE ('a' != t0.c0) AND t0.c0;"
     ]
+  },
+  {
+    "name": "TestCompIndexDNFMatch",
+    "cases": [
+      "select * from t where a = 1 and b in (1, 2) and c > 1;",
+      "select * from t where a = 1 and (b = 1 or b = 2) and c > 1;",
+      "select * from t where a = 1 and (b = 1 or b in (2, 3)) and c > 1;",
+      "select * from t where a = 1 and (b = 1 or b = 2) and b = 3 and c > 1;",
+      "select * from t where a = 1 and (b is null or b = 2);",
+      "select * from t where a = 1 and (b is null or b = 2) and c > 1;",
+      "select * from t where a = 1 and b is null and c > 1;",
+      "select * from t where a = 1 and b is null and b is null and c > 1;",
+      "select * from t where a = 1 and b is null and b = 1 and c > 1;"
+    ]
   }
 ]
