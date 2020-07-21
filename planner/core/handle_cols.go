@@ -194,7 +194,7 @@ func (ib *IntHandleCols) BuildHandle(row chunk.Row) (kv.Handle, error) {
 
 // BuildHandleFromIndexRow implements the kv.HandleCols interface.
 func (ib *IntHandleCols) BuildHandleFromIndexRow(row chunk.Row) (kv.Handle, error) {
-	return kv.IntHandle(row.GetInt64(row.Len()-1)), nil
+	return kv.IntHandle(row.GetInt64(row.Len() - 1)), nil
 }
 
 // BuildHandleByDatums implements the kv.HandleCols interface.

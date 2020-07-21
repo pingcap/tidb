@@ -754,7 +754,10 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 		totalRowCount += rowCount
 	}
 
-	ts, partialCost := ds.buildIndexMergeTableScan(prop, path.TableFilters, totalRowCount)
+	ts, partialCost, err := ds.buildIndexMergeTableScan(prop, path.TableFilters, totalRowCount)
+	if err != nil {
+		return nil, err
+	}
 	totalCost += partialCost
 	cop.tablePlan = ts
 	cop.idxMergePartPlans = scans
@@ -819,7 +822,7 @@ func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty,
 	return tablePlan, partialCost, rowCount
 }
 
-func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, tableFilters []expression.Expression, totalRowCount float64) (PhysicalPlan, float64) {
+func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, tableFilters []expression.Expression, totalRowCount float64) (PhysicalPlan, float64, error) {
 	var partialCost float64
 	sessVars := ds.ctx.GetSessionVars()
 	ts := PhysicalTableScan{
@@ -835,6 +838,11 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 		ts.HandleCols = NewIntHandleCols(ds.getPKIsHandleCol())
 	}
 	ts.SetSchema(ds.schema.Clone())
+	var err error
+	ts.HandleCols, err = ts.HandleCols.ResolveIndices(ts.schema)
+	if err != nil {
+		return nil, 0, err
+	}
 	ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
 	if ts.Table.PKIsHandle {
 		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
@@ -858,9 +866,9 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 		}
 		sel := PhysicalSelection{Conditions: tableFilters}.Init(ts.ctx, ts.stats.ScaleByExpectCnt(selectivity*totalRowCount), ts.blockOffset)
 		sel.SetChildren(ts)
-		return sel, partialCost
+		return sel, partialCost, nil
 	}
-	return ts, partialCost
+	return ts, partialCost, nil
 }
 
 func indexCoveringCol(col *expression.Column, indexCols []*expression.Column, idxColLens []int) bool {
