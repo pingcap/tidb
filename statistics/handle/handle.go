@@ -284,6 +284,7 @@ func (sc statsCache) copy() statsCache {
 }
 
 //initMemoryUsage calc total memory usage of statsCache and set statsCache.memUsage
+//should be called after the tables and their stats are initilazed
 func (sc statsCache) initMemoryUsage() {
 	sum := int64(0)
 	for _, tb := range sc.tables {
