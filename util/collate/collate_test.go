@@ -164,6 +164,26 @@ func (s *testCollateSuite) TestUnicodeCICollator(c *C) {
 	testKeyTable(keyTable, "utf8mb4_unicode_ci", c)
 }
 
+// func BenchmarkMatchSpecial(b *testing.B) {
+func BenchmarkUnicodeCICompareSpecial(b *testing.B) {
+	SetNewCollationEnabledForTest(true)
+	defer SetNewCollationEnabledForTest(false)
+
+	var (
+		a = `ßßßaaaAAAAßsssssßßßßaAaaaAAAssßßssßßsßAAaa😃☃😃😃`
+		b = `ssßßAAAAAAAßsßssßssssßaAaAAAAAßßßssßßsßAAaa😜☃😃😜`
+	)
+
+	collator := GetCollator(collate)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		match := collator.Compare(a, b)
+		if match != 0 {
+			b.Fatal("equal expected.")
+		}
+	}
+}
+
 func (s *testCollateSuite) TestSetNewCollateEnabled(c *C) {
 	defer SetNewCollationEnabledForTest(false)
 
