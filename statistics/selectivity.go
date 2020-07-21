@@ -283,6 +283,60 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 			ret *= selectionFactor
 		}
 	}
+
+	// Now we try to cover those still not covered DNF conditions using independence assumption.
+	if mask > 0 {
+		colID2SingleColIdxID := make(map[int64]int64)
+		colID2SingleColIdxLen := make(map[int64]int)
+		for idxID, cols := range coll.Idx2ColumnIDs {
+			if len(cols) == 1 {
+				colID2SingleColIdxID[cols[0]] = idxID
+				colID2SingleColIdxLen[cols[0]] = coll.Indices[idxID].Info.Columns[0].Length
+			}
+		}
+		for i := range remainedExprs {
+			if mask&(1<<uint64(i)) > 0 {
+				dnfItems := expression.FlattenDNFConditions(remainedExprs[i].(*expression.ScalarFunction))
+				ranges, cols, err := ranger.DetachSimpleDNFCondAndBuildRangeForCols(ctx, dnfItems, colID2SingleColIdxLen)
+				if err != nil {
+					return 0, nil, errors.Trace(err)
+				}
+				selectivity := 0.0
+				for j := range ranges {
+					cnt := 0.0
+					colID := cols[j].UniqueID
+					singleColIdxID, ok := colID2SingleColIdxID[colID]
+					if ok {
+						cnt, err = coll.GetRowCountByIndexRanges(sc, singleColIdxID, ranges[j])
+						if err != nil {
+							return 0, nil, errors.Trace(err)
+						}
+					} else if coll.Columns[colID].IsHandle {
+						cnt, err = coll.GetRowCountByIntColumnRanges(sc, colID, ranges[j])
+						if err != nil {
+							return 0, nil, errors.Trace(err)
+						}
+					} else {
+						cnt, err = coll.GetRowCountByColumnRanges(sc, colID, ranges[j])
+						if err != nil {
+							return 0, nil, errors.Trace(err)
+						}
+					}
+
+					curSelectivity := cnt / float64(coll.Count)
+
+					// Assuming col A and col B are independent,
+					// we can calculate the selectivity by sel(condA OR condB) = sel(condA) + sel(condB) - sel(condA) * sel(condB)
+					selectivity = selectivity + curSelectivity - selectivity*curSelectivity
+				}
+				if selectivity != 0 {
+					ret *= selectivity
+					mask &^= 1 << uint64(i)
+				}
+			}
+		}
+	}
+
 	// If there's still conditions which cannot be calculated, we will multiply a selectionFactor.
 	if mask > 0 {
 		ret *= selectionFactor

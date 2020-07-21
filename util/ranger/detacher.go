@@ -425,3 +425,54 @@ func DetachCondsForColumn(sctx sessionctx.Context, conds []expression.Expression
 	}
 	return detachColumnCNFConditions(sctx, conds, checker)
 }
+
+// DetachSimpleDNFCondAndBuildRangeForCols detaches access conditions and build range for every single column.
+// Please make sure top level is DNF form.
+// Currently it's only used by selectivity computing to handle uncovered DNF conditions.
+func DetachSimpleDNFCondAndBuildRangeForCols(sctx sessionctx.Context, conds []expression.Expression,
+	colID2SingleColIdxLen map[int64]int) (ranges [][]*Range, cols []*expression.Column, err error) {
+	col2range := make(map[*expression.Column][]point)
+	sc := sctx.GetSessionVars().StmtCtx
+	rb := builder{sc: sc}
+	for i := range conds {
+		scalar, ok := conds[i].(*expression.ScalarFunction)
+		if !ok {
+			return nil, nil, nil
+		}
+		col, ok := scalar.GetArgs()[0].(*expression.Column)
+		if !ok {
+			col, ok = scalar.GetArgs()[1].(*expression.Column)
+		}
+		if !ok {
+			return nil, nil, nil
+		}
+
+		length, ok := colID2SingleColIdxLen[col.UniqueID]
+		if !ok {
+			// If this column doesn't have single column index on it, we switch to stats on this column.
+			length = types.UnspecifiedLength
+		}
+		checker := &conditionChecker{
+			// Each DNF item should only contain a single column.
+			colUniqueID: col.UniqueID,
+			length:      length,
+		}
+		if !checker.check(scalar) {
+			return nil, nil, nil
+		}
+		if _, ok := col2range[col]; !ok {
+			col2range[col] = rb.build(conds[i])
+		} else {
+			col2range[col] = rb.union(col2range[col], rb.build(conds[i]))
+		}
+	}
+	for col, points := range col2range {
+		cols = append(cols, col)
+		curRange, err := points2Ranges(sc, points, newFieldType(col.RetType))
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		ranges = append(ranges, curRange)
+	}
+	return
+}
