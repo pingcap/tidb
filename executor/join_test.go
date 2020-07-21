@@ -2101,3 +2101,57 @@ func (s *testSuiteJoin1) TestIssue18564(c *C) {
 	tk.MustExec("insert into t2 values(1, 1)")
 	tk.MustQuery("select /*+ INL_JOIN(t1) */ * from t1 FORCE INDEX (idx) join t2 on t1.b=t2.b and t1.a = t2.a").Check(testkit.Rows("1 1 1 1"))
 }
+
+func (s *testSuite9) TestIssue18572_1(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int, b int, index idx(b));")
+	tk.MustExec("insert into t1 values(1, 1);")
+	tk.MustExec("insert into t1 select * from t1;")
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testIndexHashJoinInnerWorkerErr", "return"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testIndexHashJoinInnerWorkerErr"), IsNil)
+	}()
+
+	rs, err := tk.Exec("select /*+ inl_hash_join(t1) */ * from t1 right join t1 t2 on t1.b=t2.b;")
+	c.Assert(err, IsNil)
+	_, err = session.GetRows4Test(context.Background(), nil, rs)
+	c.Assert(strings.Contains(err.Error(), "mockIndexHashJoinInnerWorkerErr"), IsTrue)
+}
+
+func (s *testSuite9) TestIssue18572_2(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int, b int, index idx(b));")
+	tk.MustExec("insert into t1 values(1, 1);")
+	tk.MustExec("insert into t1 select * from t1;")
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testIndexHashJoinOuterWorkerErr", "return"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testIndexHashJoinOuterWorkerErr"), IsNil)
+	}()
+
+	rs, err := tk.Exec("select /*+ inl_hash_join(t1) */ * from t1 right join t1 t2 on t1.b=t2.b;")
+	c.Assert(err, IsNil)
+	_, err = session.GetRows4Test(context.Background(), nil, rs)
+	c.Assert(strings.Contains(err.Error(), "mockIndexHashJoinOuterWorkerErr"), IsTrue)
+}
+
+func (s *testSuite9) TestIssue18572_3(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int, b int, index idx(b));")
+	tk.MustExec("insert into t1 values(1, 1);")
+	tk.MustExec("insert into t1 select * from t1;")
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testIndexHashJoinBuildErr", "return"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testIndexHashJoinBuildErr"), IsNil)
+	}()
+
+	rs, err := tk.Exec("select /*+ inl_hash_join(t1) */ * from t1 right join t1 t2 on t1.b=t2.b;")
+	c.Assert(err, IsNil)
+	_, err = session.GetRows4Test(context.Background(), nil, rs)
+	c.Assert(strings.Contains(err.Error(), "mockIndexHashJoinBuildErr"), IsTrue)
+}
