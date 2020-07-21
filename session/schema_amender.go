@@ -134,7 +134,7 @@ func (a *amendCollector) collectIndexAmendOps(phyTblID int64, tblAtStart, tblAtC
 			for _, idxCol := range idxInfoAtCommit.Meta().Columns {
 				colID := tblAtCommit.Meta().Columns[idxCol.Offset].ID
 				oldColInfo := findColByID(tblAtStart, colID)
-				// TODO now index column MUST be found in old table columns
+				// TODO: now index column MUST be found in old table columns.
 				if oldColInfo == nil {
 					return nil, errors.Trace(table.ErrUnsupportedOp)
 				}
@@ -162,7 +162,7 @@ func (a *amendCollector) collectTblAmendOps(sctx sessionctx.Context, phyTblID in
 		}
 		a.tblChk[phyTblID] = chunk.NewChunkWithCapacity(fieldTypes, 4)
 	}
-	// TODO currently only add index is considered
+	// TODO: currently only "add index" is considered.
 	ops, err := a.collectIndexAmendOps(phyTblID, tblInfoAtStart, tblInfoAtCommit)
 	if err != nil {
 		return err
@@ -192,6 +192,7 @@ func (a *amendCollector) genMutationsForTbl(ctx context.Context, sess *session, 
 	return resAddMutations, nil
 }
 
+// amendOp is an amend operation for a specific schema change, new mutations will be generated using input ones.
 type amendOp interface {
 	genMutations(ctx context.Context, sctx sessionctx.Context, commitMutations tikv.CommitterMutations,
 		kvMaps map[string][]byte) (tikv.CommitterMutations, error)
@@ -386,7 +387,7 @@ func (s *SchemaAmender) AmendTxn(ctx context.Context, startInfoSchema tikv.Schem
 	infoSchemaAtStart := startInfoSchema.(infoschema.InfoSchema)
 	infoSchemaAtCheck := change.LatestInfoSchema.(infoschema.InfoSchema)
 
-	// Collect amend operations for each table by physical table id
+	// Collect amend operations for each table by physical table ID.
 	var needAmendMem bool
 	amendCollector := newAmendCollector()
 	for i, tblID := range change.PhyTblIDS {

@@ -973,7 +973,6 @@ type RelatedSchemaChange struct {
 }
 
 func (c *twoPhaseCommitter) tryAmendTxn(ctx context.Context, startInfoSchema SchemaVer, change *RelatedSchemaChange) (bool, error) {
-	memAmended := false
 	addMutations, err := c.txn.schemaAmender.AmendTxn(ctx, startInfoSchema, change, c.mutations)
 	if err != nil {
 		return false, err
@@ -987,9 +986,9 @@ func (c *twoPhaseCommitter) tryAmendTxn(ctx context.Context, startInfoSchema Sch
 			return false, err
 		}
 		logutil.Logger(ctx).Info("amend prewrite finished", zap.Uint64("txnStartTS", c.startTS))
-		memAmended = true
+		return true, nil
 	}
-	return memAmended, nil
+	return false, nil
 }
 
 func (c *twoPhaseCommitter) getCommitTS(ctx context.Context, commitDetail *execdetails.CommitDetails) (uint64, error) {
