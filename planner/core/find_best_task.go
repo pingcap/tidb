@@ -831,6 +831,9 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 		physicalTableID: ds.physicalTableID,
 		HandleCols:      ds.handleCols,
 	}.Init(ds.ctx, ds.blockOffset)
+	if ts.HandleCols == nil {
+		ts.HandleCols = NewIntHandleCols(ds.getPKIsHandleCol())
+	}
 	ts.SetSchema(ds.schema.Clone())
 	ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
 	if ts.Table.PKIsHandle {
