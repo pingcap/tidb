@@ -29,7 +29,11 @@
   {
     "name": "TestMaxMinEliminate",
     "cases": [
-      "explain (select max(a) from t) union (select min(a) from t)"
+      "explain (select max(a) from t) union (select min(a) from t)",
+      "explain select min(a), max(a) from cluster_index_t",
+      "explain select min(b), max(b) from cluster_index_t where a = 1",
+      "explain select min(a), max(a) from cluster_index_t where b = 1",
+      "explain select min(b), max(b) from cluster_index_t where b = 1"
     ]
   },
   {
