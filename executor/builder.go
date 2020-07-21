@@ -2505,6 +2505,9 @@ func buildIndexReq(b *executorBuilder, schemaLen, handleLen int, plans []planner
 	for i := 0; i < handleLen; i++ {
 		indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(schemaLen+i))
 	}
+	if len(indexReq.OutputOffsets) == 0 {
+		indexReq.OutputOffsets = []uint32{uint32(schemaLen)}
+	}
 	return indexReq, indexStreaming, err
 }
 
