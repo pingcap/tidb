@@ -15,6 +15,7 @@ package collate
 
 import (
 	"testing"
+	"bytes"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testleak"
@@ -174,12 +175,59 @@ func BenchmarkUnicodeCICompareSpecial(b *testing.B) {
 		s2 = `ssßßAAAAAAAßsßssßssssßaAaAAAAAßßßssßßsßAAaa😜☃😃😜`
 	)
 
-	collator := GetCollator(collate)
+	collator := GetCollator("utf8mb4_unicode_ci")
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		match := collator.Compare(s1, s2)
 		if match != 0 {
 			b.Fatal("equal expected.")
+		}
+	}
+}
+
+func BenchmarkUnicodeCIKeySpecial(b *testing.B) {
+	SetNewCollationEnabledForTest(true)
+	defer SetNewCollationEnabledForTest(false)
+
+	keyTable := []keyTable{
+		{"a", []byte{0x0E, 0x33}},
+		{"A", []byte{0x0E, 0x33}},
+		{"ß", []byte{0x0F, 0xEA, 0x0F, 0xEA}},
+		{"Foo © bar 𝌆 baz ☃ qux", []byte{0x0E, 0xB9, 0x0F, 0x82, 0x0F, 0x82, 0x02, 0x09, 0x02,
+			0xC5, 0x02, 0x09, 0x0E, 0x4A, 0x0E, 0x33, 0x0F, 0xC0, 0x02, 0x09, 0xFF, 0xFD, 0x02,
+			0x09, 0x0E, 0x4A, 0x0E, 0x33, 0x10, 0x6A, 0x02, 0x09, 0x06, 0xFF, 0x02, 0x09, 0x0F,
+			0xB4, 0x10, 0x1F, 0x10, 0x5A}},
+		{"a ", []byte{0x0E, 0x33}},
+	}
+	collator := GetCollator("utf8mb4_unicode_ci")
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for _, t := range keyTable {
+			if bytes.Compare(collator.Key(t.Str), t.Expect) {
+				b.Fatal("equal expected.")
+			}
+		}
+	}
+}
+
+func BenchmarkUnicodeCIMatchSpecial(b *testing.B) {
+	SetNewCollationEnabledForTest(true)
+	defer SetNewCollationEnabledForTest(false)
+
+	var (
+		pattern = `㍿%㍿%㍿%㍿%㍿%㍿%㍿%㍿%b`
+		target  = `㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿`
+		escape  = byte('\\')
+	)
+
+	p := GetCollator("utf8mb4_unicode_ci").Pattern()
+	patChars, patTypes := p.CompilePattern(pattern, escape)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		match := p.DoMatch(target, patChars, patTypes)
+		if match {
+			b.Fatal("Unmatch expected.")
 		}
 	}
 }
