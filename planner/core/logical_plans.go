@@ -731,8 +731,17 @@ func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Ex
 	if !path.Index.Unique && !path.Index.Primary && len(path.Index.Columns) == len(path.IdxCols) {
 		handleCol := ds.getPKIsHandleCol()
 		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.Flag) {
-			path.IdxCols = append(path.IdxCols, handleCol)
-			path.IdxColLens = append(path.IdxColLens, types.UnspecifiedLength)
+			alreadyHandle := false
+			for _, col := range path.IdxCols {
+				if col.ID == model.ExtraHandleID || col.Equal(nil, handleCol) {
+					alreadyHandle = true
+				}
+			}
+			// Don't add one column twice to the index. May cause unexpected errors.
+			if !alreadyHandle {
+				path.IdxCols = append(path.IdxCols, handleCol)
+				path.IdxColLens = append(path.IdxColLens, types.UnspecifiedLength)
+			}
 		}
 	}
 	if len(path.IdxCols) != 0 {
