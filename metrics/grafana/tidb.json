@@ -2270,7 +2270,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "TiDB process Go garbage collection time cost",
+          "description": "TiDB process Go garbage collection STW pause duration",
           "editable": true,
           "error": false,
           "fill": 1,
@@ -2326,7 +2326,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Go GC Duration",
+          "title": "Go GC STW Duration",
           "tooltip": {
             "msResolution": false,
             "shared": true,
