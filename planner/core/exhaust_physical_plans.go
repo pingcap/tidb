@@ -787,7 +787,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		Columns:         ds.Columns,
 		TableAsName:     ds.TableAsName,
 		DBName:          ds.DBName,
-		filterCondition: ds.pushedDownConds,
+		FilterCondition: ds.pushedDownConds,
 		Ranges:          ranges,
 		rangeDecidedBy:  outerJoinKeys,
 		KeepOrder:       keepOrder,
@@ -799,9 +799,9 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 	}
 	selectivity := float64(1)
 	countAfterAccess := rowCount
-	if len(ts.filterCondition) > 0 {
+	if len(ts.FilterCondition) > 0 {
 		var err error
-		selectivity, _, err = ds.tableStats.HistColl.Selectivity(ds.ctx, ts.filterCondition, ds.possibleAccessPaths)
+		selectivity, _, err = ds.tableStats.HistColl.Selectivity(ds.ctx, ts.FilterCondition, ds.possibleAccessPaths)
 		if err != nil || selectivity <= 0 {
 			logutil.BgLogger().Debug("unexpected selectivity, use selection factor", zap.Float64("selectivity", selectivity), zap.String("table", ts.TableAsName.L))
 			selectivity = SelectionFactor

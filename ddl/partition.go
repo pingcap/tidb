@@ -368,7 +368,9 @@ func checkPartitionFuncCallValid(ctx sessionctx.Context, tblInfo *model.TableInf
 // checkPartitionExprValid checks partition expression validly.
 func checkPartitionExprValid(ctx sessionctx.Context, tblInfo *model.TableInfo, expr ast.ExprNode) error {
 	switch v := expr.(type) {
-	case *ast.FuncCastExpr, *ast.CaseExpr, *ast.SubqueryExpr, *ast.WindowFuncExpr, *ast.RowExpr, *ast.DefaultExpr, *ast.ValuesExpr:
+	case *ast.FuncCastExpr:
+		return nil
+	case *ast.CaseExpr, *ast.SubqueryExpr, *ast.WindowFuncExpr, *ast.RowExpr, *ast.DefaultExpr, *ast.ValuesExpr:
 		return errors.Trace(ErrPartitionFunctionIsNotAllowed)
 	case *ast.FuncCallExpr:
 		return checkPartitionFuncCallValid(ctx, tblInfo, v)

@@ -786,13 +786,13 @@ func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty,
 	ts, partialCost, rowCount := ds.getOriginalPhysicalTableScan(prop, path, false)
 	rowSize := ds.TblColHists.GetAvgRowSize(ds.ctx, ds.TblCols, false, false)
 	sessVars := ds.ctx.GetSessionVars()
-	if len(ts.filterCondition) > 0 {
-		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, ts.filterCondition, nil)
+	if len(ts.FilterCondition) > 0 {
+		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, ts.FilterCondition, nil)
 		if err != nil {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = SelectionFactor
 		}
-		tablePlan = PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.ctx, ts.stats.ScaleByExpectCnt(selectivity*rowCount), ds.blockOffset)
+		tablePlan = PhysicalSelection{Conditions: ts.FilterCondition}.Init(ts.ctx, ts.stats.ScaleByExpectCnt(selectivity*rowCount), ds.blockOffset)
 		tablePlan.SetChildren(ts)
 		partialCost += rowCount * sessVars.CopCPUFactor
 		partialCost += selectivity * rowCount * rowSize * sessVars.NetworkFactor
@@ -1454,16 +1454,16 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 }
 
 func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *property.StatsInfo) {
-	ts.filterCondition, copTask.rootTaskConds = SplitSelCondsWithVirtualColumn(ts.filterCondition)
+	ts.FilterCondition, copTask.rootTaskConds = SplitSelCondsWithVirtualColumn(ts.FilterCondition)
 	var newRootConds []expression.Expression
-	ts.filterCondition, newRootConds = expression.PushDownExprs(ts.ctx.GetSessionVars().StmtCtx, ts.filterCondition, ts.ctx.GetClient(), ts.StoreType)
+	ts.FilterCondition, newRootConds = expression.PushDownExprs(ts.ctx.GetSessionVars().StmtCtx, ts.FilterCondition, ts.ctx.GetClient(), ts.StoreType)
 	copTask.rootTaskConds = append(copTask.rootTaskConds, newRootConds...)
 
 	// Add filter condition to table plan now.
 	sessVars := ts.ctx.GetSessionVars()
-	if len(ts.filterCondition) > 0 {
+	if len(ts.FilterCondition) > 0 {
 		copTask.cst += copTask.count() * sessVars.CopCPUFactor
-		sel := PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.ctx, stats, ts.blockOffset)
+		sel := PhysicalSelection{Conditions: ts.FilterCondition}.Init(ts.ctx, stats, ts.blockOffset)
 		sel.SetChildren(ts)
 		copTask.tablePlan = sel
 	}
@@ -1479,7 +1479,7 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		physicalTableID: ds.physicalTableID,
 		Ranges:          path.Ranges,
 		AccessCondition: path.AccessConds,
-		filterCondition: path.TableFilters,
+		FilterCondition: path.TableFilters,
 		StoreType:       path.StoreType,
 	}.Init(ds.ctx, ds.blockOffset)
 	ts.SetSchema(ds.schema.Clone())

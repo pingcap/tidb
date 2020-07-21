@@ -2469,7 +2469,7 @@ func (b *executorBuilder) buildPartitionTable(v *plannercore.PhysicalPartitionTa
 
 // buildTableReader builds a table reader executor. It first build a no range table reader,
 // and then update it ranges from table scan plan.
-func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) *TableReaderExecutor {
+func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) Executor {
 	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
 		if err := b.refreshForUpdateTSForRC(); err != nil {
 			b.err = err
@@ -2486,6 +2486,35 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) *
 	ret.ranges = ts.Ranges
 	sctx := b.ctx.GetSessionVars().StmtCtx
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
+
+	// Rewrite the partition table.
+	if pi := ts.Table.GetPartitionInfo(); pi != nil {
+		tmp, _ := b.is.TableByID(ts.Table.ID)
+		tbl := tmp.(table.PartitionedTable)
+		partitions, err := plannercore.PartitionPruning(b.ctx, tbl, ts.FilterCondition)
+		if err != nil {
+			b.err = err
+			return nil
+		}
+
+		if len(partitions) == 0 {
+			return &TableDualExec{baseExecutor: ret.baseExecutor}
+		}
+
+		if len(partitions) == 1 {
+			ret.table = partitions[0]
+			return ret
+		}
+
+		return &partitionDataSource{
+			baseExecutor: ret.baseExecutor,
+			partitions:   partitions,
+			nextPartition: nextPartitionForTableReader{
+				exec: ret,
+			},
+		}
+	}
+
 	return ret
 }
 
@@ -2606,6 +2635,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	if err != nil {
 		return nil, err
 	}
+
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
 	startTS, err := b.getSnapshotTS()
 	if err != nil {
@@ -2659,13 +2689,14 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	return e, nil
 }
 
-func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLookUpReader) *IndexLookUpExecutor {
+func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLookUpReader) Executor {
 	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
 		if err := b.refreshForUpdateTSForRC(); err != nil {
 			b.err = err
 			return nil
 		}
 	}
+
 	ret, err := buildNoRangeIndexLookUpReader(b, v)
 	if err != nil {
 		b.err = err
@@ -2681,6 +2712,35 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 	sctx := b.ctx.GetSessionVars().StmtCtx
 	sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
+
+	// Rewrite the partition table.
+	if pi := ts.Table.GetPartitionInfo(); pi != nil {
+		tmp, _ := b.is.TableByID(ts.Table.ID)
+		tbl := tmp.(table.PartitionedTable)
+		partitions, err := plannercore.PartitionPruning(b.ctx, tbl, ts.FilterCondition)
+		if err != nil {
+			b.err = err
+			return nil
+		}
+
+		if len(partitions) == 0 {
+			return &TableDualExec{baseExecutor: ret.baseExecutor}
+		}
+
+		if len(partitions) == 1 {
+			ret.table = partitions[0]
+			return ret
+		}
+
+		return &partitionDataSource{
+			baseExecutor: ret.baseExecutor,
+			partitions:   partitions,
+			nextPartition: nextPartitionForIndexLookUp{
+				exec: ret,
+			},
+		}
+	}
+
 	return ret
 }
 

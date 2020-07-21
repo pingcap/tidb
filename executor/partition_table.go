@@ -156,3 +156,73 @@ func (e *PartitionTableExecutor) Next(ctx context.Context, chk *chunk.Chunk) err
 func (e *PartitionTableExecutor) Close() error {
 	return nil
 }
+
+type partitionDataSource struct {
+	baseExecutor
+
+	nextPartition
+	partitions []table.PhysicalTable
+	cursor     int
+	curr       Executor
+}
+
+type nextPartition interface {
+	nextPartition(context.Context, table.PhysicalTable) (Executor, error)
+}
+
+type nextPartitionForTableReader struct {
+	exec *TableReaderExecutor
+}
+
+func (n nextPartitionForTableReader) nextPartition(ctx context.Context, tbl table.PhysicalTable) (Executor, error) {
+	n.exec.table = tbl
+	return n.exec, nil
+}
+
+type nextPartitionForIndexLookUp struct {
+	exec *IndexLookUpExecutor
+}
+
+func (n nextPartitionForIndexLookUp) nextPartition(ctx context.Context, tbl table.PhysicalTable) (Executor, error) {
+	n.exec.table = tbl
+	n.exec.open(ctx)
+	return n.exec, nil
+}
+
+func (e *partitionDataSource) Next(ctx context.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	var err error
+	for e.cursor < len(e.partitions) {
+		if e.curr == nil {
+			n := e.nextPartition
+			e.curr, err = n.nextPartition(ctx, e.partitions[e.cursor])
+			if err != nil {
+				return err
+			}
+			e.curr.Open(ctx)
+		}
+
+		err = e.curr.Next(ctx, chk)
+		if err != nil {
+			return err
+		}
+
+		if chk.NumRows() > 0 {
+			break
+		}
+
+		e.curr.Close()
+		e.curr = nil
+		e.cursor++
+	}
+	return nil
+}
+
+func (e *partitionDataSource) Close() error {
+	var err error
+	if e.curr != nil {
+		err = e.curr.Close()
+		e.curr = nil
+	}
+	return err
+}

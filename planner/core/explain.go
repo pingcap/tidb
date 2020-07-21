@@ -22,11 +22,11 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
@@ -40,6 +40,10 @@ type dataAccesser interface {
 
 	// OperatorInfo return other operator information to be explained.
 	OperatorInfo(normalized bool) string
+}
+
+type partitionAccesser interface {
+	accessObject(sessionctx.Context) string
 }
 
 // ExplainInfo implements Plan interface.
@@ -284,6 +288,48 @@ func (p *PhysicalTableReader) ExplainInfo() string {
 	return "data:" + p.tablePlan.ExplainID().String()
 }
 
+func (p *PhysicalTableReader) accessObject(sctx sessionctx.Context) string {
+	ts := p.TablePlans[0].(*PhysicalTableScan)
+	pi := ts.Table.GetPartitionInfo()
+	if pi == nil {
+		return ""
+	}
+
+	if sctx == nil {
+		return "partition: decided by condition"
+	}
+
+	var buffer bytes.Buffer
+	is := infoschema.GetInfoSchema(sctx)
+	tmp, ok := is.TableByID(ts.Table.ID)
+	if !ok {
+		fmt.Fprintf(&buffer, "partition table not found: %d", ts.Table.ID)
+		return buffer.String()
+	}
+	tbl := tmp.(table.PartitionedTable)
+	partitions, err := PartitionPruning(sctx, tbl, ts.FilterCondition)
+	if err != nil {
+		return "partition pruning error" + err.Error()
+	}
+
+	for i, p := range partitions {
+		name := pi.GetNameByID(p.GetPhysicalID())
+		if i == 0 {
+			buffer.WriteString("partition:")
+		} else {
+			buffer.WriteString(",")
+		}
+		buffer.WriteString(name)
+	}
+
+	return buffer.String()
+}
+
+// OperatorInfo return other operator information to be explained.
+func (p *PhysicalTableReader) OperatorInfo(normalized bool) string {
+	return "data:" + p.tablePlan.ExplainID().String()
+}
+
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalTableReader) ExplainNormalizedInfo() string {
 	return p.ExplainInfo()
@@ -306,6 +352,40 @@ func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
 		return fmt.Sprintf("limit embedded(offset:%v, count:%v)", p.PushedLimit.Offset, p.PushedLimit.Count)
 	}
 	return ""
+}
+
+// AccessObject implements dataAccesser interface.
+func (p *PhysicalIndexLookUpReader) accessObject(sctx sessionctx.Context) string {
+	ts := p.TablePlans[0].(*PhysicalTableScan)
+	pi := ts.Table.GetPartitionInfo()
+	if pi == nil {
+		return ""
+	}
+
+	var buffer bytes.Buffer
+	is := infoschema.GetInfoSchema(sctx)
+	tmp, ok := is.TableByID(ts.Table.ID)
+	if !ok {
+		fmt.Fprintf(&buffer, "partition table not found: %d", ts.Table.ID)
+		return buffer.String()
+	}
+	tbl := tmp.(table.PartitionedTable)
+	partitions, err := PartitionPruning(sctx, tbl, ts.FilterCondition)
+	if err != nil {
+		return "partition pruning error" + err.Error()
+	}
+
+	for i, p := range partitions {
+		name := pi.GetNameByID(p.GetPhysicalID())
+		if i == 0 {
+			buffer.WriteString("partition:")
+		} else {
+			buffer.WriteString(",")
+		}
+		buffer.WriteString(name)
+	}
+
+	return buffer.String()
 }
 
 // ExplainInfo implements Plan interface.

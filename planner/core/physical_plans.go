@@ -392,7 +392,7 @@ type PhysicalTableScan struct {
 
 	// AccessCondition is used to calculate range.
 	AccessCondition []expression.Expression
-	filterCondition []expression.Expression
+	FilterCondition []expression.Expression
 
 	Table   *model.TableInfo
 	Columns []*model.ColumnInfo
@@ -434,7 +434,7 @@ func (ts *PhysicalTableScan) Clone() (PhysicalPlan, error) {
 	}
 	clonedScan.physicalSchemaProducer = *prod
 	clonedScan.AccessCondition = cloneExprs(ts.AccessCondition)
-	clonedScan.filterCondition = cloneExprs(ts.filterCondition)
+	clonedScan.FilterCondition = cloneExprs(ts.FilterCondition)
 	if ts.Table != nil {
 		clonedScan.Table = ts.Table.Clone()
 	}
@@ -453,11 +453,11 @@ func (ts *PhysicalTableScan) Clone() (PhysicalPlan, error) {
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
 func (ts *PhysicalTableScan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0, len(ts.AccessCondition)+len(ts.filterCondition))
+	corCols := make([]*expression.CorrelatedColumn, 0, len(ts.AccessCondition)+len(ts.FilterCondition))
 	for _, expr := range ts.AccessCondition {
 		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
 	}
-	for _, expr := range ts.filterCondition {
+	for _, expr := range ts.FilterCondition {
 		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
 	}
 	return corCols
