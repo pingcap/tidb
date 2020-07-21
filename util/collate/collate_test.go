@@ -220,7 +220,7 @@ func BenchmarkUnicodeCIMatchSpecial(b *testing.B) {
 	)
 
 	p := GetCollator("utf8mb4_unicode_ci").Pattern()
-	patChars, patTypes := p.Compile(pattern, escape)
+	p.Compile(pattern, escape)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
