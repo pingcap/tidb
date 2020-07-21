@@ -677,14 +677,19 @@ type Delete struct {
 	TblColPosInfos TblColPosInfoSlice
 }
 
+type HybridTableID struct {
+	Physical   int64
+	Logical    int64
+	MergeStats bool
+}
+
 // analyzeInfo is used to store the database name, table name and partition name of analyze task.
 type analyzeInfo struct {
 	DBName        string
 	TableName     string
 	PartitionName string
-	// PhysicalTableID is the id for a partition or a table.
-	PhysicalTableID int64
-	Incremental     bool
+	TableID       HybridTableID
+	Incremental   bool
 }
 
 // AnalyzeColumnsTask is used for analyze columns.

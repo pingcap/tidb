@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -233,14 +234,18 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 	opts := make(map[ast.AnalyzeOptionType]uint64)
 	opts[ast.AnalyzeOptNumSamples] = 20
 	mockExec := &executor.AnalyzeTestFastExec{
-		Ctx:             tk.Se.(sessionctx.Context),
-		PKInfo:          pkCol,
-		ColsInfo:        colsInfo,
-		IdxsInfo:        indicesInfo,
-		Concurrency:     1,
-		PhysicalTableID: tbl.(table.PhysicalTable).GetPhysicalID(),
-		TblInfo:         tblInfo,
-		Opts:            opts,
+		Ctx:         tk.Se.(sessionctx.Context),
+		PKInfo:      pkCol,
+		ColsInfo:    colsInfo,
+		IdxsInfo:    indicesInfo,
+		Concurrency: 1,
+		TableID: core.HybridTableID{
+			Physical:   tbl.(table.PhysicalTable).GetPhysicalID(),
+			Logical:    tblInfo.ID,
+			MergeStats: tblInfo.IsNewPartition,
+		},
+		TblInfo: tblInfo,
+		Opts:    opts,
 	}
 	err = mockExec.TestFastSample()
 	c.Assert(err, IsNil)
