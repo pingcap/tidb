@@ -32,10 +32,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
@@ -385,23 +383,9 @@ func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 			return handles, retChk, nil
 		}
 		for i := 0; i < chk.NumRows(); i++ {
-			var handle kv.Handle
-			if handleCols.IsInt() {
-				handle = kv.IntHandle(chk.GetRow(i).GetInt64(handleOffset[0]))
-			} else {
-				var handleEncoded []byte
-				var datums []types.Datum
-				for j, offset := range handleOffset {
-					datums = append(datums, chk.GetRow(i).GetDatum(offset, handleCols.GetCol(j).RetType))
-				}
-				handleEncoded, err = codec.EncodeKey(w.sc.GetSessionVars().StmtCtx, nil, datums...)
-				if err != nil {
-					return nil, nil, err
-				}
-				handle, err = kv.NewCommonHandle(handleEncoded)
-				if err != nil {
-					return nil, nil, err
-				}
+			handle, err := handleCols.BuildHandleByOffsets(chk.GetRow(i), handleOffset)
+			if err != nil {
+				return nil, nil, err
 			}
 			handles = append(handles, handle)
 		}
@@ -659,23 +643,9 @@ func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 			return handles, retChk, nil
 		}
 		for i := 0; i < chk.NumRows(); i++ {
-			var handle kv.Handle
-			if handleCols.IsInt() {
-				handle = kv.IntHandle(chk.GetRow(i).GetInt64(handleOffset[0]))
-			} else {
-				var handleEncoded []byte
-				var datums []types.Datum
-				for j, offset := range handleOffset {
-					datums = append(datums, chk.GetRow(i).GetDatum(offset, handleCols.GetCol(j).RetType))
-				}
-				handleEncoded, err = codec.EncodeKey(w.sc.GetSessionVars().StmtCtx, nil, datums...)
-				if err != nil {
-					return nil, nil, err
-				}
-				handle, err = kv.NewCommonHandle(handleEncoded)
-				if err != nil {
-					return nil, nil, err
-				}
+			handle, err := handleCols.BuildHandleByOffsets(chk.GetRow(i), handleOffset)
+			if err != nil {
+				return nil, nil, err
 			}
 			handles = append(handles, handle)
 		}

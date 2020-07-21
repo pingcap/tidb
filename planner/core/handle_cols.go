@@ -33,6 +33,8 @@ type HandleCols interface {
 	BuildHandle(row chunk.Row) (kv.Handle, error)
 	// BuildHandleByDatums builds a Handle from a datum slice.
 	BuildHandleByDatums(row []types.Datum) (kv.Handle, error)
+	// BuildHandleByOffsets builds a Handle from handle columns offsets
+	BuildHandleByOffsets(row chunk.Row, offsets []int) (kv.Handle, error)
 	// ResolveIndices resolves handle column indices.
 	ResolveIndices(schema *expression.Schema) (HandleCols, error)
 	// IsInt returns if the HandleCols is a single tnt column.
@@ -59,9 +61,18 @@ type CommonHandleCols struct {
 
 // BuildHandle implements the kv.HandleCols interface.
 func (cb *CommonHandleCols) BuildHandle(row chunk.Row) (kv.Handle, error) {
+	offsets := make([]int, len(cb.columns))
+	for i, col := range cb.columns {
+		offsets[i] = col.Index
+	}
+	return cb.BuildHandleByOffsets(row, offsets)
+}
+
+// BuildHandleByOffsets implements the kv.HandleCols interface.
+func (cb *CommonHandleCols) BuildHandleByOffsets(row chunk.Row, offsets []int) (kv.Handle, error) {
 	datumBuf := make([]types.Datum, 0, 4)
-	for _, col := range cb.columns {
-		datumBuf = append(datumBuf, row.GetDatum(col.Index, col.RetType))
+	for i, col := range cb.columns {
+		datumBuf = append(datumBuf, row.GetDatum(offsets[i], col.RetType))
 	}
 	datumBuf = tablecodec.TruncateIndexValuesIfNeeded(cb.tblInfo, cb.idxInfo, datumBuf)
 	handleBytes, err := codec.EncodeKey(cb.sc, nil, datumBuf...)
@@ -179,7 +190,12 @@ type IntHandleCols struct {
 
 // BuildHandle implements the kv.HandleCols interface.
 func (ib *IntHandleCols) BuildHandle(row chunk.Row) (kv.Handle, error) {
-	return kv.IntHandle(row.GetInt64(ib.col.Index)), nil
+	return ib.BuildHandleByOffsets(row, []int{ib.col.Index})
+}
+
+// BuildHandleByOffsets implements the kv.HandleCols interface.
+func (ib *IntHandleCols) BuildHandleByOffsets(row chunk.Row, offsets []int) (kv.Handle, error) {
+	return kv.IntHandle(row.GetInt64(offsets[0])), nil
 }
 
 // BuildHandleByDatums implements the kv.HandleCols interface.
