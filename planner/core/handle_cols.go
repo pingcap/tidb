@@ -59,13 +59,22 @@ type CommonHandleCols struct {
 	sc      *stmtctx.StatementContext
 }
 
+func (cb *CommonHandleCols) buildHandleByDatumsBuffer(datumBuf []types.Datum) (kv.Handle, error) {
+	datumBuf = tablecodec.TruncateIndexValuesIfNeeded(cb.tblInfo, cb.idxInfo, datumBuf)
+	handleBytes, err := codec.EncodeKey(cb.sc, nil, datumBuf...)
+	if err != nil {
+		return nil, err
+	}
+	return kv.NewCommonHandle(handleBytes)
+}
+
 // BuildHandle implements the kv.HandleCols interface.
 func (cb *CommonHandleCols) BuildHandle(row chunk.Row) (kv.Handle, error) {
-	offsets := make([]int, len(cb.columns))
-	for i, col := range cb.columns {
-		offsets[i] = col.Index
+	datumBuf := make([]types.Datum, 0, 4)
+	for _, col := range cb.columns {
+		datumBuf = append(datumBuf, row.GetDatum(col.Index, col.RetType))
 	}
-	return cb.BuildHandleByOffsets(row, offsets)
+	return cb.buildHandleByDatumsBuffer(datumBuf)
 }
 
 // BuildHandleByOffsets implements the kv.HandleCols interface.
@@ -74,12 +83,7 @@ func (cb *CommonHandleCols) BuildHandleByOffsets(row chunk.Row, offsets []int) (
 	for i, col := range cb.columns {
 		datumBuf = append(datumBuf, row.GetDatum(offsets[i], col.RetType))
 	}
-	datumBuf = tablecodec.TruncateIndexValuesIfNeeded(cb.tblInfo, cb.idxInfo, datumBuf)
-	handleBytes, err := codec.EncodeKey(cb.sc, nil, datumBuf...)
-	if err != nil {
-		return nil, err
-	}
-	return kv.NewCommonHandle(handleBytes)
+	return cb.buildHandleByDatumsBuffer(datumBuf)
 }
 
 // BuildHandleByDatums implements the kv.HandleCols interface.
@@ -88,12 +92,7 @@ func (cb *CommonHandleCols) BuildHandleByDatums(row []types.Datum) (kv.Handle, e
 	for _, col := range cb.columns {
 		datumBuf = append(datumBuf, row[col.Index])
 	}
-	datumBuf = tablecodec.TruncateIndexValuesIfNeeded(cb.tblInfo, cb.idxInfo, datumBuf)
-	handleBytes, err := codec.EncodeKey(cb.sc, nil, datumBuf...)
-	if err != nil {
-		return nil, err
-	}
-	return kv.NewCommonHandle(handleBytes)
+	return cb.buildHandleByDatumsBuffer(datumBuf)
 }
 
 // ResolveIndices implements the kv.HandleCols interface.
