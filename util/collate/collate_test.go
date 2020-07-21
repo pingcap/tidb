@@ -170,14 +170,14 @@ func BenchmarkUnicodeCICompareSpecial(b *testing.B) {
 	defer SetNewCollationEnabledForTest(false)
 
 	var (
-		a = `ßßßaaaAAAAßsssssßßßßaAaaaAAAssßßssßßsßAAaa😃☃😃😃`
-		b = `ssßßAAAAAAAßsßssßssssßaAaAAAAAßßßssßßsßAAaa😜☃😃😜`
+		s1 = `ßßßaaaAAAAßsssssßßßßaAaaaAAAssßßssßßsßAAaa😃☃😃😃`
+		s2 = `ssßßAAAAAAAßsßssßssssßaAaAAAAAßßßssßßsßAAaa😜☃😃😜`
 	)
 
 	collator := GetCollator(collate)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		match := collator.Compare(a, b)
+		match := collator.Compare(s1, s2)
 		if match != 0 {
 			b.Fatal("equal expected.")
 		}
