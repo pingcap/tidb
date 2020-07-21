@@ -519,6 +519,7 @@ func (s *session) StmtCommit(memTracker *memory.Tracker) (err error) {
 		if r := recover(); r != nil {
 			err = errors.Errorf("%v", r)
 			s.txn.doNotCommit = err
+			return
 		}
 		s.txn.cleanup()
 	}()
