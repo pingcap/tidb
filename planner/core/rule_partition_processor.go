@@ -155,7 +155,7 @@ func (s *partitionProcessor) processHashPartition(ds *DataSource, pi *model.Part
 }
 
 func (s *partitionProcessor) pruneHashPartition(ctx sessionctx.Context, tbl table.Table, partitionNames []model.CIStr,
-     conds []expression.Expression, columns []*expression.Column, names types.NameSlice) ([]int, error) {
+	conds []expression.Expression, columns []*expression.Column, names types.NameSlice) ([]int, error) {
 	pi := tbl.Meta().Partition
 	pe, err := generateHashPartitionExpr(ctx, pi, columns, names)
 	if err != nil {
