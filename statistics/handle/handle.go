@@ -346,14 +346,14 @@ func (h *Handle) FlushStats() {
 	for len(h.ddlEventCh) > 0 {
 		e := <-h.ddlEventCh
 		if err := h.HandleDDLEvent(e); err != nil {
-			logutil.BgLogger().Debug("[stats] handle ddl event fail", zap.Error(err))
+			logutil.BgLogger().Error("[stats] handle ddl event fail", zap.Error(err))
 		}
 	}
 	if err := h.DumpStatsDeltaToKV(DumpAll); err != nil {
-		logutil.BgLogger().Debug("[stats] dump stats delta fail", zap.Error(err))
+		logutil.BgLogger().Error("[stats] dump stats delta fail", zap.Error(err))
 	}
 	if err := h.DumpStatsFeedbackToKV(); err != nil {
-		logutil.BgLogger().Debug("[stats] dump stats feedback fail", zap.Error(err))
+		logutil.BgLogger().Error("[stats] dump stats feedback fail", zap.Error(err))
 	}
 }
 

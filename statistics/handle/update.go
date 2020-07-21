@@ -226,7 +226,7 @@ var (
 // do not exceed one hour.
 func needDumpStatsDelta(h *Handle, id int64, item variable.TableDelta, currentTime time.Time) bool {
 	logutil.BgLogger().Info("[stats] Check needDumpStatsDelta", zap.Any("table_id", id),
-		zap.Any("InitTime", item.InitTime),
+		zap.Any("item", item),
 		zap.Any("currentTime", currentTime))
 	if item.InitTime.IsZero() {
 		item.InitTime = currentTime
@@ -308,14 +308,14 @@ func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
 		}
 		updated, err := h.dumpTableStatCountToKV(id, item)
 		if err != nil {
-			logutil.BgLogger().Info("[stats] dumpTableStatCountToKV fail.", zap.Error(err))
+			logutil.BgLogger().Error("[stats] dumpTableStatCountToKV fail.", zap.Error(err))
 			return errors.Trace(err)
 		}
 		if updated {
 			h.globalMap.update(id, -item.Delta, -item.Count, nil)
 		}
 		if err = h.dumpTableStatColSizeToKV(id, item); err != nil {
-			logutil.BgLogger().Info("[stats] dumpTableStatColSizeToKV fail.", zap.Error(err))
+			logutil.BgLogger().Error("[stats] dumpTableStatColSizeToKV fail.", zap.Error(err))
 			return errors.Trace(err)
 		}
 		if updated {

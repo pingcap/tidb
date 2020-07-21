@@ -1019,7 +1019,7 @@ func (do *Domain) loadStatsWorker() {
 		case <-loadTicker.C:
 			err = statsHandle.Update(do.InfoSchema())
 			if err != nil {
-				logutil.BgLogger().Debug("update stats info failed", zap.Error(err))
+				logutil.BgLogger().Error("update stats info failed", zap.Error(err))
 			}
 			err = statsHandle.LoadNeededHistograms()
 			if err != nil {
@@ -1047,6 +1047,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 		do.SetStatsUpdating(false)
 		do.wg.Done()
 	}()
+	logutil.BgLogger().Info("[stats] stats worker starts.")
 	defer func() {
 		logutil.BgLogger().Info("[stats] stats worker exits.")
 	}()
