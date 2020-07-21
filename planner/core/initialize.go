@@ -416,16 +416,6 @@ func (p PhysicalTableReader) Init(ctx sessionctx.Context, offset int) *PhysicalT
 	return &p
 }
 
-// Init initializes PhysicalPartitionTable.
-func (p PhysicalPartitionTable) Init(ctx sessionctx.Context, offset int) *PhysicalPartitionTable {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypePartitionTable, &p, offset)
-	if p.tablePlan != nil {
-		p.TablePlans = flattenPushDownPlan(p.tablePlan)
-		p.schema = p.tablePlan.Schema()
-	}
-	return &p
-}
-
 // Init initializes PhysicalIndexReader.
 func (p PhysicalIndexReader) Init(ctx sessionctx.Context, offset int) *PhysicalIndexReader {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeIndexReader, &p, offset)

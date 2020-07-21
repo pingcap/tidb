@@ -59,15 +59,7 @@ var (
 	_ PhysicalPlan = &PhysicalShuffle{}
 	_ PhysicalPlan = &PhysicalShuffleDataSourceStub{}
 	_ PhysicalPlan = &BatchPointGetPlan{}
-	_ PhysicalPlan = &PhysicalPartitionTable{}
 )
-
-type PhysicalPartitionTable struct {
-	PhysicalTableReader
-
-	Table      *model.TableInfo
-	Conditions []expression.Expression
-}
 
 // PhysicalTableReader is the table reader in tidb.
 type PhysicalTableReader struct {

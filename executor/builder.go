@@ -212,8 +212,6 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildAnalyze(v)
 	case *plannercore.PhysicalTableReader:
 		return b.buildTableReader(v)
-	case *plannercore.PhysicalPartitionTable:
-		return b.buildPartitionTable(v)
 	case *plannercore.PhysicalIndexReader:
 		return b.buildIndexReader(v)
 	case *plannercore.PhysicalIndexLookUpReader:
@@ -2079,21 +2077,17 @@ func markChildrenUsedCols(outputSchema *expression.Schema, childSchema ...*expre
 }
 
 func (b *executorBuilder) constructDAGReq(plans []plannercore.PhysicalPlan) (dagReq *tipb.DAGRequest, streaming bool, err error) {
-	return constructDAGReq(b.ctx, plans)
-}
-
-func constructDAGReq(sctx sessionctx.Context, plans []plannercore.PhysicalPlan) (dagReq *tipb.DAGRequest, streaming bool, err error) {
 	dagReq = &tipb.DAGRequest{}
-	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(sctx.GetSessionVars().Location())
-	sc := sctx.GetSessionVars().StmtCtx
+	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(b.ctx.GetSessionVars().Location())
+	sc := b.ctx.GetSessionVars().StmtCtx
 	if sc.RuntimeStatsColl != nil {
 		collExec := true
 		dagReq.CollectExecutionSummaries = &collExec
 	}
 	dagReq.Flags = sc.PushDownFlags()
-	dagReq.Executors, streaming, err = constructDistExec(sctx, plans)
+	dagReq.Executors, streaming, err = constructDistExec(b.ctx, plans)
 
-	distsql.SetEncodeType(sctx, dagReq)
+	distsql.SetEncodeType(b.ctx, dagReq)
 	return dagReq, streaming, err
 }
 
@@ -2313,19 +2307,22 @@ func containsLimit(execs []*tipb.Executor) bool {
 
 // When allow batch cop is 1, only agg / topN uses batch cop.
 // When allow batch cop is 2, every query uses batch cop.
-func allowBatchCop(sctx sessionctx.Context, tablePlans []plannercore.PhysicalPlan) bool {
-	switch sctx.GetSessionVars().AllowBatchCop {
+func (e *TableReaderExecutor) setBatchCop(v *plannercore.PhysicalTableReader) {
+	if e.storeType != kv.TiFlash || e.keepOrder {
+		return
+	}
+	switch e.ctx.GetSessionVars().AllowBatchCop {
 	case 1:
-		for _, p := range tablePlans {
+		for _, p := range v.TablePlans {
 			switch p.(type) {
 			case *plannercore.PhysicalHashAgg, *plannercore.PhysicalStreamAgg, *plannercore.PhysicalTopN:
-				return true
+				e.batchCop = true
 			}
 		}
 	case 2:
-		return true
+		e.batchCop = true
 	}
-	return false
+	return
 }
 
 func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableReader) (*TableReaderExecutor, error) {
@@ -2344,11 +2341,6 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 	if err != nil {
 		return nil, err
 	}
-
-	var batchCop bool
-	if v.StoreType == kv.TiFlash && !ts.KeepOrder {
-		batchCop = allowBatchCop(b.ctx, v.TablePlans)
-	}
 	e := &TableReaderExecutor{
 		baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		dagPB:          dagReq,
@@ -2362,8 +2354,8 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		corColInAccess: b.corColInAccess(v.TablePlans[0]),
 		plans:          v.TablePlans,
 		storeType:      v.StoreType,
-		batchCop:       batchCop,
 	}
+	e.setBatchCop(v)
 	e.buildVirtualColumnInfo()
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, ts.Desc)
@@ -2390,92 +2382,6 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 	return e, nil
 }
 
-func (b *executorBuilder) buildPartitionTable(v *plannercore.PhysicalPartitionTable) *PartitionTableExecutor {
-	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-		if err := b.refreshForUpdateTSForRC(); err != nil {
-			b.err = err
-			return nil
-		}
-	}
-
-	dagReq, streaming, err := constructDAGReq(b.ctx, v.TablePlans)
-	if err != nil {
-		b.err = err
-		return nil
-	}
-
-	startTS, err := b.getSnapshotTS()
-	if err != nil {
-		b.err = err
-		return nil
-	}
-	tbl, ok := b.is.TableByID(v.Table.ID)
-	if !ok {
-		b.err = errors.New("table not found in executor builder")
-		return nil
-	}
-	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
-	var batchCop bool
-	if v.StoreType == kv.TiFlash && !ts.KeepOrder {
-		batchCop = allowBatchCop(b.ctx, v.TablePlans)
-	}
-
-	e := &PartitionTableExecutor{
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
-
-		dagReq:    dagReq,
-		startTS:   startTS,
-		table:     tbl.(table.PartitionedTable),
-		keepOrder: ts.KeepOrder,
-		desc:      ts.Desc,
-		// columns:        ts.Columns,
-		streaming:      streaming,
-		corColInFilter: b.corColInDistPlan(v.TablePlans),
-		corColInAccess: b.corColInAccess(v.TablePlans[0]),
-		storeType:      v.StoreType,
-		batchCop:       batchCop,
-
-		plans: v.TablePlans,
-
-		ranges: ts.Ranges,
-		conds:  v.Conditions,
-	}
-
-	e.virtualColumnIndex = buildVirtualColumnIndex(e.Schema(), ts.Columns)
-	if len(e.virtualColumnIndex) > 0 {
-		e.virtualColumnRetFieldTypes = make([]*types.FieldType, len(e.virtualColumnIndex))
-		for i, idx := range e.virtualColumnIndex {
-			e.virtualColumnRetFieldTypes[i] = e.schema.Columns[idx].RetType
-		}
-	}
-
-	if containsLimit(dagReq.Executors) {
-		e.feedback = statistics.NewQueryFeedback(0, nil, 0, ts.Desc)
-	} else {
-		e.feedback = statistics.NewQueryFeedback(getPhysicalTableID(tbl), ts.Hist, int64(ts.StatsCount()), ts.Desc)
-	}
-	collect := statistics.CollectFeedback(b.ctx.GetSessionVars().StmtCtx, e.feedback, len(ts.Ranges))
-	if !collect {
-		e.feedback.Invalidate()
-	}
-	e.dagReq.CollectRangeCounts = &collect
-	if v.StoreType == kv.TiDB && b.ctx.GetSessionVars().User != nil {
-		// User info is used to do privilege check. It is only used in TiDB cluster memory table.
-		e.dagReq.User = &tipb.UserIdentity{
-			UserName: b.ctx.GetSessionVars().User.Username,
-			UserHost: b.ctx.GetSessionVars().User.Hostname,
-		}
-	}
-
-	for i := range v.Schema().Columns {
-		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
-	}
-
-	// sctx := b.ctx.GetSessionVars().StmtCtx
-	// sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
-	return e
-}
-
 // buildTableReader builds a table reader executor. It first build a no range table reader,
 // and then update it ranges from table scan plan.
 func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) Executor {
@@ -2496,33 +2402,33 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 	sctx := b.ctx.GetSessionVars().StmtCtx
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
 
-	// Rewrite the partition table.
-	if pi := ts.Table.GetPartitionInfo(); pi != nil {
-		tmp, _ := b.is.TableByID(ts.Table.ID)
-		tbl := tmp.(table.PartitionedTable)
-		partitions, err := plannercore.PartitionPruning(b.ctx, tbl, ts.FilterCondition)
-		if err != nil {
-			b.err = err
-			return nil
-		}
+       // Rewrite the partition table.
+       if pi := ts.Table.GetPartitionInfo(); pi != nil {
+               tmp, _ := b.is.TableByID(ts.Table.ID)
+               tbl := tmp.(table.PartitionedTable)
+               partitions, err := plannercore.PartitionPruning(b.ctx, tbl, ts.FilterCondition)
+               if err != nil {
+                       b.err = err
+                       return nil
+               }
 
-		if len(partitions) == 0 {
-			return &TableDualExec{baseExecutor: ret.baseExecutor}
-		}
+               if len(partitions) == 0 {
+                       return &TableDualExec{baseExecutor: ret.baseExecutor}
+               }
 
-		if len(partitions) == 1 {
-			ret.table = partitions[0]
-			return ret
-		}
+               if len(partitions) == 1 {
+                       ret.table = partitions[0]
+                       return ret
+               }
 
-		return &partitionDataSource{
-			baseExecutor: ret.baseExecutor,
-			partitions:   partitions,
-			nextPartition: nextPartitionForTableReader{
-				exec: ret,
-			},
-		}
-	}
+               return &PartitionTableExecutor{
+                       baseExecutor: ret.baseExecutor,
+                       partitions:   partitions,
+                       nextPartition: nextPartitionForTableReader{
+                               exec: ret,
+                       },
+               }
+       }
 
 	return ret
 }
@@ -2644,7 +2550,6 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	if err != nil {
 		return nil, err
 	}
-
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
 	startTS, err := b.getSnapshotTS()
 	if err != nil {
@@ -2705,7 +2610,6 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 			return nil
 		}
 	}
-
 	ret, err := buildNoRangeIndexLookUpReader(b, v)
 	if err != nil {
 		b.err = err
@@ -2741,7 +2645,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 			return ret
 		}
 
-		return &partitionDataSource{
+		return &PartitionTableExecutor{
 			baseExecutor: ret.baseExecutor,
 			partitions:   partitions,
 			nextPartition: nextPartitionForIndexLookUp{
@@ -2749,7 +2653,6 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 			},
 		}
 	}
-
 	return ret
 }
 

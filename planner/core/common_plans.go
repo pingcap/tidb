@@ -923,16 +923,6 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 	}
 
 	switch x := p.(type) {
-	case *PhysicalPartitionTable:
-		var storeType string
-		switch x.PhysicalTableReader.StoreType {
-		case kv.TiKV, kv.TiFlash, kv.TiDB:
-			// expected do nothing
-		default:
-			return errors.Errorf("the store type %v is unknown", x.StoreType)
-		}
-		storeType = x.PhysicalTableReader.StoreType.Name()
-		err = e.explainPlanInRowFormat(x.tablePlan, "cop["+storeType+"]", "", childIndent, true)
 	case *PhysicalTableReader:
 		var storeType string
 		switch x.StoreType {

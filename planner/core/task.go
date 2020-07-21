@@ -672,23 +672,6 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 			tp = tp.Children()[0]
 		}
 		ts := tp.(*PhysicalTableScan)
-		// A partition table.
-		// if ts.Table.GetPartitionInfo() != nil {
-		// 	fmt.Println("convert to partition table")
-		// 	p := PhysicalPartitionTable{
-		// 		Table:      ts.Table,
-		// 		Conditions: ts.FilterCondition,
-
-		// 		PhysicalTableReader: PhysicalTableReader{
-		// 			tablePlan:      t.tablePlan,
-		// 			StoreType:      ts.StoreType,
-		// 			IsCommonHandle: ts.Table.IsCommonHandle,
-		// 		},
-		// 	}.Init(ctx, t.tablePlan.SelectBlockOffset())
-		// 	p.stats = t.tablePlan.statsInfo()
-		// 	ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
-		// 	newTask.p = p
-		// } else {
 		p := PhysicalTableReader{
 			tablePlan:      t.tablePlan,
 			StoreType:      ts.StoreType,
@@ -697,7 +680,6 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 		p.stats = t.tablePlan.statsInfo()
 		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
 		newTask.p = p
-		// }
 	}
 
 	if len(t.rootTaskConds) > 0 {
