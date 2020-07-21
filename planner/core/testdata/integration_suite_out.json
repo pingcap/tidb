@@ -954,6 +954,33 @@
         "Res": [
           "1 111 1.1000000000 11"
         ]
+      },
+      {
+        "SQL": "select /*+ use_index_merge(t1 primary, c) */ * from t1 where t1.a >= 1 or t1.c = 2.2",
+        "Plan": [
+          "IndexMerge_8 3.00 root  ",
+          "├─TableRangeScan_5(Build) 3.00 cop[tikv] table:t1 range:[1,+inf], keep order:false",
+          "├─IndexRangeScan_6(Build) 1.00 cop[tikv] table:t1, index:c(c) range:[2.2000000000,2.2000000000], keep order:false",
+          "└─TableRowIDScan_7(Probe) 3.00 cop[tikv] table:t1 keep order:false"
+        ],
+        "Res": [
+          "1 111 1.1000000000 11",
+          "2 222 2.2000000000 12",
+          "3 333 3.3000000000 13"
+        ]
+      },
+      {
+        "SQL": "select /*+ use_index_merge(t1 primary, c) */ * from t1 where t1.a = 1 and t1.b = '111' or t1.c = 3.3",
+        "Plan": [
+          "IndexMerge_8 2.00 root  ",
+          "├─TableRangeScan_5(Build) 1.00 cop[tikv] table:t1 range:[1 \"111\",1 \"111\"], keep order:false",
+          "├─IndexRangeScan_6(Build) 1.00 cop[tikv] table:t1, index:c(c) range:[3.3000000000,3.3000000000], keep order:false",
+          "└─TableRowIDScan_7(Probe) 2.00 cop[tikv] table:t1 keep order:false"
+        ],
+        "Res": [
+          "1 111 1.1000000000 11",
+          "3 333 3.3000000000 13"
+        ]
       }
     ]
   },

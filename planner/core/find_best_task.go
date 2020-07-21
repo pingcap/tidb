@@ -829,6 +829,7 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 		DBName:          ds.DBName,
 		isPartition:     ds.isPartition,
 		physicalTableID: ds.physicalTableID,
+		HandleCols:      ds.handleCols,
 	}.Init(ds.ctx, ds.blockOffset)
 	ts.SetSchema(ds.schema.Clone())
 	ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)

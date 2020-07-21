@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"unsafe"
@@ -23,17 +24,18 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
@@ -102,6 +104,8 @@ type IndexMergeReaderExecutor struct {
 	corColInAccess  bool
 	idxCols         [][]*expression.Column
 	colLens         [][]int
+
+	handleCols plannercore.HandleCols
 }
 
 // Open implements the Executor Open interface
@@ -110,7 +114,15 @@ func (e *IndexMergeReaderExecutor) Open(ctx context.Context) error {
 	for i, plan := range e.partialPlans {
 		_, ok := plan[0].(*plannercore.PhysicalIndexScan)
 		if !ok {
-			e.keyRanges = append(e.keyRanges, nil)
+			if e.table.Meta().IsCommonHandle {
+				keyRanges, err := distsql.CommonHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.ranges[i])
+				if err != nil {
+					return err
+				}
+				e.keyRanges = append(e.keyRanges, keyRanges)
+			} else {
+				e.keyRanges = append(e.keyRanges, nil)
+			}
 			continue
 		}
 		keyRange, err := distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.indexes[i].ID, e.ranges[i], e.feedbacks[i])
@@ -194,13 +206,14 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 		return err
 	}
 
-	result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, e.feedbacks[workID], getPhysicalPlanIDs(e.partialPlans[workID]), e.id)
+	result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, e.handleCols.GetFieldsTypes(), e.feedbacks[workID], getPhysicalPlanIDs(e.partialPlans[workID]), e.id)
 	if err != nil {
 		return err
 	}
 
 	result.Fetch(ctx)
 	worker := &partialIndexWorker{
+		sc:           e.ctx,
 		batchSize:    e.maxChunkSize,
 		maxBatchSize: e.ctx.GetSessionVars().IndexLookupSize,
 		maxChunkSize: e.maxChunkSize,
@@ -220,7 +233,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 		var err error
 		util.WithRecovery(
 			func() {
-				_, err = worker.fetchHandles(ctx1, result, exitCh, fetchCh, e.resultCh, e.finished)
+				_, err = worker.fetchHandles(ctx1, result, exitCh, fetchCh, e.resultCh, e.finished, e.handleCols)
 			},
 			e.handleHandlesFetcherPanic(ctx, e.resultCh, "partialIndexWorker"),
 		)
@@ -261,6 +274,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 	}
 	tableInfo := e.partialPlans[workID][0].(*plannercore.PhysicalTableScan).Table
 	worker := &partialTableWorker{
+		sc:           e.ctx,
 		batchSize:    e.maxChunkSize,
 		maxBatchSize: e.ctx.GetSessionVars().IndexLookupSize,
 		maxChunkSize: e.maxChunkSize,
@@ -277,7 +291,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 		var err error
 		util.WithRecovery(
 			func() {
-				_, err = worker.fetchHandles(ctx1, exitCh, fetchCh, e.resultCh, e.finished)
+				_, err = worker.fetchHandles(ctx1, exitCh, fetchCh, e.resultCh, e.finished, e.handleCols)
 			},
 			e.handleHandlesFetcherPanic(ctx, e.resultCh, "partialTableWorker"),
 		)
@@ -294,6 +308,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 }
 
 type partialTableWorker struct {
+	sc           sessionctx.Context
 	batchSize    int
 	maxBatchSize int
 	maxChunkSize int
@@ -302,16 +317,27 @@ type partialTableWorker struct {
 }
 
 func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *lookupTableTask, resultCh chan<- *lookupTableTask,
-	finished <-chan struct{}) (count int64, err error) {
+	finished <-chan struct{}, handleCols plannercore.HandleCols) (count int64, err error) {
 	var chk *chunk.Chunk
-	handleOffset := -1
+	handleOffset := make([]int, 0, handleCols.NumCols())
 	if w.tableInfo.PKIsHandle {
 		handleCol := w.tableInfo.GetPkColInfo()
 		columns := w.tableInfo.Columns
 		for i := 0; i < len(columns); i++ {
 			if columns[i].Name.L == handleCol.Name.L {
-				handleOffset = i
+				handleOffset = append(handleOffset, i)
 				break
+			}
+		}
+	} else if w.tableInfo.IsCommonHandle {
+		columns := w.tableInfo.Columns
+		for i := 0; i < handleCols.NumCols(); i++ {
+			names := strings.Split(handleCols.GetCol(i).OrigName, ".")
+			for j := 0; j < len(columns); j++ {
+				if columns[j].Name.L == names[len(names)-1] {
+					handleOffset = append(handleOffset, j)
+					break
+				}
 			}
 		}
 	} else {
@@ -320,7 +346,7 @@ func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan str
 
 	chk = chunk.NewChunkWithCapacity(retTypes(w.tableReader), w.maxChunkSize)
 	for {
-		handles, retChunk, err := w.extractTaskHandles(ctx, chk, handleOffset)
+		handles, retChunk, err := w.extractTaskHandles(ctx, chk, handleCols, handleOffset)
 		if err != nil {
 			doneCh := make(chan error, 1)
 			doneCh <- err
@@ -346,7 +372,7 @@ func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan str
 	}
 }
 
-func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, handleOffset int) (
+func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, handleCols plannercore.HandleCols, handleOffset []int) (
 	handles []kv.Handle, retChk *chunk.Chunk, err error) {
 	handles = make([]kv.Handle, 0, w.batchSize)
 	for len(handles) < w.batchSize {
@@ -359,8 +385,25 @@ func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 			return handles, retChk, nil
 		}
 		for i := 0; i < chk.NumRows(); i++ {
-			h := kv.IntHandle(chk.GetRow(i).GetInt64(handleOffset))
-			handles = append(handles, h)
+			var handle kv.Handle
+			if handleCols.IsInt() {
+				handle = kv.IntHandle(chk.GetRow(i).GetInt64(handleOffset[0]))
+			} else {
+				var handleEncoded []byte
+				var datums []types.Datum
+				for j, offset := range handleOffset {
+					datums = append(datums, chk.GetRow(i).GetDatum(offset, handleCols.GetCol(j).RetType))
+				}
+				handleEncoded, err = codec.EncodeKey(w.sc.GetSessionVars().StmtCtx, nil, datums...)
+				if err != nil {
+					return nil, nil, err
+				}
+				handle, err = kv.NewCommonHandle(handleEncoded)
+				if err != nil {
+					return nil, nil, err
+				}
+			}
+			handles = append(handles, handle)
 		}
 	}
 	w.batchSize *= 2
@@ -557,15 +600,23 @@ func (w *indexMergeProcessWorker) handleLoopFetcherPanic(ctx context.Context, re
 }
 
 type partialIndexWorker struct {
+	sc           sessionctx.Context
 	batchSize    int
 	maxBatchSize int
 	maxChunkSize int
 }
 
-func (w *partialIndexWorker) fetchHandles(ctx context.Context, result distsql.SelectResult, exitCh <-chan struct{}, fetchCh chan<- *lookupTableTask, resultCh chan<- *lookupTableTask, finished <-chan struct{}) (count int64, err error) {
-	chk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, w.maxChunkSize)
+func (w *partialIndexWorker) fetchHandles(
+	ctx context.Context,
+	result distsql.SelectResult,
+	exitCh <-chan struct{},
+	fetchCh chan<- *lookupTableTask,
+	resultCh chan<- *lookupTableTask,
+	finished <-chan struct{},
+	handleCols plannercore.HandleCols) (count int64, err error) {
+	chk := chunk.NewChunkWithCapacity(handleCols.GetFieldsTypes(), w.maxChunkSize)
 	for {
-		handles, retChunk, err := w.extractTaskHandles(ctx, chk, result)
+		handles, retChunk, err := w.extractTaskHandles(ctx, chk, result, handleCols)
 		if err != nil {
 			doneCh := make(chan error, 1)
 			doneCh <- err
@@ -591,9 +642,12 @@ func (w *partialIndexWorker) fetchHandles(ctx context.Context, result distsql.Se
 	}
 }
 
-func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult) (
+func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult, handleCols plannercore.HandleCols) (
 	handles []kv.Handle, retChk *chunk.Chunk, err error) {
-	handleOffset := chk.NumCols() - 1
+	var handleOffset []int
+	for i := 0; i < handleCols.NumCols(); i++ {
+		handleOffset = append(handleOffset, chk.NumCols()-handleCols.NumCols()+i)
+	}
 	handles = make([]kv.Handle, 0, w.batchSize)
 	for len(handles) < w.batchSize {
 		chk.SetRequiredRows(w.batchSize-len(handles), w.maxChunkSize)
@@ -605,8 +659,25 @@ func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 			return handles, retChk, nil
 		}
 		for i := 0; i < chk.NumRows(); i++ {
-			h := kv.IntHandle(chk.GetRow(i).GetInt64(handleOffset))
-			handles = append(handles, h)
+			var handle kv.Handle
+			if handleCols.IsInt() {
+				handle = kv.IntHandle(chk.GetRow(i).GetInt64(handleOffset[0]))
+			} else {
+				var handleEncoded []byte
+				var datums []types.Datum
+				for j, offset := range handleOffset {
+					datums = append(datums, chk.GetRow(i).GetDatum(offset, handleCols.GetCol(j).RetType))
+				}
+				handleEncoded, err = codec.EncodeKey(w.sc.GetSessionVars().StmtCtx, nil, datums...)
+				if err != nil {
+					return nil, nil, err
+				}
+				handle, err = kv.NewCommonHandle(handleEncoded)
+				if err != nil {
+					return nil, nil, err
+				}
+			}
+			handles = append(handles, handle)
 		}
 	}
 	w.batchSize *= 2

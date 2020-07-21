@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -44,6 +45,8 @@ type HandleCols interface {
 	NumCols() int
 	// Compare compares two datum rows by handle order.
 	Compare(a, b []types.Datum) (int, error)
+	// GetFieldTypes return field types of columns
+	GetFieldsTypes() []*types.FieldType
 }
 
 // CommonHandleCols implements the kv.HandleCols interface.
@@ -145,6 +148,15 @@ func (cb *CommonHandleCols) Compare(a, b []types.Datum) (int, error) {
 	return 0, nil
 }
 
+// GetFieldTypes implements the kv.HandleCols interface.
+func (cb *CommonHandleCols) GetFieldsTypes() []*types.FieldType {
+	fieldTps := make([]*types.FieldType, 0, len(cb.columns))
+	for _, col := range cb.columns {
+		fieldTps = append(fieldTps, col.RetType)
+	}
+	return fieldTps
+}
+
 // NewCommonHandleCols creates a new CommonHandleCols.
 func NewCommonHandleCols(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
 	tableColumns []*expression.Column) *CommonHandleCols {
@@ -218,6 +230,11 @@ func (ib *IntHandleCols) Compare(a, b []types.Datum) (int, error) {
 		return -1, nil
 	}
 	return 1, nil
+}
+
+// GetFieldTypes implements the kv.HandleCols interface.
+func (ib *IntHandleCols) GetFieldsTypes() []*types.FieldType {
+	return []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 }
 
 // NewIntHandleCols creates a new IntHandleCols.

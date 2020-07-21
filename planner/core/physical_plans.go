@@ -403,7 +403,8 @@ type PhysicalTableScan struct {
 	rangeDecidedBy []*expression.Column
 
 	// HandleIdx is the index of handle, which is only used for admin check table.
-	HandleIdx []int
+	HandleIdx  []int
+	HandleCols HandleCols
 
 	StoreType kv.StoreType
 
