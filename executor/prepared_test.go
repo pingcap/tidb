@@ -125,8 +125,8 @@ func (s *testSuite9) TestPlanCacheClusterIndex(c *C) {
 	tk.MustExec("create table t1(a varchar(20), b varchar(20), c varchar(20), primary key(a, b))")
 	tk.MustExec("insert into t1 values('1','1','111'),('2','2','222'),('3','3','333')")
 
+	// For table scan
 	tk.MustExec(`prepare stmt1 from "select * from t1 where t1.a = ? and t1.b > ?"`)
-
 	tk.MustExec("set @v1 = 1")
 	tk.MustExec("set @v2 = 0")
 	tk.MustQuery("execute stmt1 using @v1,@v2").Check(testkit.Rows("1 1 111"))
@@ -143,4 +143,23 @@ func (s *testSuite9) TestPlanCacheClusterIndex(c *C) {
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
 	c.Assert(strings.Index(rows[len(rows)-1][4].(string), `range:("3" "2","3" +inf]`), Equals, 0)
+
+	// For point get
+	tk.MustExec(`prepare stmt2 from "select * from t1 where t1.a = ? and t1.b = ?"`)
+	tk.MustExec("set @v1 = 1")
+	tk.MustExec("set @v2 = 1")
+	tk.MustQuery("execute stmt2 using @v1,@v2").Check(testkit.Rows("1 1 111"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("set @v1 = 2")
+	tk.MustExec("set @v2 = 2")
+	tk.MustQuery("execute stmt2 using @v1,@v2").Check(testkit.Rows("2 2 222"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("set @v1 = 3")
+	tk.MustExec("set @v2 = 3")
+	tk.MustQuery("execute stmt2 using @v1,@v2").Check(testkit.Rows("3 3 333"))
+	tkProcess = tk.Se.ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
+	c.Assert(strings.Index(rows[len(rows)-1][0].(string), `Point_Get`), Equals, 0)
 }
