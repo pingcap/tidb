@@ -992,25 +992,22 @@ func (e *InsertValues) addRecord(ctx context.Context, row []types.Datum) error {
 	return e.addRecordWithAutoIDHint(ctx, row, 0)
 }
 
-func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.Datum, reserveAutoIDCount int) error {
-	txn, err := e.ctx.Txn(true)
-	if err != nil {
-		return err
-	}
-	if !e.ctx.GetSessionVars().ConstraintCheckInPlace {
-		txn.SetOption(kv.PresumeKeyNotExists, nil)
+func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.Datum, reserveAutoIDCount int) (err error) {
+	vars := e.ctx.GetSessionVars()
+	if !vars.ConstraintCheckInPlace {
+		vars.PresumeKeyNotExists = true
 	}
 	if reserveAutoIDCount > 0 {
 		_, err = e.Table.AddRecord(e.ctx, row, table.WithCtx(ctx), table.WithReserveAutoIDHint(reserveAutoIDCount))
 	} else {
 		_, err = e.Table.AddRecord(e.ctx, row, table.WithCtx(ctx))
 	}
-	txn.DelOption(kv.PresumeKeyNotExists)
+	vars.PresumeKeyNotExists = false
 	if err != nil {
 		return err
 	}
 	if e.lastInsertID != 0 {
-		e.ctx.GetSessionVars().SetLastInsertID(e.lastInsertID)
+		vars.SetLastInsertID(e.lastInsertID)
 	}
 	return nil
 }
