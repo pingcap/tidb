@@ -56,5 +56,17 @@
       "select /*+ stream_agg() */ count(*) c from t group by a order by a limit 1",
       "select /*+ stream_agg() */ count(*) c from t group by a order by a"
     ]
+  },
+  {
+    "name": "TestPartitionPruningForInExpr",
+    "cases": [
+      "explain select * from t where a in (1, 2,'11')",
+      "explain select * from t where a in (17, null)",
+      "explain select * from t where a in (16, 'abc')",
+      "explain select * from t where a in (15, 0.12, 3.47)",
+      "explain select * from t where a in (0.12, 3.47)",
+      "explain select * from t where a in (14, floor(3.47))",
+      "explain select * from t where b in (3, 4)"
+    ]
   }
 ]
