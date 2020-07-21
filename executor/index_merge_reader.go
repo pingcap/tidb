@@ -16,7 +16,6 @@ package executor
 import (
 	"context"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"unsafe"
@@ -317,34 +316,10 @@ type partialTableWorker struct {
 func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *lookupTableTask, resultCh chan<- *lookupTableTask,
 	finished <-chan struct{}, handleCols plannercore.HandleCols) (count int64, err error) {
 	var chk *chunk.Chunk
-	handleOffset := make([]int, 0, handleCols.NumCols())
-	if w.tableInfo.PKIsHandle {
-		handleCol := w.tableInfo.GetPkColInfo()
-		columns := w.tableInfo.Columns
-		for i := 0; i < len(columns); i++ {
-			if columns[i].Name.L == handleCol.Name.L {
-				handleOffset = append(handleOffset, i)
-				break
-			}
-		}
-	} else if w.tableInfo.IsCommonHandle {
-		columns := w.tableInfo.Columns
-		for i := 0; i < handleCols.NumCols(); i++ {
-			names := strings.Split(handleCols.GetCol(i).OrigName, ".")
-			for j := 0; j < len(columns); j++ {
-				if columns[j].Name.L == names[len(names)-1] {
-					handleOffset = append(handleOffset, j)
-					break
-				}
-			}
-		}
-	} else {
-		return 0, errors.Errorf("cannot find the column for handle")
-	}
 
 	chk = chunk.NewChunkWithCapacity(retTypes(w.tableReader), w.maxChunkSize)
 	for {
-		handles, retChunk, err := w.extractTaskHandles(ctx, chk, handleCols, handleOffset)
+		handles, retChunk, err := w.extractTaskHandles(ctx, chk, handleCols)
 		if err != nil {
 			doneCh := make(chan error, 1)
 			doneCh <- err
@@ -370,7 +345,7 @@ func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan str
 	}
 }
 
-func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, handleCols plannercore.HandleCols, handleOffset []int) (
+func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, handleCols plannercore.HandleCols) (
 	handles []kv.Handle, retChk *chunk.Chunk, err error) {
 	handles = make([]kv.Handle, 0, w.batchSize)
 	for len(handles) < w.batchSize {
@@ -383,7 +358,7 @@ func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 			return handles, retChk, nil
 		}
 		for i := 0; i < chk.NumRows(); i++ {
-			handle, err := handleCols.BuildHandleByOffsets(chk.GetRow(i), handleOffset)
+			handle, err := handleCols.BuildHandle(chk.GetRow(i))
 			if err != nil {
 				return nil, nil, err
 			}
@@ -628,10 +603,6 @@ func (w *partialIndexWorker) fetchHandles(
 
 func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult, handleCols plannercore.HandleCols) (
 	handles []kv.Handle, retChk *chunk.Chunk, err error) {
-	var handleOffset []int
-	for i := 0; i < handleCols.NumCols(); i++ {
-		handleOffset = append(handleOffset, chk.NumCols()-handleCols.NumCols()+i)
-	}
 	handles = make([]kv.Handle, 0, w.batchSize)
 	for len(handles) < w.batchSize {
 		chk.SetRequiredRows(w.batchSize-len(handles), w.maxChunkSize)
@@ -643,7 +614,7 @@ func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 			return handles, retChk, nil
 		}
 		for i := 0; i < chk.NumRows(); i++ {
-			handle, err := handleCols.BuildHandleByOffsets(chk.GetRow(i), handleOffset)
+			handle, err := handleCols.BuildHandle(chk.GetRow(i))
 			if err != nil {
 				return nil, nil, err
 			}
