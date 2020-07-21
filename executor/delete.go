@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -49,17 +50,19 @@ func (e *DeleteExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return e.deleteSingleTableByChunk(ctx)
 }
 
-func (e *DeleteExec) deleteOneRow(tbl table.Table, handleIndex int, isExtraHandle bool, row []types.Datum) error {
+func (e *DeleteExec) deleteOneRow(tbl table.Table, handleCols plannercore.HandleCols, isExtraHandle bool, row []types.Datum) error {
 	end := len(row)
 	if isExtraHandle {
 		end--
 	}
-	handle := kv.IntHandle(row[handleIndex].GetInt64())
-	err := e.removeRow(e.ctx, tbl, handle, row[:end])
+	handle, err := handleCols.BuildHandleByDatums(row)
 	if err != nil {
 		return err
 	}
-
+	err = e.removeRow(e.ctx, tbl, handle, row[:end])
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -67,13 +70,15 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	var (
 		tbl           table.Table
 		isExtrahandle bool
-		handleIndex   int
+		handleCols    plannercore.HandleCols
 		rowCount      int
 	)
 	for _, info := range e.tblColPosInfos {
 		tbl = e.tblID2Table[info.TblID]
-		handleIndex = info.HandleOrdinal
-		isExtrahandle = handleIsExtra(e.children[0].Schema().Columns[info.HandleOrdinal])
+		handleCols = info.HandleCols
+		if !tbl.Meta().IsCommonHandle {
+			isExtrahandle = handleCols.IsInt() && handleCols.GetCol(0).ID == model.ExtraHandleID
+		}
 	}
 
 	// If tidb_batch_delete is ON and not in a transaction, we could use BatchDelete mode.
@@ -107,7 +112,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 			}
 
 			datumRow := chunkRow.GetDatumRow(fields)
-			err = e.deleteOneRow(tbl, handleIndex, isExtrahandle, datumRow)
+			err = e.deleteOneRow(tbl, handleCols, isExtrahandle, datumRow)
 			if err != nil {
 				return err
 			}
@@ -119,16 +124,20 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	return nil
 }
 
-func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []plannercore.TblColPosInfo, joinedRow []types.Datum) {
+func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []plannercore.TblColPosInfo, joinedRow []types.Datum) error {
 	// iterate all the joined tables, and got the copresonding rows in joinedRow.
 	for _, info := range colPosInfos {
 		if tblRowMap[info.TblID] == nil {
 			tblRowMap[info.TblID] = kv.NewHandleMap()
 		}
-		handle := kv.IntHandle(joinedRow[info.HandleOrdinal].GetInt64())
+		handle, err := info.HandleCols.BuildHandleByDatums(joinedRow)
+		if err != nil {
+			return err
+		}
 		// tblRowMap[info.TblID][handle] hold the row datas binding to this table and this handle.
 		tblRowMap[info.TblID].Set(handle, joinedRow[info.Start:info.End])
 	}
+	return nil
 }
 
 func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
@@ -152,7 +161,10 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 
 		for joinedChunkRow := iter.Begin(); joinedChunkRow != iter.End(); joinedChunkRow = iter.Next() {
 			joinedDatumRow := joinedChunkRow.GetDatumRow(fields)
-			e.composeTblRowMap(tblRowMap, colPosInfos, joinedDatumRow)
+			err := e.composeTblRowMap(tblRowMap, colPosInfos, joinedDatumRow)
+			if err != nil {
+				return err
+			}
 		}
 		chk = chunk.Renew(chk, e.maxChunkSize)
 	}

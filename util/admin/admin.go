@@ -15,6 +15,7 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"sort"
@@ -42,7 +43,7 @@ import (
 // DDLInfo is for DDL information.
 type DDLInfo struct {
 	SchemaVer   int64
-	ReorgHandle int64        // It's only used for DDL information.
+	ReorgHandle kv.Handle    // It's only used for DDL information.
 	Jobs        []*model.Job // It's the currently running jobs.
 }
 
@@ -76,7 +77,11 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 		return info, nil
 	}
 
-	info.ReorgHandle, _, _, err = t.GetDDLReorgHandle(addIdxJob)
+	tbl, err := t.GetTable(addIdxJob.SchemaID, addIdxJob.TableID)
+	if err != nil {
+		return info, nil
+	}
+	info.ReorgHandle, _, _, err = t.GetDDLReorgHandle(addIdxJob, tbl.IsCommonHandle)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -160,7 +165,7 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 
 			job.State = model.JobStateCancelling
 			// Make sure RawArgs isn't overwritten.
-			err := job.DecodeArgs(job.RawArgs)
+			err := json.Unmarshal(job.RawArgs, &job.Args)
 			if err != nil {
 				errs[i] = errors.Trace(err)
 				continue
@@ -281,7 +286,7 @@ func IterAllDDLJobs(txn kv.Transaction, finishFn func([]*model.Job) (bool, error
 
 // RecordData is the record data composed of a handle and values.
 type RecordData struct {
-	Handle int64
+	Handle kv.Handle
 	Values []types.Datum
 }
 
@@ -343,13 +348,13 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 // CheckRecordAndIndex is exported for testing.
 func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, idx table.Index, genExprs map[model.TableColumnID]expression.Expression) error {
 	sc := sessCtx.GetSessionVars().StmtCtx
-	cols := make([]*table.Column, len(idx.Meta().Columns))
+	idxCols := make([]*table.Column, len(idx.Meta().Columns))
 	for i, col := range idx.Meta().Columns {
-		cols[i] = t.Cols()[col.Offset]
+		idxCols[i] = t.Cols()[col.Offset]
 	}
 
 	startKey := t.RecordKey(kv.IntHandle(math.MinInt64))
-	filterFunc := func(h1 int64, vals1 []types.Datum, cols []*table.Column) (bool, error) {
+	filterFunc := func(h1 kv.Handle, vals1 []types.Datum, cols []*table.Column) (bool, error) {
 		for i, val := range vals1 {
 			col := cols[i]
 			if val.IsNull() {
@@ -364,10 +369,10 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 				vals1[i] = colDefVal
 			}
 		}
-		isExist, h2, err := idx.Exist(sc, txn, vals1, kv.IntHandle(h1))
+		isExist, h2, err := idx.Exist(sc, txn.GetUnionStore(), vals1, h1)
 		if kv.ErrKeyExists.Equal(err) {
 			record1 := &RecordData{Handle: h1, Values: vals1}
-			record2 := &RecordData{Handle: h2.IntValue(), Values: vals1}
+			record2 := &RecordData{Handle: h2, Values: vals1}
 			return false, ErrDataInConsistent.GenWithStack("index:%#v != record:%#v", record2, record1)
 		}
 		if err != nil {
@@ -380,7 +385,7 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 
 		return true, nil
 	}
-	err := iterRecords(sessCtx, txn, t, startKey, cols, filterFunc, genExprs)
+	err := iterRecords(sessCtx, txn, t, startKey, idxCols, filterFunc, genExprs)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -404,7 +409,7 @@ func makeRowDecoder(t table.Table, decodeCol []*table.Column, genExpr map[model.
 }
 
 // genExprs use to calculate generated column value.
-func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Table, startKey kv.Key, cols []*table.Column,
+func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Table, startKey kv.Key, idxCols []*table.Column,
 	fn table.RecordIterFunc, genExprs map[model.TableColumnID]expression.Expression) error {
 	prefix := t.RecordPrefix()
 	keyUpperBound := prefix.PrefixNext()
@@ -423,7 +428,7 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 		zap.Stringer("startKey", startKey),
 		zap.Stringer("key", it.Key()),
 		zap.Binary("value", it.Value()))
-	rowDecoder := makeRowDecoder(t, cols, genExprs)
+	rowDecoder := makeRowDecoder(t, idxCols, genExprs)
 	for it.Valid() && it.Key().HasPrefix(prefix) {
 		// first kv pair is row lock information.
 		// TODO: check valid lock
@@ -437,19 +442,11 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 		if err != nil {
 			return errors.Trace(err)
 		}
-		data := make([]types.Datum, 0, len(cols))
-		for _, col := range cols {
-			if col.IsPKHandleColumn(t.Meta()) {
-				if mysql.HasUnsignedFlag(col.Flag) {
-					data = append(data, types.NewUintDatum(uint64(handle.IntValue())))
-				} else {
-					data = append(data, types.NewIntDatum(handle.IntValue()))
-				}
-			} else {
-				data = append(data, rowMap[col.ID])
-			}
+		data := make([]types.Datum, 0, len(idxCols))
+		for _, col := range idxCols {
+			data = append(data, rowMap[col.ID])
 		}
-		more, err := fn(handle.IntValue(), data, cols)
+		more, err := fn(handle, data, idxCols)
 		if !more || err != nil {
 			return errors.Trace(err)
 		}

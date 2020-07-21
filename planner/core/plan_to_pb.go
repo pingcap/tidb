@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
@@ -103,11 +104,8 @@ func (p *PhysicalLimit) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
-	tsExec := &tipb.TableScan{
-		TableId: p.Table.ID,
-		Columns: util.ColumnsToProto(p.Columns, p.Table.PKIsHandle),
-		Desc:    p.Desc,
-	}
+	tsExec := tables.BuildTableScanFromInfos(p.Table, p.Columns)
+	tsExec.Desc = p.Desc
 	if p.isPartition {
 		tsExec.TableId = p.physicalTableID
 	}
@@ -150,11 +148,16 @@ func (p *PhysicalIndexScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
 			columns = append(columns, findColumnInfoByID(tableColumns, col.ID))
 		}
 	}
+	var pkColIds []int64
+	if p.NeedCommonHandle {
+		pkColIds = tables.TryGetCommonPkColumnIds(p.Table)
+	}
 	idxExec := &tipb.IndexScan{
-		TableId: p.Table.ID,
-		IndexId: p.Index.ID,
-		Columns: util.ColumnsToProto(columns, p.Table.PKIsHandle),
-		Desc:    p.Desc,
+		TableId:          p.Table.ID,
+		IndexId:          p.Index.ID,
+		Columns:          util.ColumnsToProto(columns, p.Table.PKIsHandle),
+		Desc:             p.Desc,
+		PrimaryColumnIds: pkColIds,
 	}
 	if p.isPartition {
 		idxExec.TableId = p.physicalTableID

@@ -176,7 +176,6 @@ func TestSyncerSimple(t *testing.T) {
 	}
 
 	// for StartCleanWork
-	go d.SchemaSyncer().StartCleanWork()
 	ttl := 10
 	// Make sure NeededCleanTTL > ttl, then we definitely clean the ttl.
 	NeededCleanTTL = int64(11)
@@ -221,14 +220,14 @@ func TestSyncerSimple(t *testing.T) {
 	}
 	checkRespKV(t, 0, ttlKey, "", resp.Kvs...)
 
-	// for RemoveSelfVersionPath
+	// for Close
 	resp, err = cli.Get(goctx.Background(), key)
 	if err != nil {
 		t.Fatalf("get key %s failed %v", key, err)
 	}
 	currVer := fmt.Sprintf("%v", currentVer)
 	checkRespKV(t, 1, key, currVer, resp.Kvs...)
-	d.SchemaSyncer().RemoveSelfVersionPath()
+	d.SchemaSyncer().Close()
 	resp, err = cli.Get(goctx.Background(), key)
 	if err != nil {
 		t.Fatalf("get key %s failed %v", key, err)

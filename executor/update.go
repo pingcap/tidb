@@ -62,11 +62,12 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 		if e.updatedRowKeys[content.TblID] == nil {
 			e.updatedRowKeys[content.TblID] = kv.NewHandleMap()
 		}
-		handleDatum := row[content.HandleOrdinal]
-		if e.canNotUpdate(handleDatum) {
-			continue
+		var handle kv.Handle
+		handle, err = content.HandleCols.BuildHandleByDatums(row)
+		if err != nil {
+			return err
 		}
-		handle := kv.IntHandle(row[content.HandleOrdinal].GetInt64())
+
 		oldData := row[content.Start:content.End]
 		newTableData := newData[content.Start:content.End]
 		updatable := false

@@ -16,12 +16,13 @@ package executor
 import (
 	"context"
 	"sort"
+	"sync/atomic"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -34,23 +35,24 @@ import (
 type BatchPointGetExec struct {
 	baseExecutor
 
-	tblInfo    *model.TableInfo
-	idxInfo    *model.IndexInfo
-	handles    []kv.Handle
-	physIDs    []int64
-	partPos    int
-	idxVals    [][]types.Datum
-	startTS    uint64
-	snapshotTS uint64
-	txn        kv.Transaction
-	lock       bool
-	waitTime   int64
-	inited     bool
-	values     [][]byte
-	index      int
-	rowDecoder *rowcodec.ChunkDecoder
-	keepOrder  bool
-	desc       bool
+	tblInfo     *model.TableInfo
+	idxInfo     *model.IndexInfo
+	handles     []kv.Handle
+	physIDs     []int64
+	partPos     int
+	idxVals     [][]types.Datum
+	startTS     uint64
+	snapshotTS  uint64
+	txn         kv.Transaction
+	lock        bool
+	waitTime    int64
+	inited      uint32
+	values      [][]byte
+	index       int
+	rowDecoder  *rowcodec.ChunkDecoder
+	keepOrder   bool
+	desc        bool
+	batchGetter kv.BatchGetter
 
 	columns []*model.ColumnInfo
 	// virtualColumnIndex records all the indices of virtual columns and sort them in definition
@@ -74,43 +76,6 @@ func (e *BatchPointGetExec) buildVirtualColumnInfo() {
 
 // Open implements the Executor interface.
 func (e *BatchPointGetExec) Open(context.Context) error {
-	return nil
-}
-
-// Close implements the Executor interface.
-func (e *BatchPointGetExec) Close() error {
-	return nil
-}
-
-// Next implements the Executor interface.
-func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	req.Reset()
-	if !e.inited {
-		if err := e.initialize(ctx); err != nil {
-			return err
-		}
-		e.inited = true
-	}
-	if e.index >= len(e.values) {
-		return nil
-	}
-	for !req.IsFull() && e.index < len(e.values) {
-		handle, val := e.handles[e.index], e.values[e.index]
-		err := decodeRowValToChunk(e.base(), e.tblInfo, handle, val, req, e.rowDecoder)
-		if err != nil {
-			return err
-		}
-		e.index++
-	}
-
-	err := FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.schema, e.columns, e.ctx, req)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	e.snapshotTS = e.startTS
 	txnCtx := e.ctx.GetSessionVars().TxnCtx
 	if e.lock {
@@ -140,16 +105,55 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	if txn.Valid() {
 		batchGetter = kv.NewBufferBatchGetter(txn.GetMemBuffer(), &PessimisticLockCacheGetter{txnCtx: txnCtx}, snapshot)
 	}
+	e.batchGetter = batchGetter
+	return nil
+}
 
+// Close implements the Executor interface.
+func (e *BatchPointGetExec) Close() error {
+	return nil
+}
+
+// Next implements the Executor interface.
+func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	req.Reset()
+	if atomic.CompareAndSwapUint32(&e.inited, 0, 1) {
+		if err := e.initialize(ctx); err != nil {
+			return err
+		}
+	}
+
+	if e.index >= len(e.values) {
+		return nil
+	}
+	for !req.IsFull() && e.index < len(e.values) {
+		handle, val := e.handles[e.index], e.values[e.index]
+		err := decodeRowValToChunk(e.base(), e.tblInfo, handle, val, req, e.rowDecoder)
+		if err != nil {
+			return err
+		}
+		e.index++
+	}
+
+	err := FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.schema, e.columns, e.ctx, req)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	var handleVals map[string][]byte
 	var indexKeys []kv.Key
-	if e.idxInfo != nil {
+	var err error
+	batchGetter := e.batchGetter
+	if e.idxInfo != nil && !isCommonHandleRead(e.tblInfo, e.idxInfo) {
 		// `SELECT a, b FROM t WHERE (a, b) IN ((1, 2), (1, 2), (2, 1), (1, 2))` should not return duplicated rows
 		dedup := make(map[hack.MutableString]struct{})
 		keys := make([]kv.Key, 0, len(e.idxVals))
 		for _, idxVals := range e.idxVals {
-			physID := getPhysID(e.tblInfo, idxVals[e.partPos].GetInt64())
-			idxKey, err1 := encodeIndexKey(e.base(), e.tblInfo, e.idxInfo, idxVals, physID)
+			physID := getPhysID(e.tblInfo, kv.IntHandle(idxVals[e.partPos].GetInt64()))
+			idxKey, err1 := EncodeUniqueIndexKey(e.ctx, e.tblInfo, e.idxInfo, idxVals, physID)
 			if err1 != nil && !kv.ErrNotExist.Equal(err1) {
 				return err1
 			}
@@ -185,11 +189,11 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			if len(handleVal) == 0 {
 				continue
 			}
-			handle, err1 := tables.DecodeHandleInUniqueIndexValue(handleVal)
+			handle, err1 := tablecodec.DecodeHandleInUniqueIndexValue(handleVal, e.tblInfo.IsCommonHandle)
 			if err1 != nil {
 				return err1
 			}
-			e.handles = append(e.handles, kv.IntHandle(handle))
+			e.handles = append(e.handles, handle)
 			if e.tblInfo.Partition != nil {
 				e.physIDs = append(e.physIDs, tablecodec.DecodeTableID(key))
 			}
@@ -223,7 +227,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		if len(e.physIDs) > 0 {
 			tID = e.physIDs[i]
 		} else {
-			tID = getPhysID(e.tblInfo, handle.IntValue())
+			tID = getPhysID(e.tblInfo, handle)
 		}
 		key := tablecodec.EncodeRowKeyWithHandle(tID, handle)
 		keys[i] = key
@@ -241,7 +245,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 				lockKeys = append(lockKeys, idxKey)
 			}
 		}
-		err = e.lockKeys(ctx, lockKeys)
+		err = LockKeys(ctx, e.ctx, e.waitTime, lockKeys...)
 		if err != nil {
 			return err
 		}
@@ -260,7 +264,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	for i, key := range keys {
 		val := values[string(key)]
 		if len(val) == 0 {
-			if e.idxInfo != nil {
+			if e.idxInfo != nil && (!e.tblInfo.IsCommonHandle || !e.idxInfo.Primary) {
 				return kv.ErrNotExist.GenWithStack("inconsistent extra index %s, handle %d not found in table",
 					e.idxInfo.Name.O, e.handles[i])
 			}
@@ -274,7 +278,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	}
 	// Lock exists keys only for Read Committed Isolation.
 	if e.lock && rc {
-		err = e.lockKeys(ctx, existKeys)
+		err = LockKeys(ctx, e.ctx, e.waitTime, existKeys...)
 		if err != nil {
 			return err
 		}
@@ -283,14 +287,15 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	return nil
 }
 
-func (e *BatchPointGetExec) lockKeys(ctx context.Context, keys []kv.Key) error {
-	txnCtx := e.ctx.GetSessionVars().TxnCtx
-	lctx := newLockCtx(e.ctx.GetSessionVars(), e.waitTime)
+// LockKeys locks the keys for pessimistic transaction.
+func LockKeys(ctx context.Context, seCtx sessionctx.Context, lockWaitTime int64, keys ...kv.Key) error {
+	txnCtx := seCtx.GetSessionVars().TxnCtx
+	lctx := newLockCtx(seCtx.GetSessionVars(), lockWaitTime)
 	if txnCtx.IsPessimistic {
 		lctx.ReturnValues = true
 		lctx.Values = make(map[string]kv.ReturnedValue, len(keys))
 	}
-	err := doLockKeys(ctx, e.ctx, lctx, keys...)
+	err := doLockKeys(ctx, seCtx, lctx, keys...)
 	if err != nil {
 		return err
 	}
@@ -322,11 +327,11 @@ func (getter *PessimisticLockCacheGetter) Get(_ context.Context, key kv.Key) ([]
 	return nil, kv.ErrNotExist
 }
 
-func getPhysID(tblInfo *model.TableInfo, val int64) int64 {
+func getPhysID(tblInfo *model.TableInfo, val kv.Handle) int64 {
 	pi := tblInfo.Partition
 	if pi == nil {
 		return tblInfo.ID
 	}
-	partIdx := math.Abs(val) % int64(pi.Num)
+	partIdx := math.Abs(val.IntValue() % int64(pi.Num)) // TODO: fix me for table, partition on cluster index.
 	return pi.Definitions[partIdx].ID
 }

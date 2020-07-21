@@ -565,7 +565,7 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 				return nil, err
 			}
 			if !e.lazyFillAutoID || (e.lazyFillAutoID && !mysql.HasAutoIncrementFlag(c.Flag)) {
-				if row[i], err = c.HandleBadNull(row[i], e.ctx.GetSessionVars().StmtCtx); err != nil {
+				if err = c.HandleBadNull(&row[i], e.ctx.GetSessionVars().StmtCtx); err != nil {
 					return nil, err
 				}
 			}
@@ -582,7 +582,7 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 			return nil, err
 		}
 		// Handle the bad null error.
-		if row[colIdx], err = gCol.HandleBadNull(row[colIdx], e.ctx.GetSessionVars().StmtCtx); err != nil {
+		if err = gCol.HandleBadNull(&row[colIdx], e.ctx.GetSessionVars().StmtCtx); err != nil {
 			return nil, err
 		}
 	}
@@ -640,7 +640,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatumInRetry(ctx context.Context, 
 			}
 			autoDatum.SetAutoID(id, col.Flag)
 
-			if autoDatum, err = col.HandleBadNull(autoDatum, e.ctx.GetSessionVars().StmtCtx); err != nil {
+			if err = col.HandleBadNull(&autoDatum, e.ctx.GetSessionVars().StmtCtx); err != nil {
 				return nil, err
 			}
 			rows[i][colIdx] = autoDatum
@@ -893,7 +893,9 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 func (e *InsertValues) allocAutoRandomID(fieldType *types.FieldType) (int64, error) {
 	alloc := e.Table.Allocators(e.ctx).Get(autoid.AutoRandomType)
 	tableInfo := e.Table.Meta()
-	_, autoRandomID, err := alloc.Alloc(tableInfo.ID, 1, 1, 1)
+	increment := e.ctx.GetSessionVars().AutoIncrementIncrement
+	offset := e.ctx.GetSessionVars().AutoIncrementOffset
+	_, autoRandomID, err := alloc.Alloc(tableInfo.ID, 1, int64(increment), int64(offset))
 	if err != nil {
 		return 0, err
 	}
@@ -902,7 +904,7 @@ func (e *InsertValues) allocAutoRandomID(fieldType *types.FieldType) (int64, err
 	if tables.OverflowShardBits(autoRandomID, tableInfo.AutoRandomBits, layout.TypeBitsLength, layout.HasSignBit) {
 		return 0, autoid.ErrAutoRandReadFailed
 	}
-	shard := tables.CalcShard(tableInfo.AutoRandomBits, e.ctx.GetSessionVars().TxnCtx.StartTS, layout.TypeBitsLength, layout.HasSignBit)
+	shard := e.ctx.GetSessionVars().TxnCtx.GetShard(tableInfo.AutoRandomBits, layout.TypeBitsLength, layout.HasSignBit, 1)
 	autoRandomID |= shard
 	return autoRandomID, nil
 }
@@ -927,7 +929,7 @@ func (e *InsertValues) handleWarning(err error) {
 
 // batchCheckAndInsert checks rows with duplicate errors.
 // All duplicate rows will be ignored and appended as duplicate warnings.
-func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.Datum, addRecord func(ctx context.Context, row []types.Datum) (int64, error)) error {
+func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.Datum, addRecord func(ctx context.Context, row []types.Datum) error) error {
 	// all the rows will be checked, so it is safe to set BatchCheck = true
 	e.ctx.GetSessionVars().StmtCtx.BatchCheck = true
 
@@ -977,7 +979,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 		// There may be duplicate keys inside the insert statement.
 		if !skip {
 			e.ctx.GetSessionVars().StmtCtx.AddCopiedRows(1)
-			_, err = addRecord(ctx, rows[i])
+			err = addRecord(ctx, rows[i])
 			if err != nil {
 				return err
 			}
@@ -986,30 +988,26 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	return nil
 }
 
-func (e *InsertValues) addRecord(ctx context.Context, row []types.Datum) (int64, error) {
+func (e *InsertValues) addRecord(ctx context.Context, row []types.Datum) error {
 	return e.addRecordWithAutoIDHint(ctx, row, 0)
 }
 
-func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.Datum, reserveAutoIDCount int) (int64, error) {
-	txn, err := e.ctx.Txn(true)
-	if err != nil {
-		return 0, err
+func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.Datum, reserveAutoIDCount int) (err error) {
+	vars := e.ctx.GetSessionVars()
+	if !vars.ConstraintCheckInPlace {
+		vars.PresumeKeyNotExists = true
 	}
-	if !e.ctx.GetSessionVars().ConstraintCheckInPlace {
-		txn.SetOption(kv.PresumeKeyNotExists, nil)
-	}
-	var h kv.Handle
 	if reserveAutoIDCount > 0 {
-		h, err = e.Table.AddRecord(e.ctx, row, table.WithCtx(ctx), table.WithReserveAutoIDHint(reserveAutoIDCount))
+		_, err = e.Table.AddRecord(e.ctx, row, table.WithCtx(ctx), table.WithReserveAutoIDHint(reserveAutoIDCount))
 	} else {
-		h, err = e.Table.AddRecord(e.ctx, row, table.WithCtx(ctx))
+		_, err = e.Table.AddRecord(e.ctx, row, table.WithCtx(ctx))
 	}
-	txn.DelOption(kv.PresumeKeyNotExists)
+	vars.PresumeKeyNotExists = false
 	if err != nil {
-		return 0, err
+		return err
 	}
 	if e.lastInsertID != 0 {
-		e.ctx.GetSessionVars().SetLastInsertID(e.lastInsertID)
+		vars.SetLastInsertID(e.lastInsertID)
 	}
-	return h.IntValue(), nil
+	return nil
 }

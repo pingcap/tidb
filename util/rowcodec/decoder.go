@@ -113,6 +113,7 @@ func (decoder *DatumMapDecoder) tryDecodeHandleColumn(col *ColInfo, handle kv.Ha
 		}
 		return true
 	}
+	// TODO: support common handle.
 	return false
 }
 
@@ -266,9 +267,19 @@ func (decoder *ChunkDecoder) tryAppendHandleColumn(colIdx int, col *ColInfo, han
 	if handle == nil {
 		return false
 	}
-	if col.ID == decoder.handleColIDs[0] {
+	if handle.IsInt() && col.ID == decoder.handleColIDs[0] {
 		chk.AppendInt64(colIdx, handle.IntValue())
 		return true
+	}
+	for i, id := range decoder.handleColIDs {
+		if col.ID == id {
+			coder := codec.NewDecoder(chk, decoder.loc)
+			_, err := coder.DecodeOne(handle.EncodedCol(i), colIdx, col.Ft)
+			if err != nil {
+				return false
+			}
+			return true
+		}
 	}
 	return false
 }
@@ -436,6 +447,16 @@ func (decoder *BytesDecoder) tryDecodeHandle(values [][]byte, offset int, col *C
 			handleData = append(handleData, IntFlag)
 			handleData = codec.EncodeInt(handleData, handle.IntValue())
 		}
+		values[offset] = handleData
+		return true
+	}
+	var handleData []byte
+	for i, hid := range decoder.handleColIDs {
+		if col.ID == hid {
+			handleData = append(handleData, handle.EncodedCol(i)...)
+		}
+	}
+	if len(handleData) > 0 {
 		values[offset] = handleData
 		return true
 	}
