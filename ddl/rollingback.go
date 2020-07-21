@@ -245,7 +245,7 @@ func convertAddTablePartitionJob2RollbackJob(t *meta.Meta, job *model.Job, other
 	// partDefPointers' len = 0 means the job hasn't reached the delete-only state.
 	if len(partDefPointers) == 0 {
 		job.State = model.JobStateCancelled
-		return ver, otherwiseErr
+		return ver, errors.Trace(otherwiseErr)
 	}
 	partNames := make([]string, 0, len(partDefPointers))
 	for _, pd := range partDefPointers {
