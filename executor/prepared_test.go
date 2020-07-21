@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"fmt"
+	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
@@ -104,7 +105,7 @@ func (s *testSuite1) TestPrepareStmtAfterIsolationReadChange(c *C) {
 	c.Assert(tk.Se.GetSessionVars().PreparedStmts[1].(*plannercore.CachedPrepareStmt).NormalizedPlan, Equals, "")
 }
 
-func (s *testSuite1) TestClusterIndex(c *C) {
+func (s *testSuite9) TestPlanCacheClusterIndex(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
@@ -113,25 +114,33 @@ func (s *testSuite1) TestClusterIndex(c *C) {
 		dom.Close()
 		store.Close()
 	}()
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("drop table if exists t1")
 	tk.MustExec("set @@tidb_enable_clustered_index = 1")
-	tk.MustExec("create table t1(a int, b int, c varchar(20), primary key(a, b))")
-	tk.MustExec("insert into t1 values(1,1,'111'),(2,2,'222'),(3,3,'333')")
-	tk.MustExec("create table t2(a decimal(40,10), b varchar(20), primary key(a))")
-	tk.MustExec("insert into t2 values(1.1,'111'),(2.2,'222')")
+	tk.MustExec("create table t1(a varchar(20), b varchar(20), c varchar(20), primary key(a, b))")
+	tk.MustExec("insert into t1 values('1','1','111'),('2','2','222'),('3','3','333')")
 
 	tk.MustExec(`prepare stmt1 from "select * from t1 where t1.a = ? and t1.b > ?"`)
-	tk.MustExec(`prepare stmt2 from "select * from t2 where t2.a < ?"`)
 
 	tk.MustExec("set @v1 = 1")
 	tk.MustExec("set @v2 = 0")
 	tk.MustQuery("execute stmt1 using @v1,@v2").Check(testkit.Rows("1 1 111"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("set @v1 = 2")
+	tk.MustExec("set @v2 = 1")
+	tk.MustQuery("execute stmt1 using @v1,@v2").Check(testkit.Rows("2 2 222"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("set @v1 = 3")
+	tk.MustExec("set @v2 = 2")
+	tk.MustQuery("execute stmt1 using @v1,@v2").Check(testkit.Rows("3 3 333"))
 	tkProcess := tk.Se.ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
-	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(nil)
-
-	tk.MustExec("set @v1 = 2.2")
-	tk.MustQuery("execute stmt2 using @v1").Check(testkit.Rows("1.1000000000 111"))
+	rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
+	c.Assert(strings.Index(rows[len(rows)-1][4].(string), `range:("3" "2","3" +inf]`), Equals, 0)
 }

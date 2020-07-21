@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
@@ -416,27 +417,42 @@ func (e *Execute) rebuildRange(p Plan) error {
 	case *PhysicalTableReader:
 		ts := x.TablePlans[0].(*PhysicalTableScan)
 		var pkCol *expression.Column
-		if ts.Table.PKIsHandle {
-			if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
-				pkCol = expression.ColInfo2Col(ts.schema.Columns, pkColInfo)
+		if ts.Table.IsCommonHandle {
+			pk := tables.FindPrimaryIndex(ts.Table)
+			pkCols := make([]*expression.Column, 0, len(pk.Columns))
+			pkColsLen := make([]int, 0, len(pk.Columns))
+			for _, colInfo := range pk.Columns {
+				pkCols = append(pkCols, expression.ColInfo2Col(ts.schema.Columns, ts.Table.Columns[colInfo.Offset]))
+				pkColsLen = append(pkColsLen, types.UnspecifiedLength)
 			}
-		}
-		if pkCol != nil {
-			ts.Ranges, err = ranger.BuildTableRange(ts.AccessCondition, sc, pkCol.RetType)
+			res, err := ranger.DetachCondAndBuildRangeForIndex(p.SCtx(), ts.AccessCondition, pkCols, pkColsLen)
 			if err != nil {
 				return err
 			}
-			if ts.Table.Partition != nil && ts.Table.Partition.Type == model.PartitionTypeHash {
-				pID, err := rebuildNewTableIDFromTable(e.ctx, ts, sc, pkCol)
+			ts.Ranges = res.Ranges
+		} else {
+			if ts.Table.PKIsHandle {
+				if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
+					pkCol = expression.ColInfo2Col(ts.schema.Columns, pkColInfo)
+				}
+			}
+			if pkCol != nil {
+				ts.Ranges, err = ranger.BuildTableRange(ts.AccessCondition, sc, pkCol.RetType)
 				if err != nil {
 					return err
 				}
-				if pID != -1 {
-					ts.physicalTableID = pID
+				if ts.Table.Partition != nil && ts.Table.Partition.Type == model.PartitionTypeHash {
+					pID, err := rebuildNewTableIDFromTable(e.ctx, ts, sc, pkCol)
+					if err != nil {
+						return err
+					}
+					if pID != -1 {
+						ts.physicalTableID = pID
+					}
 				}
+			} else {
+				ts.Ranges = ranger.FullIntRange(false)
 			}
-		} else {
-			ts.Ranges = ranger.FullIntRange(false)
 		}
 	case *PhysicalIndexReader:
 		is := x.IndexPlans[0].(*PhysicalIndexScan)
