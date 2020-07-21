@@ -717,10 +717,22 @@ func DecodeIndexHandle(key, value []byte, colsLen int, pkTp *types.FieldType) (i
 		return d.GetInt64(), nil
 
 	} else if len(value) >= 8 {
-		return DecodeIndexValueAsHandle(value)
+		return decodeHandleInIndexValue(value)
 	}
 	// Should never execute to here.
 	return 0, errors.Errorf("no handle in index key: %v, value: %v", key, value)
+}
+
+func decodeHandleInIndexValue(value []byte) (int64, error) {
+	if len(value) > MaxOldEncodeValueLen {
+		tailLen := value[0]
+		if tailLen >= 8 {
+			return DecodeIndexValueAsHandle(value[len(value)-int(tailLen):])
+		}
+		// Should never executed to here, since the handle is encoded in IndexKey.
+		return 0, errors.Errorf("no handle in index value: %v", value)
+	}
+	return DecodeIndexValueAsHandle(value)
 }
 
 // DecodeIndexValueAsHandle uses to decode index value as handle id.
