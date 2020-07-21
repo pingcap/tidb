@@ -459,11 +459,27 @@ func compareCandidates(lhs, rhs *candidatePath) int {
 
 func (ds *DataSource) getTableCandidate(path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
-	pkCol := ds.getPKIsHandleCol()
-	if len(prop.Items) == 1 && pkCol != nil {
-		candidate.isMatchProp = prop.Items[0].Col.Equal(nil, pkCol)
-		if path.StoreType == kv.TiFlash {
-			candidate.isMatchProp = candidate.isMatchProp && !prop.Items[0].Desc
+	if path.IsIntHandlePath {
+		pkCol := ds.getPKIsHandleCol()
+		if len(prop.Items) == 1 && pkCol != nil {
+			candidate.isMatchProp = prop.Items[0].Col.Equal(nil, pkCol)
+			if path.StoreType == kv.TiFlash {
+				candidate.isMatchProp = candidate.isMatchProp && !prop.Items[0].Desc
+			}
+		}
+	} else {
+		all, _ := prop.AllSameOrder()
+		// When the prop is empty or `all` is false, `isMatchProp` is better to be `false` because
+		// it needs not to keep order for index scan.
+		if !prop.IsEmpty() && all {
+			for i, col := range path.IdxCols {
+				if col.Equal(nil, prop.Items[0].Col) {
+					candidate.isMatchProp = matchIndicesProp(path.IdxCols[i:], path.IdxColLens[i:], prop.Items)
+					break
+				} else if i >= path.EqCondCount {
+					break
+				}
+			}
 		}
 	}
 	candidate.columnSet = expression.ExtractColumnSet(path.AccessConds)
