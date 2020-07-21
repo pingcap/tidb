@@ -476,12 +476,37 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) (bool, error) {
 // determine whether we remove other paths or not.
 func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 	sc := ds.ctx.GetSessionVars().StmtCtx
+<<<<<<< HEAD
 	path.ranges = ranger.FullRange()
 	path.countAfterAccess = float64(ds.statisticTable.Count)
 	path.idxCols, path.idxColLens = expression.IndexInfo2Cols(ds.schema.Columns, path.index)
 	eqOrInCount := 0
 	if len(path.idxCols) != 0 {
 		res, err := ranger.DetachCondAndBuildRangeForIndex(ds.ctx, ds.pushedDownConds, path.idxCols, path.idxColLens)
+=======
+	path.Ranges = ranger.FullRange()
+	path.CountAfterAccess = float64(ds.statisticTable.Count)
+	path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.Index)
+	path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.Index)
+	if !path.Index.Unique && !path.Index.Primary && len(path.Index.Columns) == len(path.IdxCols) {
+		handleCol := ds.getPKIsHandleCol()
+		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.Flag) {
+			alreadyHandle := false
+			for _, col := range path.IdxCols {
+				if col.ID == model.ExtraHandleID || col.Equal(nil, handleCol) {
+					alreadyHandle = true
+				}
+			}
+			// Don't add one column twice to the index. May cause unexpected errors.
+			if !alreadyHandle {
+				path.IdxCols = append(path.IdxCols, handleCol)
+				path.IdxColLens = append(path.IdxColLens, types.UnspecifiedLength)
+			}
+		}
+	}
+	if len(path.IdxCols) != 0 {
+		res, err := ranger.DetachCondAndBuildRangeForIndex(ds.ctx, conds, path.IdxCols, path.IdxColLens)
+>>>>>>> 847a3b7... planner: don't put the handle column twice into the index column (#18565)
 		if err != nil {
 			return false, err
 		}
