@@ -510,14 +510,15 @@ func (s *session) HasDirtyContent(tid int64) bool {
 }
 
 // StmtCommit implements the sessionctx.Context interface.
-func (s *session) StmtCommit(memTracker *memory.Tracker) error {
+func (s *session) StmtCommit(memTracker *memory.Tracker) (err error) {
 	defer func() {
 		// If StmtCommit is called in batch mode, we need to clear the txn size
 		// in memTracker to avoid double-counting. If it's not batch mode, this
 		// work has no effect because that no more data will be appended into
 		// s.txn.
-		if memTracker != nil {
-			memTracker.Consume(int64(-s.txn.Size()))
+		if r := recover(); r != nil {
+			err = errors.Errorf("%v", r)
+			s.txn.doNotCommit = err
 		}
 		s.txn.cleanup()
 	}()
@@ -529,7 +530,6 @@ func (s *session) StmtCommit(memTracker *memory.Tracker) error {
 		return err
 	}
 
-	var err error
 	failpoint.Inject("mockStmtCommitError", func(val failpoint.Value) {
 		if val.(bool) && bufLen > 3 {
 			err = errors.New("mock stmt commit error")

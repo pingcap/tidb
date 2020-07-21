@@ -1211,7 +1211,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 		// Handle the stmt commit/rollback.
 		if se.txn.Valid() {
 			if err != nil {
-				se.txn.doNotCommit = err
+				se.StmtRollback()
 			} else {
 				err = se.StmtCommit(sessVars.StmtCtx.MemTracker)
 			}
