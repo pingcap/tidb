@@ -971,14 +971,16 @@ func checkAddPartition(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.P
 	partDefPointers := make([]*model.PartitionDefinition, 0, len(partInfo.Definitions))
 	for _, pd := range partInfo.Definitions {
 		partitionDefInMeta := tblInfo.FindPartitionDefinitionByName(pd.Name.L)
-		if partitionDefInMeta != nil && partitionDefInMeta.State == model.StatePublic {
-			// Even one partition with the same name existed, whole job canceled.
-			// We already have these new added partition with the same name.
-			job.State = model.JobStateCancelled
-			return nil, nil, nil, errors.Trace(ErrSameNamePartition.GenWithStackByArgs(pd.Name.L))
+		if partitionDefInMeta != nil {
+			if partitionDefInMeta.State == model.StatePublic {
+				// Even one partition with the same name existed, whole job canceled.
+				// We already have these new added partition with the same name.
+				job.State = model.JobStateCancelled
+				return nil, nil, nil, errors.Trace(ErrSameNamePartition.GenWithStackByArgs(pd.Name.L))
+			}
+			// Collect the partition definition pointer in tableInfo for future state change.
+			partDefPointers = append(partDefPointers, partitionDefInMeta)
 		}
-		// Collect the partition definition pointer in tableInfo for future state change.
-		partDefPointers = append(partDefPointers, partitionDefInMeta)
 	}
 	return tblInfo, partInfo, partDefPointers, nil
 }
@@ -1095,7 +1097,7 @@ func onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ 
 			// be finished. Otherwise the query to this partition will be blocked.
 			needWait, err := checkPartitionReplica(partDefPointers, d, job)
 			if err != nil {
-				ver, err := convertAddTablePartitionJob2RollbackJob(t, job, err)
+				ver, err = convertAddTablePartitionJob2RollbackJob(t, job, err)
 				return ver, err
 			}
 			if needWait {
