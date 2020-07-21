@@ -315,9 +315,7 @@ type partialTableWorker struct {
 
 func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *lookupTableTask, resultCh chan<- *lookupTableTask,
 	finished <-chan struct{}, handleCols plannercore.HandleCols) (count int64, err error) {
-	var chk *chunk.Chunk
-
-	chk = chunk.NewChunkWithCapacity(retTypes(w.tableReader), w.maxChunkSize)
+	chk := chunk.NewChunkWithCapacity(retTypes(w.tableReader), w.maxChunkSize)
 	for {
 		handles, retChunk, err := w.extractTaskHandles(ctx, chk, handleCols)
 		if err != nil {

@@ -834,10 +834,14 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 		physicalTableID: ds.physicalTableID,
 		HandleCols:      ds.handleCols,
 	}.Init(ds.ctx, ds.blockOffset)
-	if ts.HandleCols == nil {
-		ts.HandleCols = NewIntHandleCols(ds.getPKIsHandleCol())
-	}
 	ts.SetSchema(ds.schema.Clone())
+	if ts.HandleCols == nil {
+		handleCol := ds.getPKIsHandleCol()
+		if handleCol == nil {
+			handleCol, _ = ts.appendExtraHandleCol(ds)
+		}
+		ts.HandleCols = NewIntHandleCols(handleCol)
+	}
 	var err error
 	ts.HandleCols, err = ts.HandleCols.ResolveIndices(ts.schema)
 	if err != nil {
