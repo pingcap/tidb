@@ -14,7 +14,6 @@
 package stringutil
 
 import (
-	"bytes"
 	"fmt"
 	"strings"
 	"unicode/utf8"
@@ -167,6 +166,7 @@ func CompilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
 				}
 			}
 		case '_':
+<<<<<<< HEAD
 			if lastAny {
 				continue
 			}
@@ -176,6 +176,21 @@ func CompilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
 				continue
 			}
 			lastAny = true
+=======
+			// %_ => _%
+			if patLen > 0 && patTypes[patLen-1] == PatAny {
+				tp = PatAny
+				c = '%'
+				patChars[patLen-1], patTypes[patLen-1] = '_', PatOne
+			} else {
+				tp = PatOne
+			}
+		case '%':
+			// %% => %
+			if patLen > 0 && patTypes[patLen-1] == PatAny {
+				continue
+			}
+>>>>>>> c84aa7997... *: simplify LIKE patterns with multiple consecutive wildcards (#17490)
 			tp = PatAny
 		default:
 			lastAny = false
@@ -218,6 +233,7 @@ func CompileLike2Regexp(str string) string {
 				result = append(result, '.')
 			}
 		case PatAny:
+<<<<<<< HEAD
 			// ..* == .*
 			if bytes.HasSuffix(result, []byte{'.'}) {
 				result = append(result, '*')
@@ -228,6 +244,9 @@ func CompileLike2Regexp(str string) string {
 				result = append(result, '.')
 				result = append(result, '*')
 			}
+=======
+			result = append(result, '.', '*')
+>>>>>>> c84aa7997... *: simplify LIKE patterns with multiple consecutive wildcards (#17490)
 		}
 	}
 	return string(result)
