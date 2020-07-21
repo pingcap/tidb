@@ -31,6 +31,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const splitBatchRegionLimit = 16
+
 func equalRegionStartKey(key, regionStartKey []byte) bool {
 	if bytes.Equal(key, regionStartKey) {
 		return true
@@ -48,7 +50,7 @@ func (s *tikvStore) splitBatchRegionsReq(bo *Backoffer, keys [][]byte, scatter b
 
 	var batches []batch
 	for regionID, groupKeys := range groups {
-		batches = appendKeyBatches(batches, regionID, groupKeys, rawBatchPutSize)
+		batches = appendKeyBatches(batches, regionID, groupKeys, splitBatchRegionLimit)
 	}
 
 	if len(batches) == 0 {
