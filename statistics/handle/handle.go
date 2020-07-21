@@ -90,10 +90,12 @@ type Handle struct {
 // Clear the statsCache, only for test.
 func (h *Handle) Clear() {
 	h.mu.Lock()
+	h.statsCache.Lock()
 	h.statsCache.Store(statsCache{tables: make(map[int64]*statistics.Table)})
 	h.statsCache.memTracker = memory.NewTracker(
 		stringutil.MemoizeStr(func() string { return "statsCache" }),
 		-1)
+	h.statsCache.Unlock()
 	for len(h.ddlEventCh) > 0 {
 		<-h.ddlEventCh
 	}
