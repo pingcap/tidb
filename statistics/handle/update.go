@@ -297,8 +297,10 @@ func (h *Handle) sweepList() {
 // DumpStatsDeltaToKV sweeps the whole list and updates the global map, then we dumps every table that held in map to KV.
 // If the mode is `DumpDelta`, it will only dump that delta info that `Modify Count / Table Count` greater than a ratio.
 func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
+	logutil.BgLogger().Info("[stats] DumpStatsDeltaToKV")
 	h.sweepList()
 	currentTime := time.Now()
+	logutil.BgLogger().Info("[stats] globalMap", zap.Any("h.globalMap", h.globalMap))
 	for id, item := range h.globalMap {
 		if mode == DumpDelta && !needDumpStatsDelta(h, id, item, currentTime) {
 			logutil.BgLogger().Info("[stats] skip update", zap.Any("table id:", id))
