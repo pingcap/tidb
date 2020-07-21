@@ -573,6 +573,14 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 
 	if firstIsPrimary && (actionIsCommit || actionIsCleanup || actionIsPessimiticLock) {
 		// primary should be committed/cleanup/pessimistically locked first
+
+		// Strip secondary keys in the batch
+		for i, k := range batches[0].mutations.keys {
+			if bytes.Equal(k, c.primary()) {
+				batches[0].mutations = batches[0].mutations.subRange(i, i+1)
+				break
+			}
+		}
 		err = c.doActionOnBatches(bo, action, batches[:1])
 		if err != nil {
 			return errors.Trace(err)
@@ -588,17 +596,17 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 		// The backoffer instance is created outside of the goroutine to avoid
 		// potential data race in unit test since `CommitMaxBackoff` will be updated
 		// by test suites.
-		secondaryBo := NewBackoffer(context.Background(), CommitMaxBackoff).WithVars(c.txn.vars)
-		go func() {
-			e := c.doActionOnBatches(secondaryBo, action, batches)
-			if e != nil {
-				logutil.BgLogger().Debug("2PC async doActionOnBatches",
-					zap.Uint64("conn", c.connID),
-					zap.Stringer("action type", action),
-					zap.Error(e))
-				tikvSecondaryLockCleanupFailureCounterCommit.Inc()
-			}
-		}()
+		// secondaryBo := NewBackoffer(context.Background(), CommitMaxBackoff).WithVars(c.txn.vars)
+		// go func() {
+		// e := c.doActionOnBatches(secondaryBo, action, batches)
+		// if e != nil {
+		// logutil.BgLogger().Debug("2PC async doActionOnBatches",
+		// zap.Uint64("conn", c.connID),
+		// zap.Stringer("action type", action),
+		// zap.Error(e))
+		// tikvSecondaryLockCleanupFailureCounterCommit.Inc()
+		// }
+		// }()
 	} else {
 		err = c.doActionOnBatches(bo, action, batches)
 	}
