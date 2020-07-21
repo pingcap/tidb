@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/util/set"
 )
 
+// FullRange represent used all partitions.
 const FullRange = -1
 
 // partitionProcessor rewrites the ast for table partition.
@@ -116,13 +117,12 @@ func generateHashPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo, 
 func convertToRangeOr(used []int, pi *model.PartitionInfo) partitionRangeOR {
 	if len(used) == 1 && used[0] == FullRange {
 		return fullRange(len(pi.Definitions))
-	} else {
-		ret := make(partitionRangeOR, len(used))
-		for _, i := range used {
-			ret = append(ret, partitionRange{i, i + 1})
-		}
-		return ret
 	}
+	ret := make(partitionRangeOR, len(used))
+	for _, i := range used {
+		ret = append(ret, partitionRange{i, i + 1})
+	}
+	return ret
 }
 
 func (s *partitionProcessor) convertToIntSlice(or partitionRangeOR, pi *model.PartitionInfo, partitionNames []model.CIStr) []int {
