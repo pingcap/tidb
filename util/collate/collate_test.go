@@ -14,8 +14,8 @@
 package collate
 
 import (
-	"testing"
 	"bytes"
+	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testleak"
@@ -165,7 +165,6 @@ func (s *testCollateSuite) TestUnicodeCICollator(c *C) {
 	testKeyTable(keyTable, "utf8mb4_unicode_ci", c)
 }
 
-// func BenchmarkMatchSpecial(b *testing.B) {
 func BenchmarkUnicodeCICompareSpecial(b *testing.B) {
 	SetNewCollationEnabledForTest(true)
 	defer SetNewCollationEnabledForTest(false)
