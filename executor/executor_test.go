@@ -127,11 +127,13 @@ var _ = SerialSuites(&testClusterTableSuite{})
 var _ = SerialSuites(&testPrepareSerialSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testSplitTable{&baseTestSuite{}})
 var _ = SerialSuites(&testSerialSuite1{&baseTestSuite{}})
+var _ = SerialSuites(&testSlowQuery{&baseTestSuite{}})
 
 type testSuite struct{ *baseTestSuite }
 type testSuiteP1 struct{ *baseTestSuite }
 type testSuiteP2 struct{ *baseTestSuite }
 type testSplitTable struct{ *baseTestSuite }
+type testSlowQuery struct{ *baseTestSuite }
 
 type baseTestSuite struct {
 	cluster cluster.Cluster
@@ -4200,7 +4202,7 @@ func (s *testSuiteP2) TestReadPartitionedTable(c *C) {
 	tk.MustQuery("select a from pt where b = 3").Check(testkit.Rows("3"))
 }
 
-func (s *testSuiteP2) TestSplitRegion(c *C) {
+func (s *testSplitTable) TestSplitRegion(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, t1")
@@ -5963,7 +5965,7 @@ func (s *testSuite) TestGenerateColumnReplace(c *C) {
 	tk.MustQuery("select * from t1").Check(testkit.Rows("3 4"))
 }
 
-func (s *testSuite) TestSlowQuerySensitiveQuery(c *C) {
+func (s *testSlowQuery) TestSlowQuerySensitiveQuery(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
