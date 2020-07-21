@@ -614,7 +614,7 @@ func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 			return handles, retChk, nil
 		}
 		for i := 0; i < chk.NumRows(); i++ {
-			handle, err := handleCols.BuildHandle(chk.GetRow(i))
+			handle, err := handleCols.BuildHandleFromIndexRow(chk.GetRow(i))
 			if err != nil {
 				return nil, nil, err
 			}

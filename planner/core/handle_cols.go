@@ -33,6 +33,8 @@ type HandleCols interface {
 	BuildHandle(row chunk.Row) (kv.Handle, error)
 	// BuildHandleByDatums builds a Handle from a datum slice.
 	BuildHandleByDatums(row []types.Datum) (kv.Handle, error)
+	// BuildHandleFromIndexRow builds a Handle from index row data.
+	BuildHandleFromIndexRow(row chunk.Row) (kv.Handle, error)
 	// ResolveIndices resolves handle column indices.
 	ResolveIndices(schema *expression.Schema) (HandleCols, error)
 	// IsInt returns if the HandleCols is a single tnt column.
@@ -71,6 +73,15 @@ func (cb *CommonHandleCols) BuildHandle(row chunk.Row) (kv.Handle, error) {
 	datumBuf := make([]types.Datum, 0, 4)
 	for _, col := range cb.columns {
 		datumBuf = append(datumBuf, row.GetDatum(col.Index, col.RetType))
+	}
+	return cb.buildHandleByDatumsBuffer(datumBuf)
+}
+
+// BuildHandleFromIndexRow implements the kv.HandleCols interface.
+func (cb *CommonHandleCols) BuildHandleFromIndexRow(row chunk.Row) (kv.Handle, error) {
+	datumBuf := make([]types.Datum, 0, 4)
+	for i := 0; i < cb.NumCols(); i++ {
+		datumBuf = append(datumBuf, row.GetDatum(row.Len()-cb.NumCols()+i, cb.columns[i].RetType))
 	}
 	return cb.buildHandleByDatumsBuffer(datumBuf)
 }
@@ -179,6 +190,11 @@ type IntHandleCols struct {
 // BuildHandle implements the kv.HandleCols interface.
 func (ib *IntHandleCols) BuildHandle(row chunk.Row) (kv.Handle, error) {
 	return kv.IntHandle(row.GetInt64(ib.col.Index)), nil
+}
+
+// BuildHandleFromIndexRow implements the kv.HandleCols interface.
+func (ib *IntHandleCols) BuildHandleFromIndexRow(row chunk.Row) (kv.Handle, error) {
+	return kv.IntHandle(row.GetInt64(row.Len()-1)), nil
 }
 
 // BuildHandleByDatums implements the kv.HandleCols interface.
