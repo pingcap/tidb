@@ -25,6 +25,8 @@ const (
 	flagPresumeKNE KeyFlags = 1 << iota
 	flagKeyLocked
 	flagNoNeedCommit
+	flagDirtyOpAdd
+	flagDirtyOpDel
 
 	persistentFlags = flagKeyLocked
 	// bit 1 => red, bit 0 => black
@@ -50,6 +52,16 @@ func (f KeyFlags) HasNoNeedCommit() bool {
 	return f&flagNoNeedCommit != 0
 }
 
+// HasDirtyOpAdd returns whether the key has a add operation in DirtyDB.
+func (f KeyFlags) HasDirtyOpAdd() bool {
+	return f&flagDirtyOpAdd != 0
+}
+
+// HasDirtyOpDel returns whether the key has a del operation in DirtyDB.
+func (f KeyFlags) HasDirtyOpDel() bool {
+	return f&flagDirtyOpDel != 0
+}
+
 // FlagsOp describes KeyFlags modify operation.
 type FlagsOp uint8
 
@@ -64,6 +76,10 @@ const (
 	DelKeyLocked
 	// SetNoNeedCommit marks the key shouldn't be used in 2pc commit phase.
 	SetNoNeedCommit
+	// SetDirtyOpAdd marks the key has a DirtyDB del operation.
+	SetDirtyOpAdd
+	// SetDirtyOpDel marks the key has a DirtyDB add operation.
+	SetDirtyOpDel
 )
 
 func applyFlagsOps(origin KeyFlags, ops ...FlagsOp) KeyFlags {
@@ -79,6 +95,11 @@ func applyFlagsOps(origin KeyFlags, ops ...FlagsOp) KeyFlags {
 			origin &= ^flagKeyLocked
 		case SetNoNeedCommit:
 			origin |= flagNoNeedCommit
+		case SetDirtyOpDel:
+			origin &= ^flagDirtyOpAdd
+			origin |= flagDirtyOpDel
+		case SetDirtyOpAdd:
+			origin |= flagDirtyOpAdd
 		}
 	}
 	return origin

@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-binlog"
@@ -51,7 +50,7 @@ type TxnState struct {
 	initCnt       int
 	stagingHandle kv.StagingHandle
 	mutations     map[int64]*binlog.TableMutation
-	dirtyTableOP  []dirtyTableOperation
+	dirtyTables   map[int64]struct{}
 
 	// If doNotCommit is not nil, Commit() will not commit the transaction.
 	// doNotCommit flag may be set when StmtCommit fail.
@@ -60,6 +59,7 @@ type TxnState struct {
 
 func (st *TxnState) init() {
 	st.mutations = make(map[int64]*binlog.TableMutation)
+	st.dirtyTables = make(map[int64]struct{})
 }
 
 func (st *TxnState) initStmtBuf() {
@@ -137,9 +137,6 @@ func (st *TxnState) GoString() string {
 	} else if st.Valid() {
 		s.WriteString("state=valid")
 		fmt.Fprintf(&s, ", txnStartTS=%d", st.Transaction.StartTS())
-		if len(st.dirtyTableOP) > 0 {
-			fmt.Fprintf(&s, ", len(dirtyTable)=%d, %#v", len(st.dirtyTableOP), st.dirtyTableOP)
-		}
 		if len(st.mutations) > 0 {
 			fmt.Fprintf(&s, ", len(mutations)=%d, %#v", len(st.mutations), st.mutations)
 		}
@@ -226,7 +223,7 @@ func ResetMockAutoRandIDRetryCount(failTimes int64) {
 // Commit overrides the Transaction interface.
 func (st *TxnState) Commit(ctx context.Context) error {
 	defer st.reset()
-	if len(st.mutations) != 0 || len(st.dirtyTableOP) != 0 || st.countHint() != 0 {
+	if len(st.mutations) != 0 || len(st.dirtyTables) != 0 || st.countHint() != 0 {
 		logutil.BgLogger().Error("the code should never run here",
 			zap.String("TxnState", st.GoString()),
 			zap.Int("staging handler", int(st.stagingHandle)),
@@ -283,17 +280,8 @@ func (st *TxnState) cleanup() {
 	for key := range st.mutations {
 		delete(st.mutations, key)
 	}
-	if st.dirtyTableOP != nil {
-		empty := dirtyTableOperation{}
-		for i := 0; i < len(st.dirtyTableOP); i++ {
-			st.dirtyTableOP[i] = empty
-		}
-		if len(st.dirtyTableOP) > 256 {
-			// Reduce memory footprint for the large transaction.
-			st.dirtyTableOP = nil
-		} else {
-			st.dirtyTableOP = st.dirtyTableOP[:0]
-		}
+	for key := range st.dirtyTables {
+		delete(st.dirtyTables, key)
 	}
 }
 
@@ -354,16 +342,6 @@ func mergeToMutation(m1, m2 *binlog.TableMutation) {
 	m1.Sequence = append(m1.Sequence, m2.Sequence...)
 }
 
-func mergeToDirtyDB(dirtyDB *executor.DirtyDB, op dirtyTableOperation) {
-	dt := dirtyDB.GetDirtyTable(op.tid)
-	switch op.kind {
-	case table.DirtyTableAddRow:
-		dt.AddRow(op.handle)
-	case table.DirtyTableDeleteRow:
-		dt.DeleteRow(op.handle)
-	}
-}
-
 type txnFailFuture struct{}
 
 func (txnFailFuture) Wait() (uint64, error) {
@@ -417,7 +395,7 @@ func (s *session) HasDirtyContent(tid int64) bool {
 	if x == nil {
 		return false
 	}
-	return !x.(*executor.DirtyDB).GetDirtyTable(tid).IsEmpty()
+	return x.(*executor.DirtyDB).IsDirty(tid)
 }
 
 // StmtCommit implements the sessionctx.Context interface.
@@ -444,10 +422,10 @@ func (s *session) StmtCommit() error {
 		mergeToMutation(mutation, delta)
 	}
 
-	if len(st.dirtyTableOP) > 0 {
+	if len(st.dirtyTables) > 0 {
 		dirtyDB := executor.GetDirtyDB(s)
-		for _, op := range st.dirtyTableOP {
-			mergeToDirtyDB(dirtyDB, op)
+		for id := range st.dirtyTables {
+			dirtyDB.MarkTable(id)
 		}
 	}
 	return nil
@@ -467,6 +445,6 @@ func (s *session) StmtGetMutation(tableID int64) *binlog.TableMutation {
 	return st.mutations[tableID]
 }
 
-func (s *session) StmtAddDirtyTableOP(op int, tid int64, handle kv.Handle) {
-	s.txn.dirtyTableOP = append(s.txn.dirtyTableOP, dirtyTableOperation{op, tid, handle})
+func (s *session) MarkTableDirty(tid int64) {
+	s.txn.dirtyTables[tid] = struct{}{}
 }
