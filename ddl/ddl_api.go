@@ -19,7 +19,6 @@ package ddl
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"math"
 	"strconv"
@@ -807,7 +806,6 @@ func setTimestampDefaultValue(c *table.Column, hasDefaultValue bool, setOnUpdate
 	if mysql.HasTimestampFlag(c.Flag) && mysql.HasNotNullFlag(c.Flag) {
 		if setOnUpdateNow {
 			if err := c.SetDefaultValue(types.ZeroDatetimeStr); err != nil {
-				context.Background()
 				logutil.BgLogger().Error("set default value failed", zap.Error(err))
 			}
 		} else {
@@ -1708,7 +1706,7 @@ func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo
 		scatterRegion = variable.TiDBOptOn(val)
 	}
 	if pi != nil {
-		preSplit = func() { splitPartitionTableRegion(ctx, sp, pi, scatterRegion) }
+		preSplit = func() { splitPartitionTableRegion(ctx, sp, tbInfo, pi, scatterRegion) }
 	} else {
 		preSplit = func() { splitTableRegion(ctx, sp, tbInfo, scatterRegion) }
 	}
@@ -2214,6 +2212,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			err = errors.Trace(errUnsupportedOptimizePartition)
 		case ast.AlterTableRemovePartitioning:
 			err = errors.Trace(errUnsupportedRemovePartition)
+		case ast.AlterTableRepairPartition:
+			err = errors.Trace(errUnsupportedRepairPartition)
 		case ast.AlterTableDropColumn:
 			err = d.DropColumn(ctx, ident, spec)
 		case ast.AlterTableDropIndex:
@@ -2343,8 +2343,21 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 	var actionType model.ActionType
 	switch tp {
 	case autoid.AutoRandomType:
-		if t.Meta().AutoRandomBits == 0 {
+		tbInfo := t.Meta()
+		if tbInfo.AutoRandomBits == 0 {
 			return errors.Trace(ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomRebaseNotApplicable))
+		}
+		var autoRandColTp types.FieldType
+		for _, c := range tbInfo.Columns {
+			if mysql.HasPriKeyFlag(c.Flag) {
+				autoRandColTp = c.FieldType
+				break
+			}
+		}
+		layout := autoid.NewAutoRandomIDLayout(&autoRandColTp, tbInfo.AutoRandomBits)
+		if layout.IncrementalMask()&newBase != newBase {
+			errMsg := fmt.Sprintf(autoid.AutoRandomRebaseOverflow, newBase, layout.IncrementalBitsCapacity())
+			return errors.Trace(ErrInvalidAutoRandom.GenWithStackByArgs(errMsg))
 		}
 		actionType = model.ActionRebaseAutoRandomBase
 	case autoid.RowIDAllocType:
@@ -2759,6 +2772,7 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 	if err != nil {
 		return errors.Trace(err)
 	}
+	pids := []int64{pid}
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -2766,7 +2780,7 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 		SchemaName: schema.Name.L,
 		Type:       model.ActionTruncateTablePartition,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{pid},
+		Args:       []interface{}{pids},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -2798,7 +2812,8 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 	}
 
 	partName := spec.PartitionNames[0].L
-	err = checkDropTablePartition(meta, partName)
+	partNames := []string{partName}
+	err = checkDropTablePartition(meta, partNames)
 	if err != nil {
 		if ErrDropPartitionNonExistent.Equal(err) && spec.IfExists {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
@@ -2813,7 +2828,7 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 		SchemaName: schema.Name.L,
 		Type:       model.ActionDropTablePartition,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{partName},
+		Args:       []interface{}{partNames},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -2852,6 +2867,25 @@ func checkFieldTypeCompatible(ft *types.FieldType, other *types.FieldType) bool 
 	return true
 }
 
+func checkTiFlashReplicaCompatible(source *model.TiFlashReplicaInfo, target *model.TiFlashReplicaInfo) bool {
+	if source == target {
+		return true
+	}
+	if source == nil || target == nil {
+		return false
+	}
+	if source.Count != target.Count ||
+		source.Available != target.Available || len(source.LocationLabels) != len(target.LocationLabels) {
+		return false
+	}
+	for i, lable := range source.LocationLabels {
+		if target.LocationLabels[i] != lable {
+			return false
+		}
+	}
+	return true
+}
+
 func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) error {
 	// check auto_random
 	if source.AutoRandomBits != target.AutoRandomBits ||
@@ -2859,7 +2893,7 @@ func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) e
 		source.Collate != target.Collate ||
 		source.ShardRowIDBits != target.ShardRowIDBits ||
 		source.MaxShardRowIDBits != target.MaxShardRowIDBits ||
-		source.TiFlashReplica != target.TiFlashReplica {
+		!checkTiFlashReplicaCompatible(source.TiFlashReplica, target.TiFlashReplica) {
 		return errors.Trace(ErrTablesDifferentMetadata)
 	}
 	if len(source.Cols()) != len(target.Cols()) {
@@ -3528,7 +3562,10 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 
 func checkAutoRandom(tableInfo *model.TableInfo, originCol *table.Column, specNewColumn *ast.ColumnDef) (uint64, error) {
 	// Disallow add/drop actions on auto_random.
-	oldRandBits := tableInfo.AutoRandomBits
+	var oldRandBits uint64
+	if tableInfo.PKIsHandle && (tableInfo.GetPkName().L == originCol.Name.L) {
+		oldRandBits = tableInfo.AutoRandomBits
+	}
 	newRandBits, err := extractAutoRandomBitsFromColDef(specNewColumn)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -4209,7 +4246,9 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 	}
 
 	indexName = model.NewCIStr(mysql.PrimaryKeyName)
-	if indexInfo := t.Meta().FindIndexByName(indexName.L); indexInfo != nil {
+	if indexInfo := t.Meta().FindIndexByName(indexName.L); indexInfo != nil ||
+		// If the table's PKIsHandle is true, it also means that this table has a primary key.
+		t.Meta().PKIsHandle {
 		return infoschema.ErrMultiplePriKey
 	}
 
@@ -4354,7 +4393,14 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	}
 
 	if indexInfo := t.Meta().FindIndexByName(indexName.L); indexInfo != nil {
-		err = ErrDupKeyName.GenWithStack("index already exist %s", indexName)
+		if indexInfo.State != model.StatePublic {
+			// NOTE: explicit error message. See issue #18363.
+			err = ErrDupKeyName.GenWithStack("index already exist %s; "+
+				"a background job is trying to add the same index, "+
+				"please check by `ADMIN SHOW DDL JOBS`", indexName)
+		} else {
+			err = ErrDupKeyName.GenWithStack("index already exist %s", indexName)
+		}
 		if ifNotExists {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			return nil

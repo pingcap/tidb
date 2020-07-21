@@ -206,7 +206,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	c.Assert(err, IsNil)
 
 	i := int64(0)
-	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		c.Assert(data, HasLen, 3)
 		c.Assert(data[0].GetInt64(), Equals, i)
 		c.Assert(data[1].GetInt64(), Equals, 10*i)
@@ -227,7 +227,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 
 	i = int64(0)
 	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(),
-		func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+		func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 			c.Assert(data, HasLen, 4)
 			c.Assert(data[0].GetInt64(), Equals, i)
 			c.Assert(data[1].GetInt64(), Equals, 10*i)
@@ -410,7 +410,7 @@ func (s *testColumnSuite) checkDeleteOnlyColumn(ctx sessionctx.Context, d *ddl, 
 		return errors.Trace(err)
 	}
 	i := int64(0)
-	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		if !reflect.DeepEqual(data, row) {
 			return false, errors.Errorf("%v not equal to %v", data, row)
 		}
@@ -446,7 +446,7 @@ func (s *testColumnSuite) checkDeleteOnlyColumn(ctx sessionctx.Context, d *ddl, 
 	rows := [][]types.Datum{row, newRow}
 
 	i = int64(0)
-	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		if !reflect.DeepEqual(data, rows[i]) {
 			return false, errors.Errorf("%v not equal to %v", data, rows[i])
 		}
@@ -479,7 +479,7 @@ func (s *testColumnSuite) checkDeleteOnlyColumn(ctx sessionctx.Context, d *ddl, 
 		return errors.Trace(err)
 	}
 	i = int64(0)
-	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		i++
 		return true, nil
 	})
@@ -512,7 +512,7 @@ func (s *testColumnSuite) checkWriteOnlyColumn(ctx sessionctx.Context, d *ddl, t
 	}
 
 	i := int64(0)
-	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		if !reflect.DeepEqual(data, row) {
 			return false, errors.Errorf("%v not equal to %v", data, row)
 		}
@@ -550,7 +550,7 @@ func (s *testColumnSuite) checkWriteOnlyColumn(ctx sessionctx.Context, d *ddl, t
 	rows := [][]types.Datum{row, newRow}
 
 	i = int64(0)
-	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		if !reflect.DeepEqual(data, rows[i]) {
 			return false, errors.Errorf("%v not equal to %v", data, rows[i])
 		}
@@ -584,7 +584,7 @@ func (s *testColumnSuite) checkWriteOnlyColumn(ctx sessionctx.Context, d *ddl, t
 	}
 
 	i = int64(0)
-	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		i++
 		return true, nil
 	})
@@ -617,7 +617,7 @@ func (s *testColumnSuite) checkReorganizationColumn(ctx sessionctx.Context, d *d
 	}
 
 	i := int64(0)
-	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		if !reflect.DeepEqual(data, row) {
 			return false, errors.Errorf("%v not equal to %v", data, row)
 		}
@@ -650,7 +650,7 @@ func (s *testColumnSuite) checkReorganizationColumn(ctx sessionctx.Context, d *d
 	rows := [][]types.Datum{row, newRow}
 
 	i = int64(0)
-	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		if !reflect.DeepEqual(data, rows[i]) {
 			return false, errors.Errorf("%v not equal to %v", data, rows[i])
 		}
@@ -685,7 +685,7 @@ func (s *testColumnSuite) checkReorganizationColumn(ctx sessionctx.Context, d *d
 	}
 
 	i = int64(0)
-	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		i++
 		return true, nil
 	})
@@ -714,7 +714,7 @@ func (s *testColumnSuite) checkPublicColumn(ctx sessionctx.Context, d *ddl, tblI
 
 	i := int64(0)
 	updatedRow := append(oldRow, types.NewDatum(columnValue))
-	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		if !reflect.DeepEqual(data, updatedRow) {
 			return false, errors.Errorf("%v not equal to %v", data, updatedRow)
 		}
@@ -747,7 +747,7 @@ func (s *testColumnSuite) checkPublicColumn(ctx sessionctx.Context, d *ddl, tblI
 	rows := [][]types.Datum{updatedRow, newRow}
 
 	i = int64(0)
-	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		if !reflect.DeepEqual(data, rows[i]) {
 			return false, errors.Errorf("%v not equal to %v", data, rows[i])
 		}
@@ -775,7 +775,7 @@ func (s *testColumnSuite) checkPublicColumn(ctx sessionctx.Context, d *ddl, tblI
 	}
 
 	i = int64(0)
-	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		if !reflect.DeepEqual(data, updatedRow) {
 			return false, errors.Errorf("%v not equal to %v", data, updatedRow)
 		}

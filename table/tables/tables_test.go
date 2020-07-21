@@ -15,6 +15,7 @@ package tables_test
 
 import (
 	"context"
+	"strconv"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -121,7 +122,7 @@ func (ts *testSuite) TestBasic(c *C) {
 
 	c.Assert(tb.UpdateRecord(context.Background(), ctx, rid, types.MakeDatums(1, "abc"), types.MakeDatums(1, "cba"), []bool{false, true}), IsNil)
 
-	tb.IterRecords(ctx, tb.FirstKey(), tb.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+	tb.IterRecords(ctx, tb.FirstKey(), tb.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		return true, nil
 	})
 
@@ -336,7 +337,7 @@ func (ts *testSuite) TestIterRecords(c *C) {
 	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tIter"))
 	c.Assert(err, IsNil)
 	totalCount := 0
-	err = tb.IterRecords(ts.se, tb.FirstKey(), tb.Cols(), func(h int64, rec []types.Datum, cols []*table.Column) (bool, error) {
+	err = tb.IterRecords(ts.se, tb.FirstKey(), tb.Cols(), func(_ kv.Handle, rec []types.Datum, cols []*table.Column) (bool, error) {
 		totalCount++
 		c.Assert(rec[0].IsNull(), IsFalse)
 		return true, nil
@@ -393,6 +394,23 @@ func (ts *testSuite) TestTableFromMeta(c *C) {
 
 	_, err = tables.AllocHandle(tk.Se, tb)
 	c.Assert(err, NotNil)
+}
+
+func (ts *testSuite) TestShardRowIDBitsStep(c *C) {
+	tk := testkit.NewTestKit(c, ts.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists shard_t;")
+	tk.MustExec("create table shard_t (a int) shard_row_id_bits = 15;")
+	tk.MustExec("set @@tidb_shard_allocate_step=3;")
+	tk.MustExec("insert into shard_t values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10), (11);")
+	rows := tk.MustQuery("select _tidb_rowid from shard_t;").Rows()
+	shards := make(map[int]struct{})
+	for _, row := range rows {
+		id, err := strconv.ParseUint(row[0].(string), 10, 64)
+		c.Assert(err, IsNil)
+		shards[int(id>>48)] = struct{}{}
+	}
+	c.Assert(len(shards), Equals, 4)
 }
 
 func (ts *testSuite) TestHiddenColumn(c *C) {
@@ -571,8 +589,7 @@ func (ts *testSuite) TestAddRecordWithCtx(c *C) {
 	c.Assert(ts.se.NewTxn(context.Background()), IsNil)
 	txn, err := ts.se.Txn(true)
 	c.Assert(err, IsNil)
-	store := kv.NewStagingBufferStore(txn)
-	recordCtx := tables.NewCommonAddRecordCtx(len(tb.Cols()), store)
+	recordCtx := tables.NewCommonAddRecordCtx(len(tb.Cols()))
 	tables.SetAddRecordCtx(ts.se, recordCtx)
 	defer tables.ClearAddRecordCtx(ts.se)
 
@@ -587,7 +604,7 @@ func (ts *testSuite) TestAddRecordWithCtx(c *C) {
 	}
 
 	i := 0
-	err = tb.IterRecords(ts.se, tb.FirstKey(), tb.Cols(), func(h int64, rec []types.Datum, cols []*table.Column) (bool, error) {
+	err = tb.IterRecords(ts.se, tb.FirstKey(), tb.Cols(), func(_ kv.Handle, rec []types.Datum, cols []*table.Column) (bool, error) {
 		i++
 		return true, nil
 	})

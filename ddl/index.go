@@ -767,11 +767,6 @@ func checkAlterIndexVisibility(t *meta.Meta, job *model.Job) (*model.TableInfo, 
 	return tblInfo, indexName, invisible, nil
 }
 
-const (
-	// DefaultTaskHandleCnt is default batch size of adding indices.
-	DefaultTaskHandleCnt = 128
-)
-
 // indexRecord is the record information of an index.
 type indexRecord struct {
 	handle kv.Handle
@@ -1041,7 +1036,7 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 	for i, key := range w.batchCheckKeys {
 		if val, found := batchVals[string(key)]; found {
 			if w.distinctCheckFlags[i] {
-				handle, err1 := tables.DecodeHandleInUniqueIndexValue(val, w.table.Meta().IsCommonHandle)
+				handle, err1 := tablecodec.DecodeHandleInUniqueIndexValue(val, w.table.Meta().IsCommonHandle)
 				if err1 != nil {
 					return errors.Trace(err1)
 				}
@@ -1055,7 +1050,7 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 			// The keys in w.batchCheckKeys also maybe duplicate,
 			// so we need to backfill the not found key into `batchVals` map.
 			if w.distinctCheckFlags[i] {
-				batchVals[string(key)] = tables.EncodeHandleInUniqueIndexValue(idxRecords[i].handle, false)
+				batchVals[string(key)] = tablecodec.EncodeHandleInUniqueIndexValue(idxRecords[i].handle, false)
 			}
 		}
 	}
@@ -1109,7 +1104,7 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (taskCtx
 			}
 
 			// Create the index.
-			handle, err := w.index.Create(w.sessCtx, txn, idxRecord.vals, idxRecord.handle)
+			handle, err := w.index.Create(w.sessCtx, txn.GetUnionStore(), idxRecord.vals, idxRecord.handle)
 			if err != nil {
 				if kv.ErrKeyExists.Equal(err) && idxRecord.handle.Equal(handle) {
 					// Index already exists, skip it.
@@ -1247,7 +1242,7 @@ func splitTableRanges(t table.PhysicalTable, store kv.Storage, startHandle, endH
 	}
 
 	maxSleep := 10000 // ms
-	bo := tikv.NewBackoffer(context.Background(), maxSleep)
+	bo := tikv.NewBackofferWithVars(context.Background(), maxSleep, nil)
 	ranges, err := tikv.SplitRegionRanges(bo, s.GetRegionCache(), []kv.KeyRange{kvRange})
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1411,7 +1406,7 @@ func loadDDLReorgVars(w *worker) error {
 // For a partitioned table, it should be handled partition by partition.
 //
 // How to add index in reorganization state?
-// Concurrently process the defaultTaskHandleCnt tasks. Each task deals with a handle range of the index record.
+// Concurrently process the @@tidb_ddl_reorg_worker_cnt tasks. Each task deals with a handle range of the index record.
 // The handle range is split from PD regions now. Each worker deal with a region table key range one time.
 // Each handle range by estimation, concurrent processing needs to perform after the handle range has been acquired.
 // The operation flow is as follows:
