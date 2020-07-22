@@ -63,6 +63,14 @@ const expressionIndexPrefix = "_V$"
 
 const placementRuleDefaultID = "inserted_by_ddl"
 
+const (
+	placementRuleIndexDefault int = iota
+	placementRuleIndexDatabase
+	placementRuleIndexTable
+	placementRuleIndexPartition
+	placementRuleIndexIndex
+)
+
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) error {
 	dbInfo := &model.DBInfo{Name: schema}
 	if charsetInfo != nil {
@@ -5247,7 +5255,7 @@ func (d *ddl) AlterTablePartition(ctx sessionctx.Context, ident ast.Ident, spec 
 	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(partitionID+1)))
 	for _, rule := range rules {
 		rule.GroupID = groupID
-		rule.Index = 3
+		rule.Index = placementRuleIndexPartition
 		rule.StartKeyHex = startKey
 		rule.EndKeyHex = endKey
 	}
