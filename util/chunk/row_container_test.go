@@ -255,6 +255,6 @@ func (r *rowContainerTestSerialSuite) TestActionBlocked(c *check.C) {
 		wg.Done()
 	}()
 	ac.Action(tracker)
-	c.Assert(time.Now().Sub(starttime), check.GreaterEqual, 200*time.Millisecond)
+	c.Assert(time.Since(starttime), check.GreaterEqual, 200*time.Millisecond)
 	wg.Wait()
 }
