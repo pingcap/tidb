@@ -334,8 +334,8 @@ import (
 	concurrency           "CONCURRENCY"
 	connection            "CONNECTION"
 	consistent            "CONSISTENT"
+	constraints           "CONSTRAINTS"
 	context               "CONTEXT"
-	count                 "COUNT"
 	cpu                   "CPU"
 	csvBackslashEscape    "CSV_BACKSLASH_ESCAPE"
 	csvDelimiter          "CSV_DELIMITER"
@@ -412,7 +412,6 @@ import (
 	issuer                "ISSUER"
 	jsonType              "JSON"
 	keyBlockSize          "KEY_BLOCK_SIZE"
-	label                 "LABEL"
 	labels                "LABELS"
 	language              "LANGUAGE"
 	last                  "LAST"
@@ -474,6 +473,7 @@ import (
 	per_table             "PER_TABLE"
 	pipesAsOr
 	plugins               "PLUGINS"
+	policy                "POLICY"
 	preSplitRegions       "PRE_SPLIT_REGIONS"
 	preceding             "PRECEDING"
 	prepare               "PREPARE"
@@ -496,6 +496,7 @@ import (
 	repair                "REPAIR"
 	repeatable            "REPEATABLE"
 	replica               "REPLICA"
+	replicas              "REPLICAS"
 	replication           "REPLICATION"
 	respect               "RESPECT"
 	restore               "RESTORE"
@@ -1373,7 +1374,7 @@ PlacementRole:
 	}
 
 PlacementCountOpt:
-	"COUNT" "=" LengthNum
+	"REPLICAS" "=" LengthNum
 	{
 		cnt := $3.(uint64)
 		if cnt <= 0 {
@@ -1384,7 +1385,7 @@ PlacementCountOpt:
 	}
 
 PlacementLabelOpt:
-	"LABEL" "=" stringLit
+	"CONSTRAINTS" "=" stringLit
 	{
 		// [+|-]x=
 		if len($3) < 3 {
@@ -1404,13 +1405,13 @@ PlacementOpts:
 	PlacementCountOpt
 	{
 		$$ = &ast.PlacementSpec{
-			Count: $1.(uint64),
+			Replicas: $1.(uint64),
 		}
 	}
 |	PlacementLabelOpt
 	{
 		$$ = &ast.PlacementSpec{
-			Labels: $1.(string),
+			Constraints: $1.(string),
 		}
 	}
 |	PlacementRoleOpt
@@ -1422,21 +1423,21 @@ PlacementOpts:
 |	PlacementOpts PlacementCountOpt
 	{
 		spec := $1.(*ast.PlacementSpec)
-		if spec.Count > 0 {
-			yylex.AppendError(yylex.Errorf("Duplicate placement option COUNT"))
+		if spec.Replicas > 0 {
+			yylex.AppendError(yylex.Errorf("Duplicate placement option REPLICAS"))
 			return 1
 		}
-		spec.Count = $2.(uint64)
+		spec.Replicas = $2.(uint64)
 		$$ = spec
 	}
 |	PlacementOpts PlacementLabelOpt
 	{
 		spec := $1.(*ast.PlacementSpec)
-		if len(spec.Labels) > 0 {
-			yylex.AppendError(yylex.Errorf("Duplicate placement option LABEL"))
+		if len(spec.Constraints) > 0 {
+			yylex.AppendError(yylex.Errorf("Duplicate placement option CONSTRAINTS"))
 			return 1
 		}
-		spec.Labels = $2.(string)
+		spec.Constraints = $2.(string)
 		$$ = spec
 	}
 |	PlacementOpts PlacementRoleOpt
@@ -1451,9 +1452,9 @@ PlacementOpts:
 	}
 
 PlacementSpec:
-	"ADD" "PLACEMENT" PlacementOpts
+	"ADD" "PLACEMENT" "POLICY" PlacementOpts
 	{
-		spec := $3.(*ast.PlacementSpec)
+		spec := $4.(*ast.PlacementSpec)
 		spec.Tp = ast.PlacementAdd
 		$$ = spec
 	}
@@ -5318,8 +5319,9 @@ UnReservedKeyword:
 |	"CSV_SEPARATOR"
 |	"ON_DUPLICATE"
 |	"TIKV_IMPORTER"
-|	"LABEL"
-|	"COUNT"
+|	"CONSTRAINTS"
+|	"REPLICAS"
+|	"POLICY"
 
 TiDBKeyword:
 	"ADMIN"
