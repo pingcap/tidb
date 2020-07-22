@@ -1466,7 +1466,7 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 	if err != nil {
 		if ok {
 			// ok means there is one HTTP resp, but not 200
-			// cancell the job if PD declined us for some reason, avoid lots of meaningless retries
+			// Cancel the job if PD declined us for some reason, avoiding meaningless retries
 			job.State = model.JobStateCancelled
 		}
 		return 0, errors.Trace(err)
