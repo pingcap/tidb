@@ -1449,6 +1449,25 @@ func truncateTableByReassignPartitionIDs(t *meta.Meta, tblInfo *model.TableInfo)
 	return nil
 }
 
+func checkPlacementRules(t *meta.Meta, job *model.Job, rules []*placement.Rule) ([]*placement.Rule, error) {
+	tblInfo, err := getTableInfo(t, job.TableID, job.SchemaID)
+	if err != nil {
+		return nil, err
+	}
+
+	ptInfo := tblInfo.GetPartitionInfo()
+	leftRules := rules[:0]
+
+	for _, rule := range rules {
+		pid, _ := strconv.ParseInt(rule.GroupID, 10, 64)
+		if ptInfo.GetNameByID(pid) != "" {
+			leftRules = append(leftRules, rule)
+		}
+	}
+
+	return leftRules, nil
+}
+
 func onAlterTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 	var rules []*placement.Rule
 	err := job.DecodeArgs(&rules)
@@ -1458,6 +1477,11 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 	}
 
 	ver, err := t.GetSchemaVersion()
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	rules, err = checkPlacementRules(t, job, rules)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
