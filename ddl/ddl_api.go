@@ -5185,33 +5185,35 @@ func validatePlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.Rule, erro
 			return rules, errors.Errorf("invalid placement spec[%d], unknown role: %d", k, spec.Role)
 		}
 
-		for _, label := range strings.Split(spec.Constraints, ",") {
-			label = strings.TrimSpace(label)
+		if len(spec.Constraints) != 0 {
+			for _, label := range strings.Split(spec.Constraints, ",") {
+				label = strings.TrimSpace(label)
 
-			if len(label) < 4 {
-				return rules, errors.Errorf("invalid placement spec[%d], constraint too short to be valid: %s", k, label)
+				if len(label) < 4 {
+					return rules, errors.Errorf("invalid placement spec[%d], constraint too short to be valid: %s", k, label)
+				}
+
+				var op placement.LabelConstraintOp
+				switch label[0] {
+				case '+':
+					op = placement.In
+				case '-':
+					op = placement.NotIn
+				default:
+					return rules, errors.Errorf("invalid placement spec[%d], unknown operation: %c", k, label[0])
+				}
+
+				kv := strings.Split(label[1:], "=")
+				if len(kv) != 2 {
+					return rules, errors.Errorf("invalid placement spec[%d], invalid constraint format: %s", k, label)
+				}
+
+				rule.LabelConstraints = append(rule.LabelConstraints, placement.LabelConstraint{
+					Key:    strings.TrimSpace(kv[0]),
+					Op:     op,
+					Values: []string{strings.TrimSpace(kv[1])},
+				})
 			}
-
-			var op placement.LabelConstraintOp
-			switch label[0] {
-			case '+':
-				op = placement.In
-			case '-':
-				op = placement.NotIn
-			default:
-				return rules, errors.Errorf("invalid placement spec[%d], unknown operation: %c", k, label[0])
-			}
-
-			kv := strings.Split(label[1:], "=")
-			if len(kv) != 2 {
-				return rules, errors.Errorf("invalid placement spec[%d], invalid constraint format: %s", k, label)
-			}
-
-			rule.LabelConstraints = append(rule.LabelConstraints, placement.LabelConstraint{
-				Key:    strings.TrimSpace(kv[0]),
-				Op:     op,
-				Values: []string{strings.TrimSpace(kv[1])},
-			})
 		}
 
 		rules = append(rules, rule)

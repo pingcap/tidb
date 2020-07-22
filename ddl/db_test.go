@@ -5112,6 +5112,12 @@ PARTITION BY RANGE (c) (
 
 	_, err := tk.Exec(`alter table t1 alter partition p0
 add placement policy
+	role=leader
+	replicas=3`)
+	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
+
+	_, err = tk.Exec(`alter table t1 alter partition p0
+add placement policy
 	constraints='+zone=sh'
 	role=leader
 	replicas=3`)
