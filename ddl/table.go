@@ -1005,14 +1005,14 @@ func checkPartitionReplica(partDefPointers []*model.PartitionDefinition, d *ddlC
 			if err != nil {
 				return needWait, errors.Trace(err)
 			}
-			tiflashPeerCount := checkTiFlashPeerStore(stores, regionState.Meta.Peers)
+			tiflashPeerAtLeastOne := checkTiFlashPeerStoreAtLeastOne(stores, regionState.Meta.Peers)
 			// It's unnecessary to wait all tiflash peer to be replicated.
 			// Here only make sure that tiflash peer count > 0 (at least one).
-			if tiflashPeerCount > 0 {
+			if tiflashPeerAtLeastOne {
 				continue
 			}
 			needWait = true
-			logutil.BgLogger().Info("[ddl] partition replicas check failed in delete-only DDL state", zap.Int64("pID", pd.ID), zap.Uint64("wait region ID", region.Id), zap.Uint64("tiflash peer nums", tiflashPeerCount), zap.Time("check time", time.Now()))
+			logutil.BgLogger().Info("[ddl] partition replicas check failed in delete-only DDL state", zap.Int64("pID", pd.ID), zap.Uint64("wait region ID", region.Id), zap.Bool("tiflash peer at least one", tiflashPeerAtLeastOne), zap.Time("check time", time.Now()))
 			return needWait, nil
 		}
 	}
@@ -1020,16 +1020,15 @@ func checkPartitionReplica(partDefPointers []*model.PartitionDefinition, d *ddlC
 	return needWait, nil
 }
 
-func checkTiFlashPeerStore(stores []*metapb.Store, peers []*metapb.Peer) (tiFlashPeerCount uint64) {
+func checkTiFlashPeerStoreAtLeastOne(stores []*metapb.Store, peers []*metapb.Peer) bool {
 	for _, peer := range peers {
 		for _, store := range stores {
 			if peer.StoreId == store.Id && storeHasEngineTiFlashLabel(store) {
-				tiFlashPeerCount++
-				break
+				return true
 			}
 		}
 	}
-	return
+	return false
 }
 
 func storeHasEngineTiFlashLabel(store *metapb.Store) bool {
