@@ -95,8 +95,9 @@ func compilePatternUnicodeCI(pattern string, escape byte) (patWeights []rune, pa
 	runes := []rune(pattern)
 	escapeRune := rune(escape)
 	lenRunes := len(runes)
-	patWeights = make([]rune, 0, lenRunes)
-	patTypes = make([]byte, 0, lenRunes)
+	patWeights = make([]rune, lenRunes)
+	patTypes = make([]byte, lenRunes)
+	patLen := 0
 	for i := 0; i < lenRunes; i++ {
 		var tp byte
 		var r = runes[i]
@@ -120,15 +121,29 @@ func compilePatternUnicodeCI(pattern string, escape byte) (patWeights []rune, pa
 				}
 			}
 		case '_':
-			tp = stringutil.PatOne
+			// %_ => _%
+			if patLen > 0 && patTypes[patLen-1] == stringutil.PatAny {
+				tp = stringutil.PatAny
+				r = '%'
+				patWeights[patLen-1], patTypes[patLen-1] = '_', stringutil.PatOne
+			} else {
+				tp = stringutil.PatOne
+			}
 		case '%':
+			// %% => %
+			if patLen > 0 && patTypes[patLen-1] == stringutil.PatAny {
+				continue
+			}
 			tp = stringutil.PatAny
 		default:
 			tp = stringutil.PatMatch
 		}
-		patWeights = append(patWeights, r)
-		patTypes = append(patTypes, tp)
+		patWeights[patLen] = r
+		patTypes[patLen] = tp
+		patLen++
 	}
+	patWeights = patWeights[:patLen]
+	patTypes = patTypes[:patLen]
 	return
 }
 
