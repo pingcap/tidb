@@ -176,7 +176,7 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.
 	return row, nil
 }
 
-// BuildFullDecodeColMap build a map that contains [columnID -> struct{*table.Column, expression.Expression}] from all columns.
+// BuildFullDecodeColMap builds a map that contains [columnID -> struct{*table.Column, expression.Expression}] from all columns.
 func BuildFullDecodeColMap(t table.Table, schema *expression.Schema) map[int64]Column {
 	decodeColMap := make(map[int64]Column, len(t.Cols()))
 	for _, col := range t.Cols() {
