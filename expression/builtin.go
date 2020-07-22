@@ -243,7 +243,8 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 	return bf, nil
 }
 
-// newBaseBuiltinFuncWithFieldType create base without check.
+// newBaseBuiltinFuncWithFieldType create BaseBuiltinFunc with FieldType charset and collation.
+// do not check and compute collation.
 func newBaseBuiltinFuncWithFieldType(ctx sessionctx.Context, tp *types.FieldType, args []Expression) (baseBuiltinFunc, error) {
 	if ctx == nil {
 		panic("ctx should not be nil")
