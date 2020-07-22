@@ -46,7 +46,7 @@ var (
 	_ functionClass = &isIPv4MappedFunctionClass{}
 	_ functionClass = &isIPv6FunctionClass{}
 	_ functionClass = &isUsedLockFunctionClass{}
-	_ functionClass = &masterPosWaitFunctionClass{}
+	_ functionClass = &mainPosWaitFunctionClass{}
 	_ functionClass = &nameConstFunctionClass{}
 	_ functionClass = &releaseAllLocksFunctionClass{}
 	_ functionClass = &uuidFunctionClass{}
@@ -844,11 +844,11 @@ func (c *isUsedLockFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "IS_USED_LOCK")
 }
 
-type masterPosWaitFunctionClass struct {
+type mainPosWaitFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *masterPosWaitFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *mainPosWaitFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "MASTER_POS_WAIT")
 }
 

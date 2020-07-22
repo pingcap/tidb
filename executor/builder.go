@@ -648,8 +648,8 @@ func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) Executor {
 		e.User.Username = vars.User.AuthUsername
 		e.Roles = vars.ActiveRoles
 	}
-	if e.Tp == ast.ShowMasterStatus {
-		// show master status need start ts.
+	if e.Tp == ast.ShowMainStatus {
+		// show main status need start ts.
 		if _, err := e.ctx.Txn(true); err != nil {
 			b.err = err
 		}

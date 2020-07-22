@@ -279,7 +279,7 @@ var funcName2Alias = map[string]string{
 	"is_ipv4_mapped":             ast.IsIPv4Mapped,
 	"is_ipv6":                    ast.IsIPv6,
 	"is_used_lock":               ast.IsUsedLock,
-	"master_pos_wait":            ast.MasterPosWait,
+	"main_pos_wait":            ast.MainPosWait,
 	"name_const":                 ast.NameConst,
 	"release_all_locks":          ast.ReleaseAllLocks,
 	"sleep":                      ast.Sleep,

@@ -257,7 +257,7 @@ func (s *testSuiteP1) TestShow(c *C) {
 		"ascii US ASCII ascii_bin 1",
 		"latin1 Latin1 latin1_bin 1",
 		"binary binary binary 1"))
-	c.Assert(len(tk.MustQuery("show master status").Rows()), Equals, 1)
+	c.Assert(len(tk.MustQuery("show main status").Rows()), Equals, 1)
 	tk.MustQuery("show create database test_show").Check(testkit.Rows("test_show CREATE DATABASE `test_show` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
 	tk.MustQuery("show privileges").Check(testkit.Rows("Alter Tables To alter the table",
 		"Alter Tables To alter the table",
@@ -280,8 +280,8 @@ func (s *testSuiteP1) TestShow(c *C) {
 		"Proxy Server Admin To make proxy user possible",
 		"References Databases,Tables To have references on tables",
 		"Reload Server Admin To reload or refresh tables, logs and privileges",
-		"Replication client Server Admin To ask where the slave or master servers are",
-		"Replication slave Server Admin To read binary log events from the master",
+		"Replication client Server Admin To ask where the subordinate or main servers are",
+		"Replication subordinate Server Admin To read binary log events from the main",
 		"Select Tables To retrieve rows from table",
 		"Show databases Server Admin To see all databases with SHOW DATABASES",
 		"Show view Tables To see views with SHOW CREATE VIEW",

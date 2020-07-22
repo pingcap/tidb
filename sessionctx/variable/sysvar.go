@@ -96,7 +96,7 @@ func BoolToInt32(b bool) int32 {
 var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "gtid_mode", "OFF"},
 	{ScopeGlobal, FlushTime, "0"},
-	{ScopeSession, PseudoSlaveMode, ""},
+	{ScopeSession, PseudoSubordinateMode, ""},
 	{ScopeNone, "performance_schema_max_mutex_classes", "200"},
 	{ScopeGlobal | ScopeSession, LowPriorityUpdates, "0"},
 	{ScopeGlobal | ScopeSession, SessionTrackGtids, "OFF"},
@@ -107,7 +107,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, MaxConnections, "151"},
 	{ScopeGlobal | ScopeSession, BigTables, "0"},
 	{ScopeNone, "skip_external_locking", "1"},
-	{ScopeGlobal, "slave_pending_jobs_size_max", "16777216"},
+	{ScopeGlobal, "subordinate_pending_jobs_size_max", "16777216"},
 	{ScopeNone, "innodb_sync_array_size", "1"},
 	{ScopeSession, "rand_seed2", ""},
 	{ScopeGlobal, ValidatePasswordCheckUserName, "0"},
@@ -118,7 +118,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "multi_range_count", "256"},
 	{ScopeGlobal | ScopeSession, DefaultWeekFormat, "0"},
 	{ScopeGlobal | ScopeSession, "binlog_error_action", "IGNORE_ERROR"},
-	{ScopeGlobal, "slave_transaction_retries", "10"},
+	{ScopeGlobal, "subordinate_transaction_retries", "10"},
 	{ScopeGlobal | ScopeSession, "default_storage_engine", "InnoDB"},
 	{ScopeNone, "ft_query_expansion_limit", "20"},
 	{ScopeGlobal, MaxConnectErrors, "100"},
@@ -142,7 +142,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, TmpTableSize, "16777216"},
 	{ScopeGlobal, "innodb_max_purge_lag", "0"},
 	{ScopeGlobal | ScopeSession, "preload_buffer_size", "32768"},
-	{ScopeGlobal, "slave_checkpoint_period", "300"},
+	{ScopeGlobal, "subordinate_checkpoint_period", "300"},
 	{ScopeGlobal, CheckProxyUsers, "0"},
 	{ScopeNone, "have_query_cache", "YES"},
 	{ScopeGlobal, "innodb_flush_log_at_timeout", "1"},
@@ -182,17 +182,17 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, GeneralLog, "0"},
 	{ScopeGlobal, "validate_password_dictionary_file", ""},
 	{ScopeGlobal, BinlogOrderCommits, "1"},
-	{ScopeGlobal, MasterVerifyChecksum, "0"},
+	{ScopeGlobal, MainVerifyChecksum, "0"},
 	{ScopeGlobal, "key_cache_division_limit", "100"},
-	{ScopeGlobal, "rpl_semi_sync_master_trace_level", ""},
+	{ScopeGlobal, "rpl_semi_sync_main_trace_level", ""},
 	{ScopeGlobal | ScopeSession, "max_insert_delayed_threads", "20"},
 	{ScopeNone, "performance_schema_session_connect_attrs_size", "512"},
 	{ScopeGlobal | ScopeSession, "time_zone", "SYSTEM"},
 	{ScopeGlobal, "innodb_max_dirty_pages_pct", "75"},
 	{ScopeGlobal, InnodbFilePerTable, "1"},
 	{ScopeGlobal, InnodbLogCompressedPages, "1"},
-	{ScopeGlobal, "master_info_repository", "FILE"},
-	{ScopeGlobal, "rpl_stop_slave_timeout", "31536000"},
+	{ScopeGlobal, "main_info_repository", "FILE"},
+	{ScopeGlobal, "rpl_stop_subordinate_timeout", "31536000"},
 	{ScopeNone, "skip_networking", "0"},
 	{ScopeGlobal, "innodb_monitor_reset", ""},
 	{ScopeNone, "have_ssl", "DISABLED"},
@@ -205,7 +205,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "system_time_zone", "CST"},
 	{ScopeGlobal, InnodbPrintAllDeadlocks, "0"},
 	{ScopeNone, "innodb_autoinc_lock_mode", "1"},
-	{ScopeGlobal, "slave_net_timeout", "3600"},
+	{ScopeGlobal, "subordinate_net_timeout", "3600"},
 	{ScopeGlobal, "key_buffer_size", "8388608"},
 	{ScopeGlobal | ScopeSession, ForeignKeyChecks, "OFF"},
 	{ScopeGlobal, "host_cache_size", "279"},
@@ -221,7 +221,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "join_buffer_size", "262144"},
 	{ScopeNone, "innodb_mirrored_log_groups", "1"},
 	{ScopeGlobal, "max_binlog_size", "1073741824"},
-	{ScopeGlobal, "sync_master_info", "10000"},
+	{ScopeGlobal, "sync_main_info", "10000"},
 	{ScopeGlobal, "concurrent_insert", "AUTO"},
 	{ScopeGlobal, InnodbAdaptiveHashIndex, "1"},
 	{ScopeGlobal, InnodbFtEnableStopword, "1"},
@@ -230,7 +230,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "innodb_compression_level", "6"},
 	{ScopeNone, "innodb_file_format_check", "1"},
 	{ScopeNone, "myisam_mmap_size", "18446744073709551615"},
-	{ScopeGlobal, "init_slave", ""},
+	{ScopeGlobal, "init_subordinate", ""},
 	{ScopeNone, "innodb_buffer_pool_instances", "8"},
 	{ScopeGlobal | ScopeSession, BlockEncryptionMode, "aes-128-ecb"},
 	{ScopeGlobal | ScopeSession, "max_length_for_sort_data", "1024"},
@@ -241,9 +241,9 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, QueryCacheType, "OFF"},
 	{ScopeNone, "innodb_rollback_on_timeout", "0"},
 	{ScopeGlobal | ScopeSession, "query_alloc_block_size", "8192"},
-	{ScopeGlobal, SlaveCompressedProtocol, "0"},
+	{ScopeGlobal, SubordinateCompressedProtocol, "0"},
 	{ScopeGlobal | ScopeSession, InitConnect, ""},
-	{ScopeGlobal, "rpl_semi_sync_slave_trace_level", ""},
+	{ScopeGlobal, "rpl_semi_sync_subordinate_trace_level", ""},
 	{ScopeNone, "have_compress", "YES"},
 	{ScopeNone, "thread_concurrency", "10"},
 	{ScopeGlobal | ScopeSession, "query_prealloc_size", "8192"},
@@ -266,7 +266,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "performance_schema_max_table_instances", "12500"},
 	{ScopeGlobal, "innodb_stats_persistent_sample_pages", "20"},
 	{ScopeGlobal, "show_compatibility_56", ""},
-	{ScopeGlobal, LogSlowSlaveStatements, "0"},
+	{ScopeGlobal, LogSlowSubordinateStatements, "0"},
 	{ScopeNone, "innodb_open_files", "2000"},
 	{ScopeGlobal, "innodb_spin_wait_delay", "6"},
 	{ScopeGlobal, "thread_cache_size", "9"},
@@ -303,9 +303,9 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "performance_schema_max_stage_classes", "150"},
 	{ScopeGlobal, "innodb_purge_batch_size", "300"},
 	{ScopeNone, "have_profiling", "NO"},
-	{ScopeGlobal, "slave_checkpoint_group", "512"},
+	{ScopeGlobal, "subordinate_checkpoint_group", "512"},
 	{ScopeGlobal | ScopeSession, "character_set_client", mysql.DefaultCharset},
-	{ScopeNone, "slave_load_tmpdir", "/var/tmp/"},
+	{ScopeNone, "subordinate_load_tmpdir", "/var/tmp/"},
 	{ScopeGlobal, InnodbBufferPoolDumpNow, "0"},
 	{ScopeGlobal, RelayLogPurge, "1"},
 	{ScopeGlobal, "ndb_distribution", ""},
@@ -333,7 +333,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "performance_schema_events_statements_history_long_size", "10000"},
 	{ScopeGlobal, "innodb_monitor_disable", ""},
 	{ScopeNone, "innodb_doublewrite", "1"},
-	{ScopeGlobal, "slave_parallel_type", ""},
+	{ScopeGlobal, "subordinate_parallel_type", ""},
 	{ScopeNone, "log_bin_use_v1_row_events", "0"},
 	{ScopeSession, "innodb_optimize_point_storage", ""},
 	{ScopeNone, "innodb_api_disable_rowlock", "0"},
@@ -359,7 +359,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "skip_show_database", "0"},
 	{ScopeGlobal, "log_timestamps", ""},
 	{ScopeNone, "version_compile_machine", "x86_64"},
-	{ScopeGlobal, "slave_parallel_workers", "0"},
+	{ScopeGlobal, "subordinate_parallel_workers", "0"},
 	{ScopeGlobal, "event_scheduler", "OFF"},
 	{ScopeGlobal | ScopeSession, "ndb_deferred_constraints", ""},
 	{ScopeGlobal, "log_syslog_include_pid", ""},
@@ -392,9 +392,9 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, TxnIsolation, "REPEATABLE-READ"},
 	{ScopeGlobal | ScopeSession, TransactionIsolation, "REPEATABLE-READ"},
 	{ScopeGlobal | ScopeSession, "collation_connection", mysql.DefaultCollationName},
-	{ScopeGlobal, "rpl_semi_sync_master_timeout", ""},
+	{ScopeGlobal, "rpl_semi_sync_main_timeout", ""},
 	{ScopeGlobal | ScopeSession, "transaction_prealloc_size", "4096"},
-	{ScopeNone, "slave_skip_errors", "OFF"},
+	{ScopeNone, "subordinate_skip_errors", "OFF"},
 	{ScopeNone, "performance_schema_setup_objects_size", "100"},
 	{ScopeGlobal, "sync_relay_log", "10000"},
 	{ScopeGlobal, "innodb_ft_result_cache_limit", "2000000000"},
@@ -422,7 +422,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "log_syslog", ""},
 	{ScopeNone, "version", mysql.ServerVersion},
 	{ScopeGlobal | ScopeSession, "transaction_alloc_block_size", "8192"},
-	{ScopeGlobal, "sql_slave_skip_counter", "0"},
+	{ScopeGlobal, "sql_subordinate_skip_counter", "0"},
 	{ScopeGlobal, "innodb_large_prefix", "OFF"},
 	{ScopeNone, "performance_schema_max_cond_classes", "80"},
 	{ScopeGlobal, "innodb_io_capacity", "200"},
@@ -450,7 +450,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "ndb_eventbuffer_max_alloc", ""},
 	{ScopeGlobal, "innodb_read_ahead_threshold", "56"},
 	{ScopeGlobal, "key_cache_block_size", "1024"},
-	{ScopeGlobal, "rpl_semi_sync_slave_enabled", ""},
+	{ScopeGlobal, "rpl_semi_sync_subordinate_enabled", ""},
 	{ScopeNone, "ndb_recv_thread_cpu_mask", ""},
 	{ScopeGlobal, "gtid_purged", ""},
 	{ScopeGlobal, "max_binlog_stmt_cache_size", "18446744073709547520"},
@@ -459,25 +459,25 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "innodb_read_io_threads", "4"},
 	{ScopeGlobal | ScopeSession, MaxSpRecursionDepth, "0"},
 	{ScopeNone, "ignore_builtin_innodb", "0"},
-	{ScopeGlobal, "rpl_semi_sync_master_enabled", ""},
+	{ScopeGlobal, "rpl_semi_sync_main_enabled", ""},
 	{ScopeGlobal, "slow_query_log_file", "/usr/local/mysql/data/localhost-slow.log"},
 	{ScopeGlobal, "innodb_thread_sleep_delay", "10000"},
 	{ScopeNone, "license", "Apache License 2.0"},
 	{ScopeGlobal, "innodb_ft_aux_table", ""},
 	{ScopeGlobal | ScopeSession, SQLWarnings, "0"},
 	{ScopeGlobal | ScopeSession, KeepFilesOnCreate, "0"},
-	{ScopeGlobal, "slave_preserve_commit_order", ""},
+	{ScopeGlobal, "subordinate_preserve_commit_order", ""},
 	{ScopeNone, "innodb_data_file_path", "ibdata1:12M:autoextend"},
 	{ScopeNone, "performance_schema_setup_actors_size", "100"},
 	{ScopeNone, "innodb_additional_mem_pool_size", "8388608"},
 	{ScopeNone, "log_error", "/usr/local/mysql/data/localhost.err"},
-	{ScopeGlobal, "slave_exec_mode", "STRICT"},
+	{ScopeGlobal, "subordinate_exec_mode", "STRICT"},
 	{ScopeGlobal, "binlog_stmt_cache_size", "32768"},
 	{ScopeNone, "relay_log_info_file", "relay-log.info"},
 	{ScopeNone, "innodb_ft_total_cache_size", "640000000"},
 	{ScopeNone, "performance_schema_max_rwlock_instances", "9102"},
 	{ScopeGlobal, "table_open_cache", "2000"},
-	{ScopeNone, "log_slave_updates", "0"},
+	{ScopeNone, "log_subordinate_updates", "0"},
 	{ScopeNone, "performance_schema_events_stages_history_long_size", "10000"},
 	{ScopeGlobal | ScopeSession, AutoCommit, "1"},
 	{ScopeSession, "insert_id", ""},
@@ -498,7 +498,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "log_syslog_tag", ""},
 	{ScopeGlobal | ScopeSession, TxReadOnly, "0"},
 	{ScopeGlobal | ScopeSession, TransactionReadOnly, "0"},
-	{ScopeGlobal, "rpl_semi_sync_master_wait_point", ""},
+	{ScopeGlobal, "rpl_semi_sync_main_wait_point", ""},
 	{ScopeGlobal, "innodb_undo_log_truncate", ""},
 	{ScopeSession, "innodb_create_intrinsic", ""},
 	{ScopeGlobal, "gtid_executed_compression_period", ""},
@@ -514,7 +514,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "query_cache_min_res_unit", "4096"},
 	{ScopeGlobal | ScopeSession, "updatable_views_with_limit", "YES"},
 	{ScopeGlobal | ScopeSession, "optimizer_prune_level", "1"},
-	{ScopeGlobal, "slave_sql_verify_checksum", "1"},
+	{ScopeGlobal, "subordinate_sql_verify_checksum", "1"},
 	{ScopeGlobal | ScopeSession, "completion_type", "NO_CHAIN"},
 	{ScopeGlobal, "binlog_checksum", "CRC32"},
 	{ScopeNone, "report_port", "3306"},
@@ -528,7 +528,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "date_format", "%Y-%m-%d"},
 	{ScopeGlobal, "innodb_buffer_pool_filename", "ib_buffer_pool"},
 	{ScopeGlobal, "slow_launch_time", "2"},
-	{ScopeGlobal, "slave_max_allowed_packet", "1073741824"},
+	{ScopeGlobal, "subordinate_max_allowed_packet", "1073741824"},
 	{ScopeGlobal | ScopeSession, "ndb_use_transactions", ""},
 	{ScopeNone, "innodb_purge_threads", "1"},
 	{ScopeGlobal, "innodb_concurrency_tickets", "5000"},
@@ -548,14 +548,14 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, PerformanceSchema, "0"},
 	{ScopeNone, "myisam_recover_options", "OFF"},
 	{ScopeGlobal | ScopeSession, NetBufferLength, "16384"},
-	{ScopeGlobal, "rpl_semi_sync_master_wait_for_slave_count", ""},
+	{ScopeGlobal, "rpl_semi_sync_main_wait_for_subordinate_count", ""},
 	{ScopeGlobal | ScopeSession, "binlog_row_image", "FULL"},
 	{ScopeNone, "innodb_locks_unsafe_for_binlog", "0"},
 	{ScopeSession, "rbr_exec_mode", ""},
 	{ScopeGlobal, "myisam_max_sort_file_size", "9223372036853727232"},
 	{ScopeNone, "back_log", "80"},
 	{ScopeNone, "lower_case_file_system", "1"},
-	{ScopeGlobal, "rpl_semi_sync_master_wait_no_slave", ""},
+	{ScopeGlobal, "rpl_semi_sync_main_wait_no_subordinate", ""},
 	{ScopeGlobal | ScopeSession, GroupConcatMaxLen, "1024"},
 	{ScopeSession, "pseudo_thread_id", ""},
 	{ScopeNone, "socket", "/tmp/myssock"},
@@ -573,7 +573,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, CharacterSetServer, mysql.DefaultCharset},
 	{ScopeGlobal, "validate_password_special_char_count", "1"},
 	{ScopeNone, "performance_schema_max_thread_instances", "402"},
-	{ScopeGlobal, "slave_rows_search_algorithms", "TABLE_SCAN,INDEX_SCAN"},
+	{ScopeGlobal, "subordinate_rows_search_algorithms", "TABLE_SCAN,INDEX_SCAN"},
 	{ScopeGlobal | ScopeSession, "ndbinfo_show_hidden", ""},
 	{ScopeGlobal | ScopeSession, "net_read_timeout", "30"},
 	{ScopeNone, "innodb_page_size", "16384"},
@@ -591,7 +591,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, SQLSafeUpdates, "0"},
 	{ScopeNone, "tmpdir", "/var/tmp/"},
 	{ScopeGlobal, "innodb_thread_concurrency", "0"},
-	{ScopeGlobal, SlaveAllowBatching, "0"},
+	{ScopeGlobal, SubordinateAllowBatching, "0"},
 	{ScopeGlobal, "innodb_buffer_pool_dump_pct", ""},
 	{ScopeGlobal | ScopeSession, "lc_time_names", "en_US"},
 	{ScopeGlobal | ScopeSession, "max_statement_time", ""},
@@ -809,8 +809,8 @@ const (
 	InteractiveTimeout = "interactive_timeout"
 	// FlushTime is the name for 'flush_time' system variable.
 	FlushTime = "flush_time"
-	// PseudoSlaveMode is the name for 'pseudo_slave_mode' system variable.
-	PseudoSlaveMode = "pseudo_slave_mode"
+	// PseudoSubordinateMode is the name for 'pseudo_subordinate_mode' system variable.
+	PseudoSubordinateMode = "pseudo_subordinate_mode"
 	// LowPriorityUpdates is the name for 'low_priority_updates' system variable.
 	LowPriorityUpdates = "low_priority_updates"
 	// SessionTrackGtids is the name for 'session_track_gtids' system variable.
@@ -863,8 +863,8 @@ const (
 	Socket = "socket"
 	// BinlogOrderCommits is the name for 'binlog_order_commits' system variable.
 	BinlogOrderCommits = "binlog_order_commits"
-	// MasterVerifyChecksum is the name for 'master_verify_checksum' system variable.
-	MasterVerifyChecksum = "master_verify_checksum"
+	// MainVerifyChecksum is the name for 'main_verify_checksum' system variable.
+	MainVerifyChecksum = "main_verify_checksum"
 	// ValidatePasswordCheckUserName is the name for 'validate_password_check_user_name' system variable.
 	ValidatePasswordCheckUserName = "validate_password_check_user_name"
 	// SuperReadOnly is the name for 'super_read_only' system variable.
@@ -873,12 +873,12 @@ const (
 	SQLNotes = "sql_notes"
 	// QueryCacheType is the name for 'query_cache_type' system variable.
 	QueryCacheType = "query_cache_type"
-	// SlaveCompressedProtocol is the name for 'slave_compressed_protocol' system variable.
-	SlaveCompressedProtocol = "slave_compressed_protocol"
+	// SubordinateCompressedProtocol is the name for 'subordinate_compressed_protocol' system variable.
+	SubordinateCompressedProtocol = "subordinate_compressed_protocol"
 	// BinlogRowQueryLogEvents is the name for 'binlog_rows_query_log_events' system variable.
 	BinlogRowQueryLogEvents = "binlog_rows_query_log_events"
-	// LogSlowSlaveStatements is the name for 'log_slow_slave_statements' system variable.
-	LogSlowSlaveStatements = "log_slow_slave_statements"
+	// LogSlowSubordinateStatements is the name for 'log_slow_subordinate_statements' system variable.
+	LogSlowSubordinateStatements = "log_slow_subordinate_statements"
 	// LogSlowAdminStatements is the name for 'log_slow_admin_statements' system variable.
 	LogSlowAdminStatements = "log_slow_admin_statements"
 	// LogQueriesNotUsingIndexes is the name for 'log_queries_not_using_indexes' system variable.
@@ -923,8 +923,8 @@ const (
 	PerformanceSchema = "performance_schema"
 	// Flush is the name for 'flush' system variable.
 	Flush = "flush"
-	// SlaveAllowBatching is the name for 'slave_allow_batching' system variable.
-	SlaveAllowBatching = "slave_allow_batching"
+	// SubordinateAllowBatching is the name for 'subordinate_allow_batching' system variable.
+	SubordinateAllowBatching = "subordinate_allow_batching"
 	// MyISAMUseMmap is the name for 'myisam_use_mmap' system variable.
 	MyISAMUseMmap = "myisam_use_mmap"
 	// InnodbFilePerTable is the name for 'innodb_file_per_table' system variable.

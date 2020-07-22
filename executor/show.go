@@ -188,8 +188,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowPlugins()
 	case ast.ShowProfiles:
 		// empty result
-	case ast.ShowMasterStatus:
-		return e.fetchShowMasterStatus()
+	case ast.ShowMainStatus:
+		return e.fetchShowMainStatus()
 	case ast.ShowPrivileges:
 		return e.fetchShowPrivileges()
 	case ast.ShowBindings:
@@ -635,7 +635,7 @@ func (e *ShowExec) fetchShowCharset() error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowMasterStatus() error {
+func (e *ShowExec) fetchShowMainStatus() error {
 	tso := e.ctx.GetSessionVars().TxnCtx.StartTS
 	e.appendRow([]interface{}{"tidb-binlog", tso, "", "", ""})
 	return nil
@@ -1298,8 +1298,8 @@ func (e *ShowExec) fetchShowPrivileges() error {
 	e.appendRow([]interface{}{"Proxy", "Server Admin", "To make proxy user possible"})
 	e.appendRow([]interface{}{"References", "Databases,Tables", "To have references on tables"})
 	e.appendRow([]interface{}{"Reload", "Server Admin", "To reload or refresh tables, logs and privileges"})
-	e.appendRow([]interface{}{"Replication client", "Server Admin", "To ask where the slave or master servers are"})
-	e.appendRow([]interface{}{"Replication slave", "Server Admin", "To read binary log events from the master"})
+	e.appendRow([]interface{}{"Replication client", "Server Admin", "To ask where the subordinate or main servers are"})
+	e.appendRow([]interface{}{"Replication subordinate", "Server Admin", "To read binary log events from the main"})
 	e.appendRow([]interface{}{"Select", "Tables", "To retrieve rows from table"})
 	e.appendRow([]interface{}{"Show databases", "Server Admin", "To see all databases with SHOW DATABASES"})
 	e.appendRow([]interface{}{"Show view", "Tables", "To see views with SHOW CREATE VIEW"})
