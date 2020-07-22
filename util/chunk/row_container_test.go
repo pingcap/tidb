@@ -15,7 +15,6 @@ package chunk
 
 import (
 	"errors"
-	"sync"
 	"time"
 
 	"github.com/pingcap/check"
@@ -244,17 +243,13 @@ func (r *rowContainerTestSerialSuite) TestActionBlocked(c *check.C) {
 	rc = NewRowContainer(fields, sz)
 	tracker = rc.GetMemTracker()
 	ac = rc.ActionSpill()
-	wg := sync.WaitGroup{}
-	wg.Add(1)
 	starttime := time.Now()
 	ac.setStatus(spilling)
 	go func() {
 		time.Sleep(200 * time.Millisecond)
 		ac.setStatus(spilledYet)
 		ac.cond.Broadcast()
-		wg.Done()
 	}()
 	ac.Action(tracker)
 	c.Assert(time.Since(starttime), check.GreaterEqual, 200*time.Millisecond)
-	wg.Wait()
 }
