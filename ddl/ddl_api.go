@@ -5229,7 +5229,7 @@ func (d *ddl) AlterTablePartition(ctx sessionctx.Context, ident ast.Ident, spec 
 
 	meta := tb.Meta()
 	if meta.Partition == nil {
-		return errors.Errorf("Alter partition '%s' on an unpartioned table", spec.PartitionNames[0].L)
+		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
 	}
 
 	partitionID, err := tables.FindPartitionByName(meta, spec.PartitionNames[0].L)
