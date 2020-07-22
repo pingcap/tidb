@@ -3468,23 +3468,23 @@ const (
 type PlacementSpec struct {
 	node
 
-	Tp     PlacementActionType
-	Labels string
-	Role   PlacementRole
-	Count  uint64
+	Tp          PlacementActionType
+	Constraints string
+	Role        PlacementRole
+	Replicas    uint64
 }
 
 func (n *PlacementSpec) Restore(ctx *format.RestoreCtx) error {
 	switch n.Tp {
 	case PlacementAdd:
-		ctx.WriteKeyWord("ADD PLACEMENT ")
+		ctx.WriteKeyWord("ADD PLACEMENT POLICY ")
 	default:
 		return errors.Errorf("invalid PlacementActionType: %d", n.Tp)
 	}
 
-	ctx.WriteKeyWord("LABEL")
+	ctx.WriteKeyWord("CONSTRAINTS")
 	ctx.WritePlain("=")
-	ctx.WriteString(n.Labels)
+	ctx.WriteString(n.Constraints)
 
 	ctx.WriteKeyWord(" ROLE")
 	ctx.WritePlain("=")
@@ -3501,8 +3501,8 @@ func (n *PlacementSpec) Restore(ctx *format.RestoreCtx) error {
 		return errors.Errorf("invalid PlacementRole: %d", n.Role)
 	}
 
-	ctx.WriteKeyWord(" COUNT")
-	ctx.WritePlainf("=%d", n.Count)
+	ctx.WriteKeyWord(" REPLICAS")
+	ctx.WritePlainf("=%d", n.Replicas)
 	return nil
 }
 
