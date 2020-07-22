@@ -199,6 +199,13 @@ The `InnerErrorCode` is the identity of this error internally, note that this er
 
 The content of `ErrorClass` and `InnerErrorCode` must matches `[0-9a-zA-Z]+`.
 
+Here are some examples:
+
+- BR:Internal:FileNotFound
+- KV:Region:EpochNotMatch
+- KV:Region:NotLeader
+- DB:BRIE:BackupFailed
+
 For compatibility with MySQL protocol, the code transmitted through the mysql protocol should be number only, others can be a number with a prefix string.
 
 The code of each components looks like:
@@ -215,12 +222,15 @@ Lightning: LN:{class}:{code}
 Dumpling: DP:{class}:{code}
 
 {class}, {code} ~= [A-Za-z0-9]+
+```
 
 For mysql protocol compatible components, table below shows the available purely numeric codes for each component.
-MySQL error code range  | TiDB Family Component
-[0, 9000)               | TiDB
-[9000, 9010)            | TiKV / PD / TiFlash
-```
+
+| MySQL error code range  | TiDB Family Component |
+| ----------------------- | ------- |
+| [0, 9000)               | TiDB |
+| [8124, 8200)            | Ecosystem Productions in TiDB |
+| [9000, 9010)            | TiKV / PD / TiFlash |
 
 ### How It Works
 
