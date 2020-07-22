@@ -195,7 +195,7 @@ Where `Component` field is the abbreviated component name of the error source, w
 
 The `ErrorClass` is the name of the `ErrClass` the error belongs to, which defined by `[errors.RegisterErrorClass](https://github.com/pingcap/errors/blob/f9054262e67a3704a936a6ea216e73287486490d/terror/terror.go#L41)` or someway likewise. If this is unacceptable (for projects not written with golang), anything that can classify the "type" of this error (e.g., package name.) would also be good. 
 
-The `InnerErrorCode` is the identity of this error internally, note that this error code can be duplicated in different component or `ErrorClass`. Both numeric and textual code are acceptable, but it would be better to provide textual code, which should be one or two short words with PascalCase named to identity the error.
+The `InnerErrorCode` is the identity of this error internally, note that this error code can be duplicated in different component or `ErrorClass`. Both numeric and textual code are acceptable, but it would be better to provide textual code, which should be one or two short words with PascalCase to identity the error.
 
 The content of `ErrorClass` and `InnerErrorCode` must matches `[0-9a-zA-Z]+`.
 
@@ -205,6 +205,12 @@ Here are some examples:
 - KV:Region:EpochNotMatch
 - KV:Region:NotLeader
 - DB:BRIE:BackupFailed
+
+When logging, the format `[ErrorCode] message` should be used, for example:
+
+```
+[2020/07/17 18:38:06.461 +08:00] [ERROR] [import.go:259] ["failed to download file"] [error="[BR:Internal:DownloadFileFailed] failed to download foo.sst : File not found"] [errVerbose="..."]
+```
 
 For compatibility with MySQL protocol, the code transmitted through the mysql protocol should be number only, others can be a number with a prefix string.
 
