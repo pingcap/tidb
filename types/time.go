@@ -2190,6 +2190,10 @@ func mysqlTimeFix(t *MysqlTime, ctx map[string]int) error {
 		if valueAMorPm == constForPM {
 			t.hour += 12
 		}
+	} else {
+		if _, ok := ctx["%h"]; ok && t.Hour() == 12 {
+			t.setHour(0)
+		}
 	}
 	return nil
 }
@@ -2405,6 +2409,10 @@ func time12Hour(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
 	if !succ || hour > 12 || hour == 0 || input[2] != ':' {
 		return input, false
 	}
+	// 12:34:56 AM -> 00:34:56
+	if hour == 12 {
+		hour = 0
+	}
 
 	minute, succ := parseDigits(input[3:], 2)
 	if !succ || minute > 59 || input[5] != ':' {
@@ -2549,7 +2557,12 @@ func hour12Numeric(t *MysqlTime, input string, ctx map[string]int) (string, bool
 	if !ok || v > 12 || v == 0 {
 		return input, false
 	}
+<<<<<<< HEAD
 	t.hour = v
+=======
+	t.setHour(uint8(v))
+	ctx["%h"] = v
+>>>>>>> cc0b6f1... types: fix STR_TO_DATE handling for %h, %r (#18171) (#18428)
 	return input[length:], true
 }
 
