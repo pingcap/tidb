@@ -165,7 +165,7 @@ In the discussion above, an error has at least 4 parts:
 - The error code: it's the identity of an error.
 - The error field: it's the error itself the user can view in TiDB system. Like `err.Error()`.
 - The description field: the description of the error, what happened and why happened? This could be written by developer outside the code, and the more detail this field explaining the better, even some guess of cause could be included.
-- The workaround filed: how to workaround this error.
+- The workaround filed: how to work around this error. It's used to teach the users how to solve the error if occurring in the real environment.
 
 Besides, we can append a optional tags field to it:
 ```toml
