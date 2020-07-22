@@ -1468,6 +1468,7 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 			// ok means there is one HTTP resp, but not 200
 			// Cancel the job if PD declined us for some reason, avoiding meaningless retries
 			job.State = model.JobStateCancelled
+			err = errors.Wrapf(err, "PD refused the placement rules")
 		}
 		return 0, errors.Trace(err)
 	}
