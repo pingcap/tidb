@@ -193,7 +193,7 @@ Where `Component` field is the abbreviated component name of the error source, w
 - TiFlash: FLASH
 - Dumpling: DP
 
-The `ErrorClass` is the name of the `ErrClass` the error belongs to, which defined by `errors.RegisterErrorClass` or someway likewise. If this is unacceptable (for projects not written with golang), anything that can classify the "type" of this error (e.g., package name.) would also be good. 
+The `ErrorClass` is the name of the `ErrClass` the error belongs to, which defined by `[errors.RegisterErrorClass](https://github.com/pingcap/errors/blob/f9054262e67a3704a936a6ea216e73287486490d/terror/terror.go#L41)` or someway likewise. If this is unacceptable (for projects not written with golang), anything that can classify the "type" of this error (e.g., package name.) would also be good. 
 
 The `ErrorCode` is the identity of this error. Both numeric and textual code are acceptable, but it would be better to provide textual code, which should be one or two short words with PascalCase named to identity the error.
 
@@ -217,9 +217,10 @@ Dumpling: DP:{class}:{code}
 {class}, {code} ~= [A-Za-z0-9]+
 
 For mysql protocol compatible components, table below shows the available purely numeric codes for each component.
-MySQL error code range <-> TiDB Family Component
-[0, 9000)              <-> TiDB
-[9000, 9010)           <-> TiKV / PD / TiFlash
+MySQL error code range  | TiDB Family Component
+[0, 9000)               | TiDB
+[9000, 9010)            | TiKV / PD / TiFlash
+[9900, 10000)           | Ecosystem Productions
 ```
 
 ### How It Works
