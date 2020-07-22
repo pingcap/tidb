@@ -1007,6 +1007,7 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 		ctx = context.WithValue(ctx, "injectedBackoff", struct{}{})
 		bo = tikv.NewBackofferWithVars(ctx, sleep, nil)
 	})
+retryScanAndResolve:
 	for {
 		select {
 		case <-ctx.Done():
@@ -1049,28 +1050,29 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 		if w.testingKnobs.scanLocks != nil {
 			locks = append(locks, w.testingKnobs.scanLocks(key)...)
 		}
-	retryResolveLockBatch:
-		ok, err1 := w.store.GetLockResolver().BatchResolveLocks(bo, locks, loc.Region)
-		if w.testingKnobs.resolveLocks != nil {
-			ok, err1 = w.testingKnobs.resolveLocks(loc.Region)
-		}
-		if err1 != nil {
-			return stat, errors.Trace(err1)
-		}
-		if !ok {
-			err = bo.Backoff(tikv.BoTxnLock, errors.Errorf("remain locks: %d", len(locks)))
-			if err != nil {
-				return stat, errors.Trace(err)
+		for {
+			ok, err1 := w.store.GetLockResolver().BatchResolveLocks(bo, locks, loc.Region)
+			if w.testingKnobs.resolveLocks != nil {
+				ok, err1 = w.testingKnobs.resolveLocks(loc.Region)
 			}
-			stillInSame, refreshedLoc, err := w.tryRelocateLocksRegion(bo, locks)
-			if err != nil {
-				return stat, errors.Trace(err)
+			if err1 != nil {
+				return stat, errors.Trace(err1)
 			}
-			if stillInSame {
-				loc = refreshedLoc
-				goto retryResolveLockBatch
+			if !ok {
+				err = bo.Backoff(tikv.BoTxnLock, errors.Errorf("remain locks: %d", len(locks)))
+				if err != nil {
+					return stat, errors.Trace(err)
+				}
+				stillInSame, refreshedLoc, err := w.tryRelocateLocksRegion(bo, locks)
+				if err != nil {
+					return stat, errors.Trace(err)
+				}
+				if stillInSame {
+					loc = refreshedLoc
+					continue
+				}
+				continue retryScanAndResolve
 			}
-			continue
 		}
 		if len(locks) < gcScanLockLimit {
 			stat.CompletedRegions++
