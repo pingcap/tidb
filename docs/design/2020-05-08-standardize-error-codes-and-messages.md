@@ -193,7 +193,7 @@ Where `Component` field is the abbreviated component name of the error source, w
 - TiFlash: FLASH
 - Dumpling: DP
 
-The `ErrorClass` is the name of the `ErrClass` the error belongs to, which defined by `[errors.RegisterErrorClass](https://github.com/pingcap/errors/blob/f9054262e67a3704a936a6ea216e73287486490d/terror/terror.go#L41)` or someway likewise. If this is unacceptable (for projects not written with golang), anything that can classify the "type" of this error (e.g., package name.) would also be good. 
+The `ErrorClass` is the name of the `ErrClass` the error belongs to, which defined by [`errors.RegisterErrorClass`](https://github.com/pingcap/errors/blob/f9054262e67a3704a936a6ea216e73287486490d/terror/terror.go#L41) or someway likewise. If this is unacceptable (for projects not written with golang), anything that can classify the "type" of this error (e.g., package name.) would also be good. 
 
 The `InnerErrorCode` is the identity of this error internally, note that this error code can be duplicated in different component or `ErrorClass`. Both numeric and textual code are acceptable, but it would be better to provide textual code, which should be one or two short words with PascalCase to identity the error.
 
