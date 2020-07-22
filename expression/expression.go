@@ -50,7 +50,7 @@ const (
 // EvalAstExpr evaluates ast expression directly.
 var EvalAstExpr func(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error)
 
-// RewriteAstExpr rewrite ast expression directly.
+// RewriteAstExpr rewrites ast expression directly.
 var RewriteAstExpr func(sctx sessionctx.Context, expr ast.ExprNode, schema *Schema, names types.NameSlice) (Expression, error)
 
 // VecExpr contains all vectorized evaluation methods.
