@@ -217,7 +217,7 @@ Dumpling: DP:{class}:{code}
 {class}, {code} ~= [A-Za-z0-9]+
 
 For mysql protocol compatible components, table below shows the available purely numeric codes for each component.
-MySQL error code raneg <-> TiDB Family Component
+MySQL error code range <-> TiDB Family Component
 [0, 9000)              <-> TiDB
 [9000, 9010)           <-> TiKV / PD / TiFlash
 ```
