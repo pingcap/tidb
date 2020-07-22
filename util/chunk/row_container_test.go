@@ -217,7 +217,7 @@ func (r *rowContainerTestSerialSuite) TestActionBlocked(c *check.C) {
 	}
 	var tracker *memory.Tracker
 	var err error
-	// Case 1
+	// Case 1, test Broadcast in Action.
 	tracker = rc.GetMemTracker()
 	tracker.SetBytesLimit(1450)
 	ac := rc.ActionSpill()
@@ -240,12 +240,13 @@ func (r *rowContainerTestSerialSuite) TestActionBlocked(c *check.C) {
 	c.Assert(tracker.MaxConsumed(), check.Greater, int64(0))
 	c.Assert(rc.GetDiskTracker().BytesConsumed(), check.Greater, int64(0))
 
-	// Case 2
+	// Case 2, test Action will block when spilling.
 	rc = NewRowContainer(fields, sz)
 	tracker = rc.GetMemTracker()
 	ac = rc.ActionSpill()
 	wg := sync.WaitGroup{}
 	wg.Add(1)
+	starttime := time.Now()
 	ac.setStatus(spilling)
 	go func() {
 		time.Sleep(200 * time.Millisecond)
@@ -254,5 +255,6 @@ func (r *rowContainerTestSerialSuite) TestActionBlocked(c *check.C) {
 		wg.Done()
 	}()
 	ac.Action(tracker)
+	c.Assert(time.Now().Sub(starttime), check.GreaterEqual, 200*time.Millisecond)
 	wg.Wait()
 }
