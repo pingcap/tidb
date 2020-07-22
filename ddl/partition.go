@@ -1450,7 +1450,7 @@ func truncateTableByReassignPartitionIDs(t *meta.Meta, tblInfo *model.TableInfo)
 }
 
 func checkPlacementRules(t *meta.Meta, job *model.Job, rules []*placement.Rule) ([]*placement.Rule, error) {
-	tblInfo, err := getTableInfo(t, job.TableID, job.SchemaID)
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return nil, err
 	}
