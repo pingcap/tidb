@@ -1486,15 +1486,10 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 		return ver, errors.Trace(err)
 	}
 
-	ok, err := infosync.UpdatePlacementRules(nil, rules)
+	err = infosync.UpdatePlacementRules(nil, rules)
 	if err != nil {
-		if ok {
-			// ok means there is one HTTP resp, but not 200
-			// Cancel the job if PD declined us for some reason, avoiding meaningless retries
-			job.State = model.JobStateCancelled
-			err = errors.Wrapf(err, "PD refused the placement rules")
-		}
-		return 0, errors.Trace(err)
+		job.State = model.JobStateCancelled
+		return 0, errors.Wrapf(err, "PD refused the placement rules")
 	}
 
 	job.State = model.JobStateDone

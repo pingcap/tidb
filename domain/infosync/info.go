@@ -268,7 +268,7 @@ func GetTiFlashTableSyncProgress(ctx context.Context) (map[int64]float64, error)
 	return progressMap, nil
 }
 
-func doRequest(ctx context.Context, addrs []string, route, method string, body io.Reader) (bool, error) {
+func doRequest(ctx context.Context, addrs []string, route, method string, body io.Reader) error {
 	var err error
 	var req *http.Request
 	for _, addr := range addrs {
@@ -285,7 +285,7 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 			req, err = http.NewRequest(method, url, body)
 		}
 		if err != nil {
-			return false, err
+			return err
 		}
 		if body != nil {
 			req.Header.Set("Content-Type", "application/json")
@@ -295,19 +295,19 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 		if err == nil {
 			if res.StatusCode != http.StatusOK {
 				bodyBytes, _ := ioutil.ReadAll(res.Body)
-				return true, errors.Errorf("%s", bodyBytes)
+				return errors.Errorf("%s", bodyBytes)
 			}
-			return true, nil
+			return nil
 		}
 	}
-	return false, err
+	return err
 }
 
 // UpdatePlacementRules is used to notify PD changes of placement rules.
-func UpdatePlacementRules(ctx context.Context, rules []*placement.Rule) (bool, error) {
+func UpdatePlacementRules(ctx context.Context, rules []*placement.Rule) error {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
-		return false, err
+		return err
 	}
 
 	var addrs []string
@@ -316,20 +316,19 @@ func UpdatePlacementRules(ctx context.Context, rules []*placement.Rule) (bool, e
 	}
 
 	if len(addrs) == 0 {
-		return false, errors.Errorf("pd unavailable")
+		return errors.Errorf("pd unavailable")
 	}
 
 	route := path.Join(pdapi.Config, "rule")
 
 	for _, rule := range rules {
 		b, _ := json.Marshal(rule)
-		ok, err := doRequest(ctx, addrs, route, http.MethodPost, bytes.NewReader(b))
-		if err != nil {
-			return ok, err
+		if err := doRequest(ctx, addrs, route, http.MethodPost, bytes.NewReader(b)); err != nil {
+			return err
 		}
 	}
 
-	return true, nil
+	return nil
 }
 
 func (is *InfoSyncer) getAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
