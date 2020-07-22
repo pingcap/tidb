@@ -5186,6 +5186,8 @@ func validatePlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.Rule, erro
 		}
 
 		for _, label := range strings.Split(spec.Constraints, ",") {
+			label = strings.TrimSpace(label)
+
 			if len(label) < 4 {
 				return rules, errors.Errorf("invalid placement spec[%d], constraint too short to be valid: %s", k, label)
 			}
@@ -5200,19 +5202,15 @@ func validatePlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.Rule, erro
 				return rules, errors.Errorf("invalid placement spec[%d], unknown operation: %c", k, label[0])
 			}
 
-			idx := strings.IndexByte(label, '=')
-			if idx == -1 {
+			kv := strings.Split(label[1:], "=")
+			if len(kv) != 2 {
 				return rules, errors.Errorf("invalid placement spec[%d], invalid constraint format: %s", k, label)
-			} else if idx == 1 {
-				return rules, errors.Errorf("invalid placement spec[%d], empty constraint key: %s", k, label)
-			} else if idx+1 >= len(label) {
-				return rules, errors.Errorf("invalid placement spec[%d], empty constraint value: %s", k, label)
 			}
 
 			rule.LabelConstraints = append(rule.LabelConstraints, placement.LabelConstraint{
-				Key:    label[1:idx],
+				Key:    strings.TrimSpace(kv[0]),
 				Op:     op,
-				Values: []string{label[idx+1:]},
+				Values: []string{strings.TrimSpace(kv[1])},
 			})
 		}
 
