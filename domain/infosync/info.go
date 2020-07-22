@@ -161,6 +161,11 @@ func (is *InfoSyncer) SetSessionManager(manager util2.SessionManager) {
 	is.manager = manager
 }
 
+// GetSessionManager get the session manager.
+func (is *InfoSyncer) GetSessionManager() util2.SessionManager {
+	return is.manager
+}
+
 // GetServerInfo gets self server static information.
 func GetServerInfo() (*ServerInfo, error) {
 	is, err := getGlobalInfoSyncer()

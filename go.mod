@@ -44,7 +44,6 @@ require (
 	github.com/prometheus/client_model v0.2.0
 	github.com/prometheus/common v0.9.1
 	github.com/shirou/gopsutil v2.19.10+incompatible
-	github.com/shurcooL/httpfs v0.0.0-20190707220628-8d4bc4ba7749 // indirect
 	github.com/sirupsen/logrus v1.6.0
 	github.com/soheilhy/cmux v0.1.4
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
@@ -56,11 +55,11 @@ require (
 	go.uber.org/atomic v1.6.0
 	go.uber.org/automaxprocs v1.2.0
 	go.uber.org/zap v1.15.0
-	golang.org/x/net v0.0.0-20200520182314-0ba52f642ac2
+	golang.org/x/net v0.0.0-20200324143707-d3edc9973b7e
 	golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e
 	golang.org/x/sys v0.0.0-20200323222414-85ca7c5b95cd
 	golang.org/x/text v0.3.2
-	golang.org/x/tools v0.0.0-20200527183253-8e7acdbce89d
+	golang.org/x/tools v0.0.0-20200521211927-2b542361a4fc
 	google.golang.org/grpc v1.26.0
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20180531100431-4c381bd170b4
@@ -69,8 +68,4 @@ require (
 
 go 1.13
 
-replace (
-	github.com/pingcap/kvproto => github.com/pingyu/kvproto v0.0.0-20200625060901-6757a66da095
-	github.com/pingcap/pd/v4 => github.com/pingyu/pd/v4 v4.0.0-20200621165438-ce3c2afac420
-	github.com/pingcap/tipb => github.com/pingyu/tipb v0.0.0-20200624160448-105ff4559211
-)
+replace github.com/pingcap/tipb => github.com/pingyu/tipb v0.0.0-20200624160448-105ff4559211

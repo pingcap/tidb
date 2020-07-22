@@ -234,6 +234,8 @@ func (msm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, boo
 
 func (msm *mockSessionManager) Kill(cid uint64, query bool) {}
 
+func (msm *mockSessionManager) KillAllConnections() {}
+
 func (msm *mockSessionManager) UpdateTLSConfig(cfg *tls.Config) {}
 
 func (msm *mockSessionManager) ServerID() uint64 {

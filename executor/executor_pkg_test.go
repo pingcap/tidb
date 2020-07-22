@@ -76,7 +76,9 @@ func (msm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, boo
 
 // Kill implements the SessionManager.Kill interface.
 func (msm *mockSessionManager) Kill(cid uint64, query bool) {
+}
 
+func (msm *mockSessionManager) KillAllConnections() {
 }
 
 func (msm *mockSessionManager) UpdateTLSConfig(cfg *tls.Config) {

@@ -219,10 +219,6 @@ func (c *mockPDClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.
 
 func (c *mockPDClient) GetLeaderAddr() string { return "mockpd" }
 
-func (c *mockPDClient) AllocID(ctx context.Context, idType pdpb.AllocIDRequest_IDType) (uint64, error) {
-	return 1, nil
-}
-
 type checkRequestClient struct {
 	Client
 	priority pb.CommandPri

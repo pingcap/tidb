@@ -145,6 +145,7 @@ type SessionManager interface {
 	ShowProcessList() map[uint64]*ProcessInfo
 	GetProcessInfo(id uint64) (*ProcessInfo, bool)
 	Kill(connectionID uint64, query bool)
+	KillAllConnections()
 	UpdateTLSConfig(cfg *tls.Config)
 	ServerID() uint64
 }
