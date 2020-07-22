@@ -20,7 +20,8 @@ import (
 )
 
 // PartitionPruning finds all used partitions according to query conditions, it will
-// return nil if condition match none of partitions.
+// return nil if condition match none of partitions. The return value is a array of the
+// idx in the partition definitions array, use pi.Definitions[idx] to get the partition ID
 func PartitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, conds []expression.Expression, partitionNames []model.CIStr) ([]int, error) {
 	s := partitionProcessor{}
 	tblInfo := tbl.Meta()
