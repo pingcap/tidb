@@ -67,10 +67,11 @@ func (c *RowContainer) SpillToDisk() {
 	if c.alreadySpilled() {
 		return
 	}
+	// c.actionSpill may be nil in some unit tests.
 	if c.actionSpill != nil {
-		c.actionSpill.setStatus(doingStatus)
+		c.actionSpill.setStatus(spilling)
 		defer c.actionSpill.cond.Broadcast()
-		defer c.actionSpill.setStatus(doneStatus)
+		defer c.actionSpill.setStatus(spilledYet)
 	}
 	var err error
 	N := c.m.records.NumChunks()
@@ -109,9 +110,9 @@ func (c *RowContainer) alreadySpilled() bool {
 	return c.m.recordsInDisk != nil
 }
 
-// AlreadySpilledSafe indicates that records have spilled out into disk. It's thread-safe.
+// AlreadySpilledSafeForTest indicates that records have spilled out into disk. It's thread-safe.
 // The function is only used for test.
-func (c *RowContainer) AlreadySpilledSafe() bool {
+func (c *RowContainer) AlreadySpilledSafeForTest() bool {
 	c.m.RLock()
 	defer c.m.RUnlock()
 	return c.m.recordsInDisk != nil
@@ -223,10 +224,9 @@ func (c *RowContainer) Close() (err error) {
 // ActionSpill returns a SpillDiskAction for spilling over to disk.
 func (c *RowContainer) ActionSpill() *SpillDiskAction {
 	if c.actionSpill == nil {
-		c.actionSpill = &SpillDiskAction{c: c, cond: struct {
-			*sync.Cond
-			status uint32
-		}{sync.NewCond(new(sync.Mutex)), 0}}
+		c.actionSpill = &SpillDiskAction{
+			c:    c,
+			cond: spillStatusCond{sync.NewCond(new(sync.Mutex)), notSpilled}}
 	}
 	return c.actionSpill
 }
@@ -241,10 +241,7 @@ func (c *RowContainer) ActionSpillForTest() *SpillDiskAction {
 		testSyncOutputFunc: func() {
 			c.actionSpill.testWg.Done()
 		},
-		cond: struct {
-			*sync.Cond
-			status uint32
-		}{sync.NewCond(new(sync.Mutex)), 0},
+		cond: spillStatusCond{sync.NewCond(new(sync.Mutex)), notSpilled},
 	}
 	return c.actionSpill
 }
@@ -257,14 +254,7 @@ type SpillDiskAction struct {
 	fallbackAction memory.ActionOnExceed
 	m              sync.Mutex
 	once           sync.Once
-	cond           struct {
-		*sync.Cond
-		// status indicates different stages for the Action
-		// 0 indicates the rowContainer is not spilled.
-		// 1 indicates the rowContainer is spilling.
-		// 2 indicates thr rowContainer is spilled.
-		status uint32
-	}
+	cond           spillStatusCond
 
 	// test function only used for test sync.
 	testSyncInputFunc  func()
@@ -272,19 +262,30 @@ type SpillDiskAction struct {
 	testWg             sync.WaitGroup
 }
 
+type spillStatusCond struct {
+	*sync.Cond
+	// status indicates different stages for the Action
+	// notSpilled indicates the rowContainer is not spilled.
+	// spilling indicates the rowContainer is spilling.
+	// spilledYet indicates thr rowContainer is spilled.
+	status spillStatus
+}
+
+type spillStatus uint32
+
 const (
-	todoStatus uint32 = iota
-	doingStatus
-	doneStatus
+	notSpilled spillStatus = iota
+	spilling
+	spilledYet
 )
 
-func (a *SpillDiskAction) setStatus(status uint32) {
+func (a *SpillDiskAction) setStatus(status spillStatus) {
 	a.cond.L.Lock()
 	defer a.cond.L.Unlock()
 	a.cond.status = status
 }
 
-func (a *SpillDiskAction) getStatus() uint32 {
+func (a *SpillDiskAction) getStatus() spillStatus {
 	a.cond.L.Lock()
 	defer a.cond.L.Unlock()
 	return a.cond.status
@@ -296,7 +297,7 @@ func (a *SpillDiskAction) Action(t *memory.Tracker) {
 	a.m.Lock()
 	defer a.m.Unlock()
 
-	if a.getStatus() == todoStatus {
+	if a.getStatus() == notSpilled {
 		a.once.Do(func() {
 			logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
 				zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
@@ -315,7 +316,7 @@ func (a *SpillDiskAction) Action(t *memory.Tracker) {
 	}
 
 	a.cond.L.Lock()
-	for a.cond.status == doingStatus {
+	for a.cond.status == spilling {
 		a.cond.Wait()
 	}
 	a.cond.L.Unlock()
@@ -462,7 +463,8 @@ func (c *SortedRowContainer) ActionSpill() *SortAndSpillDiskAction {
 
 // ActionSpillForTest returns a SortAndSpillDiskAction for sorting and spilling over to disk for test.
 func (c *SortedRowContainer) ActionSpillForTest() *SortAndSpillDiskAction {
-	c.actionSpill = &SortAndSpillDiskAction{c: c,
+	c.actionSpill = &SortAndSpillDiskAction{
+		c:               c,
 		SpillDiskAction: c.RowContainer.ActionSpillForTest(),
 	}
 	return c.actionSpill
@@ -482,7 +484,7 @@ func (a *SortAndSpillDiskAction) Action(t *memory.Tracker) {
 	a.m.Lock()
 	defer a.m.Unlock()
 	// Guarantee that each partition size is at least 10% of the threshold, to avoid opening too many files.
-	if a.getStatus() == todoStatus && a.c.GetMemTracker().BytesConsumed() > t.GetBytesLimit()/10 {
+	if a.getStatus() == notSpilled && a.c.GetMemTracker().BytesConsumed() > t.GetBytesLimit()/10 {
 		a.once.Do(func() {
 			logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
 				zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
@@ -501,7 +503,7 @@ func (a *SortAndSpillDiskAction) Action(t *memory.Tracker) {
 	}
 
 	a.cond.L.Lock()
-	for a.cond.status == doingStatus {
+	for a.cond.status == spilling {
 		a.cond.Wait()
 	}
 	a.cond.L.Unlock()
