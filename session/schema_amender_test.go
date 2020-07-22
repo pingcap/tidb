@@ -65,6 +65,88 @@ func mutationsEqual(res *tikv.CommitterMutations, expected *tikv.CommitterMutati
 	}
 }
 
+type data struct {
+	keys   [][]byte
+	values [][]byte
+}
+
+func prepareTestData(se *session, mutations *tikv.CommitterMutations, oldTblInfo table.Table, newTblInfo table.Table,
+	expecetedAmendOps []amendOperationAddIndex, c *C) (*data, *data, tikv.CommitterMutations) {
+	var err error
+	// Generated test data.
+	colIds := make([]int64, len(oldTblInfo.Meta().Columns))
+	basicRowValue := make([]types.Datum, len(oldTblInfo.Meta().Columns))
+	for i, col := range oldTblInfo.Meta().Columns {
+		colIds[i] = oldTblInfo.Meta().Columns[col.Offset].ID
+		if col.FieldType.Tp == mysql.TypeLong {
+			basicRowValue[i] = types.NewIntDatum(int64(col.Offset))
+		} else {
+			basicRowValue[i] = types.NewStringDatum(strconv.Itoa(col.Offset))
+		}
+	}
+	KeyOps := []kvrpcpb.Op{kvrpcpb.Op_Put, kvrpcpb.Op_Del, kvrpcpb.Op_Lock, kvrpcpb.Op_Insert}
+	rowValues := make([][]types.Datum, len(KeyOps))
+	rd := rowcodec.Encoder{Enable: true}
+	newData := &data{}
+	oldData := &data{}
+	expecteMutations := tikv.NewCommiterMutations(8)
+	for i := 0; i < len(KeyOps); i++ {
+		keyOp := KeyOps[i]
+		rowKey := tablecodec.EncodeRowKeyWithHandle(oldTblInfo.Meta().ID, kv.IntHandle(i+1))
+		thisRowValue := make([]types.Datum, len(basicRowValue))
+		copy(thisRowValue, basicRowValue)
+		thisRowValue[0] = types.NewIntDatum(int64(i + 1))
+		thisRowValue[4] = types.NewIntDatum(int64(i + 1 + 4))
+		var rowValue []byte
+		// Test using old row format, the amender will decode this row.
+		if keyOp == kvrpcpb.Op_Insert {
+			rowValue, err = tablecodec.EncodeOldRow(se.sessionVars.StmtCtx, thisRowValue, colIds, nil, nil)
+		} else {
+			rowValue, err = rd.Encode(se.sessionVars.StmtCtx, colIds, thisRowValue, nil)
+		}
+		if keyOp == kvrpcpb.Op_Del {
+			oldData.keys = append(oldData.keys, rowKey)
+			oldData.values = append(oldData.values, rowValue)
+		} else {
+			newData.keys = append(newData.keys, rowKey)
+			newData.values = append(newData.values, rowValue)
+		}
+		c.Assert(err, IsNil)
+		if keyOp == kvrpcpb.Op_Del {
+			mutations.Push(keyOp, rowKey, []byte{}, true)
+		} else {
+			mutations.Push(keyOp, rowKey, rowValue, true)
+		}
+		rowValues[i] = thisRowValue
+	}
+	// Prepare expected results.
+	for _, op := range expecetedAmendOps {
+		for i := 0; i < len(KeyOps); i++ {
+			keyOp := KeyOps[i]
+			thisRowValue := rowValues[i]
+			indexDatums := make([]types.Datum, len(op.relatedOldIdxCols))
+			for colIdx, col := range op.relatedOldIdxCols {
+				indexDatums[colIdx] = thisRowValue[col.Offset]
+			}
+			kvHandle := kv.IntHandle(thisRowValue[0].GetInt64())
+			idxKey, _, err := tablecodec.GenIndexKey(se.sessionVars.StmtCtx, newTblInfo.Meta(),
+				op.indexInfoAtCommit.Meta(), newTblInfo.Meta().ID, indexDatums, kvHandle, nil)
+			c.Assert(err, IsNil)
+			var idxVal []byte
+			if (op.AmendOpType == AmendNeedAddDelete || op.AmendOpType == AmendNeedAddDeleteAndInsert) && isDeleteOp(keyOp) {
+				expecteMutations.Push(keyOp, idxKey, idxVal, false)
+			}
+			if (op.AmendOpType == AmendNeedAddDeleteAndInsert || op.AmendOpType == AmendNeedAddInsert) && isInsertOp(keyOp) {
+				idxVal, err = tablecodec.GenIndexValue(se.sessionVars.StmtCtx, newTblInfo.Meta(), op.indexInfoAtCommit.Meta(),
+					false, op.indexInfoAtCommit.Meta().Unique, false, indexDatums, kvHandle)
+				c.Assert(err, IsNil)
+				expecteMutations.Push(keyOp, idxKey, idxVal, false)
+			}
+		}
+	}
+	return newData, oldData, expecteMutations
+}
+
 func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 	ctx := context.Background()
 	store := newStore(c, "test_schema_amender")
@@ -152,71 +234,48 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 					c.Assert(col, Equals, expecetedAmendOps[i].relatedOldIdxCols[j])
 				}
 			}
-			// Check mutation generations.
+			// Generated test data.
+			mutations := tikv.NewCommiterMutations(8)
+			newData, oldData, expectedMutations := prepareTestData(se, &mutations, oldTbInfo, newTblInfo, expecetedAmendOps, c)
+			// Prepare old data in table.
+			txnPrepare, err := se.store.Begin()
+			c.Assert(err, IsNil)
+			for i, key := range oldData.keys {
+				err = txnPrepare.Set(key, oldData.values[i])
+				c.Assert(err, IsNil)
+			}
+			err = txnPrepare.Commit(ctx)
+			c.Assert(err, IsNil)
+			txnCheck, err := se.store.Begin()
+			c.Assert(err, IsNil)
+			snapData, err := txnCheck.GetSnapshot().Get(ctx, oldData.keys[0])
+			c.Assert(err, IsNil)
+			c.Assert(oldData.values[0], BytesEquals, snapData)
+			err = txnCheck.Rollback()
+			c.Assert(err, IsNil)
+
+			// Write data for this new transaction, its memory buffer will be used by schema amender.
 			txn, err := se.store.Begin()
 			c.Assert(err, IsNil)
 			se.txn.changeInvalidToValid(txn)
 			txn, err = se.Txn(true)
 			c.Assert(err, IsNil)
+			for i, key := range newData.keys {
+				err = txn.Set(key, newData.values[i])
+				c.Assert(err, IsNil)
+			}
+			for _, key := range oldData.keys {
+				err = txn.Delete(key)
+				c.Assert(err, IsNil)
+			}
+			c.Assert(err, IsNil)
 
 			schemaAmender := NewSchemaAmenderForTikvTxn(se)
-			mutations := tikv.NewCommiterMutations(8)
-			colIds := make([]int64, len(oldTbInfo.Meta().Columns))
-			basicRowValue := make([]types.Datum, len(oldTbInfo.Meta().Columns))
-			rd := rowcodec.Encoder{Enable: true}
-			for i, col := range oldTbInfo.Meta().Columns {
-				colIds[i] = oldTbInfo.Meta().Columns[col.Offset].ID
-				if col.FieldType.Tp == mysql.TypeLong {
-					basicRowValue[i] = types.NewIntDatum(int64(col.Offset))
-				} else {
-					basicRowValue[i] = types.NewStringDatum(strconv.Itoa(col.Offset))
-				}
-				c.Assert(err, IsNil)
-			}
-			expecteMutations := tikv.NewCommiterMutations(8)
-			KeyOps := []kvrpcpb.Op{kvrpcpb.Op_Put, kvrpcpb.Op_Del, kvrpcpb.Op_Lock, kvrpcpb.Op_Insert}
-			rowValues := make([][]types.Datum, len(KeyOps))
-			for i := 0; i < len(KeyOps); i++ {
-				rowKey := tablecodec.EncodeRowKeyWithHandle(oldTbInfo.Meta().ID, kv.IntHandle(i+1))
-				thisRowValue := make([]types.Datum, len(basicRowValue))
-				copy(thisRowValue, basicRowValue)
-				thisRowValue[0] = types.NewIntDatum(int64(i + 1))
-				thisRowValue[4] = types.NewIntDatum(int64(i + 1 + 4))
-				rowValue, err := rd.Encode(se.sessionVars.StmtCtx, colIds, thisRowValue, nil)
-				c.Assert(err, IsNil)
-				err = txn.Set(rowKey, rowValue)
-				c.Assert(err, IsNil)
-				keyOp := KeyOps[i]
-				mutations.Push(keyOp, rowKey, rowValue, true)
-				rowValues[i] = thisRowValue
-			}
-			for _, op := range expecetedAmendOps {
-				for rowIdx, curRow := range rowValues {
-					keyOp := KeyOps[rowIdx]
-					indexDatums := make([]types.Datum, len(op.relatedOldIdxCols))
-					for colIdx, col := range op.relatedOldIdxCols {
-						indexDatums[colIdx] = curRow[col.Offset]
-					}
-					kvHandle := kv.IntHandle(curRow[0].GetInt64())
-					idxKey, _, err := tablecodec.GenIndexKey(se.sessionVars.StmtCtx, newTblInfo.Meta(),
-						op.indexInfoAtCommit.Meta(), newTblInfo.Meta().ID, indexDatums, kvHandle, nil)
-					c.Assert(err, IsNil)
-					var idxVal []byte
-					if (op.AmendOpType == AmendNeedAddDelete || op.AmendOpType == AmendNeedAddDeleteAndInsert) && isDeleteOp(keyOp) {
-						expecteMutations.Push(keyOp, idxKey, idxVal, false)
-					}
-					if (op.AmendOpType == AmendNeedAddDeleteAndInsert || op.AmendOpType == AmendNeedAddInsert) && isInsertOp(keyOp) {
-						idxVal, err = tablecodec.GenIndexValue(se.sessionVars.StmtCtx, newTblInfo.Meta(), op.indexInfoAtCommit.Meta(),
-							false, op.indexInfoAtCommit.Meta().Unique, false, indexDatums, kvHandle)
-						c.Assert(err, IsNil)
-						expecteMutations.Push(keyOp, idxKey, idxVal, false)
-					}
-				}
-			}
+			// Some noisy index key values.
 			for i := 0; i < 4; i++ {
 				idxValue := []byte("idxValue")
 				idxKey := tablecodec.EncodeIndexSeekKey(oldTbInfo.Meta().ID, oldTbInfo.Indices()[2].Meta().ID, idxValue)
-				err = txn.Set(idxKey, idxKey)
+				err = txn.Set(idxKey, idxValue)
 				c.Assert(err, IsNil)
 				mutations.Push(kvrpcpb.Op_Put, idxKey, idxValue, false)
 			}
@@ -228,7 +287,7 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 			c.Assert(len(res.GetKeys()), Equals, len(res.GetOps()))
 			c.Assert(len(res.GetValues()), Equals, len(res.GetOps()))
 			c.Assert(len(res.GetPessimisticFlags()), Equals, len(res.GetOps()))
-			mutationsEqual(res, &expecteMutations, c)
+			mutationsEqual(res, &expectedMutations, c)
 			err = txn.Rollback()
 			c.Assert(err, IsNil)
 		}

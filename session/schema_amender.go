@@ -22,12 +22,13 @@ import (
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -72,17 +73,22 @@ var ConstOpAddIndex = map[model.SchemaState]map[model.SchemaState]int{
 	},
 }
 
+type schemaAndDecoder struct {
+	schema  *expression.Schema
+	decoder *rowcodec.ChunkDecoder
+}
+
 // amendCollector collects all amend operations, row decoders and memory chunks for each table needs amend.
 type amendCollector struct {
 	tblAmendOpMap map[int64][]amendOp
-	tblDecoder    map[int64]*rowcodec.ChunkDecoder
+	tblDecoder    map[int64]*schemaAndDecoder
 	tblChk        map[int64]*chunk.Chunk
 }
 
 func newAmendCollector() *amendCollector {
 	res := &amendCollector{
 		tblAmendOpMap: make(map[int64][]amendOp),
-		tblDecoder:    make(map[int64]*rowcodec.ChunkDecoder),
+		tblDecoder:    make(map[int64]*schemaAndDecoder),
 		tblChk:        make(map[int64]*chunk.Chunk),
 	}
 	return res
@@ -134,14 +140,14 @@ func (a *amendCollector) collectIndexAmendOps(phyTblID int64, tblAtStart, tblAtC
 			for _, idxCol := range idxInfoAtCommit.Meta().Columns {
 				colID := tblAtCommit.Meta().Columns[idxCol.Offset].ID
 				oldColInfo := findColByID(tblAtStart, colID)
-				// TODO: now index column MUST be found in old table columns.
-				if oldColInfo == nil {
+				// TODO: now index column MUST be found in old table columns, generated column is not supported.
+				if oldColInfo == nil || oldColInfo.IsGenerated() {
 					return nil, errors.Trace(table.ErrUnsupportedOp)
 				}
 				op.relatedOldIdxCols = append(op.relatedOldIdxCols, oldColInfo)
 			}
 
-			op.decoder = a.tblDecoder[phyTblID]
+			op.schemaAndDecoder = a.tblDecoder[phyTblID]
 			op.chk = a.tblChk[phyTblID]
 			op.processedNewIndexKeys = make(map[string]interface{})
 			res = append(res, &op)
@@ -155,7 +161,7 @@ func (a *amendCollector) collectTblAmendOps(sctx sessionctx.Context, phyTblID in
 	tblInfoAtStart, tblInfoAtCommit table.Table) error {
 	if _, ok := a.tblAmendOpMap[phyTblID]; !ok {
 		a.tblAmendOpMap[phyTblID] = make([]amendOp, 0, 4)
-		a.tblDecoder[phyTblID] = newRowChkDecoder(sctx, tblInfoAtStart.Meta())
+		a.tblDecoder[phyTblID] = newSchemaAndDecoder(sctx, tblInfoAtStart.Meta())
 		fieldTypes := make([]*types.FieldType, 0, len(tblInfoAtStart.Meta().Columns))
 		for _, col := range tblInfoAtStart.Meta().Columns {
 			fieldTypes = append(fieldTypes, &col.FieldType)
@@ -180,10 +186,10 @@ func isInsertOp(keyOp pb.Op) bool {
 }
 
 func (a *amendCollector) genMutationsForTbl(ctx context.Context, sess *session, commitMutations tikv.CommitterMutations,
-	kvMaps map[string][]byte, amendOps []amendOp) (tikv.CommitterMutations, error) {
+	newValKvMap map[string][]byte, oldValKvMap map[string][]byte, amendOps []amendOp) (tikv.CommitterMutations, error) {
 	resAddMutations := tikv.NewCommiterMutations(8)
 	for _, curOp := range amendOps {
-		curAddMutations, err := curOp.genMutations(ctx, sess, commitMutations, kvMaps)
+		curAddMutations, err := curOp.genMutations(ctx, sess, commitMutations, newValKvMap, oldValKvMap)
 		if err != nil {
 			return resAddMutations, err
 		}
@@ -195,7 +201,7 @@ func (a *amendCollector) genMutationsForTbl(ctx context.Context, sess *session, 
 // amendOp is an amend operation for a specific schema change, new mutations will be generated using input ones.
 type amendOp interface {
 	genMutations(ctx context.Context, sctx sessionctx.Context, commitMutations tikv.CommitterMutations,
-		kvMaps map[string][]byte) (tikv.CommitterMutations, error)
+		newValKvMap map[string][]byte, oldValKvMap map[string][]byte) (tikv.CommitterMutations, error)
 }
 
 // amendOperationAddIndex represents one amend operation related to a specific add index change.
@@ -207,7 +213,7 @@ type amendOperationAddIndex struct {
 	indexInfoAtCommit table.Index
 	relatedOldIdxCols []*table.Column
 
-	decoder               *rowcodec.ChunkDecoder
+	schemaAndDecoder      *schemaAndDecoder
 	chk                   *chunk.Chunk
 	processedNewIndexKeys map[string]interface{}
 }
@@ -225,14 +231,14 @@ func (a *amendOperationAddIndex) String() string {
 }
 
 func (a *amendOperationAddIndex) genMutations(ctx context.Context, sctx sessionctx.Context, commitMutations tikv.CommitterMutations,
-	kvMaps map[string][]byte) (tikv.CommitterMutations, error) {
+	newValKvMap map[string][]byte, oldValKvMap map[string][]byte) (tikv.CommitterMutations, error) {
 	resAddMutations := tikv.NewCommiterMutations(8)
 	for i, key := range commitMutations.GetKeys() {
 		keyOp := commitMutations.GetOps()[i]
 		if tablecodec.IsIndexKey(key) || tablecodec.DecodeTableID(key) != a.tblInfoAtCommit.Meta().ID {
 			continue
 		}
-		addMutations, err := a.processKey(ctx, sctx, keyOp, key, kvMaps)
+		addMutations, err := a.processKey(ctx, sctx, keyOp, key, newValKvMap, oldValKvMap)
 		if err != nil {
 			return resAddMutations, err
 		}
@@ -249,11 +255,10 @@ func (a *amendOperationAddIndex) genIndexKeyValue(ctx context.Context, sctx sess
 	for _, oldCol := range a.tblInfoAtStart.Meta().Cols() {
 		colMap[oldCol.ID] = &oldCol.FieldType
 	}
-	rowDecoder := a.decoder
 	chk := a.chk
 	chk.Reset()
 	val := kvMaps[string(key)]
-	err := rowDecoder.DecodeToChunk(val, kvHandle, chk)
+	err := executor.DecodeRowValToChunk(sctx, a.schemaAndDecoder.schema, a.tblInfoAtStart.Meta(), kvHandle, val, chk, a.schemaAndDecoder.decoder)
 	if err != nil {
 		logutil.Logger(ctx).Warn("amend decode value to chunk failed", zap.Error(err))
 		return nil, nil, errors.Trace(err)
@@ -293,7 +298,7 @@ func (a *amendOperationAddIndex) genIndexKeyValue(ctx context.Context, sctx sess
 }
 
 func (a *amendOperationAddIndex) processKey(ctx context.Context, sctx sessionctx.Context, keyOp pb.Op, key []byte,
-	kvMaps map[string][]byte) (resAdd tikv.CommitterMutations, err error) {
+	newValKvMap map[string][]byte, oldValKvMap map[string][]byte) (resAdd tikv.CommitterMutations, err error) {
 	kvHandle, err := tablecodec.DecodeRowKey(key)
 	if err != nil {
 		logutil.Logger(ctx).Error("decode key error", zap.String("key", hex.EncodeToString(key)), zap.Error(err))
@@ -302,7 +307,7 @@ func (a *amendOperationAddIndex) processKey(ctx context.Context, sctx sessionctx
 
 	// Generated delete index key value.
 	if (a.AmendOpType == AmendNeedAddDelete || a.AmendOpType == AmendNeedAddDeleteAndInsert) && isDeleteOp(keyOp) {
-		newIdxKey, emptyVal, err := a.genIndexKeyValue(ctx, sctx, kvMaps, key, kvHandle, true)
+		newIdxKey, emptyVal, err := a.genIndexKeyValue(ctx, sctx, oldValKvMap, key, kvHandle, true)
 		if err != nil {
 			return resAdd, errors.Trace(err)
 		}
@@ -311,7 +316,7 @@ func (a *amendOperationAddIndex) processKey(ctx context.Context, sctx sessionctx
 
 	// Generated insert index key value.
 	if (a.AmendOpType == AmendNeedAddDeleteAndInsert || a.AmendOpType == AmendNeedAddInsert) && isInsertOp(keyOp) {
-		newIdxKey, newIdxValue, err := a.genIndexKeyValue(ctx, sctx, kvMaps, key, kvHandle, false)
+		newIdxKey, newIdxValue, err := a.genIndexKeyValue(ctx, sctx, newValKvMap, key, kvHandle, false)
 		if err != nil {
 			return resAdd, errors.Trace(err)
 		}
@@ -339,38 +344,50 @@ func NewSchemaAmenderForTikvTxn(sess *session) *SchemaAmender {
 	return amender
 }
 
-func (s *SchemaAmender) getAmendableKeys(commitMutations tikv.CommitterMutations, info *amendCollector) []kv.Key {
-	kvKeys := make([]kv.Key, 0, len(commitMutations.GetKeys()))
-	for _, byteKey := range commitMutations.GetKeys() {
+func (s *SchemaAmender) getAmendableKeys(commitMutations tikv.CommitterMutations, info *amendCollector) ([]kv.Key, []kv.Key) {
+	addKeys := make([]kv.Key, 0, len(commitMutations.GetKeys()))
+	removeKeys := make([]kv.Key, 0, len(commitMutations.GetKeys()))
+	for i, byteKey := range commitMutations.GetKeys() {
 		if tablecodec.IsIndexKey(byteKey) || !info.keyHasAmendOp(byteKey) {
 			continue
 		}
-		kvKeys = append(kvKeys, byteKey)
+		if isInsertOp(commitMutations.GetOps()[i]) {
+			addKeys = append(addKeys, byteKey)
+		} else if isDeleteOp(commitMutations.GetOps()[i]) {
+			removeKeys = append(removeKeys, byteKey)
+		} else {
+			// Do nothing.
+		}
 	}
-	return kvKeys
+	return addKeys, removeKeys
 }
 
 // genAllAmendMutations generates CommitterMutations for all tables and related amend operations.
 func (s *SchemaAmender) genAllAmendMutations(ctx context.Context, commitMutations tikv.CommitterMutations,
 	info *amendCollector) (*tikv.CommitterMutations, error) {
 	// Get keys need to be considered for the amend operation, currently only row keys.
-	kvKeys := s.getAmendableKeys(commitMutations, info)
+	addKeys, removeKeys := s.getAmendableKeys(commitMutations, info)
 
 	// BatchGet the key values.
 	txn, err := s.sess.Txn(true)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
-	kvMaps, err := txn.BatchGet(ctx, kvKeys)
+	newValKvMap, err := txn.BatchGet(ctx, addKeys)
 	if err != nil {
-		logutil.Logger(ctx).Warn("amend failed to batch get kv keys", zap.Error(err))
+		logutil.Logger(ctx).Warn("amend failed to batch get kv new keys", zap.Error(err))
+		return nil, errors.Trace(err)
+	}
+	oldValKvMap, err := txn.GetSnapshot().BatchGet(ctx, removeKeys)
+	if err != nil {
+		logutil.Logger(ctx).Warn("amend failed to batch get kv old keys", zap.Error(err))
 		return nil, errors.Trace(err)
 	}
 
 	// Do generate add/remove mutations processing each key.
 	addMutations := tikv.NewCommiterMutations(8)
 	for _, amendOps := range info.tblAmendOpMap {
-		resAddMutations, err := info.genMutationsForTbl(ctx, s.sess, commitMutations, kvMaps, amendOps)
+		resAddMutations, err := info.genMutationsForTbl(ctx, s.sess, commitMutations, newValKvMap, oldValKvMap, amendOps)
 		if err != nil {
 			return nil, err
 		}
@@ -425,45 +442,18 @@ func (s *SchemaAmender) AmendTxn(ctx context.Context, startInfoSchema tikv.Schem
 	return nil, nil
 }
 
-func newRowChkDecoder(ctx sessionctx.Context, tbl *model.TableInfo) *rowcodec.ChunkDecoder {
-	getColInfoByID := func(tbl *model.TableInfo, colID int64) *model.ColumnInfo {
-		for _, col := range tbl.Columns {
-			if col.ID == colID {
-				return col
-			}
+func newSchemaAndDecoder(ctx sessionctx.Context, tbl *model.TableInfo) *schemaAndDecoder {
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(tbl.Columns))...)
+	for _, col := range tbl.Columns {
+		colExpr := &expression.Column{
+			RetType: &col.FieldType,
+			ID:      col.ID,
 		}
-		return nil
+		if col.IsGenerated() && !col.GeneratedStored {
+			// This will not be used since generated column is rejected in collectIndexAmendOps.
+			colExpr.VirtualExpr = &expression.Constant{}
+		}
+		schema.Append(colExpr)
 	}
-	var pkCols []int64
-	reqCols := make([]rowcodec.ColInfo, len(tbl.Columns))
-	for i := range tbl.Columns {
-		idx, col := i, tbl.Columns[i]
-		isPK := (tbl.PKIsHandle && mysql.HasPriKeyFlag(col.FieldType.Flag)) || col.ID == model.ExtraHandleID
-		if isPK {
-			pkCols = append(pkCols, col.ID)
-		}
-
-		isVirtualGenCol := col.IsGenerated() && !col.GeneratedStored
-		reqCols[idx] = rowcodec.ColInfo{
-			ID:            col.ID,
-			VirtualGenCol: isVirtualGenCol,
-			Ft:            &col.FieldType,
-		}
-	}
-	if len(pkCols) == 0 {
-		pkCols = tables.TryGetCommonPkColumnIds(tbl)
-		if len(pkCols) == 0 {
-			pkCols = []int64{0}
-		}
-	}
-	defVal := func(i int, chk *chunk.Chunk) error {
-		ci := getColInfoByID(tbl, reqCols[i].ID)
-		d, err := table.GetColOriginDefaultValue(ctx, ci)
-		if err != nil {
-			return err
-		}
-		chk.AppendDatum(i, &d)
-		return nil
-	}
-	return rowcodec.NewChunkDecoder(reqCols, pkCols, defVal, ctx.GetSessionVars().TimeZone)
+	return &schemaAndDecoder{schema, executor.NewRowDecoder(ctx, schema, tbl)}
 }
