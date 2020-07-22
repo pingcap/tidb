@@ -43,21 +43,11 @@ func PbTypeToFieldType(tp *tipb.FieldType) *types.FieldType {
 }
 
 func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *tipb.FieldType, args []Expression) (f builtinFunc, e error) {
-	if ctx == nil {
-		panic("ctx should not be nil")
-	}
 	fieldTp := PbTypeToFieldType(tp)
-	base := baseBuiltinFunc{
-		bufAllocator:           newLocalSliceBuffer(len(args)),
-		childrenVectorizedOnce: new(sync.Once),
-		childrenReversedOnce:   new(sync.Once),
-
-		args: args,
-		ctx:  ctx,
-		tp:   types.NewFieldType(mysql.TypeUnspecified),
+	base, err := newBaseBuiltinFuncWithFieldType(ctx, fieldTp, args)
+	if err != nil {
+		return nil, err
 	}
-	base.SetCharsetAndCollation(fieldTp.Charset, fieldTp.Collate)
-	base.setCollator(collate.GetCollator(fieldTp.Collate))
 	base.tp = fieldTp
 	switch sigCode {
 	case tipb.ScalarFuncSig_CastIntAsInt:
@@ -1141,7 +1131,11 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *stmtctx.StatementCont
 	if err != nil {
 		return nil, err
 	}
-
+	// recover collation information
+	if collate.NewCollationEnabled() {
+		tp := sf.GetType()
+		sf.SetCharsetAndCollation(tp.Charset, tp.Collate)
+	}
 	return sf, nil
 }
 
