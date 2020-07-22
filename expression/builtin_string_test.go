@@ -2382,7 +2382,7 @@ func (s *testEvaluatorSerialSuites) TestCIWeightString(c *C) {
 		expect  interface{}
 	}
 
-	checkResult := func (collation string, tests []weightStringTest) {
+	checkResult := func(collation string, tests []weightStringTest) {
 		fc := funcs[ast.WeightString]
 		for _, test := range tests {
 			str := types.NewCollationStringDatum(test.str, collation, utf8.RuneCountInString(test.str))
@@ -2408,7 +2408,7 @@ func (s *testEvaluatorSerialSuites) TestCIWeightString(c *C) {
 		}
 	}
 
-	generalTests := []weightStringTest {
+	generalTests := []weightStringTest{
 		{"aAÁàãăâ", "NONE", 0, "\x00A\x00A\x00A\x00A\x00A\x00A\x00A"},
 		{"中", "NONE", 0, "\x4E\x2D"},
 		{"a", "CHAR", 5, "\x00A"},
@@ -2425,7 +2425,7 @@ func (s *testEvaluatorSerialSuites) TestCIWeightString(c *C) {
 		{"中", "BINARY", 5, "中\x00\x00"},
 	}
 
-	unicodeTests := []weightStringTest {
+	unicodeTests := []weightStringTest{
 		{"aAÁàãăâ", "NONE", 0, "\x0e3\x0e3\x0e3\x0e3\x0e3\x0e3\x0e3"},
 		{"中", "NONE", 0, "\xfb\x40\xce\x2d"},
 		{"a", "CHAR", 5, "\x0e3"},
