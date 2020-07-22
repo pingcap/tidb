@@ -21,8 +21,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -153,7 +153,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		keys := make([]kv.Key, 0, len(e.idxVals))
 		for _, idxVals := range e.idxVals {
 			physID := getPhysID(e.tblInfo, kv.IntHandle(idxVals[e.partPos].GetInt64()))
-			idxKey, err1 := encodeIndexKey(e.base(), e.tblInfo, e.idxInfo, idxVals, physID)
+			idxKey, err1 := EncodeUniqueIndexKey(e.ctx, e.tblInfo, e.idxInfo, idxVals, physID)
 			if err1 != nil && !kv.ErrNotExist.Equal(err1) {
 				return err1
 			}
@@ -189,7 +189,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			if len(handleVal) == 0 {
 				continue
 			}
-			handle, err1 := tables.DecodeHandleInUniqueIndexValue(handleVal, e.tblInfo.IsCommonHandle)
+			handle, err1 := tablecodec.DecodeHandleInUniqueIndexValue(handleVal, e.tblInfo.IsCommonHandle)
 			if err1 != nil {
 				return err1
 			}
@@ -245,7 +245,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 				lockKeys = append(lockKeys, idxKey)
 			}
 		}
-		err = e.lockKeys(ctx, lockKeys)
+		err = LockKeys(ctx, e.ctx, e.waitTime, lockKeys...)
 		if err != nil {
 			return err
 		}
@@ -278,7 +278,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	}
 	// Lock exists keys only for Read Committed Isolation.
 	if e.lock && rc {
-		err = e.lockKeys(ctx, existKeys)
+		err = LockKeys(ctx, e.ctx, e.waitTime, existKeys...)
 		if err != nil {
 			return err
 		}
@@ -287,14 +287,15 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	return nil
 }
 
-func (e *BatchPointGetExec) lockKeys(ctx context.Context, keys []kv.Key) error {
-	txnCtx := e.ctx.GetSessionVars().TxnCtx
-	lctx := newLockCtx(e.ctx.GetSessionVars(), e.waitTime)
+// LockKeys locks the keys for pessimistic transaction.
+func LockKeys(ctx context.Context, seCtx sessionctx.Context, lockWaitTime int64, keys ...kv.Key) error {
+	txnCtx := seCtx.GetSessionVars().TxnCtx
+	lctx := newLockCtx(seCtx.GetSessionVars(), lockWaitTime)
 	if txnCtx.IsPessimistic {
 		lctx.ReturnValues = true
 		lctx.Values = make(map[string]kv.ReturnedValue, len(keys))
 	}
-	err := doLockKeys(ctx, e.ctx, lctx, keys...)
+	err := doLockKeys(ctx, seCtx, lctx, keys...)
 	if err != nil {
 		return err
 	}
@@ -331,6 +332,6 @@ func getPhysID(tblInfo *model.TableInfo, val kv.Handle) int64 {
 	if pi == nil {
 		return tblInfo.ID
 	}
-	partIdx := math.Abs(val.IntValue()) % int64(pi.Num) // TODO: fix me for table, partition on cluster index.
+	partIdx := math.Abs(val.IntValue() % int64(pi.Num)) // TODO: fix me for table, partition on cluster index.
 	return pi.Definitions[partIdx].ID
 }

@@ -279,6 +279,18 @@ func (s *testSuite11) TestUpdateClusterIndex(c *C) {
 	tk.MustQuery(`select * from ut1pku`).Check(testkit.Rows("a 3 2", "b 2 3"))
 	tk.MustGetErrCode(`update ut1pku set uk = 2 where id = 'a'`, errno.ErrDupEntry)
 	tk.MustQuery(`select * from ut1pku`).Check(testkit.Rows("a 3 2", "b 2 3"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10) primary key, b char(10));")
+	tk.MustExec("insert into t values('a', 'b');")
+	tk.MustExec("update t set a='c' where t.a='a' and b='b';")
+	tk.MustQuery("select * from t").Check(testkit.Rows("c b"))
+
+	tk.MustExec("drop table if exists s")
+	tk.MustExec("create table s (a int, b int, c int, primary key (a, b))")
+	tk.MustExec("insert s values (3, 3, 3), (5, 5, 5)")
+	tk.MustExec("update s set c = 10 where a = 3")
+	tk.MustQuery("select * from s").Check(testkit.Rows("3 3 10", "5 5 5"))
 }
 
 func (s *testSuite11) TestDeleteClusterIndex(c *C) {
@@ -308,6 +320,12 @@ func (s *testSuite11) TestDeleteClusterIndex(c *C) {
 	tk.MustExec(`delete from dt3pku where id = 'a'`)
 	tk.MustQuery(`select * from dt3pku`).Check(testkit.Rows())
 	tk.MustExec(`insert into dt3pku(id, uk, v) values('a', 1, 2)`)
+
+	tk.MustExec("drop table if exists s1")
+	tk.MustExec("create table s1 (a int, b int, c int, primary key (a, b))")
+	tk.MustExec("insert s1 values (3, 3, 3), (5, 5, 5)")
+	tk.MustExec("delete from s1 where a = 3")
+	tk.MustQuery("select * from s1").Check(testkit.Rows("5 5 5"))
 }
 
 func (s *testSuite11) TestReplaceClusterIndex(c *C) {

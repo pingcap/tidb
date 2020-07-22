@@ -42,7 +42,7 @@ func (p *LogicalUnionScan) exhaustPhysicalPlans(prop *property.PhysicalProperty)
 	childProp := prop.Clone()
 	us := PhysicalUnionScan{
 		Conditions: p.conditions,
-		HandleCol:  p.handleCol,
+		HandleCols: p.handleCols,
 	}.Init(p.ctx, p.stats, p.blockOffset, childProp)
 	return []PhysicalPlan{us}, true
 }
@@ -570,6 +570,35 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 	return p.buildIndexJoinInner2IndexScan(prop, ds, innerJoinKeys, outerJoinKeys, outerIdx, us, avgInnerRowCnt)
 }
 
+func (p *LogicalJoin) getIndexJoinBuildHelper(ds *DataSource, innerJoinKeys []*expression.Column,
+	checkPathValid func(path *util.AccessPath) bool) (*indexJoinBuildHelper, []int) {
+	helper := &indexJoinBuildHelper{join: p}
+	for _, path := range ds.possibleAccessPaths {
+		if checkPathValid(path) {
+			emptyRange, err := helper.analyzeLookUpFilters(path, ds, innerJoinKeys)
+			if emptyRange {
+				return nil, nil
+			}
+			if err != nil {
+				logutil.BgLogger().Warn("build index join failed", zap.Error(err))
+			}
+		}
+	}
+	if helper.chosenPath == nil {
+		return nil, nil
+	}
+	keyOff2IdxOff := make([]int, len(innerJoinKeys))
+	for i := range keyOff2IdxOff {
+		keyOff2IdxOff[i] = -1
+	}
+	for idxOff, keyOff := range helper.idxOff2KeyOff {
+		if keyOff != -1 {
+			keyOff2IdxOff[keyOff] = idxOff
+		}
+	}
+	return helper, keyOff2IdxOff
+}
+
 // buildIndexJoinInner2TableScan builds a TableScan as the inner child for an
 // IndexJoin if possible.
 // If the inner side of a index join is a TableScan, only one tuple will be
@@ -580,7 +609,7 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 	outerIdx int, us *LogicalUnionScan, avgInnerRowCnt float64) (joins []PhysicalPlan) {
 	var tblPath *util.AccessPath
 	for _, path := range ds.possibleAccessPaths {
-		if path.IsTablePath && path.StoreType == kv.TiKV {
+		if path.IsTablePath() && path.StoreType == kv.TiKV {
 			tblPath = path
 			break
 		}
@@ -588,76 +617,76 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 	if tblPath == nil {
 		return nil
 	}
-	pkCol := ds.getPKIsHandleCol()
-	if pkCol == nil {
-		return nil
-	}
 	keyOff2IdxOff := make([]int, len(innerJoinKeys))
 	newOuterJoinKeys := make([]*expression.Column, 0)
-	pkMatched := false
-	for i, key := range innerJoinKeys {
-		if !key.Equal(nil, pkCol) {
-			keyOff2IdxOff[i] = -1
-			continue
+	var ranges []*ranger.Range
+	var innerTask, innerTask2 task
+	var helper *indexJoinBuildHelper
+	if ds.tableInfo.IsCommonHandle {
+		helper, keyOff2IdxOff = p.getIndexJoinBuildHelper(ds, innerJoinKeys, func(path *util.AccessPath) bool { return path.IsCommonHandlePath })
+		if helper == nil {
+			return nil
 		}
-		pkMatched = true
-		keyOff2IdxOff[i] = 0
-		// Add to newOuterJoinKeys only if conditions contain inner primary key. For issue #14822.
-		newOuterJoinKeys = append(newOuterJoinKeys, outerJoinKeys[i])
-	}
-	outerJoinKeys = newOuterJoinKeys
-	if !pkMatched {
-		return nil
+		innerTask = p.constructInnerTableScanTask(ds, nil, outerJoinKeys, us, false, false, avgInnerRowCnt)
+		// The index merge join's inner plan is different from index join, so we
+		// should construct another inner plan for it.
+		// Because we can't keep order for union scan, if there is a union scan in inner task,
+		// we can't construct index merge join.
+		if us == nil {
+			innerTask2 = p.constructInnerTableScanTask(ds, nil, outerJoinKeys, us, true, !prop.IsEmpty() && prop.Items[0].Desc, avgInnerRowCnt)
+		}
+		ranges = helper.chosenRanges
+	} else {
+		pkMatched := false
+		pkCol := ds.getPKIsHandleCol()
+		if pkCol == nil {
+			return nil
+		}
+		for i, key := range innerJoinKeys {
+			if !key.Equal(nil, pkCol) {
+				keyOff2IdxOff[i] = -1
+				continue
+			}
+			pkMatched = true
+			keyOff2IdxOff[i] = 0
+			// Add to newOuterJoinKeys only if conditions contain inner primary key. For issue #14822.
+			newOuterJoinKeys = append(newOuterJoinKeys, outerJoinKeys[i])
+		}
+		outerJoinKeys = newOuterJoinKeys
+		if !pkMatched {
+			return nil
+		}
+		innerTask = p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, false, false, avgInnerRowCnt)
+		// The index merge join's inner plan is different from index join, so we
+		// should construct another inner plan for it.
+		// Because we can't keep order for union scan, if there is a union scan in inner task,
+		// we can't construct index merge join.
+		if us == nil {
+			innerTask2 = p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, true, !prop.IsEmpty() && prop.Items[0].Desc, avgInnerRowCnt)
+		}
 	}
 	joins = make([]PhysicalPlan, 0, 3)
-	innerTask := p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, false, false, avgInnerRowCnt)
 	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(p.constructIndexHashJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil))
 		}
 	})
-	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil)...)
-	// The index merge join's inner plan is different from index join, so we
-	// should construct another inner plan for it.
-	// Because we can't keep order for union scan, if there is a union scan in inner task,
-	// we can't construct index merge join.
-	if us == nil {
-		innerTask2 := p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, true, !prop.IsEmpty() && prop.Items[0].Desc, avgInnerRowCnt)
-		joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, nil, keyOff2IdxOff, nil, nil)...)
-	}
+	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, nil, nil)...)
 	// We can reuse the `innerTask` here since index nested loop hash join
 	// do not need the inner child to promise the order.
-	joins = append(joins, p.constructIndexHashJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil)...)
+	joins = append(joins, p.constructIndexHashJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, nil, nil)...)
+	if innerTask2 != nil {
+		joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, ranges, keyOff2IdxOff, nil, nil)...)
+	}
 	return joins
 }
 
 func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 	prop *property.PhysicalProperty, ds *DataSource, innerJoinKeys, outerJoinKeys []*expression.Column,
 	outerIdx int, us *LogicalUnionScan, avgInnerRowCnt float64) (joins []PhysicalPlan) {
-	helper := &indexJoinBuildHelper{join: p}
-	for _, path := range ds.possibleAccessPaths {
-		if path.IsTablePath {
-			continue
-		}
-		emptyRange, err := helper.analyzeLookUpFilters(path, ds, innerJoinKeys)
-		if emptyRange {
-			return nil
-		}
-		if err != nil {
-			logutil.BgLogger().Warn("build index join failed", zap.Error(err))
-		}
-	}
-	if helper.chosenPath == nil {
+	helper, keyOff2IdxOff := p.getIndexJoinBuildHelper(ds, innerJoinKeys, func(path *util.AccessPath) bool { return !path.IsTablePath() })
+	if helper == nil {
 		return nil
-	}
-	keyOff2IdxOff := make([]int, len(innerJoinKeys))
-	for i := range keyOff2IdxOff {
-		keyOff2IdxOff[i] = -1
-	}
-	for idxOff, keyOff := range helper.idxOff2KeyOff {
-		if keyOff != -1 {
-			keyOff2IdxOff[keyOff] = idxOff
-		}
 	}
 	joins = make([]PhysicalPlan, 0, 3)
 	rangeInfo := helper.buildRangeDecidedByInformation(helper.chosenPath.IdxCols, outerJoinKeys)
@@ -678,6 +707,9 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 		}
 	})
 	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
+	// We can reuse the `innerTask` here since index nested loop hash join
+	// do not need the inner child to promise the order.
+	joins = append(joins, p.constructIndexHashJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
 	// The index merge join's inner plan is different from index join, so we
 	// should construct another inner plan for it.
 	// Because we can't keep order for union scan, if there is a union scan in inner task,
@@ -686,9 +718,6 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 		innerTask2 := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRemained, outerJoinKeys, us, rangeInfo, true, !prop.IsEmpty() && prop.Items[0].Desc, avgInnerRowCnt, maxOneRow)
 		joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
 	}
-	// We can reuse the `innerTask` here since index nested loop hash join
-	// do not need the inner child to promise the order.
-	joins = append(joins, p.constructIndexHashJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
 	return joins
 }
 
@@ -746,7 +775,13 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 	desc bool,
 	rowCount float64,
 ) task {
-	ranges := ranger.FullIntRange(mysql.HasUnsignedFlag(pk.RetType.Flag))
+	var ranges []*ranger.Range
+	// pk is nil means the table uses the common handle.
+	if pk == nil {
+		ranges = ranger.FullRange()
+	} else {
+		ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(pk.RetType.Flag))
+	}
 	ts := PhysicalTableScan{
 		Table:           ds.tableInfo,
 		Columns:         ds.Columns,
@@ -806,7 +841,7 @@ func (p *LogicalJoin) constructInnerUnionScan(us *LogicalUnionScan, reader Physi
 	// childrenReqProps now since we have got reader already.
 	physicalUnionScan := PhysicalUnionScan{
 		Conditions: us.conditions,
-		HandleCol:  us.handleCol,
+		HandleCols: us.handleCols,
 	}.Init(us.ctx, reader.statsInfo(), us.blockOffset, nil)
 	physicalUnionScan.SetChildren(reader)
 	return physicalUnionScan
@@ -847,7 +882,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		tblCols:     ds.TblCols,
 		keepOrder:   is.KeepOrder,
 	}
-	if !isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, is.Table.PKIsHandle) {
+	if !ds.isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, is.Table) {
 		// On this way, it's double read case.
 		ts := PhysicalTableScan{
 			Columns:         ds.Columns,
@@ -857,14 +892,17 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 			physicalTableID: ds.physicalTableID,
 		}.Init(ds.ctx, ds.blockOffset)
 		ts.schema = is.dataSourceSchema.Clone()
+		if ds.tableInfo.IsCommonHandle {
+			cop.commonHandleCols = ds.commonHandleCols
+		}
 		// If inner cop task need keep order, the extraHandleCol should be set.
 		if cop.keepOrder {
 			cop.extraHandleCol, cop.doubleReadNeedProj = ts.appendExtraHandleCol(ds)
 		}
 		cop.tablePlan = ts
 	}
-	is.initSchema(path.Index, path.FullIdxCols, cop.tablePlan != nil)
-	indexConds, tblConds := splitIndexFilterConditions(filterConds, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo)
+	is.initSchema(append(path.FullIdxCols, ds.commonHandleCols...), cop.tablePlan != nil)
+	indexConds, tblConds := ds.splitIndexFilterConditions(filterConds, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo)
 	// Specially handle cases when input rowCount is 0, which can only happen in 2 scenarios:
 	// - estimated row count of outer plan is 0;
 	// - estimated row count of inner "DataSource + filters" is 0;
@@ -1555,9 +1593,29 @@ func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 		return nil, true
 	}
 	join := la.GetHashJoin(prop)
+	var columns []*expression.Column
+	for _, colColumn := range la.CorCols {
+		columns = append(columns, &colColumn.Column)
+	}
+	cacheHitRatio := 0.0
+	if la.stats.RowCount != 0 {
+		ndv := getCardinality(columns, la.schema, la.stats)
+		// for example, if there are 100 rows and the number of distinct values of these correlated columns
+		// are 70, then we can assume 30 rows can hit the cache so the cache hit ratio is 1 - (70/100) = 0.3
+		cacheHitRatio = 1 - (ndv / la.stats.RowCount)
+	}
+
+	var canUseCache bool
+	if cacheHitRatio > 0.1 && la.ctx.GetSessionVars().NestedLoopJoinCacheCapacity > 0 {
+		canUseCache = true
+	} else {
+		canUseCache = false
+	}
+
 	apply := PhysicalApply{
 		PhysicalHashJoin: *join,
 		OuterSchema:      la.CorCols,
+		CanUseCache:      canUseCache,
 	}.Init(la.ctx,
 		la.stats.ScaleByExpectCnt(prop.ExpectedCnt),
 		la.blockOffset,

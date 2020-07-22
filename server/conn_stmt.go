@@ -48,6 +48,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
 )
 
@@ -182,6 +183,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 			return errors.Annotate(err, cc.preparedStmt2String(stmtID))
 		}
 	}
+	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	rs, err := stmt.Execute(ctx, args)
 	if err != nil {
 		return errors.Annotate(err, cc.preparedStmt2String(stmtID))
@@ -634,6 +636,9 @@ func (cc *clientConn) preparedStmt2String(stmtID uint32) string {
 	sv := cc.ctx.GetSessionVars()
 	if sv == nil {
 		return ""
+	}
+	if sv.EnableLogDesensitization {
+		return cc.preparedStmt2StringNoArgs(stmtID)
 	}
 	return cc.preparedStmt2StringNoArgs(stmtID) + sv.PreparedParams.String()
 }

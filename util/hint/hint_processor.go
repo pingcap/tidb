@@ -23,10 +23,18 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
+
+var supportedHintNameForInsertStmt = map[string]struct{}{}
+
+func init() {
+	supportedHintNameForInsertStmt["memory_quota"] = struct{}{}
+}
 
 // HintsSet contains all hints of a query.
 type HintsSet struct {
@@ -55,7 +63,7 @@ func (hs *HintsSet) ContainTableHint(hint string) bool {
 }
 
 // ExtractTableHintsFromStmtNode extracts table hints from this node.
-func ExtractTableHintsFromStmtNode(node ast.Node) []*ast.TableOptimizerHint {
+func ExtractTableHintsFromStmtNode(node ast.Node, sctx sessionctx.Context) []*ast.TableOptimizerHint {
 	switch x := node.(type) {
 	case *ast.SelectStmt:
 		return x.TableHints
@@ -63,11 +71,47 @@ func ExtractTableHintsFromStmtNode(node ast.Node) []*ast.TableOptimizerHint {
 		return x.TableHints
 	case *ast.DeleteStmt:
 		return x.TableHints
-	// TODO: support hint for InsertStmt
+	case *ast.InsertStmt:
+		//check duplicated hints
+		checkInsertStmtHintDuplicated(node, sctx)
+		return x.TableHints
 	case *ast.ExplainStmt:
-		return ExtractTableHintsFromStmtNode(x.Stmt)
+		return ExtractTableHintsFromStmtNode(x.Stmt, sctx)
 	default:
 		return nil
+	}
+}
+
+// checkInsertStmtHintDuplicated check whether existed the duplicated hints in both insertStmt and its selectStmt.
+// If existed, it would send a warning message.
+func checkInsertStmtHintDuplicated(node ast.Node, sctx sessionctx.Context) {
+	switch x := node.(type) {
+	case *ast.InsertStmt:
+		if len(x.TableHints) > 0 {
+			var supportedHint *ast.TableOptimizerHint
+			for _, hint := range x.TableHints {
+				if _, ok := supportedHintNameForInsertStmt[hint.HintName.L]; ok {
+					supportedHint = hint
+					break
+				}
+			}
+			if supportedHint != nil {
+				var duplicatedHint *ast.TableOptimizerHint
+				for _, hint := range ExtractTableHintsFromStmtNode(x.Select, nil) {
+					if hint.HintName.L == supportedHint.HintName.L {
+						duplicatedHint = hint
+						break
+					}
+				}
+				if duplicatedHint != nil {
+					hint := fmt.Sprintf("%s(`%v`)", duplicatedHint.HintName.O, duplicatedHint.HintData)
+					err := terror.ClassUtil.New(errno.ErrWarnConflictingHint, fmt.Sprintf(errno.MySQLErrName[errno.ErrWarnConflictingHint], hint))
+					sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+				}
+			}
+		}
+	default:
+		return
 	}
 }
 
