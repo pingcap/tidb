@@ -216,9 +216,10 @@ Dumpling: DP:{class}:{code}
 
 {class}, {code} ~= [A-Za-z0-9]+
 
-MySQL error code <-> TiDB error code
-[0, 9000) <-> {class}:{code}
-[9000, 9010) <-> KV:{class}:{code} / PD:{class}:{code} / Flash:{class}:{code}
+For mysql protocol compatible components, table below shows the available purely numeric codes for each component.
+MySQL error code raneg <-> TiDB Family Component
+[0, 9000)              <-> TiDB
+[9000, 9010)           <-> TiKV / PD / TiFlash
 ```
 
 ### How It Works
