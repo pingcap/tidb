@@ -88,12 +88,8 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 		{`May 01, 2013`, `%M %d,%Y`, types.FromDate(2013, 5, 1, 0, 0, 0, 0)},
 		{`a09:30:17`, `a%h:%i:%s`, types.FromDate(0, 0, 0, 9, 30, 17, 0)},
 		{`09:30:17a`, `%h:%i:%s`, types.FromDate(0, 0, 0, 9, 30, 17, 0)},
-<<<<<<< HEAD
 		{`abc`, `abc`, types.ZeroTime},
-=======
 		{`12:43:24`, `%h:%i:%s`, types.FromDate(0, 0, 0, 0, 43, 24, 0)},
-		{`abc`, `abc`, types.ZeroCoreTime},
->>>>>>> cc0b6f1... types: fix STR_TO_DATE handling for %h, %r (#18171) (#18428)
 		{`09`, `%m`, types.FromDate(0, 9, 0, 0, 0, 0, 0)},
 		{`09`, `%s`, types.FromDate(0, 0, 0, 0, 0, 9, 0)},
 		{`12:43:24 AM`, `%r`, types.FromDate(0, 0, 0, 0, 43, 24, 0)},

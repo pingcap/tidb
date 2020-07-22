@@ -2175,7 +2175,7 @@ func mysqlTimeFix(t *MysqlTime, ctx map[string]int) error {
 		}
 	} else {
 		if _, ok := ctx["%h"]; ok && t.Hour() == 12 {
-			t.setHour(0)
+			t.hour = 0
 		}
 	}
 	return nil
@@ -2549,12 +2549,8 @@ func hour12Numeric(t *MysqlTime, input string, ctx map[string]int) (string, bool
 	if !ok || v > 12 || v == 0 {
 		return input, false
 	}
-<<<<<<< HEAD
 	t.hour = v
-=======
-	t.setHour(uint8(v))
 	ctx["%h"] = v
->>>>>>> cc0b6f1... types: fix STR_TO_DATE handling for %h, %r (#18171) (#18428)
 	return input[length:], true
 }
 
