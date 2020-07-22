@@ -149,6 +149,8 @@ func (s *testCollateSuite) TestUnicodeCICollator(c *C) {
 		{"a ", "a  ", 0},
 		{"😜", "😃", 0},
 		{"a\t", "a", 1},
+		{"ß", "s", 1},
+		{"ß", "ss", 0},
 	}
 	keyTable := []keyTable{
 		{"a", []byte{0x0E, 0x33}},
@@ -163,25 +165,6 @@ func (s *testCollateSuite) TestUnicodeCICollator(c *C) {
 
 	testCompareTable(compareTable, "utf8mb4_unicode_ci", c)
 	testKeyTable(keyTable, "utf8mb4_unicode_ci", c)
-}
-
-func BenchmarkUnicodeCICompareSpecial(b *testing.B) {
-	SetNewCollationEnabledForTest(true)
-	defer SetNewCollationEnabledForTest(false)
-
-	var (
-		s1 = `ßßßaaaAAAAßsssssßßßßaAaaaAAAssßßssßßsßAAaa😃☃😃😃`
-		s2 = `ssßßAAAAAAAßsßssßssssßaAaAAAAAßßßssßßsßAAaa😜☃😃😜`
-	)
-
-	collator := GetCollator("utf8mb4_unicode_ci")
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		match := collator.Compare(s1, s2)
-		if match != 0 {
-			b.Fatal("equal expected.")
-		}
-	}
 }
 
 func BenchmarkUnicodeCIKeySpecial(b *testing.B) {
@@ -205,28 +188,6 @@ func BenchmarkUnicodeCIKeySpecial(b *testing.B) {
 			if !bytes.Equal(collator.Key(t.Str), t.Expect) {
 				b.Fatal("equal expected.")
 			}
-		}
-	}
-}
-
-func BenchmarkUnicodeCIMatchSpecial(b *testing.B) {
-	SetNewCollationEnabledForTest(true)
-	defer SetNewCollationEnabledForTest(false)
-
-	var (
-		pattern = `㍿%㍿%㍿%㍿%㍿%㍿%㍿%㍿%b`
-		target  = `㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿`
-		escape  = byte('\\')
-	)
-
-	p := GetCollator("utf8mb4_unicode_ci").Pattern()
-	p.Compile(pattern, escape)
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		match := p.DoMatch(target)
-		if match {
-			b.Fatal("Unmatch expected.")
 		}
 	}
 }

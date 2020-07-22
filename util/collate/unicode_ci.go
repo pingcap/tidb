@@ -208,11 +208,7 @@ func runeEqual(a, b rune) bool {
 		return a == b
 	}
 
-	for weightA[0] != terminal && weightB[0] != terminal {
-		if weightA[0] != weightB[0] {
-			return false
-		}
-
+	for weightA[0] == weightB[0] && weightA[0] != terminal {
 		weightA, weightB = weightA[1:], weightB[1:]
 	}
 
