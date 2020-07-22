@@ -5216,10 +5216,20 @@ func checkPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.Rule, error) 
 					return rules, errors.Errorf("invalid placement spec[%d], invalid constraint format: %s", k, label)
 				}
 
+				key := strings.TrimSpace(kv[0])
+				if key == "" {
+					return rules, errors.Errorf("invalid placement spec[%d], empty constraint key: %s", k, label)
+				}
+
+				val := strings.TrimSpace(kv[1])
+				if val == "" {
+					return rules, errors.Errorf("invalid placement spec[%d], empty constraint val: %s", k, label)
+				}
+
 				rule.LabelConstraints = append(rule.LabelConstraints, placement.LabelConstraint{
-					Key:    strings.TrimSpace(kv[0]),
+					Key:    key,
 					Op:     op,
-					Values: []string{strings.TrimSpace(kv[1])},
+					Values: []string{val},
 				})
 			}
 		}
