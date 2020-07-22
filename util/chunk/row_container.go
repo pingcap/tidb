@@ -67,7 +67,7 @@ func (c *RowContainer) SpillToDisk() {
 	if c.alreadySpilled() {
 		return
 	}
-	// c.actionSpill may be nil in some unit tests.
+	// c.actionSpill may be nil when testing SpillToDisk directly.
 	if c.actionSpill != nil {
 		c.actionSpill.setStatus(spilling)
 		defer c.actionSpill.cond.Broadcast()
