@@ -869,7 +869,7 @@ func benchmarkHashJoinExec(b *testing.B, casTest *hashJoinTestCase, opt1, opt2 *
 
 	if testResult {
 		time.Sleep(200 * time.Millisecond)
-		if spilled := exec.rowContainer.alreadySpilledSafe(); spilled != casTest.disk {
+		if spilled := exec.rowContainer.alreadySpilledSafeForTest(); spilled != casTest.disk {
 			b.Fatal("wrong usage with disk:", spilled, casTest.disk)
 		}
 	}
@@ -1063,7 +1063,7 @@ func benchmarkBuildHashTable(b *testing.B, casTest *hashJoinTestCase, dataSource
 
 	if testResult {
 		time.Sleep(200 * time.Millisecond)
-		if exec.rowContainer.alreadySpilledSafe() != casTest.disk {
+		if exec.rowContainer.alreadySpilledSafeForTest() != casTest.disk {
 			b.Fatal("wrong usage with disk")
 		}
 	}

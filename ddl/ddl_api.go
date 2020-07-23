@@ -1106,12 +1106,12 @@ func checkConstraintNames(constraints []*ast.Constraint) error {
 }
 
 func setTableAutoRandomBits(ctx sessionctx.Context, tbInfo *model.TableInfo, colDefs []*ast.ColumnDef) error {
-	allowAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
 	pkColName := tbInfo.GetPkName()
 	for _, col := range colDefs {
 		if containsColumnOption(col, ast.ColumnOptionAutoRandom) {
-			if !allowAutoRandom {
-				return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomExperimentalDisabledErrMsg)
+			if col.Tp.Tp != mysql.TypeLonglong {
+				return ErrInvalidAutoRandom.GenWithStackByArgs(
+					fmt.Sprintf(autoid.AutoRandomOnNonBigIntColumn, types.TypeStr(col.Tp.Tp)))
 			}
 			if !tbInfo.PKIsHandle || col.Name.Name.L != pkColName.L {
 				errMsg := fmt.Sprintf(autoid.AutoRandomPKisNotHandleErrMsg, col.Name.Name.O)
@@ -1132,9 +1132,9 @@ func setTableAutoRandomBits(ctx sessionctx.Context, tbInfo *model.TableInfo, col
 			layout := autoid.NewAutoRandomIDLayout(col.Tp, autoRandBits)
 			if autoRandBits == 0 {
 				return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomNonPositive)
-			} else if autoRandBits >= layout.TypeBitsLength {
-				errMsg := fmt.Sprintf(autoid.AutoRandomOverflowErrMsg, col.Name.Name.L,
-					layout.TypeBitsLength, autoRandBits, col.Name.Name.L, layout.TypeBitsLength-1)
+			} else if autoRandBits > autoid.MaxAutoRandomBits {
+				errMsg := fmt.Sprintf(autoid.AutoRandomOverflowErrMsg,
+					autoid.MaxAutoRandomBits, autoRandBits, col.Name.Name.O)
 				return ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
 			}
 			tbInfo.AutoRandomBits = autoRandBits
@@ -2215,8 +2215,21 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 	var actionType model.ActionType
 	switch tp {
 	case autoid.AutoRandomType:
-		if t.Meta().AutoRandomBits == 0 {
+		tbInfo := t.Meta()
+		if tbInfo.AutoRandomBits == 0 {
 			return errors.Trace(ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomRebaseNotApplicable))
+		}
+		var autoRandColTp types.FieldType
+		for _, c := range tbInfo.Columns {
+			if mysql.HasPriKeyFlag(c.Flag) {
+				autoRandColTp = c.FieldType
+				break
+			}
+		}
+		layout := autoid.NewAutoRandomIDLayout(&autoRandColTp, tbInfo.AutoRandomBits)
+		if layout.IncrementalMask()&newBase != newBase {
+			errMsg := fmt.Sprintf(autoid.AutoRandomRebaseOverflow, newBase, layout.IncrementalBitsCapacity())
+			return errors.Trace(ErrInvalidAutoRandom.GenWithStackByArgs(errMsg))
 		}
 		actionType = model.ActionRebaseAutoRandomBase
 	case autoid.RowIDAllocType:
@@ -3014,7 +3027,8 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		return nil, errors.Trace(err)
 	}
 
-	if err = checkAutoRandom(t.Meta(), col, specNewColumn); err != nil {
+	var newAutoRandBits uint64
+	if newAutoRandBits, err = checkAutoRandom(t.Meta(), col, specNewColumn); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -3024,7 +3038,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		SchemaName: schema.Name.L,
 		Type:       model.ActionModifyColumn,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{&newCol, originalColName, spec.Position, modifyColumnTp},
+		Args:       []interface{}{&newCol, originalColName, spec.Position, modifyColumnTp, newAutoRandBits},
 	}
 	return job, nil
 }
@@ -3066,34 +3080,46 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 	return nil
 }
 
-func checkAutoRandom(tableInfo *model.TableInfo, originCol *table.Column, specNewColumn *ast.ColumnDef) error {
-	if !config.GetGlobalConfig().Experimental.AllowAutoRandom && containsColumnOption(specNewColumn, ast.ColumnOptionAutoRandom) {
-		return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomExperimentalDisabledErrMsg)
+func checkAutoRandom(tableInfo *model.TableInfo, originCol *table.Column, specNewColumn *ast.ColumnDef) (uint64, error) {
+	// Disallow add/drop actions on auto_random.
+	var oldRandBits uint64
+	if tableInfo.PKIsHandle && (tableInfo.GetPkName().L == originCol.Name.L) {
+		oldRandBits = tableInfo.AutoRandomBits
 	}
-	// Disallow add/drop/modify actions on auto_random.
-	newAutoRandomBit, err := extractAutoRandomBitsFromColDef(specNewColumn)
+	newRandBits, err := extractAutoRandomBitsFromColDef(specNewColumn)
 	if err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
-	if tableInfo.AutoRandomBits != newAutoRandomBit {
-		return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomAlterErrMsg)
+	switch {
+	case oldRandBits == newRandBits:
+		break
+	case oldRandBits == 0 || newRandBits == 0:
+		return 0, ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomAlterErrMsg)
+	case autoid.MaxAutoRandomBits < newRandBits:
+		errMsg := fmt.Sprintf(autoid.AutoRandomOverflowErrMsg,
+			autoid.MaxAutoRandomBits, newRandBits, specNewColumn.Name.Name.O)
+		return 0, ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
+	case oldRandBits < newRandBits:
+		break // Increasing auto_random shard bits is allowed.
+	case oldRandBits > newRandBits:
+		return 0, ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomDecreaseBitErrMsg)
 	}
 
-	if tableInfo.AutoRandomBits != 0 {
+	if oldRandBits != 0 {
 		// Disallow changing the column field type.
 		if originCol.Tp != specNewColumn.Tp.Tp {
-			return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomModifyColTypeErrMsg)
+			return 0, ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomModifyColTypeErrMsg)
 		}
 		// Disallow changing auto_increment on auto_random column.
 		if containsColumnOption(specNewColumn, ast.ColumnOptionAutoIncrement) != mysql.HasAutoIncrementFlag(originCol.Flag) {
-			return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomIncompatibleWithAutoIncErrMsg)
+			return 0, ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomIncompatibleWithAutoIncErrMsg)
 		}
 		// Disallow specifying a default value on auto_random column.
 		if containsColumnOption(specNewColumn, ast.ColumnOptionDefaultValue) {
-			return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomIncompatibleWithDefaultValueErrMsg)
+			return 0, ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomIncompatibleWithDefaultValueErrMsg)
 		}
 	}
-	return nil
+	return newRandBits, nil
 }
 
 // ChangeColumn renames an existing column and modifies the column's definition,
@@ -3887,7 +3913,14 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	}
 
 	if indexInfo := t.Meta().FindIndexByName(indexName.L); indexInfo != nil {
-		err = ErrDupKeyName.GenWithStack("index already exist %s", indexName)
+		if indexInfo.State != model.StatePublic {
+			// NOTE: explicit error message. See issue #18363.
+			err = ErrDupKeyName.GenWithStack("index already exist %s; "+
+				"a background job is trying to add the same index, "+
+				"please check by `ADMIN SHOW DDL JOBS`", indexName)
+		} else {
+			err = ErrDupKeyName.GenWithStack("index already exist %s", indexName)
+		}
 		if ifNotExists {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			return nil

@@ -6587,3 +6587,135 @@ func (s *testIntegrationSuite) TestIssue17727(c *C) {
 	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1591940878"))
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 }
+
+func (s *testIntegrationSerialSuite) TestIssue18702(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test;")
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	// test unique index
+	tk.MustExec(`CREATE TABLE t (
+  a bigint(20) PRIMARY KEY,
+  b varchar(50) COLLATE utf8_general_ci DEFAULT NULL,
+  c int,
+  d int,
+    UNIQUE KEY idx_bc(b, c)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
+`)
+	// test without untouched flag.
+	tk.MustExec("INSERT INTO t VALUES (1, 'A', 10, 1), (2, 'B', 20, 1);")
+	tk.MustExec("BEGIN;")
+	tk.MustExec("UPDATE t SET c = 5 WHERE c = 10;")
+	tk.MustQuery("SELECT * FROM t FORCE INDEX(idx_bc) WHERE b = 'A';").Check(testkit.Rows("1 A 5 1"))
+	tk.MustExec("ROLLBACK;")
+	tk.MustQuery("SELECT * FROM t FORCE INDEX(idx_bc);").Check(testkit.Rows("1 A 10 1", "2 B 20 1"))
+
+	// test with untouched flag.
+	tk.MustExec("BEGIN;")
+	tk.MustExec("UPDATE t SET d = 5 WHERE c = 10;")
+	tk.MustQuery("SELECT * FROM t FORCE INDEX(idx_bc) WHERE b = 'A';").Check(testkit.Rows("1 A 10 5"))
+	tk.MustExec("ROLLBACK;")
+	tk.MustQuery("SELECT * FROM t FORCE INDEX(idx_bc);").Check(testkit.Rows("1 A 10 1", "2 B 20 1"))
+
+	// test update handle
+	tk.MustExec("BEGIN;")
+	tk.MustExec("UPDATE t SET a = 3 WHERE a = 1;")
+	tk.MustQuery("SELECT * FROM t FORCE INDEX(idx_bc) WHERE b = 'A';").Check(testkit.Rows("3 A 10 1"))
+	tk.MustExec("ROLLBACK;")
+	tk.MustQuery("SELECT * FROM t FORCE INDEX(idx_bc);").Check(testkit.Rows("1 A 10 1", "2 B 20 1"))
+
+	// test with INSERT ... ON DUPLICATE KEY UPDATE
+	tk.MustExec("BEGIN;")
+	tk.MustExec("INSERT INTO t VALUES (1, 'A', 10, 1) ON DUPLICATE KEY UPDATE c = 5;")
+	tk.MustQuery("SELECT * FROM t FORCE INDEX(idx_bc) WHERE b = 'A';").Check(testkit.Rows("1 A 5 1"))
+	tk.MustExec("ROLLBACK;")
+	tk.MustQuery("SELECT * FROM t FORCE INDEX(idx_bc);").Check(testkit.Rows("1 A 10 1", "2 B 20 1"))
+
+	tk.MustExec("BEGIN;")
+	tk.MustExec("INSERT INTO t VALUES (1, 'A', 10, 1) ON DUPLICATE KEY UPDATE b = 'C'")
+	tk.MustQuery("SELECT * FROM t FORCE INDEX(idx_bc) WHERE b = 'c';").Check(testkit.Rows("1 C 10 1"))
+	tk.MustExec("ROLLBACK;")
+	tk.MustQuery("SELECT * FROM t FORCE INDEX(idx_bc);").Check(testkit.Rows("1 A 10 1", "2 B 20 1"))
+
+	// test update handle
+	tk.MustExec("BEGIN;")
+	tk.MustExec("INSERT INTO t VALUES (1, 'A', 10, 1) ON DUPLICATE KEY UPDATE a = 3")
+	tk.MustQuery("SELECT * FROM t FORCE INDEX(idx_bc) WHERE b = 'A';").Check(testkit.Rows("3 A 10 1"))
+	tk.MustExec("ROLLBACK;")
+	tk.MustQuery("SELECT * FROM t FORCE INDEX(idx_bc);").Check(testkit.Rows("1 A 10 1", "2 B 20 1"))
+
+	// test with REPLACE INTO
+	tk.MustExec("BEGIN;")
+	tk.MustExec("REPLACE INTO t VALUES (1, 'A', 5, 1);")
+	tk.MustQuery("SELECT * FROM t FORCE INDEX(idx_bc) WHERE b = 'A';").Check(testkit.Rows("1 A 5 1"))
+	tk.MustExec("ROLLBACK;")
+	tk.MustQuery("SELECT * FROM t FORCE INDEX(idx_bc);").Check(testkit.Rows("1 A 10 1", "2 B 20 1"))
+
+	// test update handle
+	tk.MustExec("BEGIN;")
+	tk.MustExec("REPLACE INTO t VALUES (3, 'A', 10, 1);")
+	tk.MustQuery("SELECT * FROM t FORCE INDEX(idx_bc) WHERE b = 'A';").Check(testkit.Rows("3 A 10 1"))
+	tk.MustExec("ROLLBACK;")
+	tk.MustQuery("SELECT * FROM t FORCE INDEX(idx_bc);").Check(testkit.Rows("1 A 10 1", "2 B 20 1"))
+
+	// test non-unique index
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec(`CREATE TABLE t (
+  a bigint(20) PRIMARY KEY,
+  b varchar(50) COLLATE utf8_general_ci DEFAULT NULL,
+  c int,
+  d int,
+    KEY idx_bc(b, c)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
+`)
+	// test without untouched flag.
+	tk.MustExec("INSERT INTO t VALUES (1, 'A', 10, 1), (2, 'B', 20, 1);")
+	tk.MustExec("BEGIN;")
+	tk.MustExec("UPDATE t SET c = 5 WHERE c = 10;")
+	tk.MustQuery("SELECT * FROM t FORCE INDEX(idx_bc) WHERE b = 'A';").Check(testkit.Rows("1 A 5 1"))
+	tk.MustExec("ROLLBACK;")
+	tk.MustQuery("SELECT * FROM t FORCE INDEX(idx_bc);").Check(testkit.Rows("1 A 10 1", "2 B 20 1"))
+
+	// test with untouched flag.
+	tk.MustExec("BEGIN;")
+	tk.MustExec("UPDATE t SET d = 5 WHERE c = 10;")
+	tk.MustQuery("SELECT * FROM t FORCE INDEX(idx_bc) WHERE b = 'A';").Check(testkit.Rows("1 A 10 5"))
+	tk.MustExec("ROLLBACK;")
+	tk.MustQuery("SELECT * FROM t FORCE INDEX(idx_bc);").Check(testkit.Rows("1 A 10 1", "2 B 20 1"))
+
+	// test with INSERT ... ON DUPLICATE KEY UPDATE
+	tk.MustExec("BEGIN;")
+	tk.MustExec("INSERT INTO t VALUES (1, 'A', 10, 1) ON DUPLICATE KEY UPDATE c = 5;")
+	tk.MustQuery("SELECT * FROM t FORCE INDEX(idx_bc) WHERE b = 'A';").Check(testkit.Rows("1 A 5 1"))
+	tk.MustExec("ROLLBACK;")
+	tk.MustQuery("SELECT * FROM t FORCE INDEX(idx_bc);").Check(testkit.Rows("1 A 10 1", "2 B 20 1"))
+
+	tk.MustExec("BEGIN;")
+	tk.MustExec("INSERT INTO t VALUES (1, 'A', 10, 1) ON DUPLICATE KEY UPDATE b = 'C'")
+	tk.MustQuery("SELECT * FROM t FORCE INDEX(idx_bc) WHERE b = 'c';").Check(testkit.Rows("1 C 10 1"))
+	tk.MustExec("ROLLBACK;")
+	tk.MustQuery("SELECT * FROM t FORCE INDEX(idx_bc);").Check(testkit.Rows("1 A 10 1", "2 B 20 1"))
+
+	// test update handle
+	tk.MustExec("BEGIN;")
+	tk.MustExec("INSERT INTO t VALUES (1, 'A', 10, 1) ON DUPLICATE KEY UPDATE a = 3")
+	tk.MustQuery("SELECT * FROM t FORCE INDEX(idx_bc) WHERE b = 'A';").Check(testkit.Rows("3 A 10 1"))
+	tk.MustExec("ROLLBACK;")
+	tk.MustQuery("SELECT * FROM t FORCE INDEX(idx_bc);").Check(testkit.Rows("1 A 10 1", "2 B 20 1"))
+
+	// test with REPLACE INTO
+	tk.MustExec("BEGIN;")
+	tk.MustExec("REPLACE INTO t VALUES (1, 'A', 5, 1);")
+	tk.MustQuery("SELECT * FROM t FORCE INDEX(idx_bc) WHERE b = 'A';").Check(testkit.Rows("1 A 5 1"))
+	tk.MustExec("ROLLBACK;")
+	tk.MustQuery("SELECT * FROM t FORCE INDEX(idx_bc);").Check(testkit.Rows("1 A 10 1", "2 B 20 1"))
+
+	// test update handle
+	tk.MustExec("BEGIN;")
+	tk.MustExec("REPLACE INTO t VALUES (3, 'A', 10, 1);")
+	tk.MustQuery("SELECT * FROM t FORCE INDEX(idx_bc) WHERE b = 'A';").Check(testkit.Rows("1 A 10 1", "3 A 10 1"))
+	tk.MustExec("ROLLBACK;")
+	tk.MustQuery("SELECT * FROM t FORCE INDEX(idx_bc);").Check(testkit.Rows("1 A 10 1", "2 B 20 1"))
+}

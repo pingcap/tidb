@@ -600,10 +600,10 @@ func (s *testTableSuite) TestTableRowIDShardingInfo(c *C) {
 	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
 	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
 
-	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t4` (a int key auto_random)")
+	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t4` (a bigint key auto_random)")
 	assertShardingInfo("t4", "PK_AUTO_RANDOM_BITS=5")
 
-	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t5` (a int key auto_random(1))")
+	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t5` (a bigint key auto_random(1))")
 	assertShardingInfo("t5", "PK_AUTO_RANDOM_BITS=1")
 
 	tk.MustExec("DROP DATABASE `sharding_info_test_db`")
@@ -880,6 +880,7 @@ func (s *testTableSuite) TestSelectHiddenColumn(c *C) {
 func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	tk := s.newTestKitWithRoot(c)
 
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk.MustQuery("select column_comment from information_schema.columns " +
 		"where table_name='STATEMENTS_SUMMARY' and column_name='STMT_TYPE'",
 	).Check(testkit.Rows("Statement type"))
