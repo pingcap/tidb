@@ -18,6 +18,7 @@ import (
 	"context"
 	"math"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -99,6 +100,9 @@ type twoPhaseCommitter struct {
 		acAfterCommitPrimary chan struct{}
 		bkAfterCommitPrimary chan struct{}
 	}
+
+	useAsyncCommit uint32
+	minCommitTS    uint64
 }
 
 type committerMutations struct {
@@ -158,6 +162,24 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 	}, nil
 }
 
+func (c *twoPhaseCommitter) extractKeyExistsErr(key kv.Key) error {
+	if !c.txn.us.HasPresumeKeyNotExists(key) {
+		return errors.Errorf("conn %d, existErr for key:%s should not be nil", c.connID, key)
+	}
+
+	_, handle, err := tablecodec.DecodeRecordKey(key)
+	if err == nil {
+		return kv.ErrKeyExists.FastGenByArgs(handle.String(), "PRIMARY")
+	}
+
+	tableID, indexID, indexValues, err := tablecodec.DecodeIndexKey(key)
+	if err == nil {
+		return kv.ErrKeyExists.FastGenByArgs(strings.Join(indexValues, "-"), c.txn.us.GetIndexName(tableID, indexID))
+	}
+
+	return kv.ErrKeyExists.FastGenByArgs(key.String(), "UNKNOWN")
+}
+
 func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	var (
 		size            int
@@ -167,7 +189,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		noNeedCommitKey = make(map[string]struct{})
 	)
 	txn := c.txn
-	sizeHint := len(txn.lockKeys) + txn.us.Len()
+	sizeHint := len(txn.lockKeys) + txn.us.GetMemBuffer().Len()
 	mutations := newCommiterMutations(sizeHint)
 	c.isPessimistic = txn.IsPessimistic()
 
@@ -176,7 +198,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		return bytes.Compare(txn.lockKeys[i], txn.lockKeys[j]) < 0
 	})
 	lockIdx := 0
-	err := txn.us.WalkBuffer(func(k kv.Key, v []byte) error {
+	err := kv.WalkMemBuffer(txn.us.GetMemBuffer(), func(k kv.Key, v []byte) error {
 		var (
 			op                pb.Op
 			value             []byte
@@ -187,13 +209,13 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 				return nil
 			}
 			op = pb.Op_Put
-			if c := txn.us.GetKeyExistErrInfo(k); c != nil {
+			if txn.us.HasPresumeKeyNotExists(k) {
 				op = pb.Op_Insert
 			}
 			value = v
 			putCnt++
 		} else {
-			if !txn.IsPessimistic() && txn.us.GetKeyExistErrInfo(k) != nil {
+			if !txn.IsPessimistic() && txn.us.HasPresumeKeyNotExists(k) {
 				// delete-your-writes keys in optimistic txn need check not exists in prewrite-phase
 				// due to `Op_CheckNotExists` doesn't prewrite lock, so mark those keys should not be used in commit-phase.
 				op = pb.Op_CheckNotExists
@@ -647,43 +669,83 @@ func sendTxnHeartBeat(bo *Backoffer, store *tikvStore, primary []byte, startTS, 
 	}
 }
 
+// checkAsyncCommit checks if async commit protocol is available for current transaction commit, true is returned if possible.
+func (c *twoPhaseCommitter) checkAsyncCommit() bool {
+	// TODO the keys limit need more tests, this value makes the unit test pass by now.
+	const asyncCommitKeysLimit = 256
+	// Async commit is not compatible with Binlog because of the non unique timestamp issue.
+	if c.connID > 0 && config.GetGlobalConfig().TiKVClient.EnableAsyncCommit &&
+		len(c.mutations.keys) <= asyncCommitKeysLimit && !c.shouldWriteBinlog() {
+		return true
+	}
+	return false
+}
+
+func (c *twoPhaseCommitter) isAsyncCommit() bool {
+	return atomic.LoadUint32(&c.useAsyncCommit) > 0
+}
+
+func (c *twoPhaseCommitter) setAsyncCommit(val bool) {
+	if val {
+		atomic.StoreUint32(&c.useAsyncCommit, 1)
+	} else {
+		atomic.StoreUint32(&c.useAsyncCommit, 0)
+	}
+}
+
+func (c *twoPhaseCommitter) cleanup(ctx context.Context) {
+	c.cleanWg.Add(1)
+	go func() {
+		cleanupKeysCtx := context.WithValue(context.Background(), txnStartKey, ctx.Value(txnStartKey))
+		err := c.cleanupMutations(NewBackofferWithVars(cleanupKeysCtx, cleanupMaxBackoff, c.txn.vars), c.mutations)
+		if err != nil {
+			tikvSecondaryLockCleanupFailureCounterRollback.Inc()
+			logutil.Logger(ctx).Info("2PC cleanup failed",
+				zap.Error(err),
+				zap.Uint64("txnStartTS", c.startTS))
+		} else {
+			logutil.Logger(ctx).Info("2PC clean up done",
+				zap.Uint64("txnStartTS", c.startTS))
+		}
+		c.cleanWg.Done()
+	}()
+}
+
 // execute executes the two-phase commit protocol.
 func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	var binlogSkipped bool
 	defer func() {
-		// Always clean up all written keys if the txn does not commit.
-		c.mu.RLock()
-		committed := c.mu.committed
-		undetermined := c.mu.undeterminedErr != nil
-		c.mu.RUnlock()
-		if !committed && !undetermined {
-			c.cleanWg.Add(1)
-			go func() {
-				cleanupKeysCtx := context.WithValue(context.Background(), txnStartKey, ctx.Value(txnStartKey))
-				err := c.cleanupMutations(NewBackofferWithVars(cleanupKeysCtx, cleanupMaxBackoff, c.txn.vars), c.mutations)
-				if err != nil {
-					tikvSecondaryLockCleanupFailureCounterRollback.Inc()
-					logutil.Logger(ctx).Info("2PC cleanup failed",
-						zap.Error(err),
-						zap.Uint64("txnStartTS", c.startTS))
-				} else {
-					logutil.Logger(ctx).Info("2PC clean up done",
-						zap.Uint64("txnStartTS", c.startTS))
-				}
-				c.cleanWg.Done()
-			}()
-		}
-		c.txn.commitTS = c.commitTS
-		if binlogSkipped {
-			binloginfo.RemoveOneSkippedCommitter()
-		} else {
-			if err != nil {
-				c.writeFinishBinlog(ctx, binlog.BinlogType_Rollback, 0)
+		if !c.isAsyncCommit() {
+			// Always clean up all written keys if the txn does not commit.
+			c.mu.RLock()
+			committed := c.mu.committed
+			undetermined := c.mu.undeterminedErr != nil
+			c.mu.RUnlock()
+			if !committed && !undetermined {
+				c.cleanup(ctx)
+			}
+			c.txn.commitTS = c.commitTS
+			if binlogSkipped {
+				binloginfo.RemoveOneSkippedCommitter()
 			} else {
-				c.writeFinishBinlog(ctx, binlog.BinlogType_Commit, int64(c.commitTS))
+				if err != nil {
+					c.writeFinishBinlog(ctx, binlog.BinlogType_Rollback, 0)
+				} else {
+					c.writeFinishBinlog(ctx, binlog.BinlogType_Commit, int64(c.commitTS))
+				}
+			}
+		} else {
+			// The error means the async commit should not succeed.
+			if err != nil {
+				c.cleanup(ctx)
 			}
 		}
 	}()
+
+	// Check async commit is available or not.
+	if c.checkAsyncCommit() {
+		c.setAsyncCommit(true)
+	}
 
 	binlogChan := c.prewriteBinlog(ctx)
 	prewriteBo := NewBackofferWithVars(ctx, PrewriteMaxBackoff, c.txn.vars)
@@ -719,18 +781,27 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	// strip check_not_exists keys that no need to commit.
 	c.stripNoNeedCommitKeys()
 
-	start = time.Now()
-	logutil.Event(ctx, "start get commit ts")
-	commitTS, err := c.store.getTimestampWithRetry(NewBackofferWithVars(ctx, tsoMaxBackoff, c.txn.vars))
-	if err != nil {
-		logutil.Logger(ctx).Warn("2PC get commitTS failed",
-			zap.Error(err),
-			zap.Uint64("txnStartTS", c.startTS))
-		return errors.Trace(err)
+	var commitTS uint64
+	if c.isAsyncCommit() {
+		if c.minCommitTS == 0 {
+			err = errors.Errorf("conn %d invalid minCommitTS for async commit protocol after prewrite, startTS=%v", c.connID, c.startTS)
+			return errors.Trace(err)
+		}
+		commitTS = c.minCommitTS
+	} else {
+		start = time.Now()
+		logutil.Event(ctx, "start get commit ts")
+		commitTS, err = c.store.getTimestampWithRetry(NewBackofferWithVars(ctx, tsoMaxBackoff, c.txn.vars))
+		if err != nil {
+			logutil.Logger(ctx).Warn("2PC get commitTS failed",
+				zap.Error(err),
+				zap.Uint64("txnStartTS", c.startTS))
+			return errors.Trace(err)
+		}
+		commitDetail.GetCommitTsTime = time.Since(start)
+		logutil.Event(ctx, "finish get commit ts")
+		logutil.SetTag(ctx, "commitTs", commitTS)
 	}
-	commitDetail.GetCommitTsTime = time.Since(start)
-	logutil.Event(ctx, "finish get commit ts")
-	logutil.SetTag(ctx, "commitTs", commitTS)
 
 	// check commitTS
 	if commitTS <= c.startTS {
@@ -754,9 +825,32 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		failpoint.Inject("beforeCommit", func() {})
 	}
 
-	start = time.Now()
+	if c.isAsyncCommit() {
+		// For async commit protocol, the commit is considered success here.
+		c.txn.commitTS = c.commitTS
+		logutil.Logger(ctx).Info("2PC will use async commit protocol to commit this txn", zap.Uint64("startTS", c.startTS),
+			zap.Uint64("commitTS", c.commitTS))
+		go func() {
+			failpoint.Inject("asyncCommitDoNothing", func() {
+				failpoint.Return()
+			})
+			defer c.ttlManager.close()
+			commitBo := NewBackofferWithVars(ctx, CommitMaxBackoff, c.txn.vars)
+			err := c.commitMutations(commitBo, c.mutations)
+			if err != nil {
+				logutil.Logger(ctx).Warn("2PC async commit failed", zap.Uint64("connID", c.connID),
+					zap.Uint64("startTS", c.startTS), zap.Uint64("commitTS", c.commitTS), zap.Error(err))
+			}
+		}()
+		return nil
+	}
+	return c.commitTxn(ctx, commitDetail)
+}
+
+func (c *twoPhaseCommitter) commitTxn(ctx context.Context, commitDetail *execdetails.CommitDetails) error {
+	start := time.Now()
 	commitBo := NewBackofferWithVars(ctx, CommitMaxBackoff, c.txn.vars)
-	err = c.commitMutations(commitBo, c.mutations)
+	err := c.commitMutations(commitBo, c.mutations)
 	commitDetail.CommitTime = time.Since(start)
 	if commitBo.totalSleep > 0 {
 		atomic.AddInt64(&commitDetail.CommitBackoffTime, int64(commitBo.totalSleep)*int64(time.Millisecond))

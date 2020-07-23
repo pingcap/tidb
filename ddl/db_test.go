@@ -177,6 +177,33 @@ func (s *testSerialDBSuite) TestAddIndexWithPK(c *C) {
 	testAddIndexWithPK(tk, s, c)
 }
 
+func (s *testDBSuite5) TestAddIndexWithDupIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use " + s.schemaName)
+
+	err1 := ddl.ErrDupKeyName.GenWithStack("index already exist %s", "idx")
+	err2 := ddl.ErrDupKeyName.GenWithStack("index already exist %s; "+
+		"a background job is trying to add the same index, "+
+		"please check by `ADMIN SHOW DDL JOBS`", "idx")
+
+	// When there is already an duplicate index, show error message.
+	tk.MustExec("create table test_add_index_with_dup (a int, key idx (a))")
+	_, err := tk.Exec("alter table test_add_index_with_dup add index idx (a)")
+	c.Check(errors.Cause(err1).(*terror.Error).Equal(err), Equals, true)
+	c.Assert(errors.Cause(err1).Error() == err.Error(), IsTrue)
+
+	// When there is another session adding duplicate index with state other than
+	// StatePublic, show explicit error message.
+	t := s.testGetTable(c, "test_add_index_with_dup")
+	indexInfo := t.Meta().FindIndexByName("idx")
+	indexInfo.State = model.StateNone
+	_, err = tk.Exec("alter table test_add_index_with_dup add index idx (a)")
+	c.Check(errors.Cause(err2).(*terror.Error).Equal(err), Equals, true)
+	c.Assert(errors.Cause(err2).Error() == err.Error(), IsTrue)
+
+	tk.MustExec("drop table test_add_index_with_dup")
+}
+
 func (s *testDBSuite1) TestRenameIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use " + s.schemaName)
@@ -984,13 +1011,34 @@ func (s *testDBSuite5) TestAddMultiColumnsIndex(c *C) {
 	tk.MustExec("alter table tidb.test add index idx1 (a, b);")
 	tk.MustExec("admin check table test")
 }
+
+func (s *testDBSuite6) TestAddMultiColumnsIndexClusterIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop database if exists test_add_multi_col_index_clustered;")
+	tk.MustExec("create database test_add_multi_col_index_clustered;")
+	tk.MustExec("use test_add_multi_col_index_clustered;")
+
+	tk.MustExec("set @@tidb_enable_clustered_index = 1")
+	tk.MustExec("create table t (a int, b varchar(10), c int, primary key (a, b));")
+	tk.MustExec("insert into t values (1, '1', 1), (2, '2', NULL), (3, '3', 3);")
+	tk.MustExec("create index idx on t (a, c);")
+
+	tk.MustExec("admin check index t idx;")
+	tk.MustExec("admin check table t;")
+
+	tk.MustExec("insert into t values (5, '5', 5), (6, '6', NULL);")
+
+	tk.MustExec("admin check index t idx;")
+	tk.MustExec("admin check table t;")
+}
+
 func (s *testDBSuite1) TestAddPrimaryKey1(c *C) {
-	testAddIndex(c, s.store, s.lease, false,
+	testAddIndex(c, s.store, s.lease, testPlain,
 		"create table test_add_index (c1 bigint, c2 bigint, c3 bigint, unique key(c1))", "primary")
 }
 
 func (s *testDBSuite2) TestAddPrimaryKey2(c *C) {
-	testAddIndex(c, s.store, s.lease, true,
+	testAddIndex(c, s.store, s.lease, testPartition,
 		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint, key(c1))
 			      partition by range (c3) (
 			      partition p0 values less than (3440),
@@ -1001,13 +1049,13 @@ func (s *testDBSuite2) TestAddPrimaryKey2(c *C) {
 }
 
 func (s *testDBSuite3) TestAddPrimaryKey3(c *C) {
-	testAddIndex(c, s.store, s.lease, true,
+	testAddIndex(c, s.store, s.lease, testPartition,
 		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint, key(c1))
 			      partition by hash (c3) partitions 4;`, "primary")
 }
 
 func (s *testDBSuite4) TestAddPrimaryKey4(c *C) {
-	testAddIndex(c, s.store, s.lease, true,
+	testAddIndex(c, s.store, s.lease, testPartition,
 		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint, key(c1))
 			      partition by range columns (c3) (
 			      partition p0 values less than (3440),
@@ -1018,12 +1066,12 @@ func (s *testDBSuite4) TestAddPrimaryKey4(c *C) {
 }
 
 func (s *testDBSuite1) TestAddIndex1(c *C) {
-	testAddIndex(c, s.store, s.lease, false,
+	testAddIndex(c, s.store, s.lease, testPlain,
 		"create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))", "")
 }
 
 func (s *testDBSuite2) TestAddIndex2(c *C) {
-	testAddIndex(c, s.store, s.lease, true,
+	testAddIndex(c, s.store, s.lease, testPartition,
 		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))
 			      partition by range (c1) (
 			      partition p0 values less than (3440),
@@ -1034,13 +1082,13 @@ func (s *testDBSuite2) TestAddIndex2(c *C) {
 }
 
 func (s *testDBSuite3) TestAddIndex3(c *C) {
-	testAddIndex(c, s.store, s.lease, true,
+	testAddIndex(c, s.store, s.lease, testPartition,
 		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))
 			      partition by hash (c1) partitions 4;`, "")
 }
 
 func (s *testDBSuite4) TestAddIndex4(c *C) {
-	testAddIndex(c, s.store, s.lease, true,
+	testAddIndex(c, s.store, s.lease, testPartition,
 		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))
 			      partition by range columns (c1) (
 			      partition p0 values less than (3440),
@@ -1050,11 +1098,27 @@ func (s *testDBSuite4) TestAddIndex4(c *C) {
 			      partition p4 values less than maxvalue)`, "")
 }
 
-func testAddIndex(c *C, store kv.Storage, lease time.Duration, testPartition bool, createTableSQL, idxTp string) {
+func (s *testDBSuite5) TestAddIndex5(c *C) {
+	testAddIndex(c, s.store, s.lease, testClusteredIndex,
+		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c2, c3))`, "")
+}
+
+type testAddIndexType int8
+
+const (
+	testPlain testAddIndexType = iota
+	testPartition
+	testClusteredIndex
+)
+
+func testAddIndex(c *C, store kv.Storage, lease time.Duration, tp testAddIndexType, createTableSQL, idxTp string) {
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test_db")
-	if testPartition {
+	switch tp {
+	case testPartition:
 		tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
+	case testClusteredIndex:
+		tk.MustExec("set @@tidb_enable_clustered_index = 1")
 	}
 	tk.MustExec("drop table if exists test_add_index")
 	tk.MustExec(createTableSQL)
@@ -1140,7 +1204,7 @@ LOOP:
 	matchRows(c, rows, expectedRows)
 
 	tk.MustExec("admin check table test_add_index")
-	if testPartition {
+	if tp == testPartition {
 		return
 	}
 
@@ -2288,6 +2352,28 @@ func (s *testSerialDBSuite) TestCreateTable(c *C) {
 	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
 	_, err = tk.Exec("create table t_enum (a enum('B','b')) charset=utf8 collate=utf8_general_ci;")
 	c.Assert(err.Error(), Equals, "[types:1291]Column 'a' has duplicated value 'b' in ENUM")
+
+	// test for table option "union" not supported
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE x (a INT) ENGINE = MyISAM;")
+	tk.MustExec("CREATE TABLE y (a INT) ENGINE = MyISAM;")
+	failSQL = "CREATE TABLE z (a INT) ENGINE = MERGE UNION = (x, y);"
+	tk.MustGetErrCode(failSQL, errno.ErrTableOptionUnionUnsupported)
+	failSQL = "ALTER TABLE x UNION = (y);"
+	tk.MustGetErrCode(failSQL, errno.ErrTableOptionUnionUnsupported)
+	tk.MustExec("drop table x;")
+	tk.MustExec("drop table y;")
+
+	// test for table option "insert method" not supported
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE x (a INT) ENGINE = MyISAM;")
+	tk.MustExec("CREATE TABLE y (a INT) ENGINE = MyISAM;")
+	failSQL = "CREATE TABLE z (a INT) ENGINE = MERGE INSERT_METHOD=LAST;"
+	tk.MustGetErrCode(failSQL, errno.ErrTableOptionInsertMethodUnsupported)
+	failSQL = "ALTER TABLE x INSERT_METHOD=LAST;"
+	tk.MustGetErrCode(failSQL, errno.ErrTableOptionInsertMethodUnsupported)
+	tk.MustExec("drop table x;")
+	tk.MustExec("drop table y;")
 }
 
 func (s *testDBSuite5) TestRepairTable(c *C) {
