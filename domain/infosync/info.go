@@ -294,8 +294,8 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 		res, err := http.DefaultClient.Do(req)
 		if err == nil {
 			if res.StatusCode != http.StatusOK {
-				bodyBytes, _ := ioutil.ReadAll(res.Body)
-				return errors.Errorf("%s", bodyBytes)
+				bodyBytes, err := ioutil.ReadAll(res.Body)
+				return errors.Wrapf(err, "%s", bodyBytes)
 			}
 			return nil
 		}
@@ -322,8 +322,13 @@ func UpdatePlacementRules(ctx context.Context, rules []*placement.Rule) error {
 	route := path.Join(pdapi.Config, "rule")
 
 	for _, rule := range rules {
-		b, _ := json.Marshal(rule)
-		if err := doRequest(ctx, addrs, route, http.MethodPost, bytes.NewReader(b)); err != nil {
+		b, err := json.Marshal(rule)
+		if err != nil {
+			return err
+		}
+
+		err = doRequest(ctx, addrs, route, http.MethodPost, bytes.NewReader(b))
+		if err != nil {
 			return err
 		}
 	}

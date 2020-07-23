@@ -1459,7 +1459,11 @@ func checkPlacementRules(t *meta.Meta, job *model.Job, rules []*placement.Rule) 
 	leftRules := rules[:0]
 
 	for _, rule := range rules {
-		pid, _ := strconv.ParseInt(rule.GroupID, 10, 64)
+		pid, err := strconv.ParseInt(rule.GroupID, 10, 64)
+		if err != nil {
+			return nil, err
+		}
+
 		if ptInfo.GetNameByID(pid) != "" {
 			leftRules = append(leftRules, rule)
 		}
