@@ -1137,7 +1137,7 @@ func (s *testCommitterSuite) TestResolveMixed(c *C) {
 
 // TestSecondaryKeys tests that when async commit is enabled, each prewrite message includes an
 // accurate list of secondary keys.
-func (s *testCommitterSuite) TestPrewiteSecondaryKeys(c *C) {
+func (s *testCommitterSuite) TestPrewriteSecondaryKeys(c *C) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.EnableAsyncCommit = true
@@ -1169,9 +1169,11 @@ func (s *testCommitterSuite) TestPrewiteSecondaryKeys(c *C) {
 	ctx := context.Background()
 	// TODO remove this when minCommitTS is returned from mockStore prewrite response.
 	committer.minCommitTS = committer.startTS + 10
+	committer.testingKnobs.noFallBack = true
 	err = committer.execute(ctx)
 	c.Assert(err, IsNil)
-	c.Assert(mock.seenPrimaryReq > 0 && mock.seenSecondaryReq > 0, IsTrue)
+	c.Assert(mock.seenPrimaryReq > 0, IsTrue)
+	c.Assert(mock.seenSecondaryReq > 0, IsTrue)
 }
 
 func (s *testCommitterSuite) TestAsyncCommit(c *C) {
