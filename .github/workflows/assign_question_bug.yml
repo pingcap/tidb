@@ -16,7 +16,7 @@ jobs:
       if: |
         (
         contains(github.event.issue.labels.*.name, 'type/question') ||
-        contains(github.event.issue.labels.*.name, 'type/bug') ||
+        contains(github.event.issue.labels.*.name, 'type/bug')
         ) && 
         (
         contains(github.event.issue.labels.*.name, 'component/parser') ||
