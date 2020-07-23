@@ -286,6 +286,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 
 	// Now we try to cover those still not covered DNF conditions using independence assumption.
 	if mask > 0 {
+		// Firstly collect single column index information.
 		colID2SingleColIdxID := make(map[int64]int64)
 		colID2SingleColIdxLen := make(map[int64]int)
 		for idxID, cols := range coll.Idx2ColumnIDs {
