@@ -532,7 +532,7 @@ func (s *Server) getTLSConfig() *tls.Config {
 
 func killConn(conn *clientConn) {
 	sessVars := conn.ctx.GetSessionVars()
-	atomic.CompareAndSwapUint32(&sessVars.Killed, 0, 1)
+	atomic.StoreUint32(&sessVars.Killed, 1)
 }
 
 // KillAllConnections kills all connections when server is not gracefully shutdown.
