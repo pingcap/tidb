@@ -162,4 +162,34 @@ func (s *testSuite9) TestPlanCacheClusterIndex(c *C) {
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
 	c.Assert(strings.Index(rows[len(rows)-1][0].(string), `Point_Get`), Equals, 0)
+
+	// For CBO point get
+	// case 1:
+	tk.MustExec(`drop table if exists ta, tb`)
+	tk.MustExec(`create table ta (a varchar(8) primary key, b int)`)
+	tk.MustExec(`insert ta values ('a', 1), ('b', 2)`)
+	tk.MustExec(`create table tb (a varchar(8) primary key, b int)`)
+	tk.MustExec(`insert tb values ('a', 1), ('b', 2)`)
+	tk.MustExec(`prepare stmt1 from "select * from ta, tb where ta.a = tb.a and ta.a = ?"`)
+	tk.MustExec(`set @v1 = 'a', @v2 = 'b'`)
+	tk.MustQuery(`execute stmt1 using @v1`).Check(testkit.Rows("a 1 a 1"))
+	tk.MustQuery(`execute stmt1 using @v2`).Check(testkit.Rows("b 2 b 2"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	// case 2:
+	tk.MustExec(`drop table if exists ta, tb`)
+	tk.MustExec(`create table ta (a varchar(10) primary key, b int not null)`)
+	tk.MustExec(`insert ta values ('a', 1), ('b', 2)`)
+	tk.MustExec(`create table tb (b int primary key, c int)`)
+	tk.MustExec(`insert tb values (1, 1), (2, 2)`)
+	tk.MustExec(`prepare stmt1 from "select * from ta, tb where ta.b = tb.b and ta.a = ?"`)
+	tk.MustExec(`set @v1 = 'a', @v2 = 'b'`)
+	tk.MustQuery(`execute stmt1 using @v1`).Check(testkit.Rows("a 1 1 1"))
+	tk.MustQuery(`execute stmt1 using @v2`).Check(testkit.Rows("b 2 2 2"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery(`execute stmt1 using @v2`).Check(testkit.Rows("b 2 2 2"))
+	tkProcess = tk.Se.ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
+	c.Assert(strings.Index(rows[1][0].(string), `Point_Get`), Equals, 6)
 }

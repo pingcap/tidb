@@ -34,7 +34,7 @@ type aggregationEliminateChecker struct {
 
 // tryToEliminateAggregation will eliminate aggregation grouped by unique key.
 // e.g. select min(b) from t group by a. If a is a unique key, then this sql is equal to `select b from t group by a`.
-// For count(expr), sum(expr), avg(expr), count(distinct expr, [expr...]) we may need to rewrite the expr. Details are shown below.
+// For count(AccessCondition), sum(AccessCondition), avg(AccessCondition), count(distinct AccessCondition, [AccessCondition...]) we may need to rewrite the AccessCondition. Details are shown below.
 // If we can eliminate agg successful, we return a projection. Else we return a nil pointer.
 func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggregation) *LogicalProjection {
 	for _, af := range agg.AggFuncs {
@@ -103,9 +103,9 @@ func rewriteExpr(ctx sessionctx.Context, aggFunc *aggregation.AggFuncDesc) (bool
 }
 
 func rewriteCount(ctx sessionctx.Context, exprs []expression.Expression, targetTp *types.FieldType) expression.Expression {
-	// If is count(expr), we will change it to if(isnull(expr), 0, 1).
+	// If is count(AccessCondition), we will change it to if(isnull(AccessCondition), 0, 1).
 	// If is count(distinct x, y, z) we will change it to if(isnull(x) or isnull(y) or isnull(z), 0, 1).
-	// If is count(expr not null), we will change it to constant 1.
+	// If is count(AccessCondition not null), we will change it to constant 1.
 	isNullExprs := make([]expression.Expression, 0, len(exprs))
 	for _, expr := range exprs {
 		if mysql.HasNotNullFlag(expr.GetType().Flag) {

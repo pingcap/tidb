@@ -55,7 +55,9 @@ type PointGetPlan struct {
 	HandleParam        *driver.ParamMarkerExpr
 	IndexValues        []types.Datum
 	IndexValueParams   []*driver.ParamMarkerExpr
-	expr               expression.Expression
+	IdxCols            []*expression.Column
+	IdxColLens         []int
+	AccessCondition    expression.Expression
 	ctx                sessionctx.Context
 	UnsignedHandle     bool
 	IsTableDual        bool
@@ -242,6 +244,9 @@ type BatchPointGetPlan struct {
 	HandleParams     []*driver.ParamMarkerExpr
 	IndexValues      [][]types.Datum
 	IndexValueParams [][]*driver.ParamMarkerExpr
+	AccessConditions []expression.Expression
+	IdxCols          []*expression.Column
+	IdxColLens       []int
 	PartitionColPos  int
 	KeepOrder        bool
 	Desc             bool
@@ -893,7 +898,7 @@ func getSingleTableNameAndAlias(tableRefs *ast.TableRefsClause) (tblName *ast.Ta
 	return tblName, tblAlias
 }
 
-// getNameValuePairs extracts `column = constant/paramMarker` conditions from expr as name value pairs.
+// getNameValuePairs extracts `column = constant/paramMarker` conditions from AccessCondition as name value pairs.
 func getNameValuePairs(stmtCtx *stmtctx.StatementContext, tbl *model.TableInfo, tblName model.CIStr, nvPairs []nameValuePair, expr ast.ExprNode) (
 	pairs []nameValuePair, isTableDual bool) {
 	binOp, ok := expr.(*ast.BinaryOperationExpr)
