@@ -816,7 +816,7 @@ func (w *tableWorker) pickAndExecTask(ctx context.Context) {
 			buf := make([]byte, 4096)
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
-			logutil.Logger(ctx).Error("tableWorker in IndexLookUpExecutor panicked", zap.String("stack", string(buf)))
+			logutil.Logger(ctx).Error("tableWorker in IndexLookUpExecutor panicked", zap.String("r", fmt.Sprint(r)), zap.String("stack", string(buf)))
 			task.doneCh <- errors.Errorf("%v", r)
 		}
 	}()

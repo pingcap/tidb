@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -67,13 +68,18 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 	if err != nil {
 		return copErrorResponse{err}
 	}
+	t := req.MemTracker
+	if req.MemTracker != nil {
+		t = memory.NewTracker(stringutil.StringerStr("copIterator"), -1)
+		t.AttachTo(req.MemTracker)
+	}
 	it := &copIterator{
 		store:           c.store,
 		req:             req,
 		concurrency:     req.Concurrency,
 		finishCh:        make(chan struct{}),
 		vars:            vars,
-		memTracker:      req.MemTracker,
+		memTracker:      t,
 		replicaReadSeed: c.replicaReadSeed,
 		rpcCancel:       NewRPCanceller(),
 	}

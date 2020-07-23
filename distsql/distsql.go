@@ -25,6 +25,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -75,6 +77,11 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 	if canUseChunkRPC(sctx) {
 		encodetype = tipb.EncodeType_TypeChunk
 	}
+	t := kvReq.MemTracker
+	if kvReq.MemTracker != nil {
+		t = memory.NewTracker(stringutil.StringerStr("selectResult"), -1)
+		t.AttachTo(kvReq.MemTracker)
+	}
 	return &selectResult{
 		label:      "dag",
 		resp:       resp,
@@ -83,7 +90,7 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		ctx:        sctx,
 		feedback:   fb,
 		sqlType:    label,
-		memTracker: kvReq.MemTracker,
+		memTracker: t,
 		encodeType: encodetype,
 	}, nil
 }
