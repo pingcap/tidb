@@ -1198,6 +1198,32 @@ func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (
 	return setOprPlan, nil
 }
 
+func (b *PlanBuilder) buildSemiJoinForSetOperator(
+	leftOriginPlan LogicalPlan,
+	rightPlan LogicalPlan,
+	joinType JoinType) (leftPlan LogicalPlan, err error) {
+	leftPlan, err = b.buildDistinct(leftOriginPlan, leftOriginPlan.Schema().Len())
+	if err != nil {
+		return nil, err
+	}
+	joinPlan := LogicalJoin{JoinType: joinType}.Init(b.ctx, b.getSelectOffset())
+	joinPlan.SetChildren(leftPlan, rightPlan)
+	joinPlan.SetSchema(leftPlan.Schema())
+	joinPlan.names = make([]*types.FieldName, leftPlan.Schema().Len())
+	copy(joinPlan.names, leftPlan.OutputNames())
+	for j := 0; j < len(rightPlan.Schema().Columns); j++ {
+		leftCol, rightCol := leftPlan.Schema().Columns[j], rightPlan.Schema().Columns[j]
+		eqCond, err := expression.NewFunction(b.ctx, ast.NullEQ, types.NewFieldType(mysql.TypeTiny), leftCol, rightCol)
+		if err != nil {
+			return nil, err
+		}
+		joinPlan.EqualConditions = append(joinPlan.EqualConditions, eqCond.(*expression.ScalarFunction))
+	}
+	return joinPlan, nil
+}
+
+// buildIntersect build the set operator for 'intersect'. It is called before buildExcept and buildUnion because of its
+// higher precedence.
 func (b *PlanBuilder) buildIntersect(ctx context.Context, selects []*ast.SelectStmt) (LogicalPlan, *ast.SetOprType, error) {
 	leftPlan, err := b.buildSelect(ctx, selects[0])
 	if err != nil {
@@ -1216,20 +1242,7 @@ func (b *PlanBuilder) buildIntersect(ctx context.Context, selects []*ast.SelectS
 		if rightPlan.Schema().Len() != columnNums {
 			return nil, nil, ErrWrongNumberOfColumnsInSelect.GenWithStackByArgs()
 		}
-		joinPlan := LogicalJoin{JoinType: SemiJoin}.Init(b.ctx, b.getSelectOffset())
-		joinPlan.SetChildren(leftPlan, rightPlan)
-		joinPlan.SetSchema(leftPlan.Schema())
-		joinPlan.names = make([]*types.FieldName, leftPlan.Schema().Len())
-		copy(joinPlan.names, leftPlan.OutputNames())
-		for j := 0; j < len(rightPlan.Schema().Columns); j++ {
-			leftCol, rightCol := leftPlan.Schema().Columns[j], rightPlan.Schema().Columns[j]
-			eqCond, err := expression.NewFunction(b.ctx, ast.NullEQ, types.NewFieldType(mysql.TypeTiny), leftCol, rightCol)
-			if err != nil {
-				return nil, nil, err
-			}
-			joinPlan.EqualConditions = append(joinPlan.EqualConditions, eqCond.(*expression.ScalarFunction))
-		}
-		leftPlan, err = b.buildDistinct(joinPlan, leftPlan.Schema().Len())
+		leftPlan, err = b.buildSemiJoinForSetOperator(leftPlan, rightPlan, SemiJoin)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -1237,6 +1250,8 @@ func (b *PlanBuilder) buildIntersect(ctx context.Context, selects []*ast.SelectS
 	return leftPlan, selects[0].AfterSetOperator, nil
 }
 
+// buildExcept build the set operators for 'except', and in this function, it calls buildUnion at the same time. Because
+// Union and except has the same precedence.
 func (b *PlanBuilder) buildExcept(ctx context.Context, selects []LogicalPlan, afterSetOpts []*ast.SetOprType) (LogicalPlan, error) {
 	unionPlans := []LogicalPlan{selects[0]}
 	tmpAfterSetOpts := []*ast.SetOprType{nil}
@@ -1251,23 +1266,7 @@ func (b *PlanBuilder) buildExcept(ctx context.Context, selects []LogicalPlan, af
 			if err != nil {
 				return nil, err
 			}
-			joinPlan := LogicalJoin{JoinType: AntiSemiJoin}.Init(b.ctx, b.getSelectOffset())
-			joinPlan.SetChildren(leftPlan, rightPlan)
-			joinPlan.SetSchema(leftPlan.Schema())
-			joinPlan.names = make([]*types.FieldName, leftPlan.Schema().Len())
-			copy(joinPlan.names, leftPlan.OutputNames())
-			for j := 0; j < len(rightPlan.Schema().Columns); j++ {
-				leftCol, rightCol := leftPlan.Schema().Columns[j], rightPlan.Schema().Columns[j]
-				eqCond, err := expression.NewFunction(b.ctx, ast.NullEQ, types.NewFieldType(mysql.TypeTiny), leftCol, rightCol)
-				if err != nil {
-					return nil, err
-				}
-				joinPlan.EqualConditions = append(joinPlan.EqualConditions, eqCond.(*expression.ScalarFunction))
-			}
-			leftPlan, err = b.buildDistinct(joinPlan, leftPlan.Schema().Len())
-			if err != nil {
-				return nil, err
-			}
+			leftPlan, err = b.buildSemiJoinForSetOperator(leftPlan, rightPlan, AntiSemiJoin)
 			unionPlans = []LogicalPlan{leftPlan}
 			tmpAfterSetOpts = []*ast.SetOprType{nil}
 		} else {
