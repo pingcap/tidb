@@ -1267,6 +1267,9 @@ func (b *PlanBuilder) buildExcept(ctx context.Context, selects []LogicalPlan, af
 				return nil, err
 			}
 			leftPlan, err = b.buildSemiJoinForSetOperator(leftPlan, rightPlan, AntiSemiJoin)
+			if err != nil {
+				return nil, err
+			}
 			unionPlans = []LogicalPlan{leftPlan}
 			tmpAfterSetOpts = []*ast.SetOprType{nil}
 		} else {
