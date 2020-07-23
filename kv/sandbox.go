@@ -367,7 +367,7 @@ func (sb *sandbox) merge(new *sandbox) int {
 	arena := sb.arena
 
 	if sb.head.nexts[0].isNull() {
-		// current skip-list is empty, overwite head node using the new list's head.
+		// current skip-list is empty, overwrite head node using the new list's head.
 		sb.head = new.head
 		sb.height = new.height
 		sb.length = new.length
