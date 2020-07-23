@@ -181,7 +181,7 @@ func (s *testMySQLConstSuite) TestHighNotPrecedenceMode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1 if not exists (a int);")
+	tk.MustExec("create table if not exists t1 (a int);")
 	tk.MustExec("insert into t1 values (0),(1),(NULL);")
 	r := tk.MustQuery(`SELECT * FROM t1 WHERE NOT a BETWEEN 2 AND 3;`)
 	r.Check(testkit.Rows("0", "1"))
