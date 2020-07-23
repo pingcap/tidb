@@ -2498,6 +2498,10 @@ func mysqlTimeFix(t *CoreTime, ctx map[string]int) error {
 		if valueAMorPm == constForPM {
 			t.setHour(t.getHour() + 12)
 		}
+	} else {
+		if _, ok := ctx["%h"]; ok && t.Hour() == 12 {
+			t.setHour(0)
+		}
 	}
 	return nil
 }
@@ -2703,6 +2707,10 @@ func time12Hour(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 	if !succ || hour > 12 || hour == 0 || input[2] != ':' {
 		return input, false
 	}
+	// 12:34:56 AM -> 00:34:56
+	if hour == 12 {
+		hour = 0
+	}
 
 	minute, succ := parseDigits(input[3:], 2)
 	if !succ || minute > 59 || input[5] != ':' {
@@ -2826,6 +2834,7 @@ func hour12Numeric(t *CoreTime, input string, ctx map[string]int) (string, bool)
 		return input, false
 	}
 	t.setHour(uint8(v))
+	ctx["%h"] = v
 	return input[length:], true
 }
 
