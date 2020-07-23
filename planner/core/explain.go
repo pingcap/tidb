@@ -186,8 +186,17 @@ func (p *PhysicalTableScan) AccessObject() string {
 // OperatorInfo implements dataAccesser interface.
 func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 	buffer := bytes.NewBufferString("")
-	if p.pkCol != nil {
-		fmt.Fprintf(buffer, "pk col:%s, ", p.pkCol.ExplainInfo())
+	for i, pkCol := range p.PkCols {
+		var fmtStr string
+		switch i {
+		case 0:
+			fmtStr = "pk cols: (%s, "
+		case len(p.PkCols) - 1:
+			fmtStr = "%s)"
+		default:
+			fmtStr = "%s, "
+		}
+		fmt.Fprintf(buffer, fmtStr, pkCol.ExplainInfo())
 	}
 	if len(p.rangeDecidedBy) > 0 {
 		fmt.Fprintf(buffer, "range: decided by %v, ", p.rangeDecidedBy)
@@ -672,7 +681,7 @@ func (p *LogicalUnionScan) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
 	fmt.Fprintf(buffer, "conds:%s",
 		expression.SortedExplainExpressionList(p.conditions))
-	fmt.Fprintf(buffer, ", handle:%s", p.handleCol.ExplainInfo())
+	fmt.Fprintf(buffer, ", handle:%s", p.handleCols)
 	return buffer.String()
 }
 
@@ -728,8 +737,8 @@ func (p *LogicalLimit) ExplainInfo() string {
 // ExplainInfo implements Plan interface.
 func (p *LogicalTableScan) ExplainInfo() string {
 	buffer := bytes.NewBufferString(p.Source.ExplainInfo())
-	if p.Source.handleCol != nil {
-		fmt.Fprintf(buffer, ", pk col:%s", p.Source.handleCol.ExplainInfo())
+	if p.Source.handleCols != nil {
+		fmt.Fprintf(buffer, ", pk col:%s", p.Source.handleCols)
 	}
 	if len(p.AccessConds) > 0 {
 		fmt.Fprintf(buffer, ", cond:%v", p.AccessConds)

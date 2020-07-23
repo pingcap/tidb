@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 	"unsafe"
 
 	"github.com/opentracing/opentracing-go"
@@ -129,7 +130,7 @@ func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string]
 	// We want [][]byte instead of []kv.Key, use some magic to save memory.
 	bytesKeys := *(*[][]byte)(unsafe.Pointer(&keys))
 	ctx = context.WithValue(ctx, txnStartKey, s.version.Ver)
-	bo := NewBackoffer(ctx, batchGetMaxBackoff).WithVars(s.vars)
+	bo := NewBackofferWithVars(ctx, batchGetMaxBackoff, s.vars)
 
 	// Create a map to collect key-values from region servers.
 	var mu sync.Mutex
@@ -187,6 +188,9 @@ func appendBatchKeysBySize(b []batchKeys, region RegionVerID, keys [][]byte, siz
 }
 
 func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, collectF func(k, v []byte)) error {
+	defer func(start time.Time) {
+		tikvTxnCmdHistogramWithBatchGet.Observe(time.Since(start).Seconds())
+	}(time.Now())
 	groups, _, err := s.store.regionCache.GroupKeysByRegion(bo, keys, nil)
 	if err != nil {
 		return errors.Trace(err)
@@ -308,8 +312,12 @@ func (s *tikvSnapshot) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
+	defer func(start time.Time) {
+		tikvTxnCmdHistogramWithGet.Observe(time.Since(start).Seconds())
+	}(time.Now())
+
 	ctx = context.WithValue(ctx, txnStartKey, s.version.Ver)
-	val, err := s.get(NewBackoffer(ctx, getMaxBackoff), k)
+	val, err := s.get(NewBackofferWithVars(ctx, getMaxBackoff, s.vars), k)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

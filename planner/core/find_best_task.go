@@ -210,6 +210,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		// The curCntPlan records the number of possible plans for pp
 		curCntPlan = 1
 		TimeStampNow := p.GetlogicalTS4TaskMap()
+		savedPlanID := p.ctx.GetSessionVars().PlanID
 		for j, child := range p.children {
 			childTask, cnt, err := child.findBestTask(pp.GetChildReqProps(j), &PlanCounterDisabled)
 			childCnts[j] = cnt
@@ -230,6 +231,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 
 		// If the target plan can be found in this physicalPlan(pp), rebuild childTasks to build the corresponding combination.
 		if planCounter.IsForce() && int64(*planCounter) <= curCntPlan {
+			p.ctx.GetSessionVars().PlanID = savedPlanID
 			curCntPlan = int64(*planCounter)
 			err := p.rebuildChildTasks(&childTasks, pp, childCnts, int64(*planCounter), TimeStampNow)
 			if err != nil {
@@ -457,11 +459,27 @@ func compareCandidates(lhs, rhs *candidatePath) int {
 
 func (ds *DataSource) getTableCandidate(path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
-	pkCol := ds.getPKIsHandleCol()
-	if len(prop.Items) == 1 && pkCol != nil {
-		candidate.isMatchProp = prop.Items[0].Col.Equal(nil, pkCol)
-		if path.StoreType == kv.TiFlash {
-			candidate.isMatchProp = candidate.isMatchProp && !prop.Items[0].Desc
+	if path.IsIntHandlePath {
+		pkCol := ds.getPKIsHandleCol()
+		if len(prop.Items) == 1 && pkCol != nil {
+			candidate.isMatchProp = prop.Items[0].Col.Equal(nil, pkCol)
+			if path.StoreType == kv.TiFlash {
+				candidate.isMatchProp = candidate.isMatchProp && !prop.Items[0].Desc
+			}
+		}
+	} else {
+		all, _ := prop.AllSameOrder()
+		// When the prop is empty or `all` is false, `isMatchProp` is better to be `false` because
+		// it needs not to keep order for index scan.
+		if !prop.IsEmpty() && all {
+			for i, col := range path.IdxCols {
+				if col.Equal(nil, prop.Items[0].Col) {
+					candidate.isMatchProp = matchIndicesProp(path.IdxCols[i:], path.IdxColLens[i:], prop.Items)
+					break
+				} else if i >= path.EqCondCount {
+					break
+				}
+			}
 		}
 	}
 	candidate.columnSet = expression.ExtractColumnSet(path.AccessConds)
@@ -870,11 +888,11 @@ func (ds *DataSource) isCoveringIndex(columns, indexColumns []*expression.Column
 
 // If there is a table reader which needs to keep order, we should append a pk to table scan.
 func (ts *PhysicalTableScan) appendExtraHandleCol(ds *DataSource) (*expression.Column, bool) {
-	handleCol := ds.handleCol
-	if handleCol != nil {
-		return handleCol, false
+	handleCols := ds.handleCols
+	if handleCols != nil {
+		return handleCols.GetCol(0), false
 	}
-	handleCol = ds.newExtraHandleSchemaCol()
+	handleCol := ds.newExtraHandleSchemaCol()
 	ts.schema.Append(handleCol)
 	ts.Columns = append(ts.Columns, model.NewExtraHandleColInfo())
 	return handleCol, true
@@ -967,15 +985,7 @@ func (is *PhysicalIndexScan) indexScanRowSize(idx *model.IndexInfo, ds *DataSour
 func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoubleRead bool) {
 	indexCols := make([]*expression.Column, len(is.IdxCols), len(is.Index.Columns)+1)
 	copy(indexCols, is.IdxCols)
-	is.NeedCommonHandle = is.Table.IsCommonHandle && len(is.IdxCols) < len(is.Columns)
 
-	if is.NeedCommonHandle {
-		for i := len(is.Index.Columns); i < len(idxExprCols); i++ {
-			indexCols = append(indexCols, idxExprCols[i])
-		}
-		is.SetSchema(expression.NewSchema(indexCols...))
-		return
-	}
 	for i := len(is.IdxCols); i < len(is.Index.Columns); i++ {
 		if idxExprCols[i] != nil {
 			indexCols = append(indexCols, idxExprCols[i])
@@ -987,6 +997,15 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 				UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID(),
 			})
 		}
+	}
+	is.NeedCommonHandle = is.Table.IsCommonHandle
+
+	if is.NeedCommonHandle {
+		for i := len(is.Index.Columns); i < len(idxExprCols); i++ {
+			indexCols = append(indexCols, idxExprCols[i])
+		}
+		is.SetSchema(expression.NewSchema(indexCols...))
+		return
 	}
 	setHandle := len(indexCols) > len(is.Index.Columns)
 	if !setHandle {
@@ -1347,7 +1366,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 	var cost float64
 	if candidate.path.IsIntHandlePath {
 		pointGetPlan.Handle = kv.IntHandle(candidate.path.Ranges[0].LowVal[0].GetInt64())
-		pointGetPlan.UnsignedHandle = mysql.HasUnsignedFlag(ds.getHandleCol().RetType.Flag)
+		pointGetPlan.UnsignedHandle = mysql.HasUnsignedFlag(ds.handleCols.GetCol(0).RetType.Flag)
 		pointGetPlan.PartitionInfo = partitionInfo
 		cost = pointGetPlan.GetCost(ds.TblCols)
 		// Add filter condition to table plan now.
@@ -1517,7 +1536,7 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 	} else {
 		// If `ds.handleCol` is nil, then the schema of tableScan doesn't have handle column.
 		// This logic can be ensured in column pruning.
-		rowSize = ds.TblColHists.GetTableAvgRowSize(ds.ctx, ts.Schema().Columns, ts.StoreType, ds.handleCol != nil)
+		rowSize = ds.TblColHists.GetTableAvgRowSize(ds.ctx, ts.Schema().Columns, ts.StoreType, ds.handleCols != nil)
 	}
 	sessVars := ds.ctx.GetSessionVars()
 	cost := rowCount * rowSize * sessVars.ScanFactor
