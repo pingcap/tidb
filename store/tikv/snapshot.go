@@ -20,11 +20,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-<<<<<<< HEAD
-=======
-	"sync/atomic"
 	"time"
->>>>>>> 9d536c4... *: add HTTP API to generate TiDB metric profile  (#18272)
 	"unsafe"
 
 	"github.com/opentracing/opentracing-go"
