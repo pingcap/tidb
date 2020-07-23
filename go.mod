@@ -68,4 +68,4 @@ require (
 
 go 1.13
 
-replace github.com/pingcap/parser => github.com/oraluben/parser v0.0.0-20200723125734-a484c7c083e4
+replace github.com/pingcap/parser => github.com/oraluben/parser v0.0.0-20200723131709-6e5ff0b765dc
