@@ -770,6 +770,22 @@ func (s *testPlanSuite) TestValidate(c *C) {
 			sql: "select concat(c_str, d_str) from t group by `concat(c_str,d_str)`",
 			err: ErrUnknownColumn,
 		},
+		{
+			sql: "select a from t b having b.a",
+			err: nil,
+		},
+		{
+			sql: "select b.a from t b having b.a",
+			err: nil,
+		},
+		{
+			sql: "select b.a from t b having a",
+			err: nil,
+		},
+		{
+			sql: "select a+1 from t having t.a",
+			err: ErrUnknownColumn,
+		},
 	}
 
 	ctx := context.Background()
@@ -1379,7 +1395,7 @@ func (s *testPlanSuite) optimize(ctx context.Context, sql string) (PhysicalPlan,
 	if err != nil {
 		return nil, nil, err
 	}
-	p, _, err = physicalOptimize(p.(LogicalPlan))
+	p, _, err = physicalOptimize(p.(LogicalPlan), &PlanCounterDisabled)
 	return p.(PhysicalPlan), stmt, err
 }
 

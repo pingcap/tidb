@@ -231,17 +231,19 @@ func (s *testIntegrationSuite1) TestUniqueKeyNullValue(c *C) {
 	tk.MustExec("admin check index t b")
 }
 
-func (s *testIntegrationSuite3) TestEndIncluded(c *C) {
+func (s *testIntegrationSuite2) TestUniqueKeyNullValueClusterIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
-	tk.MustExec("USE test")
-	tk.MustExec("create table t(a int, b int)")
-	for i := 0; i < ddl.DefaultTaskHandleCnt+1; i++ {
-		tk.MustExec("insert into t values(1, 1)")
-	}
-	tk.MustExec("alter table t add index b(b);")
-	tk.MustExec("admin check index t b")
-	tk.MustExec("admin check table t")
+	tk.MustExec("drop database if exists unique_null_val;")
+	tk.MustExec("create database unique_null_val;")
+	tk.MustExec("use unique_null_val;")
+	tk.MustExec("create table t (a varchar(10), b float, c varchar(255), primary key (a, b));")
+	tk.MustExec("insert into t values ('1', 1, NULL);")
+	tk.MustExec("insert into t values ('2', 2, NULL);")
+	tk.MustExec("alter table t add unique index c(c);")
+	tk.MustQuery("select count(*) from t use index(c);").Check(testkit.Rows("2"))
+	tk.MustExec("admin check table t;")
+	tk.MustExec("admin check index t c;")
 }
 
 // TestModifyColumnAfterAddIndex Issue 5134
