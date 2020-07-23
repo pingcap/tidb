@@ -297,7 +297,12 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 		}
 		for i := range remainedExprs {
 			if mask&(1<<uint64(i)) > 0 {
-				dnfItems := expression.FlattenDNFConditions(remainedExprs[i].(*expression.ScalarFunction))
+				scalarCond, ok := remainedExprs[i].(*expression.ScalarFunction)
+				// Make sure we only handle DNF condition.
+				if !ok || scalarCond.FuncName.L != ast.LogicOr {
+					continue
+				}
+				dnfItems := expression.FlattenDNFConditions(scalarCond)
 				ranges, cols, err := ranger.DetachSimpleDNFCondAndBuildRangeForCols(ctx, dnfItems, colID2SingleColIdxLen)
 				if err != nil {
 					return 0, nil, errors.Trace(err)
