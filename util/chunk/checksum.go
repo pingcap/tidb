@@ -2,6 +2,7 @@ package chunk
 
 import (
 	"bufio"
+	"encoding/binary"
 	"errors"
 	"hash/crc32"
 	"io"
@@ -17,45 +18,66 @@ const (
 var emptyChecksumBlock = make([]byte, checksumBlockSize)
 
 type checksum struct {
-	disk      *os.File
-	bufWriter *bufio.Writer
+	disk *os.File
+	err  error
+	buf  []byte
+	n    int
 }
 
 func newChecksum(disk *os.File) *checksum {
-	cs := &checksum{disk: disk}
-	cs.bufWriter = bufio.NewWriterSize(disk, checksumPayloadSize)
-	return cs
+	cks := &checksum{disk: disk}
+	cks.buf = make([]byte, checksumBlockSize)
+	cks.n = checksumSize
+	return cks
 }
 
-func (cks *checksum) Write(p []byte) (n int, err error) {
-	start, end := 0, len(p)
-	if end > checksumPayloadSize {
-		end = checksumPayloadSize
-	}
-	payload := p[start:end]
-	buf := make([]byte, checksumBlockSize)
-	for len(payload) > 0 {
-		// We need to fill in payload before calculating the checksum.
-		copy(buf[4:], payload)
-		checksum := crc32.Checksum(buf[4:], crc32.MakeTable(crc32.IEEE))
-		buf[0] = byte(checksum & 0xff000000 >> 24)
-		buf[1] = byte(checksum & 0x00ff0000 >> 16)
-		buf[2] = byte(checksum & 0x0000ff00 >> 8)
-		buf[3] = byte(checksum & 0x000000ff)
-		n1, err := cks.bufWriter.Write(buf)
-		n += n1
+// Available returns how many bytes are unused in the buffer.
+func (cks *checksum) Available() int { return len(cks.buf) - cks.n }
+
+func (cks *checksum) Write(p []byte) (nn int, err error) {
+	for len(p) > cks.Available() && cks.err == nil {
+		n := copy(cks.buf[cks.n:], p)
+		cks.n += n
+		err := cks.Flush()
 		if err != nil {
-			return n, err
+			return nn, err
 		}
-		start = end
-		end = len(p)
-		if end-start > checksumPayloadSize {
-			end = start + checksumPayloadSize
-		}
-		payload = p[start:end]
-		copy(buf, emptyChecksumBlock)
+		nn += n
+		p = p[n:]
 	}
-	return n, nil
+	if cks.err != nil {
+		return nn, cks.err
+	}
+	n := copy(cks.buf[cks.n:], p)
+	cks.n += n
+	nn += n
+	return nn, nil
+}
+
+// Flush writes any buffered data to the disk.
+func (cks *checksum) Flush() error {
+	if cks.err != nil {
+		return cks.err
+	}
+	if cks.n == 0 {
+		return nil
+	}
+	checksum := crc32.Checksum(cks.buf[checksumSize:cks.n], crc32.MakeTable(crc32.IEEE))
+	binary.LittleEndian.PutUint32(cks.buf, checksum)
+	n, err := cks.disk.Write(cks.buf[0:cks.n])
+	if n < cks.n && err == nil {
+		err = io.ErrShortWrite
+	}
+	if err != nil {
+		if n > 0 && n < cks.n {
+			copy(cks.buf[0:cks.n-n], cks.buf[n:cks.n])
+		}
+		cks.n -= n
+		cks.err = err
+		return err
+	}
+	cks.n = checksumSize
+	return nil
 }
 
 func (cks *checksum) ReadAt(p []byte, off int64) (n int, err error) {
@@ -66,39 +88,6 @@ func (cks *checksum) ReadAt(p []byte, off int64) (n int, err error) {
 	needWriteSize := int64(len(p))
 
 	r := io.NewSectionReader(cks.disk, startBlock*checksumBlockSize, (endBlock-startBlock+1)*checksumBlockSize)
-	readBuffer := bufio.NewReaderSize(r, checksumBlockSize)
-	buffer := make([]byte, checksumBlockSize)
-	for i := int64(0); i < endBlock-startBlock+1; i++ {
-		n1, err := readBuffer.Read(buffer)
-		if n1 != checksumBlockSize {
-			if err != io.EOF {
-				return n, err
-			}
-			return n, nil
-		}
-
-		originChecksum := uint32(buffer[0])<<24 | uint32(buffer[1])<<16 | uint32(buffer[2])<<8 | uint32(buffer[3])
-		payload := buffer[checksumSize:]
-		checksum := crc32.Checksum(payload, crc32.MakeTable(crc32.IEEE))
-		if originChecksum != checksum {
-			return n, errors.New("checksum error")
-		}
-
-		// checksumPayloadSize-offsetInBlockPayload get the remaining payload which is in a checksum block to be copied.
-		if needWriteSize >= checksumPayloadSize-offsetInBlockPayload {
-			copy(p[writeOffset:], payload[offsetInBlockPayload:])
-			n2 := len(payload[offsetInBlockPayload:])
-			n += n2
-			needWriteSize -= int64(n2)
-			writeOffset += int64(n2)
-			offsetInBlockPayload = 0
-			copy(buffer, emptyChecksumBlock)
-			continue
-		}
-		copy(p[writeOffset:], payload[offsetInBlockPayload:offsetInBlockPayload+needWriteSize])
-		n += len(payload[offsetInBlockPayload : offsetInBlockPayload+needWriteSize])
-		break
-	}
-
-	return n, nil
+	r.Read(cks.buf)
+	return nil
 }
