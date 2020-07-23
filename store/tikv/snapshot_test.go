@@ -306,7 +306,6 @@ func (s *testSnapshotSuite) TestSnapshotRuntimeStats(c *C) {
 	reqStats := make(map[tikvrpc.CmdType]*RegionRequestRuntimeStats)
 	recordRegionRequestRuntimeStats(reqStats, tikvrpc.CmdGet, time.Second)
 	recordRegionRequestRuntimeStats(reqStats, tikvrpc.CmdGet, time.Millisecond)
-	recordRegionRequestRuntimeStats(reqStats, tikvrpc.CmdResolveLock, time.Millisecond)
 	snapshot := newTiKVSnapshot(s.store, kv.Version{Ver: 0}, 0)
 	snapshot.SetOption(kv.CollectRuntimeStats, &SnapshotRuntimeStats{})
 	snapshot.mergeRegionRequestStats(reqStats)
@@ -316,6 +315,6 @@ func (s *testSnapshotSuite) TestSnapshotRuntimeStats(c *C) {
 	c.Assert(err, IsNil)
 	snapshot.recordBackoffInfo(bo)
 	snapshot.recordBackoffInfo(bo)
-	expect := "Get:{num_rpc:4, total_time:2.002s},ResolveLock:{num_rpc:2, total_time:2ms},txnLockFast_backoff:{num:2, total_time:60 ms}"
+	expect := "Get:{num_rpc:4, total_time:2.002s},txnLockFast_backoff:{num:2, total_time:60 ms}"
 	c.Assert(snapshot.stats.String(), Equals, expect)
 }
