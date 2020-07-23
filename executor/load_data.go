@@ -150,7 +150,7 @@ func (e *LoadDataInfo) initLoadColumns() error {
 
 	tableCols := e.Table.Cols()
 	if len(e.ColumnsAndUserVars) > 0 {
-		columns := make([]string, 0, len(e.ColumnsAndUserVars) + len(e.ColumnAssignments))
+		columns := make([]string, 0, len(e.ColumnsAndUserVars)+len(e.ColumnAssignments))
 		for _, v := range e.ColumnsAndUserVars {
 			var column *table.Column
 			if v.ColumnName != nil {
