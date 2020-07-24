@@ -236,7 +236,7 @@ func (e *IndexNestedLoopHashJoin) Next(ctx context.Context, req *chunk.Chunk) er
 	return nil
 }
 
-func (e *IndexNestedLoopHashJoin) runInOrder(ctx context.Context, req *chunk.Chunk) (err error) {
+func (e *IndexNestedLoopHashJoin) runInOrder(ctx context.Context, req *chunk.Chunk) error {
 	var (
 		result *indexHashJoinResult
 		ok     bool
@@ -448,7 +448,7 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.
 		if !ok {
 			break
 		}
-		// We need to init resultCh before the err is returned, or
+		// We need to init resultCh before the err is returned.
 		if task.keepOuterOrder {
 			resultCh = task.resultCh
 		}
