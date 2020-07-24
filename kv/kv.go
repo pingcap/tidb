@@ -50,7 +50,7 @@ const (
 	TaskID
 	// InfoSchema is schema version used by txn startTS.
 	InfoSchema
-	// CollectRuntimeStats used to enable collect runtime stats.
+	// CollectRuntimeStats is used to enable collect runtime stats.
 	CollectRuntimeStats
 )
 
