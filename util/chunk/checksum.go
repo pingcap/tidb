@@ -1,7 +1,6 @@
 package chunk
 
 import (
-	"bufio"
 	"encoding/binary"
 	"errors"
 	"hash/crc32"
@@ -80,14 +79,42 @@ func (cks *checksum) Flush() error {
 	return nil
 }
 
-func (cks *checksum) ReadAt(p []byte, off int64) (n int, err error) {
+func (cks *checksum) ReadAt(p []byte, off int64) (nn int, err error) {
 	startBlock := off / checksumPayloadSize
-	endBlock := (off + int64(len(p))) / checksumPayloadSize
-	offsetInBlockPayload := off - startBlock*checksumPayloadSize
-	writeOffset := int64(0)
-	needWriteSize := int64(len(p))
-
-	r := io.NewSectionReader(cks.disk, startBlock*checksumBlockSize, (endBlock-startBlock+1)*checksumBlockSize)
-	r.Read(cks.buf)
-	return nil
+	//endBlock := (off + int64(len(p))) / checksumPayloadSize
+	offsetInBlock := off - startBlock*checksumPayloadSize
+	off = startBlock * checksumPayloadSize
+	_, err = cks.disk.Seek(startBlock*checksumBlockSize, io.SeekStart)
+	if err != nil {
+		return 0, err
+	}
+	var n int
+	for len(p) > 0 && cks.err == nil {
+		n, cks.err = cks.disk.Read(cks.buf)
+		off += int64(n)
+		if cks.err != nil {
+			if cks.err != io.EOF {
+				return nn, cks.err
+			}
+			_, err = cks.disk.Seek((startBlock-1)*checksumBlockSize, io.SeekStart)
+			if err != nil {
+				return 0, err
+			}
+			off = startBlock * checksumBlockSize
+			n, cks.err = cks.disk.Read(cks.buf[:cks.n])
+			if cks.err != nil {
+				return nn, cks.err
+			}
+		}
+		originChecksum := binary.LittleEndian.Uint32(cks.buf)
+		checksum := crc32.Checksum(cks.buf[checksumSize:n], crc32.MakeTable(crc32.IEEE))
+		if originChecksum != checksum {
+			return nn, errors.New("error checksum")
+		}
+		n1 := copy(p, cks.buf[checksumSize+offsetInBlock:n])
+		p = p[n1:]
+		offsetInBlock = 0
+		startBlock++
+	}
+	return nn, cks.err
 }
