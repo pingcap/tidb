@@ -4957,6 +4957,7 @@ func (s *testSerialDBSuite) TestCommitTxnWithIndexChange(c *C) {
 			false,
 			model.StateNone},
 		// Test unique index
+		/* TODO unique index is not supported now.
 		{[]string{"insert into t1 values(3, 30, 300)",
 			"insert into t1 values(4, 40, 400)",
 			"insert into t2 values(11, 11, 11)",
@@ -5000,6 +5001,7 @@ func (s *testSerialDBSuite) TestCommitTxnWithIndexChange(c *C) {
 				{"1 10 100", "2 20 200"}},
 			true,
 			model.StateWriteOnly},
+		*/
 	}
 	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 10 100", "2 20 200"))
 

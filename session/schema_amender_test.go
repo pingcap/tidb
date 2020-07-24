@@ -51,6 +51,8 @@ func initTblColIdxID(metaInfo *model.TableInfo) {
 	}
 	for i, idx := range metaInfo.Indices {
 		idx.ID = int64(i + 1)
+		// TODO unique index is not supported now.
+		idx.Unique = false
 	}
 	metaInfo.ID = 1
 	metaInfo.State = model.StatePublic
@@ -297,8 +299,7 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 			}
 			if addIndexNeedAddOp(addIndexOpInfo.AmendOpType) {
 				expectedAmendOps = append(expectedAmendOps, &amendOperationAddNewIndex{
-					info:                  addIndexOpInfo,
-					processedNewIndexKeys: make(map[string]interface{}),
+					info: addIndexOpInfo,
 				})
 			}
 
@@ -318,8 +319,7 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 			}
 			if addIndexNeedAddOp(addIndexOpInfo1.AmendOpType) {
 				expectedAmendOps = append(expectedAmendOps, &amendOperationAddNewIndex{
-					info:                  addIndexOpInfo1,
-					processedNewIndexKeys: make(map[string]interface{}),
+					info: addIndexOpInfo1,
 				})
 			}
 			// Check collect results.

@@ -145,6 +145,10 @@ func (a *amendCollector) collectIndexAmendOps(phyTblID int64, tblAtStart, tblAtC
 			amendOpType = ConstOpAddIndex[idxInfoAtStart.Meta().State][idxInfoAtCommit.Meta().State]
 		}
 		if amendOpType != AmendNone {
+			// TODO unique index amend is not supported by now.
+			if idxInfoAtCommit.Meta().Unique {
+				return nil, errors.Trace(table.ErrUnsupportedOp)
+			}
 			opInfo := &amendOperationAddIndexInfo{}
 			opInfo.AmendOpType = amendOpType
 			opInfo.tblInfoAtStart = tblAtStart
@@ -171,8 +175,7 @@ func (a *amendCollector) collectIndexAmendOps(phyTblID int64, tblAtStart, tblAtC
 			}
 			if addIndexNeedAddOp(amendOpType) {
 				addNewIndexOp := &amendOperationAddNewIndex{
-					info:                  opInfo,
-					processedNewIndexKeys: make(map[string]interface{}),
+					info: opInfo,
 				}
 				res = append(res, addNewIndexOp)
 			}
@@ -248,8 +251,7 @@ type amendOperationDeleteOldIndex struct {
 
 // amendOperationAddNewIndex represents the add operation will be performed on new key values for add index amend.
 type amendOperationAddNewIndex struct {
-	info                  *amendOperationAddIndexInfo
-	processedNewIndexKeys map[string]interface{}
+	info *amendOperationAddIndexInfo
 }
 
 func (a *amendOperationAddIndexInfo) String() string {
@@ -275,7 +277,7 @@ func (a *amendOperationDeleteOldIndex) genMutations(ctx context.Context, sctx se
 		if !isDeleteOp(keyOp) {
 			continue
 		}
-		addMutations, err := a.processKey(ctx, sctx, key, kvMap.oldRowKvMap)
+		addMutations, err := a.processRowKey(ctx, sctx, key, kvMap.oldRowKvMap)
 		if err != nil {
 			return resAddMutations, err
 		}
@@ -297,7 +299,7 @@ func (a *amendOperationAddNewIndex) genMutations(ctx context.Context, sctx sessi
 		if !isInsertOp(keyOp) {
 			continue
 		}
-		addMutations, err := a.processKey(ctx, sctx, key, kvMap.newRowKvMap)
+		addMutations, err := a.processRowKey(ctx, sctx, key, kvMap.newRowKvMap)
 		if err != nil {
 			return resAddMutations, err
 		}
@@ -360,7 +362,7 @@ func (a *amendOperationAddIndexInfo) genIndexKeyValue(ctx context.Context, sctx 
 	return newIdxKey, newIdxVal, nil
 }
 
-func (a *amendOperationAddNewIndex) processKey(ctx context.Context, sctx sessionctx.Context, key []byte,
+func (a *amendOperationAddNewIndex) processRowKey(ctx context.Context, sctx sessionctx.Context, key []byte,
 	kvMap map[string][]byte) (resAdd tikv.CommitterMutations, err error) {
 	kvHandle, err := tablecodec.DecodeRowKey(key)
 	if err != nil {
@@ -373,20 +375,11 @@ func (a *amendOperationAddNewIndex) processKey(ctx context.Context, sctx session
 		return resAdd, errors.Trace(err)
 	}
 	// Check if the generated index keys are unique for unique index.
-	newIndexOp := pb.Op_Put
-	if a.info.indexInfoAtCommit.Meta().Unique {
-		if _, ok := a.processedNewIndexKeys[string(newIdxKey)]; ok {
-			return resAdd, errors.Trace(errors.Errorf("amend process key same key=%v found for unique index=%v",
-				newIdxKey, a.info.indexInfoAtCommit.Meta().Name))
-		}
-		newIndexOp = pb.Op_Insert
-	}
-	a.processedNewIndexKeys[string(newIdxKey)] = nil
-	resAdd.Push(newIndexOp, newIdxKey, newIdxValue, false)
+	resAdd.Push(pb.Op_Put, newIdxKey, newIdxValue, false)
 	return
 }
 
-func (a *amendOperationDeleteOldIndex) processKey(ctx context.Context, sctx sessionctx.Context, key []byte,
+func (a *amendOperationDeleteOldIndex) processRowKey(ctx context.Context, sctx sessionctx.Context, key []byte,
 	oldValKvMap map[string][]byte) (resAdd tikv.CommitterMutations, err error) {
 	kvHandle, err := tablecodec.DecodeRowKey(key)
 	if err != nil {
