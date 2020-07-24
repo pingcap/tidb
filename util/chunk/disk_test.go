@@ -179,7 +179,7 @@ func checkRow(c *check.C, row1, row2 Row) {
 	}
 }
 
-func (s *testChunkSuite) TestListInDiskOriginal(c *check.C) {
+func (s *testChunkSuite1) TestListInDiskOriginal(c *check.C) {
 	numChk, numRow := 3, 1000
 	chks, fields := initChunks(numChk, numRow)
 	lChecksum := NewListInDisk(fields)
@@ -196,7 +196,7 @@ func (s *testChunkSuite) TestListInDiskOriginal(c *check.C) {
 
 	var ptrs []RowPtr
 	for i := 2; i < numChk; i++ {
-		for j := 922; j < numRow; j++ {
+		for j := 990; j < numRow; j++ {
 			ptrs = append(ptrs, RowPtr{
 				ChkIdx: uint32(i),
 				RowIdx: uint32(j),
@@ -204,14 +204,12 @@ func (s *testChunkSuite) TestListInDiskOriginal(c *check.C) {
 		}
 	}
 
-	lChecksum.flush()
-
 	finfo, _ := lChecksum.disk.Stat()
 	fmt.Println(finfo.Size())
 
 	for _, rowPtr := range ptrs {
-		row1, _ := lChecksum.GetRow(rowPtr)
 		row2, _ := lDisk.GetRow(rowPtr)
+		row1, _ := lChecksum.GetRow(rowPtr)
 		fmt.Println(rowPtr)
 		checkRow(c, row1, row2)
 	}

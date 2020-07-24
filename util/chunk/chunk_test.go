@@ -45,9 +45,10 @@ func TestT(t *testing.T) {
 	check.TestingT(t)
 }
 
-var _ = check.Suite(&testChunkSuite{})
+var _ = check.Suite(&testChunkSuite1{})
 
 type testChunkSuite struct{}
+type testChunkSuite1 struct{}
 
 func (s *testChunkSuite) TestChunk(c *check.C) {
 	numCols := 6
