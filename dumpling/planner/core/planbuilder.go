@@ -1085,7 +1085,6 @@ func (b *PlanBuilder) getGenExprs(ctx context.Context, dbName model.CIStr, tbl t
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			expr = expression.BuildCastFunction(b.ctx, expr, colExpr.GetType())
 			found := false
 			for _, column := range idx.Columns {
 				if strings.EqualFold(col.Name.L, column.Name.L) {
@@ -1122,18 +1121,14 @@ func FindColumnInfoByID(colInfos []*model.ColumnInfo, id int64) *model.ColumnInf
 }
 
 func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName model.CIStr, tbl table.Table, idx *model.IndexInfo) (Plan, error) {
-	// Get generated columns.
-	var genCols []*expression.Column
 	var extraColHandle *expression.Column
 	var commonHandleCols []*expression.Column
 	var pkOffsets []int
 	tblInfo := tbl.Meta()
-	colsMap := set.NewInt64Set()
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(idx.Columns))...)
 	idxReaderCols := make([]*model.ColumnInfo, 0, len(idx.Columns))
 	tblReaderCols := make([]*model.ColumnInfo, 0, len(tbl.Cols()))
-	fullExprCols, fullColNames := expression.TableInfo2SchemaAndNames(b.ctx, dbName, tblInfo)
-	genExprsMap, err := b.getGenExprs(ctx, dbName, tbl, idx, fullExprCols, fullColNames)
+	fullExprCols, _, err := expression.TableInfo2SchemaAndNames(b.ctx, dbName, tblInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -1143,66 +1138,11 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 				idxReaderCols = append(idxReaderCols, col)
 				tblReaderCols = append(tblReaderCols, col)
 				schema.Append(fullExprCols.Columns[i])
-				colsMap.Insert(col.ID)
-				if mysql.HasPriKeyFlag(col.Flag) {
-					pkOffsets = append(pkOffsets, len(tblReaderCols)-1)
-				}
-				genColumnID := model.TableColumnID{TableID: tblInfo.ID, ColumnID: col.ID}
-				if expr, ok := genExprsMap[genColumnID]; ok {
-					cols := expression.ExtractColumns(expr)
-					genCols = append(genCols, cols...)
-				}
 			}
 		}
 	}
 	idxCols, idxColLens := expression.IndexInfo2PrefixCols(tblReaderCols, schema.Columns, idx)
 	fullIdxCols, _ := expression.IndexInfo2Cols(tblReaderCols, schema.Columns, idx)
-	// Add generated columns to tblSchema and tblReaderCols.
-	tblSchema := schema.Clone()
-	for _, col := range genCols {
-		if !colsMap.Exist(col.ID) {
-			info := FindColumnInfoByID(tblInfo.Columns, col.ID)
-			if info != nil {
-				tblReaderCols = append(tblReaderCols, info)
-				tblSchema.Append(col)
-				colsMap.Insert(col.ID)
-				if mysql.HasPriKeyFlag(col.RetType.Flag) {
-					pkOffsets = append(pkOffsets, len(tblReaderCols)-1)
-				}
-			}
-		}
-	}
-	for k, expr := range genExprsMap {
-		genExprsMap[k], err = expr.ResolveIndices(tblSchema)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	if tblInfo.IsCommonHandle {
-		pkOffsets = pkOffsets[:0]
-		pk := tables.FindPrimaryIndex(tblInfo)
-		commonHandleCols, _ = expression.IndexInfo2Cols(tblInfo.Columns, fullExprCols.Columns, pk)
-		for _, c := range commonHandleCols {
-			tblSchema.Append(c)
-		}
-		for _, c := range tables.TryGetCommonPkColumns(tbl) {
-			tblReaderCols = append(tblReaderCols, c.ColumnInfo)
-			idxReaderCols = append(idxReaderCols, c.ColumnInfo)
-			pkOffsets = append(pkOffsets, len(tblReaderCols)-1)
-		}
-	} else {
-		if !tblInfo.PKIsHandle || len(pkOffsets) == 0 {
-			tblReaderCols = append(tblReaderCols, model.NewExtraHandleColInfo())
-			extraColHandle = &expression.Column{
-				RetType:  types.NewFieldType(mysql.TypeLonglong),
-				UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
-				ID:       model.ExtraHandleID,
-			}
-			tblSchema.Append(extraColHandle)
-			pkOffsets = []int{len(tblReaderCols) - 1}
-		}
-	}
 
 	is := PhysicalIndexScan{
 		Table:            tblInfo,
@@ -1214,13 +1154,44 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 		IdxColLens:       idxColLens,
 		dataSourceSchema: schema,
 		Ranges:           ranger.FullRange(),
-		GenExprs:         genExprsMap,
 	}.Init(b.ctx, b.getSelectOffset())
 	// There is no alternative plan choices, so just use pseudo stats to avoid panic.
 	is.stats = &property.StatsInfo{HistColl: &(statistics.PseudoTable(tblInfo)).HistColl}
 	// It's double read case.
 	ts := PhysicalTableScan{Columns: tblReaderCols, Table: is.Table, TableAsName: &tblInfo.Name}.Init(b.ctx, b.getSelectOffset())
-	ts.SetSchema(tblSchema.Clone())
+	ts.SetSchema(schema.Clone())
+	ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
+	if tblInfo.IsCommonHandle {
+		pkOffsets = pkOffsets[:0]
+		pk := tables.FindPrimaryIndex(tblInfo)
+		commonHandleCols, _ = expression.IndexInfo2Cols(tblInfo.Columns, fullExprCols.Columns, pk)
+		for _, c := range commonHandleCols {
+			ts.schema.Append(c)
+		}
+		for _, c := range tables.TryGetCommonPkColumns(tbl) {
+			ts.Columns = append(ts.Columns, c.ColumnInfo)
+			is.Columns = append(is.Columns, c.ColumnInfo)
+			pkOffsets = append(pkOffsets, len(ts.Columns)-1)
+		}
+	} else {
+		pkOffsets = pkOffsets[:0]
+		for offset, col := range ts.Columns {
+			if mysql.HasPriKeyFlag(col.Flag) {
+				pkOffsets = append(pkOffsets, offset)
+			}
+		}
+		if !tblInfo.PKIsHandle || len(pkOffsets) == 0 {
+			ts.Columns = append(ts.Columns, model.NewExtraHandleColInfo())
+			extraColHandle = &expression.Column{
+				RetType:  types.NewFieldType(mysql.TypeLonglong),
+				UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+				ID:       model.ExtraHandleID,
+			}
+			ts.schema.Append(extraColHandle)
+			pkOffsets = []int{len(ts.Columns) - 1}
+		}
+	}
+
 	if tbl.Meta().GetPartitionInfo() != nil {
 		pid := tbl.(table.PhysicalTable).GetPhysicalID()
 		is.physicalTableID = pid
@@ -1238,6 +1209,9 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 	ts.HandleIdx = pkOffsets
 	is.initSchema(append(fullIdxCols, commonHandleCols...), true)
 	rootT := finishCopTask(b.ctx, cop).(*rootTask)
+	if err := rootT.p.ResolveIndices(); err != nil {
+		return nil, err
+	}
 	return rootT.p, nil
 }
 
@@ -2107,7 +2081,10 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		return nil, err
 	}
 	// Build Schema with DBName otherwise ColumnRef with DBName cannot match any Column in Schema.
-	schema, names := expression.TableInfo2SchemaAndNames(b.ctx, tn.Schema, tableInfo)
+	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx, tn.Schema, tableInfo)
+	if err != nil {
+		return nil, err
+	}
 	tableInPlan, ok := b.is.TableByID(tableInfo.ID)
 	if !ok {
 		return nil, errors.Errorf("Can't get table %s.", tableInfo.Name.O)
@@ -2510,12 +2487,14 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 		db := b.ctx.GetSessionVars().CurrentDB
 		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(db, tableInfo.Name.O)
 	}
-	schema, names := expression.TableInfo2SchemaAndNames(b.ctx, model.NewCIStr(""), tableInfo)
+	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx, model.NewCIStr(""), tableInfo)
+	if err != nil {
+		return nil, err
+	}
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 	mockTablePlan.SetSchema(schema)
 	mockTablePlan.names = names
 
-	var err error
 	p.GenCols, err = b.resolveGeneratedColumns(ctx, tableInPlan.Cols(), nil, mockTablePlan)
 	if err != nil {
 		return nil, err
@@ -2556,7 +2535,10 @@ func (b *PlanBuilder) buildSplitIndexRegion(node *ast.SplitRegionStmt) (Plan, er
 		return nil, ErrKeyDoesNotExist.GenWithStackByArgs(node.IndexName, tblInfo.Name)
 	}
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
-	schema, names := expression.TableInfo2SchemaAndNames(b.ctx, node.Table.Schema, tblInfo)
+	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx, node.Table.Schema, tblInfo)
+	if err != nil {
+		return nil, err
+	}
 	mockTablePlan.SetSchema(schema)
 	mockTablePlan.names = names
 
@@ -2668,7 +2650,10 @@ func (b *PlanBuilder) buildSplitTableRegion(node *ast.SplitRegionStmt) (Plan, er
 	tblInfo := node.Table.TableInfo
 	handleColInfos := buildHandleColumnInfos(tblInfo)
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
-	schema, names := expression.TableInfo2SchemaAndNames(b.ctx, node.Table.Schema, tblInfo)
+	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx, node.Table.Schema, tblInfo)
+	if err != nil {
+		return nil, err
+	}
 	mockTablePlan.SetSchema(schema)
 	mockTablePlan.names = names
 
@@ -2690,7 +2675,6 @@ func (b *PlanBuilder) buildSplitTableRegion(node *ast.SplitRegionStmt) (Plan, er
 		return p, nil
 	}
 
-	var err error
 	p.Lower, err = convertValueListToData(node.SplitOpt.Lower, handleColInfos, lowerBound, b, mockTablePlan)
 	if err != nil {
 		return nil, err
