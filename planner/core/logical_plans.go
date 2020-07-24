@@ -157,7 +157,7 @@ func (p *LogicalJoin) Shallow() *LogicalJoin {
 	return join.Init(p.ctx, p.blockOffset)
 }
 
-// GetJoinKeys extracts join keys(columns) from EqualConditions. It returns left join keys, right 
+// GetJoinKeys extracts join keys(columns) from EqualConditions. It returns left join keys, right
 // join keys and an `isNullEQ` array which means the `joinKey[i]` is a `NullEQ` function. The `hasNullEQ`
 // means whether there is a `NullEQ` of a join key.
 func (p *LogicalJoin) GetJoinKeys() (leftKeys, rightKeys []*expression.Column, isNullEQ []bool, hasNullEQ bool) {
