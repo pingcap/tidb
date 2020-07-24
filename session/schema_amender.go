@@ -37,7 +37,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const amendableType = nonMemAmendType | (memBufAmendType)
+const amendableType = nonMemAmendType | memBufAmendType
 const nonMemAmendType = (1 << model.ActionAddColumn) | (1 << model.ActionDropColumn) | (1 << model.ActionDropIndex)
 const memBufAmendType = uint64(1 << model.ActionAddIndex)
 
