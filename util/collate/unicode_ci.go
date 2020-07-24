@@ -32,6 +32,7 @@ func newUnicodeScanner(s string) *unicodeScanner {
 }
 
 // return next weight of string. return `terminal` when string is done
+// a rune may expand to many weights, it will be returned one by one
 func (us *unicodeScanner) next() uint16 {
 	if len(us.expand) != 0 && us.expand[0] != terminal {
 		r := us.expand[0]
@@ -52,6 +53,7 @@ func (us *unicodeScanner) next() uint16 {
 	return terminal
 }
 
+// unicodeCICollator implements UCA. see also http://unicode.org/reports/tr10/
 type unicodeCICollator struct {
 }
 
