@@ -985,7 +985,7 @@ func checkAddPartition(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.P
 	return tblInfo, partInfo, partDefPointers, nil
 }
 
-func checkPartitionReplica(partDefPointers []*model.PartitionDefinition, d *ddlCtx, job *model.Job) (needWait bool, err error) {
+func checkPartitionReplica(partDefPointers []*model.PartitionDefinition, d *ddlCtx) (needWait bool, err error) {
 	ctx := context.Background()
 	pdCli := d.store.(tikv.Storage).GetRegionCache().PDClient()
 	stores, err := pdCli.GetAllStores(ctx)
@@ -1091,10 +1091,11 @@ func onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ 
 	case model.StateDeleteOnly:
 		// delete only -> public
 		// Here need do some tiflash replica complement check.
+		// Todo: if a table is with no TiFlashReplica or it is not available, the delete-only state can be eliminated.
 		if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
 			// For available state, the new added partition should wait it's replica to
 			// be finished. Otherwise the query to this partition will be blocked.
-			needWait, err := checkPartitionReplica(partDefPointers, d, job)
+			needWait, err := checkPartitionReplica(partDefPointers, d)
 			if err != nil {
 				ver, err = convertAddTablePartitionJob2RollbackJob(t, job, err)
 				return ver, err
