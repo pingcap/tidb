@@ -731,10 +731,14 @@ func (d *regionKeyDecoder) decodeRegionKey(key []byte) string {
 		if len(d.recordPrefix) == len(key) {
 			return fmt.Sprintf("t_%d_r", d.physicalTableID)
 		}
-		_, handle, err := codec.DecodeInt(key[len(d.recordPrefix):])
-		if err == nil {
-			return fmt.Sprintf("t_%d_r_%d", d.physicalTableID, handle)
+		isIntHandle := len(key)-len(d.recordPrefix) == 8
+		if isIntHandle {
+			_, handle, err := codec.DecodeInt(key[len(d.recordPrefix):])
+			if err == nil {
+				return fmt.Sprintf("t_%d_r_%d", d.physicalTableID, handle)
+			}
 		}
+		return fmt.Sprintf("t_%d_r_%x", d.physicalTableID, key[len(d.recordPrefix):])
 	}
 	if len(d.tablePrefix) > 0 && bytes.HasPrefix(key, d.tablePrefix) {
 		key = key[len(d.tablePrefix):]
