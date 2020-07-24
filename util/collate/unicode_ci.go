@@ -54,7 +54,7 @@ func (us *unicodeScanner) next() uint16 {
 type unicodeCICollator struct {
 }
 
-// Compare implement Collator interface.
+// Compare implements Collator interface.
 func (uc *unicodeCICollator) Compare(a, b string) int {
 	as := newUnicodeScanner(truncateTailingSpace(a))
 	bs := newUnicodeScanner(truncateTailingSpace(b))
@@ -87,6 +87,16 @@ func (uc *unicodeCICollator) Pattern() WildcardPattern {
 type unicodeCIPattern struct {
 	patChars []rune
 	patTypes []byte
+}
+
+// Compile implements WildcardPattern interface.
+func (p *unicodeCIPattern) Compile(patternStr string, escape byte) {
+	p.patChars, p.patTypes = compilePatternUnicodeCI(patternStr, escape)
+}
+
+// Compile implements WildcardPattern interface.
+func (p *unicodeCIPattern) DoMatch(str string) bool {
+	return doMatchUnicodeCI(str, p.patChars, p.patTypes)
 }
 
 // compilePatternUnicodeCI handles escapes and wild cards, generate pattern weights and types.
@@ -190,16 +200,6 @@ func doMatchUnicodeCI(str string, patWeights []rune, patTypes []byte) bool {
 	}
 	// Matched all of pattern to all of name. Success.
 	return true
-}
-
-// Compile implements WildcardPattern interface.
-func (p *unicodeCIPattern) Compile(patternStr string, escape byte) {
-	p.patChars, p.patTypes = compilePatternUnicodeCI(patternStr, escape)
-}
-
-// Compile implements WildcardPattern interface.
-func (p *unicodeCIPattern) DoMatch(str string) bool {
-	return doMatchUnicodeCI(str, p.patChars, p.patTypes)
 }
 
 // runeEqual compare rune is equal with unicode_ci collation
