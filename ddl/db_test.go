@@ -5298,3 +5298,54 @@ func init() {
 	domain.SchemaOutOfDateRetryInterval = int64(50 * time.Millisecond)
 	domain.SchemaOutOfDateRetryTimes = int32(50)
 }
+
+func (s *testDBSuite7) TestCreateTableWithIntegerLengthWaring(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+
+	tk.MustExec("create table t(a tinyint(1))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 Integer display width is deprecated and will be removed in a future release."))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a smallint(2))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 Integer display width is deprecated and will be removed in a future release."))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int(2))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 Integer display width is deprecated and will be removed in a future release."))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a mediumint(2))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 Integer display width is deprecated and will be removed in a future release."))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bigint(2))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 Integer display width is deprecated and will be removed in a future release."))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a integer(2))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 Integer display width is deprecated and will be removed in a future release."))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int1(1))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 Integer display width is deprecated and will be removed in a future release."))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int2(2))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 Integer display width is deprecated and will be removed in a future release."))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int3(2))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 Integer display width is deprecated and will be removed in a future release."))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int4(2))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 Integer display width is deprecated and will be removed in a future release."))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int8(2))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 Integer display width is deprecated and will be removed in a future release."))
+
+	tk.MustExec("drop table if exists t")
+}
