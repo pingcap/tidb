@@ -197,17 +197,6 @@ func (s *testSuite9) TestPlanCacheClusterIndex(c *C) {
 	// case 3:
 	tk.MustExec(`drop table if exists ta, tb`)
 	tk.MustExec(`create table ta (a varchar(10), b varchar(10), c int, primary key (a, b))`)
-	tk.MustExec(`insert ta values ('a', 'a', 1), ('b', 'b', 2)`)
-	tk.MustExec(`create table tb (b int primary key, c int)`)
-	tk.MustExec(`insert tb values (1, 1), (2, 2)`)
-	tk.MustExec(`prepare stmt1 from "select * from ta, tb where ta.c = tb.b and ta.a = ? and ta.b = ?"`)
-	tk.MustExec(`set @v1 = 'a', @v2 = 'b'`)
-	tk.MustQuery(`execute stmt1 using @v1, @v1`).Check(testkit.Rows("a a 1 1 1"))
-	tk.MustQuery(`execute stmt1 using @v2, @v2`).Check(testkit.Rows("b b 2 2 2"))
-
-	// case 4:
-	tk.MustExec(`drop table if exists ta, tb`)
-	tk.MustExec(`create table ta (a varchar(10), b varchar(10), c int, primary key (a, b))`)
 	tk.MustExec(`insert ta values ('a', 'a', 1), ('b', 'b', 2), ('c', 'c', 3)`)
 	tk.MustExec(`create table tb (b int primary key, c int)`)
 	tk.MustExec(`insert tb values (1, 1), (2, 2), (3,3)`)
