@@ -37,7 +37,6 @@ func (s *testSuite1) TestExplainPriviliges(c *C) {
 	tk.MustExec("create table t (id int)")
 	tk.MustExec("create view v as select * from t")
 	tk.MustExec(`create user 'explain'@'%'`)
-	tk.MustExec(`flush privileges`)
 
 	tk1 := testkit.NewTestKit(c, s.store)
 	se, err = session.CreateSession4Test(s.store)
@@ -46,7 +45,6 @@ func (s *testSuite1) TestExplainPriviliges(c *C) {
 	tk1.Se = se
 
 	tk.MustExec(`grant select on explaindatabase.v to 'explain'@'%'`)
-	tk.MustExec(`flush privileges`)
 	tk1.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA", "explaindatabase"))
 
 	tk1.MustExec("use explaindatabase")
@@ -55,11 +53,9 @@ func (s *testSuite1) TestExplainPriviliges(c *C) {
 	c.Assert(err.Error(), Equals, plannercore.ErrViewNoExplain.Error())
 
 	tk.MustExec(`grant show view on explaindatabase.v to 'explain'@'%'`)
-	tk.MustExec(`flush privileges`)
 	tk1.MustQuery("explain select * from v")
 
 	tk.MustExec(`revoke select on explaindatabase.v from 'explain'@'%'`)
-	tk.MustExec(`flush privileges`)
 
 	err = tk1.ExecToErr("explain select * from v")
 	c.Assert(err.Error(), Equals, plannercore.ErrTableaccessDenied.GenWithStackByArgs("SELECT", "explain", "%", "v").Error())
