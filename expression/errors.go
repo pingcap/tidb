@@ -58,10 +58,10 @@ func handleInvalidTimeError(ctx sessionctx.Context, err error) error {
 		return err
 	}
 	sc := ctx.GetSessionVars().StmtCtx
+	err = sc.HandleTruncate(err)
 	if ctx.GetSessionVars().StrictSQLMode && (sc.InInsertStmt || sc.InUpdateStmt || sc.InDeleteStmt) {
 		return err
 	}
-	sc.AppendWarning(err)
 	return nil
 }
 

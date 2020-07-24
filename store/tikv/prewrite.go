@@ -84,6 +84,8 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 			req.Secondaries = c.asyncSecondaries()
 		}
 		req.UseAsyncCommit = true
+		// The async commit can not be used for large transactions, and the commit ts can't be pushed.
+		req.MinCommitTs = 0
 	}
 
 	return tikvrpc.NewRequest(tikvrpc.CmdPrewrite, req, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
@@ -133,6 +135,9 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 				// commit cannot proceed. The client can then fallback to normal way to
 				// continue committing the transaction if prewrite are all finished.
 				if prewriteResp.MinCommitTs == 0 {
+					if c.testingKnobs.noFallBack {
+						return nil
+					}
 					logutil.Logger(bo.ctx).Warn("async commit cannot proceed since the returned minCommitTS is zero, "+
 						"fallback to normal path", zap.Uint64("startTS", c.startTS))
 					c.setAsyncCommit(false)
