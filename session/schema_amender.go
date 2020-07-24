@@ -343,7 +343,6 @@ func (a *amendOperationAddNewIndex) processRowKey(ctx context.Context, sctx sess
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// Check if the generated index keys are unique for unique index.
 	resAddMutations.Push(pb.Op_Put, newIdxKey, newIdxValue, false)
 	return nil
 }
