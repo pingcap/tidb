@@ -789,6 +789,7 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 	}
 	// Resolve virtual generated column.
 	mockSchema := NewSchema(columns...)
+	// Ignore redundant warning here.
 	save := ctx.GetSessionVars().StmtCtx.IgnoreTruncate
 	defer func() {
 		ctx.GetSessionVars().StmtCtx.IgnoreTruncate = save

@@ -46,11 +46,11 @@ func evalAstExpr(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error
 	if val, ok := expr.(*driver.ValueExpr); ok {
 		return val.Datum, nil
 	}
-	NewExpr, err := rewriteAstExpr(sctx, expr, nil, nil)
+	newExpr, err := rewriteAstExpr(sctx, expr, nil, nil)
 	if err != nil {
 		return types.Datum{}, err
 	}
-	return NewExpr.Eval(chunk.Row{})
+	return newExpr.Eval(chunk.Row{})
 }
 
 // rewriteAstExpr rewrites ast expression directly.
