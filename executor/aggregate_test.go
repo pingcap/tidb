@@ -839,6 +839,19 @@ func (s *testSuiteAgg) TestAggEliminator(c *C) {
 	tk.MustQuery("select group_concat(b, b) from t group by a").Sort().Check(testkit.Rows("-1-1", "-2-2", "11", "<nil>"))
 }
 
+func (s *testSuiteAgg) TestClusterIndexMaxMinEliminator(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("set @@tidb_enable_clustered_index=1;")
+	tk.MustExec("create table t (a int, b int, c int, primary key(a, b));")
+	for i := 0; i < 10+1; i++ {
+		tk.MustExec("insert into t values (?, ?, ?)", i, i, i)
+	}
+	tk.MustQuery("select max(a), min(a+b) from t;").Check(testkit.Rows("10 0"))
+	tk.MustQuery("select max(a+b), min(a+b) from t;").Check(testkit.Rows("20 0"))
+	tk.MustQuery("select min(a), max(a), min(b), max(b) from t;").Check(testkit.Rows("0 10 0 10"))
+}
+
 func (s *testSuiteAgg) TestMaxMinFloatScalaFunc(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 

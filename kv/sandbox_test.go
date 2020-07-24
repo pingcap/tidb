@@ -19,7 +19,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/goleveldb/leveldb/memdb"
+	leveldb "github.com/pingcap/goleveldb/leveldb/memdb"
 )
 
 const (
@@ -342,7 +342,7 @@ func (s testMemDBSuite) TestEmptyDB(c *C) {
 	c.Check(it.Valid(), IsFalse)
 }
 
-func (s testMemDBSuite) checkConsist(c *C, p1 *sandbox, p2 *memdb.DB) {
+func (s testMemDBSuite) checkConsist(c *C, p1 *sandbox, p2 *leveldb.DB) {
 	c.Check(p1.Len(), Equals, p2.Len())
 	c.Check(p1.Size(), Equals, p2.Size())
 

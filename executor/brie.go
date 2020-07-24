@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/br/pkg/backup"
 	"github.com/pingcap/br/pkg/glue"
 	"github.com/pingcap/br/pkg/storage"
 	"github.com/pingcap/br/pkg/task"
@@ -249,6 +250,8 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	switch s.Kind {
 	case ast.BRIEKindBackup:
 		e.backupCfg = &task.BackupConfig{Config: cfg}
+		// TODO adapt new backup config in br.
+		e.backupCfg.GCTTL = backup.DefaultBRGCSafePointTTL
 
 		for _, opt := range s.Options {
 			switch opt.Tp {
@@ -277,6 +280,10 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 
 	case ast.BRIEKindRestore:
 		e.restoreCfg = &task.RestoreConfig{Config: cfg}
+		// TODO adapt new restore config in br. now give these with default value
+		e.restoreCfg.SwitchModeInterval = backup.DefaultBRGCSafePointTTL
+		e.restoreCfg.CheckRequirements = false
+		e.restoreCfg.RemoveTiFlash = true
 		for _, opt := range s.Options {
 			switch opt.Tp {
 			case ast.BRIEOptionOnline:
