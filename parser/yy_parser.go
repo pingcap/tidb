@@ -49,6 +49,10 @@ var (
 	ErrUnknownAlterAlgorithm = terror.ClassParser.New(mysql.ErrUnknownAlterAlgorithm, mysql.MySQLErrName[mysql.ErrUnknownAlterAlgorithm])
 	// ErrWrongValue returns for wrong value
 	ErrWrongValue = terror.ClassParser.New(mysql.ErrWrongValue, mysql.MySQLErrName[mysql.ErrWrongValue])
+	// ErrWarnDeprecatedSyntaxNoReplacement return when the syntax was deprecated and there is no replacement.
+	ErrWarnDeprecatedSyntaxNoReplacement = terror.ClassParser.New(mysql.ErrWarnDeprecatedSyntaxNoReplacement, mysql.MySQLErrName[mysql.ErrWarnDeprecatedSyntaxNoReplacement])
+	// ErrWarnDeprecatedIntegerDisplayWidth share the same code 1681, and it will be returned when length is specified in integer.
+	ErrWarnDeprecatedIntegerDisplayWidth = terror.ClassParser.New(mysql.ErrWarnDeprecatedSyntaxNoReplacement, "Integer display width is deprecated and will be removed in a future release.")
 	// SpecFieldPattern special result field pattern
 	SpecFieldPattern = regexp.MustCompile(`(\/\*!(M?[0-9]{5,6})?|\*\/)`)
 	specCodeStart    = regexp.MustCompile(`^\/\*!(M?[0-9]{5,6})?[ \t]*`)
