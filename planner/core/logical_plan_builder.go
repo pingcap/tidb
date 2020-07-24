@@ -1333,16 +1333,12 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 				return node, false
 			}
 			if index == -1 {
-<<<<<<< HEAD
-				if a.orderBy {
-					index, a.err = a.resolveFromSchema(v, a.p.Schema())
-=======
 				if a.curClause == orderByClause {
-					index, a.err = a.resolveFromPlan(v, a.p)
+					index, a.err = a.resolveFromSchema(v, a.p.Schema())
 				} else if a.curClause == havingClause && v.Name.Table.L != "" {
 					// For SQLs like:
 					//   select a from t b having b.a;
-					index, a.err = a.resolveFromPlan(v, a.p)
+					index, a.err = a.resolveFromSchema(v, a.p.Schema())
 					if a.err != nil {
 						return node, false
 					}
@@ -1353,7 +1349,6 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 						newV.Name = &ast.ColumnName{Name: v.Name.Name}
 						index, a.err = resolveFromSelectFields(newV, a.selectFields, true)
 					}
->>>>>>> 62979f6... planner: resolveFromPlan when tblName.colName exists in having clause (#18349)
 				} else {
 					index, a.err = resolveFromSelectFields(v, a.selectFields, true)
 				}
