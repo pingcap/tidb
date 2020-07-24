@@ -357,11 +357,12 @@ func buildIndexLookUpChecker(b *executorBuilder, p *plannercore.PhysicalIndexLoo
 	for _, col := range is.Columns {
 		tps = append(tps, &col.FieldType)
 	}
+
 	if !e.isCommonHandle() {
 		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
 	}
 
-	e.checkIndexValue = &checkIndexValue{genExprs: is.GenExprs, idxColTps: tps}
+	e.checkIndexValue = &checkIndexValue{idxColTps: tps}
 
 	colNames := make([]string, 0, len(is.IdxCols))
 	for i := range is.IdxCols {
