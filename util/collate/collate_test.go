@@ -167,6 +167,28 @@ func (s *testCollateSuite) TestUnicodeCICollator(c *C) {
 	testKeyTable(keyTable, "utf8mb4_unicode_ci", c)
 }
 
+func BenchmarkUnicodeCIMatchSpecial(b *testing.B) {
+	SetNewCollationEnabledForTest(true)
+	defer SetNewCollationEnabledForTest(false)
+
+	var (
+		pattern = `㍿%㍿%㍿%㍿%㍿%㍿%㍿%㍿%b`
+		target  = `㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿`
+		escape  = byte('\\')
+	)
+
+	p := GetCollator("utf8mb4_unicode_ci").Pattern()
+	p.Compile(pattern, escape)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		match := p.DoMatch(target)
+		if match {
+			b.Fatal("Unmatch expected.")
+		}
+	}
+}
+
 func BenchmarkUnicodeCIKeySpecial(b *testing.B) {
 	SetNewCollationEnabledForTest(true)
 	defer SetNewCollationEnabledForTest(false)

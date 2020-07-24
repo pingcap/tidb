@@ -78,8 +78,8 @@ func (s *testEvaluatorSerialSuites) TestCILike(c *C) {
 		{"áééá", "a%_a", 1, 1},
 		{"áéá", "a_%a", 1, 1},
 		{"áéá", "a%_a", 1, 1},
-		{"áá", "a_%a", 0, 1},
-		{"áá", "a%_a", 0, 1},
+		{"áá", "a_%a", 0, 0},
+		{"áá", "a%_a", 0, 0},
 		{"áééáííí", "a_%a%", 1, 1},
 
 		// general_ci and unicode_ci different
