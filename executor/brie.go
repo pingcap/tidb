@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/br/pkg/backup"
 	"github.com/pingcap/br/pkg/glue"
 	"github.com/pingcap/br/pkg/storage"
 	"github.com/pingcap/br/pkg/task"
@@ -249,6 +250,7 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	switch s.Kind {
 	case ast.BRIEKindBackup:
 		e.backupCfg = &task.BackupConfig{Config: cfg}
+		e.backupCfg.GCTTL = backup.DefaultBRGCSafePointTTL
 
 		for _, opt := range s.Options {
 			switch opt.Tp {
