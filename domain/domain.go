@@ -1249,17 +1249,15 @@ const (
 	serverIDEtcdPath        = "/tidb/server_id"
 	acquireServerIDRetryCnt = 3
 	acquireServerIDTimeout  = 3 * time.Second
-	// serverIDTTL is ttl for serverID, and it's the ETCD session's TTL in seconds.
-	serverIDTTL                     = 20
-	serverIDTimeToCheckPDConnection = serverIDTTL * time.Second / 10
-	lostConnectionTimeout           = serverIDTimeToCheckPDConnection * 5
 )
 
 func (do *Domain) acquireServerID(ctx context.Context) error {
+	cfg := config.GetGlobalConfig()
+
 	atomic.StoreUint64(&do.serverID, 0)
 
 	logPrefix := fmt.Sprintf("[acquireServerID] ")
-	session, err := owner.NewSession(ctx, logPrefix, do.etcdClient, owner.NewSessionDefaultRetryCnt, serverIDTTL)
+	session, err := owner.NewSession(ctx, logPrefix, do.etcdClient, owner.NewSessionDefaultRetryCnt, cfg.ServerIDTTL)
 	if err != nil {
 		return err
 	}
@@ -1302,6 +1300,10 @@ func (do *Domain) refreshServerIDTTL(ctx context.Context) error {
 }
 
 func (do *Domain) serverIDKeeper() {
+	cfg := config.GetGlobalConfig()
+	serverIDTimeToCheckPDConnection := time.Duration(cfg.ServerIDTTL) * time.Second / 10
+	lostConnectionTimeout := serverIDTimeToCheckPDConnection * 5
+
 	defer util.Recover(metrics.LabelDomain, "serverIDKeeper", nil, false)
 	ticker := time.NewTicker(serverIDTimeToCheckPDConnection)
 	defer func() {
@@ -1328,9 +1330,15 @@ func (do *Domain) serverIDKeeper() {
 			}
 		case <-do.serverIDSession.Done():
 			logutil.BgLogger().Info("serverIDSession need restart")
-			if err := do.acquireServerID(context.Background()); err == nil {
+			ctx := context.Background()
+			if err := do.acquireServerID(ctx); err == nil {
 				do.onConnectionToPDRestored()
 				lastSucceedTimestamp = time.Now().Unix()
+
+				if err1 := do.info.StoreServerInfo(ctx); err1 != nil {
+					logutil.BgLogger().Error("StoreServerInfo failed", zap.Error(err1))
+				}
+
 				logutil.BgLogger().Info("serverIDSession restarted")
 			} else {
 				logutil.BgLogger().Error("acquireServerID in restart failed", zap.Error(err))
@@ -1342,7 +1350,7 @@ func (do *Domain) serverIDKeeper() {
 }
 
 func (do *Domain) onLostConnectionToPD() {
-	logutil.BgLogger().Warn("lost connection to PD", zap.Int64("lostConnectionTimeout", int64(lostConnectionTimeout.Seconds())))
+	logutil.BgLogger().Warn("lost connection to PD")
 	atomic.StoreInt32(&do.isLostConnectionToPD, 1)
 	do.InfoSyncer().GetSessionManager().KillAllConnections()
 }

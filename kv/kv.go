@@ -18,7 +18,6 @@ import (
 	"sync"
 	"time"
 
-	pd "github.com/pingcap/pd/v4/client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -442,8 +441,6 @@ type Storage interface {
 	Describe() string
 	// ShowStatus returns the specified status of the storage
 	ShowStatus(ctx context.Context, key string) (interface{}, error)
-	// PDClient return contained pd.Client
-	PDClient() pd.Client
 }
 
 // FnKeyCmp is the function for iterator the keys

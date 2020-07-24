@@ -1,7 +1,7 @@
 # Global Kill
 
 - Author(s):     [pingyu](https://github.com/pingyu) (Ping Yu)
-- Last updated:  2020-07-14
+- Last updated:  2020-07-25
 - Discussion at: https://github.com/pingcap/tidb/issues/8854
 
 ## Abstract
@@ -47,13 +47,13 @@ To support "Global Kill", we need:
 
 
 #### 3. serverId
-`serverId` is allocated to each TiDB instance on startup by PD, begin with 1, to insure that high 32 bits of `connId` should always be non-zero, and make it possible to detect truncation.
+`serverId` is selected RANDOMLY by each TiDB instance on startup, and the uniqueness is guaranteed by PD(etcd). `serverId` should be larger or equal to 1, to insure that high 32 bits of `connId` should always be non-zero, and make it possible to detect truncation.
 
 On single TiDB instance without PD, a `serverId` of `0` is assigned.
 
 When `serverId == 0`, we deal with `KILL x` as in [early versions](https://pingcap.com/docs/stable/sql-statements/sql-statement-kill/).
 
-Integer overflow is ignored at this stage, as `serverId` should be long enough.
+`serverId` is kept by PD with a lease default to 1 hour. If TiDB is disconnected to PD longer to half of the lease, all connections are killed. On connection to PD restored, a new `serverId` is acquired.
 
 #### 4. local connId
 `local connId` is allocated by each TiDB instance on establishing connections.

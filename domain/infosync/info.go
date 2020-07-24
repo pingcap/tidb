@@ -104,7 +104,7 @@ type ServerInfo struct {
 	StartTimestamp int64         `json:"start_timestamp"`
 	ServerID       func() uint64 `json:"-"`
 
-	// JSONServerID is serverID for json marshal/unmarshal ONLY.
+	// JSONServerID is `serverID` for json marshal/unmarshal ONLY.
 	JSONServerID uint64 `json:"server_id"`
 }
 
@@ -307,8 +307,8 @@ func (is *InfoSyncer) getAllServerInfo(ctx context.Context) (map[string]*ServerI
 	return allInfo, nil
 }
 
-// storeServerInfo stores self server static information to etcd.
-func (is *InfoSyncer) storeServerInfo(ctx context.Context) error {
+// StoreServerInfo stores self server static information to etcd.
+func (is *InfoSyncer) StoreServerInfo(ctx context.Context) error {
 	if is.etcdCli == nil {
 		return nil
 	}
@@ -474,10 +474,10 @@ func (is *InfoSyncer) newSessionAndStoreServerInfo(ctx context.Context, retryCnt
 	is.session = session
 	binloginfo.RegisterStatusListener(func(status binloginfo.BinlogStatus) error {
 		is.info.BinlogStatus = status.String()
-		err := is.storeServerInfo(ctx)
+		err := is.StoreServerInfo(ctx)
 		return errors.Trace(err)
 	})
-	return is.storeServerInfo(ctx)
+	return is.StoreServerInfo(ctx)
 }
 
 // newTopologySessionAndStoreServerInfo creates a new etcd session and stores server info to etcd.

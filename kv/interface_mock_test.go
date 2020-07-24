@@ -16,7 +16,6 @@ package kv
 import (
 	"context"
 
-	pd "github.com/pingcap/pd/v4/client"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
@@ -201,8 +200,6 @@ func (s *mockStorage) Describe() string {
 func (s *mockStorage) ShowStatus(ctx context.Context, key string) (interface{}, error) {
 	return nil, nil
 }
-
-func (s *mockStorage) PDClient() pd.Client { return nil }
 
 // newMockStorage creates a new mockStorage.
 func newMockStorage() Storage {

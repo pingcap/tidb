@@ -16,7 +16,6 @@ package mock
 import (
 	"context"
 
-	pd "github.com/pingcap/pd/v4/client"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 )
@@ -63,6 +62,3 @@ func (s *Store) Describe() string {
 
 // ShowStatus implements kv.Storage interface.
 func (s *Store) ShowStatus(ctx context.Context, key string) (interface{}, error) { return nil, nil }
-
-// PDClient implements kv.Storage interface.
-func (s *Store) PDClient() pd.Client { return nil }
