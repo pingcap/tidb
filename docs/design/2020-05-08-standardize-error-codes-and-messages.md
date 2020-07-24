@@ -1,7 +1,7 @@
 # Proposal: Standardize error codes and messages
 
 - Author(s):     Joshua
-- Last updated:  May 8
+- Last updated:  July 22
 - Discussion at: https://docs.google.com/document/d/1beoa5xyuToboSx6e6J02tjLLX5SWzmqvqHuAPEk-I58/edit?usp=sharing
 
 ## Abstract
@@ -24,14 +24,14 @@ keep a metafile in the code repository. The metafile should be a toml file which
 
 ```toml
 [error.8005]
-message = '''Write Conflict, txnStartTS is stale'''
+error = '''Write Conflict, txnStartTS is stale'''
 description = '''Transactions in TiDB encounter write conflicts.'''
 workaround = '''
 Check whether `tidb_disable_txn_auto_retry` is set to `on`. If so, set it to `off`; if it is already `off`, increase the value of `tidb_retry_limit` until the error no longer occurs.
 '''
 
 [error.9005]
-message = '''Region is unavailable'''
+error = '''Region is unavailable'''
 description = '''
 A certain Raft Group is not available, such as the number of replicas is not enough.
 This error usually occurs when the TiKV server is busy or the TiKV node is down.
@@ -60,13 +60,13 @@ The json format of metafile is like:
 [
     {
         "code": 8005,
-        "message": "Write Conflict, txnStartTS is stale",
+        "error": "Write Conflict, txnStartTS is stale",
         "description": "Transactions in TiDB encounter write conflicts.",
         "workaround": "Check whether `tidb_disable_txn_auto_retry` is set to `on`. If so, set it to `off`; if it is already `off`, increase the value of `tidb_retry_limit` until the error no longer occurs."
     },
     {
         "code": 9005,
-        "message": "Region is unavailable",
+        "error": "Region is unavailable",
         "description": "A certain Raft Group is not available, such as the number of replicas is not enough.\nThis error usually occurs when the TiKV server is busy or the TiKV node is down.",
         "workaround": "Check the status, monitoring data and log of the TiKV server."
     }
@@ -87,7 +87,7 @@ Tradeoff:
 ## Code: 8005
 ### Error
 Write Conflict, txnStartTS is stale
-### Message
+### Description
 A certain Raft Group is not available, such as the number of replicas is not enough.
 This error usually occurs when the TiKV server is busy or the TiKV node is down.
 ### Workaround
@@ -96,7 +96,7 @@ Check whether `tidb_disable_txn_auto_retry` is set to `on`. If so, set it to `of
 ## Code: 9005
 ### Error
 Region is unavailable
-### Message
+### Description
 A certain Raft Group is not available, such as the number of replicas is not enough.
 This error usually occurs when the TiKV server is busy or the TiKV node is down.
 ### Workaround
@@ -118,14 +118,14 @@ Tradeoff Example:
 ## Code: 8005
 ### Error
 Write Conflict, txnStartTS is stale
-### Message
+### Description
 A certain Raft Group is not available, such as the number of replicas is not enough.
 This error usually occurs when the TiKV server is busy or the TiKV node is down.
 ### Workaround
 ## Code: 9005
 ### Error
 Region is unavailable
-### Message
+### Description
 A certain Raft Group is not available, such as the number of replicas is not enough.
 This error usually occurs when the TiKV server is busy or the TiKV node is down.
 ### Workaround
@@ -136,13 +136,13 @@ As the syntax above, the 9005 block is the message part of 8005 block, so we exp
 
 ```toml
 [error.8005]
-message = '''Write Conflict, txnStartTS is stale'''
+error = '''Write Conflict, txnStartTS is stale'''
 description = '''Transactions in TiDB encounter write conflicts.'''
 workaround = '''
 ## Code: 9005
 ### Error
 Region is unavailable
-### Message
+### Description
 A certain Raft Group is not available, such as the number of replicas is not enough.
 This error usually occurs when the TiKV server is busy or the TiKV node is down.
 ### Workaround
@@ -162,35 +162,81 @@ In addition, the error codes should be append only in case of conflict between v
 ### The Error Definition
 
 In the discussion above, an error has at least 4 parts:
-- The error code: it's the identity of an error
-- The error field: it's the error itself the user can view in TiDB system
-- the message field: the description of the error, what happened and why happend?
-- the workaround filed: how to workaround this error
+- The error code: it's the identity of an error.
+- The error field: it's the error itself the user can view in TiDB system. Like `err.Error()`.
+- The description field: the expanded detail of why this error occurred. This could be written by developer outside the code, and the more detail this field explaining the better, even some guess of the cause could be included.
+- The workaround filed: how to work around this error. It's used to teach the users how to solve the error if occurring in the real environment.
 
 Besides, we can append a optional tags field to it:
 ```toml
 [error.9005]
-message = ""
+error = ""
 description = ""
 workaround = ""
 tags = ["tikv"]
 ```
 
-The tags is used to classify errors (e.g. the level of seriousness). At the very beginning, we can ignore it since we don't have enough errors listed. Once we have enough data, we need to classify all errors by different dimensions. Then we will make out a standard abount how to classify errors.
+The tags is used to classify errors (e.g. the level of seriousness). At the very beginning, we can ignore it since we don't have enough errors listed. Once we have enough data, we need to classify all errors by different dimensions. Then we will make out a standard about how to classify errors.
 
 #### The Error Code Range
+
+The error code is a 3-tuple of abbreviated component name, error class and error code, joined by a colon like `{Component}:{ErrorClass}:{InnerErrorCode}`.
+
+Where `Component` field is the abbreviated component name of the error source, wrote as upper case, component names are mapped as below:
+
+- TiKV: KV
+- PD: PD
+- DM: DM
+- BR: BR
+- TiCDC: CDC
+- Lightning: LN
+- TiFlash: FLASH
+- Dumpling: DP
+
+The `ErrorClass` is the name of the `ErrClass` the error belongs to, which defined by [`errors.RegisterErrorClass`](https://github.com/pingcap/errors/blob/f9054262e67a3704a936a6ea216e73287486490d/terror/terror.go#L41) or someway likewise. If this is unacceptable (for projects not written with golang), anything that can classify the "type" of this error (e.g., package name.) would also be good. 
+
+The `InnerErrorCode` is the identity of this error internally, note that this error code can be duplicated in different component or `ErrorClass`. Both numeric and textual code are acceptable, but it would be better to provide textual code, which should be one or two short words with PascalCase to identity the error.
+
+The content of `ErrorClass` and `InnerErrorCode` must matches `[0-9a-zA-Z]+`.
+
+Here are some examples:
+
+- BR:Internal:FileNotFound
+- KV:Region:EpochNotMatch
+- KV:Region:NotLeader
+- DB:BRIE:BackupFailed
+
+When logging, the format `[ErrorCode] message` should be used, for example:
+
+```
+[2020/07/17 18:38:06.461 +08:00] [ERROR] [import.go:259] ["failed to download file"] [error="[BR:Internal:DownloadFileFailed] failed to download foo.sst : File not found"] [errVerbose="..."]
+```
 
 For compatibility with MySQL protocol, the code transmitted through the mysql protocol should be number only, others can be a number with a prefix string.
 
 The code of each components looks like:
-- TiDB: [0, 9000), DB-([A-Z]+-)?[0-9]{3,}
-- TiKV: [9000, 9010), KV-([A-Z]+-)?[0-9]{3,}
-- PD: [9000, 9010), PD-([A-Z]+-)?[0-9]{3,}
-- DM: DM-([A-Z]+-)?[0-9]{3,}
-- BR: BR-([A-Z]+-)?[0-9]{3,}
-- CDC: CDC-([A-Z]+-)?[0-9]{3,}
-- Lightning: LN-([A-Z]+-)?[0-9]{3,}
-- Dumpling: DP-([A-Z]+-)?[0-9]{3,}
+
+```
+TiDB: {class}:{code}
+TiKV: KV:{class}:{code}
+PD: PD:{class}:{code}
+TiFlash: FLASH:{class}:{code}
+DM: DM:{class}:{code}
+BR: BR:{class}:{code}
+CDC: CDC:{class}:{code}
+Lightning: LN:{class}:{code}
+Dumpling: DP:{class}:{code}
+
+{class}, {code} ~= [A-Za-z0-9]+
+```
+
+For mysql protocol compatible components, table below shows the available purely numeric codes for each component.
+
+| MySQL error code range  | TiDB Family Component |
+| ----------------------- | ------- |
+| [0, 9000)               | TiDB |
+| [8124, 8200)            | Ecosystem Productions in TiDB |
+| [9000, 9010)            | TiKV / PD / TiFlash |
 
 ### How It Works
 

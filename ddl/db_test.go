@@ -2352,6 +2352,28 @@ func (s *testSerialDBSuite) TestCreateTable(c *C) {
 	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
 	_, err = tk.Exec("create table t_enum (a enum('B','b')) charset=utf8 collate=utf8_general_ci;")
 	c.Assert(err.Error(), Equals, "[types:1291]Column 'a' has duplicated value 'b' in ENUM")
+
+	// test for table option "union" not supported
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE x (a INT) ENGINE = MyISAM;")
+	tk.MustExec("CREATE TABLE y (a INT) ENGINE = MyISAM;")
+	failSQL = "CREATE TABLE z (a INT) ENGINE = MERGE UNION = (x, y);"
+	tk.MustGetErrCode(failSQL, errno.ErrTableOptionUnionUnsupported)
+	failSQL = "ALTER TABLE x UNION = (y);"
+	tk.MustGetErrCode(failSQL, errno.ErrTableOptionUnionUnsupported)
+	tk.MustExec("drop table x;")
+	tk.MustExec("drop table y;")
+
+	// test for table option "insert method" not supported
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE x (a INT) ENGINE = MyISAM;")
+	tk.MustExec("CREATE TABLE y (a INT) ENGINE = MyISAM;")
+	failSQL = "CREATE TABLE z (a INT) ENGINE = MERGE INSERT_METHOD=LAST;"
+	tk.MustGetErrCode(failSQL, errno.ErrTableOptionInsertMethodUnsupported)
+	failSQL = "ALTER TABLE x INSERT_METHOD=LAST;"
+	tk.MustGetErrCode(failSQL, errno.ErrTableOptionInsertMethodUnsupported)
+	tk.MustExec("drop table x;")
+	tk.MustExec("drop table y;")
 }
 
 func (s *testDBSuite5) TestRepairTable(c *C) {
