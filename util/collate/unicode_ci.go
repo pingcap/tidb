@@ -16,7 +16,7 @@ package collate
 type unicodeCICollator struct {
 }
 
-// Compare implement Collator interface. Always return 0 temporary, will change when implement
+// Compare implements Collator interface. Always return 0 temporary, will change when implement
 func (uc *unicodeCICollator) Compare(a, b string) int {
 	return 0
 }
