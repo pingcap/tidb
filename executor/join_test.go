@@ -2195,5 +2195,6 @@ func (s *testSuite9) TestIssue18744(c *C) {
 	tk.MustExec(`set tidb_mem_quota_query=500;`)
 	config.GetGlobalConfig().OOMAction = config.OOMActionCancel
 	defer func() { config.GetGlobalConfig().OOMAction = config.OOMActionLog }()
-	tk.MustQuery(`select /*+ inl_hash_join(t2) */ t1.id, t2.id from t1 join t t2 on t1.a = t2.a order by t1.a ASC limit 1;`)
+	err := tk.QueryToErr(`select /*+ inl_hash_join(t2) */ t1.id, t2.id from t1 join t t2 on t1.a = t2.a order by t1.a ASC limit 1;`)
+	c.Assert(strings.Contains(err.Error(), "Out Of Memory Quota!"), IsTrue)
 }
