@@ -14,10 +14,8 @@
 package executor
 
 import (
+	"fmt"
 	"context"
-	// "runtime"
-	// "sync"
-	// "sync/atomic"
 
 	// "github.com/opentracing/opentracing-go"
 	// "github.com/pingcap/errors"
@@ -66,9 +64,20 @@ type nextPartitionForIndexLookUp struct {
 }
 
 func (n nextPartitionForIndexLookUp) nextPartition(ctx context.Context, tbl table.PhysicalTable) (Executor, error) {
+	fmt.Println("nextPartition for index look up", tbl.GetPhysicalID())
 	n.exec.table = tbl
-	n.exec.open(ctx)
 	return n.exec, nil
+}
+
+type nextPartitionForIndexReader struct {
+	exec *IndexReaderExecutor
+}
+
+func (n nextPartitionForIndexReader) nextPartition(ctx context.Context, tbl table.PhysicalTable) (Executor, error) {
+	exec := n.exec
+	exec.table = tbl
+	exec.physicalTableID = tbl.GetPhysicalID()
+	return exec, nil
 }
 
 func (e *PartitionTableExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
@@ -81,7 +90,9 @@ func (e *PartitionTableExecutor) Next(ctx context.Context, chk *chunk.Chunk) err
 			if err != nil {
 				return err
 			}
-			e.curr.Open(ctx)
+			if err := e.curr.Open(ctx); err != nil {
+				return err
+			}
 		}
 
 		err = e.curr.Next(ctx, chk)

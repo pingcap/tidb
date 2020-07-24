@@ -284,6 +284,10 @@ func (p *PhysicalTableReader) accessObject(sctx sessionctx.Context) string {
 		return "partition pruning error" + err.Error()
 	}
 
+	if len(partitions) == len(tbl.Meta().GetPartitionInfo().Definitions) {
+		return "partition:all"
+	}
+
 	for i, p := range partitions {
 		name := pi.GetNameByID(p.GetPhysicalID())
 		if i == 0 {
@@ -341,10 +345,20 @@ func (p *PhysicalIndexLookUpReader) accessObject(sctx sessionctx.Context) string
 		fmt.Fprintf(&buffer, "partition table not found: %d", ts.Table.ID)
 		return buffer.String()
 	}
+
+	fmt.Println("index lookup filter cond ===", len(ts.FilterCondition))
+	for _, cond := range ts.FilterCondition {
+		fmt.Println("==============", cond)
+	}
+
 	tbl := tmp.(table.PartitionedTable)
 	partitions, err := PartitionPruning(sctx, tbl, ts.FilterCondition)
 	if err != nil {
 		return "partition pruning error" + err.Error()
+	}
+
+	if len(partitions) == len(tbl.Meta().GetPartitionInfo().Definitions) {
+		return "partition:all"
 	}
 
 	for i, p := range partitions {
