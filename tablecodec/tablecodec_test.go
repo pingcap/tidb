@@ -94,7 +94,7 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 	for _, col := range cols {
 		colMap[col.id] = col.tp
 	}
-	r, err := DecodeRow(bs, colMap, time.UTC)
+	r, err := DecodeRowToDatum(bs, colMap, time.UTC)
 	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
 	c.Assert(r, HasLen, len(row))
@@ -109,7 +109,7 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 
 	// colMap may contains more columns than encoded row.
 	//colMap[4] = types.NewFieldType(mysql.TypeFloat)
-	r, err = DecodeRow(bs, colMap, time.UTC)
+	r, err = DecodeRowToDatum(bs, colMap, time.UTC)
 	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
 	c.Assert(r, HasLen, len(row))
@@ -124,7 +124,7 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 	// colMap may contains less columns than encoded row.
 	delete(colMap, 3)
 	delete(colMap, 4)
-	r, err = DecodeRow(bs, colMap, time.UTC)
+	r, err = DecodeRowToDatum(bs, colMap, time.UTC)
 	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
 	c.Assert(r, HasLen, len(row)-2)
@@ -144,7 +144,7 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(bs, HasLen, 1)
 
-	r, err = DecodeRow(bs, colMap, time.UTC)
+	r, err = DecodeRowToDatum(bs, colMap, time.UTC)
 	c.Assert(err, IsNil)
 	c.Assert(len(r), Equals, 0)
 }
@@ -217,7 +217,7 @@ func (s *testTableCodecSuite) TestUnflattenDatums(c *C) {
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	input := types.MakeDatums(int64(1))
 	tps := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
-	output, err := UnflattenDatums(input, tps, sc.TimeZone)
+	output, err := rowcodec.UnflattenDatums(input, tps, sc.TimeZone)
 	c.Assert(err, IsNil)
 	cmp, err := input[0].CompareDatum(sc, &output[0])
 	c.Assert(err, IsNil)
@@ -261,7 +261,7 @@ func (s *testTableCodecSuite) TestTimeCodec(c *C) {
 	for _, col := range cols {
 		colMap[col.id] = col.tp
 	}
-	r, err := DecodeRow(bs, colMap, time.UTC)
+	r, err := DecodeRowToDatum(bs, colMap, time.UTC)
 	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
 	c.Assert(r, HasLen, colLen)

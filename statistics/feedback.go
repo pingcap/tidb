@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/rowcodec"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -901,7 +902,7 @@ func ConvertDatumsType(vals []types.Datum, ft *types.FieldType, loc *time.Locati
 		if val.Kind() == types.KindMinNotNull || val.Kind() == types.KindMaxValue {
 			continue
 		}
-		newVal, err := tablecodec.UnflattenDatums([]types.Datum{val}, []*types.FieldType{ft}, loc)
+		newVal, err := rowcodec.UnflattenDatums([]types.Datum{val}, []*types.FieldType{ft}, loc)
 		if err != nil {
 			return err
 		}

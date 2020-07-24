@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/generatedexpr"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/pingcap/tipb/go-tipb"
@@ -851,7 +852,7 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 			if err != nil {
 				return nil, nil, err
 			}
-			dt, err = tablecodec.Unflatten(dt, &col.FieldType, ctx.GetSessionVars().Location())
+			dt, err = rowcodec.Unflatten(dt, &col.FieldType, ctx.GetSessionVars().Location())
 			if err != nil {
 				return nil, nil, err
 			}
@@ -860,7 +861,7 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 		}
 		colTps[col.ID] = &col.FieldType
 	}
-	rowMap, err := tablecodec.DecodeRow(value, colTps, ctx.GetSessionVars().Location())
+	rowMap, err := tablecodec.DecodeRowToDatum(value, colTps, ctx.GetSessionVars().Location())
 	if err != nil {
 		return nil, rowMap, err
 	}
@@ -1103,7 +1104,7 @@ func (t *TableCommon) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols 
 		if err != nil {
 			return err
 		}
-		rowMap, err := tablecodec.DecodeRow(it.Value(), colMap, ctx.GetSessionVars().Location())
+		rowMap, err := tablecodec.DecodeRowToDatum(it.Value(), colMap, ctx.GetSessionVars().Location())
 		if err != nil {
 			return err
 		}
@@ -1157,7 +1158,7 @@ func tryDecodeColumnFromCommonHandle(col *table.Column, handle kv.Handle, pkIds 
 		if err != nil {
 			return types.Datum{}, errors.Trace(err)
 		}
-		if d, err = tablecodec.Unflatten(d, &col.FieldType, decodeLoc); err != nil {
+		if d, err = rowcodec.Unflatten(d, &col.FieldType, decodeLoc); err != nil {
 			return types.Datum{}, err
 		}
 		return d, nil

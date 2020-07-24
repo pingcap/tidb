@@ -801,7 +801,7 @@ func (e *AnalyzeFastExec) decodeValues(sValue []byte) (values map[int64]types.Da
 	for _, col := range e.colsInfo {
 		colID2FieldTypes[col.ID] = &col.FieldType
 	}
-	return tablecodec.DecodeRow(sValue, colID2FieldTypes, e.ctx.GetSessionVars().Location())
+	return tablecodec.DecodeRowToDatum(sValue, colID2FieldTypes, e.ctx.GetSessionVars().Location())
 }
 
 func (e *AnalyzeFastExec) getValueByInfo(colInfo *model.ColumnInfo, values map[int64]types.Datum) (types.Datum, error) {
