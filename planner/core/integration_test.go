@@ -17,6 +17,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
@@ -344,6 +345,17 @@ func (s *testIntegrationSuite) TestIssue15813(c *C) {
 	tk.MustQuery("select /*+ MERGE_JOIN(t0, t1) */ * from t0, t1 where t0.c0 = t1.c0").Check(testkit.Rows())
 }
 
+func (s *testIntegrationSuite) TestFullGroupByOrderBy(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustQuery("select count(a) as b from t group by a order by b").Check(testkit.Rows())
+	err := tk.ExecToErr("select count(a) as cnt from t group by a order by b")
+	c.Assert(terror.ErrorEqual(err, core.ErrFieldNotInGroupBy), IsTrue)
+}
+
 func (s *testIntegrationSuite) TestIssue16440(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -407,4 +419,15 @@ func (s *testIntegrationSuite) TestTableDualWithRequiredProperty(c *C) {
 		"(partition p0 values less than(10), partition p1 values less than MAXVALUE)")
 	tk.MustExec("create table t2 (a int, b int)")
 	tk.MustExec("select /*+ MERGE_JOIN(t1, t2) */ * from t1 partition (p0), t2  where t1.a > 100 and t1.a = t2.a")
+}
+
+func (s *testIntegrationSuite) TestIssue16935(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0;")
+	tk.MustExec("CREATE TABLE t0(c0 INT);")
+	tk.MustExec("INSERT INTO t0(c0) VALUES (1), (1), (1), (1), (1), (1);")
+	tk.MustExec("CREATE definer='root'@'localhost' VIEW v0(c0) AS SELECT NULL FROM t0;")
+
+	tk.MustQuery("SELECT * FROM t0 LEFT JOIN v0 ON TRUE WHERE v0.c0 IS NULL;")
 }

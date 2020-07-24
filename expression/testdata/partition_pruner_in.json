@@ -14,7 +14,11 @@
       "explain select * from t1 left join t2 on true where t1.a = 1 and null",
       "explain select * from t1 left join t2 on true where t1.a = null",
       "explain select * from t4 where d = '2019-10-07 10:40:00' and a = 1",
-      "explain select * from t5 where d = '2019-10-07'"
+      "explain select * from t5 where d = '2019-10-07'",
+      "explain select * from t6 where a is null",
+      "explain select * from t6 where b is null",
+      "explain select * from t5 where d is null",
+      "explain select * from t7 where b = -3 and a is null"
     ]
   }
 ]

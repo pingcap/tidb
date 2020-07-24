@@ -1,0 +1,41 @@
+[
+  {
+    "name": "TestOuterJoinPropConst",
+    "cases": [
+      // Positive tests.
+      "explain select * from t1 left join t2 on t1.a > t2.a and t1.a = 1",
+      "explain select * from t1 left join t2 on t1.a > t2.a where t1.a = 1",
+      "explain select * from t1 left join t2 on t1.a = t2.a and t1.a > 1",
+      "explain select * from t1 left join t2 on t1.a = t2.a where t1.a > 1",
+      "explain select * from t1 right join t2 on t1.a > t2.a where t2.a = 1",
+      "explain select * from t1 right join t2 on t1.a = t2.a where t2.a > 1",
+      "explain select * from t1 right join t2 on t1.a = t2.a and t2.a > 1",
+      "explain select * from t1 right join t2 on t1.a > t2.a and t2.a = 1",
+      // Negative tests.
+      "explain select * from t1 left join t2 on t1.a = t2.a and t2.a > 1",
+      "explain select * from t1 left join t2 on t1.a > t2.a and t2.a = 1",
+      "explain select * from t1 right join t2 on t1.a > t2.a and t1.a = 1",
+      "explain select * from t1 right join t2 on t1.a = t2.a and t1.a > 1",
+      "explain select * from t1 left join t2 on t1.a = t1.b and t1.a > 1",
+      "explain select * from t1 left join t2 on t2.a = t2.b and t2.a > 1",
+      // Constant equal condition merge in outer join.
+      "explain select * from t1 left join t2 on true where t1.a = 1 and false",
+      "explain select * from t1 left join t2 on true where t1.a = 1 and null",
+      "explain select * from t1 left join t2 on true where t1.a = null",
+      "explain select * from t1 left join t2 on true where t1.a = 1 and t1.a = 2",
+      "explain select * from t1 left join t2 on true where t1.a = 1 and t1.a = 1",
+      "explain select * from t1 left join t2 on false",
+      "explain select * from t1 right join t2 on false",
+      "explain select * from t1 left join t2 on t1.a = 1 and t1.a = 2",
+      "explain select * from t1 left join t2 on t1.a =1 where t1.a = 2",
+      "explain select * from t1 left join t2 on t2.a = 1 and t2.a = 2",
+      // Constant propagation for DNF in outer join.
+      "explain select * from t1 left join t2 on t1.a = 1 or (t1.a = 2 and t1.a = 3)",
+      "explain select * from t1 left join t2 on true where t1.a = 1 or (t1.a = 2 and t1.a = 3)",
+      // Constant propagation over left outer semi join, filter with aux column should not be derived.
+      "explain select * from t1 where t1.b > 1 or t1.b in (select b from t2)",
+      // Don't propagate for the control function.
+      "explain select * from t1 left join t2 on t1.a = t2.a where ifnull(t2.b, t1.a) = 1"
+    ]
+  }
+]
