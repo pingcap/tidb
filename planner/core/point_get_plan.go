@@ -57,7 +57,7 @@ type PointGetPlan struct {
 	IndexValueParams   []*driver.ParamMarkerExpr
 	IdxCols            []*expression.Column
 	IdxColLens         []int
-	AccessCondition    expression.Expression
+	AccessConditions   []expression.Expression
 	ctx                sessionctx.Context
 	UnsignedHandle     bool
 	IsTableDual        bool

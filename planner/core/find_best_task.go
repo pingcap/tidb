@@ -1340,14 +1340,14 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 	}
 
 	pointGetPlan := PointGetPlan{
-		ctx:             ds.ctx,
-		AccessCondition: candidate.path.AccessConds[0],
-		schema:          ds.schema.Clone(),
-		dbName:          ds.DBName.L,
-		TblInfo:         ds.TableInfo(),
-		outputNames:     ds.OutputNames(),
-		LockWaitTime:    ds.ctx.GetSessionVars().LockWaitTimeout,
-		Columns:         ds.Columns,
+		ctx:              ds.ctx,
+		AccessConditions: candidate.path.AccessConds,
+		schema:           ds.schema.Clone(),
+		dbName:           ds.DBName.L,
+		TblInfo:          ds.TableInfo(),
+		outputNames:      ds.OutputNames(),
+		LockWaitTime:     ds.ctx.GetSessionVars().LockWaitTimeout,
+		Columns:          ds.Columns,
 	}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(1.0), ds.blockOffset)
 	var partitionInfo *model.PartitionDefinition
 	if ds.isPartition {

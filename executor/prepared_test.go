@@ -163,7 +163,7 @@ func (s *testSuite9) TestPlanCacheClusterIndex(c *C) {
 	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
 	c.Assert(strings.Index(rows[len(rows)-1][0].(string), `Point_Get`), Equals, 0)
 
-	// For CBO point get
+	// For CBO point get and batch point get
 	// case 1:
 	tk.MustExec(`drop table if exists ta, tb`)
 	tk.MustExec(`create table ta (a varchar(8) primary key, b int)`)
@@ -175,6 +175,7 @@ func (s *testSuite9) TestPlanCacheClusterIndex(c *C) {
 	tk.MustQuery(`execute stmt1 using @v1`).Check(testkit.Rows("a 1 a 1"))
 	tk.MustQuery(`execute stmt1 using @v2`).Check(testkit.Rows("b 2 b 2"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
 	// case 2:
 	tk.MustExec(`drop table if exists ta, tb`)
 	tk.MustExec(`create table ta (a varchar(10) primary key, b int not null)`)
@@ -192,4 +193,29 @@ func (s *testSuite9) TestPlanCacheClusterIndex(c *C) {
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
 	c.Assert(strings.Index(rows[1][0].(string), `Point_Get`), Equals, 6)
+
+	// case 3:
+	tk.MustExec(`drop table if exists ta, tb`)
+	tk.MustExec(`create table ta (a varchar(10), b varchar(10), c int, primary key (a, b))`)
+	tk.MustExec(`insert ta values ('a', 'a', 1), ('b', 'b', 2)`)
+	tk.MustExec(`create table tb (b int primary key, c int)`)
+	tk.MustExec(`insert tb values (1, 1), (2, 2)`)
+	tk.MustExec(`prepare stmt1 from "select * from ta, tb where ta.c = tb.b and ta.a = ? and ta.b = ?"`)
+	tk.MustExec(`set @v1 = 'a', @v2 = 'b'`)
+	tk.MustQuery(`execute stmt1 using @v1, @v1`).Check(testkit.Rows("a a 1 1 1"))
+	tk.MustQuery(`execute stmt1 using @v2, @v2`).Check(testkit.Rows("b b 2 2 2"))
+
+	// case 4:
+	tk.MustExec(`drop table if exists ta, tb`)
+	tk.MustExec(`create table ta (a varchar(10), b varchar(10), c int, primary key (a, b))`)
+	tk.MustExec(`insert ta values ('a', 'a', 1), ('b', 'b', 2), ('c', 'c', 3)`)
+	tk.MustExec(`create table tb (b int primary key, c int)`)
+	tk.MustExec(`insert tb values (1, 1), (2, 2), (3,3)`)
+	tk.MustExec(`prepare stmt1 from "select * from ta, tb where ta.c = tb.b and ta.a = ? and ta.b = ?"`)
+	tk.MustExec(`set @v1 = 'a', @v2 = 'b', @v3 = 'c'`)
+	tk.MustQuery(`execute stmt1 using @v1, @v1`).Check(testkit.Rows("a a 1 1 1"))
+	tk.MustQuery(`execute stmt1 using @v2, @v2`).Check(testkit.Rows("b b 2 2 2"))
+	tk.MustExec(`prepare stmt2 from "select * from ta, tb where ta.c = tb.b and (ta.a, ta.b) in ((?, ?), (?, ?))"`)
+	tk.MustQuery(`execute stmt2 using @v1, @v1, @v2, @v2`).Check(testkit.Rows("a a 1 1 1", "b b 2 2 2"))
+	tk.MustQuery(`execute stmt2 using @v2, @v2, @v3, @v3`).Check(testkit.Rows("b b 2 2 2", "c c 3 3 3"))
 }
