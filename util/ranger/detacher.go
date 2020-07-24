@@ -29,16 +29,16 @@ func detachColumnCNFConditions(sctx sessionctx.Context, conditions []expression.
 	for _, cond := range conditions {
 		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
 			dnfItems := expression.FlattenDNFConditions(sf)
-			colulmnDNFItems, hasResidual := detachColumnDNFConditions(sctx, dnfItems, checker)
+			columnDNFItems, hasResidual := detachColumnDNFConditions(sctx, dnfItems, checker)
 			// If this CNF has expression that cannot be resolved as access condition, then the total DNF expression
 			// should be also appended into filter condition.
 			if hasResidual {
 				filterConditions = append(filterConditions, cond)
 			}
-			if len(colulmnDNFItems) == 0 {
+			if len(columnDNFItems) == 0 {
 				continue
 			}
-			rebuildDNF := expression.ComposeDNFCondition(sctx, colulmnDNFItems...)
+			rebuildDNF := expression.ComposeDNFCondition(sctx, columnDNFItems...)
 			accessConditions = append(accessConditions, rebuildDNF)
 			continue
 		}
@@ -339,7 +339,7 @@ func detachDNFCondAndBuildRangeForIndex(sctx sessionctx.Context, condition *expr
 	return totalRanges, []expression.Expression{expression.ComposeDNFCondition(sctx, newAccessItems...)}, hasResidual, nil
 }
 
-// DetachRangeResult wraps up results when detaching conditions and builing ranges.
+// DetachRangeResult wraps up results when detaching conditions and building ranges.
 type DetachRangeResult struct {
 	// Ranges is the ranges extracted and built from conditions.
 	Ranges []*Range
