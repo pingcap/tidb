@@ -213,22 +213,10 @@ func isInsertOp(keyOp pb.Op) bool {
 	return keyOp == pb.Op_Put || keyOp == pb.Op_Insert
 }
 
-func (a *amendCollector) genMutationsForTbl(ctx context.Context, sess *session, commitMutations tikv.CommitterMutations,
-	kvMap *rowKvMap, amendOps []amendOp) (tikv.CommitterMutations, error) {
-	resAddMutations := tikv.NewCommiterMutations(8)
-	for _, curOp := range amendOps {
-		curAddMutations, err := curOp.genMutations(ctx, sess, commitMutations, kvMap)
-		if err != nil {
-			return resAddMutations, err
-		}
-		resAddMutations.MergeMutations(curAddMutations)
-	}
-	return resAddMutations, nil
-}
-
 // amendOp is an amend operation for a specific schema change, new mutations will be generated using input ones.
 type amendOp interface {
-	genMutations(ctx context.Context, sctx sessionctx.Context, commitMutations tikv.CommitterMutations, kvMap *rowKvMap) (tikv.CommitterMutations, error)
+	genMutations(ctx context.Context, sctx sessionctx.Context, commitMutations tikv.CommitterMutations, kvMap *rowKvMap,
+		resultMutations *tikv.CommitterMutations) error
 }
 
 // amendOperationAddIndex represents one amend operation related to a specific add index change.
@@ -267,8 +255,7 @@ func (a *amendOperationAddIndexInfo) String() string {
 }
 
 func (a *amendOperationDeleteOldIndex) genMutations(ctx context.Context, sctx sessionctx.Context,
-	commitMutations tikv.CommitterMutations, kvMap *rowKvMap) (tikv.CommitterMutations, error) {
-	resAddMutations := tikv.NewCommiterMutations(8)
+	commitMutations tikv.CommitterMutations, kvMap *rowKvMap, resAddMutations *tikv.CommitterMutations) error {
 	for i, key := range commitMutations.GetKeys() {
 		keyOp := commitMutations.GetOps()[i]
 		if tablecodec.IsIndexKey(key) || tablecodec.DecodeTableID(key) != a.info.tblInfoAtCommit.Meta().ID {
@@ -277,20 +264,16 @@ func (a *amendOperationDeleteOldIndex) genMutations(ctx context.Context, sctx se
 		if !isDeleteOp(keyOp) {
 			continue
 		}
-		addMutations, err := a.processRowKey(ctx, sctx, key, kvMap.oldRowKvMap)
+		err := a.processRowKey(ctx, sctx, key, kvMap.oldRowKvMap, resAddMutations)
 		if err != nil {
-			return resAddMutations, err
-		}
-		if len(addMutations.GetKeys()) > 0 {
-			resAddMutations.MergeMutations(addMutations)
+			return err
 		}
 	}
-	return resAddMutations, nil
+	return nil
 }
 
 func (a *amendOperationAddNewIndex) genMutations(ctx context.Context, sctx sessionctx.Context, commitMutations tikv.CommitterMutations,
-	kvMap *rowKvMap) (tikv.CommitterMutations, error) {
-	resAddMutations := tikv.NewCommiterMutations(8)
+	kvMap *rowKvMap, resAddMutations *tikv.CommitterMutations) error {
 	for i, key := range commitMutations.GetKeys() {
 		keyOp := commitMutations.GetOps()[i]
 		if tablecodec.IsIndexKey(key) || tablecodec.DecodeTableID(key) != a.info.tblInfoAtCommit.Meta().ID {
@@ -299,15 +282,12 @@ func (a *amendOperationAddNewIndex) genMutations(ctx context.Context, sctx sessi
 		if !isInsertOp(keyOp) {
 			continue
 		}
-		addMutations, err := a.processRowKey(ctx, sctx, key, kvMap.newRowKvMap)
+		err := a.processRowKey(ctx, sctx, key, kvMap.newRowKvMap, resAddMutations)
 		if err != nil {
-			return resAddMutations, err
-		}
-		if len(addMutations.GetKeys()) > 0 {
-			resAddMutations.MergeMutations(addMutations)
+			return err
 		}
 	}
-	return resAddMutations, nil
+	return nil
 }
 
 func (a *amendOperationAddIndexInfo) genIndexKeyValue(ctx context.Context, sctx sessionctx.Context, kvMap map[string][]byte,
@@ -363,38 +343,39 @@ func (a *amendOperationAddIndexInfo) genIndexKeyValue(ctx context.Context, sctx 
 }
 
 func (a *amendOperationAddNewIndex) processRowKey(ctx context.Context, sctx sessionctx.Context, key []byte,
-	kvMap map[string][]byte) (resAdd tikv.CommitterMutations, err error) {
+	kvMap map[string][]byte, resAddMutations *tikv.CommitterMutations) error {
 	kvHandle, err := tablecodec.DecodeRowKey(key)
 	if err != nil {
 		logutil.Logger(ctx).Error("decode key error", zap.String("key", hex.EncodeToString(key)), zap.Error(err))
-		return resAdd, errors.Trace(err)
+		return errors.Trace(err)
 	}
 
 	newIdxKey, newIdxValue, err := a.info.genIndexKeyValue(ctx, sctx, kvMap, key, kvHandle, false)
 	if err != nil {
-		return resAdd, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	// Check if the generated index keys are unique for unique index.
-	resAdd.Push(pb.Op_Put, newIdxKey, newIdxValue, false)
-	return
+	resAddMutations.Push(pb.Op_Put, newIdxKey, newIdxValue, false)
+	return nil
 }
 
 func (a *amendOperationDeleteOldIndex) processRowKey(ctx context.Context, sctx sessionctx.Context, key []byte,
-	oldValKvMap map[string][]byte) (resAdd tikv.CommitterMutations, err error) {
+	oldValKvMap map[string][]byte, resAddMutations *tikv.CommitterMutations) error {
 	kvHandle, err := tablecodec.DecodeRowKey(key)
 	if err != nil {
 		logutil.Logger(ctx).Error("decode key error", zap.String("key", hex.EncodeToString(key)), zap.Error(err))
-		return resAdd, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	// Generated delete index key value.
 	newIdxKey, emptyVal, err := a.info.genIndexKeyValue(ctx, sctx, oldValKvMap, key, kvHandle, true)
 	if err != nil {
-		return resAdd, errors.Trace(err)
+		return errors.Trace(err)
 	}
+	// For Op_Put the key may not exist in old key value map.
 	if len(newIdxKey) > 0 {
-		resAdd.Push(pb.Op_Del, newIdxKey, emptyVal, false)
+		resAddMutations.Push(pb.Op_Del, newIdxKey, emptyVal, false)
 	}
-	return
+	return nil
 }
 
 // SchemaAmender is used to amend pessimistic transactions for schema change.
@@ -482,15 +463,16 @@ func (s *SchemaAmender) genAllAmendMutations(ctx context.Context, commitMutation
 		return nil, err
 	}
 	// Do generate add/remove mutations processing each key.
-	addMutations := tikv.NewCommiterMutations(8)
+	resultNewMutations := tikv.NewCommiterMutations(32)
 	for _, amendOps := range info.tblAmendOpMap {
-		resAddMutations, err := info.genMutationsForTbl(ctx, s.sess, commitMutations, rowKvMap, amendOps)
-		if err != nil {
-			return nil, err
+		for _, curOp := range amendOps {
+			err := curOp.genMutations(ctx, s.sess, commitMutations, rowKvMap, &resultNewMutations)
+			if err != nil {
+				return nil, err
+			}
 		}
-		addMutations.MergeMutations(resAddMutations)
 	}
-	return &addMutations, nil
+	return &resultNewMutations, nil
 }
 
 // AmendTxn does check and generate amend mutations based on input infoSchema and mutations, mutations need to prewrite
