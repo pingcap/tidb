@@ -135,6 +135,9 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 				// commit cannot proceed. The client can then fallback to normal way to
 				// continue committing the transaction if prewrite are all finished.
 				if prewriteResp.MinCommitTs == 0 {
+					if c.testingKnobs.noFallBack {
+						return nil
+					}
 					logutil.Logger(bo.ctx).Warn("async commit cannot proceed since the returned minCommitTS is zero, "+
 						"fallback to normal path", zap.Uint64("startTS", c.startTS))
 					c.setAsyncCommit(false)
