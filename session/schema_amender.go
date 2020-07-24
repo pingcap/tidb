@@ -81,15 +81,11 @@ type schemaAndDecoder struct {
 // amendCollector collects all amend operations, row decoders and memory chunks for each table needs amend.
 type amendCollector struct {
 	tblAmendOpMap map[int64][]amendOp
-	tblDecoder    map[int64]*schemaAndDecoder
-	tblChk        map[int64]*chunk.Chunk
 }
 
 func newAmendCollector() *amendCollector {
 	res := &amendCollector{
 		tblAmendOpMap: make(map[int64][]amendOp),
-		tblDecoder:    make(map[int64]*schemaAndDecoder),
-		tblChk:        make(map[int64]*chunk.Chunk),
 	}
 	return res
 }
@@ -132,7 +128,7 @@ func (a *amendCollector) keyHasAmendOp(key []byte) bool {
 	return len(ops) > 0
 }
 
-func (a *amendCollector) collectIndexAmendOps(phyTblID int64, tblAtStart, tblAtCommit table.Table) ([]amendOp, error) {
+func (a *amendCollector) collectIndexAmendOps(sctx sessionctx.Context, tblAtStart, tblAtCommit table.Table) ([]amendOp, error) {
 	res := make([]amendOp, 0, 4)
 	// Check index having state change, collect index column info.
 	for _, idxInfoAtCommit := range tblAtCommit.Indices() {
@@ -164,9 +160,12 @@ func (a *amendCollector) collectIndexAmendOps(phyTblID int64, tblAtStart, tblAtC
 				}
 				opInfo.relatedOldIdxCols = append(opInfo.relatedOldIdxCols, oldColInfo)
 			}
-
-			opInfo.schemaAndDecoder = a.tblDecoder[phyTblID]
-			opInfo.chk = a.tblChk[phyTblID]
+			opInfo.schemaAndDecoder = newSchemaAndDecoder(sctx, tblAtStart.Meta())
+			fieldTypes := make([]*types.FieldType, 0, len(tblAtStart.Meta().Columns))
+			for _, col := range tblAtStart.Meta().Columns {
+				fieldTypes = append(fieldTypes, &col.FieldType)
+			}
+			opInfo.chk = chunk.NewChunkWithCapacity(fieldTypes, 4)
 			if addIndexNeedRemoveOp(amendOpType) {
 				removeIndexOp := &amendOperationDeleteOldIndex{
 					info: opInfo,
@@ -189,15 +188,9 @@ func (a *amendCollector) collectTblAmendOps(sctx sessionctx.Context, phyTblID in
 	tblInfoAtStart, tblInfoAtCommit table.Table) error {
 	if _, ok := a.tblAmendOpMap[phyTblID]; !ok {
 		a.tblAmendOpMap[phyTblID] = make([]amendOp, 0, 4)
-		a.tblDecoder[phyTblID] = newSchemaAndDecoder(sctx, tblInfoAtStart.Meta())
-		fieldTypes := make([]*types.FieldType, 0, len(tblInfoAtStart.Meta().Columns))
-		for _, col := range tblInfoAtStart.Meta().Columns {
-			fieldTypes = append(fieldTypes, &col.FieldType)
-		}
-		a.tblChk[phyTblID] = chunk.NewChunkWithCapacity(fieldTypes, 4)
 	}
 	// TODO: currently only "add index" is considered.
-	ops, err := a.collectIndexAmendOps(phyTblID, tblInfoAtStart, tblInfoAtCommit)
+	ops, err := a.collectIndexAmendOps(sctx, tblInfoAtStart, tblInfoAtCommit)
 	if err != nil {
 		return err
 	}
