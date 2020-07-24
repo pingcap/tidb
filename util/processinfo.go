@@ -164,9 +164,10 @@ type SessionManager interface {
 // |             ???             |(1b,==0)|
 // +-----------------------------+--------+
 type GlobalConnID struct {
-	ServerID    uint64
-	LocalConnID uint64
-	Is64bits    bool
+	ServerID       uint64
+	LocalConnID    uint64
+	Is64bits       bool
+	ServerIDGetter func() uint64
 }
 
 var (
@@ -175,11 +176,19 @@ var (
 )
 
 func (g *GlobalConnID) makeID(localConnID uint64) uint64 {
-	var id uint64
+	var (
+		id       uint64
+		serverID uint64
+	)
+	if g.ServerIDGetter != nil {
+		serverID = g.ServerIDGetter()
+	} else {
+		serverID = g.ServerID
+	}
 	if g.Is64bits {
 		id |= 0x1
 		id |= localConnID & 0xff_ffff_ffff << 1 // 40 bits local connID.
-		id |= g.ServerID & 0x7f_ffff << 41      // 23 bits serverID.
+		id |= serverID & 0x7f_ffff << 41        // 23 bits serverID.
 	} else {
 		// TODO: update after new design for 32 bits version.
 		id |= localConnID & 0x7fff_ffff << 1 // 31 bits local connID.

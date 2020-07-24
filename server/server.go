@@ -150,10 +150,10 @@ func (s *Server) SetDomain(dom *domain.Domain) {
 }
 
 // InitGlobalConnID initialize global connection id.
-func (s *Server) InitGlobalConnID(serverID uint64) {
+func (s *Server) InitGlobalConnID(serverIDGetter func() uint64) {
 	s.globalConnID = util.GlobalConnID{
-		ServerID: serverID,
-		Is64bits: true,
+		ServerIDGetter: serverIDGetter,
+		Is64bits:       true,
 	}
 }
 
@@ -629,7 +629,7 @@ func (s *Server) kickIdleConnection() {
 
 // ServerID implements SessionManager interface.
 func (s *Server) ServerID() uint64 {
-	return s.globalConnID.ServerID
+	return s.dom.ServerID()
 }
 
 // setSysTimeZoneOnce is used for parallel run tests. When several servers are running,

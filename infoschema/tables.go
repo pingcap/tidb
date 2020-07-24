@@ -1317,7 +1317,7 @@ func GetTiDBServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 			Version:        FormatVersion(node.Version, isDefaultVersion),
 			GitHash:        node.GitHash,
 			StartTimestamp: node.StartTimestamp,
-			ServerID:       node.ServerID,
+			ServerID:       node.ServerID(),
 		})
 	}
 	return servers, nil

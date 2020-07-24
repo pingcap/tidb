@@ -95,14 +95,38 @@ type InfoSyncer struct {
 // It will not be updated when tidb-server running. So please only put static information in ServerInfo struct.
 type ServerInfo struct {
 	ServerVersionInfo
-	ID             string `json:"ddl_id"`
-	IP             string `json:"ip"`
-	Port           uint   `json:"listening_port"`
-	StatusPort     uint   `json:"status_port"`
-	Lease          string `json:"lease"`
-	BinlogStatus   string `json:"binlog_status"`
-	StartTimestamp int64  `json:"start_timestamp"`
-	ServerID       uint64 `json:"server_id"`
+	ID             string        `json:"ddl_id"`
+	IP             string        `json:"ip"`
+	Port           uint          `json:"listening_port"`
+	StatusPort     uint          `json:"status_port"`
+	Lease          string        `json:"lease"`
+	BinlogStatus   string        `json:"binlog_status"`
+	StartTimestamp int64         `json:"start_timestamp"`
+	ServerID       func() uint64 `json:"-"`
+
+	// JSONServerID is serverID for json marshal/unmarshal ONLY.
+	JSONServerID uint64 `json:"server_id"`
+}
+
+// Marshal `ServerInfo` into bytes.
+func (info *ServerInfo) Marshal() ([]byte, error) {
+	info.JSONServerID = info.ServerID()
+	infoBuf, err := json.Marshal(info)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return infoBuf, nil
+}
+
+// Unmarshal `ServerInfo` from bytes.
+func (info *ServerInfo) Unmarshal(v []byte) error {
+	if err := json.Unmarshal(v, info); err != nil {
+		return err
+	}
+	info.ServerID = func() uint64 {
+		return info.JSONServerID
+	}
+	return nil
 }
 
 // ServerVersionInfo is the server version and git_hash.
@@ -129,10 +153,10 @@ func setGlobalInfoSyncer(is *InfoSyncer) {
 }
 
 // GlobalInfoSyncerInit return a new InfoSyncer. It is exported for testing.
-func GlobalInfoSyncerInit(ctx context.Context, id string, serverID uint64, etcdCli *clientv3.Client, skipRegisterToDashBoard bool) (*InfoSyncer, error) {
+func GlobalInfoSyncerInit(ctx context.Context, id string, serverIDGetter func() uint64, etcdCli *clientv3.Client, skipRegisterToDashBoard bool) (*InfoSyncer, error) {
 	is := &InfoSyncer{
 		etcdCli:        etcdCli,
-		info:           getServerInfo(id, serverID),
+		info:           getServerInfo(id, serverIDGetter),
 		serverInfoPath: fmt.Sprintf("%s/%s", ServerInformationPath, id),
 		minStartTSPath: fmt.Sprintf("%s/%s", ServerMinStartTSPath, id),
 	}
@@ -288,7 +312,7 @@ func (is *InfoSyncer) storeServerInfo(ctx context.Context) error {
 	if is.etcdCli == nil {
 		return nil
 	}
-	infoBuf, err := json.Marshal(is.info)
+	infoBuf, err := is.info.Marshal()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -593,7 +617,7 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 			info := &ServerInfo{
 				BinlogStatus: binloginfo.BinlogStatusUnknown.String(),
 			}
-			err = json.Unmarshal(kv.Value, info)
+			err = info.Unmarshal(kv.Value)
 			if err != nil {
 				logutil.BgLogger().Info("get key failed", zap.String("key", string(kv.Key)), zap.ByteString("value", kv.Value),
 					zap.Error(err))
@@ -607,7 +631,7 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 }
 
 // getServerInfo gets self tidb server information.
-func getServerInfo(id string, serverID uint64) *ServerInfo {
+func getServerInfo(id string, serverIDGetter func() uint64) *ServerInfo {
 	cfg := config.GetGlobalConfig()
 	info := &ServerInfo{
 		ID:             id,
@@ -617,7 +641,7 @@ func getServerInfo(id string, serverID uint64) *ServerInfo {
 		Lease:          cfg.Lease,
 		BinlogStatus:   binloginfo.GetStatus().String(),
 		StartTimestamp: time.Now().Unix(),
-		ServerID:       serverID,
+		ServerID:       serverIDGetter,
 	}
 	info.Version = mysql.ServerVersion
 	info.GitHash = versioninfo.TiDBGitHash
