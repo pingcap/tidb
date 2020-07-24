@@ -1459,7 +1459,7 @@ func (s *seqTestSuite) TestIssue18744(c *C) {
 	tk.MustExec(`insert into t values(0, 2010,  "2010-01-01 01:01:00" , "2010-01-01 01:01:00" , 2010 , 2010 , 2010.000000);`)
 	tk.MustExec(`insert into t values(1 , NULL , NULL                , NULL                , NULL , NULL ,        NULL);`)
 	tk.MustExec(`insert into t values(2 , 2012 , "2012-01-01 01:01:00" , "2012-01-01 01:01:00" , 2012 , 2012 , 2012.000000);`)
-	tk.MustExec(`set tidb_mem_quota_query=200;`)
+	tk.MustExec(`set tidb_mem_quota_query=400;`)
 	tk.MustExec(`set tidb_index_lookup_join_concurrency=1`)
 	config.GetGlobalConfig().OOMAction = config.OOMActionCancel
 	defer func() { config.GetGlobalConfig().OOMAction = config.OOMActionLog }()
