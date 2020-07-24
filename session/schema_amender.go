@@ -285,10 +285,6 @@ func (a *amendOperationAddNewIndex) genMutations(ctx context.Context, sctx sessi
 
 func (a *amendOperationAddIndexInfo) genIndexKeyValue(ctx context.Context, sctx sessionctx.Context, kvMap map[string][]byte,
 	key []byte, kvHandle kv.Handle, keyOnly bool) ([]byte, []byte, error) {
-	colMap := make(map[int64]*types.FieldType)
-	for _, oldCol := range a.tblInfoAtStart.Meta().Cols() {
-		colMap[oldCol.ID] = &oldCol.FieldType
-	}
 	chk := a.chk
 	chk.Reset()
 	// The Op_Put may not exist in old value kv map.
