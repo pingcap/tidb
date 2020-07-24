@@ -94,7 +94,7 @@ func (p *unicodeCIPattern) Compile(patternStr string, escape byte) {
 	p.patChars, p.patTypes = compilePatternUnicodeCI(patternStr, escape)
 }
 
-// Compile implements WildcardPattern interface.
+// DoMatch implements WildcardPattern interface.
 func (p *unicodeCIPattern) DoMatch(str string) bool {
 	return doMatchUnicodeCI(str, p.patChars, p.patTypes)
 }
