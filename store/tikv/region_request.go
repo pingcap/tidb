@@ -104,6 +104,7 @@ func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, re
 
 	for {
 		ctx, err := s.regionCache.GetRPCContext(bo, regionID)
+
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -131,6 +132,16 @@ func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, re
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
+
+		// recheck whether the session/query is killed during the Next()
+		if bo.vars != nil && bo.vars.Killed != nil && atomic.LoadUint32(bo.vars.Killed) == 1 {
+			return nil, nil, ErrQueryInterrupted
+		}
+		failpoint.Inject("mockRetrySendReqToRegion", func(val failpoint.Value) {
+			if val.(bool) {
+				retry = true
+			}
+		})
 		if retry {
 			continue
 		}
@@ -164,6 +175,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 		defer s.releaseStoreToken(ctx.Store)
 	}
 	resp, err = s.client.SendRequest(bo.ctx, ctx.Addr, req, timeout)
+
 	if err != nil {
 		s.rpcError = err
 		if e := s.onSendFail(bo, ctx, err); e != nil {

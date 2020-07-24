@@ -895,6 +895,10 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 // It also gets a token from server which is used to limit the concurrently handling clients.
 // The most frequently used command is ComQuery.
 func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
+	defer func() {
+		// reset killed for each request
+		atomic.StoreUint32(&cc.ctx.GetSessionVars().Killed, 0)
+	}()
 	span := opentracing.StartSpan("server.dispatch")
 
 	t := time.Now()
@@ -919,6 +923,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	}()
 
 	vars := cc.ctx.GetSessionVars()
+	// reset killed for each request
 	atomic.StoreUint32(&vars.Killed, 0)
 	if cmd < mysql.ComEnd {
 		cc.ctx.SetCommandValue(cmd)
