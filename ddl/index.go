@@ -202,7 +202,7 @@ func getIndexColumnLength(col *model.ColumnInfo, colLen int) (int, error) {
 			return mysql.DefaultLengthOfMysqlTypes[mysql.TypeFloat], nil
 		}
 		return mysql.DefaultLengthOfMysqlTypes[mysql.TypeDouble], nil
-	case mysql.TypeDecimal, mysql.TypeNewDecimal:
+	case mysql.TypeNewDecimal:
 		return calcBytesLengthForDecimal(length), nil
 	case mysql.TypeYear, mysql.TypeDate, mysql.TypeDuration, mysql.TypeDatetime, mysql.TypeTimestamp:
 		return mysql.DefaultLengthOfMysqlTypes[col.Tp], nil
