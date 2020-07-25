@@ -512,7 +512,6 @@ func (s *testSuite3) TestFlushPrivileges(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec(`CREATE USER 'testflush'@'localhost' IDENTIFIED BY '';`)
-	tk.MustExec(`FLUSH PRIVILEGES;`)
 	tk.MustExec(`UPDATE mysql.User SET Select_priv='Y' WHERE User="testflush" and Host="localhost"`)
 
 	// Create a new session.
@@ -542,10 +541,10 @@ func (s *testFlushSuite) TestFlushPrivilegesPanic(c *C) {
 	c.Assert(err, IsNil)
 	defer store.Close()
 
-	saveConf := config.GetGlobalConfig()
-	conf := *saveConf
-	conf.Security.SkipGrantTable = true
-	config.StoreGlobalConfig(&conf)
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Security.SkipGrantTable = true
+	})
 
 	dom, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
@@ -553,8 +552,6 @@ func (s *testFlushSuite) TestFlushPrivilegesPanic(c *C) {
 
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("FLUSH PRIVILEGES")
-
-	config.StoreGlobalConfig(saveConf)
 }
 
 func (s *testSuite3) TestDropStats(c *C) {

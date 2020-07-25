@@ -1285,12 +1285,12 @@
       },
       {
         "SQL": "select /*+ HASH_AGG(@sel_1), STREAM_AGG(@sel_2) */ count(*) from t t1 where t1.a < (select count(*) from t t2 where t1.a > t2.a)",
-        "Plan": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]]->Sel([gt(test.t.a, test.t.a)])->StreamAgg)->StreamAgg->Sel([not(isnull(Column#25))])}->HashAgg",
+        "Plan": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]]->Sel([gt(test.t.a, test.t.a)])->StreamAgg)->StreamAgg}->HashAgg",
         "Hints": "use_index(@`sel_1` `test`.`t1` `f`), use_index(@`sel_2` `test`.`t2` `f`), stream_agg(@`sel_2`), hash_agg(@`sel_1`)"
       },
       {
         "SQL": "select /*+ STREAM_AGG(@sel_1), HASH_AGG(@qb) */ count(*) from t t1 where t1.a < (select /*+ QB_NAME(qb) */ count(*) from t t2 where t1.a > t2.a)",
-        "Plan": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]]->Sel([gt(test.t.a, test.t.a)])->HashAgg)->HashAgg->Sel([not(isnull(Column#25))])}->StreamAgg",
+        "Plan": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]]->Sel([gt(test.t.a, test.t.a)])->HashAgg)->HashAgg}->StreamAgg",
         "Hints": "use_index(@`sel_1` `test`.`t1` `f`), use_index(@`sel_2` `test`.`t2` `f`), hash_agg(@`sel_2`), stream_agg(@`sel_1`)"
       },
       {
@@ -2073,6 +2073,55 @@
       {
         "SQL": "select /*+ inl_hash_join(test.t1) */ * from test.t2 join test.t1 on test.t2.a = test.t1.a",
         "Plan": "IndexHashJoin{IndexReader(Index(t2.idx_a)[[-inf,+inf]])->IndexReader(Index(t1.idx_a)[[NULL,+inf]]->Sel([not(isnull(test.t1.a))]))}(test.t2.a,test.t1.a)"
+      }
+    ]
+  },
+  {
+    "Name": "TestNthPlanHintWithExplain",
+    "Cases": [
+      {
+        "SQL": "select /*+nth_plan(1)*/ * from test.tt where a=1 and b=1",
+        "Plan": [
+          "TableReader_7 0.01 root  data:Selection_6",
+          "└─Selection_6 0.01 cop[tikv]  eq(test.tt.a, 1), eq(test.tt.b, 1)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:tt keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+nth_plan(2)*/ * from test.tt where a=1 and b=1;",
+        "Plan": [
+          "IndexLookUp_11 0.01 root  ",
+          "├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:tt, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+          "└─Selection_10(Probe) 0.01 cop[tikv]  eq(test.tt.b, 1)",
+          "  └─TableRowIDScan_9 10.00 cop[tikv] table:tt keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+nth_plan(3)*/ * from test.tt where a=1 and b=1;",
+        "Plan": [
+          "IndexLookUp_15 0.01 root  ",
+          "├─IndexRangeScan_12(Build) 10.00 cop[tikv] table:tt, index:b(b) range:[1,1], keep order:false, stats:pseudo",
+          "└─Selection_14(Probe) 0.01 cop[tikv]  eq(test.tt.a, 1)",
+          "  └─TableRowIDScan_13 10.00 cop[tikv] table:tt keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+nth_plan(2)*/ * from test.tt where a=1 and b=1;",
+        "Plan": [
+          "IndexLookUp_11 0.01 root  ",
+          "├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:tt, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+          "└─Selection_10(Probe) 0.01 cop[tikv]  eq(test.tt.b, 1)",
+          "  └─TableRowIDScan_9 10.00 cop[tikv] table:tt keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from test.tt where a=1 and b=1",
+        "Plan": [
+          "IndexLookUp_11 0.01 root  ",
+          "├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:tt, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+          "└─Selection_10(Probe) 0.01 cop[tikv]  eq(test.tt.b, 1)",
+          "  └─TableRowIDScan_9 10.00 cop[tikv] table:tt keep order:false, stats:pseudo"
+        ]
       }
     ]
   }

@@ -187,16 +187,16 @@ func NewRulePushSelDownTableScan() Transformation {
 func (r *PushSelDownTableScan) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
 	ts := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalTableScan)
-	if ts.Handle == nil {
+	if ts.HandleCols == nil {
 		return nil, false, false, nil
 	}
-	accesses, remained := ranger.DetachCondsForColumn(ts.SCtx(), sel.Conditions, ts.Handle)
+	accesses, remained := ranger.DetachCondsForColumn(ts.SCtx(), sel.Conditions, ts.HandleCols.GetCol(0))
 	if accesses == nil {
 		return nil, false, false, nil
 	}
 	newTblScan := plannercore.LogicalTableScan{
 		Source:      ts.Source,
-		Handle:      ts.Handle,
+		HandleCols:  ts.HandleCols,
 		AccessConds: ts.AccessConds.Shallow(),
 	}.Init(ts.SCtx(), ts.SelectBlockOffset())
 	newTblScan.AccessConds = append(newTblScan.AccessConds, accesses...)
@@ -2374,7 +2374,7 @@ func (r *TransformApplyToJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo
 
 func (r *TransformApplyToJoin) extractCorColumnsBySchema(innerGroup *memo.Group, outerSchema *expression.Schema) []*expression.CorrelatedColumn {
 	corCols := r.extractCorColumnsFromGroup(innerGroup)
-	return plannercore.ExtractCorColumnsBySchema(corCols, outerSchema)
+	return plannercore.ExtractCorColumnsBySchema(corCols, outerSchema, false)
 }
 
 func (r *TransformApplyToJoin) extractCorColumnsFromGroup(g *memo.Group) []*expression.CorrelatedColumn {

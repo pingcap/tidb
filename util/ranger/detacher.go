@@ -97,7 +97,22 @@ func getEqOrInColOffset(expr expression.Expression, cols []*expression.Column) i
 		return -1
 	}
 	_, collation := expr.CharsetAndCollation(f.GetCtx())
-	if f.FuncName.L == ast.EQ {
+	switch f.FuncName.L {
+	case ast.LogicOr:
+		dnfItems := expression.FlattenDNFConditions(f)
+		offset := int(-1)
+		for _, dnfItem := range dnfItems {
+			curOffset := getEqOrInColOffset(dnfItem, cols)
+			if curOffset == -1 {
+				return -1
+			}
+			if offset != -1 && curOffset != offset {
+				return -1
+			}
+			offset = curOffset
+		}
+		return offset
+	case ast.EQ:
 		if c, ok := f.GetArgs()[0].(*expression.Column); ok {
 			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.Collate, collation) {
 				return -1
@@ -122,8 +137,7 @@ func getEqOrInColOffset(expr expression.Expression, cols []*expression.Column) i
 				}
 			}
 		}
-	}
-	if f.FuncName.L == ast.In {
+	case ast.In:
 		c, ok := f.GetArgs()[0].(*expression.Column)
 		if !ok {
 			return -1

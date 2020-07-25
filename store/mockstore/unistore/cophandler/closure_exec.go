@@ -15,7 +15,6 @@ package cophandler
 
 import (
 	"bytes"
-	"encoding/binary"
 	"fmt"
 	"math"
 	"sort"
@@ -47,7 +46,20 @@ const (
 	pkColNotExists = iota
 	pkColIsSigned
 	pkColIsUnsigned
+	pkColIsCommon
 )
+
+func mapPkStatusToHandleStatus(pkStatus int) tablecodec.HandleStatus {
+	switch pkStatus {
+	case pkColNotExists:
+		return tablecodec.HandleNotNeeded
+	case pkColIsCommon | pkColIsSigned:
+		return tablecodec.HandleDefault
+	case pkColIsUnsigned:
+		return tablecodec.HandleIsUnsigned
+	}
+	return tablecodec.HandleDefault
+}
 
 // buildClosureExecutor build a closureExecutor for the DAGRequest.
 // Currently the composition of executors are:
@@ -128,7 +140,7 @@ func newClosureExecutor(dagCtx *dagContext, dagReq *tipb.DAGRequest) (*closureEx
 		idxScan := executors[0].IdxScan
 		e.unique = idxScan.GetUnique()
 		e.scanCtx.desc = idxScan.Desc
-		e.initIdxScanCtx()
+		e.initIdxScanCtx(idxScan)
 	default:
 		panic(fmt.Sprintf("unknown first executor type %s", executors[0].Tp))
 	}
@@ -150,25 +162,33 @@ func newClosureExecutor(dagCtx *dagContext, dagReq *tipb.DAGRequest) (*closureEx
 	return e, nil
 }
 
-func (e *closureExecutor) initIdxScanCtx() {
+func (e *closureExecutor) initIdxScanCtx(idxScan *tipb.IndexScan) {
 	e.idxScanCtx = new(idxScanCtx)
 	e.idxScanCtx.columnLen = len(e.columnInfos)
 	e.idxScanCtx.pkStatus = pkColNotExists
+
+	e.idxScanCtx.primaryColumnIds = idxScan.PrimaryColumnIds
+
 	lastColumn := e.columnInfos[len(e.columnInfos)-1]
-	// The PKHandle column info has been collected in ctx.
-	if lastColumn.GetPkHandle() {
-		if mysql.HasUnsignedFlag(uint(lastColumn.GetFlag())) {
-			e.idxScanCtx.pkStatus = pkColIsUnsigned
-		} else {
+
+	if len(e.idxScanCtx.primaryColumnIds) == 0 {
+		if lastColumn.GetPkHandle() {
+			if mysql.HasUnsignedFlag(uint(lastColumn.GetFlag())) {
+				e.idxScanCtx.pkStatus = pkColIsUnsigned
+			} else {
+				e.idxScanCtx.pkStatus = pkColIsSigned
+			}
+			e.idxScanCtx.columnLen--
+		} else if lastColumn.ColumnId == model.ExtraHandleID {
 			e.idxScanCtx.pkStatus = pkColIsSigned
+			e.idxScanCtx.columnLen--
 		}
-		e.idxScanCtx.columnLen--
-	} else if lastColumn.ColumnId == model.ExtraHandleID {
-		e.idxScanCtx.pkStatus = pkColIsSigned
-		e.idxScanCtx.columnLen--
+	} else {
+		e.idxScanCtx.pkStatus = pkColIsCommon
+		e.idxScanCtx.columnLen -= len(e.idxScanCtx.primaryColumnIds)
 	}
 
-	colInfos := make([]rowcodec.ColInfo, e.idxScanCtx.columnLen)
+	colInfos := make([]rowcodec.ColInfo, len(e.columnInfos))
 	for i := range colInfos {
 		col := e.columnInfos[i]
 		colInfos[i] = rowcodec.ColInfo{
@@ -180,13 +200,13 @@ func (e *closureExecutor) initIdxScanCtx() {
 	e.idxScanCtx.colInfos = colInfos
 
 	colIDs := make(map[int64]int, len(colInfos))
-	for i, col := range colInfos {
+	for i, col := range colInfos[:e.idxScanCtx.columnLen] {
 		colIDs[col.ID] = i
 	}
 	e.scanCtx.newCollationIds = colIDs
 
 	// We don't need to decode handle here, and colIDs >= 0 always.
-	e.scanCtx.newCollationRd = rowcodec.NewByteDecoder(colInfos, []int64{-1}, nil, nil)
+	e.scanCtx.newCollationRd = rowcodec.NewByteDecoder(colInfos[:e.idxScanCtx.columnLen], []int64{-1}, nil, nil)
 }
 
 func isCountAgg(pbAgg *tipb.Aggregation) bool {
@@ -303,20 +323,22 @@ type closureProcessor interface {
 }
 
 type scanCtx struct {
-	count   int
-	limit   int
-	chk     *chunk.Chunk
-	desc    bool
-	decoder *rowcodec.ChunkDecoder
+	count            int
+	limit            int
+	chk              *chunk.Chunk
+	desc             bool
+	decoder          *rowcodec.ChunkDecoder
+	primaryColumnIds []int64
 
 	newCollationRd  *rowcodec.BytesDecoder
 	newCollationIds map[int64]int
 }
 
 type idxScanCtx struct {
-	pkStatus  int
-	columnLen int
-	colInfos  []rowcodec.ColInfo
+	pkStatus         int
+	columnLen        int
+	colInfos         []rowcodec.ColInfo
+	primaryColumnIds []int64
 }
 
 type aggCtx struct {
@@ -340,7 +362,7 @@ func (e *closureExecutor) execute() ([]tipb.Chunk, error) {
 	}
 	dbReader := e.dbReader
 	for i, ran := range e.kvRanges {
-		if e.unique && ran.IsPoint() {
+		if e.isPointGetRange(ran) {
 			val, err := dbReader.Get(ran.StartKey, e.startTS)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -376,6 +398,13 @@ func (e *closureExecutor) execute() ([]tipb.Chunk, error) {
 	}
 	err = e.processor.Finish()
 	return e.oldChunks, err
+}
+
+func (e *closureExecutor) isPointGetRange(ran kv.KeyRange) bool {
+	if len(e.primaryCols) > 0 {
+		return false
+	}
+	return e.unique && ran.IsPoint()
 }
 
 func (e *closureExecutor) checkRangeLock() error {
@@ -591,70 +620,26 @@ func (e *indexScanProcessor) Finish() error {
 }
 
 func (e *closureExecutor) indexScanProcessCore(key, value []byte) error {
-	if len(value) > tablecodec.MaxOldEncodeValueLen {
-		return e.indexScanProcessNewCollation(key, value)
-	}
-	return e.indexScanProcessOldCollation(key, value)
-}
-
-func (e *closureExecutor) indexScanProcessNewCollation(key, value []byte) error {
-	colLen := e.idxScanCtx.columnLen
-	pkStatus := e.idxScanCtx.pkStatus
-	chk := e.scanCtx.chk
-	rd := e.scanCtx.newCollationRd
-	colIDs := e.scanCtx.newCollationIds
-
-	vLen := len(value)
-	tailLen := int(value[0])
-	values, err := rd.DecodeToBytesNoHandle(colIDs, value[1:vLen-tailLen])
-	if err != nil {
-		return errors.Trace(err)
-	}
-	decoder := codec.NewDecoder(chk, e.sc.TimeZone)
-	for i, colVal := range values {
-		_, err = decoder.DecodeOne(colVal, i, e.fieldTps[i])
-		if err != nil {
-			return errors.Trace(err)
+	handleStatus := mapPkStatusToHandleStatus(e.idxScanCtx.pkStatus)
+	restoredCols := make([]rowcodec.ColInfo, 0, len(e.idxScanCtx.colInfos))
+	for _, c := range e.idxScanCtx.colInfos {
+		if c.ID != -1 {
+			restoredCols = append(restoredCols, c)
 		}
 	}
-
-	if tailLen < 8 {
-		if pkStatus != pkColNotExists {
-			_, err = decoder.DecodeOne(key[len(key)-9:], colLen, e.fieldTps[colLen])
+	values, err := tablecodec.DecodeIndexKV(key, value, e.idxScanCtx.columnLen, handleStatus, restoredCols)
+	if err != nil {
+		return err
+	}
+	chk := e.scanCtx.chk
+	decoder := codec.NewDecoder(chk, e.sc.TimeZone)
+	for i, colVal := range values {
+		if i < len(e.fieldTps) {
+			_, err = decoder.DecodeOne(colVal, i, e.fieldTps[i])
 			if err != nil {
 				return errors.Trace(err)
 			}
 		}
-	} else if pkStatus != pkColNotExists {
-		chk.AppendInt64(colLen, int64(binary.BigEndian.Uint64(value[vLen-tailLen:])))
-	}
-	return nil
-}
-
-func (e *closureExecutor) indexScanProcessOldCollation(key, value []byte) error {
-	colLen := e.idxScanCtx.columnLen
-	pkStatus := e.idxScanCtx.pkStatus
-	chk := e.scanCtx.chk
-	values, b, err := tablecodec.CutIndexKeyNew(key, colLen)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	decoder := codec.NewDecoder(chk, e.sc.TimeZone)
-	for i, colVal := range values {
-		_, err = decoder.DecodeOne(colVal, i, e.fieldTps[i])
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	if len(b) > 0 {
-		if pkStatus != pkColNotExists {
-			_, err = decoder.DecodeOne(b, colLen, e.fieldTps[colLen])
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
-	} else if pkStatus != pkColNotExists {
-		chk.AppendInt64(colLen, int64(binary.BigEndian.Uint64(value)))
 	}
 	return nil
 }

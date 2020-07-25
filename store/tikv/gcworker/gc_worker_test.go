@@ -231,15 +231,16 @@ func (s *testGCWorkerSuite) TestGetOracleTime(c *C) {
 }
 
 func (s *testGCWorkerSuite) TestMinStartTS(c *C) {
+	ctx := context.Background()
 	spkv := s.store.GetSafePointKV()
 	err := spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), strconv.FormatUint(math.MaxUint64, 10))
 	c.Assert(err, IsNil)
 	now := time.Now()
-	sp := s.gcWorker.calSafePointByMinStartTS(now)
+	sp := s.gcWorker.calSafePointByMinStartTS(ctx, now)
 	c.Assert(sp.Second(), Equals, now.Second())
 	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), "0")
 	c.Assert(err, IsNil)
-	sp = s.gcWorker.calSafePointByMinStartTS(now)
+	sp = s.gcWorker.calSafePointByMinStartTS(ctx, now)
 	zeroTime := time.Unix(0, oracle.ExtractPhysical(0)*1e6)
 	c.Assert(sp, Equals, zeroTime)
 
@@ -247,7 +248,7 @@ func (s *testGCWorkerSuite) TestMinStartTS(c *C) {
 	c.Assert(err, IsNil)
 	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "b"), "1")
 	c.Assert(err, IsNil)
-	sp = s.gcWorker.calSafePointByMinStartTS(now)
+	sp = s.gcWorker.calSafePointByMinStartTS(ctx, now)
 	c.Assert(sp, Equals, zeroTime)
 
 	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"),
@@ -256,7 +257,7 @@ func (s *testGCWorkerSuite) TestMinStartTS(c *C) {
 	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "b"),
 		strconv.FormatUint(variable.GoTimeToTS(now.Add(-20*time.Second)), 10))
 	c.Assert(err, IsNil)
-	sp = s.gcWorker.calSafePointByMinStartTS(now.Add(-10 * time.Second))
+	sp = s.gcWorker.calSafePointByMinStartTS(ctx, now.Add(-10*time.Second))
 	c.Assert(sp.Second(), Equals, now.Add(-20*time.Second).Second())
 }
 
@@ -375,7 +376,7 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 
 func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
 	ctx := context.Background()
-	bo := tikv.NewBackoffer(ctx, tikv.GcOneRegionMaxBackoff)
+	bo := tikv.NewBackofferWithVars(ctx, tikv.GcOneRegionMaxBackoff, nil)
 	loc, err := s.store.GetRegionCache().LocateKey(bo, []byte(""))
 	c.Assert(err, IsNil)
 	var regionErr *errorpb.Error
@@ -480,23 +481,23 @@ func (s *testGCWorkerSuite) TestCheckGCMode(c *C) {
 func (s *testGCWorkerSuite) TestCheckScanLockMode(c *C) {
 	usePhysical, err := s.gcWorker.checkUsePhysicalScanLock()
 	c.Assert(err, IsNil)
-	c.Assert(usePhysical, Equals, false)
-	// This is a hidden config, so default value will not be inserted to table.
+	c.Assert(usePhysical, Equals, gcScanLockModeDefault == gcScanLockModePhysical)
+	// Now the row must be set to the default value.
 	str, err := s.gcWorker.loadValueFromSysTable(gcScanLockModeKey)
 	c.Assert(err, IsNil)
-	c.Assert(str, Equals, "")
-
-	err = s.gcWorker.saveValueToSysTable(gcScanLockModeKey, gcScanLockModePhysical)
-	c.Assert(err, IsNil)
-	usePhysical, err = s.gcWorker.checkUsePhysicalScanLock()
-	c.Assert(err, IsNil)
-	c.Assert(usePhysical, Equals, true)
+	c.Assert(str, Equals, gcScanLockModeDefault)
 
 	err = s.gcWorker.saveValueToSysTable(gcScanLockModeKey, gcScanLockModeLegacy)
 	c.Assert(err, IsNil)
 	usePhysical, err = s.gcWorker.checkUsePhysicalScanLock()
 	c.Assert(err, IsNil)
 	c.Assert(usePhysical, Equals, false)
+
+	err = s.gcWorker.saveValueToSysTable(gcScanLockModeKey, gcScanLockModePhysical)
+	c.Assert(err, IsNil)
+	usePhysical, err = s.gcWorker.checkUsePhysicalScanLock()
+	c.Assert(err, IsNil)
+	c.Assert(usePhysical, Equals, true)
 
 	err = s.gcWorker.saveValueToSysTable(gcScanLockModeKey, "invalid_mode")
 	c.Assert(err, IsNil)
@@ -506,8 +507,9 @@ func (s *testGCWorkerSuite) TestCheckScanLockMode(c *C) {
 }
 
 func (s *testGCWorkerSuite) TestNeedsGCOperationForStore(c *C) {
-	newStore := func(hasEngineLabel bool, engineLabel string) *metapb.Store {
+	newStore := func(state metapb.StoreState, hasEngineLabel bool, engineLabel string) *metapb.Store {
 		store := &metapb.Store{}
+		store.State = state
 		if hasEngineLabel {
 			store.Labels = []*metapb.StoreLabel{{Key: engineLabelKey, Value: engineLabel}}
 		}
@@ -515,23 +517,25 @@ func (s *testGCWorkerSuite) TestNeedsGCOperationForStore(c *C) {
 	}
 
 	// TiKV needs to do the store-level GC operations.
-	res, err := needsGCOperationForStore(newStore(false, ""))
-	c.Assert(err, IsNil)
-	c.Assert(res, IsTrue)
-	res, err = needsGCOperationForStore(newStore(true, ""))
-	c.Assert(err, IsNil)
-	c.Assert(res, IsTrue)
-	res, err = needsGCOperationForStore(newStore(true, engineLabelTiKV))
-	c.Assert(err, IsNil)
-	c.Assert(res, IsTrue)
+	for _, state := range []metapb.StoreState{metapb.StoreState_Up, metapb.StoreState_Offline, metapb.StoreState_Tombstone} {
+		needGC := state != metapb.StoreState_Tombstone
+		res, err := needsGCOperationForStore(newStore(state, false, ""))
+		c.Assert(err, IsNil)
+		c.Assert(res, Equals, needGC)
+		res, err = needsGCOperationForStore(newStore(state, true, ""))
+		c.Assert(err, IsNil)
+		c.Assert(res, Equals, needGC)
+		res, err = needsGCOperationForStore(newStore(state, true, engineLabelTiKV))
+		c.Assert(err, IsNil)
+		c.Assert(res, Equals, needGC)
 
-	// TiFlash does not need these operations.
-	res, err = needsGCOperationForStore(newStore(true, engineLabelTiFlash))
-	c.Assert(err, IsNil)
-	c.Assert(res, IsFalse)
-
+		// TiFlash does not need these operations.
+		res, err = needsGCOperationForStore(newStore(state, true, engineLabelTiFlash))
+		c.Assert(err, IsNil)
+		c.Assert(res, IsFalse)
+	}
 	// Throw an error for unknown store types.
-	_, err = needsGCOperationForStore(newStore(true, "invalid"))
+	_, err := needsGCOperationForStore(newStore(metapb.StoreState_Up, true, "invalid"))
 	c.Assert(err, NotNil)
 }
 
@@ -578,7 +582,7 @@ func (s *testGCWorkerSuite) testDeleteRangesFailureImpl(c *C, failType int) {
 	c.Assert(err, IsNil)
 	c.Assert(preparedRanges, DeepEquals, ranges)
 
-	stores, err := s.gcWorker.getUpStoresForGC(context.Background())
+	stores, err := s.gcWorker.getStoresForGC(context.Background())
 	c.Assert(err, IsNil)
 	c.Assert(len(stores), Equals, 3)
 
@@ -999,7 +1003,7 @@ func (s *testGCWorkerSuite) makeMergedMockClient(c *C, count int) (*mergeLockSca
 
 	const scanLockLimit = 3
 
-	storesMap, err := s.gcWorker.getUpStoresMapForGC(context.Background())
+	storesMap, err := s.gcWorker.getStoresMapForGC(context.Background())
 	c.Assert(err, IsNil)
 	scanner := newMergeLockScanner(100000, s.client, storesMap)
 	scanner.scanLockLimit = scanLockLimit
