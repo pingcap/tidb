@@ -16,68 +16,65 @@ const (
 
 type checksum struct {
 	disk        *os.File
-	err         error
 	buf         []byte
-	payLoad     []byte
-	payLoadUsed int
-	size        int
+	payload     []byte
+	payloadUsed int
+	size        int64
 }
 
 func newChecksum(disk *os.File) *checksum {
 	cks := &checksum{disk: disk}
 	cks.buf = make([]byte, checksumBlockSize)
-	cks.payLoad = cks.buf[checksumSize:]
-	cks.payLoadUsed = 0
+	cks.payload = cks.buf[checksumSize:]
+	cks.payloadUsed = 0
 	return cks
 }
 
 // Available returns how many bytes are unused in the buffer.
-func (cks *checksum) Available() int { return len(cks.payLoad) - cks.payLoadUsed }
+func (cks *checksum) Available() int { return len(cks.payload) - cks.payloadUsed }
 
 func (cks *checksum) Write(p []byte) (nn int, err error) {
-	for len(p) > cks.Available() && cks.err == nil {
-		n := copy(cks.payLoad[cks.payLoadUsed:], p)
-		cks.payLoadUsed += n
-		err := cks.Flush()
+	for len(p) > 0 {
+		n := copy(cks.payload[cks.payloadUsed:], p)
+		cks.payloadUsed += n
+		err = cks.Flush()
 		if err != nil {
-			return nn, err
+			return
 		}
 		nn += n
 		p = p[n:]
 	}
-	if cks.err != nil {
-		return nn, cks.err
-	}
-	n := copy(cks.payLoad[cks.payLoadUsed:], p)
-	cks.payLoadUsed += n
-	nn += n
-	return nn, nil
+	return
 }
 
 // Flush writes any buffered data to the disk.
 func (cks *checksum) Flush() error {
-	if cks.err != nil {
-		return cks.err
-	}
-	if cks.payLoadUsed == 0 {
+	if cks.payloadUsed == 0 {
 		return nil
 	}
-	checksum := crc32.Checksum(cks.payLoad[:cks.payLoadUsed], crc32.MakeTable(crc32.IEEE))
+	checksum := crc32.Checksum(cks.payload[:cks.payloadUsed], crc32.MakeTable(crc32.IEEE))
 	binary.LittleEndian.PutUint32(cks.buf, checksum)
-	n, err := cks.disk.Write(cks.buf[:cks.payLoadUsed+checksumSize])
-	cks.size += n
-	if n < cks.payLoadUsed && err == nil {
+	if cks.size%checksumBlockSize > 0 {
+		cursor := cks.size / checksumBlockSize * checksumBlockSize
+		_, err := cks.disk.Seek(int64(cursor), io.SeekStart)
+		if err != nil {
+			return err
+		}
+		cks.size = cursor
+	}
+	n, err := cks.disk.Write(cks.buf[:cks.payloadUsed+checksumSize])
+	cks.size += int64(n)
+	if n < cks.payloadUsed && err == nil {
 		err = io.ErrShortWrite
 	}
 	if err != nil {
-		if n > 0 && n < cks.payLoadUsed {
-			copy(cks.payLoad[:cks.payLoadUsed-n], cks.payLoad[n:cks.payLoadUsed])
+		if n > 0 && n < cks.payloadUsed {
+			copy(cks.payload[:cks.payloadUsed-n], cks.payload[n:cks.payloadUsed])
 		}
-		cks.payLoadUsed -= n
-		cks.err = err
+		cks.payloadUsed -= n
 		return err
 	}
-	cks.payLoadUsed = 0
+	cks.payloadUsed %= checksumPayloadSize
 	return nil
 }
 
@@ -86,14 +83,14 @@ func (cks *checksum) ReadAt(p []byte, off int64) (nn int, err error) {
 	offsetInPayload := off % checksumPayloadSize
 	cursor := startBlock * checksumBlockSize
 	var n int
-	for len(p) > 0 && cks.err == nil && cursor < int64(cks.size) {
+	for len(p) > 0 && cursor < int64(cks.size) {
 		if cursor+checksumBlockSize > int64(cks.size) {
-			n, cks.err = cks.disk.ReadAt(cks.buf[:int64(cks.size)-cursor], cursor)
+			n, err = cks.disk.ReadAt(cks.buf[:int64(cks.size)-cursor], cursor)
 		} else {
-			n, cks.err = cks.disk.ReadAt(cks.buf, cursor)
+			n, err = cks.disk.ReadAt(cks.buf, cursor)
 		}
-		if cks.err != nil {
-			return nn, cks.err
+		if err != nil {
+			return
 		}
 		cursor += int64(n)
 		originChecksum := binary.LittleEndian.Uint32(cks.buf)
@@ -106,5 +103,5 @@ func (cks *checksum) ReadAt(p []byte, off int64) (nn int, err error) {
 		p = p[n1:]
 		offsetInPayload = 0
 	}
-	return nn, cks.err
+	return
 }

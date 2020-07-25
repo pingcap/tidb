@@ -104,16 +104,10 @@ func (l *ListInDisk) flush() (err error) {
 		return nil
 	}
 	l.bufFlushMutex.Lock()
-	defer l.bufFlushMutex.Unlock()
 	if l.bufWriter.Buffered() != 0 {
 		err = l.bufWriter.Flush()
-		if err != nil {
-			return err
-		}
 	}
-	if l.checksum != nil {
-		err = l.checksum.Flush()
-	}
+	l.bufFlushMutex.Unlock()
 	return err
 }
 

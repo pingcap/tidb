@@ -134,12 +134,12 @@ func BenchmarkListInDiskGetRow(b *testing.B) {
 	}
 }
 
-type listInDiskOriginal struct {
+type listInDiskWriteDisk struct {
 	ListInDisk
 }
 
-func newListInDiskOriginal(fieldTypes []*types.FieldType) (*listInDiskOriginal, error) {
-	l := listInDiskOriginal{*NewListInDisk(fieldTypes)}
+func newListInDiskWriteDisk(fieldTypes []*types.FieldType) (*listInDiskWriteDisk, error) {
+	l := listInDiskWriteDisk{*NewListInDisk(fieldTypes)}
 	err := l.initDiskFile()
 	if err != nil {
 		return nil, err
@@ -148,7 +148,7 @@ func newListInDiskOriginal(fieldTypes []*types.FieldType) (*listInDiskOriginal, 
 	return &l, nil
 }
 
-func (l *listInDiskOriginal) GetRow(ptr RowPtr) (row Row, err error) {
+func (l *listInDiskWriteDisk) GetRow(ptr RowPtr) (row Row, err error) {
 	err = l.flush()
 	if err != nil {
 		return
@@ -179,14 +179,14 @@ func checkRow(c *check.C, row1, row2 Row) {
 	}
 }
 
-func (s *testChunkSuite1) TestListInDiskOriginal(c *check.C) {
-	numChk, numRow := 3, 1000
+func (s *testChunkSuite) TestListInDiskWithChecksum(c *check.C) {
+	numChk, numRow := 10, 1000
 	chks, fields := initChunks(numChk, numRow)
 	lChecksum := NewListInDisk(fields)
-	//defer lChecksum.Close()
-	lDisk, err := newListInDiskOriginal(fields)
+	defer lChecksum.Close()
+	lDisk, err := newListInDiskWriteDisk(fields)
 	c.Assert(err, check.IsNil)
-	//defer lDisk.Close()
+	defer lDisk.Close()
 	for _, chk := range chks {
 		err := lChecksum.Add(chk)
 		c.Assert(err, check.IsNil)
@@ -195,8 +195,8 @@ func (s *testChunkSuite1) TestListInDiskOriginal(c *check.C) {
 	}
 
 	var ptrs []RowPtr
-	for i := 2; i < numChk; i++ {
-		for j := 990; j < numRow; j++ {
+	for i := 0; i < numChk; i++ {
+		for j := 0; j < numRow; j++ {
 			ptrs = append(ptrs, RowPtr{
 				ChkIdx: uint32(i),
 				RowIdx: uint32(j),
@@ -204,13 +204,11 @@ func (s *testChunkSuite1) TestListInDiskOriginal(c *check.C) {
 		}
 	}
 
-	finfo, _ := lChecksum.disk.Stat()
-	fmt.Println(finfo.Size())
-
 	for _, rowPtr := range ptrs {
-		row2, _ := lDisk.GetRow(rowPtr)
-		row1, _ := lChecksum.GetRow(rowPtr)
-		fmt.Println(rowPtr)
+		row1, err := lChecksum.GetRow(rowPtr)
+		c.Assert(err, check.IsNil)
+		row2, err := lDisk.GetRow(rowPtr)
+		c.Assert(err, check.IsNil)
 		checkRow(c, row1, row2)
 	}
 }
