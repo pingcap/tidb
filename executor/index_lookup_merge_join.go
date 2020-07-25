@@ -220,6 +220,9 @@ func (e *IndexLookUpMergeJoin) newOuterWorker(resultCh, innerCh chan *lookUpMerg
 		parentMemTracker:      e.memTracker,
 		nextColCompareFilters: e.lastColHelper,
 	}
+	failpoint.Inject("testIssue18068", func() {
+		omw.batchSize = 1
+	})
 	return omw
 }
 
@@ -278,7 +281,7 @@ func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.Chunk) error
 			result.src <- result.chk
 			return nil
 		case <-ctx.Done():
-			return nil
+			return ctx.Err()
 		}
 	}
 
@@ -297,12 +300,18 @@ func (e *IndexLookUpMergeJoin) getFinishedTask(ctx context.Context) {
 
 func (omw *outerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancelFunc context.CancelFunc) {
 	defer func() {
+		if r := recover(); r != nil {
+			task := &lookUpMergeJoinTask{
+				doneErr: errors.New(fmt.Sprintf("%v", r)),
+				results: make(chan *indexMergeJoinResult, numResChkHold),
+			}
+			close(task.results)
+			omw.resultCh <- task
+			cancelFunc()
+		}
 		close(omw.resultCh)
 		close(omw.innerCh)
 		wg.Done()
-		if r := recover(); r != nil {
-			cancelFunc()
-		}
 	}()
 	for {
 		task, err := omw.buildTask(ctx)
@@ -312,6 +321,7 @@ func (omw *outerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancel
 			omw.pushToChan(ctx, task, omw.resultCh)
 			return
 		}
+		failpoint.Inject("mockIndexMergeJoinOOMPanic", nil)
 		if task == nil {
 			return
 		}
@@ -464,9 +474,10 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 				}
 			}
 			if cmp != 0 || imw.nextColCompareFilters == nil {
-				return cmp < 0
+				return (cmp < 0 && !imw.desc) || (cmp > 0 && imw.desc)
 			}
-			return imw.nextColCompareFilters.CompareRow(rowI, rowJ) < 0
+			cmp = int64(imw.nextColCompareFilters.CompareRow(rowI, rowJ))
+			return (cmp < 0 && !imw.desc) || (cmp > 0 && imw.desc)
 		})
 	}
 	dLookUpKeys, err := imw.constructDatumLookupKeys(task)
@@ -476,7 +487,7 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 	dLookUpKeys = imw.dedupDatumLookUpKeys(dLookUpKeys)
 	// If the order requires descending, the deDupedLookUpContents is keep descending order before.
 	// So at the end, we should generate the ascending deDupedLookUpContents to build the correct range for inner read.
-	if !imw.outerMergeCtx.needOuterSort && imw.desc {
+	if imw.desc {
 		lenKeys := len(dLookUpKeys)
 		for i := 0; i < lenKeys/2; i++ {
 			dLookUpKeys[i], dLookUpKeys[lenKeys-i-1] = dLookUpKeys[lenKeys-i-1], dLookUpKeys[i]
@@ -505,8 +516,12 @@ func (imw *innerMergeWorker) fetchNewChunkWhenFull(ctx context.Context, task *lo
 		return false
 	}
 	var ok bool
-	*chk, ok = <-imw.joinChkResourceCh
-	if !ok {
+	select {
+	case *chk, ok = <-imw.joinChkResourceCh:
+		if !ok {
+			return false
+		}
+	case <-ctx.Done():
 		return false
 	}
 	(*chk).Reset()
@@ -516,6 +531,9 @@ func (imw *innerMergeWorker) fetchNewChunkWhenFull(ctx context.Context, task *lo
 func (imw *innerMergeWorker) doMergeJoin(ctx context.Context, task *lookUpMergeJoinTask) (err error) {
 	chk := <-imw.joinChkResourceCh
 	defer func() {
+		if chk == nil {
+			return
+		}
 		if chk.NumRows() > 0 {
 			select {
 			case task.results <- &indexMergeJoinResult{chk, imw.joinChkResourceCh}:
@@ -697,11 +715,16 @@ func (e *IndexLookUpMergeJoin) Close() error {
 		e.cancelFunc()
 		e.cancelFunc = nil
 	}
-	e.workerWg.Wait()
-	for i := range e.joinChkResourceCh {
-		close(e.joinChkResourceCh[i])
+	if e.resultCh != nil {
+		for range e.resultCh {
+		}
+		e.resultCh = nil
 	}
 	e.joinChkResourceCh = nil
+	// joinChkResourceCh is to recycle result chunks, used by inner worker.
+	// resultCh is the main thread get the results, used by main thread and inner worker.
+	// cancelFunc control the outer worker and outer worker close the task channel.
+	e.workerWg.Wait()
 	e.memTracker = nil
 	if e.runtimeStats != nil {
 		concurrency := cap(e.resultCh)

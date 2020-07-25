@@ -1073,6 +1073,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 			er.err = err
 			return
 		}
+		f.SetCoercibility(expression.CoercibilityImplicit)
 		er.ctxStackAppend(f, types.EmptyName)
 		return
 	}
@@ -1525,9 +1526,16 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 	var function expression.Expression
 	er.ctxStackPop(len(v.Args))
 	if _, ok := expression.DeferredFunctions[v.FnName.L]; er.useCache() && ok {
-		function, er.err = expression.NewFunctionBase(er.sctx, v.FnName.L, &v.Type, args...)
-		c := &expression.Constant{Value: types.NewDatum(nil), RetType: function.GetType().Clone(), DeferredExpr: function}
-		er.ctxStackAppend(c, types.EmptyName)
+		// When the expression is unix_timestamp and the number of argument is not zero,
+		// we deal with it as normal expression.
+		if v.FnName.L == ast.UnixTimestamp && len(v.Args) != 0 {
+			function, er.err = er.newFunction(v.FnName.L, &v.Type, args...)
+			er.ctxStackAppend(function, types.EmptyName)
+		} else {
+			function, er.err = expression.NewFunctionBase(er.sctx, v.FnName.L, &v.Type, args...)
+			c := &expression.Constant{Value: types.NewDatum(nil), RetType: function.GetType().Clone(), DeferredExpr: function}
+			er.ctxStackAppend(c, types.EmptyName)
+		}
 	} else {
 		function, er.err = er.newFunction(v.FnName.L, &v.Type, args...)
 		er.ctxStackAppend(function, types.EmptyName)

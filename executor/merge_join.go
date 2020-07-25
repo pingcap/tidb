@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -99,7 +100,12 @@ func (t *mergeJoinTable) init(exec *MergeJoinExec) {
 		t.rowContainer.GetDiskTracker().SetLabel(innerTableLabel)
 		if config.GetGlobalConfig().OOMUseTmpStorage {
 			actionSpill := t.rowContainer.ActionSpill()
-			exec.ctx.GetSessionVars().StmtCtx.MemTracker.SetActionOnExceed(actionSpill)
+			failpoint.Inject("testMergeJoinRowContainerSpill", func(val failpoint.Value) {
+				if val.(bool) {
+					actionSpill = t.rowContainer.ActionSpillForTest()
+				}
+			})
+			exec.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionSpill)
 		}
 		t.memTracker = memory.NewTracker(innerTableLabel, -1)
 	} else {
@@ -115,6 +121,12 @@ func (t *mergeJoinTable) finish() error {
 	t.memTracker.Consume(-t.childChunk.MemoryUsage())
 
 	if t.isInner {
+		failpoint.Inject("testMergeJoinRowContainerSpill", func(val failpoint.Value) {
+			if val.(bool) {
+				actionSpill := t.rowContainer.ActionSpill()
+				actionSpill.WaitForTest()
+			}
+		})
 		if err := t.rowContainer.Close(); err != nil {
 			return err
 		}

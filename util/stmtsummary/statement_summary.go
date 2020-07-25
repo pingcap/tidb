@@ -163,6 +163,8 @@ type stmtSummaryByDigestElement struct {
 	// other
 	sumMem          int64
 	maxMem          int64
+	sumDisk         int64
+	maxDisk         int64
 	sumAffectedRows uint64
 	// The first time this type of SQL executes.
 	firstSeen time.Time
@@ -192,6 +194,7 @@ type StmtExecInfo struct {
 	CopTasks       *stmtctx.CopTasksDetails
 	ExecDetail     *execdetails.ExecDetails
 	MemMax         int64
+	DiskMax        int64
 	StartTime      time.Time
 	IsInternal     bool
 	Succeed        bool
@@ -731,6 +734,8 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	if sei.PlanInCache {
 		ssElement.planInCache = true
 		ssElement.planCacheHits += 1
+	} else {
+		ssElement.planInCache = false
 	}
 
 	// other
@@ -738,6 +743,10 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	ssElement.sumMem += sei.MemMax
 	if sei.MemMax > ssElement.maxMem {
 		ssElement.maxMem = sei.MemMax
+	}
+	ssElement.sumDisk += sei.DiskMax
+	if sei.DiskMax > ssElement.maxDisk {
+		ssElement.maxDisk = sei.DiskMax
 	}
 	if sei.StartTime.Before(ssElement.firstSeen) {
 		ssElement.firstSeen = sei.StartTime
@@ -824,6 +833,8 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		formatBackoffTypes(ssElement.backoffTypes),
 		avgInt(ssElement.sumMem, ssElement.execCount),
 		ssElement.maxMem,
+		avgInt(ssElement.sumDisk, ssElement.execCount),
+		ssElement.maxDisk,
 		avgFloat(int64(ssElement.sumAffectedRows), ssElement.execCount),
 		types.NewTime(types.FromGoTime(ssElement.firstSeen), mysql.TypeTimestamp, 0),
 		types.NewTime(types.FromGoTime(ssElement.lastSeen), mysql.TypeTimestamp, 0),

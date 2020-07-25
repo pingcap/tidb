@@ -710,6 +710,10 @@ func (s *testInfoschemaClusterTableSuite) TestTiDBClusterInfo(c *C) {
 		row("tikv", "store1", ""),
 	))
 
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockStoreTombstone", `return(true)`), IsNil)
+	tk.MustQuery("select type, instance, start_time from information_schema.cluster_info where type = 'tikv'").Check(testkit.Rows())
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/infoschema/mockStoreTombstone"), IsNil)
+
 	// information_schema.cluster_config
 	instances := []string{
 		"pd,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash",
@@ -758,4 +762,12 @@ func (s *testInfoschemaTableSuite) TestSequences(c *C) {
 	tk.MustQuery("SELECT * FROM information_schema.sequences WHERE sequence_schema='test' AND sequence_name='seq'").Check(testkit.Rows("def test seq 1 10 0 1 10 -1 -1 "))
 	tk.MustExec("CREATE SEQUENCE test.seq2 start = -9 minvalue -10 maxvalue 10 increment -1 cache 15")
 	tk.MustQuery("SELECT * FROM information_schema.sequences WHERE sequence_schema='test' AND sequence_name='seq2'").Check(testkit.Rows("def test seq2 1 15 0 -1 10 -10 -9 "))
+}
+
+func (s *testInfoschemaTableSuite) TestTiFlashSystemTables(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	err := tk.QueryToErr("select * from information_schema.TIFLASH_TABLES;")
+	c.Assert(err.Error(), Equals, "Etcd addrs not found")
+	err = tk.QueryToErr("select * from information_schema.TIFLASH_SEGMENTS;")
+	c.Assert(err.Error(), Equals, "Etcd addrs not found")
 }
