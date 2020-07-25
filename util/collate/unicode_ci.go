@@ -53,7 +53,7 @@ func (us *unicodeScanner) next() uint16 {
 	return terminal
 }
 
-// unicodeCICollator implements UCA. see also http://unicode.org/reports/tr10/
+// unicodeCICollator implements UCA. see http://unicode.org/reports/tr10/
 type unicodeCICollator struct {
 }
 
@@ -84,21 +84,21 @@ func (uc *unicodeCICollator) Key(str string) []byte {
 
 // Pattern implements Collator interface.
 func (uc *unicodeCICollator) Pattern() WildcardPattern {
-	return &unicodeCIPattern{}
+	return &unicodePattern{}
 }
 
-type unicodeCIPattern struct {
+type unicodePattern struct {
 	patChars []rune
 	patTypes []byte
 }
 
 // Compile implements WildcardPattern interface.
-func (p *unicodeCIPattern) Compile(patternStr string, escape byte) {
+func (p *unicodePattern) Compile(patternStr string, escape byte) {
 	p.patChars, p.patTypes = compilePatternUnicodeCI(patternStr, escape)
 }
 
 // DoMatch implements WildcardPattern interface.
-func (p *unicodeCIPattern) DoMatch(str string) bool {
+func (p *unicodePattern) DoMatch(str string) bool {
 	return doMatchUnicodeCI(str, p.patChars, p.patTypes)
 }
 

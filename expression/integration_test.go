@@ -6152,9 +6152,10 @@ func (s *testIntegrationSerialSuite) TestCollateHashAgg(c *C) {
 	tk.MustExec("insert into t values ('a'), ('A'), ('b')")
 	tk.MustExec("insert into t values ('a'), ('A'), ('b')")
 	tk.MustExec("insert into t values ('a'), ('A'), ('b')")
-	tk.MustQuery("select count(1) from t group by a collate utf8mb4_bin").Check(testkit.Rows("3", "3", "3"))
-	tk.MustQuery("select count(1) from t group by a collate utf8mb4_unicode_ci").Check(testkit.Rows("6", "3"))
-	tk.MustQuery("select count(1) from t group by a collate utf8mb4_general_ci").Check(testkit.Rows("6", "3"))
+	tk.MustExec("insert into t values ('s'), ('ss'), ('ß')")
+	tk.MustQuery("select count(1) from t group by a collate utf8mb4_bin order by a collate utf8mb4_bin").Check(testkit.Rows("3", "3", "3", "1", "1", "1"))
+	tk.MustQuery("select count(1) from t group by a collate utf8mb4_unicode_ci order by a collate utf8mb4_unicode_ci").Check(testkit.Rows("6", "3", "1", "2"))
+	tk.MustQuery("select count(1) from t group by a collate utf8mb4_general_ci order by a collate utf8mb4_general_ci").Check(testkit.Rows("6", "3", "2", "1"))
 }
 
 func (s *testIntegrationSerialSuite) TestCollateStreamAgg(c *C) {
