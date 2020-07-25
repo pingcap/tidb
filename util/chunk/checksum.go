@@ -1,8 +1,10 @@
 package chunk
 
 import (
+	"bufio"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"hash/crc32"
 	"io"
 	"os"
@@ -80,14 +82,22 @@ func (cks *checksum) Flush() error {
 
 func (cks *checksum) ReadAt(p []byte, off int64) (nn int, err error) {
 	startBlock := off / checksumPayloadSize
+	endBlock := (off + int64(len(p))) / checksumPayloadSize
 	offsetInPayload := off % checksumPayloadSize
-	cursor := startBlock * checksumBlockSize
+	base := startBlock * checksumBlockSize
+	cursor := base
+
+	r := io.NewSectionReader(cks.disk, base, (endBlock+1)*checksumBlockSize)
+	bufReader := bufReaderPool.Get().(*bufio.Reader)
+	bufReader.Reset(r)
+	defer bufReaderPool.Put(bufReader)
+
 	var n int
 	for len(p) > 0 && cursor < cks.size {
 		if cursor+checksumBlockSize > cks.size {
-			n, err = cks.disk.ReadAt(cks.buf[:cks.size-cursor], cursor)
+			n, err = r.ReadAt(cks.buf[:cks.size-cursor], cursor-base)
 		} else {
-			n, err = cks.disk.ReadAt(cks.buf, cursor)
+			n, err = r.ReadAt(cks.buf, cursor-base)
 		}
 		if err != nil {
 			return
@@ -96,6 +106,8 @@ func (cks *checksum) ReadAt(p []byte, off int64) (nn int, err error) {
 		originChecksum := binary.LittleEndian.Uint32(cks.buf)
 		checksum := crc32.Checksum(cks.buf[checksumSize:n], crc32.MakeTable(crc32.IEEE))
 		if originChecksum != checksum {
+			fmt.Println("originChecksum", originChecksum)
+			fmt.Println("checksum", checksum)
 			return nn, errors.New("error checksum")
 		}
 		n1 := copy(p, cks.buf[checksumSize+offsetInPayload:n])
