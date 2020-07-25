@@ -712,7 +712,7 @@ func (s *testInfoschemaClusterTableSuite) TestTiDBClusterInfo(c *C) {
 	tidbStatusAddr := fmt.Sprintf(":%d", config.GetGlobalConfig().Status.StatusPort)
 	row := func(cols ...string) string { return strings.Join(cols, " ") }
 	tk.MustQuery("select type, instance, status_address, version, git_hash from information_schema.cluster_info").Check(testkit.Rows(
-		row("tidb", ":4000", tidbStatusAddr, "None", "None"),
+		row("tidb", fmt.Sprintf("%s:4000", util.GetLocalIP()), tidbStatusAddr, "None", "None"),
 		row("pd", mockAddr, mockAddr, "4.0.0-alpha", "mock-pd-githash"),
 		row("tikv", "store1", "", "", ""),
 	))
