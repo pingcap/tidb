@@ -121,7 +121,9 @@ func (hg *Histogram) MemoryUsage() (sum int64) {
 	if hg == nil {
 		return
 	}
-	sum = hg.Bounds.MemoryUsage() + int64(cap(hg.Buckets)*int(unsafe.Sizeof(Bucket{}))) + int64(cap(hg.scalars)*int(unsafe.Sizeof(scalar{})))
+	//let the initial sum = 0
+	sum = hg.Bounds.MemoryUsage() - chunk.NewChunkWithCapacity([]*types.FieldType{hg.Tp}, 0).MemoryUsage()
+	sum = sum + int64(cap(hg.Buckets)*int(unsafe.Sizeof(Bucket{}))) + int64(cap(hg.scalars)*int(unsafe.Sizeof(scalar{})))
 	return
 }
 
@@ -677,6 +679,12 @@ func (hg *Histogram) outOfRange(val types.Datum) bool {
 		chunk.Compare(hg.Bounds.GetRow(hg.Bounds.NumRows()-1), 0, &val) < 0
 }
 
+// CopyMeta meta data from histogram without bound bucket and scalars.
+func (hg *Histogram) CopyMeta() *Histogram {
+	newHist := NewHistogram(hg.ID, hg.NDV, hg.NullCount, hg.LastUpdateVersion, hg.Tp, 0, hg.TotColSize)
+	return newHist
+}
+
 // Copy deep copies the histogram.
 func (hg *Histogram) Copy() *Histogram {
 	newHist := *hg
@@ -759,6 +767,19 @@ func (c *Column) MemoryUsage() (sum int64) {
 		sum += c.CMSketch.MemoryUsage()
 	}
 	return
+}
+
+// CopyMeta Column meta data ,there is not bound bucket and scalarsin histogram.
+func (c *Column) CopyMeta() *Column {
+	newColumn := &Column{
+		Histogram:  *c.Histogram.CopyMeta(),
+		PhysicalID: c.PhysicalID,
+		Info:       c.Info,
+		Count:      c.Count,
+		IsHandle:   c.IsHandle,
+		Flag:       c.Flag,
+	}
+	return newColumn
 }
 
 // HistogramNeededColumns stores the columns whose Histograms need to be loaded from physical kv layer.
@@ -892,6 +913,7 @@ type Index struct {
 	StatsVer       int64 // StatsVer is the version of the current stats, used to maintain compatibility
 	Info           *model.IndexInfo
 	Flag           int64
+	PhysicalID     int64 // PhysicalID for lazy load
 	LastAnalyzePos types.Datum
 }
 
@@ -899,9 +921,35 @@ func (idx *Index) String() string {
 	return idx.Histogram.ToString(len(idx.Info.Columns))
 }
 
-// IsInvalid checks if this index is invalid.
-func (idx *Index) IsInvalid(collPseudo bool) bool {
-	return (collPseudo && idx.NotAccurate()) || idx.TotalRowCount() == 0
+// CopyMeta meta data from histogram without bound bucket and scalars .
+func (idx *Index) CopyMeta() *Index {
+	newIndex := &Index{
+		Histogram:  *idx.Histogram.CopyMeta(),
+		PhysicalID: idx.PhysicalID,
+		Info:       idx.Info,
+		StatsVer:   idx.StatsVer,
+		Flag:       idx.Flag,
+	}
+
+	return newIndex
+}
+
+// HistogramNeededIndices stores the Index whose Histograms need to be loaded from physical kv layer.
+// Currently, we only load index/pk's Histogram from kv automatically. Columns' are loaded by needs.
+var HistogramNeededIndices = neededIndexMap{idxs: map[tableIndexID]struct{}{}}
+
+// IsInvalid checks if this Index is invalid.
+// If this Index has histogram but not loaded yet, then we mark it
+// as need Index.
+func (idx *Index) IsInvalid(sc *stmtctx.StatementContext, collPseudo bool) bool {
+	if collPseudo && idx.NotAccurate() {
+		return true
+	}
+	if idx.NDV > 0 && idx.Len() == 0 && sc != nil {
+		sc.SetHistogramsNotLoad()
+		HistogramNeededIndices.insert(tableIndexID{TableID: idx.PhysicalID, IndexID: idx.Info.ID})
+	}
+	return idx.TotalRowCount() == 0 || (idx.NDV > 0 && idx.Len() == 0)
 }
 
 // MemoryUsage returns the total memory usage of a Histogram and CMSketch in Index.

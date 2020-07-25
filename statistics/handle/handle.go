@@ -43,13 +43,10 @@ import (
 	"go.uber.org/zap"
 )
 
-// statsCache caches the tables in memory for Handle.
-type statsCache struct {
-	tables map[int64]*statistics.Table
-	// version is the latest version of cache.
-	version  uint64
-	memUsage int64
-}
+const (
+	// maxMemoryLimit 1G for statsCache
+	maxMemoryLimit = 1024 * 1024 * 1024
+)
 
 // Handle can update stats info periodically.
 type Handle struct {
@@ -91,10 +88,10 @@ type Handle struct {
 func (h *Handle) Clear() {
 	h.mu.Lock()
 	h.statsCache.Lock()
-	h.statsCache.Store(statsCache{tables: make(map[int64]*statistics.Table)})
+	h.statsCache.Store(*NewStatsCache())
 	h.statsCache.memTracker = memory.NewTracker(
 		stringutil.MemoizeStr(func() string { return "statsCache" }),
-		-1)
+		maxMemoryLimit)
 	h.statsCache.Unlock()
 	for len(h.ddlEventCh) > 0 {
 		<-h.ddlEventCh
@@ -125,10 +122,10 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
 	}
 	handle.statsCache.memTracker = memory.NewTracker(
 		stringutil.MemoizeStr(func() string { return "statsCache" }),
-		-1)
+		maxMemoryLimit)
+	handle.statsCache.Store(*NewStatsCache())
 	handle.mu.ctx = ctx
 	handle.mu.rateMap = make(errorRateDeltaMap)
-	handle.statsCache.Store(statsCache{tables: make(map[int64]*statistics.Table)})
 	return handle
 }
 
@@ -157,7 +154,7 @@ func DurationToTS(d time.Duration) uint64 {
 
 // Update reads stats meta from store and updates the stats map.
 func (h *Handle) Update(is infoschema.InfoSchema) error {
-	oldCache := h.statsCache.Load().(statsCache)
+	oldCache := h.statsCache.Load().(StatsCache)
 	lastVersion := oldCache.version
 	// We need this because for two tables, the smaller version may write later than the one with larger version.
 	// Consider the case that there are two tables A and B, their version and commit time is (A0, A1) and (B0, B1),
@@ -247,6 +244,24 @@ func (h *Handle) GetMemConsumed() (size int64) {
 	return
 }
 
+// GetAllTableStats retrieves  all the statistics table from cache, only used in test.
+func (h *Handle) GetAllTableStats() []*statistics.Table {
+	statsCache := h.statsCache.Load().(StatsCache)
+
+	tableStats := make([]*statistics.Table, 0)
+	for _, v := range statsCache.tables {
+		tableStats = append(tableStats, v.Table)
+	}
+	return tableStats
+}
+
+// EraseTable erease a table by ID and add new empty (with Meta) table, only used in test.
+func (h *Handle) EraseTable(ID int64) {
+	statsCache := h.statsCache.Load().(StatsCache)
+	statsCache.Insert(statsCache.tables[ID].CopyMeta())
+	h.updateStatsCache(statsCache)
+}
+
 // GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
 func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *statistics.Table {
 	return h.GetPartitionStats(tblInfo, tblInfo.ID)
@@ -254,8 +269,8 @@ func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *statistics.Table {
 
 // GetPartitionStats retrieves the partition stats from cache.
 func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table {
-	statsCache := h.statsCache.Load().(statsCache)
-	tbl, ok := statsCache.tables[pid]
+	statsCache := h.statsCache.Load().(StatsCache)
+	tbl, ok := statsCache.Lookup(pid)
 	if !ok {
 		tbl = statistics.PseudoTable(tblInfo)
 		tbl.PhysicalID = pid
@@ -265,29 +280,59 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statist
 	return tbl
 }
 
-func (h *Handle) updateStatsCache(newCache statsCache) {
+//SetBytesLimit sets the bytes limit for this tracker. "bytesLimit <= 0" means no limit.
+func (h *Handle) SetBytesLimit(bytesLimit int64) {
+	h.statsCache.memTracker.SetBytesLimit(bytesLimit)
+}
+func (h *Handle) updateStatsCache(newCache StatsCache) {
 	h.statsCache.Lock()
-	oldCache := h.statsCache.Load().(statsCache)
+	oldCache := h.statsCache.Load().(StatsCache)
 	if oldCache.version <= newCache.version {
+
+		//update total Consume memUsage
 		h.statsCache.memTracker.Consume(newCache.memUsage - oldCache.memUsage)
+
+		//erase last cache in newCache if consumed memsize is bigger than byteslimit
+		for !newCache.isEmpty() && h.statsCache.memTracker.BytesConsumed() > h.statsCache.memTracker.GetBytesLimit() {
+			size := newCache.EraseLast()
+			h.statsCache.memTracker.Consume(size)
+		}
 		h.statsCache.Store(newCache)
 	}
 	h.statsCache.Unlock()
 }
 
-func (sc statsCache) copy() statsCache {
-	newCache := statsCache{tables: make(map[int64]*statistics.Table, len(sc.tables)),
-		version:  sc.version,
-		memUsage: sc.memUsage}
+func (sc StatsCache) copy() StatsCache {
+	newCache := *NewStatsCache()
+	newCache.version = sc.version
+	newCache.memUsage = sc.memUsage
 	for k, v := range sc.tables {
-		newCache.tables[k] = v
+		newCache.tables[k] = &tableLRUHandle{Table: v.Table, prev: v.prev, next: v.next}
+	}
+
+	//copy the lrulist of statscache
+	//every points tableLRUHandle in list are changed
+	for _, v := range newCache.tables {
+		if v.prev == sc.lruList {
+			v.prev = newCache.lruList
+			newCache.lruList.next = v
+		} else {
+			v.prev = newCache.tables[v.prev.PhysicalID]
+		}
+		if v.next == sc.lruList {
+			v.next = newCache.lruList
+			newCache.lruList.prev = v
+
+		} else {
+			v.next = newCache.tables[v.next.PhysicalID]
+		}
 	}
 	return newCache
 }
 
 //initMemoryUsage calc total memory usage of statsCache and set statsCache.memUsage
 //should be called after the tables and their stats are initilazed
-func (sc statsCache) initMemoryUsage() {
+func (sc StatsCache) initMemoryUsage() {
 	sum := int64(0)
 	for _, tb := range sc.tables {
 		sum += tb.MemoryUsage()
@@ -297,22 +342,14 @@ func (sc statsCache) initMemoryUsage() {
 }
 
 // update updates the statistics table cache using copy on write.
-func (sc statsCache) update(tables []*statistics.Table, deletedIDs []int64, newVersion uint64) statsCache {
+func (sc StatsCache) update(tables []*statistics.Table, deletedIDs []int64, newVersion uint64) StatsCache {
 	newCache := sc.copy()
 	newCache.version = newVersion
 	for _, tbl := range tables {
-		id := tbl.PhysicalID
-		if ptbl, ok := newCache.tables[id]; ok {
-			newCache.memUsage -= ptbl.MemoryUsage()
-		}
-		newCache.tables[id] = tbl
-		newCache.memUsage += tbl.MemoryUsage()
+		newCache.Insert(tbl)
 	}
 	for _, id := range deletedIDs {
-		if ptbl, ok := newCache.tables[id]; ok {
-			newCache.memUsage -= ptbl.MemoryUsage()
-		}
-		delete(newCache.tables, id)
+		newCache.Erase(id)
 	}
 	return newCache
 }
@@ -320,6 +357,7 @@ func (sc statsCache) update(tables []*statistics.Table, deletedIDs []int64, newV
 // LoadNeededHistograms will load histograms for those needed columns.
 func (h *Handle) LoadNeededHistograms() (err error) {
 	cols := statistics.HistogramNeededColumns.AllCols()
+	idxs := statistics.HistogramNeededIndices.AllIdxs()
 	reader, err := h.getStatsReader(nil)
 	if err != nil {
 		return err
@@ -333,8 +371,8 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 	}()
 
 	for _, col := range cols {
-		statsCache := h.statsCache.Load().(statsCache)
-		tbl, ok := statsCache.tables[col.TableID]
+		statsCache := h.statsCache.Load().(StatsCache)
+		tbl, ok := statsCache.Lookup(col.TableID)
 		if !ok {
 			continue
 		}
@@ -363,17 +401,49 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 		h.updateStatsCache(statsCache.update([]*statistics.Table{tbl}, nil, statsCache.version))
 		statistics.HistogramNeededColumns.Delete(col)
 	}
+
+	for _, pidx := range idxs {
+		statsCache := h.statsCache.Load().(StatsCache)
+		tbl, ok := statsCache.Lookup(pidx.TableID)
+		if !ok {
+			continue
+		}
+		tbl = tbl.Copy()
+		idx, ok := tbl.Indices[pidx.IndexID]
+		if !ok || idx.Len() > 0 {
+			statistics.HistogramNeededIndices.Delete(pidx)
+			continue
+		}
+		hg, err := h.histogramFromStorage(reader, pidx.TableID, idx.ID, types.NewFieldType(mysql.TypeBlob), idx.NDV, 0, idx.LastUpdateVersion, idx.NullCount, idx.TotColSize, idx.Correlation)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		cms, err := h.cmSketchFromStorage(reader, pidx.TableID, 1, pidx.IndexID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		tbl.Indices[idx.ID] = &statistics.Index{
+			Histogram:  *hg,
+			CMSketch:   cms,
+			PhysicalID: pidx.TableID,
+			Info:       idx.Info,
+			StatsVer:   idx.StatsVer,
+			Flag:       idx.Flag,
+		}
+		h.updateStatsCache(statsCache.update([]*statistics.Table{tbl}, nil, statsCache.version))
+		statistics.HistogramNeededIndices.Delete(pidx)
+	}
 	return nil
 }
 
 // LastUpdateVersion gets the last update version.
 func (h *Handle) LastUpdateVersion() uint64 {
-	return h.statsCache.Load().(statsCache).version
+	return h.statsCache.Load().(StatsCache).version
 }
 
 // SetLastUpdateVersion sets the last update version.
 func (h *Handle) SetLastUpdateVersion(version uint64) {
-	statsCache := h.statsCache.Load().(statsCache)
+	statsCache := h.statsCache.Load().(StatsCache)
 	h.updateStatsCache(statsCache.update(nil, nil, version))
 }
 
@@ -434,7 +504,7 @@ func (h *Handle) indexStatsFromStorage(reader *statsReader, row chunk.Row, table
 			if err != nil {
 				return errors.Trace(err)
 			}
-			idx = &statistics.Index{Histogram: *hg, CMSketch: cms, Info: idxInfo, ErrorRate: errorRate, StatsVer: row.GetInt64(7), Flag: flag}
+			idx = &statistics.Index{Histogram: *hg, CMSketch: cms, Info: idxInfo, ErrorRate: errorRate, StatsVer: row.GetInt64(7), Flag: flag, PhysicalID: table.PhysicalID}
 			lastAnalyzePos.Copy(&idx.LastAnalyzePos)
 		}
 		break
@@ -547,7 +617,8 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 			err = err1
 		}
 	}()
-	table, ok := h.statsCache.Load().(statsCache).tables[physicalID]
+	stateCache := h.statsCache.Load().(StatsCache)
+	table, ok := stateCache.Lookup(physicalID)
 	// If table stats is pseudo, we also need to copy it, since we will use the column stats when
 	// the average error rate of it is small.
 	if !ok || historyStatsExec != nil {

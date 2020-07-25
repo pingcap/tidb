@@ -123,6 +123,31 @@ func (t *Table) Copy() *Table {
 	return nt
 }
 
+// CopyMeta copies the current table only with metadata.
+func (t *Table) CopyMeta() *Table {
+	newHistColl := HistColl{
+		PhysicalID:     t.PhysicalID,
+		HavePhysicalID: t.HavePhysicalID,
+		Count:          t.Count,
+		Columns:        make(map[int64]*Column, len(t.Columns)),
+		Indices:        make(map[int64]*Index, len(t.Indices)),
+		Pseudo:         t.Pseudo,
+		ModifyCount:    t.ModifyCount,
+	}
+	for id, col := range t.Columns {
+		newHistColl.Columns[id] = col.CopyMeta()
+	}
+	for id, idx := range t.Indices {
+		newHistColl.Indices[id] = idx.CopyMeta()
+	}
+	nt := &Table{
+		HistColl: newHistColl,
+		Version:  t.Version,
+		Name:     t.Name,
+	}
+	return nt
+}
+
 // String implements Stringer interface.
 func (t *Table) String() string {
 	strs := make([]string, 0, len(t.Columns)+1)
@@ -195,6 +220,40 @@ func (n *neededColumnMap) insert(col tableColumnID) {
 func (n *neededColumnMap) Delete(col tableColumnID) {
 	n.m.Lock()
 	delete(n.cols, col)
+	n.m.Unlock()
+}
+
+type tableIndexID struct {
+	TableID int64
+	IndexID int64
+}
+
+type neededIndexMap struct {
+	m    sync.Mutex
+	idxs map[tableIndexID]struct{}
+}
+
+// AllIdxs returns all the idx with an array
+func (n *neededIndexMap) AllIdxs() []tableIndexID {
+	n.m.Lock()
+	keys := make([]tableIndexID, 0, len(n.idxs))
+	for key := range n.idxs {
+		keys = append(keys, key)
+	}
+	n.m.Unlock()
+	return keys
+}
+
+func (n *neededIndexMap) insert(idx tableIndexID) {
+	n.m.Lock()
+	n.idxs[idx] = struct{}{}
+	n.m.Unlock()
+}
+
+// Delete delete a idx from idxs
+func (n *neededIndexMap) Delete(idx tableIndexID) {
+	n.m.Lock()
+	delete(n.idxs, idx)
 	n.m.Unlock()
 }
 
@@ -283,7 +342,7 @@ func (coll *HistColl) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, co
 // GetRowCountByIndexRanges estimates the row count by a slice of Range.
 func (coll *HistColl) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.Range) (float64, error) {
 	idx := coll.Indices[idxID]
-	if idx == nil || idx.IsInvalid(coll.Pseudo) {
+	if idx == nil || idx.IsInvalid(sc, coll.Pseudo) {
 		colsLen := -1
 		if idx != nil && idx.Info.Unique {
 			colsLen = len(idx.Info.Columns)

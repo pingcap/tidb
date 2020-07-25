@@ -32,7 +32,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache *statsCache, iter *chunk.Iterator4Chunk) {
+func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache *StatsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		physicalID := row.GetInt64(1)
 		table, ok := h.getTableByPhysicalID(is, physicalID)
@@ -54,26 +54,30 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache *statsCache
 			Version:  row.GetUint64(0),
 			Name:     getFullTableName(is, tableInfo),
 		}
-		cache.tables[physicalID] = tbl
+
+		//use Insert to insert to lruList
+		//Ignore the Memusage change, it will be caculate later
+		cache.Insert(tbl)
 	}
 }
 
-func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
+func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (StatsCache, error) {
 	sql := "select HIGH_PRIORITY version, table_id, modify_count, count from mysql.stats_meta"
 	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	if len(rc) > 0 {
 		defer terror.Call(rc[0].Close)
 	}
 	if err != nil {
-		return statsCache{}, errors.Trace(err)
+		return StatsCache{}, errors.Trace(err)
 	}
-	tables := statsCache{tables: make(map[int64]*statistics.Table)}
+	tables := *NewStatsCache()
+
 	req := rc[0].NewChunk()
 	iter := chunk.NewIterator4Chunk(req)
 	for {
 		err := rc[0].Next(context.TODO(), req)
 		if err != nil {
-			return statsCache{}, errors.Trace(err)
+			return StatsCache{}, errors.Trace(err)
 		}
 		if req.NumRows() == 0 {
 			break
@@ -83,7 +87,7 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
 	return tables, nil
 }
 
-func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *statsCache, iter *chunk.Iterator4Chunk) {
+func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *StatsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		table, ok := cache.tables[row.GetInt64(0)]
 		if !ok {
@@ -110,11 +114,12 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *stat
 			}
 			hist := statistics.NewHistogram(id, ndv, nullCount, version, types.NewFieldType(mysql.TypeBlob), chunk.InitialCapacity, 0)
 			index := &statistics.Index{
-				Histogram: *hist,
-				CMSketch:  cms,
-				Info:      idxInfo,
-				StatsVer:  row.GetInt64(8),
-				Flag:      row.GetInt64(10),
+				Histogram:  *hist,
+				CMSketch:   cms,
+				PhysicalID: table.PhysicalID,
+				Info:       idxInfo,
+				StatsVer:   row.GetInt64(8),
+				Flag:       row.GetInt64(10),
 			}
 			lastAnalyzePos.Copy(&index.LastAnalyzePos)
 			table.Indices[hist.ID] = index
@@ -145,7 +150,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *stat
 	}
 }
 
-func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache *statsCache) error {
+func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache *StatsCache) error {
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms"
 	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	if len(rc) > 0 {
@@ -169,7 +174,7 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache *statsCache
 	return nil
 }
 
-func (h *Handle) initStatsTopN4Chunk(cache *statsCache, iter *chunk.Iterator4Chunk) {
+func (h *Handle) initStatsTopN4Chunk(cache *StatsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		table, ok := cache.tables[row.GetInt64(0)]
 		if !ok {
@@ -185,7 +190,7 @@ func (h *Handle) initStatsTopN4Chunk(cache *statsCache, iter *chunk.Iterator4Chu
 	}
 }
 
-func (h *Handle) initStatsTopN(cache *statsCache) error {
+func (h *Handle) initStatsTopN(cache *StatsCache) error {
 	sql := "select HIGH_PRIORITY table_id, hist_id, value, count from mysql.stats_top_n where is_index = 1"
 	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	if len(rc) > 0 {
@@ -209,7 +214,7 @@ func (h *Handle) initStatsTopN(cache *statsCache) error {
 	return nil
 }
 
-func initStatsBuckets4Chunk(ctx sessionctx.Context, cache *statsCache, iter *chunk.Iterator4Chunk) {
+func initStatsBuckets4Chunk(ctx sessionctx.Context, cache *StatsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tableID, isIndex, histID := row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
 		table, ok := cache.tables[tableID]
@@ -255,7 +260,7 @@ func initStatsBuckets4Chunk(ctx sessionctx.Context, cache *statsCache, iter *chu
 	}
 }
 
-func (h *Handle) initStatsBuckets(cache *statsCache) error {
+func (h *Handle) initStatsBuckets(cache *StatsCache) error {
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, count, repeats, lower_bound, upper_bound from mysql.stats_buckets order by table_id, is_index, hist_id, bucket_id"
 	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	if len(rc) > 0 {
