@@ -43,6 +43,10 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		inPrepare bool
 		err       error
 	}{
+		// issue 18756
+		{"ALTER TABLE test.t RENAME TO t", false, nil},
+		{"ALTER TABLE test.t ADD CONSTRAINT fk FOREIGN KEY (c2) REFERENCES t (c1)", false, nil},
+
 		{"select ?", false, parser.ErrSyntax},
 		{"select ?", true, nil},
 		{"create table t(id int not null auto_increment default 2, key (id))", true,
@@ -228,11 +232,14 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 	}()
 	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "use test")
-	c.Assert(err, IsNil)
 	ctx := se.(sessionctx.Context)
 	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
-	for _, tt := range tests {
+	for k, tt := range tests {
+		// the first two tests should be executed without selecting a database
+		if k == 2 {
+			_, err = se.Execute(context.Background(), "use test")
+			c.Assert(err, IsNil)
+		}
 		stmts, err1 := session.Parse(ctx, tt.sql)
 		c.Assert(err1, IsNil)
 		c.Assert(stmts, HasLen, 1)
