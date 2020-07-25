@@ -171,7 +171,7 @@ func deriveCoercibilityForColumn(c *Column) Coercibility {
 // DeriveCollationFromExprs derives collation information from these expressions.
 func DeriveCollationFromExprs(ctx sessionctx.Context, exprs ...Expression) (dstCharset, dstCollation string) {
 	curCoer := CoercibilityCoercible
-	curCollationPriority := -1
+	curCollationPriority := 0
 	dstCharset, dstCollation = charset.GetDefaultCharsetAndCollate()
 	if ctx != nil && ctx.GetSessionVars() != nil {
 		dstCharset, dstCollation = ctx.GetSessionVars().GetCharsetInfo()
@@ -189,20 +189,17 @@ func DeriveCollationFromExprs(ctx sessionctx.Context, exprs ...Expression) (dstC
 
 		coer := e.Coercibility()
 		ft := e.GetType()
-		collationPriority, ok := collationPriority[strings.ToLower(ft.Collate)]
-		if !ok {
-			collationPriority = -1
-		}
+		priority := collationPriority[strings.ToLower(ft.Collate)]
 		if coer != curCoer {
 			if coer < curCoer {
-				curCoer, curCollationPriority, dstCharset, dstCollation = coer, collationPriority, ft.Charset, ft.Collate
+				curCoer, curCollationPriority, dstCharset, dstCollation = coer, priority, ft.Charset, ft.Collate
 			}
 			continue
 		}
-		if !ok || collationPriority <= curCollationPriority {
+		if priority <= curCollationPriority {
 			continue
 		}
-		curCollationPriority, dstCharset, dstCollation = collationPriority, ft.Charset, ft.Collate
+		curCollationPriority, dstCharset, dstCollation = priority, ft.Charset, ft.Collate
 	}
 	if !hasStrArg {
 		dstCharset, dstCollation = charset.CharsetBin, charset.CollationBin
