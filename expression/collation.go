@@ -114,13 +114,13 @@ var (
 
 	// collationPriority is the priority when infer the result collation, the priority of collation a > b iff collationPriority[a] > collationPriority[b]
 	collationPriority = map[string]int{
-		charset.CollationASCII:   0,
-		charset.CollationLatin1:  1,
-		"utf8_general_ci":        2,
-		charset.CollationUTF8:    3,
-		"utf8mb4_general_ci":     4,
-		charset.CollationUTF8MB4: 5,
-		charset.CollationBin:     6,
+		charset.CollationASCII:   1,
+		charset.CollationLatin1:  2,
+		"utf8_general_ci":        3,
+		charset.CollationUTF8:    4,
+		"utf8mb4_general_ci":     5,
+		charset.CollationUTF8MB4: 6,
+		charset.CollationBin:     7,
 	}
 
 	// CollationStrictness indicates the strictness of comparison of the collation. The unequal order in a weak collation also holds in a strict collation.
