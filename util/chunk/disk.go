@@ -163,6 +163,9 @@ func (l *ListInDisk) GetRow(ptr RowPtr) (row Row, err error) {
 	bufReader.Reset(r)
 	defer bufReaderPool.Put(bufReader)
 
+	l.bufFlushMutex.Lock()
+	defer l.bufFlushMutex.Unlock()
+
 	format := rowInDisk{numCol: len(l.fieldTypes)}
 	_, err = format.ReadFrom(bufReader)
 	if err != nil {

@@ -106,6 +106,7 @@ func (cks *checksum) ReadAt(p []byte, off int64) (nn int, err error) {
 		originChecksum := binary.LittleEndian.Uint32(cks.buf)
 		checksum := crc32.Checksum(cks.buf[checksumSize:n], crc32.MakeTable(crc32.IEEE))
 		if originChecksum != checksum {
+			fmt.Println("cursor", cursor)
 			fmt.Println("originChecksum", originChecksum)
 			fmt.Println("checksum", checksum)
 			return nn, errors.New("error checksum")
