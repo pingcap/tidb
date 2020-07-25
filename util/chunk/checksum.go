@@ -56,7 +56,7 @@ func (cks *checksum) Flush() error {
 	binary.LittleEndian.PutUint32(cks.buf, checksum)
 	if cks.size%checksumBlockSize > 0 {
 		cursor := cks.size / checksumBlockSize * checksumBlockSize
-		_, err := cks.disk.Seek(int64(cursor), io.SeekStart)
+		_, err := cks.disk.Seek(cursor, io.SeekStart)
 		if err != nil {
 			return err
 		}
@@ -83,9 +83,9 @@ func (cks *checksum) ReadAt(p []byte, off int64) (nn int, err error) {
 	offsetInPayload := off % checksumPayloadSize
 	cursor := startBlock * checksumBlockSize
 	var n int
-	for len(p) > 0 && cursor < int64(cks.size) {
-		if cursor+checksumBlockSize > int64(cks.size) {
-			n, err = cks.disk.ReadAt(cks.buf[:int64(cks.size)-cursor], cursor)
+	for len(p) > 0 && cursor < cks.size {
+		if cursor+checksumBlockSize > cks.size {
+			n, err = cks.disk.ReadAt(cks.buf[:cks.size-cursor], cursor)
 		} else {
 			n, err = cks.disk.ReadAt(cks.buf, cursor)
 		}
