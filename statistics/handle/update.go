@@ -861,8 +861,11 @@ func logForIndex(prefix string, t *statistics.Table, idx *statistics.Index, rang
 }
 
 func (h *Handle) logDetailedInfo(q *statistics.QueryFeedback) {
+	h.statsCache.Lock()
 	statsCache := h.statsCache.Load().(StatsCache)
 	t, ok := statsCache.Lookup(q.PhysicalID)
+	h.statsCache.Unlock()
+
 	if !ok {
 		return
 	}
@@ -903,8 +906,10 @@ func logForPK(prefix string, c *statistics.Column, ranges []*ranger.Range, actua
 
 // RecalculateExpectCount recalculates the expect row count if the origin row count is estimated by pseudo.
 func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
+	h.statsCache.Lock()
 	statsCache := h.statsCache.Load().(StatsCache)
 	t, ok := statsCache.Lookup(q.PhysicalID)
+	h.statsCache.Unlock()
 	if !ok {
 		return nil
 	}

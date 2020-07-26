@@ -273,8 +273,10 @@ func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *statistics.Table {
 
 // GetPartitionStats retrieves the partition stats from cache.
 func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table {
+	h.statsCache.Lock()
 	statsCache := h.statsCache.Load().(StatsCache)
 	tbl, ok := statsCache.Lookup(pid)
+	h.statsCache.Unlock()
 	if !ok {
 		tbl = statistics.PseudoTable(tblInfo)
 		tbl.PhysicalID = pid
@@ -380,8 +382,10 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 	}()
 
 	for _, col := range cols {
+		h.statsCache.Lock()
 		statsCache := h.statsCache.Load().(StatsCache)
 		tbl, ok := statsCache.Lookup(col.TableID)
+		h.statsCache.Unlock()
 		if !ok {
 			continue
 		}
@@ -412,8 +416,11 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 	}
 
 	for _, pidx := range idxs {
+		h.statsCache.Lock()
 		statsCache := h.statsCache.Load().(StatsCache)
 		tbl, ok := statsCache.Lookup(pidx.TableID)
+		h.statsCache.Unlock()
+
 		if !ok {
 			continue
 		}
@@ -626,8 +633,11 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 			err = err1
 		}
 	}()
+	h.statsCache.Lock()
 	stateCache := h.statsCache.Load().(StatsCache)
 	table, ok := stateCache.Lookup(physicalID)
+	h.statsCache.Unlock()
+
 	// If table stats is pseudo, we also need to copy it, since we will use the column stats when
 	// the average error rate of it is small.
 	if !ok || historyStatsExec != nil {
