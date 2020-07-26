@@ -353,10 +353,7 @@ func (sc StatsCache) initMemoryUsage() {
 
 // update updates the statistics table cache using copy on write.
 func (sc StatsCache) update(tables []*statistics.Table, deletedIDs []int64, newVersion uint64) StatsCache {
-	h.statsCache.Lock()
 	newCache := sc.copy()
-	h.statsCache.Unlock()
-
 	newCache.version = newVersion
 	for _, tbl := range tables {
 		newCache.Insert(tbl)
