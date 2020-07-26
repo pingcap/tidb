@@ -1,8 +1,6 @@
 package handle
 
 import (
-	"sync"
-
 	"github.com/pingcap/tidb/statistics"
 )
 
@@ -24,7 +22,6 @@ type StatsCache struct {
 	memUsage int64
 	//after insert a table, append it to the end of the list
 	//lruList.next is the next table to remove
-	mu      sync.Mutex
 	lruList *tableLRUHandle
 }
 
@@ -41,7 +38,7 @@ func NewStatsCache() *StatsCache {
 	return sc
 }
 
-// Lookup remove a tableLRUHandle from lruList
+// setLRUlist init LRUlist
 func (sc *StatsCache) setLRUlist() {
 	if sc.lruList != nil {
 		return
@@ -52,16 +49,18 @@ func (sc *StatsCache) setLRUlist() {
 	sc.lruList.prev = sc.lruList
 }
 
-// Lookup remove a tableLRUHandle from lruList
-func (sc *StatsCache) Lookup(id int64) (*statistics.Table, bool) {
+// Lookup let table with id tableLRUHandle to head of lruList
+func (sc *StatsCache) Lookup(id int64, isRemove bool) (*statistics.Table, bool) {
 	sc.setLRUlist()
 
 	htbl, ok := sc.tables[id]
 	if !ok {
 		return nil, false
 	}
-	sc.LRURemove(htbl)
-	sc.LRUAppend(htbl)
+	if isRemove {
+		sc.LRURemove(htbl)
+		sc.LRUAppend(htbl)
+	}
 	return htbl.Table, true
 }
 
@@ -86,20 +85,17 @@ func (sc *StatsCache) Insert(table *statistics.Table) (memUsage int64) {
 
 // LRUAppend remove a tableLRUHandle from lruList
 func (sc *StatsCache) LRUAppend(e *tableLRUHandle) {
-	sc.mu.Lock()
 	e.next = sc.lruList
 	e.prev = sc.lruList.prev
 	e.prev.next = e
 	e.next.prev = e
-	sc.mu.Unlock()
 }
 
 // LRURemove remove a tableLRUHandle from lruList
 func (sc *StatsCache) LRURemove(e *tableLRUHandle) {
-	sc.mu.Lock()
+
 	e.next.prev = e.prev
 	e.prev.next = e.next
-	sc.mu.Unlock()
 }
 
 // Erase Erase a stateCache with physical id

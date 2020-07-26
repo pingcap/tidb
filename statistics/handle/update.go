@@ -464,7 +464,7 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 				newTblStats.Columns[fb.Hist.ID] = &newCol
 			}
 			oldCache := h.statsCache.Load().(StatsCache)
-			h.updateStatsCache(oldCache.update([]*statistics.Table{newTblStats}, nil, oldCache.version))
+			h.updateStatsCache(oldCache.update([]*statistics.Table{newTblStats}, nil, oldCache.version, h))
 		}
 	}
 }
@@ -497,7 +497,7 @@ func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
 	}
 	h.mu.Unlock()
 	oldCache := h.statsCache.Load().(StatsCache)
-	h.updateStatsCache(oldCache.update(tbls, nil, oldCache.version))
+	h.updateStatsCache(oldCache.update(tbls, nil, oldCache.version, h))
 }
 
 // HandleUpdateStats update the stats using feedback.
@@ -863,7 +863,7 @@ func logForIndex(prefix string, t *statistics.Table, idx *statistics.Index, rang
 func (h *Handle) logDetailedInfo(q *statistics.QueryFeedback) {
 	h.statsCache.Lock()
 	statsCache := h.statsCache.Load().(StatsCache)
-	t, ok := statsCache.Lookup(q.PhysicalID)
+	t, ok := statsCache.Lookup(q.PhysicalID, false)
 	h.statsCache.Unlock()
 
 	if !ok {
@@ -908,7 +908,7 @@ func logForPK(prefix string, c *statistics.Column, ranges []*ranger.Range, actua
 func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
 	h.statsCache.Lock()
 	statsCache := h.statsCache.Load().(StatsCache)
-	t, ok := statsCache.Lookup(q.PhysicalID)
+	t, ok := statsCache.Lookup(q.PhysicalID, false)
 	h.statsCache.Unlock()
 	if !ok {
 		return nil

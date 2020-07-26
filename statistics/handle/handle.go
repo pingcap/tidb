@@ -208,7 +208,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 		tbl.Name = getFullTableName(is, tableInfo)
 		tables = append(tables, tbl)
 	}
-	h.updateStatsCache(oldCache.update(tables, deletedTableIDs, lastVersion))
+	h.updateStatsCache(oldCache.update(tables, deletedTableIDs, lastVersion, h))
 	return nil
 }
 
@@ -275,12 +275,12 @@ func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *statistics.Table {
 func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table {
 	h.statsCache.Lock()
 	statsCache := h.statsCache.Load().(StatsCache)
-	tbl, ok := statsCache.Lookup(pid)
+	tbl, ok := statsCache.Lookup(pid, false)
 	h.statsCache.Unlock()
 	if !ok {
 		tbl = statistics.PseudoTable(tblInfo)
 		tbl.PhysicalID = pid
-		h.updateStatsCache(statsCache.update([]*statistics.Table{tbl}, nil, statsCache.version))
+		h.updateStatsCache(statsCache.update([]*statistics.Table{tbl}, nil, statsCache.version, h))
 		return tbl
 	}
 	return tbl
@@ -352,8 +352,10 @@ func (sc StatsCache) initMemoryUsage() {
 }
 
 // update updates the statistics table cache using copy on write.
-func (sc StatsCache) update(tables []*statistics.Table, deletedIDs []int64, newVersion uint64) StatsCache {
+func (sc StatsCache) update(tables []*statistics.Table, deletedIDs []int64, newVersion uint64, h *Handle) StatsCache {
+	h.statsCache.Lock()
 	newCache := sc.copy()
+	h.statsCache.Unlock()
 	newCache.version = newVersion
 	for _, tbl := range tables {
 		newCache.Insert(tbl)
@@ -384,7 +386,7 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 	for _, col := range cols {
 		h.statsCache.Lock()
 		statsCache := h.statsCache.Load().(StatsCache)
-		tbl, ok := statsCache.Lookup(col.TableID)
+		tbl, ok := statsCache.Lookup(col.TableID, false)
 		h.statsCache.Unlock()
 		if !ok {
 			continue
@@ -411,14 +413,14 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 			Count:      int64(hg.TotalRowCount()),
 			IsHandle:   c.IsHandle,
 		}
-		h.updateStatsCache(statsCache.update([]*statistics.Table{tbl}, nil, statsCache.version))
+		h.updateStatsCache(statsCache.update([]*statistics.Table{tbl}, nil, statsCache.version, h))
 		statistics.HistogramNeededColumns.Delete(col)
 	}
 
 	for _, pidx := range idxs {
 		h.statsCache.Lock()
 		statsCache := h.statsCache.Load().(StatsCache)
-		tbl, ok := statsCache.Lookup(pidx.TableID)
+		tbl, ok := statsCache.Lookup(pidx.TableID, false)
 		h.statsCache.Unlock()
 
 		if !ok {
@@ -446,7 +448,7 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 			StatsVer:   idx.StatsVer,
 			Flag:       idx.Flag,
 		}
-		h.updateStatsCache(statsCache.update([]*statistics.Table{tbl}, nil, statsCache.version))
+		h.updateStatsCache(statsCache.update([]*statistics.Table{tbl}, nil, statsCache.version, h))
 		statistics.HistogramNeededIndices.Delete(pidx)
 	}
 	return nil
@@ -460,7 +462,7 @@ func (h *Handle) LastUpdateVersion() uint64 {
 // SetLastUpdateVersion sets the last update version.
 func (h *Handle) SetLastUpdateVersion(version uint64) {
 	statsCache := h.statsCache.Load().(StatsCache)
-	h.updateStatsCache(statsCache.update(nil, nil, version))
+	h.updateStatsCache(statsCache.update(nil, nil, version, h))
 }
 
 // FlushStats flushes the cached stats update into store.
@@ -635,7 +637,7 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 	}()
 	h.statsCache.Lock()
 	stateCache := h.statsCache.Load().(StatsCache)
-	table, ok := stateCache.Lookup(physicalID)
+	table, ok := stateCache.Lookup(physicalID, false)
 	h.statsCache.Unlock()
 
 	// If table stats is pseudo, we also need to copy it, since we will use the column stats when
