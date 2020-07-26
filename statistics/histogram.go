@@ -963,16 +963,6 @@ func (idx *Index) MemoryUsage() (sum int64) {
 	return
 }
 
-// MemoryUsage returns the total memory usage of a Histogram and CMSketch in Index.
-// We ignore the size of other metadata in Index.
-func (idx *Index) MemoryUsage() (sum int64) {
-	sum = idx.Histogram.MemoryUsage()
-	if idx.CMSketch != nil {
-		sum += idx.CMSketch.MemoryUsage()
-	}
-	return
-}
-
 var nullKeyBytes, _ = codec.EncodeKey(nil, nil, types.NewDatum(nil))
 
 func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte, modifyCount int64) (float64, error) {
