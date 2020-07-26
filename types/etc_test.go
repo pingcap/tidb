@@ -324,7 +324,7 @@ func (s *testTypeEtcSuite) TestIsTypeNumeric(c *C) {
 	c.Assert(res, Equals, true)
 
 	res = IsTypeNumeric(mysql.TypeUnspecified)
-	c.Assert(res, Equals, false)
+	c.Assert(res, Equals, true)
 
 	res = IsTypeNumeric(mysql.TypeFloat)
 	c.Assert(res, Equals, true)

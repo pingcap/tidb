@@ -342,7 +342,7 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		//mysql.TypeNull         mysql.TypeTimestamp
 		mysql.TypeNewDecimal, mysql.TypeVarchar,
 		//mysql.TypeLonglong     mysql.TypeInt24
-		mysql.TypeNewDecimal, mysql.TypeNewDecimal,
+		mysql.TypeUnspecified, mysql.TypeUnspecified,
 		//mysql.TypeDate         mysql.TypeTime
 		mysql.TypeVarchar, mysql.TypeVarchar,
 		//mysql.TypeDatetime     mysql.TypeYear
