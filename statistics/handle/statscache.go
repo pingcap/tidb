@@ -100,9 +100,8 @@ func (sc *StatsCache) LRURemove(e *tableLRUHandle) {
 //return erased memUsage
 func (sc *StatsCache) Erase(deletedID int64) (memUsage int64) {
 	sc.setLRUlist()
-	e := sc.tables[deletedID]
-	sc.LRURemove(e)
 	if ptbl, ok := sc.tables[deletedID]; ok {
+		sc.LRURemove(ptbl)
 		memUsage -= ptbl.MemoryUsage()
 	}
 	sc.memUsage += memUsage
