@@ -1,6 +1,8 @@
 package handle
 
 import (
+	"sync"
+
 	"github.com/pingcap/tidb/statistics"
 )
 
@@ -10,7 +12,7 @@ type tableLRUHandle struct {
 	next *tableLRUHandle
 }
 
-//MemoryUsage of tableLRUHandle returns the Table MemoryUsage
+// MemoryUsage of tableLRUHandle returns the Table MemoryUsage
 func (tbr *tableLRUHandle) MemoryUsage() int64 {
 	return tbr.Table.MemoryUsage()
 }
@@ -22,10 +24,11 @@ type StatsCache struct {
 	memUsage int64
 	//after insert a table, append it to the end of the list
 	//lruList.next is the next table to remove
+	mu      sync.Mutex
 	lruList *tableLRUHandle
 }
 
-//NewStatsCache creates a new StatsCache.
+// NewStatsCache creates a new StatsCache.
 func NewStatsCache() *StatsCache {
 	sc := &StatsCache{
 		tables:   make(map[int64]*tableLRUHandle),
@@ -38,7 +41,7 @@ func NewStatsCache() *StatsCache {
 	return sc
 }
 
-//Lookup remove a tableLRUHandle from lruList
+// Lookup remove a tableLRUHandle from lruList
 func (sc *StatsCache) setLRUlist() {
 	if sc.lruList != nil {
 		return
@@ -49,7 +52,7 @@ func (sc *StatsCache) setLRUlist() {
 	sc.lruList.prev = sc.lruList
 }
 
-//Lookup remove a tableLRUHandle from lruList
+// Lookup remove a tableLRUHandle from lruList
 func (sc *StatsCache) Lookup(id int64) (*statistics.Table, bool) {
 	sc.setLRUlist()
 
@@ -62,7 +65,7 @@ func (sc *StatsCache) Lookup(id int64) (*statistics.Table, bool) {
 	return htbl.Table, true
 }
 
-//Insert insert a new table to tables and append to lrulist.
+// Insert insert a new table to tables and append to lrulist.
 func (sc *StatsCache) Insert(table *statistics.Table) (memUsage int64) {
 	sc.setLRUlist()
 
@@ -81,23 +84,26 @@ func (sc *StatsCache) Insert(table *statistics.Table) (memUsage int64) {
 	return
 }
 
-//LRUAppend remove a tableLRUHandle from lruList
+// LRUAppend remove a tableLRUHandle from lruList
 func (sc *StatsCache) LRUAppend(e *tableLRUHandle) {
+	sc.mu.Lock()
 	e.next = sc.lruList
 	e.prev = sc.lruList.prev
 	e.prev.next = e
 	e.next.prev = e
+	sc.mu.Unlock()
 }
 
-//LRURemove remove a tableLRUHandle from lruList
+// LRURemove remove a tableLRUHandle from lruList
 func (sc *StatsCache) LRURemove(e *tableLRUHandle) {
-
+	sc.mu.Lock()
 	e.next.prev = e.prev
 	e.prev.next = e.next
+	sc.mu.Unlock()
 }
 
-//Erase Erase a stateCache with physical id
-//return erased memUsage
+// Erase Erase a stateCache with physical id
+// return erased memUsage
 func (sc *StatsCache) Erase(deletedID int64) (memUsage int64) {
 	sc.setLRUlist()
 	if ptbl, ok := sc.tables[deletedID]; ok {
@@ -110,16 +116,16 @@ func (sc *StatsCache) Erase(deletedID int64) (memUsage int64) {
 	return
 }
 
-//EraseLast erase last table statistic data in cache
-//and table meta data not erased only used in Handle.updateStatsCache
-//returns erased memUsage
+// EraseLast erase last table statistic data in cache
+// and table meta data not erased only used in Handle.updateStatsCache
+// returns erased memUsage
 func (sc *StatsCache) EraseLast() int64 {
 	ID := sc.lruList.next.PhysicalID
 
 	return sc.Insert(sc.tables[ID].CopyMeta())
 }
 
-//isEmpty returns if sc is empty
+// isEmpty returns if sc is empty
 func (sc StatsCache) isEmpty() bool {
 	return sc.lruList.next == sc.lruList
 }
