@@ -48,6 +48,7 @@ const (
 	maxMemoryLimit = 1024 * 1024 * 1024
 )
 
+
 // Handle can update stats info periodically.
 type Handle struct {
 	mu struct {
@@ -92,6 +93,7 @@ func (h *Handle) Clear() {
 	h.statsCache.memTracker = memory.NewTracker(
 		stringutil.MemoizeStr(func() string { return "statsCache" }),
 		maxMemoryLimit)
+
 	h.statsCache.Unlock()
 	for len(h.ddlEventCh) > 0 {
 		<-h.ddlEventCh
@@ -124,6 +126,7 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
 		stringutil.MemoizeStr(func() string { return "statsCache" }),
 		maxMemoryLimit)
 	handle.statsCache.Store(*NewStatsCache())
+
 	handle.mu.ctx = ctx
 	handle.mu.rateMap = make(errorRateDeltaMap)
 	return handle
@@ -289,6 +292,7 @@ func (h *Handle) updateStatsCache(newCache StatsCache) {
 	oldCache := h.statsCache.Load().(StatsCache)
 	if oldCache.version <= newCache.version {
 
+
 		//update total Consume memUsage
 		h.statsCache.memTracker.Consume(newCache.memUsage - oldCache.memUsage)
 
@@ -306,6 +310,7 @@ func (sc StatsCache) copy() StatsCache {
 	newCache := *NewStatsCache()
 	newCache.version = sc.version
 	newCache.memUsage = sc.memUsage
+
 	for k, v := range sc.tables {
 		newCache.tables[k] = &tableLRUHandle{Table: v.Table, prev: v.prev, next: v.next}
 	}
@@ -333,6 +338,7 @@ func (sc StatsCache) copy() StatsCache {
 //initMemoryUsage calc total memory usage of statsCache and set statsCache.memUsage
 //should be called after the tables and their stats are initilazed
 func (sc StatsCache) initMemoryUsage() {
+
 	sum := int64(0)
 	for _, tb := range sc.tables {
 		sum += tb.MemoryUsage()
@@ -350,6 +356,7 @@ func (sc StatsCache) update(tables []*statistics.Table, deletedIDs []int64, newV
 	}
 	for _, id := range deletedIDs {
 		newCache.Erase(id)
+
 	}
 	return newCache
 }

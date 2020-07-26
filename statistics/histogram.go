@@ -124,6 +124,7 @@ func (hg *Histogram) MemoryUsage() (sum int64) {
 	//let the initial sum = 0
 	sum = hg.Bounds.MemoryUsage() - chunk.NewChunkWithCapacity([]*types.FieldType{hg.Tp}, 0).MemoryUsage()
 	sum = sum + int64(cap(hg.Buckets)*int(unsafe.Sizeof(Bucket{}))) + int64(cap(hg.scalars)*int(unsafe.Sizeof(scalar{})))
+
 	return
 }
 
@@ -950,6 +951,16 @@ func (idx *Index) IsInvalid(sc *stmtctx.StatementContext, collPseudo bool) bool 
 		HistogramNeededIndices.insert(tableIndexID{TableID: idx.PhysicalID, IndexID: idx.Info.ID})
 	}
 	return idx.TotalRowCount() == 0 || (idx.NDV > 0 && idx.Len() == 0)
+}
+
+// MemoryUsage returns the total memory usage of a Histogram and CMSketch in Index.
+// We ignore the size of other metadata in Index.
+func (idx *Index) MemoryUsage() (sum int64) {
+	sum = idx.Histogram.MemoryUsage()
+	if idx.CMSketch != nil {
+		sum += idx.CMSketch.MemoryUsage()
+	}
+	return
 }
 
 // MemoryUsage returns the total memory usage of a Histogram and CMSketch in Index.

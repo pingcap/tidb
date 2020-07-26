@@ -299,7 +299,7 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 	}
 	// Test only 1 partition and all data in memory.
 	c.Assert(len(exec.partitionList), Equals, 1)
-	c.Assert(exec.partitionList[0].AlreadySpilledSafe(), Equals, false)
+	c.Assert(exec.partitionList[0].AlreadySpilledSafeForTest(), Equals, false)
 	c.Assert(exec.partitionList[0].NumRow(), Equals, 2048)
 	err = exec.Close()
 	c.Assert(err, IsNil)
@@ -321,13 +321,13 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 	// Golang goroutine scheduling. So the result has two possibilities.
 	if len(exec.partitionList) == 2 {
 		c.Assert(len(exec.partitionList), Equals, 2)
-		c.Assert(exec.partitionList[0].AlreadySpilledSafe(), Equals, true)
-		c.Assert(exec.partitionList[1].AlreadySpilledSafe(), Equals, true)
+		c.Assert(exec.partitionList[0].AlreadySpilledSafeForTest(), Equals, true)
+		c.Assert(exec.partitionList[1].AlreadySpilledSafeForTest(), Equals, true)
 		c.Assert(exec.partitionList[0].NumRow(), Equals, 1024)
 		c.Assert(exec.partitionList[1].NumRow(), Equals, 1024)
 	} else {
 		c.Assert(len(exec.partitionList), Equals, 1)
-		c.Assert(exec.partitionList[0].AlreadySpilledSafe(), Equals, true)
+		c.Assert(exec.partitionList[0].AlreadySpilledSafeForTest(), Equals, true)
 		c.Assert(exec.partitionList[0].NumRow(), Equals, 2048)
 	}
 
@@ -347,7 +347,7 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 	}
 	// Test only 1 partition but spill disk.
 	c.Assert(len(exec.partitionList), Equals, 1)
-	c.Assert(exec.partitionList[0].AlreadySpilledSafe(), Equals, true)
+	c.Assert(exec.partitionList[0].AlreadySpilledSafeForTest(), Equals, true)
 	c.Assert(exec.partitionList[0].NumRow(), Equals, 2048)
 	err = exec.Close()
 	c.Assert(err, IsNil)

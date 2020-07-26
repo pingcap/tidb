@@ -112,6 +112,7 @@ func (s *testStatsSuite) TestStatsCacheMemTracker(c *C) {
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.MemoryUsage() >= 0, IsTrue)
+
 	c.Assert(statsTbl.MemoryUsage(), Equals, do.StatsHandle().GetMemConsumed())
 
 	c.Assert(statsTbl.Pseudo, IsTrue)
@@ -142,6 +143,7 @@ func (s *testStatsSuite) TestStatsCacheMemTracker(c *C) {
 
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.MemoryUsage() >= 0, IsTrue)
+
 	c.Assert(statsTbl.MemoryUsage(), Equals, do.StatsHandle().GetMemConsumed())
 	c.Assert(statsTbl.Pseudo, IsFalse)
 
