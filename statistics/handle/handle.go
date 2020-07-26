@@ -48,7 +48,6 @@ const (
 	maxMemoryLimit = 1024 * 1024 * 1024
 )
 
-
 // Handle can update stats info periodically.
 type Handle struct {
 	mu struct {
@@ -243,7 +242,9 @@ func buildPartitionID2TableID(is infoschema.InfoSchema) map[int64]int64 {
 
 // GetMemConsumed returns the mem size of statscache consumed
 func (h *Handle) GetMemConsumed() (size int64) {
+	h.statsCache.Lock()
 	size = h.statsCache.memTracker.BytesConsumed()
+	h.statsCache.Unlock()
 	return
 }
 
@@ -285,13 +286,14 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statist
 
 //SetBytesLimit sets the bytes limit for this tracker. "bytesLimit <= 0" means no limit.
 func (h *Handle) SetBytesLimit(bytesLimit int64) {
+	h.statsCache.Lock()
 	h.statsCache.memTracker.SetBytesLimit(bytesLimit)
+	h.statsCache.Unlock()
 }
 func (h *Handle) updateStatsCache(newCache StatsCache) {
 	h.statsCache.Lock()
 	oldCache := h.statsCache.Load().(StatsCache)
 	if oldCache.version <= newCache.version {
-
 
 		//update total Consume memUsage
 		h.statsCache.memTracker.Consume(newCache.memUsage - oldCache.memUsage)
