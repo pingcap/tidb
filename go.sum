@@ -267,6 +267,8 @@ github.com/imtbkcat/parser v0.0.0-20200727031917-8c11574f418f h1:VagevwLSA2WnvWi
 github.com/imtbkcat/parser v0.0.0-20200727031917-8c11574f418f/go.mod h1:qupHD3o7J0aBb3bbVyXRnxe9kKy2MTY/6POS6NO/Ei8=
 github.com/imtbkcat/parser v0.0.0-20200727033704-6b37196a0bc2 h1:5gAdVhRYo4DQG/N6OIkJ8+j5KZftcgdrC7RiLtzChaI=
 github.com/imtbkcat/parser v0.0.0-20200727033704-6b37196a0bc2/go.mod h1:vQdbJqobJAgFyiRNNtXahpMoGWwPEuWciVEK5A20NS0=
+github.com/imtbkcat/parser v0.0.0-20200727044629-97c00acb6835 h1:5PO/6IdU7iox4t1ky0w3bKsfdz01R3vPj9Z8TJ4gP3E=
+github.com/imtbkcat/parser v0.0.0-20200727044629-97c00acb6835/go.mod h1:vQdbJqobJAgFyiRNNtXahpMoGWwPEuWciVEK5A20NS0=
 github.com/inconshreveable/mousetrap v1.0.0 h1:Z8tu5sraLXCXIcARxBp/8cbvlwVa7Z1NHg9XEKhtSvM=
 github.com/inconshreveable/mousetrap v1.0.0/go.mod h1:PxqpIevigyE2G7u3NXJIT2ANytuPF1OarO4DADm73n8=
 github.com/jessevdk/go-flags v1.4.0/go.mod h1:4FA24M0QyGHXBuZZK/XkWh8h0e1EYbRYJSGM75WSRxI=
