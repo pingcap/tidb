@@ -573,14 +573,14 @@ func (e *Explain) RenderResult() error {
 	if e.TargetPlan == nil {
 		return nil
 	}
-	if _, ok := e.StmtPlan.(PhysicalPlan); !ok {
-		return nil
-	}
 	switch strings.ToLower(e.Format) {
 	case ast.ExplainFormatROW:
 		e.explainedPlans = map[int]bool{}
 		e.explainPlanInRowFormat(e.TargetPlan, "root", "", true)
 	case ast.ExplainFormatDOT:
+		if _, ok := e.TargetPlan.(PhysicalPlan); !ok {
+			return nil
+		}
 		e.prepareDotInfo(e.TargetPlan.(PhysicalPlan))
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
