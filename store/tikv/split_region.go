@@ -67,7 +67,10 @@ func (s *tikvStore) splitBatchRegionsReq(bo *Backoffer, keys [][]byte, scatter b
 	for _, batch1 := range batches {
 		go func(b batch) {
 			backoffer, cancel := bo.Fork()
-			defer cancel()
+			defer func() {
+				cancel()
+				logutil.Logger(bo.ctx).Error("tikvStore invoke cancelFunc")
+			}()
 
 			util.WithRecovery(func() {
 				select {

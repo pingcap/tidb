@@ -488,6 +488,8 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 			e.feedback.Invalidate()
 		}
 		cancel()
+		ctx2 := logutil.WithConnID(ctx, uint32(e.ctx.GetSessionVars().ConnectionID))
+		logutil.Logger(ctx2).Error("IndexLookUpExecutor invoke cancel", zap.String("id", e.id.String()))
 		if err := result.Close(); err != nil {
 			logutil.Logger(ctx).Error("close Select result failed", zap.Error(err))
 		}
@@ -526,6 +528,8 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 		go func() {
 			worker.pickAndExecTask(ctx1)
 			cancel()
+			ctx2 := logutil.WithConnID(ctx, uint32(e.ctx.GetSessionVars().ConnectionID))
+			logutil.Logger(ctx2).Error("IndexLookUpExecutor invoke cancel", zap.String("id", e.id.String()))
 			e.tblWorkerWg.Done()
 		}()
 	}
