@@ -218,7 +218,7 @@ func (ft *FieldType) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain(")")
 	case mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDuration:
 		precision = ft.Decimal
-	case mysql.TypeDecimal, mysql.TypeFloat, mysql.TypeDouble, mysql.TypeNewDecimal:
+	case mysql.TypeUnspecified, mysql.TypeFloat, mysql.TypeDouble, mysql.TypeNewDecimal:
 		precision = ft.Flen
 		scale = ft.Decimal
 	default:
