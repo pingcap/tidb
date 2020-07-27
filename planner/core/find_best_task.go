@@ -918,6 +918,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		indexPlan:   is,
 		tblColHists: ds.TblColHists,
 		tblCols:     ds.TblCols,
+		pruningConds: ds.allConds,
 	}
 	if !candidate.isSingleScan {
 		// On this way, it's double read case.
@@ -1316,6 +1317,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		indexPlanFinished: true,
 		tblColHists:       ds.TblColHists,
 		cst:               cost,
+		pruningConds: ds.allConds,
 	}
 	task = copTask
 	if candidate.isMatchProp {

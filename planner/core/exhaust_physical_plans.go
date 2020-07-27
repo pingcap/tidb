@@ -824,6 +824,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		cst:               sessVars.ScanFactor * rowSize * ts.stats.RowCount,
 		tblColHists:       ds.TblColHists,
 		keepOrder:         ts.KeepOrder,
+		pruningConds: ds.allConds,
 	}
 	selStats := ts.stats.Scale(selectivity)
 	ts.addPushedDownSelection(copTask, selStats)
@@ -881,6 +882,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		tblColHists: ds.TblColHists,
 		tblCols:     ds.TblCols,
 		keepOrder:   is.KeepOrder,
+		pruningConds: ds.allConds,
 	}
 	if !ds.isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, is.Table) {
 		// On this way, it's double read case.

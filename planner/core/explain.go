@@ -279,7 +279,7 @@ func (p *PhysicalTableReader) accessObject(sctx sessionctx.Context) string {
 		return buffer.String()
 	}
 	tbl := tmp.(table.PartitionedTable)
-	partitions, err := PartitionPruning(sctx, tbl, ts.FilterCondition)
+	partitions, err := PartitionPruning(sctx, tbl, p.PruningConds)
 	if err != nil {
 		return "partition pruning error" + err.Error()
 	}
@@ -346,13 +346,8 @@ func (p *PhysicalIndexLookUpReader) accessObject(sctx sessionctx.Context) string
 		return buffer.String()
 	}
 
-	fmt.Println("index lookup filter cond ===", len(ts.FilterCondition))
-	for _, cond := range ts.FilterCondition {
-		fmt.Println("==============", cond)
-	}
-
 	tbl := tmp.(table.PartitionedTable)
-	partitions, err := PartitionPruning(sctx, tbl, ts.FilterCondition)
+	partitions, err := PartitionPruning(sctx, tbl, p.PruningConds)
 	if err != nil {
 		return "partition pruning error" + err.Error()
 	}
