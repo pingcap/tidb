@@ -1293,7 +1293,7 @@ func (s *testDBSuite1) TestCancelAddTableAndDropTablePartition(c *C) {
 		{model.ActionAddTablePartition, model.JobStateNone, model.StateNone, true},
 		{model.ActionDropTablePartition, model.JobStateNone, model.StateNone, true},
 		// Add table partition now can be cancelled in DeleteOnly state.
-		{model.ActionAddTablePartition, model.JobStateRunning, model.StateDeleteOnly, true},
+		{model.ActionAddTablePartition, model.JobStateRunning, model.StateReplicaOnly, true},
 		{model.ActionAddTablePartition, model.JobStateRunning, model.StatePublic, false},
 		{model.ActionDropTablePartition, model.JobStateRunning, model.StatePublic, false},
 	}

@@ -15,6 +15,7 @@ package ddl
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -407,6 +408,9 @@ func checkCancelState(txn kv.Transaction, job *model.Job, test *testCancelJob) e
 		job.SchemaState == model.StateWriteReorganization && job.SnapshotVer == 0
 	// If the action is adding index and the state is writing reorganization, it wants to test the case of cancelling the job when backfilling indexes.
 	// When the job satisfies this case of addIndexFirstReorg, the worker hasn't started to backfill indexes.
+	if job.SchemaState == model.StateReplicaOnly {
+		fmt.Println(1)
+	}
 	if test.cancelState == job.SchemaState && !addIndexFirstReorg && !job.IsRollingback() {
 		errs, err := admin.CancelJobs(txn, test.jobIDs)
 		if err != nil {
@@ -493,7 +497,7 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 		{act: model.ActionExchangeTablePartition, jobIDs: []int64{firstID + 54}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 54)}, cancelState: model.StatePublic},
 
 		{act: model.ActionAddTablePartition, jobIDs: []int64{firstID + 59}, cancelRetErrs: noErrs, cancelState: model.StateNone},
-		{act: model.ActionAddTablePartition, jobIDs: []int64{firstID + 60}, cancelRetErrs: noErrs, cancelState: model.StateDeleteOnly},
+		{act: model.ActionAddTablePartition, jobIDs: []int64{firstID + 60}, cancelRetErrs: noErrs, cancelState: model.StateReplicaOnly},
 		{act: model.ActionAddTablePartition, jobIDs: []int64{firstID + 61}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob}, cancelState: model.StatePublic},
 	}
 
@@ -608,6 +612,9 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 		}
 		// This hook only valid for the related test job.
 		// This is use to avoid parallel test fail.
+		if job.SchemaState == model.StateReplicaOnly {
+			fmt.Println(1)
+		}
 		mu.Lock()
 		if len(test.jobIDs) > 0 && test.jobIDs[0] != job.ID {
 			mu.Unlock()

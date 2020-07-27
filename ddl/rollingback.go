@@ -238,17 +238,17 @@ func rollingbackAddIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, isP
 
 func convertAddTablePartitionJob2RollbackJob(t *meta.Meta, job *model.Job, otherwiseErr error) (ver int64, err error) {
 	job.State = model.JobStateRollingback
-	tblInfo, _, partDefPointers, err := checkAddPartition(t, job)
+	tblInfo, _, addingDefinitions, err := checkAddPartition(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	// partDefPointers' len = 0 means the job hasn't reached the delete-only state.
-	if len(partDefPointers) == 0 {
+	// addingDefinitions' len = 0 means the job hasn't reached the replica-only state.
+	if len(addingDefinitions) == 0 {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(otherwiseErr)
 	}
-	partNames := make([]string, 0, len(partDefPointers))
-	for _, pd := range partDefPointers {
+	partNames := make([]string, 0, len(addingDefinitions))
+	for _, pd := range addingDefinitions {
 		partNames = append(partNames, pd.Name.L)
 	}
 	job.Args = []interface{}{partNames}

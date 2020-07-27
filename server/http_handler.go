@@ -753,17 +753,20 @@ func (h flashReplicaHandler) getTiFlashReplicaInfo(tblInfo *model.TableInfo, rep
 	}
 	if pi := tblInfo.GetPartitionInfo(); pi != nil {
 		for _, p := range pi.Definitions {
-			priority := false
-			if p.State == model.StateDeleteOnly {
-				// the new added partition should be in high priority for scheduling.
-				priority = true
-			}
 			replicaInfos = append(replicaInfos, &tableFlashReplicaInfo{
 				ID:             p.ID,
 				ReplicaCount:   tblInfo.TiFlashReplica.Count,
 				LocationLabels: tblInfo.TiFlashReplica.LocationLabels,
 				Available:      tblInfo.TiFlashReplica.IsPartitionAvailable(p.ID),
-				HighPriority:   priority,
+			})
+		}
+		for _, p := range pi.AddingDefinitions {
+			replicaInfos = append(replicaInfos, &tableFlashReplicaInfo{
+				ID:             p.ID,
+				ReplicaCount:   tblInfo.TiFlashReplica.Count,
+				LocationLabels: tblInfo.TiFlashReplica.LocationLabels,
+				Available:      tblInfo.TiFlashReplica.IsPartitionAvailable(p.ID),
+				HighPriority:   true,
 			})
 		}
 		return replicaInfos

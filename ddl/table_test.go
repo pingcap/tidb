@@ -92,8 +92,6 @@ func testTableInfoWithPartition(c *C, d *ddl, name string, num int) *model.Table
 func testTableInfoWithPartitionLessThan(c *C, d *ddl, name string, num int, lessthan string) *model.TableInfo {
 	tblInfo := testTableInfoWithPartition(c, d, name, num)
 	tblInfo.Partition.Definitions[0].LessThan = []string{lessthan}
-	// the new table with partition should change partition state to state public at the beginning.
-	tblInfo.Partition.Definitions[0].State = model.StatePublic
 	return tblInfo
 }
 

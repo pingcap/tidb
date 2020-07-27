@@ -50,7 +50,7 @@ const (
 	partitionMaxValue = "MAXVALUE"
 )
 
-func checkAddPartition(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.PartitionInfo, []*model.PartitionDefinition, error) {
+func checkAddPartition(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.PartitionInfo, []model.PartitionDefinition, error) {
 	schemaID := job.SchemaID
 	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
@@ -62,21 +62,10 @@ func checkAddPartition(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.P
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, errors.Trace(err)
 	}
-	partDefPointers := make([]*model.PartitionDefinition, 0, len(partInfo.Definitions))
-	for _, pd := range partInfo.Definitions {
-		partitionDefInMeta := tblInfo.FindPartitionDefinitionByName(pd.Name.L)
-		if partitionDefInMeta != nil {
-			if partitionDefInMeta.State == model.StatePublic {
-				// Even one partition with the same name existed, whole job canceled.
-				// We already have these new added partition with the same name.
-				job.State = model.JobStateCancelled
-				return nil, nil, nil, errors.Trace(ErrSameNamePartition.GenWithStackByArgs(pd.Name.L))
-			}
-			// Collect the partition definition pointer in tableInfo for future state change.
-			partDefPointers = append(partDefPointers, partitionDefInMeta)
-		}
+	if len(tblInfo.Partition.AddingDefinitions) > 0 {
+		return tblInfo, partInfo, tblInfo.Partition.AddingDefinitions, nil
 	}
-	return tblInfo, partInfo, partDefPointers, nil
+	return tblInfo, partInfo, []model.PartitionDefinition{}, nil
 }
 
 func onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -89,14 +78,14 @@ func onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ 
 		return ver, nil
 	}
 
-	tblInfo, partInfo, partDefPointers, err := checkAddPartition(t, job)
+	tblInfo, partInfo, addingDefinitions, err := checkAddPartition(t, job)
 	if err != nil {
 		return ver, err
 	}
 
-	// partDefPointers's len is 0 meaning the job is in the initial state of add partition.
+	// addingDefinition's len is 0 meaning the job is in the initial state of add partition.
 	// Here should use partInfo from job directly and do some check action.
-	if len(partDefPointers) == 0 {
+	if len(addingDefinitions) == 0 {
 		err = checkAddPartitionTooManyPartitions(uint64(len(tblInfo.Partition.Definitions) + len(partInfo.Definitions)))
 		if err != nil {
 			job.State = model.JobStateCancelled
@@ -114,26 +103,25 @@ func onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ 
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		partDefPointers = updatePartitionInfo(partInfo, tblInfo)
 	}
 
-	originalState := partDefPointers[0].State
-	switch partDefPointers[0].State {
+	// In order to skip maintaining the state check in partitionDefinition, TiDB use addingDefinition instead of state field.
+	// So here using `job.SchemaState` to judge what the stage of this job is.
+	switch job.SchemaState {
 	case model.StateNone:
-		// none -> delete only
-		job.SchemaState = model.StateDeleteOnly
-		for _, pdDef := range partDefPointers {
-			pdDef.State = model.StateDeleteOnly
-		}
-		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, originalState != partDefPointers[0].State)
-	case model.StateDeleteOnly:
-		// delete only -> public
+		// none -> replica only
+		job.SchemaState = model.StateReplicaOnly
+		// move the adding definition into tableInfo.
+		updateAddingPartitionInfo(partInfo, tblInfo)
+		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, true)
+	case model.StateReplicaOnly:
+		// replica only -> public
 		// Here need do some tiflash replica complement check.
-		// TODO: If a table is with no TiFlashReplica or it is not available, the delete-only state can be eliminated.
+		// TODO: If a table is with no TiFlashReplica or it is not available, the replica-only state can be eliminated.
 		if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
 			// For available state, the new added partition should wait it's replica to
 			// be finished. Otherwise the query to this partition will be blocked.
-			needWait, err := checkPartitionReplica(partDefPointers, d)
+			needWait, err := checkPartitionReplica(addingDefinitions, d)
 			if err != nil {
 				ver, err = convertAddTablePartitionJob2RollbackJob(t, job, err)
 				return ver, err
@@ -146,11 +134,10 @@ func onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ 
 			}
 		}
 
-		// For normal table, change the state to public directly.
-		for _, pdDef := range partDefPointers {
-			pdDef.State = model.StatePublic
-		}
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != partDefPointers[0].State)
+		// For normal and replica finished table, move the `addingDefinitions` into `Definitions`.
+		updatePartitionInfo(tblInfo)
+
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -158,25 +145,38 @@ func onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ 
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionAddTablePartition, TableInfo: tblInfo, PartInfo: partInfo})
 	default:
-		err = ErrInvalidDDLState.GenWithStackByArgs("partition", partDefPointers[0].State)
+		err = ErrInvalidDDLState.GenWithStackByArgs("partition", job.SchemaState)
 	}
 
 	return ver, errors.Trace(err)
 }
 
-func updatePartitionInfo(partitionInfo *model.PartitionInfo, tblInfo *model.TableInfo) []*model.PartitionDefinition {
+// updatePartitionInfo merge `addingDefinitions` into `Definitions` in the tableInfo.
+func updatePartitionInfo(tblInfo *model.TableInfo) {
 	parInfo := &model.PartitionInfo{}
-	oldDefs, newDefs := tblInfo.Partition.Definitions, partitionInfo.Definitions
+	oldDefs, newDefs := tblInfo.Partition.Definitions, tblInfo.Partition.AddingDefinitions
 	parInfo.Definitions = make([]model.PartitionDefinition, 0, len(newDefs)+len(oldDefs))
 	parInfo.Definitions = append(parInfo.Definitions, oldDefs...)
 	parInfo.Definitions = append(parInfo.Definitions, newDefs...)
 	tblInfo.Partition.Definitions = parInfo.Definitions
-	partDefPointers := make([]*model.PartitionDefinition, 0, len(partitionInfo.Definitions))
-	for _, pdAdded := range partitionInfo.Definitions {
-		pdInMetaPointer := tblInfo.FindPartitionDefinitionByName(pdAdded.Name.L)
-		partDefPointers = append(partDefPointers, pdInMetaPointer)
+	tblInfo.Partition.AddingDefinitions = tblInfo.Partition.AddingDefinitions[:0]
+}
+
+// updateAddingPartitionInfo write adding partitions into `addingDefinitions` field in the tableInfo.
+func updateAddingPartitionInfo(partitionInfo *model.PartitionInfo, tblInfo *model.TableInfo) {
+	newDefs := partitionInfo.Definitions
+	tblInfo.Partition.AddingDefinitions = make([]model.PartitionDefinition, 0, len(newDefs))
+	tblInfo.Partition.AddingDefinitions = append(tblInfo.Partition.AddingDefinitions, newDefs...)
+}
+
+// rollbackAddingPartitionInfo remove the `addingDefinitions` in the tableInfo.
+func rollbackAddingPartitionInfo(tblInfo *model.TableInfo) []int64 {
+	physicalTableIDs := make([]int64, 0, len(tblInfo.Partition.AddingDefinitions))
+	for _, one := range tblInfo.Partition.AddingDefinitions {
+		physicalTableIDs = append(physicalTableIDs, one.ID)
 	}
-	return partDefPointers
+	tblInfo.Partition.AddingDefinitions = tblInfo.Partition.AddingDefinitions[:0]
+	return physicalTableIDs
 }
 
 // checkAddPartitionValue values less than value must be strictly increasing for each partition.
@@ -214,14 +214,14 @@ func checkAddPartitionValue(meta *model.TableInfo, part *model.PartitionInfo) er
 	return nil
 }
 
-func checkPartitionReplica(partDefPointers []*model.PartitionDefinition, d *ddlCtx) (needWait bool, err error) {
+func checkPartitionReplica(addingDefinitions []model.PartitionDefinition, d *ddlCtx) (needWait bool, err error) {
 	ctx := context.Background()
 	pdCli := d.store.(tikv.Storage).GetRegionCache().PDClient()
 	stores, err := pdCli.GetAllStores(ctx)
 	if err != nil {
 		return needWait, errors.Trace(err)
 	}
-	for _, pd := range partDefPointers {
+	for _, pd := range addingDefinitions {
 		startKey, endKey := tablecodec.GetTableHandleKeyRange(pd.ID)
 		regions, _, err := pdCli.ScanRegions(ctx, startKey, endKey, -1)
 		if err != nil {
@@ -357,8 +357,6 @@ func buildHashPartitionDefinitions(ctx sessionctx.Context, s *ast.CreateTableStm
 			defs[i].Name = def.Name
 			defs[i].Comment, _ = def.Comment()
 		}
-		// For create table statement, the created partition definition in tableInfo should be with public state.
-		defs[i].State = model.StatePublic
 	}
 	pi.Definitions = defs
 	return nil
@@ -383,8 +381,6 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, s *ast.CreateTableSt
 			piDef.LessThan = append(piDef.LessThan, buf.String())
 			buf.Reset()
 		}
-		// For create table statement, the created partition definition in tableInfo should be with public state.
-		piDef.State = model.StatePublic
 		pi.Definitions = append(pi.Definitions, piDef)
 	}
 	return nil
@@ -877,16 +873,22 @@ func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	// If an error occurs, it returns that it cannot delete all partitions or that the partition doesn't exist.
-	err = checkDropTablePartition(tblInfo, partNames)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-	physicalTableIDs := removePartitionInfo(tblInfo, partNames)
-	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
-	if err != nil {
-		return ver, errors.Trace(err)
+	var physicalTableIDs []int64
+	if job.Type == model.ActionAddTablePartition {
+		// It is rollbacked from adding table partition, just remove addingDefinitions from tableInfo.
+		physicalTableIDs = rollbackAddingPartitionInfo(tblInfo)
+	} else {
+		// If an error occurs, it returns that it cannot delete all partitions or that the partition doesn't exist.
+		err = checkDropTablePartition(tblInfo, partNames)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		physicalTableIDs = removePartitionInfo(tblInfo, partNames)
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 	}
 
 	// Finish this job.
