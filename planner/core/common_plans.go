@@ -423,7 +423,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 			pkColsLen := make([]int, 0, len(pk.Columns))
 			for _, colInfo := range pk.Columns {
 				pkCols = append(pkCols, expression.ColInfo2Col(ts.schema.Columns, ts.Table.Columns[colInfo.Offset]))
-				pkColsLen = append(pkColsLen, types.UnspecifiedLength)
+				pkColsLen = append(pkColsLen, colInfo.Length)
 			}
 			res, err := ranger.DetachCondAndBuildRangeForIndex(p.SCtx(), ts.AccessCondition, pkCols, pkColsLen)
 			if err != nil {
