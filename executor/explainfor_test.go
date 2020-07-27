@@ -103,3 +103,21 @@ func (s *testSuite) TestIssue11124(c *C) {
 		c.Assert(rs[i], DeepEquals, rs2[i])
 	}
 }
+
+func (s *testSuite) TestExplainDotForExplainPlan(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	rows := tk.MustQuery("select connection_id()").Rows()
+	c.Assert(len(rows), Equals, 1)
+	connID := rows[0][0].(string)
+	tk.MustQuery("explain select 1").Check(testkit.Rows(
+		"Projection_3 1.00 root 1",
+		"└─TableDual_4 1.00 root rows:1",
+	))
+
+	tkProcess := tk.Se.ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+
+	tk.MustQuery(fmt.Sprintf("explain format=\"dot\" for connection %s", connID)).Check(nil)
+}
